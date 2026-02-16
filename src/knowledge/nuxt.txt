@@ -1,0 +1,9 @@
+Nuxt 3 conventions for this project:
+- Auto-imports: no need to import ref, computed, useState, etc.
+- Pages auto-register routes based on file structure (pages/)
+- Components auto-register based on file name (components/)
+- Composables auto-imported from composables/ directory
+- useFetch() or useAsyncData() for SSR-friendly data fetching
+- definePageMeta() for page-level metadata and middleware
+- server/api/ for API routes with defineEventHandler()
+- useState('key', () => default) for SSR-safe shared state

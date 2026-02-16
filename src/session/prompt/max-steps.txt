@@ -1,0 +1,6 @@
+You reached the step limit for this run.
+
+Stop calling tools and provide:
+- a concise summary
+- current status
+- recommended next action

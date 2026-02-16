@@ -1,0 +1,10 @@
+React Native conventions for this project:
+- Functional components with hooks, same as React
+- Navigation: React Navigation (@react-navigation/native)
+- Styling: StyleSheet.create(), flexbox layout (default column)
+- Platform-specific: Platform.OS, Platform.select(), .ios.tsx/.android.tsx
+- Native modules: use Expo SDK or react-native-* community packages
+- State: React Context, Zustand, or Redux Toolkit
+- Lists: FlatList for long lists (not ScrollView + map)
+- Images: require() for local, { uri } for remote, use caching
+- Testing: Jest + React Native Testing Library

@@ -1,0 +1,9 @@
+Go conventions for this project:
+- Standard project layout: cmd/, internal/, pkg/
+- Error handling: return errors, don't panic. Wrap with fmt.Errorf("context: %w", err)
+- Interfaces: small, defined by consumer not provider
+- Concurrency: goroutines + channels, or sync.WaitGroup
+- Testing: table-driven tests, testify for assertions
+- Naming: MixedCaps, no underscores. Exported = uppercase first letter
+- Context: pass context.Context as first parameter
+- Dependencies: go mod, minimal external deps

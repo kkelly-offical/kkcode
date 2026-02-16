@@ -1,0 +1,11 @@
+Ruby/Rails conventions for this project:
+- MVC: app/controllers/, app/models/, app/views/
+- Convention over configuration: naming drives behavior
+- ActiveRecord for ORM: migrations, associations, validations, scopes
+- RESTful routes: resources :users in config/routes.rb
+- Strong parameters for mass assignment protection
+- Concerns for shared model/controller logic
+- Background jobs: Sidekiq or ActiveJob
+- Testing: RSpec preferred, FactoryBot for test data
+- Gems via Bundler, Gemfile for dependency management
+- Ruby style: snake_case methods, 2-space indent, no semicolons

@@ -1,0 +1,8 @@
+Generate a short title for this conversation session based on the user's first message.
+
+Rules:
+- Single line, maximum 50 characters
+- Use the same language as the user's message
+- Capture the main topic or task
+- No quotes, punctuation, or formatting
+- Be specific, not generic

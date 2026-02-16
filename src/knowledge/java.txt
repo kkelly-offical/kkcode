@@ -1,0 +1,9 @@
+Java / Spring Boot conventions for this project:
+- Spring Boot with @SpringBootApplication entry point
+- @RestController for API endpoints, @Service for business logic
+- @Repository with Spring Data JPA for data access
+- Constructor injection (not field injection) for dependencies
+- Records for DTOs, entities with @Entity annotation
+- Validation: @Valid + jakarta.validation annotations
+- Testing: JUnit 5 + Mockito, @SpringBootTest for integration
+- Maven or Gradle for build, application.yml for config

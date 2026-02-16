@@ -1,0 +1,10 @@
+Swift conventions for this project:
+- SwiftUI: declarative UI with @State, @Binding, @ObservedObject, @EnvironmentObject
+- MVVM architecture: View, ViewModel (ObservableObject), Model
+- Combine framework for reactive programming
+- Structured concurrency: async/await, Task, AsyncSequence
+- Protocol-oriented programming over class inheritance
+- Optionals: guard let, if let, nil coalescing (??)
+- SPM (Swift Package Manager) for dependencies
+- Naming: camelCase for properties/methods, PascalCase for types
+- Testing: XCTest framework, XCTAssert for assertions

@@ -1,0 +1,15 @@
+Fetch content from a URL and return it as processed text.
+
+Use cases:
+- Retrieve documentation or API references
+- Read web pages for research
+- Fetch remote configuration or data
+
+Parameters:
+- url: The URL to fetch (must be a valid HTTP/HTTPS URL)
+- prompt: Optional instruction for how to process/extract information from the content
+
+Notes:
+- HTML is converted to Markdown for readability
+- Large content may be truncated
+- Only use for public, unauthenticated URLs

@@ -1,0 +1,18 @@
+Search for code examples, API docs, and SDK usage via Exa AI.
+
+IMPORTANT — When to use PROACTIVELY (reduce hallucination):
+- Working with an unfamiliar library or framework
+- Need correct function signatures, parameter types, or return values
+- Looking for configuration examples or migration guides
+- Unsure about best practices for a specific tool or pattern
+
+Do NOT invent API signatures. Search first, then write code.
+
+Parameters:
+- query (required): describe what you need (e.g. "Express.js middleware error handling", "Prisma schema relations")
+- tokensNum (optional): context size 1000-50000 (default: 5000). Use higher for comprehensive docs, lower for quick lookups.
+
+Tips:
+- Be specific: "Next.js 14 app router server actions" > "Next.js server"
+- Include the language/framework name in the query
+- For debugging, include the error message or symptom

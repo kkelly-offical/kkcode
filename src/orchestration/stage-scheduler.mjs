@@ -1,0 +1,336 @@
+import { BackgroundManager } from "./background-manager.mjs"
+import { EventBus } from "../core/events.mjs"
+import { EVENT_TYPES } from "../core/constants.mjs"
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function normalizeFiles(list) {
+  if (!Array.isArray(list)) return []
+  return [...new Set(list.map((item) => String(item || "").trim()).filter(Boolean))]
+}
+
+function mergeUnique(...lists) {
+  const merged = []
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue
+    merged.push(...list)
+  }
+  return [...new Set(merged)]
+}
+
+function normalizeFileChanges(list) {
+  if (!Array.isArray(list)) return []
+  return list
+    .map((item) => ({
+      path: String(item?.path || "").trim(),
+      addedLines: Math.max(0, Number(item?.addedLines || 0)),
+      removedLines: Math.max(0, Number(item?.removedLines || 0)),
+      stageId: item?.stageId ? String(item.stageId) : "",
+      taskId: item?.taskId ? String(item.taskId) : ""
+    }))
+    .filter((item) => item.path)
+}
+
+function mergeFileChanges(...lists) {
+  const map = new Map()
+  for (const list of lists) {
+    for (const item of normalizeFileChanges(list)) {
+      const key = `${item.path}::${item.stageId}::${item.taskId}`
+      const prev = map.get(key) || { ...item, addedLines: 0, removedLines: 0 }
+      prev.addedLines += item.addedLines
+      prev.removedLines += item.removedLines
+      map.set(key, prev)
+    }
+  }
+  return [...map.values()]
+}
+
+function computeRemaining(planned = [], completed = []) {
+  const done = new Set(normalizeFiles(completed))
+  return normalizeFiles(planned).filter((file) => !done.has(file))
+}
+
+function stageConfig(config = {}) {
+  const parallel = config.agent?.longagent?.parallel || {}
+  return {
+    maxConcurrency: Math.max(1, Number(parallel.max_concurrency || 3)),
+    taskTimeoutMs: Math.max(1000, Number(parallel.task_timeout_ms || 600000)),
+    taskMaxRetries: Math.max(0, Number(parallel.task_max_retries ?? 2)),
+    passRule: "all_success"
+  }
+}
+
+function retryPrompt(taskPrompt, remainingFiles = [], attempt = 1, lastError = "") {
+  const parts = [
+    taskPrompt,
+    "",
+    `Retry attempt: ${attempt}`,
+    "Continue from previous progress. Focus ONLY on remaining files."
+  ]
+  if (remainingFiles.length) {
+    parts.push(`Remaining files: ${remainingFiles.join(", ")}`)
+  }
+  if (lastError) {
+    parts.push(`Previous failure: ${lastError}`)
+  }
+  return parts.join("\n")
+}
+
+async function launchTask({
+  stage,
+  task,
+  logicalTask,
+  config,
+  sessionId,
+  model,
+  providerType
+}) {
+  const payload = {
+    parentSessionId: sessionId,
+    subSessionId: logicalTask.subSessionId,
+    prompt: logicalTask.prompt,
+    cwd: process.cwd(),
+    model,
+    providerType,
+    subagent: task.subagentType || null,
+    category: task.category || null,
+    subagentType: task.subagentType || null,
+    stageId: stage.stageId,
+    logicalTaskId: task.taskId,
+    plannedFiles: logicalTask.plannedFiles,
+    remainingFiles: logicalTask.remainingFiles,
+    attempt: logicalTask.attempt,
+    workerTimeoutMs: logicalTask.timeoutMs
+  }
+
+  const taskDescription = `${stage.stageId}:${task.taskId}#${logicalTask.attempt}`
+  const bg = await BackgroundManager.launchDelegateTask({
+    description: taskDescription,
+    payload,
+    config: {
+      ...config,
+      background: {
+        ...(config.background || {}),
+        max_parallel: Math.max(
+          Number(config.background?.max_parallel || 1),
+          Number(config.agent?.longagent?.parallel?.max_concurrency || 3)
+        )
+      }
+    }
+  })
+
+  await EventBus.emit({
+    type: EVENT_TYPES.LONGAGENT_STAGE_TASK_DISPATCHED,
+    sessionId,
+    payload: {
+      stageId: stage.stageId,
+      taskId: task.taskId,
+      backgroundTaskId: bg.id,
+      attempt: logicalTask.attempt
+    }
+  })
+
+  return bg.id
+}
+
+export async function runStageBarrier({
+  stage,
+  sessionId,
+  config,
+  model,
+  providerType,
+  seedTaskProgress = {}
+}) {
+  const cfg = stageConfig(config)
+  const logical = new Map()
+
+  for (const task of stage.tasks || []) {
+    const seeded = seedTaskProgress[task.taskId] || {}
+    const planned = normalizeFiles(task.plannedFiles)
+    const completed = normalizeFiles(seeded.completedFiles || [])
+    const remaining = normalizeFiles(seeded.remainingFiles || computeRemaining(planned, completed))
+    logical.set(task.taskId, {
+      stageId: stage.stageId,
+      taskId: task.taskId,
+      subSessionId: seeded.subSessionId || `sub_${sessionId}_${task.taskId}`,
+      plannedFiles: planned,
+      completedFiles: completed,
+      remainingFiles: remaining,
+      acceptance: Array.isArray(task.acceptance) ? task.acceptance : [],
+      prompt: seeded.prompt || task.prompt,
+      status: seeded.status || "pending",
+      attempt: Number(seeded.attempt || 0),
+      maxRetries: Number(task.maxRetries ?? cfg.taskMaxRetries),
+      timeoutMs: Number(task.timeoutMs || cfg.taskTimeoutMs),
+      backgroundTaskId: null,
+      lastError: seeded.lastError || "",
+      fileChanges: normalizeFileChanges(seeded.fileChanges || [])
+    })
+  }
+
+  await EventBus.emit({
+    type: EVENT_TYPES.LONGAGENT_STAGE_STARTED,
+    sessionId,
+    payload: {
+      stageId: stage.stageId,
+      taskCount: logical.size,
+      passRule: cfg.passRule
+    }
+  })
+
+  while (true) {
+    await BackgroundManager.tick({
+      ...config,
+      background: {
+        ...(config.background || {}),
+        max_parallel: Math.max(
+          Number(config.background?.max_parallel || 1),
+          cfg.maxConcurrency
+        )
+      }
+    })
+
+    let activeCount = [...logical.values()].filter((item) => item.status === "running").length
+    if (activeCount < cfg.maxConcurrency) {
+      for (const task of stage.tasks || []) {
+        const item = logical.get(task.taskId)
+        if (!item) continue
+        if (item.backgroundTaskId) continue
+        if (!["pending", "retrying"].includes(item.status)) continue
+        if (activeCount >= cfg.maxConcurrency) break
+        item.attempt += 1
+        item.status = "running"
+        if (item.attempt > 1) {
+          item.prompt = retryPrompt(
+            task.prompt,
+            item.remainingFiles,
+            item.attempt,
+            item.lastError
+          )
+        }
+        item.backgroundTaskId = await launchTask({
+          stage,
+          task,
+          logicalTask: item,
+          config,
+          sessionId,
+          model,
+          providerType
+        })
+        activeCount += 1
+      }
+    }
+
+    let pending = 0
+    for (const item of logical.values()) {
+      if (!item.backgroundTaskId) {
+        if (["pending", "retrying", "running"].includes(item.status)) pending += 1
+        continue
+      }
+      const bg = await BackgroundManager.get(item.backgroundTaskId)
+      if (!bg) {
+        item.status = "error"
+        item.lastError = "background worker disappeared"
+        item.backgroundTaskId = null
+        continue
+      }
+      if (!["completed", "error", "interrupted", "cancelled"].includes(bg.status)) {
+        pending += 1
+        continue
+      }
+
+      const result = bg.result || {}
+      const completedFromResult = mergeUnique(
+        item.completedFiles,
+        normalizeFiles(result.completed_files || result.completedFiles || [])
+      )
+      const remainingFromResult = normalizeFiles(
+        result.remaining_files || result.remainingFiles || computeRemaining(item.plannedFiles, completedFromResult)
+      )
+      item.completedFiles = completedFromResult
+      item.remainingFiles = remainingFromResult
+      item.fileChanges = mergeFileChanges(
+        item.fileChanges,
+        result.file_changes || result.fileChanges || []
+      )
+      item.backgroundTaskId = null
+
+      if (bg.status === "completed" && remainingFromResult.length === 0) {
+        item.status = "completed"
+        item.lastError = ""
+      } else if (bg.status === "completed" && remainingFromResult.length > 0) {
+        item.status = item.attempt < item.maxRetries ? "retrying" : "error"
+        item.lastError = "task completed but remaining files still pending"
+      } else {
+        item.lastError = bg.error || "task failed"
+        item.status = item.attempt < item.maxRetries ? "retrying" : (bg.status === "cancelled" ? "cancelled" : "error")
+      }
+      item.lastReply = String(result.reply || "")
+      item.lastCost = Number(result.cost || 0)
+
+      await EventBus.emit({
+        type: EVENT_TYPES.LONGAGENT_STAGE_TASK_FINISHED,
+        sessionId,
+        payload: {
+          stageId: stage.stageId,
+          taskId: item.taskId,
+          status: item.status,
+          attempt: item.attempt,
+          remainingFiles: item.remainingFiles
+        }
+      })
+
+      if (["pending", "retrying", "running"].includes(item.status)) pending += 1
+    }
+
+    if (pending <= 0) break
+    await sleep(700)
+  }
+
+  const items = [...logical.values()]
+  const successCount = items.filter((item) => item.status === "completed").length
+  const failItems = items.filter((item) => item.status !== "completed")
+  const retryCount = items.reduce((sum, item) => sum + Math.max(0, item.attempt - 1), 0)
+  const remainingFiles = mergeUnique(...items.map((item) => item.remainingFiles))
+  const completionMarkerSeen = items.some((item) => String(item.lastReply || "").toLowerCase().includes("[task_complete]"))
+  const totalCost = items.reduce((sum, item) => sum + (Number.isFinite(item.lastCost) ? item.lastCost : 0), 0)
+  const fileChanges = mergeFileChanges(...items.map((item) => item.fileChanges))
+
+  const summary = {
+    stageId: stage.stageId,
+    successCount,
+    failCount: failItems.length,
+    retryCount,
+    remainingFiles,
+    completionMarkerSeen,
+    totalCost,
+    fileChanges,
+    allSuccess: failItems.length === 0,
+    taskProgress: Object.fromEntries(
+      items.map((item) => [
+        item.taskId,
+        {
+          taskId: item.taskId,
+          attempt: item.attempt,
+          status: item.status,
+          plannedFiles: item.plannedFiles,
+          completedFiles: item.completedFiles,
+          remainingFiles: item.remainingFiles,
+          fileChanges: item.fileChanges,
+          lastError: item.lastError || "",
+          lastReply: item.lastReply || ""
+        }
+      ])
+    )
+  }
+
+  await EventBus.emit({
+    type: EVENT_TYPES.LONGAGENT_STAGE_FINISHED,
+    sessionId,
+    payload: summary
+  })
+
+  return summary
+}

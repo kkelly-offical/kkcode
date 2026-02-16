@@ -1,0 +1,9 @@
+ASP.NET Core conventions for this project:
+- Minimal API or Controller-based endpoints
+- Dependency injection via builder.Services
+- Entity Framework Core for data access with migrations
+- DTOs separate from domain models
+- Middleware pipeline for cross-cutting concerns
+- appsettings.json for configuration, IOptions<T> pattern
+- xUnit or NUnit for testing, Moq for mocking
+- Async/await throughout, CancellationToken for cancellation

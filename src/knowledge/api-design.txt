@@ -1,0 +1,9 @@
+API design conventions:
+- RESTful: resources as nouns, HTTP verbs for actions
+- Consistent response format: { data, error, meta }
+- Input validation at the boundary (controller/handler level)
+- Service layer for business logic, separate from HTTP handling
+- Error responses: appropriate status codes + error message + error code
+- Authentication middleware, not inline checks
+- Pagination: cursor-based or offset-based, consistent across endpoints
+- Versioning: URL prefix (/api/v1/) or header-based

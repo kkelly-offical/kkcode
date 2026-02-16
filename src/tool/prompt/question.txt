@@ -1,0 +1,11 @@
+Use this tool to ask the user a question during execution.
+
+Use cases:
+- Gather user preferences or requirements
+- Clarify ambiguous instructions
+- Get decisions on implementation choices
+- Offer choices about direction to take
+
+Parameters:
+- question: The question text to display to the user
+- options: Optional array of string choices for the user to pick from

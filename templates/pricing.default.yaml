@@ -1,0 +1,18 @@
+currency: USD
+per_tokens: 1000000
+default:
+  input: 0
+  output: 0
+  cache_read: 0
+  cache_write: 0
+models:
+  anthropic/claude-sonnet-4.5:
+    input: 3
+    output: 15
+    cache_read: 0.3
+    cache_write: 3.75
+  openai/gpt-5:
+    input: 2.5
+    output: 10
+    cache_read: 0
+    cache_write: 0

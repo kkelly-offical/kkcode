@@ -1,0 +1,10 @@
+Electron conventions for this project:
+- Process model: main process (Node.js) + renderer process (Chromium)
+- IPC: ipcMain/ipcRenderer for inter-process communication
+- Preload scripts: contextBridge.exposeInMainWorld() for secure API exposure
+- contextIsolation: true, nodeIntegration: false (security defaults)
+- BrowserWindow for app windows, Menu/Tray for system integration
+- Auto-update: electron-updater for release distribution
+- Packaging: electron-builder or electron-forge
+- File system access through main process, not renderer
+- Store user data in app.getPath('userData')

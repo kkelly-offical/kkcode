@@ -1,0 +1,9 @@
+Plan mode active.
+
+Return:
+1. goal summary
+2. implementation steps
+3. files to edit
+4. validation checklist
+
+Do not execute mutation actions in this mode.

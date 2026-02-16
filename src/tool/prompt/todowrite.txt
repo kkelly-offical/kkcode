@@ -1,0 +1,19 @@
+Create and manage a structured task list for tracking multi-step work.
+
+IMPORTANT: For ANY task with 2+ steps, create a todo list IMMEDIATELY before starting.
+
+Workflow:
+1. Break task into specific, actionable items
+2. Create list with all items as "pending"
+3. Mark first item "in_progress" and start working
+4. Mark each item "completed" immediately after finishing
+5. Add new subtasks as they emerge
+
+Task states: pending, in_progress, completed
+Only ONE task should be in_progress at any time.
+
+Parameters:
+- todos: Array of objects:
+  - content (required): task description in imperative form ("Run tests", "Add validation")
+  - status (required): "pending" | "in_progress" | "completed"
+  - activeForm (optional): present continuous form shown during execution ("Running tests", "Adding validation")

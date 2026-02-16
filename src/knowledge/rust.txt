@@ -1,0 +1,9 @@
+Rust conventions for this project:
+- Ownership and borrowing: prefer references over cloning
+- Error handling: Result<T, E> with ? operator, thiserror for custom errors
+- Traits for abstraction, impl blocks for methods
+- Pattern matching with match and if let
+- Cargo workspace for multi-crate projects
+- Testing: #[cfg(test)] mod tests, #[test] functions
+- Naming: snake_case for functions/variables, PascalCase for types
+- Use clippy lints and rustfmt for code quality

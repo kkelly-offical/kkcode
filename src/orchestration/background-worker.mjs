@@ -1,0 +1,237 @@
+import { appendFile } from "node:fs/promises"
+import { readJson, writeJson } from "../storage/json-store.mjs"
+import { ensureBackgroundTaskRuntimeDir, backgroundTaskCheckpointPath, backgroundTaskLogPath } from "../storage/paths.mjs"
+import { buildContext } from "../context.mjs"
+import { ToolRegistry } from "../tool/registry.mjs"
+import { executeTurn } from "../session/engine.mjs"
+
+function now() {
+  return Date.now()
+}
+
+function argValue(flag) {
+  const idx = process.argv.indexOf(flag)
+  if (idx < 0) return null
+  return process.argv[idx + 1] || null
+}
+
+function makeAbortError(reason = "aborted") {
+  const err = new Error(reason)
+  err.code = "ABORT_ERR"
+  return err
+}
+
+function isAbortError(error) {
+  return error?.code === "ABORT_ERR" || error?.name === "AbortError"
+}
+
+async function readTask(taskId) {
+  return readJson(backgroundTaskCheckpointPath(taskId), null)
+}
+
+async function patchTask(taskId, updater) {
+  const current = await readTask(taskId)
+  if (!current) return null
+  const next = {
+    ...current,
+    ...updater(current),
+    updatedAt: now()
+  }
+  await writeJson(backgroundTaskCheckpointPath(taskId), next)
+  return next
+}
+
+async function appendTaskLog(taskId, line) {
+  await appendFile(backgroundTaskLogPath(taskId), `${line}\n`, "utf8")
+  await patchTask(taskId, (current) => ({
+    logs: [...(current.logs || []), String(line)].slice(-300),
+    lastHeartbeatAt: now()
+  }))
+}
+
+async function runDelegateTask(task, signal) {
+  const payload = task.payload || {}
+  const cwd = payload.cwd || process.cwd()
+  process.chdir(cwd)
+
+  const ctx = await buildContext({ cwd })
+  await ToolRegistry.initialize({
+    config: ctx.configState.config,
+    cwd
+  })
+  const { CustomAgentRegistry } = await import("../agent/custom-agent-loader.mjs")
+  await CustomAgentRegistry.initialize(cwd)
+
+  const providerType = payload.providerType || ctx.configState.config.provider.default
+  const providerDefault = ctx.configState.config.provider[providerType]
+  const model = payload.model || providerDefault?.default_model
+
+  const out = await executeTurn({
+    prompt: String(payload.prompt || ""),
+    mode: "agent",
+    model,
+    providerType,
+    sessionId: payload.subSessionId,
+    configState: ctx.configState,
+    signal,
+    allowQuestion: payload.allowQuestion !== true ? false : true,
+    toolContext: {
+      taskId: task.id,
+      stageId: payload.stageId || null,
+      logicalTaskId: payload.logicalTaskId || null
+    }
+  })
+
+  const plannedFiles = Array.isArray(payload.plannedFiles)
+    ? payload.plannedFiles.map((item) => String(item || "").trim()).filter(Boolean)
+    : []
+  const completedFilesFromTools = out.toolEvents
+    .filter((event) => ["write", "edit"].includes(event.name) && event.status === "completed")
+    .map((event) => {
+      const p = event.args?.path
+      return p ? String(p).trim() : ""
+    })
+    .filter(Boolean)
+
+  const fileChanges = out.toolEvents
+    .flatMap((event) => Array.isArray(event?.metadata?.fileChanges) ? event.metadata.fileChanges : [])
+    .map((item) => ({
+      path: String(item?.path || "").trim(),
+      addedLines: Math.max(0, Number(item?.addedLines || 0)),
+      removedLines: Math.max(0, Number(item?.removedLines || 0)),
+      stageId: item?.stageId ? String(item.stageId) : (payload.stageId || ""),
+      taskId: item?.taskId ? String(item.taskId) : (payload.logicalTaskId || "")
+    }))
+    .filter((item) => item.path)
+
+  const completedFileSet = new Set(
+    completedFilesFromTools.filter((file) => plannedFiles.length === 0 || plannedFiles.includes(file))
+  )
+  const completedFiles = [...completedFileSet]
+  const remainingFiles = plannedFiles.filter((file) => !completedFileSet.has(file))
+
+  return {
+    session_id: payload.subSessionId,
+    parent_session_id: payload.parentSessionId || null,
+    subagent: payload.subagent || null,
+    reply: out.reply,
+    tool_events: out.toolEvents?.length || 0,
+    completed_files: completedFiles,
+    remaining_files: remainingFiles,
+    file_changes: fileChanges,
+    cost: out.cost,
+    budget_warnings: out.budgetWarnings || []
+  }
+}
+
+async function main() {
+  const taskId = argValue("--task-id") || process.env.KKCODE_BACKGROUND_TASK_ID || null
+  if (!taskId) {
+    process.exit(1)
+    return
+  }
+
+  await ensureBackgroundTaskRuntimeDir()
+  const task = await readTask(taskId)
+  if (!task) {
+    process.exit(1)
+    return
+  }
+
+  if (task.cancelled) {
+    await patchTask(taskId, () => ({
+      status: "cancelled",
+      endedAt: now()
+    }))
+    process.exit(0)
+    return
+  }
+
+  await patchTask(taskId, () => ({
+    status: "running",
+    workerPid: process.pid,
+    startedAt: now(),
+    lastHeartbeatAt: now()
+  }))
+
+  const abortController = new AbortController()
+  const heartbeatTimer = setInterval(() => {
+    patchTask(taskId, () => ({ lastHeartbeatAt: now() })).catch(() => {})
+  }, 2000)
+
+  const cancelPoll = setInterval(() => {
+    readTask(taskId).then((latest) => {
+      if (latest?.cancelled && !abortController.signal.aborted) {
+        abortController.abort(makeAbortError("cancelled by user"))
+      }
+    }).catch(() => {})
+  }, 1500)
+
+  const timeoutMs = Math.max(1000, Number(task.payload?.workerTimeoutMs || 900000))
+  const timeoutTimer = setTimeout(() => {
+    if (!abortController.signal.aborted) {
+      abortController.abort(makeAbortError(`worker timeout after ${timeoutMs}ms`))
+    }
+  }, timeoutMs)
+
+  try {
+    await appendTaskLog(taskId, `task started (worker pid=${process.pid})`)
+
+    const latest = await readTask(taskId)
+    if (!latest?.payload?.workerType || latest.payload.workerType !== "delegate_task") {
+      throw new Error(`unsupported workerType: ${latest?.payload?.workerType || "unknown"}`)
+    }
+
+    const result = await runDelegateTask(latest, abortController.signal)
+    await appendTaskLog(taskId, "task completed")
+    await patchTask(taskId, () => ({
+      status: "completed",
+      result,
+      error: null,
+      endedAt: now(),
+      lastHeartbeatAt: now()
+    }))
+    process.exit(0)
+  } catch (error) {
+    const latest = await readTask(taskId)
+    const cancelled = latest?.cancelled
+    const aborted = isAbortError(error)
+    if (cancelled) {
+      await appendTaskLog(taskId, "task cancelled")
+      await patchTask(taskId, () => ({
+        status: "cancelled",
+        endedAt: now(),
+        error: null
+      }))
+      process.exit(0)
+      return
+    }
+
+    if (aborted) {
+      await appendTaskLog(taskId, `task interrupted: ${error.message}`)
+      await patchTask(taskId, () => ({
+        status: "interrupted",
+        error: error.message,
+        endedAt: now()
+      }))
+      process.exit(2)
+      return
+    }
+
+    await appendTaskLog(taskId, `task error: ${error.message}`)
+    await patchTask(taskId, () => ({
+      status: "error",
+      error: error.message,
+      endedAt: now()
+    }))
+    process.exit(1)
+  } finally {
+    clearInterval(heartbeatTimer)
+    clearInterval(cancelPoll)
+    clearTimeout(timeoutTimer)
+  }
+}
+
+main().catch(() => {
+  process.exit(1)
+})

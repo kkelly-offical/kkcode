@@ -1,0 +1,9 @@
+React conventions for this project:
+- Functional components only, TypeScript interfaces for props
+- Hooks: useState, useEffect, useMemo, useCallback, useRef
+- Custom hooks in hooks/ directory, prefixed with "use"
+- React Router v6: createBrowserRouter, useParams, useNavigate
+- State: local useState, complex useReducer, global Context/Zustand
+- Prefer named exports, one component per file
+- Memoize expensive components with React.memo()
+- Error boundaries for fault isolation

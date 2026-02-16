@@ -1,0 +1,23 @@
+Replace text in an existing file. Transactional with automatic rollback.
+
+IMPORTANT:
+- You MUST `read` the file first. Edits on unread files are rejected.
+- The `before` string must match EXACTLY in the file.
+- By default, `before` must match exactly ONE location. Include enough context for uniqueness.
+- Set `replace_all: true` to replace ALL occurrences (useful for renaming variables/functions).
+
+Parameters:
+- path (required): file path
+- before (required): exact text to find
+- after (required): replacement text
+- replace_all (optional, default false): replace all occurrences instead of requiring unique match
+
+When to use replace_all:
+- Renaming a variable, function, or class across a file
+- Changing an import path that appears multiple times
+- Updating a repeated pattern (e.g. changing all "http://" to "https://")
+
+Common mistakes:
+- Editing without reading first → always `read` before `edit`
+- `before` too short → include surrounding lines for uniqueness
+- Stale content → re-read if edit fails with "not found"

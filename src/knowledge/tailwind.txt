@@ -1,0 +1,10 @@
+Tailwind CSS conventions:
+- Utility-first: compose styles with utility classes, avoid custom CSS
+- Responsive: mobile-first with sm:, md:, lg:, xl:, 2xl: prefixes
+- Dark mode: dark: prefix with class or media strategy
+- Component patterns: extract repeated patterns with @apply in CSS or component abstraction
+- Spacing scale: p-4 = 1rem, m-2 = 0.5rem (4px base)
+- Colors: bg-blue-500, text-gray-900, use project's color palette
+- Layout: flex, grid, container mx-auto, gap utilities
+- Customization: tailwind.config.js for theme extension
+- Avoid: inline styles, arbitrary values when a utility exists

@@ -1,0 +1,10 @@
+GraphQL conventions:
+- Schema-first or code-first design, consistent across project
+- Types: Query for reads, Mutation for writes, Subscription for real-time
+- Naming: camelCase for fields, PascalCase for types, UPPER_CASE for enums
+- Input types for mutation arguments: input CreateUserInput { ... }
+- Pagination: Relay-style connections (edges, nodes, pageInfo) or simple offset
+- Error handling: use errors array with extensions for error codes
+- N+1 prevention: DataLoader for batching and caching
+- Resolvers: thin resolvers that delegate to service layer
+- Authentication: context-based, not per-resolver checks

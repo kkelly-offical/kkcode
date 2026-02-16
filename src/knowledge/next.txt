@@ -1,0 +1,8 @@
+Next.js App Router conventions:
+- Server Components by default, 'use client' only for interactivity
+- app/ directory: layout.tsx, page.tsx, loading.tsx, error.tsx
+- Server Actions with 'use server' for mutations
+- Data fetching: async Server Components, no useEffect for data
+- next/image for images, next/link for navigation, next/font for fonts
+- Route Handlers in app/api/ for API endpoints
+- Metadata API for SEO: export const metadata or generateMetadata()

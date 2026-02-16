@@ -1,0 +1,10 @@
+Python conventions for this project:
+- Type hints on all function signatures
+- Pydantic models for data validation and serialization
+- async/await for I/O-bound operations
+- Virtual environment (venv or poetry)
+- Project structure: src/<package>/ with __init__.py
+- Testing: pytest with fixtures, parametrize for variants
+- Linting: ruff for formatting and linting
+- Logging: use logging module, not print()
+- Error handling: specific exceptions, not bare except

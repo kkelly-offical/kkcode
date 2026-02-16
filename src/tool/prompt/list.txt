@@ -1,0 +1,8 @@
+List files and subdirectories in a single directory level.
+Returns entries with type prefix: d=directory, f=file.
+
+Use `list` for quick directory overview (what's in this folder?).
+Use `glob` for recursive pattern matching across the project (find all *.ts files).
+Use `grep` to search file contents by pattern.
+
+Do NOT use `bash` with ls or find — use `list` or `glob` instead.

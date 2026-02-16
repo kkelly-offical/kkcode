@@ -1,0 +1,10 @@
+Find files by glob pattern in the current working directory.
+Use this to discover project structure and locate files before reading or editing them.
+
+Examples:
+- "**/*.mjs" — all .mjs files recursively
+- "src/**/*.ts" — TypeScript files under src/
+- "*.json" — JSON files in root
+- "src/components/**" — everything under components/
+
+Returns matching file paths sorted by name. Limited to 200 results.

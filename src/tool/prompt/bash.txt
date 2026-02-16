@@ -1,0 +1,23 @@
+Run a shell command in the workspace directory.
+
+CRITICAL — tool selection rules:
+- Read files → use `read` (NEVER cat/head/tail)
+- Search contents → use `grep` (NEVER bash grep/rg)
+- Find files → use `glob` (NEVER bash find/ls)
+- Write files → use `write` (NEVER echo/cat heredoc)
+- Edit files → use `edit` (NEVER sed/awk)
+
+Only use `bash` for: git, npm, pip, docker, make, cargo, go, python, node, etc.
+
+Parameters:
+- command (required): shell command to execute
+- timeout (optional): timeout in ms, default 120000, max 600000 (10 min)
+- description (optional): human-readable description of what this command does
+- run_in_background (optional): run as background task, returns task_id immediately
+
+Rules:
+- Prefer non-destructive commands. Avoid rm -rf, git reset --hard without confirmation.
+- NEVER run long-running/dev-server commands (npm run dev, jest --watch, etc.) in foreground.
+  Use run_in_background: true for long tasks, or tell user to run manually.
+- Use description to explain non-obvious commands.
+- Use timeout for commands that may take longer than 2 minutes.

@@ -1,0 +1,1 @@
+Retrieve logs/result for a background delegated task by `task_id`.

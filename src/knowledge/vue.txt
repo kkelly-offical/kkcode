@@ -1,0 +1,9 @@
+Vue 3 conventions for this project:
+- Single-file components with <script setup lang="ts">
+- Composition API: ref(), reactive(), computed(), watch()
+- Props: defineProps<T>(), Emits: defineEmits<T>()
+- Pinia stores with setup syntax: defineStore('name', () => { ... })
+- Vue Router: createRouter + createWebHistory, lazy routes
+- <style scoped> by default, CSS variables for theming
+- Component naming: PascalCase files, kebab-case in templates
+- Composables in composables/ directory, prefixed with "use"

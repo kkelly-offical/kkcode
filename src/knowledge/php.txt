@@ -1,0 +1,10 @@
+PHP/Laravel conventions for this project:
+- MVC architecture: Controllers, Models (Eloquent), Blade views
+- Routing: routes/web.php for web, routes/api.php for API
+- Eloquent ORM: relationships, scopes, accessors/mutators
+- Migrations for database schema, Seeders for test data
+- Form Requests for validation, Resources for API responses
+- Middleware for authentication, CORS, rate limiting
+- Artisan commands: php artisan make:model/controller/migration
+- Composer for dependency management
+- Testing: PHPUnit with Feature and Unit test directories

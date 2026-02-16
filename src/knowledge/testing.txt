@@ -1,0 +1,8 @@
+Testing conventions:
+- Test file next to source or in __tests__/ directory
+- Name: [module].test.ts / test_[module].py / [module]_test.go
+- Structure: Arrange-Act-Assert (AAA) pattern
+- Cover: happy path, edge cases, error conditions
+- Mock external dependencies, not internal logic
+- Integration tests for API endpoints and database queries
+- Avoid testing implementation details, test behavior

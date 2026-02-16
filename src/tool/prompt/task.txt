@@ -1,0 +1,23 @@
+Delegate complex, multi-step work to a subagent that makes its own LLM calls.
+
+WHEN TO USE:
+- Complex tasks requiring multiple tool calls and autonomous reasoning
+  (e.g. "refactor module X", "write comprehensive tests for Y", "migrate codebase from A to B")
+- Work that benefits from an independent context and session
+
+WHEN NOT TO USE:
+- Creating or writing files → use `write` directly
+- Modifying existing files → use `edit` directly
+- Running shell commands → use `bash` directly
+- Reading files or searching → use `read`, `grep`, `list` directly
+- Simple single-step operations of any kind → use the appropriate tool directly
+
+IMPORTANT:
+- Each `task` call spawns a full LLM session — it is expensive and slow.
+- Do NOT use `task` as a wrapper for simple file operations.
+- `run_in_background: true` spawns a separate worker process. Only use this for
+  truly long-running work. Background tasks may fail silently if the worker
+  process encounters errors.
+- Prefer foreground execution (run_in_background: false or omitted) unless the
+  task will take many iterations.
+- `subagent_type` and `category` are mutually exclusive. Omit both to use the default agent.

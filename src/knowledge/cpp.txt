@@ -1,0 +1,10 @@
+C/C++ conventions for this project:
+- C++: prefer modern C++ (C++17/20), RAII for resource management
+- Smart pointers: std::unique_ptr (default), std::shared_ptr (shared ownership)
+- Containers: std::vector, std::unordered_map, std::string
+- Error handling: exceptions for C++, error codes for C, std::expected (C++23)
+- Build: CMake (CMakeLists.txt) or Makefile
+- Headers: #pragma once or include guards, forward declarations to reduce includes
+- Naming: snake_case (Google/STL style) or camelCase (project convention)
+- Testing: Google Test (gtest) or Catch2
+- Memory: avoid raw new/delete, use containers and smart pointers

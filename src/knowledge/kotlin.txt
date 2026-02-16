@@ -1,0 +1,10 @@
+Kotlin conventions for this project:
+- Null safety: use ?, ?., ?:, let, require, check
+- Data classes for DTOs and value objects
+- Sealed classes for restricted hierarchies and state machines
+- Coroutines: suspend functions, Flow for reactive streams
+- Extension functions for utility methods
+- Scope functions: let, run, with, apply, also
+- Android: Jetpack Compose for UI, ViewModel + StateFlow for state
+- Spring Boot: @RestController, @Service with constructor injection
+- Testing: JUnit 5 + MockK, kotlinx-coroutines-test for coroutines

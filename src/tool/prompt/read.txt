@@ -1,0 +1,18 @@
+Read file content with line numbers. Returns numbered lines in "     1→content" format.
+
+IMPORTANT:
+- ALWAYS use `read` to view files. NEVER use `bash` with cat/head/tail.
+- You MUST read a file before editing it with `edit`.
+- Lines longer than 2000 characters are automatically truncated.
+
+Parameters:
+- path (required): file path
+- offset (optional): start line number (1-based)
+- limit (optional): max lines to return
+- encoding (optional): file encoding (default: utf8)
+
+Tips:
+- Read the full file first to understand context before editing.
+- For large files (1000+ lines), use offset+limit to read sections.
+- After a failed edit, re-read — the file may have changed.
+- Line numbers in output help you locate exact positions for edits.

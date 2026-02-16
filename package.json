@@ -1,0 +1,22 @@
+{
+  "name": "kkcode",
+  "version": "0.1.0",
+  "description": "Team-first coding CLI with themed UX, usage metering and diff review workflow.",
+  "type": "module",
+  "packageManager": "pnpm@10.5.2",
+  "bin": {
+    "kkcode": "./src/index.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node ./src/index.mjs",
+    "test": "node --test",
+    "test:e2e": "node --test test/e2e/"
+  },
+  "dependencies": {
+    "commander": "^13.1.0",
+    "yaml": "^2.8.1"
+  }
+}

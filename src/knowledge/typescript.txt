@@ -1,0 +1,8 @@
+TypeScript conventions:
+- Strict mode enabled (strict: true in tsconfig)
+- Prefer interfaces over type aliases for object shapes
+- Use discriminated unions for state machines
+- Avoid 'any', use 'unknown' + type guards instead
+- Utility types: Partial<T>, Pick<T,K>, Omit<T,K>, Record<K,V>
+- Enums: prefer const enums or string literal unions
+- Generic constraints: <T extends Base> for bounded generics

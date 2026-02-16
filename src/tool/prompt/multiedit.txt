@@ -1,0 +1,20 @@
+Apply multiple file edits in a single atomic operation.
+All changes succeed together or are rolled back entirely — no half-applied states.
+
+When to use (instead of sequential `edit` calls):
+- Renaming an export and updating all its import sites
+- Refactoring a function signature and all call sites
+- Moving code between files (delete from one, add to another)
+- Any change where partial application would break the codebase
+
+Parameters:
+- changes (required): array of file operations:
+  - path: file path
+  - before: text to find (omit to create a new file)
+  - after: replacement text (for edits) or full content (for new files)
+  - replace_all: replace all occurrences of `before` (default: false)
+
+Rules:
+- You MUST `read` each file before editing it (same as `edit` tool).
+- If any change fails validation (no match, ambiguous match), the entire batch is rejected before any writes.
+- On write failure mid-batch, all previously applied changes are rolled back.

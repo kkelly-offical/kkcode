@@ -1,0 +1,10 @@
+Docker conventions for this project:
+- Multi-stage builds: separate build and runtime stages
+- Use specific base image tags, not :latest
+- .dockerignore to exclude node_modules, .git, .env
+- One process per container, use docker-compose for multi-service
+- COPY package*.json first, then npm install (layer caching)
+- Non-root user: USER node or create dedicated user
+- Health checks: HEALTHCHECK CMD curl -f http://localhost:PORT/health
+- Environment variables for configuration, not hardcoded values
+- docker-compose.yml: services, volumes, networks, depends_on

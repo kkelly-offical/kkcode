@@ -1,0 +1,1 @@
+Cancel a running background delegated task by `task_id`.

@@ -1,0 +1,22 @@
+Search file contents by regex pattern across the project.
+ALWAYS use `grep` instead of `bash` with grep/rg.
+
+Parameters:
+- pattern (required): regex or literal string
+- output_mode (optional): "content" (matching lines with line numbers), "files" (file paths only, default), "count" (match counts per file)
+- type (optional): file type filter — js, ts, py, go, rs, etc.
+- glob (optional): glob filter — "*.mjs", "src/**/*.ts"
+- context (optional): lines of context around each match (-C)
+- before_context (optional): lines before each match (-B)
+- after_context (optional): lines after each match (-A)
+- ignoreCase (optional): case-insensitive search
+- maxCount (optional): max matches per file
+- multiline (optional): enable cross-line matching (patterns can span multiple lines)
+- head_limit (optional): limit output to first N lines/entries
+- offset (optional): skip first N lines/entries before applying head_limit
+
+Tips:
+- Use output_mode "files" for quick file discovery, "content" for understanding code.
+- Use before_context/after_context for asymmetric context (e.g. see 5 lines after a function def).
+- Use multiline to match patterns spanning multiple lines (e.g. multi-line function signatures).
+- Combine head_limit + offset for paginated browsing of large result sets.

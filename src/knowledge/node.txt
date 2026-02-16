@@ -1,0 +1,8 @@
+Node.js conventions for this project:
+- ESM modules ("type": "module" in package.json)
+- Async/await for all I/O, avoid callback patterns
+- Error handling: try/catch with specific error types
+- Environment: dotenv for config, never hardcode secrets
+- Logging: structured logging (pino or winston)
+- Validation: zod or joi for input validation
+- File structure: src/ with clear separation of concerns

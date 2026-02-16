@@ -1,0 +1,20 @@
+Search the web for up-to-date information using Exa AI.
+
+IMPORTANT — When to use PROACTIVELY (reduce hallucination):
+- You are unsure about a fact, API, library version, or behavior
+- The user asks about recent events, releases, or changelogs
+- You encounter an unfamiliar error message or deprecation warning
+- You need to verify correct syntax or configuration for a specific version
+- The topic is beyond your training data cutoff
+
+Do NOT guess when you can search. A quick websearch is always better than a confident hallucination.
+
+Parameters:
+- query (required): search query — be specific, include version numbers and context
+- numResults (optional): number of results (default: 5)
+- type (optional): "auto" (balanced, default), "fast" (quick), "deep" (comprehensive)
+
+Tips:
+- Include the year or version in queries for time-sensitive topics (e.g. "React 19 new hooks 2025")
+- Use specific error messages as queries when debugging
+- Prefer "deep" type for complex research questions

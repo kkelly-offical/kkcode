@@ -1,0 +1,9 @@
+SvelteKit conventions for this project:
+- Svelte 5 runes: $state(), $derived(), $effect(), $props()
+- File-based routing: src/routes/+page.svelte, +layout.svelte
+- Server data loading: +page.server.ts with export const load
+- Access data in page: let { data } = $props()
+- <style> is scoped by default in Svelte components
+- Form actions for mutations: +page.server.ts export const actions
+- $lib alias for src/lib/ imports
+- Use <script lang="ts"> for TypeScript

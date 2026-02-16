@@ -1,0 +1,17 @@
+Write full file content to a target path. Creates the file and parent directories
+if they do not exist.
+
+This is the PRIMARY tool for creating new files. When you need to create a new
+file (code, config, documentation, etc.), use this tool directly with the
+complete file content. Do NOT delegate file creation to `task` — just call
+`write` with the path and content.
+
+IMPORTANT:
+- Parent directories are created automatically — no need to `mkdir` first.
+- Always include the COMPLETE file content in a single `write` call.
+  Do NOT split a file across multiple writes or plan to "append later".
+- For reading files, use the `read` tool — never use `bash` with cat/type/Get-Content.
+
+Usage:
+- path: relative or absolute file path
+- content: the complete file content to write

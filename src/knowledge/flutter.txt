@@ -1,0 +1,10 @@
+Flutter/Dart conventions for this project:
+- Widget composition: small, focused widgets over large build() methods
+- StatelessWidget for UI without state, StatefulWidget only when needed
+- State management: Provider, Riverpod, or Bloc pattern
+- Navigation: GoRouter or Navigator 2.0 for declarative routing
+- Naming: snake_case for files, PascalCase for classes, camelCase for variables
+- Async: Future<T> and Stream<T> with async/await
+- Null safety: use required, late, and ? operators properly
+- Testing: widget tests with testWidgets(), unit tests with test()
+- Folder structure: lib/screens/, lib/widgets/, lib/models/, lib/services/
