@@ -1,5 +1,5 @@
 import { requestProvider } from "../provider/router.mjs"
-import { getConversationHistory, appendMessage } from "./store.mjs"
+import { getConversationHistory, replaceMessages } from "./store.mjs"
 import { HookBus } from "../plugin/hook-bus.mjs"
 import { saveCheckpoint } from "./checkpoint.mjs"
 
@@ -155,12 +155,13 @@ export async function compactSession({
 
   if (!summaryText) return { compacted: false, reason: "empty summary from LLM" }
 
-  await appendMessage(sessionId, "user", `<compaction-summary>\n${summaryText}\n</compaction-summary>`, {
-    synthetic: true,
-    compaction: true,
-    summarizedCount: toSummarize.length,
-    compactedAt: Date.now()
-  })
+  // Replace all messages with: [summary] + [kept recent messages]
+  const summaryMessage = {
+    role: "user",
+    content: `<compaction-summary>\n${summaryText}\n</compaction-summary>`
+  }
+  await replaceMessages(sessionId, [summaryMessage, ...kept])
+
   await saveCheckpoint(sessionId, {
     kind: "compaction",
     iteration: 0,

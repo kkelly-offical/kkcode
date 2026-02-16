@@ -262,6 +262,21 @@ export async function appendMessage(sessionId, role, content, extra = {}) {
   })
 }
 
+export async function replaceMessages(sessionId, newMessages) {
+  return withLock(async () => {
+    await ensureLoadedUnsafe()
+    const data = await loadSessionDataUnsafe(sessionId)
+    data.messages = newMessages.map((m) => ({
+      ...m,
+      id: m.id || `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      timestamp: m.timestamp || now()
+    }))
+    if (state.index.sessions[sessionId]) state.index.sessions[sessionId].updatedAt = now()
+    markDirty(sessionId)
+    if (state.options.flushIntervalMs <= 0) await flushUnsafe()
+  })
+}
+
 export async function appendPart(sessionId, part) {
   return withLock(async () => {
     await ensureLoadedUnsafe()
