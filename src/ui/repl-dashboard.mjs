@@ -270,11 +270,11 @@ export function renderReplDashboard({
 export function renderReplLogo({ theme, columns = null }) {
   const width = Number.isFinite(columns) ? Math.max(60, Math.min(Number(columns), 220)) : terminalWidth()
   const rawLogo = [
-    " _  __ _  __  ____   ___   ___   ____  ",
-    "| |/ /| |/ / / ___| / _ \\ / _ \\ |  _ \\ ",
-    "| ' / | ' / | |    | | | | | | || | | |",
-    "| . \\ | . \\ | |___ | |_| | |_| || |_| |",
-    "|_|\\_\\|_|\\_\\ \\____| \\___/ \\___/ |____/ "
+    " _  __ _  __  ____   ___   ____   _____ ",
+    "| |/ /| |/ / / ___| / _ \\ |  _ \\ | ____|",
+    "| ' / | ' / | |    | | | || | | ||  _|  ",
+    "| . \\ | . \\ | |___ | |_| || |_| || |___ ",
+    "|_|\\_\\|_|\\_\\ \\____| \\___/ |____/ |_____|"
   ]
   const palette = [
     theme.semantic.info,

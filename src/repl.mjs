@@ -2567,32 +2567,99 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 }
 
+function startSplash() {
+  if (!process.stdout.isTTY) return { update() {}, stop() {} }
+  const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+  const logo = [
+    " _  __ _  __  ____   ___   ____   _____ ",
+    "| |/ /| |/ / / ___| / _ \\ |  _ \\ | ____|",
+    "| ' / | ' / | |    | | | || | | ||  _|  ",
+    "| . \\ | . \\ | |___ | |_| || |_| || |___ ",
+    "|_|\\_\\|_|\\_\\ \\____| \\___/ |____/ |_____|"
+  ]
+  const palette = ["#6ec1ff", "#52b7ff", "#36d8d3", "#3fd487", "#f1c55b"]
+  let idx = 0
+  let status = "loading config..."
+  let steps = []
+
+  function render() {
+    const cols = process.stdout.columns || 80
+    const rows = process.stdout.rows || 24
+    const lines = []
+    // vertical centering
+    const contentHeight = logo.length + 2 + steps.length + 2
+    const topPad = Math.max(0, Math.floor((rows - contentHeight) / 2))
+    for (let i = 0; i < topPad; i++) lines.push("")
+    // logo
+    for (let i = 0; i < logo.length; i++) {
+      const pad = Math.max(0, Math.floor((cols - logo[i].length) / 2))
+      lines.push(" ".repeat(pad) + paint(logo[i], palette[i], { bold: true }))
+    }
+    lines.push("")
+    // completed steps
+    for (const s of steps) {
+      const pad = Math.max(0, Math.floor((cols - s.length - 4) / 2))
+      lines.push(" ".repeat(pad) + paint(`  ✓ ${s}`, "#3fd487"))
+    }
+    // current spinner line
+    const spinLine = `${frames[idx]} ${status}`
+    const spinPad = Math.max(0, Math.floor((cols - spinLine.length - 2) / 2))
+    lines.push(" ".repeat(spinPad) + paint(`  ${spinLine}`, "#6ec1ff", { bold: true }))
+    // write
+    process.stdout.write("\x1B[?25l")  // hide cursor
+    process.stdout.write("\x1Bc")       // clear
+    process.stdout.write(lines.join("\n"))
+  }
+
+  render()
+  const timer = setInterval(() => { idx = (idx + 1) % frames.length; render() }, 80)
+
+  return {
+    update(text) {
+      steps.push(status.replace("...", ""))
+      status = text
+      render()
+    },
+    stop() {
+      clearInterval(timer)
+      process.stdout.write("\x1B[?25h")  // show cursor
+      process.stdout.write("\x1Bc")       // clear
+    }
+  }
+}
+
 export async function startRepl() {
+  const splash = startSplash()
+
   const ctx = await buildContext()
   printContextWarnings(ctx)
 
+  splash.update("loading tools & MCP servers...")
   await ToolRegistry.initialize({ config: ctx.configState.config, cwd: process.cwd() })
 
-  // Print MCP server connection status
+  // Collect MCP status for later display
   const mcpHealth = McpRegistry.healthSnapshot()
-  if (mcpHealth.length) {
-    for (const entry of mcpHealth) {
-      if (entry.ok) {
-        const toolCount = McpRegistry.listTools().filter((t) => t.server === entry.name).length
-        console.log(paint(`  mcp ✓ ${entry.name}`, ctx.themeState.theme.semantic.success) + paint(` (${toolCount} tools, ${entry.transport})`, ctx.themeState.theme.base.muted))
-      } else {
-        const reason = entry.error || entry.reason || "unknown"
-        console.log(paint(`  mcp ✗ ${entry.name}`, ctx.themeState.theme.semantic.error) + paint(` ${reason}`, ctx.themeState.theme.base.muted))
-      }
+  const mcpStatusLines = []
+  for (const entry of mcpHealth) {
+    if (entry.ok) {
+      const toolCount = McpRegistry.listTools().filter((t) => t.server === entry.name).length
+      mcpStatusLines.push(paint(`  mcp ✓ ${entry.name}`, ctx.themeState.theme.semantic.success) + paint(` (${toolCount} tools, ${entry.transport})`, ctx.themeState.theme.base.muted))
+    } else {
+      const reason = entry.error || entry.reason || "unknown"
+      mcpStatusLines.push(paint(`  mcp ✗ ${entry.name}`, ctx.themeState.theme.semantic.error) + paint(` ${reason}`, ctx.themeState.theme.base.muted))
     }
   }
 
+  splash.update("loading skills & agents...")
   await SkillRegistry.initialize(ctx.configState.config, process.cwd())
   const { CustomAgentRegistry } = await import("./agent/custom-agent-loader.mjs")
   await CustomAgentRegistry.initialize(process.cwd())
-  await initHookBus()
 
+  splash.update("loading hooks & history...")
+  await initHookBus()
   const historyLines = await loadHistory()
+
+  splash.update("preparing workspace...")
   const state = {
     sessionId: newSessionId(),
     mode: ctx.configState.config.agent.default_mode || "agent",
@@ -2604,6 +2671,11 @@ export async function startRepl() {
   const customCommands = await loadCustomCommands(process.cwd())
   const providersConfigured = configuredProviders(ctx.configState.config)
   const recentSessions = await listSessions({ cwd: process.cwd(), limit: 6, includeChildren: false }).catch(() => [])
+
+  splash.stop()
+
+  // Print MCP status after splash
+  for (const line of mcpStatusLines) console.log(line)
 
   if (process.stdout.isTTY && process.stdin.isTTY) {
     await startTuiRepl({
