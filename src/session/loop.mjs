@@ -362,10 +362,10 @@ export async function processTurnLoop({
         for await (const chunk of chunks) {
           if (chunk.type === "thinking") {
             if (!inThinking) {
-              sinkWrite(paint("  thinking ", null, { dim: true, italic: true }))
+              sinkWrite(paint("●", "#666666") + " " + paint("Thinking", null, { italic: true, dim: true }) + " " + paint("∨", null, { dim: true }) + "\n")
               inThinking = true
             }
-            sinkWrite(paint(chunk.content, null, { dim: true, italic: true }))
+            sinkWrite(paint("  " + chunk.content, null, { dim: true, italic: true }))
           } else if (chunk.type === "text") {
             if (inThinking) {
               sinkWrite("\n")
