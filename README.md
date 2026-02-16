@@ -14,24 +14,30 @@
 - [2. 安装与启动](#2-安装与启动)
 - [3. 模式系统](#3-模式系统)
 - [4. LongAgent（核心能力）](#4-longagent核心能力)
-- [5. 权限系统](#5-权限系统permission)
-- [6. 工具与扩展](#6-工具与扩展)
-- [7. 会话、审计、预算](#7-会话审计预算)
-- [8. REPL/TUI 交互](#8-repltui-交互)
-- [9. 配置示例](#9-配置示例最小)
-- [10. 与主流 Coding CLI 对比](#10-kkcode-与主流-coding-cli-对比)
-- [11. 何时选 kkcode](#11-何时选-kkcode)
-- [12. 常见问题](#12-常见问题)
-- [13. 联系方式](#13-联系方式)
-- [14. License](#14-license)
+- [5. 主动规划（Plan Tools）](#5-主动规划plan-tools)
+- [6. 权限系统](#6-权限系统permission)
+- [7. 工具与扩展](#7-工具与扩展)
+- [8. 子智能体（Subagents）](#8-子智能体subagents)
+- [9. Auto Memory（持久记忆）](#9-auto-memory持久记忆)
+- [10. 会话、审计、预算](#10-会话审计预算)
+- [11. REPL/TUI 交互](#11-repltui-交互)
+- [12. 配置示例](#12-配置示例最小)
+- [13. 与主流 Coding CLI 对比](#13-kkcode-与主流-coding-cli-对比)
+- [14. 何时选 kkcode](#14-何时选-kkcode)
+- [15. 常见问题](#15-常见问题)
+- [16. 联系方式](#16-联系方式)
+- [17. License](#17-license)
 
 ---
 
 ## 1. 你能用 kkcode 做什么
 
 - 单轮快速编码：`agent` 模式直接读写代码并执行工具。
+- 主动规划与执行：agent 遇到复杂任务时自动调用 `enter_plan` → 生成计划 → `exit_plan` 弹窗让用户审批 → 获批后执行。
 - 多轮规划与执行：`plan -> agent` 或直接 `longagent`。
 - 大任务并行拆解：LongAgent 支持阶段计划、同阶段并发、阶段栅栏推进。
+- 专项子智能体：`explore`（代码探索）、`reviewer`（代码审查）、`researcher`（深度研究+Web 搜索）。
+- 持久记忆：Auto Memory 系统跨会话保存项目知识和用户偏好。
 - 风险治理：权限询问、审查队列、预算门禁、审计日志。
 - 团队定制：自定义 commands/skills/agents/tools/plugins/MCP。
 
@@ -86,7 +92,7 @@ kkcode init -y
 
 ## 4. LongAgent（核心能力）
 
-LongAgent 当前支持“意图识别 + 阶段并行 + 门禁闭环”。
+LongAgent 当前支持"意图识别 + 阶段并行 + 门禁闭环"。
 
 ### 4.1 主流程
 
@@ -113,17 +119,37 @@ LongAgent 当前支持“意图识别 + 阶段并行 + 门禁闭环”。
 
 ---
 
-## 5. 权限系统（Permission）
+## 5. 主动规划（Plan Tools）
+
+kkcode 的 agent 可以在执行过程中**主动进入规划模式**，而不需要用户手动切换到 plan 模式。
+
+### 工作流
+
+1. Agent 遇到复杂任务（多文件、架构决策、多种可行方案）时，主动调用 `enter_plan` 工具。
+2. Agent 在规划模式下分析代码、设计方案，遵循 5 阶段工作流：理解 → 设计 → 审查 → 最终计划 → 用户审批。
+3. Agent 调用 `exit_plan` 提交计划，TUI 弹出审批面板。
+4. 用户选择 **Approve**（批准执行）或 **Reject**（驳回并提供反馈）。
+5. 批准后 agent 按计划执行，驳回则根据反馈修订。
+
+### 前端显示
+
+- 状态栏 busy line 显示 `enter_plan` / `exit_plan` 的实时状态。
+- Activity log 中以洋红色 `☐ Enter Plan` 和绿色 `☑ Plan Submitted` 标记规划事件。
+- 审批面板复用 question prompt TUI，支持键盘导航和自定义反馈输入。
+
+---
+
+## 6. 权限系统（Permission）
 
 kkcode 采用 **策略 + 交互审批 + 会话缓存授权** 的组合模型。
 
-### 5.1 策略项
+### 6.1 策略项
 
 - `permission.default_policy`: `ask|allow|deny`
 - `permission.non_tty_default`: `allow_once|deny`
 - `permission.rules[]`: 按工具/模式/风险匹配细粒度规则
 
-### 5.2 REPL 命令
+### 6.2 REPL 命令
 
 - `/permission show`
 - `/permission ask`
@@ -133,7 +159,7 @@ kkcode 采用 **策略 + 交互审批 + 会话缓存授权** 的组合模型。
 - `/permission non-tty deny`
 - `/permission session-clear`
 
-### 5.3 TUI 审批交互
+### 6.3 TUI 审批交互
 
 当工具触发权限询问时，TUI 内联展示审批面板（不会打乱界面布局）：
 
@@ -145,11 +171,29 @@ kkcode 采用 **策略 + 交互审批 + 会话缓存授权** 的组合模型。
 
 ---
 
-## 6. 工具与扩展
+## 7. 工具与扩展
 
-### 6.1 内置工具（含写入治理）
+### 7.1 内置工具
 
-核心工具覆盖 read/list/glob/grep/write/edit/bash/task/todowrite/question/webfetch/background_output/background_cancel。
+| 工具 | 说明 |
+|------|------|
+| `read` | 读取文件内容 |
+| `write` | 原子写文件 |
+| `edit` | 事务替换 + 回滚 |
+| `list` | 列出目录内容 |
+| `glob` | 按模式搜索文件（支持 `path` 限定目录） |
+| `grep` | 按正则搜索文件内容（支持 `path` 限定目录） |
+| `bash` | 执行 shell 命令 |
+| `task` | 委派子智能体执行子任务 |
+| `todowrite` | 结构化任务管理 |
+| `question` | 向用户提问 |
+| `enter_plan` | 主动进入规划模式 |
+| `exit_plan` | 提交计划等待用户审批 |
+| `webfetch` | 抓取网页内容 |
+| `websearch` | Web 搜索 |
+| `codesearch` | 代码搜索引擎 |
+| `background_output` | 获取后台任务输出 |
+| `background_cancel` | 取消后台任务 |
 
 写入相关特性：
 
@@ -158,7 +202,7 @@ kkcode 采用 **策略 + 交互审批 + 会话缓存授权** 的组合模型。
 - 外部修改检测与读前编辑约束
 - file lock 串行化冲突写
 
-### 6.2 MCP 服务器
+### 7.2 MCP 服务器
 
 kkcode 支持三种 MCP 传输协议，可通过配置文件或项目级 `.mcp.json` 接入：
 
@@ -196,7 +240,7 @@ kkcode mcp tools         # 列出可用 MCP 工具
 kkcode doctor --json     # 完整诊断（含 MCP 健康摘要）
 ```
 
-### 6.3 其他扩展机制
+### 7.3 其他扩展机制
 
 - `.kkcode/commands/`：模板命令
 - `.kkcode/skills/`：可编程技能（`/create-skill` 自动生成）
@@ -206,7 +250,51 @@ kkcode doctor --json     # 完整诊断（含 MCP 健康摘要）
 
 ---
 
-## 7. 会话、审计、预算
+## 8. 子智能体（Subagents）
+
+kkcode 内置多种专项子智能体，通过 `task` 工具委派：
+
+| 类型 | 说明 | 权限 | 可用工具 |
+|------|------|------|----------|
+| `build` | 通用构建执行 | 全工具 | 全部 |
+| `explore` | 快速代码探索 | 只读 | read, glob, grep, list, bash |
+| `reviewer` | 代码审查专家，检查 bug/安全/质量 | 只读 | read, glob, grep, list, bash |
+| `researcher` | 深度研究，结合代码分析与 Web 搜索 | 只读 | read, glob, grep, list, bash, websearch, codesearch, webfetch |
+
+也可通过 YAML/MJS 自定义子智能体，或使用 `/create-agent` 让 AI 自动生成。
+
+---
+
+## 9. Auto Memory（持久记忆）
+
+kkcode 为每个项目维护独立的持久记忆目录，跨会话保存项目知识。
+
+### 工作原理
+
+- 记忆存储在 `~/.kkcode/projects/<项目名>_<hash>/memory/` 目录下。
+- `MEMORY.md` 文件内容会在每次会话开始时自动注入系统提示词（限 200 行）。
+- Agent 可以通过 `write` / `edit` 工具直接读写记忆文件。
+
+### 记忆内容
+
+适合保存：
+- 项目架构决策、重要文件路径、技术栈约定
+- 用户偏好（工作流、工具选择、沟通风格）
+- 稳定的模式和惯例
+- 反复出现的问题和调试方案
+
+不保存：
+- 会话级临时状态
+- 未经验证的推测
+- 与项目指令文件重复的内容
+
+### 状态栏显示
+
+当记忆加载时，TUI 状态栏会显示 `MEM` 徽章。
+
+---
+
+## 10. 会话、审计、预算
 
 - 会话分片：`~/.kkcode/sessions/*.json` + `index.json`
 - 背景任务：`~/.kkcode/tasks/`
@@ -231,7 +319,21 @@ kkcode longagent plan --session <id>
 
 ---
 
-## 8. REPL/TUI 交互
+## 11. REPL/TUI 交互
+
+### 状态栏
+
+TUI 底部状态栏实时显示：
+
+`MODE` `MODEL` `TOKENS` `COST` `CONTEXT` `MEM` `PERMISSION` `LONG`
+
+- **MODE**：当前模式（ask/plan/agent/longagent）
+- **TOKENS**：Turn/Session/Global 三层 token 用量
+- **COST**：累计费用
+- **CONTEXT**：上下文窗口占用百分比（85%+ 红色告警）
+- **MEM**：Auto Memory 已加载（仅在记忆存在时显示）
+- **PERMISSION**：当前权限策略
+- **LONG**：LongAgent 运行状态（仅在 longagent 模式下显示）
 
 ### Slash 命令（常用）
 
@@ -250,7 +352,7 @@ kkcode longagent plan --session <id>
 
 ---
 
-## 9. 配置示例（最小）
+## 12. 配置示例（最小）
 
 ```yaml
 provider:
@@ -285,69 +387,72 @@ usage:
     strategy: warn
 ```
 
-> 📖 完整配置参考（含 `~/.kkcode/` 目录结构、每个文件的格式与样例、MCP 配置、规则/Skill/Agent 编写指南）请查阅 **[notice.md](notice.md)**。
+> 完整配置参考（含 `~/.kkcode/` 目录结构、每个文件的格式与样例、MCP 配置、规则/Skill/Agent 编写指南）请查阅 **[notice.md](notice.md)**。
 
 ---
 
-## 10. kkcode 与主流 Coding CLI 对比
+## 13. kkcode 与主流 Coding CLI 对比
 
 > 说明：以下对比聚焦「能力形态」，不代表任何厂商的完整商业规格。Claude Code、OpenCode、Codex CLI 均为业界成熟的 AI Coding CLI，各有强项，均可能随版本迭代更新。
 
-### 10.1 核心能力对比
+### 13.1 核心能力对比
 
 | 维度 | kkcode | Claude Code | OpenCode | Codex CLI |
 |---|---|---|---|---|
-| 本地 CLI 交互 | ✅ TUI 面板 + REPL 双模式 | ✅ 终端 + IDE + Web 多端 | ✅ 终端 + IDE + 桌面应用 | ✅ 终端 TUI + exec 脚本化 |
-| 多模式切换 | ✅ 四模式 ask/plan/agent/longagent，Tab 一键轮换 | ✅ Skills + 模型/参数切换 | ✅ Plan / Build 双模式，Tab 切换 | ✅ Full Access / Read-only / Auto 三档 + Slash 命令 |
-| Long-running Agent 编排 | ✅ 阶段计划 → 并行委派 → barrier 同步 → 门禁闭环 | ✅ Subagents 隔离并行 + Agent Teams 多会话协作 | ✅ 并行 Agent 会话，同项目多实例 | ✅ Plan-Review-Validate 闭环 + exec 长任务 |
-| 变更文件行数摘要 | ✅ 内置统计，每次 write/edit 自动汇报 +added / -removed | ✅ Diff 展示 + Checkpoints 回滚 | ⚠️ 有 diff，无内置行数统计 | ✅ Transcript 记录变更，支持 /diff |
-| 本地可编程扩展 | ✅ skills / tools / plugins / agents 四层扩展 | ✅ Skills / Hooks / MCP / Plugins，生态成熟 | ✅ 自定义 commands / tools / agents | ✅ Slash 命令 + MCP（stdio/HTTP）|
-| MCP 深度接入 | ✅ 三种传输（stdio/sse/http）+ 自动发现 + 健康检查 | ✅ stdio/sse，MCP 生态成熟 | ✅ stdio/sse，配置灵活 | ✅ stdio + streaming HTTP |
+| 本地 CLI 交互 | TUI 面板 + REPL 双模式 | 终端 + IDE + Web 多端 | 终端 + IDE + 桌面应用 | 终端 TUI + exec 脚本化 |
+| 多模式切换 | 四模式 ask/plan/agent/longagent，Tab 一键轮换 | Skills + 模型/参数切换 | Plan / Build 双模式，Tab 切换 | Full Access / Read-only / Auto 三档 + Slash 命令 |
+| 主动规划 | Agent 可主动调用 enter_plan/exit_plan，TUI 弹窗审批 | EnterPlanMode / ExitPlanMode 工具 | 无内置主动规划工具 | Plan-Review-Validate 闭环 |
+| Long-running Agent 编排 | 阶段计划 → 并行委派 → barrier 同步 → 门禁闭环 | Subagents 隔离并行 + Agent Teams | 并行 Agent 会话，同项目多实例 | Plan-Review-Validate 闭环 + exec 长任务 |
+| 专项子智能体 | explore / reviewer / researcher / 自定义 | Explore / Plan / code-reviewer 等 | 自定义 commands / tools / agents | Slash 命令可扩展 |
+| 持久记忆 | Auto Memory（MEMORY.md 跨会话注入） | Auto Memory（~/.claude/projects/） | 无内置持久记忆 | 无内置持久记忆 |
+| MCP 深度接入 | 三种传输（stdio/sse/http）+ 自动发现 + 健康检查 | stdio/sse，MCP 生态成熟 | stdio/sse，配置灵活 | stdio + streaming HTTP |
 
-### 10.2 工程治理对比
-
-| 维度 | kkcode | Claude Code | OpenCode | Codex CLI |
-|---|---|---|---|---|
-| 权限策略 | ✅ 三级策略 ask/allow/deny + 细粒度 rules 按工具/模式/命令前缀匹配 | ✅ 支持 ask/allow/deny，可按工具配置 | ⚠️ 支持权限控制，粒度较粗 | ✅ Full Access / Read-only / Auto 三档，可按范围配置 |
-| 会话级授权缓存 | ✅ 审批一次后同会话内同类操作自动放行 | ✅ 会话内缓存已授权操作 | ⚠️ 依模式而定 | ⚠️ 依 approval 模式而定 |
-| 审计日志 | ✅ 独立 audit-log.json + events.log 双日志 | ⚠️ 有事件记录，无独立审计日志文件 | ❌ 无专用审计日志 | ❌ 无审计日志 |
-| 预算门禁 | ✅ warn/block 两种策略，turn/session/global 三层 usage 追踪 | ⚠️ 有 token 用量显示，无自动阻断门禁 | ⚠️ 有用量统计，无门禁策略 | ⚠️ 有用量统计，无门禁策略 |
-| 会话 fsck/gc 维护 | ✅ 内置 `session fsck` 一致性检查 + `session gc` 过期清理 | ❌ 无此功能 | ⚠️ 有基础会话管理，无 fsck/gc | ❌ 无此功能 |
-| 后台任务生命周期管理 | ✅ worker 池 + 状态追踪 + 超时 + 重试 + cancel | ⚠️ Subagents 可后台执行，返回摘要 | ⚠️ 有子任务管理，无完整 worker 池 | ⚠️ exec 可脚本化，无 worker 池 |
-
-### 10.3 编排能力对比
+### 13.2 工程治理对比
 
 | 维度 | kkcode | Claude Code | OpenCode | Codex CLI |
 |---|---|---|---|---|
-| 阶段计划冻结 | ✅ L1 阶段生成 JSON 计划后冻结，后续严格按计划执行 | ⚠️ 有 plan 模式但计划不冻结，模型可随时偏离 | ⚠️ 有计划生成，无冻结机制 | ✅ Plan-Review-Validate，计划与 review 分离 |
-| 同阶段并行委派 | ✅ 同阶段任务由 worker 池并发执行，max_concurrency 可配 | ✅ Subagents 隔离并行，可多任务同时执行 | ✅ 并行 Agent 会话，同项目多实例 | ⚠️ 单会话内串行，exec 可多进程 |
-| 阶段栅栏推进 | ✅ 同阶段全部 success 后才推进下一阶段，失败触发重试 | ⚠️ Subagents 返回摘要后主会话续跑 | ⚠️ 多 Agent 独立，无显式栅栏 | ⚠️ Review 阶段可阻断，无栅栏机制 |
-| 失败任务续写重试 | ✅ 失败任务自动重试，优先续写 remaining files 而非从头开始 | ⚠️ 有重试能力，无 remaining files 续写优化 | ⚠️ 有基础重试，无续写优化 | ✅ Session resume 可续接历史会话 |
-| 可用性门禁 | ✅ 五维门禁：build / test / review / health / budget 全量校验 | ⚠️ 有基础检查，无系统化多维门禁 | ⚠️ 有基础检查，无系统化门禁 | ✅ Review Agent 可做代码审查门禁 |
+| 权限策略 | 三级策略 ask/allow/deny + 细粒度 rules 按工具/模式/命令前缀匹配 | 支持 ask/allow/deny，可按工具配置 | 支持权限控制，粒度较粗 | Full Access / Read-only / Auto 三档 |
+| 会话级授权缓存 | 审批一次后同会话内同类操作自动放行 | 会话内缓存已授权操作 | 依模式而定 | 依 approval 模式而定 |
+| 审计日志 | 独立 audit-log.json + events.log 双日志 | 有事件记录，无独立审计日志文件 | 无专用审计日志 | 无审计日志 |
+| 预算门禁 | warn/block 两种策略，turn/session/global 三层 usage 追踪 | 有 token 用量显示，无自动阻断门禁 | 有用量统计，无门禁策略 | 有用量统计，无门禁策略 |
+| 会话 fsck/gc 维护 | 内置 `session fsck` 一致性检查 + `session gc` 过期清理 | 无此功能 | 有基础会话管理，无 fsck/gc | 无此功能 |
+| Git 协议 | 系统提示内嵌完整 git commit/PR 协议（HEREDOC、安全规则） | 系统提示内嵌完整 git 协议 | 有基础 git 集成 | 有 git 集成 |
 
-### 10.4 可定制性对比
+### 13.3 编排能力对比
 
 | 维度 | kkcode | Claude Code | OpenCode | Codex CLI |
 |---|---|---|---|---|
-| 项目级命令模板 | ✅ `.kkcode/commands/*.md` 模板，支持变量替换 | ✅ Skills 可 `/` 触发，CLAUDE.md 常驻 | ✅ 支持自定义命令目录 | ✅ Slash 命令可自定义，支持团队共享 |
-| 自定义子智能体 | ✅ YAML/MJS 定义 + `/create-agent` 一键生成 | ✅ Subagents + Skills 可定制专属工作流 | ✅ 支持 agents 目录定义 | ⚠️ Slash 命令可扩展，无 agent 目录 |
-| 本地工具目录热加载 | ✅ `.kkcode/tools/` 下 .mjs 自动加载，`/reload` 热更新 | ✅ 通过 MCP + Skills 扩展，生态丰富 | ✅ 支持工具目录加载 | ⚠️ 通过 MCP 扩展，无本地目录 |
-| Hook/插件脚本 | ✅ `.kkcode/plugins/` + hook 事件机制 | ✅ Hooks + Plugins 市场 | ✅ 支持 hook 机制 | ⚠️ 无预置 hook，可脚本化扩展 |
-| 规则与指令分层注入 | ✅ 全局 + 项目级 rules 分层合并注入 system prompt | ✅ CLAUDE.md 分层（全局/项目/目录级） | ✅ 指令文件分层 | ✅ AGENTS.md 分层 |
+| 阶段计划冻结 | L1 阶段生成 JSON 计划后冻结，后续严格按计划执行 | 有 plan 模式但计划不冻结 | 有计划生成，无冻结机制 | Plan-Review-Validate，计划与 review 分离 |
+| 同阶段并行委派 | 同阶段任务由 worker 池并发执行，max_concurrency 可配 | Subagents 隔离并行 | 并行 Agent 会话 | 单会话内串行，exec 可多进程 |
+| 阶段栅栏推进 | 同阶段全部 success 后才推进下一阶段，失败触发重试 | Subagents 返回摘要后主会话续跑 | 多 Agent 独立，无显式栅栏 | Review 阶段可阻断，无栅栏机制 |
+| 失败任务续写重试 | 失败任务自动重试，优先续写 remaining files | 有重试能力，无续写优化 | 有基础重试，无续写优化 | Session resume 可续接历史会话 |
+| 可用性门禁 | 五维门禁：build / test / review / health / budget | 有基础检查，无系统化多维门禁 | 有基础检查，无系统化门禁 | Review Agent 可做代码审查门禁 |
+
+### 13.4 可定制性对比
+
+| 维度 | kkcode | Claude Code | OpenCode | Codex CLI |
+|---|---|---|---|---|
+| 项目级命令模板 | `.kkcode/commands/*.md` 模板，支持变量替换 | Skills 可 `/` 触发，CLAUDE.md 常驻 | 支持自定义命令目录 | Slash 命令可自定义 |
+| 自定义子智能体 | YAML/MJS 定义 + `/create-agent` 一键生成 | Subagents + Skills 可定制 | 支持 agents 目录定义 | 无 agent 目录 |
+| 本地工具目录热加载 | `.kkcode/tools/` 下 .mjs 自动加载，`/reload` 热更新 | 通过 MCP + Skills 扩展 | 支持工具目录加载 | 通过 MCP 扩展 |
+| Hook/插件脚本 | `.kkcode/plugins/` + hook 事件机制 | Hooks + Plugins 市场 | 支持 hook 机制 | 无预置 hook |
+| 规则与指令分层注入 | 全局 + 项目级 rules 分层合并注入 system prompt | CLAUDE.md 分层（全局/项目/目录级） | 指令文件分层 | AGENTS.md 分层 |
 
 ---
 
-## 11. 何时选 kkcode
+## 14. 何时选 kkcode
 
 优先考虑 kkcode 的场景：
 
 - 你需要 **团队内可控** 的编码代理（权限、审计、预算、门禁）。
 - 你需要 **长程并行编排**，不止是单轮对话改代码。
+- 你需要 agent 在复杂任务前 **主动规划并征求审批**。
+- 你需要 **跨会话持久记忆**，让 agent 记住项目约定和历史决策。
 - 你需要 **高可定制**：按项目接入自定义 skills/tools/agents/MCP。
 
 ---
 
-## 12. 常见问题
+## 15. 常见问题
 
 ### Q1: `/permission` 改完会永久保存吗？
 默认是运行时生效（当前进程）。建议同步写入配置文件以固化策略。
@@ -356,16 +461,22 @@ usage:
 LongAgent是执行型编排器，非编码目标会被意图识别拦截，避免空转消耗 token。
 
 ### Q3: 如何让模型稳定优先改某些文件？
-在任务目标里明确“范围文件 + 验收标准”，并结合 review/budget 门禁。
+在任务目标里明确"范围文件 + 验收标准"，并结合 review/budget 门禁。
+
+### Q4: Auto Memory 会不会无限增长？
+MEMORY.md 注入系统提示时限制 200 行。Agent 会被指导保持精简、按主题组织、删除过时条目。
+
+### Q5: enter_plan 和 /plan 模式有什么区别？
+`/plan` 是用户手动切换到只读规划模式。`enter_plan` 是 agent 在执行过程中主动进入规划，完成后通过 TUI 弹窗让用户审批，审批通过后继续在 agent 模式下执行。
 
 ---
 
-## 13. 联系方式
+## 16. 联系方式
 
 项目维护联系：`drliuxk@ecupl.edu.cn`
 
 ---
 
-## 14. License
+## 17. License
 
 本项目基于 [MIT License](LICENSE) 开源。
