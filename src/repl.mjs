@@ -1231,14 +1231,14 @@ function renderSuggestions({ inputLine, suggestions, selected, offset, maxVisibl
   }
 }
 
-async function startTuiRepl({ ctx, state, providersConfigured, customCommands, recentSessions, historyLines }) {
+async function startTuiRepl({ ctx, state, providersConfigured, customCommands, recentSessions, historyLines, mcpStatusLines = [] }) {
   let localCustomCommands = customCommands
   let localRecentSessions = recentSessions
 
   const ui = {
     input: "",
     inputCursor: 0,
-    logs: [],
+    logs: [...mcpStatusLines],
     busy: false,
     pendingImages: [],
     permissionQueue: [],
@@ -2674,9 +2674,6 @@ export async function startRepl() {
 
   splash.stop()
 
-  // Print MCP status after splash
-  for (const line of mcpStatusLines) console.log(line)
-
   if (process.stdout.isTTY && process.stdin.isTTY) {
     await startTuiRepl({
       ctx,
@@ -2684,12 +2681,14 @@ export async function startRepl() {
       providersConfigured,
       customCommands,
       recentSessions,
-      historyLines
+      historyLines,
+      mcpStatusLines
     })
     return
   }
 
   clearScreen()
+  for (const line of mcpStatusLines) console.log(line)
   await startLineRepl({
     ctx,
     state,
