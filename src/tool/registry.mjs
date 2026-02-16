@@ -67,18 +67,17 @@ function wasFileRead(filePath) {
   return fileReadTracker.has(filePath)
 }
 
-async function runGlob(pattern, cwd) {
+async function runGlob(pattern, cwd, searchPath) {
   if (!pattern) return "pattern is required"
-  // Use rg --files with glob pattern for cross-platform support
   const escaped = pattern.replace(/"/g, '\\"')
-  const command = `rg --files --glob "${escaped}" .`
+  const target = searchPath ? path.resolve(cwd, searchPath) : "."
+  const command = `rg --files --glob "${escaped}" "${target}"`
   const out = await exec(command, { cwd, timeout: 15000 }).catch((error) => ({
     stdout: error.stdout ?? "",
     stderr: error.stderr ?? error.message
   }))
   const text = `${out.stdout || ""}`.trim()
   if (!text) return "no files matched"
-  // Limit output to 200 files
   const lines = text.split("\n").filter(Boolean)
   if (lines.length > 200) {
     return lines.slice(0, 200).join("\n") + `\n... (+${lines.length - 200} more files)`
@@ -104,7 +103,8 @@ async function runGrep(pattern, cwd, options = {}) {
   if (options.maxCount) parts.push("-m", String(options.maxCount))
   if (options.ignoreCase) parts.push("-i")
   const escaped = process.platform === "win32" ? `"${pattern}"` : `'${pattern}'`
-  parts.push(escaped, ".")
+  const target = options.path ? `"${path.resolve(cwd, options.path)}"` : "."
+  parts.push(escaped, target)
   const command = parts.join(" ")
   const out = await exec(command, { cwd, timeout: 30000 }).catch((error) => ({
     stdout: error.stdout ?? "",
@@ -224,7 +224,7 @@ function builtinTools() {
 
   const readTool = {
     name: "read",
-    description: "Read file content with line numbers. Returns numbered lines in '    1→content' format. ALWAYS use this instead of `bash` with cat/head/tail. You MUST read a file before editing it with `edit`. Lines longer than 2000 characters are truncated.",
+    description: "Read file content with line numbers. Returns numbered lines in '    1→content' format. Use `offset` and `limit` to read specific line ranges (e.g. offset=50, limit=20 reads lines 50-69). ALWAYS use this instead of `bash` with cat/head/tail. You MUST read a file before editing it with `edit`. Lines longer than 2000 characters are truncated.",
     inputSchema: {
       type: "object",
       properties: {
@@ -396,26 +396,28 @@ function builtinTools() {
 
   const globTool = {
     name: "glob",
-    description: "Find files by glob pattern recursively in cwd. Use this instead of `bash` with find/ls. Returns up to 200 matching file paths sorted by name.",
+    description: "Find files by glob pattern recursively. Use this instead of `bash` with find/ls. Optionally specify a `path` to search within a specific directory. Returns up to 200 matching file paths.",
     inputSchema: {
       type: "object",
       properties: {
-        pattern: schema("string", "glob pattern, e.g. **/*.mjs, src/**/*.ts")
+        pattern: schema("string", "glob pattern, e.g. **/*.mjs, src/**/*.ts"),
+        path: schema("string", "directory to search in (default: cwd)")
       },
       required: ["pattern"]
     },
     async execute(args, ctx) {
-      return runGlob(String(args.pattern || ""), ctx.cwd)
+      return runGlob(String(args.pattern || ""), ctx.cwd, args.path || null)
     }
   }
 
   const grepTool = {
     name: "grep",
-    description: "Search file contents by regex pattern in cwd. Use this instead of `bash` with grep/rg. Supports output modes (content/files/count), multiline matching, context lines, and pagination.",
+    description: "Search file contents by regex pattern. Use this instead of `bash` with grep/rg. Supports searching within a specific file or directory via `path`, output modes (content/files/count), multiline matching, context lines, and pagination.",
     inputSchema: {
       type: "object",
       properties: {
         pattern: schema("string", "regex or string pattern"),
+        path: schema("string", "file or directory to search in (default: cwd). Use this to search within a specific file."),
         output_mode: schema("string", "output mode: 'content' (lines with numbers), 'files' (file paths only, default), 'count' (match counts per file)"),
         type: schema("string", "file type filter, e.g. js, ts, py (optional)"),
         glob: schema("string", "glob filter, e.g. *.mjs, src/**/*.ts (optional)"),
@@ -432,6 +434,7 @@ function builtinTools() {
     },
     async execute(args, ctx) {
       return runGrep(String(args.pattern || ""), ctx.cwd, {
+        path: args.path || null,
         outputMode: args.output_mode || "files",
         type: args.type || null,
         glob: args.glob || null,
