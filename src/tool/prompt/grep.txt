@@ -3,6 +3,7 @@ ALWAYS use `grep` instead of `bash` with grep/rg.
 
 Parameters:
 - pattern (required): regex or literal string
+- path (optional): file or directory to search in (default: cwd). Use this to search within a specific file or subdirectory.
 - output_mode (optional): "content" (matching lines with line numbers), "files" (file paths only, default), "count" (match counts per file)
 - type (optional): file type filter — js, ts, py, go, rs, etc.
 - glob (optional): glob filter — "*.mjs", "src/**/*.ts"
@@ -16,7 +17,8 @@ Parameters:
 - offset (optional): skip first N lines/entries before applying head_limit
 
 Tips:
+- Use `path` to search within a specific file: grep pattern="TODO" path="src/main.mjs"
+- Use `path` to search within a directory: grep pattern="import" path="src/utils/"
 - Use output_mode "files" for quick file discovery, "content" for understanding code.
-- Use before_context/after_context for asymmetric context (e.g. see 5 lines after a function def).
-- Use multiline to match patterns spanning multiple lines (e.g. multi-line function signatures).
+- Use multiline to match patterns spanning multiple lines.
 - Combine head_limit + offset for paginated browsing of large result sets.

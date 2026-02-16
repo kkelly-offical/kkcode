@@ -1,0 +1,16 @@
+Present your completed plan to the user for approval.
+
+REQUIREMENTS:
+- You MUST have called enter_plan first
+- Your plan must be complete and specific — include file paths, function names, and concrete changes
+- Include ALL files that will be created or modified in the `files` parameter
+
+The user will see your plan and can:
+- Approve: you proceed with implementation
+- Reject: you receive their feedback and should revise your approach
+- Provide custom feedback: treat as rejection with specific guidance
+
+IMPORTANT:
+- Do NOT start implementation before receiving approval
+- If rejected, address the user's feedback and submit a revised plan
+- Keep the plan concise but detailed enough to execute without ambiguity

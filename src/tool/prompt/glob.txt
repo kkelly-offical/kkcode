@@ -1,10 +1,16 @@
-Find files by glob pattern in the current working directory.
+Find files by glob pattern recursively.
 Use this to discover project structure and locate files before reading or editing them.
+ALWAYS use `glob` instead of `bash` with find/ls/dir.
+
+Parameters:
+- pattern (required): glob pattern
+- path (optional): directory to search in (default: cwd). Use this to limit search to a subdirectory.
 
 Examples:
 - "**/*.mjs" — all .mjs files recursively
 - "src/**/*.ts" — TypeScript files under src/
 - "*.json" — JSON files in root
 - "src/components/**" — everything under components/
+- glob pattern="**/*.test.mjs" path="src/tool/" — test files under src/tool/
 
 Returns matching file paths sorted by name. Limited to 200 results.

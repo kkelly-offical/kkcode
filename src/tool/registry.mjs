@@ -871,7 +871,50 @@ function builtinTools() {
     }
   }
 
-  return [listTool, readTool, writeTool, editTool, multieditTool, globTool, grepTool, bashTool, createTaskTool(), outputTool, cancelTool, todowriteTool, questionTool, skillTool, webfetchTool, websearchTool, codesearchTool]
+  const enterPlanTool = {
+    name: "enter_plan",
+    description: "Enter planning mode. Use this PROACTIVELY when the task is non-trivial and requires architectural decisions, multi-file changes, or when multiple valid approaches exist. After calling this, outline your plan, then call `exit_plan` to present it to the user for approval.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        reason: schema("string", "why planning is needed (shown to user)")
+      },
+      required: []
+    },
+    async execute(args, ctx) {
+      ctx._planMode = true
+      return `Planning mode entered. Outline your plan now, then call exit_plan to present it for user approval.${args.reason ? ` Reason: ${args.reason}` : ""}`
+    }
+  }
+
+  const exitPlanTool = {
+    name: "exit_plan",
+    description: "Present your plan to the user for approval. The user will see the plan and can approve, reject, or request changes. Only call this after enter_plan and after you have outlined a complete plan in your response.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        plan: schema("string", "the complete plan text to present to the user"),
+        files: {
+          type: "array", items: { type: "string" },
+          description: "list of files that will be created or modified"
+        }
+      },
+      required: ["plan"]
+    },
+    async execute(args, ctx) {
+      ctx._planMode = false
+      return {
+        output: "Plan submitted for user approval.",
+        metadata: {
+          planApproval: true,
+          plan: String(args.plan || ""),
+          files: Array.isArray(args.files) ? args.files : []
+        }
+      }
+    }
+  }
+
+  return [listTool, readTool, writeTool, editTool, multieditTool, globTool, grepTool, bashTool, createTaskTool(), outputTool, cancelTool, todowriteTool, questionTool, skillTool, webfetchTool, websearchTool, codesearchTool, enterPlanTool, exitPlanTool]
 }
 
 function mcpTools() {

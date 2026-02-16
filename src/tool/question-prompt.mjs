@@ -60,3 +60,27 @@ export async function askQuestionInteractive({ questions }) {
   }
   return answers
 }
+
+export async function askPlanApproval({ plan, files = [] }) {
+  const fileList = files.length ? `\nFiles to modify:\n${files.map(f => `  - ${f}`).join("\n")}` : ""
+  const questions = [
+    {
+      id: "plan_approval",
+      text: `Plan Review`,
+      description: `${plan}${fileList}`,
+      options: [
+        { label: "Approve", value: "approve", description: "Proceed with this plan" },
+        { label: "Reject", value: "reject", description: "Reject and provide feedback" }
+      ],
+      multi: false,
+      allowCustom: true
+    }
+  ]
+  const answers = await askQuestionInteractive({ questions })
+  const answer = String(answers.plan_approval || "").trim().toLowerCase()
+  if (answer === "approve" || answer === "1") {
+    return { approved: true, feedback: "" }
+  }
+  const feedback = answer === "reject" || answer === "2" ? "" : answer
+  return { approved: false, feedback }
+}

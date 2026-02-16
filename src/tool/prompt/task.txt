@@ -1,23 +1,26 @@
 Delegate complex, multi-step work to a subagent that makes its own LLM calls.
 
-WHEN TO USE:
-- Complex tasks requiring multiple tool calls and autonomous reasoning
-  (e.g. "refactor module X", "write comprehensive tests for Y", "migrate codebase from A to B")
+# Available subagent types
+- subagent_type="explore" — Fast codebase exploration. Use for: finding files, understanding project structure, tracing dependencies. Read-only.
+- subagent_type="reviewer" — Code review specialist. Use for: finding bugs, security issues, code quality problems, convention violations. Read-only.
+- subagent_type="researcher" — Deep research agent. Use for: investigating unfamiliar libraries, combining local analysis with web search, producing research reports. Read-only with web access.
+- (default) — Full-capability agent. Use for: complex multi-file changes, refactoring, test writing.
+
+# WHEN TO USE
+- Complex tasks requiring multiple tool calls and autonomous reasoning (e.g. "refactor module X", "write tests for Y")
 - Work that benefits from an independent context and session
+- Code review, deep research, or codebase exploration that would clutter the main conversation
 
-WHEN NOT TO USE:
-- Creating or writing files → use `write` directly
-- Modifying existing files → use `edit` directly
-- Running shell commands → use `bash` directly
-- Reading files or searching → use `read`, `grep`, `list` directly
-- Simple single-step operations of any kind → use the appropriate tool directly
+# WHEN NOT TO USE — use the appropriate tool directly instead:
+- Creating or writing files → use `write`
+- Modifying existing files → use `edit`
+- Running shell commands → use `bash`
+- Reading files or searching → use `read`, `grep`, `glob`
+- Simple single-step operations → use the appropriate tool
 
-IMPORTANT:
+# IMPORTANT
 - Each `task` call spawns a full LLM session — it is expensive and slow.
 - Do NOT use `task` as a wrapper for simple file operations.
-- `run_in_background: true` spawns a separate worker process. Only use this for
-  truly long-running work. Background tasks may fail silently if the worker
-  process encounters errors.
-- Prefer foreground execution (run_in_background: false or omitted) unless the
-  task will take many iterations.
+- `run_in_background: true` spawns a separate worker. Only use for truly long-running work.
+- Prefer foreground execution unless the task will take many iterations.
 - `subagent_type` and `category` are mutually exclusive. Omit both to use the default agent.

@@ -26,9 +26,10 @@ import { shouldCompact, compactSession, estimateTokenCount, modelContextLimit, c
 import { createStreamRenderer } from "../theme/markdown.mjs"
 import { paint } from "../theme/color.mjs"
 import { saveCheckpoint } from "./checkpoint.mjs"
+import { askPlanApproval } from "../tool/question-prompt.mjs"
 
 const READ_ONLY_TOOLS = new Set([
-  "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch", "background_output", "todowrite"
+  "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch", "background_output", "todowrite", "enter_plan", "exit_plan"
 ])
 
 function addUsage(target, delta) {
@@ -626,6 +627,22 @@ export async function processTurnLoop({
 
         const hookAfterResult = await HookBus.toolAfter({ tool: call.name, args: call.args, result, sessionId, step })
         if (hookAfterResult?.result) result = hookAfterResult.result
+
+        // Plan approval interception: if the tool returned planApproval metadata,
+        // pause and ask the user to approve/reject the plan
+        if (result.metadata?.planApproval) {
+          const approval = await askPlanApproval({
+            plan: result.metadata.plan || "",
+            files: result.metadata.files || []
+          })
+          result = {
+            ...result,
+            output: approval.approved
+              ? "User APPROVED the plan. Proceed with implementation."
+              : `User REJECTED the plan. Feedback: ${approval.feedback || "no feedback provided"}`,
+            metadata: { ...result.metadata, planApprovalResult: approval }
+          }
+        }
 
         await appendPart(sessionId, {
           type: "tool-call",

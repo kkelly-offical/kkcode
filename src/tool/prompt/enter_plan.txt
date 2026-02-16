@@ -1,0 +1,19 @@
+Enter planning mode before implementing non-trivial tasks.
+
+WHEN TO USE — call enter_plan PROACTIVELY when ANY of these apply:
+- New feature implementation requiring architectural decisions
+- Multiple valid approaches exist and user should choose
+- Changes affect more than 2-3 files
+- The task involves unfamiliar code or unclear requirements
+- Refactoring or restructuring existing code
+
+WHEN NOT TO USE:
+- Single-line fixes, typo corrections, simple renames
+- Tasks with very specific, detailed user instructions
+- Pure research or exploration (use task with explore subagent instead)
+
+After calling enter_plan:
+1. Outline your plan in your text response
+2. List which files will be created or modified
+3. Call exit_plan to present the plan to the user for approval
+4. Wait for approval before making any code changes

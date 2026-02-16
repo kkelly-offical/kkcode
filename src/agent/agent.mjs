@@ -95,6 +95,22 @@ defineAgent({
 })
 
 defineAgent({
+  name: "reviewer",
+  description: "Code review specialist for analyzing code quality, bugs, and security issues",
+  mode: "subagent",
+  permission: "readonly",
+  tools: ["read", "glob", "grep", "list", "bash"]
+})
+
+defineAgent({
+  name: "researcher",
+  description: "Deep codebase research and web-augmented exploration agent",
+  mode: "subagent",
+  permission: "readonly",
+  tools: ["read", "glob", "grep", "list", "bash", "websearch", "codesearch", "webfetch"]
+})
+
+defineAgent({
   name: "compaction",
   description: "Conversation summarizer for context compression",
   mode: "subagent",
