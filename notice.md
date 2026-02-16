@@ -19,6 +19,13 @@
 ├── background-tasks.json               # 后台任务元数据（自动管理）
 ├── audit-log.json                      # 操作审计日志（自动管理）
 │
+├── projects/                           # Auto Memory 持久记忆（按项目隔离）
+│   └── {项目名}_{hash}/
+│       └── memory/
+│           ├── MEMORY.md               #   主记忆文件（注入系统提示，限 200 行）
+│           ├── patterns.md             #   可选：模式和约定笔记
+│           └── debugging.md            #   可选：调试经验笔记
+│
 ├── rules/                              # 全局规则目录
 │   ├── 01-code-style.md                #   按文件名字母序加载
 │   └── 02-security.md
@@ -540,10 +547,32 @@ export async function handler(ctx) {
 |------|------|----------|
 | `ask` | 纯问答，不调用写入工具 | read, glob, grep, list, websearch, webfetch |
 | `plan` | 只读分析，生成计划但不修改文件 | 同 ask |
-| `agent` | 完整 agent，可读写文件、执行命令 | 全部工具 |
+| `agent` | 完整 agent，可读写文件、执行命令 | 全部工具（含 enter_plan / exit_plan） |
 | `longagent` | 长任务自治模式，多阶段并行执行 | 全部工具 + 阶段管理 |
 
 运行时切换：`/mode agent` 或 `/mode longagent`
+
+### 主动规划工具
+
+Agent 在执行过程中可以主动进入规划模式：
+
+| 工具 | 说明 |
+|------|------|
+| `enter_plan` | Agent 主动进入规划阶段，后续输出为计划内容 |
+| `exit_plan` | 提交计划给用户审批，TUI 弹出 Approve / Reject 面板 |
+
+工作流：`enter_plan` → 分析代码、设计方案 → `exit_plan` → 用户审批 → 批准后执行
+
+### 内置子智能体
+
+通过 `task` 工具委派子任务：
+
+| 类型 | 说明 | 权限 |
+|------|------|------|
+| `build` | 通用构建执行 | 全工具 |
+| `explore` | 快速代码探索和文件搜索 | 只读 |
+| `reviewer` | 代码审查（bug、安全、质量） | 只读 |
+| `researcher` | 深度研究，结合代码分析与 Web 搜索 | 只读 |
 
 ---
 
@@ -568,7 +597,49 @@ export async function handler(ctx) {
 
 ---
 
-## 12. 环境变量
+## 12. Auto Memory（持久记忆）
+
+kkcode 为每个项目维护独立的持久记忆，跨会话保存项目知识和用户偏好。
+
+### 存储位置
+
+```
+~/.kkcode/projects/<项目名>_<hash>/memory/
+├── MEMORY.md        # 主记忆文件（自动注入系统提示，限 200 行）
+├── patterns.md      # 可选：项目模式和约定
+├── debugging.md     # 可选：调试经验
+└── ...              # 可按主题自由创建
+```
+
+- `<项目名>` 取自 `cwd` 的 basename（最多 30 字符，仅保留 `[a-zA-Z0-9_-]`）
+- `<hash>` 取自 `cwd` 的 MD5 前 12 位，确保不同路径下的同名项目不冲突
+
+### 工作机制
+
+1. 每次会话开始时，`MEMORY.md` 的内容（前 200 行）会自动注入系统提示词
+2. Agent 可以通过 `write` / `edit` 工具直接读写记忆文件
+3. Agent 被指导在遇到可复用的模式时主动记录，在发现过时信息时主动清理
+
+### 适合记录
+
+- 项目架构决策、技术栈约定
+- 重要文件路径和模块关系
+- 用户偏好（工作流、工具选择、沟通风格）
+- 反复出现的问题和调试方案
+
+### 不适合记录
+
+- 会话级临时状态（当前任务进度等）
+- 未经验证的推测
+- 与项目指令文件（KKCODE.md 等）重复的内容
+
+### TUI 状态栏
+
+当 `MEMORY.md` 存在且非空时，状态栏会显示 `MEM` 徽章。
+
+---
+
+## 13. 环境变量
 
 | 变量 | 说明 |
 |------|------|
@@ -580,7 +651,7 @@ export async function handler(ctx) {
 
 ---
 
-## 13. 快速上手
+## 14. 快速上手
 
 ```bash
 # 1. 设置 API Key
