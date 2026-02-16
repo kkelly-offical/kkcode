@@ -39,5 +39,6 @@ export const EVENT_TYPES = {
   LONGAGENT_GIT_BRANCH_CREATED: "longagent.git.branch.created",
   LONGAGENT_GIT_STAGE_COMMITTED: "longagent.git.stage.committed",
   LONGAGENT_GIT_MERGED: "longagent.git.merged",
-  SESSION_COMPACTED: "session.compacted"
+  SESSION_COMPACTED: "session.compacted",
+  TURN_USAGE_UPDATE: "turn.usage.update"
 }

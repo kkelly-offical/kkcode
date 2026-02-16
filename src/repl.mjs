@@ -1335,6 +1335,19 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         ui.currentActivity = { type: "thinking" }
         requestRender()
         break
+      case EVENT_TYPES.TURN_USAGE_UPDATE: {
+        const u = payload.usage || {}
+        ui.metrics.tokenMeter = {
+          ...ui.metrics.tokenMeter,
+          estimated: true,
+          turn: { input: u.input || 0, output: u.output || 0 }
+        }
+        // rough cost estimate: $15/M input, $75/M output (opus-class)
+        ui.metrics.cost = ((u.input || 0) * 15 + (u.output || 0) * 75) / 1_000_000
+        if (payload.context) ui.metrics.context = payload.context
+        requestRender()
+        break
+      }
       case EVENT_TYPES.TURN_FINISH:
         ui.currentActivity = null
         ui.currentStep = 0

@@ -432,6 +432,28 @@ export async function processTurnLoop({
 
       addUsage(usage, response.usage || {})
 
+      // Update context meter with real API input tokens (much more accurate than char estimate)
+      const realInput = response.usage?.input || 0
+      if (realInput > 0) {
+        const contextLimit = modelContextLimit(model)
+        const contextRatio = contextLimit > 0 ? Math.min(1, realInput / contextLimit) : 0
+        lastContextMeter = {
+          tokens: realInput,
+          limit: contextLimit,
+          ratio: contextRatio,
+          percent: Math.round(contextRatio * 100),
+          fromCache: false
+        }
+      }
+
+      // Emit cumulative usage so status bar can update in real-time
+      await EventBus.emit({
+        type: EVENT_TYPES.TURN_USAGE_UPDATE,
+        sessionId,
+        turnId,
+        payload: { usage: { ...usage }, step, model, context: lastContextMeter }
+      })
+
       // --- Auto-continue on output truncation (max_tokens) ---
       if (response.stopReason === "max_tokens" && continueCount < MAX_CONTINUES) {
         continueCount++

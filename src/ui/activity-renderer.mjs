@@ -360,12 +360,13 @@ export function createActivityRenderer({ output }) {
 
     switch (type) {
       case EVENT_TYPES.TOOL_START: {
+        // Only track timing & args — the busy line already shows the active tool.
+        // We log nothing here; TOOL_FINISH will show the result.
         const key = timerKey(sessionId, turnId, payload.tool)
         const lookupKey = `${sessionId}:${turnId}:${payload.tool}`
         toolTimers.set(key, Date.now())
         activeToolKeys.set(lookupKey, key)
         activeToolArgs.set(lookupKey, payload.args)
-        log(formatToolStart(payload.tool, payload.args))
         break
       }
 
