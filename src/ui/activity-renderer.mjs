@@ -98,6 +98,15 @@ export function formatToolStart(toolName, args) {
       const q = clipText(args?.question, 80)
       return `${dot} ${name} ${paint(q, null, { dim: true })}`
     }
+    case "enter_plan": {
+      const reason = args?.reason ? paint(` ${clipText(args.reason, 60)}`, null, { dim: true }) : ""
+      return `${paint(SYM.plan, "magenta")} ${paint("Enter Plan", "magenta", { bold: true })}${reason}`
+    }
+    case "exit_plan": {
+      const fileCount = Array.isArray(args?.files) ? args.files.length : 0
+      const fileInfo = fileCount > 0 ? paint(` (${fileCount} files)`, null, { dim: true }) : ""
+      return `${paint(SYM.planDone, "green")} ${paint("Submit Plan", "green", { bold: true })}${fileInfo}`
+    }
     default: {
       const argKeys = args ? Object.keys(args).slice(0, 3).join(", ") : ""
       return `${dot} ${name} ${paint(argKeys, null, { dim: true })}`
@@ -138,6 +147,15 @@ export function formatToolFinish(toolName, status, durationMs, args) {
           : ""
         summary = `${paint(filePath + range, null, { dim: true })}`
         break
+      }
+      case "enter_plan": {
+        const reason = args?.reason ? ` — ${args.reason}` : ""
+        return `${paint(SYM.plan, "magenta")} ${paint("Plan Mode", "magenta", { bold: true })}${paint(reason, null, { dim: true })} ${elapsed}`
+      }
+      case "exit_plan": {
+        const fileCount = Array.isArray(args?.files) ? args.files.length : 0
+        const fileInfo = fileCount > 0 ? ` (${fileCount} files)` : ""
+        return `${paint(SYM.planDone, "green")} ${paint("Plan Submitted", "green", { bold: true })}${paint(fileInfo, null, { dim: true })} ${elapsed}`
       }
       default:
         break
@@ -236,6 +254,23 @@ export function formatToolResultPreview(toolName, output, status, args) {
     }
     case "task": {
       return `  ${paint(clipText(text, 120), null, { dim: true })}`
+    }
+    case "enter_plan": {
+      return `  ${paint("Agent entered planning mode. Awaiting plan...", "magenta", { dim: true })}`
+    }
+    case "exit_plan": {
+      const files = Array.isArray(args?.files) ? args.files : []
+      if (files.length) {
+        const lines = [`  ${paint("Plan submitted for review:", "green", { dim: true })}`]
+        for (const f of files.slice(0, 5)) {
+          lines.push(`    ${paint(shortPath(f), null, { dim: true })}`)
+        }
+        if (files.length > 5) {
+          lines.push(`    ${paint(`... +${files.length - 5} more`, null, { dim: true })}`)
+        }
+        return lines
+      }
+      return `  ${paint("Plan submitted for review.", "green", { dim: true })}`
     }
     default:
       return null

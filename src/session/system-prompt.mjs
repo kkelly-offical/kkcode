@@ -1,9 +1,11 @@
-import { readFile } from "node:fs/promises"
+import { readFile, access } from "node:fs/promises"
+import { execSync } from "node:child_process"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { createHash } from "node:crypto"
 import { loadSessionPrompt } from "./prompt-loader.mjs"
 import { getAgentPrompt, listAgents } from "../agent/agent.mjs"
+import { loadAutoMemory } from "./memory-loader.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const TOOL_PROMPT_DIR = path.join(__dirname, "..", "tool", "prompt")
@@ -31,17 +33,46 @@ async function loadToolPrompt(name) {
   return toolPromptCache.get(name)
 }
 
+// Detect if cwd is a git repo
+function detectGitRepo(cwd) {
+  try {
+    execSync("git rev-parse --is-inside-work-tree", { cwd, stdio: "pipe", timeout: 3000 })
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Detect the user's default shell
+function detectShell() {
+  if (process.platform === "win32") {
+    // On Windows, kkcode uses bash (git bash / WSL) internally
+    return "bash (use Unix shell syntax, not Windows — e.g., /dev/null not NUL, forward slashes in paths)"
+  }
+  const shell = process.env.SHELL || "/bin/bash"
+  return path.basename(shell)
+}
+
 // Layer 1: Environment information (dynamic per turn — changes with cwd/date)
 export function environmentPrompt({ model, cwd }) {
-  return [
+  const isGit = detectGitRepo(cwd)
+  const shell = detectShell()
+  const today = new Date().toISOString().slice(0, 10)
+  const lines = [
     `<env>`,
     `  model: ${model}`,
     `  cwd: ${cwd}`,
     `  platform: ${process.platform}`,
+    `  shell: ${shell}`,
     `  node: ${process.version}`,
-    `  date: ${new Date().toISOString().slice(0, 10)}`,
-    `</env>`
-  ].join("\n")
+    `  date: ${today}`,
+    `  git_repo: ${isGit}`,
+    `</env>`,
+    ``,
+    `Knowledge cutoff: early 2025. Current date: ${today}.`,
+    `When searching for recent information, use the current year (${today.slice(0, 4)}) in queries.`
+  ]
+  return lines.join("\n")
 }
 
 // Layer 2: System prompt (model-specific — stable across session)
@@ -196,6 +227,12 @@ export async function buildSystemPromptBlocks({ mode, model, cwd, agent = null, 
     if (langText) {
       blocks.push({ label: "language", text: `# Language\n\n${langText}`, cacheable: true })
     }
+  }
+
+  // Block 4.95: Auto Memory (semi-stable — changes when user updates memory files)
+  const memoryText = await loadAutoMemory(cwd)
+  if (memoryText) {
+    blocks.push({ label: "memory", text: memoryText, cacheable: false })
   }
 
   // Block 5: Environment (dynamic per turn)

@@ -52,7 +52,8 @@ export function renderStatusBar({
   contextMeter = null,
   theme,
   layout = "compact",
-  longagentState = null
+  longagentState = null,
+  memoryLoaded = false
 }) {
   const width = Number(process.stdout.columns || 120)
   const dense = width < 110
@@ -90,6 +91,9 @@ export function renderStatusBar({
     const suffix = contextMeter.fromCache ? " CACHE" : ""
     const text = tight ? `CTX ${pct}%` : `CONTEXT ${pct}%${suffix}`
     segments.push(badge(text, contrastText(ctxBg), ctxBg, { bold: false }))
+  }
+  if (memoryLoaded && !tight) {
+    segments.push(badge("MEM", contrastText(theme.semantic.info), theme.semantic.info, { bold: false }))
   }
   const permBg = permissionColor(permission, theme)
   segments.push(badge(`PERMISSION ${permission.toUpperCase()}`, contrastText(permBg), permBg, { bold: false }))

@@ -26,7 +26,7 @@ import { EventBus } from "./core/events.mjs"
 import { EVENT_TYPES } from "./core/constants.mjs"
 import { extractImageRefs, buildContentBlocks, readClipboardImage, readClipboardText } from "./tool/image-util.mjs"
 import { generateSkill, saveSkillGlobal } from "./skill/generator.mjs"
-import { userConfigCandidates, projectConfigCandidates } from "./storage/paths.mjs"
+import { userConfigCandidates, projectConfigCandidates, memoryFilePath } from "./storage/paths.mjs"
 
 const HIST_DIR = join(homedir(), ".kkcode")
 const HIST_FILE = join(HIST_DIR, "repl_history")
@@ -55,6 +55,8 @@ function formatBusyToolDetail(toolName, args) {
     case "grep": return args.pattern ? paint(` ${clipBusy(args.pattern, 40)}`, null, { dim: true }) : ""
     case "glob": return args.pattern ? paint(` ${clipBusy(args.pattern, 40)}`, null, { dim: true }) : ""
     case "task": return args.description ? paint(` ${clipBusy(args.description, 50)}`, null, { dim: true }) : ""
+    case "enter_plan": return args.reason ? paint(` ${clipBusy(args.reason, 50)}`, null, { dim: true }) : paint(" planning...", null, { dim: true })
+    case "exit_plan": return paint(" submitting plan...", null, { dim: true })
     default: return ""
   }
 }
@@ -867,7 +869,8 @@ async function processInputLine({
       showCost: ctx.configState.config.ui.status.show_cost,
       showTokenMeter: ctx.configState.config.ui.status.show_token_meter,
       theme: ctx.themeState.theme, layout: ctx.configState.config.ui.layout,
-      longagentState: state.mode === "longagent" ? result.longagent : null
+      longagentState: state.mode === "longagent" ? result.longagent : null,
+      memoryLoaded: state.memoryLoaded
     })
     if (showTurnStatus) print(status)
     if (!result.emittedText) {
@@ -1013,7 +1016,8 @@ async function processInputLine({
     showTokenMeter: ctx.configState.config.ui.status.show_token_meter,
     theme: ctx.themeState.theme,
     layout: ctx.configState.config.ui.layout,
-    longagentState: state.mode === "longagent" ? result.longagent : null
+    longagentState: state.mode === "longagent" ? result.longagent : null,
+    memoryLoaded: state.memoryLoaded
   })
   if (showTurnStatus) print(status)
 
@@ -1119,7 +1123,8 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
       showTokenMeter: ctx.configState.config.ui.status.show_token_meter,
       theme: ctx.themeState.theme,
       layout: ctx.configState.config.ui.layout,
-      longagentState: state.mode === "longagent" ? lastTurn.longagent : null
+      longagentState: state.mode === "longagent" ? lastTurn.longagent : null,
+      memoryLoaded: state.memoryLoaded
     })
 
     const line = await collectInput(rl, `${status}\n> `)
@@ -1633,7 +1638,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       showTokenMeter: ctx.configState.config.ui.status.show_token_meter,
       theme: ctx.themeState.theme,
       layout: ctx.configState.config.ui.layout,
-      longagentState: state.mode === "longagent" ? ui.metrics.longagent : null
+      longagentState: state.mode === "longagent" ? ui.metrics.longagent : null,
+      memoryLoaded: state.memoryLoaded
     })
 
     const lines = []
@@ -1668,6 +1674,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         const toolName = ui.currentActivity.tool || "tool"
         const toolColor = toolName === "edit" || toolName === "write" ? "yellow"
           : toolName === "bash" ? "magenta"
+          : toolName === "enter_plan" || toolName === "exit_plan" ? "magenta"
           : "cyan"
         const detail = formatBusyToolDetail(toolName, ui.currentActivity.args)
         busyLine = `${paint(spinner, toolColor)} ${paint(toolName, toolColor, { bold: true })}${detail}${stepTag}`
@@ -2680,6 +2687,14 @@ export async function startRepl() {
     model: ""
   }
   state.model = resolveProviderDefaultModel(ctx.configState.config, state.providerType)
+
+  // Check if auto memory file exists
+  try {
+    await readFile(memoryFilePath(process.cwd()), "utf8")
+    state.memoryLoaded = true
+  } catch {
+    state.memoryLoaded = false
+  }
 
   const customCommands = await loadCustomCommands(process.cwd())
   const providersConfigured = configuredProviders(ctx.configState.config)

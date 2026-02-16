@@ -1,5 +1,6 @@
 import os from "node:os"
 import path from "node:path"
+import { createHash } from "node:crypto"
 import { mkdir } from "node:fs/promises"
 
 export function userRootDir() {
@@ -112,4 +113,19 @@ export async function ensureSessionShardRoot() {
 
 export async function ensureBackgroundTaskRuntimeDir() {
   await mkdir(backgroundTaskRuntimeDir(), { recursive: true })
+}
+
+// Auto Memory — persistent per-project memory directory
+export function memoryDir(cwd = process.cwd()) {
+  const hash = createHash("md5").update(cwd).digest("hex").slice(0, 12)
+  const safeName = path.basename(cwd).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 30)
+  return path.join(userRootDir(), "projects", `${safeName}_${hash}`, "memory")
+}
+
+export function memoryFilePath(cwd = process.cwd()) {
+  return path.join(memoryDir(cwd), "MEMORY.md")
+}
+
+export async function ensureMemoryDir(cwd = process.cwd()) {
+  await mkdir(memoryDir(cwd), { recursive: true })
 }
