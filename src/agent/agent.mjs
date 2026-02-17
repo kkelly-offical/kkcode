@@ -111,6 +111,14 @@ defineAgent({
 })
 
 defineAgent({
+  name: "architect",
+  description: "Feature architecture designer. Analyzes codebase patterns, designs implementation blueprints with specific files, component designs, data flows.",
+  mode: "subagent",
+  permission: "readonly",
+  tools: ["read", "glob", "grep", "list", "bash"]
+})
+
+defineAgent({
   name: "compaction",
   description: "Conversation summarizer for context compression",
   mode: "subagent",
