@@ -15,6 +15,9 @@ Parameters:
 - type (optional): "auto" (balanced, default), "fast" (quick), "deep" (comprehensive)
 
 Tips:
-- Include the year or version in queries for time-sensitive topics (e.g. "React 19 new hooks 2025")
+- ALWAYS include the current year in queries for time-sensitive topics (e.g. "React 19 new hooks 2026")
 - Use specific error messages as queries when debugging
 - Prefer "deep" type for complex research questions
+- Include library/framework version numbers when relevant
+
+CRITICAL: After answering the user's question with search results, you SHOULD include source URLs so the user can verify the information.

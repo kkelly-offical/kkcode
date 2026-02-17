@@ -1,24 +1,26 @@
 Search file contents by regex pattern across the project.
 ALWAYS use `grep` instead of `bash` with grep/rg.
+Supports full regex syntax (e.g. "log.*Error", "function\\s+\\w+").
 
 Parameters:
-- pattern (required): regex or literal string
+- pattern (required): regex or literal string to search for
 - path (optional): file or directory to search in (default: cwd). Use this to search within a specific file or subdirectory.
 - output_mode (optional): "content" (matching lines with line numbers), "files" (file paths only, default), "count" (match counts per file)
-- type (optional): file type filter — js, ts, py, go, rs, etc.
+- type (optional): file type filter — js, ts, py, go, rs, etc. More efficient than glob for standard types.
 - glob (optional): glob filter — "*.mjs", "src/**/*.ts"
 - context (optional): lines of context around each match (-C)
 - before_context (optional): lines before each match (-B)
 - after_context (optional): lines after each match (-A)
 - ignoreCase (optional): case-insensitive search
 - maxCount (optional): max matches per file
-- multiline (optional): enable cross-line matching (patterns can span multiple lines)
-- head_limit (optional): limit output to first N lines/entries
-- offset (optional): skip first N lines/entries before applying head_limit
+- multiline (optional): enable cross-line matching. By default patterns match within single lines only. Use for patterns like "struct \\{[\\s\\S]*?field" that span multiple lines.
+- head_limit (optional): limit output to first N lines/entries. Works across all output modes.
+- offset (optional): skip first N lines/entries before applying head_limit. Combine with head_limit for paginated browsing.
 
 Tips:
 - Use `path` to search within a specific file: grep pattern="TODO" path="src/main.mjs"
-- Use `path` to search within a directory: grep pattern="import" path="src/utils/"
-- Use output_mode "files" for quick file discovery, "content" for understanding code.
-- Use multiline to match patterns spanning multiple lines.
-- Combine head_limit + offset for paginated browsing of large result sets.
+- Use `path` to search a directory: grep pattern="import" path="src/utils/"
+- Use output_mode "files" for quick file discovery, "content" for understanding code
+- Use multiline to match patterns spanning multiple lines
+- Combine head_limit + offset for paginated browsing of large result sets
+- Pattern syntax uses ripgrep — literal braces need escaping (use "interface\\{\\}" to find "interface{}" in Go)

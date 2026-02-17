@@ -1,7 +1,9 @@
 Delegate complex, multi-step work to a subagent that makes its own LLM calls.
+Each task spawns a full, independent LLM session with its own context window.
 
 # Available subagent types
-- subagent_type="explore" — Fast codebase exploration. Use for: finding files, understanding project structure, tracing dependencies. Read-only.
+- subagent_type="explore" — Fast codebase exploration. Use for: finding files, understanding project structure, tracing dependencies, answering questions about the codebase. Read-only.
+- subagent_type="architect" — Feature architecture designer. Use for: analyzing codebase patterns, designing implementation blueprints with specific files, component designs, data flows. Read-only.
 - subagent_type="reviewer" — Code review specialist. Use for: finding bugs, security issues, code quality problems, convention violations. Read-only.
 - subagent_type="researcher" — Deep research agent. Use for: investigating unfamiliar libraries, combining local analysis with web search, producing research reports. Read-only with web access.
 - (default) — Full-capability agent. Use for: complex multi-file changes, refactoring, test writing.
@@ -10,17 +12,26 @@ Delegate complex, multi-step work to a subagent that makes its own LLM calls.
 - Complex tasks requiring multiple tool calls and autonomous reasoning (e.g. "refactor module X", "write tests for Y")
 - Work that benefits from an independent context and session
 - Code review, deep research, or codebase exploration that would clutter the main conversation
+- When you need to parallelize independent queries — launch multiple tasks simultaneously
 
 # WHEN NOT TO USE — use the appropriate tool directly instead:
 - Creating or writing files → use `write`
 - Modifying existing files → use `edit`
 - Running shell commands → use `bash`
-- Reading files or searching → use `read`, `grep`, `glob`
+- Reading a specific file path → use `read`
+- Searching for a specific class/function → use `grep` or `glob`
 - Simple single-step operations → use the appropriate tool
+
+# Parameters
+- prompt (required): detailed task description with all necessary context
+- subagent_type (optional): agent type from the list above
+- run_in_background (optional): run as background worker, returns task_id
 
 # IMPORTANT
 - Each `task` call spawns a full LLM session — it is expensive and slow.
 - Do NOT use `task` as a wrapper for simple file operations.
-- `run_in_background: true` spawns a separate worker. Only use for truly long-running work.
-- Prefer foreground execution unless the task will take many iterations.
-- `subagent_type` and `category` are mutually exclusive. Omit both to use the default agent.
+- Provide clear, detailed prompts so the agent can work autonomously.
+- Clearly tell the agent whether you expect it to write code or just do research.
+- The agent's result is NOT visible to the user. To show results, send a text message with a summary.
+- You can launch multiple tasks in parallel for independent work.
+- Avoid duplicating work that subagents are already doing.

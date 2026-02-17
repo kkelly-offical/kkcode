@@ -1,16 +1,20 @@
-Find files by glob pattern recursively.
-Use this to discover project structure and locate files before reading or editing them.
+Fast file pattern matching tool that works with any codebase size.
+Supports glob patterns like "**/*.js" or "src/**/*.ts".
+Returns matching file paths sorted by name, limited to 200 results.
 ALWAYS use `glob` instead of `bash` with find/ls/dir.
 
 Parameters:
-- pattern (required): glob pattern
+- pattern (required): glob pattern to match files against
 - path (optional): directory to search in (default: cwd). Use this to limit search to a subdirectory.
 
 Examples:
 - "**/*.mjs" — all .mjs files recursively
 - "src/**/*.ts" — TypeScript files under src/
-- "*.json" — JSON files in root
+- "*.json" — JSON files in root only
 - "src/components/**" — everything under components/
-- glob pattern="**/*.test.mjs" path="src/tool/" — test files under src/tool/
+- pattern="**/*.test.mjs" path="src/tool/" — test files under src/tool/
 
-Returns matching file paths sorted by name. Limited to 200 results.
+Tips:
+- When doing an open-ended search that may require multiple rounds of globbing and grepping, use the `task` tool with explore subagent instead.
+- You can call multiple glob tools in a single response. It is always better to speculatively perform multiple searches in parallel if they are potentially useful.
+- Use `path` parameter to narrow search to a specific directory for faster results.
