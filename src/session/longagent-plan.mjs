@@ -213,17 +213,38 @@ export async function buildStagePlan({
   defaults = {}
 }) {
   const plannerPrompt = [
-    "Generate a stage plan for parallel execution.",
+    "Generate a stage plan for parallel execution of a coding task.",
     "Return STRICT JSON ONLY with this schema:",
     '{"planId":"...","objective":"...","stages":[{"stageId":"...","name":"...","passRule":"all_success","tasks":[{"taskId":"...","prompt":"...","subagentType":"...","category":"...","plannedFiles":["..."],"acceptance":["..."],"timeoutMs":600000,"maxRetries":2}]}]}',
-    "Rules:",
+    "",
+    "## Planning Rules",
+    "",
+    "### File Assignment (CRITICAL)",
+    "- Files that import from each other MUST be in the same task",
+    "- A module and its tests MUST be in the same task",
+    "- A component and its type definitions MUST be in the same task",
+    "- Each task should own 2-8 files. If only 1 file, merge with related task. If >10 files, split.",
+    "- NO file may appear in multiple tasks within the same stage",
+    "",
+    "### Stage Ordering",
+    "- Stages execute sequentially; tasks within a stage execute in parallel",
+    "- Order: Infrastructure/utilities → Core logic → Integration/UI → Tests/Validation",
+    "- If Task B depends on Task A's output (e.g. imports from files Task A creates), they MUST be in different stages (A's stage before B's stage)",
+    "",
+    "### Task Requirements",
     "- passRule must be all_success",
     "- each stage must have 1..8 tasks",
-    "- each task must include prompt, plannedFiles, acceptance",
+    "- each task MUST include: prompt (detailed instructions), plannedFiles (specific file paths), acceptance (machine-verifiable criteria)",
     "- keep task scope independent for parallel execution",
+    "- task prompts should be self-contained — the sub-agent has no context beyond what you write",
     "",
-    `Objective: ${objective}`,
-    intakeSummary ? `Intake summary:\n${intakeSummary}` : ""
+    "### Acceptance Criteria Rules",
+    "- MUST be machine-verifiable (e.g. 'node --check passes', 'npm test passes', 'function X is exported from Y')",
+    "- NEVER use subjective criteria (e.g. 'code quality is good', 'implementation is clean')",
+    "",
+    `## Objective`,
+    objective,
+    intakeSummary ? `\n## Intake Summary\n${intakeSummary}` : ""
   ].filter(Boolean).join("\n")
 
   const out = await processTurnLoop({
