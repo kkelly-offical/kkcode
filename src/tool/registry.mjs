@@ -222,24 +222,97 @@ function builtinTools() {
     }
   }
 
+  const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp", ".ico"])
+  const IMAGE_MIME = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".svg": "image/svg+xml", ".webp": "image/webp", ".bmp": "image/bmp", ".ico": "image/x-icon" }
+
+  function readNotebook(raw) {
+    const notebook = JSON.parse(raw)
+    if (!notebook.cells || !Array.isArray(notebook.cells)) return "Not a valid .ipynb file (missing cells array)"
+    const lines = []
+    notebook.cells.forEach((cell, i) => {
+      const type = cell.cell_type || "unknown"
+      lines.push(`--- Cell ${i} [${type}] ---`)
+      const source = Array.isArray(cell.source) ? cell.source.join("") : String(cell.source || "")
+      lines.push(source)
+      if (cell.outputs && cell.outputs.length > 0) {
+        lines.push("[Output]:")
+        for (const out of cell.outputs) {
+          if (out.text) lines.push(Array.isArray(out.text) ? out.text.join("") : String(out.text))
+          else if (out.data?.["text/plain"]) {
+            const plain = out.data["text/plain"]
+            lines.push(Array.isArray(plain) ? plain.join("") : String(plain))
+          }
+        }
+      }
+      lines.push("")
+    })
+    return lines.join("\n")
+  }
+
+  function extractPdfText(buffer) {
+    // Basic PDF text extraction: find text between BT/ET operators and parenthesized strings
+    const str = buffer.toString("latin1")
+    const texts = []
+    const tjRegex = /\(([^)]*)\)/g
+    // Extract strings from content streams
+    let match
+    while ((match = tjRegex.exec(str)) !== null) {
+      const decoded = match[1]
+        .replace(/\\n/g, "\n").replace(/\\r/g, "\r")
+        .replace(/\\t/g, "\t").replace(/\\\\/g, "\\")
+        .replace(/\\([()])/g, "$1")
+      if (decoded.trim()) texts.push(decoded)
+    }
+    if (texts.length === 0) return "(PDF contains no extractable text — may be image-based or encrypted)"
+    return texts.join(" ").replace(/\s+/g, " ").trim()
+  }
+
   const readTool = {
     name: "read",
-    description: "Read file content with line numbers. Returns numbered lines in '    1→content' format. Use `offset` and `limit` to read specific line ranges (e.g. offset=50, limit=20 reads lines 50-69). ALWAYS use this instead of `bash` with cat/head/tail. You MUST read a file before editing it with `edit`. Lines longer than 2000 characters are truncated.",
+    description: "Read file content with line numbers. Supports text files, images (PNG/JPG/GIF/SVG/WebP/BMP/ICO as base64), PDF (text extraction), and Jupyter notebooks (.ipynb cell parsing). Use `offset` and `limit` to read specific line ranges. ALWAYS use this instead of `bash` with cat/head/tail. You MUST read a file before editing it with `edit`.",
     inputSchema: {
       type: "object",
       properties: {
         path: schema("string", "file path"),
         offset: schema("number", "start line number (1-based, optional)"),
         limit: schema("number", "max lines to return (optional)"),
-        encoding: schema("string", "file encoding (default: utf8)")
+        encoding: schema("string", "file encoding (default: utf8)"),
+        pages: schema("string", "page range for PDF files, e.g. '1-5' (optional)")
       },
       required: ["path"]
     },
     async execute(args, ctx) {
       const target = path.resolve(ctx.cwd, args.path)
+      const ext = path.extname(target).toLowerCase()
+      markFileRead(target)
+
+      // Image files: return base64 data URI
+      if (IMAGE_EXTENSIONS.has(ext)) {
+        const buffer = await readFile(target)
+        const base64 = buffer.toString("base64")
+        const mime = IMAGE_MIME[ext] || "application/octet-stream"
+        return {
+          type: "image",
+          output: `Image file: ${args.path} (${buffer.length} bytes, ${mime})`,
+          data: `data:${mime};base64,${base64}`
+        }
+      }
+
+      // PDF files: extract text
+      if (ext === ".pdf") {
+        const buffer = await readFile(target)
+        return extractPdfText(buffer)
+      }
+
+      // Jupyter notebooks: parse cells
+      if (ext === ".ipynb") {
+        const raw = await readFile(target, "utf8")
+        return readNotebook(raw)
+      }
+
+      // Default: text file with line numbers
       const encoding = args.encoding || "utf8"
       const content = await readFile(target, encoding)
-      markFileRead(target)
       const allLines = content.split("\n")
       const start = Math.max(0, (Number(args.offset) || 1) - 1)
       const count = Number(args.limit) || allLines.length

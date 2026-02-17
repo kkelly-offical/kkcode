@@ -119,6 +119,14 @@ defineAgent({
 })
 
 defineAgent({
+  name: "guide",
+  description: "kkcode self-help guide. Answers questions about kkcode features, tools, configuration, modes, skills, hooks, MCP servers, and usage patterns by searching the kkcode source code.",
+  mode: "subagent",
+  permission: "readonly",
+  tools: ["read", "glob", "grep", "list", "webfetch", "websearch"]
+})
+
+defineAgent({
   name: "compaction",
   description: "Conversation summarizer for context compression",
   mode: "subagent",

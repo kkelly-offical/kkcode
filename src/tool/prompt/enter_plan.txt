@@ -15,10 +15,16 @@ Enter planning mode before implementing non-trivial tasks. Getting user sign-off
    - Example: "Refactor this component" — what's the target architecture?
 
 4. **Architectural Decisions**: The task requires choosing between patterns or technologies
+   - Example: "Add real-time updates" — WebSockets vs SSE vs polling
+   - Example: "Implement state management" — Redux vs Context vs custom solution
 
 5. **Multi-File Changes**: The task will likely touch more than 2-3 files
+   - Example: "Refactor the authentication system"
+   - Example: "Add a new API endpoint with tests"
 
 6. **Unclear Requirements**: You need to explore before understanding the full scope
+   - Example: "Make the app faster" — need to profile and identify bottlenecks
+   - Example: "Fix the bug in checkout" — need to investigate root cause
 
 7. **User Preferences Matter**: The implementation could reasonably go multiple ways.
    If you would use `question` to clarify the approach, use enter_plan instead — it lets you explore first, then present options with context.
@@ -30,6 +36,33 @@ Only skip enter_plan for simple tasks:
 - Adding a single function with clear requirements
 - Tasks where the user has given very specific, detailed instructions
 - Pure research/exploration tasks (use `task` with explore subagent instead)
+
+<example>
+GOOD — Use enter_plan:
+User: "Add user authentication to the app"
+→ Requires architectural decisions (session vs JWT, storage, middleware)
+
+User: "Optimize the database queries"
+→ Multiple approaches possible, need to profile first
+
+User: "Add a delete button to the user profile"
+→ Involves placement, confirmation dialog, API call, error handling, state updates
+
+User: "Update the error handling in the API"
+→ Affects multiple files, user should approve the approach
+</example>
+
+<example>
+BAD — Don't use enter_plan:
+User: "Fix the typo in the README"
+→ Straightforward, no planning needed
+
+User: "Add a console.log to debug this function"
+→ Simple, obvious implementation
+
+User: "What files handle routing?"
+→ Research task, not implementation planning
+</example>
 
 ## After calling enter_plan:
 

@@ -1,26 +1,44 @@
 Ask the user one or more structured questions during execution. Use when you need user input to proceed.
 
 ## When to Use
+
 - Gather user preferences or requirements
 - Clarify ambiguous instructions
 - Get decisions on implementation choices as you work
 - Offer choices about what direction to take
 
+<example>
+You're implementing a caching layer but unsure which strategy the user prefers:
+→ question(questions=[{id: "cache", text: "Which caching strategy should we use?", options: [{label: "Redis (Recommended)", description: "Distributed cache, best for multi-server"}, {label: "In-memory", description: "Simple, single-server only"}, {label: "File-based", description: "Persistent, slower"}]}])
+</example>
+
+<example>
+User says "fix the bug" but there are multiple potential issues:
+→ question(questions=[{id: "bug", text: "Which issue should I fix first?", options: [{label: "Auth timeout", description: "Users get logged out after 5 minutes"}, {label: "API 500 error", description: "POST /users returns 500 on duplicate email"}]}])
+</example>
+
+## When NOT to Use
+
+- Do NOT use this to ask "Is my plan ready?" or "Should I proceed?" — use `exit_plan` for plan approval.
+- Do NOT use this for trivial confirmations that don't affect the outcome.
+- If you can reasonably infer the answer from context, just proceed.
+
 ## Parameters
+
 - questions (required): array of question objects (1-4 questions per call)
   - id (required): unique question identifier
   - text (required): the complete question text (should end with ?)
   - description (optional): supplementary explanation
   - options (optional): array of predefined choices (2-4 options)
-    - label (required): display text (concise, 1-5 words)
+    - label (required): display text (concise, 1-5 words). If you recommend a specific option, list it first and add "(Recommended)" to its label.
     - value (optional): option value (defaults to label)
-    - description (optional): explanation of what this option means
-  - multi (optional, default false): allow multiple selections
+    - description (optional): explanation of what this option means or what will happen if chosen
+  - multi (optional, default false): allow multiple selections. Use when choices are not mutually exclusive.
   - allowCustom (optional, default true): allow custom text input
 
 ## Tips
+
 - Users will always be able to provide custom text input regardless of options
-- Use multi: true when choices are not mutually exclusive
-- If you recommend a specific option, list it first and add "(Recommended)" to its label
 - Keep option labels concise and clearly distinct from each other
-- In plan mode, use this tool to clarify requirements BEFORE finalizing your plan. Do NOT use this to ask "Is my plan ready?" — use exit_plan for that.
+- When you have 2-4 distinct approaches, use options. When the answer is open-ended, skip options.
+- In plan mode, use this tool to clarify requirements BEFORE finalizing your plan. Do NOT use this to ask "Is my plan ready?" — use `exit_plan` for that.

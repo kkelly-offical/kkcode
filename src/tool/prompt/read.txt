@@ -1,25 +1,40 @@
 Reads a file from the local filesystem. You can access any file directly by using this tool.
+Assume this tool is able to read all files on the machine. If the user provides a path to a file, assume that path is valid.
 
-Usage:
+## Usage
+
 - The path parameter can be absolute or relative to the working directory.
 - By default, it reads the entire file. You can optionally specify offset and limit for large files.
 - Any lines longer than 2000 characters will be truncated.
 - Results are returned with line numbers in "     1→content" format.
 
-IMPORTANT:
+## File Type Support
+
+- **Text files**: All text files are read with line numbers. This is the default behavior.
+- **Image files** (PNG, JPG, GIF, SVG, WebP, BMP, ICO): Returns a base64-encoded data URI that can be visually analyzed. Use this when the user asks you to look at a screenshot or image.
+- **PDF files** (.pdf): Extracts text content from PDF pages. For large PDFs (10+ pages), use the `pages` parameter to read specific page ranges (e.g. pages="1-5"). Maximum 20 pages per request.
+- **Jupyter notebooks** (.ipynb): Parses the notebook JSON and returns all cells with their type, source, and outputs in a readable format. Combines code, text, and output for easy understanding.
+
+## Critical Rules
+
 - ALWAYS use `read` to view files. NEVER use `bash` with cat/head/tail/type/Get-Content.
 - You MUST read a file before editing it with `edit`. Edits on unread files are rejected.
 - You can call multiple `read` tools in a single response. It is always better to speculatively read multiple potentially useful files in parallel.
+- If the user provides a path to a screenshot, ALWAYS use this tool to view the file at that path.
 
-Parameters:
+## Parameters
+
 - path (required): file path (absolute or relative)
 - offset (optional): start line number (1-based). Only provide if the file is too large to read at once.
 - limit (optional): max lines to return. Only provide if the file is too large to read at once.
 - encoding (optional): file encoding (default: utf8)
+- pages (optional): page range for PDF files (e.g. "1-5", "3", "10-20"). Only applicable to PDF files.
 
-Tips:
+## Tips
+
 - Read the full file first to understand context before editing. Do not provide offset/limit unless necessary.
 - For large files (1000+ lines), use offset+limit to read specific sections.
 - After a failed edit, re-read the file — it may have changed since your last read.
 - Line numbers in output help you locate exact positions for edits.
 - When reading multiple related files, read them all in parallel for efficiency.
+- When editing text from read output, preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: spaces + line number + →. Everything after that → is the actual file content to match. Never include any part of the line number prefix in edit operations.
