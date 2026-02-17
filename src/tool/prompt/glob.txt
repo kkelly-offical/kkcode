@@ -14,7 +14,20 @@ Examples:
 - "src/components/**" — everything under components/
 - pattern="**/*.test.mjs" path="src/tool/" — test files under src/tool/
 
+## When NOT to Use
+- Do NOT use glob to search file *contents* — use `grep` for that.
+- Do NOT use glob when you need a simple directory listing — use `bash` with `ls` only if truly needed.
+- Do NOT use glob to find a file when you already know its exact path — use `read` directly.
+- If you need to search both file names AND contents, use glob for names and grep for contents in parallel.
+
 Tips:
 - When doing an open-ended search that may require multiple rounds of globbing and grepping, use the `task` tool with explore subagent instead.
 - You can call multiple glob tools in a single response. It is always better to speculatively perform multiple searches in parallel if they are potentially useful.
 - Use `path` parameter to narrow search to a specific directory for faster results.
+- When unsure of exact file naming convention, launch multiple speculative globs in parallel:
+  <good-example>
+  # Looking for config files — try multiple patterns at once:
+  glob "**/*.config.{js,ts,mjs}"
+  glob "**/config.{js,ts,mjs,json}"
+  glob "**/.{eslint,prettier,babel}*"
+  </good-example>

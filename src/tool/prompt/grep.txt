@@ -17,10 +17,22 @@ Parameters:
 - head_limit (optional): limit output to first N lines/entries. Works across all output modes.
 - offset (optional): skip first N lines/entries before applying head_limit. Combine with head_limit for paginated browsing.
 
+## When NOT to Use
+- Do NOT use grep to find files by *name* — use `glob` for that.
+- Do NOT use grep to read a whole file — use `read` instead.
+- Do NOT use grep when you already know the exact file and line — use `read` with offset/limit.
+- For open-ended exploration requiring multiple search rounds, use `task` with explore subagent.
+
 Tips:
 - Use `path` to search within a specific file: grep pattern="TODO" path="src/main.mjs"
 - Use `path` to search a directory: grep pattern="import" path="src/utils/"
 - Use output_mode "files" for quick file discovery, "content" for understanding code
 - Use multiline to match patterns spanning multiple lines
-- Combine head_limit + offset for paginated browsing of large result sets
+- Combine head_limit + offset for paginated browsing of large result sets:
+  <example>
+  # Page 1: first 20 matches
+  grep pattern="TODO" output_mode="content" head_limit=20
+  # Page 2: next 20 matches
+  grep pattern="TODO" output_mode="content" head_limit=20 offset=20
+  </example>
 - Pattern syntax uses ripgrep — literal braces need escaping (use "interface\\{\\}" to find "interface{}" in Go)

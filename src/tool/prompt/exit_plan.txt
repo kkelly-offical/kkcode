@@ -30,6 +30,33 @@ The user will:
 - Reject: you receive their feedback and should revise
 - Provide custom feedback: treat as rejection with specific guidance
 
+## Examples
+
+<good-example>
+# Complete plan with structure
+plan:
+## Context
+Adding dark mode toggle to the settings page.
+
+## Approach
+Use CSS custom properties for theme switching with React Context for state management.
+
+## Files to modify
+- src/contexts/ThemeContext.tsx — new context provider
+- src/components/Settings/ThemeToggle.tsx — new toggle component
+- src/styles/variables.css — add dark theme variables
+- src/App.tsx — wrap with ThemeProvider
+
+## Verification
+- Toggle switches theme visually
+- Theme persists across page refresh (localStorage)
+- All existing tests still pass
+</good-example>
+<bad-example>
+# Plan too vague — no files, no specifics
+plan: "I'll add dark mode by creating some components and updating styles"
+</bad-example>
+
 IMPORTANT:
 - Do NOT start implementation before receiving approval
 - If rejected, address the user's feedback and submit a revised plan

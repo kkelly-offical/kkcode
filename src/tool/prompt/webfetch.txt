@@ -17,5 +17,22 @@ Notes:
 - Only use for public, unauthenticated URLs
 - HTTP URLs are automatically upgraded to HTTPS
 - Includes a 30-second timeout
+- Includes a self-cleaning 15-minute cache for faster repeat access
 - Do NOT use for local file reading — use `read` instead
 - Do NOT generate or guess URLs. Only use URLs provided by the user or found in project files.
+
+Examples:
+<good-example>
+# Fetch public documentation
+webfetch url="https://docs.example.com/api" prompt="Extract all REST endpoints and their parameters"
+</good-example>
+<bad-example>
+# WRONG: authenticated URL — will fail
+webfetch url="https://docs.google.com/document/d/abc123/edit"
+# Instead: ask the user to paste the content or use an MCP tool with auth
+</bad-example>
+<bad-example>
+# WRONG: GitHub URL — use gh CLI instead
+webfetch url="https://github.com/org/repo/pull/42"
+# Instead: bash "gh pr view 42"
+</bad-example>
