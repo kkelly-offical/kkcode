@@ -78,6 +78,65 @@ function retryPrompt(taskPrompt, remainingFiles = [], attempt = 1, lastError = "
   return parts.join("\n")
 }
 
+function buildEnrichedPrompt({ stage, task, logicalTask, objective, stageIndex, stageCount, allTasks }) {
+  const parts = []
+
+  parts.push("## Global Objective")
+  parts.push(objective || "(not specified)")
+  parts.push("")
+
+  parts.push("## Current Stage")
+  parts.push(`Stage ${stageIndex + 1}/${stageCount}: ${stage.name || stage.stageId}`)
+  parts.push("")
+
+  parts.push("## Your Task")
+  parts.push(logicalTask.prompt)
+  parts.push("")
+
+  if (logicalTask.plannedFiles.length > 0) {
+    parts.push("## Files You Own (ONLY modify these)")
+    for (const file of logicalTask.plannedFiles) {
+      parts.push(`- ${file}`)
+    }
+    parts.push("")
+  }
+
+  const siblings = (allTasks || []).filter((t) => t.taskId !== task.taskId)
+  if (siblings.length > 0) {
+    parts.push("## Other Tasks in This Stage (DO NOT touch their files)")
+    for (const sibling of siblings) {
+      const files = normalizeFiles(sibling.plannedFiles)
+      parts.push(`- ${sibling.taskId}: ${files.length > 0 ? files.join(", ") : "(no files)"}`)
+    }
+    parts.push("")
+  }
+
+  if (logicalTask.acceptance.length > 0) {
+    parts.push("## Acceptance Criteria")
+    for (const criterion of logicalTask.acceptance) {
+      parts.push(`- ${criterion}`)
+    }
+    parts.push("")
+  }
+
+  return parts.join("\n")
+}
+
+function checkFileIsolation(tasks) {
+  const ownership = new Map()
+  const overlaps = []
+  for (const task of tasks) {
+    for (const file of normalizeFiles(task.plannedFiles)) {
+      if (ownership.has(file)) {
+        overlaps.push({ file, tasks: [ownership.get(file), task.taskId] })
+      } else {
+        ownership.set(file, task.taskId)
+      }
+    }
+  }
+  return overlaps
+}
+
 async function launchTask({
   stage,
   task,
@@ -85,12 +144,26 @@ async function launchTask({
   config,
   sessionId,
   model,
-  providerType
+  providerType,
+  objective,
+  stageIndex,
+  stageCount,
+  allTasks
 }) {
+  const enrichedPrompt = buildEnrichedPrompt({
+    stage,
+    task,
+    logicalTask,
+    objective,
+    stageIndex: stageIndex || 0,
+    stageCount: stageCount || 1,
+    allTasks
+  })
+
   const payload = {
     parentSessionId: sessionId,
     subSessionId: logicalTask.subSessionId,
-    prompt: logicalTask.prompt,
+    prompt: enrichedPrompt,
     cwd: process.cwd(),
     model,
     providerType,
@@ -141,10 +214,37 @@ export async function runStageBarrier({
   config,
   model,
   providerType,
-  seedTaskProgress = {}
+  seedTaskProgress = {},
+  objective = "",
+  stageIndex = 0,
+  stageCount = 1
 }) {
   const cfg = stageConfig(config)
   const logical = new Map()
+
+  // File isolation check: detect overlapping file ownership across tasks
+  const overlaps = checkFileIsolation(stage.tasks || [])
+  if (overlaps.length > 0) {
+    for (const overlap of overlaps) {
+      await EventBus.emit({
+        type: EVENT_TYPES.LONGAGENT_STAGE_STARTED,
+        sessionId,
+        payload: {
+          warning: `File "${overlap.file}" is claimed by multiple tasks: ${overlap.tasks.join(", ")}. Assigning to first task only.`,
+          stageId: stage.stageId
+        }
+      })
+    }
+    // Resolve overlaps: first task wins
+    const assigned = new Set()
+    for (const task of stage.tasks || []) {
+      task.plannedFiles = normalizeFiles(task.plannedFiles).filter((file) => {
+        if (assigned.has(file)) return false
+        assigned.add(file)
+        return true
+      })
+    }
+  }
 
   for (const task of stage.tasks || []) {
     const seeded = seedTaskProgress[task.taskId] || {}
@@ -217,7 +317,11 @@ export async function runStageBarrier({
           config,
           sessionId,
           model,
-          providerType
+          providerType,
+          objective,
+          stageIndex,
+          stageCount,
+          allTasks: stage.tasks || []
         })
         activeCount += 1
       }

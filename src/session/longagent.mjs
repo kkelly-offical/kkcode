@@ -557,7 +557,10 @@ async function runParallelLongAgent({
       config: configState.config,
       model,
       providerType,
-      seedTaskProgress: seeded
+      seedTaskProgress: seeded,
+      objective: prompt,
+      stageIndex,
+      stageCount: stagePlan.stages.length
     })
 
     for (const [taskId, progress] of Object.entries(stageResult.taskProgress || {})) {
