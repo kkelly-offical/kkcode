@@ -1,18 +1,25 @@
-Read file content with line numbers. Returns numbered lines in "     1→content" format.
+Reads a file from the local filesystem. You can access any file directly by using this tool.
+
+Usage:
+- The path parameter can be absolute or relative to the working directory.
+- By default, it reads the entire file. You can optionally specify offset and limit for large files.
+- Any lines longer than 2000 characters will be truncated.
+- Results are returned with line numbers in "     1→content" format.
 
 IMPORTANT:
-- ALWAYS use `read` to view files. NEVER use `bash` with cat/head/tail.
-- You MUST read a file before editing it with `edit`.
-- Lines longer than 2000 characters are automatically truncated.
+- ALWAYS use `read` to view files. NEVER use `bash` with cat/head/tail/type/Get-Content.
+- You MUST read a file before editing it with `edit`. Edits on unread files are rejected.
+- You can call multiple `read` tools in a single response. It is always better to speculatively read multiple potentially useful files in parallel.
 
 Parameters:
-- path (required): file path
-- offset (optional): start line number (1-based)
-- limit (optional): max lines to return
+- path (required): file path (absolute or relative)
+- offset (optional): start line number (1-based). Only provide if the file is too large to read at once.
+- limit (optional): max lines to return. Only provide if the file is too large to read at once.
 - encoding (optional): file encoding (default: utf8)
 
 Tips:
-- Read the full file first to understand context before editing.
-- For large files (1000+ lines), use offset+limit to read sections.
-- After a failed edit, re-read — the file may have changed.
+- Read the full file first to understand context before editing. Do not provide offset/limit unless necessary.
+- For large files (1000+ lines), use offset+limit to read specific sections.
+- After a failed edit, re-read the file — it may have changed since your last read.
 - Line numbers in output help you locate exact positions for edits.
+- When reading multiple related files, read them all in parallel for efficiency.

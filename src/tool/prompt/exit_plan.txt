@@ -1,16 +1,35 @@
-Present your completed plan to the user for approval.
+Present your completed plan to the user for approval. The user will see the plan and can approve, reject, or request changes.
 
-REQUIREMENTS:
+## How This Tool Works
+- You should have already outlined your plan in your text response after calling enter_plan
+- This tool submits the plan for user review
+- The user will see the plan content and the list of files affected
+
+## When to Use
+IMPORTANT: Only use this tool when planning implementation steps for a task that requires writing code.
+For research tasks where you're gathering information, searching files, or understanding the codebase — do NOT use this tool.
+
+## Before Using This Tool
+Ensure your plan is complete and unambiguous:
+- If you have unresolved questions about requirements or approach, use `question` first
+- Once your plan is finalized, use THIS tool to request approval
+- Do NOT use `question` to ask "Is this plan okay?" — that's exactly what exit_plan does
+
+## Requirements
 - You MUST have called enter_plan first
 - Your plan must be complete and specific — include file paths, function names, and concrete changes
 - Include ALL files that will be created or modified in the `files` parameter
 
-The user will see your plan and can:
+## Parameters
+- plan (required): the complete plan text to present to the user
+- files (optional): array of file paths that will be created or modified
+
+## User Response
+The user will:
 - Approve: you proceed with implementation
-- Reject: you receive their feedback and should revise your approach
+- Reject: you receive their feedback and should revise
 - Provide custom feedback: treat as rejection with specific guidance
 
 IMPORTANT:
 - Do NOT start implementation before receiving approval
 - If rejected, address the user's feedback and submit a revised plan
-- Keep the plan concise but detailed enough to execute without ambiguity

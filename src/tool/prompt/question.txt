@@ -1,11 +1,26 @@
-Use this tool to ask the user a question during execution.
+Ask the user one or more structured questions during execution. Use when you need user input to proceed.
 
-Use cases:
+## When to Use
 - Gather user preferences or requirements
 - Clarify ambiguous instructions
-- Get decisions on implementation choices
-- Offer choices about direction to take
+- Get decisions on implementation choices as you work
+- Offer choices about what direction to take
 
-Parameters:
-- question: The question text to display to the user
-- options: Optional array of string choices for the user to pick from
+## Parameters
+- questions (required): array of question objects (1-4 questions per call)
+  - id (required): unique question identifier
+  - text (required): the complete question text (should end with ?)
+  - description (optional): supplementary explanation
+  - options (optional): array of predefined choices (2-4 options)
+    - label (required): display text (concise, 1-5 words)
+    - value (optional): option value (defaults to label)
+    - description (optional): explanation of what this option means
+  - multi (optional, default false): allow multiple selections
+  - allowCustom (optional, default true): allow custom text input
+
+## Tips
+- Users will always be able to provide custom text input regardless of options
+- Use multi: true when choices are not mutually exclusive
+- If you recommend a specific option, list it first and add "(Recommended)" to its label
+- Keep option labels concise and clearly distinct from each other
+- In plan mode, use this tool to clarify requirements BEFORE finalizing your plan. Do NOT use this to ask "Is my plan ready?" — use exit_plan for that.

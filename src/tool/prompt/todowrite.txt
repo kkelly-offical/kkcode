@@ -1,19 +1,40 @@
-Create and manage a structured task list for tracking multi-step work.
+Create and manage a structured task list for tracking multi-step work. This helps you track progress, organize complex tasks, and demonstrate thoroughness to the user.
 
-IMPORTANT: For ANY task with 2+ steps, create a todo list IMMEDIATELY before starting.
+## When to Use This Tool
+Use this tool proactively in these scenarios:
+1. Complex multi-step tasks — When a task requires 3 or more distinct steps
+2. Non-trivial tasks — Tasks requiring careful planning or multiple operations
+3. User provides multiple tasks — When users provide a list of things to be done
+4. After receiving new instructions — Immediately capture requirements as todos
 
-Workflow:
-1. Break task into specific, actionable items
-2. Create list with all items as "pending"
-3. Mark first item "in_progress" and start working
-4. Mark each item "completed" immediately after finishing
-5. Add new subtasks as they emerge
+## When NOT to Use This Tool
+Skip using this tool when:
+1. There is only a single, straightforward task
+2. The task is trivial and tracking provides no benefit
+3. The task can be completed in less than 3 trivial steps
+4. The task is purely conversational or informational
+
+## Task States and Management
 
 Task states: pending, in_progress, completed
-Only ONE task should be in_progress at any time.
+
+IMPORTANT — Task descriptions must have two forms:
+- content: imperative form describing what needs to be done (e.g. "Run tests", "Fix authentication bug")
+- activeForm: present continuous form shown during execution (e.g. "Running tests", "Fixing authentication bug")
+
+Rules:
+- Update task status in real-time as you work
+- Mark tasks complete IMMEDIATELY after finishing (don't batch completions)
+- Exactly ONE task must be in_progress at any time
+- Complete current tasks before starting new ones
+
+Task Completion Requirements:
+- ONLY mark a task as completed when you have FULLY accomplished it
+- If you encounter errors, blockers, or cannot finish, keep the task as in_progress
+- Never mark a task as completed if: tests are failing, implementation is partial, you encountered unresolved errors
 
 Parameters:
-- todos: Array of objects:
-  - content (required): task description in imperative form ("Run tests", "Add validation")
+- todos (required): array of task objects
+  - content (required): task description in imperative form
   - status (required): "pending" | "in_progress" | "completed"
-  - activeForm (optional): present continuous form shown during execution ("Running tests", "Adding validation")
+  - activeForm (required): present continuous form shown during execution

@@ -1,17 +1,25 @@
-Write full file content to a target path. Creates the file and parent directories
-if they do not exist.
+Writes a file to the local filesystem. Creates parent directories automatically.
 
-This is the PRIMARY tool for creating new files. When you need to create a new
-file (code, config, documentation, etc.), use this tool directly with the
-complete file content. Do NOT delegate file creation to `task` — just call
-`write` with the path and content.
+Usage:
+- This tool will overwrite the existing file if there is one at the provided path.
+- If this is an existing file, you MUST use the `read` tool first to read the file's contents.
+- ALWAYS prefer editing existing files with `edit`. NEVER write new files unless explicitly required.
+- NEVER proactively create documentation files (*.md) or README files. Only create documentation if explicitly requested by the user.
+- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.
 
 IMPORTANT:
 - Parent directories are created automatically — no need to `mkdir` first.
-- Always include the COMPLETE file content in a single `write` call.
-  Do NOT split a file across multiple writes or plan to "append later".
+- Always include the COMPLETE file content in a single `write` call. Do NOT split a file across multiple writes or plan to "append later".
 - For reading files, use the `read` tool — never use `bash` with cat/type/Get-Content.
+- Do NOT use `write` when only a small part of an existing file needs to change — use `edit` instead.
+- Do NOT delegate file creation to `task` — just call `write` directly.
 
-Usage:
-- path: relative or absolute file path
-- content: the complete file content to write
+Parameters:
+- path (required): file path (absolute or relative)
+- content (required): the complete file content to write
+
+When to use `write` vs `edit`:
+- New file that doesn't exist yet → `write`
+- Replacing entire file content → `write` (after reading it first)
+- Changing a few lines in an existing file → `edit`
+- Renaming a variable across a file → `edit` with replace_all

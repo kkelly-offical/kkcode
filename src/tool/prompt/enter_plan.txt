@@ -1,19 +1,41 @@
-Enter planning mode before implementing non-trivial tasks.
+Enter planning mode before implementing non-trivial tasks. Getting user sign-off on your approach before writing code prevents wasted effort and ensures alignment.
 
-WHEN TO USE — call enter_plan PROACTIVELY when ANY of these apply:
-- New feature implementation requiring architectural decisions
-- Multiple valid approaches exist and user should choose
-- Changes affect more than 2-3 files
-- The task involves unfamiliar code or unclear requirements
-- Refactoring or restructuring existing code
+## When to Use — call enter_plan PROACTIVELY when ANY of these apply:
 
-WHEN NOT TO USE:
-- Single-line fixes, typo corrections, simple renames
-- Tasks with very specific, detailed user instructions
-- Pure research or exploration (use task with explore subagent instead)
+1. **New Feature Implementation**: Adding meaningful new functionality
+   - Example: "Add a logout button" — where should it go? What should happen on click?
+   - Example: "Add form validation" — what rules? What error messages?
 
-After calling enter_plan:
-1. Outline your plan in your text response
-2. List which files will be created or modified
-3. Call exit_plan to present the plan to the user for approval
-4. Wait for approval before making any code changes
+2. **Multiple Valid Approaches**: The task can be solved in several different ways
+   - Example: "Add caching to the API" — could use Redis, in-memory, file-based, etc.
+   - Example: "Improve performance" — many optimization strategies possible
+
+3. **Code Modifications**: Changes that affect existing behavior or structure
+   - Example: "Update the login flow" — what exactly should change?
+   - Example: "Refactor this component" — what's the target architecture?
+
+4. **Architectural Decisions**: The task requires choosing between patterns or technologies
+
+5. **Multi-File Changes**: The task will likely touch more than 2-3 files
+
+6. **Unclear Requirements**: You need to explore before understanding the full scope
+
+7. **User Preferences Matter**: The implementation could reasonably go multiple ways.
+   If you would use `question` to clarify the approach, use enter_plan instead — it lets you explore first, then present options with context.
+
+## When NOT to Use
+
+Only skip enter_plan for simple tasks:
+- Single-line or few-line fixes (typos, obvious bugs, small tweaks)
+- Adding a single function with clear requirements
+- Tasks where the user has given very specific, detailed instructions
+- Pure research/exploration tasks (use `task` with explore subagent instead)
+
+## After calling enter_plan:
+
+1. Thoroughly explore the codebase using `glob`, `grep`, and `read`
+2. Understand existing patterns and architecture
+3. Design an implementation approach
+4. Present your plan with `exit_plan` for user approval
+5. Use `question` if you need to clarify approaches DURING planning
+6. Wait for approval before making any code changes

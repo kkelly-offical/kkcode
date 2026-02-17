@@ -1,15 +1,17 @@
-Replace text in an existing file. Transactional with automatic rollback.
+Performs exact string replacements in files. Transactional with automatic rollback on failure.
 
-IMPORTANT:
-- You MUST `read` the file first. Edits on unread files are rejected.
-- The `before` string must match EXACTLY in the file.
-- By default, `before` must match exactly ONE location. Include enough context for uniqueness.
-- Set `replace_all: true` to replace ALL occurrences (useful for renaming variables/functions).
+Usage:
+- You must use `read` at least once before editing. This tool will error if you attempt an edit without reading the file.
+- When editing text from `read` output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: spaces + line number + arrow (→). Everything after that arrow is the actual file content to match. Never include any part of the line number prefix in the `before` or `after` strings.
+- ALWAYS prefer editing existing files. NEVER write new files unless explicitly required.
+- Only use emojis if the user explicitly requests it.
+- The edit will FAIL if `before` is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use `replace_all` to change every instance.
+- Use `replace_all` for replacing and renaming strings across the file. This parameter is useful for renaming a variable, function, or class.
 
 Parameters:
 - path (required): file path
-- before (required): exact text to find
-- after (required): replacement text
+- before (required): exact text to find in the file
+- after (required): replacement text (must be different from before)
 - replace_all (optional, default false): replace all occurrences instead of requiring unique match
 
 When to use replace_all:
@@ -17,7 +19,9 @@ When to use replace_all:
 - Changing an import path that appears multiple times
 - Updating a repeated pattern (e.g. changing all "http://" to "https://")
 
-Common mistakes:
+Common mistakes and how to avoid them:
 - Editing without reading first → always `read` before `edit`
-- `before` too short → include surrounding lines for uniqueness
-- Stale content → re-read if edit fails with "not found"
+- `before` too short, matches multiple locations → include surrounding lines for uniqueness
+- Stale content after failed edit → re-read the file, it may have changed
+- Including line number prefixes in `before` → only use actual file content, not the "     1→" prefix
+- Using `edit` for whole-file replacement → use `write` instead for complete rewrites

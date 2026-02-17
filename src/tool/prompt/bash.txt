@@ -1,23 +1,71 @@
-Run a shell command in the workspace directory.
+Executes a shell command in the workspace directory with optional timeout.
 
-CRITICAL — tool selection rules:
-- Read files → use `read` (NEVER cat/head/tail)
+CRITICAL — tool selection rules. Do NOT use `bash` when a dedicated tool exists:
+- Read files → use `read` (NEVER cat/head/tail/type/Get-Content)
 - Search contents → use `grep` (NEVER bash grep/rg)
-- Find files → use `glob` (NEVER bash find/ls)
+- Find files → use `glob` (NEVER bash find/ls/dir)
 - Write files → use `write` (NEVER echo/cat heredoc)
 - Edit files → use `edit` (NEVER sed/awk)
-
-Only use `bash` for: git, npm, pip, docker, make, cargo, go, python, node, etc.
+Only use `bash` for: git, npm, pip, docker, make, cargo, go, python, node, and other system commands.
 
 Parameters:
 - command (required): shell command to execute
-- timeout (optional): timeout in ms, default 120000, max 600000 (10 min)
-- description (optional): human-readable description of what this command does
+- timeout (optional): timeout in ms (default 120000, max 600000)
+- description (optional): human-readable description of what this command does. For simple commands keep it brief (5-10 words). For complex commands (piped commands, obscure flags), add enough context to clarify.
 - run_in_background (optional): run as background task, returns task_id immediately
 
 Rules:
-- Prefer non-destructive commands. Avoid rm -rf, git reset --hard without confirmation.
-- NEVER run long-running/dev-server commands (npm run dev, jest --watch, etc.) in foreground.
-  Use run_in_background: true for long tasks, or tell user to run manually.
+- Always quote file paths that contain spaces with double quotes.
+- NEVER run long-running/dev-server commands in foreground (npm run dev, jest --watch, webpack serve, nodemon, tsc --watch, etc.). Use run_in_background: true or tell user to run manually.
 - Use description to explain non-obvious commands.
-- Use timeout for commands that may take longer than 2 minutes.
+- When issuing multiple independent commands, make multiple bash calls in parallel.
+- When commands depend on each other, chain with && (e.g. `git add . && git commit -m "msg"`).
+- NEVER use interactive flags like -i (e.g. git rebase -i, git add -i) — they require interactive input which is not supported.
+
+# Committing changes with git
+
+Only create commits when requested by the user. If unclear, ask first. When creating a git commit:
+
+1. Run in parallel:
+   - `git status` (NEVER use -uall flag)
+   - `git diff` to see changes
+   - `git log --oneline -5` to follow commit message style
+
+2. Analyze changes and draft a concise commit message focusing on "why" not "what".
+   Do NOT commit files that likely contain secrets (.env, credentials.json, etc.).
+
+3. Stage and commit:
+   - Prefer `git add <specific-files>` over `git add -A` or `git add .`
+   - ALWAYS pass the commit message via a HEREDOC:
+     git commit -m "$(cat <<'EOF'
+     Commit message here.
+
+     Co-Authored-By: kkcode <noreply@kkcode.dev>
+     EOF
+     )"
+   - Run `git status` after commit to verify success
+
+4. Git safety rules:
+   - NEVER update git config
+   - NEVER run destructive commands (push --force, reset --hard, checkout ., clean -f, branch -D) unless user explicitly requests
+   - NEVER skip hooks (--no-verify) unless user explicitly requests
+   - NEVER force push to main/master — warn the user
+   - ALWAYS create NEW commits rather than amending, unless user explicitly asks for amend
+   - When a pre-commit hook fails, the commit did NOT happen — fix the issue, re-stage, create a NEW commit (do NOT --amend)
+   - NEVER commit unless the user explicitly asks
+
+# Creating pull requests
+
+When creating a PR:
+1. Run in parallel: git status, git diff, check remote tracking, git log + git diff <base>...HEAD
+2. Analyze ALL commits and draft PR title (under 70 chars) and summary
+3. Push and create PR:
+   gh pr create --title "title" --body "$(cat <<'EOF'
+   ## Summary
+   <1-3 bullet points>
+
+   ## Test plan
+   - [ ] testing checklist...
+   EOF
+   )"
+4. Return the PR URL
