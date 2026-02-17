@@ -52,6 +52,7 @@ function formatBusyToolDetail(toolName, args) {
     case "read": return args.path ? paint(` ${clipBusy(args.path, 60)}`, null, { dim: true }) : ""
     case "write": return args.path ? paint(` ${clipBusy(args.path, 60)}`, null, { dim: true }) : ""
     case "edit": return args.path ? paint(` ${clipBusy(args.path, 60)}`, null, { dim: true }) : ""
+    case "notebookedit": return args.path ? paint(` ${clipBusy(args.path, 50)} cell ${args.cell_number ?? 0}`, null, { dim: true }) : ""
     case "grep": return args.pattern ? paint(` ${clipBusy(args.pattern, 40)}`, null, { dim: true }) : ""
     case "glob": return args.pattern ? paint(` ${clipBusy(args.pattern, 40)}`, null, { dim: true }) : ""
     case "task": return args.description ? paint(` ${clipBusy(args.description, 50)}`, null, { dim: true }) : ""
@@ -1672,7 +1673,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         : ""
       if (ui.currentActivity.type === "tool") {
         const toolName = ui.currentActivity.tool || "tool"
-        const toolColor = toolName === "edit" || toolName === "write" ? "yellow"
+        const toolColor = toolName === "edit" || toolName === "write" || toolName === "notebookedit" ? "yellow"
           : toolName === "bash" ? "magenta"
           : toolName === "enter_plan" || toolName === "exit_plan" ? "magenta"
           : "cyan"

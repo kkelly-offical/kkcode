@@ -914,7 +914,90 @@ function builtinTools() {
     }
   }
 
-  return [listTool, readTool, writeTool, editTool, multieditTool, globTool, grepTool, bashTool, createTaskTool(), outputTool, cancelTool, todowriteTool, questionTool, skillTool, webfetchTool, websearchTool, codesearchTool, enterPlanTool, exitPlanTool]
+  const notebookeditTool = {
+    name: "notebookedit",
+    description: "Edit a Jupyter notebook (.ipynb) cell. Supports replace, insert, and delete operations on individual cells. Use this instead of `write` when modifying notebooks — it preserves cell metadata and outputs.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: schema("string", "notebook file path (.ipynb)"),
+        cell_number: schema("number", "0-indexed cell number to operate on (default: 0)"),
+        new_source: schema("string", "new cell source content"),
+        cell_type: { type: "string", enum: ["code", "markdown"], description: "cell type (required for insert)" },
+        edit_mode: { type: "string", enum: ["replace", "insert", "delete"], description: "operation type (default: replace)" }
+      },
+      required: ["path", "new_source"]
+    },
+    async execute(args, ctx) {
+      const target = path.resolve(ctx.cwd, args.path)
+      const raw = await readFile(target, "utf8")
+      const notebook = JSON.parse(raw)
+      if (!notebook.cells || !Array.isArray(notebook.cells)) {
+        return "error: not a valid .ipynb file (missing cells array)"
+      }
+      const mode = args.edit_mode || "replace"
+      const cellNum = Number(args.cell_number ?? 0)
+      const source = String(args.new_source ?? "")
+      const sourceLines = source.split("\n").map((line, i, arr) => i < arr.length - 1 ? line + "\n" : line)
+
+      if (mode === "insert") {
+        const cellType = args.cell_type
+        if (!cellType || !["code", "markdown"].includes(cellType)) {
+          return "error: cell_type is required for insert mode (must be 'code' or 'markdown')"
+        }
+        const newCell = {
+          cell_type: cellType,
+          metadata: {},
+          source: sourceLines
+        }
+        if (cellType === "code") {
+          newCell.execution_count = null
+          newCell.outputs = []
+        }
+        const insertAt = cellNum < 0 ? 0 : Math.min(cellNum + 1, notebook.cells.length)
+        notebook.cells.splice(insertAt, 0, newCell)
+      } else if (mode === "delete") {
+        if (cellNum < 0 || cellNum >= notebook.cells.length) {
+          return `error: cell_number ${cellNum} out of range (0-${notebook.cells.length - 1})`
+        }
+        notebook.cells.splice(cellNum, 1)
+      } else {
+        // replace
+        if (cellNum < 0 || cellNum >= notebook.cells.length) {
+          return `error: cell_number ${cellNum} out of range (0-${notebook.cells.length - 1})`
+        }
+        const cell = notebook.cells[cellNum]
+        cell.source = sourceLines
+        if (args.cell_type && args.cell_type !== cell.cell_type) {
+          cell.cell_type = args.cell_type
+          if (args.cell_type === "markdown") {
+            delete cell.execution_count
+            delete cell.outputs
+          } else if (args.cell_type === "code") {
+            cell.execution_count = null
+            cell.outputs = []
+          }
+        }
+      }
+
+      await atomicWriteFile(target, JSON.stringify(notebook, null, 1) + "\n")
+      markFileRead(target)
+      const actionLabel = mode === "insert" ? "inserted" : mode === "delete" ? "deleted" : "replaced"
+      return {
+        output: `${actionLabel} cell ${cellNum} in ${args.path} (${notebook.cells.length} cells total)`,
+        metadata: {
+          fileChanges: [{
+            path: String(args.path || target),
+            tool: "notebookedit",
+            stageId: ctx.stageId || null,
+            taskId: ctx.logicalTaskId || ctx.taskId || null
+          }]
+        }
+      }
+    }
+  }
+
+  return [listTool, readTool, writeTool, editTool, multieditTool, globTool, grepTool, bashTool, createTaskTool(), outputTool, cancelTool, todowriteTool, questionTool, skillTool, webfetchTool, websearchTool, codesearchTool, notebookeditTool, enterPlanTool, exitPlanTool]
 }
 
 function mcpTools() {

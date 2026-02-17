@@ -1,0 +1,21 @@
+Edit a Jupyter notebook (.ipynb) cell. Supports replace, insert, and delete operations.
+
+Parameters:
+- path (required): absolute or relative path to the .ipynb file
+- cell_number (optional): 0-indexed cell number to operate on (default: 0)
+- new_source (required): new cell source content (ignored for delete)
+- cell_type (optional): "code" or "markdown" — required for insert, defaults to existing cell type for replace
+- edit_mode (optional): "replace" (default), "insert", or "delete"
+
+Operations:
+- replace: Replace the source of cell at cell_number with new_source. Preserves cell type unless cell_type is specified.
+- insert: Insert a new cell AFTER cell_number. cell_type is required. If cell_number is -1, inserts at the beginning.
+- delete: Remove the cell at cell_number. new_source is ignored but must be provided.
+
+IMPORTANT:
+- The notebook must be a valid .ipynb JSON file with a "cells" array.
+- cell_number is 0-indexed. The first cell is 0, second is 1, etc.
+- For insert mode, cell_type must be specified ("code" or "markdown").
+- Cell outputs are preserved during replace; cleared only if cell_type changes to "markdown".
+- When inserting code cells, outputs default to an empty array.
+- This tool reads the notebook, modifies the cells array, and writes it back atomically.

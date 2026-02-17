@@ -59,6 +59,12 @@ export function formatToolStart(toolName, args) {
       const filePath = shortPath(args?.path)
       return `${dot} ${name} ${paint(filePath, null, { dim: true })}`
     }
+    case "notebookedit": {
+      const filePath = shortPath(args?.path)
+      const mode = args?.edit_mode || "replace"
+      const cellNum = args?.cell_number ?? 0
+      return `${dot} ${name} ${paint(filePath, null, { dim: true })} ${paint(`cell ${cellNum} (${mode})`, null, { dim: true })}`
+    }
     case "read": {
       const filePath = shortPath(args?.path)
       const range = args?.offset && args?.limit
@@ -138,6 +144,13 @@ export function formatToolFinish(toolName, status, durationMs, args) {
         if (added > 0) parts.push(paint(`+${added}`, "green"))
         if (removed > 0) parts.push(paint(`-${removed}`, "red"))
         summary = `${paint(filePath, null, { dim: true })}\n  ${parts.length ? parts.join(" ") + " lines" : ""}`
+        break
+      }
+      case "notebookedit": {
+        const filePath = shortPath(args?.path)
+        const mode = args?.edit_mode || "replace"
+        const cellNum = args?.cell_number ?? 0
+        summary = `${paint(filePath, null, { dim: true })}\n  ${paint(`${mode} cell ${cellNum}`, "green", { dim: true })}`
         break
       }
       case "read": {
