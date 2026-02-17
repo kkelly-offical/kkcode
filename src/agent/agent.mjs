@@ -127,6 +127,30 @@ defineAgent({
 })
 
 defineAgent({
+  name: "security-reviewer",
+  description: "Security audit specialist. Performs OWASP Top 10 checks, hardcoded secret scans, dependency audits, and authentication/authorization reviews.",
+  mode: "subagent",
+  permission: "readonly",
+  tools: ["read", "glob", "grep", "list", "bash"]
+})
+
+defineAgent({
+  name: "tdd-guide",
+  description: "TDD specialist. Guides and executes test-driven development: scaffold interfaces, write failing tests (RED), implement minimum code (GREEN), refactor (IMPROVE). Targets 80%+ coverage.",
+  mode: "subagent",
+  permission: "full",
+  tools: ["read", "write", "edit", "bash", "glob", "grep", "list"]
+})
+
+defineAgent({
+  name: "build-fixer",
+  description: "Build error diagnosis and repair. Analyzes build failures, identifies root causes, applies fixes, and verifies the build succeeds. Supports TypeScript, Python, Go, Rust, Java.",
+  mode: "subagent",
+  permission: "full",
+  tools: ["read", "write", "edit", "bash", "glob", "grep", "list"]
+})
+
+defineAgent({
   name: "compaction",
   description: "Conversation summarizer for context compression",
   mode: "subagent",

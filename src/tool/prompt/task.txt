@@ -9,6 +9,9 @@ Each task spawns a full, independent LLM session with its own context window. Th
 - **reviewer** — Code review specialist. Use for: finding bugs, logic errors, security vulnerabilities, code quality issues, and adherence to project conventions. Read-only. (Tools: read, glob, grep, list, bash)
 - **researcher** — Deep research agent. Use for: investigating unfamiliar libraries, combining local code analysis with web search, producing research reports with sources. Read-only with web access. (Tools: read, glob, grep, list, bash, websearch, codesearch, webfetch)
 - **guide** — kkcode self-help guide. Use when the user asks "How do I...", "Can kkcode...", "What tool should I use for..." questions about kkcode itself. Searches kkcode source code for accurate answers. Read-only. (Tools: read, glob, grep, list, webfetch, websearch)
+- **security-reviewer** — Security audit specialist. Use for: OWASP Top 10 checks, hardcoded secret scans, dependency audits, authentication/authorization reviews. Read-only. (Tools: read, glob, grep, list, bash)
+- **tdd-guide** — TDD specialist. Use for: guiding test-driven development workflows (scaffold→RED→GREEN→REFACTOR), writing failing tests first, targeting 80%+ coverage. Full access. (Tools: read, write, edit, bash, glob, grep, list)
+- **build-fixer** — Build error resolver. Use for: diagnosing build failures, identifying root causes (type errors, missing imports, dependency conflicts), applying fixes, verifying builds. Full access. (Tools: read, write, edit, bash, glob, grep, list)
 - **(default)** — Full-capability build agent. Use for: complex multi-file changes, refactoring, test writing, any task requiring file mutations.
 
 # When to Use This Tool

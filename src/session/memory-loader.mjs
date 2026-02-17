@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { memoryDir, memoryFilePath, ensureMemoryDir } from "../storage/paths.mjs"
+import { formatInstinctsForPrompt } from "./instinct-manager.mjs"
 
 const MAX_MEMORY_LINES = 200
 
@@ -58,6 +59,16 @@ export async function loadAutoMemory(cwd = process.cwd()) {
     lines.push("", "## MEMORY.md", "", ...truncated)
   } else {
     lines.push("", "## MEMORY.md", "", "Your MEMORY.md is currently empty. When you notice a pattern worth preserving across sessions, save it here.")
+  }
+
+  // Inject learned instincts (high-confidence patterns from previous sessions)
+  try {
+    const instinctBlock = await formatInstinctsForPrompt(cwd, 0.5)
+    if (instinctBlock) {
+      lines.push(instinctBlock)
+    }
+  } catch {
+    // Instinct loading failure is non-critical
   }
 
   return lines.join("\n")

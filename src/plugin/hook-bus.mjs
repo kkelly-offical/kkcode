@@ -1,6 +1,8 @@
 import path from "node:path"
 import { access, readdir } from "node:fs/promises"
-import { pathToFileURL } from "node:url"
+import { pathToFileURL, fileURLToPath } from "node:url"
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const HOOK_EVENTS = [
   "chat.params",
@@ -59,10 +61,13 @@ async function loadModule(file) {
 
 export async function initHookBus(cwd = process.cwd()) {
   if (state.loaded) return state
+  // Built-in hooks ship with kkcode (lowest priority — user hooks can override)
+  const builtinHooks = path.join(__dirname, "builtin-hooks")
   const userRoot = process.env.USERPROFILE || process.env.HOME || cwd
   const userHooks = path.join(userRoot, ".kkcode", "hooks")
   const projectHooks = path.join(cwd, ".kkcode", "hooks")
-  const files = [...(await discover(userHooks)), ...(await discover(projectHooks))]
+  // Load order: builtin → user → project (later hooks in chain take priority)
+  const files = [...(await discover(builtinHooks)), ...(await discover(userHooks)), ...(await discover(projectHooks))]
   for (const file of files) {
     const loaded = await loadModule(file)
     if (loaded.error) {
