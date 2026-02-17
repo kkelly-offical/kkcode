@@ -477,6 +477,18 @@ MEMORY.md 注入系统提示时限制 200 行。Agent 会被指导保持精简�
 
 ---
 
-## 17. License
+## 17. 致谢
+
+kkcode 的设计与实现受到以下优秀开源项目的深刻启发，在此表示衷心感谢：
+
+- **[Claude Code](https://github.com/anthropics/claude-code)** — Anthropic 官方 AI Coding CLI。kkcode 的工具体系、子智能体架构、提示词工程、Auto Memory 等核心设计均以 Claude Code 为标杆进行对齐和扩展。
+- **[OpenCode](https://github.com/nicepkg/opencode)** — 开源终端 AI Coding 助手。kkcode 的多 Provider 支持、主题系统、插件架构等借鉴了 OpenCode 的设计思路。
+- **[Everything Claude Code](https://github.com/affaan-m/everything-claude-code)** — Anthropic x Forum Ventures 黑客松第一名作品。kkcode 的 Instinct 自动学习系统、内置 Hook Recipes（post-edit typecheck/format、strategic compaction）、TDD 工作流、安全审查智能体等能力直接受到该项目的启发。
+
+> 开源社区的创新与分享让每个项目都能站在巨人的肩膀上。以上项目的具体实现和商业细节请以各自官方版本为准。
+
+---
+
+## 18. License
 
 本项目基于 [MIT License](LICENSE) 开源。
