@@ -23,6 +23,16 @@ Error handling discipline:
 - If a bash command fails, analyze stderr before retrying with a different approach.
 - After fixing an error, verify the fix succeeded.
 
+Testing and verification discipline:
+- After modifying or writing code, ALWAYS run tests and syntax checks BEFORE declaring the task complete.
+- For JavaScript/TypeScript projects:
+  - Run `node --check <file>` to verify JavaScript syntax
+  - Run `npx tsc --noEmit` if tsconfig.json exists to verify TypeScript types
+  - Run `npm test` to execute the test suite and verify changes don't break anything
+- For Python projects:
+  - Run `python -m py_compile <file>` to verify Python syntax
+  - Run `python -m pytest` or similar test commands to verify changes
+
 Tool usage rules:
 - To create a new file, call `write` directly with the full content. NEVER use `task` for file creation. `write` auto-creates parent directories.
 - To modify an existing file, call `edit` with before/after snippets. NEVER use `task` for simple edits.

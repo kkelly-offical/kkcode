@@ -2179,8 +2179,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   if (process.stdin.isTTY) process.stdin.setRawMode(true)
   process.stdin.resume()
 
-  // Enable SGR mouse tracking for scroll wheel support
-  process.stdout.write("\x1b[?1000h\x1b[?1006h")
+  // Disable mouse tracking to prevent interference
+  // This allows terminal's native right-click menu and scroll to work properly
+  process.stdout.write("\x1b[?1000l\x1b[?1006l")
 
   paintFrame(buildFrame())
 
@@ -2521,14 +2522,28 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         }
 
         if (key.name === "home") {
-          setCursor(0)
-          requestRender()
+          if (key.ctrl || key.shift) {
+            // Ctrl+Home or Shift+Home: scroll to top of logs
+            scrollToTop()
+            requestRender()
+          } else {
+            // Home: move input cursor to start
+            setCursor(0)
+            requestRender()
+          }
           return
         }
 
         if (key.name === "end") {
-          setCursor(ui.input.length)
-          requestRender()
+          if (key.ctrl || key.shift) {
+            // Ctrl+End or Shift+End: scroll to bottom of logs
+            scrollToBottom()
+            requestRender()
+          } else {
+            // End: move input cursor to end
+            setCursor(ui.input.length)
+            requestRender()
+          }
           return
         }
 
@@ -2572,15 +2587,6 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       }
       onData = async (chunk) => {
         if (ui.quitting) return
-        // SGR mouse wheel: \x1b[<64;col;rowM (wheel up) / \x1b[<65;col;rowM (wheel down)
-        const str = typeof chunk === "string" ? chunk : chunk.toString("utf8")
-        const sgrMatch = str.match(/\x1b\[<(\d+);\d+;\d+[Mm]/)
-        if (sgrMatch) {
-          const btn = Number(sgrMatch[1])
-          if (btn === 64) { scrollBy(3); requestRender() }
-          else if (btn === 65) { scrollBy(-3); requestRender() }
-          return
-        }
         if (ui.busy) return
         if (!hasShiftEnterSequence(chunk)) return
         insertAtCursor("\n")
@@ -2597,8 +2603,6 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       process.on("SIGINT", onSigint)
     })
   } finally {
-    // Disable SGR mouse tracking
-    process.stdout.write("\x1b[?1006l\x1b[?1000l")
     if (renderTimer) clearTimeout(renderTimer)
     stopBusySpinner()
     activityRenderer.stop()

@@ -16,3 +16,73 @@ models:
     output: 10
     cache_read: 0
     cache_write: 0
+  qwen-plus:
+    input: 0.11
+    output: 1.11
+    cache_read: 0.02
+    cache_write: 0
+  qwen-max:
+    input: 0.33
+    output: 1.33
+    cache_read: 0.07
+    cache_write: 0
+  qwen-turbo:
+    input: 0.04
+    output: 0.08
+    cache_read: 0.01
+    cache_write: 0
+  deepseek-v3.2:
+    input: 0.28
+    output: 0.41
+    cache_read: 0.03
+    cache_write: 0.28
+  kimi-k2.5:
+    input: 0.55
+    output: 2.9
+    cache_read: 0
+    cache_write: 0
+  kimi-k2-0905:
+    input: 0.55
+    output: 2.2
+    cache_read: 0.14
+    cache_write: 0
+  qwen3-coder-plus:
+    input: 0.55
+    output: 2.2
+    cache_read: 0.11
+    cache_write: 0
+  qwen3-coder-flash:
+    input: 0.14
+    output: 0.55
+    cache_read: 0.03
+    cache_write: 0
+  doubao-seed-2.0-code:
+    input: 0.44
+    output: 2.2
+    cache_read: 0
+    cache_write: 0
+  doubao-seed-1.8:
+    input: 0.11
+    output: 1.1
+    cache_read: 0
+    cache_write: 0
+  minimax-m2.5:
+    input: 0.29
+    output: 1.16
+    cache_read: 0.03
+    cache_write: 0
+  minimax-m2.5-highspeed:
+    input: 0.58
+    output: 2.32
+    cache_read: 0.03
+    cache_write: 0
+  glm-5:
+    input: 0.55
+    output: 3.05
+    cache_read: 0
+    cache_write: 0
+  glm-4.7:
+    input: 0.41
+    output: 1.93
+    cache_read: 0
+    cache_write: 0

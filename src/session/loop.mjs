@@ -27,6 +27,7 @@ import { createStreamRenderer } from "../theme/markdown.mjs"
 import { paint } from "../theme/color.mjs"
 import { saveCheckpoint } from "./checkpoint.mjs"
 import { askPlanApproval } from "../tool/question-prompt.mjs"
+import { createValidator } from "./task-validator.mjs"
 
 const READ_ONLY_TOOLS = new Set([
   "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch", "background_output", "todowrite", "enter_plan", "exit_plan"
@@ -520,19 +521,30 @@ export async function processTurnLoop({
       continueCount = 0
 
       if (!response.toolCalls?.length) {
-        // Bug 8: nudge if todo items remain incomplete
+        // Enhanced task completion verification
         if (verifyCompletion && nudgeCount < 2) {
-          const incomplete = (toolContext._todoState || []).filter(t => t.status !== "completed")
-          if (incomplete.length > 0) {
-            nudgeCount++
-            const items = incomplete.map(t => `- ${t.content}`).join("\n")
-            await appendMessage(sessionId, "user",
-              `[TASK INCOMPLETE] You indicated completion, but these todo items remain unfinished:\n${items}\nPlease complete them or mark them as completed if done.`,
-              { mode, model, providerType, step, turnId, synthetic: true }
-            )
-            continue
+          try {
+            const validator = await createValidator({ cwd, configState })
+            const validationResult = await validator.validate({
+              todoState: toolContext._todoState
+            })
+            
+            if (!validationResult.passed) {
+              nudgeCount++
+              const validationPrompt = language === "zh"
+                ? `[任务验证失败] 您报告任务已完成，但以下验证失败：\n\n${validationResult.message}\n\n请修复问题后再报告完成。`
+                : `[TASK VERIFICATION FAILED] You indicated completion, but verification failed:\n\n${validationResult.message}\n\nPlease fix the issues before declaring completion.`
+              
+              await appendMessage(sessionId, "user", validationPrompt,
+                { mode, model, providerType, step, turnId, synthetic: true }
+              )
+              continue
+            }
+          } catch (validationError) {
+            sinkWrite(paint(`\n  ⚠ Task validation skipped: ${validationError.message}\n`, "yellow", { dim: true }))
           }
         }
+        
         finalReply = (response.text || "").trim() || "No content returned from provider."
         const assistant = await appendMessage(sessionId, "assistant", finalReply, {
           mode,
