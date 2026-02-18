@@ -8,11 +8,12 @@ import { appendEventLog } from "../storage/event-log.mjs"
 import { EventBus } from "../core/events.mjs"
 import { ToolRegistry } from "../tool/registry.mjs"
 import { resolveAgentForMode } from "../agent/agent.mjs"
+import { estimateStringTokens } from "./compaction.mjs"
 
 let sinkReady = false
 
 function estimateTokens(text) {
-  return Math.max(1, Math.ceil((text || "").length / 4))
+  return Math.max(1, estimateStringTokens(text || ""))
 }
 
 export function resolveMode(inputMode = "agent") {

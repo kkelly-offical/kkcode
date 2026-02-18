@@ -22,7 +22,7 @@ export async function buildContext(options = {}) {
 
   const themeState = await loadTheme(configState, options.themeFile ?? null)
   const cwd = options.cwd ?? process.cwd()
-  const trustState = await checkWorkspaceTrust({ cwd, cliTrust: Boolean(options.trust), isTTY: process.stdin.isTTY })
+  const trustState = options.trustState ?? await checkWorkspaceTrust({ cwd, cliTrust: Boolean(options.trust), isTTY: process.stdin.isTTY })
   return {
     configState,
     themeState,

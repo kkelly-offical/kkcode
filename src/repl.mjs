@@ -2673,9 +2673,13 @@ function startSplash() {
 }
 
 export async function startRepl({ trust = false } = {}) {
+  // Trust check BEFORE splash — readline prompt must not compete with splash screen clearing
+  const { checkWorkspaceTrust } = await import("./permission/workspace-trust.mjs")
+  const trustState = await checkWorkspaceTrust({ cwd: process.cwd(), cliTrust: trust, isTTY: process.stdin.isTTY })
+
   const splash = startSplash()
 
-  const ctx = await buildContext({ trust })
+  const ctx = await buildContext({ trust, trustState })
   printContextWarnings(ctx)
 
   splash.update("loading tools & MCP servers...")

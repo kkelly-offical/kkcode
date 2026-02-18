@@ -24,49 +24,32 @@ function systemWithCacheControl(system) {
   if (!system) return undefined
 
   // Structured format from buildSystemPromptBlocks: { text, blocks }
-  // Place cache breakpoints at natural boundaries for maximum reuse:
-  //   Breakpoint 1: identity (provider + agent + mode) — most stable
-  //   Breakpoint 2: tools description — large, stable within session
-  //   Breakpoint 3: skills — stable within session
-  //   (Breakpoint 4 reserved for last tool definition in mapTools)
+  // Strategy: merge all stable content into ONE block with cache_control,
+  // keeping dynamic content separate. Combined with the tool breakpoint in
+  // mapTools, this gives us 2 breakpoints total — well within the 4-max limit
+  // and ensures the cumulative prefix easily exceeds the minimum cacheable
+  // threshold (4096 tokens for Opus, 1024 for Sonnet).
   if (system.blocks && Array.isArray(system.blocks)) {
-    const groups = { identity: [], tools: [], skills: [], dynamic: [] }
+    const stableParts = []
+    const dynamicParts = []
     for (const block of system.blocks) {
-      if (["provider", "agent", "mode"].includes(block.label)) {
-        groups.identity.push(block.text)
-      } else if (block.label === "tools") {
-        groups.tools.push(block.text)
-      } else if (block.label === "skills") {
-        groups.skills.push(block.text)
+      if (block.label === "dynamic" || block.label === "context") {
+        dynamicParts.push(block.text)
       } else {
-        groups.dynamic.push(block.text)
+        stableParts.push(block.text)
       }
     }
 
     const contentBlocks = []
-    if (groups.identity.length) {
+    if (stableParts.length) {
       contentBlocks.push({
         type: "text",
-        text: groups.identity.join("\n\n"),
+        text: stableParts.join("\n\n"),
         cache_control: { type: "ephemeral" }
       })
     }
-    if (groups.tools.length) {
-      contentBlocks.push({
-        type: "text",
-        text: groups.tools.join("\n\n"),
-        cache_control: { type: "ephemeral" }
-      })
-    }
-    if (groups.skills.length) {
-      contentBlocks.push({
-        type: "text",
-        text: groups.skills.join("\n\n"),
-        cache_control: { type: "ephemeral" }
-      })
-    }
-    if (groups.dynamic.length) {
-      contentBlocks.push({ type: "text", text: groups.dynamic.join("\n\n") })
+    if (dynamicParts.length) {
+      contentBlocks.push({ type: "text", text: dynamicParts.join("\n\n") })
     }
     return contentBlocks.length ? contentBlocks : undefined
   }

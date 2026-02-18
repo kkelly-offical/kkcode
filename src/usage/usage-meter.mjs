@@ -21,12 +21,26 @@ function addUsage(target, delta, cost) {
   target.turns += 1
 }
 
+function todayKey() {
+  return new Date().toISOString().slice(0, 10) // "YYYY-MM-DD"
+}
+
 function defaultStore() {
   return {
     updatedAt: Date.now(),
+    globalDay: todayKey(),
     global: emptyUsage(),
     sessions: {}
   }
+}
+
+function maybeRotateGlobal(store) {
+  const today = todayKey()
+  if (store.globalDay && store.globalDay !== today) {
+    store.global = emptyUsage()
+    store.globalDay = today
+  }
+  if (!store.globalDay) store.globalDay = today
 }
 
 export async function readUsageStore() {
@@ -41,6 +55,7 @@ async function persist(store) {
 
 export async function recordTurn({ sessionId, usage, cost }) {
   const store = await readUsageStore()
+  maybeRotateGlobal(store)
   if (!store.sessions[sessionId]) store.sessions[sessionId] = emptyUsage()
   addUsage(store.sessions[sessionId], usage, cost)
   addUsage(store.global, usage, cost)

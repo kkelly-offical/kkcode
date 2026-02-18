@@ -22,7 +22,7 @@ const DEFAULT_KEEP_RECENT = 6
 const TOOL_RESULT_PREVIEW_LIMIT = 200
 
 // Estimate tokens from a string, accounting for CJK characters (~1.5 chars/token vs ~4 for Latin)
-function estimateStringTokens(str) {
+export function estimateStringTokens(str) {
   if (!str) return 0
   let cjk = 0
   for (let i = 0; i < str.length; i++) {

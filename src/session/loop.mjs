@@ -446,7 +446,10 @@ export async function processTurnLoop({
           limit: contextLimit,
           ratio: contextRatio,
           percent: Math.round(contextRatio * 100),
-          fromCache: false
+          fromCache: false,
+          cacheRead: u.cacheRead || 0,
+          cacheWrite: u.cacheWrite || 0,
+          inputUncached: u.input || 0
         }
       }
 

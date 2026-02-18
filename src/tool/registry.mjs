@@ -72,7 +72,7 @@ async function runGlob(pattern, cwd, searchPath) {
   const escaped = pattern.replace(/"/g, '\\"')
   const target = searchPath ? path.resolve(cwd, searchPath) : "."
   const command = `rg --files --glob "${escaped}" "${target}"`
-  const out = await exec(command, { cwd, timeout: 15000 }).catch((error) => ({
+  const out = await exec(command, { cwd, timeout: 15000, encoding: "utf8" }).catch((error) => ({
     stdout: error.stdout ?? "",
     stderr: error.stderr ?? error.message
   }))
@@ -106,7 +106,7 @@ async function runGrep(pattern, cwd, options = {}) {
   const target = options.path ? `"${path.resolve(cwd, options.path)}"` : "."
   parts.push(escaped, target)
   const command = parts.join(" ")
-  const out = await exec(command, { cwd, timeout: 30000 }).catch((error) => ({
+  const out = await exec(command, { cwd, timeout: 30000, encoding: "utf8" }).catch((error) => ({
     stdout: error.stdout ?? "",
     stderr: error.stderr ?? error.message
   }))
@@ -155,7 +155,7 @@ async function runBash(command, cwd, timeoutMs = BASH_TIMEOUT_MS) {
   if (isLongRunningCommand(command)) {
     return `[blocked] "${command}" looks like a long-running/dev-server command that would block execution. Please tell the user to run it manually in their terminal, or use run_in_background: true.`
   }
-  const out = await exec(command, { cwd, timeout: timeoutMs }).catch((error) => {
+  const out = await exec(command, { cwd, timeout: timeoutMs, encoding: "utf8" }).catch((error) => {
     if (error.killed || error.signal === "SIGTERM") {
       return {
         stdout: error.stdout ?? "",
@@ -546,7 +546,7 @@ function builtinTools() {
           description: args.description || command,
           payload: { command, cwd: ctx.cwd },
           run: async () => {
-            const out = await exec(command, { cwd: ctx.cwd, timeout: 600_000 })
+            const out = await exec(command, { cwd: ctx.cwd, timeout: 600_000, encoding: "utf8" })
               .catch(e => ({ stdout: e.stdout ?? "", stderr: e.stderr ?? e.message }))
             return `${out.stdout || ""}${out.stderr || ""}`.trim() || "(empty output)"
           },
