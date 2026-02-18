@@ -58,6 +58,7 @@ function stageConfig(config = {}) {
     maxConcurrency: Math.max(1, Number(parallel.max_concurrency || 3)),
     taskTimeoutMs: Math.max(1000, Number(parallel.task_timeout_ms || 600000)),
     taskMaxRetries: Math.max(0, Number(parallel.task_max_retries ?? 2)),
+    budgetLimitUsd: Number(parallel.budget_limit_usd || 0),
     passRule: "all_success"
   }
 }
@@ -222,28 +223,16 @@ export async function runStageBarrier({
   const cfg = stageConfig(config)
   const logical = new Map()
 
-  // File isolation check: detect overlapping file ownership across tasks
+  // File isolation check: overlapping files = plan bug, fail-fast
   const overlaps = checkFileIsolation(stage.tasks || [])
   if (overlaps.length > 0) {
-    for (const overlap of overlaps) {
-      await EventBus.emit({
-        type: EVENT_TYPES.LONGAGENT_STAGE_STARTED,
-        sessionId,
-        payload: {
-          warning: `File "${overlap.file}" is claimed by multiple tasks: ${overlap.tasks.join(", ")}. Assigning to first task only.`,
-          stageId: stage.stageId
-        }
-      })
-    }
-    // Resolve overlaps: first task wins
-    const assigned = new Set()
-    for (const task of stage.tasks || []) {
-      task.plannedFiles = normalizeFiles(task.plannedFiles).filter((file) => {
-        if (assigned.has(file)) return false
-        assigned.add(file)
-        return true
-      })
-    }
+    const details = overlaps.map((o) => `"${o.file}" claimed by [${o.tasks.join(", ")}]`).join("; ")
+    await EventBus.emit({
+      type: EVENT_TYPES.LONGAGENT_STAGE_STARTED,
+      sessionId,
+      payload: { error: `File isolation violation in stage ${stage.stageId}: ${details}`, stageId: stage.stageId }
+    })
+    throw new Error(`Stage ${stage.stageId}: file isolation violation — ${details}. Fix the plan to avoid overlapping file ownership.`)
   }
 
   for (const task of stage.tasks || []) {
@@ -294,36 +283,26 @@ export async function runStageBarrier({
 
     let activeCount = [...logical.values()].filter((item) => item.status === "running").length
     if (activeCount < cfg.maxConcurrency) {
+      const toLaunch = []
       for (const task of stage.tasks || []) {
         const item = logical.get(task.taskId)
-        if (!item) continue
-        if (item.backgroundTaskId) continue
+        if (!item || item.backgroundTaskId) continue
         if (!["pending", "retrying"].includes(item.status)) continue
-        if (activeCount >= cfg.maxConcurrency) break
+        if (activeCount + toLaunch.length >= cfg.maxConcurrency) break
         item.attempt += 1
         item.status = "running"
         if (item.attempt > 1) {
-          item.prompt = retryPrompt(
-            task.prompt,
-            item.remainingFiles,
-            item.attempt,
-            item.lastError
-          )
+          item.prompt = retryPrompt(task.prompt, item.remainingFiles, item.attempt, item.lastError)
         }
-        item.backgroundTaskId = await launchTask({
-          stage,
-          task,
-          logicalTask: item,
-          config,
-          sessionId,
-          model,
-          providerType,
-          objective,
-          stageIndex,
-          stageCount,
-          allTasks: stage.tasks || []
-        })
-        activeCount += 1
+        toLaunch.push({ task, item })
+      }
+      if (toLaunch.length > 0) {
+        const bgIds = await Promise.all(toLaunch.map(({ task, item }) =>
+          launchTask({ stage, task, logicalTask: item, config, sessionId, model, providerType, objective, stageIndex, stageCount, allTasks: stage.tasks || [] })
+        ))
+        for (let i = 0; i < toLaunch.length; i++) {
+          toLaunch[i].item.backgroundTaskId = bgIds[i]
+        }
       }
     }
 
@@ -365,11 +344,11 @@ export async function runStageBarrier({
         item.status = "completed"
         item.lastError = ""
       } else if (bg.status === "completed" && remainingFromResult.length > 0) {
-        item.status = item.attempt < item.maxRetries ? "retrying" : "error"
+        item.status = item.attempt <= item.maxRetries ? "retrying" : "error"
         item.lastError = "task completed but remaining files still pending"
       } else {
         item.lastError = bg.error || "task failed"
-        item.status = item.attempt < item.maxRetries ? "retrying" : (bg.status === "cancelled" ? "cancelled" : "error")
+        item.status = item.attempt <= item.maxRetries ? "retrying" : (bg.status === "cancelled" ? "cancelled" : "error")
       }
       item.lastReply = String(result.reply || "")
       item.lastCost = Number(result.cost || 0)
@@ -390,7 +369,30 @@ export async function runStageBarrier({
     }
 
     if (pending <= 0) break
-    await sleep(700)
+
+    // Budget circuit breaker: abort remaining tasks if cost exceeds limit
+    if (cfg.budgetLimitUsd > 0) {
+      const spent = [...logical.values()].reduce((s, i) => s + (Number.isFinite(i.lastCost) ? i.lastCost : 0), 0)
+      if (spent >= cfg.budgetLimitUsd) {
+        for (const item of logical.values()) {
+          if (["pending", "retrying"].includes(item.status)) {
+            item.status = "error"
+            item.lastError = `budget limit exceeded ($${spent.toFixed(2)} >= $${cfg.budgetLimitUsd})`
+          }
+          if (item.backgroundTaskId && item.status === "running") {
+            await BackgroundManager.cancel(item.backgroundTaskId).catch(() => {})
+          }
+        }
+        await EventBus.emit({
+          type: EVENT_TYPES.LONGAGENT_ALERT,
+          sessionId,
+          payload: { kind: "budget_breaker", spent, limit: cfg.budgetLimitUsd, stageId: stage.stageId }
+        })
+        break
+      }
+    }
+
+    await sleep(300)
   }
 
   const items = [...logical.values()]

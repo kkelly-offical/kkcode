@@ -155,11 +155,19 @@ async function main() {
   }))
 
   const abortController = new AbortController()
+  const parentPid = process.ppid
   const heartbeatTimer = setInterval(() => {
     patchTask(taskId, () => ({ lastHeartbeatAt: now() })).catch(() => {})
   }, 2000)
 
   const cancelPoll = setInterval(() => {
+    // Orphan detection: if parent process died, self-terminate
+    try { process.kill(parentPid, 0) } catch {
+      if (!abortController.signal.aborted) {
+        abortController.abort(makeAbortError("parent process exited, worker orphaned"))
+      }
+      return
+    }
     readTask(taskId).then((latest) => {
       if (latest?.cancelled && !abortController.signal.aborted) {
         abortController.abort(makeAbortError("cancelled by user"))

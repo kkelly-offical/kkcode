@@ -131,13 +131,41 @@ export function validateAndNormalizeStagePlan(input, { objective = "", defaults 
     }
   }
 
+  // Cross-stage dependency check: later stages should not own files already owned by earlier stages
+  const globalOwnership = new Map()
+  for (const stage of plan.stages) {
+    for (const task of stage.tasks) {
+      for (const file of task.plannedFiles || []) {
+        if (globalOwnership.has(file)) {
+          const prev = globalOwnership.get(file)
+          errors.push(`file "${file}" appears in stage "${prev}" and "${stage.stageId}" — split into dependency chain or deduplicate`)
+        } else {
+          globalOwnership.set(file, stage.stageId)
+        }
+      }
+    }
+  }
+
+  // Quality score: penalize tasks with no files or no acceptance criteria
+  let qualityScore = 100
+  let totalTasks = 0
+  for (const stage of plan.stages) {
+    for (const task of stage.tasks) {
+      totalTasks += 1
+      if (!task.plannedFiles.length) qualityScore -= 15
+      if (!task.acceptance.length) qualityScore -= 10
+    }
+  }
+  qualityScore = Math.max(0, Math.min(100, qualityScore))
+
   if (errors.length) {
     return {
       plan: defaultStagePlan(objective || plan.objective, defaults),
-      errors
+      errors,
+      qualityScore: 0
     }
   }
-  return { plan, errors: [] }
+  return { plan, errors: [], qualityScore }
 }
 
 export async function runIntakeDialogue({
@@ -253,6 +281,14 @@ export async function buildStagePlan({
     "- MUST be machine-verifiable (e.g. 'node --check passes', 'npm test passes', 'function X is exported from Y')",
     "- NEVER use subjective criteria (e.g. 'code quality is good', 'implementation is clean')",
     "",
+    "### Example (2-stage plan)",
+    '{"planId":"plan_ex","objective":"Add user auth","stages":[',
+    '  {"stageId":"s1","name":"Auth core","passRule":"all_success","tasks":[',
+    '    {"taskId":"s1_auth","prompt":"Implement JWT auth middleware...","plannedFiles":["src/auth/jwt.mjs","src/auth/jwt.test.mjs"],"acceptance":["node --check src/auth/jwt.mjs passes","npm test -- auth passes"],"timeoutMs":600000,"maxRetries":2}',
+    '  ]},{"stageId":"s2","name":"Auth routes","passRule":"all_success","tasks":[',
+    '    {"taskId":"s2_routes","prompt":"Add login/register routes using auth from s1...","plannedFiles":["src/routes/auth.mjs","src/routes/auth.test.mjs"],"acceptance":["node --check passes","npm test passes"],"timeoutMs":600000,"maxRetries":2}',
+    "  ]}]}",
+    "",
     `## Objective`,
     objective,
     intakeSummary ? `\n## Intake Summary\n${intakeSummary}` : ""
@@ -274,10 +310,14 @@ export async function buildStagePlan({
   })
 
   const parsed = parseJsonLoose(out.reply)
-  const { plan, errors } = validateAndNormalizeStagePlan(parsed, { objective, defaults })
-  return {
-    plan,
-    errors,
-    rawReply: out.reply
+  if (!parsed) {
+    return {
+      plan: defaultStagePlan(objective, defaults),
+      errors: ["planner returned unparseable response — falling back to single-stage plan"],
+      qualityScore: 0,
+      rawReply: out.reply
+    }
   }
+  const { plan, errors, qualityScore } = validateAndNormalizeStagePlan(parsed, { objective, defaults })
+  return { plan, errors, qualityScore, rawReply: out.reply }
 }

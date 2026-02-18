@@ -876,28 +876,35 @@ async function runParallelLongAgent({
 
   // --- Git: final commit + merge back to base branch ---
   if (gitActive && gitBaseBranch && gitBranch) {
-    await git.commitAll(`[kkcode] longagent session ${sessionId} completed`, cwd)
-    if (gitConfig.auto_merge !== false) {
-      const doneState = await LongAgentManager.get(sessionId)
-      if (doneState?.status === "completed") {
-        await git.checkoutBranch(gitBaseBranch, cwd)
-        const mergeResult = await git.mergeBranch(gitBranch, cwd)
-        if (mergeResult.ok) {
-          await git.deleteBranch(gitBranch, cwd)
-          gateStatus.git = { ...gateStatus.git, merged: true, mergeMessage: mergeResult.message }
-          await EventBus.emit({
-            type: EVENT_TYPES.LONGAGENT_GIT_MERGED,
-            sessionId,
-            payload: { branch: gitBranch, baseBranch: gitBaseBranch, merged: true }
-          })
-        } else {
-          gateStatus.git = { ...gateStatus.git, merged: false, mergeError: mergeResult.message }
-          const rollback = await git.checkoutBranch(gitBranch, cwd)
-          if (!rollback.ok) {
-            gateStatus.git = { ...gateStatus.git, rollbackFailed: true, rollbackError: rollback.message }
+    try {
+      await git.commitAll(`[kkcode] longagent session ${sessionId} completed`, cwd)
+      if (gitConfig.auto_merge !== false) {
+        const doneState = await LongAgentManager.get(sessionId)
+        if (doneState?.status === "completed") {
+          await git.checkoutBranch(gitBaseBranch, cwd)
+          const mergeResult = await git.mergeBranch(gitBranch, cwd)
+          if (mergeResult.ok) {
+            await git.deleteBranch(gitBranch, cwd)
+            gateStatus.git = { ...gateStatus.git, merged: true, mergeMessage: mergeResult.message }
+            await EventBus.emit({
+              type: EVENT_TYPES.LONGAGENT_GIT_MERGED,
+              sessionId,
+              payload: { branch: gitBranch, baseBranch: gitBaseBranch, merged: true }
+            })
+          } else {
+            gateStatus.git = { ...gateStatus.git, merged: false, mergeError: mergeResult.message }
+            // Rollback: return to feature branch so user can resolve manually
+            const rollback = await git.checkoutBranch(gitBranch, cwd)
+            if (!rollback.ok) {
+              gateStatus.git = { ...gateStatus.git, rollbackFailed: true, rollbackError: rollback.message }
+            }
           }
         }
       }
+    } catch (gitErr) {
+      gateStatus.git = { ...gateStatus.git, error: gitErr.message }
+      // Best-effort: try to return to feature branch
+      try { await git.checkoutBranch(gitBranch, cwd) } catch { /* already on it or unrecoverable */ }
     }
   }
 

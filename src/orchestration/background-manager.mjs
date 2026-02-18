@@ -46,16 +46,26 @@ async function saveTask(task) {
   return task
 }
 
-async function patchTask(id, updater) {
-  const current = await loadTask(id)
-  if (!current) return null
-  const next = {
-    ...current,
-    ...updater(current),
-    updatedAt: now()
+async function patchTask(id, updater, { maxRetries = 3 } = {}) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const current = await loadTask(id)
+    if (!current) return null
+    const next = {
+      ...current,
+      ...updater(current),
+      _version: (current._version || 0) + 1,
+      updatedAt: now()
+    }
+    // Optimistic lock: re-read and verify version before write
+    const check = await loadTask(id)
+    if (check && (check._version || 0) !== (current._version || 0)) {
+      if (attempt < maxRetries) continue // version changed, retry
+      // Last attempt: write anyway to avoid deadlock
+    }
+    await saveTask(next)
+    return next
   }
-  await saveTask(next)
-  return next
+  return null
 }
 
 async function listTaskIds() {
