@@ -94,6 +94,7 @@ export function calculateCost(pricing, model, usage) {
       (usage.cacheRead || 0) * (entry.cache_read || 0) +
       (usage.cacheWrite || 0) * (entry.cache_write || 0)) /
     per
+  const savings = ((usage.cacheRead || 0) * ((entry.input || 0) - (entry.cache_read || 0))) / per
   const unknown = !findPricingEntry(pricing.models, model)
-  return { amount, unknown, currency: pricing.currency }
+  return { amount, savings, unknown, currency: pricing.currency }
 }

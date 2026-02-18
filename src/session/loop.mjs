@@ -135,6 +135,7 @@ export async function processTurnLoop({
   const cwd = process.cwd()
   const turnId = newId("turn")
   const maxSteps = Math.max(1, Number(configState.config.agent.max_steps || 25))
+  const verifyCompletion = configState.config.agent?.verify_completion !== false
   const recoveryEnabled = isRecoveryEnabled(configState.config)
   const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   const toolEvents = []
@@ -250,6 +251,7 @@ export async function processTurnLoop({
 
   const MAX_CONTINUES = 3
   let continueCount = 0
+  let nudgeCount = 0
   let finalReply = ""
   const sinkWrite = typeof output?.write === "function"
     ? output.write
@@ -517,6 +519,19 @@ export async function processTurnLoop({
       continueCount = 0
 
       if (!response.toolCalls?.length) {
+        // Bug 8: nudge if todo items remain incomplete
+        if (verifyCompletion && nudgeCount < 2) {
+          const incomplete = (toolContext._todoState || []).filter(t => t.status !== "completed")
+          if (incomplete.length > 0) {
+            nudgeCount++
+            const items = incomplete.map(t => `- ${t.content}`).join("\n")
+            await appendMessage(sessionId, "user",
+              `[TASK INCOMPLETE] You indicated completion, but these todo items remain unfinished:\n${items}\nPlease complete them or mark them as completed if done.`,
+              { mode, model, providerType, step, turnId, synthetic: true }
+            )
+            continue
+          }
+        }
         finalReply = (response.text || "").trim() || "No content returned from provider."
         const assistant = await appendMessage(sessionId, "assistant", finalReply, {
           mode,

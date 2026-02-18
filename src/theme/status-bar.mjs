@@ -47,6 +47,7 @@ export function renderStatusBar({
   tokenMeter,
   aggregation = ["turn", "session", "global"],
   cost,
+  savings = 0,
   showCost = true,
   showTokenMeter = true,
   contextMeter = null,
@@ -79,7 +80,8 @@ export function renderStatusBar({
     )
   }
   if (showCost) {
-    segments.push(badge(`COST ${formatCost(cost)}`, contrastText(theme.semantic.warn), theme.semantic.warn, { bold: false }))
+    const savingsStr = savings > 0 ? ` ↓${formatCost(savings)}` : ""
+    segments.push(badge(`COST ${formatCost(cost)}${savingsStr}`, contrastText(theme.semantic.warn), theme.semantic.warn, { bold: false }))
   }
   if (contextMeter && Number.isFinite(contextMeter.percent)) {
     const pct = Math.max(0, Math.min(100, Math.round(contextMeter.percent)))

@@ -882,7 +882,7 @@ async function processInputLine({
       mode: state.mode, model: state.model,
       permission: ctx.configState.config.permission.default_policy,
       tokenMeter: result.tokenMeter, aggregation: ctx.configState.config.usage.aggregation,
-      cost: result.cost, contextMeter: result.context,
+      cost: result.cost, savings: result.costSavings, contextMeter: result.context,
       showCost: ctx.configState.config.ui.status.show_cost,
       showTokenMeter: ctx.configState.config.ui.status.show_token_meter,
       theme: ctx.themeState.theme, layout: ctx.configState.config.ui.layout,
@@ -894,7 +894,7 @@ async function processInputLine({
       const mdEnabled = ctx.configState.config.ui?.markdown_render !== false
       print(mdEnabled ? renderMarkdown(result.reply) : result.reply)
     }
-    return { exit: false, turnResult: { tokenMeter: result.tokenMeter, cost: result.cost, context: result.context, longagent: result.longagent, toolEvents: result.toolEvents } }
+    return { exit: false, turnResult: { tokenMeter: result.tokenMeter, cost: result.cost, costSavings: result.costSavings, context: result.context, longagent: result.longagent, toolEvents: result.toolEvents } }
   }
 
   // /create-skill — AI generates a new skill from description
@@ -1028,6 +1028,7 @@ async function processInputLine({
     tokenMeter: result.tokenMeter,
     aggregation: ctx.configState.config.usage.aggregation,
     cost: result.cost,
+    savings: result.costSavings,
     contextMeter: result.context,
     showCost: ctx.configState.config.ui.status.show_cost,
     showTokenMeter: ctx.configState.config.ui.status.show_token_meter,
@@ -1136,6 +1137,7 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
       tokenMeter: lastTurn.tokenMeter,
       aggregation: ctx.configState.config.usage.aggregation,
       cost: lastTurn.cost,
+      savings: lastTurn.costSavings,
       contextMeter: lastTurn.context,
       showCost: ctx.configState.config.ui.status.show_cost,
       showTokenMeter: ctx.configState.config.ui.status.show_token_meter,
@@ -1366,8 +1368,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           estimated: true,
           turn: { input: u.input || 0, output: u.output || 0 }
         }
-        // rough cost estimate: $15/M input, $75/M output (opus-class)
-        ui.metrics.cost = ((u.input || 0) * 15 + (u.output || 0) * 75) / 1_000_000
+        // rough cost estimate: opus-class rates with cache differentiation
+        ui.metrics.cost = ((u.input || 0) * 15 + (u.output || 0) * 75 + (u.cacheRead || 0) * 1.5 + (u.cacheWrite || 0) * 18.75) / 1_000_000
         if (payload.context) ui.metrics.context = payload.context
         requestRender()
         break
@@ -1652,6 +1654,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       tokenMeter: ui.metrics.tokenMeter,
       aggregation: ctx.configState.config.usage.aggregation,
       cost: ui.metrics.cost,
+      savings: ui.metrics.costSavings,
       contextMeter: ui.metrics.context,
       showCost: ctx.configState.config.ui.status.show_cost,
       showTokenMeter: ctx.configState.config.ui.status.show_token_meter,
@@ -2074,6 +2077,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       if (action.turnResult) {
         ui.metrics.tokenMeter = action.turnResult.tokenMeter || ui.metrics.tokenMeter
         ui.metrics.cost = Number.isFinite(action.turnResult.cost) ? action.turnResult.cost : ui.metrics.cost
+        ui.metrics.costSavings = action.turnResult.costSavings ?? 0
         ui.metrics.context = action.turnResult.context || null
         ui.metrics.longagent = action.turnResult.longagent || null
         ui.metrics.toolEvents = action.turnResult.toolEvents || []
