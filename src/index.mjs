@@ -21,8 +21,9 @@ import { createAuditCommand } from "./commands/audit.mjs"
 import { startRepl } from "./repl.mjs"
 
 async function main() {
-  if (process.argv.length <= 2) {
-    await startRepl()
+  const hasTrust = process.argv.includes("--trust")
+  if (process.argv.length <= 2 || (process.argv.length === 3 && hasTrust)) {
+    await startRepl({ trust: hasTrust })
     return
   }
 

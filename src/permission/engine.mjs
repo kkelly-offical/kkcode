@@ -5,12 +5,15 @@ import { evaluatePermission } from "./rules.mjs"
 import { askPermissionInteractive } from "./prompt.mjs"
 
 const sessionAllow = new Map()
+let workspaceTrusted = true
 
 function cacheKey(tool, pattern) {
   return `${tool}::${pattern || "*"}`
 }
 
 export const PermissionEngine = {
+  setTrusted(value) { workspaceTrusted = Boolean(value) },
+  isTrusted() { return workspaceTrusted },
   clearSession(sessionId) {
     sessionAllow.delete(sessionId)
   },
@@ -18,6 +21,7 @@ export const PermissionEngine = {
     return [...(sessionAllow.get(sessionId) || new Set())]
   },
   async check({ config, sessionId, tool, mode, pattern = "*", command = "", risk = 0, reason = "" }) {
+    if (!workspaceTrusted) throw new PermissionError("workspace not trusted — run /trust to enable tools")
     const key = cacheKey(tool, pattern)
     const set = sessionAllow.get(sessionId)
     if (set?.has(key)) {

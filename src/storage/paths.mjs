@@ -38,6 +38,10 @@ export function usageStorePath() {
   return path.join(userRootDir(), "usage.json")
 }
 
+export function trustFilePath(cwd = process.cwd()) {
+  return path.join(projectRootDir(cwd), "trust.json")
+}
+
 export function reviewStorePath(cwd = process.cwd()) {
   return path.join(projectRootDir(cwd), "review-state.json")
 }
