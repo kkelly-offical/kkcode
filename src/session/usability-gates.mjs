@@ -10,6 +10,25 @@ import { EVENT_TYPES } from "../core/constants.mjs"
 const DEFAULT_GATE_TIMEOUT_MS = 15 * 60 * 1000
 const GATE_PREFS_FILE = path.join(homedir(), ".kkcode", "gate-preferences.json")
 
+// --- Gate result cache (5-min TTL, only caches passing results) ---
+const gateCache = new Map()
+const GATE_CACHE_TTL_MS = 5 * 60 * 1000
+
+function getCachedGate(key) {
+  const entry = gateCache.get(key)
+  if (!entry) return null
+  if (Date.now() - entry.ts > GATE_CACHE_TTL_MS) { gateCache.delete(key); return null }
+  return entry.result
+}
+
+function setCachedGate(key, result) {
+  if (result.status === "pass" || result.status === "not_applicable") {
+    gateCache.set(key, { result, ts: Date.now() })
+  }
+}
+
+export function clearGateCache() { gateCache.clear() }
+
 // --- Gate preference persistence ---
 let cachedPrefs = null
 
@@ -163,6 +182,7 @@ async function runCommand({ command, args, cwd, timeoutMs = DEFAULT_GATE_TIMEOUT
 }
 
 async function checkBuildGate({ cwd, config }) {
+  const cached = getCachedGate("build"); if (cached) return cached
   if (!isEnabled(config, "build")) {
     return { enabled: false, status: "disabled", reason: "build gate disabled" }
   }
@@ -179,7 +199,8 @@ async function checkBuildGate({ cwd, config }) {
     cwd
   })
   if (result.ok) {
-    return { enabled: true, status: "pass", reason: "build succeeded" }
+    const r = { enabled: true, status: "pass", reason: "build succeeded" }
+    setCachedGate("build", r); return r
   }
   return {
     enabled: true,
@@ -190,6 +211,7 @@ async function checkBuildGate({ cwd, config }) {
 }
 
 async function checkTestGate({ cwd, config }) {
+  const cached = getCachedGate("test"); if (cached) return cached
   if (!isEnabled(config, "test")) {
     return { enabled: false, status: "disabled", reason: "test gate disabled" }
   }
@@ -219,7 +241,8 @@ async function checkTestGate({ cwd, config }) {
   }
 
   if (result.ok) {
-    return { enabled: true, status: "pass", reason: "tests succeeded" }
+    const r = { enabled: true, status: "pass", reason: "tests succeeded" }
+    setCachedGate("test", r); return r
   }
   return {
     enabled: true,
@@ -230,6 +253,7 @@ async function checkTestGate({ cwd, config }) {
 }
 
 async function checkReviewGate({ cwd, config, sessionId }) {
+  const cached = getCachedGate("review"); if (cached) return cached
   if (!isEnabled(config, "review")) {
     return { enabled: false, status: "disabled", reason: "review gate disabled" }
   }
@@ -253,16 +277,19 @@ async function checkReviewGate({ cwd, config, sessionId }) {
       output: pending.slice(0, 5).map((item) => item.path).join(", ")
     }
   }
-  return { enabled: true, status: "pass", reason: "all review items approved" }
+  const r = { enabled: true, status: "pass", reason: "all review items approved" }
+  setCachedGate("review", r); return r
 }
 
 async function checkHealthGate({ config }) {
+  const cached = getCachedGate("health"); if (cached) return cached
   if (!isEnabled(config, "health")) {
     return { enabled: false, status: "disabled", reason: "health gate disabled" }
   }
   const report = await fsckSessionStore()
   if (report.ok) {
-    return { enabled: true, status: "pass", reason: "session fsck passed" }
+    const r = { enabled: true, status: "pass", reason: "session fsck passed" }
+    setCachedGate("health", r); return r
   }
   return {
     enabled: true,
@@ -273,6 +300,7 @@ async function checkHealthGate({ config }) {
 }
 
 async function checkBudgetGate({ config, sessionId }) {
+  const cached = getCachedGate("budget"); if (cached) return cached
   if (!isEnabled(config, "budget")) {
     return { enabled: false, status: "disabled", reason: "budget gate disabled" }
   }
@@ -298,7 +326,8 @@ async function checkBudgetGate({ config, sessionId }) {
       output: budgetState.warnings.join(" | ")
     }
   }
-  return { enabled: true, status: "pass", reason: "budget gate passed" }
+  const r = { enabled: true, status: "pass", reason: "budget gate passed" }
+  setCachedGate("budget", r); return r
 }
 
 function isPassingStatus(status) {
@@ -311,13 +340,14 @@ export async function runUsabilityGates({
   cwd = process.cwd(),
   iteration = 0
 }) {
-  const checks = {
-    build: await checkBuildGate({ cwd, config }),
-    test: await checkTestGate({ cwd, config }),
-    review: await checkReviewGate({ cwd, config, sessionId }),
-    health: await checkHealthGate({ config }),
-    budget: await checkBudgetGate({ config, sessionId })
-  }
+  const [build, test, review, health, budget] = await Promise.all([
+    checkBuildGate({ cwd, config }),
+    checkTestGate({ cwd, config }),
+    checkReviewGate({ cwd, config, sessionId }),
+    checkHealthGate({ config }),
+    checkBudgetGate({ config, sessionId })
+  ])
+  const checks = { build, test, review, health, budget }
 
   for (const [gate, result] of Object.entries(checks)) {
     await EventBus.emit({

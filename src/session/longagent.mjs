@@ -684,21 +684,20 @@ async function runParallelLongAgent({
     }
 
     stageIndex += 1
-    if (checkpointInterval > 0 && iteration % checkpointInterval === 0) {
-      await saveCheckpoint(sessionId, {
-        name: `stage_${stage.stageId}`,
-        iteration,
-        currentPhase,
-        currentGate,
-        recoveryCount,
-        gateStatus,
-        taskProgress,
-        stageIndex,
-        stagePlan,
-        planFrozen,
-        lastProgress
-      })
-    }
+    // Always checkpoint after each stage for reliable recovery
+    await saveCheckpoint(sessionId, {
+      name: `stage_${stage.stageId}`,
+      iteration,
+      currentPhase,
+      currentGate,
+      recoveryCount,
+      gateStatus,
+      taskProgress,
+      stageIndex,
+      stagePlan,
+      planFrozen,
+      lastProgress
+    })
   }
 
   if (stagePlan && stageIndex >= stagePlan.stages.length) {

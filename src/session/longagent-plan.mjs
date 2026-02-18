@@ -118,6 +118,17 @@ export function validateAndNormalizeStagePlan(input, { objective = "", defaults 
   if (!plan.stages.length) errors.push("no stages")
   for (const stage of plan.stages) {
     if (!stage.tasks.length) errors.push(`stage "${stage.stageId}" has no tasks`)
+    // Early file isolation check — detect overlapping file ownership at plan time
+    const ownership = new Map()
+    for (const task of stage.tasks) {
+      for (const file of task.plannedFiles || []) {
+        if (ownership.has(file)) {
+          errors.push(`stage "${stage.stageId}": file "${file}" claimed by "${ownership.get(file)}" and "${task.taskId}"`)
+        } else {
+          ownership.set(file, task.taskId)
+        }
+      }
+    }
   }
 
   if (errors.length) {
