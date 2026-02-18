@@ -2,6 +2,8 @@ import { requestProvider } from "../provider/router.mjs"
 import { getConversationHistory, replaceMessages } from "./store.mjs"
 import { HookBus } from "../plugin/hook-bus.mjs"
 import { saveCheckpoint } from "./checkpoint.mjs"
+import { recordTurn } from "../usage/usage-meter.mjs"
+import { loadPricing, calculateCost } from "../usage/pricing.mjs"
 
 const COMPACTION_SYSTEM = `You are a conversation summarizer. Your task is to create a concise summary of the conversation so far to reduce context size while preserving critical information.
 
@@ -19,19 +21,44 @@ const DEFAULT_THRESHOLD_RATIO = 0.7
 const DEFAULT_KEEP_RECENT = 6
 const TOOL_RESULT_PREVIEW_LIMIT = 200
 
+// Estimate tokens from a string, accounting for CJK characters (~1.5 chars/token vs ~4 for Latin)
+function estimateStringTokens(str) {
+  if (!str) return 0
+  let cjk = 0
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i)
+    if ((code >= 0x4E00 && code <= 0x9FFF) || (code >= 0x3000 && code <= 0x30FF) ||
+        (code >= 0xAC00 && code <= 0xD7AF)) cjk++
+  }
+  const latin = str.length - cjk
+  return Math.ceil(latin / 4 + cjk / 1.5)
+}
+
+const MSG_OVERHEAD = 4 // ~4 tokens per message for role/metadata
+
 export function estimateTokenCount(messages) {
-  let chars = 0
+  let tokens = 0
   for (const msg of messages) {
+    tokens += MSG_OVERHEAD
     const content = msg.content
     if (Array.isArray(content)) {
       for (const block of content) {
-        chars += (block.text || block.content || "").length
+        if (block.type === "image") {
+          tokens += 1600 // conservative estimate for a typical image
+        } else if (block.type === "tool_use") {
+          tokens += estimateStringTokens(block.name || "")
+          tokens += estimateStringTokens(JSON.stringify(block.input || {}))
+        } else if (block.type === "tool_result") {
+          tokens += estimateStringTokens(String(block.content || ""))
+        } else {
+          tokens += estimateStringTokens(block.text || block.content || "")
+        }
       }
     } else {
-      chars += (content || "").length
+      tokens += estimateStringTokens(content || "")
     }
   }
-  return Math.ceil(chars / 4)
+  return tokens
 }
 
 /**
@@ -69,9 +96,14 @@ export function pruneForSummary(messages, previewLimit = TOOL_RESULT_PREVIEW_LIM
 export function modelContextLimit(model) {
   const m = String(model || "").toLowerCase()
   if (m.includes("gpt-5")) return 272000
+  if (m.includes("o3")) return 200000
+  if (m.includes("o1")) return 200000
   if (m.includes("claude-opus-4")) return 200000
   if (m.includes("claude-3-5") || m.includes("claude-3.5")) return 200000
   if (m.includes("claude")) return 200000
+  if (m.includes("gemini-2")) return 1048576
+  if (m.includes("gemini-1.5")) return 1048576
+  if (m.includes("gemini")) return 128000
   if (m.includes("gpt-4o")) return 128000
   if (m.includes("gpt-4")) return 128000
   if (m.includes("gpt-3.5")) return 16000
@@ -137,6 +169,7 @@ export async function compactSession({
   if (hookPayload?.skip) return { compacted: false, reason: "skipped by hook" }
 
   let summaryText
+  let compactionUsage = null
   try {
     const response = await requestProvider({
       configState,
@@ -149,6 +182,7 @@ export async function compactSession({
       apiKeyEnv
     })
     summaryText = (response.text || "").trim()
+    compactionUsage = response.usage || null
   } catch (error) {
     return { compacted: false, reason: `compaction LLM call failed: ${error.message}` }
   }
@@ -161,6 +195,15 @@ export async function compactSession({
     content: `<compaction-summary>\n${summaryText}\n</compaction-summary>`
   }
   await replaceMessages(sessionId, [summaryMessage, ...kept])
+
+  // Record compaction LLM usage so it's not "invisible"
+  if (compactionUsage) {
+    try {
+      const { pricing } = await loadPricing(configState)
+      const { amount } = calculateCost(pricing, model, compactionUsage)
+      await recordTurn({ sessionId, usage: compactionUsage, cost: amount })
+    } catch { /* best-effort */ }
+  }
 
   await saveCheckpoint(sessionId, {
     kind: "compaction",
