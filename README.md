@@ -39,6 +39,8 @@
 - 专项子智能体：`explore`（代码探索）、`reviewer`（代码审查）、`researcher`（深度研究+Web 搜索）。
 - 持久记忆：Auto Memory 系统跨会话保存项目知识和用户偏好。
 - 风险治理：权限询问、审查队列、预算门禁、审计日志。
+- 多模态输入：支持本地图片和远程图片 URL 引用（`@path`、`@url`）。
+- 灵活配置：模型上下文窗口、扩展思考、自定义 Provider 均可通过配置文件调整。
 - 团队定制：自定义 commands/skills/agents/tools/plugins/MCP。
 
 ---
@@ -329,7 +331,7 @@ TUI 底部状态栏实时显示：
 
 - **MODE**：当前模式（ask/plan/agent/longagent）
 - **TOKENS**：Turn/Session/Global 三层 token 用量
-- **COST**：累计费用
+- **COST**：累计费用（含缓存节省额，如 `COST $0.04 ↓$0.03`）
 - **CONTEXT**：上下文窗口占用百分比（85%+ 红色告警）
 - **MEM**：Auto Memory 已加载（仅在记忆存在时显示）
 - **PERMISSION**：当前权限策略
@@ -344,7 +346,7 @@ TUI 底部状态栏实时显示：
 - `Enter` 发送
 - `Shift+Enter` / `Ctrl+J` 换行
 - `Tab` 模式轮换
-- `Ctrl+V` 粘贴剪贴板图片
+- `Ctrl+V` 粘贴剪贴板图片（也支持输入中 `@图片路径` 或 `@图片URL` 引用）
 - `PgUp/PgDn` 历史滚动
 - `Esc` 清空输入
 - `Ctrl+L` 清空活动区
@@ -367,6 +369,12 @@ provider:
     base_url: https://api.anthropic.com/v1
     api_key_env: ANTHROPIC_API_KEY
     default_model: claude-opus-4-6
+    context_limit: null            # 上下文窗口（null = 内置默认值）
+    thinking:                      # 扩展思考（null = 关闭）
+      type: enabled
+      budget_tokens: 10000
+  model_context:                   # 按模型名覆盖上下文窗口
+    deepseek-chat: 128000
 
 agent:
   default_mode: agent

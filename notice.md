@@ -103,6 +103,8 @@ provider:
     retry_attempts: 3
     retry_base_delay_ms: 800
     stream: true
+    context_limit: null          # 上下文窗口大小（null = 使用内置默认值）
+    thinking: null               # 扩展思考配置（null = 关闭）
   anthropic:
     base_url: https://api.anthropic.com/v1
     api_key_env: ANTHROPIC_API_KEY
@@ -114,6 +116,10 @@ provider:
     retry_attempts: 3
     retry_base_delay_ms: 800
     stream: true
+    context_limit: null          # 上下文窗口大小（null = 使用内置默认值）
+    thinking:                    # 扩展思考（Anthropic extended thinking）
+      type: enabled
+      budget_tokens: 10000       # 思考预算 token 数
   ollama:
     base_url: http://localhost:11434
     api_key_env: ""
@@ -124,6 +130,11 @@ provider:
     retry_attempts: 1
     retry_base_delay_ms: 1000
     stream: true
+    context_limit: null
+    thinking: null
+  model_context:                 # 按模型名覆盖上下文窗口大小
+    deepseek-chat: 128000
+    qwen-max: 128000
 
 agent:
   default_mode: agent           # 启动默认模式: ask | plan | agent | longagent
@@ -597,7 +608,26 @@ Agent 在执行过程中可以主动进入规划模式：
 
 ---
 
-## 12. Auto Memory（持久记忆）
+## 12. 图片引用
+
+在输入中引用图片，支持本地文件和远程 URL 两种方式：
+
+| 语法 | 说明 | 示例 |
+|------|------|------|
+| `@路径` | 本地图片文件 | `@screenshot.png`、`@./img/demo.jpg` |
+| `@"带空格路径"` | 含空格的本地路径 | `@"my files/screenshot.png"` |
+| `@URL` | 远程图片 URL | `@https://example.com/img.png` |
+| `@"URL"` | 带引号的远程 URL | `@"https://example.com/my image.png"` |
+| 裸路径 | 自动识别本地图片路径 | `./img/demo.png` |
+| 裸 URL | 自动识别远程图片 URL | `https://example.com/img.png` |
+
+支持的图片格式：`png`、`jpg/jpeg`、`gif`、`webp`、`bmp`、`svg`
+
+> 图片会被 base64 编码后作为多模态内容发送给模型。远程图片有 15 秒超时和 20MB 大小限制。
+
+---
+
+## 13. Auto Memory（持久记忆）
 
 kkcode 为每个项目维护独立的持久记忆，跨会话保存项目知识和用户偏好。
 
@@ -639,7 +669,7 @@ kkcode 为每个项目维护独立的持久记忆，跨会话保存项目知识�
 
 ---
 
-## 13. 环境变量
+## 14. 环境变量
 
 | 变量 | 说明 |
 |------|------|
@@ -651,7 +681,7 @@ kkcode 为每个项目维护独立的持久记忆，跨会话保存项目知识�
 
 ---
 
-## 14. 快速上手
+## 15. 快速上手
 
 ```bash
 # 1. 设置 API Key
