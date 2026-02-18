@@ -2,6 +2,10 @@ import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { paint } from "../theme/color.mjs"
 
+let _theme = null
+function diffAdd() { return _theme?.components?.diff_add || "green" }
+function diffDel() { return _theme?.components?.diff_del || "red" }
+
 // ── Symbols ──────────────────────────────────────────────
 export const SYM = {
   dot: "●",
@@ -213,7 +217,7 @@ export function formatToolResultPreview(toolName, output, status, args) {
       const preview = contentLines.slice(0, 4)
       const result = []
       for (const line of preview) {
-        result.push(`  ${paint("+", "green", { bold: true })} ${paint(clipText(line, 90), "green", { dim: true })}`)
+        result.push(`  ${paint("+", diffAdd(), { bold: true })} ${paint(clipText(line, 90), diffAdd(), { dim: true })}`)
       }
       if (contentLines.length > 4) {
         result.push(`  ${paint(`... +${contentLines.length - 4} more lines`, null, { dim: true })}`)
@@ -228,10 +232,10 @@ export function formatToolResultPreview(toolName, output, status, args) {
         const oldLines = String(args.old_string).split("\n")
         const showOld = oldLines.slice(0, 3)
         for (const line of showOld) {
-          result.push(`  ${paint("-", "red", { bold: true })} ${paint(clipText(line, 90), "red", { dim: true })}`)
+          result.push(`  ${paint("-", diffDel(), { bold: true })} ${paint(clipText(line, 90), diffDel(), { dim: true })}`)
         }
         if (oldLines.length > 3) {
-          result.push(`  ${paint(`  ... -${oldLines.length - 3} more`, "red", { dim: true })}`)
+          result.push(`  ${paint(`  ... -${oldLines.length - 3} more`, diffDel(), { dim: true })}`)
         }
       }
       // Show added lines
@@ -239,10 +243,10 @@ export function formatToolResultPreview(toolName, output, status, args) {
         const newLines = String(args.new_string).split("\n")
         const showNew = newLines.slice(0, 3)
         for (const line of showNew) {
-          result.push(`  ${paint("+", "green", { bold: true })} ${paint(clipText(line, 90), "green", { dim: true })}`)
+          result.push(`  ${paint("+", diffAdd(), { bold: true })} ${paint(clipText(line, 90), diffAdd(), { dim: true })}`)
         }
         if (newLines.length > 3) {
-          result.push(`  ${paint(`  ... +${newLines.length - 3} more`, "green", { dim: true })}`)
+          result.push(`  ${paint(`  ... +${newLines.length - 3} more`, diffAdd(), { dim: true })}`)
         }
       }
       return result
@@ -385,7 +389,8 @@ export function formatPlanProgress(taskProgress) {
 
 // ── Renderer ─────────────────────────────────────────────
 
-export function createActivityRenderer({ output }) {
+export function createActivityRenderer({ output, theme = null }) {
+  _theme = theme
   const log = typeof output?.appendLog === "function"
     ? output.appendLog
     : (text) => console.log(text)

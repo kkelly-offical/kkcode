@@ -123,7 +123,10 @@ export function renderStatusBar({
       parts.push(`I:${iter}`)
     }
     if (!tight && longagentState.progress?.percentage !== null && longagentState.progress?.percentage !== undefined) {
-      parts.push(`${longagentState.progress.percentage}%`)
+      const pct = longagentState.progress.percentage
+      const barW = dense ? 8 : 14
+      const filled = Math.round(barW * pct / 100)
+      parts.push(`${"█".repeat(filled)}${"░".repeat(barW - filled)} ${pct}%`)
     }
     if (!dense && longagentState.elapsed !== undefined) {
       const m = Math.floor(longagentState.elapsed / 60)

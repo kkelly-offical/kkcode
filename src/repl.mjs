@@ -27,6 +27,7 @@ import { EVENT_TYPES } from "./core/constants.mjs"
 import { extractImageRefs, buildContentBlocks, readClipboardImage, readClipboardText } from "./tool/image-util.mjs"
 import { generateSkill, saveSkillGlobal } from "./skill/generator.mjs"
 import { userConfigCandidates, projectConfigCandidates, memoryFilePath } from "./storage/paths.mjs"
+import { persistTrust, revokeTrust } from "./permission/workspace-trust.mjs"
 
 const HIST_DIR = join(homedir(), ".kkcode")
 const HIST_FILE = join(HIST_DIR, "repl_history")
@@ -85,6 +86,8 @@ const BUILTIN_SLASH = [
   { name: "longagent", desc: "switch to longagent mode" },
   { name: "create-skill", desc: "generate a new skill via AI" },
   { name: "create-agent", desc: "generate a new sub-agent via AI" },
+  { name: "trust", desc: "trust this workspace" },
+  { name: "untrust", desc: "revoke workspace trust" },
   { name: "exit", desc: "quit" }
 ]
 
@@ -689,6 +692,19 @@ async function processInputLine({
     return { exit: false }
   }
 
+  if (["/trust"].includes(normalized)) {
+    await persistTrust(process.cwd())
+    PermissionEngine.setTrusted(true)
+    print("workspace trusted")
+    return { exit: false }
+  }
+  if (["/untrust"].includes(normalized)) {
+    await revokeTrust(process.cwd())
+    PermissionEngine.setTrusted(false)
+    print("workspace trust revoked — tools are now blocked")
+    return { exit: false }
+  }
+
   if (["/new", "/n"].includes(normalized)) {
     state.sessionId = newSessionId()
     print(`new session: ${state.sessionId}`)
@@ -1102,6 +1118,7 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
   if (hint) console.log(`${hint}\n`)
 
   const lineActivityRenderer = createActivityRenderer({
+    theme: ctx.themeState.theme,
     output: {
       appendLog: (text) => console.log(text),
       appendStreamChunk: (chunk) => process.stdout.write(chunk)
@@ -1319,6 +1336,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   const activityRenderer = createActivityRenderer({
+    theme: ctx.themeState.theme,
     output: { appendLog, appendStreamChunk }
   })
   activityRenderer.start()
@@ -1806,7 +1824,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           const done = qId in ui.questionAnswers
           const isCurrent = i === ui.questionIndex
           const marker = done ? "✓" : " "
-          tabBar += isCurrent ? `[${marker}Q${i + 1}]` : ` ${marker}Q${i + 1} `
+          const tabLabel = (questions[i].header || `Q${i + 1}`).slice(0, 12)
+          tabBar += isCurrent ? `[${marker}${tabLabel}]` : ` ${marker}${tabLabel} `
           if (i < qCount - 1) tabBar += " "
         }
         questionLines.push(paint(`│ ${padRight(tabBar, Math.max(1, width - 5))}│`, ctx.themeState.theme.base.fg))
@@ -1842,13 +1861,15 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           } else {
             marker = active ? "●" : "○"
           }
-          const desc = opt.description ? ` - ${opt.description}` : ""
-          const optLine = ` ${prefix} ${marker} ${opt.label}${desc}`
+          const optLine = ` ${prefix} ${marker} ${opt.label}`
           questionLines.push(
             active
               ? paint(`│${padRight(optLine, Math.max(1, width - 5))}│`, "#111111", { bg: ctx.themeState.theme.semantic.info, bold: true })
               : paint(`│${padRight(optLine, Math.max(1, width - 5))}│`, ctx.themeState.theme.base.fg)
           )
+          if (opt.description) {
+            questionLines.push(paint(`│${padRight(`       ${opt.description}`, Math.max(1, width - 5))}│`, ctx.themeState.theme.base.muted))
+          }
         }
         // Custom option
         if (currentQ.allowCustom !== false) {
@@ -1872,7 +1893,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
       // Footer
       questionLines.push(paint(`│${"─".repeat(Math.max(1, width - 4))}│`, ctx.themeState.theme.base.border))
-      const footerText = `Answered: ${answered}/${qCount}  [Ctrl+Enter submit all]`
+      const multiCount = currentQ.multi ? (ui.questionMultiSelected[currentQ.id] || new Set()).size : 0
+      const multiHint = currentQ.multi && multiCount > 0 ? `  (${multiCount} selected)` : ""
+      const footerText = `Answered: ${answered}/${qCount}${multiHint}  [Ctrl+Enter submit all]`
       questionLines.push(paint(`│ ${padRight(footerText, Math.max(1, width - 5))}│`, ctx.themeState.theme.base.muted))
       questionLines.push(paint(`└${"─".repeat(Math.max(1, width - 4))}┘`, ctx.themeState.theme.base.border))
     }
@@ -2649,10 +2672,10 @@ function startSplash() {
   }
 }
 
-export async function startRepl() {
+export async function startRepl({ trust = false } = {}) {
   const splash = startSplash()
 
-  const ctx = await buildContext()
+  const ctx = await buildContext({ trust })
   printContextWarnings(ctx)
 
   splash.update("loading tools & MCP servers...")
@@ -2702,6 +2725,11 @@ export async function startRepl() {
   const recentSessions = await listSessions({ cwd: process.cwd(), limit: 6, includeChildren: false }).catch(() => [])
 
   splash.stop()
+
+  PermissionEngine.setTrusted(ctx.trustState?.trusted !== false)
+  if (!ctx.trustState?.trusted) {
+    console.log(paint("  ⚠ workspace not trusted — tools are blocked. Run /trust to enable.", ctx.themeState.theme.semantic.warning))
+  }
 
   if (process.stdout.isTTY && process.stdin.isTTY) {
     await startTuiRepl({
