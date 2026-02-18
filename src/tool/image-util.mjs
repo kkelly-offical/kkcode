@@ -36,25 +36,41 @@ export function mimeType(filePath) {
 /**
  * Extract image file references from user input text.
  * Supports:
- *   @path/to/image.png  (explicit)
+ *   @path/to/image.png  (explicit file)
+ *   @https://example.com/image.png  (explicit URL)
  *   Bare paths ending in image extensions
- * Returns { text, imagePaths } where text has image refs removed.
+ *   Bare http(s) URLs ending in image extensions
+ * Returns { text, imagePaths, imageUrls } where text has image refs removed.
  */
 export function extractImageRefs(text, cwd = process.cwd()) {
   const raw = String(text || "")
   const imagePaths = []
+  const imageUrls = []
 
-  // Match @"path" or @path (with or without quotes)
+  // Match @"url" or @url for http(s) URLs with image extensions
+  const atUrlPattern = /@"(https?:\/\/[^"]+\.(png|jpe?g|gif|webp|bmp|svg)(?:\?[^"]*)?)"|@(https?:\/\/\S+\.(png|jpe?g|gif|webp|bmp|svg)(?:\?\S*)?)/gi
+  let cleaned = raw.replace(atUrlPattern, (match, quoted, _e1, bare, _e2) => {
+    const ref = quoted || bare
+    if (ref) imageUrls.push(ref)
+    return ""
+  })
+
+  // Match @"path" or @path (with or without quotes) for local files
   const atPattern = /@"([^"]+\.(png|jpe?g|gif|webp|bmp|svg))"|@(\S+\.(png|jpe?g|gif|webp|bmp|svg))/gi
-  let cleaned = raw.replace(atPattern, (match, quoted, _e1, bare, _e2) => {
+  cleaned = cleaned.replace(atPattern, (match, quoted, _e1, bare, _e2) => {
     const ref = quoted || bare
     if (ref) imagePaths.push(path.resolve(cwd, ref))
     return ""
   })
 
+  // Bare http(s) URLs ending in image extensions
+  const bareUrlPattern = /https?:\/\/\S+\.(png|jpe?g|gif|webp|bmp|svg)(?:\?\S*)?/gi
+  cleaned = cleaned.replace(bareUrlPattern, (match) => {
+    if (!imageUrls.includes(match)) imageUrls.push(match)
+    return ""
+  })
+
   // Also detect bare absolute/relative paths ending in image extensions
-  // Windows: C:\path\to\file.png or D:/path/file.jpg
-  // Unix: /path/to/file.png or ./relative/file.png
   const barePattern = /(?:(?:[A-Za-z]:[\\\/]|[.\/\\])[\w\-.\\/: ]*?\.(png|jpe?g|gif|webp|bmp|svg))/gi
   cleaned = cleaned.replace(barePattern, (match) => {
     const trimmed = match.trim()
@@ -68,7 +84,8 @@ export function extractImageRefs(text, cwd = process.cwd()) {
 
   return {
     text: cleaned.replace(/\s{2,}/g, " ").trim(),
-    imagePaths
+    imagePaths,
+    imageUrls
   }
 }
 
@@ -174,14 +191,42 @@ export async function readClipboardText() {
   }
 }
 
-export async function buildContentBlocks(text, imagePaths = []) {
-  if (!imagePaths.length) return text
+/**
+ * Fetch a remote image URL and return a content block.
+ * Returns { type: "image_url", url } for provider-native URL support,
+ * or fetches + base64-encodes as fallback.
+ */
+export async function fetchImageUrlAsBlock(url) {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(15000) })
+    if (!response.ok) return { type: "text", text: `[image fetch failed: ${url} (${response.status})]` }
+    const contentType = response.headers.get("content-type") || ""
+    if (!contentType.startsWith("image/")) {
+      return { type: "text", text: `[not an image: ${url} (${contentType})]` }
+    }
+    const buffer = Buffer.from(await response.arrayBuffer())
+    if (buffer.length > MAX_IMAGE_SIZE) {
+      return { type: "text", text: `[image too large: ${url} (${Math.round(buffer.length / 1024 / 1024)}MB)]` }
+    }
+    return { type: "image", path: url, mediaType: contentType.split(";")[0], data: buffer.toString("base64") }
+  } catch (err) {
+    return { type: "text", text: `[image fetch error: ${url} — ${err.message}]` }
+  }
+}
+
+export async function buildContentBlocks(text, imagePaths = [], imageUrls = []) {
+  if (!imagePaths.length && !imageUrls.length) return text
 
   const blocks = []
   if (text) blocks.push({ type: "text", text })
 
   for (const imgPath of imagePaths) {
     const block = await readImageAsBlock(imgPath)
+    if (block) blocks.push(block)
+  }
+
+  for (const url of imageUrls) {
+    const block = await fetchImageUrlAsBlock(url)
     if (block) blocks.push(block)
   }
 

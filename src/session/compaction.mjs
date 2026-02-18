@@ -93,28 +93,41 @@ export function pruneForSummary(messages, previewLimit = TOOL_RESULT_PREVIEW_LIM
   })
 }
 
-export function modelContextLimit(model) {
+const BUILTIN_CONTEXT = {
+  "gpt-5": 272000, "o3": 200000, "o1": 200000,
+  "claude-opus-4": 200000, "claude-3-5": 200000, "claude-3.5": 200000, "claude": 200000,
+  "gemini-2": 1048576, "gemini-1.5": 1048576, "gemini": 128000,
+  "gpt-4o": 128000, "gpt-4": 128000, "gpt-3.5": 16000,
+  "deepseek": 64000, "qwen": 128000
+}
+
+export function modelContextLimit(model, configState = null) {
   const m = String(model || "").toLowerCase()
-  if (m.includes("gpt-5")) return 272000
-  if (m.includes("o3")) return 200000
-  if (m.includes("o1")) return 200000
-  if (m.includes("claude-opus-4")) return 200000
-  if (m.includes("claude-3-5") || m.includes("claude-3.5")) return 200000
-  if (m.includes("claude")) return 200000
-  if (m.includes("gemini-2")) return 1048576
-  if (m.includes("gemini-1.5")) return 1048576
-  if (m.includes("gemini")) return 128000
-  if (m.includes("gpt-4o")) return 128000
-  if (m.includes("gpt-4")) return 128000
-  if (m.includes("gpt-3.5")) return 16000
-  if (m.includes("deepseek")) return 64000
-  if (m.includes("qwen")) return 128000
+  // 1) Check provider-level context_limit for the active provider
+  const providerCfg = configState?.config?.provider
+  if (providerCfg) {
+    // Per-model override from provider.model_context map
+    const mc = providerCfg.model_context
+    if (mc) {
+      if (mc[model]) return mc[model]
+      for (const key of Object.keys(mc)) {
+        if (m.startsWith(key.toLowerCase())) return mc[key]
+      }
+    }
+    // Provider-level context_limit
+    const active = providerCfg[providerCfg.default]
+    if (active?.context_limit > 0) return active.context_limit
+  }
+  // 2) Builtin prefix match
+  for (const [prefix, limit] of Object.entries(BUILTIN_CONTEXT)) {
+    if (m.includes(prefix)) return limit
+  }
   return 128000
 }
 
-export function contextUtilization(messages, model) {
+export function contextUtilization(messages, model, configState = null) {
   const tokens = estimateTokenCount(messages)
-  const limit = modelContextLimit(model)
+  const limit = modelContextLimit(model, configState)
   const ratio = limit > 0 ? Math.min(1, tokens / limit) : 0
   return {
     tokens,
@@ -124,9 +137,9 @@ export function contextUtilization(messages, model) {
   }
 }
 
-export function shouldCompact({ messages, model, thresholdMessages = DEFAULT_THRESHOLD_MESSAGES, thresholdRatio = DEFAULT_THRESHOLD_RATIO }) {
+export function shouldCompact({ messages, model, thresholdMessages = DEFAULT_THRESHOLD_MESSAGES, thresholdRatio = DEFAULT_THRESHOLD_RATIO, configState = null }) {
   if (messages.length >= thresholdMessages) return true
-  const utilization = contextUtilization(messages, model)
+  const utilization = contextUtilization(messages, model, configState)
   return utilization.tokens >= utilization.limit * thresholdRatio
 }
 

@@ -59,6 +59,26 @@ export function validateConfig(config) {
         if (p.retry_attempts !== undefined) checkInt(errors, `provider.${key}.retry_attempts`, p.retry_attempts, 0)
         if (p.retry_base_delay_ms !== undefined) checkInt(errors, `provider.${key}.retry_base_delay_ms`, p.retry_base_delay_ms, 100)
         if (p.stream !== undefined && typeof p.stream !== "boolean") err(errors, `provider.${key}.stream`, "must be boolean")
+        if (p.context_limit !== undefined && p.context_limit !== null) {
+          if (!Number.isInteger(p.context_limit) || p.context_limit < 1024) err(errors, `provider.${key}.context_limit`, "must be integer >= 1024 or null")
+        }
+        if (p.thinking !== undefined && p.thinking !== null) {
+          if (!isObj(p.thinking)) err(errors, `provider.${key}.thinking`, "must be object or null")
+          else {
+            if (p.thinking.type !== undefined && typeof p.thinking.type !== "string") err(errors, `provider.${key}.thinking.type`, "must be string")
+            if (p.thinking.budget_tokens !== undefined) {
+              if (!Number.isInteger(p.thinking.budget_tokens) || p.thinking.budget_tokens < 0) err(errors, `provider.${key}.thinking.budget_tokens`, "must be integer >= 0")
+            }
+          }
+        }
+      }
+      if (config.provider.model_context !== undefined) {
+        if (!isObj(config.provider.model_context)) err(errors, "provider.model_context", "must be object")
+        else {
+          for (const [mk, mv] of Object.entries(config.provider.model_context)) {
+            if (!Number.isInteger(mv) || mv < 1024) err(errors, `provider.model_context.${mk}`, "must be integer >= 1024")
+          }
+        }
       }
     }
   }

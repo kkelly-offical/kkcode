@@ -133,7 +133,8 @@ export async function requestProvider({
     retry: {
       attempts: Number(providerCfg.retry_attempts || 3),
       baseDelayMs: Number(providerCfg.retry_base_delay_ms || 800)
-    }
+    },
+    thinking: providerCfg.thinking || null
   }
 
   const provider = registry.get(settings.providerType)
@@ -193,6 +194,7 @@ export async function* requestProviderStream({
       attempts: Number(providerCfg.retry_attempts || 3),
       baseDelayMs: Number(providerCfg.retry_base_delay_ms || 800)
     },
+    thinking: providerCfg.thinking || null,
     signal
   }
 

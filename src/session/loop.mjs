@@ -282,7 +282,7 @@ export async function processTurnLoop({
       } else if (contextCachePoint) {
         contextCachePoint = null
       }
-      const contextLimit = modelContextLimit(model)
+      const contextLimit = modelContextLimit(model, configState)
       const contextRatio = contextLimit > 0 ? Math.min(1, contextTokens / contextLimit) : 0
       lastContextMeter = {
         tokens: contextTokens,
@@ -322,7 +322,8 @@ export async function processTurnLoop({
         messages: normalizedHistory,
         model,
         thresholdMessages,
-        thresholdRatio
+        thresholdRatio,
+        configState
       })) {
           const compactResult = await compactSession({
             sessionId, model, providerType, configState, baseUrl, apiKeyEnv
@@ -330,7 +331,7 @@ export async function processTurnLoop({
           if (compactResult.compacted) {
             await EventBus.emit({ type: EVENT_TYPES.SESSION_COMPACTED, sessionId, turnId, payload: compactResult })
             history = await getConversationHistory(sessionId, Number(configState.config.session.max_history || 30))
-            const compactedMeter = contextUtilization(history.map(normalizeMessageForCache), model)
+            const compactedMeter = contextUtilization(history.map(normalizeMessageForCache), model, configState)
             lastContextMeter = { ...compactedMeter, fromCache: false }
             contextCachePoint = {
               messages: history.map(normalizeMessageForCache),
@@ -441,7 +442,7 @@ export async function processTurnLoop({
       const u = response.usage || {}
       const totalInput = (u.input || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0)
       if (totalInput > 0) {
-        const contextLimit = modelContextLimit(model)
+        const contextLimit = modelContextLimit(model, configState)
         const contextRatio = contextLimit > 0 ? Math.min(1, totalInput / contextLimit) : 0
         lastContextMeter = {
           tokens: totalInput,

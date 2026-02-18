@@ -553,11 +553,11 @@ export async function collectInput(rl, promptStr) {
 
 async function executePromptTurn({ prompt, state, ctx, streamSink = null, pendingImages = [] }) {
   // Detect image file references in the prompt
-  const { text: cleanedPrompt, imagePaths } = extractImageRefs(prompt, process.cwd())
+  const { text: cleanedPrompt, imagePaths, imageUrls = [] } = extractImageRefs(prompt, process.cwd())
   const effectivePrompt = cleanedPrompt ?? prompt
   let contentBlocks = null
-  if (imagePaths.length || pendingImages.length) {
-    contentBlocks = await buildContentBlocks(effectivePrompt, imagePaths)
+  if (imagePaths.length || imageUrls.length || pendingImages.length) {
+    contentBlocks = await buildContentBlocks(effectivePrompt, imagePaths, imageUrls)
     // buildContentBlocks returns plain string when no file images — normalize to array
     if (typeof contentBlocks === "string") {
       contentBlocks = [{ type: "text", text: contentBlocks }]

@@ -143,6 +143,9 @@ export async function requestAnthropic(input) {
     messages: mapMessages(messages),
     tools: mappedTools.length ? mappedTools : undefined
   }
+  if (input.thinking?.type) {
+    payload.thinking = { type: input.thinking.type, budget_tokens: input.thinking.budget_tokens || 10000 }
+  }
 
   return requestWithRetry({
     attempts: Number(retry.attempts ?? 3),
@@ -199,6 +202,9 @@ export async function* requestAnthropicStream(input) {
     messages: mapMessages(messages),
     tools: mappedTools.length ? mappedTools : undefined,
     stream: true
+  }
+  if (input.thinking?.type) {
+    payload.thinking = { type: input.thinking.type, budget_tokens: input.thinking.budget_tokens || 10000 }
   }
   const attempts = Number(retry.attempts ?? 3)
   const baseDelayMs = Number(retry.baseDelayMs ?? 800)

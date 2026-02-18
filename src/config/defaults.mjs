@@ -10,9 +10,11 @@ export const DEFAULT_CONFIG = {
       timeout_ms: 120000,
       stream_idle_timeout_ms: 120000,
       max_tokens: 32768,
+      context_limit: null,
       retry_attempts: 3,
       retry_base_delay_ms: 800,
-      stream: true
+      stream: true,
+      thinking: null
     },
     anthropic: {
       base_url: "https://api.anthropic.com/v1",
@@ -22,9 +24,11 @@ export const DEFAULT_CONFIG = {
       timeout_ms: 120000,
       stream_idle_timeout_ms: 120000,
       max_tokens: 32768,
+      context_limit: null,
       retry_attempts: 3,
       retry_base_delay_ms: 800,
-      stream: true
+      stream: true,
+      thinking: null
     },
     ollama: {
       base_url: "http://localhost:11434",
@@ -33,10 +37,13 @@ export const DEFAULT_CONFIG = {
       timeout_ms: 300000,
       stream_idle_timeout_ms: 300000,
       max_tokens: 32768,
+      context_limit: null,
       retry_attempts: 1,
       retry_base_delay_ms: 1000,
-      stream: true
-    }
+      stream: true,
+      thinking: null
+    },
+    model_context: {}
   },
   agent: {
     default_mode: "agent",
