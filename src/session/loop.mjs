@@ -433,13 +433,16 @@ export async function processTurnLoop({
 
       addUsage(usage, response.usage || {})
 
-      // Update context meter with real API input tokens (much more accurate than char estimate)
-      const realInput = response.usage?.input || 0
-      if (realInput > 0) {
+      // Update context meter with real API total input tokens
+      // Anthropic: input_tokens is only non-cached portion; total = input + cacheRead + cacheWrite
+      // OpenAI: prompt_tokens is already the total
+      const u = response.usage || {}
+      const totalInput = (u.input || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0)
+      if (totalInput > 0) {
         const contextLimit = modelContextLimit(model)
-        const contextRatio = contextLimit > 0 ? Math.min(1, realInput / contextLimit) : 0
+        const contextRatio = contextLimit > 0 ? Math.min(1, totalInput / contextLimit) : 0
         lastContextMeter = {
-          tokens: realInput,
+          tokens: totalInput,
           limit: contextLimit,
           ratio: contextRatio,
           percent: Math.round(contextRatio * 100),

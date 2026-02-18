@@ -98,12 +98,24 @@ function parseToolCalls(message) {
     })
 }
 
-// Extract flat text from system prompt (handles both string and { text, blocks } format)
-function resolveSystemText(system) {
-  if (!system) return ""
-  if (typeof system === "string") return system
-  if (system.text) return system.text
-  return String(system)
+// Build system messages from structured blocks for optimal prefix caching.
+// OpenAI auto-caches matching prefixes — stable content first, dynamic last.
+function buildSystemMessages(system) {
+  if (!system) return []
+  if (system.blocks && Array.isArray(system.blocks)) {
+    const stable = []
+    const dynamic = []
+    for (const block of system.blocks) {
+      if (block.cacheable) stable.push(block.text)
+      else dynamic.push(block.text)
+    }
+    const msgs = []
+    if (stable.length) msgs.push({ role: "system", content: stable.join("\n\n") })
+    if (dynamic.length) msgs.push({ role: "system", content: dynamic.join("\n\n") })
+    return msgs
+  }
+  const text = typeof system === "string" ? system : system.text || String(system)
+  return text ? [{ role: "system", content: text }] : []
 }
 
 function timeoutSignal(ms, parentSignal = null) {
@@ -122,7 +134,7 @@ export async function requestOpenAI(input) {
 
   const payload = {
     model,
-    messages: [{ role: "system", content: resolveSystemText(system) }, ...mapMessages(messages)],
+    messages: [...buildSystemMessages(system), ...mapMessages(messages)],
     tools: mapTools(tools),
     tool_choice: tools?.length ? "auto" : undefined,
     ...(maxTokens ? { max_tokens: maxTokens } : {})
@@ -157,10 +169,12 @@ export async function requestOpenAI(input) {
 
       const json = await response.json()
       const message = json?.choices?.[0]?.message ?? {}
+      const promptTokens = json?.usage?.prompt_tokens ?? 0
+      const cachedTokens = json?.usage?.prompt_tokens_details?.cached_tokens ?? 0
       const usage = {
-        input: json?.usage?.prompt_tokens ?? 0,
+        input: promptTokens - cachedTokens,
         output: json?.usage?.completion_tokens ?? 0,
-        cacheRead: json?.usage?.prompt_tokens_details?.cached_tokens ?? 0,
+        cacheRead: cachedTokens,
         cacheWrite: 0
       }
       const toolCalls = parseToolCalls(message)
@@ -180,7 +194,7 @@ export async function* requestOpenAIStream(input) {
 
   const payload = {
     model,
-    messages: [{ role: "system", content: resolveSystemText(system) }, ...mapMessages(messages)],
+    messages: [...buildSystemMessages(system), ...mapMessages(messages)],
     tools: mapTools(tools),
     tool_choice: tools?.length ? "auto" : undefined,
     ...(maxTokens ? { max_tokens: maxTokens } : {}),
@@ -238,14 +252,11 @@ export async function* requestOpenAIStream(input) {
     try { json = JSON.parse(data) } catch { continue }
 
     if (json.usage) {
+      const pt = json.usage.prompt_tokens ?? 0
+      const ct = json.usage.prompt_tokens_details?.cached_tokens ?? 0
       yield {
         type: "usage",
-        usage: {
-          input: json.usage.prompt_tokens ?? 0,
-          output: json.usage.completion_tokens ?? 0,
-          cacheRead: json.usage.prompt_tokens_details?.cached_tokens ?? 0,
-          cacheWrite: 0
-        }
+        usage: { input: pt - ct, output: json.usage.completion_tokens ?? 0, cacheRead: ct, cacheWrite: 0 }
       }
     }
 
