@@ -639,6 +639,7 @@ function builtinTools() {
             properties: {
               id: schema("string", "unique question identifier"),
               text: schema("string", "question text"),
+              header: schema("string", "short label for tab chip (max 12 chars)"),
               description: schema("string", "supplementary description (optional)"),
               options: {
                 type: "array",

@@ -35,8 +35,8 @@ export async function askQuestionInteractive({ questions }) {
       if (options.length) {
         for (let i = 0; i < options.length; i++) {
           const opt = options[i]
-          const desc = opt.description ? ` - ${opt.description}` : ""
-          console.log(`    ${i + 1}. ${opt.label}${desc}`)
+          console.log(`    ${i + 1}. ${opt.label}`)
+          if (opt.description) console.log(`       ${opt.description}`)
         }
         if (q.allowCustom !== false) {
           console.log(`    ${options.length + 1}. Custom...`)
