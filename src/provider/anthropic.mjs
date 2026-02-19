@@ -97,7 +97,7 @@ function mapContentBlock(block) {
 }
 
 function mapMessages(messages) {
-  return messages.map((message) => {
+  const mapped = messages.map((message) => {
     const role = message.role === "assistant" ? "assistant" : "user"
     const content = message.content
     if (Array.isArray(content)) {
@@ -105,6 +105,19 @@ function mapMessages(messages) {
     }
     return { role, content: String(content || "") }
   })
+  // Add cache_control to last user message for multi-turn caching
+  for (let i = mapped.length - 1; i >= 0; i--) {
+    if (mapped[i].role === "user") {
+      const c = mapped[i].content
+      if (Array.isArray(c) && c.length) {
+        c[c.length - 1].cache_control = { type: "ephemeral" }
+      } else if (typeof c === "string") {
+        mapped[i].content = [{ type: "text", text: c, cache_control: { type: "ephemeral" } }]
+      }
+      break
+    }
+  }
+  return mapped
 }
 
 function parseContentBlocks(content) {
@@ -157,8 +170,7 @@ export async function requestAnthropic(input) {
         headers: {
           "content-type": "application/json",
           "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "anthropic-beta": "prompt-caching-2024-07-31"
+          "anthropic-version": "2023-06-01"
         },
         body: JSON.stringify(payload),
         signal: timeoutSignal(timeoutMs, signal)
@@ -226,8 +238,7 @@ export async function* requestAnthropicStream(input) {
         headers: {
           "content-type": "application/json",
           "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "anthropic-beta": "prompt-caching-2024-07-31"
+          "anthropic-version": "2023-06-01"
         },
         body: JSON.stringify(payload),
         signal: fetchSignal
