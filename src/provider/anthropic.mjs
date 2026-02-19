@@ -152,6 +152,7 @@ export async function requestAnthropic(input) {
   const payload = {
     model,
     max_tokens: maxTokens,
+    metadata: { user_id: "kkcode" },
     system: systemWithCacheControl(system),
     messages: mapMessages(messages),
     tools: mappedTools.length ? mappedTools : undefined
@@ -212,6 +213,7 @@ export async function* requestAnthropicStream(input) {
   const payload = {
     model,
     max_tokens: maxTokens,
+    metadata: { user_id: "kkcode" },
     system: systemWithCacheControl(system),
     messages: mapMessages(messages),
     tools: mappedTools.length ? mappedTools : undefined,
