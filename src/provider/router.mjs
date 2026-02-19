@@ -1,4 +1,4 @@
-import { requestAnthropic, requestAnthropicStream } from "./anthropic.mjs"
+import { requestAnthropic, requestAnthropicStream, countTokensAnthropic } from "./anthropic.mjs"
 import { requestOpenAI, requestOpenAIStream } from "./openai.mjs"
 import { request as requestOAICompat, requestStream as requestStreamOAICompat } from "./openai-compatible.mjs"
 import { requestOllama, requestOllamaStream } from "./ollama.mjs"
@@ -24,7 +24,7 @@ export function getProvider(name) {
 
 // Built-in providers
 registerProvider("openai", { request: requestOpenAI, requestStream: requestOpenAIStream })
-registerProvider("anthropic", { request: requestAnthropic, requestStream: requestAnthropicStream })
+registerProvider("anthropic", { request: requestAnthropic, requestStream: requestAnthropicStream, countTokens: countTokensAnthropic })
 registerProvider("openai-compatible", { request: requestOAICompat, requestStream: requestStreamOAICompat })
 registerProvider("ollama", { request: requestOllama, requestStream: requestOllamaStream })
 
@@ -207,4 +207,20 @@ export async function* requestProviderStream({
   } catch (error) {
     throw normalizeProviderError(error, settings.providerType, settings.model)
   }
+}
+
+// --- Token Counting (Anthropic only, returns null for other providers) ---
+export async function countTokensProvider({
+  configState, providerType, model, system, messages, tools,
+  baseUrl = null, apiKeyEnv = null
+}) {
+  const resolvedProviderType = providerType || configState.config.provider.default
+  const settings = resolveSettings(configState, resolvedProviderType, { model, baseUrl, apiKeyEnv })
+  const provider = registry.get(settings.providerType)
+  if (!provider?.countTokens) return null
+  const apiKey = process.env[settings.apiKeyEnv] || ""
+  return provider.countTokens({
+    apiKey, baseUrl: settings.baseUrl, model: settings.model,
+    system, messages, tools
+  })
 }

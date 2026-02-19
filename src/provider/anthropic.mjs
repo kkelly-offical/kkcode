@@ -200,6 +200,36 @@ export async function requestAnthropic(input) {
   })
 }
 
+export async function countTokensAnthropic(input) {
+  const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 10000 } = input
+  if (!apiKey) return null
+  const endpoint = `${baseUrl.replace(/\/$/, "")}/messages/count_tokens`
+  const mappedTools = mapTools(tools)
+  const payload = {
+    model,
+    system: systemWithCacheControl(system),
+    messages: mapMessages(messages),
+    tools: mappedTools.length ? mappedTools : undefined
+  }
+  try {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01"
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(timeoutMs)
+    })
+    if (!res.ok) return null
+    const json = await res.json()
+    return json?.input_tokens ?? null
+  } catch {
+    return null
+  }
+}
+
 export async function* requestAnthropicStream(input) {
   const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 120000, streamIdleTimeoutMs = 120000, maxTokens = 16384, retry = {}, signal = null } = input
   if (!apiKey) {

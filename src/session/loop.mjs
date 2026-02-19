@@ -1,7 +1,7 @@
 import { newId } from "../core/types.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
-import { requestProviderStream } from "../provider/router.mjs"
+import { requestProviderStream, countTokensProvider } from "../provider/router.mjs"
 import { ToolRegistry } from "../tool/registry.mjs"
 import { executeTool } from "../tool/executor.mjs"
 import { PermissionEngine } from "../permission/engine.mjs"
@@ -276,7 +276,16 @@ export async function processTurnLoop({
       const normalizedHistory = history.map(normalizeMessageForCache)
       let contextTokens = estimateTokenCount(normalizedHistory)
       let contextFromCache = false
-      if (contextCachePoint && isPrefixMessages(contextCachePoint.messages, normalizedHistory)) {
+
+      // Use real token counting API when available (includes system + tools + messages)
+      const realCount = await countTokensProvider({
+        configState, providerType, model,
+        system: systemPrompt, messages: history, tools,
+        baseUrl, apiKeyEnv
+      })
+      if (realCount != null) {
+        contextTokens = realCount
+      } else if (contextCachePoint && isPrefixMessages(contextCachePoint.messages, normalizedHistory)) {
         const delta = normalizedHistory.slice(contextCachePoint.messages.length)
         contextTokens = contextCachePoint.tokens + estimateTokenCount(delta)
         contextFromCache = true
