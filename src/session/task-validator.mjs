@@ -50,23 +50,15 @@ export class TaskValidator {
     const errors = []
     for (const file of jsFiles.slice(0, 20)) {
       try {
-        const content = await readFile(file, "utf8")
-        new Function(content)
+        await exec(`node --check "${file}"`, { cwd: this.cwd, timeout: 10000 })
       } catch (error) {
-        errors.push(`${file}: ${error.message}`)
-      }
-    }
-
-    if (errors.length === 0) {
-      return {
-        passed: true,
-        message: "JavaScript syntax check passed"
+        errors.push(`${file}: ${(error.stderr || error.message || "").trim()}`)
       }
     }
 
     return {
-      passed: false,
-      message: `JavaScript syntax errors:\n${errors.join("\n")}`
+      passed: errors.length === 0,
+      message: errors.length === 0 ? "JavaScript syntax check passed" : `JavaScript syntax errors:\n${errors.join("\n")}`
     }
   }
 
@@ -106,21 +98,18 @@ export class TaskValidator {
       }
     }
 
-    try {
-      await exec("python -m py_compile", {
-        cwd: this.cwd,
-        timeout: 30000
-      })
-      return {
-        passed: true,
-        message: "Python syntax check passed"
+    const errors = []
+    for (const file of pyFiles.slice(0, 20)) {
+      try {
+        await exec(`python -m py_compile "${file}"`, { cwd: this.cwd, timeout: 10000 })
+      } catch (error) {
+        errors.push(`${file}: ${(error.stderr || error.message || "").trim()}`)
       }
-    } catch (error) {
-      const output = (error.stdout || error.stderr || "").trim()
-      return {
-        passed: false,
-        message: `Python syntax errors:\n${output.slice(0, 2000)}`
-      }
+    }
+
+    return {
+      passed: errors.length === 0,
+      message: errors.length === 0 ? "Python syntax check passed" : `Python syntax errors:\n${errors.join("\n")}`
     }
   }
 
