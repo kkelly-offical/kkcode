@@ -170,7 +170,8 @@ export async function requestAnthropic(input) {
         headers: {
           "content-type": "application/json",
           "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01"
+          "anthropic-version": "2023-06-01",
+          "anthropic-beta": "prompt-caching-2024-07-31"
         },
         body: JSON.stringify(payload),
         signal: timeoutSignal(timeoutMs, signal)
@@ -238,7 +239,8 @@ export async function* requestAnthropicStream(input) {
         headers: {
           "content-type": "application/json",
           "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01"
+          "anthropic-version": "2023-06-01",
+          "anthropic-beta": "prompt-caching-2024-07-31"
         },
         body: JSON.stringify(payload),
         signal: fetchSignal
