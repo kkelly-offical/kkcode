@@ -880,9 +880,9 @@ async function processInputLine({
   if (normalized === "/paste" || normalized.startsWith("/paste ")) {
     const pasteText = normalized.replace(/^\/paste\s*/, "").trim()
     print("reading clipboard...")
-    const clipBlock = await readClipboardImage()
-    if (!clipBlock) {
-      print("no image found in clipboard")
+    const clipBlock = await readClipboardImage({ onStatus: (msg) => { if (msg) print(msg) } })
+    if (!clipBlock || clipBlock.type === "error") {
+      print(clipBlock?.message ? `paste failed: ${clipBlock.message}` : "no image found in clipboard")
       return { exit: false }
     }
     if (!pasteText) {
@@ -2493,10 +2493,31 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
         // Ctrl+V: try image first, fall back to text paste
         if (key.ctrl && key.name === "v") {
-          const clipBlock = await readClipboardImage()
-          if (clipBlock) {
+          appendLog("reading clipboard...")
+          requestRender()
+          const clipBlock = await readClipboardImage({
+            onStatus: (msg) => {
+              if (msg) {
+                // Update the last log line with status
+                if (ui.logs.length && ui.logs[ui.logs.length - 1].startsWith("reading clipboard") || ui.logs[ui.logs.length - 1].startsWith("processing image")) {
+                  ui.logs[ui.logs.length - 1] = msg
+                }
+              }
+              requestRender()
+            }
+          })
+          // Remove status line
+          if (ui.logs.length && (ui.logs[ui.logs.length - 1].startsWith("reading clipboard") || ui.logs[ui.logs.length - 1].startsWith("processing image"))) {
+            ui.logs.pop()
+          }
+          if (clipBlock && clipBlock.type === "image") {
             ui.pendingImages.push(clipBlock)
             appendLog(`image pasted (${ui.pendingImages.length} attached)`)
+            requestRender()
+            return
+          }
+          if (clipBlock && clipBlock.type === "error") {
+            appendLog(`paste failed: ${clipBlock.message}`)
             requestRender()
             return
           }

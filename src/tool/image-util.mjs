@@ -123,38 +123,80 @@ export async function readImageAsBlock(filePath) {
  * Returns a content block { type: "image", mediaType, data } or null if no image.
  * Supports Windows (PowerShell), macOS (pngpaste/osascript), Linux (xclip).
  */
-export async function readClipboardImage() {
+export async function readClipboardImage({ onStatus } = {}) {
   const tempPath = path.join(tmpdir(), `kkcode-clip-${Date.now()}.png`)
+  const status = typeof onStatus === "function" ? onStatus : () => {}
 
   try {
     if (process.platform === "win32") {
+      status("reading clipboard...")
+      // Use escaped path for PowerShell; try multiple clipboard formats
+      const psPath = tempPath.replace(/\\/g, "\\\\").replace(/'/g, "''")
+      const psScript = [
+        "Add-Type -AssemblyName System.Windows.Forms",
+        "Add-Type -AssemblyName System.Drawing",
+        `$outPath = '${psPath}'`,
+        "$img = [System.Windows.Forms.Clipboard]::GetImage()",
+        "if ($img) {",
+        "  $img.Save($outPath, [System.Drawing.Imaging.ImageFormat]::Png)",
+        "  Write-Output 'saved'",
+        "  exit",
+        "}",
+        // Fallback: try reading raw clipboard data stream (handles CF_DIB from some screenshot tools)
+        "$data = [System.Windows.Forms.Clipboard]::GetDataObject()",
+        "if ($data -and $data.GetDataPresent('PNG')) {",
+        "  $stream = $data.GetData('PNG')",
+        "  $fs = [System.IO.File]::Create($outPath)",
+        "  $stream.CopyTo($fs)",
+        "  $fs.Close()",
+        "  $stream.Close()",
+        "  Write-Output 'saved'",
+        "  exit",
+        "}",
+        "if ($data -and $data.GetDataPresent([System.Windows.Forms.DataFormats]::Bitmap)) {",
+        "  $bmp = $data.GetData([System.Windows.Forms.DataFormats]::Bitmap)",
+        "  if ($bmp) {",
+        "    $bmp.Save($outPath, [System.Drawing.Imaging.ImageFormat]::Png)",
+        "    Write-Output 'saved'",
+        "    exit",
+        "  }",
+        "}",
+        "Write-Output 'empty'"
+      ].join("\n")
       const { stdout } = await execFileAsync("powershell", [
-        "-NoProfile", "-NonInteractive", "-Command",
-        `Add-Type -AssemblyName System.Windows.Forms; $img = [System.Windows.Forms.Clipboard]::GetImage(); if ($img) { $img.Save('${tempPath.replace(/'/g, "''")}', [System.Drawing.Imaging.ImageFormat]::Png); 'saved' } else { 'empty' }`
-      ], { timeout: 8000 })
-      if (!stdout.includes("saved")) return null
+        "-NoProfile", "-NonInteractive", "-Command", psScript
+      ], { timeout: 10000 })
+      if (!stdout.includes("saved")) {
+        status("")
+        return null
+      }
     } else if (process.platform === "darwin") {
+      status("reading clipboard...")
       try {
         await execFileAsync("pngpaste", [tempPath], { timeout: 5000 })
       } catch {
         const script = `set theFile to POSIX file "${tempPath}"\ntry\n  set theImage to the clipboard as «class PNGf»\n  set fp to open for access theFile with write permission\n  write theImage to fp\n  close access fp\non error\n  return "empty"\nend try`
         const { stdout } = await execFileAsync("osascript", ["-e", script], { timeout: 5000 })
-        if (stdout.includes("empty")) return null
+        if (stdout.includes("empty")) { status(""); return null }
       }
     } else {
+      status("reading clipboard...")
       const result = await execFileAsync("xclip", [
         "-selection", "clipboard", "-t", "image/png", "-o"
       ], { timeout: 5000, maxBuffer: MAX_IMAGE_SIZE, encoding: "buffer" })
-      if (!result.stdout || !result.stdout.length) return null
+      if (!result.stdout || !result.stdout.length) { status(""); return null }
       await fsWriteFile(tempPath, result.stdout)
     }
 
+    status("processing image...")
     const block = await readImageAsBlock(tempPath)
     await unlink(tempPath).catch(() => {})
+    status("")
     return block && block.type === "image" ? block : null
-  } catch {
+  } catch (err) {
     await unlink(tempPath).catch(() => {})
-    return null
+    status("")
+    return { type: "error", message: err.message || "clipboard read failed" }
   }
 }
 
