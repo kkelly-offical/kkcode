@@ -211,9 +211,9 @@ async function reinitialize(config, { force = false, cwd = null } = {}) {
   // Built-in MCP servers (user config can override or disable with enabled: false)
   const builtinServers = {
     context7: {
-      transport: "sse",
-      url: "https://mcp.context7.com/mcp",
-      timeout_ms: 15000
+      command: "npx",
+      args: ["-y", "@upstash/context7-mcp@latest"],
+      timeout_ms: 30000
     }
   }
   const configServers = config?.mcp?.servers || {}
