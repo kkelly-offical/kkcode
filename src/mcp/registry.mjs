@@ -208,11 +208,19 @@ async function reinitialize(config, { force = false, cwd = null } = {}) {
   state.health.clear()
   state.configured.clear()
 
+  // Built-in MCP servers (user config can override or disable with enabled: false)
+  const builtinServers = {
+    context7: {
+      transport: "sse",
+      url: "https://mcp.context7.com/mcp",
+      timeout_ms: 15000
+    }
+  }
   const configServers = config?.mcp?.servers || {}
   const discoveredServers = config?.mcp?.auto_discover !== false
     ? await discoverProjectServers(effectiveCwd)
     : {}
-  const allServers = { ...discoveredServers, ...configServers }
+  const allServers = { ...builtinServers, ...discoveredServers, ...configServers }
 
   for (const [name, serverConfig] of Object.entries(allServers)) {
     state.configured.set(name, serverConfig)
