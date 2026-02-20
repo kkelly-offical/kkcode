@@ -1,6 +1,23 @@
 import { BackgroundManager } from "./background-manager.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
+import { getAgent } from "../agent/agent.mjs"
+
+const AGENT_HINTS = [
+  { pattern: /\b(test|spec|jest|mocha|vitest|coverage)\b/i, agent: "tdd-guide" },
+  { pattern: /\b(review|audit|lint|quality)\b/i, agent: "reviewer" },
+  { pattern: /\b(secur|vuln|owasp|xss|inject|auth)\b/i, agent: "security-reviewer" },
+  { pattern: /\b(architect|design|blueprint|interface|api.*design)\b/i, agent: "architect" },
+  { pattern: /\b(build.*fix|compile.*error|type.*error|syntax.*error)\b/i, agent: "build-fixer" }
+]
+
+function inferSubagentType(taskPrompt, taskId) {
+  const text = `${taskPrompt} ${taskId}`
+  for (const { pattern, agent } of AGENT_HINTS) {
+    if (pattern.test(text) && getAgent(agent)) return agent
+  }
+  return null
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -79,12 +96,18 @@ function retryPrompt(taskPrompt, remainingFiles = [], attempt = 1, lastError = "
   return parts.join("\n")
 }
 
-function buildEnrichedPrompt({ stage, task, logicalTask, objective, stageIndex, stageCount, allTasks }) {
+function buildEnrichedPrompt({ stage, task, logicalTask, objective, stageIndex, stageCount, allTasks, priorContext }) {
   const parts = []
 
   parts.push("## Global Objective")
   parts.push(objective || "(not specified)")
   parts.push("")
+
+  if (priorContext) {
+    parts.push("## Prior Stage Results")
+    parts.push(priorContext)
+    parts.push("")
+  }
 
   parts.push("## Current Stage")
   parts.push(`Stage ${stageIndex + 1}/${stageCount}: ${stage.name || stage.stageId}`)
@@ -149,7 +172,8 @@ async function launchTask({
   objective,
   stageIndex,
   stageCount,
-  allTasks
+  allTasks,
+  priorContext
 }) {
   const enrichedPrompt = buildEnrichedPrompt({
     stage,
@@ -158,8 +182,11 @@ async function launchTask({
     objective,
     stageIndex: stageIndex || 0,
     stageCount: stageCount || 1,
-    allTasks
+    allTasks,
+    priorContext
   })
+
+  const autoAgent = !task.subagentType ? inferSubagentType(logicalTask.prompt, task.taskId) : null
 
   const payload = {
     parentSessionId: sessionId,
@@ -168,9 +195,9 @@ async function launchTask({
     cwd: process.cwd(),
     model,
     providerType,
-    subagent: task.subagentType || null,
+    subagent: task.subagentType || autoAgent || null,
     category: task.category || null,
-    subagentType: task.subagentType || null,
+    subagentType: task.subagentType || autoAgent || null,
     stageId: stage.stageId,
     logicalTaskId: task.taskId,
     plannedFiles: logicalTask.plannedFiles,
@@ -218,7 +245,8 @@ export async function runStageBarrier({
   seedTaskProgress = {},
   objective = "",
   stageIndex = 0,
-  stageCount = 1
+  stageCount = 1,
+  priorContext = ""
 }) {
   const cfg = stageConfig(config)
   const logical = new Map()
@@ -298,7 +326,7 @@ export async function runStageBarrier({
       }
       if (toLaunch.length > 0) {
         const bgIds = await Promise.all(toLaunch.map(({ task, item }) =>
-          launchTask({ stage, task, logicalTask: item, config, sessionId, model, providerType, objective, stageIndex, stageCount, allTasks: stage.tasks || [] })
+          launchTask({ stage, task, logicalTask: item, config, sessionId, model, providerType, objective, stageIndex, stageCount, allTasks: stage.tasks || [], priorContext })
         ))
         for (let i = 0; i < toLaunch.length; i++) {
           toLaunch[i].item.backgroundTaskId = bgIds[i]

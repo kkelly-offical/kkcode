@@ -178,29 +178,86 @@ export class TaskValidator {
     }
   }
 
-  async validate({ todoState }) {
+  async checkBuild() {
+    const packageJsonPath = path.join(this.cwd, "package.json")
+    if (!(await fileExists(packageJsonPath))) {
+      return { passed: true, message: "No package.json found", severity: "skip" }
+    }
+    try {
+      const pkg = JSON.parse(await readFile(packageJsonPath, "utf8"))
+      if (!pkg.scripts?.build) {
+        return { passed: true, message: "No build script", severity: "skip" }
+      }
+      await exec("npm run build --silent", { cwd: this.cwd, timeout: 60000 })
+      return { passed: true, message: "Build succeeded", severity: "pass" }
+    } catch (error) {
+      const output = (error.stdout || error.stderr || "").trim()
+      return { passed: false, message: `Build failed:\n${output.slice(0, 1500)}`, severity: "critical" }
+    }
+  }
+
+  async checkLint() {
+    const packageJsonPath = path.join(this.cwd, "package.json")
+    if (!(await fileExists(packageJsonPath))) {
+      return { passed: true, message: "No package.json found", severity: "skip" }
+    }
+    try {
+      const pkg = JSON.parse(await readFile(packageJsonPath, "utf8"))
+      if (!pkg.scripts?.lint) {
+        return { passed: true, message: "No lint script", severity: "skip" }
+      }
+      await exec("npm run lint --silent", { cwd: this.cwd, timeout: 30000 })
+      return { passed: true, message: "Lint passed", severity: "pass" }
+    } catch (error) {
+      const output = (error.stdout || error.stderr || "").trim()
+      return { passed: false, message: `Lint issues:\n${output.slice(0, 1500)}`, severity: "warning" }
+    }
+  }
+
+  async validate({ todoState, level = "standard" }) {
     const results = []
 
     const todoResult = await this.checkTodoCompletion(todoState)
-    results.push({ name: "Todo Check", ...todoResult })
+    results.push({ name: "Todo", ...todoResult, severity: todoResult.passed ? "pass" : "critical" })
 
     const jsResult = await this.checkJavaScriptSyntax()
-    results.push({ name: "JavaScript Syntax", ...jsResult })
+    results.push({ name: "JS Syntax", ...jsResult, severity: jsResult.passed ? "pass" : "critical" })
 
-    const tsResult = await this.checkTypeScript()
-    results.push({ name: "TypeScript Check", ...tsResult })
+    if (level !== "quick") {
+      const tsResult = await this.checkTypeScript()
+      results.push({ name: "TypeScript", ...tsResult, severity: tsResult.passed ? "pass" : "critical" })
 
-    const testResult = await this.runTests()
-    results.push({ name: "Test Run", ...testResult })
+      const buildResult = await this.checkBuild()
+      results.push({ name: "Build", ...buildResult })
 
-    const allPassed = results.every(r => r.passed)
-    const messages = results.map(r => `${r.passed ? "✅" : "❌"} ${r.name}: ${r.message}`).join("\n")
-
-    return {
-      passed: allPassed,
-      results,
-      message: messages
+      const testResult = await this.runTests()
+      results.push({ name: "Tests", ...testResult, severity: testResult.passed ? "pass" : "critical" })
     }
+
+    if (level === "strict") {
+      const lintResult = await this.checkLint()
+      results.push({ name: "Lint", ...lintResult })
+
+      const pyResult = await this.checkPythonSyntax()
+      results.push({ name: "Python", ...pyResult, severity: pyResult.passed ? "pass" : "warning" })
+    }
+
+    const critical = results.filter(r => !r.passed && r.severity === "critical").length
+    const warnings = results.filter(r => !r.passed && r.severity === "warning").length
+    const verdict = critical > 0 ? "BLOCK" : warnings > 0 ? "WARNING" : "APPROVE"
+    const allPassed = verdict !== "BLOCK"
+
+    const lines = [
+      "VERIFICATION REPORT",
+      "===================",
+      ...results.map(r => `${r.passed ? "PASS" : "FAIL"} ${r.name}: ${r.message}`),
+      "",
+      `VERDICT: ${verdict}`,
+      `CRITICAL: ${critical}  WARNING: ${warnings}`,
+      allPassed ? "Ready to proceed." : "Must fix critical issues before proceeding."
+    ]
+
+    return { passed: allPassed, verdict, results, message: lines.join("\n") }
   }
 }
 

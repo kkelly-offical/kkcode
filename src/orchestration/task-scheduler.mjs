@@ -16,13 +16,16 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
       return { error: "task.prompt is required when session_id is not provided" }
     }
 
+    const subModel = subagent.model || model
+    const subProvider = subagent.providerType || providerType
+
     const run = async ({ isCancelled, log }) => {
       await log(`task started (${subagent.name})`)
       const out = await runSubtask({
         prompt,
         sessionId: subSessionId,
-        model,
-        providerType,
+        model: subModel,
+        providerType: subProvider,
         subagent,
         allowQuestion: args.allow_question === true
       })
@@ -44,8 +47,8 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
           subSessionId,
           prompt,
           cwd: process.cwd(),
-          model,
-          providerType,
+          model: subModel,
+          providerType: subProvider,
           subagent: subagent.name,
           category: args.category || null,
           subagentType: subagent.name,

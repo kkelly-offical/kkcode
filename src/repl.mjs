@@ -386,7 +386,7 @@ function shortcutLegend() {
     "  Ctrl+V paste image from clipboard",
     "  Up/Down navigate suggestion/history",
     "  Left/Right/Home/End edit cursor",
-    "  PgUp/PgDn scroll context history",
+    "  PgUp/PgDn scroll log   Ctrl+Home/End jump to oldest/latest",
     "  Tab cycle mode (longagent -> plan -> ask -> agent)",
     "  Esc clear input  Ctrl+C exit"
   ].join("\n")
@@ -1103,8 +1103,6 @@ async function processInputLine({
       for (const line of renderFileChangeLines(fileChanges, 10)) print(line)
     }
   }
-  if (result.toolEvents.length) print(`tool events: ${result.toolEvents.length}`)
-
   return {
     exit: false,
     turnResult: {
@@ -1370,12 +1368,13 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   const uiEventUnsub = EventBus.subscribe((event) => {
     const { type, payload } = event
     switch (type) {
-      case EVENT_TYPES.TURN_STEP_START:
+      case EVENT_TYPES.TURN_STEP_START: {
         ui.currentStep = payload.step || 0
         ui.maxSteps = Number(ctx.configState.config.agent?.max_steps) || 25
         ui.currentActivity = { type: "thinking" }
         requestRender()
         break
+      }
       case EVENT_TYPES.TOOL_START:
         ui.currentActivity = { type: "tool", tool: payload.tool, args: payload.args }
         requestRender()
@@ -1713,25 +1712,17 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     let busyLine
     if (ui.busy && ui.currentActivity) {
       const spinner = BUSY_SPINNER_FRAMES[ui.spinnerIndex]
-      const stepTag = ui.currentStep > 0
-        ? paint(` [${ui.currentStep}/${ui.maxSteps || "?"}]`, "cyan", { dim: true })
-        : ""
       if (ui.currentActivity.type === "tool") {
         const toolName = ui.currentActivity.tool || "tool"
-        const toolColor = toolName === "edit" || toolName === "write" || toolName === "notebookedit" ? "yellow"
-          : toolName === "bash" ? "magenta"
-          : toolName === "enter_plan" || toolName === "exit_plan" ? "magenta"
-          : "cyan"
-        const detail = formatBusyToolDetail(toolName, ui.currentActivity.args)
-        busyLine = `${paint(spinner, toolColor)} ${paint(toolName, toolColor, { bold: true })}${detail}${stepTag}`
+        busyLine = `${paint(spinner, "cyan")} ${paint(toolName, null, { dim: true })}${formatBusyToolDetail(toolName, ui.currentActivity.args)}`
       } else {
-        busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint("thinking", ctx.themeState.theme.semantic.warn, { bold: true })}${stepTag}`
+        busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint("thinking", null, { dim: true })}`
       }
     } else if (ui.busy) {
       const spinner = BUSY_SPINNER_FRAMES[ui.spinnerIndex]
-      busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint("thinking", ctx.themeState.theme.semantic.warn, { bold: true })}`
+      busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint("thinking", null, { dim: true })}`
     } else {
-      busyLine = paint("ready", ctx.themeState.theme.base.muted, { dim: true })
+      busyLine = ""
     }
 
     const suggestionBlock = suggestionLines.length ? suggestionLines.length + 1 : 0
@@ -1957,13 +1948,31 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     }
 
     const scrollHint = ui.scrollOffset > 0
-      ? paint(`Scroll: older +${ui.scrollOffset} lines (PgDn/End -> latest)`, ctx.themeState.theme.semantic.warn)
-      : paint("Scroll: follow mode (PgUp back, PgDn forward, Home oldest, End latest)", ctx.themeState.theme.base.muted)
+      ? paint(`  PgUp/PgDn scroll | +${ui.scrollOffset} lines`, ctx.themeState.theme.semantic.warn)
+      : paint("  PgUp/PgDn scroll | Home oldest | End latest", ctx.themeState.theme.base.muted, { dim: true })
 
-    lines.push(clipAnsiLine(paint("Activity", ctx.themeState.theme.semantic.warn, { bold: true }), width))
+    lines.push(clipAnsiLine(paint("─".repeat(Math.min(40, width)), ctx.themeState.theme.base.border, { dim: true }), width))
+
+    // Scrollbar calculation
+    const totalLog = wrappedAllLogs.length
+    const showScrollbar = totalLog > logRows
+    let thumbStart = 0, thumbEnd = 0
+    if (showScrollbar) {
+      const viewStart = start
+      thumbStart = Math.floor((viewStart / totalLog) * logRows)
+      thumbEnd = Math.min(logRows, thumbStart + Math.max(1, Math.round((logRows / totalLog) * logRows)))
+    }
 
     for (let i = 0; i < logRows; i++) {
-      lines.push(clipAnsiLine(wrappedLogs[i] || "", width))
+      const content = wrappedLogs[i] || ""
+      if (showScrollbar) {
+        const bar = i >= thumbStart && i < thumbEnd
+          ? paint("┃", ctx.themeState.theme.semantic.warn)
+          : paint("│", ctx.themeState.theme.base.border, { dim: true })
+        lines.push(clipAnsiLine(content, width - 2) + " " + bar)
+      } else {
+        lines.push(clipAnsiLine(content, width))
+      }
     }
 
     lines.push(clipAnsiLine(scrollHint, width))
@@ -2202,10 +2211,6 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   emitKeypressEvents(process.stdin)
   if (process.stdin.isTTY) process.stdin.setRawMode(true)
   process.stdin.resume()
-
-  // Disable mouse tracking to prevent interference
-  // This allows terminal's native right-click menu and scroll to work properly
-  process.stdout.write("\x1b[?1000l\x1b[?1006l")
 
   paintFrame(buildFrame())
 
@@ -2452,6 +2457,31 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           return
         }
 
+        // Scrolling keys work even when busy
+        if (key.name === "pageup") {
+          scrollBy(pageSize(ui.scrollMeta.logRows))
+          requestRender()
+          return
+        }
+
+        if (key.name === "pagedown") {
+          scrollBy(-pageSize(ui.scrollMeta.logRows))
+          requestRender()
+          return
+        }
+
+        if (key.name === "home" && (key.ctrl || key.shift)) {
+          scrollToTop()
+          requestRender()
+          return
+        }
+
+        if (key.name === "end" && (key.ctrl || key.shift)) {
+          scrollToBottom()
+          requestRender()
+          return
+        }
+
         if (ui.busy) return
 
         // Ctrl+V: try image first, fall back to text paste
@@ -2571,22 +2601,10 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           return
         }
 
-        if (key.name === "pageup") {
-          scrollBy(pageSize(ui.scrollMeta.logRows))
-          requestRender()
-          return
-        }
-
-        if (key.name === "pagedown") {
-          scrollBy(-pageSize(ui.scrollMeta.logRows))
-          requestRender()
-          return
-        }
-
         if (key.name === "up" || key.name === "down") {
-          // Ctrl+Up/Down: scroll the log area
+          // Ctrl+Up/Down: navigate input history
           if (key.ctrl) {
-            scrollBy(key.name === "up" ? 3 : -3)
+            navigateHistory(key.name)
             requestRender()
             return
           }

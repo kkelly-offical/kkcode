@@ -27,6 +27,7 @@ async function loadYamlAgent(filePath, scope) {
     model: spec.model || null,
     temperature: spec.temperature ?? null,
     hidden: spec.hidden || false,
+    maxTurns: spec.maxTurns || spec.max_turns || null,
     prompt: spec.prompt || "",
     scope,
     source: filePath
@@ -45,7 +46,35 @@ async function loadMjsAgent(filePath, scope) {
     model: mod.model || null,
     temperature: mod.temperature ?? null,
     hidden: mod.hidden || false,
+    maxTurns: mod.maxTurns || mod.max_turns || null,
     prompt: mod.prompt || "",
+    scope,
+    source: filePath
+  }
+}
+
+function parseFrontmatter(raw) {
+  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/)
+  if (!match) return { meta: {}, body: raw.trim() }
+  try { return { meta: parseYaml(match[1]) || {}, body: match[2].trim() } }
+  catch { return { meta: {}, body: raw.trim() } }
+}
+
+async function loadMdAgent(filePath, scope) {
+  const raw = await readFile(filePath, "utf8")
+  const { meta, body } = parseFrontmatter(raw)
+  const name = meta.name || path.basename(filePath, ".md")
+  return {
+    name,
+    description: meta.description || name,
+    mode: meta.mode || "subagent",
+    permission: meta.permission || "default",
+    tools: meta["allowed-tools"] || (Array.isArray(meta.tools) ? meta.tools : null),
+    model: meta.model || null,
+    temperature: meta.temperature ?? null,
+    hidden: meta.hidden || false,
+    maxTurns: meta.maxTurns || meta["max-turns"] || null,
+    prompt: body || "",
     scope,
     source: filePath
   }
@@ -65,6 +94,9 @@ async function loadAgentsFromDir(dir, scope) {
         if (agent) agents.push(agent)
       } else if (ext === ".mjs") {
         const agent = await loadMjsAgent(full, scope)
+        if (agent) agents.push(agent)
+      } else if (ext === ".md") {
+        const agent = await loadMdAgent(full, scope)
         if (agent) agents.push(agent)
       }
     } catch { /* skip broken agent files */ }
@@ -96,6 +128,7 @@ export const CustomAgentRegistry = {
         model: agent.model,
         temperature: agent.temperature,
         hidden: agent.hidden,
+        maxTurns: agent.maxTurns || null,
         promptFile: agent.name,
         _promptCache: agent.prompt || "",
         _customAgent: true,

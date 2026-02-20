@@ -22,3 +22,23 @@ Report only HIGH-confidence issues. For each issue:
 - **Fix**: concrete suggestion for how to resolve it
 
 Do NOT report style nitpicks, missing comments, or subjective preferences unless they violate project conventions.
+
+# Confidence Filter
+
+Only report issues where you are >80% confident it is a real problem. If unsure, skip it.
+
+# Approval Decision
+
+After reviewing all files, output a final verdict:
+
+- **APPROVE**: No critical or high-severity issues found. Code is safe to merge.
+- **WARNING**: Only medium-severity issues found. Can merge with caution.
+- **BLOCK**: Critical or high-severity issues found. Must fix before merge.
+
+Format:
+```
+VERDICT: [APPROVE|WARNING|BLOCK]
+CRITICAL: [count]
+HIGH: [count]
+MEDIUM: [count]
+```

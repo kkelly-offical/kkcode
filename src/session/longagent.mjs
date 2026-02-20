@@ -19,6 +19,7 @@ import {
 import { runIntakeDialogue, buildStagePlan } from "./longagent-plan.mjs"
 import { runStageBarrier } from "../orchestration/stage-scheduler.mjs"
 import { runScaffoldPhase } from "./longagent-scaffold.mjs"
+import { createValidator } from "./task-validator.mjs"
 import * as git from "../util/git.mjs"
 
 function isComplete(text) {
@@ -506,6 +507,8 @@ async function runParallelLongAgent({
   }
   // --- End L1.5 ---
 
+  let priorContext = ""
+
   while (stageIndex < stagePlan.stages.length) {
     const state = await LongAgentManager.get(sessionId)
     if (state?.retryStageId) {
@@ -567,7 +570,8 @@ async function runParallelLongAgent({
       seedTaskProgress: seeded,
       objective: prompt,
       stageIndex,
-      stageCount: stagePlan.stages.length
+      stageCount: stagePlan.stages.length,
+      priorContext
     })
 
     for (const [taskId, progress] of Object.entries(stageResult.taskProgress || {})) {
@@ -591,6 +595,15 @@ async function runParallelLongAgent({
       retryCount: stageResult.retryCount,
       remainingFiles: stageResult.remainingFiles
     }
+
+    // Build inter-stage knowledge transfer summary
+    const taskSummaries = Object.values(stageResult.taskProgress || {})
+      .filter(t => t.lastReply)
+      .map(t => `[${t.taskId}] ${t.status}: ${t.lastReply.slice(0, 300)}`)
+    if (taskSummaries.length) {
+      priorContext += `### Stage ${stageIndex + 1}: ${stage.name || stage.stageId} (${stageResult.allSuccess ? "PASS" : "FAIL"})\n${taskSummaries.join("\n")}\n\n`
+    }
+
     lastProgress = {
       percentage: Math.round(((stageIndex + (stageResult.allSuccess ? 1 : 0)) / Math.max(1, stagePlan.stages.length)) * 100),
       currentStep: stageIndex + (stageResult.allSuccess ? 1 : 0),
@@ -745,13 +758,37 @@ async function runParallelLongAgent({
       }
     }
 
+    // --- Structured completion verification ---
+    const validationLevel = longagentConfig.validation_level || "standard"
+    let validationReport = null
+    try {
+      const validator = await createValidator({ cwd, configState })
+      validationReport = await validator.validate({ todoState: toolContext?._todoState, level: validationLevel })
+      gateStatus.validation = {
+        status: validationReport.verdict === "BLOCK" ? "fail" : "pass",
+        verdict: validationReport.verdict,
+        reason: validationReport.verdict === "APPROVE"
+          ? "all checks passed"
+          : `${validationReport.results.filter(r => !r.passed).length} check(s) failed`
+      }
+    } catch (valErr) {
+      gateStatus.validation = { status: "warn", reason: `validation skipped: ${valErr.message}` }
+    }
+
+    const validationContext = validationReport
+      ? `\n\nVerification Report:\n${validationReport.message}`
+      : ""
+
     if (!completionMarkerSeen) {
       const markerTurn = await processTurnLoop({
         prompt: [
           `Objective: ${prompt}`,
-          "All planned stages are done. Validate if the task is truly complete.",
-          "If complete, include [TASK_COMPLETE] exactly once."
-        ].join("\n"),
+          "All planned stages are done.",
+          validationContext,
+          validationReport?.verdict === "BLOCK"
+            ? "Verification found critical issues. Fix them, then include [TASK_COMPLETE]."
+            : "Validate if the task is truly complete. If complete, include [TASK_COMPLETE] exactly once."
+        ].filter(Boolean).join("\n"),
         mode: "agent",
         model,
         providerType,
@@ -839,13 +876,22 @@ async function runParallelLongAgent({
         lastMessage: `gate recovery #${gateAttempt}: ${failureSummary || "unknown"}`
       })
 
+      // Re-run validation to give remediation agent fresh context
+      let remediationContext = ""
+      try {
+        const reValidator = await createValidator({ cwd, configState })
+        const reReport = await reValidator.validate({ todoState: toolContext?._todoState, level: validationLevel })
+        remediationContext = `\n\nCurrent Verification:\n${reReport.message}`
+      } catch { /* skip */ }
+
       const remediation = await processTurnLoop({
         prompt: [
           `Objective: ${prompt}`,
           "Usability gates failed.",
           `Failures: ${failureSummary || "unknown"}`,
-          "Apply fixes, then include [TASK_COMPLETE] when fully usable."
-        ].join("\n"),
+          remediationContext,
+          "Fix ALL failing checks, then include [TASK_COMPLETE] when fully usable."
+        ].filter(Boolean).join("\n"),
         mode: "agent",
         model,
         providerType,

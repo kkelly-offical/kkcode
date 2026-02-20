@@ -1,8 +1,13 @@
 import path from "node:path"
 import { access, readdir, readFile } from "node:fs/promises"
 import { pathToFileURL, fileURLToPath } from "node:url"
+import { exec } from "node:child_process"
+import { promisify } from "node:util"
+import { parse as parseYaml } from "yaml"
 import { McpRegistry } from "../mcp/registry.mjs"
 import { loadCustomCommands, applyCommandTemplate } from "../command/custom-commands.mjs"
+
+const execAsync = promisify(exec)
 
 async function exists(target) {
   try {
@@ -11,6 +16,88 @@ async function exists(target) {
   } catch {
     return false
   }
+}
+
+/**
+ * Parse YAML frontmatter from SKILL.md content.
+ * Returns { meta: {}, body: string }
+ */
+function parseFrontmatter(raw) {
+  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/)
+  if (!match) return { meta: {}, body: raw.trim() }
+  try {
+    return { meta: parseYaml(match[1]) || {}, body: match[2].trim() }
+  } catch {
+    return { meta: {}, body: raw.trim() }
+  }
+}
+
+/**
+ * Replace !`command` patterns with command stdout.
+ */
+async function injectDynamicContext(template, cwd) {
+  const pattern = /!\`([^`]+)\`/g
+  const matches = [...template.matchAll(pattern)]
+  if (!matches.length) return template
+  let result = template
+  for (const m of matches) {
+    try {
+      const { stdout } = await execAsync(m[1], { cwd, timeout: 10000 })
+      result = result.replace(m[0], stdout.trim())
+    } catch {
+      result = result.replace(m[0], `[command failed: ${m[1]}]`)
+    }
+  }
+  return result
+}
+
+/**
+ * Load SKILL.md directory-format skills from a directory.
+ * Scans for <dir>/<name>/SKILL.md
+ */
+async function loadAuxFiles(skillDir) {
+  const aux = {}
+  try {
+    const entries = await readdir(skillDir, { withFileTypes: true })
+    for (const e of entries) {
+      if (!e.isFile() || e.name === "SKILL.md") continue
+      aux[e.name] = path.join(skillDir, e.name)
+    }
+  } catch { /* ignore */ }
+  return aux
+}
+
+async function loadSkillDirs(dir, scope) {
+  if (!(await exists(dir))) return []
+  const entries = await readdir(dir, { withFileTypes: true })
+  const dirs = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort()
+  const skills = []
+  for (const name of dirs) {
+    const skillDir = path.join(dir, name)
+    const mdPath = path.join(skillDir, "SKILL.md")
+    if (!(await exists(mdPath))) continue
+    try {
+      const raw = await readFile(mdPath, "utf8")
+      const { meta, body } = parseFrontmatter(raw)
+      const auxFiles = await loadAuxFiles(skillDir)
+      skills.push({
+        name: meta.name || name,
+        description: meta.description || name,
+        type: "skill_md",
+        scope,
+        source: mdPath,
+        skillDir,
+        template: body,
+        auxFiles,
+        disableModelInvocation: !!meta["disable-model-invocation"],
+        userInvocable: meta["user-invocable"] !== false,
+        allowedTools: meta["allowed-tools"] || null,
+        model: meta.model || null,
+        contextFork: !!meta["context-fork"]
+      })
+    } catch { /* skip broken */ }
+  }
+  return skills
 }
 
 /**
@@ -105,12 +192,14 @@ export const SkillRegistry = {
     const userRoot = process.env.USERPROFILE || process.env.HOME || cwd
     const globalSkillDir = path.join(userRoot, ".kkcode", "skills")
     const projectSkillDir = path.join(cwd, ".kkcode", "skills")
-    const [globalSkills, projectSkills] = await Promise.all([
+    const [globalSkills, projectSkills, globalSkillMds, projectSkillMds] = await Promise.all([
       loadMjsSkills(globalSkillDir, "global"),
-      loadMjsSkills(projectSkillDir, "project")
+      loadMjsSkills(projectSkillDir, "project"),
+      loadSkillDirs(globalSkillDir, "global"),
+      loadSkillDirs(projectSkillDir, "project")
     ])
     // Project skills override global skills with same name
-    for (const skill of [...globalSkills, ...projectSkills]) {
+    for (const skill of [...globalSkills, ...projectSkills, ...globalSkillMds, ...projectSkillMds]) {
       state.skills.set(skill.name, skill)
     }
 
@@ -173,6 +262,35 @@ export const SkillRegistry = {
       })
     }
 
+    if (skill.type === "skill_md" && skill.template) {
+      const cwd = context.cwd || process.cwd()
+      let prompt = applyCommandTemplate(skill.template, args, {
+        path: cwd, mode: context.mode || "agent",
+        provider: context.provider || "", cwd, project: path.basename(cwd)
+      })
+      // Resolve $FILE{name} references to auxiliary file contents
+      if (skill.auxFiles) {
+        const filePattern = /\$FILE\{([^}]+)\}/g
+        const fileMatches = [...prompt.matchAll(filePattern)]
+        for (const m of fileMatches) {
+          const filePath = skill.auxFiles[m[1]]
+          if (filePath) {
+            try {
+              const content = await readFile(filePath, "utf8")
+              prompt = prompt.replace(m[0], content.trim())
+            } catch {
+              prompt = prompt.replace(m[0], `[file not found: ${m[1]}]`)
+            }
+          }
+        }
+      }
+      prompt = await injectDynamicContext(prompt, cwd)
+      if (skill.contextFork) {
+        return { prompt, contextFork: true, model: skill.model }
+      }
+      return prompt
+    }
+
     if (skill.type === "mcp_prompt" && skill.promptId) {
       // MCP prompt — fetch from server
       const promptArgs = {}
@@ -211,9 +329,8 @@ export const SkillRegistry = {
    * Return skill metadata for system prompt inclusion.
    */
   listForSystemPrompt() {
-    return [...state.skills.values()].map((s) => ({
-      name: s.name,
-      description: s.description
-    }))
+    return [...state.skills.values()]
+      .filter((s) => !s.disableModelInvocation)
+      .map((s) => ({ name: s.name, description: s.description }))
   }
 }

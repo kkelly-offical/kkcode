@@ -20,7 +20,10 @@ export const SYM = {
   recovery: "⟳",
   alert: "!",
   thinking: "▶",
-  thinkingOpen: "▼"
+  thinkingOpen: "▼",
+  search: "*",
+  arrow: "→",
+  write: "◇"
 }
 
 // ── Helpers ──────────────────────────────────────────────
@@ -39,166 +42,59 @@ function shortPath(p) {
   return ".../" + parts.slice(-3).join("/")
 }
 
-function countLines(text) {
-  if (!text) return 0
-  return String(text).split("\n").filter(Boolean).length
-}
-
 // ── Tool Display Formatters ──────────────────────────────
 
 export function formatToolStart(toolName, args) {
-  const dot = paint(SYM.dot, "#666666")
-  const name = paint(toolName.charAt(0).toUpperCase() + toolName.slice(1), "white", { bold: true })
+  // Compact single-line dim format (OpenCode style)
+  const sym = toolName === "grep" || toolName === "glob" || toolName === "websearch"
+    ? SYM.search
+    : toolName === "write" || toolName === "edit" || toolName === "notebookedit"
+      ? SYM.write
+      : SYM.arrow
+  const prefix = paint(sym, "#666666")
+  const name = paint(toolName.charAt(0).toUpperCase() + toolName.slice(1), null, { dim: true })
 
   switch (toolName) {
     case "bash": {
-      const desc = args?.description ? paint(args.description, null, { dim: true }) : ""
-      const cmd = clipText(args?.command, 80)
-      return `${dot} ${name} ${desc}\n  ${paint("IN", "cyan", { bold: true })}  ${paint(cmd, null, { dim: true })}`
+      const desc = clipText(args?.description || args?.command, 80)
+      return `  ${prefix} ${name} ${paint(desc, null, { dim: true })}`
     }
-    case "write": {
-      const filePath = shortPath(args?.path)
-      return `${dot} ${name} ${paint(filePath, null, { dim: true })}`
-    }
-    case "edit": {
-      const filePath = shortPath(args?.path)
-      return `${dot} ${name} ${paint(filePath, null, { dim: true })}`
-    }
-    case "notebookedit": {
-      const filePath = shortPath(args?.path)
-      const mode = args?.edit_mode || "replace"
-      const cellNum = args?.cell_number ?? 0
-      return `${dot} ${name} ${paint(filePath, null, { dim: true })} ${paint(`cell ${cellNum} (${mode})`, null, { dim: true })}`
-    }
-    case "read": {
-      const filePath = shortPath(args?.path)
-      const range = args?.offset && args?.limit
-        ? paint(` (lines ${args.offset}-${args.offset + args.limit})`, null, { dim: true })
-        : ""
-      return `${dot} ${name} ${paint(filePath, null, { dim: true })}${range}`
-    }
-    case "list": {
-      const dirPath = shortPath(args?.path || ".")
-      return `${dot} ${name} ${paint(dirPath, null, { dim: true })}`
-    }
-    case "grep": {
-      const pattern = String(args?.pattern || "").trim()
-      return `${dot} ${name} ${paint(pattern, "magenta")}`
-    }
-    case "glob": {
-      const pattern = String(args?.pattern || "").trim()
-      return `${dot} ${name} ${paint(pattern, "magenta")}`
-    }
-    case "task": {
-      const desc = clipText(args?.description || args?.prompt, 80)
-      return `${dot} ${name} ${paint(desc, null, { dim: true })}`
-    }
-    case "todowrite": {
-      const count = Array.isArray(args?.todos) ? args.todos.length : 0
-      return `${dot} ${name} ${paint(`${count} items`, null, { dim: true })}`
-    }
-    case "webfetch": {
-      const url = clipText(args?.url, 80)
-      return `${dot} ${name} ${paint(url, null, { dim: true })}`
-    }
-    case "websearch": {
-      const q = clipText(args?.query, 80)
-      return `${dot} ${name} ${paint(q, null, { dim: true })}`
-    }
-    case "question": {
-      const q = clipText(args?.question, 80)
-      return `${dot} ${name} ${paint(q, null, { dim: true })}`
-    }
-    case "enter_plan": {
-      const reason = args?.reason ? paint(` ${clipText(args.reason, 60)}`, null, { dim: true }) : ""
-      return `${paint(SYM.plan, "magenta")} ${paint("Enter Plan", "magenta", { bold: true })}${reason}`
-    }
-    case "exit_plan": {
-      const fileCount = Array.isArray(args?.files) ? args.files.length : 0
-      const fileInfo = fileCount > 0 ? paint(` (${fileCount} files)`, null, { dim: true }) : ""
-      return `${paint(SYM.planDone, "green")} ${paint("Submit Plan", "green", { bold: true })}${fileInfo}`
-    }
-    default: {
-      const argKeys = args ? Object.keys(args).slice(0, 3).join(", ") : ""
-      return `${dot} ${name} ${paint(argKeys, null, { dim: true })}`
-    }
+    case "write":
+    case "edit":
+      return `  ${prefix} ${name} ${paint(shortPath(args?.path), null, { dim: true })}`
+    case "notebookedit":
+      return `  ${prefix} ${name} ${paint(shortPath(args?.path), null, { dim: true })} ${paint(`cell ${args?.cell_number ?? 0}`, null, { dim: true })}`
+    case "read":
+    case "list":
+      return `  ${prefix} ${name} ${paint(shortPath(args?.path || "."), null, { dim: true })}`
+    case "grep":
+    case "glob":
+      return `  ${prefix} ${name} ${paint(clipText(args?.pattern, 60), null, { dim: true })}`
+    case "task":
+      return `  ${prefix} ${name} ${paint(clipText(args?.description || args?.prompt, 60), null, { dim: true })}`
+    case "todowrite":
+      return null // handled by result preview only
+    case "webfetch":
+      return `  ${prefix} ${name} ${paint(clipText(args?.url, 60), null, { dim: true })}`
+    case "websearch":
+      return `  ${prefix} ${name} ${paint(clipText(args?.query, 60), null, { dim: true })}`
+    case "question":
+      return `  ~ ${paint("Asking questions...", null, { dim: true })}`
+    case "enter_plan":
+      return `  ${paint(SYM.plan, "magenta")} ${paint("Enter Plan", "magenta")}`
+    case "exit_plan":
+      return `  ${paint(SYM.planDone, "green")} ${paint("Submit Plan", "green")}`
+    default:
+      return `  ${prefix} ${name} ${paint(clipText(args ? Object.keys(args).slice(0, 3).join(", ") : "", 40), null, { dim: true })}`
   }
 }
 
 export function formatToolFinish(toolName, status, durationMs, args) {
-  const elapsed = durationMs ? paint(`${durationMs}ms`, null, { dim: true }) : ""
-
-  if (status === "completed") {
-    const dot = paint(SYM.dot, "green")
-    const name = paint(toolName.charAt(0).toUpperCase() + toolName.slice(1), "white", { bold: true })
-
-    // Show summary based on tool type
-    let summary = ""
-    switch (toolName) {
-      case "bash": {
-        const desc = args?.description ? paint(args.description, null, { dim: true }) : ""
-        summary = desc
-        break
-      }
-      case "write": {
-        const filePath = shortPath(args?.path)
-        const lines = countLines(args?.content)
-        summary = `${paint(filePath, null, { dim: true })}\n  ${paint(`Created ${lines} lines`, "green", { dim: true })}`
-        break
-      }
-      case "edit": {
-        const filePath = shortPath(args?.path)
-        const added = countLines(args?.new_string)
-        const removed = countLines(args?.old_string)
-        const parts = []
-        if (added > 0) parts.push(paint(`+${added}`, "green"))
-        if (removed > 0) parts.push(paint(`-${removed}`, "red"))
-        summary = `${paint(filePath, null, { dim: true })}\n  ${parts.length ? parts.join(" ") + " lines" : ""}`
-        break
-      }
-      case "notebookedit": {
-        const filePath = shortPath(args?.path)
-        const mode = args?.edit_mode || "replace"
-        const cellNum = args?.cell_number ?? 0
-        summary = `${paint(filePath, null, { dim: true })}\n  ${paint(`${mode} cell ${cellNum}`, "green", { dim: true })}`
-        break
-      }
-      case "read": {
-        const filePath = shortPath(args?.path)
-        const range = args?.offset && args?.limit
-          ? ` (lines ${args.offset}-${args.offset + args.limit})`
-          : ""
-        summary = `${paint(filePath + range, null, { dim: true })}`
-        break
-      }
-      case "enter_plan": {
-        const reason = args?.reason ? ` — ${args.reason}` : ""
-        return `${paint(SYM.plan, "magenta")} ${paint("Plan Mode", "magenta", { bold: true })}${paint(reason, null, { dim: true })} ${elapsed}`
-      }
-      case "exit_plan": {
-        const fileCount = Array.isArray(args?.files) ? args.files.length : 0
-        const fileInfo = fileCount > 0 ? ` (${fileCount} files)` : ""
-        return `${paint(SYM.planDone, "green")} ${paint("Plan Submitted", "green", { bold: true })}${paint(fileInfo, null, { dim: true })} ${elapsed}`
-      }
-      default:
-        break
-    }
-
-    if (summary) {
-      return `${dot} ${name} ${summary} ${elapsed}`
-    }
-    return `${dot} ${name} ${elapsed}`
-  }
-
   if (status === "error") {
-    const dot = paint(SYM.dot, "red")
-    const name = paint(toolName.charAt(0).toUpperCase() + toolName.slice(1), "white", { bold: true })
-    return `${dot} ${name} ${paint("error", "red")} ${elapsed}`
+    return `  ${paint(SYM.toolErr, "red")} ${paint(toolName, null, { dim: true })} ${paint("error", "red")}${durationMs ? paint(` ${durationMs}ms`, null, { dim: true }) : ""}`
   }
-
-  const dot = paint(SYM.dot, "yellow")
-  const name = paint(toolName.charAt(0).toUpperCase() + toolName.slice(1), "white", { bold: true })
-  return `${dot} ${name} ${paint(status || "unknown", "yellow")} ${elapsed}`
+  // For completed tools, return null — the start line + result preview is enough
+  return null
 }
 
 export function formatToolResultPreview(toolName, output, status, args) {
@@ -209,75 +105,33 @@ export function formatToolResultPreview(toolName, output, status, args) {
     case "bash": {
       const lines = text.split("\n").filter(Boolean)
       if (!lines.length) return null
-      const preview = lines.slice(0, 3).map((l) => clipText(l, 100))
-      const suffix = lines.length > 3 ? paint(` (+${lines.length - 3} lines)`, null, { dim: true }) : ""
-      const result = []
-      for (let i = 0; i < preview.length; i++) {
-        const prefix = i === 0 ? paint("OUT", "cyan", { bold: true }) + " " : "     "
-        result.push(`  ${prefix}${paint(preview[i], null, { dim: true })}${i === preview.length - 1 ? suffix : ""}`)
-      }
-      return result
+      const first = clipText(lines[0], 90)
+      const suffix = lines.length > 1 ? paint(` (+${lines.length - 1} lines)`, null, { dim: true }) : ""
+      return `    ${paint(first, null, { dim: true })}${suffix}`
     }
     case "write": {
-      if (!args?.content) return null
-      const contentLines = String(args.content).split("\n").filter(Boolean)
-      const preview = contentLines.slice(0, 4)
-      const result = []
-      for (const line of preview) {
-        result.push(`  ${paint("+", diffAdd(), { bold: true })} ${paint(clipText(line, 90), diffAdd(), { dim: true })}`)
-      }
-      if (contentLines.length > 4) {
-        result.push(`  ${paint(`... +${contentLines.length - 4} more lines`, null, { dim: true })}`)
-      }
-      return result
+      const n = String(args?.content || "").split("\n").filter(Boolean).length
+      return `    ${paint(`+${n} lines`, diffAdd(), { dim: true })}`
     }
     case "edit": {
-      if (!args?.old_string && !args?.new_string) return null
-      const result = []
-      // Show removed lines
-      if (args?.old_string) {
-        const oldLines = String(args.old_string).split("\n")
-        const showOld = oldLines.slice(0, 3)
-        for (const line of showOld) {
-          result.push(`  ${paint("-", diffDel(), { bold: true })} ${paint(clipText(line, 90), diffDel(), { dim: true })}`)
-        }
-        if (oldLines.length > 3) {
-          result.push(`  ${paint(`  ... -${oldLines.length - 3} more`, diffDel(), { dim: true })}`)
-        }
-      }
-      // Show added lines
-      if (args?.new_string) {
-        const newLines = String(args.new_string).split("\n")
-        const showNew = newLines.slice(0, 3)
-        for (const line of showNew) {
-          result.push(`  ${paint("+", diffAdd(), { bold: true })} ${paint(clipText(line, 90), diffAdd(), { dim: true })}`)
-        }
-        if (newLines.length > 3) {
-          result.push(`  ${paint(`  ... +${newLines.length - 3} more`, diffAdd(), { dim: true })}`)
-        }
-      }
-      return result
+      const added = String(args?.new_string || "").split("\n").filter(Boolean).length
+      const removed = String(args?.old_string || "").split("\n").filter(Boolean).length
+      const parts = []
+      if (added > 0) parts.push(paint(`+${added}`, diffAdd()))
+      if (removed > 0) parts.push(paint(`-${removed}`, diffDel()))
+      return parts.length ? `    ${parts.join(" ")} ${paint("lines", null, { dim: true })}` : null
     }
     case "grep": {
       const lines = text.split("\n").filter(Boolean)
-      if (text === "no matches" || !lines.length) {
-        return `  ${paint("no matches", null, { dim: true })}`
-      }
-      return `  ${paint(`${lines.length} matches`, null, { dim: true })}`
+      if (text === "no matches" || !lines.length) return `    ${paint("no matches", null, { dim: true })}`
+      return `    ${paint(`${lines.length} matches`, null, { dim: true })}`
     }
-    case "read": {
-      const lines = text.split("\n")
-      return `  ${paint(`${lines.length} lines`, null, { dim: true })}`
-    }
+    case "read":
+      return `    ${paint(`${text.split("\n").length} lines`, null, { dim: true })}`
     case "glob": {
       const lines = text.split("\n").filter(Boolean)
-      if (!lines.length) return `  ${paint("no files found", null, { dim: true })}`
-      const preview = lines.slice(0, 2).map((l) => shortPath(l))
-      const suffix = lines.length > 2 ? ` (+${lines.length - 2} more)` : ""
-      return `  ${paint(`${lines.length} files: ${preview.join(", ")}${suffix}`, null, { dim: true })}`
-    }
-    case "task": {
-      return `  ${paint(clipText(text, 120), null, { dim: true })}`
+      if (!lines.length) return `    ${paint("no files", null, { dim: true })}`
+      return `    ${paint(`${lines.length} files`, null, { dim: true })}`
     }
     case "todowrite": {
       const todos = Array.isArray(args?.todos) ? args.todos : []
@@ -294,23 +148,6 @@ export function formatToolResultPreview(toolName, output, status, args) {
       }
       if (todos.length > 8) result.push(paint(`  ... +${todos.length - 8} more`, null, { dim: true }))
       return result
-    }
-    case "enter_plan": {
-      return `  ${paint("Agent entered planning mode. Awaiting plan...", "magenta", { dim: true })}`
-    }
-    case "exit_plan": {
-      const files = Array.isArray(args?.files) ? args.files : []
-      if (files.length) {
-        const lines = [`  ${paint("Plan submitted for review:", "green", { dim: true })}`]
-        for (const f of files.slice(0, 5)) {
-          lines.push(`    ${paint(shortPath(f), null, { dim: true })}`)
-        }
-        if (files.length > 5) {
-          lines.push(`    ${paint(`... +${files.length - 5} more`, null, { dim: true })}`)
-        }
-        return lines
-      }
-      return `  ${paint("Plan submitted for review.", "green", { dim: true })}`
     }
     default:
       return null
@@ -436,28 +273,28 @@ export function createActivityRenderer({ output, theme = null }) {
 
     switch (type) {
       case EVENT_TYPES.TOOL_START: {
-        // Only track timing & args — the busy line already shows the active tool.
-        // We log nothing here; TOOL_FINISH will show the result.
         const key = timerKey(sessionId, turnId, payload.tool)
         const lookupKey = `${sessionId}:${turnId}:${payload.tool}`
         toolTimers.set(key, Date.now())
         activeToolKeys.set(lookupKey, key)
         activeToolArgs.set(lookupKey, payload.args)
+        // Show tool call inline (compact dim line)
+        const startLine = formatToolStart(payload.tool, payload.args)
+        if (startLine) log(startLine)
         break
       }
 
       case EVENT_TYPES.TOOL_FINISH: {
         const lookupKey = `${sessionId}:${turnId}:${payload.tool}`
         const key = activeToolKeys.get(lookupKey)
-        const startedAt = key ? toolTimers.get(key) : null
-        const durationMs = startedAt ? Date.now() - startedAt : (payload.durationMs || 0)
         const savedArgs = activeToolArgs.get(lookupKey) || payload.args
         if (key) {
           toolTimers.delete(key)
           activeToolKeys.delete(lookupKey)
           activeToolArgs.delete(lookupKey)
         }
-        log(formatToolFinish(payload.tool, payload.status, durationMs, savedArgs))
+        const finishLine = formatToolFinish(payload.tool, payload.status, 0, savedArgs)
+        if (finishLine) log(finishLine)
         const preview = formatToolResultPreview(payload.tool, payload.output, payload.status, savedArgs)
         if (preview) {
           if (Array.isArray(preview)) {
@@ -466,21 +303,21 @@ export function createActivityRenderer({ output, theme = null }) {
             log(preview)
           }
         }
+        // Blank line after tool for visual spacing
+        if (payload.tool !== "todowrite") log("")
         break
       }
 
       case EVENT_TYPES.TOOL_ERROR: {
         const lookupKey = `${sessionId}:${turnId}:${payload.tool}`
         const key = activeToolKeys.get(lookupKey)
-        const startedAt = key ? toolTimers.get(key) : null
-        const durationMs = startedAt ? Date.now() - startedAt : (payload.durationMs || 0)
         const savedArgs = activeToolArgs.get(lookupKey) || payload.args
         if (key) {
           toolTimers.delete(key)
           activeToolKeys.delete(lookupKey)
           activeToolArgs.delete(lookupKey)
         }
-        log(formatToolFinish(payload.tool, payload.status || "error", durationMs, savedArgs))
+        log(formatToolFinish(payload.tool, payload.status || "error", 0, savedArgs))
         const errLine = formatToolError(payload.error)
         if (errLine) log(errLine)
         break

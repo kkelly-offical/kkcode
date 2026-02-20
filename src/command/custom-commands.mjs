@@ -49,6 +49,7 @@ export function applyCommandTemplate(template, args, vars = {}) {
   const rawArgs = String(args || "").trim()
   const tokens = rawArgs ? rawArgs.split(/\s+/) : []
   let output = template
+  output = output.replace(/\$ARGUMENTS\[(\d+)\]/g, (_, i) => tokens[Number(i)] || "")
   output = output.replace(/\$ARGUMENTS/g, rawArgs)
   output = output.replace(/\$(\d+)/g, (_, index) => tokens[Number(index) - 1] || "")
   output = renderTemplate(output, vars)

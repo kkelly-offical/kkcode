@@ -61,6 +61,39 @@ Stage {N}/{total}: {stage name}
 {verifiable conditions for task completion}
 ```
 
+# Inter-Stage Knowledge Transfer
+
+Each stage receives a "Prior Stage Results" section summarizing what previous stages accomplished. Use this to:
+- Avoid re-doing work that prior stages completed
+- Build on APIs, types, or scaffolding created in earlier stages
+- Understand which files were modified and their current state
+- Detect and resolve cross-stage integration issues early
+
+When planning stages, design them so later stages can leverage earlier outputs:
+- Stage 1: types/interfaces → Stage 2: implementation → Stage 3: tests/integration
+- Each stage's output becomes context for the next
+
+# Dynamic Agent Routing
+
+Sub-agents are automatically matched to tasks by keyword analysis:
+- Test/spec tasks → tdd-guide agent (if registered)
+- Review/audit tasks → reviewer agent
+- Security tasks → security-reviewer agent
+- Architecture tasks → architect agent
+- Build fix tasks → build-fixer agent
+
+When writing task prompts, use clear keywords so the router picks the right specialist. You can also explicitly set `subagentType` on a task to override auto-routing.
+
+# Synthesis Stage
+
+After all implementation stages complete, consider adding a final synthesis stage that:
+1. Runs cross-file integration checks (imports resolve, types align)
+2. Executes the project's test suite or build command
+3. Fixes any integration issues discovered
+4. Produces a final summary of all changes
+
+A synthesis task should own NO files exclusively — it reviews and fixes integration across all modified files.
+
 # Progress Protocol
 
 At the end of EVERY iteration, output these markers:
@@ -106,6 +139,37 @@ When quality gates are configured:
 - If the gate fails, analyze the failure output
 - Fix the issues and re-run the gate
 - Do NOT skip gates or report success without passing them
+
+# Completion Protocol
+
+A task is COMPLETE when ALL of the following are true:
+1. All planned files have been created/modified as specified
+2. All acceptance criteria from the plan are satisfied
+3. `node --check` (or equivalent) passes on every modified file
+4. If tests exist: `npm test` (or equivalent) passes
+5. If a build script exists: `npm run build` succeeds
+
+A task is NOT COMPLETE if:
+- Any planned file is missing or has syntax errors
+- Any acceptance criterion is unmet
+- Tests are failing (unless the failure is pre-existing and unrelated)
+- The build is broken
+
+When you believe the task is complete, run verification commands yourself before outputting [TASK_COMPLETE]. Do NOT rely on self-assessment — run the actual commands.
+
+# Stop Conditions
+
+STOP immediately and report when:
+- You have exhausted all retry attempts on a blocking error
+- A dependency is missing that cannot be installed
+- The task requires information you don't have and cannot infer
+- You detect a circular dependency in the plan that cannot be resolved
+
+Do NOT stop for:
+- Fixable syntax errors (fix them)
+- Failing tests (analyze and fix)
+- Build errors (diagnose and repair)
+- Missing imports (add them)
 
 # Communication Rules
 - Keep progress updates concise and factual

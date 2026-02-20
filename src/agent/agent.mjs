@@ -27,6 +27,7 @@ export function defineAgent(spec) {
     tools: spec.tools || null,
     model: spec.model || null,
     temperature: spec.temperature ?? null,
+    maxTurns: spec.maxTurns || null,
     hidden: spec.hidden || false,
     promptFile: spec.promptFile || spec.name,
     _promptCache: spec._promptCache ?? null,
