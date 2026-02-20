@@ -169,7 +169,9 @@ async function runBash(command, cwd, timeoutMs = BASH_TIMEOUT_MS) {
       stderr: error.stderr ?? error.message
     }
   })
-  return `${out.stdout || ""}${out.stderr || ""}`.trim() || "(empty output)"
+  const raw = `${out.stdout || ""}${out.stderr || ""}`.trim() || "(empty output)"
+  if (raw.length > 30000) return raw.slice(0, 30000) + `\n\n[truncated] output exceeded 30000 chars (total: ${raw.length})`
+  return raw
 }
 
 function lockOptions(ctx = {}) {
@@ -317,7 +319,7 @@ function builtinTools() {
       const content = await readFile(target, encoding)
       const allLines = content.split("\n")
       const start = Math.max(0, (Number(args.offset) || 1) - 1)
-      const count = Number(args.limit) || allLines.length
+      const count = Number(args.limit) || Math.min(allLines.length, 2000)
       const slice = allLines.slice(start, start + count)
       const numbered = slice.map((line, i) => {
         const num = String(start + i + 1).padStart(6)

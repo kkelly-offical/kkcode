@@ -135,7 +135,7 @@ export async function processTurnLoop({
 
   const cwd = process.cwd()
   const turnId = newId("turn")
-  const maxSteps = Math.max(1, Number(configState.config.agent.max_steps || 25))
+  const maxSteps = Math.max(1, Number(configState.config.agent.max_steps || 128))
   const verifyCompletion = configState.config.agent?.verify_completion !== false
   const recoveryEnabled = isRecoveryEnabled(configState.config)
   const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }

@@ -4,7 +4,7 @@ Assume this tool is able to read all files on the machine. If the user provides 
 ## Usage
 
 - The path parameter can be absolute or relative to the working directory.
-- By default, it reads the entire file. You can optionally specify offset and limit for large files.
+- By default, it reads up to 2000 lines starting from the beginning of the file. You can optionally specify offset and limit for large files.
 - Any lines longer than 2000 characters will be truncated.
 - Results are returned with line numbers in "     1→content" format.
 
