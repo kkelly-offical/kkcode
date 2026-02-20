@@ -1,0 +1,24 @@
+Replace a range of lines in a file by line number. Transactional with automatic rollback.
+
+Usage:
+- You MUST `read` the file first — patches on unread files are rejected.
+- Use `read` with offset/limit to view the relevant section, note line numbers, then call `patch`.
+- Lines are 1-based and the range is inclusive (both start_line and end_line are replaced).
+- To delete lines without replacement, pass content as empty string "".
+
+Parameters:
+- path (required): file path
+- start_line (required): first line to replace (1-based, inclusive)
+- end_line (required): last line to replace (1-based, inclusive)
+- content (required): replacement text (replaces the entire line range)
+
+When to use `patch` vs `edit`:
+- You know exact line numbers from a recent `read` → use `patch`
+- You know exact text to match but not line numbers → use `edit`
+- You need to replace many occurrences of a string → use `edit` with replace_all
+- You want to replace a large section (50+ lines) → use `patch` (only needs new content, not old)
+
+Workflow for large file modifications:
+1. `read` the file (or section with offset/limit)
+2. Note the line numbers of the section to change
+3. Call `patch` with start_line, end_line, and new content

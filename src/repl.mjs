@@ -57,6 +57,7 @@ function formatBusyToolDetail(toolName, args) {
     case "notebookedit": return args.path ? paint(` ${clipBusy(args.path, 50)} cell ${args.cell_number ?? 0}`, null, { dim: true }) : ""
     case "grep": return args.pattern ? paint(` ${clipBusy(args.pattern, 40)}`, null, { dim: true }) : ""
     case "glob": return args.pattern ? paint(` ${clipBusy(args.pattern, 40)}`, null, { dim: true }) : ""
+    case "patch": return args.path ? paint(` ${clipBusy(args.path, 40)} L${args.start_line || "?"}-${args.end_line || "?"}`, null, { dim: true }) : ""
     case "task": return args.description ? paint(` ${clipBusy(args.description, 50)}`, null, { dim: true }) : ""
     case "enter_plan": return args.reason ? paint(` ${clipBusy(args.reason, 50)}`, null, { dim: true }) : paint(" planning...", null, { dim: true })
     case "exit_plan": return paint(" submitting plan...", null, { dim: true })
@@ -383,7 +384,7 @@ function shortcutLegend() {
     "TUI keys:",
     "  Enter choose slash suggestion / submit prompt",
     "  Ctrl+J insert newline (Shift+Enter if terminal supports)",
-    "  Ctrl+V paste image from clipboard",
+    "  /paste paste image from clipboard (Ctrl+V if terminal supports)",
     "  Up/Down navigate suggestion/history",
     "  Left/Right/Home/End edit cursor",
     "  Ctrl+Up/Down scroll log   Ctrl+Home/End oldest/latest",
@@ -2026,7 +2027,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       lines.push(`${left}${clipAnsiLine(inputLine, inputInnerWidth)}${right}`)
     }
     lines.push(inputBottom)
-    lines.push(clipAnsiLine(paint("? for shortcuts | Enter send | Ctrl+J newline | Ctrl+V paste image", ctx.themeState.theme.base.muted), width))
+    lines.push(clipAnsiLine(paint("? for shortcuts | Enter send | Ctrl+J newline | /paste image", ctx.themeState.theme.base.muted), width))
 
     const final = lines.slice(0, Math.max(1, height))
     while (final.length < height) final.push(" ".repeat(width))

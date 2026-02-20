@@ -9,17 +9,30 @@ Usage:
 
 IMPORTANT:
 - Parent directories are created automatically — no need to `mkdir` first.
-- Always include the COMPLETE file content in a single `write` call. Do NOT split a file across multiple writes or plan to "append later".
+- For small files: include COMPLETE content in a single call.
+- For large files (200+ lines): use mode="append" to build incrementally across multiple calls.
 - For reading files, use the `read` tool — never use `bash` with cat/type/Get-Content.
-- Do NOT use `write` when only a small part of an existing file needs to change — use `edit` instead.
+- Do NOT use `write` when only a small part of an existing file needs to change — use `edit` or `patch` instead.
 - Do NOT delegate file creation to `task` — just call `write` directly.
 
 Parameters:
 - path (required): file path (absolute or relative)
-- content (required): the complete file content to write
+- content (required): file content to write
+- mode (optional): "overwrite" (default), "append", or "insert"
+  - overwrite: replaces entire file (default behavior)
+  - append: adds content to end of existing file (creates file if new)
+  - insert: inserts content at a specific line, shifting existing lines down
+- insert_at_line (optional): 1-based line number for insert mode
 
-When to use `write` vs `edit`:
+Building large files incrementally (avoids output truncation):
+1. First call: write(path, content, mode="overwrite") — create with initial section
+2. Subsequent calls: write(path, content, mode="append") — add remaining sections
+Each call should be ~100-150 lines to stay well within output limits.
+
+When to use `write` vs `edit` vs `patch`:
 - New file that doesn't exist yet → `write`
 - Replacing entire file content → `write` (after reading it first)
+- Adding content to end of file → `write` with mode="append"
 - Changing a few lines in an existing file → `edit`
 - Renaming a variable across a file → `edit` with replace_all
+- Replacing a large section by line numbers → `patch`

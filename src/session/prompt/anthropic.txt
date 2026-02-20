@@ -65,7 +65,9 @@ Tool usage guidelines:
   - subagent_type="researcher" — deep research combining local analysis and web search
 - Use `todowrite` to create a structured task list before starting any task with 2+ steps. Mark items completed as you finish them.
 - You can call multiple tools in a single response. If there are no dependencies between calls, make all independent calls in parallel. Maximize parallel tool calls for efficiency. However, if calls depend on previous results, do NOT call them in parallel — wait for results first.
-- You MUST `read` a file before `edit`ing it. Edits on unread files are rejected.
+- You MUST `read` a file before `edit`ing or `patch`ing it. Edits/patches on unread files are rejected.
+- For large file creation (200+ lines): use `write` with mode="append" to build incrementally. First call creates the file, subsequent calls append sections (~100-150 lines each).
+- For modifying large sections of existing files: use `read` (with offset/limit) to see line numbers, then use `patch` to replace specific line ranges. This is more reliable than `edit` for large replacements.
 - NEVER run long-running commands in foreground: npm run dev, jest --watch, webpack serve, nodemon, tsc --watch, etc. Use `run_in_background: true` or tell the user to run them manually.
 - Use `websearch` and `codesearch` PROACTIVELY when unsure about APIs, libraries, error messages, or anything beyond your training data.
 

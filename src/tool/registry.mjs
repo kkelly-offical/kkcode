@@ -332,27 +332,30 @@ function builtinTools() {
 
   const writeTool = {
     name: "write",
-    description: "Create or overwrite a file atomically. Auto-creates parent directories. Include ALL content in a single call — do NOT split across multiple writes. Use `edit` instead when only a small part of an existing file needs to change.",
+    description: "Create or overwrite a file atomically. Auto-creates parent directories. Supports three modes: 'overwrite' (default, full replacement), 'append' (add to end of file), 'insert' (insert at a specific line). For large files (200+ lines), use mode='append' to build incrementally across multiple calls to avoid output truncation. Use `edit` instead when only a small part of an existing file needs to change.",
     inputSchema: {
       type: "object",
       properties: {
         path: schema("string", "file path"),
-        content: schema("string", "new file content")
+        content: schema("string", "file content to write"),
+        mode: schema("string", "write mode: 'overwrite' (default), 'append' (add to end), 'insert' (insert at line number)"),
+        insert_at_line: schema("number", "1-based line number for insert mode. Content is inserted BEFORE this line.")
       },
       required: ["path", "content"]
     },
     async execute(args, ctx) {
       const target = path.resolve(ctx.cwd, args.path)
       const content = String(args.content ?? "")
+      const mode = String(args.mode || "overwrite")
 
       // Guard: detect empty/parse-error writes that would destroy existing content
       if (args.__parse_error) {
         return {
-          output: `error: tool call arguments were corrupted (JSON parse failed). The write was NOT executed. This usually means the response was truncated — try generating a shorter file or use the edit tool for incremental changes.`,
+          output: `error: tool call arguments were corrupted (JSON parse failed). The write was NOT executed. This usually means the response was truncated — try using write with mode="append" to build the file incrementally.`,
           metadata: { blocked: true, reason: "parse_error" }
         }
       }
-      if (!content && !args.content) {
+      if (!content && !args.content && mode === "overwrite") {
         return {
           output: `error: content is empty or missing. The write was NOT executed. If you intended to create an empty file, pass content as an empty string explicitly.`,
           metadata: { blocked: true, reason: "empty_content" }
@@ -361,14 +364,30 @@ function builtinTools() {
 
       let previous = ""
       const options = lockOptions(ctx)
+
       const runWrite = async () => {
         try {
           previous = await readFile(target, "utf8")
         } catch {
           previous = ""
         }
-        await atomicWriteFile(target, content)
+
+        if (mode === "append") {
+          const separator = previous && !previous.endsWith("\n") ? "\n" : ""
+          await atomicWriteFile(target, previous + separator + content)
+        } else if (mode === "insert") {
+          const lineNum = Math.max(1, Number(args.insert_at_line) || 1)
+          const lines = previous ? previous.split("\n") : []
+          const insertIdx = Math.min(lineNum - 1, lines.length)
+          const newLines = content.split("\n")
+          lines.splice(insertIdx, 0, ...newLines)
+          await atomicWriteFile(target, lines.join("\n"))
+        } else {
+          // overwrite (default)
+          await atomicWriteFile(target, content)
+        }
       }
+
       if (options.mode === "file_lock") {
         await withFileLock({
           targetPath: target,
@@ -379,18 +398,20 @@ function builtinTools() {
       } else {
         await runWrite()
       }
-      const diff = diffLineCount(previous, content)
-      const addedLines = diff.added
-      const removedLines = diff.removed
+
+      let finalContent
+      try { finalContent = await readFile(target, "utf8") } catch { finalContent = content }
+      const diff = diffLineCount(previous, finalContent)
+      const modeLabel = mode === "append" ? "appended" : mode === "insert" ? "inserted" : "written"
       return {
-        output: `written: ${target}`,
+        output: `${modeLabel}: ${target}`,
         metadata: {
           fileChanges: [
             {
               path: String(args.path || target),
               tool: "write",
-              addedLines,
-              removedLines,
+              addedLines: diff.added,
+              removedLines: diff.removed,
               stageId: ctx.stageId || null,
               taskId: ctx.logicalTaskId || ctx.taskId || null
             }
@@ -1075,7 +1096,90 @@ function builtinTools() {
     }
   }
 
-  return [listTool, readTool, writeTool, editTool, multieditTool, globTool, grepTool, bashTool, createTaskTool(), outputTool, cancelTool, todowriteTool, questionTool, skillTool, webfetchTool, websearchTool, codesearchTool, notebookeditTool, enterPlanTool, exitPlanTool]
+  const patchTool = {
+    name: "patch",
+    description: "Replace a range of lines in a file by line numbers. Read the file first with `read` (use offset/limit for large files) to see line numbers, then specify the line range to replace. Lines are 1-based and inclusive. Ideal for modifying specific sections of large files without needing to match exact text.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: schema("string", "file path"),
+        start_line: schema("number", "first line to replace (1-based, inclusive)"),
+        end_line: schema("number", "last line to replace (1-based, inclusive)"),
+        content: schema("string", "replacement content (replaces the line range). Empty string deletes lines.")
+      },
+      required: ["path", "start_line", "end_line", "content"]
+    },
+    async execute(args, ctx) {
+      const target = path.resolve(ctx.cwd, args.path)
+
+      if (!wasFileRead(target)) {
+        try {
+          await access(target)
+          return {
+            output: `warning: you should read "${args.path}" before patching it. Use the read tool first.`,
+            metadata: { fileChanges: [] }
+          }
+        } catch { /* new file — allow */ }
+      }
+
+      const readInfo = fileReadTracker.get(target)
+      if (readInfo) {
+        try {
+          const fileStat = await stat(target)
+          if (fileStat.mtimeMs > readInfo.readAt + 500) {
+            return {
+              output: `warning: "${args.path}" was modified since you last read it. Read it again before patching.`,
+              metadata: { fileChanges: [] }
+            }
+          }
+        } catch { /* ok */ }
+      }
+
+      const startLine = Math.max(1, Number(args.start_line) || 1)
+      const endLine = Math.max(startLine, Number(args.end_line) || startLine)
+      const content = String(args.content ?? "")
+
+      const options = lockOptions(ctx)
+      let result
+      const runPatch = async () => {
+        const existing = await readFile(target, "utf8")
+        const lines = existing.split("\n")
+        if (startLine > lines.length) {
+          throw new Error(`start_line ${startLine} exceeds file length (${lines.length} lines)`)
+        }
+        const startIdx = startLine - 1
+        const endIdx = Math.min(endLine, lines.length)
+        const newLines = content === "" ? [] : content.split("\n")
+        lines.splice(startIdx, endIdx - startIdx, ...newLines)
+        const final = lines.join("\n")
+        await atomicWriteFile(target, final)
+        return { removedCount: endIdx - startIdx, insertedCount: newLines.length, previous: existing, final }
+      }
+
+      if (options.mode === "file_lock") {
+        result = await withFileLock({ targetPath: target, owner: options.owner, waitTimeoutMs: options.waitTimeoutMs, run: runPatch })
+      } else {
+        result = await runPatch()
+      }
+
+      markFileRead(target)
+      return {
+        output: `patched ${args.path}: replaced lines ${startLine}-${endLine} (removed ${result.removedCount}, inserted ${result.insertedCount})`,
+        metadata: {
+          fileChanges: [{
+            path: String(args.path || target),
+            tool: "patch",
+            addedLines: result.insertedCount,
+            removedLines: result.removedCount,
+            stageId: ctx.stageId || null,
+            taskId: ctx.logicalTaskId || ctx.taskId || null
+          }]
+        }
+      }
+    }
+  }
+
+  return [listTool, readTool, writeTool, editTool, patchTool, multieditTool, globTool, grepTool, bashTool, createTaskTool(), outputTool, cancelTool, todowriteTool, questionTool, skillTool, webfetchTool, websearchTool, codesearchTool, notebookeditTool, enterPlanTool, exitPlanTool]
 }
 
 function mcpTools() {
@@ -1092,7 +1196,7 @@ function mcpTools() {
 
 function toolAllowedByMode(toolName, mode) {
   if (mode === "ask" || mode === "plan") {
-    return !["write", "edit", "bash", "task"].includes(toolName)
+    return !["write", "edit", "patch", "bash", "task"].includes(toolName)
   }
   return true
 }

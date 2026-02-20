@@ -36,3 +36,8 @@ Tips:
   grep pattern="TODO" output_mode="content" head_limit=20 offset=20
   </example>
 - Pattern syntax uses ripgrep — literal braces need escaping (use "interface\\{\\}" to find "interface{}" in Go)
+
+## Using grep with patch/edit:
+- Use output_mode="content" to see line numbers alongside matches.
+- Line numbers from grep correspond directly to `read` (offset/limit) and `patch` (start_line/end_line).
+- Workflow: grep to find location → read surrounding context → patch or edit the section.

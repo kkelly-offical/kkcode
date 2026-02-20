@@ -531,8 +531,8 @@ export async function processTurnLoop({
         const truncatedToolNames = (response.toolCalls || []).filter(tc => tc.args?.__parse_error).map(tc => tc.name).join(", ")
         const toolHint = hadTruncatedToolCalls
           ? (language === "zh"
-            ? `\n被截断的工具调用: ${truncatedToolNames}。请完整重新发起这些工具调用。如果是 write/edit 工具写入大文件，考虑分段写入或使用更精简的内容。`
-            : `\nTruncated tool calls: ${truncatedToolNames}. Re-issue these tool calls completely. If writing large files with write/edit, consider splitting into smaller parts.`)
+            ? `\n被截断的工具调用: ${truncatedToolNames}。请完整重新发起这些工具调用。如果是创建大文件，使用 write(mode="append") 分段追加；如果是修改已有文件的局部内容，使用 patch 按行号范围替换。`
+            : `\nTruncated tool calls: ${truncatedToolNames}. Re-issue these tool calls completely. For large file creation, use write(mode="append") to append in chunks. For modifying sections of existing files, use patch to replace by line range.`)
           : ""
         const continuePrompt = language === "zh"
           ? `[输出被截断 ${continueCount}/${MAX_CONTINUES}] 你的上一条回复在输出 token 上限处被截断。请从你停止的地方精确继续，不要重复已经写过的内容。如果你正在执行工具调用，请完整重新发起。${toolHint}`
