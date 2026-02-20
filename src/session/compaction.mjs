@@ -5,16 +5,37 @@ import { saveCheckpoint } from "./checkpoint.mjs"
 import { recordTurn } from "../usage/usage-meter.mjs"
 import { loadPricing, calculateCost } from "../usage/pricing.mjs"
 
-const COMPACTION_SYSTEM = `You are a conversation summarizer. Your task is to create a concise summary of the conversation so far to reduce context size while preserving critical information.
+const COMPACTION_SYSTEM = `You are a conversation summarizer. Create a structured summary preserving all critical information for continued work.
 
-Focus on:
-- What tasks were completed and what is currently being worked on
-- Which files were created, modified, or deleted
-- Key decisions made and user preferences expressed
-- What needs to be done next
-- Any errors encountered and how they were resolved
+## Output Format
 
-Output a single summary in the same language as the conversation. Do NOT include tool call details or message metadata. Be concise but complete.`
+<summary>
+<goal>The user's overall goal or current task</goal>
+<completed>
+- Completed task with specific details (file paths, function names, line numbers)
+</completed>
+<in_progress>Current work being done, if any</in_progress>
+<files_modified>
+- path/to/file: specific change description
+</files_modified>
+<key_decisions>
+- Decision and reasoning
+- User preferences or constraints
+</key_decisions>
+<errors_resolved>
+- Error description → fix applied
+</errors_resolved>
+<next_steps>
+- Specific next action items
+</next_steps>
+</summary>
+
+Rules:
+- Use the SAME LANGUAGE as the conversation
+- Preserve ALL file paths, function names, variable names, and technical identifiers exactly
+- Include specific code changes, not just "modified file X"
+- Omit tool call metadata and message formatting details
+- Be concise but never drop actionable information`
 
 const DEFAULT_THRESHOLD_MESSAGES = 50
 const DEFAULT_THRESHOLD_RATIO = 0.7
@@ -137,10 +158,11 @@ export function contextUtilization(messages, model, configState = null) {
   }
 }
 
-export function shouldCompact({ messages, model, thresholdMessages = DEFAULT_THRESHOLD_MESSAGES, thresholdRatio = DEFAULT_THRESHOLD_RATIO, configState = null }) {
+export function shouldCompact({ messages, model, thresholdMessages = DEFAULT_THRESHOLD_MESSAGES, thresholdRatio = DEFAULT_THRESHOLD_RATIO, configState = null, realTokenCount = null }) {
   if (messages.length >= thresholdMessages) return true
-  const utilization = contextUtilization(messages, model, configState)
-  return utilization.tokens >= utilization.limit * thresholdRatio
+  const limit = modelContextLimit(model, configState)
+  const tokens = realTokenCount != null ? realTokenCount : estimateTokenCount(messages)
+  return tokens >= limit * thresholdRatio
 }
 
 export async function compactSession({
@@ -155,8 +177,19 @@ export async function compactSession({
   const history = await getConversationHistory(sessionId, 9999)
   if (history.length <= keepRecent + 2) return { compacted: false, reason: "too few messages" }
 
-  const toSummarize = history.slice(0, -keepRecent)
-  const kept = history.slice(-keepRecent)
+  // Find split point that doesn't break tool_use/tool_result pairs
+  let splitIdx = history.length - keepRecent
+  while (splitIdx > 0 && splitIdx < history.length) {
+    const msg = history[splitIdx]
+    const content = msg.content
+    if (Array.isArray(content) && content.some(b => b.type === "tool_result")) {
+      splitIdx-- // include the paired assistant tool_use message
+      continue
+    }
+    break
+  }
+  const toSummarize = history.slice(0, splitIdx)
+  const kept = history.slice(splitIdx)
 
   // Layer 1: prune large tool outputs before sending to LLM
   const pruned = pruneForSummary(toSummarize)

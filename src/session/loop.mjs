@@ -333,7 +333,8 @@ export async function processTurnLoop({
         model,
         thresholdMessages,
         thresholdRatio,
-        configState
+        configState,
+        realTokenCount: realCount != null ? contextTokens : null
       })) {
           const compactResult = await compactSession({
             sessionId, model, providerType, configState, baseUrl, apiKeyEnv
