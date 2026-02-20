@@ -2702,51 +2702,124 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
 function startSplash() {
   if (!process.stdout.isTTY) return { update() {}, stop() {} }
+
   const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+  // Block-style logo — each character colored individually for wave effect
   const logo = [
-    " _  __ _  __  ____   ___   ____   _____ ",
-    "| |/ /| |/ / / ___| / _ \\ |  _ \\ | ____|",
-    "| ' / | ' / | |    | | | || | | ||  _|  ",
-    "| . \\ | . \\ | |___ | |_| || |_| || |___ ",
-    "|_|\\_\\|_|\\_\\ \\____| \\___/ |____/ |_____|",
-    "                 v0.1.1                  "
+    "  ██╗  ██╗ ██╗  ██╗  ██████╗  ██████╗  ██████╗  ███████╗ ",
+    "  ██║ ██╔╝ ██║ ██╔╝ ██╔════╝ ██╔═══██╗ ██╔══██╗ ██╔════╝ ",
+    "  █████╔╝  █████╔╝  ██║      ██║   ██║ ██║  ██║ █████╗   ",
+    "  ██╔═██╗  ██╔═██╗  ██║      ██║   ██║ ██║  ██║ ██╔══╝   ",
+    "  ██║  ██╗ ██║  ██╗ ╚██████╗ ╚██████╔╝ ██████╔╝ ███████╗ ",
+    "  ╚═╝  ╚═╝ ╚═╝  ╚═╝  ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝ "
   ]
-  const palette = ["#6ec1ff", "#52b7ff", "#36d8d3", "#3fd487", "#f1c55b", "#aaa"]
-  let idx = 0
+  const tagline = "AI Coding Agent"
+  const version = "v0.1.1"
+
+  // Gradient colors for the wave animation (cyan → blue → purple → pink → back)
+  const wave = [
+    "#4af5f0", "#3de8f5", "#30dbfa", "#38c8ff", "#40b5ff",
+    "#58a0ff", "#708bff", "#8876ff", "#a061ff", "#b84cff",
+    "#d037ff", "#e828f0", "#f034d0", "#f040b0", "#f04c90",
+    "#f040b0", "#f034d0", "#e828f0", "#d037ff", "#b84cff",
+    "#a061ff", "#8876ff", "#708bff", "#58a0ff", "#40b5ff",
+    "#38c8ff", "#30dbfa", "#3de8f5"
+  ]
+
+  let tick = 0
   let status = "loading config..."
   let steps = []
+  let revealChars = 0           // typewriter reveal counter
+  const totalChars = logo[0].length
+  const revealSpeed = 3         // chars revealed per tick
+
+  // Paint a single character with a hex color using raw ANSI (avoid overhead of paint())
+  function charColor(ch, hex) {
+    if (ch === " " || ch === "\n") return ch
+    const r = parseInt(hex.slice(1, 3), 16)
+    const g = parseInt(hex.slice(3, 5), 16)
+    const b = parseInt(hex.slice(5, 7), 16)
+    return `\x1b[1;38;2;${r};${g};${b}m${ch}\x1b[0m`
+  }
 
   function render() {
     const cols = process.stdout.columns || 80
     const rows = process.stdout.rows || 24
     const lines = []
-    // vertical centering
-    const contentHeight = logo.length + 2 + steps.length + 2
+
+    const contentHeight = logo.length + 4 + steps.length + 2
     const topPad = Math.max(0, Math.floor((rows - contentHeight) / 2))
     for (let i = 0; i < topPad; i++) lines.push("")
-    // logo
-    for (let i = 0; i < logo.length; i++) {
-      const pad = Math.max(0, Math.floor((cols - logo[i].length) / 2))
-      lines.push(" ".repeat(pad) + paint(logo[i], palette[i], { bold: true }))
+
+    // Render logo with color wave + typewriter reveal
+    const visible = Math.min(revealChars, totalChars)
+    for (let row = 0; row < logo.length; row++) {
+      const line = logo[row]
+      const pad = Math.max(0, Math.floor((cols - line.length) / 2))
+      let out = " ".repeat(pad)
+      for (let col = 0; col < line.length; col++) {
+        if (col >= visible) { out += " "; continue }
+        const ch = line[col]
+        // Wave: color index based on column + time offset, different phase per row
+        const waveIdx = (col + tick * 2 + row * 3) % wave.length
+        out += charColor(ch, wave[waveIdx])
+      }
+      lines.push(out)
     }
+
+    // Tagline + version (fade in after logo is revealed)
+    const tagFull = `${tagline}  ·  ${version}`
+    if (visible >= totalChars) {
+      const tagPad = Math.max(0, Math.floor((cols - tagFull.length) / 2))
+      const tagAlpha = Math.min(1, (revealChars - totalChars) / 20)
+      // Interpolate from dim to bright
+      const brightness = Math.round(100 + 155 * tagAlpha)
+      const tagHex = `#${brightness.toString(16).padStart(2, "0")}${brightness.toString(16).padStart(2, "0")}${brightness.toString(16).padStart(2, "0")}`
+      lines.push(" ".repeat(tagPad) + paint(tagFull, tagHex, { dim: tagAlpha < 0.5 }))
+    } else {
+      lines.push("")
+    }
+
+    // Separator line — subtle gradient bar
+    if (visible >= totalChars) {
+      const barWidth = Math.min(40, cols - 4)
+      const barPad = Math.max(0, Math.floor((cols - barWidth) / 2))
+      let bar = ""
+      for (let i = 0; i < barWidth; i++) {
+        const ci = (i + tick) % wave.length
+        bar += charColor("─", wave[ci])
+      }
+      lines.push(" ".repeat(barPad) + bar)
+    } else {
+      lines.push("")
+    }
+
     lines.push("")
-    // completed steps
+
+    // Completed steps
     for (const s of steps) {
       const pad = Math.max(0, Math.floor((cols - s.length - 4) / 2))
       lines.push(" ".repeat(pad) + paint(`  ✓ ${s}`, "#3fd487"))
     }
-    // current spinner line
-    const spinLine = `${frames[idx]} ${status}`
+
+    // Current spinner
+    const spinChar = frames[tick % frames.length]
+    const spinLine = `${spinChar} ${status}`
     const spinPad = Math.max(0, Math.floor((cols - spinLine.length - 2) / 2))
     lines.push(" ".repeat(spinPad) + paint(`  ${spinLine}`, "#6ec1ff", { bold: true }))
-    // write
-    process.stdout.write("\x1B[?25l")  // hide cursor
-    process.stdout.write("\x1Bc")       // clear
+
+    process.stdout.write("\x1B[?25l")
+    process.stdout.write("\x1Bc")
     process.stdout.write(lines.join("\n"))
   }
 
   render()
-  const timer = setInterval(() => { idx = (idx + 1) % frames.length; render() }, 80)
+  const timer = setInterval(() => {
+    tick++
+    if (revealChars < totalChars + 30) revealChars += revealSpeed
+    render()
+  }, 50)
 
   return {
     update(text) {
@@ -2756,8 +2829,8 @@ function startSplash() {
     },
     stop() {
       clearInterval(timer)
-      process.stdout.write("\x1B[?25h")  // show cursor
-      process.stdout.write("\x1Bc")       // clear
+      process.stdout.write("\x1B[?25h")
+      process.stdout.write("\x1Bc")
     }
   }
 }

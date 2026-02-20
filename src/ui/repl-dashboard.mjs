@@ -270,21 +270,32 @@ export function renderReplDashboard({
 export function renderReplLogo({ theme, columns = null }) {
   const width = Number.isFinite(columns) ? Math.max(60, Math.min(Number(columns), 220)) : terminalWidth()
   const rawLogo = [
-    " _  __ _  __  ____   ___   ____   _____ ",
-    "| |/ /| |/ / / ___| / _ \\ |  _ \\ | ____|",
-    "| ' / | ' / | |    | | | || | | ||  _|  ",
-    "| . \\ | . \\ | |___ | |_| || |_| || |___ ",
-    "|_|\\_\\|_|\\_\\ \\____| \\___/ |____/ |_____|"
+    "██╗  ██╗ ██╗  ██╗  ██████╗  ██████╗  ██████╗  ███████╗",
+    "██║ ██╔╝ ██║ ██╔╝ ██╔════╝ ██╔═══██╗ ██╔══██╗ ██╔════╝",
+    "█████╔╝  █████╔╝  ██║      ██║   ██║ ██║  ██║ █████╗  ",
+    "██╔═██╗  ██╔═██╗  ██║      ██║   ██║ ██║  ██║ ██╔══╝  ",
+    "██║  ██╗ ██║  ██╗ ╚██████╗ ╚██████╔╝ ██████╔╝ ███████╗",
+    "╚═╝  ╚═╝ ╚═╝  ╚═╝  ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝"
   ]
-  const palette = [
-    theme.semantic.info,
-    theme.modes.ask,
-    theme.modes.plan,
-    theme.modes.agent,
-    theme.modes.longagent
+  const wave = [
+    "#4af5f0", "#3de8f5", "#30dbfa", "#38c8ff", "#40b5ff",
+    "#58a0ff", "#708bff", "#8876ff", "#a061ff", "#b84cff",
+    "#d037ff", "#e828f0", "#f034d0", "#f040b0", "#f04c90",
+    "#f040b0", "#f034d0", "#e828f0", "#d037ff", "#b84cff",
+    "#a061ff", "#8876ff", "#708bff", "#58a0ff", "#40b5ff",
+    "#38c8ff", "#30dbfa", "#3de8f5"
   ]
-  const coreLines = rawLogo.map((line, idx) => paint(line, palette[idx % palette.length], { bold: true }))
-  coreLines.push(paint("Interactive Coding CLI", theme.base.fg, { bold: true }))
+  const coreLines = rawLogo.map((line, row) => {
+    let out = ""
+    for (let col = 0; col < line.length; col++) {
+      const ch = line[col]
+      if (ch === " ") { out += " "; continue }
+      const waveIdx = (col + row * 3) % wave.length
+      out += paint(ch, wave[waveIdx], { bold: true })
+    }
+    return out
+  })
+  coreLines.push(paint("AI Coding Agent", theme.base.fg, { bold: true }))
   coreLines.push(paint("Type /status to open Workspace & Runtime panel", theme.base.muted))
 
   const mascotRaw = [
