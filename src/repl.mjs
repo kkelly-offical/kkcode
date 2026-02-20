@@ -386,7 +386,7 @@ function shortcutLegend() {
     "  Ctrl+V paste image from clipboard",
     "  Up/Down navigate suggestion/history",
     "  Left/Right/Home/End edit cursor",
-    "  PgUp/PgDn scroll log   Ctrl+Home/End jump to oldest/latest",
+    "  Ctrl+Up/Down scroll log   Ctrl+Home/End oldest/latest",
     "  Tab cycle mode (longagent -> plan -> ask -> agent)",
     "  Esc clear input  Ctrl+C exit"
   ].join("\n")
@@ -1948,8 +1948,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     }
 
     const scrollHint = ui.scrollOffset > 0
-      ? paint(`  PgUp/PgDn scroll | +${ui.scrollOffset} lines`, ctx.themeState.theme.semantic.warn)
-      : paint("  PgUp/PgDn scroll | Home oldest | End latest", ctx.themeState.theme.base.muted, { dim: true })
+      ? paint(`  Ctrl+Up/Down scroll | +${ui.scrollOffset} lines`, ctx.themeState.theme.semantic.warn)
+      : paint("  Ctrl+Up/Down scroll | Ctrl+Home oldest | Ctrl+End latest", ctx.themeState.theme.base.muted, { dim: true })
 
     lines.push(clipAnsiLine(paint("─".repeat(Math.min(40, width)), ctx.themeState.theme.base.border, { dim: true }), width))
 
@@ -2470,6 +2470,13 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           return
         }
 
+        // Ctrl+Up/Down: scroll log area (3 lines at a time)
+        if (key.ctrl && (key.name === "up" || key.name === "down")) {
+          scrollBy(key.name === "up" ? 3 : -3)
+          requestRender()
+          return
+        }
+
         if (key.name === "home" && (key.ctrl || key.shift)) {
           scrollToTop()
           requestRender()
@@ -2602,12 +2609,6 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         }
 
         if (key.name === "up" || key.name === "down") {
-          // Ctrl+Up/Down: navigate input history
-          if (key.ctrl) {
-            navigateHistory(key.name)
-            requestRender()
-            return
-          }
           const handled = handleUpDownSuggestions(key.name)
           if (!handled) navigateHistory(key.name)
           requestRender()
