@@ -327,7 +327,7 @@ export async function* requestAnthropicStream(input) {
         const text = parsed.delta.text || ""
         if (text) yield { type: "text", content: text }
       }
-      if (parsed.delta?.type === "thinking_delta") {
+      if (parsed.delta?.type === "thinking_delta" && currentBlock?.type !== "redacted_thinking") {
         const thinking = parsed.delta.thinking || ""
         if (thinking) yield { type: "thinking", content: thinking }
       }

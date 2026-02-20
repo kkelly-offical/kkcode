@@ -94,7 +94,7 @@ export function renderStatusBar({
     if (contextMeter.cacheRead > 0 || contextMeter.cacheWrite > 0) {
       const total = (contextMeter.cacheRead || 0) + (contextMeter.cacheWrite || 0) + (contextMeter.inputUncached || 0)
       const hitPct = total > 0 ? Math.round((contextMeter.cacheRead || 0) / total * 100) : 0
-      suffix = ` C:${hitPct}%`
+      suffix = ` Cache:${hitPct}%`
     }
     const text = tight ? `CTX ${pct}%` : `CONTEXT ${pct}%${suffix}`
     segments.push(badge(text, contrastText(ctxBg), ctxBg, { bold: false }))

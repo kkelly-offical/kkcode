@@ -376,15 +376,7 @@ export async function processTurnLoop({
 
         for await (const chunk of chunks) {
           if (chunk.type === "thinking") {
-            // Skip encrypted/binary thinking content (high ratio of non-printable chars)
             const text = chunk.content || ""
-            let bad = 0
-            for (let i = 0; i < Math.min(text.length, 80); i++) {
-              const c = text.charCodeAt(i)
-              if (c < 32 && c !== 10 && c !== 13 && c !== 9) bad++
-              else if (c >= 0xFFF0) bad++
-            }
-            if (text.length > 0 && bad / Math.min(text.length, 80) > 0.15) continue
             if (!inThinking) {
               sinkWrite(paint("●", "#666666") + " " + paint("Thinking", null, { dim: true }) + " " + paint("∨", null, { dim: true }) + "\n")
               inThinking = true

@@ -145,6 +145,8 @@ const LONG_RUNNING_PATTERNS = [
 ]
 
 const BASH_TIMEOUT_MS = 120_000
+const IS_WIN = process.platform === "win32"
+function wrapCmd(cmd) { return IS_WIN ? `chcp 65001 >nul & ${cmd}` : cmd }
 
 function isLongRunningCommand(command) {
   const cmd = String(command || "").trim()
@@ -155,7 +157,7 @@ async function runBash(command, cwd, timeoutMs = BASH_TIMEOUT_MS) {
   if (isLongRunningCommand(command)) {
     return `[blocked] "${command}" looks like a long-running/dev-server command that would block execution. Please tell the user to run it manually in their terminal, or use run_in_background: true.`
   }
-  const out = await exec(command, { cwd, timeout: timeoutMs, encoding: "utf8" }).catch((error) => {
+  const out = await exec(wrapCmd(command), { cwd, timeout: timeoutMs, encoding: "utf8" }).catch((error) => {
     if (error.killed || error.signal === "SIGTERM") {
       return {
         stdout: error.stdout ?? "",
@@ -546,7 +548,7 @@ function builtinTools() {
           description: args.description || command,
           payload: { command, cwd: ctx.cwd },
           run: async () => {
-            const out = await exec(command, { cwd: ctx.cwd, timeout: 600_000, encoding: "utf8" })
+            const out = await exec(wrapCmd(command), { cwd: ctx.cwd, timeout: 600_000, encoding: "utf8" })
               .catch(e => ({ stdout: e.stdout ?? "", stderr: e.stderr ?? e.message }))
             return `${out.stdout || ""}${out.stderr || ""}`.trim() || "(empty output)"
           },
