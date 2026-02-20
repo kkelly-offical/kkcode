@@ -382,7 +382,7 @@ function shortcutLegend() {
     "",
     "TUI keys:",
     "  Enter choose slash suggestion / submit prompt",
-    "  Shift+Enter (or Ctrl+J) insert newline",
+    "  Ctrl+J insert newline (Shift+Enter if terminal supports)",
     "  Ctrl+V paste image from clipboard",
     "  Up/Down navigate suggestion/history",
     "  Left/Right/Home/End edit cursor",
@@ -2010,7 +2010,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       lines.push(`${left}${clipAnsiLine(inputLine, inputInnerWidth)}${right}`)
     }
     lines.push(inputBottom)
-    lines.push(clipAnsiLine(paint("? for shortcuts | Enter send | Shift+Enter newline | Ctrl+V paste image", ctx.themeState.theme.base.muted), width))
+    lines.push(clipAnsiLine(paint("? for shortcuts | Enter send | Ctrl+J newline | Ctrl+V paste image", ctx.themeState.theme.base.muted), width))
 
     const final = lines.slice(0, Math.max(1, height))
     while (final.length < height) final.push(" ".repeat(width))
