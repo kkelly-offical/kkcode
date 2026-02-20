@@ -13,6 +13,7 @@ import { loadCustomCommands, applyCommandTemplate } from "./command/custom-comma
 import { SkillRegistry } from "./skill/registry.mjs"
 import { renderMarkdown } from "./theme/markdown.mjs"
 import { listSessions, getConversationHistory } from "./session/store.mjs"
+import { compactSession } from "./session/compaction.mjs"
 import { ToolRegistry } from "./tool/registry.mjs"
 import { McpRegistry } from "./mcp/registry.mjs"
 import { HookBus, initHookBus } from "./plugin/hook-bus.mjs"
@@ -331,6 +332,7 @@ function help(providers = []) {
     ["/keys,/k", "show key map"],
     ["/status", "show current runtime state"],
     ["/exit,/quit,/q", "quit"],
+    ["/compact", "summarize conversation to free context"],
     ["/ask /plan /agent /longagent", "quick mode switch"]
   ]
   const lines = ["", "Commands:"]
@@ -704,6 +706,26 @@ async function processInputLine({
     await revokeTrust(process.cwd())
     PermissionEngine.setTrusted(false)
     print("workspace trust revoked — tools are now blocked")
+    return { exit: false }
+  }
+
+  if (["/compact"].includes(normalized)) {
+    try {
+      print("compacting conversation...")
+      const result = await compactSession({
+        sessionId: state.sessionId,
+        model: state.model,
+        providerType: state.providerType,
+        configState: ctx.configState
+      })
+      if (result.compacted) {
+        print(`compacted: ${result.summarizedCount} messages summarized, ${result.keptCount} kept`)
+      } else {
+        print(`skipped: ${result.reason}`)
+      }
+    } catch (err) {
+      print(`compact failed: ${err.message}`)
+    }
     return { exit: false }
   }
 
