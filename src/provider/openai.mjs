@@ -124,6 +124,32 @@ function timeoutSignal(ms, parentSignal = null) {
   return AbortSignal.any([parentSignal, own])
 }
 
+export async function countTokensOpenAI(input) {
+  const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 10000 } = input
+  if (!apiKey) return null
+  const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`
+  const payload = {
+    model,
+    messages: [...buildSystemMessages(system), ...mapMessages(messages)],
+    tools: mapTools(tools),
+    max_tokens: 1,
+    stream: false
+  }
+  try {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(timeoutMs)
+    })
+    if (!res.ok) return null
+    const json = await res.json()
+    return json?.usage?.prompt_tokens ?? null
+  } catch {
+    return null
+  }
+}
+
 export async function requestOpenAI(input) {
   const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 120000, maxTokens, retry = {}, signal = null } = input
   if (!apiKey) {

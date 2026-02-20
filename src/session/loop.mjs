@@ -22,7 +22,7 @@ import {
 import { pendingRejections, markRejectionsConsumed } from "../review/rejection-queue.mjs"
 import { isRecoveryEnabled, markTurnFinished, markTurnInProgress } from "./recovery.mjs"
 import { HookBus, initHookBus } from "../plugin/hook-bus.mjs"
-import { shouldCompact, compactSession, estimateTokenCount, modelContextLimit, contextUtilization } from "./compaction.mjs"
+import { shouldCompact, compactSession, estimateTokenCount, modelContextLimit, contextUtilization, supportsNativeCompaction } from "./compaction.mjs"
 import { createStreamRenderer } from "../theme/markdown.mjs"
 import { paint } from "../theme/color.mjs"
 import { saveCheckpoint } from "./checkpoint.mjs"
@@ -147,6 +147,8 @@ export async function processTurnLoop({
   const thresholdRatio = Number(configState.config.session?.compaction_threshold_ratio ?? 0.7)
   const thresholdMessages = Number(configState.config.session?.compaction_threshold_messages ?? 50)
   const cachePointsEnabled = configState.config.session?.context_cache_points !== false
+  const useNativeCompaction = supportsNativeCompaction(providerType, model)
+  const nativeCompactionTrigger = useNativeCompaction ? Math.floor(modelContextLimit(model, configState) * thresholdRatio) : 0
 
   await touchSession({
     sessionId,
@@ -328,7 +330,7 @@ export async function processTurnLoop({
         })
       }
 
-      if (shouldCompact({
+      if (!useNativeCompaction && shouldCompact({
         messages: normalizedHistory,
         model,
         thresholdMessages,
@@ -364,7 +366,8 @@ export async function processTurnLoop({
           tools,
           baseUrl,
           apiKeyEnv,
-          signal
+          signal,
+          compaction: useNativeCompaction ? { trigger: nativeCompactionTrigger } : null
         })
         const textParts = []
         const streamToolCalls = []
@@ -402,6 +405,8 @@ export async function processTurnLoop({
             streamToolCalls.push(chunk.call)
           } else if (chunk.type === "usage") {
             streamUsage = chunk.usage
+          } else if (chunk.type === "compaction") {
+            sinkWrite(paint("\n  ↻ context compacted by provider\n", "cyan", { dim: true }))
           } else if (chunk.type === "stop") {
             streamStopReason = chunk.reason || "end_turn"
           }

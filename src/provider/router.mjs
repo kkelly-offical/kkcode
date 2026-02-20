@@ -1,5 +1,5 @@
 import { requestAnthropic, requestAnthropicStream, countTokensAnthropic } from "./anthropic.mjs"
-import { requestOpenAI, requestOpenAIStream } from "./openai.mjs"
+import { requestOpenAI, requestOpenAIStream, countTokensOpenAI } from "./openai.mjs"
 import { request as requestOAICompat, requestStream as requestStreamOAICompat } from "./openai-compatible.mjs"
 import { requestOllama, requestOllamaStream } from "./ollama.mjs"
 import { ProviderError } from "../core/errors.mjs"
@@ -23,9 +23,9 @@ export function getProvider(name) {
 }
 
 // Built-in providers
-registerProvider("openai", { request: requestOpenAI, requestStream: requestOpenAIStream })
+registerProvider("openai", { request: requestOpenAI, requestStream: requestOpenAIStream, countTokens: countTokensOpenAI })
 registerProvider("anthropic", { request: requestAnthropic, requestStream: requestAnthropicStream, countTokens: countTokensAnthropic })
-registerProvider("openai-compatible", { request: requestOAICompat, requestStream: requestStreamOAICompat })
+registerProvider("openai-compatible", { request: requestOAICompat, requestStream: requestStreamOAICompat, countTokens: countTokensOpenAI })
 registerProvider("ollama", { request: requestOllama, requestStream: requestOllamaStream })
 
 // --- Settings Resolution ---
@@ -158,7 +158,8 @@ export async function* requestProviderStream({
   tools,
   baseUrl = null,
   apiKeyEnv = null,
-  signal = null
+  signal = null,
+  compaction = null
 }) {
   const resolvedProviderType = providerType || configState.config.provider.default
   const settings = resolveSettings(configState, resolvedProviderType, {
@@ -195,7 +196,8 @@ export async function* requestProviderStream({
       baseDelayMs: Number(providerCfg.retry_base_delay_ms || 800)
     },
     thinking: providerCfg.thinking || null,
-    signal
+    signal,
+    compaction
   }
 
   const provider = registry.get(settings.providerType)

@@ -158,6 +158,12 @@ export function contextUtilization(messages, model, configState = null) {
   }
 }
 
+export function supportsNativeCompaction(providerType, model) {
+  if (providerType !== "anthropic") return false
+  const m = String(model || "").toLowerCase()
+  return m.includes("claude") && (m.includes("opus") || m.includes("sonnet"))
+}
+
 export function shouldCompact({ messages, model, thresholdMessages = DEFAULT_THRESHOLD_MESSAGES, thresholdRatio = DEFAULT_THRESHOLD_RATIO, configState = null, realTokenCount = null }) {
   if (messages.length >= thresholdMessages) return true
   const limit = modelContextLimit(model, configState)

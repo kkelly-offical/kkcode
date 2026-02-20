@@ -231,7 +231,7 @@ export async function countTokensAnthropic(input) {
 }
 
 export async function* requestAnthropicStream(input) {
-  const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 120000, streamIdleTimeoutMs = 120000, maxTokens = 16384, retry = {}, signal = null } = input
+  const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 120000, streamIdleTimeoutMs = 120000, maxTokens = 16384, retry = {}, signal = null, compaction = null } = input
   if (!apiKey) {
     throw new ProviderError(`missing API key for anthropic provider (env: ${input.apiKeyEnv || "unknown"})`, {
       provider: "anthropic"
@@ -247,7 +247,8 @@ export async function* requestAnthropicStream(input) {
     system: systemWithCacheControl(system),
     messages: mapMessages(messages),
     tools: mappedTools.length ? mappedTools : undefined,
-    stream: true
+    stream: true,
+    ...(compaction ? { context_management: { edits: [{ type: "compact_20260112", trigger: { tokens: compaction.trigger || 150000 } }] } } : {})
   }
   if (input.thinking?.type) {
     payload.thinking = { type: input.thinking.type, budget_tokens: input.thinking.budget_tokens || 10000 }
@@ -272,7 +273,7 @@ export async function* requestAnthropicStream(input) {
           "content-type": "application/json",
           "x-api-key": apiKey,
           "anthropic-version": "2023-06-01",
-          "anthropic-beta": "prompt-caching-2024-07-31"
+          "anthropic-beta": compaction ? "prompt-caching-2024-07-31,compact-2026-01-12" : "prompt-caching-2024-07-31"
         },
         body: JSON.stringify(payload),
         signal: fetchSignal
@@ -334,6 +335,9 @@ export async function* requestAnthropicStream(input) {
       if (parsed.delta?.type === "input_json_delta") {
         if (currentBlock) currentBlock.jsonParts.push(parsed.delta.partial_json || "")
       }
+      if (parsed.delta?.type === "compaction_delta") {
+        if (currentBlock) currentBlock.compactionContent = parsed.delta.content || ""
+      }
     }
 
     if (event === "content_block_stop" && currentBlock) {
@@ -354,6 +358,9 @@ export async function* requestAnthropicStream(input) {
             args
           }
         }
+      }
+      if (currentBlock.type === "compaction") {
+        yield { type: "compaction", content: currentBlock.compactionContent || "" }
       }
       currentBlock = null
     }
