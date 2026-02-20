@@ -45,9 +45,13 @@ function extractStructuredProgress(text) {
   }
 }
 
-function detectProgress(currentReply, previousReplyNormalized) {
+function detectProgress(currentReply, previousReplyNormalized, toolEventCount = 0) {
   const structured = extractStructuredProgress(currentReply)
   if (structured.hasStructuredSignal) {
+    return { hasProgress: true, structured }
+  }
+  // Tool calls (file writes, bash executions) count as objective progress
+  if (toolEventCount > 0) {
     return { hasProgress: true, structured }
   }
   const normalized = normalizeReply(currentReply)
@@ -87,6 +91,9 @@ function buildRecoveryPrompt(original, reply, iteration, reason, progress, check
     parts.push(
       `Checkpoint restored: name=${checkpoint.name || "latest"} savedAt=${new Date(checkpoint.savedAt || Date.now()).toISOString()}`
     )
+    if (checkpoint.recentToolSummary) {
+      parts.push(`Recent tool calls: ${checkpoint.recentToolSummary}`)
+    }
   }
   parts.push("")
   parts.push("Latest output that failed to advance:")
@@ -612,6 +619,9 @@ async function runParallelLongAgent({
 
     if (!stageResult.allSuccess) {
       recoveryCount += 1
+      // Exponential backoff before retry
+      const backoffMs = Math.min(1000 * 2 ** (recoveryCount - 1), 30000)
+      await new Promise(r => setTimeout(r, backoffMs))
       lastGateFailures = Object.values(stageResult.taskProgress || {})
         .filter((item) => item.status !== "completed")
         .map((item) => `${item.taskId}:${item.lastError || item.status}`)
@@ -807,6 +817,8 @@ async function runParallelLongAgent({
       const failureSummary = summarizeGateFailures(gateResult.failures)
       lastGateFailures = gateResult.failures.map((item) => `${item.gate}:${item.reason}`)
       recoveryCount += 1
+      const backoffMs = Math.min(1000 * 2 ** (recoveryCount - 1), 30000)
+      await new Promise(r => setTimeout(r, backoffMs))
 
       await EventBus.emit({
         type: EVENT_TYPES.LONGAGENT_RECOVERY_ENTERED,
@@ -893,6 +905,14 @@ async function runParallelLongAgent({
             })
           } else {
             gateStatus.git = { ...gateStatus.git, merged: false, mergeError: mergeResult.message }
+            await EventBus.emit({
+              type: EVENT_TYPES.LONGAGENT_ALERT,
+              sessionId,
+              payload: {
+                kind: "git_merge_failed",
+                message: `Git merge failed: ${mergeResult.message}. Staying on branch "${gitBranch}" — resolve conflicts manually.`
+              }
+            })
             // Rollback: return to feature branch so user can resolve manually
             const rollback = await git.checkoutBranch(gitBranch, cwd)
             if (!rollback.ok) {
@@ -1004,6 +1024,8 @@ async function runLegacyLongAgent({
   }
 
   async function saveRuntimeCheckpoint(name = "latest") {
+    // Save last N tool events as context summaries for recovery
+    const recentTools = toolEvents.slice(-20).map(e => `${e.tool}:${e.status || "ok"}`).join(", ")
     await saveCheckpoint(sessionId, {
       name,
       iteration,
@@ -1015,7 +1037,8 @@ async function runLegacyLongAgent({
       lastProgress,
       gateStatus,
       currentGate,
-      lastGateFailures
+      lastGateFailures,
+      recentToolSummary: recentTools
     })
   }
 
@@ -1032,6 +1055,9 @@ async function runLegacyLongAgent({
 
   async function enterRecovery(reason) {
     recoveryCount += 1
+    // Exponential backoff: 1s → 2s → 4s → ... capped at 30s
+    const backoffMs = Math.min(1000 * 2 ** (recoveryCount - 1), 30000)
+    await new Promise(r => setTimeout(r, backoffMs))
     const checkpoint = await loadCheckpoint(sessionId, "latest")
     lastGateFailures = [reason]
     gateStatus = {
@@ -1230,7 +1256,7 @@ async function runLegacyLongAgent({
     aggregateUsage.cacheWrite += turn.usage.cacheWrite || 0
     toolEvents.push(...turn.toolEvents)
 
-    const progressDetection = detectProgress(turn.reply, previousReplyNormalized)
+    const progressDetection = detectProgress(turn.reply, previousReplyNormalized, turn.toolEvents?.length || 0)
     if (progressDetection.structured.hasStructuredSignal) {
       lastProgress = {
         percentage: progressDetection.structured.percentage ?? lastProgress.percentage,

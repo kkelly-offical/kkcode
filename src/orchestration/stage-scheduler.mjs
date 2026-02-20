@@ -340,6 +340,25 @@ export async function runStageBarrier({
       )
       item.backgroundTaskId = null
 
+      // Runtime file ownership check: warn if task touched files outside its plan
+      const plannedSet = new Set(item.plannedFiles)
+      const outOfScope = item.fileChanges
+        .map(fc => fc.path)
+        .filter(p => p && !plannedSet.has(p))
+      if (outOfScope.length > 0) {
+        await EventBus.emit({
+          type: EVENT_TYPES.LONGAGENT_ALERT,
+          sessionId,
+          payload: {
+            kind: "file_ownership_violation",
+            message: `Task ${item.taskId} modified ${outOfScope.length} file(s) outside its plan: ${outOfScope.slice(0, 5).join(", ")}`,
+            taskId: item.taskId,
+            stageId: stage.stageId,
+            outOfScopeFiles: outOfScope
+          }
+        })
+      }
+
       if (bg.status === "completed" && remainingFromResult.length === 0) {
         item.status = "completed"
         item.lastError = ""
