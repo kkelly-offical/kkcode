@@ -40,5 +40,7 @@ export const EVENT_TYPES = {
   LONGAGENT_GIT_STAGE_COMMITTED: "longagent.git.stage.committed",
   LONGAGENT_GIT_MERGED: "longagent.git.merged",
   SESSION_COMPACTED: "session.compacted",
-  TURN_USAGE_UPDATE: "turn.usage.update"
+  TURN_USAGE_UPDATE: "turn.usage.update",
+  STREAM_TEXT_START: "stream.text.start",
+  STREAM_THINKING_START: "stream.thinking.start"
 }

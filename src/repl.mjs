@@ -1384,6 +1384,14 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         ui.currentActivity = { type: "thinking" }
         requestRender()
         break
+      case EVENT_TYPES.STREAM_TEXT_START:
+        ui.currentActivity = { type: "writing" }
+        requestRender()
+        break
+      case EVENT_TYPES.STREAM_THINKING_START:
+        ui.currentActivity = { type: "thinking" }
+        requestRender()
+        break
       case EVENT_TYPES.TURN_USAGE_UPDATE: {
         const u = payload.usage || {}
         ui.metrics.tokenMeter = {
@@ -1712,15 +1720,23 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     let busyLine
     if (ui.busy && ui.currentActivity) {
       const spinner = BUSY_SPINNER_FRAMES[ui.spinnerIndex]
+      const stepTag = ui.currentStep > 0
+        ? paint(` [${ui.currentStep}/${ui.maxSteps || "?"}]`, "cyan", { dim: true })
+        : ""
       if (ui.currentActivity.type === "tool") {
         const toolName = ui.currentActivity.tool || "tool"
-        busyLine = `${paint(spinner, "cyan")} ${paint(toolName, null, { dim: true })}${formatBusyToolDetail(toolName, ui.currentActivity.args)}`
+        const toolColor = toolName === "edit" || toolName === "write" || toolName === "notebookedit" ? "yellow"
+          : toolName === "bash" ? "magenta"
+          : "cyan"
+        busyLine = `${paint(spinner, toolColor)} ${paint(toolName, toolColor, { bold: true })}${formatBusyToolDetail(toolName, ui.currentActivity.args)}${stepTag}`
+      } else if (ui.currentActivity.type === "writing") {
+        busyLine = `${paint(spinner, "green")} ${paint("writing", "green", { bold: true })}${stepTag}`
       } else {
-        busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint("thinking", null, { dim: true })}`
+        busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint("thinking", ctx.themeState.theme.semantic.warn, { bold: true })}${stepTag}`
       }
     } else if (ui.busy) {
       const spinner = BUSY_SPINNER_FRAMES[ui.spinnerIndex]
-      busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint("thinking", null, { dim: true })}`
+      busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint("thinking", ctx.themeState.theme.semantic.warn, { bold: true })}`
     } else {
       busyLine = ""
     }
@@ -2111,7 +2127,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         ui.metrics.tokenMeter = action.turnResult.tokenMeter || ui.metrics.tokenMeter
         ui.metrics.cost = Number.isFinite(action.turnResult.cost) ? action.turnResult.cost : ui.metrics.cost
         ui.metrics.costSavings = action.turnResult.costSavings ?? 0
-        ui.metrics.context = action.turnResult.context || null
+        if (action.turnResult.context) ui.metrics.context = action.turnResult.context
         ui.metrics.longagent = action.turnResult.longagent || null
         ui.metrics.toolEvents = action.turnResult.toolEvents || []
       }

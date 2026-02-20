@@ -253,7 +253,7 @@ export async function processTurnLoop({
     }
   })
 
-  const MAX_CONTINUES = 3
+  const MAX_CONTINUES = 8
   let continueCount = 0
   let nudgeCount = 0
   let finalReply = ""
@@ -384,12 +384,16 @@ export async function processTurnLoop({
             if (!inThinking) {
               sinkWrite(paint("●", "#666666") + " " + paint("Thinking", null, { dim: true }) + " " + paint("∨", null, { dim: true }) + "\n")
               inThinking = true
+              await EventBus.emit({ type: EVENT_TYPES.STREAM_THINKING_START, sessionId, turnId, payload: { step } })
             }
             sinkWrite(paint("  " + text, null, { dim: true }))
           } else if (chunk.type === "text") {
             if (inThinking) {
               sinkWrite("\n")
               inThinking = false
+            }
+            if (textParts.length === 0) {
+              await EventBus.emit({ type: EVENT_TYPES.STREAM_TEXT_START, sessionId, turnId, payload: { step } })
             }
             if (streamRenderer) {
               const rendered = streamRenderer.push(chunk.content)
@@ -522,10 +526,17 @@ export async function processTurnLoop({
           })
         }
 
-        // Inject continue prompt (localized)
+        // Inject continue prompt (localized) — include info about what was truncated
+        const hadTruncatedToolCalls = (response.toolCalls || []).some(tc => tc.args?.__parse_error)
+        const truncatedToolNames = (response.toolCalls || []).filter(tc => tc.args?.__parse_error).map(tc => tc.name).join(", ")
+        const toolHint = hadTruncatedToolCalls
+          ? (language === "zh"
+            ? `\n被截断的工具调用: ${truncatedToolNames}。请完整重新发起这些工具调用。如果是 write/edit 工具写入大文件，考虑分段写入或使用更精简的内容。`
+            : `\nTruncated tool calls: ${truncatedToolNames}. Re-issue these tool calls completely. If writing large files with write/edit, consider splitting into smaller parts.`)
+          : ""
         const continuePrompt = language === "zh"
-          ? "[输出被截断] 你的上一条回复在输出 token 上限处被截断。请从你停止的地方精确继续，不要重复已经写过的内容。如果你正在执行工具调用，请完整重新发起。"
-          : "[OUTPUT TRUNCATED] Your previous response was cut off at the output token limit. Continue EXACTLY from where you stopped. Do not repeat any content you already wrote. If you were in the middle of a tool call, re-issue it completely."
+          ? `[输出被截断 ${continueCount}/${MAX_CONTINUES}] 你的上一条回复在输出 token 上限处被截断。请从你停止的地方精确继续，不要重复已经写过的内容。如果你正在执行工具调用，请完整重新发起。${toolHint}`
+          : `[OUTPUT TRUNCATED ${continueCount}/${MAX_CONTINUES}] Your previous response was cut off at the output token limit. Continue EXACTLY from where you stopped. Do not repeat any content you already wrote. If you were in the middle of a tool call, re-issue it completely.${toolHint}`
         await appendMessage(sessionId, "user", continuePrompt,
           { mode, model, providerType, step, turnId, synthetic: true }
         )
