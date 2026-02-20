@@ -52,8 +52,9 @@ export function formatToolStart(toolName, args) {
 
   switch (toolName) {
     case "bash": {
-      const cmd = clipText(args?.command, 100)
-      return `${dot} ${name} ${paint(cmd, null, { dim: true })}`
+      const desc = args?.description ? paint(args.description, null, { dim: true }) : ""
+      const cmd = clipText(args?.command, 80)
+      return `${dot} ${name} ${desc}\n  ${paint("IN", "cyan", { bold: true })}  ${paint(cmd, null, { dim: true })}`
     }
     case "write": {
       const filePath = shortPath(args?.path)
@@ -134,6 +135,11 @@ export function formatToolFinish(toolName, status, durationMs, args) {
     // Show summary based on tool type
     let summary = ""
     switch (toolName) {
+      case "bash": {
+        const desc = args?.description ? paint(args.description, null, { dim: true }) : ""
+        summary = desc
+        break
+      }
       case "write": {
         const filePath = shortPath(args?.path)
         const lines = countLines(args?.content)
@@ -207,7 +213,8 @@ export function formatToolResultPreview(toolName, output, status, args) {
       const suffix = lines.length > 3 ? paint(` (+${lines.length - 3} lines)`, null, { dim: true }) : ""
       const result = []
       for (let i = 0; i < preview.length; i++) {
-        result.push(`  ${paint(preview[i], null, { dim: true })}${i === preview.length - 1 ? suffix : ""}`)
+        const prefix = i === 0 ? paint("OUT", "cyan", { bold: true }) + " " : "     "
+        result.push(`  ${prefix}${paint(preview[i], null, { dim: true })}${i === preview.length - 1 ? suffix : ""}`)
       }
       return result
     }
@@ -271,6 +278,22 @@ export function formatToolResultPreview(toolName, output, status, args) {
     }
     case "task": {
       return `  ${paint(clipText(text, 120), null, { dim: true })}`
+    }
+    case "todowrite": {
+      const todos = Array.isArray(args?.todos) ? args.todos : []
+      if (!todos.length) return null
+      const result = []
+      for (const t of todos.slice(0, 8)) {
+        const s = t.status || "pending"
+        const dot = s === "completed" ? paint(SYM.toolOk, "green")
+          : s === "in_progress" ? paint(SYM.dot, "yellow")
+          : paint(SYM.dotHollow, "#666666")
+        const color = s === "completed" ? "green" : s === "in_progress" ? "yellow" : null
+        const label = s === "in_progress" && t.activeForm ? t.activeForm : t.content
+        result.push(`  ${dot} ${paint(label || "", color, { dim: s === "completed" })}`)
+      }
+      if (todos.length > 8) result.push(paint(`  ... +${todos.length - 8} more`, null, { dim: true }))
+      return result
     }
     case "enter_plan": {
       return `  ${paint("Agent entered planning mode. Awaiting plan...", "magenta", { dim: true })}`

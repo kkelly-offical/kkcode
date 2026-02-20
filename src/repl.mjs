@@ -439,11 +439,13 @@ function renderFileChangeLines(fileChanges = [], limit = 20) {
   const rows = fileChanges.slice(0, limit)
   for (const item of rows) {
     const scope = [item.stageId, item.taskId].filter(Boolean).join("/")
-    const suffix = scope ? ` (${scope})` : ""
-    lines.push(`  ${item.path}  +${item.addedLines} -${item.removedLines}${suffix}`)
+    const suffix = scope ? paint(` (${scope})`, null, { dim: true }) : ""
+    const add = item.addedLines > 0 ? paint(`+${item.addedLines}`, "green") : paint("+0", null, { dim: true })
+    const del = item.removedLines > 0 ? paint(`-${item.removedLines}`, "red") : paint("-0", null, { dim: true })
+    lines.push(`  ${paint(item.path, "white")}  ${add} ${del}${suffix}`)
   }
   if (fileChanges.length > rows.length) {
-    lines.push(`  ... +${fileChanges.length - rows.length} more file(s)`)
+    lines.push(paint(`  ... +${fileChanges.length - rows.length} more file(s)`, null, { dim: true }))
   }
   return lines
 }
@@ -1063,7 +1065,7 @@ async function processInputLine({
       }
     }
     if (fileChanges.length) {
-      print("changed files:")
+      print(paint("changed files:", "cyan", { bold: true }))
       for (const line of renderFileChangeLines(fileChanges)) print(line)
     } else if (!result.emittedText && result.reply) {
       const mdEnabled = ctx.configState.config.ui?.markdown_render !== false
@@ -1075,7 +1077,7 @@ async function processInputLine({
       print(mdEnabled ? renderMarkdown(result.reply) : result.reply)
     }
     if (fileChanges.length) {
-      print("changed files:")
+      print(paint("changed files:", "cyan", { bold: true }))
       for (const line of renderFileChangeLines(fileChanges, 10)) print(line)
     }
   }
