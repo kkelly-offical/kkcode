@@ -1,5 +1,5 @@
 {
-  "name": "kkcode",
+  "name": "@kkelly-offical/kkcode",
   "version": "0.1.2",
   "description": "Team-first terminal AI coding agent CLI with LongAgent orchestration, GitHub integration and themed UX.",
   "type": "module",
