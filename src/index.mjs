@@ -25,6 +25,20 @@ async function main() {
   const hasGithub = process.argv.includes("--github")
 
   if (hasGithub) {
+    const githubArgIndex = process.argv.indexOf("--github")
+    const nextArg = process.argv[githubArgIndex + 1]
+    
+    if (nextArg === "logout") {
+      const { logout } = await import("./github/auth.mjs")
+      const success = await logout()
+      if (success) {
+        console.log("✓ 已登出 GitHub 账户")
+      } else {
+        console.log("⚠ 没有已登录的 GitHub 账户")
+      }
+      return
+    }
+    
     const { runGitHubFlow, promptPushChanges } = await import("./github/flow.mjs")
     const result = await runGitHubFlow()
     process.chdir(result.cwd)
