@@ -1,6 +1,6 @@
 {
   "name": "kkcode",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Team-first coding CLI with themed UX, usage metering and diff review workflow.",
   "type": "module",
   "packageManager": "pnpm@10.5.2",
