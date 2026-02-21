@@ -192,7 +192,7 @@ export function createSseMcpClient(serverName, config) {
     const result = await sendRequest("initialize", {
       protocolVersion: "2024-11-05",
       capabilities: {},
-      clientInfo: { name: "kkcode", version: "0.1.1" }
+      clientInfo: { name: "kkcode", version: "0.1.2" }
     })
     // Send initialized notification
     try {
