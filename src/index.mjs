@@ -22,6 +22,16 @@ import { startRepl } from "./repl.mjs"
 
 async function main() {
   const hasTrust = process.argv.includes("--trust")
+  const hasGithub = process.argv.includes("--github")
+
+  if (hasGithub) {
+    const { runGitHubFlow } = await import("./github/flow.mjs")
+    const result = await runGitHubFlow()
+    process.chdir(result.cwd)
+    await startRepl({ trust: hasTrust })
+    return
+  }
+
   if (process.argv.length <= 2 || (process.argv.length === 3 && hasTrust)) {
     await startRepl({ trust: hasTrust })
     return

@@ -133,3 +133,16 @@ export function memoryFilePath(cwd = process.cwd()) {
 export async function ensureMemoryDir(cwd = process.cwd()) {
   await mkdir(memoryDir(cwd), { recursive: true })
 }
+
+// GitHub integration
+export function githubTokenPath() {
+  return path.join(userRootDir(), "github-token.json")
+}
+
+export function githubReposDir() {
+  return path.join(userRootDir(), "repos")
+}
+
+export async function ensureGithubReposDir() {
+  await mkdir(githubReposDir(), { recursive: true })
+}
