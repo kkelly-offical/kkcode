@@ -75,12 +75,12 @@
 
 | 优先级 | 全局路径 | 项目级路径 |
 |--------|----------|------------|
-| 1 | `~/.kkcode/config.yaml` | `{项目}/.kkcode/config.yaml` |
-| 2 | `~/.kkcode/config.yml` | `{项目}/.kkcode/config.yml` |
-| 3 | `~/.kkcode/config.json` | `{项目}/.kkcode/config.json` |
-| 4 | `~/.kkcode/kkcode.config.yaml` | `{项目}/.kkcode/kkcode.config.yaml` |
-| 5 | `~/.kkcode/kkcode.config.yml` | `{项目}/.kkcode/kkcode.config.yml` |
-| 6 | `~/.kkcode/kkcode.config.json` | `{项目}/.kkcode/kkcode.config.json` |
+| 1 | `~/.kkcode/config.yaml` | `{项目}/kkcode.config.yaml` |
+| 2 | `~/.kkcode/config.yml` | `{项目}/kkcode.config.yml` |
+| 3 | `~/.kkcode/config.json` | `{项目}/kkcode.config.json` |
+| 4 | `~/.kkcode/kkcode.config.yaml` | `{项目}/.kkcode/config.yaml` |
+| 5 | `~/.kkcode/kkcode.config.yml` | `{项目}/.kkcode/config.yml` |
+| 6 | `~/.kkcode/kkcode.config.json` | `{项目}/.kkcode/config.json` |
 
 项目级配置会深度合并到全局配置之上。所有配置项均有内置默认值，只需覆盖你想修改的字段。
 
@@ -88,10 +88,10 @@
 
 ```yaml
 # kkcode 全局配置
-language: zh                    # 界面语言: en | zh
+language: en                    # 界面语言: en | zh
 
 provider:
-  default: anthropic            # 默认提供商: openai | anthropic | ollama | openai-compatible
+  default: openai               # 默认提供商: openai | anthropic | ollama | openai-compatible
   openai:
     base_url: https://api.openai.com/v1
     api_key_env: OPENAI_API_KEY
@@ -109,7 +109,7 @@ provider:
     base_url: https://api.anthropic.com/v1
     api_key_env: ANTHROPIC_API_KEY
     default_model: claude-opus-4-6
-    models: [claude-sonnet-4-5, claude-haiku-4-5-20251001, claude-opus-4-6]
+    models: [claude-sonnet-4-5, claude-sonnet-4-6, claude-haiku-4-5-20251001, claude-opus-4-6]
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
     max_tokens: 32768
@@ -117,9 +117,7 @@ provider:
     retry_base_delay_ms: 800
     stream: true
     context_limit: null          # 上下文窗口大小（null = 使用内置默认值）
-    thinking:                    # 扩展思考（Anthropic extended thinking）
-      type: enabled
-      budget_tokens: 10000       # 思考预算 token 数
+    thinking: null               # 扩展思考（null = 关闭；启用示例: { type: enabled, budget_tokens: 10000 }）
   ollama:
     base_url: http://localhost:11434
     api_key_env: ""
@@ -329,6 +327,8 @@ ui:
 
 `config.yaml` 中 `mcp.servers` 里定义的服务器会覆盖自动发现的同名服务器。
 
+> kkcode 还内置了一个 `context7` MCP 服务器（`@upstash/context7-mcp`），启动时自动安装并注册。如需禁用，在 `mcp.json` 中设置 `"context7": { "enabled": false }`。
+
 ### MCP 故障排查
 
 ```bash
@@ -440,6 +440,10 @@ kkcode 预置了以下 skills，无需配置即可使用：
 | debug | `/debug <error>` | 系统化调试：复现 → 定位 → 修复 → 验证 |
 | frontend | `/frontend <desc>` | 框架感知的前端开发（Vue/React/Next/Nuxt/Svelte） |
 | init | `/init <framework>` | 项目脚手架（vue/react/next/nuxt/svelte/node/express） |
+| tdd | `/tdd <desc>` | TDD 工作流引导：RED → GREEN → REFACTOR |
+| backend-patterns | `/backend-patterns` | 后端开发模式参考（API 设计、数据库、缓存等） |
+| frontend-patterns | `/frontend-patterns` | 前端开发模式参考（组件设计、状态管理等） |
+| security-checklist | `/security-checklist` | 安全审查清单（OWASP Top 10、依赖审计等） |
 
 ---
 
@@ -556,16 +560,16 @@ export async function handler(ctx) {
 
 | 模式 | 说明 | 可用工具 |
 |------|------|----------|
-| `ask` | 纯问答，不调用写入工具 | read, glob, grep, list, websearch, webfetch |
+| `ask` | 纯问答，不调用写入工具 | read, glob, grep, list, websearch, webfetch, codesearch, background_output, todowrite, enter_plan, exit_plan |
 | `plan` | 只读分析，生成计划但不修改文件 | 同 ask |
-| `agent` | 完整 agent，可读写文件、执行命令 | 全部工具（含 enter_plan / exit_plan） |
+| `agent` | 完整 agent，可读写文件、执行命令 | 全部工具 |
 | `longagent` | 长任务自治模式，多阶段并行执行 | 全部工具 + 阶段管理 |
 
 运行时切换：`/mode agent` 或 `/mode longagent`
 
 ### 主动规划工具
 
-Agent 在执行过程中可以主动进入规划模式：
+Agent 在执行过程中可以主动进入规划模式（所有模式均可使用）：
 
 | 工具 | 说明 |
 |------|------|
@@ -580,10 +584,14 @@ Agent 在执行过程中可以主动进入规划模式：
 
 | 类型 | 说明 | 权限 |
 |------|------|------|
-| `build` | 通用构建执行 | 全工具 |
 | `explore` | 快速代码探索和文件搜索 | 只读 |
 | `reviewer` | 代码审查（bug、安全、质量） | 只读 |
 | `researcher` | 深度研究，结合代码分析与 Web 搜索 | 只读 |
+| `architect` | 功能架构设计（分析代码模式、设计实现蓝图） | 只读 |
+| `guide` | kkcode 自助指南（解答 kkcode 功能、配置、使用问题） | 只读 |
+| `security-reviewer` | 安全审计（OWASP Top 10、密钥扫描、依赖审计） | 只读 |
+| `tdd-guide` | TDD 专家（RED → GREEN → REFACTOR，目标 80%+ 覆盖率） | 全工具 |
+| `build-fixer` | 构建错误诊断与修复（TypeScript、Python、Go、Rust、Java） | 全工具 |
 
 ---
 
@@ -676,8 +684,6 @@ kkcode 为每个项目维护独立的持久记忆，跨会话保存项目知识�
 | `OPENAI_API_KEY` | OpenAI API 密钥 |
 | `ANTHROPIC_API_KEY` | Anthropic API 密钥 |
 | `KKCODE_HOME` | 覆盖 `~/.kkcode` 根目录位置 |
-| `KKCODE_CONFIG` | 自定义配置文件路径 |
-| `KKCODE_DEBUG` | 设为 `1` 启用调试日志 |
 
 ---
 
