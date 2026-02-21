@@ -1,0 +1,47 @@
+name: "❓ Question / 问题求助"
+description: "Ask a question about usage or behavior. / 询问使用方法或行为相关的问题。"
+title: "[Question] "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before asking, please check the [README](https://github.com/kkelly-offical/kkcode/blob/main/README.md) and existing issues.
+        提问前请先查阅 [README](https://github.com/kkelly-offical/kkcode/blob/main/README.md) 和已有 Issue。
+
+  - type: textarea
+    id: question
+    attributes:
+      label: "Your Question / 您的问题"
+      description: "Describe your question clearly. / 清晰描述您的问题。"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: topic
+    attributes:
+      label: "Topic / 相关主题"
+      options:
+        - "Installation / Setup / 安装配置"
+        - "Configuration / 配置文件"
+        - "LongAgent / 长程编排"
+        - "Modes (ask/plan/agent) / 模式"
+        - "Tools / 工具"
+        - "MCP Integration / MCP 接入"
+        - "Provider / 模型配置"
+        - "TUI / Terminal UI"
+        - "Other / 其他"
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: "What Have You Tried / 已尝试的方法"
+      description: "What have you tried so far? / 您已经尝试过什么？"
+
+  - type: textarea
+    id: context
+    attributes:
+      label: "Environment & Context / 环境与上下文"
+      description: "OS, Node version, kkcode version, relevant config. / 操作系统、Node 版本、kkcode 版本、相关配置。"

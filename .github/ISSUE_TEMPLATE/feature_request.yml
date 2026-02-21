@@ -1,0 +1,56 @@
+name: "✨ Feature Request / 功能建议"
+description: "Suggest a new feature. / 建议一个新功能。"
+title: "[Feature] "
+labels: ["feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        We'd love to hear your ideas! Please describe the feature you'd like to see.
+        我们很乐意听取您的想法！请描述您期望的功能。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: "Problem / Motivation / 问题与动机"
+      description: "What problem does this feature solve? / 这个功能解决什么问题？"
+      placeholder: "I'm always frustrated when ... / 我经常遇到这样的问题……"
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: "Proposed Solution / 建议方案"
+      description: "Describe how you'd like this to work. / 描述您期望的工作方式。"
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "Alternatives Considered / 其他方案"
+      description: "Any alternative solutions you've considered. / 您考虑过的其他方案。"
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: "Scope / 影响范围"
+      options:
+        - "TUI / Terminal UI"
+        - "LongAgent / 长程编排"
+        - "Tool System / 工具体系"
+        - "Provider / 模型适配"
+        - "Permission / 权限系统"
+        - "MCP"
+        - "Config / 配置"
+        - "CLI Commands / 命令行"
+        - "Other / 其他"
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: "Additional Context / 补充信息"
+      description: "Any other context, mockups, or examples. / 其他补充信息、示意图或示例。"

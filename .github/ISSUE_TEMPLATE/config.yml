@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "📖 Documentation / 文档"
+    url: https://github.com/kkelly-offical/kkcode/blob/main/README.md
+    about: "Read the docs before opening an issue. / 提交 Issue 前请先阅读文档。"
+  - name: "💬 Discussions / 讨论区"
+    url: https://github.com/kkelly-offical/kkcode/discussions
+    about: "Ask questions and share ideas in Discussions. / 在讨论区提问和交流想法。"

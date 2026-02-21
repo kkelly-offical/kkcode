@@ -1,0 +1,68 @@
+name: "🔧 Enhancement / 功能改进"
+description: "Suggest an improvement to an existing feature. / 建议改进现有功能。"
+title: "[Enhancement] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea to improve an existing feature? Tell us about it!
+        有改进现有功能的想法？请告诉我们！
+
+  - type: textarea
+    id: current
+    attributes:
+      label: "Current Behavior / 当前行为"
+      description: "How does the feature currently work? / 该功能目前是怎样工作的？"
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed
+    attributes:
+      label: "Proposed Improvement / 改进建议"
+      description: "How should it work instead? / 您认为应该如何改进？"
+    validations:
+      required: true
+
+  - type: textarea
+    id: benefit
+    attributes:
+      label: "Expected Benefit / 预期收益"
+      description: "What would this improvement enable? / 这项改进会带来什么好处？"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: "Affected Area / 影响区域"
+      options:
+        - "TUI / Terminal UI"
+        - "LongAgent / 长程编排"
+        - "Tool System / 工具体系"
+        - "Provider / 模型适配"
+        - "Permission / 权限系统"
+        - "MCP"
+        - "Config / 配置"
+        - "Performance / 性能"
+        - "DX (Developer Experience) / 开发体验"
+        - "Other / 其他"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: breaking
+    attributes:
+      label: "Breaking Change? / 是否有破坏性变更？"
+      options:
+        - "No / 否"
+        - "Yes / 是"
+        - "Not sure / 不确定"
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: "Additional Context / 补充信息"
