@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process"
-import { mkdir, readdir, stat, rmdir } from "node:fs/promises"
+import { mkdir, readdir, stat, rm } from "node:fs/promises"
 import path from "node:path"
 import { githubReposDir } from "../storage/paths.mjs"
 
@@ -110,7 +110,6 @@ export async function localBranches(repoPath) {
 
 export async function removeLocalRepo(fullName) {
   const localPath = repoLocalPath(fullName)
-  const { rm } = await import("node:fs/promises")
   try {
     await rm(localPath, { recursive: true, force: true })
     return true

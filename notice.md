@@ -109,7 +109,7 @@ provider:
     base_url: https://api.anthropic.com/v1
     api_key_env: ANTHROPIC_API_KEY
     default_model: claude-opus-4-6
-    models: [claude-sonnet-4-5, claude-sonnet-4-6, claude-haiku-4-5-20251001, claude-opus-4-6]
+    models: [claude-sonnet-4-6, claude-haiku-4-5-20251001, claude-opus-4-6]
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
     max_tokens: 32768
