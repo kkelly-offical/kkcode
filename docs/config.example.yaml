@@ -1,0 +1,152 @@
+# kkcode 配置示例 - Git 自动化功能
+
+# =============================================================================
+# Git 自动化配置
+# =============================================================================
+git_auto:
+  # 启用 Git 自动化功能（默认：true）
+  # 禁用后，所有 git_* 工具将不可用
+  enabled: true
+  
+  # 每次 AI 修改文件前自动创建快照（默认：true）
+  # 启用后，AI 在执行 write/edit/patch 前会自动创建幽灵提交
+  auto_snapshot: true
+  
+  # 每个仓库最多保留的快照数量（默认：50）
+  max_snapshots: 50
+  
+  # 快照保留天数，过期后自动清理（默认：7）
+  ttl_days: 7
+  
+  # 禁止 AI 执行 git commit（默认：true）
+  # 用户必须手动运行 git commit 来创建正式提交
+  forbid_commit: true
+  
+  # 禁止 AI 执行 git push（默认：true）
+  # 用户必须手动审查后推送
+  forbid_push: true
+  
+  # =============================================================================
+  # 全自动化模式配置（⚠️ 高级用户）
+  # =============================================================================
+  # 警告：启用后 AI 将拥有更多权限，包括自动提交和推送
+  # 建议仅在受控环境或 CI/CD 场景中使用
+  
+  # 启用全自动化模式（默认：false）
+  full_auto: false
+  
+  # 允许 AI 自动执行 git commit（需 full_auto: true）
+  auto_commit: false
+  
+  # 允许 AI 自动执行 git push（需 full_auto: true）
+  auto_push: false
+  
+  # 自动 stage 更改（默认：true，需 full_auto: true）
+  auto_stage: true
+  
+  # 允许危险操作如 force push（默认：false，需 full_auto: true）
+  # ⚠️ 极度危险，可能导致数据丢失
+  allow_dangerous_ops: false
+
+# =============================================================================
+# 提供者配置（OpenAI, Anthropic, Ollama 等）
+# =============================================================================
+provider:
+  default: "openai"
+  
+  openai:
+    type: "openai"
+    api_key_env: "OPENAI_API_KEY"
+    default_model: "gpt-4"
+    timeout_ms: 60000
+    
+  anthropic:
+    type: "anthropic"
+    api_key_env: "ANTHROPIC_API_KEY"
+    default_model: "claude-3-opus-20240229"
+    timeout_ms: 60000
+
+# =============================================================================
+# Agent 配置
+# =============================================================================
+agent:
+  default_mode: "code"  # code, ask, plan, architect, debug
+  max_steps: 50
+  
+  longagent:
+    max_iterations: 10
+    no_progress_warning: 3
+    checkpoint_interval: 5
+    
+    # 并行执行配置
+    parallel:
+      enabled: true
+      max_concurrency: 3
+      task_timeout_ms: 300000
+
+# =============================================================================
+# 工具配置
+# =============================================================================
+tool:
+  # 文件写入锁配置
+  write_lock:
+    mode: "file_lock"  # file_lock 或 none
+    wait_timeout_ms: 120000
+  
+  # 工具来源
+  sources:
+    builtin: true      # 内置工具（包括 git_auto）
+    local: true
+    plugin: false
+    mcp: true
+
+# =============================================================================
+# 运行时配置
+# =============================================================================
+runtime:
+  tool_registry_cache_ttl_ms: 30000
+  mcp_refresh_ttl_ms: 60000
+
+# =============================================================================
+# 审查配置
+# =============================================================================
+review:
+  sort: "risk_desc"    # risk_desc, time_desc, time_asc
+  default_lines: 3
+  max_expand_lines: 100
+  
+  risk_weights:
+    edit: 1.0
+    write: 0.8
+    delete: 1.5
+    exec: 2.0
+
+# =============================================================================
+# 使用量和预算配置
+# =============================================================================
+usage:
+  pricing_file: null   # 自定义定价文件路径
+  
+  budget:
+    enabled: false
+    monthly_limit_usd: 100
+    warn_at_percent: 80
+    strategy: "warn"   # warn 或 block
+
+# =============================================================================
+# UI 配置
+# =============================================================================
+ui:
+  layout: "comfortable"  # compact 或 comfortable
+  markdown_render: true
+  
+  mode_colors:
+    code: "#4CAF50"
+    ask: "#2196F3"
+    plan: "#FF9800"
+    architect: "#9C27B0"
+    debug: "#F44336"
+    
+  status:
+    show_cost: true
+    show_token_meter: true

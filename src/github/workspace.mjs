@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process"
-import { mkdir, readdir, stat } from "node:fs/promises"
+import { mkdir, readdir, stat, rmdir } from "node:fs/promises"
 import path from "node:path"
 import { githubReposDir } from "../storage/paths.mjs"
 
@@ -105,5 +105,109 @@ export async function localBranches(repoPath) {
     return out.split("\n").filter(Boolean)
   } catch {
     return []
+  }
+}
+
+export async function removeLocalRepo(fullName) {
+  const localPath = repoLocalPath(fullName)
+  const { rm } = await import("node:fs/promises")
+  try {
+    await rm(localPath, { recursive: true, force: true })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export async function syncRepo({ fullName, branch, token }) {
+  const localPath = repoLocalPath(fullName)
+  await configureCredential(localPath, token)
+  await exec("git", ["fetch", "origin"], { cwd: localPath })
+
+  // Check if branch exists locally
+  const localBranchList = await localBranches(localPath)
+  if (localBranchList.includes(branch)) {
+    await exec("git", ["checkout", branch], { cwd: localPath })
+    await exec("git", ["pull", "--ff-only", "origin", branch], { cwd: localPath }).catch(() => {
+      // pull may fail if diverged, that's ok
+    })
+  } else {
+    // Checkout remote branch
+    await exec("git", ["checkout", "-b", branch, `origin/${branch}`], { cwd: localPath })
+  }
+
+  return { path: localPath }
+}
+
+// Check if there are uncommitted changes
+export async function hasLocalChanges(repoPath) {
+  try {
+    const status = await exec("git", ["status", "--porcelain"], { cwd: repoPath })
+    return status.length > 0
+  } catch {
+    return false
+  }
+}
+
+// Get diff stats for display
+export async function getDiffStats(repoPath) {
+  try {
+    const stats = await exec("git", ["diff", "--stat", "HEAD"], { cwd: repoPath })
+    return stats
+  } catch {
+    return ""
+  }
+}
+
+// Get changed files list
+export async function getChangedFiles(repoPath) {
+  try {
+    const output = await exec("git", ["status", "--short"], { cwd: repoPath })
+    return output.split("\n").filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+// Commit and push changes
+export async function commitAndPush({ repoPath, message, branch, token }) {
+  await configureCredential(repoPath, token)
+
+  // Add all changes
+  await exec("git", ["add", "-A"], { cwd: repoPath })
+
+  // Commit
+  await exec("git", ["commit", "-m", message], { cwd: repoPath })
+
+  // Push
+  await exec("git", ["push", "origin", branch], { cwd: repoPath })
+
+  return true
+}
+
+// Generate a commit message based on changes
+export async function generateCommitMessage(repoPath) {
+  try {
+    const files = await getChangedFiles(repoPath)
+    if (files.length === 0) return "Update files"
+
+    // Count types of changes
+    const added = files.filter(f => f.startsWith("A") || f.startsWith("??")).length
+    const modified = files.filter(f => f.startsWith("M")).length
+    const deleted = files.filter(f => f.startsWith("D")).length
+
+    if (added > 0 && modified === 0 && deleted === 0) {
+      return added === 1 ? "Add file" : `Add ${added} files`
+    }
+    if (modified > 0 && added === 0 && deleted === 0) {
+      return modified === 1 ? "Update file" : `Update ${modified} files`
+    }
+    if (deleted > 0 && added === 0 && modified === 0) {
+      return deleted === 1 ? "Remove file" : `Remove ${deleted} files`
+    }
+
+    return `Update files (+${added} ~${modified} -${deleted})`
+  } catch {
+    return "Update files"
   }
 }

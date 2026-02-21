@@ -464,5 +464,46 @@ export function validateConfig(config) {
     }
   }
 
+  if (config.git_auto !== undefined) {
+    if (!isObj(config.git_auto)) {
+      err(errors, "git_auto", "must be object")
+    } else {
+      if (config.git_auto.enabled !== undefined && typeof config.git_auto.enabled !== "boolean") {
+        err(errors, "git_auto.enabled", "must be boolean")
+      }
+      if (config.git_auto.auto_snapshot !== undefined && typeof config.git_auto.auto_snapshot !== "boolean") {
+        err(errors, "git_auto.auto_snapshot", "must be boolean")
+      }
+      if (config.git_auto.max_snapshots !== undefined) {
+        checkInt(errors, "git_auto.max_snapshots", config.git_auto.max_snapshots, 1)
+      }
+      if (config.git_auto.ttl_days !== undefined) {
+        checkInt(errors, "git_auto.ttl_days", config.git_auto.ttl_days, 1)
+      }
+      if (config.git_auto.forbid_commit !== undefined && typeof config.git_auto.forbid_commit !== "boolean") {
+        err(errors, "git_auto.forbid_commit", "must be boolean")
+      }
+      if (config.git_auto.forbid_push !== undefined && typeof config.git_auto.forbid_push !== "boolean") {
+        err(errors, "git_auto.forbid_push", "must be boolean")
+      }
+      // 全自动化模式配置
+      if (config.git_auto.full_auto !== undefined && typeof config.git_auto.full_auto !== "boolean") {
+        err(errors, "git_auto.full_auto", "must be boolean")
+      }
+      if (config.git_auto.auto_commit !== undefined && typeof config.git_auto.auto_commit !== "boolean") {
+        err(errors, "git_auto.auto_commit", "must be boolean")
+      }
+      if (config.git_auto.auto_push !== undefined && typeof config.git_auto.auto_push !== "boolean") {
+        err(errors, "git_auto.auto_push", "must be boolean")
+      }
+      if (config.git_auto.allow_dangerous_ops !== undefined && typeof config.git_auto.allow_dangerous_ops !== "boolean") {
+        err(errors, "git_auto.allow_dangerous_ops", "must be boolean")
+      }
+      if (config.git_auto.auto_stage !== undefined && typeof config.git_auto.auto_stage !== "boolean") {
+        err(errors, "git_auto.auto_stage", "must be boolean")
+      }
+    }
+  }
+
   return { valid: errors.length === 0, errors }
 }

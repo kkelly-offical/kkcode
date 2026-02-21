@@ -25,10 +25,12 @@ async function main() {
   const hasGithub = process.argv.includes("--github")
 
   if (hasGithub) {
-    const { runGitHubFlow } = await import("./github/flow.mjs")
+    const { runGitHubFlow, promptPushChanges } = await import("./github/flow.mjs")
     const result = await runGitHubFlow()
     process.chdir(result.cwd)
     await startRepl({ trust: hasTrust })
+    // After REPL exits, ask user if they want to push changes
+    await promptPushChanges(result)
     return
   }
 

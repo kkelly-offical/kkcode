@@ -11,6 +11,9 @@ import { createTaskTool } from "./task-tool.mjs"
 import { McpRegistry } from "../mcp/registry.mjs"
 import { SkillRegistry } from "../skill/registry.mjs"
 import { askQuestionInteractive } from "./question-prompt.mjs"
+import { checkBashAllowed } from "../permission/exec-policy.mjs"
+import { gitAutoTools } from "./git-auto.mjs"
+import { gitFullAutoTools } from "./git-full-auto.mjs"
 
 const exec = promisify(execCb)
 
@@ -211,7 +214,7 @@ async function loadDynamicTools(dirs) {
   return loaded
 }
 
-function builtinTools() {
+function builtinTools(config) {
   const listTool = {
     name: "list",
     description: "List files and subdirectories in a directory. Returns entry names with type prefix (d=directory, f=file). Use this for quick directory overview; use `glob` for recursive pattern matching.",
@@ -564,6 +567,18 @@ function builtinTools() {
     async execute(args, ctx) {
       const command = String(args.command || "")
       const timeoutMs = Math.min(Math.max(Number(args.timeout) || BASH_TIMEOUT_MS, 1000), 600_000)
+
+      // 执行策略检查
+      const policyCheck = checkBashAllowed(command, ctx.config)
+      if (!policyCheck.allowed) {
+        return {
+          ok: false,
+          blocked: true,
+          error: "execution_policy_violation",
+          message: policyCheck.reason,
+          suggestion: "Use git_snapshot to create temporary snapshots, then manually commit when satisfied."
+        }
+      }
 
       if (args.run_in_background) {
         // Launch as background task
@@ -1179,7 +1194,10 @@ function builtinTools() {
     }
   }
 
-  return [listTool, readTool, writeTool, editTool, patchTool, multieditTool, globTool, grepTool, bashTool, createTaskTool(), outputTool, cancelTool, todowriteTool, questionTool, skillTool, webfetchTool, websearchTool, codesearchTool, notebookeditTool, enterPlanTool, exitPlanTool]
+  const gitTools = config?.git_auto?.enabled !== false ? gitAutoTools : []
+  const gitFullAutoToolsList = config?.git_auto?.full_auto === true ? gitFullAutoTools : []
+  
+  return [listTool, readTool, writeTool, editTool, patchTool, multieditTool, globTool, grepTool, bashTool, createTaskTool(), outputTool, cancelTool, todowriteTool, questionTool, skillTool, webfetchTool, websearchTool, codesearchTool, notebookeditTool, enterPlanTool, exitPlanTool, ...gitTools, ...gitFullAutoToolsList]
 }
 
 function mcpTools() {
@@ -1196,7 +1214,7 @@ function mcpTools() {
 
 function toolAllowedByMode(toolName, mode) {
   if (mode === "ask" || mode === "plan") {
-    return !["write", "edit", "patch", "bash", "task"].includes(toolName)
+    return !["write", "edit", "patch", "bash", "task", "git_snapshot", "git_restore", "git_apply_patch", "git_delete_snapshot"].includes(toolName)
   }
   return true
 }
@@ -1216,7 +1234,7 @@ export const ToolRegistry = {
     const tools = []
 
     if (config.tool?.sources?.builtin !== false) {
-      tools.push(...builtinTools())
+      tools.push(...builtinTools(config))
     }
 
     if (config.tool?.sources?.local !== false) {

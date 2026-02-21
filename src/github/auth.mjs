@@ -1,5 +1,6 @@
 import { readFile, writeFile, unlink, mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
+import { spawn } from "node:child_process"
 import { githubTokenPath } from "../storage/paths.mjs"
 
 const CLIENT_ID = "Ov23liCqhJ6cRaqyv3uA"
@@ -70,31 +71,139 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/**
+ * 跨平台打开浏览器
+ * @param {string} url - 要打开的 URL
+ */
+function openBrowser(url) {
+  const platform = process.platform
+  let command
+  let args
+
+  if (platform === "win32") {
+    // Windows
+    command = "cmd"
+    args = ["/c", "start", "", url]
+  } else if (platform === "darwin") {
+    // macOS
+    command = "open"
+    args = [url]
+  } else {
+    // Linux 和其他平台
+    command = "xdg-open"
+    args = [url]
+  }
+
+  try {
+    const child = spawn(command, args, { detached: true, stdio: "ignore" })
+    child.unref()
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 跨平台复制文本到剪贴板
+ * @param {string} text - 要复制的文本
+ * @returns {boolean} 是否成功
+ */
+function copyToClipboard(text) {
+  const platform = process.platform
+  let command
+  let args
+  let input = text
+
+  if (platform === "win32") {
+    // Windows - 使用 clip 命令
+    command = "clip"
+    args = []
+  } else if (platform === "darwin") {
+    // macOS - 使用 pbcopy
+    command = "pbcopy"
+    args = []
+  } else {
+    // Linux - 尝试 wl-copy (Wayland) 或 xclip (X11)
+    try {
+      // 先尝试 wl-copy (Wayland)
+      const child = spawn("wl-copy", [], { stdio: ["pipe", "ignore", "ignore"] })
+      child.stdin.write(text)
+      child.stdin.end()
+      return true
+    } catch {
+      // 回退到 xclip (X11)
+      try {
+        const child = spawn("xclip", ["-selection", "clipboard"], { stdio: ["pipe", "ignore", "ignore"] })
+        child.stdin.write(text)
+        child.stdin.end()
+        return true
+      } catch {
+        return false
+      }
+    }
+  }
+
+  try {
+    const child = spawn(command, args, { stdio: ["pipe", "ignore", "ignore"] })
+    child.stdin.write(input)
+    child.stdin.end()
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function pollAccessToken(deviceCode, interval) {
+  let retryCount = 0
+  const maxRetries = 3
+
   while (true) {
     await sleep(interval * 1000)
-    const res = await fetch(ACCESS_TOKEN_URL, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        client_id: CLIENT_ID,
-        device_code: deviceCode,
-        grant_type: "urn:ietf:params:oauth:grant-type:device_code"
+
+    let res
+    try {
+      res = await fetch(ACCESS_TOKEN_URL, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          client_id: CLIENT_ID,
+          device_code: deviceCode,
+          grant_type: "urn:ietf:params:oauth:grant-type:device_code"
+        })
       })
-    })
-    const data = await res.json()
+      retryCount = 0 // 重置重试计数
+    } catch (networkError) {
+      retryCount++
+      if (retryCount >= maxRetries) {
+        throw new Error(`Network error after ${maxRetries} retries: ${networkError.message}`)
+      }
+      process.stdout.write(`\n  \x1b[33m⚠ 网络错误，${maxRetries - retryCount} 秒后重试...\x1b[0m`)
+      await sleep(1000)
+      process.stdout.write("\r  \x1b[K等待授权...")
+      continue
+    }
+
+    let data
+    try {
+      data = await res.json()
+    } catch {
+      // 如果无法解析 JSON，可能是网络问题，继续等待
+      continue
+    }
 
     if (data.access_token) {
       return data.access_token
     }
     if (data.error === "authorization_pending") {
+      process.stdout.write(".")
       continue
     }
     if (data.error === "slow_down") {
       interval = (data.interval || interval) + 1
+      process.stdout.write("\n  \x1b[33m⚠ 请求过于频繁，已放慢速度...\x1b[0m")
       continue
     }
     if (data.error === "expired_token") {
@@ -103,7 +212,8 @@ async function pollAccessToken(deviceCode, interval) {
     if (data.error === "access_denied") {
       throw new Error("Authorization denied by user.")
     }
-    throw new Error(`Unexpected error: ${data.error || JSON.stringify(data)}`)
+    // 其他错误，记录但继续等待（可能是临时错误）
+    process.stdout.write(`\n  \x1b[33m⚠ 服务器返回: ${data.error || 'unknown'}，继续等待...\x1b[0m`)
   }
 }
 
@@ -125,8 +235,28 @@ export async function ensureGitHubAuth() {
   const deviceData = await requestDeviceCode()
   const { device_code, user_code, verification_uri, interval } = deviceData
 
+  // 自动复制代码到剪贴板
+  const copied = copyToClipboard(user_code)
+
   console.log(`  请在浏览器中打开: \x1b[36m\x1b[4m${verification_uri}\x1b[0m`)
-  console.log(`  输入代码: \x1b[1m\x1b[32m${user_code}\x1b[0m\n`)
+  if (copied) {
+    console.log(`  输入代码: \x1b[1m\x1b[32m${user_code}\x1b[0m  \x1b[2m✅ 已复制到剪贴板\x1b[0m\n`)
+  } else {
+    console.log(`  输入代码: \x1b[1m\x1b[32m${user_code}\x1b[0m\n`)
+  }
+
+  // 自动打开浏览器
+  const opened = openBrowser(verification_uri)
+  if (opened) {
+    console.log("  \x1b[2m已自动打开浏览器，请完成授权...\x1b[0m")
+    if (copied) {
+      console.log("  \x1b[2m提示: 在 GitHub 页面按 Ctrl+V 粘贴代码\x1b[0m\n")
+    } else {
+      console.log("")
+    }
+  } else {
+    console.log("  \x1b[33m⚠ 无法自动打开浏览器，请手动访问上述链接\x1b[0m\n")
+  }
 
   process.stdout.write("  等待授权...")
 

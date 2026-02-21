@@ -443,8 +443,13 @@ function renderFileChangeLines(fileChanges = [], limit = 20) {
   for (const item of rows) {
     const scope = [item.stageId, item.taskId].filter(Boolean).join("/")
     const suffix = scope ? paint(` (${scope})`, null, { dim: true }) : ""
-    const add = item.addedLines > 0 ? paint(`+${item.addedLines}`, "green") : paint("+0", null, { dim: true })
-    const del = item.removedLines > 0 ? paint(`-${item.removedLines}`, "red") : paint("-0", null, { dim: true })
+    // 使用亮色和加粗让变更更醒目
+    const add = item.addedLines > 0
+      ? paint(`+${item.addedLines}`, "#00ff00", { bold: true })
+      : paint("+0", null, { dim: true })
+    const del = item.removedLines > 0
+      ? paint(`-${item.removedLines}`, "#ff4444", { bold: true })
+      : paint("-0", null, { dim: true })
     lines.push(`  ${paint(item.path, "white")}  ${add} ${del}${suffix}`)
   }
   if (fileChanges.length > rows.length) {
