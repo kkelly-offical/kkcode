@@ -325,7 +325,7 @@ export function createStdioMcpClient(serverName, config = {}) {
     const initParams = {
       protocolVersion: "2024-11-05",
       capabilities: {},
-      clientInfo: { name: "kkcode", version: "0.1.2" }
+      clientInfo: { name: "kkcode", version: "0.1.3" }
     }
 
     if (configuredFraming === "auto") {

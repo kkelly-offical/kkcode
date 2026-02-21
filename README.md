@@ -1,5 +1,6 @@
 # kkcode
 
+[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 ![Node](https://img.shields.io/badge/Node.js-%3E%3D22-green)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
@@ -55,17 +56,20 @@
 
 ### 安装与运行
 
+**从 npm 安装（推荐）：**
+
 ```bash
+npm install -g @kkelly-offical/kkcode
+kkcode
+```
+
+**从源码运行（开发用）：**
+
+```bash
+git clone https://github.com/kkelly-offical/kkcode.git
 cd kkcode
 npm install
 npm run start
-```
-
-全局链接（开发常用）：
-
-```bash
-npm link
-kkcode
 ```
 
 ### 初始化项目配置
