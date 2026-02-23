@@ -1,7 +1,7 @@
 import path from "node:path"
 import { readdir, readFile } from "node:fs/promises"
 import { access, stat, unlink } from "node:fs/promises"
-import { exec as execCb } from "node:child_process"
+import { exec as execCb, spawn } from "node:child_process"
 import { promisify } from "node:util"
 import { pathToFileURL } from "node:url"
 import { atomicWriteFile, replaceInFileTransactional, replaceAllInFileTransactional, diffLineCount } from "./edit-transaction.mjs"
@@ -70,16 +70,37 @@ function wasFileRead(filePath) {
   return fileReadTracker.has(filePath)
 }
 
+function runRg(args, cwd, timeoutMs = 30000) {
+  return new Promise((resolve) => {
+    let stdout = "", stderr = "", done = false
+    const child = spawn("rg", ["--no-config", ...args], {
+      cwd, windowsHide: true, stdio: ["ignore", "pipe", "pipe"]
+    })
+    const timer = setTimeout(() => {
+      if (done) return
+      done = true
+      child.kill("SIGTERM")
+      setTimeout(() => { try { child.kill("SIGKILL") } catch {} }, 2000).unref()
+      resolve({ ok: false, stdout, stderr: "search timed out" })
+    }, timeoutMs)
+    child.stdout.on("data", (b) => { stdout += b })
+    child.stderr.on("data", (b) => { stderr += b })
+    child.on("error", (e) => {
+      if (done) return; done = true; clearTimeout(timer)
+      resolve({ ok: false, stdout, stderr: e.message })
+    })
+    child.on("close", (code) => {
+      if (done) return; done = true; clearTimeout(timer)
+      resolve({ ok: code === 0 || code === 1, stdout: stdout.trim(), stderr: stderr.trim() })
+    })
+  })
+}
+
 async function runGlob(pattern, cwd, searchPath) {
   if (!pattern) return "pattern is required"
-  const escaped = pattern.replace(/"/g, '\\"')
   const target = searchPath ? path.resolve(cwd, searchPath) : "."
-  const command = `rg --files --glob "${escaped}" "${target}"`
-  const out = await exec(command, { cwd, timeout: 15000, encoding: "utf8" }).catch((error) => ({
-    stdout: error.stdout ?? "",
-    stderr: error.stderr ?? error.message
-  }))
-  const text = `${out.stdout || ""}`.trim()
+  const { stdout } = await runRg(["--files", "--glob", pattern, target], cwd, 15000)
+  const text = stdout.trim()
   if (!text) return "no files matched"
   const lines = text.split("\n").filter(Boolean)
   if (lines.length > 200) {
@@ -90,31 +111,23 @@ async function runGlob(pattern, cwd, searchPath) {
 
 async function runGrep(pattern, cwd, options = {}) {
   if (!pattern) return "pattern is required"
-  const parts = ["rg"]
-  // Output mode
-  if (options.multiline) parts.push("-U", "--multiline-dotall")
-  if (options.outputMode === "count") parts.push("-c")
-  else if (options.outputMode === "files") parts.push("-l")
-  else parts.push("-n") // content mode (default)
-  // Context
-  if (options.beforeContext) parts.push("-B", String(options.beforeContext))
-  if (options.afterContext) parts.push("-A", String(options.afterContext))
-  if (options.context) parts.push("-C", String(options.context))
-  // Filters
-  if (options.type) parts.push("--type", options.type)
-  if (options.glob) parts.push("--glob", `"${options.glob}"`)
-  if (options.maxCount) parts.push("-m", String(options.maxCount))
-  if (options.ignoreCase) parts.push("-i")
-  const escaped = process.platform === "win32" ? `"${pattern}"` : `'${pattern}'`
-  const target = options.path ? `"${path.resolve(cwd, options.path)}"` : "."
-  parts.push(escaped, target)
-  const command = parts.join(" ")
-  const out = await exec(command, { cwd, timeout: 30000, encoding: "utf8" }).catch((error) => ({
-    stdout: error.stdout ?? "",
-    stderr: error.stderr ?? error.message
-  }))
-  let text = `${out.stdout || ""}${out.stderr || ""}`.trim()
-  // Post-process: offset + head_limit for pagination
+  const args = []
+  if (options.multiline) args.push("-U", "--multiline-dotall")
+  if (options.outputMode === "count") args.push("-c")
+  else if (options.outputMode === "files") args.push("-l")
+  else args.push("-n")
+  if (options.beforeContext) args.push("-B", String(options.beforeContext))
+  if (options.afterContext) args.push("-A", String(options.afterContext))
+  if (options.context) args.push("-C", String(options.context))
+  if (options.type) args.push("--type", options.type)
+  if (options.glob) args.push("--glob", options.glob)
+  if (options.maxCount) args.push("-m", String(options.maxCount))
+  if (options.ignoreCase) args.push("-i")
+  args.push(pattern)
+  args.push(options.path ? path.resolve(cwd, options.path) : ".")
+  const { stdout, stderr } = await runRg(args, cwd)
+  let text = stdout.trim()
+  if (!text && stderr) text = `[search error] ${stderr}`
   if (text && (options.offset || options.headLimit)) {
     const lines = text.split("\n")
     const start = options.offset || 0

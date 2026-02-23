@@ -2,6 +2,10 @@ import { makeToolResult } from "../core/types.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { withAudit } from "./audit-wrapper.mjs"
+import { autoSnapshotBeforeEdit } from "../session/checkpoint.mjs"
+
+const FILE_EDIT_TOOLS = new Set(["write", "edit", "multiedit", "patch", "notebookedit"])
+const snapshotted = new Set()
 
 export async function executeTool({ tool, args, sessionId, turnId, context, signal = null }) {
   return withAudit({
@@ -42,6 +46,13 @@ export async function executeTool({ tool, args, sessionId, turnId, context, sign
             }
           })
           return cancelled
+        }
+
+        // Auto snapshot before first file edit per turn
+        if (FILE_EDIT_TOOLS.has(tool.name) && !snapshotted.has(turnId)) {
+          snapshotted.add(turnId)
+          if (snapshotted.size > 200) snapshotted.clear()
+          autoSnapshotBeforeEdit(sessionId, context.cwd, context.config).catch(() => {})
         }
 
         const raw = await tool.execute(args || {}, context)

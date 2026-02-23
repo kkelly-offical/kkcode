@@ -524,22 +524,3 @@ export async function getLastSnapshotId(sessionId) {
   return state.lastSnapshotId
 }
 
-/**
- * 在修改前自动创建快照（如果配置启用）
- */
-export async function autoSnapshotBeforeEdit(sessionId, cwd, config = {}) {
-  if (!config.git_auto?.enabled || !config.git_auto?.auto_snapshot) {
-    return { skipped: true, reason: "auto_snapshot_disabled" }
-  }
-
-  if (!(await isGitRepo(cwd))) {
-    return { skipped: true, reason: "not_a_git_repo" }
-  }
-
-  const result = await gitSnapshotTool.execute(
-    { auto: true, message: "Auto snapshot before AI edit" },
-    { cwd, sessionId }
-  )
-
-  return result
-}
