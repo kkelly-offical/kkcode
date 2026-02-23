@@ -338,6 +338,15 @@ export async function runStageBarrier({
         if (!item || item.backgroundTaskId) continue
         if (!["pending", "retrying"].includes(item.status)) continue
         if (activeCount + toLaunch.length >= cfg.maxConcurrency) break
+        // #7 依赖感知：等待 dependsOn 的 task 全部完成
+        const deps = Array.isArray(task.dependsOn) ? task.dependsOn : []
+        if (deps.length > 0) {
+          const allDepsCompleted = deps.every(depId => {
+            const dep = logical.get(depId)
+            return dep && dep.status === "completed"
+          })
+          if (!allDepsCompleted) continue
+        }
         item.attempt += 1
         item.status = "running"
         if (item.attempt > 1) {

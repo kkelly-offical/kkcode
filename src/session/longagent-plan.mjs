@@ -49,6 +49,8 @@ function normalizeTask(task, stageId, defaults = {}) {
   if (!prompt) return null
   const timeoutMs = Number(task?.timeoutMs || defaults.timeoutMs || 600000)
   const maxRetries = Number(task?.maxRetries ?? defaults.maxRetries ?? 2)
+  const complexity = ["low", "medium", "high"].includes(task?.complexity) ? task.complexity : "medium"
+  const dependsOn = normalizeStringList(task?.dependsOn || [])
   return {
     taskId,
     prompt,
@@ -56,6 +58,8 @@ function normalizeTask(task, stageId, defaults = {}) {
     category: task?.category ? String(task.category) : undefined,
     plannedFiles: normalizeFileList(task?.plannedFiles),
     acceptance: normalizeStringList(task?.acceptance),
+    dependsOn,
+    complexity,
     timeoutMs: Number.isFinite(timeoutMs) && timeoutMs >= 1000 ? timeoutMs : 600000,
     maxRetries: Number.isFinite(maxRetries) && maxRetries >= 0 ? maxRetries : 2
   }

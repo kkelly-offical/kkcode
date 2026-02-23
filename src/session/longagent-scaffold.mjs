@@ -143,6 +143,41 @@ function buildScaffoldPrompt(objective, stagePlan) {
   ].join("\n")
 }
 
+function buildTddScaffoldPrompt(objective, stagePlan) {
+  const taskSpecs = []
+  const allFiles = new Set()
+  for (const stage of stagePlan.stages || []) {
+    for (const task of stage.tasks || []) {
+      taskSpecs.push({ taskId: task.taskId, stageId: stage.stageId, prompt: task.prompt, plannedFiles: task.plannedFiles, acceptance: task.acceptance })
+      for (const f of task.plannedFiles || []) allFiles.add(f)
+    }
+  }
+  if (!allFiles.size) return null
+
+  return [
+    "You are the TDD ARCHITECT agent. Your job is to create TEST FILES FIRST, then implementation stubs.",
+    "",
+    "## Objective", objective, "",
+    "## Task plan:", JSON.stringify(taskSpecs, null, 2), "",
+    "## TDD Workflow",
+    "For EACH planned file, create TWO files:",
+    "1. **Test file first** — e.g. `src/foo.test.mjs` for `src/foo.mjs`",
+    "   - Write concrete test cases based on acceptance criteria",
+    "   - Tests should initially fail (implementation is stub)",
+    "2. **Implementation stub** — the actual file with inline comments (same as normal scaffold)",
+    "",
+    "## Test file naming",
+    "- JS/TS: `<name>.test.mjs` or `<name>.spec.ts`",
+    "- Python: `test_<name>.py`",
+    "- Place tests next to source or in `__tests__/` / `tests/` per project convention",
+    "",
+    "## Completion",
+    "When ALL files (tests + stubs) are created, say [SCAFFOLD_COMPLETE].",
+    "",
+    "Start now. Create test files first, then stubs."
+  ].join("\n")
+}
+
 export async function runScaffoldPhase({
   objective,
   stagePlan,
@@ -154,9 +189,12 @@ export async function runScaffoldPhase({
   apiKeyEnv = null,
   agent = null,
   signal = null,
-  toolContext = {}
+  toolContext = {},
+  tddMode = false
 }) {
-  const prompt = buildScaffoldPrompt(objective, stagePlan)
+  const prompt = tddMode
+    ? buildTddScaffoldPrompt(objective, stagePlan)
+    : buildScaffoldPrompt(objective, stagePlan)
   if (!prompt) {
     return { scaffolded: false, fileCount: 0, files: [], errors: [] }
   }

@@ -87,11 +87,28 @@ export const DEFAULT_CONFIG = {
         enabled: true,
         debugging_max_iterations: 20,
         max_coding_rollbacks: 2,
+        parallel_preview: true,
+        blueprint_review: false,
+        blueprint_validation: true,
+        tdd_mode: false,
+        cross_review: true,
+        incremental_gates: true,
+        context_pressure_limit: 8000,
+        budget_awareness: true,
+        checkpoint_resume: true,
+        project_memory: true,
+        task_bus: true,
         separate_models: {
           enabled: false,
           preview_model: null,
           blueprint_model: null,
           debugging_model: null
+        },
+        adaptive_models: {
+          enabled: false,
+          low: null,
+          medium: null,
+          high: null
         }
       },
       resume_incomplete_files: true,

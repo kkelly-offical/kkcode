@@ -9,7 +9,7 @@ import { processTurnLoop } from "./loop.mjs"
 import { markSessionStatus } from "./store.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES, LONGAGENT_4STAGE_STAGES } from "../core/constants.mjs"
-import { saveCheckpoint } from "./checkpoint.mjs"
+import { saveCheckpoint, loadCheckpoint } from "./checkpoint.mjs"
 import { getAgent } from "../agent/agent.mjs"
 import { runStageBarrier } from "../orchestration/stage-scheduler.mjs"
 import { runScaffoldPhase } from "./longagent-scaffold.mjs"
@@ -32,7 +32,35 @@ import {
   summarizeGateFailures,
   LONGAGENT_FILE_CHANGES_LIMIT
 } from "./longagent-utils.mjs"
+import { TaskBus } from "./longagent-task-bus.mjs"
+import { loadProjectMemory, saveProjectMemory, memoryToContext, parseMemoryFromPreview } from "./longagent-project-memory.mjs"
 import * as git from "../util/git.mjs"
+
+// #13 上下文压缩
+async function compressContext(text, limit, { model, providerType, sessionId, configState, baseUrl, apiKeyEnv, signal, toolContext }) {
+  if (text.length <= limit) return text
+  const out = await processTurnLoop({
+    prompt: `Summarize the following context into key facts and decisions only, max ${Math.round(limit * 0.6)} chars:\n\n${text.slice(0, limit * 2)}`,
+    mode: "ask", model, providerType, sessionId, configState, baseUrl, apiKeyEnv, signal, allowQuestion: false, toolContext
+  })
+  return (out.reply || text.slice(0, limit)).slice(0, limit)
+}
+
+// #3 动态计划修订解析
+function parseReplanMarker(text) {
+  const match = String(text || "").match(/\[REPLAN:\s*([\s\S]*?)\]/i)
+  if (!match) return null
+  try { return JSON.parse(match[1]) } catch { return null }
+}
+
+// #1 细粒度回滚：从 debugging 输出中提取失败的 taskId
+function extractFailedTaskIds(text) {
+  const ids = []
+  const pattern = /\[FAILED_TASK:\s*(\S+)\]/gi
+  let m
+  while ((m = pattern.exec(text)) !== null) ids.push(m[1])
+  return ids
+}
 
 function stripFence(text = "") {
   const raw = String(text || "").trim()
@@ -96,10 +124,18 @@ export async function runHybridLongAgent({
   // 每阶段模型选择
   const separateModels = hybridConfig.separate_models || {}
   const useSeparateModels = separateModels.enabled === true
+  const adaptiveModels = hybridConfig.adaptive_models || {}
+  const useAdaptiveModels = adaptiveModels.enabled === true
   function getModelForStage(stage) {
     if (!useSeparateModels) return { model, providerType }
     const m = { preview: separateModels.preview_model, blueprint: separateModels.blueprint_model, debugging: separateModels.debugging_model }
     return m[stage] ? { model: m[stage], providerType } : { model, providerType }
+  }
+  // #8 自适应模型路由：根据 task complexity 选择模型
+  function getModelForTask(task) {
+    if (!useAdaptiveModels) return model
+    const tier = task?.complexity || "medium"
+    return adaptiveModels[tier] || model
   }
 
   let iteration = 0, recoveryCount = 0, stageIndex = 0
@@ -113,6 +149,14 @@ export async function runHybridLongAgent({
   const aggregateUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   const toolEvents = []
   const startTime = Date.now()
+  // #4 TaskBus
+  const taskBus = hybridConfig.task_bus !== false ? new TaskBus() : null
+  // #5 Project Memory
+  const cwd = process.cwd()
+  let projectMemory = null
+  if (hybridConfig.project_memory !== false) {
+    try { projectMemory = await loadProjectMemory(cwd) } catch { projectMemory = null }
+  }
 
   function accumulateUsage(turn) {
     aggregateUsage.input += turn.usage?.input || 0
@@ -153,6 +197,25 @@ export async function runHybridLongAgent({
     return { sessionId, turnId: `turn_long_${Date.now()}`, reply: blocked, usage: aggregateUsage, toolEvents, iterations: 0, status: "blocked", phase: "H0", gateStatus: {}, currentGate: "init", lastGateFailures: [], recoveryCount: 0, progress: lastProgress, elapsed: 0, stageIndex: 0, stageCount: 0, planFrozen: false, taskProgress: {}, fileChanges: [], stageProgress: { done: 0, total: 0 }, remainingFilesCount: 0 }
   }
 
+  // #15 Checkpoint 恢复：如果有之前的检查点，跳过已完成阶段
+  if (hybridConfig.checkpoint_resume !== false) {
+    try {
+      const cp = await loadCheckpoint(sessionId)
+      if (cp?.stageIndex > 0 && cp?.stagePlan) {
+        stagePlan = cp.stagePlan; stageIndex = cp.stageIndex; planFrozen = true
+        taskProgress = cp.taskProgress || {}; lastProgress = cp.lastProgress || lastProgress
+        iteration = cp.iteration || 0
+        await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_CHECKPOINT_RESUMED, sessionId, payload: { stageIndex, iteration } })
+        await syncState({ lastMessage: `resumed from checkpoint at stage ${stageIndex}` })
+      }
+    } catch { /* no checkpoint, start fresh */ }
+  }
+
+  // #5 Memory 事件
+  if (projectMemory?.techStack?.length) {
+    await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_MEMORY_LOADED, sessionId, payload: { techStack: projectMemory.techStack } })
+  }
+
   // ========== H1: PREVIEW (只读探索) ==========
   await setPhase("H1", "preview")
   currentGate = "preview"
@@ -160,7 +223,9 @@ export async function runHybridLongAgent({
   await syncState({ lastMessage: "H1: preview agent exploring codebase" })
 
   const previewModel = getModelForStage("preview")
-  const previewPrompt = buildStageWrapper(LONGAGENT_4STAGE_STAGES.PREVIEW, { preview: null, blueprint: null, coding: null }, prompt)
+  // #5 注入 project memory 到 preview prompt
+  const memCtx = projectMemory ? memoryToContext(projectMemory) : ""
+  const previewPrompt = buildStageWrapper(LONGAGENT_4STAGE_STAGES.PREVIEW, { preview: null, blueprint: null, coding: null }, memCtx ? `${memCtx}\n\n${prompt}` : prompt)
   const previewOut = await processTurnLoop({
     prompt: previewPrompt, mode: "agent", agent: getAgent("preview-agent"),
     model: previewModel.model, providerType: previewModel.providerType,
@@ -199,10 +264,34 @@ export async function runHybridLongAgent({
   await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_PLAN_FROZEN, sessionId, payload: { planId: stagePlan.planId, stageCount: stagePlan.stages.length, errors: [] } })
   await syncState({ planFrozen: true, lastMessage: `H2: blueprint complete, ${stagePlan.stages.length} stage(s)` })
 
+  // #9 Blueprint 语义验证
+  if (hybridConfig.blueprint_validation !== false && stagePlan.stages.length > 0) {
+    const totalTasks = stagePlan.stages.reduce((s, st) => s + (st.tasks?.length || 0), 0)
+    const totalFiles = new Set(stagePlan.stages.flatMap(st => (st.tasks || []).flatMap(t => t.plannedFiles || []))).size
+    const valid = totalTasks > 0 && totalFiles > 0
+    gateStatus.blueprintValidation = { status: valid ? "pass" : "warn", totalTasks, totalFiles }
+    await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_BLUEPRINT_VALIDATED, sessionId, payload: { totalTasks, totalFiles, valid } })
+  }
+
+  // #2 人工审查检查点
+  if (hybridConfig.blueprint_review === true && allowQuestion) {
+    await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_BLUEPRINT_REVIEW, sessionId, payload: { planId: stagePlan.planId } })
+    const reviewOut = await processTurnLoop({
+      prompt: `[SYSTEM] Blueprint 已生成，包含 ${stagePlan.stages.length} 个阶段。架构摘要:\n${architectureText.slice(0, 1500)}\n\n请确认是否继续执行？回复 yes/是 继续，no/否 中止。`,
+      mode: "ask", model, providerType, sessionId, configState, baseUrl, apiKeyEnv, agent, signal, allowQuestion: true, toolContext
+    })
+    accumulateUsage(reviewOut)
+    const answer = String(reviewOut.reply || "").toLowerCase().trim()
+    if (["no", "否", "n", "取消", "abort"].some(k => answer.includes(k))) {
+      await LongAgentManager.update(sessionId, { status: "aborted", lastMessage: "user rejected blueprint" })
+      await markSessionStatus(sessionId, "active")
+      return { sessionId, turnId: `turn_long_${Date.now()}`, reply: "用户中止了 Blueprint 审查。", usage: aggregateUsage, toolEvents, iterations: iteration, status: "aborted", phase: "H2", gateStatus, currentGate, lastGateFailures: [], recoveryCount: 0, progress: lastProgress, elapsed: Math.round((Date.now() - startTime) / 1000), stageIndex: 0, stageCount: stagePlan.stages.length, planFrozen, taskProgress: {}, fileChanges: [], stageProgress: { done: 0, total: 0 }, remainingFilesCount: 0 }
+    }
+  }
+
   // ========== H2.5: GIT BRANCH (可选) ==========
   const gitEnabled = gitConfig.enabled === true || gitConfig.enabled === "ask"
   const gitAsk = gitConfig.enabled === "ask"
-  const cwd = process.cwd()
   const inGitRepo = gitEnabled && await git.isGitRepo(cwd)
 
   if (inGitRepo) {
@@ -245,7 +334,8 @@ export async function runHybridLongAgent({
     const scaffoldResult = await runScaffoldPhase({
       objective: `${prompt}\n\n=== BLUEPRINT ARCHITECTURE ===\n${architectureText.slice(0, 4000)}`,
       stagePlan, model, providerType, sessionId, configState,
-      baseUrl, apiKeyEnv, agent, signal, toolContext
+      baseUrl, apiKeyEnv, agent, signal, toolContext,
+      tddMode: hybridConfig.tdd_mode === true
     })
 
     gateStatus.scaffold = { status: scaffoldResult.scaffolded ? "pass" : "skip", fileCount: scaffoldResult.fileCount }
@@ -260,6 +350,7 @@ export async function runHybridLongAgent({
   }
 
   // ========== H4+H5: CODING(并行) + DEBUGGING(回滚) 循环 ==========
+  const gatesConfig = longagentConfig.usability_gates || {}
   let priorContext = [
     "### Preview Findings", previewFindings.slice(0, 2000), "",
     "### Blueprint Architecture", architectureText.slice(0, 3000)
@@ -301,6 +392,17 @@ export async function runHybridLongAgent({
       for (const [taskId, progress] of Object.entries(stageResult.taskProgress || {})) {
         taskProgress[taskId] = { ...taskProgress[taskId], ...progress }
         if (String(progress.lastReply || "").toLowerCase().includes("[task_complete]")) completionMarkerSeen = true
+        // #4 TaskBus: 解析 task 输出中的广播消息
+        if (taskBus && progress.lastReply) taskBus.parseTaskOutput(taskId, progress.lastReply)
+        // #3 动态重规划: 检测 [REPLAN:...] 标记
+        const replan = parseReplanMarker(progress.lastReply)
+        if (replan?.stages) {
+          const { plan, errors } = validateAndNormalizeStagePlan(replan, { objective: prompt, defaults: planDefaults })
+          if (!errors.length) {
+            stagePlan = plan
+            await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_REPLAN, sessionId, payload: { newStageCount: plan.stages.length } })
+          }
+        }
       }
       if (stageResult.completionMarkerSeen) completionMarkerSeen = true
       if (stageResult.fileChanges?.length) {
@@ -319,6 +421,17 @@ export async function runHybridLongAgent({
       if (taskSummaries.length) {
         priorContext += `\n### Stage ${stageIndex + 1}: ${stage.name || stage.stageId} (${stageResult.allSuccess ? "PASS" : "FAIL"})\n${taskSummaries.join("\n")}\n`
       }
+      // #4 TaskBus 注入到 priorContext
+      if (taskBus) {
+        const busCtx = taskBus.toContextString()
+        if (busCtx) priorContext += `\n${busCtx}\n`
+      }
+      // #13 上下文压缩
+      const pressureLimit = Number(hybridConfig.context_pressure_limit || 8000)
+      if (priorContext.length > pressureLimit) {
+        priorContext = await compressContext(priorContext, pressureLimit, { model, providerType, sessionId, configState, baseUrl, apiKeyEnv, signal, toolContext })
+        await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_CONTEXT_COMPRESSED, sessionId, payload: { newLength: priorContext.length } })
+      }
 
       lastProgress = {
         percentage: Math.round(((stageIndex + (stageResult.allSuccess ? 1 : 0)) / Math.max(1, stagePlan.stages.length)) * 100),
@@ -330,6 +443,35 @@ export async function runHybridLongAgent({
       if (gitActive && stageResult.allSuccess && gitConfig.auto_commit_stages !== false) {
         const msg = `[kkcode-hybrid] stage ${stage.stageId} completed (${stageIndex + 1}/${stagePlan.stages.length})`
         await git.commitAll(msg, cwd)
+      }
+
+      // #10 增量门控：每个 stage 完成后运行轻量检查
+      if (hybridConfig.incremental_gates !== false && stageResult.allSuccess && stageIndex < stagePlan.stages.length - 1) {
+        const stageFiles = (stageResult.fileChanges || []).map(f => f.path).filter(Boolean)
+        if (stageFiles.length > 0) {
+          const miniGate = await runUsabilityGates({
+            sessionId, configState, model, providerType, baseUrl, apiKeyEnv, signal, toolContext,
+            objective: `Verify stage ${stage.stageId}: ${stage.name || ""}`, fileChanges: stageResult.fileChanges || [],
+            gatesConfig: { ...gatesConfig, lint: true, typecheck: true, test: false, security: false, build: false }, allowQuestion: false
+          })
+          if (miniGate.usage) accumulateUsage(miniGate)
+          gateStatus[`gate_${stage.stageId}`] = { status: miniGate.allPassed ? "pass" : "warn" }
+          await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_INCREMENTAL_GATE, sessionId, payload: { stageId: stage.stageId, passed: miniGate.allPassed } })
+        }
+      }
+
+      // #14 预算感知：检查 token 消耗是否超限
+      if (hybridConfig.budget_awareness !== false) {
+        const totalTokens = aggregateUsage.input + aggregateUsage.output
+        const budgetLimit = Number(longagentConfig.token_budget || 2000000)
+        if (totalTokens > budgetLimit * 0.9) {
+          await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_BUDGET_WARNING, sessionId, payload: { totalTokens, budgetLimit, percentage: Math.round(totalTokens / budgetLimit * 100) } })
+          await syncState({ lastMessage: `H4: budget warning — ${Math.round(totalTokens / budgetLimit * 100)}% used` })
+        }
+        if (totalTokens > budgetLimit) {
+          await syncState({ status: "budget_exceeded", lastMessage: `H4: budget exceeded (${totalTokens}/${budgetLimit})` })
+          break
+        }
       }
 
       if (!stageResult.allSuccess) {
@@ -350,6 +492,20 @@ export async function runHybridLongAgent({
 
       stageIndex++
       await saveCheckpoint(sessionId, { name: `hybrid_stage_${stage.stageId}`, iteration, currentPhase, stageIndex, stagePlan, taskProgress, planFrozen, lastProgress })
+    }
+
+    // #11 Cross-review：H4 完成后、H5 之前，让独立 agent 审查代码
+    if (hybridConfig.cross_review !== false && fileChanges.length > 0) {
+      await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_CROSS_REVIEW, sessionId, payload: { fileCount: fileChanges.length } })
+      const reviewFiles = fileChanges.slice(0, 20).map(f => f.path).join(", ")
+      const reviewOut = await processTurnLoop({
+        prompt: `Review the following files for bugs, inconsistencies, and missing error handling. Files: ${reviewFiles}\n\nObjective: ${prompt}\n\nReport issues as [FAILED_TASK: taskId] markers if a specific task's output is broken.`,
+        mode: "agent", agent: getAgent("debugging-agent"),
+        model, providerType, sessionId, configState, baseUrl, apiKeyEnv, signal, output, allowQuestion: false, toolContext
+      })
+      accumulateUsage(reviewOut)
+      // 将审查发现注入 priorContext
+      if (reviewOut.reply) priorContext += `\n### Cross-Review Findings\n${reviewOut.reply.slice(0, 1500)}\n`
     }
 
     // --- H5: DEBUGGING (回滚检测) ---
@@ -389,12 +545,20 @@ export async function runHybridLongAgent({
       if (detectReturnToCoding(finalReply)) {
         codingRollbackCount++
         rerunCoding = true
-        gateStatus.debugging = { status: "rollback", iterations: debugIter, rollbackCount: codingRollbackCount }
-        await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_RETURN_TO_CODING, sessionId, payload: { rollbackCount: codingRollbackCount } })
-        // 重置失败 task
-        for (const [taskId, tp] of Object.entries(taskProgress)) {
-          if (tp.status === "error") taskProgress[taskId] = { ...tp, status: "retrying", attempt: 0 }
+        // #1 细粒度回滚：优先只重置被标记的失败 task
+        const failedIds = extractFailedTaskIds(finalReply)
+        if (failedIds.length > 0) {
+          for (const fid of failedIds) {
+            if (taskProgress[fid]) taskProgress[fid] = { ...taskProgress[fid], status: "retrying", attempt: 0 }
+          }
+        } else {
+          // 回退：重置所有 error 状态的 task
+          for (const [taskId, tp] of Object.entries(taskProgress)) {
+            if (tp.status === "error") taskProgress[taskId] = { ...tp, status: "retrying", attempt: 0 }
+          }
         }
+        gateStatus.debugging = { status: "rollback", iterations: debugIter, rollbackCount: codingRollbackCount, failedTaskIds: failedIds }
+        await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_RETURN_TO_CODING, sessionId, payload: { rollbackCount: codingRollbackCount, failedTaskIds: failedIds } })
         break
       }
 
@@ -415,7 +579,6 @@ export async function runHybridLongAgent({
   currentGate = "gates"
   await syncState({ lastMessage: "H6: running usability gates" })
 
-  const gatesConfig = longagentConfig.usability_gates || {}
   let gateAttempt = 0
 
   while (gateAttempt < maxGateAttempts) {
@@ -470,6 +633,18 @@ export async function runHybridLongAgent({
     } catch (err) {
       gateStatus.gitMerge = { status: "warn", reason: err.message }
     }
+  }
+
+  // #5 保存 project memory
+  if (hybridConfig.project_memory !== false && previewFindings) {
+    try {
+      const newMemory = parseMemoryFromPreview(previewFindings)
+      if (newMemory.techStack.length) {
+        const merged = { ...projectMemory, techStack: [...new Set([...(projectMemory?.techStack || []), ...newMemory.techStack])].slice(0, 20), patterns: [...new Set([...(projectMemory?.patterns || []), ...newMemory.patterns])].slice(0, 20), conventions: projectMemory?.conventions || [] }
+        await saveProjectMemory(cwd, merged)
+        await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_MEMORY_SAVED, sessionId, payload: { techStackCount: merged.techStack.length } })
+      }
+    } catch { /* ignore memory save errors */ }
   }
 
   // ========== 完成 ==========
