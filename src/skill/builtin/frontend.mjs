@@ -178,6 +178,14 @@ export async function run(ctx) {
     parts.push("  npm create vite@latest . -- --template vanilla-ts")
   }
 
+  parts.push("")
+  parts.push("## Design Quality")
+  parts.push("- Read existing styles/theme/config before writing new CSS")
+  parts.push("- Use CSS variables for colors. Prefer project's design tokens over hardcoded values")
+  parts.push("- Add transitions for interactive elements (hover, focus, active states)")
+  parts.push("- Consistent spacing scale. Generous whitespace.")
+  parts.push("- For new UI: use /design for full design mode with aesthetics guidance")
+
   if (task) {
     parts.push("")
     parts.push("Now implement the task described above using the project's framework and conventions.")

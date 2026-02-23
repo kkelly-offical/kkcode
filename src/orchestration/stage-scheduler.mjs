@@ -7,7 +7,8 @@ const AGENT_HINTS = [
   { pattern: /\b(test|spec|jest|mocha|vitest|coverage)\b/i, agent: "tdd-guide" },
   { pattern: /\b(review|audit|lint|quality)\b/i, agent: "reviewer" },
   { pattern: /\b(secur|vuln|owasp|xss|inject|auth)\b/i, agent: "security-reviewer" },
-  { pattern: /\b(architect|design|blueprint|interface|api.*design)\b/i, agent: "architect" },
+  { pattern: /\b(ui|ux|frontend|front.?end|component|page|layout|style|css|tailwind|theme|responsive|landing|dashboard)\b/i, agent: "frontend-designer" },
+  { pattern: /\b(architect|blueprint|interface|api.*design)\b/i, agent: "architect" },
   { pattern: /\b(build.*fix|compile.*error|type.*error|syntax.*error)\b/i, agent: "build-fixer" }
 ]
 
@@ -99,6 +100,10 @@ function retryPrompt(taskPrompt, remainingFiles = [], attempt = 1, lastError = "
 function buildEnrichedPrompt({ stage, task, logicalTask, objective, stageIndex, stageCount, allTasks, priorContext }) {
   const parts = []
 
+  parts.push("## Your Role")
+  parts.push("You are an IMPLEMENTATION agent. The scaffold files already contain detailed inline comments describing what to implement. Your job is to READ those comments and REPLACE them with working code.")
+  parts.push("")
+
   parts.push("## Global Objective")
   parts.push(objective || "(not specified)")
   parts.push("")
@@ -142,6 +147,22 @@ function buildEnrichedPrompt({ stage, task, logicalTask, objective, stageIndex, 
     }
     parts.push("")
   }
+
+  parts.push("## Workflow")
+  parts.push("1. READ each file you own — the inline comments are your implementation spec")
+  parts.push("2. IMPLEMENT by replacing comments with working code (keep the file header comment)")
+  parts.push("3. VERIFY with acceptance criteria (run tests, syntax checks, etc.)")
+  parts.push("4. Say [TASK_COMPLETE] when done")
+  parts.push("")
+
+  parts.push("## Tool Usage Guide")
+  parts.push("USE `read` first — read your scaffold files to understand the implementation spec")
+  parts.push("USE `edit` to replace comment blocks with real code (preferred over `write` for existing files)")
+  parts.push("USE `write` only for files that don't exist yet or need full rewrite")
+  parts.push("USE `bash` to run tests, syntax checks, or build commands from acceptance criteria")
+  parts.push("USE `grep`/`glob` to find imports, references, or patterns in the codebase")
+  parts.push("AVOID `bash` for file reading (use `read`), file editing (use `edit`), or file searching (use `grep`/`glob`)")
+  parts.push("AVOID modifying files outside your ownership list")
 
   return parts.join("\n")
 }

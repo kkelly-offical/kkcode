@@ -58,7 +58,8 @@ const LANGUAGE_MAP = {
 // Project type → scenario knowledge
 const TYPE_MAP = {
   backend: ["api-design.txt"],
-  fullstack: ["api-design.txt"],
+  fullstack: ["api-design.txt", "frontend-aesthetics.txt"],
+  frontend: ["frontend-aesthetics.txt"],
 }
 
 // Feature → knowledge file

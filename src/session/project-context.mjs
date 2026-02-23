@@ -79,6 +79,32 @@ function detectFeatures(allDeps) {
   return features
 }
 
+/** Detect CSS framework used in the project */
+function detectCssFramework(allDeps) {
+  if (allDeps.tailwindcss) return "tailwind"
+  if (allDeps.unocss || allDeps["@unocss/core"]) return "unocss"
+  if (allDeps["styled-components"]) return "styled-components"
+  if (allDeps["@emotion/react"]) return "emotion"
+  if (allDeps.sass || allDeps["sass-loader"]) return "sass"
+  return null
+}
+
+/** Detect UI component library */
+function detectComponentLib(allDeps) {
+  if (allDeps["@shadcn/ui"] || allDeps["shadcn-ui"]) return "shadcn/ui"
+  if (allDeps["antd"]) return "antd"
+  if (allDeps["element-plus"]) return "element-plus"
+  if (allDeps["@mui/material"]) return "mui"
+  if (allDeps["@chakra-ui/react"]) return "chakra-ui"
+  if (allDeps["@radix-ui/react-dialog"] || allDeps["@radix-ui/themes"]) return "radix"
+  if (allDeps["@headlessui/react"]) return "headless-ui"
+  if (allDeps["@mantine/core"]) return "mantine"
+  if (allDeps["naive-ui"]) return "naive-ui"
+  if (allDeps["vuetify"]) return "vuetify"
+  if (allDeps["@arco-design/web-react"] || allDeps["@arco-design/web-vue"]) return "arco-design"
+  return null
+}
+
 async function detectStructure(cwd) {
   const dirs = []
   try {
@@ -341,6 +367,10 @@ export async function detectProjectContext(cwd) {
     if (structure.length) lines.push(`  structure: ${structure.join(", ")}`)
     if (projectType) lines.push(`  type: ${projectType}`)
     if (features.length) lines.push(`  features: ${features.join(", ")}`)
+    const cssFramework = detectCssFramework(allDeps)
+    if (cssFramework) lines.push(`  css_framework: ${cssFramework}`)
+    const componentLib = detectComponentLib(allDeps)
+    if (componentLib) lines.push(`  component_lib: ${componentLib}`)
     const hasDocker = await exists(path.join(cwd, "Dockerfile"))
     if (hasDocker) lines.push(`  docker: true`)
     lines.push("</project>")

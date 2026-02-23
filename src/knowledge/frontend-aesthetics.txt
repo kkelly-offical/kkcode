@@ -1,0 +1,39 @@
+<frontend_aesthetics>
+## Frontend Design Quality Rules
+
+When building frontend UI, avoid generic "AI-generated" aesthetics. Make creative, distinctive choices.
+
+### Typography
+- Avoid default fonts (Inter, Roboto, Arial, system-ui). Choose distinctive fonts.
+- Use high contrast: pair display fonts with monospace, serif with geometric sans.
+- Use extreme weight differences (200 vs 800) and 3x+ size jumps.
+- Load fonts from Google Fonts via <link> or @import.
+
+### Color
+- Define ALL colors as CSS variables in :root.
+- Use a dominant color with 1-2 sharp accents. Avoid evenly-distributed palettes.
+- Draw from real palettes: IDE themes (Nord, Catppuccin, Dracula), nature, cultural aesthetics.
+- AVOID: purple gradients on white, generic blue buttons, gray-on-gray cards.
+
+### Motion
+- One high-impact animation per page (staggered reveal on load).
+- Micro-interactions: hover lift, focus glow, press feedback.
+- Use CSS transitions/animations. Use animation-delay for staggered effects.
+
+### Layout
+- CSS Grid for page structure, Flexbox for components.
+- Generous whitespace. Consistent spacing scale (4/8/12/16/24/32/48/64px).
+- Mobile-first responsive design.
+
+### Depth & Atmosphere
+- Layered gradients, subtle patterns, backdrop-filter for glass effects.
+- Elevation hierarchy via box-shadow (not just border).
+- Noise/grain textures for premium feel.
+
+### What NOT to do
+- Cookie-cutter card grids with identical rounded corners
+- Generic hero with centered text + gradient
+- border-radius: 9999px on everything
+- Gray placeholder text that looks like wireframe
+- No visual rhythm (identical spacing everywhere)
+</frontend_aesthetics>

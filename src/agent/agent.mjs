@@ -152,6 +152,14 @@ defineAgent({
 })
 
 defineAgent({
+  name: "frontend-designer",
+  description: "Frontend design specialist. Creates polished, distinctive UIs with strong aesthetics — typography, color, motion, layout. Avoids generic AI-style designs. Reads project design system (Tailwind, CSS vars, component libraries) and produces production-grade frontend code.",
+  mode: "subagent",
+  permission: "full",
+  tools: ["read", "write", "edit", "bash", "glob", "grep", "list"]
+})
+
+defineAgent({
   name: "compaction",
   description: "Conversation summarizer for context compression",
   mode: "subagent",

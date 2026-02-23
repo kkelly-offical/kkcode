@@ -4,7 +4,16 @@ Tailwind CSS conventions:
 - Dark mode: dark: prefix with class or media strategy
 - Component patterns: extract repeated patterns with @apply in CSS or component abstraction
 - Spacing scale: p-4 = 1rem, m-2 = 0.5rem (4px base)
-- Colors: bg-blue-500, text-gray-900, use project's color palette
+- Colors: bg-blue-500, text-gray-900, use project's color palette from tailwind.config
 - Layout: flex, grid, container mx-auto, gap utilities
-- Customization: tailwind.config.js for theme extension
+- Customization: tailwind.config.js for theme extension (colors, fonts, spacing)
 - Avoid: inline styles, arbitrary values when a utility exists
+
+Design quality with Tailwind:
+- READ tailwind.config.js first — use the project's defined colors/fonts/spacing
+- Prefer semantic color names (primary, accent, muted) over raw colors (blue-500)
+- Use ring utilities for focus states (ring-2 ring-offset-2)
+- Transition utilities: transition-all duration-200 ease-in-out for interactions
+- Shadow scale: shadow-sm → shadow → shadow-md → shadow-lg for elevation
+- Use group and group-hover for parent-child hover effects
+- Animate: animate-pulse for loading, animate-spin for spinners
