@@ -1454,9 +1454,10 @@ async function runLegacyLongAgent({
 
 export async function runLongAgent(args) {
   const longagentConfig = args?.configState?.config?.agent?.longagent || {}
-  const parallelEnabled = longagentConfig.parallel?.enabled === true
-  if (parallelEnabled) {
-    return runParallelLongAgent(args)
+  // Parallel mode is the default; legacy is the fallback/degradation strategy
+  const useLegacy = longagentConfig.parallel?.enabled === false
+  if (useLegacy) {
+    return runLegacyLongAgent(args)
   }
-  return runLegacyLongAgent(args)
+  return runParallelLongAgent(args)
 }
