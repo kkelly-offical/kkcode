@@ -84,7 +84,7 @@ export const DEFAULT_CONFIG = {
         }
       },
       hybrid: {
-        enabled: false,
+        enabled: true,
         debugging_max_iterations: 20,
         max_coding_rollbacks: 2,
         separate_models: {
