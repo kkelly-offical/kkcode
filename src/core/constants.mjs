@@ -10,6 +10,13 @@ export const DEFAULT_RETRY_ATTEMPTS = 3
 export const DEFAULT_LONGAGENT_RETRY_STORM_THRESHOLD = 3
 export const DEFAULT_LONGAGENT_TOKEN_ALERT_THRESHOLD = 120000
 
+export const LONGAGENT_4STAGE_STAGES = {
+  PREVIEW: "preview",
+  BLUEPRINT: "blueprint",
+  CODING: "coding",
+  DEBUGGING: "debugging"
+}
+
 export const EVENT_TYPES = {
   TURN_START: "turn.start",
   TURN_STEP_START: "turn.step.start",
@@ -39,6 +46,15 @@ export const EVENT_TYPES = {
   LONGAGENT_GIT_BRANCH_CREATED: "longagent.git.branch.created",
   LONGAGENT_GIT_STAGE_COMMITTED: "longagent.git.stage.committed",
   LONGAGENT_GIT_MERGED: "longagent.git.merged",
+  LONGAGENT_4STAGE_PREVIEW_START: "longagent.4stage.preview.start",
+  LONGAGENT_4STAGE_PREVIEW_COMPLETE: "longagent.4stage.preview.complete",
+  LONGAGENT_4STAGE_BLUEPRINT_START: "longagent.4stage.blueprint.start",
+  LONGAGENT_4STAGE_BLUEPRINT_COMPLETE: "longagent.4stage.blueprint.complete",
+  LONGAGENT_4STAGE_CODING_START: "longagent.4stage.coding.start",
+  LONGAGENT_4STAGE_CODING_COMPLETE: "longagent.4stage.coding.complete",
+  LONGAGENT_4STAGE_DEBUGGING_START: "longagent.4stage.debugging.start",
+  LONGAGENT_4STAGE_DEBUGGING_COMPLETE: "longagent.4stage.debugging.complete",
+  LONGAGENT_4STAGE_RETURN_TO_CODING: "longagent.4stage.return_to_coding",
   SESSION_COMPACTED: "session.compacted",
   TURN_USAGE_UPDATE: "turn.usage.update",
   STREAM_TEXT_START: "stream.text.start",

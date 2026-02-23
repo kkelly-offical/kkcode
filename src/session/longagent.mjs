@@ -7,6 +7,7 @@ import {
   DEFAULT_LONGAGENT_RETRY_STORM_THRESHOLD,
   DEFAULT_LONGAGENT_TOKEN_ALERT_THRESHOLD
 } from "../core/constants.mjs"
+import { run4StageLongAgent } from "./longagent-4stage.mjs"
 import { saveCheckpoint, loadCheckpoint } from "./checkpoint.mjs"
 import {
   runUsabilityGates,
@@ -1454,6 +1455,10 @@ async function runLegacyLongAgent({
 
 export async function runLongAgent(args) {
   const longagentConfig = args?.configState?.config?.agent?.longagent || {}
+  // 4-stage mode: Preview → Blueprint → Coding → Debugging
+  if (longagentConfig.four_stage?.enabled === true) {
+    return run4StageLongAgent(args)
+  }
   // Parallel mode is the default; legacy is the fallback/degradation strategy
   const useLegacy = longagentConfig.parallel?.enabled === false
   if (useLegacy) {

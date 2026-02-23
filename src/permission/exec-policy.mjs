@@ -34,7 +34,11 @@ function createMatcher(pattern) {
     return (cmd) => pattern.test(cmd)
   }
   if (Array.isArray(pattern)) {
-    // 数组表示命令必须按顺序包含所有元素（用于匹配 git commit）
+    // RegExp 数组：任一匹配即命中
+    if (pattern[0] instanceof RegExp) {
+      return (cmd) => pattern.some(re => re.test(cmd))
+    }
+    // 字符串数组：按顺序包含所有元素（用于匹配 git commit）
     return (cmd) => {
       const parts = cmd.toLowerCase().split(/\s+/)
       let patternIdx = 0

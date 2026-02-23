@@ -61,8 +61,11 @@ export async function listCheckpoints(sessionId) {
  * @returns {Promise<{ok: boolean, snapshot?: Object, skipped?: boolean, reason?: string}>}
  */
 export async function autoSnapshotBeforeEdit(sessionId, cwd, config = {}, options = {}) {
-  // 需要显式启用 git_auto 和 auto_snapshot
-  if (!config.git_auto?.enabled || !config.git_auto?.auto_snapshot) {
+  // 检查 Git 自动化是否启用（默认启用，只有显式关闭才跳过）
+  if (config.git_auto?.enabled === false) {
+    return { ok: true, skipped: true, reason: "git_auto_disabled" }
+  }
+  if (config.git_auto?.auto_snapshot === false) {
     return { ok: true, skipped: true, reason: "auto_snapshot_disabled" }
   }
 
