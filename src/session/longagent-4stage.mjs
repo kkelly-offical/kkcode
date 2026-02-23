@@ -10,7 +10,7 @@ import { saveCheckpoint } from "./checkpoint.mjs"
 import { getAgent } from "../agent/agent.mjs"
 import * as git from "../util/git.mjs"
 
-function detectStageComplete(text, stage) {
+export function detectStageComplete(text, stage) {
   const str = String(text || "")
   const markers = {
     [LONGAGENT_4STAGE_STAGES.PREVIEW]: /\[STAGE 1\/4: PREVIEW(?:ING AGENT)? - COMPLETE\]/,
@@ -21,11 +21,11 @@ function detectStageComplete(text, stage) {
   return markers[stage] ? markers[stage].test(str) : false
 }
 
-function detectReturnToCoding(text) {
+export function detectReturnToCoding(text) {
   return /\[RETURN TO STAGE 3/.test(String(text || ""))
 }
 
-function buildStageWrapper(stage, context, userPrompt) {
+export function buildStageWrapper(stage, context, userPrompt) {
   const stageInfo = {
     [LONGAGENT_4STAGE_STAGES.PREVIEW]: { num: "1/4", name: "PREVIEW", focus: "Explore project, understand requirements, extract key information", readonly: true },
     [LONGAGENT_4STAGE_STAGES.BLUEPRINT]: { num: "2/4", name: "BLUEPRINT", focus: "Detailed planning, architecture design, function definitions", readonly: true },

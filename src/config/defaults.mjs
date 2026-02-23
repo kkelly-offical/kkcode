@@ -83,6 +83,17 @@ export const DEFAULT_CONFIG = {
           debugging_model: null
         }
       },
+      hybrid: {
+        enabled: false,
+        debugging_max_iterations: 20,
+        max_coding_rollbacks: 2,
+        separate_models: {
+          enabled: false,
+          preview_model: null,
+          blueprint_model: null,
+          debugging_model: null
+        }
+      },
       resume_incomplete_files: true,
       scaffold: {
         enabled: true

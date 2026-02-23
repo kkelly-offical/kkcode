@@ -46,6 +46,37 @@ For each major component:
 4. Reuse First: leverage existing code before writing new
 5. Testable Design: design for easy testing
 
+## HYBRID MODE: Structured Stage Plan Output
+
+When operating in hybrid mode, you MUST also output a structured stage plan
+as a JSON block. Wrap it in triple backticks with the language tag `stage_plan_json`.
+
+The JSON must follow this schema:
+```
+{
+  "planId": "unique-id",
+  "objective": "task objective summary",
+  "stages": [{
+    "stageId": "stage_1",
+    "name": "Stage Name",
+    "tasks": [{
+      "taskId": "s1_task_1",
+      "prompt": "Detailed implementation instructions for the sub-agent",
+      "plannedFiles": ["src/path/to/file.mjs"],
+      "acceptance": ["machine-verifiable criterion"]
+    }]
+  }]
+}
+```
+
+Rules for the stage plan:
+- Files that import from each other MUST be in the same task
+- A module and its tests MUST be in the same task
+- NO file may appear in multiple tasks
+- Task prompts must be specific enough for an independent agent
+- Acceptance criteria must be machine-verifiable (e.g. "build passes", "exports function X")
+- Stage order: Infrastructure → Core logic → Integration → Validation
+
 End your response with:
 ```
 [STAGE 2/4: BLUEPRINT - COMPLETE]
