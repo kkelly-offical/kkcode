@@ -29,7 +29,7 @@ function isProcessAlive(pid) {
   }
 }
 
-async function tryRemoveStaleLock(file) {
+async function tryRemoveStaleLock(file, staleMs = LOCK_STALE_MS) {
   try {
     const content = await readFile(file, "utf-8")
     const [pidStr] = content.split(":")
@@ -41,7 +41,7 @@ async function tryRemoveStaleLock(file) {
     }
     // Otherwise check mtime-based staleness
     const info = await stat(file)
-    if (Date.now() - info.mtimeMs > LOCK_STALE_MS) {
+    if (Date.now() - info.mtimeMs > staleMs) {
       await unlink(file).catch(() => {})
       return true
     }
@@ -54,6 +54,7 @@ async function tryRemoveStaleLock(file) {
 
 async function acquireLock(cwd, lockTimeoutMs = LOCK_TIMEOUT_MS) {
   const file = lockPath(cwd)
+  const staleMs = lockTimeoutMs * 0.8
   const deadline = Date.now() + lockTimeoutMs
   let retryMs = LOCK_RETRY_INIT_MS
 
@@ -63,7 +64,7 @@ async function acquireLock(cwd, lockTimeoutMs = LOCK_TIMEOUT_MS) {
       return true
     } catch (err) {
       if (err.code !== "EEXIST") throw err
-      const removed = await tryRemoveStaleLock(file)
+      const removed = await tryRemoveStaleLock(file, staleMs)
       if (removed) continue
       // Exponential backoff: 50 → 100 → 200 → 400 → 500 (capped)
       await new Promise((r) => setTimeout(r, retryMs))
@@ -72,7 +73,7 @@ async function acquireLock(cwd, lockTimeoutMs = LOCK_TIMEOUT_MS) {
   }
 
   // Final attempt after timeout
-  const removed = await tryRemoveStaleLock(file)
+  const removed = await tryRemoveStaleLock(file, staleMs)
   if (removed) {
     try {
       await writeFile(file, `${process.pid}:${Date.now()}`, { flag: "wx" })

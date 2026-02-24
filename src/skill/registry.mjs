@@ -13,11 +13,14 @@ const execAsync = promisify(exec)
 
 const DEFAULT_ALLOWED_COMMANDS = ["git", "node", "npm", "ls", "cat", "date", "pwd", "echo", "which"]
 let _allowedCommands = null
+let _allowedCommandsSig = null
 
 function getAllowedCommands(config) {
-  if (_allowedCommands) return _allowedCommands
   const extra = config?.skills?.allowed_commands || []
+  const sig = extra.join(",")
+  if (_allowedCommands && _allowedCommandsSig === sig) return _allowedCommands
   _allowedCommands = new Set([...DEFAULT_ALLOWED_COMMANDS, ...extra])
+  _allowedCommandsSig = sig
   return _allowedCommands
 }
 
