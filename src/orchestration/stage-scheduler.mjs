@@ -469,11 +469,19 @@ export async function runStageBarrier({
       if (toLaunch.length > 0) {
         // #17: Inject real-time TaskBus context into each launched task
         const busCtx = taskBus ? taskBus.toContextString() : ""
-        const bgIds = await Promise.all(toLaunch.map(({ task, item }) =>
+        const results = await Promise.allSettled(toLaunch.map(({ task, item }) =>
           launchTask({ stage, task, logicalTask: item, config, sessionId, model, providerType, objective, stageIndex, stageCount, allTasks: stage.tasks || [], priorContext, taskBusContext: busCtx || undefined })
         ))
         for (let i = 0; i < toLaunch.length; i++) {
-          toLaunch[i].item.backgroundTaskId = bgIds[i]
+          const r = results[i]
+          if (r.status === "fulfilled") {
+            toLaunch[i].item.backgroundTaskId = r.value
+          } else {
+            // Launch failed — mark error so it won't be orphaned
+            toLaunch[i].item.status = "error"
+            toLaunch[i].item.lastError = `launch failed: ${r.reason?.message || "unknown"}`
+            toLaunch[i].item.errorCategory = ERROR_CATEGORIES.TRANSIENT
+          }
         }
       }
     }
