@@ -72,6 +72,9 @@ export function validateConfig(config) {
           }
         }
       }
+      if (config.provider.strict_mode !== undefined && typeof config.provider.strict_mode !== "boolean") {
+        err(errors, "provider.strict_mode", "must be boolean")
+      }
       if (config.provider.model_context !== undefined) {
         if (!isObj(config.provider.model_context)) err(errors, "provider.model_context", "must be object")
         else {
@@ -118,8 +121,11 @@ export function validateConfig(config) {
               if (config.agent.longagent.parallel.max_concurrency !== undefined) {
                 checkInt(errors, "agent.longagent.parallel.max_concurrency", config.agent.longagent.parallel.max_concurrency, 1)
               }
-              if (config.agent.longagent.parallel.stage_pass_rule !== undefined && config.agent.longagent.parallel.stage_pass_rule !== "all_success") {
-                err(errors, "agent.longagent.parallel.stage_pass_rule", "must be all_success")
+              if (config.agent.longagent.parallel.stage_pass_rule !== undefined && !["all_success", "majority", "any_success"].includes(config.agent.longagent.parallel.stage_pass_rule)) {
+                err(errors, "agent.longagent.parallel.stage_pass_rule", "must be all_success|majority|any_success")
+              }
+              if (config.agent.longagent.parallel.poll_interval_ms !== undefined) {
+                checkInt(errors, "agent.longagent.parallel.poll_interval_ms", config.agent.longagent.parallel.poll_interval_ms, 50)
               }
               if (config.agent.longagent.parallel.task_timeout_ms !== undefined) {
                 checkInt(errors, "agent.longagent.parallel.task_timeout_ms", config.agent.longagent.parallel.task_timeout_ms, 1000)
@@ -147,6 +153,58 @@ export function validateConfig(config) {
               }
               if (config.agent.longagent.planner.ask_user_after_plan_frozen !== undefined && typeof config.agent.longagent.planner.ask_user_after_plan_frozen !== "boolean") {
                 err(errors, "agent.longagent.planner.ask_user_after_plan_frozen", "must be boolean")
+              }
+            }
+          }
+          if (config.agent.longagent.lock_timeout_ms !== undefined) {
+            checkInt(errors, "agent.longagent.lock_timeout_ms", config.agent.longagent.lock_timeout_ms, 1000)
+          }
+          if (config.agent.longagent.four_stage !== undefined) {
+            if (!isObj(config.agent.longagent.four_stage)) {
+              err(errors, "agent.longagent.four_stage", "must be object")
+            } else {
+              const fs = config.agent.longagent.four_stage
+              if (fs.enabled !== undefined && typeof fs.enabled !== "boolean") err(errors, "agent.longagent.four_stage.enabled", "must be boolean")
+              if (fs.separate_models !== undefined) {
+                if (!isObj(fs.separate_models)) err(errors, "agent.longagent.four_stage.separate_models", "must be object")
+                else {
+                  if (fs.separate_models.enabled !== undefined && typeof fs.separate_models.enabled !== "boolean") err(errors, "agent.longagent.four_stage.separate_models.enabled", "must be boolean")
+                  for (const k of ["preview_model", "blueprint_model", "coding_model", "debugging_model"]) {
+                    if (fs.separate_models[k] !== undefined && fs.separate_models[k] !== null && typeof fs.separate_models[k] !== "string") {
+                      err(errors, `agent.longagent.four_stage.separate_models.${k}`, "must be string or null")
+                    }
+                  }
+                }
+              }
+            }
+          }
+          if (config.agent.longagent.hybrid !== undefined) {
+            if (!isObj(config.agent.longagent.hybrid)) {
+              err(errors, "agent.longagent.hybrid", "must be object")
+            } else {
+              const hy = config.agent.longagent.hybrid
+              if (hy.enabled !== undefined && typeof hy.enabled !== "boolean") err(errors, "agent.longagent.hybrid.enabled", "must be boolean")
+              if (hy.separate_models !== undefined) {
+                if (!isObj(hy.separate_models)) err(errors, "agent.longagent.hybrid.separate_models", "must be object")
+                else {
+                  if (hy.separate_models.enabled !== undefined && typeof hy.separate_models.enabled !== "boolean") err(errors, "agent.longagent.hybrid.separate_models.enabled", "must be boolean")
+                  for (const k of ["preview_model", "blueprint_model", "debugging_model"]) {
+                    if (hy.separate_models[k] !== undefined && hy.separate_models[k] !== null && typeof hy.separate_models[k] !== "string") {
+                      err(errors, `agent.longagent.hybrid.separate_models.${k}`, "must be string or null")
+                    }
+                  }
+                }
+              }
+              if (hy.adaptive_models !== undefined) {
+                if (!isObj(hy.adaptive_models)) err(errors, "agent.longagent.hybrid.adaptive_models", "must be object")
+                else {
+                  if (hy.adaptive_models.enabled !== undefined && typeof hy.adaptive_models.enabled !== "boolean") err(errors, "agent.longagent.hybrid.adaptive_models.enabled", "must be boolean")
+                  for (const k of ["low", "medium", "high"]) {
+                    if (hy.adaptive_models[k] !== undefined && hy.adaptive_models[k] !== null && typeof hy.adaptive_models[k] !== "string") {
+                      err(errors, `agent.longagent.hybrid.adaptive_models.${k}`, "must be string or null")
+                    }
+                  }
+                }
               }
             }
           }
@@ -180,6 +238,8 @@ export function validateConfig(config) {
     else {
       if (config.mcp.servers !== undefined && !isObj(config.mcp.servers)) err(errors, "mcp.servers", "must be object")
       if (config.mcp.timeout_ms !== undefined) checkInt(errors, "mcp.timeout_ms", config.mcp.timeout_ms, 1000)
+      if (config.mcp.shutdown_timeout_ms !== undefined) checkInt(errors, "mcp.shutdown_timeout_ms", config.mcp.shutdown_timeout_ms, 100)
+      if (config.mcp.max_sse_buffer_bytes !== undefined) checkInt(errors, "mcp.max_sse_buffer_bytes", config.mcp.max_sse_buffer_bytes, 1024)
       if (config.mcp.auto_discover !== undefined && typeof config.mcp.auto_discover !== "boolean") {
         err(errors, "mcp.auto_discover", "must be boolean")
       }
@@ -248,6 +308,10 @@ export function validateConfig(config) {
       }
       if (config.skills.dirs !== undefined && !Array.isArray(config.skills.dirs)) {
         err(errors, "skills.dirs", "must be array")
+      }
+      if (config.skills.allowed_commands !== undefined) {
+        if (!Array.isArray(config.skills.allowed_commands)) err(errors, "skills.allowed_commands", "must be array")
+        else if (config.skills.allowed_commands.some(c => typeof c !== "string")) err(errors, "skills.allowed_commands", "all values must be string")
       }
     }
   }
@@ -325,6 +389,7 @@ export function validateConfig(config) {
       }
       if (config.background.worker_timeout_ms !== undefined) checkInt(errors, "background.worker_timeout_ms", config.background.worker_timeout_ms, 1000)
       if (config.background.max_parallel !== undefined) checkInt(errors, "background.max_parallel", config.background.max_parallel, 1)
+      if (config.background.max_log_lines !== undefined) checkInt(errors, "background.max_log_lines", config.background.max_log_lines, 1)
     }
   }
 
@@ -357,6 +422,7 @@ export function validateConfig(config) {
       }
       if (config.tool.local_dirs !== undefined && !Array.isArray(config.tool.local_dirs)) err(errors, "tool.local_dirs", "must be array")
       if (config.tool.plugin_dirs !== undefined && !Array.isArray(config.tool.plugin_dirs)) err(errors, "tool.plugin_dirs", "must be array")
+      if (config.tool.bash_timeout_ms !== undefined) checkInt(errors, "tool.bash_timeout_ms", config.tool.bash_timeout_ms, 1000)
     }
   }
 

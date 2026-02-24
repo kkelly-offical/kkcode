@@ -245,7 +245,7 @@ export function createStdioMcpClient(serverName, config = {}) {
     })
   }
 
-  const shutdownTimeoutMs = 5000
+  const shutdownTimeoutMs = Number(config.shutdown_timeout_ms || 5000)
 
   async function shutdownProcess() {
     if (!child) return

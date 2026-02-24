@@ -113,6 +113,7 @@ function stageConfig(config = {}) {
     taskTimeoutMs: Math.max(1000, Number(parallel.task_timeout_ms || 600000)),
     taskMaxRetries: Math.max(0, Number(parallel.task_max_retries ?? 2)),
     budgetLimitUsd: Number(parallel.budget_limit_usd || 0),
+    pollIntervalMs: Math.max(50, Number(parallel.poll_interval_ms || 300)),
     passRule: "all_success"
   }
 }
@@ -635,7 +636,7 @@ export async function runStageBarrier({
       }
     }
 
-    await sleep(300)
+    await sleep(cfg.pollIntervalMs)
   }
 
   const items = [...logical.values()]

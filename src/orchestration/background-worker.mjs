@@ -41,10 +41,12 @@ async function patchTask(taskId, updater) {
   return next
 }
 
+let _maxLogLines = 300
+
 async function appendTaskLog(taskId, line) {
   await appendFile(backgroundTaskLogPath(taskId), `${line}\n`, "utf8")
   await patchTask(taskId, (current) => ({
-    logs: [...(current.logs || []), String(line)].slice(-300),
+    logs: [...(current.logs || []), String(line)].slice(-_maxLogLines),
     lastHeartbeatAt: now()
   }))
 }
@@ -55,6 +57,7 @@ async function runDelegateTask(task, signal) {
   process.chdir(cwd)
 
   const ctx = await buildContext({ cwd })
+  _maxLogLines = Number(ctx.configState.config?.background?.max_log_lines || 300)
   await ToolRegistry.initialize({
     config: ctx.configState.config,
     cwd

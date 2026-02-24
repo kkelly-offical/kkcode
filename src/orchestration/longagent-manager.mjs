@@ -52,9 +52,9 @@ async function tryRemoveStaleLock(file) {
   return false
 }
 
-async function acquireLock(cwd) {
+async function acquireLock(cwd, lockTimeoutMs = LOCK_TIMEOUT_MS) {
   const file = lockPath(cwd)
-  const deadline = Date.now() + LOCK_TIMEOUT_MS
+  const deadline = Date.now() + lockTimeoutMs
   let retryMs = LOCK_RETRY_INIT_MS
 
   while (Date.now() < deadline) {
@@ -79,7 +79,7 @@ async function acquireLock(cwd) {
       return true
     } catch { /* another process grabbed it */ }
   }
-  throw new Error(`Failed to acquire lock after ${LOCK_TIMEOUT_MS}ms: ${file}`)
+  throw new Error(`Failed to acquire lock after ${lockTimeoutMs}ms: ${file}`)
 }
 
 async function releaseLock(cwd) {
@@ -97,8 +97,9 @@ async function write(data, cwd = process.cwd()) {
 }
 
 export const LongAgentManager = {
-  async update(sessionId, patch, cwd = process.cwd()) {
-    await acquireLock(cwd)
+  async update(sessionId, patch, cwd = process.cwd(), config = null) {
+    const lockMs = Number(config?.agent?.longagent?.lock_timeout_ms || LOCK_TIMEOUT_MS)
+    await acquireLock(cwd, lockMs)
     try {
       const state = await read(cwd)
       const current = state.sessions[sessionId] || {

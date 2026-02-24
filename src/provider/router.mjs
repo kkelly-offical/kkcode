@@ -3,6 +3,8 @@ import { requestOpenAI, requestOpenAIStream, countTokensOpenAI } from "./openai.
 import { request as requestOAICompat, requestStream as requestStreamOAICompat } from "./openai-compatible.mjs"
 import { requestOllama, requestOllamaStream } from "./ollama.mjs"
 import { ProviderError } from "../core/errors.mjs"
+import { EventBus } from "../core/events.mjs"
+import { EVENT_TYPES } from "../core/constants.mjs"
 
 // --- Provider Registry ---
 const registry = new Map()
@@ -39,6 +41,17 @@ function resolveSettings(configState, providerType, overrides = {}) {
     if (providerConfig?.type && registry.has(providerConfig.type)) {
       resolvedType = providerConfig.type
     } else {
+      if (llm.strict_mode) {
+        throw new ProviderError(
+          `unknown provider "${providerType}". registered: ${listProviders().join(", ")}`,
+          { provider: providerType, reason: "unknown_provider" }
+        )
+      }
+      console.warn(`[kkcode] unknown provider "${providerType}", falling back to openai`)
+      EventBus.emit({
+        type: EVENT_TYPES.PROVIDER_FALLBACK,
+        payload: { requested: providerType, resolved: "openai" }
+      }).catch(() => {})
       resolvedType = "openai"
     }
   }

@@ -2,6 +2,7 @@ export const DEFAULT_CONFIG = {
   language: "en",
   provider: {
     default: "openai",
+    strict_mode: false,
     openai: {
       base_url: "https://api.openai.com/v1",
       api_key_env: "OPENAI_API_KEY",
@@ -55,12 +56,14 @@ export const DEFAULT_CONFIG = {
       max_stage_recoveries: 3,
       heartbeat_timeout_ms: 120000,
       checkpoint_interval: 5,
+      lock_timeout_ms: 5000,
       parallel: {
         enabled: true,
         max_concurrency: 3,
         stage_pass_rule: "all_success",
         task_timeout_ms: 600000,
-        task_max_retries: 2
+        task_max_retries: 2,
+        poll_interval_ms: 300
       },
       planner: {
         intake_questions: {
@@ -154,7 +157,9 @@ export const DEFAULT_CONFIG = {
     max_reconnect_attempts: 5,
     circuit_reset_ms: 60000,
     health_check_interval_ms: 0,
-    max_buffer_bytes: 16777216
+    max_buffer_bytes: 16777216,
+    shutdown_timeout_ms: 5000,
+    max_sse_buffer_bytes: 4194304
   },
   skills: {
     enabled: true,
@@ -175,7 +180,8 @@ export const DEFAULT_CONFIG = {
   background: {
     mode: "worker_process",
     worker_timeout_ms: 900000,
-    max_parallel: 2
+    max_parallel: 2,
+    max_log_lines: 300
   },
   runtime: {
     tool_registry_cache_ttl_ms: 30000,
@@ -188,6 +194,7 @@ export const DEFAULT_CONFIG = {
       mcp: true,
       plugin: true
     },
+    bash_timeout_ms: 120000,
     write_lock: {
       mode: "file_lock",
       wait_timeout_ms: 120000

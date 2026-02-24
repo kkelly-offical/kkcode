@@ -101,7 +101,7 @@ export function createSseMcpClient(serverName, config) {
     }
   }
 
-  const maxSseBufferBytes = 4 * 1024 * 1024
+  const maxSseBufferBytes = Number(config.max_sse_buffer_bytes || 4 * 1024 * 1024)
 
   async function parseSseResponse(body, requestId) {
     const reader = body.getReader()

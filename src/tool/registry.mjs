@@ -580,7 +580,8 @@ function builtinTools(config) {
     },
     async execute(args, ctx) {
       const command = String(args.command || "")
-      const timeoutMs = Math.min(Math.max(Number(args.timeout) || BASH_TIMEOUT_MS, 1000), 600_000)
+      const configBashTimeout = Number(ctx.config?.tool?.bash_timeout_ms || BASH_TIMEOUT_MS)
+      const timeoutMs = Math.min(Math.max(Number(args.timeout) || configBashTimeout, 1000), 600_000)
 
       // 执行策略检查
       const policyCheck = checkBashAllowed(command, ctx.config)
