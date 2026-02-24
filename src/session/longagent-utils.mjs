@@ -29,7 +29,8 @@ export function parseJsonLoose(text = "") {
 export const ERROR_CATEGORIES = {
   TRANSIENT: "transient",
   LOGIC: "logic",
-  PERMANENT: "permanent"
+  PERMANENT: "permanent",
+  UNKNOWN: "unknown"
 }
 
 export function classifyError(errorText, bgStatus) {
@@ -71,8 +72,8 @@ export function classifyError(errorText, bgStatus) {
     return ERROR_CATEGORIES.LOGIC
   }
 
-  // 默认视为 transient（可重试）
-  return ERROR_CATEGORIES.TRANSIENT
+  // 默认: 未知类别，不自动重试（避免在不可恢复错误上浪费资源）
+  return ERROR_CATEGORIES.UNKNOWN
 }
 
 export function isComplete(text) {
@@ -303,10 +304,16 @@ export function createSemanticErrorTracker(threshold = 3) {
 
   function isSimilar(a, b) {
     if (a === b) return true
-    const shorter = a.length < b.length ? a : b
-    const longer = a.length >= b.length ? a : b
-    if (shorter.length < 10) return a === b
-    return longer.includes(shorter) || shorter.includes(longer.slice(0, shorter.length))
+    if (a.length < 10 || b.length < 10) return a === b
+    // Token-level Jaccard similarity — more robust than substring matching
+    const tokenize = (s) => new Set(s.toLowerCase().split(/[\s:.'"`()\[\]{}]+/).filter(t => t.length > 2))
+    const setA = tokenize(a)
+    const setB = tokenize(b)
+    if (!setA.size || !setB.size) return false
+    let intersection = 0
+    for (const t of setA) { if (setB.has(t)) intersection++ }
+    const union = setA.size + setB.size - intersection
+    return union > 0 && (intersection / union) >= 0.6
   }
 
   return {

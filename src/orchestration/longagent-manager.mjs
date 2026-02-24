@@ -153,5 +153,18 @@ export const LongAgentManager = {
     const existing = await this.get(sessionId, cwd)
     if (!existing) return null
     return this.update(sessionId, { stopRequested: false }, cwd)
+  },
+  /**
+   * Execute `fn` while holding the state lock.
+   * Prevents TOCTOU races (e.g. read-status → git-merge).
+   */
+  async withLock(fn, cwd = process.cwd(), config = null) {
+    const lockMs = Number(config?.agent?.longagent?.lock_timeout_ms || LOCK_TIMEOUT_MS)
+    await acquireLock(cwd, lockMs)
+    try {
+      return await fn()
+    } finally {
+      await releaseLock(cwd)
+    }
   }
 }

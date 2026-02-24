@@ -518,6 +518,9 @@ export async function runStageBarrier({
         .map(fc => fc.path)
         .filter(p => p && !plannedSet.has(p))
       if (outOfScope.length > 0) {
+        // Check if any out-of-scope file is locked by another task
+        const conflicts = fileLocks.getConflicts(outOfScope, item.taskId)
+        const conflicting = conflicts.map(c => c.file)
         await EventBus.emit({
           type: EVENT_TYPES.LONGAGENT_ALERT,
           sessionId,
@@ -526,9 +529,17 @@ export async function runStageBarrier({
             message: `Task ${item.taskId} modified ${outOfScope.length} file(s) outside its plan: ${outOfScope.slice(0, 5).join(", ")}`,
             taskId: item.taskId,
             stageId: stage.stageId,
-            outOfScopeFiles: outOfScope
+            outOfScopeFiles: outOfScope,
+            conflicting
           }
         })
+        // Escalate to error if conflicting with another task's locked files
+        if (conflicting.length > 0) {
+          item.status = "error"
+          item.lastError = `file ownership conflict: ${conflicting.slice(0, 3).join(", ")} locked by other tasks`
+          item.errorCategory = ERROR_CATEGORIES.PERMANENT
+          continue
+        }
       }
 
       // #20: Release file locks when task finishes
@@ -548,9 +559,9 @@ export async function runStageBarrier({
         item.lastError = bg.error || "task failed"
         const category = classifyError(item.lastError, bg.status)
         item.errorCategory = category
-        if (category === ERROR_CATEGORIES.PERMANENT) {
+        if (category === ERROR_CATEGORIES.PERMANENT || category === ERROR_CATEGORIES.UNKNOWN) {
           item.status = "error"
-          item.skipReason = `permanent error: ${item.lastError.slice(0, 100)}`
+          item.skipReason = `${category} error: ${item.lastError.slice(0, 100)}`
         } else {
           item.status = item.attempt <= item.maxRetries ? "retrying" : (bg.status === "cancelled" ? "cancelled" : "error")
         }

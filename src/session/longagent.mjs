@@ -787,8 +787,10 @@ async function runParallelLongAgent({
     try {
       await git.commitAll(`[kkcode] longagent session ${sessionId} completed`, cwd)
       if (gitConfig.auto_merge !== false) {
-        const doneState = await LongAgentManager.get(sessionId)
-        if (doneState?.status === "completed") {
+        // Hold state lock during read-status → merge to prevent TOCTOU race
+        await LongAgentManager.withLock(async () => {
+          const doneState = await LongAgentManager.get(sessionId)
+          if (doneState?.status !== "completed") return
           await git.checkoutBranch(gitBaseBranch, cwd)
           const mergeResult = await git.mergeBranch(gitBranch, cwd)
           if (mergeResult.ok) {
@@ -809,13 +811,12 @@ async function runParallelLongAgent({
                 message: `Git merge failed: ${mergeResult.message}. Staying on branch "${gitBranch}" — resolve conflicts manually.`
               }
             })
-            // Rollback: return to feature branch so user can resolve manually
             const rollback = await git.checkoutBranch(gitBranch, cwd)
             if (!rollback.ok) {
               gateStatus.git = { ...gateStatus.git, rollbackFailed: true, rollbackError: rollback.message }
             }
           }
-        }
+        }, cwd)
       }
     } catch (gitErr) {
       gateStatus.git = { ...gateStatus.git, error: gitErr.message }
@@ -830,7 +831,9 @@ async function runParallelLongAgent({
       maxKeep: 10,
       keepStageCheckpoints: true
     })
-  } catch { /* ignore cleanup errors */ }
+  } catch (cleanupErr) {
+    console.warn(`[kkcode] checkpoint cleanup failed for session ${sessionId}: ${cleanupErr.message}`)
+  }
 
   const done = await LongAgentManager.get(sessionId)
   const totalElapsed = Math.round((Date.now() - startTime) / 1000)
