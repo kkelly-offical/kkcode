@@ -38,12 +38,33 @@ export function createMetricsCollector() {
     return histograms.get(name)
   }
 
+  const MAX_OPEN_ENTRIES = 500
+
+  function pruneStaleMap(map) {
+    if (map.size <= MAX_OPEN_ENTRIES) return
+    const cutoff = Date.now() - 30 * 60 * 1000 // 30 min
+    for (const [k, v] of map) {
+      if (v < cutoff) map.delete(k)
+    }
+    // If still over limit, drop oldest half
+    if (map.size > MAX_OPEN_ENTRIES) {
+      let toDrop = Math.floor(map.size / 2)
+      for (const k of map.keys()) {
+        if (toDrop-- <= 0) break
+        map.delete(k)
+      }
+    }
+  }
+
   function handleEvent(event) {
     const { type, payload, turnId, sessionId } = event
 
     if (type === EVENT_TYPES.TURN_START) {
       inc("turn_count")
-      if (turnId) turnStarts.set(turnId, event.timestamp)
+      if (turnId) {
+        turnStarts.set(turnId, event.timestamp)
+        pruneStaleMap(turnStarts)
+      }
     }
 
     if (type === EVENT_TYPES.TURN_FINISH) {
@@ -73,7 +94,10 @@ export function createMetricsCollector() {
 
     if (type === EVENT_TYPES.LONGAGENT_STAGE_STARTED) {
       const key = payload?.stageId || sessionId
-      if (key) stageStarts.set(key, event.timestamp)
+      if (key) {
+        stageStarts.set(key, event.timestamp)
+        pruneStaleMap(stageStarts)
+      }
     }
 
     if (type === EVENT_TYPES.LONGAGENT_STAGE_FINISHED) {

@@ -7,10 +7,22 @@ function newSpanId() {
 
 export function createTracer(options = {}) {
   const maxTraces = options.maxTraces || 100
+  const maxOpenSpans = options.maxOpenSpans || 500
   const traces = []
   const openSpans = new Map()
   const phaseSpan = { current: null }
   let currentTraceId = null
+
+  function pruneOpenSpans() {
+    if (openSpans.size <= maxOpenSpans) return
+    // Close oldest spans as "expired"
+    let toDrop = Math.floor(openSpans.size / 2)
+    for (const [key, span] of openSpans) {
+      if (toDrop-- <= 0) break
+      closeSpan(span, "expired")
+      openSpans.delete(key)
+    }
+  }
 
   function startSpan(name, attributes = {}, parentSpanId = null, timestamp = null) {
     if (!currentTraceId) currentTraceId = `trace_${randomUUID().slice(0, 12)}`
@@ -47,6 +59,7 @@ export function createTracer(options = {}) {
       }
       const span = startSpan("turn", { turnId, sessionId }, null, timestamp)
       if (turnId) openSpans.set(key, span)
+      pruneOpenSpans()
     }
 
     if (type === EVENT_TYPES.TURN_FINISH) {
@@ -73,6 +86,7 @@ export function createTracer(options = {}) {
       if (stageId) {
         const span = startSpan("stage", { stageId, sessionId }, null, timestamp)
         openSpans.set(`stage:${stageId}`, span)
+        pruneOpenSpans()
       }
     }
 
@@ -101,12 +115,15 @@ export function createTracer(options = {}) {
   }
 
   function getTraces() {
-    return [...traces]
+    const result = [...traces]
+    if (phaseSpan.current) result.push({ ...phaseSpan.current, status: "open" })
+    return result
   }
 
   function exportTraces(format = "json") {
-    if (format === "json") return JSON.stringify(traces, null, 2)
-    return JSON.stringify(traces)
+    const all = getTraces()
+    if (format === "json") return JSON.stringify(all, null, 2)
+    return JSON.stringify(all)
   }
 
   function reset() {

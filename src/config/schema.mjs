@@ -39,11 +39,10 @@ export function validateConfig(config) {
       err(errors, "provider", "must be object")
     } else {
       const providerTypes = getValidProviderTypes()
-      const knownKeys = new Set([...providerTypes, ...Object.keys(config.provider).filter(k => k !== "default")])
-      if (config.provider.default !== undefined && !knownKeys.has(config.provider.default)) {
-        err(errors, "provider.default", `must be one of ${[...knownKeys].join(", ")}`)
-      }
       const providerKeys = new Set([...providerTypes, ...Object.keys(config.provider).filter(k => k !== "default")])
+      if (config.provider.default !== undefined && !providerKeys.has(config.provider.default)) {
+        err(errors, "provider.default", `must be one of ${[...providerKeys].join(", ")}`)
+      }
       for (const key of providerKeys) {
         const p = config.provider[key]
         if (p === undefined) continue

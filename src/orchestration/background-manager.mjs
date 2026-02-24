@@ -19,11 +19,13 @@ function now() {
 }
 
 function resolveWorkerTimeoutMs(config = {}, payload = {}) {
-  return Math.max(1000, Number(payload.workerTimeoutMs || config.background?.worker_timeout_ms || 900000))
+  const raw = Number(payload.workerTimeoutMs || config.background?.worker_timeout_ms || 900000)
+  return Number.isFinite(raw) ? Math.max(1000, raw) : 900000
 }
 
 function resolveMaxParallel(config = {}) {
-  return Math.max(1, Number(config.background?.max_parallel || 2))
+  const raw = Number(config.background?.max_parallel || 2)
+  return Number.isFinite(raw) ? Math.max(1, raw) : 2
 }
 
 function isProcessAlive(pid) {
