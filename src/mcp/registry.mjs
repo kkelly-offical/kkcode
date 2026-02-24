@@ -5,7 +5,7 @@ import { McpError } from "../core/errors.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { readFile } from "node:fs/promises"
-import { exec } from "node:child_process"
+import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { join } from "node:path"
 import { homedir } from "node:os"
@@ -45,14 +45,14 @@ function normalizePrompt(serverName, prompt) {
   }
 }
 
-const execAsync = promisify(exec)
+const execFileAsync = promisify(execFile)
 let context7InstallLock = null
 async function ensureGlobalPackage(pkg) {
   const name = pkg.replace(/@[^/]*$/, "")
   try {
-    await execAsync(`npm list -g ${name}`, { timeout: 10000 })
+    await execFileAsync("npm", ["list", "-g", name], { timeout: 10000 })
   } catch {
-    await execAsync(`npm install -g ${pkg}`, { timeout: 120000 })
+    await execFileAsync("npm", ["install", "-g", pkg], { timeout: 120000 })
   }
 }
 

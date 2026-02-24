@@ -290,6 +290,7 @@ export async function* requestAnthropicStream(input) {
       }
       break
     } catch (err) {
+      clearTimeout(connTimer)
       if (signal?.aborted) throw err
       const isNetwork = err?.code === "ETIMEDOUT" || err?.code === "ECONNRESET" || err?.name === "AbortError"
       if (!isNetwork || attempt >= attempts) throw err

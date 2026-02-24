@@ -98,10 +98,14 @@ function createFileLockRegistry() {
       }
     },
     getConflicts(files, taskId) {
-      return files.filter(f => {
+      const conflicts = []
+      for (const f of files) {
         const lock = locks.get(f)
-        return lock && lock.taskId !== taskId
-      }).map(f => ({ file: f, heldBy: locks.get(f).taskId }))
+        if (lock && lock.taskId !== taskId) {
+          conflicts.push({ file: f, heldBy: lock.taskId })
+        }
+      }
+      return conflicts
     }
   }
 }
@@ -458,7 +462,23 @@ export async function runStageBarrier({
           if (!allDepsCompleted) continue
         }
         // #20: Acquire file locks before launching
-        for (const f of item.plannedFiles) fileLocks.tryLock(f, task.taskId)
+        const lockFailures = []
+        for (const f of item.plannedFiles) {
+          if (!fileLocks.tryLock(f, task.taskId)) lockFailures.push(f)
+        }
+        if (lockFailures.length > 0) {
+          EventBus.emit({
+            type: EVENT_TYPES.LONGAGENT_ALERT,
+            sessionId,
+            payload: {
+              kind: "file_lock_conflict",
+              message: `Task ${task.taskId} could not lock: ${lockFailures.join(", ")}`,
+              taskId: task.taskId,
+              stageId: stage.stageId,
+              files: lockFailures
+            }
+          }).catch(() => {})
+        }
         item.attempt += 1
         item.status = "running"
         if (item.attempt > 1) {
