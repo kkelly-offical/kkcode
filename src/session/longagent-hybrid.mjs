@@ -622,8 +622,8 @@ export async function runHybridLongAgent({
         for (const [taskId, tp] of Object.entries(taskProgress)) {
           if (tp.status === "error") {
             const category = classifyError(tp.lastError)
-            if (category === ERROR_CATEGORIES.PERMANENT) {
-              taskProgress[taskId] = { ...tp, status: "error", skipReason: "permanent error" }
+            if (category === ERROR_CATEGORIES.PERMANENT || category === ERROR_CATEGORIES.UNKNOWN) {
+              taskProgress[taskId] = { ...tp, status: "error", skipReason: `${category} error` }
             } else {
               taskProgress[taskId] = { ...tp, status: "retrying", attempt: 0 }
             }

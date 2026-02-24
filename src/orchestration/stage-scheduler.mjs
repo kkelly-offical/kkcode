@@ -558,10 +558,8 @@ export async function runStageBarrier({
         item.lastError = ""
         item.errorCategory = null
       } else if (bg.status === "completed" && remainingFromResult.length > 0) {
-        const errText = "task completed but remaining files still pending"
-        const category = classifyError(errText, bg.status)
-        item.lastError = errText
-        item.errorCategory = category
+        item.lastError = "task completed but remaining files still pending"
+        item.errorCategory = ERROR_CATEGORIES.TRANSIENT
         item.status = item.attempt <= item.maxRetries ? "retrying" : "error"
       } else {
         item.lastError = bg.error || "task failed"
