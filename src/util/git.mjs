@@ -485,6 +485,29 @@ export async function getStagedDiff(repoPath) {
 }
 
 // ============================================================================
+// Conflict Detection Helpers
+// ============================================================================
+
+/** Check if an error is a merge conflict */
+export function isConflictError(error) {
+  const msg = String(error?.message || error || "")
+  return msg.includes("CONFLICT") || msg.includes("Merge conflict") || msg.includes("merge conflict")
+}
+
+/** Get list of files with merge conflicts */
+export async function getConflictFiles(cwd = process.cwd()) {
+  const result = await run(["diff", "--name-only", "--diff-filter=U"], cwd)
+  if (!result.ok) return []
+  return result.stdout.trim().split("\n").filter(Boolean)
+}
+
+/** Abort an in-progress merge */
+export async function mergeAbort(cwd = process.cwd()) {
+  const result = await run(["merge", "--abort"], cwd)
+  return { ok: result.ok, message: result.ok ? "merge aborted" : result.stderr }
+}
+
+// ============================================================================
 // 内部工具函数
 // ============================================================================
 

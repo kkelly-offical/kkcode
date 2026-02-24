@@ -75,5 +75,11 @@ export const EVENT_TYPES = {
   SESSION_COMPACTED: "session.compacted",
   TURN_USAGE_UPDATE: "turn.usage.update",
   STREAM_TEXT_START: "stream.text.start",
-  STREAM_THINKING_START: "stream.thinking.start"
+  STREAM_THINKING_START: "stream.thinking.start",
+  LONGAGENT_DEGRADATION_APPLIED: "longagent.degradation.applied",
+  LONGAGENT_WRITE_LOOP_DETECTED: "longagent.write_loop.detected",
+  LONGAGENT_SEMANTIC_ERROR_REPEATED: "longagent.semantic_error.repeated",
+  LONGAGENT_PHASE_TIMEOUT: "longagent.phase.timeout",
+  LONGAGENT_GIT_CONFLICT_RESOLUTION: "longagent.git.conflict_resolution",
+  LONGAGENT_CHECKPOINT_CLEANED: "longagent.checkpoint.cleaned"
 }

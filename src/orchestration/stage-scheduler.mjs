@@ -2,6 +2,7 @@ import { BackgroundManager } from "./background-manager.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { getAgent } from "../agent/agent.mjs"
+import { classifyError, ERROR_CATEGORIES } from "../session/longagent-utils.mjs"
 
 const AGENT_HINTS = [
   { pattern: /\b(test|spec|jest|mocha|vitest|coverage)\b/i, agent: "tdd-guide" },
@@ -267,7 +268,9 @@ export async function runStageBarrier({
   objective = "",
   stageIndex = 0,
   stageCount = 1,
-  priorContext = ""
+  priorContext = "",
+  stuckTracker = null,
+  onTaskComplete = null
 }) {
   const cfg = stageConfig(config)
   const logical = new Map()
@@ -420,12 +423,23 @@ export async function runStageBarrier({
       if (bg.status === "completed" && remainingFromResult.length === 0) {
         item.status = "completed"
         item.lastError = ""
+        item.errorCategory = null
       } else if (bg.status === "completed" && remainingFromResult.length > 0) {
+        const errText = "task completed but remaining files still pending"
+        const category = classifyError(errText, bg.status)
+        item.lastError = errText
+        item.errorCategory = category
         item.status = item.attempt <= item.maxRetries ? "retrying" : "error"
-        item.lastError = "task completed but remaining files still pending"
       } else {
         item.lastError = bg.error || "task failed"
-        item.status = item.attempt <= item.maxRetries ? "retrying" : (bg.status === "cancelled" ? "cancelled" : "error")
+        const category = classifyError(item.lastError, bg.status)
+        item.errorCategory = category
+        if (category === ERROR_CATEGORIES.PERMANENT) {
+          item.status = "error"
+          item.skipReason = `permanent error: ${item.lastError.slice(0, 100)}`
+        } else {
+          item.status = item.attempt <= item.maxRetries ? "retrying" : (bg.status === "cancelled" ? "cancelled" : "error")
+        }
       }
       item.lastReply = String(result.reply || "")
       item.lastCost = Number(result.cost || 0)
@@ -438,9 +452,43 @@ export async function runStageBarrier({
           taskId: item.taskId,
           status: item.status,
           attempt: item.attempt,
-          remainingFiles: item.remainingFiles
+          remainingFiles: item.remainingFiles,
+          errorCategory: item.errorCategory || null
         }
       })
+
+      // Phase 3: stuck tracker 集成
+      if (stuckTracker && result.toolEvents?.length) {
+        const stuckResult = stuckTracker.track(result.toolEvents)
+        if (stuckResult.isStuck) {
+          await EventBus.emit({
+            type: EVENT_TYPES.LONGAGENT_ALERT,
+            sessionId,
+            payload: {
+              kind: stuckResult.reason === "write_loop_detected" || stuckResult.reason === "edit_cycle_detected"
+                ? "write_loop_warning" : "stuck_warning",
+              message: `Task ${item.taskId} in stage ${stage.stageId}: ${stuckResult.reason}`,
+              taskId: item.taskId,
+              stageId: stage.stageId,
+              reason: stuckResult.reason
+            }
+          })
+        }
+      }
+
+      // Phase 7: task 级 checkpoint 回调
+      if (onTaskComplete && item.status === "completed") {
+        try {
+          await onTaskComplete({
+            stageId: stage.stageId,
+            taskId: item.taskId,
+            status: item.status,
+            completedFiles: item.completedFiles,
+            fileChanges: item.fileChanges,
+            attempt: item.attempt
+          })
+        } catch { /* ignore checkpoint errors */ }
+      }
 
       if (["pending", "retrying", "running"].includes(item.status)) pending += 1
     }

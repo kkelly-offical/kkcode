@@ -353,6 +353,44 @@ export function formatPlanProgress(taskProgress) {
   return lines
 }
 
+// ── Recovery Suggestions Formatter ───────────────────────
+
+export function formatRecoverySuggestions(recovery) {
+  if (!recovery) return []
+  const lines = []
+  lines.push(paint("Recovery Suggestions:", "yellow", { bold: true }))
+
+  if (recovery.summary) {
+    lines.push(`  ${paint(recovery.summary, null, { dim: true })}`)
+  }
+
+  if (recovery.suggestions?.length) {
+    for (const s of recovery.suggestions) {
+      lines.push(`  ${paint(SYM.alert, "yellow")} ${paint(s, "yellow")}`)
+    }
+  }
+
+  if (recovery.failedTasks?.length) {
+    lines.push(paint("  Failed Tasks:", "red"))
+    for (const t of recovery.failedTasks.slice(0, 5)) {
+      lines.push(`    ${paint(SYM.dot, "red")} ${t.taskId} [${t.category}]: ${paint(t.error || "", null, { dim: true })}`)
+    }
+  }
+
+  if (recovery.manualSteps?.length) {
+    lines.push(paint("  Manual Steps:", "cyan"))
+    for (const step of recovery.manualSteps.slice(0, 5)) {
+      lines.push(`    ${paint(SYM.arrow, "cyan")} ${paint(step, null, { dim: true })}`)
+    }
+  }
+
+  if (recovery.resumeHint) {
+    lines.push(`  ${paint(SYM.dot, "green")} ${paint(recovery.resumeHint, "green")}`)
+  }
+
+  return lines
+}
+
 // ── Renderer ─────────────────────────────────────────────
 
 export function createActivityRenderer({ output, theme = null }) {
@@ -558,6 +596,32 @@ export function createActivityRenderer({ output, theme = null }) {
       }
       case EVENT_TYPES.LONGAGENT_HYBRID_MEMORY_SAVED: {
         log(formatHybridMemorySaved(payload.techStackCount))
+        break
+      }
+
+      // ── New Fault Recovery Events ──────────────────
+      case EVENT_TYPES.LONGAGENT_DEGRADATION_APPLIED: {
+        log(formatAlert("degradation", `${payload.strategy} applied in ${payload.phase}${payload.reason ? ` (${payload.reason})` : ""}`))
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_WRITE_LOOP_DETECTED: {
+        log(formatAlert("write_loop", payload.message || "write loop detected"))
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_SEMANTIC_ERROR_REPEATED: {
+        log(formatAlert("semantic_error", `repeated ${payload.count}x: ${(payload.error || "").slice(0, 80)}`))
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_PHASE_TIMEOUT: {
+        log(formatAlert("phase_timeout", `${payload.phase} timed out after ${Math.round((payload.elapsed || 0) / 1000)}s`))
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_GIT_CONFLICT_RESOLUTION: {
+        log(formatAlert("git_conflict", `resolving conflicts in ${(payload.files || []).length} file(s)`))
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_CHECKPOINT_CLEANED: {
+        log(`  ${paint(SYM.dot, "#666666")} ${paint(`checkpoints cleaned (${payload.removed} removed)`, null, { dim: true })}`)
         break
       }
 

@@ -46,6 +46,72 @@ export async function listCheckpoints(sessionId) {
     .sort()
 }
 
+// ========== Phase 7: Task 级 Checkpoint ==========
+
+export async function saveTaskCheckpoint(sessionId, stageId, taskId, data) {
+  const dir = checkpointDir(sessionId)
+  await mkdir(dir, { recursive: true })
+  const name = `task_${stageId}_${taskId}`
+  const checkpoint = {
+    sessionId,
+    stageId,
+    taskId,
+    savedAt: Date.now(),
+    ...data
+  }
+  await writeJson(checkpointFile(sessionId, name), checkpoint)
+  return checkpoint
+}
+
+export async function loadTaskCheckpoints(sessionId, stageId) {
+  const dir = checkpointDir(sessionId)
+  const files = await readdir(dir, { withFileTypes: true }).catch(() => [])
+  const prefix = `task_${stageId}_`
+  const results = {}
+  for (const entry of files) {
+    if (entry.isFile() && entry.name.startsWith(prefix) && entry.name.endsWith(".json")) {
+      const data = await readJson(path.join(dir, entry.name), null)
+      if (data?.taskId) results[data.taskId] = data
+    }
+  }
+  return results
+}
+
+// ========== Phase 10: Checkpoint 清理策略 ==========
+
+export async function cleanupCheckpoints(sessionId, options = {}) {
+  const maxKeep = options.maxKeep || 10
+  const keepStageCheckpoints = options.keepStageCheckpoints !== false
+  const dir = checkpointDir(sessionId)
+  const all = await listCheckpoints(sessionId)
+  if (all.length <= maxKeep + 1) return { removed: 0 }
+
+  const toKeep = new Set(["latest"])
+  // 保留 stage 级和 task 级 checkpoint
+  if (keepStageCheckpoints) {
+    for (const name of all) {
+      if (name.startsWith("hybrid_stage_") || name.startsWith("task_")) {
+        toKeep.add(name)
+      }
+    }
+  }
+  // 保留最近 maxKeep 个编号 checkpoint
+  const numbered = all.filter(n => n.startsWith("cp_")).sort()
+  for (const n of numbered.slice(-maxKeep)) toKeep.add(n)
+
+  let removed = 0
+  for (const name of all) {
+    if (toKeep.has(name)) continue
+    try {
+      const { unlink: unlinkFile } = await import("node:fs/promises")
+      await unlinkFile(checkpointFile(sessionId, name) + ".json").catch(() => {})
+      await unlinkFile(checkpointFile(sessionId, name)).catch(() => {})
+      removed++
+    } catch { /* ignore */ }
+  }
+  return { removed }
+}
+
 // ============================================================================
 // Git Snapshot Integration - AI Agent 自动 Git 快照功能
 // ============================================================================

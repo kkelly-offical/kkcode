@@ -9,7 +9,7 @@ import { processTurnLoop } from "./loop.mjs"
 import { markSessionStatus } from "./store.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES, LONGAGENT_4STAGE_STAGES } from "../core/constants.mjs"
-import { saveCheckpoint, loadCheckpoint } from "./checkpoint.mjs"
+import { saveCheckpoint, loadCheckpoint, saveTaskCheckpoint, cleanupCheckpoints } from "./checkpoint.mjs"
 import { getAgent } from "../agent/agent.mjs"
 import { runStageBarrier } from "../orchestration/stage-scheduler.mjs"
 import { runScaffoldPhase } from "./longagent-scaffold.mjs"
@@ -31,11 +31,25 @@ import {
   stageProgressStats,
   summarizeGateFailures,
   LONGAGENT_FILE_CHANGES_LIMIT,
-  createStuckTracker
+  createStuckTracker,
+  classifyError,
+  ERROR_CATEGORIES,
+  createSemanticErrorTracker,
+  createDegradationChain,
+  generateRecoverySuggestions
 } from "./longagent-utils.mjs"
 import { TaskBus } from "./longagent-task-bus.mjs"
 import { loadProjectMemory, saveProjectMemory, memoryToContext, parseMemoryFromPreview } from "./longagent-project-memory.mjs"
 import * as git from "../util/git.mjs"
+
+// Gate 修复策略路由 (Phase 8)
+function getGateFixStrategy(failures) {
+  const gateTypes = (failures || []).map(f => f.gate).filter(Boolean)
+  if (gateTypes.includes("test")) return { agent: "debugging-agent", prefix: "Analyze test failures and fix:" }
+  if (gateTypes.every(g => g === "build")) return { agent: "coding-agent", prefix: "Fix build errors:" }
+  if (gateTypes.every(g => g === "lint")) return { autoFix: "npx eslint --fix .", agent: "coding-agent", prefix: "Fix lint errors:" }
+  return { agent: "coding-agent", prefix: "Fix gate failures:" }
+}
 
 // #13 上下文压缩
 async function compressContext(text, limit, { model, providerType, sessionId, configState, baseUrl, apiKeyEnv, signal, toolContext }) {
@@ -151,6 +165,11 @@ export async function runHybridLongAgent({
   const toolEvents = []
   const startTime = Date.now()
   const stuckTracker = createStuckTracker()
+  // Phase 6: 降级链
+  const degradationChain = createDegradationChain(hybridConfig.degradation || {})
+  // Phase 2: 阶段超时配置
+  const codingPhaseTimeoutMs = Number(hybridConfig.coding_phase_timeout_ms || 1800000)
+  const debuggingPhaseTimeoutMs = Number(hybridConfig.debugging_phase_timeout_ms || 600000)
   // #4 TaskBus
   const taskBus = hybridConfig.task_bus !== false ? new TaskBus() : null
   // #5 Project Memory
@@ -391,10 +410,23 @@ export async function runHybridLongAgent({
     await setPhase("H4", "coding")
     currentGate = "coding"
     stageIndex = 0
+    const codingPhaseStart = Date.now()
 
     while (stageIndex < stagePlan.stages.length) {
       const state = await LongAgentManager.get(sessionId)
       if (state?.stopRequested || signal?.aborted) break
+
+      // Phase 2: 阶段超时检测
+      if (Date.now() - codingPhaseStart > codingPhaseTimeoutMs) {
+        await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_PHASE_TIMEOUT, sessionId, payload: { phase: "H4", elapsed: Date.now() - codingPhaseStart } })
+        if (degradationChain.canDegrade()) {
+          const deg = degradationChain.apply({ model, taskProgress, configState, shouldStop: false })
+          await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_DEGRADATION_APPLIED, sessionId, payload: { strategy: deg.strategy, phase: "H4" } })
+          if (deg.applied && deg.strategy === "graceful_stop") break
+        } else {
+          break
+        }
+      }
 
       iteration++
       const stage = stagePlan.stages[stageIndex]
@@ -408,7 +440,11 @@ export async function runHybridLongAgent({
       const stageResult = await runStageBarrier({
         stage, sessionId, config: configState.config, model, providerType,
         seedTaskProgress: seeded, objective: prompt,
-        stageIndex, stageCount: stagePlan.stages.length, priorContext
+        stageIndex, stageCount: stagePlan.stages.length, priorContext,
+        stuckTracker,
+        onTaskComplete: async (taskData) => {
+          await saveTaskCheckpoint(sessionId, taskData.stageId, taskData.taskId, taskData)
+        }
       })
 
       // 合并结果
@@ -492,8 +528,18 @@ export async function runHybridLongAgent({
           await syncState({ lastMessage: `H4: budget warning — ${Math.round(totalTokens / budgetLimit * 100)}% used` })
         }
         if (totalTokens > budgetLimit) {
-          await syncState({ status: "budget_exceeded", lastMessage: `H4: budget exceeded (${totalTokens}/${budgetLimit})` })
-          break
+          // Phase 6: 尝试降级而非直接 break
+          if (degradationChain.canDegrade()) {
+            const deg = degradationChain.apply({ model, taskProgress, configState, shouldStop: false })
+            await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_DEGRADATION_APPLIED, sessionId, payload: { strategy: deg.strategy, phase: "H4", reason: "budget_exceeded" } })
+            if (deg.applied && deg.strategy === "graceful_stop") {
+              await syncState({ status: "budget_exceeded", lastMessage: `H4: budget exceeded, graceful stop` })
+              break
+            }
+          } else {
+            await syncState({ status: "budget_exceeded", lastMessage: `H4: budget exceeded (${totalTokens}/${budgetLimit})` })
+            break
+          }
         }
       }
 
@@ -503,12 +549,31 @@ export async function runHybridLongAgent({
         await new Promise(r => setTimeout(r, backoffMs))
         const maxStageRecoveries = Number(longagentConfig.max_stage_recoveries ?? 3)
         if (recoveryCount >= maxStageRecoveries) {
-          await syncState({ status: "error", lastMessage: `stage ${stage.stageId} aborted after ${recoveryCount} recoveries` })
-          break
+          // Phase 6: 尝试降级而非直接 abort
+          if (degradationChain.canDegrade()) {
+            const deg = degradationChain.apply({ model, taskProgress, configState, shouldStop: false })
+            await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_DEGRADATION_APPLIED, sessionId, payload: { strategy: deg.strategy, phase: "H4", reason: "max_recoveries" } })
+            if (deg.applied && deg.strategy === "graceful_stop") {
+              await syncState({ status: "error", lastMessage: `stage ${stage.stageId} aborted after degradation` })
+              break
+            }
+            // 降级成功但非 graceful_stop，重置 recoveryCount 继续
+            recoveryCount = 0
+          } else {
+            await syncState({ status: "error", lastMessage: `stage ${stage.stageId} aborted after ${recoveryCount} recoveries` })
+            break
+          }
         }
-        // 重置失败 task 重试
+        // Phase 1: 根据错误类别决定是否重试
         for (const [taskId, tp] of Object.entries(taskProgress)) {
-          if (tp.status === "error") taskProgress[taskId] = { ...tp, status: "retrying", attempt: 0 }
+          if (tp.status === "error") {
+            const category = classifyError(tp.lastError)
+            if (category === ERROR_CATEGORIES.PERMANENT) {
+              taskProgress[taskId] = { ...tp, status: "error", skipReason: "permanent error" }
+            } else {
+              taskProgress[taskId] = { ...tp, status: "retrying", attempt: 0 }
+            }
+          }
         }
         continue
       }
@@ -546,11 +611,26 @@ export async function runHybridLongAgent({
 
     let debugIter = 0
     let debugDone = false
+    const semanticTracker = createSemanticErrorTracker(3)
+    const debugPhaseStart = Date.now()
+
     while (!debugDone && debugIter < maxDebugIterations) {
       debugIter++
       iteration++
       const state = await LongAgentManager.get(sessionId)
       if (state?.stopRequested || signal?.aborted) break
+
+      // Phase 2: debugging 阶段超时检测
+      if (Date.now() - debugPhaseStart > debuggingPhaseTimeoutMs) {
+        await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_PHASE_TIMEOUT, sessionId, payload: { phase: "H5", elapsed: Date.now() - debugPhaseStart } })
+        if (degradationChain.canDegrade()) {
+          const deg = degradationChain.apply({ model, taskProgress, configState, shouldStop: false })
+          await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_DEGRADATION_APPLIED, sessionId, payload: { strategy: deg.strategy, phase: "H5" } })
+          if (deg.applied && deg.strategy === "graceful_stop") break
+        } else {
+          break
+        }
+      }
 
       const debugOut = await processTurnLoop({
         prompt: debugPrompt, mode: "agent", agent: getAgent("debugging-agent"),
@@ -571,6 +651,17 @@ export async function runHybridLongAgent({
           })
           await syncState({ lastMessage: `H5: stuck detected (${stuckResult.reason}), iter ${debugIter}` })
         }
+      }
+
+      // Phase 5: 语义级错误检测
+      const semResult = semanticTracker.track(finalReply)
+      if (semResult.isRepeated) {
+        await EventBus.emit({
+          type: EVENT_TYPES.LONGAGENT_SEMANTIC_ERROR_REPEATED, sessionId,
+          payload: { error: semResult.error, count: semResult.count, debugIter }
+        })
+        // 注入更详细的错误分析提示，避免无限循环
+        await syncState({ lastMessage: `H5: repeated error detected (${semResult.count}x): ${(semResult.error || "").slice(0, 80)}` })
       }
 
       if (detectStageComplete(finalReply, LONGAGENT_4STAGE_STAGES.DEBUGGING)) {
@@ -705,10 +796,20 @@ export async function runHybridLongAgent({
     gateStatus.usabilityGates = { status: "fixing", attempt: gateAttempt, failures: summarizeGateFailures(lastGateFailures) }
     await syncState({ lastMessage: `H6: gate failures (attempt ${gateAttempt}/${maxGateAttempts}), fixing...` })
 
-    // 修复循环：让 coding agent 修复 gate 失败
-    const fixPrompt = `Fix the following usability gate failures:\n${summarizeGateFailures(lastGateFailures)}\n\nOriginal objective: ${prompt}`
+    // 修复循环：根据 gate 类型选择修复策略 (Phase 8)
+    const strategy = getGateFixStrategy(lastGateFailures)
+
+    // lint 失败时先尝试自动修复
+    if (strategy.autoFix) {
+      try {
+        const { execSync } = await import("node:child_process")
+        execSync(strategy.autoFix, { cwd: process.cwd(), timeout: 30000, stdio: "ignore" })
+      } catch { /* autofix failed, fall through to agent */ }
+    }
+
+    const fixPrompt = `${strategy.prefix || "Fix the following usability gate failures:"}\n${summarizeGateFailures(lastGateFailures)}\n\nOriginal objective: ${prompt}`
     const fixOut = await processTurnLoop({
-      prompt: fixPrompt, mode: "agent", agent: getAgent("coding-agent"),
+      prompt: fixPrompt, mode: "agent", agent: getAgent(strategy.agent || "coding-agent"),
       model, providerType, sessionId, configState,
       baseUrl, apiKeyEnv, signal, output, allowQuestion, toolContext
     })
@@ -733,7 +834,37 @@ export async function runHybridLongAgent({
         await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_GIT_MERGED, sessionId, payload: { branch: gitBranch, baseBranch: gitBaseBranch } })
       }
     } catch (err) {
-      gateStatus.gitMerge = { status: "warn", reason: err.message }
+      // Phase 9: 自愈式 Git 操作
+      if (git.isConflictError(err)) {
+        try {
+          const conflictFiles = await git.getConflictFiles(cwd)
+          if (conflictFiles.length > 0) {
+            await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_GIT_CONFLICT_RESOLUTION, sessionId, payload: { files: conflictFiles } })
+            const conflictPrompt = `Resolve merge conflicts in the following files:\n${conflictFiles.join("\n")}\n\nRead each file, find conflict markers (<<<<<<< ======= >>>>>>>), and resolve them by keeping the correct code.`
+            const conflictOut = await processTurnLoop({
+              prompt: conflictPrompt, mode: "agent", agent: getAgent("coding-agent"),
+              model, providerType, sessionId, configState,
+              baseUrl, apiKeyEnv, signal, output, allowQuestion: false, toolContext
+            })
+            accumulateUsage(conflictOut)
+            const commitResult = await git.commitAll(`[kkcode-hybrid] resolved merge conflicts`, cwd)
+            if (commitResult.ok) {
+              gateStatus.gitMerge = { status: "pass", branch: gitBranch, baseBranch: gitBaseBranch, conflictsResolved: true }
+              await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_GIT_MERGED, sessionId, payload: { branch: gitBranch, baseBranch: gitBaseBranch } })
+            } else {
+              await git.mergeAbort(cwd)
+              gateStatus.gitMerge = { status: "warn", reason: "conflict resolution failed, staying on feature branch" }
+            }
+          } else {
+            gateStatus.gitMerge = { status: "warn", reason: err.message }
+          }
+        } catch (resolveErr) {
+          await git.mergeAbort(cwd).catch(() => {})
+          gateStatus.gitMerge = { status: "warn", reason: `conflict resolution error: ${resolveErr.message}` }
+        }
+      } else {
+        gateStatus.gitMerge = { status: "warn", reason: err.message }
+      }
     }
   }
 
@@ -749,6 +880,19 @@ export async function runHybridLongAgent({
     } catch { /* ignore memory save errors */ }
   }
 
+  // Phase 10: Checkpoint 清理
+  if (hybridConfig.checkpoint_cleanup !== false) {
+    try {
+      const cleanResult = await cleanupCheckpoints(sessionId, {
+        maxKeep: Number(hybridConfig.checkpoint_max_keep || 10),
+        keepStageCheckpoints: true
+      })
+      if (cleanResult.removed > 0) {
+        await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_CHECKPOINT_CLEANED, sessionId, payload: { removed: cleanResult.removed } })
+      }
+    } catch { /* ignore cleanup errors */ }
+  }
+
   // ========== 完成 ==========
   const elapsed = Math.round((Date.now() - startTime) / 1000)
   const finalStatus = completionMarkerSeen ? "completed" : "done"
@@ -756,6 +900,20 @@ export async function runHybridLongAgent({
   await markSessionStatus(sessionId, finalStatus === "completed" ? "completed" : "active")
 
   const stats = stageProgressStats(taskProgress)
+
+  // Phase 11: 恢复建议生成
+  let recoverySuggestions = null
+  if (finalStatus !== "completed") {
+    recoverySuggestions = generateRecoverySuggestions({
+      status: finalStatus,
+      taskProgress,
+      gateStatus,
+      phase: currentPhase,
+      recoveryCount,
+      fileChanges
+    })
+  }
+
   return {
     sessionId, turnId: `turn_long_${Date.now()}`,
     reply: finalReply || "hybrid longagent complete",
@@ -767,6 +925,7 @@ export async function runHybridLongAgent({
     planFrozen, taskProgress, fileChanges,
     stageProgress: { done: stats.done, total: stats.total },
     remainingFilesCount: stats.remainingFilesCount,
-    gitBranch, gitBaseBranch
+    gitBranch, gitBaseBranch,
+    recoverySuggestions
   }
 }

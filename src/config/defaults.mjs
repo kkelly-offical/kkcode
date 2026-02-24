@@ -100,6 +100,15 @@ export const DEFAULT_CONFIG = {
         checkpoint_resume: true,
         project_memory: true,
         task_bus: true,
+        coding_phase_timeout_ms: 1800000,
+        debugging_phase_timeout_ms: 600000,
+        checkpoint_max_keep: 10,
+        checkpoint_cleanup: true,
+        degradation: {
+          enabled: true,
+          fallback_model: null,
+          skip_non_critical: true
+        },
         separate_models: {
           enabled: false,
           preview_model: null,
