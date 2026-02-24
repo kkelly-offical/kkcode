@@ -8,6 +8,7 @@ import {
 } from "../core/constants.mjs"
 import { saveCheckpoint } from "./checkpoint.mjs"
 import { getAgent } from "../agent/agent.mjs"
+import { createStuckTracker, isReadOnlyTool } from "./longagent-utils.mjs"
 import * as git from "../util/git.mjs"
 
 export function detectStageComplete(text, stage) {
@@ -25,7 +26,7 @@ export function detectReturnToCoding(text) {
   return /\[RETURN TO STAGE 3/.test(String(text || ""))
 }
 
-export function buildStageWrapper(stage, context, userPrompt) {
+export function buildStageWrapper(stage, context, userPrompt, warningMsg = null) {
   const stageInfo = {
     [LONGAGENT_4STAGE_STAGES.PREVIEW]: { num: "1/4", name: "PREVIEW", focus: "Explore project, understand requirements, extract key information", readonly: true },
     [LONGAGENT_4STAGE_STAGES.BLUEPRINT]: { num: "2/4", name: "BLUEPRINT", focus: "Detailed planning, architecture design, function definitions", readonly: true },
@@ -83,7 +84,13 @@ export function buildStageWrapper(stage, context, userPrompt) {
       "2. Run tests and check for errors",
       "3. Debug and fix any issues found",
       "4. Validate the implementation end-to-end",
-      "5. If major issues found, output [RETURN TO STAGE 3: CODING]"
+      "5. If major issues found, output [RETURN TO STAGE 3: CODING]",
+      "",
+      "## IMPORTANT: AFTER VERIFICATION IS COMPLETE:",
+      "- Provide a clear summary of what was implemented",
+      "- Explain how to use the code/tool/project",
+      "- Give usage examples and commands",
+      "- Mention any key files or configuration needed"
     )
   }
 
@@ -97,6 +104,10 @@ export function buildStageWrapper(stage, context, userPrompt) {
   }
   if (context.coding && stage === LONGAGENT_4STAGE_STAGES.DEBUGGING) {
     parts.push("", "=== CODING STAGE OUTPUT ===", context.coding)
+  }
+
+  if (warningMsg) {
+    parts.push("", "=== WARNING ===", warningMsg, "")
   }
 
   parts.push("", "=== USER OBJECTIVE ===", userPrompt)
@@ -124,6 +135,8 @@ export async function run4StageLongAgent({
   const startTime = Date.now()
   let completionMarkerSeen = false
   let gitBranch = null, gitBaseBranch = null, gitActive = false
+  let stuckWarningMsg = null
+  const stuckTracker = createStuckTracker()
 
   const stageMaxIterations = {
     [LONGAGENT_4STAGE_STAGES.PREVIEW]: Number(fourStageConfig.preview_max_iterations || 10),
@@ -245,7 +258,8 @@ export async function run4StageLongAgent({
         return { sessionId, reply: "longagent stopped", usage: aggregateUsage, toolEvents, iterations: iteration, status: "stopped" }
       }
 
-      const fullPrompt = buildStageWrapper(stage, stageContext, prompt)
+      const fullPrompt = buildStageWrapper(stage, stageContext, prompt, stuckWarningMsg)
+      if (stuckWarningMsg) stuckWarningMsg = null
       const readonly = stage === LONGAGENT_4STAGE_STAGES.PREVIEW || stage === LONGAGENT_4STAGE_STAGES.BLUEPRINT
       const stageAgentName = readonly
         ? (stage === LONGAGENT_4STAGE_STAGES.PREVIEW ? "preview-agent" : "blueprint-agent")
@@ -261,6 +275,23 @@ export async function run4StageLongAgent({
       aggregateUsage.output += out.usage.output || 0
       if (out.toolEvents?.length) toolEvents.push(...out.toolEvents)
       finalReply = out.reply
+
+      // 防卡死检测
+      if (out.toolEvents?.length) {
+        const stuckResult = stuckTracker.track(out.toolEvents)
+        if (stuckResult.isStuck) {
+          const readonly = stage === LONGAGENT_4STAGE_STAGES.PREVIEW || stage === LONGAGENT_4STAGE_STAGES.BLUEPRINT
+          stuckWarningMsg = readonly
+            ? `[STUCK DETECTION] You have been exploring files for too many rounds without progress. STOP reading more files. Synthesize what you've learned and COMPLETE this stage now.`
+            : `[STUCK DETECTION] You appear stuck in an exploration loop. STOP reading files and START implementing. Make concrete changes to files.`
+          stuckTracker.resetReadOnlyCount()
+          await EventBus.emit({
+            type: EVENT_TYPES.LONGAGENT_ALERT, sessionId,
+            payload: { kind: "stuck_warning", stage, reason: stuckResult.reason, iteration: currentStageIteration }
+          })
+          await syncState({ lastMessage: `stuck detected at ${stage}, iter ${currentStageIteration}` })
+        }
+      }
 
       if (detectStageComplete(out.reply, stage)) {
         stageComplete = true
@@ -292,16 +323,19 @@ export async function run4StageLongAgent({
     await saveCheckpoint(sessionId, { name: `4stage_${stage}`, iteration, currentStage, stageContext })
   }
 
-  // Git merge
+  // Git merge (only if not failed)
   if (gitActive && gitBaseBranch && gitBranch) {
     try {
       await git.commitAll(`[kkcode] 4-stage session ${sessionId} completed`, cwd)
       if (gitConfig.auto_merge !== false) {
-        await git.checkoutBranch(gitBaseBranch, cwd)
-        await git.mergeBranch(gitBranch, cwd)
-        await git.deleteBranch(gitBranch, cwd)
+        const doneState = await LongAgentManager.get(sessionId)
+        if (doneState?.status !== "failed") {
+          await git.checkoutBranch(gitBaseBranch, cwd)
+          await git.mergeBranch(gitBranch, cwd)
+          await git.deleteBranch(gitBranch, cwd)
+        }
       }
-    } catch {}
+    } catch { /* git merge best-effort */ }
   }
 
   await LongAgentManager.update(sessionId, { status: completionMarkerSeen ? "completed" : "done", lastMessage: "4-stage longagent complete" })

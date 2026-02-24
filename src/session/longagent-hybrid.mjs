@@ -30,7 +30,8 @@ import {
   mergeCappedFileChanges,
   stageProgressStats,
   summarizeGateFailures,
-  LONGAGENT_FILE_CHANGES_LIMIT
+  LONGAGENT_FILE_CHANGES_LIMIT,
+  createStuckTracker
 } from "./longagent-utils.mjs"
 import { TaskBus } from "./longagent-task-bus.mjs"
 import { loadProjectMemory, saveProjectMemory, memoryToContext, parseMemoryFromPreview } from "./longagent-project-memory.mjs"
@@ -149,6 +150,7 @@ export async function runHybridLongAgent({
   const aggregateUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   const toolEvents = []
   const startTime = Date.now()
+  const stuckTracker = createStuckTracker()
   // #4 TaskBus
   const taskBus = hybridConfig.task_bus !== false ? new TaskBus() : null
   // #5 Project Memory
@@ -536,6 +538,19 @@ export async function runHybridLongAgent({
       })
       accumulateUsage(debugOut)
       finalReply = debugOut.reply || ""
+
+      // 防卡死检测
+      if (debugOut.toolEvents?.length) {
+        const stuckResult = stuckTracker.track(debugOut.toolEvents)
+        if (stuckResult.isStuck) {
+          stuckTracker.resetReadOnlyCount()
+          await EventBus.emit({
+            type: EVENT_TYPES.LONGAGENT_ALERT, sessionId,
+            payload: { kind: "stuck_warning", stage: "H5:debugging", reason: stuckResult.reason, debugIter }
+          })
+          await syncState({ lastMessage: `H5: stuck detected (${stuckResult.reason}), iter ${debugIter}` })
+        }
+      }
 
       if (detectStageComplete(finalReply, LONGAGENT_4STAGE_STAGES.DEBUGGING)) {
         debugDone = true

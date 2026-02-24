@@ -15,7 +15,9 @@ import {
   mergeCappedFileChanges,
   stageProgressStats,
   summarizeGateFailures,
-  LONGAGENT_FILE_CHANGES_LIMIT
+  LONGAGENT_FILE_CHANGES_LIMIT,
+  createStuckTracker,
+  isReadOnlyTool
 } from "./longagent-utils.mjs"
 import { saveCheckpoint, loadCheckpoint } from "./checkpoint.mjs"
 import {
@@ -49,20 +51,25 @@ function extractStructuredProgress(text) {
   }
 }
 
-function detectProgress(currentReply, previousReplyNormalized, toolEventCount = 0) {
+function detectProgress(currentReply, previousReplyNormalized, toolEvents = []) {
   const structured = extractStructuredProgress(currentReply)
   if (structured.hasStructuredSignal) {
-    return { hasProgress: true, structured }
+    return { hasProgress: true, structured, isStuck: false }
   }
-  // Tool calls (file writes, bash executions) count as objective progress
-  if (toolEventCount > 0) {
-    return { hasProgress: true, structured }
+  // 写入类工具算作有效进展
+  const hasWriteTools = toolEvents.some(e => !isReadOnlyTool(e.name))
+  if (hasWriteTools) {
+    return { hasProgress: true, structured, isStuck: false }
+  }
+  // 有工具调用但全是只读 → 不算进展（但也不一定卡死，由 stuckTracker 判断）
+  if (toolEvents.length > 0 && !hasWriteTools) {
+    return { hasProgress: false, structured, isStuck: false }
   }
   const normalized = normalizeReply(currentReply)
   if (normalized !== previousReplyNormalized && normalized.length > 10) {
-    return { hasProgress: true, structured }
+    return { hasProgress: true, structured, isStuck: false }
   }
-  return { hasProgress: false, structured }
+  return { hasProgress: false, structured, isStuck: false }
 }
 
 function buildNextPrompt(original, reply, iteration, progress) {
@@ -100,6 +107,11 @@ function buildRecoveryPrompt(original, reply, iteration, reason, progress, check
     }
   }
   parts.push("")
+  if (reason === "excessive_read_only_exploration" || reason === "repeated_config_file_glob" || reason === "tool_cycle_detected") {
+    parts.push("WARNING: You have been searching files without making progress.")
+    parts.push("STOP searching and START implementing based on what you already know.")
+    parts.push("")
+  }
   parts.push("Latest output that failed to advance:")
   parts.push(reply || "(empty)")
   parts.push("")
@@ -119,13 +131,14 @@ async function runParallelLongAgent({
   baseUrl = null,
   apiKeyEnv = null,
   agent = null,
-  maxIterations = 0,
+  maxIterations: maxIterationsParam = 0,
   signal = null,
   output = null,
   allowQuestion = true,
   toolContext = {}
 }) {
   const longagentConfig = configState.config.agent.longagent || {}
+  const maxIterations = Number(longagentConfig.max_iterations || maxIterationsParam)
   const plannerConfig = longagentConfig.planner || {}
   const intakeConfig = plannerConfig.intake_questions || {}
   const parallelConfig = longagentConfig.parallel || {}
@@ -942,7 +955,7 @@ async function runLegacyLongAgent({
   baseUrl = null,
   apiKeyEnv = null,
   agent = null,
-  maxIterations = 0,
+  maxIterations: maxIterationsParam = 0,
   signal = null,
   fromCheckpoint = null,
   output = null,
@@ -950,6 +963,7 @@ async function runLegacyLongAgent({
   toolContext = {}
 }) {
   const longagentConfig = configState.config.agent.longagent || {}
+  const maxIterations = Number(longagentConfig.max_iterations || maxIterationsParam)
   const noProgressWarning = Number(longagentConfig.no_progress_warning || 3)
   const noProgressLimit = Number(longagentConfig.no_progress_limit || 5)
   const heartbeatTimeoutMs = Number(longagentConfig.heartbeat_timeout_ms || 120000)
@@ -972,6 +986,7 @@ async function runLegacyLongAgent({
   const toolEvents = []
   const startTime = Date.now()
   const lastAlertAtIteration = new Map()
+  const stuckTracker = createStuckTracker()
 
   function shouldEmitAlert(key, every = 1) {
     const prev = Number(lastAlertAtIteration.get(key) || 0)
@@ -1228,7 +1243,8 @@ async function runLegacyLongAgent({
     aggregateUsage.cacheWrite += turn.usage.cacheWrite || 0
     toolEvents.push(...turn.toolEvents)
 
-    const progressDetection = detectProgress(turn.reply, previousReplyNormalized, turn.toolEvents?.length || 0)
+    const progressDetection = detectProgress(turn.reply, previousReplyNormalized, turn.toolEvents || [])
+    const stuckResult = stuckTracker.track(turn.toolEvents || [])
     if (progressDetection.structured.hasStructuredSignal) {
       lastProgress = {
         percentage: progressDetection.structured.percentage ?? lastProgress.percentage,
@@ -1245,6 +1261,14 @@ async function runLegacyLongAgent({
       gateStatus = { ...gateStatus, progress: "warn" }
     }
     previousReplyNormalized = normalizeReply(turn.reply)
+
+    // 防卡死：检测到卡死时立即触发恢复
+    if (stuckResult.isStuck) {
+      await emitAlert("stuck_detected", `stuck: ${stuckResult.reason}`, { reason: stuckResult.reason }, 1)
+      stuckTracker.resetReadOnlyCount()
+      await enterRecovery(stuckResult.reason)
+      continue
+    }
 
     const totalTokens = aggregateUsage.input + aggregateUsage.output
     if (totalTokens >= tokenAlertThreshold) {

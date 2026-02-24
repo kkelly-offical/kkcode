@@ -62,6 +62,81 @@ export function normalizeFileChange(item = {}) {
   }
 }
 
+// ========== 防卡死机制 (ported from Mark's anti-stuck work) ==========
+
+export const READ_ONLY_TOOLS = new Set(["read", "glob", "grep", "list", "webfetch", "websearch", "codesearch"])
+
+export function isReadOnlyTool(name) {
+  return READ_ONLY_TOOLS.has(name)
+}
+
+/**
+ * 检测配置文件搜索循环（Qwen 等模型容易反复 glob 配置文件）
+ */
+export function detectExplorationLoop(recentToolCalls) {
+  const recentGlobs = recentToolCalls.slice(-10).filter(sig => sig.startsWith("glob:"))
+  if (recentGlobs.length >= 6) {
+    const patterns = recentGlobs.map(sig => {
+      try { return JSON.parse(sig.slice(5)).pattern } catch { return null }
+    }).filter(Boolean)
+    const configPatterns = [/pyproject\.toml/, /setup\.py/, /Pipfile/, /Dockerfile/, /\.env/, /main\.py/, /package\.json/, /tsconfig\.json/]
+    const matched = patterns.filter(p => configPatterns.some(cp => cp.test(p)))
+    if (matched.length >= 4) return { isLoop: true, reason: "repeated_config_file_glob" }
+  }
+  return { isLoop: false }
+}
+
+/**
+ * 检测工具调用循环（同类工具重复 / 前后半段完全相同）
+ */
+export function detectToolCycle(recentToolCalls) {
+  if (recentToolCalls.length < 6) return false
+  // 同类工具连续 6 次
+  const recentTypes = recentToolCalls.slice(-6).map(sig => sig.split(":")[0])
+  if (recentTypes.every(t => t === recentTypes[0]) && isReadOnlyTool(recentTypes[0])) return true
+  // 前后半段完全相同
+  const allReadOnly = recentToolCalls.every(sig => isReadOnlyTool(sig.split(":")[0]))
+  if (allReadOnly) {
+    const half = Math.floor(recentToolCalls.length / 2)
+    if (half >= 3) {
+      const first = recentToolCalls.slice(0, half).sort().join(",")
+      const second = recentToolCalls.slice(half).sort().join(",")
+      if (first === second) return true
+    }
+  }
+  return false
+}
+
+/**
+ * 创建一个有状态的卡死追踪器，供各模式的主循环使用
+ */
+export function createStuckTracker(maxRecent = 10) {
+  const recentToolCalls = []
+  let consecutiveReadOnlyCount = 0
+
+  return {
+    /** 记录本轮 tool events，返回 { isStuck, reason } */
+    track(toolEvents = []) {
+      const sigs = toolEvents.map(e => `${e.name}:${JSON.stringify(e.args || {})}`)
+      recentToolCalls.push(...sigs)
+      while (recentToolCalls.length > maxRecent) recentToolCalls.shift()
+
+      const allReadOnly = toolEvents.length > 0 && toolEvents.every(e => isReadOnlyTool(e.name))
+      if (allReadOnly) consecutiveReadOnlyCount++
+      else consecutiveReadOnlyCount = 0
+
+      const loop = detectExplorationLoop(recentToolCalls)
+      if (loop.isLoop) return { isStuck: true, reason: loop.reason }
+      if (detectToolCycle(recentToolCalls)) return { isStuck: true, reason: "tool_cycle_detected" }
+      if (consecutiveReadOnlyCount >= 4) return { isStuck: true, reason: "excessive_read_only_exploration" }
+      return { isStuck: false, reason: null }
+    },
+    /** 重置连续只读计数（警告注入后调用） */
+    resetReadOnlyCount() { consecutiveReadOnlyCount = 0 },
+    get consecutiveReadOnly() { return consecutiveReadOnlyCount }
+  }
+}
+
 export function mergeCappedFileChanges(current = [], incoming = [], limit = LONGAGENT_FILE_CHANGES_LIMIT) {
   const maxEntries = Math.max(1, Number(limit || LONGAGENT_FILE_CHANGES_LIMIT))
   const map = new Map()

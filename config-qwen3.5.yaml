@@ -1,0 +1,133 @@
+provider:
+  default: dashscope
+  dashscope:
+    type: openai-compatible
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api_key_env: DASHSCOPE_API_KEY
+    default_model: qwen3.5-plus-latest
+    models:
+      # Qwen3.5 系列（最新）
+      - qwen3.5-plus-latest
+      - qwen3.5-plus
+      - qwen3.5-397b-a17b
+      # Qwen3 系列
+      - qwen3-max
+      - qwen3-max-preview
+      - qwen3-coder-plus
+      - qwen3-coder-480b-a35b-instruct
+      - qwen3-coder-flash
+      # 旧版 Qwen
+      - qwen-max
+      - qwen-plus
+      - qwen-turbo
+    timeout_ms: 120000
+    stream_idle_timeout_ms: 120000
+    max_tokens: 32768
+    retry_attempts: 3
+    retry_base_delay_ms: 800
+    stream: true
+  anthropic:
+    type: anthropic
+    base_url: https://code.newcli.com/claude/aws/v1
+    api_key_env: ANTHROPIC_API_KEY
+    default_model: claude-opus-4-6
+    models:
+      - claude-opus-4-6
+    timeout_ms: 120000
+    stream_idle_timeout_ms: 120000
+    max_tokens: 32768
+    retry_attempts: 3
+    retry_base_delay_ms: 800
+    stream: true
+  openai:
+    type: openai
+    base_url: https://code.newcli.com/codex/v1
+    api_key_env: OPENAI_API_KEY
+    default_model: gpt-5.3-codex
+    models:
+      - gpt-5.3-codex
+      - gpt-5.2
+    timeout_ms: 120000
+    stream_idle_timeout_ms: 120000
+    max_tokens: 32768
+    retry_attempts: 3
+    retry_base_delay_ms: 800
+    stream: true
+  kimi:
+    type: openai-compatible
+  ollama:
+    type: ollama
+    base_url: http://localhost:11434
+    default_model: llama3.1
+agent:
+  default_mode: agent
+  max_steps: 500
+  longagent:
+    max_iterations: 50
+    no_progress_warning: 3
+    no_progress_limit: 5
+    heartbeat_timeout_ms: 30000
+    checkpoint_interval: 5
+    parallel:
+      enabled: false
+      max_concurrency: 3
+      stage_pass_rule: all_success
+      task_timeout_ms: 120000
+      task_max_retries: 2
+    planner:
+      intake_questions:
+        enabled: false
+        max_rounds: 3
+      ask_user_after_plan_frozen: false
+    resume_incomplete_files: true
+    usability_gates:
+      prompt_user: first_run
+      build:
+        enabled: true
+      test:
+        enabled: true
+      review:
+        enabled: true
+      health:
+        enabled: true
+      budget:
+        enabled: true
+  subagents: {}
+  routing:
+    categories: {}
+session:
+  max_history: 50
+  recovery: true
+  compaction_threshold_ratio: 0.7
+  compaction_threshold_messages: 50
+  context_cache_points: true
+permission:
+  default_policy: allow
+  non_tty_default: allow_once
+  rules:
+    - tool: read
+      action: allow
+    - tool: glob
+      action: allow
+    - tool: grep
+      action: allow
+    - tool: list
+      action: allow
+    - tool: todowrite
+      action: allow
+    - tool: websearch
+      action: allow
+    - tool: codesearch
+      action: allow
+    - tool: write
+      action: allow
+    - tool: edit
+      action: allow
+    - tool: patch
+      action: allow
+    - tool: bash
+      action: allow
+    - tool: question
+      action: allow
+    - tool: ask
+      action: allow
