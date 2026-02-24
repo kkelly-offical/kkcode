@@ -127,6 +127,50 @@ async function runDelegateTask(task, signal) {
   }
 }
 
+const SILENT_ERROR_PATTERNS = [
+  /provider[\s._-]*error/i,
+  /api[\s._-]*timeout/i,
+  /rate[\s._-]?limit/i,
+  /\b(429|503|502|500)\b/,
+  /missing api key/i,
+  /stream idle timeout/i,
+  /\b(econnreset|econnrefused|etimedout)\b/i,
+  /budget exceeded/i
+]
+
+function detectSilentError(result, payload) {
+  const reply = String(result?.reply || "")
+  const toolEvents = Number(result?.tool_events || 0)
+  const plannedFiles = Array.isArray(payload?.plannedFiles) ? payload.plannedFiles : []
+  const completedFiles = Array.isArray(result?.completed_files) ? result.completed_files : []
+  const remainingFiles = Array.isArray(result?.remaining_files) ? result.remaining_files : []
+
+  // Guard: tasks without plannedFiles (review/analysis) skip all detection
+  if (plannedFiles.length === 0) return { hasError: false, errorMessage: "" }
+
+  // Guard: [TASK_COMPLETE] marker present — trust the agent's self-report
+  if (reply.toLowerCase().includes("[task_complete]")) return { hasError: false, errorMessage: "" }
+
+  // Guard: has tool activity and substantial reply — likely real work done
+  if (toolEvents > 0 && reply.length >= 200) return { hasError: false, errorMessage: "" }
+
+  // Pattern matching: known provider error signatures in reply
+  for (const pattern of SILENT_ERROR_PATTERNS) {
+    if (pattern.test(reply)) {
+      return { hasError: true, errorMessage: `silent provider error detected: ${reply.slice(0, 200)}` }
+    }
+  }
+
+  // Heuristic: planned files exist but none completed, low activity
+  if (completedFiles.length === 0
+    && remainingFiles.length === plannedFiles.length
+    && (reply.length < 200 || toolEvents === 0)) {
+    return { hasError: true, errorMessage: `heuristic: no files completed, no tool activity (reply ${reply.length} chars, ${toolEvents} tool events)` }
+  }
+
+  return { hasError: false, errorMessage: "" }
+}
+
 async function main() {
   const taskId = argValue("--task-id") || process.env.KKCODE_BACKGROUND_TASK_ID || null
   if (!taskId) {
@@ -194,15 +238,28 @@ async function main() {
     }
 
     const result = await runDelegateTask(latest, abortController.signal)
-    await appendTaskLog(taskId, "task completed")
-    await patchTask(taskId, () => ({
-      status: "completed",
-      result,
-      error: null,
-      endedAt: now(),
-      lastHeartbeatAt: now()
-    }))
-    process.exit(0)
+    const silentCheck = detectSilentError(result, latest.payload)
+    if (silentCheck.hasError) {
+      await appendTaskLog(taskId, `silent error detected: ${silentCheck.errorMessage}`)
+      await patchTask(taskId, () => ({
+        status: "error",
+        result,
+        error: silentCheck.errorMessage,
+        endedAt: now(),
+        lastHeartbeatAt: now()
+      }))
+      process.exit(1)
+    } else {
+      await appendTaskLog(taskId, "task completed")
+      await patchTask(taskId, () => ({
+        status: "completed",
+        result,
+        error: null,
+        endedAt: now(),
+        lastHeartbeatAt: now()
+      }))
+      process.exit(0)
+    }
   } catch (error) {
     const latest = await readTask(taskId)
     const cancelled = latest?.cancelled

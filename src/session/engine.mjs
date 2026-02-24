@@ -6,6 +6,7 @@ import { runLongAgent } from "./longagent.mjs"
 import { touchSession, setBudgetState } from "./store.mjs"
 import { appendEventLog } from "../storage/event-log.mjs"
 import { EventBus } from "../core/events.mjs"
+import { initialize as initObservability } from "../observability/index.mjs"
 import { ToolRegistry } from "../tool/registry.mjs"
 import { resolveAgentForMode } from "../agent/agent.mjs"
 import { estimateStringTokens } from "./compaction.mjs"
@@ -31,6 +32,7 @@ function maybeRegisterSink() {
   EventBus.registerSink(async (event) => {
     await appendEventLog(event)
   })
+  initObservability(EventBus)
   sinkReady = true
 }
 

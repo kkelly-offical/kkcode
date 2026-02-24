@@ -13,6 +13,7 @@ export async function* parseSSE(body, signal, options = {}) {
   const decoder = new TextDecoder()
   let buffer = ""
   const idleMs = options.idleTimeoutMs || 0
+  let currentTimeout = null
 
   try {
     while (true) {
@@ -20,10 +21,11 @@ export async function* parseSSE(body, signal, options = {}) {
 
       let readResult
       if (idleMs > 0) {
-        // Race between next chunk and idle timeout
+        if (currentTimeout) currentTimeout.cancel()
+        currentTimeout = idleTimeout(idleMs, signal)
         readResult = await Promise.race([
           reader.read(),
-          idleTimeout(idleMs, signal)
+          currentTimeout.promise
         ])
       } else {
         readResult = await reader.read()
@@ -48,19 +50,22 @@ export async function* parseSSE(body, signal, options = {}) {
       if (result && result !== null) yield result
     }
   } finally {
+    if (currentTimeout) currentTimeout.cancel()
     try { reader.releaseLock() } catch { /* reader may have pending read if generator was force-closed */ }
   }
 }
 
 function idleTimeout(ms, signal) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
+  let timer = null
+  let onAbort = null
+  const promise = new Promise((resolve, reject) => {
+    timer = setTimeout(() => {
       const err = new Error(`stream idle timeout: no data received for ${ms}ms`)
       err.code = "STREAM_IDLE_TIMEOUT"
       reject(err)
     }, ms)
     if (signal) {
-      const onAbort = () => {
+      onAbort = () => {
         clearTimeout(timer)
         const err = new Error("aborted")
         err.code = "ABORT_ERR"
@@ -70,6 +75,14 @@ function idleTimeout(ms, signal) {
       signal.addEventListener("abort", onAbort, { once: true })
     }
   })
+  function cancel() {
+    if (timer !== null) { clearTimeout(timer); timer = null }
+    if (onAbort && signal) {
+      signal.removeEventListener("abort", onAbort)
+      onAbort = null
+    }
+  }
+  return { promise, cancel }
 }
 
 function parsePart(part) {
