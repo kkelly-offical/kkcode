@@ -2,7 +2,7 @@
  * LongAgent Hybrid 模式
  * 融合 4-Stage 的只读探索/规划/调试回滚 + Parallel 的脚手架/并行执行/门控
  *
- * 流程: H1:Preview → H2:Blueprint → H2.5:Git → H3:Scaffold → H4:Coding(并行) → H5:Debugging(回滚) → H6:Gates → H7:GitMerge
+ * 流程: H0:Intake → H1:Preview → H2:Blueprint → H2.5:Git → H3:Scaffold → H4:Coding(并行) → H5:Debugging(回滚) → H5.5:Validation → H6:Gates → H7:GitMerge
  */
 import { LongAgentManager } from "../orchestration/longagent-manager.mjs"
 import { processTurnLoop } from "./loop.mjs"
@@ -21,7 +21,7 @@ import {
   buildGatePromptText,
   parseGateSelection
 } from "./usability-gates.mjs"
-import { validateAndNormalizeStagePlan, defaultStagePlan } from "./longagent-plan.mjs"
+import { runIntakeDialogue, validateAndNormalizeStagePlan, defaultStagePlan } from "./longagent-plan.mjs"
 import { createValidator } from "./task-validator.mjs"
 import { detectStageComplete, detectReturnToCoding, buildStageWrapper } from "./longagent-4stage.mjs"
 import {
@@ -218,6 +218,27 @@ export async function runHybridLongAgent({
     await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_MEMORY_LOADED, sessionId, payload: { techStack: projectMemory.techStack } })
   }
 
+  // ========== H0: INTAKE (需求澄清) ==========
+  let intakeSummary = prompt
+  if (hybridConfig.intake !== false && !planFrozen) {
+    await setPhase("H0", "intake")
+    await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_INTAKE_STARTED, sessionId, payload: { objective: prompt } })
+    await syncState({ lastMessage: "H0: intake dialogue — clarifying requirements" })
+
+    const plannerConfig = longagentConfig.planner || {}
+    const intakeConfig = plannerConfig.intake_questions || {}
+    const intake = await runIntakeDialogue({
+      objective: prompt,
+      model, providerType, sessionId, configState,
+      baseUrl, apiKeyEnv, agent, signal,
+      maxRounds: Number(intakeConfig.max_rounds || 6)
+    })
+    intakeSummary = intake.summary || prompt
+    accumulateUsage(intake)
+    gateStatus.intake = { status: "pass", rounds: intake.transcript.length, summary: intakeSummary.slice(0, 500) }
+    await syncState({ lastMessage: `H0: intake complete (${intake.transcript.length} qa pairs)` })
+  }
+
   // ========== H1: PREVIEW (只读探索) ==========
   await setPhase("H1", "preview")
   currentGate = "preview"
@@ -227,7 +248,7 @@ export async function runHybridLongAgent({
   const previewModel = getModelForStage("preview")
   // #5 注入 project memory 到 preview prompt
   const memCtx = projectMemory ? memoryToContext(projectMemory) : ""
-  const previewPrompt = buildStageWrapper(LONGAGENT_4STAGE_STAGES.PREVIEW, { preview: null, blueprint: null, coding: null }, memCtx ? `${memCtx}\n\n${prompt}` : prompt)
+  const previewPrompt = buildStageWrapper(LONGAGENT_4STAGE_STAGES.PREVIEW, { preview: null, blueprint: null, coding: null }, memCtx ? `${memCtx}\n\n${intakeSummary}` : intakeSummary)
   const previewOut = await processTurnLoop({
     prompt: previewPrompt, mode: "agent", agent: getAgent("preview-agent"),
     model: previewModel.model, providerType: previewModel.providerType,
@@ -589,10 +610,76 @@ export async function runHybridLongAgent({
     await syncState({ lastMessage: rerunCoding ? `H5: rollback to coding (attempt ${codingRollbackCount})` : `H5: debugging complete` })
   } // end while(rerunCoding)
 
+  // ========== H5.5: COMPLETION VALIDATION ==========
+  if (hybridConfig.completion_validation !== false) {
+    await setPhase("H5.5", "completion_validation")
+    await syncState({ lastMessage: "H5.5: validating completion" })
+
+    const cwd = process.cwd()
+    try {
+      const validator = await createValidator({ cwd, configState })
+      const report = await validator.validate({ todoState: toolContext?._todoState, level: "standard" })
+      gateStatus.completionValidation = {
+        status: report.verdict === "BLOCK" ? "fail" : "pass",
+        verdict: report.verdict,
+        failedChecks: report.results?.filter(r => !r.passed).length || 0
+      }
+
+      if (report.verdict === "BLOCK" && !completionMarkerSeen) {
+        const fixPrompt = [
+          `Objective: ${prompt}`,
+          `\nCompletion validation found issues:\n${report.message}`,
+          "\nFix these issues. When done, include [TASK_COMPLETE]."
+        ].join("")
+        const fixOut = await processTurnLoop({
+          prompt: fixPrompt, mode: "agent", agent: getAgent("coding-agent"),
+          model, providerType, sessionId, configState,
+          baseUrl, apiKeyEnv, signal, output, allowQuestion, toolContext
+        })
+        accumulateUsage(fixOut)
+        iteration++
+        if (/\[TASK_COMPLETE\]/i.test(fixOut.reply || "")) completionMarkerSeen = true
+        finalReply = fixOut.reply || finalReply
+      }
+    } catch (valErr) {
+      gateStatus.completionValidation = { status: "warn", reason: `skipped: ${valErr.message}` }
+    }
+  }
+
   // ========== H6: USABILITY GATES ==========
   await setPhase("H6", "gates")
   currentGate = "gates"
   await syncState({ lastMessage: "H6: running usability gates" })
+
+  // Gate 偏好提示（首次运行时询问用户）
+  const shouldPromptGates = gatesConfig.prompt_user === "first_run" || gatesConfig.prompt_user === "always"
+  if (shouldPromptGates && allowQuestion) {
+    const hasPrefs = await hasGatePreferences()
+    if (!hasPrefs || gatesConfig.prompt_user === "always") {
+      const gateAskResult = await processTurnLoop({
+        prompt: buildGatePromptText(),
+        mode: "ask", model, providerType, sessionId, configState,
+        baseUrl, apiKeyEnv, agent, signal, allowQuestion: true, toolContext
+      })
+      accumulateUsage(gateAskResult)
+      const gatePrefs = parseGateSelection(gateAskResult.reply)
+      await saveGatePreferences(gatePrefs)
+      for (const [gate, enabled] of Object.entries(gatePrefs)) {
+        if (configState.config.agent.longagent.usability_gates[gate]) {
+          configState.config.agent.longagent.usability_gates[gate].enabled = enabled
+        }
+      }
+    } else {
+      const savedPrefs = await getGatePreferences()
+      if (savedPrefs) {
+        for (const [gate, enabled] of Object.entries(savedPrefs)) {
+          if (configState.config.agent.longagent.usability_gates[gate]) {
+            configState.config.agent.longagent.usability_gates[gate].enabled = enabled
+          }
+        }
+      }
+    }
+  }
 
   let gateAttempt = 0
 

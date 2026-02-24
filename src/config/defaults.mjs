@@ -85,6 +85,8 @@ export const DEFAULT_CONFIG = {
       },
       hybrid: {
         enabled: true,
+        intake: true,
+        completion_validation: true,
         debugging_max_iterations: 20,
         max_coding_rollbacks: 2,
         parallel_preview: true,

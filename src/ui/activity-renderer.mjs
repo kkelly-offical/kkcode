@@ -226,6 +226,112 @@ export function formatGateChecked(gate, status) {
   return `   ${dot} gate=${paint(gate || "-", "cyan")} ${paint(status || "-", status === "pass" ? "green" : "yellow")}`
 }
 
+// ── Hybrid Stage Formatters ──────────────────────────────
+
+function hybridBanner(label, color) {
+  const line = paint("━".repeat(40), color, { dim: true })
+  return `${line}\n${paint(label, color, { bold: true })}`
+}
+
+export function formatHybridPreviewStart(objective) {
+  const preview = clipText(objective, 70)
+  return `${hybridBanner("H1 Preview", "#3b82f6")}\n  ${paint(preview, null, { dim: true })}`
+}
+
+export function formatHybridPreviewComplete(findingsLength) {
+  return `  ${paint(SYM.toolOk, "green")} ${paint("preview complete", "green")} ${paint(`(${findingsLength} chars)`, null, { dim: true })}`
+}
+
+export function formatHybridBlueprintStart() {
+  return hybridBanner("H2 Blueprint", "#a855f7")
+}
+
+export function formatHybridBlueprintComplete(planId, stageCount) {
+  return `  ${paint(SYM.toolOk, "green")} ${paint("blueprint complete", "green")} ${paint(planId || "", null, { dim: true })} ${paint(`${stageCount} stage(s)`, null, { dim: true })}`
+}
+
+export function formatHybridBlueprintReview(planId) {
+  return `  ${paint("⏳", "yellow")} ${paint("awaiting blueprint review", "yellow")} ${paint(planId || "", null, { dim: true })}`
+}
+
+export function formatHybridBlueprintValidated(totalTasks, totalFiles, valid) {
+  const status = valid ? paint("PASS", "green") : paint("WARN", "yellow")
+  return `  ${paint(SYM.dot, valid ? "green" : "yellow")} ${paint("blueprint validation", null, { dim: true })} ${status} ${paint(`${totalTasks} tasks, ${totalFiles} files`, null, { dim: true })}`
+}
+
+// ── Hybrid Debugging/Rollback Formatters ─────────────────
+
+export function formatHybridDebuggingStart(codingRollbackCount) {
+  const suffix = codingRollbackCount > 0 ? ` ${paint(`(rollback #${codingRollbackCount})`, "yellow")}` : ""
+  return `${hybridBanner("H5 Debugging", "#fb923c")}${suffix}`
+}
+
+export function formatHybridDebuggingComplete(debugIter, rollback) {
+  const status = rollback
+    ? paint("ROLLBACK", "yellow", { bold: true })
+    : paint("PASS", "green", { bold: true })
+  return `  ${paint(SYM.dot, rollback ? "yellow" : "green")} ${paint("debugging", null, { dim: true })} ${status} ${paint(`(${debugIter} iters)`, null, { dim: true })}`
+}
+
+export function formatHybridReturnToCoding(rollbackCount, failedTaskIds) {
+  const tasks = failedTaskIds?.length ? paint(` [${failedTaskIds.join(", ")}]`, null, { dim: true }) : ""
+  return `  ${paint(SYM.recovery, "yellow")} ${paint(`rollback to coding #${rollbackCount}`, "yellow")}${tasks}`
+}
+
+export function formatHybridCrossReview(fileCount) {
+  return `  ${paint(SYM.dot, "cyan")} ${paint("cross-review", "cyan")} ${paint(`${fileCount} file(s)`, null, { dim: true })}`
+}
+
+// ── Hybrid Incremental/Budget/Context Formatters ─────────
+
+export function formatHybridIncrementalGate(stageId, passed) {
+  const dot = passed ? paint(SYM.dot, "green") : paint(SYM.dot, "yellow")
+  const status = passed ? paint("pass", "green") : paint("warn", "yellow")
+  return `   ${dot} ${paint("gate", null, { dim: true })} ${paint(stageId, "cyan")} ${status}`
+}
+
+export function formatHybridContextCompressed(newLength) {
+  return `  ${paint(SYM.dot, "#666666")} ${paint(`context compressed → ${newLength} chars`, null, { dim: true })}`
+}
+
+export function formatHybridBudgetWarning(totalTokens, budgetLimit, percentage) {
+  const color = percentage >= 100 ? "red" : "yellow"
+  return `  ${paint(SYM.alert, color)} ${paint("budget", color, { bold: true })} ${paint(`${percentage}%`, color)} ${paint(`(${totalTokens}/${budgetLimit})`, null, { dim: true })}`
+}
+
+export function formatHybridCheckpointResumed(stageIndex, iteration) {
+  return `  ${paint(SYM.dot, "cyan")} ${paint("checkpoint resumed", "cyan")} ${paint(`stage ${stageIndex}, iter ${iteration}`, null, { dim: true })}`
+}
+
+export function formatHybridReplan(newStageCount) {
+  return `  ${paint(SYM.dot, "#a855f7")} ${paint("replan", "#a855f7", { bold: true })} ${paint(`→ ${newStageCount} stage(s)`, null, { dim: true })}`
+}
+
+// ── Hybrid Memory Formatters ─────────────────────────────
+
+export function formatHybridMemoryLoaded(techStack) {
+  const items = Array.isArray(techStack) ? techStack.slice(0, 5).join(", ") : ""
+  return `  ${paint(SYM.dot, "#666666")} ${paint("memory loaded", null, { dim: true })} ${paint(items, null, { dim: true })}`
+}
+
+export function formatHybridMemorySaved(techStackCount) {
+  return `  ${paint(SYM.dot, "#666666")} ${paint(`memory saved (${techStackCount} items)`, null, { dim: true })}`
+}
+
+// ── Git Formatters ───────────────────────────────────────
+
+export function formatGitBranchCreated(branch, baseBranch) {
+  return `  ${paint(SYM.dot, "green")} ${paint("git branch", "green")} ${paint(branch, "white", { bold: true })} ${paint(`← ${baseBranch}`, null, { dim: true })}`
+}
+
+export function formatGitStageCommitted(stageId, message) {
+  return `   ${paint(SYM.dot, "#666666")} ${paint("commit", null, { dim: true })} ${paint(clipText(message || stageId, 60), null, { dim: true })}`
+}
+
+export function formatGitMerged(branch, baseBranch) {
+  return `  ${paint(SYM.toolOk, "green")} ${paint("git merged", "green", { bold: true })} ${paint(branch, null, { dim: true })} ${paint("→", null, { dim: true })} ${paint(baseBranch, "white")}`
+}
+
 // ── Plan Progress Formatter ──────────────────────────────
 
 export function formatPlanProgress(taskProgress) {
@@ -382,6 +488,90 @@ export function createActivityRenderer({ output, theme = null }) {
 
       case EVENT_TYPES.LONGAGENT_GATE_CHECKED: {
         log(formatGateChecked(payload.gate, payload.status))
+        break
+      }
+
+      // ── Hybrid Events ──────────────────────────────
+      case EVENT_TYPES.LONGAGENT_HYBRID_PREVIEW_START: {
+        log(formatHybridPreviewStart(payload.objective))
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_HYBRID_PREVIEW_COMPLETE: {
+        log(formatHybridPreviewComplete(payload.findingsLength))
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_HYBRID_BLUEPRINT_START: {
+        log(formatHybridBlueprintStart())
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_HYBRID_BLUEPRINT_COMPLETE: {
+        log(formatHybridBlueprintComplete(payload.planId, payload.stageCount))
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_HYBRID_BLUEPRINT_REVIEW: {
+        log(formatHybridBlueprintReview(payload.planId))
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_HYBRID_BLUEPRINT_VALIDATED: {
+        log(formatHybridBlueprintValidated(payload.totalTasks, payload.totalFiles, payload.valid))
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_HYBRID_DEBUGGING_START: {
+        log(formatHybridDebuggingStart(payload.codingRollbackCount))
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_HYBRID_DEBUGGING_COMPLETE: {
+        log(formatHybridDebuggingComplete(payload.debugIter, payload.rollback))
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_HYBRID_RETURN_TO_CODING: {
+        log(formatHybridReturnToCoding(payload.rollbackCount, payload.failedTaskIds))
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_HYBRID_CROSS_REVIEW: {
+        log(formatHybridCrossReview(payload.fileCount))
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_HYBRID_INCREMENTAL_GATE: {
+        log(formatHybridIncrementalGate(payload.stageId, payload.passed))
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_HYBRID_CONTEXT_COMPRESSED: {
+        log(formatHybridContextCompressed(payload.newLength))
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_HYBRID_BUDGET_WARNING: {
+        log(formatHybridBudgetWarning(payload.totalTokens, payload.budgetLimit, payload.percentage))
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_HYBRID_CHECKPOINT_RESUMED: {
+        log(formatHybridCheckpointResumed(payload.stageIndex, payload.iteration))
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_HYBRID_REPLAN: {
+        log(formatHybridReplan(payload.newStageCount))
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_HYBRID_MEMORY_LOADED: {
+        log(formatHybridMemoryLoaded(payload.techStack))
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_HYBRID_MEMORY_SAVED: {
+        log(formatHybridMemorySaved(payload.techStackCount))
+        break
+      }
+
+      // ── Git Events ─────────────────────────────────
+      case EVENT_TYPES.LONGAGENT_GIT_BRANCH_CREATED: {
+        log(formatGitBranchCreated(payload.branch, payload.baseBranch))
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_GIT_STAGE_COMMITTED: {
+        log(formatGitStageCommitted(payload.stageId, payload.message))
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_GIT_MERGED: {
+        log(formatGitMerged(payload.branch, payload.baseBranch))
         break
       }
 

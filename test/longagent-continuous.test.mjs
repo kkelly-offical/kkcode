@@ -46,6 +46,7 @@ function baseConfig(longagentOverrides = {}) {
           no_progress_limit: 1,
           heartbeat_timeout_ms: 120000,
           checkpoint_interval: 0,
+          hybrid: { enabled: false },
           ...longagentOverrides
         }
       },
