@@ -15,8 +15,8 @@ function createHistogram() {
         min: sorted[0],
         max: sorted[count - 1],
         avg: sum / count,
-        p50: sorted[Math.floor(count * 0.5)] || 0,
-        p99: sorted[Math.floor(count * 0.99)] || 0
+        p50: sorted[Math.max(0, Math.ceil(count * 0.5) - 1)] || 0,
+        p99: sorted[Math.max(0, Math.ceil(count * 0.99) - 1)] || 0
       }
     },
     reset() { values.length = 0 }

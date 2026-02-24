@@ -40,8 +40,13 @@ export function createTracer(options = {}) {
     const { type, payload, turnId, sessionId, timestamp } = event
 
     if (type === EVENT_TYPES.TURN_START) {
+      const key = `turn:${turnId}`
+      if (turnId && openSpans.has(key)) {
+        closeSpan(openSpans.get(key), "error", timestamp)
+        openSpans.delete(key)
+      }
       const span = startSpan("turn", { turnId, sessionId }, null, timestamp)
-      if (turnId) openSpans.set(`turn:${turnId}`, span)
+      if (turnId) openSpans.set(key, span)
     }
 
     if (type === EVENT_TYPES.TURN_FINISH) {
