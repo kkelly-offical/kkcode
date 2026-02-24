@@ -344,7 +344,7 @@ export const McpRegistry = {
   async callTool(toolId, args = {}, signal = null) {
     const tool = state.tools.get(toolId)
     if (!tool) throw new Error(`mcp tool not found: ${toolId}`)
-    const client = state.servers.get(tool.server)
+    let client = state.servers.get(tool.server)
     if (!client) throw new Error(`mcp server not found: ${tool.server}`)
     const serverConfig = state.configured.get(tool.server)
     const serverTimeout = serverConfig?.timeout_ms
@@ -352,7 +352,36 @@ export const McpRegistry = {
     if (serverTimeout && !signal) {
       effectiveSignal = AbortSignal.timeout(serverTimeout)
     }
-    return client.callTool(tool.name, args, effectiveSignal)
+    try {
+      return await client.callTool(tool.name, args, effectiveSignal)
+    } catch (error) {
+      if (error?.reason === "spawn_failed" || error?.reason === "server_crash") {
+        setHealth(tool.server, serverConfig, {
+          ok: false, reason: error.reason, error: error.message
+        })
+        try {
+          await this.refreshServer(tool.server)
+          client = state.servers.get(tool.server)
+          if (client) return client.callTool(tool.name, args, effectiveSignal)
+        } catch {}
+      }
+      throw error
+    }
+  },
+
+  async refreshServer(name) {
+    const serverConfig = state.configured.get(name)
+    if (!serverConfig) throw new Error(`mcp server not configured: ${name}`)
+    const existing = state.servers.get(name)
+    if (existing && typeof existing.shutdown === "function") existing.shutdown()
+    state.servers.delete(name)
+    for (const [id, t] of state.tools) {
+      if (t.server === name) state.tools.delete(id)
+    }
+    for (const [id, p] of state.prompts) {
+      if (p.server === name) state.prompts.delete(id)
+    }
+    return connectServer(name, serverConfig)
   },
 
   async addServer(name, serverConfig) {

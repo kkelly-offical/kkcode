@@ -55,6 +55,9 @@ export function createStdioMcpClient(serverName, config = {}) {
     })
   }
 
+  const maxReconnectAttempts = Number(config.max_reconnect_attempts ?? 5)
+  const circuitResetMs = Number(config.circuit_reset_ms ?? 60000)
+
   let child = null
   let lifecycle = "closed"
   let nextId = 1
@@ -68,6 +71,10 @@ export function createStdioMcpClient(serverName, config = {}) {
   let stderrLines = []
   let stderrTotalBytes = 0
   let ignoreClose = false
+  let reconnectAttempts = 0
+  let circuitState = "closed" // "closed" | "open" | "half_open"
+  let circuitOpenedAt = 0
+  let wasEverInitialized = false
 
   const pending = new Map()
 
@@ -260,13 +267,58 @@ export function createStdioMcpClient(serverName, config = {}) {
     cleanupChild()
   }
 
+  async function ensureAlive() {
+    // Circuit breaker: open state rejects immediately
+    if (circuitState === "open") {
+      if (Date.now() - circuitOpenedAt >= circuitResetMs) {
+        circuitState = "half_open"
+      } else {
+        throw new McpError(`mcp server "${serverName}" circuit breaker open`, {
+          reason: "server_crash", server: serverName, phase: "request"
+        })
+      }
+    }
+
+    // Only attempt lazy reconnect if we were previously initialized
+    if ((lifecycle === "closed" || lifecycle === "stopping") && wasEverInitialized) {
+      const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000)
+      if (reconnectAttempts > 0) {
+        await new Promise((r) => setTimeout(r, delay))
+      }
+      try {
+        initialized = false
+        await startProcess()
+        await initializeOnce()
+        reconnectAttempts = 0
+        if (circuitState === "half_open") {
+          circuitState = "closed"
+          EventBus.emit({ type: EVENT_TYPES.MCP_CIRCUIT_CLOSE, payload: { server: serverName } }).catch(() => {})
+        }
+        EventBus.emit({ type: EVENT_TYPES.MCP_RECONNECT, payload: { server: serverName, success: true } }).catch(() => {})
+      } catch (error) {
+        reconnectAttempts++
+        if (circuitState === "half_open" || reconnectAttempts >= maxReconnectAttempts) {
+          circuitState = "open"
+          circuitOpenedAt = Date.now()
+          EventBus.emit({ type: EVENT_TYPES.MCP_CIRCUIT_OPEN, payload: { server: serverName, attempts: reconnectAttempts } }).catch(() => {})
+        }
+        EventBus.emit({ type: EVENT_TYPES.MCP_RECONNECT, payload: { server: serverName, success: false, attempt: reconnectAttempts } }).catch(() => {})
+        throw error
+      }
+      return
+    }
+
+    // Normal first-time startup
+    await startProcess()
+  }
+
   async function sendRequest(method, params = {}, { phase = "request", timeoutMs = requestTimeoutMs, signal = null } = {}) {
     if (signal?.aborted) {
       throw new McpError(`mcp server "${serverName}" request cancelled`, {
         reason: "timeout", server: serverName, action: method, phase
       })
     }
-    await startProcess()
+    await ensureAlive()
     const id = nextId++
     const payload = { jsonrpc: "2.0", id, method, params }
 
@@ -361,6 +413,7 @@ export function createStdioMcpClient(serverName, config = {}) {
           await sendRequest("initialize", initParams, { phase: "initialize" })
           sendNotification("notifications/initialized")
           initialized = true
+          wasEverInitialized = true
           return
         } catch (error) {
           lastError = error
@@ -377,6 +430,7 @@ export function createStdioMcpClient(serverName, config = {}) {
     await sendRequest("initialize", initParams, { phase: "initialize" })
     sendNotification("notifications/initialized")
     initialized = true
+    wasEverInitialized = true
   }
 
   async function healthPingOrTools() {
