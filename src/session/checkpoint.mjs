@@ -104,7 +104,6 @@ export async function cleanupCheckpoints(sessionId, options = {}) {
     if (toKeep.has(name)) continue
     try {
       const { unlink: unlinkFile } = await import("node:fs/promises")
-      await unlinkFile(checkpointFile(sessionId, name) + ".json").catch(() => {})
       await unlinkFile(checkpointFile(sessionId, name)).catch(() => {})
       removed++
     } catch { /* ignore */ }
