@@ -150,7 +150,11 @@ export const DEFAULT_CONFIG = {
   mcp: {
     servers: {},
     auto_discover: true,
-    timeout_ms: 30000
+    timeout_ms: 30000,
+    max_reconnect_attempts: 5,
+    circuit_reset_ms: 60000,
+    health_check_interval_ms: 0,
+    max_buffer_bytes: 16777216
   },
   skills: {
     enabled: true,

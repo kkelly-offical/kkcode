@@ -44,6 +44,7 @@ function normalizePrompt(serverName, prompt) {
 }
 
 const execAsync = promisify(exec)
+let context7InstallLock = null
 async function ensureGlobalPackage(pkg) {
   const name = pkg.replace(/@[^/]*$/, "")
   try {
@@ -119,6 +120,14 @@ async function discoverProjectServers(cwd) {
 }
 
 async function connectServer(name, server) {
+  // Lazy install for context7 built-in server
+  if (name === "context7" && server?.command === "context7-mcp") {
+    if (!context7InstallLock) {
+      context7InstallLock = ensureGlobalPackage("@upstash/context7-mcp@latest").catch(() => {})
+    }
+    await context7InstallLock
+  }
+
   const transport = resolveTransport(server)
   let client
   try {
@@ -221,7 +230,6 @@ async function reinitialize(config, { force = false, cwd = null } = {}) {
   state.configured.clear()
 
   // Built-in MCP servers (user config can override or disable with enabled: false)
-  try { await ensureGlobalPackage("@upstash/context7-mcp@latest") } catch {}
   const builtinServers = {
     context7: {
       command: "context7-mcp",
@@ -398,6 +406,39 @@ export const McpRegistry = {
     }
     state.configured.set(name, serverConfig)
     return connectServer(name, serverConfig)
+  },
+
+  async healthCheck(serverName) {
+    const client = state.servers.get(serverName)
+    const serverConfig = state.configured.get(serverName)
+    if (!client || !serverConfig) return { ok: false, reason: "not_found" }
+    try {
+      const result = await client.health()
+      const patch = {
+        ok: Boolean(result?.ok),
+        reason: result?.reason || (result?.ok ? "ok" : "unknown"),
+        error: result?.error || null
+      }
+      setHealth(serverName, serverConfig, patch)
+      await EventBus.emit({ type: EVENT_TYPES.MCP_HEALTH, payload: { server: serverName, ...patch } })
+      if (!result?.ok) {
+        try { await this.refreshServer(serverName) } catch {}
+      }
+      return patch
+    } catch (error) {
+      const patch = { ok: false, reason: error.reason || "unknown", error: error.message }
+      setHealth(serverName, serverConfig, patch)
+      return patch
+    }
+  },
+
+  async healthCheckAll() {
+    const results = {}
+    for (const name of state.configured.keys()) {
+      if (state.configured.get(name)?.enabled === false) continue
+      results[name] = await this.healthCheck(name)
+    }
+    return results
   },
 
   removeServer(name) {
