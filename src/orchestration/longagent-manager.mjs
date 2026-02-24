@@ -53,6 +53,7 @@ async function tryRemoveStaleLock(file, staleMs = LOCK_STALE_MS) {
 }
 
 async function acquireLock(cwd, lockTimeoutMs = LOCK_TIMEOUT_MS) {
+  await ensure(cwd)
   const file = lockPath(cwd)
   const staleMs = lockTimeoutMs * 0.8
   const deadline = Date.now() + lockTimeoutMs
