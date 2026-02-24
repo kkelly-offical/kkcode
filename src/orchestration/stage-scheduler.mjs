@@ -504,6 +504,8 @@ export async function runStageBarrier({
             toLaunch[i].item.status = "error"
             toLaunch[i].item.lastError = `launch failed: ${r.reason?.message || "unknown"}`
             toLaunch[i].item.errorCategory = ERROR_CATEGORIES.TRANSIENT
+            // Release file locks held by this task to prevent deadlock
+            fileLocks.unlock(toLaunch[i].task.taskId)
           }
         }
       }

@@ -24,11 +24,14 @@ export async function saveProjectMemory(cwd, memory) {
 }
 
 export function memoryToContext(memory) {
-  if (!memory?.techStack?.length && !memory?.patterns?.length) return ""
+  const ts = Array.isArray(memory?.techStack) ? memory.techStack : []
+  const pt = Array.isArray(memory?.patterns) ? memory.patterns : []
+  const cv = Array.isArray(memory?.conventions) ? memory.conventions : []
+  if (!ts.length && !pt.length) return ""
   const lines = ["### Project Memory (from previous sessions)"]
-  if (memory.techStack?.length) lines.push(`Tech stack: ${memory.techStack.join(", ")}`)
-  if (memory.patterns?.length) lines.push(`Patterns: ${memory.patterns.join(", ")}`)
-  if (memory.conventions?.length) lines.push(`Conventions: ${memory.conventions.join(", ")}`)
+  if (ts.length) lines.push(`Tech stack: ${ts.join(", ")}`)
+  if (pt.length) lines.push(`Patterns: ${pt.join(", ")}`)
+  if (cv.length) lines.push(`Conventions: ${cv.join(", ")}`)
   return lines.join("\n")
 }
 
