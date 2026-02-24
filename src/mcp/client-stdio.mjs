@@ -66,6 +66,7 @@ export function createStdioMcpClient(serverName, config = {}) {
   let malformedSeen = false
   let malformedSnippet = ""
   let stderrLines = []
+  let stderrTotalBytes = 0
   let ignoreClose = false
 
   const pending = new Map()
@@ -77,13 +78,15 @@ export function createStdioMcpClient(serverName, config = {}) {
     malformedSeen = false
     malformedSnippet = ""
     stderrLines = []
+    stderrTotalBytes = 0
   }
 
   function appendStderr(chunk) {
     const text = String(chunk || "").trim()
     if (!text) return
+    stderrTotalBytes += Buffer.byteLength(chunk)
     stderrLines.push(text)
-    if (stderrLines.length > 8) stderrLines = stderrLines.slice(stderrLines.length - 8)
+    if (stderrLines.length > 32) stderrLines = stderrLines.slice(stderrLines.length - 32)
   }
 
   function rejectPending(reason, message, details = {}) {
@@ -235,13 +238,25 @@ export function createStdioMcpClient(serverName, config = {}) {
     })
   }
 
+  const shutdownTimeoutMs = 5000
+
   async function shutdownProcess() {
     if (!child) return
+    const proc = child
+    lifecycle = "stopping"
     ignoreClose = true
-    try {
-      child.kill()
-    } catch {}
+    try { proc.kill() } catch {}
     rejectPending("unknown", `mcp server "${serverName}" shutdown`, { phase: "shutdown" })
+    await new Promise((resolve) => {
+      const killTimer = setTimeout(() => {
+        try { proc.kill("SIGKILL") } catch {}
+        resolve()
+      }, shutdownTimeoutMs)
+      proc.once("close", () => {
+        clearTimeout(killTimer)
+        resolve()
+      })
+    })
     cleanupChild()
   }
 
@@ -304,16 +319,21 @@ export function createStdioMcpClient(serverName, config = {}) {
 
     if (configuredFraming === "auto") {
       let lastError = null
+      let needRestart = false
       for (const candidate of ["content-length", "newline"]) {
         activeFraming = candidate
-        await shutdownProcess()
+        if (needRestart) {
+          await shutdownProcess()
+        }
         try {
+          decoder.reset()
           await sendRequest("initialize", initParams, { phase: "initialize" })
           sendNotification("notifications/initialized")
           initialized = true
           return
         } catch (error) {
           lastError = error
+          needRestart = true
         }
       }
       throw lastError || new McpError(`mcp server "${serverName}" failed to initialize`, {
