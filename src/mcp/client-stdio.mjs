@@ -260,14 +260,39 @@ export function createStdioMcpClient(serverName, config = {}) {
     cleanupChild()
   }
 
-  async function sendRequest(method, params = {}, { phase = "request", timeoutMs = requestTimeoutMs } = {}) {
+  async function sendRequest(method, params = {}, { phase = "request", timeoutMs = requestTimeoutMs, signal = null } = {}) {
+    if (signal?.aborted) {
+      throw new McpError(`mcp server "${serverName}" request cancelled`, {
+        reason: "timeout", server: serverName, action: method, phase
+      })
+    }
     await startProcess()
     const id = nextId++
     const payload = { jsonrpc: "2.0", id, method, params }
 
     return new Promise((resolve, reject) => {
       const startedAt = Date.now()
+      let settled = false
+
+      function settle() {
+        if (settled) return false
+        settled = true
+        if (signal) signal.removeEventListener("abort", onAbort)
+        return true
+      }
+
+      function onAbort() {
+        if (!settle()) return
+        clearTimeout(timer)
+        pending.delete(id)
+        sendNotification("notifications/cancelled", { requestId: id, reason: "client_cancelled" })
+        reject(new McpError(`mcp server "${serverName}" request cancelled`, {
+          reason: "timeout", server: serverName, action: method, phase
+        }))
+      }
+
       const timer = setTimeout(() => {
+        if (!settle()) return
         pending.delete(id)
         reject(
           new McpError(`mcp server "${serverName}" timed out after ${timeoutMs}ms on "${method}"`, {
@@ -279,7 +304,13 @@ export function createStdioMcpClient(serverName, config = {}) {
         )
       }, timeoutMs)
 
-      pending.set(id, { resolve, reject, timer, method, phase, startedAt })
+      if (signal) signal.addEventListener("abort", onAbort, { once: true })
+
+      pending.set(id, {
+        resolve: (v) => { if (settle()) { clearTimeout(timer); resolve(v) } },
+        reject: (e) => { if (settle()) { clearTimeout(timer); reject(e) } },
+        timer, method, phase, startedAt
+      })
       try {
         const wireFraming = configuredFraming === "auto" ? activeFraming : configuredFraming
         child.stdin.write(encodeRpcMessage(payload, wireFraming))
@@ -433,7 +464,7 @@ export function createStdioMcpClient(serverName, config = {}) {
 
     async callTool(name, args = {}, signal = null) {
       await initializeOnce()
-      const result = await sendRequest("tools/call", { name, arguments: args })
+      const result = await sendRequest("tools/call", { name, arguments: args }, { signal })
       return normalizeToolResult(result, serverName, name)
     },
 

@@ -346,7 +346,13 @@ export const McpRegistry = {
     if (!tool) throw new Error(`mcp tool not found: ${toolId}`)
     const client = state.servers.get(tool.server)
     if (!client) throw new Error(`mcp server not found: ${tool.server}`)
-    return client.callTool(tool.name, args, signal)
+    const serverConfig = state.configured.get(tool.server)
+    const serverTimeout = serverConfig?.timeout_ms
+    let effectiveSignal = signal
+    if (serverTimeout && !signal) {
+      effectiveSignal = AbortSignal.timeout(serverTimeout)
+    }
+    return client.callTool(tool.name, args, effectiveSignal)
   },
 
   async addServer(name, serverConfig) {

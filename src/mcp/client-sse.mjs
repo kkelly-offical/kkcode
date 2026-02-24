@@ -32,23 +32,24 @@ export function createSseMcpClient(serverName, config) {
     return h
   }
 
-  async function sendRequest(method, params = {}) {
+  async function sendRequest(method, params = {}, { signal: parentSignal = null } = {}) {
     const id = nextId++
     const body = { jsonrpc: "2.0", id, method, params }
     const startedAt = Date.now()
 
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    const timeoutSignal = AbortSignal.timeout(timeoutMs)
+    const combinedSignal = parentSignal
+      ? AbortSignal.any([parentSignal, timeoutSignal])
+      : timeoutSignal
 
     try {
       const res = await fetch(baseUrl, {
         method: "POST",
         headers: buildHeaders(),
         body: JSON.stringify(body),
-        signal: controller.signal
+        signal: combinedSignal
       })
 
-      clearTimeout(timer)
       const elapsed = Date.now() - startedAt
 
       // Capture session ID from response
@@ -91,7 +92,6 @@ export function createSseMcpClient(serverName, config) {
       }
       return json.result ?? json
     } catch (error) {
-      clearTimeout(timer)
       if (error instanceof McpError) throw error
       const reason = error.name === "AbortError" ? "timeout" : "connection_refused"
       throw new McpError(
@@ -250,7 +250,7 @@ export function createSseMcpClient(serverName, config) {
 
     async callTool(name, args = {}, signal = null) {
       await ensureInitialized()
-      const result = await sendRequest("tools/call", { name, arguments: args })
+      const result = await sendRequest("tools/call", { name, arguments: args }, { signal })
       return normalizeToolResult(result, serverName, name)
     },
 
