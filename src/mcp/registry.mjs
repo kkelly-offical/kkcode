@@ -1,6 +1,7 @@
 import { createHttpMcpClient } from "./client-http.mjs"
 import { createStdioMcpClient } from "./client-stdio.mjs"
 import { createSseMcpClient } from "./client-sse.mjs"
+import { McpError } from "../core/errors.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { readFile } from "node:fs/promises"
@@ -18,7 +19,8 @@ const state = {
   configured: new Map(),
   loadedAt: 0,
   lastSignature: "",
-  initPromise: null
+  initPromise: null,
+  shuttingDown: false
 }
 
 function normalizeTool(serverName, tool) {
@@ -123,7 +125,9 @@ async function connectServer(name, server) {
   // Lazy install for context7 built-in server
   if (name === "context7" && server?.command === "context7-mcp") {
     if (!context7InstallLock) {
-      context7InstallLock = ensureGlobalPackage("@upstash/context7-mcp@latest").catch(() => {})
+      context7InstallLock = ensureGlobalPackage("@upstash/context7-mcp@latest").catch(() => {
+        context7InstallLock = null  // Reset on failure to allow retry
+      })
     }
     await context7InstallLock
   }
@@ -208,6 +212,7 @@ async function connectServer(name, server) {
 }
 
 async function reinitialize(config, { force = false, cwd = null } = {}) {
+  state.shuttingDown = false
   const ttlMs = Math.max(0, Number(config?.runtime?.mcp_refresh_ttl_ms || 60000))
   const effectiveCwd = cwd || process.cwd()
   const sig = JSON.stringify({
@@ -350,6 +355,9 @@ export const McpRegistry = {
   },
 
   async callTool(toolId, args = {}, signal = null) {
+    if (state.shuttingDown) {
+      throw new McpError("MCP registry is shutting down", { reason: "shutting_down" })
+    }
     const tool = state.tools.get(toolId)
     if (!tool) throw new Error(`mcp tool not found: ${toolId}`)
     let client = state.servers.get(tool.server)
@@ -456,6 +464,7 @@ export const McpRegistry = {
   },
 
   shutdown() {
+    state.shuttingDown = true
     for (const [, client] of state.servers) {
       if (typeof client.shutdown === "function") client.shutdown()
     }

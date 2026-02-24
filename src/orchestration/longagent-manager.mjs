@@ -1,5 +1,5 @@
 import path from "node:path"
-import { mkdir, writeFile, unlink, stat } from "node:fs/promises"
+import { mkdir, writeFile, readFile, unlink, stat } from "node:fs/promises"
 import { readJson, writeJson } from "../storage/json-store.mjs"
 import { projectRootDir } from "../storage/paths.mjs"
 
@@ -16,40 +16,69 @@ async function ensure(cwd = process.cwd()) {
 }
 
 const LOCK_TIMEOUT_MS = 5000
-const LOCK_RETRY_MS = 50
-const LOCK_STALE_MS = 10000
+const LOCK_STALE_MS = LOCK_TIMEOUT_MS * 0.8  // 4000ms — detect stale before timeout
+const LOCK_RETRY_INIT_MS = 50
+const LOCK_RETRY_MAX_MS = 500
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function tryRemoveStaleLock(file) {
+  try {
+    const content = await readFile(file, "utf-8")
+    const [pidStr] = content.split(":")
+    const pid = Number(pidStr)
+    // If PID is valid and process is dead, remove immediately
+    if (pid > 0 && !isProcessAlive(pid)) {
+      await unlink(file).catch(() => {})
+      return true
+    }
+    // Otherwise check mtime-based staleness
+    const info = await stat(file)
+    if (Date.now() - info.mtimeMs > LOCK_STALE_MS) {
+      await unlink(file).catch(() => {})
+      return true
+    }
+  } catch {
+    // lock disappeared or unreadable — retry
+    return true
+  }
+  return false
+}
 
 async function acquireLock(cwd) {
   const file = lockPath(cwd)
   const deadline = Date.now() + LOCK_TIMEOUT_MS
+  let retryMs = LOCK_RETRY_INIT_MS
+
   while (Date.now() < deadline) {
     try {
       await writeFile(file, `${process.pid}:${Date.now()}`, { flag: "wx" })
       return true
     } catch (err) {
       if (err.code !== "EEXIST") throw err
-      // Stale lock detection: only remove if truly stale (2x timeout)
-      try {
-        const info = await stat(file)
-        if (Date.now() - info.mtimeMs > LOCK_STALE_MS) {
-          await unlink(file).catch(() => {})
-          continue
-        }
-      } catch { /* lock disappeared, retry */ continue }
-      await new Promise((r) => setTimeout(r, LOCK_RETRY_MS))
+      const removed = await tryRemoveStaleLock(file)
+      if (removed) continue
+      // Exponential backoff: 50 → 100 → 200 → 400 → 500 (capped)
+      await new Promise((r) => setTimeout(r, retryMs))
+      retryMs = Math.min(retryMs * 2, LOCK_RETRY_MAX_MS)
     }
   }
-  // Timeout: force-remove only truly stale locks, then retry once
-  try {
-    const info = await stat(file)
-    if (Date.now() - info.mtimeMs > LOCK_STALE_MS) {
-      await unlink(file).catch(() => {})
-      try {
-        await writeFile(file, `${process.pid}:${Date.now()}`, { flag: "wx" })
-        return true
-      } catch { /* another process grabbed it */ }
-    }
-  } catch { /* lock gone */ }
+
+  // Final attempt after timeout
+  const removed = await tryRemoveStaleLock(file)
+  if (removed) {
+    try {
+      await writeFile(file, `${process.pid}:${Date.now()}`, { flag: "wx" })
+      return true
+    } catch { /* another process grabbed it */ }
+  }
   throw new Error(`Failed to acquire lock after ${LOCK_TIMEOUT_MS}ms: ${file}`)
 }
 

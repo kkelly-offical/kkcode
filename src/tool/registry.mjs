@@ -23,7 +23,8 @@ const state = {
   loadedAt: 0,
   lastSignature: "",
   lastCwd: "",
-  lastConfig: null
+  lastConfig: null,
+  refreshing: false
 }
 
 function schema(type, description) {
@@ -1327,8 +1328,15 @@ export const ToolRegistry = {
   },
 
   refreshMcpTools() {
-    if (!state.initialized) return
-    state.tools = state.tools.filter((t) => !t.name.startsWith("mcp_"))
-    state.tools.push(...mcpTools())
+    if (!state.initialized || state.refreshing) return
+    state.refreshing = true
+    try {
+      // Atomic replacement: build new list, then assign once
+      const nonMcp = state.tools.filter((t) => !t.name.startsWith("mcp_"))
+      const newMcpTools = mcpTools()
+      state.tools = [...nonMcp, ...newMcpTools]
+    } finally {
+      state.refreshing = false
+    }
   }
 }
