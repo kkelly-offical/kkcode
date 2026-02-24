@@ -4,6 +4,7 @@ import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { createStdioFramingDecoder, encodeRpcMessage } from "./stdio-framing.mjs"
 import { normalizeToolResult } from "./tool-result.mjs"
+import { MCP_PROTOCOL_VERSION, MCP_CLIENT_INFO } from "./constants.mjs"
 
 const VALID_FRAMING = new Set(["auto", "content-length", "newline"])
 const VALID_HEALTH_METHOD = new Set(["auto", "ping", "tools_list"])
@@ -319,6 +320,7 @@ export function createStdioMcpClient(serverName, config = {}) {
       })
     }
     await ensureAlive()
+    if (nextId > Number.MAX_SAFE_INTEGER - 1) nextId = 1
     const id = nextId++
     const payload = { jsonrpc: "2.0", id, method, params }
 
@@ -395,9 +397,9 @@ export function createStdioMcpClient(serverName, config = {}) {
   async function initializeOnce() {
     if (initialized) return
     const initParams = {
-      protocolVersion: "2024-11-05",
+      protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: {},
-      clientInfo: { name: "kkcode", version: "0.1.3" }
+      clientInfo: MCP_CLIENT_INFO
     }
 
     if (configuredFraming === "auto") {

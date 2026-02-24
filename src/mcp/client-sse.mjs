@@ -2,6 +2,7 @@ import { McpError } from "../core/errors.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { normalizeToolResult } from "./tool-result.mjs"
+import { MCP_PROTOCOL_VERSION, MCP_CLIENT_INFO } from "./constants.mjs"
 
 /**
  * MCP Streamable HTTP (SSE) client.
@@ -33,6 +34,7 @@ export function createSseMcpClient(serverName, config) {
   }
 
   async function sendRequest(method, params = {}, { signal: parentSignal = null } = {}) {
+    if (nextId > Number.MAX_SAFE_INTEGER - 1) nextId = 1
     const id = nextId++
     const body = { jsonrpc: "2.0", id, method, params }
     const startedAt = Date.now()
@@ -83,7 +85,19 @@ export function createSseMcpClient(serverName, config) {
       }
 
       // Regular JSON response
-      const json = await res.json().catch(() => ({}))
+      const json = await res.json().catch((parseErr) => {
+        if (method === "initialize") {
+          throw new McpError(
+            `mcp server "${serverName}" malformed JSON in initialize response: ${parseErr.message}`,
+            { reason: "bad_response", server: serverName, action: method, phase: "request" }
+          )
+        }
+        EventBus.emit({
+          type: EVENT_TYPES.MCP_REQUEST,
+          payload: { server: serverName, action: method, warning: "malformed_json_response" }
+        }).catch(() => {})
+        return {}
+      })
       if (json.error) {
         throw new McpError(
           `mcp server "${serverName}" error: ${json.error.message || JSON.stringify(json.error)}`,
@@ -177,9 +191,9 @@ export function createSseMcpClient(serverName, config) {
   async function ensureInitialized() {
     if (initialized) return
     const result = await sendRequest("initialize", {
-      protocolVersion: "2024-11-05",
+      protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: {},
-      clientInfo: { name: "kkcode", version: "0.1.3" }
+      clientInfo: MCP_CLIENT_INFO
     })
     // Send initialized notification
     try {

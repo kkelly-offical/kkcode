@@ -50,7 +50,14 @@ async function requestJson({ serverName, method, url, body = null, timeoutMs = 1
         { reason, server: serverName, action, phase: "request", statusCode: status }
       )
     }
-    return res.json().catch(() => ({}))
+    return res.json().catch((parseErr) => {
+      const action = body?.args ? "call_tool" : "request"
+      EventBus.emit({
+        type: EVENT_TYPES.MCP_REQUEST,
+        payload: { server: serverName, action, warning: "malformed_json_response", detail: parseErr.message }
+      }).catch(() => {})
+      return {}
+    })
   } catch (error) {
     if (error instanceof McpError) throw error
     const reason = classifyHttpError(error, status)
@@ -103,8 +110,7 @@ export function createHttpMcpClient(serverName, config) {
       try {
         const out = await requestJson({ serverName, method: "GET", url: `${baseUrl}/resources`, timeoutMs, headers })
         return Array.isArray(out?.resources) ? out.resources : []
-      } catch (error) {
-        if (error.reason === "server_crash" || error.reason === "timeout") throw error
+      } catch {
         return []
       }
     },

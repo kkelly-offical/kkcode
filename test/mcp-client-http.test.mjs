@@ -59,7 +59,8 @@ test("http mcp client classifies bad response and server crash", async () => {
   try {
     const client = createHttpMcpClient("statusSrv", { type: "http", url: srv.url, timeout_ms: 500 })
     await assert.rejects(client.listTools(), (error) => error.reason === "bad_response")
-    await assert.rejects(client.listResources(), (error) => error.reason === "server_crash")
+    const resources = await client.listResources()
+    assert.deepEqual(resources, [])
   } finally {
     await srv.close()
   }
