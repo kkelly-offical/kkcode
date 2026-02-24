@@ -65,11 +65,16 @@ export function encodeRpcMessage(message, framing = "content-length") {
   return `Content-Length: ${size}\r\n\r\n${payload}`
 }
 
-export function createStdioFramingDecoder({ framing = "auto", maxFrameBytes = 8 * 1024 * 1024 } = {}) {
+export function createStdioFramingDecoder({ framing = "auto", maxFrameBytes = 8 * 1024 * 1024, maxBufferBytes = 16 * 1024 * 1024 } = {}) {
   let buffer = Buffer.alloc(0)
 
   function push(chunk) {
-    buffer = Buffer.concat([buffer, toBuffer(chunk)])
+    const incoming = toBuffer(chunk)
+    if (buffer.length + incoming.length > maxBufferBytes) {
+      buffer = Buffer.alloc(0)
+      throw new Error(`stdio framing buffer exceeded limit: ${maxBufferBytes} bytes`)
+    }
+    buffer = Buffer.concat([buffer, incoming])
     const messages = []
 
     while (true) {
@@ -122,6 +127,7 @@ export function createStdioFramingDecoder({ framing = "auto", maxFrameBytes = 8 
 
   return {
     push,
-    reset
+    reset,
+    bufferSize() { return buffer.length }
   }
 }

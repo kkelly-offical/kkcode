@@ -101,6 +101,8 @@ export function createSseMcpClient(serverName, config) {
     }
   }
 
+  const maxSseBufferBytes = 4 * 1024 * 1024
+
   async function parseSseResponse(body, requestId) {
     const reader = body.getReader()
     const decoder = new TextDecoder()
@@ -112,6 +114,13 @@ export function createSseMcpClient(serverName, config) {
         const { done, value } = await reader.read()
         if (done) break
         buffer += decoder.decode(value, { stream: true })
+        if (Buffer.byteLength(buffer, "utf8") > maxSseBufferBytes) {
+          try { reader.releaseLock() } catch {}
+          throw new McpError(
+            `mcp server "${serverName}" SSE buffer exceeded ${maxSseBufferBytes} bytes`,
+            { reason: "bad_response", server: serverName, phase: "request" }
+          )
+        }
 
         const parts = buffer.split("\n\n")
         buffer = parts.pop()
