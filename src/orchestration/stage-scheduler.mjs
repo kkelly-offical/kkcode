@@ -116,7 +116,7 @@ function stageConfig(config = {}) {
     maxConcurrency: Math.max(1, Number(parallel.max_concurrency || 3)),
     taskTimeoutMs: Math.max(1000, Number(parallel.task_timeout_ms || 600000)),
     taskMaxRetries: Math.max(0, Number(parallel.task_max_retries ?? 2)),
-    budgetLimitUsd: Number(parallel.budget_limit_usd || 0),
+    budgetLimitUsd: Number.isFinite(Number(parallel.budget_limit_usd)) ? Number(parallel.budget_limit_usd) : 0,
     pollIntervalMs: Math.max(50, Number(parallel.poll_interval_ms || 300)),
     passRule: "all_success"
   }
