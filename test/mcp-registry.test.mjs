@@ -133,3 +133,59 @@ test("mcp registry keeps healthy server and tool bridge works", async () => {
 
   McpRegistry.shutdown()
 })
+
+test("mcp registry addServer and removeServer", async () => {
+  await McpRegistry.initialize(
+    {
+      runtime: { mcp_refresh_ttl_ms: 0 },
+      mcp: { servers: {} }
+    },
+    { force: true }
+  )
+
+  assert.equal(McpRegistry.listServers().length, 0)
+
+  // Add a server dynamically
+  await McpRegistry.addServer("dynamic", {
+    transport: "stdio",
+    command: makeNodeScript(healthyScript),
+    timeout_ms: 2000,
+    framing: "content-length"
+  })
+
+  assert.ok(McpRegistry.listServers().includes("dynamic"))
+  const tools = McpRegistry.listTools()
+  assert.ok(tools.some((t) => t.server === "dynamic"))
+
+  // Remove it
+  McpRegistry.removeServer("dynamic")
+  assert.equal(McpRegistry.listServers().includes("dynamic"), false)
+  assert.equal(McpRegistry.listTools().some((t) => t.server === "dynamic"), false)
+
+  McpRegistry.shutdown()
+})
+
+test("mcp registry healthCheckAll reports status", async () => {
+  await McpRegistry.initialize(
+    {
+      runtime: { mcp_refresh_ttl_ms: 0 },
+      mcp: {
+        servers: {
+          alive: {
+            transport: "stdio",
+            command: makeNodeScript(healthyScript),
+            timeout_ms: 2000,
+            framing: "content-length"
+          }
+        }
+      }
+    },
+    { force: true }
+  )
+
+  const results = await McpRegistry.healthCheckAll()
+  assert.ok(results.alive)
+  assert.equal(results.alive.ok, true)
+
+  McpRegistry.shutdown()
+})

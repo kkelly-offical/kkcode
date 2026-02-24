@@ -93,7 +93,7 @@ export function createSseMcpClient(serverName, config) {
       return json.result ?? json
     } catch (error) {
       if (error instanceof McpError) throw error
-      const reason = error.name === "AbortError" ? "timeout" : "connection_refused"
+      const reason = (error.name === "AbortError" || error.name === "TimeoutError") ? "timeout" : "connection_refused"
       throw new McpError(
         `mcp server "${serverName}" ${reason}: ${error.message}`,
         { reason, server: serverName, action: method, phase: "request" }
