@@ -1219,8 +1219,14 @@ function mcpTools() {
     description: `[mcp:${tool.server}] ${tool.description}`,
     inputSchema: tool.inputSchema,
     async execute(args, ctx) {
-      const result = await McpRegistry.callTool(tool.id, args || {}, ctx.signal || null)
-      return result.output
+      try {
+        const result = await McpRegistry.callTool(tool.id, args || {}, ctx.signal || null)
+        return result.output
+      } catch (error) {
+        const reason = error.reason || "unknown"
+        const server = error.server || tool.server
+        return `[MCP Error: ${server} ${reason}] ${error.message}`
+      }
     }
   }))
 }
@@ -1318,5 +1324,11 @@ export const ToolRegistry = {
         error: error.message
       }
     }
+  },
+
+  refreshMcpTools() {
+    if (!state.initialized) return
+    state.tools = state.tools.filter((t) => !t.name.startsWith("mcp_"))
+    state.tools.push(...mcpTools())
   }
 }
