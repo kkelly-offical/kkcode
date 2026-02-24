@@ -440,10 +440,11 @@ export async function runStageBarrier({
         // #7 依赖感知：等待 dependsOn 的 task 全部完成
         const deps = Array.isArray(task.dependsOn) ? task.dependsOn : []
         if (deps.length > 0) {
-          // Cascade: if any dependency failed/errored, skip this task
+          // Cascade: if any dependency failed/errored/missing, skip this task
           const anyDepFailed = deps.some(depId => {
             const dep = logical.get(depId)
-            return dep && ["failed", "error", "cancelled", "skipped"].includes(dep.status)
+            if (!dep) return true // missing dependency = treat as failed
+            return ["failed", "error", "cancelled", "skipped"].includes(dep.status)
           })
           if (anyDepFailed) {
             item.status = "skipped"
@@ -461,12 +462,13 @@ export async function runStageBarrier({
           })
           if (!allDepsCompleted) continue
         }
-        // #20: Acquire file locks before launching
+        // #20: Acquire file locks before launching (atomic: rollback on conflict)
         const lockFailures = []
         for (const f of item.plannedFiles) {
           if (!fileLocks.tryLock(f, task.taskId)) lockFailures.push(f)
         }
         if (lockFailures.length > 0) {
+          fileLocks.unlock(task.taskId)
           EventBus.emit({
             type: EVENT_TYPES.LONGAGENT_ALERT,
             sessionId,
@@ -478,6 +480,7 @@ export async function runStageBarrier({
               files: lockFailures
             }
           }).catch(() => {})
+          continue
         }
         item.attempt += 1
         item.status = "running"

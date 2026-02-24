@@ -200,7 +200,8 @@ export function createSseMcpClient(serverName, config) {
       await fetch(baseUrl, {
         method: "POST",
         headers: buildHeaders(),
-        body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })
+        body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+        signal: AbortSignal.timeout(timeoutMs)
       })
     } catch { /* best-effort */ }
     initialized = true

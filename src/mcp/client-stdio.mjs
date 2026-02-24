@@ -527,6 +527,7 @@ export function createStdioMcpClient(serverName, config = {}) {
     shutdown() {
       sendNotification("notifications/cancelled", { reason: "shutdown" })
       shutdownProcess().catch(() => {})
+      pending.clear()
     }
   }
 }
