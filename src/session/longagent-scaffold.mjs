@@ -1,6 +1,8 @@
 import { processTurnLoop } from "./loop.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
+import { stat } from "node:fs/promises"
+import path from "node:path"
 
 function buildScaffoldPrompt(objective, stagePlan) {
   const tasksByFile = new Map()
@@ -220,12 +222,28 @@ export async function runScaffoldPhase({
     .map((e) => e.args?.path)
     .filter(Boolean)
 
+  // Verify files actually exist on disk
+  const verified = []
+  const missing = []
+  for (const file of createdFiles) {
+    const abs = path.isAbsolute(file) ? file : path.join(process.cwd(), file)
+    try {
+      await stat(abs)
+      verified.push(file)
+    } catch {
+      missing.push(file)
+    }
+  }
+
   return {
     scaffolded: true,
-    fileCount: createdFiles.length,
-    files: createdFiles,
+    fileCount: verified.length,
+    files: verified,
+    missingFiles: missing,
     usage: out.usage,
     toolEvents: out.toolEvents,
-    errors: []
+    errors: missing.length > 0
+      ? [`${missing.length} file(s) reported created but not found on disk: ${missing.slice(0, 5).join(", ")}`]
+      : []
   }
 }

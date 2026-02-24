@@ -225,9 +225,12 @@ export async function run4StageLongAgent({
         const stashResult = await git.stash("kkcode-auto-stash-before-branch", cwd)
         stashed = stashResult.ok
       }
-      const created = await git.createBranch(branchName, cwd)
-      if (created.ok) { gitBranch = branchName; gitActive = true }
-      if (stashed) await git.stashPop(cwd)
+      try {
+        const created = await git.createBranch(branchName, cwd)
+        if (created.ok) { gitBranch = branchName; gitActive = true }
+      } finally {
+        if (stashed) await git.stashPop(cwd).catch(() => {})
+      }
     }
   }
 
@@ -239,6 +242,8 @@ export async function run4StageLongAgent({
     LONGAGENT_4STAGE_STAGES.DEBUGGING
   ]
   let stageIndex = 0
+  let codingRollbackCount = 0
+  const maxCodingRollbacks = Number(fourStageConfig.max_coding_rollbacks || 3)
 
   while (stageIndex < stageOrder.length) {
     const stage = stageOrder[stageIndex]
@@ -302,9 +307,15 @@ export async function run4StageLongAgent({
         }
       }
 
-      // Debugging → Coding回退
+      // Debugging → Coding回退（带次数限制）
       if (stage === LONGAGENT_4STAGE_STAGES.DEBUGGING && detectReturnToCoding(out.reply)) {
-        await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_4STAGE_RETURN_TO_CODING, sessionId, payload: {} })
+        codingRollbackCount++
+        if (codingRollbackCount > maxCodingRollbacks) {
+          await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_ALERT, sessionId, payload: { kind: "rollback_limit", message: `coding rollback limit (${maxCodingRollbacks}) reached, forcing completion` } })
+          stageComplete = true
+          continue
+        }
+        await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_4STAGE_RETURN_TO_CODING, sessionId, payload: { rollbackCount: codingRollbackCount } })
         stageIndex = stageOrder.indexOf(LONGAGENT_4STAGE_STAGES.CODING)
         stageComplete = true
         continue

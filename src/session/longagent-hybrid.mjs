@@ -9,7 +9,7 @@ import { processTurnLoop } from "./loop.mjs"
 import { markSessionStatus } from "./store.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES, LONGAGENT_4STAGE_STAGES } from "../core/constants.mjs"
-import { saveCheckpoint, loadCheckpoint, saveTaskCheckpoint, cleanupCheckpoints } from "./checkpoint.mjs"
+import { saveCheckpoint, loadCheckpoint, saveTaskCheckpoint, loadTaskCheckpoints, cleanupCheckpoints } from "./checkpoint.mjs"
 import { getAgent } from "../agent/agent.mjs"
 import { runStageBarrier } from "../orchestration/stage-scheduler.mjs"
 import { runScaffoldPhase } from "./longagent-scaffold.mjs"
@@ -36,7 +36,9 @@ import {
   ERROR_CATEGORIES,
   createSemanticErrorTracker,
   createDegradationChain,
-  generateRecoverySuggestions
+  generateRecoverySuggestions,
+  stripFence,
+  parseJsonLoose
 } from "./longagent-utils.mjs"
 import { TaskBus } from "./longagent-task-bus.mjs"
 import { loadProjectMemory, saveProjectMemory, memoryToContext, parseMemoryFromPreview } from "./longagent-project-memory.mjs"
@@ -77,22 +79,6 @@ function extractFailedTaskIds(text) {
   return ids
 }
 
-function stripFence(text = "") {
-  const raw = String(text || "").trim()
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)
-  return fenced ? fenced[1].trim() : raw
-}
-
-function parseJsonLoose(text = "") {
-  const raw = stripFence(text)
-  try { return JSON.parse(raw) } catch { /* ignore */ }
-  const start = raw.indexOf("{")
-  const end = raw.lastIndexOf("}")
-  if (start >= 0 && end > start) {
-    try { return JSON.parse(raw.slice(start, end + 1)) } catch { /* ignore */ }
-  }
-  return null
-}
 
 function parseBlueprintOutput(reply, objective, defaults) {
   // 1. 尝试提取 ```stage_plan_json ... ``` 块
@@ -219,6 +205,7 @@ export async function runHybridLongAgent({
   }
 
   // #15 Checkpoint 恢复：如果有之前的检查点，跳过已完成阶段
+  // #22: 增强为 task 级粒度恢复
   if (hybridConfig.checkpoint_resume !== false) {
     try {
       const cp = await loadCheckpoint(sessionId)
@@ -226,6 +213,18 @@ export async function runHybridLongAgent({
         stagePlan = cp.stagePlan; stageIndex = cp.stageIndex; planFrozen = true
         taskProgress = cp.taskProgress || {}; lastProgress = cp.lastProgress || lastProgress
         iteration = cp.iteration || 0
+        // #22: Load task-level checkpoints to recover intra-stage progress
+        if (stageIndex > 0) {
+          const prevStage = cp.stagePlan.stages[stageIndex - 1]
+          if (prevStage) {
+            const taskCps = await loadTaskCheckpoints(sessionId, prevStage.stageId)
+            for (const [tid, tData] of Object.entries(taskCps)) {
+              if (!taskProgress[tid] || taskProgress[tid].status !== "completed") {
+                taskProgress[tid] = { ...taskProgress[tid], ...tData }
+              }
+            }
+          }
+        }
         await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_CHECKPOINT_RESUMED, sessionId, payload: { stageIndex, iteration } })
         await syncState({ lastMessage: `resumed from checkpoint at stage ${stageIndex}` })
       }
@@ -354,15 +353,18 @@ export async function runHybridLongAgent({
       const clean = await git.isClean(cwd)
       let stashed = false
       if (!clean) { const sr = await git.stash("kkcode-auto-stash", cwd); stashed = sr.ok }
-      const created = await git.createBranch(branchName, cwd)
-      if (created.ok) {
-        gitBranch = branchName; gitActive = true
-        gateStatus.git = { status: "pass", branch: branchName, baseBranch: gitBaseBranch }
-        await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_GIT_BRANCH_CREATED, sessionId, payload: { branch: branchName, baseBranch: gitBaseBranch } })
-      } else {
-        gateStatus.git = { status: "warn", reason: created.message }
+      try {
+        const created = await git.createBranch(branchName, cwd)
+        if (created.ok) {
+          gitBranch = branchName; gitActive = true
+          gateStatus.git = { status: "pass", branch: branchName, baseBranch: gitBaseBranch }
+          await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_GIT_BRANCH_CREATED, sessionId, payload: { branch: branchName, baseBranch: gitBaseBranch } })
+        } else {
+          gateStatus.git = { status: "warn", reason: created.message }
+        }
+      } finally {
+        if (stashed) await git.stashPop(cwd).catch(() => {})
       }
-      if (stashed) await git.stashPop(cwd)
     }
   }
 
@@ -444,7 +446,8 @@ export async function runHybridLongAgent({
         stuckTracker,
         onTaskComplete: async (taskData) => {
           await saveTaskCheckpoint(sessionId, taskData.stageId, taskData.taskId, taskData)
-        }
+        },
+        taskBus
       })
 
       // 合并结果
@@ -516,13 +519,32 @@ export async function runHybridLongAgent({
           if (miniGate.usage) accumulateUsage(miniGate)
           gateStatus[`gate_${stage.stageId}`] = { status: miniGate.allPassed ? "pass" : "warn" }
           await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_INCREMENTAL_GATE, sessionId, payload: { stageId: stage.stageId, passed: miniGate.allPassed } })
+          // #18: Feed gate results into priorContext so subsequent stages see lint/typecheck feedback
+          if (!miniGate.allPassed && miniGate.failures?.length) {
+            const gateFeedback = miniGate.failures.slice(0, 3).map(f => `${f.gate}: ${(f.reason || "").slice(0, 150)}`).join("; ")
+            priorContext += `\n### Incremental Gate Warning (${stage.stageId})\n${gateFeedback}\n`
+          }
         }
       }
 
       // #14 预算感知：检查 token 消耗是否超限
+      // #21: 增加基于历史平均值的预算预测
       if (hybridConfig.budget_awareness !== false) {
         const totalTokens = aggregateUsage.input + aggregateUsage.output
         const budgetLimit = Number(longagentConfig.token_budget || 2000000)
+
+        // #21: Predict remaining budget based on average per-stage cost
+        const completedStages = stageIndex + (stageResult.allSuccess ? 1 : 0)
+        const remainingStages = stagePlan.stages.length - completedStages
+        if (completedStages > 0 && remainingStages > 0) {
+          const avgPerStage = totalTokens / completedStages
+          const predicted = totalTokens + avgPerStage * remainingStages
+          if (predicted > budgetLimit && totalTokens <= budgetLimit * 0.9) {
+            await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_BUDGET_WARNING, sessionId, payload: { totalTokens, budgetLimit, predicted: Math.round(predicted), percentage: Math.round(totalTokens / budgetLimit * 100), forecast: true } })
+            await syncState({ lastMessage: `H4: budget forecast — predicted ${Math.round(predicted / 1000)}k tokens (limit ${Math.round(budgetLimit / 1000)}k)` })
+          }
+        }
+
         if (totalTokens > budgetLimit * 0.9) {
           await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_BUDGET_WARNING, sessionId, payload: { totalTokens, budgetLimit, percentage: Math.round(totalTokens / budgetLimit * 100) } })
           await syncState({ lastMessage: `H4: budget warning — ${Math.round(totalTokens / budgetLimit * 100)}% used` })

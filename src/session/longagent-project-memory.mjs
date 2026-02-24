@@ -34,10 +34,14 @@ export function memoryToContext(memory) {
 
 export function parseMemoryFromPreview(text) {
   const memory = { techStack: [], patterns: [], conventions: [] }
-  const techMatch = text.match(/(?:tech.*?stack|技术栈|framework|语言)[:\s]*([^\n]+)/gi)
+  // Only match lines that clearly declare tech stack (require colon separator)
+  const techMatch = text.match(/(?:tech\s*stack|技术栈|frameworks?|主要语言|dependencies)\s*[：:]\s*([^\n]+)/gi)
   if (techMatch) {
     for (const m of techMatch) {
-      const items = m.replace(/^[^:：]+[：:]/, "").split(/[,，、;；]/).map(s => s.trim()).filter(Boolean)
+      const items = m.replace(/^[^:：]+[：:]/, "").split(/[,，、;；]/).map(s => s.trim()).filter(s => {
+        // Filter out overly generic or long items (likely false positives)
+        return s.length >= 2 && s.length <= 40 && !/^\d+$/.test(s)
+      })
       memory.techStack.push(...items)
     }
   }

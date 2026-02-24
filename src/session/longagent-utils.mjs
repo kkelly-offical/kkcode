@@ -5,6 +5,25 @@
 
 export const LONGAGENT_FILE_CHANGES_LIMIT = 400
 
+// ========== 共享 JSON 解析工具 ==========
+
+export function stripFence(text = "") {
+  const raw = String(text || "").trim()
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  return fenced ? fenced[1].trim() : raw
+}
+
+export function parseJsonLoose(text = "") {
+  const raw = stripFence(text)
+  try { return JSON.parse(raw) } catch { /* ignore */ }
+  const start = raw.indexOf("{")
+  const end = raw.lastIndexOf("}")
+  if (start >= 0 && end > start) {
+    try { return JSON.parse(raw.slice(start, end + 1)) } catch { /* ignore */ }
+  }
+  return null
+}
+
 // ========== Phase 1: 错误分类 ==========
 
 export const ERROR_CATEGORIES = {
@@ -59,8 +78,8 @@ export function classifyError(errorText, bgStatus) {
 export function isComplete(text) {
   const lower = String(text || "").toLowerCase()
   if (lower.includes("[task_complete]")) return true
-  if (lower.includes("task complete")) return true
-  if (lower.includes("completed successfully")) return true
+  // Only match "task complete" as a standalone phrase, not substring of other text
+  if (/\btask[\s_-]?complete\b/.test(lower)) return true
   return false
 }
 
@@ -258,7 +277,12 @@ export function mergeCappedFileChanges(current = [], incoming = [], limit = LONG
   for (const item of incoming) append(item)
 
   const merged = [...map.values()]
-  return merged.length <= maxEntries ? merged : merged.slice(merged.length - maxEntries)
+  if (merged.length > maxEntries) {
+    const truncated = merged.slice(merged.length - maxEntries)
+    truncated._truncatedFrom = merged.length
+    return truncated
+  }
+  return merged
 }
 
 // ========== Phase 5: 语义级错误检测 ==========

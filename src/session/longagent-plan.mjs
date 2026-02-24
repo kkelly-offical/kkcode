@@ -1,30 +1,6 @@
 import { newId } from "../core/types.mjs"
 import { processTurnLoop } from "./loop.mjs"
-
-function stripFence(text = "") {
-  const raw = String(text || "").trim()
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)
-  if (fenced) return fenced[1].trim()
-  return raw
-}
-
-function parseJsonLoose(text = "") {
-  const raw = stripFence(text)
-  try {
-    return JSON.parse(raw)
-  } catch {
-    const start = raw.indexOf("{")
-    const end = raw.lastIndexOf("}")
-    if (start >= 0 && end > start) {
-      try {
-        return JSON.parse(raw.slice(start, end + 1))
-      } catch {
-        return null
-      }
-    }
-    return null
-  }
-}
+import { stripFence, parseJsonLoose } from "./longagent-utils.mjs"
 
 function normalizeFileList(value) {
   if (!Array.isArray(value)) return []

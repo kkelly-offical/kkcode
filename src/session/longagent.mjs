@@ -14,7 +14,7 @@ import {
   LONGAGENT_FILE_CHANGES_LIMIT,
   createStuckTracker
 } from "./longagent-utils.mjs"
-import { saveCheckpoint, loadCheckpoint } from "./checkpoint.mjs"
+import { saveCheckpoint, loadCheckpoint, cleanupCheckpoints } from "./checkpoint.mjs"
 import {
   runUsabilityGates,
   hasGatePreferences,
@@ -235,22 +235,25 @@ async function runParallelLongAgent({
         const stashResult = await git.stash("kkcode-auto-stash-before-branch", cwd)
         stashed = stashResult.ok
       }
-      const created = await git.createBranch(branchName, cwd)
-      if (created.ok) {
-        gitBranch = branchName
-        gitActive = true
-        gateStatus.git = { status: "pass", branch: branchName, baseBranch: gitBaseBranch }
-        await EventBus.emit({
-          type: EVENT_TYPES.LONGAGENT_GIT_BRANCH_CREATED,
-          sessionId,
-          payload: { branch: branchName, baseBranch: gitBaseBranch }
-        })
-        await syncState({ lastMessage: `git branch created: ${branchName}` })
-      } else {
-        gateStatus.git = { status: "warn", reason: created.message }
-      }
-      if (stashed) {
-        await git.stashPop(cwd)
+      try {
+        const created = await git.createBranch(branchName, cwd)
+        if (created.ok) {
+          gitBranch = branchName
+          gitActive = true
+          gateStatus.git = { status: "pass", branch: branchName, baseBranch: gitBaseBranch }
+          await EventBus.emit({
+            type: EVENT_TYPES.LONGAGENT_GIT_BRANCH_CREATED,
+            sessionId,
+            payload: { branch: branchName, baseBranch: gitBaseBranch }
+          })
+          await syncState({ lastMessage: `git branch created: ${branchName}` })
+        } else {
+          gateStatus.git = { status: "warn", reason: created.message }
+        }
+      } finally {
+        if (stashed) {
+          await git.stashPop(cwd).catch(() => {})
+        }
       }
     }
   }
@@ -359,6 +362,8 @@ async function runParallelLongAgent({
     const state = await LongAgentManager.get(sessionId)
     if (state?.retryStageId) {
       const targetIdx = stagePlan.stages.findIndex((stage) => stage.stageId === state.retryStageId)
+      // Atomically clear retryStageId to prevent race with concurrent updates
+      await LongAgentManager.update(sessionId, { retryStageId: null })
       if (targetIdx >= 0) {
         stageIndex = targetIdx
         // Clear progress for target stage AND all subsequent stages
@@ -369,7 +374,6 @@ async function runParallelLongAgent({
           }
         }
       }
-      await LongAgentManager.update(sessionId, { retryStageId: null })
     }
     if (state?.stopRequested || signal?.aborted) {
       await LongAgentManager.update(sessionId, {
@@ -699,9 +703,9 @@ async function runParallelLongAgent({
 
       const failureSummary = summarizeGateFailures(gateResult.failures)
       lastGateFailures = gateResult.failures.map((item) => `${item.gate}:${item.reason}`)
-      recoveryCount += 1
-      const backoffMs = Math.min(1000 * 2 ** (recoveryCount - 1), 30000)
-      await new Promise(r => setTimeout(r, backoffMs))
+      // Use gate-specific backoff (not shared recoveryCount) to avoid over-aggressive delays
+      const gateBackoffMs = Math.min(1000 * 2 ** (gateAttempt - 1), 30000)
+      await new Promise(r => setTimeout(r, gateBackoffMs))
 
       await EventBus.emit({
         type: EVENT_TYPES.LONGAGENT_RECOVERY_ENTERED,
@@ -819,6 +823,14 @@ async function runParallelLongAgent({
       try { await git.checkoutBranch(gitBranch, cwd) } catch { /* already on it or unrecoverable */ }
     }
   }
+
+  // Checkpoint cleanup (same as hybrid mode)
+  try {
+    const cleanResult = await cleanupCheckpoints(sessionId, {
+      maxKeep: 10,
+      keepStageCheckpoints: true
+    })
+  } catch { /* ignore cleanup errors */ }
 
   const done = await LongAgentManager.get(sessionId)
   const totalElapsed = Math.round((Date.now() - startTime) / 1000)

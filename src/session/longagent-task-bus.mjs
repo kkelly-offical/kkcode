@@ -4,13 +4,18 @@
  */
 
 export class TaskBus {
-  constructor() {
+  constructor({ maxMessages = 500 } = {}) {
     this._messages = []
     this._shared = {}
+    this._maxMessages = maxMessages
   }
 
   publish(taskId, key, value) {
     this._messages.push({ taskId, key, value, ts: Date.now() })
+    // Evict oldest messages when exceeding capacity
+    if (this._messages.length > this._maxMessages) {
+      this._messages = this._messages.slice(-Math.round(this._maxMessages * 0.8))
+    }
     this._shared[key] = { value, from: taskId, ts: Date.now() }
   }
 

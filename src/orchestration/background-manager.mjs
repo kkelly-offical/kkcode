@@ -60,7 +60,10 @@ async function patchTask(id, updater, { maxRetries = 3 } = {}) {
     const check = await loadTask(id)
     if (check && (check._version || 0) !== (current._version || 0)) {
       if (attempt < maxRetries) continue // version changed, retry
-      // Last attempt: write anyway to avoid deadlock
+      // Last attempt: log warning and fail instead of silent overwrite
+      const err = new Error(`patchTask(${id}): version conflict after ${maxRetries} retries (expected ${current._version}, got ${check._version})`)
+      err.code = "VERSION_CONFLICT"
+      throw err
     }
     await saveTask(next)
     return next
@@ -94,15 +97,24 @@ function spawnWorker(taskId) {
   } catch {
     // directory may not exist yet or permission issue — fall back to ignore
   }
-  const child = spawn(process.execPath, [WORKER_ENTRY, "--task-id", taskId], {
-    detached: true,
-    windowsHide: true,
-    stdio: ["ignore", "ignore", stderrFd !== null ? stderrFd : "ignore"],
-    env: {
-      ...process.env,
-      KKCODE_BACKGROUND_TASK_ID: taskId
+  let child
+  try {
+    child = spawn(process.execPath, [WORKER_ENTRY, "--task-id", taskId], {
+      detached: true,
+      windowsHide: true,
+      stdio: ["ignore", "ignore", stderrFd !== null ? stderrFd : "ignore"],
+      env: {
+        ...process.env,
+        KKCODE_BACKGROUND_TASK_ID: taskId
+      }
+    })
+  } catch (err) {
+    // Close fd to prevent leak if spawn fails
+    if (stderrFd !== null) {
+      try { closeSync(stderrFd) } catch { /* ignore */ }
     }
-  })
+    throw err
+  }
   child.on("exit", (code) => {
     if (stderrFd !== null) {
       try { closeSync(stderrFd) } catch { /* already closed */ }

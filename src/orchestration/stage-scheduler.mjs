@@ -4,21 +4,32 @@ import { EVENT_TYPES } from "../core/constants.mjs"
 import { getAgent } from "../agent/agent.mjs"
 import { classifyError, ERROR_CATEGORIES } from "../session/longagent-utils.mjs"
 
+// #19: Agent capability scoring — multi-pattern weighted routing
 const AGENT_HINTS = [
-  { pattern: /\b(test|spec|jest|mocha|vitest|coverage)\b/i, agent: "tdd-guide" },
-  { pattern: /\b(review|audit|lint|quality)\b/i, agent: "reviewer" },
-  { pattern: /\b(secur|vuln|owasp|xss|inject|auth)\b/i, agent: "security-reviewer" },
-  { pattern: /\b(ui|ux|frontend|front.?end|component|page|layout|style|css|tailwind|theme|responsive|landing|dashboard)\b/i, agent: "frontend-designer" },
-  { pattern: /\b(architect|blueprint|interface|api.*design)\b/i, agent: "architect" },
-  { pattern: /\b(build.*fix|compile.*error|type.*error|syntax.*error)\b/i, agent: "build-fixer" }
+  { pattern: /\b(test|spec|jest|mocha|vitest|coverage)\b/i, agent: "tdd-guide", weight: 2 },
+  { pattern: /\b(review|audit|lint|quality)\b/i, agent: "reviewer", weight: 1 },
+  { pattern: /\b(secur|vuln|owasp|xss|inject|auth)\b/i, agent: "security-reviewer", weight: 3 },
+  { pattern: /\b(ui|ux|frontend|front.?end|component|page|layout|style|css|tailwind|theme|responsive|landing|dashboard)\b/i, agent: "frontend-designer", weight: 2 },
+  { pattern: /\b(architect|blueprint|interface|api.*design)\b/i, agent: "architect", weight: 1 },
+  { pattern: /\b(build.*fix|compile.*error|type.*error|syntax.*error)\b/i, agent: "build-fixer", weight: 3 }
 ]
 
 function inferSubagentType(taskPrompt, taskId) {
   const text = `${taskPrompt} ${taskId}`
-  for (const { pattern, agent } of AGENT_HINTS) {
-    if (pattern.test(text) && getAgent(agent)) return agent
+  // Score each agent by summing weights of all matching patterns
+  const scores = new Map()
+  for (const { pattern, agent, weight } of AGENT_HINTS) {
+    if (pattern.test(text) && getAgent(agent)) {
+      scores.set(agent, (scores.get(agent) || 0) + weight)
+    }
   }
-  return null
+  if (scores.size === 0) return null
+  // Return highest-scoring agent
+  let best = null, bestScore = 0
+  for (const [agent, score] of scores) {
+    if (score > bestScore) { best = agent; bestScore = score }
+  }
+  return best
 }
 
 function sleep(ms) {
@@ -71,6 +82,30 @@ function computeRemaining(planned = [], completed = []) {
   return normalizeFiles(planned).filter((file) => !done.has(file))
 }
 
+// #20: Runtime file lock registry — tracks which files are actively being modified
+function createFileLockRegistry() {
+  const locks = new Map() // path → { taskId, lockedAt }
+  return {
+    tryLock(filePath, taskId) {
+      const existing = locks.get(filePath)
+      if (existing && existing.taskId !== taskId) return false
+      locks.set(filePath, { taskId, lockedAt: Date.now() })
+      return true
+    },
+    unlock(taskId) {
+      for (const [path, lock] of locks) {
+        if (lock.taskId === taskId) locks.delete(path)
+      }
+    },
+    getConflicts(files, taskId) {
+      return files.filter(f => {
+        const lock = locks.get(f)
+        return lock && lock.taskId !== taskId
+      }).map(f => ({ file: f, heldBy: locks.get(f).taskId }))
+    }
+  }
+}
+
 function stageConfig(config = {}) {
   const parallel = config.agent?.longagent?.parallel || {}
   return {
@@ -98,7 +133,7 @@ function retryPrompt(taskPrompt, remainingFiles = [], attempt = 1, lastError = "
   return parts.join("\n")
 }
 
-function buildEnrichedPrompt({ stage, task, logicalTask, objective, stageIndex, stageCount, allTasks, priorContext }) {
+function buildEnrichedPrompt({ stage, task, logicalTask, objective, stageIndex, stageCount, allTasks, priorContext, taskBusContext }) {
   const parts = []
 
   parts.push("## Your Role")
@@ -149,6 +184,13 @@ function buildEnrichedPrompt({ stage, task, logicalTask, objective, stageIndex, 
     parts.push("")
   }
 
+  // #17: Inject TaskBus shared context so parallel tasks see each other's broadcasts
+  if (taskBusContext) {
+    parts.push("## Shared Context (from sibling tasks)")
+    parts.push(taskBusContext)
+    parts.push("")
+  }
+
   parts.push("## Workflow")
   parts.push("1. READ each file you own — the inline comments are your implementation spec")
   parts.push("2. IMPLEMENT by replacing comments with working code (keep the file header comment)")
@@ -183,6 +225,35 @@ function checkFileIsolation(tasks) {
   return overlaps
 }
 
+function checkDependencyCycles(tasks) {
+  const graph = new Map()
+  for (const task of tasks) {
+    graph.set(task.taskId, Array.isArray(task.dependsOn) ? task.dependsOn : [])
+  }
+  const visited = new Set()
+  const inStack = new Set()
+  const cycles = []
+
+  function dfs(node, path) {
+    if (inStack.has(node)) {
+      cycles.push([...path, node])
+      return
+    }
+    if (visited.has(node)) return
+    visited.add(node)
+    inStack.add(node)
+    for (const dep of graph.get(node) || []) {
+      dfs(dep, [...path, node])
+    }
+    inStack.delete(node)
+  }
+
+  for (const taskId of graph.keys()) {
+    dfs(taskId, [])
+  }
+  return cycles
+}
+
 async function launchTask({
   stage,
   task,
@@ -195,7 +266,8 @@ async function launchTask({
   stageIndex,
   stageCount,
   allTasks,
-  priorContext
+  priorContext,
+  taskBusContext
 }) {
   const enrichedPrompt = buildEnrichedPrompt({
     stage,
@@ -205,7 +277,8 @@ async function launchTask({
     stageIndex: stageIndex || 0,
     stageCount: stageCount || 1,
     allTasks,
-    priorContext
+    priorContext,
+    taskBusContext
   })
 
   const autoAgent = !task.subagentType ? inferSubagentType(logicalTask.prompt, task.taskId) : null
@@ -270,7 +343,8 @@ export async function runStageBarrier({
   stageCount = 1,
   priorContext = "",
   stuckTracker = null,
-  onTaskComplete = null
+  onTaskComplete = null,
+  taskBus = null
 }) {
   const cfg = stageConfig(config)
   const logical = new Map()
@@ -286,6 +360,21 @@ export async function runStageBarrier({
     })
     throw new Error(`Stage ${stage.stageId}: file isolation violation — ${details}. Fix the plan to avoid overlapping file ownership.`)
   }
+
+  // Dependency cycle check: circular dependsOn = deadlock, fail-fast
+  const cycles = checkDependencyCycles(stage.tasks || [])
+  if (cycles.length > 0) {
+    const detail = cycles[0].join(" → ")
+    await EventBus.emit({
+      type: EVENT_TYPES.LONGAGENT_ALERT,
+      sessionId,
+      payload: { kind: "dependency_cycle", message: `Cycle in stage ${stage.stageId}: ${detail}`, stageId: stage.stageId }
+    })
+    throw new Error(`Stage ${stage.stageId}: dependency cycle detected — ${detail}. Fix the plan to remove circular dependencies.`)
+  }
+
+  // #20: Runtime file lock registry
+  const fileLocks = createFileLockRegistry()
 
   for (const task of stage.tasks || []) {
     const seeded = seedTaskProgress[task.taskId] || {}
@@ -333,14 +422,16 @@ export async function runStageBarrier({
       }
     })
 
-    let activeCount = [...logical.values()].filter((item) => item.status === "running").length
+    // Recount active tasks each iteration to avoid stale counts
+    const activeCount = [...logical.values()].filter((item) => item.status === "running" && item.backgroundTaskId).length
     if (activeCount < cfg.maxConcurrency) {
+      const slotsAvailable = cfg.maxConcurrency - activeCount
       const toLaunch = []
       for (const task of stage.tasks || []) {
         const item = logical.get(task.taskId)
         if (!item || item.backgroundTaskId) continue
         if (!["pending", "retrying"].includes(item.status)) continue
-        if (activeCount + toLaunch.length >= cfg.maxConcurrency) break
+        if (toLaunch.length >= slotsAvailable) break
         // #7 依赖感知：等待 dependsOn 的 task 全部完成
         const deps = Array.isArray(task.dependsOn) ? task.dependsOn : []
         if (deps.length > 0) {
@@ -350,6 +441,8 @@ export async function runStageBarrier({
           })
           if (!allDepsCompleted) continue
         }
+        // #20: Acquire file locks before launching
+        for (const f of item.plannedFiles) fileLocks.tryLock(f, task.taskId)
         item.attempt += 1
         item.status = "running"
         if (item.attempt > 1) {
@@ -358,8 +451,10 @@ export async function runStageBarrier({
         toLaunch.push({ task, item })
       }
       if (toLaunch.length > 0) {
+        // #17: Inject real-time TaskBus context into each launched task
+        const busCtx = taskBus ? taskBus.toContextString() : ""
         const bgIds = await Promise.all(toLaunch.map(({ task, item }) =>
-          launchTask({ stage, task, logicalTask: item, config, sessionId, model, providerType, objective, stageIndex, stageCount, allTasks: stage.tasks || [], priorContext })
+          launchTask({ stage, task, logicalTask: item, config, sessionId, model, providerType, objective, stageIndex, stageCount, allTasks: stage.tasks || [], priorContext, taskBusContext: busCtx || undefined })
         ))
         for (let i = 0; i < toLaunch.length; i++) {
           toLaunch[i].item.backgroundTaskId = bgIds[i]
@@ -420,6 +515,9 @@ export async function runStageBarrier({
         })
       }
 
+      // #20: Release file locks when task finishes
+      fileLocks.unlock(item.taskId)
+
       if (bg.status === "completed" && remainingFromResult.length === 0) {
         item.status = "completed"
         item.lastError = ""
@@ -456,6 +554,11 @@ export async function runStageBarrier({
           errorCategory: item.errorCategory || null
         }
       })
+
+      // #17: Real-time TaskBus parsing — completed tasks broadcast immediately
+      if (taskBus && item.lastReply) {
+        taskBus.parseTaskOutput(item.taskId, item.lastReply)
+      }
 
       // Phase 3: stuck tracker 集成
       if (stuckTracker && result.toolEvents?.length) {

@@ -17,20 +17,21 @@ async function ensure(cwd = process.cwd()) {
 
 const LOCK_TIMEOUT_MS = 5000
 const LOCK_RETRY_MS = 50
+const LOCK_STALE_MS = 10000
 
 async function acquireLock(cwd) {
   const file = lockPath(cwd)
   const deadline = Date.now() + LOCK_TIMEOUT_MS
   while (Date.now() < deadline) {
     try {
-      await writeFile(file, String(process.pid), { flag: "wx" })
+      await writeFile(file, `${process.pid}:${Date.now()}`, { flag: "wx" })
       return true
     } catch (err) {
       if (err.code !== "EEXIST") throw err
-      // Stale lock detection: if lock file is older than timeout, remove it
+      // Stale lock detection: only remove if truly stale (2x timeout)
       try {
         const info = await stat(file)
-        if (Date.now() - info.mtimeMs > LOCK_TIMEOUT_MS) {
+        if (Date.now() - info.mtimeMs > LOCK_STALE_MS) {
           await unlink(file).catch(() => {})
           continue
         }
@@ -38,9 +39,18 @@ async function acquireLock(cwd) {
       await new Promise((r) => setTimeout(r, LOCK_RETRY_MS))
     }
   }
-  // Timeout: force-remove stale lock and proceed
-  await unlink(file).catch(() => {})
-  return false
+  // Timeout: force-remove only truly stale locks, then retry once
+  try {
+    const info = await stat(file)
+    if (Date.now() - info.mtimeMs > LOCK_STALE_MS) {
+      await unlink(file).catch(() => {})
+      try {
+        await writeFile(file, `${process.pid}:${Date.now()}`, { flag: "wx" })
+        return true
+      } catch { /* another process grabbed it */ }
+    }
+  } catch { /* lock gone */ }
+  throw new Error(`Failed to acquire lock after ${LOCK_TIMEOUT_MS}ms: ${file}`)
 }
 
 async function releaseLock(cwd) {
