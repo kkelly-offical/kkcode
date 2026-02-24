@@ -435,6 +435,21 @@ export async function runStageBarrier({
         // #7 依赖感知：等待 dependsOn 的 task 全部完成
         const deps = Array.isArray(task.dependsOn) ? task.dependsOn : []
         if (deps.length > 0) {
+          // Cascade: if any dependency failed/errored, skip this task
+          const anyDepFailed = deps.some(depId => {
+            const dep = logical.get(depId)
+            return dep && ["failed", "error", "cancelled", "skipped"].includes(dep.status)
+          })
+          if (anyDepFailed) {
+            item.status = "skipped"
+            item.lastError = "dependency_failed"
+            EventBus.emit({
+              type: EVENT_TYPES.LONGAGENT_STAGE_TASK_SKIPPED,
+              sessionId,
+              payload: { stageId: stage.stageId, taskId: task.taskId, reason: "dependency_failed" }
+            }).catch(() => {})
+            continue
+          }
           const allDepsCompleted = deps.every(depId => {
             const dep = logical.get(depId)
             return dep && dep.status === "completed"

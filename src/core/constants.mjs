@@ -84,5 +84,7 @@ export const EVENT_TYPES = {
   LONGAGENT_SEMANTIC_ERROR_REPEATED: "longagent.semantic_error.repeated",
   LONGAGENT_PHASE_TIMEOUT: "longagent.phase.timeout",
   LONGAGENT_GIT_CONFLICT_RESOLUTION: "longagent.git.conflict_resolution",
-  LONGAGENT_CHECKPOINT_CLEANED: "longagent.checkpoint.cleaned"
+  LONGAGENT_CHECKPOINT_CLEANED: "longagent.checkpoint.cleaned",
+  LONGAGENT_HYBRID_CHECKPOINT_INVALID: "longagent.hybrid.checkpoint_invalid",
+  LONGAGENT_STAGE_TASK_SKIPPED: "longagent.stage.task.skipped"
 }

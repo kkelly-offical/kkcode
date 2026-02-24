@@ -44,6 +44,16 @@ import { TaskBus } from "./longagent-task-bus.mjs"
 import { loadProjectMemory, saveProjectMemory, memoryToContext, parseMemoryFromPreview } from "./longagent-project-memory.mjs"
 import * as git from "../util/git.mjs"
 
+// Checkpoint 结构校验
+function validateCheckpoint(cp) {
+  if (!cp || !cp.stagePlan || !Array.isArray(cp.stagePlan.stages)) return false
+  if (typeof cp.stageIndex !== "number" || cp.stageIndex < 0) return false
+  if (cp.stageIndex > cp.stagePlan.stages.length) return false
+  // Verify the previous stage exists for task checkpoint loading
+  if (cp.stageIndex > 0 && !cp.stagePlan.stages[cp.stageIndex - 1]) return false
+  return true
+}
+
 // Gate 修复策略路由 (Phase 8)
 function getGateFixStrategy(failures) {
   const gateTypes = (failures || []).map(f => f.gate).filter(Boolean)
@@ -210,23 +220,28 @@ export async function runHybridLongAgent({
     try {
       const cp = await loadCheckpoint(sessionId)
       if (cp?.stageIndex > 0 && cp?.stagePlan) {
-        stagePlan = cp.stagePlan; stageIndex = cp.stageIndex; planFrozen = true
-        taskProgress = cp.taskProgress || {}; lastProgress = cp.lastProgress || lastProgress
-        iteration = cp.iteration || 0
-        // #22: Load task-level checkpoints to recover intra-stage progress
-        if (stageIndex > 0) {
-          const prevStage = cp.stagePlan.stages[stageIndex - 1]
-          if (prevStage) {
-            const taskCps = await loadTaskCheckpoints(sessionId, prevStage.stageId)
-            for (const [tid, tData] of Object.entries(taskCps)) {
-              if (!taskProgress[tid] || taskProgress[tid].status !== "completed") {
-                taskProgress[tid] = { ...taskProgress[tid], ...tData }
+        if (!validateCheckpoint(cp)) {
+          // Invalid checkpoint structure — discard and start fresh
+          await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_CHECKPOINT_INVALID, sessionId, payload: { reason: "structure_validation_failed" } })
+        } else {
+          stagePlan = cp.stagePlan; stageIndex = cp.stageIndex; planFrozen = true
+          taskProgress = cp.taskProgress || {}; lastProgress = cp.lastProgress || lastProgress
+          iteration = cp.iteration || 0
+          // #22: Load task-level checkpoints to recover intra-stage progress
+          if (stageIndex > 0) {
+            const prevStage = cp.stagePlan.stages[stageIndex - 1]
+            if (prevStage) {
+              const taskCps = await loadTaskCheckpoints(sessionId, prevStage.stageId)
+              for (const [tid, tData] of Object.entries(taskCps)) {
+                if (!taskProgress[tid] || taskProgress[tid].status !== "completed") {
+                  taskProgress[tid] = { ...taskProgress[tid], ...tData }
+                }
               }
             }
           }
+          await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_CHECKPOINT_RESUMED, sessionId, payload: { stageIndex, iteration } })
+          await syncState({ lastMessage: `resumed from checkpoint at stage ${stageIndex}` })
         }
-        await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_CHECKPOINT_RESUMED, sessionId, payload: { stageIndex, iteration } })
-        await syncState({ lastMessage: `resumed from checkpoint at stage ${stageIndex}` })
       }
     } catch { /* no checkpoint, start fresh */ }
   }
@@ -349,21 +364,38 @@ export async function runHybridLongAgent({
     }
     if (userWantsGit) {
       gitBaseBranch = await git.currentBranch(cwd)
-      const branchName = git.generateBranchName(sessionId, prompt)
-      const clean = await git.isClean(cwd)
-      let stashed = false
-      if (!clean) { const sr = await git.stash("kkcode-auto-stash", cwd); stashed = sr.ok }
-      try {
-        const created = await git.createBranch(branchName, cwd)
-        if (created.ok) {
-          gitBranch = branchName; gitActive = true
-          gateStatus.git = { status: "pass", branch: branchName, baseBranch: gitBaseBranch }
-          await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_GIT_BRANCH_CREATED, sessionId, payload: { branch: branchName, baseBranch: gitBaseBranch } })
-        } else {
-          gateStatus.git = { status: "warn", reason: created.message }
+      // Guard: skip git flow if branch is empty or HEAD detached
+      if (!gitBaseBranch || gitBaseBranch === "HEAD") {
+        gateStatus.git = { status: "warn", reason: "detached HEAD or no branch" }
+      } else {
+        const branchName = git.generateBranchName(sessionId, prompt)
+        const clean = await git.isClean(cwd)
+        let stashed = false
+        try {
+          if (!clean) {
+            const sr = await git.stash("kkcode-auto-stash", cwd)
+            stashed = sr.ok
+            if (!stashed) {
+              // Stash failed — skip branch creation
+              gateStatus.git = { status: "warn", reason: "git stash failed" }
+            }
+          }
+          if (!stashed && !clean) {
+            // stash failed, skip branch creation (already set gateStatus above)
+          } else {
+            const created = await git.createBranch(branchName, cwd)
+            if (created.ok) {
+              gitBranch = branchName; gitActive = true
+              gateStatus.git = { status: "pass", branch: branchName, baseBranch: gitBaseBranch }
+              await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_GIT_BRANCH_CREATED, sessionId, payload: { branch: branchName, baseBranch: gitBaseBranch } })
+            } else {
+              gateStatus.git = { status: "warn", reason: created.message }
+            }
+          }
+        } finally {
+          // Always restore stash on any exit path
+          if (stashed) await git.stashPop(cwd).catch(() => {})
         }
-      } finally {
-        if (stashed) await git.stashPop(cwd).catch(() => {})
       }
     }
   }
