@@ -53,7 +53,7 @@ export async function requestWithRetry({ execute, attempts = 3, baseDelayMs = 80
         throw error
       }
 
-      const networkRetryable = error?.code === "ETIMEDOUT" || error?.code === "ECONNRESET"
+      const networkRetryable = error?.code === "ETIMEDOUT" || error?.code === "ECONNRESET" || error?.code === "ECONNREFUSED" || error?.code === "ENOTFOUND" || error?.code === "EHOSTUNREACH"
       if ((!isRetryable(classification) && !networkRetryable) || attempt >= attempts) {
         throw error
       }
