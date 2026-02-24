@@ -6,8 +6,29 @@ import { promisify } from "node:util"
 import { parse as parseYaml } from "yaml"
 import { McpRegistry } from "../mcp/registry.mjs"
 import { loadCustomCommands, applyCommandTemplate } from "../command/custom-commands.mjs"
+import { EventBus } from "../core/events.mjs"
+import { EVENT_TYPES } from "../core/constants.mjs"
 
 const execAsync = promisify(exec)
+
+const DEFAULT_ALLOWED_COMMANDS = ["git", "node", "npm", "ls", "cat", "date", "pwd", "echo", "which"]
+let _allowedCommands = null
+
+function getAllowedCommands(config) {
+  if (_allowedCommands) return _allowedCommands
+  const extra = config?.skills?.allowed_commands || []
+  _allowedCommands = new Set([...DEFAULT_ALLOWED_COMMANDS, ...extra])
+  return _allowedCommands
+}
+
+function isCommandAllowed(cmdString, config) {
+  const allowed = getAllowedCommands(config)
+  const trimmed = cmdString.trim()
+  // Extract the base command (first token, strip path)
+  const firstToken = trimmed.split(/\s+/)[0] || ""
+  const baseName = path.basename(firstToken)
+  return allowed.has(baseName)
+}
 
 async function exists(target) {
   try {
@@ -34,13 +55,22 @@ function parseFrontmatter(raw) {
 
 /**
  * Replace !`command` patterns with command stdout.
+ * Commands are checked against a whitelist before execution.
  */
-async function injectDynamicContext(template, cwd) {
+async function injectDynamicContext(template, cwd, config) {
   const pattern = /!\`([^`]+)\`/g
   const matches = [...template.matchAll(pattern)]
   if (!matches.length) return template
   let result = template
   for (const m of matches) {
+    if (!isCommandAllowed(m[1], config)) {
+      result = result.replace(m[0], `[blocked: ${m[1]}]`)
+      EventBus.emit({
+        type: EVENT_TYPES.LONGAGENT_ALERT,
+        payload: { kind: "skill_command_blocked", command: m[1] }
+      }).catch(() => {})
+      continue
+    }
     try {
       const { stdout } = await execAsync(m[1], { cwd, timeout: 10000 })
       result = result.replace(m[0], stdout.trim())
@@ -57,11 +87,21 @@ async function injectDynamicContext(template, cwd) {
  */
 async function loadAuxFiles(skillDir) {
   const aux = {}
+  const resolvedSkillDir = path.resolve(skillDir)
   try {
     const entries = await readdir(skillDir, { withFileTypes: true })
     for (const e of entries) {
       if (!e.isFile() || e.name === "SKILL.md") continue
-      aux[e.name] = path.join(skillDir, e.name)
+      const filePath = path.resolve(skillDir, e.name)
+      // Path traversal protection: ensure file is within skillDir
+      if (!filePath.startsWith(resolvedSkillDir + path.sep) && filePath !== resolvedSkillDir) {
+        EventBus.emit({
+          type: EVENT_TYPES.LONGAGENT_ALERT,
+          payload: { kind: "skill_path_traversal", file: e.name, skillDir }
+        }).catch(() => {})
+        continue
+      }
+      aux[e.name] = filePath
     }
   } catch { /* ignore */ }
   return aux
@@ -270,11 +310,22 @@ export const SkillRegistry = {
       })
       // Resolve $FILE{name} references to auxiliary file contents
       if (skill.auxFiles) {
+        const resolvedSkillDir = path.resolve(skill.skillDir)
         const filePattern = /\$FILE\{([^}]+)\}/g
         const fileMatches = [...prompt.matchAll(filePattern)]
         for (const m of fileMatches) {
           const filePath = skill.auxFiles[m[1]]
           if (filePath) {
+            // Path traversal protection for $FILE{} references
+            const resolvedFile = path.resolve(filePath)
+            if (!resolvedFile.startsWith(resolvedSkillDir + path.sep)) {
+              prompt = prompt.replace(m[0], `[blocked: path traversal: ${m[1]}]`)
+              EventBus.emit({
+                type: EVENT_TYPES.LONGAGENT_ALERT,
+                payload: { kind: "skill_path_traversal", file: m[1], skillDir: skill.skillDir }
+              }).catch(() => {})
+              continue
+            }
             try {
               const content = await readFile(filePath, "utf8")
               prompt = prompt.replace(m[0], content.trim())
@@ -284,7 +335,7 @@ export const SkillRegistry = {
           }
         }
       }
-      prompt = await injectDynamicContext(prompt, cwd)
+      prompt = await injectDynamicContext(prompt, cwd, context.config)
       if (skill.contextFork) {
         return { prompt, contextFork: true, model: skill.model }
       }

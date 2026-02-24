@@ -158,7 +158,8 @@ export const DEFAULT_CONFIG = {
   },
   skills: {
     enabled: true,
-    dirs: [".kkcode/skills"]
+    dirs: [".kkcode/skills"],
+    allowed_commands: []
   },
   permission: {
     default_policy: "ask",

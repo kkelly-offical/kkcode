@@ -299,21 +299,15 @@ export function checkBashAllowed(command, config = {}) {
   const result = evaluateCommand(command)
   
   if (result.isForbidden()) {
-    // 全自动化模式下，危险操作可能被允许（如果 allow_dangerous_ops 启用）
+    // 全自动化模式下，仅 git_safety 类别的危险操作可被允许
     if (fullAuto && allowDangerous && result.category === "git_safety") {
       return {
         allowed: true,
-        warning: `Dangerous operation allowed in full-auto mode: ${result.reason}`
+        warning: `Dangerous git operation allowed in full-auto mode: ${result.reason}`
       }
     }
-    
-    if (fullAuto && allowDangerous) {
-      return {
-        allowed: true,
-        warning: `Operation allowed in full-auto mode with dangerous_ops enabled: ${result.reason}`
-      }
-    }
-    
+
+    // 其他 forbidden 类别（fs_safety, network_safety 等）始终禁止
     return {
       allowed: false,
       reason: result.reason
