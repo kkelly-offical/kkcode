@@ -1,6 +1,6 @@
 {
   "name": "@kkelly-offical/kkcode",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Team-first terminal AI coding agent CLI with LongAgent orchestration, GitHub integration and themed UX.",
   "type": "module",
   "packageManager": "pnpm@10.5.2",
