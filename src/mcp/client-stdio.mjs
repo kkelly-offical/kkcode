@@ -3,6 +3,7 @@ import { McpError } from "../core/errors.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { createStdioFramingDecoder, encodeRpcMessage } from "./stdio-framing.mjs"
+import { normalizeToolResult } from "./tool-result.mjs"
 
 const VALID_FRAMING = new Set(["auto", "content-length", "newline"])
 const VALID_HEALTH_METHOD = new Set(["auto", "ping", "tools_list"])
@@ -23,33 +24,6 @@ function classifySpawnError(error) {
   if (code === "ENOENT" || code === "EACCES") return "spawn_failed"
   if (msg.includes("ENOENT") || msg.includes("EACCES") || msg.includes("spawn")) return "spawn_failed"
   return "unknown"
-}
-
-function normalizeToolResult(result, serverName, toolName) {
-  if (result?.isError) {
-    const text = Array.isArray(result.content)
-      ? result.content.map((item) => item?.text || "").join("\n").trim()
-      : ""
-    throw new McpError(text || "mcp tool returned isError", {
-      reason: "bad_response",
-      server: serverName,
-      action: `tools/call:${toolName}`,
-      phase: "request"
-    })
-  }
-
-  const content = Array.isArray(result?.content) ? result.content : null
-  const contentText = content
-    ? content.map((item) => (typeof item?.text === "string" ? item.text : "")).join("\n").trim()
-    : ""
-  const output =
-    contentText ||
-    (typeof result?.output === "string" ? result.output : "") ||
-    (typeof result === "string" ? result : JSON.stringify(result))
-
-  return content
-    ? { output, raw: result, content }
-    : { output, raw: result }
 }
 
 export function createStdioMcpClient(serverName, config = {}) {

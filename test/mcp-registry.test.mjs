@@ -10,7 +10,7 @@ const healthyScript = `
 let buffer = Buffer.alloc(0);
 function send(message) {
   const payload = JSON.stringify(message);
-  const frame = "Content-Length: " + Buffer.byteLength(payload, "utf8") + "\\\\r\\\\n\\\\r\\\\n" + payload;
+  const frame = "Content-Length: " + Buffer.byteLength(payload, "utf8") + "\\r\\n\\r\\n" + payload;
   process.stdout.write(frame);
 }
 function handleMessage(msg) {
@@ -55,10 +55,10 @@ function handleMessage(msg) {
 }
 function tryConsume() {
   while (true) {
-    const sep = buffer.indexOf("\\\\r\\\\n\\\\r\\\\n");
+    const sep = buffer.indexOf("\\r\\n\\r\\n");
     if (sep !== -1) {
       const header = buffer.subarray(0, sep).toString("utf8");
-      const match = /content-length:\\\\s*(\\\\d+)/i.exec(header);
+      const match = /content-length:\\s*(\\d+)/i.exec(header);
       if (match) {
         const len = Number(match[1]);
         const total = sep + 4 + len;
@@ -69,7 +69,7 @@ function tryConsume() {
         continue;
       }
     }
-    const nl = buffer.indexOf("\\\\n");
+    const nl = buffer.indexOf("\\n");
     if (nl === -1) return;
     const line = buffer.subarray(0, nl).toString("utf8").trim();
     buffer = buffer.subarray(nl + 1);

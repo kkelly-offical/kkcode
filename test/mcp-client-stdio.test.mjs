@@ -10,7 +10,7 @@ const standardMcpServerScript = `
 let buffer = Buffer.alloc(0);
 function send(message) {
   const payload = JSON.stringify(message);
-  const frame = "Content-Length: " + Buffer.byteLength(payload, "utf8") + "\\\\r\\\\n\\\\r\\\\n" + payload;
+  const frame = "Content-Length: " + Buffer.byteLength(payload, "utf8") + "\\r\\n\\r\\n" + payload;
   process.stdout.write(frame);
 }
 function handleMessage(msg) {
@@ -42,10 +42,10 @@ function handleMessage(msg) {
 }
 function tryConsume() {
   while (true) {
-    const sep = buffer.indexOf("\\\\r\\\\n\\\\r\\\\n");
+    const sep = buffer.indexOf("\\r\\n\\r\\n");
     if (sep !== -1) {
       const header = buffer.subarray(0, sep).toString("utf8");
-      const match = /content-length:\\\\s*(\\\\d+)/i.exec(header);
+      const match = /content-length:\\s*(\\d+)/i.exec(header);
       if (match) {
         const len = Number(match[1]);
         const total = sep + 4 + len;
@@ -56,7 +56,7 @@ function tryConsume() {
         continue;
       }
     }
-    const nl = buffer.indexOf("\\\\n");
+    const nl = buffer.indexOf("\\n");
     if (nl === -1) return;
     const line = buffer.subarray(0, nl).toString("utf8").trim();
     buffer = buffer.subarray(nl + 1);
@@ -94,7 +94,8 @@ test("stdio mcp client timeout classification", async (t) => {
     command: nodeCommand(script),
     shell: false,
     timeout_ms: 80,
-    startup_timeout_ms: 200
+    startup_timeout_ms: 200,
+    framing: "content-length"
   })
   t.after(() => client.shutdown())
   await assert.rejects(client.listTools(), (error) => error.reason === "timeout")
@@ -102,7 +103,7 @@ test("stdio mcp client timeout classification", async (t) => {
 
 test("stdio mcp client bad_response classification", async (t) => {
   const script = `
-    process.stdout.write("not json\\\\n");
+    process.stdout.write("not json\\n");
     setTimeout(() => process.exit(0), 20);
   `
   const client = createStdioMcpClient("stdioBadJson", {
