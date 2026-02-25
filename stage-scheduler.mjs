@@ -1,0 +1,735 @@
+import { BackgroundManager } from "./background-manager.mjs"
+import { EventBus } from "../core/events.mjs"
+import { EVENT_TYPES } from "../core/constants.mjs"
+import { getAgent } from "../agent/agent.mjs"
+import { classifyError, ERROR_CATEGORIES, createSemanticErrorTracker } from "../session/longagent-utils.mjs"
+
+// #19: Agent capability scoring — multi-pattern weighted routing
+const AGENT_HINTS = [
+  { pattern: /\b(test|spec|jest|mocha|vitest|coverage)\b/i, agent: "tdd-guide", weight: 2 },
+  { pattern: /\b(review|audit|lint|quality)\b/i, agent: "reviewer", weight: 1 },
+  { pattern: /\b(secur|vuln|owasp|xss|inject|auth)\b/i, agent: "security-reviewer", weight: 3 },
+  { pattern: /\b(ui|ux|frontend|front.?end|component|page|layout|style|css|tailwind|theme|responsive|landing|dashboard)\b/i, agent: "frontend-designer", weight: 2 },
+  { pattern: /\b(architect|blueprint|interface|api.*design)\b/i, agent: "architect", weight: 1 },
+  { pattern: /\b(build.*fix|compile.*error|type.*error|syntax.*error)\b/i, agent: "build-fixer", weight: 3 }
+]
+
+function inferSubagentType(taskPrompt, taskId) {
+  const text = `${taskPrompt} ${taskId}`
+  // Score each agent by summing weights of all matching patterns
+  const scores = new Map()
+  for (const { pattern, agent, weight } of AGENT_HINTS) {
+    if (pattern.test(text) && getAgent(agent)) {
+      scores.set(agent, (scores.get(agent) || 0) + weight)
+    }
+  }
+  if (scores.size === 0) return null
+  // Return highest-scoring agent
+  let best = null, bestScore = 0
+  for (const [agent, score] of scores) {
+    if (score > bestScore) { best = agent; bestScore = score }
+  }
+  return best
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function normalizeFiles(list) {
+  if (!Array.isArray(list)) return []
+  return [...new Set(list.map((item) => String(item || "").trim()).filter(Boolean))]
+}
+
+function mergeUnique(...lists) {
+  const merged = []
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue
+    merged.push(...list)
+  }
+  return [...new Set(merged)]
+}
+
+function normalizeFileChanges(list) {
+  if (!Array.isArray(list)) return []
+  return list
+    .map((item) => ({
+      path: String(item?.path || "").trim(),
+      addedLines: Math.max(0, Number(item?.addedLines || 0)),
+      removedLines: Math.max(0, Number(item?.removedLines || 0)),
+      stageId: item?.stageId ? String(item.stageId) : "",
+      taskId: item?.taskId ? String(item.taskId) : ""
+    }))
+    .filter((item) => item.path)
+}
+
+function mergeFileChanges(...lists) {
+  const map = new Map()
+  for (const list of lists) {
+    for (const item of normalizeFileChanges(list)) {
+      const key = `${item.path}::${item.stageId}::${item.taskId}`
+      const prev = map.get(key) || { ...item, addedLines: 0, removedLines: 0 }
+      prev.addedLines += item.addedLines
+      prev.removedLines += item.removedLines
+      map.set(key, prev)
+    }
+  }
+  return [...map.values()]
+}
+
+function computeRemaining(planned = [], completed = []) {
+  const done = new Set(normalizeFiles(completed))
+  return normalizeFiles(planned).filter((file) => !done.has(file))
+}
+
+// #20: Runtime file lock registry — tracks which files are actively being modified
+function createFileLockRegistry() {
+  const locks = new Map() // path → { taskId, lockedAt }
+  return {
+    tryLock(filePath, taskId) {
+      const existing = locks.get(filePath)
+      if (existing && existing.taskId !== taskId) return false
+      locks.set(filePath, { taskId, lockedAt: Date.now() })
+      return true
+    },
+    unlock(taskId) {
+      for (const [path, lock] of locks) {
+        if (lock.taskId === taskId) locks.delete(path)
+      }
+    },
+    getConflicts(files, taskId) {
+      const conflicts = []
+      for (const f of files) {
+        const lock = locks.get(f)
+        if (lock && lock.taskId !== taskId) {
+          conflicts.push({ file: f, heldBy: lock.taskId })
+        }
+      }
+      return conflicts
+    }
+  }
+}
+
+function stageConfig(config = {}) {
+  const parallel = config.agent?.longagent?.parallel || {}
+  return {
+    maxConcurrency: Math.max(1, Number(parallel.max_concurrency || 3)),
+    taskTimeoutMs: Math.max(1000, Number(parallel.task_timeout_ms || 600000)),
+    taskMaxRetries: Math.max(0, Number(parallel.task_max_retries ?? 2)),
+    budgetLimitUsd: Number.isFinite(Number(parallel.budget_limit_usd)) ? Number(parallel.budget_limit_usd) : 0,
+    pollIntervalMs: Math.max(50, Number(parallel.poll_interval_ms || 300)),
+    passRule: "all_success"
+  }
+}
+
+function retryPrompt(taskPrompt, remainingFiles = [], attempt = 1, lastError = "") {
+  const parts = [
+    taskPrompt,
+    "",
+    `Retry attempt: ${attempt}`,
+    "Continue from previous progress. Focus ONLY on remaining files."
+  ]
+  if (remainingFiles.length) {
+    parts.push(`Remaining files: ${remainingFiles.join(", ")}`)
+  }
+  if (lastError) {
+    parts.push(`Previous failure: ${lastError}`)
+  }
+  return parts.join("\n")
+}
+
+function buildEnrichedPrompt({ stage, task, logicalTask, objective, stageIndex, stageCount, allTasks, priorContext, taskBusContext }) {
+  const parts = []
+
+  parts.push("## Your Role")
+  parts.push("You are an IMPLEMENTATION agent. The scaffold files already contain detailed inline comments describing what to implement. Your job is to READ those comments and REPLACE them with working code.")
+  parts.push("")
+
+  parts.push("## Global Objective")
+  parts.push(objective || "(not specified)")
+  parts.push("")
+
+  if (priorContext) {
+    parts.push("## Prior Stage Results")
+    parts.push(priorContext)
+    parts.push("")
+  }
+
+  parts.push("## Current Stage")
+  parts.push(`Stage ${stageIndex + 1}/${stageCount}: ${stage.name || stage.stageId}`)
+  parts.push("")
+
+  parts.push("## Your Task")
+  parts.push(logicalTask.prompt)
+  parts.push("")
+
+  if (logicalTask.plannedFiles.length > 0) {
+    parts.push("## Files You Own (ONLY modify these)")
+    for (const file of logicalTask.plannedFiles) {
+      parts.push(`- ${file}`)
+    }
+    parts.push("")
+  }
+
+  const siblings = (allTasks || []).filter((t) => t.taskId !== task.taskId)
+  if (siblings.length > 0) {
+    parts.push("## Other Tasks in This Stage (DO NOT touch their files)")
+    for (const sibling of siblings) {
+      const files = normalizeFiles(sibling.plannedFiles)
+      parts.push(`- ${sibling.taskId}: ${files.length > 0 ? files.join(", ") : "(no files)"}`)
+    }
+    parts.push("")
+  }
+
+  if (logicalTask.acceptance.length > 0) {
+    parts.push("## Acceptance Criteria")
+    for (const criterion of logicalTask.acceptance) {
+      parts.push(`- ${criterion}`)
+    }
+    parts.push("")
+  }
+
+  // #17: Inject TaskBus shared context so parallel tasks see each other's broadcasts
+  if (taskBusContext) {
+    parts.push("## Shared Context (from sibling tasks)")
+    parts.push(taskBusContext)
+    parts.push("")
+  }
+
+  parts.push("## Workflow")
+  parts.push("1. READ each file you own — the inline comments are your implementation spec")
+  parts.push("2. IMPLEMENT by replacing comments with working code (keep the file header comment)")
+  parts.push("3. VERIFY with acceptance criteria (run tests, syntax checks, etc.)")
+  parts.push("4. Say [TASK_COMPLETE] when done")
+  parts.push("")
+
+  parts.push("## Tool Usage Guide")
+  parts.push("USE `read` first — read your scaffold files to understand the implementation spec")
+  parts.push("USE `edit` to replace comment blocks with real code (preferred over `write` for existing files)")
+  parts.push("USE `write` only for files that don't exist yet or need full rewrite")
+  parts.push("USE `bash` to run tests, syntax checks, or build commands from acceptance criteria")
+  parts.push("USE `grep`/`glob` to find imports, references, or patterns in the codebase")
+  parts.push("AVOID `bash` for file reading (use `read`), file editing (use `edit`), or file searching (use `grep`/`glob`)")
+  parts.push("AVOID modifying files outside your ownership list")
+
+  return parts.join("\n")
+}
+
+function checkFileIsolation(tasks) {
+  const ownership = new Map()
+  const overlaps = []
+  for (const task of tasks) {
+    for (const file of normalizeFiles(task.plannedFiles)) {
+      if (ownership.has(file)) {
+        overlaps.push({ file, tasks: [ownership.get(file), task.taskId] })
+      } else {
+        ownership.set(file, task.taskId)
+      }
+    }
+  }
+  return overlaps
+}
+
+function checkDependencyCycles(tasks) {
+  const graph = new Map()
+  for (const task of tasks) {
+    graph.set(task.taskId, Array.isArray(task.dependsOn) ? task.dependsOn : [])
+  }
+  const visited = new Set()
+  const inStack = new Set()
+  const cycles = []
+
+  function dfs(node, path) {
+    if (inStack.has(node)) {
+      cycles.push([...path, node])
+      return
+    }
+    if (visited.has(node)) return
+    visited.add(node)
+    inStack.add(node)
+    for (const dep of graph.get(node) || []) {
+      dfs(dep, [...path, node])
+    }
+    inStack.delete(node)
+  }
+
+  for (const taskId of graph.keys()) {
+    dfs(taskId, [])
+  }
+  return cycles
+}
+
+async function launchTask({
+  stage,
+  task,
+  logicalTask,
+  config,
+  sessionId,
+  model,
+  providerType,
+  objective,
+  stageIndex,
+  stageCount,
+  allTasks,
+  priorContext,
+  taskBusContext
+}) {
+  const enrichedPrompt = buildEnrichedPrompt({
+    stage,
+    task,
+    logicalTask,
+    objective,
+    stageIndex: stageIndex || 0,
+    stageCount: stageCount || 1,
+    allTasks,
+    priorContext,
+    taskBusContext
+  })
+
+  const autoAgent = !task.subagentType ? inferSubagentType(logicalTask.prompt, task.taskId) : null
+
+  const payload = {
+    parentSessionId: sessionId,
+    subSessionId: logicalTask.subSessionId,
+    prompt: enrichedPrompt,
+    cwd: process.cwd(),
+    model,
+    providerType,
+    subagent: task.subagentType || autoAgent || null,
+    category: task.category || null,
+    subagentType: task.subagentType || autoAgent || null,
+    stageId: stage.stageId,
+    logicalTaskId: task.taskId,
+    plannedFiles: logicalTask.plannedFiles,
+    remainingFiles: logicalTask.remainingFiles,
+    attempt: logicalTask.attempt,
+    workerTimeoutMs: logicalTask.timeoutMs
+  }
+
+  const taskDescription = `${stage.stageId}:${task.taskId}#${logicalTask.attempt}`
+  const bg = await BackgroundManager.launchDelegateTask({
+    description: taskDescription,
+    payload,
+    config: {
+      ...config,
+      background: {
+        ...(config.background || {}),
+        max_parallel: Math.max(
+          Number(config.background?.max_parallel || 1),
+          Number(config.agent?.longagent?.parallel?.max_concurrency || 3)
+        )
+      }
+    }
+  })
+
+  await EventBus.emit({
+    type: EVENT_TYPES.LONGAGENT_STAGE_TASK_DISPATCHED,
+    sessionId,
+    payload: {
+      stageId: stage.stageId,
+      taskId: task.taskId,
+      backgroundTaskId: bg.id,
+      attempt: logicalTask.attempt
+    }
+  })
+
+  return bg.id
+}
+
+export async function runStageBarrier({
+  stage,
+  sessionId,
+  config,
+  model,
+  providerType,
+  seedTaskProgress = {},
+  objective = "",
+  stageIndex = 0,
+  stageCount = 1,
+  priorContext = "",
+  stuckTracker = null,
+  onTaskComplete = null,
+  taskBus = null
+}) {
+  const cfg = stageConfig(config)
+  const logical = new Map()
+
+  // File isolation check: overlapping files = plan bug, fail-fast
+  const overlaps = checkFileIsolation(stage.tasks || [])
+  if (overlaps.length > 0) {
+    const details = overlaps.map((o) => `"${o.file}" claimed by [${o.tasks.join(", ")}]`).join("; ")
+    await EventBus.emit({
+      type: EVENT_TYPES.LONGAGENT_STAGE_STARTED,
+      sessionId,
+      payload: { error: `File isolation violation in stage ${stage.stageId}: ${details}`, stageId: stage.stageId }
+    })
+    throw new Error(`Stage ${stage.stageId}: file isolation violation — ${details}. Fix the plan to avoid overlapping file ownership.`)
+  }
+
+  // Dependency cycle check: circular dependsOn = deadlock, fail-fast
+  const cycles = checkDependencyCycles(stage.tasks || [])
+  if (cycles.length > 0) {
+    const detail = cycles[0].join(" → ")
+    await EventBus.emit({
+      type: EVENT_TYPES.LONGAGENT_ALERT,
+      sessionId,
+      payload: { kind: "dependency_cycle", message: `Cycle in stage ${stage.stageId}: ${detail}`, stageId: stage.stageId }
+    })
+    throw new Error(`Stage ${stage.stageId}: dependency cycle detected — ${detail}. Fix the plan to remove circular dependencies.`)
+  }
+
+  // #20: Runtime file lock registry
+  const fileLocks = createFileLockRegistry()
+
+  for (const task of stage.tasks || []) {
+    const seeded = seedTaskProgress[task.taskId] || {}
+    const planned = normalizeFiles(task.plannedFiles)
+    const completed = normalizeFiles(seeded.completedFiles || [])
+    const remaining = normalizeFiles(seeded.remainingFiles || computeRemaining(planned, completed))
+    logical.set(task.taskId, {
+      stageId: stage.stageId,
+      taskId: task.taskId,
+      subSessionId: seeded.subSessionId || `sub_${sessionId}_${task.taskId}`,
+      plannedFiles: planned,
+      completedFiles: completed,
+      remainingFiles: remaining,
+      acceptance: Array.isArray(task.acceptance) ? task.acceptance : [],
+      prompt: seeded.prompt || task.prompt,
+      status: seeded.status || "pending",
+      attempt: Number(seeded.attempt || 0),
+      maxRetries: Number(task.maxRetries ?? cfg.taskMaxRetries),
+      timeoutMs: Number(task.timeoutMs || cfg.taskTimeoutMs),
+      backgroundTaskId: null,
+      lastError: seeded.lastError || "",
+      fileChanges: normalizeFileChanges(seeded.fileChanges || []),
+      // D1: 语义错误追踪器 — 检测重复错误，防止无限重试
+      semanticTracker: createSemanticErrorTracker()
+    })
+  }
+
+  await EventBus.emit({
+    type: EVENT_TYPES.LONGAGENT_STAGE_STARTED,
+    sessionId,
+    payload: {
+      stageId: stage.stageId,
+      taskCount: logical.size,
+      passRule: cfg.passRule
+    }
+  })
+
+  while (true) {
+    await BackgroundManager.tick({
+      ...config,
+      background: {
+        ...(config.background || {}),
+        max_parallel: Math.max(
+          Number(config.background?.max_parallel || 1),
+          cfg.maxConcurrency
+        )
+      }
+    })
+
+    // Recount active tasks each iteration to avoid stale counts
+    const activeCount = [...logical.values()].filter((item) => item.status === "running" && item.backgroundTaskId).length
+    if (activeCount < cfg.maxConcurrency) {
+      const slotsAvailable = cfg.maxConcurrency - activeCount
+      const toLaunch = []
+      for (const task of stage.tasks || []) {
+        const item = logical.get(task.taskId)
+        if (!item || item.backgroundTaskId) continue
+        if (!["pending", "retrying"].includes(item.status)) continue
+        if (toLaunch.length >= slotsAvailable) break
+        // #7 依赖感知：等待 dependsOn 的 task 全部完成
+        const deps = Array.isArray(task.dependsOn) ? task.dependsOn : []
+        if (deps.length > 0) {
+          // Cascade: if any dependency failed/errored/missing, skip this task
+          const anyDepFailed = deps.some(depId => {
+            const dep = logical.get(depId)
+            if (!dep) return true // missing dependency = treat as failed
+            return ["failed", "error", "cancelled", "skipped"].includes(dep.status)
+          })
+          if (anyDepFailed) {
+            item.status = "skipped"
+            item.lastError = "dependency_failed"
+            EventBus.emit({
+              type: EVENT_TYPES.LONGAGENT_STAGE_TASK_SKIPPED,
+              sessionId,
+              payload: { stageId: stage.stageId, taskId: task.taskId, reason: "dependency_failed" }
+            }).catch(() => {})
+            continue
+          }
+          const allDepsCompleted = deps.every(depId => {
+            const dep = logical.get(depId)
+            return dep && dep.status === "completed"
+          })
+          if (!allDepsCompleted) continue
+        }
+        // #20: Acquire file locks before launching (atomic: rollback on conflict)
+        const lockFailures = []
+        for (const f of item.plannedFiles) {
+          if (!fileLocks.tryLock(f, task.taskId)) lockFailures.push(f)
+        }
+        if (lockFailures.length > 0) {
+          fileLocks.unlock(task.taskId)
+          EventBus.emit({
+            type: EVENT_TYPES.LONGAGENT_ALERT,
+            sessionId,
+            payload: {
+              kind: "file_lock_conflict",
+              message: `Task ${task.taskId} could not lock: ${lockFailures.join(", ")}`,
+              taskId: task.taskId,
+              stageId: stage.stageId,
+              files: lockFailures
+            }
+          }).catch(() => {})
+          continue
+        }
+        item.attempt += 1
+        item.status = "running"
+        if (item.attempt > 1) {
+          item.prompt = retryPrompt(task.prompt, item.remainingFiles, item.attempt, item.lastError)
+        }
+        toLaunch.push({ task, item })
+      }
+      if (toLaunch.length > 0) {
+        // #17: Inject real-time TaskBus context into each launched task
+        const busCtx = taskBus ? taskBus.toContextString() : ""
+        const results = await Promise.allSettled(toLaunch.map(({ task, item }) =>
+          launchTask({ stage, task, logicalTask: item, config, sessionId, model, providerType, objective, stageIndex, stageCount, allTasks: stage.tasks || [], priorContext, taskBusContext: busCtx || undefined })
+        ))
+        for (let i = 0; i < toLaunch.length; i++) {
+          const r = results[i]
+          if (r.status === "fulfilled") {
+            toLaunch[i].item.backgroundTaskId = r.value
+          } else {
+            // Launch failed — mark error so it won't be orphaned
+            toLaunch[i].item.status = "error"
+            toLaunch[i].item.lastError = `launch failed: ${r.reason?.message || "unknown"}`
+            toLaunch[i].item.errorCategory = ERROR_CATEGORIES.TRANSIENT
+            // Release file locks held by this task to prevent deadlock
+            fileLocks.unlock(toLaunch[i].task.taskId)
+          }
+        }
+      }
+    }
+
+    let pending = 0
+    for (const item of logical.values()) {
+      if (!item.backgroundTaskId) {
+        if (["pending", "retrying", "running"].includes(item.status)) pending += 1
+        continue
+      }
+      const bg = await BackgroundManager.get(item.backgroundTaskId)
+      if (!bg) {
+        item.status = "error"
+        item.lastError = "background worker disappeared"
+        item.backgroundTaskId = null
+        continue
+      }
+      if (!["completed", "error", "interrupted", "cancelled"].includes(bg.status)) {
+        pending += 1
+        continue
+      }
+
+      const result = bg.result || {}
+      const completedFromResult = mergeUnique(
+        item.completedFiles,
+        normalizeFiles(result.completed_files || result.completedFiles || [])
+      )
+      const remainingFromResult = normalizeFiles(
+        result.remaining_files || result.remainingFiles || computeRemaining(item.plannedFiles, completedFromResult)
+      )
+      item.completedFiles = completedFromResult
+      item.remainingFiles = remainingFromResult
+      item.fileChanges = mergeFileChanges(
+        item.fileChanges,
+        result.file_changes || result.fileChanges || []
+      )
+      item.backgroundTaskId = null
+
+      // Runtime file ownership check: warn if task touched files outside its plan
+      const plannedSet = new Set(item.plannedFiles)
+      const outOfScope = item.fileChanges
+        .map(fc => fc.path)
+        .filter(p => p && !plannedSet.has(p))
+      if (outOfScope.length > 0) {
+        // Check if any out-of-scope file is locked by another task
+        const conflicts = fileLocks.getConflicts(outOfScope, item.taskId)
+        const conflicting = conflicts.map(c => c.file)
+        await EventBus.emit({
+          type: EVENT_TYPES.LONGAGENT_ALERT,
+          sessionId,
+          payload: {
+            kind: "file_ownership_violation",
+            message: `Task ${item.taskId} modified ${outOfScope.length} file(s) outside its plan: ${outOfScope.slice(0, 5).join(", ")}`,
+            taskId: item.taskId,
+            stageId: stage.stageId,
+            outOfScopeFiles: outOfScope,
+            conflicting
+          }
+        })
+        // Escalate to error if conflicting with another task's locked files
+        if (conflicting.length > 0) {
+          item.status = "error"
+          item.lastError = `file ownership conflict: ${conflicting.slice(0, 3).join(", ")} locked by other tasks`
+          item.errorCategory = ERROR_CATEGORIES.PERMANENT
+          continue
+        }
+      }
+
+      // #20: Release file locks when task finishes
+      fileLocks.unlock(item.taskId)
+
+      if (bg.status === "completed" && remainingFromResult.length === 0) {
+        item.status = "completed"
+        item.lastError = ""
+        item.errorCategory = null
+      } else if (bg.status === "completed" && remainingFromResult.length > 0) {
+        item.lastError = "task completed but remaining files still pending"
+        item.errorCategory = ERROR_CATEGORIES.TRANSIENT
+        item.status = item.attempt <= item.maxRetries ? "retrying" : "error"
+      } else {
+        item.lastError = bg.error || "task failed"
+        const category = classifyError(item.lastError, bg.status)
+        item.errorCategory = category
+        // D1: 语义错误追踪 — 检测重复错误模式，升级为 PERMANENT 阻止无效重试
+        const semanticResult = item.semanticTracker.track(item.lastError)
+        if (category === ERROR_CATEGORIES.PERMANENT || category === ERROR_CATEGORIES.UNKNOWN || semanticResult.isDuplicate) {
+          item.status = "error"
+          item.skipReason = semanticResult.isDuplicate
+            ? `repeated error (${semanticResult.count}x): ${item.lastError.slice(0, 80)}`
+            : `${category} error: ${item.lastError.slice(0, 100)}`
+          item.errorCategory = ERROR_CATEGORIES.PERMANENT
+        } else {
+          item.status = item.attempt <= item.maxRetries ? "retrying" : (bg.status === "cancelled" ? "cancelled" : "error")
+        }
+      }
+      item.lastReply = String(result.reply || "")
+      item.lastCost = Number(result.cost || 0)
+
+      await EventBus.emit({
+        type: EVENT_TYPES.LONGAGENT_STAGE_TASK_FINISHED,
+        sessionId,
+        payload: {
+          stageId: stage.stageId,
+          taskId: item.taskId,
+          status: item.status,
+          attempt: item.attempt,
+          remainingFiles: item.remainingFiles,
+          errorCategory: item.errorCategory || null
+        }
+      })
+
+      // #17: Real-time TaskBus parsing — completed tasks broadcast immediately
+      if (taskBus && item.lastReply) {
+        taskBus.parseTaskOutput(item.taskId, item.lastReply)
+      }
+
+      // Phase 3: stuck tracker 集成
+      if (stuckTracker && result.toolEvents?.length) {
+        const stuckResult = stuckTracker.track(result.toolEvents)
+        if (stuckResult.isStuck) {
+          await EventBus.emit({
+            type: EVENT_TYPES.LONGAGENT_ALERT,
+            sessionId,
+            payload: {
+              kind: stuckResult.reason === "write_loop_detected" || stuckResult.reason === "edit_cycle_detected"
+                ? "write_loop_warning" : "stuck_warning",
+              message: `Task ${item.taskId} in stage ${stage.stageId}: ${stuckResult.reason}`,
+              taskId: item.taskId,
+              stageId: stage.stageId,
+              reason: stuckResult.reason
+            }
+          })
+        }
+      }
+
+      // Phase 7: task 级 checkpoint 回调
+      if (onTaskComplete && item.status === "completed") {
+        try {
+          await onTaskComplete({
+            stageId: stage.stageId,
+            taskId: item.taskId,
+            status: item.status,
+            completedFiles: item.completedFiles,
+            fileChanges: item.fileChanges,
+            attempt: item.attempt
+          })
+        } catch { /* ignore checkpoint errors */ }
+      }
+
+      if (["pending", "retrying", "running"].includes(item.status)) pending += 1
+    }
+
+    if (pending <= 0) break
+
+    // Budget circuit breaker: abort remaining tasks if cost exceeds limit
+    if (cfg.budgetLimitUsd > 0) {
+      const spent = [...logical.values()].reduce((s, i) => s + (Number.isFinite(i.lastCost) ? i.lastCost : 0), 0)
+      if (spent >= cfg.budgetLimitUsd) {
+        for (const item of logical.values()) {
+          if (["pending", "retrying"].includes(item.status)) {
+            item.status = "error"
+            item.lastError = `budget limit exceeded ($${spent.toFixed(2)} >= $${cfg.budgetLimitUsd})`
+          }
+          if (item.backgroundTaskId && item.status === "running") {
+            await BackgroundManager.cancel(item.backgroundTaskId).catch(() => {})
+          }
+        }
+        await EventBus.emit({
+          type: EVENT_TYPES.LONGAGENT_ALERT,
+          sessionId,
+          payload: { kind: "budget_breaker", spent, limit: cfg.budgetLimitUsd, stageId: stage.stageId }
+        })
+        break
+      }
+    }
+
+    await sleep(cfg.pollIntervalMs)
+  }
+
+  const items = [...logical.values()]
+  const successCount = items.filter((item) => item.status === "completed").length
+  const failItems = items.filter((item) => item.status !== "completed")
+  const retryCount = items.reduce((sum, item) => sum + Math.max(0, item.attempt - 1), 0)
+  const remainingFiles = mergeUnique(...items.map((item) => item.remainingFiles))
+  const completionMarkerSeen = items.some((item) => String(item.lastReply || "").toLowerCase().includes("[task_complete]"))
+  const totalCost = items.reduce((sum, item) => sum + (Number.isFinite(item.lastCost) ? item.lastCost : 0), 0)
+  const fileChanges = mergeFileChanges(...items.map((item) => item.fileChanges))
+
+  const summary = {
+    stageId: stage.stageId,
+    successCount,
+    failCount: failItems.length,
+    retryCount,
+    remainingFiles,
+    completionMarkerSeen,
+    totalCost,
+    fileChanges,
+    allSuccess: failItems.length === 0,
+    taskProgress: Object.fromEntries(
+      items.map((item) => [
+        item.taskId,
+        {
+          taskId: item.taskId,
+          attempt: item.attempt,
+          status: item.status,
+          plannedFiles: item.plannedFiles,
+          completedFiles: item.completedFiles,
+          remainingFiles: item.remainingFiles,
+          fileChanges: item.fileChanges,
+          lastError: item.lastError || "",
+          lastReply: item.lastReply || ""
+        }
+      ])
+    )
+  }
+
+  await EventBus.emit({
+    type: EVENT_TYPES.LONGAGENT_STAGE_FINISHED,
+    sessionId,
+    payload: summary
+  })
+
+  return summary
+}
