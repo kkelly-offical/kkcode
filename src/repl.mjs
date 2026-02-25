@@ -6,7 +6,7 @@ import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
 import YAML from "yaml"
 import { buildContext, printContextWarnings } from "./context.mjs"
-import { executeTurn, newSessionId, resolveMode } from "./session/engine.mjs"
+import { executeTurn, newSessionId, resolveMode, routeMode } from "./session/engine.mjs"
 import { renderStatusBar } from "./theme/status-bar.mjs"
 import { listProviders } from "./provider/router.mjs"
 import { loadCustomCommands, applyCommandTemplate } from "./command/custom-commands.mjs"
@@ -1461,6 +1461,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     paused: false,
     turnAbortController: null,
     lastCtrlCTime: 0,
+    lastLongAgentPrompt: null,
+    longagentAborted: false,
+    pendingModeConfirm: null,
     metrics: {
       tokenMeter: {
         estimated: false,
@@ -2232,6 +2235,115 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     const line = ui.input.replace(/\r/g, "")
     if (!line.trim() || ui.busy) return
 
+    // --- Task 3: 处理中途补充需求确认 ---
+    if (ui.pendingModeConfirm && !line.startsWith("/")) {
+      const confirm = ui.pendingModeConfirm
+      ui.pendingModeConfirm = null
+      const answer = line.trim().toLowerCase()
+      const confirmed = ["y", "yes", "是", "继续", "ok", "好"].includes(answer)
+      if (confirmed) {
+        // 用户确认继续用 longagent，清除 abort 状态
+        ui.longagentAborted = false
+        appendLog(paint("继续使用 longagent 模式执行。", ctx.themeState.theme.semantic.info))
+        ui.input = ""
+        ui.inputCursor = 0
+        requestRender()
+        return
+      } else {
+        // 用户拒绝，切换到建议模式
+        state.mode = confirm.suggestedMode
+        appendLog(paint(`已切换到 ${confirm.suggestedMode} 模式。`, ctx.themeState.theme.semantic.success))
+        ui.input = ""
+        ui.inputCursor = 0
+        requestRender()
+        return
+      }
+    }
+
+    // --- Task 3: 处理 longagent 中途补充需求 ---
+    if (ui.longagentAborted && state.mode === "longagent" && !line.startsWith("/")) {
+      const originalPrompt = ui.lastLongAgentPrompt
+      ui.longagentAborted = false
+      ui.lastLongAgentPrompt = null
+      if (originalPrompt && line.trim()) {
+        // 合并原始需求 + 补充需求，从 H0 重新规划
+        const mergedPrompt = `${originalPrompt}\n\n[补充需求]\n${line.trim()}`
+        appendLog(paint("已合并补充需求，从头重新规划...", ctx.themeState.theme.semantic.info))
+        ui.history.push(line)
+        if (ui.history.length > HIST_SIZE) ui.history.splice(0, ui.history.length - HIST_SIZE)
+        ui.historyIndex = ui.history.length
+        appendLog(`❯ ${line}`)
+        appendLog("")
+        ui.input = ""
+        ui.inputCursor = 0
+        ui.selectedSuggestion = 0
+        ui.suggestionOffset = 0
+        ui.busy = true
+        ui.paused = false
+        const aborter = new AbortController()
+        ui.turnAbortController = aborter
+        ui.lastLongAgentPrompt = mergedPrompt
+        startBusySpinner()
+        requestRender()
+        try {
+          const action = await processInputLine({
+            line: mergedPrompt,
+            state, ctx, providersConfigured,
+            customCommands: localCustomCommands,
+            setCustomCommands: (next) => { localCustomCommands = next },
+            print: appendLog,
+            streamSink: appendStreamChunk,
+            showTurnStatus: false,
+            pendingImages: ui.pendingImages,
+            clearPendingImages: () => { ui.pendingImages = [] },
+            signal: aborter.signal,
+            suspendTui: async (fn) => {
+              stopBusySpinner()
+              if (onKey) process.stdin.removeListener("keypress", onKey)
+              if (onData) process.stdin.removeListener("data", onData)
+              if (process.stdin.isTTY) process.stdin.setRawMode(false)
+              stopTuiFrame()
+              process.stdout.write("\x1b[2J\x1b[H")
+              try { await fn() } finally {
+                process.stdout.write("\x1b[2J\x1b[H")
+                startTuiFrame()
+                emitKeypressEvents(process.stdin)
+                if (process.stdin.isTTY) process.stdin.setRawMode(true)
+                process.stdin.resume()
+                if (onKey) process.stdin.on("keypress", onKey)
+                if (onData) process.stdin.on("data", onData)
+                forceFullPaint = true
+                requestRender()
+              }
+            }
+          })
+          if (action.turnResult) {
+            ui.metrics.tokenMeter = action.turnResult.tokenMeter || ui.metrics.tokenMeter
+            ui.metrics.cost = Number.isFinite(action.turnResult.cost) ? action.turnResult.cost : ui.metrics.cost
+            ui.metrics.costSavings = action.turnResult.costSavings ?? 0
+            if (action.turnResult.context) ui.metrics.context = action.turnResult.context
+            ui.metrics.longagent = action.turnResult.longagent || null
+            ui.metrics.toolEvents = action.turnResult.toolEvents || []
+          }
+          if (action.exit) ui.quitting = true
+        } catch (error) {
+          if (error.name !== "AbortError") appendLog(`error: ${error.message}`)
+        } finally {
+          if (aborter.signal.aborted && state.mode === "longagent") {
+            ui.longagentAborted = true
+            ui.lastLongAgentPrompt = mergedPrompt
+            appendLog(paint("⏸ LongAgent 已中止。输入补充需求后按 Enter 可从头重新规划，或切换模式继续。", ctx.themeState.theme.semantic.warn))
+          }
+          ui.busy = false
+          ui.turnAbortController = null
+          ui.currentActivity = null
+          stopBusySpinner()
+          requestRender()
+        }
+        return
+      }
+    }
+
     ui.history.push(line)
     if (ui.history.length > HIST_SIZE) ui.history.splice(0, ui.history.length - HIST_SIZE)
     ui.historyIndex = ui.history.length
@@ -2246,6 +2358,34 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     ui.paused = false
     const aborter = new AbortController()
     ui.turnAbortController = aborter
+
+    // --- Task 1: 自动路由 ---
+    if (!line.startsWith("/")) {
+      const route = routeMode(line, state.mode)
+      if (route.changed) {
+        const modeLabel = route.mode === "ask" ? "ask（问答）" : route.mode
+        appendLog(paint(`⟳ 自动切换到 ${modeLabel} 模式（${route.reason}）`, ctx.themeState.theme.semantic.info, { dim: true }))
+        state.mode = route.mode
+      } else if (route.forced && route.suggestion) {
+        // 用户强制 longagent 但任务看起来是简单任务 → 需要确认
+        ui.pendingModeConfirm = { suggestedMode: route.suggestion, originalMode: state.mode, reason: route.reason }
+        appendLog(paint(`⚠ 这看起来是个简单任务，建议用 ${route.suggestion} 模式。输入 y 继续用 longagent，或 n 切换到 ${route.suggestion}。`, ctx.themeState.theme.semantic.warn))
+        ui.busy = false
+        ui.turnAbortController = null
+        stopBusySpinner()
+        requestRender()
+        return
+      } else if (route.suggestion === "longagent" && state.mode === "agent") {
+        appendLog(paint(`💡 这看起来是个复杂任务，可以用 /longagent 切换到 longagent 模式获得更好效果。`, ctx.themeState.theme.base.muted, { dim: true }))
+      }
+    }
+
+    // 记录 longagent 原始 prompt（用于 Task 3 中途补充需求）
+    if (state.mode === "longagent" && !line.startsWith("/")) {
+      ui.lastLongAgentPrompt = line
+      ui.longagentAborted = false
+    }
+
     startBusySpinner()
     requestRender()
 
@@ -2322,6 +2462,11 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     } catch (error) {
       if (error.name !== "AbortError") appendLog(`error: ${error.message}`)
     } finally {
+      // Task 3: 检测 longagent 被中止，提示用户可补充需求
+      if (aborter.signal.aborted && state.mode === "longagent" && ui.lastLongAgentPrompt) {
+        ui.longagentAborted = true
+        appendLog(paint("⏸ LongAgent 已中止。输入补充需求后按 Enter 可从头重新规划，或切换模式继续。", ctx.themeState.theme.semantic.warn))
+      }
       ui.busy = false
       ui.turnAbortController = null
       ui.currentActivity = null

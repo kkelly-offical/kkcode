@@ -38,7 +38,9 @@ import {
   createDegradationChain,
   generateRecoverySuggestions,
   stripFence,
-  parseJsonLoose
+  parseJsonLoose,
+  detectFrontendTask,
+  buildFrontendDesignPrompt
 } from "./longagent-utils.mjs"
 import { TaskBus } from "./longagent-task-bus.mjs"
 import { loadProjectMemory, saveProjectMemory, memoryToContext, parseMemoryFromPreview } from "./longagent-project-memory.mjs"
@@ -282,6 +284,43 @@ export async function runHybridLongAgent({
     accumulateUsage(intake)
     gateStatus.intake = { status: "pass", rounds: intake.transcript.length, summary: intakeSummary.slice(0, 500) }
     await syncState({ lastMessage: `H0: intake complete (${intake.transcript.length} qa pairs)` })
+
+    // Task 2: 用户可见的需求确认 — 展示 intake 摘要，请用户确认或补充
+    if (allowQuestion && hybridConfig.intake_user_confirm !== false) {
+      const confirmPrompt = [
+        "[SYSTEM] H0 需求分析完成。以下是对任务的理解摘要：",
+        "",
+        intakeSummary.slice(0, 1200),
+        "",
+        "请使用 question 工具询问用户：",
+        "1. 以上需求理解是否准确？",
+        "2. 是否有需要补充或修改的地方？",
+        "3. 如果没有补充，回复 [确认] 或 [继续] 即可开始执行。",
+        "",
+        "根据用户的回复更新 intakeSummary（如有补充则合并到需求中）。"
+      ].join("\n")
+      const confirmOut = await processTurnLoop({
+        prompt: confirmPrompt,
+        mode: "ask", model, providerType, sessionId, configState,
+        baseUrl, apiKeyEnv, agent, signal, allowQuestion: true, toolContext, output
+      })
+      accumulateUsage(confirmOut)
+      // 如果用户提供了补充，将其合并到 intakeSummary
+      const userAddition = String(confirmOut.reply || "").trim()
+      const cancelKeywords = ["abort", "cancel", "取消", "中止", "停止"]
+      if (cancelKeywords.some(k => userAddition.toLowerCase().includes(k))) {
+        await LongAgentManager.update(sessionId, { status: "aborted", lastMessage: "user cancelled at intake confirmation" })
+        await markSessionStatus(sessionId, "active")
+        return { sessionId, turnId: `turn_long_${Date.now()}`, reply: "用户在需求确认阶段取消了任务。", usage: aggregateUsage, toolEvents, iterations: iteration, status: "aborted", phase: "H0", gateStatus, currentGate, lastGateFailures: [], recoveryCount: 0, progress: lastProgress, elapsed: Math.round((Date.now() - startTime) / 1000), stageIndex: 0, stageCount: 0, planFrozen: false, taskProgress: {}, fileChanges: [], stageProgress: { done: 0, total: 0 }, remainingFilesCount: 0 }
+      }
+      if (userAddition && !["确认", "继续", "ok", "yes", "是", "好", "没有", "no addition"].some(k => userAddition.toLowerCase().includes(k))) {
+        intakeSummary = `${intakeSummary}\n\n[用户补充]\n${userAddition}`
+        gateStatus.intake = { ...gateStatus.intake, userConfirmed: true, userAddition: userAddition.slice(0, 200) }
+      } else {
+        gateStatus.intake = { ...gateStatus.intake, userConfirmed: true }
+      }
+      await syncState({ lastMessage: "H0: user confirmed requirements" })
+    }
   }
 
   // ========== H1: PREVIEW (只读探索) ==========
@@ -313,7 +352,13 @@ export async function runHybridLongAgent({
   await syncState({ lastMessage: "H2: blueprint agent designing architecture" })
 
   const blueprintModel = getModelForStage("blueprint")
+  // Task 4: 检测前端任务，注入设计风格提示词
+  const isFrontend = detectFrontendTask(prompt)
+  const frontendBlock = isFrontend
+    ? "\n\n" + buildFrontendDesignPrompt(configState.config.agent?.design_style || "")
+    : ""
   const blueprintPrompt = buildStageWrapper(LONGAGENT_4STAGE_STAGES.BLUEPRINT, { preview: previewFindings, blueprint: null, coding: null }, prompt)
+    + frontendBlock
     + [
       "\n\n## HYBRID MODE: STRUCTURED EXECUTION PLAN (REQUIRED)",
       "In addition to your architecture design, you MUST output a machine-parseable stage plan.",
@@ -355,20 +400,35 @@ export async function runHybridLongAgent({
     await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_BLUEPRINT_VALIDATED, sessionId, payload: { totalTasks, totalFiles, valid } })
   }
 
-  // #2 人工审查检查点
-  if (hybridConfig.blueprint_review === true && allowQuestion) {
+  // #2 人工审查检查点（Task 2: 默认 ON，用户可见的 Blueprint 确认）
+  if (hybridConfig.blueprint_review !== false && allowQuestion) {
     await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_BLUEPRINT_REVIEW, sessionId, payload: { planId: stagePlan.planId } })
+    const stageList = stagePlan.stages.map((s, i) => `  ${i + 1}. ${s.name || s.stageId} (${(s.tasks || []).length} 个任务)`).join("\n")
     const reviewOut = await processTurnLoop({
-      prompt: `[SYSTEM] Blueprint 已生成，包含 ${stagePlan.stages.length} 个阶段。架构摘要:\n${architectureText.slice(0, 1500)}\n\n请确认是否继续执行？回复 yes/是 继续，no/否 中止。`,
-      mode: "ask", model, providerType, sessionId, configState, baseUrl, apiKeyEnv, agent, signal, allowQuestion: true, toolContext
+      prompt: [
+        `[SYSTEM] H2 Blueprint 已生成，包含 ${stagePlan.stages.length} 个执行阶段：`,
+        stageList,
+        "",
+        "架构摘要：",
+        architectureText.slice(0, 1200),
+        "",
+        "请使用 question 工具询问用户：",
+        "1. 以上执行计划是否符合预期？",
+        "2. 是否有需要调整的阶段或任务？",
+        "3. 确认后将开始执行，输入 [确认]/[继续]/yes 开始，输入 [取消]/abort 中止。",
+        "",
+        "根据用户回复决定是否继续执行。"
+      ].join("\n"),
+      mode: "ask", model, providerType, sessionId, configState, baseUrl, apiKeyEnv, agent, signal, allowQuestion: true, toolContext, output
     })
     accumulateUsage(reviewOut)
     const answer = String(reviewOut.reply || "").toLowerCase().trim()
-    if (["no", "否", "n", "取消", "abort"].some(k => answer.includes(k))) {
+    if (["no", "否", "n", "取消", "abort", "cancel", "中止", "停止"].some(k => answer.includes(k))) {
       await LongAgentManager.update(sessionId, { status: "aborted", lastMessage: "user rejected blueprint" })
       await markSessionStatus(sessionId, "active")
       return { sessionId, turnId: `turn_long_${Date.now()}`, reply: "用户中止了 Blueprint 审查。", usage: aggregateUsage, toolEvents, iterations: iteration, status: "aborted", phase: "H2", gateStatus, currentGate, lastGateFailures: [], recoveryCount: 0, progress: lastProgress, elapsed: Math.round((Date.now() - startTime) / 1000), stageIndex: 0, stageCount: stagePlan.stages.length, planFrozen, taskProgress: {}, fileChanges: [], stageProgress: { done: 0, total: 0 }, remainingFilesCount: 0 }
     }
+    gateStatus.blueprintReview = { status: "pass", userConfirmed: true }
   }
 
   // ========== H2.5: GIT BRANCH (可选) ==========

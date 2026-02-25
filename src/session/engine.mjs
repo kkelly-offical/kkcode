@@ -10,6 +10,7 @@ import { initialize as initObservability } from "../observability/index.mjs"
 import { ToolRegistry } from "../tool/registry.mjs"
 import { resolveAgentForMode } from "../agent/agent.mjs"
 import { estimateStringTokens } from "./compaction.mjs"
+import { classifyTaskMode } from "./longagent-utils.mjs"
 
 let sinkReady = false
 
@@ -21,6 +22,48 @@ export function resolveMode(inputMode = "agent") {
   const mode = String(inputMode || "agent").toLowerCase()
   if (["ask", "plan", "agent", "longagent"].includes(mode)) return mode
   return "agent"
+}
+
+/**
+ * 智能模式路由：根据 prompt 内容判断最适合的执行模式
+ * @returns {{ mode: string, changed: boolean, reason: string, confidence: string, forced: boolean }}
+ *   forced=true 表示用户强制使用了不匹配的模式（需要确认）
+ */
+export function routeMode(prompt, requestedMode) {
+  const req = resolveMode(requestedMode)
+  // plan 模式不参与自动路由
+  if (req === "plan") return { mode: req, changed: false, reason: "plan_mode_exempt", confidence: "high", forced: false }
+
+  const classification = classifyTaskMode(prompt)
+  const suggested = classification.mode
+
+  // 相同模式，无需路由
+  if (suggested === req) return { mode: req, changed: false, reason: classification.reason, confidence: classification.confidence, forced: false }
+
+  // 低置信度不自动路由
+  if (classification.confidence === "low") return { mode: req, changed: false, reason: "low_confidence", confidence: "low", forced: false }
+
+  // 高置信度：问答类 → 自动切换到 ask（无需确认）
+  if (suggested === "ask" && classification.confidence === "high") {
+    return { mode: "ask", changed: true, reason: classification.reason, confidence: "high", forced: false }
+  }
+
+  // 高置信度：agent 模式下检测到 longagent 任务 → 建议切换（无需确认，只提示）
+  if (req === "agent" && suggested === "longagent" && classification.confidence === "high") {
+    return { mode: req, changed: false, reason: classification.reason, confidence: "high", forced: false, suggestion: "longagent" }
+  }
+
+  // 高置信度：用户强制 longagent 但任务是简单 agent 任务 → 需要确认
+  if (req === "longagent" && suggested === "agent" && classification.confidence === "high") {
+    return { mode: req, changed: false, reason: classification.reason, confidence: "high", forced: true, suggestion: "agent" }
+  }
+
+  // 中等置信度：agent 模式下检测到问答 → 自动切换
+  if (req === "agent" && suggested === "ask" && classification.confidence === "medium") {
+    return { mode: "ask", changed: true, reason: classification.reason, confidence: "medium", forced: false }
+  }
+
+  return { mode: req, changed: false, reason: classification.reason, confidence: classification.confidence, forced: false }
 }
 
 export function newSessionId() {

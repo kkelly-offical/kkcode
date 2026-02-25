@@ -402,6 +402,129 @@ export function createDegradationChain(config = {}) {
   }
 }
 
+// ========== Task 1: 智能任务模式分类 ==========
+
+/**
+ * 分析 prompt，判断最适合的执行模式
+ * @returns {{ mode: 'ask'|'agent'|'longagent', confidence: 'high'|'medium'|'low', reason: string }}
+ */
+export function classifyTaskMode(prompt) {
+  const text = String(prompt || "").trim()
+  if (!text) return { mode: "ask", confidence: "high", reason: "empty_input" }
+  const lower = text.toLowerCase()
+  const len = text.length
+
+  // --- 问答类信号 → ask ---
+  const questionPatterns = [
+    /^(what|how|why|when|where|who|which|explain|tell me|describe|show me)\b/i,
+    /^(什么|为什么|怎么|如何|哪里|哪个|谁|能否|请解释|告诉我|描述|是什么|有什么|怎样)/,
+    /[？?]\s*$/
+  ]
+  const pureAskKeywords = [
+    "explain", "what is", "what are", "how does", "why does", "describe", "tell me about",
+    "解释", "是什么", "为什么", "怎么理解", "什么意思", "有什么区别", "如何理解"
+  ]
+  const isQuestion = questionPatterns.some(re => re.test(text))
+  const isPureAsk = pureAskKeywords.some(kw => lower.includes(kw))
+
+  if (isQuestion && isPureAsk) {
+    return { mode: "ask", confidence: "high", reason: "question_with_explain_intent" }
+  }
+  if (isQuestion && len < 80) {
+    return { mode: "ask", confidence: "medium", reason: "short_question" }
+  }
+
+  // --- 大型/多文件任务信号 → longagent ---
+  const longagentPatterns = [
+    /\b(multiple files?|across files?|entire (codebase|project|repo)|all files?|跨文件|多个文件|整个项目|全量)\b/i,
+    /\b(refactor|migrate|rewrite|overhaul|redesign|重构|迁移|重写|改造|全面重)\b/i,
+    /\b(implement|build|create|develop|add).{0,40}(system|module|service|feature|component|framework|pipeline|架构|系统|模块|服务|功能|组件|框架|流水线)\b/i,
+    /\b(full|complete|comprehensive|end.to.end|完整实现|完全|端到端)\b/i,
+    /\b(multi.?stage|multi.?step|多阶段|多步骤|分阶段)\b/i
+  ]
+  const isLongAgent = longagentPatterns.some(re => re.test(lower))
+
+  if (isLongAgent) {
+    return { mode: "longagent", confidence: "high", reason: "multi_file_or_system_task" }
+  }
+  // 长文本通常是复杂任务
+  if (len > 400 && !isQuestion) {
+    return { mode: "longagent", confidence: "medium", reason: "long_complex_prompt" }
+  }
+
+  // --- 简单单文件任务信号 → agent ---
+  const agentPatterns = [
+    /\b(fix|debug|patch|update|change|modify|rename|delete|remove|add|insert|append)\b/i,
+    /\b(修复|调试|修改|更新|删除|添加|插入|改一下|帮我改|帮我加)\b/i,
+    /\b(run|execute|test|check|verify|运行|执行|测试|检查|验证)\b/i
+  ]
+  const isAgent = agentPatterns.some(re => re.test(lower))
+
+  if (isAgent && len < 250) {
+    return { mode: "agent", confidence: "medium", reason: "simple_action_task" }
+  }
+  if (len > 50 && !isQuestion) {
+    return { mode: "agent", confidence: "low", reason: "default_agent" }
+  }
+
+  return { mode: "ask", confidence: "low", reason: "default_ask" }
+}
+
+// ========== Task 4: 前端任务检测与设计风格提示词 ==========
+
+/**
+ * 检测 prompt 是否涉及前端/UI 任务
+ */
+export function detectFrontendTask(prompt) {
+  const lower = String(prompt || "").toLowerCase()
+  const frontendPatterns = [
+    /\b(react|vue|angular|svelte|next\.?js|nuxt|remix|astro|solid)\b/i,
+    /\b(html|css|scss|sass|less|tailwind|bootstrap|styled.components|emotion|chakra)\b/i,
+    /\b(ui|ux|frontend|front.end|web app|webpage|landing page|dashboard|component|widget)\b/i,
+    /\b(button|form|modal|navbar|sidebar|layout|grid|flex|animation|transition|responsive)\b/i,
+    /\b(前端|界面|页面|组件|样式|布局|动画|交互|响应式|移动端)\b/i
+  ]
+  return frontendPatterns.some(re => re.test(lower))
+}
+
+/**
+ * 生成前端设计风格提示词块
+ * @param {string} designStyle - 用户 profile 中的 design_style
+ */
+export function buildFrontendDesignPrompt(designStyle = "") {
+  const lines = [
+    "## Frontend Design Guidelines",
+    "",
+    "Apply these principles to all UI/frontend code:",
+    "- Use semantic HTML5 elements (header, nav, main, section, article, footer)",
+    "- Responsive design with mobile-first approach (breakpoints: 640/768/1024/1280px)",
+    "- Accessibility: aria labels, keyboard navigation, color contrast ≥ 4.5:1",
+    "- CSS custom properties for theming; prefer CSS Grid/Flexbox for layouts",
+    "- Smooth transitions (150-300ms ease) for interactive elements",
+    "- Consistent spacing scale (4px base unit: 4/8/12/16/24/32/48/64px)",
+    "- Cross-browser compatibility (Chrome, Firefox, Safari, Edge)"
+  ]
+
+  if (designStyle) {
+    const s = designStyle.toLowerCase()
+    if (s.includes("minimal") || s.includes("clean")) {
+      lines.push("- Style: Minimal/Clean — generous whitespace, 2-3 color palette, flat design, no decorative elements")
+    } else if (s.includes("material")) {
+      lines.push("- Style: Material Design — elevation shadows, ripple effects, Material color system, 8dp grid")
+    } else if (s.includes("dark")) {
+      lines.push("- Style: Dark theme — backgrounds #121212/#1e1e1e, surface #2d2d2d, ensure contrast ≥ 4.5:1")
+    } else if (s.includes("glass") || s.includes("glassmorphism")) {
+      lines.push("- Style: Glassmorphism — backdrop-filter blur(10-20px), semi-transparent bg (rgba white/black 0.1-0.2), subtle 1px border")
+    } else if (s.includes("neumorphism") || s.includes("soft")) {
+      lines.push("- Style: Neumorphism — soft inset/outset shadows, monochromatic palette, subtle depth without harsh borders")
+    } else {
+      lines.push(`- Style: ${designStyle} — apply consistently across all components`)
+    }
+  }
+
+  return lines.join("\n")
+}
+
 // ========== Phase 11: 恢复建议生成 ==========
 
 export function generateRecoverySuggestions({ status, taskProgress, gateStatus, phase, recoveryCount, fileChanges }) {
