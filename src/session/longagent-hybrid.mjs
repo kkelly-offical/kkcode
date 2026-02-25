@@ -457,6 +457,7 @@ export async function runHybridLongAgent({
     "### Preview Findings", previewFindings.slice(0, 2000), "",
     "### Blueprint Architecture", architectureText.slice(0, 3000)
   ].join("\n")
+  const seenFilePaths = new Set() // #3 去重：跨阶段文件路径去重
 
   let codingRollbackCount = 0
   const maxCodingRollbacks = Number(hybridConfig.max_coding_rollbacks || 2)
@@ -499,10 +500,17 @@ export async function runHybridLongAgent({
         stage.tasks.map(t => [t.taskId, taskProgress[t.taskId]]).filter(([, v]) => Boolean(v))
       )
 
+      // #4 计划锚点 — 每阶段动态构建，不存入 priorContext 避免被压缩掉
+      const stageStatuses = stagePlan.stages.map((s, i) => {
+        const marker = i < stageIndex ? "✓" : i === stageIndex ? "→" : " "
+        return `[${marker}] 阶段${i + 1}: ${s.name || s.stageId}`
+      }).join("\n")
+      const planAnchor = `## 计划锚点\n目标: ${stagePlan.objective || prompt}\n进度: ${stageIndex + 1}/${stagePlan.stages.length}\n${stageStatuses}\n\n`
+
       const stageResult = await runStageBarrier({
         stage, sessionId, config: configState.config, model, providerType,
         seedTaskProgress: seeded, objective: prompt,
-        stageIndex, stageCount: stagePlan.stages.length, priorContext,
+        stageIndex, stageCount: stagePlan.stages.length, priorContext: planAnchor + priorContext,
         stuckTracker,
         onTaskComplete: async (taskData) => {
           await saveTaskCheckpoint(sessionId, taskData.stageId, taskData.taskId, taskData)
@@ -536,12 +544,19 @@ export async function runHybridLongAgent({
         successCount: stageResult.successCount, failCount: stageResult.failCount
       }
 
-      // 知识传递
+      // #1 阶段级压缩 + #3 文件去重 — 结构化摘要，跨阶段去重文件路径
       const taskSummaries = Object.values(stageResult.taskProgress || {})
         .filter(t => t.lastReply)
-        .map(t => `[${t.taskId}] ${t.status}: ${t.lastReply.slice(0, 300)}`)
-      if (taskSummaries.length) {
-        priorContext += `\n### Stage ${stageIndex + 1}: ${stage.name || stage.stageId} (${stageResult.allSuccess ? "PASS" : "FAIL"})\n${taskSummaries.join("\n")}\n`
+        .map(t => `  - [${t.taskId}] ${t.status}: ${t.lastReply.slice(0, 250)}`)
+      const stageFiles = (stageResult.fileChanges || [])
+        .map(f => (typeof f === "string" ? f : (f.path || f.file || "")))
+        .filter(Boolean)
+      const newFiles = stageFiles.filter(f => !seenFilePaths.has(f))
+      newFiles.forEach(f => seenFilePaths.add(f))
+      if (taskSummaries.length || newFiles.length) {
+        const fileNote = newFiles.length ? `\n  新增/修改文件: ${newFiles.join(", ")}` : ""
+        const failNote = !stageResult.allSuccess ? ` 失败任务数: ${stageResult.failCount}` : ""
+        priorContext += `\n### 阶段${stageIndex + 1}: ${stage.name || stage.stageId} (${stageResult.allSuccess ? "PASS" : "FAIL"}${failNote})\n${taskSummaries.join("\n")}${fileNote}\n`
       }
       // #4 TaskBus 注入到 priorContext
       if (taskBus) {
