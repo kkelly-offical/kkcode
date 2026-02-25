@@ -1,0 +1,120 @@
+# kkcode 权限配置 — 严格模式
+# 适用于：生产环境、企业团队、安全敏感项目
+# 原则：最小权限，所有写操作和命令执行需确认
+#
+# 使用方式：将此文件内容合并到你的 kkcode 配置文件中
+
+permission:
+  default_policy: deny
+  non_tty_default: deny
+
+  rules:
+    # ─── 只读工具：始终允许 ───
+    - tool: read
+      action: allow
+    - tool: glob
+      action: allow
+    - tool: grep
+      action: allow
+    - tool: list
+      action: allow
+    - tool: codesearch
+      action: allow
+
+    # ─── 规划与提问：始终允许 ───
+    - tool: todowrite
+      action: allow
+    - tool: question
+      action: allow
+    - tool: ask
+      action: allow
+
+    # ─── 文件写入：仅允许项目源码目录 ───
+    - tool: write
+      action: allow
+      file_pattern: "src/**"
+    - tool: write
+      action: allow
+      file_pattern: "test/**"
+    - tool: write
+      action: allow
+      file_pattern: "tests/**"
+    - tool: write
+      action: ask
+      # 其他目录的写入需要确认
+
+    - tool: edit
+      action: allow
+      file_pattern: "src/**"
+    - tool: edit
+      action: allow
+      file_pattern: "test/**"
+    - tool: edit
+      action: allow
+      file_pattern: "tests/**"
+    - tool: edit
+      action: ask
+
+    - tool: patch
+      action: allow
+      file_pattern: "src/**"
+    - tool: patch
+      action: allow
+      file_pattern: "test/**"
+    - tool: patch
+      action: ask
+
+    # ─── Bash 命令：白名单制 ───
+    # 安全的只读命令
+    - tool: bash
+      action: allow
+      command_prefix: "node --check"
+    - tool: bash
+      action: allow
+      command_prefix: "node --test"
+    - tool: bash
+      action: allow
+      command_prefix: "npm test"
+    - tool: bash
+      action: allow
+      command_prefix: "npm run lint"
+    - tool: bash
+      action: allow
+      command_prefix: "npm run build"
+    - tool: bash
+      action: allow
+      command_prefix: "git status"
+    - tool: bash
+      action: allow
+      command_prefix: "git diff"
+    - tool: bash
+      action: allow
+      command_prefix: "git log"
+
+    # 危险命令：始终拒绝
+    - tool: bash
+      action: deny
+      command_prefix: "rm -rf"
+    - tool: bash
+      action: deny
+      command_prefix: "git push --force"
+    - tool: bash
+      action: deny
+      command_prefix: "git reset --hard"
+    - tool: bash
+      action: deny
+      command_prefix: "chmod"
+    - tool: bash
+      action: deny
+      command_prefix: "curl"
+    - tool: bash
+      action: deny
+      command_prefix: "wget"
+
+    # 其他 bash 命令需要确认
+    - tool: bash
+      action: ask
+
+    # ─── 网络工具：需确认 ───
+    - tool: websearch
+      action: ask

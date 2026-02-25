@@ -1,0 +1,57 @@
+# kkcode 权限配置 — 宽松模式
+# 适用于：个人项目、CI/CD 环境、受控沙箱
+# 原则：全部放行，仅拒绝极端危险操作
+#
+# ⚠️ 警告：此模式下 AI 拥有几乎完全的文件和命令权限
+# 仅在你完全信任运行环境时使用
+#
+# 使用方式：将此文件内容合并到你的 kkcode 配置文件中
+
+permission:
+  default_policy: allow
+  non_tty_default: allow_once
+
+  rules:
+    # ─── 所有只读工具：允许 ───
+    - tool: read
+      action: allow
+    - tool: glob
+      action: allow
+    - tool: grep
+      action: allow
+    - tool: list
+      action: allow
+    - tool: codesearch
+      action: allow
+    - tool: websearch
+      action: allow
+
+    # ─── 所有写入工具：允许 ───
+    - tool: write
+      action: allow
+    - tool: edit
+      action: allow
+    - tool: patch
+      action: allow
+    - tool: todowrite
+      action: allow
+    - tool: question
+      action: allow
+    - tool: ask
+      action: allow
+
+    # ─── Bash 命令：允许，仅拒绝极端危险操作 ───
+    - tool: bash
+      action: deny
+      command_prefix: "rm -rf /"
+    - tool: bash
+      action: deny
+      command_prefix: "mkfs"
+    - tool: bash
+      action: deny
+      command_prefix: "dd if="
+    - tool: bash
+      action: deny
+      command_prefix: ":(){:|:&};:"
+    - tool: bash
+      action: allow

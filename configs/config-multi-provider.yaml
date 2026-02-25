@@ -1,0 +1,76 @@
+# kkcode 配置 — 多 Provider 组合
+# 同时配置多个模型提供商，按需切换
+# 适用于需要在不同模型间灵活选择的团队
+#
+# 环境变量:
+#   export DASHSCOPE_API_KEY="your-dashscope-key"
+#   export DEEPSEEK_API_KEY="your-deepseek-key"
+#   export ZHIPU_API_KEY="your-zhipu-key"
+#   export ANTHROPIC_API_KEY="your-anthropic-key"
+
+provider:
+  # 默认使用 DashScope（Qwen 系列）
+  default: dashscope
+
+  dashscope:
+    type: openai-compatible
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api_key_env: DASHSCOPE_API_KEY
+    default_model: qwen3.5-plus-latest
+    models:
+      - qwen3.5-plus-latest
+      - qwen3.5-plus
+      - qwen3-max
+      - qwen3-coder-plus
+      - qwen-plus
+    timeout_ms: 120000
+    stream_idle_timeout_ms: 120000
+    max_tokens: 32768
+    retry_attempts: 3
+    retry_base_delay_ms: 800
+    stream: true
+
+  deepseek:
+    type: openai-compatible
+    base_url: https://api.deepseek.com
+    api_key_env: DEEPSEEK_API_KEY
+    default_model: deepseek-chat
+    models:
+      - deepseek-chat
+      - deepseek-reasoner
+    timeout_ms: 120000
+    stream_idle_timeout_ms: 120000
+    max_tokens: 32768
+    retry_attempts: 3
+    retry_base_delay_ms: 800
+    stream: true
+
+  zhipu:
+    type: openai-compatible
+    base_url: https://open.bigmodel.cn/api/paas/v4
+    api_key_env: ZHIPU_API_KEY
+    default_model: glm-5
+    models:
+      - glm-5
+      - glm-4.5
+    timeout_ms: 120000
+    stream_idle_timeout_ms: 120000
+    max_tokens: 32768
+    retry_attempts: 3
+    retry_base_delay_ms: 800
+    stream: true
+
+  anthropic:
+    type: anthropic
+    api_key_env: ANTHROPIC_API_KEY
+    default_model: claude-sonnet-4-6
+    models:
+      - claude-opus-4-6
+      - claude-sonnet-4-6
+      - claude-haiku-4-5-20251001
+    timeout_ms: 120000
+    stream_idle_timeout_ms: 120000
+    max_tokens: 32768
+    retry_attempts: 3
+    retry_base_delay_ms: 800
+    stream: true

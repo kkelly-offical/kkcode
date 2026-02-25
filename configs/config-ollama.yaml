@@ -1,0 +1,43 @@
+# kkcode 配置 — 本地 Ollama
+# 适用于使用本地部署模型的用户（无需 API Key）
+# 安装 Ollama: https://ollama.com/
+#
+# 使用前先拉取模型:
+#   ollama pull qwen3:32b
+#   ollama pull deepseek-coder-v2:16b
+#   ollama pull codellama:34b
+
+provider:
+  default: ollama
+
+  ollama:
+    type: ollama
+    base_url: http://localhost:11434
+    api_key_env: ""
+    default_model: qwen3:32b
+    models:
+      # 推荐编码模型（按参数量排序）
+      - qwen3:32b
+      - qwen3:14b
+      - qwen3:8b
+      - deepseek-coder-v2:16b
+      - codellama:34b
+      - codellama:13b
+      - llama3.1:70b
+      - llama3.1:8b
+    # 本地模型响应较慢，适当放宽超时
+    timeout_ms: 600000
+    stream_idle_timeout_ms: 300000
+    max_tokens: 16384
+    retry_attempts: 1
+    retry_base_delay_ms: 1000
+    stream: true
+
+# 本地模型建议降低并发和迭代上限
+agent:
+  max_steps: 30
+  longagent:
+    max_iterations: 20
+    parallel:
+      enabled: false
+      max_concurrency: 1

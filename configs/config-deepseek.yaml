@@ -1,0 +1,26 @@
+# kkcode 配置 — DeepSeek V3 / R1
+# 适用于使用 DeepSeek 官方 API 的用户
+# 获取 API Key: https://platform.deepseek.com/
+#
+# 环境变量:
+#   export DEEPSEEK_API_KEY="your-api-key-here"
+
+provider:
+  default: deepseek
+
+  deepseek:
+    type: openai-compatible
+    base_url: https://api.deepseek.com
+    api_key_env: DEEPSEEK_API_KEY
+    default_model: deepseek-chat
+    models:
+      # deepseek-chat — 通用对话模型（当前指向 V3.1-Terminus 非思考模式）
+      - deepseek-chat
+      # deepseek-reasoner — 推理模型（当前指向 V3.1-Terminus 思考模式）
+      - deepseek-reasoner
+    timeout_ms: 120000
+    stream_idle_timeout_ms: 120000
+    max_tokens: 32768
+    retry_attempts: 3
+    retry_base_delay_ms: 800
+    stream: true

@@ -1,0 +1,33 @@
+# kkcode 配置 — 智谱 GLM-5 / GLM-4.5
+# 适用于使用智谱 AI 平台的用户
+# 获取 API Key: https://open.bigmodel.cn/
+#
+# 环境变量:
+#   export ZHIPU_API_KEY="your-api-key-here"
+
+provider:
+  default: zhipu
+
+  zhipu:
+    type: openai-compatible
+    # 国内端点（推荐大陆用户）
+    base_url: https://open.bigmodel.cn/api/paas/v4
+    # 国际端点（海外用户可替换）
+    # base_url: https://api.z.ai/api/paas/v4
+    api_key_env: ZHIPU_API_KEY
+    default_model: glm-5
+    models:
+      # GLM-5 旗舰（745B MoE, 44B 激活参数, 200K 上下文）
+      - glm-5
+      # GLM-4.5 系列（355B MoE, 32B 激活参数）
+      - glm-4.5
+      - glm-4.5-air    # 轻量版（106B MoE, 12B 激活参数）
+      # GLM-4 系列
+      - glm-4.7
+      - glm-4.6
+    timeout_ms: 120000
+    stream_idle_timeout_ms: 120000
+    max_tokens: 32768
+    retry_attempts: 3
+    retry_base_delay_ms: 800
+    stream: true
