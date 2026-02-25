@@ -163,19 +163,33 @@ export class TaskValidator {
   }
 
   async globPattern(pattern) {
+    // A2: 使用 Node.js 22 内置 fs.glob 替代不在 dependencies 中的 npm glob 包
+    const SKIP_DIRS = ["node_modules", ".git", "dist", "build"]
     try {
-      const { Glob } = await import("glob")
-      const g = new Glob(pattern, {
-        cwd: this.cwd,
-        ignore: ["node_modules/**", ".git/**", "dist/**", "build/**"]
-      })
+      const { glob } = await import("node:fs/promises")
       const matches = []
-      for await (const match of g) {
-        matches.push(path.join(this.cwd, match))
+      for await (const entry of glob(pattern, {
+        cwd: this.cwd,
+        exclude: (name) => SKIP_DIRS.some(s => name.includes(s))
+      })) {
+        matches.push(path.join(this.cwd, entry))
       }
       return matches
     } catch {
-      return []
+      // Fallback: 用 child_process 执行 find 命令
+      try {
+        const ext = pattern.replace("**/*.", "")
+        const { stdout } = await execFile("find", [
+          ".", "-name", `*.${ext}`,
+          "-not", "-path", "*/node_modules/*",
+          "-not", "-path", "*/.git/*",
+          "-not", "-path", "*/dist/*",
+          "-not", "-path", "*/build/*"
+        ], { cwd: this.cwd, timeout: 10000 })
+        return stdout.trim().split("\n").filter(Boolean).map(f => path.join(this.cwd, f))
+      } catch {
+        return []
+      }
     }
   }
 
