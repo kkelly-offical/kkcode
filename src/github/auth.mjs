@@ -76,22 +76,25 @@ function sleep(ms) {
  * @param {string} url - 要打开的 URL
  */
 function openBrowser(url) {
+  // Validate URL is a safe https:// URL before passing to shell
+  let parsed
+  try { parsed = new URL(url) } catch { return false }
+  if (parsed.protocol !== "https:") return false
+
+  const safeUrl = parsed.href
   const platform = process.platform
   let command
   let args
 
   if (platform === "win32") {
-    // Windows
     command = "cmd"
-    args = ["/c", "start", "", url]
+    args = ["/c", "start", "", safeUrl]
   } else if (platform === "darwin") {
-    // macOS
     command = "open"
-    args = [url]
+    args = [safeUrl]
   } else {
-    // Linux 和其他平台
     command = "xdg-open"
-    args = [url]
+    args = [safeUrl]
   }
 
   try {

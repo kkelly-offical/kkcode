@@ -47,14 +47,14 @@
 - npm / pnpm
 - 建议终端：Windows Terminal、iTerm2 或现代 Linux terminal
 
-### 安装与运行
-
-**从 npm 安装（推荐）：**
+### 快速开始
 
 ```bash
 npm install -g @kkelly-offical/kkcode
 kkcode
 ```
+
+首次启动会进入 **引导设置**，选择编程语言、技术栈、代码风格等偏好，kkcode 会在每次对话中自动应用这些设置。随时可用 `/profile` 查看或修改，`/like` 重新运行引导。
 
 **从源码运行（开发用）：**
 
@@ -289,15 +289,20 @@ kkcode longagent status      # LongAgent 状态
 | `Tab` | 模式轮换 |
 | `Up/Down` | 输入历史 |
 | `Ctrl+Up/Down` | 滚动日志区 |
-| `Esc` | 清空输入 |
+| `Esc` | 中断当前 turn（空闲时清空输入） |
+| `Ctrl+C` | busy 时中断 turn；空闲时连按两次退出 |
 | `Ctrl+L` | 清空活动区 |
-| `Ctrl+C` | 退出 |
 
 支持 `@图片路径` 或 `@图片URL` 引用多模态输入。
 
 ### 常用 Slash 命令
 
-`/help` `/status` `/history` `/new` `/resume` `/mode` `/provider` `/model` `/permission` `/paste` `/commands` `/reload` `/clear` `/exit`
+**会话**: `/new` `/resume` `/history` `/compact` `/undo`
+**模式**: `/ask` `/plan` `/agent` `/longagent`
+**配置**: `/provider` `/model` `/permission`
+**个人**: `/profile` `/like`
+**工具**: `/paste` `/status` `/keys` `/commands`
+**其他**: `/help` `/clear` `/exit`
 
 ---
 

@@ -134,7 +134,7 @@ export function createInitCommand() {
       const defaultProvider = config.provider.default
       const providerCfg = config.provider[defaultProvider] || {}
       if (providerCfg.api_key_env && !process.env[providerCfg.api_key_env]) {
-        console.log(`note: ${providerCfg.api_key_env} is not set in environment`)
+        console.log(`note: environment variable ${providerCfg.api_key_env} is not set`)
       }
       console.log("run 'kkcode doctor' for full diagnostics")
     })

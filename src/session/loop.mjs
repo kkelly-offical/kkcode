@@ -54,11 +54,29 @@ async function buildSystemPrompt({ mode, model, cwd, agent = null, tools = [], s
   const profile = await loadProfile()
   let profileBlock = ""
   if (profile && !profile.beginner) {
-    const lines = ["# User Profile"]
-    if (profile.languages?.length) lines.push(`- Languages: ${profile.languages.join(", ")}`)
-    if (profile.tech_stack?.length) lines.push(`- Tech stack: ${profile.tech_stack.join(", ")}`)
-    if (profile.design_style) lines.push(`- Code style preference: ${profile.design_style}`)
-    if (profile.extra_notes) lines.push(`- Notes: ${profile.extra_notes}`)
+    const lines = ["# User Profile", "", "Apply these preferences consistently in all code you write and suggestions you make:"]
+    if (profile.languages?.length) {
+      lines.push(`- Languages: ${profile.languages.join(", ")} — prefer these when suggesting solutions or writing code`)
+    }
+    if (profile.tech_stack?.length) {
+      lines.push(`- Tech stack: ${profile.tech_stack.join(", ")} — use these frameworks/tools when relevant`)
+    }
+    if (profile.design_style) {
+      lines.push(`- Code style: ${profile.design_style}`)
+      const s = profile.design_style.toLowerCase()
+      if (s.includes("minimal") || s.startsWith("clean")) {
+        lines.push("  → Write minimal code. Avoid over-engineering, unnecessary abstractions, and verbose implementations. Prefer simple, direct solutions.")
+      } else if (s.startsWith("functional") || s.includes("pure function")) {
+        lines.push("  → Prefer pure functions and immutability. Use map/filter/reduce over loops. Avoid side effects and mutable state where possible.")
+      } else if (s.startsWith("object-oriented") || s.includes("class")) {
+        lines.push("  → Use OOP patterns — encapsulation, design patterns, well-defined classes. Organize code around objects and their behaviors.")
+      } else if (s.startsWith("performance") || s.includes("optimize")) {
+        lines.push("  → Optimize for performance. Consider time/space complexity. Avoid unnecessary allocations and redundant operations.")
+      }
+    }
+    if (profile.extra_notes) {
+      lines.push(`- User requirements: ${profile.extra_notes} — treat these as hard requirements`)
+    }
     profileBlock = lines.join("\n")
   }
 

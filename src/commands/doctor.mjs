@@ -120,7 +120,7 @@ function printTextReport(report, themeWarnings = []) {
   }
   for (const p of report.runtime.providersConfigured) {
     console.log(
-      `provider:${p.name} type=${p.type} model=${p.model || "?"} key=${p.apiKeyEnv || "-"} (${p.apiKeyConfigured ? "set" : "missing"})`
+      `provider:${p.name} type=${p.type} model=${p.model || "?"} env=${p.apiKeyEnv || "-"} (${p.apiKeyConfigured ? "set" : "missing"})`
     )
   }
   console.log(`check node=${report.checks.node ? "ok" : "missing"} rg=${report.checks.rg ? "ok" : "missing"} git=${report.checks.git ? "ok" : "missing"}`)

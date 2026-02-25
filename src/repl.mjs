@@ -74,27 +74,28 @@ const BUILTIN_SLASH = [
   { name: "new", desc: "new session" },
   { name: "resume", desc: "resume session" },
   { name: "history", desc: "list sessions" },
+  { name: "compact", desc: "summarize conversation to free context" },
+  { name: "undo", desc: "undo last code changes" },
   { name: "mode", desc: "switch mode" },
-  { name: "provider", desc: "switch provider" },
-  { name: "model", desc: "open model picker" },
-  { name: "permission", desc: "permission policy / cache" },
-  { name: "status", desc: "runtime state" },
-  { name: "commands", desc: "list custom slash commands" },
-  { name: "reload", desc: "reload custom commands" },
-  { name: "paste", desc: "paste image from clipboard" },
-  { name: "keys", desc: "show key map" },
-  { name: "session", desc: "show session id" },
   { name: "ask", desc: "switch to ask mode" },
   { name: "plan", desc: "switch to plan mode" },
   { name: "agent", desc: "switch to agent mode" },
   { name: "longagent", desc: "switch to longagent mode" },
-  { name: "create-skill", desc: "generate a new skill via AI" },
-  { name: "create-agent", desc: "generate a new sub-agent via AI" },
-  { name: "undo", desc: "undo last code changes" },
+  { name: "provider", desc: "switch provider" },
+  { name: "model", desc: "open model picker" },
+  { name: "profile", desc: "view or edit your user profile" },
+  { name: "like", desc: "show welcome screen / re-run onboarding" },
   { name: "trust", desc: "trust this workspace" },
   { name: "untrust", desc: "revoke workspace trust" },
-  { name: "profile", desc: "view or edit your user profile" },
-  { name: "like", desc: "show the welcome screen again" },
+  { name: "permission", desc: "permission policy / cache" },
+  { name: "paste", desc: "paste image from clipboard" },
+  { name: "status", desc: "runtime state" },
+  { name: "keys", desc: "show key map" },
+  { name: "session", desc: "show session id" },
+  { name: "commands", desc: "list custom slash commands" },
+  { name: "create-skill", desc: "generate a new skill via AI" },
+  { name: "create-agent", desc: "generate a new sub-agent via AI" },
+  { name: "reload", desc: "reload custom commands" },
   { name: "exit", desc: "quit" }
 ]
 
@@ -318,32 +319,53 @@ function clearScreen() {
 }
 
 function help(providers = []) {
-  const rows = [
-    ["/help,/h,/?", "show help"],
-    ["/dash,/home", "show dashboard panel"],
-    ["/clear,/cls", "clear terminal"],
-    ["/new,/n", "start a new session"],
-    ["/resume [id],/r [id]", "resume a previous session"],
-    ["/history", "list recent sessions"],
-    ["/mode <name>,/m <name>", "switch mode (ask|plan|agent|longagent)"],
-    ["/provider <type>,/p <type>", `switch provider (${providers.join("|") || "configured providers"})`],
-    ["/model <id>", "set active model in current provider"],
-    ["/permission [...]", "adjust permission policy"],
-    ["/paste [text]", "paste clipboard image (with optional prompt)"],
-    ["/session,/s", "print current session id"],
-    ["/commands", "list custom slash commands"],
-    ["/create-skill <desc>", "generate a new skill via AI"],
-    ["/create-agent <desc>", "generate a new sub-agent via AI"],
-    ["/reload", "reload commands, skills, agents"],
-    ["/keys,/k", "show key map"],
-    ["/status", "show current runtime state"],
-    ["/exit,/quit,/q", "quit"],
-    ["/compact", "summarize conversation to free context"],
-    ["/ask /plan /agent /longagent", "quick mode switch"],
-    ["/longagent 4stage|hybrid", "switch longagent impl (4stage or hybrid)"]
-  ]
+  const W = 30
+  const row = (cmd, desc) => `  ${padRight(cmd, W)} ${desc}`
   const lines = ["", "Commands:"]
-  for (const row of rows) lines.push(`  ${padRight(row[0], 28)} ${row[1]}`)
+
+  lines.push("")
+  lines.push("  Session")
+  lines.push(row("/new,/n", "start a new session"))
+  lines.push(row("/resume [id],/r [id]", "resume a previous session"))
+  lines.push(row("/history", "list recent sessions"))
+  lines.push(row("/session,/s", "print current session id"))
+  lines.push(row("/compact", "summarize conversation to free context"))
+  lines.push(row("/undo", "undo last code changes"))
+
+  lines.push("")
+  lines.push("  Mode & Provider")
+  lines.push(row("/ask /plan /agent /longagent", "quick mode switch"))
+  lines.push(row("/mode <name>,/m <name>", "switch mode (ask|plan|agent|longagent)"))
+  lines.push(row("/longagent 4stage|hybrid", "switch longagent impl"))
+  lines.push(row("/provider <type>,/p <type>", `switch provider (${providers.join("|") || "configured"})`))
+  lines.push(row("/model <id>", "set active model"))
+
+  lines.push("")
+  lines.push("  Profile & Workspace")
+  lines.push(row("/profile", "view or edit your user profile"))
+  lines.push(row("/like", "show welcome screen / re-run onboarding"))
+  lines.push(row("/trust", "trust this workspace"))
+  lines.push(row("/untrust", "revoke workspace trust"))
+
+  lines.push("")
+  lines.push("  Tools & Display")
+  lines.push(row("/permission [...]", "adjust permission policy"))
+  lines.push(row("/paste [text]", "paste clipboard image"))
+  lines.push(row("/status", "show current runtime state"))
+  lines.push(row("/dash,/home", "redraw dashboard"))
+  lines.push(row("/clear,/cls", "clear terminal"))
+  lines.push(row("/keys,/k", "show key map"))
+
+  lines.push("")
+  lines.push("  Custom Extensions")
+  lines.push(row("/commands", "list custom slash commands"))
+  lines.push(row("/create-skill <desc>", "generate a new skill via AI"))
+  lines.push(row("/create-agent <desc>", "generate a new sub-agent via AI"))
+  lines.push(row("/reload", "reload commands, skills, agents"))
+
+  lines.push("")
+  lines.push(row("/help,/h,/?", "show this help"))
+  lines.push(row("/exit,/quit,/q", "quit"))
 
   lines.push("")
   lines.push("Configuration:")
@@ -364,7 +386,6 @@ function help(providers = []) {
   lines.push("  provider.<name>.default_model default model id")
   lines.push("  agent.default_mode            startup mode (ask|plan|agent|longagent)")
   lines.push("  agent.longagent.git.enabled   git branch mgmt (true|false|\"ask\")")
-  lines.push("  agent.longagent.usability_gates  quality gates config")
   lines.push("  permission.default_policy     tool permission (ask|allow|deny)")
   lines.push("  usage.budget.session_usd      per-session cost limit")
   lines.push("")
@@ -395,7 +416,7 @@ function shortcutLegend() {
     "  Left/Right/Home/End edit cursor",
     "  Ctrl+Up/Down scroll log   Ctrl+Home/End oldest/latest",
     "  Tab cycle mode (longagent -> plan -> ask -> agent)",
-    "  Esc clear input  Ctrl+C exit"
+    "  Esc interrupt turn  Ctrl+C×2 exit"
   ].join("\n")
 }
 
@@ -1439,6 +1460,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     maxSteps: 0,
     paused: false,
     turnAbortController: null,
+    lastCtrlCTime: 0,
     metrics: {
       tokenMeter: {
         estimated: false,
@@ -1829,7 +1851,12 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     const before = ui.input.slice(0, ui.inputCursor)
     const after = ui.input.slice(ui.inputCursor)
     const imgTag = ui.pendingImages.length ? `[${ui.pendingImages.length} img] ` : ""
-    const inputDecorated = `${ui.busy ? "[running] " : ui.paused ? "[paused] " : "[ready] "}${imgTag}> ${before}${cursorMark}${after}`
+    const stateIndicator = ui.busy
+      ? paint("● ", ctx.themeState.theme.semantic.warn)
+      : ui.paused
+        ? paint("⏸ ", ctx.themeState.theme.base.muted)
+        : paint("❯ ", ctx.themeState.theme.semantic.success)
+    const inputDecorated = `${stateIndicator}${imgTag}${before}${cursorMark}${after}`
     const inputLogical = inputDecorated.split("\n")
     const inputWrapped = []
     for (const logicalLine of inputLogical) {
@@ -2147,7 +2174,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       lines.push(`${left}${clipAnsiLine(inputLine, inputInnerWidth)}${right}`)
     }
     lines.push(inputBottom)
-    lines.push(clipAnsiLine(paint("? for shortcuts | Enter send | Ctrl+J newline | /paste image", ctx.themeState.theme.base.muted), width))
+    lines.push(clipAnsiLine(paint("↵ send  ⌃J newline  /paste image  ? help", ctx.themeState.theme.base.muted, { dim: true }), width))
 
     const final = lines.slice(0, Math.max(1, height))
     while (final.length < height) final.push(" ".repeat(width))
@@ -2209,7 +2236,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     if (ui.history.length > HIST_SIZE) ui.history.splice(0, ui.history.length - HIST_SIZE)
     ui.historyIndex = ui.history.length
 
-    appendLog(`> ${line}`)
+    appendLog(`❯ ${line}`)
     appendLog("")
     ui.input = ""
     ui.inputCursor = 0
@@ -2400,8 +2427,27 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         if (ui.quitting) return
 
         if (key.ctrl && key.name === "c") {
-          ui.quitting = true
-          finish()
+          // Busy: abort current turn (same as ESC)
+          if (ui.busy) {
+            if (ui.turnAbortController) {
+              ui.turnAbortController.abort()
+              ui.turnAbortController = null
+            }
+            ui.paused = true
+            appendLog("[paused] turn interrupted — enter a new message or command to continue")
+            requestRender()
+            return
+          }
+          // Idle: require double Ctrl+C within 2s to exit
+          const now = Date.now()
+          if (now - ui.lastCtrlCTime < 2000) {
+            ui.quitting = true
+            finish()
+          } else {
+            ui.lastCtrlCTime = now
+            appendLog("Press Ctrl+C again to exit")
+            requestRender()
+          }
           return
         }
 
@@ -2837,8 +2883,25 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         requestRender()
       }
       onSigint = () => {
-        ui.quitting = true
-        finish()
+        const now = Date.now()
+        if (ui.busy) {
+          if (ui.turnAbortController) {
+            ui.turnAbortController.abort()
+            ui.turnAbortController = null
+          }
+          ui.paused = true
+          appendLog("[paused] turn interrupted — enter a new message or command to continue")
+          requestRender()
+          return
+        }
+        if (now - ui.lastCtrlCTime < 2000) {
+          ui.quitting = true
+          finish()
+        } else {
+          ui.lastCtrlCTime = now
+          appendLog("Press Ctrl+C again to exit")
+          requestRender()
+        }
       }
 
       process.stdout.on("resize", onResize)
