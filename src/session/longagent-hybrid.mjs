@@ -680,6 +680,7 @@ export async function runHybridLongAgent({
       }
 
       stageIndex++
+      recoveryCount = 0  // reset per-stage recovery counter after successful stage
       await saveCheckpoint(sessionId, { name: `hybrid_stage_${stage.stageId}`, iteration, currentPhase, stageIndex, stagePlan, taskProgress, planFrozen, lastProgress })
     }
 

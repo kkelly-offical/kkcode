@@ -572,6 +572,7 @@ async function runParallelLongAgent({
     }
 
     stageIndex += 1
+    recoveryCount = 0  // reset per-stage recovery counter after successful stage
     // Always checkpoint after each stage for reliable recovery
     await saveCheckpoint(sessionId, {
       name: `stage_${stage.stageId}`,
