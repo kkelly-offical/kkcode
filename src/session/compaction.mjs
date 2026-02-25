@@ -89,7 +89,9 @@ export function estimateTokenCount(messages) {
  * - Truncate very long plain-text assistant/user messages
  */
 export function pruneForSummary(messages, previewLimit = TOOL_RESULT_PREVIEW_LIMIT) {
-  return messages.map((msg) => {
+  // Strip synthetic scaffolding messages (continuation prompts, fake tool_result errors)
+  // before summarization — they are noise and pollute the compaction summary
+  return messages.filter(msg => !msg.synthetic).map((msg) => {
     const content = msg.content
     if (Array.isArray(content)) {
       const pruned = content.map((block) => {
