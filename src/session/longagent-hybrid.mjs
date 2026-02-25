@@ -19,7 +19,8 @@ import {
   getGatePreferences,
   saveGatePreferences,
   buildGatePromptText,
-  parseGateSelection
+  parseGateSelection,
+  clearGateCache
 } from "./usability-gates.mjs"
 import { runIntakeDialogue, validateAndNormalizeStagePlan, defaultStagePlan } from "./longagent-plan.mjs"
 import { createValidator } from "./task-validator.mjs"
@@ -38,11 +39,13 @@ import {
   createDegradationChain,
   generateRecoverySuggestions,
   stripFence,
-  parseJsonLoose
+  parseJsonLoose,
+  buildLongAgentResult
 } from "./longagent-utils.mjs"
 import { TaskBus } from "./longagent-task-bus.mjs"
 import { loadProjectMemory, saveProjectMemory, memoryToContext, parseMemoryFromPreview } from "./longagent-project-memory.mjs"
 import * as git from "../util/git.mjs"
+import { setupGitBranch } from "./longagent-git-lifecycle.mjs"
 
 // Checkpoint 结构校验
 function validateCheckpoint(cp) {
@@ -223,7 +226,7 @@ export async function runHybridLongAgent({
     const blocked = "LongAgent 需要明确的编码目标。请直接描述要实现/修复的内容。"
     await LongAgentManager.update(sessionId, { status: "blocked", phase: "H0", lastMessage: blocked })
     await markSessionStatus(sessionId, "active")
-    return { sessionId, turnId: `turn_long_${Date.now()}`, reply: blocked, usage: aggregateUsage, toolEvents, iterations: 0, status: "blocked", phase: "H0", gateStatus: {}, currentGate: "init", lastGateFailures: [], recoveryCount: 0, progress: lastProgress, elapsed: 0, stageIndex: 0, stageCount: 0, planFrozen: false, taskProgress: {}, fileChanges: [], stageProgress: { done: 0, total: 0 }, remainingFilesCount: 0 }
+    return buildLongAgentResult({ sessionId, reply: blocked, usage: aggregateUsage, toolEvents, iterations: 0, status: "blocked", phase: "H0", currentGate: "init" })
   }
 
   // #15 Checkpoint 恢复：如果有之前的检查点，跳过已完成阶段
@@ -367,11 +370,11 @@ export async function runHybridLongAgent({
     if (["no", "否", "n", "取消", "abort"].some(k => answer.includes(k))) {
       await LongAgentManager.update(sessionId, { status: "aborted", lastMessage: "user rejected blueprint" })
       await markSessionStatus(sessionId, "active")
-      return { sessionId, turnId: `turn_long_${Date.now()}`, reply: "用户中止了 Blueprint 审查。", usage: aggregateUsage, toolEvents, iterations: iteration, status: "aborted", phase: "H2", gateStatus, currentGate, lastGateFailures: [], recoveryCount: 0, progress: lastProgress, elapsed: Math.round((Date.now() - startTime) / 1000), stageIndex: 0, stageCount: stagePlan.stages.length, planFrozen, taskProgress: {}, fileChanges: [], stageProgress: { done: 0, total: 0 }, remainingFilesCount: 0 }
+      return buildLongAgentResult({ sessionId, reply: "用户中止了 Blueprint 审查。", usage: aggregateUsage, toolEvents, iterations: iteration, status: "aborted", phase: "H2", gateStatus, currentGate, elapsed: Math.round((Date.now() - startTime) / 1000), stageCount: stagePlan.stages.length, planFrozen })
     }
   }
 
-  // ========== H2.5: GIT BRANCH (可选) ==========
+  // ========== H2.5: GIT BRANCH (可选) — C1: 使用共享模块 ==========
   const gitEnabled = gitConfig.enabled === true || gitConfig.enabled === "ask"
   const gitAsk = gitConfig.enabled === "ask"
   const inGitRepo = gitEnabled && await git.isGitRepo(cwd)
@@ -389,40 +392,9 @@ export async function runHybridLongAgent({
       accumulateUsage(askResult)
     }
     if (userWantsGit) {
-      gitBaseBranch = await git.currentBranch(cwd)
-      // Guard: skip git flow if branch is empty or HEAD detached
-      if (!gitBaseBranch || gitBaseBranch === "HEAD") {
-        gateStatus.git = { status: "warn", reason: "detached HEAD or no branch" }
-      } else {
-        const branchName = git.generateBranchName(sessionId, prompt)
-        const clean = await git.isClean(cwd)
-        let stashed = false
-        try {
-          if (!clean) {
-            const sr = await git.stash("kkcode-auto-stash", cwd)
-            stashed = sr.ok
-            if (!stashed) {
-              // Stash failed — skip branch creation
-              gateStatus.git = { status: "warn", reason: "git stash failed" }
-            }
-          }
-          if (!stashed && !clean) {
-            // stash failed, skip branch creation (already set gateStatus above)
-          } else {
-            const created = await git.createBranch(branchName, cwd)
-            if (created.ok) {
-              gitBranch = branchName; gitActive = true
-              gateStatus.git = { status: "pass", branch: branchName, baseBranch: gitBaseBranch }
-              await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_GIT_BRANCH_CREATED, sessionId, payload: { branch: branchName, baseBranch: gitBaseBranch } })
-            } else {
-              gateStatus.git = { status: "warn", reason: created.message }
-            }
-          }
-        } finally {
-          // Always restore stash on any exit path
-          if (stashed) await git.stashPop(cwd).catch(() => {})
-        }
-      }
+      const gitSetup = await setupGitBranch({ sessionId, prompt, cwd })
+      gitBranch = gitSetup.gitBranch; gitBaseBranch = gitSetup.gitBaseBranch; gitActive = gitSetup.gitActive
+      gateStatus.git = gitSetup.gateStatus
     }
   }
 
@@ -457,7 +429,6 @@ export async function runHybridLongAgent({
     "### Preview Findings", previewFindings.slice(0, 2000), "",
     "### Blueprint Architecture", architectureText.slice(0, 3000)
   ].join("\n")
-  const seenFilePaths = new Set() // #3 去重：跨阶段文件路径去重
 
   let codingRollbackCount = 0
   const maxCodingRollbacks = Number(hybridConfig.max_coding_rollbacks || 2)
@@ -500,17 +471,10 @@ export async function runHybridLongAgent({
         stage.tasks.map(t => [t.taskId, taskProgress[t.taskId]]).filter(([, v]) => Boolean(v))
       )
 
-      // #4 计划锚点 — 每阶段动态构建，不存入 priorContext 避免被压缩掉
-      const stageStatuses = stagePlan.stages.map((s, i) => {
-        const marker = i < stageIndex ? "✓" : i === stageIndex ? "→" : " "
-        return `[${marker}] 阶段${i + 1}: ${s.name || s.stageId}`
-      }).join("\n")
-      const planAnchor = `## 计划锚点\n目标: ${stagePlan.objective || prompt}\n进度: ${stageIndex + 1}/${stagePlan.stages.length}\n${stageStatuses}\n\n`
-
       const stageResult = await runStageBarrier({
         stage, sessionId, config: configState.config, model, providerType,
         seedTaskProgress: seeded, objective: prompt,
-        stageIndex, stageCount: stagePlan.stages.length, priorContext: planAnchor + priorContext,
+        stageIndex, stageCount: stagePlan.stages.length, priorContext,
         stuckTracker,
         onTaskComplete: async (taskData) => {
           await saveTaskCheckpoint(sessionId, taskData.stageId, taskData.taskId, taskData)
@@ -544,19 +508,12 @@ export async function runHybridLongAgent({
         successCount: stageResult.successCount, failCount: stageResult.failCount
       }
 
-      // #1 阶段级压缩 + #3 文件去重 — 结构化摘要，跨阶段去重文件路径
+      // 知识传递
       const taskSummaries = Object.values(stageResult.taskProgress || {})
         .filter(t => t.lastReply)
-        .map(t => `  - [${t.taskId}] ${t.status}: ${t.lastReply.slice(0, 250)}`)
-      const stageFiles = (stageResult.fileChanges || [])
-        .map(f => (typeof f === "string" ? f : (f.path || f.file || "")))
-        .filter(Boolean)
-      const newFiles = stageFiles.filter(f => !seenFilePaths.has(f))
-      newFiles.forEach(f => seenFilePaths.add(f))
-      if (taskSummaries.length || newFiles.length) {
-        const fileNote = newFiles.length ? `\n  新增/修改文件: ${newFiles.join(", ")}` : ""
-        const failNote = !stageResult.allSuccess ? ` 失败任务数: ${stageResult.failCount}` : ""
-        priorContext += `\n### 阶段${stageIndex + 1}: ${stage.name || stage.stageId} (${stageResult.allSuccess ? "PASS" : "FAIL"}${failNote})\n${taskSummaries.join("\n")}${fileNote}\n`
+        .map(t => `[${t.taskId}] ${t.status}: ${t.lastReply.slice(0, 300)}`)
+      if (taskSummaries.length) {
+        priorContext += `\n### Stage ${stageIndex + 1}: ${stage.name || stage.stageId} (${stageResult.allSuccess ? "PASS" : "FAIL"})\n${taskSummaries.join("\n")}\n`
       }
       // #4 TaskBus 注入到 priorContext
       if (taskBus) {
@@ -680,7 +637,6 @@ export async function runHybridLongAgent({
       }
 
       stageIndex++
-      recoveryCount = 0  // reset per-stage recovery counter after successful stage
       await saveCheckpoint(sessionId, { name: `hybrid_stage_${stage.stageId}`, iteration, currentPhase, stageIndex, stagePlan, taskProgress, planFrozen, lastProgress })
     }
 
@@ -864,6 +820,7 @@ export async function runHybridLongAgent({
           baseUrl, apiKeyEnv, signal, output, allowQuestion, toolContext
         })
         accumulateUsage(fixOut)
+        clearGateCache()
         iteration++
         if (/\[TASK_COMPLETE\]/i.test(fixOut.reply || "")) completionMarkerSeen = true
         finalReply = fixOut.reply || finalReply
@@ -965,6 +922,7 @@ export async function runHybridLongAgent({
       baseUrl, apiKeyEnv, signal, output, allowQuestion, toolContext
     })
     accumulateUsage(fixOut)
+    clearGateCache()
     iteration++
   }
 
@@ -1080,8 +1038,8 @@ export async function runHybridLongAgent({
     })
   }
 
-  return {
-    sessionId, turnId: `turn_long_${Date.now()}`,
+  return buildLongAgentResult({
+    sessionId,
     reply: finalReply || "hybrid longagent complete",
     usage: aggregateUsage, toolEvents, iterations: iteration,
     status: finalStatus, phase: currentPhase,
@@ -1093,5 +1051,5 @@ export async function runHybridLongAgent({
     remainingFilesCount: stats.remainingFilesCount,
     gitBranch, gitBaseBranch,
     recoverySuggestions
-  }
+  })
 }
