@@ -2,7 +2,7 @@ import { BackgroundManager } from "./background-manager.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { getAgent } from "../agent/agent.mjs"
-import { classifyError, ERROR_CATEGORIES } from "../session/longagent-utils.mjs"
+import { classifyError, ERROR_CATEGORIES, createSemanticErrorTracker } from "../session/longagent-utils.mjs"
 
 // #19: Agent capability scoring — multi-pattern weighted routing
 const AGENT_HINTS = [
@@ -401,7 +401,9 @@ export async function runStageBarrier({
       timeoutMs: Number(task.timeoutMs || cfg.taskTimeoutMs),
       backgroundTaskId: null,
       lastError: seeded.lastError || "",
-      fileChanges: normalizeFileChanges(seeded.fileChanges || [])
+      fileChanges: normalizeFileChanges(seeded.fileChanges || []),
+      // D1: 语义错误追踪器 — 检测重复错误，防止无限重试
+      semanticTracker: createSemanticErrorTracker()
     })
   }
 
@@ -590,9 +592,14 @@ export async function runStageBarrier({
         item.lastError = bg.error || "task failed"
         const category = classifyError(item.lastError, bg.status)
         item.errorCategory = category
-        if (category === ERROR_CATEGORIES.PERMANENT || category === ERROR_CATEGORIES.UNKNOWN) {
+        // D1: 语义错误追踪 — 检测重复错误模式，升级为 PERMANENT 阻止无效重试
+        const semanticResult = item.semanticTracker.track(item.lastError)
+        if (category === ERROR_CATEGORIES.PERMANENT || category === ERROR_CATEGORIES.UNKNOWN || semanticResult.isDuplicate) {
           item.status = "error"
-          item.skipReason = `${category} error: ${item.lastError.slice(0, 100)}`
+          item.skipReason = semanticResult.isDuplicate
+            ? `repeated error (${semanticResult.count}x): ${item.lastError.slice(0, 80)}`
+            : `${category} error: ${item.lastError.slice(0, 100)}`
+          item.errorCategory = ERROR_CATEGORIES.PERMANENT
         } else {
           item.status = item.attempt <= item.maxRetries ? "retrying" : (bg.status === "cancelled" ? "cancelled" : "error")
         }
