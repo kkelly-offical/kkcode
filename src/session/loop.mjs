@@ -534,9 +534,16 @@ export async function processTurnLoop({
             ? `\n被截断的工具调用: ${truncatedToolNames}。请完整重新发起这些工具调用。如果是创建大文件，使用 write(mode="append") 分段追加；如果是修改已有文件的局部内容，使用 patch 按行号范围替换。`
             : `\nTruncated tool calls: ${truncatedToolNames}. Re-issue these tool calls completely. For large file creation, use write(mode="append") to append in chunks. For modifying sections of existing files, use patch to replace by line range.`)
           : ""
+        // Anchor: last 200 chars of truncated text so model knows exactly where to resume
+        const textTail = response.text ? response.text.slice(-200) : ""
+        const anchorHint = textTail
+          ? (language === "zh"
+            ? `\n[锚点] 上次输出末尾：...${textTail}`
+            : `\n[Anchor] Last output ended with: ...${textTail}`)
+          : ""
         const continuePrompt = language === "zh"
-          ? `[输出被截断 ${continueCount}/${MAX_CONTINUES}] 你的上一条回复在输出 token 上限处被截断。请从你停止的地方精确继续，不要重复已经写过的内容。如果你正在执行工具调用，请完整重新发起。${toolHint}`
-          : `[OUTPUT TRUNCATED ${continueCount}/${MAX_CONTINUES}] Your previous response was cut off at the output token limit. Continue EXACTLY from where you stopped. Do not repeat any content you already wrote. If you were in the middle of a tool call, re-issue it completely.${toolHint}`
+          ? `[输出被截断 ${continueCount}/${MAX_CONTINUES}] 你的上一条回复在输出 token 上限处被截断。请从你停止的地方精确继续，不要重复已经写过的内容。如果你正在执行工具调用，请完整重新发起。${toolHint}${anchorHint}`
+          : `[OUTPUT TRUNCATED ${continueCount}/${MAX_CONTINUES}] Your previous response was cut off at the output token limit. Continue EXACTLY from where you stopped. Do not repeat any content you already wrote. If you were in the middle of a tool call, re-issue it completely.${toolHint}${anchorHint}`
         await appendMessage(sessionId, "user", continuePrompt,
           { mode, model, providerType, step, turnId, synthetic: true }
         )

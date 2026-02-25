@@ -187,6 +187,18 @@ export async function buildSystemPromptBlocks({ mode, model, cwd, agent = null, 
     blocks.push({ label: "tools", text: toolText, cacheable: true })
   }
 
+  // Block 3.5: Large output strategy (stable — always included)
+  const outputStrategyLines = [
+    "# Large Output Strategy",
+    "",
+    "When generating large amounts of content:",
+    "- For large file creation, write no more than 200 lines per tool call; use append mode for subsequent chunks",
+    "- For partial file edits, use patch with line ranges instead of rewriting the whole file",
+    "- If a task requires more than 300 lines of code, proactively split into multiple sequential tool calls",
+    "- Never attempt to write an entire large file in a single tool call"
+  ]
+  blocks.push({ label: "output_strategy", text: outputStrategyLines.join("\n"), cacheable: true })
+
   // Block 4: Skills descriptions (stable — changes only when skills change)
   if (skills.length) {
     const skillLines = skills.map((s) => `- /${s.name}: ${s.description || s.name}`).join("\n")
