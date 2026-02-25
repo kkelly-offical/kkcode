@@ -84,23 +84,32 @@ export function estimateTokenCount(messages) {
 
 /**
  * Pre-prune messages before LLM summarization.
- * - Truncate large tool_result content to a short preview
+ * - Strip synthetic scaffolding messages (continuation noise)
+ * - Truncate large tool_result content with aging: older steps get shorter previews
  * - Keep tool_use blocks intact (they show model intent)
  * - Truncate very long plain-text assistant/user messages
  */
 export function pruneForSummary(messages, previewLimit = TOOL_RESULT_PREVIEW_LIMIT) {
   // Strip synthetic scaffolding messages (continuation prompts, fake tool_result errors)
-  // before summarization — they are noise and pollute the compaction summary
-  return messages.filter(msg => !msg.synthetic).map((msg) => {
+  const real = messages.filter(msg => !msg.synthetic)
+
+  // #2 工具结果老化: find max step to compute relative age per message
+  const maxStep = real.reduce((m, msg) => Math.max(m, msg.step || 0), 0)
+
+  return real.map((msg) => {
+    // Aging: older tool_results get more aggressive truncation
+    const age = maxStep - (msg.step || 0)
+    const effectiveLimit = Math.max(50, previewLimit - age * 15)
+
     const content = msg.content
     if (Array.isArray(content)) {
       const pruned = content.map((block) => {
         if (block.type === "tool_result") {
           const raw = String(block.content || "")
-          if (raw.length > previewLimit) {
+          if (raw.length > effectiveLimit) {
             return {
               ...block,
-              content: `${raw.slice(0, previewLimit)}... [truncated ${raw.length} chars]`
+              content: `${raw.slice(0, effectiveLimit)}... [truncated ${raw.length} chars, age=${age}]`
             }
           }
         }

@@ -357,6 +357,7 @@ async function runParallelLongAgent({
   // --- End L1.5 ---
 
   let priorContext = ""
+  const seenFilePaths = new Set() // #3 去重：跨阶段文件路径去重，避免 priorContext 重复提及
 
   while (stageIndex < stagePlan.stages.length) {
     const state = await LongAgentManager.get(sessionId)
@@ -411,6 +412,13 @@ async function runParallelLongAgent({
         .filter(([, value]) => Boolean(value))
     )
 
+    // #4 计划锚点 — 每个阶段执行前重建，确保模型始终看到完整计划和当前进度
+    const stageStatuses = stagePlan.stages.map((s, i) => {
+      const marker = i < stageIndex ? "✓" : i === stageIndex ? "→" : " "
+      return `[${marker}] 阶段${i + 1}: ${s.name || s.stageId}`
+    }).join("\n")
+    const planAnchor = `## 计划锚点\n目标: ${stagePlan.objective || prompt}\n进度: ${stageIndex + 1}/${stagePlan.stages.length}\n${stageStatuses}\n\n`
+
     const stageResult = await runStageBarrier({
       stage,
       sessionId,
@@ -421,7 +429,7 @@ async function runParallelLongAgent({
       objective: prompt,
       stageIndex,
       stageCount: stagePlan.stages.length,
-      priorContext
+      priorContext: planAnchor + priorContext
     })
 
     for (const [taskId, progress] of Object.entries(stageResult.taskProgress || {})) {
@@ -446,12 +454,19 @@ async function runParallelLongAgent({
       remainingFiles: stageResult.remainingFiles
     }
 
-    // Build inter-stage knowledge transfer summary
+    // #1 阶段级压缩 + #3 去重 — 结构化阶段摘要，文件路径跨阶段去重
     const taskSummaries = Object.values(stageResult.taskProgress || {})
       .filter(t => t.lastReply)
-      .map(t => `[${t.taskId}] ${t.status}: ${t.lastReply.slice(0, 300)}`)
-    if (taskSummaries.length) {
-      priorContext += `### Stage ${stageIndex + 1}: ${stage.name || stage.stageId} (${stageResult.allSuccess ? "PASS" : "FAIL"})\n${taskSummaries.join("\n")}\n\n`
+      .map(t => `  - [${t.taskId}] ${t.status}: ${t.lastReply.slice(0, 250)}`)
+    const stageFiles = (stageResult.fileChanges || [])
+      .map(f => (typeof f === "string" ? f : (f.path || f.file || "")))
+      .filter(Boolean)
+    const newFiles = stageFiles.filter(f => !seenFilePaths.has(f))
+    newFiles.forEach(f => seenFilePaths.add(f))
+    if (taskSummaries.length || newFiles.length) {
+      const fileNote = newFiles.length ? `\n  新增/修改文件: ${newFiles.join(", ")}` : ""
+      const failNote = !stageResult.allSuccess ? `\n  失败任务数: ${stageResult.failCount}` : ""
+      priorContext += `### 阶段${stageIndex + 1}: ${stage.name || stage.stageId} (${stageResult.allSuccess ? "PASS" : "FAIL"})${failNote}\n${taskSummaries.join("\n")}${fileNote}\n\n`
     }
 
     lastProgress = {

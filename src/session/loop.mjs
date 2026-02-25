@@ -29,6 +29,9 @@ import { saveCheckpoint } from "./checkpoint.mjs"
 import { askPlanApproval } from "../tool/question-prompt.mjs"
 import { createValidator } from "./task-validator.mjs"
 
+// Max chars kept in active context per tool_result — process output beyond this is truncated
+const TOOL_RESULT_ACTIVE_LIMIT = 3000
+
 const READ_ONLY_TOOLS = new Set([
   "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch", "background_output", "todowrite", "enter_plan", "exit_plan"
 ])
@@ -805,15 +808,19 @@ export async function processTurnLoop({
       })
 
       // User message: tool_result blocks (one per tool call, in order)
+      // Process output beyond TOOL_RESULT_ACTIVE_LIMIT is truncated to keep context lean
       const resultContent = []
       for (const call of response.toolCalls) {
         const entry = callResults.get(call.id)
-        const output = entry?.result?.output || ""
+        const rawOutput = entry?.result?.output || ""
         const isError = entry?.result?.status === "error"
+        const content = rawOutput.length > TOOL_RESULT_ACTIVE_LIMIT
+          ? `${rawOutput.slice(0, TOOL_RESULT_ACTIVE_LIMIT)}\n[...过程输出已截断，共 ${rawOutput.length} 字符，仅保留前 ${TOOL_RESULT_ACTIVE_LIMIT} 字符]`
+          : rawOutput
         resultContent.push({
           type: "tool_result",
           tool_use_id: call.id,
-          content: output,
+          content,
           is_error: isError
         })
       }
