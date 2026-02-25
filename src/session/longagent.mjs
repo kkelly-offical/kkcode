@@ -887,6 +887,13 @@ async function runParallelLongAgent({
 
 export async function runLongAgent(args) {
   const longagentConfig = args?.configState?.config?.agent?.longagent || {}
+  // Runtime impl override (set via /longagent 4stage or /longagent hybrid)
+  if (args?.longagentImpl === "4stage") {
+    return run4StageLongAgent(args)
+  }
+  if (args?.longagentImpl === "hybrid") {
+    return runHybridLongAgent(args)
+  }
   // Hybrid mode (default): Preview → Blueprint → Git → Scaffold → Coding(并行) → Debugging(回滚) → Gates → GitMerge
   if (longagentConfig.hybrid?.enabled !== false) {
     return runHybridLongAgent(args)

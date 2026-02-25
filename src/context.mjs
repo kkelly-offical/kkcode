@@ -4,6 +4,7 @@ import { configureSessionStore } from "./session/store.mjs"
 import { configureEventLog } from "./storage/event-log.mjs"
 import { configureAuditStore } from "./storage/audit-store.mjs"
 import { checkWorkspaceTrust } from "./permission/workspace-trust.mjs"
+import { loadProfile } from "./onboarding.mjs"
 
 export async function buildContext(options = {}) {
   const configState = await loadConfig(options.cwd ?? process.cwd())
@@ -23,10 +24,12 @@ export async function buildContext(options = {}) {
   const themeState = await loadTheme(configState, options.themeFile ?? null)
   const cwd = options.cwd ?? process.cwd()
   const trustState = options.trustState ?? await checkWorkspaceTrust({ cwd, cliTrust: Boolean(options.trust), isTTY: process.stdin.isTTY })
+  const profile = await loadProfile()
   return {
     configState,
     themeState,
-    trustState
+    trustState,
+    profile
   }
 }
 
