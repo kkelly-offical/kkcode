@@ -8,8 +8,9 @@ import {
 } from "../core/constants.mjs"
 import { saveCheckpoint } from "./checkpoint.mjs"
 import { getAgent } from "../agent/agent.mjs"
-import { createStuckTracker, isReadOnlyTool } from "./longagent-utils.mjs"
+import { createStuckTracker, isReadOnlyTool, accumulateUsage, buildLongAgentResult } from "./longagent-utils.mjs"
 import * as git from "../util/git.mjs"
+import { setupGitBranch } from "./longagent-git-lifecycle.mjs"
 
 export function detectStageComplete(text, stage) {
   const str = String(text || "")
@@ -294,37 +295,24 @@ export async function run4StageLongAgent({
   await markSessionStatus(sessionId, "running-longagent")
   await syncState({ status: "running", lastMessage: "4-stage longagent started" })
 
-  // Git branch setup
+  // C1: Git branch setup — 使用共享模块
   const cwd = process.cwd()
   const inGitRepo = gitEnabled && await git.isGitRepo(cwd)
   if (inGitRepo) {
     let userWantsGit = !gitAsk
     if (gitAsk && allowQuestion) {
       const askResult = await processTurnLoop({
-        prompt: "[SYSTEM] Git 分支管理已就绪。是否为本次 LongAgent 会话创建独立分支？\n回复 yes/是 启用，no/否 跳过。\n启用后：自动创建特性分支 → 每阶段自动提交 → 完成后合并回主分支。",
+        prompt: "[SYSTEM] Git 分支管理已就绪。是否为本次 LongAgent 会话创建独立分支？\n回复 yes/是 启用，no/否 跳过。",
         mode: "ask", model, providerType, sessionId, configState,
         baseUrl, apiKeyEnv, agent, signal, allowQuestion: true, toolContext
       })
       const answer = String(askResult.reply || "").toLowerCase().trim()
       userWantsGit = ["yes", "是", "y", "ok", "好", "确认", "开启", "启用"].some(k => answer.includes(k))
-      aggregateUsage.input += askResult.usage.input || 0
-      aggregateUsage.output += askResult.usage.output || 0
+      accumulateUsage(aggregateUsage, askResult)
     }
     if (userWantsGit) {
-      gitBaseBranch = await git.currentBranch(cwd)
-      const branchName = git.generateBranchName(sessionId, prompt)
-      const clean = await git.isClean(cwd)
-      let stashed = false
-      if (!clean) {
-        const stashResult = await git.stash("kkcode-auto-stash-before-branch", cwd)
-        stashed = stashResult.ok
-      }
-      try {
-        const created = await git.createBranch(branchName, cwd)
-        if (created.ok) { gitBranch = branchName; gitActive = true }
-      } finally {
-        if (stashed) await git.stashPop(cwd).catch(() => {})
-      }
+      const gitSetup = await setupGitBranch({ sessionId, prompt, cwd })
+      gitBranch = gitSetup.gitBranch; gitBaseBranch = gitSetup.gitBaseBranch; gitActive = gitSetup.gitActive
     }
   }
 
@@ -354,7 +342,7 @@ export async function run4StageLongAgent({
       if (state?.stopRequested || signal?.aborted) {
         await LongAgentManager.update(sessionId, { status: "stopped", lastMessage: "stop requested" })
         await markSessionStatus(sessionId, "stopped")
-        return { sessionId, reply: "longagent stopped", usage: aggregateUsage, toolEvents, iterations: iteration, status: "stopped" }
+        return buildLongAgentResult({ sessionId, reply: "longagent stopped", usage: aggregateUsage, toolEvents, iterations: iteration, status: "stopped" })
       }
 
       const fullPrompt = buildStageWrapper(stage, stageContext, prompt, stuckWarningMsg)
@@ -370,8 +358,7 @@ export async function run4StageLongAgent({
         baseUrl, apiKeyEnv, signal, output, allowQuestion, toolContext
       })
 
-      aggregateUsage.input += out.usage.input || 0
-      aggregateUsage.output += out.usage.output || 0
+      accumulateUsage(aggregateUsage, out)
       if (out.toolEvents?.length) toolEvents.push(...out.toolEvents)
       finalReply = out.reply
 
@@ -421,14 +408,14 @@ export async function run4StageLongAgent({
 
     if (!stageComplete) {
       await LongAgentManager.update(sessionId, { status: "failed", lastMessage: `stage ${stage} timed out after ${maxIter} iterations` })
-      return { sessionId, reply: `stage ${stage} timed out`, usage: aggregateUsage, toolEvents, iterations: iteration, status: "failed" }
+      return buildLongAgentResult({ sessionId, reply: `stage ${stage} timed out`, usage: aggregateUsage, toolEvents, iterations: iteration, status: "failed" })
     }
 
     stageIndex += 1
     await saveCheckpoint(sessionId, { name: `4stage_${stage}`, iteration, currentStage, stageContext })
   }
 
-  // Git merge (only if not failed)
+  // D3: Git merge — 添加合并失败处理和回滚逻辑
   if (gitActive && gitBaseBranch && gitBranch) {
     try {
       await git.commitAll(`[kkcode] 4-stage session ${sessionId} completed`, cwd)
@@ -436,19 +423,37 @@ export async function run4StageLongAgent({
         const doneState = await LongAgentManager.get(sessionId)
         if (doneState?.status !== "failed") {
           await git.checkoutBranch(gitBaseBranch, cwd)
-          await git.mergeBranch(gitBranch, cwd)
-          await git.deleteBranch(gitBranch, cwd)
+          const mergeResult = await git.mergeBranch(gitBranch, cwd)
+          if (mergeResult.ok) {
+            await git.deleteBranch(gitBranch, cwd)
+          } else {
+            await EventBus.emit({
+              type: EVENT_TYPES.LONGAGENT_ALERT,
+              sessionId,
+              payload: {
+                kind: "git_merge_failed",
+                message: `Git merge failed: ${mergeResult.message}. Staying on branch "${gitBranch}".`
+              }
+            })
+            await git.checkoutBranch(gitBranch, cwd).catch(() => {})
+          }
         }
       }
-    } catch { /* git merge best-effort */ }
+    } catch (err) {
+      await EventBus.emit({
+        type: EVENT_TYPES.LONGAGENT_ALERT,
+        sessionId,
+        payload: { kind: "git_error", message: err.message }
+      }).catch(() => {})
+      try { await git.checkoutBranch(gitBranch, cwd) } catch { /* unrecoverable */ }
+    }
   }
 
   await LongAgentManager.update(sessionId, { status: completionMarkerSeen ? "completed" : "done", lastMessage: "4-stage longagent complete" })
   await markSessionStatus(sessionId, completionMarkerSeen ? "completed" : "active")
 
-  return {
+  return buildLongAgentResult({
     sessionId,
-    turnId: `turn_long_${Date.now()}`,
     reply: finalReply || "4-stage longagent complete",
     usage: aggregateUsage,
     toolEvents,
@@ -456,5 +461,5 @@ export async function run4StageLongAgent({
     status: completionMarkerSeen ? "completed" : "done",
     elapsed: Math.round((Date.now() - startTime) / 1000),
     fourStage: { completed: true, stageContext }
-  }
+  })
 }
