@@ -67,7 +67,19 @@ function getGateFixStrategy(failures) {
 async function compressContext(text, limit, { model, providerType, sessionId, configState, baseUrl, apiKeyEnv, signal, toolContext }) {
   if (text.length <= limit) return text
   const out = await processTurnLoop({
-    prompt: `Summarize the following context into key facts and decisions only, max ${Math.round(limit * 0.6)} chars:\n\n${text.slice(0, limit * 2)}`,
+    prompt: [
+      `Compress the following engineering context to max ${Math.round(limit * 0.6)} characters.`,
+      "Preserve ONLY:",
+      "- Concrete decisions made (technology choices, architecture patterns, API contracts)",
+      "- File paths and function signatures that were created or modified",
+      "- Error messages and their resolutions",
+      "- Cross-task dependencies and integration points",
+      "- Test results (pass/fail with specific failure reasons)",
+      "Discard: exploration logs, verbose tool output, repeated information, reasoning chains.",
+      "Output the compressed context directly — no preamble or explanation.",
+      "",
+      text.slice(0, limit * 2)
+    ].join("\n"),
     mode: "ask", model, providerType, sessionId, configState, baseUrl, apiKeyEnv, signal, allowQuestion: false, toolContext
   })
   return (out.reply || text.slice(0, limit)).slice(0, limit)
@@ -302,7 +314,21 @@ export async function runHybridLongAgent({
 
   const blueprintModel = getModelForStage("blueprint")
   const blueprintPrompt = buildStageWrapper(LONGAGENT_4STAGE_STAGES.BLUEPRINT, { preview: previewFindings, blueprint: null, coding: null }, prompt)
-    + "\n\n## HYBRID MODE REQUIREMENT\nYou MUST also output a structured stage plan JSON block wrapped in ```stage_plan_json ... ```. See your system prompt for the exact schema."
+    + [
+      "\n\n## HYBRID MODE: STRUCTURED EXECUTION PLAN (REQUIRED)",
+      "In addition to your architecture design, you MUST output a machine-parseable stage plan.",
+      "",
+      "Wrap it in a ```stage_plan_json ... ``` fenced block. Schema:",
+      '{"planId":"...","objective":"...","stages":[{"stageId":"...","name":"...","passRule":"all_success","tasks":[{"taskId":"...","prompt":"detailed task prompt for sub-agent","plannedFiles":["file1.mjs","file2.mjs"],"acceptance":["node --check file1.mjs","node --test test/file1.test.mjs"],"timeoutMs":600000,"maxRetries":2,"complexity":"low|medium|high"}]}]}',
+      "",
+      "Rules for the stage plan:",
+      "- Each task prompt must be SELF-CONTAINED: the sub-agent has NO access to your blueprint text",
+      "- plannedFiles must list EVERY file the task will create or modify (no file in multiple tasks)",
+      "- acceptance must be machine-verifiable commands (not subjective criteria)",
+      "- Files that import each other MUST be in the same task",
+      "- A module and its test file MUST be in the same task",
+      "- Order stages by dependency: shared types → core logic → integration → validation"
+    ].join("\n")
   const blueprintOut = await processTurnLoop({
     prompt: blueprintPrompt, mode: "agent", agent: getAgent("blueprint-agent"),
     model: blueprintModel.model, providerType: blueprintModel.providerType,
@@ -647,7 +673,28 @@ export async function runHybridLongAgent({
       await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_CROSS_REVIEW, sessionId, payload: { fileCount: fileChanges.length } })
       const reviewFiles = fileChanges.slice(0, 20).map(f => f.path).join(", ")
       const reviewOut = await processTurnLoop({
-        prompt: `Review the following files for bugs, inconsistencies, and missing error handling. Files: ${reviewFiles}\n\nObjective: ${prompt}\n\nReport issues as [FAILED_TASK: taskId] markers if a specific task's output is broken.`,
+        prompt: [
+          "You are the CROSS-REVIEW agent. Multiple parallel sub-agents just completed their coding tasks independently.",
+          "Your job: verify that their outputs are compatible, correct, and integrate properly.",
+          "",
+          "## Files to review:",
+          reviewFiles,
+          "",
+          "## Review Checklist",
+          "1. IMPORT RESOLUTION: Do all cross-file imports resolve? Are exported symbols correct?",
+          "2. INTERFACE COMPATIBILITY: Do function signatures match what callers expect?",
+          "3. ERROR HANDLING: Are errors properly caught, propagated, or thrown? No silent failures?",
+          "4. RESOURCE CLEANUP: Are timers cleared, listeners removed, handles closed in all code paths?",
+          "5. EDGE CASES: Null/undefined checks, empty arrays, concurrent access guards?",
+          "6. CONSISTENCY: Same naming conventions, error patterns, async style across files?",
+          "",
+          `## Original Objective: ${prompt}`,
+          "",
+          "## Output Format",
+          "For each issue found, output: [FAILED_TASK: taskId] with a description of the problem.",
+          "If no issues found, state that the cross-review passed.",
+          "Focus on REAL bugs that would cause runtime failures — not style preferences."
+        ].join("\n"),
         mode: "agent", agent: getAgent("debugging-agent"),
         model, providerType, sessionId, configState, baseUrl, apiKeyEnv, signal, output, allowQuestion: false, toolContext
       })
@@ -780,10 +827,21 @@ export async function runHybridLongAgent({
 
       if (report.verdict === "BLOCK" && !completionMarkerSeen) {
         const fixPrompt = [
-          `Objective: ${prompt}`,
-          `\nCompletion validation found issues:\n${report.message}`,
-          "\nFix these issues. When done, include [TASK_COMPLETE]."
-        ].join("")
+          "## Completion Validation Failed — Fix Required",
+          "",
+          `Original objective: ${prompt}`,
+          "",
+          "## Validation Issues Found:",
+          report.message,
+          "",
+          "## Fix Instructions",
+          "1. Read each failing check and identify the root cause",
+          "2. Fix the issue in the source code (not by suppressing the check)",
+          "3. Re-run the relevant verification command to confirm the fix",
+          "4. If a fix requires changes to multiple files, ensure cross-file consistency",
+          "",
+          "When ALL issues are resolved and verified, include [TASK_COMPLETE] in your response."
+        ].join("\n")
         const fixOut = await processTurnLoop({
           prompt: fixPrompt, mode: "agent", agent: getAgent("coding-agent"),
           model, providerType, sessionId, configState,
@@ -869,7 +927,22 @@ export async function runHybridLongAgent({
       } catch { /* autofix failed, fall through to agent */ }
     }
 
-    const fixPrompt = `${strategy.prefix || "Fix the following usability gate failures:"}\n${summarizeGateFailures(lastGateFailures)}\n\nOriginal objective: ${prompt}`
+    const gateFailureSummary = summarizeGateFailures(lastGateFailures)
+    const fixPrompt = [
+      `## Quality Gate Failures — Attempt ${gateAttempt}/${maxGateAttempts}`,
+      "",
+      `${strategy.prefix || "Fix the following quality gate failures:"}`,
+      "",
+      gateFailureSummary,
+      "",
+      "## Fix Protocol",
+      "1. Read the error output carefully — identify the ROOT CAUSE, not just the symptom",
+      "2. Fix the source code (do NOT disable or skip the gate check)",
+      "3. Re-run the failing command to verify the fix works",
+      "4. If the fix touches shared code, verify no regressions in other modules",
+      "",
+      `Original objective: ${prompt}`
+    ].join("\n")
     const fixOut = await processTurnLoop({
       prompt: fixPrompt, mode: "agent", agent: getAgent(strategy.agent || "coding-agent"),
       model, providerType, sessionId, configState,
@@ -902,7 +975,22 @@ export async function runHybridLongAgent({
           const conflictFiles = await git.getConflictFiles(cwd)
           if (conflictFiles.length > 0) {
             await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_GIT_CONFLICT_RESOLUTION, sessionId, payload: { files: conflictFiles } })
-            const conflictPrompt = `Resolve merge conflicts in the following files:\n${conflictFiles.join("\n")}\n\nRead each file, find conflict markers (<<<<<<< ======= >>>>>>>), and resolve them by keeping the correct code.`
+            const conflictPrompt = [
+              "## Git Merge Conflict Resolution",
+              "",
+              "The following files have merge conflicts that must be resolved:",
+              ...conflictFiles.map(f => `- ${f}`),
+              "",
+              "## Resolution Protocol",
+              "1. Read each conflicted file and locate ALL conflict markers (<<<<<<< ======= >>>>>>>)",
+              "2. For each conflict block:",
+              "   - Understand what BOTH sides intended (ours = feature branch, theirs = base branch)",
+              "   - Keep the feature branch changes (our work) unless they break base branch functionality",
+              "   - If both sides modified the same logic, merge them intelligently (not just pick one)",
+              "   - Remove ALL conflict markers — no <<<<<<< or ======= or >>>>>>> should remain",
+              "3. After resolving, run syntax check on each file (node --check / python -m py_compile)",
+              "4. Verify imports still resolve correctly across resolved files"
+            ].join("\n")
             const conflictOut = await processTurnLoop({
               prompt: conflictPrompt, mode: "agent", agent: getAgent("coding-agent"),
               model, providerType, sessionId, configState,
