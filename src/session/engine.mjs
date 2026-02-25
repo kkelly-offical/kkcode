@@ -80,12 +80,17 @@ export async function executeTurn({
     config: configState.config,
     cwd: process.cwd()
   })
+  // Auto-name session from first user prompt (truncated to 50 chars)
+  const autoTitle = typeof prompt === "string"
+    ? prompt.replace(/\s+/g, " ").trim().slice(0, 50)
+    : null
   await touchSession({
     sessionId,
     mode,
     model,
     providerType: resolvedProviderType,
     cwd: process.cwd(),
+    title: autoTitle || null,
     status: mode === "longagent" ? "running-longagent" : "active"
   })
 

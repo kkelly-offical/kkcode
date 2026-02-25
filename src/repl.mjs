@@ -29,6 +29,7 @@ import { extractImageRefs, buildContentBlocks, readClipboardImage, readClipboard
 import { generateSkill, saveSkillGlobal } from "./skill/generator.mjs"
 import { userConfigCandidates, projectConfigCandidates, memoryFilePath } from "./storage/paths.mjs"
 import { persistTrust, revokeTrust } from "./permission/workspace-trust.mjs"
+import { confirmRollback, executeRollback } from "./session/rollback.mjs"
 
 const HIST_DIR = join(homedir(), ".kkcode")
 const HIST_FILE = join(HIST_DIR, "repl_history")
@@ -88,6 +89,7 @@ const BUILTIN_SLASH = [
   { name: "longagent", desc: "switch to longagent mode" },
   { name: "create-skill", desc: "generate a new skill via AI" },
   { name: "create-agent", desc: "generate a new sub-agent via AI" },
+  { name: "undo", desc: "undo last code changes" },
   { name: "trust", desc: "trust this workspace" },
   { name: "untrust", desc: "revoke workspace trust" },
   { name: "exit", desc: "quit" }
@@ -747,7 +749,9 @@ async function processInputLine({
     else {
       for (const s of sessions) {
         const age = ageLabel(Date.now() - s.updatedAt)
-        print(`  ${s.id.slice(0, 12)}  ${padRight(s.mode, 9)} ${padRight(s.model || "?", 20)} ${padRight(s.status || "-", 14)} ${age}`)
+        const title = s.title || `${s.mode}:${s.model || "?"}`
+        const titleClipped = title.length > 35 ? title.slice(0, 32) + "..." : title
+        print(`  ${s.id.slice(0, 12)}  ${padRight(titleClipped, 36)} ${padRight(s.mode, 9)} ${padRight(s.status || "-", 10)} ${age}`)
       }
     }
     return { exit: false }
@@ -756,12 +760,42 @@ async function processInputLine({
   if (normalized === "/resume" || normalized.startsWith("/resume ") || normalized === "/r" || normalized.startsWith("/r ")) {
     const arg = normalized.replace(/^\/(resume|r)/, "").trim()
     const sessions = await listSessions({ cwd: process.cwd(), limit: 20, includeChildren: false })
+
+    if (!sessions.length) {
+      print("no sessions found in current directory")
+      return { exit: false }
+    }
+
     let target = null
-    if (!arg) target = sessions[0] || null
-    else target = sessions.find((s) => s.id === arg || s.id.startsWith(arg)) || null
+
+    if (!arg) {
+      // Show interactive numbered list
+      print(`\n  Sessions in ${paint(process.cwd(), "cyan")}:\n`)
+      for (let i = 0; i < sessions.length; i++) {
+        const s = sessions[i]
+        const num = paint(`  ${String(i + 1).padStart(2)}.`, "yellow")
+        const title = s.title || `${s.mode}:${s.model || "?"}`
+        const titleClipped = title.length > 45 ? title.slice(0, 42) + "..." : title
+        const age = ageLabel(Date.now() - s.updatedAt)
+        const mode = paint(padRight(s.mode, 9), "cyan")
+        const status = s.status === "active" ? paint("active", "green") : paint(s.status || "-", null, { dim: true })
+        print(`${num} ${padRight(titleClipped, 46)} ${mode} ${padRight(status, 14)} ${paint(age, null, { dim: true })}`)
+      }
+      print(`\n  usage: ${paint("/resume <number>", "yellow")} or ${paint("/resume <session-id>", "yellow")}`)
+      return { exit: false }
+    }
+
+    // Try numeric index first (1-based)
+    const idx = parseInt(arg, 10)
+    if (!Number.isNaN(idx) && idx >= 1 && idx <= sessions.length) {
+      target = sessions[idx - 1]
+    } else {
+      // Fallback to ID prefix match
+      target = sessions.find((s) => s.id === arg || s.id.startsWith(arg)) || null
+    }
 
     if (!target) {
-      print(arg ? `no session matching "${arg}"` : "no sessions to resume")
+      print(`no session matching "${arg}"`)
       return { exit: false }
     }
 
@@ -769,12 +803,30 @@ async function processInputLine({
     state.mode = target.mode || state.mode
     state.providerType = target.providerType || state.providerType
     state.model = target.model || state.model
-    print(`resumed session: ${target.id} (${target.mode}, ${target.model || "?"})`)
+    const title = target.title || `${target.mode}:${target.model || "?"}`
+    print(`resumed: ${paint(title, "cyan")} (${target.mode}, ${target.model || "?"})`)
     const msgs = await getConversationHistory(target.id, 3)
     for (const m of msgs) {
-      const preview = m.content.length > 84 ? `${m.content.slice(0, 84)}...` : m.content
+      const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content)
+      const preview = text.length > 84 ? `${text.slice(0, 84)}...` : text
       print(`  [${m.role}] ${preview}`)
     }
+    return { exit: false }
+  }
+
+  if (normalized === "/undo") {
+    const language = ctx.configState.config.language || "en"
+    const cwd = process.cwd()
+    const confirmation = await confirmRollback({ cwd, language })
+    print(confirmation.message)
+    if (!confirmation.confirmed) return { exit: false }
+    const result = await executeRollback({
+      cwd,
+      commitHash: confirmation.commitHash,
+      sessionId: state.sessionId,
+      language
+    })
+    print(result.message)
     return { exit: false }
   }
 

@@ -222,7 +222,7 @@ export async function touchSession({
       model,
       providerType,
       cwd,
-      title: title || existing?.title || `${mode}:${model}`,
+      title: existing?.title || title || `${mode}:${model}`,
       status,
       parentSessionId: parentSessionId || existing?.parentSessionId || null,
       forkFrom: forkFrom || existing?.forkFrom || null,
