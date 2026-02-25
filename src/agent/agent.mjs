@@ -209,3 +209,12 @@ defineAgent({
   permission: "full",
   tools: null
 })
+
+defineAgent({
+  name: "bug-hunter",
+  description: "Deep bug detection specialist. Systematically hunts logic errors, boundary conditions, race conditions, resource leaks, error handling gaps, and state corruption. Reports only HIGH/MEDIUM confidence bugs with concrete trigger paths.",
+  mode: "subagent",
+  permission: "full",
+  maxTurns: 30,
+  tools: ["read", "glob", "grep", "list", "bash"]
+})

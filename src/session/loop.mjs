@@ -28,6 +28,7 @@ import { paint } from "../theme/color.mjs"
 import { saveCheckpoint } from "./checkpoint.mjs"
 import { askPlanApproval } from "../tool/question-prompt.mjs"
 import { createValidator } from "./task-validator.mjs"
+import { handleRollbackIfNeeded } from "./rollback.mjs"
 
 // Max chars kept in active context per tool_result — process output beyond this is truncated
 const TOOL_RESULT_ACTIVE_LIMIT = 3000
@@ -133,6 +134,24 @@ export async function processTurnLoop({
       context: null,
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       toolEvents: []
+    }
+  }
+
+  // --- Rollback intent detection (top-level only, before any model call) ---
+  if (depth === 0 && allowQuestion && typeof prompt === "string") {
+    const cwd0 = process.cwd()
+    const language = configState.config.language || "en"
+    const rollback = await handleRollbackIfNeeded({ prompt, cwd: cwd0, sessionId, language })
+    if (rollback.handled) {
+      return {
+        sessionId,
+        turnId: newId("turn"),
+        reply: rollback.reply,
+        emittedText: false,
+        context: null,
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        toolEvents: []
+      }
     }
   }
 
