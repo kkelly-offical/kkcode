@@ -10,6 +10,7 @@ import { loadInstructions } from "./instruction-loader.mjs"
 import { buildSystemPromptBlocks } from "./system-prompt.mjs"
 import { detectProjectContext } from "./project-context.mjs"
 import { renderRulesPrompt } from "../rules/load-rules.mjs"
+import { loadProfile } from "../onboarding.mjs"
 import { SkillRegistry } from "../skill/registry.mjs"
 import {
   touchSession,
@@ -48,7 +49,20 @@ async function buildSystemPrompt({ mode, model, cwd, agent = null, tools = [], s
   // Assemble user instructions + rules (Layer 6)
   const instructions = await loadInstructions(cwd)
   const rules = await renderRulesPrompt(cwd)
-  const userInstructions = [...instructions, rules].filter(Boolean).join("\n\n")
+
+  // Inject user profile as a context block
+  const profile = await loadProfile()
+  let profileBlock = ""
+  if (profile && !profile.beginner) {
+    const lines = ["# User Profile"]
+    if (profile.languages?.length) lines.push(`- Languages: ${profile.languages.join(", ")}`)
+    if (profile.tech_stack?.length) lines.push(`- Tech stack: ${profile.tech_stack.join(", ")}`)
+    if (profile.design_style) lines.push(`- Code style preference: ${profile.design_style}`)
+    if (profile.extra_notes) lines.push(`- Notes: ${profile.extra_notes}`)
+    profileBlock = lines.join("\n")
+  }
+
+  const userInstructions = [...instructions, rules, profileBlock].filter(Boolean).join("\n\n")
 
   // Detect project context (framework, language, build tool, etc.)
   const projectContext = await detectProjectContext(cwd)

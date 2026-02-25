@@ -70,7 +70,8 @@ export async function executeTurn({
   signal = null,
   output = null,
   allowQuestion = true,
-  toolContext = {}
+  toolContext = {},
+  longagentImpl = null
 }) {
   maybeRegisterSink()
 
@@ -112,7 +113,8 @@ export async function executeTurn({
           signal,
           output,
           allowQuestion,
-          toolContext
+          toolContext,
+          longagentImpl
         })
       : await processTurnLoop({
           prompt,

@@ -30,6 +30,7 @@ import { generateSkill, saveSkillGlobal } from "./skill/generator.mjs"
 import { userConfigCandidates, projectConfigCandidates, memoryFilePath } from "./storage/paths.mjs"
 import { persistTrust, revokeTrust } from "./permission/workspace-trust.mjs"
 import { confirmRollback, executeRollback } from "./session/rollback.mjs"
+import { loadProfile, runOnboarding } from "./onboarding.mjs"
 
 const HIST_DIR = join(homedir(), ".kkcode")
 const HIST_FILE = join(HIST_DIR, "repl_history")
@@ -92,6 +93,8 @@ const BUILTIN_SLASH = [
   { name: "undo", desc: "undo last code changes" },
   { name: "trust", desc: "trust this workspace" },
   { name: "untrust", desc: "revoke workspace trust" },
+  { name: "profile", desc: "view or edit your user profile" },
+  { name: "like", desc: "show the welcome screen again" },
   { name: "exit", desc: "quit" }
 ]
 
@@ -336,7 +339,8 @@ function help(providers = []) {
     ["/status", "show current runtime state"],
     ["/exit,/quit,/q", "quit"],
     ["/compact", "summarize conversation to free context"],
-    ["/ask /plan /agent /longagent", "quick mode switch"]
+    ["/ask /plan /agent /longagent", "quick mode switch"],
+    ["/longagent 4stage|hybrid", "switch longagent impl (4stage or hybrid)"]
   ]
   const lines = ["", "Commands:"]
   for (const row of rows) lines.push(`  ${padRight(row[0], 28)} ${row[1]}`)
@@ -396,12 +400,16 @@ function shortcutLegend() {
 }
 
 function runtimeStateText(state) {
-  return [
+  const lines = [
     `session=${state.sessionId}`,
     `mode=${state.mode}`,
     `provider=${state.providerType}`,
     `model=${state.model}`
-  ].join("\n")
+  ]
+  if (state.mode === "longagent" && state.longagentImpl) {
+    lines.push(`longagent.impl=${state.longagentImpl}`)
+  }
+  return lines.join("\n")
 }
 
 function normalizeFileChanges(toolEvents = []) {
@@ -563,7 +571,7 @@ export async function collectInput(rl, promptStr) {
   return first
 }
 
-async function executePromptTurn({ prompt, state, ctx, streamSink = null, pendingImages = [] }) {
+async function executePromptTurn({ prompt, state, ctx, streamSink = null, pendingImages = [], signal = null }) {
   // Detect image file references in the prompt
   const { text: cleanedPrompt, imagePaths, imageUrls = [] } = extractImageRefs(prompt, process.cwd())
   const effectivePrompt = cleanedPrompt ?? prompt
@@ -595,6 +603,8 @@ async function executePromptTurn({ prompt, state, ctx, streamSink = null, pendin
     sessionId: state.sessionId,
     configState: ctx.configState,
     providerType: chatParams.providerType ?? state.providerType,
+    longagentImpl: state.longagentImpl ?? null,
+    signal,
     output: streamSink && typeof streamSink === "function"
       ? { write: streamSink }
       : null
@@ -626,7 +636,9 @@ async function processInputLine({
   streamSink = null,
   showTurnStatus = true,
   pendingImages = [],
-  clearPendingImages = null
+  clearPendingImages = null,
+  signal = null,
+  suspendTui = null
 }) {
   const normalized = normalizeSlashAlias(String(line || "").trim())
 
@@ -830,9 +842,56 @@ async function processInputLine({
     return { exit: false }
   }
 
+  if (normalized === "/profile" || normalized === "/profile edit") {
+    const { loadProfile: lp, runOnboarding: ro } = await import("./onboarding.mjs")
+    const current = await lp()
+    if (normalized === "/profile" && current) {
+      const lines = ["Current profile:"]
+      if (current.beginner) {
+        lines.push("  mode: beginner (using defaults)")
+      } else {
+        if (current.languages?.length) lines.push(`  languages: ${current.languages.join(", ")}`)
+        if (current.tech_stack?.length) lines.push(`  tech stack: ${current.tech_stack.join(", ")}`)
+        if (current.design_style) lines.push(`  style: ${current.design_style}`)
+        if (current.extra_notes) lines.push(`  notes: ${current.extra_notes}`)
+      }
+      lines.push("")
+      lines.push("Run /profile edit to update your profile.")
+      print(lines.join("\n"))
+      return { exit: false }
+    }
+    if (suspendTui) await suspendTui(ro)
+    else await ro()
+    return { exit: false }
+  }
+
+  if (normalized === "/like") {
+    const { runOnboarding: ro } = await import("./onboarding.mjs")
+    if (suspendTui) await suspendTui(ro)
+    else await ro()
+    return { exit: false }
+  }
+
   if (["/ask", "/plan", "/agent", "/longagent"].includes(normalized)) {
     state.mode = resolveMode(normalized.slice(1))
+    if (normalized === "/longagent") state.longagentImpl = null
     print(`mode switched: ${state.mode}`)
+    return { exit: false }
+  }
+
+  if (normalized.startsWith("/longagent ")) {
+    const sub = normalized.replace("/longagent ", "").trim().toLowerCase()
+    if (sub === "4stage") {
+      state.mode = "longagent"
+      state.longagentImpl = "4stage"
+      print("mode switched: longagent (4stage)")
+    } else if (sub === "hybrid") {
+      state.mode = "longagent"
+      state.longagentImpl = "hybrid"
+      print("mode switched: longagent (hybrid)")
+    } else {
+      print("usage: /longagent [4stage|hybrid]")
+    }
     return { exit: false }
   }
 
@@ -957,7 +1016,8 @@ async function processInputLine({
       state,
       ctx,
       streamSink: state.mode === "longagent" ? null : streamSink,
-      pendingImages: allImages
+      pendingImages: allImages,
+      signal
     })
     const result = turn.result
     const status = renderStatusBar({
@@ -1099,7 +1159,8 @@ async function processInputLine({
     state,
     ctx,
     streamSink: state.mode === "longagent" ? null : streamSink,
-    pendingImages: images
+    pendingImages: images,
+    signal
   })
   const result = turn.result
 
@@ -1376,6 +1437,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     currentActivity: null,
     currentStep: 0,
     maxSteps: 0,
+    paused: false,
+    turnAbortController: null,
     metrics: {
       tokenMeter: {
         estimated: false,
@@ -1766,7 +1829,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     const before = ui.input.slice(0, ui.inputCursor)
     const after = ui.input.slice(ui.inputCursor)
     const imgTag = ui.pendingImages.length ? `[${ui.pendingImages.length} img] ` : ""
-    const inputDecorated = `${ui.busy ? "[running] " : "[ready] "}${imgTag}> ${before}${cursorMark}${after}`
+    const inputDecorated = `${ui.busy ? "[running] " : ui.paused ? "[paused] " : "[ready] "}${imgTag}> ${before}${cursorMark}${after}`
     const inputLogical = inputDecorated.split("\n")
     const inputWrapped = []
     for (const logicalLine of inputLogical) {
@@ -2153,6 +2216,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     ui.selectedSuggestion = 0
     ui.suggestionOffset = 0
     ui.busy = true
+    ui.paused = false
+    const aborter = new AbortController()
+    ui.turnAbortController = aborter
     startBusySpinner()
     requestRender()
 
@@ -2170,7 +2236,34 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         streamSink: appendStreamChunk,
         showTurnStatus: false,
         pendingImages: ui.pendingImages,
-        clearPendingImages: () => { ui.pendingImages = [] }
+        clearPendingImages: () => { ui.pendingImages = [] },
+        signal: aborter.signal,
+        suspendTui: async (fn) => {
+          stopBusySpinner()
+          // Detach listeners before raw mode change to avoid ghost events
+          if (onKey) process.stdin.removeListener("keypress", onKey)
+          if (onData) process.stdin.removeListener("data", onData)
+          if (process.stdin.isTTY) process.stdin.setRawMode(false)
+          // Switch back to normal screen, then clear it
+          stopTuiFrame()
+          process.stdout.write("\x1b[2J\x1b[H")
+          try {
+            await fn()
+          } finally {
+            // Clear any onboarding remnants before switching back
+            process.stdout.write("\x1b[2J\x1b[H")
+            // Re-enter alternate screen and restore raw mode
+            startTuiFrame()
+            emitKeypressEvents(process.stdin)
+            if (process.stdin.isTTY) process.stdin.setRawMode(true)
+            process.stdin.resume()
+            // Re-attach listeners
+            if (onKey) process.stdin.on("keypress", onKey)
+            if (onData) process.stdin.on("data", onData)
+            forceFullPaint = true
+            requestRender()
+          }
+        }
       })
 
       if (action.cleared) {
@@ -2200,9 +2293,10 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         ui.quitting = true
       }
     } catch (error) {
-      appendLog(`error: ${error.message}`)
+      if (error.name !== "AbortError") appendLog(`error: ${error.message}`)
     } finally {
       ui.busy = false
+      ui.turnAbortController = null
       ui.currentActivity = null
       stopBusySpinner()
       requestRender()
@@ -2563,6 +2657,18 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           return
         }
 
+        // Esc while busy: pause current turn
+        if (key.name === "escape" && ui.busy) {
+          if (ui.turnAbortController) {
+            ui.turnAbortController.abort()
+            ui.turnAbortController = null
+          }
+          ui.paused = true
+          appendLog("[paused] turn interrupted — enter a new message or command to continue")
+          requestRender()
+          return
+        }
+
         if (ui.busy) return
 
         // Ctrl+V: try image first, fall back to text paste
@@ -2893,6 +2999,12 @@ function startSplash() {
 }
 
 export async function startRepl({ trust = false } = {}) {
+  // First-run onboarding — must run before splash/readline to own the terminal
+  const existingProfile = await loadProfile()
+  if (!existingProfile || process.env.KKCODE_ONBOARDING === "1") {
+    await runOnboarding()
+  }
+
   // Trust check BEFORE splash — readline prompt must not compete with splash screen clearing
   const { checkWorkspaceTrust } = await import("./permission/workspace-trust.mjs")
   const trustState = await checkWorkspaceTrust({ cwd: process.cwd(), cliTrust: trust, isTTY: process.stdin.isTTY })

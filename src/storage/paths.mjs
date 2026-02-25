@@ -146,3 +146,8 @@ export function githubReposDir() {
 export async function ensureGithubReposDir() {
   await mkdir(githubReposDir(), { recursive: true })
 }
+
+// User onboarding profile — stores tech stack, style preferences, etc.
+export function profilePath() {
+  return path.join(userRootDir(), "profile.yaml")
+}
