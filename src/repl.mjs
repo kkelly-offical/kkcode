@@ -3086,7 +3086,7 @@ function startSplash() {
     "  ╚═╝  ╚═╝ ╚═╝  ╚═╝  ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝ "
   ]
   const tagline = "AI Coding Agent"
-  const version = "v0.1.6"
+  const version = "v0.1.8"
 
   // Gradient colors for the wave animation (cyan → blue → purple → pink → back)
   const wave = [
