@@ -1,6 +1,6 @@
 # kkcode
 
-[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
+[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=v0.1.8)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 ![Node](https://img.shields.io/badge/Node.js-%3E%3D22-green)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
@@ -116,7 +116,7 @@ LongAgent 是 kkcode 的核心差异能力，支持两种编排模式：
 **Hybrid 模式**（默认）— 7 阶段流水线：
 
 ```
-Intake → Preview → Blueprint → Git分支 → Scaffold+并行编码 → Debugging → 门禁验证 → Git合并
+Intake → OA确认 → Preview → Blueprint → 用户审批 → Git分支 → Scaffold+并行编码 → Debugging → 门禁验证 → Git合并
 ```
 
 **4-Stage 模式** — 4 阶段顺序执行：
@@ -127,6 +127,11 @@ Preview(只读) → Blueprint(只读) → Coding(写入) → Debugging(写入)
 
 ### 关键机制
 
+- **智能意图路由** — 自动识别任务类型：问答类转 `ask`，简单任务转 `agent`，复杂多文件任务才进 `longagent`；强制使用不匹配模式时弹出确认
+- **OA 需求确认** — H0 阶段完成后向用户展示需求摘要，支持补充修改后再进入规划
+- **Blueprint 审批** — H2 阶段生成执行计划后，展示阶段列表和架构摘要，用户确认后才开始执行
+- **中途补充需求** — 执行中按 `Esc` 中止后，输入补充需求按 Enter 可从 H0 重新规划（原始需求自动合并）
+- **前端设计提示词** — 自动检测前端任务（React/Vue/CSS/UI 等），注入响应式、无障碍、设计风格等指南
 - **阶段并行** — 同阶段任务由独立 worker 并发执行，`max_concurrency` 控制并发数
 - **文件隔离** — 每个文件仅归属一个 task，plan 阶段即检测冲突
 - **自动重试** — 失败任务自动重试，优先续写未完成文件
