@@ -40,6 +40,7 @@ Rules:
 const DEFAULT_THRESHOLD_MESSAGES = 50
 const DEFAULT_THRESHOLD_RATIO = 0.7
 const DEFAULT_KEEP_RECENT = 6
+const DEFAULT_KEEP_RECENT_TURNS = 3
 const TOOL_RESULT_PREVIEW_LIMIT = 200
 
 // Estimate tokens from a string, accounting for CJK characters (~1.5 chars/token vs ~4 for Latin)
@@ -188,22 +189,32 @@ export async function compactSession({
   providerType,
   configState,
   keepRecent = DEFAULT_KEEP_RECENT,
+  keepRecentTurns = DEFAULT_KEEP_RECENT_TURNS,
   baseUrl = null,
   apiKeyEnv = null
 }) {
   const history = await getConversationHistory(sessionId, 9999)
   if (history.length <= keepRecent + 2) return { compacted: false, reason: "too few messages" }
 
-  // Find split point that doesn't break tool_use/tool_result pairs
-  let splitIdx = history.length - keepRecent
-  while (splitIdx > 0 && splitIdx < history.length) {
-    const msg = history[splitIdx]
-    const content = msg.content
-    if (Array.isArray(content) && content.some(b => b.type === "tool_result")) {
-      splitIdx-- // include the paired assistant tool_use message
-      continue
+  // Turn-based split: keep last keepRecentTurns complete turns
+  // A "turn" = one user interaction cycle (user msg + model response + all tool calls)
+  // Falls back to message-count if no turnId metadata is present
+  let splitIdx
+  const turnIds = []
+  const seenTurns = new Set()
+  for (const msg of history) {
+    if (msg.turnId && !seenTurns.has(msg.turnId)) {
+      seenTurns.add(msg.turnId)
+      turnIds.push(msg.turnId)
     }
-    break
+  }
+  if (turnIds.length > keepRecentTurns) {
+    const keepFromTurnId = turnIds[turnIds.length - keepRecentTurns]
+    splitIdx = history.findIndex(msg => msg.turnId === keepFromTurnId)
+    if (splitIdx < 0) splitIdx = history.length - keepRecent
+  } else {
+    // Fallback: not enough turns, use message count
+    splitIdx = history.length - keepRecent
   }
   const toSummarize = history.slice(0, splitIdx)
   const kept = history.slice(splitIdx)
