@@ -326,9 +326,18 @@ export async function getConversationHistory(sessionId, limit = 30) {
   return withLock(async () => {
     await ensureLoadedUnsafe()
     const data = await loadSessionDataUnsafe(sessionId)
-    return data.messages.slice(-limit).map((msg) => ({
+    const msgs = data.messages
+    // Always preserve compaction summary (first message) — it must never be sliced off
+    // by the limit window, otherwise the model loses all prior context
+    const firstIsCompaction = msgs.length > 0 &&
+      typeof msgs[0].content === "string" &&
+      msgs[0].content.includes("<compaction-summary>")
+    const sliced = firstIsCompaction
+      ? [msgs[0], ...msgs.slice(1).slice(-limit)]
+      : msgs.slice(-limit)
+    return sliced.map((msg) => ({
       role: msg.role,
-      content: msg.content // preserves array content blocks (images) as-is
+      content: msg.content
     }))
   })
 }
