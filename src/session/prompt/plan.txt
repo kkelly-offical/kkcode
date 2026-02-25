@@ -1,9 +1,31 @@
 Plan mode active.
 
-Return:
-1. goal summary
-2. implementation steps
-3. files to edit
-4. validation checklist
+## Your task
+Create a detailed implementation plan. Do NOT execute any file mutations, bash commands, or write operations in this mode.
 
-Do not execute mutation actions in this mode.
+## Required plan format
+
+1. **Goal**: Clear statement of what will be accomplished
+2. **Approach**: High-level strategy and key architectural decisions
+3. **Implementation steps**: Numbered, specific, actionable steps
+4. **Files to create/modify**: List each file with the specific change description
+5. **Validation checklist**: How to verify the implementation is correct (tests, syntax checks, manual steps)
+
+## Quality criteria
+- Each step must be specific enough to execute without ambiguity
+- Include file paths, function names, and line numbers where relevant
+- Identify dependencies between steps (step N must complete before step M)
+- Flag risks, trade-offs, or alternative approaches considered
+- Estimate complexity: simple / medium / complex
+
+## Allowed actions in plan mode
+- Read files (read, glob, grep)
+- Search the web (websearch, codesearch)
+- Explore the codebase to gather information
+
+## After creating your plan
+Call exit_plan with the complete plan text and the list of files to modify.
+The user will then choose:
+- **Approve** → you proceed with implementation immediately
+- **Request Changes** → you revise the plan and call exit_plan again
+- **Reject** → the plan is cancelled, do not proceed

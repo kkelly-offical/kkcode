@@ -33,7 +33,7 @@ import { createValidator } from "./task-validator.mjs"
 const TOOL_RESULT_ACTIVE_LIMIT = 3000
 
 const READ_ONLY_TOOLS = new Set([
-  "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch", "background_output", "todowrite", "enter_plan", "exit_plan"
+  "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch", "background_output", "todowrite", "enter_plan"
 ])
 
 function addUsage(target, delta) {
@@ -652,42 +652,51 @@ export async function processTurnLoop({
             }
           }
 
-          await PermissionEngine.check({
-            config: configState.config,
-            sessionId,
-            tool: call.name,
-            mode,
-            pattern,
-            command,
-            risk,
-            reason: `tool call from model at step ${step}`
-          })
+          // Plan mode enforcement: block write tools when _planMode is active
+          if (toolContext._planMode && !READ_ONLY_TOOLS.has(call.name) && call.name !== "exit_plan") {
+            result = {
+              name: call.name,
+              status: "error",
+              output: `[PLAN MODE] Cannot execute '${call.name}' in plan mode. Finish your plan outline and call exit_plan to present it for user approval.`
+            }
+          } else {
+            await PermissionEngine.check({
+              config: configState.config,
+              sessionId,
+              tool: call.name,
+              mode,
+              pattern,
+              command,
+              risk,
+              reason: `tool call from model at step ${step}`
+            })
 
-          const tool = await ToolRegistry.get(call.name)
-          result = !tool
-            ? {
-                name: call.name,
-                status: "error",
-                output: `unknown tool: ${call.name}`,
-                error: `unknown tool: ${call.name}`
-              }
-            : await executeTool({
-                tool,
-                args: call.args,
-                sessionId,
-                turnId,
-                context: {
-                  cwd,
-                  mode,
-                  delegateTask,
-                  signal,
+            const tool = await ToolRegistry.get(call.name)
+            result = !tool
+              ? {
+                  name: call.name,
+                  status: "error",
+                  output: `unknown tool: ${call.name}`,
+                  error: `unknown tool: ${call.name}`
+                }
+              : await executeTool({
+                  tool,
+                  args: call.args,
                   sessionId,
                   turnId,
-                  config: configState.config,
-                  ...toolContext
-                },
-                signal
-              })
+                  context: {
+                    cwd,
+                    mode,
+                    delegateTask,
+                    signal,
+                    sessionId,
+                    turnId,
+                    config: configState.config,
+                    ...toolContext
+                  },
+                  signal
+                })
+          }
         } catch (error) {
           result = {
             name: call.name,
@@ -710,8 +719,10 @@ export async function processTurnLoop({
           result = {
             ...result,
             output: approval.approved
-              ? "User APPROVED the plan. Proceed with implementation."
-              : `User REJECTED the plan. Feedback: ${approval.feedback || "no feedback provided"}`,
+              ? "User APPROVED the plan. Proceed with implementation immediately."
+              : approval.requestChanges
+                ? `User requested changes to the plan. Feedback: ${approval.feedback || "no specific feedback"}. Revise your plan and call exit_plan again with the updated plan.`
+                : `User REJECTED the plan. Feedback: ${approval.feedback || "no feedback provided"}. Do not proceed — the plan has been cancelled.`,
             metadata: { ...result.metadata, planApprovalResult: approval }
           }
         }

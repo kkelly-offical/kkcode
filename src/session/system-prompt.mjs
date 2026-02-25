@@ -96,6 +96,7 @@ export async function agentPrompt(agent) {
 // Layer 4: Mode reminder (stable within mode)
 export async function modeReminder(mode) {
   if (mode === "plan") return loadSessionPrompt("plan.txt")
+  if (mode === "agent") return loadSessionPrompt("agent.txt")
   return ""
 }
 

@@ -70,7 +70,8 @@ export async function askPlanApproval({ plan, files = [] }) {
       description: `${plan}${fileList}`,
       options: [
         { label: "Approve", value: "approve", description: "Proceed with this plan" },
-        { label: "Reject", value: "reject", description: "Reject and provide feedback" }
+        { label: "Request Changes", value: "changes", description: "Revise and resubmit with feedback" },
+        { label: "Reject", value: "reject", description: "Cancel this plan entirely" }
       ],
       multi: false,
       allowCustom: true
@@ -79,8 +80,14 @@ export async function askPlanApproval({ plan, files = [] }) {
   const answers = await askQuestionInteractive({ questions })
   const answer = String(answers.plan_approval || "").trim().toLowerCase()
   if (answer === "approve" || answer === "1") {
-    return { approved: true, feedback: "" }
+    return { approved: true, requestChanges: false, feedback: "" }
   }
-  const feedback = answer === "reject" || answer === "2" ? "" : answer
-  return { approved: false, feedback }
+  if (answer === "changes" || answer === "2") {
+    return { approved: false, requestChanges: true, feedback: "" }
+  }
+  if (answer === "reject" || answer === "3") {
+    return { approved: false, requestChanges: false, feedback: "" }
+  }
+  // Custom text input: treat as "request changes" with the text as feedback
+  return { approved: false, requestChanges: true, feedback: answer }
 }
