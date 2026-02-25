@@ -5,6 +5,31 @@
 
 export const LONGAGENT_FILE_CHANGES_LIMIT = 400
 
+// E2: 集中定义 LongAgent 模块的默认常量，避免 magic number 散落各处
+export const LONGAGENT_DEFAULTS = {
+  NO_PROGRESS_LIMIT: 5,
+  CHECKPOINT_INTERVAL: 5,
+  MAX_GATE_ATTEMPTS: 5,
+  MAX_STAGE_RECOVERIES: 3,
+  GATE_TIMEOUT_MS: 15 * 60 * 1000,
+  GATE_CACHE_TTL_MS: 5 * 60 * 1000,
+  PARALLEL_MAX_CONCURRENCY: 3,
+  TASK_TIMEOUT_MS: 600000,
+  TASK_MAX_RETRIES: 2,
+  POLL_INTERVAL_MS: 300,
+  BACKOFF_MAX_MS: 30000,
+  INTERRUPTIBLE_SLEEP_CHUNK_MS: 500,
+  INTAKE_MAX_ROUNDS: 6,
+  INTAKE_SUMMARY_MAX_LEN: 500,
+  TASK_SUMMARY_MAX_LEN: 300,
+  FILE_LIST_MAX: 80,
+  STRING_LIST_MAX: 50,
+  TASK_BUS_MAX_MESSAGES: 500,
+  TASK_BUS_CONTEXT_MAX_LEN: 2000,
+  SEMANTIC_ERROR_THRESHOLD: 3,
+  JACCARD_SIMILARITY_THRESHOLD: 0.6
+}
+
 // ========== 共享 JSON 解析工具 ==========
 
 export function stripFence(text = "") {
@@ -91,6 +116,13 @@ export function isLikelyActionableObjective(prompt) {
   const greetings = [
     "hi", "hello", "hey", "你好", "您好", "在吗", "yo", "嗨"
   ]
+  // E1: 扩展非编码意图前缀，防止纯问答触发 LongAgent
+  const nonActionablePrefixes = [
+    "what is", "what are", "explain", "describe", "tell me about",
+    "how does", "why does", "when was", "who is", "can you explain",
+    "什么是", "解释", "介绍", "告诉我", "为什么", "怎么理解",
+    "今天", "天气", "新闻", "推荐", "聊聊"
+  ]
   const codingSignals = [
     "fix", "build", "implement", "refactor", "debug", "test", "review", "write", "create", "add", "optimize", "migrate", "deploy",
     "bug", "issue", "error", "code", "repo", "file", "function", "api",
@@ -98,6 +130,7 @@ export function isLikelyActionableObjective(prompt) {
   ]
   if (codingSignals.some((kw) => lower.includes(kw))) return true
   if (greetings.some((g) => lower === g || lower === `${g}!` || lower === `${g}！`)) return false
+  if (nonActionablePrefixes.some((p) => lower.startsWith(p + " ") || lower === p)) return false
   if (text.length <= 8 && !/[./\\:_-]/.test(text)) return false
   return true
 }
@@ -119,6 +152,66 @@ export function stageProgressStats(taskProgress = {}) {
   const total = items.length
   const remainingFiles = [...new Set(items.flatMap((item) => Array.isArray(item.remainingFiles) ? item.remainingFiles : []))]
   return { done, total, remainingFiles, remainingFilesCount: remainingFiles.length }
+}
+
+// B1: 可中断退避等待 — 将长 sleep 拆为小段，每段间检查中断信号
+export async function interruptibleSleep(ms, { signal, sessionId, getStopRequested } = {}) {
+  const CHUNK = 500
+  let remaining = ms
+  while (remaining > 0) {
+    if (signal?.aborted) return true
+    if (sessionId && getStopRequested) {
+      try {
+        const stopped = await getStopRequested(sessionId)
+        if (stopped) return true
+      } catch { /* ignore read errors */ }
+    }
+    const delay = Math.min(remaining, CHUNK)
+    await new Promise(r => setTimeout(r, delay))
+    remaining -= delay
+  }
+  return false
+}
+
+// C2: 统一的 usage 累加工具函数，替代散落各处的 4 行累加模式
+export function accumulateUsage(aggregate, turn) {
+  aggregate.input += turn.usage?.input || 0
+  aggregate.output += turn.usage?.output || 0
+  aggregate.cacheRead += turn.usage?.cacheRead || 0
+  aggregate.cacheWrite += turn.usage?.cacheWrite || 0
+}
+
+// C3: 统一返回值结构 — 所有模式共用，确保 engine.mjs 读取的字段都有默认值
+export function buildLongAgentResult(fields = {}) {
+  return {
+    sessionId: fields.sessionId || "",
+    turnId: fields.turnId || `turn_long_${Date.now()}`,
+    reply: fields.reply || "",
+    usage: fields.usage || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    toolEvents: fields.toolEvents || [],
+    iterations: fields.iterations || 0,
+    status: fields.status || "unknown",
+    phase: fields.phase || "",
+    gateStatus: fields.gateStatus || {},
+    currentGate: fields.currentGate || "",
+    lastGateFailures: fields.lastGateFailures || [],
+    recoveryCount: fields.recoveryCount || 0,
+    progress: fields.progress || { percentage: 0, currentStep: 0, totalSteps: 0 },
+    elapsed: fields.elapsed || 0,
+    stageIndex: fields.stageIndex || 0,
+    stageCount: fields.stageCount || 0,
+    currentStageId: fields.currentStageId || null,
+    planFrozen: fields.planFrozen || false,
+    taskProgress: fields.taskProgress || {},
+    fileChanges: fields.fileChanges || [],
+    stageProgress: fields.stageProgress || { done: 0, total: 0 },
+    remainingFilesCount: fields.remainingFilesCount || 0,
+    // Mode-specific fields (optional, passed through if present)
+    ...(fields.gitBranch != null ? { gitBranch: fields.gitBranch } : {}),
+    ...(fields.gitBaseBranch != null ? { gitBaseBranch: fields.gitBaseBranch } : {}),
+    ...(fields.recoverySuggestions != null ? { recoverySuggestions: fields.recoverySuggestions } : {}),
+    ...(fields.fourStage != null ? { fourStage: fields.fourStage } : {})
+  }
 }
 
 export function normalizeFileChange(item = {}) {
