@@ -12,7 +12,10 @@ import {
   stageProgressStats,
   summarizeGateFailures,
   LONGAGENT_FILE_CHANGES_LIMIT,
-  createStuckTracker
+  createStuckTracker,
+  interruptibleSleep,
+  accumulateUsage,
+  buildLongAgentResult
 } from "./longagent-utils.mjs"
 import { saveCheckpoint, loadCheckpoint, cleanupCheckpoints } from "./checkpoint.mjs"
 import {
@@ -21,13 +24,15 @@ import {
   getGatePreferences,
   saveGatePreferences,
   buildGatePromptText,
-  parseGateSelection
+  parseGateSelection,
+  clearGateCache
 } from "./usability-gates.mjs"
 import { runIntakeDialogue, buildStagePlan } from "./longagent-plan.mjs"
 import { runStageBarrier } from "../orchestration/stage-scheduler.mjs"
 import { runScaffoldPhase } from "./longagent-scaffold.mjs"
 import { createValidator } from "./task-validator.mjs"
 import * as git from "../util/git.mjs"
+import { setupGitBranch } from "./longagent-git-lifecycle.mjs"
 
 async function runParallelLongAgent({
   prompt,
@@ -128,6 +133,33 @@ async function runParallelLongAgent({
     stopRequested: false
   })
 
+  // B2: Checkpoint 恢复 — 从断点继续，跳过已完成的阶段
+  const parallelResumeEnabled = longagentConfig.checkpoint_resume !== false
+  if (parallelResumeEnabled) {
+    try {
+      const cp = await loadCheckpoint(sessionId)
+      if (cp?.stageIndex > 0 && cp?.stagePlan?.stages && Array.isArray(cp.stagePlan.stages)
+          && typeof cp.stageIndex === "number" && cp.stageIndex >= 0
+          && cp.stageIndex <= cp.stagePlan.stages.length) {
+        stagePlan = cp.stagePlan
+        stageIndex = cp.stageIndex
+        planFrozen = true
+        taskProgress = cp.taskProgress || {}
+        lastProgress = cp.lastProgress || lastProgress
+        iteration = cp.iteration || 0
+        gateStatus = cp.gateStatus || gateStatus
+        currentGate = cp.currentGate || currentGate
+        recoveryCount = cp.recoveryCount || 0
+        await EventBus.emit({
+          type: EVENT_TYPES.LONGAGENT_PHASE_CHANGED,
+          sessionId,
+          payload: { prevPhase: "L0", nextPhase: "L2", reason: "checkpoint_resume", iteration }
+        })
+        await syncState({ lastMessage: `resumed from checkpoint at stage ${stageIndex}` })
+      }
+    } catch { /* no checkpoint, start fresh */ }
+  }
+
   if (!isLikelyActionableObjective(prompt)) {
     const blocked = "LongAgent 需要明确的编码目标。请直接描述要实现/修复的内容、涉及文件或验收标准。"
     await LongAgentManager.update(sessionId, {
@@ -143,33 +175,21 @@ async function runParallelLongAgent({
       lastMessage: blocked
     })
     await markSessionStatus(sessionId, "active")
-    return {
+    return buildLongAgentResult({
       sessionId,
-      turnId: `turn_long_${Date.now()}`,
       reply: blocked,
       usage: aggregateUsage,
       toolEvents,
       iterations: 0,
-      emittedText: false,
-      context: null,
       status: "blocked",
       phase: "L0",
       gateStatus: { intake: { status: "blocked", reason: "objective_not_actionable" } },
-      currentGate: "intake",
-      lastGateFailures: [],
-      recoveryCount: 0,
-      progress: { percentage: 0, currentStep: 0, totalSteps: 0 },
-      elapsed: 0,
-      stageIndex: 0,
-      stageCount: 0,
-      currentStageId: null,
-      planFrozen: false,
-      taskProgress: {},
-      stageProgress: { done: 0, total: 0, remainingFiles: [], remainingFilesCount: 0 },
-      fileChanges: [],
-      remainingFilesCount: 0
-    }
+      currentGate: "intake"
+    })
   }
+
+  // B2: checkpoint 恢复时跳过 intake/planning/scaffold
+  if (!planFrozen) {
 
   await EventBus.emit({
     type: EVENT_TYPES.LONGAGENT_INTAKE_STARTED,
@@ -204,57 +224,26 @@ async function runParallelLongAgent({
     })
   }
 
-  // --- Git branch creation (after intake, before planning) ---
+  // C1: Git branch creation — 使用共享模块
   const cwd = process.cwd()
   const inGitRepo = gitEnabled && await git.isGitRepo(cwd)
   if (inGitRepo) {
     let userWantsGit = !gitAsk
     if (gitAsk && allowQuestion) {
-      // Ask user via a lightweight turn
       const askResult = await processTurnLoop({
-        prompt: [
-          "[SYSTEM] Git 分支管理已就绪。是否为本次 LongAgent 会话创建独立分支？",
-          "回复 yes/是 启用，no/否 跳过。",
-          "启用后：自动创建特性分支 → 每阶段自动提交 → 完成后合并回主分支。"
-        ].join("\n"),
+        prompt: "[SYSTEM] Git 分支管理已就绪。是否为本次 LongAgent 会话创建独立分支？\n回复 yes/是 启用，no/否 跳过。",
         mode: "ask", model, providerType, sessionId, configState,
         baseUrl, apiKeyEnv, agent, signal, allowQuestion: true, toolContext
       })
       const answer = String(askResult.reply || "").toLowerCase().trim()
       userWantsGit = ["yes", "是", "y", "ok", "好", "确认", "开启", "启用"].some(k => answer.includes(k))
-      aggregateUsage.input += askResult.usage.input || 0
-      aggregateUsage.output += askResult.usage.output || 0
+      accumulateUsage(aggregateUsage, askResult)
     }
-
     if (userWantsGit) {
-      gitBaseBranch = await git.currentBranch(cwd)
-      const branchName = git.generateBranchName(sessionId, prompt)
-      const clean = await git.isClean(cwd)
-      let stashed = false
-      if (!clean) {
-        const stashResult = await git.stash("kkcode-auto-stash-before-branch", cwd)
-        stashed = stashResult.ok
-      }
-      try {
-        const created = await git.createBranch(branchName, cwd)
-        if (created.ok) {
-          gitBranch = branchName
-          gitActive = true
-          gateStatus.git = { status: "pass", branch: branchName, baseBranch: gitBaseBranch }
-          await EventBus.emit({
-            type: EVENT_TYPES.LONGAGENT_GIT_BRANCH_CREATED,
-            sessionId,
-            payload: { branch: branchName, baseBranch: gitBaseBranch }
-          })
-          await syncState({ lastMessage: `git branch created: ${branchName}` })
-        } else {
-          gateStatus.git = { status: "warn", reason: created.message }
-        }
-      } finally {
-        if (stashed) {
-          await git.stashPop(cwd).catch(() => {})
-        }
-      }
+      const gitSetup = await setupGitBranch({ sessionId, prompt, cwd })
+      gitBranch = gitSetup.gitBranch; gitBaseBranch = gitSetup.gitBaseBranch; gitActive = gitSetup.gitActive
+      gateStatus.git = gitSetup.gateStatus
+      if (gitActive) await syncState({ lastMessage: `git branch created: ${gitBranch}` })
     }
   }
 
@@ -328,10 +317,7 @@ async function runParallelLongAgent({
     }
 
     if (scaffoldResult.usage) {
-      aggregateUsage.input += scaffoldResult.usage.input || 0
-      aggregateUsage.output += scaffoldResult.usage.output || 0
-      aggregateUsage.cacheRead += scaffoldResult.usage.cacheRead || 0
-      aggregateUsage.cacheWrite += scaffoldResult.usage.cacheWrite || 0
+      accumulateUsage(aggregateUsage, scaffoldResult)
     }
     if (scaffoldResult.toolEvents?.length) {
       toolEvents.push(...scaffoldResult.toolEvents)
@@ -356,8 +342,9 @@ async function runParallelLongAgent({
   }
   // --- End L1.5 ---
 
+  } // end if (!planFrozen) — B2 checkpoint resume guard
+
   let priorContext = ""
-  const seenFilePaths = new Set() // #3 去重：跨阶段文件路径去重，避免 priorContext 重复提及
 
   while (stageIndex < stagePlan.stages.length) {
     const state = await LongAgentManager.get(sessionId)
@@ -412,13 +399,6 @@ async function runParallelLongAgent({
         .filter(([, value]) => Boolean(value))
     )
 
-    // #4 计划锚点 — 每个阶段执行前重建，确保模型始终看到完整计划和当前进度
-    const stageStatuses = stagePlan.stages.map((s, i) => {
-      const marker = i < stageIndex ? "✓" : i === stageIndex ? "→" : " "
-      return `[${marker}] 阶段${i + 1}: ${s.name || s.stageId}`
-    }).join("\n")
-    const planAnchor = `## 计划锚点\n目标: ${stagePlan.objective || prompt}\n进度: ${stageIndex + 1}/${stagePlan.stages.length}\n${stageStatuses}\n\n`
-
     const stageResult = await runStageBarrier({
       stage,
       sessionId,
@@ -429,7 +409,7 @@ async function runParallelLongAgent({
       objective: prompt,
       stageIndex,
       stageCount: stagePlan.stages.length,
-      priorContext: planAnchor + priorContext
+      priorContext
     })
 
     for (const [taskId, progress] of Object.entries(stageResult.taskProgress || {})) {
@@ -454,19 +434,12 @@ async function runParallelLongAgent({
       remainingFiles: stageResult.remainingFiles
     }
 
-    // #1 阶段级压缩 + #3 去重 — 结构化阶段摘要，文件路径跨阶段去重
+    // Build inter-stage knowledge transfer summary
     const taskSummaries = Object.values(stageResult.taskProgress || {})
       .filter(t => t.lastReply)
-      .map(t => `  - [${t.taskId}] ${t.status}: ${t.lastReply.slice(0, 250)}`)
-    const stageFiles = (stageResult.fileChanges || [])
-      .map(f => (typeof f === "string" ? f : (f.path || f.file || "")))
-      .filter(Boolean)
-    const newFiles = stageFiles.filter(f => !seenFilePaths.has(f))
-    newFiles.forEach(f => seenFilePaths.add(f))
-    if (taskSummaries.length || newFiles.length) {
-      const fileNote = newFiles.length ? `\n  新增/修改文件: ${newFiles.join(", ")}` : ""
-      const failNote = !stageResult.allSuccess ? `\n  失败任务数: ${stageResult.failCount}` : ""
-      priorContext += `### 阶段${stageIndex + 1}: ${stage.name || stage.stageId} (${stageResult.allSuccess ? "PASS" : "FAIL"})${failNote}\n${taskSummaries.join("\n")}${fileNote}\n\n`
+      .map(t => `[${t.taskId}] ${t.status}: ${t.lastReply.slice(0, 300)}`)
+    if (taskSummaries.length) {
+      priorContext += `### Stage ${stageIndex + 1}: ${stage.name || stage.stageId} (${stageResult.allSuccess ? "PASS" : "FAIL"})\n${taskSummaries.join("\n")}\n\n`
     }
 
     lastProgress = {
@@ -497,9 +470,11 @@ async function runParallelLongAgent({
 
     if (!stageResult.allSuccess) {
       recoveryCount += 1
-      // Exponential backoff before retry
+      // B1: 可中断退避等待，检查 stop 信号
       const backoffMs = Math.min(1000 * 2 ** (recoveryCount - 1), 30000)
-      await new Promise(r => setTimeout(r, backoffMs))
+      const getStop = async (sid) => (await LongAgentManager.get(sid))?.stopRequested
+      const interrupted = await interruptibleSleep(backoffMs, { signal, sessionId, getStopRequested: getStop })
+      if (interrupted) break
       lastGateFailures = Object.values(stageResult.taskProgress || {})
         .filter((item) => item.status !== "completed")
         .map((item) => `${item.taskId}:${item.lastError || item.status}`)
@@ -572,7 +547,6 @@ async function runParallelLongAgent({
     }
 
     stageIndex += 1
-    recoveryCount = 0  // reset per-stage recovery counter after successful stage
     // Always checkpoint after each stage for reliable recovery
     await saveCheckpoint(sessionId, {
       name: `stage_${stage.stageId}`,
@@ -609,8 +583,7 @@ async function runParallelLongAgent({
             configState.config.agent.longagent.usability_gates[gate].enabled = enabled
           }
         }
-        aggregateUsage.input += gateAskResult.usage.input || 0
-        aggregateUsage.output += gateAskResult.usage.output || 0
+        accumulateUsage(aggregateUsage, gateAskResult)
       } else {
         // Apply saved preferences
         const savedPrefs = await getGatePreferences()
@@ -668,10 +641,7 @@ async function runParallelLongAgent({
         toolContext
       })
       finalReply = markerTurn.reply
-      aggregateUsage.input += markerTurn.usage.input || 0
-      aggregateUsage.output += markerTurn.usage.output || 0
-      aggregateUsage.cacheRead += markerTurn.usage.cacheRead || 0
-      aggregateUsage.cacheWrite += markerTurn.usage.cacheWrite || 0
+      accumulateUsage(aggregateUsage, markerTurn)
       toolEvents.push(...markerTurn.toolEvents)
       completionMarkerSeen = isComplete(markerTurn.reply)
       gateStatus.completionMarker = {
@@ -720,8 +690,11 @@ async function runParallelLongAgent({
       const failureSummary = summarizeGateFailures(gateResult.failures)
       lastGateFailures = gateResult.failures.map((item) => `${item.gate}:${item.reason}`)
       // Use gate-specific backoff (not shared recoveryCount) to avoid over-aggressive delays
+      // B1: 可中断退避等待
       const gateBackoffMs = Math.min(1000 * 2 ** (gateAttempt - 1), 30000)
-      await new Promise(r => setTimeout(r, gateBackoffMs))
+      const getStop = async (sid) => (await LongAgentManager.get(sid))?.stopRequested
+      const gateInterrupted = await interruptibleSleep(gateBackoffMs, { signal, sessionId, getStopRequested: getStop })
+      if (gateInterrupted) break
 
       await EventBus.emit({
         type: EVENT_TYPES.LONGAGENT_RECOVERY_ENTERED,
@@ -771,11 +744,10 @@ async function runParallelLongAgent({
         toolContext
       })
       finalReply = remediation.reply
-      aggregateUsage.input += remediation.usage.input || 0
-      aggregateUsage.output += remediation.usage.output || 0
-      aggregateUsage.cacheRead += remediation.usage.cacheRead || 0
-      aggregateUsage.cacheWrite += remediation.usage.cacheWrite || 0
+      accumulateUsage(aggregateUsage, remediation)
       toolEvents.push(...remediation.toolEvents)
+      // A1: 清除 gate 缓存，避免 remediation 修改代码后仍返回旧的 pass 结果
+      clearGateCache()
       if (isComplete(remediation.reply)) {
         completionMarkerSeen = true
       }
@@ -855,9 +827,8 @@ async function runParallelLongAgent({
   const totalElapsed = Math.round((Date.now() - startTime) / 1000)
   const stats = stageProgressStats(taskProgress)
 
-  return {
+  return buildLongAgentResult({
     sessionId,
-    turnId: `turn_long_${Date.now()}`,
     reply: finalReply || done?.lastMessage || "longagent stopped",
     usage: aggregateUsage,
     toolEvents,
@@ -876,12 +847,9 @@ async function runParallelLongAgent({
     planFrozen,
     taskProgress,
     fileChanges,
-    stageProgress: {
-      done: stats.done,
-      total: stats.total
-    },
+    stageProgress: { done: stats.done, total: stats.total },
     remainingFilesCount: stats.remainingFilesCount
-  }
+  })
 }
 
 
