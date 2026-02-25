@@ -40,7 +40,8 @@ export class TaskBus {
   }
 
   parseTaskOutput(taskId, text) {
-    const pattern = /\[TASK_BROADCAST:\s*(\w+)\s*=\s*(.*?)\]/g
+    // D2: 支持 dots/dashes/slashes 的 key（如 api.base_url, config-key, auth/token）
+    const pattern = /\[TASK_BROADCAST:\s*([\w.\-/]+)\s*=\s*(.*?)\]/g
     let match
     while ((match = pattern.exec(text)) !== null) {
       this.publish(taskId, match[1], match[2].trim())
