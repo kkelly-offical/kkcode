@@ -1,9 +1,10 @@
-import { exec as execCb } from "node:child_process"
+import { exec as execCb, execFile as execFileCb } from "node:child_process"
 import { promisify } from "node:util"
 import { access, readFile } from "node:fs/promises"
 import path from "node:path"
 
 const exec = promisify(execCb)
+const execFile = promisify(execFileCb)
 
 async function fileExists(p) {
   try { await access(p); return true } catch { return false }
@@ -50,7 +51,7 @@ export class TaskValidator {
     const errors = []
     for (const file of jsFiles.slice(0, 20)) {
       try {
-        await exec(`node --check "${file}"`, { cwd: this.cwd, timeout: 10000 })
+        await execFile("node", ["--check", file], { cwd: this.cwd, timeout: 10000 })
       } catch (error) {
         errors.push(`${file}: ${(error.stderr || error.message || "").trim()}`)
       }
@@ -101,7 +102,7 @@ export class TaskValidator {
     const errors = []
     for (const file of pyFiles.slice(0, 20)) {
       try {
-        await exec(`python -m py_compile "${file}"`, { cwd: this.cwd, timeout: 10000 })
+        await execFile("python", ["-m", "py_compile", file], { cwd: this.cwd, timeout: 10000 })
       } catch (error) {
         errors.push(`${file}: ${(error.stderr || error.message || "").trim()}`)
       }

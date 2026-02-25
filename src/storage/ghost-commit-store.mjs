@@ -6,6 +6,9 @@ const GHOST_COMMIT_DIR = "ghost-commits"
 const MAX_GHOST_COMMITS_PER_REPO = 50 // 每个仓库最多保留的幽灵提交数
 const GHOST_COMMIT_TTL_MS = 7 * 24 * 60 * 60 * 1000 // 7天过期
 
+// 防止并发 cleanup 竞态：per-repo 锁
+const cleanupLocks = new Map()
+
 /**
  * Ghost Commit 存储管理
  * 
@@ -152,16 +155,23 @@ export async function deleteGhostCommit(repoPath, ghostCommitId) {
  * @param {string} repoPath - 仓库路径
  */
 export async function cleanupOldGhostCommits(repoPath) {
-  const commits = await listGhostCommits(repoPath, { includeExpired: true })
+  // 同一 repo 的 cleanup 串行化，防止并发竞态
+  if (cleanupLocks.get(repoPath)) return
+  cleanupLocks.set(repoPath, true)
+  try {
+    const commits = await listGhostCommits(repoPath, { includeExpired: true })
 
-  if (commits.length <= MAX_GHOST_COMMITS_PER_REPO) {
-    return
-  }
+    if (commits.length <= MAX_GHOST_COMMITS_PER_REPO) {
+      return
+    }
 
-  // 删除多余的旧提交
-  const toDelete = commits.slice(MAX_GHOST_COMMITS_PER_REPO)
-  for (const commit of toDelete) {
-    await deleteGhostCommit(repoPath, commit.id)
+    // 删除多余的旧提交
+    const toDelete = commits.slice(MAX_GHOST_COMMITS_PER_REPO)
+    for (const commit of toDelete) {
+      await deleteGhostCommit(repoPath, commit.id)
+    }
+  } finally {
+    cleanupLocks.delete(repoPath)
   }
 }
 

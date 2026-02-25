@@ -80,6 +80,8 @@ const state = {
   }
 }
 
+const LOCK_TIMEOUT_MS = 30000
+
 let lock = Promise.resolve()
 function withLock(fn) {
   const run = lock.then(fn, fn)
@@ -87,7 +89,12 @@ function withLock(fn) {
     () => undefined,
     () => undefined
   )
-  return run
+  return Promise.race([
+    run,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error("[store] withLock timeout after 30s")), LOCK_TIMEOUT_MS)
+    })
+  ])
 }
 
 function scheduleFlush() {
