@@ -678,7 +678,7 @@ export async function runStageBarrier({
       }
     }
 
-    await sleep(cfg.pollIntervalMs)
+    await BackgroundManager.waitForSettled(cfg.pollIntervalMs)
   }
 
   const items = [...logical.values()]

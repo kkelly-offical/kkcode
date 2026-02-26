@@ -3,6 +3,7 @@ import { spawn } from "node:child_process"
 import { openSync, closeSync } from "node:fs"
 import { readdir, unlink } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
+import { EventEmitter } from "node:events"
 import { readJson, writeJson } from "../storage/json-store.mjs"
 import {
   ensureBackgroundTaskRuntimeDir,
@@ -10,6 +11,10 @@ import {
   backgroundTaskLogPath,
   backgroundTaskRuntimeDir
 } from "../storage/paths.mjs"
+
+// Internal emitter for task settlement notifications
+const settledEmitter = new EventEmitter()
+settledEmitter.setMaxListeners(50)
 
 const WORKER_ENTRY = fileURLToPath(new URL("./background-worker.mjs", import.meta.url))
 const TERMINAL_STATES = new Set(["completed", "cancelled", "error", "interrupted"])
@@ -71,6 +76,10 @@ async function patchTask(id, updater, { maxRetries = 3 } = {}) {
         throw err
       }
       await saveTask(next)
+      // Emit settlement notification when task reaches a terminal state
+      if (TERMINAL_STATES.has(next.status) && !TERMINAL_STATES.has(current.status)) {
+        settledEmitter.emit("task-settled", { id: next.id, status: next.status })
+      }
       return next
     }
     return null
@@ -137,10 +146,13 @@ function spawnWorker(taskId) {
             endedAt: now()
           }
         }
-        return {}
+        return
       }).catch((err) => {
         console.warn(`[kkcode] patchTask failed for exited worker ${taskId}: ${err?.message || err}`)
       })
+    } else {
+      // Worker exited cleanly (code 0) — notify waiters so they re-check status
+      settledEmitter.emit("task-settled", { id: taskId, status: "exited", code: 0 })
     }
   })
   child.unref()
@@ -372,6 +384,25 @@ export const BackgroundManager = {
       removed.push(task.id)
     }
     return removed
+  },
+
+  /**
+   * Wait for any task to reach a terminal state, or timeout.
+   * Returns immediately if a settlement event fires before the deadline.
+   */
+  waitForSettled(timeoutMs = 300) {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        settledEmitter.removeListener("task-settled", onSettled)
+        resolve()
+      }, timeoutMs)
+      function onSettled() {
+        clearTimeout(timer)
+        settledEmitter.removeListener("task-settled", onSettled)
+        resolve()
+      }
+      settledEmitter.once("task-settled", onSettled)
+    })
   },
 
   async tick(config = {}) {
