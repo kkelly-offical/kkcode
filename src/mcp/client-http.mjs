@@ -51,12 +51,10 @@ async function requestJson({ serverName, method, url, body = null, timeoutMs = 1
       )
     }
     return res.json().catch((parseErr) => {
-      const action = body?.args ? "call_tool" : "request"
-      EventBus.emit({
-        type: EVENT_TYPES.MCP_REQUEST,
-        payload: { server: serverName, action, warning: "malformed_json_response", detail: parseErr.message }
-      }).catch(() => {})
-      return {}
+      throw new McpError(
+        `mcp server "${serverName}" malformed JSON response: ${parseErr.message}`,
+        { reason: "bad_response", server: serverName, action: body?.method || "request", phase: "request" }
+      )
     })
   } catch (error) {
     if (error instanceof McpError) throw error

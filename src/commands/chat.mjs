@@ -4,6 +4,7 @@ import { executeTurn, newSessionId, resolveMode } from "../session/engine.mjs"
 import { renderStatusBar } from "../theme/status-bar.mjs"
 import { applyCommandTemplate, loadCustomCommands } from "../command/custom-commands.mjs"
 import { ToolRegistry } from "../tool/registry.mjs"
+import { SkillRegistry } from "../skill/registry.mjs"
 import { HookBus, initHookBus } from "../plugin/hook-bus.mjs"
 import { listProviders } from "../provider/router.mjs"
 
@@ -48,6 +49,7 @@ export function createChatCommand() {
         config: ctx.configState.config,
         cwd: process.cwd()
       })
+      await SkillRegistry.initialize(ctx.configState.config, process.cwd())
 
       await initHookBus()
       const chatParams = await HookBus.chatParams({

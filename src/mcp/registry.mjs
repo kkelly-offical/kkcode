@@ -251,8 +251,16 @@ async function reinitialize(config, { force = false, cwd = null } = {}) {
     : {}
   const allServers = { ...builtinServers, ...discoveredServers, ...configServers }
 
+  // Merge global mcp.* defaults into each server config (server-level overrides global)
+  const mcpGlobalDefaults = {}
+  for (const gk of ["timeout_ms", "shutdown_timeout_ms", "max_sse_buffer_bytes", "max_reconnect_attempts", "circuit_reset_ms", "max_buffer_bytes"]) {
+    if (config?.mcp?.[gk] !== undefined) mcpGlobalDefaults[gk] = config.mcp[gk]
+  }
+
   for (const [name, serverConfig] of Object.entries(allServers)) {
-    state.configured.set(name, serverConfig)
+    const effective = { ...mcpGlobalDefaults, ...serverConfig }
+    allServers[name] = effective
+    state.configured.set(name, effective)
     if (serverConfig?.enabled === false) {
       setHealth(name, serverConfig, {
         ok: false,

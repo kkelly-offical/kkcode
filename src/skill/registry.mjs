@@ -24,9 +24,15 @@ function getAllowedCommands(config) {
   return _allowedCommands
 }
 
+// Shell metacharacters that enable command chaining / injection
+const SHELL_INJECTION_RE = /[;|&`$(){}]|>\s*>|<\s*</
+
 function isCommandAllowed(cmdString, config) {
   const allowed = getAllowedCommands(config)
   const trimmed = cmdString.trim()
+  if (!trimmed) return false
+  // Reject any shell control characters — prevents chaining like `git status; rm -rf /`
+  if (SHELL_INJECTION_RE.test(trimmed)) return false
   // Extract the base command (first token, strip path)
   const firstToken = trimmed.split(/\s+/)[0] || ""
   const baseName = path.basename(firstToken)
@@ -218,6 +224,12 @@ export const SkillRegistry = {
   async initialize(config, cwd = process.cwd()) {
     state.skills.clear()
 
+    // Respect skills.enabled config — if explicitly false, skip all loading
+    if (config?.skills?.enabled === false) {
+      state.loaded = true
+      return
+    }
+
     // Source 0: Built-in skills (shipped with kkcode)
     const builtinDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "builtin")
     const builtinSkills = await loadMjsSkills(builtinDir, "builtin")
@@ -231,27 +243,38 @@ export const SkillRegistry = {
       state.skills.set(skill.name, skill)
     }
 
-    // Source 2: Programmable skills (.mjs)
+    // Source 2: Programmable skills (.mjs) + SKILL.md directories
     const userRoot = process.env.USERPROFILE || process.env.HOME || cwd
-    const globalSkillDir = path.join(userRoot, ".kkcode", "skills")
-    const projectSkillDir = path.join(cwd, ".kkcode", "skills")
-    const [globalSkills, projectSkills, globalSkillMds, projectSkillMds] = await Promise.all([
-      loadMjsSkills(globalSkillDir, "global"),
-      loadMjsSkills(projectSkillDir, "project"),
-      loadSkillDirs(globalSkillDir, "global"),
-      loadSkillDirs(projectSkillDir, "project")
+    const customDirs = config?.skills?.dirs || []
+    // Default directories: global (~/.kkcode/skills) + project (.kkcode/skills)
+    const defaultDirs = [
+      { dir: path.join(userRoot, ".kkcode", "skills"), scope: "global" },
+      { dir: path.join(cwd, ".kkcode", "skills"), scope: "project" }
+    ]
+    // Custom dirs from config (resolve relative to cwd)
+    const extraDirs = customDirs.map(d => ({
+      dir: path.isAbsolute(d) ? d : path.resolve(cwd, d),
+      scope: "custom"
+    }))
+    const allSkillDirs = [...defaultDirs, ...extraDirs]
+
+    const loadPromises = allSkillDirs.flatMap(({ dir, scope }) => [
+      loadMjsSkills(dir, scope),
+      loadSkillDirs(dir, scope)
     ])
-    // Project skills override global skills with same name
-    for (const skill of [...globalSkills, ...projectSkills, ...globalSkillMds, ...projectSkillMds]) {
-      state.skills.set(skill.name, skill)
+    const results = await Promise.all(loadPromises)
+    for (const skills of results) {
+      for (const skill of skills) {
+        state.skills.set(skill.name, skill)
+      }
     }
 
     // Source 3: MCP prompts (if MCP is initialized)
     if (McpRegistry.isReady()) {
       const prompts = McpRegistry.listPrompts()
       for (const skill of mcpPromptsToSkills(prompts)) {
-        // Prefix MCP skills to avoid name collisions
-        const key = `mcp:${skill.name}`
+        // Include server name to avoid cross-server name collisions
+        const key = `mcp:${skill.server}:${skill.name}`
         state.skills.set(key, { ...skill, name: key })
       }
     }

@@ -85,17 +85,10 @@ export function createSseMcpClient(serverName, config) {
 
       // Regular JSON response
       const json = await res.json().catch((parseErr) => {
-        if (method === "initialize") {
-          throw new McpError(
-            `mcp server "${serverName}" malformed JSON in initialize response: ${parseErr.message}`,
-            { reason: "bad_response", server: serverName, action: method, phase: "request" }
-          )
-        }
-        EventBus.emit({
-          type: EVENT_TYPES.MCP_REQUEST,
-          payload: { server: serverName, action: method, warning: "malformed_json_response" }
-        }).catch(() => {})
-        return {}
+        throw new McpError(
+          `mcp server "${serverName}" malformed JSON in ${method} response: ${parseErr.message}`,
+          { reason: "bad_response", server: serverName, action: method, phase: "request" }
+        )
       })
       if (json.error) {
         throw new McpError(
