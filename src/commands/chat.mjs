@@ -5,6 +5,7 @@ import { renderStatusBar } from "../theme/status-bar.mjs"
 import { applyCommandTemplate, loadCustomCommands } from "../command/custom-commands.mjs"
 import { ToolRegistry } from "../tool/registry.mjs"
 import { SkillRegistry } from "../skill/registry.mjs"
+import { PermissionEngine } from "../permission/engine.mjs"
 import { HookBus, initHookBus } from "../plugin/hook-bus.mjs"
 import { listProviders } from "../provider/router.mjs"
 
@@ -23,6 +24,7 @@ export function createChatCommand() {
     .action(async (promptParts, options) => {
       const ctx = await buildContext()
       printContextWarnings(ctx)
+      PermissionEngine.setTrusted(ctx.trustState?.trusted !== false)
       let prompt = promptParts.join(" ").trim()
       if (prompt.startsWith("/")) {
         const commands = await loadCustomCommands(process.cwd())

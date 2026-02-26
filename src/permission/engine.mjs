@@ -5,7 +5,7 @@ import { evaluatePermission } from "./rules.mjs"
 import { askPermissionInteractive } from "./prompt.mjs"
 
 const sessionAllow = new Map()
-let workspaceTrusted = true
+let workspaceTrusted = false
 
 function cacheKey(tool, pattern) {
   return `${tool}::${pattern || "*"}`

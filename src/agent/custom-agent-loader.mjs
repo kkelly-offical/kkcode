@@ -82,12 +82,15 @@ async function loadMdAgent(filePath, scope) {
 
 async function loadAgentsFromDir(dir, scope) {
   if (!(await exists(dir))) return []
+  const resolvedDir = path.resolve(dir)
   const entries = await readdir(dir, { withFileTypes: true })
   const agents = []
   for (const entry of entries) {
     if (!entry.isFile()) continue
     const ext = path.extname(entry.name).toLowerCase()
-    const full = path.join(dir, entry.name)
+    const full = path.resolve(dir, entry.name)
+    // Path boundary check: ensure resolved path is within expected directory
+    if (!full.startsWith(resolvedDir + path.sep) && full !== resolvedDir) continue
     try {
       if (ext === ".yaml" || ext === ".yml") {
         const agent = await loadYamlAgent(full, scope)

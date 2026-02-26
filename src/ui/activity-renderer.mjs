@@ -2,6 +2,9 @@ import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { paint } from "../theme/color.mjs"
 
+const ANSI_RE = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*\x07)/g
+function stripAnsi(text) { return String(text || "").replace(ANSI_RE, "") }
+
 let _theme = null
 function diffAdd() { return _theme?.components?.diff_add || "green" }
 function diffDel() { return _theme?.components?.diff_del || "red" }
@@ -103,7 +106,7 @@ export function formatToolResultPreview(toolName, output, status, args) {
 
   switch (toolName) {
     case "bash": {
-      const lines = text.split("\n").filter(Boolean)
+      const lines = stripAnsi(text).split("\n").filter(Boolean)
       if (!lines.length) return null
       const first = clipText(lines[0], 90)
       const suffix = lines.length > 1 ? paint(` (+${lines.length - 1} lines)`, null, { dim: true }) : ""
@@ -156,7 +159,7 @@ export function formatToolResultPreview(toolName, output, status, args) {
 
 function formatToolError(error) {
   if (!error) return null
-  return `  ${paint(clipText(error, 120), "red", { dim: true })}`
+  return `  ${paint(clipText(stripAnsi(error), 120), "red", { dim: true })}`
 }
 
 // ── Thinking Formatter ──────────────────────────────────

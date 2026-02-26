@@ -159,6 +159,7 @@ async function loadSkillDirs(dir, scope) {
  */
 async function loadMjsSkills(dir, scope) {
   if (!(await exists(dir))) return []
+  const resolvedDir = path.resolve(dir)
   const entries = await readdir(dir, { withFileTypes: true })
   const files = entries
     .filter((e) => e.isFile() && e.name.endsWith(".mjs"))
@@ -167,7 +168,9 @@ async function loadMjsSkills(dir, scope) {
 
   const skills = []
   for (const file of files) {
-    const full = path.join(dir, file)
+    const full = path.resolve(dir, file)
+    // Path boundary check: ensure resolved path is within expected directory
+    if (!full.startsWith(resolvedDir + path.sep) && full !== resolvedDir) continue
     try {
       const mod = await import(pathToFileURL(full).href)
       const name = mod.name || path.basename(file, ".mjs")

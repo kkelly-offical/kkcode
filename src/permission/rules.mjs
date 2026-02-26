@@ -31,9 +31,18 @@ function globToRegex(pattern) {
   return new RegExp(`^${src}$`, "i")
 }
 
+function normalizePath(p) {
+  // Resolve ../ and ./ sequences to prevent traversal bypass
+  return p.replace(/\\/g, "/").split("/").reduce((acc, seg) => {
+    if (seg === "..") { acc.pop(); return acc }
+    if (seg !== "." && seg !== "") acc.push(seg)
+    return acc
+  }, []).join("/")
+}
+
 function matchGlob(value, pattern) {
   if (!pattern || pattern === "*") return true
-  const str = String(value || "")
+  const str = normalizePath(String(value || ""))
   const negate = pattern.startsWith("!")
   const pat = negate ? pattern.slice(1) : pattern
   const matched = globToRegex(pat).test(str)

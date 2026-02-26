@@ -60,6 +60,13 @@ async function listDir(dir) {
   return items.map((item) => `${item.isDirectory() ? "d" : "f"} ${item.name}`).join("\n")
 }
 
+function assertWithinCwd(resolved, cwd) {
+  const normalCwd = path.resolve(cwd)
+  if (!resolved.startsWith(normalCwd + path.sep) && resolved !== normalCwd) {
+    throw new Error(`path traversal blocked: ${resolved} is outside working directory`)
+  }
+}
+
 // Track which files have been read in this session (for edit safety)
 const fileReadTracker = new Map() // path -> { readAt: timestamp }
 
@@ -304,6 +311,7 @@ function builtinTools(config) {
     },
     async execute(args, ctx) {
       const target = path.resolve(ctx.cwd, args.path)
+      assertWithinCwd(target, ctx.cwd)
       const ext = path.extname(target).toLowerCase()
       markFileRead(target)
 
@@ -362,6 +370,7 @@ function builtinTools(config) {
     },
     async execute(args, ctx) {
       const target = path.resolve(ctx.cwd, args.path)
+      assertWithinCwd(target, ctx.cwd)
       const content = String(args.content ?? "")
       const mode = String(args.mode || "overwrite")
 
@@ -453,6 +462,7 @@ function builtinTools(config) {
     },
     async execute(args, ctx) {
       const target = path.resolve(ctx.cwd, args.path)
+      assertWithinCwd(target, ctx.cwd)
       // Safety: warn if file was not read first
       if (!wasFileRead(target)) {
         const fileExists = await exists(target)
@@ -596,6 +606,9 @@ function builtinTools(config) {
       }
 
       if (args.run_in_background) {
+        if (isLongRunningCommand(command)) {
+          return `[blocked] "${command}" appears to be a long-running command. Run it manually in your terminal.`
+        }
         // Launch as background task
         const task = await BackgroundManager.launch({
           description: args.description || command,
@@ -1240,7 +1253,7 @@ function mcpTools() {
 
 function toolAllowedByMode(toolName, mode) {
   if (mode === "ask" || mode === "plan") {
-    return !["write", "edit", "patch", "bash", "task", "git_snapshot", "git_restore", "git_apply_patch", "git_delete_snapshot"].includes(toolName)
+    return !["write", "edit", "patch", "multiedit", "notebookedit", "bash", "task", "git_snapshot", "git_restore", "git_apply_patch", "git_delete_snapshot"].includes(toolName)
   }
   return true
 }
