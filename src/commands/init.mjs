@@ -35,6 +35,22 @@ const PROVIDER_DEFAULTS = {
   "openai-compatible": { base_url: "", api_key_env: "", default_model: "" }
 }
 
+// Auto-detect available providers by checking environment variables
+function detectProvider() {
+  const checks = [
+    { provider: "anthropic", env: "ANTHROPIC_API_KEY" },
+    { provider: "openai", env: "OPENAI_API_KEY" }
+  ]
+  const available = []
+  for (const { provider, env } of checks) {
+    if (process.env[env]) available.push(provider)
+  }
+  // Prefer anthropic if both are set, otherwise first available, fallback to openai
+  if (available.includes("anthropic")) return { provider: "anthropic", detected: available }
+  if (available.length) return { provider: available[0], detected: available }
+  return { provider: "openai", detected: [] }
+}
+
 function buildConfig(answers) {
   const config = {
     provider: {
@@ -56,7 +72,11 @@ function buildConfig(answers) {
 
 async function runInteractive(rl) {
   const providers = listProviders()
-  const provider = await askChoice(rl, "select default provider:", providers, "openai")
+  const { provider: detectedProvider, detected } = detectProvider()
+  if (detected.length) {
+    console.log(`\nauto-detected API keys: ${detected.join(", ")}`)
+  }
+  const provider = await askChoice(rl, "select default provider:", providers, detectedProvider)
   const defaults = PROVIDER_DEFAULTS[provider] || {}
 
   let baseUrl = ""
@@ -102,11 +122,16 @@ export function createInitCommand() {
 
       let answers
       if (options.yes) {
+        const { provider, detected } = detectProvider()
+        const defaults = PROVIDER_DEFAULTS[provider] || {}
+        if (detected.length) {
+          console.log(`auto-detected: ${detected.join(", ")} → using ${provider}`)
+        }
         answers = {
-          provider: "openai",
-          baseUrl: "",
-          apiKeyEnv: "OPENAI_API_KEY",
-          model: "gpt-5.3-codex",
+          provider,
+          baseUrl: defaults.base_url || "",
+          apiKeyEnv: defaults.api_key_env || "",
+          model: defaults.default_model || "",
           permissionPolicy: "ask"
         }
       } else {
