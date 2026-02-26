@@ -921,7 +921,7 @@ export async function processTurnLoop({
       turnId,
       maxSteps: true
     })
-    await markTurnFinished(sessionId)
+    await markTurnFinished(sessionId, recoveryEnabled)
     await EventBus.emit({
       type: EVENT_TYPES.TURN_FINISH,
       sessionId,

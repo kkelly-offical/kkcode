@@ -83,10 +83,16 @@ export async function askPlanApproval({ plan, files = [] }) {
     return { approved: true, requestChanges: false, feedback: "" }
   }
   if (answer === "changes" || answer === "2") {
-    return { approved: false, requestChanges: true, feedback: "" }
+    const rl2 = createInterface({ input, output })
+    let changeFeedback = ""
+    try { changeFeedback = (await rl2.question("  Feedback> ")).trim() } catch {} finally { rl2.close() }
+    return { approved: false, requestChanges: true, feedback: changeFeedback }
   }
   if (answer === "reject" || answer === "3") {
-    return { approved: false, requestChanges: false, feedback: "" }
+    const rl3 = createInterface({ input, output })
+    let rejectFeedback = ""
+    try { rejectFeedback = (await rl3.question("  Reason> ")).trim() } catch {} finally { rl3.close() }
+    return { approved: false, requestChanges: false, feedback: rejectFeedback }
   }
   // Custom text input: treat as "request changes" with the text as feedback
   return { approved: false, requestChanges: true, feedback: answer }

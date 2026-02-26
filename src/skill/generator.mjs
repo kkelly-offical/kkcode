@@ -86,6 +86,22 @@ export async function generateSkill({ description, configState, providerType, mo
   const fenceMatch = content.match(/```(?:markdown|javascript|js|mjs)?\n([\s\S]*?)\n```/)
   if (fenceMatch) content = fenceMatch[1]
 
+  // Safety: reject .mjs skills that contain dangerous patterns
+  if (type === "mjs") {
+    const dangerPatterns = [
+      /child_process/,
+      /\bexec\s*\(/,
+      /\bspawn\s*\(/,
+      /\beval\s*\(/,
+      /Function\s*\(/,
+      /require\s*\(\s*['"]fs['"]\s*\)/
+    ]
+    const hasDanger = dangerPatterns.some(p => p.test(content))
+    if (hasDanger) {
+      return { name, filename: `${name}.${type}`, content, type, needsReview: true, reviewReason: "contains potentially dangerous code patterns (child_process, exec, eval, etc.)" }
+    }
+  }
+
   const filename = `${name}.${type}`
   return { name, filename, content, type }
 }

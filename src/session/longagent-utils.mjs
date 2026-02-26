@@ -434,6 +434,16 @@ export function classifyTaskMode(prompt) {
     return { mode: "ask", confidence: "medium", reason: "short_question" }
   }
 
+  // --- 规划类信号 → plan ---
+  const planPatterns = [
+    /\b(plan|design|architect|outline|blueprint|draft|propose|sketch)\b/i,
+    /\b(规划|设计|架构|方案|蓝图|草案|提案|计划一下|帮我想想)\b/i
+  ]
+  const isPlan = planPatterns.some(re => re.test(lower))
+  if (isPlan && !isLongAgent && len < 200) {
+    return { mode: "plan", confidence: "medium", reason: "planning_or_design_intent" }
+  }
+
   // --- 大型/多文件任务信号 → longagent ---
   const longagentPatterns = [
     /\b(multiple files?|across files?|entire (codebase|project|repo)|all files?|跨文件|多个文件|整个项目|全量)\b/i,

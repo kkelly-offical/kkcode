@@ -1050,6 +1050,12 @@ function builtinTools(config) {
       required: ["plan"]
     },
     async execute(args, ctx) {
+      if (!ctx._planMode) {
+        return {
+          output: "Cannot exit plan mode — you are not currently in plan mode. Call enter_plan first.",
+          metadata: {}
+        }
+      }
       ctx._planMode = false
       return {
         output: "Plan submitted for user approval.",

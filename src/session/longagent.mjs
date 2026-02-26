@@ -603,23 +603,27 @@ async function runParallelLongAgent({
         })
         const gatePrefs = parseGateSelection(gateAskResult.reply)
         await saveGatePreferences(gatePrefs)
-        // Apply preferences to runtime config
+        // Apply preferences to a shallow copy to avoid mutating shared configState
+        const gatesCopy = { ...configState.config.agent.longagent.usability_gates }
         for (const [gate, enabled] of Object.entries(gatePrefs)) {
-          if (configState.config.agent.longagent.usability_gates[gate]) {
-            configState.config.agent.longagent.usability_gates[gate].enabled = enabled
+          if (gatesCopy[gate]) {
+            gatesCopy[gate] = { ...gatesCopy[gate], enabled }
           }
         }
+        configState.config.agent.longagent = { ...configState.config.agent.longagent, usability_gates: gatesCopy }
         aggregateUsage.input += gateAskResult.usage.input || 0
         aggregateUsage.output += gateAskResult.usage.output || 0
       } else {
         // Apply saved preferences
         const savedPrefs = await getGatePreferences()
         if (savedPrefs) {
+          const gatesCopy = { ...configState.config.agent.longagent.usability_gates }
           for (const [gate, enabled] of Object.entries(savedPrefs)) {
-            if (configState.config.agent.longagent.usability_gates[gate]) {
-              configState.config.agent.longagent.usability_gates[gate].enabled = enabled
+            if (gatesCopy[gate]) {
+              gatesCopy[gate] = { ...gatesCopy[gate], enabled }
             }
           }
+          configState.config.agent.longagent = { ...configState.config.agent.longagent, usability_gates: gatesCopy }
         }
       }
     }

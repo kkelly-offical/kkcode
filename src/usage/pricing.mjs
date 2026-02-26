@@ -87,6 +87,7 @@ export async function loadPricing(configState) {
     const pricing = {
       ...DEFAULT_PRICING,
       ...parsed,
+      models: { ...DEFAULT_PRICING.models, ...(parsed.models ?? {}) },
       default: { ...DEFAULT_PRICING.default, ...(parsed.default ?? {}) }
     }
     return { pricing, source: file, errors: [] }

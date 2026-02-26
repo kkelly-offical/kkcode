@@ -491,6 +491,10 @@ export function validateConfig(config) {
           if (config.usage.budget.strategy !== undefined && !["warn", "block"].includes(config.usage.budget.strategy)) {
             err(errors, "usage.budget.strategy", "must be warn|block")
           }
+          if (config.usage.budget.budget_limit_usd !== undefined) {
+            const v = config.usage.budget.budget_limit_usd
+            if (typeof v !== "number" || !Number.isFinite(v) || v < 0) err(errors, "usage.budget.budget_limit_usd", "must be non-negative number")
+          }
         }
       }
     }

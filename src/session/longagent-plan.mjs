@@ -139,6 +139,13 @@ export function validateAndNormalizeStagePlan(input, { objective = "", defaults 
   qualityScore = Math.max(0, Math.min(100, qualityScore))
 
   if (errors.length) {
+    // If the parsed plan has at least one valid stage with tasks, keep it despite warnings
+    const hasValidStages = plan.stages.some(s => s.tasks.length > 0)
+    if (hasValidStages) {
+      // Filter out empty stages but preserve valid ones
+      plan.stages = plan.stages.filter(s => s.tasks.length > 0)
+      return { plan, errors, qualityScore: Math.max(0, qualityScore - errors.length * 10) }
+    }
     return {
       plan: defaultStagePlan(objective || plan.objective, defaults),
       errors,

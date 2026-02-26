@@ -148,6 +148,7 @@ export async function executeRollback({ cwd, commitHash, sessionId, language = "
     await EventBus.emit({
       type: EVENT_TYPES.TURN_STEP_FINISH,
       sessionId,
+      turnId: null,
       payload: { action: "rollback", commitHash }
     })
 

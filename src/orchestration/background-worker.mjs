@@ -43,12 +43,28 @@ async function patchTask(taskId, updater) {
 
 let _maxLogLines = 300
 
-async function appendTaskLog(taskId, line) {
-  await appendFile(backgroundTaskLogPath(taskId), `${line}\n`, "utf8")
+let _logBuffer = []
+let _logFlushTimer = null
+const LOG_FLUSH_INTERVAL_MS = 3000
+
+async function flushLogBuffer(taskId) {
+  if (!_logBuffer.length) return
+  const lines = _logBuffer.splice(0)
   await patchTask(taskId, (current) => ({
-    logs: [...(current.logs || []), String(line)].slice(-_maxLogLines),
+    logs: [...(current.logs || []), ...lines].slice(-_maxLogLines),
     lastHeartbeatAt: now()
   }))
+}
+
+async function appendTaskLog(taskId, line) {
+  await appendFile(backgroundTaskLogPath(taskId), `${line}\n`, "utf8")
+  _logBuffer.push(String(line))
+  if (!_logFlushTimer) {
+    _logFlushTimer = setTimeout(async () => {
+      _logFlushTimer = null
+      await flushLogBuffer(taskId).catch(() => {})
+    }, LOG_FLUSH_INTERVAL_MS)
+  }
 }
 
 async function runDelegateTask(task, signal) {

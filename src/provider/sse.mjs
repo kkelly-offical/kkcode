@@ -96,7 +96,7 @@ function parsePart(part) {
     } else if (line.startsWith("data:")) {
       const payload = line.slice(5).trim()
       if (payload === "[DONE]") return null
-      data = payload
+      data = data ? data + "\n" + payload : payload
     }
   }
   if (!data) return undefined

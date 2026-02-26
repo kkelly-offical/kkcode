@@ -71,8 +71,10 @@ export function createStdioFramingDecoder({ framing = "auto", maxFrameBytes = 8 
   function push(chunk) {
     const incoming = toBuffer(chunk)
     if (buffer.length + incoming.length > maxBufferBytes) {
-      buffer = Buffer.alloc(0)
-      throw new Error(`stdio framing buffer exceeded limit: ${maxBufferBytes} bytes`)
+      // Preserve tail of buffer (last 25%) to avoid losing partial frames
+      const keepBytes = Math.floor(maxBufferBytes * 0.25)
+      buffer = buffer.subarray(buffer.length - keepBytes)
+      throw new Error(`stdio framing buffer exceeded limit: ${maxBufferBytes} bytes (kept last ${keepBytes} bytes)`)
     }
     buffer = Buffer.concat([buffer, incoming])
     const messages = []

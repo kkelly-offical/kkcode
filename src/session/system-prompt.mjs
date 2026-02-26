@@ -97,6 +97,7 @@ export async function agentPrompt(agent) {
 export async function modeReminder(mode) {
   if (mode === "plan") return loadSessionPrompt("plan.txt")
   if (mode === "agent") return loadSessionPrompt("agent.txt")
+  if (mode === "ask") return "You are in ASK mode (read-only). Answer questions, explain code, and provide analysis. Do NOT modify any files — you only have read access to the codebase."
   return ""
 }
 

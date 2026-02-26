@@ -395,7 +395,10 @@ export const McpRegistry = {
         try {
           await this.refreshServer(tool.server)
           client = state.servers.get(tool.server)
-          if (client) return client.callTool(tool.name, args, effectiveSignal)
+          if (client) {
+            const retrySignal = serverTimeout ? AbortSignal.timeout(serverTimeout) : null
+            return client.callTool(tool.name, args, retrySignal)
+          }
         } catch {}
       }
       throw error

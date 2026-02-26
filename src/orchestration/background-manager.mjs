@@ -48,29 +48,36 @@ async function saveTask(task) {
   return task
 }
 
+// Process-level mutex to serialize patchTask calls (prevents same-process TOCTOU)
+let patchLock = Promise.resolve()
+
 async function patchTask(id, updater, { maxRetries = 3 } = {}) {
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const current = await loadTask(id)
-    if (!current) return null
-    const next = {
-      ...current,
-      ...updater(current),
-      _version: (current._version || 0) + 1,
-      updatedAt: now()
+  const run = async () => {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const current = await loadTask(id)
+      if (!current) return null
+      const next = {
+        ...current,
+        ...updater(current),
+        _version: (current._version || 0) + 1,
+        updatedAt: now()
+      }
+      // Optimistic lock: re-read and verify version before write
+      const check = await loadTask(id)
+      if (check && (check._version || 0) !== (current._version || 0)) {
+        if (attempt < maxRetries) continue // version changed, retry
+        const err = new Error(`patchTask(${id}): version conflict after ${maxRetries} retries (expected ${current._version}, got ${check._version})`)
+        err.code = "VERSION_CONFLICT"
+        throw err
+      }
+      await saveTask(next)
+      return next
     }
-    // Optimistic lock: re-read and verify version before write
-    const check = await loadTask(id)
-    if (check && (check._version || 0) !== (current._version || 0)) {
-      if (attempt < maxRetries) continue // version changed, retry
-      // Last attempt: log warning and fail instead of silent overwrite
-      const err = new Error(`patchTask(${id}): version conflict after ${maxRetries} retries (expected ${current._version}, got ${check._version})`)
-      err.code = "VERSION_CONFLICT"
-      throw err
-    }
-    await saveTask(next)
-    return next
+    return null
   }
-  return null
+  const result = patchLock.then(run, run)
+  patchLock = result.then(() => undefined, () => undefined)
+  return result
 }
 
 async function listTaskIds() {

@@ -43,11 +43,17 @@ async function cleanupOldLogs() {
   }
 }
 
+let lastCleanupAt = 0
+const CLEANUP_INTERVAL_MS = 60 * 60 * 1000 // 1 hour
+
 export async function appendEventLog(event) {
   await ensureUserRoot()
   await maybeRotate()
   await appendFile(eventLogPath(), JSON.stringify(event) + "\n", "utf8")
-  await cleanupOldLogs()
+  if (Date.now() - lastCleanupAt > CLEANUP_INTERVAL_MS) {
+    lastCleanupAt = Date.now()
+    await cleanupOldLogs()
+  }
 }
 
 export async function eventLogStats() {

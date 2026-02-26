@@ -281,7 +281,7 @@ export async function compactSession({
 
   await saveCheckpoint(sessionId, {
     kind: "compaction",
-    iteration: 0,
+    iteration: Date.now(),
     compactedAt: Date.now(),
     summarizeCount: toSummarize.length,
     keepCount: kept.length,

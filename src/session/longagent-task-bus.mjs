@@ -40,7 +40,7 @@ export class TaskBus {
   }
 
   parseTaskOutput(taskId, text) {
-    const pattern = /\[TASK_BROADCAST:\s*(\w+)\s*=\s*(.*?)\]/g
+    const pattern = /\[TASK_BROADCAST:\s*(\w+)\s*=\s*([\s\S]*?)\]/g
     let match
     while ((match = pattern.exec(text)) !== null) {
       this.publish(taskId, match[1], match[2].trim())
