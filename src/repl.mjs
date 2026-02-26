@@ -1162,13 +1162,20 @@ async function processInputLine({
         cwd: process.cwd(),
         mode: state.mode,
         model: state.model,
-        provider: state.providerType
+        provider: state.providerType,
+        config: ctx.configState?.config || null
       })
       if (!expanded) {
         print(`skill /${name} returned no output`)
         return { exit: false }
       }
-      prompt = expanded
+      // contextFork skills return { prompt, contextFork, model }
+      if (typeof expanded === "object" && expanded.contextFork) {
+        prompt = expanded.prompt || ""
+        if (expanded.model) state.model = expanded.model
+      } else {
+        prompt = expanded
+      }
     } else {
       // Fallback: check raw custom commands (in case SkillRegistry not ready)
       const custom = customCommands.find((item) => item.name === name)

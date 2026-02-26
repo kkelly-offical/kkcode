@@ -804,9 +804,14 @@ function builtinTools(config) {
         cwd: ctx.cwd,
         mode: ctx.mode || "agent",
         model: ctx.model || "",
-        provider: ctx.provider || ""
+        provider: ctx.provider || "",
+        config: ctx.config || null
       })
       if (!result) return `skill /${name} returned no output`
+      // contextFork skills return { prompt, contextFork, model }
+      if (typeof result === "object" && result.contextFork) {
+        return result.prompt || ""
+      }
       return result
     }
   }

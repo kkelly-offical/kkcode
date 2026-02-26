@@ -225,7 +225,9 @@ async function reinitialize(config, { force = false, cwd = null } = {}) {
   if (cacheValid) return
 
   for (const [, client] of state.servers) {
-    if (typeof client.shutdown === "function") client.shutdown()
+    if (typeof client.shutdown === "function") {
+      try { await Promise.resolve(client.shutdown()) } catch { /* best-effort */ }
+    }
   }
   state.loaded = false
   state.servers.clear()
@@ -334,12 +336,19 @@ export const McpRegistry = {
 
   async getPrompt(promptId, args = {}) {
     const prompt = state.prompts.get(promptId)
-    if (!prompt) throw new Error(`mcp prompt not found: ${promptId}`)
+    if (!prompt) throw new McpError(`mcp prompt not found: ${promptId}`, { reason: "not_found", prompt: promptId })
     const client = state.servers.get(prompt.server)
     if (!client || typeof client.getPrompt !== "function") {
-      throw new Error(`mcp server "${prompt.server}" does not support prompts/get`)
+      throw new McpError(`mcp server "${prompt.server}" does not support prompts/get`, { reason: "not_supported", server: prompt.server })
     }
-    return client.getPrompt(prompt.name, args)
+    try {
+      return await client.getPrompt(prompt.name, args)
+    } catch (error) {
+      if (error instanceof McpError) throw error
+      throw new McpError(`mcp prompt "${promptId}" failed: ${error?.message || error}`, {
+        reason: "bad_response", server: prompt.server, prompt: promptId
+      })
+    }
   },
 
   async listResources(serverName) {
@@ -359,9 +368,9 @@ export const McpRegistry = {
       throw new McpError("MCP registry is shutting down", { reason: "shutting_down" })
     }
     const tool = state.tools.get(toolId)
-    if (!tool) throw new Error(`mcp tool not found: ${toolId}`)
+    if (!tool) throw new McpError(`mcp tool not found: ${toolId}`, { reason: "not_found", tool: toolId })
     let client = state.servers.get(tool.server)
-    if (!client) throw new Error(`mcp server not found: ${tool.server}`)
+    if (!client) throw new McpError(`mcp server not found: ${tool.server}`, { reason: "not_found", server: tool.server })
     const serverConfig = state.configured.get(tool.server)
     const serverTimeout = serverConfig?.timeout_ms
     let effectiveSignal = signal

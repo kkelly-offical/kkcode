@@ -286,7 +286,8 @@ export const SkillRegistry = {
           cwd: context.cwd || process.cwd(),
           mode: context.mode || "agent",
           model: context.model || "",
-          provider: context.provider || ""
+          provider: context.provider || "",
+          config: context.config || null
         })
         return result == null ? "" : typeof result === "string" ? result : JSON.stringify(result)
       } catch (error) {
@@ -383,8 +384,8 @@ export const SkillRegistry = {
    * Return skill metadata for system prompt inclusion.
    */
   listForSystemPrompt() {
-    return [...state.skills.values()]
-      .filter((s) => !s.disableModelInvocation)
-      .map((s) => ({ name: s.name, description: s.description }))
+    return [...state.skills.entries()]
+      .filter(([key, s]) => !s.disableModelInvocation && !key.startsWith("mcp:"))
+      .map(([, s]) => ({ name: s.name, description: s.description }))
   }
 }

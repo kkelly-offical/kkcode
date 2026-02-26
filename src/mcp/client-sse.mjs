@@ -20,7 +20,6 @@ export function createSseMcpClient(serverName, config) {
   let sessionId = null
   let nextId = 1
   let initialized = false
-  let notificationStream = null
 
   function buildHeaders(extra = {}) {
     const h = {
@@ -182,7 +181,7 @@ export function createSseMcpClient(serverName, config) {
     let data = ""
     for (const line of trimmed.split("\n")) {
       if (line.startsWith("event:")) event = line.slice(6).trim()
-      else if (line.startsWith("data:")) data += line.slice(5).trim()
+      else if (line.startsWith("data:")) data += (data ? "\n" : "") + line.slice(5).trim()
     }
     if (!data) return null
     return { event, data }
@@ -190,11 +189,17 @@ export function createSseMcpClient(serverName, config) {
 
   async function ensureInitialized() {
     if (initialized) return
-    const result = await sendRequest("initialize", {
-      protocolVersion: MCP_PROTOCOL_VERSION,
-      capabilities: {},
-      clientInfo: MCP_CLIENT_INFO
-    })
+    let result
+    try {
+      result = await sendRequest("initialize", {
+        protocolVersion: MCP_PROTOCOL_VERSION,
+        capabilities: {},
+        clientInfo: MCP_CLIENT_INFO
+      })
+    } catch (err) {
+      initialized = false
+      throw err
+    }
     // Send initialized notification
     try {
       await fetch(baseUrl, {
@@ -270,10 +275,6 @@ export function createSseMcpClient(serverName, config) {
     },
 
     shutdown() {
-      if (notificationStream) {
-        try { notificationStream.cancel() } catch { /* ignore */ }
-        notificationStream = null
-      }
       // Send session termination if we have a session
       if (sessionId) {
         fetch(baseUrl, {

@@ -127,7 +127,7 @@ export function createHttpMcpClient(serverName, config) {
         serverName,
         method: "POST",
         url: `${baseUrl}/tools/${encodeURIComponent(name)}`,
-        body: { args },
+        body: { arguments: args },
         timeoutMs,
         headers,
         signal

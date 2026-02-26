@@ -138,7 +138,7 @@ test("mcp registry addServer and removeServer", async () => {
   await McpRegistry.initialize(
     {
       runtime: { mcp_refresh_ttl_ms: 0 },
-      mcp: { servers: {} }
+      mcp: { servers: { context7: { enabled: false } }, auto_discover: false }
     },
     { force: true }
   )
