@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process"
-import { mkdir, readdir, stat, rm } from "node:fs/promises"
+import { chmod, mkdir, readdir, stat, rm } from "node:fs/promises"
 import path from "node:path"
 import { githubReposDir } from "../storage/paths.mjs"
 
@@ -39,7 +39,12 @@ export async function ensureRepo({ fullName, branch, token }) {
     // Clone
     await mkdir(path.dirname(localPath), { recursive: true })
     const cloneUrl = `https://${token}@github.com/${fullName}.git`
-    await exec("git", ["clone", "--depth", "1", "-b", branch, "--single-branch", cloneUrl, localPath])
+    try {
+      await exec("git", ["clone", "--depth", "1", "-b", branch, "--single-branch", cloneUrl, localPath])
+    } catch (err) {
+      sanitizeTokenFromError(err, token)
+      throw err
+    }
     // Remove token from remote URL
     const cleanUrl = `https://github.com/${fullName}.git`
     await exec("git", ["remote", "set-url", "origin", cleanUrl], { cwd: localPath })
@@ -67,11 +72,19 @@ export async function ensureRepo({ fullName, branch, token }) {
   return { path: localPath, isNew: false }
 }
 
+function sanitizeTokenFromError(err, token) {
+  const mask = (s) => s ? s.replace(/https:\/\/[^@\s]+@/g, "https://***@") : s
+  if (err.message) err.message = mask(err.message)
+  if (err.stderr) err.stderr = mask(err.stderr)
+  if (err.stdout) err.stdout = mask(err.stdout)
+}
+
 async function configureCredential(repoPath, token) {
   // Use store credential helper scoped to this repo
   const credentialPath = path.join(repoPath, ".git", "kkcode-credentials")
   const { writeFile } = await import("node:fs/promises")
-  await writeFile(credentialPath, `https://x-access-token:${token}@github.com\n`, "utf8")
+  await writeFile(credentialPath, `https://x-access-token:${token}@github.com\n`, { encoding: "utf8", mode: 0o600 })
+  await chmod(credentialPath, 0o600)
   await exec("git", ["config", "credential.helper", `store --file="${credentialPath}"`], { cwd: repoPath })
 }
 
