@@ -52,6 +52,7 @@ export function validateConfig(config) {
         }
         if (p.type !== undefined && typeof p.type !== "string") err(errors, `provider.${key}.type`, "must be string")
         if (p.base_url !== undefined && typeof p.base_url !== "string") err(errors, `provider.${key}.base_url`, "must be string")
+        if (p.api_key !== undefined && typeof p.api_key !== "string") err(errors, `provider.${key}.api_key`, "must be string")
         if (p.api_key_env !== undefined && typeof p.api_key_env !== "string") err(errors, `provider.${key}.api_key_env`, "must be string")
         if (p.default_model !== undefined && typeof p.default_model !== "string") err(errors, `provider.${key}.default_model`, "must be string")
         if (p.timeout_ms !== undefined) checkInt(errors, `provider.${key}.timeout_ms`, p.timeout_ms, 1000)

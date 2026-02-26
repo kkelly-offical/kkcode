@@ -66,7 +66,8 @@ function resolveSettings(configState, providerType, overrides = {}) {
     configKey: providerType,
     model: normalizedModel,
     baseUrl: overrides.baseUrl || defaults.base_url,
-    apiKeyEnv: overrides.apiKeyEnv || defaults.api_key_env
+    apiKeyEnv: overrides.apiKeyEnv || defaults.api_key_env,
+    apiKeyDirect: defaults.api_key || null
   }
 }
 
@@ -130,7 +131,7 @@ export async function requestProvider({
     baseUrl,
     apiKeyEnv
   })
-  const apiKey = process.env[settings.apiKeyEnv] || ""
+  const apiKey = settings.apiKeyDirect || process.env[settings.apiKeyEnv] || ""
   const providerCfg = configState.config.provider[settings.configKey] || configState.config.provider[settings.providerType] || {}
 
   const input = {
@@ -180,7 +181,7 @@ export async function* requestProviderStream({
     baseUrl,
     apiKeyEnv
   })
-  const apiKey = process.env[settings.apiKeyEnv] || ""
+  const apiKey = settings.apiKeyDirect || process.env[settings.apiKeyEnv] || ""
   const providerCfg = configState.config.provider[settings.configKey] || configState.config.provider[settings.providerType] || {}
 
   if (providerCfg.stream === false) {

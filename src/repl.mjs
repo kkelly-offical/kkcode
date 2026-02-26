@@ -9,6 +9,7 @@ import { buildContext, printContextWarnings } from "./context.mjs"
 import { executeTurn, newSessionId, resolveMode, routeMode } from "./session/engine.mjs"
 import { renderStatusBar } from "./theme/status-bar.mjs"
 import { listProviders } from "./provider/router.mjs"
+import { createWizardState, startWizard, handleWizardInput } from "./provider/wizard.mjs"
 import { loadCustomCommands, applyCommandTemplate } from "./command/custom-commands.mjs"
 import { SkillRegistry } from "./skill/registry.mjs"
 import { renderMarkdown } from "./theme/markdown.mjs"
@@ -653,6 +654,8 @@ async function processInputLine({
   providersConfigured,
   customCommands,
   setCustomCommands,
+  wizard,
+  setWizard,
   print,
   streamSink = null,
   showTurnStatus = true,
@@ -662,6 +665,13 @@ async function processInputLine({
   suspendTui = null
 }) {
   const normalized = normalizeSlashAlias(String(line || "").trim())
+
+  // --- 向导模式：拦截所有输入 ---
+  if (wizard?.active) {
+    const result = await handleWizardInput(wizard, line, print)
+    if (result.done && setWizard) setWizard({ ...wizard })
+    return { exit: false }
+  }
 
   if (!normalized) return { exit: false }
   if (normalized === "/") return { exit: false }
@@ -924,7 +934,12 @@ async function processInputLine({
   }
 
   if (normalized === "/provider" || normalized === "/p") {
-    print(`available providers: ${providersConfigured.join(", ")}`)
+    if (wizard && setWizard) {
+      startWizard(wizard, print)
+      setWizard({ ...wizard })
+    } else {
+      print(`available providers: ${providersConfigured.join(", ")}`)
+    }
     return { exit: false }
   }
 
@@ -1258,6 +1273,7 @@ async function processInputLine({
 async function startLineRepl({ ctx, state, providersConfigured, customCommands, recentSessions, historyLines }) {
   const rl = createInterface({ input, output, history: historyLines, historySize: HIST_SIZE })
   let localCustomCommands = customCommands
+  let localWizard = createWizardState()
   const entered = [...historyLines]
   const lastTurn = {
     tokenMeter: {
@@ -1322,6 +1338,8 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
       setCustomCommands: (next) => {
         localCustomCommands = next
       },
+      wizard: localWizard,
+      setWizard: (next) => { localWizard = next },
       print: (text) => console.log(text),
       pendingImages: linePendingImages,
       clearPendingImages: () => { linePendingImages = [] }
@@ -1464,6 +1482,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     lastLongAgentPrompt: null,
     longagentAborted: false,
     pendingModeConfirm: null,
+    wizard: createWizardState(),
     metrics: {
       tokenMeter: {
         estimated: false,
@@ -2291,6 +2310,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
             state, ctx, providersConfigured,
             customCommands: localCustomCommands,
             setCustomCommands: (next) => { localCustomCommands = next },
+            wizard: ui.wizard,
+            setWizard: (next) => { ui.wizard = next },
             print: appendLog,
             streamSink: appendStreamChunk,
             showTurnStatus: false,
@@ -2399,6 +2420,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         setCustomCommands: (next) => {
           localCustomCommands = next
         },
+        wizard: ui.wizard,
+        setWizard: (next) => { ui.wizard = next },
         print: appendLog,
         streamSink: appendStreamChunk,
         showTurnStatus: false,
