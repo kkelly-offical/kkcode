@@ -433,12 +433,19 @@ export async function run4StageLongAgent({
     try {
       await git.commitAll(`[kkcode] 4-stage session ${sessionId} completed`, cwd)
       if (gitConfig.auto_merge !== false) {
-        const doneState = await LongAgentManager.get(sessionId)
-        if (doneState?.status !== "failed") {
-          await git.checkoutBranch(gitBaseBranch, cwd)
-          await git.mergeBranch(gitBranch, cwd)
-          await git.deleteBranch(gitBranch, cwd)
-        }
+        await LongAgentManager.withLock(async () => {
+          const doneState = await LongAgentManager.get(sessionId)
+          if (doneState?.status !== "failed") {
+            await git.checkoutBranch(gitBaseBranch, cwd)
+            const mergeResult = await git.mergeBranch(gitBranch, cwd)
+            if (mergeResult.ok) {
+              await git.deleteBranch(gitBranch, cwd)
+            } else {
+              // Merge failed — stay on feature branch
+              await git.checkoutBranch(gitBranch, cwd).catch(() => {})
+            }
+          }
+        }, cwd)
       }
     } catch { /* git merge best-effort */ }
   }

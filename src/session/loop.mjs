@@ -289,7 +289,9 @@ export async function processTurnLoop({
   })
 
   const MAX_CONTINUES = 8
+  const MAX_TOTAL_CONTINUES = 24 // hard cap on total auto-continues per turn
   let continueCount = 0
+  let totalContinueCount = 0
   let nudgeCount = 0
   let finalReply = ""
   const sinkWrite = typeof output?.write === "function"
@@ -522,8 +524,9 @@ export async function processTurnLoop({
       })
 
       // --- Auto-continue on output truncation (max_tokens) ---
-      if (response.stopReason === "max_tokens" && continueCount < MAX_CONTINUES) {
+      if (response.stopReason === "max_tokens" && continueCount < MAX_CONTINUES && totalContinueCount < MAX_TOTAL_CONTINUES) {
         continueCount++
+        totalContinueCount++
         sinkWrite(paint(`\n  ↳ output truncated, auto-continuing (${continueCount}/${MAX_CONTINUES})...\n`, "yellow", { dim: true }))
 
         // Drop any tool calls with parse errors (truncated JSON from cutoff)

@@ -80,6 +80,7 @@ export async function resetUsage(sessionId = null) {
     return
   }
   const store = await readUsageStore()
+  maybeRotateGlobal(store)
   delete store.sessions[sessionId]
   store.global = emptyUsage()
   for (const session of Object.values(store.sessions)) {

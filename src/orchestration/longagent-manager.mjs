@@ -146,14 +146,24 @@ export const LongAgentManager = {
     return Object.values(state.sessions).sort((a, b) => b.updatedAt - a.updatedAt)
   },
   async stop(sessionId, cwd = process.cwd()) {
-    const existing = await this.get(sessionId, cwd)
-    if (!existing) return null
-    return this.update(sessionId, { stopRequested: true }, cwd)
+    await acquireLock(cwd)
+    try {
+      const existing = await this.get(sessionId, cwd)
+      if (!existing) return null
+      return this.update(sessionId, { stopRequested: true }, cwd)
+    } finally {
+      await releaseLock(cwd)
+    }
   },
   async clearStop(sessionId, cwd = process.cwd()) {
-    const existing = await this.get(sessionId, cwd)
-    if (!existing) return null
-    return this.update(sessionId, { stopRequested: false }, cwd)
+    await acquireLock(cwd)
+    try {
+      const existing = await this.get(sessionId, cwd)
+      if (!existing) return null
+      return this.update(sessionId, { stopRequested: false }, cwd)
+    } finally {
+      await releaseLock(cwd)
+    }
   },
   /**
    * Execute `fn` while holding the state lock.

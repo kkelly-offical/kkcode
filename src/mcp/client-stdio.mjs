@@ -369,6 +369,7 @@ export function createStdioMcpClient(serverName, config = {}) {
         const wireFraming = configuredFraming === "auto" ? activeFraming : configuredFraming
         child.stdin.write(encodeRpcMessage(payload, wireFraming))
       } catch (error) {
+        if (!settle()) return
         clearTimeout(timer)
         pending.delete(id)
         reject(

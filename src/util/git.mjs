@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process"
-import { mkdtemp, writeFile, unlink, rmdir } from "node:fs/promises"
+import { mkdtemp, writeFile, unlink, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
@@ -256,7 +256,7 @@ export async function createGhostCommit(repoPath, message = "kkcode snapshot", p
     // 清理临时目录
     if (tmpDir) {
       try {
-        await rmdir(tmpDir, { recursive: true })
+        await rm(tmpDir, { recursive: true, force: true })
       } catch { /* ignore cleanup errors */ }
     }
   }

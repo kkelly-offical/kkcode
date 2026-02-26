@@ -33,7 +33,13 @@ export function resolveSubagent({ config, subagentType = null, category = null }
         mode: "agent"
       }
     }
-    throw new Error(`unknown subagent_type: ${subagentType}`)
+    // Unknown subagent type with configured subagents — return structured error fallback
+    return {
+      name: subagentType,
+      mode: "agent",
+      fallback: true,
+      reason: `unknown subagent_type: ${subagentType}`
+    }
   }
 
   if (category) {

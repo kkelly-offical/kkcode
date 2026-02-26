@@ -161,6 +161,7 @@ export function createSseMcpClient(serverName, config) {
         }
       }
     } finally {
+      try { await reader.cancel() } catch { /* stream may already be closed */ }
       try { reader.releaseLock() } catch { /* reader may have pending read if stream was force-closed */ }
     }
 
@@ -178,7 +179,10 @@ export function createSseMcpClient(serverName, config) {
     let data = ""
     for (const line of trimmed.split("\n")) {
       if (line.startsWith("event:")) event = line.slice(6).trim()
-      else if (line.startsWith("data:")) data += (data ? "\n" : "") + line.slice(5).trim()
+      else if (line.startsWith("data:")) {
+        const raw = line.slice(5)
+        data += (data ? "\n" : "") + (raw.startsWith(" ") ? raw.slice(1) : raw)
+      }
     }
     if (!data) return null
     return { event, data }

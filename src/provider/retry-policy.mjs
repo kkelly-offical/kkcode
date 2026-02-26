@@ -5,7 +5,8 @@ function sleep(ms) {
 export function classifyHttpError(status) {
   if (status === 401 || status === 403) return "auth"
   if (status === 429) return "rate_limit"
-  if (status === 413 || status === 400) return "context_overflow"
+  if (status === 413) return "context_overflow"
+  if (status === 400) return "bad_request"
   if (status >= 500) return "server"
   if (status === 408 || status === 409 || status === 425) return "transient"
   return "unknown"

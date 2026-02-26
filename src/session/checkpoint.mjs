@@ -263,7 +263,7 @@ export class CheckpointManager {
       
       if (snapshotResult.ok && !snapshotResult.skipped) {
         results.gitSnapshot = snapshotResult.snapshot
-        this.lastSnapshotId = snapshotResult.snapshot.id
+        this.lastSnapshotId = snapshotResult.snapshot?.id ?? null
       }
     }
 

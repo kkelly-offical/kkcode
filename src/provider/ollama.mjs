@@ -231,6 +231,7 @@ export async function* requestOllamaStream(input) {
       } catch { /* ignore incomplete JSON */ }
     }
   } finally {
+    try { await reader.cancel() } catch { /* stream may already be closed */ }
     try { reader.releaseLock() } catch { /* reader may have pending read if generator was force-closed */ }
   }
 }

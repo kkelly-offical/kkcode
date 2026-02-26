@@ -138,7 +138,9 @@ function spawnWorker(taskId) {
           }
         }
         return {}
-      }).catch(() => {})
+      }).catch((err) => {
+        console.warn(`[kkcode] patchTask failed for exited worker ${taskId}: ${err?.message || err}`)
+      })
     }
   })
   child.unref()

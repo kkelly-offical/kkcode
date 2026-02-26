@@ -165,13 +165,13 @@ export function detectToolCycle(recentToolCalls) {
   // 同类工具连续 6 次
   const recentTypes = recentToolCalls.slice(-6).map(sig => sig.split(":")[0])
   if (recentTypes.every(t => t === recentTypes[0]) && isReadOnlyTool(recentTypes[0])) return true
-  // 前后半段完全相同
+  // 前后半段按序列比较（保留顺序信息，避免排序后误报）
   const allReadOnly = recentToolCalls.every(sig => isReadOnlyTool(sig.split(":")[0]))
   if (allReadOnly) {
     const half = Math.floor(recentToolCalls.length / 2)
     if (half >= 3) {
-      const first = recentToolCalls.slice(0, half).sort().join(",")
-      const second = recentToolCalls.slice(half).sort().join(",")
+      const first = recentToolCalls.slice(0, half).join(",")
+      const second = recentToolCalls.slice(half, half * 2).join(",")
       if (first === second) return true
     }
   }

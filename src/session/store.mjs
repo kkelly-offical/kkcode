@@ -330,9 +330,12 @@ export async function getConversationHistory(sessionId, limit = 30) {
     const msgs = data.messages
     // Always preserve compaction summary (first message) — it must never be sliced off
     // by the limit window, otherwise the model loses all prior context
-    const firstIsCompaction = msgs.length > 0 &&
-      typeof msgs[0].content === "string" &&
-      msgs[0].content.includes("<compaction-summary>")
+    const firstIsCompaction = msgs.length > 0 && (() => {
+      const c = msgs[0].content
+      if (typeof c === "string") return c.includes("<compaction-summary>")
+      if (Array.isArray(c)) return c.some(block => typeof block === "string" ? block.includes("<compaction-summary>") : (block.type === "text" && typeof block.text === "string" && block.text.includes("<compaction-summary>")))
+      return false
+    })()
     const sliced = firstIsCompaction
       ? [msgs[0], ...msgs.slice(1).slice(-limit)]
       : msgs.slice(-limit)

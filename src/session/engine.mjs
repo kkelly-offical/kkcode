@@ -8,6 +8,7 @@ import { appendEventLog } from "../storage/event-log.mjs"
 import { EventBus } from "../core/events.mjs"
 import { initialize as initObservability } from "../observability/index.mjs"
 import { ToolRegistry } from "../tool/registry.mjs"
+import { SkillRegistry } from "../skill/registry.mjs"
 import { resolveAgentForMode } from "../agent/agent.mjs"
 import { estimateStringTokens } from "./compaction.mjs"
 import { classifyTaskMode } from "./longagent-utils.mjs"
@@ -124,6 +125,7 @@ export async function executeTurn({
     config: configState.config,
     cwd: process.cwd()
   })
+  await SkillRegistry.initialize(configState.config, process.cwd())
   // Auto-name session from first user prompt (truncated to 50 chars)
   const autoTitle = typeof prompt === "string"
     ? prompt.replace(/\s+/g, " ").trim().slice(0, 50)

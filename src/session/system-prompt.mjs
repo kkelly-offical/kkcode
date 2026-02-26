@@ -140,7 +140,7 @@ export async function buildSystemPromptBlocks({ mode, model, cwd, agent = null, 
     agent: agent?.name || null,
     tools: tools.map(t => t.name).sort(),
     skills: skills.map(s => s.name).sort(),
-    userInstructions: userInstructions.slice(0, 200) // first 200 chars as fingerprint
+    userInstructions: hashInputs({ ui: userInstructions }) // hash full string to avoid collisions
   })
 
   if (blockCache.key === cacheKey && blockCache.result) {
