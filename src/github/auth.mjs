@@ -159,8 +159,12 @@ function copyToClipboard(text) {
 async function pollAccessToken(deviceCode, interval) {
   let retryCount = 0
   const maxRetries = 3
+  const deadline = Date.now() + 10 * 60 * 1000 // 10 minute total timeout
 
   while (true) {
+    if (Date.now() > deadline) {
+      throw new Error("Authorization timed out after 10 minutes. Please try again.")
+    }
     await sleep(interval * 1000)
 
     let res

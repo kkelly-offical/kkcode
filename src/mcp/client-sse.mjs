@@ -184,30 +184,37 @@ export function createSseMcpClient(serverName, config) {
     return { event, data }
   }
 
+  let initPromise = null
+
   async function ensureInitialized() {
     if (initialized) return
-    let result
-    try {
-      result = await sendRequest("initialize", {
-        protocolVersion: MCP_PROTOCOL_VERSION,
-        capabilities: {},
-        clientInfo: MCP_CLIENT_INFO
-      })
-    } catch (err) {
-      initialized = false
-      throw err
-    }
-    // Send initialized notification
-    try {
-      await fetch(baseUrl, {
-        method: "POST",
-        headers: buildHeaders(),
-        body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
-        signal: AbortSignal.timeout(timeoutMs)
-      })
-    } catch { /* best-effort */ }
-    initialized = true
-    return result
+    if (initPromise) return initPromise
+    initPromise = (async () => {
+      try {
+        const result = await sendRequest("initialize", {
+          protocolVersion: MCP_PROTOCOL_VERSION,
+          capabilities: {},
+          clientInfo: MCP_CLIENT_INFO
+        })
+        // Send initialized notification
+        try {
+          await fetch(baseUrl, {
+            method: "POST",
+            headers: buildHeaders(),
+            body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+            signal: AbortSignal.timeout(timeoutMs)
+          })
+        } catch { /* best-effort */ }
+        initialized = true
+        return result
+      } catch (err) {
+        initialized = false
+        throw err
+      } finally {
+        initPromise = null
+      }
+    })()
+    return initPromise
   }
 
   return {

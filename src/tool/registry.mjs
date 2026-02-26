@@ -977,7 +977,8 @@ function builtinTools(config) {
           if (change.isCreate) {
             await atomicWriteFile(change.target, String(change.after))
           } else {
-            const content = await readFile(change.target, "utf8")
+            const snap = snapshots.find(s => s.path === change.target)
+            const content = snap?.original ?? await readFile(change.target, "utf8")
             const next = change.replace_all
               ? content.replaceAll(change.before, change.after)
               : content.replace(change.before, change.after)

@@ -89,10 +89,11 @@ function withLock(fn) {
     () => undefined,
     () => undefined
   )
+  let timer
   return Promise.race([
-    run,
+    run.finally(() => clearTimeout(timer)),
     new Promise((_, reject) => {
-      setTimeout(() => reject(new Error("[store] withLock timeout after 30s")), LOCK_TIMEOUT_MS)
+      timer = setTimeout(() => reject(new Error("[store] withLock timeout after 30s")), LOCK_TIMEOUT_MS)
     })
   ])
 }

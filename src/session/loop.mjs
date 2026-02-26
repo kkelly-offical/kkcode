@@ -738,6 +738,13 @@ export async function processTurnLoop({
           }
         }
 
+        // Sync _planMode back to toolContext after enter_plan / exit_plan
+        if (call.name === "enter_plan" && result.status !== "error") {
+          toolContext._planMode = true
+        } else if (call.name === "exit_plan" && result.status !== "error") {
+          toolContext._planMode = false
+        }
+
         const hookAfterResult = await HookBus.toolAfter({ tool: call.name, args: call.args, result, sessionId, step })
         if (hookAfterResult?.result) result = hookAfterResult.result
 

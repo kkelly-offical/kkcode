@@ -76,7 +76,7 @@ defineAgent({
   description: "Read-only analysis agent, no file editing allowed",
   mode: "primary",
   permission: "readonly",
-  tools: ["read", "glob", "grep", "list", "bash"]
+  tools: ["read", "glob", "grep", "list", "webfetch", "websearch", "question", "enter_plan", "exit_plan"]
 })
 
 defineAgent({

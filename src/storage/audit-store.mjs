@@ -23,19 +23,26 @@ export async function readAuditStore() {
   return readJson(auditStorePath(), defaults())
 }
 
+let writeLock = Promise.resolve()
+
 export async function appendAuditEntry(entry) {
-  const store = await readAuditStore()
-  store.entries.push({
-    id: `aud_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    createdAt: Date.now(),
-    ...entry
-  })
-  if (store.entries.length > state.maxEntries) {
-    store.entries = store.entries.slice(-state.maxEntries)
+  const run = async () => {
+    const store = await readAuditStore()
+    store.entries.push({
+      id: `aud_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      createdAt: Date.now(),
+      ...entry
+    })
+    if (store.entries.length > state.maxEntries) {
+      store.entries = store.entries.slice(-state.maxEntries)
+    }
+    store.updatedAt = Date.now()
+    await writeJson(auditStorePath(), store)
+    return store.entries[store.entries.length - 1]
   }
-  store.updatedAt = Date.now()
-  await writeJson(auditStorePath(), store)
-  return store.entries[store.entries.length - 1]
+  const result = writeLock.then(run, run)
+  writeLock = result.then(() => undefined, () => undefined)
+  return result
 }
 
 export async function listAuditEntries(options = {}) {
