@@ -105,6 +105,8 @@ function extractFailedTaskIds(text) {
 
 
 function parseBlueprintOutput(reply, objective, defaults) {
+  const parseErrors = []
+
   // 1. 尝试提取 ```stage_plan_json ... ``` 块
   const jsonMatch = reply.match(/```stage_plan_json\s*([\s\S]*?)```/)
   if (jsonMatch) {
@@ -112,11 +114,15 @@ function parseBlueprintOutput(reply, objective, defaults) {
     if (parsed?.stages) {
       const { plan, errors } = validateAndNormalizeStagePlan(parsed, { objective, defaults })
       if (!errors.length) {
-        return { architectureText: reply.replace(/```stage_plan_json[\s\S]*?```/g, "").trim(), stagePlan: plan }
+        return { architectureText: reply.replace(/```stage_plan_json[\s\S]*?```/g, "").trim(), stagePlan: plan, parseErrors: [] }
       }
+      parseErrors.push(`stage_plan_json block validation: ${errors.join("; ")}`)
+    } else {
+      parseErrors.push("stage_plan_json block found but no stages field")
     }
   }
-  // 2. 回退：尝试任意 JSON 块
+
+  // 2. 回退：尝试任意 JSON 围栏块
   const anyJson = reply.match(/```(?:json)?\s*([\s\S]*?)```/g)
   if (anyJson) {
     for (const block of anyJson) {
@@ -124,12 +130,27 @@ function parseBlueprintOutput(reply, objective, defaults) {
       const parsed = parseJsonLoose(inner)
       if (parsed?.stages) {
         const { plan, errors } = validateAndNormalizeStagePlan(parsed, { objective, defaults })
-        if (!errors.length) return { architectureText: reply, stagePlan: plan }
+        if (!errors.length) return { architectureText: reply, stagePlan: plan, parseErrors: [] }
+        parseErrors.push(`json block validation: ${errors.join("; ")}`)
       }
     }
   }
-  // 3. 最终回退：单任务默认计划
-  return { architectureText: reply, stagePlan: defaultStagePlan(objective, defaults) }
+
+  // 3. 回退：裸 JSON（无围栏包裹）
+  const braceStart = reply.indexOf("{")
+  const braceEnd = reply.lastIndexOf("}")
+  if (braceStart >= 0 && braceEnd > braceStart) {
+    const parsed = parseJsonLoose(reply.slice(braceStart, braceEnd + 1))
+    if (parsed?.stages) {
+      const { plan, errors } = validateAndNormalizeStagePlan(parsed, { objective, defaults })
+      if (!errors.length) return { architectureText: reply, stagePlan: plan, parseErrors: [] }
+      parseErrors.push(`bare JSON validation: ${errors.join("; ")}`)
+    }
+  }
+
+  // 4. 最终回退：单任务默认计划
+  if (!parseErrors.length) parseErrors.push("no JSON with stages field found in reply")
+  return { architectureText: reply, stagePlan: defaultStagePlan(objective, defaults), parseErrors }
 }
 
 export async function runHybridLongAgent({
@@ -382,11 +403,17 @@ export async function runHybridLongAgent({
   accumulateUsage(blueprintOut)
 
   const planDefaults = { timeoutMs: Number(parallelConfig.task_timeout_ms || 600000), maxRetries: Number(parallelConfig.task_max_retries ?? 2) }
-  const { architectureText, stagePlan: parsedPlan } = parseBlueprintOutput(blueprintOut.reply || "", prompt, planDefaults)
+  const { architectureText, stagePlan: parsedPlan, parseErrors } = parseBlueprintOutput(blueprintOut.reply || "", prompt, planDefaults)
   stagePlan = parsedPlan
   planFrozen = true
 
-  gateStatus.blueprint = { status: "pass", hasArchitecture: architectureText.length > 100, stageCount: stagePlan.stages.length }
+  const blueprintFellBack = parseErrors.length > 0
+  gateStatus.blueprint = {
+    status: blueprintFellBack ? "warn" : "pass",
+    hasArchitecture: architectureText.length > 100,
+    stageCount: stagePlan.stages.length,
+    parseErrors: blueprintFellBack ? parseErrors : undefined
+  }
   await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_BLUEPRINT_COMPLETE, sessionId, payload: { planId: stagePlan.planId, stageCount: stagePlan.stages.length } })
   await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_PLAN_FROZEN, sessionId, payload: { planId: stagePlan.planId, stageCount: stagePlan.stages.length, errors: [] } })
   await syncState({ planFrozen: true, lastMessage: `H2: blueprint complete, ${stagePlan.stages.length} stage(s)` })
@@ -618,9 +645,9 @@ export async function runHybridLongAgent({
         const failNote = !stageResult.allSuccess ? ` 失败任务数: ${stageResult.failCount}` : ""
         priorContext += `\n### 阶段${stageIndex + 1}: ${stage.name || stage.stageId} (${stageResult.allSuccess ? "PASS" : "FAIL"}${failNote})\n${taskSummaries.join("\n")}${fileNote}\n`
       }
-      // #4 TaskBus 注入到 priorContext
+      // #4 TaskBus 增量注入到 priorContext（只包含本阶段新消息）
       if (taskBus) {
-        const busCtx = taskBus.toContextString()
+        const busCtx = taskBus.toDeltaString()
         if (busCtx) priorContext += `\n${busCtx}\n`
       }
       // #13 上下文压缩

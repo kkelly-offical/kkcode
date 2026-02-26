@@ -8,6 +8,7 @@ export class TaskBus {
     this._messages = []
     this._shared = {}
     this._maxMessages = maxMessages
+    this._lastFlushedTs = 0
   }
 
   publish(taskId, key, value) {
@@ -34,6 +35,20 @@ export class TaskBus {
     for (const [key, { value, from }] of entries) {
       const val = typeof value === "string" ? value : JSON.stringify(value)
       lines.push(`- [${from}] ${key}: ${val.slice(0, 200)}`)
+    }
+    const result = lines.join("\n")
+    return result.length > maxLen ? result.slice(0, maxLen) + "\n..." : result
+  }
+
+  toDeltaString(maxLen = 2000) {
+    const cutoff = this._lastFlushedTs
+    const newMessages = this._messages.filter(m => m.ts > cutoff)
+    this._lastFlushedTs = Date.now()
+    if (!newMessages.length) return ""
+    const lines = ["### Task Bus (new since last stage)"]
+    for (const { taskId, key, value } of newMessages) {
+      const val = typeof value === "string" ? value : JSON.stringify(value)
+      lines.push(`- [${taskId}] ${key}: ${val.slice(0, 200)}`)
     }
     const result = lines.join("\n")
     return result.length > maxLen ? result.slice(0, maxLen) + "\n..." : result

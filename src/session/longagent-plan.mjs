@@ -112,13 +112,15 @@ export function validateAndNormalizeStagePlan(input, { objective = "", defaults 
   }
 
   // Cross-stage dependency check: later stages should not own files already owned by earlier stages
+  // Downgraded to warnings — cross-stage overlap is common (e.g. shared config) and should not block the plan
+  const warnings = []
   const globalOwnership = new Map()
   for (const stage of plan.stages) {
     for (const task of stage.tasks) {
       for (const file of task.plannedFiles || []) {
         if (globalOwnership.has(file)) {
           const prev = globalOwnership.get(file)
-          errors.push(`file "${file}" appears in stage "${prev}" and "${stage.stageId}" — split into dependency chain or deduplicate`)
+          warnings.push(`file "${file}" appears in stage "${prev}" and "${stage.stageId}"`)
         } else {
           globalOwnership.set(file, stage.stageId)
         }
@@ -136,6 +138,8 @@ export function validateAndNormalizeStagePlan(input, { objective = "", defaults 
       if (!task.acceptance.length) qualityScore -= 10
     }
   }
+  // Cross-stage file overlap: penalize quality but don't block
+  qualityScore -= warnings.length * 5
   qualityScore = Math.max(0, Math.min(100, qualityScore))
 
   if (errors.length) {
@@ -144,15 +148,15 @@ export function validateAndNormalizeStagePlan(input, { objective = "", defaults 
     if (hasValidStages) {
       // Filter out empty stages but preserve valid ones
       plan.stages = plan.stages.filter(s => s.tasks.length > 0)
-      return { plan, errors, qualityScore: Math.max(0, qualityScore - errors.length * 10) }
+      return { plan, errors, warnings, qualityScore: Math.max(0, qualityScore - errors.length * 10) }
     }
     return {
       plan: defaultStagePlan(objective || plan.objective, defaults),
-      errors,
+      errors, warnings,
       qualityScore: 0
     }
   }
-  return { plan, errors: [], qualityScore }
+  return { plan, errors: [], warnings, qualityScore }
 }
 
 export async function runIntakeDialogue({
