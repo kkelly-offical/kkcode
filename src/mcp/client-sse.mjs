@@ -164,7 +164,11 @@ export function createSseMcpClient(serverName, config) {
       try { reader.releaseLock() } catch { /* reader may have pending read if stream was force-closed */ }
     }
 
-    return result ?? {}
+    if (result !== null) return result
+    throw new McpError(
+      `mcp server "${serverName}" SSE stream ended without matching response for request ${requestId}`,
+      { reason: "bad_response", server: serverName, phase: "request" }
+    )
   }
 
   function parseSsePart(part) {

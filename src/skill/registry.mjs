@@ -1,7 +1,7 @@
 import path from "node:path"
 import { access, readdir, readFile } from "node:fs/promises"
 import { pathToFileURL, fileURLToPath } from "node:url"
-import { exec } from "node:child_process"
+import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { parse as parseYaml } from "yaml"
 import { McpRegistry } from "../mcp/registry.mjs"
@@ -9,7 +9,7 @@ import { loadCustomCommands, applyCommandTemplate } from "../command/custom-comm
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 
-const execAsync = promisify(exec)
+const execFileAsync = promisify(execFile)
 
 const DEFAULT_ALLOWED_COMMANDS = ["git", "node", "npm", "ls", "cat", "date", "pwd", "echo", "which"]
 let _allowedCommands = null
@@ -24,8 +24,8 @@ function getAllowedCommands(config) {
   return _allowedCommands
 }
 
-// Shell metacharacters that enable command chaining / injection
-const SHELL_INJECTION_RE = /[;|&`$(){}]|>\s*>|<\s*</
+// Shell metacharacters and control chars that enable command chaining / injection
+const SHELL_INJECTION_RE = /[;|&`$(){}]|>\s*>|<\s*<|[\n\r]/
 
 function isCommandAllowed(cmdString, config) {
   const allowed = getAllowedCommands(config)
@@ -81,7 +81,10 @@ async function injectDynamicContext(template, cwd, config) {
       continue
     }
     try {
-      const { stdout } = await execAsync(m[1], { cwd, timeout: 10000 })
+      const tokens = m[1].trim().split(/\s+/)
+      const cmd = tokens[0]
+      const cmdArgs = tokens.slice(1)
+      const { stdout } = await execFileAsync(cmd, cmdArgs, { cwd, timeout: 10000 })
       result = result.replace(m[0], stdout.trim())
     } catch {
       result = result.replace(m[0], `[command failed: ${m[1]}]`)
