@@ -44,6 +44,7 @@ import {
 } from "./longagent-utils.mjs"
 import { TaskBus } from "./longagent-task-bus.mjs"
 import { loadProjectMemory, saveProjectMemory, memoryToContext, parseMemoryFromPreview } from "./longagent-project-memory.mjs"
+import YAML from "yaml"
 import * as git from "../util/git.mjs"
 
 // Checkpoint 结构校验
@@ -148,8 +149,26 @@ function parseBlueprintOutput(reply, objective, defaults) {
     }
   }
 
-  // 4. 最终回退：单任务默认计划
-  if (!parseErrors.length) parseErrors.push("no JSON with stages field found in reply")
+  // 4. 回退：YAML 围栏块（```yaml ... ```）
+  const yamlBlocks = reply.match(/```ya?ml\s*([\s\S]*?)```/g)
+  if (yamlBlocks) {
+    for (const block of yamlBlocks) {
+      const inner = block.replace(/```ya?ml?\s*/g, "").replace(/```/g, "").trim()
+      try {
+        const parsed = YAML.parse(inner)
+        if (parsed?.stages) {
+          const { plan, errors } = validateAndNormalizeStagePlan(parsed, { objective, defaults })
+          if (!errors.length) return { architectureText: reply, stagePlan: plan, parseErrors: [] }
+          parseErrors.push(`yaml block validation: ${errors.join("; ")}`)
+        }
+      } catch (e) {
+        parseErrors.push(`yaml parse error: ${e.message}`)
+      }
+    }
+  }
+
+  // 5. 最终回退：单任务默认计划
+  if (!parseErrors.length) parseErrors.push("no JSON/YAML with stages field found in reply")
   return { architectureText: reply, stagePlan: defaultStagePlan(objective, defaults), parseErrors }
 }
 
@@ -403,7 +422,43 @@ export async function runHybridLongAgent({
   accumulateUsage(blueprintOut)
 
   const planDefaults = { timeoutMs: Number(parallelConfig.task_timeout_ms || 600000), maxRetries: Number(parallelConfig.task_max_retries ?? 2) }
-  const { architectureText, stagePlan: parsedPlan, parseErrors } = parseBlueprintOutput(blueprintOut.reply || "", prompt, planDefaults)
+  let { architectureText, stagePlan: parsedPlan, parseErrors } = parseBlueprintOutput(blueprintOut.reply || "", prompt, planDefaults)
+
+  // Blueprint 解析失败重试：用 repair prompt 要求 LLM 只输出合法 JSON
+  const maxBlueprintRetries = Number(hybridConfig.blueprint_parse_retries || 1)
+  if (parseErrors.length > 0 && maxBlueprintRetries > 0) {
+    for (let retryIdx = 0; retryIdx < maxBlueprintRetries; retryIdx++) {
+      await EventBus.emit({
+        type: EVENT_TYPES.LONGAGENT_ALERT, sessionId,
+        payload: { kind: "blueprint_parse_retry", attempt: retryIdx + 1, errors: parseErrors }
+      })
+      const repairPrompt = [
+        "Your previous blueprint output could not be parsed into a valid stage plan.",
+        `Parse errors: ${parseErrors.join("; ")}`,
+        "",
+        "Output ONLY a valid JSON object (no markdown, no explanation) with this schema:",
+        '{"planId":"...","objective":"...","stages":[{"stageId":"...","name":"...","tasks":[{"taskId":"...","prompt":"...","plannedFiles":["..."],"acceptance":["..."],"timeoutMs":600000,"maxRetries":2,"complexity":"medium"}]}]}',
+        "",
+        `Objective: ${prompt}`
+      ].join("\n")
+      const repairOut = await processTurnLoop({
+        prompt: repairPrompt, mode: "ask",
+        model: blueprintModel.model, providerType: blueprintModel.providerType,
+        sessionId, configState, baseUrl, apiKeyEnv, signal,
+        output: { write: () => {} }, allowQuestion: false
+      })
+      accumulateUsage(repairOut)
+      const retry = parseBlueprintOutput(repairOut.reply || "", prompt, planDefaults)
+      if (retry.parseErrors.length === 0) {
+        architectureText = architectureText || retry.architectureText
+        parsedPlan = retry.stagePlan
+        parseErrors = []
+        break
+      }
+      parseErrors = retry.parseErrors
+    }
+  }
+
   stagePlan = parsedPlan
   planFrozen = true
 

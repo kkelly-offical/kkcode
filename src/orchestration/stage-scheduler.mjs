@@ -678,7 +678,11 @@ export async function runStageBarrier({
       }
     }
 
-    await BackgroundManager.waitForSettled(cfg.pollIntervalMs)
+    // Collect running background task IDs for precise event-driven waiting
+    const runningBgIds = [...logical.values()]
+      .filter(item => item.status === "running" && item.backgroundTaskId)
+      .map(item => item.backgroundTaskId)
+    await BackgroundManager.waitForAny(runningBgIds, cfg.pollIntervalMs)
   }
 
   const items = [...logical.values()]

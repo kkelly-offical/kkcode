@@ -405,6 +405,34 @@ export const BackgroundManager = {
     })
   },
 
+  /**
+   * Wait for any of the specified tasks to settle, or timeout.
+   * Unlike waitForSettled(), this filters by task ID — unrelated task
+   * settlements won't cause a spurious wakeup.
+   * @param {string[]} taskIds - IDs to watch
+   * @param {number} timeoutMs - max wait before resolving anyway
+   * @returns {Promise<{id:string,status:string}|null>} settled task info, or null on timeout
+   */
+  waitForAny(taskIds, timeoutMs = 300) {
+    if (!taskIds || !taskIds.length) {
+      return this.waitForSettled(timeoutMs)
+    }
+    const idSet = new Set(taskIds)
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        settledEmitter.removeListener("task-settled", onSettled)
+        resolve(null)
+      }, timeoutMs)
+      function onSettled(event) {
+        if (!idSet.has(event.id)) return // ignore unrelated tasks
+        clearTimeout(timer)
+        settledEmitter.removeListener("task-settled", onSettled)
+        resolve(event)
+      }
+      settledEmitter.on("task-settled", onSettled)
+    })
+  },
+
   async tick(config = {}) {
     await markStaleRunningTasks(config)
     await startPendingTasks(config)
