@@ -507,6 +507,24 @@ export async function mergeAbort(cwd = process.cwd()) {
   return { ok: result.ok, message: result.ok ? "merge aborted" : result.stderr }
 }
 
+/** Get current HEAD commit hash (for rollback savepoints) */
+export async function getHeadHash(cwd = process.cwd()) {
+  const result = await run(["rev-parse", "HEAD"], cwd)
+  return result.ok ? result.stdout.trim() : null
+}
+
+/** Hard reset to a specific commit (rollback) */
+export async function resetTo(ref, cwd = process.cwd()) {
+  const result = await run(["reset", "--hard", ref], cwd)
+  return { ok: result.ok, message: result.ok ? `reset to ${ref}` : result.stderr }
+}
+
+/** Check if conflict markers remain in working tree */
+export async function hasConflictMarkers(cwd = process.cwd()) {
+  const result = await run(["diff", "--check"], cwd)
+  return !result.ok
+}
+
 // ============================================================================
 // 内部工具函数
 // ============================================================================

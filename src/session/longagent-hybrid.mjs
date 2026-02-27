@@ -104,6 +104,25 @@ function extractFailedTaskIds(text) {
   return ids
 }
 
+function buildConflictResolutionPrompt(conflictFiles) {
+  return [
+    "## Git Merge Conflict Resolution",
+    "",
+    "The following files have merge conflicts that must be resolved:",
+    ...conflictFiles.map(f => `- ${f}`),
+    "",
+    "## Resolution Protocol",
+    "1. Read each conflicted file and locate ALL conflict markers (<<<<<<< ======= >>>>>>>)",
+    "2. For each conflict block:",
+    "   - Understand what BOTH sides intended (ours = feature branch, theirs = base branch)",
+    "   - Keep the feature branch changes (our work) unless they break base branch functionality",
+    "   - If both sides modified the same logic, merge them intelligently (not just pick one)",
+    "   - Remove ALL conflict markers — no <<<<<<< or ======= or >>>>>>> should remain",
+    "3. After resolving, run syntax check on each file (node --check / python -m py_compile)",
+    "4. Verify imports still resolve correctly across resolved files"
+  ].join("\n")
+}
+
 
 function parseBlueprintOutput(reply, objective, defaults) {
   const parseErrors = []
@@ -1115,82 +1134,92 @@ export async function runHybridLongAgent({
     gateStatus.usabilityGates = { status: "fail", attempt: gateAttempt, failures: summarizeGateFailures(lastGateFailures) }
   }
 
-  // ========== H7: GIT MERGE ==========
+  // ========== H7: GIT MERGE (原子性保护) ==========
   if (gitActive && gitBaseBranch && gitBranch) {
     await setPhase("H7", "git_merge")
     try {
-      await git.commitAll(`[kkcode-hybrid] session ${sessionId} completed`, cwd)
-      if (gitConfig.auto_merge !== false) {
+      // Step 1: 提交 feature branch 上的最终变更
+      const finalCommit = await git.commitAll(`[kkcode-hybrid] session ${sessionId} completed`, cwd)
+      if (!finalCommit.ok && !finalCommit.empty) {
+        gateStatus.gitMerge = { status: "warn", reason: `final commit failed: ${finalCommit.message}` }
+      } else if (gitConfig.auto_merge !== false) {
         await LongAgentManager.withLock(async () => {
           const doneState = await LongAgentManager.get(sessionId)
           if (doneState?.status === "failed") return
+
+          // Step 2: 保存 savepoint — 记录 feature branch HEAD 用于回滚
+          const featureHead = await git.getHeadHash(cwd)
+
+          // Step 3: checkout base branch
+          const checkoutResult = await git.checkoutBranch(gitBaseBranch, cwd)
+          if (!checkoutResult.ok) {
+            await git.checkoutBranch(gitBranch, cwd).catch(() => {})
+            gateStatus.gitMerge = { status: "warn", reason: `checkout base failed: ${checkoutResult.message}` }
+            return
+          }
+
+          // Step 4: 保存 base branch HEAD（merge 失败时回滚到此）
+          const baseHead = await git.getHeadHash(cwd)
+
+          // Step 5: 执行 merge
+          const mergeResult = await git.mergeBranch(gitBranch, cwd)
+          if (mergeResult.ok) {
+            // Step 6: merge 成功 — 验证后再删分支
+            await git.deleteBranch(gitBranch, cwd)
+            gateStatus.gitMerge = { status: "pass", branch: gitBranch, baseBranch: gitBaseBranch }
+            await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_GIT_MERGED, sessionId, payload: { branch: gitBranch, baseBranch: gitBaseBranch } })
+            return
+          }
+
+          // Step 7: merge 失败 — 检查是否为冲突
+          const conflictFiles = await git.getConflictFiles(cwd)
+          if (conflictFiles.length === 0) {
+            // 非冲突类 merge 失败 — 回滚到 base HEAD，回到 feature branch
+            if (baseHead) await git.resetTo(baseHead, cwd).catch(() => {})
+            await git.checkoutBranch(gitBranch, cwd).catch(() => {})
+            gateStatus.gitMerge = { status: "warn", reason: `merge failed: ${mergeResult.message}` }
+            return
+          }
+
+          // Step 8: 冲突自愈 — 原子化处理
+          await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_GIT_CONFLICT_RESOLUTION, sessionId, payload: { files: conflictFiles } })
           try {
-            await git.checkoutBranch(gitBaseBranch, cwd)
-            const mergeResult = await git.mergeBranch(gitBranch, cwd)
-            if (mergeResult.ok) {
+            const conflictPrompt = buildConflictResolutionPrompt(conflictFiles)
+            const conflictOut = await processTurnLoop({
+              prompt: conflictPrompt, mode: "agent", agent: getAgent("coding-agent"),
+              model, providerType, sessionId, configState,
+              baseUrl, apiKeyEnv, signal, output, allowQuestion: false, toolContext
+            })
+            accumulateUsage(conflictOut)
+
+            // Step 9: 验证冲突标记已全部清除
+            const markersRemain = await git.hasConflictMarkers(cwd)
+            if (markersRemain) {
+              throw new Error("conflict markers still present after resolution")
+            }
+
+            const commitResult = await git.commitAll(`[kkcode-hybrid] resolved merge conflicts`, cwd)
+            if (commitResult.ok) {
               await git.deleteBranch(gitBranch, cwd)
-              gateStatus.gitMerge = { status: "pass", branch: gitBranch, baseBranch: gitBaseBranch }
+              gateStatus.gitMerge = { status: "pass", branch: gitBranch, baseBranch: gitBaseBranch, conflictsResolved: true }
               await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_GIT_MERGED, sessionId, payload: { branch: gitBranch, baseBranch: gitBaseBranch } })
-            } else {
-              // Merge failed — stay on feature branch
-              await git.checkoutBranch(gitBranch, cwd).catch(() => {})
-              gateStatus.gitMerge = { status: "warn", reason: "merge failed, staying on feature branch" }
+              return
             }
-          } catch (err) {
-            // Phase 9: 自愈式 Git 操作
-            if (git.isConflictError(err)) {
-              try {
-                const conflictFiles = await git.getConflictFiles(cwd)
-                if (conflictFiles.length > 0) {
-                  await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_GIT_CONFLICT_RESOLUTION, sessionId, payload: { files: conflictFiles } })
-                  const conflictPrompt = [
-                    "## Git Merge Conflict Resolution",
-                    "",
-                    "The following files have merge conflicts that must be resolved:",
-                    ...conflictFiles.map(f => `- ${f}`),
-                    "",
-                    "## Resolution Protocol",
-                    "1. Read each conflicted file and locate ALL conflict markers (<<<<<<< ======= >>>>>>>)",
-                    "2. For each conflict block:",
-                    "   - Understand what BOTH sides intended (ours = feature branch, theirs = base branch)",
-                    "   - Keep the feature branch changes (our work) unless they break base branch functionality",
-                    "   - If both sides modified the same logic, merge them intelligently (not just pick one)",
-                    "   - Remove ALL conflict markers — no <<<<<<< or ======= or >>>>>>> should remain",
-                    "3. After resolving, run syntax check on each file (node --check / python -m py_compile)",
-                    "4. Verify imports still resolve correctly across resolved files"
-                  ].join("\n")
-                  const conflictOut = await processTurnLoop({
-                    prompt: conflictPrompt, mode: "agent", agent: getAgent("coding-agent"),
-                    model, providerType, sessionId, configState,
-                    baseUrl, apiKeyEnv, signal, output, allowQuestion: false, toolContext
-                  })
-                  accumulateUsage(conflictOut)
-                  const commitResult = await git.commitAll(`[kkcode-hybrid] resolved merge conflicts`, cwd)
-                  if (commitResult.ok) {
-                    gateStatus.gitMerge = { status: "pass", branch: gitBranch, baseBranch: gitBaseBranch, conflictsResolved: true }
-                    await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_GIT_MERGED, sessionId, payload: { branch: gitBranch, baseBranch: gitBaseBranch } })
-                  } else {
-                    await git.mergeAbort(cwd)
-                    await git.checkoutBranch(gitBranch, cwd).catch(() => {})
-                    gateStatus.gitMerge = { status: "warn", reason: "conflict resolution failed, staying on feature branch" }
-                  }
-                } else {
-                  await git.checkoutBranch(gitBranch, cwd).catch(() => {})
-                  gateStatus.gitMerge = { status: "warn", reason: err.message }
-                }
-              } catch (resolveErr) {
-                await git.mergeAbort(cwd).catch(() => {})
-                await git.checkoutBranch(gitBranch, cwd).catch(() => {})
-                gateStatus.gitMerge = { status: "warn", reason: `conflict resolution error: ${resolveErr.message}` }
-              }
-            } else {
-              await git.checkoutBranch(gitBranch, cwd).catch(() => {})
-              gateStatus.gitMerge = { status: "warn", reason: err.message }
-            }
+            throw new Error(`commit after conflict resolution failed: ${commitResult.message}`)
+          } catch (resolveErr) {
+            // Step 10: 冲突解决失败 — 精确回滚
+            await git.mergeAbort(cwd).catch(() => {})
+            if (baseHead) await git.resetTo(baseHead, cwd).catch(() => {})
+            await git.checkoutBranch(gitBranch, cwd).catch(() => {})
+            if (featureHead) await git.resetTo(featureHead, cwd).catch(() => {})
+            gateStatus.gitMerge = { status: "warn", reason: `conflict resolution failed: ${resolveErr.message}` }
           }
         }, cwd)
       }
-    } catch { /* git merge best-effort */ }
+    } catch (h7Err) {
+      // 记录错误而非静默吞掉
+      gateStatus.gitMerge = gateStatus.gitMerge || { status: "warn", reason: `H7 error: ${h7Err.message}` }
+    }
   }
 
   // #5 保存 project memory
