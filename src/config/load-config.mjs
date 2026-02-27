@@ -19,6 +19,49 @@ function parseConfigFile(filePath, content) {
   return YAML.parse(content)
 }
 
+const ENV_VAR_RE = /^[A-Z][A-Z0-9_]{1,}$/
+
+const ENV_VAR_SKIP_KEYS = new Set(["api_key_env"])
+
+function resolveEnvVars(obj) {
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return obj
+  const out = {}
+  for (const [k, v] of Object.entries(obj)) {
+    if (ENV_VAR_SKIP_KEYS.has(k)) {
+      out[k] = v
+    } else if (typeof v === "string" && ENV_VAR_RE.test(v)) {
+      out[k] = process.env[v] !== undefined ? process.env[v] : v
+    } else if (Array.isArray(v)) {
+      out[k] = v.map(item =>
+        typeof item === "string" && ENV_VAR_RE.test(item)
+          ? (process.env[item] !== undefined ? process.env[item] : item)
+          : item
+      )
+    } else if (v && typeof v === "object") {
+      out[k] = resolveEnvVars(v)
+    } else {
+      out[k] = v
+    }
+  }
+  return out
+}
+
+function resolveConfigEnvVars(config) {
+  if (!config || typeof config !== "object") return config
+  const out = { ...config }
+  if (out.provider && typeof out.provider === "object") {
+    const provider = { ...out.provider }
+    for (const key of Object.keys(provider)) {
+      if (key === "default" || key === "strict_mode" || key === "model_context") continue
+      if (provider[key] && typeof provider[key] === "object") {
+        provider[key] = resolveEnvVars(provider[key])
+      }
+    }
+    out.provider = provider
+  }
+  return out
+}
+
 function mergeObject(base, override) {
   if (override === undefined || override === null) return base
   if (Array.isArray(override)) return [...override]
@@ -43,8 +86,9 @@ async function loadOne(filePath) {
   try {
     const raw = await readFile(filePath, "utf8")
     const parsed = parseConfigFile(filePath, raw) ?? {}
-    const check = validateConfig(parsed)
-    if (check.valid) return { config: parsed, errors: [] }
+    const resolved = resolveConfigEnvVars(parsed)
+    const check = validateConfig(resolved)
+    if (check.valid) return { config: resolved, errors: [] }
     return { config: {}, errors: check.errors.map((error) => `${filePath}: ${error}`) }
   } catch (error) {
     return { config: {}, errors: [`${filePath}: ${error.message}`] }

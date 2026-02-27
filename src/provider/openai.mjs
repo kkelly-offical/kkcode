@@ -233,11 +233,12 @@ export async function* requestOpenAIStream(input) {
 
   let response
   for (let attempt = 1; attempt <= attempts; attempt++) {
+    let connTimer
     try {
       // Use a connection-only timeout for the initial fetch.
       // Once headers arrive, clear it — the SSE idle timeout handles the streaming phase.
       const connController = new AbortController()
-      const connTimer = setTimeout(() => connController.abort(), timeoutMs)
+      connTimer = setTimeout(() => connController.abort(), timeoutMs)
       const fetchSignal = signal
         ? AbortSignal.any([signal, connController.signal])
         : connController.signal

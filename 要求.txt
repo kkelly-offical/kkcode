@@ -1,0 +1,13 @@
+我想让   anthropic:
+    type: anthropic
+    base_url: ANTHROPIC_BASE_URL
+    api_key_env: ANTHROPIC_API_KEY
+    default_model: ANTHROPIC_MODEL
+models:
+      - ANTHROPIC_MODEL
+ 这种写法生效，需要修改 load-config.mjs 添加环境变量替换功能。
+现在在C:\Users\Mr_Mark_qwq\.kkcode这里config.yaml只支持api_key_env: ANTHROPIC_API_KEY的环境变量调用，但是其他的不支持
+最后实现的效果要是：终端输入：$env:ANTHROPIC_API_KEY="sk-ant-oat01-OwvX7l9CowM641tE-go-geV6RbT9RINRA9wCcZCkYQ3alAJcy5RjCdqju1OZ_dSHzD_udskXCZhry88pOmesOYls8g2c1AA"
+$env:ANTHROPIC_BASE_URL="https://code.newcli.com/claude/aws"
+$env:ANTHROPIC_MODEL="xxxxx"
+之后就可以直接读取到模型名称并且成功调用

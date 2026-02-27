@@ -1,0 +1,55 @@
+  mcp ✓ context7 (2 tools, stdio)
+❯ 你好
+
+provider error: anthropic stream failed: 400 {"error":{"code":"modelnotfound","message":"模型 sonnet-4.6 未开放，可通过/
+model切换到sonnet4.5模型","type":"404"}}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  Ctrl+Up/Down scroll | Ctrl+Home oldest | Ctrl+End latest
+ AGENT   MODEL sonnet-4.6   TOKENS T:45 S:45 G:39,820 ~   COST $0.0007   CONTEXT 0%   PERMISSION ALLOW
+
+
+——————
+PS D:\MarkLab\test_kkcode\Mypage2> $env:ANTHROPIC_MODEL="claude-sonnet-4.6"
+PS D:\MarkLab\test_kkcode\Mypage2> $env:ANTHROPIC_BASE_URL="https://code.newcli.com/claude/aws/v1"   
+
+────────────────────────────────────────
+  mcp ✓ context7 (2 tools, stdio)
+❯ 你好
+
+provider error: anthropic stream failed: 400 {"error":{"code":"modelnotfound","message":"模型 claude-sonnet-4.6 未开放，
+可通过/model切换到sonnet4.5模型","type":"404"}}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  Ctrl+Up/Down scroll | Ctrl+Home oldest | Ctrl+End latest
+ AGENT   MODEL claude-sonnet-4.6   TOKENS T:47 S:47 G:39,867 ~   COST $0.0007   CONTEXT 0%   PERMISSION ALLOW
