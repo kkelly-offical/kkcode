@@ -193,7 +193,12 @@ export async function requestOpenAI(input) {
         throw error
       }
 
-      const json = await response.json()
+      let json
+      try {
+        json = await response.json()
+      } catch (parseErr) {
+        throw new ProviderError(`openai response JSON parse failed: ${parseErr.message}`, { provider: "openai", model, endpoint })
+      }
       const message = json?.choices?.[0]?.message ?? {}
       const promptTokens = json?.usage?.prompt_tokens ?? 0
       const cachedTokens = json?.usage?.prompt_tokens_details?.cached_tokens ?? 0

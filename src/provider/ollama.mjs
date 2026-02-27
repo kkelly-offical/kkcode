@@ -121,7 +121,12 @@ export async function requestOllama(input) {
     throw error
   }
 
-  const json = await response.json()
+  let json
+  try {
+    json = await response.json()
+  } catch (parseErr) {
+    throw new ProviderError(`ollama response JSON parse failed: ${parseErr.message}`, { provider: "ollama", model, endpoint })
+  }
   const message = json.message || {}
   const text = typeof message.content === "string" ? message.content : ""
   const toolCalls = parseToolCalls(message)

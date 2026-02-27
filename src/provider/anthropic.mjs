@@ -187,7 +187,12 @@ export async function requestAnthropic(input) {
         error.httpStatus = response.status
         throw error
       }
-      const json = await response.json()
+      let json
+      try {
+        json = await response.json()
+      } catch (parseErr) {
+        throw new ProviderError(`anthropic response JSON parse failed: ${parseErr.message}`, { provider: "anthropic", model, endpoint })
+      }
       const parsed = parseContentBlocks(json?.content)
       const usage = {
         input: json?.usage?.input_tokens ?? 0,
