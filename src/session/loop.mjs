@@ -412,16 +412,26 @@ export async function processTurnLoop({
         const mdEnabled = configState.config.ui?.markdown_render !== false
         const streamRenderer = mdEnabled ? createStreamRenderer() : null
         let inThinking = false
+        let thinkingLineStart = true
 
         for await (const chunk of chunks) {
           if (chunk.type === "thinking") {
             const text = chunk.content || ""
             if (!inThinking) {
-              sinkWrite(paint("●", "#666666") + " " + paint("Thinking", null, { dim: true }) + " " + paint("∨", null, { dim: true }) + "\n")
               inThinking = true
+              thinkingLineStart = true
               await EventBus.emit({ type: EVENT_TYPES.STREAM_THINKING_START, sessionId, turnId, payload: { step } })
+              sinkWrite(paint("●", "#666666") + " " + paint("Thinking", null, { dim: true }) + " " + paint("∨", null, { dim: true }) + "\n")
             }
-            sinkWrite(paint("  " + text, null, { dim: true }))
+            // 只在行首加缩进，避免 chunk 中间出现多余空格
+            const indented = text.replace(/^|\n/g, (m) => {
+              if (m === "\n") { thinkingLineStart = true; return "\n" }
+              if (thinkingLineStart) { thinkingLineStart = false; return "  " }
+              return ""
+            })
+            // 如果 chunk 末尾是换行，标记下一个 chunk 需要缩进
+            if (text.endsWith("\n")) thinkingLineStart = true
+            sinkWrite(paint(indented, null, { dim: true }))
           } else if (chunk.type === "text") {
             if (inThinking) {
               sinkWrite("\n")
