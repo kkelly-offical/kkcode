@@ -277,6 +277,14 @@ export async function runHybridLongAgent({
     })
   }
 
+  // Phase 2: 事件驱动 stop 检测 — 用内存标志替代磁盘轮询
+  let stopFlag = false
+  const unsubscribeStop = EventBus.subscribe((evt) => {
+    if (evt.type === EVENT_TYPES.LONGAGENT_STOP_REQUESTED && evt.sessionId === sessionId) {
+      stopFlag = true
+    }
+  })
+
   await markSessionStatus(sessionId, "running-longagent")
   await syncState({ status: "running", lastMessage: "hybrid mode started" })
 
@@ -285,6 +293,7 @@ export async function runHybridLongAgent({
     const blocked = "LongAgent 需要明确的编码目标。请直接描述要实现/修复的内容。"
     await LongAgentManager.update(sessionId, { status: "blocked", phase: "H0", lastMessage: blocked })
     await markSessionStatus(sessionId, "active")
+    unsubscribeStop()
     return { sessionId, turnId: `turn_long_${Date.now()}`, reply: blocked, usage: aggregateUsage, toolEvents, iterations: 0, status: "blocked", phase: "H0", gateStatus: {}, currentGate: "init", lastGateFailures: [], recoveryCount: 0, progress: lastProgress, elapsed: 0, stageIndex: 0, stageCount: 0, planFrozen: false, taskProgress: {}, fileChanges: [], stageProgress: { done: 0, total: 0 }, remainingFilesCount: 0 }
   }
 
@@ -371,6 +380,7 @@ export async function runHybridLongAgent({
       if (cancelKeywords.some(k => userAddition.toLowerCase().includes(k))) {
         await LongAgentManager.update(sessionId, { status: "aborted", lastMessage: "user cancelled at intake confirmation" })
         await markSessionStatus(sessionId, "active")
+        unsubscribeStop()
         return { sessionId, turnId: `turn_long_${Date.now()}`, reply: "用户在需求确认阶段取消了任务。", usage: aggregateUsage, toolEvents, iterations: iteration, status: "aborted", phase: "H0", gateStatus, currentGate, lastGateFailures: [], recoveryCount: 0, progress: lastProgress, elapsed: Math.round((Date.now() - startTime) / 1000), stageIndex: 0, stageCount: 0, planFrozen: false, taskProgress: {}, fileChanges: [], stageProgress: { done: 0, total: 0 }, remainingFilesCount: 0 }
       }
       if (userAddition && !["确认", "继续", "ok", "yes", "是", "好", "没有", "no addition"].some(k => userAddition.toLowerCase().includes(k))) {
@@ -636,8 +646,7 @@ export async function runHybridLongAgent({
     const codingPhaseStart = Date.now()
 
     while (stageIndex < stagePlan.stages.length) {
-      const state = await LongAgentManager.get(sessionId)
-      if (state?.stopRequested || signal?.aborted) break
+      if (stopFlag || signal?.aborted) break
 
       // Phase 2: 阶段超时检测
       if (Date.now() - codingPhaseStart > codingPhaseTimeoutMs) {
@@ -846,7 +855,12 @@ export async function runHybridLongAgent({
       await saveCheckpoint(sessionId, { name: `hybrid_stage_${stage.stageId}`, iteration, currentPhase, stageIndex, stagePlan, taskProgress, planFrozen, lastProgress })
     }
 
-    // #11 Cross-review：H4 完成后、H5 之前，让独立 agent 审查代码
+    // #11 Cross-review + H5 ghost commit 并行化
+    // Phase 2 改进: ghost commit 不依赖 cross-review 结果，提前启动并行执行
+    const ghostCommitPromise = gitActive
+      ? git.createGhostCommit(cwd, `[kkcode] pre-debug savepoint session ${sessionId}`).catch(() => null)
+      : Promise.resolve(null)
+
     if (hybridConfig.cross_review !== false && fileChanges.length > 0) {
       await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_CROSS_REVIEW, sessionId, payload: { fileCount: fileChanges.length } })
       const reviewFiles = fileChanges.slice(0, 20).map(f => f.path).join(", ")
@@ -877,7 +891,6 @@ export async function runHybridLongAgent({
         model, providerType, sessionId, configState, baseUrl, apiKeyEnv, signal, output, allowQuestion: false, toolContext
       })
       accumulateUsage(reviewOut)
-      // 将审查发现注入 priorContext
       if (reviewOut.reply) priorContext += `\n### Cross-Review Findings\n${reviewOut.reply.slice(0, 1500)}\n`
     }
 
@@ -885,14 +898,9 @@ export async function runHybridLongAgent({
     await setPhase("H5", "debugging")
     currentGate = "debugging"
 
-    // Phase 2 改进: H5 前创建 ghost commit 保护点，debugging 改坏代码可回滚
-    let debugSavepoint = null
-    if (gitActive) {
-      try {
-        const gcResult = await git.createGhostCommit(cwd, `[kkcode] pre-debug savepoint session ${sessionId}`)
-        if (gcResult.ok) debugSavepoint = gcResult.ghostCommit?.commitHash || null
-      } catch { /* ghost commit is best-effort */ }
-    }
+    // 等待并行启动的 ghost commit 完成
+    const gcResult = await ghostCommitPromise
+    const debugSavepoint = gcResult?.ok ? (gcResult.ghostCommit?.commitHash || null) : null
 
     await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_DEBUGGING_START, sessionId, payload: { codingRollbackCount, debugSavepoint } })
     await syncState({ lastMessage: "H5: debugging agent verifying implementation" })
@@ -913,8 +921,7 @@ export async function runHybridLongAgent({
     while (!debugDone && debugIter < maxDebugIterations) {
       debugIter++
       iteration++
-      const state = await LongAgentManager.get(sessionId)
-      if (state?.stopRequested || signal?.aborted) break
+      if (stopFlag || signal?.aborted) break
 
       // Phase 2: debugging 阶段超时检测
       if (Date.now() - debugPhaseStart > debuggingPhaseTimeoutMs) {
@@ -1104,8 +1111,7 @@ export async function runHybridLongAgent({
 
   while (gateAttempt < maxGateAttempts) {
     gateAttempt++
-    const state = await LongAgentManager.get(sessionId)
-    if (state?.stopRequested || signal?.aborted) break
+    if (stopFlag || signal?.aborted) break
 
     const gateResult = await runUsabilityGates({
       sessionId, configState, model, providerType,
@@ -1289,6 +1295,7 @@ export async function runHybridLongAgent({
   }
 
   // ========== 完成 ==========
+  unsubscribeStop()
   const elapsed = Math.round((Date.now() - startTime) / 1000)
   const finalStatus = completionMarkerSeen ? "completed" : "done"
   await LongAgentManager.update(sessionId, { status: finalStatus, lastMessage: "hybrid longagent complete", elapsed })

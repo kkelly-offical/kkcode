@@ -2,6 +2,8 @@ import path from "node:path"
 import { mkdir, writeFile, readFile, unlink, stat } from "node:fs/promises"
 import { readJson, writeJson } from "../storage/json-store.mjs"
 import { projectRootDir } from "../storage/paths.mjs"
+import { EventBus } from "../core/events.mjs"
+import { EVENT_TYPES } from "../core/constants.mjs"
 
 function statePath(cwd = process.cwd()) {
   return path.join(projectRootDir(cwd), "longagent-state.json")
@@ -150,7 +152,9 @@ export const LongAgentManager = {
     try {
       const existing = await this.get(sessionId, cwd)
       if (!existing) return null
-      return this.update(sessionId, { stopRequested: true }, cwd)
+      const result = await this.update(sessionId, { stopRequested: true }, cwd)
+      await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_STOP_REQUESTED, sessionId, payload: { sessionId } }).catch(() => {})
+      return result
     } finally {
       await releaseLock(cwd)
     }
