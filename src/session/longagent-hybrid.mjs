@@ -1168,14 +1168,17 @@ export async function runHybridLongAgent({
   if (gitActive && gitBaseBranch && gitBranch) {
     await setPhase("H7", "git_merge")
     try {
-      // Step 1: 提交 feature branch 上的最终变更
-      const finalCommit = await git.commitAll(`[kkcode-hybrid] session ${sessionId} completed`, cwd)
-      if (!finalCommit.ok && !finalCommit.empty) {
-        gateStatus.gitMerge = { status: "warn", reason: `final commit failed: ${finalCommit.message}` }
-      } else if (gitConfig.auto_merge !== false) {
+      if (gitConfig.auto_merge !== false) {
         await LongAgentManager.withLock(async () => {
           const doneState = await LongAgentManager.get(sessionId)
           if (doneState?.status === "failed") return
+
+          // Step 1: 提交 feature branch 上的最终变更（锁内执行，防止并发）
+          const finalCommit = await git.commitAll(`[kkcode-hybrid] session ${sessionId} completed`, cwd)
+          if (!finalCommit.ok && !finalCommit.empty) {
+            gateStatus.gitMerge = { status: "warn", reason: `final commit failed: ${finalCommit.message}` }
+            return
+          }
 
           // Step 2: 保存 savepoint — 记录 feature branch HEAD 用于回滚
           const featureHead = await git.getHeadHash(cwd)
@@ -1194,7 +1197,15 @@ export async function runHybridLongAgent({
           // Step 5: 执行 merge
           const mergeResult = await git.mergeBranch(gitBranch, cwd)
           if (mergeResult.ok) {
-            // Step 6: merge 成功 — 验证后再删分支
+            // Step 6: post-merge 验证 — 确认 HEAD 包含 feature 分支的变更
+            const mergedHead = await git.getHeadHash(cwd)
+            if (!mergedHead || mergedHead === baseHead) {
+              // merge 声称成功但 HEAD 未变化，回滚
+              if (baseHead) await git.resetTo(baseHead, cwd).catch(() => {})
+              await git.checkoutBranch(gitBranch, cwd).catch(() => {})
+              gateStatus.gitMerge = { status: "warn", reason: "merge reported success but HEAD unchanged" }
+              return
+            }
             await git.deleteBranch(gitBranch, cwd)
             gateStatus.gitMerge = { status: "pass", branch: gitBranch, baseBranch: gitBaseBranch }
             await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_GIT_MERGED, sessionId, payload: { branch: gitBranch, baseBranch: gitBaseBranch } })

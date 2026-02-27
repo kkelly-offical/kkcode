@@ -168,13 +168,21 @@ export const LongAgentManager = {
   /**
    * Execute `fn` while holding the state lock.
    * Prevents TOCTOU races (e.g. read-status → git-merge).
+   * Includes heartbeat to prevent stale detection during long operations.
    */
   async withLock(fn, cwd = process.cwd(), config = null) {
     const lockMs = Number(config?.agent?.longagent?.lock_timeout_ms || LOCK_TIMEOUT_MS)
     await acquireLock(cwd, lockMs)
+    // Heartbeat: touch lock file periodically to prevent stale detection
+    const heartbeatMs = Math.max(Math.floor(lockMs * 0.3), 1000)
+    const file = lockPath(cwd)
+    const heartbeat = setInterval(() => {
+      writeFile(file, `${process.pid}:${Date.now()}`).catch(() => {})
+    }, heartbeatMs)
     try {
       return await fn()
     } finally {
+      clearInterval(heartbeat)
       await releaseLock(cwd)
     }
   }
