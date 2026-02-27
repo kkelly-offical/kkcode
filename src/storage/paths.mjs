@@ -34,6 +34,14 @@ export function projectConfigCandidates(cwd = process.cwd()) {
   ]
 }
 
+export function envFileCandidates(cwd = process.cwd()) {
+  return [
+    path.join(cwd, ".env"),
+    path.join(projectRootDir(cwd), ".env"),
+    path.join(userRootDir(), ".env")
+  ]
+}
+
 export function usageStorePath() {
   return path.join(userRootDir(), "usage.json")
 }

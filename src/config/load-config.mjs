@@ -3,7 +3,7 @@ import { access, readFile } from "node:fs/promises"
 import YAML from "yaml"
 import { DEFAULT_CONFIG } from "./defaults.mjs"
 import { validateConfig } from "./schema.mjs"
-import { projectConfigCandidates, userConfigCandidates } from "../storage/paths.mjs"
+import { projectConfigCandidates, userConfigCandidates, envFileCandidates } from "../storage/paths.mjs"
 
 async function exists(file) {
   try {
@@ -38,6 +38,46 @@ async function firstExisting(candidates) {
   return null
 }
 
+/**
+ * Parse .env file — only extract KKCODE_ prefixed vars into nested config.
+ * Uses __ (double underscore) as nesting separator, single _ stays in key name.
+ *
+ * KKCODE_PROVIDER__DEFAULT=anthropic → { provider: { default: "anthropic" } }
+ * KKCODE_AGENT__LONGAGENT__PARALLEL__MAX_CONCURRENCY=5 → { agent: { longagent: { parallel: { max_concurrency: 5 } } } }
+ * KKCODE_LANGUAGE=zh → { language: "zh" }
+ */
+export function parseEnvOverlay(content) {
+  const config = {}
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith("#")) continue
+    const eqIdx = trimmed.indexOf("=")
+    if (eqIdx <= 0) continue
+    const key = trimmed.slice(0, eqIdx).trim()
+    if (!key.startsWith("KKCODE_")) continue
+    let val = trimmed.slice(eqIdx + 1).trim()
+    // strip surrounding quotes
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1)
+    }
+    // split on __ for nesting, lowercase each part
+    const parts = key.slice(7).split("__").map(p => p.toLowerCase())
+    // coerce types
+    let typed = val
+    if (val === "true") typed = true
+    else if (val === "false") typed = false
+    else if (val !== "" && !isNaN(val)) typed = Number(val)
+
+    let cursor = config
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (!cursor[parts[i]] || typeof cursor[parts[i]] !== "object") cursor[parts[i]] = {}
+      cursor = cursor[parts[i]]
+    }
+    cursor[parts[parts.length - 1]] = typed
+  }
+  return config
+}
+
 async function loadOne(filePath) {
   if (!filePath) return { config: {}, errors: [] }
   try {
@@ -57,7 +97,22 @@ export async function loadConfig(cwd = process.cwd()) {
 
   const userLoaded = await loadOne(userPath)
   const projectLoaded = await loadOne(projectPath)
-  const merged = mergeObject(mergeObject(DEFAULT_CONFIG, userLoaded.config), projectLoaded.config)
+  let merged = mergeObject(mergeObject(DEFAULT_CONFIG, userLoaded.config), projectLoaded.config)
+
+  // .env overlay — highest priority, KKCODE_ prefixed vars
+  let envPath = null
+  let envOverlay = {}
+  const envCandidate = await firstExisting(envFileCandidates(cwd))
+  if (envCandidate) {
+    try {
+      const raw = await readFile(envCandidate, "utf8")
+      envOverlay = parseEnvOverlay(raw)
+      if (Object.keys(envOverlay).length > 0) {
+        envPath = envCandidate
+        merged = mergeObject(merged, envOverlay)
+      }
+    } catch { /* ignore unreadable .env */ }
+  }
 
   const source = {
     userPath,
@@ -65,7 +120,9 @@ export async function loadConfig(cwd = process.cwd()) {
     userRaw: userLoaded.config,
     projectPath,
     projectDir: projectPath ? path.dirname(projectPath) : null,
-    projectRaw: projectLoaded.config
+    projectRaw: projectLoaded.config,
+    envPath,
+    envOverlay
   }
 
   return {
