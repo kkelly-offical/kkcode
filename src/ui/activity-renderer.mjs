@@ -6,8 +6,8 @@ const ANSI_RE = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*\x07)/g
 function stripAnsi(text) { return String(text || "").replace(ANSI_RE, "") }
 
 let _theme = null
-function diffAdd() { return _theme?.components?.diff_add || "green" }
-function diffDel() { return _theme?.components?.diff_del || "red" }
+function diffAdd(theme) { return (theme ?? _theme)?.components?.diff_add || "green" }
+function diffDel(theme) { return (theme ?? _theme)?.components?.diff_del || "red" }
 
 // ── Symbols ──────────────────────────────────────────────
 export const SYM = {

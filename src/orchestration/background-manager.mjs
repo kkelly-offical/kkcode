@@ -419,17 +419,24 @@ export const BackgroundManager = {
     }
     const idSet = new Set(taskIds)
     return new Promise((resolve) => {
+      let done = false
       const timer = setTimeout(() => {
+        done = true
         settledEmitter.removeListener("task-settled", onSettled)
         resolve(null)
       }, timeoutMs)
       function onSettled(event) {
-        if (!idSet.has(event.id)) return // ignore unrelated tasks
-        clearTimeout(timer)
-        settledEmitter.removeListener("task-settled", onSettled)
-        resolve(event)
+        if (done) return
+        if (idSet.has(event.id)) {
+          done = true
+          clearTimeout(timer)
+          settledEmitter.removeListener("task-settled", onSettled)
+          resolve(event)
+        }
+        // unrelated event — .once() already removed us, re-register
+        if (!done) settledEmitter.once("task-settled", onSettled)
       }
-      settledEmitter.on("task-settled", onSettled)
+      settledEmitter.once("task-settled", onSettled)
     })
   },
 

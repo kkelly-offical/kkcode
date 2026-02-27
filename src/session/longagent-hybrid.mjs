@@ -156,6 +156,7 @@ function parseBlueprintOutput(reply, objective, defaults) {
       const inner = block.replace(/```ya?ml?\s*/g, "").replace(/```/g, "").trim()
       try {
         const parsed = YAML.parse(inner)
+        if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) continue
         if (parsed?.stages) {
           const { plan, errors } = validateAndNormalizeStagePlan(parsed, { objective, defaults })
           if (!errors.length) return { architectureText: reply, stagePlan: plan, parseErrors: [] }

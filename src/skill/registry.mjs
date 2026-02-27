@@ -62,6 +62,26 @@ function parseFrontmatter(raw) {
   }
 }
 
+function shellTokenize(input) {
+  const tokens = []
+  let current = ""
+  let inQuote = null
+  for (const ch of input) {
+    if (inQuote) {
+      if (ch === inQuote) { inQuote = null; continue }
+      current += ch
+    } else if (ch === '"' || ch === "'") {
+      inQuote = ch
+    } else if (/\s/.test(ch)) {
+      if (current) { tokens.push(current); current = "" }
+    } else {
+      current += ch
+    }
+  }
+  if (current) tokens.push(current)
+  return tokens
+}
+
 /**
  * Replace !`command` patterns with command stdout.
  * Commands are checked against a whitelist before execution.
@@ -81,7 +101,7 @@ async function injectDynamicContext(template, cwd, config) {
       continue
     }
     try {
-      const tokens = m[1].trim().split(/\s+/)
+      const tokens = shellTokenize(m[1].trim())
       const cmd = tokens[0]
       const cmdArgs = tokens.slice(1)
       const { stdout } = await execFileAsync(cmd, cmdArgs, { cwd, timeout: 10000 })

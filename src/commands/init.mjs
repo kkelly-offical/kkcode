@@ -37,13 +37,14 @@ const PROVIDER_DEFAULTS = {
 
 // Auto-detect available providers by checking environment variables
 function detectProvider() {
+  const registered = new Set(listProviders())
   const checks = [
     { provider: "anthropic", env: "ANTHROPIC_API_KEY" },
     { provider: "openai", env: "OPENAI_API_KEY" }
   ]
   const available = []
   for (const { provider, env } of checks) {
-    if (process.env[env]) available.push(provider)
+    if (process.env[env] && registered.has(provider)) available.push(provider)
   }
   // Prefer anthropic if both are set, otherwise first available, fallback to openai
   if (available.includes("anthropic")) return { provider: "anthropic", detected: available }

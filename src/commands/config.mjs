@@ -28,8 +28,13 @@ function getByPath(obj, keyPath) {
   return current
 }
 
+const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"])
+
 function setByPath(obj, keyPath, value) {
   const keys = keyPath.split(".")
+  if (keys.some(k => FORBIDDEN_KEYS.has(k))) {
+    throw new Error(`forbidden key in path: ${keyPath}`)
+  }
   let current = obj
   for (let i = 0; i < keys.length - 1; i++) {
     const key = keys[i]
@@ -45,8 +50,7 @@ function coerceValue(raw) {
   if (raw === "true") return true
   if (raw === "false") return false
   if (raw === "null") return null
-  const num = Number(raw)
-  if (raw !== "" && Number.isFinite(num)) return num
+  if (raw !== "" && /^-?\d+(\.\d+)?$/.test(raw)) return Number(raw)
   return raw
 }
 

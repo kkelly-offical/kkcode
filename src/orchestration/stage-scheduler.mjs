@@ -568,6 +568,7 @@ export async function runStageBarrier({
         })
         // Escalate to error if conflicting with another task's locked files
         if (conflicting.length > 0) {
+          fileLocks.unlock(item.taskId)
           item.status = "error"
           item.lastError = `file ownership conflict: ${conflicting.slice(0, 3).join(", ")} locked by other tasks`
           item.errorCategory = ERROR_CATEGORIES.PERMANENT
