@@ -884,7 +884,17 @@ export async function runHybridLongAgent({
     // --- H5: DEBUGGING (回滚检测) ---
     await setPhase("H5", "debugging")
     currentGate = "debugging"
-    await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_DEBUGGING_START, sessionId, payload: { codingRollbackCount } })
+
+    // Phase 2 改进: H5 前创建 ghost commit 保护点，debugging 改坏代码可回滚
+    let debugSavepoint = null
+    if (gitActive) {
+      try {
+        const gcResult = await git.createGhostCommit(cwd, `[kkcode] pre-debug savepoint session ${sessionId}`)
+        if (gcResult.ok) debugSavepoint = gcResult.ghostCommit?.commitHash || null
+      } catch { /* ghost commit is best-effort */ }
+    }
+
+    await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_DEBUGGING_START, sessionId, payload: { codingRollbackCount, debugSavepoint } })
     await syncState({ lastMessage: "H5: debugging agent verifying implementation" })
 
     const debugModel = getModelForStage("debugging")
@@ -896,6 +906,7 @@ export async function runHybridLongAgent({
 
     let debugIter = 0
     let debugDone = false
+    let debugRecoveryHint = "" // Phase 2 改进: stuck 恢复提示注入
     const semanticTracker = createSemanticErrorTracker(3)
     const debugPhaseStart = Date.now()
 
@@ -919,13 +930,15 @@ export async function runHybridLongAgent({
         }
       }
 
+      const effectiveDebugPrompt = debugRecoveryHint ? `${debugRecoveryHint}\n\n${debugPrompt}` : debugPrompt
       const debugOut = await processTurnLoop({
-        prompt: debugPrompt, mode: "agent", agent: getAgent("debugging-agent"),
+        prompt: effectiveDebugPrompt, mode: "agent", agent: getAgent("debugging-agent"),
         model: debugModel.model, providerType: debugModel.providerType,
         sessionId, configState, baseUrl, apiKeyEnv, signal, output, allowQuestion, toolContext
       })
       accumulateUsage(debugOut)
       finalReply = debugOut.reply || ""
+      debugRecoveryHint = "" // 每次迭代后清空恢复提示
 
       // 防卡死检测
       if (debugOut.toolEvents?.length) {
@@ -937,6 +950,16 @@ export async function runHybridLongAgent({
             payload: { kind: "stuck_warning", stage: "H5:debugging", reason: stuckResult.reason, debugIter }
           })
           await syncState({ lastMessage: `H5: stuck detected (${stuckResult.reason}), iter ${debugIter}` })
+          // Phase 2 改进: 注入恢复提示，引导 agent 换策略
+          debugRecoveryHint = [
+            "## Recovery Hint — Stuck Pattern Detected",
+            `Previous iteration was stuck: ${stuckResult.reason}.`,
+            "You MUST change your approach. Try one of these strategies:",
+            "1. If reading the same files repeatedly — stop reading and start making changes",
+            "2. If the same test keeps failing — re-read the error, check a different root cause",
+            "3. If edits are not taking effect — verify the file path and check for syntax errors",
+            "4. Consider reverting recent changes and trying a fundamentally different fix"
+          ].join("\n")
         }
       }
 
@@ -947,8 +970,15 @@ export async function runHybridLongAgent({
           type: EVENT_TYPES.LONGAGENT_SEMANTIC_ERROR_REPEATED, sessionId,
           payload: { error: semResult.error, count: semResult.count, debugIter }
         })
-        // 注入更详细的错误分析提示，避免无限循环
         await syncState({ lastMessage: `H5: repeated error detected (${semResult.count}x): ${(semResult.error || "").slice(0, 80)}` })
+        // Phase 2 改进: 语义重复错误超阈值强制退出，防止无限循环
+        const maxSemanticRepeats = 5
+        if (semResult.count >= maxSemanticRepeats) {
+          debugDone = true
+          gateStatus.debugging = { status: "force_exit", reason: "semantic_repeat_limit", error: (semResult.error || "").slice(0, 200), iterations: debugIter }
+          await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_ALERT, sessionId, payload: { kind: "semantic_force_exit", count: semResult.count, error: semResult.error, debugIter } })
+          await syncState({ lastMessage: `H5: force exit — same error repeated ${semResult.count} times` })
+        }
       }
 
       if (detectStageComplete(finalReply, LONGAGENT_4STAGE_STAGES.DEBUGGING)) {
