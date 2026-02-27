@@ -128,15 +128,15 @@ function copyToClipboard(text) {
   } else {
     // Linux - 尝试 wl-copy (Wayland) 或 xclip (X11)
     try {
-      // 先尝试 wl-copy (Wayland)
       const child = spawn("wl-copy", [], { stdio: ["pipe", "ignore", "ignore"] })
+      child.on("error", () => {}) // prevent unhandled error crash
       child.stdin.write(text)
       child.stdin.end()
       return true
     } catch {
-      // 回退到 xclip (X11)
       try {
         const child = spawn("xclip", ["-selection", "clipboard"], { stdio: ["pipe", "ignore", "ignore"] })
+        child.on("error", () => {}) // prevent unhandled error crash
         child.stdin.write(text)
         child.stdin.end()
         return true
@@ -148,6 +148,7 @@ function copyToClipboard(text) {
 
   try {
     const child = spawn(command, args, { stdio: ["pipe", "ignore", "ignore"] })
+    child.on("error", () => {}) // prevent unhandled error crash
     child.stdin.write(input)
     child.stdin.end()
     return true

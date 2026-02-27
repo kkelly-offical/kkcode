@@ -1,6 +1,5 @@
 import path from "node:path"
-import { exec } from "node:child_process"
-import { promisify } from "node:util"
+import { spawn } from "node:child_process"
 import {
   isGitRepo,
   currentBranch,
@@ -8,8 +7,6 @@ import {
 } from "../util/git.mjs"
 import { gitSnapshotTool } from "./git-auto.mjs"
 import { isFullAutoMode, getPolicyMode } from "../permission/exec-policy.mjs"
-
-const execAsync = promisify(exec)
 
 /**
  * 全自动化 Git 操作工具
@@ -28,24 +25,36 @@ const execAsync = promisify(exec)
  * 执行 Git 命令
  */
 async function runGit(args, cwd, timeoutMs = 30000) {
-  try {
-    const { stdout, stderr } = await execAsync(
-      `git ${args.join(" ")}`,
-      { cwd, timeout: timeoutMs, encoding: "utf8" }
-    )
-    return {
-      ok: true,
-      stdout: stdout?.trim() || "",
-      stderr: stderr?.trim() || ""
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      stdout: error.stdout?.trim() || "",
-      stderr: error.stderr?.trim() || "",
-      error: error.message
-    }
-  }
+  return new Promise((resolve) => {
+    let stdout = ""
+    let stderr = ""
+    let done = false
+    const child = spawn("git", args, {
+      cwd,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    })
+    const timer = setTimeout(() => {
+      if (done) return
+      done = true
+      child.kill()
+      resolve({ ok: false, stdout, stderr: "git command timed out", error: "timeout" })
+    }, timeoutMs)
+    child.stdout.on("data", (buf) => { stdout += String(buf) })
+    child.stderr.on("data", (buf) => { stderr += String(buf) })
+    child.on("error", (err) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      resolve({ ok: false, stdout, stderr: err.message, error: err.message })
+    })
+    child.on("close", (code) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      resolve({ ok: code === 0, stdout: stdout.trim(), stderr: stderr.trim() })
+    })
+  })
 }
 
 /**
