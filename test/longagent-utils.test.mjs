@@ -38,6 +38,15 @@ describe("parseJsonLoose", () => {
   it("returns null for invalid input", () => {
     assert.equal(parseJsonLoose("not json at all"), null)
   })
+  it("repairs trailing commas", () => {
+    assert.deepEqual(parseJsonLoose('{"a":1, "b":2, }'), { a: 1, b: 2 })
+  })
+  it("repairs trailing commas in arrays", () => {
+    assert.deepEqual(parseJsonLoose('{"items":[1,2,3,]}'), { items: [1, 2, 3] })
+  })
+  it("repairs trailing commas in extracted block", () => {
+    assert.deepEqual(parseJsonLoose('Result: {"stages":[{"id":"s1",}], }'), { stages: [{ id: "s1" }] })
+  })
 })
 
 describe("classifyError", () => {

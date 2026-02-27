@@ -15,11 +15,24 @@ export function stripFence(text = "") {
 
 export function parseJsonLoose(text = "") {
   const raw = stripFence(text)
+  // 1. 直接解析
   try { return JSON.parse(raw) } catch { /* ignore */ }
+  // 2. 修复 trailing comma（LLM 常产出 {…, } 或 […, ]）
+  const repaired = raw.replace(/,\s*([}\]])/g, "$1")
+  if (repaired !== raw) {
+    try { return JSON.parse(repaired) } catch { /* ignore */ }
+  }
+  // 3. 提取最外层 {} 块
   const start = raw.indexOf("{")
   const end = raw.lastIndexOf("}")
   if (start >= 0 && end > start) {
-    try { return JSON.parse(raw.slice(start, end + 1)) } catch { /* ignore */ }
+    const slice = raw.slice(start, end + 1)
+    try { return JSON.parse(slice) } catch { /* ignore */ }
+    // 3b. 对提取的块也尝试 trailing comma 修复
+    const sliceRepaired = slice.replace(/,\s*([}\]])/g, "$1")
+    if (sliceRepaired !== slice) {
+      try { return JSON.parse(sliceRepaired) } catch { /* ignore */ }
+    }
   }
   return null
 }

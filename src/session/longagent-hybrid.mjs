@@ -142,11 +142,12 @@ function parseBlueprintOutput(reply, objective, defaults) {
     }
   }
 
-  // 2. 回退：尝试任意 JSON 围栏块
+  // 2. 回退：尝试任意 JSON 围栏块（排除已处理的 stage_plan_json）
   const anyJson = reply.match(/```(?:json)?\s*([\s\S]*?)```/g)
   if (anyJson) {
     for (const block of anyJson) {
-      const inner = block.replace(/```(?:json|stage_plan_json)?\s*/g, "").replace(/```/g, "").trim()
+      if (/```stage_plan_json/.test(block)) continue
+      const inner = block.replace(/```(?:json)?\s*/g, "").replace(/```/g, "").trim()
       const parsed = parseJsonLoose(inner)
       if (parsed?.stages) {
         const { plan, errors } = validateAndNormalizeStagePlan(parsed, { objective, defaults })
@@ -156,15 +157,25 @@ function parseBlueprintOutput(reply, objective, defaults) {
     }
   }
 
-  // 3. 回退：裸 JSON（无围栏包裹）
-  const braceStart = reply.indexOf("{")
-  const braceEnd = reply.lastIndexOf("}")
-  if (braceStart >= 0 && braceEnd > braceStart) {
-    const parsed = parseJsonLoose(reply.slice(braceStart, braceEnd + 1))
-    if (parsed?.stages) {
-      const { plan, errors } = validateAndNormalizeStagePlan(parsed, { objective, defaults })
-      if (!errors.length) return { architectureText: reply, stagePlan: plan, parseErrors: [] }
-      parseErrors.push(`bare JSON validation: ${errors.join("; ")}`)
+  // 3. 回退：裸 JSON — 定位含 "stages" 的最外层 {} 块
+  const stripped = reply.replace(/```[\s\S]*?```/g, "")
+  let braceDepth = 0, objStart = -1
+  for (let i = 0; i < stripped.length; i++) {
+    if (stripped[i] === "{") { if (braceDepth === 0) objStart = i; braceDepth++ }
+    else if (stripped[i] === "}") {
+      braceDepth--
+      if (braceDepth === 0 && objStart >= 0) {
+        const candidate = stripped.slice(objStart, i + 1)
+        if (candidate.includes('"stages"')) {
+          const parsed = parseJsonLoose(candidate)
+          if (parsed?.stages) {
+            const { plan, errors } = validateAndNormalizeStagePlan(parsed, { objective, defaults })
+            if (!errors.length) return { architectureText: reply, stagePlan: plan, parseErrors: [] }
+            parseErrors.push(`bare JSON validation: ${errors.join("; ")}`)
+          }
+        }
+        objStart = -1
+      }
     }
   }
 
