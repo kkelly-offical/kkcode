@@ -1293,7 +1293,7 @@ export const ToolRegistry = {
       tools.push(...(await loadDynamicTools(pluginDirs)))
     }
 
-    if (config.tool?.sources?.mcp !== false) {
+    if (config.tool && config.tool?.sources?.mcp !== false) {
       await McpRegistry.initialize(config, { cwd })
       tools.push(...mcpTools())
     }

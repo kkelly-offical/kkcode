@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { registerProvider } from "../src/provider/router.mjs"
 import { ToolRegistry } from "../src/tool/registry.mjs"
+import { PermissionEngine } from "../src/permission/engine.mjs"
 import { processTurnLoop } from "../src/session/loop.mjs"
 
 let tmpDir
@@ -12,12 +13,14 @@ let tmpDir
 before(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), "kkcode-test-loop-"))
   process.env.KKCODE_HOME = tmpDir
+  PermissionEngine.setTrusted(true)
   await ToolRegistry.initialize({
     config: { tool: { sources: { builtin: true, local: false, plugin: false, mcp: false } } }
   })
 })
 
 after(async () => {
+  PermissionEngine.setTrusted(false)
   delete process.env.KKCODE_HOME
   await rm(tmpDir, { recursive: true, force: true })
 })
