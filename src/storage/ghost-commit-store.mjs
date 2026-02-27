@@ -108,8 +108,6 @@ export async function listGhostCommits(repoPath, options = {}) {
         // 检查是否过期
         const isExpired = Date.now() - commit.createdAt > GHOST_COMMIT_TTL_MS
         if (!includeExpired && isExpired) {
-          // 删除过期文件
-          await unlink(path.join(repoDir, entry.name)).catch(() => {})
           continue
         }
 

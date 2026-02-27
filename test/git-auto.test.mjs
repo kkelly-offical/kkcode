@@ -179,7 +179,7 @@ describe("Git Auto - Integration Tests", () => {
       await setupTestRepo()
       
       // 先写入原始内容
-      await writeFile(path.join(testRepoPath, "patch.txt"), "hello world")
+      await writeFile(path.join(testRepoPath, "patch.txt"), "hello world\n")
       execSync("git add . && git commit -m 'add file'", { cwd: testRepoPath })
       
       // 创建一个可以应用的 patch
@@ -220,7 +220,7 @@ describe("Git Auto - Integration Tests", () => {
       
       // 写入原始内容
       const filePath = path.join(testRepoPath, "apply.txt")
-      await writeFile(filePath, "original content")
+      await writeFile(filePath, "original content\n")
       execSync("git add . && git commit -m 'add file'", { cwd: testRepoPath })
       
       // 创建 patch

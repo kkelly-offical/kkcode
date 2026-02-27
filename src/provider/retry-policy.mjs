@@ -40,7 +40,12 @@ export async function requestWithRetry({ execute, attempts = 3, baseDelayMs = 80
     } catch (error) {
       lastError = error
       const status = Number(error?.status || error?.httpStatus || 0)
-      const classification = classifyHttpError(status)
+      let classification = classifyHttpError(status)
+
+      // HTTP 400 with context_length_exceeded in body → treat as context_overflow
+      if (classification === "bad_request" && /context_length_exceeded/i.test(error.message)) {
+        classification = "context_overflow"
+      }
 
       error.errorClass = classification
 
