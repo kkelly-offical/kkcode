@@ -12,7 +12,7 @@ import { listProviders } from "./provider/router.mjs"
 import { createWizardState, startWizard, handleWizardInput } from "./provider/wizard.mjs"
 import { loadCustomCommands, applyCommandTemplate } from "./command/custom-commands.mjs"
 import { SkillRegistry } from "./skill/registry.mjs"
-import { renderMarkdown } from "./theme/markdown.mjs"
+import { renderMarkdown, createStreamRenderer } from "./theme/markdown.mjs"
 import { listSessions, getConversationHistory } from "./session/store.mjs"
 import { compactSession } from "./session/compaction.mjs"
 import { ToolRegistry } from "./tool/registry.mjs"
@@ -1385,9 +1385,13 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
 function startTuiFrame() {
   output.write("\x1b[?1049h")
   output.write("\x1b[?25l")
+  output.write("\x1b[?1002h")   // 启用鼠标按键+拖拽追踪（含滚轮）
+  output.write("\x1b[?1006h")   // 启用 SGR 扩展模式
 }
 
 function stopTuiFrame() {
+  output.write("\x1b[?1002l")   // 禁用鼠标追踪
+  output.write("\x1b[?1006l")   // 禁用 SGR 模式
   output.write("\x1b[?25h")
   output.write("\x1b[?1049l")
 }
@@ -1483,12 +1487,22 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     currentActivity: null,
     currentStep: 0,
     maxSteps: 0,
+    thinkingHidden: false,
+    inThinkingStream: false,
+    thinkingSkipped: false,
     paused: false,
     turnAbortController: null,
     lastCtrlCTime: 0,
     lastLongAgentPrompt: null,
     longagentAborted: false,
     pendingModeConfirm: null,
+    // 鼠标文本选择状态
+    mouseSelection: null,  // { startRow, startCol, endRow, endCol, active }
+    autoCopy: false,       // 拖拽选择后是否自动复制到剪贴板（Ctrl+Y 切换）
+    inputSelection: null,  // { start, end } 输入框内的选择范围（字符位置）
+    inputDragAnchor: -1,   // 输入框拖拽起始字符位置
+    // 屏幕布局元数据（buildFrame 中更新）
+    layoutMeta: { logStartRow: 0, logEndRow: 0, inputStartRow: 0, inputEndRow: 0 },
     wizard: createWizardState(),
     metrics: {
       tokenMeter: {
@@ -1518,10 +1532,23 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     if (follow) ui.scrollOffset = 0
   }
 
+  // 流式 markdown 渲染器 — 每轮对话重置
+  let _streamMd = createStreamRenderer()
+
+  function resetStreamRenderer() {
+    _streamMd = createStreamRenderer()
+  }
+
   function appendStreamChunk(chunk = "") {
-    const follow = ui.scrollOffset === 0
-    const text = String(chunk || "").replace(/\r/g, "")
+    // 如果 thinking 被隐藏且当前在 thinking 流中，跳过内容
+    if (ui.thinkingHidden && ui.inThinkingStream) {
+      ui.thinkingSkipped = true
+      return
+    }
+    const mdEnabled = ctx.configState.config.ui?.markdown_render !== false
+    const text = mdEnabled ? _streamMd.push(chunk) : String(chunk || "").replace(/\r/g, "")
     if (!text) return
+    const follow = ui.scrollOffset === 0
     const parts = text.split("\n")
     if (!ui.logs.length) ui.logs.push("")
     ui.logs[ui.logs.length - 1] += parts[0]
@@ -1529,6 +1556,14 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     if (ui.logs.length > MAX_TUI_LOG_LINES) ui.logs.splice(0, ui.logs.length - MAX_TUI_LOG_LINES)
     if (follow) ui.scrollOffset = 0
     requestRender()
+  }
+
+  function flushStreamRenderer() {
+    const mdEnabled = ctx.configState.config.ui?.markdown_render !== false
+    if (!mdEnabled) return
+    const remaining = _streamMd.flush()
+    if (remaining) appendLog(remaining)
+    resetStreamRenderer()
   }
 
   const activityRenderer = createActivityRenderer({
@@ -1557,10 +1592,18 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         requestRender()
         break
       case EVENT_TYPES.STREAM_TEXT_START:
+        if (ui.inThinkingStream && ui.thinkingSkipped) {
+          appendLog(paint("● Thinking (collapsed, Ctrl+T to expand)", null, { dim: true }))
+          appendLog("")
+        }
+        ui.inThinkingStream = false
+        ui.thinkingSkipped = false
         ui.currentActivity = { type: "writing" }
         requestRender()
         break
       case EVENT_TYPES.STREAM_THINKING_START:
+        ui.inThinkingStream = true
+        ui.thinkingSkipped = false
         ui.currentActivity = { type: "thinking" }
         requestRender()
         break
@@ -1578,6 +1621,13 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         break
       }
       case EVENT_TYPES.TURN_FINISH:
+        flushStreamRenderer()
+        if (ui.inThinkingStream && ui.thinkingSkipped) {
+          appendLog(paint("● Thinking (collapsed, Ctrl+T to expand)", null, { dim: true }))
+          appendLog("")
+        }
+        ui.inThinkingStream = false
+        ui.thinkingSkipped = false
         ui.currentActivity = null
         ui.currentStep = 0
         requestRender()
@@ -1812,12 +1862,63 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     ui.scrollOffset = Math.max(0, Math.min(max, ui.scrollOffset + delta))
   }
 
+  // SGR 鼠标事件解析：\x1b[<button;x;yM（按下）或 \x1b[<button;x;ym（释放）
+  const SGR_MOUSE_RE = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/g
+  function parseSgrMouseEvents(data) {
+    const text = Buffer.isBuffer(data) ? data.toString("utf8") : String(data || "")
+    const events = []
+    let m
+    while ((m = SGR_MOUSE_RE.exec(text)) !== null) {
+      events.push({ button: parseInt(m[1], 10), x: parseInt(m[2], 10), y: parseInt(m[3], 10), release: m[4] === "m" })
+    }
+    SGR_MOUSE_RE.lastIndex = 0
+    return events
+  }
+
   function scrollToTop() {
     ui.scrollOffset = ui.scrollMeta.maxOffset || 0
   }
 
   function scrollToBottom() {
     ui.scrollOffset = 0
+  }
+
+  // OSC 52 剪贴板复制（终端原生支持，无需外部工具）
+  function copyToClipboard(text) {
+    if (!text) return
+    const b64 = Buffer.from(text, "utf8").toString("base64")
+    output.write(`\x1b]52;c;${b64}\x07`)
+  }
+
+  // 从渲染后的屏幕行中提取纯文本（用于选择复制）
+  function extractPlainText(frameLines, row) {
+    if (!frameLines || row < 0 || row >= frameLines.length) return ""
+    return stripAnsi(frameLines[row])
+  }
+
+  // 对屏幕行数组应用选择高亮（反色）
+  function applySelectionHighlight(frameLines, sel) {
+    if (!sel) return
+    let r1 = sel.startRow - 1, c1 = sel.startCol - 1
+    let r2 = sel.endRow - 1, c2 = sel.endCol - 1
+    if (r1 > r2 || (r1 === r2 && c1 > c2)) {
+      ;[r1, c1, r2, c2] = [r2, c2, r1, c1]
+    }
+    if (r1 === r2 && c1 === c2) return
+
+    for (let r = r1; r <= r2; r++) {
+      if (r < 0 || r >= frameLines.length) continue
+      const plain = stripAnsi(frameLines[r])
+      const sc = r === r1 ? c1 : 0
+      const ec = r === r2 ? c2 : plain.length
+      if (sc >= ec || sc >= plain.length) continue
+
+      const before = plain.slice(0, sc)
+      const selected = plain.slice(sc, ec)
+      const after = plain.slice(ec)
+      // \x1b[7m = 反色开始, \x1b[27m = 反色结束
+      frameLines[r] = before + "\x1b[7m" + selected + "\x1b[27m" + after
+    }
   }
 
   function buildFrame() {
@@ -1885,7 +1986,22 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       : ui.paused
         ? paint("⏸ ", ctx.themeState.theme.base.muted)
         : paint("❯ ", ctx.themeState.theme.semantic.success)
-    const inputDecorated = `${stateIndicator}${imgTag}${before}${cursorMark}${after}`
+    // 输入框选择高亮
+    let inputBody
+    const iSel = ui.inputSelection
+    if (iSel && iSel.start < iSel.end) {
+      const s = iSel.start, e = iSel.end, c = ui.inputCursor
+      if (c <= s) {
+        inputBody = ui.input.slice(0, c) + cursorMark + ui.input.slice(c, s) + "\x1b[7m" + ui.input.slice(s, e) + "\x1b[27m" + ui.input.slice(e)
+      } else if (c >= e) {
+        inputBody = ui.input.slice(0, s) + "\x1b[7m" + ui.input.slice(s, e) + "\x1b[27m" + ui.input.slice(e, c) + cursorMark + ui.input.slice(c)
+      } else {
+        inputBody = ui.input.slice(0, s) + "\x1b[7m" + ui.input.slice(s, c) + cursorMark + ui.input.slice(c, e) + "\x1b[27m" + ui.input.slice(e)
+      }
+    } else {
+      inputBody = `${before}${cursorMark}${after}`
+    }
+    const inputDecorated = `${stateIndicator}${imgTag}${inputBody}`
     const inputLogical = inputDecorated.split("\n")
     const inputWrapped = []
     for (const logicalLine of inputLogical) {
@@ -2156,6 +2272,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       thumbEnd = Math.min(logRows, thumbStart + Math.max(1, Math.round((logRows / totalLog) * logRows)))
     }
 
+    // 记录日志区起始行号（0-based in lines array, 1-based on screen）
+    const logStartRow = lines.length
+
     for (let i = 0; i < logRows; i++) {
       const content = wrappedLogs[i] || ""
       if (showScrollbar) {
@@ -2167,6 +2286,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         lines.push(clipAnsiLine(content, width))
       }
     }
+
+    const logEndRow = lines.length  // 日志区结束行号（不含）
 
     lines.push(clipAnsiLine(scrollHint, width))
 
@@ -2197,22 +2318,40 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     const inputTop = paint(`┌${"─".repeat(Math.max(1, width - 2))}┐`, ctx.themeState.theme.base.border)
     const inputBottom = paint(`└${"─".repeat(Math.max(1, width - 2))}┘`, ctx.themeState.theme.base.border)
     lines.push(inputTop)
+    const inputStartRow = lines.length  // 输入区内容起始行
     for (const inputLine of visibleInput) {
       const left = paint("│ ", ctx.themeState.theme.base.border)
       const right = paint(" │", ctx.themeState.theme.base.border)
       lines.push(`${left}${clipAnsiLine(inputLine, inputInnerWidth)}${right}`)
     }
+    const inputEndRow = lines.length  // 输入区内容结束行（不含）
     lines.push(inputBottom)
-    lines.push(clipAnsiLine(paint("↵ send  ⌃J newline  /paste image  ? help", ctx.themeState.theme.base.muted, { dim: true }), width))
+    lines.push(clipAnsiLine(paint("↵ send  ⌃J newline  ⌃Y auto-copy  /paste image  ? help", ctx.themeState.theme.base.muted, { dim: true }), width))
 
     const final = lines.slice(0, Math.max(1, height))
     while (final.length < height) final.push(" ".repeat(width))
 
-    return { lines: final, width, height }
+    // 鼠标选择高亮：对选中区域应用反色
+    if (ui.mouseSelection) {
+      applySelectionHighlight(final, ui.mouseSelection)
+    }
+
+    // 存储布局元数据供鼠标事件使用（行号均为 1-based 屏幕坐标）
+    ui.layoutMeta = {
+      logStartRow: logStartRow + 1,
+      logEndRow: logEndRow,
+      inputStartRow: inputStartRow + 1,
+      inputEndRow: inputEndRow,
+      inputInnerOffset: 3,  // "│ " 占 2 个可见字符 + 1 (1-based)
+      width
+    }
+
+    return { lines: final, width, height, wrappedLogs }
   }
 
   function paintFrame(frame) {
     if (!frame || !Array.isArray(frame.lines)) return
+    _lastFrame = frame  // 保存帧数据供鼠标选择使用
     const patches = []
 
     if (forceFullPaint || frame.width !== lastFrameWidth || lastFrame.length !== frame.lines.length) {
@@ -2298,7 +2437,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         ui.history.push(line)
         if (ui.history.length > HIST_SIZE) ui.history.splice(0, ui.history.length - HIST_SIZE)
         ui.historyIndex = ui.history.length
-        appendLog(`❯ ${line}`)
+        appendLog(paint("❯ ", ctx.themeState.theme.semantic.success) + paint(line, "#e2e8f0"))
         appendLog("")
         ui.input = ""
         ui.inputCursor = 0
@@ -2376,7 +2515,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     if (ui.history.length > HIST_SIZE) ui.history.splice(0, ui.history.length - HIST_SIZE)
     ui.historyIndex = ui.history.length
 
-    appendLog(`❯ ${line}`)
+    appendLog(paint("❯ ", ctx.themeState.theme.semantic.success) + paint(line, "#e2e8f0"))
     appendLog("")
     ui.input = ""
     ui.inputCursor = 0
@@ -2479,7 +2618,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         ui.metrics.longagent = action.turnResult.longagent || null
         ui.metrics.toolEvents = action.turnResult.toolEvents || []
       }
-      if (!action.dashboardRefresh && !line.startsWith("/")) ui.showDashboard = false
+      // logo 显示由 Ctrl+B 手动切换，不再自动隐藏
       if (action.openModelPicker) {
         openModelPicker()
       }
@@ -2579,6 +2718,184 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     })
   )
   emitKeypressEvents(process.stdin)
+
+  // Monkey-patch stdin.emit 拦截鼠标事件，防止 readline 将其解析为键盘输入
+  let _lastFrame = null  // 保存最近一帧用于文本提取
+  const _origStdinEmit = process.stdin.emit.bind(process.stdin)
+  process.stdin.emit = function (event, ...args) {
+    if (event === "data") {
+      const raw = args[0]
+      const text = Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw || "")
+      if (SGR_MOUSE_RE.test(text)) {
+        const mouseEvents = parseSgrMouseEvents(text)
+        for (const ev of mouseEvents) {
+          handleMouseEvent(ev)
+        }
+        if (mouseEvents.length > 0) requestRender()
+        const cleaned = text.replace(SGR_MOUSE_RE, "")
+        if (!cleaned) return false
+        args[0] = Buffer.from(cleaned, "utf8")
+      }
+    }
+    return _origStdinEmit(event, ...args)
+  }
+
+  function handleMouseEvent(ev) {
+    const btn = ev.button
+    // 滚轮
+    if (btn === 64) { scrollBy(3); return }
+    if (btn === 65) { scrollBy(-3); return }
+
+    const row = ev.y  // 1-based 屏幕行
+    const col = ev.x  // 1-based 屏幕列
+    const layout = ui.layoutMeta
+
+    // 左键按下 (button 0, press)
+    if (btn === 0 && !ev.release) {
+      // 清除之前的选择
+      clearSelections()
+      // 点击输入区 → 定位光标 + 准备拖拽
+      if (row >= layout.inputStartRow && row < layout.inputEndRow) {
+        handleInputClick(row, col, layout)
+        return
+      }
+      // 点击日志区 → 开始文本选择
+      ui.mouseSelection = {
+        startRow: row, startCol: col,
+        endRow: row, endCol: col,
+        active: true
+      }
+      return
+    }
+
+    // 左键拖拽 (button 32 = motion with left held)
+    if (btn === 32) {
+      // 日志区拖拽
+      if (ui.mouseSelection?.active) {
+        ui.mouseSelection.endRow = row
+        ui.mouseSelection.endCol = col
+        return
+      }
+      // 输入框拖拽选择
+      if (ui.inputDragAnchor >= 0 && row >= layout.inputStartRow && row < layout.inputEndRow) {
+        const pos = inputCharFromScreen(row, col, layout)
+        const anchor = ui.inputDragAnchor
+        ui.inputSelection = {
+          start: Math.min(anchor, pos),
+          end: Math.max(anchor, pos)
+        }
+        ui.inputCursor = pos
+        return
+      }
+      return
+    }
+
+    // 左键释放 (button 0, release)
+    if (btn === 0 && ev.release) {
+      // 日志区选择完成
+      if (ui.mouseSelection?.active) {
+        ui.mouseSelection.endRow = row
+        ui.mouseSelection.endCol = col
+        ui.mouseSelection.active = false
+        finishSelection()
+        return
+      }
+      // 输入框拖拽结束
+      if (ui.inputDragAnchor >= 0) {
+        ui.inputDragAnchor = -1
+        // 如果没有实际选择范围，清除 inputSelection
+        if (ui.inputSelection && ui.inputSelection.start === ui.inputSelection.end) {
+          ui.inputSelection = null
+        }
+        return
+      }
+    }
+  }
+
+  // 屏幕坐标 → 输入框字符位置
+  function inputCharFromScreen(row, col, layout) {
+    const textCol = Math.max(0, col - layout.inputInnerOffset)
+    const inputLineIdx = row - layout.inputStartRow
+    if (inputLineIdx < 0) return 0
+    const statePrefix = 2  // "❯ "
+    const imgPrefix = ui.pendingImages.length ? `[${ui.pendingImages.length} img] `.length : 0
+    const adjusted = Math.max(0, textCol - statePrefix - imgPrefix)
+    return Math.min(adjusted, ui.input.length)
+  }
+
+  // 点击输入框 → 定位光标到对应位置
+  function handleInputClick(row, col, layout) {
+    if (ui.busy) return
+    ui.inputCursor = inputCharFromScreen(row, col, layout)
+    ui.inputSelection = null
+    ui.inputDragAnchor = ui.inputCursor
+    requestRender()
+  }
+
+  // 清除所有选择状态
+  function clearSelections() {
+    if (ui.mouseSelection) { ui.mouseSelection = null }
+    if (ui.inputSelection) { ui.inputSelection = null; ui.inputDragAnchor = -1 }
+  }
+
+  // 删除输入框中选中的文本，返回 true 表示有选择被删除
+  function deleteInputSelection() {
+    const sel = ui.inputSelection
+    if (!sel || sel.start === sel.end) return false
+    const s = Math.min(sel.start, sel.end)
+    const e = Math.max(sel.start, sel.end)
+    ui.input = ui.input.slice(0, s) + ui.input.slice(e)
+    ui.inputCursor = s
+    ui.inputSelection = null
+    ui.inputDragAnchor = -1
+    return true
+  }
+
+  // 完成文本选择 → 根据 autoCopy 决定是否复制
+  function finishSelection() {
+    const sel = ui.mouseSelection
+    if (!sel) return
+    if (!_lastFrame?.lines) { ui.mouseSelection = null; return }
+
+    // 规范化选择范围（确保 start <= end）
+    let r1 = sel.startRow - 1, c1 = sel.startCol - 1  // 转为 0-based
+    let r2 = sel.endRow - 1, c2 = sel.endCol - 1
+    if (r1 > r2 || (r1 === r2 && c1 > c2)) {
+      ;[r1, c1, r2, c2] = [r2, c2, r1, c1]
+    }
+
+    // 如果起止相同，视为单击而非选择
+    if (r1 === r2 && c1 === c2) {
+      ui.mouseSelection = null
+      return
+    }
+
+    // autoCopy 开启时提取文本并复制
+    if (ui.autoCopy) {
+      const lines = []
+      for (let r = r1; r <= r2; r++) {
+        const plain = extractPlainText(_lastFrame.lines, r)
+        if (r === r1 && r === r2) {
+          lines.push(plain.slice(c1, c2))
+        } else if (r === r1) {
+          lines.push(plain.slice(c1))
+        } else if (r === r2) {
+          lines.push(plain.slice(0, c2))
+        } else {
+          lines.push(plain)
+        }
+      }
+      const selectedText = lines.join("\n").trimEnd()
+      if (selectedText) copyToClipboard(selectedText)
+      // 短暂保留高亮后清除
+      setTimeout(() => {
+        ui.mouseSelection = null
+        requestRender()
+      }, 200)
+    }
+    // autoCopy 关闭时：保留高亮，等待下次点击或按键清除
+  }
+
   if (process.stdin.isTTY) process.stdin.setRawMode(true)
   process.stdin.resume()
 
@@ -2600,6 +2917,12 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       onResize = () => requestRender({ force: true })
       onKey = async (str, key = {}) => {
         if (ui.quitting) return
+
+        // 任意按键清除日志区鼠标选择（不清除输入框选择，由具体按键处理）
+        if (ui.mouseSelection) {
+          ui.mouseSelection = null
+          requestRender()
+        }
 
         if (key.ctrl && key.name === "c") {
           // Busy: abort current turn (same as ESC)
@@ -2956,7 +3279,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         }
 
         if (key.name === "backspace") {
-          if (ui.inputCursor > 0) {
+          if (!deleteInputSelection() && ui.inputCursor > 0) {
             const head = ui.input.slice(0, ui.inputCursor - 1)
             const tail = ui.input.slice(ui.inputCursor)
             ui.input = `${head}${tail}`
@@ -2969,9 +3292,11 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         }
 
         if (key.name === "delete") {
-          const head = ui.input.slice(0, ui.inputCursor)
-          const tail = ui.input.slice(ui.inputCursor + 1)
-          ui.input = `${head}${tail}`
+          if (!deleteInputSelection()) {
+            const head = ui.input.slice(0, ui.inputCursor)
+            const tail = ui.input.slice(ui.inputCursor + 1)
+            ui.input = `${head}${tail}`
+          }
           ui.selectedSuggestion = 0
           ui.suggestionOffset = 0
           requestRender()
@@ -3037,6 +3362,26 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           return
         }
 
+        if (key.ctrl && key.name === "t") {
+          ui.thinkingHidden = !ui.thinkingHidden
+          appendLog(paint(`● Thinking ${ui.thinkingHidden ? "hidden" : "visible"} (Ctrl+T to toggle)`, null, { dim: true }))
+          requestRender()
+          return
+        }
+
+        if (key.ctrl && key.name === "b") {
+          ui.showDashboard = !ui.showDashboard
+          requestRender()
+          return
+        }
+
+        if (key.ctrl && key.name === "y") {
+          ui.autoCopy = !ui.autoCopy
+          appendLog(paint(`● Auto-copy ${ui.autoCopy ? "ON" : "OFF"} (Ctrl+Y to toggle)`, null, { dim: true }))
+          requestRender()
+          return
+        }
+
         if (key.ctrl && key.name === "l" && !key.shift) {
           ui.logs = []
           requestRender()
@@ -3044,6 +3389,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         }
 
         if (typeof str === "string" && str.length > 0 && !key.ctrl && !key.meta) {
+          deleteInputSelection()  // 有选择时先删除选中文本
           insertAtCursor(str)
           ui.selectedSuggestion = 0
           ui.suggestionOffset = 0
@@ -3096,6 +3442,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     if (onData) process.stdin.removeListener("data", onData)
     if (onSigint) process.removeListener("SIGINT", onSigint)
     if (process.stdin.isTTY) process.stdin.setRawMode(false)
+    process.stdin.emit = _origStdinEmit  // 还原 stdin.emit
     stopTuiFrame()
     await saveHistoryLines(ui.history)
   }

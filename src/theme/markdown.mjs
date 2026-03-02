@@ -38,6 +38,10 @@ function renderLine(line) {
 
 function renderInline(text) {
   return text
+    // 先处理组合格式：**`code`** → 粗体+青色
+    .replace(/\*\*`([^`]+)`\*\*/g, (_, c) => paint(c, COLORS.code, { bold: true }))
+    .replace(/__`([^`]+)`__/g, (_, c) => paint(c, COLORS.code, { bold: true }))
+    // 再处理单独格式
     .replace(/`([^`]+)`/g, (_, code) => paint(code, COLORS.code))
     .replace(/\*\*([^*]+)\*\*/g, (_, b) => paint(b, null, { bold: true }))
     .replace(/__([^_]+)__/g, (_, b) => paint(b, null, { bold: true }))
