@@ -18,6 +18,7 @@ import { createRuleCommand } from "./commands/rule.mjs"
 import { createBackgroundCommand } from "./commands/background.mjs"
 import { createInitCommand } from "./commands/init.mjs"
 import { createAuditCommand } from "./commands/audit.mjs"
+import { createSkillCommand } from "./commands/skill.mjs"
 import { startRepl } from "./repl.mjs"
 
 async function main() {
@@ -73,6 +74,7 @@ async function main() {
   program.addCommand(createBackgroundCommand())
   program.addCommand(createAuditCommand())
   program.addCommand(createInitCommand())
+  program.addCommand(createSkillCommand())
   await program.parseAsync(process.argv)
 }
 

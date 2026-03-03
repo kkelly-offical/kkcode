@@ -306,6 +306,9 @@ export function validateConfig(config) {
       if (config.skills.enabled !== undefined && typeof config.skills.enabled !== "boolean") {
         err(errors, "skills.enabled", "must be boolean")
       }
+      if (config.skills.auto_seed !== undefined && typeof config.skills.auto_seed !== "boolean") {
+        err(errors, "skills.auto_seed", "must be boolean")
+      }
       if (config.skills.dirs !== undefined && !Array.isArray(config.skills.dirs)) {
         err(errors, "skills.dirs", "must be array")
       }

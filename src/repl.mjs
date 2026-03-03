@@ -447,11 +447,41 @@ function shortcutLegend() {
     "  Left/Right/Home/End edit cursor",
     "  Ctrl+Up/Down scroll log   Ctrl+Home/End oldest/latest",
     "  Tab cycle mode (longagent -> plan -> ask -> agent)",
-    "  Esc interrupt turn  Ctrl+C×2 exit"
-  ].join("\n")
+  "  Esc interrupt turn  Ctrl+C×2 exit"
+].join("\n")
 }
 
-function runtimeStateText(state) {
+function collectMcpSummary() {
+  const snapshot = McpRegistry.healthSnapshot()
+  const tools = McpRegistry.listTools()
+  const byServer = {}
+  for (const tool of tools) {
+    const server = tool.server || "unknown"
+    byServer[server] = (byServer[server] || 0) + 1
+  }
+  const healthy = snapshot.filter((item) => item.ok).length
+  return {
+    configured: snapshot.length,
+    healthy,
+    unhealthy: snapshot.length - healthy,
+    tools: tools.length,
+    byServer,
+    entries: snapshot
+  }
+}
+
+function collectSkillSummary() {
+  const list = SkillRegistry.isReady() ? SkillRegistry.list() : []
+  return {
+    total: list.length,
+    template: list.filter((s) => s.type === "template").length,
+    skillMd: list.filter((s) => s.type === "skill_md").length,
+    mcpPrompt: list.filter((s) => s.type === "mcp_prompt").length,
+    programmable: list.filter((s) => s.type === "mjs").length
+  }
+}
+
+function formatRuntimeStateText(state, mcpSummary = null, skillSummary = null) {
   const lines = [
     `session=${state.sessionId}`,
     `mode=${state.mode}`,
@@ -460,6 +490,15 @@ function runtimeStateText(state) {
   ]
   if (state.mode === "longagent" && state.longagentImpl) {
     lines.push(`longagent.impl=${state.longagentImpl}`)
+  }
+  if (mcpSummary) {
+    lines.push(`mcp=${mcpSummary.healthy}/${mcpSummary.configured} healthy, ${mcpSummary.tools} tools`)
+    if (mcpSummary.configured === 0) {
+      lines.push("mcp.quickstart=kkcode mcp init --project")
+    }
+  }
+  if (skillSummary) {
+    lines.push(`skills=${skillSummary.total} loaded (md:${skillSummary.template + skillSummary.skillMd}, mcp:${skillSummary.mcpPrompt}, mjs:${skillSummary.programmable})`)
   }
   return lines.join("\n")
 }
@@ -732,18 +771,22 @@ async function processInputLine({
 
   if (["/status"].includes(normalized)) {
     const latest = await listSessions({ cwd: process.cwd(), limit: 6, includeChildren: false }).catch(() => [])
+    const mcpSummary = collectMcpSummary()
+    const skillSummary = collectSkillSummary()
     print(
       renderReplDashboard({
         theme: ctx.themeState.theme,
         state,
         providers: providersConfigured,
         recentSessions: latest,
+        mcpSummary,
+        skillSummary,
         customCommandCount: customCommands.length,
         cwd: process.cwd()
       })
     )
     print("")
-    print(runtimeStateText(state))
+    print(formatRuntimeStateText(state, mcpSummary, skillSummary))
     return { exit: false }
   }
 
@@ -1431,12 +1474,16 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
     if (action.cleared) clearScreen()
     if (action.dashboardRefresh) {
       const latest = action.recentSessions || []
+      const mcpSummary = collectMcpSummary()
+      const skillSummary = collectSkillSummary()
       console.log(
         renderReplDashboard({
           theme: ctx.themeState.theme,
           state,
           providers: providersConfigured,
           recentSessions: latest,
+          mcpSummary,
+          skillSummary,
           customCommandCount: localCustomCommands.length,
           cwd: process.cwd()
         })

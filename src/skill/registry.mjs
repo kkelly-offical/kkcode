@@ -1,5 +1,5 @@
 import path from "node:path"
-import { access, readdir, readFile } from "node:fs/promises"
+import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises"
 import { pathToFileURL, fileURLToPath } from "node:url"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
@@ -8,8 +8,88 @@ import { McpRegistry } from "../mcp/registry.mjs"
 import { loadCustomCommands, applyCommandTemplate } from "../command/custom-commands.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
+import { userRootDir } from "../storage/paths.mjs"
 
 const execFileAsync = promisify(execFile)
+
+const DEFAULT_SKILL_DIR_README = `# kkcode Skills\n\nThis directory stores reusable skills for kkcode.\n\nWhen kkcode starts, skills in this directory are loaded automatically and can be invoked as slash commands (for example: \/code-review).\n\nDefault skill packs include:\n- code-review: structured review checklist for changed files\n- test-plan: lightweight test planning support\n\nAdd your own skills as:\n- .md files (simple templates)\n- .mjs files (programmable)\n- directories with SKILL.md (metadata + templates)`
+
+const DEFAULT_SKILL_PACKS = [
+  {
+    dir: "code-review",
+    content: `---\nname: code-review\ndescription: Review code changes and provide risk-oriented recommendations.\nuser-invocable: true\ncontext-fork: false\n---\n请基于以下内容做结构化代码评审：\n- 先给出风险分级（高/中/低）与范围\n- 列出 3 条以内关键问题\n- 给出最小可执行修复建议\n\n输入：\n$ARGUMENTS\n\n如果是目录或文件路径，请先说明覆盖范围后再给建议。`
+  },
+  {
+    dir: "test-plan",
+    content: `---\nname: test-plan\ndescription: Generate a compact test plan for task execution.\nuser-invocable: true\ncontext-fork: false\n---\n请为下列任务生成测试计划：\n$ARGUMENTS\n\n请输出：\n1) 关键测试场景（按优先级）\n2) 可执行命令顺序\n3) 关键验证标准\n4) 回归风险与缓解建议`
+  }
+]
+
+function toText(v) {
+  if (v === undefined || v === null) return ""
+  return String(v)
+}
+
+async function exists(target) {
+  try {
+    await access(target)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function writeIfMissing(filePath, content, force = false) {
+  if (!force && await exists(filePath)) return false
+  await mkdir(path.dirname(filePath), { recursive: true })
+  await writeFile(filePath, toText(content), "utf8")
+  return true
+}
+
+export async function ensureDefaultSkillPack({
+  cwd = process.cwd(),
+  force = false,
+  includeProject = true,
+  includeGlobal = true
+} = {}) {
+  const targets = []
+  if (includeGlobal) {
+    targets.push({ scope: "global", dir: path.join(userRootDir(), "skills") })
+  }
+  if (includeProject) {
+    targets.push({ scope: "project", dir: path.join(cwd, ".kkcode", "skills") })
+  }
+
+  const created = []
+  for (const target of targets) {
+    const createdFiles = []
+    const skippedFiles = []
+
+    if (await writeIfMissing(path.join(target.dir, "README.md"), DEFAULT_SKILL_DIR_README, force)) {
+      createdFiles.push("README.md")
+    } else {
+      skippedFiles.push("README.md")
+    }
+
+    for (const pack of DEFAULT_SKILL_PACKS) {
+      const filePath = path.join(target.dir, pack.dir, "SKILL.md")
+      if (await writeIfMissing(filePath, pack.content, force)) {
+        createdFiles.push(`${pack.dir}/SKILL.md`)
+      } else {
+        skippedFiles.push(`${pack.dir}/SKILL.md`)
+      }
+    }
+
+    created.push({
+      scope: target.scope,
+      dir: target.dir,
+      created: createdFiles,
+      skipped: skippedFiles
+    })
+  }
+
+  return created
+}
 
 const DEFAULT_ALLOWED_COMMANDS = ["git", "node", "npm", "ls", "cat", "date", "pwd", "echo", "which"]
 let _allowedCommands = null
@@ -39,15 +119,6 @@ function isCommandAllowed(cmdString, config) {
   return allowed.has(baseName)
 }
 
-async function exists(target) {
-  try {
-    await access(target)
-    return true
-  } catch {
-    return false
-  }
-}
-
 /**
  * Parse YAML frontmatter from SKILL.md content.
  * Returns { meta: {}, body: string }
@@ -60,6 +131,87 @@ function parseFrontmatter(raw) {
   } catch {
     return { meta: {}, body: raw.trim() }
   }
+}
+
+/**
+ * Load plain .md skills from skill directories.
+ * Supports optional YAML frontmatter.
+ */
+async function loadMarkdownSkills(dir, scope) {
+  if (!(await exists(dir))) return []
+  const entries = await readdir(dir, { withFileTypes: true })
+  const mdFiles = entries
+    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".md"))
+    .map((entry) => entry.name)
+    .sort()
+
+  const skills = []
+  for (const name of mdFiles) {
+    const lowerName = name.toLowerCase()
+    if (lowerName === "skill.md" || lowerName === "readme.md") continue
+    const filePath = path.join(dir, name)
+    try {
+      const raw = await readFile(filePath, "utf8")
+      const trimmed = raw.trim()
+      if (!trimmed) continue
+      const { meta, body } = parseFrontmatter(trimmed)
+      skills.push({
+        name: meta.name || path.basename(name, ".md"),
+        description: meta.description || path.basename(name, ".md"),
+        type: "skill_md",
+        scope,
+        source: filePath,
+        skillDir: path.dirname(filePath),
+        template: body,
+        auxFiles: {},
+        disableModelInvocation: !!meta["disable-model-invocation"],
+        userInvocable: meta["user-invocable"] !== false,
+        allowedTools: meta["allowed-tools"] || null,
+        model: meta.model || null,
+        contextFork: !!meta["context-fork"]
+      })
+    } catch {
+      // skip invalid markdown skill files
+    }
+  }
+  return skills
+}
+
+/**
+ * Load .mjs programmable skills from a directory.
+ * Each .mjs file should export: { name, description, run(ctx) }
+ * run() returns a string prompt to send to the model.
+ */
+async function loadMjsSkills(dir, scope) {
+  if (!(await exists(dir))) return []
+  const resolvedDir = path.resolve(dir)
+  const entries = await readdir(dir, { withFileTypes: true })
+  const files = entries
+    .filter((e) => e.isFile() && e.name.endsWith(".mjs"))
+    .map((e) => e.name)
+    .sort()
+
+  const skills = []
+  for (const file of files) {
+    const full = path.resolve(dir, file)
+    // Path boundary check: ensure resolved path is within expected directory
+    if (!full.startsWith(resolvedDir + path.sep) && full !== resolvedDir) continue
+    try {
+      const mod = await import(pathToFileURL(full).href)
+      const name = mod.name || path.basename(file, ".mjs")
+      skills.push({
+        name,
+        description: mod.description || name,
+        type: "mjs",
+        scope,
+        source: full,
+        run: typeof mod.run === "function" ? mod.run : null
+      })
+    } catch {
+      // Skip broken skill files silently
+    }
+  }
+  return skills
 }
 
 function shellTokenize(input) {
@@ -173,43 +325,6 @@ async function loadSkillDirs(dir, scope) {
 }
 
 /**
- * Load .mjs programmable skills from a directory.
- * Each .mjs file should export: { name, description, run(ctx) }
- * run() returns a string prompt to send to the model.
- */
-async function loadMjsSkills(dir, scope) {
-  if (!(await exists(dir))) return []
-  const resolvedDir = path.resolve(dir)
-  const entries = await readdir(dir, { withFileTypes: true })
-  const files = entries
-    .filter((e) => e.isFile() && e.name.endsWith(".mjs"))
-    .map((e) => e.name)
-    .sort()
-
-  const skills = []
-  for (const file of files) {
-    const full = path.resolve(dir, file)
-    // Path boundary check: ensure resolved path is within expected directory
-    if (!full.startsWith(resolvedDir + path.sep) && full !== resolvedDir) continue
-    try {
-      const mod = await import(pathToFileURL(full).href)
-      const name = mod.name || path.basename(file, ".mjs")
-      skills.push({
-        name,
-        description: mod.description || name,
-        type: "mjs",
-        scope,
-        source: full,
-        run: typeof mod.run === "function" ? mod.run : null
-      })
-    } catch {
-      // Skip broken skill files silently
-    }
-  }
-  return skills
-}
-
-/**
  * Convert custom commands (.md templates) to skill format.
  */
 function customCommandsToSkills(commands) {
@@ -249,6 +364,14 @@ export const SkillRegistry = {
    */
   async initialize(config, cwd = process.cwd()) {
     state.skills.clear()
+    const autoSeed = config?.skills?.auto_seed !== false
+    if (autoSeed) {
+      try {
+        await ensureDefaultSkillPack({ cwd, force: false, includeProject: true })
+      } catch {
+        // Ignore seed failures (e.g., read-only mode)
+      }
+    }
 
     // Respect skills.enabled config — if explicitly false, skip all loading
     if (config?.skills?.enabled === false) {
@@ -285,6 +408,7 @@ export const SkillRegistry = {
     const allSkillDirs = [...defaultDirs, ...extraDirs]
 
     const loadPromises = allSkillDirs.flatMap(({ dir, scope }) => [
+      loadMarkdownSkills(dir, scope),
       loadMjsSkills(dir, scope),
       loadSkillDirs(dir, scope)
     ])

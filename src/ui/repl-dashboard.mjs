@@ -106,6 +106,33 @@ function shortenPath(path) {
   return `...${replaced.slice(-69)}`
 }
 
+function formatMcpStatus(summary) {
+  if (!summary) return []
+  const lines = [
+    `MCP: configured ${summary.configured}, healthy ${summary.healthy}, tools ${summary.tools || 0}`
+  ]
+  if (!summary.configured) {
+    lines.push("  quickstart: kkcode mcp init --project")
+    return lines
+  }
+  for (const entry of summary.entries || []) {
+    const byServer = summary.byServer?.[entry.name]
+    const toolCount = byServer !== undefined ? ` (${byServer} tools)` : ""
+    lines.push(`  ${entry.ok ? "✓" : "×"} ${entry.name}${toolCount}`)
+  }
+  return lines
+}
+
+function formatSkillStatus(summary) {
+  if (!summary) return []
+  return [
+    `Skills: ${summary.total} loaded`,
+    `  templates: ${summary.template + summary.skillMd}`,
+    `  mcp prompts: ${summary.mcpPrompt}`,
+    `  programmable: ${summary.programmable}`
+  ]
+}
+
 function renderTag(theme, label, fg = "#0b0b0b", bg = theme.base.accent) {
   return paint(` ${label} `, fg, { bg, bold: true })
 }
@@ -179,6 +206,8 @@ export function renderReplDashboard({
   providers,
   recentSessions,
   customCommandCount,
+  mcpSummary = null,
+  skillSummary = null,
   cwd,
   columns = null
 }) {
@@ -204,7 +233,9 @@ export function renderReplDashboard({
         `Mode: ${state.mode}`,
         `Provider: ${state.providerType}`,
         `Model: ${state.model}`,
-        `Custom commands: ${customCommandCount}`
+        `Custom commands: ${customCommandCount}`,
+        ...formatMcpStatus(mcpSummary),
+        ...formatSkillStatus(skillSummary)
       ]
     },
     {
@@ -226,6 +257,12 @@ export function renderReplDashboard({
       title: "Tips",
       color: theme.semantic.warn,
       items: [
+        ...[
+          "Commands for bootstrap:",
+          "  kkcode mcp discover",
+          "  kkcode mcp init --project",
+          "  kkcode skill init"
+        ],
         "Use /dash to redraw this panel",
         "Use /clear to clear screen",
         "Use /model <id> to override model",

@@ -163,6 +163,7 @@ export const DEFAULT_CONFIG = {
   },
   skills: {
     enabled: true,
+    auto_seed: true,
     dirs: [".kkcode/skills"],
     allowed_commands: []
   },
