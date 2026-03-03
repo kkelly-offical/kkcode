@@ -8,6 +8,7 @@ import { auditStats } from "../storage/audit-store.mjs"
 import { fsckSessionStore, flushNow } from "../session/store.mjs"
 import { BackgroundManager } from "../orchestration/background-manager.mjs"
 import { McpRegistry } from "../mcp/registry.mjs"
+import { SkillRegistry } from "../skill/registry.mjs"
 
 const exec = promisify(execCb)
 
@@ -69,8 +70,19 @@ async function buildDoctorReport() {
   const storage = await fsckSessionStore()
   const backgroundTasks = await BackgroundManager.list()
   await McpRegistry.initialize(config)
+  await SkillRegistry.initialize({ ...config, skills: { ...(config.skills || {}), auto_seed: false } }, process.cwd())
   const mcpSnapshot = McpRegistry.healthSnapshot()
   const mcpHealthy = mcpSnapshot.filter((item) => item.ok).length
+  const skillList = SkillRegistry.list()
+  const skillSummary = {
+    enabled: config.skills?.enabled !== false,
+    autoSeed: config.skills?.auto_seed !== false,
+    total: skillList.length,
+    template: skillList.filter((s) => s.type === "template").length,
+    skillMd: skillList.filter((s) => s.type === "skill_md").length,
+    mcpPrompt: skillList.filter((s) => s.type === "mcp_prompt").length,
+    programmable: skillList.filter((s) => s.type === "mjs").length
+  }
 
   return {
     ok: storage.ok,
@@ -94,6 +106,7 @@ async function buildDoctorReport() {
       unhealthy: mcpSnapshot.length - mcpHealthy,
       servers: mcpSnapshot
     },
+    skills: skillSummary,
     storage: {
       sessions: storage,
       eventLog: events,
@@ -125,6 +138,13 @@ function printTextReport(report, themeWarnings = []) {
   }
   console.log(`check node=${report.checks.node ? "ok" : "missing"} rg=${report.checks.rg ? "ok" : "missing"} git=${report.checks.git ? "ok" : "missing"}`)
   console.log(`mcp: configured=${report.mcp.configured} healthy=${report.mcp.healthy} unhealthy=${report.mcp.unhealthy}`)
+  console.log(`skills: total=${report.skills.total} template=${report.skills.template + report.skills.skillMd} mcp=${report.skills.mcpPrompt} programmable=${report.skills.programmable}`)
+  if (report.mcp.configured === 0) {
+    console.log("  mcp quickstart: kkcode mcp init --project --with-skills")
+  }
+  if (report.skills.total === 0) {
+    console.log("  skills quickstart: kkcode skill init --project")
+  }
   console.log(`sessions: ok=${report.storage.sessions.ok} index=${report.storage.sessions.sessionsInIndex} files=${report.storage.sessions.filesOnDisk}`)
   console.log(`events: active=${report.storage.eventLog.activeBytes} rotated=${report.storage.eventLog.rotatedFiles}`)
   console.log(`audit: total=${report.storage.audit.total} error1h=${report.storage.audit.error1h} error24h=${report.storage.audit.error24h}`)

@@ -498,7 +498,11 @@ function formatRuntimeStateText(state, mcpSummary = null, skillSummary = null) {
     }
   }
   if (skillSummary) {
-    lines.push(`skills=${skillSummary.total} loaded (md:${skillSummary.template + skillSummary.skillMd}, mcp:${skillSummary.mcpPrompt}, mjs:${skillSummary.programmable})`)
+    const mdCount = skillSummary.template + skillSummary.skillMd
+    lines.push(`skills=${skillSummary.total} loaded (md:${mdCount}, mcp:${skillSummary.mcpPrompt}, mjs:${skillSummary.programmable})`)
+    if (skillSummary.total === 0) {
+      lines.push("skills.quickstart=kkcode skill init --project")
+    }
   }
   return lines.join("\n")
 }

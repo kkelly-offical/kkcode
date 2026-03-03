@@ -6,7 +6,7 @@ import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
-import { homedir } from "node:os"
+import { userRootDir } from "../storage/paths.mjs"
 
 const state = {
   loaded: false,
@@ -83,14 +83,14 @@ function setHealth(name, serverConfig = {}, patch = {}) {
  *   .mcp.json                — Claude Code / VS Code convention
  *   .mcp/config.json         — directory-based convention
  *   .kkcode/mcp.json         — kkcode-specific
- *   ~/.kkcode/mcp.json       — global user-level
+ *   <KKCODE_HOME>/mcp.json    — global user-level
  */
 async function discoverProjectServers(cwd) {
   const candidates = [
     join(cwd, ".mcp.json"),
     join(cwd, ".mcp", "config.json"),
     join(cwd, ".kkcode", "mcp.json"),
-    join(homedir(), ".kkcode", "mcp.json")
+    join(userRootDir(), "mcp.json")
   ]
   const merged = {}
   for (const filePath of candidates) {

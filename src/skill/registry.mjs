@@ -397,7 +397,7 @@ export const SkillRegistry = {
     const customDirs = config?.skills?.dirs || []
     // Default directories: global (~/.kkcode/skills) + project (.kkcode/skills)
     const defaultDirs = [
-      { dir: path.join(userRoot, ".kkcode", "skills"), scope: "global" },
+      { dir: path.join(userRoot, "skills"), scope: "global" },
       { dir: path.join(cwd, ".kkcode", "skills"), scope: "project" }
     ]
     // Custom dirs from config (resolve relative to cwd)

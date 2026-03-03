@@ -26,6 +26,7 @@ export function createSkillCommand() {
     .option("--global", "initialize global scope ~/.kkcode/skills")
     .option("--all", "initialize both project and global scope")
     .option("--force", "overwrite existing files")
+    .option("--json", "print structured output", false)
     .action(async (options) => {
       const cwd = process.cwd()
       const includeProject = options.all || options.project || (!options.global && !options.project)
@@ -37,6 +38,11 @@ export function createSkillCommand() {
         includeProject,
         includeGlobal
       })
+
+      if (options.json) {
+        console.log(JSON.stringify({ ok: true, cwd, includeProject, includeGlobal, results }, null, 2))
+        return
+      }
 
       console.log("skill init summary:")
       for (const line of formatSummary(results)) {

@@ -1,10 +1,10 @@
 import { Command } from "commander"
 import { access, mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
-import { homedir } from "node:os"
 import { buildContext, printContextWarnings } from "../context.mjs"
 import { McpRegistry } from "../mcp/registry.mjs"
 import { ensureDefaultSkillPack } from "../skill/registry.mjs"
+import { userRootDir } from "../storage/paths.mjs"
 
 const DEFAULT_MCP_INIT_CONFIG = {
   servers: {
@@ -31,7 +31,15 @@ function projectMcpPath(cwd = process.cwd()) {
 }
 
 function globalMcpPath() {
-  return join(homedir(), ".kkcode", "mcp.json")
+  return join(userRootDir(), "mcp.json")
+}
+
+function renderPathLabel(filePath) {
+  const home = process.env.HOME
+  if (home && filePath.startsWith(`${home}/`)) {
+    return `~${filePath.slice(home.length)}`
+  }
+  return filePath
 }
 
 function legacyMcpPaths(cwd = process.cwd()) {
@@ -39,7 +47,7 @@ function legacyMcpPaths(cwd = process.cwd()) {
     { kind: "local", path: join(cwd, ".mcp.json"), label: ".mcp.json" },
     { kind: "local", path: join(cwd, ".mcp", "config.json"), label: ".mcp/config.json" },
     { kind: "project", path: join(cwd, ".kkcode", "mcp.json"), label: ".kkcode/mcp.json" },
-    { kind: "global", path: globalMcpPath(), label: "~/.kkcode/mcp.json" }
+    { kind: "global", path: globalMcpPath(), label: renderPathLabel(globalMcpPath()) }
   ]
 }
 
@@ -62,14 +70,23 @@ function collectServers(fileConfig) {
 
 function parseMcpConfig(text) {
   if (!text || !text.trim()) return { raw: {}, error: "empty" }
-  const first = text.trim()[0]
+  const normalizedText = text.replace(/^\uFEFF/, "").trim()
+  const first = normalizedText[0]
   if (first !== "{" && first !== "[") {
     return { raw: null, error: "unsupported format (expected JSON)" }
   }
   try {
-    return { raw: JSON.parse(text), error: null }
+    return { raw: JSON.parse(normalizedText), error: null }
   } catch (error) {
-    return { raw: null, error: error.message || "invalid JSON" }
+    const cleaned = normalizedText
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/(^|[^:])\/\/.*$/gm, "$1")
+      .replace(/,\s*([}\]])/g, "$1")
+    try {
+      return { raw: JSON.parse(cleaned), error: null }
+    } catch (fallbackError) {
+      return { raw: null, error: error.message || "invalid JSON", fallbackError: fallbackError?.message || "invalid JSON" }
+    }
   }
 }
 
@@ -173,13 +190,14 @@ export function createMcpCommand() {
         }
 
         const text = await readFile(item.path, "utf8")
-        const { raw, error } = parseMcpConfig(text)
+        const { raw, error, fallbackError } = parseMcpConfig(text)
         const servers = collectServers(raw)
         results.push({
           ...item,
           exists: true,
           parsed: error === null,
           parseError: error,
+          parseFallbackError: fallbackError || null,
           servers,
           serverCount: servers.length
         })
@@ -200,7 +218,11 @@ export function createMcpCommand() {
       for (const item of results) {
         if (!item.exists) continue
         if (!item.parsed) {
-          console.log(`- ${item.label}: parse error (${item.parseError})`)
+          const pathHint = item.parseFallbackError ? ` fallback=${item.parseFallbackError}` : ""
+          console.log(`- ${item.label}: parse error (${item.parseError})${pathHint}`)
+          if (item.parseError?.includes("unsupported format")) {
+            console.log("  tip: check file is JSON and contains { servers: ... } or { mcpServers: ... }")
+          }
         } else {
           console.log(`- ${item.label}: ${item.serverCount} server(s)`)
           for (const serverName of item.servers) {

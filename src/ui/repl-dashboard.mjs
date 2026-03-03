@@ -112,7 +112,7 @@ function formatMcpStatus(summary) {
     `MCP: configured ${summary.configured}, healthy ${summary.healthy}, tools ${summary.tools || 0}`
   ]
   if (!summary.configured) {
-    lines.push("  quickstart: kkcode mcp init --project")
+    lines.push("  quickstart: kkcode mcp init --project --with-skills")
     return lines
   }
   for (const entry of summary.entries || []) {
@@ -125,12 +125,20 @@ function formatMcpStatus(summary) {
 
 function formatSkillStatus(summary) {
   if (!summary) return []
-  return [
+  const mdTotal = summary.template + summary.skillMd
+  const lines = [
     `Skills: ${summary.total} loaded`,
-    `  templates: ${summary.template + summary.skillMd}`,
+    `  markdown: ${mdTotal} (templates: ${summary.template}, dirs: ${summary.skillMd})`,
     `  mcp prompts: ${summary.mcpPrompt}`,
     `  programmable: ${summary.programmable}`
   ]
+  if (summary.total === 0) {
+    lines.push("  quickstart: kkcode skill init --project")
+  }
+  if (summary.total > 0) {
+    lines.push("  try: /code-review /test-plan")
+  }
+  return lines
 }
 
 function renderTag(theme, label, fg = "#0b0b0b", bg = theme.base.accent) {
