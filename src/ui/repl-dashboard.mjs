@@ -1,4 +1,5 @@
 import { homedir } from "node:os"
+import { resolve } from "node:path"
 import { paint } from "../theme/color.mjs"
 
 function stripAnsi(text) {
@@ -101,7 +102,11 @@ function centerLine(text, width) {
 function shortenPath(path) {
   const home = homedir()
   if (!path) return ""
-  const replaced = path.startsWith(home) ? `~${path.slice(home.length)}` : path
+  const normalizedPath = resolve(path).replace(/\\/g, "/")
+  const homeNorm = home ? resolve(home).replace(/\\/g, "/") : ""
+  const replaced = (home && normalizedPath.startsWith(`${homeNorm}/`)) || normalizedPath === homeNorm
+    ? `~${normalizedPath.slice(homeNorm.length)}`
+    : path
   if (replaced.length <= 72) return replaced
   return `...${replaced.slice(-69)}`
 }

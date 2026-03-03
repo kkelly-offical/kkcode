@@ -367,7 +367,7 @@ export const SkillRegistry = {
     const autoSeed = config?.skills?.auto_seed !== false
     if (autoSeed) {
       try {
-        await ensureDefaultSkillPack({ cwd, force: false, includeProject: true })
+        await ensureDefaultSkillPack({ cwd, force: false, includeProject: true, includeGlobal: true })
       } catch {
         // Ignore seed failures (e.g., read-only mode)
       }
@@ -405,7 +405,13 @@ export const SkillRegistry = {
       dir: path.isAbsolute(d) ? d : path.resolve(cwd, d),
       scope: "custom"
     }))
-    const allSkillDirs = [...defaultDirs, ...extraDirs]
+    const seenDirSet = new Set()
+    const allSkillDirs = [...defaultDirs, ...extraDirs].filter((entry) => {
+      const resolved = path.resolve(entry.dir)
+      if (seenDirSet.has(resolved)) return false
+      seenDirSet.add(resolved)
+      return true
+    })
 
     const loadPromises = allSkillDirs.flatMap(({ dir, scope }) => [
       loadMarkdownSkills(dir, scope),

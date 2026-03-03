@@ -91,10 +91,16 @@ const VENDOR_KEYS = Object.keys(VENDOR_PRESETS)
 function userConfigPathLabel() {
   const userRoot = userRootDir()
   const home = process.env.HOME || process.env.USERPROFILE
-  if (home && userRoot.startsWith(`${home}/`)) {
-    return `~${userRoot.slice(home.length)}/config.yaml`
+  if (!home) return `${path.resolve(userRoot).replace(/\\/g, "/")}/config.yaml`
+  const normalizedHome = path.resolve(home).replace(/\\/g, "/")
+  const normalizedRoot = path.resolve(userRoot).replace(/\\/g, "/")
+  if (normalizedRoot === normalizedHome) {
+    return "~/config.yaml"
   }
-  return `${userRoot}/config.yaml`
+  if (normalizedRoot.startsWith(`${normalizedHome}/`)) {
+    return `~${normalizedRoot.slice(normalizedHome.length)}/config.yaml`
+  }
+  return `${normalizedRoot}/config.yaml`
 }
 
 // --- 编辑模式的可配置字段 ---

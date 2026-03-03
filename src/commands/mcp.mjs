@@ -1,6 +1,6 @@
 import { Command } from "commander"
 import { access, mkdir, readFile, writeFile } from "node:fs/promises"
-import { dirname, join } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { buildContext, printContextWarnings } from "../context.mjs"
 import { McpRegistry } from "../mcp/registry.mjs"
 import { ensureDefaultSkillPack } from "../skill/registry.mjs"
@@ -36,8 +36,12 @@ function globalMcpPath() {
 
 function renderPathLabel(filePath) {
   const home = process.env.HOME || process.env.USERPROFILE
-  if (home && filePath.startsWith(`${home}/`)) {
-    return `~${filePath.slice(home.length)}`
+  if (!home) return filePath
+  const homeNorm = resolve(home).replace(/\\/g, "/")
+  const fileNorm = resolve(filePath).replace(/\\/g, "/")
+  if (fileNorm === homeNorm) return "~"
+  if (fileNorm.startsWith(`${homeNorm}/`)) {
+    return `~${fileNorm.slice(homeNorm.length)}`
   }
   return filePath
 }
@@ -45,8 +49,12 @@ function renderPathLabel(filePath) {
 function globalScopeLabel() {
   const home = process.env.HOME || process.env.USERPROFILE
   const userRoot = globalMcpPath()
-  if (home && userRoot.startsWith(`${home}/`)) {
-    return `~${userRoot.slice(home.length)}`
+  if (!home) return userRoot
+  const homeNorm = resolve(home).replace(/\\/g, "/")
+  const rootNorm = resolve(userRoot).replace(/\\/g, "/")
+  if (rootNorm === homeNorm) return "~"
+  if (rootNorm.startsWith(`${homeNorm}/`)) {
+    return `~${rootNorm.slice(homeNorm.length)}`
   }
   return userRoot
 }

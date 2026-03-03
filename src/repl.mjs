@@ -2,7 +2,7 @@ import { stdin as input, stdout as output } from "node:process"
 import { createInterface } from "node:readline/promises"
 import { emitKeypressEvents } from "node:readline"
 import { readFile, writeFile, mkdir } from "node:fs/promises"
-import { basename, dirname, join } from "node:path"
+import { basename, dirname, join, resolve as resolvePath } from "node:path"
 import YAML from "yaml"
 import { buildContext, printContextWarnings } from "./context.mjs"
 import { executeTurn, newSessionId, resolveMode, routeMode } from "./session/engine.mjs"
@@ -237,7 +237,11 @@ function configuredProviders(config) {
 function displayUserRootPath() {
   const userRoot = userRootDir()
   const home = process.env.HOME || process.env.USERPROFILE
-  if (home && userRoot.startsWith(`${home}/`)) return `~${userRoot.slice(home.length)}`
+  if (!home) return userRoot
+  const homeNorm = resolvePath(home).replace(/\\/g, "/")
+  const rootNorm = resolvePath(userRoot).replace(/\\/g, "/")
+  if (rootNorm === homeNorm) return "~"
+  if (rootNorm.startsWith(`${homeNorm}/`)) return `~${rootNorm.slice(homeNorm.length)}`
   return userRoot
 }
 
