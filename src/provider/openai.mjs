@@ -8,7 +8,7 @@ function sleep(ms) {
 
 function mapTools(tools) {
   if (!tools || !tools.length) return undefined
-  return tools.map((tool) => ({
+  const mapped = tools.map((tool) => ({
     type: "function",
     function: {
       name: tool.name,
@@ -16,6 +16,11 @@ function mapTools(tools) {
       parameters: tool.inputSchema
     }
   }))
+  // Cache tool definitions — they rarely change within a session
+  if (mapped.length > 0) {
+    mapped[mapped.length - 1].cache_control = { type: "ephemeral" }
+  }
+  return mapped
 }
 
 function mapContentBlock(block) {
@@ -74,6 +79,20 @@ function mapMessages(messages) {
     // Regular array content (images, text)
     mapped.push({ role: message.role, content: content.map(mapContentBlock) })
   }
+
+  // Add cache_control to the last user message for multi-turn caching
+  for (let i = mapped.length - 1; i >= 0; i--) {
+    if (mapped[i].role === "user") {
+      const c = mapped[i].content
+      if (Array.isArray(c) && c.length) {
+        c[c.length - 1].cache_control = { type: "ephemeral" }
+      } else if (typeof c === "string") {
+        mapped[i].content = [{ type: "text", text: c, cache_control: { type: "ephemeral" } }]
+      }
+      break
+    }
+  }
+
   return mapped
 }
 
@@ -98,8 +117,8 @@ function parseToolCalls(message) {
     })
 }
 
-// Build system messages from structured blocks for optimal prefix caching.
-// OpenAI auto-caches matching prefixes — stable content first, dynamic last.
+// Build system messages from structured blocks with cache_control markers.
+// Stable content gets cache_control for prompt caching (OpenAI auto-cache + Qwen/compatible explicit cache).
 function buildSystemMessages(system) {
   if (!system) return []
   if (system.blocks && Array.isArray(system.blocks)) {
@@ -110,12 +129,25 @@ function buildSystemMessages(system) {
       else dynamic.push(block.text)
     }
     const msgs = []
-    if (stable.length) msgs.push({ role: "system", content: stable.join("\n\n") })
+    if (stable.length) {
+      msgs.push({
+        role: "system",
+        content: [{
+          type: "text",
+          text: stable.join("\n\n"),
+          cache_control: { type: "ephemeral" }
+        }]
+      })
+    }
     if (dynamic.length) msgs.push({ role: "system", content: dynamic.join("\n\n") })
     return msgs
   }
   const text = typeof system === "string" ? system : system.text || String(system)
-  return text ? [{ role: "system", content: text }] : []
+  if (!text) return []
+  return [{
+    role: "system",
+    content: [{ type: "text", text, cache_control: { type: "ephemeral" } }]
+  }]
 }
 
 function timeoutSignal(ms, parentSignal = null) {
@@ -201,12 +233,14 @@ export async function requestOpenAI(input) {
       }
       const message = json?.choices?.[0]?.message ?? {}
       const promptTokens = json?.usage?.prompt_tokens ?? 0
-      const cachedTokens = json?.usage?.prompt_tokens_details?.cached_tokens ?? 0
+      const details = json?.usage?.prompt_tokens_details || {}
+      const cachedTokens = details.cached_tokens ?? 0
+      const cacheWriteTokens = details.cache_creation_input_tokens ?? 0
       const usage = {
         input: promptTokens - cachedTokens,
         output: json?.usage?.completion_tokens ?? 0,
         cacheRead: cachedTokens,
-        cacheWrite: 0
+        cacheWrite: cacheWriteTokens
       }
       const toolCalls = parseToolCalls(message)
       const text = typeof message.content === "string" ? message.content : ""
@@ -238,11 +272,12 @@ export async function* requestOpenAIStream(input) {
 
   let response
   for (let attempt = 1; attempt <= attempts; attempt++) {
+    let connTimer = null
+    const connController = new AbortController()
     try {
       // Use a connection-only timeout for the initial fetch.
       // Once headers arrive, clear it — the SSE idle timeout handles the streaming phase.
-      const connController = new AbortController()
-      const connTimer = setTimeout(() => connController.abort(), timeoutMs)
+      connTimer = setTimeout(() => connController.abort(), timeoutMs)
       const fetchSignal = signal
         ? AbortSignal.any([signal, connController.signal])
         : connController.signal
@@ -285,10 +320,12 @@ export async function* requestOpenAIStream(input) {
 
     if (json.usage) {
       const pt = json.usage.prompt_tokens ?? 0
-      const ct = json.usage.prompt_tokens_details?.cached_tokens ?? 0
+      const details = json.usage.prompt_tokens_details || {}
+      const ct = details.cached_tokens ?? 0
+      const cw = details.cache_creation_input_tokens ?? 0
       yield {
         type: "usage",
-        usage: { input: pt - ct, output: json.usage.completion_tokens ?? 0, cacheRead: ct, cacheWrite: 0 }
+        usage: { input: pt - ct, output: json.usage.completion_tokens ?? 0, cacheRead: ct, cacheWrite: cw }
       }
     }
 

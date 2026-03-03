@@ -5,8 +5,6 @@ import { McpError } from "../core/errors.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { readFile } from "node:fs/promises"
-import { execFile } from "node:child_process"
-import { promisify } from "node:util"
 import { join } from "node:path"
 import { homedir } from "node:os"
 
@@ -42,17 +40,6 @@ function normalizePrompt(serverName, prompt) {
     name: prompt.name,
     description: prompt.description || `${serverName}:${prompt.name}`,
     arguments: prompt.arguments || []
-  }
-}
-
-const execFileAsync = promisify(execFile)
-let context7InstallLock = null
-async function ensureGlobalPackage(pkg) {
-  const name = pkg.replace(/@[^/]*$/, "")
-  try {
-    await execFileAsync("npm", ["list", "-g", name], { timeout: 10000 })
-  } catch {
-    await execFileAsync("npm", ["install", "-g", pkg], { timeout: 120000 })
   }
 }
 
@@ -122,16 +109,6 @@ async function discoverProjectServers(cwd) {
 }
 
 async function connectServer(name, server) {
-  // Lazy install for context7 built-in server
-  if (name === "context7" && server?.command === "context7-mcp") {
-    if (!context7InstallLock) {
-      context7InstallLock = ensureGlobalPackage("@upstash/context7-mcp@latest").catch(() => {
-        context7InstallLock = null  // Reset on failure to allow retry
-      })
-    }
-    await context7InstallLock
-  }
-
   const transport = resolveTransport(server)
   let client
   try {
@@ -239,9 +216,10 @@ async function reinitialize(config, { force = false, cwd = null } = {}) {
   // Built-in MCP servers (user config can override or disable with enabled: false)
   const builtinServers = {
     context7: {
-      command: "context7-mcp",
-      args: [],
+      command: "npx",
+      args: ["--yes", "@upstash/context7-mcp"],
       timeout_ms: 30000,
+      startup_timeout_ms: 60000,
       framing: "newline"
     }
   }
@@ -277,7 +255,28 @@ async function reinitialize(config, { force = false, cwd = null } = {}) {
   }
 
   const entries = Object.entries(allServers).filter(([, serverConfig]) => serverConfig?.enabled !== false)
-  await Promise.allSettled(entries.map(([name, serverConfig]) => connectServer(name, serverConfig)))
+
+  // 内置服务器（如 context7）必须在启动前加载，失败时重试一次
+  const builtinEntries = entries.filter(([name]) => name in builtinServers)
+  const otherEntries = entries.filter(([name]) => !(name in builtinServers))
+
+  // 优先加载内置 MCP 服务器（串行 + 重试）
+  for (const [name, serverConfig] of builtinEntries) {
+    let result = await connectServer(name, serverConfig)
+    if (!result) {
+      // 重试一次
+      const health = state.health.get(name)
+      const errMsg = health?.error || "unknown error"
+      process.stderr.write(`[kkcode] MCP builtin "${name}" 首次连接失败 (${errMsg})，正在重试...\n`)
+      result = await connectServer(name, serverConfig)
+      if (!result) {
+        process.stderr.write(`[kkcode] MCP builtin "${name}" 重试仍失败，跳过。可使用 /status 查看详情。\n`)
+      }
+    }
+  }
+
+  // 并行加载其他 MCP 服务器
+  await Promise.allSettled(otherEntries.map(([name, serverConfig]) => connectServer(name, serverConfig)))
 
   state.loaded = true
   state.loadedAt = Date.now()

@@ -9,7 +9,7 @@ import { buildContext, printContextWarnings } from "./context.mjs"
 import { executeTurn, newSessionId, resolveMode, routeMode } from "./session/engine.mjs"
 import { renderStatusBar } from "./theme/status-bar.mjs"
 import { listProviders } from "./provider/router.mjs"
-import { createWizardState, startWizard, handleWizardInput } from "./provider/wizard.mjs"
+import { createWizardState, startWizard, startEditWizard, handleWizardInput, VENDOR_PRESETS } from "./provider/wizard.mjs"
 import { loadCustomCommands, applyCommandTemplate } from "./command/custom-commands.mjs"
 import { SkillRegistry } from "./skill/registry.mjs"
 import { renderMarkdown, createStreamRenderer } from "./theme/markdown.mjs"
@@ -226,11 +226,40 @@ function configuredProviders(config) {
   const out = []
   for (const [name, value] of Object.entries(config.provider || {})) {
     if (name === "default") continue
+    if (name === "strict_mode") continue
+    if (name === "model_context") continue
     if (!value || typeof value !== "object") continue
     const type = value.type || name
     if (builtins.has(type)) out.push(name)
   }
   return out
+}
+
+/**
+ * 获取所有已配置 provider 的模型列表。
+ * 优先使用 config 中的 models 数组，fallback 到 VENDOR_PRESETS。
+ * 返回 [{ provider, model, label }]
+ */
+function allProviderModels(config) {
+  const items = []
+  const seen = new Set()
+  for (const [name, conf] of Object.entries(config.provider || {})) {
+    if (name === "default" || name === "strict_mode" || name === "model_context") continue
+    if (!conf || typeof conf !== "object") continue
+    // 模型列表：config > VENDOR_PRESETS
+    const models = conf.models || VENDOR_PRESETS[name]?.models || []
+    const defaultModel = conf.default_model || VENDOR_PRESETS[name]?.default_model
+    // 如果连 models 和 default_model 都没有，跳过
+    if (!models.length && !defaultModel) continue
+    const modelList = models.length ? models : (defaultModel ? [defaultModel] : [])
+    for (const model of modelList) {
+      const key = `${name}/${model}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      items.push({ provider: name, model, label: `${name} / ${model}` })
+    }
+  }
+  return items
 }
 
 async function loadHistory() {
@@ -339,6 +368,7 @@ function help(providers = []) {
   lines.push(row("/mode <name>,/m <name>", "switch mode (ask|plan|agent|longagent)"))
   lines.push(row("/longagent 4stage|hybrid", "switch longagent impl"))
   lines.push(row("/provider <type>,/p <type>", `switch provider (${providers.join("|") || "configured"})`))
+  lines.push(row("/provider edit <name>", "edit existing provider config"))
   lines.push(row("/model <id>", "set active model"))
 
   lines.push("")
@@ -670,6 +700,14 @@ async function processInputLine({
   if (wizard?.active) {
     const result = await handleWizardInput(wizard, line, print)
     if (result.done && setWizard) setWizard({ ...wizard })
+    // 热更新内存中的 config
+    if (result.configPatch?.provider) {
+      if (!ctx.configState.config.provider) ctx.configState.config.provider = {}
+      Object.assign(ctx.configState.config.provider, result.configPatch.provider)
+      if (result.configPatch.provider.default) {
+        ctx.configState.config.provider.default = result.configPatch.provider.default
+      }
+    }
     return { exit: false }
   }
 
@@ -944,19 +982,57 @@ async function processInputLine({
   }
 
   if (normalized.startsWith("/provider ") || normalized.startsWith("/p ")) {
-    const next = normalized.replace(/^\/(provider|p)\s+/, "").trim()
+    const rest = normalized.replace(/^\/(provider|p)\s+/, "").trim()
+
+    // /provider edit <name> — 编辑已有 provider 配置
+    if (rest.startsWith("edit ") || rest === "edit") {
+      const editName = rest.replace(/^edit\s*/, "").trim()
+      if (!editName) {
+        print("usage: /provider edit <name>")
+        return { exit: false }
+      }
+      const providerCfg = ctx.configState.config?.provider?.[editName]
+      if (!providerCfg || typeof providerCfg !== "object") {
+        print(`provider "${editName}" 未找到，可用: ${providersConfigured.join(", ")}`)
+        return { exit: false }
+      }
+      if (wizard && setWizard) {
+        startEditWizard(wizard, editName, providerCfg, print)
+        setWizard({ ...wizard })
+      }
+      return { exit: false }
+    }
+
+    // /provider <name> — 切换 provider
+    const next = rest
     if (!providersConfigured.includes(next)) {
       print(`provider must be one of: ${providersConfigured.join(", ")}`)
       return { exit: false }
     }
     state.providerType = next
     state.model = resolveProviderDefaultModel(ctx.configState.config, next, state.model)
-    print(`provider switched: ${next}`)
+    print(`provider switched: ${next} (model: ${state.model})`)
+    // 展示该 provider 下可用模型
+    const providerModels = allProviderModels(ctx.configState.config).filter(m => m.provider === next)
+    if (providerModels.length > 1) {
+      print("  可用模型: " + providerModels.map(m => m.model).join(", "))
+    }
     return { exit: false }
   }
 
   if (normalized === "/model") {
     print(`current: ${state.providerType} / ${state.model}`)
+    const items = allProviderModels(ctx.configState.config)
+    if (items.length) {
+      print("")
+      print("  可用模型：")
+      for (const item of items) {
+        const marker = (item.provider === state.providerType && item.model === state.model) ? " ●" : ""
+        print(`    ${item.label}${marker}`)
+      }
+      print("")
+      print("  用法: /model <model-id>  或  /provider <name> 切换厂商")
+    }
     return { exit: false, openModelPicker: true }
   }
 
@@ -1758,15 +1834,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   function buildModelPickerItems() {
-    const items = []
-    const providerConfig = ctx.configState.config.provider || {}
-    for (const [name, conf] of Object.entries(providerConfig)) {
-      if (!conf || typeof conf !== "object" || !conf.models) continue
-      for (const model of conf.models) {
-        items.push({ provider: name, model, label: `${name} / ${model}` })
-      }
-    }
-    return items
+    return allProviderModels(ctx.configState.config)
   }
 
   function openModelPicker() {
