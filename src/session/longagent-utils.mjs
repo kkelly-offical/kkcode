@@ -452,12 +452,6 @@ export function classifyTaskMode(prompt) {
     /\b(plan|design|architect|outline|blueprint|draft|propose|sketch)\b/i,
     /\b(规划|设计|架构|方案|蓝图|草案|提案|计划一下|帮我想想)\b/i
   ]
-  const isPlan = planPatterns.some(re => re.test(lower))
-  if (isPlan && !isLongAgent && len < 200) {
-    return { mode: "plan", confidence: "medium", reason: "planning_or_design_intent" }
-  }
-
-  // --- 大型/多文件任务信号 → longagent ---
   const longagentPatterns = [
     /\b(multiple files?|across files?|entire (codebase|project|repo)|all files?|跨文件|多个文件|整个项目|全量)\b/i,
     /\b(refactor|migrate|rewrite|overhaul|redesign|重构|迁移|重写|改造|全面重)\b/i,
@@ -466,6 +460,11 @@ export function classifyTaskMode(prompt) {
     /\b(multi.?stage|multi.?step|多阶段|多步骤|分阶段)\b/i
   ]
   const isLongAgent = longagentPatterns.some(re => re.test(lower))
+
+  const isPlan = planPatterns.some(re => re.test(lower))
+  if (isPlan && !isLongAgent && len < 200) {
+    return { mode: "plan", confidence: "medium", reason: "planning_or_design_intent" }
+  }
 
   if (isLongAgent) {
     return { mode: "longagent", confidence: "high", reason: "multi_file_or_system_task" }

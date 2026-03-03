@@ -2,6 +2,7 @@ import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import {
   stripFence, parseJsonLoose, classifyError, ERROR_CATEGORIES,
+  classifyTaskMode,
   isComplete, isLikelyActionableObjective, summarizeGateFailures,
   stageProgressStats, normalizeFileChange, isReadOnlyTool,
   detectExplorationLoop, detectToolCycle, createStuckTracker,
@@ -83,6 +84,24 @@ describe("classifyError", () => {
   it("handles null/empty input", () => {
     assert.equal(classifyError(null), ERROR_CATEGORIES.UNKNOWN)
     assert.equal(classifyError(""), ERROR_CATEGORIES.UNKNOWN)
+  })
+})
+
+describe("classifyTaskMode", () => {
+  it("classifies long planning prompts as plan mode", () => {
+    const result = classifyTaskMode("Need a migration plan for the auth module")
+    assert.equal(result.mode, "plan")
+    assert.equal(result.confidence, "medium")
+  })
+
+  it("classifies long complex tasks as longagent", () => {
+    const result = classifyTaskMode("Implement a full end-to-end billing subsystem across checkout, invoicing, and reporting modules")
+    assert.equal(result.mode, "longagent")
+    assert.equal(result.confidence, "high")
+  })
+
+  it("does not throw for prompts with plan + longagent overlap", () => {
+    assert.doesNotThrow(() => classifyTaskMode("Please write a redesign plan for our multi-stage service architecture"))
   })
 })
 
