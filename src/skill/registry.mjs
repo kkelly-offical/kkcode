@@ -393,7 +393,7 @@ export const SkillRegistry = {
     }
 
     // Source 2: Programmable skills (.mjs) + SKILL.md directories
-    const userRoot = process.env.USERPROFILE || process.env.HOME || cwd
+    const userRoot = userRootDir()
     const customDirs = config?.skills?.dirs || []
     // Default directories: global (~/.kkcode/skills) + project (.kkcode/skills)
     const defaultDirs = [

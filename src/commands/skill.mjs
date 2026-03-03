@@ -1,5 +1,6 @@
 import { Command } from "commander"
 import { ensureDefaultSkillPack } from "../skill/registry.mjs"
+import { userRootDir } from "../storage/paths.mjs"
 
 function formatSummary(scopeResults) {
   const lines = []
@@ -23,7 +24,7 @@ export function createSkillCommand() {
     .command("init")
     .description("initialize built-in skill packs")
     .option("--project", "initialize project scope .kkcode/skills")
-    .option("--global", "initialize global scope ~/.kkcode/skills")
+    .option("--global", "initialize global scope (KKCODE_HOME)/skills")
     .option("--all", "initialize both project and global scope")
     .option("--force", "overwrite existing files")
     .option("--json", "print structured output", false)
@@ -52,8 +53,9 @@ export function createSkillCommand() {
         console.log("- no target directories selected")
       }
       console.log("tip:")
+      const globalHint = userRootDir()
       console.log("  kkcode skill init --project   # initialize .kkcode/skills")
-      console.log("  kkcode skill init --global    # initialize ~/.kkcode/skills")
+      console.log(`  kkcode skill init --global    # initialize ${globalHint}/skills`)
       console.log("  kkcode skill init            # initialize both")
     })
 

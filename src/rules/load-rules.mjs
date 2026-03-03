@@ -1,5 +1,6 @@
 import path from "node:path"
 import { access, readdir, readFile } from "node:fs/promises"
+import { userRootDir } from "../storage/paths.mjs"
 
 async function exists(file) {
   try {
@@ -39,9 +40,8 @@ async function readSingleRuleFile(filePath, scope) {
 }
 
 export async function loadRuleBlocks(cwd = process.cwd()) {
-  const userHome = process.env.USERPROFILE || process.env.HOME || cwd
-  const userRuleFile = path.join(userHome, ".kkcode", "rule.md")
-  const userRulesDir = path.join(userHome, ".kkcode", "rules")
+  const userRuleFile = path.join(userRootDir(), "rule.md")
+  const userRulesDir = path.join(userRootDir(), "rules")
   const projectRuleFile = path.join(cwd, ".kkcode", "rule.md")
   const projectRulesDir = path.join(cwd, ".kkcode", "rules")
   const [globalSingle, globalDir, projectSingle, projectDir] = await Promise.all([

@@ -1,6 +1,7 @@
 import path from "node:path"
 import { access, readdir, readFile } from "node:fs/promises"
 import { renderTemplate } from "../util/template.mjs"
+import { userRootDir } from "../storage/paths.mjs"
 
 async function exists(target) {
   try {
@@ -34,8 +35,7 @@ async function loadDir(dir, scope) {
 }
 
 export async function loadCustomCommands(cwd = process.cwd()) {
-  const userRoot = process.env.USERPROFILE || process.env.HOME || cwd
-  const userDir = path.join(userRoot, ".kkcode", "commands")
+  const userDir = path.join(userRootDir(), "commands")
   const projectDir = path.join(cwd, ".kkcode", "commands")
   const [globalCommands, projectCommands] = await Promise.all([loadDir(userDir, "global"), loadDir(projectDir, "project")])
   const map = new Map()

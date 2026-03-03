@@ -1,14 +1,14 @@
 import path from "node:path"
 import { access, readFile, writeFile, mkdir } from "node:fs/promises"
-import { homedir } from "node:os"
 import { spawn } from "node:child_process"
 import { readReviewState } from "../review/review-store.mjs"
 import { fsckSessionStore, getSession } from "./store.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
+import { userRootDir } from "../storage/paths.mjs"
 
 const DEFAULT_GATE_TIMEOUT_MS = 15 * 60 * 1000
-const GATE_PREFS_FILE = path.join(homedir(), ".kkcode", "gate-preferences.json")
+const GATE_PREFS_FILE = path.join(userRootDir(), "gate-preferences.json")
 
 // --- Gate result cache (5-min TTL, only caches passing results) ---
 const gateCache = new Map()

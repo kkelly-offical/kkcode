@@ -35,11 +35,20 @@ function globalMcpPath() {
 }
 
 function renderPathLabel(filePath) {
-  const home = process.env.HOME
+  const home = process.env.HOME || process.env.USERPROFILE
   if (home && filePath.startsWith(`${home}/`)) {
     return `~${filePath.slice(home.length)}`
   }
   return filePath
+}
+
+function globalScopeLabel() {
+  const home = process.env.HOME || process.env.USERPROFILE
+  const userRoot = globalMcpPath()
+  if (home && userRoot.startsWith(`${home}/`)) {
+    return `~${userRoot.slice(home.length)}`
+  }
+  return userRoot
 }
 
 function legacyMcpPaths(cwd = process.cwd()) {
@@ -235,7 +244,7 @@ export function createMcpCommand() {
   cmd
     .command("init")
     .description("initialize MCP config for quick one-click import")
-    .option("--global", "write to ~/.kkcode/mcp.json")
+    .option("--global", `write to ${globalScopeLabel()}`)
     .option("--project", "write to .kkcode/mcp.json")
     .option("--all", "write both global and project config")
     .option("--force", "overwrite existing files")

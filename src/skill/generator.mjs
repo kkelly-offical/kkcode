@@ -1,7 +1,7 @@
 import { writeFile, mkdir } from "node:fs/promises"
 import { join, basename } from "node:path"
-import { homedir } from "node:os"
 import { requestProvider } from "../provider/router.mjs"
+import { userRootDir } from "../storage/paths.mjs"
 
 const SKILL_GEN_SYSTEM = `You are a skill generator for kkcode, a terminal AI coding agent.
 Your task is to generate a skill file based on the user's description.
@@ -110,7 +110,7 @@ export async function generateSkill({ description, configState, providerType, mo
  * Save a skill to the global skills directory.
  */
 export async function saveSkillGlobal(filename, content) {
-  const dir = join(homedir(), ".kkcode", "skills")
+  const dir = join(userRootDir(), "skills")
   await mkdir(dir, { recursive: true })
   const filePath = join(dir, filename)
   await writeFile(filePath, content, "utf-8")

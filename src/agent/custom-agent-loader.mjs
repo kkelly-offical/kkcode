@@ -3,6 +3,7 @@ import { access, readdir, readFile } from "node:fs/promises"
 import { pathToFileURL } from "node:url"
 import { parseYaml } from "../util/yaml.mjs"
 import { defineAgent, getAgent } from "./agent.mjs"
+import { userRootDir } from "../storage/paths.mjs"
 
 const state = {
   agents: new Map(),
@@ -110,8 +111,7 @@ async function loadAgentsFromDir(dir, scope) {
 export const CustomAgentRegistry = {
   async initialize(cwd = process.cwd()) {
     state.agents.clear()
-    const userRoot = process.env.USERPROFILE || process.env.HOME || cwd
-    const globalDir = path.join(userRoot, ".kkcode", "agents")
+    const globalDir = path.join(userRootDir(), "agents")
     const projectDir = path.join(cwd, ".kkcode", "agents")
 
     const [globalAgents, projectAgents] = await Promise.all([

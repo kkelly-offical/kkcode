@@ -88,6 +88,15 @@ export const VENDOR_PRESETS = {
 
 const VENDOR_KEYS = Object.keys(VENDOR_PRESETS)
 
+function userConfigPathLabel() {
+  const userRoot = userRootDir()
+  const home = process.env.HOME || process.env.USERPROFILE
+  if (home && userRoot.startsWith(`${home}/`)) {
+    return `~${userRoot.slice(home.length)}/config.yaml`
+  }
+  return `${userRoot}/config.yaml`
+}
+
 // --- 编辑模式的可配置字段 ---
 const EDIT_FIELDS = [
   { key: "type",            label: "Provider 类型",        type: "provider_type" },
@@ -362,7 +371,7 @@ async function _stepConfirm(wiz, val, print) {
   const name = wiz.customName || wiz.vendorKey
   await _saveProviderConfig(cfg)
   wiz.active = false
-  print(`\n  已保存 provider "${name}" 到 ~/.kkcode/config.yaml，已生效。`)
+  print(`\n  已保存 provider "${name}" 到 ${userConfigPathLabel()}，已生效。`)
   return { done: true, cancelled: false, providerName: name, configPatch: cfg }
 }
 
@@ -380,7 +389,7 @@ function _buildConfirmPrompt(wiz) {
     `    上下文:   ${wiz.contextLimit ? wiz.contextLimit + " tokens" : "(默认)"}`,
     wiz.thinking ? "    Thinking: 启用" : null,
     "",
-    "  保存到 ~/.kkcode/config.yaml？(Y/n)："
+    `  保存到 ${userConfigPathLabel()}？(Y/n)：`
   ].filter(Boolean)
   return lines.join("\n")
 }
@@ -514,7 +523,7 @@ async function _stepEditConfirm(wiz, val, print) {
   const saveCfg = { provider: { [wiz.editName]: merged } }
   await _saveProviderConfig(saveCfg, false)
   wiz.active = false
-  print(`\n  已更新 provider "${wiz.editName}" 到 ~/.kkcode/config.yaml，已生效。`)
+  print(`\n  已更新 provider "${wiz.editName}" 到 ${userConfigPathLabel()}，已生效。`)
   return { done: true, cancelled: false, providerName: wiz.editName, configPatch: saveCfg }
 }
 

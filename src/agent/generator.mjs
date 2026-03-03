@@ -1,7 +1,7 @@
 import { writeFile, mkdir } from "node:fs/promises"
 import { join } from "node:path"
-import { homedir } from "node:os"
 import { requestProvider } from "../provider/router.mjs"
+import { userRootDir } from "../storage/paths.mjs"
 
 const AGENT_GEN_SYSTEM = `You are an agent definition generator for kkcode, a terminal AI coding agent.
 Your task is to generate an agent definition file in YAML format based on the user's description.
@@ -96,7 +96,7 @@ export async function generateAgent({ description, configState, providerType, mo
  * Save an agent definition to the global agents directory.
  */
 export async function saveAgentGlobal(filename, content) {
-  const dir = join(homedir(), ".kkcode", "agents")
+  const dir = join(userRootDir(), "agents")
   await mkdir(dir, { recursive: true })
   const filePath = join(dir, filename)
   await writeFile(filePath, content, "utf-8")

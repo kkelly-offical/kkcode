@@ -2,7 +2,6 @@ import { stdin as input, stdout as output } from "node:process"
 import { createInterface } from "node:readline/promises"
 import { emitKeypressEvents } from "node:readline"
 import { readFile, writeFile, mkdir } from "node:fs/promises"
-import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
 import YAML from "yaml"
 import { buildContext, printContextWarnings } from "./context.mjs"
@@ -28,12 +27,12 @@ import { EventBus } from "./core/events.mjs"
 import { EVENT_TYPES } from "./core/constants.mjs"
 import { extractImageRefs, buildContentBlocks, readClipboardImage, readClipboardText } from "./tool/image-util.mjs"
 import { generateSkill, saveSkillGlobal } from "./skill/generator.mjs"
-import { userConfigCandidates, projectConfigCandidates, memoryFilePath } from "./storage/paths.mjs"
+import { userRootDir, userConfigCandidates, projectConfigCandidates, memoryFilePath } from "./storage/paths.mjs"
 import { persistTrust, revokeTrust } from "./permission/workspace-trust.mjs"
 import { confirmRollback, executeRollback } from "./session/rollback.mjs"
 import { loadProfile, runOnboarding } from "./onboarding.mjs"
 
-const HIST_DIR = join(homedir(), ".kkcode")
+const HIST_DIR = userRootDir()
 const HIST_FILE = join(HIST_DIR, "repl_history")
 const HIST_SIZE = 500
 const MAX_TUI_LOG_LINES = 1200
@@ -235,6 +234,13 @@ function configuredProviders(config) {
   return out
 }
 
+function displayUserRootPath() {
+  const userRoot = userRootDir()
+  const home = process.env.HOME || process.env.USERPROFILE
+  if (home && userRoot.startsWith(`${home}/`)) return `~${userRoot.slice(home.length)}`
+  return userRoot
+}
+
 /**
  * 获取所有已配置 provider 的模型列表。
  * 优先使用 config 中的 models 数组，fallback 到 VENDOR_PRESETS。
@@ -400,11 +406,11 @@ function help(providers = []) {
 
   lines.push("")
   lines.push("Configuration:")
-  lines.push("  Global config     ~/.kkcode/config.yaml")
+  lines.push(`  Global config     ${displayUserRootPath()}/config.yaml`)
   lines.push("  Project config    kkcode.config.yaml / .kkcode/config.yaml")
   lines.push("  Custom commands   .kkcode/commands/    (project-level slash commands)")
-  lines.push("  Custom skills     ~/.kkcode/skills/    or .kkcode/skills/")
-  lines.push("  Custom agents     ~/.kkcode/agents/    or .kkcode/agents/")
+  lines.push(`  Custom skills     ${displayUserRootPath()}/skills/    or .kkcode/skills/`)
+  lines.push(`  Custom agents     ${displayUserRootPath()}/agents/    or .kkcode/agents/`)
   lines.push("  Custom tools      .kkcode/tools/       (project-level tool definitions)")
   lines.push("  Plugins/hooks     .kkcode/plugins/     (project-level hook scripts)")
   lines.push("  Rules             .kkcode/rules/       (project-level prompt rules)")
