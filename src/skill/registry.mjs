@@ -394,17 +394,22 @@ export const SkillRegistry = {
 
     // Source 2: Programmable skills (.mjs) + SKILL.md directories
     const userRoot = userRootDir()
-    const customDirs = config?.skills?.dirs || []
+    const rawCustomDirs = Array.isArray(config?.skills?.dirs) ? config.skills.dirs : []
     // Default directories: global (~/.kkcode/skills) + project (.kkcode/skills)
     const defaultDirs = [
       { dir: path.join(userRoot, "skills"), scope: "global" },
       { dir: path.join(cwd, ".kkcode", "skills"), scope: "project" }
     ]
     // Custom dirs from config (resolve relative to cwd)
-    const extraDirs = customDirs.map(d => ({
-      dir: path.isAbsolute(d) ? d : path.resolve(cwd, d),
-      scope: "custom"
-    }))
+    const extraDirs = rawCustomDirs
+      .filter((d) => typeof d === "string" && d.trim().length > 0)
+      .map((d) => {
+        const trimmed = d.trim()
+        return {
+          dir: path.isAbsolute(trimmed) ? trimmed : path.resolve(cwd, trimmed),
+          scope: "custom"
+        }
+      })
     const seenDirSet = new Set()
     const allSkillDirs = [...defaultDirs, ...extraDirs].filter((entry) => {
       const resolved = path.resolve(entry.dir)
