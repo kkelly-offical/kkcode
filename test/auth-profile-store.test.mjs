@@ -98,3 +98,16 @@ test("setDefaultAuthProfile flips defaults within provider", async () => {
   assert.equal(profiles[0].isDefault, true)
   assert.equal(profiles[1].isDefault, false)
 })
+
+test("anthropic setup_token profiles must use a full setup-token", async () => {
+  await assert.rejects(
+    upsertAuthProfile({
+      providerId: "anthropic",
+      displayName: "Claude Setup Token",
+      authMode: "setup_token",
+      credential: "not-a-setup-token",
+      isDefault: true
+    }),
+    /must start with sk-ant-oat01-/
+  )
+})

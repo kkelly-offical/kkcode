@@ -3,7 +3,10 @@ import { authProfileStorePath, ensureUserRoot } from "../storage/paths.mjs"
 import { readJson, writeJson } from "../storage/json-store.mjs"
 
 const STORE_VERSION = 1
-const VALID_AUTH_MODES = new Set(["api_key", "token", "oauth"])
+const VALID_AUTH_MODES = new Set(["api_key", "token", "oauth", "setup_token"])
+
+export const ANTHROPIC_SETUP_TOKEN_PREFIX = "sk-ant-oat01-"
+export const ANTHROPIC_SETUP_TOKEN_MIN_LENGTH = 80
 
 function generateProfileId() {
   return `auth_${randomUUID().replace(/-/g, "").slice(0, 12)}`
@@ -86,6 +89,24 @@ export function resolveAuthProfileCredential(profile, env = process.env) {
   return ""
 }
 
+export function validateAuthProfileInput(input = {}) {
+  const providerId = String(input.providerId || "").trim().toLowerCase()
+  const authMode = VALID_AUTH_MODES.has(input.authMode) ? input.authMode : "api_key"
+  const credential = String(input.credential || "").trim()
+
+  if (providerId === "anthropic" && authMode === "setup_token") {
+    if (!credential) return "anthropic setup-token is required"
+    if (!credential.startsWith(ANTHROPIC_SETUP_TOKEN_PREFIX)) {
+      return `anthropic setup-token must start with ${ANTHROPIC_SETUP_TOKEN_PREFIX}`
+    }
+    if (credential.length < ANTHROPIC_SETUP_TOKEN_MIN_LENGTH) {
+      return "anthropic setup-token looks too short; paste the full token"
+    }
+  }
+
+  return null
+}
+
 export function resolveAuthProfileStatus(profile, env = process.env) {
   if (!profile) return "missing"
   if (profile.expiresAt && profile.expiresAt < Date.now()) return "expired"
@@ -97,6 +118,10 @@ export async function upsertAuthProfile(input) {
   const next = normalizeProfile(input)
   if (!next.providerId) {
     throw new Error("auth profile providerId is required")
+  }
+  const validationError = validateAuthProfileInput(next)
+  if (validationError) {
+    throw new Error(validationError)
   }
   const store = await loadAuthProfileStore()
   const existing = store.profiles.filter((profile) => profile.id !== next.id)

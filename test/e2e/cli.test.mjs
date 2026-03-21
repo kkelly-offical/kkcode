@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process"
 import { resolve, join } from "node:path"
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
+import { projectConfigCandidates } from "../../src/storage/paths.mjs"
 
 const CLI = resolve("src/index.mjs")
 const NODE = process.execPath
@@ -23,6 +24,17 @@ function run(args, { timeout = 15000, env = {}, cwd = process.cwd(), expectFail 
     if (!expectFail) throw err
     return { stdout: err.stdout || "", stderr: err.stderr || "", exitCode: err.status || 1 }
   }
+}
+
+function readProjectConfig(cwd) {
+  for (const candidate of projectConfigCandidates(cwd)) {
+    try {
+      return readFileSync(candidate, "utf8")
+    } catch {
+      // keep scanning
+    }
+  }
+  throw new Error(`project config not found for ${cwd}`)
 }
 
 // --help
@@ -126,6 +138,157 @@ test("e2e: auth onboard sets default provider and verifies ready env-backed prov
     assert.ok(stdout.includes("verified: ready"))
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("e2e: auth onboard anthropic suggests setup-token flow", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kkcode-e2e-auth-anthropic-onboard-"))
+  try {
+    run(["init", "--yes"], { cwd: dir, env: { ANTHROPIC_API_KEY: "" } })
+    const { stdout, exitCode } = run(["auth", "onboard", "anthropic"], {
+      cwd: dir,
+      env: { ANTHROPIC_API_KEY: "" },
+      expectFail: true
+    })
+    assert.ok(exitCode !== 0)
+    assert.ok(stdout.includes("login_error: interactive browser oauth is not implemented for provider: anthropic"))
+    assert.ok(stdout.includes("next: kkcode auth add anthropic"))
+    assert.ok(stdout.includes("setup_token"))
+    assert.ok(stdout.includes("verified: not-ready"))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("e2e: auth onboard cloudflare-ai-gateway accepts inline credential and computed base url", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kkcode-e2e-auth-cloudflare-onboard-"))
+  const home = mkdtempSync(join(tmpdir(), "kkcode-e2e-auth-cloudflare-home-"))
+  try {
+    run(["init", "--yes"], { cwd: dir, env: { KKCODE_HOME: home } })
+    const { stdout } = run([
+      "auth", "onboard", "cloudflare-ai-gateway",
+      "--no-login",
+      "--credential", "cf-test-key",
+      "--account-id", "acc_123",
+      "--gateway-id", "gw_456"
+    ], {
+      cwd: dir,
+      env: { KKCODE_HOME: home }
+    })
+    assert.ok(stdout.includes("verified: ready"))
+    const listed = run(["auth", "list", "--json"], { env: { KKCODE_HOME: home } })
+    const profiles = JSON.parse(listed.stdout)
+    assert.equal(profiles[0].providerId, "cloudflare-ai-gateway")
+    assert.equal(profiles[0].baseUrlOverride, "https://gateway.ai.cloudflare.com/v1/acc_123/gw_456/anthropic")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test("e2e: auth onboard vllm configures self-hosted provider", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kkcode-e2e-auth-vllm-onboard-"))
+  const home = mkdtempSync(join(tmpdir(), "kkcode-e2e-auth-vllm-home-"))
+  try {
+    run(["init", "--yes"], { cwd: dir, env: { KKCODE_HOME: home } })
+    const { stdout } = run([
+      "auth", "onboard", "vllm",
+      "--no-login",
+      "--credential", "local-key",
+      "--base-url", "http://127.0.0.1:8000",
+      "--model-id", "meta-llama/Meta-Llama-3-8B-Instruct"
+    ], {
+      cwd: dir,
+      env: { KKCODE_HOME: home }
+    })
+    assert.ok(stdout.includes("verified: ready"))
+    const configRaw = readProjectConfig(dir)
+    assert.match(configRaw, /provider:\n/)
+    assert.match(configRaw, /vllm:/)
+    assert.match(configRaw, /base_url: http:\/\/127.0.0.1:8000\/v1/)
+    assert.match(configRaw, /default_model: meta-llama\/Meta-Llama-3-8B-Instruct/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test("e2e: auth onboard copilot-proxy configures local proxy defaults", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kkcode-e2e-auth-copilot-proxy-onboard-"))
+  const home = mkdtempSync(join(tmpdir(), "kkcode-e2e-auth-copilot-proxy-home-"))
+  try {
+    run(["init", "--yes"], { cwd: dir, env: { KKCODE_HOME: home } })
+    const { stdout } = run([
+      "auth", "onboard", "copilot-proxy",
+      "--no-login",
+      "--base-url", "http://localhost:3000",
+      "--models", "gpt-5.2,claude-opus-4.6"
+    ], {
+      cwd: dir,
+      env: { KKCODE_HOME: home }
+    })
+    assert.ok(stdout.includes("verified: ready"))
+    const configRaw = readProjectConfig(dir)
+    assert.match(configRaw, /copilot-proxy:/)
+    assert.match(configRaw, /base_url: http:\/\/localhost:3000\/v1/)
+    assert.match(configRaw, /default_model: gpt-5.2/)
+    assert.match(configRaw, /- claude-opus-4.6/)
+    const listed = run(["auth", "list", "--json"], { env: { KKCODE_HOME: home } })
+    const profiles = JSON.parse(listed.stdout)
+    const target = profiles.find((item) => item.providerId === "copilot-proxy")
+    assert.equal(target.authMode, "token")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test("e2e: auth login chutes requires client id for oauth", () => {
+  const { stdout, stderr, exitCode } = run(["auth", "login", "chutes"], {
+    env: { CHUTES_CLIENT_ID: "" },
+    expectFail: true
+  })
+  assert.ok(exitCode !== 0)
+  assert.match(`${stdout}\n${stderr}`, /chutes oauth requires --client-id or CHUTES_CLIENT_ID/)
+})
+
+test("e2e: auth onboard sglang configures self-hosted provider", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kkcode-e2e-auth-sglang-onboard-"))
+  const home = mkdtempSync(join(tmpdir(), "kkcode-e2e-auth-sglang-home-"))
+  try {
+    run(["init", "--yes"], { cwd: dir, env: { KKCODE_HOME: home } })
+    const { stdout } = run([
+      "auth", "onboard", "sglang",
+      "--no-login",
+      "--credential", "sg-key",
+      "--base-url", "http://127.0.0.1:30000",
+      "--model-id", "Qwen/Qwen3-8B"
+    ], {
+      cwd: dir,
+      env: { KKCODE_HOME: home }
+    })
+    assert.ok(stdout.includes("verified: ready"))
+    const configRaw = readProjectConfig(dir)
+    assert.match(configRaw, /sglang:/)
+    assert.match(configRaw, /base_url: http:\/\/127.0.0.1:30000\/v1/)
+    assert.match(configRaw, /default_model: Qwen\/Qwen3-8B/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test("e2e: auth login chutes with client id creates pending oauth flow", () => {
+  const home = mkdtempSync(join(tmpdir(), "kkcode-e2e-auth-chutes-home-"))
+  try {
+    const { stdout } = run(["auth", "login", "chutes", "--client-id", "cid_demo", "--no-open-browser"], {
+      env: { KKCODE_HOME: home }
+    })
+    assert.match(stdout, /open: https:\/\/api\.chutes\.ai\/idp\/authorize/)
+    assert.match(stdout, /redirect_uri: kkcode:\/\/oauth/)
+    assert.match(stdout, /kkcode auth import-callback chutes/)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
   }
 })
 
@@ -480,6 +643,12 @@ test("e2e: auth providers lists catalog auth capabilities", () => {
   assert.ok(providers.some((item) => item.id === "xai"))
   assert.ok(providers.some((item) => item.id === "moonshot"))
   assert.ok(providers.some((item) => item.id === "xiaomi"))
+  assert.ok(providers.some((item) => item.id === "byteplus"))
+  assert.ok(providers.some((item) => item.id === "opencode-go"))
+  assert.ok(providers.some((item) => item.id === "litellm"))
+  assert.ok(providers.some((item) => item.id === "chutes"))
+  assert.ok(providers.some((item) => item.id === "vllm"))
+  assert.ok(providers.some((item) => item.id === "sglang"))
 })
 
 test("e2e: auth probe reports provider runtime details", () => {

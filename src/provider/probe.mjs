@@ -2,7 +2,16 @@ import { getProviderSpec } from "./catalog.mjs"
 import { resolveProviderAuthProfile } from "./auth-profiles.mjs"
 import { resolveProviderAttemptTargets } from "./runtime-factory.mjs"
 
-const OAUTH_REFRESH_PROVIDERS = new Set(["qwen-portal", "minimax-portal"])
+const OAUTH_REFRESH_PROVIDERS = new Set(["qwen-portal", "minimax-portal", "chutes"])
+const SUPPORTED_RUNTIME_TYPES = new Set(["openai", "anthropic", "openai-compatible", "ollama"])
+
+function interactiveLoginSupportedFor(providerId, spec) {
+  if (providerId === "github-copilot") return true
+  if (providerId === "anthropic") return false
+  if (!spec?.supports_oauth) return false
+  if (spec.oauth_flow === "device_code") return true
+  return spec.supports_oauth === true
+}
 
 function credentialSourceFor(profile, targetDefaults, env = process.env) {
   if (profile?.authMode === "oauth" && profile?.accessToken) return "auth_profile:oauth"
@@ -61,15 +70,23 @@ export async function buildProviderProbeReport({
   )
 
   const warnings = []
-  const interactiveLoginSupported = providerId === "github-copilot" || spec?.supports_oauth === true
+  const interactiveLoginSupported = interactiveLoginSupportedFor(providerId, spec)
+  const runtimeType = providerDefaults.type || spec?.type || providerId
+  const runtimeAvailable = SUPPORTED_RUNTIME_TYPES.has(String(runtimeType || "").trim())
   if (!spec && !config.provider?.[providerId]) {
     warnings.push(`provider "${providerId}" is not defined in config or provider catalog`)
+  }
+  if (!runtimeAvailable) {
+    warnings.push(`provider "${providerId}" maps to runtime "${runtimeType}", but that runtime is not implemented in kkcode yet`)
   }
   if (providerNeedsCredential(spec, providerDefaults, providerId) && credentialSourceFor(auth.profile, providerDefaults, env) === "missing") {
     warnings.push(`provider "${providerId}" has no ready credential source`)
   }
   if (auth.readyState === "expired" && !OAUTH_REFRESH_PROVIDERS.has(providerId)) {
     warnings.push(`oauth profile is expired and automatic refresh is not implemented for provider "${providerId}"`)
+  }
+  if (spec?.supports_oauth === true && !interactiveLoginSupported) {
+    warnings.push(`provider "${providerId}" supports oauth-compatible credentials, but built-in interactive login is not implemented`)
   }
   for (const attempt of attempts) {
     if (!attempt.configured) {
@@ -84,7 +101,8 @@ export async function buildProviderProbeReport({
     providerId,
     label: spec?.label || providerId,
     configured: Boolean(spec) || Boolean(config.provider?.[providerId]),
-    runtimeType: providerDefaults.type || spec?.type || providerId,
+    runtimeType,
+    runtimeAvailable,
     model: effectiveModel,
     baseUrl: auth.baseUrlOverride || providerDefaults.base_url || spec?.base_url || "",
     authModes: spec?.auth_modes || ["api_key"],

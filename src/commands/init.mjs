@@ -36,9 +36,12 @@ function formatProviderGuide(providerId) {
   const authModes = Array.isArray(spec.auth_modes) && spec.auth_modes.length
     ? spec.auth_modes.join("/")
     : "api_key"
+  const runtime = ["openai", "anthropic", "openai-compatible", "ollama"].includes(spec.type)
+    ? "runtime"
+    : "no-runtime"
   const oauth = spec.supports_oauth ? ` oauth:${spec.oauth_flow || "browser"}` : ""
   const model = spec.default_model ? ` default:${spec.default_model}` : ""
-  return `${spec.label} [${providerId}] (${authModes}${oauth}${model ? `,${model}` : ""})`
+  return `${spec.label} [${providerId}] (${authModes},${runtime}${oauth}${model ? `,${model}` : ""})`
 }
 
 function printProviderCatalog() {
@@ -48,6 +51,7 @@ function printProviderCatalog() {
     if (!spec) continue
     console.log(`- ${spec.label} [${providerId}]`)
     console.log(`  auth: ${(spec.auth_modes || []).join(", ") || "api_key"}`)
+    console.log(`  runtime: ${["openai", "anthropic", "openai-compatible", "ollama"].includes(spec.type) ? "available" : "not-implemented"}`)
     if (spec.supports_oauth) {
       console.log(`  oauth: ${spec.oauth_flow || "browser"}`)
     }

@@ -211,6 +211,9 @@ function printTextReport(report, themeWarnings = []) {
   }
   console.log("  auth quickstart: kkcode auth providers")
   console.log("  auth onboarding: kkcode auth onboard openai")
+  console.log("  self-hosted: kkcode auth onboard vllm --credential <api-key> --base-url http://127.0.0.1:8000/v1 --model-id <model>")
+  console.log("  local proxy: kkcode auth onboard copilot-proxy --base-url http://localhost:3000/v1 --models 'gpt-5.2,claude-opus-4.6'")
+  console.log("  chutes oauth: CHUTES_CLIENT_ID=... kkcode auth login chutes")
   console.log("  provider guide: kkcode init --providers")
   console.log("  auth probe: kkcode auth probe openai")
   console.log("  resume picker: kkcode session picker")

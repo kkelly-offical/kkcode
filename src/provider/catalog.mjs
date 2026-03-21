@@ -36,8 +36,9 @@ export const PROVIDER_CATALOG = {
     key_env: "ANTHROPIC_API_KEY",
     supports_thinking: true,
     supports_vision: true,
-    auth_modes: ["api_key", "oauth", "token"],
-    supports_oauth: true
+    auth_modes: ["api_key", "setup_token", "oauth", "token"],
+    supports_oauth: true,
+    auth_docs_url: "https://console.anthropic.com/"
   }),
   openai: defineProvider("openai", {
     label: "OpenAI (GPT)",
@@ -74,6 +75,15 @@ export const PROVIDER_CATALOG = {
     key_env: "DASHSCOPE_API_KEY",
     supports_vision: true
   }),
+  google: defineProvider("google", {
+    label: "Google Gemini",
+    type: "openai-compatible",
+    base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+    default_model: "gemini-2.5-pro",
+    models: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
+    key_env: "GEMINI_API_KEY",
+    supports_vision: true
+  }),
   "qwen-portal": defineProvider("qwen-portal", {
     label: "Qwen Portal OAuth",
     type: "openai-compatible",
@@ -108,6 +118,14 @@ export const PROVIDER_CATALOG = {
     supports_vision: true,
     auth_modes: ["oauth", "token"],
     supports_oauth: true
+  }),
+  "copilot-proxy": defineProvider("copilot-proxy", {
+    label: "Copilot Proxy",
+    type: "openai-compatible",
+    base_url: "http://localhost:3000/v1",
+    default_model: "gpt-5.2",
+    models: ["gpt-5.2", "gpt-5.2-codex", "claude-opus-4.6", "gemini-3-pro", "grok-code-fast-1"],
+    auth_modes: ["token"]
   }),
   "coding-plan": defineProvider("coding-plan", {
     label: "Coding Plan (DashScope Coding)",
@@ -193,6 +211,14 @@ export const PROVIDER_CATALOG = {
     models: ["openai/gpt-oss-120b", "Qwen/Qwen2.5-Coder-32B-Instruct", "meta-llama/Llama-3.3-70B-Instruct"],
     key_env: "HUGGINGFACE_API_KEY"
   }),
+  nvidia: defineProvider("nvidia", {
+    label: "NVIDIA",
+    type: "openai-compatible",
+    base_url: "https://integrate.api.nvidia.com/v1",
+    default_model: "nvidia/llama-3.1-nemotron-70b-instruct",
+    models: ["nvidia/llama-3.1-nemotron-70b-instruct", "meta/llama-3.3-70b-instruct", "nvidia/mistral-nemo-minitron-8b-8k-instruct"],
+    key_env: "NVIDIA_API_KEY"
+  }),
   zai: defineProvider("zai", {
     label: "Z.AI / GLM",
     type: "openai-compatible",
@@ -201,6 +227,19 @@ export const PROVIDER_CATALOG = {
     models: ["glm-5", "glm-4.7"],
     key_env: "ZAI_API_KEY"
   }),
+  kimi: defineProvider("kimi", {
+    label: "Kimi Coding",
+    type: "anthropic",
+    base_url: "https://api.kimi.com/coding/",
+    default_model: "kimi-code",
+    models: ["kimi-code", "k2p5"],
+    key_env: "KIMI_API_KEY",
+    headers: {
+      "User-Agent": "claude-code/0.1.0"
+    },
+    supports_vision: true,
+    supports_thinking: true
+  }),
   minimax: defineProvider("minimax", {
     label: "MiniMax",
     type: "anthropic",
@@ -208,6 +247,20 @@ export const PROVIDER_CATALOG = {
     default_model: "MiniMax-M2.5",
     models: ["MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M2.7"],
     key_env: "MINIMAX_API_KEY"
+  }),
+  chutes: defineProvider("chutes", {
+    label: "Chutes",
+    type: "openai-compatible",
+    base_url: "https://llm.chutes.ai/v1",
+    default_model: "zai-org/GLM-4.7-TEE",
+    models: ["zai-org/GLM-4.7-TEE"],
+    key_env: "CHUTES_API_KEY",
+    auth_modes: ["api_key", "oauth"],
+    supports_oauth: true,
+    auth_docs_url: "https://chutes.ai/docs/sign-in-with-chutes/overview",
+    oauth_authorize_url: "https://api.chutes.ai/idp/authorize",
+    oauth_token_url: "https://api.chutes.ai/idp/token",
+    oauth_scopes: ["openid", "profile", "chutes:invoke"]
   }),
   "minimax-portal": defineProvider("minimax-portal", {
     label: "MiniMax Portal",
@@ -246,13 +299,143 @@ export const PROVIDER_CATALOG = {
     models: ["mimo-v2-flash"],
     key_env: "XIAOMI_API_KEY"
   }),
+  byteplus: defineProvider("byteplus", {
+    label: "BytePlus",
+    type: "openai-compatible",
+    base_url: "https://ark.ap-southeast.bytepluses.com/api/v3",
+    default_model: "doubao-seed-1-6-thinking-250715",
+    models: ["doubao-seed-1-6-thinking-250715", "doubao-seed-1-6-flash-250715", "doubao-1-5-thinking-pro-250415"],
+    key_env: "BYTEPLUS_API_KEY"
+  }),
+  "cloudflare-ai-gateway": defineProvider("cloudflare-ai-gateway", {
+    label: "Cloudflare AI Gateway",
+    type: "anthropic",
+    base_url: "",
+    default_model: "claude-sonnet-4-5",
+    models: ["claude-sonnet-4-5"],
+    key_env: "CLOUDFLARE_AI_GATEWAY_API_KEY"
+  }),
+  "byteplus-plan": defineProvider("byteplus-plan", {
+    label: "BytePlus Coding",
+    type: "openai-compatible",
+    base_url: "https://ark.ap-southeast.bytepluses.com/api/coding/v3",
+    default_model: "ark-code-latest",
+    models: ["ark-code-latest"],
+    key_env: "BYTEPLUS_API_KEY"
+  }),
+  volcengine: defineProvider("volcengine", {
+    label: "Volcano Engine Doubao",
+    type: "openai-compatible",
+    base_url: "https://ark.cn-beijing.volces.com/api/v3",
+    default_model: "doubao-seed-1-6-thinking-250715",
+    models: ["doubao-seed-1-6-thinking-250715", "doubao-seed-1-6-flash-250715", "doubao-1-5-thinking-pro-250415"],
+    key_env: "VOLCANO_ENGINE_API_KEY"
+  }),
+  "volcengine-plan": defineProvider("volcengine-plan", {
+    label: "Volcano Engine Coding",
+    type: "openai-compatible",
+    base_url: "https://ark.cn-beijing.volces.com/api/coding/v3",
+    default_model: "ark-code-latest",
+    models: ["ark-code-latest"],
+    key_env: "VOLCANO_ENGINE_API_KEY"
+  }),
+  qianfan: defineProvider("qianfan", {
+    label: "Baidu Qianfan",
+    type: "openai-compatible",
+    base_url: "https://qianfan.baidubce.com/v2",
+    default_model: "deepseek-v3.2",
+    models: ["deepseek-v3.2", "ernie-5.0-thinking-preview"],
+    key_env: "QIANFAN_API_KEY"
+  }),
+  modelstudio: defineProvider("modelstudio", {
+    label: "Alibaba Model Studio",
+    type: "openai-compatible",
+    base_url: "https://coding-intl.dashscope.aliyuncs.com/v1",
+    default_model: "qwen3.5-plus",
+    models: ["qwen3.5-plus", "qwen3-max-2026-01-23", "qwen3-coder-next", "qwen3-coder-plus", "MiniMax-M2.5", "glm-5", "glm-4.7", "kimi-k2.5"],
+    key_env: "MODELSTUDIO_API_KEY",
+    supports_vision: true
+  }),
+  kilocode: defineProvider("kilocode", {
+    label: "KiloCode Gateway",
+    type: "openai-compatible",
+    base_url: "https://api.kilo.ai/api/gateway/",
+    default_model: "kilo/auto",
+    models: ["kilo/auto"],
+    key_env: "KILOCODE_API_KEY"
+  }),
+  synthetic: defineProvider("synthetic", {
+    label: "Synthetic",
+    type: "anthropic",
+    base_url: "https://api.synthetic.new/anthropic",
+    default_model: "hf:MiniMaxAI/MiniMax-M2.5",
+    models: ["hf:MiniMaxAI/MiniMax-M2.5"],
+    key_env: "SYNTHETIC_API_KEY"
+  }),
+  "vercel-ai-gateway": defineProvider("vercel-ai-gateway", {
+    label: "Vercel AI Gateway",
+    type: "anthropic",
+    base_url: "https://ai-gateway.vercel.sh",
+    default_model: "anthropic/claude-opus-4.6",
+    models: ["anthropic/claude-opus-4.6"],
+    key_env: "AI_GATEWAY_API_KEY"
+  }),
+  opencode: defineProvider("opencode", {
+    label: "OpenCode Zen",
+    type: "openai-compatible",
+    base_url: "https://opencode.ai/zen/v1",
+    default_model: "claude-opus-4-6",
+    models: ["claude-opus-4-6", "gpt-5.1-codex", "gpt-5.2", "gemini-3-pro", "glm-4.7"],
+    key_env: "OPENCODE_API_KEY"
+  }),
+  "opencode-go": defineProvider("opencode-go", {
+    label: "OpenCode Go",
+    type: "openai-compatible",
+    base_url: "https://opencode.ai/zen/go/v1",
+    default_model: "kimi-k2.5",
+    models: ["kimi-k2.5", "glm-5", "minimax-m2.5"],
+    key_env: "OPENCODE_API_KEY"
+  }),
+  litellm: defineProvider("litellm", {
+    label: "LiteLLM",
+    type: "openai-compatible",
+    base_url: "http://localhost:4000",
+    default_model: "claude-opus-4-6",
+    models: ["claude-opus-4-6"],
+    key_env: "LITELLM_API_KEY"
+  }),
   venice: defineProvider("venice", {
     label: "Venice",
     type: "openai-compatible",
     base_url: "https://api.venice.ai/api/v1",
-    default_model: "llama-3.3-70b",
-    models: ["llama-3.3-70b", "qwen-2.5-coder-32b", "deepseek-r1-671b"],
+    default_model: "kimi-k2-5",
+    models: ["kimi-k2-5", "llama-3.3-70b", "qwen-2.5-coder-32b", "deepseek-r1-671b"],
     key_env: "VENICE_API_KEY"
+  }),
+  vllm: defineProvider("vllm", {
+    label: "vLLM",
+    type: "openai-compatible",
+    base_url: "http://127.0.0.1:8000/v1",
+    default_model: "meta-llama/Meta-Llama-3-8B-Instruct",
+    models: ["meta-llama/Meta-Llama-3-8B-Instruct"],
+    key_env: "VLLM_API_KEY"
+  }),
+  sglang: defineProvider("sglang", {
+    label: "SGLang",
+    type: "openai-compatible",
+    base_url: "http://127.0.0.1:30000/v1",
+    default_model: "Qwen/Qwen3-8B",
+    models: ["Qwen/Qwen3-8B"],
+    key_env: "SGLANG_API_KEY"
+  }),
+  "amazon-bedrock": defineProvider("amazon-bedrock", {
+    label: "Amazon Bedrock",
+    type: "amazon-bedrock",
+    base_url: "",
+    default_model: "anthropic.claude-sonnet-4-5",
+    models: ["anthropic.claude-sonnet-4-5", "anthropic.claude-opus-4-6"],
+    auth_modes: ["token"],
+    auth_docs_url: "https://docs.aws.amazon.com/bedrock/"
   }),
   ollama: defineProvider("ollama", {
     label: "Ollama (local)",
