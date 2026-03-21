@@ -257,6 +257,12 @@ export async function run4StageLongAgent({
     if (currentStage === nextStage) return
     currentStage = nextStage
     currentStageIteration = 0
+    await LongAgentManager.checkpoint(sessionId, {
+      phase: nextStage,
+      kind: "stage",
+      stageId: nextStage,
+      summary: `entered stage ${nextStage}`
+    })
     const eventMap = {
       [LONGAGENT_4STAGE_STAGES.PREVIEW]: EVENT_TYPES.LONGAGENT_4STAGE_PREVIEW_START,
       [LONGAGENT_4STAGE_STAGES.BLUEPRINT]: EVENT_TYPES.LONGAGENT_4STAGE_BLUEPRINT_START,
@@ -279,11 +285,20 @@ export async function run4StageLongAgent({
     if (eventMap[stage]) {
       await EventBus.emit({ type: eventMap[stage], sessionId, payload: { stage, iteration } })
     }
+    await LongAgentManager.checkpoint(sessionId, {
+      phase: stage,
+      kind: "stage",
+      stageId: stage,
+      summary: `completed stage ${stage}`
+    })
   }
 
   async function syncState(patch = {}) {
     await LongAgentManager.update(sessionId, {
       status: patch.status || "running",
+      providerType,
+      model,
+      maxIterations,
       fourStage: { currentStage, stageContext },
       iterations: iteration,
       heartbeatAt: Date.now(),
@@ -292,7 +307,7 @@ export async function run4StageLongAgent({
   }
 
   await markSessionStatus(sessionId, "running-longagent")
-  await syncState({ status: "running", lastMessage: "4-stage longagent started" })
+  await syncState({ status: "running", objective: prompt, providerType, model, maxIterations, lastMessage: "4-stage longagent started" })
 
   // Git branch setup
   const cwd = process.cwd()

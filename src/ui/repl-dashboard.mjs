@@ -146,6 +146,89 @@ function formatSkillStatus(summary) {
   return lines
 }
 
+function formatLongAgentStatus(longagent, sessionId = null) {
+  if (!longagent || typeof longagent !== "object") return []
+  const enriched = longagent.sessionId ? longagent : { ...longagent, sessionId: sessionId || null }
+  const stageCount = Math.max(0, Number(longagent.stageCount || 0))
+  const stageIndex = Math.max(0, Number(longagent.stageIndex || 0))
+  const stageLabel = longagent.currentStageId || (stageCount > 0 ? `${Math.min(stageIndex + 1, stageCount)}/${stageCount}` : "-")
+  const lines = [
+    `LongAgent: ${longagent.status || "idle"} ${longagent.phase ? `(${longagent.phase})` : ""}`.trim(),
+    `  stage: ${stageLabel} gate=${longagent.currentGate || "-"}`,
+    `  progress: ${longagent.progress?.percentage ?? 0}% recovery=${longagent.recoveryCount || 0}`
+  ]
+  const lastStage = longagent.lastStageReport
+  if (lastStage?.stageId) {
+    lines.push(
+      `  last stage: ${lastStage.stageId} ${String(lastStage.status || "-").toUpperCase()} ${lastStage.successCount || 0} ok / ${lastStage.failCount || 0} fail`
+    )
+    if (Number(lastStage.remainingFilesCount || 0) > 0) {
+      lines.push(`  remaining files: ${lastStage.remainingFilesCount}`)
+    }
+  }
+  const timeline = formatLongagentTimeline(longagent)
+  if (timeline.length) {
+    lines.push("  timeline:")
+    for (const item of timeline) lines.push(`    ${item}`)
+  }
+  const recommended = recommendLongagentAction(enriched)
+  if (recommended) {
+    lines.push(`  recommended: ${compactRecommendedCommand(recommended.command)}`)
+    lines.push(`  reason: ${recommended.reason}`)
+  }
+  return lines
+}
+
+function compactRecommendedCommand(command = "") {
+  const value = String(command || "")
+  const checkpointMatch = value.match(/recover-checkpoint --session [^ ]+ --checkpoint ([^ ]+)/)
+  if (checkpointMatch) return `recover-checkpoint ${checkpointMatch[1]}`
+  const recoverMatch = value.match(/recover --session ([^ ]+)/)
+  if (recoverMatch) return `recover ${recoverMatch[1]}`
+  return value
+}
+
+function recommendLongagentAction(longagent) {
+  if (!longagent?.sessionId) return null
+  if (["interrupted", "error", "cancel_requested"].includes(longagent.backgroundTaskStatus || "")) {
+    return {
+      command: `kkcode longagent recover --session ${longagent.sessionId}`,
+      reason: `background task is ${longagent.backgroundTaskStatus}`
+    }
+  }
+  const checkpoints = Array.isArray(longagent.checkpoints) ? longagent.checkpoints : []
+  const latestCheckpointId = checkpoints.length ? checkpoints[checkpoints.length - 1].id : null
+  if ((longagent.lastStageReport?.status === "fail" || Number(longagent.recoveryCount || 0) > 0) && latestCheckpointId) {
+    return {
+      command: `kkcode longagent recover-checkpoint --session ${longagent.sessionId} --checkpoint ${latestCheckpointId}`,
+      reason: longagent.lastStageReport?.status === "fail"
+        ? `last stage ${longagent.lastStageReport.stageId || "-"} failed`
+        : `recovery_count=${longagent.recoveryCount || 0}`
+    }
+  }
+  return null
+}
+
+function formatLongagentTimeline(longagent, maxItems = 3) {
+  if (!longagent || typeof longagent !== "object") return []
+  const reports = Array.isArray(longagent.stageReports) ? longagent.stageReports : []
+  const checkpoints = Array.isArray(longagent.checkpoints) ? longagent.checkpoints : []
+  const items = []
+
+  for (const report of reports.slice(-Math.max(0, maxItems))) {
+    items.push(`stage ${report.stageId || "-"} ${String(report.status || "-").toUpperCase()}`)
+  }
+  for (const checkpoint of checkpoints.slice(-Math.max(0, maxItems))) {
+    const summary = String(checkpoint.summary || "").trim()
+    items.push(`checkpoint ${checkpoint.phase || "-"} ${checkpoint.kind || "checkpoint"}${summary ? ` ${summary}` : ""}`)
+  }
+  if (longagent.backgroundTaskId) {
+    items.push(`background ${longagent.backgroundTaskStatus || "unknown"} attempt=${longagent.backgroundTaskAttempt || 0}`)
+  }
+
+  return items.slice(-Math.max(0, maxItems))
+}
+
 function renderTag(theme, label, fg = "#0b0b0b", bg = theme.base.accent) {
   return paint(` ${label} `, fg, { bg, bold: true })
 }
@@ -219,6 +302,10 @@ export function renderReplDashboard({
   providers,
   recentSessions,
   customCommandCount,
+  providerSwitches = [],
+  recoverableSessions = [],
+  backgroundSummary = null,
+  recentBackgroundTasks = [],
   mcpSummary = null,
   skillSummary = null,
   cwd,
@@ -246,6 +333,7 @@ export function renderReplDashboard({
         `Mode: ${state.mode}`,
         `Provider: ${state.providerType}`,
         `Model: ${state.model}`,
+        ...formatLongAgentStatus(state.longagent, state.sessionId),
         `Custom commands: ${customCommandCount}`,
         ...formatMcpStatus(mcpSummary),
         ...formatSkillStatus(skillSummary)
@@ -271,15 +359,19 @@ export function renderReplDashboard({
       color: theme.semantic.warn,
       items: [
         ...[
-          "Commands for bootstrap:",
-          "  kkcode mcp discover",
+        "Commands for bootstrap:",
+        "  kkcode init --providers",
+        "  kkcode auth onboard openai",
+        "  kkcode mcp discover",
           "  kkcode mcp init --project",
-          "  kkcode skill init"
+          "  kkcode skill init",
+          "  kkcode auth providers"
         ],
         "Use /dash to redraw this panel",
         "Use /clear to clear screen",
         "Use /model <id> to override model",
-        "Use \"\"\" for multi-line prompts"
+        "Use \"\"\" for multi-line prompts",
+        "Use kkcode background center for task overview"
       ]
     },
     {
@@ -288,16 +380,48 @@ export function renderReplDashboard({
       items: recentLines
     },
     {
+      title: "Task Center",
+      color: theme.semantic.warn,
+      items: backgroundSummary
+        ? [
+            `tasks: total=${backgroundSummary.total} running=${backgroundSummary.running} pending=${backgroundSummary.pending} interrupted=${backgroundSummary.interrupted} error=${backgroundSummary.error}`,
+            `kinds: longagent=${backgroundSummary.longagent} recovery=${backgroundSummary.recovery}`,
+            ...recentBackgroundTasks.slice(0, 3)
+          ]
+        : ["(no background tasks)"]
+    },
+    {
+      title: "Recovery Center",
+      color: theme.semantic.info,
+      items: Array.isArray(recoverableSessions) && recoverableSessions.length
+        ? [
+            `recoverable=${recoverableSessions.length}`,
+            ...recoverableSessions.slice(0, 3).map((item) =>
+              `${item.id || "-"} ${item.status || "recoverable"} ${item.retryable ? "retry" : "resume"}`
+            )
+          ]
+        : ["(no recoverable sessions)"]
+    },
+    {
       title: "Providers",
       color: theme.modes.ask,
-      items: [providers.length ? providers.join(" | ") : "(none configured)"]
+      items: [
+        providers.length ? providers.join(" | ") : "(none configured)",
+        ...(Array.isArray(providerSwitches) && providerSwitches.length
+          ? ["timeline:", ...providerSwitches.slice(0, 3).map((item) => `  ${item}`)]
+          : [])
+      ]
     },
     {
       title: "Useful Commands",
       color: theme.modes.longagent,
       items: [
         "/history /resume /commands /reload",
-        "/ask /plan /agent /longagent"
+        "/ask /plan /agent /longagent",
+        "kkcode session picker",
+        "kkcode auth onboard openai",
+        "kkcode auth probe openai",
+        "kkcode background center"
       ]
     }
   ]
@@ -403,5 +527,12 @@ export function renderStartupHint(recentSessions = []) {
   if (!recentSessions.length) return ""
   const last = recentSessions[0]
   const age = ageLabel(Date.now() - last.updatedAt)
-  return `last session: ${last.id} (${last.mode}, ${age})\n  quick resume: /r ${last.id.slice(0, 12)}`
+  return [
+    `last session: ${last.id} (${last.mode}, ${age})`,
+    `  quick resume: /r ${last.id.slice(0, 12)}`,
+    "  recovery:     /picker or Ctrl+R",
+    "  auth onboard: kkcode auth onboard openai",
+    "  auth catalog: kkcode auth providers",
+    "  task center:  kkcode background center"
+  ].join("\n")
 }

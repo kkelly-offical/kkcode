@@ -159,3 +159,7 @@ export async function ensureGithubReposDir() {
 export function profilePath() {
   return path.join(userRootDir(), "profile.yaml")
 }
+
+export function authProfileStorePath() {
+  return path.join(userRootDir(), "auth-profiles.json")
+}

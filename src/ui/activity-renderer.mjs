@@ -180,11 +180,26 @@ export function formatStageStarted(stageId, taskCount) {
   return `${paint(SYM.stage, "#fb923c", { bold: true })} ${paint("stage", "#fb923c", { bold: true })} ${paint(stageId, "white", { bold: true })} ${paint(`(${taskCount} tasks)`, null, { dim: true })}`
 }
 
-export function formatStageFinished(stageId, successCount, failCount) {
+export function formatStageFinished(stageIdOrPayload, successCountArg, failCountArg) {
+  const payload = typeof stageIdOrPayload === "object" && stageIdOrPayload
+    ? stageIdOrPayload
+    : { stageId: stageIdOrPayload, successCount: successCountArg, failCount: failCountArg }
+  const failCount = Number(payload.failCount || 0)
+  const successCount = Number(payload.successCount || 0)
+  const retryCount = Number(payload.retryCount || 0)
+  const remainingFilesCount = Number(payload.remainingFilesCount || payload.remainingFiles?.length || 0)
+  const fileChangesCount = Number(payload.fileChangesCount || payload.fileChanges?.length || 0)
+  const totalCost = Number(payload.totalCost || 0)
   const status = failCount === 0
     ? paint("PASS", "green", { bold: true })
     : paint(`FAIL (${failCount})`, "red", { bold: true })
-  return `${paint(SYM.stage, "#fb923c")} ${paint("stage", "#fb923c")} ${paint(stageId, "white")} ${status} ${paint(`(${successCount} ok)`, null, { dim: true })}`
+  const extras = []
+  if (retryCount > 0) extras.push(`retry ${retryCount}`)
+  if (remainingFilesCount > 0) extras.push(`${remainingFilesCount} remaining`)
+  if (fileChangesCount > 0) extras.push(`${fileChangesCount} files`)
+  if (totalCost > 0) extras.push(`$${totalCost.toFixed(4)}`)
+  const suffix = extras.length ? ` ${paint(`[${extras.join(" | ")}]`, null, { dim: true })}` : ""
+  return `${paint(SYM.stage, "#fb923c")} ${paint("stage", "#fb923c")} ${paint(payload.stageId || "-", "white")} ${status} ${paint(`(${successCount} ok)`, null, { dim: true })}${suffix}`
 }
 
 export function formatTaskDispatched(_stageId, taskId, attempt) {
@@ -217,6 +232,12 @@ export function formatRecovery(reason, recoveryCount) {
 
 export function formatAlert(kind, message) {
   return `${paint(SYM.alert, "red", { bold: true })} ${paint("alert", "red", { bold: true })} [${kind}] ${paint(message || "", null, { dim: true })}`
+}
+
+export function formatProviderFallback(requested, resolved, model, reason) {
+  const target = resolved ? `${resolved}${model ? `::${model}` : ""}` : model || "-"
+  const reasonText = reason ? paint(clipText(reason, 80), null, { dim: true }) : paint("retrying with fallback target", null, { dim: true })
+  return `${paint(SYM.arrow, "yellow")} ${paint("provider fallback", "yellow", { bold: true })} ${paint(String(requested || "-"), null, { dim: true })} ${paint("→", null, { dim: true })} ${paint(target, "yellow")} ${reasonText}`
 }
 
 export function formatIntakeStarted(objective) {
@@ -481,7 +502,7 @@ export function createActivityRenderer({ output, theme = null }) {
       }
 
       case EVENT_TYPES.LONGAGENT_STAGE_FINISHED: {
-        log(formatStageFinished(payload.stageId, payload.successCount, payload.failCount))
+        log(formatStageFinished(payload))
         break
       }
 
@@ -644,6 +665,11 @@ export function createActivityRenderer({ output, theme = null }) {
 
       case EVENT_TYPES.SESSION_COMPACTED: {
         log(`${paint(SYM.phase, "magenta")} ${paint("context compacted", "magenta", { dim: true })}`)
+        break
+      }
+
+      case EVENT_TYPES.PROVIDER_FALLBACK: {
+        log(formatProviderFallback(payload.requested, payload.resolved, payload.model, payload.reason))
         break
       }
     }

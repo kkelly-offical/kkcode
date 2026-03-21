@@ -5,6 +5,8 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { registerProvider } from "../src/provider/router.mjs"
 import { runLongAgent } from "../src/session/longagent.mjs"
+import { EventBus } from "../src/core/events.mjs"
+import { EVENT_TYPES } from "../src/core/constants.mjs"
 
 let tmpHome = ""
 let tmpProject = ""
@@ -117,4 +119,34 @@ test("longagent maxIterations is warning threshold only and does not stop execut
   assert.equal(result.status, "completed")
   assert.ok(result.iterations >= 1, `expected at least 1 iteration, got ${result.iterations}`)
   assert.equal(result.stageCount, 1)
+})
+
+test("longagent honors runtime maxIterations override over config value", async () => {
+  registerProvider("mock_longagent", createMockProvider([
+    { text: "[TASK_COMPLETE] all done", toolCalls: [], usage: { input: 5, output: 5, cacheRead: 0, cacheWrite: 0 } }
+  ]))
+
+  const gateEvents = []
+  const unsubscribe = EventBus.subscribe((event) => {
+    if (event.type === EVENT_TYPES.LONGAGENT_GATE_CHECKED && event.payload?.gate === "max_iterations") {
+      gateEvents.push(event)
+    }
+  })
+
+  try {
+    const result = await runLongAgent({
+      prompt: "finish task",
+      model: "mock-model",
+      providerType: "mock_longagent",
+      sessionId: `ses_longagent_override_${Date.now()}`,
+      configState: baseConfig({ max_iterations: 5, no_progress_limit: 5 }),
+      maxIterations: 1
+    })
+
+    assert.equal(result.status, "completed")
+    assert.equal(gateEvents.length > 0, true)
+    assert.equal(gateEvents[0].payload.threshold, 1)
+  } finally {
+    unsubscribe()
+  }
 })

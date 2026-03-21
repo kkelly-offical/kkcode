@@ -1,49 +1,41 @@
+import { buildProviderEntryFromCatalog, listCatalogProviders } from "../provider/catalog.mjs"
+
+const STANDARD_PROVIDER_DEFAULTS = {
+  timeout_ms: 120000,
+  stream_idle_timeout_ms: 120000,
+  max_tokens: 32768,
+  context_limit: null,
+  retry_attempts: 3,
+  retry_base_delay_ms: 800,
+  stream: true,
+  thinking: null
+}
+
+function buildDefaultProviderConfig(providerId, overrides = {}) {
+  return {
+    ...STANDARD_PROVIDER_DEFAULTS,
+    ...(buildProviderEntryFromCatalog(providerId) || {}),
+    ...overrides
+  }
+}
+
+const DEFAULT_PROVIDER_CONFIG = Object.fromEntries(
+  listCatalogProviders({ includeInDefaults: true }).map((provider) => [provider.id, buildDefaultProviderConfig(provider.id)])
+)
+
+DEFAULT_PROVIDER_CONFIG.ollama = buildDefaultProviderConfig("ollama", {
+  timeout_ms: 300000,
+  stream_idle_timeout_ms: 300000,
+  retry_attempts: 1,
+  retry_base_delay_ms: 1000
+})
+
 export const DEFAULT_CONFIG = {
   language: "en",
   provider: {
     default: "openai",
     strict_mode: false,
-    openai: {
-      base_url: "https://api.openai.com/v1",
-      api_key_env: "OPENAI_API_KEY",
-      default_model: "gpt-5.3-codex",
-      models: ["gpt-5.3-codex", "gpt-5.2"],
-      timeout_ms: 120000,
-      stream_idle_timeout_ms: 120000,
-      max_tokens: 32768,
-      context_limit: null,
-      retry_attempts: 3,
-      retry_base_delay_ms: 800,
-      stream: true,
-      thinking: null
-    },
-    anthropic: {
-      base_url: "https://api.anthropic.com/v1",
-      api_key_env: "ANTHROPIC_API_KEY",
-      default_model: "claude-opus-4-6",
-      models: ["claude-sonnet-4-5", "claude-sonnet-4-6", "claude-haiku-4-5-20251001", "claude-opus-4-6"],
-      timeout_ms: 120000,
-      stream_idle_timeout_ms: 120000,
-      max_tokens: 32768,
-      context_limit: null,
-      retry_attempts: 3,
-      retry_base_delay_ms: 800,
-      stream: true,
-      thinking: null
-    },
-    ollama: {
-      base_url: "http://localhost:11434",
-      api_key_env: "",
-      default_model: "llama3.1",
-      timeout_ms: 300000,
-      stream_idle_timeout_ms: 300000,
-      max_tokens: 32768,
-      context_limit: null,
-      retry_attempts: 1,
-      retry_base_delay_ms: 1000,
-      stream: true,
-      thinking: null
-    },
+    ...DEFAULT_PROVIDER_CONFIG,
     model_context: {}
   },
   agent: {
@@ -235,6 +227,8 @@ export const DEFAULT_CONFIG = {
   },
   ui: {
     theme_file: null,
+    alternate_screen: "auto",
+    log_buffer_lines: 5000,
     mode_colors: {
       ask: "#8da3b9",
       plan: "#00b7c2",

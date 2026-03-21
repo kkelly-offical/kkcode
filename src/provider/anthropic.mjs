@@ -140,7 +140,7 @@ function timeoutSignal(ms, parentSignal = null) {
 }
 
 export async function requestAnthropic(input) {
-  const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 120000, maxTokens = 16384, retry = {}, signal = null } = input
+  const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 120000, maxTokens = 16384, retry = {}, signal = null, headers = {} } = input
   if (!apiKey) {
     throw new ProviderError(`missing API key for anthropic provider (env: ${input.apiKeyEnv || "unknown"})`, {
       provider: "anthropic"
@@ -170,6 +170,7 @@ export async function requestAnthropic(input) {
         method: "POST",
         headers: {
           "content-type": "application/json",
+          ...headers,
           "x-api-key": apiKey,
           "anthropic-version": "2023-06-01",
           "anthropic-beta": "prompt-caching-2024-07-31"
@@ -206,7 +207,7 @@ export async function requestAnthropic(input) {
 }
 
 export async function countTokensAnthropic(input) {
-  const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 10000 } = input
+  const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 10000, headers = {} } = input
   if (!apiKey) return null
   const endpoint = `${baseUrl.replace(/\/$/, "")}/messages/count_tokens`
   const mappedTools = mapTools(tools)
@@ -221,6 +222,7 @@ export async function countTokensAnthropic(input) {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...headers,
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01"
       },
@@ -236,7 +238,7 @@ export async function countTokensAnthropic(input) {
 }
 
 export async function* requestAnthropicStream(input) {
-  const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 120000, streamIdleTimeoutMs = 120000, maxTokens = 16384, retry = {}, signal = null, compaction = null } = input
+  const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 120000, streamIdleTimeoutMs = 120000, maxTokens = 16384, retry = {}, signal = null, compaction = null, headers = {} } = input
   if (!apiKey) {
     throw new ProviderError(`missing API key for anthropic provider (env: ${input.apiKeyEnv || "unknown"})`, {
       provider: "anthropic"
@@ -277,6 +279,7 @@ export async function* requestAnthropicStream(input) {
         method: "POST",
         headers: {
           "content-type": "application/json",
+          ...headers,
           "x-api-key": apiKey,
           "anthropic-version": "2023-06-01",
           "anthropic-beta": compaction ? "prompt-caching-2024-07-31,compact-2026-01-12" : "prompt-caching-2024-07-31"

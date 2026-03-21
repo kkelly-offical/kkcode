@@ -1,6 +1,6 @@
 import { describe, it } from "node:test"
 import assert from "node:assert"
-import { mkdir, writeFile, rmdir } from "node:fs/promises"
+import { mkdir, writeFile, readFile, rm, mkdtemp } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { execSync } from "node:child_process"
@@ -101,7 +101,7 @@ describe("Git Auto - Integration Tests", () => {
   async function cleanupTestRepo() {
     if (testRepoPath) {
       try {
-        await rmdir(testRepoPath, { recursive: true })
+        await rm(testRepoPath, { recursive: true, force: true })
       } catch { /* ignore */ }
     }
     process.chdir(originalCwd)
@@ -119,7 +119,7 @@ describe("Git Auto - Integration Tests", () => {
       const tmpDir = await mkdtemp(path.join(tmpdir(), "non-git-"))
       const isRepo = await isGitRepo(tmpDir)
       assert.strictEqual(isRepo, false)
-      await rmdir(tmpDir, { recursive: true })
+      await rm(tmpDir, { recursive: true, force: true })
     })
 
     it("should get git info", async () => {
@@ -170,7 +170,7 @@ describe("Git Auto - Integration Tests", () => {
       const result = await createGhostCommit(tmpDir, "test")
       assert.strictEqual(result.ok, false)
       assert.ok(result.error.includes("not a git"))
-      await rmdir(tmpDir, { recursive: true })
+      await rm(tmpDir, { recursive: true, force: true })
     })
   })
 
@@ -329,14 +329,3 @@ describe("Git Auto - Integration Tests", () => {
     })
   })
 })
-
-// 辅助函数
-async function mkdtemp(prefix) {
-  const { mkdtemp: realMkdtemp } = await import("node:fs/promises")
-  return realMkdtemp(prefix)
-}
-
-async function readFile(path, encoding) {
-  const { readFile: realReadFile } = await import("node:fs/promises")
-  return realReadFile(path, encoding)
-}

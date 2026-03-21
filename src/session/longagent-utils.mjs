@@ -146,6 +146,38 @@ export function normalizeFileChange(item = {}) {
   }
 }
 
+export function buildStageReport(stageResult = {}, meta = {}) {
+  const remainingFiles = [...new Set(
+    (Array.isArray(stageResult.remainingFiles) ? stageResult.remainingFiles : [])
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+  )]
+  const fileChangesCount = Array.isArray(stageResult.fileChanges) ? stageResult.fileChanges.length : 0
+  const totalCost = Number.isFinite(Number(stageResult.totalCost)) ? Number(stageResult.totalCost) : 0
+  const stageId = String(stageResult.stageId || meta.stageId || "").trim()
+  const stageName = String(meta.stageName || stageResult.stageName || "").trim()
+  const successCount = Math.max(0, Number(stageResult.successCount || 0))
+  const failCount = Math.max(0, Number(stageResult.failCount || 0))
+  const retryCount = Math.max(0, Number(stageResult.retryCount || 0))
+  return {
+    stageId,
+    stageName,
+    stageIndex: Math.max(0, Number(meta.stageIndex || 0)),
+    stageCount: Math.max(0, Number(meta.stageCount || 0)),
+    status: failCount === 0 ? "pass" : "fail",
+    successCount,
+    failCount,
+    retryCount,
+    remainingFiles: remainingFiles.slice(0, 12),
+    remainingFilesCount: remainingFiles.length,
+    fileChangesCount,
+    totalCost,
+    completionMarkerSeen: stageResult.completionMarkerSeen === true,
+    allSuccess: stageResult.allSuccess === true || failCount === 0,
+    updatedAt: Date.now()
+  }
+}
+
 // ========== 防卡死机制 (ported from Mark's anti-stuck work) ==========
 
 export const READ_ONLY_TOOLS = new Set(["read", "glob", "grep", "list", "webfetch", "websearch", "codesearch"])

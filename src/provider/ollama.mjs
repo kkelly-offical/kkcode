@@ -94,7 +94,7 @@ function timeoutSignal(ms, parentSignal = null) {
 
 // --- Non-streaming ---
 export async function requestOllama(input) {
-  const { baseUrl, model, system, messages, tools, timeoutMs = 300000, signal = null } = input
+  const { baseUrl, model, system, messages, tools, timeoutMs = 300000, signal = null, headers = {} } = input
 
   const endpoint = `${baseUrl.replace(/\/$/, "")}/api/chat`
   const payload = {
@@ -107,7 +107,7 @@ export async function requestOllama(input) {
 
   const response = await fetch(endpoint, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify(payload),
     signal: timeoutSignal(timeoutMs, signal)
   })
@@ -145,7 +145,7 @@ export async function requestOllama(input) {
 
 // --- Streaming (NDJSON) ---
 export async function* requestOllamaStream(input) {
-  const { baseUrl, model, system, messages, tools, timeoutMs = 300000, signal = null } = input
+  const { baseUrl, model, system, messages, tools, timeoutMs = 300000, signal = null, headers = {} } = input
 
   const endpoint = `${baseUrl.replace(/\/$/, "")}/api/chat`
   const payload = {
@@ -158,7 +158,7 @@ export async function* requestOllamaStream(input) {
 
   const response = await fetch(endpoint, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify(payload),
     signal: timeoutSignal(timeoutMs, signal)
   })

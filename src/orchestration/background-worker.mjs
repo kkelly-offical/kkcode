@@ -4,6 +4,7 @@ import { ensureBackgroundTaskRuntimeDir, backgroundTaskCheckpointPath, backgroun
 import { buildContext } from "../context.mjs"
 import { ToolRegistry } from "../tool/registry.mjs"
 import { executeTurn } from "../session/engine.mjs"
+import { LongAgentManager } from "./longagent-manager.mjs"
 
 function now() {
   return Date.now()
@@ -65,6 +66,21 @@ async function appendTaskLog(taskId, line) {
       await flushLogBuffer(taskId).catch(() => {})
     }, LOG_FLUSH_INTERVAL_MS)
   }
+}
+
+function resolveLongAgentSessionId(payload = {}, task = {}) {
+  return String(payload.longagentSessionId || payload.sessionId || task.id || "").trim() || null
+}
+
+async function syncLongAgentBackgroundState(task, patch = {}) {
+  const payload = task?.payload || {}
+  const sessionId = resolveLongAgentSessionId(payload, task)
+  if (!sessionId) return null
+  const cwd = payload.cwd || process.cwd()
+  return LongAgentManager.update(sessionId, {
+    objective: String(payload.prompt || ""),
+    ...patch
+  }, cwd)
 }
 
 async function runDelegateTask(task, signal) {
@@ -143,6 +159,61 @@ async function runDelegateTask(task, signal) {
   }
 }
 
+async function runLongAgentSession(task, signal) {
+  const payload = task.payload || {}
+  const cwd = payload.cwd || process.cwd()
+  process.chdir(cwd)
+  await syncLongAgentBackgroundState(task, {
+    status: "queued",
+    backgroundTaskId: task.id,
+    backgroundTaskStatus: task.status || "running",
+    backgroundTaskAttempt: Number(task.attempt || 1),
+    backgroundTaskUpdatedAt: Date.now(),
+    lastMessage: "background longagent worker attached"
+  })
+
+  const ctx = await buildContext({ cwd })
+  _maxLogLines = Number(ctx.configState.config?.background?.max_log_lines || 300)
+  await ToolRegistry.initialize({
+    config: ctx.configState.config,
+    cwd
+  })
+  const { CustomAgentRegistry } = await import("../agent/custom-agent-loader.mjs")
+  await CustomAgentRegistry.initialize(cwd)
+
+  const providerType = payload.providerType || ctx.configState.config.provider.default
+  const providerDefault = ctx.configState.config.provider[providerType]
+  const model = payload.model || providerDefault?.default_model
+
+  const out = await executeTurn({
+    prompt: String(payload.prompt || ""),
+    mode: "longagent",
+    model,
+    providerType,
+    sessionId: payload.longagentSessionId || payload.sessionId || task.id,
+    configState: ctx.configState,
+    signal,
+    allowQuestion: false,
+    maxIterations: Number(payload.maxIterations || 0),
+    toolContext: {
+      backgroundTaskId: task.id
+    }
+  })
+
+  return {
+    session_id: payload.longagentSessionId || payload.sessionId || task.id,
+    reply: out.reply,
+    status: out.status,
+    phase: out.phase,
+    stage_index: out.stageIndex,
+    stage_count: out.stageCount,
+    current_stage_id: out.currentStageId || null,
+    recovery_count: out.recoveryCount || 0,
+    last_message: out.lastMessage || "",
+    file_changes: Array.isArray(out.fileChanges) ? out.fileChanges : []
+  }
+}
+
 const SILENT_ERROR_PATTERNS = [
   /provider[\s._-]*error/i,
   /api[\s._-]*timeout/i,
@@ -190,14 +261,14 @@ function detectSilentError(result, payload) {
 async function main() {
   const taskId = argValue("--task-id") || process.env.KKCODE_BACKGROUND_TASK_ID || null
   if (!taskId) {
-    process.exit(1)
+    process.exitCode = 1
     return
   }
 
   await ensureBackgroundTaskRuntimeDir()
   const task = await readTask(taskId)
   if (!task) {
-    process.exit(1)
+    process.exitCode = 1
     return
   }
 
@@ -206,16 +277,28 @@ async function main() {
       status: "cancelled",
       endedAt: now()
     }))
-    process.exit(0)
+    process.exitCode = 0
     return
   }
 
   await patchTask(taskId, () => ({
     status: "running",
     workerPid: process.pid,
+    workerToken: process.env.KKCODE_BACKGROUND_TASK_TOKEN || null,
+    workerHostPid: Number(process.env.KKCODE_BACKGROUND_HOST_PID || 0) || null,
+    workerBootConfirmedAt: now(),
+    workerBootDeadlineAt: null,
     startedAt: now(),
     lastHeartbeatAt: now()
   }))
+  await syncLongAgentBackgroundState(task, {
+    status: "running",
+    backgroundTaskId: task.id,
+    backgroundTaskStatus: "running",
+    backgroundTaskAttempt: Number(task.attempt || 1),
+    backgroundTaskUpdatedAt: now(),
+    lastMessage: "background worker running"
+  }).catch(() => {})
 
   const abortController = new AbortController()
   const parentPid = process.ppid
@@ -244,38 +327,55 @@ async function main() {
       abortController.abort(makeAbortError(`worker timeout after ${timeoutMs}ms`))
     }
   }, timeoutMs)
+  let exitCode = 0
 
   try {
     await appendTaskLog(taskId, `task started (worker pid=${process.pid})`)
 
     const latest = await readTask(taskId)
-    if (!latest?.payload?.workerType || latest.payload.workerType !== "delegate_task") {
-      throw new Error(`unsupported workerType: ${latest?.payload?.workerType || "unknown"}`)
+    const workerType = latest?.payload?.workerType || "unknown"
+    let result
+    if (workerType === "delegate_task") {
+      result = await runDelegateTask(latest, abortController.signal)
+      const silentCheck = detectSilentError(result, latest.payload)
+      if (silentCheck.hasError) {
+        await appendTaskLog(taskId, `silent error detected: ${silentCheck.errorMessage}`)
+        await patchTask(taskId, () => ({
+          status: "error",
+          result,
+          error: silentCheck.errorMessage,
+          endedAt: now(),
+          lastHeartbeatAt: now(),
+          workerPid: null,
+          workerToken: null
+        }))
+        exitCode = 1
+        return
+      }
+    } else if (workerType === "longagent_session") {
+      result = await runLongAgentSession(latest, abortController.signal)
+    } else {
+      throw new Error(`unsupported workerType: ${workerType}`)
     }
 
-    const result = await runDelegateTask(latest, abortController.signal)
-    const silentCheck = detectSilentError(result, latest.payload)
-    if (silentCheck.hasError) {
-      await appendTaskLog(taskId, `silent error detected: ${silentCheck.errorMessage}`)
-      await patchTask(taskId, () => ({
-        status: "error",
-        result,
-        error: silentCheck.errorMessage,
-        endedAt: now(),
-        lastHeartbeatAt: now()
-      }))
-      process.exit(1)
-    } else {
-      await appendTaskLog(taskId, "task completed")
-      await patchTask(taskId, () => ({
-        status: "completed",
-        result,
-        error: null,
-        endedAt: now(),
-        lastHeartbeatAt: now()
-      }))
-      process.exit(0)
-    }
+    await appendTaskLog(taskId, "task completed")
+    await patchTask(taskId, () => ({
+      status: "completed",
+      result,
+      error: null,
+      endedAt: now(),
+      lastHeartbeatAt: now(),
+      workerPid: null,
+      workerToken: null
+    }))
+    await syncLongAgentBackgroundState(latest, {
+      backgroundTaskId: taskId,
+      backgroundTaskStatus: "completed",
+      backgroundTaskAttempt: Number(latest?.attempt || 1),
+      backgroundTaskUpdatedAt: now(),
+      lastMessage: "background worker completed"
+    }).catch(() => {})
+    exitCode = 0
   } catch (error) {
     const latest = await readTask(taskId)
     const cancelled = latest?.cancelled
@@ -285,9 +385,19 @@ async function main() {
       await patchTask(taskId, () => ({
         status: "cancelled",
         endedAt: now(),
-        error: null
+        error: null,
+        workerPid: null,
+        workerToken: null
       }))
-      process.exit(0)
+      await syncLongAgentBackgroundState(latest, {
+        backgroundTaskId: taskId,
+        backgroundTaskStatus: "cancelled",
+        backgroundTaskAttempt: Number(latest?.attempt || 1),
+        backgroundTaskUpdatedAt: now(),
+        status: "cancelled",
+        lastMessage: "background worker cancelled"
+      }).catch(() => {})
+      exitCode = 0
       return
     }
 
@@ -296,9 +406,19 @@ async function main() {
       await patchTask(taskId, () => ({
         status: "interrupted",
         error: error.message,
-        endedAt: now()
+        endedAt: now(),
+        workerPid: null,
+        workerToken: null
       }))
-      process.exit(2)
+      await syncLongAgentBackgroundState(latest, {
+        backgroundTaskId: taskId,
+        backgroundTaskStatus: "interrupted",
+        backgroundTaskAttempt: Number(latest?.attempt || 1),
+        backgroundTaskUpdatedAt: now(),
+        status: "interrupted",
+        lastMessage: error.message
+      }).catch(() => {})
+      exitCode = 2
       return
     }
 
@@ -306,16 +426,32 @@ async function main() {
     await patchTask(taskId, () => ({
       status: "error",
       error: error.message,
-      endedAt: now()
+      endedAt: now(),
+      workerPid: null,
+      workerToken: null
     }))
-    process.exit(1)
+    await syncLongAgentBackgroundState(latest, {
+      backgroundTaskId: taskId,
+      backgroundTaskStatus: "error",
+      backgroundTaskAttempt: Number(latest?.attempt || 1),
+      backgroundTaskUpdatedAt: now(),
+      status: "error",
+      lastMessage: error.message
+    }).catch(() => {})
+    exitCode = 1
   } finally {
     clearInterval(heartbeatTimer)
     clearInterval(cancelPoll)
     clearTimeout(timeoutTimer)
+    if (_logFlushTimer) {
+      clearTimeout(_logFlushTimer)
+      _logFlushTimer = null
+    }
+    await flushLogBuffer(taskId).catch(() => {})
+    process.exitCode = exitCode
   }
 }
 
 main().catch(() => {
-  process.exit(1)
+  process.exitCode = 1
 })

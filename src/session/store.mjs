@@ -8,7 +8,8 @@ import {
   sessionDataPath,
   legacySessionStorePath,
   sessionShardRootPath,
-  sessionCheckpointRootPath
+  sessionCheckpointRootPath,
+  userRootDir
 } from "../storage/paths.mjs"
 import { readJson, writeJson } from "../storage/json-store.mjs"
 
@@ -68,6 +69,7 @@ async function exists(file) {
 }
 
 const state = {
+  rootDir: userRootDir(),
   loaded: false,
   index: defaultIndex(),
   sessionCache: new Map(),
@@ -98,6 +100,26 @@ function withLock(fn) {
   ])
 }
 
+function resetStateForRoot(nextRootDir) {
+  if (state.flushTimer) {
+    clearTimeout(state.flushTimer)
+    state.flushTimer = null
+  }
+  state.rootDir = nextRootDir
+  state.loaded = false
+  state.index = defaultIndex()
+  state.sessionCache = new Map()
+  state.dirtyIndex = false
+  state.dirtySessions = new Set()
+}
+
+function syncStoreRoot() {
+  const nextRootDir = userRootDir()
+  if (nextRootDir !== state.rootDir) {
+    resetStateForRoot(nextRootDir)
+  }
+}
+
 function scheduleFlush() {
   if (state.options.flushIntervalMs <= 0) return
   if (state.flushTimer) return
@@ -117,6 +139,7 @@ function markDirty(sessionId = null) {
 }
 
 async function flushUnsafe() {
+  syncStoreRoot()
   if (!state.loaded) return
   await ensureUserRoot()
   await ensureSessionShardRoot()
@@ -128,13 +151,45 @@ async function flushUnsafe() {
   }
 
   if (state.dirtyIndex) {
-    state.index.updatedAt = now()
+    const diskIndex = normalizeIndex(await readJson(sessionIndexPath(), defaultIndex()))
+    const mergedSessions = { ...diskIndex.sessions }
+    for (const [sessionId, session] of Object.entries(state.index.sessions || {})) {
+      const diskSession = mergedSessions[sessionId]
+      if (!diskSession) {
+        mergedSessions[sessionId] = session
+        continue
+      }
+      mergedSessions[sessionId] = Number(session?.updatedAt || 0) >= Number(diskSession?.updatedAt || 0)
+        ? session
+        : diskSession
+    }
+    state.index = {
+      ...diskIndex,
+      ...state.index,
+      sessions: mergedSessions,
+      updatedAt: now()
+    }
     await writeJson(sessionIndexPath(), state.index)
     state.dirtyIndex = false
   }
 }
 
+function normalizeIndex(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return defaultIndex()
+  return {
+    version: Number(raw.version || 2),
+    updatedAt: Number(raw.updatedAt || now()),
+    sessions: raw.sessions && typeof raw.sessions === "object" && !Array.isArray(raw.sessions)
+      ? raw.sessions
+      : {}
+  }
+}
+
 export async function flushNow() {
+  if (state.flushTimer) {
+    clearTimeout(state.flushTimer)
+    state.flushTimer = null
+  }
   return withLock(async () => {
     await flushUnsafe()
   })
@@ -180,6 +235,7 @@ async function migrateLegacyStoreIfNeededUnsafe() {
 }
 
 async function ensureLoadedUnsafe() {
+  syncStoreRoot()
   if (state.loaded) return
   await ensureUserRoot()
   await ensureSessionShardRoot()
@@ -194,6 +250,7 @@ async function ensureLoaded() {
 }
 
 export function configureSessionStore(options = {}) {
+  syncStoreRoot()
   if (typeof options.sessionShardEnabled === "boolean") {
     state.options.sessionShardEnabled = options.sessionShardEnabled
   }

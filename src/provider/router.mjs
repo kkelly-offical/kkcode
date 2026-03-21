@@ -2,6 +2,10 @@ import { requestAnthropic, requestAnthropicStream, countTokensAnthropic } from "
 import { requestOpenAI, requestOpenAIStream, countTokensOpenAI } from "./openai.mjs"
 import { request as requestOAICompat, requestStream as requestStreamOAICompat } from "./openai-compatible.mjs"
 import { requestOllama, requestOllamaStream } from "./ollama.mjs"
+import { resolveProviderAuthProfile, upsertAuthProfile } from "./auth-profiles.mjs"
+import { resolveGitHubCopilotRuntimeAuth } from "./github-copilot-auth.mjs"
+import { refreshQwenPortalToken } from "./qwen-portal-auth.mjs"
+import { createProviderAttemptChain } from "./runtime-factory.mjs"
 import { ProviderError } from "../core/errors.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
@@ -31,7 +35,7 @@ registerProvider("openai-compatible", { request: requestOAICompat, requestStream
 registerProvider("ollama", { request: requestOllama, requestStream: requestOllamaStream })
 
 // --- Settings Resolution ---
-function resolveSettings(configState, providerType, overrides = {}) {
+async function resolveSettings(configState, providerType, overrides = {}) {
   const llm = configState.config.provider
 
   // Resolve registry key: direct match → config type field → fallback to openai
@@ -58,16 +62,140 @@ function resolveSettings(configState, providerType, overrides = {}) {
 
   // Read config from original provider name (e.g. "deepseek"), not resolved type
   const defaults = llm[providerType] || llm[resolvedType] || {}
-  const normalizedModel = String(overrides.model || defaults.default_model || "").includes("/")
-    ? String(overrides.model || defaults.default_model).split("/").slice(1).join("/")
-    : String(overrides.model || defaults.default_model || "")
+  let auth = await resolveProviderAuthProfile({
+    providerId: providerType,
+    explicitProfileId: defaults.auth_profile || null
+  })
+  if (
+    auth.readyState === "expired" &&
+    auth.profile?.providerId === "qwen-portal" &&
+    auth.profile?.refreshToken
+  ) {
+    try {
+      const refreshed = await refreshQwenPortalToken({ refreshToken: auth.profile.refreshToken })
+      await upsertAuthProfile({
+        ...auth.profile,
+        authMode: "oauth",
+        credential: refreshed.accessToken,
+        accessToken: refreshed.accessToken,
+        refreshToken: refreshed.refreshToken,
+        expiresAt: refreshed.expiresAt,
+        lastVerifiedAt: Date.now(),
+        status: "ready"
+      })
+      auth = await resolveProviderAuthProfile({
+        providerId: providerType,
+        explicitProfileId: defaults.auth_profile || auth.profile.id || null
+      })
+    } catch {
+      // Keep the expired auth state and allow env/config credentials to win.
+    }
+  }
+  const rawModel = String(overrides.model || defaults.default_model || "")
+  const normalizedModel = normalizeModelId(rawModel, {
+    providerType,
+    resolvedType,
+    providerConfigType: defaults.type || null
+  })
+  const envOverride = overrides.apiKeyEnv || null
+  const configEnv = defaults.api_key_env || ""
+  const explicitEnvCredential = envOverride ? String(process.env[envOverride] || "").trim() : ""
+  const configEnvCredential = !envOverride && configEnv ? String(process.env[configEnv] || "").trim() : ""
+  const authCredential = auth.readyState === "ready" ? auth.credential : ""
+  const rawCredential = explicitEnvCredential || authCredential || defaults.api_key || configEnvCredential || ""
+  const authProjection = await resolveProviderAuthProjection({
+    providerId: providerType,
+    resolvedType,
+    credential: rawCredential,
+    headers: {
+      ...(defaults.headers || {}),
+      ...(auth.headers || {})
+    }
+  })
   return {
     providerType: resolvedType,
     configKey: providerType,
     model: normalizedModel,
-    baseUrl: overrides.baseUrl || defaults.base_url,
-    apiKeyEnv: overrides.apiKeyEnv || defaults.api_key_env,
-    apiKeyDirect: defaults.api_key || null
+    baseUrl: overrides.baseUrl || authProjection.baseUrl || auth.baseUrlOverride || defaults.base_url,
+    apiKeyEnv: envOverride || configEnv,
+    apiKey: authProjection.apiKey,
+    headers: authProjection.headers,
+    authProfileId: auth.profile?.id || null,
+    authReadyState: auth.readyState
+  }
+}
+
+async function emitProviderFallbackEvent(payload) {
+  await EventBus.emit({
+    type: EVENT_TYPES.PROVIDER_FALLBACK,
+    payload
+  }).catch(() => {})
+}
+
+function normalizeModelId(model, { providerType, resolvedType, providerConfigType } = {}) {
+  const raw = String(model || "").trim()
+  if (!raw.includes("/")) return raw
+  const [prefix, ...rest] = raw.split("/")
+  if (!prefix || rest.length === 0) return raw
+  const providerPrefixes = new Set(
+    [providerType, resolvedType, providerConfigType]
+      .filter(Boolean)
+      .map((item) => String(item).trim().toLowerCase())
+  )
+  return providerPrefixes.has(prefix.toLowerCase()) ? rest.join("/") : raw
+}
+
+async function resolveProviderAuthProjection({ providerId, resolvedType, credential, headers = {} } = {}) {
+  const providerKey = String(providerId || "").trim().toLowerCase()
+  const providerRuntime = String(resolvedType || "").trim().toLowerCase()
+  const rawCredential = String(credential || "").trim()
+  const baseHeaders = { ...(headers || {}) }
+
+  if (!rawCredential) {
+    return { apiKey: "", headers: baseHeaders }
+  }
+
+  if (providerKey === "gemini" || providerRuntime === "gemini") {
+    if (rawCredential.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(rawCredential)
+        const token = String(parsed?.token || "").trim()
+        const projectId = String(parsed?.projectId || "").trim()
+        if (token) {
+          return {
+            apiKey: "",
+            headers: {
+              ...baseHeaders,
+              Authorization: `Bearer ${token}`,
+              ...(projectId ? { "x-goog-user-project": projectId } : {})
+            }
+          }
+        }
+      } catch {
+        // Fall back to API-key style auth below.
+      }
+    }
+    return {
+      apiKey: "",
+      headers: {
+        ...baseHeaders,
+        "x-goog-api-key": rawCredential
+      }
+    }
+  }
+
+  if (providerKey === "github-copilot") {
+    const runtimeAuth = await resolveGitHubCopilotRuntimeAuth({ githubToken: rawCredential })
+    return {
+      apiKey: runtimeAuth.apiKey,
+      baseUrl: runtimeAuth.baseUrl,
+      headers: baseHeaders
+    }
+  }
+
+  return {
+    apiKey: rawCredential,
+    headers: baseHeaders
   }
 }
 
@@ -126,40 +254,43 @@ export async function requestProvider({
   apiKeyEnv = null
 }) {
   const resolvedProviderType = providerType || configState.config.provider.default
-  const settings = resolveSettings(configState, resolvedProviderType, {
+  const attempts = await createProviderAttemptChain({
+    configState,
+    providerType: resolvedProviderType,
     model,
     baseUrl,
-    apiKeyEnv
-  })
-  const apiKey = settings.apiKeyDirect || process.env[settings.apiKeyEnv] || ""
-  const providerCfg = configState.config.provider[settings.configKey] || configState.config.provider[settings.providerType] || {}
-
-  const input = {
-    apiKey,
-    baseUrl: settings.baseUrl,
-    apiKeyEnv: settings.apiKeyEnv,
-    model: settings.model,
+    apiKeyEnv,
     system,
     messages,
     tools,
-    timeoutMs: Number(providerCfg.timeout_ms || 120000),
-    maxTokens: Number(providerCfg.max_tokens || 16384),
-    retry: {
-      attempts: Number(providerCfg.retry_attempts || 3),
-      baseDelayMs: Number(providerCfg.retry_base_delay_ms || 800)
-    },
-    thinking: providerCfg.thinking || null
-  }
+    stream: false,
+    resolveSettings,
+    getProvider
+  })
+  let lastError = null
 
-  const provider = registry.get(settings.providerType)
-  if (!provider) {
-    throw new Error(`unknown provider: ${settings.providerType}. registered: ${listProviders().join(", ")}`)
+  for (let index = 0; index < attempts.length; index += 1) {
+    const attempt = attempts[index]
+    const { settings, provider, input } = attempt
+    if (!provider) {
+      throw new Error(`unknown provider: ${settings.providerType}. registered: ${listProviders().join(", ")}`)
+    }
+    try {
+      if (index > 0) {
+        await emitProviderFallbackEvent({
+          requested: resolvedProviderType,
+          resolved: attempt.target.providerType,
+          runtime: settings.providerType,
+          model: settings.model,
+          reason: lastError?.message || null
+        })
+      }
+      return await provider.request(input)
+    } catch (error) {
+      lastError = normalizeProviderError(error, settings.providerType, settings.model)
+    }
   }
-  try {
-    return await provider.request(input)
-  } catch (error) {
-    throw normalizeProviderError(error, settings.providerType, settings.model)
-  }
+  throw lastError || new ProviderError("provider request failed", { provider: resolvedProviderType, reason: "unknown" })
 }
 
 // --- Streaming Request ---
@@ -176,53 +307,77 @@ export async function* requestProviderStream({
   compaction = null
 }) {
   const resolvedProviderType = providerType || configState.config.provider.default
-  const settings = resolveSettings(configState, resolvedProviderType, {
+  const attempts = await createProviderAttemptChain({
+    configState,
+    providerType: resolvedProviderType,
     model,
     baseUrl,
-    apiKeyEnv
-  })
-  const apiKey = settings.apiKeyDirect || process.env[settings.apiKeyEnv] || ""
-  const providerCfg = configState.config.provider[settings.configKey] || configState.config.provider[settings.providerType] || {}
-
-  if (providerCfg.stream === false) {
-    const result = await requestProvider({
-      configState, providerType, model, system, messages, tools, baseUrl, apiKeyEnv
-    })
-    if (result.text) yield { type: "text", content: result.text }
-    for (const call of result.toolCalls) yield { type: "tool_call", call }
-    yield { type: "usage", usage: result.usage }
-    return
-  }
-
-  const input = {
-    apiKey,
-    baseUrl: settings.baseUrl,
-    apiKeyEnv: settings.apiKeyEnv,
-    model: settings.model,
+    apiKeyEnv,
     system,
     messages,
     tools,
-    timeoutMs: Number(providerCfg.timeout_ms || 120000),
-    streamIdleTimeoutMs: Number(providerCfg.stream_idle_timeout_ms || 120000),
-    maxTokens: Number(providerCfg.max_tokens || 16384),
-    retry: {
-      attempts: Number(providerCfg.retry_attempts || 3),
-      baseDelayMs: Number(providerCfg.retry_base_delay_ms || 800)
-    },
-    thinking: providerCfg.thinking || null,
     signal,
-    compaction
-  }
+    compaction,
+    stream: true,
+    resolveSettings,
+    getProvider
+  })
+  let lastError = null
 
-  const provider = registry.get(settings.providerType)
-  if (!provider) {
-    throw new Error(`unknown provider: ${settings.providerType}. registered: ${listProviders().join(", ")}`)
+  for (let index = 0; index < attempts.length; index += 1) {
+    const attempt = attempts[index]
+    const { settings, providerCfg, provider, input } = attempt
+
+    if (providerCfg.stream === false) {
+      try {
+        if (index > 0) {
+          await emitProviderFallbackEvent({
+            requested: resolvedProviderType,
+            resolved: attempt.target.providerType,
+            runtime: settings.providerType,
+            model: settings.model,
+            reason: lastError?.message || null
+          })
+        }
+        const result = await requestProvider({
+          configState, providerType: attempt.target.providerType, model: attempt.target.model, system, messages, tools, baseUrl, apiKeyEnv
+        })
+        if (result.text) yield { type: "text", content: result.text }
+        for (const call of result.toolCalls) yield { type: "tool_call", call }
+        yield { type: "usage", usage: result.usage }
+        return
+      } catch (error) {
+        lastError = normalizeProviderError(error, settings.providerType, settings.model)
+        continue
+      }
+    }
+
+    if (!provider) {
+      throw new Error(`unknown provider: ${settings.providerType}. registered: ${listProviders().join(", ")}`)
+    }
+
+    let emitted = false
+    try {
+      if (index > 0) {
+        await emitProviderFallbackEvent({
+          requested: resolvedProviderType,
+          resolved: attempt.target.providerType,
+          runtime: settings.providerType,
+          model: settings.model,
+          reason: lastError?.message || null
+        })
+      }
+      for await (const chunk of provider.requestStream(input)) {
+        emitted = true
+        yield chunk
+      }
+      return
+    } catch (error) {
+      lastError = normalizeProviderError(error, settings.providerType, settings.model)
+      if (emitted || index === attempts.length - 1) throw lastError
+    }
   }
-  try {
-    yield* provider.requestStream(input)
-  } catch (error) {
-    throw normalizeProviderError(error, settings.providerType, settings.model)
-  }
+  throw lastError || new ProviderError("provider request failed", { provider: resolvedProviderType, reason: "unknown" })
 }
 
 // --- Token Counting (Anthropic only, returns null for other providers) ---
@@ -231,12 +386,11 @@ export async function countTokensProvider({
   baseUrl = null, apiKeyEnv = null
 }) {
   const resolvedProviderType = providerType || configState.config.provider.default
-  const settings = resolveSettings(configState, resolvedProviderType, { model, baseUrl, apiKeyEnv })
+  const settings = await resolveSettings(configState, resolvedProviderType, { model, baseUrl, apiKeyEnv })
   const provider = registry.get(settings.providerType)
   if (!provider?.countTokens) return null
-  const apiKey = process.env[settings.apiKeyEnv] || ""
   return provider.countTokens({
-    apiKey, baseUrl: settings.baseUrl, model: settings.model,
-    system, messages, tools
+    apiKey: settings.apiKey, baseUrl: settings.baseUrl, model: settings.model,
+    system, messages, tools, headers: settings.headers
   })
 }

@@ -147,7 +147,12 @@ async function connectServer(name, server) {
     payload: { server: name, ...normalizedHealth }
   })
 
-  if (!normalizedHealth.ok) return null
+  if (!normalizedHealth.ok) {
+    if (typeof client.shutdown === "function") {
+      try { await Promise.resolve(client.shutdown()) } catch { /* best-effort */ }
+    }
+    return null
+  }
 
   state.servers.set(name, client)
 
@@ -165,6 +170,9 @@ async function connectServer(name, server) {
       error: `listTools failed: ${error.message}`
     })
     state.servers.delete(name)
+    if (typeof client.shutdown === "function") {
+      try { await Promise.resolve(client.shutdown()) } catch { /* best-effort */ }
+    }
     await EventBus.emit({
       type: EVENT_TYPES.MCP_HEALTH,
       payload: { server: name, ...state.health.get(name) }
@@ -216,10 +224,12 @@ async function reinitialize(config, { force = false, cwd = null } = {}) {
   // Built-in MCP servers (user config can override or disable with enabled: false)
   const builtinServers = {
     context7: {
+      enabled: false,
       command: "npx",
       args: ["--yes", "@upstash/context7-mcp"],
-      timeout_ms: 30000,
-      startup_timeout_ms: 60000,
+      // Keep builtin MCP probing responsive for CLI commands like doctor/mcp list.
+      timeout_ms: 3000,
+      startup_timeout_ms: 3000,
       framing: "newline"
     }
   }

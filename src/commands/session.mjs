@@ -14,6 +14,45 @@ function assertRecoveryEnabled(config, commandName) {
   return false
 }
 
+function formatRelativeAge(timestamp) {
+  const value = Number(timestamp || 0)
+  if (!Number.isFinite(value) || value <= 0) return "-"
+  const delta = Math.max(0, Date.now() - value)
+  if (delta < 60000) return `${Math.round(delta / 1000)}s ago`
+  if (delta < 3600000) return `${Math.round(delta / 60000)}m ago`
+  if (delta < 86400000) return `${Math.round(delta / 3600000)}h ago`
+  return `${Math.round(delta / 86400000)}d ago`
+}
+
+function clipText(text, max = 88) {
+  const value = String(text || "").replace(/\s+/g, " ").trim()
+  if (!value) return ""
+  return value.length > max ? `${value.slice(0, Math.max(0, max - 3))}...` : value
+}
+
+function formatRecoverableSessionLine(session, index = null) {
+  const prefix = index === null ? "" : `${String(index + 1).padStart(2)}. `
+  const retryMeta = session.retryMeta || {}
+  const reason = retryMeta.inProgress
+    ? "in-progress"
+    : session.status === "error"
+      ? "error"
+      : session.status || "recoverable"
+  const resume = session.lastPrompt ? clipText(session.lastPrompt, 72) : "(no prompt preview)"
+  return `${prefix}${session.id.slice(0, 12)}  ${session.mode}  ${reason}  ${formatRelativeAge(session.updatedAt)}  ${resume}`
+}
+
+function resolveRecoverableTarget(sessions, { index = null, id = null } = {}) {
+  if (!Array.isArray(sessions) || !sessions.length) return null
+  if (Number.isFinite(Number(index))) {
+    const idx = Number(index)
+    if (idx >= 1 && idx <= sessions.length) return sessions[idx - 1]
+  }
+  const rawId = String(id || "").trim()
+  if (!rawId) return null
+  return sessions.find((session) => session.id === rawId || session.id.startsWith(rawId)) || null
+}
+
 export function createSessionCommand() {
   const cmd = new Command("session").description("manage persisted kkcode sessions")
 
@@ -81,6 +120,69 @@ export function createSessionCommand() {
         console.log(
           `${session.id}  ${session.mode}  ${session.providerType}  ${session.model}  ${new Date(session.updatedAt).toLocaleString()}${parent}`
         )
+      }
+    })
+
+  cmd
+    .command("picker")
+    .description("show a resume-oriented session picker summary")
+    .option("--cwd-only", "filter by cwd", false)
+    .option("--limit <n>", "max sessions", "12")
+    .option("--index <n>", "select one recoverable session by 1-based index")
+    .option("--id <id>", "select one recoverable session by exact id or prefix")
+    .option("--json", "print recoverable sessions as json", false)
+    .action(async (options) => {
+      const ctx = await buildContext()
+      if (!assertRecoveryEnabled(ctx.configState.config, "session picker")) return
+
+      const sessions = await listRecoverableSessions({
+        cwd: options.cwdOnly ? process.cwd() : null,
+        limit: Number(options.limit || 12),
+        enabled: true
+      })
+      if (!sessions.length) {
+        console.log("no recoverable sessions")
+        return
+      }
+      const target = resolveRecoverableTarget(sessions, {
+        index: options.index,
+        id: options.id
+      })
+      if (options.index || options.id) {
+        if (!target) {
+          console.error("recoverable session not found")
+          process.exitCode = 1
+          return
+        }
+        const selected = {
+          ...target,
+          commands: {
+            resume: `kkcode session resume --id ${target.id}`,
+            retry: target.retryMeta?.failedAt || target.status === "error"
+              ? `kkcode session retry --id ${target.id}`
+              : null
+          }
+        }
+        if (options.json) {
+          console.log(JSON.stringify(selected, null, 2))
+          return
+        }
+        console.log(formatRecoverableSessionLine(target))
+        console.log(`resume: ${selected.commands.resume}`)
+        if (selected.commands.retry) console.log(`retry:  ${selected.commands.retry}`)
+        return
+      }
+      if (options.json) {
+        console.log(JSON.stringify(sessions, null, 2))
+        return
+      }
+      console.log("recoverable sessions:")
+      for (const [index, session] of sessions.entries()) {
+        console.log(`  ${formatRecoverableSessionLine(session, index)}`)
+        console.log(`     resume: kkcode session resume --id ${session.id}`)
+        if (session.retryMeta?.failedAt || session.status === "error") {
+          console.log(`     retry:  kkcode session retry --id ${session.id}`)
+        }
       }
     })
 
@@ -225,9 +327,8 @@ export function createSessionCommand() {
         console.log("no recoverable sessions")
         return
       }
-      for (const s of sessions) {
-        const reason = s.retryMeta?.inProgress ? "in-progress" : s.status === "error" ? "error" : "unknown"
-        console.log(`${s.id}  ${s.mode}  ${reason}  ${new Date(s.updatedAt).toLocaleString()}`)
+      for (const [index, s] of sessions.entries()) {
+        console.log(formatRecoverableSessionLine(s, index))
       }
     })
 

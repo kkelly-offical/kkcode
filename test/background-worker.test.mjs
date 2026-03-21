@@ -79,3 +79,35 @@ test("background retry increases attempt for interrupted task", async () => {
   assert.equal(retried.cancelled, false)
   assert.equal(retried.error, null)
 })
+
+test("background tick marks unconfirmed worker boot as interrupted", async () => {
+  const id = "bg_boot_timeout"
+  const now = Date.now()
+  await writeJson(backgroundTaskCheckpointPath(id), {
+    id,
+    description: "boot timeout",
+    payload: { workerTimeoutMs: 30000 },
+    status: "running",
+    createdAt: now - 60000,
+    updatedAt: now - 60000,
+    startedAt: now - 60000,
+    endedAt: null,
+    logs: [],
+    result: null,
+    error: null,
+    cancelled: false,
+    backgroundMode: "worker_process",
+    workerPid: 999999,
+    workerToken: "worker_dead",
+    workerBootConfirmedAt: null,
+    workerBootDeadlineAt: now - 1000,
+    lastHeartbeatAt: now,
+    attempt: 1,
+    resumeToken: "resume_1"
+  })
+
+  await BackgroundManager.tick({ background: { worker_timeout_ms: 30000, max_parallel: 1 } })
+  const task = await BackgroundManager.get(id)
+  assert.equal(task.status, "interrupted")
+  assert.match(task.error, /failed to boot|before boot confirmation/)
+})

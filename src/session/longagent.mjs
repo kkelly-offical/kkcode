@@ -8,6 +8,7 @@ import { runHybridLongAgent } from "./longagent-hybrid.mjs"
 import {
   isComplete,
   isLikelyActionableObjective,
+  buildStageReport,
   mergeCappedFileChanges,
   stageProgressStats,
   summarizeGateFailures,
@@ -45,7 +46,9 @@ async function runParallelLongAgent({
   toolContext = {}
 }) {
   const longagentConfig = configState.config.agent.longagent || {}
-  const maxIterations = Number(longagentConfig.max_iterations || maxIterationsParam)
+  const maxIterations = Number(
+    maxIterationsParam ?? longagentConfig.max_iterations ?? 0
+  )
   const plannerConfig = longagentConfig.planner || {}
   const intakeConfig = plannerConfig.intake_questions || {}
   const parallelConfig = longagentConfig.parallel || {}
@@ -83,6 +86,11 @@ async function runParallelLongAgent({
     if (currentPhase === nextPhase) return
     const prevPhase = currentPhase
     currentPhase = nextPhase
+    await LongAgentManager.checkpoint(sessionId, {
+      phase: nextPhase,
+      kind: "phase",
+      summary: `entered phase ${nextPhase}${reason ? ` (${reason})` : ""}`
+    })
     await EventBus.emit({
       type: EVENT_TYPES.LONGAGENT_PHASE_CHANGED,
       sessionId,
@@ -101,6 +109,9 @@ async function runParallelLongAgent({
       currentGate,
       recoveryCount,
       lastGateFailures,
+      providerType,
+      model,
+      maxIterations,
       iterations: iteration,
       heartbeatAt: Date.now(),
       noProgressCount: 0,
@@ -124,6 +135,10 @@ async function runParallelLongAgent({
   await markSessionStatus(sessionId, "running-longagent")
   await syncState({
     status: "running",
+    objective: prompt,
+    providerType,
+    model,
+    maxIterations,
     lastMessage: "longagent parallel mode started",
     stopRequested: false
   })
@@ -154,6 +169,7 @@ async function runParallelLongAgent({
       context: null,
       status: "blocked",
       phase: "L0",
+      maxIterations,
       gateStatus: { intake: { status: "blocked", reason: "objective_not_actionable" } },
       currentGate: "intake",
       lastGateFailures: [],
@@ -296,8 +312,14 @@ async function runParallelLongAgent({
 
   await syncState({
     stagePlan,
+    objective: prompt,
     planFrozen: true,
     lastMessage: `plan frozen with ${stagePlan.stages.length} stage(s)`
+  })
+  await LongAgentManager.checkpoint(sessionId, {
+    phase: currentPhase,
+    kind: "plan",
+    summary: `plan frozen with ${stagePlan.stages.length} stage(s)`
   })
 
   // --- L1.5: Scaffolding Phase ---
@@ -405,6 +427,12 @@ async function runParallelLongAgent({
       stageStatus: "running",
       lastMessage: `running ${stage.stageId} (${stageIndex + 1}/${stagePlan.stages.length})`
     })
+    await LongAgentManager.checkpoint(sessionId, {
+      phase: currentPhase,
+      kind: "stage",
+      stageId: stage.stageId,
+      summary: `started stage ${stageIndex + 1}/${stagePlan.stages.length}: ${stage.name || stage.stageId}`
+    })
 
     const seeded = Object.fromEntries(
       stage.tasks
@@ -431,6 +459,13 @@ async function runParallelLongAgent({
       stageCount: stagePlan.stages.length,
       priorContext: planAnchor + priorContext
     })
+    const stageReport = buildStageReport(stageResult, {
+      stageId: stage.stageId,
+      stageName: stage.name || stage.stageId,
+      stageIndex,
+      stageCount: stagePlan.stages.length
+    })
+    await LongAgentManager.pushStageReport(sessionId, stageReport)
 
     for (const [taskId, progress] of Object.entries(stageResult.taskProgress || {})) {
       taskProgress[taskId] = {
@@ -477,9 +512,18 @@ async function runParallelLongAgent({
 
     await syncState({
       stageStatus: stageResult.allSuccess ? "completed" : "failed",
+      lastStageReport: stageReport,
       lastMessage: stageResult.allSuccess
         ? `stage ${stage.stageId} completed`
         : `stage ${stage.stageId} failed (${stageResult.failCount})`
+    })
+    await LongAgentManager.checkpoint(sessionId, {
+      phase: currentPhase,
+      kind: "stage",
+      stageId: stage.stageId,
+      summary: stageResult.allSuccess
+        ? `completed stage ${stage.stageId} (${stageResult.successCount} ok)`
+        : `failed stage ${stage.stageId} (${stageResult.failCount} failed)`
     })
 
     // --- Git: auto-commit after successful stage ---
@@ -866,12 +910,14 @@ async function runParallelLongAgent({
     usage: aggregateUsage,
     toolEvents,
     iterations: iteration,
+    maxIterations,
     recoveryCount,
     phase: done?.phase || currentPhase,
     gateStatus: done?.gateStatus || gateStatus,
     currentGate: done?.currentGate || currentGate,
     lastGateFailures: done?.lastGateFailures || lastGateFailures,
     status: done?.status || "unknown",
+    lastMessage: done?.lastMessage || finalReply || "",
     progress: lastProgress,
     elapsed: totalElapsed,
     stageIndex,
@@ -884,7 +930,9 @@ async function runParallelLongAgent({
       done: stats.done,
       total: stats.total
     },
-    remainingFilesCount: stats.remainingFilesCount
+    remainingFilesCount: stats.remainingFilesCount,
+    lastStageReport: done?.lastStageReport || null,
+    stageReports: Array.isArray(done?.stageReports) ? done.stageReports : []
   }
 }
 

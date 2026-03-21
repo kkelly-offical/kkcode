@@ -15,6 +15,7 @@ const NODE = process.execPath
 let home = ""
 let project = ""
 let oldCwd = process.cwd()
+let oldHomeEnv = process.env.KKCODE_HOME
 
 function runCli(args, { expectFail = false } = {}) {
   try {
@@ -40,11 +41,15 @@ beforeEach(async () => {
   home = await mkdtemp(join(tmpdir(), "kkcode-recovery-home-"))
   project = await mkdtemp(join(tmpdir(), "kkcode-recovery-project-"))
   oldCwd = process.cwd()
+  oldHomeEnv = process.env.KKCODE_HOME
+  process.env.KKCODE_HOME = home
   process.chdir(project)
 })
 
 afterEach(async () => {
   process.chdir(oldCwd)
+  if (oldHomeEnv === undefined) delete process.env.KKCODE_HOME
+  else process.env.KKCODE_HOME = oldHomeEnv
   await flushNow()
   await rm(home, { recursive: true, force: true })
   await rm(project, { recursive: true, force: true })
@@ -136,4 +141,50 @@ test("session commands report disabled when session.recovery=false", async () =>
   const out = runCli(["session", "recoverable"], { expectFail: true })
   assert.equal(out.code, 2)
   assert.ok(`${out.stdout}\n${out.stderr}`.includes("session recovery is disabled"))
+})
+
+test("session picker lists recoverable sessions with resume commands", async () => {
+  const sessionId = `ses_picker_${Date.now()}`
+  await touchSession({
+    sessionId,
+    mode: "agent",
+    model: "mock-model",
+    providerType: "mock_toggle",
+    cwd: project,
+    status: "error",
+    retryMeta: {
+      inProgress: false,
+      failedAt: Date.now()
+    }
+  })
+  await flushNow()
+  const out = runCli(["session", "picker"])
+  assert.equal(out.code, 0)
+  assert.ok(out.stdout.includes("recoverable sessions:"))
+  assert.ok(out.stdout.includes(sessionId.slice(0, 12)))
+  assert.ok(out.stdout.includes(`kkcode session resume --id ${sessionId}`))
+  assert.ok(out.stdout.includes(`kkcode session retry --id ${sessionId}`))
+})
+
+test("session picker supports json selection by index", async () => {
+  const sessionId = `ses_picker_json_${Date.now()}`
+  await touchSession({
+    sessionId,
+    mode: "plan",
+    model: "mock-model",
+    providerType: "mock_toggle",
+    cwd: project,
+    status: "error",
+    retryMeta: {
+      inProgress: false,
+      failedAt: Date.now()
+    }
+  })
+  await flushNow()
+  const out = runCli(["session", "picker", "--index", "1", "--json"])
+  assert.equal(out.code, 0)
+  const parsed = JSON.parse(out.stdout)
+  assert.equal(parsed.id, sessionId)
+  assert.equal(parsed.commands.resume, `kkcode session resume --id ${sessionId}`)
+  assert.equal(parsed.commands.retry, `kkcode session retry --id ${sessionId}`)
 })

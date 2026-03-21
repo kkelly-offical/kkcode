@@ -8,6 +8,54 @@ import { SkillRegistry } from "../skill/registry.mjs"
 import { PermissionEngine } from "../permission/engine.mjs"
 import { HookBus, initHookBus } from "../plugin/hook-bus.mjs"
 import { listProviders } from "../provider/router.mjs"
+import { resolveProviderAuthProfile } from "../provider/auth-profiles.mjs"
+
+function providerNeedsCredential(providerDefaults = {}, providerType = "") {
+  const resolvedType = String(providerDefaults?.type || providerType || "").toLowerCase()
+  return resolvedType !== "ollama"
+}
+
+export async function hasProviderCredential(providerType, providerDefaults = {}, apiKeyEnvOverride = null) {
+  if (providerDefaults.api_key) return true
+  const envName = apiKeyEnvOverride || providerDefaults.api_key_env || ""
+  if (envName && process.env[envName]) return true
+  const auth = await resolveProviderAuthProfile({
+    providerId: providerType,
+    explicitProfileId: providerDefaults.auth_profile || null
+  })
+  return auth.readyState === "ready"
+}
+
+function parseFallbackTarget(rawValue, defaultProviderType) {
+  const raw = String(rawValue || "").trim()
+  if (!raw) return null
+  const split = raw.split("::", 2)
+  if (split.length === 2 && split[0].trim() && split[1].trim()) {
+    return { providerType: split[0].trim() }
+  }
+  return { providerType: defaultProviderType }
+}
+
+export async function hasAnyProviderCredential(config, providerType, providerDefaults = {}, apiKeyEnvOverride = null) {
+  const candidates = [{ providerType, defaults: providerDefaults, apiKeyEnvOverride }]
+  for (const rawFallback of Array.isArray(providerDefaults.fallback_models) ? providerDefaults.fallback_models : []) {
+    const parsed = parseFallbackTarget(rawFallback, providerType)
+    if (!parsed) continue
+    const fallbackDefaults = config.provider?.[parsed.providerType] || {}
+    candidates.push({ providerType: parsed.providerType, defaults: fallbackDefaults, apiKeyEnvOverride: null })
+  }
+
+  const seen = new Set()
+  for (const candidate of candidates) {
+    if (seen.has(candidate.providerType)) continue
+    seen.add(candidate.providerType)
+    if (!providerNeedsCredential(candidate.defaults, candidate.providerType)) return true
+    if (await hasProviderCredential(candidate.providerType, candidate.defaults, candidate.apiKeyEnvOverride)) {
+      return true
+    }
+  }
+  return false
+}
 
 export function createChatCommand() {
   const providers = listProviders()
@@ -43,6 +91,10 @@ export function createChatCommand() {
       const providerDefaults = ctx.configState.config.provider[providerType]
       if (!providerDefaults) {
         throw new Error(`unknown provider type: ${providerType}`)
+      }
+      if (providerNeedsCredential(providerDefaults, providerType) && !await hasAnyProviderCredential(ctx.configState.config, providerType, providerDefaults, options.apiKeyEnv ?? null)) {
+        const envName = options.apiKeyEnv ?? providerDefaults.api_key_env ?? "UNKNOWN_API_KEY_ENV"
+        throw new Error(`missing API key for provider "${providerType}" (env: ${envName})`)
       }
       const model = options.model ?? providerDefaults.default_model
       const sessionId = options.session || newSessionId()

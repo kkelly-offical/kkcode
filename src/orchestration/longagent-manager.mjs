@@ -100,6 +100,78 @@ async function write(data, cwd = process.cwd()) {
   await writeJson(statePath(cwd), data)
 }
 
+async function patchSession(sessionId, patch, cwd = process.cwd()) {
+  const state = await read(cwd)
+  const current = state.sessions[sessionId]
+  if (!current) return null
+  state.sessions[sessionId] = {
+    ...current,
+    ...patch,
+    updatedAt: Date.now()
+  }
+  await write(state, cwd)
+  return state.sessions[sessionId]
+}
+
+function normalizeStageReport(report = {}, fallback = {}) {
+  const stageId = String(report.stageId || fallback.stageId || "").trim()
+  const stageName = String(report.stageName || fallback.stageName || "").trim()
+  const successCount = Math.max(0, Number(report.successCount || 0))
+  const failCount = Math.max(0, Number(report.failCount || 0))
+  const retryCount = Math.max(0, Number(report.retryCount || 0))
+  const remainingFiles = [...new Set(
+    (Array.isArray(report.remainingFiles) ? report.remainingFiles : [])
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+  )]
+  const fileChanges = Array.isArray(report.fileChanges) ? report.fileChanges : []
+  const totalCost = Number.isFinite(Number(report.totalCost)) ? Number(report.totalCost) : 0
+  const updatedAt = Date.now()
+  return {
+    stageId,
+    stageName,
+    stageIndex: Math.max(0, Number(report.stageIndex ?? fallback.stageIndex ?? 0)),
+    stageCount: Math.max(0, Number(report.stageCount ?? fallback.stageCount ?? 0)),
+    status: failCount === 0 ? "pass" : "fail",
+    successCount,
+    failCount,
+    retryCount,
+    remainingFiles: remainingFiles.slice(0, 12),
+    remainingFilesCount: remainingFiles.length,
+    fileChangesCount: fileChanges.length,
+    totalCost,
+    completionMarkerSeen: report.completionMarkerSeen === true,
+    allSuccess: report.allSuccess === true || failCount === 0,
+    updatedAt
+  }
+}
+
+function normalizeCheckpoint(checkpoint = {}, fallback = {}) {
+  const phase = String(checkpoint.phase || fallback.phase || "").trim()
+  const summary = String(checkpoint.summary || "").trim()
+  if (!phase || !summary) return null
+  return {
+    id: String(checkpoint.id || `chk_${Date.now().toString(36)}`),
+    phase,
+    kind: String(checkpoint.kind || "phase"),
+    stageId: checkpoint.stageId ? String(checkpoint.stageId) : null,
+    taskId: checkpoint.taskId ? String(checkpoint.taskId) : null,
+    summary,
+    createdAt: Number(checkpoint.createdAt || Date.now())
+  }
+}
+
+function normalizeBackgroundTask(task = {}) {
+  const id = String(task.id || task.backgroundTaskId || "").trim()
+  if (!id) return null
+  return {
+    backgroundTaskId: id,
+    backgroundTaskStatus: String(task.status || task.backgroundTaskStatus || "pending"),
+    backgroundTaskAttempt: Math.max(1, Number(task.attempt || task.backgroundTaskAttempt || 1)),
+    backgroundTaskUpdatedAt: Number(task.updatedAt || task.backgroundTaskUpdatedAt || Date.now())
+  }
+}
+
 export const LongAgentManager = {
   async update(sessionId, patch, cwd = process.cwd(), config = null) {
     const lockMs = Number(config?.agent?.longagent?.lock_timeout_ms || LOCK_TIMEOUT_MS)
@@ -109,15 +181,27 @@ export const LongAgentManager = {
       const current = state.sessions[sessionId] || {
         sessionId,
         status: "idle",
+        objective: "",
+        providerType: null,
+        model: null,
+        maxIterations: 0,
         phase: "L0",
         gateStatus: {},
         currentGate: "execution",
         recoveryCount: 0,
         planFrozen: false,
+        stagePlan: null,
         currentStageId: null,
         stageIndex: 0,
         stageCount: 0,
         stageStatus: null,
+        lastStageReport: null,
+        stageReports: [],
+        checkpoints: [],
+        backgroundTaskId: null,
+        backgroundTaskStatus: null,
+        backgroundTaskAttempt: 0,
+        backgroundTaskUpdatedAt: null,
         taskProgress: {},
         remainingFiles: [],
         remainingFilesCount: 0,
@@ -147,12 +231,24 @@ export const LongAgentManager = {
     const state = await read(cwd)
     return Object.values(state.sessions).sort((a, b) => b.updatedAt - a.updatedAt)
   },
+  async linkBackgroundTask(sessionId, task, cwd = process.cwd(), config = null) {
+    const normalized = normalizeBackgroundTask(task)
+    if (!normalized) return this.get(sessionId, cwd)
+    return this.update(sessionId, normalized, cwd, config)
+  },
+  async clearBackgroundTask(sessionId, cwd = process.cwd(), config = null) {
+    return this.update(sessionId, {
+      backgroundTaskId: null,
+      backgroundTaskStatus: null,
+      backgroundTaskAttempt: 0,
+      backgroundTaskUpdatedAt: Date.now()
+    }, cwd, config)
+  },
   async stop(sessionId, cwd = process.cwd()) {
     await acquireLock(cwd)
     try {
-      const existing = await this.get(sessionId, cwd)
-      if (!existing) return null
-      const result = await this.update(sessionId, { stopRequested: true }, cwd)
+      const result = await patchSession(sessionId, { stopRequested: true }, cwd)
+      if (!result) return null
       await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_STOP_REQUESTED, sessionId, payload: { sessionId } }).catch(() => {})
       return result
     } finally {
@@ -162,9 +258,50 @@ export const LongAgentManager = {
   async clearStop(sessionId, cwd = process.cwd()) {
     await acquireLock(cwd)
     try {
-      const existing = await this.get(sessionId, cwd)
-      if (!existing) return null
-      return this.update(sessionId, { stopRequested: false }, cwd)
+      return patchSession(sessionId, { stopRequested: false }, cwd)
+    } finally {
+      await releaseLock(cwd)
+    }
+  },
+  async checkpoint(sessionId, checkpoint, cwd = process.cwd(), config = null) {
+    const lockMs = Number(config?.agent?.longagent?.lock_timeout_ms || LOCK_TIMEOUT_MS)
+    await acquireLock(cwd, lockMs)
+    try {
+      const state = await read(cwd)
+      const current = state.sessions[sessionId]
+      if (!current) return null
+      const normalized = normalizeCheckpoint(checkpoint, current)
+      if (!normalized) return current
+      const checkpoints = [...(Array.isArray(current.checkpoints) ? current.checkpoints : []), normalized].slice(-30)
+      state.sessions[sessionId] = {
+        ...current,
+        checkpoints,
+        updatedAt: Date.now()
+      }
+      await write(state, cwd)
+      return state.sessions[sessionId]
+    } finally {
+      await releaseLock(cwd)
+    }
+  },
+  async pushStageReport(sessionId, report, cwd = process.cwd(), config = null) {
+    const lockMs = Number(config?.agent?.longagent?.lock_timeout_ms || LOCK_TIMEOUT_MS)
+    await acquireLock(cwd, lockMs)
+    try {
+      const state = await read(cwd)
+      const current = state.sessions[sessionId]
+      if (!current) return null
+      const normalized = normalizeStageReport(report, current)
+      const prior = Array.isArray(current.stageReports) ? current.stageReports : []
+      const stageReports = [...prior, normalized].slice(-12)
+      state.sessions[sessionId] = {
+        ...current,
+        lastStageReport: normalized,
+        stageReports,
+        updatedAt: Date.now()
+      }
+      await write(state, cwd)
+      return state.sessions[sessionId]
     } finally {
       await releaseLock(cwd)
     }

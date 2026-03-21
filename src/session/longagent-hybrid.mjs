@@ -27,6 +27,7 @@ import { detectStageComplete, detectReturnToCoding, buildStageWrapper } from "./
 import {
   isComplete,
   isLikelyActionableObjective,
+  buildStageReport,
   mergeCappedFileChanges,
   stageProgressStats,
   summarizeGateFailures,
@@ -272,6 +273,11 @@ export async function runHybridLongAgent({
     if (currentPhase === next) return
     const prev = currentPhase
     currentPhase = next
+    await LongAgentManager.checkpoint(sessionId, {
+      phase: next,
+      kind: "phase",
+      summary: `entered phase ${next}${reason ? ` (${reason})` : ""}`
+    })
     await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_PHASE_CHANGED, sessionId, payload: { prevPhase: prev, nextPhase: next, reason, iteration } })
   }
 
@@ -279,7 +285,7 @@ export async function runHybridLongAgent({
     const stats = stageProgressStats(taskProgress)
     await LongAgentManager.update(sessionId, {
       status: patch.status || "running", phase: currentPhase, gateStatus, currentGate,
-      recoveryCount, lastGateFailures, iterations: iteration, heartbeatAt: Date.now(),
+      recoveryCount, lastGateFailures, providerType, model, maxIterations, iterations: iteration, heartbeatAt: Date.now(),
       progress: lastProgress, planFrozen, stageIndex,
       stageCount: stagePlan?.stages?.length || 0,
       taskProgress, stageProgress: { done: stats.done, total: stats.total },
@@ -297,7 +303,7 @@ export async function runHybridLongAgent({
   })
 
   await markSessionStatus(sessionId, "running-longagent")
-  await syncState({ status: "running", lastMessage: "hybrid mode started" })
+  await syncState({ status: "running", objective: prompt, providerType, model, maxIterations, lastMessage: "hybrid mode started" })
 
   // 前置检查
   if (!isLikelyActionableObjective(prompt)) {
@@ -305,7 +311,7 @@ export async function runHybridLongAgent({
     await LongAgentManager.update(sessionId, { status: "blocked", phase: "H0", lastMessage: blocked })
     await markSessionStatus(sessionId, "active")
     unsubscribeStop()
-    return { sessionId, turnId: `turn_long_${Date.now()}`, reply: blocked, usage: aggregateUsage, toolEvents, iterations: 0, status: "blocked", phase: "H0", gateStatus: {}, currentGate: "init", lastGateFailures: [], recoveryCount: 0, progress: lastProgress, elapsed: 0, stageIndex: 0, stageCount: 0, planFrozen: false, taskProgress: {}, fileChanges: [], stageProgress: { done: 0, total: 0 }, remainingFilesCount: 0 }
+        return { sessionId, turnId: `turn_long_${Date.now()}`, reply: blocked, usage: aggregateUsage, toolEvents, iterations: 0, maxIterations, status: "blocked", phase: "H0", gateStatus: {}, currentGate: "init", lastGateFailures: [], recoveryCount: 0, progress: lastProgress, elapsed: 0, stageIndex: 0, stageCount: 0, planFrozen: false, taskProgress: {}, fileChanges: [], stageProgress: { done: 0, total: 0 }, remainingFilesCount: 0, lastMessage: blocked }
   }
 
   // #15 Checkpoint 恢复：如果有之前的检查点，跳过已完成阶段
@@ -334,7 +340,7 @@ export async function runHybridLongAgent({
             }
           }
           await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_CHECKPOINT_RESUMED, sessionId, payload: { stageIndex, iteration } })
-          await syncState({ lastMessage: `resumed from checkpoint at stage ${stageIndex}` })
+          await syncState({ objective: prompt, stagePlan, lastMessage: `resumed from checkpoint at stage ${stageIndex}` })
         }
       }
     } catch { /* no checkpoint, start fresh */ }
@@ -392,7 +398,7 @@ export async function runHybridLongAgent({
         await LongAgentManager.update(sessionId, { status: "aborted", lastMessage: "user cancelled at intake confirmation" })
         await markSessionStatus(sessionId, "active")
         unsubscribeStop()
-        return { sessionId, turnId: `turn_long_${Date.now()}`, reply: "用户在需求确认阶段取消了任务。", usage: aggregateUsage, toolEvents, iterations: iteration, status: "aborted", phase: "H0", gateStatus, currentGate, lastGateFailures: [], recoveryCount: 0, progress: lastProgress, elapsed: Math.round((Date.now() - startTime) / 1000), stageIndex: 0, stageCount: 0, planFrozen: false, taskProgress: {}, fileChanges: [], stageProgress: { done: 0, total: 0 }, remainingFilesCount: 0 }
+        return { sessionId, turnId: `turn_long_${Date.now()}`, reply: "用户在需求确认阶段取消了任务。", usage: aggregateUsage, toolEvents, iterations: iteration, maxIterations, status: "aborted", phase: "H0", gateStatus, currentGate, lastGateFailures: [], recoveryCount: 0, progress: lastProgress, elapsed: Math.round((Date.now() - startTime) / 1000), stageIndex: 0, stageCount: 0, planFrozen: false, taskProgress: {}, fileChanges: [], stageProgress: { done: 0, total: 0 }, remainingFilesCount: 0, lastMessage: "用户在需求确认阶段取消了任务。" }
       }
       if (userAddition && !["确认", "继续", "ok", "yes", "是", "好", "没有", "no addition"].some(k => userAddition.toLowerCase().includes(k))) {
         intakeSummary = `${intakeSummary}\n\n[用户补充]\n${userAddition}`
@@ -512,7 +518,12 @@ export async function runHybridLongAgent({
   }
   await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_BLUEPRINT_COMPLETE, sessionId, payload: { planId: stagePlan.planId, stageCount: stagePlan.stages.length } })
   await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_PLAN_FROZEN, sessionId, payload: { planId: stagePlan.planId, stageCount: stagePlan.stages.length, errors: [] } })
-  await syncState({ planFrozen: true, lastMessage: `H2: blueprint complete, ${stagePlan.stages.length} stage(s)` })
+  await syncState({ objective: prompt, stagePlan, planFrozen: true, lastMessage: `H2: blueprint complete, ${stagePlan.stages.length} stage(s)` })
+  await LongAgentManager.checkpoint(sessionId, {
+    phase: currentPhase,
+    kind: "plan",
+    summary: `blueprint frozen with ${stagePlan.stages.length} stage(s)`
+  })
 
   // #9 Blueprint 语义验证
   if (hybridConfig.blueprint_validation !== false && stagePlan.stages.length > 0) {
@@ -549,7 +560,7 @@ export async function runHybridLongAgent({
     if (["no", "否", "n", "取消", "abort", "cancel", "中止", "停止"].some(k => answer.includes(k))) {
       await LongAgentManager.update(sessionId, { status: "aborted", lastMessage: "user rejected blueprint" })
       await markSessionStatus(sessionId, "active")
-      return { sessionId, turnId: `turn_long_${Date.now()}`, reply: "用户中止了 Blueprint 审查。", usage: aggregateUsage, toolEvents, iterations: iteration, status: "aborted", phase: "H2", gateStatus, currentGate, lastGateFailures: [], recoveryCount: 0, progress: lastProgress, elapsed: Math.round((Date.now() - startTime) / 1000), stageIndex: 0, stageCount: stagePlan.stages.length, planFrozen, taskProgress: {}, fileChanges: [], stageProgress: { done: 0, total: 0 }, remainingFilesCount: 0 }
+      return { sessionId, turnId: `turn_long_${Date.now()}`, reply: "用户中止了 Blueprint 审查。", usage: aggregateUsage, toolEvents, iterations: iteration, maxIterations, status: "aborted", phase: "H2", gateStatus, currentGate, lastGateFailures: [], recoveryCount: 0, progress: lastProgress, elapsed: Math.round((Date.now() - startTime) / 1000), stageIndex: 0, stageCount: stagePlan.stages.length, planFrozen, taskProgress: {}, fileChanges: [], stageProgress: { done: 0, total: 0 }, remainingFilesCount: 0, lastMessage: "用户中止了 Blueprint 审查。" }
     }
     gateStatus.blueprintReview = { status: "pass", userConfirmed: true }
   }
@@ -677,6 +688,12 @@ export async function runHybridLongAgent({
       const stage = stagePlan.stages[stageIndex]
       currentGate = `stage:${stage.stageId}`
       await syncState({ stageStatus: "running", lastMessage: `H4: running ${stage.stageId} (${stageIndex + 1}/${stagePlan.stages.length})` })
+      await LongAgentManager.checkpoint(sessionId, {
+        phase: currentPhase,
+        kind: "stage",
+        stageId: stage.stageId,
+        summary: `started stage ${stageIndex + 1}/${stagePlan.stages.length}: ${stage.name || stage.stageId}`
+      })
 
       const seeded = Object.fromEntries(
         stage.tasks.map(t => [t.taskId, taskProgress[t.taskId]]).filter(([, v]) => Boolean(v))
@@ -699,6 +716,13 @@ export async function runHybridLongAgent({
         },
         taskBus
       })
+      const stageReport = buildStageReport(stageResult, {
+        stageId: stage.stageId,
+        stageName: stage.name || stage.stageId,
+        stageIndex,
+        stageCount: stagePlan.stages.length
+      })
+      await LongAgentManager.pushStageReport(sessionId, stageReport)
 
       // 合并结果
       for (const [taskId, progress] of Object.entries(stageResult.taskProgress || {})) {
@@ -757,6 +781,15 @@ export async function runHybridLongAgent({
         currentStep: stageIndex + (stageResult.allSuccess ? 1 : 0),
         totalSteps: stagePlan.stages.length
       }
+      await syncState({ lastStageReport: stageReport })
+      await LongAgentManager.checkpoint(sessionId, {
+        phase: currentPhase,
+        kind: "stage",
+        stageId: stage.stageId,
+        summary: stageResult.allSuccess
+          ? `completed stage ${stage.stageId} (${stageResult.successCount} ok)`
+          : `failed stage ${stage.stageId} (${stageResult.failCount} failed)`
+      })
 
       // Git: 每 stage 自动 commit
       if (gitActive && stageResult.allSuccess && gitConfig.auto_commit_stages !== false) {
@@ -1311,6 +1344,7 @@ export async function runHybridLongAgent({
   const finalStatus = completionMarkerSeen ? "completed" : "done"
   await LongAgentManager.update(sessionId, { status: finalStatus, lastMessage: "hybrid longagent complete", elapsed })
   await markSessionStatus(sessionId, finalStatus === "completed" ? "completed" : "active")
+  const finalState = await LongAgentManager.get(sessionId)
 
   const stats = stageProgressStats(taskProgress)
 
@@ -1330,7 +1364,7 @@ export async function runHybridLongAgent({
   return {
     sessionId, turnId: `turn_long_${Date.now()}`,
     reply: finalReply || "hybrid longagent complete",
-    usage: aggregateUsage, toolEvents, iterations: iteration,
+    usage: aggregateUsage, toolEvents, iterations: iteration, maxIterations,
     status: finalStatus, phase: currentPhase,
     gateStatus, currentGate, lastGateFailures, recoveryCount,
     progress: lastProgress, elapsed,
@@ -1339,6 +1373,9 @@ export async function runHybridLongAgent({
     stageProgress: { done: stats.done, total: stats.total },
     remainingFilesCount: stats.remainingFilesCount,
     gitBranch, gitBaseBranch,
-    recoverySuggestions
+    recoverySuggestions,
+    lastMessage: finalReply || "hybrid longagent complete",
+    lastStageReport: finalState?.lastStageReport || null,
+    stageReports: Array.isArray(finalState?.stageReports) ? finalState.stageReports : []
   }
 }

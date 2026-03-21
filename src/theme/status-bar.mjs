@@ -54,7 +54,9 @@ export function renderStatusBar({
   theme,
   layout = "compact",
   longagentState = null,
-  memoryLoaded = false
+  memoryLoaded = false,
+  backgroundSummary = null,
+  recoverySummary = null
 }) {
   const width = Number(process.stdout.columns || 120)
   const dense = width < 110
@@ -101,6 +103,22 @@ export function renderStatusBar({
   }
   if (memoryLoaded && !tight) {
     segments.push(badge("MEM", contrastText(theme.semantic.info), theme.semantic.info, { bold: false }))
+  }
+  if (backgroundSummary && Number(backgroundSummary.total || 0) > 0) {
+    const running = Number(backgroundSummary.running || 0)
+    const pending = Number(backgroundSummary.pending || 0)
+    const interrupted = Number(backgroundSummary.interrupted || 0)
+    const bgText = tight
+      ? `BG ${running}/${backgroundSummary.total}`
+      : `BG R:${running} P:${pending} I:${interrupted}`
+    segments.push(badge(bgText, theme.base.fg, "#334155", { bold: false }))
+  }
+  if (recoverySummary && Number(recoverySummary.total || 0) > 0) {
+    const retryable = Number(recoverySummary.retryable || 0)
+    const text = tight
+      ? `REC ${recoverySummary.total}`
+      : `REC ${recoverySummary.total}${retryable > 0 ? ` retry:${retryable}` : ""}`
+    segments.push(badge(text, contrastText(theme.semantic.info), theme.semantic.info, { bold: false }))
   }
   const permBg = permissionColor(permission, theme)
   segments.push(badge(`PERMISSION ${permission.toUpperCase()}`, contrastText(permBg), permBg, { bold: false }))

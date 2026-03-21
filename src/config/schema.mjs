@@ -54,6 +54,23 @@ export function validateConfig(config) {
         if (p.base_url !== undefined && typeof p.base_url !== "string") err(errors, `provider.${key}.base_url`, "must be string")
         if (p.api_key !== undefined && typeof p.api_key !== "string") err(errors, `provider.${key}.api_key`, "must be string")
         if (p.api_key_env !== undefined && typeof p.api_key_env !== "string") err(errors, `provider.${key}.api_key_env`, "must be string")
+        if (p.auth_profile !== undefined && typeof p.auth_profile !== "string") err(errors, `provider.${key}.auth_profile`, "must be string")
+        if (p.headers !== undefined) {
+          if (!isObj(p.headers)) err(errors, `provider.${key}.headers`, "must be object")
+          else {
+            for (const [headerName, headerValue] of Object.entries(p.headers)) {
+              if (typeof headerValue !== "string") err(errors, `provider.${key}.headers.${headerName}`, "must be string")
+            }
+          }
+        }
+        if (p.fallback_models !== undefined) {
+          if (!Array.isArray(p.fallback_models)) err(errors, `provider.${key}.fallback_models`, "must be array")
+          else {
+            for (const [index, value] of p.fallback_models.entries()) {
+              if (typeof value !== "string" || !value.trim()) err(errors, `provider.${key}.fallback_models.${index}`, "must be non-empty string")
+            }
+          }
+        }
         if (p.default_model !== undefined && typeof p.default_model !== "string") err(errors, `provider.${key}.default_model`, "must be string")
         if (p.timeout_ms !== undefined) checkInt(errors, `provider.${key}.timeout_ms`, p.timeout_ms, 1000)
         if (p.retry_attempts !== undefined) checkInt(errors, `provider.${key}.retry_attempts`, p.retry_attempts, 0)
@@ -509,6 +526,9 @@ export function validateConfig(config) {
       if (config.ui.theme_file !== undefined && config.ui.theme_file !== null && typeof config.ui.theme_file !== "string") {
         err(errors, "ui.theme_file", "must be string|null")
       }
+      if (config.ui.alternate_screen !== undefined && !["auto", "always", "never"].includes(config.ui.alternate_screen)) {
+        err(errors, "ui.alternate_screen", "must be auto|always|never")
+      }
       if (config.ui.mode_colors !== undefined) {
         if (!isObj(config.ui.mode_colors)) err(errors, "ui.mode_colors", "must be object")
         else {
@@ -522,6 +542,9 @@ export function validateConfig(config) {
       }
       if (config.ui.markdown_render !== undefined && typeof config.ui.markdown_render !== "boolean") {
         err(errors, "ui.markdown_render", "must be boolean")
+      }
+      if (config.ui.log_buffer_lines !== undefined) {
+        checkInt(errors, "ui.log_buffer_lines", config.ui.log_buffer_lines, 200)
       }
       if (config.ui.status !== undefined) {
         if (!isObj(config.ui.status)) err(errors, "ui.status", "must be object")

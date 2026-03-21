@@ -8,17 +8,35 @@ import { buildContext, printContextWarnings } from "./context.mjs"
 import { executeTurn, newSessionId, resolveMode, routeMode } from "./session/engine.mjs"
 import { renderStatusBar } from "./theme/status-bar.mjs"
 import { listProviders } from "./provider/router.mjs"
+import { getProviderSpec } from "./provider/catalog.mjs"
 import { createWizardState, startWizard, startEditWizard, handleWizardInput, VENDOR_PRESETS } from "./provider/wizard.mjs"
 import { loadCustomCommands, applyCommandTemplate } from "./command/custom-commands.mjs"
 import { SkillRegistry } from "./skill/registry.mjs"
 import { renderMarkdown, createStreamRenderer } from "./theme/markdown.mjs"
 import { listSessions, getConversationHistory } from "./session/store.mjs"
+import { listRecoverableSessions } from "./session/recovery.mjs"
 import { compactSession } from "./session/compaction.mjs"
 import { ToolRegistry } from "./tool/registry.mjs"
 import { McpRegistry } from "./mcp/registry.mjs"
 import { HookBus, initHookBus } from "./plugin/hook-bus.mjs"
 import { renderReplDashboard, renderReplLogo, renderStartupHint } from "./ui/repl-dashboard.mjs"
 import { paint } from "./theme/color.mjs"
+import {
+  createInputBufferState,
+  createScrollState,
+  deleteInputBufferSelection,
+  insertIntoInputBuffer,
+  moveInputCursor,
+  renderFileChangesPanel,
+  renderInspectorOverlay,
+  renderLongAgentPanel,
+  scrollByDelta,
+  scrollToBottom as setScrollBottom,
+  scrollToTop as setScrollTop,
+  setInputCursor,
+  shouldUseAlternateScreen,
+  syncScrollViewport
+} from "./ui/tui-helpers.mjs"
 import { PermissionEngine } from "./permission/engine.mjs"
 import { setPermissionPromptHandler } from "./permission/prompt.mjs"
 import { setQuestionPromptHandler } from "./tool/question-prompt.mjs"
@@ -35,7 +53,6 @@ import { loadProfile, runOnboarding } from "./onboarding.mjs"
 const HIST_DIR = userRootDir()
 const HIST_FILE = join(HIST_DIR, "repl_history")
 const HIST_SIZE = 500
-const MAX_TUI_LOG_LINES = 1200
 const MAX_TUI_SUGGESTIONS = 5
 const MAX_MODEL_PICKER_VISIBLE = 8
 const TUI_FRAME_MS = 16
@@ -73,6 +90,7 @@ const BUILTIN_SLASH = [
   { name: "clear", desc: "clear terminal" },
   { name: "new", desc: "new session" },
   { name: "resume", desc: "resume session" },
+  { name: "picker", desc: "recoverable session picker" },
   { name: "history", desc: "list sessions" },
   { name: "compact", desc: "summarize conversation to free context" },
   { name: "undo", desc: "undo last code changes" },
@@ -220,6 +238,119 @@ function ageLabel(ms) {
   return `${Math.round(hours / 24)}d ago`
 }
 
+function formatCompactElapsed(ms) {
+  const totalSec = Math.max(0, Math.floor((Number(ms) || 0) / 1000))
+  if (totalSec < 60) return `${totalSec}s`
+  const minutes = Math.floor(totalSec / 60)
+  const seconds = totalSec % 60
+  if (minutes < 60) return `${minutes}m ${String(seconds).padStart(2, "0")}s`
+  const hours = Math.floor(minutes / 60)
+  const remMin = minutes % 60
+  return `${hours}h ${String(remMin).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`
+}
+
+function formatProviderSwitchEntry(provider, model, source = "manual") {
+  const target = model ? `${provider} / ${model}` : String(provider || "-")
+  return `${source}: ${target}`
+}
+
+function recordProviderSwitch(state, provider, model, source = "manual") {
+  if (!state) return
+  const timeline = Array.isArray(state.providerSwitches) ? state.providerSwitches : []
+  state.providerSwitches = [formatProviderSwitchEntry(provider, model, source), ...timeline].slice(0, 8)
+}
+
+function printRecoverablePicker(print, sessions = []) {
+  if (!sessions.length) {
+    print("no recoverable sessions")
+    return
+  }
+  print("\n  Recoverable sessions:\n")
+  for (const [index, session] of sessions.entries()) {
+    const age = ageLabel(Date.now() - Number(session.updatedAt || Date.now()))
+    const reason = session.retryMeta?.inProgress ? "in-progress" : session.status || "recoverable"
+    const title = session.title || `${session.mode}:${session.model || "?"}`
+    const titleClipped = title.length > 42 ? `${title.slice(0, 39)}...` : title
+    print(`  ${paint(String(index + 1).padStart(2) + ".", "yellow")} ${padRight(titleClipped, 43)} ${padRight(reason, 12)} ${paint(age, null, { dim: true })}`)
+    print(`      resume: kkcode session resume --id ${session.id}`)
+    if (session.retryMeta?.failedAt || session.status === "error") {
+      print(`      retry:  kkcode session retry --id ${session.id}`)
+    }
+  }
+}
+
+function clipPickerLabel(text, max = 72) {
+  const value = String(text || "").replace(/\s+/g, " ").trim()
+  if (!value) return "-"
+  return value.length > max ? `${value.slice(0, Math.max(0, max - 3))}...` : value
+}
+
+function applyPickerFilter(picker, query = "") {
+  if (!picker) return
+  const normalized = String(query || "").trim().toLowerCase()
+  picker.query = String(query || "")
+  picker.items = !normalized
+    ? [...(picker.allItems || [])]
+    : (picker.allItems || []).filter((item) => {
+        const haystack = [
+          item.id,
+          item.label,
+          item.mode,
+          item.model,
+          item.phase,
+          item.stageId,
+          item.summary
+        ].filter(Boolean).join(" ").toLowerCase()
+        return haystack.includes(normalized)
+      })
+  picker.selected = Math.max(0, Math.min(picker.selected || 0, Math.max(0, picker.items.length - 1)))
+  picker.offset = 0
+}
+
+function resolveLogBufferLineLimit(config) {
+  const raw = Number(config?.ui?.log_buffer_lines || 5000)
+  if (!Number.isFinite(raw)) return 5000
+  return Math.max(200, Math.floor(raw))
+}
+
+function classifyBackgroundTaskLabel(task) {
+  const workerType = task?.payload?.workerType || ""
+  if (workerType === "longagent_session") return "longagent"
+  if (workerType === "delegate_task") return "delegate"
+  if (String(task?.description || "").toLowerCase().includes("recover")) return "recovery"
+  return "task"
+}
+
+function summarizeBackgroundTasks(tasks = []) {
+  const summary = {
+    total: tasks.length,
+    pending: 0,
+    running: 0,
+    completed: 0,
+    error: 0,
+    interrupted: 0,
+    cancelled: 0,
+    longagent: 0,
+    recovery: 0
+  }
+  for (const task of tasks) {
+    if (summary[task.status] !== undefined) summary[task.status] += 1
+    const label = classifyBackgroundTaskLabel(task)
+    if (label === "longagent") summary.longagent += 1
+    if (label === "recovery") summary.recovery += 1
+  }
+  return summary
+}
+
+function formatBackgroundTaskSummary(task) {
+  return {
+    id: task.id,
+    label: classifyBackgroundTaskLabel(task),
+    status: task.status || "unknown",
+    sessionId: task?.payload?.longagentSessionId || task?.payload?.sessionId || null
+  }
+}
+
 function configuredProviders(config) {
   const builtins = new Set(listProviders())
   const out = []
@@ -232,6 +363,16 @@ function configuredProviders(config) {
     if (builtins.has(type)) out.push(name)
   }
   return out
+}
+
+function formatProviderSummary(providerName, config) {
+  const spec = getProviderSpec(providerName)
+  const providerCfg = config?.provider?.[providerName] || {}
+  const authModes = spec?.auth_modes?.length ? spec.auth_modes.join("/") : "api_key"
+  const oauth = spec?.supports_oauth ? "oauth" : "no-oauth"
+  const model = providerCfg.default_model || spec?.default_model || "?"
+  const label = spec?.label || providerName
+  return `${providerName} (${label}) model=${model} auth=${authModes} ${oauth}`
 }
 
 function displayUserRootPath() {
@@ -250,6 +391,29 @@ function displayUserRootPath() {
  * 优先使用 config 中的 models 数组，fallback 到 VENDOR_PRESETS。
  * 返回 [{ provider, model, label }]
  */
+function normalizeModelEntry(provider, entry, fallbackContext = null) {
+  if (typeof entry === "string") {
+    return {
+      provider,
+      model: entry,
+      label: `${provider} / ${entry}`,
+      meta: []
+    }
+  }
+  if (!entry || typeof entry !== "object" || typeof entry.id !== "string") return null
+  const meta = []
+  if (entry.reasoning) meta.push("reasoning")
+  if (Array.isArray(entry.input) && entry.input.length) meta.push(entry.input.join("+"))
+  const contextWindow = entry.context_window || entry.contextWindow || fallbackContext
+  if (Number.isFinite(contextWindow)) meta.push(`ctx:${Math.round(contextWindow / 1000)}k`)
+  return {
+    provider,
+    model: entry.id,
+    label: `${provider} / ${entry.label || entry.name || entry.id}`,
+    meta
+  }
+}
+
 function allProviderModels(config) {
   const items = []
   const seen = new Set()
@@ -262,11 +426,13 @@ function allProviderModels(config) {
     // 如果连 models 和 default_model 都没有，跳过
     if (!models.length && !defaultModel) continue
     const modelList = models.length ? models : (defaultModel ? [defaultModel] : [])
-    for (const model of modelList) {
-      const key = `${name}/${model}`
+    for (const entry of modelList) {
+      const model = normalizeModelEntry(name, entry, conf.context_limit)
+      if (!model) continue
+      const key = `${name}/${model.model}`
       if (seen.has(key)) continue
       seen.add(key)
-      items.push({ provider: name, model, label: `${name} / ${model}` })
+      items.push(model)
     }
   }
   return items
@@ -367,8 +533,11 @@ function help(providers = []) {
   lines.push("  Session")
   lines.push(row("/new,/n", "start a new session"))
   lines.push(row("/resume [id],/r [id]", "resume a previous session"))
+  lines.push(row("/picker [id],/recover [id]", "pick a recoverable session or retry target"))
+  lines.push(row("/longagent recover-checkpoint <id>", "queue recovery from a saved checkpoint"))
   lines.push(row("/history", "list recent sessions"))
   lines.push(row("/session,/s", "print current session id"))
+  lines.push(row("kkcode session picker", "show recoverable sessions with resume/retry commands"))
   lines.push(row("/compact", "summarize conversation to free context"))
   lines.push(row("/undo", "undo last code changes"))
 
@@ -376,10 +545,15 @@ function help(providers = []) {
   lines.push("  Mode & Provider")
   lines.push(row("/ask /plan /agent /longagent", "quick mode switch"))
   lines.push(row("/mode <name>,/m <name>", "switch mode (ask|plan|agent|longagent)"))
-  lines.push(row("/longagent 4stage|hybrid", "switch longagent impl"))
+  lines.push(row("/longagent 4stage|hybrid|status|checkpoints|task", "switch impl or manage current longagent"))
   lines.push(row("/provider <type>,/p <type>", `switch provider (${providers.join("|") || "configured"})`))
   lines.push(row("/provider edit <name>", "edit existing provider config"))
   lines.push(row("/model <id>", "set active model"))
+  lines.push(row("kkcode init --providers", "show provider auth/docs/default-model guide"))
+  lines.push(row("kkcode auth providers", "list provider auth capabilities"))
+  lines.push(row("kkcode auth onboard <provider>", "detect/login/verify/set-default in one flow"))
+  lines.push(row("kkcode auth probe <provider>", "inspect auth/fallback runtime state"))
+  lines.push(row("kkcode auth import-callback ...", "import browser OAuth callback URL"))
 
   lines.push("")
   lines.push("  Profile & Workspace")
@@ -394,6 +568,7 @@ function help(providers = []) {
   lines.push(row("/paste [text]", "paste clipboard image"))
   lines.push(row("/status", "show current runtime state"))
   lines.push(row("/dash,/home", "redraw dashboard"))
+  lines.push(row("kkcode background center", "show task-center style summary"))
   lines.push(row("/clear,/cls", "clear terminal"))
   lines.push(row("/keys,/k", "show key map"))
 
@@ -425,6 +600,7 @@ function help(providers = []) {
   lines.push("  provider.default              default provider name")
   lines.push("  provider.<name>.api_key_env   env var for API key")
   lines.push("  provider.<name>.default_model default model id")
+  lines.push("  provider.<name>.fallback_models fallback chain, supports provider::model")
   lines.push("  agent.default_mode            startup mode (ask|plan|agent|longagent)")
   lines.push("  agent.longagent.git.enabled   git branch mgmt (true|false|\"ask\")")
   lines.push("  permission.default_policy     tool permission (ask|allow|deny)")
@@ -441,6 +617,8 @@ function shortcutLegend() {
     "  /h      Help",
     "  /n      New session",
     "  /r      Resume latest session",
+    "  /picker Recovery picker",
+    "  /longagent recover-checkpoint <id>  Recover from checkpoint",
     "  /m      Switch mode",
     "  /p      Switch provider",
     "  /k      Show this key map",
@@ -452,12 +630,16 @@ function shortcutLegend() {
     "TUI keys:",
     "  Enter choose slash suggestion / submit prompt",
     "  Ctrl+J insert newline (Shift+Enter if terminal supports)",
+    "  Ctrl+R open recovery picker",
+    "  Ctrl+S open session picker",
+    "  Ctrl+K open checkpoint picker",
+    "  Ctrl+O open model picker   Ctrl+G open policy picker",
     "  /paste paste image from clipboard (Ctrl+V if terminal supports)",
     "  Up/Down navigate suggestion/history",
     "  Left/Right/Home/End edit cursor",
     "  Ctrl+Up/Down scroll log   Ctrl+Home/End oldest/latest",
     "  Tab cycle mode (longagent -> plan -> ask -> agent)",
-  "  Esc interrupt turn  Ctrl+C×2 exit"
+    "  Esc interrupt turn  Ctrl+C×2 exit"
 ].join("\n")
 }
 
@@ -573,12 +755,70 @@ function renderFileChangeLines(fileChanges = [], limit = 20) {
   return lines
 }
 
+function renderLongAgentStageReport(report) {
+  if (!report || typeof report !== "object" || !report.stageId) return []
+  const lines = []
+  const statusColor = report.status === "pass" ? "green" : report.status === "fail" ? "red" : "yellow"
+  lines.push(
+    `${paint("stage report:", "cyan", { bold: true })} ${paint(report.stageId, "white", { bold: true })} ${paint(String(report.status || "-").toUpperCase(), statusColor, { bold: true })} ${paint(`${report.successCount || 0} ok / ${report.failCount || 0} fail`, null, { dim: true })}`
+  )
+  const details = []
+  if (Number(report.retryCount || 0) > 0) details.push(`retry ${report.retryCount}`)
+  if (Number(report.fileChangesCount || 0) > 0) details.push(`${report.fileChangesCount} changed file(s)`)
+  if (Number(report.remainingFilesCount || 0) > 0) details.push(`${report.remainingFilesCount} remaining file(s)`)
+  if (Number(report.totalCost || 0) > 0) details.push(`$${Number(report.totalCost).toFixed(4)}`)
+  if (details.length) lines.push(`  ${paint(details.join(" | "), null, { dim: true })}`)
+  if (Array.isArray(report.remainingFiles) && report.remainingFiles.length) {
+    lines.push(`  ${paint(`remaining: ${report.remainingFiles.join(", ")}`, null, { dim: true })}`)
+  }
+  return lines
+}
+
 function resolveProviderDefaultModel(config, providerType, fallback = "") {
   return (
     config.provider?.[providerType]?.default_model ||
     config.provider?.[config.provider?.default]?.default_model ||
     fallback
   )
+}
+
+async function queueLongagentBackgroundRecovery(session, config, {
+  promptOverride = null,
+  lastMessage = null,
+  checkpointPatch = null
+} = {}) {
+  const prompt = String(promptOverride || session?.objective || "").trim()
+  if (!prompt) throw new Error("session has no objective to recover")
+  const providerKey = session.providerType || config.provider?.default
+  const providerConf = config.provider?.[providerKey] || {}
+  const model = session.model || providerConf.default_model
+  if (!model) throw new Error(`no model configured for provider ""`)
+
+  const task = await BackgroundManager.launchLongAgentTask({
+    description: `longagent session `,
+    payload: {
+      workerType: "longagent_session",
+      cwd: process.cwd(),
+      prompt,
+      providerType: providerKey,
+      model,
+      longagentSessionId: session.sessionId,
+      maxIterations: Number(session.maxIterations || 0)
+    },
+    config
+  })
+  await LongAgentManager.linkBackgroundTask(session.sessionId, task)
+  await LongAgentManager.update(session.sessionId, {
+    status: "pending",
+    objective: session.objective,
+    providerType: providerKey,
+    model,
+    maxIterations: Number(session.maxIterations || 0),
+    stopRequested: false,
+    ...(checkpointPatch || {}),
+    lastMessage: lastMessage || `background recovery queued ()`
+  })
+  return task
 }
 
 function buildSlashCatalog(customCommands = []) {
@@ -793,6 +1033,12 @@ async function processInputLine({
         state,
         providers: providersConfigured,
         recentSessions: latest,
+        providerSwitches: state.providerSwitches || [],
+        recoverableSessions: ui.metrics.recovery?.sessions || [],
+        backgroundSummary: ui.metrics.background?.summary || null,
+        recentBackgroundTasks: (ui.metrics.background?.tasks || []).map((task) =>
+          `${task.id} ${task.label} ${task.status}${task.sessionId ? ` ${task.sessionId}` : ""}`
+        ),
         mcpSummary,
         skillSummary,
         customCommandCount: customCommands.length,
@@ -895,6 +1141,38 @@ async function processInputLine({
     return { exit: false }
   }
 
+  if (normalized === "/picker" || normalized.startsWith("/picker ") || normalized === "/recover" || normalized.startsWith("/recover ")) {
+    const recoverable = await listRecoverableSessions({
+      cwd: process.cwd(),
+      limit: 12,
+      enabled: ctx.configState.config?.session?.recovery !== false
+    }).catch(() => [])
+    const arg = normalized.replace(/^\/(picker|recover)/, "").trim()
+    if (!arg) {
+      printRecoverablePicker(print, recoverable)
+      return { exit: false }
+    }
+    let target = null
+    const idx = parseInt(arg, 10)
+    if (!Number.isNaN(idx) && idx >= 1 && idx <= recoverable.length) {
+      target = recoverable[idx - 1]
+    } else {
+      target = recoverable.find((session) => session.id === arg || session.id.startsWith(arg)) || null
+    }
+    if (!target) {
+      print(`no recoverable session matching "${arg}"`)
+      return { exit: false }
+    }
+    state.sessionId = target.id
+    state.mode = target.mode || state.mode
+    state.providerType = target.providerType || state.providerType
+    state.model = target.model || state.model
+    recordProviderSwitch(state, state.providerType, state.model, "recovery-picker")
+    const title = target.title || `${target.mode}:${target.model || "?"}`
+    print(`picked recoverable session: ${paint(title, "cyan")} (${target.mode}, ${target.model || "?"})`)
+    return { exit: false }
+  }
+
   if (normalized === "/resume" || normalized.startsWith("/resume ") || normalized === "/r" || normalized.startsWith("/r ")) {
     const arg = normalized.replace(/^\/(resume|r)/, "").trim()
     const sessions = await listSessions({ cwd: process.cwd(), limit: 20, includeChildren: false })
@@ -907,6 +1185,15 @@ async function processInputLine({
     let target = null
 
     if (!arg) {
+      const recoverable = await listRecoverableSessions({
+        cwd: process.cwd(),
+        limit: 6,
+        enabled: ctx.configState.config?.session?.recovery !== false
+      }).catch(() => [])
+      if (recoverable.length) {
+        printRecoverablePicker(print, recoverable)
+        print("")
+      }
       // Show interactive numbered list
       print(`\n  Sessions in ${paint(process.cwd(), "cyan")}:\n`)
       for (let i = 0; i < sessions.length; i++) {
@@ -941,6 +1228,7 @@ async function processInputLine({
     state.mode = target.mode || state.mode
     state.providerType = target.providerType || state.providerType
     state.model = target.model || state.model
+    recordProviderSwitch(state, state.providerType, state.model, "resume")
     const title = target.title || `${target.mode}:${target.model || "?"}`
     print(`resumed: ${paint(title, "cyan")} (${target.mode}, ${target.model || "?"})`)
     const msgs = await getConversationHistory(target.id, 3)
@@ -1006,18 +1294,130 @@ async function processInputLine({
   }
 
   if (normalized.startsWith("/longagent ")) {
-    const sub = normalized.replace("/longagent ", "").trim().toLowerCase()
-    if (sub === "4stage") {
+    const sub = normalized.replace("/longagent ", "").trim()
+    const subLower = sub.toLowerCase()
+    if (subLower === "4stage") {
       state.mode = "longagent"
       state.longagentImpl = "4stage"
       print("mode switched: longagent (4stage)")
-    } else if (sub === "hybrid") {
+      return { exit: false }
+    }
+    if (subLower === "hybrid") {
       state.mode = "longagent"
       state.longagentImpl = "hybrid"
       print("mode switched: longagent (hybrid)")
-    } else {
-      print("usage: /longagent [4stage|hybrid]")
+      return { exit: false }
     }
+
+    const sessionId = state.sessionId
+    if (!sessionId) {
+      print("no active session")
+      return { exit: false }
+    }
+
+    const session = await LongAgentManager.get(sessionId)
+    if (["status", "checkpoints", "task"].includes(subLower)) {
+      if (!session) {
+        print(`longagent session not found: ${sessionId}`)
+        return { exit: false }
+      }
+      if (subLower === "status") {
+        print(JSON.stringify(session, null, 2))
+        return { exit: false }
+      }
+      if (subLower === "checkpoints") {
+        print(JSON.stringify(session.checkpoints || [], null, 2))
+        return { exit: false }
+      }
+      await BackgroundManager.tick(ctx.configState.config).catch(() => {})
+      const task = session.backgroundTaskId ? await BackgroundManager.get(session.backgroundTaskId) : null
+      print(JSON.stringify(task || {
+        id: session.backgroundTaskId || null,
+        status: session.backgroundTaskStatus || "unknown",
+        attempt: session.backgroundTaskAttempt || 0,
+        updatedAt: session.backgroundTaskUpdatedAt || null
+      }, null, 2))
+      return { exit: false }
+    }
+
+    if (subLower.startsWith("recover-checkpoint ")) {
+      if (!session) {
+        print(`longagent session not found: ${sessionId}`)
+        return { exit: false }
+      }
+      const checkpointId = sub.replace(/^recover-checkpoint\s+/i, "").trim()
+      const checkpoint = (session.checkpoints || []).find((item) => item.id === checkpointId)
+      if (!checkpoint) {
+        print(`checkpoint not found: ${checkpointId}`)
+        return { exit: false }
+      }
+      const objective = [
+        session.objective,
+        "",
+        "Resume from checkpoint:",
+        `- Kind: ${checkpoint.kind || "phase"}`,
+        `- Phase: ${checkpoint.phase || "-"}`,
+        checkpoint.stageId ? `- Stage: ${checkpoint.stageId}` : null,
+        checkpoint.taskId ? `- Task: ${checkpoint.taskId}` : null,
+        `- Summary: ${checkpoint.summary || ""}`
+      ].filter(Boolean).join("\n")
+      const task = await queueLongagentBackgroundRecovery(session, ctx.configState.config, {
+        promptOverride: objective,
+        checkpointPatch: {
+          phase: checkpoint.phase || session.phase,
+          currentStageId: checkpoint.stageId || session.currentStageId || null
+        },
+        lastMessage: `manual recovery queued from checkpoint ${checkpoint.id}`
+      })
+      await LongAgentManager.checkpoint(sessionId, {
+        phase: checkpoint.phase || session.phase,
+        kind: "manual_recovery",
+        stageId: checkpoint.stageId || null,
+        taskId: checkpoint.taskId || null,
+        summary: `manual recovery from checkpoint ${checkpoint.id}`
+      }, process.cwd(), ctx.configState.config)
+      print(`checkpoint recovery queued: ${task.id}`)
+      return { exit: false }
+    }
+
+    if (subLower.startsWith("retry-task ")) {
+      if (!session) {
+        print(`longagent session not found: ${sessionId}`)
+        return { exit: false }
+      }
+      const taskId = sub.replace(/^retry-task\s+/i, "").trim()
+      const taskState = session.taskProgress?.[taskId]
+      if (!taskState) {
+        print(`task not found in session progress: ${taskId}`)
+        return { exit: false }
+      }
+      const objective = [
+        session.objective,
+        "",
+        "Retry the failed task only.",
+        `- Target task: ${taskId}`,
+        session.currentStageId ? `- Stage: ${session.currentStageId}` : null,
+        taskState.lastError ? `- Last error: ${String(taskState.lastError).slice(-2000)}` : null
+      ].filter(Boolean).join("\n")
+      const backgroundTask = await queueLongagentBackgroundRecovery(session, ctx.configState.config, {
+        promptOverride: objective,
+        checkpointPatch: {
+          retryStageId: session.currentStageId || null
+        },
+        lastMessage: `manual retry queued for task ${taskId}`
+      })
+      await LongAgentManager.checkpoint(sessionId, {
+        phase: session.phase || "manual_retry",
+        kind: "manual_task_retry",
+        stageId: session.currentStageId || null,
+        taskId,
+        summary: `manual retry for task ${taskId}`
+      }, process.cwd(), ctx.configState.config)
+      print(`task retry queued: ${backgroundTask.id}`)
+      return { exit: false }
+    }
+
+    print("usage: /longagent [4stage|hybrid|status|checkpoints|task|recover-checkpoint <id>|retry-task <id>]")
     return { exit: false }
   }
 
@@ -1033,7 +1433,10 @@ async function processInputLine({
       startWizard(wizard, print)
       setWizard({ ...wizard })
     } else {
-      print(`available providers: ${providersConfigured.join(", ")}`)
+      print("available providers:")
+      for (const providerName of providersConfigured) {
+        print(`  - ${formatProviderSummary(providerName, ctx.configState.config)}`)
+      }
     }
     return { exit: false }
   }
@@ -1063,11 +1466,15 @@ async function processInputLine({
     // /provider <name> — 切换 provider
     const next = rest
     if (!providersConfigured.includes(next)) {
-      print(`provider must be one of: ${providersConfigured.join(", ")}`)
+      print("provider must be one of:")
+      for (const providerName of providersConfigured) {
+        print(`  - ${formatProviderSummary(providerName, ctx.configState.config)}`)
+      }
       return { exit: false }
     }
     state.providerType = next
     state.model = resolveProviderDefaultModel(ctx.configState.config, next, state.model)
+    recordProviderSwitch(state, state.providerType, state.model, "provider")
     print(`provider switched: ${next} (model: ${state.model})`)
     // 展示该 provider 下可用模型
     const providerModels = allProviderModels(ctx.configState.config).filter(m => m.provider === next)
@@ -1354,7 +1761,12 @@ async function processInputLine({
     theme: ctx.themeState.theme,
     layout: ctx.configState.config.ui.layout,
     longagentState: state.mode === "longagent" ? result.longagent : null,
-    memoryLoaded: state.memoryLoaded
+    memoryLoaded: state.memoryLoaded,
+    backgroundSummary: ui.metrics.background?.summary || null,
+    recoverySummary: {
+      total: ui.metrics.recovery?.total || 0,
+      retryable: (ui.metrics.recovery?.sessions || []).filter((item) => item.retryable).length
+    }
   })
   if (showTurnStatus) print(status)
 
@@ -1377,6 +1789,7 @@ async function processInputLine({
         ? result.longagent.currentStageId
         : `${(result.longagent.stageIndex || 0) + 1}/${Math.max(1, result.longagent.stageCount || 1)}`
       print(`longagent: phase=${result.longagent.phase || "-"} stage=${stg} gate=${result.longagent.currentGate || "-"}`)
+      for (const line of renderLongAgentStageReport(result.longagent.lastStageReport)) print(line)
       if (result.longagent.taskProgress && Object.keys(result.longagent.taskProgress).length) {
         for (const line of formatPlanProgress(result.longagent.taskProgress)) print(line)
       }
@@ -1462,7 +1875,12 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
       theme: ctx.themeState.theme,
       layout: ctx.configState.config.ui.layout,
       longagentState: state.mode === "longagent" ? lastTurn.longagent : null,
-      memoryLoaded: state.memoryLoaded
+      memoryLoaded: state.memoryLoaded,
+      backgroundSummary: ui.metrics.background?.summary || null,
+      recoverySummary: {
+        total: ui.metrics.recovery?.total || 0,
+        retryable: (ui.metrics.recovery?.sessions || []).filter((item) => item.retryable).length
+      }
     })
 
     const line = await collectInput(rl, `${status}\n> `)
@@ -1496,6 +1914,12 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
           state,
           providers: providersConfigured,
           recentSessions: latest,
+          providerSwitches: state.providerSwitches || [],
+          recoverableSessions: ui.metrics.recovery?.sessions || [],
+          backgroundSummary: ui.metrics.background?.summary || null,
+          recentBackgroundTasks: (ui.metrics.background?.tasks || []).map((task) =>
+            `${task.id} ${task.label} ${task.status}${task.sessionId ? ` ${task.sessionId}` : ""}`
+          ),
           mcpSummary,
           skillSummary,
           customCommandCount: localCustomCommands.length,
@@ -1509,6 +1933,7 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
       lastTurn.cost = Number.isFinite(action.turnResult.cost) ? action.turnResult.cost : lastTurn.cost
       lastTurn.context = action.turnResult.context || null
       lastTurn.longagent = action.turnResult.longagent || null
+      state.longagent = action.turnResult.longagent || null
     }
 
     if (action.exit) break
@@ -1519,18 +1944,18 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
   await saveHistoryLines(entered)
 }
 
-function startTuiFrame() {
-  output.write("\x1b[?1049h")
+function startTuiFrame(useAlternateScreen = true) {
+  if (useAlternateScreen) output.write("\x1b[?1049h")
   output.write("\x1b[?25l")
   output.write("\x1b[?1002h")   // 启用鼠标按键+拖拽追踪（含滚轮）
   output.write("\x1b[?1006h")   // 启用 SGR 扩展模式
 }
 
-function stopTuiFrame() {
+function stopTuiFrame(useAlternateScreen = true) {
   output.write("\x1b[?1002l")   // 禁用鼠标追踪
   output.write("\x1b[?1006l")   // 禁用 SGR 模式
   output.write("\x1b[?25h")
-  output.write("\x1b[?1049l")
+  if (useAlternateScreen) output.write("\x1b[?1049l")
 }
 
 function hasShiftEnterSequence(dataChunk) {
@@ -1587,10 +2012,10 @@ function renderSuggestions({ inputLine, suggestions, selected, offset, maxVisibl
 async function startTuiRepl({ ctx, state, providersConfigured, customCommands, recentSessions, historyLines, mcpStatusLines = [] }) {
   let localCustomCommands = customCommands
   let localRecentSessions = recentSessions
+  const useAlternateScreen = shouldUseAlternateScreen(ctx.configState.config.ui, output)
 
   const ui = {
-    input: "",
-    inputCursor: 0,
+    inputState: createInputBufferState(),
     logs: [...mcpStatusLines],
     busy: false,
     pendingImages: [],
@@ -1606,20 +2031,19 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     questionCustomInput: "",
     questionCustomCursor: 0,
     questionAnswers: {},
+    sessionPicker: null,
+    checkpointPicker: null,
     modelPicker: null,
     policyPicker: null,
     selectedSuggestion: 0,
     suggestionOffset: 0,
     history: [...historyLines],
     historyIndex: historyLines.length,
-    scrollOffset: 0,
+    scrollState: createScrollState(),
+    truncatedLogLines: 0,
     quitting: false,
     showDashboard: true,
-    scrollMeta: {
-      logRows: 0,
-      totalRows: 0,
-      maxOffset: 0
-    },
+    showInspector: false,
     spinnerIndex: 0,
     currentActivity: null,
     currentStep: 0,
@@ -1628,6 +2052,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     inThinkingStream: false,
     thinkingSkipped: false,
     paused: false,
+    busyStartedAt: 0,
     turnAbortController: null,
     lastCtrlCTime: 0,
     lastLongAgentPrompt: null,
@@ -1636,8 +2061,6 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     // 鼠标文本选择状态
     mouseSelection: null,  // { startRow, startCol, endRow, endCol, active }
     autoCopy: false,       // 拖拽选择后是否自动复制到剪贴板（Ctrl+Y 切换）
-    inputSelection: null,  // { start, end } 输入框内的选择范围（字符位置）
-    inputDragAnchor: -1,   // 输入框拖拽起始字符位置
     // 屏幕布局元数据（buildFrame 中更新）
     layoutMeta: { logStartRow: 0, logEndRow: 0, inputStartRow: 0, inputEndRow: 0 },
     wizard: createWizardState(),
@@ -1651,22 +2074,103 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       cost: 0,
       context: null,
       longagent: null,
-      toolEvents: []
+      toolEvents: [],
+      background: {
+        summary: null,
+        tasks: []
+      },
+      recovery: {
+        total: 0,
+        sessions: []
+      }
     }
   }
+  const replNodeMajor = Number.parseInt(String(process.versions?.node || process.version || "").replace(/^v/, "").split(".")[0] || "", 10)
+  if (Number.isFinite(replNodeMajor) && replNodeMajor >= 25) {
+    ui.logs.push("[runtime] Node 25 has a known worker lifecycle edge case. kkcode now self-recovers more aggressively, but Node 22 remains the stable baseline for longagent/background workers.")
+  }
+  Object.defineProperties(ui, {
+    input: {
+      get() { return this.inputState.text },
+      set(value) { this.inputState.text = String(value || "") }
+    },
+    inputCursor: {
+      get() { return this.inputState.cursor },
+      set(value) { this.inputState.cursor = Math.max(0, Math.min(this.inputState.text.length, Number(value) || 0)) }
+    },
+    inputSelection: {
+      get() { return this.inputState.selection },
+      set(value) { this.inputState.selection = value }
+    },
+    inputDragAnchor: {
+      get() { return this.inputState.dragAnchor },
+      set(value) { this.inputState.dragAnchor = Number(value) }
+    },
+    scrollOffset: {
+      get() { return this.scrollState.offset },
+      set(value) {
+        this.scrollState.offset = Math.max(0, Math.min(this.scrollState.maxOffset || 0, Number(value) || 0))
+      }
+    },
+    scrollMeta: {
+      get() { return this.scrollState },
+      set(value) {
+        syncScrollViewport(this.scrollState, value || {})
+      }
+    }
+  })
   let lastFrame = []
   let lastFrameWidth = 0
   let forceFullPaint = true
   let renderScheduled = false
   let renderTimer = null
   let spinnerTimer = null
+  let backgroundOverviewTimer = null
+  const logBufferLineLimit = resolveLogBufferLineLimit(ctx.configState.config)
+
+  function trimLogBuffer() {
+    if (ui.logs.length <= logBufferLineLimit) return
+    const removed = ui.logs.length - logBufferLineLimit
+    ui.logs.splice(0, removed)
+    ui.truncatedLogLines += removed
+  }
 
   function appendLog(text = "") {
     const follow = ui.scrollOffset === 0
     const lines = String(text || "").replace(/\r/g, "").split("\n")
     for (const line of lines) ui.logs.push(line)
-    if (ui.logs.length > MAX_TUI_LOG_LINES) ui.logs.splice(0, ui.logs.length - MAX_TUI_LOG_LINES)
+    trimLogBuffer()
     if (follow) ui.scrollOffset = 0
+  }
+
+  async function refreshBackgroundOverview() {
+    try {
+      await BackgroundManager.tick(ctx.configState.config).catch(() => {})
+      const tasks = await BackgroundManager.list()
+      const recoverable = await listRecoverableSessions({
+        cwd: process.cwd(),
+        limit: 6,
+        enabled: ctx.configState.config?.session?.recovery !== false
+      }).catch(() => [])
+      ui.metrics.background = {
+        summary: summarizeBackgroundTasks(tasks),
+        tasks: tasks.slice(0, 8).map(formatBackgroundTaskSummary)
+      }
+      ui.metrics.recovery = {
+        total: recoverable.length,
+        sessions: recoverable.slice(0, 6).map((session) => ({
+          id: session.id,
+          mode: session.mode,
+          model: session.model,
+          status: session.status,
+          updatedAt: session.updatedAt,
+          retryable: Boolean(session.retryMeta?.failedAt || session.status === "error")
+        }))
+      }
+      requestRender()
+    } catch {
+      // ignore background overview failures in REPL
+    }
   }
 
   // 流式 markdown 渲染器 — 每轮对话重置
@@ -1690,7 +2194,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     if (!ui.logs.length) ui.logs.push("")
     ui.logs[ui.logs.length - 1] += parts[0]
     for (let i = 1; i < parts.length; i++) ui.logs.push(parts[i])
-    if (ui.logs.length > MAX_TUI_LOG_LINES) ui.logs.splice(0, ui.logs.length - MAX_TUI_LOG_LINES)
+    trimLogBuffer()
     if (follow) ui.scrollOffset = 0
     requestRender()
   }
@@ -1708,6 +2212,10 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     output: { appendLog, appendStreamChunk }
   })
   activityRenderer.start()
+  await refreshBackgroundOverview()
+  backgroundOverviewTimer = setInterval(() => {
+    refreshBackgroundOverview().catch(() => {})
+  }, 4000)
 
   const uiEventUnsub = EventBus.subscribe((event) => {
     const { type, payload } = event
@@ -1898,6 +2406,164 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     return allProviderModels(ctx.configState.config)
   }
 
+  async function openSessionPicker({ recoverableOnly = false } = {}) {
+    const sessions = await listSessions({ cwd: process.cwd(), limit: 20, includeChildren: false }).catch(() => [])
+    const recoverable = await listRecoverableSessions({
+      cwd: process.cwd(),
+      limit: 20,
+      enabled: ctx.configState.config?.session?.recovery !== false
+    }).catch(() => [])
+    const recoverableMap = new Map(recoverable.map((item) => [item.id, item]))
+    const baseSessions = recoverableOnly ? recoverable : sessions
+    const items = baseSessions.map((session) => {
+      const recoverableSession = recoverableMap.get(session.id) || null
+      const recoverableFlag = Boolean(recoverableSession)
+      const status = recoverableSession?.retryMeta?.inProgress ? "in-progress" : session.status || recoverableSession?.status || "-"
+      const action = recoverableFlag
+        ? ((recoverableSession?.retryMeta?.failedAt || recoverableSession?.status === "error" || session.status === "error") ? "retry" : "resume")
+        : null
+      return {
+        id: session.id,
+        providerType: session.providerType,
+        model: session.model,
+        mode: session.mode,
+        recoverable: recoverableFlag,
+        action,
+        updatedAt: Number(session.updatedAt || recoverableSession?.updatedAt || 0),
+        label: `${clipPickerLabel(session.title || `${session.mode}:${session.model || "?"}`, 56)}  ${session.mode}  ${status}${action ? `  [${action}]` : ""}`
+      }
+    }).sort((a, b) => {
+      if (a.recoverable !== b.recoverable) return a.recoverable ? -1 : 1
+      return Number(b.updatedAt || 0) - Number(a.updatedAt || 0)
+    })
+    if (!items.length) {
+      appendLog(paint(recoverableOnly ? "No recoverable sessions available." : "No sessions available to switch.", ctx.themeState.theme.semantic.error))
+      requestRender()
+      return
+    }
+    const currentIdx = items.findIndex((it) => it.id === state.sessionId)
+    ui.sessionPicker = {
+      allItems: items,
+      items: [...items],
+      query: "",
+      recoverableOnly,
+      selected: Math.max(0, currentIdx),
+      offset: 0
+    }
+    requestRender({ force: true })
+  }
+
+  function closeSessionPicker() {
+    ui.sessionPicker = null
+    requestRender({ force: true })
+  }
+
+  function openCheckpointPicker() {
+    const checkpoints = Array.isArray(ui.metrics.longagent?.checkpoints) ? ui.metrics.longagent.checkpoints : []
+    const recommendedCheckpointId = checkpoints.length && (
+      ui.metrics.longagent?.lastStageReport?.status === "fail" || Number(ui.metrics.longagent?.recoveryCount || 0) > 0
+    ) ? checkpoints[checkpoints.length - 1].id : ""
+    const items = checkpoints.slice().reverse().map((checkpoint) => ({
+      id: checkpoint.id,
+      phase: checkpoint.phase || null,
+      stageId: checkpoint.stageId || null,
+      taskId: checkpoint.taskId || null,
+      kind: checkpoint.kind || "checkpoint",
+      summary: checkpoint.summary || "",
+      recommended: checkpoint.id === recommendedCheckpointId,
+      label: clipPickerLabel(
+        `${checkpoint.id}  ${checkpoint.kind || "checkpoint"}  ${checkpoint.phase || "-"}${checkpoint.id === recommendedCheckpointId ? "  [recommended]" : ""}${checkpoint.stageId ? `  ${checkpoint.stageId}` : ""}  ${checkpoint.summary || ""}`,
+        84
+      )
+    }))
+    if (!items.length) {
+      appendLog(paint("No longagent checkpoints available.", ctx.themeState.theme.semantic.error))
+      requestRender()
+      return
+    }
+    ui.checkpointPicker = {
+      allItems: items,
+      items: [...items],
+      query: "",
+      selected: 0,
+      offset: 0
+    }
+    requestRender({ force: true })
+  }
+
+  function closeCheckpointPicker() {
+    ui.checkpointPicker = null
+    requestRender({ force: true })
+  }
+
+  async function confirmCheckpointPicker() {
+    if (!ui.checkpointPicker) return
+    const chosen = ui.checkpointPicker.items[ui.checkpointPicker.selected]
+    if (!chosen) {
+      closeCheckpointPicker()
+      return
+    }
+    const session = await LongAgentManager.get(state.sessionId)
+    if (!session) {
+      appendLog(paint(`longagent session not found: ${state.sessionId}`, ctx.themeState.theme.semantic.error))
+      closeCheckpointPicker()
+      return
+    }
+    const checkpoint = (session.checkpoints || []).find((item) => item.id === chosen.id)
+    if (!checkpoint) {
+      appendLog(paint(`checkpoint not found: ${chosen.id}`, ctx.themeState.theme.semantic.error))
+      closeCheckpointPicker()
+      return
+    }
+    const objective = [
+      session.objective,
+      "",
+      "Resume from checkpoint:",
+      `- Kind: ${checkpoint.kind || "phase"}`,
+      `- Phase: ${checkpoint.phase || "-"}`,
+      checkpoint.stageId ? `- Stage: ${checkpoint.stageId}` : null,
+      checkpoint.taskId ? `- Task: ${checkpoint.taskId}` : null,
+      `- Summary: ${checkpoint.summary || ""}`
+    ].filter(Boolean).join("\n")
+    try {
+      const task = await queueLongagentBackgroundRecovery(session, ctx.configState.config, {
+        promptOverride: objective,
+        checkpointPatch: {
+          phase: checkpoint.phase || session.phase,
+          currentStageId: checkpoint.stageId || session.currentStageId || null
+        },
+        lastMessage: `manual recovery queued from checkpoint ${checkpoint.id}`
+      })
+      await LongAgentManager.checkpoint(session.sessionId, {
+        phase: checkpoint.phase || session.phase,
+        kind: "manual_recovery",
+        stageId: checkpoint.stageId || null,
+        taskId: checkpoint.taskId || null,
+        summary: `manual recovery from checkpoint ${checkpoint.id}`
+      }, process.cwd(), ctx.configState.config)
+      appendLog(paint(`checkpoint recovery queued: ${task.id} (${checkpoint.id})`, ctx.themeState.theme.semantic.success))
+      await refreshBackgroundOverview()
+    } catch (error) {
+      appendLog(paint(`checkpoint recovery failed: ${error.message}`, ctx.themeState.theme.semantic.error))
+    }
+    closeCheckpointPicker()
+  }
+
+  function confirmSessionPicker() {
+    if (!ui.sessionPicker) return
+    const chosen = ui.sessionPicker.items[ui.sessionPicker.selected]
+    if (chosen) {
+      state.sessionId = chosen.id
+      state.mode = chosen.mode || state.mode
+      state.providerType = chosen.providerType || state.providerType
+      state.model = chosen.model || state.model
+      recordProviderSwitch(state, state.providerType, state.model, ui.sessionPicker.recoverableOnly ? "recovery-picker" : "session-picker")
+      const actionLabel = chosen.action ? ` ${chosen.action}` : ""
+      appendLog(paint(`session switched${actionLabel}: ${chosen.id} (${chosen.mode}, ${chosen.model || "?"})`, ctx.themeState.theme.semantic.success))
+    }
+    closeSessionPicker()
+  }
+
   function openModelPicker() {
     const items = buildModelPickerItems()
     if (!items.length) {
@@ -1925,6 +2591,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     if (chosen) {
       state.providerType = chosen.provider
       state.model = chosen.model
+      recordProviderSwitch(state, state.providerType, state.model, "model-picker")
       appendLog(paint(`model switched: ${chosen.provider} / ${chosen.model}`, ctx.themeState.theme.semantic.success))
     }
     closeModelPicker()
@@ -1971,24 +2638,19 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   function insertAtCursor(text) {
-    if (!text) return
-    const head = ui.input.slice(0, ui.inputCursor)
-    const tail = ui.input.slice(ui.inputCursor)
-    ui.input = `${head}${text}${tail}`
-    ui.inputCursor += text.length
+    insertIntoInputBuffer(ui.inputState, text)
   }
 
   function moveCursor(delta) {
-    ui.inputCursor = Math.max(0, Math.min(ui.input.length, ui.inputCursor + delta))
+    moveInputCursor(ui.inputState, delta)
   }
 
   function setCursor(pos) {
-    ui.inputCursor = Math.max(0, Math.min(ui.input.length, pos))
+    setInputCursor(ui.inputState, pos)
   }
 
   function scrollBy(delta) {
-    const max = ui.scrollMeta.maxOffset || 0
-    ui.scrollOffset = Math.max(0, Math.min(max, ui.scrollOffset + delta))
+    scrollByDelta(ui.scrollState, delta)
   }
 
   // SGR 鼠标事件解析：\x1b[<button;x;yM（按下）或 \x1b[<button;x;ym（释放）
@@ -2005,11 +2667,11 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   function scrollToTop() {
-    ui.scrollOffset = ui.scrollMeta.maxOffset || 0
+    setScrollTop(ui.scrollState)
   }
 
   function scrollToBottom() {
-    ui.scrollOffset = 0
+    setScrollBottom(ui.scrollState)
   }
 
   // OSC 52 剪贴板复制（终端原生支持，无需外部工具）
@@ -2094,8 +2756,50 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       theme: ctx.themeState.theme,
       layout: ctx.configState.config.ui.layout,
       longagentState: state.mode === "longagent" ? ui.metrics.longagent : null,
-      memoryLoaded: state.memoryLoaded
+      memoryLoaded: state.memoryLoaded,
+      backgroundSummary: ui.metrics.background?.summary || null,
+      recoverySummary: {
+        total: ui.metrics.recovery?.total || 0,
+        retryable: (ui.metrics.recovery?.sessions || []).filter((item) => item.retryable).length
+      }
     })
+    const longagentPanelLines = state.mode === "longagent"
+      ? renderLongAgentPanel({
+          ...(ui.metrics.longagent || {}),
+          sessionId: ui.metrics.longagent?.sessionId || state.sessionId
+        }, {
+          width,
+          theme: ctx.themeState.theme
+        })
+      : []
+    const recentFileChanges = state.mode === "longagent" && Array.isArray(ui.metrics.longagent?.fileChanges)
+      ? normalizeFileChanges(
+          ui.metrics.longagent.fileChanges.map((item) => ({
+            name: "write",
+            metadata: { fileChanges: [item] }
+          }))
+        )
+      : normalizeFileChanges(ui.metrics.toolEvents || [])
+    const fileChangesPanelLines = renderFileChangesPanel(recentFileChanges, {
+      width,
+      theme: ctx.themeState.theme,
+      title: state.mode === "longagent" ? "Stage File Changes" : "Recent File Changes"
+    })
+    const inspectorLines = ui.showInspector
+      ? renderInspectorOverlay({
+          mode: state.mode,
+          providerType: state.providerType,
+          model: state.model,
+          longagentState: ui.metrics.longagent,
+          providerSwitches: state.providerSwitches || [],
+          recoverableSessions: ui.metrics.recovery?.sessions || [],
+          backgroundSummary: ui.metrics.background?.summary || null,
+          backgroundTasks: ui.metrics.background?.tasks || [],
+          fileChanges: recentFileChanges,
+          width,
+          theme: ctx.themeState.theme
+        })
+      : []
 
     const lines = []
     let dashboardRows = 0
@@ -2140,6 +2844,52 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     const inputVisibleRows = Math.max(1, Math.min(5, Math.floor(height * 0.2)))
     const visibleInput = inputWrapped.slice(-inputVisibleRows)
     let busyLine
+    let busyDetailLine = ""
+    const busyMeta = []
+    if (ui.busyStartedAt) busyMeta.push(formatCompactElapsed(Date.now() - ui.busyStartedAt))
+    if (ui.busy) busyMeta.push("Esc interrupt")
+    if (state.mode === "longagent" && ui.metrics.longagent) {
+      const la = ui.metrics.longagent
+      const stage = la.currentStageId || (Number.isFinite(la.stageIndex) && Number.isFinite(la.stageCount) && la.stageCount > 0
+        ? `${la.stageIndex + 1}/${la.stageCount}`
+        : null)
+      if (stage) busyMeta.push(`stg ${stage}`)
+      if (la.currentGate) busyMeta.push(`gate ${la.currentGate}`)
+      if (Number.isFinite(la.remainingFilesCount)) busyMeta.push(`rem ${la.remainingFilesCount}`)
+      if (Number(la.recoveryCount || 0) > 0) busyMeta.push(`retry ${la.recoveryCount}`)
+    }
+    if (Number(ui.metrics.background?.summary?.running || 0) > 0) {
+      busyMeta.push(`bg ${ui.metrics.background.summary.running}`)
+    }
+    if (Number(ui.metrics.recovery?.total || 0) > 0) {
+      busyMeta.push(`rec ${ui.metrics.recovery.total}`)
+    }
+    const inlineMeta = busyMeta.length
+      ? paint(` (${busyMeta.join(" • ")})`, ctx.themeState.theme.base.muted, { dim: true })
+      : ""
+    if (ui.busy && state.mode === "longagent" && ui.metrics.longagent) {
+      const la = ui.metrics.longagent
+      const detailParts = []
+      if (la.lastStageReport?.stageId) {
+        const report = la.lastStageReport
+        const counts = [
+          Number.isFinite(report.successCount) ? `ok ${report.successCount}` : null,
+          Number.isFinite(report.failCount) ? `fail ${report.failCount}` : null
+        ].filter(Boolean).join(" ")
+        detailParts.push(`report ${report.stageId}:${report.status || "unknown"}${counts ? ` ${counts}` : ""}`)
+      }
+      if (Array.isArray(la.checkpoints) && la.checkpoints.length) {
+        const checkpoint = la.checkpoints[0]
+        const cpSummary = clipPickerLabel(checkpoint.summary || `${checkpoint.kind || "checkpoint"} ${checkpoint.phase || "-"}`, 54)
+        detailParts.push(`checkpoint ${cpSummary}`)
+      }
+      if (Array.isArray(la.recoverySuggestions) && la.recoverySuggestions.length) {
+        detailParts.push(`hint ${clipPickerLabel(la.recoverySuggestions[0], 54)}`)
+      }
+      if (detailParts.length) {
+        busyDetailLine = paint(`  ${detailParts.join("  |  ")}`, ctx.themeState.theme.base.muted, { dim: true })
+      }
+    }
     if (ui.busy && ui.currentActivity) {
       const spinner = BUSY_SPINNER_FRAMES[ui.spinnerIndex]
       const stepTag = ui.currentStep > 0
@@ -2150,15 +2900,15 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         const toolColor = toolName === "edit" || toolName === "write" || toolName === "notebookedit" ? "yellow"
           : toolName === "bash" ? "magenta"
           : "cyan"
-        busyLine = `${paint(spinner, toolColor)} ${paint(toolName, toolColor, { bold: true })}${formatBusyToolDetail(toolName, ui.currentActivity.args)}${stepTag}`
+        busyLine = `${paint(spinner, toolColor)} ${paint(toolName, toolColor, { bold: true })}${formatBusyToolDetail(toolName, ui.currentActivity.args)}${stepTag}${inlineMeta}`
       } else if (ui.currentActivity.type === "writing") {
-        busyLine = `${paint(spinner, "green")} ${paint("writing", "green", { bold: true })}${stepTag}`
+        busyLine = `${paint(spinner, "green")} ${paint("writing", "green", { bold: true })}${stepTag}${inlineMeta}`
       } else {
-        busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint("thinking", ctx.themeState.theme.semantic.warn, { bold: true })}${stepTag}`
+        busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint("thinking", ctx.themeState.theme.semantic.warn, { bold: true })}${stepTag}${inlineMeta}`
       }
     } else if (ui.busy) {
       const spinner = BUSY_SPINNER_FRAMES[ui.spinnerIndex]
-      busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint("thinking", ctx.themeState.theme.semantic.warn, { bold: true })}`
+      busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint("thinking", ctx.themeState.theme.semantic.warn, { bold: true })}${inlineMeta}`
     } else {
       busyLine = ""
     }
@@ -2229,6 +2979,81 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       }
     }
     const modelPickerBlock = modelPickerLines.length ? modelPickerLines.length : 0
+    const sessionPickerLines = []
+    if (ui.sessionPicker) {
+      const sp = ui.sessionPicker
+      const visible = Math.min(sp.items.length, MAX_MODEL_PICKER_VISIBLE)
+      let start = Math.max(0, Math.min(sp.offset, sp.items.length - visible))
+      if (sp.selected < start) start = sp.selected
+      if (sp.selected >= start + visible) start = sp.selected - visible + 1
+      sp.offset = start
+      const end = Math.min(sp.items.length, start + visible)
+      const pickerTitle = sp.recoverableOnly ? "Recovery Picker" : "Switch Session"
+      const pickerHint = sp.recoverableOnly ? "resume/retry focus" : "recoverable first"
+      sessionPickerLines.push(
+        paint(`${pickerTitle} (${sp.items.length ? sp.selected + 1 : 0}/${sp.items.length})  ↑↓ navigate  type filter  Enter select  Esc cancel  ${pickerHint}${sp.query ? `  filter=${sp.query}` : ""}`, ctx.themeState.theme.semantic.info, { bold: true })
+      )
+      sessionPickerLines.push(paint(`┌${"─".repeat(Math.max(1, width - 4))}┐`, ctx.themeState.theme.base.border))
+      if (!sp.items.length) {
+        sessionPickerLines.push(paint(`│ ${padRight("(no matches)", Math.max(1, width - 5))}│`, ctx.themeState.theme.base.muted))
+      } else {
+        for (let i = start; i < end; i++) {
+          const item = sp.items[i]
+          const active = i === sp.selected
+          const current = item.id === state.sessionId
+          const marker = current ? "●" : item.action === "retry" ? "↻" : item.recoverable ? "↺" : " "
+          const prefix = active ? "▸" : " "
+          const line = ` ${prefix} ${marker} ${item.label}`
+          const padded = padRight(line, Math.max(1, width - 5))
+          sessionPickerLines.push(
+            active
+              ? paint(`│${padded}│`, "#111111", { bg: ctx.themeState.theme.semantic.info, bold: true })
+              : paint(`│${padded}│`, current ? ctx.themeState.theme.semantic.success : item.recoverable ? ctx.themeState.theme.semantic.warn : ctx.themeState.theme.base.fg)
+          )
+        }
+      }
+      sessionPickerLines.push(paint(`└${"─".repeat(Math.max(1, width - 4))}┘`, ctx.themeState.theme.base.border))
+      if (sp.items.length > visible) {
+        sessionPickerLines.push(paint(`  ${start + 1}-${end} of ${sp.items.length}`, ctx.themeState.theme.base.muted))
+      }
+    }
+    const sessionPickerBlock = sessionPickerLines.length ? sessionPickerLines.length : 0
+    const checkpointPickerLines = []
+    if (ui.checkpointPicker) {
+      const cp = ui.checkpointPicker
+      const visible = Math.min(cp.items.length, MAX_MODEL_PICKER_VISIBLE)
+      let start = Math.max(0, Math.min(cp.offset, cp.items.length - visible))
+      if (cp.selected < start) start = cp.selected
+      if (cp.selected >= start + visible) start = cp.selected - visible + 1
+      cp.offset = start
+      const end = Math.min(cp.items.length, start + visible)
+      checkpointPickerLines.push(
+        paint(`Checkpoint Recovery (${cp.items.length ? cp.selected + 1 : 0}/${cp.items.length})  ↑↓ navigate  type filter  Enter recover  Esc cancel${cp.query ? `  filter=${cp.query}` : ""}`, ctx.themeState.theme.semantic.info, { bold: true })
+      )
+      checkpointPickerLines.push(paint(`┌${"─".repeat(Math.max(1, width - 4))}┐`, ctx.themeState.theme.base.border))
+      if (!cp.items.length) {
+        checkpointPickerLines.push(paint(`│ ${padRight("(no matches)", Math.max(1, width - 5))}│`, ctx.themeState.theme.base.muted))
+      } else {
+        for (let i = start; i < end; i++) {
+          const item = cp.items[i]
+          const active = i === cp.selected
+          const prefix = active ? "▸" : " "
+          const marker = item.recommended ? "★" : "↺"
+          const line = ` ${prefix} ${marker} ${item.label}`
+          const padded = padRight(line, Math.max(1, width - 5))
+          checkpointPickerLines.push(
+            active
+              ? paint(`│${padded}│`, "#111111", { bg: ctx.themeState.theme.semantic.info, bold: true })
+              : paint(`│${padded}│`, ctx.themeState.theme.semantic.warn)
+          )
+        }
+      }
+      checkpointPickerLines.push(paint(`└${"─".repeat(Math.max(1, width - 4))}┘`, ctx.themeState.theme.base.border))
+      if (cp.items.length > visible) {
+        checkpointPickerLines.push(paint(`  ${start + 1}-${end} of ${cp.items.length}`, ctx.themeState.theme.base.muted))
+      }
+    }
+    const checkpointPickerBlock = checkpointPickerLines.length ? checkpointPickerLines.length : 0
     const policyPickerLines = []
     if (ui.policyPicker) {
       const currentPolicy = ctx.configState.config.permission?.default_policy || "ask"
@@ -2358,15 +3183,20 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     const questionBlock = questionLines.length
 
     const fixedRows =
+      longagentPanelLines.length +
+      fileChangesPanelLines.length +
       1 + // activity title
       1 + // scroll hint
       suggestionBlock +
       modelPickerBlock +
+      sessionPickerBlock +
+      checkpointPickerBlock +
       policyPickerBlock +
       permissionBlock +
       questionBlock +
       1 + // status bar
       1 + // busy indicator
+      (busyDetailLine ? 1 : 0) +
       1 + // input top border
       visibleInput.length +
       1 + // input bottom border
@@ -2385,9 +3215,21 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       maxOffset
     }
 
+    const truncationHint = ui.truncatedLogLines > 0
+      ? ` | buffer trimmed ${ui.truncatedLogLines} lines`
+      : ""
     const scrollHint = ui.scrollOffset > 0
-      ? paint(`  Ctrl+Up/Down scroll | +${ui.scrollOffset} lines`, ctx.themeState.theme.semantic.warn)
-      : paint("  Ctrl+Up/Down scroll | Ctrl+Home oldest | Ctrl+End latest", ctx.themeState.theme.base.muted, { dim: true })
+      ? paint(`  Ctrl+Up/Down scroll | +${ui.scrollOffset} lines${truncationHint}`, ctx.themeState.theme.semantic.warn)
+      : paint(`  Ctrl+Up/Down scroll | Ctrl+Home oldest | Ctrl+End latest${truncationHint}`, ctx.themeState.theme.base.muted, { dim: true })
+
+    if (longagentPanelLines.length) {
+      for (const panelLine of longagentPanelLines) lines.push(clipAnsiLine(panelLine, width))
+      lines.push(" ".repeat(width))
+    }
+    if (fileChangesPanelLines.length) {
+      for (const panelLine of fileChangesPanelLines) lines.push(clipAnsiLine(panelLine, width))
+      lines.push(" ".repeat(width))
+    }
 
     lines.push(clipAnsiLine(paint("─".repeat(Math.min(40, width)), ctx.themeState.theme.base.border, { dim: true }), width))
 
@@ -2429,6 +3271,14 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       for (const line of modelPickerLines) lines.push(clipAnsiLine(line, width))
     }
 
+    if (sessionPickerLines.length) {
+      for (const line of sessionPickerLines) lines.push(clipAnsiLine(line, width))
+    }
+
+    if (checkpointPickerLines.length) {
+      for (const line of checkpointPickerLines) lines.push(clipAnsiLine(line, width))
+    }
+
     if (policyPickerLines.length) {
       for (const line of policyPickerLines) lines.push(clipAnsiLine(line, width))
     }
@@ -2443,6 +3293,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
     lines.push(clipAnsiLine(status, width))
     lines.push(clipAnsiLine(busyLine, width))
+    if (busyDetailLine) lines.push(clipAnsiLine(busyDetailLine, width))
 
     const inputTop = paint(`┌${"─".repeat(Math.max(1, width - 2))}┐`, ctx.themeState.theme.base.border)
     const inputBottom = paint(`└${"─".repeat(Math.max(1, width - 2))}┘`, ctx.themeState.theme.base.border)
@@ -2455,10 +3306,22 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     }
     const inputEndRow = lines.length  // 输入区内容结束行（不含）
     lines.push(inputBottom)
-    lines.push(clipAnsiLine(paint("↵ send  ⌃J newline  ⌃Y auto-copy  /paste image  ? help", ctx.themeState.theme.base.muted, { dim: true }), width))
+    lines.push(clipAnsiLine(paint("↵ send  ⌃J newline  ⌃R recovery  ⌃S sessions  ⌃K checkpoints  ⌃O models  ⌃G policy  ? help", ctx.themeState.theme.base.muted, { dim: true }), width))
 
     const final = lines.slice(0, Math.max(1, height))
     while (final.length < height) final.push(" ".repeat(width))
+
+    if (inspectorLines.length) {
+      const overlayHeight = Math.min(inspectorLines.length, final.length)
+      const top = Math.max(0, Math.floor((final.length - overlayHeight) / 2))
+      for (let i = 0; i < overlayHeight; i++) {
+        const row = top + i
+        if (row >= final.length) break
+        const overlayLine = clipAnsiLine(inspectorLines[i], Math.max(1, width - 6))
+        const pad = Math.max(0, Math.floor((width - displayWidth(overlayLine)) / 2))
+        final[row] = `${" ".repeat(pad)}${overlayLine}`
+      }
+    }
 
     // 鼠标选择高亮：对选中区域应用反色
     if (ui.mouseSelection) {
@@ -2513,6 +3376,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
   function startBusySpinner() {
     if (spinnerTimer) return
+    if (!ui.busyStartedAt) ui.busyStartedAt = Date.now()
     spinnerTimer = setInterval(() => {
       ui.spinnerIndex = (ui.spinnerIndex + 1) % BUSY_SPINNER_FRAMES.length
       requestRender()
@@ -2523,6 +3387,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     if (!spinnerTimer) return
     clearInterval(spinnerTimer)
     spinnerTimer = null
+    ui.busyStartedAt = 0
   }
 
   async function submitCurrentInput() {
@@ -2598,11 +3463,11 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
               if (onKey) process.stdin.removeListener("keypress", onKey)
               if (onData) process.stdin.removeListener("data", onData)
               if (process.stdin.isTTY) process.stdin.setRawMode(false)
-              stopTuiFrame()
+              stopTuiFrame(useAlternateScreen)
               process.stdout.write("\x1b[2J\x1b[H")
               try { await fn() } finally {
                 process.stdout.write("\x1b[2J\x1b[H")
-                startTuiFrame()
+                startTuiFrame(useAlternateScreen)
                 emitKeypressEvents(process.stdin)
                 if (process.stdin.isTTY) process.stdin.setRawMode(true)
                 process.stdin.resume()
@@ -2710,7 +3575,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           if (onData) process.stdin.removeListener("data", onData)
           if (process.stdin.isTTY) process.stdin.setRawMode(false)
           // Switch back to normal screen, then clear it
-          stopTuiFrame()
+          stopTuiFrame(useAlternateScreen)
           process.stdout.write("\x1b[2J\x1b[H")
           try {
             await fn()
@@ -2718,7 +3583,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
             // Clear any onboarding remnants before switching back
             process.stdout.write("\x1b[2J\x1b[H")
             // Re-enter alternate screen and restore raw mode
-            startTuiFrame()
+            startTuiFrame(useAlternateScreen)
             emitKeypressEvents(process.stdin)
             if (process.stdin.isTTY) process.stdin.setRawMode(true)
             process.stdin.resume()
@@ -2829,7 +3694,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     requestRender()
   }
 
-  startTuiFrame()
+  startTuiFrame(useAlternateScreen)
   setPermissionPromptHandler(({ tool, sessionId, reason = "", defaultAction = "deny" }) =>
     new Promise((resolve) => {
       queuePermissionPrompt({
@@ -2969,15 +3834,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
   // 删除输入框中选中的文本，返回 true 表示有选择被删除
   function deleteInputSelection() {
-    const sel = ui.inputSelection
-    if (!sel || sel.start === sel.end) return false
-    const s = Math.min(sel.start, sel.end)
-    const e = Math.max(sel.start, sel.end)
-    ui.input = ui.input.slice(0, s) + ui.input.slice(e)
-    ui.inputCursor = s
-    ui.inputSelection = null
-    ui.inputDragAnchor = -1
-    return true
+    const hadSelection = !!ui.inputSelection && ui.inputSelection.start !== ui.inputSelection.end
+    deleteInputBufferSelection(ui.inputState)
+    return hadSelection
   }
 
   // 完成文本选择 → 根据 autoCopy 决定是否复制
@@ -3276,6 +4135,80 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           return
         }
 
+        if (ui.sessionPicker) {
+          if (key.name === "escape") {
+            if (ui.sessionPicker.query) {
+              applyPickerFilter(ui.sessionPicker, "")
+              requestRender()
+              return
+            }
+            closeSessionPicker()
+            return
+          }
+          if (key.name === "return") {
+            confirmSessionPicker()
+            return
+          }
+          if (key.name === "backspace") {
+            applyPickerFilter(ui.sessionPicker, ui.sessionPicker.query.slice(0, -1))
+            requestRender()
+            return
+          }
+          if (key.name === "up") {
+            ui.sessionPicker.selected = Math.max(0, ui.sessionPicker.selected - 1)
+            requestRender()
+            return
+          }
+          if (key.name === "down") {
+            ui.sessionPicker.selected = Math.min(ui.sessionPicker.items.length - 1, ui.sessionPicker.selected + 1)
+            requestRender()
+            return
+          }
+          if (typeof str === "string" && str.length === 1 && !key.ctrl && !key.meta) {
+            applyPickerFilter(ui.sessionPicker, `${ui.sessionPicker.query}${str}`)
+            requestRender()
+            return
+          }
+          return
+        }
+
+        if (ui.checkpointPicker) {
+          if (key.name === "escape") {
+            if (ui.checkpointPicker.query) {
+              applyPickerFilter(ui.checkpointPicker, "")
+              requestRender()
+              return
+            }
+            closeCheckpointPicker()
+            return
+          }
+          if (key.name === "return") {
+            await confirmCheckpointPicker()
+            return
+          }
+          if (key.name === "backspace") {
+            applyPickerFilter(ui.checkpointPicker, ui.checkpointPicker.query.slice(0, -1))
+            requestRender()
+            return
+          }
+          if (key.name === "up") {
+            ui.checkpointPicker.selected = Math.max(0, ui.checkpointPicker.selected - 1)
+            requestRender()
+            return
+          }
+          if (key.name === "down") {
+            ui.checkpointPicker.selected = Math.min(ui.checkpointPicker.items.length - 1, ui.checkpointPicker.selected + 1)
+            requestRender()
+            return
+          }
+          if (typeof str === "string" && str.length === 1 && !key.ctrl && !key.meta) {
+            applyPickerFilter(ui.checkpointPicker, `${ui.checkpointPicker.query}${str}`)
+            requestRender()
+            return
+          }
+          return
+        }
+
         if (ui.policyPicker) {
           if (key.name === "escape") {
             closePolicyPicker()
@@ -3296,6 +4229,14 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
             return
           }
           return
+        }
+
+        if (ui.showInspector) {
+          if (key.name === "escape" || (key.ctrl && key.name === "i")) {
+            ui.showInspector = false
+            requestRender()
+            return
+          }
         }
 
         // Scrolling keys work even when busy
@@ -3498,6 +4439,38 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           return
         }
 
+        if (key.ctrl && key.name === "i") {
+          ui.showInspector = !ui.showInspector
+          appendLog(paint(`● Inspector ${ui.showInspector ? "open" : "closed"} (Ctrl+I to toggle)`, null, { dim: true }))
+          requestRender()
+          return
+        }
+
+        if (key.ctrl && key.name === "s") {
+          await openSessionPicker()
+          return
+        }
+
+        if (key.ctrl && key.name === "k") {
+          openCheckpointPicker()
+          return
+        }
+
+        if (key.ctrl && key.name === "r") {
+          await openSessionPicker({ recoverableOnly: true })
+          return
+        }
+
+        if (key.ctrl && key.name === "o") {
+          openModelPicker()
+          return
+        }
+
+        if (key.ctrl && key.name === "g") {
+          openPolicyPicker()
+          return
+        }
+
         if (key.ctrl && key.name === "b") {
           ui.showDashboard = !ui.showDashboard
           requestRender()
@@ -3561,6 +4534,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     })
   } finally {
     if (renderTimer) clearTimeout(renderTimer)
+    if (backgroundOverviewTimer) clearInterval(backgroundOverviewTimer)
     stopBusySpinner()
     activityRenderer.stop()
     uiEventUnsub()
@@ -3572,7 +4546,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     if (onSigint) process.removeListener("SIGINT", onSigint)
     if (process.stdin.isTTY) process.stdin.setRawMode(false)
     process.stdin.emit = _origStdinEmit  // 还原 stdin.emit
-    stopTuiFrame()
+    stopTuiFrame(useAlternateScreen)
     await saveHistoryLines(ui.history)
   }
 }
@@ -3758,9 +4732,12 @@ export async function startRepl({ trust = false } = {}) {
     sessionId: newSessionId(),
     mode: ctx.configState.config.agent.default_mode || "agent",
     providerType: ctx.configState.config.provider.default,
-    model: ""
+    model: "",
+    longagent: null,
+    providerSwitches: []
   }
   state.model = resolveProviderDefaultModel(ctx.configState.config, state.providerType)
+  recordProviderSwitch(state, state.providerType, state.model, "startup")
 
   // Check if auto memory file exists
   try {

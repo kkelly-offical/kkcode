@@ -6,11 +6,15 @@ import { tmpdir } from "node:os"
 import YAML from "yaml"
 import { validateConfig } from "../src/config/schema.mjs"
 
-async function runInit(cwd, args = []) {
+async function runInit(cwd, args = [], options = {}) {
   const { execFile } = await import("node:child_process")
   const { promisify } = await import("node:util")
   const exec = promisify(execFile)
-  return exec(process.execPath, [join(import.meta.dirname, "..", "src", "index.mjs"), "init", ...args], { cwd, timeout: 10000 })
+  return exec(process.execPath, [join(import.meta.dirname, "..", "src", "index.mjs"), "init", ...args], {
+    cwd,
+    timeout: 10000,
+    env: options.env || process.env
+  })
 }
 
 let tmpDir
@@ -26,6 +30,7 @@ test("init --yes creates valid config.yaml", async () => {
   await mkdir(dir, { recursive: true })
   const { stdout } = await runInit(dir, ["--yes"])
   assert.ok(stdout.includes("created:"))
+  assert.ok(stdout.includes("next:"), "should print next-step guidance")
 
   const content = await readFile(join(dir, ".kkcode", "config.yaml"), "utf8")
   const config = YAML.parse(content)
@@ -60,4 +65,22 @@ test("init --yes generated config has correct provider defaults", async () => {
   assert.ok(openaiBlock)
   assert.equal(openaiBlock.api_key_env, "OPENAI_API_KEY")
   assert.equal(openaiBlock.default_model, "gpt-5.3-codex")
+})
+
+test("init --providers prints provider auth guidance", async () => {
+  const dir = join(tmpDir, "providers")
+  await mkdir(dir, { recursive: true })
+  const { stdout } = await runInit(dir, ["--providers"])
+  assert.ok(stdout.includes("providers:"))
+  assert.ok(stdout.includes("OpenAI (GPT) [openai]"))
+  assert.ok(stdout.includes("auth:"))
+})
+
+test("init --yes --onboard-auth verifies ready env-backed provider", async () => {
+  const dir = join(tmpDir, "onboard")
+  await mkdir(dir, { recursive: true })
+  const { stdout } = await runInit(dir, ["--yes", "--onboard-auth"], {
+    env: { ...process.env, OPENAI_API_KEY: "test-key" }
+  })
+  assert.ok(stdout.includes("onboard: ready"))
 })

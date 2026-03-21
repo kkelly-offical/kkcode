@@ -156,9 +156,31 @@ function timeoutSignal(ms, parentSignal = null) {
   return AbortSignal.any([parentSignal, own])
 }
 
+function hasHeader(headers = {}, name) {
+  const target = String(name || "").toLowerCase()
+  return Object.keys(headers || {}).some((key) => String(key).toLowerCase() === target)
+}
+
+function buildAuthHeaders(apiKey, headers = {}) {
+  const merged = { ...(headers || {}) }
+  if (!hasHeader(merged, "authorization") && !hasHeader(merged, "x-goog-api-key") && !hasHeader(merged, "x-api-key") && apiKey) {
+    merged.authorization = `Bearer ${apiKey}`
+  }
+  return merged
+}
+
+function hasUsableAuth(apiKey, headers = {}) {
+  return Boolean(
+    String(apiKey || "").trim() ||
+    hasHeader(headers, "authorization") ||
+    hasHeader(headers, "x-goog-api-key") ||
+    hasHeader(headers, "x-api-key")
+  )
+}
+
 export async function countTokensOpenAI(input) {
-  const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 10000 } = input
-  if (!apiKey) return null
+  const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 10000, headers = {} } = input
+  if (!hasUsableAuth(apiKey, headers)) return null
   const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`
   const payload = {
     model,
@@ -170,7 +192,7 @@ export async function countTokensOpenAI(input) {
   try {
     const res = await fetch(endpoint, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+      headers: { "content-type": "application/json", ...buildAuthHeaders(apiKey, headers) },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(timeoutMs)
     })
@@ -183,8 +205,8 @@ export async function countTokensOpenAI(input) {
 }
 
 export async function requestOpenAI(input) {
-  const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 120000, maxTokens, retry = {}, signal = null } = input
-  if (!apiKey) {
+  const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 120000, maxTokens, retry = {}, signal = null, headers = {} } = input
+  if (!hasUsableAuth(apiKey, headers)) {
     throw new ProviderError(`missing API key for openai provider (env: ${input.apiKeyEnv || "unknown"})`, {
       provider: "openai"
     })
@@ -208,7 +230,7 @@ export async function requestOpenAI(input) {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          authorization: `Bearer ${apiKey}`
+          ...buildAuthHeaders(apiKey, headers)
         },
         body: JSON.stringify(payload),
         signal: timeoutSignal(timeoutMs, signal)
@@ -250,8 +272,8 @@ export async function requestOpenAI(input) {
 }
 
 export async function* requestOpenAIStream(input) {
-  const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 120000, streamIdleTimeoutMs = 120000, maxTokens, retry = {}, signal = null } = input
-  if (!apiKey) {
+  const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 120000, streamIdleTimeoutMs = 120000, maxTokens, retry = {}, signal = null, headers = {} } = input
+  if (!hasUsableAuth(apiKey, headers)) {
     throw new ProviderError(`missing API key for openai provider (env: ${input.apiKeyEnv || "unknown"})`, {
       provider: "openai"
     })
@@ -286,7 +308,7 @@ export async function* requestOpenAIStream(input) {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          authorization: `Bearer ${apiKey}`
+          ...buildAuthHeaders(apiKey, headers)
         },
         body: JSON.stringify(payload),
         signal: fetchSignal

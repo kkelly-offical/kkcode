@@ -19,63 +19,70 @@ import { createBackgroundCommand } from "./commands/background.mjs"
 import { createInitCommand } from "./commands/init.mjs"
 import { createAuditCommand } from "./commands/audit.mjs"
 import { createSkillCommand } from "./commands/skill.mjs"
+import { createAuthCommand } from "./commands/auth.mjs"
 import { startRepl } from "./repl.mjs"
 
 async function main() {
-  const hasTrust = process.argv.includes("--trust")
-  const hasGithub = process.argv.includes("--github")
+  try {
+    const hasTrust = process.argv.includes("--trust")
+    const hasGithub = process.argv.includes("--github")
 
-  if (hasGithub) {
-    const githubArgIndex = process.argv.indexOf("--github")
-    const nextArg = process.argv[githubArgIndex + 1]
-    
-    if (nextArg === "logout") {
-      const { logout } = await import("./github/auth.mjs")
-      const success = await logout()
-      if (success) {
-        console.log("✓ 已登出 GitHub 账户")
-      } else {
-        console.log("⚠ 没有已登录的 GitHub 账户")
+    if (hasGithub) {
+      const githubArgIndex = process.argv.indexOf("--github")
+      const nextArg = process.argv[githubArgIndex + 1]
+
+      if (nextArg === "logout") {
+        const { logout } = await import("./github/auth.mjs")
+        const success = await logout()
+        if (success) {
+          console.log("✓ 已登出 GitHub 账户")
+        } else {
+          console.log("⚠ 没有已登录的 GitHub 账户")
+        }
+        return
       }
+
+      const { runGitHubFlow, promptPushChanges } = await import("./github/flow.mjs")
+      const result = await runGitHubFlow()
+      process.chdir(result.cwd)
+      await startRepl({ trust: hasTrust })
+      // After REPL exits, ask user if they want to push changes
+      await promptPushChanges(result)
       return
     }
-    
-    const { runGitHubFlow, promptPushChanges } = await import("./github/flow.mjs")
-    const result = await runGitHubFlow()
-    process.chdir(result.cwd)
-    await startRepl({ trust: hasTrust })
-    // After REPL exits, ask user if they want to push changes
-    await promptPushChanges(result)
-    return
-  }
 
-  if (process.argv.length <= 2 || (process.argv.length === 3 && hasTrust)) {
-    await startRepl({ trust: hasTrust })
-    return
-  }
+    if (process.argv.length <= 2 || (process.argv.length === 3 && hasTrust)) {
+      await startRepl({ trust: hasTrust })
+      return
+    }
 
-  const program = new Command()
-  program.name("kkcode").description("kkcode CLI").version("0.1.8")
-  program.addCommand(createChatCommand())
-  program.addCommand(createThemeCommand())
-  program.addCommand(createUsageCommand())
-  program.addCommand(createReviewCommand())
-  program.addCommand(createAgentCommand())
-  program.addCommand(createMcpCommand())
-  program.addCommand(createPermissionCommand())
-  program.addCommand(createDoctorCommand())
-  program.addCommand(createConfigCommand())
-  program.addCommand(createSessionCommand())
-  program.addCommand(createPromptCommand())
-  program.addCommand(createLongagentCommand())
-  program.addCommand(createHookCommand())
-  program.addCommand(createCommandCommand())
-  program.addCommand(createRuleCommand())
-  program.addCommand(createBackgroundCommand())
-  program.addCommand(createAuditCommand())
-  program.addCommand(createInitCommand())
-  program.addCommand(createSkillCommand())
-  await program.parseAsync(process.argv)
+    const program = new Command()
+    program.name("kkcode").description("kkcode CLI").version("0.1.8")
+    program.addCommand(createChatCommand())
+    program.addCommand(createThemeCommand())
+    program.addCommand(createUsageCommand())
+    program.addCommand(createReviewCommand())
+    program.addCommand(createAgentCommand())
+    program.addCommand(createMcpCommand())
+    program.addCommand(createPermissionCommand())
+    program.addCommand(createDoctorCommand())
+    program.addCommand(createConfigCommand())
+    program.addCommand(createSessionCommand())
+    program.addCommand(createPromptCommand())
+    program.addCommand(createLongagentCommand())
+    program.addCommand(createHookCommand())
+    program.addCommand(createCommandCommand())
+    program.addCommand(createRuleCommand())
+    program.addCommand(createBackgroundCommand())
+    program.addCommand(createAuditCommand())
+    program.addCommand(createInitCommand())
+    program.addCommand(createSkillCommand())
+    program.addCommand(createAuthCommand())
+    await program.parseAsync(process.argv)
+  } finally {
+    const { McpRegistry } = await import("./mcp/registry.mjs")
+    McpRegistry.shutdown()
+  }
 }
 
 main().catch((error) => {

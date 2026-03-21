@@ -18,9 +18,15 @@ settledEmitter.setMaxListeners(50)
 
 const WORKER_ENTRY = fileURLToPath(new URL("./background-worker.mjs", import.meta.url))
 const TERMINAL_STATES = new Set(["completed", "cancelled", "error", "interrupted"])
+const NODE_MAJOR = Number.parseInt(process.versions.node.split(".")[0] || "", 10)
+const AVOID_EXIT_HOOKS = NODE_MAJOR >= 25
 
 function now() {
   return Date.now()
+}
+
+function makeWorkerToken() {
+  return `worker_${Math.random().toString(36).slice(2, 12)}_${Date.now().toString(36)}`
 }
 
 function resolveWorkerTimeoutMs(config = {}, payload = {}) {
@@ -116,14 +122,16 @@ function spawnWorker(taskId) {
     // directory may not exist yet or permission issue — fall back to ignore
   }
   let child
+  const workerToken = makeWorkerToken()
   try {
     child = spawn(process.execPath, [WORKER_ENTRY, "--task-id", taskId], {
-      detached: true,
       windowsHide: true,
       stdio: ["ignore", "ignore", stderrFd !== null ? stderrFd : "ignore"],
       env: {
         ...process.env,
-        KKCODE_BACKGROUND_TASK_ID: taskId
+        KKCODE_BACKGROUND_TASK_ID: taskId,
+        KKCODE_BACKGROUND_TASK_TOKEN: workerToken,
+        KKCODE_BACKGROUND_HOST_PID: String(process.pid)
       }
     })
   } catch (err) {
@@ -132,6 +140,13 @@ function spawnWorker(taskId) {
       try { closeSync(stderrFd) } catch { /* ignore */ }
     }
     throw err
+  }
+  child.unref()
+  if (AVOID_EXIT_HOOKS) {
+    if (stderrFd !== null) {
+      try { closeSync(stderrFd) } catch { /* already closed */ }
+    }
+    return { pid: child.pid, token: workerToken }
   }
   child.on("exit", (code) => {
     if (stderrFd !== null) {
@@ -155,8 +170,24 @@ function spawnWorker(taskId) {
       settledEmitter.emit("task-settled", { id: taskId, status: "exited", code: 0 })
     }
   })
-  child.unref()
-  return child.pid
+  child.on("error", (error) => {
+    if (stderrFd !== null) {
+      try { closeSync(stderrFd) } catch { /* already closed */ }
+      stderrFd = null
+    }
+    patchTask(taskId, (current) => {
+      if (TERMINAL_STATES.has(current.status)) return
+      return {
+        status: "error",
+        error: `worker process error: ${error.message}`,
+        endedAt: now(),
+        workerPid: null
+      }
+    }).catch((err) => {
+      console.warn(`[kkcode] patchTask failed for errored worker ${taskId}: ${err?.message || err}`)
+    })
+  })
+  return { pid: child.pid, token: workerToken }
 }
 
 async function markStaleRunningTasks(config = {}) {
@@ -167,21 +198,31 @@ async function markStaleRunningTasks(config = {}) {
   for (const task of tasks) {
     if (task.status !== "running") continue
     const heartbeatAt = Number(task.lastHeartbeatAt || 0)
+    const bootConfirmedAt = Number(task.workerBootConfirmedAt || 0)
+    const bootDeadlineAt = Number(task.workerBootDeadlineAt || 0)
     const timeoutMs = resolveWorkerTimeoutMs(config, task.payload || {})
     const staleByHeartbeat = heartbeatAt > 0 && now() - heartbeatAt > timeoutMs + 5000
     const deadPid = task.workerPid ? !isProcessAlive(task.workerPid) : false
     const staleNoHeartbeat = heartbeatAt === 0 && now() - Number(task.startedAt || task.createdAt || now()) > timeoutDefault + 5000
+    const bootTimeout = bootConfirmedAt === 0 && bootDeadlineAt > 0 && now() > bootDeadlineAt
+    const launchFailed = deadPid && bootConfirmedAt === 0
 
-    if (staleByHeartbeat || deadPid || staleNoHeartbeat) {
+    if (staleByHeartbeat || deadPid || staleNoHeartbeat || bootTimeout) {
       await patchTask(task.id, () => ({
         status: "interrupted",
         endedAt: now(),
-        error: deadPid
+        error: bootTimeout
+          ? "background worker failed to boot"
+          : launchFailed
+            ? "background worker exited before boot confirmation"
+            : deadPid
           ? "background worker exited unexpectedly"
           : staleByHeartbeat
             ? "background worker heartbeat timeout"
             : "background worker no heartbeat",
-        workerPid: null
+        workerPid: null,
+        workerToken: null,
+        workerBootDeadlineAt: null
       }))
       interrupted += 1
     }
@@ -204,9 +245,9 @@ async function startPendingTasks(config = {}) {
 
   for (const task of pending) {
     if (remainingSlots <= 0) break
-    let pid
+    let spawned
     try {
-      pid = spawnWorker(task.id)
+      spawned = spawnWorker(task.id)
     } catch (err) {
       await patchTask(task.id, () => ({
         status: "error",
@@ -218,7 +259,11 @@ async function startPendingTasks(config = {}) {
     const timeoutMs = resolveWorkerTimeoutMs(config, task.payload || {})
     await patchTask(task.id, (current) => ({
       status: "running",
-      workerPid: pid,
+      workerPid: spawned.pid,
+      workerToken: spawned.token,
+      workerHostPid: process.pid,
+      workerBootDeadlineAt: now() + 15000,
+      workerBootConfirmedAt: null,
       lastHeartbeatAt: now(),
       startedAt: current.startedAt || now(),
       payload: {
@@ -317,6 +362,20 @@ export const BackgroundManager = {
       payload: {
         ...payload,
         workerType: "delegate_task",
+        attempt: Number(payload.attempt || 1),
+        resumeToken: payload.resumeToken || `resume_${Date.now()}`
+      },
+      run: null,
+      config
+    })
+  },
+
+  async launchLongAgentTask({ description, payload, config = {} }) {
+    return this.launch({
+      description,
+      payload: {
+        ...payload,
+        workerType: "longagent_session",
         attempt: Number(payload.attempt || 1),
         resumeToken: payload.resumeToken || `resume_${Date.now()}`
       },

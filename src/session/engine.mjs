@@ -12,6 +12,7 @@ import { SkillRegistry } from "../skill/registry.mjs"
 import { resolveAgentForMode } from "../agent/agent.mjs"
 import { estimateStringTokens } from "./compaction.mjs"
 import { classifyTaskMode } from "./longagent-utils.mjs"
+import { LongAgentManager } from "../orchestration/longagent-manager.mjs"
 
 let sinkReady = false
 
@@ -179,6 +180,9 @@ export async function executeTurn({
         })
 
   const usage = { ...turn.usage }
+  const persistedLongAgentState = mode === "longagent"
+    ? await LongAgentManager.get(sessionId).catch(() => null)
+    : null
   let estimated = false
   if ((usage.input || 0) === 0 && (usage.output || 0) === 0) {
     usage.input = estimateTokens(prompt)
@@ -233,7 +237,19 @@ export async function executeTurn({
             taskProgress: turn.taskProgress,
             stageProgress: turn.stageProgress,
             remainingFilesCount: turn.remainingFilesCount,
-            fileChanges: turn.fileChanges || []
+            fileChanges: turn.fileChanges || [],
+            maxIterations: turn.maxIterations ?? null,
+            lastMessage: turn.lastMessage || "",
+            gitBranch: turn.gitBranch || null,
+            gitBaseBranch: turn.gitBaseBranch || null,
+            recoverySuggestions: turn.recoverySuggestions || [],
+            stageReports: persistedLongAgentState?.stageReports || [],
+            lastStageReport: persistedLongAgentState?.lastStageReport || null,
+            checkpoints: persistedLongAgentState?.checkpoints || [],
+            backgroundTaskId: persistedLongAgentState?.backgroundTaskId || null,
+            backgroundTaskStatus: persistedLongAgentState?.backgroundTaskStatus || null,
+            backgroundTaskAttempt: persistedLongAgentState?.backgroundTaskAttempt || 0,
+            remainingFiles: persistedLongAgentState?.remainingFiles || []
           }
         : null
     }
@@ -272,8 +288,20 @@ export async function executeTurn({
           taskProgress: turn.taskProgress,
           stageProgress: turn.stageProgress,
           remainingFilesCount: turn.remainingFilesCount,
-          fileChanges: turn.fileChanges || []
-        }
-      : null
+        fileChanges: turn.fileChanges || [],
+        maxIterations: turn.maxIterations ?? null,
+        lastMessage: turn.lastMessage || "",
+        gitBranch: turn.gitBranch || null,
+        gitBaseBranch: turn.gitBaseBranch || null,
+        recoverySuggestions: turn.recoverySuggestions || [],
+        stageReports: persistedLongAgentState?.stageReports || [],
+        lastStageReport: persistedLongAgentState?.lastStageReport || null,
+        checkpoints: persistedLongAgentState?.checkpoints || [],
+        backgroundTaskId: persistedLongAgentState?.backgroundTaskId || null,
+        backgroundTaskStatus: persistedLongAgentState?.backgroundTaskStatus || null,
+        backgroundTaskAttempt: persistedLongAgentState?.backgroundTaskAttempt || 0,
+        remainingFiles: persistedLongAgentState?.remainingFiles || []
+      }
+    : null
   }
 }

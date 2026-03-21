@@ -2,89 +2,9 @@ import path from "node:path"
 import { readFile, writeFile, mkdir } from "node:fs/promises"
 import YAML from "yaml"
 import { userRootDir } from "../storage/paths.mjs"
+import { WIZARD_PROVIDER_PRESETS as VENDOR_PRESETS } from "./catalog.mjs"
 
-// --- 标准厂商预设 ---
-export const VENDOR_PRESETS = {
-  anthropic: {
-    label: "Anthropic (Claude)",
-    type: "anthropic",
-    base_url: "https://api.anthropic.com/v1",
-    default_model: "claude-opus-4-6",
-    models: ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
-    supports_thinking: true,
-    supports_vision: true,
-    key_env: "ANTHROPIC_API_KEY"
-  },
-  openai: {
-    label: "OpenAI (GPT)",
-    type: "openai",
-    base_url: "https://api.openai.com/v1",
-    default_model: "gpt-4o",
-    models: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
-    supports_thinking: false,
-    supports_vision: true,
-    key_env: "OPENAI_API_KEY"
-  },
-  qwen: {
-    label: "通义千问 Qwen (DashScope)",
-    type: "openai-compatible",
-    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    default_model: "qwen-max",
-    models: ["qwen-max", "qwen-plus", "qwen-turbo", "qwen3-coder-plus"],
-    supports_thinking: false,
-    supports_vision: true,
-    key_env: "DASHSCOPE_API_KEY"
-  },
-  "coding-plan": {
-    label: "Coding Plan (阿里云百炼)",
-    protocols: {
-      openai: {
-        type: "openai-compatible",
-        base_url: "https://coding.dashscope.aliyuncs.com/v1"
-      },
-      anthropic: {
-        type: "anthropic",
-        base_url: "https://coding.dashscope.aliyuncs.com/apps/anthropic"
-      }
-    },
-    default_model: "qwen3.5-plus",
-    models: ["qwen3.5-plus", "kimi-k2.5", "glm-5", "MiniMax-M2.5", "qwen3-coder-next", "qwen3-coder-plus", "glm-4.7"],
-    context_limit: 983616,
-    supports_thinking: false,
-    supports_vision: true,
-    key_env: "CODING_PLAN_API_KEY"
-  },
-  glm: {
-    label: "智谱 GLM",
-    type: "openai-compatible",
-    base_url: "https://open.bigmodel.cn/api/paas/v4",
-    default_model: "glm-4-plus",
-    models: ["glm-4-plus", "glm-4-air", "glm-4-flash"],
-    supports_thinking: false,
-    supports_vision: true,
-    key_env: "ZHIPU_API_KEY"
-  },
-  deepseek: {
-    label: "DeepSeek",
-    type: "openai-compatible",
-    base_url: "https://api.deepseek.com",
-    default_model: "deepseek-chat",
-    models: ["deepseek-chat", "deepseek-reasoner"],
-    supports_thinking: true,
-    supports_vision: false,
-    key_env: "DEEPSEEK_API_KEY"
-  },
-  ollama: {
-    label: "Ollama (本地，无需 API Key)",
-    type: "ollama",
-    base_url: "http://localhost:11434",
-    default_model: "qwen3",
-    models: ["qwen3", "deepseek-coder", "llama3.1"],
-    supports_thinking: false,
-    supports_vision: false,
-    key_env: ""
-  }
-}
+export { VENDOR_PRESETS }
 
 const VENDOR_KEYS = Object.keys(VENDOR_PRESETS)
 
@@ -373,7 +293,7 @@ async function _stepConfirm(wiz, val, print) {
     print("已取消。")
     return { done: true, cancelled: true }
   }
-  const cfg = _buildProviderConfig(wiz)
+  const cfg = buildProviderConfig(wiz)
   const name = wiz.customName || wiz.vendorKey
   await _saveProviderConfig(cfg)
   wiz.active = false
@@ -400,7 +320,7 @@ function _buildConfirmPrompt(wiz) {
   return lines.join("\n")
 }
 
-function _buildProviderConfig(wiz) {
+export function buildProviderConfig(wiz) {
   const name = wiz.customName || wiz.vendorKey
   const preset = wiz.preset
   const entry = {}
@@ -417,11 +337,15 @@ function _buildProviderConfig(wiz) {
       entry.type = preset.type
     }
     entry.base_url = preset.base_url
+    if (preset.headers) entry.headers = { ...preset.headers }
   }
 
   if (wiz.apiKey) entry.api_key = wiz.apiKey
+  else if (preset?.key_env) entry.api_key_env = preset.key_env
   if (wiz.defaultModel) entry.default_model = wiz.defaultModel
+  else if (preset?.default_model && !entry.default_model) entry.default_model = preset.default_model
   if (wiz.contextLimit) entry.context_limit = wiz.contextLimit
+  else if (preset?.context_limit) entry.context_limit = preset.context_limit
   if (wiz.thinking) entry.thinking = { type: "enabled", budget_tokens: 8000 }
 
   return { provider: { default: name, [name]: entry } }
