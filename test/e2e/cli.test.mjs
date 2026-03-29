@@ -40,14 +40,14 @@ test("e2e: --version exits 0", () => {
 
 // doctor
 test("e2e: doctor exits 0", () => {
-  const { stdout } = run(["doctor"])
+  const { stdout } = run(["doctor", "--skip-mcp"])
   assert.ok(stdout.includes("node"), "should check node")
 })
 
 test("e2e: doctor --json exits 0 and outputs structured json", () => {
   const home = mkdtempSync(join(tmpdir(), "kkcode-e2e-doctor-"))
   try {
-    const { stdout } = run(["doctor", "--json"], { env: { KKCODE_HOME: home } })
+    const { stdout } = run(["doctor", "--json", "--skip-mcp"], { env: { KKCODE_HOME: home } })
     const parsed = JSON.parse(stdout)
     assert.equal(typeof parsed.ok, "boolean")
     assert.ok(parsed.config)

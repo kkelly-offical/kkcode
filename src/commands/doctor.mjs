@@ -38,7 +38,7 @@ function summarizeBackground(tasks) {
   return counters
 }
 
-async function buildDoctorReport() {
+async function buildDoctorReport({ skipMcp = false } = {}) {
   const ctx = await buildContext()
   await flushNow()
   await BackgroundManager.tick(ctx.configState.config)
@@ -69,9 +69,11 @@ async function buildDoctorReport() {
   const audit = await auditStats()
   const storage = await fsckSessionStore()
   const backgroundTasks = await BackgroundManager.list()
-  await McpRegistry.initialize(config)
+  if (!skipMcp) {
+    await McpRegistry.initialize(config)
+  }
   await SkillRegistry.initialize({ ...config, skills: { ...(config.skills || {}), auto_seed: false } }, process.cwd())
-  const mcpSnapshot = McpRegistry.healthSnapshot()
+  const mcpSnapshot = skipMcp ? [] : McpRegistry.healthSnapshot()
   const mcpHealthy = mcpSnapshot.filter((item) => item.ok).length
   const skillList = SkillRegistry.list()
   const skillSummary = {
@@ -157,8 +159,9 @@ export function createDoctorCommand() {
   return new Command("doctor")
     .description("run environment diagnostics")
     .option("--json", "print structured diagnostics", false)
+    .option("--skip-mcp", "skip MCP server initialization (faster)", false)
     .action(async (options) => {
-      const report = await buildDoctorReport()
+      const report = await buildDoctorReport({ skipMcp: options.skipMcp })
       if (options.json) {
         console.log(JSON.stringify(report, null, 2))
         return
