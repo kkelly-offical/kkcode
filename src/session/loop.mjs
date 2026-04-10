@@ -92,6 +92,12 @@ async function buildSystemPrompt({ mode, model, cwd, agent = null, tools = [], s
 
 function toolPatternFromArgs(args) {
   if (!args || typeof args !== "object") return "*"
+  if (Array.isArray(args.changes) && args.changes.length > 0) {
+    return args.changes
+      .map((change) => change?.path)
+      .filter(Boolean)
+      .join(",")
+  }
   return String(args.path || args.command || args.pattern || args.task_id || "*")
 }
 

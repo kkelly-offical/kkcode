@@ -2,7 +2,7 @@ Writes a file to the local filesystem. Creates parent directories automatically.
 
 Usage:
 - This tool will overwrite the existing file if there is one at the provided path.
-- If this is an existing file, you MUST use the `read` tool first to read the file's contents.
+- If this is an existing file, you MUST use the `read` tool first to read the full file. Partial reads do not authorize whole-file writes.
 - ALWAYS prefer editing existing files with `edit`. NEVER write new files unless explicitly required.
 - NEVER proactively create documentation files (*.md) or README files. Only create documentation if explicitly requested by the user.
 - Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.

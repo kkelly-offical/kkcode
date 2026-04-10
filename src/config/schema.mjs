@@ -425,6 +425,12 @@ export function validateConfig(config) {
       }
       if (config.tool.local_dirs !== undefined && !Array.isArray(config.tool.local_dirs)) err(errors, "tool.local_dirs", "must be array")
       if (config.tool.plugin_dirs !== undefined && !Array.isArray(config.tool.plugin_dirs)) err(errors, "tool.plugin_dirs", "must be array")
+      if (config.tool.sensitive_file_patterns !== undefined) {
+        if (!Array.isArray(config.tool.sensitive_file_patterns)) err(errors, "tool.sensitive_file_patterns", "must be array")
+        else if (config.tool.sensitive_file_patterns.some((pattern) => typeof pattern !== "string")) {
+          err(errors, "tool.sensitive_file_patterns", "all values must be string")
+        }
+      }
       if (config.tool.bash_timeout_ms !== undefined) checkInt(errors, "tool.bash_timeout_ms", config.tool.bash_timeout_ms, 1000)
     }
   }

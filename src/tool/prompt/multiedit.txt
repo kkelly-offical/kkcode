@@ -16,5 +16,6 @@ Parameters:
 
 Rules:
 - You MUST `read` each file before editing it (same as `edit` tool).
+- Existing files in the batch must be freshly read. If any file is unread or stale, the whole batch is rejected.
 - If any change fails validation (no match, ambiguous match), the entire batch is rejected before any writes.
 - On write failure mid-batch, all previously applied changes are rolled back.

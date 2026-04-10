@@ -1,7 +1,7 @@
 Performs exact string replacements in files. Transactional with automatic rollback on failure.
 
 Usage:
-- You must use `read` at least once before editing. This tool will error if you attempt an edit without reading the file.
+- You must use `read` before editing. This tool will reject edits on unread or stale files.
 - When editing text from `read` output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: spaces + line number + arrow (→). Everything after that arrow is the actual file content to match. Never include any part of the line number prefix in the `before` or `after` strings.
 - ALWAYS prefer editing existing files. NEVER write new files unless explicitly required.
 - Only use emojis if the user explicitly requests it.
@@ -22,6 +22,6 @@ When to use replace_all:
 Common mistakes and how to avoid them:
 - Editing without reading first → always `read` before `edit`
 - `before` too short, matches multiple locations → include surrounding lines for uniqueness
-- Stale content after failed edit → re-read the file, it may have changed
+- Stale content after failed edit → re-read the file, it may have changed; stale edits are rejected
 - Including line number prefixes in `before` → only use actual file content, not the "     1→" prefix
 - Using `edit` for whole-file replacement → use `write` instead for complete rewrites

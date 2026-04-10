@@ -158,11 +158,15 @@ export function createDoctorCommand() {
     .description("run environment diagnostics")
     .option("--json", "print structured diagnostics", false)
     .action(async (options) => {
-      const report = await buildDoctorReport()
-      if (options.json) {
-        console.log(JSON.stringify(report, null, 2))
-        return
+      try {
+        const report = await buildDoctorReport()
+        if (options.json) {
+          console.log(JSON.stringify(report, null, 2))
+          return
+        }
+        printTextReport(report, report.themeWarnings || [])
+      } finally {
+        McpRegistry.shutdown()
       }
-      printTextReport(report, report.themeWarnings || [])
     })
 }

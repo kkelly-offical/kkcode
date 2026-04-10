@@ -2,3 +2,5 @@ node_modules/
 .kkcode/
 usage-export.*
 kkcode.config.yaml
+.omx/
+claudenext-private/

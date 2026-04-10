@@ -1,3 +1,5 @@
+import { getSensitiveEditPolicy } from "./file-edit-policy.mjs"
+
 /**
  * Glob-style pattern matching supporting:
  *   *      — any chars except /
@@ -111,18 +113,36 @@ export function evaluatePermission({ config, tool, mode, pattern = "*", command 
   const rules = Array.isArray(permission.rules) ? permission.rules : []
   for (const rule of rules) {
     if (matchRule(rule, { tool, mode, pattern, command, risk })) {
-      return {
+      const matchedDecision = {
         action: rule.action,
         source: "rule",
         rule
       }
+      const sensitivePolicy = getSensitiveEditPolicy(tool, pattern, config)
+      if (sensitivePolicy && matchedDecision.action === "allow") {
+        return {
+          action: sensitivePolicy.action,
+          source: sensitivePolicy.source,
+          rule
+        }
+      }
+      return matchedDecision
     }
   }
-  return {
+  const fallbackDecision = {
     action: permission.default_policy || "ask",
     source: "default",
     rule: null
   }
+  const sensitivePolicy = getSensitiveEditPolicy(tool, pattern, config)
+  if (sensitivePolicy && fallbackDecision.action === "allow") {
+    return {
+      action: sensitivePolicy.action,
+      source: sensitivePolicy.source,
+      rule: null
+    }
+  }
+  return fallbackDecision
 }
 
 // Exported for testing

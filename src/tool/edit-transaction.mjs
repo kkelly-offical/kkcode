@@ -9,6 +9,11 @@ function backupPath(target) {
   return `${target}.kkcode.bak`
 }
 
+function linesForPatch(text) {
+  const value = String(text ?? "")
+  return value === "" ? [] : value.split("\n")
+}
+
 /**
  * Count added/removed lines between two text snippets using LCS.
  * For snippets under 500 lines, uses O(m*n) DP. For larger texts, falls back to simple line-count diff.
@@ -49,6 +54,24 @@ export function diffLineCount(oldText, newText) {
   }
   const common = dp[m][n]
   return { added: n - common, removed: m - common }
+}
+
+export function buildStructuredPatch(oldText, newText, {
+  oldStart = 1,
+  newStart = 1
+} = {}) {
+  const removed = linesForPatch(oldText)
+  const added = linesForPatch(newText)
+  return [{
+    oldStart,
+    oldLineCount: removed.length,
+    newStart,
+    newLineCount: added.length,
+    lines: [
+      ...removed.map((text) => ({ type: "remove", text })),
+      ...added.map((text) => ({ type: "add", text }))
+    ]
+  }]
 }
 
 export async function atomicWriteFile(target, content) {

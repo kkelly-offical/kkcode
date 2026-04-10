@@ -4,7 +4,7 @@ import { access, stat, unlink } from "node:fs/promises"
 import { exec as execCb, spawn } from "node:child_process"
 import { promisify } from "node:util"
 import { pathToFileURL } from "node:url"
-import { atomicWriteFile, replaceInFileTransactional, replaceAllInFileTransactional, diffLineCount } from "./edit-transaction.mjs"
+import { atomicWriteFile, replaceInFileTransactional, replaceAllInFileTransactional, diffLineCount, buildStructuredPatch } from "./edit-transaction.mjs"
 import { withFileLock } from "./file-lock-manager.mjs"
 import { BackgroundManager } from "../orchestration/background-manager.mjs"
 import { createTaskTool } from "./task-tool.mjs"
@@ -14,6 +14,8 @@ import { askQuestionInteractive } from "./question-prompt.mjs"
 import { checkBashAllowed } from "../permission/exec-policy.mjs"
 import { gitAutoTools } from "./git-auto.mjs"
 import { gitFullAutoTools } from "./git-full-auto.mjs"
+import { markFileRead, refreshFileReadStateFromDisk } from "./file-read-state.mjs"
+import { validateExistingFileMutation } from "./mutation-guard.mjs"
 
 const exec = promisify(execCb)
 
@@ -65,17 +67,6 @@ function assertWithinCwd(resolved, cwd) {
   if (!resolved.startsWith(normalCwd + path.sep) && resolved !== normalCwd) {
     throw new Error(`path traversal blocked: ${resolved} is outside working directory`)
   }
-}
-
-// Track which files have been read in this session (for edit safety)
-const fileReadTracker = new Map() // path -> { readAt: timestamp }
-
-function markFileRead(filePath) {
-  fileReadTracker.set(filePath, { readAt: Date.now() })
-}
-
-function wasFileRead(filePath) {
-  return fileReadTracker.has(filePath)
 }
 
 function runRg(args, cwd, timeoutMs = 30000) {
@@ -205,6 +196,38 @@ function lockOptions(ctx = {}) {
   return { mode, waitTimeoutMs, owner }
 }
 
+function mutationMetadata({
+  operation,
+  filePath,
+  originalContent = null,
+  updatedContent = null,
+  structuredPatch = [],
+  addedLines = 0,
+  removedLines = 0,
+  stageId = null,
+  taskId = null
+}) {
+  return {
+    fileChanges: [{
+      path: filePath,
+      tool: operation,
+      addedLines,
+      removedLines,
+      stageId,
+      taskId
+    }],
+    mutation: {
+      operation,
+      filePath,
+      originalContent,
+      updatedContent,
+      structuredPatch,
+      addedLines,
+      removedLines
+    }
+  }
+}
+
 async function loadDynamicTools(dirs) {
   const loaded = []
   for (const dir of dirs) {
@@ -297,7 +320,7 @@ function builtinTools(config) {
 
   const readTool = {
     name: "read",
-    description: "Read file content with line numbers. Supports text files, images (PNG/JPG/GIF/SVG/WebP/BMP/ICO as base64), PDF (text extraction), and Jupyter notebooks (.ipynb cell parsing). Use `offset` and `limit` to read specific line ranges. ALWAYS use this instead of `bash` with cat/head/tail. You MUST read a file before editing it with `edit`.",
+    description: "Read file content with line numbers. Supports text files, images (PNG/JPG/GIF/SVG/WebP/BMP/ICO as base64), PDF (text extraction), and Jupyter notebooks (.ipynb cell parsing). Use `offset` and `limit` to read specific line ranges. ALWAYS use this instead of `bash` with cat/head/tail. Existing-file write/edit/patch/notebookedit flows require a recent read first.",
     inputSchema: {
       type: "object",
       properties: {
@@ -313,7 +336,6 @@ function builtinTools(config) {
       const target = path.resolve(ctx.cwd, args.path)
       assertWithinCwd(target, ctx.cwd)
       const ext = path.extname(target).toLowerCase()
-      markFileRead(target)
 
       // Image files: return base64 data URI
       if (IMAGE_EXTENSIONS.has(ext)) {
@@ -336,16 +358,31 @@ function builtinTools(config) {
       // Jupyter notebooks: parse cells
       if (ext === ".ipynb") {
         const raw = await readFile(target, "utf8")
+        const fileStat = await stat(target)
+        markFileRead(target, {
+          content: raw,
+          timestamp: fileStat.mtimeMs,
+          isPartialView: false
+        })
         return readNotebook(raw)
       }
 
       // Default: text file with line numbers
       const encoding = args.encoding || "utf8"
       const content = await readFile(target, encoding)
+      const fileStat = await stat(target)
       const allLines = content.split("\n")
       const start = Math.max(0, (Number(args.offset) || 1) - 1)
       const count = Number(args.limit) || Math.min(allLines.length, 2000)
       const slice = allLines.slice(start, start + count)
+      const isPartialView = start > 0 || start + count < allLines.length
+      markFileRead(target, {
+        content: isPartialView ? slice.join("\n") : content,
+        timestamp: fileStat.mtimeMs,
+        offset: isPartialView ? start + 1 : undefined,
+        limit: isPartialView ? count : undefined,
+        isPartialView
+      })
       const numbered = slice.map((line, i) => {
         const num = String(start + i + 1).padStart(6)
         const truncated = line.length > 2000 ? line.slice(0, 2000) + "... (truncated)" : line
@@ -357,7 +394,7 @@ function builtinTools(config) {
 
   const writeTool = {
     name: "write",
-    description: "Create or overwrite a file atomically. Auto-creates parent directories. Supports three modes: 'overwrite' (default, full replacement), 'append' (add to end of file), 'insert' (insert at a specific line). For large files (200+ lines), use mode='append' to build incrementally across multiple calls to avoid output truncation. Use `edit` instead when only a small part of an existing file needs to change.",
+    description: "Create or overwrite a file atomically. Auto-creates parent directories. Supports three modes: 'overwrite' (default, full replacement), 'append' (add to end of file), 'insert' (insert at a specific line). Existing-file writes require a recent full read first. For large files (200+ lines), use mode='append' to build incrementally across multiple calls to avoid output truncation. Use `edit` instead when only a small part of an existing file needs to change.",
     inputSchema: {
       type: "object",
       properties: {
@@ -385,6 +422,21 @@ function builtinTools(config) {
         return {
           output: `error: content is empty or missing. The write was NOT executed. If you intended to create an empty file, pass content as an empty string explicitly.`,
           metadata: { blocked: true, reason: "empty_content" }
+        }
+      }
+
+      if (await exists(target)) {
+        const validation = await validateExistingFileMutation({
+          targetPath: target,
+          displayPath: String(args.path || target),
+          operation: "writing to it",
+          requireFullRead: true
+        })
+        if (!validation.ok) {
+          return {
+            output: validation.message,
+            metadata: { blocked: true, reason: validation.reason, fileChanges: [] }
+          }
         }
       }
 
@@ -427,29 +479,29 @@ function builtinTools(config) {
 
       let finalContent
       try { finalContent = await readFile(target, "utf8") } catch { finalContent = content }
+      await refreshFileReadStateFromDisk(target, { content: finalContent }).catch(() => {})
       const diff = diffLineCount(previous, finalContent)
       const modeLabel = mode === "append" ? "appended" : mode === "insert" ? "inserted" : "written"
       return {
         output: `${modeLabel}: ${target}`,
-        metadata: {
-          fileChanges: [
-            {
-              path: String(args.path || target),
-              tool: "write",
-              addedLines: diff.added,
-              removedLines: diff.removed,
-              stageId: ctx.stageId || null,
-              taskId: ctx.logicalTaskId || ctx.taskId || null
-            }
-          ]
-        }
+        metadata: mutationMetadata({
+          operation: "write",
+          filePath: String(args.path || target),
+          originalContent: previous,
+          updatedContent: finalContent,
+          structuredPatch: buildStructuredPatch(previous, finalContent),
+          addedLines: diff.added,
+          removedLines: diff.removed,
+          stageId: ctx.stageId || null,
+          taskId: ctx.logicalTaskId || ctx.taskId || null
+        })
       }
     }
   }
 
   const editTool = {
     name: "edit",
-    description: "Replace a specific text snippet in an existing file. Transactional with automatic rollback on failure. You MUST `read` the file first — edits on unread files are rejected. Provide enough surrounding context in `before` to ensure a unique match. Set `replace_all: true` to replace ALL occurrences.",
+    description: "Replace a specific text snippet in an existing file. Transactional with automatic rollback on failure. You MUST `read` the file first — edits on unread or stale files are rejected. Provide enough surrounding context in `before` to ensure a unique match. Set `replace_all: true` to replace ALL occurrences.",
     inputSchema: {
       type: "object",
       properties: {
@@ -463,28 +515,18 @@ function builtinTools(config) {
     async execute(args, ctx) {
       const target = path.resolve(ctx.cwd, args.path)
       assertWithinCwd(target, ctx.cwd)
-      // Safety: warn if file was not read first
-      if (!wasFileRead(target)) {
-        const fileExists = await exists(target)
-        if (fileExists) {
+      if (await exists(target)) {
+        const validation = await validateExistingFileMutation({
+          targetPath: target,
+          displayPath: String(args.path || target),
+          operation: "editing it"
+        })
+        if (!validation.ok) {
           return {
-            output: `warning: you should read "${args.path}" before editing it. Use the read tool first to understand the file content, then retry the edit.`,
-            metadata: { fileChanges: [] }
+            output: validation.message,
+            metadata: { blocked: true, reason: validation.reason, fileChanges: [] }
           }
         }
-      }
-      // Safety: check if file was modified externally since last read
-      const readInfo = fileReadTracker.get(target)
-      if (readInfo) {
-        try {
-          const fileStat = await stat(target)
-          if (fileStat.mtimeMs > readInfo.readAt + 500) {
-            return {
-              output: `warning: "${args.path}" was modified since you last read it. Read it again to see the latest content before editing.`,
-              metadata: { fileChanges: [] }
-            }
-          }
-        } catch { /* file may not exist yet */ }
       }
       const options = lockOptions(ctx)
       const runEdit = async () =>
@@ -499,22 +541,21 @@ function builtinTools(config) {
             run: runEdit
           })
         : await runEdit()
-      // Update read tracker after successful edit
-      markFileRead(target)
+      const updatedContent = await readFile(target, "utf8").catch(() => null)
+      await refreshFileReadStateFromDisk(target, { content: updatedContent ?? undefined }).catch(() => {})
       return {
         output: result.output,
-        metadata: {
-          fileChanges: [
-            {
-              path: String(args.path || target),
-              tool: "edit",
-              addedLines: Number(result.addedLines || 0),
-              removedLines: Number(result.removedLines || 0),
-              stageId: ctx.stageId || null,
-              taskId: ctx.logicalTaskId || ctx.taskId || null
-            }
-          ]
-        }
+        metadata: mutationMetadata({
+          operation: "edit",
+          filePath: String(args.path || target),
+          originalContent: String(args.before),
+          updatedContent: String(args.after),
+          structuredPatch: buildStructuredPatch(String(args.before), String(args.after)),
+          addedLines: Number(result.addedLines || 0),
+          removedLines: Number(result.removedLines || 0),
+          stageId: ctx.stageId || null,
+          taskId: ctx.logicalTaskId || ctx.taskId || null
+        })
       }
     }
   }
@@ -948,19 +989,28 @@ function builtinTools(config) {
       const resolved = []
       for (const change of changes) {
         const target = path.resolve(ctx.cwd, change.path)
-        const isCreate = !change.before && change.before !== ""
-        if (!isCreate && !wasFileRead(target)) {
-          const fileExists = await exists(target)
-          if (fileExists) {
-            return `error: you must read "${change.path}" before editing it. Use the read tool first.`
-          }
+        const originalExists = await exists(target)
+        const hasBefore = Object.prototype.hasOwnProperty.call(change, "before")
+        const isCreate = !originalExists && !hasBefore
+        if (originalExists && !hasBefore) {
+          return `error: "${change.path}" already exists. Provide a "before" snippet for existing-file multiedit changes.`
         }
         let original = null
         try {
           original = await readFile(target, "utf8")
         } catch { /* new file */ }
 
-        if (!isCreate) {
+        if (!isCreate && original === null) {
+          return `error: "${change.path}" does not exist. Omit "before" only for new-file creation.`
+        }
+
+        if (!isCreate && original !== null) {
+          const validation = await validateExistingFileMutation({
+            targetPath: target,
+            displayPath: String(change.path || target),
+            operation: "applying this multiedit change"
+          })
+          if (!validation.ok) return validation.message
           const matches = (original || "").split(change.before).length - 1
           if (matches === 0) return `error: no match for "before" in ${change.path}. Re-read the file and check your snippet.`
           if (matches > 1 && !change.replace_all) return `error: ${matches} matches in ${change.path} — set replace_all: true or provide more context.`
@@ -984,7 +1034,7 @@ function builtinTools(config) {
               : content.replace(change.before, change.after)
             await atomicWriteFile(change.target, next)
           }
-          markFileRead(change.target)
+          await refreshFileReadStateFromDisk(change.target).catch(() => {})
           applied.push(change.target)
         }
       } catch (error) {
@@ -1013,7 +1063,26 @@ function builtinTools(config) {
             tool: "multiedit",
             stageId: ctx.stageId || null,
             taskId: ctx.logicalTaskId || ctx.taskId || null
-          }))
+          })),
+          mutations: resolved.map((c) => {
+            const snap = snapshots.find((s) => s.path === c.target)
+            const originalContent = snap?.original ?? null
+            const updatedContent = c.isCreate
+              ? String(c.after)
+              : c.replace_all
+                ? String(originalContent ?? "").replaceAll(String(c.before), String(c.after))
+                : String(originalContent ?? "").replace(String(c.before), String(c.after))
+            const diff = diffLineCount(originalContent ?? "", updatedContent)
+            return {
+              operation: "multiedit",
+              filePath: String(c.path || c.target),
+              originalContent,
+              updatedContent,
+              structuredPatch: buildStructuredPatch(originalContent ?? "", updatedContent),
+              addedLines: diff.added,
+              removedLines: diff.removed
+            }
+          })
         }
       }
     }
@@ -1070,7 +1139,7 @@ function builtinTools(config) {
 
   const notebookeditTool = {
     name: "notebookedit",
-    description: "Edit a Jupyter notebook (.ipynb) cell. Supports replace, insert, and delete operations on individual cells. Use this instead of `write` when modifying notebooks — it preserves cell metadata and outputs.",
+    description: "Edit a Jupyter notebook (.ipynb) cell. Supports replace, insert, and delete operations on individual cells. Use this instead of `write` when modifying notebooks — it preserves cell metadata and outputs. Notebooks must be read first and stale notebooks are rejected.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1084,6 +1153,20 @@ function builtinTools(config) {
     },
     async execute(args, ctx) {
       const target = path.resolve(ctx.cwd, args.path)
+      if (await exists(target)) {
+        const validation = await validateExistingFileMutation({
+          targetPath: target,
+          displayPath: String(args.path || target),
+          operation: "editing the notebook",
+          requireFullRead: true
+        })
+        if (!validation.ok) {
+          return {
+            output: validation.message,
+            metadata: { blocked: true, reason: validation.reason, fileChanges: [] }
+          }
+        }
+      }
       const raw = await readFile(target, "utf8")
       const notebook = JSON.parse(raw)
       if (!notebook.cells || !Array.isArray(notebook.cells)) {
@@ -1134,19 +1217,23 @@ function builtinTools(config) {
         }
       }
 
-      await atomicWriteFile(target, JSON.stringify(notebook, null, 1) + "\n")
-      markFileRead(target)
+      const finalNotebook = JSON.stringify(notebook, null, 1) + "\n"
+      await atomicWriteFile(target, finalNotebook)
+      await refreshFileReadStateFromDisk(target, { content: finalNotebook }).catch(() => {})
       const actionLabel = mode === "insert" ? "inserted" : mode === "delete" ? "deleted" : "replaced"
       return {
         output: `${actionLabel} cell ${cellNum} in ${args.path} (${notebook.cells.length} cells total)`,
-        metadata: {
-          fileChanges: [{
-            path: String(args.path || target),
-            tool: "notebookedit",
-            stageId: ctx.stageId || null,
-            taskId: ctx.logicalTaskId || ctx.taskId || null
-          }]
-        }
+        metadata: mutationMetadata({
+          operation: "notebookedit",
+          filePath: String(args.path || target),
+          originalContent: raw,
+          updatedContent: finalNotebook,
+          structuredPatch: buildStructuredPatch(raw, finalNotebook),
+          addedLines: 0,
+          removedLines: 0,
+          stageId: ctx.stageId || null,
+          taskId: ctx.logicalTaskId || ctx.taskId || null
+        })
       }
     }
   }
@@ -1167,27 +1254,18 @@ function builtinTools(config) {
     async execute(args, ctx) {
       const target = path.resolve(ctx.cwd, args.path)
 
-      if (!wasFileRead(target)) {
-        try {
-          await access(target)
+      if (await exists(target)) {
+        const validation = await validateExistingFileMutation({
+          targetPath: target,
+          displayPath: String(args.path || target),
+          operation: "patching it"
+        })
+        if (!validation.ok) {
           return {
-            output: `warning: you should read "${args.path}" before patching it. Use the read tool first.`,
-            metadata: { fileChanges: [] }
+            output: validation.message,
+            metadata: { blocked: true, reason: validation.reason, fileChanges: [] }
           }
-        } catch { /* new file — allow */ }
-      }
-
-      const readInfo = fileReadTracker.get(target)
-      if (readInfo) {
-        try {
-          const fileStat = await stat(target)
-          if (fileStat.mtimeMs > readInfo.readAt + 500) {
-            return {
-              output: `warning: "${args.path}" was modified since you last read it. Read it again before patching.`,
-              metadata: { fileChanges: [] }
-            }
-          }
-        } catch { /* ok */ }
+        }
       }
 
       const startLine = Math.max(1, Number(args.start_line) || 1)
@@ -1217,19 +1295,20 @@ function builtinTools(config) {
         result = await runPatch()
       }
 
-      markFileRead(target)
+      await refreshFileReadStateFromDisk(target, { content: result.final }).catch(() => {})
       return {
         output: `patched ${args.path}: replaced lines ${startLine}-${endLine} (removed ${result.removedCount}, inserted ${result.insertedCount})`,
-        metadata: {
-          fileChanges: [{
-            path: String(args.path || target),
-            tool: "patch",
-            addedLines: result.insertedCount,
-            removedLines: result.removedCount,
-            stageId: ctx.stageId || null,
-            taskId: ctx.logicalTaskId || ctx.taskId || null
-          }]
-        }
+        metadata: mutationMetadata({
+          operation: "patch",
+          filePath: String(args.path || target),
+          originalContent: result.previous,
+          updatedContent: result.final,
+          structuredPatch: buildStructuredPatch(result.previous, result.final, { oldStart: startLine, newStart: startLine }),
+          addedLines: result.insertedCount,
+          removedLines: result.removedCount,
+          stageId: ctx.stageId || null,
+          taskId: ctx.logicalTaskId || ctx.taskId || null
+        })
       }
     }
   }

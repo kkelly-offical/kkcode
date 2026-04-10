@@ -14,6 +14,7 @@ Operations:
 
 IMPORTANT:
 - The notebook must be a valid .ipynb JSON file with a "cells" array.
+- You MUST read the notebook before editing it. Unread or stale notebook edits are rejected.
 - cell_number is 0-indexed. The first cell is 0, second is 1, etc.
 - For insert mode, cell_type must be specified ("code" or "markdown").
 - Cell outputs are preserved during replace; cleared only if cell_type changes to "markdown".

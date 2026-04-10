@@ -18,7 +18,7 @@ Assume this tool is able to read all files on the machine. If the user provides 
 ## Critical Rules
 
 - ALWAYS use `read` to view files. NEVER use `bash` with cat/head/tail/type/Get-Content.
-- You MUST read a file before editing it with `edit`. Edits on unread files are rejected.
+- You MUST read an existing file before using `write`, `edit`, `patch`, or `notebookedit` on it. Unread or stale edits are rejected.
 - You can call multiple `read` tools in a single response. It is always better to speculatively read multiple potentially useful files in parallel.
 - If the user provides a path to a screenshot, ALWAYS use this tool to view the file at that path.
 
@@ -32,7 +32,7 @@ Assume this tool is able to read all files on the machine. If the user provides 
 
 ## Tips
 
-- Read the full file first to understand context before editing. Do not provide offset/limit unless necessary.
+- Read the full file first to understand context before editing. Offset/limit reads are treated as partial views and do not authorize whole-file overwrites.
 - For large files (1000+ lines), use offset+limit to read specific sections.
 - After a failed edit, re-read the file — it may have changed since your last read.
 - Line numbers in output help you locate exact positions for edits.

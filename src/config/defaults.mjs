@@ -200,6 +200,24 @@ export const DEFAULT_CONFIG = {
       mode: "file_lock",
       wait_timeout_ms: 120000
     },
+    sensitive_file_patterns: [
+      "AGENTS.md",
+      "**/AGENTS.md",
+      "KKCODE.md",
+      "**/KKCODE.md",
+      ".kkcode/**",
+      "**/.kkcode/**",
+      "kkcode.config.yaml",
+      "**/kkcode.config.yaml",
+      ".mcp.json",
+      "**/.mcp.json",
+      ".env",
+      ".env.*",
+      "**/.env",
+      "**/.env.*",
+      ".github/workflows/**",
+      "**/.github/workflows/**"
+    ],
     local_dirs: [".kkcode/tools", ".kkcode/tool"],
     plugin_dirs: [".kkcode/plugins", ".kkcode/plugin"]
   },
