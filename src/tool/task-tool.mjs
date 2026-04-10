@@ -1,16 +1,16 @@
 export function createTaskTool() {
   return {
     name: "task",
-    description: "Delegate complex multi-step work to a subagent that makes its own LLM calls. IMPORTANT: Do NOT use this for simple file operations — use 'write' to create files and 'edit' to modify files directly. Only use 'task' when the work requires multiple tool calls, reasoning, or autonomous decision-making (e.g. 'refactor module X', 'write tests for Y'). Background tasks (run_in_background) spawn a separate worker process.",
+    description: "Delegate complex multi-step work to a subagent that makes its own LLM calls. Prefer staying local for simple edits or critical-path work that immediately depends on your next action. New delegated runs start with fresh context unless you continue an existing sub-session via session_id. IMPORTANT: Do NOT use this for simple file operations — use 'write' to create files and 'edit' to modify files directly. Background tasks (run_in_background) spawn a separate worker process for sidecar work.",
     inputSchema: {
       type: "object",
       properties: {
-        prompt: { type: "string", description: "task prompt" },
-        description: { type: "string", description: "short task description" },
+        prompt: { type: "string", description: "self-contained task brief for the delegated subagent" },
+        description: { type: "string", description: "short task description for background task tracking" },
         subagent_type: { type: "string", description: "explicit subagent type" },
         category: { type: "string", description: "routing category" },
-        run_in_background: { type: "boolean", description: "run async in background" },
-        session_id: { type: "string", description: "continue from existing sub session" },
+        run_in_background: { type: "boolean", description: "run async in background for non-blocking sidecar work" },
+        session_id: { type: "string", description: "continue from an existing delegated sub-session instead of starting fresh" },
         stage_id: { type: "string", description: "optional stage id for orchestration" },
         task_id: { type: "string", description: "optional logical task id" },
         planned_files: { type: "array", items: { type: "string" }, description: "planned files for this task" },

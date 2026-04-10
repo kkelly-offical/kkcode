@@ -255,9 +255,12 @@ kkcode --github logout             # 登出
 | 技能 | `.kkcode/skills/` | 可编程技能，`/create-skill` 生成 |
 | 子智能体 | `.kkcode/agents/` | YAML/MJS 定义，`/create-agent` 生成 |
 | 自定义工具 | `.kkcode/tools/` | .mjs 自动加载，`/reload` 热更新 |
-| 插件/Hook | `.kkcode/plugins/` | Hook 事件脚本 |
+| Hook | `.kkcode/hooks/` | Hook 事件脚本（chat/tool/session） |
+| 插件包（MVP） | `.kkcode-plugin/plugin.json` 或 `.kkcode/plugins/<name>/plugin.json` | 将 skills / agents / hooks / MCP 片段打包到一个本地插件边界 |
 | 规则 | `.kkcode/rules/` | 项目级提示词规则 |
 | 指令文件 | `KKCODE.md` | 项目级指令，自动注入提示词 |
+
+说明：`.kkcode/hooks/` 是实际 Hook 加载目录；`.kkcode/plugins/` 预留给带 `plugin.json` 的本地插件包。若历史文档把 `.kkcode/plugins/` 当作 Hook 路径，请迁移为 `.kkcode/hooks/`。
 
 ---
 

@@ -65,9 +65,17 @@ export async function initHookBus(cwd = process.cwd()) {
   // Built-in hooks ship with kkcode (lowest priority — user hooks can override)
   const builtinHooks = path.join(__dirname, "builtin-hooks")
   const userHooks = path.join(userRootDir(), "hooks")
+  const projectPluginHooks = path.join(cwd, ".kkcode", "plugins")
   const projectHooks = path.join(cwd, ".kkcode", "hooks")
-  // Load order: builtin → user → project (later hooks in chain take priority)
-  const files = [...(await discover(builtinHooks)), ...(await discover(userHooks)), ...(await discover(projectHooks))]
+  // Load order: builtin → user → project plugin alias → project hooks
+  // `.kkcode/plugins` remains a compatibility alias for hook scripts while
+  // `.kkcode/hooks` is the explicit project hook path.
+  const files = [
+    ...(await discover(builtinHooks)),
+    ...(await discover(userHooks)),
+    ...(await discover(projectPluginHooks)),
+    ...(await discover(projectHooks))
+  ]
   for (const file of files) {
     const loaded = await loadModule(file)
     if (loaded.error) {

@@ -8,6 +8,7 @@ import { McpRegistry } from "../mcp/registry.mjs"
 import { loadCustomCommands, applyCommandTemplate } from "../command/custom-commands.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
+import { discoverLocalPluginManifests, pluginComponentDirs } from "../plugin/manifest-loader.mjs"
 import { userRootDir } from "../storage/paths.mjs"
 
 const execFileAsync = promisify(execFile)
@@ -28,6 +29,19 @@ const DEFAULT_SKILL_PACKS = [
 function toText(v) {
   if (v === undefined || v === null) return ""
   return String(v)
+}
+
+function toArray(value) {
+  if (Array.isArray(value)) return value
+  if (value === undefined || value === null || value === "") return []
+  return [value]
+}
+
+function toStringArray(value) {
+  return toArray(value)
+    .flatMap((item) => typeof item === "string" ? item.split(",") : [item])
+    .map((item) => typeof item === "string" ? item.trim() : "")
+    .filter(Boolean)
 }
 
 async function exists(target) {
@@ -133,11 +147,39 @@ function parseFrontmatter(raw) {
   }
 }
 
+function normalizeSkillMeta(meta = {}, defaults = {}) {
+  const contextValue = typeof meta.context === "string" ? meta.context.trim().toLowerCase() : ""
+  const explicitContextFork = meta["context-fork"] === true || meta.contextFork === true
+  const contextFork = explicitContextFork || contextValue === "fork"
+  const rawModel = typeof meta.model === "string" ? meta.model.trim() : meta.model
+  const model = rawModel && rawModel.toLowerCase() === "inherit" ? null : rawModel || null
+  const allowedTools = toStringArray(meta["allowed-tools"] ?? meta.allowedTools ?? meta.tools)
+
+  return {
+    disableModelInvocation: !!meta["disable-model-invocation"],
+    userInvocable: meta["user-invocable"] !== false,
+    allowedTools: allowedTools.length ? allowedTools : null,
+    model,
+    contextFork,
+    context: contextFork ? "fork" : contextValue === "inline" ? "inline" : null,
+    whenToUse: meta.when_to_use || meta["when-to-use"] || null,
+    argumentHint: meta.argument_hint || meta["argument-hint"] || null,
+    arguments: Array.isArray(meta.arguments) ? meta.arguments : [],
+    agent: meta.agent || null,
+    effort: meta.effort || null,
+    shell: meta.shell || null,
+    hooks: meta.hooks || null,
+    paths: toStringArray(meta.paths),
+    skillRoot: defaults.skillDir || path.dirname(defaults.source || process.cwd()),
+    plugin: defaults.plugin || null
+  }
+}
+
 /**
  * Load plain .md skills from skill directories.
  * Supports optional YAML frontmatter.
  */
-async function loadMarkdownSkills(dir, scope) {
+async function loadMarkdownSkills(dir, scope, plugin = null) {
   if (!(await exists(dir))) return []
   const entries = await readdir(dir, { withFileTypes: true })
   const mdFiles = entries
@@ -155,6 +197,11 @@ async function loadMarkdownSkills(dir, scope) {
       const trimmed = raw.trim()
       if (!trimmed) continue
       const { meta, body } = parseFrontmatter(trimmed)
+      const normalized = normalizeSkillMeta(meta, {
+        skillDir: path.dirname(filePath),
+        source: filePath,
+        plugin
+      })
       skills.push({
         name: meta.name || path.basename(name, ".md"),
         description: meta.description || path.basename(name, ".md"),
@@ -164,11 +211,7 @@ async function loadMarkdownSkills(dir, scope) {
         skillDir: path.dirname(filePath),
         template: body,
         auxFiles: {},
-        disableModelInvocation: !!meta["disable-model-invocation"],
-        userInvocable: meta["user-invocable"] !== false,
-        allowedTools: meta["allowed-tools"] || null,
-        model: meta.model || null,
-        contextFork: !!meta["context-fork"]
+        ...normalized
       })
     } catch {
       // skip invalid markdown skill files
@@ -182,7 +225,7 @@ async function loadMarkdownSkills(dir, scope) {
  * Each .mjs file should export: { name, description, run(ctx) }
  * run() returns a string prompt to send to the model.
  */
-async function loadMjsSkills(dir, scope) {
+async function loadMjsSkills(dir, scope, plugin = null) {
   if (!(await exists(dir))) return []
   const resolvedDir = path.resolve(dir)
   const entries = await readdir(dir, { withFileTypes: true })
@@ -205,7 +248,9 @@ async function loadMjsSkills(dir, scope) {
         type: "mjs",
         scope,
         source: full,
-        run: typeof mod.run === "function" ? mod.run : null
+        run: typeof mod.run === "function" ? mod.run : null,
+        skillRoot: path.dirname(full),
+        plugin
       })
     } catch {
       // Skip broken skill files silently
@@ -291,7 +336,7 @@ async function loadAuxFiles(skillDir) {
   return aux
 }
 
-async function loadSkillDirs(dir, scope) {
+async function loadSkillDirs(dir, scope, plugin = null) {
   if (!(await exists(dir))) return []
   const entries = await readdir(dir, { withFileTypes: true })
   const dirs = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort()
@@ -304,6 +349,11 @@ async function loadSkillDirs(dir, scope) {
       const raw = await readFile(mdPath, "utf8")
       const { meta, body } = parseFrontmatter(raw)
       const auxFiles = await loadAuxFiles(skillDir)
+      const normalized = normalizeSkillMeta(meta, {
+        skillDir,
+        source: mdPath,
+        plugin
+      })
       skills.push({
         name: meta.name || name,
         description: meta.description || name,
@@ -313,11 +363,7 @@ async function loadSkillDirs(dir, scope) {
         skillDir,
         template: body,
         auxFiles,
-        disableModelInvocation: !!meta["disable-model-invocation"],
-        userInvocable: meta["user-invocable"] !== false,
-        allowedTools: meta["allowed-tools"] || null,
-        model: meta.model || null,
-        contextFork: !!meta["context-fork"]
+        ...normalized
       })
     } catch { /* skip broken */ }
   }
@@ -355,7 +401,9 @@ function mcpPromptsToSkills(prompts) {
 
 const state = {
   skills: new Map(),
-  loaded: false
+  loaded: false,
+  plugins: [],
+  pluginErrors: []
 }
 
 export const SkillRegistry = {
@@ -364,6 +412,8 @@ export const SkillRegistry = {
    */
   async initialize(config, cwd = process.cwd()) {
     state.skills.clear()
+    state.plugins = []
+    state.pluginErrors = []
     const autoSeed = config?.skills?.auto_seed !== false
     if (autoSeed) {
       try {
@@ -394,12 +444,16 @@ export const SkillRegistry = {
 
     // Source 2: Programmable skills (.mjs) + SKILL.md directories
     const userRoot = userRootDir()
+    const pluginManifestState = await discoverLocalPluginManifests(cwd)
+    state.plugins = pluginManifestState.plugins
+    state.pluginErrors = pluginManifestState.errors
     const rawCustomDirs = Array.isArray(config?.skills?.dirs) ? config.skills.dirs : []
     // Default directories: global (~/.kkcode/skills) + project (.kkcode/skills)
     const defaultDirs = [
       { dir: path.join(userRoot, "skills"), scope: "global" },
       { dir: path.join(cwd, ".kkcode", "skills"), scope: "project" }
     ]
+    const pluginDirs = pluginComponentDirs(state.plugins, "skills")
     // Custom dirs from config (resolve relative to cwd)
     const extraDirs = rawCustomDirs
       .filter((d) => typeof d === "string" && d.trim().length > 0)
@@ -411,17 +465,17 @@ export const SkillRegistry = {
         }
       })
     const seenDirSet = new Set()
-    const allSkillDirs = [...defaultDirs, ...extraDirs].filter((entry) => {
+    const allSkillDirs = [...pluginDirs, ...defaultDirs, ...extraDirs].filter((entry) => {
       const resolved = path.resolve(entry.dir)
       if (seenDirSet.has(resolved)) return false
       seenDirSet.add(resolved)
       return true
     })
 
-    const loadPromises = allSkillDirs.flatMap(({ dir, scope }) => [
-      loadMarkdownSkills(dir, scope),
-      loadMjsSkills(dir, scope),
-      loadSkillDirs(dir, scope)
+    const loadPromises = allSkillDirs.flatMap(({ dir, scope, plugin = null }) => [
+      loadMarkdownSkills(dir, scope, plugin),
+      loadMjsSkills(dir, scope, plugin),
+      loadSkillDirs(dir, scope, plugin)
     ])
     const results = await Promise.all(loadPromises)
     for (const skills of results) {
@@ -494,7 +548,12 @@ export const SkillRegistry = {
       const cwd = context.cwd || process.cwd()
       let prompt = applyCommandTemplate(skill.template, args, {
         path: cwd, mode: context.mode || "agent",
-        provider: context.provider || "", cwd, project: path.basename(cwd)
+        provider: context.provider || "", cwd, project: path.basename(cwd),
+        SKILL_ROOT: skill.skillRoot || skill.skillDir || path.dirname(skill.source),
+        SKILL_DIR: skill.skillRoot || skill.skillDir || path.dirname(skill.source),
+        SKILL_NAME: skill.name,
+        ARGUMENT_HINT: skill.argumentHint || "",
+        WHEN_TO_USE: skill.whenToUse || ""
       })
       // Resolve $FILE{name} references to auxiliary file contents
       if (skill.auxFiles) {
@@ -571,5 +630,13 @@ export const SkillRegistry = {
     return [...state.skills.entries()]
       .filter(([key, s]) => !s.disableModelInvocation && !key.startsWith("mcp:"))
       .map(([, s]) => ({ name: s.name, description: s.description }))
+  },
+
+  listPluginManifests() {
+    return [...state.plugins]
+  },
+
+  pluginErrors() {
+    return [...state.pluginErrors]
   }
 }

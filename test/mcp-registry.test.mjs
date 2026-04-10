@@ -1,5 +1,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
 import { McpRegistry } from "../src/mcp/registry.mjs"
 
 function makeNodeScript(body) {
@@ -188,4 +191,57 @@ test("mcp registry healthCheckAll reports status", async () => {
   assert.equal(results.alive.ok, true)
 
   McpRegistry.shutdown()
+})
+
+test("mcp registry auto-discovers repo-local MCP config files", async () => {
+  const project = await mkdtemp(join(tmpdir(), "kkcode-mcp-discovery-"))
+  try {
+    await mkdir(join(project, ".kkcode"), { recursive: true })
+    await writeFile(
+      join(project, ".mcp.json"),
+      JSON.stringify({
+        servers: {
+          discoveredA: {
+            transport: "stdio",
+            command: makeNodeScript(healthyScript),
+            timeout_ms: 2000,
+            framing: "content-length"
+          }
+        }
+      }),
+      "utf8"
+    )
+    await writeFile(
+      join(project, ".kkcode", "mcp.json"),
+      JSON.stringify({
+        servers: {
+          discoveredB: {
+            transport: "stdio",
+            command: makeNodeScript(healthyScript),
+            timeout_ms: 2000,
+            framing: "content-length"
+          }
+        }
+      }),
+      "utf8"
+    )
+
+    await McpRegistry.initialize(
+      {
+        runtime: { mcp_refresh_ttl_ms: 0 },
+        mcp: {
+          auto_discover: true,
+          servers: { context7: { enabled: false } }
+        }
+      },
+      { force: true, cwd: project }
+    )
+
+    const servers = McpRegistry.listServers()
+    assert.ok(servers.includes("discoveredA"))
+    assert.ok(servers.includes("discoveredB"))
+  } finally {
+    McpRegistry.shutdown()
+    await rm(project, { recursive: true, force: true })
+  }
 })

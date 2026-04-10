@@ -1,6 +1,37 @@
 Launch a subagent to handle complex, multi-step tasks autonomously.
 
-Each task spawns a full, independent LLM session with its own context window. The subagent makes its own tool calls and returns a single result message when done.
+Each task spawns a delegated LLM session that makes its own tool calls and returns a single result message when done.
+
+# Delegation Decision Rules
+
+Stay local when:
+- The next step is a simple read/edit/run action you can do directly
+- Your immediate next action is blocked on the result, and delegation would only add latency
+- The work is tightly coupled to nearby edits you are already making
+
+Delegate when:
+- The work needs multiple tool calls plus autonomous reasoning
+- The work is self-contained enough to brief clearly
+- The work can proceed in parallel without racing your current critical path
+
+# Fresh Session vs Continued Session
+
+- New `task` calls start with fresh context by default. The subagent does NOT see your parent conversation unless you summarize it in the prompt.
+- Use `session_id` only to continue an existing delegated session that already has the needed context.
+- Until kkcode has a dedicated inherited-context delegation lane, do NOT assume a brand-new subagent can see parent-session state, hidden reasoning, or other delegates' work.
+- For implementation-heavy work, prefer a fresh task brief with explicit file scope. For follow-up questions or incremental continuation on the same delegated slice, continue the same `session_id`.
+
+# Brief Writing Rules
+
+Every delegated prompt should include:
+- Objective: the concrete outcome to produce
+- Why: the context or decision pressure behind the task
+- Write scope: whether to mutate files or stay read-only
+- Starting points: relevant paths, symbols, tests, or commands
+- Constraints: architectural boundaries, forbidden edits, or safety rules
+- Deliverable: what the subagent should return (summary, patch, review findings, etc.)
+
+Good delegation briefs are directive and self-contained. The subagent should not need to infer hidden context.
 
 # Available subagent types
 
@@ -21,6 +52,7 @@ Use `task` when the work:
 - Benefits from an independent context window (protects main conversation from result noise)
 - Involves code review, deep research, or broad codebase exploration
 - Can be parallelized — launch multiple independent tasks simultaneously
+- Is safe to hand off without racing another agent on the same files
 
 <example>
 User: "Please investigate how authentication works in this project"
@@ -71,7 +103,9 @@ GOOD: glob(pattern="**/*.test.js")
 
 - **subagent_type** (optional): One of "explore", "architect", "reviewer", "researcher", or omit for default build agent.
 
-- **run_in_background** (optional): Set to true to run as a background worker. Returns a task_id immediately — use `background_output` to check results later.
+- **session_id** (optional): Continue an existing delegated session when you need follow-up work on the same slice. Do NOT use this as a substitute for briefing a new task.
+
+- **run_in_background** (optional): Set to true only for sidecar work that can continue while you do other things. Returns a task_id immediately — use `background_output` to check results later.
 
 # Important Behaviors
 
@@ -81,3 +115,7 @@ GOOD: glob(pattern="**/*.test.js")
 - Avoid duplicating work that subagents are already doing. If you delegated research, don't also search yourself.
 - Provide clear, self-contained prompts. The subagent has no access to your conversation context.
 - Clearly state whether you expect the agent to write code or just do research, since it cannot infer your intent.
+- Do NOT launch overlapping delegates on the same file set unless coordination is explicit.
+- Do NOT "peek" at unfinished delegated work and present it as done. Wait for the result, then summarize it accurately.
+- Do NOT fabricate completion. If a background delegate is still running or blocked, report that truthfully.
+- If you launch background work, keep moving on non-overlapping tasks and report progress when the delegate finishes or blocks.
