@@ -4,6 +4,7 @@ import { ensureBackgroundTaskRuntimeDir, backgroundTaskCheckpointPath, backgroun
 import { buildContext } from "../context.mjs"
 import { ToolRegistry } from "../tool/registry.mjs"
 import { executeTurn } from "../session/engine.mjs"
+import { flushNow, forkSession, getSession } from "../session/store.mjs"
 
 function now() {
   return Date.now()
@@ -67,6 +68,26 @@ async function appendTaskLog(taskId, line) {
   }
 }
 
+async function ensureDelegatedSession({ executionMode, parentSessionId, subSessionId }) {
+  if (executionMode !== "fork_context") return
+  if (!parentSessionId) throw new Error("fork_context requires a parent session")
+
+  const existing = await getSession(subSessionId)
+  if (existing) return
+
+  const forked = await forkSession({
+    sessionId: parentSessionId,
+    newSessionId: subSessionId,
+    title: `fork:${subSessionId}`
+  })
+
+  if (!forked) {
+    throw new Error(`fork_context parent session not found: ${parentSessionId}`)
+  }
+
+  await flushNow()
+}
+
 async function runDelegateTask(task, signal) {
   const payload = task.payload || {}
   const cwd = payload.cwd || process.cwd()
@@ -84,6 +105,17 @@ async function runDelegateTask(task, signal) {
   const providerType = payload.providerType || ctx.configState.config.provider.default
   const providerDefault = ctx.configState.config.provider[providerType]
   const model = payload.model || providerDefault?.default_model
+  const executionMode = String(payload.executionMode || "fresh_agent").trim().toLowerCase() || "fresh_agent"
+
+  if (!["fresh_agent", "fork_context"].includes(executionMode)) {
+    throw new Error(`unsupported task.execution_mode: ${payload.executionMode}`)
+  }
+
+  await ensureDelegatedSession({
+    executionMode,
+    parentSessionId: payload.parentSessionId || null,
+    subSessionId: payload.subSessionId
+  })
 
   const out = await executeTurn({
     prompt: String(payload.prompt || ""),
@@ -100,6 +132,7 @@ async function runDelegateTask(task, signal) {
       logicalTaskId: payload.logicalTaskId || null
     }
   })
+  await flushNow()
 
   const plannedFiles = Array.isArray(payload.plannedFiles)
     ? payload.plannedFiles.map((item) => String(item || "").trim()).filter(Boolean)
@@ -133,6 +166,7 @@ async function runDelegateTask(task, signal) {
     session_id: payload.subSessionId,
     parent_session_id: payload.parentSessionId || null,
     subagent: payload.subagent || null,
+    execution_mode: executionMode,
     reply: out.reply,
     tool_events: out.toolEvents?.length || 0,
     completed_files: completedFiles,

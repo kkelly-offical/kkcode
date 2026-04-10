@@ -5,6 +5,9 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import http from "node:http"
 import { BackgroundManager } from "../src/orchestration/background-manager.mjs"
+import { appendAssistantMessage, appendUserMessage, flushNow, touchSession } from "../src/session/store.mjs"
+import { readJson } from "../src/storage/json-store.mjs"
+import { sessionDataPath, sessionIndexPath } from "../src/storage/paths.mjs"
 
 let home = ""
 let project = ""
@@ -165,4 +168,56 @@ test("background worker kill -> interrupted -> retry -> completed", async () => 
   const completed = await waitFor(task.id, (it) => it.status === "completed", { config, timeoutMs: 30000 })
   assert.equal(completed.status, "completed")
   assert.equal(completed.result?.reply, "background completed")
+})
+
+test("background fork_context task inherits parent session transcript", async () => {
+  const config = {
+    background: {
+      mode: "worker_process",
+      max_parallel: 1,
+      worker_timeout_ms: 30000
+    }
+  }
+
+  await touchSession({ sessionId: "ses_parent_bg_fork", mode: "agent", model: "test-model", providerType: "local", cwd: project })
+  await appendUserMessage("ses_parent_bg_fork", "parent background user context")
+  await appendAssistantMessage("ses_parent_bg_fork", "parent background assistant context")
+  await flushNow()
+
+  const subSessionId = `ses_bg_fork_${Date.now()}`
+  const task = await BackgroundManager.launchDelegateTask({
+    description: "e2e fork-context delegate task",
+    payload: {
+      workerType: "delegate_task",
+      cwd: project,
+      prompt: "run once",
+      parentSessionId: "ses_parent_bg_fork",
+      subSessionId,
+      executionMode: "fork_context",
+      providerType: "local",
+      model: "test-model"
+    },
+    config
+  })
+
+  const completed = await waitFor(task.id, (it) => it.status === "completed", { config, timeoutMs: 30000 })
+  assert.equal(completed.status, "completed")
+  assert.equal(completed.result?.execution_mode, "fork_context")
+  assert.equal(completed.result?.parent_session_id, "ses_parent_bg_fork")
+
+  const sessionIndex = await readJson(sessionIndexPath(), { sessions: {} })
+  const childSession = sessionIndex.sessions?.[subSessionId]
+  const childData = await readJson(sessionDataPath(subSessionId), { messages: [] })
+
+  assert.equal(childSession?.parentSessionId, "ses_parent_bg_fork")
+  assert.equal(childSession?.forkFrom, "ses_parent_bg_fork")
+  assert.deepEqual(
+    childData.messages.map((message) => message.content),
+    [
+      "parent background user context",
+      "parent background assistant context",
+      "run once",
+      "background completed"
+    ]
+  )
 })

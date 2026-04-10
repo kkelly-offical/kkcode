@@ -14,11 +14,12 @@ Delegate when:
 - The work is self-contained enough to brief clearly
 - The work can proceed in parallel without racing your current critical path
 
-# Fresh Session vs Continued Session
+# Fresh Session vs Forked Context vs Continued Session
 
 - New `task` calls start with fresh context by default. The subagent does NOT see your parent conversation unless you summarize it in the prompt.
+- Set `execution_mode="fork_context"` when the delegated task should start from a fork of the current parent session transcript. Use this for sidecar research, audits, or follow-up verification that materially benefits from current context.
 - Use `session_id` only to continue an existing delegated session that already has the needed context.
-- Until kkcode has a dedicated inherited-context delegation lane, do NOT assume a brand-new subagent can see parent-session state, hidden reasoning, or other delegates' work.
+- `fork_context` inherits transcript context, but it does NOT change the parent/child result contract: the parent agent still owns synthesis and must wait for the child result instead of assuming it succeeded.
 - For implementation-heavy work, prefer a fresh task brief with explicit file scope. For follow-up questions or incremental continuation on the same delegated slice, continue the same `session_id`.
 
 # Brief Writing Rules
@@ -104,6 +105,7 @@ GOOD: glob(pattern="**/*.test.js")
 - **subagent_type** (optional): One of "explore", "architect", "reviewer", "researcher", or omit for default build agent.
 
 - **session_id** (optional): Continue an existing delegated session when you need follow-up work on the same slice. Do NOT use this as a substitute for briefing a new task.
+- **execution_mode** (optional): `fresh_agent` (default) or `fork_context`. Use `fork_context` only when inheriting the parent transcript is genuinely useful.
 
 - **run_in_background** (optional): Set to true only for sidecar work that can continue while you do other things. Returns a task_id immediately — use `background_output` to check results later.
 

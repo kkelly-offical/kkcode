@@ -9,6 +9,7 @@ test("task tool exposes delegation-focused schema fields", () => {
   assert.equal(tool.name, "task")
   assert.ok(props.prompt)
   assert.ok(props.subagent_type)
+  assert.ok(props.execution_mode)
   assert.ok(props.run_in_background)
   assert.ok(props.session_id)
   assert.ok(props.stage_id)
@@ -28,6 +29,7 @@ test("task tool forwards arguments to delegateTask unchanged", async () => {
   const args = {
     prompt: "delegate this",
     subagent_type: "explore",
+    execution_mode: "fork_context",
     run_in_background: true,
     session_id: "sub-session",
     stage_id: "stage-1",
