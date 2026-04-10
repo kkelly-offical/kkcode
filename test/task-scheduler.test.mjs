@@ -44,7 +44,9 @@ test("task delegate reuses an existing sub-session with continuation prompt", as
   assert.equal(received.allowQuestion, true)
   assert.deepEqual(result, {
     session_id: "sub_existing",
+    parent_session_id: "parent_2",
     subagent: "default-subagent",
+    execution_mode: "fresh_agent",
     reply: "continued",
     tool_events: 2
   })
@@ -122,7 +124,8 @@ test("task delegate launches background tasks with deterministic payload metadat
     assert.deepEqual(result, {
       background_task_id: "bg_123",
       status: "pending",
-      session_id: result.session_id
+      session_id: result.session_id,
+      execution_mode: "fresh_agent"
     })
     assert.match(result.session_id, /^sub_parent_bg_\d+$/)
     assert.equal(launchArgs.description, "verify branch")

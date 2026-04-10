@@ -46,6 +46,15 @@ function baseConfig(longagentOverrides = {}) {
           no_progress_limit: 1,
           heartbeat_timeout_ms: 120000,
           checkpoint_interval: 0,
+          max_gate_attempts: 1,
+          usability_gates: {
+            prompt_user: "never",
+            build: { enabled: false },
+            test: { enabled: false },
+            review: { enabled: false },
+            health: { enabled: false },
+            budget: { enabled: false }
+          },
           hybrid: { enabled: false },
           ...longagentOverrides
         }
