@@ -50,3 +50,24 @@ export async function getResumeContext(sessionId, { enabled = true } = {}) {
     canRetry: Boolean(session.retryMeta?.failedAt)
   }
 }
+
+export function summarizeResumeContext(resumeCtx) {
+  if (!resumeCtx) return null
+  const retryMeta = resumeCtx.retryMeta || {}
+  const status = retryMeta.inProgress
+    ? "in-progress"
+    : resumeCtx.canRetry
+      ? "retryable-error"
+      : resumeCtx.canResume
+        ? "resumable"
+        : "idle"
+  return {
+    status,
+    canResume: resumeCtx.canResume,
+    canRetry: resumeCtx.canRetry,
+    messageCount: resumeCtx.messageCount,
+    lastPromptPreview: resumeCtx.lastPrompt ? `${String(resumeCtx.lastPrompt).slice(0, 100)}${String(resumeCtx.lastPrompt).length > 100 ? "..." : ""}` : "",
+    retryStep: Number(retryMeta.step || 0),
+    turnId: retryMeta.turnId || null
+  }
+}

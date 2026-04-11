@@ -41,11 +41,13 @@ beforeEach(async () => {
   project = await mkdtemp(join(tmpdir(), "kkcode-recovery-project-"))
   oldCwd = process.cwd()
   process.chdir(project)
+  process.env.KKCODE_HOME = home
 })
 
 afterEach(async () => {
   process.chdir(oldCwd)
   await flushNow()
+  delete process.env.KKCODE_HOME
   await rm(home, { recursive: true, force: true })
   await rm(project, { recursive: true, force: true })
 })
@@ -136,4 +138,20 @@ test("session commands report disabled when session.recovery=false", async () =>
   const out = runCli(["session", "recoverable"], { expectFail: true })
   assert.equal(out.code, 2)
   assert.ok(`${out.stdout}\n${out.stderr}`.includes("session recovery is disabled"))
+})
+
+test("session show --summary returns resume metadata", async () => {
+  const sessionId = `ses_summary_${Date.now()}`
+  await touchSession({
+    sessionId,
+    mode: "agent",
+    model: "mock",
+    providerType: "mock_toggle",
+    cwd: project
+  })
+  await flushNow()
+  const out = runCli(["session", "show", "--id", sessionId, "--summary"])
+  const parsed = JSON.parse(out.stdout)
+  assert.equal(parsed.session.id, sessionId)
+  assert.equal(parsed.resume.status, "idle")
 })

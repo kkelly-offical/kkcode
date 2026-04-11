@@ -3,7 +3,8 @@ import { writeFile } from "node:fs/promises"
 import { Command } from "commander"
 import { exportSession, getSession, listSessions, forkSession, fsckSessionStore, gcSessionStore, flushNow } from "../session/store.mjs"
 import { newSessionId, executeTurn } from "../session/engine.mjs"
-import { listRecoverableSessions, getResumeContext, isRecoveryEnabled } from "../session/recovery.mjs"
+import { listRecoverableSessions, getResumeContext, isRecoveryEnabled, summarizeResumeContext } from "../session/recovery.mjs"
+import { summarizeSessionRuntimeState } from "../session/runtime-state.mjs"
 import { buildContext } from "../context.mjs"
 import { ToolRegistry } from "../tool/registry.mjs"
 
@@ -85,14 +86,59 @@ export function createSessionCommand() {
     })
 
   cmd
+    .command("status")
+    .description("show a unified runtime summary for the latest or selected session")
+    .option("--id <id>", "session id")
+    .option("--json", "print as json", false)
+    .action(async (options) => {
+      const ctx = await buildContext()
+      const summary = await summarizeSessionRuntimeState({
+        sessionId: options.id || null,
+        cwd: process.cwd(),
+        recoveryEnabled: isRecoveryEnabled(ctx.configState.config)
+      })
+
+      if (options.json) {
+        console.log(JSON.stringify(summary, null, 2))
+        return
+      }
+      if (!summary.session) {
+        console.log("no session state available")
+        return
+      }
+
+      console.log(`session=${summary.session.id} mode=${summary.session.mode} provider=${summary.session.providerType} model=${summary.session.model}`)
+      console.log(`status=${summary.session.status} messages=${summary.messageCount} parts=${summary.partCount}`)
+      if (summary.retryMeta) {
+        console.log(`retry=inProgress:${Boolean(summary.retryMeta.inProgress)} step=${summary.retryMeta.step ?? "-"}`)
+      }
+      if (summary.budgetState) {
+        console.log(`budget=exceeded:${Boolean(summary.budgetState.exceeded)} warnings=${(summary.budgetState.warnings || []).length}`)
+      }
+      console.log(`recoverable=${summary.recoverableCount}`)
+      console.log(`background total=${summary.background.total} running=${summary.background.running} pending=${summary.background.pending} interrupted=${summary.background.interrupted} error=${summary.background.error}`)
+      console.log(`audit total=${summary.audit.total} error1h=${summary.audit.error1h} error24h=${summary.audit.error24h}`)
+    })
+
+  cmd
     .command("show")
     .description("show one session")
     .requiredOption("--id <id>", "session id")
+    .option("--summary", "show a concise session/resume summary")
     .action(async (options) => {
       const data = await getSession(options.id)
       if (!data) {
         console.error(`session not found: ${options.id}`)
         process.exitCode = 1
+        return
+      }
+      if (options.summary) {
+        const resumeCtx = await getResumeContext(options.id)
+        const summary = summarizeResumeContext(resumeCtx)
+        console.log(JSON.stringify({
+          session: data.session,
+          resume: summary
+        }, null, 2))
         return
       }
       console.log(JSON.stringify(data, null, 2))
@@ -213,7 +259,8 @@ export function createSessionCommand() {
   cmd
     .command("recoverable")
     .description("list sessions that can be resumed or retried")
-    .action(async () => {
+    .option("--json", "print as json", false)
+    .action(async (options) => {
       const ctx = await buildContext()
       if (!assertRecoveryEnabled(ctx.configState.config, "session recoverable")) return
 
@@ -225,9 +272,17 @@ export function createSessionCommand() {
         console.log("no recoverable sessions")
         return
       }
+      if (options.json) {
+        const payload = await Promise.all(sessions.map(async (session) => ({
+          session,
+          resume: summarizeResumeContext(await getResumeContext(session.id, { enabled: true }))
+        })))
+        console.log(JSON.stringify(payload, null, 2))
+        return
+      }
       for (const s of sessions) {
-        const reason = s.retryMeta?.inProgress ? "in-progress" : s.status === "error" ? "error" : "unknown"
-        console.log(`${s.id}  ${s.mode}  ${reason}  ${new Date(s.updatedAt).toLocaleString()}`)
+        const summary = summarizeResumeContext(await getResumeContext(s.id, { enabled: true }))
+        console.log(`${s.id}  ${s.mode}  ${summary?.status || "unknown"}  ${new Date(s.updatedAt).toLocaleString()}  ${summary?.lastPromptPreview || ""}`)
       }
     })
 

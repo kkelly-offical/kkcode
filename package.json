@@ -1,6 +1,6 @@
 {
   "name": "@kkelly-offical/kkcode",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "description": "Team-first terminal AI coding agent CLI with LongAgent orchestration, GitHub integration and themed UX.",
   "type": "module",
   "packageManager": "pnpm@10.5.2",
@@ -36,8 +36,12 @@
   },
   "scripts": {
     "start": "node ./src/index.mjs",
+    "lint": "node ./scripts/check-node-syntax.mjs",
     "test": "node ./scripts/run-node-tests.mjs",
-    "test:e2e": "node --test test/e2e/"
+    "test:e2e": "node --test test/e2e/",
+    "typecheck": "node ./scripts/check-types.mjs",
+    "coverage": "node ./scripts/run-node-tests.mjs --coverage",
+    "release:verify": "node ./scripts/release-verify.mjs"
   },
   "dependencies": {
     "commander": "^13.1.0",
