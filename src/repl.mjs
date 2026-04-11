@@ -27,6 +27,7 @@ import { HookBus, initHookBus } from "./plugin/hook-bus.mjs"
 import { BackgroundManager } from "./orchestration/background-manager.mjs"
 import { renderReplDashboard, renderReplLogo, renderStartupHint } from "./ui/repl-dashboard.mjs"
 import { buildHelpText, buildShortcutLegend } from "./ui/repl-help.mjs"
+import { buildRouteFeedback } from "./ui/repl-route-feedback.mjs"
 import { paint } from "./theme/color.mjs"
 import { PermissionEngine } from "./permission/engine.mjs"
 import { setPermissionPromptHandler } from "./permission/prompt.mjs"
@@ -2692,7 +2693,11 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     if (!line.startsWith("/")) {
       routeRequestedMode = state.mode
       route = routeMode(submittedLine, state.mode)
-      const routeExplanation = route.explanation || route.reason
+      const routeFeedback = buildRouteFeedback({
+        route,
+        currentMode: state.mode,
+        routeSummary: summarizeRouteDecision(route)
+      })
       await emitRouteDecisionEvent({
         sessionId: state.sessionId,
         source: "repl",
@@ -2701,26 +2706,26 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         prompt: submittedLine,
         continuedTransaction: Boolean(activeAgentContinuation)
       })
-      if (route.changed) {
-        const modeLabel = route.mode === "ask" ? "ask（问答）" : route.mode
-        appendLog(paint(`⟳ 自动切换到 ${modeLabel} 模式（${routeExplanation}）`, ctx.themeState.theme.semantic.info, { dim: true }))
+      if (routeFeedback.changedMessage) {
+        appendLog(paint(routeFeedback.changedMessage, ctx.themeState.theme.semantic.info, { dim: true }))
         state.mode = route.mode
-      } else if (route.forced && route.suggestion) {
+      } else if (routeFeedback.forcedMessage) {
         // 用户强制 longagent 但任务看起来是简单任务 → 需要确认
         ui.pendingModeConfirm = { suggestedMode: route.suggestion, originalMode: state.mode, reason: route.reason }
-        appendLog(paint(`⚠ 这看起来是个简单任务（${routeExplanation}），建议用 ${route.suggestion} 模式。输入 y 继续用 longagent，或 n 切换到 ${route.suggestion}。`, ctx.themeState.theme.semantic.warn))
+        appendLog(paint(routeFeedback.forcedMessage, ctx.themeState.theme.semantic.warn))
         ui.busy = false
         ui.turnAbortController = null
         stopBusySpinner()
         requestRender()
         return
-      } else if (route.suggestion === "longagent" && state.mode === "agent") {
-        appendLog(paint(`💡 这看起来是个复杂任务（${routeExplanation}），可以用 /longagent 切换到 longagent 模式获得更好效果。`, ctx.themeState.theme.base.muted, { dim: true }))
-      } else if (route.reason !== "low_confidence") {
-        const currentLabel = state.mode === "ask" ? "ask（问答）" : state.mode
-        appendLog(paint(`↳ 保持 ${currentLabel} 模式（${routeExplanation}）`, ctx.themeState.theme.base.muted, { dim: true }))
+      } else if (routeFeedback.suggestionMessage) {
+        appendLog(paint(routeFeedback.suggestionMessage, ctx.themeState.theme.base.muted, { dim: true }))
+      } else if (routeFeedback.stayedMessage) {
+        appendLog(paint(routeFeedback.stayedMessage, ctx.themeState.theme.base.muted, { dim: true }))
       }
-      appendLog(paint(`   ${summarizeRouteDecision(route)}`, ctx.themeState.theme.base.muted, { dim: true }))
+      if (routeFeedback.summaryMessage) {
+        appendLog(paint(routeFeedback.summaryMessage, ctx.themeState.theme.base.muted, { dim: true }))
+      }
 
       if (state.mode === "agent") {
         ui.agentContinuation = summarizeAgentTransaction({
@@ -3682,7 +3687,7 @@ function startSplash() {
     "  ╚═╝  ╚═╝ ╚═╝  ╚═╝  ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝ "
   ]
   const tagline = "AI Coding Agent"
-  const version = "v0.1.22"
+  const version = "v0.1.23"
 
   // Gradient colors for the wave animation (cyan → blue → purple → pink → back)
   const wave = [
