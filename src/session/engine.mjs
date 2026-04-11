@@ -30,60 +30,94 @@ export function resolveMode(inputMode = "agent") {
  * @returns {{ mode: string, changed: boolean, reason: string, confidence: string, forced: boolean }}
  *   forced=true 表示用户强制使用了不匹配的模式（需要确认）
  */
-export function routeMode(prompt, requestedMode) {
+function finalizeRouteDecision(req, classification, base = {}) {
+  const effectiveMode = base.changed ? base.mode : req
+  return {
+    ...base,
+    topology: classification.topology || "open_ended",
+    evidence: Array.isArray(classification.evidence) ? classification.evidence : [],
+    pathHints: Array.isArray(classification.pathHints) ? classification.pathHints : [],
+    continuity: classification.continuity || "new_transaction",
+    observability: {
+      requestedMode: req,
+      effectiveMode,
+      suggestedMode: classification.mode,
+      changed: Boolean(base.changed),
+      forced: Boolean(base.forced),
+      suggestion: base.suggestion || null,
+      reason: base.reason,
+      confidence: base.confidence,
+      topology: classification.topology || "open_ended",
+      evidence: Array.isArray(classification.evidence) ? classification.evidence : [],
+      pathHints: Array.isArray(classification.pathHints) ? classification.pathHints : [],
+      continuity: classification.continuity || "new_transaction",
+      stayedLocal: effectiveMode === "agent" && classification.mode === "agent",
+      deferredLongagent: req === "agent" && base.suggestion === "longagent",
+      overEscalatedToLongagent: req === "longagent" && classification.mode === "agent"
+    }
+  }
+}
+
+export function routeMode(prompt, requestedMode, options = {}) {
   const req = resolveMode(requestedMode)
   // plan 模式不参与自动路由
   if (req === "plan") {
-    return {
+    return finalizeRouteDecision(req, {
+      mode: req,
+      topology: "open_ended",
+      evidence: [],
+      pathHints: [],
+      continuity: "new_transaction"
+    }, {
       mode: req,
       changed: false,
       reason: "plan_mode_exempt",
       explanation: explainTaskModeReason("plan_mode_exempt"),
       confidence: "high",
       forced: false
-    }
+    })
   }
 
-  const classification = classifyTaskMode(prompt)
+  const classification = classifyTaskMode(prompt, options)
   const suggested = classification.mode
   const explanation = classification.explanation || explainTaskModeReason(classification.reason)
 
   // 相同模式，无需路由
   if (suggested === req) {
-    return { mode: req, changed: false, reason: classification.reason, explanation, confidence: classification.confidence, forced: false }
+    return finalizeRouteDecision(req, classification, { mode: req, changed: false, reason: classification.reason, explanation, confidence: classification.confidence, forced: false })
   }
 
   // 低置信度不自动路由
   if (classification.confidence === "low") {
-    return { mode: req, changed: false, reason: "low_confidence", explanation: explainTaskModeReason("low_confidence"), confidence: "low", forced: false }
+    return finalizeRouteDecision(req, classification, { mode: req, changed: false, reason: "low_confidence", explanation: explainTaskModeReason("low_confidence"), confidence: "low", forced: false })
   }
 
   // 高置信度：问答类 → 自动切换到 ask（无需确认）
   if (suggested === "ask" && classification.confidence === "high") {
-    return { mode: "ask", changed: true, reason: classification.reason, explanation, confidence: "high", forced: false }
+    return finalizeRouteDecision(req, classification, { mode: "ask", changed: true, reason: classification.reason, explanation, confidence: "high", forced: false })
   }
 
   // 高置信度：agent 模式下检测到 longagent 任务 → 建议切换（无需确认，只提示）
   if (req === "agent" && suggested === "longagent" && classification.confidence === "high") {
-    return { mode: req, changed: false, reason: classification.reason, explanation, confidence: "high", forced: false, suggestion: "longagent" }
+    return finalizeRouteDecision(req, classification, { mode: req, changed: false, reason: classification.reason, explanation, confidence: "high", forced: false, suggestion: "longagent" })
   }
 
   // 高置信度：用户强制 longagent 但任务是简单 agent 任务 → 需要确认
   if (req === "longagent" && suggested === "agent" && classification.confidence === "high") {
-    return { mode: req, changed: false, reason: classification.reason, explanation, confidence: "high", forced: true, suggestion: "agent" }
+    return finalizeRouteDecision(req, classification, { mode: req, changed: false, reason: classification.reason, explanation, confidence: "high", forced: true, suggestion: "agent" })
   }
 
   // 中等置信度：agent 模式下检测到问答 → 自动切换
   if (req === "agent" && suggested === "ask" && classification.confidence === "medium") {
-    return { mode: "ask", changed: true, reason: classification.reason, explanation, confidence: "medium", forced: false }
+    return finalizeRouteDecision(req, classification, { mode: "ask", changed: true, reason: classification.reason, explanation, confidence: "medium", forced: false })
   }
 
-  return { mode: req, changed: false, reason: classification.reason, explanation, confidence: classification.confidence, forced: false }
+  return finalizeRouteDecision(req, classification, { mode: req, changed: false, reason: classification.reason, explanation, confidence: classification.confidence, forced: false })
 }
 
-export function resolvePromptMode(prompt, requestedMode = "agent") {
+export function resolvePromptMode(prompt, requestedMode = "agent", options = {}) {
   const requested = resolveMode(requestedMode)
-  const route = routeMode(prompt, requested)
+  const route = routeMode(prompt, requested, options)
   return {
     requestedMode: requested,
     effectiveMode: route.changed ? route.mode : requested,
@@ -95,7 +129,7 @@ export function newSessionId() {
   return `ses_${randomUUID().slice(0, 12)}`
 }
 
-function maybeRegisterSink() {
+export function ensureEventSinks() {
   if (sinkReady) return
   EventBus.registerSink(async (event) => {
     await appendEventLog(event)
@@ -141,7 +175,7 @@ export async function executeTurn({
   toolContext = {},
   longagentImpl = null
 }) {
-  maybeRegisterSink()
+  ensureEventSinks()
 
   const resolvedProviderType = providerType || configState.config.provider.default
   const agent = resolveAgentForMode(mode)

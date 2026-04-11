@@ -1,3 +1,5 @@
+import { detectAgentContinuationInput, extractPromptPathHints } from "./agent-transaction.mjs"
+
 /**
  * LongAgent 共享工具函数
  * 被 longagent.mjs、longagent-hybrid.mjs 共同使用
@@ -422,6 +424,7 @@ const MODE_REASON_EXPLANATIONS = {
   question_with_explain_intent: "检测到问答 / 解释意图",
   short_question: "检测到简短问答",
   planning_or_design_intent: "检测到规划 / 设计意图",
+  long_complex_prompt: "检测到长而复杂的任务描述，可能需要 longagent",
   short_local_task_protected: "检测到短小本地事务，避免升级到 longagent",
   local_transaction_task: "检测到本地事务型任务，适合保持在轻量 agent 路径",
   local_lookup_task: "检测到本地读取 / 总结类任务",
@@ -439,17 +442,23 @@ export function explainTaskModeReason(reason) {
   return MODE_REASON_EXPLANATIONS[reason] || String(reason || "unknown")
 }
 
+function countPromptMatches(patterns, input) {
+  return patterns.reduce((count, pattern) => count + (pattern.test(input) ? 1 : 0), 0)
+}
+
 /**
  * 分析 prompt，判断最适合的执行模式
  * @returns {{ mode: 'ask'|'plan'|'agent'|'longagent', confidence: 'high'|'medium'|'low', reason: string }}
  */
-export function classifyTaskMode(prompt) {
+export function classifyTaskMode(prompt, options = {}) {
   const text = String(prompt || "").trim()
   if (!text) return { mode: "ask", confidence: "high", reason: "empty_input" }
 
+  const continuation = options?.continuation || null
   const lower = text.toLowerCase()
   const len = text.length
-  const hasPathHint = /([./~][^\s]+|\b[\w-]+\.(mjs|cjs|js|jsx|ts|tsx|json|md|yaml|yml|toml|txt|log|sh)\b)/i.test(text)
+  const pathHints = extractPromptPathHints(text)
+  const hasPathHint = pathHints.length > 0
 
   const questionPatterns = [
     /^(what|how|why|when|where|who|which|explain|tell me|describe|show me)\b/i,
@@ -464,34 +473,73 @@ export function classifyTaskMode(prompt) {
     /\b(plan|design|architect|outline|blueprint|draft|propose|sketch)\b/i,
     /\b(规划|设计|架构|方案|蓝图|草案|提案|计划一下|帮我想想)\b/i
   ]
-  const longagentPatterns = [
+  const explicitHeavyScopePatterns = [
     /\b(multiple files?|across files?|entire (codebase|project|repo)|all files?|cross[- ]repo|跨文件|多个文件|整个项目|全量)\b/i,
-    /\b(refactor|rewrite|overhaul|redesign|migrate).{0,30}(system|service|architecture|repo|project|module|pipeline|codebase)\b/i,
+    /\b(refactor|rewrite|overhaul|redesign|migrate).{0,30}(system|service|architecture|repo|project|module|pipeline|codebase)\b/i
+  ]
+  const heavyDeliveryPatterns = [
     /\b(implement|build|create|develop|add).{0,40}(system|subsystem|service|feature|component|framework|pipeline|architecture|架构|系统|模块|服务|功能|组件|框架|流水线)\b/i,
     /\b(full|complete|comprehensive|end.to.end|完整实现|完全|端到端)\b/i,
     /\b(multi.?stage|multi.?step|phases?|多阶段|多步骤|分阶段)\b/i
   ]
-  const localTaskPatterns = [
+  const inspectPatterns = [
     /\b(run|execute|check|inspect|look at|read|open|summari[sz]e|scan|search|find|list|grep|tail|cat|count|compare|verify|show)\b/i,
     /\b(日志|目录|文件|配置|仓库|看一下|检查|查看|读取|总结|搜一下|列出|执行|运行|验证)\b/i
   ]
-  const agentPatterns = [
+  const patchPatterns = [
     /\b(fix|debug|patch|update|change|modify|rename|delete|remove|add|insert|append)\b/i,
-    /\b(修复|调试|修改|更新|删除|添加|插入|改一下|帮我改|帮我加)\b/i,
-    /\b(test|check|verify|运行|执行|测试|检查|验证)\b/i
+    /\b(修复|调试|修改|更新|删除|添加|插入|改一下|帮我改|帮我加)\b/i
   ]
   const singleCommandPatterns = [
     /`[^`]+`/,
     /\b(npm|pnpm|yarn|node|git|ls|cat|grep|rg|find|sed|awk|tail|head)\b/i
   ]
+  const verifyPatterns = [
+    /\b(test|verify|validate|confirm|make sure|ensure|smoke)\b/i,
+    /\b(验证|确认|测试|确保|冒烟)\b/i
+  ]
 
   const isQuestion = questionPatterns.some((re) => re.test(text))
   const isPureAsk = pureAskKeywords.some((kw) => lower.includes(kw))
   const isPlan = planPatterns.some((re) => re.test(lower))
-  const isLongAgent = longagentPatterns.some((re) => re.test(lower))
-  const isLocalTask = localTaskPatterns.some((re) => re.test(lower))
-  const isAgentAction = agentPatterns.some((re) => re.test(lower))
+  const explicitHeavyScope = explicitHeavyScopePatterns.some((re) => re.test(lower))
+  const heavyDelivery = heavyDeliveryPatterns.some((re) => re.test(lower))
+  const hasAcrossScope = /\bacross\b|跨/.test(lower)
+  const isLocalTask = inspectPatterns.some((re) => re.test(lower))
+  const isPatchTask = patchPatterns.some((re) => re.test(lower))
+  const isVerifyTask = verifyPatterns.some((re) => re.test(lower))
+  const isAgentAction = isPatchTask || isVerifyTask
   const isSingleCommandTask = singleCommandPatterns.some((re) => re.test(text))
+  const isVerificationTask = isVerifyTask
+  const hasContinuationSignal = Boolean(options?.continued || continuation?.objective || detectAgentContinuationInput(text, continuation))
+  const isLongAgent = explicitHeavyScope || heavyDelivery
+  const localSignalCount = [isLocalTask, isPatchTask, isVerifyTask, hasPathHint, isSingleCommandTask, hasContinuationSignal].filter(Boolean).length
+  const heavySignalCount = [explicitHeavyScope, heavyDelivery, hasAcrossScope].filter(Boolean).length
+  const smallBoundedPathSet = hasPathHint && pathHints.length <= 3
+  const isBoundedLocalTask = !isLongAgent && (isLocalTask || isAgentAction) && (hasPathHint || isSingleCommandTask || len < 320)
+  const isInspectPatchVerifyLoop = isLocalTask && isAgentAction && isVerificationTask
+  const evidence = []
+  if (hasPathHint) evidence.push(hasPathHint && pathHints.length === 1 ? "single_path" : "bounded_file_set")
+  if (isSingleCommandTask) evidence.push("single_command")
+  if (isLocalTask) evidence.push("inspect")
+  if (isPatchTask) evidence.push("patch")
+  if (isVerifyTask) evidence.push("verify")
+  if (isInspectPatchVerifyLoop) evidence.push("inspect_patch_verify")
+  if (isPlan && localSignalCount >= 2 && !explicitHeavyScope) evidence.push("embedded_planning_language")
+  if (hasContinuationSignal) evidence.push("continuation_context")
+  if (explicitHeavyScope || hasAcrossScope) evidence.push("cross_file_scope")
+  if (heavyDelivery) evidence.push("heavy_delivery")
+
+  let topology = "open_ended"
+  if (explicitHeavyScope || (heavyDelivery && heavySignalCount >= 2 && localSignalCount <= 2)) {
+    topology = "heavy_multi_file_delivery"
+  } else if (isInspectPatchVerifyLoop || (localSignalCount >= 3 && smallBoundedPathSet)) {
+    topology = "bounded_local_transaction"
+  } else if (hasContinuationSignal) {
+    topology = "continued_local_transaction"
+  } else if (isLocalTask || hasPathHint || isSingleCommandTask) {
+    topology = "bounded_lookup"
+  }
 
   const scores = { ask: 0, plan: 0, agent: 0, longagent: 0 }
   const reasons = {
@@ -502,43 +550,91 @@ export function classifyTaskMode(prompt) {
   }
 
   if (isQuestion) {
+    evidence.push("question_intent")
     scores.ask += len < 120 ? 4 : 3
     reasons.ask = len < 80 ? "short_question" : "question_with_explain_intent"
   }
   if (isPureAsk) {
+    evidence.push("pure_explanation_request")
     scores.ask += 3
     reasons.ask = "question_with_explain_intent"
   }
 
   if (isPlan) {
+    evidence.push("planning_language")
     scores.plan += 4
   }
 
   if (isLongAgent) {
+    evidence.push("heavy_scope_signal")
     scores.longagent += 6
+    reasons.longagent = "multi_file_or_system_task"
+  }
+  if (heavyDelivery) {
+    scores.longagent += explicitHeavyScope ? 2 : 3
+    if (reasons.longagent === "default_longagent") reasons.longagent = "multi_file_or_system_task"
+  }
+  if (hasAcrossScope && heavyDelivery) {
+    scores.longagent += 3
     reasons.longagent = "multi_file_or_system_task"
   }
 
   if (isLocalTask) {
+    evidence.push("local_task_signal")
     scores.agent += 4
     reasons.agent = "local_transaction_task"
   }
   if (isAgentAction) {
+    evidence.push("mutation_signal")
     scores.agent += 3
     if (reasons.agent === "default_agent") reasons.agent = "simple_action_task"
   }
+  if (isVerifyTask) {
+    scores.agent += 2
+    if (reasons.agent === "default_agent") reasons.agent = "simple_action_task"
+  }
+  if (isInspectPatchVerifyLoop) {
+    scores.agent += 2
+    reasons.agent = "local_transaction_task"
+  }
+  if (hasContinuationSignal) {
+    scores.agent += 3
+    reasons.agent = "local_transaction_task"
+  }
+  if (isAgentAction && localSignalCount >= 2 && !explicitHeavyScope) {
+    scores.agent += 3
+    reasons.agent = "local_transaction_task"
+  }
   if (hasPathHint || isSingleCommandTask) {
+    evidence.push(hasPathHint ? "path_hint" : "single_command")
     scores.agent += 2
     if (reasons.agent === "default_agent") reasons.agent = "single_path_or_command_task"
   }
+  if (isVerificationTask) {
+    evidence.push("verification_signal")
+  }
+  if (isBoundedLocalTask) {
+    evidence.push("bounded_local_scope")
+    scores.agent += 2
+  }
+  if (isInspectPatchVerifyLoop) {
+    evidence.push("inspect_patch_verify_loop")
+    scores.agent += 2
+    scores.longagent = Math.max(0, scores.longagent - 4)
+    reasons.agent = "short_local_task_protected"
+  }
 
   if (len > 500 && !isQuestion && !isLocalTask && !isAgentAction && !hasPathHint && !isSingleCommandTask) {
+    evidence.push("long_prompt")
     scores.longagent += 2
     if (reasons.longagent === "default_longagent") reasons.longagent = "long_complex_prompt"
   }
 
-  if (len < 240 && (isLocalTask || isAgentAction || hasPathHint || isSingleCommandTask) && !isLongAgent) {
+  if ((len < 240 || isBoundedLocalTask) && (isLocalTask || isAgentAction || hasPathHint || isSingleCommandTask) && !isLongAgent) {
     scores.longagent = Math.max(0, scores.longagent - 3)
+    if (reasons.agent === "local_transaction_task" || reasons.agent === "single_path_or_command_task") {
+      reasons.agent = "short_local_task_protected"
+    }
   }
 
   if (!isQuestion && len > 50) {
@@ -546,14 +642,26 @@ export function classifyTaskMode(prompt) {
   }
 
   if (scores.plan >= 4 && scores.plan >= scores.longagent + 2 && scores.plan >= scores.agent + 1 && len < 240) {
-    return { mode: "plan", confidence: scores.plan >= 5 ? "high" : "medium", reason: reasons.plan }
+    return {
+      mode: "plan",
+      confidence: scores.plan >= 5 ? "high" : "medium",
+      reason: reasons.plan,
+      evidence,
+      topology,
+      pathHints,
+      continuity: hasContinuationSignal ? "continue_current_transaction" : "new_transaction"
+    }
   }
 
   if (scores.longagent >= Math.max(scores.ask, scores.agent) + 2 && scores.longagent > 0) {
     return {
       mode: "longagent",
       confidence: scores.longagent >= 6 ? "high" : "medium",
-      reason: reasons.longagent === "default_longagent" ? "long_complex_prompt" : reasons.longagent
+      reason: reasons.longagent === "default_longagent" ? "long_complex_prompt" : reasons.longagent,
+      evidence,
+      topology,
+      pathHints,
+      continuity: hasContinuationSignal ? "continue_current_transaction" : "new_transaction"
     }
   }
 
@@ -561,14 +669,22 @@ export function classifyTaskMode(prompt) {
     return {
       mode: "agent",
       confidence: scores.agent >= 6 ? "high" : scores.agent >= 3 ? "medium" : "low",
-      reason: reasons.agent
+      reason: reasons.agent,
+      evidence,
+      topology,
+      pathHints,
+      continuity: hasContinuationSignal ? "continue_current_transaction" : "new_transaction"
     }
   }
 
   return {
     mode: "ask",
     confidence: scores.ask >= 6 ? "high" : scores.ask >= 3 ? "medium" : "low",
-    reason: reasons.ask
+    reason: reasons.ask,
+    evidence,
+    topology,
+    pathHints,
+    continuity: hasContinuationSignal ? "continue_current_transaction" : "new_transaction"
   }
 }
 

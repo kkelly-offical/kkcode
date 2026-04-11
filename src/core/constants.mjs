@@ -18,6 +18,9 @@ export const LONGAGENT_4STAGE_STAGES = {
 }
 
 export const EVENT_TYPES = {
+  ROUTE_DECISION: "route.decision",
+  AGENT_CONTINUATION_INTERRUPTED: "agent.continuation.interrupted",
+  AGENT_CONTINUATION_RESUMED: "agent.continuation.resumed",
   TURN_START: "turn.start",
   TURN_STEP_START: "turn.step.start",
   TURN_STEP_FINISH: "turn.step.finish",
@@ -77,6 +80,8 @@ export const EVENT_TYPES = {
   LONGAGENT_HYBRID_MEMORY_SAVED: "longagent.hybrid.memory_saved",
   SESSION_COMPACTED: "session.compacted",
   TURN_USAGE_UPDATE: "turn.usage.update",
+  ROUTE_DECISION: "route.decision",
+  AGENT_CONTINUATION_RESUMED: "agent.continuation.resumed",
   STREAM_TEXT_START: "stream.text.start",
   STREAM_THINKING_START: "stream.thinking.start",
   LONGAGENT_DEGRADATION_APPLIED: "longagent.degradation.applied",

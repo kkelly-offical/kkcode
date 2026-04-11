@@ -8,6 +8,7 @@ Stay local when:
 - The next step is a simple read/edit/run action you can do directly
 - Your immediate next action is blocked on the result, and delegation would only add latency
 - The work is tightly coupled to nearby edits you are already making
+- Routing is merely uncertain — do not delegate just to compensate for that uncertainty
 
 Delegate when:
 - The work needs multiple tool calls plus autonomous reasoning
@@ -38,6 +39,8 @@ kkcode also accepts structured brief fields for these sections (`objective`, `wh
 
 Whether the brief is handwritten or synthesized, delegated work must follow this contract:
 - Stay local if a direct read/edit/run action would finish the next step faster
+- Do not delegate to compensate for routing uncertainty on a bounded local task
+- Avoid suggesting LongAgent-style escalation unless heavy multi-file evidence is actually present
 - Do not fabricate completion or present unfinished work as done
 - Do not peek at unfinished sibling work and convert guesses into facts
 

@@ -38,3 +38,16 @@ test("routeMode auto-switches short explain questions from agent to ask", () => 
   assert.equal(route.changed, true)
   assert.match(route.reason, /(question_with_explain_intent|short_question)/)
 })
+
+test("routeMode keeps inspect + patch + verify loops in agent with evidence categories", () => {
+  const route = routeMode(
+    "Check ./logs/app.log, patch README.md with the right command, and verify `npm test -- --help` still works.",
+    "agent"
+  )
+
+  assert.equal(route.mode, "agent")
+  assert.equal(route.changed, false)
+  assert.equal(route.reason, "short_local_task_protected")
+  assert.ok(route.evidence.includes("inspect_patch_verify_loop"))
+  assert.ok(route.evidence.includes("bounded_local_scope"))
+})

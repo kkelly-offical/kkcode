@@ -1,6 +1,7 @@
 import { Command } from "commander"
 import { buildContext, printContextWarnings } from "../context.mjs"
-import { executeTurn, newSessionId, resolveMode, resolvePromptMode } from "../session/engine.mjs"
+import { ensureEventSinks, executeTurn, newSessionId, resolveMode, resolvePromptMode } from "../session/engine.mjs"
+import { emitRouteDecisionEvent } from "../session/routing-observability.mjs"
 import { renderStatusBar } from "../theme/status-bar.mjs"
 import { applyCommandTemplate, loadCustomCommands } from "../command/custom-commands.mjs"
 import { ToolRegistry } from "../tool/registry.mjs"
@@ -8,6 +9,8 @@ import { SkillRegistry } from "../skill/registry.mjs"
 import { PermissionEngine } from "../permission/engine.mjs"
 import { HookBus, initHookBus } from "../plugin/hook-bus.mjs"
 import { listProviders } from "../provider/router.mjs"
+import { EventBus } from "../core/events.mjs"
+import { EVENT_TYPES } from "../core/constants.mjs"
 
 export function resolveChatExecutionMode(prompt, requestedMode) {
   return resolvePromptMode(prompt, requestedMode)
@@ -71,6 +74,14 @@ export function createChatCommand() {
       const routedMode = resolveChatExecutionMode(chatParams.prompt ?? prompt, chatParams.mode ?? mode)
       const effectiveMode = routedMode.effectiveMode
       const effectiveExplanation = routedMode.route.explanation || routedMode.route.reason
+      ensureEventSinks()
+      await emitRouteDecisionEvent({
+        sessionId,
+        source: "chat",
+        requestedMode: routedMode.requestedMode,
+        route: routedMode.route,
+        prompt: chatParams.prompt ?? prompt
+      })
 
       if (routedMode.route.changed) {
         console.log(`mode routed: ${routedMode.requestedMode} -> ${effectiveMode} (${effectiveExplanation})`)

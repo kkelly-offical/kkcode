@@ -103,6 +103,13 @@ describe("classifyTaskMode", () => {
   it("does not throw for prompts with plan + longagent overlap", () => {
     assert.doesNotThrow(() => classifyTaskMode("Please write a redesign plan for our multi-stage service architecture"))
   })
+
+  it("keeps bounded inspect + patch + verify tasks in agent mode", () => {
+    const result = classifyTaskMode("Check ./logs/app.log, update README.md, and verify `npm test -- --help` still passes.")
+    assert.equal(result.mode, "agent")
+    assert.equal(result.reason, "short_local_task_protected")
+    assert.ok(result.evidence.includes("inspect_patch_verify_loop"))
+  })
 })
 
 describe("isComplete", () => {

@@ -59,6 +59,30 @@ export function createMetricsCollector() {
   function handleEvent(event) {
     const { type, payload, turnId, sessionId } = event
 
+    if (type === EVENT_TYPES.ROUTE_DECISION) {
+      inc("route_decision_count")
+      if (payload?.changed) inc("route_changed_count")
+      if (payload?.suggestion === "longagent") inc("route_longagent_suggestion_count")
+      if (payload?.continuedTransaction) inc("route_continuation_count")
+      if (payload?.stayedLocal) inc("route_stayed_local_count")
+      if (payload?.deferredLongagent) inc("route_deferred_longagent_count")
+      if (payload?.overEscalatedToLongagent) inc("route_over_escalated_longagent_count")
+      if (Array.isArray(payload?.evidence)) {
+        for (const item of payload.evidence) {
+          const key = String(item || "").trim().replace(/[^\w]+/g, "_")
+          if (key) inc(`route_evidence_${key}`)
+        }
+      }
+    }
+
+    if (type === EVENT_TYPES.AGENT_CONTINUATION_INTERRUPTED) {
+      inc("agent_continuation_interrupted_count")
+    }
+
+    if (type === EVENT_TYPES.AGENT_CONTINUATION_RESUMED) {
+      inc("agent_continuation_resumed_count")
+    }
+
     if (type === EVENT_TYPES.TURN_START) {
       inc("turn_count")
       if (turnId) {
@@ -90,6 +114,10 @@ export function createMetricsCollector() {
       if (payload?.input) inc("token_input", payload.input)
       if (payload?.output) inc("token_output", payload.output)
       if (payload?.cacheRead) inc("token_cache_read", payload.cacheRead)
+    }
+
+    if (type === EVENT_TYPES.AGENT_CONTINUATION_RESUMED) {
+      inc("agent_continuation_count")
     }
 
     if (type === EVENT_TYPES.LONGAGENT_STAGE_STARTED) {

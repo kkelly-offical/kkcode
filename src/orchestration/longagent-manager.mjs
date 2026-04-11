@@ -100,41 +100,45 @@ async function write(data, cwd = process.cwd()) {
   await writeJson(statePath(cwd), data)
 }
 
+async function updateSessionState(sessionId, patch, cwd = process.cwd()) {
+  const state = await read(cwd)
+  const current = state.sessions[sessionId] || {
+    sessionId,
+    status: "idle",
+    phase: "L0",
+    gateStatus: {},
+    currentGate: "execution",
+    recoveryCount: 0,
+    planFrozen: false,
+    currentStageId: null,
+    stageIndex: 0,
+    stageCount: 0,
+    stageStatus: null,
+    taskProgress: {},
+    remainingFiles: [],
+    remainingFilesCount: 0,
+    lastGateFailures: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    heartbeatAt: null,
+    iterations: 0,
+    lastMessage: ""
+  }
+  state.sessions[sessionId] = {
+    ...current,
+    ...patch,
+    updatedAt: Date.now()
+  }
+  await write(state, cwd)
+  return state.sessions[sessionId]
+}
+
 export const LongAgentManager = {
   async update(sessionId, patch, cwd = process.cwd(), config = null) {
     const lockMs = Number(config?.agent?.longagent?.lock_timeout_ms || LOCK_TIMEOUT_MS)
     await acquireLock(cwd, lockMs)
     try {
-      const state = await read(cwd)
-      const current = state.sessions[sessionId] || {
-        sessionId,
-        status: "idle",
-        phase: "L0",
-        gateStatus: {},
-        currentGate: "execution",
-        recoveryCount: 0,
-        planFrozen: false,
-        currentStageId: null,
-        stageIndex: 0,
-        stageCount: 0,
-        stageStatus: null,
-        taskProgress: {},
-        remainingFiles: [],
-        remainingFilesCount: 0,
-        lastGateFailures: [],
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        heartbeatAt: null,
-        iterations: 0,
-        lastMessage: ""
-      }
-      state.sessions[sessionId] = {
-        ...current,
-        ...patch,
-        updatedAt: Date.now()
-      }
-      await write(state, cwd)
-      return state.sessions[sessionId]
+      return await updateSessionState(sessionId, patch, cwd)
     } finally {
       await releaseLock(cwd)
     }
@@ -152,7 +156,7 @@ export const LongAgentManager = {
     try {
       const existing = await this.get(sessionId, cwd)
       if (!existing) return null
-      const result = await this.update(sessionId, { stopRequested: true }, cwd)
+      const result = await updateSessionState(sessionId, { stopRequested: true }, cwd)
       await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_STOP_REQUESTED, sessionId, payload: { sessionId } }).catch(() => {})
       return result
     } finally {
@@ -164,7 +168,7 @@ export const LongAgentManager = {
     try {
       const existing = await this.get(sessionId, cwd)
       if (!existing) return null
-      return this.update(sessionId, { stopRequested: false }, cwd)
+      return await updateSessionState(sessionId, { stopRequested: false }, cwd)
     } finally {
       await releaseLock(cwd)
     }

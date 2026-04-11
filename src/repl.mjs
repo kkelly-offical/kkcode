@@ -5,7 +5,13 @@ import { readFile, writeFile, mkdir } from "node:fs/promises"
 import { basename, dirname, join, resolve as resolvePath } from "node:path"
 import YAML from "yaml"
 import { buildContext, printContextWarnings } from "./context.mjs"
-import { executeTurn, newSessionId, resolveMode, routeMode } from "./session/engine.mjs"
+import { ensureEventSinks, executeTurn, newSessionId, resolveMode, routeMode } from "./session/engine.mjs"
+import { buildAgentContinuationPrompt, summarizeAgentTransaction } from "./session/agent-transaction.mjs"
+import {
+  emitAgentContinuationInterrupted,
+  emitAgentContinuationResumed,
+  emitRouteDecisionEvent
+} from "./session/routing-observability.mjs"
 import { renderStatusBar } from "./theme/status-bar.mjs"
 import { listProviders } from "./provider/router.mjs"
 import { createWizardState, startWizard, startEditWizard, handleWizardInput, VENDOR_PRESETS } from "./provider/wizard.mjs"
@@ -1681,8 +1687,11 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     paused: false,
     turnAbortController: null,
     lastCtrlCTime: 0,
+    agentContinuation: null,
     lastLongAgentPrompt: null,
     longagentAborted: false,
+    agentTransaction: null,
+    agentAborted: false,
     pendingModeConfirm: null,
     // 鼠标文本选择状态
     mouseSelection: null,  // { startRow, startCol, endRow, endCol, active }
@@ -2579,6 +2588,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   async function submitCurrentInput() {
     const line = ui.input.replace(/\r/g, "")
     if (!line.trim() || ui.busy) return
+    ensureEventSinks()
 
     // --- Task 3: 处理中途补充需求确认 ---
     if (ui.pendingModeConfirm && !line.startsWith("/")) {
@@ -2602,6 +2612,42 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         ui.inputCursor = 0
         requestRender()
         return
+      }
+    }
+
+    if (ui.agentAborted && state.mode === "agent" && !line.startsWith("/")) {
+      const summary = ui.agentTransaction
+      ui.agentAborted = false
+      if (summary && line.trim()) {
+        submittedLine = buildAgentContinuationPrompt(summary, line.trim())
+        route = routeMode(submittedLine, state.mode, { continuation: summary, continued: true })
+        await EventBus.emit({
+          type: EVENT_TYPES.ROUTE_DECISION,
+          sessionId: state.sessionId,
+          payload: {
+            ...(route.observability || {}),
+            promptLength: submittedLine.length,
+            continuedTransaction: true
+          }
+        })
+        await EventBus.emit({
+          type: EVENT_TYPES.AGENT_CONTINUATION_RESUMED,
+          sessionId: state.sessionId,
+          payload: {
+            topology: route.topology,
+            evidence: route.evidence,
+            continuationCount: Number(summary.continuationCount || 0) + 1
+          }
+        })
+        ui.agentTransaction = summarizeAgentTransaction({
+          prompt: summary.objective || line,
+          route,
+          previous: {
+            ...summary,
+            continuationCount: Number(summary.continuationCount || 0) + 1
+          }
+        })
+        appendLog(paint(`↻ 继续当前 agent 事务（${route.explanation || route.reason}）`, ctx.themeState.theme.semantic.info))
       }
     }
 
@@ -2691,6 +2737,26 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       }
     }
 
+    let submittedLine = line
+    let activeAgentContinuation = null
+    let routeRequestedMode = state.mode
+
+    if (ui.paused && ui.agentContinuation && state.mode === "agent" && !line.startsWith("/")) {
+      activeAgentContinuation = ui.agentContinuation
+      submittedLine = buildAgentContinuationPrompt(activeAgentContinuation, line)
+      ui.agentContinuation = null
+      ui.paused = false
+      appendLog(paint("↻ 继续当前 agent 事务…", ctx.themeState.theme.semantic.info))
+      if (activeAgentContinuation.pendingNextStep) {
+        appendLog(paint(`   ${activeAgentContinuation.pendingNextStep}`, ctx.themeState.theme.base.muted, { dim: true }))
+      }
+      await emitAgentContinuationResumed({
+        sessionId: state.sessionId,
+        summary: activeAgentContinuation,
+        continuation: line
+      })
+    }
+
     ui.history.push(line)
     if (ui.history.length > HIST_SIZE) ui.history.splice(0, ui.history.length - HIST_SIZE)
     ui.historyIndex = ui.history.length
@@ -2707,9 +2773,19 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     ui.turnAbortController = aborter
 
     // --- Task 1: 自动路由 ---
+    let route = null
     if (!line.startsWith("/")) {
-      const route = routeMode(line, state.mode)
+      routeRequestedMode = state.mode
+      route = routeMode(submittedLine, state.mode)
       const routeExplanation = route.explanation || route.reason
+      await emitRouteDecisionEvent({
+        sessionId: state.sessionId,
+        source: "repl",
+        requestedMode: routeRequestedMode,
+        route,
+        prompt: submittedLine,
+        continuedTransaction: Boolean(activeAgentContinuation)
+      })
       if (route.changed) {
         const modeLabel = route.mode === "ask" ? "ask（问答）" : route.mode
         appendLog(paint(`⟳ 自动切换到 ${modeLabel} 模式（${routeExplanation}）`, ctx.themeState.theme.semantic.info, { dim: true }))
@@ -2729,12 +2805,34 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         const currentLabel = state.mode === "ask" ? "ask（问答）" : state.mode
         appendLog(paint(`↳ 保持 ${currentLabel} 模式（${routeExplanation}）`, ctx.themeState.theme.base.muted, { dim: true }))
       }
+
+      if (state.mode === "agent") {
+        ui.agentContinuation = summarizeAgentTransaction({
+          prompt: submittedLine,
+          route,
+          mode: state.mode
+        })
+      } else {
+        ui.agentContinuation = null
+      }
     }
 
     // 记录 longagent 原始 prompt（用于 Task 3 中途补充需求）
     if (state.mode === "longagent" && !line.startsWith("/")) {
-      ui.lastLongAgentPrompt = line
+      ui.lastLongAgentPrompt = submittedLine
       ui.longagentAborted = false
+      ui.agentTransaction = null
+      ui.agentAborted = false
+    } else if (state.mode === "agent" && !line.startsWith("/")) {
+      ui.agentTransaction = summarizeAgentTransaction({
+        prompt: ui.agentTransaction?.objective || line,
+        route,
+        previous: ui.agentTransaction
+      })
+      ui.agentAborted = false
+    } else if (!line.startsWith("/")) {
+      ui.agentTransaction = null
+      ui.agentAborted = false
     }
 
     startBusySpinner()
@@ -2742,7 +2840,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
     try {
       const action = await processInputLine({
-        line,
+        line: submittedLine,
         state,
         ctx,
         providersConfigured,
@@ -2801,6 +2899,15 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         if (action.turnResult.context) ui.metrics.context = action.turnResult.context
         ui.metrics.longagent = action.turnResult.longagent || null
         ui.metrics.toolEvents = action.turnResult.toolEvents || []
+        if (state.mode === "agent" && ui.agentTransaction) {
+          ui.agentTransaction = summarizeAgentTransaction({
+            prompt: ui.agentTransaction.objective || line,
+            route,
+            previous: ui.agentTransaction,
+            toolEvents: action.turnResult.toolEvents || [],
+            reply: action.turnResult.reply || ""
+          })
+        }
       }
       // logo 显示由 Ctrl+B 手动切换，不再自动隐藏
       if (action.openModelPicker) {
@@ -2819,6 +2926,12 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       if (aborter.signal.aborted && state.mode === "longagent" && ui.lastLongAgentPrompt) {
         ui.longagentAborted = true
         appendLog(paint("⏸ LongAgent 已中止。输入补充需求后按 Enter 可从头重新规划，或切换模式继续。", ctx.themeState.theme.semantic.warn))
+      } else if (aborter.signal.aborted && state.mode === "agent" && ui.agentContinuation) {
+        await emitAgentContinuationInterrupted({
+          sessionId: state.sessionId,
+          summary: ui.agentContinuation
+        })
+        appendLog(paint("⏸ Agent 已中止。直接输入补充内容即可继续当前本地事务，或输入命令切换模式。", ctx.themeState.theme.semantic.warn))
       }
       ui.busy = false
       ui.turnAbortController = null
@@ -3116,7 +3229,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
               ui.turnAbortController = null
             }
             ui.paused = true
-            appendLog("[paused] turn interrupted — enter a new message or command to continue")
+            appendLog(state.mode === "agent"
+              ? "[paused] agent turn interrupted — enter a follow-up message to continue the same task"
+              : "[paused] turn interrupted — enter a new message or command to continue")
             requestRender()
             return
           }
@@ -3392,7 +3507,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
             ui.turnAbortController = null
           }
           ui.paused = true
-          appendLog("[paused] turn interrupted — enter a new message or command to continue")
+          appendLog(state.mode === "agent"
+            ? "[paused] agent turn interrupted — enter a follow-up message to continue the same task"
+            : "[paused] turn interrupted — enter a new message or command to continue")
           requestRender()
           return
         }
@@ -3595,7 +3712,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
             ui.turnAbortController = null
           }
           ui.paused = true
-          appendLog("[paused] turn interrupted — enter a new message or command to continue")
+          appendLog(state.mode === "agent"
+            ? "[paused] agent turn interrupted — enter a follow-up message to continue the same task"
+            : "[paused] turn interrupted — enter a new message or command to continue")
           requestRender()
           return
         }
@@ -3647,7 +3766,7 @@ function startSplash() {
     "  ╚═╝  ╚═╝ ╚═╝  ╚═╝  ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝ "
   ]
   const tagline = "AI Coding Agent"
-  const version = "v0.1.11"
+  const version = "v0.1.12"
 
   // Gradient colors for the wave animation (cyan → blue → purple → pink → back)
   const wave = [
