@@ -24,6 +24,90 @@ function now() {
   return Date.now()
 }
 
+function clipText(text, max = 160) {
+  const value = String(text || "").trim().replace(/\s+/g, " ")
+  if (value.length <= max) return value
+  return `${value.slice(0, Math.max(0, max - 1))}…`
+}
+
+function extractTaskResultPreview(task) {
+  if (task?.status === "completed") {
+    const reply = String(task?.result?.reply || task?.result?.summary || "").trim()
+    if (reply) return clipText(reply, 180)
+    return "completed successfully"
+  }
+  if (task?.error) return clipText(task.error, 180)
+  if (task?.interruptionReason) return clipText(task.interruptionReason, 120)
+  return ""
+}
+
+function nextActionForTask(task) {
+  switch (task?.status) {
+    case "pending":
+      return "wait for the worker to start or inspect later with background show/background_output"
+    case "running":
+      return "wait for completion or inspect logs with background show/background_output"
+    case "completed":
+      return "read the final result and file changes via background_output"
+    case "error":
+      return "inspect the error/log tail and use background retry if the task is safe to rerun"
+    case "interrupted":
+      return "inspect the interruption reason and use background retry when appropriate"
+    case "cancelled":
+      return "rerun the task if you still need the sidecar result"
+    default:
+      return "inspect the task record for more detail"
+  }
+}
+
+function summarizeTask(task) {
+  if (!task) return null
+  return {
+    id: task.id,
+    description: task.description,
+    status: task.status,
+    attempt: Number(task.attempt || 1),
+    background_mode: task.backgroundMode || null,
+    subagent: task.payload?.subagent || task.payload?.subagentType || null,
+    execution_mode: task.payload?.executionMode || null,
+    session_id: task.payload?.subSessionId || null,
+    parent_session_id: task.payload?.parentSessionId || null,
+    stage_id: task.payload?.stageId || null,
+    logical_task_id: task.payload?.logicalTaskId || null,
+    created_at: task.createdAt || null,
+    started_at: task.startedAt || null,
+    ended_at: task.endedAt || null,
+    interruption_reason: task.interruptionReason || null,
+    next_action: nextActionForTask(task),
+    log_lines: Array.isArray(task.logs) ? task.logs.length : 0,
+    log_tail: Array.isArray(task.logs) ? task.logs.slice(-10) : [],
+    result_preview: extractTaskResultPreview(task)
+  }
+}
+
+function summarizeTaskList(tasks = []) {
+  const counts = {
+    pending: 0,
+    running: 0,
+    completed: 0,
+    cancelled: 0,
+    error: 0,
+    interrupted: 0
+  }
+  for (const task of tasks) {
+    if (counts[task.status] !== undefined) counts[task.status] += 1
+  }
+  return {
+    total: tasks.length,
+    active: counts.pending + counts.running,
+    counts,
+    recent_terminal: tasks
+      .filter((task) => TERMINAL_STATES.has(task.status))
+      .slice(0, 3)
+      .map((task) => summarizeTask(task))
+  }
+}
+
 function resolveWorkerTimeoutMs(config = {}, payload = {}) {
   const raw = Number(payload.workerTimeoutMs || config.background?.worker_timeout_ms || 900000)
   return Number.isFinite(raw) ? Math.max(1000, raw) : 900000
@@ -338,9 +422,22 @@ export const BackgroundManager = {
     return loadTask(id)
   },
 
+  summarize(task) {
+    return summarizeTask(task)
+  },
+
+  summarizeList(tasks) {
+    return summarizeTaskList(tasks)
+  },
+
   async list() {
     await ensureBackgroundTaskRuntimeDir()
     return readAllTasks()
+  },
+
+  async summary() {
+    await ensureBackgroundTaskRuntimeDir()
+    return summarizeTaskList(await readAllTasks())
   },
 
   async cancel(id) {

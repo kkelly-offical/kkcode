@@ -9,16 +9,46 @@ async function withContext(action) {
   return action(ctx)
 }
 
+function printTaskSummary(task) {
+  const summary = BackgroundManager.summarize(task)
+  if (!summary) return
+  console.log(`[${summary.status}] ${summary.id} :: ${summary.description}`)
+  console.log(`  attempt=${summary.attempt} subagent=${summary.subagent || "-"} execution_mode=${summary.execution_mode || "-"} session=${summary.session_id || "-"}`)
+  if (summary.interruption_reason) {
+    console.log(`  interruption=${summary.interruption_reason}`)
+  }
+  if (summary.result_preview) {
+    console.log(`  preview=${summary.result_preview}`)
+  }
+  console.log(`  next=${summary.next_action}`)
+}
+
 export function createBackgroundCommand() {
   const cmd = new Command("background").description("inspect background delegated tasks")
 
   cmd
     .command("list")
     .description("list background tasks")
-    .action(async () => {
+    .option("--json", "print raw JSON")
+    .action(async (options) => {
       await withContext(async () => {
         const list = await BackgroundManager.list()
-        console.log(JSON.stringify(list, null, 2))
+        if (options.json) {
+          console.log(JSON.stringify(list, null, 2))
+          return
+        }
+        const aggregate = BackgroundManager.summarizeList(list)
+        console.log(`summary: total=${aggregate.total} active=${aggregate.active} pending=${aggregate.counts.pending} running=${aggregate.counts.running} completed=${aggregate.counts.completed} interrupted=${aggregate.counts.interrupted} error=${aggregate.counts.error}`)
+        if (aggregate.recent_terminal.length) {
+          console.log(`recent terminal: ${aggregate.recent_terminal.map((item) => `${item.id}:${item.status}`).join(" | ")}`)
+        }
+        if (!list.length) {
+          console.log("no background tasks")
+          return
+        }
+        for (const task of list) {
+          printTaskSummary(task)
+        }
       })
     })
 
@@ -26,6 +56,7 @@ export function createBackgroundCommand() {
     .command("show")
     .description("show one background task")
     .requiredOption("--id <id>", "task id")
+    .option("--json", "print raw JSON")
     .action(async (options) => {
       await withContext(async () => {
         const task = await BackgroundManager.get(options.id)
@@ -34,7 +65,22 @@ export function createBackgroundCommand() {
           process.exitCode = 1
           return
         }
-        console.log(JSON.stringify(task, null, 2))
+        if (options.json) {
+          console.log(JSON.stringify(task, null, 2))
+          return
+        }
+        printTaskSummary(task)
+        const summary = BackgroundManager.summarize(task)
+        if (summary?.log_tail?.length) {
+          console.log("  log tail:")
+          for (const line of summary.log_tail) {
+            console.log(`    ${line}`)
+          }
+        }
+        if (task.result) {
+          console.log("  result:")
+          console.log(JSON.stringify(task.result, null, 2))
+        }
       })
     })
 

@@ -863,7 +863,11 @@ function builtinTools(config) {
     async execute(args) {
       const task = await BackgroundManager.get(String(args.task_id || ""))
       if (!task) return "background task not found"
-      return task
+      return {
+        ...BackgroundManager.summarize(task),
+        result: task.result,
+        error: task.error || null
+      }
     }
   }
 
