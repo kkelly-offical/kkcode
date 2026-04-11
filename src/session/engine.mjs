@@ -15,6 +15,29 @@ import { classifyTaskMode, explainTaskModeReason } from "./longagent-utils.mjs"
 
 let sinkReady = false
 
+export const PUBLIC_MODE_CONTRACT = Object.freeze([
+  {
+    mode: "ask",
+    summary: "read-only explanation and analysis",
+    guarantee: "ask never mutates repo state"
+  },
+  {
+    mode: "plan",
+    summary: "produce a spec/plan only",
+    guarantee: "plan does not execute file mutations"
+  },
+  {
+    mode: "agent",
+    summary: "default bounded local execution lane",
+    guarantee: "agent is the default lane for bounded inspect/patch/verify work"
+  },
+  {
+    mode: "longagent",
+    summary: "heavyweight staged multi-file delivery lane",
+    guarantee: "longagent stays reserved for structured multi-file or system-level work"
+  }
+])
+
 function estimateTokens(text) {
   return Math.max(1, estimateStringTokens(text || ""))
 }
@@ -23,6 +46,29 @@ export function resolveMode(inputMode = "agent") {
   const mode = String(inputMode || "agent").toLowerCase()
   if (["ask", "plan", "agent", "longagent"].includes(mode)) return mode
   return "agent"
+}
+
+export function getPublicModeContract(inputMode = "agent") {
+  const mode = resolveMode(inputMode)
+  return PUBLIC_MODE_CONTRACT.find((item) => item.mode === mode) || PUBLIC_MODE_CONTRACT[2]
+}
+
+export function formatPublicModeSummary(inputMode = "agent") {
+  const contract = getPublicModeContract(inputMode)
+  return `${contract.mode}: ${contract.summary}`
+}
+
+export function renderPublicModeContract() {
+  return [
+    "# Mode Contract",
+    "",
+    "- `ask`: read-only explanation and analysis; never mutate repo state.",
+    "- `plan`: produce a spec/plan only; do not execute file mutations.",
+    "- `agent`: default bounded local execution lane for inspect/patch/verify work.",
+    "- `longagent`: heavyweight staged multi-file delivery lane with explicit gates.",
+    "- Upgrade from `agent` to `longagent` only when heavy multi-file or system-level evidence appears.",
+    "- Keep `plan` explicit and mutation-free even when later execution is likely."
+  ].join("\n")
 }
 
 /**
@@ -34,6 +80,7 @@ function finalizeRouteDecision(req, classification, base = {}) {
   const effectiveMode = base.changed ? base.mode : req
   return {
     ...base,
+    modeContract: getPublicModeContract(effectiveMode),
     topology: classification.topology || "open_ended",
     evidence: Array.isArray(classification.evidence) ? classification.evidence : [],
     pathHints: Array.isArray(classification.pathHints) ? classification.pathHints : [],
@@ -45,6 +92,7 @@ function finalizeRouteDecision(req, classification, base = {}) {
       changed: Boolean(base.changed),
       forced: Boolean(base.forced),
       suggestion: base.suggestion || null,
+      modeContract: getPublicModeContract(effectiveMode),
       reason: base.reason,
       confidence: base.confidence,
       topology: classification.topology || "open_ended",
@@ -121,6 +169,7 @@ export function resolvePromptMode(prompt, requestedMode = "agent", options = {})
   return {
     requestedMode: requested,
     effectiveMode: route.changed ? route.mode : requested,
+    effectiveContract: getPublicModeContract(route.changed ? route.mode : requested),
     route
   }
 }

@@ -4,6 +4,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { createHash } from "node:crypto"
 import { loadSessionPrompt } from "./prompt-loader.mjs"
+import { renderPublicModeContract } from "./engine.mjs"
 import { getAgentPrompt, listAgents } from "../agent/agent.mjs"
 import { loadAutoMemory } from "./memory-loader.mjs"
 
@@ -95,10 +96,14 @@ export async function agentPrompt(agent) {
 
 // Layer 4: Mode reminder (stable within mode)
 export async function modeReminder(mode) {
-  if (mode === "plan") return loadSessionPrompt("plan.txt")
-  if (mode === "agent") return loadSessionPrompt("agent.txt")
-  if (mode === "ask") return "You are in ASK mode (read-only). Answer questions, explain code, and provide analysis. Do NOT modify any files — you only have read access to the codebase."
-  return ""
+  const contractBlock = renderPublicModeContract()
+  if (mode === "plan") return `${contractBlock}\n\n${await loadSessionPrompt("plan.txt")}`
+  if (mode === "agent") return `${contractBlock}\n\n${await loadSessionPrompt("agent.txt")}`
+  if (mode === "ask") return `${contractBlock}\n\nYou are in ASK mode (read-only). Answer questions, explain code, and provide analysis. Do NOT modify any files — you only have read access to the codebase.`
+  if (mode === "longagent") {
+    return `${contractBlock}\n\nLongAgent mode active. Treat this as the heavyweight staged delivery lane for multi-file or system-level work. Keep explicit gates, ownership, and recovery behavior intact.`
+  }
+  return contractBlock
 }
 
 // Layer 5: Tool descriptions (stable across session — ideal cache target)
@@ -225,6 +230,9 @@ export async function buildSystemPromptBlocks({ mode, model, cwd, agent = null, 
     "Do not imply unsupported product surfaces such as GUI desktop automation, IDE integration, marketplace installs, or remote bridge platforms."
   ]
   blocks.push({ label: "assistant_contract", text: assistantContractLines.join("\n"), cacheable: true })
+
+  // Block 4.5: Public mode contract (stable — keeps ask/plan/agent/longagent aligned)
+  blocks.push({ label: "mode_contract", text: renderPublicModeContract(), cacheable: true })
 
   // Block 5: Skills descriptions (stable — changes only when skills change)
   if (skills.length) {

@@ -1,6 +1,6 @@
 import { Command } from "commander"
 import { buildContext, printContextWarnings } from "../context.mjs"
-import { ensureEventSinks, executeTurn, newSessionId, resolveMode, resolvePromptMode } from "../session/engine.mjs"
+import { ensureEventSinks, executeTurn, formatPublicModeSummary, getPublicModeContract, newSessionId, resolveMode, resolvePromptMode } from "../session/engine.mjs"
 import { emitRouteDecisionEvent } from "../session/routing-observability.mjs"
 import { renderStatusBar } from "../theme/status-bar.mjs"
 import { applyCommandTemplate, loadCustomCommands } from "../command/custom-commands.mjs"
@@ -19,7 +19,7 @@ export function resolveChatExecutionMode(prompt, requestedMode) {
 export function createChatCommand() {
   const providers = listProviders()
   return new Command("chat")
-    .description("run one prompt in ask/plan/agent/longagent mode")
+    .description("run one prompt in ask/plan/agent/longagent mode (agent = default bounded lane)")
     .argument("<prompt...>", "prompt text")
     .option("--mode <mode>", "ask|plan|agent|longagent", "agent")
     .option("--model <model>", "model id")
@@ -74,6 +74,8 @@ export function createChatCommand() {
       const routedMode = resolveChatExecutionMode(chatParams.prompt ?? prompt, chatParams.mode ?? mode)
       const effectiveMode = routedMode.effectiveMode
       const effectiveExplanation = routedMode.route.explanation || routedMode.route.reason
+      const requestedContract = getPublicModeContract(routedMode.requestedMode)
+      const effectiveContract = routedMode.effectiveContract || getPublicModeContract(effectiveMode)
       ensureEventSinks()
       await emitRouteDecisionEvent({
         sessionId,
@@ -92,6 +94,11 @@ export function createChatCommand() {
       } else {
         console.log(`mode: ${effectiveMode} (${effectiveExplanation})`)
       }
+      if (routedMode.requestedMode !== effectiveMode) {
+        console.log(`requested lane: ${requestedContract.summary}`)
+      }
+      console.log(`effective lane: ${formatPublicModeSummary(effectiveMode)}`)
+      console.log(`lane guarantee: ${effectiveContract.guarantee}`)
 
       const result = await executeTurn({
         prompt: chatParams.prompt ?? prompt,

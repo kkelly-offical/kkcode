@@ -380,12 +380,13 @@ function help(providers = []) {
 
   lines.push("")
   lines.push("  Mode & Provider")
-  lines.push(row("/ask /plan /agent /longagent", "quick mode switch"))
-  lines.push(row("/mode <name>,/m <name>", "switch mode (ask|plan|agent|longagent)"))
+  lines.push(row("/ask /plan /agent /longagent", "quick mode switch to the public execution lanes"))
+  lines.push(row("/mode <name>,/m <name>", "switch mode (ask|plan|agent|longagent) with explicit lane semantics"))
   lines.push(row("/longagent 4stage|hybrid", "switch longagent impl"))
   lines.push(row("/provider <type>,/p <type>", `switch provider (${providers.join("|") || "configured"})`))
   lines.push(row("/provider edit <name>", "edit existing provider config"))
   lines.push(row("/model <id>", "set active model"))
+  lines.push(row("", "ask = read-only explanation · plan = spec only · agent = default bounded lane · longagent = staged multi-file lane"))
 
   lines.push("")
   lines.push("  Profile & Workspace")
@@ -454,7 +455,7 @@ function shortcutLegend() {
     "  /permission [show|ask|allow|deny|non-tty <allow_once|deny>|save [project|user]|session-clear]",
     "  /dash   Redraw dashboard",
     "  /clear  Clear screen",
-    "  /ask /plan /agent /longagent  Quick mode switch",
+    "  /ask /plan /agent /longagent  Quick lane switch",
     "",
     "TUI keys:",
     "  Enter choose slash suggestion / submit prompt",
@@ -463,7 +464,7 @@ function shortcutLegend() {
     "  Up/Down navigate suggestion/history",
     "  Left/Right/Home/End edit cursor",
     "  Ctrl+Up/Down scroll log   Ctrl+Home/End oldest/latest",
-    "  Tab cycle mode (longagent -> plan -> ask -> agent)",
+    "  Tab cycle lane (longagent -> plan -> ask -> agent)",
   "  Esc interrupt turn  Ctrl+C×2 exit"
 ].join("\n")
 }
@@ -3766,7 +3767,7 @@ function startSplash() {
     "  ╚═╝  ╚═╝ ╚═╝  ╚═╝  ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝ "
   ]
   const tagline = "AI Coding Agent"
-  const version = "v0.1.12"
+  const version = "v0.1.13"
 
   // Gradient colors for the wave animation (cyan → blue → purple → pink → back)
   const wave = [

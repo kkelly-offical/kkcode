@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { routeMode } from "../src/session/engine.mjs"
+import { renderPublicModeContract, routeMode } from "../src/session/engine.mjs"
 import { classifyTaskMode } from "../src/session/longagent-utils.mjs"
 
 test("routing keeps long narrative local when the task is a single command check", () => {
@@ -50,4 +50,20 @@ test("routeMode keeps inspect + patch + verify loops in agent with evidence cate
   assert.equal(route.reason, "short_local_task_protected")
   assert.ok(route.evidence.includes("inspect_patch_verify_loop"))
   assert.ok(route.evidence.includes("bounded_local_scope"))
+})
+
+test("routeMode keeps plan explicit and mutation-free as a public contract", () => {
+  const route = routeMode("Plan a safe refactor for the tool registry.", "plan")
+  assert.equal(route.mode, "plan")
+  assert.equal(route.changed, false)
+  assert.equal(route.reason, "plan_mode_exempt")
+  assert.equal(route.continuity, "new_transaction")
+})
+
+test("renderPublicModeContract keeps all four public lanes aligned", () => {
+  const text = renderPublicModeContract()
+  assert.match(text, /`ask`: read-only explanation and analysis/i)
+  assert.match(text, /`plan`: produce a spec\/plan only/i)
+  assert.match(text, /`agent`: default bounded local execution lane/i)
+  assert.match(text, /`longagent`: heavyweight staged multi-file delivery lane/i)
 })

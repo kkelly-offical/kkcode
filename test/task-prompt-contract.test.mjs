@@ -2,7 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 
-test("task prompt documents the 0.1.12 delegation contract", async () => {
+test("task prompt documents the 0.1.13 delegation contract", async () => {
   const prompt = await readFile(new URL("../src/tool/prompt/task.txt", import.meta.url), "utf8")
 
   assert.match(prompt, /Stay local when:/)

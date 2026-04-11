@@ -1,12 +1,12 @@
-# kkcode CLI General Assistant Capability Matrix (0.1.12)
+# kkcode CLI General Assistant Capability Matrix (0.1.13)
 
-This document defines the **0.1.12 shipped capability boundary** for kkcode as a pure CLI general assistant.
+This document defines the **0.1.13 shipped capability boundary** for kkcode as a pure CLI general assistant.
 
 The goal is not to turn kkcode into an IDE shell or GUI automation platform. The goal is to make it reliably useful for high-value terminal-native work across coding, local machine tasks, repo operations, bounded research, interrupted-task continuation, and release assistance.
 
 ## Scope principle
 
-kkcode 0.1.12 should be understood as:
+kkcode 0.1.13 should be understood as:
 
 - **CLI-first**
 - **agent-default for bounded terminal work**
@@ -15,9 +15,17 @@ kkcode 0.1.12 should be understood as:
 - **general-assistant friendly for bounded local transactions**
 - **explicitly not a GUI / desktop automation product**
 
+Public mode contract:
+
+- `ask` = read-only explanation and analysis
+- `plan` = produce a spec / plan only, without file mutation
+- `agent` = default bounded local execution lane
+- `longagent` = staged multi-file delivery lane
+- upgrade from `agent` to `longagent` only when heavy multi-file evidence appears
+
 ## Capability taxonomy
 
-| Capability lane | Typical user request | Current tool / runtime anchor | 0.1.12 status |
+| Capability lane | Typical user request | Current tool / runtime anchor | 0.1.13 status |
 | --- | --- | --- | --- |
 | Coding | “修这个 bug”, “改一下 README”, “补测试” | `read` / `write` / `edit` / `patch` / LongAgent | Shipped |
 | System / runtime summary | “看一下系统信息”, “当前环境怎样”, “机器资源概况” | `sysinfo` | Shipped |
@@ -33,7 +41,7 @@ kkcode 0.1.12 should be understood as:
 
 ## What “general assistant” means in practice
 
-0.1.12 keeps kkcode as a terminal-native assistant and pushes `agent` further toward the default bounded-transaction lane. It can also:
+0.1.13 keeps kkcode as a terminal-native assistant and pushes `agent` further toward the default bounded-transaction lane. It can also:
 
 - inspect directories, configs, and logs
 - summarize repo state and release hygiene
@@ -44,7 +52,7 @@ kkcode 0.1.12 should be understood as:
 
 ## Non-goals for this release
 
-These are **not** part of the 0.1.12 public contract:
+These are **not** part of the 0.1.13 public contract:
 
 - IDE integration
 - desktop GUI automation
@@ -74,7 +82,7 @@ When kkcode is acting as a CLI general assistant, it should:
 
 ## Release checklist
 
-Before shipping 0.1.12, confirm:
+Before shipping 0.1.13, confirm:
 
 - README reflects the CLI general assistant boundary
 - prompt/runtime copy says `agent` is the default bounded transaction lane

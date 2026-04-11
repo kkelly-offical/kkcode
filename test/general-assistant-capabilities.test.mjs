@@ -20,6 +20,8 @@ test("CLI general assistant capability doc keeps the shipped boundary explicit",
   assert.match(doc, /Structured delegation/)
   assert.match(doc, /Interrupted-turn continuation/)
   assert.match(doc, /not to turn kkcode into an IDE shell or GUI automation platform/i)
+  assert.match(doc, /`plan` = produce a spec \/ plan only/i)
+  assert.match(doc, /upgrade from `agent` to `longagent` only when heavy multi-file evidence appears/i)
   assert.match(doc, /agent.*default general execution lane/i)
   assert.match(doc, /LongAgent remains the preferred lane/i)
 })
@@ -27,7 +29,9 @@ test("CLI general assistant capability doc keeps the shipped boundary explicit",
 test("README advertises kkcode as a CLI general assistant without making GUI promises", async () => {
   const readme = await read("README.md")
 
-  assert.match(readme, /CLI 通用助手能力边界（0\.1\.12）/)
+  assert.match(readme, /CLI 通用助手能力边界（0\.1\.13）/)
+  assert.match(readme, /公共模式契约/)
+  assert.match(readme, /plan.*只产出规格.*不执行文件变更/)
   assert.match(readme, /系统 \/ 运行时信息/)
   assert.match(readme, /本地目录 \/ 文件 \/ 日志检查/)
   assert.match(readme, /仓库 \/ 发布辅助/)
