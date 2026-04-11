@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import http from "node:http"
+import { execSync } from "node:child_process"
 import { BackgroundManager } from "../src/orchestration/background-manager.mjs"
 import { appendAssistantMessage, appendUserMessage, flushNow, touchSession } from "../src/session/store.mjs"
 import { readJson } from "../src/storage/json-store.mjs"
@@ -118,6 +119,12 @@ beforeEach(async () => {
     ) + "\n",
     "utf8"
   )
+
+  execSync("git init", { cwd: project })
+  execSync("git config user.email 'test@test.com'", { cwd: project })
+  execSync("git config user.name 'Test User'", { cwd: project })
+  await writeFile(join(project, "README.md"), "worktree test\n", "utf8")
+  execSync("git add . && git commit -m 'initial commit'", { cwd: project })
 })
 
 afterEach(async () => {
@@ -220,4 +227,35 @@ test("background fork_context task inherits parent session transcript", async ()
       "background completed"
     ]
   )
+})
+
+test("background delegate can run inside a local detached worktree and auto-clean when unchanged", async () => {
+  const config = {
+    background: {
+      mode: "worker_process",
+      max_parallel: 1,
+      worker_timeout_ms: 30000
+    }
+  }
+
+  const task = await BackgroundManager.launchDelegateTask({
+    description: "e2e worktree delegate task",
+    payload: {
+      workerType: "delegate_task",
+      cwd: project,
+      prompt: "run once",
+      parentSessionId: "ses_parent_bg_worktree",
+      subSessionId: `ses_bg_worktree_${Date.now()}`,
+      isolation: "worktree",
+      executionMode: "fresh_agent",
+      providerType: "local",
+      model: "test-model"
+    },
+    config
+  })
+
+  const completed = await waitFor(task.id, (it) => it.status === "completed", { config, timeoutMs: 30000 })
+  assert.equal(completed.result?.isolation, "worktree")
+  assert.equal(completed.result?.worktree_preserved, false)
+  assert.equal(completed.result?.worktree_path, null)
 })

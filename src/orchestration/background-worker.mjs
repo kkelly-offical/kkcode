@@ -1,4 +1,5 @@
-import { appendFile } from "node:fs/promises"
+import { appendFile, access, copyFile, mkdir } from "node:fs/promises"
+import path from "node:path"
 import { readJson, writeJson } from "../storage/json-store.mjs"
 import { ensureBackgroundTaskRuntimeDir, backgroundTaskCheckpointPath, backgroundTaskLogPath } from "../storage/paths.mjs"
 import { buildContext } from "../context.mjs"
@@ -7,6 +8,7 @@ import { executeTurn } from "../session/engine.mjs"
 import { flushNow, forkSession, getSession } from "../session/store.mjs"
 import { extractEditFeedbackFromToolEvents } from "../observability/edit-diagnostics.mjs"
 import { INTERRUPTION_REASONS, normalizeInterruptionReason } from "./interruption-reason.mjs"
+import * as git from "../util/git.mjs"
 
 function now() {
   return Date.now()
@@ -26,6 +28,26 @@ function makeAbortError(reason = "aborted") {
 
 function isAbortError(error) {
   return error?.code === "ABORT_ERR" || error?.name === "AbortError"
+}
+
+async function copyWorkspaceConfigFiles(sourceRoot, targetRoot) {
+  const candidates = [
+    "kkcode.config.json",
+    "kkcode.config.yaml",
+    ".kkcode/config.json",
+    ".kkcode/config.yaml"
+  ]
+  for (const rel of candidates) {
+    const from = path.join(sourceRoot, rel)
+    try {
+      await access(from)
+    } catch {
+      continue
+    }
+    const to = path.join(targetRoot, rel)
+    await mkdir(path.dirname(to), { recursive: true })
+    await copyFile(from, to)
+  }
 }
 
 async function readTask(taskId) {
@@ -92,17 +114,30 @@ async function ensureDelegatedSession({ executionMode, parentSessionId, subSessi
 
 async function runDelegateTask(task, signal) {
   const payload = task.payload || {}
-  const cwd = payload.cwd || process.cwd()
-  process.chdir(cwd)
+  const repoCwd = payload.cwd || process.cwd()
+  let effectiveCwd = repoCwd
+  let worktree = null
 
-  const ctx = await buildContext({ cwd })
+  if (String(payload.isolation || "default").trim().toLowerCase() === "worktree") {
+    const created = await git.createDetachedWorktree(repoCwd, task.id)
+    if (!created.ok) {
+      throw new Error(`worktree setup failed: ${created.error}`)
+    }
+    worktree = created
+    effectiveCwd = created.path
+    await copyWorkspaceConfigFiles(repoCwd, effectiveCwd)
+  }
+
+  process.chdir(effectiveCwd)
+
+  const ctx = await buildContext({ cwd: effectiveCwd })
   _maxLogLines = Number(ctx.configState.config?.background?.max_log_lines || 300)
   await ToolRegistry.initialize({
     config: ctx.configState.config,
-    cwd
+    cwd: effectiveCwd
   })
   const { CustomAgentRegistry } = await import("../agent/custom-agent-loader.mjs")
-  await CustomAgentRegistry.initialize(cwd)
+  await CustomAgentRegistry.initialize(effectiveCwd)
 
   const providerType = payload.providerType || ctx.configState.config.provider.default
   const providerDefault = ctx.configState.config.provider[providerType]
@@ -122,22 +157,33 @@ async function runDelegateTask(task, signal) {
     subSessionId: payload.subSessionId
   })
 
-  const out = await executeTurn({
-    prompt: String(payload.prompt || ""),
-    mode: "agent",
-    model,
-    providerType,
-    sessionId: payload.subSessionId,
-    configState: ctx.configState,
-    signal,
-    allowQuestion: false,
-    toolContext: {
-      taskId: task.id,
-      stageId: payload.stageId || null,
-      logicalTaskId: payload.logicalTaskId || null
+  let out
+  try {
+    out = await executeTurn({
+      prompt: String(payload.prompt || ""),
+      mode: "agent",
+      model,
+      providerType,
+      sessionId: payload.subSessionId,
+      configState: ctx.configState,
+      signal,
+      allowQuestion: false,
+      toolContext: {
+        taskId: task.id,
+        stageId: payload.stageId || null,
+        logicalTaskId: payload.logicalTaskId || null
+      }
+    })
+    await flushNow()
+  } catch (error) {
+    if (worktree) {
+      const clean = await git.isClean(worktree.path).catch(() => false)
+      if (clean) {
+        await git.removeWorktree(worktree.path, repoCwd).catch(() => {})
+      }
     }
-  })
-  await flushNow()
+    throw error
+  }
 
   const plannedFiles = Array.isArray(payload.plannedFiles)
     ? payload.plannedFiles.map((item) => String(item || "").trim()).filter(Boolean)
@@ -167,6 +213,11 @@ async function runDelegateTask(task, signal) {
   )
   const completedFiles = [...completedFileSet]
   const remainingFiles = plannedFiles.filter((file) => !completedFileSet.has(file))
+  const worktreePreserved = Boolean(worktree && (fileChanges.length > 0 || completedFiles.length > 0))
+
+  if (worktree && !worktreePreserved) {
+    await git.removeWorktree(worktree.path, repoCwd).catch(() => {})
+  }
 
   return {
     session_id: payload.subSessionId,
@@ -180,7 +231,10 @@ async function runDelegateTask(task, signal) {
     file_changes: fileChanges,
     edit_feedback: editFeedback,
     cost: out.cost,
-    budget_warnings: out.budgetWarnings || []
+    budget_warnings: out.budgetWarnings || [],
+    isolation: String(payload.isolation || "default"),
+    worktree_path: worktreePreserved ? worktree.path : null,
+    worktree_preserved: worktreePreserved
   }
 }
 

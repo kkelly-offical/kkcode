@@ -17,6 +17,7 @@ test("task tool exposes delegation-focused schema fields", () => {
   assert.ok(props.subagent_type)
   assert.ok(props.execution_mode)
   assert.deepEqual(props.execution_mode.enum, ["fresh_agent", "fork_context"])
+  assert.deepEqual(props.isolation.enum, ["default", "worktree"])
   assert.ok(props.run_in_background)
   assert.ok(props.session_id)
   assert.ok(props.stage_id)

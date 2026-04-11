@@ -10,12 +10,14 @@ import { execSync } from "node:child_process"
 
 import {
   isGitRepo,
+  createDetachedWorktree,
   createGhostCommit,
   restoreGhostCommit,
   applyPatch,
   preflightPatch,
   getGitInfo,
-  getDiff
+  getDiff,
+  removeWorktree
 } from "../src/util/git.mjs"
 
 import {
@@ -143,6 +145,20 @@ describe("Git Auto - Integration Tests", () => {
       assert.strictEqual(result.info.hasUncommittedChanges, true)
       assert.ok(result.info.changedFiles.length > 0)
       
+      await cleanupTestRepo()
+    })
+
+    it("should create and remove a detached local worktree", async () => {
+      await setupTestRepo()
+
+      const created = await createDetachedWorktree(testRepoPath, "worker-test")
+      assert.strictEqual(created.ok, true)
+      assert.ok(created.path)
+      assert.strictEqual(await isGitRepo(created.path), true)
+
+      const removed = await removeWorktree(created.path, testRepoPath)
+      assert.strictEqual(removed.ok, true)
+
       await cleanupTestRepo()
     })
   })

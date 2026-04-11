@@ -16,6 +16,7 @@ export function createTaskTool() {
         subagent_type: { type: "string", description: "explicit subagent type" },
         category: { type: "string", description: "routing category" },
         execution_mode: { type: "string", enum: ["fresh_agent", "fork_context"], description: "delegation mode: 'fresh_agent' (default) for implementation or isolated new work, or 'fork_context' for read-only sidecar work that must inherit the parent transcript" },
+        isolation: { type: "string", enum: ["default", "worktree"], description: "execution isolation: 'default' runs in the main workspace, 'worktree' creates a local detached git worktree for isolated background sidecar execution" },
         run_in_background: { type: "boolean", description: "run async in background for non-blocking sidecar work; background delegates cannot ask interactive questions" },
         session_id: { type: "string", description: "continue from an existing delegated sub-session instead of starting fresh" },
         stage_id: { type: "string", description: "optional stage id for orchestration" },

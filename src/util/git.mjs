@@ -112,6 +112,31 @@ export async function diffStat(cwd = process.cwd()) {
   return result.ok ? result.stdout.trim() : ""
 }
 
+/** Create a detached git worktree rooted at HEAD for isolated local execution */
+export async function createDetachedWorktree(cwd = process.cwd(), label = "task") {
+  if (!(await isGitRepo(cwd))) {
+    return { ok: false, error: "not a git repository" }
+  }
+
+  const prefix = `kkcode-worktree-${String(label || "task").replace(/[^a-zA-Z0-9_-]+/g, "-").slice(0, 24)}-`
+  const worktreePath = await mkdtemp(path.join(tmpdir(), prefix))
+  const addResult = await run(["worktree", "add", "--detach", worktreePath, "HEAD"], cwd, GIT_TIMEOUT_MS)
+  if (!addResult.ok) {
+    await rm(worktreePath, { recursive: true, force: true }).catch(() => {})
+    return { ok: false, error: addResult.stderr || "git worktree add failed" }
+  }
+  return { ok: true, path: worktreePath }
+}
+
+/** Remove an existing git worktree */
+export async function removeWorktree(worktreePath, cwd = process.cwd()) {
+  const result = await run(["worktree", "remove", "--force", worktreePath], cwd, GIT_TIMEOUT_MS)
+  if (!result.ok) {
+    await rm(worktreePath, { recursive: true, force: true }).catch(() => {})
+  }
+  return { ok: result.ok, message: result.ok ? `removed worktree: ${worktreePath}` : result.stderr || "git worktree remove failed" }
+}
+
 /** Stash current changes */
 export async function stash(message = "auto-stash", cwd = process.cwd()) {
   const result = await run(["stash", "push", "-m", message], cwd)

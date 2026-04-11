@@ -23,6 +23,7 @@ Delegate when:
 - Use `session_id` only to continue an existing delegated session that already has the needed context.
 - `fork_context` inherits transcript context, but it does NOT change the parent/child result contract: the parent agent still owns synthesis and must wait for the child result instead of assuming it succeeded.
 - For implementation-heavy work, prefer a fresh task brief with explicit file scope. For follow-up questions or incremental continuation on the same delegated slice, continue the same `session_id`.
+- `isolation="worktree"` creates a **local detached git worktree** for isolated sidecar execution. This MVP is local-only and currently intended for background delegated runs.
 
 # Brief Writing Rules
 
@@ -50,6 +51,7 @@ Whether the brief is handwritten or synthesized, delegated work must follow this
 - Do not fabricate completion or present unfinished work as done
 - Do not peek at unfinished sibling work and convert guesses into facts
 - Background delegates cannot ask interactive questions; keep them self-contained
+- `isolation="worktree"` is local-only and must not be treated as a remote execution surface
 
 Good delegation briefs are directive and self-contained. The subagent should not need to infer hidden context.
 
@@ -125,6 +127,7 @@ GOOD: glob(pattern="**/*.test.js")
 
 - **session_id** (optional): Continue an existing delegated session when you need follow-up work on the same slice. Do NOT use this as a substitute for briefing a new task.
 - **execution_mode** (optional): `fresh_agent` (default) or `fork_context`. Use `fork_context` only when inheriting the parent transcript is genuinely useful and the delegated slice stays read-only.
+- **isolation** (optional): `default` (normal workspace) or `worktree` (local detached git worktree). `worktree` is currently meant for isolated background sidecar execution only.
 
 - **run_in_background** (optional): Set to true only for sidecar work that can continue while you do other things. Returns a task_id immediately — use `background_output` to check results later. Background delegates must be self-contained and cannot use `question`.
 

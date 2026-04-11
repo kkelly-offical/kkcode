@@ -4,6 +4,7 @@ import { flushNow, forkSession, getSession } from "../session/store.mjs"
 import { extractEditFeedbackFromToolEvents } from "../observability/edit-diagnostics.mjs"
 
 const SUPPORTED_EXECUTION_MODES = new Set(["fresh_agent", "fork_context"])
+const SUPPORTED_ISOLATION_MODES = new Set(["default", "worktree"])
 
 function extractFileChanges(toolEvents = []) {
   return toolEvents
@@ -22,6 +23,14 @@ function normalizeExecutionMode(raw) {
   const mode = String(raw || "fresh_agent").trim().toLowerCase() || "fresh_agent"
   if (!SUPPORTED_EXECUTION_MODES.has(mode)) {
     return { error: `unsupported task.execution_mode: ${raw}` }
+  }
+  return { mode }
+}
+
+function normalizeIsolation(raw) {
+  const mode = String(raw || "default").trim().toLowerCase() || "default"
+  if (!SUPPORTED_ISOLATION_MODES.has(mode)) {
+    return { error: `unsupported task.isolation: ${raw}` }
   }
   return { mode }
 }
@@ -99,6 +108,13 @@ function validateDelegationArgs(args = {}, executionMode) {
   if (args.run_in_background && args.allow_question === true) {
     return "task.run_in_background does not support allow_question=true"
   }
+  const isolation = String(args.isolation || "default").trim().toLowerCase() || "default"
+  if (isolation === "worktree" && executionMode !== "fresh_agent") {
+    return "task.isolation=worktree currently requires execution_mode='fresh_agent'"
+  }
+  if (isolation === "worktree" && args.run_in_background !== true) {
+    return "task.isolation=worktree currently requires run_in_background=true"
+  }
   return null
 }
 
@@ -109,6 +125,7 @@ function buildDelegationPrompt(args = {}) {
   const objective = String(args.objective || "").trim()
   if (!objective) return ""
   const executionMode = String(args.execution_mode || "fresh_agent").trim().toLowerCase() || "fresh_agent"
+  const isolation = String(args.isolation || "default").trim().toLowerCase() || "default"
 
   const why = String(args.why || "").trim()
   const writeScope = String(args.write_scope || "").trim()
@@ -140,6 +157,9 @@ function buildDelegationPrompt(args = {}) {
     lines.push("- This is a forked-context sidecar: inherit parent context, keep the brief directive-style, and avoid restating the full parent thread.")
   } else {
     lines.push("- This is a fresh agent: assume zero inherited context and include all required context in the brief.")
+  }
+  if (isolation === "worktree") {
+    lines.push("- Run this delegated slice inside a local detached git worktree. Keep all execution local and self-contained.")
   }
   lines.push("- Never delegate understanding of the problem itself; delegate execution, verification, or bounded research against an already-understood objective.")
   lines.push("- Do not guess unfinished results or treat background work as completed before it settles.")
@@ -178,8 +198,11 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
     const executionModeResult = normalizeExecutionMode(args.execution_mode)
     if (executionModeResult.error) return { error: executionModeResult.error }
     const executionMode = executionModeResult.mode
+    const isolationResult = normalizeIsolation(args.isolation)
+    if (isolationResult.error) return { error: isolationResult.error }
     const validationError = validateDelegationArgs(args, executionMode)
     if (validationError) return { error: validationError }
+    const isolation = isolationResult.mode
 
     const subagent = resolveSubagent({
       config,
@@ -235,6 +258,7 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
           model: subModel,
           providerType: subProvider,
           executionMode,
+          isolation,
           subagent: subagent.name,
           category: args.category || null,
           subagentType: subagent.name,
@@ -249,7 +273,8 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
         background_task_id: task.id,
         status: task.status,
         session_id: subSessionId,
-        execution_mode: executionMode
+        execution_mode: executionMode,
+        isolation
       }
     }
 

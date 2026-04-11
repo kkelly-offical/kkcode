@@ -307,7 +307,8 @@ test("task delegate launches background tasks with deterministic payload metadat
       background_task_id: "bg_123",
       status: "pending",
       session_id: result.session_id,
-      execution_mode: "fresh_agent"
+      execution_mode: "fresh_agent",
+      isolation: "default"
     })
     assert.match(result.session_id, /^sub_parent_bg_\d+$/)
     assert.equal(launchArgs.description, "verify branch")
@@ -347,4 +348,69 @@ test("task delegate rejects interactive questions for background sidecar work", 
   assert.deepEqual(result, {
     error: "task.run_in_background does not support allow_question=true"
   })
+})
+
+test("task delegate rejects worktree isolation outside background fresh-agent runs", async () => {
+  const delegateTask = createTaskDelegate({
+    config: {},
+    parentSessionId: "parent_worktree_rules",
+    model: "gpt-parent",
+    providerType: "local",
+    runSubtask: async () => {
+      throw new Error("should not run")
+    }
+  })
+
+  assert.deepEqual(
+    await delegateTask({
+      prompt: "implement safely",
+      isolation: "worktree"
+    }),
+    { error: "task.isolation=worktree currently requires run_in_background=true" }
+  )
+
+  assert.deepEqual(
+    await delegateTask({
+      prompt: "audit safely",
+      isolation: "worktree",
+      run_in_background: true,
+      execution_mode: "fork_context",
+      write_scope: "read-only",
+      deliverable: "return findings"
+    }),
+    { error: "task.isolation=worktree currently requires execution_mode='fresh_agent'" }
+  )
+})
+
+test("task delegate forwards worktree isolation metadata to background workers", async () => {
+  const originalLaunchDelegateTask = BackgroundManager.launchDelegateTask
+  let launchArgs = null
+
+  BackgroundManager.launchDelegateTask = async (args) => {
+    launchArgs = args
+    return { id: "bg_worktree", status: "pending" }
+  }
+
+  try {
+    const delegateTask = createTaskDelegate({
+      config: { background: { mode: "worker_process" } },
+      parentSessionId: "parent_worktree",
+      model: "gpt-parent",
+      providerType: "local",
+      runSubtask: async () => {
+        throw new Error("background lane should not run inline")
+      }
+    })
+
+    const result = await delegateTask({
+      prompt: "implement in isolated worktree",
+      run_in_background: true,
+      isolation: "worktree"
+    })
+
+    assert.equal(result.isolation, "worktree")
+    assert.equal(launchArgs.payload.isolation, "worktree")
+  } finally {
+    BackgroundManager.launchDelegateTask = originalLaunchDelegateTask
+  }
 })
