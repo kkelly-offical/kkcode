@@ -18,7 +18,8 @@ export default {
   name: "post-edit-format",
   tool: {
     async after(payload) {
-      const { toolName, args, cwd } = payload
+      const toolName = String(payload.toolName || payload.tool || "")
+      const { args, cwd } = payload
       if (!["edit", "write", "multiedit"].includes(toolName)) return payload
 
       // Collect affected files

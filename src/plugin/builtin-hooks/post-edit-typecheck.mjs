@@ -1,61 +1,125 @@
-// Post-edit TypeScript type check hook
-// Runs `tsc --noEmit` after editing .ts/.tsx files to catch type errors early
+// Post-edit diagnostics + observability hook
+// Captures baseline diagnostics before mutation tools and appends a concise
+// post-edit diagnostics delta plus mutation summary after mutation tools run.
 
-import { exec as execCb } from "node:child_process"
-import { promisify } from "node:util"
-import { access } from "node:fs/promises"
-import path from "node:path"
+import {
+  buildEditDiagnosticsReport,
+  buildMutationObservability,
+  collectDiagnosticsSnapshot,
+  extractTouchedFiles,
+  isDiagnosticsEligibleFile,
+  isMutationTool
+} from "../../observability/edit-diagnostics.mjs"
 
-const exec = promisify(execCb)
+function normalizeToolName(payload = {}) {
+  return String(payload.toolName || payload.tool || "").trim()
+}
 
-async function fileExists(p) {
-  try { await access(p); return true } catch { return false }
+function isCompletedResult(result) {
+  if (!result || typeof result !== "object") return true
+  return !result.status || result.status === "completed"
+}
+
+function appendFeedback(result, reportText) {
+  if (!reportText) return result
+  if (typeof result === "string") return `${result}\n${reportText}`.trim()
+  if (result && typeof result === "object") {
+    return {
+      ...result,
+      output: `${String(result.output || "")}\n${reportText}`.trim()
+    }
+  }
+  return result
+}
+
+function buildReportText({ observability, diagnostics }) {
+  const lines = []
+  if (observability?.changes?.length) {
+    lines.push("Mutation summary:")
+    lines.push(`- ${observability.summary}`)
+  }
+  if (diagnostics?.summary?.text) {
+    lines.push("Diagnostics:")
+    lines.push(`- ${diagnostics.summary.text}`)
+    for (const issue of (diagnostics.delta?.added || []).slice(0, 2)) {
+      lines.push(`- introduced ${issue.file || "unknown"} ${issue.code || ""} ${issue.message || ""}`.trim())
+    }
+    for (const issue of (diagnostics.delta?.resolved || []).slice(0, 2)) {
+      lines.push(`- resolved ${issue.file || "unknown"} ${issue.code || ""} ${issue.message || ""}`.trim())
+    }
+  }
+  return lines.join("\n")
 }
 
 export default {
   name: "post-edit-typecheck",
   tool: {
-    async after(payload) {
-      const { toolName, args, result, cwd } = payload
-      if (!["edit", "write", "multiedit"].includes(toolName)) return payload
+    async before(payload) {
+      const toolName = normalizeToolName(payload)
+      if (!isMutationTool(toolName)) return payload
 
-      // Determine affected files
-      const files = []
-      if (args?.path) files.push(args.path)
-      if (args?.changes) {
-        for (const c of args.changes) {
-          if (c.path) files.push(c.path)
+      const cwd = payload.cwd || process.cwd()
+      const files = extractTouchedFiles({ args: payload.args }).filter(isDiagnosticsEligibleFile)
+      if (files.length === 0) return payload
+
+      const baseline = await collectDiagnosticsSnapshot({ cwd, files }).catch(() => null)
+      return {
+        ...payload,
+        _editObservability: {
+          files,
+          baseline
         }
       }
+    },
 
-      // Only check if at least one TS/TSX file was edited
-      const tsFiles = files.filter(f => /\.tsx?$/.test(f))
-      if (tsFiles.length === 0) return payload
+    async after(payload) {
+      const toolName = normalizeToolName(payload)
+      if (!isMutationTool(toolName)) return payload
+      if (!isCompletedResult(payload.result)) return payload
 
-      // Verify tsconfig.json exists in project
-      const tsconfigPath = path.join(cwd || process.cwd(), "tsconfig.json")
-      if (!(await fileExists(tsconfigPath))) return payload
+      const cwd = payload.cwd || process.cwd()
+      const metadata = payload.result && typeof payload.result === "object" && payload.result.metadata && typeof payload.result.metadata === "object"
+        ? { ...payload.result.metadata }
+        : {}
+      const files = (payload._editObservability?.files || extractTouchedFiles({ args: payload.args, metadata }))
+        .filter(isDiagnosticsEligibleFile)
 
-      try {
-        await exec("npx tsc --noEmit --pretty 2>&1", {
-          cwd: cwd || process.cwd(),
-          timeout: 15000
+      const observability = buildMutationObservability(metadata)
+      let diagnostics = null
+
+      if (files.length > 0) {
+        const current = await collectDiagnosticsSnapshot({ cwd, files }).catch(() => null)
+        diagnostics = buildEditDiagnosticsReport({
+          cwd,
+          files,
+          baseline: payload._editObservability?.baseline || {},
+          current: current || {},
+          reason: current ? "" : "snapshot_failed"
         })
-        // No errors — silently pass through
-      } catch (error) {
-        const output = (error.stdout || error.stderr || "").trim()
-        if (output) {
-          // Append type check warnings to tool result
-          const warning = `\n⚠ TypeScript type check found issues:\n${output.slice(0, 2000)}`
-          if (typeof result === "string") {
-            payload.result = result + warning
-          } else if (result && typeof result === "object") {
-            payload.result = { ...result, output: (result.output || "") + warning }
+      }
+
+      if (!observability.changes.length && !diagnostics) {
+        return payload
+      }
+
+      const reportText = buildReportText({ observability, diagnostics })
+      let nextResult = appendFeedback(payload.result, reportText)
+
+      if (nextResult && typeof nextResult === "object") {
+        nextResult = {
+          ...nextResult,
+          metadata: {
+            ...metadata,
+            observability,
+            ...(diagnostics ? { diagnostics } : {})
           }
         }
       }
 
-      return payload
+      return {
+        ...payload,
+        result: nextResult
+      }
     }
   }
 }

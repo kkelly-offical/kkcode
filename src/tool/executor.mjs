@@ -3,9 +3,33 @@ import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { withAudit } from "./audit-wrapper.mjs"
 import { autoSnapshotBeforeEdit } from "../session/checkpoint.mjs"
+import { buildMutationObservability } from "../observability/edit-diagnostics.mjs"
 
 const FILE_EDIT_TOOLS = new Set(["write", "edit", "multiedit", "patch", "notebookedit"])
 const snapshotted = new Set()
+
+function eventMetadataSummary(metadata = {}) {
+  const fileChanges = Array.isArray(metadata.fileChanges) ? metadata.fileChanges : []
+  const observability = metadata.observability?.contract
+    ? metadata.observability
+    : buildMutationObservability(metadata)
+  const diagnostics = metadata.diagnostics?.contract
+    ? {
+        summary: metadata.diagnostics.summary || null,
+        currentCount: metadata.diagnostics.current?.count || 0,
+        delta: metadata.diagnostics.delta
+          ? {
+              added: metadata.diagnostics.delta.added?.length || 0,
+              resolved: metadata.diagnostics.delta.resolved?.length || 0,
+              persisted: metadata.diagnostics.delta.persisted?.length || 0
+            }
+          : null
+      }
+    : null
+
+  if (!fileChanges.length && !observability?.changes?.length && !diagnostics) return null
+  return { fileChanges, observability, diagnostics }
+}
 
 export async function executeTool({ tool, args, sessionId, turnId, context, signal = null }) {
   return withAudit({
@@ -88,7 +112,8 @@ export async function executeTool({ tool, args, sessionId, turnId, context, sign
             status: result.status,
             args,
             output: String(output || "").slice(0, 500),
-            durationMs: result.durationMs
+            durationMs: result.durationMs,
+            metadata: eventMetadataSummary(metadata)
           }
         })
         return result

@@ -1,8 +1,22 @@
 import { BackgroundManager } from "./background-manager.mjs"
 import { resolveSubagent } from "./subagent-router.mjs"
 import { flushNow, forkSession, getSession } from "../session/store.mjs"
+import { extractEditFeedbackFromToolEvents } from "../observability/edit-diagnostics.mjs"
 
 const SUPPORTED_EXECUTION_MODES = new Set(["fresh_agent", "fork_context"])
+
+function extractFileChanges(toolEvents = []) {
+  return toolEvents
+    .flatMap((event) => Array.isArray(event?.metadata?.fileChanges) ? event.metadata.fileChanges : [])
+    .map((item) => ({
+      path: String(item?.path || "").trim(),
+      addedLines: Math.max(0, Number(item?.addedLines || 0)),
+      removedLines: Math.max(0, Number(item?.removedLines || 0)),
+      stageId: item?.stageId ? String(item.stageId) : "",
+      taskId: item?.taskId ? String(item.taskId) : ""
+    }))
+    .filter((item) => item.path)
+}
 
 function normalizeExecutionMode(raw) {
   const mode = String(raw || "fresh_agent").trim().toLowerCase() || "fresh_agent"
@@ -74,13 +88,17 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
       })
       await log(out.reply)
       if (isCancelled()) return { cancelled: true }
+      const fileChanges = extractFileChanges(out.toolEvents || [])
+      const editFeedback = extractEditFeedbackFromToolEvents(out.toolEvents || [])
       return {
         session_id: subSessionId,
         parent_session_id: parentSessionId,
         subagent: subagent.name,
         execution_mode: executionMode,
         reply: out.reply,
-        tool_events: out.toolEvents?.length || 0
+        tool_events: out.toolEvents?.length || 0,
+        file_changes: fileChanges,
+        edit_feedback: editFeedback
       }
     }
 

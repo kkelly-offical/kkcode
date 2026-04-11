@@ -48,7 +48,9 @@ test("task delegate reuses an existing sub-session with continuation prompt", as
     subagent: "default-subagent",
     execution_mode: "fresh_agent",
     reply: "continued",
-    tool_events: 2
+    tool_events: 2,
+    file_changes: [],
+    edit_feedback: []
   })
 })
 
@@ -88,6 +90,60 @@ test("task delegate routes foreground work through resolved subagent config", as
   assert.equal(result.subagent, "reviewer")
   assert.equal(result.reply, "done")
   assert.equal(result.tool_events, 1)
+  assert.deepEqual(result.file_changes, [])
+  assert.deepEqual(result.edit_feedback, [])
+})
+
+test("task delegate surfaces file_changes and edit_feedback from mutation tool events", async () => {
+  const delegateTask = createTaskDelegate({
+    config: {},
+    parentSessionId: "parent_4",
+    model: "gpt-parent",
+    providerType: "local",
+    runSubtask: async () => ({
+      reply: "done",
+      toolEvents: [{
+        name: "edit",
+        status: "completed",
+        args: { path: "src/demo.mjs" },
+        metadata: {
+          fileChanges: [{
+            path: "src/demo.mjs",
+            addedLines: 2,
+            removedLines: 1,
+            stageId: "stage_1",
+            taskId: "task_1"
+          }],
+          mutation: {
+            operation: "edit",
+            filePath: "src/demo.mjs",
+            addedLines: 2,
+            removedLines: 1
+          },
+          diagnostics: {
+            contract: "kkcode/edit-diagnostics@1",
+            files: ["src/demo.mjs"],
+            summary: { status: "clean", text: "clean (no diagnostics before or after)" }
+          }
+        }
+      }]
+    })
+  })
+
+  const result = await delegateTask({
+    prompt: "update file"
+  })
+
+  assert.deepEqual(result.file_changes, [{
+    path: "src/demo.mjs",
+    addedLines: 2,
+    removedLines: 1,
+    stageId: "stage_1",
+    taskId: "task_1"
+  }])
+  assert.equal(result.edit_feedback.length, 1)
+  assert.equal(result.edit_feedback[0].tool, "edit")
+  assert.equal(result.edit_feedback[0].diagnostics.summary.status, "clean")
 })
 
 test("task delegate launches background tasks with deterministic payload metadata", async () => {

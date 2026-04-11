@@ -160,7 +160,8 @@ export async function processTurnLoop({
   allowQuestion = true,
   toolContext = {}
 }) {
-  await initHookBus()
+  const cwd = process.cwd()
+  await initHookBus(cwd)
 
   if (depth > 8) {
     return {
@@ -174,7 +175,6 @@ export async function processTurnLoop({
     }
   }
 
-  const cwd = process.cwd()
   const turnId = newId("turn")
   const configMaxSteps = Math.max(1, Number(configState.config.agent.max_steps || 128))
   const maxSteps = (subagent?.maxTurns > 0) ? Math.min(configMaxSteps, subagent.maxTurns) : configMaxSteps
@@ -693,7 +693,15 @@ export async function processTurnLoop({
         const risk = ["bash", "write", "edit", "task"].includes(call.name) ? 9 : 1
         let result
         try {
-          const hookTransformed = await HookBus.toolBefore({ tool: call.name, args: call.args, sessionId, step })
+          const hookTransformed = await HookBus.toolBefore({
+            tool: call.name,
+            toolName: call.name,
+            args: call.args,
+            sessionId,
+            step,
+            cwd,
+            mode
+          })
           if (hookTransformed?.args) call.args = hookTransformed.args
 
           if (call.name === "question" && !allowQuestion) {
@@ -764,7 +772,16 @@ export async function processTurnLoop({
           toolContext._planMode = false
         }
 
-        const hookAfterResult = await HookBus.toolAfter({ tool: call.name, args: call.args, result, sessionId, step })
+        const hookAfterResult = await HookBus.toolAfter({
+          tool: call.name,
+          toolName: call.name,
+          args: call.args,
+          result,
+          sessionId,
+          step,
+          cwd,
+          mode
+        })
         if (hookAfterResult?.result) result = hookAfterResult.result
 
         // Plan approval interception: if the tool returned planApproval metadata,

@@ -574,6 +574,47 @@ function renderFileChangeLines(fileChanges = [], limit = 20) {
   return lines
 }
 
+function normalizeDiagnostics(toolEvents = []) {
+  const summaries = []
+  for (const event of toolEvents || []) {
+    const diagnostics = event?.metadata?.diagnostics
+    if (!diagnostics) continue
+    const summary = diagnostics.summary || {}
+    const currentSummary = diagnostics.after?.summary || diagnostics.current?.summary || {}
+    const delta = diagnostics.delta || {}
+    summaries.push({
+      tool: String(event?.name || ""),
+      path: String(event?.args?.path || diagnostics.current?.diagnostics?.[0]?.file || diagnostics.baseline?.diagnostics?.[0]?.file || "").trim(),
+      introduced: Number(summary.introduced || delta.added?.length || 0),
+      persistent: Number(summary.persistent || delta.persisted?.length || 0),
+      resolved: Number(summary.resolved || delta.resolved?.length || 0),
+      unchanged: Boolean(summary.unchanged || delta.unchanged),
+      errorCount: Number(currentSummary.errorCount || currentSummary.errors || 0),
+      warningCount: Number(currentSummary.warningCount || currentSummary.warnings || 0),
+      status: String(summary.status || diagnostics.after?.status || diagnostics.current?.status || diagnostics.status || "")
+    })
+  }
+  return summaries
+}
+
+function renderDiagnosticsLines(rows = [], limit = 10) {
+  const lines = []
+  const visible = rows.slice(0, limit)
+  for (const item of visible) {
+    const label = item.path || item.tool || "diagnostics"
+    const summary = item.unchanged
+      ? "no change"
+      : `+${item.introduced} / ${item.persistent} / -${item.resolved}`
+    const totals = `${item.errorCount} error(s), ${item.warningCount} warning(s)`
+    const status = item.status ? paint(` ${item.status}`, null, { dim: true }) : ""
+    lines.push(`  ${paint(label, "white")}  ${paint(summary, "yellow", { bold: true })}  ${paint(totals, null, { dim: true })}${status}`)
+  }
+  if (rows.length > visible.length) {
+    lines.push(paint(`  ... +${rows.length - visible.length} more diagnostics result(s)`, null, { dim: true }))
+  }
+  return lines
+}
+
 function resolveProviderDefaultModel(config, providerType, fallback = "") {
   return (
     config.provider?.[providerType]?.default_model ||
@@ -1371,6 +1412,7 @@ async function processInputLine({
   const fileChanges = state.mode === "longagent" && longagentFileChanges.length
     ? longagentFileChanges
     : toolFileChanges
+  const diagnostics = normalizeDiagnostics(result.toolEvents)
 
   if (state.mode === "longagent") {
     if (result.longagent) {
@@ -1385,6 +1427,10 @@ async function processInputLine({
     if (fileChanges.length) {
       print(paint("changed files:", "cyan", { bold: true }))
       for (const line of renderFileChangeLines(fileChanges)) print(line)
+    }
+    if (diagnostics.length) {
+      print(paint("diagnostics:", "yellow", { bold: true }))
+      for (const line of renderDiagnosticsLines(diagnostics, 6)) print(line)
     } else if (!result.emittedText && result.reply) {
       const mdEnabled = ctx.configState.config.ui?.markdown_render !== false
       print(mdEnabled ? renderMarkdown(result.reply) : result.reply)
@@ -1397,6 +1443,10 @@ async function processInputLine({
     if (fileChanges.length) {
       print(paint("changed files:", "cyan", { bold: true }))
       for (const line of renderFileChangeLines(fileChanges, 10)) print(line)
+    }
+    if (diagnostics.length) {
+      print(paint("diagnostics:", "yellow", { bold: true }))
+      for (const line of renderDiagnosticsLines(diagnostics, 6)) print(line)
     }
   }
   return {
@@ -3593,7 +3643,7 @@ function startSplash() {
     "  ╚═╝  ╚═╝ ╚═╝  ╚═╝  ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝ "
   ]
   const tagline = "AI Coding Agent"
-  const version = "v0.1.9"
+  const version = "v0.1.10"
 
   // Gradient colors for the wave animation (cyan → blue → purple → pink → back)
   const wave = [

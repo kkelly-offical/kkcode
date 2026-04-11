@@ -95,6 +95,27 @@ test("successful write refreshes read state and returns structured metadata", as
   assert.ok(Array.isArray(result.metadata.mutation.structuredPatch))
 })
 
+test("successful edit returns structured mutation summary", async () => {
+  await writeFile(join(tempDir, "a.js"), "const a = 1\n", "utf8")
+  await executeTool("read", { path: "a.js" })
+
+  const result = await executeTool("edit", {
+    path: "a.js",
+    before: "const a = 1",
+    after: "const a = 2"
+  })
+
+  assert.equal(result.metadata.mutation.operation, "edit")
+  assert.equal(result.metadata.mutation.filePath, "a.js")
+  assert.equal(result.metadata.mutation.originalContent, "const a = 1")
+  assert.equal(result.metadata.mutation.updatedContent, "const a = 2")
+  assert.equal(result.metadata.mutation.addedLines, 1)
+  assert.equal(result.metadata.mutation.removedLines, 1)
+  assert.ok(Array.isArray(result.metadata.fileChanges))
+  assert.equal(result.metadata.fileChanges[0].tool, "edit")
+  assert.equal(await readFile(join(tempDir, "a.js"), "utf8"), "const a = 2\n")
+})
+
 test("edit rejects unread existing files", async () => {
   await writeFile(join(tempDir, "a.js"), "const a = 1\n", "utf8")
 
@@ -146,6 +167,26 @@ test("patch rejects unread and stale files", async () => {
   assert.match(toolOutput(stale), /has changed since it was last read/i)
 })
 
+test("successful patch returns structured mutation summary", async () => {
+  await writeFile(join(tempDir, "a.js"), "one\ntwo\nthree\n", "utf8")
+  await executeTool("read", { path: "a.js" })
+
+  const result = await executeTool("patch", {
+    path: "a.js",
+    start_line: 2,
+    end_line: 2,
+    content: "TWO\nSECOND"
+  })
+
+  assert.equal(result.metadata.mutation.operation, "patch")
+  assert.equal(result.metadata.mutation.filePath, "a.js")
+  assert.equal(result.metadata.mutation.addedLines, 2)
+  assert.equal(result.metadata.mutation.removedLines, 1)
+  assert.deepEqual(result.metadata.mutation.structuredPatch[0].oldStart, 2)
+  assert.deepEqual(result.metadata.mutation.structuredPatch[0].newStart, 2)
+  assert.match(await readFile(join(tempDir, "a.js"), "utf8"), /TWO\nSECOND/)
+})
+
 test("multiedit rejects whole batch when one file is unread", async () => {
   await writeFile(join(tempDir, "a.js"), "export const a = 1\n", "utf8")
   await writeFile(join(tempDir, "b.js"), "export const b = 1\n", "utf8")
@@ -169,6 +210,39 @@ test("multiedit rejects whole batch when one file is unread", async () => {
   assert.match(toolOutput(result), /has not been read yet/i)
   assert.equal(await readFile(join(tempDir, "a.js"), "utf8"), "export const a = 1\n")
   assert.equal(await readFile(join(tempDir, "b.js"), "utf8"), "export const b = 1\n")
+})
+
+test("successful multiedit returns per-file observability summaries", async () => {
+  await writeFile(join(tempDir, "a.js"), "export const a = 1\n", "utf8")
+  await writeFile(join(tempDir, "b.js"), "export const b = 1\n", "utf8")
+  await executeTool("read", { path: "a.js" })
+  await executeTool("read", { path: "b.js" })
+
+  const result = await executeTool("multiedit", {
+    changes: [
+      {
+        path: "a.js",
+        before: "export const a = 1",
+        after: "export const a = 2"
+      },
+      {
+        path: "b.js",
+        before: "export const b = 1",
+        after: "export const b = 3"
+      }
+    ]
+  })
+
+  assert.equal(result.metadata.fileChanges.length, 2)
+  assert.equal(result.metadata.mutations.length, 2)
+  assert.deepEqual(
+    result.metadata.mutations.map((item) => item.filePath).sort(),
+    ["a.js", "b.js"]
+  )
+  assert.ok(result.metadata.mutations.every((item) => item.operation === "multiedit"))
+  assert.ok(result.metadata.mutations.every((item) => Array.isArray(item.structuredPatch)))
+  assert.equal(await readFile(join(tempDir, "a.js"), "utf8"), "export const a = 2\n")
+  assert.equal(await readFile(join(tempDir, "b.js"), "utf8"), "export const b = 3\n")
 })
 
 test("notebookedit rejects unread and stale notebooks", async () => {
@@ -206,4 +280,36 @@ test("notebookedit rejects unread and stale notebooks", async () => {
     new_source: "print('bye')\n"
   })
   assert.match(toolOutput(stale), /has changed since it was last read/i)
+})
+
+test("successful notebookedit returns structured mutation summary", async () => {
+  const notebookPath = join(tempDir, "demo.ipynb")
+  const notebook = JSON.stringify({
+    cells: [
+      {
+        cell_type: "code",
+        metadata: {},
+        source: ["print('hi')\n"],
+        execution_count: null,
+        outputs: []
+      }
+    ],
+    metadata: {},
+    nbformat: 4,
+    nbformat_minor: 5
+  }, null, 1) + "\n"
+
+  await writeFile(notebookPath, notebook, "utf8")
+  await executeTool("read", { path: "demo.ipynb" })
+
+  const result = await executeTool("notebookedit", {
+    path: "demo.ipynb",
+    cell_number: 0,
+    new_source: "print('bye')\n"
+  })
+
+  assert.equal(result.metadata.mutation.operation, "notebookedit")
+  assert.equal(result.metadata.mutation.filePath, "demo.ipynb")
+  assert.ok(Array.isArray(result.metadata.mutation.structuredPatch))
+  assert.match(await readFile(notebookPath, "utf8"), /print\('bye'\)/)
 })

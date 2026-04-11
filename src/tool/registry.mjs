@@ -16,6 +16,7 @@ import { gitAutoTools } from "./git-auto.mjs"
 import { gitFullAutoTools } from "./git-full-auto.mjs"
 import { markFileRead, refreshFileReadStateFromDisk } from "./file-read-state.mjs"
 import { validateExistingFileMutation } from "./mutation-guard.mjs"
+import { buildMutationObservability } from "../observability/edit-diagnostics.mjs"
 
 const exec = promisify(execCb)
 
@@ -224,7 +225,26 @@ function mutationMetadata({
       structuredPatch,
       addedLines,
       removedLines
-    }
+    },
+    observability: buildMutationObservability({
+      fileChanges: [{
+        path: filePath,
+        tool: operation,
+        addedLines,
+        removedLines,
+        stageId,
+        taskId
+      }],
+      mutation: {
+        operation,
+        filePath,
+        originalContent,
+        updatedContent,
+        structuredPatch,
+        addedLines,
+        removedLines
+      }
+    })
   }
 }
 

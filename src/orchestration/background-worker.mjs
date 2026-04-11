@@ -5,6 +5,7 @@ import { buildContext } from "../context.mjs"
 import { ToolRegistry } from "../tool/registry.mjs"
 import { executeTurn } from "../session/engine.mjs"
 import { flushNow, forkSession, getSession } from "../session/store.mjs"
+import { extractEditFeedbackFromToolEvents } from "../observability/edit-diagnostics.mjs"
 
 function now() {
   return Date.now()
@@ -155,6 +156,7 @@ async function runDelegateTask(task, signal) {
       taskId: item?.taskId ? String(item.taskId) : (payload.logicalTaskId || "")
     }))
     .filter((item) => item.path)
+  const editFeedback = extractEditFeedbackFromToolEvents(out.toolEvents || [])
 
   const completedFileSet = new Set(
     completedFilesFromTools.filter((file) => plannedFiles.length === 0 || plannedFiles.includes(file))
@@ -172,6 +174,7 @@ async function runDelegateTask(task, signal) {
     completed_files: completedFiles,
     remaining_files: remainingFiles,
     file_changes: fileChanges,
+    edit_feedback: editFeedback,
     cost: out.cost,
     budget_warnings: out.budgetWarnings || []
   }
