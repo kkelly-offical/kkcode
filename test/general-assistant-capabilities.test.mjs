@@ -12,6 +12,7 @@ test("CLI general assistant capability doc keeps the shipped boundary explicit",
   assert.match(doc, /CLI-first/i)
   assert.match(doc, /agent-default for bounded terminal work/i)
   assert.match(doc, /Coding/)
+  assert.match(doc, /System \/ runtime summary/)
   assert.match(doc, /Local filesystem inspection/)
   assert.match(doc, /Shell \/ task execution/)
   assert.match(doc, /Repo \/ release assistance/)
@@ -27,6 +28,7 @@ test("README advertises kkcode as a CLI general assistant without making GUI pro
   const readme = await read("README.md")
 
   assert.match(readme, /CLI 通用助手能力边界（0\.1\.12）/)
+  assert.match(readme, /系统 \/ 运行时信息/)
   assert.match(readme, /本地目录 \/ 文件 \/ 日志检查/)
   assert.match(readme, /仓库 \/ 发布辅助/)
   assert.match(readme, /不代表.*GUI \/ 桌面自动化/)

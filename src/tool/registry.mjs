@@ -1,6 +1,7 @@
 import path from "node:path"
+import os from "node:os"
 import { readdir, readFile } from "node:fs/promises"
-import { access, stat, unlink } from "node:fs/promises"
+import { access, stat, statfs, unlink } from "node:fs/promises"
 import { exec as execCb, spawn } from "node:child_process"
 import { promisify } from "node:util"
 import { pathToFileURL } from "node:url"
@@ -61,6 +62,50 @@ async function exists(target) {
 async function listDir(dir) {
   const items = await readdir(dir, { withFileTypes: true })
   return items.map((item) => `${item.isDirectory() ? "d" : "f"} ${item.name}`).join("\n")
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0)
+  if (!Number.isFinite(value) || value <= 0) return "0 B"
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"]
+  let size = value
+  let unitIndex = 0
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024
+    unitIndex += 1
+  }
+  const decimals = size >= 10 || unitIndex === 0 ? 0 : 1
+  return `${size.toFixed(decimals)} ${units[unitIndex]}`
+}
+
+function detectShellInfo() {
+  if (process.platform === "win32") {
+    return process.env.ComSpec || process.env.SHELL || "powershell/cmd"
+  }
+  return process.env.SHELL || "/bin/sh"
+}
+
+async function detectGitRepo(cwd) {
+  try {
+    await exec("git rev-parse --is-inside-work-tree", { cwd, timeout: 3000 })
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function detectPackageManagers(cwd) {
+  const candidates = [
+    ["npm", "package-lock.json"],
+    ["pnpm", "pnpm-lock.yaml"],
+    ["yarn", "yarn.lock"],
+    ["bun", "bun.lockb"]
+  ]
+  const present = []
+  for (const [name, file] of candidates) {
+    if (await exists(path.join(cwd, file))) present.push(name)
+  }
+  return present
 }
 
 function assertWithinCwd(resolved, cwd) {
@@ -290,6 +335,123 @@ function builtinTools(config) {
     async execute(args, ctx) {
       const target = path.resolve(ctx.cwd, args.path || ".")
       return listDir(target)
+    }
+  }
+
+  const sysinfoTool = {
+    name: "sysinfo",
+    description: "Return structured, read-only system and runtime information for the current machine/workspace. Good for OS/runtime/workspace/cpu/memory/disk summaries without relying on raw shell output.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sections: {
+          type: "array",
+          description: "optional sections to return: os, runtime, workspace, cpu, memory, disk",
+          items: { type: "string" }
+        },
+        path: schema("string", "optional workspace path for disk/workspace inspection (default: cwd)")
+      },
+      required: []
+    },
+    async execute(args, ctx) {
+      const targetPath = path.resolve(ctx.cwd, String(args.path || "."))
+      assertWithinCwd(targetPath, ctx.cwd)
+      const requestedSections = Array.isArray(args.sections) && args.sections.length
+        ? args.sections.map((item) => String(item || "").trim().toLowerCase()).filter(Boolean)
+        : ["os", "runtime", "workspace", "cpu", "memory", "disk"]
+      const sectionSet = new Set(requestedSections)
+
+      const result = {
+        generatedAt: new Date().toISOString(),
+        path: targetPath,
+        sections: {}
+      }
+
+      if (sectionSet.has("os")) {
+        result.sections.os = {
+          platform: process.platform,
+          arch: process.arch,
+          hostname: os.hostname(),
+          release: os.release(),
+          version: typeof os.version === "function" ? os.version() : null
+        }
+      }
+
+      if (sectionSet.has("runtime")) {
+        result.sections.runtime = {
+          nodeVersion: process.version,
+          shell: detectShellInfo(),
+          pid: process.pid,
+          uptimeSeconds: Math.round(process.uptime()),
+          uptimeHuman: `${Math.round(process.uptime())}s`
+        }
+      }
+
+      if (sectionSet.has("workspace")) {
+        const packageManagers = await detectPackageManagers(targetPath)
+        result.sections.workspace = {
+          cwd: targetPath,
+          isGitRepo: await detectGitRepo(targetPath),
+          packageManagers,
+          hasPackageJson: await exists(path.join(targetPath, "package.json")),
+          hasNodeModules: await exists(path.join(targetPath, "node_modules"))
+        }
+      }
+
+      if (sectionSet.has("cpu")) {
+        const cpus = os.cpus() || []
+        result.sections.cpu = {
+          cores: cpus.length,
+          model: cpus[0]?.model || null,
+          loadAverage: typeof os.loadavg === "function" ? os.loadavg() : []
+        }
+      }
+
+      if (sectionSet.has("memory")) {
+        const total = os.totalmem()
+        const free = os.freemem()
+        result.sections.memory = {
+          totalBytes: total,
+          freeBytes: free,
+          usedBytes: Math.max(0, total - free),
+          total: formatBytes(total),
+          free: formatBytes(free),
+          used: formatBytes(Math.max(0, total - free))
+        }
+      }
+
+      if (sectionSet.has("disk")) {
+        try {
+          const disk = await statfs(targetPath)
+          const blockSize = Number(disk.bsize || disk.frsize || 0)
+          const totalBytes = Number(disk.blocks || 0) * blockSize
+          const freeBytes = Number(disk.bavail || disk.bfree || 0) * blockSize
+          result.sections.disk = {
+            path: targetPath,
+            totalBytes,
+            freeBytes,
+            usedBytes: Math.max(0, totalBytes - freeBytes),
+            total: formatBytes(totalBytes),
+            free: formatBytes(freeBytes),
+            used: formatBytes(Math.max(0, totalBytes - freeBytes))
+          }
+        } catch (error) {
+          result.sections.disk = {
+            path: targetPath,
+            error: error.message
+          }
+        }
+      }
+
+      const summaryParts = []
+      if (result.sections.os) summaryParts.push(`${result.sections.os.platform}/${result.sections.os.arch}`)
+      if (result.sections.runtime) summaryParts.push(`node ${result.sections.runtime.nodeVersion}`)
+      if (result.sections.workspace) summaryParts.push(result.sections.workspace.isGitRepo ? "git repo" : "non-git cwd")
+      if (result.sections.memory) summaryParts.push(`mem ${result.sections.memory.used}/${result.sections.memory.total}`)
+      if (result.sections.disk?.total) summaryParts.push(`disk ${result.sections.disk.used}/${result.sections.disk.total}`)
+      result.summary = summaryParts.join(" · ")
+
+      return result
     }
   }
 
@@ -1336,7 +1498,7 @@ function builtinTools(config) {
   const gitTools = config?.git_auto?.enabled !== false ? gitAutoTools : []
   const gitFullAutoToolsList = config?.git_auto?.full_auto === true ? gitFullAutoTools : []
   
-  return [listTool, readTool, writeTool, editTool, patchTool, multieditTool, globTool, grepTool, bashTool, createTaskTool(), outputTool, cancelTool, todowriteTool, questionTool, skillTool, webfetchTool, websearchTool, codesearchTool, notebookeditTool, enterPlanTool, exitPlanTool, ...gitTools, ...gitFullAutoToolsList]
+  return [listTool, sysinfoTool, readTool, writeTool, editTool, patchTool, multieditTool, globTool, grepTool, bashTool, createTaskTool(), outputTool, cancelTool, todowriteTool, questionTool, skillTool, webfetchTool, websearchTool, codesearchTool, notebookeditTool, enterPlanTool, exitPlanTool, ...gitTools, ...gitFullAutoToolsList]
 }
 
 function mcpTools() {

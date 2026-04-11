@@ -20,6 +20,7 @@ kkcode 0.1.12 should be understood as:
 | Capability lane | Typical user request | Current tool / runtime anchor | 0.1.12 status |
 | --- | --- | --- | --- |
 | Coding | “修这个 bug”, “改一下 README”, “补测试” | `read` / `write` / `edit` / `patch` / LongAgent | Shipped |
+| System / runtime summary | “看一下系统信息”, “当前环境怎样”, “机器资源概况” | `sysinfo` | Shipped |
 | Local filesystem inspection | “看看这个目录”, “读一下配置”, “搜某个字符串” | `list` / `glob` / `grep` / `read` | Shipped |
 | Shell / task execution | “跑一下测试”, “检查日志”, “执行这个命令” | `bash` | Shipped |
 | Repo / release assistance | “看 git 状态”, “做快照”, “恢复现场” | `git_status` / `git_info` / `git_snapshot` / `git_restore` | Shipped |

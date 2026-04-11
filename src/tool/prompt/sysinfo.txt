@@ -1,0 +1,29 @@
+Return structured, read-only system and runtime information for the current machine/workspace.
+
+Use `sysinfo` when the user asks for:
+- system information
+- OS / runtime / shell summary
+- CPU / memory / disk summary
+- current workspace / package-manager / git-repo context
+
+Prefer `sysinfo` over raw `bash` when the goal is a concise environment summary.
+
+Parameters:
+- `sections` (optional): array of section names to return. Supported:
+  - `os`
+  - `runtime`
+  - `workspace`
+  - `cpu`
+  - `memory`
+  - `disk`
+- `path` (optional): workspace path to inspect for `workspace` / `disk` sections
+
+Examples:
+- `sysinfo()`
+- `sysinfo(sections=["os","runtime","workspace"])`
+- `sysinfo(sections=["disk"], path=".")`
+
+Safety:
+- This tool is read-only.
+- It does not dump full environment variables or process lists.
+- Use `bash` only when the user truly needs deeper platform-specific diagnostics.
