@@ -127,3 +127,25 @@ Args: $ARGUMENTS
   assert.equal(manifests[0].name, "compat-plugin")
   assert.deepEqual(SkillRegistry.pluginErrors(), [])
 })
+
+test("SkillRegistry skips disabled plugin skill components but still reports the manifest", async () => {
+  const pluginRoot = path.join(projectDir, ".kkcode", "plugins", "disabled-plugin")
+  const skillDir = path.join(pluginRoot, "skills", "hidden-skill")
+  await mkdir(skillDir, { recursive: true })
+  await writeFile(path.join(pluginRoot, "plugin.json"), JSON.stringify({
+    name: "disabled-plugin",
+    manifest_version: 2,
+    components: {
+      skills: {
+        enabled: false,
+        dirs: ["skills"]
+      }
+    }
+  }, null, 2))
+  await writeFile(path.join(skillDir, "SKILL.md"), `---\nname: hidden-skill\ndescription: hidden\n---\nHidden`)
+
+  await SkillRegistry.initialize({ skills: { auto_seed: false }, mcp: { auto_discover: false } }, projectDir)
+  assert.equal(SkillRegistry.get("hidden-skill"), null)
+  const manifests = SkillRegistry.listPluginManifests()
+  assert.ok(manifests.some((plugin) => plugin.name === "disabled-plugin" && plugin.skillsEnabled === false))
+})

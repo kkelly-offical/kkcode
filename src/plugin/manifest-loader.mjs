@@ -71,6 +71,19 @@ function normalizeComponentDirs(value, rootDir, label, errors) {
     .filter(Boolean)
 }
 
+function normalizeComponentSpec(value, rootDir, label, errors) {
+  if (isPlainObject(value)) {
+    return {
+      enabled: value.enabled !== false,
+      dirs: normalizeComponentDirs(value.dirs ?? value.paths ?? value.path ?? value.dir ?? [], rootDir, label, errors)
+    }
+  }
+  return {
+    enabled: true,
+    dirs: normalizeComponentDirs(value, rootDir, label, errors)
+  }
+}
+
 async function normalizeMcpServers(manifest, rootDir, errors) {
   const out = {}
   const inlineServers = manifest.mcpServers || manifest.mcp_servers
@@ -128,18 +141,26 @@ async function loadManifest(filePath, scope) {
   const name = typeof manifest.name === "string" && manifest.name.trim()
     ? manifest.name.trim()
     : path.basename(rootDir)
+  const skillSpec = normalizeComponentSpec(manifest.skills ?? components.skills, rootDir, "skills", errors)
+  const agentSpec = normalizeComponentSpec(manifest.agents ?? components.agents, rootDir, "agents", errors)
+  const hookSpec = normalizeComponentSpec(manifest.hooks ?? components.hooks, rootDir, "hooks", errors)
 
   const plugin = {
     name,
     version: typeof manifest.version === "string" ? manifest.version : null,
+    manifestVersion: manifest.manifest_version ?? manifest.manifestVersion ?? 1,
     enabled: manifest.enabled !== false && manifest.disabled !== true,
     displayName: typeof manifest.displayName === "string" ? manifest.displayName.trim() : null,
+    disabledReason: typeof manifest.disabled_reason === "string" ? manifest.disabled_reason : null,
     scope,
     source: filePath,
     rootDir,
-    skills: normalizeComponentDirs(manifest.skills ?? components.skills, rootDir, "skills", errors),
-    agents: normalizeComponentDirs(manifest.agents ?? components.agents, rootDir, "agents", errors),
-    hooks: normalizeComponentDirs(manifest.hooks ?? components.hooks, rootDir, "hooks", errors),
+    skillsEnabled: skillSpec.enabled,
+    agentsEnabled: agentSpec.enabled,
+    hooksEnabled: hookSpec.enabled,
+    skills: skillSpec.dirs,
+    agents: agentSpec.dirs,
+    hooks: hookSpec.dirs,
     mcpServers: await normalizeMcpServers(manifest, rootDir, errors),
     capabilities: normalizeCapabilities(manifest)
   }
@@ -183,7 +204,8 @@ export async function discoverLocalPluginManifests(cwd = process.cwd()) {
 }
 
 export function pluginComponentDirs(plugins, key) {
-  return plugins.flatMap((plugin) => (plugin.enabled === false ? [] : (plugin[key] || [])).map((dir) => ({
+  const enabledFlag = `${key}Enabled`
+  return plugins.flatMap((plugin) => (plugin.enabled === false || plugin[enabledFlag] === false ? [] : (plugin[key] || [])).map((dir) => ({
     dir,
     scope: `plugin:${plugin.scope}:${plugin.name}`,
     plugin

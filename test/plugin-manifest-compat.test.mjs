@@ -59,6 +59,30 @@ test("plugin manifest parser keeps malformed entries actionable", async () => {
   assert.ok(result.errors.some((item) => item.includes("mcp entries must be strings or objects")))
 })
 
+test("plugin manifest supports disabled plugins and component-level toggles", async () => {
+  const root = path.join(projectDir, ".kkcode-plugin")
+  await mkdir(path.join(root, "skills"), { recursive: true })
+  await writeFile(path.join(root, "plugin.json"), JSON.stringify({
+    name: "disabled-plugin",
+    enabled: false,
+    disabled_reason: "local policy",
+    manifest_version: 2,
+    components: {
+      skills: {
+        enabled: false,
+        dirs: ["skills"]
+      }
+    }
+  }, null, 2))
+
+  const result = await discoverLocalPluginManifests(projectDir)
+  assert.equal(result.plugins.length, 1)
+  assert.equal(result.plugins[0].enabled, false)
+  assert.equal(result.plugins[0].disabledReason, "local policy")
+  assert.equal(result.plugins[0].manifestVersion, 2)
+  assert.equal(result.plugins[0].skillsEnabled, false)
+})
+
 test("disabled plugin manifests stay discoverable but do not expose runtime components", async () => {
   const root = path.join(projectDir, ".kkcode", "plugins", "disabled-plugin")
   await mkdir(path.join(root, "skills"), { recursive: true })
