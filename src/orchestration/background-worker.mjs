@@ -112,6 +112,9 @@ async function runDelegateTask(task, signal) {
   if (!["fresh_agent", "fork_context"].includes(executionMode)) {
     throw new Error(`unsupported task.execution_mode: ${payload.executionMode}`)
   }
+  if (payload.allowQuestion === true) {
+    throw new Error("background delegated tasks cannot set allow_question=true")
+  }
 
   await ensureDelegatedSession({
     executionMode,
@@ -127,7 +130,7 @@ async function runDelegateTask(task, signal) {
     sessionId: payload.subSessionId,
     configState: ctx.configState,
     signal,
-    allowQuestion: payload.allowQuestion !== true ? false : true,
+    allowQuestion: false,
     toolContext: {
       taskId: task.id,
       stageId: payload.stageId || null,

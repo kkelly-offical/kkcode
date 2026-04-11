@@ -1,6 +1,6 @@
 # kkcode
 
-[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=v0.1.13)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
+[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=v0.1.14)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 ![Node](https://img.shields.io/badge/Node.js-%3E%3D22-green)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
@@ -233,16 +233,17 @@ kkcode 仍然是**纯 CLI 优先**工具，但 0.1.13 进一步把 ask / plan / 
 
 支持通过 YAML/MJS 自定义子智能体，或 `/create-agent` 自动生成。
 
-### `task` 委派契约（0.1.13 最小公开面）
+### `task` 委派契约（0.1.14 最小公开面）
 
 把 `task` 当成**有边界的 sidecar 委派工具**，不要把它当成 LongAgent 的替代品：
 
 - **stay local**：简单 `read` / `edit` / 单命令执行，直接本地处理
 - **先定主航道**：`ask` 负责解释，`plan` 负责规格，`agent` 负责默认事务，`longagent` 负责重型交付
 - **`fresh_agent`（默认）**：自包含、实现导向、希望隔离上下文的子任务
-- **`fork_context`**：仅用于研究 / 审计 / 验证等 sidecar 工作，子任务继承父会话上下文，但父会话仍负责最终综合
-- **`run_in_background`**：长耗时 sidecar 工作，立即返回后台 `task_id`
+- **`fork_context`**：仅用于研究 / 审计 / 验证等**只读** sidecar 工作，子任务继承父会话上下文，但父会话仍负责最终综合
+- **`run_in_background`**：长耗时 sidecar 工作，立即返回后台 `task_id`；后台委派必须自包含，不能依赖交互式提问
 - **不要用委派掩盖路由不确定性**：如果还是单路径 / 单命令 / 小闭环事务，就继续留在主 `agent`
+- **不要把理解工作本身外包**：主线程负责综合判断，子线程只返回结果
 - **只有出现重型证据再建议 `longagent`**：例如跨文件 ownership、分阶段交付、系统级 blast radius
 
 后台委派的跟踪是**确定性的**：
@@ -250,6 +251,9 @@ kkcode 仍然是**纯 CLI 优先**工具，但 0.1.13 进一步把 ask / plan / 
 - `background_output`：查看状态 / 日志 / 结果
 - `background_cancel`：取消运行中的后台委派
 - 终态固定为：`completed` / `cancelled` / `error` / `interrupted`
+
+更完整的 task 兼容矩阵见
+[`docs/task-delegation-contract-matrix.md`](docs/task-delegation-contract-matrix.md)。
 
 更完整的发布边界、模式主契约、兼容矩阵与非目标见
 [`docs/kkcode-0.1.13-mode-lane-contract.md`](docs/kkcode-0.1.13-mode-lane-contract.md)。

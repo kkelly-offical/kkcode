@@ -18,6 +18,28 @@ test("task delegate requires a prompt for new delegated sessions", async () => {
   assert.deepEqual(result, { error: "task.prompt or task.objective is required when session_id is not provided" })
 })
 
+test("task delegate requires write_scope and deliverable for synthesized briefs", async () => {
+  const delegateTask = createTaskDelegate({
+    config: {},
+    parentSessionId: "parent_structured_validation",
+    model: "gpt-test",
+    providerType: "local",
+    runSubtask: async () => {
+      throw new Error("should not run")
+    }
+  })
+
+  assert.deepEqual(
+    await delegateTask({ objective: "Audit routing heuristics" }),
+    { error: "task.write_scope is required when synthesizing a new delegation brief" }
+  )
+
+  assert.deepEqual(
+    await delegateTask({ objective: "Audit routing heuristics", write_scope: "read-only" }),
+    { error: "task.deliverable is required when synthesizing a new delegation brief" }
+  )
+})
+
 test("task delegate synthesizes a directive brief from structured delegation fields", async () => {
   let received = null
   const delegateTask = createTaskDelegate({
@@ -70,11 +92,12 @@ test("task delegate reuses an existing sub-session with continuation prompt", as
 
   const result = await delegateTask({
     session_id: "sub_existing",
+    prompt: "Continue the same delegated slice and return a concise update.",
     allow_question: true
   })
 
   assert.equal(received.sessionId, "sub_existing")
-  assert.equal(received.prompt, "Continue from existing sub-session context.")
+  assert.equal(received.prompt, "Continue the same delegated slice and return a concise update.")
   assert.equal(received.model, "gpt-parent")
   assert.equal(received.providerType, "local")
   assert.equal(received.subagent.name, "default-subagent")
@@ -88,6 +111,72 @@ test("task delegate reuses an existing sub-session with continuation prompt", as
     tool_events: 2,
     file_changes: [],
     edit_feedback: []
+  })
+})
+
+test("task delegate rejects structured brief fields when continuing an existing sub-session", async () => {
+  const delegateTask = createTaskDelegate({
+    config: {},
+    parentSessionId: "parent_cont_structured",
+    model: "gpt-parent",
+    providerType: "local",
+    runSubtask: async () => {
+      throw new Error("should not run")
+    }
+  })
+
+  const result = await delegateTask({
+    session_id: "sub_existing",
+    objective: "Continue investigating the delegated slice"
+  })
+
+  assert.deepEqual(result, {
+    error: "task.session_id cannot be combined with structured brief fields; use a short continuation prompt instead"
+  })
+})
+
+test("task delegate rejects execution_mode when continuing an existing sub-session", async () => {
+  const delegateTask = createTaskDelegate({
+    config: {},
+    parentSessionId: "parent_cont_mode",
+    model: "gpt-parent",
+    providerType: "local",
+    runSubtask: async () => {
+      throw new Error("should not run")
+    }
+  })
+
+  const result = await delegateTask({
+    session_id: "sub_existing",
+    prompt: "Continue the delegated work.",
+    execution_mode: "fork_context"
+  })
+
+  assert.deepEqual(result, {
+    error: "task.execution_mode only applies when starting a new delegated session"
+  })
+})
+
+test("task delegate reserves fork_context for read-only sidecar work", async () => {
+  const delegateTask = createTaskDelegate({
+    config: {},
+    parentSessionId: "parent_fork_guard",
+    model: "gpt-parent",
+    providerType: "local",
+    runSubtask: async () => {
+      throw new Error("should not run")
+    }
+  })
+
+  const result = await delegateTask({
+    objective: "Implement the feature directly in the delegated slice",
+    write_scope: "modify src/tool/task-tool.mjs",
+    deliverable: "return a patch",
+    execution_mode: "fork_context"
+  })
+
+  assert.deepEqual(result, {
+    error: "task.execution_mode=fork_context is reserved for read-only sidecar work; use fresh_agent for implementation"
   })
 })
 
@@ -211,7 +300,7 @@ test("task delegate launches background tasks with deterministic payload metadat
       stage_id: "stage_2",
       task_id: "task_99",
       planned_files: ["src/a.mjs", "test/a.test.mjs"],
-      allow_question: true
+      allow_question: false
     })
 
     assert.deepEqual(result, {
@@ -232,8 +321,30 @@ test("task delegate launches background tasks with deterministic payload metadat
     assert.equal(launchArgs.payload.stageId, "stage_2")
     assert.equal(launchArgs.payload.logicalTaskId, "task_99")
     assert.deepEqual(launchArgs.payload.plannedFiles, ["src/a.mjs", "test/a.test.mjs"])
-    assert.equal(launchArgs.payload.allowQuestion, true)
+    assert.equal(launchArgs.payload.allowQuestion, false)
   } finally {
     BackgroundManager.launchDelegateTask = originalLaunchDelegateTask
   }
+})
+
+test("task delegate rejects interactive questions for background sidecar work", async () => {
+  const delegateTask = createTaskDelegate({
+    config: { background: { mode: "worker_process" } },
+    parentSessionId: "parent_bg_question",
+    model: "gpt-parent",
+    providerType: "local",
+    runSubtask: async () => {
+      throw new Error("should not run")
+    }
+  })
+
+  const result = await delegateTask({
+    prompt: "run sidecar verification",
+    run_in_background: true,
+    allow_question: true
+  })
+
+  assert.deepEqual(result, {
+    error: "task.run_in_background does not support allow_question=true"
+  })
 })

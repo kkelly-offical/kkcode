@@ -19,6 +19,7 @@ Delegate when:
 
 - New `task` calls start with fresh context by default. The subagent does NOT see your parent conversation unless you summarize it in the prompt.
 - Set `execution_mode="fork_context"` when the delegated task should start from a fork of the current parent session transcript. Use this for sidecar research, audits, or follow-up verification that materially benefits from current context.
+- `fork_context` is reserved for **read-only sidecar work**. If the delegated slice needs implementation or file mutation, prefer `fresh_agent`.
 - Use `session_id` only to continue an existing delegated session that already has the needed context.
 - `fork_context` inherits transcript context, but it does NOT change the parent/child result contract: the parent agent still owns synthesis and must wait for the child result instead of assuming it succeeded.
 - For implementation-heavy work, prefer a fresh task brief with explicit file scope. For follow-up questions or incremental continuation on the same delegated slice, continue the same `session_id`.
@@ -33,6 +34,11 @@ Every delegated prompt should include:
 - Constraints: architectural boundaries, forbidden edits, or safety rules
 - Deliverable: what the subagent should return (summary, patch, review findings, etc.)
 
+Never delegate understanding:
+- Do not hand off the core synthesis step with prompts like “based on your findings, fix it”
+- Parent agent owns synthesis, judgment, and final claims
+- Forked/background delegates report results; they do not authorize the parent to guess
+
 kkcode also accepts structured brief fields for these sections (`objective`, `why`, `write_scope`, `starting_points`, `constraints`, `deliverable`) and will synthesize the directive brief when `prompt` is omitted.
 
 ## Execution contract
@@ -43,6 +49,7 @@ Whether the brief is handwritten or synthesized, delegated work must follow this
 - Avoid suggesting LongAgent-style escalation unless heavy multi-file evidence is actually present
 - Do not fabricate completion or present unfinished work as done
 - Do not peek at unfinished sibling work and convert guesses into facts
+- Background delegates cannot ask interactive questions; keep them self-contained
 
 Good delegation briefs are directive and self-contained. The subagent should not need to infer hidden context.
 
@@ -117,9 +124,9 @@ GOOD: glob(pattern="**/*.test.js")
 - **subagent_type** (optional): One of "explore", "architect", "reviewer", "researcher", or omit for default build agent.
 
 - **session_id** (optional): Continue an existing delegated session when you need follow-up work on the same slice. Do NOT use this as a substitute for briefing a new task.
-- **execution_mode** (optional): `fresh_agent` (default) or `fork_context`. Use `fork_context` only when inheriting the parent transcript is genuinely useful.
+- **execution_mode** (optional): `fresh_agent` (default) or `fork_context`. Use `fork_context` only when inheriting the parent transcript is genuinely useful and the delegated slice stays read-only.
 
-- **run_in_background** (optional): Set to true only for sidecar work that can continue while you do other things. Returns a task_id immediately — use `background_output` to check results later.
+- **run_in_background** (optional): Set to true only for sidecar work that can continue while you do other things. Returns a task_id immediately — use `background_output` to check results later. Background delegates must be self-contained and cannot use `question`.
 
 # Important Behaviors
 
