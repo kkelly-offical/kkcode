@@ -139,6 +139,16 @@ test("e2e: background retry on missing task exits non-zero", () => {
   assert.ok(exitCode !== 0, "should fail for missing task")
 })
 
+test("e2e: background output on missing task exits non-zero", () => {
+  const { exitCode } = run(["background", "output", "--id", "bg_missing"], { expectFail: true })
+  assert.ok(exitCode !== 0, "should fail for missing task output")
+})
+
+test("e2e: background wait on missing task exits non-zero", () => {
+  const { exitCode } = run(["background", "wait", "--id", "bg_missing", "--timeout", "1"], { expectFail: true })
+  assert.ok(exitCode !== 0, "should fail for missing task wait")
+})
+
 test("e2e: audit list --json exits 0", () => {
   const { stdout } = run(["audit", "list", "--json"])
   const parsed = JSON.parse(stdout)

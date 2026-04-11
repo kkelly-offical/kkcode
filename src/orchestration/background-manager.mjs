@@ -547,6 +547,19 @@ export const BackgroundManager = {
     })
   },
 
+  async waitForTask(id, { timeoutMs = 30000, tickMs = 250, config = {} } = {}) {
+    const deadline = Date.now() + Math.max(100, Number(timeoutMs || 30000))
+    while (Date.now() < deadline) {
+      await this.tick(config)
+      const task = await loadTask(id)
+      if (!task) return null
+      if (TERMINAL_STATES.has(task.status)) return task
+      const remaining = Math.max(1, deadline - Date.now())
+      await this.waitForAny([id], Math.min(Number(tickMs || 250), remaining))
+    }
+    return loadTask(id)
+  },
+
   async tick(config = {}) {
     await markStaleRunningTasks(config)
     await startPendingTasks(config)

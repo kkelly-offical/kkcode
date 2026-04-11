@@ -30,9 +30,13 @@ export function createBackgroundCommand() {
     .command("list")
     .description("list background tasks")
     .option("--json", "print raw JSON")
+    .option("--status <status>", "filter by status")
     .action(async (options) => {
       await withContext(async () => {
-        const list = await BackgroundManager.list()
+        const list = (await BackgroundManager.list()).filter((task) => {
+          if (!options.status) return true
+          return String(task.status || "") === String(options.status || "")
+        })
         if (options.json) {
           console.log(JSON.stringify(list, null, 2))
           return
@@ -49,6 +53,56 @@ export function createBackgroundCommand() {
         for (const task of list) {
           printTaskSummary(task)
         }
+      })
+    })
+
+  cmd
+    .command("output")
+    .description("print the terminal result payload for one background task")
+    .requiredOption("--id <id>", "task id")
+    .action(async (options) => {
+      await withContext(async () => {
+        const task = await BackgroundManager.get(options.id)
+        if (!task) {
+          console.error(`not found: ${options.id}`)
+          process.exitCode = 1
+          return
+        }
+        if (!task.result) {
+          console.log(JSON.stringify(BackgroundManager.summarize(task), null, 2))
+          return
+        }
+        console.log(JSON.stringify(task.result, null, 2))
+      })
+    })
+
+  cmd
+    .command("wait")
+    .description("wait for one background task to reach a terminal state")
+    .requiredOption("--id <id>", "task id")
+    .option("--timeout-ms <ms>", "wait timeout in milliseconds", "30000")
+    .option("--json", "print raw JSON")
+    .action(async (options) => {
+      await withContext(async (ctx) => {
+        const task = await BackgroundManager.waitForTask(options.id, {
+          timeoutMs: Number(options.timeoutMs || 30000),
+          config: ctx.configState.config
+        })
+        if (!task) {
+          console.error(`not found: ${options.id}`)
+          process.exitCode = 1
+          return
+        }
+        if (!["completed", "cancelled", "error", "interrupted"].includes(task.status)) {
+          console.error(`timeout waiting for task: ${options.id} (status=${task.status})`)
+          process.exitCode = 1
+          return
+        }
+        if (options.json) {
+          console.log(JSON.stringify(task, null, 2))
+          return
+        }
+        printTaskSummary(task)
       })
     })
 
@@ -81,6 +135,77 @@ export function createBackgroundCommand() {
           console.log("  result:")
           console.log(JSON.stringify(task.result, null, 2))
         }
+      })
+    })
+
+  cmd
+    .command("output")
+    .description("show the latest result payload for one background task")
+    .requiredOption("--id <id>", "task id")
+    .action(async (options) => {
+      await withContext(async () => {
+        const task = await BackgroundManager.get(options.id)
+        if (!task) {
+          console.error(`not found: ${options.id}`)
+          process.exitCode = 1
+          return
+        }
+        if (!task.result) {
+          console.error(`no result yet: ${options.id} (status=${task.status})`)
+          process.exitCode = 1
+          return
+        }
+        console.log(JSON.stringify(task.result, null, 2))
+      })
+    })
+
+  cmd
+    .command("logs")
+    .description("show recent log lines for one background task")
+    .requiredOption("--id <id>", "task id")
+    .option("--tail <n>", "number of lines to show", "20")
+    .action(async (options) => {
+      await withContext(async () => {
+        const task = await BackgroundManager.get(options.id)
+        if (!task) {
+          console.error(`not found: ${options.id}`)
+          process.exitCode = 1
+          return
+        }
+        const tailCount = Math.max(1, Number(options.tail || 20))
+        const lines = Array.isArray(task.logs) ? task.logs.slice(-tailCount) : []
+        if (!lines.length) {
+          console.log(`no logs yet: ${options.id}`)
+          return
+        }
+        for (const line of lines) {
+          console.log(line)
+        }
+      })
+    })
+
+  cmd
+    .command("wait")
+    .description("wait for one background task to settle and then show its summary")
+    .requiredOption("--id <id>", "task id")
+    .option("--timeout <ms>", "max wait time in milliseconds", "30000")
+    .action(async (options) => {
+      await withContext(async () => {
+        const task = await BackgroundManager.get(options.id)
+        if (!task) {
+          console.error(`not found: ${options.id}`)
+          process.exitCode = 1
+          return
+        }
+        await BackgroundManager.waitForAny([options.id], Number(options.timeout || 30000))
+        await BackgroundManager.tick()
+        const latest = await BackgroundManager.get(options.id)
+        if (!latest) {
+          console.error(`not found: ${options.id}`)
+          process.exitCode = 1
+          return
+        }
+        printTaskSummary(latest)
       })
     })
 
