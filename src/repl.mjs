@@ -23,6 +23,7 @@ import { compactSession } from "./session/compaction.mjs"
 import { ToolRegistry } from "./tool/registry.mjs"
 import { McpRegistry } from "./mcp/registry.mjs"
 import { HookBus, initHookBus } from "./plugin/hook-bus.mjs"
+import { BackgroundManager } from "./orchestration/background-manager.mjs"
 import { renderReplDashboard, renderReplLogo, renderStartupHint } from "./ui/repl-dashboard.mjs"
 import { paint } from "./theme/color.mjs"
 import { PermissionEngine } from "./permission/engine.mjs"
@@ -499,7 +500,7 @@ function collectSkillSummary() {
   }
 }
 
-function formatRuntimeStateText(state, mcpSummary = null, skillSummary = null) {
+function formatRuntimeStateText(state, mcpSummary = null, skillSummary = null, backgroundSummary = null) {
   const lines = [
     `session=${state.sessionId}`,
     `mode=${state.mode}`,
@@ -521,6 +522,10 @@ function formatRuntimeStateText(state, mcpSummary = null, skillSummary = null) {
     if (skillSummary.total === 0) {
       lines.push("skills.quickstart=kkcode skill init --project")
     }
+  }
+  if (backgroundSummary) {
+    lines.push(`background=${backgroundSummary.active} active (pending:${backgroundSummary.counts.pending}, running:${backgroundSummary.counts.running})`)
+    lines.push(`background.terminal=completed:${backgroundSummary.counts.completed} interrupted:${backgroundSummary.counts.interrupted} error:${backgroundSummary.counts.error}`)
   }
   return lines.join("\n")
 }
@@ -836,6 +841,7 @@ async function processInputLine({
     const latest = await listSessions({ cwd: process.cwd(), limit: 6, includeChildren: false }).catch(() => [])
     const mcpSummary = collectMcpSummary()
     const skillSummary = collectSkillSummary()
+    const backgroundSummary = await BackgroundManager.summary().catch(() => null)
     print(
       renderReplDashboard({
         theme: ctx.themeState.theme,
@@ -844,12 +850,13 @@ async function processInputLine({
         recentSessions: latest,
         mcpSummary,
         skillSummary,
+        backgroundSummary,
         customCommandCount: customCommands.length,
         cwd: process.cwd()
       })
     )
     print("")
-    print(formatRuntimeStateText(state, mcpSummary, skillSummary))
+    print(formatRuntimeStateText(state, mcpSummary, skillSummary, backgroundSummary))
     return { exit: false }
   }
 
@@ -1548,6 +1555,7 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
       const latest = action.recentSessions || []
       const mcpSummary = collectMcpSummary()
       const skillSummary = collectSkillSummary()
+      const backgroundSummary = await BackgroundManager.summary().catch(() => null)
       console.log(
         renderReplDashboard({
           theme: ctx.themeState.theme,
@@ -1556,6 +1564,7 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
           recentSessions: latest,
           mcpSummary,
           skillSummary,
+          backgroundSummary,
           customCommandCount: localCustomCommands.length,
           cwd: process.cwd()
         })
