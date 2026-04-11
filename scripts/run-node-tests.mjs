@@ -4,6 +4,7 @@ import { spawn } from "node:child_process"
 
 const rootDir = process.cwd()
 const testDir = path.join(rootDir, "test")
+const enableCoverage = process.argv.includes("--coverage")
 
 async function collectTests(dir) {
   const entries = await readdir(dir, { withFileTypes: true })
@@ -28,7 +29,11 @@ if (testFiles.length === 0) {
   process.exit(1)
 }
 
-const child = spawn(process.execPath, ["--test", ...testFiles], {
+const childArgs = enableCoverage
+  ? ["--experimental-test-coverage", "--test", ...testFiles]
+  : ["--test", ...testFiles]
+
+const child = spawn(process.execPath, childArgs, {
   cwd: rootDir,
   stdio: "inherit"
 })
