@@ -1,6 +1,6 @@
 # kkcode
 
-[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=v0.1.10)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
+[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=v0.1.11)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 ![Node](https://img.shields.io/badge/Node.js-%3E%3D22-green)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
@@ -187,6 +187,23 @@ TUI 审批面板：`1` allow once / `2` allow session / `3` deny / `Esc` deny
 | `codesearch` | 代码搜索引擎 |
 
 写入安全特性：原子写、事务回滚、外部修改检测、读前编辑约束、file lock 串行化。
+
+### CLI 通用助手能力边界（0.1.11）
+
+kkcode 仍然是**纯 CLI 优先**工具，但 0.1.11 明确把它扩成了一个更稳健的本地通用助手入口：
+
+| 能力面 | 当前覆盖 |
+|------|------|
+| 代码交付 | `read` / `write` / `edit` / `patch` / LongAgent |
+| 本地目录 / 文件 / 日志检查 | `list` / `glob` / `grep` / `read` / `bash` |
+| 仓库 / 发布辅助 | `git_status` / `git_info` / `git_snapshot` / `git_restore` |
+| Web 查询 / 抓取 | `websearch` / `webfetch` |
+| 子任务委派 | `task` / `background_output` / `background_cancel` |
+
+这意味着 kkcode 不再只适合“写代码”，也适合做很多**终端原生**的本地事务；但这**不代表**它已经承诺 GUI / 桌面自动化、IDE 集成或 marketplace 平台能力。
+
+更完整的能力矩阵见
+[`docs/cli-general-assistant-capability-matrix.md`](docs/cli-general-assistant-capability-matrix.md)。
 
 ---
 

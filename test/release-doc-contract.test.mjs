@@ -16,6 +16,8 @@ test("README advertises the shipped delegation and interruption contract", async
   assert.match(readme, /Esc.*中断当前 turn/)
   assert.match(readme, /\.kkcode\/hooks\//)
   assert.match(readme, /\.kkcode-plugin\/plugin\.json/)
+  assert.match(readme, /CLI 通用助手能力边界（0\.1\.11）/)
+  assert.match(readme, /docs\/cli-general-assistant-capability-matrix\.md/)
 })
 
 test("0.1.11 contract doc keeps the shipped scope and boundaries explicit", async () => {
@@ -30,6 +32,8 @@ test("0.1.11 contract doc keeps the shipped scope and boundaries explicit", asyn
   assert.match(doc, /interrupted/)
   assert.match(doc, /\.kkcode\/hooks\//)
   assert.match(doc, /\.kkcode-plugin\/plugin\.json/)
+  assert.match(doc, /CLI general assistant capability boundary/)
+  assert.match(doc, /docs\/cli-general-assistant-capability-matrix\.md/)
   assert.match(doc, /no GUI\/desktop automation promise/i)
   assert.match(doc, /keep LongAgent/i)
 })

@@ -4,17 +4,19 @@ This document records the **shipped public contract** for the 0.1.11 slice appro
 
 - `.omx/plans/prd-kkcode-0.1.11-agent-general-assistant.md`
 - `.omx/plans/test-spec-kkcode-0.1.11-agent-general-assistant.md`
+- `docs/cli-general-assistant-capability-matrix.md`
 
 It is intentionally release-facing rather than aspirational: it describes what users and extenders can rely on now, and it makes the out-of-scope edges explicit.
 
 ## 1. Scope of the 0.1.11 slice
 
-The committed 0.1.11 slice covers four areas:
+The committed 0.1.11 slice covers five areas:
 
 1. **Routing + agent-mode tolerance foundation**
 2. **Interruption compliance core**
 3. **Delegation contract minimum slice** tightly coupled to routing/interruption
-4. **Compatibility/docs updates** required for the shipped behavior
+4. **CLI general assistant capability boundary**
+5. **Compatibility/docs updates** required for the shipped behavior
 
 Hard boundaries for this slice:
 
@@ -138,7 +140,26 @@ The 0.1.11 docs use three support buckets:
 
 This matters because compatibility should not imply unsupported runtime guarantees.
 
-## 7. Explicit non-goals
+## 7. CLI general assistant capability boundary
+
+The 0.1.11 public contract explicitly treats kkcode as a **terminal-native general assistant**, not just a code mutator.
+
+Users can rely on these terminal-first capability lanes:
+
+- coding and patching
+- local filesystem / config / log inspection
+- shell execution
+- repo / release assistance
+- web lookup / fetch
+- bounded delegated sidecar work
+
+The authoritative release-facing matrix is documented in:
+
+- `docs/cli-general-assistant-capability-matrix.md`
+
+This boundary matters because it expands “what kkcode is for” without implying GUI automation, IDE integration, or remote platform surfaces.
+
+## 8. Explicit non-goals
 
 The following are still out of scope for this release slice:
 
@@ -148,7 +169,7 @@ The following are still out of scope for this release slice:
 - remote bridge/platform rewrites
 - weakening LongAgent ownership/stage discipline
 
-## 8. Release-ready checklist
+## 9. Release-ready checklist
 
 Treat this slice as documented correctly only when all of the following stay true:
 
@@ -157,4 +178,5 @@ Treat this slice as documented correctly only when all of the following stay tru
 - background delegated work has deterministic terminal states
 - `fork_context` is positioned as a sidecar lane, not a LongAgent substitute
 - docs keep hooks and plugin packages distinct
+- docs keep the CLI general assistant boundary explicit and non-GUI
 - compatibility notes do not promise GUI/platform features that are not shipped

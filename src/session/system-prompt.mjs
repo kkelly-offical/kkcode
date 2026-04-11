@@ -201,14 +201,37 @@ export async function buildSystemPromptBlocks({ mode, model, cwd, agent = null, 
   ]
   blocks.push({ label: "output_strategy", text: outputStrategyLines.join("\n"), cacheable: true })
 
-  // Block 4: Skills descriptions (stable — changes only when skills change)
+  // Block 4: CLI assistant contract (stable — release-facing behavior boundary)
+  const assistantContractLines = [
+    "# CLI Assistant Contract",
+    "",
+    "Operate as a CLI-first assistant, not an IDE shell or GUI automation product.",
+    "",
+    "Prefer the lightest path that completes the next step well:",
+    "- answer directly for short questions",
+    "- handle small local read/edit/run tasks without over-upgrading to heavyweight execution",
+    "- reserve longagent-style behavior for structured multi-file or system-level delivery",
+    "",
+    "Current safe capability boundary:",
+    "- coding and patching",
+    "- local filesystem, config, and log inspection",
+    "- shell/task execution",
+    "- repo/release assistance",
+    "- web lookup/fetch",
+    "- bounded delegated sidecar work",
+    "",
+    "Do not imply unsupported product surfaces such as GUI desktop automation, IDE integration, marketplace installs, or remote bridge platforms."
+  ]
+  blocks.push({ label: "assistant_contract", text: assistantContractLines.join("\n"), cacheable: true })
+
+  // Block 5: Skills descriptions (stable — changes only when skills change)
   if (skills.length) {
     const skillLines = skills.map((s) => `- /${s.name}: ${s.description || s.name}`).join("\n")
     const skillText = `# Available Skills\n\nInvoke with /<skill-name> [arguments].\n\n${skillLines}`
     blocks.push({ label: "skills", text: skillText, cacheable: true })
   }
 
-  // Block 4.5: Available sub-agents (stable — changes only when custom agents change)
+  // Block 5.5: Available sub-agents (stable — changes only when custom agents change)
   const allAgents = listAgents({ includeHidden: false })
   const customSubagents = allAgents.filter((a) => a.mode === "subagent" && a._customAgent)
   if (customSubagents.length) {
@@ -227,12 +250,12 @@ export async function buildSystemPromptBlocks({ mode, model, cwd, agent = null, 
     blocks.push({ label: "subagents", text: subagentText, cacheable: true })
   }
 
-  // Block 4.7: Project context (semi-stable — changes when cwd changes)
+  // Block 5.7: Project context (semi-stable — changes when cwd changes)
   if (projectContext) {
     blocks.push({ label: "project", text: projectContext, cacheable: false })
   }
 
-  // Block 4.9: Language constraint (stable — changes only when config changes)
+  // Block 5.9: Language constraint (stable — changes only when config changes)
   if (language && language !== "en") {
     const langMap = {
       zh: "Always respond in Chinese (中文). Use Chinese for all explanations, comments, and communications. Technical terms, code identifiers, and code content should remain in their original form (typically English)."
@@ -243,7 +266,7 @@ export async function buildSystemPromptBlocks({ mode, model, cwd, agent = null, 
     }
   }
 
-  // Block 4.95: Auto Memory (semi-stable — changes when user updates memory files)
+  // Block 5.95: Auto Memory (semi-stable — changes when user updates memory files)
   const memoryText = await loadAutoMemory(cwd)
   if (memoryText) {
     blocks.push({ label: "memory", text: memoryText, cacheable: false })
