@@ -25,6 +25,8 @@ test("route decisions expose topology and evidence for observability", () => {
   assert.ok(route.evidence.includes("inspect_patch_verify"))
   assert.equal(route.observability.stayedLocal, true)
   assert.equal(route.observability.requestedMode, "agent")
+  assert.match(route.observability.topologySummary, /bounded_local_transaction/)
+  assert.match(route.observability.evidenceSummary, /inspect_patch_verify/)
 })
 
 test("metrics collect stayed-local, over-escalation, and continuation counters", () => {

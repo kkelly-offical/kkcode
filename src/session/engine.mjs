@@ -71,6 +71,25 @@ export function renderPublicModeContract() {
   ].join("\n")
 }
 
+function summarizeRouteEvidence(classification) {
+  const evidence = Array.isArray(classification?.evidence) ? classification.evidence : []
+  if (!evidence.length) return "evidence=none"
+  return `evidence=${evidence.join(", ")}`
+}
+
+function summarizeRouteTopology(classification) {
+  const topology = classification?.topology || "open_ended"
+  const continuity = classification?.continuity || "new_transaction"
+  return `topology=${topology}; continuity=${continuity}`
+}
+
+export function summarizeRouteDecision(route) {
+  if (!route) return ""
+  const parts = [summarizeRouteTopology(route), summarizeRouteEvidence(route)]
+  if (route.suggestion) parts.push(`upgrade_path=${route.mode}->${route.suggestion}`)
+  return parts.join("; ")
+}
+
 /**
  * 智能模式路由：根据 prompt 内容判断最适合的执行模式
  * @returns {{ mode: string, changed: boolean, reason: string, confidence: string, forced: boolean }}
@@ -78,6 +97,9 @@ export function renderPublicModeContract() {
  */
 function finalizeRouteDecision(req, classification, base = {}) {
   const effectiveMode = base.changed ? base.mode : req
+  const evidenceSummary = summarizeRouteEvidence(classification)
+  const topologySummary = summarizeRouteTopology(classification)
+  const upgradePath = base.suggestion ? `${effectiveMode}->${base.suggestion}` : null
   return {
     ...base,
     modeContract: getPublicModeContract(effectiveMode),
@@ -85,6 +107,9 @@ function finalizeRouteDecision(req, classification, base = {}) {
     evidence: Array.isArray(classification.evidence) ? classification.evidence : [],
     pathHints: Array.isArray(classification.pathHints) ? classification.pathHints : [],
     continuity: classification.continuity || "new_transaction",
+    evidenceSummary,
+    topologySummary,
+    upgradePath,
     observability: {
       requestedMode: req,
       effectiveMode,
@@ -99,6 +124,9 @@ function finalizeRouteDecision(req, classification, base = {}) {
       evidence: Array.isArray(classification.evidence) ? classification.evidence : [],
       pathHints: Array.isArray(classification.pathHints) ? classification.pathHints : [],
       continuity: classification.continuity || "new_transaction",
+      evidenceSummary,
+      topologySummary,
+      upgradePath,
       stayedLocal: effectiveMode === "agent" && classification.mode === "agent",
       deferredLongagent: req === "agent" && base.suggestion === "longagent",
       overEscalatedToLongagent: req === "longagent" && classification.mode === "agent"

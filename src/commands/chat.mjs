@@ -1,6 +1,6 @@
 import { Command } from "commander"
 import { buildContext, printContextWarnings } from "../context.mjs"
-import { ensureEventSinks, executeTurn, formatPublicModeSummary, getPublicModeContract, newSessionId, resolveMode, resolvePromptMode } from "../session/engine.mjs"
+import { ensureEventSinks, executeTurn, formatPublicModeSummary, getPublicModeContract, newSessionId, resolveMode, resolvePromptMode, summarizeRouteDecision } from "../session/engine.mjs"
 import { emitRouteDecisionEvent } from "../session/routing-observability.mjs"
 import { renderStatusBar } from "../theme/status-bar.mjs"
 import { applyCommandTemplate, loadCustomCommands } from "../command/custom-commands.mjs"
@@ -99,6 +99,7 @@ export function createChatCommand() {
       }
       console.log(`effective lane: ${formatPublicModeSummary(effectiveMode)}`)
       console.log(`lane guarantee: ${effectiveContract.guarantee}`)
+      console.log(`route summary: ${summarizeRouteDecision(routedMode.route)}`)
 
       const result = await executeTurn({
         prompt: chatParams.prompt ?? prompt,

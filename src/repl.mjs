@@ -6,6 +6,7 @@ import { basename, dirname, join, resolve as resolvePath } from "node:path"
 import YAML from "yaml"
 import { buildContext, printContextWarnings } from "./context.mjs"
 import { ensureEventSinks, executeTurn, newSessionId, resolveMode, routeMode } from "./session/engine.mjs"
+import { summarizeRouteDecision } from "./session/engine.mjs"
 import { buildAgentContinuationPrompt, summarizeAgentTransaction } from "./session/agent-transaction.mjs"
 import {
   emitAgentContinuationInterrupted,
@@ -2815,6 +2816,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         const currentLabel = state.mode === "ask" ? "ask（问答）" : state.mode
         appendLog(paint(`↳ 保持 ${currentLabel} 模式（${routeExplanation}）`, ctx.themeState.theme.base.muted, { dim: true }))
       }
+      appendLog(paint(`   ${summarizeRouteDecision(route)}`, ctx.themeState.theme.base.muted, { dim: true }))
 
       if (state.mode === "agent") {
         ui.agentContinuation = summarizeAgentTransaction({
@@ -3776,7 +3778,7 @@ function startSplash() {
     "  ╚═╝  ╚═╝ ╚═╝  ╚═╝  ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝ "
   ]
   const tagline = "AI Coding Agent"
-  const version = "v0.1.15"
+  const version = "v0.1.16"
 
   // Gradient colors for the wave animation (cyan → blue → purple → pink → back)
   const wave = [

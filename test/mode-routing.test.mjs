@@ -30,6 +30,8 @@ test("routeMode suggests longagent for cross-file implementation while preservin
   assert.equal(route.changed, false)
   assert.equal(route.suggestion, "longagent")
   assert.equal(route.reason, "multi_file_or_system_task")
+  assert.equal(route.upgradePath, "agent->longagent")
+  assert.match(route.evidenceSummary, /cross_file_scope/)
 })
 
 test("routeMode auto-switches short explain questions from agent to ask", () => {
@@ -50,6 +52,8 @@ test("routeMode keeps inspect + patch + verify loops in agent with evidence cate
   assert.equal(route.reason, "short_local_task_protected")
   assert.ok(route.evidence.includes("inspect_patch_verify_loop"))
   assert.ok(route.evidence.includes("bounded_local_scope"))
+  assert.match(route.topologySummary, /bounded_local_transaction/)
+  assert.match(route.evidenceSummary, /inspect_patch_verify_loop/)
 })
 
 test("routeMode keeps plan explicit and mutation-free as a public contract", () => {

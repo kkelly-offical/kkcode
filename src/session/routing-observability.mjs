@@ -23,6 +23,11 @@ export async function emitRouteDecisionEvent({
       reason: route.reason || null,
       explanation: route.explanation || null,
       confidence: route.confidence || null,
+      topology: route.topology || null,
+      continuity: route.continuity || null,
+      evidenceSummary: route.evidenceSummary || null,
+      topologySummary: route.topologySummary || null,
+      upgradePath: route.upgradePath || null,
       evidence: Array.isArray(route.evidence) ? route.evidence : [],
       promptLength: String(prompt || "").trim().length,
       continuedTransaction
