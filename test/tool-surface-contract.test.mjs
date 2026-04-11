@@ -27,7 +27,7 @@ test("tool surface covers the shipped CLI general assistant lanes", async () => 
   for (const name of ["sysinfo", "list", "glob", "grep"]) {
     assert.ok(names.has(name), `missing local inspection tool ${name}`)
   }
-  for (const name of ["bash", "task", "background_output", "background_cancel"]) {
+  for (const name of ["bash", "task", "background_output", "background_cancel", "task_list", "task_get", "task_stop", "task_output"]) {
     assert.ok(names.has(name), `missing execution/delegation tool ${name}`)
   }
   for (const name of ["git_status", "git_info", "git_snapshot", "git_restore"]) {

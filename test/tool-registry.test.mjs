@@ -7,6 +7,9 @@ const testConfig = { tool: { sources: { builtin: true, local: false, plugin: fal
 test("tool registry exposes task tool in agent mode", async () => {
   const tools = await ToolRegistry.list({ mode: "agent", cwd: process.cwd(), agents: ["explore", "general"], config: testConfig })
   assert.ok(tools.some((tool) => tool.name === "task"))
+  for (const name of ["task_list", "task_get", "task_stop", "task_output"]) {
+    assert.ok(tools.some((tool) => tool.name === name))
+  }
 })
 
 test("tool registry hides mutation and task tools in plan mode", async () => {

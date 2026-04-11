@@ -80,12 +80,12 @@ export function createBackgroundCommand() {
     .command("wait")
     .description("wait for one background task to reach a terminal state")
     .requiredOption("--id <id>", "task id")
-    .option("--timeout-ms <ms>", "wait timeout in milliseconds", "30000")
+    .option("--timeout <ms>", "wait timeout in milliseconds", "30000")
     .option("--json", "print raw JSON")
     .action(async (options) => {
       await withContext(async (ctx) => {
         const task = await BackgroundManager.waitForTask(options.id, {
-          timeoutMs: Number(options.timeoutMs || 30000),
+          timeoutMs: Number(options.timeout || 30000),
           config: ctx.configState.config
         })
         if (!task) {
@@ -139,27 +139,6 @@ export function createBackgroundCommand() {
     })
 
   cmd
-    .command("output")
-    .description("show the latest result payload for one background task")
-    .requiredOption("--id <id>", "task id")
-    .action(async (options) => {
-      await withContext(async () => {
-        const task = await BackgroundManager.get(options.id)
-        if (!task) {
-          console.error(`not found: ${options.id}`)
-          process.exitCode = 1
-          return
-        }
-        if (!task.result) {
-          console.error(`no result yet: ${options.id} (status=${task.status})`)
-          process.exitCode = 1
-          return
-        }
-        console.log(JSON.stringify(task.result, null, 2))
-      })
-    })
-
-  cmd
     .command("logs")
     .description("show recent log lines for one background task")
     .requiredOption("--id <id>", "task id")
@@ -185,33 +164,24 @@ export function createBackgroundCommand() {
     })
 
   cmd
-    .command("wait")
-    .description("wait for one background task to settle and then show its summary")
+    .command("cancel")
+    .description("cancel one background task")
     .requiredOption("--id <id>", "task id")
-    .option("--timeout <ms>", "max wait time in milliseconds", "30000")
     .action(async (options) => {
       await withContext(async () => {
-        const task = await BackgroundManager.get(options.id)
-        if (!task) {
+        const ok = await BackgroundManager.cancel(options.id)
+        if (!ok) {
           console.error(`not found: ${options.id}`)
           process.exitCode = 1
           return
         }
-        await BackgroundManager.waitForAny([options.id], Number(options.timeout || 30000))
-        await BackgroundManager.tick()
-        const latest = await BackgroundManager.get(options.id)
-        if (!latest) {
-          console.error(`not found: ${options.id}`)
-          process.exitCode = 1
-          return
-        }
-        printTaskSummary(latest)
+        console.log(`cancel requested: ${options.id}`)
       })
     })
 
   cmd
-    .command("cancel")
-    .description("cancel one background task")
+    .command("stop")
+    .description("alias for cancel")
     .requiredOption("--id <id>", "task id")
     .action(async (options) => {
       await withContext(async () => {

@@ -871,6 +871,74 @@ function builtinTools(config) {
     }
   }
 
+  const taskListTool = {
+    name: "task_list",
+    description: "List delegated background tasks with concise lifecycle summaries.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+    async execute() {
+      const tasks = await BackgroundManager.list()
+      return tasks.map((task) => BackgroundManager.summarize(task))
+    }
+  }
+
+  const taskGetTool = {
+    name: "task_get",
+    description: "Retrieve one delegated background task summary and result payload by task_id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: schema("string", "background task id")
+      },
+      required: ["task_id"]
+    },
+    async execute(args) {
+      const task = await BackgroundManager.get(String(args.task_id || ""))
+      if (!task) return "background task not found"
+      return {
+        ...BackgroundManager.summarize(task),
+        result: task.result,
+        error: task.error || null
+      }
+    }
+  }
+
+  const taskStopTool = {
+    name: "task_stop",
+    description: "Cancel a delegated background task by task_id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: schema("string", "background task id")
+      },
+      required: ["task_id"]
+    },
+    async execute(args) {
+      const ok = await BackgroundManager.cancel(String(args.task_id || ""))
+      return ok ? "cancel requested" : "background task not found"
+    }
+  }
+
+  const taskOutputTool = {
+    name: "task_output",
+    description: "Retrieve delegated background task output with summary, result payload, and next-action guidance.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: schema("string", "background task id")
+      },
+      required: ["task_id"]
+    },
+    async execute(args) {
+      const task = await BackgroundManager.get(String(args.task_id || ""))
+      if (!task) return "background task not found"
+      return {
+        ...BackgroundManager.summarize(task),
+        result: task.result,
+        error: task.error || null
+      }
+    }
+  }
+
   const cancelTool = {
     name: "background_cancel",
     description: "Cancel a running background task by its task_id. Only works on tasks launched via `task` with `run_in_background: true`.",
@@ -1502,7 +1570,7 @@ function builtinTools(config) {
   const gitTools = config?.git_auto?.enabled !== false ? gitAutoTools : []
   const gitFullAutoToolsList = config?.git_auto?.full_auto === true ? gitFullAutoTools : []
   
-  return [listTool, sysinfoTool, readTool, writeTool, editTool, patchTool, multieditTool, globTool, grepTool, bashTool, createTaskTool(), outputTool, cancelTool, todowriteTool, questionTool, skillTool, webfetchTool, websearchTool, codesearchTool, notebookeditTool, enterPlanTool, exitPlanTool, ...gitTools, ...gitFullAutoToolsList]
+  return [listTool, sysinfoTool, readTool, writeTool, editTool, patchTool, multieditTool, globTool, grepTool, bashTool, createTaskTool(), outputTool, cancelTool, taskListTool, taskGetTool, taskStopTool, taskOutputTool, todowriteTool, questionTool, skillTool, webfetchTool, websearchTool, codesearchTool, notebookeditTool, enterPlanTool, exitPlanTool, ...gitTools, ...gitFullAutoToolsList]
 }
 
 function mcpTools() {

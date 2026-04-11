@@ -61,3 +61,19 @@ test("waitForAny returns null when watched tasks do not settle before timeout", 
   const settled = await BackgroundManager.waitForAny([pending.id], 20)
   assert.equal(settled, null)
 })
+
+test("waitForTask returns the terminal task when it settles", async () => {
+  const task = await BackgroundManager.launch({
+    description: "wait target",
+    payload: {},
+    config: {},
+    run: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return { reply: "done" }
+    }
+  })
+
+  const settled = await BackgroundManager.waitForTask(task.id, { timeoutMs: 500, tickMs: 20 })
+  assert.equal(settled.status, "completed")
+  assert.equal(settled.result.reply, "done")
+})
