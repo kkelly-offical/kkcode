@@ -75,6 +75,10 @@ test("e2e: session list exits 0", () => {
   run(["session", "list"])
 })
 
+test("e2e: session status exits 0", () => {
+  run(["session", "status"])
+})
+
 test("e2e: session fsck exits 0 on clean home", () => {
   const home = mkdtempSync(join(tmpdir(), "kkcode-e2e-fsck-"))
   try {
