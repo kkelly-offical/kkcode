@@ -15,7 +15,44 @@ test("task delegate requires a prompt for new delegated sessions", async () => {
   })
 
   const result = await delegateTask({})
-  assert.deepEqual(result, { error: "task.prompt is required when session_id is not provided" })
+  assert.deepEqual(result, { error: "task.prompt or task.objective is required when session_id is not provided" })
+})
+
+test("task delegate synthesizes a directive brief from structured delegation fields", async () => {
+  let received = null
+  const delegateTask = createTaskDelegate({
+    config: {},
+    parentSessionId: "parent_structured",
+    model: "gpt-parent",
+    providerType: "local",
+    runSubtask: async (payload) => {
+      received = payload
+      return { reply: "structured done", toolEvents: [] }
+    }
+  })
+
+  const result = await delegateTask({
+    objective: "Audit the routing heuristics",
+    why: "Need a bounded sidecar review before changing the CLI routing layer",
+    write_scope: "read-only",
+    starting_points: ["src/session/engine.mjs", "test/longagent-utils.test.mjs"],
+    constraints: ["Do not edit files", "Focus on ask/agent/longagent boundaries"],
+    planned_files: ["src/session/engine.mjs"],
+    deliverable: "Return a concise findings summary with recommended follow-ups",
+    subagent_type: "explore"
+  })
+
+  assert.ok(received)
+  assert.match(received.prompt, /Objective: Audit the routing heuristics/)
+  assert.match(received.prompt, /Why: Need a bounded sidecar review before changing the CLI routing layer/)
+  assert.match(received.prompt, /Write scope: read-only/)
+  assert.match(received.prompt, /Starting points:\n- src\/session\/engine\.mjs\n- test\/longagent-utils\.test\.mjs/)
+  assert.match(received.prompt, /Constraints:\n- Do not edit files\n- Focus on ask\/agent\/longagent boundaries/)
+  assert.match(received.prompt, /Planned files:\n- src\/session\/engine\.mjs/)
+  assert.match(received.prompt, /Deliverable: Return a concise findings summary with recommended follow-ups/)
+  assert.match(received.prompt, /Execution contract:\n- Stay local instead of delegating if a direct read\/edit\/run action would finish the next step faster\./)
+  assert.equal(received.subagent.name, "explore")
+  assert.equal(result.reply, "structured done")
 })
 
 test("task delegate reuses an existing sub-session with continuation prompt", async () => {

@@ -32,6 +32,8 @@ test("system prompt assembles stable tool and skill blocks", async () => {
   assert.ok(labels.includes("skills"))
   assert.ok(labels.includes("env"))
   assert.match(prompt.text, /## task/)
+  assert.match(prompt.text, /structured brief fields/)
+  assert.match(prompt.text, /Execution contract/)
   assert.match(prompt.text, /\/compat-skill: compat description/)
 })
 

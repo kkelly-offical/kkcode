@@ -8,6 +8,12 @@ test("task tool exposes delegation-focused schema fields", () => {
 
   assert.equal(tool.name, "task")
   assert.ok(props.prompt)
+  assert.ok(props.objective)
+  assert.ok(props.why)
+  assert.ok(props.write_scope)
+  assert.ok(props.starting_points)
+  assert.ok(props.constraints)
+  assert.ok(props.deliverable)
   assert.ok(props.subagent_type)
   assert.ok(props.execution_mode)
   assert.ok(props.run_in_background)
@@ -27,7 +33,12 @@ test("task tool returns error when delegateTask is unavailable", async () => {
 test("task tool forwards arguments to delegateTask unchanged", async () => {
   const tool = createTaskTool()
   const args = {
-    prompt: "delegate this",
+    objective: "audit routing heuristics",
+    why: "need a bounded sidecar review",
+    write_scope: "read-only",
+    starting_points: ["src/session/engine.mjs"],
+    constraints: ["no edits"],
+    deliverable: "findings summary",
     subagent_type: "explore",
     execution_mode: "fork_context",
     run_in_background: true,

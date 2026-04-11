@@ -26,6 +26,59 @@ function normalizeExecutionMode(raw) {
   return { mode }
 }
 
+function normalizeList(input) {
+  if (Array.isArray(input)) {
+    return input
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+  }
+  if (typeof input === "string") {
+    const value = input.trim()
+    return value ? [value] : []
+  }
+  return []
+}
+
+function buildDelegationPrompt(args = {}) {
+  const explicitPrompt = String(args.prompt || "").trim()
+  if (explicitPrompt) return explicitPrompt
+  if (args.session_id) return "Continue from existing sub-session context."
+
+  const objective = String(args.objective || "").trim()
+  if (!objective) return ""
+
+  const why = String(args.why || "").trim()
+  const writeScope = String(args.write_scope || "").trim()
+  const startingPoints = normalizeList(args.starting_points)
+  const constraints = normalizeList(args.constraints)
+  const deliverable = String(args.deliverable || "").trim()
+  const plannedFiles = normalizeList(args.planned_files)
+
+  const lines = [`Objective: ${objective}`]
+  if (why) lines.push(`Why: ${why}`)
+  if (writeScope) lines.push(`Write scope: ${writeScope}`)
+  if (startingPoints.length) {
+    lines.push("Starting points:")
+    for (const item of startingPoints) lines.push(`- ${item}`)
+  }
+  if (constraints.length) {
+    lines.push("Constraints:")
+    for (const item of constraints) lines.push(`- ${item}`)
+  }
+  if (plannedFiles.length) {
+    lines.push("Planned files:")
+    for (const item of plannedFiles) lines.push(`- ${item}`)
+  }
+  if (deliverable) lines.push(`Deliverable: ${deliverable}`)
+
+  lines.push("Execution contract:")
+  lines.push("- Stay local instead of delegating if a direct read/edit/run action would finish the next step faster.")
+  lines.push("- Do not fabricate completion or present unfinished work as done.")
+  lines.push("- Do not peek at unfinished sibling work and turn guesses into facts.")
+
+  return lines.join("\n")
+}
+
 async function ensureDelegatedSession({ executionMode, parentSessionId, subSessionId }) {
   if (executionMode !== "fork_context") return
 
@@ -62,10 +115,10 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
     })
 
     const subSessionId = String(args.session_id || `sub_${parentSessionId}_${Date.now()}`)
-    const prompt = String(args.prompt || "").trim() || (args.session_id ? "Continue from existing sub-session context." : "")
+    const prompt = buildDelegationPrompt(args)
 
     if (!prompt) {
-      return { error: "task.prompt is required when session_id is not provided" }
+      return { error: "task.prompt or task.objective is required when session_id is not provided" }
     }
 
     const subModel = subagent.model || model

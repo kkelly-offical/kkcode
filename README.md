@@ -128,6 +128,7 @@ Preview(只读) → Blueprint(只读) → Coding(写入) → Debugging(写入)
 ### 关键机制
 
 - **智能意图路由** — 自动识别任务类型：问答类转 `ask`，简单任务转 `agent`，复杂多文件任务才进 `longagent`；强制使用不匹配模式时弹出确认
+- **路由理由可见** — 自动切换模式时会显示原因标签（例如 `short_question`、`simple_action_task`、`multi_file_or_system_task`），避免黑盒切换
 - **OA 需求确认** — H0 阶段完成后向用户展示需求摘要，支持补充修改后再进入规划
 - **Blueprint 审批** — H2 阶段生成执行计划后，展示阶段列表和架构摘要，用户确认后才开始执行
 - **中途补充需求** — 执行中按 `Esc` 中止后，输入补充需求按 Enter 可从 H0 重新规划（原始需求自动合并）
@@ -201,6 +202,24 @@ TUI 审批面板：`1` allow once / `2` allow session / `3` deny / `Esc` deny
 | `researcher` | 深度研究 + Web 搜索 | 只读 + 网络 |
 
 支持通过 YAML/MJS 自定义子智能体，或 `/create-agent` 自动生成。
+
+### `task` 委派契约（0.1.11 最小公开面）
+
+把 `task` 当成**有边界的 sidecar 委派工具**，不要把它当成 LongAgent 的替代品：
+
+- **stay local**：简单 `read` / `edit` / 单命令执行，直接本地处理
+- **`fresh_agent`（默认）**：自包含、实现导向、希望隔离上下文的子任务
+- **`fork_context`**：仅用于研究 / 审计 / 验证等 sidecar 工作，子任务继承父会话上下文，但父会话仍负责最终综合
+- **`run_in_background`**：长耗时 sidecar 工作，立即返回后台 `task_id`
+
+后台委派的跟踪是**确定性的**：
+
+- `background_output`：查看状态 / 日志 / 结果
+- `background_cancel`：取消运行中的后台委派
+- 终态固定为：`completed` / `cancelled` / `error` / `interrupted`
+
+更完整的发布边界、兼容矩阵与非目标见
+[`docs/kkcode-0.1.11-agent-general-assistant-contract.md`](docs/kkcode-0.1.11-agent-general-assistant-contract.md)。
 
 ---
 
@@ -302,6 +321,14 @@ kkcode longagent status      # LongAgent 状态
 | `Ctrl+L` | 清空活动区 |
 
 支持 `@图片路径` 或 `@图片URL` 引用多模态输入。
+
+### 中断 / 继续语义
+
+- `Esc`：中断当前 turn，但不退出会话，可直接输入新消息继续
+- `Ctrl+C`（busy 时）：与 `Esc` 一致，中断当前 turn
+- `Ctrl+C`（idle 时）：2 秒内连按两次才退出
+- LongAgent 被中断后，可直接补充需求并重新进入规划
+- 后台委派若被中止/超时/worker 消失，会进入 `interrupted` 终态，而不是静默消失
 
 ### 常用 Slash 命令
 

@@ -5,6 +5,7 @@ import { readdir, unlink } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { EventEmitter } from "node:events"
 import { readJson, writeJson } from "../storage/json-store.mjs"
+import { INTERRUPTION_REASONS } from "./interruption-reason.mjs"
 import {
   ensureBackgroundTaskRuntimeDir,
   backgroundTaskCheckpointPath,
@@ -176,6 +177,7 @@ async function markStaleRunningTasks(config = {}) {
       await patchTask(task.id, () => ({
         status: "interrupted",
         endedAt: now(),
+        interruptionReason: deadPid ? INTERRUPTION_REASONS.INTERRUPT : INTERRUPTION_REASONS.TIMEOUT,
         error: deadPid
           ? "background worker exited unexpectedly"
           : staleByHeartbeat
@@ -251,7 +253,11 @@ async function runInline(task, run) {
     })
     const latest = await loadTask(task.id)
     if (latest?.cancelled) {
-      await patchTask(task.id, () => ({ status: "cancelled", endedAt: now() }))
+      await patchTask(task.id, () => ({
+        status: "cancelled",
+        endedAt: now(),
+        interruptionReason: INTERRUPTION_REASONS.USER_CANCEL
+      }))
       return
     }
     await patchTask(task.id, () => ({ status: "completed", result, endedAt: now() }))
@@ -260,6 +266,7 @@ async function runInline(task, run) {
     await patchTask(task.id, () => ({
       status: latest?.cancelled ? "cancelled" : "error",
       error: error.message,
+      interruptionReason: latest?.cancelled ? INTERRUPTION_REASONS.USER_CANCEL : null,
       endedAt: now()
     }))
   }
@@ -285,6 +292,7 @@ export const BackgroundManager = {
       logs: [],
       result: null,
       error: null,
+      interruptionReason: null,
       cancelled: false,
       backgroundMode: run ? "inline" : (config.background?.mode || "worker_process"),
       workerPid: null,
@@ -340,7 +348,8 @@ export const BackgroundManager = {
     if (!task) return false
     await patchTask(id, (current) => ({
       cancelled: true,
-      status: current.status === "pending" ? "cancelled" : current.status
+      status: current.status === "pending" ? "cancelled" : current.status,
+      interruptionReason: INTERRUPTION_REASONS.USER_CANCEL
     }))
     return true
   },
@@ -355,6 +364,7 @@ export const BackgroundManager = {
     await patchTask(id, () => ({
       status: "pending",
       error: null,
+      interruptionReason: null,
       cancelled: false,
       endedAt: null,
       workerPid: null,

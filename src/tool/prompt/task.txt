@@ -32,6 +32,15 @@ Every delegated prompt should include:
 - Constraints: architectural boundaries, forbidden edits, or safety rules
 - Deliverable: what the subagent should return (summary, patch, review findings, etc.)
 
+kkcode also accepts structured brief fields for these sections (`objective`, `why`, `write_scope`, `starting_points`, `constraints`, `deliverable`) and will synthesize the directive brief when `prompt` is omitted.
+
+## Execution contract
+
+Whether the brief is handwritten or synthesized, delegated work must follow this contract:
+- Stay local if a direct read/edit/run action would finish the next step faster
+- Do not fabricate completion or present unfinished work as done
+- Do not peek at unfinished sibling work and convert guesses into facts
+
 Good delegation briefs are directive and self-contained. The subagent should not need to infer hidden context.
 
 # Available subagent types
@@ -96,7 +105,7 @@ GOOD: glob(pattern="**/*.test.js")
 
 # Parameters
 
-- **prompt** (required): Detailed task description with ALL necessary context. The subagent starts fresh — it cannot see your conversation history. Include:
+- **prompt** (required unless `objective` is provided for a new run): Detailed task description with ALL necessary context. The subagent starts fresh — it cannot see your conversation history. Include:
   - What to do (specific instructions)
   - Why (context for decision-making)
   - Whether to write code or just research

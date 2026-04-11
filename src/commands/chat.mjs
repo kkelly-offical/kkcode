@@ -1,6 +1,6 @@
 import { Command } from "commander"
 import { buildContext, printContextWarnings } from "../context.mjs"
-import { executeTurn, newSessionId, resolveMode } from "../session/engine.mjs"
+import { executeTurn, newSessionId, resolveMode, resolvePromptMode } from "../session/engine.mjs"
 import { renderStatusBar } from "../theme/status-bar.mjs"
 import { applyCommandTemplate, loadCustomCommands } from "../command/custom-commands.mjs"
 import { ToolRegistry } from "../tool/registry.mjs"
@@ -8,6 +8,10 @@ import { SkillRegistry } from "../skill/registry.mjs"
 import { PermissionEngine } from "../permission/engine.mjs"
 import { HookBus, initHookBus } from "../plugin/hook-bus.mjs"
 import { listProviders } from "../provider/router.mjs"
+
+export function resolveChatExecutionMode(prompt, requestedMode) {
+  return resolvePromptMode(prompt, requestedMode)
+}
 
 export function createChatCommand() {
   const providers = listProviders()
@@ -64,9 +68,23 @@ export function createChatCommand() {
         apiKeyEnv: options.apiKeyEnv ?? null
       })
 
+      const routedMode = resolveChatExecutionMode(chatParams.prompt ?? prompt, chatParams.mode ?? mode)
+      const effectiveMode = routedMode.effectiveMode
+      const effectiveExplanation = routedMode.route.explanation || routedMode.route.reason
+
+      if (routedMode.route.changed) {
+        console.log(`mode routed: ${routedMode.requestedMode} -> ${effectiveMode} (${effectiveExplanation})`)
+      } else if (routedMode.route.forced && routedMode.route.suggestion) {
+        console.log(`mode kept: ${effectiveMode} (${effectiveExplanation}; suggested ${routedMode.route.suggestion})`)
+      } else if (routedMode.route.suggestion === "longagent" && routedMode.requestedMode === "agent") {
+        console.log(`mode note: ${effectiveMode} (${effectiveExplanation}; consider --mode longagent)`)
+      } else {
+        console.log(`mode: ${effectiveMode} (${effectiveExplanation})`)
+      }
+
       const result = await executeTurn({
         prompt: chatParams.prompt ?? prompt,
-        mode: chatParams.mode ?? mode,
+        mode: effectiveMode,
         model: chatParams.model ?? model,
         sessionId,
         configState: ctx.configState,
@@ -80,7 +98,7 @@ export function createChatCommand() {
       })
 
       const status = renderStatusBar({
-        mode,
+        mode: effectiveMode,
         model: result.model,
         permission: ctx.configState.config.permission.default_policy,
         tokenMeter: result.tokenMeter,
@@ -90,7 +108,7 @@ export function createChatCommand() {
         showTokenMeter: ctx.configState.config.ui.status.show_token_meter,
         theme: ctx.themeState.theme,
         layout: ctx.configState.config.ui.layout,
-        longagentState: mode === "longagent" ? result.longagent : null
+        longagentState: effectiveMode === "longagent" ? result.longagent : null
       })
 
       console.log(status)

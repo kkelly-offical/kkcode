@@ -6,6 +6,7 @@ import { ToolRegistry } from "../tool/registry.mjs"
 import { executeTurn } from "../session/engine.mjs"
 import { flushNow, forkSession, getSession } from "../session/store.mjs"
 import { extractEditFeedbackFromToolEvents } from "../observability/edit-diagnostics.mjs"
+import { INTERRUPTION_REASONS, normalizeInterruptionReason } from "./interruption-reason.mjs"
 
 function now() {
   return Date.now()
@@ -241,6 +242,7 @@ async function main() {
   if (task.cancelled) {
     await patchTask(taskId, () => ({
       status: "cancelled",
+      interruptionReason: INTERRUPTION_REASONS.USER_CANCEL,
       endedAt: now()
     }))
     process.exit(0)
@@ -321,6 +323,7 @@ async function main() {
       await appendTaskLog(taskId, "task cancelled")
       await patchTask(taskId, () => ({
         status: "cancelled",
+        interruptionReason: INTERRUPTION_REASONS.USER_CANCEL,
         endedAt: now(),
         error: null
       }))
@@ -332,6 +335,7 @@ async function main() {
       await appendTaskLog(taskId, `task interrupted: ${error.message}`)
       await patchTask(taskId, () => ({
         status: "interrupted",
+        interruptionReason: normalizeInterruptionReason(error.message),
         error: error.message,
         endedAt: now()
       }))

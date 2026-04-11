@@ -417,17 +417,40 @@ export function createDegradationChain(config = {}) {
 
 // ========== Task 1: 智能任务模式分类 ==========
 
+const MODE_REASON_EXPLANATIONS = {
+  empty_input: "空输入，按问答处理",
+  question_with_explain_intent: "检测到问答 / 解释意图",
+  short_question: "检测到简短问答",
+  planning_or_design_intent: "检测到规划 / 设计意图",
+  short_local_task_protected: "检测到短小本地事务，避免升级到 longagent",
+  local_transaction_task: "检测到本地事务型任务，适合保持在轻量 agent 路径",
+  local_lookup_task: "检测到本地读取 / 总结类任务",
+  single_path_or_command_task: "检测到单路径或单命令任务，适合保持在轻量路径",
+  multi_file_or_system_task: "检测到跨文件 / 系统级任务",
+  broad_scope_multi_step: "检测到宽范围多步骤任务",
+  simple_action_task: "检测到单轮执行任务",
+  default_agent: "信号偏执行型，保持 agent",
+  default_ask: "信号不足，按 ask 处理",
+  low_confidence: "信号不足，保持当前模式",
+  plan_mode_exempt: "plan 模式不参与自动路由"
+}
+
+export function explainTaskModeReason(reason) {
+  return MODE_REASON_EXPLANATIONS[reason] || String(reason || "unknown")
+}
+
 /**
  * 分析 prompt，判断最适合的执行模式
- * @returns {{ mode: 'ask'|'agent'|'longagent', confidence: 'high'|'medium'|'low', reason: string }}
+ * @returns {{ mode: 'ask'|'plan'|'agent'|'longagent', confidence: 'high'|'medium'|'low', reason: string }}
  */
 export function classifyTaskMode(prompt) {
   const text = String(prompt || "").trim()
   if (!text) return { mode: "ask", confidence: "high", reason: "empty_input" }
+
   const lower = text.toLowerCase()
   const len = text.length
+  const hasPathHint = /([./~][^\s]+|\b[\w-]+\.(mjs|cjs|js|jsx|ts|tsx|json|md|yaml|yml|toml|txt|log|sh)\b)/i.test(text)
 
-  // --- 问答类信号 → ask ---
   const questionPatterns = [
     /^(what|how|why|when|where|who|which|explain|tell me|describe|show me)\b/i,
     /^(什么|为什么|怎么|如何|哪里|哪个|谁|能否|请解释|告诉我|描述|是什么|有什么|怎样)/,
@@ -437,59 +460,116 @@ export function classifyTaskMode(prompt) {
     "explain", "what is", "what are", "how does", "why does", "describe", "tell me about",
     "解释", "是什么", "为什么", "怎么理解", "什么意思", "有什么区别", "如何理解"
   ]
-  const isQuestion = questionPatterns.some(re => re.test(text))
-  const isPureAsk = pureAskKeywords.some(kw => lower.includes(kw))
-
-  if (isQuestion && isPureAsk) {
-    return { mode: "ask", confidence: "high", reason: "question_with_explain_intent" }
-  }
-  if (isQuestion && len < 80) {
-    return { mode: "ask", confidence: "medium", reason: "short_question" }
-  }
-
-  // --- 规划类信号 → plan ---
   const planPatterns = [
     /\b(plan|design|architect|outline|blueprint|draft|propose|sketch)\b/i,
     /\b(规划|设计|架构|方案|蓝图|草案|提案|计划一下|帮我想想)\b/i
   ]
   const longagentPatterns = [
-    /\b(multiple files?|across files?|entire (codebase|project|repo)|all files?|跨文件|多个文件|整个项目|全量)\b/i,
-    /\b(refactor|migrate|rewrite|overhaul|redesign|重构|迁移|重写|改造|全面重)\b/i,
-    /\b(implement|build|create|develop|add).{0,40}(system|module|service|feature|component|framework|pipeline|架构|系统|模块|服务|功能|组件|框架|流水线)\b/i,
+    /\b(multiple files?|across files?|entire (codebase|project|repo)|all files?|cross[- ]repo|跨文件|多个文件|整个项目|全量)\b/i,
+    /\b(refactor|rewrite|overhaul|redesign|migrate).{0,30}(system|service|architecture|repo|project|module|pipeline|codebase)\b/i,
+    /\b(implement|build|create|develop|add).{0,40}(system|subsystem|service|feature|component|framework|pipeline|architecture|架构|系统|模块|服务|功能|组件|框架|流水线)\b/i,
     /\b(full|complete|comprehensive|end.to.end|完整实现|完全|端到端)\b/i,
-    /\b(multi.?stage|multi.?step|多阶段|多步骤|分阶段)\b/i
+    /\b(multi.?stage|multi.?step|phases?|多阶段|多步骤|分阶段)\b/i
   ]
-  const isLongAgent = longagentPatterns.some(re => re.test(lower))
-
-  const isPlan = planPatterns.some(re => re.test(lower))
-  if (isPlan && !isLongAgent && len < 200) {
-    return { mode: "plan", confidence: "medium", reason: "planning_or_design_intent" }
-  }
-
-  if (isLongAgent) {
-    return { mode: "longagent", confidence: "high", reason: "multi_file_or_system_task" }
-  }
-  // 长文本通常是复杂任务
-  if (len > 400 && !isQuestion) {
-    return { mode: "longagent", confidence: "medium", reason: "long_complex_prompt" }
-  }
-
-  // --- 简单单文件任务信号 → agent ---
+  const localTaskPatterns = [
+    /\b(run|execute|check|inspect|look at|read|open|summari[sz]e|scan|search|find|list|grep|tail|cat|count|compare|verify|show)\b/i,
+    /\b(日志|目录|文件|配置|仓库|看一下|检查|查看|读取|总结|搜一下|列出|执行|运行|验证)\b/i
+  ]
   const agentPatterns = [
     /\b(fix|debug|patch|update|change|modify|rename|delete|remove|add|insert|append)\b/i,
     /\b(修复|调试|修改|更新|删除|添加|插入|改一下|帮我改|帮我加)\b/i,
-    /\b(run|execute|test|check|verify|运行|执行|测试|检查|验证)\b/i
+    /\b(test|check|verify|运行|执行|测试|检查|验证)\b/i
   ]
-  const isAgent = agentPatterns.some(re => re.test(lower))
+  const singleCommandPatterns = [
+    /`[^`]+`/,
+    /\b(npm|pnpm|yarn|node|git|ls|cat|grep|rg|find|sed|awk|tail|head)\b/i
+  ]
 
-  if (isAgent && len < 250) {
-    return { mode: "agent", confidence: "medium", reason: "simple_action_task" }
-  }
-  if (len > 50 && !isQuestion) {
-    return { mode: "agent", confidence: "low", reason: "default_agent" }
+  const isQuestion = questionPatterns.some((re) => re.test(text))
+  const isPureAsk = pureAskKeywords.some((kw) => lower.includes(kw))
+  const isPlan = planPatterns.some((re) => re.test(lower))
+  const isLongAgent = longagentPatterns.some((re) => re.test(lower))
+  const isLocalTask = localTaskPatterns.some((re) => re.test(lower))
+  const isAgentAction = agentPatterns.some((re) => re.test(lower))
+  const isSingleCommandTask = singleCommandPatterns.some((re) => re.test(text))
+
+  const scores = { ask: 0, plan: 0, agent: 0, longagent: 0 }
+  const reasons = {
+    ask: "default_ask",
+    plan: "planning_or_design_intent",
+    agent: "default_agent",
+    longagent: "default_longagent"
   }
 
-  return { mode: "ask", confidence: "low", reason: "default_ask" }
+  if (isQuestion) {
+    scores.ask += len < 120 ? 4 : 3
+    reasons.ask = len < 80 ? "short_question" : "question_with_explain_intent"
+  }
+  if (isPureAsk) {
+    scores.ask += 3
+    reasons.ask = "question_with_explain_intent"
+  }
+
+  if (isPlan) {
+    scores.plan += 4
+  }
+
+  if (isLongAgent) {
+    scores.longagent += 6
+    reasons.longagent = "multi_file_or_system_task"
+  }
+
+  if (isLocalTask) {
+    scores.agent += 4
+    reasons.agent = "local_transaction_task"
+  }
+  if (isAgentAction) {
+    scores.agent += 3
+    if (reasons.agent === "default_agent") reasons.agent = "simple_action_task"
+  }
+  if (hasPathHint || isSingleCommandTask) {
+    scores.agent += 2
+    if (reasons.agent === "default_agent") reasons.agent = "single_path_or_command_task"
+  }
+
+  if (len > 500 && !isQuestion && !isLocalTask && !isAgentAction && !hasPathHint && !isSingleCommandTask) {
+    scores.longagent += 2
+    if (reasons.longagent === "default_longagent") reasons.longagent = "long_complex_prompt"
+  }
+
+  if (len < 240 && (isLocalTask || isAgentAction || hasPathHint || isSingleCommandTask) && !isLongAgent) {
+    scores.longagent = Math.max(0, scores.longagent - 3)
+  }
+
+  if (!isQuestion && len > 50) {
+    scores.agent += 1
+  }
+
+  if (scores.plan >= 4 && scores.plan >= scores.longagent + 2 && scores.plan >= scores.agent + 1 && len < 240) {
+    return { mode: "plan", confidence: scores.plan >= 5 ? "high" : "medium", reason: reasons.plan }
+  }
+
+  if (scores.longagent >= Math.max(scores.ask, scores.agent) + 2 && scores.longagent > 0) {
+    return {
+      mode: "longagent",
+      confidence: scores.longagent >= 6 ? "high" : "medium",
+      reason: reasons.longagent === "default_longagent" ? "long_complex_prompt" : reasons.longagent
+    }
+  }
+
+  if (scores.agent >= scores.ask && scores.agent > 0) {
+    return {
+      mode: "agent",
+      confidence: scores.agent >= 6 ? "high" : scores.agent >= 3 ? "medium" : "low",
+      reason: reasons.agent
+    }
+  }
+
+  return {
+    mode: "ask",
+    confidence: scores.ask >= 6 ? "high" : scores.ask >= 3 ? "medium" : "low",
+    reason: reasons.ask
+  }
 }
 
 // ========== Task 4: 前端任务检测与设计风格提示词 ==========

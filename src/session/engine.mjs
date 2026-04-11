@@ -11,7 +11,7 @@ import { ToolRegistry } from "../tool/registry.mjs"
 import { SkillRegistry } from "../skill/registry.mjs"
 import { resolveAgentForMode } from "../agent/agent.mjs"
 import { estimateStringTokens } from "./compaction.mjs"
-import { classifyTaskMode } from "./longagent-utils.mjs"
+import { classifyTaskMode, explainTaskModeReason } from "./longagent-utils.mjs"
 
 let sinkReady = false
 
@@ -33,38 +33,62 @@ export function resolveMode(inputMode = "agent") {
 export function routeMode(prompt, requestedMode) {
   const req = resolveMode(requestedMode)
   // plan 模式不参与自动路由
-  if (req === "plan") return { mode: req, changed: false, reason: "plan_mode_exempt", confidence: "high", forced: false }
+  if (req === "plan") {
+    return {
+      mode: req,
+      changed: false,
+      reason: "plan_mode_exempt",
+      explanation: explainTaskModeReason("plan_mode_exempt"),
+      confidence: "high",
+      forced: false
+    }
+  }
 
   const classification = classifyTaskMode(prompt)
   const suggested = classification.mode
+  const explanation = classification.explanation || explainTaskModeReason(classification.reason)
 
   // 相同模式，无需路由
-  if (suggested === req) return { mode: req, changed: false, reason: classification.reason, confidence: classification.confidence, forced: false }
+  if (suggested === req) {
+    return { mode: req, changed: false, reason: classification.reason, explanation, confidence: classification.confidence, forced: false }
+  }
 
   // 低置信度不自动路由
-  if (classification.confidence === "low") return { mode: req, changed: false, reason: "low_confidence", confidence: "low", forced: false }
+  if (classification.confidence === "low") {
+    return { mode: req, changed: false, reason: "low_confidence", explanation: explainTaskModeReason("low_confidence"), confidence: "low", forced: false }
+  }
 
   // 高置信度：问答类 → 自动切换到 ask（无需确认）
   if (suggested === "ask" && classification.confidence === "high") {
-    return { mode: "ask", changed: true, reason: classification.reason, confidence: "high", forced: false }
+    return { mode: "ask", changed: true, reason: classification.reason, explanation, confidence: "high", forced: false }
   }
 
   // 高置信度：agent 模式下检测到 longagent 任务 → 建议切换（无需确认，只提示）
   if (req === "agent" && suggested === "longagent" && classification.confidence === "high") {
-    return { mode: req, changed: false, reason: classification.reason, confidence: "high", forced: false, suggestion: "longagent" }
+    return { mode: req, changed: false, reason: classification.reason, explanation, confidence: "high", forced: false, suggestion: "longagent" }
   }
 
   // 高置信度：用户强制 longagent 但任务是简单 agent 任务 → 需要确认
   if (req === "longagent" && suggested === "agent" && classification.confidence === "high") {
-    return { mode: req, changed: false, reason: classification.reason, confidence: "high", forced: true, suggestion: "agent" }
+    return { mode: req, changed: false, reason: classification.reason, explanation, confidence: "high", forced: true, suggestion: "agent" }
   }
 
   // 中等置信度：agent 模式下检测到问答 → 自动切换
   if (req === "agent" && suggested === "ask" && classification.confidence === "medium") {
-    return { mode: "ask", changed: true, reason: classification.reason, confidence: "medium", forced: false }
+    return { mode: "ask", changed: true, reason: classification.reason, explanation, confidence: "medium", forced: false }
   }
 
-  return { mode: req, changed: false, reason: classification.reason, confidence: classification.confidence, forced: false }
+  return { mode: req, changed: false, reason: classification.reason, explanation, confidence: classification.confidence, forced: false }
+}
+
+export function resolvePromptMode(prompt, requestedMode = "agent") {
+  const requested = resolveMode(requestedMode)
+  const route = routeMode(prompt, requested)
+  return {
+    requestedMode: requested,
+    effectiveMode: route.changed ? route.mode : requested,
+    route
+  }
 }
 
 export function newSessionId() {
