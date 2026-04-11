@@ -1,6 +1,6 @@
 # kkcode
 
-[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=v0.1.16)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
+[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=v0.1.17)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 ![Node](https://img.shields.io/badge/Node.js-%3E%3D22-green)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
@@ -312,11 +312,11 @@ kkcode --github logout             # 登出
 | 子智能体 | `.kkcode/agents/` | YAML/MJS 定义，`/create-agent` 生成 |
 | 自定义工具 | `.kkcode/tools/` | .mjs 自动加载，`/reload` 热更新 |
 | Hook | `.kkcode/hooks/` | Hook 事件脚本（chat/tool/session） |
-| 插件包（MVP） | `.kkcode-plugin/plugin.json` 或 `.kkcode/plugins/<name>/plugin.json` | 将 skills / agents / hooks / MCP 片段打包到一个本地插件边界 |
+| 插件包（MVP） | `.kkcode-plugin/plugin.json` 或 `.kkcode/plugins/<name>/plugin.json` | 将 skills / agents / hooks / MCP 片段打包到一个本地插件边界；支持 `enabled: false` 关闭包 |
 | 规则 | `.kkcode/rules/` | 项目级提示词规则 |
 | 指令文件 | `KKCODE.md` | 项目级指令，自动注入提示词 |
 
-说明：`.kkcode/hooks/` 是实际 Hook 加载目录；`.kkcode/plugins/` 预留给带 `plugin.json` 的本地插件包。若历史文档把 `.kkcode/plugins/` 当作 Hook 路径，请迁移为 `.kkcode/hooks/`。
+说明：`.kkcode/hooks/` 是实际 Hook 加载目录；`.kkcode/plugins/` 预留给带 `plugin.json` 的本地插件包。若历史文档把 `.kkcode/plugins/` 当作 Hook 路径，请迁移为 `.kkcode/hooks/`；runtime 仍暂时兼容，但会给出弃用提示。
 
 ---
 

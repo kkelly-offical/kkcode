@@ -33,9 +33,11 @@ test("hook bus loads .kkcode/plugins as a compatibility alias for hook scripts",
     await mod.initHookBus(cwd)
     const transformed = await mod.HookBus.toolBefore({ tool: "task" })
     const loadedSources = mod.HookBus.list().map((item) => item.source)
+    const warnings = mod.HookBus.errors()
 
     assert.equal(transformed.via, "plugin-alias")
     assert.ok(loadedSources.some((source) => source.includes(".kkcode/plugins/alias-hook.mjs")))
+    assert.ok(warnings.some((item) => item.includes("deprecated hook path")))
   } finally {
     await rm(cwd, { recursive: true, force: true })
   }

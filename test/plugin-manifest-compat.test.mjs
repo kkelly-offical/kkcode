@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { tmpdir } from "node:os"
 import { discoverLocalPluginManifests } from "../src/plugin/manifest-loader.mjs"
+import { pluginComponentDirs, pluginMcpServers } from "../src/plugin/manifest-loader.mjs"
 
 let homeDir
 let projectDir
@@ -56,4 +57,23 @@ test("plugin manifest parser keeps malformed entries actionable", async () => {
   assert.equal(result.plugins.length, 1)
   assert.ok(result.errors.some((item) => item.includes("points outside plugin root")))
   assert.ok(result.errors.some((item) => item.includes("mcp entries must be strings or objects")))
+})
+
+test("disabled plugin manifests stay discoverable but do not expose runtime components", async () => {
+  const root = path.join(projectDir, ".kkcode", "plugins", "disabled-plugin")
+  await mkdir(path.join(root, "skills"), { recursive: true })
+  await writeFile(path.join(root, "plugin.json"), JSON.stringify({
+    name: "disabled-plugin",
+    enabled: false,
+    skills: ["skills"],
+    mcpServers: {
+      disabledDemo: { transport: "stdio", command: ["node", "server.js"] }
+    }
+  }, null, 2))
+
+  const result = await discoverLocalPluginManifests(projectDir)
+  assert.equal(result.plugins.length, 1)
+  assert.equal(result.plugins[0].enabled, false)
+  assert.deepEqual(pluginComponentDirs(result.plugins, "skills"), [])
+  assert.deepEqual(pluginMcpServers(result.plugins), {})
 })

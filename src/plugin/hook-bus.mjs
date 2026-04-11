@@ -18,7 +18,8 @@ const HOOK_EVENTS = [
 const state = {
   loaded: false,
   hooks: [],
-  errors: []
+  errors: [],
+  warnedPluginAlias: false
 }
 
 function normalizeHook(mod, source) {
@@ -70,10 +71,15 @@ export async function initHookBus(cwd = process.cwd()) {
   // Load order: builtin → user → project plugin alias → project hooks
   // `.kkcode/plugins` remains a compatibility alias for hook scripts while
   // `.kkcode/hooks` is the explicit project hook path.
+  const pluginAliasFiles = await discover(projectPluginHooks)
+  if (pluginAliasFiles.length && !state.warnedPluginAlias) {
+    state.errors.push("deprecated hook path: .kkcode/plugins is a compatibility alias for loose hook scripts; prefer .kkcode/hooks or a plugin.json package boundary")
+    state.warnedPluginAlias = true
+  }
   const files = [
     ...(await discover(builtinHooks)),
     ...(await discover(userHooks)),
-    ...(await discover(projectPluginHooks)),
+    ...pluginAliasFiles,
     ...(await discover(projectHooks))
   ]
   for (const file of files) {

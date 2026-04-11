@@ -132,6 +132,8 @@ async function loadManifest(filePath, scope) {
   const plugin = {
     name,
     version: typeof manifest.version === "string" ? manifest.version : null,
+    enabled: manifest.enabled !== false && manifest.disabled !== true,
+    displayName: typeof manifest.displayName === "string" ? manifest.displayName.trim() : null,
     scope,
     source: filePath,
     rootDir,
@@ -181,7 +183,7 @@ export async function discoverLocalPluginManifests(cwd = process.cwd()) {
 }
 
 export function pluginComponentDirs(plugins, key) {
-  return plugins.flatMap((plugin) => (plugin[key] || []).map((dir) => ({
+  return plugins.flatMap((plugin) => (plugin.enabled === false ? [] : (plugin[key] || [])).map((dir) => ({
     dir,
     scope: `plugin:${plugin.scope}:${plugin.name}`,
     plugin
@@ -191,6 +193,7 @@ export function pluginComponentDirs(plugins, key) {
 export function pluginMcpServers(plugins) {
   const servers = {}
   for (const plugin of plugins) {
+    if (plugin.enabled === false) continue
     Object.assign(servers, plugin.mcpServers || {})
   }
   return servers
