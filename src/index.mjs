@@ -55,7 +55,7 @@ async function main() {
   }
 
   const program = new Command()
-  program.name("kkcode").description("kkcode CLI").version("0.1.26")
+  program.name("kkcode").description("kkcode CLI").version("0.1.27")
   program.addCommand(createChatCommand())
   program.addCommand(createThemeCommand())
   program.addCommand(createUsageCommand())

@@ -42,6 +42,17 @@ import { userRootDir, userConfigCandidates, projectConfigCandidates, memoryFileP
 import { persistTrust, revokeTrust } from "./permission/workspace-trust.mjs"
 import { confirmRollback, executeRollback } from "./session/rollback.mjs"
 import { loadProfile, runOnboarding } from "./onboarding.mjs"
+import {
+  configuredProviders,
+  loadHistoryLines,
+  saveHistoryLines,
+  clearScreen,
+  resolveProviderDefaultModel,
+  createInitialReplState,
+  collectMcpStatusLines,
+  startSplash
+} from "./repl/core-shell.mjs"
+import { runReplController } from "./repl/controller-entry.mjs"
 
 const HIST_DIR = userRootDir()
 const HIST_FILE = join(HIST_DIR, "repl_history")
@@ -231,20 +242,6 @@ function ageLabel(ms) {
   return `${Math.round(hours / 24)}d ago`
 }
 
-function configuredProviders(config) {
-  const builtins = new Set(listProviders())
-  const out = []
-  for (const [name, value] of Object.entries(config.provider || {})) {
-    if (name === "default") continue
-    if (name === "strict_mode") continue
-    if (name === "model_context") continue
-    if (!value || typeof value !== "object") continue
-    const type = value.type || name
-    if (builtins.has(type)) out.push(name)
-  }
-  return out
-}
-
 function displayUserRootPath() {
   const userRoot = userRootDir()
   const home = process.env.HOME || process.env.USERPROFILE
@@ -281,23 +278,6 @@ function allProviderModels(config) {
     }
   }
   return items
-}
-
-async function loadHistory() {
-  try {
-    const raw = await readFile(HIST_FILE, "utf8")
-    return raw.split("\n").filter(Boolean).slice(-HIST_SIZE)
-  } catch {
-    return []
-  }
-}
-
-async function saveHistoryLines(lines) {
-  try {
-    await mkdir(HIST_DIR, { recursive: true })
-    const finalLines = [...lines].slice(-HIST_SIZE)
-    await writeFile(HIST_FILE, finalLines.join("\n") + (finalLines.length ? "\n" : ""), "utf8")
-  } catch {}
 }
 
 function parseConfigByPath(filePath, raw) {
@@ -364,11 +344,6 @@ async function persistPermissionConfig({ scope, ctx, values }) {
   return target
 }
 
-function clearScreen() {
-  if (!process.stdout.isTTY) return
-  process.stdout.write("\x1Bc")
-}
-
 function help(providers = []) {
   return buildHelpText({ providers, userRootPath: displayUserRootPath() })
 }
@@ -405,14 +380,6 @@ function collectSkillSummary() {
     mcpPrompt: list.filter((s) => s.type === "mcp_prompt").length,
     programmable: list.filter((s) => s.type === "mjs").length
   }
-}
-
-function resolveProviderDefaultModel(config, providerType, fallback = "") {
-  return (
-    config.provider?.[providerType]?.default_model ||
-    config.provider?.[config.provider?.default]?.default_model ||
-    fallback
-  )
 }
 
 function buildSlashCatalog(customCommands = []) {
@@ -1343,7 +1310,7 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
 
   lineActivityRenderer.stop()
   rl.close()
-  await saveHistoryLines(entered)
+  await saveHistoryLines(HIST_FILE, HIST_SIZE, entered)
 }
 
 function startTuiFrame() {
@@ -3515,142 +3482,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     if (process.stdin.isTTY) process.stdin.setRawMode(false)
     process.stdin.emit = _origStdinEmit  // 还原 stdin.emit
     stopTuiFrame()
-    await saveHistoryLines(ui.history)
-  }
-}
-
-function startSplash() {
-  if (!process.stdout.isTTY) return { update() {}, stop() {} }
-
-  const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-
-  // Block-style logo — each character colored individually for wave effect
-  const logo = [
-    "  ██╗  ██╗ ██╗  ██╗  ██████╗  ██████╗  ██████╗  ███████╗ ",
-    "  ██║ ██╔╝ ██║ ██╔╝ ██╔════╝ ██╔═══██╗ ██╔══██╗ ██╔════╝ ",
-    "  █████╔╝  █████╔╝  ██║      ██║   ██║ ██║  ██║ █████╗   ",
-    "  ██╔═██╗  ██╔═██╗  ██║      ██║   ██║ ██║  ██║ ██╔══╝   ",
-    "  ██║  ██╗ ██║  ██╗ ╚██████╗ ╚██████╔╝ ██████╔╝ ███████╗ ",
-    "  ╚═╝  ╚═╝ ╚═╝  ╚═╝  ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝ "
-  ]
-  const tagline = "AI Coding Agent"
-  const version = "v0.1.26"
-
-  // Gradient colors for the wave animation (cyan → blue → purple → pink → back)
-  const wave = [
-    "#4af5f0", "#3de8f5", "#30dbfa", "#38c8ff", "#40b5ff",
-    "#58a0ff", "#708bff", "#8876ff", "#a061ff", "#b84cff",
-    "#d037ff", "#e828f0", "#f034d0", "#f040b0", "#f04c90",
-    "#f040b0", "#f034d0", "#e828f0", "#d037ff", "#b84cff",
-    "#a061ff", "#8876ff", "#708bff", "#58a0ff", "#40b5ff",
-    "#38c8ff", "#30dbfa", "#3de8f5"
-  ]
-
-  let tick = 0
-  let status = "loading config..."
-  let steps = []
-  let revealChars = 0           // typewriter reveal counter
-  const totalChars = logo[0].length
-  const revealSpeed = 3         // chars revealed per tick
-
-  // Paint a single character with a hex color using raw ANSI (avoid overhead of paint())
-  function charColor(ch, hex) {
-    if (ch === " " || ch === "\n") return ch
-    const r = parseInt(hex.slice(1, 3), 16)
-    const g = parseInt(hex.slice(3, 5), 16)
-    const b = parseInt(hex.slice(5, 7), 16)
-    return `\x1b[1;38;2;${r};${g};${b}m${ch}\x1b[0m`
-  }
-
-  function render() {
-    const cols = process.stdout.columns || 80
-    const rows = process.stdout.rows || 24
-    const lines = []
-
-    const contentHeight = logo.length + 4 + steps.length + 2
-    const topPad = Math.max(0, Math.floor((rows - contentHeight) / 2))
-    for (let i = 0; i < topPad; i++) lines.push("")
-
-    // Render logo with color wave + typewriter reveal
-    const visible = Math.min(revealChars, totalChars)
-    for (let row = 0; row < logo.length; row++) {
-      const line = logo[row]
-      const pad = Math.max(0, Math.floor((cols - line.length) / 2))
-      let out = " ".repeat(pad)
-      for (let col = 0; col < line.length; col++) {
-        if (col >= visible) { out += " "; continue }
-        const ch = line[col]
-        // Wave: color index based on column + time offset, different phase per row
-        const waveIdx = (col + tick * 2 + row * 3) % wave.length
-        out += charColor(ch, wave[waveIdx])
-      }
-      lines.push(out)
-    }
-
-    // Tagline + version (fade in after logo is revealed)
-    const tagFull = `${tagline}  ·  ${version}`
-    if (visible >= totalChars) {
-      const tagPad = Math.max(0, Math.floor((cols - tagFull.length) / 2))
-      const tagAlpha = Math.min(1, (revealChars - totalChars) / 20)
-      // Interpolate from dim to bright
-      const brightness = Math.round(100 + 155 * tagAlpha)
-      const tagHex = `#${brightness.toString(16).padStart(2, "0")}${brightness.toString(16).padStart(2, "0")}${brightness.toString(16).padStart(2, "0")}`
-      lines.push(" ".repeat(tagPad) + paint(tagFull, tagHex, { dim: tagAlpha < 0.5 }))
-    } else {
-      lines.push("")
-    }
-
-    // Separator line — subtle gradient bar
-    if (visible >= totalChars) {
-      const barWidth = Math.min(40, cols - 4)
-      const barPad = Math.max(0, Math.floor((cols - barWidth) / 2))
-      let bar = ""
-      for (let i = 0; i < barWidth; i++) {
-        const ci = (i + tick) % wave.length
-        bar += charColor("─", wave[ci])
-      }
-      lines.push(" ".repeat(barPad) + bar)
-    } else {
-      lines.push("")
-    }
-
-    lines.push("")
-
-    // Completed steps
-    for (const s of steps) {
-      const pad = Math.max(0, Math.floor((cols - s.length - 4) / 2))
-      lines.push(" ".repeat(pad) + paint(`  ✓ ${s}`, "#3fd487"))
-    }
-
-    // Current spinner
-    const spinChar = frames[tick % frames.length]
-    const spinLine = `${spinChar} ${status}`
-    const spinPad = Math.max(0, Math.floor((cols - spinLine.length - 2) / 2))
-    lines.push(" ".repeat(spinPad) + paint(`  ${spinLine}`, "#6ec1ff", { bold: true }))
-
-    process.stdout.write("\x1B[?25l")
-    process.stdout.write("\x1Bc")
-    process.stdout.write(lines.join("\n"))
-  }
-
-  render()
-  const timer = setInterval(() => {
-    tick++
-    if (revealChars < totalChars + 30) revealChars += revealSpeed
-    render()
-  }, 50)
-
-  return {
-    update(text) {
-      steps.push(status.replace("...", ""))
-      status = text
-      render()
-    },
-    stop() {
-      clearInterval(timer)
-      process.stdout.write("\x1B[?25h")
-      process.stdout.write("\x1Bc")
-    }
+    await saveHistoryLines(HIST_FILE, HIST_SIZE, ui.history)
   }
 }
 
@@ -3665,7 +3497,7 @@ export async function startRepl({ trust = false } = {}) {
   const { checkWorkspaceTrust } = await import("./permission/workspace-trust.mjs")
   const trustState = await checkWorkspaceTrust({ cwd: process.cwd(), cliTrust: trust, isTTY: process.stdin.isTTY })
 
-  const splash = startSplash()
+  const splash = startSplash({ version: "v0.1.27" })
 
   const ctx = await buildContext({ trust, trustState })
   printContextWarnings(ctx)
@@ -3675,16 +3507,7 @@ export async function startRepl({ trust = false } = {}) {
 
   // Collect MCP status for later display
   const mcpHealth = McpRegistry.healthSnapshot()
-  const mcpStatusLines = []
-  for (const entry of mcpHealth) {
-    if (entry.ok) {
-      const toolCount = McpRegistry.listTools().filter((t) => t.server === entry.name).length
-      mcpStatusLines.push(paint(`  mcp ✓ ${entry.name}`, ctx.themeState.theme.semantic.success) + paint(` (${toolCount} tools, ${entry.transport})`, ctx.themeState.theme.base.muted))
-    } else {
-      const reason = entry.error || entry.reason || "unknown"
-      mcpStatusLines.push(paint(`  mcp ✗ ${entry.name}`, ctx.themeState.theme.semantic.error) + paint(` ${reason}`, ctx.themeState.theme.base.muted))
-    }
-  }
+  const mcpStatusLines = collectMcpStatusLines(ctx.themeState.theme, mcpHealth, McpRegistry.listTools())
 
   splash.update("loading skills & agents...")
   await SkillRegistry.initialize(ctx.configState.config, process.cwd())
@@ -3693,16 +3516,10 @@ export async function startRepl({ trust = false } = {}) {
 
   splash.update("loading hooks & history...")
   await initHookBus()
-  const historyLines = await loadHistory()
+  const historyLines = await loadHistoryLines(HIST_FILE, HIST_SIZE)
 
   splash.update("preparing workspace...")
-  const state = {
-    sessionId: newSessionId(),
-    mode: ctx.configState.config.agent.default_mode || "agent",
-    providerType: ctx.configState.config.provider.default,
-    model: ""
-  }
-  state.model = resolveProviderDefaultModel(ctx.configState.config, state.providerType)
+  const state = createInitialReplState(ctx.configState.config, { newSessionIdFn: newSessionId })
 
   // Check if auto memory file exists
   try {
@@ -3713,7 +3530,7 @@ export async function startRepl({ trust = false } = {}) {
   }
 
   const customCommands = await loadCustomCommands(process.cwd())
-  const providersConfigured = configuredProviders(ctx.configState.config)
+  const providersConfigured = configuredProviders(ctx.configState.config, listProviders)
   const recentSessions = await listSessions({ cwd: process.cwd(), limit: 6, includeChildren: false }).catch(() => [])
 
   splash.stop()
@@ -3723,27 +3540,16 @@ export async function startRepl({ trust = false } = {}) {
     console.log(paint("  ⚠ workspace not trusted — tools are blocked. Run /trust to enable.", ctx.themeState.theme.semantic.warning))
   }
 
-  if (process.stdout.isTTY && process.stdin.isTTY) {
-    await startTuiRepl({
-      ctx,
-      state,
-      providersConfigured,
-      customCommands,
-      recentSessions,
-      historyLines,
-      mcpStatusLines
-    })
-    return
-  }
-
-  clearScreen()
-  for (const line of mcpStatusLines) console.log(line)
-  await startLineRepl({
+  await runReplController({
     ctx,
     state,
     providersConfigured,
     customCommands,
     recentSessions,
-    historyLines
+    historyLines,
+    mcpStatusLines,
+    startTuiRepl,
+    startLineRepl,
+    clearScreenFn: clearScreen
   })
 }
