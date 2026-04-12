@@ -1,15 +1,13 @@
 name: release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  release:
+  release_verify:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -23,6 +21,3 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run release:verify
-      - uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
