@@ -71,6 +71,7 @@ import { renderInstalledCommandSurface, describeReloadSummary } from "./repl/com
 import { executePromptTurn } from "./repl/turn-controller.mjs"
 import { buildCapabilitySnapshot } from "./repl/capability-facade.mjs"
 import { buildReplRuntimeSnapshot } from "./repl/runtime-facade.mjs"
+import { buildOperatorSnapshot } from "./repl/operator-surface.mjs"
 import {
   activateNextQuestionState,
   commitQuestionAnswer,
@@ -446,6 +447,10 @@ async function processInputLine({
       mcpRegistry: McpRegistry,
       skillRegistry: SkillRegistry,
       recoveryEnabled: ctx.configState.config.session?.recovery !== false
+    })
+    runtimeView.operatorSnapshot = buildOperatorSnapshot({
+      runtimeSummary: runtimeView.runtimeSummary,
+      backgroundSummary: runtimeView.backgroundSummary
     })
     print(renderRuntimeDashboardView({
       theme: ctx.themeState.theme,

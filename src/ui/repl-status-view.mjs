@@ -1,6 +1,7 @@
 import { renderStatusBar } from "../theme/status-bar.mjs"
 import { renderReplDashboard, renderReplLogo, renderStartupHint } from "./repl-dashboard.mjs"
 import { formatRuntimeStateText } from "./repl-turn-summary.mjs"
+import { renderOperatorPanel } from "./repl-operator-panel.mjs"
 
 export function renderReplStatusLine({
   state,
@@ -39,6 +40,7 @@ export function renderRuntimeDashboardView({
   skillSummary,
   backgroundSummary,
   runtimeSummary,
+  operatorSnapshot = null,
   customCommandCount,
   cwd,
   columns = null
@@ -57,7 +59,8 @@ export function renderRuntimeDashboardView({
       columns
     }),
     "",
-    formatRuntimeStateText(state, mcpSummary, skillSummary, backgroundSummary, runtimeSummary)
+    formatRuntimeStateText(state, mcpSummary, skillSummary, backgroundSummary, runtimeSummary),
+    ...(operatorSnapshot ? ["", ...renderOperatorPanel(operatorSnapshot)] : [])
   ].join("\n")
 }
 

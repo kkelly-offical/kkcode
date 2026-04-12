@@ -25,6 +25,7 @@ test("renderRuntimeDashboardView includes dashboard and runtime summary", () => 
     skillSummary: { total: 0, template: 0, skillMd: 0, mcpPrompt: 0, programmable: 0 },
     backgroundSummary: { active: 1, counts: { pending: 1, running: 0, completed: 0, interrupted: 0, error: 0 } },
     runtimeSummary: { messageCount: 12, partCount: 4, recoverableCount: 1, audit: { total: 2, errorCount: 0 } },
+    operatorSnapshot: { recoverableCount: 1, activeBackground: 1, actions: ["bg_1: inspect output"] },
     customCommandCount: 0,
     cwd: process.cwd(),
     columns: 100
@@ -33,6 +34,7 @@ test("renderRuntimeDashboardView includes dashboard and runtime summary", () => 
   assert.match(text, /session=ses_demo/)
   assert.match(text, /background=1 active/)
   assert.match(text, /session.messages=12/)
+  assert.match(text, /operator surface:/)
 })
 
 test("renderStartupScreen preserves logo and startup hint output", () => {
