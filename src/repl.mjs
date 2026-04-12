@@ -67,6 +67,13 @@ import {
 import { renderInstalledCommandSurface, describeReloadSummary } from "./repl/command-surface.mjs"
 import { executePromptTurn } from "./repl/turn-controller.mjs"
 import { buildReplRuntimeSnapshot } from "./repl/runtime-facade.mjs"
+import {
+  activateNextQuestionState,
+  commitQuestionAnswer,
+  advanceQuestionState,
+  finalizeQuestionAnswers
+} from "./repl/dialog-router.mjs"
+import { POLICY_CHOICES, createPolicyPickerState, applyPolicyChoice } from "./repl/permission-flow.mjs"
 
 const HIST_DIR = userRootDir()
 const HIST_FILE = join(HIST_DIR, "repl_history")
@@ -1438,55 +1445,50 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   function activateNextQuestion() {
-    if (ui.questionQueue.length === 0) {
-      ui.pendingQuestion = null
-      return
-    }
-    const next = ui.questionQueue.shift()
-    ui.pendingQuestion = next
-    ui.questionIndex = 0
-    ui.questionOptionSelected = 0
-    ui.questionMultiSelected = {}
-    ui.questionCustomMode = false
-    ui.questionCustomInput = ""
-    ui.questionCustomCursor = 0
-    ui.questionAnswers = {}
+    const next = activateNextQuestionState(ui.questionQueue)
+    if (next.queue) ui.questionQueue = next.queue
+    ui.pendingQuestion = next.pendingQuestion
+    ui.questionIndex = next.questionIndex
+    ui.questionOptionSelected = next.questionOptionSelected
+    ui.questionMultiSelected = next.questionMultiSelected
+    ui.questionCustomMode = next.questionCustomMode
+    ui.questionCustomInput = next.questionCustomInput
+    ui.questionCustomCursor = next.questionCustomCursor
+    ui.questionAnswers = next.questionAnswers
   }
 
   function commitCurrentQuestionAnswer() {
-    if (!ui.pendingQuestion) return
-    const questions = ui.pendingQuestion.questions || []
-    const q = questions[ui.questionIndex]
-    if (!q) return
-    if (ui.questionCustomMode) {
-      ui.questionAnswers[q.id] = ui.questionCustomInput || ""
-      ui.questionCustomMode = false
-      ui.questionCustomInput = ""
-      ui.questionCustomCursor = 0
-    } else if (q.multi) {
-      const selected = ui.questionMultiSelected[q.id] || new Set()
-      const values = [...selected].map((i) => {
-        const opt = (q.options || [])[i]
-        return opt ? (opt.value || opt.label) : ""
-      }).filter(Boolean)
-      ui.questionAnswers[q.id] = values.join(", ")
-    } else {
-      const opt = (q.options || [])[ui.questionOptionSelected]
-      if (opt) {
-        ui.questionAnswers[q.id] = opt.value || opt.label
-      }
-    }
+    const next = commitQuestionAnswer({
+      pendingQuestion: ui.pendingQuestion,
+      questionIndex: ui.questionIndex,
+      questionOptionSelected: ui.questionOptionSelected,
+      questionMultiSelected: ui.questionMultiSelected,
+      questionCustomMode: ui.questionCustomMode,
+      questionCustomInput: ui.questionCustomInput,
+      questionAnswers: ui.questionAnswers
+    })
+    ui.questionAnswers = next.questionAnswers
+    ui.questionCustomMode = next.questionCustomMode
+    ui.questionCustomInput = next.questionCustomInput
+    ui.questionCustomCursor = next.questionCustomCursor
   }
 
   function advanceOrSubmitQuestion() {
     commitCurrentQuestionAnswer()
-    const questions = ui.pendingQuestion?.questions || []
-    if (ui.questionIndex < questions.length - 1) {
-      ui.questionIndex += 1
-      ui.questionOptionSelected = 0
-      ui.questionCustomMode = false
-      ui.questionCustomInput = ""
-      ui.questionCustomCursor = 0
+    const next = advanceQuestionState({
+      pendingQuestion: ui.pendingQuestion,
+      questionIndex: ui.questionIndex,
+      questionOptionSelected: ui.questionOptionSelected,
+      questionCustomMode: ui.questionCustomMode,
+      questionCustomInput: ui.questionCustomInput,
+      questionCustomCursor: ui.questionCustomCursor
+    })
+    if (!next.shouldSubmit) {
+      ui.questionIndex = next.questionIndex
+      ui.questionOptionSelected = next.questionOptionSelected
+      ui.questionCustomMode = next.questionCustomMode
+      ui.questionCustomInput = next.questionCustomInput
+      ui.questionCustomCursor = next.questionCustomCursor
       requestRender({ force: true })
     } else {
       resolveQuestionPrompt()
@@ -1496,14 +1498,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   function resolveQuestionPrompt() {
     if (!ui.pendingQuestion) return
     const current = ui.pendingQuestion
-    const questions = current.questions || []
-    // Ensure all unanswered questions get committed
-    for (let i = 0; i < questions.length; i++) {
-      if (!(questions[i].id in ui.questionAnswers)) {
-        ui.questionAnswers[questions[i].id] = "(skipped)"
-      }
-    }
-    const answers = { ...ui.questionAnswers }
+    const answers = finalizeQuestionAnswers(current, ui.questionAnswers)
     ui.pendingQuestion = null
     ui.questionIndex = 0
     ui.questionOptionSelected = 0
@@ -1555,17 +1550,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     closeModelPicker()
   }
 
-  const POLICY_CHOICES = [
-    { label: "Ask", value: "ask", desc: "prompt before each tool call" },
-    { label: "Allow", value: "allow", desc: "allow all tool calls" },
-    { label: "Deny", value: "deny", desc: "deny all tool calls" },
-    { label: "Session Clear", value: "session-clear", desc: "clear cached grants" }
-  ]
-
   function openPolicyPicker() {
     const current = ctx.configState.config.permission?.default_policy || "ask"
-    const idx = POLICY_CHOICES.findIndex((c) => c.value === current)
-    ui.policyPicker = { selected: Math.max(0, idx) }
+    ui.policyPicker = createPolicyPickerState(current)
     requestRender({ force: true })
   }
 
@@ -1578,13 +1565,15 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     if (!ui.policyPicker) return
     const chosen = POLICY_CHOICES[ui.policyPicker.selected]
     if (chosen) {
-      if (chosen.value === "session-clear") {
-        PermissionEngine.clearSession(state.sessionId)
-        appendLog(paint(`permission session cache cleared`, ctx.themeState.theme.semantic.success))
-      } else {
-        const permission = ctx.configState.config.permission || (ctx.configState.config.permission = {})
-        permission.default_policy = chosen.value
-        appendLog(paint(`permission policy → ${chosen.value}`, ctx.themeState.theme.semantic.success))
+      const permission = ctx.configState.config.permission || (ctx.configState.config.permission = {})
+      const result = applyPolicyChoice(chosen, {
+        permissionConfig: permission,
+        sessionId: state.sessionId,
+        clearSession: (sessionId) => PermissionEngine.clearSession(sessionId)
+      })
+      ctx.configState.config.permission = result.permissionConfig
+      if (result.message) {
+        appendLog(paint(result.message, ctx.themeState.theme.semantic.success))
       }
     }
     closePolicyPicker()
@@ -3312,7 +3301,7 @@ export async function startRepl({ trust = false } = {}) {
   const { checkWorkspaceTrust } = await import("./permission/workspace-trust.mjs")
   const trustState = await checkWorkspaceTrust({ cwd: process.cwd(), cliTrust: trust, isTTY: process.stdin.isTTY })
 
-  const splash = startSplash({ version: "v0.1.31" })
+  const splash = startSplash({ version: "v0.1.32" })
 
   const ctx = await buildContext({ trust, trustState })
   printContextWarnings(ctx)
