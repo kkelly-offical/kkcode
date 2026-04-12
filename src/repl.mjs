@@ -3301,7 +3301,7 @@ export async function startRepl({ trust = false } = {}) {
   const { checkWorkspaceTrust } = await import("./permission/workspace-trust.mjs")
   const trustState = await checkWorkspaceTrust({ cwd: process.cwd(), cliTrust: trust, isTTY: process.stdin.isTTY })
 
-  const splash = startSplash({ version: "v0.1.35" })
+  const splash = startSplash({ version: "v0.1.36" })
 
   const ctx = await buildContext({ trust, trustState })
   printContextWarnings(ctx)
