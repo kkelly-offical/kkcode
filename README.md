@@ -1,63 +1,89 @@
 # kkcode
 
-[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=v0.1.36)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
+[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=v0.2.0)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
+[![GitHub Release](https://img.shields.io/github/v/release/kkelly-offical/kkcode)](https://github.com/kkelly-offical/kkcode/releases)
 ![Node](https://img.shields.io/badge/Node.js-%3E%3D22-green)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
-![Models](https://img.shields.io/badge/Models-Qwen%20%7C%20GLM%20%7C%20DeepSeek%20%7C%20Claude%20%7C%20GPT%20%7C%20Ollama-orange)
 
-面向团队协作的终端 AI Coding Agent。
+**Terminal-first AI coding agent for governed execution, LongAgent orchestration, and extensible local workflows.**
 
-**可执行** — 内置 16+ 工具链，子智能体委派，主动规划与审批。
-**可治理** — 三级权限策略，会话审计，Token 预算控制。
-**可长跑** — LongAgent 阶段并行编排，自动重试与门禁闭环。
-**多模型** — 原生支持 Qwen3.5、GLM-5、DeepSeek、Claude、GPT、Ollama 本地模型。
+**终端优先、可治理、可扩展的 AI Coding Agent。**  
+kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同一个 CLI 工作台里，并且把权限、预算、审计、后台任务、MCP、技能与插件一起纳入统一执行面。
 
 ---
 
-## 目录
+<a id="table-of-contents"></a>
+## Table of Contents / 目录
 
-- [快速开始](#快速开始)
-- [支持的模型](#支持的模型)
-- [模式系统](#模式系统)
-- [LongAgent 编排](#longagent-编排)
-- [主动规划](#主动规划)
-- [权限系统](#权限系统)
-- [内置工具](#内置工具)
-- [子智能体](#子智能体)
-- [Auto Memory](#auto-memory)
-- [MCP 接入](#mcp-接入)
-- [GitHub 集成](#github-集成)
-- [扩展机制](#扩展机制)
-- [会话与审计](#会话与审计)
-- [TUI 交互](#tui-交互)
-- [项目结构](#项目结构)
-- [配置](#配置)
-- [常见问题](#常见问题)
-- [致谢](#致谢)
-- [License](#license)
+- [Overview / 概览](#overview)
+- [Why kkcode / 为什么选择 kkcode](#why-kkcode)
+- [Installation / 安装](#installation)
+- [Quick Start / 快速开始](#quick-start)
+- [Capability Snapshot / 能力总览](#capability-snapshot)
+- [Modes & LongAgent / 模式与 LongAgent](#modes-and-longagent)
+- [Safety & Permissions / 权限与安全](#safety-and-permissions)
+- [Delegation & Subagents / 委派与子智能体](#delegation-and-subagents)
+- [Integrations / 集成](#integrations)
+- [Extensions / 扩展机制](#extensions)
+- [TUI & CLI Reference / TUI 与命令参考](#tui-and-cli-reference)
+- [Configuration & Project Layout / 配置与项目结构](#configuration-and-project-layout)
+- [Release Status / 发布状态](#release-status)
+- [Compatibility, Limits & Roadmap / 兼容性、边界与路线图](#compatibility-limits-and-roadmap)
+- [FAQ / 常见问题](#faq)
+- [Contributing / 贡献](#contributing)
+- [License / 许可证](#license)
+- [Further Reading / 延伸阅读](#further-reading)
 
 ---
 
-## 快速开始
+<a id="overview"></a>
+## Overview / 概览
 
-### 环境要求
+**English**
+- kkcode is a terminal-native AI coding agent designed for local development, governed execution, and multi-stage delivery.
+- It keeps four public lanes — `ask`, `plan`, `agent`, and `longagent` — under one CLI surface.
+- It is optimized for **CLI-first** and **LongAgent-first** workflows rather than GUI-first or marketplace-first product patterns.
 
+**中文**
+- kkcode 是一个面向终端原生工作流的 AI Coding Agent，强调本地开发、可治理执行和多阶段交付。
+- 它把四条公开执行航道 —— `ask`、`plan`、`agent`、`longagent` —— 收敛在同一个 CLI 入口下。
+- 它优先服务 **CLI-first**、**LongAgent-first** 的工程工作流，而不是 GUI 优先或 marketplace 优先的平台形态。
+
+---
+
+<a id="why-kkcode"></a>
+## Why kkcode / 为什么选择 kkcode
+
+**English**
+- **CLI-first**: core workflows stay in the terminal.
+- **LongAgent-first**: large tasks are planned, staged, and verified instead of improvised in one prompt.
+- **Governed execution**: permissions, budgets, audit logs, and recovery are built in.
+- **Local extensibility**: MCP, skills, commands, hooks, tools, and custom agents can all be mounted locally.
+
+**中文**
+- **CLI-first**：核心工作流都在终端内完成。
+- **LongAgent-first**：复杂任务先规划、分阶段、带门禁，而不是靠单轮 prompt 硬顶。
+- **可治理执行**：权限、预算、审计、恢复、后台任务都是内建能力。
+- **本地可扩展**：MCP、skills、commands、hooks、tools、custom agents 都能本地挂载。
+
+---
+
+<a id="installation"></a>
+## Installation / 安装
+
+**Requirements / 环境要求**
 - Node.js `>=22`
-- npm / pnpm
-- 建议终端：Windows Terminal、iTerm2 或现代 Linux terminal
+- npm or pnpm
+- A modern terminal on Windows, macOS, or Linux
 
-### 快速开始
-
+**Install from npm / 通过 npm 安装**
 ```bash
 npm install -g @kkelly-offical/kkcode
 kkcode
 ```
 
-首次启动会进入 **引导设置**，选择编程语言、技术栈、代码风格等偏好，kkcode 会在每次对话中自动应用这些设置。随时可用 `/profile` 查看或修改，`/like` 重新运行引导。
-
-**从源码运行（开发用）：**
-
+**Run from source / 从源码运行**
 ```bash
 git clone https://github.com/kkelly-offical/kkcode.git
 cd kkcode
@@ -65,400 +91,360 @@ npm install
 npm run start
 ```
 
-### 初始化项目配置
+**Useful links / 常用链接**
+- [npm package](https://www.npmjs.com/package/@kkelly-offical/kkcode)
+- [GitHub Releases](https://github.com/kkelly-offical/kkcode/releases)
+- [Example config](docs/config.example.yaml)
 
+---
+
+<a id="quick-start"></a>
+## Quick Start / 快速开始
+
+**1. Launch / 启动**
+```bash
+kkcode
+```
+
+**2. Initialize project config / 初始化项目配置**
 ```bash
 kkcode init -y
 ```
 
-配置文件按优先级自动查找：
-
-- 用户级：`~/.kkcode/config.yaml`
-- 项目级：`./kkcode.config.yaml` 或 `./.kkcode/config.yaml`
-
----
-
-## 支持的模型
-
-kkcode 通过统一的 Provider 抽象层支持多种模型，开箱即用：
-
-| 提供商 | 模型 | 类型 | 配置样例 |
-|--------|------|------|----------|
-| 阿里 DashScope | Qwen3.5-Plus、Qwen3-Max、Qwen3-Coder | `openai-compatible` | [`config-qwen3.5.yaml`](configs/config-qwen3.5.yaml) |
-| 智谱 AI | GLM-5、GLM-4.5 | `openai-compatible` | [`config-glm5.yaml`](configs/config-glm5.yaml) |
-| DeepSeek | DeepSeek-Chat (V3)、DeepSeek-Reasoner (R1) | `openai-compatible` | [`config-deepseek.yaml`](configs/config-deepseek.yaml) |
-| Anthropic | Claude Opus 4.6、Sonnet 4.6 | `anthropic` | [`config.example.yaml`](docs/config.example.yaml) |
-| OpenAI | GPT-5.3-Codex、GPT-5.2 | `openai` | [`config.example.yaml`](docs/config.example.yaml) |
-| Ollama | Qwen3、DeepSeek-Coder、LLaMA 等本地模型 | `ollama` | [`config-ollama.yaml`](configs/config-ollama.yaml) |
-| 任意 OpenAI 兼容 API | Kimi、Yi、Moonshot 等 | `openai-compatible` | [`config-multi-provider.yaml`](configs/config-multi-provider.yaml) |
-
-切换模型只需修改配置文件中的 `provider.default`，或在 TUI 中使用 `/provider` 和 `/model` 命令。
-
----
-
-## 模式系统
-
-| 模式 | 目标 | 工具权限 | 典型场景 |
-|---|---|---|---|
-| `ask` | 问答 / 解释 | 只读 | 理解代码、解释报错 |
-| `plan` | 方案拆解 | 只读 | 先出执行计划 |
-| `agent` | 默认通用事务 | 全工具 | 看/改/跑命令/小范围修复与验证 |
-| `longagent` | 长程编排 | 全工具 + 调度 | 跨文件 / 多阶段 / ownership 明确的任务 |
-
-TUI 中按 `Tab` 一键轮换模式。
-
-公共模式契约：
-
-- `ask`：只做解释、答疑、分析，不执行仓库写入
-- `plan`：只产出规格 / 方案，不执行文件变更
-- `agent`：默认有界本地执行航道，优先承接 inspect / patch / verify 小闭环事务
-- `longagent`：只用于显式重型、多文件、分阶段交付任务
-- 只有出现明确重型证据时，才从 `agent` 升级到 `longagent`
-
----
-
-## LongAgent 编排
-
-LongAgent 是 kkcode 的核心差异能力，支持两种编排模式：
-
-**Hybrid 模式**（默认）— 7 阶段流水线：
-
-```
-Intake → OA确认 → Preview → Blueprint → 用户审批 → Git分支 → Scaffold+并行编码 → Debugging → 门禁验证 → Git合并
+**3. Verify the install / 验证安装**
+```bash
+kkcode --help
+kkcode doctor
 ```
 
-**4-Stage 模式** — 4 阶段顺序执行：
+**First-run behavior / 首次启动行为**
+- On first launch, kkcode runs onboarding and records your preferences.
+- Use `/profile` to inspect or update personal preferences.
+- Use `/like` to rerun onboarding.
 
-```
-Preview(只读) → Blueprint(只读) → Coding(写入) → Debugging(写入)
-```
-
-### 关键机制
-
-- **智能意图路由** — 自动识别任务类型：`agent` 作为默认通用执行航道，局部 inspect + patch + verify 事务优先留在 `agent`，只有出现明确重型证据才建议 `longagent`
-- **路由理由可见** — 自动切换模式时会显示原因标签与任务拓扑（例如 `short_question`、`local_transaction_task`、`multi_file_or_system_task`），避免黑盒切换
-- **OA 需求确认** — H0 阶段完成后向用户展示需求摘要，支持补充修改后再进入规划
-- **Blueprint 审批** — H2 阶段生成执行计划后，展示阶段列表和架构摘要，用户确认后才开始执行
-- **中断后继续** — `agent` 中止后可把补充输入视为当前事务的继续；`longagent` 中止后仍可输入补充需求并从 H0 重新规划
-- **前端设计提示词** — 自动检测前端任务（React/Vue/CSS/UI 等），注入响应式、无障碍、设计风格等指南
-- **阶段并行** — 同阶段任务由独立 worker 并发执行，`max_concurrency` 控制并发数
-- **文件隔离** — 每个文件仅归属一个 task，plan 阶段即检测冲突
-- **自动重试** — 失败任务自动重试，优先续写未完成文件
-- **门禁闭环** — build / test / review / health / budget 五项质量门禁
-- **Git 集成** — 自动创建特性分支，每阶段提交，完成后合并
-- **防卡死** — 检测探索循环，强制推进到下一阶段
+**Configuration search order / 配置查找顺序**
+- User-level: `~/.kkcode/config.yaml`
+- Project-level: `./kkcode.config.yaml` or `./.kkcode/config.yaml`
 
 ---
 
-## 主动规划
+<a id="capability-snapshot"></a>
+## Capability Snapshot / 能力总览
 
-Agent 执行中可主动进入规划模式，无需用户手动切换：
+| Area / 能力面 | Status / 状态 | Notes / 说明 |
+| --- | --- | --- |
+| Ask / 问答分析 | Supported | Read-only explanation and code understanding |
+| Plan / 方案规划 | Supported | Planning without mutating the repo |
+| Agent / 默认事务航道 | Supported | Local inspect/patch/verify loops |
+| LongAgent / 长程编排 | Supported | Multi-stage execution, retries, gates, resumable flow |
+| Permissions / 权限治理 | Supported | Policy + approvals + session cache |
+| Background tasks / 后台任务 | Supported | Launch, inspect, wait, retry, cancel |
+| MCP / 模型上下文协议 | Supported | Local MCP discovery and registry |
+| Skills / Commands / Hooks | Supported | Local-first extensibility surface |
+| Plugins / 插件包 | MVP | Local plugin manifests and component toggles |
+| GUI / IDE / desktop automation | Not promised | README does not claim GUI-first product support |
 
-1. Agent 遇到复杂任务时调用 `enter_plan`
-2. 在规划模式下分析代码、设计方案
-3. 调用 `exit_plan` 提交计划，TUI 弹出审批面板
-4. 用户 Approve 或 Reject（可附反馈）
-5. 批准后按计划执行，驳回则修订
-
----
-
-## 权限系统
-
-采用 **策略 + 交互审批 + 会话缓存授权** 组合模型。
-
-- `permission.default_policy`: `ask | allow | deny`
-- `permission.rules[]`: 按工具 / 模式 / 文件模式 / 命令前缀匹配细粒度规则
-- 审批一次后同会话内同类操作自动放行
-
-提供三级权限模板：[严格](configs/permission-strict.yaml) | [标准](configs/permission-standard.yaml) | [宽松](configs/permission-permissive.yaml)
-
-TUI 审批面板：`1` allow once / `2` allow session / `3` deny / `Esc` deny
+For a deeper boundary matrix, see [CLI General Assistant Capability Matrix](docs/cli-general-assistant-capability-matrix.md).
 
 ---
 
-## 内置工具
+<a id="modes-and-longagent"></a>
+## Modes & LongAgent / 模式与 LongAgent
 
-| 工具 | 说明 |
-|------|------|
-| `read` | 读取文件内容（支持 offset/limit 分页） |
-| `sysinfo` | 读取结构化系统 / 运行时 / 工作区摘要 |
-| `write` | 原子写文件（overwrite / append / insert） |
-| `edit` | 事务性字符串替换 + 自动回滚 |
-| `patch` | 按行号范围替换文件内容 |
-| `glob` | 按模式搜索文件 |
-| `grep` | 按正则搜索文件内容 |
-| `bash` | 执行 shell 命令 |
-| `task` | 委派子智能体执行子任务 |
-| `todowrite` | 结构化任务管理 |
-| `question` | 向用户提问 |
-| `enter_plan` / `exit_plan` | 主动规划与审批 |
-| `webfetch` / `websearch` | 网页抓取与搜索 |
-| `codesearch` | 代码搜索引擎 |
+### Public lanes / 公开执行航道
 
-写入安全特性：原子写、事务回滚、外部修改检测、读前编辑约束、file lock 串行化。
+| Mode | Purpose | Typical use |
+| --- | --- | --- |
+| `ask` | explanation / analysis | understanding code, errors, design questions |
+| `plan` | specification / planning | producing an execution plan before mutations |
+| `agent` | bounded local execution | inspect + patch + verify small/medium tasks |
+| `longagent` | staged orchestration | multi-file, multi-step, ownership-driven delivery |
+
+**English**
+- `agent` is the default bounded execution lane.
+- Only escalate to `longagent` when the task is clearly multi-stage or system-wide.
+- Interrupted work can be resumed with the same session context.
+
+**中文**
+- `agent` 是默认的有界本地执行航道。
+- 只有在任务明显跨文件、跨阶段、影响面较大时，才建议升级到 `longagent`。
+- 中断后的工作可以在同一会话中继续，不需要从零开始。
+- **路由理由可见**：当 kkcode 自动建议模式变化时，会尽量解释为什么当前任务更适合留在 `agent` 或升级到 `longagent`。
 
 ### CLI 通用助手能力边界（0.1.13）
 
-kkcode 仍然是**纯 CLI 优先**工具，但 0.1.13 进一步把 ask / plan / agent / longagent 四条公共执行航道写成统一主契约，并继续把 `agent` 保持为默认通用事务入口：
+**公共模式契约**
 
-| 能力面 | 当前覆盖 |
-|------|------|
-| 代码交付 | `read` / `write` / `edit` / `patch` / LongAgent |
-| 系统 / 运行时信息 | `sysinfo` |
-| 本地目录 / 文件 / 日志检查 | `list` / `glob` / `grep` / `read` / `bash` |
-| 仓库 / 发布辅助 | `git_status` / `git_info` / `git_snapshot` / `git_restore` |
-| 中断后继续同一事务 | 同一会话上下文 + 路由 / REPL continuation 提示 |
-| Web 查询 / 抓取 | `websearch` / `webfetch` |
-| 子任务委派 | `task` / `background_output` / `background_cancel` |
+- `ask`：只做解释、答疑、分析。
+- `plan`：**只产出规格，不执行文件变更**。
+- `agent`：**默认有界本地执行航道**，优先承接 inspect / patch / verify 小闭环事务。
+- **只有出现明确重型证据时，才从 `agent` 升级到 `longagent`**。
 
-这意味着 kkcode 不再只适合“写代码”，也适合做很多**终端原生**的本地事务；而且中断后的补充输入会优先尝试继续同一 agent 事务。但这**不代表**它已经承诺 GUI / 桌面自动化、IDE 集成或 marketplace 平台能力。
+**能力边界速览**
+- 系统 / 运行时信息
+- 本地目录 / 文件 / 日志检查
+- 仓库 / 发布辅助
+- 这**不代表** kkcode 已经承诺 GUI / 桌面自动化能力
+- 默认先在 `agent` 内把局部 inspect / patch / verify 做完，再判断是否需要升级
 
-默认先在 `agent` 内把局部 inspect / patch / verify 做完；只有出现明确重型证据时，才建议切到 `longagent`。
-
-更完整的能力矩阵见
-[`docs/cli-general-assistant-capability-matrix.md`](docs/cli-general-assistant-capability-matrix.md)。
-
----
-
-## 子智能体
-
-通过 `task` 工具委派专项子智能体：
-
-| 类型 | 说明 | 权限 |
-|------|------|------|
-| `build` | 通用构建执行 | 全工具 |
-| `explore` | 快速代码探索 | 只读 |
-| `reviewer` | 代码审查（bug / 安全 / 质量） | 只读 |
-| `researcher` | 深度研究 + Web 搜索 | 只读 + 网络 |
-
-支持通过 YAML/MJS 自定义子智能体，或 `/create-agent` 自动生成。
-
-### `task` 委派契约（0.1.14 最小公开面）
-
-把 `task` 当成**有边界的 sidecar 委派工具**，不要把它当成 LongAgent 的替代品：
-
-- **stay local**：简单 `read` / `edit` / 单命令执行，直接本地处理
-- **先定主航道**：`ask` 负责解释，`plan` 负责规格，`agent` 负责默认事务，`longagent` 负责重型交付
-- **`fresh_agent`（默认）**：自包含、实现导向、希望隔离上下文的子任务
-- **`fork_context`**：仅用于研究 / 审计 / 验证等**只读** sidecar 工作，子任务继承父会话上下文，但父会话仍负责最终综合
-- **`run_in_background`**：长耗时 sidecar 工作，立即返回后台 `task_id`；后台委派必须自包含，不能依赖交互式提问
-- **不要用委派掩盖路由不确定性**：如果还是单路径 / 单命令 / 小闭环事务，就继续留在主 `agent`
-- **不要把理解工作本身外包**：主线程负责综合判断，子线程只返回结果
-- **只有出现重型证据再建议 `longagent`**：例如跨文件 ownership、分阶段交付、系统级 blast radius
-
-后台委派的跟踪是**确定性的**：
-
-- `background_output`：查看状态 / 日志 / 结果
-- `background_cancel`：取消运行中的后台委派
-- 终态固定为：`completed` / `cancelled` / `error` / `interrupted`
-
-更完整的 task 兼容矩阵见
-[`docs/task-delegation-contract-matrix.md`](docs/task-delegation-contract-matrix.md)。
-
-更完整的发布边界、模式主契约、兼容矩阵与非目标见
-[`docs/kkcode-0.1.13-mode-lane-contract.md`](docs/kkcode-0.1.13-mode-lane-contract.md)。
+**Further reading / 延伸阅读**
+- [0.1.13 Mode Lane Contract](docs/kkcode-0.1.13-mode-lane-contract.md)
+- [Agent Mode Tolerance Contract](docs/kkcode-0.1.12-agent-mode-tolerance-contract.md)
 
 ---
 
-## Auto Memory
+<a id="safety-and-permissions"></a>
+## Safety & Permissions / 权限与安全
 
-为每个项目维护独立持久记忆，跨会话保存项目知识。
+**English**
+- kkcode uses a policy-driven permission model with optional approvals.
+- Session-scoped grants can reduce repeated prompts while preserving boundaries.
+- Budget and usage controls are designed to keep long-running sessions governable.
 
-- 存储位置：`~/.kkcode/projects/<项目名>_<hash>/memory/MEMORY.md`
-- 每次会话启动时自动注入系统提示词（限 200 行）
-- Agent 可直接读写记忆文件
-- 状态栏显示 `MEM` 徽章表示已加载
+**中文**
+- kkcode 使用策略驱动的权限模型，并可叠加交互式审批。
+- 会话级授权缓存可减少重复确认，同时保持边界清晰。
+- 预算与用量控制让长会话、长任务仍然处于可治理状态。
 
----
-
-## MCP 接入
-
-支持三种传输协议：
-
-| 传输 | 适用场景 | 关键字段 |
-|------|----------|----------|
-| `stdio` | 本地子进程 | `command`, `args` |
-| `sse` | 远程 Streamable HTTP | `url`, `headers` |
-| `http` | REST 风格 | `url`, `headers` |
-
-自动发现：合并 `.mcp.json`、`.kkcode/mcp.json`、`~/.kkcode/mcp.json` 中的配置。
-
-```bash
-kkcode mcp test          # 健康状态
-kkcode mcp tools         # 可用工具列表
-```
+**Policy examples / 策略示例**
+- `permission.default_policy: ask | allow | deny`
+- rule-based overrides by tool / mode / file pattern / command prefix
 
 ---
 
-## GitHub 集成
+<a id="delegation-and-subagents"></a>
+## Delegation & Subagents / 委派与子智能体
 
-通过 GitHub Device Flow 实现安全的仓库访问，无需手动配置 Token。
+**English**
+- kkcode supports bounded delegation through the `task` surface.
+- Use `fresh_agent` for isolated implementation work.
+- Use `fork_context` for read-only sidecar work such as research or verification.
+- Do not outsource core understanding when the main thread must synthesize the result.
 
-```bash
-kkcode --github                    # 登录并选择仓库
-kkcode --github logout             # 登出
-```
+**中文**
+- kkcode 通过 `task` 能力支持有边界的委派。
+- `fresh_agent` 适合隔离实现任务。
+- `fork_context` 适合研究、审计、验证这类只读 sidecar 任务。
+- 如果主线程必须综合判断，就不要把理解工作本身外包出去。
 
-工作流程：登录 → 选择仓库/分支 → 选择本地或云端模式 → 进入 REPL → 退出时询问是否推送。
+**Background task contract / 后台任务契约**
+- 通过 `background_output` 查看后台任务输出
+- 通过 `background_cancel` 取消后台任务
+- 终态固定为 `completed` / `cancelled` / `error` / `interrupted`
 
----
-
-## 扩展机制
-
-| 扩展类型 | 目录 | 说明 |
-|----------|------|------|
-| 命令模板 | `.kkcode/commands/` | Markdown 模板，支持变量替换 |
-| 技能 | `.kkcode/skills/` | 可编程技能，`/create-skill` 生成 |
-| 子智能体 | `.kkcode/agents/` | YAML/MJS 定义，`/create-agent` 生成 |
-| 自定义工具 | `.kkcode/tools/` | .mjs 自动加载，`/reload` 热更新 |
-| Hook | `.kkcode/hooks/` | Hook 事件脚本（chat/tool/session） |
-| 插件包（MVP） | `.kkcode-plugin/plugin.json` 或 `.kkcode/plugins/<name>/plugin.json` | 将 skills / agents / hooks / MCP 片段打包到一个本地插件边界；支持 `enabled: false` 关闭包 |
-| 规则 | `.kkcode/rules/` | 项目级提示词规则 |
-| 指令文件 | `KKCODE.md` | 项目级指令，自动注入提示词 |
-
-说明：`.kkcode/hooks/` 是实际 Hook 加载目录；`.kkcode/plugins/` 预留给带 `plugin.json` 的本地插件包。若历史文档把 `.kkcode/plugins/` 当作 Hook 路径，请迁移为 `.kkcode/hooks/`；runtime 仍暂时兼容，但会给出弃用提示。
+**Further reading / 延伸阅读**
+- [Task Delegation Contract Matrix](docs/task-delegation-contract-matrix.md)
+- [Agent / LongAgent Extension Guide](docs/agent-longagent-compat-extension-guide.md)
 
 ---
 
-## 会话与审计
+<a id="integrations"></a>
+## Integrations / 集成
 
-- 会话存储：`~/.kkcode/sessions/`
-- 审计日志：`~/.kkcode/audit-log.json`
-- 事件日志：`~/.kkcode/events.log`
-- 三层用量追踪：turn / session / global
-- 预算策略：`warn | block`
+### MCP
+- Discover local MCP definitions and mount tools into the runtime.
+- Inspect registered MCP servers from the CLI.
+- Use MCP as part of the same governed tool surface.
 
-```bash
-kkcode doctor --json         # 完整诊断
-kkcode session list          # 会话列表
-kkcode session gc            # 过期清理
-kkcode usage show            # 用量统计
-kkcode longagent status      # LongAgent 状态
-```
+### GitHub
+- Authenticate, inspect repositories, and run GitHub-related flows from the terminal.
+- Repository helpers live under `src/github/`.
 
----
-
-## TUI 交互
-
-### 状态栏
-
-底部实时显示：`MODE` `MODEL` `TOKENS` `COST` `CONTEXT` `MEM` `PERMISSION` `LONG`
-
-### 快捷键
-
-| 按键 | 功能 |
-|------|------|
-| `Enter` | 发送 |
-| `Ctrl+J` | 换行 |
-| `Tab` | 模式轮换 |
-| `Up/Down` | 输入历史 |
-| `Ctrl+Up/Down` | 滚动日志区 |
-| `Esc` | 中断当前 turn（空闲时清空输入） |
-| `Ctrl+C` | busy 时中断 turn；空闲时连按两次退出 |
-| `Ctrl+L` | 清空活动区 |
-
-支持 `@图片路径` 或 `@图片URL` 引用多模态输入。
-
-### 中断 / 继续语义
-
-- `Esc`：中断当前 turn，但不退出会话，可直接输入新消息继续
-- `Ctrl+C`（busy 时）：与 `Esc` 一致，中断当前 turn
-- `Ctrl+C`（idle 时）：2 秒内连按两次才退出
-- LongAgent 被中断后，可直接补充需求并重新进入规划
-- 后台委派若被中止/超时/worker 消失，会进入 `interrupted` 终态，而不是静默消失
-
-### 常用 Slash 命令
-
-**会话**: `/new` `/resume` `/history` `/compact` `/undo`
-**模式**: `/ask` `/plan` `/agent` `/longagent`
-**配置**: `/provider` `/model` `/permission`
-**个人**: `/profile` `/like`
-**工具**: `/paste` `/status` `/keys` `/commands`
-**其他**: `/help` `/clear` `/exit`
+### Git automation
+- Local git-aware helpers support safe status, patch, and snapshot workflows.
+- See [GIT_AUTO_USAGE.md](docs/GIT_AUTO_USAGE.md).
 
 ---
 
-## 项目结构
+<a id="extensions"></a>
+## Extensions / 扩展机制
 
-```
-kkcode/
-├── src/
-│   ├── index.mjs              # CLI 入口
-│   ├── repl.mjs               # TUI 主循环
-│   ├── core/                  # 核心类型、常量、事件总线
-│   ├── config/                # 配置加载、Schema 校验、默认值
-│   ├── session/               # 会话引擎、消息循环、LongAgent 编排
-│   ├── tool/                  # 工具注册、执行、事务管理
-│   ├── agent/                 # 子智能体（explore/reviewer/researcher）
-│   ├── provider/              # 多 Provider 适配
-│   ├── permission/            # 权限引擎
-│   ├── mcp/                   # MCP 客户端（stdio/sse/http）
-│   ├── orchestration/         # 后台任务管理与并行 worker
-│   ├── observability/         # 可观测性（Metrics/Tracer）
-│   ├── ui/                    # Dashboard 渲染
-│   ├── storage/               # 会话/任务持久化
-│   ├── usage/                 # Token 计量与预算
-│   └── util/                  # 通用工具函数
-├── configs/                   # 配置样例与权限模板
-├── test/                      # 单元测试与集成测试
-├── package.json
-├── LICENSE                    # GPL-3.0
-└── NOTICE.md                  # 第三方致谢与声明
-```
+**Local-first extension surface / 本地优先扩展面**
+- commands
+- skills
+- agents
+- tools
+- hooks
+- plugin manifests
 
----
+**Directory conventions / 目录约定**
+- `.kkcode/commands/`
+- `.kkcode/skills/`
+- `.kkcode/agents/`
+- `.kkcode/tools/`
+- `.kkcode/plugins/`
+- `.kkcode/hooks/`
+- `.kkcode-plugin/plugin.json`
 
-## 配置
+**English**
+- kkcode’s extension story is local-first and explicit.
+- Plugins are currently an MVP surface, not a marketplace platform promise.
 
-完整配置参考：[`docs/config.example.yaml`](docs/config.example.yaml)
+**中文**
+- kkcode 的扩展机制是本地优先、显式可控的。
+- 当前插件能力是 MVP，不代表已经承诺 marketplace 平台形态。
 
-### 配置样例（configs/ 目录）
-
-| 文件 | 说明 |
-|------|------|
-| [`config-qwen3.5.yaml`](configs/config-qwen3.5.yaml) | 通义千问 Qwen3.5 系列 |
-| [`config-qwen3.yaml`](configs/config-qwen3.yaml) | 通义千问 Qwen3 系列 |
-| [`config-glm5.yaml`](configs/config-glm5.yaml) | 智谱 GLM-5 / GLM-4.5 |
-| [`config-deepseek.yaml`](configs/config-deepseek.yaml) | DeepSeek V3 / R1 |
-| [`config-ollama.yaml`](configs/config-ollama.yaml) | 本地 Ollama |
-| [`config-multi-provider.yaml`](configs/config-multi-provider.yaml) | 多 Provider 组合 |
-| [`permission-strict.yaml`](configs/permission-strict.yaml) | 严格权限（生产环境） |
-| [`permission-standard.yaml`](configs/permission-standard.yaml) | 标准权限（日常开发） |
-| [`permission-permissive.yaml`](configs/permission-permissive.yaml) | 宽松权限（个人/CI） |
+**Further reading / 延伸阅读**
+- [ClaudeNext Agent / LongAgent Skills Compatibility](docs/claudenext-agent-longagent-skills-compat.md)
+- [Agent / LongAgent Extension Guide](docs/agent-longagent-compat-extension-guide.md)
 
 ---
 
-## 常见问题
+<a id="tui-and-cli-reference"></a>
+## TUI & CLI Reference / TUI 与命令参考
 
-**Q: LongAgent 为什么拒绝"你好"？**
-LongAgent 是执行型编排器，非编码目标会被意图识别拦截。请使用 `ask` 模式进行对话。
+### Common TUI slash commands / 常用 TUI slash 命令
+- `/help` — show help
+- `/status` — show runtime and operator status
+- `/commands` — inspect command / skill / capability surface
+- `/reload` — reload commands, skills, and agents
+- `/new`, `/resume`, `/history` — session lifecycle
+- `/provider`, `/model` — provider/model switching
+- `/permission` — permission policy management
+- `/create-skill`, `/create-agent` — generate local extensions
 
-**Q: enter_plan 和 /plan 有什么区别？**
-`/plan` 是用户手动切换模式。`enter_plan` 是 agent 执行中主动进入规划，审批通过后继续执行。
+**Interrupt semantics / 中断语义**
+- `Esc` 可用于**中断当前 turn**、退出部分选择态或拒绝当前交互式请求，具体行为取决于当前上下文。
 
-**Q: 如何切换模型？**
-TUI 中使用 `/provider` 切换提供商，`/model` 切换模型。或修改配置文件中的 `provider.default`。
+### Main CLI commands / 主要 CLI 子命令
+- `chat`
+- `session`
+- `background`
+- `agent`
+- `longagent`
+- `mcp`
+- `skill`
+- `config`
+- `doctor`
+- `usage`
+- `review`
+- `audit`
 
-**Q: Auto Memory 会无限增长吗？**
-注入系统提示时限制 200 行。Agent 会保持精简并删除过时条目。
-
-**Q: 支持哪些国产模型？**
-原生支持通义千问 Qwen3.5/3 系列、智谱 GLM-5/4.5、DeepSeek V3/R1，以及任何 OpenAI 兼容 API。
+Run `kkcode --help` or `kkcode <command> --help` for the full surface.
 
 ---
 
-## 致谢
+<a id="configuration-and-project-layout"></a>
+## Configuration & Project Layout / 配置与项目结构
 
-kkcode 的设计受到以下项目的启发：
+### Key config themes / 关键配置主题
+- provider/model selection
+- permission and trust policy
+- agent / longagent behavior
+- usage and budget limits
+- UI / theme settings
+- MCP and extension loading
 
-- **[Claude Code](https://github.com/anthropics/claude-code)** — Anthropic 官方 AI Coding CLI。工具体系、子智能体架构、提示词工程等核心设计以此为标杆。
-- **[OpenCode](https://github.com/nicepkg/opencode)** — 开源终端 AI Coding 助手。多 Provider 支持、主题系统等借鉴了其设计。
-- **[Everything Claude Code](https://github.com/affaan-m/everything-claude-code)** — Instinct 自动学习、Hook Recipes、TDD 工作流等能力受此启发。
+### Project structure / 项目结构
+- `src/repl.mjs` — main REPL assembly surface
+- `src/repl/` — extracted REPL seams
+- `src/ui/` — REPL panels and render helpers
+- `src/session/` — execution loop, memory, recovery, prompts
+- `src/orchestration/` — background and longagent orchestration
+- `src/skill/`, `src/plugin/`, `src/mcp/` — extension systems
+
+**Useful docs / 推荐文档**
+- [Example config](docs/config.example.yaml)
+- [REPL roadmap](docs/repl-roadmap-0.1.27-0.1.36.md)
 
 ---
 
-## License
+<a id="release-status"></a>
+## Release Status / 发布状态
 
-本项目基于 [GNU General Public License v3.0](LICENSE) 开源。
+**Current stable / 当前稳定版本**: `v0.2.0`  
+**Latest releases / 最新发布**: [GitHub Releases](https://github.com/kkelly-offical/kkcode/releases)  
+**Package / 包地址**: [npm](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 
-Copyright (C) 2026 kkcode team
+**English**
+- `0.2.0` is the first formal release line after the staged REPL refactor from `0.1.27` to `0.1.36`.
+- The release train now includes explicit verification rails and GitHub release automation.
+
+**中文**
+- `0.2.0` 是 `0.1.27` 到 `0.1.36` 这轮 REPL 分阶段重构后的首个正式版本线。
+- 这条发布线已经具备显式验证护栏和 GitHub Release 自动发布能力。
+
+---
+
+<a id="compatibility-limits-and-roadmap"></a>
+## Compatibility, Limits & Roadmap / 兼容性、边界与路线图
+
+**What this README does claim / 本 README 明确声明的能力**
+- terminal-native coding workflows
+- governed execution and permissions
+- staged LongAgent orchestration
+- MCP and local extension surfaces
+- session/background/task visibility
+
+**What this README does not promise / 本 README 不承诺的能力**
+- GUI-first product workflows
+- IDE-native UX parity
+- desktop automation platform behavior
+- marketplace-style plugin ecosystem
+
+**Roadmap references / 路线图参考**
+- [REPL roadmap 0.1.27 → 0.1.36](docs/repl-roadmap-0.1.27-0.1.36.md)
+- [kkcode vs claudenext compatibility notes](docs/kkcode-vs-claudenext-private-agent-longagent-compat.md)
+- [kkcode vs claudenext report](docs/kkcode-vs-claudenext-private-agent-longagent-report.md)
+
+---
+
+<a id="faq"></a>
+## FAQ / 常见问题
+
+**Q: When should I use `longagent`? / 什么时候该用 `longagent`？**  
+A: Use it when the task is clearly multi-stage, cross-file, or needs ownership/gates. Small inspect/patch/verify loops should stay in `agent`.
+
+**Q: Can kkcode work with multiple providers? / kkcode 支持多模型厂商吗？**  
+A: Yes. Provider switching is built into config and the REPL command surface.
+
+**Q: Can I extend kkcode locally? / 可以本地扩展吗？**  
+A: Yes. Commands, skills, hooks, tools, agents, and plugin manifests all have local-first support.
+
+**Q: Does kkcode promise GUI or IDE parity? / 是否承诺 GUI 或 IDE 对等体验？**  
+A: No. This release line is CLI-first and does not overclaim GUI-first capability.
+
+---
+
+<a id="contributing"></a>
+## Contributing / 贡献
+
+**English**
+- Keep changes small, testable, and reviewable.
+- Run validation before pushing:
+  - `npm run lint`
+  - `npm run typecheck`
+  - `node ./scripts/run-node-tests.mjs`
+  - `npm run release:verify`
+
+**中文**
+- 贡献尽量保持小步、可验证、可审阅。
+- 推送前建议至少运行：
+  - `npm run lint`
+  - `npm run typecheck`
+  - `node ./scripts/run-node-tests.mjs`
+  - `npm run release:verify`
+
+欢迎中英双语 issue / PR。
+
+---
+
+<a id="license"></a>
+## License / 许可证
+
+kkcode is licensed under **GPL-3.0**.  
+See [LICENSE](LICENSE) for the full text.
+
+---
+
+<a id="further-reading"></a>
+## Further Reading / 延伸阅读
+
+- [CLI General Assistant Capability Matrix](docs/cli-general-assistant-capability-matrix.md)
+- [0.1.13 Mode Lane Contract](docs/kkcode-0.1.13-mode-lane-contract.md)
+- [Task Delegation Contract Matrix](docs/task-delegation-contract-matrix.md)
+- [Agent / LongAgent Extension Guide](docs/agent-longagent-compat-extension-guide.md)
+- [ClaudeNext Agent / LongAgent Skills Compatibility](docs/claudenext-agent-longagent-skills-compat.md)
+- [REPL roadmap 0.1.27 → 0.1.36](docs/repl-roadmap-0.1.27-0.1.36.md)
+- [Git automation usage](docs/GIT_AUTO_USAGE.md)
+- [Edit diagnostics feedback contract](docs/edit-diagnostics-feedback-contract.md)
