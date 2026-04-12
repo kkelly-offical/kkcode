@@ -1,4 +1,5 @@
 import { paint } from "../theme/color.mjs"
+import { renderBackgroundSummaryPanel } from "./repl-background-panel.mjs"
 
 export function formatRuntimeStateText(state, mcpSummary = null, skillSummary = null, backgroundSummary = null, runtimeSummary = null) {
   const lines = [
@@ -24,8 +25,7 @@ export function formatRuntimeStateText(state, mcpSummary = null, skillSummary = 
     }
   }
   if (backgroundSummary) {
-    lines.push(`background=${backgroundSummary.active} active (pending:${backgroundSummary.counts.pending}, running:${backgroundSummary.counts.running})`)
-    lines.push(`background.terminal=completed:${backgroundSummary.counts.completed} interrupted:${backgroundSummary.counts.interrupted} error:${backgroundSummary.counts.error}`)
+    lines.push(...renderBackgroundSummaryPanel(backgroundSummary))
   }
   if (runtimeSummary) {
     lines.push(`session.messages=${runtimeSummary.messageCount}`)

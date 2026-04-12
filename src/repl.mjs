@@ -24,6 +24,7 @@ import { ToolRegistry } from "./tool/registry.mjs"
 import { McpRegistry } from "./mcp/registry.mjs"
 import { initHookBus } from "./plugin/hook-bus.mjs"
 import { renderReplDashboard, renderReplLogo, renderStartupHint } from "./ui/repl-dashboard.mjs"
+import { renderCapabilityPanel } from "./ui/repl-capability-panel.mjs"
 import { buildHelpText, buildShortcutLegend } from "./ui/repl-help.mjs"
 import { buildRouteFeedback } from "./ui/repl-route-feedback.mjs"
 import { formatRuntimeStateText, normalizeDiagnostics, normalizeFileChanges, renderDiagnosticsLines, renderFileChangeLines } from "./ui/repl-turn-summary.mjs"
@@ -33,6 +34,8 @@ import { PermissionEngine } from "./permission/engine.mjs"
 import { setPermissionPromptHandler } from "./permission/prompt.mjs"
 import { setQuestionPromptHandler } from "./tool/question-prompt.mjs"
 import { createActivityRenderer, formatPlanProgress } from "./ui/activity-renderer.mjs"
+import { buildTranscriptViewport } from "./ui/repl-transcript-panel.mjs"
+import { renderTaskProgressPanel } from "./ui/repl-task-panel.mjs"
 import { EventBus } from "./core/events.mjs"
 import { EVENT_TYPES } from "./core/constants.mjs"
 import { readClipboardImage, readClipboardText } from "./tool/image-util.mjs"
@@ -66,6 +69,7 @@ import {
 } from "./repl/slash-router.mjs"
 import { renderInstalledCommandSurface, describeReloadSummary } from "./repl/command-surface.mjs"
 import { executePromptTurn } from "./repl/turn-controller.mjs"
+import { buildCapabilitySnapshot } from "./repl/capability-facade.mjs"
 import { buildReplRuntimeSnapshot } from "./repl/runtime-facade.mjs"
 import {
   activateNextQuestionState,
@@ -462,6 +466,19 @@ async function processInputLine({
   if (["/commands"].includes(normalized)) {
     const skills = SkillRegistry.isReady() ? SkillRegistry.list() : []
     for (const line of renderInstalledCommandSurface({ customCommands, skills })) print(line)
+    const { CustomAgentRegistry } = await import("./agent/custom-agent-loader.mjs")
+    const capabilitySnapshot = await buildCapabilitySnapshot({
+      mode: state.mode,
+      cwd: process.cwd(),
+      configState: ctx.configState,
+      customCommands,
+      skillRegistry: SkillRegistry,
+      toolRegistry: ToolRegistry,
+      mcpRegistry: McpRegistry,
+      listAgents: () => CustomAgentRegistry.list()
+    })
+    print("")
+    for (const line of renderCapabilityPanel(capabilitySnapshot)) print(line)
     return { exit: false }
   }
 
@@ -1007,7 +1024,7 @@ async function processInputLine({
         : `${(result.longagent.stageIndex || 0) + 1}/${Math.max(1, result.longagent.stageCount || 1)}`
       print(`longagent: phase=${result.longagent.phase || "-"} stage=${stg} gate=${result.longagent.currentGate || "-"}`)
       if (result.longagent.taskProgress && Object.keys(result.longagent.taskProgress).length) {
-        for (const line of formatPlanProgress(result.longagent.taskProgress)) print(line)
+        for (const line of renderTaskProgressPanel(result.longagent.taskProgress, formatPlanProgress)) print(line)
       }
     }
     if (fileChanges.length) {
@@ -1980,48 +1997,26 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       1 // footer hint
 
     const logRows = Math.max(2, height - lines.length - fixedRows)
-    const wrappedAllLogs = wrapLogLines(ui.logs, width)
-    const maxOffset = Math.max(0, wrappedAllLogs.length - logRows)
-    if (ui.scrollOffset > maxOffset) ui.scrollOffset = maxOffset
-    const end = Math.max(0, wrappedAllLogs.length - ui.scrollOffset)
-    const start = Math.max(0, end - logRows)
-    const wrappedLogs = wrappedAllLogs.slice(start, end)
-    ui.scrollMeta = {
+    const transcriptViewport = buildTranscriptViewport({
+      logs: ui.logs,
+      width,
       logRows,
-      totalRows: wrappedAllLogs.length,
-      maxOffset
-    }
-
-    const scrollHint = ui.scrollOffset > 0
-      ? paint(`  Ctrl+Up/Down scroll | +${ui.scrollOffset} lines`, ctx.themeState.theme.semantic.warn)
-      : paint("  Ctrl+Up/Down scroll | Ctrl+Home oldest | Ctrl+End latest", ctx.themeState.theme.base.muted, { dim: true })
+      scrollOffset: ui.scrollOffset,
+      wrapLogLines,
+      clipAnsiLine,
+      paint,
+      theme: ctx.themeState.theme
+    })
+    const wrappedLogs = transcriptViewport.wrappedLogs
+    ui.scrollOffset = transcriptViewport.scrollOffset
+    ui.scrollMeta = transcriptViewport.scrollMeta
+    const scrollHint = transcriptViewport.scrollHint
 
     lines.push(clipAnsiLine(paint("─".repeat(Math.min(40, width)), ctx.themeState.theme.base.border, { dim: true }), width))
 
-    // Scrollbar calculation
-    const totalLog = wrappedAllLogs.length
-    const showScrollbar = totalLog > logRows
-    let thumbStart = 0, thumbEnd = 0
-    if (showScrollbar) {
-      const viewStart = start
-      thumbStart = Math.floor((viewStart / totalLog) * logRows)
-      thumbEnd = Math.min(logRows, thumbStart + Math.max(1, Math.round((logRows / totalLog) * logRows)))
-    }
-
     // 记录日志区起始行号（0-based in lines array, 1-based on screen）
     const logStartRow = lines.length
-
-    for (let i = 0; i < logRows; i++) {
-      const content = wrappedLogs[i] || ""
-      if (showScrollbar) {
-        const bar = i >= thumbStart && i < thumbEnd
-          ? paint("┃", ctx.themeState.theme.semantic.warn)
-          : paint("│", ctx.themeState.theme.base.border, { dim: true })
-        lines.push(clipAnsiLine(content, width - 2) + " " + bar)
-      } else {
-        lines.push(clipAnsiLine(content, width))
-      }
-    }
+    lines.push(...transcriptViewport.lines)
 
     const logEndRow = lines.length  // 日志区结束行号（不含）
 
@@ -3301,7 +3296,7 @@ export async function startRepl({ trust = false } = {}) {
   const { checkWorkspaceTrust } = await import("./permission/workspace-trust.mjs")
   const trustState = await checkWorkspaceTrust({ cwd: process.cwd(), cliTrust: trust, isTTY: process.stdin.isTTY })
 
-  const splash = startSplash({ version: "v0.1.32" })
+  const splash = startSplash({ version: "v0.1.34" })
 
   const ctx = await buildContext({ trust, trustState })
   printContextWarnings(ctx)
