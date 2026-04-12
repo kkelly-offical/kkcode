@@ -1,6 +1,6 @@
 import { paint } from "../theme/color.mjs"
 
-export function formatRuntimeStateText(state, mcpSummary = null, skillSummary = null, backgroundSummary = null) {
+export function formatRuntimeStateText(state, mcpSummary = null, skillSummary = null, backgroundSummary = null, runtimeSummary = null) {
   const lines = [
     `session=${state.sessionId}`,
     `mode=${state.mode}`,
@@ -26,6 +26,14 @@ export function formatRuntimeStateText(state, mcpSummary = null, skillSummary = 
   if (backgroundSummary) {
     lines.push(`background=${backgroundSummary.active} active (pending:${backgroundSummary.counts.pending}, running:${backgroundSummary.counts.running})`)
     lines.push(`background.terminal=completed:${backgroundSummary.counts.completed} interrupted:${backgroundSummary.counts.interrupted} error:${backgroundSummary.counts.error}`)
+  }
+  if (runtimeSummary) {
+    lines.push(`session.messages=${runtimeSummary.messageCount}`)
+    lines.push(`session.parts=${runtimeSummary.partCount}`)
+    lines.push(`session.recoverable=${runtimeSummary.recoverableCount}`)
+    if (runtimeSummary.audit) {
+      lines.push(`audit.total=${runtimeSummary.audit.total} error=${runtimeSummary.audit.errorCount}`)
+    }
   }
   return lines.join("\n")
 }

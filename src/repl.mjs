@@ -23,7 +23,6 @@ import { compactSession } from "./session/compaction.mjs"
 import { ToolRegistry } from "./tool/registry.mjs"
 import { McpRegistry } from "./mcp/registry.mjs"
 import { initHookBus } from "./plugin/hook-bus.mjs"
-import { BackgroundManager } from "./orchestration/background-manager.mjs"
 import { renderReplDashboard, renderReplLogo, renderStartupHint } from "./ui/repl-dashboard.mjs"
 import { buildHelpText, buildShortcutLegend } from "./ui/repl-help.mjs"
 import { buildRouteFeedback } from "./ui/repl-route-feedback.mjs"
@@ -67,6 +66,7 @@ import {
 } from "./repl/slash-router.mjs"
 import { renderInstalledCommandSurface, describeReloadSummary } from "./repl/command-surface.mjs"
 import { executePromptTurn } from "./repl/turn-controller.mjs"
+import { buildReplRuntimeSnapshot } from "./repl/runtime-facade.mjs"
 
 const HIST_DIR = userRootDir()
 const HIST_FILE = join(HIST_DIR, "repl_history")
@@ -365,36 +365,6 @@ function shortcutLegend() {
   return buildShortcutLegend()
 }
 
-function collectMcpSummary() {
-  const snapshot = McpRegistry.healthSnapshot()
-  const tools = McpRegistry.listTools()
-  const byServer = {}
-  for (const tool of tools) {
-    const server = tool.server || "unknown"
-    byServer[server] = (byServer[server] || 0) + 1
-  }
-  const healthy = snapshot.filter((item) => item.ok).length
-  return {
-    configured: snapshot.length,
-    healthy,
-    unhealthy: snapshot.length - healthy,
-    tools: tools.length,
-    byServer,
-    entries: snapshot
-  }
-}
-
-function collectSkillSummary() {
-  const list = SkillRegistry.isReady() ? SkillRegistry.list() : []
-  return {
-    total: list.length,
-    template: list.filter((s) => s.type === "template").length,
-    skillMd: list.filter((s) => s.type === "skill_md").length,
-    mcpPrompt: list.filter((s) => s.type === "mcp_prompt").length,
-    programmable: list.filter((s) => s.type === "mjs").length
-  }
-}
-
 function slashRouterOptions(customCommands = []) {
   return {
     builtinSlash: BUILTIN_SLASH,
@@ -457,20 +427,18 @@ async function processInputLine({
   }
 
   if (["/status"].includes(normalized)) {
-    const latest = await listSessions({ cwd: process.cwd(), limit: 6, includeChildren: false }).catch(() => [])
-    const mcpSummary = collectMcpSummary()
-    const skillSummary = collectSkillSummary()
-    const backgroundSummary = await BackgroundManager.summary().catch(() => null)
+    const runtimeView = await buildReplRuntimeSnapshot({
+      cwd: process.cwd(),
+      state,
+      customCommands,
+      providers: providersConfigured,
+      mcpRegistry: McpRegistry,
+      skillRegistry: SkillRegistry,
+      recoveryEnabled: ctx.configState.config.session?.recovery !== false
+    })
     print(renderRuntimeDashboardView({
       theme: ctx.themeState.theme,
-      state,
-      providers: providersConfigured,
-      recentSessions: latest,
-      mcpSummary,
-      skillSummary,
-      backgroundSummary,
-      customCommandCount: customCommands.length,
-      cwd: process.cwd()
+      ...runtimeView
     }))
     return { exit: false }
   }
@@ -1140,21 +1108,20 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
 
     if (action.cleared) clearScreen()
     if (action.dashboardRefresh) {
-      const latest = action.recentSessions || []
-      const mcpSummary = collectMcpSummary()
-      const skillSummary = collectSkillSummary()
-      const backgroundSummary = await BackgroundManager.summary().catch(() => null)
+      const runtimeView = await buildReplRuntimeSnapshot({
+        cwd: process.cwd(),
+        state,
+        customCommands: localCustomCommands,
+        providers: providersConfigured,
+        mcpRegistry: McpRegistry,
+        skillRegistry: SkillRegistry,
+        recoveryEnabled: ctx.configState.config.session?.recovery !== false
+      })
+      runtimeView.recentSessions = action.recentSessions || runtimeView.recentSessions
       console.log(
         renderReplDashboard({
           theme: ctx.themeState.theme,
-          state,
-          providers: providersConfigured,
-          recentSessions: latest,
-          mcpSummary,
-          skillSummary,
-          backgroundSummary,
-          customCommandCount: localCustomCommands.length,
-          cwd: process.cwd()
+          ...runtimeView
         })
       )
     }
@@ -3345,7 +3312,7 @@ export async function startRepl({ trust = false } = {}) {
   const { checkWorkspaceTrust } = await import("./permission/workspace-trust.mjs")
   const trustState = await checkWorkspaceTrust({ cwd: process.cwd(), cliTrust: trust, isTTY: process.stdin.isTTY })
 
-  const splash = startSplash({ version: "v0.1.30" })
+  const splash = startSplash({ version: "v0.1.31" })
 
   const ctx = await buildContext({ trust, trustState })
   printContextWarnings(ctx)

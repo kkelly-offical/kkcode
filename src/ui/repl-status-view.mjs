@@ -38,6 +38,7 @@ export function renderRuntimeDashboardView({
   mcpSummary,
   skillSummary,
   backgroundSummary,
+  runtimeSummary,
   customCommandCount,
   cwd,
   columns = null
@@ -56,7 +57,7 @@ export function renderRuntimeDashboardView({
       columns
     }),
     "",
-    formatRuntimeStateText(state, mcpSummary, skillSummary, backgroundSummary)
+    formatRuntimeStateText(state, mcpSummary, skillSummary, backgroundSummary, runtimeSummary)
   ].join("\n")
 }
 
