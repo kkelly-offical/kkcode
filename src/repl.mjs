@@ -42,6 +42,7 @@ import { userRootDir, userConfigCandidates, projectConfigCandidates, memoryFileP
 import { persistTrust, revokeTrust } from "./permission/workspace-trust.mjs"
 import { confirmRollback, executeRollback } from "./session/rollback.mjs"
 import { loadProfile, runOnboarding } from "./onboarding.mjs"
+import { MODE_CYCLE_ORDER, nextMode } from "./repl/keymap.mjs"
 import {
   configuredProviders,
   loadHistoryLines,
@@ -53,6 +54,12 @@ import {
   startSplash
 } from "./repl/core-shell.mjs"
 import { runReplController } from "./repl/controller-entry.mjs"
+import {
+  collectInput,
+  resolveHistoryNavigation,
+  shouldApplySuggestionOnEnter as shouldApplySlashSuggestionOnEnter
+} from "./repl/input-engine.mjs"
+export { collectInput } from "./repl/input-engine.mjs"
 
 const HIST_DIR = userRootDir()
 const HIST_FILE = join(HIST_DIR, "repl_history")
@@ -63,7 +70,6 @@ const MAX_MODEL_PICKER_VISIBLE = 8
 const TUI_FRAME_MS = 16
 const ANSI_RE = /\x1B\[[0-9;]*m/g
 const SCROLL_PAGE_RATIO = 0.75
-const MODE_CYCLE_ORDER = ["longagent", "plan", "ask", "agent"]
 const BUSY_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
 function clipBusy(text, max) {
@@ -431,50 +437,6 @@ function applySuggestionToInput(current, suggestionName) {
   const firstSpace = body.indexOf(" ")
   if (firstSpace < 0) return `/${suggestionName} `
   return `/${suggestionName}${body.slice(firstSpace)}`
-}
-
-function cycleMode(state) {
-  const idx = MODE_CYCLE_ORDER.indexOf(state.mode)
-  const nextIdx = idx >= 0 ? (idx + 1) % MODE_CYCLE_ORDER.length : 0
-  state.mode = MODE_CYCLE_ORDER[nextIdx]
-  return state.mode
-}
-
-/**
- * Collect single-line or multi-line input from the user.
- * - `"""` block mode: starts with `"""`, collects until a line is exactly `"""`
- * - `\` continuation: line ending with `\` continues on next line
- * - Otherwise: single line
- */
-export async function collectInput(rl, promptStr) {
-  const first = (await rl.question(promptStr)).trim()
-  if (!first) return ""
-
-  if (first === '"""' || first.startsWith('"""')) {
-    const lines = []
-    if (first !== '"""') lines.push(first.slice(3))
-    while (true) {
-      const next = await rl.question("... ")
-      if (next.trim() === '"""') break
-      lines.push(next)
-    }
-    return lines.join("\n").trim()
-  }
-
-  if (first.endsWith("\\")) {
-    const lines = [first.slice(0, -1)]
-    while (true) {
-      const next = await rl.question("... ")
-      if (next.endsWith("\\")) lines.push(next.slice(0, -1))
-      else {
-        lines.push(next)
-        break
-      }
-    }
-    return lines.join("\n").trim()
-  }
-
-  return first
 }
 
 async function executePromptTurn({ prompt, state, ctx, streamSink = null, pendingImages = [], signal = null }) {
@@ -2690,19 +2652,10 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   function navigateHistory(keyName) {
-    if (!ui.history.length) return
-    if (keyName === "up") {
-      if (ui.historyIndex > 0) ui.historyIndex -= 1
-      setInputFromHistory(ui.history[ui.historyIndex] || "")
-      return
-    }
-    if (ui.historyIndex < ui.history.length - 1) {
-      ui.historyIndex += 1
-      setInputFromHistory(ui.history[ui.historyIndex] || "")
-      return
-    }
-    ui.historyIndex = ui.history.length
-    setInputFromHistory("")
+    const result = resolveHistoryNavigation(ui.history, ui.historyIndex, keyName)
+    if (!result.changed) return
+    ui.historyIndex = result.historyIndex
+    setInputFromHistory(result.value)
   }
 
   function applyCurrentSuggestion() {
@@ -2714,20 +2667,16 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   function shouldApplySuggestionOnEnter() {
-    const suggestions = slashSuggestions(ui.input, localCustomCommands)
-    if (!suggestions.length) return false
-    if (!String(ui.input || "").startsWith("/")) return false
-    const body = String(ui.input || "").slice(1)
-    const firstSpace = body.indexOf(" ")
-    if (firstSpace >= 0) return false
-    const token = body.trim()
-    if (!token) return true
-    const chosen = suggestions[Math.max(0, Math.min(ui.selectedSuggestion, suggestions.length - 1))]
-    return chosen && chosen.name !== token
+    return shouldApplySlashSuggestionOnEnter(
+      ui.input,
+      slashSuggestions(ui.input, localCustomCommands),
+      ui.selectedSuggestion
+    )
   }
 
   function cycleModeForwardAndNotify() {
-    const next = cycleMode(state)
+    const next = nextMode(state.mode, MODE_CYCLE_ORDER)
+    state.mode = next
     appendLog(`mode switched: ${next}`)
     requestRender()
   }
@@ -3497,7 +3446,7 @@ export async function startRepl({ trust = false } = {}) {
   const { checkWorkspaceTrust } = await import("./permission/workspace-trust.mjs")
   const trustState = await checkWorkspaceTrust({ cwd: process.cwd(), cliTrust: trust, isTTY: process.stdin.isTTY })
 
-  const splash = startSplash({ version: "v0.1.27" })
+  const splash = startSplash({ version: "v0.1.28" })
 
   const ctx = await buildContext({ trust, trustState })
   printContextWarnings(ctx)
