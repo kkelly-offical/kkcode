@@ -13,7 +13,6 @@ import {
   emitAgentContinuationResumed,
   emitRouteDecisionEvent
 } from "./session/routing-observability.mjs"
-import { renderStatusBar } from "./theme/status-bar.mjs"
 import { listProviders } from "./provider/router.mjs"
 import { createWizardState, startWizard, startEditWizard, handleWizardInput, VENDOR_PRESETS } from "./provider/wizard.mjs"
 import { loadCustomCommands, applyCommandTemplate } from "./command/custom-commands.mjs"
@@ -29,6 +28,7 @@ import { renderReplDashboard, renderReplLogo, renderStartupHint } from "./ui/rep
 import { buildHelpText, buildShortcutLegend } from "./ui/repl-help.mjs"
 import { buildRouteFeedback } from "./ui/repl-route-feedback.mjs"
 import { formatRuntimeStateText, normalizeDiagnostics, normalizeFileChanges, renderDiagnosticsLines, renderFileChangeLines } from "./ui/repl-turn-summary.mjs"
+import { renderFrameDashboardHeader, renderReplStatusLine, renderRuntimeDashboardView, renderStartupScreen } from "./ui/repl-status-view.mjs"
 import { paint } from "./theme/color.mjs"
 import { PermissionEngine } from "./permission/engine.mjs"
 import { setPermissionPromptHandler } from "./permission/prompt.mjs"
@@ -622,21 +622,17 @@ async function processInputLine({
     const mcpSummary = collectMcpSummary()
     const skillSummary = collectSkillSummary()
     const backgroundSummary = await BackgroundManager.summary().catch(() => null)
-    print(
-      renderReplDashboard({
-        theme: ctx.themeState.theme,
-        state,
-        providers: providersConfigured,
-        recentSessions: latest,
-        mcpSummary,
-        skillSummary,
-        backgroundSummary,
-        customCommandCount: customCommands.length,
-        cwd: process.cwd()
-      })
-    )
-    print("")
-    print(formatRuntimeStateText(state, mcpSummary, skillSummary, backgroundSummary))
+    print(renderRuntimeDashboardView({
+      theme: ctx.themeState.theme,
+      state,
+      providers: providersConfigured,
+      recentSessions: latest,
+      mcpSummary,
+      skillSummary,
+      backgroundSummary,
+      customCommandCount: customCommands.length,
+      cwd: process.cwd()
+    }))
     return { exit: false }
   }
 
@@ -1025,16 +1021,15 @@ async function processInputLine({
       signal
     })
     const result = turn.result
-    const status = renderStatusBar({
-      mode: state.mode, model: state.model,
-      permission: ctx.configState.config.permission.default_policy,
-      tokenMeter: result.tokenMeter, aggregation: ctx.configState.config.usage.aggregation,
-      cost: result.cost, savings: result.costSavings, contextMeter: result.context,
-      showCost: ctx.configState.config.ui.status.show_cost,
-      showTokenMeter: ctx.configState.config.ui.status.show_token_meter,
-      theme: ctx.themeState.theme, layout: ctx.configState.config.ui.layout,
-      longagentState: state.mode === "longagent" ? result.longagent : null,
-      memoryLoaded: state.memoryLoaded
+    const status = renderReplStatusLine({
+      state,
+      configState: ctx.configState,
+      theme: ctx.themeState.theme,
+      tokenMeter: result.tokenMeter,
+      cost: result.cost,
+      costSavings: result.costSavings,
+      contextMeter: result.context,
+      longagentState: result.longagent
     })
     if (showTurnStatus) print(status)
     if (!result.emittedText) {
@@ -1176,21 +1171,15 @@ async function processInputLine({
   })
   const result = turn.result
 
-  const status = renderStatusBar({
-    mode: state.mode,
-    model: state.model,
-    permission: ctx.configState.config.permission.default_policy,
-    tokenMeter: result.tokenMeter,
-    aggregation: ctx.configState.config.usage.aggregation,
-    cost: result.cost,
-    savings: result.costSavings,
-    contextMeter: result.context,
-    showCost: ctx.configState.config.ui.status.show_cost,
-    showTokenMeter: ctx.configState.config.ui.status.show_token_meter,
+  const status = renderReplStatusLine({
+    state,
+    configState: ctx.configState,
     theme: ctx.themeState.theme,
-    layout: ctx.configState.config.ui.layout,
-    longagentState: state.mode === "longagent" ? result.longagent : null,
-    memoryLoaded: state.memoryLoaded
+    tokenMeter: result.tokenMeter,
+    cost: result.cost,
+    costSavings: result.costSavings,
+    contextMeter: result.context,
+    longagentState: result.longagent
   })
   if (showTurnStatus) print(status)
 
@@ -1272,14 +1261,11 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
     longagent: null
   }
 
-  console.log(
-    renderReplLogo({
-      theme: ctx.themeState.theme,
-      columns: Number(process.stdout.columns || 120)
-    })
-  )
-  const hint = renderStartupHint(recentSessions)
-  if (hint) console.log(`${hint}\n`)
+  console.log(renderStartupScreen({
+    theme: ctx.themeState.theme,
+    recentSessions,
+    columns: Number(process.stdout.columns || 120)
+  }))
 
   const lineActivityRenderer = createActivityRenderer({
     theme: ctx.themeState.theme,
@@ -1293,21 +1279,15 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
   let linePendingImages = []
 
   while (true) {
-    const status = renderStatusBar({
-      mode: state.mode,
-      model: state.model,
-      permission: ctx.configState.config.permission.default_policy,
-      tokenMeter: lastTurn.tokenMeter,
-      aggregation: ctx.configState.config.usage.aggregation,
-      cost: lastTurn.cost,
-      savings: lastTurn.costSavings,
-      contextMeter: lastTurn.context,
-      showCost: ctx.configState.config.ui.status.show_cost,
-      showTokenMeter: ctx.configState.config.ui.status.show_token_meter,
+    const status = renderReplStatusLine({
+      state,
+      configState: ctx.configState,
       theme: ctx.themeState.theme,
-      layout: ctx.configState.config.ui.layout,
-      longagentState: state.mode === "longagent" ? lastTurn.longagent : null,
-      memoryLoaded: state.memoryLoaded
+      tokenMeter: lastTurn.tokenMeter,
+      cost: lastTurn.cost,
+      costSavings: lastTurn.costSavings,
+      contextMeter: lastTurn.context,
+      longagentState: lastTurn.longagent
     })
 
     const line = await collectInput(rl, `${status}\n> `)
@@ -1904,12 +1884,11 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     const width = Number(process.stdout.columns || 120)
     const height = Number(process.stdout.rows || 40)
 
-    const dashboardLines = ui.showDashboard
-      ? renderReplLogo({
-          theme: ctx.themeState.theme,
-          columns: width
-        }).split("\n")
-      : []
+    const dashboardLines = renderFrameDashboardHeader({
+      showDashboard: ui.showDashboard,
+      theme: ctx.themeState.theme,
+      columns: width
+    })
 
     const suggestions = slashSuggestions(ui.input, localCustomCommands)
     if (suggestions.length === 0) {
@@ -1930,21 +1909,15 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     const suggestionLines = suggestionRender.lines
     ui.suggestionOffset = suggestionRender.offset
 
-    const status = renderStatusBar({
-      mode: state.mode,
-      model: state.model,
-      permission: ctx.configState.config.permission.default_policy,
-      tokenMeter: ui.metrics.tokenMeter,
-      aggregation: ctx.configState.config.usage.aggregation,
-      cost: ui.metrics.cost,
-      savings: ui.metrics.costSavings,
-      contextMeter: ui.metrics.context,
-      showCost: ctx.configState.config.ui.status.show_cost,
-      showTokenMeter: ctx.configState.config.ui.status.show_token_meter,
+    const status = renderReplStatusLine({
+      state,
+      configState: ctx.configState,
       theme: ctx.themeState.theme,
-      layout: ctx.configState.config.ui.layout,
-      longagentState: state.mode === "longagent" ? ui.metrics.longagent : null,
-      memoryLoaded: state.memoryLoaded
+      tokenMeter: ui.metrics.tokenMeter,
+      cost: ui.metrics.cost,
+      costSavings: ui.metrics.costSavings,
+      contextMeter: ui.metrics.context,
+      longagentState: ui.metrics.longagent
     })
 
     const lines = []
@@ -3561,7 +3534,7 @@ function startSplash() {
     "  ╚═╝  ╚═╝ ╚═╝  ╚═╝  ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝ "
   ]
   const tagline = "AI Coding Agent"
-  const version = "v0.1.25"
+  const version = "v0.1.26"
 
   // Gradient colors for the wave animation (cyan → blue → purple → pink → back)
   const wave = [
