@@ -5,7 +5,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises"
 import { basename, dirname, join, resolve as resolvePath } from "node:path"
 import YAML from "yaml"
 import { buildContext, printContextWarnings } from "./context.mjs"
-import { ensureEventSinks, executeTurn, newSessionId, resolveMode, routeMode } from "./session/engine.mjs"
+import { ensureEventSinks, newSessionId, resolveMode, routeMode } from "./session/engine.mjs"
 import { summarizeRouteDecision } from "./session/engine.mjs"
 import { buildAgentContinuationPrompt, summarizeAgentTransaction } from "./session/agent-transaction.mjs"
 import {
@@ -22,7 +22,7 @@ import { listSessions, getConversationHistory } from "./session/store.mjs"
 import { compactSession } from "./session/compaction.mjs"
 import { ToolRegistry } from "./tool/registry.mjs"
 import { McpRegistry } from "./mcp/registry.mjs"
-import { HookBus, initHookBus } from "./plugin/hook-bus.mjs"
+import { initHookBus } from "./plugin/hook-bus.mjs"
 import { BackgroundManager } from "./orchestration/background-manager.mjs"
 import { renderReplDashboard, renderReplLogo, renderStartupHint } from "./ui/repl-dashboard.mjs"
 import { buildHelpText, buildShortcutLegend } from "./ui/repl-help.mjs"
@@ -36,7 +36,7 @@ import { setQuestionPromptHandler } from "./tool/question-prompt.mjs"
 import { createActivityRenderer, formatPlanProgress } from "./ui/activity-renderer.mjs"
 import { EventBus } from "./core/events.mjs"
 import { EVENT_TYPES } from "./core/constants.mjs"
-import { extractImageRefs, buildContentBlocks, readClipboardImage, readClipboardText } from "./tool/image-util.mjs"
+import { readClipboardImage, readClipboardText } from "./tool/image-util.mjs"
 import { generateSkill, saveSkillGlobal } from "./skill/generator.mjs"
 import { userRootDir, userConfigCandidates, projectConfigCandidates, memoryFilePath } from "./storage/paths.mjs"
 import { persistTrust, revokeTrust } from "./permission/workspace-trust.mjs"
@@ -66,6 +66,7 @@ import {
   normalizeSlashAlias
 } from "./repl/slash-router.mjs"
 import { renderInstalledCommandSurface, describeReloadSummary } from "./repl/command-surface.mjs"
+import { executePromptTurn } from "./repl/turn-controller.mjs"
 
 const HIST_DIR = userRootDir()
 const HIST_FILE = join(HIST_DIR, "repl_history")
@@ -400,47 +401,6 @@ function slashRouterOptions(customCommands = []) {
     customCommands,
     skills: SkillRegistry.isReady() ? SkillRegistry.list() : []
   }
-}
-
-async function executePromptTurn({ prompt, state, ctx, streamSink = null, pendingImages = [], signal = null }) {
-  // Detect image file references in the prompt
-  const { text: cleanedPrompt, imagePaths, imageUrls = [] } = extractImageRefs(prompt, process.cwd())
-  const effectivePrompt = cleanedPrompt ?? prompt
-  let contentBlocks = null
-  if (imagePaths.length || imageUrls.length || pendingImages.length) {
-    contentBlocks = await buildContentBlocks(effectivePrompt, imagePaths, imageUrls)
-    // buildContentBlocks returns plain string when no file images — normalize to array
-    if (typeof contentBlocks === "string") {
-      contentBlocks = [{ type: "text", text: contentBlocks }]
-    }
-    for (const img of pendingImages) {
-      if (img && img.type === "image") contentBlocks.push(img)
-    }
-  }
-
-  const chatParams = await HookBus.chatParams({
-    prompt: effectivePrompt,
-    mode: state.mode,
-    model: state.model,
-    providerType: state.providerType,
-    sessionId: state.sessionId
-  })
-
-  const exec = async () => executeTurn({
-    prompt: chatParams.prompt ?? effectivePrompt,
-    contentBlocks,
-    mode: chatParams.mode ?? state.mode,
-    model: chatParams.model ?? state.model,
-    sessionId: state.sessionId,
-    configState: ctx.configState,
-    providerType: chatParams.providerType ?? state.providerType,
-    longagentImpl: state.longagentImpl ?? null,
-    signal,
-    output: streamSink && typeof streamSink === "function"
-      ? { write: streamSink }
-      : null
-  })
-  return { result: await exec() }
 }
 
 async function processInputLine({
@@ -3385,7 +3345,7 @@ export async function startRepl({ trust = false } = {}) {
   const { checkWorkspaceTrust } = await import("./permission/workspace-trust.mjs")
   const trustState = await checkWorkspaceTrust({ cwd: process.cwd(), cliTrust: trust, isTTY: process.stdin.isTTY })
 
-  const splash = startSplash({ version: "v0.1.29" })
+  const splash = startSplash({ version: "v0.1.30" })
 
   const ctx = await buildContext({ trust, trustState })
   printContextWarnings(ctx)
