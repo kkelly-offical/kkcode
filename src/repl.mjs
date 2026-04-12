@@ -60,6 +60,12 @@ import {
   shouldApplySuggestionOnEnter as shouldApplySlashSuggestionOnEnter
 } from "./repl/input-engine.mjs"
 export { collectInput } from "./repl/input-engine.mjs"
+import {
+  slashSuggestions,
+  applySuggestionToInput,
+  normalizeSlashAlias
+} from "./repl/slash-router.mjs"
+import { renderInstalledCommandSurface, describeReloadSummary } from "./repl/command-surface.mjs"
 
 const HIST_DIR = userRootDir()
 const HIST_FILE = join(HIST_DIR, "repl_history")
@@ -388,55 +394,12 @@ function collectSkillSummary() {
   }
 }
 
-function buildSlashCatalog(customCommands = []) {
-  const custom = customCommands.map((cmd) => ({
-    name: cmd.name,
-    desc: `custom (${cmd.scope || "project"})`
-  }))
-  const skills = SkillRegistry.isReady()
-    ? SkillRegistry.list()
-        .filter((s) => !custom.some((c) => c.name === s.name))
-        .map((s) => ({ name: s.name, desc: `skill (${s.type})` }))
-    : []
-  return [...BUILTIN_SLASH, ...custom, ...skills]
-}
-
-function slashQuery(inputLine) {
-  if (!String(inputLine || "").startsWith("/")) return null
-  const raw = String(inputLine).slice(1)
-  const firstSpace = raw.indexOf(" ")
-  const token = (firstSpace >= 0 ? raw.slice(0, firstSpace) : raw).trim()
-  return token
-}
-
-function slashSuggestions(inputLine, customCommands) {
-  const token = slashQuery(inputLine)
-  if (token === null) return []
-  const all = buildSlashCatalog(customCommands)
-  const q = token.toLowerCase()
-  const ranked = all
-    .map((item) => {
-      const name = item.name.toLowerCase()
-      let rank = 99
-      if (!q) rank = 0
-      else if (name === q) rank = 0
-      else if (name.startsWith(q)) rank = 1
-      else if (name.includes(q)) rank = 2
-      return { ...item, rank }
-    })
-    .filter((item) => item.rank < 99)
-    .sort((a, b) => (a.rank - b.rank) || a.name.localeCompare(b.name))
-
-  return ranked
-}
-
-function applySuggestionToInput(current, suggestionName) {
-  const raw = String(current || "")
-  if (!raw.startsWith("/")) return raw
-  const body = raw.slice(1)
-  const firstSpace = body.indexOf(" ")
-  if (firstSpace < 0) return `/${suggestionName} `
-  return `/${suggestionName}${body.slice(firstSpace)}`
+function slashRouterOptions(customCommands = []) {
+  return {
+    builtinSlash: BUILTIN_SLASH,
+    customCommands,
+    skills: SkillRegistry.isReady() ? SkillRegistry.list() : []
+  }
 }
 
 async function executePromptTurn({ prompt, state, ctx, streamSink = null, pendingImages = [], signal = null }) {
@@ -478,19 +441,6 @@ async function executePromptTurn({ prompt, state, ctx, streamSink = null, pendin
       : null
   })
   return { result: await exec() }
-}
-
-function normalizeSlashAlias(line) {
-  if (line === "/h") return "/help"
-  if (line === "/?") return "/help"
-  if (line === "/n") return "/new"
-  if (line === "/s") return "/session"
-  if (line === "/k") return "/keys"
-  if (line === "/r") return "/resume"
-  if (line === "/m") return "/mode"
-  if (line === "/p") return "/provider"
-  if (line === "/q") return "/exit"
-  return line
 }
 
 async function processInputLine({
@@ -576,18 +526,7 @@ async function processInputLine({
 
   if (["/commands"].includes(normalized)) {
     const skills = SkillRegistry.isReady() ? SkillRegistry.list() : []
-    if (!customCommands.length && !skills.length) print("no custom commands or skills found")
-    else {
-      if (customCommands.length) {
-        print("custom commands:")
-        customCommands.forEach((cmd) => print(`  /${cmd.name} (${cmd.scope}) -> ${cmd.source}`))
-      }
-      const nonCustomSkills = skills.filter((s) => s.type !== "template")
-      if (nonCustomSkills.length) {
-        print("skills:")
-        nonCustomSkills.forEach((s) => print(`  /${s.name} (${s.type}${s.scope ? ", " + s.scope : ""})`))
-      }
-    }
+    for (const line of renderInstalledCommandSurface({ customCommands, skills })) print(line)
     return { exit: false }
   }
 
@@ -599,7 +538,7 @@ async function processInputLine({
     await CustomAgentRegistry.initialize(process.cwd())
     const skillCount = SkillRegistry.isReady() ? SkillRegistry.list().length : 0
     const agentCount = CustomAgentRegistry.list().length
-    print(`reloaded commands: ${reloaded.length}, skills: ${skillCount}, agents: ${agentCount}`)
+    print(describeReloadSummary({ commandCount: reloaded.length, skillCount, agentCount }))
     return { exit: false }
   }
 
@@ -1819,7 +1758,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       columns: width
     })
 
-    const suggestions = slashSuggestions(ui.input, localCustomCommands)
+    const suggestions = slashSuggestions(ui.input, slashRouterOptions(localCustomCommands))
     if (suggestions.length === 0) {
       ui.selectedSuggestion = 0
       ui.suggestionOffset = 0
@@ -2639,7 +2578,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   function handleUpDownSuggestions(keyName) {
-    const suggestions = slashSuggestions(ui.input, localCustomCommands)
+    const suggestions = slashSuggestions(ui.input, slashRouterOptions(localCustomCommands))
     if (suggestions.length > 0 && String(ui.input || "").startsWith("/")) {
       if (keyName === "up") {
         ui.selectedSuggestion = Math.max(0, ui.selectedSuggestion - 1)
@@ -2659,7 +2598,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   function applyCurrentSuggestion() {
-    const suggestions = slashSuggestions(ui.input, localCustomCommands)
+    const suggestions = slashSuggestions(ui.input, slashRouterOptions(localCustomCommands))
     if (!suggestions.length) return
     const chosen = suggestions[Math.max(0, Math.min(ui.selectedSuggestion, suggestions.length - 1))]
     ui.input = applySuggestionToInput(ui.input, chosen.name)
@@ -2669,7 +2608,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   function shouldApplySuggestionOnEnter() {
     return shouldApplySlashSuggestionOnEnter(
       ui.input,
-      slashSuggestions(ui.input, localCustomCommands),
+      slashSuggestions(ui.input, slashRouterOptions(localCustomCommands)),
       ui.selectedSuggestion
     )
   }
@@ -3446,7 +3385,7 @@ export async function startRepl({ trust = false } = {}) {
   const { checkWorkspaceTrust } = await import("./permission/workspace-trust.mjs")
   const trustState = await checkWorkspaceTrust({ cwd: process.cwd(), cliTrust: trust, isTTY: process.stdin.isTTY })
 
-  const splash = startSplash({ version: "v0.1.28" })
+  const splash = startSplash({ version: "v0.1.29" })
 
   const ctx = await buildContext({ trust, trustState })
   printContextWarnings(ctx)
