@@ -195,7 +195,8 @@ async function ensureDelegatedSession({ executionMode, parentSessionId, subSessi
 
 export function createTaskDelegate({ config, parentSessionId, model, providerType, runSubtask }) {
   return async function delegateTask(args = {}) {
-    const executionModeResult = normalizeExecutionMode(args.execution_mode)
+    const requestedExecutionMode = args.inherit_context === true && !args.execution_mode ? "fork_context" : args.execution_mode
+    const executionModeResult = normalizeExecutionMode(requestedExecutionMode)
     if (executionModeResult.error) return { error: executionModeResult.error }
     const executionMode = executionModeResult.mode
     const isolationResult = normalizeIsolation(args.isolation)
@@ -211,7 +212,7 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
     })
 
     const subSessionId = String(args.session_id || `sub_${parentSessionId}_${Date.now()}`)
-    const prompt = buildDelegationPrompt(args)
+    const prompt = buildDelegationPrompt({ ...args, execution_mode: executionMode })
 
     const subModel = subagent.model || model
     const subProvider = subagent.providerType || providerType
@@ -229,7 +230,9 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
         model: subModel,
         providerType: subProvider,
         subagent,
-        allowQuestion: args.allow_question === true
+        allowQuestion: args.allow_question === true,
+        groupId: args.group_id || null,
+        groupLabel: args.group_label || null
       })
       await log(out.reply)
       if (isCancelled()) return { cancelled: true }
@@ -243,7 +246,9 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
         reply: out.reply,
         tool_events: out.toolEvents?.length || 0,
         file_changes: fileChanges,
-        edit_feedback: editFeedback
+        edit_feedback: editFeedback,
+        group_id: args.group_id || null,
+        group_label: args.group_label || null
       }
     }
 
@@ -265,7 +270,9 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
           stageId: args.stage_id || null,
           logicalTaskId: args.task_id || null,
           plannedFiles: Array.isArray(args.planned_files) ? args.planned_files : [],
-          allowQuestion: args.allow_question === true
+          allowQuestion: args.allow_question === true,
+          groupId: args.group_id || null,
+          groupLabel: args.group_label || null
         },
         config
       })
@@ -274,7 +281,9 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
         status: task.status,
         session_id: subSessionId,
         execution_mode: executionMode,
-        isolation
+        isolation,
+        group_id: args.group_id || null,
+        group_label: args.group_label || null
       }
     }
 

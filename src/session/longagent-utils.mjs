@@ -427,13 +427,14 @@ const MODE_REASON_EXPLANATIONS = {
   long_complex_prompt: "检测到长而复杂的任务描述，可能需要 longagent",
   short_local_task_protected: "检测到短小本地事务，避免升级到 longagent",
   local_transaction_task: "检测到本地事务型任务，适合保持在轻量 agent 路径",
+  assistant_local_task: "检测到终端个人助手任务",
   local_lookup_task: "检测到本地读取 / 总结类任务",
   single_path_or_command_task: "检测到单路径或单命令任务，适合保持在轻量路径",
   multi_file_or_system_task: "检测到跨文件 / 系统级任务",
   broad_scope_multi_step: "检测到宽范围多步骤任务",
   simple_action_task: "检测到单轮执行任务",
   default_agent: "信号偏执行型，保持 agent",
-  default_ask: "信号不足，按 ask 处理",
+  default_assistant: "信号不足，按 assistant 处理",
   low_confidence: "信号不足，保持当前模式",
   plan_mode_exempt: "plan 模式不参与自动路由"
 }
@@ -448,11 +449,11 @@ function countPromptMatches(patterns, input) {
 
 /**
  * 分析 prompt，判断最适合的执行模式
- * @returns {{ mode: 'ask'|'plan'|'agent'|'longagent', confidence: 'high'|'medium'|'low', reason: string }}
+ * @returns {{ mode: 'assistant'|'plan'|'agent'|'longagent', confidence: 'high'|'medium'|'low', reason: string }}
  */
 export function classifyTaskMode(prompt, options = {}) {
   const text = String(prompt || "").trim()
-  if (!text) return { mode: "ask", confidence: "high", reason: "empty_input" }
+  if (!text) return { mode: "assistant", confidence: "high", reason: "empty_input" }
 
   const continuation = options?.continuation || null
   const lower = text.toLowerCase()
@@ -465,7 +466,7 @@ export function classifyTaskMode(prompt, options = {}) {
     /^(什么|为什么|怎么|如何|哪里|哪个|谁|能否|请解释|告诉我|描述|是什么|有什么|怎样)/,
     /[？?]\s*$/
   ]
-  const pureAskKeywords = [
+  const pureAssistantKeywords = [
     "explain", "what is", "what are", "how does", "why does", "describe", "tell me about",
     "解释", "是什么", "为什么", "怎么理解", "什么意思", "有什么区别", "如何理解"
   ]
@@ -500,7 +501,7 @@ export function classifyTaskMode(prompt, options = {}) {
   ]
 
   const isQuestion = questionPatterns.some((re) => re.test(text))
-  const isPureAsk = pureAskKeywords.some((kw) => lower.includes(kw))
+  const isPureAssistantRequest = pureAssistantKeywords.some((kw) => lower.includes(kw))
   const isPlan = planPatterns.some((re) => re.test(lower))
   const explicitHeavyScope = explicitHeavyScopePatterns.some((re) => re.test(lower))
   const heavyDelivery = heavyDeliveryPatterns.some((re) => re.test(lower))
@@ -541,9 +542,9 @@ export function classifyTaskMode(prompt, options = {}) {
     topology = "bounded_lookup"
   }
 
-  const scores = { ask: 0, plan: 0, agent: 0, longagent: 0 }
+  const scores = { assistant: 0, plan: 0, agent: 0, longagent: 0 }
   const reasons = {
-    ask: "default_ask",
+    assistant: "assistant_local_task",
     plan: "planning_or_design_intent",
     agent: "default_agent",
     longagent: "default_longagent"
@@ -551,13 +552,13 @@ export function classifyTaskMode(prompt, options = {}) {
 
   if (isQuestion) {
     evidence.push("question_intent")
-    scores.ask += len < 120 ? 4 : 3
-    reasons.ask = len < 80 ? "short_question" : "question_with_explain_intent"
+    scores.assistant += len < 120 ? 4 : 3
+    reasons.assistant = len < 80 ? "short_question" : "question_with_explain_intent"
   }
-  if (isPureAsk) {
+  if (isPureAssistantRequest) {
     evidence.push("pure_explanation_request")
-    scores.ask += 3
-    reasons.ask = "question_with_explain_intent"
+    scores.assistant += 3
+    reasons.assistant = "question_with_explain_intent"
   }
 
   if (isPlan) {
@@ -581,8 +582,8 @@ export function classifyTaskMode(prompt, options = {}) {
 
   if (isLocalTask) {
     evidence.push("local_task_signal")
-    scores.agent += 4
-    reasons.agent = "local_transaction_task"
+    scores.assistant += 4
+    reasons.assistant = "local_lookup_task"
   }
   if (isAgentAction) {
     evidence.push("mutation_signal")
@@ -607,15 +608,16 @@ export function classifyTaskMode(prompt, options = {}) {
   }
   if (hasPathHint || isSingleCommandTask) {
     evidence.push(hasPathHint ? "path_hint" : "single_command")
-    scores.agent += 2
-    if (reasons.agent === "default_agent") reasons.agent = "single_path_or_command_task"
+    scores.assistant += 2
+    if (reasons.assistant === "assistant_local_task") reasons.assistant = "single_path_or_command_task"
   }
   if (isVerificationTask) {
     evidence.push("verification_signal")
   }
   if (isBoundedLocalTask) {
     evidence.push("bounded_local_scope")
-    scores.agent += 2
+    scores.assistant += 2
+    if (isAgentAction) scores.agent += 2
   }
   if (isInspectPatchVerifyLoop) {
     evidence.push("inspect_patch_verify_loop")
@@ -632,13 +634,14 @@ export function classifyTaskMode(prompt, options = {}) {
 
   if ((len < 240 || isBoundedLocalTask) && (isLocalTask || isAgentAction || hasPathHint || isSingleCommandTask) && !isLongAgent) {
     scores.longagent = Math.max(0, scores.longagent - 3)
-    if (reasons.agent === "local_transaction_task" || reasons.agent === "single_path_or_command_task") {
+    if (isAgentAction && (reasons.agent === "local_transaction_task" || reasons.agent === "single_path_or_command_task")) {
       reasons.agent = "short_local_task_protected"
     }
   }
 
   if (!isQuestion && len > 50) {
-    scores.agent += 1
+    scores.assistant += 1
+    if (isAgentAction) scores.agent += 1
   }
 
   if (scores.plan >= 4 && scores.plan >= scores.longagent + 2 && scores.plan >= scores.agent + 1 && len < 240) {
@@ -653,7 +656,7 @@ export function classifyTaskMode(prompt, options = {}) {
     }
   }
 
-  if (scores.longagent >= Math.max(scores.ask, scores.agent) + 2 && scores.longagent > 0) {
+  if (scores.longagent >= Math.max(scores.assistant, scores.agent) + 2 && scores.longagent > 0) {
     return {
       mode: "longagent",
       confidence: scores.longagent >= 6 ? "high" : "medium",
@@ -665,7 +668,7 @@ export function classifyTaskMode(prompt, options = {}) {
     }
   }
 
-  if (scores.agent >= scores.ask && scores.agent > 0) {
+  if (scores.agent >= scores.assistant && scores.agent > 0) {
     return {
       mode: "agent",
       confidence: scores.agent >= 6 ? "high" : scores.agent >= 3 ? "medium" : "low",
@@ -677,10 +680,22 @@ export function classifyTaskMode(prompt, options = {}) {
     }
   }
 
+  if (scores.assistant > 0) {
+    return {
+      mode: "assistant",
+      confidence: scores.assistant >= 6 ? "high" : scores.assistant >= 3 ? "medium" : "low",
+      reason: reasons.assistant,
+      evidence,
+      topology,
+      pathHints,
+      continuity: hasContinuationSignal ? "continue_current_transaction" : "new_transaction"
+    }
+  }
+
   return {
-    mode: "ask",
-    confidence: scores.ask >= 6 ? "high" : scores.ask >= 3 ? "medium" : "low",
-    reason: reasons.ask,
+    mode: "assistant",
+    confidence: scores.assistant >= 6 ? "high" : scores.assistant >= 3 ? "medium" : "low",
+    reason: reasons.assistant || "default_assistant",
     evidence,
     topology,
     pathHints,

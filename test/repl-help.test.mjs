@@ -9,8 +9,9 @@ test("buildHelpText keeps the public lane descriptions together", () => {
   })
 
   assert.match(text, /quick mode switch to the public execution lanes/i)
-  assert.match(text, /ask = read-only explanation/i)
-  assert.match(text, /longagent = staged multi-file lane/i)
+  assert.match(text, /assistant = personal CLI \+ Q&A lane/i)
+  assert.match(text, /agent\/code = coding/i)
+  assert.match(text, /longagent = staged/i)
   assert.match(text, /Plugin packages\s+\.kkcode-plugin/i)
 })
 

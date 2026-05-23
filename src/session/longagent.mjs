@@ -210,14 +210,14 @@ async function runParallelLongAgent({
   if (inGitRepo) {
     let userWantsGit = !gitAsk
     if (gitAsk && allowQuestion) {
-      // Ask user via a lightweight turn
+      // Confirm via a lightweight turn
       const askResult = await processTurnLoop({
         prompt: [
           "[SYSTEM] Git 分支管理已就绪。是否为本次 LongAgent 会话创建独立分支？",
           "回复 yes/是 启用，no/否 跳过。",
           "启用后：自动创建特性分支 → 每阶段自动提交 → 完成后合并回主分支。"
         ].join("\n"),
-        mode: "ask", model, providerType, sessionId, configState,
+        mode: "assistant", model, providerType, sessionId, configState,
         baseUrl, apiKeyEnv, agent, signal, allowQuestion: true, toolContext
       })
       const answer = String(askResult.reply || "").toLowerCase().trim()
@@ -596,12 +596,12 @@ async function runParallelLongAgent({
     if (shouldPromptGates && allowQuestion) {
       const hasPrefs = await hasGatePreferences()
       if (!hasPrefs || gatesConfig.prompt_user === "always") {
-        const gateAskResult = await processTurnLoop({
+        const gateAssistantResult = await processTurnLoop({
           prompt: buildGatePromptText(),
-          mode: "ask", model, providerType, sessionId, configState,
+          mode: "assistant", model, providerType, sessionId, configState,
           baseUrl, apiKeyEnv, agent, signal, allowQuestion: true, toolContext
         })
-        const gatePrefs = parseGateSelection(gateAskResult.reply)
+        const gatePrefs = parseGateSelection(gateAssistantResult.reply)
         await saveGatePreferences(gatePrefs)
         // Apply preferences to a shallow copy to avoid mutating shared configState
         const gatesCopy = { ...configState.config.agent.longagent.usability_gates }
@@ -611,8 +611,8 @@ async function runParallelLongAgent({
           }
         }
         configState.config.agent.longagent = { ...configState.config.agent.longagent, usability_gates: gatesCopy }
-        aggregateUsage.input += gateAskResult.usage.input || 0
-        aggregateUsage.output += gateAskResult.usage.output || 0
+        aggregateUsage.input += gateAssistantResult.usage.input || 0
+        aggregateUsage.output += gateAssistantResult.usage.output || 0
       } else {
         // Apply saved preferences
         const savedPrefs = await getGatePreferences()

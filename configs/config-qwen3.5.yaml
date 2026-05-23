@@ -102,6 +102,7 @@ session:
   compaction_threshold_messages: 50
   context_cache_points: true
 permission:
+  mode: yolo
   default_policy: allow
   non_tty_default: allow_once
   rules:

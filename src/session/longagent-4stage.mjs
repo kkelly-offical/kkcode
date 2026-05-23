@@ -302,7 +302,7 @@ export async function run4StageLongAgent({
     if (gitAsk && allowQuestion) {
       const askResult = await processTurnLoop({
         prompt: "[SYSTEM] Git 分支管理已就绪。是否为本次 LongAgent 会话创建独立分支？\n回复 yes/是 启用，no/否 跳过。\n启用后：自动创建特性分支 → 每阶段自动提交 → 完成后合并回主分支。",
-        mode: "ask", model, providerType, sessionId, configState,
+        mode: "assistant", model, providerType, sessionId, configState,
         baseUrl, apiKeyEnv, agent, signal, allowQuestion: true, toolContext
       })
       const answer = String(askResult.reply || "").toLowerCase().trim()

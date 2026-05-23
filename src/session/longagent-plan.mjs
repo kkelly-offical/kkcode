@@ -226,7 +226,7 @@ export async function runIntakeDialogue({
 
     const out = await processTurnLoop({
       prompt,
-      mode: "ask",
+      mode: "assistant",
       model,
       providerType,
       sessionId,

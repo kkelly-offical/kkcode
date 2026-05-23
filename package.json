@@ -1,14 +1,14 @@
 {
   "name": "@kkelly-offical/kkcode",
-  "version": "0.2.0",
-  "description": "CLI-first, LongAgent-first AI coding agent for governed terminal workflows, MCP integrations, and extensible automation.",
+  "version": "0.2.3",
+  "description": "CLI-first personal assistant with dedicated coding and LongAgent modes for governed terminal workflows, MCP integrations, and extensible automation.",
   "type": "module",
   "packageManager": "pnpm@10.5.2",
   "license": "GPL-3.0",
   "author": "kkelly-offical",
   "repository": {
     "type": "git",
-    "url": "https://github.com/kkelly-offical/kkcode.git"
+    "url": "git+https://github.com/kkelly-offical/kkcode.git"
   },
   "homepage": "https://github.com/kkelly-offical/kkcode",
   "bugs": {
@@ -25,7 +25,7 @@
     "mcp"
   ],
   "bin": {
-    "kkcode": "./src/index.mjs"
+    "kkcode": "src/index.mjs"
   },
   "files": [
     "src/",

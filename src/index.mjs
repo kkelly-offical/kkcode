@@ -20,6 +20,8 @@ import { createInitCommand } from "./commands/init.mjs"
 import { createAuditCommand } from "./commands/audit.mjs"
 import { createSkillCommand } from "./commands/skill.mjs"
 import { startRepl } from "./repl.mjs"
+import { PACKAGE_VERSION } from "./version.mjs"
+import { createUpdateCommand } from "./commands/update.mjs"
 
 async function main() {
   const hasTrust = process.argv.includes("--trust")
@@ -55,7 +57,7 @@ async function main() {
   }
 
   const program = new Command()
-  program.name("kkcode").description("kkcode CLI").version("0.2.0")
+  program.name("kkcode").description("kkcode CLI").version(PACKAGE_VERSION)
   program.addCommand(createChatCommand())
   program.addCommand(createThemeCommand())
   program.addCommand(createUsageCommand())
@@ -75,6 +77,7 @@ async function main() {
   program.addCommand(createAuditCommand())
   program.addCommand(createInitCommand())
   program.addCommand(createSkillCommand())
+  program.addCommand(createUpdateCommand())
   await program.parseAsync(process.argv)
 }
 

@@ -1,0 +1,3 @@
+Use task_parallel to inspect delegated background tasks grouped as parallel subagent lanes.
+
+It returns groups with group_id, group_label, aggregate status counts, active lane counts, and per-lane status/result previews. Use it after task_group or when summarizing concurrent subagent progress for the user.

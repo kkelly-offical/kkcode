@@ -102,7 +102,7 @@ provider:
 # Agent 配置
 # =============================================================================
 agent:
-  default_mode: "agent"       # ask | plan | agent | longagent
+  default_mode: "assistant"   # assistant | plan | agent | code | coding | longagent
   max_steps: 50
 
   longagent:
@@ -198,11 +198,20 @@ usage:
 # =============================================================================
 # UI 配置
 # =============================================================================
+update:
+  enabled: true                 # check npm dist-tags for newer kkcode versions
+  notify_on_startup: true       # print a startup notice when an update is available
+  auto_install: false           # when true, runs npm install -g automatically after detecting an update
+  channel: "latest"             # latest | preview | stable or any npm dist-tag
+  check_interval_hours: 12
+  registry: "https://registry.npmjs.org"
+  timeout_ms: 2500
+
 ui:
   layout: "compact"           # compact | comfortable
   markdown_render: true
   mode_colors:
-    ask: "#8da3b9"
+    assistant: "#22d3ee"
     plan: "#00b7c2"
     agent: "#2ac26f"
     longagent: "#ff7a33"

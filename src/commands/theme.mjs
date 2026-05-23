@@ -71,7 +71,7 @@ export function createThemeCommand() {
       printContextWarnings(ctx)
       const theme = ctx.themeState.theme
       const config = ctx.configState.config
-      const modes = ["ask", "plan", "agent", "longagent"]
+      const modes = ["assistant", "plan", "agent", "longagent"]
       for (const mode of modes) {
         const line = renderStatusBar({
           mode,

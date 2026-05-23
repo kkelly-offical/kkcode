@@ -1,5 +1,5 @@
 const REQUIRED_GROUPS = ["base", "semantic", "modes", "components"]
-const MODE_KEYS = ["ask", "plan", "agent", "longagent"]
+const MODE_KEYS = ["assistant", "plan", "agent", "longagent"]
 const HEX_RE = /^#([A-Fa-f0-9]{6})$/
 
 function validateColor(value, path, errors) {

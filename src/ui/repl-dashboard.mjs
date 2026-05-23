@@ -289,7 +289,7 @@ export function renderReplDashboard({
     },
     {
       title: "Providers",
-      color: theme.modes.ask,
+      color: theme.modes.assistant,
       items: [providers.length ? providers.join(" | ") : "(none configured)"]
     },
     {
@@ -297,7 +297,7 @@ export function renderReplDashboard({
       color: theme.modes.longagent,
       items: [
         "/history /resume /commands /reload",
-        "/ask /plan /agent /longagent"
+        "/assistant /plan /agent /longagent"
       ]
     }
   ]

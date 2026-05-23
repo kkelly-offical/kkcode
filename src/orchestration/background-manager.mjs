@@ -70,6 +70,8 @@ function summarizeTask(task) {
     background_mode: task.backgroundMode || null,
     subagent: task.payload?.subagent || task.payload?.subagentType || null,
     execution_mode: task.payload?.executionMode || null,
+    group_id: task.payload?.groupId || null,
+    group_label: task.payload?.groupLabel || null,
     session_id: task.payload?.subSessionId || null,
     parent_session_id: task.payload?.parentSessionId || null,
     stage_id: task.payload?.stageId || null,
@@ -104,8 +106,45 @@ function summarizeTaskList(tasks = []) {
     recent_terminal: tasks
       .filter((task) => TERMINAL_STATES.has(task.status))
       .slice(0, 3)
-      .map((task) => summarizeTask(task))
+      .map((task) => summarizeTask(task)),
+    parallel_groups: summarizeParallelGroups(tasks)
   }
+}
+
+function summarizeParallelGroups(tasks = []) {
+  const groups = new Map()
+  for (const task of tasks) {
+    const payload = task.payload || {}
+    const groupId = payload.groupId || payload.parentSessionId || "ungrouped"
+    const groupLabel = payload.groupLabel || payload.parentSessionId || "ungrouped"
+    if (!groups.has(groupId)) {
+      groups.set(groupId, {
+        group_id: groupId,
+        group_label: groupLabel,
+        parent_session_id: payload.parentSessionId || null,
+        total: 0,
+        active: 0,
+        counts: { pending: 0, running: 0, completed: 0, cancelled: 0, error: 0, interrupted: 0 },
+        lanes: []
+      })
+    }
+    const group = groups.get(groupId)
+    const status = task.status || "unknown"
+    group.total += 1
+    if (group.counts[status] !== undefined) group.counts[status] += 1
+    if (status === "pending" || status === "running") group.active += 1
+    group.lanes.push({
+      id: task.id,
+      status,
+      subagent: payload.subagent || payload.subagentType || null,
+      execution_mode: payload.executionMode || null,
+      logical_task_id: payload.logicalTaskId || null,
+      session_id: payload.subSessionId || null,
+      description: task.description || "",
+      result_preview: extractTaskResultPreview(task)
+    })
+  }
+  return [...groups.values()].sort((a, b) => b.active - a.active || b.total - a.total)
 }
 
 function resolveWorkerTimeoutMs(config = {}, payload = {}) {
@@ -428,6 +467,10 @@ export const BackgroundManager = {
 
   summarizeList(tasks) {
     return summarizeTaskList(tasks)
+  },
+
+  summarizeParallel(tasks) {
+    return summarizeParallelGroups(tasks)
   },
 
   async list() {

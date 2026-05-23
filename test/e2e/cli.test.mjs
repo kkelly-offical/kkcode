@@ -70,6 +70,11 @@ test("e2e: usage show exits 0", () => {
   assert.ok(stdout.includes("global"), "should show global usage")
 })
 
+test("e2e: update --help exits 0", () => {
+  const { stdout } = run(["update", "--help"])
+  assert.ok(stdout.includes("check for and install kkcode updates"), "should describe updater")
+})
+
 // session list
 test("e2e: session list exits 0", () => {
   run(["session", "list"])

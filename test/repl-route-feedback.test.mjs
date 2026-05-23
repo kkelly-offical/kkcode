@@ -7,14 +7,14 @@ test("buildRouteFeedback renders the changed-lane message", () => {
     currentMode: "agent",
     routeSummary: "topology=bounded_lookup; evidence=question_intent",
     route: {
-      mode: "ask",
+      mode: "assistant",
       changed: true,
       reason: "short_question",
       explanation: "检测到简短问答"
     }
   })
 
-  assert.match(feedback.changedMessage, /自动切换到 ask（问答） 模式/)
+  assert.match(feedback.changedMessage, /自动切换到 assistant（个人助手） 模式/)
   assert.match(feedback.summaryMessage, /topology=bounded_lookup/)
 })
 

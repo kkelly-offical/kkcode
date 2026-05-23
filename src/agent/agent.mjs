@@ -58,17 +58,17 @@ export function listAgents({ includeHidden = false } = {}) {
 
 export function resolveAgentForMode(mode) {
   if (registry.has(mode)) return registry.get(mode)
-  const modeMap = { ask: "ask", plan: "plan", agent: "build", longagent: "longagent" }
+  const modeMap = { assistant: "assistant", plan: "plan", agent: "build", longagent: "longagent" }
   const mapped = modeMap[mode]
   return mapped ? registry.get(mapped) || null : null
 }
 
 defineAgent({
-  name: "ask",
-  description: "Read-only Q&A agent for answering questions without modifying files",
+  name: "assistant",
+  description: "Default CLI personal assistant for terminal-native personal work, local tasks, research, and lightweight automation",
   mode: "primary",
-  permission: "readonly",
-  tools: ["read", "glob", "grep", "list", "webfetch", "websearch", "question"]
+  permission: "full",
+  tools: null
 })
 
 defineAgent({

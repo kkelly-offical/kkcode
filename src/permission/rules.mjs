@@ -1,5 +1,84 @@
 import { getSensitiveEditPolicy } from "./file-edit-policy.mjs"
 
+export const PERMISSION_MODES = ["auto", "manual", "yolo"]
+export const LEGACY_PERMISSION_POLICIES = ["ask", "allow", "deny"]
+
+const AUTO_READONLY_TOOLS = new Set([
+  "list",
+  "read",
+  "glob",
+  "grep",
+  "codesearch",
+  "sysinfo",
+  "websearch",
+  "webfetch",
+  "background_output",
+  "task_list",
+  "task_get",
+  "task_output",
+  "todowrite",
+  "question",
+  "enter_plan",
+  "exit_plan"
+])
+
+const AUTO_REVIEW_ASK_TOOLS = new Set([
+  "bash",
+  "write",
+  "edit",
+  "patch",
+  "multiedit",
+  "notebookedit",
+  "task",
+  "task_stop",
+  "background_cancel",
+  "skill"
+])
+
+const TRUSTED_BASH_PATTERNS = [
+  /^(pwd|ls|cat|head|tail|wc|which|date|whoami|uname)\b/i,
+  /^(rg|grep|find)\b/i,
+  /^sed\s+-n\b/i,
+  /^git\s+(status|log|diff|show|branch|rev-parse)\b/i,
+  /^(node|npm|pnpm|yarn)\s+(--version|-v|version|root|list|ls)\b/i
+]
+
+function normalizePermissionMode(permission = {}) {
+  const mode = String(permission.mode || "").toLowerCase()
+  if (PERMISSION_MODES.includes(mode)) return mode
+  const legacy = String(permission.default_policy || "").toLowerCase()
+  if (legacy === "auto" || legacy === "yolo") return legacy
+  return "manual"
+}
+
+function trustedBashCommand(command) {
+  const cmd = String(command || "").trim()
+  if (!cmd) return false
+  if (/[;&|<>`]/.test(cmd)) return false
+  return TRUSTED_BASH_PATTERNS.some((pattern) => pattern.test(cmd))
+}
+
+function autoAllowsTool({ tool, command = "" }) {
+  if (AUTO_READONLY_TOOLS.has(tool)) return true
+  if (tool === "bash") return trustedBashCommand(command)
+  if (AUTO_REVIEW_ASK_TOOLS.has(tool)) return false
+  return false
+}
+
+function applySensitiveEscalation(decision, { tool, pattern, config, mode }) {
+  if (mode === "yolo") return decision
+  const sensitivePolicy = getSensitiveEditPolicy(tool, pattern, config)
+  if (sensitivePolicy && decision.action === "allow") {
+    return {
+      action: sensitivePolicy.action,
+      source: sensitivePolicy.source,
+      rule: decision.rule || null,
+      mode
+    }
+  }
+  return decision
+}
+
 /**
  * Glob-style pattern matching supporting:
  *   *      — any chars except /
@@ -110,40 +189,41 @@ export function matchRule(rule, input) {
 
 export function evaluatePermission({ config, tool, mode, pattern = "*", command = "", risk = 0 }) {
   const permission = config.permission || { default_policy: "ask", rules: [] }
+  const permissionMode = normalizePermissionMode(permission)
   const rules = Array.isArray(permission.rules) ? permission.rules : []
   for (const rule of rules) {
     if (matchRule(rule, { tool, mode, pattern, command, risk })) {
       const matchedDecision = {
         action: rule.action,
         source: "rule",
-        rule
+        rule,
+        mode: permissionMode
       }
-      const sensitivePolicy = getSensitiveEditPolicy(tool, pattern, config)
-      if (sensitivePolicy && matchedDecision.action === "allow") {
-        return {
-          action: sensitivePolicy.action,
-          source: sensitivePolicy.source,
-          rule
-        }
-      }
-      return matchedDecision
+      return applySensitiveEscalation(matchedDecision, { tool, pattern, config, mode: permissionMode })
     }
   }
+
+  if (permissionMode === "yolo") {
+    return { action: "allow", source: "mode:yolo", rule: null, mode: permissionMode }
+  }
+
+  if (permissionMode === "auto") {
+    const action = autoAllowsTool({ tool, command, risk }) ? "allow" : "ask"
+    const decision = { action, source: "auto_review", rule: null, mode: permissionMode }
+    return applySensitiveEscalation(decision, { tool, pattern, config, mode: permissionMode })
+  }
+
+  const defaultPolicy = LEGACY_PERMISSION_POLICIES.includes(permission.default_policy)
+    ? permission.default_policy
+    : "ask"
   const fallbackDecision = {
-    action: permission.default_policy || "ask",
+    action: defaultPolicy,
     source: "default",
-    rule: null
+    rule: null,
+    mode: permissionMode
   }
-  const sensitivePolicy = getSensitiveEditPolicy(tool, pattern, config)
-  if (sensitivePolicy && fallbackDecision.action === "allow") {
-    return {
-      action: sensitivePolicy.action,
-      source: sensitivePolicy.source,
-      rule: null
-    }
-  }
-  return fallbackDecision
+  return applySensitiveEscalation(fallbackDecision, { tool, pattern, config, mode: permissionMode })
 }
 
 // Exported for testing
-export { matchGlob, matchPatterns, matchCommandPrefix }
+export { matchGlob, matchPatterns, matchCommandPrefix, normalizePermissionMode, trustedBashCommand, autoAllowsTool }

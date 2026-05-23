@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { createTaskTool } from "../src/tool/task-tool.mjs"
+import { createTaskGroupTool, createTaskTool } from "../src/tool/task-tool.mjs"
 
 test("task tool exposes delegation-focused schema fields", () => {
   const tool = createTaskTool()
@@ -22,6 +22,9 @@ test("task tool exposes delegation-focused schema fields", () => {
   assert.ok(props.session_id)
   assert.ok(props.stage_id)
   assert.ok(props.task_id)
+  assert.ok(props.group_id)
+  assert.ok(props.group_label)
+  assert.ok(props.inherit_context)
   assert.ok(props.planned_files)
   assert.ok(props.allow_question)
 })
@@ -61,4 +64,33 @@ test("task tool forwards arguments to delegateTask unchanged", async () => {
 
   assert.deepEqual(received, args)
   assert.deepEqual(result, { ok: true, session_id: "sub-session" })
+})
+
+test("task_group launches parallel background delegates with shared group metadata", async () => {
+  const tool = createTaskGroupTool()
+  const calls = []
+  const result = await tool.execute({
+    group_id: "grp_test",
+    group_label: "parallel review",
+    inherit_context: true,
+    tasks: [
+      { objective: "Review routing", write_scope: "read-only", deliverable: "findings", subagent_type: "reviewer" },
+      { prompt: "Explore docs", write_scope: "read-only", subagent_type: "explore" }
+    ]
+  }, {
+    delegateTask: async (payload) => {
+      calls.push(payload)
+      return { background_task_id: "bg_" + calls.length, status: "pending", session_id: "sub_" + calls.length }
+    }
+  })
+
+  assert.equal(calls.length, 2)
+  assert.equal(calls[0].group_id, "grp_test")
+  assert.equal(calls[1].group_label, "parallel review")
+  assert.equal(calls[0].run_in_background, true)
+  assert.equal(calls[0].inherit_context, true)
+  assert.equal(calls[0].task_id, "lane_1")
+  assert.equal(result.status, "launched")
+  assert.equal(result.group_id, "grp_test")
+  assert.equal(result.visualization[0].task_id, "bg_1")
 })

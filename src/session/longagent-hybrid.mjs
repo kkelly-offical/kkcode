@@ -83,7 +83,7 @@ async function compressContext(text, limit, { model, providerType, sessionId, co
       "",
       text.slice(0, limit * 2)
     ].join("\n"),
-    mode: "ask", model, providerType, sessionId, configState, baseUrl, apiKeyEnv, signal, allowQuestion: false, toolContext
+    mode: "assistant", model, providerType, sessionId, configState, baseUrl, apiKeyEnv, signal, allowQuestion: false, toolContext
   })
   return (out.reply || text.slice(0, limit)).slice(0, limit)
 }
@@ -381,7 +381,7 @@ export async function runHybridLongAgent({
       ].join("\n")
       const confirmOut = await processTurnLoop({
         prompt: confirmPrompt,
-        mode: "ask", model, providerType, sessionId, configState,
+        mode: "assistant", model, providerType, sessionId, configState,
         baseUrl, apiKeyEnv, agent, signal, allowQuestion: true, toolContext, output
       })
       accumulateUsage(confirmOut)
@@ -483,7 +483,7 @@ export async function runHybridLongAgent({
         `Objective: ${prompt}`
       ].join("\n")
       const repairOut = await processTurnLoop({
-        prompt: repairPrompt, mode: "ask",
+        prompt: repairPrompt, mode: "assistant",
         model: blueprintModel.model, providerType: blueprintModel.providerType,
         sessionId, configState, baseUrl, apiKeyEnv, signal,
         output: { write: () => {} }, allowQuestion: false
@@ -542,7 +542,7 @@ export async function runHybridLongAgent({
         "",
         "根据用户回复决定是否继续执行。"
       ].join("\n"),
-      mode: "ask", model, providerType, sessionId, configState, baseUrl, apiKeyEnv, agent, signal, allowQuestion: true, toolContext, output
+      mode: "assistant", model, providerType, sessionId, configState, baseUrl, apiKeyEnv, agent, signal, allowQuestion: true, toolContext, output
     })
     accumulateUsage(reviewOut)
     const answer = String(reviewOut.reply || "").toLowerCase().trim()
@@ -565,7 +565,7 @@ export async function runHybridLongAgent({
     if (gitAsk && allowQuestion) {
       const askResult = await processTurnLoop({
         prompt: "[SYSTEM] 是否为本次 Hybrid LongAgent 创建独立 Git 分支？回复 yes/是 启用，no/否 跳过。",
-        mode: "ask", model, providerType, sessionId, configState, baseUrl, apiKeyEnv, agent, signal, allowQuestion: true, toolContext
+        mode: "assistant", model, providerType, sessionId, configState, baseUrl, apiKeyEnv, agent, signal, allowQuestion: true, toolContext
       })
       const answer = String(askResult.reply || "").toLowerCase().trim()
       userWantsGit = ["yes", "是", "y", "ok", "好", "确认"].some(k => answer.includes(k))
@@ -1093,13 +1093,13 @@ export async function runHybridLongAgent({
   if (shouldPromptGates && allowQuestion) {
     const hasPrefs = await hasGatePreferences()
     if (!hasPrefs || gatesConfig.prompt_user === "always") {
-      const gateAskResult = await processTurnLoop({
+      const gateAssistantResult = await processTurnLoop({
         prompt: buildGatePromptText(),
-        mode: "ask", model, providerType, sessionId, configState,
+        mode: "assistant", model, providerType, sessionId, configState,
         baseUrl, apiKeyEnv, agent, signal, allowQuestion: true, toolContext
       })
-      accumulateUsage(gateAskResult)
-      const gatePrefs = parseGateSelection(gateAskResult.reply)
+      accumulateUsage(gateAssistantResult)
+      const gatePrefs = parseGateSelection(gateAssistantResult.reply)
       await saveGatePreferences(gatePrefs)
       for (const [gate, enabled] of Object.entries(gatePrefs)) {
         if (configState.config.agent.longagent.usability_gates[gate]) {

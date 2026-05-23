@@ -1,3 +1,5 @@
+import { PACKAGE_VERSION } from "./version.mjs"
+import { maybeNotifyUpdateOnStartup } from "./update/checker.mjs"
 import { stdin as input, stdout as output } from "node:process"
 import { createInterface } from "node:readline/promises"
 import { emitKeypressEvents } from "node:readline"
@@ -124,7 +126,6 @@ const BUILTIN_SLASH = [
   { name: "compact", desc: "summarize conversation to free context" },
   { name: "undo", desc: "undo last code changes" },
   { name: "mode", desc: "switch mode" },
-  { name: "ask", desc: "switch to ask mode" },
   { name: "plan", desc: "switch to plan mode" },
   { name: "agent", desc: "switch to agent mode" },
   { name: "longagent", desc: "switch to longagent mode" },
@@ -348,6 +349,7 @@ async function persistPermissionConfig({ scope, ctx, values }) {
 
   const merged = mergeObject(existing, {
     permission: {
+      mode: values.mode,
       default_policy: values.default_policy,
       non_tty_default: values.non_tty_default
     }
@@ -655,7 +657,7 @@ async function processInputLine({
     return { exit: false }
   }
 
-  if (["/ask", "/plan", "/agent", "/longagent"].includes(normalized)) {
+  if (["/assistant", "/plan", "/agent", "/code", "/coding", "/longagent"].includes(normalized)) {
     state.mode = resolveMode(normalized.slice(1))
     if (normalized === "/longagent") state.longagentImpl = null
     print(`mode switched: ${state.mode}`)
@@ -766,13 +768,21 @@ async function processInputLine({
     const permission = ctx.configState.config.permission || (ctx.configState.config.permission = {})
 
     if (sub === "show") {
-      print(`current: ${permission.default_policy || "ask"}`)
+      print(`current: ${permission.mode || permission.default_policy || "auto"}`)
+      print(`mode: ${permission.mode || "manual"}; default_policy: ${permission.default_policy || "ask"}; non_tty: ${permission.non_tty_default || "deny"}`)
       return { exit: false, openPolicyPicker: true }
     }
 
+    if (["auto", "yolo"].includes(sub)) {
+      permission.mode = sub
+      print(`permission.mode -> ${sub} (runtime)`)
+      return { exit: false }
+    }
+
     if (["ask", "allow", "deny"].includes(sub)) {
+      permission.mode = "manual"
       permission.default_policy = sub
-      print(`permission.default_policy -> ${sub} (runtime)`)
+      print(`permission.default_policy -> ${sub} (runtime, mode=manual)`)
       return { exit: false }
     }
 
@@ -798,6 +808,7 @@ async function processInputLine({
           scope,
           ctx,
           values: {
+            mode: permission.mode || "auto",
             default_policy: permission.default_policy || "ask",
             non_tty_default: permission.non_tty_default || "deny"
           }
@@ -815,7 +826,7 @@ async function processInputLine({
       return { exit: false }
     }
 
-    print("usage: /permission [show|ask|allow|deny|non-tty <allow_once|deny>|save [project|user]|session-clear]")
+    print("usage: /permission [show|auto|yolo|ask|allow|deny|non-tty <allow_once|deny>|save [project|user]|session-clear]")
     return { exit: false }
   }
 
@@ -1573,7 +1584,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   function openPolicyPicker() {
-    const current = ctx.configState.config.permission?.default_policy || "ask"
+    const current = ctx.configState.config.permission || { mode: "auto" }
     ui.policyPicker = createPolicyPickerState(current)
     requestRender({ force: true })
   }
@@ -1860,7 +1871,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     const modelPickerBlock = modelPickerLines.length ? modelPickerLines.length : 0
     const policyPickerLines = []
     if (ui.policyPicker) {
-      const currentPolicy = ctx.configState.config.permission?.default_policy || "ask"
+      const currentPolicy = ctx.configState.config.permission?.mode || ctx.configState.config.permission?.default_policy || "auto"
       policyPickerLines.push(
         paint(`Permission Policy  ↑↓ navigate  Enter select  Esc cancel`, ctx.themeState.theme.semantic.info, { bold: true })
       )
@@ -3301,10 +3312,11 @@ export async function startRepl({ trust = false } = {}) {
   const { checkWorkspaceTrust } = await import("./permission/workspace-trust.mjs")
   const trustState = await checkWorkspaceTrust({ cwd: process.cwd(), cliTrust: trust, isTTY: process.stdin.isTTY })
 
-  const splash = startSplash({ version: "v0.2.0" })
+  const splash = startSplash({ version: `v${PACKAGE_VERSION}` })
 
   const ctx = await buildContext({ trust, trustState })
   printContextWarnings(ctx)
+  void maybeNotifyUpdateOnStartup(ctx.configState.config, { currentVersion: PACKAGE_VERSION })
 
   splash.update("loading tools & MCP servers...")
   await ToolRegistry.initialize({ config: ctx.configState.config, cwd: process.cwd() })

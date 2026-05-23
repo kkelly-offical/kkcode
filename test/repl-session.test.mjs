@@ -17,7 +17,7 @@ after(async () => {
 
 test("listSessions returns sessions sorted by updatedAt desc", async () => {
   const cwd = process.cwd()
-  await touchSession({ sessionId: "ses_a", mode: "ask", model: "m1", providerType: "openai", cwd })
+  await touchSession({ sessionId: "ses_a", mode: "assistant", model: "m1", providerType: "openai", cwd })
   await new Promise((r) => setTimeout(r, 20))
   await touchSession({ sessionId: "ses_b", mode: "agent", model: "m2", providerType: "openai", cwd })
 

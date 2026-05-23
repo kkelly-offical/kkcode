@@ -58,7 +58,7 @@ test("task delegate synthesizes a directive brief from structured delegation fie
     why: "Need a bounded sidecar review before changing the CLI routing layer",
     write_scope: "read-only",
     starting_points: ["src/session/engine.mjs", "test/longagent-utils.test.mjs"],
-    constraints: ["Do not edit files", "Focus on ask/agent/longagent boundaries"],
+    constraints: ["Do not edit files", "Focus on assistant/agent/longagent boundaries"],
     planned_files: ["src/session/engine.mjs"],
     deliverable: "Return a concise findings summary with recommended follow-ups",
     subagent_type: "explore"
@@ -69,7 +69,7 @@ test("task delegate synthesizes a directive brief from structured delegation fie
   assert.match(received.prompt, /Why: Need a bounded sidecar review before changing the CLI routing layer/)
   assert.match(received.prompt, /Write scope: read-only/)
   assert.match(received.prompt, /Starting points:\n- src\/session\/engine\.mjs\n- test\/longagent-utils\.test\.mjs/)
-  assert.match(received.prompt, /Constraints:\n- Do not edit files\n- Focus on ask\/agent\/longagent boundaries/)
+  assert.match(received.prompt, /Constraints:\n- Do not edit files\n- Focus on assistant\/agent\/longagent boundaries/)
   assert.match(received.prompt, /Planned files:\n- src\/session\/engine\.mjs/)
   assert.match(received.prompt, /Deliverable: Return a concise findings summary with recommended follow-ups/)
   assert.match(received.prompt, /Execution contract:\n- Stay local instead of delegating if a direct read\/edit\/run action would finish the next step faster\./)
@@ -110,7 +110,9 @@ test("task delegate reuses an existing sub-session with continuation prompt", as
     reply: "continued",
     tool_events: 2,
     file_changes: [],
-    edit_feedback: []
+    edit_feedback: [],
+    group_id: null,
+    group_label: null
   })
 })
 
@@ -308,7 +310,9 @@ test("task delegate launches background tasks with deterministic payload metadat
       status: "pending",
       session_id: result.session_id,
       execution_mode: "fresh_agent",
-      isolation: "default"
+      isolation: "default",
+      group_id: null,
+      group_label: null
     })
     assert.match(result.session_id, /^sub_parent_bg_\d+$/)
     assert.equal(launchArgs.description, "verify branch")
@@ -410,6 +414,47 @@ test("task delegate forwards worktree isolation metadata to background workers",
 
     assert.equal(result.isolation, "worktree")
     assert.equal(launchArgs.payload.isolation, "worktree")
+  } finally {
+    BackgroundManager.launchDelegateTask = originalLaunchDelegateTask
+  }
+})
+
+test("task delegate forwards inherited context and parallel group metadata", async () => {
+  const originalLaunchDelegateTask = BackgroundManager.launchDelegateTask
+  let launchArgs = null
+
+  BackgroundManager.launchDelegateTask = async (args) => {
+    launchArgs = args
+    return { id: "bg_group", status: "pending" }
+  }
+
+  try {
+    const delegateTask = createTaskDelegate({
+      config: { background: { mode: "worker_process" } },
+      parentSessionId: "parent_group",
+      model: "gpt-parent",
+      providerType: "local",
+      runSubtask: async () => {
+        throw new Error("background lane should not run inline")
+      }
+    })
+
+    const result = await delegateTask({
+      objective: "Review current routing state",
+      write_scope: "read-only",
+      deliverable: "findings",
+      inherit_context: true,
+      run_in_background: true,
+      group_id: "grp_review",
+      group_label: "parallel review"
+    })
+
+    assert.equal(result.execution_mode, "fork_context")
+    assert.equal(result.group_id, "grp_review")
+    assert.equal(result.group_label, "parallel review")
+    assert.equal(launchArgs.payload.executionMode, "fork_context")
+    assert.equal(launchArgs.payload.groupId, "grp_review")
+    assert.equal(launchArgs.payload.groupLabel, "parallel review")
   } finally {
     BackgroundManager.launchDelegateTask = originalLaunchDelegateTask
   }

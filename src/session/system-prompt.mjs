@@ -97,9 +97,9 @@ export async function agentPrompt(agent) {
 // Layer 4: Mode reminder (stable within mode)
 export async function modeReminder(mode) {
   const contractBlock = renderPublicModeContract()
+  if (mode === "assistant") return `${contractBlock}\n\nAssistant mode active. Treat this as the default CLI personal assistant lane for bounded terminal-native work: local files, logs, system checks, web lookup, Git/GitHub assistance, notes, task organization, and lightweight automation. Escalate to agent/code for explicit coding mutations and to longagent for staged multi-file delivery. When the user explicitly asks to summon, call, delegate to, or run one or more subagents, you must use task for one subagent or task_group for multiple parallel subagents. Use inherit_context=true or execution_mode=fork_context only for read-only sidecar work that needs the parent transcript; use fresh_agent for implementation work.`
   if (mode === "plan") return `${contractBlock}\n\n${await loadSessionPrompt("plan.txt")}`
-  if (mode === "agent") return `${contractBlock}\n\n${await loadSessionPrompt("agent.txt")}`
-  if (mode === "ask") return `${contractBlock}\n\nYou are in ASK mode (read-only). Answer questions, explain code, and provide analysis. Do NOT modify any files — you only have read access to the codebase.`
+  if (mode === "agent") return `${contractBlock}\n\n${await loadSessionPrompt("agent.txt")}\n\nCoding lane active. Focus on inspect/patch/verify coding work, keep diffs small, and validate with the narrowest useful tests.`
   if (mode === "longagent") {
     return `${contractBlock}\n\nLongAgent mode active. Treat this as the heavyweight staged delivery lane for multi-file or system-level work. Keep explicit gates, ownership, and recovery behavior intact.`
   }
@@ -210,12 +210,13 @@ export async function buildSystemPromptBlocks({ mode, model, cwd, agent = null, 
   const assistantContractLines = [
     "# CLI Assistant Contract",
     "",
-    "Operate as a CLI-first assistant, not an IDE shell or GUI automation product.",
+    "Operate as a CLI-first personal assistant, not an IDE shell or GUI automation product.",
     "",
     "Prefer the lightest path that completes the next step well:",
     "- answer directly for short questions",
-    "- treat agent as the default general execution lane for bounded local transactions",
-    "- handle small local read/edit/run/verify tasks without over-upgrading to heavyweight execution",
+    "- treat assistant as the default lane for bounded terminal-native personal assistant work",
+    "- treat agent/code/coding as the dedicated lane for coding mutation, debugging, refactoring, and test repair",
+    "- handle small local inspect/run/summarize tasks without over-upgrading to heavyweight execution",
     "- continue an interrupted local transaction when the follow-up still fits the same bounded scope",
     "- reserve longagent-style behavior for structured multi-file or system-level delivery with explicit heavy evidence",
     "",
@@ -231,7 +232,7 @@ export async function buildSystemPromptBlocks({ mode, model, cwd, agent = null, 
   ]
   blocks.push({ label: "assistant_contract", text: assistantContractLines.join("\n"), cacheable: true })
 
-  // Block 4.5: Public mode contract (stable — keeps ask/plan/agent/longagent aligned)
+  // Block 4.5: Public mode contract (stable — keeps assistant/plan/agent/longagent aligned)
   blocks.push({ label: "mode_contract", text: renderPublicModeContract(), cacheable: true })
 
   // Block 5: Skills descriptions (stable — changes only when skills change)
@@ -243,7 +244,7 @@ export async function buildSystemPromptBlocks({ mode, model, cwd, agent = null, 
 
   // Block 5.5: Available sub-agents (stable — changes only when custom agents change)
   const allAgents = listAgents({ includeHidden: false })
-  const customSubagents = allAgents.filter((a) => a.mode === "subagent" && a._customAgent)
+  const customSubagents = allAgents.filter((a) => a.mode === "subagent" && a.hidden !== true)
   if (customSubagents.length) {
     const agentLines = customSubagents.map((a) => {
       const perms = a.permission === "readonly" ? " (read-only)" : a.permission === "full" ? " (full access)" : ""
@@ -253,7 +254,7 @@ export async function buildSystemPromptBlocks({ mode, model, cwd, agent = null, 
       "# Available Sub-agents",
       "",
       "Delegate specialized work to these sub-agents using the `task` tool with `subagent_type` parameter.",
-      "Use sub-agents when a task is self-contained and would benefit from a specialist, or to save context window space.",
+      "Use sub-agents when a task is self-contained and would benefit from a specialist, to save context window space, or whenever the user explicitly asks for subagents. Use task_group for multiple independent lanes.",
       "",
       ...agentLines
     ].join("\n")

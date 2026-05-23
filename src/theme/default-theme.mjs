@@ -14,7 +14,7 @@ export const DEFAULT_THEME = {
     success: "#34d399"
   },
   modes: {
-    ask: "#7aa2f7",
+    assistant: "#22d3ee",
     plan: "#2dd4bf",
     agent: "#4ade80",
     longagent: "#fb923c"

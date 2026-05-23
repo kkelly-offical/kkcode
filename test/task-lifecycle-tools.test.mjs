@@ -19,7 +19,7 @@ test("task lifecycle tools expose delegated background task summaries", async ()
     description: "review delegated slice",
     status: "running",
     attempt: 1,
-    payload: { subagent: "reviewer", executionMode: "fresh_agent", subSessionId: "sub_1" },
+    payload: { subagent: "reviewer", executionMode: "fresh_agent", subSessionId: "sub_1", groupId: "grp_1", groupLabel: "review group" },
     logs: ["started"],
     result: null,
     error: null
@@ -29,7 +29,7 @@ test("task lifecycle tools expose delegated background task summaries", async ()
     description: "review delegated slice",
     status: "completed",
     attempt: 1,
-    payload: { subagent: "reviewer", executionMode: "fresh_agent", subSessionId: "sub_1" },
+    payload: { subagent: "reviewer", executionMode: "fresh_agent", subSessionId: "sub_1", groupId: "grp_1", groupLabel: "review group" },
     logs: ["started", "done"],
     result: { reply: "completed review" },
     error: null
@@ -39,13 +39,19 @@ test("task lifecycle tools expose delegated background task summaries", async ()
   try {
     await ToolRegistry.initialize({ config: TEST_CONFIG, cwd: process.cwd(), force: true })
     const byName = Object.fromEntries(await Promise.all(
-      ["task_list", "task_get", "task_stop", "task_output"].map(async (name) => [name, await ToolRegistry.get(name)])
+      ["task_list", "task_parallel", "task_get", "task_stop", "task_output"].map(async (name) => [name, await ToolRegistry.get(name)])
     ))
 
     const listed = await byName.task_list.execute({}, { cwd: process.cwd(), config: TEST_CONFIG })
     assert.equal(Array.isArray(listed), true)
     assert.equal(listed[0].id, "bg_1")
     assert.equal(listed[0].subagent, "reviewer")
+    assert.equal(listed[0].group_id, "grp_1")
+
+    const parallel = await byName.task_parallel.execute({}, { cwd: process.cwd(), config: TEST_CONFIG })
+    assert.equal(parallel[0].group_id, "grp_1")
+    assert.equal(parallel[0].active, 1)
+    assert.equal(parallel[0].lanes[0].subagent, "reviewer")
 
     const got = await byName.task_get.execute({ task_id: "bg_1" }, { cwd: process.cwd(), config: TEST_CONFIG })
     assert.equal(got.id, "bg_1")

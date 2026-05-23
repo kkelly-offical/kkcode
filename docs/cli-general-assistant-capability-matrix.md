@@ -1,27 +1,27 @@
-# kkcode CLI General Assistant Capability Matrix (0.1.13)
+# kkcode CLI Personal Assistant Capability Matrix
 
-This document defines the **0.1.13 shipped capability boundary** for kkcode as a pure CLI general assistant.
+This document defines the **0.1.13 shipped capability boundary** for kkcode as a CLI-first personal assistant.
 
-The goal is not to turn kkcode into an IDE shell or GUI automation platform. The goal is to make it reliably useful for high-value terminal-native work across coding, local machine tasks, repo operations, bounded research, interrupted-task continuation, and release assistance.
+The goal is not to turn kkcode into an IDE shell or GUI automation platform. The goal is to make it reliably useful for high-value terminal-native personal work across local machine tasks, repo operations, bounded research, notes/task organization, release assistance, and dedicated coding workflows.
 
 ## Scope principle
 
 kkcode 0.1.13 should be understood as:
 
 - **CLI-first**
-- **agent-default for bounded terminal work**
+- **assistant-default for bounded terminal personal work**
 - **LongAgent reserved for heavyweight staged delivery**
-- **code-strong by default**
-- **general-assistant friendly for bounded local transactions**
+- **dedicated agent/code/coding lane for code work**
+- **personal-assistant friendly for bounded local transactions**
 - **explicitly not a GUI / desktop automation product**
 
 Public mode contract:
 
-- `ask` = read-only explanation and analysis
+- `assistant` = default CLI personal assistant lane
 - `plan` = produce a spec / plan only, without file mutation
-- `agent` = default bounded local execution lane
+- `agent` / `code` / `coding` = dedicated coding lane for inspect / patch / verify work
 - `longagent` = staged multi-file delivery lane
-- upgrade from `agent` to `longagent` only when heavy multi-file evidence appears
+- upgrade from `assistant` or `agent` to `longagent` only when heavy multi-file evidence appears
 
 ## Capability taxonomy
 
@@ -41,12 +41,12 @@ Public mode contract:
 
 ## What “general assistant” means in practice
 
-0.1.13 keeps kkcode as a terminal-native assistant and pushes `agent` further toward the default bounded-transaction lane. It can also:
+KKcode keeps the terminal-native assistant boundary and makes `assistant` the default bounded personal-assistant lane. It can also:
 
 - inspect directories, configs, and logs
 - summarize repo state and release hygiene
 - combine shell execution with codebase reasoning
-- keep bounded inspect + patch + verify work in `agent` by default
+- keep bounded personal-assistant work in `assistant` by default
 - continue the same local transaction after an interrupt when the follow-up is still bounded
 - surface route reasons so users can see why kkcode stayed local or suggested `longagent`
 
@@ -65,8 +65,8 @@ These are **not** part of the 0.1.13 public contract:
 
 The capability matrix should influence routing behavior in four specific ways:
 
-- a bounded local task should remain eligible for `ask` or `agent`
-- an interrupted bounded task should prefer continuing the same `agent` transaction before re-routing
+- a bounded local task should remain eligible for `assistant` or `agent`
+- an interrupted bounded task should prefer continuing the same local transaction before re-routing
 - a short terminal task should not become LongAgent just because it mentions design, logs, or multiple checks
 - LongAgent remains the preferred lane for structured multi-file delivery and staged ownership
 
@@ -75,17 +75,18 @@ The capability matrix should influence routing behavior in four specific ways:
 When kkcode is acting as a CLI general assistant, it should:
 
 1. prefer direct local completion for small bounded work
-2. keep `agent` as the default general execution lane for bounded local transactions
-3. avoid over-delegating one-shot terminal actions
-4. keep GUI/platform promises explicit and conservative
-5. preserve LongAgent for heavyweight delivery rather than flattening everything into one agent surface
+2. keep `assistant` as the default personal-assistant lane for bounded terminal-native transactions
+3. route explicit code mutation/debug/test repair to `agent` / `code` / `coding`
+4. avoid over-delegating one-shot terminal actions
+5. keep GUI/platform promises explicit and conservative
+6. preserve LongAgent for heavyweight delivery rather than flattening everything into one agent surface
 
 ## Release checklist
 
 Before shipping 0.1.13, confirm:
 
 - README reflects the CLI general assistant boundary
-- prompt/runtime copy says `agent` is the default bounded transaction lane
+- prompt/runtime copy says `assistant` is the default bounded personal-assistant lane
 - prompt/runtime copy does not imply GUI automation support
 - route-reason copy, continuation copy, and release docs tell the same story
 - tool surface still covers coding + local ops + shell + web + repo + delegation

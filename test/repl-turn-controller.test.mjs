@@ -62,7 +62,7 @@ test("executePromptTurn applies chat param overrides and stream sink", async () 
       extractImageRefs: () => ({ text: "hello", imagePaths: [], imageUrls: [] }),
       chatParams: async () => ({
         prompt: "hello rewritten",
-        mode: "ask",
+        mode: "assistant",
         model: "gpt-5-mini",
         providerType: "anthropic"
       }),
@@ -74,7 +74,7 @@ test("executePromptTurn applies chat param overrides and stream sink", async () 
     }
   })
   assert.equal(received.prompt, "hello rewritten")
-  assert.equal(received.mode, "ask")
+  assert.equal(received.mode, "assistant")
   assert.equal(received.model, "gpt-5-mini")
   assert.equal(received.providerType, "anthropic")
   assert.deepEqual(writes, ["streamed"])

@@ -17,9 +17,9 @@ let sinkReady = false
 
 export const PUBLIC_MODE_CONTRACT = Object.freeze([
   {
-    mode: "ask",
-    summary: "read-only explanation and analysis",
-    guarantee: "ask never mutates repo state"
+    mode: "assistant",
+    summary: "default CLI personal assistant lane",
+    guarantee: "assistant handles bounded terminal-native personal assistant work under normal tool permissions"
   },
   {
     mode: "plan",
@@ -28,8 +28,8 @@ export const PUBLIC_MODE_CONTRACT = Object.freeze([
   },
   {
     mode: "agent",
-    summary: "default bounded local execution lane",
-    guarantee: "agent is the default lane for bounded inspect/patch/verify work"
+    summary: "dedicated coding execution lane",
+    guarantee: "agent is the dedicated lane for bounded coding inspect/patch/verify work"
   },
   {
     mode: "longagent",
@@ -42,18 +42,20 @@ function estimateTokens(text) {
   return Math.max(1, estimateStringTokens(text || ""))
 }
 
-export function resolveMode(inputMode = "agent") {
-  const mode = String(inputMode || "agent").toLowerCase()
-  if (["ask", "plan", "agent", "longagent"].includes(mode)) return mode
-  return "agent"
+export function resolveMode(inputMode = "assistant") {
+  const mode = String(inputMode || "assistant").toLowerCase()
+  if (mode === "code" || mode === "coding") return "agent"
+  if (mode === "ask") return "assistant"
+  if (["assistant", "plan", "agent", "longagent"].includes(mode)) return mode
+  return "assistant"
 }
 
-export function getPublicModeContract(inputMode = "agent") {
+export function getPublicModeContract(inputMode = "assistant") {
   const mode = resolveMode(inputMode)
-  return PUBLIC_MODE_CONTRACT.find((item) => item.mode === mode) || PUBLIC_MODE_CONTRACT[2]
+  return PUBLIC_MODE_CONTRACT.find((item) => item.mode === mode) || PUBLIC_MODE_CONTRACT[0]
 }
 
-export function formatPublicModeSummary(inputMode = "agent") {
+export function formatPublicModeSummary(inputMode = "assistant") {
   const contract = getPublicModeContract(inputMode)
   return `${contract.mode}: ${contract.summary}`
 }
@@ -62,11 +64,12 @@ export function renderPublicModeContract() {
   return [
     "# Mode Contract",
     "",
-    "- `ask`: read-only explanation and analysis; never mutate repo state.",
+    "- `assistant`: default CLI personal assistant lane for bounded terminal-native personal work, explanation, and analysis.",
     "- `plan`: produce a spec/plan only; do not execute file mutations.",
-    "- `agent`: default bounded local execution lane for inspect/patch/verify work.",
+    "- `agent` / `code` / `coding`: dedicated coding lane for inspect/patch/verify work.",
     "- `longagent`: heavyweight staged multi-file delivery lane with explicit gates.",
-    "- Upgrade from `agent` to `longagent` only when heavy multi-file or system-level evidence appears.",
+    "- Route from `assistant` to `agent` when coding mutation, debugging, or test work is explicit.",
+    "- Upgrade from `assistant` or `agent` to `longagent` only when heavy multi-file or system-level evidence appears.",
     "- Keep `plan` explicit and mutation-free even when later execution is likely."
   ].join("\n")
 }
@@ -127,8 +130,8 @@ function finalizeRouteDecision(req, classification, base = {}) {
       evidenceSummary,
       topologySummary,
       upgradePath,
-      stayedLocal: effectiveMode === "agent" && classification.mode === "agent",
-      deferredLongagent: req === "agent" && base.suggestion === "longagent",
+      stayedLocal: (effectiveMode === "assistant" && classification.mode === "assistant") || (effectiveMode === "agent" && classification.mode === "agent"),
+      deferredLongagent: (req === "assistant" || req === "agent") && base.suggestion === "longagent",
       overEscalatedToLongagent: req === "longagent" && classification.mode === "agent"
     }
   }
@@ -168,24 +171,24 @@ export function routeMode(prompt, requestedMode, options = {}) {
     return finalizeRouteDecision(req, classification, { mode: req, changed: false, reason: "low_confidence", explanation: explainTaskModeReason("low_confidence"), confidence: "low", forced: false })
   }
 
-  // 高置信度：问答类 → 自动切换到 ask（无需确认）
-  if (suggested === "ask" && classification.confidence === "high") {
-    return finalizeRouteDecision(req, classification, { mode: "ask", changed: true, reason: classification.reason, explanation, confidence: "high", forced: false })
+  // 高置信度：assistant/agent 模式下检测到 longagent 任务 → 建议切换（无需确认，只提示）
+  if ((req === "assistant" || req === "agent") && suggested === "longagent" && classification.confidence === "high") {
+    return finalizeRouteDecision(req, classification, { mode: req, changed: false, reason: classification.reason, explanation, confidence: "high", forced: false, suggestion: "longagent" })
   }
 
-  // 高置信度：agent 模式下检测到 longagent 任务 → 建议切换（无需确认，只提示）
-  if (req === "agent" && suggested === "longagent" && classification.confidence === "high") {
-    return finalizeRouteDecision(req, classification, { mode: req, changed: false, reason: classification.reason, explanation, confidence: "high", forced: false, suggestion: "longagent" })
+  // assistant 模式下检测到明确编码任务 → 自动切换到专门 coding lane
+  if (req === "assistant" && suggested === "agent" && classification.confidence !== "low") {
+    return finalizeRouteDecision(req, classification, { mode: "agent", changed: true, reason: classification.reason, explanation, confidence: classification.confidence, forced: false })
+  }
+
+  // agent 模式下检测到通用问答 / 分析任务 → 回到通用 assistant lane
+  if (req === "agent" && suggested === "assistant" && classification.confidence !== "low") {
+    return finalizeRouteDecision(req, classification, { mode: "assistant", changed: true, reason: classification.reason, explanation, confidence: classification.confidence, forced: false })
   }
 
   // 高置信度：用户强制 longagent 但任务是简单 agent 任务 → 需要确认
   if (req === "longagent" && suggested === "agent" && classification.confidence === "high") {
     return finalizeRouteDecision(req, classification, { mode: req, changed: false, reason: classification.reason, explanation, confidence: "high", forced: true, suggestion: "agent" })
-  }
-
-  // 中等置信度：agent 模式下检测到问答 → 自动切换
-  if (req === "agent" && suggested === "ask" && classification.confidence === "medium") {
-    return finalizeRouteDecision(req, classification, { mode: "ask", changed: true, reason: classification.reason, explanation, confidence: "medium", forced: false })
   }
 
   return finalizeRouteDecision(req, classification, { mode: req, changed: false, reason: classification.reason, explanation, confidence: classification.confidence, forced: false })

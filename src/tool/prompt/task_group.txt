@@ -1,0 +1,10 @@
+Use `task_group` when the user explicitly asks for multiple subagents, parallel agents, separate specialist lanes, or a comparison between independent agent findings.
+
+Behavior:
+- Launches every lane as a background delegated task.
+- Returns a shared `group_id`, `group_label`, per-lane task ids, and a compact visualization payload.
+- Use `inherit_context=true` or `execution_mode="fork_context"` only for read-only sidecar work that needs the parent transcript.
+- Use `fresh_agent` for implementation or mutation work.
+- Provide `subagent_type`, `objective` or `prompt`, `write_scope`, and `deliverable` for each lane when possible.
+
+After launching a group, use `task_parallel`, `task_list`, or `task_output` to observe progress and collect results.

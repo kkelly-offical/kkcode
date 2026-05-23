@@ -1,14 +1,14 @@
 # kkcode
 
-[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=v0.2.0)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
+[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=v0.2.3)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 [![GitHub Release](https://img.shields.io/github/v/release/kkelly-offical/kkcode)](https://github.com/kkelly-offical/kkcode/releases)
 ![Node](https://img.shields.io/badge/Node.js-%3E%3D22-green)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 
-**Terminal-first AI coding agent for governed execution, LongAgent orchestration, and extensible local workflows.**
+**Terminal-first personal assistant with dedicated Coding Agent and LongAgent modes for governed execution and extensible local workflows.**
 
-**终端优先、可治理、可扩展的 AI Coding Agent。**  
+**终端优先、可治理、可扩展的个人助手，内置专门 Coding Agent 与 LongAgent 模式。**
 kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同一个 CLI 工作台里，并且把权限、预算、审计、后台任务、MCP、技能与插件一起纳入统一执行面。
 
 ---
@@ -41,13 +41,13 @@ kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同�
 ## Overview / 概览
 
 **English**
-- kkcode is a terminal-native AI coding agent designed for local development, governed execution, and multi-stage delivery.
-- It keeps four public lanes — `ask`, `plan`, `agent`, and `longagent` — under one CLI surface.
+- kkcode is a terminal-native personal assistant designed for local work, governed execution, coding, and multi-stage delivery.
+- It keeps four public lanes — `assistant`, `plan`, `agent`/`code`, and `longagent` — under one CLI surface.
 - It is optimized for **CLI-first** and **LongAgent-first** workflows rather than GUI-first or marketplace-first product patterns.
 
 **中文**
-- kkcode 是一个面向终端原生工作流的 AI Coding Agent，强调本地开发、可治理执行和多阶段交付。
-- 它把四条公开执行航道 —— `ask`、`plan`、`agent`、`longagent` —— 收敛在同一个 CLI 入口下。
+- kkcode 是一个面向终端原生工作流的个人助手，强调本地事务、可治理执行、编码和多阶段交付。
+- 它把四条公开执行航道 —— `assistant`、`plan`、`agent`/`code`、`longagent` —— 收敛在同一个 CLI 入口下。
 - 它优先服务 **CLI-first**、**LongAgent-first** 的工程工作流，而不是 GUI 优先或 marketplace 优先的平台形态。
 
 ---
@@ -133,7 +133,7 @@ kkcode doctor
 
 | Area / 能力面 | Status / 状态 | Notes / 说明 |
 | --- | --- | --- |
-| Ask / 问答分析 | Supported | Read-only explanation and code understanding |
+| Assistant / 个人助手 | Supported | Default CLI lane for terminal-native personal work, explanation, and code understanding |
 | Plan / 方案规划 | Supported | Planning without mutating the repo |
 | Agent / 默认事务航道 | Supported | Local inspect/patch/verify loops |
 | LongAgent / 长程编排 | Supported | Multi-stage execution, retries, gates, resumable flow |
@@ -155,37 +155,39 @@ For a deeper boundary matrix, see [CLI General Assistant Capability Matrix](docs
 
 | Mode | Purpose | Typical use |
 | --- | --- | --- |
-| `ask` | explanation / analysis | understanding code, errors, design questions |
+| `assistant` | default personal assistant | local files, logs, system checks, web lookup, Git/GitHub, notes, tasks |
 | `plan` | specification / planning | producing an execution plan before mutations |
-| `agent` | bounded local execution | inspect + patch + verify small/medium tasks |
+| `agent` / `code` / `coding` | dedicated coding execution | inspect + patch + verify small/medium coding tasks |
 | `longagent` | staged orchestration | multi-file, multi-step, ownership-driven delivery |
 
 **English**
-- `agent` is the default bounded execution lane.
+- `assistant` is the default terminal personal-assistant lane.
+- `agent` / `code` / `coding` is the dedicated coding lane.
 - Only escalate to `longagent` when the task is clearly multi-stage or system-wide.
 - Interrupted work can be resumed with the same session context.
 
 **中文**
-- `agent` 是默认的有界本地执行航道。
+- `assistant` 是默认的终端个人助手航道。
+- `agent` / `code` / `coding` 是专门编码航道。
 - 只有在任务明显跨文件、跨阶段、影响面较大时，才建议升级到 `longagent`。
 - 中断后的工作可以在同一会话中继续，不需要从零开始。
-- **路由理由可见**：当 kkcode 自动建议模式变化时，会尽量解释为什么当前任务更适合留在 `agent` 或升级到 `longagent`。
+- **路由理由可见**：当 kkcode 自动建议模式变化时，会尽量解释为什么当前任务更适合留在 `assistant` / `agent` 或升级到 `longagent`。
 
 ### CLI 通用助手能力边界（0.1.13）
 
 **公共模式契约**
 
-- `ask`：只做解释、答疑、分析。
+- `assistant`：默认终端个人助手航道，承接本地文件、日志、系统信息、网页查询、Git/GitHub、笔记、任务整理、解释、答疑和分析。
 - `plan`：**只产出规格，不执行文件变更**。
-- `agent`：**默认有界本地执行航道**，优先承接 inspect / patch / verify 小闭环事务。
-- **只有出现明确重型证据时，才从 `agent` 升级到 `longagent`**。
+- `agent` / `code` / `coding`：专门编码航道，承接 inspect / patch / verify 小闭环事务。
+- **只有出现明确重型证据时，才从 `assistant` 或 `agent` 升级到 `longagent`**。
 
 **能力边界速览**
 - 系统 / 运行时信息
 - 本地目录 / 文件 / 日志检查
 - 仓库 / 发布辅助
 - 这**不代表** kkcode 已经承诺 GUI / 桌面自动化能力
-- 默认先在 `agent` 内把局部 inspect / patch / verify 做完，再判断是否需要升级
+- 默认先在 `assistant` 内处理普通终端事务；明确编码修改进入 `agent` / `code`，再判断是否需要升级
 
 **Further reading / 延伸阅读**
 - [0.1.13 Mode Lane Contract](docs/kkcode-0.1.13-mode-lane-contract.md)
@@ -217,18 +219,25 @@ For a deeper boundary matrix, see [CLI General Assistant Capability Matrix](docs
 
 **English**
 - kkcode supports bounded delegation through the `task` surface.
+- Assistant mode may call subagents directly when the user explicitly asks for one or more agents.
+- Use `task_group` to launch multiple parallel background subagents as one observable group.
+- Use `kkcode agent list --json` to inspect built-in, custom, and configured subagent roles.
 - Use `fresh_agent` for isolated implementation work.
 - Use `fork_context` for read-only sidecar work such as research or verification.
 - Do not outsource core understanding when the main thread must synthesize the result.
 
 **中文**
 - kkcode 通过 `task` 能力支持有边界的委派。
+- 当用户显式要求一个或多个智能体工作时，Assistant 模式可以直接调用子智能体。
+- 使用 `task_group` 可以把多个后台子智能体作为同一个并行组启动和观察。
+- 使用 `kkcode agent list --json` 查看内置、自定义和配置覆盖后的子智能体角色。
 - `fresh_agent` 适合隔离实现任务。
 - `fork_context` 适合研究、审计、验证这类只读 sidecar 任务。
 - 如果主线程必须综合判断，就不要把理解工作本身外包出去。
 
 **Background task contract / 后台任务契约**
 - 通过 `background_output` 查看后台任务输出
+- 通过 `kkcode background parallel` 查看并行子智能体分组和 lane 状态
 - 通过 `background_cancel` 取消后台任务
 - 终态固定为 `completed` / `cancelled` / `error` / `interrupted`
 
@@ -349,20 +358,46 @@ Run `kkcode --help` or `kkcode <command> --help` for the full surface.
 
 ---
 
+<a id="updates"></a>
+## Updates / 更新
+
+KKCode checks npm dist-tags in the background on startup and caches the result under `~/.kkcode/update-state.json`. By default it only prints a notice; it does not modify your global install unless you explicitly run the updater.
+
+```bash
+kkcode update --check
+kkcode update --install --channel latest
+kkcode update --install --channel preview
+```
+
+Config:
+
+```yaml
+update:
+  enabled: true
+  notify_on_startup: true
+  auto_install: false
+  channel: "latest"
+  check_interval_hours: 12
+```
+
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current stable / 当前稳定版本**: `v0.2.0`  
+**Current stable / 当前稳定版本**: `v0.2.3`
 **Latest releases / 最新发布**: [GitHub Releases](https://github.com/kkelly-offical/kkcode/releases)  
 **Package / 包地址**: [npm](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 
 **English**
-- `0.2.0` is the first formal release line after the staged REPL refactor from `0.1.27` to `0.1.36`.
-- The release train now includes explicit verification rails and GitHub release automation.
+- `0.2.3` is the stable assistant/subagent/context release: Assistant can explicitly delegate to one or many subagents, parallel lanes are observable, updater support is included, and context compaction keeps prior summaries plus recent evidence.
+- `0.2.3-preview.2` validated the context compaction path.
+- `0.2.3-preview.1` validated updater checks and the `kkcode update` command.
+- `0.2.1` rebuilt kkcode around Assistant as the default general-purpose lane, with dedicated Agent and LongAgent modes for coding work.
 
 **中文**
-- `0.2.0` 是 `0.1.27` 到 `0.1.36` 这轮 REPL 分阶段重构后的首个正式版本线。
-- 这条发布线已经具备显式验证护栏和 GitHub Release 自动发布能力。
+- `0.2.3` 是稳定版 Assistant / 子智能体 / 上下文版本：Assistant 可以显式委派一个或多个子智能体，并行 lane 可观察，包含更新器能力，上下文压缩会保留旧摘要和近期证据。
+- `0.2.3-preview.2` 验证了上下文压缩路径。
+- `0.2.3-preview.1` 验证了更新检查和 `kkcode update` 命令。
+- `0.2.1` 将 kkcode 重构为以 Assistant 为默认入口的通用个人助手，同时保留专门面向代码工作的 Agent 和 LongAgent 模式。
 
 ---
 
@@ -393,7 +428,7 @@ Run `kkcode --help` or `kkcode <command> --help` for the full surface.
 ## FAQ / 常见问题
 
 **Q: When should I use `longagent`? / 什么时候该用 `longagent`？**  
-A: Use it when the task is clearly multi-stage, cross-file, or needs ownership/gates. Small inspect/patch/verify loops should stay in `agent`.
+A: Use it when the task is clearly multi-stage, cross-file, or needs ownership/gates. Ordinary terminal assistance should stay in `assistant`; small coding inspect/patch/verify loops should stay in `agent` / `code`.
 
 **Q: Can kkcode work with multiple providers? / kkcode 支持多模型厂商吗？**  
 A: Yes. Provider switching is built into config and the REPL command surface.

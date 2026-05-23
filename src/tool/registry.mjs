@@ -8,7 +8,7 @@ import { pathToFileURL } from "node:url"
 import { atomicWriteFile, replaceInFileTransactional, replaceAllInFileTransactional, diffLineCount, buildStructuredPatch } from "./edit-transaction.mjs"
 import { withFileLock } from "./file-lock-manager.mjs"
 import { BackgroundManager } from "../orchestration/background-manager.mjs"
-import { createTaskTool } from "./task-tool.mjs"
+import { createTaskTool, createTaskGroupTool } from "./task-tool.mjs"
 import { McpRegistry } from "../mcp/registry.mjs"
 import { SkillRegistry } from "../skill/registry.mjs"
 import { askQuestionInteractive } from "./question-prompt.mjs"
@@ -881,6 +881,17 @@ function builtinTools(config) {
     }
   }
 
+
+  const taskParallelTool = {
+    name: "task_parallel",
+    description: "Show delegated background tasks grouped as parallel subagent lanes.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+    async execute() {
+      const tasks = await BackgroundManager.list()
+      return BackgroundManager.summarizeParallel(tasks)
+    }
+  }
+
   const taskGetTool = {
     name: "task_get",
     description: "Retrieve one delegated background task summary and result payload by task_id.",
@@ -1570,7 +1581,7 @@ function builtinTools(config) {
   const gitTools = config?.git_auto?.enabled !== false ? gitAutoTools : []
   const gitFullAutoToolsList = config?.git_auto?.full_auto === true ? gitFullAutoTools : []
   
-  return [listTool, sysinfoTool, readTool, writeTool, editTool, patchTool, multieditTool, globTool, grepTool, bashTool, createTaskTool(), outputTool, cancelTool, taskListTool, taskGetTool, taskStopTool, taskOutputTool, todowriteTool, questionTool, skillTool, webfetchTool, websearchTool, codesearchTool, notebookeditTool, enterPlanTool, exitPlanTool, ...gitTools, ...gitFullAutoToolsList]
+  return [listTool, sysinfoTool, readTool, writeTool, editTool, patchTool, multieditTool, globTool, grepTool, bashTool, createTaskTool(), createTaskGroupTool(), outputTool, cancelTool, taskListTool, taskParallelTool, taskGetTool, taskStopTool, taskOutputTool, todowriteTool, questionTool, skillTool, webfetchTool, websearchTool, codesearchTool, notebookeditTool, enterPlanTool, exitPlanTool, ...gitTools, ...gitFullAutoToolsList]
 }
 
 function mcpTools() {
@@ -1592,8 +1603,8 @@ function mcpTools() {
 }
 
 function toolAllowedByMode(toolName, mode) {
-  if (mode === "ask" || mode === "plan") {
-    return !["write", "edit", "patch", "multiedit", "notebookedit", "bash", "task", "git_snapshot", "git_restore", "git_apply_patch", "git_delete_snapshot"].includes(toolName)
+  if (mode === "plan") {
+    return !["write", "edit", "patch", "multiedit", "notebookedit", "bash", "task", "task_group", "git_snapshot", "git_restore", "git_apply_patch", "git_delete_snapshot"].includes(toolName)
   }
   return true
 }

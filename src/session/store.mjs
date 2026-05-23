@@ -323,7 +323,7 @@ export async function listSessions({ cwd = null, limit = 100, includeChildren = 
   })
 }
 
-export async function getConversationHistory(sessionId, limit = 30) {
+export async function getConversationHistory(sessionId, limit = 30, options = {}) {
   return withLock(async () => {
     await ensureLoadedUnsafe()
     const data = await loadSessionDataUnsafe(sessionId)
@@ -339,10 +339,19 @@ export async function getConversationHistory(sessionId, limit = 30) {
     const sliced = firstIsCompaction
       ? [msgs[0], ...msgs.slice(1).slice(-limit)]
       : msgs.slice(-limit)
-    return sliced.map((msg) => ({
-      role: msg.role,
-      content: msg.content
-    }))
+    return sliced.map((msg) => {
+      const base = {
+        role: msg.role,
+        content: msg.content
+      }
+      if (!options.includeMetadata) return base
+      return {
+        ...base,
+        turnId: msg.turnId,
+        step: msg.step,
+        synthetic: msg.synthetic
+      }
+    })
   })
 }
 

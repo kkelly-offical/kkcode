@@ -111,6 +111,10 @@ export function auditStorePath() {
   return path.join(userRootDir(), "audit-log.json")
 }
 
+export function updateStatePath() {
+  return path.join(userRootDir(), "update-state.json")
+}
+
 export async function ensureUserRoot() {
   await mkdir(userRootDir(), { recursive: true })
 }

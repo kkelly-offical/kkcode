@@ -322,6 +322,9 @@ export function validateConfig(config) {
   if (config.permission !== undefined) {
     if (!isObj(config.permission)) err(errors, "permission", "must be object")
     else {
+      if (config.permission.mode !== undefined && !["auto", "manual", "yolo"].includes(config.permission.mode)) {
+        err(errors, "permission.mode", "must be auto|manual|yolo")
+      }
       if (config.permission.default_policy !== undefined && !["allow", "deny", "ask"].includes(config.permission.default_policy)) {
         err(errors, "permission.default_policy", "must be allow|deny|ask")
       }
@@ -506,6 +509,19 @@ export function validateConfig(config) {
           }
         }
       }
+    }
+  }
+
+  if (config.update !== undefined) {
+    if (!isObj(config.update)) err(errors, "update", "must be object")
+    else {
+      if (config.update.enabled !== undefined && typeof config.update.enabled !== "boolean") err(errors, "update.enabled", "must be boolean")
+      if (config.update.notify_on_startup !== undefined && typeof config.update.notify_on_startup !== "boolean") err(errors, "update.notify_on_startup", "must be boolean")
+      if (config.update.auto_install !== undefined && typeof config.update.auto_install !== "boolean") err(errors, "update.auto_install", "must be boolean")
+      if (config.update.channel !== undefined && typeof config.update.channel !== "string") err(errors, "update.channel", "must be string")
+      if (config.update.registry !== undefined && typeof config.update.registry !== "string") err(errors, "update.registry", "must be string")
+      if (config.update.check_interval_hours !== undefined) checkInt(errors, "update.check_interval_hours", config.update.check_interval_hours, 0)
+      if (config.update.timeout_ms !== undefined) checkInt(errors, "update.timeout_ms", config.update.timeout_ms, 100)
     }
   }
 

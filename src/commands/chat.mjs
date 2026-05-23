@@ -19,9 +19,9 @@ export function resolveChatExecutionMode(prompt, requestedMode) {
 export function createChatCommand() {
   const providers = listProviders()
   return new Command("chat")
-    .description("run one prompt in ask/plan/agent/longagent mode (agent = default bounded lane)")
+    .description("run one prompt in assistant/plan/agent/code/longagent mode (assistant = default personal lane)")
     .argument("<prompt...>", "prompt text")
-    .option("--mode <mode>", "ask|plan|agent|longagent", "agent")
+    .option("--mode <mode>", "assistant|plan|agent|code|coding|longagent", "assistant")
     .option("--model <model>", "model id")
     .option("--provider-type <type>", `provider type (${providers.join("|")})`)
     .option("--base-url <url>", "provider base url override")
@@ -89,7 +89,7 @@ export function createChatCommand() {
         console.log(`mode routed: ${routedMode.requestedMode} -> ${effectiveMode} (${effectiveExplanation})`)
       } else if (routedMode.route.forced && routedMode.route.suggestion) {
         console.log(`mode kept: ${effectiveMode} (${effectiveExplanation}; suggested ${routedMode.route.suggestion})`)
-      } else if (routedMode.route.suggestion === "longagent" && routedMode.requestedMode === "agent") {
+      } else if (routedMode.route.suggestion === "longagent" && (routedMode.requestedMode === "assistant" || routedMode.requestedMode === "agent")) {
         console.log(`mode note: ${effectiveMode} (${effectiveExplanation}; consider --mode longagent)`)
       } else {
         console.log(`mode: ${effectiveMode} (${effectiveExplanation})`)
@@ -119,7 +119,7 @@ export function createChatCommand() {
       const status = renderStatusBar({
         mode: effectiveMode,
         model: result.model,
-        permission: ctx.configState.config.permission.default_policy,
+        permission: ctx.configState.config.permission.mode || ctx.configState.config.permission.default_policy,
         tokenMeter: result.tokenMeter,
         aggregation: ctx.configState.config.usage.aggregation,
         cost: result.cost,

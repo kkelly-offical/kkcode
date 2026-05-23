@@ -14,6 +14,9 @@ function printTaskSummary(task) {
   if (!summary) return
   console.log(`[${summary.status}] ${summary.id} :: ${summary.description}`)
   console.log(`  attempt=${summary.attempt} subagent=${summary.subagent || "-"} execution_mode=${summary.execution_mode || "-"} session=${summary.session_id || "-"}`)
+  if (summary.group_id) {
+    console.log(`  group=${summary.group_id} label=${summary.group_label || "-"}`)
+  }
   if (summary.interruption_reason) {
     console.log(`  interruption=${summary.interruption_reason}`)
   }
@@ -52,6 +55,32 @@ export function createBackgroundCommand() {
         }
         for (const task of list) {
           printTaskSummary(task)
+        }
+      })
+    })
+
+
+  cmd
+    .command("parallel")
+    .description("show delegated background tasks grouped as parallel subagent lanes")
+    .option("--json", "print raw JSON")
+    .action(async (options) => {
+      await withContext(async () => {
+        const groups = BackgroundManager.summarizeParallel(await BackgroundManager.list())
+        if (options.json) {
+          console.log(JSON.stringify(groups, null, 2))
+          return
+        }
+        if (groups.length === 0) {
+          console.log("no parallel subagent groups")
+          return
+        }
+        for (const group of groups) {
+          console.log("[group] " + group.group_id + " :: " + group.group_label + " total=" + group.total + " active=" + group.active)
+          for (const lane of group.lanes) {
+            console.log("  [" + lane.status + "] " + lane.id + " subagent=" + (lane.subagent || "-") + " task=" + (lane.logical_task_id || "-") + " session=" + (lane.session_id || "-"))
+            if (lane.result_preview) console.log("    preview=" + lane.result_preview)
+          }
         }
       })
     })

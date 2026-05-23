@@ -1,4 +1,4 @@
-export const MODES = ["ask", "plan", "agent", "longagent"]
+export const MODES = ["assistant", "plan", "agent", "longagent"]
 
 export const TOOL_STATUSES = ["running", "completed", "error", "cancelled"]
 

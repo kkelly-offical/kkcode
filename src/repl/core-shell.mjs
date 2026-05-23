@@ -1,6 +1,7 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 import { paint } from "../theme/color.mjs"
+import { resolveMode } from "../session/engine.mjs"
 
 export function configuredProviders(config, listProvidersFn) {
   const builtins = new Set(listProvidersFn())
@@ -50,7 +51,7 @@ export function createInitialReplState(config, { newSessionIdFn }) {
   const providerType = config.provider.default
   const state = {
     sessionId: newSessionIdFn(),
-    mode: config.agent.default_mode || "agent",
+    mode: resolveMode(config.agent.default_mode),
     providerType,
     model: ""
   }
@@ -94,7 +95,7 @@ export function startSplash({
     "  ██║  ██╗ ██║  ██╗ ╚██████╗ ╚██████╔╝ ██████╔╝ ███████╗ ",
     "  ╚═╝  ╚═╝ ╚═╝  ╚═╝  ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝ "
   ]
-  const tagline = "AI Coding Agent"
+  const tagline = "CLI Personal Assistant"
   const wave = [
     "#4af5f0", "#3de8f5", "#30dbfa", "#38c8ff", "#40b5ff",
     "#58a0ff", "#708bff", "#8876ff", "#a061ff", "#b84cff",

@@ -147,5 +147,5 @@ When the user asks to create a pull request:
 
 # Mode constraints
 - In plan mode: output an execution plan only. No file mutations.
-- In ask mode: answer questions, explore code. No file mutations.
+- In assistant mode: answer questions, explore code, and route coding work through the coding lane.
 - In agent/longagent mode: full tool access. Execute tasks to completion.

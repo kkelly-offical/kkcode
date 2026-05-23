@@ -40,8 +40,9 @@ test("system prompt assembles stable tool and skill blocks", async () => {
   assert.match(prompt.text, /# Mode Contract/)
   assert.match(prompt.text, /`plan`: produce a spec\/plan only; do not execute file mutations/i)
   assert.match(prompt.text, /longagent.*staged multi-file delivery lane/i)
-  assert.match(prompt.text, /CLI-first assistant/)
-  assert.match(prompt.text, /default general execution lane/)
+  assert.match(prompt.text, /CLI-first personal assistant/)
+  assert.match(prompt.text, /assistant.*default lane/)
+  assert.match(prompt.text, /agent\/code\/coding.*dedicated lane/)
   assert.match(prompt.text, /continue an interrupted local transaction/i)
   assert.match(prompt.text, /Do not imply unsupported product surfaces/)
   assert.match(prompt.text, /\/compat-skill: compat description/)
@@ -75,4 +76,23 @@ test("system prompt includes custom subagent catalog block", async () => {
   assert.ok(subagentBlock)
   assert.match(subagentBlock.text, /# Available Sub-agents/)
   assert.match(subagentBlock.text, new RegExp(name))
+})
+
+test("assistant mode prompt requires explicit subagent delegation tools", async () => {
+  const prompt = await buildSystemPromptBlocks({
+    mode: "assistant",
+    model: "gpt-4o-mini",
+    cwd: process.cwd(),
+    tools: [{ name: "task" }, { name: "task_group" }],
+    skills: [],
+    userInstructions: "",
+    projectContext: "",
+    language: "en"
+  })
+
+  const modeBlock = prompt.blocks.find((block) => block.label === "mode")
+  assert.ok(modeBlock)
+  assert.match(modeBlock.text, /explicitly asks to summon/)
+  assert.match(modeBlock.text, /task_group/)
+  assert.match(modeBlock.text, /inherit_context=true/)
 })

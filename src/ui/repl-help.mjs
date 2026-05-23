@@ -19,13 +19,13 @@ export function buildHelpText({ providers = [], userRootPath = "" } = {}) {
 
   lines.push("")
   lines.push("  Mode & Provider")
-  lines.push(row("/ask /plan /agent /longagent", "quick mode switch to the public execution lanes"))
-  lines.push(row("/mode <name>,/m <name>", "switch mode (ask|plan|agent|longagent) with explicit lane semantics"))
+  lines.push(row("/assistant /plan /agent /code /longagent", "quick mode switch to the public execution lanes"))
+  lines.push(row("/mode <name>,/m <name>", "switch mode (assistant|plan|agent|code|coding|longagent)"))
   lines.push(row("/longagent 4stage|hybrid", "switch longagent impl"))
   lines.push(row("/provider <type>,/p <type>", `switch provider (${providers.join("|") || "configured"})`))
   lines.push(row("/provider edit <name>", "edit existing provider config"))
   lines.push(row("/model <id>", "set active model"))
-  lines.push(row("", "ask = read-only explanation · plan = spec only · agent = default bounded lane · longagent = staged multi-file lane"))
+  lines.push(row("", "assistant = personal CLI + Q&A lane · plan = spec only · agent/code = coding · longagent = staged"))
 
   lines.push("")
   lines.push("  Profile & Workspace")
@@ -36,7 +36,7 @@ export function buildHelpText({ providers = [], userRootPath = "" } = {}) {
 
   lines.push("")
   lines.push("  Tools & Display")
-  lines.push(row("/permission [...]", "adjust permission policy"))
+  lines.push(row("/permission [...]", "adjust permission mode/policy"))
   lines.push(row("/paste [text]", "paste clipboard image"))
   lines.push(row("/status", "show current runtime state"))
   lines.push(row("/dash,/home", "redraw dashboard"))
@@ -72,9 +72,10 @@ export function buildHelpText({ providers = [], userRootPath = "" } = {}) {
   lines.push("  provider.default              default provider name")
   lines.push("  provider.<name>.api_key_env   env var for API key")
   lines.push("  provider.<name>.default_model default model id")
-  lines.push("  agent.default_mode            startup mode (ask|plan|agent|longagent)")
+  lines.push("  agent.default_mode            startup mode (assistant|plan|agent|code|longagent)")
   lines.push("  agent.longagent.git.enabled   git branch mgmt (true|false|\"ask\")")
-  lines.push("  permission.default_policy     tool permission (ask|allow|deny)")
+  lines.push("  permission.mode               tool approvals (auto|manual|yolo)")
+  lines.push("  permission.default_policy     manual policy (ask|allow|deny)")
   lines.push("  usage.budget.session_usd      per-session cost limit")
   lines.push("")
   lines.push("See notice.md in project root for full configuration guide.")
@@ -91,10 +92,10 @@ export function buildShortcutLegend() {
     "  /m      Switch mode",
     "  /p      Switch provider",
     "  /k      Show this key map",
-    "  /permission [show|ask|allow|deny|non-tty <allow_once|deny>|save [project|user]|session-clear]",
+    "  /permission [show|auto|yolo|ask|allow|deny|non-tty <allow_once|deny>|save [project|user]|session-clear]",
     "  /dash   Redraw dashboard",
     "  /clear  Clear screen",
-    "  /ask /plan /agent /longagent  Quick lane switch",
+    "  /assistant /plan /agent /code /longagent  Quick lane switch",
     "",
     "TUI keys:",
     "  Enter choose slash suggestion / submit prompt",
@@ -103,7 +104,7 @@ export function buildShortcutLegend() {
     "  Up/Down navigate suggestion/history",
     "  Left/Right/Home/End edit cursor",
     "  Ctrl+Up/Down scroll log   Ctrl+Home/End oldest/latest",
-    "  Tab cycle lane (longagent -> plan -> ask -> agent)",
+    "  Tab cycle lane (assistant -> agent -> longagent -> plan)",
     "  Esc interrupt turn  Ctrl+C×2 exit"
   ].join("\n")
 }

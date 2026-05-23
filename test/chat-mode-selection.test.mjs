@@ -2,10 +2,10 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { resolveChatExecutionMode } from "../src/commands/chat.mjs"
 
-test("resolveChatExecutionMode auto-routes clear questions into ask mode", () => {
+test("resolveChatExecutionMode auto-routes clear questions into assistant mode", () => {
   const resolved = resolveChatExecutionMode("What files handle routing in this project?", "agent")
   assert.equal(resolved.requestedMode, "agent")
-  assert.equal(resolved.effectiveMode, "ask")
+  assert.equal(resolved.effectiveMode, "assistant")
   assert.equal(resolved.route.changed, true)
   assert.ok(["question_with_explain_intent", "short_question"].includes(resolved.route.reason))
   assert.match(resolved.route.explanation, /问答|解释/)

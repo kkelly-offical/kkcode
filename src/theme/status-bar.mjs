@@ -11,8 +11,12 @@ function formatCost(amount) {
 
 function permissionColor(permission, theme) {
   switch (permission) {
-    case "allow": return theme.semantic.success || theme.semantic.info
+    case "allow":
+    case "yolo":
+      return theme.semantic.success || theme.semantic.info
     case "deny": return theme.semantic.error || theme.semantic.warn
+    case "auto": return theme.semantic.warn || theme.semantic.info
+    case "manual":
     case "ask":
     default:
       return theme.semantic.info

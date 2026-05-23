@@ -47,7 +47,7 @@ export const DEFAULT_CONFIG = {
     model_context: {}
   },
   agent: {
-    default_mode: "agent",
+    default_mode: "assistant",
     max_steps: 8,
     longagent: {
       max_iterations: 0,
@@ -168,6 +168,7 @@ export const DEFAULT_CONFIG = {
     allowed_commands: []
   },
   permission: {
+    mode: "auto",
     default_policy: "ask",
     non_tty_default: "deny",
     rules: []
@@ -251,10 +252,19 @@ export const DEFAULT_CONFIG = {
       strategy: "warn"
     }
   },
+  update: {
+    enabled: true,
+    notify_on_startup: true,
+    auto_install: false,
+    channel: "latest",
+    check_interval_hours: 12,
+    registry: "https://registry.npmjs.org",
+    timeout_ms: 2500
+  },
   ui: {
     theme_file: null,
     mode_colors: {
-      ask: "#8da3b9",
+      assistant: "#22d3ee",
       plan: "#00b7c2",
       agent: "#2ac26f",
       longagent: "#ff7a33"
@@ -274,6 +284,6 @@ import { listProviders } from "../provider/router.mjs"
 export function getValidProviderTypes() {
   return listProviders()
 }
-export const VALID_MODES = ["ask", "plan", "agent", "longagent"]
+export const VALID_MODES = ["assistant", "plan", "agent", "code", "coding", "longagent"]
 export const VALID_REVIEW_SORT = ["risk_first", "time_order", "file_order"]
 export const VALID_LANGUAGES = ["en", "zh"]

@@ -5,36 +5,36 @@ import { saveCheckpoint } from "./checkpoint.mjs"
 import { recordTurn } from "../usage/usage-meter.mjs"
 import { loadPricing, calculateCost } from "../usage/pricing.mjs"
 
-const COMPACTION_SYSTEM = `You are a conversation summarizer. Create a structured summary preserving all critical information for continued work.
+const COMPACTION_SYSTEM = `You are a conversation summarizer. Create a structured, merge-safe summary preserving all critical information for continued work.
 
 ## Output Format
 
+Return exactly:
+
+<context-state>
+{
+  "goal": "The user's current overall goal",
+  "completed": ["Completed work with specific file paths, function names, and line numbers"],
+  "in_progress": ["Current work being done"],
+  "files_modified": [{"path":"path/to/file","changes":["specific change"]}],
+  "key_decisions": ["Decision, constraint, or user preference"],
+  "errors_resolved": ["Error -> fix applied"],
+  "evidence": ["Important command output, test result, provider error, or exact failure detail"],
+  "next_steps": ["Specific next action item"]
+}
+</context-state>
+
 <summary>
-<goal>The user's overall goal or current task</goal>
-<completed>
-- Completed task with specific details (file paths, function names, line numbers)
-</completed>
-<in_progress>Current work being done, if any</in_progress>
-<files_modified>
-- path/to/file: specific change description
-</files_modified>
-<key_decisions>
-- Decision and reasoning
-- User preferences or constraints
-</key_decisions>
-<errors_resolved>
-- Error description → fix applied
-</errors_resolved>
-<next_steps>
-- Specific next action items
-</next_steps>
+Concise human-readable continuation summary.
 </summary>
 
 Rules:
 - Use the SAME LANGUAGE as the conversation
+- Merge the prior context state with the new conversation delta; do not summarize the prior state as another chat message
 - Preserve ALL file paths, function names, variable names, and technical identifiers exactly
 - Include specific code changes, not just "modified file X"
 - Omit tool call metadata and message formatting details
+- Preserve exact errors, failing test names, package versions, release labels, and user constraints in evidence
 - Be concise but never drop actionable information`
 
 const DEFAULT_THRESHOLD_MESSAGES = 50
@@ -42,6 +42,118 @@ const DEFAULT_THRESHOLD_RATIO = 0.7
 const DEFAULT_KEEP_RECENT = 6
 const DEFAULT_KEEP_RECENT_TURNS = 3
 const TOOL_RESULT_PREVIEW_LIMIT = 200
+const EVIDENCE_PREVIEW_LIMIT = 900
+const PATH_RE = /(?:^|\s)([A-Za-z0-9_.@~/-]+\.(?:mjs|js|ts|tsx|jsx|json|yaml|yml|md|txt|rs|go|py|sh|toml|lock))(?:[:\s]|$)/g
+const IMPORTANT_LINE_RE = /(error|failed|failure|exception|traceback|assert|reject|denied|unauthorized|context|compact|version|publish|npm|test|lint|typecheck|diff|modified)/i
+
+export function isCompactionSummaryMessage(msg) {
+  const content = msg?.content
+  if (typeof content === "string") return content.includes("<compaction-summary")
+  if (Array.isArray(content)) {
+    return content.some((block) => {
+      if (typeof block === "string") return block.includes("<compaction-summary")
+      return block?.type === "text" && typeof block.text === "string" && block.text.includes("<compaction-summary")
+    })
+  }
+  return false
+}
+
+export function extractCompactionSummary(content) {
+  const text = Array.isArray(content)
+    ? content.map((block) => typeof block === "string" ? block : (block?.text || block?.content || "")).join("\n")
+    : String(content || "")
+  const match = text.match(/<compaction-summary(?:\s[^>]*)?>\s*([\s\S]*?)\s*<\/compaction-summary>/i)
+  return (match ? match[1] : "").trim()
+}
+
+function clip(text, limit = EVIDENCE_PREVIEW_LIMIT) {
+  const raw = String(text || "")
+  if (raw.length <= limit) return raw
+  return raw.slice(0, limit) + "... [truncated " + raw.length + " chars]"
+}
+
+function extractPaths(text) {
+  const paths = new Set()
+  let match
+  PATH_RE.lastIndex = 0
+  while ((match = PATH_RE.exec(String(text || ""))) !== null) {
+    paths.add(match[1])
+    if (paths.size >= 12) break
+  }
+  return [...paths]
+}
+
+function importantLines(text, limit = 12) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && IMPORTANT_LINE_RE.test(line))
+    .slice(0, limit)
+}
+
+export function collectEvidenceLedger(messages, previewLimit = EVIDENCE_PREVIEW_LIMIT) {
+  const evidence = []
+  for (const msg of messages) {
+    const content = msg.content
+    const blocks = Array.isArray(content) ? content : [{ type: "text", text: content }]
+    for (const block of blocks) {
+      const raw = String(block?.content || block?.text || "")
+      if (!raw) continue
+      if (block.type === "tool_result") {
+        const lines = importantLines(raw)
+        const paths = extractPaths(raw)
+        if (block.is_error || lines.length || paths.length) {
+          evidence.push([
+            "- role=" + msg.role + " tool_result" + (block.is_error ? " ERROR" : ""),
+            paths.length ? "  paths: " + paths.join(", ") : "",
+            lines.length ? "  key_lines:\n" + lines.map((line) => "    " + clip(line, 220)).join("\n") : "  preview: " + clip(raw, previewLimit)
+          ].filter(Boolean).join("\n"))
+        }
+      } else if (typeof content === "string" && raw.length > 1000) {
+        const lines = importantLines(raw)
+        const paths = extractPaths(raw)
+        if (lines.length || paths.length) {
+          evidence.push([
+            "- role=" + msg.role + " long_text",
+            paths.length ? "  paths: " + paths.join(", ") : "",
+            lines.length ? "  key_lines:\n" + lines.map((line) => "    " + clip(line, 220)).join("\n") : ""
+          ].filter(Boolean).join("\n"))
+        }
+      }
+      if (evidence.length >= 20) return evidence
+    }
+  }
+  return evidence
+}
+
+export function buildCompactionPrompt({ previousSummary = "", messages, evidence = [] }) {
+  const transcript = messages.map((m) => {
+    const content = m.content
+    if (Array.isArray(content)) {
+      return "[" + m.role + "]: " + content.map((b) => {
+        if (b.type === "text") return b.text || ""
+        if (b.type === "tool_use") return "[tool_use:" + b.name + "(" + JSON.stringify(b.input || {}).slice(0, 120) + ")]"
+        if (b.type === "tool_result") return "[tool_result:" + (b.is_error ? "ERROR " : "") + (b.content || "") + "]"
+        return ""
+      }).filter(Boolean).join("\n")
+    }
+    return "[" + m.role + "]: " + content
+  }).join("\n\n")
+
+  return [
+    "<prior-context-state>",
+    previousSummary || "No prior compacted context.",
+    "</prior-context-state>",
+    "",
+    "<evidence-ledger>",
+    evidence.length ? evidence.join("\n") : "No extracted evidence ledger.",
+    "</evidence-ledger>",
+    "",
+    "<conversation-delta>",
+    transcript,
+    "</conversation-delta>"
+  ].join("\n")
+}
 
 // Estimate tokens from a string, accounting for CJK characters (~1.5 chars/token vs ~4 for Latin)
 export function estimateStringTokens(str) {
@@ -193,8 +305,12 @@ export async function compactSession({
   baseUrl = null,
   apiKeyEnv = null
 }) {
-  const history = await getConversationHistory(sessionId, 9999)
+  const history = await getConversationHistory(sessionId, 9999, { includeMetadata: true })
   if (history.length <= keepRecent + 2) return { compacted: false, reason: "too few messages" }
+  const previousSummary = isCompactionSummaryMessage(history[0])
+    ? extractCompactionSummary(history[0].content)
+    : ""
+  const workingHistory = previousSummary ? history.slice(1) : history
 
   // Turn-based split: keep last keepRecentTurns complete turns
   // A "turn" = one user interaction cycle (user msg + model response + all tool calls)
@@ -202,7 +318,7 @@ export async function compactSession({
   let splitIdx
   const turnIds = []
   const seenTurns = new Set()
-  for (const msg of history) {
+  for (const msg of workingHistory) {
     if (msg.turnId && !seenTurns.has(msg.turnId)) {
       seenTurns.add(msg.turnId)
       turnIds.push(msg.turnId)
@@ -210,29 +326,19 @@ export async function compactSession({
   }
   if (turnIds.length > keepRecentTurns) {
     const keepFromTurnId = turnIds[turnIds.length - keepRecentTurns]
-    splitIdx = history.findIndex(msg => msg.turnId === keepFromTurnId)
-    if (splitIdx < 0) splitIdx = history.length - keepRecent
+    splitIdx = workingHistory.findIndex(msg => msg.turnId === keepFromTurnId)
+    if (splitIdx < 0) splitIdx = workingHistory.length - keepRecent
   } else {
     // Fallback: not enough turns, use message count
-    splitIdx = history.length - keepRecent
+    splitIdx = workingHistory.length - keepRecent
   }
-  const toSummarize = history.slice(0, splitIdx)
-  const kept = history.slice(splitIdx)
+  const toSummarize = workingHistory.slice(0, splitIdx)
+  const kept = workingHistory.slice(splitIdx)
 
-  // Layer 1: prune large tool outputs before sending to LLM
+  // Layer 1: extract exact evidence, then prune large tool outputs before sending to LLM
+  const evidence = collectEvidenceLedger(toSummarize)
   const pruned = pruneForSummary(toSummarize)
-  const summaryPrompt = pruned.map((m) => {
-    const content = m.content
-    if (Array.isArray(content)) {
-      return `[${m.role}]: ${content.map((b) => {
-        if (b.type === "text") return b.text || ""
-        if (b.type === "tool_use") return `[tool_use:${b.name}(${JSON.stringify(b.input || {}).slice(0, 120)})]`
-        if (b.type === "tool_result") return `[tool_result:${b.is_error ? "ERROR " : ""}${b.content || ""}]`
-        return ""
-      }).filter(Boolean).join("\n")}`
-    }
-    return `[${m.role}]: ${content}`
-  }).join("\n\n")
+  const summaryPrompt = buildCompactionPrompt({ previousSummary, messages: pruned, evidence })
 
   const hookPayload = await HookBus.sessionCompacting({
     sessionId,
@@ -266,7 +372,7 @@ export async function compactSession({
   // Replace all messages with: [summary] + [kept recent messages]
   const summaryMessage = {
     role: "user",
-    content: `<compaction-summary>\n${summaryText}\n</compaction-summary>`
+    content: `<compaction-summary version="2">\n${summaryText}\n</compaction-summary>`
   }
   await replaceMessages(sessionId, [summaryMessage, ...kept])
 
@@ -285,8 +391,10 @@ export async function compactSession({
     compactedAt: Date.now(),
     summarizeCount: toSummarize.length,
     keepCount: kept.length,
-    summaryVersion: 1,
-    summaryLength: summaryText.length
+    summaryVersion: 2,
+    summaryLength: summaryText.length,
+    previousSummaryLength: previousSummary.length,
+    evidenceCount: evidence.length
   })
 
   return {

@@ -11,7 +11,7 @@ semantic:
   error: "#ff6b6b"
   success: "#7fd28f"
 modes:
-  ask: "#8da3b9"
+  assistant: "#22d3ee"
   plan: "#00b7c2"
   agent: "#2ac26f"
   longagent: "#ff7a33"
