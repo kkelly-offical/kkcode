@@ -237,8 +237,8 @@ export async function buildSystemPromptBlocks({ mode, model, cwd, agent = null, 
 
   // Block 5: Skills descriptions (stable — changes only when skills change)
   if (skills.length) {
-    const skillLines = skills.map((s) => `- /${s.name}: ${s.description || s.name}`).join("\n")
-    const skillText = `# Available Skills\n\nInvoke with /<skill-name> [arguments].\n\n${skillLines}`
+    const skillLines = skills.map((s) => `- $${s.name}: ${s.description || s.name}`).join("\n")
+    const skillText = `# Available Skills\n\nInvoke with $<skill-name> [arguments]. Slash-form /<skill-name> remains legacy-compatible, but $ is the canonical skill namespace.\n\n${skillLines}`
     blocks.push({ label: "skills", text: skillText, cacheable: true })
   }
 

@@ -18,7 +18,7 @@ test("renderInstalledCommandSurface renders commands and non-template skills", (
     "custom commands:",
     "  /ship (project) -> .kkcode/commands/ship.md",
     "skills:",
-    "  /review (skill_md, project)"
+    "  $review (skill_md, project)"
   ])
 })
 

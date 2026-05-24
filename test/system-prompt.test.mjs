@@ -45,7 +45,7 @@ test("system prompt assembles stable tool and skill blocks", async () => {
   assert.match(prompt.text, /agent\/code\/coding.*dedicated lane/)
   assert.match(prompt.text, /continue an interrupted local transaction/i)
   assert.match(prompt.text, /Do not imply unsupported product surfaces/)
-  assert.match(prompt.text, /\/compat-skill: compat description/)
+  assert.match(prompt.text, /\$compat-skill: compat description/)
 })
 
 test("system prompt includes custom subagent catalog block", async () => {

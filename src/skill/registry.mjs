@@ -13,7 +13,7 @@ import { userRootDir } from "../storage/paths.mjs"
 
 const execFileAsync = promisify(execFile)
 
-const DEFAULT_SKILL_DIR_README = `# kkcode Skills\n\nThis directory stores reusable skills for kkcode.\n\nWhen kkcode starts, skills in this directory are loaded automatically and can be invoked as slash commands (for example: \/code-review).\n\nDefault skill packs include:\n- code-review: structured review checklist for changed files\n- test-plan: lightweight test planning support\n\nAdd your own skills as:\n- .md files (simple templates)\n- .mjs files (programmable)\n- directories with SKILL.md (metadata + templates)`
+const DEFAULT_SKILL_DIR_README = `# kkcode Skills\n\nThis directory stores reusable skills for kkcode.\n\nWhen kkcode starts, skills in this directory are loaded automatically and can be invoked as skill commands (for example: $code-review).\n\nDefault skill packs include:\n- code-review: structured review checklist for changed files\n- test-plan: lightweight test planning support\n\nAdd your own skills as:\n- .md files (simple templates)\n- .mjs files (programmable)\n- directories with SKILL.md (metadata + templates)`
 
 const DEFAULT_SKILL_PACKS = [
   {

@@ -950,14 +950,18 @@ async function processInputLine({
   }
 
   let prompt = normalized
-  if (normalized.startsWith("/")) {
+  if (normalized.startsWith("$") || normalized.startsWith("/")) {
+    const sigil = normalized.startsWith("$") ? "$" : "/"
     const body = normalized.slice(1)
     const [name, ...argTokens] = body.split(/\s+/)
     const args = argTokens.join(" ").trim()
 
-    // Try SkillRegistry first (covers templates, .mjs skills, MCP prompts)
     const skill = SkillRegistry.isReady() ? SkillRegistry.get(name) : null
-    if (skill) {
+    if (sigil === "$" || skill) {
+      if (!skill) {
+        print(`unknown skill: $${name}`)
+        return { exit: false }
+      }
       const expanded = await SkillRegistry.execute(name, args, {
         cwd: process.cwd(),
         mode: state.mode,
@@ -966,7 +970,7 @@ async function processInputLine({
         config: ctx.configState?.config || null
       })
       if (!expanded) {
-        print(`skill /${name} returned no output`)
+        print(`skill $${name} returned no output`)
         return { exit: false }
       }
       // contextFork skills return { prompt, contextFork, model }
@@ -1205,8 +1209,14 @@ function hasShiftEnterSequence(dataChunk) {
   )
 }
 
+function isCommandLikeInput(line) {
+  const value = String(line || "").trimStart()
+  return value.startsWith("/") || value.startsWith("$")
+}
+
 function renderSuggestions({ inputLine, suggestions, selected, offset, maxVisible, theme, width }) {
-  if (!String(inputLine || "").startsWith("/") || !suggestions.length) {
+  const sigil = String(inputLine || "").startsWith("$") ? "$" : String(inputLine || "").startsWith("/") ? "/" : null
+  if (!sigil || !suggestions.length) {
     return { lines: [], offset: 0 }
   }
   const visible = Math.max(1, maxVisible || MAX_TUI_SUGGESTIONS)
@@ -1218,7 +1228,7 @@ function renderSuggestions({ inputLine, suggestions, selected, offset, maxVisibl
   const view = suggestions.slice(start, end)
   const lines = [
     paint(
-      `Slash Commands (${selected + 1}/${suggestions.length})  Enter choose, Enter again execute`,
+      `${sigil === "$" ? "Skills" : "Slash Commands"} (${selected + 1}/${suggestions.length})  Enter choose, Enter again execute`,
       theme.base.muted,
       { bold: true }
     )
@@ -1228,7 +1238,7 @@ function renderSuggestions({ inputLine, suggestions, selected, offset, maxVisibl
     const index = start + i
     const active = index === selected
     const prefix = active ? ">" : " "
-    const line = `${prefix} /${padRight(item.name, 14)} ${item.desc}`
+    const line = `${prefix} ${sigil}${padRight(item.name, 14)} ${item.desc}`
     lines.push(
       active
         ? paint(line, "#111111", { bg: theme.semantic.info, bold: true })
@@ -2149,7 +2159,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     ensureEventSinks()
 
     // --- Task 3: 处理中途补充需求确认 ---
-    if (ui.pendingModeConfirm && !line.startsWith("/")) {
+    if (ui.pendingModeConfirm && !isCommandLikeInput(line)) {
       const confirm = ui.pendingModeConfirm
       ui.pendingModeConfirm = null
       const answer = line.trim().toLowerCase()
@@ -2173,7 +2183,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       }
     }
 
-    if (ui.agentAborted && state.mode === "agent" && !line.startsWith("/")) {
+    if (ui.agentAborted && state.mode === "agent" && !isCommandLikeInput(line)) {
       const summary = ui.agentTransaction
       ui.agentAborted = false
       if (summary && line.trim()) {
@@ -2210,7 +2220,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     }
 
     // --- Task 3: 处理 longagent 中途补充需求 ---
-    if (ui.longagentAborted && state.mode === "longagent" && !line.startsWith("/")) {
+    if (ui.longagentAborted && state.mode === "longagent" && !isCommandLikeInput(line)) {
       const originalPrompt = ui.lastLongAgentPrompt
       ui.longagentAborted = false
       ui.lastLongAgentPrompt = null
@@ -2299,7 +2309,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     let activeAgentContinuation = null
     let routeRequestedMode = state.mode
 
-    if (ui.paused && ui.agentContinuation && state.mode === "agent" && !line.startsWith("/")) {
+    if (ui.paused && ui.agentContinuation && state.mode === "agent" && !isCommandLikeInput(line)) {
       activeAgentContinuation = ui.agentContinuation
       submittedLine = buildAgentContinuationPrompt(activeAgentContinuation, line)
       ui.agentContinuation = null
@@ -2332,7 +2342,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
     // --- Task 1: 自动路由 ---
     let route = null
-    if (!line.startsWith("/")) {
+    if (!isCommandLikeInput(line)) {
       routeRequestedMode = state.mode
       route = routeMode(submittedLine, state.mode)
       const routeFeedback = buildRouteFeedback({
@@ -2381,19 +2391,19 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     }
 
     // 记录 longagent 原始 prompt（用于 Task 3 中途补充需求）
-    if (state.mode === "longagent" && !line.startsWith("/")) {
+    if (state.mode === "longagent" && !isCommandLikeInput(line)) {
       ui.lastLongAgentPrompt = submittedLine
       ui.longagentAborted = false
       ui.agentTransaction = null
       ui.agentAborted = false
-    } else if (state.mode === "agent" && !line.startsWith("/")) {
+    } else if (state.mode === "agent" && !isCommandLikeInput(line)) {
       ui.agentTransaction = summarizeAgentTransaction({
         prompt: ui.agentTransaction?.objective || line,
         route,
         previous: ui.agentTransaction
       })
       ui.agentAborted = false
-    } else if (!line.startsWith("/")) {
+    } else if (!isCommandLikeInput(line)) {
       ui.agentTransaction = null
       ui.agentAborted = false
     }
@@ -2506,7 +2516,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
   function handleUpDownSuggestions(keyName) {
     const suggestions = slashSuggestions(ui.input, slashRouterOptions(localCustomCommands))
-    if (suggestions.length > 0 && String(ui.input || "").startsWith("/")) {
+    if (suggestions.length > 0 && isCommandLikeInput(ui.input)) {
       if (keyName === "up") {
         ui.selectedSuggestion = Math.max(0, ui.selectedSuggestion - 1)
       } else {

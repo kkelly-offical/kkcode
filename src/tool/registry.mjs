@@ -1101,12 +1101,12 @@ function builtinTools(config) {
 
   const skillTool = {
     name: "skill",
-    description: "Invoke a registered skill by name. Skills are pre-built prompt templates or programmable modules that provide specialized capabilities. Use this when a task matches an available skill listed in the system prompt, or when the user mentions a slash command like '/commit'.",
+    description: "Invoke a registered skill by name. Skills are pre-built prompt templates or programmable modules that provide specialized capabilities. Use this when a task matches an available skill listed in the system prompt, or when the user mentions a skill command like '$commit'.",
     inputSchema: {
       type: "object",
       properties: {
         skill: schema("string", "skill name without '/' prefix (e.g. 'commit', 'init', 'frontend')"),
-        args: schema("string", "optional arguments to pass to the skill (e.g. 'vue' for /init vue)")
+        args: schema("string", "optional arguments to pass to the skill (e.g. 'vue' for $init vue)")
       },
       required: ["skill"]
     },

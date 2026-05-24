@@ -141,7 +141,7 @@ function formatSkillStatus(summary) {
     lines.push("  quickstart: kkcode skill init --project")
   }
   if (summary.total > 0) {
-    lines.push("  try: /code-review /test-plan")
+    lines.push("  try: $code-review $test-plan")
   }
   return lines
 }

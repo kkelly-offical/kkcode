@@ -1,6 +1,6 @@
 # kkcode
 
-[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=v0.2.3)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
+[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=v0.2.4-preview.1)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 [![GitHub Release](https://img.shields.io/github/v/release/kkelly-offical/kkcode)](https://github.com/kkelly-offical/kkcode/releases)
 ![Node](https://img.shields.io/badge/Node.js-%3E%3D22-green)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
@@ -311,6 +311,7 @@ For a deeper boundary matrix, see [CLI General Assistant Capability Matrix](docs
 - `/provider`, `/model` — provider/model switching
 - `/permission` — permission policy management
 - `/create-skill`, `/create-agent` — generate local extensions
+- `$<skill> [args]` — invoke a registered skill; `/` remains for built-in slash commands
 
 **Interrupt semantics / 中断语义**
 - `Esc` 可用于**中断当前 turn**、退出部分选择态或拒绝当前交互式请求，具体行为取决于当前上下文。
@@ -383,17 +384,19 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current stable / 当前稳定版本**: `v0.2.3`
+**Current preview / 当前预览版本**: `v0.2.4-preview.1`
 **Latest releases / 最新发布**: [GitHub Releases](https://github.com/kkelly-offical/kkcode/releases)  
 **Package / 包地址**: [npm](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 
 **English**
+- `0.2.4-preview.1` separates skills into the `$` namespace while keeping legacy `/skill` compatibility.
 - `0.2.3` is the stable assistant/subagent/context release: Assistant can explicitly delegate to one or many subagents, parallel lanes are observable, updater support is included, and context compaction keeps prior summaries plus recent evidence.
 - `0.2.3-preview.2` validated the context compaction path.
 - `0.2.3-preview.1` validated updater checks and the `kkcode update` command.
 - `0.2.1` rebuilt kkcode around Assistant as the default general-purpose lane, with dedicated Agent and LongAgent modes for coding work.
 
 **中文**
+- `0.2.4-preview.1` 将 Skill 分离到 `$` 命名空间，同时保留旧版 `/skill` 兼容。
 - `0.2.3` 是稳定版 Assistant / 子智能体 / 上下文版本：Assistant 可以显式委派一个或多个子智能体，并行 lane 可观察，包含更新器能力，上下文压缩会保留旧摘要和近期证据。
 - `0.2.3-preview.2` 验证了上下文压缩路径。
 - `0.2.3-preview.1` 验证了更新检查和 `kkcode update` 命令。

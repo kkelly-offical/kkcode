@@ -47,6 +47,7 @@ export function buildHelpText({ providers = [], userRootPath = "" } = {}) {
   lines.push("  Custom Extensions")
   lines.push(row("/commands", "list custom slash commands"))
   lines.push(row("/create-skill <desc>", "generate a new skill via AI"))
+  lines.push(row("$<skill> [args]", "invoke a registered skill"))
   lines.push(row("/create-agent <desc>", "generate a new sub-agent via AI"))
   lines.push(row("/reload", "reload commands, skills, agents"))
 

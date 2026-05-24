@@ -1,5 +1,5 @@
 export const name = "init"
-export const description = "Initialize a new project with framework scaffolding (usage: /init <framework>)"
+export const description = "Initialize a new project with framework scaffolding (usage: $init <framework>)"
 
 const GUIDES = {
   vue: `Initialize a Vue 3 project with Vite. Follow these steps exactly:
@@ -204,16 +204,16 @@ export async function run(ctx) {
   if (!arg) {
     return `Please specify a framework to initialize. Available options:
 
-${AVAILABLE.map(f => `- /init ${f}`).join("\n")}
+${AVAILABLE.map(f => `- $init ${f}`).join("\n")}
 
-Example: /init vue`
+Example: $init vue`
   }
 
   const guide = GUIDES[arg]
   if (!guide) {
     return `Unknown framework "${arg}". Available options: ${AVAILABLE.join(", ")}
 
-Example: /init vue`
+Example: $init vue`
   }
 
   return guide

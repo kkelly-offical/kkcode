@@ -61,9 +61,10 @@ export function resolveHistoryNavigation(history, historyIndex, keyName) {
 
 export function shouldApplySuggestionOnEnter(input, suggestions, selectedSuggestion) {
   if (!Array.isArray(suggestions) || suggestions.length === 0) return false
-  if (!String(input || "").startsWith("/")) return false
+  const value = String(input || "")
+  if (!value.startsWith("/") && !value.startsWith("$")) return false
 
-  const body = String(input || "").slice(1)
+  const body = value.slice(1)
   const firstSpace = body.indexOf(" ")
   if (firstSpace >= 0) return false
 

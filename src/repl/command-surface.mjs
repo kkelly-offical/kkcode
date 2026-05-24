@@ -11,7 +11,7 @@ export function renderInstalledCommandSurface({ customCommands = [], skills = []
   if (nonTemplateSkills.length) {
     lines.push("skills:")
     nonTemplateSkills.forEach((skill) =>
-      lines.push(`  /${skill.name} (${skill.type}${skill.scope ? ", " + skill.scope : ""})`)
+      lines.push(`  $${skill.name} (${skill.type}${skill.scope ? ", " + skill.scope : ""})`)
     )
   }
 

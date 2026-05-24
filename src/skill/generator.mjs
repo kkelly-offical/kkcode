@@ -6,7 +6,7 @@ import { userRootDir } from "../storage/paths.mjs"
 const SKILL_GEN_SYSTEM = `You are a skill generator for kkcode, a terminal AI coding agent.
 Your task is to generate a skill file based on the user's description.
 
-A skill is a reusable slash command. You can generate two types:
+A skill is a reusable $ command. You can generate two types:
 
 ## Type 1: Markdown Template (.md)
 Simple prompt templates with variable expansion.

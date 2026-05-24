@@ -172,7 +172,7 @@ export async function run(ctx) {
   } else if (framework) {
     parts.push(`Detected framework: ${framework}. Use its standard conventions and idioms.`)
   } else {
-    parts.push(`No framework detected in this project. If you need to create a frontend project, use /init <framework> first.`)
+    parts.push(`No framework detected in this project. If you need to create a frontend project, use $init <framework> first.`)
     parts.push("")
     parts.push("For a quick single-page app without a framework, consider using Vite:")
     parts.push("  npm create vite@latest . -- --template vanilla-ts")

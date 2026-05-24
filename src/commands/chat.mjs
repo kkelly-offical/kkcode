@@ -32,16 +32,31 @@ export function createChatCommand() {
       const ctx = await buildContext()
       printContextWarnings(ctx)
       PermissionEngine.setTrusted(ctx.trustState?.trusted !== false)
+      await SkillRegistry.initialize(ctx.configState.config, process.cwd())
       let prompt = promptParts.join(" ").trim()
-      if (prompt.startsWith("/")) {
-        const commands = await loadCustomCommands(process.cwd())
+      if (prompt.startsWith("$") || prompt.startsWith("/")) {
+        const sigil = prompt.startsWith("$") ? "$" : "/"
         const [name, ...argTokens] = prompt.slice(1).split(/\s+/)
-        const custom = commands.find((item) => item.name === name)
-        if (custom) {
-          const args = argTokens.join(" ").trim()
-          prompt = applyCommandTemplate(custom.template, args, {
-            path: process.cwd()
+        const args = argTokens.join(" ").trim()
+        const skill = SkillRegistry.get(name)
+        if (sigil === "$" || skill) {
+          if (!skill) throw new Error(`unknown skill: $${name}`)
+          const expanded = await SkillRegistry.execute(name, args, {
+            cwd: process.cwd(),
+            mode: options.mode || "assistant",
+            model: options.model || "",
+            provider: options.providerType || "",
+            config: ctx.configState.config
           })
+          prompt = typeof expanded === "object" && expanded?.contextFork ? expanded.prompt || "" : String(expanded || "")
+        } else {
+          const commands = await loadCustomCommands(process.cwd())
+          const custom = commands.find((item) => item.name === name)
+          if (custom) {
+            prompt = applyCommandTemplate(custom.template, args, {
+              path: process.cwd()
+            })
+          }
         }
       }
 
@@ -58,7 +73,6 @@ export function createChatCommand() {
         config: ctx.configState.config,
         cwd: process.cwd()
       })
-      await SkillRegistry.initialize(ctx.configState.config, process.cwd())
 
       await initHookBus()
       const chatParams = await HookBus.chatParams({
