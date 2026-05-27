@@ -1,4 +1,4 @@
-# kkcode 配置 — DeepSeek V3 / R1
+# kkcode 配置 — DeepSeek V4
 # 适用于使用 DeepSeek 官方 API 的用户
 # 获取 API Key: https://platform.deepseek.com/
 #
@@ -12,11 +12,14 @@ provider:
     type: openai-compatible
     base_url: https://api.deepseek.com
     api_key_env: DEEPSEEK_API_KEY
-    default_model: deepseek-chat
+    default_model: deepseek-v4-flash
     models:
-      # deepseek-chat — 通用对话模型（当前指向 V3.1-Terminus 非思考模式）
+      # V4 Flash — 默认通用模型，支持非思考 / 思考模式
+      - deepseek-v4-flash
+      # V4 Pro — 更强推理场景
+      - deepseek-v4-pro
+      # 兼容旧别名：官方计划于 2026-07-24 废弃
       - deepseek-chat
-      # deepseek-reasoner — 推理模型（当前指向 V3.1-Terminus 思考模式）
       - deepseek-reasoner
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000

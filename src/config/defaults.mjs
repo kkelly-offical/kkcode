@@ -6,8 +6,8 @@ export const DEFAULT_CONFIG = {
     openai: {
       base_url: "https://api.openai.com/v1",
       api_key_env: "OPENAI_API_KEY",
-      default_model: "gpt-5.3-codex",
-      models: ["gpt-5.3-codex", "gpt-5.2"],
+      default_model: "gpt-5.5",
+      models: ["gpt-5.5", "gpt-5.5-pro", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"],
       timeout_ms: 120000,
       stream_idle_timeout_ms: 120000,
       max_tokens: 32768,
@@ -20,8 +20,8 @@ export const DEFAULT_CONFIG = {
     anthropic: {
       base_url: "https://api.anthropic.com/v1",
       api_key_env: "ANTHROPIC_API_KEY",
-      default_model: "claude-opus-4-6",
-      models: ["claude-sonnet-4-5", "claude-sonnet-4-6", "claude-haiku-4-5-20251001", "claude-opus-4-6"],
+      default_model: "claude-sonnet-4-6",
+      models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
       timeout_ms: 120000,
       stream_idle_timeout_ms: 120000,
       max_tokens: 32768,

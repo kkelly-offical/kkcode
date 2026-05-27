@@ -1,0 +1,27 @@
+# kkcode 配置 — Google Gemini
+# 使用 Gemini OpenAI-compatible endpoint，适合希望复用 OpenAI 风格调用的用户。
+#
+# 环境变量:
+#   export GEMINI_API_KEY="your-gemini-key"
+
+provider:
+  default: gemini
+
+  gemini:
+    type: openai-compatible
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    api_key_env: GEMINI_API_KEY
+    default_model: gemini-3.5-flash
+    models:
+      # Stable frontier coding / agentic model
+      - gemini-3.5-flash
+      # Preview pro model for complex tasks
+      - gemini-3.1-pro
+      # Stable low-cost model
+      - gemini-3.1-flash-lite
+    timeout_ms: 120000
+    stream_idle_timeout_ms: 120000
+    max_tokens: 32768
+    retry_attempts: 3
+    retry_base_delay_ms: 800
+    stream: true

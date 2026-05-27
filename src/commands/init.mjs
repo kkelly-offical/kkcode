@@ -29,8 +29,8 @@ async function askChoice(rl, question, choices, defaultValue) {
 }
 
 const PROVIDER_DEFAULTS = {
-  openai: { api_key_env: "OPENAI_API_KEY", default_model: "gpt-5.3-codex" },
-  anthropic: { api_key_env: "ANTHROPIC_API_KEY", default_model: "claude-opus-4-6" },
+  openai: { api_key_env: "OPENAI_API_KEY", default_model: "gpt-5.5" },
+  anthropic: { api_key_env: "ANTHROPIC_API_KEY", default_model: "claude-sonnet-4-6" },
   ollama: { base_url: "http://localhost:11434", api_key_env: "", default_model: "llama3.1" },
   "openai-compatible": { base_url: "", api_key_env: "", default_model: "" }
 }

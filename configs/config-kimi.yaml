@@ -1,0 +1,26 @@
+# kkcode 配置 — Moonshot Kimi
+# 适用于使用 Moonshot / Kimi 官方 API 的用户。
+#
+# 环境变量:
+#   export MOONSHOT_API_KEY="your-kimi-key"
+
+provider:
+  default: kimi
+
+  kimi:
+    type: openai-compatible
+    base_url: https://api.moonshot.ai/v1
+    api_key_env: MOONSHOT_API_KEY
+    default_model: kimi-k2.6
+    models:
+      # Kimi K2.6 is the current recommended model for new Agent/coding work.
+      - kimi-k2.6
+      - kimi-k2.5
+      - moonshot-v1-128k
+      - moonshot-v1-32k
+    timeout_ms: 120000
+    stream_idle_timeout_ms: 120000
+    max_tokens: 32768
+    retry_attempts: 3
+    retry_base_delay_ms: 800
+    stream: true

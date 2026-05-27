@@ -1,6 +1,6 @@
 # kkcode
 
-[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=v0.2.5)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
+[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=v0.2.6)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 [![GitHub Release](https://img.shields.io/github/v/release/kkelly-offical/kkcode)](https://github.com/kkelly-offical/kkcode/releases)
 ![Node](https://img.shields.io/badge/Node.js-%3E%3D22-green)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
@@ -10,6 +10,10 @@
 
 **终端优先、可治理、可扩展的个人助手，内置专门 Coding Agent 与 LongAgent 模式。**
 kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同一个 CLI 工作台里，并且把权限、预算、审计、后台任务、MCP、技能与插件一起纳入统一执行面。
+
+**日本語**: ターミナル中心の個人アシスタント。安全な権限管理、Coding Agent、LongAgent、ローカル拡張を同じ CLI にまとめます。  
+**한국어**: 터미널 우선 개인 비서로, 권한 관리와 Coding Agent, LongAgent, 로컬 확장을 하나의 CLI에서 다룹니다。  
+**Español**: asistente personal centrado en terminal para ejecución gobernada, agentes de código, LongAgent y extensiones locales.
 
 ---
 
@@ -28,6 +32,7 @@ kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同�
 - [Extensions / 扩展机制](#extensions)
 - [TUI & CLI Reference / TUI 与命令参考](#tui-and-cli-reference)
 - [Configuration & Project Layout / 配置与项目结构](#configuration-and-project-layout)
+- [Model Templates / 模型模板](#model-templates)
 - [Release Status / 发布状态](#release-status)
 - [Compatibility, Limits & Roadmap / 兼容性、边界与路线图](#compatibility-limits-and-roadmap)
 - [FAQ / 常见问题](#faq)
@@ -355,7 +360,37 @@ Run `kkcode --help` or `kkcode <command> --help` for the full surface.
 
 **Useful docs / 推荐文档**
 - [Example config](docs/config.example.yaml)
+- [Multi-provider template](configs/config-multi-provider.yaml)
+- [Gemini template](configs/config-gemini.yaml)
+- [Kimi template](configs/config-kimi.yaml)
+- [xAI template](configs/config-xai.yaml)
 - [REPL roadmap](docs/repl-roadmap-0.1.27-0.1.36.md)
+
+---
+
+<a id="model-templates"></a>
+## Model Templates / 模型模板
+
+The `configs/` directory contains provider-ready templates for current OpenAI-compatible, Anthropic, DashScope, DeepSeek, GLM, Gemini, Kimi, xAI, and Ollama setups. The default examples prefer stable aliases where vendors publish them, and keep deprecated aliases only when they are still useful for migration.
+
+`configs/` 目录包含 OpenAI-compatible、Anthropic、DashScope、DeepSeek、GLM、Gemini、Kimi、xAI 和 Ollama 的可用模板。默认示例优先使用厂商稳定别名；即将废弃的旧别名只保留为迁移兼容项。
+
+| Provider | Default template model | Notes |
+| --- | --- | --- |
+| OpenAI | `gpt-5.5` | Latest high-capability API default, with `gpt-5.4` and `gpt-5.3-codex` listed for cost/coding lanes |
+| Anthropic | `claude-sonnet-4-6` | Balanced default; `claude-opus-4-7` is listed for highest-complexity work |
+| DashScope / Qwen | `qwen3.5-plus` | Balanced long-context default; `qwen3.5-flash` is listed for faster lower-cost work |
+| DeepSeek | `deepseek-v4-flash` | Replaces old `deepseek-chat` / `deepseek-reasoner` aliases before their 2026-07-24 deprecation |
+| Zhipu GLM | `glm-5.1` | New GLM default with `glm-5` and `glm-4.5` kept as fallback choices |
+| Google Gemini | `gemini-3.5-flash` | Uses Gemini's OpenAI-compatible endpoint |
+| Moonshot Kimi | `kimi-k2.6` | Current Kimi model for coding/agent work; old K2 aliases are avoided |
+| xAI Grok | `grok-4.3` | xAI's current general chat default |
+
+**日本語**: 最新テンプレートは安定版エイリアスを優先し、移行中の旧モデル名は互換用途としてのみ残しています。  
+**한국어**: 최신 템플릿은 안정 별칭을 우선 사용하고, 이전 모델명은 마이그레이션 호환용으로만 유지합니다.  
+**Español**: las plantillas priorizan alias estables y conservan nombres antiguos solo para migración.
+
+Reviewed source pages on 2026-05-27: [OpenAI models](https://developers.openai.com/api/docs/models/all), [Claude models](https://platform.claude.com/docs/en/about-claude/models/overview), [Alibaba Cloud Model Studio models](https://www.alibabacloud.com/help/en/model-studio/models), [DeepSeek API](https://api-docs.deepseek.com/), [Gemini OpenAI compatibility](https://ai.google.dev/gemini-api/docs/openai), [Kimi model list](https://platform.kimi.ai/docs/models), and [xAI models](https://docs.x.ai/developers/models).
 
 ---
 
@@ -384,11 +419,12 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current release / 当前版本**: `v0.2.5`
+**Current release / 当前版本**: `v0.2.6`
 **Latest releases / 最新发布**: [GitHub Releases](https://github.com/kkelly-offical/kkcode/releases)  
 **Package / 包地址**: [npm](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 
 **English**
+- `0.2.6` fixes a HIGH command-injection bug in the post-edit formatter, adds a regression test, refreshes provider templates for current model families, and expands README language coverage.
 - `0.2.5` updates the YAML parser dependency to the latest stable release and clears the Dependabot advisory for deeply nested YAML collections.
 - `0.2.4` separates skills into the `$` namespace while keeping legacy `/skill` compatibility, and establishes a production local compatibility baseline for kkcode, Claude Code, Codex, and OpenCode `SKILL.md` / plugin layouts.
 - `0.2.3` is the stable assistant/subagent/context release: Assistant can explicitly delegate to one or many subagents, parallel lanes are observable, updater support is included, and context compaction keeps prior summaries plus recent evidence.
@@ -397,6 +433,7 @@ update:
 - `0.2.1` rebuilt kkcode around Assistant as the default general-purpose lane, with dedicated Agent and LongAgent modes for coding work.
 
 **中文**
+- `0.2.6` 修复 post-edit formatter 的 HIGH 命令注入漏洞，补充回归测试，按当前模型家族刷新 provider 模板，并扩展 README 多语言说明。
 - `0.2.5` 将 YAML 解析器依赖更新到最新稳定版本，并清除深层嵌套 YAML collection 相关的 Dependabot 告警。
 - `0.2.4` 将 Skill 分离到 `$` 命名空间，同时保留旧版 `/skill` 兼容，并建立 kkcode / Claude Code / Codex / OpenCode 的本地 `SKILL.md` 与插件布局生产兼容基线。
 - `0.2.3` 是稳定版 Assistant / 子智能体 / 上下文版本：Assistant 可以显式委派一个或多个子智能体，并行 lane 可观察，包含更新器能力，上下文压缩会保留旧摘要和近期证据。

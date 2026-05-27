@@ -59,5 +59,5 @@ test("init --yes generated config has correct provider defaults", async () => {
   const openaiBlock = config.provider.openai
   assert.ok(openaiBlock)
   assert.equal(openaiBlock.api_key_env, "OPENAI_API_KEY")
-  assert.equal(openaiBlock.default_model, "gpt-5.3-codex")
+  assert.equal(openaiBlock.default_model, "gpt-5.5")
 })
