@@ -19,6 +19,7 @@ import { createBackgroundCommand } from "./commands/background.mjs"
 import { createInitCommand } from "./commands/init.mjs"
 import { createAuditCommand } from "./commands/audit.mjs"
 import { createSkillCommand } from "./commands/skill.mjs"
+import { createPluginCommand } from "./commands/plugin.mjs"
 import { startRepl } from "./repl.mjs"
 import { PACKAGE_VERSION } from "./version.mjs"
 import { createUpdateCommand } from "./commands/update.mjs"
@@ -77,6 +78,7 @@ async function main() {
   program.addCommand(createAuditCommand())
   program.addCommand(createInitCommand())
   program.addCommand(createSkillCommand())
+  program.addCommand(createPluginCommand())
   program.addCommand(createUpdateCommand())
   await program.parseAsync(process.argv)
 }

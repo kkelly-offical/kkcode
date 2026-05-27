@@ -10,6 +10,7 @@ import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { discoverLocalPluginManifests, pluginComponentDirs } from "../plugin/manifest-loader.mjs"
 import { userRootDir } from "../storage/paths.mjs"
+import { discoverCompatSkillRoots } from "../compat/ecosystem-discovery.mjs"
 
 const execFileAsync = promisify(execFile)
 
@@ -170,6 +171,10 @@ function normalizeSkillMeta(meta = {}, defaults = {}) {
     shell: meta.shell || null,
     hooks: meta.hooks || null,
     paths: toStringArray(meta.paths),
+    license: typeof meta.license === "string" ? meta.license : null,
+    compatibility: meta.compatibility || null,
+    metadata: meta.metadata && typeof meta.metadata === "object" && !Array.isArray(meta.metadata) ? meta.metadata : null,
+    sourceEcosystem: defaults.ecosystem || defaults.plugin?.sourceEcosystem || defaults.plugin?.ecosystem || "kkcode",
     skillRoot: defaults.skillDir || path.dirname(defaults.source || process.cwd()),
     plugin: defaults.plugin || null
   }
@@ -179,7 +184,7 @@ function normalizeSkillMeta(meta = {}, defaults = {}) {
  * Load plain .md skills from skill directories.
  * Supports optional YAML frontmatter.
  */
-async function loadMarkdownSkills(dir, scope, plugin = null) {
+async function loadMarkdownSkills(dir, scope, plugin = null, ecosystem = "kkcode") {
   if (!(await exists(dir))) return []
   const entries = await readdir(dir, { withFileTypes: true })
   const mdFiles = entries
@@ -200,7 +205,8 @@ async function loadMarkdownSkills(dir, scope, plugin = null) {
       const normalized = normalizeSkillMeta(meta, {
         skillDir: path.dirname(filePath),
         source: filePath,
-        plugin
+        plugin,
+        ecosystem
       })
       skills.push({
         name: meta.name || path.basename(name, ".md"),
@@ -211,6 +217,8 @@ async function loadMarkdownSkills(dir, scope, plugin = null) {
         skillDir: path.dirname(filePath),
         template: body,
         auxFiles: {},
+        canonicalName: meta.name || path.basename(name, ".md"),
+        aliases: [],
         ...normalized
       })
     } catch {
@@ -225,7 +233,7 @@ async function loadMarkdownSkills(dir, scope, plugin = null) {
  * Each .mjs file should export: { name, description, run(ctx) }
  * run() returns a string prompt to send to the model.
  */
-async function loadMjsSkills(dir, scope, plugin = null) {
+async function loadMjsSkills(dir, scope, plugin = null, ecosystem = "kkcode") {
   if (!(await exists(dir))) return []
   const resolvedDir = path.resolve(dir)
   const entries = await readdir(dir, { withFileTypes: true })
@@ -250,6 +258,9 @@ async function loadMjsSkills(dir, scope, plugin = null) {
         source: full,
         run: typeof mod.run === "function" ? mod.run : null,
         skillRoot: path.dirname(full),
+        sourceEcosystem: ecosystem,
+        canonicalName: plugin ? `${plugin.name}:${name}` : name,
+        aliases: [],
         plugin
       })
     } catch {
@@ -336,11 +347,40 @@ async function loadAuxFiles(skillDir) {
   return aux
 }
 
-async function loadSkillDirs(dir, scope, plugin = null) {
+async function loadSkillDirs(dir, scope, plugin = null, ecosystem = "kkcode") {
   if (!(await exists(dir))) return []
+  const skills = []
+  const rootSkillPath = path.join(dir, "SKILL.md")
+  if (await exists(rootSkillPath)) {
+    try {
+      const raw = await readFile(rootSkillPath, "utf8")
+      const { meta, body } = parseFrontmatter(raw)
+      const auxFiles = await loadAuxFiles(dir)
+      const normalized = normalizeSkillMeta(meta, {
+        skillDir: dir,
+        source: rootSkillPath,
+        plugin,
+        ecosystem
+      })
+      const skillName = meta.name || path.basename(dir)
+      skills.push({
+        name: skillName,
+        description: meta.description || skillName,
+        type: "skill_md",
+        scope,
+        source: rootSkillPath,
+        skillDir: dir,
+        template: body,
+        auxFiles,
+        canonicalName: plugin ? `${plugin.name}:${skillName}` : skillName,
+        aliases: [],
+        ...normalized
+      })
+    } catch { /* skip broken root skill */ }
+  }
+
   const entries = await readdir(dir, { withFileTypes: true })
   const dirs = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort()
-  const skills = []
   for (const name of dirs) {
     const skillDir = path.join(dir, name)
     const mdPath = path.join(skillDir, "SKILL.md")
@@ -352,10 +392,12 @@ async function loadSkillDirs(dir, scope, plugin = null) {
       const normalized = normalizeSkillMeta(meta, {
         skillDir,
         source: mdPath,
-        plugin
+        plugin,
+        ecosystem
       })
+      const skillName = meta.name || name
       skills.push({
-        name: meta.name || name,
+        name: skillName,
         description: meta.description || name,
         type: "skill_md",
         scope,
@@ -363,6 +405,8 @@ async function loadSkillDirs(dir, scope, plugin = null) {
         skillDir,
         template: body,
         auxFiles,
+        canonicalName: plugin ? `${plugin.name}:${skillName}` : skillName,
+        aliases: [],
         ...normalized
       })
     } catch { /* skip broken */ }
@@ -380,7 +424,10 @@ function customCommandsToSkills(commands) {
     type: "template",
     scope: cmd.scope,
     source: cmd.source,
-    template: cmd.template
+    template: cmd.template,
+    sourceEcosystem: "kkcode",
+    canonicalName: cmd.name,
+    aliases: []
   }))
 }
 
@@ -403,7 +450,36 @@ const state = {
   skills: new Map(),
   loaded: false,
   plugins: [],
-  pluginErrors: []
+  pluginErrors: [],
+  diagnostics: []
+}
+
+function addSkill(skill) {
+  const canonicalName = skill.plugin ? `${skill.plugin.name}:${skill.name}` : (skill.canonicalName || skill.name)
+  const withNames = { ...skill, canonicalName, aliases: [...(skill.aliases || [])] }
+  if (state.skills.has(canonicalName)) {
+    state.diagnostics.push({
+      kind: "skill_name_collision",
+      name: canonicalName,
+      kept: withNames.source,
+      replaced: state.skills.get(canonicalName)?.source || null
+    })
+  }
+  state.skills.set(canonicalName, withNames)
+
+  if (!skill.plugin && canonicalName !== skill.name) return
+  if (skill.plugin) {
+    if (!state.skills.has(skill.name)) {
+      state.skills.set(skill.name, { ...withNames, aliases: [...withNames.aliases, skill.name] })
+    } else {
+      state.diagnostics.push({
+        kind: "skill_alias_collision",
+        name: skill.name,
+        canonicalName,
+        source: withNames.source
+      })
+    }
+  }
 }
 
 export const SkillRegistry = {
@@ -414,6 +490,7 @@ export const SkillRegistry = {
     state.skills.clear()
     state.plugins = []
     state.pluginErrors = []
+    state.diagnostics = []
     const autoSeed = config?.skills?.auto_seed !== false
     if (autoSeed) {
       try {
@@ -433,26 +510,21 @@ export const SkillRegistry = {
     const builtinDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "builtin")
     const builtinSkills = await loadMjsSkills(builtinDir, "builtin")
     for (const skill of builtinSkills) {
-      state.skills.set(skill.name, skill)
+      addSkill(skill)
     }
 
     // Source 1: Custom commands (.md templates)
     const customCommands = await loadCustomCommands(cwd)
     for (const skill of customCommandsToSkills(customCommands)) {
-      state.skills.set(skill.name, skill)
+      addSkill(skill)
     }
 
     // Source 2: Programmable skills (.mjs) + SKILL.md directories
-    const userRoot = userRootDir()
-    const pluginManifestState = await discoverLocalPluginManifests(cwd)
+    const pluginManifestState = await discoverLocalPluginManifests(cwd, config)
     state.plugins = pluginManifestState.plugins
     state.pluginErrors = pluginManifestState.errors
     const rawCustomDirs = Array.isArray(config?.skills?.dirs) ? config.skills.dirs : []
-    // Default directories: global (~/.kkcode/skills) + project (.kkcode/skills)
-    const defaultDirs = [
-      { dir: path.join(userRoot, "skills"), scope: "global" },
-      { dir: path.join(cwd, ".kkcode", "skills"), scope: "project" }
-    ]
+    const defaultDirs = await discoverCompatSkillRoots(cwd, config)
     const pluginDirs = pluginComponentDirs(state.plugins, "skills")
     // Custom dirs from config (resolve relative to cwd)
     const extraDirs = rawCustomDirs
@@ -461,7 +533,8 @@ export const SkillRegistry = {
         const trimmed = d.trim()
         return {
           dir: path.isAbsolute(trimmed) ? trimmed : path.resolve(cwd, trimmed),
-          scope: "custom"
+          scope: "custom",
+          ecosystem: "custom"
         }
       })
     const seenDirSet = new Set()
@@ -472,15 +545,15 @@ export const SkillRegistry = {
       return true
     })
 
-    const loadPromises = allSkillDirs.flatMap(({ dir, scope, plugin = null }) => [
-      loadMarkdownSkills(dir, scope, plugin),
-      loadMjsSkills(dir, scope, plugin),
-      loadSkillDirs(dir, scope, plugin)
+    const loadPromises = allSkillDirs.flatMap(({ dir, scope, plugin = null, ecosystem = plugin?.sourceEcosystem || "kkcode" }) => [
+      loadMarkdownSkills(dir, scope, plugin, ecosystem),
+      loadMjsSkills(dir, scope, plugin, ecosystem),
+      loadSkillDirs(dir, scope, plugin, ecosystem)
     ])
     const results = await Promise.all(loadPromises)
     for (const skills of results) {
       for (const skill of skills) {
-        state.skills.set(skill.name, skill)
+        addSkill(skill)
       }
     }
 
@@ -490,7 +563,7 @@ export const SkillRegistry = {
       for (const skill of mcpPromptsToSkills(prompts)) {
         // Include server name to avoid cross-server name collisions
         const key = `mcp:${skill.server}:${skill.name}`
-        state.skills.set(key, { ...skill, name: key })
+        state.skills.set(key, { ...skill, name: key, canonicalName: key, aliases: [], sourceEcosystem: "mcp" })
       }
     }
 
@@ -502,11 +575,23 @@ export const SkillRegistry = {
   },
 
   list() {
-    return [...state.skills.values()]
+    const seen = new Set()
+    const out = []
+    for (const skill of state.skills.values()) {
+      const key = skill.canonicalName || skill.name
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(skill)
+    }
+    return out
   },
 
   get(name) {
     return state.skills.get(name) || null
+  },
+
+  diagnostics() {
+    return [...state.diagnostics]
   },
 
   /**
@@ -551,6 +636,8 @@ export const SkillRegistry = {
         provider: context.provider || "", cwd, project: path.basename(cwd),
         SKILL_ROOT: skill.skillRoot || skill.skillDir || path.dirname(skill.source),
         SKILL_DIR: skill.skillRoot || skill.skillDir || path.dirname(skill.source),
+        CLAUDE_SKILL_DIR: skill.skillRoot || skill.skillDir || path.dirname(skill.source),
+        CLAUDE_EFFORT: skill.effort || context.effort || "",
         SKILL_NAME: skill.name,
         ARGUMENT_HINT: skill.argumentHint || "",
         WHEN_TO_USE: skill.whenToUse || ""
@@ -627,9 +714,9 @@ export const SkillRegistry = {
    * Return skill metadata for system prompt inclusion.
    */
   listForSystemPrompt() {
-    return [...state.skills.entries()]
-      .filter(([key, s]) => !s.disableModelInvocation && !key.startsWith("mcp:"))
-      .map(([, s]) => ({ name: s.name, description: s.description }))
+    return this.list()
+      .filter((s) => !s.disableModelInvocation && !String(s.canonicalName || s.name).startsWith("mcp:"))
+      .map((s) => ({ name: s.canonicalName || s.name, description: s.description }))
   },
 
   listPluginManifests() {
@@ -638,5 +725,9 @@ export const SkillRegistry = {
 
   pluginErrors() {
     return [...state.pluginErrors]
+  },
+
+  compatDiagnostics() {
+    return [...state.pluginErrors, ...state.diagnostics.map((item) => JSON.stringify(item))]
   }
 }

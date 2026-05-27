@@ -319,6 +319,38 @@ export function validateConfig(config) {
     }
   }
 
+  if (config.compat !== undefined) {
+    if (!isObj(config.compat)) err(errors, "compat", "must be object")
+    else {
+      if (config.compat.skills !== undefined) {
+        if (!isObj(config.compat.skills)) err(errors, "compat.skills", "must be object")
+        else if (config.compat.skills.paths !== undefined) {
+          if (!Array.isArray(config.compat.skills.paths)) err(errors, "compat.skills.paths", "must be array")
+          else if (config.compat.skills.paths.some(p => typeof p !== "string")) err(errors, "compat.skills.paths", "all values must be string")
+        }
+      }
+      if (config.compat.plugins !== undefined) {
+        if (!isObj(config.compat.plugins)) err(errors, "compat.plugins", "must be object")
+        else {
+          if (config.compat.plugins.enabled !== undefined && typeof config.compat.plugins.enabled !== "boolean") err(errors, "compat.plugins.enabled", "must be boolean")
+          if (config.compat.plugins.execute_external_hooks !== undefined && typeof config.compat.plugins.execute_external_hooks !== "boolean") err(errors, "compat.plugins.execute_external_hooks", "must be boolean")
+          if (config.compat.plugins.ecosystems !== undefined) {
+            if (!Array.isArray(config.compat.plugins.ecosystems)) err(errors, "compat.plugins.ecosystems", "must be array")
+            else if (config.compat.plugins.ecosystems.some(v => typeof v !== "string")) err(errors, "compat.plugins.ecosystems", "all values must be string")
+          }
+        }
+      }
+      if (config.compat.opencode_plugins !== undefined) {
+        if (!isObj(config.compat.opencode_plugins)) err(errors, "compat.opencode_plugins", "must be object")
+        else if (config.compat.opencode_plugins.enabled !== undefined && typeof config.compat.opencode_plugins.enabled !== "boolean") err(errors, "compat.opencode_plugins.enabled", "must be boolean")
+      }
+      if (config.compat.diagnostics !== undefined) {
+        if (!isObj(config.compat.diagnostics)) err(errors, "compat.diagnostics", "must be object")
+        else if (config.compat.diagnostics.strict !== undefined && typeof config.compat.diagnostics.strict !== "boolean") err(errors, "compat.diagnostics.strict", "must be boolean")
+      }
+    }
+  }
+
   if (config.permission !== undefined) {
     if (!isObj(config.permission)) err(errors, "permission", "must be object")
     else {

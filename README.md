@@ -1,6 +1,6 @@
 # kkcode
 
-[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=v0.2.4-preview.1)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
+[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=v0.2.4)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 [![GitHub Release](https://img.shields.io/github/v/release/kkelly-offical/kkcode)](https://github.com/kkelly-offical/kkcode/releases)
 ![Node](https://img.shields.io/badge/Node.js-%3E%3D22-green)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
@@ -141,7 +141,7 @@ kkcode doctor
 | Background tasks / 后台任务 | Supported | Launch, inspect, wait, retry, cancel |
 | MCP / 模型上下文协议 | Supported | Local MCP discovery and registry |
 | Skills / Commands / Hooks | Supported | Local-first extensibility surface |
-| Plugins / 插件包 | MVP | Local plugin manifests and component toggles |
+| Plugins / 插件包 | Preview | Local kkcode / Claude Code / Codex / OpenCode compatibility baseline |
 | GUI / IDE / desktop automation | Not promised | README does not claim GUI-first product support |
 
 For a deeper boundary matrix, see [CLI General Assistant Capability Matrix](docs/cli-general-assistant-capability-matrix.md).
@@ -384,19 +384,19 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current preview / 当前预览版本**: `v0.2.4-preview.1`
+**Current release / 当前版本**: `v0.2.4`
 **Latest releases / 最新发布**: [GitHub Releases](https://github.com/kkelly-offical/kkcode/releases)  
 **Package / 包地址**: [npm](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 
 **English**
-- `0.2.4-preview.1` separates skills into the `$` namespace while keeping legacy `/skill` compatibility.
+- `0.2.4` separates skills into the `$` namespace while keeping legacy `/skill` compatibility, and establishes a production local compatibility baseline for kkcode, Claude Code, Codex, and OpenCode `SKILL.md` / plugin layouts.
 - `0.2.3` is the stable assistant/subagent/context release: Assistant can explicitly delegate to one or many subagents, parallel lanes are observable, updater support is included, and context compaction keeps prior summaries plus recent evidence.
 - `0.2.3-preview.2` validated the context compaction path.
 - `0.2.3-preview.1` validated updater checks and the `kkcode update` command.
 - `0.2.1` rebuilt kkcode around Assistant as the default general-purpose lane, with dedicated Agent and LongAgent modes for coding work.
 
 **中文**
-- `0.2.4-preview.1` 将 Skill 分离到 `$` 命名空间，同时保留旧版 `/skill` 兼容。
+- `0.2.4` 将 Skill 分离到 `$` 命名空间，同时保留旧版 `/skill` 兼容，并建立 kkcode / Claude Code / Codex / OpenCode 的本地 `SKILL.md` 与插件布局生产兼容基线。
 - `0.2.3` 是稳定版 Assistant / 子智能体 / 上下文版本：Assistant 可以显式委派一个或多个子智能体，并行 lane 可观察，包含更新器能力，上下文压缩会保留旧摘要和近期证据。
 - `0.2.3-preview.2` 验证了上下文压缩路径。
 - `0.2.3-preview.1` 验证了更新检查和 `kkcode update` 命令。
@@ -412,6 +412,7 @@ update:
 - governed execution and permissions
 - staged LongAgent orchestration
 - MCP and local extension surfaces
+- local plugin and `SKILL.md` compatibility for kkcode, Claude Code, Codex, and OpenCode layouts
 - session/background/task visibility
 
 **What this README does not promise / 本 README 不承诺的能力**
@@ -419,9 +420,11 @@ update:
 - IDE-native UX parity
 - desktop automation platform behavior
 - marketplace-style plugin ecosystem
+- remote plugin marketplace install/update flows
 
 **Roadmap references / 路线图参考**
 - [REPL roadmap 0.1.27 → 0.1.36](docs/repl-roadmap-0.1.27-0.1.36.md)
+- [Plugin and Skill Compatibility 0.2.4](docs/plugin-skill-compat-0.2.4.md)
 - [kkcode vs claudenext compatibility notes](docs/kkcode-vs-claudenext-private-agent-longagent-compat.md)
 - [kkcode vs claudenext report](docs/kkcode-vs-claudenext-private-agent-longagent-report.md)
 
@@ -482,6 +485,7 @@ See [LICENSE](LICENSE) for the full text.
 - [0.1.13 Mode Lane Contract](docs/kkcode-0.1.13-mode-lane-contract.md)
 - [Task Delegation Contract Matrix](docs/task-delegation-contract-matrix.md)
 - [Agent / LongAgent Extension Guide](docs/agent-longagent-compat-extension-guide.md)
+- [Plugin and Skill Compatibility 0.2.4](docs/plugin-skill-compat-0.2.4.md)
 - [ClaudeNext Agent / LongAgent Skills Compatibility](docs/claudenext-agent-longagent-skills-compat.md)
 - [REPL roadmap 0.1.27 → 0.1.36](docs/repl-roadmap-0.1.27-0.1.36.md)
 - [Git automation usage](docs/GIT_AUTO_USAGE.md)

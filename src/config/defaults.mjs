@@ -167,6 +167,22 @@ export const DEFAULT_CONFIG = {
     dirs: [".kkcode/skills"],
     allowed_commands: []
   },
+  compat: {
+    skills: {
+      paths: []
+    },
+    plugins: {
+      enabled: true,
+      ecosystems: ["kkcode", "claude", "codex", "opencode"],
+      execute_external_hooks: false
+    },
+    opencode_plugins: {
+      enabled: false
+    },
+    diagnostics: {
+      strict: false
+    }
+  },
   permission: {
     mode: "auto",
     default_policy: "ask",

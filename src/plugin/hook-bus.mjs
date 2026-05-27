@@ -2,6 +2,7 @@ import path from "node:path"
 import { access, readdir } from "node:fs/promises"
 import { pathToFileURL, fileURLToPath } from "node:url"
 import { userRootDir } from "../storage/paths.mjs"
+import { discoverLocalPluginManifests } from "./manifest-loader.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -61,7 +62,7 @@ async function loadModule(file) {
   }
 }
 
-export async function initHookBus(cwd = process.cwd()) {
+export async function initHookBus(cwd = process.cwd(), config = {}) {
   if (state.loaded) return state
   // Built-in hooks ship with kkcode (lowest priority — user hooks can override)
   const builtinHooks = path.join(__dirname, "builtin-hooks")
@@ -72,6 +73,14 @@ export async function initHookBus(cwd = process.cwd()) {
   // `.kkcode/plugins` remains a compatibility alias for hook scripts while
   // `.kkcode/hooks` is the explicit project hook path.
   const pluginAliasFiles = await discover(projectPluginHooks)
+  const manifestState = await discoverLocalPluginManifests(cwd, config)
+  state.errors.push(...manifestState.errors)
+  const manifestHookDirs = manifestState.plugins
+    .filter((plugin) => plugin.enabled !== false && plugin.hooksEnabled !== false)
+    .filter((plugin) => (plugin.sourceEcosystem || plugin.ecosystem || "kkcode") === "kkcode" || config?.compat?.plugins?.execute_external_hooks === true)
+    .flatMap((plugin) => plugin.hooks || [])
+  const manifestHookFiles = []
+  for (const dir of manifestHookDirs) manifestHookFiles.push(...await discover(dir))
   if (pluginAliasFiles.length && !state.warnedPluginAlias) {
     state.errors.push("deprecated hook path: .kkcode/plugins is a compatibility alias for loose hook scripts; prefer .kkcode/hooks or a plugin.json package boundary")
     state.warnedPluginAlias = true
@@ -80,6 +89,7 @@ export async function initHookBus(cwd = process.cwd()) {
     ...(await discover(builtinHooks)),
     ...(await discover(userHooks)),
     ...pluginAliasFiles,
+    ...manifestHookFiles,
     ...(await discover(projectHooks))
   ]
   for (const file of files) {

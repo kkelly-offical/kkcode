@@ -7,6 +7,7 @@ import { EVENT_TYPES } from "../core/constants.mjs"
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { userRootDir } from "../storage/paths.mjs"
+import { discoverLocalPluginManifests, pluginMcpServers } from "../plugin/manifest-loader.mjs"
 
 const state = {
   loaded: false,
@@ -227,7 +228,14 @@ async function reinitialize(config, { force = false, cwd = null } = {}) {
   const discoveredServers = config?.mcp?.auto_discover !== false
     ? await discoverProjectServers(effectiveCwd)
     : {}
-  const allServers = { ...builtinServers, ...discoveredServers, ...configServers }
+  const pluginState = await discoverLocalPluginManifests(effectiveCwd, config)
+  const rawPluginServers = pluginMcpServers(pluginState.plugins)
+  const pluginServers = {}
+  for (const [name, server] of Object.entries(rawPluginServers)) {
+    const key = String(name).startsWith("plugin/") ? name : `plugin/${name}`
+    pluginServers[key] = server
+  }
+  const allServers = { ...builtinServers, ...discoveredServers, ...pluginServers, ...configServers }
 
   // Merge global mcp.* defaults into each server config (server-level overrides global)
   const mcpGlobalDefaults = {}

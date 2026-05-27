@@ -83,9 +83,23 @@ async function buildDoctorReport() {
     mcpPrompt: skillList.filter((s) => s.type === "mcp_prompt").length,
     programmable: skillList.filter((s) => s.type === "mjs").length
   }
+  const pluginManifests = SkillRegistry.listPluginManifests()
+  const compatDiagnostics = SkillRegistry.compatDiagnostics()
+  const strictCompatFailed = config.compat?.diagnostics?.strict === true && compatDiagnostics.length > 0
+  const compatSummary = {
+    ecosystems: [...new Set([
+      ...skillList.map((s) => s.sourceEcosystem || "kkcode"),
+      ...pluginManifests.map((p) => p.sourceEcosystem || p.ecosystem || "kkcode")
+    ])].sort(),
+    plugins: pluginManifests.length,
+    skills: skillList.length,
+    unsupported: compatDiagnostics.filter((item) => String(item).includes("unsupported_component")).length,
+    diagnostics: compatDiagnostics,
+    strictFailed: strictCompatFailed
+  }
 
   return {
-    ok: storage.ok,
+    ok: storage.ok && !strictCompatFailed,
     timestamp: new Date().toISOString(),
     cwd: process.cwd(),
     themeWarnings: ctx.themeState.errors,
@@ -107,6 +121,7 @@ async function buildDoctorReport() {
       servers: mcpSnapshot
     },
     skills: skillSummary,
+    compat: compatSummary,
     storage: {
       sessions: storage,
       eventLog: events,
@@ -139,6 +154,10 @@ function printTextReport(report, themeWarnings = []) {
   console.log(`check node=${report.checks.node ? "ok" : "missing"} rg=${report.checks.rg ? "ok" : "missing"} git=${report.checks.git ? "ok" : "missing"}`)
   console.log(`mcp: configured=${report.mcp.configured} healthy=${report.mcp.healthy} unhealthy=${report.mcp.unhealthy}`)
   console.log(`skills: total=${report.skills.total} template=${report.skills.template + report.skills.skillMd} mcp=${report.skills.mcpPrompt} programmable=${report.skills.programmable}`)
+  console.log(`compat: ecosystems=${report.compat.ecosystems.join(",") || "-"} plugins=${report.compat.plugins} diagnostics=${report.compat.diagnostics.length}`)
+  for (const item of report.compat.diagnostics.slice(0, 5)) {
+    console.log(`  compat diagnostic: ${item}`)
+  }
   if (report.mcp.configured === 0) {
     console.log("  mcp quickstart: kkcode mcp init --project --with-skills")
   }
@@ -162,9 +181,11 @@ export function createDoctorCommand() {
         const report = await buildDoctorReport()
         if (options.json) {
           console.log(JSON.stringify(report, null, 2))
+          if (report.compat.strictFailed) process.exitCode = 1
           return
         }
         printTextReport(report, report.themeWarnings || [])
+        if (report.compat.strictFailed) process.exitCode = 1
       } finally {
         McpRegistry.shutdown()
       }

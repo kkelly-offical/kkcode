@@ -1,5 +1,6 @@
 import { Command } from "commander"
-import { ensureDefaultSkillPack } from "../skill/registry.mjs"
+import { ensureDefaultSkillPack, SkillRegistry } from "../skill/registry.mjs"
+import { buildContext } from "../context.mjs"
 import { userRootDir } from "../storage/paths.mjs"
 
 function formatSummary(scopeResults) {
@@ -19,6 +20,46 @@ function formatSummary(scopeResults) {
 
 export function createSkillCommand() {
   const cmd = new Command("skill").description("manage kkcode skills")
+
+  cmd
+    .command("list")
+    .description("list loaded skills")
+    .option("--json", "print structured output", false)
+    .action(async (options) => {
+      const ctx = await buildContext()
+      await SkillRegistry.initialize({ ...ctx.configState.config, skills: { ...(ctx.configState.config.skills || {}), auto_seed: false } }, process.cwd())
+      const skills = SkillRegistry.list()
+      if (options.json) {
+        console.log(JSON.stringify({
+          ok: true,
+          total: skills.length,
+          skills: skills.map((skill) => ({
+            name: skill.name,
+            canonicalName: skill.canonicalName || skill.name,
+            aliases: skill.aliases || [],
+            description: skill.description,
+            type: skill.type,
+            scope: skill.scope,
+            source: skill.source || null,
+            sourceEcosystem: skill.sourceEcosystem || "kkcode",
+            pluginName: skill.plugin?.name || null,
+            skillRoot: skill.skillRoot || skill.skillDir || null
+          })),
+          diagnostics: SkillRegistry.compatDiagnostics()
+        }, null, 2))
+        return
+      }
+      for (const skill of skills) {
+        const label = skill.canonicalName || skill.name
+        const ecosystem = skill.sourceEcosystem || "kkcode"
+        console.log(`- $${label} [${ecosystem}] ${skill.description || ""}`.trim())
+      }
+      const diagnostics = SkillRegistry.compatDiagnostics()
+      if (diagnostics.length) {
+        console.log("diagnostics:")
+        for (const item of diagnostics) console.log(`- ${item}`)
+      }
+    })
 
   cmd
     .command("init")

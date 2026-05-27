@@ -1,5 +1,6 @@
 import { Command } from "commander"
 import { initHookBus, HookBus } from "../plugin/hook-bus.mjs"
+import { buildContext } from "../context.mjs"
 
 export function createHookCommand() {
   const cmd = new Command("hook").description("inspect loaded hooks")
@@ -8,7 +9,8 @@ export function createHookCommand() {
     .command("list")
     .description("list loaded hooks and loading errors")
     .action(async () => {
-      await initHookBus(process.cwd())
+      const ctx = await buildContext()
+      await initHookBus(process.cwd(), ctx.configState.config)
       const hooks = HookBus.list()
       const errors = HookBus.errors()
       console.log(`supported events: ${HookBus.supportedEvents().join(", ")}`)
