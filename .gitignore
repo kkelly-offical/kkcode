@@ -4,3 +4,7 @@ usage-export.*
 kkcode.config.yaml
 .omx/
 claudenext-private/
+
+# Software copyright manual drafting artifacts
+docs/copyright/
+scripts/generate-copyright-doc.mjs
