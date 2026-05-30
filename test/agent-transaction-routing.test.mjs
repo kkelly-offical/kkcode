@@ -25,7 +25,7 @@ test("small tasks with planning language stay in agent when the topology is stil
   assert.match(explainTaskModeReason(result.reason), /本地事务|轻量/)
 })
 
-test("continuation context preserves the current transaction identity", () => {
+test("continuation context preserves the current transaction identity in unified assistant", () => {
   const route = routeMode(
     "Continue the same bounded local agent transaction unless new heavy cross-file evidence appears.\n\nCurrent objective:\nInspect README.md and package.json, then update the version note and re-run npm test.\n\nFollow-up from the user:\nAlso fix NOTICE.md while you are there.",
     "agent",
@@ -37,7 +37,7 @@ test("continuation context preserves the current transaction identity", () => {
     }
   )
 
-  assert.equal(route.mode, "agent")
+  assert.equal(route.mode, "assistant")
   assert.equal(route.continuity, "continue_current_transaction")
   assert.ok(route.evidence.includes("continuation_context"))
   assert.equal(route.topology, "bounded_local_transaction")

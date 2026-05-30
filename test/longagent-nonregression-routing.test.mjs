@@ -15,6 +15,6 @@ test("long but bounded local tasks stay out of longagent when the work is still 
   const prompt = "Check ./logs/app.log, inspect package.json and README.md, summarize the latest release mismatch, then update NOTICE.md with the corrected version note."
   const resolved = resolvePromptMode(prompt, "agent")
 
-  assert.equal(resolved.effectiveMode, "agent")
+  assert.equal(resolved.effectiveMode, "assistant")
   assert.notEqual(resolved.route.reason, "multi_file_or_system_task")
 })

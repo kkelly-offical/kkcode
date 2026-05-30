@@ -5,6 +5,8 @@
 # 使用方式：将此文件内容合并到你的 kkcode 配置文件中
 
 permission:
+  level: review
+  mode: auto
   default_policy: deny
   non_tty_default: deny
 

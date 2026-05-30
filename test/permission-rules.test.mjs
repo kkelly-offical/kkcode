@@ -115,6 +115,60 @@ test("auto mode asks before untrusted shell commands", () => {
   assert.equal(decision.source, "auto_review")
 })
 
+test("readonly permission level denies edit tools", () => {
+  const decision = evaluatePermission({
+    config: { permission: { level: "readonly", mode: "auto", default_policy: "ask", rules: [] } },
+    tool: "edit",
+    mode: "assistant",
+    pattern: "README.md"
+  })
+
+  assert.equal(decision.action, "deny")
+  assert.equal(decision.source, "level:readonly")
+})
+
+test("review permission level allows safe shell but denies edits", () => {
+  const safe = evaluatePermission({
+    config: { permission: { level: "review", mode: "auto", default_policy: "ask", rules: [] } },
+    tool: "bash",
+    mode: "assistant",
+    command: "git status --short"
+  })
+  const edit = evaluatePermission({
+    config: { permission: { level: "review", mode: "auto", default_policy: "ask", rules: [] } },
+    tool: "write",
+    mode: "assistant",
+    pattern: "README.md"
+  })
+
+  assert.equal(safe.action, "allow")
+  assert.equal(edit.action, "deny")
+})
+
+test("edit permission level allows normal edits while sensitive paths still ask", () => {
+  const normal = evaluatePermission({
+    config: {
+      permission: { level: "edit", mode: "auto", default_policy: "ask", rules: [] },
+      tool: { sensitive_file_patterns: ["AGENTS.md"] }
+    },
+    tool: "write",
+    mode: "assistant",
+    pattern: "README.md"
+  })
+  const sensitive = evaluatePermission({
+    config: {
+      permission: { level: "edit", mode: "auto", default_policy: "ask", rules: [] },
+      tool: { sensitive_file_patterns: ["AGENTS.md"] }
+    },
+    tool: "write",
+    mode: "assistant",
+    pattern: "AGENTS.md"
+  })
+
+  assert.equal(normal.action, "allow")
+  assert.equal(sensitive.action, "ask")
+})
+
 test("yolo mode allows sensitive edits unless an explicit rule denies them", () => {
   const allowed = evaluatePermission({
     config: {

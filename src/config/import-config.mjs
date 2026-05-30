@@ -71,6 +71,10 @@ export function importConfig(input = {}) {
   if (input.permission?.rules && Array.isArray(input.permission.rules)) {
     next.permission.rules.push(...input.permission.rules)
   }
+  if (input.permission?.level) next.permission.level = input.permission.level
+  if (input.permission?.mode) next.permission.mode = input.permission.mode
+  if (input.permission?.default_policy) next.permission.default_policy = input.permission.default_policy
+  if (input.permission?.non_tty_default) next.permission.non_tty_default = input.permission.non_tty_default
 
   return next
 }

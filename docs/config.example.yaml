@@ -172,6 +172,8 @@ agent:
 # 权限配置（详见 configs/permission-*.yaml 模板）
 # =============================================================================
 permission:
+  level: "auto"              # readonly | review | auto | edit | full-auto | yolo
+  mode: "auto"               # legacy compatibility: auto | manual | yolo
   default_policy: "ask"       # allow | ask | deny
   non_tty_default: "deny"     # allow | allow_once | deny
   rules:

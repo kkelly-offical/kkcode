@@ -133,7 +133,7 @@ export function createChatCommand() {
       const status = renderStatusBar({
         mode: effectiveMode,
         model: result.model,
-        permission: ctx.configState.config.permission.mode || ctx.configState.config.permission.default_policy,
+        permission: ctx.configState.config.permission.level || ctx.configState.config.permission.mode || ctx.configState.config.permission.default_policy,
         tokenMeter: result.tokenMeter,
         aggregation: ctx.configState.config.usage.aggregation,
         cost: result.cost,

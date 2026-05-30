@@ -8,16 +8,16 @@ test("buildHelpText keeps the public lane descriptions together", () => {
     userRootPath: "~/.kkcode"
   })
 
-  assert.match(text, /quick mode switch to the public execution lanes/i)
-  assert.match(text, /assistant = personal CLI \+ Q&A lane/i)
-  assert.match(text, /agent\/code = coding/i)
+  assert.match(text, /return to the unified assistant/i)
+  assert.match(text, /assistant = unified daily lane/i)
+  assert.match(text, /compatibility aliases for assistant/i)
   assert.match(text, /longagent = staged/i)
   assert.match(text, /Plugin packages\s+\.kkcode-plugin/i)
 })
 
 test("buildShortcutLegend keeps the lane cycle wording explicit", () => {
   const text = buildShortcutLegend()
-  assert.match(text, /Quick lane switch/)
-  assert.match(text, /Tab cycle lane/)
+  assert.match(text, /Explicit workflows/)
+  assert.match(text, /Shift\+Tab cycle permission level/)
   assert.match(text, /Esc interrupt turn/)
 })

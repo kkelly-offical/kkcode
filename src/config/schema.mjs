@@ -357,6 +357,9 @@ export function validateConfig(config) {
       if (config.permission.mode !== undefined && !["auto", "manual", "yolo"].includes(config.permission.mode)) {
         err(errors, "permission.mode", "must be auto|manual|yolo")
       }
+      if (config.permission.level !== undefined && !["readonly", "review", "auto", "edit", "full-auto", "yolo"].includes(config.permission.level)) {
+        err(errors, "permission.level", "must be readonly|review|auto|edit|full-auto|yolo")
+      }
       if (config.permission.default_policy !== undefined && !["allow", "deny", "ask"].includes(config.permission.default_policy)) {
         err(errors, "permission.default_policy", "must be allow|deny|ask")
       }

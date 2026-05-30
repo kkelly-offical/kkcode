@@ -1,6 +1,7 @@
 import { getSensitiveEditPolicy } from "./file-edit-policy.mjs"
 
 export const PERMISSION_MODES = ["auto", "manual", "yolo"]
+export const PERMISSION_LEVELS = ["readonly", "review", "auto", "edit", "full-auto", "yolo"]
 export const LEGACY_PERMISSION_POLICIES = ["ask", "allow", "deny"]
 
 const AUTO_READONLY_TOOLS = new Set([
@@ -35,6 +36,35 @@ const AUTO_REVIEW_ASK_TOOLS = new Set([
   "skill"
 ])
 
+const TOOL_CAPABILITIES = {
+  list: "read",
+  read: "read",
+  glob: "search",
+  grep: "search",
+  codesearch: "search",
+  sysinfo: "read",
+  websearch: "network",
+  webfetch: "network",
+  background_output: "read",
+  task_list: "read",
+  task_get: "read",
+  task_output: "read",
+  todowrite: "read",
+  question: "read",
+  enter_plan: "read",
+  exit_plan: "read",
+  bash: "shell",
+  write: "edit",
+  edit: "edit",
+  patch: "edit",
+  multiedit: "edit",
+  notebookedit: "edit",
+  task: "task",
+  task_stop: "task",
+  background_cancel: "task",
+  skill: "task"
+}
+
 const TRUSTED_BASH_PATTERNS = [
   /^(pwd|ls|cat|head|tail|wc|which|date|whoami|uname)\b/i,
   /^(rg|grep|find)\b/i,
@@ -51,6 +81,24 @@ function normalizePermissionMode(permission = {}) {
   return "manual"
 }
 
+export function normalizePermissionLevel(permission = {}) {
+  const level = String(permission.level || "").toLowerCase()
+  if (PERMISSION_LEVELS.includes(level)) return level
+  const mode = normalizePermissionMode(permission)
+  if (mode === "auto") return "auto"
+  if (mode === "yolo") return "yolo"
+  const legacy = String(permission.default_policy || "").toLowerCase()
+  if (legacy === "allow") return "full-auto"
+  if (legacy === "deny") return "readonly"
+  return "auto"
+}
+
+export function toolCapability(tool, command = "") {
+  const name = String(tool || "")
+  if (name === "bash") return trustedBashCommand(command) ? "safe-shell" : "risky-shell"
+  return TOOL_CAPABILITIES[name] || "unknown"
+}
+
 function trustedBashCommand(command) {
   const cmd = String(command || "").trim()
   if (!cmd) return false
@@ -63,6 +111,30 @@ function autoAllowsTool({ tool, command = "" }) {
   if (tool === "bash") return trustedBashCommand(command)
   if (AUTO_REVIEW_ASK_TOOLS.has(tool)) return false
   return false
+}
+
+function levelAllowsTool({ level, tool, command = "" }) {
+  const cap = toolCapability(tool, command)
+  if (level === "yolo") return "allow"
+  if (level === "readonly") {
+    return ["read", "search", "network"].includes(cap) ? "allow" : "deny"
+  }
+  if (level === "review") {
+    if (["read", "search", "network", "safe-shell"].includes(cap)) return "allow"
+    return cap === "edit" ? "deny" : "ask"
+  }
+  if (level === "auto") {
+    return autoAllowsTool({ tool, command }) ? "allow" : "ask"
+  }
+  if (level === "edit") {
+    if (["read", "search", "network", "safe-shell", "edit"].includes(cap)) return "allow"
+    return "ask"
+  }
+  if (level === "full-auto") {
+    if (["read", "search", "network", "safe-shell", "edit", "task"].includes(cap)) return "allow"
+    return "ask"
+  }
+  return "ask"
 }
 
 function applySensitiveEscalation(decision, { tool, pattern, config, mode }) {
@@ -190,6 +262,7 @@ export function matchRule(rule, input) {
 export function evaluatePermission({ config, tool, mode, pattern = "*", command = "", risk = 0 }) {
   const permission = config.permission || { default_policy: "ask", rules: [] }
   const permissionMode = normalizePermissionMode(permission)
+  const permissionLevel = normalizePermissionLevel(permission)
   const rules = Array.isArray(permission.rules) ? permission.rules : []
   for (const rule of rules) {
     if (matchRule(rule, { tool, mode, pattern, command, risk })) {
@@ -197,19 +270,26 @@ export function evaluatePermission({ config, tool, mode, pattern = "*", command 
         action: rule.action,
         source: "rule",
         rule,
-        mode: permissionMode
+        mode: permissionMode,
+        level: permissionLevel
       }
       return applySensitiveEscalation(matchedDecision, { tool, pattern, config, mode: permissionMode })
     }
   }
 
+  if (permission.level) {
+    const action = levelAllowsTool({ level: permissionLevel, tool, command, risk })
+    const decision = { action, source: `level:${permissionLevel}`, rule: null, mode: permissionMode, level: permissionLevel }
+    return applySensitiveEscalation(decision, { tool, pattern, config, mode: permissionLevel })
+  }
+
   if (permissionMode === "yolo") {
-    return { action: "allow", source: "mode:yolo", rule: null, mode: permissionMode }
+    return { action: "allow", source: "mode:yolo", rule: null, mode: permissionMode, level: permissionLevel }
   }
 
   if (permissionMode === "auto") {
     const action = autoAllowsTool({ tool, command, risk }) ? "allow" : "ask"
-    const decision = { action, source: "auto_review", rule: null, mode: permissionMode }
+    const decision = { action, source: "auto_review", rule: null, mode: permissionMode, level: permissionLevel }
     return applySensitiveEscalation(decision, { tool, pattern, config, mode: permissionMode })
   }
 
@@ -220,10 +300,11 @@ export function evaluatePermission({ config, tool, mode, pattern = "*", command 
     action: defaultPolicy,
     source: "default",
     rule: null,
-    mode: permissionMode
+    mode: permissionMode,
+    level: permissionLevel
   }
   return applySensitiveEscalation(fallbackDecision, { tool, pattern, config, mode: permissionMode })
 }
 
 // Exported for testing
-export { matchGlob, matchPatterns, matchCommandPrefix, normalizePermissionMode, trustedBashCommand, autoAllowsTool }
+export { matchGlob, matchPatterns, matchCommandPrefix, normalizePermissionMode, trustedBashCommand, autoAllowsTool, levelAllowsTool }

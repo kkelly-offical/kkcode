@@ -184,6 +184,7 @@ export const DEFAULT_CONFIG = {
     }
   },
   permission: {
+    level: "auto",
     mode: "auto",
     default_policy: "ask",
     non_tty_default: "deny",

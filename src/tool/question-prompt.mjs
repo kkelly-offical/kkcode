@@ -61,17 +61,20 @@ export async function askQuestionInteractive({ questions }) {
   return answers
 }
 
-export async function askPlanApproval({ plan, files = [] }) {
+export async function askPlanApproval({ plan, files = [], planPath = "" }) {
   const fileList = files.length ? `\nFiles to modify:\n${files.map(f => `  - ${f}`).join("\n")}` : ""
+  const pathText = planPath ? `Plan file: ${planPath}\n\n` : ""
   const questions = [
     {
       id: "plan_approval",
-      text: `Plan Review`,
-      description: `${plan}${fileList}`,
+      text: `Plan Next Step`,
+      description: `${pathText}${plan}${fileList}`,
       options: [
-        { label: "Approve", value: "approve", description: "Proceed with this plan" },
-        { label: "Request Changes", value: "changes", description: "Revise and resubmit with feedback" },
-        { label: "Reject", value: "reject", description: "Cancel this plan entirely" }
+        { label: "Assistant Build", value: "assistant", description: "Use Assistant to implement this plan" },
+        { label: "LongAgent Build", value: "longagent", description: "Use LongAgent for persistent staged delivery" },
+        { label: "Compact + Assistant", value: "compact_assistant", description: "Compact context first, then use Assistant" },
+        { label: "Compact + LongAgent", value: "compact_longagent", description: "Compact context first, then use LongAgent" },
+        { label: "Revise Plan", value: "revise", description: "Continue editing the plan with your feedback" }
       ],
       multi: false,
       allowCustom: true
@@ -79,21 +82,27 @@ export async function askPlanApproval({ plan, files = [] }) {
   ]
   const answers = await askQuestionInteractive({ questions })
   const answer = String(answers.plan_approval || "").trim().toLowerCase()
-  if (answer === "approve" || answer === "1") {
-    return { approved: true, requestChanges: false, feedback: "" }
+  if (answer === "assistant" || answer === "1") {
+    return { approved: true, requestChanges: false, action: "assistant", feedback: "", planPath }
   }
-  if (answer === "changes" || answer === "2") {
+  if (answer === "longagent" || answer === "2") {
+    return { approved: true, requestChanges: false, action: "longagent", feedback: "", planPath }
+  }
+  if (answer === "compact_assistant" || answer === "3") {
+    return { approved: true, requestChanges: false, action: "compact_assistant", feedback: "", planPath }
+  }
+  if (answer === "compact_longagent" || answer === "4") {
+    return { approved: true, requestChanges: false, action: "compact_longagent", feedback: "", planPath }
+  }
+  if (answer === "revise" || answer === "5") {
+    if (!process.stdout.isTTY || !process.stdin.isTTY) {
+      return { approved: false, requestChanges: true, action: "revise", feedback: "", planPath }
+    }
     const rl2 = createInterface({ input, output })
     let changeFeedback = ""
-    try { changeFeedback = (await rl2.question("  Feedback> ")).trim() } catch {} finally { rl2.close() }
-    return { approved: false, requestChanges: true, feedback: changeFeedback }
-  }
-  if (answer === "reject" || answer === "3") {
-    const rl3 = createInterface({ input, output })
-    let rejectFeedback = ""
-    try { rejectFeedback = (await rl3.question("  Reason> ")).trim() } catch {} finally { rl3.close() }
-    return { approved: false, requestChanges: false, feedback: rejectFeedback }
+    try { changeFeedback = (await rl2.question("  Revision> ")).trim() } catch {} finally { rl2.close() }
+    return { approved: false, requestChanges: true, action: "revise", feedback: changeFeedback, planPath }
   }
   // Custom text input: treat as "request changes" with the text as feedback
-  return { approved: false, requestChanges: true, feedback: answer }
+  return { approved: false, requestChanges: true, action: "revise", feedback: answer, planPath }
 }

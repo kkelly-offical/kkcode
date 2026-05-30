@@ -789,12 +789,20 @@ export async function processTurnLoop({
         if (result.metadata?.planApproval) {
           const approval = await askPlanApproval({
             plan: result.metadata.plan || "",
-            files: result.metadata.files || []
+            files: result.metadata.files || [],
+            planPath: result.metadata.planPath || ""
           })
+          const planPath = approval.planPath || result.metadata.planPath || ""
+          const actionText = {
+            assistant: `User selected Assistant build. Implement the saved plan${planPath ? ` at ${planPath}` : ""} in the unified assistant lane using the current permission level.`,
+            longagent: `User selected LongAgent build. Ask the user to run /longagent with the saved plan${planPath ? ` at ${planPath}` : ""}, or continue only if this session is already in longagent mode.`,
+            compact_assistant: `User selected Compact + Assistant. Compact the relevant context first, then implement the saved plan${planPath ? ` at ${planPath}` : ""} in the unified assistant lane.`,
+            compact_longagent: `User selected Compact + LongAgent. Compact the relevant context first, then ask the user to run /longagent with the saved plan${planPath ? ` at ${planPath}` : ""}, or continue only if this session is already in longagent mode.`
+          }[approval.action]
           result = {
             ...result,
             output: approval.approved
-              ? "User APPROVED the plan. Proceed with implementation immediately."
+              ? actionText || "User selected a plan execution path. Proceed according to the selected path."
               : approval.requestChanges
                 ? `User requested changes to the plan. Feedback: ${approval.feedback || "no specific feedback"}. Revise your plan and call exit_plan again with the updated plan.`
                 : `User REJECTED the plan. Feedback: ${approval.feedback || "no feedback provided"}. Do not proceed — the plan has been cancelled.`,

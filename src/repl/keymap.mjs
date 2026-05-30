@@ -1,4 +1,4 @@
-export const MODE_CYCLE_ORDER = ["assistant", "agent", "longagent", "plan"]
+export const MODE_CYCLE_ORDER = ["assistant", "longagent", "plan"]
 
 export function nextMode(currentMode, order = MODE_CYCLE_ORDER) {
   const idx = order.indexOf(currentMode)

@@ -32,6 +32,6 @@ test("buildRouteFeedback renders the longagent suggestion message without changi
   })
 
   assert.equal(feedback.changedMessage, null)
-  assert.match(feedback.suggestionMessage, /可以用 \/longagent 切换到 longagent 模式/)
+  assert.match(feedback.suggestionMessage, /可以用 \/longagent 显式启动 longagent/)
   assert.equal(feedback.stayedMessage, null)
 })

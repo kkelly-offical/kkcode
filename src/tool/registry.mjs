@@ -1,6 +1,6 @@
 import path from "node:path"
 import os from "node:os"
-import { readdir, readFile } from "node:fs/promises"
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
 import { access, stat, statfs, unlink } from "node:fs/promises"
 import { exec as execCb, spawn } from "node:child_process"
 import { promisify } from "node:util"
@@ -38,6 +38,33 @@ function schema(type, description) {
 function safeStringify(value) {
   if (typeof value === "string") return value
   return JSON.stringify(value, null, 2)
+}
+
+function planSlug(text = "") {
+  const raw = String(text || "plan")
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+  return (raw || "plan").slice(0, 48)
+}
+
+async function savePlanFile(cwd, plan, files = []) {
+  const dir = path.join(cwd, ".kkcode", "plans")
+  await mkdir(dir, { recursive: true })
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-")
+  const firstHeading = String(plan || "").split("\n").find((line) => line.trim()) || "plan"
+  const filePath = path.join(dir, `${stamp}-${planSlug(firstHeading)}.md`)
+  const body = [
+    "---",
+    `created_at: ${new Date().toISOString()}`,
+    `files: ${JSON.stringify(Array.isArray(files) ? files : [])}`,
+    "---",
+    "",
+    String(plan || "").trim(),
+    ""
+  ].join("\n")
+  await writeFile(filePath, body, "utf8")
+  return path.relative(cwd, filePath)
 }
 
 function signatureFor(config = {}, cwd = process.cwd()) {
@@ -1391,12 +1418,16 @@ function builtinTools(config) {
         }
       }
       ctx._planMode = false
+      const plan = String(args.plan || "")
+      const files = Array.isArray(args.files) ? args.files : []
+      const planPath = await savePlanFile(ctx.cwd, plan, files)
       return {
-        output: "Plan submitted for user approval.",
+        output: `Plan saved to ${planPath} and submitted for next-step selection.`,
         metadata: {
           planApproval: true,
-          plan: String(args.plan || ""),
-          files: Array.isArray(args.files) ? args.files : []
+          plan,
+          files,
+          planPath
         }
       }
     }

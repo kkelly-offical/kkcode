@@ -9,6 +9,7 @@ export async function executePromptTurn({
   streamSink = null,
   pendingImages = [],
   signal = null,
+  toolContext = {},
   deps = {}
 }) {
   const extractImageRefsFn = deps.extractImageRefs || extractImageRefs
@@ -50,6 +51,7 @@ export async function executePromptTurn({
       providerType: chatParams.providerType ?? state.providerType,
       longagentImpl: state.longagentImpl ?? null,
       signal,
+      toolContext,
       output: streamSink && typeof streamSink === "function"
         ? { write: streamSink }
         : null

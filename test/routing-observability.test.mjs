@@ -18,13 +18,13 @@ function makeEvent(type, payload = {}) {
 test("route decisions expose topology and evidence for observability", () => {
   const route = routeMode(
     "Check ./logs/app.log, patch README.md, then run npm test to verify the command.",
-    "agent"
+    "assistant"
   )
 
   assert.equal(route.topology, "bounded_local_transaction")
   assert.ok(route.evidence.includes("inspect_patch_verify"))
   assert.equal(route.observability.stayedLocal, true)
-  assert.equal(route.observability.requestedMode, "agent")
+  assert.equal(route.observability.requestedMode, "assistant")
   assert.match(route.observability.topologySummary, /bounded_local_transaction/)
   assert.match(route.observability.evidenceSummary, /inspect_patch_verify/)
 })

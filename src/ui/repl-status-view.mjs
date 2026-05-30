@@ -16,7 +16,7 @@ export function renderReplStatusLine({
   return renderStatusBar({
     mode: state.mode,
     model: state.model,
-    permission: configState.config.permission.mode || configState.config.permission.default_policy,
+    permission: configState.config.permission.level || configState.config.permission.mode || configState.config.permission.default_policy,
     tokenMeter,
     aggregation: configState.config.usage.aggregation,
     cost,

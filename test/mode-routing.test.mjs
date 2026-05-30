@@ -20,18 +20,19 @@ test("routing treats single-directory inspection as assistant work instead of lo
   assert.notEqual(classification.reason, "multi_file_or_system_task")
 })
 
-test("resolveMode defaults to assistant and keeps code aliases on the coding lane", () => {
+test("resolveMode defaults to assistant and maps code aliases to unified assistant", () => {
   assert.equal(resolveMode(), "assistant")
   assert.equal(resolveMode("unknown"), "assistant")
   assert.equal(resolveMode("assistant"), "assistant")
-  assert.equal(resolveMode("code"), "agent")
-  assert.equal(resolveMode("coding"), "agent")
+  assert.equal(resolveMode("agent"), "assistant")
+  assert.equal(resolveMode("code"), "assistant")
+  assert.equal(resolveMode("coding"), "assistant")
 })
 
-test("routeMode routes default assistant coding work to agent", () => {
+test("routeMode keeps default assistant coding work in unified assistant", () => {
   const route = routeMode("Fix the failing tests in ./test/mode-routing.test.mjs and verify npm test.", "assistant")
-  assert.equal(route.mode, "agent")
-  assert.equal(route.changed, true)
+  assert.equal(route.mode, "assistant")
+  assert.equal(route.changed, false)
   assert.match(route.reason, /(local_transaction_task|short_local_task_protected|simple_action_task)/)
 })
 
@@ -42,34 +43,34 @@ test("routeMode keeps bounded terminal assistant work in assistant", () => {
   assert.match(route.reason, /(local_lookup_task|single_path_or_command_task)/)
 })
 
-test("routeMode suggests longagent for cross-file implementation while preserving current agent mode", () => {
+test("routeMode suggests longagent for cross-file implementation while preserving assistant mode", () => {
   const route = routeMode(
     "Implement a full end-to-end billing subsystem across checkout, invoicing, and reporting modules.",
-    "agent"
+    "assistant"
   )
 
-  assert.equal(route.mode, "agent")
+  assert.equal(route.mode, "assistant")
   assert.equal(route.changed, false)
   assert.equal(route.suggestion, "longagent")
   assert.equal(route.reason, "multi_file_or_system_task")
-  assert.equal(route.upgradePath, "agent->longagent")
+  assert.equal(route.upgradePath, "assistant->longagent")
   assert.match(route.evidenceSummary, /cross_file_scope/)
 })
 
-test("routeMode auto-switches short explain questions from agent to assistant", () => {
+test("routeMode keeps short explain questions in unified assistant", () => {
   const route = routeMode("What does src/session/engine.mjs do?", "agent")
   assert.equal(route.mode, "assistant")
-  assert.equal(route.changed, true)
+  assert.equal(route.changed, false)
   assert.match(route.reason, /(question_with_explain_intent|short_question)/)
 })
 
 test("routeMode keeps inspect + patch + verify loops in agent with evidence categories", () => {
   const route = routeMode(
     "Check ./logs/app.log, patch README.md with the right command, and verify `npm test -- --help` still works.",
-    "agent"
+    "assistant"
   )
 
-  assert.equal(route.mode, "agent")
+  assert.equal(route.mode, "assistant")
   assert.equal(route.changed, false)
   assert.equal(route.reason, "short_local_task_protected")
   assert.ok(route.evidence.includes("inspect_patch_verify_loop"))
@@ -91,6 +92,6 @@ test("renderPublicModeContract keeps public lanes aligned", () => {
   assert.match(text, /`assistant`: default CLI personal assistant lane/i)
   assert.doesNotMatch(text, /`ask`:/i)
   assert.match(text, /`plan`: produce a spec\/plan only/i)
-  assert.match(text, /`agent` \/ `code` \/ `coding`: dedicated coding lane/i)
+  assert.match(text, /`agent` \/ `code` \/ `coding`: compatibility aliases/i)
   assert.match(text, /`longagent`: heavyweight staged multi-file delivery lane/i)
 })

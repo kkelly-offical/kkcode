@@ -80,7 +80,7 @@ import {
   advanceQuestionState,
   finalizeQuestionAnswers
 } from "./repl/dialog-router.mjs"
-import { POLICY_CHOICES, createPolicyPickerState, applyPolicyChoice } from "./repl/permission-flow.mjs"
+import { POLICY_CHOICES, createPolicyPickerState, applyPolicyChoice, applyPermissionLevel, nextPermissionLevel } from "./repl/permission-flow.mjs"
 
 const HIST_DIR = userRootDir()
 const HIST_FILE = join(HIST_DIR, "repl_history")
@@ -125,10 +125,10 @@ const BUILTIN_SLASH = [
   { name: "history", desc: "list sessions" },
   { name: "compact", desc: "summarize conversation to free context" },
   { name: "undo", desc: "undo last code changes" },
-  { name: "mode", desc: "switch mode" },
-  { name: "plan", desc: "switch to plan mode" },
-  { name: "agent", desc: "switch to agent mode" },
-  { name: "longagent", desc: "switch to longagent mode" },
+  { name: "mode", desc: "switch explicit mode" },
+  { name: "plan", desc: "read-only development plan" },
+  { name: "agent", desc: "assistant compatibility alias" },
+  { name: "longagent", desc: "persistent staged development" },
   { name: "provider", desc: "switch provider" },
   { name: "model", desc: "open model picker" },
   { name: "profile", desc: "view or edit your user profile" },
@@ -349,6 +349,7 @@ async function persistPermissionConfig({ scope, ctx, values }) {
 
   const merged = mergeObject(existing, {
     permission: {
+      level: values.level,
       mode: values.mode,
       default_policy: values.default_policy,
       non_tty_default: values.non_tty_default
@@ -404,7 +405,7 @@ async function processInputLine({
   signal = null,
   suspendTui = null
 }) {
-  const normalized = normalizeSlashAlias(String(line || "").trim())
+  let normalized = normalizeSlashAlias(String(line || "").trim())
 
   // --- 向导模式：拦截所有输入 ---
   if (wizard?.active) {
@@ -657,6 +658,18 @@ async function processInputLine({
     return { exit: false }
   }
 
+  if (normalized.startsWith("/plan ")) {
+    const objective = normalized.replace(/^\/plan\s+/, "").trim()
+    state.mode = "plan"
+    normalized = [
+      "Create a read-only development plan for this request.",
+      "Do not edit project source files. Inspect the repository as needed, then call enter_plan and exit_plan with the complete plan.",
+      "The plan must include goal, scope, implementation steps, impacted modules, tests, risks, and acceptance criteria.",
+      "",
+      `Request: ${objective}`
+    ].join("\n")
+  }
+
   if (["/assistant", "/plan", "/agent", "/code", "/coding", "/longagent"].includes(normalized)) {
     state.mode = resolveMode(normalized.slice(1))
     if (normalized === "/longagent") state.longagentImpl = null
@@ -665,7 +678,8 @@ async function processInputLine({
   }
 
   if (normalized.startsWith("/longagent ")) {
-    const sub = normalized.replace("/longagent ", "").trim().toLowerCase()
+    const rawSub = normalized.replace("/longagent ", "").trim()
+    const sub = rawSub.toLowerCase()
     if (sub === "4stage") {
       state.mode = "longagent"
       state.longagentImpl = "4stage"
@@ -675,9 +689,11 @@ async function processInputLine({
       state.longagentImpl = "hybrid"
       print("mode switched: longagent (hybrid)")
     } else {
-      print("usage: /longagent [4stage|hybrid]")
+      state.mode = "longagent"
+      state.longagentImpl = null
+      normalized = rawSub
     }
-    return { exit: false }
+    if (sub === "4stage" || sub === "hybrid") return { exit: false }
   }
 
   if (normalized.startsWith("/mode ") || normalized.startsWith("/m ")) {
@@ -768,14 +784,15 @@ async function processInputLine({
     const permission = ctx.configState.config.permission || (ctx.configState.config.permission = {})
 
     if (sub === "show") {
-      print(`current: ${permission.mode || permission.default_policy || "auto"}`)
+      print(`current: ${permission.level || permission.mode || permission.default_policy || "auto"}`)
+      print(`level: ${permission.level || "auto"}`)
       print(`mode: ${permission.mode || "manual"}; default_policy: ${permission.default_policy || "ask"}; non_tty: ${permission.non_tty_default || "deny"}`)
       return { exit: false, openPolicyPicker: true }
     }
 
-    if (["auto", "yolo"].includes(sub)) {
-      permission.mode = sub
-      print(`permission.mode -> ${sub} (runtime)`)
+    if (["readonly", "review", "auto", "edit", "full-auto", "yolo"].includes(sub)) {
+      ctx.configState.config.permission = applyPermissionLevel(sub, permission)
+      print(`permission.level -> ${sub} (runtime)`)
       return { exit: false }
     }
 
@@ -808,6 +825,7 @@ async function processInputLine({
           scope,
           ctx,
           values: {
+            level: permission.level || "auto",
             mode: permission.mode || "auto",
             default_policy: permission.default_policy || "ask",
             non_tty_default: permission.non_tty_default || "deny"
@@ -826,7 +844,7 @@ async function processInputLine({
       return { exit: false }
     }
 
-    print("usage: /permission [show|auto|yolo|ask|allow|deny|non-tty <allow_once|deny>|save [project|user]|session-clear]")
+    print("usage: /permission [show|readonly|review|auto|edit|full-auto|yolo|non-tty <allow_once|deny>|save [project|user]|session-clear]")
     return { exit: false }
   }
 
@@ -1881,7 +1899,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     const modelPickerBlock = modelPickerLines.length ? modelPickerLines.length : 0
     const policyPickerLines = []
     if (ui.policyPicker) {
-      const currentPolicy = ctx.configState.config.permission?.mode || ctx.configState.config.permission?.default_policy || "auto"
+      const currentPolicy = ctx.configState.config.permission?.level || ctx.configState.config.permission?.mode || ctx.configState.config.permission?.default_policy || "auto"
       policyPickerLines.push(
         paint(`Permission Policy  ↑↓ navigate  Enter select  Esc cancel`, ctx.themeState.theme.semantic.info, { bold: true })
       )
@@ -2557,6 +2575,14 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     requestRender()
   }
 
+  function cyclePermissionForwardAndNotify() {
+    const permission = ctx.configState.config.permission || (ctx.configState.config.permission = {})
+    const next = nextPermissionLevel(permission)
+    ctx.configState.config.permission = applyPermissionLevel(next, permission)
+    appendLog(`permission level switched: ${next}`)
+    requestRender()
+  }
+
   startTuiFrame()
   setPermissionPromptHandler(({ tool, sessionId, reason = "", defaultAction = "deny" }) =>
     new Promise((resolve) => {
@@ -3174,7 +3200,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         }
 
         if (key.name === "tab") {
-          cycleModeForwardAndNotify()
+          if (key.shift) cyclePermissionForwardAndNotify()
+          else applyCurrentSuggestion()
           return
         }
 
