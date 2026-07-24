@@ -202,7 +202,8 @@ export function layoutInputText({
   width = 80,
   maxRows = 5,
   prefix = "",
-  selection = null
+  selection = null,
+  ghost = ""
 } = {}) {
   const text = String(value || "")
   const innerWidth = Math.max(1, Math.trunc(width || 1))
@@ -265,6 +266,20 @@ export function layoutInputText({
   }
 
   if (!cursorPosition) cursorPosition = { row: rowIndex, col: column }
+
+  // Ghost text（下一句预测）只在光标处于输入末尾时显示，且刻意不进入
+  // cells、不改 cursorPosition、不改 endIndex —— 它是纯视觉提示，鼠标
+  // 点击与光标计算都必须看不见它。超出本行剩余宽度的部分直接裁掉，
+  // 保证不产生新行，行数与无 ghost 时完全一致。
+  const ghostText = String(ghost || "")
+  if (ghostText && safeCursor === text.length) {
+    const remaining = innerWidth - cursorPosition.col
+    if (remaining > 1) {
+      const clipped = clipAnsiByWidth(ghostText.replace(/[\r\n]+/g, " "), remaining)
+      if (clipped) rows[cursorPosition.row].text += `\x1b[90m${clipped}\x1b[0m`
+    }
+  }
+
   const visibleCount = Math.max(1, Math.trunc(maxRows || 1))
   const viewportStart = Math.max(0, cursorPosition.row - visibleCount + 1)
   const visibleRows = rows.slice(viewportStart, viewportStart + visibleCount)

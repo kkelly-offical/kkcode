@@ -651,6 +651,15 @@ export function validateConfig(config) {
       if (config.ui.markdown_render !== undefined && typeof config.ui.markdown_render !== "boolean") {
         err(errors, "ui.markdown_render", "must be boolean")
       }
+      if (config.ui.composer !== undefined) {
+        if (!isObj(config.ui.composer)) err(errors, "ui.composer", "must be object")
+        else if (
+          config.ui.composer.ghost_text !== undefined &&
+          !["auto", "off"].includes(String(config.ui.composer.ghost_text))
+        ) {
+          err(errors, "ui.composer.ghost_text", "must be auto|off")
+        }
+      }
       if (config.ui.terminal !== undefined) {
         if (!isObj(config.ui.terminal)) err(errors, "ui.terminal", "must be object")
         else {

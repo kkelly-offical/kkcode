@@ -79,6 +79,7 @@ import {
 } from "./repl/slash-router.mjs"
 import { renderInstalledCommandSurface, describeReloadSummary } from "./repl/command-surface.mjs"
 import { executePromptTurn } from "./repl/turn-controller.mjs"
+import { createGhostPredictor } from "./repl/ghost-predictor.mjs"
 import { buildCapabilitySnapshot } from "./repl/capability-facade.mjs"
 import { buildReplRuntimeSnapshot } from "./repl/runtime-facade.mjs"
 import { buildOperatorSnapshot } from "./repl/operator-surface.mjs"
@@ -1584,6 +1585,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     autoCopy: terminalFeatures.copyOnSelect, // 全屏鼠标模式下默认选中即复制
     inputSelection: null,  // { start, end } 输入框内的选择范围（字符位置）
     inputDragAnchor: -1,   // 输入框拖拽起始字符位置
+    ghostText: "",         // 小模型预测的下一句（纯视觉，不参与光标计算）
     inputLayout: null,
     // 屏幕布局元数据（buildFrame 中更新）
     layoutMeta: { logStartRow: 0, logEndRow: 0, inputStartRow: 0, inputEndRow: 0 },
@@ -1736,6 +1738,16 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   const textStreamBatcher = createFrameBatcher({
     flush: renderTextStreamFrame,
     frameMs: TUI_FRAME_MS
+  })
+
+  const ghostPredictor = createGhostPredictor({
+    configState: ctx.configState,
+    onGhost(ghost, forInput) {
+      // 双保险：predictor 已经比对过，这里再确认一次 UI 侧输入没变
+      if (ui.input !== forInput || ui.busy) return
+      ui.ghostText = ghost
+      requestRender()
+    }
   })
 
   function finalizeTextStream(status = "complete") {
@@ -2117,6 +2129,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   function setInputFromHistory(value) {
     ui.input = value || ""
     ui.inputCursor = ui.input.length
+    onInputChanged()
   }
 
   function insertAtCursor(text) {
@@ -2125,6 +2138,33 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     const tail = ui.input.slice(ui.inputCursor)
     ui.input = `${head}${text}${tail}`
     ui.inputCursor += text.length
+    onInputChanged()
+  }
+
+  /**
+   * 任何改动输入内容的路径都必须经过这里：作废当前 ghost 并重新排期预测。
+   * 陈旧的 ghost 比没有 ghost 更糟——它会让用户以为按 Tab 补的是别的内容。
+   */
+  function onInputChanged() {
+    if (ui.ghostText) {
+      ui.ghostText = ""
+      requestRender()
+    }
+    ghostPredictor?.schedule(ui.input, {
+      busy: ui.busy,
+      modal: Boolean(ui.pendingPermission || ui.pendingQuestion || ui.modelPicker || ui.policyPicker || ui.modePicker)
+    })
+  }
+
+  function acceptGhost() {
+    if (!ui.ghostText) return false
+    const ghost = ui.ghostText
+    ui.ghostText = ""
+    ui.input += ghost
+    ui.inputCursor = ui.input.length
+    ghostPredictor?.cancel()
+    requestRender()
+    return true
   }
 
   function moveCursor(delta) {
@@ -2277,7 +2317,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       width: inputInnerWidth,
       maxRows: inputVisibleRows,
       prefix: `${stateIndicator}${imgTag}`,
-      selection: ui.inputSelection
+      selection: ui.inputSelection,
+      ghost: ui.inputSelection ? "" : ui.ghostText
     })
     ui.inputCursor = inputLayout.normalizedCursor
     ui.inputLayout = inputLayout
@@ -2732,6 +2773,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   async function submitCurrentInput() {
     const line = ui.input.replace(/\r/g, "")
     if (!line.trim() || ui.busy) return
+    // 提交即作废预测：在途请求的结果对下一轮输入毫无意义
+    ui.ghostText = ""
+    ghostPredictor.cancel()
     ensureEventSinks()
 
     // --- Task 3: 处理中途补充需求确认 ---
@@ -3099,6 +3143,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     const chosen = suggestions[Math.max(0, Math.min(ui.selectedSuggestion, suggestions.length - 1))]
     ui.input = applySuggestionToInput(ui.input, chosen.name)
     ui.inputCursor = ui.input.length
+    onInputChanged()
   }
 
   function shouldApplySuggestionOnEnter() {
@@ -3370,6 +3415,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     ui.inputCursor = s
     ui.inputSelection = null
     ui.inputDragAnchor = -1
+    onInputChanged()
     return true
   }
 
@@ -3630,6 +3676,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     cancelPendingFrame()
     if (selectionClearTimer) clearTimeout(selectionClearTimer)
     textStreamBatcher.dispose()
+    ghostPredictor.dispose()
     deactivateTerminal({ pauseInput: true })
     setPermissionPromptHandler(null)
     setQuestionPromptHandler(null)
@@ -4105,6 +4152,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
             const tail = ui.input.slice(ui.inputCursor)
             ui.input = `${head}${tail}`
             ui.inputCursor = previousCursor
+            onInputChanged()
           }
           ui.selectedSuggestion = 0
           ui.suggestionOffset = 0
@@ -4118,6 +4166,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
             const head = ui.input.slice(0, ui.inputCursor)
             const tail = ui.input.slice(nextCursor)
             ui.input = `${head}${tail}`
+            onInputChanged()
           }
           ui.selectedSuggestion = 0
           ui.suggestionOffset = 0
@@ -4126,17 +4175,37 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         }
 
         if (key.name === "escape") {
+          // 先撤掉 ghost，第二次 Esc 才清空输入
+          if (ui.ghostText) {
+            ui.ghostText = ""
+            ghostPredictor?.cancel()
+            requestRender()
+            return
+          }
           ui.input = ""
           ui.inputCursor = 0
           ui.selectedSuggestion = 0
           ui.suggestionOffset = 0
+          ghostPredictor?.cancel()
           requestRender()
           return
         }
 
         if (key.name === "tab") {
-          if (key.shift) cycleModeForwardAndNotify()
-          else applyCurrentSuggestion()
+          if (key.shift) {
+            cycleModeForwardAndNotify()
+            return
+          }
+          // Tab 早已被 slash 补全占用，仅在没有补全候选时才用于接受 ghost
+          const hasSuggestions = slashSuggestions(ui.input, slashRouterOptions(localCustomCommands)).length > 0
+          if (!hasSuggestions && acceptGhost()) return
+          applyCurrentSuggestion()
+          return
+        }
+
+        // Ctrl+F 无歧义地接受 ghost，不与补全争抢
+        if (key.ctrl && key.name === "f") {
+          acceptGhost()
           return
         }
 
@@ -4288,6 +4357,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     cancelPendingFrame()
     if (selectionClearTimer) clearTimeout(selectionClearTimer)
     textStreamBatcher.dispose()
+    ghostPredictor.dispose()
     stopBusySpinner()
     activityRenderer.stop()
     uiEventUnsub()

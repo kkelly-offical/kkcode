@@ -284,6 +284,10 @@ export const DEFAULT_CONFIG = {
     },
     layout: "compact",
     markdown_render: true,
+    composer: {
+      // auto = 配置了 models.fast 才启用下一句预测；off = 始终关闭
+      ghost_text: "auto"
+    },
     terminal: {
       alternate_screen: "auto",
       mouse: "auto",

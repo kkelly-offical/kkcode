@@ -109,6 +109,7 @@ export function buildShortcutLegend() {
     "  Up/Down navigate suggestion/history",
     "  Left/Right/Home/End edit cursor",
     "  Ctrl+Up/Down scroll log   Ctrl+Home/End oldest/latest",
+    "  Tab/Ctrl+F accept ghost text (needs models.fast)",
     "  Shift+Tab cycle mode (Plan/Agent/Agent·Auto/Ultra/YOLO)",
     "  /permission cycle  cycle approval level",
     "  Esc interrupt turn  Ctrl+C×2 exit"
