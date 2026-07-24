@@ -4,8 +4,14 @@ import { LongAgentManager } from "../orchestration/longagent-manager.mjs"
 import { loadConfig } from "../config/load-config.mjs"
 import { eventLogPath } from "../storage/paths.mjs"
 
-export function createLongagentCommand() {
-  const cmd = new Command("longagent").description("manage longagent sessions")
+/**
+ * Ultra 会话管理。0.4.0 起主命令是 `kkcode ultra`，`kkcode longagent`
+ * 作为别名保留到 0.5.0。
+ */
+export function createLongagentCommand({ name = "ultra" } = {}) {
+  const cmd = new Command(name)
+    .alias(name === "ultra" ? "longagent" : "ultra")
+    .description("manage Ultra (staged delivery) sessions")
 
   cmd
     .command("status")

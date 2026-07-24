@@ -1,5 +1,73 @@
 # Changelog / 更新日志
 
+## 0.4.0
+
+### English
+
+- Collapse the mode vocabulary into a single flat cycle. `Shift+Tab` walks
+  Plan, Agent, Agent · Auto, Ultra and YOLO; `/mode` opens a picker. Each mode
+  is a (lane, approval) pair, and the lane identifiers stay on the 0.3.x
+  vocabulary so sessions, hooks and permission rules keep working.
+- Merge the six permission levels into four: `readonly`, `manual`,
+  `accept-edits` and `yolo`. The new third level is deliberately not named
+  `auto` — in 0.3.x `auto` meant edits still ask, so reusing the name would
+  have silently widened existing configs on upgrade.
+- Delete the unreachable `permission.mode` and `permission.default_policy`
+  decision branches, and fix `/permission allow|ask|deny`, which previously
+  wrote only those fields and was therefore a silent no-op.
+- Add **Always Allow** to the approval prompt. Grants persist as ordinary
+  `permission.rules[]` entries in the user config, scoped by `workspace` so
+  they neither leak into other repositories nor into a user's git history.
+  Manage them with `/permission list` and `/permission forget`.
+- Keep one Ultra orchestration. The 4stage and parallel implementations are
+  removed along with their config keys and the `/longagent 4stage|hybrid`
+  subcommands; `/ultra` is the new name and `/longagent` a deprecated alias.
+- Make the plan handoff real: choosing Build or Ultra Build after `exit_plan`
+  now switches mode and runs the build turn, instead of asking the user to
+  start it themselves.
+- Add a top-level `models` block with `main`, `fast` and `subagent`, replacing
+  five disconnected model override mechanisms. `fast` powers a cheap
+  non-streaming, audit-bypassed channel used by inline ghost text and session
+  titles; it never falls back to `main`.
+- Predict the next phrase inline in the composer when `models.fast` is set.
+  Ghost text produces no cells, never moves the cursor and never adds a row,
+  so mouse hit-testing and IME placement are unchanged.
+- Scroll the transcript while dragging past the edge of the log area. Selection
+  anchors moved to transcript-absolute coordinates, so a selection now survives
+  scrolling mid-drag and can extend beyond the visible viewport.
+- Every 0.3.x mode name, permission level and config key still works, mapping
+  automatically with a one-time deprecation notice. Removal is planned for
+  0.5.0.
+
+### 中文
+
+- 将模式词汇收敛为一条扁平循环：`Shift+Tab` 依次切换 Plan、Agent、
+  Agent · Auto、Ultra、YOLO，`/mode` 打开选择面板。每个模式都是
+  (航道, 审批档) 二元组，航道标识保持 0.3.x 不变，会话、hooks 与权限规则
+  全部照常工作。
+- 权限六级合并为四级：`readonly`、`manual`、`accept-edits`、`yolo`。第三档
+  刻意不叫 `auto`——0.3.x 的 `auto` 语义是「编辑仍需确认」，沿用同名会在升级时
+  静默放宽已有配置。
+- 删除 `permission.mode` 与 `permission.default_policy` 两条永不可达的判定
+  分支；修复 `/permission allow|ask|deny`，它此前只写这两个字段，实际是空操作。
+- 审批弹窗新增 **Always Allow**。授权以普通 `permission.rules[]` 形式写入用户级
+  配置，并带 `workspace` 限定，既不会跨仓库误放行，也不会进入用户的 git 历史。
+  可用 `/permission list` 与 `/permission forget` 管理。
+- Ultra 只保留一套编排：删除 4stage 与 parallel 两套实现及其配置键和
+  `/longagent 4stage|hybrid` 子命令；`/ultra` 为新名称，`/longagent` 保留为
+  弃用别名。
+- Plan 交接真正落地：`exit_plan` 后选择 Build 或 Ultra Build 会直接切换模式并
+  开始执行，而不再只是提示用户自己去启动。
+- 新增顶层 `models` 配置（`main` / `fast` / `subagent`），取代此前五套互不相通的
+  模型覆盖机制。`fast` 提供廉价的非流式、旁路审计通道，供输入框预测与会话标题
+  使用；它不会回退到 `main`。
+- 配置 `models.fast` 后，输入框会内联预测下一句。Ghost text 不产生 cells、
+  不移动光标、不新增行，鼠标点击与输入法定位与之前完全一致。
+- 拖动选择文字到日志区边缘外时自动滚动。选区锚点改用 transcript 绝对坐标，
+  边选边滚不再错位，选区也可以超出当前可见区域。
+- 0.3.x 的模式名、权限等级与配置键全部继续可用并自动映射，首次使用时打印一次性
+  弃用提示，计划在 0.5.0 移除。
+
 ## 0.3.3
 
 ### English

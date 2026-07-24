@@ -5,9 +5,8 @@
 # 使用方式：将此文件内容合并到你的 kkcode 配置文件中
 
 permission:
-  level: review
-  mode: auto
-  default_policy: deny
+  # 0.3.x 的 review 已并入 manual：编辑与危险命令都需确认
+  level: manual
   non_tty_default: deny
 
   rules:

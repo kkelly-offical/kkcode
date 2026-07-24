@@ -160,9 +160,12 @@ provider:
 # Agent 配置
 # =============================================================================
 agent:
-  default_mode: "assistant"   # assistant | plan | agent | code | coding | longagent
+  # 0.4.0 模式 id：plan | agent | agent-auto | ultra | yolo
+  # 旧写法 assistant / code / coding / longagent 仍可用并自动映射
+  default_mode: "agent"
   max_steps: 50
 
+  # Ultra（0.3.x 名为 longagent）；两个键名都能读，新配置用 agent.ultra
   longagent:
     max_iterations: 30
     no_progress_warning: 3
@@ -178,7 +181,6 @@ agent:
       task_max_retries: 2
 
     hybrid:
-      enabled: true
       intake: true
       completion_validation: true
       tdd_mode: false
@@ -195,10 +197,12 @@ agent:
 # 权限配置（详见 configs/permission-*.yaml 模板）
 # =============================================================================
 permission:
-  level: "auto"              # readonly | review | auto | edit | full-auto | yolo
-  mode: "auto"               # legacy compatibility: auto | manual | yolo
-  default_policy: "ask"       # allow | ask | deny
-  non_tty_default: "deny"     # allow | allow_once | deny
+  # readonly | manual | accept-edits | yolo
+  # 旧的 review/auto -> manual，edit/full-auto -> accept-edits，自动映射
+  level: "manual"
+  non_tty_default: "deny"     # allow_once | deny
+  # 审批弹窗里选择 "Always Allow" 时，规则会自动追加到用户级配置的
+  # permission.rules[]，并带上 workspace 限定与 source: learned 标记
   rules:
     - tool: read
       action: allow

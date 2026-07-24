@@ -32,7 +32,7 @@ test("README advertises kkcode as a CLI general assistant without making GUI pro
 
   assert.match(readme, /CLI 统一 Assistant 能力边界（0\.3\.0）/)
   assert.match(readme, /公共模式契约/)
-  assert.match(readme, /assistant.*默认统一助手/)
+  assert.match(readme, /agent.*默认统一助手/)
   assert.match(readme, /agent.*code.*coding.*兼容别名/)
   assert.match(readme, /\/plan.*只读编写开发计划/)
   assert.match(readme, /系统 \/ 运行时信息/)

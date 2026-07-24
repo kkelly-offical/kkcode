@@ -6,9 +6,9 @@
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 
-**Terminal-first unified Assistant with explicit Plan and LongAgent workflows for governed execution and extensible local development.**
+**Terminal-first coding agent with a five-mode cycle, governed approvals, and staged Ultra delivery.**
 
-**终端优先、可治理、可扩展的统一 Assistant，内置显式 Plan 与 LongAgent 工作流。**
+**终端优先、可治理、可扩展的编码智能体：五档模式循环、可治理审批、Ultra 分阶段交付。**
 kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同一个 CLI 工作台里，并且把权限、预算、审计、后台任务、MCP、技能与插件一起纳入统一执行面。
 
 **日本語**: ターミナル中心の個人アシスタント。安全な権限管理、Coding Agent、LongAgent、ローカル拡張を同じ CLI にまとめます。  
@@ -25,7 +25,7 @@ kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同�
 - [Installation / 安装](#installation)
 - [Quick Start / 快速开始](#quick-start)
 - [Capability Snapshot / 能力总览](#capability-snapshot)
-- [Modes & LongAgent / 模式与 LongAgent](#modes-and-longagent)
+- [Modes & Ultra / 模式与 Ultra](#modes-and-longagent)
 - [Safety & Permissions / 权限与安全](#safety-and-permissions)
 - [Delegation & Subagents / 委派与子智能体](#delegation-and-subagents)
 - [Integrations / 集成](#integrations)
@@ -47,13 +47,13 @@ kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同�
 
 **English**
 - kkcode is a terminal-native unified Assistant designed for local work, governed execution, coding, planning, and multi-stage delivery.
-- It keeps everyday work in `assistant`; `agent`/`code`/`coding` remain compatibility aliases, while `/plan` and `/longagent` are explicit workflows.
-- It is optimized for **CLI-first** and **LongAgent-first** workflows rather than GUI-first or marketplace-first product patterns.
+- Everyday work stays in `agent`; `Shift+Tab` cycles Plan, Agent, Agent · Auto, Ultra and YOLO, while `/plan` and `/ultra` remain explicit entry points.
+- It is optimized for **CLI-first** and **Ultra-first** workflows rather than GUI-first or marketplace-first product patterns.
 
 **中文**
 - kkcode 是一个面向终端原生工作流的统一 Assistant，强调本地事务、可治理执行、编码、规划和多阶段交付。
-- 日常工作统一进入 `assistant`；`agent`/`code`/`coding` 保留为兼容别名，`/plan` 与 `/longagent` 是显式工作流。
-- 它优先服务 **CLI-first**、**LongAgent-first** 的工程工作流，而不是 GUI 优先或 marketplace 优先的平台形态。
+- 日常工作统一进入 `agent`；`Shift+Tab` 循环 Plan、Agent、Agent · Auto、Ultra、YOLO，`/plan` 与 `/ultra` 仍是显式入口。
+- 它优先服务 **CLI-first**、**Ultra-first** 的工程工作流，而不是 GUI 优先或 marketplace 优先的平台形态。
 
 ---
 
@@ -62,13 +62,13 @@ kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同�
 
 **English**
 - **CLI-first**: core workflows stay in the terminal.
-- **LongAgent-first**: large tasks are planned, staged, and verified instead of improvised in one prompt.
+- **Ultra-first**: large tasks are planned, staged, and verified instead of improvised in one prompt.
 - **Governed execution**: permissions, budgets, audit logs, and recovery are built in.
 - **Local extensibility**: MCP, skills, commands, hooks, tools, and custom agents can all be mounted locally.
 
 **中文**
 - **CLI-first**：核心工作流都在终端内完成。
-- **LongAgent-first**：复杂任务先规划、分阶段、带门禁，而不是靠单轮 prompt 硬顶。
+- **Ultra-first**：复杂任务先规划、分阶段、带门禁，而不是靠单轮 prompt 硬顶。
 - **可治理执行**：权限、预算、审计、恢复、后台任务都是内建能力。
 - **本地可扩展**：MCP、skills、commands、hooks、tools、custom agents 都能本地挂载。
 
@@ -138,11 +138,12 @@ kkcode doctor
 
 | Area / 能力面 | Status / 状态 | Notes / 说明 |
 | --- | --- | --- |
-| Assistant / 统一助手 | Supported | Default CLI lane for Q&A, code edits, reviews, tests, and local automation |
-| Plan / 方案规划 | Supported | Read-only planning workflow that saves a plan file and asks how to build |
-| Agent / Code aliases | Compatible | `agent` / `code` / `coding` resolve to the unified Assistant |
-| LongAgent / 长程编排 | Supported | Multi-stage execution, retries, gates, resumable flow |
-| Permissions / 权限治理 | Supported | `readonly` / `review` / `auto` / `edit` / `full-auto` / `yolo` levels |
+| Agent / 统一助手 | Supported | Default CLI lane for Q&A, code edits, reviews, tests, and local automation |
+| Plan / 方案规划 | Supported | Read-only planning workflow that saves a plan file, then switches mode to build it |
+| Mode cycle / 模式循环 | Supported | `Shift+Tab` cycles Plan · Agent · Agent·Auto · Ultra · YOLO |
+| Ultra / 长程编排 | Supported | Multi-stage execution, retries, gates, resumable flow |
+| Permissions / 权限治理 | Supported | `readonly` / `manual` / `accept-edits` / `yolo` levels plus persistent Always Allow |
+| Ghost text / 输入预测 | Supported | Inline next-phrase prediction when `models.fast` is configured |
 | Background tasks / 后台任务 | Supported | Launch, inspect, wait, retry, cancel |
 | MCP / 模型上下文协议 | Supported | Local MCP discovery and registry |
 | Skills / Commands / Hooks | Supported | Local-first extensibility surface |
@@ -154,48 +155,76 @@ For a deeper boundary matrix, see [CLI General Assistant Capability Matrix](docs
 ---
 
 <a id="modes-and-longagent"></a>
-## Modes & LongAgent / 模式与 LongAgent
+## Modes & Ultra / 模式与 Ultra
 
-### Public lanes / 公开执行航道
+### The mode cycle / 模式循环
 
-| Mode | Purpose | Typical use |
-| --- | --- | --- |
-| `assistant` | unified daily assistant | Q&A, local files, code edits, tests, reviews, Git/GitHub, notes, automation |
-| `/plan [request]` | read-only development planning | saves a plan, then offers Assistant / LongAgent build choices |
-| `agent` / `code` / `coding` | compatibility aliases | resolve to the unified Assistant |
-| `/longagent [request]` | persistent staged orchestration | multi-file, multi-step, ownership-driven delivery |
+Press `Shift+Tab` to walk the five public modes. `/mode` opens a picker,
+`/mode <id>` switches directly.
+
+按 `Shift+Tab` 循环五个公开模式；`/mode` 打开选择面板，`/mode <id>` 直接切换。
+
+| Mode | Lane | Approval | Purpose |
+| --- | --- | --- | --- |
+| ⏸ `plan` | plan | readonly | read-only planning; never mutates files |
+| ● `agent` | assistant | manual | **default** — edits are confirmed before they land |
+| ▶ `agent-auto` | assistant | accept-edits | edits and subagents run unattended; risky shell still asks |
+| ⚡ `ultra` | longagent | accept-edits | staged multi-file delivery with gates, checkpoints and resume |
+| ☠ `yolo` | assistant | yolo | every approval prompt is skipped |
 
 **English**
-- `assistant` is the default unified lane for questions, coding, review, tests, and automation.
-- `agent` / `code` / `coding` are compatibility aliases for `assistant`.
-- Use `/longagent` explicitly when the task is clearly multi-stage or system-wide.
+- Every mode is a **(lane, approval) pair**: the lane decides how work is orchestrated, the approval level decides what runs without asking. The three `assistant`-lane modes differ only in approval.
+- `agent` is the default unified lane for questions, coding, review, tests, and automation.
+- Use `/ultra` explicitly when the task is clearly multi-stage or system-wide.
 - Interrupted work can be resumed with the same session context.
 
 **中文**
-- `assistant` 是默认统一入口，承接问答、编码、审查、测试和自动化。
-- `agent` / `code` / `coding` 是 `assistant` 的兼容别名。
-- 任务明显跨文件、跨阶段、影响面较大时，显式使用 `/longagent`。
+- 每个模式都是 **(航道, 审批档) 二元组**：航道决定如何编排，审批档决定什么可以免询问执行。三个 `assistant` 航道的模式只有审批档不同。
+- `agent` 是默认统一入口，承接问答、编码、审查、测试和自动化。
+- 任务明显跨文件、跨阶段、影响面较大时，显式使用 `/ultra`。
 - 中断后的工作可以在同一会话中继续，不需要从零开始。
-- **路由理由可见**：当 kkcode 建议使用 `longagent` 时，会解释为什么当前任务更适合重型工作流。
+- **路由理由可见**：当 kkcode 建议使用 `ultra` 时，会解释为什么当前任务更适合重型工作流。
+
+### Compatibility / 兼容旧写法
+
+0.3.x spellings keep working and map automatically, printing a one-time
+deprecation notice. Removal is planned for 0.5.0.
+
+0.3.x 的写法继续可用并自动映射，首次使用时打印一次性弃用提示，计划在 0.5.0 移除。
+
+| 0.3.x | 0.4.0 |
+| --- | --- |
+| `/longagent` | `/ultra` |
+| `assistant` / `agent` / `code` / `coding` | `agent` |
+| `permission.level: review` / `auto` | `manual` |
+| `permission.level: edit` / `full-auto` | `accept-edits` |
+| `permission.mode` / `permission.default_policy` | `permission.level` |
+
+Lane identifiers (`assistant` / `plan` / `longagent`) are unchanged, so
+sessions, hooks and `permission.rules[].modes[]` keep working.
+
+航道标识（`assistant` / `plan` / `longagent`）保持不变，会话、hooks 与
+`permission.rules[].modes[]` 都不受影响。
 
 ### CLI 统一 Assistant 能力边界（0.3.0）
 
 **公共模式契约**
 
-- `assistant`：默认统一助手，承接问答、本地检查、编码修改、测试验证、审查、网页查询、Git/GitHub、笔记和任务整理。
-- `/plan`：**只读编写开发计划**，保存计划文件后提供 Assistant / LongAgent / compact 执行选择。
-- `agent` / `code` / `coding`：兼容别名，内部归一为 `assistant`。
-- `/longagent`：显式重型开发模式，用于跨文件、多阶段、需要恢复和验收的任务。
+- `agent`：默认统一助手，承接问答、本地检查、编码修改、测试验证、审查、网页查询、Git/GitHub、笔记和任务整理。0.3.x 的 `assistant` 归一到这里。
+- `/plan`：**只读编写开发计划**，保存计划文件后提供 Build / Ultra Build / compact 执行选择，选定后**真正切换模式并开始执行**。
+- `assistant` / `agent` / `code` / `coding`：兼容别名，内部归一为 `agent` 模式（`assistant` 航道）。
+- `/ultra`：显式重型开发模式，用于跨文件、多阶段、需要恢复和验收的任务。
 
 **能力边界速览**
 - 系统 / 运行时信息
 - 本地目录 / 文件 / 日志检查
 - 仓库 / 发布辅助
 - 这**不代表** kkcode 已经承诺 GUI / 桌面自动化能力
-- 默认先在 `assistant` 内处理普通终端事务和编码小闭环；只有明确重型任务才提示 `/longagent`
+- 默认先在 `assistant` 内处理普通终端事务和编码小闭环；只有明确重型任务才提示 `/ultra`
 
 **Further reading / 延伸阅读**
-- [0.1.13 Mode Lane Contract](docs/kkcode-0.1.13-mode-lane-contract.md)
+- [0.4.0 Mode & Approval Contract](docs/kkcode-0.4.0-mode-contract.md)
+- [0.1.13 Mode Lane Contract](docs/kkcode-0.1.13-mode-lane-contract.md)（历史归档）
 - [Agent Mode Tolerance Contract](docs/kkcode-0.1.12-agent-mode-tolerance-contract.md)
 
 ---
@@ -214,9 +243,23 @@ For a deeper boundary matrix, see [CLI General Assistant Capability Matrix](docs
 - 预算与用量控制让长会话、长任务仍然处于可治理状态。
 
 **Policy examples / 策略示例**
-- `permission.level: readonly | review | auto | edit | full-auto | yolo`
-- `permission.default_policy: ask | allow | deny` remains a legacy compatibility field
-- rule-based overrides by tool / mode / file pattern / command prefix
+- `permission.level: readonly | manual | accept-edits | yolo`
+- switching mode rewrites the level; `/permission cycle` walks it independently
+- rule-based overrides by tool / mode / file pattern / command prefix / workspace
+- `permission.mode` and `permission.default_policy` are legacy fields that now map onto `permission.level`
+
+**Always Allow / 持久授权**
+
+The approval prompt offers `Allow Once`, `Allow Session`, `Always Allow` and
+`Deny`. **Always Allow** writes a rule into the **user** config with a
+`workspace` field scoping it to the current project, so the grant survives a
+restart without leaking into other repositories or into your git history.
+Manage them with `/permission list` and `/permission forget <n|all>`.
+
+审批弹窗提供 `Allow Once` / `Allow Session` / `Always Allow` / `Deny` 四项。
+**Always Allow** 会把规则写入**用户级**配置并带上 `workspace` 限定，重启后依然
+有效，同时不会泄漏到其他仓库或用户的 git 历史。可用 `/permission list` 查看、
+`/permission forget <n|all>` 撤销。
 
 ---
 
@@ -360,7 +403,7 @@ details.
 - `session`
 - `background`
 - `agent`
-- `longagent`
+- `ultra`
 - `mcp`
 - `skill`
 - `config`
@@ -380,7 +423,7 @@ Run `kkcode --help` or `kkcode <command> --help` for the full surface.
 ### Key config themes / 关键配置主题
 - provider/model selection
 - permission and trust policy
-- agent / longagent behavior
+- mode, approval and Ultra behavior
 - usage and budget limits
 - UI / theme settings
 - MCP and extension loading
@@ -447,7 +490,7 @@ to the review model.
 - `src/repl/` — extracted REPL seams
 - `src/ui/` — REPL panels and render helpers
 - `src/session/` — execution loop, memory, recovery, prompts
-- `src/orchestration/` — background and longagent orchestration
+- `src/orchestration/` — background and Ultra orchestration
 - `src/skill/`, `src/plugin/`, `src/mcp/` — extension systems
 
 **Useful docs / 推荐文档**
@@ -513,12 +556,12 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current stable version / 当前稳定版本**: `v0.3.3`
+**Current stable version / 当前稳定版本**: `v0.4.0`
 
-`v0.3.3` is the current stable npm and GitHub release. The `main` branch remains
+`v0.4.0` is the current stable npm and GitHub release. The `main` branch remains
 the development line for subsequent fixes.
 
-`v0.3.3` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
+`v0.4.0` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
 
 Use the Kimi Code preset without placing credentials in YAML:
 
@@ -538,6 +581,11 @@ with authorization values redacted.
 **Package / 包地址**: [npm](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 
 **English**
+- `0.4.0` collapses the mode vocabulary into a five-mode `Shift+Tab` cycle
+  (Plan / Agent / Agent · Auto / Ultra / YOLO), folds six permission levels into
+  four, makes Always Allow persist across restarts, keeps one Ultra
+  orchestration, adds a `models.fast` channel with inline ghost text, and
+  scrolls the transcript while dragging a selection.
 - `0.3.3` rebuilds terminal interaction around native cursor placement, mouse
   selection/scroll/click handling, transient toasts, Markdown transcripts,
   collapsible Thinking/tool details, red/green diffs, and five post-failure
@@ -552,6 +600,10 @@ with authorization values redacted.
 - `0.2.1` rebuilt kkcode around Assistant as the default general-purpose lane, with dedicated Agent and LongAgent modes for coding work.
 
 **中文**
+- `0.4.0` 将模式词汇收敛为 `Shift+Tab` 五档循环（Plan / Agent / Agent · Auto /
+  Ultra / YOLO），权限六级合并为四级，Always Allow 授权重启后依然有效，
+  Ultra 只保留一套编排，新增 `models.fast` 通道与输入框 ghost text，
+  拖选文字时支持边选边滚。
 - `0.3.3` 重构终端交互：真实光标与输入法定位、鼠标拖选/滚轮/点击、瞬时 Toast、
   Markdown 对话、可折叠 Thinking/工具详情、红绿 Diff，以及首次失败后的最多 5 次
   模型重连；流式内容一旦开始就绝不重放请求。

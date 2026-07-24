@@ -8,9 +8,8 @@
 # 使用方式：将此文件内容合并到你的 kkcode 配置文件中
 
 permission:
-  level: full-auto
-  mode: auto
-  default_policy: allow
+  # 0.3.x 的 full-auto 已并入 accept-edits：编辑与子任务放行，危险命令仍确认
+  level: accept-edits
   non_tty_default: allow_once
 
   rules:

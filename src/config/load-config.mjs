@@ -91,6 +91,22 @@ async function loadOne(filePath) {
   }
 }
 
+/**
+ * 把 0.4.0 的 `agent.ultra` 归一到内部仍在使用的 `agent.longagent`。
+ * 两个键同时存在时 ultra 优先——它是新写法。
+ */
+function normalizeUltraKey(raw) {
+  if (!raw?.agent?.ultra) return raw
+  const { ultra, ...agentRest } = raw.agent
+  return {
+    ...raw,
+    agent: {
+      ...agentRest,
+      longagent: mergeObject(agentRest.longagent || {}, ultra)
+    }
+  }
+}
+
 export async function loadConfig(cwd = process.cwd()) {
   const resolvedCwd = path.resolve(cwd)
   const userPath = await firstExisting(userConfigCandidates())
@@ -98,8 +114,8 @@ export async function loadConfig(cwd = process.cwd()) {
 
   const userLoaded = await loadOne(userPath)
   const projectLoaded = await loadOne(projectPath)
-  let userConfig = mergeObject(DEFAULT_CONFIG, userLoaded.config)
-  let merged = mergeObject(userConfig, projectLoaded.config)
+  let userConfig = mergeObject(DEFAULT_CONFIG, normalizeUltraKey(userLoaded.config))
+  let merged = mergeObject(userConfig, normalizeUltraKey(projectLoaded.config))
 
   // .env overlay — highest priority, KKCODE_ prefixed vars
   let envPath = null

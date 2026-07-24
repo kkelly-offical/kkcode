@@ -5,9 +5,8 @@
 # 使用方式：将此文件内容合并到你的 kkcode 配置文件中
 
 permission:
-  level: auto
-  mode: auto
-  default_policy: ask
+  # 0.3.x 的 auto 已并入 manual：只读与白名单命令自动放行，编辑前确认
+  level: manual
   non_tty_default: deny
 
   rules:

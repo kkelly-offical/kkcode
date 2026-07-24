@@ -74,4 +74,18 @@ agent:
     assert.equal(result.source.projectPath, null)
     assert.equal(result.source.userPath, null)
   })
+
+  it("normalizes agent.ultra onto the internal agent.longagent key", async () => {
+    await writeFile(
+      path.join(tmpDir, "config.yaml"),
+      "agent:\n  ultra:\n    max_iterations: 42\n    hybrid:\n      intake: false\n",
+      "utf8"
+    )
+    const { config } = await loadConfig(tmpDir)
+    assert.equal(config.agent.longagent.max_iterations, 42)
+    assert.equal(config.agent.longagent.hybrid.intake, false)
+    // defaults from the untouched subtree survive the merge
+    assert.equal(typeof config.agent.longagent.heartbeat_timeout_ms, "number")
+    assert.equal(config.agent.ultra, undefined)
+  })
 })

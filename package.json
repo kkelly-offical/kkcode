@@ -1,6 +1,6 @@
 {
   "name": "@kkelly-offical/kkcode",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "description": "CLI-first unified Assistant with explicit Plan and LongAgent workflows, governed permissions, MCP integrations, and extensible automation.",
   "type": "module",
   "packageManager": "npm@11.13.0",
@@ -33,6 +33,7 @@
     "docs/config.example.yaml",
     "docs/gateway-model-discovery.md",
     "docs/terminal-experience-0.3.3.md",
+    "docs/kkcode-0.4.0-mode-contract.md",
     "CHANGELOG.md",
     "NOTICE.md",
     "LICENSE"
