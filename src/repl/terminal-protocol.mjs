@@ -1,12 +1,35 @@
+import { StringDecoder } from "node:string_decoder"
+
 const COMPLETE_SGR_MOUSE_RE = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/g
-// A bare ESC is a real keyboard input (cancel/abort), not enough evidence of
-// a split SGR report. Retain only prefixes from ESC[ onward.
-const POSSIBLE_MOUSE_SUFFIX_RE = /\x1b(?:\[|\[<[\d;]*)$/
+// stdin chunks may end immediately after ESC, before the rest of an SGR
+// report arrives. Keep the ambiguous byte until the caller explicitly flushes
+// it (normally after a short escape-key timeout).
+const POSSIBLE_MOUSE_SUFFIX_RE = /\x1b(?:\[|\[<[\d;]*)?$/
 const BRACKETED_PASTE_START = "\x1b[200~"
 const BRACKETED_PASTE_END = "\x1b[201~"
 
-function asText(value) {
-  return Buffer.isBuffer(value) ? value.toString("utf8") : String(value || "")
+export function createUtf8TextDecoder() {
+  let decoder = new StringDecoder("utf8")
+
+  return {
+    feed(value) {
+      if (Buffer.isBuffer(value)) return decoder.write(value)
+      const buffered = decoder.end()
+      decoder = new StringDecoder("utf8")
+      return buffered + String(value || "")
+    },
+
+    flush() {
+      const text = decoder.end()
+      decoder = new StringDecoder("utf8")
+      return text
+    },
+
+    reset() {
+      decoder.end()
+      decoder = new StringDecoder("utf8")
+    }
+  }
 }
 
 /**
@@ -17,10 +40,11 @@ function asText(value) {
  */
 export function createSgrMouseDecoder() {
   let pending = ""
+  const utf8 = createUtf8TextDecoder()
 
   return {
     feed(chunk) {
-      let source = pending + asText(chunk)
+      let source = pending + utf8.feed(chunk)
       pending = ""
       const events = []
 
@@ -51,14 +75,19 @@ export function createSgrMouseDecoder() {
       return { events, text: source }
     },
 
+    hasPending() {
+      return pending.length > 0
+    },
+
     flush() {
-      const text = pending
+      const text = pending + utf8.flush()
       pending = ""
       return text
     },
 
     reset() {
       pending = ""
+      utf8.reset()
     }
   }
 }
@@ -80,10 +109,11 @@ export function createBracketedPasteDecoder() {
   let pending = ""
   let paste = ""
   let inPaste = false
+  const utf8 = createUtf8TextDecoder()
 
   return {
     feed(chunk) {
-      let source = pending + asText(chunk)
+      let source = pending + utf8.feed(chunk)
       pending = ""
       let text = ""
       const pastes = []
@@ -98,8 +128,7 @@ export function createBracketedPasteDecoder() {
             paste = ""
             continue
           }
-          // Do not retain a lone ESC; it must reach readline immediately.
-          const held = trailingPrefixLength(source, BRACKETED_PASTE_START, 2)
+          const held = trailingPrefixLength(source, BRACKETED_PASTE_START)
           text += held ? source.slice(0, -held) : source
           pending = held ? source.slice(-held) : ""
           source = ""
@@ -115,7 +144,7 @@ export function createBracketedPasteDecoder() {
           inPaste = false
           continue
         }
-        const held = trailingPrefixLength(source, BRACKETED_PASTE_END, 2)
+        const held = trailingPrefixLength(source, BRACKETED_PASTE_END)
         paste += held ? source.slice(0, -held) : source
         pending = held ? source.slice(-held) : ""
         source = ""
@@ -124,12 +153,38 @@ export function createBracketedPasteDecoder() {
       return { text, pastes, inPaste }
     },
 
+    hasPending() {
+      return pending.length > 0
+    },
+
+    flush() {
+      const buffered = pending + utf8.flush()
+      pending = ""
+      if (inPaste) {
+        paste += buffered
+        return { text: "", pastes: [], inPaste }
+      }
+      return { text: buffered, pastes: [], inPaste }
+    },
+
     reset() {
       pending = ""
       paste = ""
       inPaste = false
+      utf8.reset()
     }
   }
+}
+
+export function isScreenRowWithin(row, startRow, endRow) {
+  const current = Number(row)
+  const start = Number(startRow)
+  const end = Number(endRow)
+  return Number.isFinite(current) &&
+    Number.isFinite(start) &&
+    Number.isFinite(end) &&
+    current >= start &&
+    current <= end
 }
 
 export function resolveTerminalFeatures(config = {}, env = process.env) {

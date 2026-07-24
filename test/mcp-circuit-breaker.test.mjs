@@ -54,6 +54,7 @@ process.stdin.resume();
 test("stdio client reconnects after server crash", async (t) => {
   const client = createStdioMcpClient("cbReconnect", {
     command: nodeCommand(healthyServer),
+    shell: false,
     framing: "content-length",
     timeout_ms: 2000,
     startup_timeout_ms: 2000,
@@ -74,6 +75,7 @@ test("stdio client reconnects after server crash", async (t) => {
 test("stdio client circuit opens after repeated spawn failures", async (t) => {
   const client = createStdioMcpClient("cbCircuit", {
     command: nodeCommand(healthyServer),
+    shell: false,
     framing: "content-length",
     timeout_ms: 1000,
     startup_timeout_ms: 1000,

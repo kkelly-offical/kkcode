@@ -1,20 +1,66 @@
-import { spawnSync } from "node:child_process"
+import { spawn as spawnProcess } from "node:child_process"
 
 const ANSI_RE = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g
+const WINDOWS_CLIPBOARD_SCRIPT = [
+  "$encoded=[Console]::In.ReadToEnd()",
+  "$bytes=[Convert]::FromBase64String($encoded)",
+  "Set-Clipboard -Value ([Text.Encoding]::UTF8.GetString($bytes))"
+].join(";")
 
-function runClipboardCommand(command, args, text, spawn = spawnSync) {
-  try {
-    const result = spawn(command, args, {
-      input: text,
-      encoding: "utf8",
-      stdio: ["pipe", "ignore", "ignore"],
-      timeout: 1500,
-      windowsHide: true
+export function runClipboardCommand(command, args, text, {
+  spawn = spawnProcess,
+  timeoutMs = 1500
+} = {}) {
+  return new Promise((resolve) => {
+    let child
+    let timer = null
+    let settled = false
+
+    const finish = (ok) => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      resolve(Boolean(ok))
+    }
+    const abort = () => {
+      try {
+        child?.kill?.()
+      } catch {}
+      finish(false)
+    }
+
+    try {
+      child = spawn(command, args, {
+        stdio: ["pipe", "ignore", "ignore"],
+        windowsHide: true
+      })
+    } catch {
+      finish(false)
+      return
+    }
+
+    if (!child || typeof child.once !== "function" || !child.stdin) {
+      abort()
+      return
+    }
+
+    child.once("error", abort)
+    child.once("close", (code, signal) => {
+      // A missing exit code (for example, termination by a signal) must never
+      // be mistaken for a successful clipboard write.
+      finish(code === 0 && signal == null)
     })
-    return !result?.error && Number(result?.status ?? 0) === 0
-  } catch {
-    return false
-  }
+    child.stdin.once?.("error", abort)
+
+    timer = setTimeout(abort, Math.max(1, Number(timeoutMs) || 1500))
+    timer.unref?.()
+
+    try {
+      child.stdin.end(String(text || ""), "utf8")
+    } catch {
+      abort()
+    }
+  })
 }
 
 export function osc52Sequence(text) {
@@ -41,11 +87,12 @@ export function copyableFrameLine(frameLines, row, {
  * OSC 52 reaches the user's terminal over SSH/tmux; native commands cover
  * terminals that intentionally disable OSC 52.
  */
-export function copyTerminalText(text, {
+export async function copyTerminalText(text, {
   output = process.stdout,
   platform = process.platform,
   env = process.env,
-  spawn = spawnSync
+  spawn = spawnProcess,
+  timeoutMs = 1500
 } = {}) {
   const value = String(text || "")
   if (!value) {
@@ -77,16 +124,28 @@ export function copyTerminalText(text, {
     }
   }
 
+  const windowsInput = Buffer.from(value, "utf8").toString("base64")
   const candidates = platform === "win32"
-    ? [["powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "$input | Set-Clipboard"]]]
+    ? [
+        ["pwsh.exe", ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_CLIPBOARD_SCRIPT], windowsInput],
+        ["powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_CLIPBOARD_SCRIPT], windowsInput]
+      ]
     : platform === "darwin"
-      ? [["pbcopy", []]]
+      ? [["pbcopy", [], value]]
       : env.WAYLAND_DISPLAY
-        ? [["wl-copy", []], ["xclip", ["-selection", "clipboard"]], ["xsel", ["--clipboard", "--input"]]]
-        : [["xclip", ["-selection", "clipboard"]], ["xsel", ["--clipboard", "--input"]], ["wl-copy", []]]
+        ? [
+            ["wl-copy", [], value],
+            ["xclip", ["-selection", "clipboard"], value],
+            ["xsel", ["--clipboard", "--input"], value]
+          ]
+        : [
+            ["xclip", ["-selection", "clipboard"], value],
+            ["xsel", ["--clipboard", "--input"], value],
+            ["wl-copy", [], value]
+          ]
 
-  for (const [command, args] of candidates) {
-    if (runClipboardCommand(command, args, value, spawn)) {
+  for (const [command, args, input] of candidates) {
+    if (await runClipboardCommand(command, args, input, { spawn, timeoutMs })) {
       return {
         ok: true,
         confirmed: true,

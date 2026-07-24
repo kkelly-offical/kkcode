@@ -19,17 +19,30 @@ test("post-edit formatter executes local prettier without shell interpolation", 
   const cwd = await mkdtemp(path.join(tmpdir(), "kkcode-post-edit-format-"))
   try {
     const binDir = path.join(cwd, "node_modules", ".bin")
+    const prettierDir = path.join(cwd, "node_modules", "prettier")
     const prettierPath = path.join(binDir, process.platform === "win32" ? "prettier.cmd" : "prettier")
+    const prettierRunner = path.join(prettierDir, "bin", "prettier.mjs")
     const markerPath = path.join(cwd, "marker-from-injection")
     const argsLog = path.join(cwd, "prettier-args.json")
-    const maliciousPath = 'payload"; touch marker-from-injection; #.js'
+    const maliciousPath = process.platform === "win32"
+      ? "payload & echo marker-from-injection ; #.js"
+      : 'payload"; touch marker-from-injection; #.js'
 
     await mkdir(binDir, { recursive: true })
+    await mkdir(path.dirname(prettierRunner), { recursive: true })
     await writeFile(path.join(cwd, maliciousPath), "const x = 1\n", "utf8")
-    await writeFile(prettierPath, `#!/usr/bin/env node
+    await writeFile(path.join(prettierDir, "package.json"), JSON.stringify({
+      name: "prettier",
+      bin: { prettier: "bin/prettier.mjs" }
+    }), "utf8")
+    await writeFile(prettierRunner, `
 import { writeFileSync } from "node:fs"
 writeFileSync(${JSON.stringify(argsLog)}, JSON.stringify(process.argv.slice(2)))
-`, { encoding: "utf8", mode: 0o755 })
+`, "utf8")
+    const launcher = process.platform === "win32"
+      ? `@echo off\r\n"${process.execPath}" "${prettierRunner}" %*\r\n`
+      : `#!/bin/sh\nexec "${process.execPath}" "${prettierRunner}" "$@"\n`
+    await writeFile(prettierPath, launcher, { encoding: "utf8", mode: 0o755 })
 
     await postEditFormat.tool.after({
       toolName: "write",

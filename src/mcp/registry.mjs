@@ -429,7 +429,9 @@ export const McpRegistry = {
     const serverConfig = state.configured.get(name)
     if (!serverConfig) throw new Error(`mcp server not configured: ${name}`)
     const existing = state.servers.get(name)
-    if (existing && typeof existing.shutdown === "function") existing.shutdown()
+    if (existing && typeof existing.shutdown === "function") {
+      await Promise.resolve(existing.shutdown())
+    }
     state.servers.delete(name)
     for (const [id, t] of state.tools) {
       if (t.server === name) state.tools.delete(id)
@@ -443,7 +445,9 @@ export const McpRegistry = {
   async addServer(name, serverConfig) {
     if (state.servers.has(name)) {
       const existing = state.servers.get(name)
-      if (typeof existing.shutdown === "function") existing.shutdown()
+      if (typeof existing.shutdown === "function") {
+        await Promise.resolve(existing.shutdown())
+      }
       state.servers.delete(name)
       for (const [id, t] of state.tools) {
         if (t.server === name) state.tools.delete(id)
@@ -491,7 +495,9 @@ export const McpRegistry = {
 
   removeServer(name) {
     const client = state.servers.get(name)
-    if (client && typeof client.shutdown === "function") client.shutdown()
+    const shutdown = client && typeof client.shutdown === "function"
+      ? Promise.resolve(client.shutdown())
+      : Promise.resolve()
     state.servers.delete(name)
     state.configured.delete(name)
     state.health.delete(name)
@@ -501,6 +507,7 @@ export const McpRegistry = {
     for (const [id, p] of state.prompts) {
       if (p.server === name) state.prompts.delete(id)
     }
+    return shutdown
   },
 
   async shutdown() {

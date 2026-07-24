@@ -109,8 +109,21 @@ async function readPackageScripts(cwd) {
   }
 }
 
-function npmBin() {
-  return process.platform === "win32" ? "npm.cmd" : "npm"
+function npmInvocation(args) {
+  if (process.platform !== "win32") {
+    return { command: "npm", args, shell: false }
+  }
+
+  const npmExecPath = String(process.env.npm_execpath || "").trim()
+  if (npmExecPath && /\.(?:c?js|mjs)$/i.test(npmExecPath)) {
+    return {
+      command: process.execPath,
+      args: [npmExecPath, ...args],
+      shell: false
+    }
+  }
+
+  return { command: "npm.cmd", args, shell: true }
 }
 
 function outputSnippet(result) {
@@ -121,18 +134,31 @@ function outputSnippet(result) {
   return lines.slice(-12).join(" | ")
 }
 
-async function runCommand({ command, args, cwd, timeoutMs = DEFAULT_GATE_TIMEOUT_MS }) {
+async function runCommand({ command, args, cwd, shell = false, timeoutMs = DEFAULT_GATE_TIMEOUT_MS }) {
   return new Promise((resolve) => {
     let done = false
     let stdout = ""
     let stderr = ""
     let timedOut = false
 
-    const child = spawn(command, args, {
-      cwd,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"]
-    })
+    let child
+    try {
+      child = spawn(command, args, {
+        cwd,
+        windowsHide: true,
+        shell,
+        stdio: ["ignore", "pipe", "pipe"]
+      })
+    } catch (error) {
+      resolve({
+        ok: false,
+        code: null,
+        stdout,
+        stderr: String(error?.message || error),
+        timedOut: false
+      })
+      return
+    }
 
     const timer = setTimeout(() => {
       timedOut = true
@@ -186,8 +212,7 @@ async function checkBuildGate({ cwd, config }) {
     return { enabled: true, status: "not_applicable", reason: "build script not found" }
   }
   const result = await runCommand({
-    command: npmBin(),
-    args: ["run", "build", "--silent"],
+    ...npmInvocation(["run", "build", "--silent"]),
     cwd
   })
   if (result.ok) {
@@ -216,8 +241,7 @@ async function checkTestGate({ cwd, config }) {
   let result
   if (scripts?.test) {
     result = await runCommand({
-      command: npmBin(),
-      args: ["run", "test", "--silent"],
+      ...npmInvocation(["run", "test", "--silent"]),
       cwd
     })
   } else if (hasTestDir || hasNodeTestDir) {

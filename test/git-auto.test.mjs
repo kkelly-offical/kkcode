@@ -3,7 +3,7 @@ import assert from "node:assert"
 import { mkdir, writeFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { execSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
 
 // 测试 Git 自动化功能
 // 注意：这些测试需要在有 Git 环境的系统上运行
@@ -82,19 +82,28 @@ describe("Git Auto - Integration Tests", () => {
   let testRepoPath = null
   let originalCwd = process.cwd()
 
+  function git(...args) {
+    return execFileSync("git", args, {
+      cwd: testRepoPath,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    })
+  }
+
   // 在所有测试前创建临时 Git 仓库
   async function setupTestRepo() {
     testRepoPath = await mkdtemp(path.join(tmpdir(), "kkcode-test-"))
     
     // 初始化 Git 仓库
-    execSync("git init", { cwd: testRepoPath })
-    execSync("git config user.email 'test@test.com'", { cwd: testRepoPath })
-    execSync("git config user.name 'Test User'", { cwd: testRepoPath })
+    git("init")
+    git("config", "user.email", "test@test.com")
+    git("config", "user.name", "Test User")
+    git("config", "core.autocrlf", "false")
     
     // 创建初始提交
     await writeFile(path.join(testRepoPath, "initial.txt"), "initial content")
-    execSync("git add .", { cwd: testRepoPath })
-    execSync("git commit -m 'initial commit'", { cwd: testRepoPath })
+    git("add", ".")
+    git("commit", "-m", "initial commit")
     
     return testRepoPath
   }
@@ -103,7 +112,7 @@ describe("Git Auto - Integration Tests", () => {
   async function cleanupTestRepo() {
     if (testRepoPath) {
       try {
-        await rm(testRepoPath, { recursive: true, force: true })
+        await rm(testRepoPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       } catch { /* ignore */ }
     }
     process.chdir(originalCwd)
@@ -196,7 +205,8 @@ describe("Git Auto - Integration Tests", () => {
       
       // 先写入原始内容
       await writeFile(path.join(testRepoPath, "patch.txt"), "hello world\n")
-      execSync("git add . && git commit -m 'add file'", { cwd: testRepoPath })
+      git("add", ".")
+      git("commit", "-m", "add file")
       
       // 创建一个可以应用的 patch
       const diff = `diff --git a/patch.txt b/patch.txt
@@ -237,7 +247,8 @@ describe("Git Auto - Integration Tests", () => {
       // 写入原始内容
       const filePath = path.join(testRepoPath, "apply.txt")
       await writeFile(filePath, "original content\n")
-      execSync("git add . && git commit -m 'add file'", { cwd: testRepoPath })
+      git("add", ".")
+      git("commit", "-m", "add file")
       
       // 创建 patch
       const diff = `diff --git a/apply.txt b/apply.txt

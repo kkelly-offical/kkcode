@@ -28,7 +28,7 @@ async function withInitializedMcp(run) {
     })
     return await run(ctx)
   } finally {
-    McpRegistry.shutdown()
+    await McpRegistry.shutdown()
   }
 }
 

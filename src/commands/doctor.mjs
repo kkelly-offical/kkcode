@@ -262,7 +262,7 @@ export function createDoctorCommand() {
         printTextReport(report, report.themeWarnings || [])
         if (!report.ok) process.exitCode = 1
       } finally {
-        McpRegistry.shutdown()
+        await McpRegistry.shutdown()
       }
     })
 }

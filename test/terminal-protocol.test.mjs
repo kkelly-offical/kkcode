@@ -4,8 +4,10 @@ import {
   classifySgrMouseEvent,
   createBracketedPasteDecoder,
   createSgrMouseDecoder,
+  createUtf8TextDecoder,
   enterTerminalSequence,
   exitTerminalSequence,
+  isScreenRowWithin,
   normalizeMouseSelection,
   renderTerminalFrame,
   resolveTerminalFeatures
@@ -49,16 +51,76 @@ test("SGR mouse decoder buffers split reports and preserves keyboard bytes", () 
   })
 })
 
-test("bare Escape is delivered instead of retained as a protocol prefix", () => {
+test("terminal decoders preserve UTF-8 graphemes split across byte chunks", () => {
+  const value = "你🙂"
+  const bytes = Buffer.from(value, "utf8")
+  const plain = createUtf8TextDecoder()
   const mouse = createSgrMouseDecoder()
-  assert.deepEqual(mouse.feed("\x1b"), { events: [], text: "\x1b" })
+
+  assert.equal(
+    plain.feed(bytes.subarray(0, 1)) +
+      plain.feed(bytes.subarray(1, 4)) +
+      plain.feed(bytes.subarray(4)),
+    value
+  )
+  assert.equal(
+    mouse.feed(bytes.subarray(0, 2)).text +
+      mouse.feed(bytes.subarray(2, 5)).text +
+      mouse.feed(bytes.subarray(5)).text,
+    value
+  )
+})
+
+test("single-line composer rows include their final screen row", () => {
+  assert.equal(isScreenRowWithin(9, 9, 9), true)
+  assert.equal(isScreenRowWithin(8, 9, 9), false)
+  assert.equal(isScreenRowWithin(10, 9, 9), false)
+  assert.equal(isScreenRowWithin(11, 9, 11), true)
+})
+
+test("bare Escape is retained until explicitly flushed", () => {
+  const mouse = createSgrMouseDecoder()
+  assert.deepEqual(mouse.feed("\x1b"), { events: [], text: "" })
+  assert.equal(mouse.hasPending(), true)
+  assert.equal(mouse.flush(), "\x1b")
+  assert.equal(mouse.hasPending(), false)
 
   const paste = createBracketedPasteDecoder()
   assert.deepEqual(paste.feed("\x1b"), {
+    text: "",
+    pastes: [],
+    inPaste: false
+  })
+  assert.equal(paste.hasPending(), true)
+  assert.deepEqual(paste.flush(), {
     text: "\x1b",
     pastes: [],
     inPaste: false
   })
+  assert.equal(paste.hasPending(), false)
+})
+
+test("SGR mouse decoder accepts a report split immediately after Escape", () => {
+  const decoder = createSgrMouseDecoder()
+  assert.deepEqual(decoder.feed("a\x1b"), { events: [], text: "a" })
+  assert.equal(decoder.hasPending(), true)
+
+  const result = decoder.feed("[<0;4;7Mb")
+  assert.equal(result.text, "b")
+  assert.equal(result.events.length, 1)
+  assert.deepEqual(result.events[0], {
+    button: 0,
+    code: 0,
+    x: 4,
+    y: 7,
+    release: false,
+    motion: false,
+    wheel: null,
+    shift: false,
+    alt: false,
+    ctrl: false
+  })
+  assert.equal(decoder.hasPending(), false)
 })
 
 test("primary motion is classified as drag rather than another press", () => {
@@ -127,6 +189,45 @@ test("bracketed paste decoder returns multiline text atomically across chunks", 
   assert.deepEqual(decoder.feed("ond\x1b[201~y"), {
     text: "y",
     pastes: ["first\nsecond"],
+    inPaste: false
+  })
+})
+
+test("bracketed paste markers may be split immediately after Escape", () => {
+  const decoder = createBracketedPasteDecoder()
+  assert.deepEqual(decoder.feed("before\x1b"), {
+    text: "before",
+    pastes: [],
+    inPaste: false
+  })
+  assert.equal(decoder.hasPending(), true)
+  assert.deepEqual(decoder.feed("[200~payload\x1b"), {
+    text: "",
+    pastes: [],
+    inPaste: true
+  })
+  assert.equal(decoder.hasPending(), true)
+  assert.deepEqual(decoder.feed("[201~after"), {
+    text: "after",
+    pastes: ["payload"],
+    inPaste: false
+  })
+  assert.equal(decoder.hasPending(), false)
+})
+
+test("bracketed paste flush releases an ambiguous Escape into its current stream", () => {
+  const decoder = createBracketedPasteDecoder()
+  decoder.feed("\x1b[200~value\x1b")
+  assert.equal(decoder.hasPending(), true)
+  assert.deepEqual(decoder.flush(), {
+    text: "",
+    pastes: [],
+    inPaste: true
+  })
+  assert.equal(decoder.hasPending(), false)
+  assert.deepEqual(decoder.feed("\x1b[201~"), {
+    text: "",
+    pastes: ["value\x1b"],
     inPaste: false
   })
 })

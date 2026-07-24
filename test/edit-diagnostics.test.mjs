@@ -10,40 +10,31 @@ let binDir = ""
 let originalPath = ""
 
 async function installFakeNpx({ stdout = "", exitCode = 0 }) {
-  const npxPath = join(binDir, "npx")
-  const script = `#!/bin/sh
-if [ -n "${stdout}" ]; then
-  cat <<'EOF'
-${stdout}
-EOF
-fi
-exit ${exitCode}
-`
-  await writeFile(npxPath, script, "utf8")
-  await chmod(npxPath, 0o755)
+  await installSequencedFakeNpx([{ stdout, exitCode }])
 }
 
 async function installSequencedFakeNpx(responses) {
-  const npxPath = join(binDir, "npx")
+  const npxPath = join(binDir, process.platform === "win32" ? "npx.cmd" : "npx")
+  const runnerPath = join(binDir, "fake-npx.mjs")
   const encoded = Buffer.from(JSON.stringify(responses), "utf8").toString("base64")
   const stateFile = join(tempDir, "npx-state")
-  const script = `#!/bin/sh
-STATE_FILE="${stateFile}"
-if [ ! -f "$STATE_FILE" ]; then
-  printf '0' > "$STATE_FILE"
-fi
-index=$(cat "$STATE_FILE")
-PAYLOAD=$(node -e "const items = JSON.parse(Buffer.from('${encoded}', 'base64').toString('utf8')); const idx = Number(process.argv[1] || '0'); const item = items[Math.min(idx, items.length - 1)] || { stdout: '', exitCode: 0 }; process.stdout.write(JSON.stringify(item));" "$index")
-next_index=$((index + 1))
-printf '%s' "$next_index" > "$STATE_FILE"
-stdout=$(node -e "const item = JSON.parse(process.argv[1]); process.stdout.write(item.stdout || '')" "$PAYLOAD")
-exit_code=$(node -e "const item = JSON.parse(process.argv[1]); process.stdout.write(String(item.exitCode ?? 0))" "$PAYLOAD")
-if [ -n "$stdout" ]; then
-  printf '%s\n' "$stdout"
-fi
-exit "$exit_code"
+  const runner = `import { readFileSync, writeFileSync } from "node:fs"
+const responses = JSON.parse(Buffer.from(${JSON.stringify(encoded)}, "base64").toString("utf8"))
+const stateFile = ${JSON.stringify(stateFile)}
+let index = 0
+try {
+  index = Number(readFileSync(stateFile, "utf8")) || 0
+} catch {}
+writeFileSync(stateFile, String(index + 1))
+const item = responses[Math.min(index, responses.length - 1)] || { stdout: "", exitCode: 0 }
+if (item.stdout) process.stdout.write(String(item.stdout) + "\\n")
+process.exit(Number(item.exitCode) || 0)
 `
-  await writeFile(npxPath, script, "utf8")
+  await writeFile(runnerPath, runner, "utf8")
+  const launcher = process.platform === "win32"
+    ? `@echo off\r\n"${process.execPath}" "${runnerPath}" %*\r\n`
+    : `#!/bin/sh\nexec "${process.execPath}" "${runnerPath}" "$@"\n`
+  await writeFile(npxPath, launcher, "utf8")
   await chmod(npxPath, 0o755)
 }
 

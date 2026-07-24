@@ -10,11 +10,13 @@
 - Add incremental SGR mouse and bracketed-paste decoding for transcript
   selection, cross-platform clipboard requests with honest confirmation state,
   wheel scrolling, composer cursor placement, and click-to-expand Thinking/tool
-  blocks.
+  blocks. Preserve CJK and emoji input when UTF-8 bytes cross stdin chunks, and
+  include the final visible composer row in mouse hit-testing.
 - Restore cooked mode, mouse tracking, bracketed paste, and the alternate
   screen before Unix job-control suspension; reactivate them on `SIGCONT`.
   Final teardown also drains pending prompts, pauses stdin, and awaits MCP child
-  shutdown so `/exit` cannot leave the process or terminal hanging.
+  shutdown so `/exit` cannot leave the process or terminal hanging. A synchronous
+  exit guard and Windows `SIGBREAK` handling restore the shell after abrupt exits.
 - Render assistant Markdown incrementally without chunk-boundary artifacts.
   Move mode/model/provider/permission changes into transient bottom toasts,
   mute tool activity, and expose bounded red/green mutation diffs on demand.
@@ -29,16 +31,25 @@
   preserving the final provider error classification for audit records.
 - Keep real-desktop mouse, clipboard, and IME behavior in the pre-release manual
   acceptance matrix for Windows, macOS, and Linux terminal emulators.
+- Harden native Windows execution: await MCP shutdown in one-shot commands,
+  keep argv-form MCP servers out of `cmd.exe`, launch npm/npx and local Prettier
+  through safe platform-aware paths, and make branch-review hashes stable across
+  Git for Windows path quoting.
+- Hold an ambiguous standalone ESC for 35 ms so mouse and paste reports remain
+  intact across transport chunks. Native clipboard fallbacks now run
+  asynchronously; Windows uses PowerShell UTF-8/Base64 transport for CJK and emoji.
 
 ### 中文
 
 - 将全屏终端渲染重构为逐行更新，并在输入框坐标恢复真实硬件光标，让支持该机制的
   终端输入法与辅助功能使用实际输入位置。
 - 新增增量 SGR 鼠标与 bracketed paste 解码，支持对话拖选、跨平台复制请求与
-  确认状态区分、滚轮浏览、点击定位输入光标，以及点击展开/收起 Thinking 与工具详情。
+  确认状态区分、滚轮浏览、点击定位输入光标，以及点击展开/收起 Thinking 与工具详情；
+  中文与 emoji 的 UTF-8 字节即使跨 stdin 分片也不会损坏，输入框最后一行也可正确点击。
 - Unix 挂起前会恢复 cooked mode、鼠标、bracketed paste 与主屏幕，`SIGCONT`
   后再完整激活；最终退出会收口待决交互、暂停 stdin 并等待 MCP 子进程关闭，
-  避免 `/exit` 后进程或终端仍被占用。
+  避免 `/exit` 后进程或终端仍被占用；同步退出保护和 Windows `SIGBREAK`
+  处理也会在异常退出时恢复 Shell。
 - 增量解析模型 Markdown，避免流式分片破坏格式；模式、模型、Provider、权限切换
   改为底部瞬时 Toast；工具日志降为浅灰色，代码修改可按需查看受限长度的红绿 Diff。
 - 模型思考时显示带动效和耗时的 `Thinking · Ns`，完成后保存为默认折叠、可检查的
@@ -49,6 +60,12 @@
 - 重试事件关联 session、turn、trace 与 request 身份，并为审计记录保留最终模型错误分类。
 - Windows、macOS、Linux 真实桌面终端的鼠标、剪贴板和输入法表现仍列入发布前
   手工验收矩阵，不以伪终端自动化测试替代。
+- 补齐 Windows 原生执行兼容性：一次性命令会等待 MCP 完整关闭，argv 形式的 MCP
+  不再经过 `cmd.exe`，npm/npx 与项目 Prettier 使用安全的平台感知启动路径，并消除
+  Git for Windows 临时路径转义造成的分支审查哈希漂移。
+- 对单独到达的 ESC 保留 35 ms 判定窗口，避免鼠标与粘贴协议跨分片时被拆散；
+  原生剪贴板回退改为异步执行，Windows 通过 PowerShell UTF-8/Base64 通道可靠复制
+  中文与 emoji。
 
 ## 0.3.2
 

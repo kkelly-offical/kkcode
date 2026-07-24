@@ -93,8 +93,10 @@ import {
   classifySgrMouseEvent,
   createBracketedPasteDecoder,
   createSgrMouseDecoder,
+  createUtf8TextDecoder,
   enterTerminalSequence,
   exitTerminalSequence,
+  isScreenRowWithin,
   normalizeMouseSelection,
   renderTerminalFrame,
   resolveTerminalFeatures
@@ -130,6 +132,7 @@ const TUI_FRAME_MS = 16
 const ANSI_RE = /\x1B\[[0-9;]*m/g
 const SCROLL_PAGE_RATIO = 0.75
 const BUSY_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+const ESCAPE_SEQUENCE_TIMEOUT_MS = 35
 
 function clipBusy(text, max) {
   const s = String(text || "").trim().split("\n")[0]
@@ -1454,6 +1457,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   let renderTimer = null
   let spinnerTimer = null
   let selectionClearTimer = null
+  let protocolFlushTimer = null
   let disposed = false
   let terminalSuspended = true
   let terminalFrameActive = false
@@ -1468,6 +1472,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   let onData = null
   let onSigint = null
   let onTerminate = null
+  let onSigbreak = null
+  let onProcessExit = null
   let onSuspend = null
   let onContinue = null
 
@@ -1985,8 +1991,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   // Request OSC 52 and try a platform clipboard command. OSC 52 itself cannot
   // confirm whether the terminal accepted the request, so only a successful
   // native fallback may use definitive "Copied" wording.
-  function copyToClipboard(text) {
-    const result = copyTerminalText(text, { output })
+  async function copyToClipboard(text) {
+    const result = await copyTerminalText(text, { output })
+    if (disposed) return result
     if (result.confirmed) {
       showToast("Copied selection", { topic: "clipboard", tone: "success" })
     } else if (result.requested) {
@@ -2930,26 +2937,68 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   const _origStdinEmit = process.stdin.emit
   const mouseDecoder = createSgrMouseDecoder()
   const pasteDecoder = createBracketedPasteDecoder()
+  const plainTextDecoder = createUtf8TextDecoder()
+
+  function dispatchPasteResult(pasted, mouseEventCount = 0) {
+    for (const value of pasted.pastes) {
+      if (questionAcceptsTextInput()) {
+        insertQuestionText(value)
+      } else if (!ui.busy) {
+        insertAtCursor(String(value || "").replace(/\r\n?/g, "\n"))
+      }
+    }
+    if (mouseEventCount > 0 || pasted.pastes.length > 0) requestRender()
+    if (!pasted.text) return false
+    return _origStdinEmit.call(
+      process.stdin,
+      "data",
+      Buffer.from(pasted.text, "utf8")
+    )
+  }
+
+  function dispatchDecodedInput(mouse) {
+    for (const ev of mouse.events) handleMouseEvent(ev)
+    const pasted = terminalFeatures.bracketedPaste
+      ? pasteDecoder.feed(mouse.text)
+      : { text: mouse.text, pastes: [] }
+    return dispatchPasteResult(pasted, mouse.events.length)
+  }
+
+  function cancelProtocolFlush() {
+    if (protocolFlushTimer) clearTimeout(protocolFlushTimer)
+    protocolFlushTimer = null
+  }
+
+  function scheduleProtocolFlush() {
+    if (
+      !mouseDecoder.hasPending() &&
+      !(terminalFeatures.bracketedPaste && pasteDecoder.hasPending())
+    ) return
+    cancelProtocolFlush()
+    protocolFlushTimer = setTimeout(() => {
+      protocolFlushTimer = null
+      if (disposed || terminalSuspended) return
+      const mouseText = terminalFeatures.mouse
+        ? mouseDecoder.flush()
+        : plainTextDecoder.flush()
+      dispatchDecodedInput({ events: [], text: mouseText })
+      if (terminalFeatures.bracketedPaste && pasteDecoder.hasPending()) {
+        dispatchPasteResult(pasteDecoder.flush())
+      }
+    }, ESCAPE_SEQUENCE_TIMEOUT_MS)
+    protocolFlushTimer.unref?.()
+  }
+
   const interceptStdinEmit = function (event, ...args) {
     if (event === "data") {
+      cancelProtocolFlush()
       const raw = args[0]
       const mouse = terminalFeatures.mouse
         ? mouseDecoder.feed(raw)
-        : { events: [], text: Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw || "") }
-      for (const ev of mouse.events) handleMouseEvent(ev)
-      const pasted = terminalFeatures.bracketedPaste
-        ? pasteDecoder.feed(mouse.text)
-        : { text: mouse.text, pastes: [] }
-      for (const value of pasted.pastes) {
-        if (questionAcceptsTextInput()) {
-          insertQuestionText(value)
-        } else if (!ui.busy) {
-          insertAtCursor(String(value || "").replace(/\r\n?/g, "\n"))
-        }
-      }
-      if (mouse.events.length > 0 || pasted.pastes.length > 0) requestRender()
-      if (!pasted.text) return false
-      args[0] = Buffer.from(pasted.text, "utf8")
+        : { events: [], text: plainTextDecoder.feed(raw) }
+      const emitted = dispatchDecodedInput(mouse)
+      scheduleProtocolFlush()
+      return emitted
     }
     return _origStdinEmit.call(process.stdin, event, ...args)
   }
@@ -2976,7 +3025,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       // 清除之前的选择
       clearSelections()
       // 点击输入区 → 定位光标 + 准备拖拽
-      if (row >= layout.inputStartRow && row < layout.inputEndRow) {
+      if (isScreenRowWithin(row, layout.inputStartRow, layout.inputEndRow)) {
         handleInputClick(row, col, layout)
         return
       }
@@ -3002,7 +3051,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         return
       }
       // 输入框拖拽选择
-      if (ui.inputDragAnchor >= 0 && row >= layout.inputStartRow && row < layout.inputEndRow) {
+      if (ui.inputDragAnchor >= 0 && isScreenRowWithin(row, layout.inputStartRow, layout.inputEndRow)) {
         const pos = inputCharFromScreen(row, col, layout)
         const anchor = ui.inputDragAnchor
         ui.inputSelection = {
@@ -3128,7 +3177,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         }
       }
       const selectedText = lines.join("\n").trimEnd()
-      if (selectedText) copyToClipboard(selectedText)
+      if (selectedText) void copyToClipboard(selectedText)
       // 短暂保留高亮后清除
       if (selectionClearTimer) clearTimeout(selectionClearTimer)
       selectionClearTimer = setTimeout(() => {
@@ -3171,6 +3220,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   function deactivateTerminal({ pauseInput = false } = {}) {
     terminalSuspended = true
     cancelPendingFrame()
+    cancelProtocolFlush()
     detachTuiInputListeners()
 
     if (rawModeActive && process.stdin.isTTY) {
@@ -3184,6 +3234,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     }
     mouseDecoder.reset()
     pasteDecoder.reset()
+    plainTextDecoder.reset()
 
     if (terminalFrameActive) {
       terminalFrameActive = false
@@ -3281,6 +3332,14 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   try {
+    // `exit` is the last synchronous point at which Node can give the shell
+    // back a usable terminal after process.exit() or an uncaught exception.
+    // Keep this guard installed before entering the alternate screen so even
+    // a startup failure cannot strand raw mode, mouse tracking, or the cursor.
+    onProcessExit = () => {
+      deactivateTerminal()
+    }
+    process.on("exit", onProcessExit)
     setPermissionPromptHandler(({ tool, sessionId, reason = "", pattern = "*", command = "", args = {}, risk = 0, defaultAction = "deny" }) =>
       new Promise((resolve) => {
         queuePermissionPrompt({
@@ -3318,6 +3377,10 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     toastUnsub()
     toastStore.dispose()
     await saveHistoryLines(HIST_FILE, HIST_SIZE, ui.history).catch(() => {})
+    if (onProcessExit) {
+      process.removeListener("exit", onProcessExit)
+      onProcessExit = null
+    }
     throw error
   }
 
@@ -3351,7 +3414,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         if (key.ctrl && key.name === "c" && ui.inputSelection) {
           const start = Math.min(ui.inputSelection.start, ui.inputSelection.end)
           const end = Math.max(ui.inputSelection.start, ui.inputSelection.end)
-          copyToClipboard(ui.input.slice(start, end))
+          void copyToClipboard(ui.input.slice(start, end))
           requestRender()
           return
         }
@@ -3911,6 +3974,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         }
       }
       onTerminate = finish
+      onSigbreak = finish
       onSuspend = suspendForJobControl
       onContinue = continueAfterJobControl
 
@@ -3919,7 +3983,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       process.on("SIGINT", onSigint)
       process.on("SIGTERM", onTerminate)
       process.on("SIGHUP", onTerminate)
-      if (process.platform !== "win32") {
+      if (process.platform === "win32") {
+        process.on("SIGBREAK", onSigbreak)
+      } else {
         process.on("SIGTSTP", onSuspend)
         process.on("SIGCONT", onContinue)
       }
@@ -3946,11 +4012,17 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       process.removeListener("SIGTERM", onTerminate)
       process.removeListener("SIGHUP", onTerminate)
     }
-    if (process.platform !== "win32") {
+    if (process.platform === "win32") {
+      if (onSigbreak) process.removeListener("SIGBREAK", onSigbreak)
+    } else {
       if (onSuspend) process.removeListener("SIGTSTP", onSuspend)
       if (onContinue) process.removeListener("SIGCONT", onContinue)
     }
     deactivateTerminal({ pauseInput: true })
+    if (onProcessExit) {
+      process.removeListener("exit", onProcessExit)
+      onProcessExit = null
+    }
     await saveHistoryLines(HIST_FILE, HIST_SIZE, ui.history)
   }
 }

@@ -2,11 +2,23 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import { resolve, join } from "node:path"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 
 const CLI = resolve("src/index.mjs")
 const NODE = process.execPath
+
+function createIsolatedHome(prefix) {
+  const home = mkdtempSync(join(tmpdir(), prefix))
+  writeFileSync(join(home, "config.json"), JSON.stringify({
+    mcp: {
+      auto_discover: false,
+      servers: { context7: { enabled: false } }
+    },
+    skills: { auto_seed: false }
+  }), "utf8")
+  return home
+}
 
 function run(args, { timeout = 15000, env = {}, expectFail = false } = {}) {
   try {
@@ -40,17 +52,17 @@ test("e2e: --version exits 0", () => {
 
 // doctor
 test("e2e: doctor exits 0", () => {
-  const home = mkdtempSync(join(tmpdir(), "kkcode-e2e-doctor-text-"))
+  const home = createIsolatedHome("kkcode-e2e-doctor-text-")
   try {
     const { stdout } = run(["doctor"], { env: { KKCODE_HOME: home } })
     assert.ok(stdout.includes("node"), "should check node")
   } finally {
-    rmSync(home, { recursive: true, force: true })
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
 })
 
 test("e2e: doctor --json exits 0 and outputs structured json", () => {
-  const home = mkdtempSync(join(tmpdir(), "kkcode-e2e-doctor-"))
+  const home = createIsolatedHome("kkcode-e2e-doctor-")
   try {
     const { stdout } = run(["doctor", "--json"], { env: { KKCODE_HOME: home } })
     const parsed = JSON.parse(stdout)
@@ -60,7 +72,7 @@ test("e2e: doctor --json exits 0 and outputs structured json", () => {
     assert.ok(parsed.background)
     assert.ok(!parsed.runtime.providersConfigured.some((provider) => provider.name === "model_context"))
   } finally {
-    rmSync(home, { recursive: true, force: true })
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
 })
 
@@ -108,7 +120,12 @@ test("e2e: agent list exits 0", () => {
 
 // mcp list
 test("e2e: mcp list exits 0", () => {
-  run(["mcp", "list"])
+  const home = createIsolatedHome("kkcode-e2e-mcp-")
+  try {
+    run(["mcp", "list"], { env: { KKCODE_HOME: home } })
+  } finally {
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+  }
 })
 
 // permission show
@@ -178,11 +195,20 @@ test("e2e: config import with bad file exits non-zero", () => {
 
 // chat without API key
 test("e2e: chat without API key exits non-zero", () => {
-  const { exitCode } = run(["chat", "hello"], {
-    expectFail: true,
-    env: { OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "" }
-  })
-  assert.ok(exitCode !== 0, "should fail without API key")
+  const home = createIsolatedHome("kkcode-e2e-chat-")
+  try {
+    const { exitCode } = run(["chat", "hello"], {
+      expectFail: true,
+      env: {
+        KKCODE_HOME: home,
+        OPENAI_API_KEY: "",
+        ANTHROPIC_API_KEY: ""
+      }
+    })
+    assert.ok(exitCode !== 0, "should fail without API key")
+  } finally {
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+  }
 })
 
 // unknown command

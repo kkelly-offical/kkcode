@@ -65,7 +65,9 @@ describe("event-log", () => {
     assert.doesNotMatch(content, /private user prompt|private tool output|private response body|print a secret/)
   })
 
-  it("creates and repairs the event log with owner-only permissions", async () => {
+  it("creates and repairs the event log with owner-only permissions", {
+    skip: process.platform === "win32" ? "Windows does not expose POSIX owner-only mode bits" : false
+  }, async () => {
     await appendEventLog({ type: "test" })
     const info = await stat(path.join(tmpDir, "events.log"))
     assert.equal(info.mode & 0o777, 0o600)

@@ -44,14 +44,17 @@ async function resolveCommit(cwd, ref) {
 
 function stabilizeEmptyFilePath(patch, emptyFile) {
   const portable = emptyFile.replace(/\\/g, "/")
+  const gitQuoted = emptyFile.replace(/\\/g, "\\\\")
   const candidates = new Set([
     emptyFile,
     portable,
+    gitQuoted,
     `a/${portable.replace(/^\/+/, "")}`,
-    portable.startsWith("/") ? `a${portable}` : `a/${portable}`
+    portable.startsWith("/") ? `a${portable}` : `a/${portable}`,
+    `a/${gitQuoted.replace(/^\\+/, "")}`
   ])
   let stable = patch
-  for (const candidate of candidates) {
+  for (const candidate of [...candidates].sort((a, b) => b.length - a.length)) {
     if (candidate) stable = stable.replaceAll(candidate, "a/__kkcode_empty__")
   }
   return stable

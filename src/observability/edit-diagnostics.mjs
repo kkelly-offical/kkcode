@@ -248,10 +248,11 @@ async function collectTypeScriptDiagnostics({ cwd, files }) {
   }
 
   try {
-    await execFile("npx", ["tsc", "--noEmit", "--pretty", "false"], {
+    await execFile(process.platform === "win32" ? "npx.cmd" : "npx", ["tsc", "--noEmit", "--pretty", "false"], {
       cwd,
       timeout: 20000,
-      encoding: "utf8"
+      encoding: "utf8",
+      shell: process.platform === "win32"
     })
     return {
       diagnostics: [],

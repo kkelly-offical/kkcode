@@ -79,8 +79,8 @@ beforeEach(async () => {
 afterEach(async () => {
   process.chdir(originalCwd)
   delete process.env.KKCODE_HOME
-  await rm(tmpHome, { recursive: true, force: true })
-  await rm(tmpProject, { recursive: true, force: true })
+  await rm(tmpHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+  await rm(tmpProject, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 test("longagent keeps running after no-progress threshold and completes later", async () => {

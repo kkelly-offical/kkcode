@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import http from "node:http"
-import { execSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import { BackgroundManager } from "../src/orchestration/background-manager.mjs"
 import { appendAssistantMessage, appendUserMessage, flushNow, touchSession } from "../src/session/store.mjs"
 import { readJson } from "../src/storage/json-store.mjs"
@@ -17,6 +17,14 @@ let oldCwd = process.cwd()
 let server = null
 let serverUrl = ""
 let requestCount = 0
+
+function git(...args) {
+  return execFileSync("git", args, {
+    cwd: project,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  })
+}
 
 async function startMockOpenAIServer() {
   requestCount = 0
@@ -121,19 +129,21 @@ beforeEach(async () => {
     "utf8"
   )
 
-  execSync("git init", { cwd: project })
-  execSync("git config user.email 'test@test.com'", { cwd: project })
-  execSync("git config user.name 'Test User'", { cwd: project })
+  git("init")
+  git("config", "user.email", "test@test.com")
+  git("config", "user.name", "Test User")
+  git("config", "core.autocrlf", "false")
   await writeFile(join(project, "README.md"), "worktree test\n", "utf8")
-  execSync("git add . && git commit -m 'initial commit'", { cwd: project })
+  git("add", ".")
+  git("commit", "-m", "initial commit")
 })
 
 afterEach(async () => {
   process.chdir(oldCwd)
   await stopMockServer()
   delete process.env.KKCODE_HOME
-  await rm(home, { recursive: true, force: true })
-  await rm(project, { recursive: true, force: true })
+  await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+  await rm(project, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 test("background worker kill -> interrupted -> retry -> completed", async () => {

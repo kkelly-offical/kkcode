@@ -3,7 +3,7 @@
 
 import { execFile as execFileCb } from "node:child_process"
 import { promisify } from "node:util"
-import { access } from "node:fs/promises"
+import { access, readFile } from "node:fs/promises"
 import path from "node:path"
 
 const execFile = promisify(execFileCb)
@@ -17,6 +17,33 @@ async function fileExists(p) {
 function prettierBin(root) {
   const binName = process.platform === "win32" ? "prettier.cmd" : "prettier"
   return path.join(root, "node_modules", ".bin", binName)
+}
+
+async function prettierInvocation(root) {
+  const packageRoot = path.join(root, "node_modules", "prettier")
+  try {
+    const manifest = JSON.parse(await readFile(path.join(packageRoot, "package.json"), "utf8"))
+    const bin = typeof manifest.bin === "string"
+      ? manifest.bin
+      : manifest.bin?.prettier
+    if (typeof bin === "string" && bin.trim()) {
+      const entry = path.resolve(packageRoot, bin)
+      const relative = path.relative(packageRoot, entry)
+      const insidePackage = relative &&
+        !relative.startsWith(`..${path.sep}`) &&
+        relative !== ".." &&
+        !path.isAbsolute(relative)
+      if (insidePackage && await fileExists(entry)) {
+        return { command: process.execPath, args: [entry] }
+      }
+    }
+  } catch {
+    // Fall back to the executable shim where direct execution is supported.
+  }
+
+  if (process.platform === "win32") return null
+  const shim = prettierBin(root)
+  return await fileExists(shim) ? { command: shim, args: [] } : null
 }
 
 export default {
@@ -42,13 +69,13 @@ export default {
       const root = cwd || process.cwd()
 
       // Check if project-local prettier is available.
-      const pkgPath = prettierBin(root)
-      if (!(await fileExists(pkgPath))) return payload
+      const invocation = await prettierInvocation(root)
+      if (!invocation) return payload
 
       for (const file of formattable) {
         const target = path.resolve(root, file)
         try {
-          await execFile(pkgPath, ["--write", target], {
+          await execFile(invocation.command, [...invocation.args, "--write", target], {
             cwd: root,
             timeout: 10000
           })

@@ -101,12 +101,14 @@ test("mcp registry keeps healthy server and tool bridge works", async () => {
           good: {
             transport: "stdio",
             command: makeNodeScript(healthyScript),
+            shell: false,
             timeout_ms: 1000,
             framing: "auto"
           },
           bad: {
             transport: "stdio",
             command: makeNodeScript(unhealthyScript),
+            shell: false,
             timeout_ms: 1000
           }
         }
@@ -134,7 +136,7 @@ test("mcp registry keeps healthy server and tool bridge works", async () => {
   assert.ok(out.output.includes("\"foo\":\"bar\""))
   assert.ok(out.raw)
 
-  McpRegistry.shutdown()
+  await McpRegistry.shutdown()
 })
 
 test("mcp registry addServer and removeServer", async () => {
@@ -152,6 +154,7 @@ test("mcp registry addServer and removeServer", async () => {
   await McpRegistry.addServer("dynamic", {
     transport: "stdio",
     command: makeNodeScript(healthyScript),
+    shell: false,
     timeout_ms: 2000,
     framing: "content-length"
   })
@@ -161,11 +164,11 @@ test("mcp registry addServer and removeServer", async () => {
   assert.ok(tools.some((t) => t.server === "dynamic"))
 
   // Remove it
-  McpRegistry.removeServer("dynamic")
+  await McpRegistry.removeServer("dynamic")
   assert.equal(McpRegistry.listServers().includes("dynamic"), false)
   assert.equal(McpRegistry.listTools().some((t) => t.server === "dynamic"), false)
 
-  McpRegistry.shutdown()
+  await McpRegistry.shutdown()
 })
 
 test("mcp registry healthCheckAll reports status", async () => {
@@ -177,6 +180,7 @@ test("mcp registry healthCheckAll reports status", async () => {
           alive: {
             transport: "stdio",
             command: makeNodeScript(healthyScript),
+            shell: false,
             timeout_ms: 2000,
             framing: "content-length"
           }
@@ -190,7 +194,7 @@ test("mcp registry healthCheckAll reports status", async () => {
   assert.ok(results.alive)
   assert.equal(results.alive.ok, true)
 
-  McpRegistry.shutdown()
+  await McpRegistry.shutdown()
 })
 
 test("mcp registry auto-discovers repo-local MCP config files", async () => {
@@ -204,6 +208,7 @@ test("mcp registry auto-discovers repo-local MCP config files", async () => {
           discoveredA: {
             transport: "stdio",
             command: makeNodeScript(healthyScript),
+            shell: false,
             timeout_ms: 2000,
             framing: "content-length"
           }
@@ -218,6 +223,7 @@ test("mcp registry auto-discovers repo-local MCP config files", async () => {
           discoveredB: {
             transport: "stdio",
             command: makeNodeScript(healthyScript),
+            shell: false,
             timeout_ms: 2000,
             framing: "content-length"
           }
@@ -241,7 +247,7 @@ test("mcp registry auto-discovers repo-local MCP config files", async () => {
     assert.ok(servers.includes("discoveredA"))
     assert.ok(servers.includes("discoveredB"))
   } finally {
-    McpRegistry.shutdown()
+    await McpRegistry.shutdown()
     await rm(project, { recursive: true, force: true })
   }
 })

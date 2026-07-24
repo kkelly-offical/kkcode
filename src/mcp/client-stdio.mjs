@@ -36,7 +36,9 @@ export function createStdioMcpClient(serverName, config = {}) {
   const healthCheckMethod = normalizeHealthMethod(config.health_check_method)
   const configuredFraming = normalizeFraming(config.framing)
   const isWindows = process.platform === "win32"
-  const explicitShell = config.shell === true || (config.shell !== false && isWindows)
+  const commandIsArgv = Array.isArray(command)
+  const explicitShell = config.shell === true ||
+    (!commandIsArgv && config.shell !== false && isWindows)
 
   let executable
   let spawnArgs

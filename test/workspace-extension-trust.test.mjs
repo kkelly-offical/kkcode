@@ -42,7 +42,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
-  McpRegistry.shutdown()
+  await McpRegistry.shutdown()
   delete process.env.KKCODE_HOME
   await rm(workspace, { recursive: true, force: true })
   await rm(userHome, { recursive: true, force: true })
