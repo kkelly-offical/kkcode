@@ -4,6 +4,7 @@ import { recordTurn } from "../usage/usage-meter.mjs"
 import { processTurnLoop } from "./loop.mjs"
 import { runLongAgent } from "./longagent.mjs"
 import { touchSession, setBudgetState } from "./store.mjs"
+import { refineSessionTitle } from "./session-title.mjs"
 import { appendEventLog } from "../storage/event-log.mjs"
 import { EventBus } from "../core/events.mjs"
 import { initialize as initObservability } from "../observability/index.mjs"
@@ -281,6 +282,14 @@ export async function executeTurn({
     cwd: process.cwd(),
     title: autoTitle || null,
     status: mode === "longagent" ? "running-longagent" : "active"
+  })
+  // fire-and-forget：配了 models.fast 才会跑，失败静默，绝不阻塞本轮
+  void refineSessionTitle({
+    configState,
+    sessionId,
+    prompt: typeof prompt === "string" ? prompt : "",
+    providerType: resolvedProviderType,
+    autoTitle: autoTitle || ""
   })
 
   const turn =

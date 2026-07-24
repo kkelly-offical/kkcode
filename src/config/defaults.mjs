@@ -191,6 +191,13 @@ export const DEFAULT_CONFIG = {
       strict: false
     }
   },
+  // 模型角色。留空表示回退：main → provider.<default>.default_model，
+  // subagent → main。fast 刻意不回退，未配置即关闭依赖它的可选功能。
+  models: {
+    main: null,
+    fast: null,
+    subagent: null
+  },
   permission: {
     level: "manual",
     non_tty_default: "deny",

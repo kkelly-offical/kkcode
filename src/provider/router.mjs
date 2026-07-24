@@ -257,7 +257,10 @@ export async function requestProvider({
   sessionId = null,
   turnId = null,
   reviewId = "",
-  signal = null
+  signal = null,
+  // 高频的辅助调用（输入框预测、标题生成）不进审计链，否则会淹没
+  // kk.audit.v1 里真正需要追溯的模型请求
+  audit = true
 }) {
   const resolvedProviderType = providerType || configState.config.provider.default
   const settings = resolveSettings(configState, resolvedProviderType, {
@@ -324,19 +327,21 @@ export async function requestProvider({
   if (!provider) {
     throw new Error(`unknown provider: ${settings.providerType}. registered: ${listProviders().join(", ")}`)
   }
-  const auditSpan = await startAuditSpan({
-    type: "provider.request",
-    ...requestContext,
-    sessionId,
-    turnId,
-    provider: settings.configKey,
-    providerType: settings.providerType,
-    protocol: settings.protocol,
-    model: settings.model,
-    reviewId: reviewId || null,
-    endpoint: safeProviderEndpoint(settings.baseUrl, settings.providerType, settings.protocol),
-    stream: false
-  }).catch(() => null)
+  const auditSpan = audit
+    ? await startAuditSpan({
+        type: "provider.request",
+        ...requestContext,
+        sessionId,
+        turnId,
+        provider: settings.configKey,
+        providerType: settings.providerType,
+        protocol: settings.protocol,
+        model: settings.model,
+        reviewId: reviewId || null,
+        endpoint: safeProviderEndpoint(settings.baseUrl, settings.providerType, settings.protocol),
+        stream: false
+      }).catch(() => null)
+    : null
   try {
     const result = await provider.request(input)
     await auditSpan?.finish({

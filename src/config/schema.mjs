@@ -1,6 +1,7 @@
 import { VALID_MODES, VALID_PROVIDER_TYPES, VALID_REVIEW_SORT, getValidProviderTypes } from "./defaults.mjs"
 import { APPROVAL_LEVELS } from "../core/modes.mjs"
 import { noteDeprecation } from "../core/deprecations.mjs"
+import { MODEL_ROLES } from "../provider/model-roles.mjs"
 
 /** 新四档 + 0.3.x 旧六级，旧值在读取时映射并提示弃用。 */
 const ACCEPTED_PERMISSION_LEVELS = [...APPROVAL_LEVELS, "review", "auto", "edit", "full-auto"]
@@ -397,6 +398,21 @@ export function validateConfig(config) {
       if (config.compat.diagnostics !== undefined) {
         if (!isObj(config.compat.diagnostics)) err(errors, "compat.diagnostics", "must be object")
         else if (config.compat.diagnostics.strict !== undefined && typeof config.compat.diagnostics.strict !== "boolean") err(errors, "compat.diagnostics.strict", "must be boolean")
+      }
+    }
+  }
+
+  if (config.models !== undefined) {
+    if (!isObj(config.models)) err(errors, "models", "must be object")
+    else {
+      for (const role of MODEL_ROLES) {
+        const value = config.models[role]
+        if (value !== undefined && value !== null && typeof value !== "string") {
+          err(errors, `models.${role}`, "must be string or null")
+        }
+      }
+      for (const key of Object.keys(config.models)) {
+        if (!MODEL_ROLES.includes(key)) err(errors, `models.${key}`, `unknown role (${MODEL_ROLES.join("|")})`)
       }
     }
   }

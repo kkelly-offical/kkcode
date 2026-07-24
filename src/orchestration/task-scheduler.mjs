@@ -3,6 +3,7 @@ import { resolveSubagent } from "./subagent-router.mjs"
 import { flushNow, forkSession, getSession } from "../session/store.mjs"
 import { extractEditFeedbackFromToolEvents } from "../observability/edit-diagnostics.mjs"
 import { createRunSpec } from "./run-spec.mjs"
+import { resolveRoleModel } from "../provider/model-roles.mjs"
 
 const SUPPORTED_EXECUTION_MODES = new Set(["fresh_agent", "fork_context"])
 const SUPPORTED_ISOLATION_MODES = new Set(["default", "worktree"])
@@ -215,7 +216,8 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
     const subSessionId = String(args.session_id || `sub_${parentSessionId}_${Date.now()}`)
     const prompt = buildDelegationPrompt({ ...args, execution_mode: executionMode })
 
-    const subModel = subagent.model || model
+    // 优先级：子智能体级覆盖 > models.subagent 角色 > 当前会话模型
+    const subModel = subagent.model || resolveRoleModel(config, "subagent", { fallbackToMain: false }) || model
     const subProvider = subagent.providerType || providerType
     const runSpec = createRunSpec({
       sessionId: subSessionId,
