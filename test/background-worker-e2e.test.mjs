@@ -269,3 +269,37 @@ test("background delegate can run inside a local detached worktree and auto-clea
   assert.equal(completed.result?.worktree_preserved, false)
   assert.equal(completed.result?.worktree_path, null)
 })
+
+test("background delegate leaves a clean detached worktree before error cleanup", async () => {
+  const config = {
+    background: {
+      mode: "worker_process",
+      max_parallel: 1,
+      worker_timeout_ms: 30000
+    }
+  }
+
+  const task = await BackgroundManager.launchDelegateTask({
+    description: "e2e worktree error cleanup",
+    payload: {
+      workerType: "delegate_task",
+      cwd: project,
+      prompt: "fail once",
+      parentSessionId: "ses_parent_bg_worktree_error",
+      subSessionId: `ses_bg_worktree_error_${Date.now()}`,
+      isolation: "worktree",
+      executionMode: "fresh_agent",
+      allowQuestion: true,
+      providerType: "local",
+      model: "test-model"
+    },
+    config
+  })
+
+  const failed = await waitFor(task.id, (it) => it.status === "error", { config, timeoutMs: 30000 })
+  assert.equal(failed.status, "error")
+  assert.equal(
+    git("worktree", "list", "--porcelain").includes(`kkcode-worktree-${task.id}-`),
+    false
+  )
+})

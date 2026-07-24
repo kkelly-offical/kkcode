@@ -50,6 +50,13 @@ async function copyWorkspaceConfigFiles(sourceRoot, targetRoot) {
   }
 }
 
+async function removeDetachedWorktree(worktree, repoCwd) {
+  // Windows keeps the process working directory locked. Leave the detached
+  // worktree before asking Git (or the rm fallback) to remove it.
+  process.chdir(repoCwd)
+  return git.removeWorktree(worktree.path, repoCwd)
+}
+
 async function readTask(taskId) {
   return readJson(backgroundTaskCheckpointPath(taskId), null)
 }
@@ -125,44 +132,46 @@ async function runDelegateTask(task, signal) {
     }
     worktree = created
     effectiveCwd = created.path
-    await copyWorkspaceConfigFiles(repoCwd, effectiveCwd)
   }
 
-  process.chdir(effectiveCwd)
-
-  const ctx = await buildContext({ cwd: effectiveCwd })
-  _maxLogLines = Number(ctx.configState.config?.background?.max_log_lines || 300)
-  const extensionPolicy = resolveExtensionPolicy(ctx.configState)
-  await ToolRegistry.initialize({
-    config: extensionPolicy.config,
-    cwd: effectiveCwd,
-    allowProjectSources: extensionPolicy.allowProjectSources
-  })
-  const { CustomAgentRegistry } = await import("../agent/custom-agent-loader.mjs")
-  await CustomAgentRegistry.initialize(effectiveCwd, {
-    allowProjectSources: extensionPolicy.allowProjectSources
-  })
-
-  const providerType = payload.providerType || ctx.configState.config.provider.default
-  const providerDefault = ctx.configState.config.provider[providerType]
-  const model = payload.model || providerDefault?.default_model
   const executionMode = String(payload.executionMode || "fresh_agent").trim().toLowerCase() || "fresh_agent"
-
-  if (!["fresh_agent", "fork_context"].includes(executionMode)) {
-    throw new Error(`unsupported task.execution_mode: ${payload.executionMode}`)
-  }
-  if (payload.allowQuestion === true) {
-    throw new Error("background delegated tasks cannot set allow_question=true")
-  }
-
-  await ensureDelegatedSession({
-    executionMode,
-    parentSessionId: payload.parentSessionId || null,
-    subSessionId: payload.subSessionId
-  })
-
   let out
   try {
+    if (worktree) {
+      await copyWorkspaceConfigFiles(repoCwd, effectiveCwd)
+    }
+    process.chdir(effectiveCwd)
+
+    const ctx = await buildContext({ cwd: effectiveCwd })
+    _maxLogLines = Number(ctx.configState.config?.background?.max_log_lines || 300)
+    const extensionPolicy = resolveExtensionPolicy(ctx.configState)
+    await ToolRegistry.initialize({
+      config: extensionPolicy.config,
+      cwd: effectiveCwd,
+      allowProjectSources: extensionPolicy.allowProjectSources
+    })
+    const { CustomAgentRegistry } = await import("../agent/custom-agent-loader.mjs")
+    await CustomAgentRegistry.initialize(effectiveCwd, {
+      allowProjectSources: extensionPolicy.allowProjectSources
+    })
+
+    const providerType = payload.providerType || ctx.configState.config.provider.default
+    const providerDefault = ctx.configState.config.provider[providerType]
+    const model = payload.model || providerDefault?.default_model
+
+    if (!["fresh_agent", "fork_context"].includes(executionMode)) {
+      throw new Error(`unsupported task.execution_mode: ${payload.executionMode}`)
+    }
+    if (payload.allowQuestion === true) {
+      throw new Error("background delegated tasks cannot set allow_question=true")
+    }
+
+    await ensureDelegatedSession({
+      executionMode,
+      parentSessionId: payload.parentSessionId || null,
+      subSessionId: payload.subSessionId
+    })
+
     out = await executeTurn({
       prompt: String(payload.prompt || ""),
       mode: "agent",
@@ -184,10 +193,14 @@ async function runDelegateTask(task, signal) {
     if (worktree) {
       const clean = await git.isClean(worktree.path).catch(() => false)
       if (clean) {
-        await git.removeWorktree(worktree.path, repoCwd).catch(() => {})
+        await removeDetachedWorktree(worktree, repoCwd).catch(() => {})
       }
     }
     throw error
+  } finally {
+    if (worktree) {
+      process.chdir(repoCwd)
+    }
   }
 
   const plannedFiles = Array.isArray(payload.plannedFiles)
@@ -221,7 +234,7 @@ async function runDelegateTask(task, signal) {
   const worktreePreserved = Boolean(worktree && (fileChanges.length > 0 || completedFiles.length > 0))
 
   if (worktree && !worktreePreserved) {
-    await git.removeWorktree(worktree.path, repoCwd).catch(() => {})
+    await removeDetachedWorktree(worktree, repoCwd).catch(() => {})
   }
 
   return {
