@@ -1,5 +1,6 @@
 import { VALID_MODES, VALID_PROVIDER_TYPES, VALID_REVIEW_SORT, getValidProviderTypes } from "./defaults.mjs"
 import { APPROVAL_LEVELS } from "../core/modes.mjs"
+import { noteDeprecation } from "../core/deprecations.mjs"
 
 /** 新四档 + 0.3.x 旧六级，旧值在读取时映射并提示弃用。 */
 const ACCEPTED_PERMISSION_LEVELS = [...APPROVAL_LEVELS, "review", "auto", "edit", "full-auto"]
@@ -219,24 +220,13 @@ export function validateConfig(config) {
           if (config.agent.longagent.lock_timeout_ms !== undefined) {
             checkInt(errors, "agent.longagent.lock_timeout_ms", config.agent.longagent.lock_timeout_ms, 1000)
           }
+          // agent.longagent.four_stage 在 0.4.0 随 4stage 实现一并移除。
+          // 旧配置留着该段不再报错，只提示一次并忽略。
           if (config.agent.longagent.four_stage !== undefined) {
-            if (!isObj(config.agent.longagent.four_stage)) {
-              err(errors, "agent.longagent.four_stage", "must be object")
-            } else {
-              const fs = config.agent.longagent.four_stage
-              if (fs.enabled !== undefined && typeof fs.enabled !== "boolean") err(errors, "agent.longagent.four_stage.enabled", "must be boolean")
-              if (fs.separate_models !== undefined) {
-                if (!isObj(fs.separate_models)) err(errors, "agent.longagent.four_stage.separate_models", "must be object")
-                else {
-                  if (fs.separate_models.enabled !== undefined && typeof fs.separate_models.enabled !== "boolean") err(errors, "agent.longagent.four_stage.separate_models.enabled", "must be boolean")
-                  for (const k of ["preview_model", "blueprint_model", "coding_model", "debugging_model"]) {
-                    if (fs.separate_models[k] !== undefined && fs.separate_models[k] !== null && typeof fs.separate_models[k] !== "string") {
-                      err(errors, `agent.longagent.four_stage.separate_models.${k}`, "must be string or null")
-                    }
-                  }
-                }
-              }
-            }
+            noteDeprecation(
+              "config.agent.longagent.four_stage",
+              "`agent.longagent.four_stage` 已随 4stage 实现移除，Ultra 现在只有一套编排"
+            )
           }
           if (config.agent.longagent.hybrid !== undefined) {
             if (!isObj(config.agent.longagent.hybrid)) {

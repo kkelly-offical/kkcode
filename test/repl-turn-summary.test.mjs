@@ -15,7 +15,6 @@ test("formatRuntimeStateText includes background and skill quickstart lines", ()
       mode: "agent",
       providerType: "openai",
       model: "gpt-test",
-      longagentImpl: null
     },
     { healthy: 0, configured: 0, tools: 0, counts: {} },
     { total: 0, template: 0, skillMd: 0, mcpPrompt: 0, programmable: 0 },

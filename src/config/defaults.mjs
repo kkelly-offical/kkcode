@@ -95,22 +95,7 @@ export const DEFAULT_CONFIG = {
         },
         ask_user_after_plan_frozen: false
       },
-      four_stage: {
-        enabled: false,
-        preview_max_iterations: 10,
-        blueprint_max_iterations: 10,
-        coding_max_iterations: 50,
-        debugging_max_iterations: 20,
-        separate_models: {
-          enabled: false,
-          preview_model: null,
-          blueprint_model: null,
-          coding_model: null,
-          debugging_model: null
-        }
-      },
       hybrid: {
-        enabled: true,
         intake: true,
         completion_validation: true,
         debugging_max_iterations: 20,

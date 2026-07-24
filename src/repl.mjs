@@ -99,6 +99,7 @@ import {
   defaultPermissionChoiceIndex
 } from "./repl/permission-flow.mjs"
 import { approvalFromLegacy } from "./core/modes.mjs"
+import { noteDeprecation } from "./core/deprecations.mjs"
 import { normalizePermissionLevel } from "./permission/rules.mjs"
 import {
   buildLearnedRule,
@@ -198,7 +199,8 @@ const BUILTIN_SLASH = [
   { name: "mode", desc: "switch explicit mode" },
   { name: "plan", desc: "read-only development plan" },
   { name: "agent", desc: "assistant compatibility alias" },
-  { name: "longagent", desc: "persistent staged development" },
+  { name: "ultra", desc: "persistent staged development" },
+  { name: "longagent", desc: "deprecated alias for /ultra" },
   { name: "provider", desc: "switch provider" },
   { name: "model", desc: "open model picker" },
   { name: "profile", desc: "view or edit your user profile" },
@@ -803,30 +805,26 @@ async function processInputLine({
     ].join("\n")
   }
 
-  if (["/assistant", "/plan", "/agent", "/code", "/coding", "/longagent"].includes(normalized)) {
-    state.mode = resolveMode(normalized.slice(1))
-    if (normalized === "/longagent") state.longagentImpl = null
+  if (["/assistant", "/plan", "/agent", "/code", "/coding", "/longagent", "/ultra"].includes(normalized)) {
+    const raw = normalized.slice(1)
+    if (raw === "longagent") {
+      noteDeprecation("mode.longagent", "`/longagent` 已更名为 `/ultra`")
+    }
+    state.mode = resolveMode(raw)
     print(`mode switched: ${state.mode}`)
     return { exit: false }
   }
 
-  if (normalized.startsWith("/longagent ")) {
-    const rawSub = normalized.replace("/longagent ", "").trim()
+  if (normalized.startsWith("/longagent ") || normalized.startsWith("/ultra ")) {
+    const rawSub = normalized.replace(/^\/(longagent|ultra)\s+/, "").trim()
     const sub = rawSub.toLowerCase()
-    if (sub === "4stage") {
-      state.mode = "longagent"
-      state.longagentImpl = "4stage"
-      print("mode switched: longagent (4stage)")
-    } else if (sub === "hybrid") {
-      state.mode = "longagent"
-      state.longagentImpl = "hybrid"
-      print("mode switched: longagent (hybrid)")
-    } else {
-      state.mode = "longagent"
-      state.longagentImpl = null
-      normalized = rawSub
+    state.mode = "longagent"
+    if (sub === "4stage" || sub === "hybrid") {
+      // 0.4.0 只剩一套 Ultra 编排，impl 子命令不再有意义
+      print(`Ultra 现在只有一套编排，/${sub} 子命令已移除`)
+      return { exit: false }
     }
-    if (sub === "4stage" || sub === "hybrid") return { exit: false }
+    normalized = rawSub
   }
 
   if (normalized.startsWith("/mode ") || normalized.startsWith("/m ")) {

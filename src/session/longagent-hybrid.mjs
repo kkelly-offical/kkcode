@@ -8,7 +8,7 @@ import { LongAgentManager } from "../orchestration/longagent-manager.mjs"
 import { processTurnLoop } from "./loop.mjs"
 import { markSessionStatus } from "./store.mjs"
 import { EventBus } from "../core/events.mjs"
-import { EVENT_TYPES, LONGAGENT_4STAGE_STAGES } from "../core/constants.mjs"
+import { EVENT_TYPES } from "../core/constants.mjs"
 import { saveCheckpoint, loadCheckpoint, saveTaskCheckpoint, loadTaskCheckpoints, cleanupCheckpoints } from "./checkpoint.mjs"
 import { getAgent } from "../agent/agent.mjs"
 import { runStageBarrier } from "../orchestration/stage-scheduler.mjs"
@@ -23,7 +23,7 @@ import {
 } from "./usability-gates.mjs"
 import { runIntakeDialogue, validateAndNormalizeStagePlan, defaultStagePlan } from "./longagent-plan.mjs"
 import { createValidator } from "./task-validator.mjs"
-import { detectStageComplete, detectReturnToCoding, buildStageWrapper } from "./longagent-4stage.mjs"
+import { detectStageComplete, detectReturnToCoding, buildStageWrapper, ULTRA_STAGES } from "./ultra-stages.mjs"
 import {
   isComplete,
   isLikelyActionableObjective,
@@ -208,11 +208,17 @@ export function resolveHybridCompletionStatus({ completionMarkerSeen, usabilityG
   return completionMarkerSeen ? "completed" : "done"
 }
 
+/**
+ * runSpec 被显式接收但不向阶段透传：runSpecRole() 会整体覆盖 agent，而
+ * Ultra 的每个阶段都有自己的角色（preview / blueprint / debugging），
+ * 覆盖会抹掉阶段语义。0.3.x 靠解构签名里没有这个字段来「静默丢弃」，
+ * 这里改为写明意图。
+ */
 export async function runHybridLongAgent({
   prompt, model, providerType, sessionId, configState,
   baseUrl = null, apiKeyEnv = null, agent = null,
   maxIterations = 0, signal = null, output = null,
-  allowQuestion = true, toolContext = {}
+  allowQuestion = true, toolContext = {}, runSpec: _runSpec = null
 }) {
   const longagentConfig = configState.config.agent.longagent || {}
   const hybridConfig = longagentConfig.hybrid || {}
@@ -418,7 +424,7 @@ export async function runHybridLongAgent({
   const previewModel = getModelForStage("preview")
   // #5 注入 project memory 到 preview prompt
   const memCtx = projectMemory ? memoryToContext(projectMemory) : ""
-  const previewPrompt = buildStageWrapper(LONGAGENT_4STAGE_STAGES.PREVIEW, { preview: null, blueprint: null, coding: null }, memCtx ? `${memCtx}\n\n${intakeSummary}` : intakeSummary)
+  const previewPrompt = buildStageWrapper(ULTRA_STAGES.PREVIEW, { preview: null, blueprint: null, coding: null }, memCtx ? `${memCtx}\n\n${intakeSummary}` : intakeSummary)
   const previewOut = await processTurnLoop({
     prompt: previewPrompt, mode: "agent", agent: getAgent("preview-agent"),
     model: previewModel.model, providerType: previewModel.providerType,
@@ -443,7 +449,7 @@ export async function runHybridLongAgent({
   const frontendBlock = isFrontend
     ? "\n\n" + buildFrontendDesignPrompt(configState.config.agent?.design_style || "")
     : ""
-  const blueprintPrompt = buildStageWrapper(LONGAGENT_4STAGE_STAGES.BLUEPRINT, { preview: previewFindings, blueprint: null, coding: null }, prompt)
+  const blueprintPrompt = buildStageWrapper(ULTRA_STAGES.BLUEPRINT, { preview: previewFindings, blueprint: null, coding: null }, prompt)
     + frontendBlock
     + [
       "\n\n## HYBRID MODE: STRUCTURED EXECUTION PLAN (REQUIRED)",
@@ -922,7 +928,7 @@ export async function runHybridLongAgent({
     await syncState({ lastMessage: "H5: debugging agent verifying implementation" })
 
     const debugModel = getModelForStage("debugging")
-    const debugPrompt = buildStageWrapper(LONGAGENT_4STAGE_STAGES.DEBUGGING, {
+    const debugPrompt = buildStageWrapper(ULTRA_STAGES.DEBUGGING, {
       preview: previewFindings.slice(0, 2000),
       blueprint: architectureText.slice(0, 3000),
       coding: priorContext.slice(0, 4000)
@@ -1004,7 +1010,7 @@ export async function runHybridLongAgent({
         }
       }
 
-      if (detectStageComplete(finalReply, LONGAGENT_4STAGE_STAGES.DEBUGGING)) {
+      if (detectStageComplete(finalReply, ULTRA_STAGES.DEBUGGING)) {
         debugDone = true
         gateStatus.debugging = { status: "pass", iterations: debugIter }
       }

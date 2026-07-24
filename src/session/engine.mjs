@@ -43,8 +43,14 @@ function estimateTokens(text) {
   return Math.max(1, estimateStringTokens(text || ""))
 }
 
+/**
+ * 归一到执行航道。0.4.0 的公开模式名（agent / agent-auto / ultra）在这里
+ * 也被接受，但航道取值刻意保持 0.3.x 的三个值，运行时无需改动。
+ */
 export function resolveMode(inputMode = "assistant") {
   const mode = String(inputMode || "assistant").toLowerCase()
+  if (mode === "ultra") return "longagent"
+  if (mode === "agent-auto" || mode === "yolo") return "assistant"
   if (mode === "agent" || mode === "code" || mode === "coding" || mode === "ask") return "assistant"
   if (["assistant", "plan", "longagent"].includes(mode)) return mode
   return "assistant"
@@ -243,7 +249,6 @@ export async function executeTurn({
   output = null,
   allowQuestion = true,
   toolContext = {},
-  longagentImpl = null,
   runSpec = null
 }) {
   ensureEventSinks()
@@ -293,7 +298,6 @@ export async function executeTurn({
           allowQuestion,
           toolContext,
           runSpec,
-          longagentImpl
         })
       : await processTurnLoop({
           prompt,

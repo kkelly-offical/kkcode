@@ -49,7 +49,6 @@ export async function executePromptTurn({
       sessionId: state.sessionId,
       configState: ctx.configState,
       providerType: chatParams.providerType ?? state.providerType,
-      longagentImpl: state.longagentImpl ?? null,
       signal,
       toolContext,
       output: streamSink && typeof streamSink === "function"

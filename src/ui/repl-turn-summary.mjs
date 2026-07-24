@@ -8,9 +8,6 @@ export function formatRuntimeStateText(state, mcpSummary = null, skillSummary = 
     `provider=${state.providerType}`,
     `model=${state.model}`
   ]
-  if (state.mode === "longagent" && state.longagentImpl) {
-    lines.push(`longagent.impl=${state.longagentImpl}`)
-  }
   if (mcpSummary) {
     lines.push(`mcp=${mcpSummary.healthy}/${mcpSummary.configured} healthy, ${mcpSummary.tools} tools`)
     if (mcpSummary.configured === 0) {

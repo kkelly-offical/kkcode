@@ -55,7 +55,17 @@ function baseConfig(longagentOverrides = {}) {
             health: { enabled: false },
             budget: { enabled: false }
           },
-          hybrid: { enabled: false },
+          // 0.4.0 起 Ultra 只有 hybrid 一套编排；这里关掉交互阶段，
+          // 让用例专注于 no_progress / maxIterations 的阈值语义
+          hybrid: {
+            intake: false,
+            intake_user_confirm: false,
+            blueprint_review: false,
+            completion_validation: false,
+            scaffold: false
+          },
+          scaffold: { enabled: false },
+          git: { enabled: false },
           ...longagentOverrides
         }
       },
@@ -101,8 +111,8 @@ test("longagent keeps running after no-progress threshold and completes later", 
 
   // Core: no_progress_limit does NOT prevent eventual completion
   assert.equal(result.status, "completed")
-  // Parallel mode runs stages via background workers; with no plannedFiles
-  // the stage completes immediately, so iterations/recovery may be low
+  // Stages run through the barrier scheduler; with no plannedFiles the stage
+  // completes immediately, so iterations/recovery stay low
   assert.ok(result.iterations >= 1, `expected at least 1 iteration, got ${result.iterations}`)
   assert.equal(result.stageCount, 1)
 })
