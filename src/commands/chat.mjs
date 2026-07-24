@@ -1,6 +1,6 @@
 import { Command } from "commander"
 import { buildContext, printContextWarnings, resolveExtensionPolicy } from "../context.mjs"
-import { ensureEventSinks, executeTurn, formatPublicModeSummary, getPublicModeContract, newSessionId, resolveMode, resolvePromptMode, summarizeRouteDecision } from "../session/engine.mjs"
+import { ensureEventSinks, executeTurn, formatPublicModeSummary, getPublicModeContract, newSessionId, resolvePromptMode, summarizeRouteDecision } from "../session/engine.mjs"
 import { emitRouteDecisionEvent } from "../session/routing-observability.mjs"
 import { renderStatusBar } from "../theme/status-bar.mjs"
 import { applyCommandTemplate, loadCustomCommands } from "../command/custom-commands.mjs"
@@ -12,6 +12,8 @@ import { listProviders } from "../provider/router.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { createOutputReporter, resolveOutputFormat } from "../cli/output-format.mjs"
+import { MODE_IDS, DEFAULT_MODE_ID, modeIdFromLegacy, laneOf, approvalOf } from "../core/modes.mjs"
+import { applyPermissionLevel } from "../repl/permission-flow.mjs"
 
 export function resolveChatExecutionMode(prompt, requestedMode) {
   return resolvePromptMode(prompt, requestedMode)
@@ -20,9 +22,10 @@ export function resolveChatExecutionMode(prompt, requestedMode) {
 export function createChatCommand() {
   const providers = listProviders()
   return new Command("chat")
-    .description("run one prompt in assistant/plan/agent/code/longagent mode (assistant = default personal lane)")
+    .description("run one prompt in plan/agent/agent-auto/ultra/yolo mode (agent = default lane)")
     .argument("<prompt...>", "prompt text")
-    .option("--mode <mode>", "assistant|plan|agent|code|coding|longagent", "assistant")
+    .option("--mode <mode>", `${MODE_IDS.join("|")} (legacy assistant|code|coding|longagent still accepted)`, "agent")
+    .option("--yolo", "shorthand for --mode yolo: skip every approval prompt")
     .option("--model <model>", "model id")
     .option("--provider-type <type>", `provider type (${providers.join("|")})`)
     .option("--base-url <url>", "provider base url override")
@@ -69,7 +72,13 @@ export function createChatCommand() {
         }
       }
 
-      const mode = resolveMode(options.mode)
+      // --mode 接受 0.4.0 模式 id 与 0.3.x 旧名；模式同时决定航道与审批档
+      const requestedModeId = options.yolo ? "yolo" : (modeIdFromLegacy(options.mode) || DEFAULT_MODE_ID)
+      const mode = laneOf(requestedModeId)
+      ctx.configState.config.permission = applyPermissionLevel(
+        approvalOf(requestedModeId),
+        ctx.configState.config.permission || {}
+      )
       const providerType = options.providerType ?? ctx.configState.config.provider.default
       const providerDefaults = ctx.configState.config.provider[providerType]
       if (!providerDefaults) {

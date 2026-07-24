@@ -1,4 +1,5 @@
 import { paint } from "./color.mjs"
+import { getMode } from "../core/modes.mjs"
 
 function formatNumber(value) {
   return Intl.NumberFormat("en-US").format(Math.round(value))
@@ -46,6 +47,7 @@ function clipModel(model, maxLen) {
 
 export function renderStatusBar({
   mode,
+  modeId = null,
   model,
   permission,
   tokenMeter,
@@ -66,8 +68,11 @@ export function renderStatusBar({
   const modelLabel = clipModel(model, tight ? 18 : dense ? 28 : 44)
 
   const segments = []
+  // 颜色仍按航道取（theme.modes 的键是 0.3.x 航道名），标签用 0.4.0 的公开模式名
   const modeBg = theme.modes[mode] || theme.base.accent
-  segments.push(badge(mode.toUpperCase(), contrastText(modeBg), modeBg))
+  const modeInfo = modeId ? getMode(modeId) : null
+  const modeLabel = modeInfo ? `${modeInfo.icon} ${modeInfo.label.toUpperCase()}` : String(mode).toUpperCase()
+  segments.push(badge(modeLabel, contrastText(modeBg), modeBg))
   segments.push(badge(`MODEL ${modelLabel}`, theme.base.fg, theme.components.panel || theme.base.border, { bold: false }))
 
   if (showTokenMeter && tokenMeter) {

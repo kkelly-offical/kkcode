@@ -76,7 +76,12 @@ export function renderPublicModeContract() {
     "- `longagent`: heavyweight staged multi-file delivery lane with explicit gates.",
     "- Keep everyday Q&A, coding mutation, debugging, refactoring, and test repair in `assistant`.",
     "- Suggest `longagent` only when heavy multi-file or system-level evidence appears; do not auto-switch.",
-    "- Keep `plan` explicit and mutation-free even when later execution is likely."
+    "- Keep `plan` explicit and mutation-free even when later execution is likely.",
+    "",
+    "The user-facing 0.4.0 names for these lanes are Plan, Agent, Agent · Auto,",
+    "Ultra and YOLO; Ultra is the `longagent` lane and the rest run on `assistant`.",
+    "The difference between Agent, Agent · Auto and YOLO is the approval level, not",
+    "the lane: never assume an edit is pre-approved, always let the permission layer decide."
   ].join("\n")
 }
 
@@ -393,6 +398,8 @@ export async function executeTurn({
     budgetWarnings: budgetResult.warnings,
     budgetExceeded: false,
     toolEvents: turn.toolEvents,
+    // Plan 审批选择的执行航道，由 REPL 消费后真正切模式
+    planHandoff: turn.planHandoff || null,
     longagent: mode === "longagent"
       ? {
           status: turn.status,

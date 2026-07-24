@@ -18,6 +18,9 @@ test("buildHelpText keeps the public lane descriptions together", () => {
 test("buildShortcutLegend keeps the lane cycle wording explicit", () => {
   const text = buildShortcutLegend()
   assert.match(text, /Explicit workflows/)
-  assert.match(text, /Shift\+Tab cycle permission level/)
+  // 0.4.0: Shift+Tab moved from permission levels to the five-mode cycle
+  assert.match(text, /Shift\+Tab cycle mode/)
+  assert.match(text, /Plan\/Agent\/Agent·Auto\/Ultra\/YOLO/)
+  assert.match(text, /\/permission cycle/)
   assert.match(text, /Esc interrupt turn/)
 })

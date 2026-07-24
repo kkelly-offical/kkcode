@@ -2,6 +2,8 @@ import { readFile, writeFile, mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 import { paint } from "../theme/color.mjs"
 import { resolveMode } from "../session/engine.mjs"
+import { modeIdFromLegacy } from "../core/modes.mjs"
+import { restoreModeId } from "./mode-flow.mjs"
 import { PACKAGE_VERSION } from "../version.mjs"
 
 export function configuredProviders(config, listProvidersFn) {
@@ -50,8 +52,13 @@ export function resolveProviderDefaultModel(config, providerType, fallback = "")
 
 export function createInitialReplState(config, { newSessionIdFn }) {
   const providerType = config.provider.default
+  // agent.default_mode 既可能是 0.4.0 的模式 id，也可能是 0.3.x 的航道名；
+  // 后者由配置里的 permission.level 补出审批档。
+  const modeId = modeIdFromLegacy(config.agent.default_mode)
+    || restoreModeId({ mode: config.agent.default_mode, permissionConfig: config.permission || {} })
   const state = {
     sessionId: newSessionIdFn(),
+    modeId,
     mode: resolveMode(config.agent.default_mode),
     providerType,
     model: ""

@@ -98,8 +98,15 @@ import {
   PERMISSION_PROMPT_VALUES,
   defaultPermissionChoiceIndex
 } from "./repl/permission-flow.mjs"
-import { approvalFromLegacy } from "./core/modes.mjs"
+import { approvalFromLegacy, modeIdFromLegacy, nextModeId, MODE_IDS } from "./core/modes.mjs"
 import { noteDeprecation } from "./core/deprecations.mjs"
+import {
+  applyModeSelection,
+  resolveModeId,
+  createModePickerState,
+  formatModeBadge,
+  MODE_PICKER_CHOICES
+} from "./repl/mode-flow.mjs"
 import { normalizePermissionLevel } from "./permission/rules.mjs"
 import {
   buildLearnedRule,
@@ -386,6 +393,19 @@ function pickConfigPathForScope(scope, source, cwd = process.cwd()) {
   if (scope === "user") return source?.userPath || userConfigCandidates()[0]
   if (scope === "project") return source?.projectPath || projectConfigCandidates(cwd)[0]
   return null
+}
+
+/**
+ * 就地切换模式：同时写 state.modeId、state.mode（航道）与
+ * permission.level（审批档）。TUI 与行模式共用。
+ */
+function switchModeInPlace(state, ctx, modeId) {
+  const permission = ctx.configState.config.permission || (ctx.configState.config.permission = {})
+  const next = applyModeSelection(modeId, { permissionConfig: permission })
+  state.modeId = next.modeId
+  state.mode = next.mode
+  ctx.configState.config.permission = next.permissionConfig
+  return next
 }
 
 async function readConfigFile(target) {
@@ -805,20 +825,20 @@ async function processInputLine({
     ].join("\n")
   }
 
-  if (["/assistant", "/plan", "/agent", "/code", "/coding", "/longagent", "/ultra"].includes(normalized)) {
+  if (["/assistant", "/plan", "/agent", "/code", "/coding", "/longagent", "/ultra", "/yolo"].includes(normalized)) {
     const raw = normalized.slice(1)
     if (raw === "longagent") {
       noteDeprecation("mode.longagent", "`/longagent` 已更名为 `/ultra`")
     }
-    state.mode = resolveMode(raw)
-    print(`mode switched: ${state.mode}`)
+    const next = switchModeInPlace(state, ctx, raw)
+    print(`mode switched: ${next.icon} ${next.label} (${next.hint})`)
     return { exit: false }
   }
 
   if (normalized.startsWith("/longagent ") || normalized.startsWith("/ultra ")) {
     const rawSub = normalized.replace(/^\/(longagent|ultra)\s+/, "").trim()
     const sub = rawSub.toLowerCase()
-    state.mode = "longagent"
+    switchModeInPlace(state, ctx, "ultra")
     if (sub === "4stage" || sub === "hybrid") {
       // 0.4.0 只剩一套 Ultra 编排，impl 子命令不再有意义
       print(`Ultra 现在只有一套编排，/${sub} 子命令已移除`)
@@ -827,10 +847,20 @@ async function processInputLine({
     normalized = rawSub
   }
 
+  if (normalized === "/mode" || normalized === "/m") {
+    print(`mode: ${formatModeBadge(state.modeId || state.mode)}`)
+    return { exit: false, openModePicker: true }
+  }
+
   if (normalized.startsWith("/mode ") || normalized.startsWith("/m ")) {
-    const next = resolveMode(normalized.replace(/^\/(mode|m)\s+/, "").trim())
-    state.mode = next
-    print(`mode switched: ${next}`)
+    const requested = normalized.replace(/^\/(mode|m)\s+/, "").trim()
+    const modeId = modeIdFromLegacy(requested)
+    if (!modeId) {
+      print(`unknown mode: ${escapeTerminalText(requested)} (${MODE_IDS.join(" | ")})`)
+      return { exit: false }
+    }
+    const next = switchModeInPlace(state, ctx, modeId)
+    print(`mode switched: ${next.icon} ${next.label} (${next.hint})`)
     return { exit: false }
   }
 
@@ -933,6 +963,14 @@ async function processInputLine({
       print(`level: ${normalizePermissionLevel(permission)}`)
       print(`non_tty: ${permission.non_tty_default || "deny"}`)
       return { exit: false, openPolicyPicker: true }
+    }
+
+    if (sub === "cycle") {
+      // Shift+Tab 在 0.4.0 改切模式，审批档单独用这条命令循环
+      const next = nextPermissionLevel(permission)
+      ctx.configState.config.permission = applyPermissionLevel(next, permission)
+      print(`permission.level -> ${next} (runtime)`)
+      return { exit: false }
     }
 
     if (sub === "list" || sub === "rules") {
@@ -1292,8 +1330,17 @@ async function processInputLine({
       for (const line of renderDiagnosticsLines(diagnostics, 6)) print(line)
     }
   }
+  // Plan 审批选择了执行航道 → 真正切模式（0.3.x 只把选择塞回提示词）
+  let planHandoff = null
+  if (result.planHandoff?.modeId) {
+    const next = switchModeInPlace(state, ctx, result.planHandoff.modeId)
+    planHandoff = { ...result.planHandoff, label: next.label, icon: next.icon }
+    print(`mode switched: ${next.icon} ${next.label} (plan build)`)
+  }
+
   return {
     exit: false,
+    planHandoff,
     turnResult: {
       tokenMeter: result.tokenMeter,
       cost: result.cost,
@@ -1500,6 +1547,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     questionAnswers: {},
     modelPicker: null,
     policyPicker: null,
+    modePicker: null,
     selectedSuggestion: 0,
     suggestionOffset: 0,
     history: [...historyLines],
@@ -2020,8 +2068,25 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     closeModelPicker()
   }
 
+  function openModePicker() {
+    ui.modePicker = createModePickerState(state.modeId || resolveModeId(state.mode))
+    requestRender({ force: true })
+  }
+
+  function closeModePicker() {
+    ui.modePicker = null
+    requestRender({ force: true })
+  }
+
+  function confirmModePicker() {
+    if (!ui.modePicker) return
+    const chosen = MODE_PICKER_CHOICES[ui.modePicker.selected]
+    closeModePicker()
+    if (chosen) selectModeAndNotify(chosen.value)
+  }
+
   function openPolicyPicker() {
-    const current = ctx.configState.config.permission || { mode: "auto" }
+    const current = ctx.configState.config.permission || {}
     ui.policyPicker = createPolicyPickerState(current)
     requestRender({ force: true })
   }
@@ -2323,6 +2388,28 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       }
     }
     const modelPickerBlock = modelPickerLines.length ? modelPickerLines.length : 0
+    const modePickerLines = []
+    if (ui.modePicker) {
+      const currentModeId = state.modeId || resolveModeId(state.mode)
+      modePickerLines.push(
+        paint(`Mode  ↑↓ navigate  Enter select  Esc cancel  (Shift+Tab cycles)`, ctx.themeState.theme.semantic.info, { bold: true })
+      )
+      modePickerLines.push(paint(`┌${"─".repeat(Math.max(1, width - 4))}┐`, ctx.themeState.theme.base.border))
+      for (let i = 0; i < MODE_PICKER_CHOICES.length; i++) {
+        const choice = MODE_PICKER_CHOICES[i]
+        const active = i === ui.modePicker.selected
+        const current = choice.value === currentModeId
+        const marker = current ? "●" : " "
+        const prefix = active ? "▸" : " "
+        modePickerLines.push(
+          active
+            ? paint(`│${padRight(` ${prefix} ${marker} ${choice.label}  ${choice.desc}`, Math.max(1, width - 5))}│`, "#111111", { bg: ctx.themeState.theme.semantic.info, bold: true })
+            : paint(`│${padRight(` ${prefix} ${marker} ${choice.label}`, 22)}${padRight(choice.desc, Math.max(1, width - 27))}│`, current ? ctx.themeState.theme.semantic.success : ctx.themeState.theme.base.fg)
+        )
+      }
+      modePickerLines.push(paint(`└${"─".repeat(Math.max(1, width - 4))}┘`, ctx.themeState.theme.base.border))
+    }
+
     const policyPickerLines = []
     if (ui.policyPicker) {
       const currentPolicy = ctx.configState.config.permission?.level || ctx.configState.config.permission?.mode || ctx.configState.config.permission?.default_policy || "auto"
@@ -2345,6 +2432,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       policyPickerLines.push(paint(`└${"─".repeat(Math.max(1, width - 4))}┘`, ctx.themeState.theme.base.border))
     }
     const policyPickerBlock = policyPickerLines.length
+    const modePickerBlock = modePickerLines.length
     const permissionBlock = permissionLines.length
 
     // --- Question panel ---
@@ -2470,6 +2558,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       suggestionBlock +
       modelPickerBlock +
       policyPickerBlock +
+      modePickerBlock +
       permissionBlock +
       questionBlock +
       1 + // status bar
@@ -2516,6 +2605,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
     if (policyPickerLines.length) {
       for (const line of policyPickerLines) lines.push(clipAnsiLine(line, width))
+    }
+    if (modePickerLines.length) {
+      for (const line of modePickerLines) lines.push(clipAnsiLine(line, width))
     }
 
     if (permissionLines.length) {
@@ -2634,6 +2726,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     clearInterval(spinnerTimer)
     spinnerTimer = null
   }
+
+  let pendingPlanBuild = null
 
   async function submitCurrentInput() {
     const line = ui.input.replace(/\r/g, "")
@@ -2930,6 +3024,17 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       if (action.openPolicyPicker) {
         openPolicyPicker()
       }
+      if (action.openModePicker) {
+        openModePicker()
+      }
+      if (action.planHandoff?.modeId) {
+        // switchModeInPlace 已经改过 state；这里只同步 UI 并排队续跑
+        pendingPlanBuild = action.planHandoff
+        showToast(`${action.planHandoff.icon} ${action.planHandoff.label} · 开始执行计划`, {
+          topic: "mode",
+          tone: "success"
+        })
+      }
       if (action.exit) {
         ui.quitting = true
       }
@@ -2954,6 +3059,17 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       ui.currentActivity = null
       stopBusySpinner()
       requestRender()
+    }
+
+    // Plan → Build 交接：模式已切好，直接以计划文件为输入续跑一轮。
+    // pendingPlanBuild 先清空，递归深度因此固定为 1。
+    if (pendingPlanBuild && !ui.quitting && !aborter.signal.aborted) {
+      const handoff = pendingPlanBuild
+      pendingPlanBuild = null
+      const planRef = handoff.planPath ? ` at ${handoff.planPath}` : ""
+      ui.input = `Implement the approved plan${planRef}. Follow it stage by stage and report what you changed.`
+      ui.inputCursor = ui.input.length
+      await submitCurrentInput()
     }
   }
 
@@ -2993,19 +3109,25 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     )
   }
 
-  function cycleModeForwardAndNotify() {
-    const next = nextMode(state.mode, MODE_CYCLE_ORDER)
-    state.mode = next
-    showToast(`Mode · ${next}`, { topic: "mode", tone: "success" })
+  /**
+   * 切换模式同时写两处：state.modeId（唯一真值）与 permission.level
+   * （判定链读的审批档）。state.mode 保持航道值给既有消费者。
+   */
+  function selectModeAndNotify(modeId, { silent = false } = {}) {
+    const permission = ctx.configState.config.permission || (ctx.configState.config.permission = {})
+    const next = applyModeSelection(modeId, { permissionConfig: permission })
+    state.modeId = next.modeId
+    state.mode = next.mode
+    ctx.configState.config.permission = next.permissionConfig
+    if (!silent) {
+      showToast(`${next.icon} ${next.label} · ${next.hint}`, { topic: "mode", tone: "success" })
+    }
     requestRender()
+    return next
   }
 
-  function cyclePermissionForwardAndNotify() {
-    const permission = ctx.configState.config.permission || (ctx.configState.config.permission = {})
-    const next = nextPermissionLevel(permission)
-    ctx.configState.config.permission = applyPermissionLevel(next, permission)
-    showToast(`Permission · ${next}`, { topic: "permission", tone: "success" })
-    requestRender()
+  function cycleModeForwardAndNotify() {
+    selectModeAndNotify(nextModeId(state.modeId || resolveModeId(state.mode)))
   }
 
   function questionAcceptsTextInput() {
@@ -3834,6 +3956,36 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           return
         }
 
+        if (ui.modePicker) {
+          if (key.name === "escape") {
+            closeModePicker()
+            return
+          }
+          if (key.name === "return") {
+            confirmModePicker()
+            return
+          }
+          if (key.name === "tab") {
+            // 面板打开时 Shift+Tab 继续循环，手感与关闭时一致
+            const delta = key.shift ? 1 : -1
+            const count = MODE_PICKER_CHOICES.length
+            ui.modePicker.selected = (ui.modePicker.selected + delta + count) % count
+            requestRender()
+            return
+          }
+          if (key.name === "up") {
+            ui.modePicker.selected = Math.max(0, ui.modePicker.selected - 1)
+            requestRender()
+            return
+          }
+          if (key.name === "down") {
+            ui.modePicker.selected = Math.min(MODE_PICKER_CHOICES.length - 1, ui.modePicker.selected + 1)
+            requestRender()
+            return
+          }
+          return
+        }
+
         // Scrolling keys work even when busy
         if (key.name === "pageup") {
           scrollBy(pageSize(ui.scrollMeta.logRows))
@@ -3983,7 +4135,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         }
 
         if (key.name === "tab") {
-          if (key.shift) cyclePermissionForwardAndNotify()
+          if (key.shift) cycleModeForwardAndNotify()
           else applyCurrentSuggestion()
           return
         }

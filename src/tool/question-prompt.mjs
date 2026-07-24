@@ -70,10 +70,10 @@ export async function askPlanApproval({ plan, files = [], planPath = "" }) {
       text: `Plan Next Step`,
       description: `${pathText}${plan}${fileList}`,
       options: [
-        { label: "Assistant Build", value: "assistant", description: "Use Assistant to implement this plan" },
-        { label: "LongAgent Build", value: "longagent", description: "Use LongAgent for persistent staged delivery" },
-        { label: "Compact + Assistant", value: "compact_assistant", description: "Compact context first, then use Assistant" },
-        { label: "Compact + LongAgent", value: "compact_longagent", description: "Compact context first, then use LongAgent" },
+        { label: "Build", value: "assistant", description: "Switch to Agent and implement this plan" },
+        { label: "Ultra Build", value: "longagent", description: "Switch to Ultra for staged multi-file delivery" },
+        { label: "Compact + Build", value: "compact_assistant", description: "Compact context first, then build in Agent" },
+        { label: "Compact + Ultra Build", value: "compact_longagent", description: "Compact context first, then build in Ultra" },
         { label: "Revise Plan", value: "revise", description: "Continue editing the plan with your feedback" }
       ],
       multi: false,

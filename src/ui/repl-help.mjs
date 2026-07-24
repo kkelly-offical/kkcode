@@ -27,7 +27,9 @@ export function buildHelpText({ providers = [], userRootPath = "" } = {}) {
   lines.push(row("/provider <type>,/p <type>", `switch provider (${providers.join("|") || "configured"})`))
   lines.push(row("/provider edit <name>", "edit existing provider config"))
   lines.push(row("/model <id>", "set active model"))
+  lines.push(row("/mode [id]", "open the mode picker or switch directly (Shift+Tab cycles)"))
   lines.push(row("", "assistant = unified daily lane · plan = read-only planning · longagent = staged"))
+  lines.push(row("", "0.4.0 names: Plan · Agent · Agent·Auto · Ultra · YOLO"))
 
   lines.push("")
   lines.push("  Profile & Workspace")
@@ -107,7 +109,8 @@ export function buildShortcutLegend() {
     "  Up/Down navigate suggestion/history",
     "  Left/Right/Home/End edit cursor",
     "  Ctrl+Up/Down scroll log   Ctrl+Home/End oldest/latest",
-    "  Shift+Tab cycle permission level",
+    "  Shift+Tab cycle mode (Plan/Agent/Agent·Auto/Ultra/YOLO)",
+    "  /permission cycle  cycle approval level",
     "  Esc interrupt turn  Ctrl+C×2 exit"
   ].join("\n")
 }

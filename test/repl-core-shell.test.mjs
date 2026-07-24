@@ -51,10 +51,27 @@ test("createInitialReplState derives session, mode, provider and model", () => {
   const state = createInitialReplState(config, { newSessionIdFn: () => "sid_123" })
   assert.deepEqual(state, {
     sessionId: "sid_123",
+    modeId: "plan",
     mode: "plan",
     providerType: "openai",
     model: "gpt-5"
   })
+})
+
+test("createInitialReplState maps legacy default_mode onto a 0.4.0 mode id", () => {
+  const base = { provider: { default: "openai", openai: { default_model: "gpt-5" } } }
+  const make = (agent, permission) =>
+    createInitialReplState({ ...base, agent, permission }, { newSessionIdFn: () => "sid" })
+
+  // legacy lane names collapse onto the unified agent lane
+  assert.equal(make({ default_mode: "assistant" }).modeId, "agent")
+  assert.equal(make({ default_mode: "code" }).modeId, "agent")
+  // longagent becomes Ultra, and the lane value stays on the 0.3.x vocabulary
+  assert.equal(make({ default_mode: "longagent" }).modeId, "ultra")
+  assert.equal(make({ default_mode: "longagent" }).mode, "longagent")
+  // new mode ids pass through
+  assert.equal(make({ default_mode: "agent-auto" }).modeId, "agent-auto")
+  assert.equal(make({ default_mode: "yolo" }).mode, "assistant")
 })
 
 test("collectMcpStatusLines renders healthy and unhealthy lines", () => {

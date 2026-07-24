@@ -224,6 +224,8 @@ export async function processTurnLoop({
   const doomTracker = [] // recent tool call signatures for doom loop detection
   let emittedAnyText = false
   let lastContextMeter = null
+  // Plan 审批后的执行航道交接，由调用方（REPL）真正切换模式并续跑
+  let planHandoff = null
   let contextCachePoint = null
   const thresholdRatio = Number(configState.config.session?.compaction_threshold_ratio ?? 0.7)
   const thresholdMessages = Number(configState.config.session?.compaction_threshold_messages ?? 50)
@@ -767,7 +769,8 @@ export async function processTurnLoop({
           emittedText: emittedAnyText,
           context: lastContextMeter,
           usage,
-          toolEvents
+          toolEvents,
+          planHandoff
         }
       }
 
@@ -898,11 +901,23 @@ export async function processTurnLoop({
           })
           const planPath = approval.planPath || result.metadata.planPath || ""
           const actionText = {
-            assistant: `User selected Assistant build. Implement the saved plan${planPath ? ` at ${planPath}` : ""} in the unified assistant lane using the current permission level.`,
-            longagent: `User selected LongAgent build. Ask the user to run /longagent with the saved plan${planPath ? ` at ${planPath}` : ""}, or continue only if this session is already in longagent mode.`,
-            compact_assistant: `User selected Compact + Assistant. Compact the relevant context first, then implement the saved plan${planPath ? ` at ${planPath}` : ""} in the unified assistant lane.`,
-            compact_longagent: `User selected Compact + LongAgent. Compact the relevant context first, then ask the user to run /longagent with the saved plan${planPath ? ` at ${planPath}` : ""}, or continue only if this session is already in longagent mode.`
+            assistant: `User selected Build. Implement the saved plan${planPath ? ` at ${planPath}` : ""} in the unified assistant lane using the current permission level.`,
+            longagent: `User selected Ultra Build. The session is switching to Ultra; implement the saved plan${planPath ? ` at ${planPath}` : ""} as a staged delivery.`,
+            compact_assistant: `User selected Compact + Build. Compact the relevant context first, then implement the saved plan${planPath ? ` at ${planPath}` : ""} in the unified assistant lane.`,
+            compact_longagent: `User selected Compact + Ultra Build. Compact the relevant context first; the session is switching to Ultra to deliver the saved plan${planPath ? ` at ${planPath}` : ""} in stages.`
           }[approval.action]
+
+          // 0.3.x 只把这段文字塞回模型，从不真的切换执行航道。0.4.0 把选择
+          // 结果作为 planHandoff 冒泡到 turn 结果，由 REPL 真正切模式并续跑。
+          if (approval.approved) {
+            const wantsUltra = approval.action === "longagent" || approval.action === "compact_longagent"
+            planHandoff = {
+              modeId: wantsUltra ? "ultra" : "agent",
+              compactFirst: approval.action.startsWith("compact_"),
+              planPath
+            }
+          }
+
           result = {
             ...result,
             output: approval.approved
@@ -1086,7 +1101,8 @@ export async function processTurnLoop({
       emittedText: emittedAnyText,
       context: lastContextMeter,
       usage,
-      toolEvents
+      toolEvents,
+      planHandoff
     }
   } catch (error) {
     await markSessionStatus(sessionId, "error")

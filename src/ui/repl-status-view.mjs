@@ -1,4 +1,5 @@
 import { renderStatusBar } from "../theme/status-bar.mjs"
+import { normalizePermissionLevel } from "../permission/rules.mjs"
 import { renderReplDashboard, renderReplLogo, renderStartupHint } from "./repl-dashboard.mjs"
 import { formatRuntimeStateText } from "./repl-turn-summary.mjs"
 import { renderOperatorPanel } from "./repl-operator-panel.mjs"
@@ -15,8 +16,9 @@ export function renderReplStatusLine({
 }) {
   return renderStatusBar({
     mode: state.mode,
+    modeId: state.modeId,
     model: state.model,
-    permission: configState.config.permission.level || configState.config.permission.mode || configState.config.permission.default_policy,
+    permission: normalizePermissionLevel(configState.config.permission),
     tokenMeter,
     aggregation: configState.config.usage.aggregation,
     cost,
