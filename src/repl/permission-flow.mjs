@@ -1,26 +1,29 @@
+import { APPROVAL_LEVELS, DEFAULT_APPROVAL, approvalFromLegacy } from "../core/modes.mjs"
+
 export const POLICY_CHOICES = [
-  { label: "Readonly", value: "readonly", desc: "read, search, and inspect only" },
-  { label: "Review", value: "review", desc: "read plus safe checks; no edits" },
-  { label: "Auto", value: "auto", desc: "auto-approve safe tools, review risky tools" },
-  { label: "Edit", value: "edit", desc: "allow normal edits; review sensitive actions" },
-  { label: "Full Auto", value: "full-auto", desc: "autonomous local edits and checks with danger guards" },
-  { label: "YOLO", value: "yolo", desc: "allow permission checks without prompts" },
-  { label: "Session Clear", value: "session-clear", desc: "clear cached grants" }
+  { label: "Readonly", value: "readonly", desc: "只读检查，不执行任何修改" },
+  { label: "Manual", value: "manual", desc: "只读与白名单命令自动放行，编辑前确认" },
+  { label: "Accept Edits", value: "accept-edits", desc: "自动接受编辑与子任务，危险命令仍确认" },
+  { label: "YOLO", value: "yolo", desc: "跳过全部审批" },
+  { label: "Session Clear", value: "session-clear", desc: "清除本会话已授权的缓存" }
 ]
 
-export const PERMISSION_LEVEL_CYCLE = ["readonly", "review", "auto", "edit", "full-auto", "yolo"]
+export const PERMISSION_LEVEL_CYCLE = APPROVAL_LEVELS
 
-function currentPermissionValue(permissionConfigOrValue = "auto") {
-  if (typeof permissionConfigOrValue === "string") return permissionConfigOrValue
-  if (permissionConfigOrValue.level) return permissionConfigOrValue.level
-  if (permissionConfigOrValue.mode === "yolo") return "yolo"
-  if (permissionConfigOrValue.mode === "auto") return "auto"
-  if (permissionConfigOrValue.default_policy === "allow") return "full-auto"
-  if (permissionConfigOrValue.default_policy === "deny") return "readonly"
-  return "auto"
+function currentPermissionValue(permissionConfigOrValue = DEFAULT_APPROVAL) {
+  if (typeof permissionConfigOrValue === "string") {
+    return approvalFromLegacy(permissionConfigOrValue) || DEFAULT_APPROVAL
+  }
+  const config = permissionConfigOrValue || {}
+  if (config.level) return approvalFromLegacy(config.level) || DEFAULT_APPROVAL
+  if (config.mode === "yolo") return "yolo"
+  if (config.mode === "auto") return "manual"
+  if (config.default_policy === "allow") return "accept-edits"
+  if (config.default_policy === "deny") return "readonly"
+  return DEFAULT_APPROVAL
 }
 
-export function createPolicyPickerState(current = "auto") {
+export function createPolicyPickerState(current = DEFAULT_APPROVAL) {
   const value = currentPermissionValue(current)
   const idx = POLICY_CHOICES.findIndex((choice) => choice.value === value)
   return { selected: Math.max(0, idx) }
@@ -39,11 +42,7 @@ export function applyPolicyChoice(choice, { permissionConfig = {}, sessionId, cl
   if (PERMISSION_LEVEL_CYCLE.includes(choice.value)) {
     return {
       message: `permission level → ${choice.value}`,
-      permissionConfig: {
-        ...permissionConfig,
-        level: choice.value,
-        mode: choice.value === "yolo" ? "yolo" : "auto"
-      }
+      permissionConfig: applyPermissionLevel(choice.value, permissionConfig)
     }
   }
 
@@ -53,17 +52,20 @@ export function applyPolicyChoice(choice, { permissionConfig = {}, sessionId, cl
   }
 }
 
-export function nextPermissionLevel(permissionConfigOrValue = "auto", order = PERMISSION_LEVEL_CYCLE) {
+export function nextPermissionLevel(permissionConfigOrValue = DEFAULT_APPROVAL, order = PERMISSION_LEVEL_CYCLE) {
   const current = currentPermissionValue(permissionConfigOrValue)
   const idx = order.indexOf(current)
   return order[idx >= 0 ? (idx + 1) % order.length : 0]
 }
 
+/**
+ * 写回审批档。0.3.x 会同时写 `mode` 字段，0.4.0 起 `level` 是唯一真源，
+ * 因此这里顺带清掉旧的 `mode` / `default_policy`，避免两套词汇再次分叉。
+ */
 export function applyPermissionLevel(level, permissionConfig = {}) {
-  const value = PERMISSION_LEVEL_CYCLE.includes(level) ? level : "auto"
-  return {
-    ...permissionConfig,
-    level: value,
-    mode: value === "yolo" ? "yolo" : "auto"
-  }
+  const value = approvalFromLegacy(level) || DEFAULT_APPROVAL
+  const next = { ...permissionConfig, level: value }
+  delete next.mode
+  delete next.default_policy
+  return next
 }

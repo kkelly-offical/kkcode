@@ -75,8 +75,8 @@ test("permission audit events inherit review and trace correlation", async () =>
     await PermissionEngine.check({
       config: {
         permission: {
-          default_policy: "allow",
-          rules: []
+          level: "manual",
+          rules: [{ tool: "github_publish", action: "allow" }]
         }
       },
       sessionId: "review-audit-session",

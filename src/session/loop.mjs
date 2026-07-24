@@ -7,6 +7,7 @@ import { executeTool } from "../tool/executor.mjs"
 import { isToolSuccess } from "../core/types.mjs"
 import { PermissionEngine } from "../permission/engine.mjs"
 import { normalizePermissionLevel } from "../permission/rules.mjs"
+import { APPROVAL_LEVELS, DEFAULT_APPROVAL, approvalFromAgentPermission } from "../core/modes.mjs"
 import { createTaskDelegate } from "../orchestration/task-scheduler.mjs"
 import { loadInstructions } from "./instruction-loader.mjs"
 import { buildSystemPromptBlocks } from "./system-prompt.mjs"
@@ -43,21 +44,21 @@ const READ_ONLY_TOOLS = new Set([
   "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch", "background_output", "todowrite", "enter_plan"
 ])
 
-const PERMISSION_RANK = new Map([
-  ["readonly", 0],
-  ["review", 1],
-  ["auto", 2],
-  ["edit", 3],
-  ["full-auto", 4],
-  ["yolo", 5]
-])
+const PERMISSION_RANK = new Map(APPROVAL_LEVELS.map((level, index) => [level, index]))
 
+/**
+ * 子智能体只能收紧、不能放宽全局审批档。
+ *
+ * agent 定义使用第四套权限词汇（readonly|full|default|none）。0.3.x 的
+ * normalizePermissionLevel 不认识 full / none，会把它们静默降级成同一档；
+ * 0.4.0 起经 approvalFromAgentPermission 正确映射，min() 收紧语义不变。
+ */
 export function tightenPermissionConfig(config, rolePermission = null) {
   if (!rolePermission) return config
   const globalLevel = normalizePermissionLevel(config.permission || {})
-  const requested = normalizePermissionLevel(
-    typeof rolePermission === "string" ? { level: rolePermission } : rolePermission
-  )
+  const requested = typeof rolePermission === "string"
+    ? (approvalFromAgentPermission(rolePermission) || DEFAULT_APPROVAL)
+    : normalizePermissionLevel(rolePermission)
   const effective = (PERMISSION_RANK.get(requested) ?? 0) <= (PERMISSION_RANK.get(globalLevel) ?? 0)
     ? requested
     : globalLevel

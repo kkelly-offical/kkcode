@@ -1,4 +1,8 @@
 import { VALID_MODES, VALID_PROVIDER_TYPES, VALID_REVIEW_SORT, getValidProviderTypes } from "./defaults.mjs"
+import { APPROVAL_LEVELS } from "../core/modes.mjs"
+
+/** 新四档 + 0.3.x 旧六级，旧值在读取时映射并提示弃用。 */
+const ACCEPTED_PERMISSION_LEVELS = [...APPROVAL_LEVELS, "review", "auto", "edit", "full-auto"]
 
 const HEX = /^#([A-Fa-f0-9]{6})$/
 
@@ -410,11 +414,13 @@ export function validateConfig(config) {
   if (config.permission !== undefined) {
     if (!isObj(config.permission)) err(errors, "permission", "must be object")
     else {
+      // permission.mode / permission.default_policy 自 0.4.0 起弃用，
+      // 仍然校验通过并在读取时映射到 permission.level，0.5.0 移除。
       if (config.permission.mode !== undefined && !["auto", "manual", "yolo"].includes(config.permission.mode)) {
         err(errors, "permission.mode", "must be auto|manual|yolo")
       }
-      if (config.permission.level !== undefined && !["readonly", "review", "auto", "edit", "full-auto", "yolo"].includes(config.permission.level)) {
-        err(errors, "permission.level", "must be readonly|review|auto|edit|full-auto|yolo")
+      if (config.permission.level !== undefined && !ACCEPTED_PERMISSION_LEVELS.includes(config.permission.level)) {
+        err(errors, "permission.level", `must be ${APPROVAL_LEVELS.join("|")} (legacy readonly|review|auto|edit|full-auto still accepted)`)
       }
       if (config.permission.default_policy !== undefined && !["allow", "deny", "ask"].includes(config.permission.default_policy)) {
         err(errors, "permission.default_policy", "must be allow|deny|ask")

@@ -1,40 +1,12 @@
 import { getSensitiveEditPolicy } from "./file-edit-policy.mjs"
+import { matchGlob, matchPatterns, normalizePath } from "../util/glob.mjs"
+import { APPROVAL_LEVELS, DEFAULT_APPROVAL, approvalFromLegacy, isLegacyApprovalName } from "../core/modes.mjs"
+import { noteDeprecation } from "../core/deprecations.mjs"
 
+/** @deprecated 0.4.0 起审批档只有 APPROVAL_LEVELS 一套词汇，0.5.0 移除。 */
 export const PERMISSION_MODES = ["auto", "manual", "yolo"]
-export const PERMISSION_LEVELS = ["readonly", "review", "auto", "edit", "full-auto", "yolo"]
+export const PERMISSION_LEVELS = APPROVAL_LEVELS
 export const LEGACY_PERMISSION_POLICIES = ["ask", "allow", "deny"]
-
-const AUTO_READONLY_TOOLS = new Set([
-  "list",
-  "read",
-  "glob",
-  "grep",
-  "codesearch",
-  "sysinfo",
-  "websearch",
-  "webfetch",
-  "background_output",
-  "task_list",
-  "task_get",
-  "task_output",
-  "todowrite",
-  "question",
-  "enter_plan",
-  "exit_plan"
-])
-
-const AUTO_REVIEW_ASK_TOOLS = new Set([
-  "bash",
-  "write",
-  "edit",
-  "patch",
-  "multiedit",
-  "notebookedit",
-  "task",
-  "task_stop",
-  "background_cancel",
-  "skill"
-])
 
 const TOOL_CAPABILITIES = {
   list: "read",
@@ -73,6 +45,7 @@ const TRUSTED_BASH_PATTERNS = [
   /^(node|npm|pnpm|yarn)\s+(--version|-v|version|root|list|ls)\b/i
 ]
 
+/** @deprecated 仅供旧配置迁移期读取 permission.mode，0.5.0 移除。 */
 function normalizePermissionMode(permission = {}) {
   const mode = String(permission.mode || "").toLowerCase()
   if (PERMISSION_MODES.includes(mode)) return mode
@@ -81,16 +54,43 @@ function normalizePermissionMode(permission = {}) {
   return "manual"
 }
 
+/**
+ * 归一为 0.4.0 的四档审批级别。
+ *
+ * 旧配置按 level → mode → default_policy 的优先级降级读取，命中旧写法时
+ * 发一次弃用提示。注意 0.3.x 的 `auto` 语义是「编辑仍需确认」，映射到新的
+ * `manual` 而不是 `accept-edits`，升级不会静默放宽权限。
+ */
 export function normalizePermissionLevel(permission = {}) {
-  const level = String(permission.level || "").toLowerCase()
-  if (PERMISSION_LEVELS.includes(level)) return level
+  const rawLevel = String(permission.level || "").toLowerCase().trim()
+  if (rawLevel) {
+    const mapped = approvalFromLegacy(rawLevel)
+    if (mapped) {
+      if (isLegacyApprovalName(rawLevel)) {
+        noteDeprecation(
+          `permission.level.${rawLevel}`,
+          `权限等级 \`${rawLevel}\` 已合并为 \`${mapped}\``
+        )
+      }
+      return mapped
+    }
+  }
+
+  const rawMode = String(permission.mode || "").toLowerCase().trim()
+  const rawPolicy = String(permission.default_policy || "").toLowerCase().trim()
+  if (rawMode || rawPolicy) {
+    noteDeprecation(
+      "permission.mode",
+      "`permission.mode` 与 `permission.default_policy` 已被 `permission.level` 取代"
+    )
+  }
+
   const mode = normalizePermissionMode(permission)
-  if (mode === "auto") return "auto"
   if (mode === "yolo") return "yolo"
-  const legacy = String(permission.default_policy || "").toLowerCase()
-  if (legacy === "allow") return "full-auto"
-  if (legacy === "deny") return "readonly"
-  return "auto"
+  if (mode === "auto") return "manual"
+  if (rawPolicy === "allow") return "accept-edits"
+  if (rawPolicy === "deny") return "readonly"
+  return DEFAULT_APPROVAL
 }
 
 export function toolCapability(tool, command = "") {
@@ -106,120 +106,50 @@ function trustedBashCommand(command) {
   return TRUSTED_BASH_PATTERNS.some((pattern) => pattern.test(cmd))
 }
 
+/** @deprecated 旧 `auto` 档的判定，保留供既有测试与迁移期比对，0.5.0 移除。 */
 function autoAllowsTool({ tool, command = "" }) {
-  if (AUTO_READONLY_TOOLS.has(tool)) return true
-  if (tool === "bash") return trustedBashCommand(command)
-  if (AUTO_REVIEW_ASK_TOOLS.has(tool)) return false
-  return false
+  const cap = toolCapability(tool, command)
+  return ["read", "search", "network", "safe-shell"].includes(cap)
 }
 
+/**
+ * 四档审批矩阵。能力分类见 TOOL_CAPABILITIES；bash 另按命令白名单拆成
+ * safe-shell / risky-shell。
+ *
+ *              read/search/network  safe-shell  risky-shell  edit   task
+ *   readonly          allow            deny        deny      deny   deny
+ *   manual            allow           allow         ask       ask    ask
+ *   accept-edits      allow           allow         ask     allow  allow
+ *   yolo              allow           allow       allow     allow  allow
+ */
 function levelAllowsTool({ level, tool, command = "" }) {
   const cap = toolCapability(tool, command)
   if (level === "yolo") return "allow"
   if (level === "readonly") {
     return ["read", "search", "network"].includes(cap) ? "allow" : "deny"
   }
-  if (level === "review") {
-    if (["read", "search", "network", "safe-shell"].includes(cap)) return "allow"
-    return cap === "edit" ? "deny" : "ask"
-  }
-  if (level === "auto") {
-    return autoAllowsTool({ tool, command }) ? "allow" : "ask"
-  }
-  if (level === "edit") {
-    if (["read", "search", "network", "safe-shell", "edit"].includes(cap)) return "allow"
-    return "ask"
-  }
-  if (level === "full-auto") {
+  if (level === "accept-edits") {
     if (["read", "search", "network", "safe-shell", "edit", "task"].includes(cap)) return "allow"
     return "ask"
   }
+  // manual（默认）：只读与白名单 shell 自动放行，其余一律询问
+  if (["read", "search", "network", "safe-shell"].includes(cap)) return "allow"
   return "ask"
 }
 
-function applySensitiveEscalation(decision, { tool, pattern, config, mode }) {
-  if (mode === "yolo") return decision
+function applySensitiveEscalation(decision, { tool, pattern, config, level }) {
+  if (level === "yolo") return decision
   const sensitivePolicy = getSensitiveEditPolicy(tool, pattern, config)
   if (sensitivePolicy && decision.action === "allow") {
     return {
       action: sensitivePolicy.action,
       source: sensitivePolicy.source,
       rule: decision.rule || null,
-      mode
+      mode: decision.mode,
+      level
     }
   }
   return decision
-}
-
-/**
- * Glob-style pattern matching supporting:
- *   *      — any chars except /
- *   **     — any chars including /
- *   ?      — single char
- *   !pat   — negation (returns false when inner pattern matches)
- */
-function globToRegex(pattern) {
-  let src = ""
-  let i = 0
-  while (i < pattern.length) {
-    const ch = pattern[i]
-    if (ch === "*" && pattern[i + 1] === "*") {
-      src += ".*"
-      i += 2
-      if (pattern[i] === "/") i++ // skip trailing slash after **
-    } else if (ch === "*") {
-      src += "[^/]*"
-      i++
-    } else if (ch === "?") {
-      src += "[^/]"
-      i++
-    } else if (".+^${}()|[]\\".includes(ch)) {
-      src += `\\${ch}`
-      i++
-    } else {
-      src += ch
-      i++
-    }
-  }
-  return new RegExp(`^${src}$`, "i")
-}
-
-function normalizePath(p) {
-  // Resolve ../ and ./ sequences to prevent traversal bypass
-  return p.replace(/\\/g, "/").split("/").reduce((acc, seg) => {
-    if (seg === "..") { acc.pop(); return acc }
-    if (seg !== "." && seg !== "") acc.push(seg)
-    return acc
-  }, []).join("/")
-}
-
-function matchGlob(value, pattern) {
-  if (!pattern || pattern === "*") return true
-  const str = normalizePath(String(value || ""))
-  const negate = pattern.startsWith("!")
-  const pat = negate ? pattern.slice(1) : pattern
-  const matched = globToRegex(pat).test(str)
-  return negate ? !matched : matched
-}
-
-/**
- * Match a list of glob patterns (OR logic, negations filter out).
- * Single string is treated as one pattern.
- */
-function matchPatterns(value, patterns) {
-  if (!patterns) return true
-  const list = Array.isArray(patterns) ? patterns : [patterns]
-  if (!list.length) return true
-  const positives = list.filter((p) => !String(p).startsWith("!"))
-  const negatives = list.filter((p) => String(p).startsWith("!"))
-  // If any negative matches, reject
-  for (const neg of negatives) {
-    if (!matchGlob(value, neg)) return false // negation matched → excluded
-  }
-  // If no positive patterns, pass (only negatives were specified)
-  if (!positives.length) return true
-  // At least one positive must match
-  return positives.some((p) => matchGlob(value, p))
 }
 
 /**
@@ -259,11 +189,19 @@ export function matchRule(rule, input) {
   return true
 }
 
+/**
+ * 用户规则优先，其次按审批档判定。
+ *
+ * 0.3.x 在 level 判定之后还有 mode:yolo / mode:auto / default_policy 三个分支，
+ * 但 DEFAULT_CONFIG 恒定注入 permission.level，那三条路径永远不可达。0.4.0 起
+ * normalizePermissionLevel 总能给出四档之一，分支随之删除。
+ */
 export function evaluatePermission({ config, tool, mode, pattern = "*", command = "", risk = 0 }) {
-  const permission = config.permission || { default_policy: "ask", rules: [] }
-  const permissionMode = normalizePermissionMode(permission)
+  const permission = config.permission || { rules: [] }
   const permissionLevel = normalizePermissionLevel(permission)
+  const permissionMode = normalizePermissionMode(permission)
   const rules = Array.isArray(permission.rules) ? permission.rules : []
+
   for (const rule of rules) {
     if (matchRule(rule, { tool, mode, pattern, command, risk })) {
       const matchedDecision = {
@@ -273,37 +211,19 @@ export function evaluatePermission({ config, tool, mode, pattern = "*", command 
         mode: permissionMode,
         level: permissionLevel
       }
-      return applySensitiveEscalation(matchedDecision, { tool, pattern, config, mode: permissionMode })
+      return applySensitiveEscalation(matchedDecision, { tool, pattern, config, level: permissionLevel })
     }
   }
 
-  if (permission.level) {
-    const action = levelAllowsTool({ level: permissionLevel, tool, command, risk })
-    const decision = { action, source: `level:${permissionLevel}`, rule: null, mode: permissionMode, level: permissionLevel }
-    return applySensitiveEscalation(decision, { tool, pattern, config, mode: permissionLevel })
-  }
-
-  if (permissionMode === "yolo") {
-    return { action: "allow", source: "mode:yolo", rule: null, mode: permissionMode, level: permissionLevel }
-  }
-
-  if (permissionMode === "auto") {
-    const action = autoAllowsTool({ tool, command, risk }) ? "allow" : "ask"
-    const decision = { action, source: "auto_review", rule: null, mode: permissionMode, level: permissionLevel }
-    return applySensitiveEscalation(decision, { tool, pattern, config, mode: permissionMode })
-  }
-
-  const defaultPolicy = LEGACY_PERMISSION_POLICIES.includes(permission.default_policy)
-    ? permission.default_policy
-    : "ask"
-  const fallbackDecision = {
-    action: defaultPolicy,
-    source: "default",
+  const action = levelAllowsTool({ level: permissionLevel, tool, command })
+  const decision = {
+    action,
+    source: `level:${permissionLevel}`,
     rule: null,
     mode: permissionMode,
     level: permissionLevel
   }
-  return applySensitiveEscalation(fallbackDecision, { tool, pattern, config, mode: permissionMode })
+  return applySensitiveEscalation(decision, { tool, pattern, config, level: permissionLevel })
 }
 
 // Exported for testing

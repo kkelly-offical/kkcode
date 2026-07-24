@@ -1,3 +1,5 @@
+import { DEFAULT_SENSITIVE_FILE_PATTERNS } from "../permission/file-edit-policy.mjs"
+
 export const DEFAULT_CONFIG = {
   config_version: 1,
   language: "en",
@@ -205,9 +207,7 @@ export const DEFAULT_CONFIG = {
     }
   },
   permission: {
-    level: "auto",
-    mode: "auto",
-    default_policy: "ask",
+    level: "manual",
     non_tty_default: "deny",
     rules: []
   },
@@ -239,24 +239,7 @@ export const DEFAULT_CONFIG = {
       mode: "file_lock",
       wait_timeout_ms: 120000
     },
-    sensitive_file_patterns: [
-      "AGENTS.md",
-      "**/AGENTS.md",
-      "KKCODE.md",
-      "**/KKCODE.md",
-      ".kkcode/**",
-      "**/.kkcode/**",
-      "kkcode.config.yaml",
-      "**/kkcode.config.yaml",
-      ".mcp.json",
-      "**/.mcp.json",
-      ".env",
-      ".env.*",
-      "**/.env",
-      "**/.env.*",
-      ".github/workflows/**",
-      "**/.github/workflows/**"
-    ],
+    sensitive_file_patterns: [...DEFAULT_SENSITIVE_FILE_PATTERNS],
     local_dirs: [".kkcode/tools", ".kkcode/tool"],
     plugin_dirs: [".kkcode/plugins", ".kkcode/plugin"]
   },

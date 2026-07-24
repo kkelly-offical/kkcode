@@ -1,46 +1,7 @@
-function globToRegex(pattern) {
-  let src = ""
-  let i = 0
-  while (i < pattern.length) {
-    const ch = pattern[i]
-    if (ch === "*" && pattern[i + 1] === "*") {
-      src += ".*"
-      i += 2
-      if (pattern[i] === "/") i++
-    } else if (ch === "*") {
-      src += "[^/]*"
-      i++
-    } else if (ch === "?") {
-      src += "[^/]"
-      i++
-    } else if (".+^${}()|[]\\".includes(ch)) {
-      src += `\\${ch}`
-      i++
-    } else {
-      src += ch
-      i++
-    }
-  }
-  return new RegExp(`^${src}$`, "i")
-}
+import { globToRegex, normalizePath } from "../util/glob.mjs"
 
-function normalizePath(value) {
-  return String(value || "")
-    .replace(/\\/g, "/")
-    .split("/")
-    .reduce((acc, segment) => {
-      if (!segment || segment === ".") return acc
-      if (segment === "..") {
-        acc.pop()
-        return acc
-      }
-      acc.push(segment)
-      return acc
-    }, [])
-    .join("/")
-}
-
-function matchGlob(pattern, value) {
+/** 这里的模式参数在前，且不支持 `!` 取反，因此不直接复用 util 的 matchGlob。 */
+function matchSensitiveGlob(pattern, value) {
   return globToRegex(pattern).test(normalizePath(value))
 }
 
@@ -94,7 +55,7 @@ export function isSensitiveEditTool(toolName) {
 export function isSensitiveEditPath(pathOrPaths, config = {}) {
   const patterns = getSensitiveFilePatterns(config)
   const candidates = extractCandidatePaths(pathOrPaths)
-  return candidates.some((candidate) => patterns.some((pattern) => matchGlob(pattern, candidate)))
+  return candidates.some((candidate) => patterns.some((pattern) => matchSensitiveGlob(pattern, candidate)))
 }
 
 export function getSensitiveEditPolicy(toolName, pathOrPaths, config = {}) {

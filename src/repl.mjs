@@ -89,6 +89,8 @@ import {
   finalizeQuestionAnswers
 } from "./repl/dialog-router.mjs"
 import { POLICY_CHOICES, createPolicyPickerState, applyPolicyChoice, applyPermissionLevel, nextPermissionLevel } from "./repl/permission-flow.mjs"
+import { approvalFromLegacy } from "./core/modes.mjs"
+import { normalizePermissionLevel } from "./permission/rules.mjs"
 import {
   classifySgrMouseEvent,
   createBracketedPasteDecoder,
@@ -380,14 +382,7 @@ async function persistPermissionConfig({ scope, ctx, values }) {
     existing = {}
   }
 
-  const merged = mergeObject(existing, {
-    permission: {
-      level: values.level,
-      mode: values.mode,
-      default_policy: values.default_policy,
-      non_tty_default: values.non_tty_default
-    }
-  })
+  const merged = mergeObject(existing, { permission: { ...values } })
 
   await mkdir(dirname(target), { recursive: true })
   await writeFile(target, stringifyConfigByPath(target, merged), "utf8")
@@ -885,22 +880,25 @@ async function processInputLine({
     const permission = ctx.configState.config.permission || (ctx.configState.config.permission = {})
 
     if (sub === "show") {
-      print(`current: ${permission.level || permission.mode || permission.default_policy || "auto"}`)
-      print(`level: ${permission.level || "auto"}`)
-      print(`mode: ${permission.mode || "manual"}; default_policy: ${permission.default_policy || "ask"}; non_tty: ${permission.non_tty_default || "deny"}`)
+      print(`level: ${normalizePermissionLevel(permission)}`)
+      print(`non_tty: ${permission.non_tty_default || "deny"}`)
       return { exit: false, openPolicyPicker: true }
     }
 
-    if (["readonly", "review", "auto", "edit", "full-auto", "yolo"].includes(sub)) {
-      ctx.configState.config.permission = applyPermissionLevel(sub, permission)
-      print(`permission.level -> ${sub} (runtime)`)
+    if (approvalFromLegacy(sub)) {
+      const applied = applyPermissionLevel(sub, permission)
+      ctx.configState.config.permission = applied
+      print(applied.level === sub
+        ? `permission.level -> ${applied.level} (runtime)`
+        : `permission.level -> ${applied.level} (runtime, ${sub} 已合并为 ${applied.level})`)
       return { exit: false }
     }
 
     if (["ask", "allow", "deny"].includes(sub)) {
-      permission.mode = "manual"
-      permission.default_policy = sub
-      print(`permission.default_policy -> ${sub} (runtime, mode=manual)`)
+      // 0.3.x 这里只写 mode/default_policy，而判定链只看 level，实际是静默 no-op。
+      const mapped = sub === "allow" ? "accept-edits" : sub === "deny" ? "readonly" : "manual"
+      ctx.configState.config.permission = applyPermissionLevel(mapped, permission)
+      print(`/permission ${sub} 已弃用，已映射为 permission.level -> ${mapped} (runtime)`)
       return { exit: false }
     }
 
@@ -926,9 +924,7 @@ async function processInputLine({
           scope,
           ctx,
           values: {
-            level: permission.level || "auto",
-            mode: permission.mode || "auto",
-            default_policy: permission.default_policy || "ask",
+            level: normalizePermissionLevel(permission),
             non_tty_default: permission.non_tty_default || "deny"
           }
         })
