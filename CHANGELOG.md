@@ -44,8 +44,11 @@
   copies, and use PowerShell UTF-8/Base64 transport for CJK and emoji on Windows.
 - Read Linux Wayland image and text clipboards through `wl-paste`, retaining
   `xclip`/`xsel` fallbacks and bounded, timeout-protected reads. Leave detached
-  worktrees before cleanup so Windows does not hold the directory open, and
-  source the splash version directly from the package release metadata.
+  worktrees before cleanup so Windows does not hold the directory open; on
+  Windows, validate the registered non-primary worktree, remove its directory
+  directly, and prune Git metadata without invoking the hanging
+  `git worktree remove` path. Source the splash version directly from the package
+  release metadata.
 
 ### 中文
 
@@ -77,7 +80,9 @@
   过期复制，Windows 通过 PowerShell UTF-8/Base64 通道可靠复制中文与 emoji。
 - Linux Wayland 的图片与文本剪贴板优先通过 `wl-paste` 读取，同时保留
   `xclip`/`xsel` 回退、超时和大小限制；清理 detached worktree 前先离开该目录，
-  避免 Windows 持有目录锁；启动动画版本号统一读取 package 发布元数据。
+  避免 Windows 持有目录锁；Windows 还会先校验目标是已登记且非主工作树，再直接
+  删除目录并清理 Git 元数据，绕开会卡死的 `git worktree remove` 路径；启动动画
+  版本号统一读取 package 发布元数据。
 
 ## 0.3.2
 

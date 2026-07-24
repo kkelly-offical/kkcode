@@ -170,6 +170,33 @@ describe("Git Auto - Integration Tests", () => {
 
       await cleanupTestRepo()
     })
+
+    it("should remove a detached worktree with the Windows-safe prune strategy", async () => {
+      await setupTestRepo()
+      let created = null
+      try {
+        const refusedPrimary = await removeWorktree(testRepoPath, testRepoPath, { platform: "win32" })
+        assert.strictEqual(refusedPrimary.ok, false)
+        assert.strictEqual(await isGitRepo(testRepoPath), true)
+
+        created = await createDetachedWorktree(testRepoPath, "worker-windows")
+        assert.strictEqual(created.ok, true)
+
+        const removed = await removeWorktree(created.path, testRepoPath, { platform: "win32" })
+        assert.strictEqual(removed.ok, true)
+        assert.strictEqual(await isGitRepo(created.path), false)
+
+        const listed = git("worktree", "list", "--porcelain")
+          .replaceAll("\\", "/")
+          .toLowerCase()
+        assert.strictEqual(listed.includes(created.path.replaceAll("\\", "/").toLowerCase()), false)
+      } finally {
+        if (created?.path) {
+          await removeWorktree(created.path, testRepoPath).catch(() => {})
+        }
+        await cleanupTestRepo()
+      }
+    })
   })
 
   describe("Ghost Commit", () => {

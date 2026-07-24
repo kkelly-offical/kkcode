@@ -128,8 +128,62 @@ export async function createDetachedWorktree(cwd = process.cwd(), label = "task"
   return { ok: true, path: worktreePath }
 }
 
+function normalizeWorktreePath(value, platform) {
+  const normalized = path.resolve(String(value || "")).replaceAll("\\", "/")
+  return platform === "win32" ? normalized.toLowerCase() : normalized
+}
+
+async function isRegisteredWorktree(worktreePath, cwd, platform) {
+  const rawPath = String(worktreePath || "").trim()
+  if (!rawPath || /[\r\n]/.test(rawPath)) return false
+  const listed = await run(["worktree", "list", "--porcelain"], cwd, GIT_TIMEOUT_MS)
+  if (!listed.ok) return false
+  const primary = await run(["rev-parse", "--show-toplevel"], cwd, GIT_TIMEOUT_MS)
+  if (!primary.ok) return false
+  const target = normalizeWorktreePath(rawPath, platform)
+  if (target === normalizeWorktreePath(primary.stdout, platform)) return false
+  return listed.stdout
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("worktree "))
+    .map((line) => normalizeWorktreePath(line.slice("worktree ".length), platform))
+    .includes(target)
+}
+
+async function removeWindowsWorktree(worktreePath, cwd, platform) {
+  if (!(await isRegisteredWorktree(worktreePath, cwd, platform))) {
+    return { ok: false, message: `refusing to remove an unregistered worktree: ${worktreePath}` }
+  }
+
+  try {
+    await rm(worktreePath, {
+      recursive: true,
+      force: true,
+      maxRetries: 8,
+      retryDelay: 100
+    })
+  } catch (error) {
+    return {
+      ok: false,
+      message: `failed to remove worktree directory: ${error?.message || error}`
+    }
+  }
+
+  const pruned = await run(["worktree", "prune", "--expire", "now"], cwd, GIT_TIMEOUT_MS)
+  return {
+    ok: pruned.ok,
+    message: pruned.ok
+      ? `removed worktree: ${worktreePath}`
+      : pruned.stderr || "worktree directory removed but metadata prune failed"
+  }
+}
+
 /** Remove an existing git worktree */
-export async function removeWorktree(worktreePath, cwd = process.cwd()) {
+export async function removeWorktree(worktreePath, cwd = process.cwd(), {
+  platform = process.platform
+} = {}) {
+  if (platform === "win32") {
+    return removeWindowsWorktree(worktreePath, cwd, platform)
+  }
   const result = await run(["worktree", "remove", "--force", worktreePath], cwd, GIT_TIMEOUT_MS)
   if (!result.ok) {
     await rm(worktreePath, { recursive: true, force: true }).catch(() => {})
