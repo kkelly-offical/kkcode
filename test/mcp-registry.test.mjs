@@ -92,6 +92,47 @@ process.stderr.write("dead");
 process.exit(1);
 `
 
+test("mcp registry starts without built-in servers", async () => {
+  await McpRegistry.initialize(
+    {
+      runtime: { mcp_refresh_ttl_ms: 0 },
+      mcp: { servers: {}, auto_discover: false }
+    },
+    { force: true }
+  )
+
+  assert.deepEqual(McpRegistry.listServers(), [])
+  assert.deepEqual(McpRegistry.healthSnapshot(), [])
+
+  await McpRegistry.shutdown()
+})
+
+test("mcp registry loads Context7 only when explicitly configured", async () => {
+  await McpRegistry.initialize(
+    {
+      runtime: { mcp_refresh_ttl_ms: 0 },
+      mcp: {
+        auto_discover: false,
+        servers: {
+          context7: {
+            transport: "stdio",
+            command: makeNodeScript(healthyScript),
+            shell: false,
+            timeout_ms: 2000,
+            framing: "content-length"
+          }
+        }
+      }
+    },
+    { force: true }
+  )
+
+  assert.ok(McpRegistry.listServers().includes("context7"))
+  assert.ok(McpRegistry.listTools().some((tool) => tool.server === "context7"))
+
+  await McpRegistry.shutdown()
+})
+
 test("mcp registry keeps healthy server and tool bridge works", async () => {
   await McpRegistry.initialize(
     {
@@ -143,7 +184,7 @@ test("mcp registry addServer and removeServer", async () => {
   await McpRegistry.initialize(
     {
       runtime: { mcp_refresh_ttl_ms: 0 },
-      mcp: { servers: { context7: { enabled: false } }, auto_discover: false }
+      mcp: { servers: {}, auto_discover: false }
     },
     { force: true }
   )
@@ -237,7 +278,7 @@ test("mcp registry auto-discovers repo-local MCP config files", async () => {
         runtime: { mcp_refresh_ttl_ms: 0 },
         mcp: {
           auto_discover: true,
-          servers: { context7: { enabled: false } }
+          servers: {}
         }
       },
       { force: true, cwd: project }

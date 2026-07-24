@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process"
-import { mkdtemp, writeFile, unlink, rm } from "node:fs/promises"
+import { mkdtemp, writeFile, unlink, rm, readFile, realpath, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
 const GIT_TIMEOUT_MS = 30000
+const WORKTREE_CLEANUP_TIMEOUT_MS = 5000
 
 function run(args, cwd = process.cwd(), timeoutMs = GIT_TIMEOUT_MS, env = {}) {
   return new Promise((resolve) => {
@@ -56,8 +57,8 @@ export async function currentBranch(cwd = process.cwd()) {
 }
 
 /** Check if working tree is clean */
-export async function isClean(cwd = process.cwd()) {
-  const result = await run(["status", "--porcelain"], cwd)
+export async function isClean(cwd = process.cwd(), timeoutMs = GIT_TIMEOUT_MS) {
+  const result = await run(["status", "--porcelain"], cwd, timeoutMs)
   return result.ok && !result.stdout.trim()
 }
 
@@ -128,34 +129,303 @@ export async function createDetachedWorktree(cwd = process.cwd(), label = "task"
   return { ok: true, path: worktreePath }
 }
 
-function normalizeWorktreePath(value, platform) {
-  const normalized = path.resolve(String(value || "")).replaceAll("\\", "/")
-  return platform === "win32" ? normalized.toLowerCase() : normalized
+let worktreeListSupportsNul = null
+
+function parseWorktreeRecords(raw, separator) {
+  const fields = separator === "\0"
+    ? String(raw || "").split("\0")
+    : String(raw || "").split(/\r?\n/)
+  const records = []
+  let current = null
+
+  const flush = () => {
+    if (current?.path) records.push(current)
+    current = null
+  }
+
+  for (const field of fields) {
+    if (!field) {
+      flush()
+      continue
+    }
+    if (field.startsWith("worktree ")) {
+      if (current?.path) flush()
+      current = {
+        path: field.slice("worktree ".length),
+        bare: false,
+        locked: false
+      }
+      continue
+    }
+    if (!current) continue
+    if (field === "bare") current.bare = true
+    if (field === "locked" || field.startsWith("locked ")) current.locked = true
+  }
+  flush()
+  return records
 }
 
-async function isRegisteredWorktree(worktreePath, cwd, platform) {
-  const rawPath = String(worktreePath || "").trim()
-  if (!rawPath || /[\r\n]/.test(rawPath)) return false
-  const listed = await run(["worktree", "list", "--porcelain"], cwd, GIT_TIMEOUT_MS)
-  if (!listed.ok) return false
-  const primary = await run(["rev-parse", "--show-toplevel"], cwd, GIT_TIMEOUT_MS)
-  if (!primary.ok) return false
-  const target = normalizeWorktreePath(rawPath, platform)
-  if (target === normalizeWorktreePath(primary.stdout, platform)) return false
-  return listed.stdout
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith("worktree "))
-    .map((line) => normalizeWorktreePath(line.slice("worktree ".length), platform))
-    .includes(target)
+async function listWorktreeRecords(cwd, timeoutMs = WORKTREE_CLEANUP_TIMEOUT_MS) {
+  if (worktreeListSupportsNul !== false) {
+    const nulResult = await run(
+      ["-c", "core.quotePath=false", "worktree", "list", "--porcelain", "-z"],
+      cwd,
+      timeoutMs
+    )
+    if (nulResult.ok) {
+      worktreeListSupportsNul = true
+      return { ok: true, records: parseWorktreeRecords(nulResult.stdout, "\0") }
+    }
+    const unsupported = nulResult.code === 129
+      || /unknown (?:switch|option).*z/i.test(nulResult.stderr)
+    if (!unsupported) {
+      return { ok: false, message: nulResult.stderr || "git worktree list failed" }
+    }
+    worktreeListSupportsNul = false
+  }
+
+  const listed = await run(
+    ["-c", "core.quotePath=false", "worktree", "list", "--porcelain"],
+    cwd,
+    timeoutMs
+  )
+  return listed.ok
+    ? { ok: true, records: parseWorktreeRecords(listed.stdout, "\n") }
+    : { ok: false, message: listed.stderr || "git worktree list failed" }
 }
 
-async function removeWindowsWorktree(worktreePath, cwd, platform) {
-  if (!(await isRegisteredWorktree(worktreePath, cwd, platform))) {
-    return { ok: false, message: `refusing to remove an unregistered worktree: ${worktreePath}` }
+async function existingPathIdentity(value, { directory = false } = {}) {
+  const raw = String(value || "")
+  if (!raw || /[\0\r\n]/.test(raw)) return null
+  try {
+    const canonicalPath = await realpath(path.resolve(raw))
+    const info = await stat(canonicalPath, { bigint: true })
+    if (directory && !info.isDirectory()) return null
+    return {
+      canonicalPath,
+      dev: info.dev,
+      ino: info.ino
+    }
+  } catch {
+    return null
+  }
+}
+
+function samePathIdentity(left, right) {
+  if (!left || !right) return false
+  const hasStableFileId = left.ino !== 0n && right.ino !== 0n
+  if (hasStableFileId && left.dev === right.dev && left.ino === right.ino) {
+    return true
+  }
+  return left.canonicalPath === right.canonicalPath
+}
+
+async function resolveRegisteredWorktree(worktreePath, cwd) {
+  const target = await existingPathIdentity(worktreePath, { directory: true })
+  if (!target) {
+    return { ok: false, message: `refusing to remove an invalid worktree path: ${worktreePath}` }
+  }
+
+  const listed = await listWorktreeRecords(cwd)
+  if (!listed.ok || listed.records.length === 0) {
+    return { ok: false, message: listed.message || "no registered worktrees found" }
+  }
+
+  const records = await Promise.all(listed.records.map(async (record, index) => ({
+    ...record,
+    index,
+    identity: await existingPathIdentity(record.path, { directory: true })
+  })))
+  const matches = records.filter((record) => samePathIdentity(record.identity, target))
+  if (matches.length !== 1) {
+    return {
+      ok: false,
+      message: `refusing to remove an unregistered or ambiguous worktree: ${worktreePath}`
+    }
+  }
+
+  const matched = matches[0]
+  if (matched.index === 0 || matched.bare) {
+    return { ok: false, message: `refusing to remove the primary worktree: ${worktreePath}` }
+  }
+  if (matched.locked) {
+    return { ok: false, message: `refusing to remove a locked worktree: ${worktreePath}` }
+  }
+
+  const currentResult = await run(
+    ["rev-parse", "--show-toplevel"],
+    cwd,
+    WORKTREE_CLEANUP_TIMEOUT_MS
+  )
+  if (!currentResult.ok) {
+    return { ok: false, message: currentResult.stderr || "failed to resolve the current worktree" }
+  }
+  const current = await existingPathIdentity(currentResult.stdout, { directory: true })
+  if (!current || samePathIdentity(current, target)) {
+    return { ok: false, message: `refusing to remove the current worktree: ${worktreePath}` }
+  }
+
+  let runtimeCwd
+  try {
+    runtimeCwd = process.cwd()
+  } catch {
+    return { ok: false, message: "refusing to remove a worktree while process cwd is unavailable" }
+  }
+  const runtimeResult = await run(
+    ["rev-parse", "--show-toplevel"],
+    runtimeCwd,
+    WORKTREE_CLEANUP_TIMEOUT_MS
+  )
+  if (runtimeResult.ok) {
+    const runtimeRoot = await existingPathIdentity(runtimeResult.stdout, { directory: true })
+    if (!runtimeRoot) {
+      return { ok: false, message: "failed to resolve the process current worktree" }
+    }
+    if (samePathIdentity(runtimeRoot, target)) {
+      return {
+        ok: false,
+        message: `refusing to remove the process current worktree: ${worktreePath}`
+      }
+    }
+  } else if (runtimeResult.code === null) {
+    return {
+      ok: false,
+      message: runtimeResult.stderr || "failed to inspect the process current worktree"
+    }
+  }
+
+  const targetRootResult = await run(
+    ["rev-parse", "--show-toplevel"],
+    target.canonicalPath,
+    WORKTREE_CLEANUP_TIMEOUT_MS
+  )
+  const targetRoot = targetRootResult.ok
+    ? await existingPathIdentity(targetRootResult.stdout, { directory: true })
+    : null
+  if (!targetRoot || !samePathIdentity(targetRoot, target)) {
+    return {
+      ok: false,
+      message: `refusing to remove a worktree subdirectory: ${worktreePath}`
+    }
+  }
+
+  return {
+    ok: true,
+    worktree: {
+      ...matched,
+      identity: target,
+      canonicalPath: matched.identity.canonicalPath
+    }
+  }
+}
+
+function firstFileLine(content) {
+  return String(content || "").split(/\r?\n/, 1)[0]
+}
+
+function resolveGitLink(link, baseDir) {
+  return path.isAbsolute(link) ? link : path.resolve(baseDir, link)
+}
+
+async function resolveWindowsWorktreeMetadata(worktree, cwd) {
+  const dotGitPath = path.join(worktree.canonicalPath, ".git")
+  let dotGitContent
+  try {
+    dotGitContent = await readFile(dotGitPath, "utf8")
+  } catch {
+    return { ok: false, message: "worktree .git link is missing or unreadable" }
+  }
+
+  const gitDirMatch = /^gitdir: (.+)$/.exec(firstFileLine(dotGitContent))
+  if (!gitDirMatch) {
+    return { ok: false, message: "worktree .git link is malformed" }
+  }
+  const admin = await existingPathIdentity(
+    resolveGitLink(gitDirMatch[1], path.dirname(dotGitPath)),
+    { directory: true }
+  )
+  const dotGit = await existingPathIdentity(dotGitPath)
+  if (!admin || !dotGit) {
+    return { ok: false, message: "worktree administrative path is invalid" }
+  }
+
+  let commonDirContent
+  let backLinkContent
+  try {
+    [commonDirContent, backLinkContent] = await Promise.all([
+      readFile(path.join(admin.canonicalPath, "commondir"), "utf8"),
+      readFile(path.join(admin.canonicalPath, "gitdir"), "utf8")
+    ])
+  } catch {
+    return { ok: false, message: "worktree administrative links are incomplete" }
+  }
+
+  const commonDir = await existingPathIdentity(
+    resolveGitLink(firstFileLine(commonDirContent), admin.canonicalPath),
+    { directory: true }
+  )
+  const repositoryCommonResult = await run(
+    ["rev-parse", "--git-common-dir"],
+    cwd,
+    WORKTREE_CLEANUP_TIMEOUT_MS
+  )
+  const repositoryCommonDir = repositoryCommonResult.ok
+    ? await existingPathIdentity(
+        resolveGitLink(firstFileLine(repositoryCommonResult.stdout), cwd),
+        { directory: true }
+      )
+    : null
+  const worktreesDir = commonDir
+    ? await existingPathIdentity(path.join(commonDir.canonicalPath, "worktrees"), { directory: true })
+    : null
+  const adminParent = await existingPathIdentity(path.dirname(admin.canonicalPath), { directory: true })
+  const backLink = await existingPathIdentity(
+    resolveGitLink(firstFileLine(backLinkContent), admin.canonicalPath)
+  )
+
+  if (!commonDir
+    || !repositoryCommonDir
+    || !samePathIdentity(commonDir, repositoryCommonDir)
+    || !worktreesDir
+    || !adminParent
+    || !samePathIdentity(worktreesDir, adminParent)
+    || !backLink
+    || !samePathIdentity(backLink, dotGit)
+    || path.dirname(admin.canonicalPath) === admin.canonicalPath) {
+    return { ok: false, message: "worktree administrative links failed identity validation" }
+  }
+
+  return { ok: true, admin, dotGit }
+}
+
+async function revalidateIdentity(identity, { directory = false } = {}) {
+  const current = await existingPathIdentity(identity?.canonicalPath, { directory })
+  return samePathIdentity(identity, current)
+}
+
+function lexicalPath(value) {
+  return path.resolve(String(value || "")).replaceAll("\\", "/").toLowerCase()
+}
+
+function invalidRemovalPath(value) {
+  return typeof value !== "string"
+    || !value
+    || /[\0\r\n]/.test(value)
+    || !path.isAbsolute(value)
+}
+
+async function removeWindowsWorktree(worktree, cwd) {
+  const metadata = await resolveWindowsWorktreeMetadata(worktree, cwd)
+  if (!metadata.ok) return metadata
+
+  if (!(await revalidateIdentity(worktree.identity, { directory: true }))
+    || !(await revalidateIdentity(metadata.admin, { directory: true }))
+    || !(await revalidateIdentity(metadata.dotGit))) {
+    return { ok: false, message: "worktree identity changed before removal" }
   }
 
   try {
-    await rm(worktreePath, {
+    await rm(worktree.canonicalPath, {
       recursive: true,
       force: true,
       maxRetries: 8,
@@ -168,12 +438,37 @@ async function removeWindowsWorktree(worktreePath, cwd, platform) {
     }
   }
 
-  const pruned = await run(["worktree", "prune", "--expire", "now"], cwd, GIT_TIMEOUT_MS)
+  if (!(await revalidateIdentity(metadata.admin, { directory: true }))) {
+    return {
+      ok: false,
+      message: "worktree directory removed but its administrative identity changed"
+    }
+  }
+  try {
+    await rm(metadata.admin.canonicalPath, {
+      recursive: true,
+      force: true,
+      maxRetries: 8,
+      retryDelay: 100
+    })
+  } catch (error) {
+    return {
+      ok: false,
+      message: `worktree directory removed but metadata cleanup failed: ${error?.message || error}`
+    }
+  }
+
+  const verified = await listWorktreeRecords(cwd)
+  const registeredPath = lexicalPath(worktree.path)
+  const stillRegistered = verified.ok
+    && verified.records.some((record) => lexicalPath(record.path) === registeredPath)
   return {
-    ok: pruned.ok,
-    message: pruned.ok
-      ? `removed worktree: ${worktreePath}`
-      : pruned.stderr || "worktree directory removed but metadata prune failed"
+    ok: verified.ok && !stillRegistered,
+    message: !verified.ok
+      ? `worktree removed but registration verification failed: ${verified.message}`
+      : stillRegistered
+        ? "worktree removed but its registration is still present"
+        : `removed worktree: ${worktree.canonicalPath}`
   }
 }
 
@@ -181,14 +476,34 @@ async function removeWindowsWorktree(worktreePath, cwd, platform) {
 export async function removeWorktree(worktreePath, cwd = process.cwd(), {
   platform = process.platform
 } = {}) {
+  if (invalidRemovalPath(worktreePath) || invalidRemovalPath(cwd)) {
+    return {
+      ok: false,
+      message: "refusing to remove a worktree with a relative or invalid path"
+    }
+  }
+  const resolved = await resolveRegisteredWorktree(worktreePath, cwd)
+  if (!resolved.ok) return resolved
+  const worktree = resolved.worktree
+
   if (platform === "win32") {
-    return removeWindowsWorktree(worktreePath, cwd, platform)
+    return removeWindowsWorktree(worktree, cwd)
   }
-  const result = await run(["worktree", "remove", "--force", worktreePath], cwd, GIT_TIMEOUT_MS)
-  if (!result.ok) {
-    await rm(worktreePath, { recursive: true, force: true }).catch(() => {})
+
+  if (!(await revalidateIdentity(worktree.identity, { directory: true }))) {
+    return { ok: false, message: "worktree identity changed before removal" }
   }
-  return { ok: result.ok, message: result.ok ? `removed worktree: ${worktreePath}` : result.stderr || "git worktree remove failed" }
+  const result = await run(
+    ["worktree", "remove", "--force", worktree.canonicalPath],
+    cwd,
+    WORKTREE_CLEANUP_TIMEOUT_MS
+  )
+  return {
+    ok: result.ok,
+    message: result.ok
+      ? `removed worktree: ${worktree.canonicalPath}`
+      : result.stderr || "git worktree remove failed"
+  }
 }
 
 /** Stash current changes */

@@ -133,7 +133,7 @@ test("TUI restores job-control state and exits without a referenced stdin handle
       mcp: {
         auto_discover: false,
         servers: {
-          context7: {
+          fixture: {
             command: process.execPath,
             args: [mcpServerFile],
             framing: "newline",

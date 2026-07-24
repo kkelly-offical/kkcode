@@ -4,10 +4,12 @@ import { readJson, writeJson } from "../storage/json-store.mjs"
 import { ensureBackgroundTaskRuntimeDir, backgroundTaskCheckpointPath, backgroundTaskLogPath } from "../storage/paths.mjs"
 import { buildContext, resolveExtensionPolicy } from "../context.mjs"
 import { ToolRegistry } from "../tool/registry.mjs"
+import { McpRegistry } from "../mcp/registry.mjs"
 import { executeTurn } from "../session/engine.mjs"
 import { flushNow, forkSession, getSession } from "../session/store.mjs"
 import { extractEditFeedbackFromToolEvents } from "../observability/edit-diagnostics.mjs"
 import { INTERRUPTION_REASONS, normalizeInterruptionReason } from "./interruption-reason.mjs"
+import { checkWorkspaceTrust } from "../permission/workspace-trust.mjs"
 import * as git from "../util/git.mjs"
 
 function now() {
@@ -77,6 +79,7 @@ let _maxLogLines = 300
 
 let _logBuffer = []
 let _logFlushTimer = null
+let _logFlushPromise = null
 const LOG_FLUSH_INTERVAL_MS = 3000
 
 async function flushLogBuffer(taskId) {
@@ -92,9 +95,13 @@ async function appendTaskLog(taskId, line) {
   await appendFile(backgroundTaskLogPath(taskId), `${line}\n`, "utf8")
   _logBuffer.push(String(line))
   if (!_logFlushTimer) {
-    _logFlushTimer = setTimeout(async () => {
+    _logFlushTimer = setTimeout(() => {
       _logFlushTimer = null
-      await flushLogBuffer(taskId).catch(() => {})
+      _logFlushPromise = flushLogBuffer(taskId)
+        .catch(() => {})
+        .finally(() => {
+          _logFlushPromise = null
+        })
     }, LOG_FLUSH_INTERVAL_MS)
   }
 }
@@ -122,10 +129,27 @@ async function ensureDelegatedSession({ executionMode, parentSessionId, subSessi
 async function runDelegateTask(task, signal) {
   const payload = task.payload || {}
   const repoCwd = payload.cwd || process.cwd()
+  const executionMode = String(payload.executionMode || "fresh_agent").trim().toLowerCase() || "fresh_agent"
+  if (!["fresh_agent", "fork_context"].includes(executionMode)) {
+    throw new Error(`unsupported task.execution_mode: ${payload.executionMode}`)
+  }
+  if (payload.allowQuestion === true) {
+    throw new Error("background delegated tasks cannot set allow_question=true")
+  }
+
   let effectiveCwd = repoCwd
   let worktree = null
+  let inheritedTrustState = null
 
   if (String(payload.isolation || "default").trim().toLowerCase() === "worktree") {
+    // A linked worktree has a different path and therefore no separate trust
+    // record. Re-check the persisted parent workspace instead of trusting a
+    // task payload, then carry that decision into the isolated context.
+    inheritedTrustState = await checkWorkspaceTrust({
+      cwd: repoCwd,
+      cliTrust: false,
+      isTTY: false
+    })
     const created = await git.createDetachedWorktree(repoCwd, task.id)
     if (!created.ok) {
       throw new Error(`worktree setup failed: ${created.error}`)
@@ -134,7 +158,6 @@ async function runDelegateTask(task, signal) {
     effectiveCwd = created.path
   }
 
-  const executionMode = String(payload.executionMode || "fresh_agent").trim().toLowerCase() || "fresh_agent"
   let out
   try {
     if (worktree) {
@@ -142,7 +165,10 @@ async function runDelegateTask(task, signal) {
     }
     process.chdir(effectiveCwd)
 
-    const ctx = await buildContext({ cwd: effectiveCwd })
+    const ctx = await buildContext({
+      cwd: effectiveCwd,
+      ...(inheritedTrustState ? { trustState: inheritedTrustState } : {})
+    })
     _maxLogLines = Number(ctx.configState.config?.background?.max_log_lines || 300)
     const extensionPolicy = resolveExtensionPolicy(ctx.configState)
     await ToolRegistry.initialize({
@@ -158,13 +184,6 @@ async function runDelegateTask(task, signal) {
     const providerType = payload.providerType || ctx.configState.config.provider.default
     const providerDefault = ctx.configState.config.provider[providerType]
     const model = payload.model || providerDefault?.default_model
-
-    if (!["fresh_agent", "fork_context"].includes(executionMode)) {
-      throw new Error(`unsupported task.execution_mode: ${payload.executionMode}`)
-    }
-    if (payload.allowQuestion === true) {
-      throw new Error("background delegated tasks cannot set allow_question=true")
-    }
 
     await ensureDelegatedSession({
       executionMode,
@@ -191,13 +210,23 @@ async function runDelegateTask(task, signal) {
     await flushNow()
   } catch (error) {
     if (worktree) {
-      const clean = await git.isClean(worktree.path).catch(() => false)
+      await McpRegistry.shutdown().catch(() => {})
+      process.chdir(repoCwd)
+      const clean = await git.isClean(worktree.path, 5000).catch(() => false)
       if (clean) {
-        await removeDetachedWorktree(worktree, repoCwd).catch(() => {})
+        const cleanup = await removeDetachedWorktree(worktree, repoCwd)
+          .catch((cleanupError) => ({
+            ok: false,
+            message: cleanupError?.message || String(cleanupError)
+          }))
+        if (!cleanup.ok) {
+          error.message = `${error.message}; worktree cleanup failed: ${cleanup.message || "unknown error"}`
+        }
       }
     }
     throw error
   } finally {
+    await McpRegistry.shutdown().catch(() => {})
     if (worktree) {
       process.chdir(repoCwd)
     }
@@ -231,10 +260,16 @@ async function runDelegateTask(task, signal) {
   )
   const completedFiles = [...completedFileSet]
   const remainingFiles = plannedFiles.filter((file) => !completedFileSet.has(file))
-  const worktreePreserved = Boolean(worktree && (fileChanges.length > 0 || completedFiles.length > 0))
+  let worktreePreserved = Boolean(worktree && (fileChanges.length > 0 || completedFiles.length > 0))
+  let worktreeCleanupError = null
 
   if (worktree && !worktreePreserved) {
-    await removeDetachedWorktree(worktree, repoCwd).catch(() => {})
+    const cleanup = await removeDetachedWorktree(worktree, repoCwd)
+      .catch((error) => ({ ok: false, message: error?.message || String(error) }))
+    if (!cleanup.ok) {
+      worktreePreserved = true
+      worktreeCleanupError = cleanup.message || "unknown cleanup error"
+    }
   }
 
   return {
@@ -252,7 +287,8 @@ async function runDelegateTask(task, signal) {
     budget_warnings: out.budgetWarnings || [],
     isolation: String(payload.isolation || "default"),
     worktree_path: worktreePreserved ? worktree.path : null,
-    worktree_preserved: worktreePreserved
+    worktree_preserved: worktreePreserved,
+    worktree_cleanup_error: worktreeCleanupError
   }
 }
 
@@ -303,14 +339,14 @@ function detectSilentError(result, payload) {
 async function main() {
   const taskId = argValue("--task-id") || process.env.KKCODE_BACKGROUND_TASK_ID || null
   if (!taskId) {
-    process.exit(1)
+    process.exitCode = 1
     return
   }
 
   await ensureBackgroundTaskRuntimeDir()
   const task = await readTask(taskId)
   if (!task) {
-    process.exit(1)
+    process.exitCode = 1
     return
   }
 
@@ -320,7 +356,7 @@ async function main() {
       interruptionReason: INTERRUPTION_REASONS.USER_CANCEL,
       endedAt: now()
     }))
-    process.exit(0)
+    process.exitCode = 0
     return
   }
 
@@ -333,11 +369,20 @@ async function main() {
 
   const abortController = new AbortController()
   const parentPid = process.ppid
+  let stopping = false
+  let runtimeSettled = false
+  const pendingRuntimeWrites = new Set()
+  const trackRuntimeWrite = (promise) => {
+    pendingRuntimeWrites.add(promise)
+    promise.finally(() => pendingRuntimeWrites.delete(promise)).catch(() => {})
+  }
   const heartbeatTimer = setInterval(() => {
-    patchTask(taskId, () => ({ lastHeartbeatAt: now() })).catch(() => {})
+    if (stopping) return
+    trackRuntimeWrite(patchTask(taskId, () => ({ lastHeartbeatAt: now() })))
   }, 2000)
 
   const cancelPoll = setInterval(() => {
+    if (stopping) return
     // Orphan detection: if parent process died, self-terminate
     try { process.kill(parentPid, 0) } catch {
       if (!abortController.signal.aborted) {
@@ -345,11 +390,11 @@ async function main() {
       }
       return
     }
-    readTask(taskId).then((latest) => {
+    trackRuntimeWrite(readTask(taskId).then((latest) => {
       if (latest?.cancelled && !abortController.signal.aborted) {
         abortController.abort(makeAbortError("cancelled by user"))
       }
-    }).catch(() => {})
+    }))
   }, 1500)
 
   const timeoutMs = Math.max(1000, Number(task.payload?.workerTimeoutMs || 900000))
@@ -358,6 +403,25 @@ async function main() {
       abortController.abort(makeAbortError(`worker timeout after ${timeoutMs}ms`))
     }
   }, timeoutMs)
+
+  const settleRuntime = async () => {
+    if (!runtimeSettled) {
+      runtimeSettled = true
+      stopping = true
+      clearInterval(heartbeatTimer)
+      clearInterval(cancelPoll)
+      clearTimeout(timeoutTimer)
+      await Promise.allSettled([...pendingRuntimeWrites])
+    }
+    if (_logFlushTimer) {
+      clearTimeout(_logFlushTimer)
+      _logFlushTimer = null
+    }
+    if (_logFlushPromise) {
+      await _logFlushPromise
+    }
+    await flushLogBuffer(taskId).catch(() => {})
+  }
 
   try {
     await appendTaskLog(taskId, `task started (worker pid=${process.pid})`)
@@ -371,6 +435,7 @@ async function main() {
     const silentCheck = detectSilentError(result, latest.payload)
     if (silentCheck.hasError) {
       await appendTaskLog(taskId, `silent error detected: ${silentCheck.errorMessage}`)
+      await settleRuntime()
       await patchTask(taskId, () => ({
         status: "error",
         result,
@@ -378,9 +443,11 @@ async function main() {
         endedAt: now(),
         lastHeartbeatAt: now()
       }))
-      process.exit(1)
+      process.exitCode = 1
+      return
     } else {
       await appendTaskLog(taskId, "task completed")
+      await settleRuntime()
       await patchTask(taskId, () => ({
         status: "completed",
         result,
@@ -388,7 +455,8 @@ async function main() {
         endedAt: now(),
         lastHeartbeatAt: now()
       }))
-      process.exit(0)
+      process.exitCode = 0
+      return
     }
   } catch (error) {
     const latest = await readTask(taskId)
@@ -396,42 +464,43 @@ async function main() {
     const aborted = isAbortError(error)
     if (cancelled) {
       await appendTaskLog(taskId, "task cancelled")
+      await settleRuntime()
       await patchTask(taskId, () => ({
         status: "cancelled",
         interruptionReason: INTERRUPTION_REASONS.USER_CANCEL,
         endedAt: now(),
         error: null
       }))
-      process.exit(0)
+      process.exitCode = 0
       return
     }
 
     if (aborted) {
       await appendTaskLog(taskId, `task interrupted: ${error.message}`)
+      await settleRuntime()
       await patchTask(taskId, () => ({
         status: "interrupted",
         interruptionReason: normalizeInterruptionReason(error.message),
         error: error.message,
         endedAt: now()
       }))
-      process.exit(2)
+      process.exitCode = 2
       return
     }
 
     await appendTaskLog(taskId, `task error: ${error.message}`)
+    await settleRuntime()
     await patchTask(taskId, () => ({
       status: "error",
       error: error.message,
       endedAt: now()
     }))
-    process.exit(1)
+    process.exitCode = 1
   } finally {
-    clearInterval(heartbeatTimer)
-    clearInterval(cancelPoll)
-    clearTimeout(timeoutTimer)
+    await settleRuntime()
   }
 }
 
 main().catch(() => {
-  process.exit(1)
+  process.exitCode = 1
 })

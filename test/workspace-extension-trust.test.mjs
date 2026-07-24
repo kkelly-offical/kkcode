@@ -155,7 +155,7 @@ test("untrusted MCP discovery keeps user configuration and ignores project confi
     runtime: { mcp_refresh_ttl_ms: 0 },
     mcp: {
       auto_discover: true,
-      servers: { context7: { enabled: false } }
+      servers: {}
     },
     compat: { plugins: { enabled: false, ecosystems: ["kkcode"] } }
   }, {

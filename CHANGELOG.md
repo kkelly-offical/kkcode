@@ -46,9 +46,12 @@
   `xclip`/`xsel` fallbacks and bounded, timeout-protected reads. Leave detached
   worktrees before cleanup so Windows does not hold the directory open; on
   Windows, validate the registered non-primary worktree, remove its directory
-  directly, and prune Git metadata without invoking the hanging
-  `git worktree remove` path. Source the splash version directly from the package
-  release metadata.
+  and exact administrative entry directly, then verify the registration is gone
+  without invoking the hanging `git worktree remove` path. Source the splash
+  version directly from the package release metadata.
+- Stop injecting and preloading Context7 at startup, so a clean KK Code install
+  does not invoke `npx` or download an MCP package. Context7 and every other MCP
+  server remain available through explicit user, workspace, or plugin configuration.
 
 ### 中文
 
@@ -81,8 +84,11 @@
 - Linux Wayland 的图片与文本剪贴板优先通过 `wl-paste` 读取，同时保留
   `xclip`/`xsel` 回退、超时和大小限制；清理 detached worktree 前先离开该目录，
   避免 Windows 持有目录锁；Windows 还会先校验目标是已登记且非主工作树，再直接
-  删除目录并清理 Git 元数据，绕开会卡死的 `git worktree remove` 路径；启动动画
-  版本号统一读取 package 发布元数据。
+  删除目录及对应的精确 Git 管理项并复核登记已移除，绕开会卡死的
+  `git worktree remove` 路径；启动动画版本号统一读取 package 发布元数据。
+- 移除启动时自动注入并预加载的 Context7，干净安装的 KK Code 不再调用 `npx`
+  或下载 MCP 包；用户仍可通过个人、工作区或插件配置显式启用 Context7 及其他
+  任意 MCP Server。
 
 ## 0.3.2
 

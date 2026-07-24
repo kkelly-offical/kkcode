@@ -7,14 +7,7 @@ import { ensureDefaultSkillPack } from "../skill/registry.mjs"
 import { userRootDir } from "../storage/paths.mjs"
 
 const DEFAULT_MCP_INIT_CONFIG = {
-  servers: {
-    context7: {
-      enabled: false,
-      command: "npx",
-      args: ["--yes", "@upstash/context7-mcp"],
-      startup_timeout_ms: 60000
-    }
-  }
+  servers: {}
 }
 
 async function withInitializedMcp(run) {
@@ -313,7 +306,7 @@ export function createMcpCommand() {
         }
       }
 
-      console.log("tip: set enabled: true for desired servers after editing")
+      console.log("tip: add desired servers to the servers object after editing")
       if (options.withSkills) {
         console.log("tip: run kkcode skill init to re-seed or adjust scopes")
       }

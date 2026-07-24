@@ -270,7 +270,7 @@ test("background delegate can run inside a local detached worktree and auto-clea
   assert.equal(completed.result?.worktree_path, null)
 })
 
-test("background delegate leaves a clean detached worktree before error cleanup", async () => {
+test("background delegate rejects invalid input before worktree or provider startup", async () => {
   const config = {
     background: {
       mode: "worker_process",
@@ -290,6 +290,40 @@ test("background delegate leaves a clean detached worktree before error cleanup"
       isolation: "worktree",
       executionMode: "fresh_agent",
       allowQuestion: true,
+      providerType: "local",
+      model: "test-model"
+    },
+    config
+  })
+
+  const failed = await waitFor(task.id, (it) => it.status === "error", { config, timeoutMs: 30000 })
+  assert.equal(failed.status, "error")
+  assert.equal(requestCount, 0, "invalid background input must fail before provider or extension startup")
+  assert.equal(
+    git("worktree", "list", "--porcelain").includes(`kkcode-worktree-${task.id}-`),
+    false
+  )
+})
+
+test("background delegate cleans a detached worktree after a post-setup error", async () => {
+  const config = {
+    background: {
+      mode: "worker_process",
+      max_parallel: 1,
+      worker_timeout_ms: 30000
+    }
+  }
+
+  const task = await BackgroundManager.launchDelegateTask({
+    description: "e2e worktree runtime error cleanup",
+    payload: {
+      workerType: "delegate_task",
+      cwd: project,
+      prompt: "fail after worktree setup",
+      parentSessionId: "ses_missing_bg_worktree_runtime_error",
+      subSessionId: `ses_bg_worktree_runtime_error_${Date.now()}`,
+      isolation: "worktree",
+      executionMode: "fork_context",
       providerType: "local",
       model: "test-model"
     },

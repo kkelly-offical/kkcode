@@ -2,7 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import { resolve, join } from "node:path"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 
 const CLI = resolve("src/index.mjs")
@@ -13,19 +13,20 @@ function createIsolatedHome(prefix) {
   writeFileSync(join(home, "config.json"), JSON.stringify({
     mcp: {
       auto_discover: false,
-      servers: { context7: { enabled: false } }
+      servers: {}
     },
     skills: { auto_seed: false }
   }), "utf8")
   return home
 }
 
-function run(args, { timeout = 15000, env = {}, expectFail = false } = {}) {
+function run(args, { timeout = 15000, env = {}, expectFail = false, cwd } = {}) {
   try {
     const stdout = execFileSync(NODE, [CLI, ...args], {
       encoding: "utf8",
       timeout,
       env: { ...process.env, ...env, NO_COLOR: "1" },
+      cwd,
       stdio: ["ignore", "pipe", "pipe"]
     })
     if (expectFail) throw new Error("expected non-zero exit but got 0")
@@ -125,6 +126,22 @@ test("e2e: mcp list exits 0", () => {
     run(["mcp", "list"], { env: { KKCODE_HOME: home } })
   } finally {
     rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+  }
+})
+
+test("e2e: mcp init does not preload Context7", () => {
+  const home = createIsolatedHome("kkcode-e2e-mcp-init-home-")
+  const project = mkdtempSync(join(tmpdir(), "kkcode-e2e-mcp-init-project-"))
+  try {
+    run(["mcp", "init", "--project"], {
+      cwd: project,
+      env: { KKCODE_HOME: home }
+    })
+    const initialized = JSON.parse(readFileSync(join(project, ".kkcode", "mcp.json"), "utf8"))
+    assert.deepEqual(initialized, { servers: {} })
+  } finally {
+    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    rmSync(project, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
 })
 

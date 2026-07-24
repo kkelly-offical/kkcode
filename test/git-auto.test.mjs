@@ -1,6 +1,6 @@
 import { describe, it } from "node:test"
 import assert from "node:assert"
-import { mkdir, writeFile, rm } from "node:fs/promises"
+import { mkdir, writeFile, rm, symlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { execFileSync } from "node:child_process"
@@ -10,6 +10,7 @@ import { execFileSync } from "node:child_process"
 
 import {
   isGitRepo,
+  isClean,
   createDetachedWorktree,
   createGhostCommit,
   restoreGhostCommit,
@@ -123,6 +124,7 @@ describe("Git Auto - Integration Tests", () => {
       await setupTestRepo()
       const isRepo = await isGitRepo(testRepoPath)
       assert.strictEqual(isRepo, true)
+      assert.strictEqual(await isClean(testRepoPath, 5000), true)
       await cleanupTestRepo()
     })
 
@@ -171,7 +173,7 @@ describe("Git Auto - Integration Tests", () => {
       await cleanupTestRepo()
     })
 
-    it("should remove a detached worktree with the Windows-safe prune strategy", async () => {
+    it("should remove a detached worktree with the Windows-safe metadata strategy", async () => {
       await setupTestRepo()
       let created = null
       try {
@@ -193,6 +195,118 @@ describe("Git Auto - Integration Tests", () => {
       } finally {
         if (created?.path) {
           await removeWorktree(created.path, testRepoPath).catch(() => {})
+        }
+        await cleanupTestRepo()
+      }
+    })
+
+    it("should resolve a registered worktree through a filesystem alias before removal", async () => {
+      await setupTestRepo()
+      let created = null
+      let aliasRoot = null
+      try {
+        created = await createDetachedWorktree(testRepoPath, "worker-alias")
+        assert.strictEqual(created.ok, true)
+
+        aliasRoot = await mkdtemp(path.join(tmpdir(), "kkcode-worktree-alias-"))
+        const aliasPath = path.join(aliasRoot, "linked-worktree")
+        await symlink(created.path, aliasPath, process.platform === "win32" ? "junction" : "dir")
+
+        const removed = await removeWorktree(aliasPath, testRepoPath, { platform: "win32" })
+        assert.strictEqual(removed.ok, true)
+        assert.strictEqual(await isGitRepo(created.path), false)
+      } finally {
+        if (created?.path) {
+          await removeWorktree(created.path, testRepoPath).catch(() => {})
+        }
+        if (aliasRoot) {
+          await rm(aliasRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+        }
+        await cleanupTestRepo()
+      }
+    })
+
+    it("should refuse primary, current, child, locked, and unregistered removal targets", async () => {
+      await setupTestRepo()
+      let created = null
+      let safetyRoot = null
+      try {
+        safetyRoot = await mkdtemp(path.join(tmpdir(), "kkcode-worktree-safety-"))
+        const primaryAlias = path.join(safetyRoot, "primary-alias")
+        await symlink(testRepoPath, primaryAlias, process.platform === "win32" ? "junction" : "dir")
+
+        const refusedPrimary = await removeWorktree(primaryAlias, testRepoPath, { platform: "win32" })
+        assert.strictEqual(refusedPrimary.ok, false)
+        assert.match(refusedPrimary.message, /primary worktree/)
+        assert.strictEqual(await isGitRepo(testRepoPath), true)
+
+        created = await createDetachedWorktree(testRepoPath, "worker-safety")
+        assert.strictEqual(created.ok, true)
+
+        const relativeTarget = path.relative(process.cwd(), created.path)
+        for (const invalidTarget of [
+          relativeTarget,
+          `${created.path}\0suffix`,
+          `${created.path}\rsuffix`,
+          `${created.path}\nsuffix`
+        ]) {
+          const refusedInvalid = await removeWorktree(invalidTarget, testRepoPath)
+          assert.strictEqual(refusedInvalid.ok, false)
+          assert.match(refusedInvalid.message, /relative or invalid path/)
+        }
+        const refusedRelativeCwd = await removeWorktree(created.path, "relative-repository")
+        assert.strictEqual(refusedRelativeCwd.ok, false)
+        assert.match(refusedRelativeCwd.message, /relative or invalid path/)
+        assert.strictEqual(await isGitRepo(created.path), true)
+
+        const refusedCurrent = await removeWorktree(created.path, created.path, { platform: "win32" })
+        assert.strictEqual(refusedCurrent.ok, false)
+        assert.match(refusedCurrent.message, /current worktree/)
+
+        const childPath = path.join(created.path, "nested")
+        await mkdir(childPath)
+        await writeFile(path.join(childPath, "keep.txt"), "keep\n")
+        const refusedChild = await removeWorktree(childPath, testRepoPath)
+        assert.strictEqual(refusedChild.ok, false)
+        assert.strictEqual(await readFile(path.join(childPath, "keep.txt"), "utf8"), "keep\n")
+
+        process.chdir(childPath)
+        try {
+          const refusedProcessCurrent = await removeWorktree(
+            created.path,
+            testRepoPath,
+            { platform: "win32" }
+          )
+          assert.strictEqual(refusedProcessCurrent.ok, false)
+          assert.match(refusedProcessCurrent.message, /process current worktree/)
+        } finally {
+          process.chdir(testRepoPath)
+        }
+
+        const unregistered = path.join(safetyRoot, "unregistered")
+        await mkdir(unregistered)
+        await writeFile(path.join(unregistered, "keep.txt"), "keep\n")
+        const refusedUnregistered = await removeWorktree(unregistered, testRepoPath)
+        assert.strictEqual(refusedUnregistered.ok, false)
+        assert.strictEqual(await readFile(path.join(unregistered, "keep.txt"), "utf8"), "keep\n")
+
+        git("worktree", "lock", created.path)
+        const refusedLocked = await removeWorktree(created.path, testRepoPath, { platform: "win32" })
+        assert.strictEqual(refusedLocked.ok, false)
+        assert.match(refusedLocked.message, /locked worktree/)
+        git("worktree", "unlock", created.path)
+
+        const removed = await removeWorktree(created.path, testRepoPath, { platform: "win32" })
+        assert.strictEqual(removed.ok, true)
+      } finally {
+        if (created?.path) {
+          try {
+            git("worktree", "unlock", created.path)
+          } catch { /* already unlocked or removed */ }
+          await removeWorktree(created.path, testRepoPath).catch(() => {})
+        }
+        if (safetyRoot) {
+          await rm(safetyRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
         }
         await cleanupTestRepo()
       }

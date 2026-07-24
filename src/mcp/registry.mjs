@@ -221,16 +221,6 @@ async function reinitialize(config, {
   state.health.clear()
   state.configured.clear()
 
-  // Built-in MCP servers (user config can override or disable with enabled: false)
-  const builtinServers = {
-    context7: {
-      command: "npx",
-      args: ["--yes", "@upstash/context7-mcp"],
-      timeout_ms: 30000,
-      startup_timeout_ms: 60000,
-      framing: "newline"
-    }
-  }
   const configServers = config?.mcp?.servers || {}
   const discoveredServers = config?.mcp?.auto_discover !== false
     ? await discoverProjectServers(effectiveCwd, allowProjectSources)
@@ -244,7 +234,7 @@ async function reinitialize(config, {
     const key = String(name).startsWith("plugin/") ? name : `plugin/${name}`
     pluginServers[key] = server
   }
-  const allServers = { ...builtinServers, ...discoveredServers, ...pluginServers, ...configServers }
+  const allServers = { ...discoveredServers, ...pluginServers, ...configServers }
 
   // Merge global mcp.* defaults into each server config (server-level overrides global)
   const mcpGlobalDefaults = {}
@@ -272,28 +262,7 @@ async function reinitialize(config, {
   }
 
   const entries = Object.entries(allServers).filter(([, serverConfig]) => serverConfig?.enabled !== false)
-
-  // 内置服务器（如 context7）必须在启动前加载，失败时重试一次
-  const builtinEntries = entries.filter(([name]) => name in builtinServers)
-  const otherEntries = entries.filter(([name]) => !(name in builtinServers))
-
-  // 优先加载内置 MCP 服务器（串行 + 重试）
-  for (const [name, serverConfig] of builtinEntries) {
-    let result = await connectServer(name, serverConfig)
-    if (!result) {
-      // 重试一次
-      const health = state.health.get(name)
-      const errMsg = health?.error || "unknown error"
-      process.stderr.write(`[kkcode] MCP builtin "${name}" 首次连接失败 (${errMsg})，正在重试...\n`)
-      result = await connectServer(name, serverConfig)
-      if (!result) {
-        process.stderr.write(`[kkcode] MCP builtin "${name}" 重试仍失败，跳过。可使用 /status 查看详情。\n`)
-      }
-    }
-  }
-
-  // 并行加载其他 MCP 服务器
-  await Promise.allSettled(otherEntries.map(([name, serverConfig]) => connectServer(name, serverConfig)))
+  await Promise.allSettled(entries.map(([name, serverConfig]) => connectServer(name, serverConfig)))
 
   state.loaded = true
   state.loadedAt = Date.now()
