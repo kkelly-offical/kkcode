@@ -7,11 +7,24 @@ export function setPermissionPromptHandler(handler) {
   customPromptHandler = typeof handler === "function" ? handler : null
 }
 
-export async function askPermissionInteractive({ tool, sessionId, reason = "", defaultAction = "deny" }) {
+export async function askPermissionInteractive({
+  tool,
+  sessionId,
+  reason = "",
+  pattern = "*",
+  command = "",
+  args = {},
+  risk = 0,
+  defaultAction = "deny"
+}) {
   if (customPromptHandler) {
     const answer = await customPromptHandler({
       tool,
       sessionId,
+      pattern,
+      command,
+      args,
+      risk,
       reason,
       defaultAction
     })
@@ -27,6 +40,9 @@ export async function askPermissionInteractive({ tool, sessionId, reason = "", d
     console.log("")
     console.log(`Permission requested for tool: ${tool}`)
     console.log(`session: ${sessionId}`)
+    if (command) console.log(`command: ${command}`)
+    else if (pattern && pattern !== "*") console.log(`target: ${pattern}`)
+    if (risk) console.log(`risk: ${risk}/10`)
     if (reason) console.log(`reason: ${reason}`)
     console.log("Choices: [1] allow once  [2] allow session  [3] deny")
     const answer = (await rl.question("> ")).trim().toLowerCase()

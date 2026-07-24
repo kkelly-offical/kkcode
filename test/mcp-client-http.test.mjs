@@ -72,3 +72,20 @@ test("http mcp health reports connection_refused", async () => {
   assert.equal(health.ok, false)
   assert.equal(health.reason, "connection_refused")
 })
+
+test("http mcp requests include KK Code identity", async () => {
+  let headers
+  const srv = await startServer((req, res) => {
+    headers = req.headers
+    res.setHeader("content-type", "application/json")
+    res.end(JSON.stringify({ tools: [] }))
+  })
+  try {
+    const client = createHttpMcpClient("identitySrv", { type: "http", url: srv.url, timeout_ms: 500 })
+    await client.listTools()
+    assert.match(headers["user-agent"], /^KK-Code\/0\.3\.1 /)
+    assert.equal(headers["x-kk-code-client"], "cli")
+  } finally {
+    await srv.close()
+  }
+})

@@ -242,7 +242,8 @@ export async function executeTurn({
   output = null,
   allowQuestion = true,
   toolContext = {},
-  longagentImpl = null
+  longagentImpl = null,
+  runSpec = null
 }) {
   ensureEventSinks()
 
@@ -286,6 +287,7 @@ export async function executeTurn({
           output,
           allowQuestion,
           toolContext,
+          runSpec,
           longagentImpl
         })
       : await processTurnLoop({
@@ -302,7 +304,8 @@ export async function executeTurn({
           output,
           signal,
           allowQuestion,
-          toolContext
+          toolContext,
+          runSpec
         })
 
   const usage = { ...turn.usage }

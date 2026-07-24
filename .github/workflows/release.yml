@@ -2,12 +2,18 @@ name: release
 
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - "v0.3.1"
+      - "v0.3.1-rc.*"
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   release_verify:
+    environment: npm-release
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -21,3 +27,17 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run release:verify
+      - name: Audit production dependencies
+        run: npm audit --registry=https://registry.npmjs.org --omit=dev --audit-level=high
+      - name: Generate CycloneDX SBOM
+        run: npm sbom --sbom-format=cyclonedx > kkcode-${{ github.ref_name }}.cdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kkcode-${{ github.ref_name }}-sbom
+          path: kkcode-${{ github.ref_name }}.cdx.json
+      - name: Publish release candidate
+        if: startsWith(github.ref_name, 'v0.3.1-rc.')
+        run: npm publish --provenance --tag next
+      - name: Publish stable
+        if: github.ref_name == 'v0.3.1'
+        run: npm publish --provenance --tag latest

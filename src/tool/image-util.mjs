@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import path from "node:path"
+import { buildRequestHeaders } from "../http/identity.mjs"
 
 const execFileAsync = promisify(execFile)
 
@@ -240,7 +241,10 @@ export async function readClipboardText() {
  */
 export async function fetchImageUrlAsBlock(url) {
   try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(15000) })
+    const response = await fetch(url, {
+      headers: buildRequestHeaders({ target: "image-fetch", accept: "image/*" }),
+      signal: AbortSignal.timeout(15000)
+    })
     if (!response.ok) return { type: "text", text: `[image fetch failed: ${url} (${response.status})]` }
     const contentType = response.headers.get("content-type") || ""
     if (!contentType.startsWith("image/")) {

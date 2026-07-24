@@ -1,4 +1,4 @@
-import { makeToolResult } from "../core/types.mjs"
+import { makeToolResult, isToolSuccess } from "../core/types.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { withAudit } from "./audit-wrapper.mjs"
@@ -7,6 +7,36 @@ import { buildMutationObservability } from "../observability/edit-diagnostics.mj
 
 const FILE_EDIT_TOOLS = new Set(["write", "edit", "multiedit", "patch", "notebookedit"])
 const snapshotted = new Set()
+
+function outputFailureStatus(output) {
+  const text = String(output || "").trim()
+  if (/^\[blocked\]/i.test(text)) return "blocked"
+  if (/^(?:error:|\[search error\]|\[mcp error\b)/i.test(text)) return "error"
+  return null
+}
+
+function rawStatus(raw, signal, output) {
+  if (signal?.aborted || raw?.cancelled === true || raw?.status === "cancelled") return "cancelled"
+  if (raw?.blocked === true || raw?.metadata?.blocked === true || raw?.status === "blocked") return "blocked"
+  if (raw?.ok === false || raw?.status === "error" || raw?.status === "failed" || raw?.is_error === true || raw?.error) return "error"
+  return outputFailureStatus(output) || "completed"
+}
+
+function rawOutput(raw) {
+  if (typeof raw === "string") return raw
+  if (!raw || typeof raw !== "object") return String(raw ?? "")
+  if (typeof raw.output === "string") return raw.output
+  if (typeof raw.message === "string") return raw.message
+  if (typeof raw.error === "string") return raw.error
+  return JSON.stringify(raw, null, 2)
+}
+
+function rawError(raw, status, output) {
+  if (status === "completed") return null
+  if (typeof raw?.error === "string") return raw.error
+  if (raw?.error?.message) return raw.error.message
+  return output || status
+}
 
 function eventMetadataSummary(metadata = {}) {
   const fileChanges = Array.isArray(metadata.fileChanges) ? metadata.fileChanges : []
@@ -80,31 +110,29 @@ export async function executeTool({ tool, args, sessionId, turnId, context, sign
         }
 
         const raw = await tool.execute(args || {}, context)
-        let output = ""
-        let metadata = {}
-        if (typeof raw === "string") {
-          output = raw
-        } else if (raw && typeof raw === "object") {
-          if (typeof raw.output === "string") {
-            output = raw.output
-          } else {
-            output = JSON.stringify(raw, null, 2)
-          }
-          if (raw.metadata && typeof raw.metadata === "object") {
-            metadata = raw.metadata
-          }
-        } else {
-          output = String(raw ?? "")
+        const output = rawOutput(raw)
+        const metadata = raw?.metadata && typeof raw.metadata === "object" ? raw.metadata : {}
+        const status = rawStatus(raw, signal, output)
+        const evidence = {
+          ...(raw?.evidence && typeof raw.evidence === "object" ? raw.evidence : {}),
+          ...(Array.isArray(metadata.fileChanges) ? { fileChanges: metadata.fileChanges } : {}),
+          ...(metadata.exitCode !== undefined ? { exitCode: metadata.exitCode } : {}),
+          ...(metadata.checks !== undefined ? { checks: metadata.checks } : {}),
+          ...(metadata.hashes !== undefined ? { hashes: metadata.hashes } : {})
         }
         const result = makeToolResult({
           name: tool.name,
-          status: "completed",
+          status,
+          ok: status === "completed",
+          code: raw?.code || (typeof raw?.error === "string" ? raw.error : metadata.reason || null),
           output,
+          error: rawError(raw, status, output),
           durationMs: Date.now() - startedAt,
-          metadata
+          metadata,
+          evidence
         })
         await EventBus.emit({
-          type: EVENT_TYPES.TOOL_FINISH,
+          type: isToolSuccess(result) ? EVENT_TYPES.TOOL_FINISH : EVENT_TYPES.TOOL_ERROR,
           sessionId,
           turnId,
           payload: {
@@ -113,15 +141,19 @@ export async function executeTool({ tool, args, sessionId, turnId, context, sign
             args,
             output: String(output || "").slice(0, 500),
             durationMs: result.durationMs,
-            metadata: eventMetadataSummary(metadata)
+            metadata: eventMetadataSummary(metadata),
+            ...(result.error ? { error: result.error } : {})
           }
         })
         return result
       } catch (error) {
         const errorMessage = error?.message || String(error)
+        const cancelled = signal?.aborted || error?.name === "AbortError" || error?.code === "ABORT_ERR"
         const result = makeToolResult({
           name: tool.name,
-          status: "error",
+          status: cancelled ? "cancelled" : "error",
+          ok: false,
+          code: error?.code || (cancelled ? "cancelled" : null),
           output: errorMessage,
           error: errorMessage,
           durationMs: Date.now() - startedAt

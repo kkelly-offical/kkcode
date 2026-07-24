@@ -1,11 +1,14 @@
+import { buildRequestHeaders } from "../http/identity.mjs"
+
 const API_BASE = "https://api.github.com"
 
 function headers(token) {
-  return {
-    Authorization: `Bearer ${token}`,
-    Accept: "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28"
-  }
+  return buildRequestHeaders({
+    target: "github",
+    accept: "application/vnd.github+json",
+    authorization: `Bearer ${token}`,
+    customHeaders: { "X-GitHub-Api-Version": "2022-11-28" }
+  })
 }
 
 async function ghFetch(token, path, params = {}) {

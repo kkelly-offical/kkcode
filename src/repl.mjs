@@ -37,6 +37,7 @@ import { setPermissionPromptHandler } from "./permission/prompt.mjs"
 import { setQuestionPromptHandler } from "./tool/question-prompt.mjs"
 import { createActivityRenderer, formatPlanProgress } from "./ui/activity-renderer.mjs"
 import { buildTranscriptViewport } from "./ui/repl-transcript-panel.mjs"
+import { createAppState, reduceAppState } from "./ui/app-state.mjs"
 import { renderTaskProgressPanel } from "./ui/repl-task-panel.mjs"
 import { EventBus } from "./core/events.mjs"
 import { EVENT_TYPES } from "./core/constants.mjs"
@@ -1317,6 +1318,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     thinkingHidden: false,
     inThinkingStream: false,
     thinkingSkipped: false,
+    thinkingBuffer: "",
+    appState: createAppState(),
     paused: false,
     turnAbortController: null,
     lastCtrlCTime: 0,
@@ -1341,7 +1344,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         session: { input: 0, output: 0 },
         global: { input: 0, output: 0 }
       },
-      cost: 0,
+      cost: null,
       context: null,
       longagent: null,
       toolEvents: []
@@ -1373,6 +1376,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     // 如果 thinking 被隐藏且当前在 thinking 流中，跳过内容
     if (ui.thinkingHidden && ui.inThinkingStream) {
       ui.thinkingSkipped = true
+      ui.thinkingBuffer += String(chunk || "")
       return
     }
     const mdEnabled = ctx.configState.config.ui?.markdown_render !== false
@@ -1403,6 +1407,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   activityRenderer.start()
 
   const uiEventUnsub = EventBus.subscribe((event) => {
+    ui.appState = reduceAppState(ui.appState, event)
     const { type, payload } = event
     switch (type) {
       case EVENT_TYPES.TURN_STEP_START: {
@@ -1423,7 +1428,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         break
       case EVENT_TYPES.STREAM_TEXT_START:
         if (ui.inThinkingStream && ui.thinkingSkipped) {
-          appendLog(paint("● Thinking (collapsed, Ctrl+T to expand)", null, { dim: true }))
+          appendLog(paint(`● Thinking (collapsed, ${ui.thinkingBuffer.length} chars, Ctrl+T to expand)`, null, { dim: true }))
           appendLog("")
         }
         ui.inThinkingStream = false
@@ -1444,8 +1449,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           estimated: true,
           turn: { input: u.input || 0, output: u.output || 0 }
         }
-        // rough cost estimate: opus-class rates with cache differentiation
-        ui.metrics.cost = ((u.input || 0) * 15 + (u.output || 0) * 75 + (u.cacheRead || 0) * 1.5 + (u.cacheWrite || 0) * 18.75) / 1_000_000
+        // Provider/model pricing is resolved after the turn. Never present a
+        // hard-coded model rate as a live cost estimate.
+        ui.metrics.cost = null
         if (payload.context) ui.metrics.context = payload.context
         requestRender()
         break
@@ -1453,7 +1459,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       case EVENT_TYPES.TURN_FINISH:
         flushStreamRenderer()
         if (ui.inThinkingStream && ui.thinkingSkipped) {
-          appendLog(paint("● Thinking (collapsed, Ctrl+T to expand)", null, { dim: true }))
+          appendLog(paint(`● Thinking (collapsed, ${ui.thinkingBuffer.length} chars, Ctrl+T to expand)`, null, { dim: true }))
           appendLog("")
         }
         ui.inThinkingStream = false
@@ -1840,13 +1846,17 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     const permissionLines = []
     if (ui.pendingPermission) {
       const perm = ui.pendingPermission
-      const toolInfo = `tool: ${perm.tool}`
+      const target = perm.command || (perm.pattern && perm.pattern !== "*" ? perm.pattern : "")
+      const toolInfo = `tool: ${perm.tool}  risk: ${perm.risk || 0}/10`
       const reasonInfo = perm.reason ? `  ${perm.reason}` : ""
       permissionLines.push(
         paint(`Permission Request  ↑↓ navigate  Enter select  Esc deny`, ctx.themeState.theme.semantic.warn, { bold: true })
       )
       permissionLines.push(paint(`┌${"─".repeat(Math.max(1, width - 4))}┐`, ctx.themeState.theme.base.border))
       permissionLines.push(paint(`│ ${padRight(toolInfo, Math.max(1, width - 5))}│`, ctx.themeState.theme.base.fg))
+      if (target) {
+        permissionLines.push(paint(`│ ${padRight(`target: ${target}`, Math.max(1, width - 5))}│`, ctx.themeState.theme.semantic.warn))
+      }
       if (reasonInfo) {
         permissionLines.push(paint(`│ ${padRight(reasonInfo, Math.max(1, width - 5))}│`, ctx.themeState.theme.base.muted))
       }
@@ -1855,7 +1865,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         const choice = PERM_CHOICES[i]
         const active = i === ui.permissionSelected
         const prefix = active ? "▸" : " "
-        const line = ` ${prefix} ${choice.label}`
+        const line = ` ${prefix} ${i + 1}. ${choice.label}`
         permissionLines.push(
           active
             ? paint(`│${padRight(line, Math.max(1, width - 5))}│`, "#111111", { bg: ctx.themeState.theme.semantic.warn, bold: true })
@@ -2584,12 +2594,16 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   startTuiFrame()
-  setPermissionPromptHandler(({ tool, sessionId, reason = "", defaultAction = "deny" }) =>
+  setPermissionPromptHandler(({ tool, sessionId, reason = "", pattern = "*", command = "", args = {}, risk = 0, defaultAction = "deny" }) =>
     new Promise((resolve) => {
       queuePermissionPrompt({
         tool,
         sessionId,
         reason,
+        pattern,
+        command,
+        args,
+        risk,
         defaultAction,
         resolve
       })
@@ -2834,7 +2848,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           return
         }
 
-        if (key.ctrl && key.name === "d") {
+        if (key.ctrl && key.name === "d" && ui.input.length === 0) {
           ui.quitting = true
           finish()
           return
@@ -2842,6 +2856,10 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
         if (ui.pendingPermission) {
           const PERM_VALUES = ["allow_once", "allow_session", "deny"]
+          if (["1", "2", "3"].includes(str)) {
+            resolvePermissionPrompt(PERM_VALUES[Number(str) - 1])
+            return
+          }
           if (key.name === "escape") {
             resolvePermissionPrompt("deny")
             return
@@ -3253,6 +3271,10 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         if (key.ctrl && key.name === "t") {
           ui.thinkingHidden = !ui.thinkingHidden
           appendLog(paint(`● Thinking ${ui.thinkingHidden ? "hidden" : "visible"} (Ctrl+T to toggle)`, null, { dim: true }))
+          if (!ui.thinkingHidden && ui.thinkingBuffer) {
+            appendLog(ui.thinkingBuffer)
+            ui.thinkingBuffer = ""
+          }
           requestRender()
           return
         }

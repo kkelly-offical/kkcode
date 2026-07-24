@@ -18,6 +18,8 @@ import { gitFullAutoTools } from "./git-full-auto.mjs"
 import { markFileRead, refreshFileReadStateFromDisk } from "./file-read-state.mjs"
 import { validateExistingFileMutation } from "./mutation-guard.mjs"
 import { buildMutationObservability } from "../observability/edit-diagnostics.mjs"
+import { resolveWorkspacePath } from "./workspace-fs.mjs"
+import { buildRequestHeaders } from "../http/identity.mjs"
 
 const exec = promisify(execCb)
 
@@ -135,13 +137,6 @@ async function detectPackageManagers(cwd) {
   return present
 }
 
-function assertWithinCwd(resolved, cwd) {
-  const normalCwd = path.resolve(cwd)
-  if (!resolved.startsWith(normalCwd + path.sep) && resolved !== normalCwd) {
-    throw new Error(`path traversal blocked: ${resolved} is outside working directory`)
-  }
-}
-
 function runRg(args, cwd, timeoutMs = 30000) {
   return new Promise((resolve) => {
     let stdout = "", stderr = "", done = false
@@ -170,7 +165,9 @@ function runRg(args, cwd, timeoutMs = 30000) {
 
 async function runGlob(pattern, cwd, searchPath) {
   if (!pattern) return "pattern is required"
-  const target = searchPath ? path.resolve(cwd, searchPath) : "."
+  const target = searchPath
+    ? await resolveWorkspacePath(cwd, searchPath)
+    : "."
   const { stdout } = await runRg(["--files", "--glob", pattern, target], cwd, 15000)
   const text = stdout.trim()
   if (!text) return "no files matched"
@@ -196,7 +193,7 @@ async function runGrep(pattern, cwd, options = {}) {
   if (options.maxCount) args.push("-m", String(options.maxCount))
   if (options.ignoreCase) args.push("-i")
   args.push(pattern)
-  args.push(options.path ? path.resolve(cwd, options.path) : ".")
+  args.push(options.path ? await resolveWorkspacePath(cwd, options.path) : ".")
   const { stdout, stderr } = await runRg(args, cwd)
   let text = stdout.trim()
   if (!text && stderr) text = `[search error] ${stderr}`
@@ -360,7 +357,7 @@ function builtinTools(config) {
       required: []
     },
     async execute(args, ctx) {
-      const target = path.resolve(ctx.cwd, args.path || ".")
+      const target = await resolveWorkspacePath(ctx.cwd, args.path || ".", { mustExist: true })
       return listDir(target)
     }
   }
@@ -381,8 +378,7 @@ function builtinTools(config) {
       required: []
     },
     async execute(args, ctx) {
-      const targetPath = path.resolve(ctx.cwd, String(args.path || "."))
-      assertWithinCwd(targetPath, ctx.cwd)
+      const targetPath = await resolveWorkspacePath(ctx.cwd, String(args.path || "."), { mustExist: true })
       const requestedSections = Array.isArray(args.sections) && args.sections.length
         ? args.sections.map((item) => String(item || "").trim().toLowerCase()).filter(Boolean)
         : ["os", "runtime", "workspace", "cpu", "memory", "disk"]
@@ -542,8 +538,7 @@ function builtinTools(config) {
       required: ["path"]
     },
     async execute(args, ctx) {
-      const target = path.resolve(ctx.cwd, args.path)
-      assertWithinCwd(target, ctx.cwd)
+      const target = await resolveWorkspacePath(ctx.cwd, args.path, { mustExist: true })
       const ext = path.extname(target).toLowerCase()
 
       // Image files: return base64 data URI
@@ -615,8 +610,7 @@ function builtinTools(config) {
       required: ["path", "content"]
     },
     async execute(args, ctx) {
-      const target = path.resolve(ctx.cwd, args.path)
-      assertWithinCwd(target, ctx.cwd)
+      const target = await resolveWorkspacePath(ctx.cwd, args.path)
       const content = String(args.content ?? "")
       const mode = String(args.mode || "overwrite")
 
@@ -722,8 +716,7 @@ function builtinTools(config) {
       required: ["path", "before", "after"]
     },
     async execute(args, ctx) {
-      const target = path.resolve(ctx.cwd, args.path)
-      assertWithinCwd(target, ctx.cwd)
+      const target = await resolveWorkspacePath(ctx.cwd, args.path, { mustExist: true })
       if (await exists(target)) {
         const validation = await validateExistingFileMutation({
           targetPath: target,
@@ -750,6 +743,14 @@ function builtinTools(config) {
             run: runEdit
           })
         : await runEdit()
+      if (result?.ok === false) {
+        return {
+          ok: false,
+          error: "edit_failed",
+          output: result.output || "edit failed",
+          metadata: { fileChanges: [] }
+        }
+      }
       const updatedContent = await readFile(target, "utf8").catch(() => null)
       await refreshFileReadStateFromDisk(target, { content: updatedContent ?? undefined }).catch(() => {})
       return {
@@ -1113,7 +1114,10 @@ function builtinTools(config) {
       }
       try {
         const response = await fetch(url, {
-          headers: { "user-agent": "kkcode/0.1" },
+          headers: buildRequestHeaders({
+            target: "webfetch",
+            accept: "text/html, text/plain, application/json"
+          }),
           signal: AbortSignal.timeout(30000)
         })
         if (!response.ok) return `error: HTTP ${response.status}`
@@ -1174,7 +1178,11 @@ function builtinTools(config) {
     })
     const response = await fetch(EXA_MCP_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+      headers: buildRequestHeaders({
+        target: "exa",
+        accept: "application/json, text/event-stream",
+        contentType: "application/json"
+      }),
       body,
       signal: signal || AbortSignal.timeout(EXA_TIMEOUT_MS)
     })
@@ -1280,7 +1288,7 @@ function builtinTools(config) {
       const snapshots = [] // { path, original, isNew }
       const resolved = []
       for (const change of changes) {
-        const target = path.resolve(ctx.cwd, change.path)
+        const target = await resolveWorkspacePath(ctx.cwd, change.path)
         const originalExists = await exists(target)
         const hasBefore = Object.prototype.hasOwnProperty.call(change, "before")
         const isCreate = !originalExists && !hasBefore
@@ -1448,7 +1456,7 @@ function builtinTools(config) {
       required: ["path", "new_source"]
     },
     async execute(args, ctx) {
-      const target = path.resolve(ctx.cwd, args.path)
+      const target = await resolveWorkspacePath(ctx.cwd, args.path, { mustExist: true })
       if (await exists(target)) {
         const validation = await validateExistingFileMutation({
           targetPath: target,
@@ -1548,7 +1556,7 @@ function builtinTools(config) {
       required: ["path", "start_line", "end_line", "content"]
     },
     async execute(args, ctx) {
-      const target = path.resolve(ctx.cwd, args.path)
+      const target = await resolveWorkspacePath(ctx.cwd, args.path, { mustExist: true })
 
       if (await exists(target)) {
         const validation = await validateExistingFileMutation({

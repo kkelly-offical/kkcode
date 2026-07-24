@@ -1,4 +1,5 @@
 export const DEFAULT_CONFIG = {
+  config_version: 1,
   language: "en",
   provider: {
     default: "openai",
@@ -31,6 +32,22 @@ export const DEFAULT_CONFIG = {
       stream: true,
       thinking: null
     },
+    "kimi-code": {
+      type: "openai-compatible",
+      base_url: "https://api.kimi.com/coding/v1",
+      api_key_env: "KIMI_CODE_API_KEY",
+      default_model: "k3",
+      models: ["k3", "kimi-for-coding", "kimi-for-coding-highspeed"],
+      timeout_ms: 180000,
+      stream_idle_timeout_ms: 180000,
+      max_tokens: 32768,
+      context_limit: 1048576,
+      retry_attempts: 3,
+      retry_base_delay_ms: 800,
+      stream: true,
+      reasoning_effort: "high",
+      thinking: null
+    },
     ollama: {
       base_url: "http://localhost:11434",
       api_key_env: "",
@@ -44,7 +61,11 @@ export const DEFAULT_CONFIG = {
       stream: true,
       thinking: null
     },
-    model_context: {}
+    model_context: {
+      k3: 1048576,
+      "kimi-for-coding": 262144,
+      "kimi-for-coding-highspeed": 262144
+    }
   },
   agent: {
     default_mode: "assistant",

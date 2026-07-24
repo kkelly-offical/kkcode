@@ -149,3 +149,23 @@ test("sse client classifies server error (HTTP 500)", async () => {
     await srv.close()
   }
 })
+
+test("sse mcp initialize identifies KK Code in headers and clientInfo", async () => {
+  let observedHeaders
+  let observedClientInfo
+  const srv = await startSseServer(async (req, res) => {
+    observedHeaders = req.headers
+    const body = await parseJsonRpcBody(req)
+    if (body?.method === "initialize") observedClientInfo = body.params?.clientInfo
+    jsonResponse(res, { jsonrpc: "2.0", id: body?.id, result: { tools: [] } })
+  })
+  try {
+    const client = createSseMcpClient("identitySse", { url: srv.url, timeout_ms: 1000 })
+    await client.listTools()
+    assert.match(observedHeaders["user-agent"], /^KK-Code\/0\.3\.1 /)
+    assert.deepEqual(observedClientInfo, { name: "KK Code", version: "0.3.1" })
+    client.shutdown()
+  } finally {
+    await srv.close()
+  }
+})

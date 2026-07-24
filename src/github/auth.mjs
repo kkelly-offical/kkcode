@@ -2,6 +2,7 @@ import { readFile, writeFile, unlink, mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 import { spawn } from "node:child_process"
 import { githubTokenPath } from "../storage/paths.mjs"
+import { buildRequestHeaders } from "../http/identity.mjs"
 
 const CLIENT_ID = "Ov23liCqhJ6cRaqyv3uA"
 const DEVICE_CODE_URL = "https://github.com/login/device/code"
@@ -37,10 +38,11 @@ export async function logout() {
 async function validateToken(token) {
   try {
     const res = await fetch("https://api.github.com/user", {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github+json"
-      }
+      headers: buildRequestHeaders({
+        target: "github",
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${token}`
+      })
     })
     if (res.ok) {
       const user = await res.json()
@@ -55,10 +57,11 @@ async function validateToken(token) {
 async function requestDeviceCode() {
   const res = await fetch(DEVICE_CODE_URL, {
     method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json"
-    },
+    headers: buildRequestHeaders({
+      target: "github-oauth",
+      accept: "application/json",
+      contentType: "application/json"
+    }),
     body: JSON.stringify({ client_id: CLIENT_ID, scope: SCOPE })
   })
   if (!res.ok) {
@@ -172,10 +175,11 @@ async function pollAccessToken(deviceCode, interval) {
     try {
       res = await fetch(ACCESS_TOKEN_URL, {
         method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json"
-        },
+        headers: buildRequestHeaders({
+          target: "github-oauth",
+          accept: "application/json",
+          contentType: "application/json"
+        }),
         body: JSON.stringify({
           client_id: CLIENT_ID,
           device_code: deviceCode,
@@ -272,10 +276,11 @@ export async function ensureGitHubAuth() {
 
   // Get user info
   const userRes = await fetch("https://api.github.com/user", {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github+json"
-    }
+    headers: buildRequestHeaders({
+      target: "github",
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${token}`
+    })
   })
   if (!userRes.ok) {
     throw new Error(`Failed to get user info: ${userRes.status}`)

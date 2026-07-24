@@ -1,6 +1,6 @@
 # kkcode
 
-[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=v0.3.0)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
+[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=v0.3.1)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 [![GitHub Release](https://img.shields.io/github/v/release/kkelly-offical/kkcode)](https://github.com/kkelly-offical/kkcode/releases)
 ![Node](https://img.shields.io/badge/Node.js-%3E%3D22-green)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
@@ -364,6 +364,7 @@ Run `kkcode --help` or `kkcode <command> --help` for the full surface.
 - [Multi-provider template](configs/config-multi-provider.yaml)
 - [Gemini template](configs/config-gemini.yaml)
 - [Kimi template](configs/config-kimi.yaml)
+- [Kimi Code template](configs/config-kimi-code.yaml)
 - [xAI template](configs/config-xai.yaml)
 - [REPL roadmap](docs/repl-roadmap-0.1.27-0.1.36.md)
 
@@ -372,9 +373,9 @@ Run `kkcode --help` or `kkcode <command> --help` for the full surface.
 <a id="model-templates"></a>
 ## Model Templates / 模型模板
 
-The `configs/` directory contains provider-ready templates for current OpenAI-compatible, Anthropic, DashScope, DeepSeek, GLM, Gemini, Kimi, xAI, and Ollama setups. The default examples prefer stable aliases where vendors publish them, and keep deprecated aliases only when they are still useful for migration.
+The `configs/` directory contains provider-ready templates for current OpenAI-compatible, Anthropic, DashScope, DeepSeek, GLM, Gemini, Kimi Code, Moonshot Kimi, xAI, and Ollama setups. The default examples prefer stable aliases where vendors publish them, and keep deprecated aliases only when they are still useful for migration.
 
-`configs/` 目录包含 OpenAI-compatible、Anthropic、DashScope、DeepSeek、GLM、Gemini、Kimi、xAI 和 Ollama 的可用模板。默认示例优先使用厂商稳定别名；即将废弃的旧别名只保留为迁移兼容项。
+`configs/` 目录包含 OpenAI-compatible、Anthropic、DashScope、DeepSeek、GLM、Gemini、Kimi Code、Moonshot Kimi、xAI 和 Ollama 的可用模板。默认示例优先使用厂商稳定别名；即将废弃的旧别名只保留为迁移兼容项。
 
 | Provider | Default template model | Notes |
 | --- | --- | --- |
@@ -384,6 +385,7 @@ The `configs/` directory contains provider-ready templates for current OpenAI-co
 | DeepSeek | `deepseek-v4-flash` | Replaces old `deepseek-chat` / `deepseek-reasoner` aliases before their 2026-07-24 deprecation |
 | Zhipu GLM | `glm-5.1` | New GLM default with `glm-5` and `glm-4.5` kept as fallback choices |
 | Google Gemini | `gemini-3.5-flash` | Uses Gemini's OpenAI-compatible endpoint |
+| Kimi Code | `k3` | Uses the dedicated Coding API and `KIMI_CODE_API_KEY`; also includes Kimi for Coding variants |
 | Moonshot Kimi | `kimi-k2.6` | Current Kimi model for coding/agent work; old K2 aliases are avoided |
 | xAI Grok | `grok-4.3` | xAI's current general chat default |
 
@@ -420,12 +422,27 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current release / 当前版本**: `v0.2.6`
+**Current release / 当前版本**: `v0.3.1`
+
+Use the Kimi Code preset without placing credentials in YAML:
+
+```bash
+export KIMI_CODE_API_KEY="..."
+cp configs/config-kimi-code.yaml .kkcode.yaml
+kkcode doctor --http
+kkcode chat "review this repository" --output-format text
+```
+
+`--output-format` supports `text`, `json`, `stream-json`, and the interactive-compatible
+`legacy` format. In non-interactive use, progress goes to stderr and the final answer
+goes to stdout. `doctor --http` shows the effective `KK-Code/<version>` request identity
+with authorization values redacted.
+
 **Latest releases / 最新发布**: [GitHub Releases](https://github.com/kkelly-offical/kkcode/releases)  
 **Package / 包地址**: [npm](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 
 **English**
-- `0.2.6` fixes a HIGH command-injection bug in the post-edit formatter, adds a regression test, refreshes provider templates for current model families, and expands README language coverage.
+- `0.3.1` gives every outbound request a consistent `KK-Code/0.3.1` identity, adds the Kimi Code Coding API preset, and improves terminal, tool, and orchestration reliability.
 - `0.2.5` updates the YAML parser dependency to the latest stable release and clears the Dependabot advisory for deeply nested YAML collections.
 - `0.2.4` separates skills into the `$` namespace while keeping legacy `/skill` compatibility, and establishes a production local compatibility baseline for kkcode, Claude Code, Codex, and OpenCode `SKILL.md` / plugin layouts.
 - `0.2.3` is the stable assistant/subagent/context release: Assistant can explicitly delegate to one or many subagents, parallel lanes are observable, updater support is included, and context compaction keeps prior summaries plus recent evidence.
@@ -434,7 +451,7 @@ update:
 - `0.2.1` rebuilt kkcode around Assistant as the default general-purpose lane, with dedicated Agent and LongAgent modes for coding work.
 
 **中文**
-- `0.2.6` 修复 post-edit formatter 的 HIGH 命令注入漏洞，补充回归测试，按当前模型家族刷新 provider 模板，并扩展 README 多语言说明。
+- `0.3.1` 为所有出站请求统一添加 `KK-Code/0.3.1` 身份，加入 Kimi Code Coding API 预设，并提升终端、工具与编排的可靠性。
 - `0.2.5` 将 YAML 解析器依赖更新到最新稳定版本，并清除深层嵌套 YAML collection 相关的 Dependabot 告警。
 - `0.2.4` 将 Skill 分离到 `$` 命名空间，同时保留旧版 `/skill` 兼容，并建立 kkcode / Claude Code / Codex / OpenCode 的本地 `SKILL.md` 与插件布局生产兼容基线。
 - `0.2.3` 是稳定版 Assistant / 子智能体 / 上下文版本：Assistant 可以显式委派一个或多个子智能体，并行 lane 可观察，包含更新器能力，上下文压缩会保留旧摘要和近期证据。

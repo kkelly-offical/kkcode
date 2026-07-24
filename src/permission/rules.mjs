@@ -244,8 +244,8 @@ export function matchRule(rule, input) {
   if (rule.risk && input.risk && Number(input.risk) < Number(rule.risk)) return false
 
   // File glob matching (for read/write/edit/glob/grep tools)
-  if (rule.file_patterns) {
-    if (!matchPatterns(input.pattern || "", rule.file_patterns)) return false
+  if (rule.file_patterns || rule.file_pattern) {
+    if (!matchPatterns(input.pattern || "", rule.file_patterns || rule.file_pattern)) return false
   } else if (rule.pattern) {
     // Legacy single-pattern support
     if (!matchGlob(input.pattern || input.tool, rule.pattern)) return false

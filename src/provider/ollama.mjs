@@ -1,4 +1,5 @@
 import { ProviderError } from "../core/errors.mjs"
+import { buildRequestHeaders } from "../http/identity.mjs"
 
 function mapTools(tools) {
   if (!tools || !tools.length) return undefined
@@ -107,7 +108,12 @@ export async function requestOllama(input) {
 
   const response = await fetch(endpoint, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: buildRequestHeaders({
+      target: "llm",
+      provider: input.provider || "ollama",
+      accept: "application/json",
+      contentType: "application/json"
+    }),
     body: JSON.stringify(payload),
     signal: timeoutSignal(timeoutMs, signal)
   })
@@ -158,7 +164,12 @@ export async function* requestOllamaStream(input) {
 
   const response = await fetch(endpoint, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: buildRequestHeaders({
+      target: "llm",
+      provider: input.provider || "ollama",
+      accept: "application/x-ndjson, application/json",
+      contentType: "application/json"
+    }),
     body: JSON.stringify(payload),
     signal: timeoutSignal(timeoutMs, signal)
   })

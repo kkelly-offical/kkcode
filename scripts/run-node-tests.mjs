@@ -30,7 +30,14 @@ if (testFiles.length === 0) {
 }
 
 const childArgs = enableCoverage
-  ? ["--experimental-test-coverage", "--test", ...testFiles]
+  ? [
+      "--experimental-test-coverage",
+      "--test-coverage-lines=60",
+      "--test-coverage-functions=60",
+      "--test-coverage-branches=60",
+      "--test",
+      ...testFiles
+    ]
   : ["--test", ...testFiles]
 
 const child = spawn(process.execPath, childArgs, {

@@ -4,6 +4,7 @@ import { dirname } from "node:path"
 import { mkdir } from "node:fs/promises"
 import { PACKAGE_NAME, PACKAGE_VERSION } from "../version.mjs"
 import { updateStatePath } from "../storage/paths.mjs"
+import { buildRequestHeaders } from "../http/identity.mjs"
 
 const DEFAULT_REGISTRY = "https://registry.npmjs.org"
 const DEFAULT_TIMEOUT_MS = 2500
@@ -91,7 +92,10 @@ export async function fetchPackageMetadata({ packageName = PACKAGE_NAME, registr
   try {
     const url = `${normalizeRegistry(registry)}/${encodePackageName(packageName)}`
     const res = await fetchImpl(url, {
-      headers: { accept: "application/vnd.npm.install-v1+json, application/json" },
+      headers: buildRequestHeaders({
+        target: "npm-registry",
+        accept: "application/vnd.npm.install-v1+json, application/json"
+      }),
       signal: controller.signal
     })
     if (!res.ok) throw new Error(`npm registry returned HTTP ${res.status}`)

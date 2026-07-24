@@ -11,6 +11,7 @@ import { HookBus, initHookBus } from "../plugin/hook-bus.mjs"
 import { listProviders } from "../provider/router.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
+import { createOutputReporter, resolveOutputFormat } from "../cli/output-format.mjs"
 
 export function resolveChatExecutionMode(prompt, requestedMode) {
   return resolvePromptMode(prompt, requestedMode)
@@ -26,9 +27,12 @@ export function createChatCommand() {
     .option("--provider-type <type>", `provider type (${providers.join("|")})`)
     .option("--base-url <url>", "provider base url override")
     .option("--api-key-env <name>", "api key env override")
+    .option("--output-format <format>", "text|json|stream-json|legacy")
     .option("--max-iterations <n>", "longagent max iterations (0 = unlimited)")
     .option("--session <id>", "session id")
     .action(async (promptParts, options) => {
+      const outputFormat = resolveOutputFormat(options.outputFormat)
+      const reporter = createOutputReporter(outputFormat)
       const ctx = await buildContext()
       printContextWarnings(ctx)
       PermissionEngine.setTrusted(ctx.trustState?.trusted !== false)
@@ -100,20 +104,20 @@ export function createChatCommand() {
       })
 
       if (routedMode.route.changed) {
-        console.log(`mode routed: ${routedMode.requestedMode} -> ${effectiveMode} (${effectiveExplanation})`)
+        reporter.progress(`mode routed: ${routedMode.requestedMode} -> ${effectiveMode} (${effectiveExplanation})`)
       } else if (routedMode.route.forced && routedMode.route.suggestion) {
-        console.log(`mode kept: ${effectiveMode} (${effectiveExplanation}; suggested ${routedMode.route.suggestion})`)
+        reporter.progress(`mode kept: ${effectiveMode} (${effectiveExplanation}; suggested ${routedMode.route.suggestion})`)
       } else if (routedMode.route.suggestion === "longagent" && (routedMode.requestedMode === "assistant" || routedMode.requestedMode === "agent")) {
-        console.log(`mode note: ${effectiveMode} (${effectiveExplanation}; consider --mode longagent)`)
+        reporter.progress(`mode note: ${effectiveMode} (${effectiveExplanation}; consider --mode longagent)`)
       } else {
-        console.log(`mode: ${effectiveMode} (${effectiveExplanation})`)
+        reporter.progress(`mode: ${effectiveMode} (${effectiveExplanation})`)
       }
       if (routedMode.requestedMode !== effectiveMode) {
-        console.log(`requested lane: ${requestedContract.summary}`)
+        reporter.progress(`requested lane: ${requestedContract.summary}`)
       }
-      console.log(`effective lane: ${formatPublicModeSummary(effectiveMode)}`)
-      console.log(`lane guarantee: ${effectiveContract.guarantee}`)
-      console.log(`route summary: ${summarizeRouteDecision(routedMode.route)}`)
+      reporter.progress(`effective lane: ${formatPublicModeSummary(effectiveMode)}`)
+      reporter.progress(`lane guarantee: ${effectiveContract.guarantee}`)
+      reporter.progress(`route summary: ${summarizeRouteDecision(routedMode.route)}`)
 
       const result = await executeTurn({
         prompt: chatParams.prompt ?? prompt,
@@ -125,10 +129,18 @@ export function createChatCommand() {
         baseUrl: chatParams.baseUrl ?? options.baseUrl ?? null,
         apiKeyEnv: chatParams.apiKeyEnv ?? options.apiKeyEnv ?? null,
         maxIterations: options.maxIterations !== undefined ? Number(options.maxIterations) : null,
-        output: ctx.configState.config.provider[chatParams.providerType ?? providerType]?.stream !== false
-          ? { write: (chunk) => process.stdout.write(String(chunk || "")) }
+        output: ctx.configState.config.provider[chatParams.providerType ?? providerType]?.stream !== false &&
+          (outputFormat === "legacy" || outputFormat === "stream-json")
+          ? { write: (chunk) => reporter.delta(chunk) }
           : null
       })
+
+      if (outputFormat !== "legacy") {
+        for (const warning of result.pricingWarnings || []) reporter.warning(`pricing warning: ${warning}`)
+        for (const warning of result.budgetWarnings || []) reporter.warning(`budget warning: ${warning}`)
+        reporter.finish(result)
+        return
+      }
 
       const status = renderStatusBar({
         mode: effectiveMode,

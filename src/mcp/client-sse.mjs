@@ -3,6 +3,7 @@ import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { normalizeToolResult } from "./tool-result.mjs"
 import { MCP_PROTOCOL_VERSION, MCP_CLIENT_INFO } from "./constants.mjs"
+import { buildRequestHeaders } from "../http/identity.mjs"
 
 /**
  * MCP Streamable HTTP (SSE) client.
@@ -22,12 +23,12 @@ export function createSseMcpClient(serverName, config) {
   let initialized = false
 
   function buildHeaders(extra = {}) {
-    const h = {
-      "content-type": "application/json",
+    const h = buildRequestHeaders({
+      target: "mcp",
       accept: "application/json, text/event-stream",
-      ...headers,
-      ...extra
-    }
+      contentType: "application/json",
+      customHeaders: { ...headers, ...extra }
+    })
     if (sessionId) h["mcp-session-id"] = sessionId
     return h
   }

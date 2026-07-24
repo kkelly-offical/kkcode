@@ -167,6 +167,7 @@ async function runDelegateTask(task, signal) {
       sessionId: payload.subSessionId,
       configState: ctx.configState,
       signal,
+      runSpec: payload.runSpec || null,
       allowQuestion: false,
       toolContext: {
         taskId: task.id,

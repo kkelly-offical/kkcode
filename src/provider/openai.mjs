@@ -1,10 +1,7 @@
 import { ProviderError } from "../core/errors.mjs"
-import { requestWithRetry } from "./retry-policy.mjs"
+import { buildRequestHeaders } from "../http/identity.mjs"
+import { abortableSleep, requestWithRetry } from "./retry-policy.mjs"
 import { parseSSE } from "./sse.mjs"
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
 
 function mapTools(tools) {
   if (!tools || !tools.length) return undefined
@@ -35,7 +32,15 @@ function mapContentBlock(block) {
   return { type: "text", text: String(block.text || block.content || "") }
 }
 
-function mapMessages(messages) {
+function reasoningText(content) {
+  return content
+    .filter((block) => block?.type === "reasoning" || block?.type === "thinking")
+    .map((block) => String(block.text || block.content || block.thinking || ""))
+    .filter(Boolean)
+    .join("")
+}
+
+function mapMessages(messages, { preserveReasoning = false } = {}) {
   const mapped = []
   for (const message of messages) {
     const content = message.content
@@ -48,9 +53,11 @@ function mapMessages(messages) {
     const toolUseBlocks = content.filter((b) => b.type === "tool_use")
     if (toolUseBlocks.length > 0 && message.role === "assistant") {
       const textParts = content.filter((b) => b.type === "text").map((b) => b.text || "").join("\n")
+      const reasoning = preserveReasoning ? reasoningText(content) : ""
       mapped.push({
         role: "assistant",
         content: textParts || null,
+        ...(reasoning ? { reasoning_content: reasoning } : {}),
         tool_calls: toolUseBlocks.map((b) => ({
           id: b.id,
           type: "function",
@@ -76,8 +83,15 @@ function mapMessages(messages) {
       continue
     }
 
-    // Regular array content (images, text)
-    mapped.push({ role: message.role, content: content.map(mapContentBlock) })
+    // Regular array content (images, text). Kimi reasoning is a top-level
+    // assistant field, not a visible OpenAI content block.
+    const visibleContent = content.filter((block) => block?.type !== "reasoning" && block?.type !== "thinking")
+    const reasoning = preserveReasoning && message.role === "assistant" ? reasoningText(content) : ""
+    mapped.push({
+      role: message.role,
+      content: visibleContent.map(mapContentBlock),
+      ...(reasoning ? { reasoning_content: reasoning } : {})
+    })
   }
 
   // Add cache_control to the last user message for multi-turn caching
@@ -157,33 +171,14 @@ function timeoutSignal(ms, parentSignal = null) {
 }
 
 export async function countTokensOpenAI(input) {
-  const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 10000 } = input
-  if (!apiKey) return null
-  const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`
-  const payload = {
-    model,
-    messages: [...buildSystemMessages(system), ...mapMessages(messages)],
-    tools: mapTools(tools),
-    max_tokens: 1,
-    stream: false
-  }
-  try {
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(timeoutMs)
-    })
-    if (!res.ok) return null
-    const json = await res.json()
-    return json?.usage?.prompt_tokens ?? null
-  } catch {
-    return null
-  }
+  // Chat Completions has no portable count-only endpoint. A one-token
+  // completion adds latency and billable usage, so callers use local estimates.
+  void input
+  return null
 }
 
 export async function requestOpenAI(input) {
-  const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 120000, maxTokens, retry = {}, signal = null } = input
+  const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 120000, maxTokens, reasoningEffort = null, retry = {}, signal = null } = input
   if (!apiKey) {
     throw new ProviderError(`missing API key for openai provider (env: ${input.apiKeyEnv || "unknown"})`, {
       provider: "openai"
@@ -192,9 +187,13 @@ export async function requestOpenAI(input) {
 
   const payload = {
     model,
-    messages: [...buildSystemMessages(system), ...mapMessages(messages)],
+    messages: [
+      ...buildSystemMessages(system),
+      ...mapMessages(messages, { preserveReasoning: Boolean(input.provider && input.provider !== "openai") })
+    ],
     tools: mapTools(tools),
     tool_choice: tools?.length ? "auto" : undefined,
+    ...(reasoningEffort && reasoningEffort !== "none" ? { reasoning_effort: reasoningEffort } : {}),
     ...(maxTokens ? { max_tokens: maxTokens } : {})
   }
   const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`
@@ -206,10 +205,13 @@ export async function requestOpenAI(input) {
     execute: async () => {
       const response = await fetch(endpoint, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
+        headers: buildRequestHeaders({
+          target: "llm",
+          provider: input.provider || "openai",
+          accept: "application/json",
+          contentType: "application/json",
           authorization: `Bearer ${apiKey}`
-        },
+        }),
         body: JSON.stringify(payload),
         signal: timeoutSignal(timeoutMs, signal)
       })
@@ -244,13 +246,16 @@ export async function requestOpenAI(input) {
       }
       const toolCalls = parseToolCalls(message)
       const text = typeof message.content === "string" ? message.content : ""
-      return { text, usage, toolCalls }
+      const reasoning = typeof message.reasoning_content === "string"
+        ? message.reasoning_content
+        : typeof message.reasoning === "string" ? message.reasoning : ""
+      return { text, reasoning, usage, toolCalls }
     }
   })
 }
 
 export async function* requestOpenAIStream(input) {
-  const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 120000, streamIdleTimeoutMs = 120000, maxTokens, retry = {}, signal = null } = input
+  const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 120000, streamIdleTimeoutMs = 120000, maxTokens, reasoningEffort = null, retry = {}, signal = null } = input
   if (!apiKey) {
     throw new ProviderError(`missing API key for openai provider (env: ${input.apiKeyEnv || "unknown"})`, {
       provider: "openai"
@@ -259,9 +264,13 @@ export async function* requestOpenAIStream(input) {
 
   const payload = {
     model,
-    messages: [...buildSystemMessages(system), ...mapMessages(messages)],
+    messages: [
+      ...buildSystemMessages(system),
+      ...mapMessages(messages, { preserveReasoning: Boolean(input.provider && input.provider !== "openai") })
+    ],
     tools: mapTools(tools),
     tool_choice: tools?.length ? "auto" : undefined,
+    ...(reasoningEffort && reasoningEffort !== "none" ? { reasoning_effort: reasoningEffort } : {}),
     ...(maxTokens ? { max_tokens: maxTokens } : {}),
     stream: true,
     stream_options: { include_usage: true }
@@ -284,10 +293,13 @@ export async function* requestOpenAIStream(input) {
 
       response = await fetch(endpoint, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
+        headers: buildRequestHeaders({
+          target: "llm",
+          provider: input.provider || "openai",
+          accept: "text/event-stream, application/json",
+          contentType: "application/json",
           authorization: `Bearer ${apiKey}`
-        },
+        }),
         body: JSON.stringify(payload),
         signal: fetchSignal
       })
@@ -307,7 +319,7 @@ export async function* requestOpenAIStream(input) {
       if (signal?.aborted) throw err
       const isNetwork = err?.code === "ETIMEDOUT" || err?.code === "ECONNRESET" || err?.name === "AbortError"
       if (!isNetwork || attempt >= attempts) throw err
-      await sleep(baseDelayMs * Math.pow(2, attempt - 1))
+      await abortableSleep(baseDelayMs * Math.pow(2, attempt - 1), signal)
     }
   }
 
@@ -338,6 +350,16 @@ export async function* requestOpenAIStream(input) {
 
     if (delta.content) {
       yield { type: "text", content: delta.content }
+    }
+
+    const reasoning = typeof delta.reasoning_content === "string"
+      ? delta.reasoning_content
+      : typeof delta.reasoning === "string" ? delta.reasoning
+        : typeof delta.thinking === "string" ? delta.thinking : ""
+    if (reasoning) {
+      // Keep the established stream contract while identifying the native
+      // provider field for typed transcript consumers.
+      yield { type: "thinking", content: reasoning, source: "reasoning_content" }
     }
 
     if (delta.tool_calls) {

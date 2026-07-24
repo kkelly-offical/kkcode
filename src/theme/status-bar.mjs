@@ -5,7 +5,7 @@ function formatNumber(value) {
 }
 
 function formatCost(amount) {
-  if (amount === null || amount === undefined) return "unknown"
+  if (amount === null || amount === undefined || !Number.isFinite(amount)) return "—"
   return `$${amount.toFixed(4)}`
 }
 

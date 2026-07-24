@@ -2,6 +2,7 @@ import { BackgroundManager } from "./background-manager.mjs"
 import { resolveSubagent } from "./subagent-router.mjs"
 import { flushNow, forkSession, getSession } from "../session/store.mjs"
 import { extractEditFeedbackFromToolEvents } from "../observability/edit-diagnostics.mjs"
+import { createRunSpec } from "./run-spec.mjs"
 
 const SUPPORTED_EXECUTION_MODES = new Set(["fresh_agent", "fork_context"])
 const SUPPORTED_ISOLATION_MODES = new Set(["default", "worktree"])
@@ -216,6 +217,29 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
 
     const subModel = subagent.model || model
     const subProvider = subagent.providerType || providerType
+    const runSpec = createRunSpec({
+      sessionId: subSessionId,
+      parentSessionId,
+      mode: "agent",
+      model: subModel,
+      provider: subProvider,
+      role: subagent,
+      workspace: {
+        root: process.cwd(),
+        cwd: process.cwd(),
+        isolation,
+        writeScope: args.write_scope || null
+      },
+      limits: {
+        budgetUsd: args.budget_usd || null,
+        deadlineAt: args.deadline_at || null
+      },
+      toolContext: {
+        groupId: args.group_id || null,
+        stageId: args.stage_id || null,
+        logicalTaskId: args.task_id || null
+      }
+    })
 
     const run = async ({ isCancelled, log }) => {
       await ensureDelegatedSession({
@@ -230,6 +254,7 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
         model: subModel,
         providerType: subProvider,
         subagent,
+        runSpec,
         allowQuestion: args.allow_question === true,
         groupId: args.group_id || null,
         groupLabel: args.group_label || null
@@ -272,7 +297,8 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
           plannedFiles: Array.isArray(args.planned_files) ? args.planned_files : [],
           allowQuestion: args.allow_question === true,
           groupId: args.group_id || null,
-          groupLabel: args.group_label || null
+          groupLabel: args.group_label || null,
+          runSpec
         },
         config
       })

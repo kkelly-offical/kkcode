@@ -94,6 +94,17 @@ export const VENDOR_PRESETS = {
     supports_vision: true,
     key_env: "MOONSHOT_API_KEY"
   },
+  "kimi-code": {
+    label: "Kimi Code (Coding API)",
+    type: "openai-compatible",
+    base_url: "https://api.kimi.com/coding/v1",
+    default_model: "k3",
+    models: ["k3", "kimi-for-coding", "kimi-for-coding-highspeed"],
+    context_limit: 1048576,
+    supports_thinking: true,
+    supports_vision: true,
+    key_env: "KIMI_CODE_API_KEY"
+  },
   xai: {
     label: "xAI Grok",
     type: "openai-compatible",
@@ -137,7 +148,7 @@ function userConfigPathLabel() {
 const EDIT_FIELDS = [
   { key: "type",            label: "Provider 类型",        type: "provider_type" },
   { key: "base_url",        label: "Base URL",             type: "string" },
-  { key: "api_key",         label: "API Key",              type: "secret" },
+  { key: "api_key_env",     label: "API Key 环境变量",     type: "string" },
   { key: "default_model",   label: "默认模型",             type: "string" },
   { key: "max_tokens",      label: "最大输出长度 (tokens)", type: "int", min: 1 },
   { key: "context_limit",   label: "上下文长度 (tokens)",   type: "int", min: 1024 },
@@ -155,7 +166,7 @@ export function createWizardState() {
     customName: null,
     customBaseUrl: null,
     customType: null,
-    apiKey: null,
+    apiKeyEnv: null,
     defaultModel: null,
     contextLimit: null,
     thinking: false,
@@ -285,8 +296,9 @@ function _stepProtocol(wiz, val, print) {
   const chosen = wiz.preset.protocols[protoKeys[idx]]
   // 将选中的协议信息写入 preset（覆盖 type / base_url）
   wiz.preset = { ...wiz.preset, type: chosen.type, base_url: chosen.base_url }
-  wiz.step = "apikey"
-  print(`\n  输入 Coding Plan 专属 API Key（sk-sp-xxx，0=跳过使用环境变量 ${wiz.preset.key_env}）：`)
+  wiz.apiKeyEnv = wiz.preset.key_env
+  wiz.step = "model"
+  print(`\n  凭据将从环境变量 ${wiz.apiKeyEnv} 读取，不会写入配置。\n  默认模型 [${wiz.defaultModel}]（0=使用默认，或输入模型名）：`)
   return { done: false }
 }
 
@@ -316,8 +328,9 @@ function _stepVendor(wiz, val, print) {
       wiz.step = "model"
       print(`\n  默认模型 [${wiz.defaultModel}]（0=使用默认，或输入模型名）：`)
     } else {
-      wiz.step = "apikey"
-      print(`\n  输入 API Key（0=跳过，使用环境变量 ${wiz.preset.key_env}）：`)
+      wiz.apiKeyEnv = wiz.preset.key_env
+      wiz.step = "model"
+      print(`\n  凭据将从环境变量 ${wiz.apiKeyEnv} 读取，不会写入配置。\n  默认模型 [${wiz.defaultModel}]（0=使用默认）：`)
     }
   } else if (idx === total) {
     wiz.isCustom = true
@@ -348,12 +361,14 @@ function _stepCustomUrl(wiz, val, print) {
   }
   wiz.customBaseUrl = val
   wiz.step = "apikey"
-  print("\n  输入 API Key（0=跳过）：")
+  const suggested = `${String(wiz.customName || "CUSTOM").replace(/[^a-z0-9]/gi, "_").toUpperCase()}_API_KEY`
+  print(`\n  API Key 环境变量名 [${suggested}]（不会保存密钥本身，0=使用建议值）：`)
   return { done: false }
 }
 
 function _stepApiKey(wiz, val, print) {
-  wiz.apiKey = (val && val !== "0") ? val : null
+  const suggested = `${String(wiz.customName || "CUSTOM").replace(/[^a-z0-9]/gi, "_").toUpperCase()}_API_KEY`
+  wiz.apiKeyEnv = (val && val !== "0") ? val : suggested
   wiz.step = "model"
   const defModel = wiz.preset?.default_model || ""
   print(`\n  默认模型${defModel ? ` [${defModel}]` : ""}（0=使用默认）：`)
@@ -413,7 +428,7 @@ async function _stepConfirm(wiz, val, print) {
 
 function _buildConfirmPrompt(wiz) {
   const name = wiz.customName || wiz.vendorKey
-  const keyDisplay = wiz.apiKey ? wiz.apiKey.slice(0, 8) + "..." : "(使用环境变量)"
+  const keyDisplay = wiz.apiKeyEnv ? `(env: ${wiz.apiKeyEnv})` : "(无需凭据)"
   const lines = [
     "",
     "  配置摘要：",
@@ -449,7 +464,7 @@ function _buildProviderConfig(wiz) {
     entry.base_url = preset.base_url
   }
 
-  if (wiz.apiKey) entry.api_key = wiz.apiKey
+  if (wiz.apiKeyEnv) entry.api_key_env = wiz.apiKeyEnv
   if (wiz.defaultModel) entry.default_model = wiz.defaultModel
   if (wiz.contextLimit) entry.context_limit = wiz.contextLimit
   if (wiz.thinking) entry.thinking = { type: "enabled", budget_tokens: 8000 }

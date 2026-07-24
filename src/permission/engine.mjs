@@ -20,7 +20,7 @@ export const PermissionEngine = {
   listSession(sessionId) {
     return [...(sessionAllow.get(sessionId) || new Set())]
   },
-  async check({ config, sessionId, tool, mode, pattern = "*", command = "", risk = 0, reason = "" }) {
+  async check({ config, sessionId, tool, mode, pattern = "*", command = "", args = {}, risk = 0, reason = "" }) {
     if (!workspaceTrusted) throw new PermissionError("workspace not trusted — run /trust to enable tools")
     const key = cacheKey(tool, pattern)
     const set = sessionAllow.get(sessionId)
@@ -54,11 +54,15 @@ export const PermissionEngine = {
     await EventBus.emit({
       type: EVENT_TYPES.PERMISSION_ASKED,
       sessionId,
-      payload: { tool, mode, pattern, reason, risk }
+      payload: { tool, mode, pattern, command, args, reason, risk }
     })
     const reply = await askPermissionInteractive({
       tool,
       sessionId,
+      pattern,
+      command,
+      args,
+      risk,
       reason,
       defaultAction: config.permission?.non_tty_default || "deny"
     })

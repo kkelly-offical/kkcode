@@ -1,10 +1,7 @@
 import { ProviderError } from "../core/errors.mjs"
-import { requestWithRetry } from "./retry-policy.mjs"
+import { buildRequestHeaders } from "../http/identity.mjs"
+import { abortableSleep, requestWithRetry } from "./retry-policy.mjs"
 import { parseSSE } from "./sse.mjs"
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
 
 function mapTools(tools) {
   if (!tools || !tools.length) return []
@@ -101,7 +98,15 @@ function mapMessages(messages) {
     const role = message.role === "assistant" ? "assistant" : "user"
     const content = message.content
     if (Array.isArray(content)) {
-      return { role, content: content.map(mapContentBlock) }
+      // Provider-native reasoning cannot safely cross provider boundaries.
+      // Anthropic thinking blocks require signatures, so unsigned persisted
+      // reasoning is intentionally omitted rather than exposed as visible text.
+      return {
+        role,
+        content: content
+          .filter((block) => block?.type !== "reasoning" && block?.type !== "thinking")
+          .map(mapContentBlock)
+      }
     }
     return { role, content: String(content || "") }
   })
@@ -168,12 +173,17 @@ export async function requestAnthropic(input) {
     execute: async () => {
       const response = await fetch(endpoint, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "anthropic-beta": "prompt-caching-2024-07-31"
-        },
+        headers: buildRequestHeaders({
+          target: "llm",
+          provider: input.provider || "anthropic",
+          accept: "application/json",
+          contentType: "application/json",
+          customHeaders: {
+            "x-api-key": apiKey,
+            "anthropic-version": "2023-06-01",
+            "anthropic-beta": "prompt-caching-2024-07-31"
+          }
+        }),
         body: JSON.stringify(payload),
         signal: timeoutSignal(timeoutMs, signal)
       })
@@ -219,11 +229,16 @@ export async function countTokensAnthropic(input) {
   try {
     const res = await fetch(endpoint, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01"
-      },
+      headers: buildRequestHeaders({
+        target: "llm-token-count",
+        provider: input.provider || "anthropic",
+        accept: "application/json",
+        contentType: "application/json",
+        customHeaders: {
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01"
+        }
+      }),
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(timeoutMs)
     })
@@ -275,12 +290,17 @@ export async function* requestAnthropicStream(input) {
 
       response = await fetch(endpoint, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "anthropic-beta": compaction ? "prompt-caching-2024-07-31,compact-2026-01-12" : "prompt-caching-2024-07-31"
-        },
+        headers: buildRequestHeaders({
+          target: "llm",
+          provider: input.provider || "anthropic",
+          accept: "text/event-stream, application/json",
+          contentType: "application/json",
+          customHeaders: {
+            "x-api-key": apiKey,
+            "anthropic-version": "2023-06-01",
+            "anthropic-beta": compaction ? "prompt-caching-2024-07-31,compact-2026-01-12" : "prompt-caching-2024-07-31"
+          }
+        }),
         body: JSON.stringify(payload),
         signal: fetchSignal
       })
@@ -300,7 +320,7 @@ export async function* requestAnthropicStream(input) {
       if (signal?.aborted) throw err
       const isNetwork = err?.code === "ETIMEDOUT" || err?.code === "ECONNRESET" || err?.name === "AbortError"
       if (!isNetwork || attempt >= attempts) throw err
-      await sleep(baseDelayMs * Math.pow(2, attempt - 1))
+      await abortableSleep(baseDelayMs * Math.pow(2, attempt - 1), signal)
     }
   }
 

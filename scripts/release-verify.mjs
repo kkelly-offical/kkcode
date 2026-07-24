@@ -3,9 +3,10 @@ import { spawn } from "node:child_process"
 const steps = [
   { label: 'lint', cmd: 'npm', args: ['run', 'lint'] },
   { label: 'typecheck', cmd: 'npm', args: ['run', 'typecheck'] },
-  { label: 'test', cmd: 'npm', args: ['test'] },
+  { label: 'secret scan', cmd: 'npm', args: ['run', 'security:scan'] },
+  { label: 'coverage', cmd: 'npm', args: ['run', 'coverage'] },
   { label: 'test:e2e', cmd: 'npm', args: ['run', 'test:e2e'] },
-  { label: 'pack', cmd: 'npm', args: ['pack', '--dry-run'] }
+  { label: 'package smoke', cmd: 'npm', args: ['run', 'package:smoke'] }
 ]
 
 for (const step of steps) {

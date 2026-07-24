@@ -200,3 +200,33 @@ test("yolo mode allows sensitive edits unless an explicit rule denies them", () 
   assert.equal(denied.action, "deny")
   assert.equal(denied.source, "rule")
 })
+
+test("legacy file_pattern remains a working alias for file_patterns", () => {
+  const allowed = evaluatePermission({
+    config: {
+      permission: {
+        default_policy: "deny",
+        rules: [{ tool: "write", action: "allow", file_pattern: "src/**" }]
+      },
+      tool: { sensitive_file_patterns: [] }
+    },
+    tool: "write",
+    mode: "agent",
+    pattern: "src/app.mjs"
+  })
+  const denied = evaluatePermission({
+    config: {
+      permission: {
+        default_policy: "deny",
+        rules: [{ tool: "write", action: "allow", file_pattern: "src/**" }]
+      },
+      tool: { sensitive_file_patterns: [] }
+    },
+    tool: "write",
+    mode: "agent",
+    pattern: "docs/readme.md"
+  })
+
+  assert.equal(allowed.action, "allow")
+  assert.equal(denied.action, "deny")
+})

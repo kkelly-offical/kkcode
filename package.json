@@ -1,9 +1,9 @@
 {
   "name": "@kkelly-offical/kkcode",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "CLI-first unified Assistant with explicit Plan and LongAgent workflows, governed permissions, MCP integrations, and extensible automation.",
   "type": "module",
-  "packageManager": "pnpm@10.5.2",
+  "packageManager": "npm@11.13.0",
   "license": "GPL-3.0",
   "author": "kkelly-offical",
   "repository": {
@@ -38,15 +38,22 @@
   },
   "scripts": {
     "start": "node ./src/index.mjs",
-    "lint": "node ./scripts/check-node-syntax.mjs",
+    "lint": "eslint src scripts test && node ./scripts/check-node-syntax.mjs",
     "test": "node ./scripts/run-node-tests.mjs",
     "test:e2e": "node --test test/e2e/*.mjs",
     "typecheck": "node ./scripts/check-types.mjs",
     "coverage": "node ./scripts/run-node-tests.mjs --coverage",
+    "package:smoke": "node ./scripts/package-smoke.mjs",
+    "security:scan": "node ./scripts/secret-scan.mjs",
     "release:verify": "node ./scripts/release-verify.mjs"
   },
   "dependencies": {
     "commander": "^14.0.3",
     "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.1.0",
+    "eslint": "^9.39.5",
+    "typescript": "^5.9.3"
   }
 }

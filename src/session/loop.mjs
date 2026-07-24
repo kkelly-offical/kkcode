@@ -4,7 +4,9 @@ import { EVENT_TYPES } from "../core/constants.mjs"
 import { requestProviderStream, countTokensProvider } from "../provider/router.mjs"
 import { ToolRegistry } from "../tool/registry.mjs"
 import { executeTool } from "../tool/executor.mjs"
+import { isToolSuccess } from "../core/types.mjs"
 import { PermissionEngine } from "../permission/engine.mjs"
+import { normalizePermissionLevel } from "../permission/rules.mjs"
 import { createTaskDelegate } from "../orchestration/task-scheduler.mjs"
 import { loadInstructions } from "./instruction-loader.mjs"
 import { buildSystemPromptBlocks } from "./system-prompt.mjs"
@@ -29,6 +31,7 @@ import { paint } from "../theme/color.mjs"
 import { saveCheckpoint } from "./checkpoint.mjs"
 import { askPlanApproval } from "../tool/question-prompt.mjs"
 import { createValidator } from "./task-validator.mjs"
+import { runSpecRole } from "../orchestration/run-spec.mjs"
 
 // Max chars kept in active context per tool_result — process output beyond this is truncated
 const TOOL_RESULT_ACTIVE_LIMIT = 3000
@@ -36,6 +39,33 @@ const TOOL_RESULT_ACTIVE_LIMIT = 3000
 const READ_ONLY_TOOLS = new Set([
   "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch", "background_output", "todowrite", "enter_plan"
 ])
+
+const PERMISSION_RANK = new Map([
+  ["readonly", 0],
+  ["review", 1],
+  ["auto", 2],
+  ["edit", 3],
+  ["full-auto", 4],
+  ["yolo", 5]
+])
+
+export function tightenPermissionConfig(config, rolePermission = null) {
+  if (!rolePermission) return config
+  const globalLevel = normalizePermissionLevel(config.permission || {})
+  const requested = normalizePermissionLevel(
+    typeof rolePermission === "string" ? { level: rolePermission } : rolePermission
+  )
+  const effective = (PERMISSION_RANK.get(requested) ?? 0) <= (PERMISSION_RANK.get(globalLevel) ?? 0)
+    ? requested
+    : globalLevel
+  return {
+    ...config,
+    permission: {
+      ...(config.permission || {}),
+      level: effective
+    }
+  }
+}
 
 function addUsage(target, delta) {
   target.input += delta.input || 0
@@ -158,7 +188,8 @@ export async function processTurnLoop({
   subagent = null,
   agent = null,
   allowQuestion = true,
-  toolContext = {}
+  toolContext = {},
+  runSpec = null
 }) {
   const cwd = process.cwd()
   await initHookBus(cwd)
@@ -191,6 +222,8 @@ export async function processTurnLoop({
   const cachePointsEnabled = configState.config.session?.context_cache_points !== false
   const useNativeCompaction = supportsNativeCompaction(providerType, model)
   const nativeCompactionTrigger = useNativeCompaction ? Math.floor(modelContextLimit(model, configState) * thresholdRatio) : 0
+  const effectiveAgent = runSpecRole(runSpec) || subagent || agent
+  const permissionConfig = tightenPermissionConfig(configState.config, effectiveAgent?.permission)
 
   await touchSession({
     sessionId,
@@ -256,12 +289,12 @@ export async function processTurnLoop({
   })
 
   let systemTools = await ToolRegistry.list({ mode, config: configState.config, cwd })
-  if (agent?.tools) {
-    systemTools = systemTools.filter((t) => agent.tools.includes(t.name))
+  if (effectiveAgent?.tools) {
+    systemTools = systemTools.filter((t) => effectiveAgent.tools.includes(t.name))
   }
   const skills = SkillRegistry.isReady() ? SkillRegistry.listForSystemPrompt() : []
   const language = configState.config.language || "en"
-  const systemPrompt = await buildSystemPrompt({ mode, model, cwd, agent, tools: systemTools, skills, language })
+  const systemPrompt = await buildSystemPrompt({ mode, model, cwd, agent: effectiveAgent, tools: systemTools, skills, language })
   // systemPrompt = { text, blocks } — providers use blocks for cache optimization
   const delegateTask = createTaskDelegate({
     config: configState.config,
@@ -273,8 +306,9 @@ export async function processTurnLoop({
       sessionId: subSessionId,
       model: subModel,
       providerType: subProvider,
-      subagent: resolvedSubagent,
-      allowQuestion: subAllowQuestion = false
+        subagent: resolvedSubagent,
+        runSpec: subRunSpec,
+        allowQuestion: subAllowQuestion = false
     }) => {
       return processTurnLoop({
         prompt: subPrompt,
@@ -288,6 +322,7 @@ export async function processTurnLoop({
         depth: depth + 1,
         signal,
         subagent: resolvedSubagent,
+        runSpec: subRunSpec,
         allowQuestion: subAllowQuestion,
         toolContext
       })
@@ -314,10 +349,13 @@ export async function processTurnLoop({
       })
 
       let tools = await ToolRegistry.list({ mode, config: configState.config, cwd })
-      if (agent?.tools) {
-        tools = tools.filter((t) => agent.tools.includes(t.name))
+      if (effectiveAgent?.tools) {
+        tools = tools.filter((t) => effectiveAgent.tools.includes(t.name))
       }
-      let history = await getConversationHistory(sessionId, Number(configState.config.session.max_history || 30))
+      // Compaction decisions must see the complete active history. Applying
+      // max_history before this point silently drops context and can prevent the
+      // message threshold from ever being reached.
+      let history = await getConversationHistory(sessionId, 9999)
 
       const normalizedHistory = history.map(normalizeMessageForCache)
       let contextTokens = estimateTokenCount(normalizedHistory)
@@ -387,7 +425,7 @@ export async function processTurnLoop({
           })
           if (compactResult.compacted) {
             await EventBus.emit({ type: EVENT_TYPES.SESSION_COMPACTED, sessionId, turnId, payload: compactResult })
-            history = await getConversationHistory(sessionId, Number(configState.config.session.max_history || 30))
+            history = await getConversationHistory(sessionId, 9999)
             const compactedMeter = contextUtilization(history.map(normalizeMessageForCache), model, configState)
             lastContextMeter = { ...compactedMeter, fromCache: false }
             contextCachePoint = {
@@ -414,6 +452,7 @@ export async function processTurnLoop({
           compaction: useNativeCompaction ? { trigger: nativeCompactionTrigger } : null
         })
         const textParts = []
+        const thinkingParts = []
         const streamToolCalls = []
         let streamUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
         let streamStopReason = "end_turn"
@@ -425,12 +464,19 @@ export async function processTurnLoop({
         for await (const chunk of chunks) {
           if (chunk.type === "thinking") {
             const text = chunk.content || ""
+            thinkingParts.push(text)
             if (!inThinking) {
               inThinking = true
               thinkingLineStart = true
               await EventBus.emit({ type: EVENT_TYPES.STREAM_THINKING_START, sessionId, turnId, payload: { step } })
               sinkWrite(paint("●", "#666666") + " " + paint("Thinking", null, { dim: true }) + " " + paint("∨", null, { dim: true }) + "\n")
             }
+            await EventBus.emit({
+              type: EVENT_TYPES.STREAM_THINKING_DELTA,
+              sessionId,
+              turnId,
+              payload: { step, text }
+            })
             // 只在行首加缩进，避免 chunk 中间出现多余空格
             const indented = text.replace(/^|\n/g, (m) => {
               if (m === "\n") { thinkingLineStart = true; return "\n" }
@@ -448,6 +494,12 @@ export async function processTurnLoop({
             if (textParts.length === 0) {
               await EventBus.emit({ type: EVENT_TYPES.STREAM_TEXT_START, sessionId, turnId, payload: { step } })
             }
+            await EventBus.emit({
+              type: EVENT_TYPES.STREAM_TEXT_DELTA,
+              sessionId,
+              turnId,
+              payload: { step, text: chunk.content || "" }
+            })
             if (streamRenderer) {
               const rendered = streamRenderer.push(chunk.content)
               if (rendered) sinkWrite(rendered)
@@ -483,6 +535,7 @@ export async function processTurnLoop({
 
         response = {
           text: textParts.join(""),
+          reasoning: thinkingParts.join(""),
           toolCalls: streamToolCalls,
           usage: streamUsage,
           stopReason: streamStopReason
@@ -635,7 +688,13 @@ export async function processTurnLoop({
         }
         
         finalReply = (response.text || "").trim() || "No content returned from provider."
-        const assistant = await appendMessage(sessionId, "assistant", finalReply, {
+        const finalContent = response.reasoning
+          ? [
+              { type: "reasoning", text: response.reasoning },
+              { type: "text", text: finalReply }
+            ]
+          : finalReply
+        const assistant = await appendMessage(sessionId, "assistant", finalContent, {
           mode,
           model,
           providerType,
@@ -720,12 +779,13 @@ export async function processTurnLoop({
             }
           } else {
             await PermissionEngine.check({
-              config: configState.config,
+              config: permissionConfig,
               sessionId,
               tool: call.name,
               mode,
               pattern,
               command,
+              args: call.args,
               risk,
               reason: `tool call from model at step ${step}`
             })
@@ -766,9 +826,9 @@ export async function processTurnLoop({
         }
 
         // Sync _planMode back to toolContext after enter_plan / exit_plan
-        if (call.name === "enter_plan" && result.status !== "error") {
+        if (call.name === "enter_plan" && isToolSuccess(result)) {
           toolContext._planMode = true
-        } else if (call.name === "exit_plan" && result.status !== "error") {
+        } else if (call.name === "exit_plan" && isToolSuccess(result)) {
           toolContext._planMode = false
         }
 
@@ -881,6 +941,9 @@ export async function processTurnLoop({
       // --- Build native tool_use / tool_result messages ---
       // Assistant message: text + tool_use blocks
       const assistantContent = []
+      if (response.reasoning) {
+        assistantContent.push({ type: "reasoning", text: response.reasoning })
+      }
       if (response.text) {
         assistantContent.push({ type: "text", text: response.text })
       }
@@ -907,7 +970,7 @@ export async function processTurnLoop({
       for (const call of response.toolCalls) {
         const entry = callResults.get(call.id)
         const rawOutput = entry?.result?.output || ""
-        const isError = entry?.result?.status === "error"
+        const isError = !isToolSuccess(entry?.result)
         const content = rawOutput.length > TOOL_RESULT_ACTIVE_LIMIT
           ? `${rawOutput.slice(0, TOOL_RESULT_ACTIVE_LIMIT)}\n[...过程输出已截断，共 ${rawOutput.length} 字符，仅保留前 ${TOOL_RESULT_ACTIVE_LIMIT} 字符]`
           : rawOutput

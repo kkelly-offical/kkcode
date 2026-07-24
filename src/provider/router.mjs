@@ -123,7 +123,8 @@ export async function requestProvider({
   messages,
   tools,
   baseUrl = null,
-  apiKeyEnv = null
+  apiKeyEnv = null,
+  signal = null
 }) {
   const resolvedProviderType = providerType || configState.config.provider.default
   const settings = resolveSettings(configState, resolvedProviderType, {
@@ -138,6 +139,7 @@ export async function requestProvider({
     apiKey,
     baseUrl: settings.baseUrl,
     apiKeyEnv: settings.apiKeyEnv,
+    provider: settings.configKey,
     model: settings.model,
     system,
     messages,
@@ -148,7 +150,9 @@ export async function requestProvider({
       attempts: Number(providerCfg.retry_attempts || 3),
       baseDelayMs: Number(providerCfg.retry_base_delay_ms || 800)
     },
-    thinking: providerCfg.thinking || null
+    thinking: providerCfg.thinking || null,
+    reasoningEffort: providerCfg.reasoning_effort || null,
+    signal
   }
 
   const provider = registry.get(settings.providerType)
@@ -186,8 +190,11 @@ export async function* requestProviderStream({
 
   if (providerCfg.stream === false) {
     const result = await requestProvider({
-      configState, providerType, model, system, messages, tools, baseUrl, apiKeyEnv
+      configState, providerType, model, system, messages, tools, baseUrl, apiKeyEnv, signal
     })
+    if (result.reasoning) {
+      yield { type: "thinking", content: result.reasoning, source: "reasoning_content" }
+    }
     if (result.text) yield { type: "text", content: result.text }
     for (const call of result.toolCalls) yield { type: "tool_call", call }
     yield { type: "usage", usage: result.usage }
@@ -198,6 +205,7 @@ export async function* requestProviderStream({
     apiKey,
     baseUrl: settings.baseUrl,
     apiKeyEnv: settings.apiKeyEnv,
+    provider: settings.configKey,
     model: settings.model,
     system,
     messages,
@@ -210,6 +218,7 @@ export async function* requestProviderStream({
       baseDelayMs: Number(providerCfg.retry_base_delay_ms || 800)
     },
     thinking: providerCfg.thinking || null,
+    reasoningEffort: providerCfg.reasoning_effort || null,
     signal,
     compaction
   }

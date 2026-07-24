@@ -33,6 +33,7 @@ export function validateConfig(config) {
   if (!isObj(config)) {
     return { valid: false, errors: ["config must be object"] }
   }
+  if (config.config_version !== undefined) checkInt(errors, "config_version", config.config_version, 1)
 
   if (config.provider !== undefined) {
     if (!isObj(config.provider)) {
@@ -55,10 +56,18 @@ export function validateConfig(config) {
         if (p.api_key !== undefined && typeof p.api_key !== "string") err(errors, `provider.${key}.api_key`, "must be string")
         if (p.api_key_env !== undefined && typeof p.api_key_env !== "string") err(errors, `provider.${key}.api_key_env`, "must be string")
         if (p.default_model !== undefined && typeof p.default_model !== "string") err(errors, `provider.${key}.default_model`, "must be string")
+        if (p.models !== undefined && (!Array.isArray(p.models) || p.models.some((model) => typeof model !== "string" || !model.trim()))) {
+          err(errors, `provider.${key}.models`, "must be an array of non-empty strings")
+        }
         if (p.timeout_ms !== undefined) checkInt(errors, `provider.${key}.timeout_ms`, p.timeout_ms, 1000)
+        if (p.stream_idle_timeout_ms !== undefined) checkInt(errors, `provider.${key}.stream_idle_timeout_ms`, p.stream_idle_timeout_ms, 1000)
+        if (p.max_tokens !== undefined) checkInt(errors, `provider.${key}.max_tokens`, p.max_tokens, 1)
         if (p.retry_attempts !== undefined) checkInt(errors, `provider.${key}.retry_attempts`, p.retry_attempts, 0)
         if (p.retry_base_delay_ms !== undefined) checkInt(errors, `provider.${key}.retry_base_delay_ms`, p.retry_base_delay_ms, 100)
         if (p.stream !== undefined && typeof p.stream !== "boolean") err(errors, `provider.${key}.stream`, "must be boolean")
+        if (p.reasoning_effort !== undefined && !["low", "high", "max", "none"].includes(p.reasoning_effort)) {
+          err(errors, `provider.${key}.reasoning_effort`, "must be low|high|max|none")
+        }
         if (p.context_limit !== undefined && p.context_limit !== null) {
           if (!Number.isInteger(p.context_limit) || p.context_limit < 1024) err(errors, `provider.${key}.context_limit`, "must be integer >= 1024 or null")
         }
@@ -394,6 +403,9 @@ export function validateConfig(config) {
                   if (typeof pat !== "string") err(errors, `permission.rules[${index}].file_patterns`, "each pattern must be string")
                 }
               }
+            }
+            if (rule.file_pattern !== undefined && typeof rule.file_pattern !== "string") {
+              err(errors, `permission.rules[${index}].file_pattern`, "legacy alias must be string")
             }
             if (rule.command_prefix !== undefined) {
               if (!Array.isArray(rule.command_prefix) && typeof rule.command_prefix !== "string") {

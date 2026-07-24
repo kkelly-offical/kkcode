@@ -9,6 +9,7 @@ import { fsckSessionStore, flushNow } from "../session/store.mjs"
 import { BackgroundManager } from "../orchestration/background-manager.mjs"
 import { McpRegistry } from "../mcp/registry.mjs"
 import { SkillRegistry } from "../skill/registry.mjs"
+import { buildRequestHeaders, redactHeaders } from "../http/identity.mjs"
 
 const exec = promisify(execCb)
 
@@ -38,7 +39,7 @@ function summarizeBackground(tasks) {
   return counters
 }
 
-async function buildDoctorReport() {
+export async function buildDoctorReport({ includeHttp = false } = {}) {
   const ctx = await buildContext()
   await flushNow()
   await BackgroundManager.tick(ctx.configState.config)
@@ -98,6 +99,21 @@ async function buildDoctorReport() {
     strictFailed: strictCompatFailed
   }
 
+  const http = includeHttp ? {
+    identity: redactHeaders(buildRequestHeaders({ target: "doctor" })),
+    providers: providers.map((provider) => ({
+      name: provider.name,
+      baseUrl: provider.baseUrl,
+      headers: redactHeaders(buildRequestHeaders({
+        target: "model-api",
+        provider: provider.name,
+        accept: "application/json",
+        contentType: "application/json",
+        authorization: provider.apiKeyConfigured && provider.apiKeyEnv ? "Bearer configured" : ""
+      }))
+    }))
+  } : undefined
+
   return {
     ok: storage.ok && !strictCompatFailed,
     timestamp: new Date().toISOString(),
@@ -127,7 +143,8 @@ async function buildDoctorReport() {
       eventLog: events,
       audit
     },
-    background: summarizeBackground(backgroundTasks)
+    background: summarizeBackground(backgroundTasks),
+    ...(http ? { http } : {})
   }
 }
 
@@ -170,15 +187,28 @@ function printTextReport(report, themeWarnings = []) {
   console.log(
     `background: total=${report.background.total} running=${report.background.running} pending=${report.background.pending} interrupted=${report.background.interrupted} error=${report.background.error}`
   )
+  if (report.http) {
+    console.log("http identity:")
+    for (const [name, value] of Object.entries(report.http.identity)) {
+      console.log(`  ${name}: ${value}`)
+    }
+    for (const provider of report.http.providers) {
+      console.log(`http provider:${provider.name} url=${provider.baseUrl || "(none)"}`)
+      for (const [name, value] of Object.entries(provider.headers)) {
+        console.log(`  ${name}: ${value}`)
+      }
+    }
+  }
 }
 
 export function createDoctorCommand() {
   return new Command("doctor")
     .description("run environment diagnostics")
     .option("--json", "print structured diagnostics", false)
+    .option("--http", "show effective, redacted HTTP identity headers", false)
     .action(async (options) => {
       try {
-        const report = await buildDoctorReport()
+        const report = await buildDoctorReport({ includeHttp: options.http })
         if (options.json) {
           console.log(JSON.stringify(report, null, 2))
           if (report.compat.strictFailed) process.exitCode = 1

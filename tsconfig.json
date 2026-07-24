@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": false,
+    "skipLibCheck": true,
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node"]
+  },
+  "include": [
+    "src/cli/output-format.mjs",
+    "src/http/identity.mjs",
+    "src/orchestration/run-spec.mjs",
+    "src/tool/workspace-fs.mjs",
+    "src/ui/app-state.mjs"
+  ],
+  "exclude": ["node_modules", "coverage", "dist"]
+}

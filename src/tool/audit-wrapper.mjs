@@ -33,7 +33,7 @@ export async function withAudit({ sessionId, turnId, toolName, args, run }) {
       turnId,
       tool: toolName,
       durationMs: Date.now() - startedAt,
-      ok: result?.status !== "error" && result?.status !== "cancelled",
+      ok: result?.ok === true || (result?.ok === undefined && result?.status === "completed"),
       status: result?.status,
       output: result?.output?.slice(0, 2000) || ""
     })

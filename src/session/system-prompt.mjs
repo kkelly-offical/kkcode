@@ -91,6 +91,7 @@ export async function providerPromptByModel(model) {
 // Layer 3: Agent-specific prompt (stable across session)
 export async function agentPrompt(agent) {
   if (!agent) return ""
+  if (typeof agent.prompt === "string" && agent.prompt.trim()) return agent.prompt.trim()
   return getAgentPrompt(agent.name)
 }
 

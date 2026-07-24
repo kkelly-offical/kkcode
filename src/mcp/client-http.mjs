@@ -2,6 +2,7 @@ import { McpError } from "../core/errors.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { normalizeToolResult } from "./tool-result.mjs"
+import { buildRequestHeaders } from "../http/identity.mjs"
 
 function timeoutSignal(ms, parentSignal = null) {
   const own = AbortSignal.timeout(ms)
@@ -26,10 +27,12 @@ async function requestJson({ serverName, method, url, body = null, timeoutMs = 1
   try {
     const res = await fetch(url, {
       method,
-      headers: {
-        "content-type": "application/json",
-        ...headers
-      },
+      headers: buildRequestHeaders({
+        target: "mcp",
+        accept: "application/json",
+        contentType: "application/json",
+        customHeaders: headers
+      }),
       body: body ? JSON.stringify(body) : undefined,
       signal: timeoutSignal(timeoutMs, signal)
     })

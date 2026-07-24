@@ -1,5 +1,22 @@
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+export function abortableSleep(ms, signal = null) {
+  if (signal?.aborted) {
+    const error = new Error("request aborted")
+    error.code = "ABORT_ERR"
+    return Promise.reject(error)
+  }
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer)
+      const error = new Error("request aborted")
+      error.code = "ABORT_ERR"
+      reject(error)
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort)
+      resolve()
+    }, ms)
+    signal?.addEventListener("abort", onAbort, { once: true })
+  })
 }
 
 export function classifyHttpError(status) {
@@ -67,7 +84,7 @@ export async function requestWithRetry({ execute, attempts = 3, baseDelayMs = 80
       const delay = networkRetryable
         ? jitter(baseDelayMs * Math.pow(2, attempt - 1))
         : retryDelayMs(classification, baseDelayMs, attempt)
-      await sleep(delay)
+      await abortableSleep(delay, signal)
     }
   }
   throw lastError || new Error("request failed")

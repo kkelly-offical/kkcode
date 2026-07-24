@@ -76,3 +76,25 @@ test("startup notifier prints but does not throw on registry failures", async ()
   assert.equal(result.ok, false)
   assert.match(lines[0], /update check failed: offline/)
 })
+
+test("registry update request identifies KK Code instead of Node", async () => {
+  let received
+  const dir = await mkdtemp(join(tmpdir(), "kkcode-update-header-"))
+  try {
+    await checkForUpdate({}, {
+      force: true,
+      stateFile: join(dir, "state.json"),
+      fetchImpl: async (_url, options) => {
+        received = options.headers
+        return {
+          ok: true,
+          async json() { return { "dist-tags": { latest: "0.3.1" } } }
+        }
+      }
+    })
+    assert.match(received["User-Agent"], /^KK-Code\/0\.3\.1 /)
+    assert.equal(received["X-KK-Code-Client"], "cli")
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
