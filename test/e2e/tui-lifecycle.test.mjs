@@ -219,6 +219,20 @@ test("TUI restores job-control state and exits without a referenced stdin handle
       { message: `TUI did not reactivate after SIGCONT:\n${output.slice(-1200)}` }
     )
 
+    // KK Code first waits briefly to distinguish a bare Escape from a split
+    // mouse/paste sequence. Readline must not add its default 500 ms wait or
+    // merge the next printable key into a Meta chord.
+    const escapeProbeStart = output.length
+    child.stdin.write("\x1b")
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    child.stdin.write("Ω")
+    await waitFor(
+      () => output.slice(escapeProbeStart).includes("Ω"),
+      { message: `bare Escape swallowed the following key:\n${output.slice(-1200)}` }
+    )
+    child.stdin.write("\x1b")
+    await new Promise((resolve) => setTimeout(resolve, 80))
+
     child.stdin.write("/exit\r")
     const result = await withTimeout(
       exitResult,

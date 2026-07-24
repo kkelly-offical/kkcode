@@ -36,8 +36,9 @@
   through safe platform-aware paths, and make branch-review hashes stable across
   Git for Windows path quoting.
 - Hold an ambiguous standalone ESC for 35 ms so mouse and paste reports remain
-  intact across transport chunks. Native clipboard fallbacks now run
-  asynchronously; Windows uses PowerShell UTF-8/Base64 transport for CJK and emoji.
+  intact across transport chunks, then deliver a bare Escape without Readline's
+  extra delay. Native clipboard fallbacks now run asynchronously, cancel stale
+  copies, and use PowerShell UTF-8/Base64 transport for CJK and emoji on Windows.
 
 ### 中文
 
@@ -64,8 +65,8 @@
   不再经过 `cmd.exe`，npm/npx 与项目 Prettier 使用安全的平台感知启动路径，并消除
   Git for Windows 临时路径转义造成的分支审查哈希漂移。
 - 对单独到达的 ESC 保留 35 ms 判定窗口，避免鼠标与粘贴协议跨分片时被拆散；
-  原生剪贴板回退改为异步执行，Windows 通过 PowerShell UTF-8/Base64 通道可靠复制
-  中文与 emoji。
+  确认为裸 Escape 后不再叠加 Readline 延迟。原生剪贴板回退改为异步执行并取消
+  过期复制，Windows 通过 PowerShell UTF-8/Base64 通道可靠复制中文与 emoji。
 
 ## 0.3.2
 

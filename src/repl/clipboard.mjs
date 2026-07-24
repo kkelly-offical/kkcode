@@ -9,24 +9,39 @@ const WINDOWS_CLIPBOARD_SCRIPT = [
 
 export function runClipboardCommand(command, args, text, {
   spawn = spawnProcess,
-  timeoutMs = 1500
+  timeoutMs = 1500,
+  signal
 } = {}) {
   return new Promise((resolve) => {
     let child
     let timer = null
     let settled = false
+    let onAbort = null
 
     const finish = (ok) => {
       if (settled) return
       settled = true
       if (timer) clearTimeout(timer)
+      if (onAbort) signal?.removeEventListener?.("abort", onAbort)
       resolve(Boolean(ok))
     }
     const abort = () => {
+      if (settled) return
+      // Settle first so a synchronous close emitted while shutting down stdin
+      // cannot turn an aborted clipboard request into a reported success.
+      finish(false)
+      try {
+        if (typeof child?.stdin?.destroy === "function") child.stdin.destroy()
+        else child?.stdin?.end?.()
+      } catch {}
       try {
         child?.kill?.()
       } catch {}
+    }
+
+    if (signal?.aborted) {
       finish(false)
+      return
     }
 
     try {
@@ -51,6 +66,13 @@ export function runClipboardCommand(command, args, text, {
       finish(code === 0 && signal == null)
     })
     child.stdin.once?.("error", abort)
+
+    onAbort = abort
+    signal?.addEventListener?.("abort", onAbort, { once: true })
+    if (signal?.aborted) {
+      abort()
+      return
+    }
 
     timer = setTimeout(abort, Math.max(1, Number(timeoutMs) || 1500))
     timer.unref?.()
@@ -92,10 +114,11 @@ export async function copyTerminalText(text, {
   platform = process.platform,
   env = process.env,
   spawn = spawnProcess,
-  timeoutMs = 1500
+  timeoutMs = 1500,
+  signal
 } = {}) {
   const value = String(text || "")
-  if (!value) {
+  if (!value || signal?.aborted) {
     return {
       ok: false,
       confirmed: false,
@@ -145,7 +168,13 @@ export async function copyTerminalText(text, {
           ]
 
   for (const [command, args, input] of candidates) {
-    if (await runClipboardCommand(command, args, input, { spawn, timeoutMs })) {
+    if (signal?.aborted) break
+    const copied = await runClipboardCommand(command, args, input, {
+      spawn,
+      timeoutMs,
+      signal
+    })
+    if (copied && !signal?.aborted) {
       return {
         ok: true,
         confirmed: true,

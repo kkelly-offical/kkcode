@@ -133,6 +133,7 @@ const ANSI_RE = /\x1B\[[0-9;]*m/g
 const SCROLL_PAGE_RATIO = 0.75
 const BUSY_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 const ESCAPE_SEQUENCE_TIMEOUT_MS = 35
+const KEYPRESS_ESCAPE_TIMEOUT_MS = 10
 
 function clipBusy(text, max) {
   const s = String(text || "").trim().split("\n")[0]
@@ -1458,6 +1459,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   let spinnerTimer = null
   let selectionClearTimer = null
   let protocolFlushTimer = null
+  let clipboardAbortController = null
   let disposed = false
   let terminalSuspended = true
   let terminalFrameActive = false
@@ -1992,8 +1994,17 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   // confirm whether the terminal accepted the request, so only a successful
   // native fallback may use definitive "Copied" wording.
   async function copyToClipboard(text) {
-    const result = await copyTerminalText(text, { output })
-    if (disposed) return result
+    clipboardAbortController?.abort()
+    const controller = new AbortController()
+    clipboardAbortController = controller
+    const result = await copyTerminalText(text, {
+      output,
+      signal: controller.signal
+    })
+    if (clipboardAbortController === controller) {
+      clipboardAbortController = null
+    }
+    if (disposed || controller.signal.aborted) return result
     if (result.confirmed) {
       showToast("Copied selection", { topic: "clipboard", tone: "success" })
     } else if (result.requested) {
@@ -2939,7 +2950,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   const pasteDecoder = createBracketedPasteDecoder()
   const plainTextDecoder = createUtf8TextDecoder()
 
-  function dispatchPasteResult(pasted, mouseEventCount = 0) {
+  function dispatchPasteResult(pasted, mouseEventCount = 0, {
+    immediateEscape = false
+  } = {}) {
     for (const value of pasted.pastes) {
       if (questionAcceptsTextInput()) {
         insertQuestionText(value)
@@ -2949,6 +2962,15 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     }
     if (mouseEventCount > 0 || pasted.pastes.length > 0) requestRender()
     if (!pasted.text) return false
+    if (immediateEscape && pasted.text === "\x1b") {
+      return _origStdinEmit.call(process.stdin, "keypress", "\x1b", {
+        sequence: "\x1b",
+        name: "escape",
+        ctrl: false,
+        meta: false,
+        shift: false
+      })
+    }
     return _origStdinEmit.call(
       process.stdin,
       "data",
@@ -2956,12 +2978,12 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     )
   }
 
-  function dispatchDecodedInput(mouse) {
+  function dispatchDecodedInput(mouse, options = {}) {
     for (const ev of mouse.events) handleMouseEvent(ev)
     const pasted = terminalFeatures.bracketedPaste
       ? pasteDecoder.feed(mouse.text)
       : { text: mouse.text, pastes: [] }
-    return dispatchPasteResult(pasted, mouse.events.length)
+    return dispatchPasteResult(pasted, mouse.events.length, options)
   }
 
   function cancelProtocolFlush() {
@@ -2981,9 +3003,16 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       const mouseText = terminalFeatures.mouse
         ? mouseDecoder.flush()
         : plainTextDecoder.flush()
-      dispatchDecodedInput({ events: [], text: mouseText })
+      dispatchDecodedInput(
+        { events: [], text: mouseText },
+        { immediateEscape: true }
+      )
       if (terminalFeatures.bracketedPaste && pasteDecoder.hasPending()) {
-        dispatchPasteResult(pasteDecoder.flush())
+        dispatchPasteResult(
+          pasteDecoder.flush(),
+          0,
+          { immediateEscape: true }
+        )
       }
     }, ESCAPE_SEQUENCE_TIMEOUT_MS)
     protocolFlushTimer.unref?.()
@@ -3221,6 +3250,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     terminalSuspended = true
     cancelPendingFrame()
     cancelProtocolFlush()
+    clipboardAbortController?.abort()
+    clipboardAbortController = null
     detachTuiInputListeners()
 
     if (rawModeActive && process.stdin.isTTY) {
@@ -3252,7 +3283,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       startTuiFrame(terminalFeatures)
       terminalFrameActive = true
       if (!keypressDecoderStarted) {
-        emitKeypressEvents(process.stdin)
+        emitKeypressEvents(process.stdin, {
+          escapeCodeTimeout: KEYPRESS_ESCAPE_TIMEOUT_MS
+        })
         keypressDecoderStarted = true
       }
       process.stdin.emit = interceptStdinEmit

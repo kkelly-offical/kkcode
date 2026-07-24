@@ -138,6 +138,71 @@ test("missing native process exit code is not treated as clipboard success", asy
   })
 })
 
+test("aborting a clipboard fallback kills the child and does not try another candidate", async () => {
+  const controller = new AbortController()
+  const calls = []
+  let childKilled = false
+  let stdinDestroyed = false
+  const resultPromise = copyTerminalText("selected", {
+    output: { write() {} },
+    platform: "win32",
+    env: {},
+    signal: controller.signal,
+    spawn(command) {
+      calls.push(command)
+      const child = new EventEmitter()
+      child.stdin = new EventEmitter()
+      child.stdin.end = () => {}
+      child.stdin.destroy = () => {
+        stdinDestroyed = true
+      }
+      child.kill = () => {
+        childKilled = true
+      }
+      return child
+    }
+  })
+
+  controller.abort()
+  const result = await resultPromise
+
+  assert.equal(childKilled, true)
+  assert.equal(stdinDestroyed, true)
+  assert.deepEqual(calls, ["pwsh.exe"])
+  assert.deepEqual(result, {
+    ok: false,
+    confirmed: false,
+    requested: true,
+    method: "osc52"
+  })
+})
+
+test("an already-aborted clipboard request does not write or spawn", async () => {
+  const controller = new AbortController()
+  controller.abort()
+  let writes = 0
+  let spawns = 0
+  const result = await copyTerminalText("selected", {
+    output: { write() { writes += 1 } },
+    platform: "win32",
+    env: {},
+    signal: controller.signal,
+    spawn() {
+      spawns += 1
+      throw new Error("must not spawn")
+    }
+  })
+
+  assert.equal(writes, 0)
+  assert.equal(spawns, 0)
+  assert.deepEqual(result, {
+    ok: false,
+    confirmed: false,
+    requested: false,
+    method: null
+  })
+})
+
 test("copyable frame lines exclude padding and transcript scrollbars", () => {
   const lines = [
     "short                         ",
