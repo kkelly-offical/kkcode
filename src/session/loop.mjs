@@ -7,7 +7,7 @@ import { executeTool } from "../tool/executor.mjs"
 import { isToolSuccess } from "../core/types.mjs"
 import { PermissionEngine } from "../permission/engine.mjs"
 import { normalizePermissionLevel } from "../permission/rules.mjs"
-import { APPROVAL_LEVELS, DEFAULT_APPROVAL, approvalFromAgentPermission } from "../core/modes.mjs"
+import { APPROVAL_LEVELS, approvalFromAgentPermission } from "../core/modes.mjs"
 import { createTaskDelegate } from "../orchestration/task-scheduler.mjs"
 import { loadInstructions } from "./instruction-loader.mjs"
 import { buildSystemPromptBlocks } from "./system-prompt.mjs"
@@ -57,8 +57,10 @@ export function tightenPermissionConfig(config, rolePermission = null) {
   if (!rolePermission) return config
   const globalLevel = normalizePermissionLevel(config.permission || {})
   const requested = typeof rolePermission === "string"
-    ? (approvalFromAgentPermission(rolePermission) || DEFAULT_APPROVAL)
+    ? approvalFromAgentPermission(rolePermission)
     : normalizePermissionLevel(rolePermission)
+  // `full` / 未声明 → 不额外收紧，沿用全局档
+  if (!requested) return config
   const effective = (PERMISSION_RANK.get(requested) ?? 0) <= (PERMISSION_RANK.get(globalLevel) ?? 0)
     ? requested
     : globalLevel
@@ -901,6 +903,7 @@ export async function processTurnLoop({
           })
           const planPath = approval.planPath || result.metadata.planPath || ""
           const actionText = {
+            plan_saved: `The plan is saved${planPath ? ` at ${planPath}` : ""}. This is a non-interactive run, so no build follows: report the plan location and stop. Do NOT call exit_plan again.`,
             assistant: `User selected Build. Implement the saved plan${planPath ? ` at ${planPath}` : ""} in the unified assistant lane using the current permission level.`,
             longagent: `User selected Ultra Build. The session is switching to Ultra; implement the saved plan${planPath ? ` at ${planPath}` : ""} as a staged delivery.`,
             compact_assistant: `User selected Compact + Build. Compact the relevant context first, then implement the saved plan${planPath ? ` at ${planPath}` : ""} in the unified assistant lane.`,
@@ -909,7 +912,8 @@ export async function processTurnLoop({
 
           // 0.3.x 只把这段文字塞回模型，从不真的切换执行航道。0.4.0 把选择
           // 结果作为 planHandoff 冒泡到 turn 结果，由 REPL 真正切模式并续跑。
-          if (approval.approved) {
+          // plan_saved 是非交互收口，没有人选过执行航道，因此不产生交接
+          if (approval.approved && approval.action !== "plan_saved") {
             const wantsUltra = approval.action === "longagent" || approval.action === "compact_longagent"
             planHandoff = {
               modeId: wantsUltra ? "ultra" : "agent",

@@ -97,13 +97,21 @@ const LEGACY_APPROVAL_ALIASES = Object.freeze({
   yolo: "yolo"
 })
 
-/** 自定义 agent 定义里的第四套权限词汇（readonly|full|default|none）。 */
+/**
+ * 自定义 agent 定义里的第四套权限词汇（readonly|full|default|none）。
+ *
+ * `full` 刻意不在表内：它的语义是「不设额外限制」，应当沿用全局审批档，
+ * 而不是被当成 `accept-edits` 那一档去做 min()。把它映射成具体档位会让
+ * YOLO 名不副实——assistant / ultra 这些主 agent 声明的正是 `full`。
+ */
 const AGENT_PERMISSION_ALIASES = Object.freeze({
   readonly: "readonly",
   none: "readonly",
-  default: "manual",
-  full: "accept-edits"
+  default: "manual"
 })
+
+/** agent 声明「不额外收紧」时的哨兵值。 */
+export const AGENT_PERMISSION_INHERIT = "full"
 
 export function getMode(modeId) {
   return MODE_BY_ID.get(String(modeId || "").toLowerCase()) || null
@@ -160,10 +168,13 @@ export function isLegacyApprovalName(level) {
   return Boolean(LEGACY_APPROVAL_ALIASES[key]) && !APPROVAL_LEVELS.includes(key)
 }
 
-/** 自定义 agent 的 permission 字段（readonly|full|default|none）→ 审批档。 */
+/**
+ * 自定义 agent 的 permission 字段（readonly|full|default|none）→ 审批档。
+ * 返回 null 表示不收紧（未声明，或声明为 `full`）。
+ */
 export function approvalFromAgentPermission(value) {
   const key = String(value || "").toLowerCase().trim()
-  if (!key) return null
+  if (!key || key === AGENT_PERMISSION_INHERIT) return null
   if (APPROVAL_LEVELS.includes(key)) return key
   return AGENT_PERMISSION_ALIASES[key] || approvalFromLegacy(key)
 }

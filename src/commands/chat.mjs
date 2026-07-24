@@ -12,7 +12,7 @@ import { listProviders } from "../provider/router.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { createOutputReporter, resolveOutputFormat } from "../cli/output-format.mjs"
-import { MODE_IDS, DEFAULT_MODE_ID, modeIdFromLegacy, laneOf, approvalOf } from "../core/modes.mjs"
+import { MODE_IDS, DEFAULT_MODE_ID, modeIdFromLegacy, laneOf, approvalOf, getMode } from "../core/modes.mjs"
 import { applyPermissionLevel } from "../repl/permission-flow.mjs"
 
 export function resolveChatExecutionMode(prompt, requestedMode) {
@@ -120,15 +120,20 @@ export function createChatCommand() {
         prompt: chatParams.prompt ?? prompt
       })
 
+      // 报告用户实际选择的模式，而不是它底下的航道：传 --mode agent-auto
+      // 却看到 "mode: assistant" 只会让人以为参数没生效。
+      const requestedMode = getMode(requestedModeId)
+      const modeLabel = `${requestedMode.icon} ${requestedMode.label}`
       if (routedMode.route.changed) {
-        reporter.progress(`mode routed: ${routedMode.requestedMode} -> ${effectiveMode} (${effectiveExplanation})`)
+        reporter.progress(`mode routed: ${modeLabel} -> ${effectiveMode} (${effectiveExplanation})`)
       } else if (routedMode.route.forced && routedMode.route.suggestion) {
-        reporter.progress(`mode kept: ${effectiveMode} (${effectiveExplanation}; suggested ${routedMode.route.suggestion})`)
-      } else if (routedMode.route.suggestion === "longagent" && (routedMode.requestedMode === "assistant" || routedMode.requestedMode === "agent")) {
-        reporter.progress(`mode note: ${effectiveMode} (${effectiveExplanation}; consider --mode longagent)`)
+        reporter.progress(`mode kept: ${modeLabel} (${effectiveExplanation}; suggested ${routedMode.route.suggestion})`)
+      } else if (routedMode.route.suggestion === "longagent" && requestedMode.lane === "assistant") {
+        reporter.progress(`mode note: ${modeLabel} (${effectiveExplanation}; consider --mode ultra)`)
       } else {
-        reporter.progress(`mode: ${effectiveMode} (${effectiveExplanation})`)
+        reporter.progress(`mode: ${modeLabel} (${effectiveExplanation})`)
       }
+      reporter.progress(`approval: ${requestedMode.approval} · lane: ${effectiveMode}`)
       if (routedMode.requestedMode !== effectiveMode) {
         reporter.progress(`requested lane: ${requestedContract.summary}`)
       }

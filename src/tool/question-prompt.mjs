@@ -62,6 +62,19 @@ export async function askQuestionInteractive({ questions }) {
 }
 
 export async function askPlanApproval({ plan, files = [], planPath = "" }) {
+  // 非交互场景下没有人能回答这个问题。0.3.x 会拿到空答案，把它当成
+  // 「要求修改但没给理由」，模型于是反复重写计划，直到步数耗尽——一次
+  // `kkcode chat --mode plan` 能落下五六个计划文件。这里直接收口。
+  if (!customPromptHandler && (!process.stdout.isTTY || !process.stdin.isTTY)) {
+    return {
+      approved: true,
+      requestChanges: false,
+      action: "plan_saved",
+      feedback: "",
+      planPath
+    }
+  }
+
   const fileList = files.length ? `\nFiles to modify:\n${files.map(f => `  - ${f}`).join("\n")}` : ""
   const pathText = planPath ? `Plan file: ${planPath}\n\n` : ""
   const questions = [

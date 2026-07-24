@@ -106,12 +106,15 @@ test("new approval names are never legacy aliases of themselves", () => {
 })
 
 test("agent definition permission vocabulary maps instead of silently degrading", () => {
-  assert.equal(approvalFromAgentPermission("full"), "accept-edits")
+  // `full` means "no extra restriction", so it must not resolve to a concrete
+  // level — otherwise min() against it would knock YOLO back down to
+  // accept-edits, since assistant and ultra both declare `full`.
+  assert.equal(approvalFromAgentPermission("full"), null)
+  assert.equal(approvalFromAgentPermission(""), null)
   assert.equal(approvalFromAgentPermission("none"), "readonly")
   assert.equal(approvalFromAgentPermission("readonly"), "readonly")
   assert.equal(approvalFromAgentPermission("default"), "manual")
   assert.equal(approvalFromAgentPermission("review"), "manual")
-  assert.equal(approvalFromAgentPermission(""), null)
 })
 
 test("mode lookup helpers behave for known and unknown ids", () => {
