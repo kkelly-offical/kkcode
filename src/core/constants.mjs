@@ -1,8 +1,6 @@
-export const MODES = ["assistant", "plan", "agent", "longagent"]
-
 export const TOOL_STATUSES = ["running", "completed", "error", "cancelled"]
 
-export const PERMISSION_DECISIONS = ["allow_once", "allow_session", "deny"]
+export const PERMISSION_DECISIONS = ["allow_once", "allow_session", "allow_always", "deny"]
 
 export const DEFAULT_MAX_STEPS = 8
 export const DEFAULT_REQUEST_TIMEOUT_MS = 120000
