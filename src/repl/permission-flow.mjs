@@ -1,5 +1,25 @@
 import { APPROVAL_LEVELS, DEFAULT_APPROVAL, approvalFromLegacy } from "../core/modes.mjs"
 
+/**
+ * 审批弹窗的选项。「Always Allow」把授权写入用户级配置的
+ * permission.rules[]，重启后依然有效；「Allow Session」只活在内存。
+ */
+export const PERMISSION_PROMPT_CHOICES = [
+  { label: "Allow Once", value: "allow_once" },
+  { label: "Allow Session", value: "allow_session" },
+  { label: "Always Allow", value: "allow_always" },
+  { label: "Deny", value: "deny" }
+]
+
+export const PERMISSION_PROMPT_VALUES = PERMISSION_PROMPT_CHOICES.map((choice) => choice.value)
+
+export function defaultPermissionChoiceIndex(defaultAction) {
+  const index = PERMISSION_PROMPT_VALUES.indexOf(
+    defaultAction === "allow" ? "allow_once" : String(defaultAction || "")
+  )
+  return index >= 0 ? index : PERMISSION_PROMPT_VALUES.indexOf("deny")
+}
+
 export const POLICY_CHOICES = [
   { label: "Readonly", value: "readonly", desc: "只读检查，不执行任何修改" },
   { label: "Manual", value: "manual", desc: "只读与白名单命令自动放行，编辑前确认" },

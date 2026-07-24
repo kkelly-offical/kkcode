@@ -28,7 +28,7 @@ export async function askPermissionInteractive({
       reason,
       defaultAction
     })
-    if (["allow_once", "allow_session", "deny"].includes(answer)) return answer
+    if (["allow_once", "allow_session", "allow_always", "deny"].includes(answer)) return answer
   }
 
   if (!process.stdout.isTTY || !process.stdin.isTTY) {
@@ -44,10 +44,11 @@ export async function askPermissionInteractive({
     else if (pattern && pattern !== "*") console.log(`target: ${pattern}`)
     if (risk) console.log(`risk: ${risk}/10`)
     if (reason) console.log(`reason: ${reason}`)
-    console.log("Choices: [1] allow once  [2] allow session  [3] deny")
+    console.log("Choices: [1] allow once  [2] allow session  [3] always allow  [4] deny")
     const answer = (await rl.question("> ")).trim().toLowerCase()
     if (["1", "allow", "allow_once", "once", "y", "yes"].includes(answer)) return "allow_once"
-    if (["2", "session", "allow_session", "always"].includes(answer)) return "allow_session"
+    if (["2", "session", "allow_session"].includes(answer)) return "allow_session"
+    if (["3", "always", "allow_always"].includes(answer)) return "allow_always"
     return "deny"
   } finally {
     rl.close()

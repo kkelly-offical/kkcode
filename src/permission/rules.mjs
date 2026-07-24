@@ -172,6 +172,8 @@ export function matchRule(rule, input) {
   if (rule.tool !== "*" && rule.tool !== input.tool) return false
   if (Array.isArray(rule.modes) && rule.modes.length && !rule.modes.includes(input.mode)) return false
   if (rule.risk && input.risk && Number(input.risk) < Number(rule.risk)) return false
+  // workspace 限定「Always Allow」习得的规则，缺省表示全局生效（旧规则语义不变）
+  if (rule.workspace && normalizePath(rule.workspace) !== normalizePath(input.workspace || "")) return false
 
   // File glob matching (for read/write/edit/glob/grep tools)
   if (rule.file_patterns || rule.file_pattern) {
@@ -196,14 +198,14 @@ export function matchRule(rule, input) {
  * 但 DEFAULT_CONFIG 恒定注入 permission.level，那三条路径永远不可达。0.4.0 起
  * normalizePermissionLevel 总能给出四档之一，分支随之删除。
  */
-export function evaluatePermission({ config, tool, mode, pattern = "*", command = "", risk = 0 }) {
+export function evaluatePermission({ config, tool, mode, pattern = "*", command = "", risk = 0, workspace = "" }) {
   const permission = config.permission || { rules: [] }
   const permissionLevel = normalizePermissionLevel(permission)
   const permissionMode = normalizePermissionMode(permission)
   const rules = Array.isArray(permission.rules) ? permission.rules : []
 
   for (const rule of rules) {
-    if (matchRule(rule, { tool, mode, pattern, command, risk })) {
+    if (matchRule(rule, { tool, mode, pattern, command, risk, workspace })) {
       const matchedDecision = {
         action: rule.action,
         source: "rule",

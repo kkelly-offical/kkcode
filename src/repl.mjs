@@ -88,9 +88,26 @@ import {
   advanceQuestionState,
   finalizeQuestionAnswers
 } from "./repl/dialog-router.mjs"
-import { POLICY_CHOICES, createPolicyPickerState, applyPolicyChoice, applyPermissionLevel, nextPermissionLevel } from "./repl/permission-flow.mjs"
+import {
+  POLICY_CHOICES,
+  createPolicyPickerState,
+  applyPolicyChoice,
+  applyPermissionLevel,
+  nextPermissionLevel,
+  PERMISSION_PROMPT_CHOICES,
+  PERMISSION_PROMPT_VALUES,
+  defaultPermissionChoiceIndex
+} from "./repl/permission-flow.mjs"
 import { approvalFromLegacy } from "./core/modes.mjs"
 import { normalizePermissionLevel } from "./permission/rules.mjs"
+import {
+  buildLearnedRule,
+  appendLearnedRule,
+  listLearnedRules,
+  removeLearnedRules,
+  isLearnedRule,
+  describeRule
+} from "./permission/learned-rules.mjs"
 import {
   classifySgrMouseEvent,
   createBracketedPasteDecoder,
@@ -369,23 +386,58 @@ function pickConfigPathForScope(scope, source, cwd = process.cwd()) {
   return null
 }
 
+async function readConfigFile(target) {
+  try {
+    const raw = await readFile(target, "utf8")
+    return parseConfigByPath(target, raw) || {}
+  } catch {
+    return {}
+  }
+}
+
+async function writeConfigFile(target, data) {
+  await mkdir(dirname(target), { recursive: true })
+  await writeFile(target, stringifyConfigByPath(target, data), "utf8")
+}
+
+/**
+ * 把一次「Always Allow」写入用户级配置。
+ *
+ * 刻意选用户级而非项目级：用户仓库的 .gitignore 未必忽略 .kkcode/，
+ * 项目级会把授权记录提交出去。规则带 workspace 限定生效范围。
+ */
+async function persistLearnedGrant({ ctx, tool, pattern, command, workspace }) {
+  const rule = buildLearnedRule({ tool, pattern, command, workspace: workspace || process.cwd() })
+  if (!rule) return { added: false, reason: "invalid", rule: null }
+
+  const target = pickConfigPathForScope("user", ctx.configState?.source, process.cwd())
+  if (!target) return { added: false, reason: "no_target", rule }
+
+  const existing = await readConfigFile(target)
+  const currentRules = existing?.permission?.rules
+  const outcome = appendLearnedRule(currentRules, rule)
+  if (!outcome.added) return { added: false, reason: outcome.reason, rule }
+
+  await writeConfigFile(target, {
+    ...existing,
+    permission: { ...(existing.permission || {}), rules: outcome.rules }
+  })
+
+  // 让本次会话立即生效，无需重启
+  const live = ctx.configState.config.permission || (ctx.configState.config.permission = {})
+  live.rules = appendLearnedRule(live.rules, rule).rules
+  ctx.configState.source.userPath = target
+  return { added: true, reason: "added", rule }
+}
+
 async function persistPermissionConfig({ scope, ctx, values }) {
   const source = ctx.configState?.source || {}
   const target = pickConfigPathForScope(scope, source, process.cwd())
   if (!target) throw new Error(`unable to resolve ${scope} config path`)
 
-  let existing = {}
-  try {
-    const raw = await readFile(target, "utf8")
-    existing = parseConfigByPath(target, raw) || {}
-  } catch {
-    existing = {}
-  }
-
+  const existing = await readConfigFile(target)
   const merged = mergeObject(existing, { permission: { ...values } })
-
-  await mkdir(dirname(target), { recursive: true })
-  await writeFile(target, stringifyConfigByPath(target, merged), "utf8")
+  await writeConfigFile(target, merged)
 
   if (scope === "user") {
     ctx.configState.source.userPath = target
@@ -883,6 +935,55 @@ async function processInputLine({
       print(`level: ${normalizePermissionLevel(permission)}`)
       print(`non_tty: ${permission.non_tty_default || "deny"}`)
       return { exit: false, openPolicyPicker: true }
+    }
+
+    if (sub === "list" || sub === "rules") {
+      const all = Array.isArray(permission.rules) ? permission.rules : []
+      const learned = listLearnedRules(all)
+      const manual = all.filter((rule) => !isLearnedRule(rule))
+      if (!all.length) {
+        print("no permission rules configured")
+        return { exit: false }
+      }
+      if (manual.length) {
+        print(`configured rules (${manual.length}):`)
+        for (const rule of manual) print(`  ${escapeTerminalText(describeRule(rule))}`)
+      }
+      if (learned.length) {
+        print(`always-allow rules (${learned.length}) — /permission forget <n>:`)
+        for (const [index, rule] of learned.entries()) {
+          print(`  [${index}] ${escapeTerminalText(describeRule(rule))}`)
+        }
+      }
+      return { exit: false }
+    }
+
+    if (sub === "forget") {
+      const arg = String(tokens[1] || "").toLowerCase()
+      const all = arg === "--learned" || arg === "all"
+      if (!all && !/^\d+$/.test(arg)) {
+        print("usage: /permission forget <n|all>")
+        return { exit: false }
+      }
+      const outcome = removeLearnedRules(permission.rules, all ? { all: true } : { index: Number(arg) })
+      if (!outcome.removed.length) {
+        print("no matching always-allow rule")
+        return { exit: false }
+      }
+      permission.rules = outcome.rules
+      try {
+        const target = pickConfigPathForScope("user", ctx.configState?.source, process.cwd())
+        const existing = await readConfigFile(target)
+        const persisted = removeLearnedRules(existing?.permission?.rules, all ? { all: true } : { index: Number(arg) })
+        await writeConfigFile(target, {
+          ...existing,
+          permission: { ...(existing.permission || {}), rules: persisted.rules }
+        })
+        print(`forgot ${outcome.removed.length} always-allow rule(s) -> ${target}`)
+      } catch (error) {
+        print(`forgot ${outcome.removed.length} rule(s) in this session, but saving failed: ${escapeTerminalText(error.message)}`)
+      }
+      return { exit: false }
     }
 
     if (approvalFromLegacy(sub)) {
@@ -1752,11 +1853,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   function defaultPermissionIndex(perm) {
-    if (!perm) return 0
-    const da = perm.defaultAction
-    if (da === "allow" || da === "allow_once") return 0
-    if (da === "allow_session") return 1
-    return 2
+    return defaultPermissionChoiceIndex(perm?.defaultAction)
   }
 
   function queueQuestionPrompt(request) {
@@ -2155,11 +2252,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     }
 
     const suggestionBlock = suggestionLines.length ? suggestionLines.length + 1 : 0
-    const PERM_CHOICES = [
-      { label: "Allow Once", value: "allow_once" },
-      { label: "Allow Session", value: "allow_session" },
-      { label: "Deny", value: "deny" }
-    ]
+    const PERM_CHOICES = PERMISSION_PROMPT_CHOICES
     const permissionLines = []
     if (ui.pendingPermission) {
       const perm = ui.pendingPermission
@@ -3396,6 +3489,15 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         })
       })
     )
+    PermissionEngine.setPersistGrantHandler(async ({ tool, pattern, command, workspace }) => {
+      const result = await persistLearnedGrant({ ctx, tool, pattern, command, workspace })
+      if (result.added) {
+        showToast(`Always allow · ${describeRule(result.rule)}`, { topic: "permission", tone: "success" })
+      } else if (result.reason === "limit") {
+        showToast(`习得规则已达上限，请先 /permission forget`, { topic: "permission", tone: "warn" })
+      }
+      return result.added
+    })
     setQuestionPromptHandler(({ questions }) =>
       new Promise((resolve) => {
         queueQuestionPrompt({ questions, resolve })
@@ -3502,8 +3604,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         }
 
         if (ui.pendingPermission) {
-          const PERM_VALUES = ["allow_once", "allow_session", "deny"]
-          if (["1", "2", "3"].includes(str)) {
+          const PERM_VALUES = PERMISSION_PROMPT_VALUES
+          if (["1", "2", "3", "4"].includes(str)) {
             resolvePermissionPrompt(PERM_VALUES[Number(str) - 1])
             return
           }

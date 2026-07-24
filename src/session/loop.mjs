@@ -827,6 +827,7 @@ export async function processTurnLoop({
               command,
               args: call.args,
               risk,
+              workspace: cwd,
               reason: `tool call from model at step ${step}`
             })
 

@@ -8,6 +8,7 @@ import { sanitizeAuditMetadata, summarizeAuditContent } from "../audit/event.mjs
 
 const sessionAllow = new Map()
 let workspaceTrusted = false
+let persistGrantHandler = null
 
 function cacheKey(tool, pattern) {
   return `${tool}::${pattern || "*"}`
@@ -40,6 +41,13 @@ async function auditPermission(type, context, payload) {
 export const PermissionEngine = {
   setTrusted(value) { workspaceTrusted = Boolean(value) },
   isTrusted() { return workspaceTrusted },
+  /**
+   * 注册「Always Allow」的落盘回调。引擎自身不做 IO，宿主（REPL / CLI）
+   * 决定规则写到哪个配置文件，测试可注入假实现。
+   */
+  setPersistGrantHandler(handler) {
+    persistGrantHandler = typeof handler === "function" ? handler : null
+  },
   clearSession(sessionId) {
     sessionAllow.delete(sessionId)
   },
@@ -59,7 +67,8 @@ export const PermissionEngine = {
     command = "",
     args = {},
     risk = 0,
-    reason = ""
+    reason = "",
+    workspace = ""
   }) {
     if (!workspaceTrusted) throw new PermissionError("workspace not trusted — run /trust to enable tools")
     const auditContext = { sessionId, turnId, traceId, requestId, reviewId, tool }
@@ -77,7 +86,7 @@ export const PermissionEngine = {
       return { decision: "allow_session", granted: true }
     }
 
-    const decision = evaluatePermission({ config, tool, mode, pattern, command, risk })
+    const decision = evaluatePermission({ config, tool, mode, pattern, command, risk, workspace })
     if (decision.action === "allow") {
       await EventBus.emit({
         type: EVENT_TYPES.PERMISSION_DECIDED,
@@ -119,19 +128,31 @@ export const PermissionEngine = {
       reason,
       defaultAction: config.permission?.non_tty_default || "deny"
     })
-    if (reply === "allow_session") {
+    if (reply === "allow_session" || reply === "allow_always") {
       const next = sessionAllow.get(sessionId) || new Set()
       next.add(key)
       sessionAllow.set(sessionId, next)
+
+      let persisted = false
+      if (reply === "allow_always" && persistGrantHandler) {
+        try {
+          persisted = Boolean(await persistGrantHandler({ tool, pattern, command, workspace }))
+        } catch (err) {
+          // 落盘失败不应中断本次调用：会话内授权已经生效
+          console.error("[permission] persist grant failed:", err?.message || err)
+        }
+      }
+
+      const outcome = reply === "allow_always" ? "allow_always" : "allow_session"
       await EventBus.emit({
         type: EVENT_TYPES.PERMISSION_DECIDED,
         sessionId,
-        payload: { tool, decision: "allow_session", source: "interactive" }
+        payload: { tool, decision: outcome, source: "interactive", persisted }
       })
       await auditPermission("permission.decided", auditContext, {
-        decision: "allow_session", source: "interactive", mode, pattern, risk
+        decision: outcome, source: "interactive", mode, pattern, risk, persisted
       })
-      return { decision: "allow_session", granted: true }
+      return { decision: outcome, granted: true, persisted }
     }
     if (reply === "allow_once") {
       await EventBus.emit({

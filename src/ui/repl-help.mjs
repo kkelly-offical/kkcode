@@ -77,8 +77,8 @@ export function buildHelpText({ providers = [], userRootPath = "" } = {}) {
   lines.push("  provider.<name>.default_model default model id")
   lines.push("  agent.default_mode            startup mode (assistant|plan|longagent)")
   lines.push("  agent.longagent.git.enabled   git branch mgmt (true|false|\"ask\")")
-  lines.push("  permission.level              tool approvals (readonly|review|auto|edit|full-auto|yolo)")
-  lines.push("  permission.default_policy     manual policy (ask|allow|deny)")
+  lines.push("  permission.level              tool approvals (readonly|manual|accept-edits|yolo)")
+  lines.push("  permission.rules              persistent allow/deny rules incl. Always Allow")
   lines.push("  usage.budget.session_usd      per-session cost limit")
   lines.push("")
   lines.push("See notice.md in project root for full configuration guide.")
@@ -95,7 +95,7 @@ export function buildShortcutLegend() {
     "  /m      Switch explicit mode",
     "  /p      Switch provider",
     "  /k      Show this key map",
-    "  /permission [show|readonly|review|auto|edit|full-auto|yolo|non-tty <allow_once|deny>|save [project|user]|session-clear]",
+    "  /permission [show|readonly|manual|accept-edits|yolo|list|forget <n|all>|non-tty <allow_once|deny>|save [project|user]|session-clear]",
     "  /dash   Redraw dashboard",
     "  /clear  Clear screen",
     "  /assistant /plan /longagent  Explicit workflows",
