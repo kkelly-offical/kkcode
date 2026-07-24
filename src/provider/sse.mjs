@@ -15,9 +15,16 @@ export async function* parseSSE(body, signal, options = {}) {
   const idleMs = options.idleTimeoutMs || 0
   let currentTimeout = null
 
+  function throwIfAborted() {
+    if (!signal?.aborted) return
+    const error = new Error("stream aborted")
+    error.code = "ABORT_ERR"
+    throw error
+  }
+
   try {
     while (true) {
-      if (signal?.aborted) break
+      throwIfAborted()
 
       let readResult
       if (idleMs > 0) {
@@ -35,24 +42,82 @@ export async function* parseSSE(body, signal, options = {}) {
       if (done) break
       buffer += decoder.decode(value, { stream: true })
 
-      const parts = buffer.split("\n\n")
-      buffer = parts.pop()
+      // SSE permits CRLF, LF, or CR line endings. CRLF must be treated as one
+      // logical ending even when its two bytes arrive in separate chunks.
+      const split = splitCompleteFrames(buffer)
+      buffer = split.remaining
 
-      for (const part of parts) {
+      for (const part of split.frames) {
+        throwIfAborted()
         const result = parsePart(part)
         if (result === null) return // [DONE]
         if (result) yield result
       }
     }
     // flush remaining buffer
+    throwIfAborted()
+    buffer += decoder.decode()
+    const split = splitCompleteFrames(buffer, { final: true })
+    buffer = split.remaining
+    for (const part of split.frames) {
+      throwIfAborted()
+      const result = parsePart(part)
+      if (result === null) return
+      if (result) yield result
+    }
     if (buffer.trim()) {
       const result = parsePart(buffer)
       if (result && result !== null) yield result
     }
   } finally {
     if (currentTimeout) currentTimeout.cancel()
-    try { reader.releaseLock() } catch { /* reader may have pending read if generator was force-closed */ }
+    // A timed-out read may still be pending. Cancelling first closes the old
+    // response body so a reconnect cannot accumulate orphaned SSE sockets.
+    try { await reader.cancel() } catch { /* body may already be closed or errored */ }
+    try { reader.releaseLock() } catch { /* best effort after cancellation */ }
   }
+}
+
+function splitCompleteFrames(source, { final = false } = {}) {
+  const frames = []
+  let remaining = String(source || "")
+
+  while (remaining) {
+    let previousEnding = null
+    let boundary = null
+
+    for (let index = 0; index < remaining.length;) {
+      let endingLength = 0
+      if (remaining[index] === "\r") {
+        if (index + 1 >= remaining.length && !final) break
+        endingLength = remaining[index + 1] === "\n" ? 2 : 1
+      } else if (remaining[index] === "\n") {
+        endingLength = 1
+      }
+
+      if (!endingLength) {
+        previousEnding = null
+        index += 1
+        continue
+      }
+
+      if (previousEnding?.end === index) {
+        boundary = {
+          frameEnd: previousEnding.start,
+          separatorEnd: index + endingLength
+        }
+        break
+      }
+      previousEnding = { start: index, end: index + endingLength }
+      index += endingLength
+    }
+
+    if (!boundary) break
+    frames.push(remaining.slice(0, boundary.frameEnd))
+    remaining = remaining.slice(boundary.separatorEnd)
+  }
+
+  return { frames, remaining }
 }
 
 function idleTimeout(ms, signal) {
@@ -90,7 +155,7 @@ function parsePart(part) {
   if (!trimmed) return undefined
   let event = null
   let data = ""
-  for (const line of trimmed.split("\n")) {
+  for (const line of trimmed.split(/\r\n|\r|\n/)) {
     if (line.startsWith("event:")) {
       event = line.slice(6).trim()
     } else if (line.startsWith("data:")) {

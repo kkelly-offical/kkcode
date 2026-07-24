@@ -1,6 +1,11 @@
 import { ProviderError } from "../core/errors.mjs"
 import { buildRequestHeaders } from "../http/identity.mjs"
-import { abortableSleep, requestWithRetry } from "./retry-policy.mjs"
+import {
+  annotateRetryAfter,
+  primeRetriableStream,
+  requestWithRetry,
+  resolveRetryOptions
+} from "./retry-policy.mjs"
 import { parseSSE } from "./sse.mjs"
 
 function mapTools(tools) {
@@ -148,6 +153,35 @@ function notifyResponse(input, response) {
   try { input.onResponse?.(response) } catch { /* audit metadata must not affect requests */ }
 }
 
+async function fetchStreamConnection(endpoint, init, timeoutMs, signal) {
+  const timeout = Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0
+    ? Number(timeoutMs)
+    : 120000
+  const controller = new AbortController()
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, timeout)
+  const fetchSignal = signal
+    ? AbortSignal.any([signal, controller.signal])
+    : controller.signal
+
+  try {
+    return await fetch(endpoint, { ...init, signal: fetchSignal })
+  } catch (error) {
+    if (timedOut && !signal?.aborted) {
+      const timeoutError = new Error(`anthropic connection timeout after ${timeout}ms`, { cause: error })
+      timeoutError.name = "TimeoutError"
+      timeoutError.code = "ETIMEDOUT"
+      throw timeoutError
+    }
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export async function requestAnthropic(input) {
   const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 120000, maxTokens = 16384, retry = {}, signal = null } = input
   if (!apiKey && input.apiKeyEnv !== "") {
@@ -171,9 +205,10 @@ export async function requestAnthropic(input) {
   }
 
   return requestWithRetry({
-    attempts: Number(retry.attempts ?? 3),
+    ...resolveRetryOptions(retry),
     baseDelayMs: Number(retry.baseDelayMs ?? 800),
     signal,
+    onRetry: retry.onRetry,
     execute: async () => {
       const response = await fetch(endpoint, {
         method: "POST",
@@ -202,6 +237,7 @@ export async function requestAnthropic(input) {
           endpoint
         })
         error.httpStatus = response.status
+        annotateRetryAfter(error, response)
         throw error
       }
       let json
@@ -268,6 +304,34 @@ export async function* requestAnthropicStream(input) {
     })
   }
 
+  if (!retry._streamPrimed) {
+    const { iterator, first } = await primeRetriableStream({
+      create: () => requestAnthropicStream({
+        ...input,
+        retry: {
+          attempts: 1,
+          baseDelayMs: retry.baseDelayMs,
+          _streamPrimed: true
+        }
+      }),
+      ...resolveRetryOptions(retry),
+      baseDelayMs: Number(retry.baseDelayMs ?? 800),
+      signal,
+      onRetry: retry.onRetry
+    })
+    try {
+      yield first.value
+      while (true) {
+        const next = await iterator.next()
+        if (next.done) break
+        yield next.value
+      }
+    } finally {
+      try { await iterator.return?.() } catch { /* stream is already closing */ }
+    }
+    return
+  }
+
   const endpoint = `${baseUrl.replace(/\/$/, "")}/messages`
   const mappedTools = mapTools(tools)
   const payload = {
@@ -283,22 +347,13 @@ export async function* requestAnthropicStream(input) {
   if (input.thinking?.type) {
     payload.thinking = { type: input.thinking.type, budget_tokens: input.thinking.budget_tokens || 10000 }
   }
-  const attempts = Number(retry.attempts ?? 3)
-  const baseDelayMs = Number(retry.baseDelayMs ?? 800)
-
-  let response
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    let connTimer = null
-    const connController = new AbortController()
-    try {
-      // Use a connection-only timeout for the initial fetch.
-      // Once headers arrive, clear it — the SSE idle timeout handles the streaming phase.
-      connTimer = setTimeout(() => connController.abort(), timeoutMs)
-      const fetchSignal = signal
-        ? AbortSignal.any([signal, connController.signal])
-        : connController.signal
-
-      response = await fetch(endpoint, {
+  const response = await requestWithRetry({
+    attempts: Number(retry.attempts ?? 5),
+    baseDelayMs: Number(retry.baseDelayMs ?? 800),
+    signal,
+    onRetry: retry.onRetry,
+    execute: async () => {
+      const candidate = await fetchStreamConnection(endpoint, {
         method: "POST",
         headers: buildRequestHeaders({
           target: "llm",
@@ -313,29 +368,22 @@ export async function* requestAnthropicStream(input) {
             "anthropic-beta": compaction ? "prompt-caching-2024-07-31,compact-2026-01-12" : "prompt-caching-2024-07-31"
           }
         }),
-        body: JSON.stringify(payload),
-        signal: fetchSignal
-      })
-      notifyResponse(input, response)
-      clearTimeout(connTimer)
+        body: JSON.stringify(payload)
+      }, timeoutMs, signal)
+      notifyResponse(input, candidate)
 
-      if (!response.ok) {
-        const text = await response.text().catch(() => "")
-        const error = new ProviderError(`anthropic stream failed: ${response.status} ${text}`, {
+      if (!candidate.ok) {
+        const text = await candidate.text().catch(() => "")
+        const error = new ProviderError(`anthropic stream failed: ${candidate.status} ${text}`, {
           provider: "anthropic", model, endpoint
         })
-        error.httpStatus = response.status
+        error.httpStatus = candidate.status
+        annotateRetryAfter(error, candidate)
         throw error
       }
-      break
-    } catch (err) {
-      clearTimeout(connTimer)
-      if (signal?.aborted) throw err
-      const isNetwork = err?.code === "ETIMEDOUT" || err?.code === "ECONNRESET" || err?.name === "AbortError"
-      if (!isNetwork || attempt >= attempts) throw err
-      await abortableSleep(baseDelayMs * Math.pow(2, attempt - 1), signal)
+      return candidate
     }
-  }
+  })
 
   let currentBlock = null
   let inputUsage = { input: 0, cacheRead: 0, cacheWrite: 0 }

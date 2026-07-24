@@ -25,7 +25,8 @@ function defaultInput(baseUrl) {
     system: "test system",
     messages: [{ role: "user", content: "hello" }],
     tools: [],
-    timeoutMs: 5000
+    timeoutMs: 5000,
+    retry: { attempts: 1, baseDelayMs: 0 }
   }
 }
 

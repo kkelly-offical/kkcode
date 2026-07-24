@@ -531,6 +531,7 @@ export async function modelFindings({
   reviewId = "",
   traceId = "",
   parentEventId = "",
+  sessionId = null,
   maxChunkChars,
   maxChunks
 }) {
@@ -561,7 +562,8 @@ export async function modelFindings({
         maxTokens: 4096,
         reviewId,
         traceId,
-        parentEventId
+        parentEventId,
+        sessionId
       })
       findings.push(...normalizeModelFindings(extractFindingsJson(result?.text), chunk))
     } catch (error) {
@@ -660,6 +662,7 @@ export async function createBranchReviewReport({
   reviewId = "",
   traceId = "",
   parentEventId = "",
+  sessionId = null,
   maxChunkChars,
   maxChunks
 }) {
@@ -674,6 +677,7 @@ export async function createBranchReviewReport({
         reviewId,
         traceId,
         parentEventId,
+        sessionId,
         maxChunkChars,
         maxChunks
       })

@@ -8,6 +8,9 @@
 #   项目级：.kkcode/config.yaml 或项目根目录 kkcode.config.yaml
 #
 # 支持格式：YAML (.yaml/.yml) 和 JSON (.json)
+#
+# provider.*.retry_attempts 表示首次请求失败后的重连次数：
+# 设为 5 时，最多是 1 次初始请求 + 5 次重连。
 # =============================================================================
 
 # =============================================================================
@@ -26,7 +29,7 @@ provider:
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
     max_tokens: 32768
-    retry_attempts: 3
+    retry_attempts: 5
     retry_base_delay_ms: 800
     stream: true
 
@@ -38,7 +41,7 @@ provider:
     models: [claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5-20251001]
     timeout_ms: 120000
     max_tokens: 32768
-    retry_attempts: 3
+    retry_attempts: 5
     stream: true
 
   # --- 统一网关（从用户配置的 Base URL 动态读取模型）---
@@ -58,7 +61,7 @@ provider:
       cache_ttl_ms: 900000
     timeout_ms: 120000
     max_tokens: 32768
-    retry_attempts: 3
+    retry_attempts: 5
     stream: true
 
   # --- DashScope（通义千问 Qwen 系列）---
@@ -76,7 +79,7 @@ provider:
       - qwen-plus-latest
     timeout_ms: 120000
     max_tokens: 32768
-    retry_attempts: 3
+    retry_attempts: 5
     stream: true
 
   # --- 智谱 GLM ---
@@ -89,7 +92,7 @@ provider:
     models: [glm-5.1, glm-5, glm-4.5, glm-4.5-air]
     timeout_ms: 120000
     max_tokens: 32768
-    retry_attempts: 3
+    retry_attempts: 5
     stream: true
 
   # --- DeepSeek ---
@@ -102,7 +105,7 @@ provider:
     models: [deepseek-v4-flash, deepseek-v4-pro, deepseek-chat, deepseek-reasoner]
     timeout_ms: 120000
     max_tokens: 32768
-    retry_attempts: 3
+    retry_attempts: 5
     stream: true
 
   # --- Google Gemini (OpenAI-compatible endpoint) ---
@@ -114,7 +117,7 @@ provider:
     models: [gemini-3.5-flash, gemini-3.1-pro, gemini-3.1-flash-lite]
     timeout_ms: 120000
     max_tokens: 32768
-    retry_attempts: 3
+    retry_attempts: 5
     stream: true
 
   # --- Moonshot Kimi ---
@@ -126,7 +129,7 @@ provider:
     models: [kimi-k2.6, kimi-k2.5, moonshot-v1-128k, moonshot-v1-32k]
     timeout_ms: 120000
     max_tokens: 32768
-    retry_attempts: 3
+    retry_attempts: 5
     stream: true
 
   # --- xAI Grok ---
@@ -138,7 +141,7 @@ provider:
     models: [grok-4.3, grok-4.3-latest]
     timeout_ms: 120000
     max_tokens: 32768
-    retry_attempts: 3
+    retry_attempts: 5
     stream: true
 
   # --- 本地 Ollama ---
@@ -150,7 +153,7 @@ provider:
     timeout_ms: 600000
     stream_idle_timeout_ms: 300000
     max_tokens: 16384
-    retry_attempts: 1
+    retry_attempts: 5
     stream: true
 
 # =============================================================================
@@ -267,6 +270,12 @@ update:
 ui:
   layout: "compact"           # compact | comfortable
   markdown_render: true
+  terminal:
+    alternate_screen: "auto"  # auto | always | never
+    mouse: "auto"             # auto | always | never
+    bracketed_paste: true      # 多行粘贴作为一个输入块，不会误提交多次
+    copy_on_select: true       # 在应用鼠标模式中，拖选后自动复制
+    toast_duration_ms: 2600    # 模式/模型/权限切换提示的显示时间
   mode_colors:
     assistant: "#22d3ee"
     plan: "#00b7c2"

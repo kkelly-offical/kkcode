@@ -6,7 +6,7 @@ export const PERMISSION_DECISIONS = ["allow_once", "allow_session", "deny"]
 
 export const DEFAULT_MAX_STEPS = 8
 export const DEFAULT_REQUEST_TIMEOUT_MS = 120000
-export const DEFAULT_RETRY_ATTEMPTS = 3
+export const DEFAULT_RETRY_ATTEMPTS = 5
 export const DEFAULT_LONGAGENT_RETRY_STORM_THRESHOLD = 3
 export const DEFAULT_LONGAGENT_TOKEN_ALERT_THRESHOLD = 120000
 
@@ -93,5 +93,6 @@ export const EVENT_TYPES = {
   LONGAGENT_HYBRID_CHECKPOINT_INVALID: "longagent.hybrid.checkpoint_invalid",
   LONGAGENT_STAGE_TASK_SKIPPED: "longagent.stage.task.skipped",
   LONGAGENT_STOP_REQUESTED: "longagent.stop.requested",
-  PROVIDER_FALLBACK: "provider.fallback"
+  PROVIDER_FALLBACK: "provider.fallback",
+  PROVIDER_RETRY: "provider.retry"
 }

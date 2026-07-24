@@ -1,6 +1,6 @@
 # kkcode
 
-[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=v0.3.2)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
+[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=npm)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 [![GitHub Release](https://img.shields.io/github/v/release/kkelly-offical/kkcode)](https://github.com/kkelly-offical/kkcode/releases)
 ![Node](https://img.shields.io/badge/Node.js-%3E%3D22-green)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
@@ -322,6 +322,38 @@ For a deeper boundary matrix, see [CLI General Assistant Capability Matrix](docs
 **Interrupt semantics / 中断语义**
 - `Esc` 可用于**中断当前 turn**、退出部分选择态或拒绝当前交互式请求，具体行为取决于当前上下文。
 
+### v0.3.3 terminal interaction / 终端交互
+
+- Drag in the transcript to select and request a clipboard copy; use the wheel
+  to scroll, click the composer to place the real terminal cursor, and click a
+  collapsed Thinking/tool block to inspect its details.
+- 在对话区拖动即可选择并请求复制文字；滚轮可浏览历史，点击输入框会移动真实终端
+  光标，为中文输入法候选窗提供实际输入锚点；点击折叠的 Thinking/工具日志可展开详情。
+- Completed reasoning becomes a collapsed `Thinking · Ns` row. While it is
+  running, an animated indicator and elapsed time remain visible.
+- Mode, model, provider, permission, reconnect, and clipboard notices use
+  transient bottom toasts instead of permanently occupying the transcript.
+- Assistant output renders terminal-safe Markdown. Tool activity is muted gray;
+  code mutations expose bounded red/green `-`/`+` diffs on demand.
+- `Ctrl+T` toggles the latest Thinking details, `Ctrl+E` toggles the latest
+  expandable block, and `Ctrl+Y` toggles automatic copy-on-select. On Unix,
+  `Ctrl+Z` restores terminal state before suspending and redraws after `fg`.
+
+If a terminal reserves mouse reporting differently, hold its native selection
+modifier (commonly Shift), or set `ui.terminal.mouse: never` to return native
+selection and copying of the visible frame to the terminal. In that mode the
+wheel no longer controls KK Code's transcript; use `Ctrl+Up` / `Ctrl+Down` and
+`Ctrl+Home` / `Ctrl+End` to browse the application history. See the
+[0.3.3 terminal experience guide](docs/terminal-experience-0.3.3.md) for the
+Windows, macOS, Linux, SSH/tmux, clipboard, and fallback matrix.
+
+Automated protocol and layout tests cannot validate a GUI terminal's actual
+mouse reporting, clipboard permissions, or IME candidate-window placement.
+Before release, Windows Terminal + PowerShell, macOS Terminal/iTerm2, and
+representative Linux Wayland/X11 terminals still require manual mouse and IME
+acceptance; `0.3.3` on `main` remains a user-verification build until that
+matrix is signed off.
+
 ### Main CLI commands / 主要 CLI 子命令
 - `chat`
 - `session`
@@ -354,7 +386,7 @@ Run `kkcode --help` or `kkcode <command> --help` for the full surface.
 
 ### Dynamic models and unified gateway / 动态模型与统一网关
 
-`v0.3.2` reads the model catalog from the Base URL you configure. OpenAI-compatible
+`v0.3.3` reads the model catalog from the Base URL you configure. OpenAI-compatible
 and Anthropic-compatible services can share one gateway entry:
 
 ```yaml
@@ -480,7 +512,10 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current release / 当前版本**: `v0.3.2`
+**Current development version / 当前开发版本**: `v0.3.3` on `main`
+
+`v0.3.3` is staged for user verification. Pushing `main` does not publish npm or
+create a GitHub Release; publication remains tag-gated.
 
 Use the Kimi Code preset without placing credentials in YAML:
 
@@ -500,6 +535,10 @@ with authorization values redacted.
 **Package / 包地址**: [npm](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 
 **English**
+- `0.3.3` rebuilds terminal interaction around native cursor placement, mouse
+  selection/scroll/click handling, transient toasts, Markdown transcripts,
+  collapsible Thinking/tool details, red/green diffs, and five post-failure
+  provider reconnects without replaying an active stream.
 - `0.3.2` discovers models from user-configured OpenAI/Anthropic-compatible endpoints, adds unified gateway routing, traceable audit records, and AI-assisted branch/PR review.
 - `0.3.1` gives every outbound request a consistent `KK-Code/0.3.1` identity, adds the Kimi Code Coding API preset, and improves terminal, tool, and orchestration reliability.
 - `0.2.5` updates the YAML parser dependency to the latest stable release and clears the Dependabot advisory for deeply nested YAML collections.
@@ -510,6 +549,9 @@ with authorization values redacted.
 - `0.2.1` rebuilt kkcode around Assistant as the default general-purpose lane, with dedicated Agent and LongAgent modes for coding work.
 
 **中文**
+- `0.3.3` 重构终端交互：真实光标与输入法定位、鼠标拖选/滚轮/点击、瞬时 Toast、
+  Markdown 对话、可折叠 Thinking/工具详情、红绿 Diff，以及首次失败后的最多 5 次
+  模型重连；流式内容一旦开始就绝不重放请求。
 - `0.3.2` 从用户配置的 OpenAI/Anthropic 兼容端点动态发现模型，并加入统一 Gateway 路由、可追踪审计和 AI 分支/PR 审查。
 - `0.3.1` 为所有出站请求统一添加 `KK-Code/0.3.1` 身份，加入 Kimi Code Coding API 预设，并提升终端、工具与编排的可靠性。
 - `0.2.5` 将 YAML 解析器依赖更新到最新稳定版本，并清除深层嵌套 YAML collection 相关的 Dependabot 告警。

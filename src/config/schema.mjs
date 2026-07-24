@@ -639,6 +639,26 @@ export function validateConfig(config) {
       if (config.ui.markdown_render !== undefined && typeof config.ui.markdown_render !== "boolean") {
         err(errors, "ui.markdown_render", "must be boolean")
       }
+      if (config.ui.terminal !== undefined) {
+        if (!isObj(config.ui.terminal)) err(errors, "ui.terminal", "must be object")
+        else {
+          for (const key of ["alternate_screen", "mouse"]) {
+            const value = config.ui.terminal[key]
+            if (value !== undefined && typeof value !== "boolean" && !["auto", "always", "never"].includes(value)) {
+              err(errors, `ui.terminal.${key}`, "must be auto|always|never|boolean")
+            }
+          }
+          for (const key of ["bracketed_paste", "copy_on_select"]) {
+            const value = config.ui.terminal[key]
+            if (value !== undefined && typeof value !== "boolean") {
+              err(errors, `ui.terminal.${key}`, "must be boolean")
+            }
+          }
+          if (config.ui.terminal.toast_duration_ms !== undefined) {
+            checkInt(errors, "ui.terminal.toast_duration_ms", config.ui.terminal.toast_duration_ms, 250)
+          }
+        }
+      }
       if (config.ui.status !== undefined) {
         if (!isObj(config.ui.status)) err(errors, "ui.status", "must be object")
         else {

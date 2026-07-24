@@ -29,7 +29,7 @@ provider:
     timeout_ms: 600000
     stream_idle_timeout_ms: 300000
     max_tokens: 16384
-    retry_attempts: 1
+    retry_attempts: 5
     retry_base_delay_ms: 1000
     stream: true
 

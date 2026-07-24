@@ -34,7 +34,8 @@ export function commitQuestionAnswer(state) {
   if (!current) return state
 
   const nextAnswers = { ...state.questionAnswers }
-  if (state.questionCustomMode) {
+  const options = Array.isArray(current.options) ? current.options : []
+  if (state.questionCustomMode || options.length === 0) {
     nextAnswers[current.id] = state.questionCustomInput || ""
     return {
       ...state,
@@ -49,7 +50,7 @@ export function commitQuestionAnswer(state) {
     const selected = state.questionMultiSelected[current.id] || new Set()
     const values = [...selected]
       .map((index) => {
-        const opt = (current.options || [])[index]
+        const opt = options[index]
         return opt ? (opt.value || opt.label) : ""
       })
       .filter(Boolean)
@@ -57,7 +58,7 @@ export function commitQuestionAnswer(state) {
     return { ...state, questionAnswers: nextAnswers }
   }
 
-  const option = (current.options || [])[state.questionOptionSelected]
+  const option = options[state.questionOptionSelected]
   if (option) nextAnswers[current.id] = option.value || option.label
   return { ...state, questionAnswers: nextAnswers }
 }

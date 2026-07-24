@@ -1,6 +1,6 @@
 # Gateway and model discovery
 
-KK Code 0.3.2 can read a model catalog from the Base URL configured by the
+KK Code 0.3.3 can read a model catalog from the Base URL configured by the
 user. It does not silently replace a failed catalog request with a built-in
 model list.
 

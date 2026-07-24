@@ -53,7 +53,7 @@ export async function executePromptTurn({
       signal,
       toolContext,
       output: streamSink && typeof streamSink === "function"
-        ? { write: streamSink }
+        ? { write: streamSink, renderMarkdown: false }
         : null
     })
   }

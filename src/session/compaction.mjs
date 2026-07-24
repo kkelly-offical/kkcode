@@ -297,6 +297,7 @@ export function shouldCompact({ messages, model, thresholdMessages = DEFAULT_THR
 
 export async function compactSession({
   sessionId,
+  turnId = null,
   model,
   providerType,
   configState,
@@ -363,7 +364,9 @@ export async function compactSession({
       baseUrl,
       apiKeyEnv,
       traceId,
-      parentEventId
+      parentEventId,
+      sessionId,
+      turnId
     })
     summaryText = (response.text || "").trim()
     compactionUsage = response.usage || null

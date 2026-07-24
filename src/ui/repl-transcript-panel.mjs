@@ -1,3 +1,60 @@
+import { renderTranscriptItems } from "./transcript-model.mjs"
+
+function isTranscriptItem(value) {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && (
+      Object.prototype.hasOwnProperty.call(value, "summary")
+      || Object.prototype.hasOwnProperty.call(value, "details")
+      || Object.prototype.hasOwnProperty.call(value, "title")
+    )
+  )
+}
+
+function toLineMetadata(logs, { paint, theme }) {
+  const lines = []
+  for (const value of logs) {
+    if (isTranscriptItem(value)) {
+      lines.push(...renderTranscriptItems([value], { paint, theme }))
+      continue
+    }
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      lines.push({
+        ...value,
+        text: String(value.text ?? ""),
+        itemId: value.itemId ?? value.id ?? null,
+        clickable: Boolean(value.clickable),
+        action: value.action || null
+      })
+      continue
+    }
+    lines.push({
+      text: String(value ?? ""),
+      itemId: null,
+      clickable: false,
+      action: null
+    })
+  }
+  return lines
+}
+
+function wrapMetadataLines(lines, width, wrapLogLines) {
+  const wrapped = []
+  for (const line of lines) {
+    const parts = wrapLogLines([line.text], width)
+    const safeParts = Array.isArray(parts) && parts.length > 0 ? parts : [""]
+    for (let index = 0; index < safeParts.length; index++) {
+      wrapped.push({
+        ...line,
+        text: String(safeParts[index] ?? ""),
+        wrappedIndex: index
+      })
+    }
+  }
+  return wrapped
+}
+
 export function buildTranscriptViewport({
   logs = [],
   width,
@@ -8,15 +65,17 @@ export function buildTranscriptViewport({
   paint,
   theme
 }) {
-  const wrappedAllLogs = wrapLogLines(logs, width)
-  const maxOffset = Math.max(0, wrappedAllLogs.length - logRows)
+  const sourceLines = toLineMetadata(logs, { paint, theme })
+  const wrappedAllLineMeta = wrapMetadataLines(sourceLines, width, wrapLogLines)
+  const maxOffset = Math.max(0, wrappedAllLineMeta.length - logRows)
   const clampedOffset = Math.max(0, Math.min(maxOffset, scrollOffset))
-  const end = Math.max(0, wrappedAllLogs.length - clampedOffset)
+  const end = Math.max(0, wrappedAllLineMeta.length - clampedOffset)
   const start = Math.max(0, end - logRows)
-  const wrappedLogs = wrappedAllLogs.slice(start, end)
+  const visibleLineMeta = wrappedAllLineMeta.slice(start, end)
+  const wrappedLogs = visibleLineMeta.map((line) => line.text)
   const scrollMeta = {
     logRows,
-    totalRows: wrappedAllLogs.length,
+    totalRows: wrappedAllLineMeta.length,
     maxOffset
   }
 
@@ -24,7 +83,7 @@ export function buildTranscriptViewport({
     ? paint(`  Ctrl+Up/Down scroll | +${clampedOffset} lines`, theme.semantic.warn)
     : paint("  Ctrl+Up/Down scroll | Ctrl+Home oldest | Ctrl+End latest", theme.base.muted, { dim: true })
 
-  const totalLog = wrappedAllLogs.length
+  const totalLog = wrappedAllLineMeta.length
   const showScrollbar = totalLog > logRows
   let thumbStart = 0
   let thumbEnd = 0
@@ -34,8 +93,10 @@ export function buildTranscriptViewport({
   }
 
   const lines = []
+  const hitRegions = []
   for (let i = 0; i < logRows; i++) {
     const content = wrappedLogs[i] || ""
+    const lineMeta = visibleLineMeta[i] || null
     if (showScrollbar) {
       const bar = i >= thumbStart && i < thumbEnd
         ? paint("┃", theme.semantic.warn)
@@ -44,6 +105,18 @@ export function buildTranscriptViewport({
     } else {
       lines.push(clipAnsiLine(content, width))
     }
+    if (lineMeta?.clickable && lineMeta.itemId) {
+      const contentWidth = Math.max(1, showScrollbar ? width - 2 : width)
+      hitRegions.push({
+        row: i + 1,
+        viewportRow: i,
+        columnStart: 1,
+        columnEnd: contentWidth,
+        itemId: lineMeta.itemId,
+        action: lineMeta.action || "toggle",
+        section: lineMeta.section || null
+      })
+    }
   }
 
   return {
@@ -51,6 +124,9 @@ export function buildTranscriptViewport({
     scrollHint,
     scrollMeta,
     scrollOffset: clampedOffset,
-    wrappedLogs
+    wrappedLogs,
+    visibleLineMeta,
+    hitRegions,
+    clickableRegions: hitRegions
   }
 }

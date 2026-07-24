@@ -503,11 +503,9 @@ export const McpRegistry = {
     }
   },
 
-  shutdown() {
+  async shutdown() {
     state.shuttingDown = true
-    for (const [, client] of state.servers) {
-      if (typeof client.shutdown === "function") client.shutdown()
-    }
+    const clients = [...state.servers.values()]
     state.servers.clear()
     state.tools.clear()
     state.prompts.clear()
@@ -515,5 +513,10 @@ export const McpRegistry = {
     state.configured.clear()
     state.loaded = false
     state.lastSignature = ""
+    await Promise.allSettled(clients.map((client) =>
+      typeof client.shutdown === "function"
+        ? Promise.resolve(client.shutdown())
+        : Promise.resolve()
+    ))
   }
 }

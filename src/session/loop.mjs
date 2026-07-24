@@ -28,6 +28,7 @@ import { HookBus, initHookBus } from "../plugin/hook-bus.mjs"
 import { shouldCompact, compactSession, estimateTokenCount, modelContextLimit, contextUtilization, supportsNativeCompaction } from "./compaction.mjs"
 import { createStreamRenderer } from "../theme/markdown.mjs"
 import { paint } from "../theme/color.mjs"
+import { sanitizeTerminalText } from "../theme/terminal-sanitize.mjs"
 import { saveCheckpoint } from "./checkpoint.mjs"
 import { askPlanApproval } from "../tool/question-prompt.mjs"
 import { createValidator } from "./task-validator.mjs"
@@ -373,6 +374,8 @@ export async function processTurnLoop({
         system: systemPrompt, messages: history, tools,
         baseUrl, apiKeyEnv,
         traceId: turnTraceContext.traceId,
+        sessionId,
+        turnId,
         signal
       })
       if (realCount != null) {
@@ -430,7 +433,8 @@ export async function processTurnLoop({
       })) {
           const compactResult = await compactSession({
             sessionId, model, providerType, configState, baseUrl, apiKeyEnv,
-            traceId: turnTraceContext.traceId
+            traceId: turnTraceContext.traceId,
+            turnId
           })
           if (compactResult.compacted) {
             await EventBus.emit({ type: EVENT_TYPES.SESSION_COMPACTED, sessionId, turnId, payload: compactResult })
@@ -460,6 +464,8 @@ export async function processTurnLoop({
           apiKeyEnv,
           traceId: stepRequestContext.traceId,
           requestId: stepRequestContext.requestId,
+          sessionId,
+          turnId,
           signal,
           compaction: useNativeCompaction ? { trigger: nativeCompactionTrigger } : null
         })
@@ -468,16 +474,24 @@ export async function processTurnLoop({
         const streamToolCalls = []
         let streamUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
         let streamStopReason = "end_turn"
-        const mdEnabled = configState.config.ui?.markdown_render !== false
+        const mdEnabled = configState.config.ui?.markdown_render !== false && output?.renderMarkdown !== false
         const streamRenderer = mdEnabled ? createStreamRenderer() : null
         let inThinking = false
+        let streamPhase = null
         let thinkingLineStart = true
 
         for await (const chunk of chunks) {
+          if (signal?.aborted) {
+            const error = new Error("provider stream cancelled")
+            error.code = "ABORT_ERR"
+            error.errorClass = "aborted"
+            throw error
+          }
           if (chunk.type === "thinking") {
             const text = chunk.content || ""
             thinkingParts.push(text)
-            if (!inThinking) {
+            if (streamPhase !== "thinking") {
+              streamPhase = "thinking"
               inThinking = true
               thinkingLineStart = true
               await EventBus.emit({ type: EVENT_TYPES.STREAM_THINKING_START, sessionId, turnId, payload: { step } })
@@ -490,7 +504,7 @@ export async function processTurnLoop({
               payload: { step, text }
             })
             // 只在行首加缩进，避免 chunk 中间出现多余空格
-            const indented = text.replace(/^|\n/g, (m) => {
+            const indented = sanitizeTerminalText(text).replace(/^|\n/g, (m) => {
               if (m === "\n") { thinkingLineStart = true; return "\n" }
               if (thinkingLineStart) { thinkingLineStart = false; return "  " }
               return ""
@@ -503,7 +517,8 @@ export async function processTurnLoop({
               sinkWrite("\n")
               inThinking = false
             }
-            if (textParts.length === 0) {
+            if (streamPhase !== "text") {
+              streamPhase = "text"
               await EventBus.emit({ type: EVENT_TYPES.STREAM_TEXT_START, sessionId, turnId, payload: { step } })
             }
             await EventBus.emit({
@@ -516,7 +531,7 @@ export async function processTurnLoop({
               const rendered = streamRenderer.push(chunk.content)
               if (rendered) sinkWrite(rendered)
             } else {
-              sinkWrite(chunk.content)
+              sinkWrite(sanitizeTerminalText(chunk.content))
             }
             textParts.push(chunk.content)
           } else if (chunk.type === "tool_call") {
@@ -524,6 +539,7 @@ export async function processTurnLoop({
               sinkWrite("\n")
               inThinking = false
             }
+            streamPhase = "tool_call"
             streamToolCalls.push(chunk.call)
           } else if (chunk.type === "usage") {
             streamUsage = chunk.usage
@@ -532,6 +548,12 @@ export async function processTurnLoop({
           } else if (chunk.type === "stop") {
             streamStopReason = chunk.reason || "end_turn"
           }
+        }
+        if (signal?.aborted) {
+          const error = new Error("provider stream cancelled")
+          error.code = "ABORT_ERR"
+          error.errorClass = "aborted"
+          throw error
         }
         if (inThinking) {
           sinkWrite("\n")
@@ -556,7 +578,8 @@ export async function processTurnLoop({
         if (error.needsCompaction) {
           const compactResult = await compactSession({
             sessionId, model, providerType, configState, baseUrl, apiKeyEnv,
-            traceId: turnTraceContext.traceId
+            traceId: turnTraceContext.traceId,
+            turnId
           })
           if (compactResult.compacted) {
             await EventBus.emit({ type: EVENT_TYPES.SESSION_COMPACTED, sessionId, turnId, payload: compactResult })
@@ -819,6 +842,7 @@ export async function processTurnLoop({
                   args: call.args,
                   sessionId,
                   turnId,
+                  invocationId: call.id,
                   context: {
                     cwd,
                     mode,

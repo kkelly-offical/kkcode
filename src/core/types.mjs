@@ -8,12 +8,23 @@ export function newId(prefix) {
   return `${prefix}_${randomUUID().slice(0, 12)}`
 }
 
-export function makeEventEnvelope({ type, sessionId = null, turnId = null, payload = {} }) {
+export function makeEventEnvelope({
+  type,
+  sessionId = null,
+  turnId = null,
+  traceId = null,
+  requestId = null,
+  parentEventId = null,
+  payload = {}
+}) {
   return {
     id: newId("evt"),
     type,
     sessionId,
     turnId,
+    traceId,
+    requestId,
+    parentEventId,
     timestamp: nowMs(),
     payload
   }

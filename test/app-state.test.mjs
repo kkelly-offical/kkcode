@@ -22,6 +22,18 @@ test("stream chunks are invariant under chunking", () => {
   assert.equal(reduceChunks(["hello"]).transcript[0].text, reduceChunks(["he", "ll", "o"]).transcript[0].text)
 })
 
+test("retrying returns to thinking and reaches terminal phases", () => {
+  let state = reduceAppState(createAppState(), {
+    type: "provider.retry",
+    payload: { retryAttempt: 1, maxRetries: 5 }
+  })
+  assert.equal(state.phase, "retrying")
+  state = reduceAppState(state, { type: "turn.step.start", payload: { step: 1 } })
+  assert.equal(state.phase, "thinking")
+  state = reduceAppState(state, { type: "turn.error", payload: { error: "offline" } })
+  assert.equal(state.phase, "failed")
+})
+
 test("responsive tiers protect narrow terminals", () => {
   assert.equal(responsiveTier(120), "full")
   assert.equal(responsiveTier(80), "compact")

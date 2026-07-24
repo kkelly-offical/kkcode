@@ -28,6 +28,26 @@ test("commitQuestionAnswer stores single-select choice", () => {
   assert.deepEqual(next.questionAnswers, { q1: "bee" })
 })
 
+test("commitQuestionAnswer preserves free text for an options-less Ctrl+Enter submit", () => {
+  const next = commitQuestionAnswer({
+    pendingQuestion: { questions: [{ id: "details", options: [] }] },
+    questionIndex: 0,
+    questionOptionSelected: 0,
+    questionMultiSelected: {},
+    questionCustomMode: false,
+    questionCustomInput: "Use the staging database",
+    questionCustomCursor: 24,
+    questionAnswers: {}
+  })
+
+  assert.deepEqual(next.questionAnswers, {
+    details: "Use the staging database"
+  })
+  assert.equal(next.questionCustomMode, false)
+  assert.equal(next.questionCustomInput, "")
+  assert.equal(next.questionCustomCursor, 0)
+})
+
 test("advanceQuestionState advances until submit", () => {
   const advanced = advanceQuestionState({
     pendingQuestion: { questions: [{ id: "a" }, { id: "b" }] },

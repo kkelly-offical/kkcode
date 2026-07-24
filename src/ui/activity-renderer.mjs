@@ -1,13 +1,24 @@
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { paint } from "../theme/color.mjs"
+import {
+  sanitizeTerminalText,
+  sanitizeTerminalValue
+} from "../theme/terminal-sanitize.mjs"
 
 const ANSI_RE = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*\x07)/g
 function stripAnsi(text) { return String(text || "").replace(ANSI_RE, "") }
 
+const TOOL_MUTED_COLOR = "#8a8f98"
+const MAX_TOOL_DETAIL_LINES = 80
+const MAX_TOOL_DETAIL_WIDTH = 180
+
 let _theme = null
 function diffAdd(theme) { return (theme ?? _theme)?.components?.diff_add || "green" }
 function diffDel(theme) { return (theme ?? _theme)?.components?.diff_del || "red" }
+function toolMuted(text, options = {}) {
+  return paint(String(text ?? ""), TOOL_MUTED_COLOR, { dim: true, ...options })
+}
 
 // ── Symbols ──────────────────────────────────────────────
 export const SYM = {
@@ -32,13 +43,13 @@ export const SYM = {
 // ── Helpers ──────────────────────────────────────────────
 
 function clipText(text, max) {
-  const s = String(text || "").trim()
+  const s = sanitizeTerminalText(text).trim()
   if (s.length <= max) return s
   return s.slice(0, max - 3) + "..."
 }
 
 function shortPath(p) {
-  const s = String(p || "").trim()
+  const s = sanitizeTerminalText(p).trim()
   // Show last 2-3 segments for readability
   const parts = s.replace(/\\/g, "/").split("/")
   if (parts.length <= 3) return s
@@ -54,42 +65,175 @@ export function formatToolStart(toolName, args) {
     : toolName === "write" || toolName === "edit" || toolName === "notebookedit"
       ? SYM.write
       : SYM.arrow
-  const prefix = paint(sym, "#666666")
-  const name = paint(toolName.charAt(0).toUpperCase() + toolName.slice(1), null, { dim: true })
+  const prefix = toolMuted(sym)
+  const name = toolMuted(toolName.charAt(0).toUpperCase() + toolName.slice(1))
 
   switch (toolName) {
     case "bash": {
       const desc = clipText(args?.description || args?.command, 80)
-      return `  ${prefix} ${name} ${paint(desc, null, { dim: true })}`
+      return `  ${prefix} ${name} ${toolMuted(desc)}`
     }
     case "write":
     case "edit":
-      return `  ${prefix} ${name} ${paint(shortPath(args?.path), null, { dim: true })}`
+    case "patch":
+      return `  ${prefix} ${name} ${toolMuted(shortPath(args?.path))}`
+    case "multiedit": {
+      const changes = Array.isArray(args?.changes) ? args.changes : []
+      const suffix = changes.length === 1
+        ? shortPath(changes[0]?.path)
+        : `${changes.length} files`
+      return `  ${prefix} ${name} ${toolMuted(suffix)}`
+    }
     case "notebookedit":
-      return `  ${prefix} ${name} ${paint(shortPath(args?.path), null, { dim: true })} ${paint(`cell ${args?.cell_number ?? 0}`, null, { dim: true })}`
+      return `  ${prefix} ${name} ${toolMuted(shortPath(args?.path))} ${toolMuted(`cell ${args?.cell_number ?? 0}`)}`
     case "read":
     case "list":
-      return `  ${prefix} ${name} ${paint(shortPath(args?.path || "."), null, { dim: true })}`
+      return `  ${prefix} ${name} ${toolMuted(shortPath(args?.path || "."))}`
     case "grep":
     case "glob":
-      return `  ${prefix} ${name} ${paint(clipText(args?.pattern, 60), null, { dim: true })}`
+      return `  ${prefix} ${name} ${toolMuted(clipText(args?.pattern, 60))}`
     case "task":
-      return `  ${prefix} ${name} ${paint(clipText(args?.description || args?.prompt, 60), null, { dim: true })}`
+      return `  ${prefix} ${name} ${toolMuted(clipText(args?.description || args?.prompt, 60))}`
     case "todowrite":
       return null // handled by result preview only
     case "webfetch":
-      return `  ${prefix} ${name} ${paint(clipText(args?.url, 60), null, { dim: true })}`
+      return `  ${prefix} ${name} ${toolMuted(clipText(args?.url, 60))}`
     case "websearch":
-      return `  ${prefix} ${name} ${paint(clipText(args?.query, 60), null, { dim: true })}`
+      return `  ${prefix} ${name} ${toolMuted(clipText(args?.query, 60))}`
     case "question":
-      return `  ~ ${paint("Asking questions...", null, { dim: true })}`
+      return `  ~ ${toolMuted("Asking questions...")}`
     case "enter_plan":
       return `  ${paint(SYM.plan, "magenta")} ${paint("Enter Plan", "magenta")}`
     case "exit_plan":
       return `  ${paint(SYM.planDone, "green")} ${paint("Submit Plan", "green")}`
     default:
-      return `  ${prefix} ${name} ${paint(clipText(args ? Object.keys(args).slice(0, 3).join(", ") : "", 40), null, { dim: true })}`
+      return `  ${prefix} ${name} ${toolMuted(clipText(args ? Object.keys(args).slice(0, 3).join(", ") : "", 40))}`
   }
+}
+
+function durationLabel(durationMs) {
+  const value = Math.max(0, Number(durationMs) || 0)
+  if (value < 1000) return `${Math.round(value)}ms`
+  return `${(value / 1000).toFixed(value < 10000 ? 1 : 0)}s`
+}
+
+export function formatToolBlockSummary(toolName, status, durationMs, args) {
+  const start = formatToolStart(toolName, args) || `  ${toolMuted(toolName)}`
+  if (status === "running") return start
+  if (status === "error" || status === "cancelled" || status === "blocked") {
+    return `${start} ${paint(status === "error" ? "✗" : status, "red", { dim: true })} ${toolMuted(durationLabel(durationMs))}`
+  }
+  return `${start} ${toolMuted(`✓ ${durationLabel(durationMs)}`)}`
+}
+
+function rawDiffLines(value) {
+  return sanitizeTerminalText(value).split("\n")
+}
+
+function clippedDiffLine(value) {
+  const text = String(value ?? "")
+  return text.length > MAX_TOOL_DETAIL_WIDTH
+    ? `${text.slice(0, MAX_TOOL_DETAIL_WIDTH - 3)}...`
+    : text
+}
+
+/**
+ * Render a bounded, reviewable mutation preview from tool arguments. The
+ * executor intentionally keeps event metadata compact, so edit arguments are
+ * the safest source for the red/green detail view.
+ */
+export function formatToolDiffDetails(toolName, args = {}, {
+  maxLines = MAX_TOOL_DETAIL_LINES,
+  theme = null,
+  metadata = null
+} = {}) {
+  const limit = Math.max(1, Number(maxLines) || MAX_TOOL_DETAIL_LINES)
+  const rows = []
+  let truncated = false
+
+  function add(prefix, value, color) {
+    for (const line of rawDiffLines(value)) {
+      if (rows.length >= limit) {
+        truncated = true
+        return
+      }
+      rows.push(`    ${paint(`${prefix}${clippedDiffLine(line)}`, color, { dim: true })}`)
+    }
+  }
+
+  function label(value) {
+    if (rows.length >= limit) {
+      truncated = true
+      return
+    }
+    rows.push(`    ${toolMuted(value)}`)
+  }
+
+  const mutations = Array.isArray(metadata?.mutations) ? metadata.mutations : []
+  if (mutations.length > 0) {
+    for (const mutation of mutations) {
+      if (mutation.filePath) label(shortPath(mutation.filePath))
+      for (const hunk of mutation.structuredPatch || []) {
+        label(`@@ -${hunk.oldStart || 0},${hunk.oldLineCount || 0} +${hunk.newStart || 0},${hunk.newLineCount || 0} @@`)
+        for (const line of hunk.lines || []) {
+          if (line.type === "remove") add("- ", line.text, diffDel(theme))
+          else if (line.type === "add") add("+ ", line.text, diffAdd(theme))
+          else add("  ", line.text, TOOL_MUTED_COLOR)
+          if (truncated) break
+        }
+        if (truncated) break
+      }
+      if (truncated) break
+    }
+    if (truncated) rows.push(`    ${toolMuted(`… diff truncated after ${limit} lines`)}`)
+    return rows
+  }
+
+  switch (String(toolName || "").toLowerCase()) {
+    case "write":
+      add("+ ", args.content ?? "", diffAdd(theme))
+      break
+    case "edit": {
+      const before = args.before ?? args.old_string ?? ""
+      const after = args.after ?? args.new_string ?? ""
+      add("- ", before, diffDel(theme))
+      add("+ ", after, diffAdd(theme))
+      break
+    }
+    case "patch": {
+      const start = Number(args.start_line) || "?"
+      const end = Number(args.end_line) || start
+      add("- ", `lines ${start}-${end}`, diffDel(theme))
+      add("+ ", args.content ?? "", diffAdd(theme))
+      break
+    }
+    case "multiedit": {
+      const changes = Array.isArray(args.changes) ? args.changes : []
+      for (const change of changes) {
+        label(shortPath(change?.path || "(unknown file)"))
+        if (Object.prototype.hasOwnProperty.call(change || {}, "before")) {
+          add("- ", change.before, diffDel(theme))
+        }
+        add("+ ", change?.after ?? "", diffAdd(theme))
+        if (truncated) break
+      }
+      break
+    }
+    case "notebookedit": {
+      const mode = String(args.edit_mode || "replace")
+      const cell = Number(args.cell_number ?? 0)
+      if (mode !== "insert") {
+        add("- ", `cell ${cell}${mode === "delete" ? "" : " previous content"}`, diffDel(theme))
+      }
+      if (mode !== "delete") add("+ ", args.new_source ?? "", diffAdd(theme))
+      break
+    }
+    default:
+      return []
+  }
+
+  if (truncated) rows.push(`    ${toolMuted(`… diff truncated after ${limit} lines`)}`)
+  return rows
 }
 
 export function formatToolFinish(toolName, status, durationMs, args) {
@@ -102,7 +246,7 @@ export function formatToolFinish(toolName, status, durationMs, args) {
 
 export function formatToolResultPreview(toolName, output, status, args) {
   if (status !== "completed") return null
-  const text = String(output || "").trim()
+  const text = sanitizeTerminalText(output).trim()
 
   switch (toolName) {
     case "bash": {
@@ -117,8 +261,8 @@ export function formatToolResultPreview(toolName, output, status, args) {
       return `    ${paint(`+${n} lines`, diffAdd(), { dim: true })}`
     }
     case "edit": {
-      const added = String(args?.new_string || "").split("\n").filter(Boolean).length
-      const removed = String(args?.old_string || "").split("\n").filter(Boolean).length
+      const added = String(args?.after ?? args?.new_string ?? "").split("\n").filter(Boolean).length
+      const removed = String(args?.before ?? args?.old_string ?? "").split("\n").filter(Boolean).length
       const parts = []
       if (added > 0) parts.push(paint(`+${added}`, diffAdd()))
       if (removed > 0) parts.push(paint(`-${removed}`, diffDel()))
@@ -157,9 +301,18 @@ export function formatToolResultPreview(toolName, output, status, args) {
   }
 }
 
+export function formatToolDetailLines(toolName, output, status, args, options = {}) {
+  if (status !== "completed") return []
+  const diff = formatToolDiffDetails(toolName, args, options)
+  if (diff.length > 0) return diff
+  const preview = formatToolResultPreview(toolName, output, status, args)
+  if (!preview) return []
+  return Array.isArray(preview) ? preview : [preview]
+}
+
 function formatToolError(error) {
   if (!error) return null
-  return `  ${paint(clipText(stripAnsi(error), 120), "red", { dim: true })}`
+  return `  ${paint(clipText(error, 120), "red", { dim: true })}`
 }
 
 // ── Thinking Formatter ──────────────────────────────────
@@ -396,11 +549,15 @@ export function formatRecoverySuggestions(recovery) {
 
 // ── Renderer ─────────────────────────────────────────────
 
-export function createActivityRenderer({ output, theme = null }) {
+export function createActivityRenderer({ output, theme = null, eventFilter = null }) {
   _theme = theme
   const log = typeof output?.appendLog === "function"
-    ? output.appendLog
+    ? (value, options) => output.appendLog(value, options)
     : (text) => console.log(text)
+  const updateLog = typeof output?.updateLog === "function"
+    ? (id, patch) => output.updateLog(id, patch)
+    : null
+  const supportsStructuredLogs = Boolean(updateLog)
 
   const toolTimers = new Map()
   let timerCounter = 0
@@ -414,59 +571,124 @@ export function createActivityRenderer({ output, theme = null }) {
   const activeToolKeys = new Map()
   // Track tool args for finish formatting
   const activeToolArgs = new Map()
+  // Structured transcript block for each active tool invocation
+  const activeToolLogIds = new Map()
 
   function handleEvent(event) {
-    const { type, payload, sessionId, turnId } = event
+    if (typeof eventFilter === "function" && !eventFilter(event)) return
+    const { type, sessionId, turnId } = event
+    const payload = sanitizeTerminalValue(event.payload || {})
 
     switch (type) {
       case EVENT_TYPES.TOOL_START: {
         const key = timerKey(sessionId, turnId, payload.tool)
-        const lookupKey = `${sessionId}:${turnId}:${payload.tool}`
+        const lookupKey = payload.invocationId || `${sessionId}:${turnId}:${payload.tool}`
         toolTimers.set(key, Date.now())
         activeToolKeys.set(lookupKey, key)
         activeToolArgs.set(lookupKey, payload.args)
         // Show tool call inline (compact dim line)
         const startLine = formatToolStart(payload.tool, payload.args)
-        if (startLine) log(startLine)
+        if (startLine) {
+          if (supportsStructuredLogs) {
+            const logId = log({
+              kind: "tool",
+              summary: formatToolBlockSummary(payload.tool, "running", 0, payload.args),
+              details: [],
+              collapsible: true,
+              expanded: false,
+              status: "running",
+              tone: "muted",
+              metadata: {
+                tool: payload.tool,
+                sessionId,
+                turnId
+              }
+            })
+            if (logId !== null && logId !== undefined) activeToolLogIds.set(lookupKey, logId)
+          } else {
+            log(startLine)
+          }
+        }
         break
       }
 
       case EVENT_TYPES.TOOL_FINISH: {
-        const lookupKey = `${sessionId}:${turnId}:${payload.tool}`
+        const lookupKey = payload.invocationId || `${sessionId}:${turnId}:${payload.tool}`
         const key = activeToolKeys.get(lookupKey)
         const savedArgs = activeToolArgs.get(lookupKey) || payload.args
+        const startedAt = key ? toolTimers.get(key) : null
+        const durationMs = Number(payload.durationMs)
+          || (startedAt ? Math.max(0, Date.now() - startedAt) : 0)
         if (key) {
           toolTimers.delete(key)
           activeToolKeys.delete(lookupKey)
           activeToolArgs.delete(lookupKey)
         }
-        const finishLine = formatToolFinish(payload.tool, payload.status, 0, savedArgs)
-        if (finishLine) log(finishLine)
-        const preview = formatToolResultPreview(payload.tool, payload.output, payload.status, savedArgs)
-        if (preview) {
-          if (Array.isArray(preview)) {
-            for (const line of preview) log(line)
-          } else {
-            log(preview)
-          }
+        const details = formatToolDetailLines(
+          payload.tool,
+          payload.output,
+          payload.status,
+          savedArgs,
+          { theme, metadata: payload.metadata }
+        )
+        const logId = activeToolLogIds.get(lookupKey)
+        activeToolLogIds.delete(lookupKey)
+
+        if (supportsStructuredLogs && logId !== null && logId !== undefined) {
+          updateLog(logId, {
+            summary: formatToolBlockSummary(payload.tool, payload.status, durationMs, savedArgs),
+            details,
+            collapsible: details.length > 0,
+            expanded: false,
+            status: payload.status || "completed",
+            metadata: {
+              durationMs,
+              resultMetadata: payload.metadata || null
+            }
+          })
+        } else {
+          const finishLine = formatToolFinish(payload.tool, payload.status, durationMs, savedArgs)
+          if (finishLine) log(finishLine)
+          for (const line of details) log(line)
+          // Blank line after tool for visual spacing
+          if (payload.tool !== "todowrite") log("")
         }
-        // Blank line after tool for visual spacing
-        if (payload.tool !== "todowrite") log("")
         break
       }
 
       case EVENT_TYPES.TOOL_ERROR: {
-        const lookupKey = `${sessionId}:${turnId}:${payload.tool}`
+        const lookupKey = payload.invocationId || `${sessionId}:${turnId}:${payload.tool}`
         const key = activeToolKeys.get(lookupKey)
         const savedArgs = activeToolArgs.get(lookupKey) || payload.args
+        const startedAt = key ? toolTimers.get(key) : null
+        const durationMs = Number(payload.durationMs)
+          || (startedAt ? Math.max(0, Date.now() - startedAt) : 0)
         if (key) {
           toolTimers.delete(key)
           activeToolKeys.delete(lookupKey)
           activeToolArgs.delete(lookupKey)
         }
-        log(formatToolFinish(payload.tool, payload.status || "error", 0, savedArgs))
         const errLine = formatToolError(payload.error)
-        if (errLine) log(errLine)
+        const logId = activeToolLogIds.get(lookupKey)
+        activeToolLogIds.delete(lookupKey)
+        if (supportsStructuredLogs && logId !== null && logId !== undefined) {
+          updateLog(logId, {
+            summary: formatToolBlockSummary(
+              payload.tool,
+              payload.status || "error",
+              durationMs,
+              savedArgs
+            ),
+            details: errLine ? [errLine] : [],
+            collapsible: Boolean(errLine),
+            expanded: false,
+            status: payload.status || "error",
+            metadata: { durationMs }
+          })
+        } else {
+          log(formatToolFinish(payload.tool, payload.status || "error", durationMs, savedArgs))
+          if (errLine) log(errLine)
+        }
         break
       }
 
@@ -662,6 +884,7 @@ export function createActivityRenderer({ output, theme = null }) {
       toolTimers.clear()
       activeToolKeys.clear()
       activeToolArgs.clear()
+      activeToolLogIds.clear()
     }
   }
 }

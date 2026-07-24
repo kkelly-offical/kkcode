@@ -1,5 +1,11 @@
 import { ProviderError } from "../core/errors.mjs"
 import { buildRequestHeaders } from "../http/identity.mjs"
+import {
+  annotateRetryAfter,
+  primeRetriableStream,
+  requestWithRetry,
+  resolveRetryOptions
+} from "./retry-policy.mjs"
 
 function mapTools(tools) {
   if (!tools || !tools.length) return undefined
@@ -99,7 +105,20 @@ function notifyResponse(input, response) {
 
 // --- Non-streaming ---
 export async function requestOllama(input) {
-  const { baseUrl, model, system, messages, tools, timeoutMs = 300000, signal = null } = input
+  const { baseUrl, model, system, messages, tools, timeoutMs = 300000, retry = {}, signal = null } = input
+
+  if (!retry._requestRetried) {
+    return requestWithRetry({
+      execute: () => requestOllama({
+        ...input,
+        retry: { _requestRetried: true }
+      }),
+      ...resolveRetryOptions(retry),
+      baseDelayMs: Number(retry.baseDelayMs ?? 800),
+      signal,
+      onRetry: retry.onRetry
+    })
+  }
 
   const endpoint = `${baseUrl.replace(/\/$/, "")}/api/chat`
   const payload = {
@@ -131,6 +150,7 @@ export async function requestOllama(input) {
       provider: "ollama", model, endpoint
     })
     error.httpStatus = response.status
+    annotateRetryAfter(error, response)
     throw error
   }
 
@@ -158,7 +178,31 @@ export async function requestOllama(input) {
 
 // --- Streaming (NDJSON) ---
 export async function* requestOllamaStream(input) {
-  const { baseUrl, model, system, messages, tools, timeoutMs = 300000, signal = null } = input
+  const { baseUrl, model, system, messages, tools, timeoutMs = 300000, retry = {}, signal = null } = input
+
+  if (!retry._streamPrimed) {
+    const { iterator, first } = await primeRetriableStream({
+      create: () => requestOllamaStream({
+        ...input,
+        retry: { _streamPrimed: true }
+      }),
+      ...resolveRetryOptions(retry),
+      baseDelayMs: Number(retry.baseDelayMs ?? 800),
+      signal,
+      onRetry: retry.onRetry
+    })
+    try {
+      yield first.value
+      while (true) {
+        const next = await iterator.next()
+        if (next.done) break
+        yield next.value
+      }
+    } finally {
+      try { await iterator.return?.() } catch { /* stream is already closing */ }
+    }
+    return
+  }
 
   const endpoint = `${baseUrl.replace(/\/$/, "")}/api/chat`
   const payload = {
@@ -190,6 +234,7 @@ export async function* requestOllamaStream(input) {
       provider: "ollama", model, endpoint
     })
     error.httpStatus = response.status
+    annotateRetryAfter(error, response)
     throw error
   }
 

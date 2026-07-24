@@ -241,6 +241,7 @@ export function createReviewCommand() {
         reviewSpan = await startAuditSpan({
           type: "review",
           reviewId: activeReviewId,
+          sessionId: state.sessionId || null,
           provider: providerType,
           model,
           reviewSource: source.kind,
@@ -256,6 +257,7 @@ export function createReviewCommand() {
           reviewId: activeReviewId,
           traceId: reviewSpan.traceId,
           parentEventId: reviewSpan.eventId,
+          sessionId: state.sessionId || null,
           previousReport: state.branchReport
         })
         state.branchReport = report

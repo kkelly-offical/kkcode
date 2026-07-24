@@ -1,4 +1,4 @@
-# KK Code v0.3.2 — unified OpenAI / Anthropic gateway
+# KK Code v0.3.3 — unified OpenAI / Anthropic gateway
 #
 # 1. Set the credential outside YAML:
 #      export KK_GATEWAY_API_KEY="..."
@@ -34,6 +34,7 @@ provider:
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
     max_tokens: 32768
-    retry_attempts: 3
+    # Reconnects after the initial request (5 means at most 6 total requests).
+    retry_attempts: 5
     retry_base_delay_ms: 800
     stream: true

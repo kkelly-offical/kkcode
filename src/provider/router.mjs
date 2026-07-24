@@ -105,9 +105,12 @@ function resolveSettings(configState, providerType, overrides = {}) {
 
 function classifyProviderFailure(error) {
   const cls = String(error?.errorClass || "").toLowerCase()
+  if (["aborted", "cancelled"].includes(cls)) return "cancelled"
   if (["auth", "authentication"].includes(cls)) return "auth"
   if (["rate_limit"].includes(cls)) return "rate_limit"
-  if (["context_overflow", "bad_response"].includes(cls)) return "bad_response"
+  if (["timeout"].includes(cls)) return "timeout"
+  if (["network"].includes(cls)) return "network"
+  if (["context_overflow", "bad_request", "bad_response"].includes(cls)) return "bad_response"
   if (["server", "transient"].includes(cls)) return "bad_response"
 
   const status = Number(error?.status || error?.httpStatus || 0)
@@ -118,8 +121,10 @@ function classifyProviderFailure(error) {
 
   const code = String(error?.code || "").toUpperCase()
   const msg = String(error?.message || "").toLowerCase()
-  if (code === "ABORT_ERR" || msg.includes("timeout") || msg.includes("timed out")) return "timeout"
-  if (code === "ETIMEDOUT" || code === "ECONNRESET") return "timeout"
+  if (code === "ABORT_ERR") return "cancelled"
+  if (msg.includes("timeout") || msg.includes("timed out")) return "timeout"
+  if (code === "ETIMEDOUT") return "timeout"
+  if (["ECONNRESET", "ECONNREFUSED", "ENOTFOUND", "EHOSTUNREACH", "ENETUNREACH", "EAI_AGAIN"].includes(code)) return "network"
   if (msg.includes("invalid json") || msg.includes("parse")) return "bad_response"
   return "unknown"
 }
@@ -143,6 +148,9 @@ function normalizeProviderError(error, providerType, model) {
   })
   wrapped.reason = reason
   wrapped.cause = error
+  wrapped.errorClass = error?.errorClass || reason
+  wrapped.httpStatus = Number(error?.httpStatus || error?.status || 0) || null
+  if (error?.needsCompaction) wrapped.needsCompaction = true
   return wrapped
 }
 
@@ -185,6 +193,53 @@ function auditFailureMetadata(error, signal) {
   }
 }
 
+function createRetryTelemetry({
+  requestContext,
+  sessionId,
+  turnId,
+  provider,
+  model
+}) {
+  let retryCount = 0
+  let retryBudgetAttempts = 1
+  let lastRetryClass = null
+  const retryClasses = new Set()
+
+  return {
+    async onRetry(retryInfo) {
+      retryCount += 1
+      retryBudgetAttempts = Number(retryInfo.totalAttempts || retryBudgetAttempts)
+      lastRetryClass = String(retryInfo.classification || "unknown")
+      retryClasses.add(lastRetryClass)
+      await EventBus.emit({
+        type: EVENT_TYPES.PROVIDER_RETRY,
+        ...requestContext,
+        sessionId,
+        turnId,
+        payload: {
+          provider,
+          model,
+          retryAttempt: retryInfo.retryAttempt,
+          maxRetries: retryInfo.maxRetries,
+          requestAttempt: retryInfo.requestAttempt,
+          totalAttempts: retryInfo.totalAttempts,
+          classification: retryInfo.classification,
+          delayMs: retryInfo.delayMs
+        }
+      })
+    },
+    snapshot() {
+      return {
+        retryCount,
+        retryClasses: [...retryClasses],
+        lastRetryClass,
+        attemptsObserved: retryCount + 1,
+        retryBudgetAttempts
+      }
+    }
+  }
+}
+
 // --- Non-streaming Request ---
 export async function requestProvider({
   configState,
@@ -199,6 +254,8 @@ export async function requestProvider({
   traceId = "",
   requestId = "",
   parentEventId = "",
+  sessionId = null,
+  turnId = null,
   reviewId = "",
   signal = null
 }) {
@@ -228,6 +285,13 @@ export async function requestProvider({
   const requestContext = createRequestContext({ traceId, requestId, parentEventId })
   let responseStatus = null
   let responseRequestId = null
+  const retryTelemetry = createRetryTelemetry({
+    requestContext,
+    sessionId,
+    turnId,
+    provider: settings.configKey,
+    model: settings.model
+  })
 
   const input = {
     apiKey,
@@ -242,8 +306,9 @@ export async function requestProvider({
     timeoutMs: Number(providerCfg.timeout_ms || 120000),
     maxTokens: Number(maxTokens || providerCfg.max_tokens || 16384),
     retry: {
-      attempts: Number(providerCfg.retry_attempts || 3),
-      baseDelayMs: Number(providerCfg.retry_base_delay_ms || 800)
+      retries: Number(providerCfg.retry_attempts ?? 5),
+      baseDelayMs: Number(providerCfg.retry_base_delay_ms || 800),
+      onRetry: retryTelemetry.onRetry
     },
     thinking: providerCfg.thinking || null,
     reasoningEffort: providerCfg.reasoning_effort || null,
@@ -262,6 +327,8 @@ export async function requestProvider({
   const auditSpan = await startAuditSpan({
     type: "provider.request",
     ...requestContext,
+    sessionId,
+    turnId,
     provider: settings.configKey,
     providerType: settings.providerType,
     protocol: settings.protocol,
@@ -276,7 +343,8 @@ export async function requestProvider({
       status: "ok",
       httpStatus: responseStatus,
       upstreamRequestId: responseRequestId,
-      usage: result?.usage || null
+      usage: result?.usage || null,
+      ...retryTelemetry.snapshot()
     })
     return result
   } catch (error) {
@@ -285,7 +353,8 @@ export async function requestProvider({
       new Error(signal?.aborted ? "provider request cancelled" : "provider request failed"),
       {
         ...auditFailureMetadata(error, signal),
-        upstreamRequestId: responseRequestId
+        upstreamRequestId: responseRequestId,
+        ...retryTelemetry.snapshot()
       }
     )
     throw normalized
@@ -305,6 +374,8 @@ export async function* requestProviderStream({
   traceId = "",
   requestId = "",
   parentEventId = "",
+  sessionId = null,
+  turnId = null,
   reviewId = "",
   signal = null,
   compaction = null
@@ -336,7 +407,7 @@ export async function* requestProviderStream({
   if (providerCfg.stream === false) {
     const result = await requestProvider({
       configState, providerType, model, system, messages, tools, baseUrl, apiKeyEnv,
-      traceId, requestId, parentEventId, reviewId, signal
+      traceId, requestId, parentEventId, sessionId, turnId, reviewId, signal
     })
     if (result.reasoning) {
       yield { type: "thinking", content: result.reasoning, source: "reasoning_content" }
@@ -350,6 +421,13 @@ export async function* requestProviderStream({
   const requestContext = createRequestContext({ traceId, requestId, parentEventId })
   let responseStatus = null
   let responseRequestId = null
+  const retryTelemetry = createRetryTelemetry({
+    requestContext,
+    sessionId,
+    turnId,
+    provider: settings.configKey,
+    model: settings.model
+  })
   const input = {
     apiKey,
     baseUrl: settings.baseUrl,
@@ -364,8 +442,9 @@ export async function* requestProviderStream({
     streamIdleTimeoutMs: Number(providerCfg.stream_idle_timeout_ms || 120000),
     maxTokens: Number(providerCfg.max_tokens || 16384),
     retry: {
-      attempts: Number(providerCfg.retry_attempts || 3),
-      baseDelayMs: Number(providerCfg.retry_base_delay_ms || 800)
+      retries: Number(providerCfg.retry_attempts ?? 5),
+      baseDelayMs: Number(providerCfg.retry_base_delay_ms || 800),
+      onRetry: retryTelemetry.onRetry
     },
     thinking: providerCfg.thinking || null,
     reasoningEffort: providerCfg.reasoning_effort || null,
@@ -385,6 +464,8 @@ export async function* requestProviderStream({
   const auditSpan = await startAuditSpan({
     type: "provider.request",
     ...requestContext,
+    sessionId,
+    turnId,
     provider: settings.configKey,
     providerType: settings.providerType,
     protocol: settings.protocol,
@@ -399,22 +480,22 @@ export async function* requestProviderStream({
   let stopReason = null
   try {
     for await (const chunk of provider.requestStream(input)) {
+      if (signal?.aborted) {
+        const error = new Error("provider stream cancelled")
+        error.code = "ABORT_ERR"
+        error.errorClass = "aborted"
+        throw error
+      }
       if (chunk?.type === "usage") usage = chunk.usage || null
       if (chunk?.type === "stop") stopReason = chunk.reason || null
       yield chunk
     }
     streamCompleted = true
     if (signal?.aborted) {
-      auditClosed = true
-      await auditSpan?.fail(new Error("provider stream cancelled"), {
-        status: "cancelled",
-        reason: "cancelled",
-        httpStatus: responseStatus,
-        upstreamRequestId: responseRequestId,
-        usage,
-        stopReason
-      })
-      return
+      const error = new Error("provider stream cancelled")
+      error.code = "ABORT_ERR"
+      error.errorClass = "aborted"
+      throw error
     }
     auditClosed = true
     await auditSpan?.finish({
@@ -422,7 +503,8 @@ export async function* requestProviderStream({
       httpStatus: responseStatus,
       upstreamRequestId: responseRequestId,
       usage,
-      stopReason
+      stopReason,
+      ...retryTelemetry.snapshot()
     })
   } catch (error) {
     auditClosed = true
@@ -432,7 +514,8 @@ export async function* requestProviderStream({
         ...auditFailureMetadata(error, signal),
         upstreamRequestId: responseRequestId,
         usage,
-        stopReason
+        stopReason,
+        ...retryTelemetry.snapshot()
       }
     )
     throw normalizeProviderError(error, settings.providerType, settings.model)
@@ -444,7 +527,8 @@ export async function* requestProviderStream({
           httpStatus: responseStatus,
           upstreamRequestId: responseRequestId,
           usage,
-          stopReason
+          stopReason,
+          ...retryTelemetry.snapshot()
         })
       } else {
         await auditSpan?.fail(new Error("provider stream consumer closed"), {
@@ -453,7 +537,8 @@ export async function* requestProviderStream({
           httpStatus: responseStatus,
           upstreamRequestId: responseRequestId,
           usage,
-          stopReason
+          stopReason,
+          ...retryTelemetry.snapshot()
         })
       }
     }
@@ -464,7 +549,8 @@ export async function* requestProviderStream({
 export async function countTokensProvider({
   configState, providerType, model, system, messages, tools,
   baseUrl = null, apiKeyEnv = null,
-  traceId = "", requestId = "", parentEventId = "", reviewId = "", signal = null
+  traceId = "", requestId = "", parentEventId = "",
+  sessionId = null, turnId = null, reviewId = "", signal = null
 }) {
   const resolvedProviderType = providerType || configState.config.provider.default
   const settings = resolveSettings(configState, resolvedProviderType, { model, baseUrl, apiKeyEnv })
@@ -516,6 +602,8 @@ export async function countTokensProvider({
   const auditSpan = await startAuditSpan({
     type: "provider.token_count",
     ...requestContext,
+    sessionId,
+    turnId,
     provider: settings.configKey,
     providerType: settings.providerType,
     protocol: settings.protocol,

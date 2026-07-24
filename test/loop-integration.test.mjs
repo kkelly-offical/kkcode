@@ -7,6 +7,8 @@ import { registerProvider } from "../src/provider/router.mjs"
 import { ToolRegistry } from "../src/tool/registry.mjs"
 import { PermissionEngine } from "../src/permission/engine.mjs"
 import { processTurnLoop } from "../src/session/loop.mjs"
+import { EventBus } from "../src/core/events.mjs"
+import { EVENT_TYPES } from "../src/core/constants.mjs"
 
 let tmpDir
 
@@ -95,6 +97,66 @@ test("loop: pure text reply", async () => {
   assert.equal(result.toolEvents.length, 0)
   assert.equal(result.usage.input, 10)
   assert.equal(result.usage.output, 5)
+})
+
+test("loop: alternating thinking and text emits a start boundary for every segment", async () => {
+  registerProvider("mock", {
+    async request() {
+      return { text: "firstsecond", toolCalls: [], usage: {} }
+    },
+    async *requestStream() {
+      yield { type: "thinking", content: "reason one" }
+      yield { type: "text", content: "first" }
+      yield { type: "thinking", content: "reason two" }
+      yield { type: "text", content: "second" }
+      yield {
+        type: "usage",
+        usage: { input: 4, output: 6, cacheRead: 0, cacheWrite: 0 }
+      }
+      yield { type: "stop", reason: "end_turn" }
+    }
+  })
+
+  const sessionId = `ses_alternating_${Date.now()}`
+  const observed = []
+  const segmentTypes = new Set([
+    EVENT_TYPES.STREAM_THINKING_START,
+    EVENT_TYPES.STREAM_THINKING_DELTA,
+    EVENT_TYPES.STREAM_TEXT_START,
+    EVENT_TYPES.STREAM_TEXT_DELTA
+  ])
+  const unsubscribe = EventBus.subscribe((event) => {
+    if (event.sessionId === sessionId && segmentTypes.has(event.type)) {
+      observed.push(event.type)
+    }
+  })
+
+  try {
+    const configState = baseConfig()
+    configState.config.provider.mock.stream = true
+    const result = await runLoop({
+      prompt: "alternate reasoning and answer segments",
+      mode: "agent",
+      model: "test",
+      providerType: "mock",
+      sessionId,
+      configState
+    })
+
+    assert.equal(result.reply, "firstsecond")
+    assert.deepEqual(observed, [
+      EVENT_TYPES.STREAM_THINKING_START,
+      EVENT_TYPES.STREAM_THINKING_DELTA,
+      EVENT_TYPES.STREAM_TEXT_START,
+      EVENT_TYPES.STREAM_TEXT_DELTA,
+      EVENT_TYPES.STREAM_THINKING_START,
+      EVENT_TYPES.STREAM_THINKING_DELTA,
+      EVENT_TYPES.STREAM_TEXT_START,
+      EVENT_TYPES.STREAM_TEXT_DELTA
+    ])
+  } finally {
+    unsubscribe()
+  }
 })
 
 test("loop: single tool call then text reply", async () => {

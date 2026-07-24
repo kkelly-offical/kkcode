@@ -80,6 +80,8 @@ export function reduceAppState(state, event) {
     case "turn.step.start":
     case "stream.thinking.start":
       return { ...current, phase: "thinking" }
+    case "provider.retry":
+      return { ...current, phase: "retrying" }
     case "stream.thinking.delta":
       return appendDelta({ ...current, phase: "thinking" }, "thinking", payload.text || payload.content || "")
     case "stream.text.start":

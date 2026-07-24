@@ -1,6 +1,11 @@
 import { ProviderError } from "../core/errors.mjs"
 import { buildRequestHeaders } from "../http/identity.mjs"
-import { abortableSleep, requestWithRetry } from "./retry-policy.mjs"
+import {
+  annotateRetryAfter,
+  primeRetriableStream,
+  requestWithRetry,
+  resolveRetryOptions
+} from "./retry-policy.mjs"
 import { parseSSE } from "./sse.mjs"
 
 function mapTools(tools) {
@@ -174,6 +179,35 @@ function notifyResponse(input, response) {
   try { input.onResponse?.(response) } catch { /* audit metadata must not affect requests */ }
 }
 
+async function fetchStreamConnection(endpoint, init, timeoutMs, signal) {
+  const timeout = Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0
+    ? Number(timeoutMs)
+    : 120000
+  const controller = new AbortController()
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, timeout)
+  const fetchSignal = signal
+    ? AbortSignal.any([signal, controller.signal])
+    : controller.signal
+
+  try {
+    return await fetch(endpoint, { ...init, signal: fetchSignal })
+  } catch (error) {
+    if (timedOut && !signal?.aborted) {
+      const timeoutError = new Error(`openai connection timeout after ${timeout}ms`, { cause: error })
+      timeoutError.name = "TimeoutError"
+      timeoutError.code = "ETIMEDOUT"
+      throw timeoutError
+    }
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export async function countTokensOpenAI(input) {
   // Chat Completions has no portable count-only endpoint. A one-token
   // completion adds latency and billable usage, so callers use local estimates.
@@ -203,9 +237,10 @@ export async function requestOpenAI(input) {
   const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`
 
   return requestWithRetry({
-    attempts: Number(retry.attempts ?? 3),
+    ...resolveRetryOptions(retry),
     baseDelayMs: Number(retry.baseDelayMs ?? 800),
     signal,
+    onRetry: retry.onRetry,
     execute: async () => {
       const response = await fetch(endpoint, {
         method: "POST",
@@ -232,6 +267,7 @@ export async function requestOpenAI(input) {
           endpoint
         })
         error.httpStatus = response.status
+        annotateRetryAfter(error, response)
         throw error
       }
 
@@ -270,6 +306,34 @@ export async function* requestOpenAIStream(input) {
     })
   }
 
+  if (!retry._streamPrimed) {
+    const { iterator, first } = await primeRetriableStream({
+      create: () => requestOpenAIStream({
+        ...input,
+        retry: {
+          attempts: 1,
+          baseDelayMs: retry.baseDelayMs,
+          _streamPrimed: true
+        }
+      }),
+      ...resolveRetryOptions(retry),
+      baseDelayMs: Number(retry.baseDelayMs ?? 800),
+      signal,
+      onRetry: retry.onRetry
+    })
+    try {
+      yield first.value
+      while (true) {
+        const next = await iterator.next()
+        if (next.done) break
+        yield next.value
+      }
+    } finally {
+      try { await iterator.return?.() } catch { /* stream is already closing */ }
+    }
+    return
+  }
+
   const payload = {
     model,
     messages: [
@@ -284,22 +348,13 @@ export async function* requestOpenAIStream(input) {
     stream_options: { include_usage: true }
   }
   const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`
-  const attempts = Number(retry.attempts ?? 3)
-  const baseDelayMs = Number(retry.baseDelayMs ?? 800)
-
-  let response
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    let connTimer = null
-    const connController = new AbortController()
-    try {
-      // Use a connection-only timeout for the initial fetch.
-      // Once headers arrive, clear it — the SSE idle timeout handles the streaming phase.
-      connTimer = setTimeout(() => connController.abort(), timeoutMs)
-      const fetchSignal = signal
-        ? AbortSignal.any([signal, connController.signal])
-        : connController.signal
-
-      response = await fetch(endpoint, {
+  const response = await requestWithRetry({
+    attempts: Number(retry.attempts ?? 5),
+    baseDelayMs: Number(retry.baseDelayMs ?? 800),
+    signal,
+    onRetry: retry.onRetry,
+    execute: async () => {
+      const candidate = await fetchStreamConnection(endpoint, {
         method: "POST",
         headers: buildRequestHeaders({
           target: "llm",
@@ -311,36 +366,31 @@ export async function* requestOpenAIStream(input) {
           contentType: "application/json",
           authorization: apiKey ? `Bearer ${apiKey}` : ""
         }),
-        body: JSON.stringify(payload),
-        signal: fetchSignal
-      })
-      notifyResponse(input, response)
-      clearTimeout(connTimer)
+        body: JSON.stringify(payload)
+      }, timeoutMs, signal)
+      notifyResponse(input, candidate)
 
-      if (!response.ok) {
-        const text = await response.text().catch(() => "")
-        const error = new ProviderError(`openai stream failed: ${response.status} ${text}`, {
+      if (!candidate.ok) {
+        const text = await candidate.text().catch(() => "")
+        const error = new ProviderError(`openai stream failed: ${candidate.status} ${text}`, {
           provider: "openai", model, endpoint
         })
-        error.httpStatus = response.status
+        error.httpStatus = candidate.status
+        annotateRetryAfter(error, candidate)
         throw error
       }
-      break
-    } catch (err) {
-      clearTimeout(connTimer)
-      if (signal?.aborted) throw err
-      const isNetwork = err?.code === "ETIMEDOUT" || err?.code === "ECONNRESET" || err?.name === "AbortError"
-      if (!isNetwork || attempt >= attempts) throw err
-      await abortableSleep(baseDelayMs * Math.pow(2, attempt - 1), signal)
+      return candidate
     }
-  }
+  })
 
   const toolBuffers = new Map()
   let finishReason = null
+  let sawValidSseEvent = false
 
   for await (const { data } of parseSSE(response.body, signal, { idleTimeoutMs: streamIdleTimeoutMs })) {
     let json
     try { json = JSON.parse(data) } catch { continue }
+    sawValidSseEvent = true
 
     if (json.usage) {
       const pt = json.usage.prompt_tokens ?? 0
@@ -386,6 +436,12 @@ export async function* requestOpenAIStream(input) {
         if (tc.function?.arguments) buf.argsJson += tc.function.arguments
       }
     }
+  }
+
+  if (!sawValidSseEvent) {
+    const error = new Error("openai stream closed before the first valid SSE event")
+    error.errorClass = "transient"
+    throw error
   }
 
   for (const [, buf] of toolBuffers) {

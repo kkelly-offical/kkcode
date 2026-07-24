@@ -30,7 +30,7 @@ provider:
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
     max_tokens: 32768
-    retry_attempts: 3
+    retry_attempts: 5
     retry_base_delay_ms: 800
     stream: true
 
@@ -48,7 +48,7 @@ provider:
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
     max_tokens: 32768
-    retry_attempts: 3
+    retry_attempts: 5
     retry_base_delay_ms: 800
     stream: true
 
@@ -64,7 +64,7 @@ provider:
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
     max_tokens: 32768
-    retry_attempts: 3
+    retry_attempts: 5
     retry_base_delay_ms: 800
     stream: true
 
@@ -79,7 +79,7 @@ provider:
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
     max_tokens: 32768
-    retry_attempts: 3
+    retry_attempts: 5
     retry_base_delay_ms: 800
     stream: true
 
@@ -97,7 +97,7 @@ provider:
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
     max_tokens: 32768
-    retry_attempts: 3
+    retry_attempts: 5
     retry_base_delay_ms: 800
     stream: true
 
@@ -113,7 +113,7 @@ provider:
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
     max_tokens: 32768
-    retry_attempts: 3
+    retry_attempts: 5
     retry_base_delay_ms: 800
     stream: true
 
@@ -130,7 +130,7 @@ provider:
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
     max_tokens: 32768
-    retry_attempts: 3
+    retry_attempts: 5
     retry_base_delay_ms: 800
     stream: true
 
@@ -145,6 +145,6 @@ provider:
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
     max_tokens: 32768
-    retry_attempts: 3
+    retry_attempts: 5
     retry_base_delay_ms: 800
     stream: true

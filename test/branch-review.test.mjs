@@ -321,6 +321,7 @@ test("review model requests inherit umbrella audit context and redact credential
     reviewId: "review-correlated",
     traceId: "trace-review-correlated",
     parentEventId: "event-review-start",
+    sessionId: "ses-review-correlated",
     request: async (input) => {
       calls.push(input)
       return { text: "{\"findings\":[]}" }
@@ -332,6 +333,7 @@ test("review model requests inherit umbrella audit context and redact credential
   assert.equal(calls[0].reviewId, report.id)
   assert.equal(calls[0].traceId, report.traceId)
   assert.equal(calls[0].parentEventId, "event-review-start")
+  assert.equal(calls[0].sessionId, "ses-review-correlated")
   assert.doesNotMatch(calls[0].messages[0].content, new RegExp(credential))
   assert.match(calls[0].messages[0].content, /REDACTED/)
   assert.doesNotMatch(redactReviewDiff(diff), new RegExp(credential))

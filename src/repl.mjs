@@ -26,7 +26,7 @@ import { discoverModelsForProvider } from "./provider/model-catalog.mjs"
 import { escapeTerminalText, validateModelId } from "./provider/model-id.mjs"
 import { loadCustomCommands, applyCommandTemplate } from "./command/custom-commands.mjs"
 import { SkillRegistry } from "./skill/registry.mjs"
-import { renderMarkdown, createStreamRenderer } from "./theme/markdown.mjs"
+import { renderMarkdown } from "./theme/markdown.mjs"
 import { listSessions, getConversationHistory } from "./session/store.mjs"
 import { compactSession } from "./session/compaction.mjs"
 import { ToolRegistry } from "./tool/registry.mjs"
@@ -89,6 +89,36 @@ import {
   finalizeQuestionAnswers
 } from "./repl/dialog-router.mjs"
 import { POLICY_CHOICES, createPolicyPickerState, applyPolicyChoice, applyPermissionLevel, nextPermissionLevel } from "./repl/permission-flow.mjs"
+import {
+  classifySgrMouseEvent,
+  createBracketedPasteDecoder,
+  createSgrMouseDecoder,
+  enterTerminalSequence,
+  exitTerminalSequence,
+  normalizeMouseSelection,
+  renderTerminalFrame,
+  resolveTerminalFeatures
+} from "./repl/terminal-protocol.mjs"
+import {
+  clipAnsiByWidth,
+  inputIndexAtPosition,
+  layoutInputText,
+  moveGraphemeCursor,
+  splitGraphemes,
+  splitTextByCellRange,
+  terminalCellWidth,
+  wrapAnsiLine
+} from "./repl/text-layout.mjs"
+import { copyTerminalText, copyableFrameLine } from "./repl/clipboard.mjs"
+import { createTranscriptModel } from "./ui/transcript-model.mjs"
+import { createToastStore } from "./ui/toast-store.mjs"
+import { shouldApplyActiveTurnEvent } from "./ui/event-scope.mjs"
+import { createFrameBatcher } from "./ui/frame-batcher.mjs"
+import {
+  sanitizeTerminalStyledText,
+  sanitizeTerminalText,
+  sanitizeTerminalValue
+} from "./theme/terminal-sanitize.mjs"
 
 const HIST_DIR = userRootDir()
 const HIST_FILE = join(HIST_DIR, "repl_history")
@@ -159,45 +189,18 @@ function stripAnsi(text) {
   return String(text || "").replace(ANSI_RE, "")
 }
 
-function isFullWidthCodePoint(code) {
-  if (Number.isNaN(code)) return false
-  if (
-    code >= 0x1100 && (
-      code <= 0x115f ||
-      code === 0x2329 || code === 0x232a ||
-      (code >= 0x2e80 && code <= 0xa4cf && code !== 0x303f) ||
-      (code >= 0xac00 && code <= 0xd7a3) ||
-      (code >= 0xf900 && code <= 0xfaff) ||
-      (code >= 0xfe10 && code <= 0xfe19) ||
-      (code >= 0xfe30 && code <= 0xfe6f) ||
-      (code >= 0xff00 && code <= 0xff60) ||
-      (code >= 0xffe0 && code <= 0xffe6) ||
-      (code >= 0x1f300 && code <= 0x1f64f) ||
-      (code >= 0x1f900 && code <= 0x1f9ff) ||
-      (code >= 0x20000 && code <= 0x3fffd)
-    )
-  ) return true
-  return false
-}
-
 function displayWidth(text) {
-  const raw = stripAnsi(text)
-  let width = 0
-  for (const ch of raw) {
-    const code = ch.codePointAt(0)
-    width += isFullWidthCodePoint(code) ? 2 : 1
-  }
-  return width
+  return terminalCellWidth(text)
 }
 
 function clipPlainByWidth(text, maxWidth) {
   if (maxWidth <= 0) return ""
   let out = ""
   let used = 0
-  for (const ch of String(text || "")) {
-    const w = isFullWidthCodePoint(ch.codePointAt(0)) ? 2 : 1
+  for (const segment of splitGraphemes(String(text || ""))) {
+    const w = terminalCellWidth(segment.text)
     if (used + w > maxWidth) break
-    out += ch
+    out += segment.text
     used += w
   }
   return out
@@ -214,8 +217,8 @@ function clipAnsiLine(text, width) {
   const raw = stripAnsi(text)
   const used = displayWidth(raw)
   if (used <= width) return `${String(text || "")}${" ".repeat(Math.max(0, width - used))}`
-  if (width <= 1) return clipPlainByWidth(raw, Math.max(0, width))
-  return `${clipPlainByWidth(raw, width - 1)}~`
+  if (width <= 1) return clipAnsiByWidth(text, Math.max(0, width))
+  return `${clipAnsiByWidth(text, width - 1)}~`
 }
 
 function wrapPlainLine(text, width) {
@@ -236,7 +239,7 @@ function wrapPlainLine(text, width) {
 function wrapLogLines(lines, width, maxRows = null) {
   const wrapped = []
   for (const line of lines) {
-    const parts = wrapPlainLine(line, width)
+    const parts = wrapAnsiLine(line, width)
     for (const part of parts) wrapped.push(part)
   }
   if (!Number.isInteger(maxRows) || maxRows < 0) return wrapped
@@ -1294,18 +1297,12 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
   await saveHistoryLines(HIST_FILE, HIST_SIZE, entered)
 }
 
-function startTuiFrame() {
-  output.write("\x1b[?1049h")
-  output.write("\x1b[?25l")
-  output.write("\x1b[?1002h")   // 启用鼠标按键+拖拽追踪（含滚轮）
-  output.write("\x1b[?1006h")   // 启用 SGR 扩展模式
+function startTuiFrame(features) {
+  output.write(enterTerminalSequence(features))
 }
 
-function stopTuiFrame() {
-  output.write("\x1b[?1002l")   // 禁用鼠标追踪
-  output.write("\x1b[?1006l")   // 禁用 SGR 模式
-  output.write("\x1b[?25h")
-  output.write("\x1b[?1049l")
+function stopTuiFrame(features) {
+  output.write(exitTerminalSequence(features))
 }
 
 function hasShiftEnterSequence(dataChunk) {
@@ -1368,11 +1365,17 @@ function renderSuggestions({ inputLine, suggestions, selected, offset, maxVisibl
 async function startTuiRepl({ ctx, state, providersConfigured, customCommands, recentSessions, historyLines, mcpStatusLines = [] }) {
   let localCustomCommands = customCommands
   let localRecentSessions = recentSessions
+  const terminalFeatures = resolveTerminalFeatures(ctx.configState.config.ui?.terminal || {})
+  const transcript = createTranscriptModel({ maxItems: MAX_TUI_LOG_LINES })
+  const toastStore = createToastStore({
+    durationMs: Number(ctx.configState.config.ui?.terminal?.toast_duration_ms || 2600),
+    maxToasts: 3
+  })
+  for (const line of mcpStatusLines) transcript.appendLog(sanitizeTerminalStyledText(line))
 
   const ui = {
     input: "",
     inputCursor: 0,
-    logs: [...mcpStatusLines],
     busy: false,
     pendingImages: [],
     permissionQueue: [],
@@ -1405,11 +1408,14 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     currentActivity: null,
     currentStep: 0,
     maxSteps: 0,
-    thinkingHidden: false,
     inThinkingStream: false,
-    thinkingSkipped: false,
-    thinkingBuffer: "",
+    thinkingStartedAt: 0,
+    thinkingRaw: "",
+    lastThinkingId: null,
+    streamLogId: null,
+    streamRaw: "",
     appState: createAppState(),
+    activeTurnId: null,
     paused: false,
     turnAbortController: null,
     lastCtrlCTime: 0,
@@ -1421,9 +1427,10 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     pendingModeConfirm: null,
     // 鼠标文本选择状态
     mouseSelection: null,  // { startRow, startCol, endRow, endCol, active }
-    autoCopy: false,       // 拖拽选择后是否自动复制到剪贴板（Ctrl+Y 切换）
+    autoCopy: terminalFeatures.copyOnSelect, // 全屏鼠标模式下默认选中即复制
     inputSelection: null,  // { start, end } 输入框内的选择范围（字符位置）
     inputDragAnchor: -1,   // 输入框拖拽起始字符位置
+    inputLayout: null,
     // 屏幕布局元数据（buildFrame 中更新）
     layoutMeta: { logStartRow: 0, logEndRow: 0, inputStartRow: 0, inputEndRow: 0 },
     wizard: createWizardState(),
@@ -1446,68 +1453,190 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   let renderScheduled = false
   let renderTimer = null
   let spinnerTimer = null
+  let selectionClearTimer = null
+  let disposed = false
+  let terminalSuspended = true
+  let terminalFrameActive = false
+  let keypressDecoderStarted = false
+  let stdinEmitPatched = false
+  let rawModeActive = false
+  let jobControlSuspended = false
+  let resumeTerminalAfterContinue = false
+  let resumeSpinnerAfterContinue = false
+  let onResize = null
+  let onKey = null
+  let onData = null
+  let onSigint = null
+  let onTerminate = null
+  let onSuspend = null
+  let onContinue = null
 
-  function appendLog(text = "") {
-    const follow = ui.scrollOffset === 0
-    const lines = String(text || "").replace(/\r/g, "").split("\n")
-    for (const line of lines) ui.logs.push(line)
-    if (ui.logs.length > MAX_TUI_LOG_LINES) ui.logs.splice(0, ui.logs.length - MAX_TUI_LOG_LINES)
-    if (follow) ui.scrollOffset = 0
-  }
-
-  // 流式 markdown 渲染器 — 每轮对话重置
-  let _streamMd = createStreamRenderer()
-
-  function resetStreamRenderer() {
-    _streamMd = createStreamRenderer()
-  }
-
-  function appendStreamChunk(chunk = "") {
-    // 如果 thinking 被隐藏且当前在 thinking 流中，跳过内容
-    if (ui.thinkingHidden && ui.inThinkingStream) {
-      ui.thinkingSkipped = true
-      ui.thinkingBuffer += String(chunk || "")
-      return
+  function sanitizeTranscriptRecord(input, options = {}) {
+    const source = input && typeof input === "object" && !Array.isArray(input)
+      ? { ...input, ...options }
+      : { ...options, summary: String(input ?? "").replace(/\r/g, "") }
+    const safe = sanitizeTerminalValue(source)
+    for (const key of ["summary", "title", "text"]) {
+      if (source[key] !== undefined) safe[key] = sanitizeTerminalStyledText(source[key])
     }
-    const mdEnabled = ctx.configState.config.ui?.markdown_render !== false
-    const text = mdEnabled ? _streamMd.push(chunk) : String(chunk || "").replace(/\r/g, "")
-    if (!text) return
-    const follow = ui.scrollOffset === 0
-    const parts = text.split("\n")
-    if (!ui.logs.length) ui.logs.push("")
-    ui.logs[ui.logs.length - 1] += parts[0]
-    for (let i = 1; i < parts.length; i++) ui.logs.push(parts[i])
-    if (ui.logs.length > MAX_TUI_LOG_LINES) ui.logs.splice(0, ui.logs.length - MAX_TUI_LOG_LINES)
-    if (follow) ui.scrollOffset = 0
-    requestRender()
+    if (source.details !== undefined) {
+      const details = Array.isArray(source.details) ? source.details : [source.details]
+      safe.details = details.flatMap((line) =>
+        sanitizeTerminalStyledText(line).split(/\r?\n/)
+      )
+    }
+    return safe
   }
 
-  function flushStreamRenderer() {
-    const mdEnabled = ctx.configState.config.ui?.markdown_render !== false
-    if (!mdEnabled) return
-    const remaining = _streamMd.flush()
-    if (remaining) appendLog(remaining)
-    resetStreamRenderer()
+  function appendLog(text = "", options = {}) {
+    const follow = ui.scrollOffset === 0
+    const id = transcript.appendLog(sanitizeTranscriptRecord(text, options))
+    if (follow) ui.scrollOffset = 0
+    return id
+  }
+
+  function printTui(text = "") {
+    const plain = stripAnsi(text).trim()
+    if (/^(?:mode|model|provider|permission(?: level)?) switched:/i.test(plain)) {
+      showToast(plain, { topic: "switch", tone: "success" })
+      return null
+    }
+    if (/^dashboard refreshed$/i.test(plain)) {
+      showToast(plain, { topic: "dashboard", tone: "success" })
+      return null
+    }
+    return appendLog(text)
+  }
+
+  function updateLog(id, patch) {
+    if (!patch || typeof patch !== "object") return transcript.updateLog(id, patch)
+    return transcript.updateLog(id, sanitizeTranscriptRecord(patch))
+  }
+
+  function showToast(message, {
+    topic = "status",
+    tone = "info",
+    durationMs
+  } = {}) {
+    return toastStore.show(sanitizeTerminalText(message), { topic, tone, durationMs })
+  }
+
+  function appendStreamChunk() {
+    // Provider text/thinking is consumed from typed EventBus deltas below.
+    // Keeping the sink avoids direct stdout writes while the TUI owns the
+    // screen and prevents a second Markdown rendering pass.
+  }
+
+  function formatThinkingDuration(ms) {
+    const seconds = Math.max(0, Number(ms) || 0) / 1000
+    return seconds < 10 ? `${seconds.toFixed(1)}s` : `${Math.round(seconds)}s`
+  }
+
+  function renderToastLine() {
+    const toast = toastStore.getToasts({ pruneExpired: false }).at(-1)
+    if (!toast) return null
+    const palette = {
+      success: ctx.themeState.theme.semantic.success,
+      warning: ctx.themeState.theme.semantic.warn,
+      error: ctx.themeState.theme.semantic.error,
+      info: ctx.themeState.theme.semantic.info
+    }
+    const symbols = { success: "✓", warning: "!", error: "✗", info: "●" }
+    const tone = toast.tone in palette ? toast.tone : "info"
+    return `${paint(symbols[tone], palette[tone], { bold: true })} ${paint(toast.message, palette[tone])}`
+  }
+
+  function finalizeThinking() {
+    if (!ui.inThinkingStream && !ui.thinkingStartedAt) return null
+    const durationMs = Math.max(0, Date.now() - (ui.thinkingStartedAt || Date.now()))
+    const raw = sanitizeTerminalText(ui.thinkingRaw || "").trim()
+    const details = raw
+      ? raw.split(/\r?\n/).map((line) => paint(`  ${line}`, "#777777"))
+      : []
+    const id = appendLog(
+      paint(`Thinking · ${formatThinkingDuration(durationMs)}`, "#8a8a8a", { dim: true }),
+      {
+        kind: "thinking",
+        details,
+        collapsible: details.length > 0,
+        expanded: false,
+        metadata: { durationMs }
+      }
+    )
+    ui.lastThinkingId = id
+    ui.inThinkingStream = false
+    ui.thinkingStartedAt = 0
+    ui.thinkingRaw = ""
+    return id
+  }
+
+  function renderTextStreamFrame() {
+    if (!ui.streamLogId && !ui.streamRaw) return
+    const rendered = ctx.configState.config.ui?.markdown_render !== false
+      ? renderMarkdown(ui.streamRaw)
+      : sanitizeTerminalText(ui.streamRaw)
+    if (!ui.streamLogId) {
+      ui.streamLogId = appendLog(rendered, { kind: "assistant", status: "streaming" })
+    } else {
+      updateLog(ui.streamLogId, { summary: rendered, status: "streaming" })
+    }
+  }
+
+  const textStreamBatcher = createFrameBatcher({
+    flush: renderTextStreamFrame,
+    frameMs: TUI_FRAME_MS
+  })
+
+  function finalizeTextStream(status = "complete") {
+    textStreamBatcher.flushNow()
+    if (ui.streamLogId) updateLog(ui.streamLogId, { status })
+    ui.streamLogId = null
+    ui.streamRaw = ""
   }
 
   const activityRenderer = createActivityRenderer({
     theme: ctx.themeState.theme,
-    output: { appendLog, appendStreamChunk }
+    output: { appendLog, updateLog, appendStreamChunk },
+    eventFilter: (event) =>
+      (!event?.sessionId || event.sessionId === state.sessionId) &&
+      shouldApplyActiveTurnEvent(event, {
+        sessionId: state.sessionId,
+        turnId: ui.activeTurnId
+      })
   })
-  activityRenderer.start()
+
+  const transcriptUnsub = transcript.subscribe(() => {
+    if (ui.scrollOffset === 0) ui.scrollOffset = 0
+    requestRender()
+  })
+  const toastUnsub = toastStore.subscribe(() => requestRender())
 
   const uiEventUnsub = EventBus.subscribe((event) => {
-    ui.appState = reduceAppState(ui.appState, event)
     const { type, payload } = event
+    if (!shouldApplyActiveTurnEvent(event, {
+      sessionId: state.sessionId,
+      turnId: ui.activeTurnId
+    })) {
+      return
+    }
+    ui.appState = reduceAppState(ui.appState, event)
     switch (type) {
+      case EVENT_TYPES.TURN_START:
+        ui.activeTurnId = event.turnId || null
+        break
       case EVENT_TYPES.TURN_STEP_START: {
+        finalizeTextStream()
+        finalizeThinking()
         ui.currentStep = payload.step || 0
         ui.maxSteps = Number(ctx.configState.config.agent?.max_steps) || 25
         ui.currentActivity = { type: "thinking" }
+        ui.thinkingStartedAt = Date.now()
         requestRender()
         break
       }
       case EVENT_TYPES.TOOL_START:
+        finalizeTextStream()
+        finalizeThinking()
         ui.currentActivity = { type: "tool", tool: payload.tool, args: payload.args }
         requestRender()
         break
@@ -1517,19 +1646,29 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         requestRender()
         break
       case EVENT_TYPES.STREAM_TEXT_START:
-        if (ui.inThinkingStream && ui.thinkingSkipped) {
-          appendLog(paint(`● Thinking (collapsed, ${ui.thinkingBuffer.length} chars, Ctrl+T to expand)`, null, { dim: true }))
-          appendLog("")
-        }
-        ui.inThinkingStream = false
-        ui.thinkingSkipped = false
+        finalizeTextStream()
+        finalizeThinking()
+        ui.streamRaw = ""
+        ui.streamLogId = appendLog("", { kind: "assistant", status: "streaming" })
         ui.currentActivity = { type: "writing" }
         requestRender()
         break
+      case EVENT_TYPES.STREAM_TEXT_DELTA: {
+        ui.streamRaw += String(payload.text || payload.content || "")
+        textStreamBatcher.schedule()
+        break
+      }
       case EVENT_TYPES.STREAM_THINKING_START:
+        finalizeTextStream()
+        finalizeThinking()
         ui.inThinkingStream = true
-        ui.thinkingSkipped = false
+        if (!ui.thinkingStartedAt) ui.thinkingStartedAt = Date.now()
+        ui.thinkingRaw = ""
         ui.currentActivity = { type: "thinking" }
+        requestRender()
+        break
+      case EVENT_TYPES.STREAM_THINKING_DELTA:
+        ui.thinkingRaw += String(payload.text || payload.content || "")
         requestRender()
         break
       case EVENT_TYPES.TURN_USAGE_UPDATE: {
@@ -1546,20 +1685,41 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         requestRender()
         break
       }
+      case EVENT_TYPES.PROVIDER_RETRY:
+        showToast(
+          `Reconnecting ${payload.retryAttempt}/${payload.maxRetries} · ${payload.classification}`,
+          {
+            topic: "provider-retry",
+            tone: "warning",
+            durationMs: Math.max(1200, Number(payload.delayMs || 0) + 500)
+          }
+        )
+        ui.currentActivity = { type: "thinking" }
+        requestRender()
+        break
       case EVENT_TYPES.TURN_FINISH:
-        flushStreamRenderer()
-        if (ui.inThinkingStream && ui.thinkingSkipped) {
-          appendLog(paint(`● Thinking (collapsed, ${ui.thinkingBuffer.length} chars, Ctrl+T to expand)`, null, { dim: true }))
-          appendLog("")
-        }
-        ui.inThinkingStream = false
-        ui.thinkingSkipped = false
+        finalizeThinking()
+        finalizeTextStream()
+        toastStore.dismissTopic("provider-retry")
         ui.currentActivity = null
         ui.currentStep = 0
+        ui.activeTurnId = null
+        requestRender()
+        break
+      case EVENT_TYPES.TURN_ERROR:
+        finalizeThinking()
+        finalizeTextStream("error")
+        toastStore.dismissTopic("provider-retry")
+        ui.currentActivity = null
+        ui.currentStep = 0
+        ui.activeTurnId = null
         requestRender()
         break
     }
   })
+  // Subscribe activity logs after typed stream state so a completed Thinking
+  // block is inserted before the tool block that follows it.
+  activityRenderer.start()
 
   function queuePermissionPrompt(request) {
     ui.permissionQueue.push(request)
@@ -1594,7 +1754,10 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   function queueQuestionPrompt(request) {
-    ui.questionQueue.push(request)
+    ui.questionQueue.push({
+      ...request,
+      questions: sanitizeTerminalValue(request?.questions || [])
+    })
     if (!ui.pendingQuestion) {
       activateNextQuestion()
     }
@@ -1671,9 +1834,60 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     requestRender({ force: true })
   }
 
+  /**
+   * Resolve every application-owned modal before teardown. Permission prompts
+   * fail closed; unfinished questions return explicit skipped values. This
+   * prevents an awaiting tool turn from surviving after the terminal UI exits.
+   */
+  function settlePendingPromptsForExit() {
+    const permissions = [
+      ...(ui.pendingPermission ? [ui.pendingPermission] : []),
+      ...ui.permissionQueue
+    ]
+    ui.pendingPermission = null
+    ui.permissionQueue = []
+    ui.permissionSelected = 0
+    for (const permission of permissions) {
+      try { permission.resolve("deny") } catch {}
+    }
+
+    const questions = [
+      ...(ui.pendingQuestion
+        ? [{ request: ui.pendingQuestion, answers: ui.questionAnswers }]
+        : []),
+      ...ui.questionQueue.map((request) => ({ request, answers: {} }))
+    ]
+    ui.pendingQuestion = null
+    ui.questionQueue = []
+    ui.questionIndex = 0
+    ui.questionOptionSelected = 0
+    ui.questionMultiSelected = {}
+    ui.questionCustomMode = false
+    ui.questionCustomInput = ""
+    ui.questionCustomCursor = 0
+    ui.questionAnswers = {}
+    for (const { request, answers } of questions) {
+      try {
+        request.resolve(finalizeQuestionAnswers(request, answers))
+      } catch {}
+    }
+  }
+
+  function abortTurnAndPromptsForExit() {
+    if (ui.turnAbortController) {
+      ui.turnAbortController.abort()
+      ui.turnAbortController = null
+    }
+    settlePendingPromptsForExit()
+  }
+
   function openModelPicker(items = []) {
     if (!items.length) {
-      appendLog(paint("No models discovered. Use /model <model-id> for manual selection.", ctx.themeState.theme.semantic.error))
+      showToast("No models discovered · use /model <model-id>", {
+        topic: "model",
+        tone: "error",
+        durationMs: 5000
+      })
       requestRender()
       return
     }
@@ -1697,7 +1911,10 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     if (chosen) {
       state.providerType = chosen.provider
       state.model = chosen.model
-      appendLog(paint(`model switched: ${chosen.provider} / ${chosen.model}`, ctx.themeState.theme.semantic.success))
+      showToast(`Model · ${chosen.provider} / ${chosen.model}`, {
+        topic: "model",
+        tone: "success"
+      })
     }
     closeModelPicker()
   }
@@ -1725,7 +1942,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       })
       ctx.configState.config.permission = result.permissionConfig
       if (result.message) {
-        appendLog(paint(result.message, ctx.themeState.theme.semantic.success))
+        showToast(stripAnsi(result.message), { topic: "permission", tone: "success" })
       }
     }
     closePolicyPicker()
@@ -1745,7 +1962,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   function moveCursor(delta) {
-    ui.inputCursor = Math.max(0, Math.min(ui.input.length, ui.inputCursor + delta))
+    ui.inputCursor = moveGraphemeCursor(ui.input, ui.inputCursor, delta)
   }
 
   function setCursor(pos) {
@@ -1757,19 +1974,6 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     ui.scrollOffset = Math.max(0, Math.min(max, ui.scrollOffset + delta))
   }
 
-  // SGR 鼠标事件解析：\x1b[<button;x;yM（按下）或 \x1b[<button;x;ym（释放）
-  const SGR_MOUSE_RE = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/g
-  function parseSgrMouseEvents(data) {
-    const text = Buffer.isBuffer(data) ? data.toString("utf8") : String(data || "")
-    const events = []
-    let m
-    while ((m = SGR_MOUSE_RE.exec(text)) !== null) {
-      events.push({ button: parseInt(m[1], 10), x: parseInt(m[2], 10), y: parseInt(m[3], 10), release: m[4] === "m" })
-    }
-    SGR_MOUSE_RE.lastIndex = 0
-    return events
-  }
-
   function scrollToTop() {
     ui.scrollOffset = ui.scrollMeta.maxOffset || 0
   }
@@ -1778,39 +1982,58 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     ui.scrollOffset = 0
   }
 
-  // OSC 52 剪贴板复制（终端原生支持，无需外部工具）
+  // Request OSC 52 and try a platform clipboard command. OSC 52 itself cannot
+  // confirm whether the terminal accepted the request, so only a successful
+  // native fallback may use definitive "Copied" wording.
   function copyToClipboard(text) {
-    if (!text) return
-    const b64 = Buffer.from(text, "utf8").toString("base64")
-    output.write(`\x1b]52;c;${b64}\x07`)
+    const result = copyTerminalText(text, { output })
+    if (result.confirmed) {
+      showToast("Copied selection", { topic: "clipboard", tone: "success" })
+    } else if (result.requested) {
+      showToast("Copy requested · terminal approval may be required", {
+        topic: "clipboard",
+        tone: "info",
+        durationMs: 4200
+      })
+    } else {
+      showToast("Copy failed · use the terminal copy shortcut", {
+        topic: "clipboard",
+        tone: "error",
+        durationMs: 5000
+      })
+    }
+    return result
   }
 
   // 从渲染后的屏幕行中提取纯文本（用于选择复制）
   function extractPlainText(frameLines, row) {
-    if (!frameLines || row < 0 || row >= frameLines.length) return ""
-    return stripAnsi(frameLines[row])
+    return copyableFrameLine(frameLines, row, {
+      logStartRow: ui.layoutMeta.logStartRow,
+      logEndRow: ui.layoutMeta.logEndRow,
+      showScrollbar: ui.scrollMeta.totalRows > ui.scrollMeta.logRows
+    })
   }
 
   // 对屏幕行数组应用选择高亮（反色）
   function applySelectionHighlight(frameLines, sel) {
     if (!sel) return
-    let r1 = sel.startRow - 1, c1 = sel.startCol - 1
-    let r2 = sel.endRow - 1, c2 = sel.endCol - 1
-    if (r1 > r2 || (r1 === r2 && c1 > c2)) {
-      ;[r1, c1, r2, c2] = [r2, c2, r1, c1]
-    }
-    if (r1 === r2 && c1 === c2) return
+    const {
+      startRow: r1,
+      startCol: c1,
+      endRow: r2,
+      endCol: c2,
+      isClick
+    } = normalizeMouseSelection(sel)
+    if (isClick) return
 
     for (let r = r1; r <= r2; r++) {
       if (r < 0 || r >= frameLines.length) continue
       const plain = stripAnsi(frameLines[r])
       const sc = r === r1 ? c1 : 0
-      const ec = r === r2 ? c2 : plain.length
-      if (sc >= ec || sc >= plain.length) continue
+      const ec = r === r2 ? c2 : displayWidth(plain)
+      if (sc >= ec || sc >= displayWidth(plain)) continue
 
-      const before = plain.slice(0, sc)
-      const selected = plain.slice(sc, ec)
-      const after = plain.slice(ec)
+      const { before, selected, after } = splitTextByCellRange(plain, sc, ec)
       // \x1b[7m = 反色开始, \x1b[27m = 反色结束
       frameLines[r] = before + "\x1b[7m" + selected + "\x1b[27m" + after
     }
@@ -1865,39 +2088,24 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     }
 
     const inputInnerWidth = Math.max(8, width - 4)
-    const cursorMark = "▌"
-    const before = ui.input.slice(0, ui.inputCursor)
-    const after = ui.input.slice(ui.inputCursor)
     const imgTag = ui.pendingImages.length ? `[${ui.pendingImages.length} img] ` : ""
     const stateIndicator = ui.busy
       ? paint("● ", ctx.themeState.theme.semantic.warn)
       : ui.paused
         ? paint("⏸ ", ctx.themeState.theme.base.muted)
         : paint("❯ ", ctx.themeState.theme.semantic.success)
-    // 输入框选择高亮
-    let inputBody
-    const iSel = ui.inputSelection
-    if (iSel && iSel.start < iSel.end) {
-      const s = iSel.start, e = iSel.end, c = ui.inputCursor
-      if (c <= s) {
-        inputBody = ui.input.slice(0, c) + cursorMark + ui.input.slice(c, s) + "\x1b[7m" + ui.input.slice(s, e) + "\x1b[27m" + ui.input.slice(e)
-      } else if (c >= e) {
-        inputBody = ui.input.slice(0, s) + "\x1b[7m" + ui.input.slice(s, e) + "\x1b[27m" + ui.input.slice(e, c) + cursorMark + ui.input.slice(c)
-      } else {
-        inputBody = ui.input.slice(0, s) + "\x1b[7m" + ui.input.slice(s, c) + cursorMark + ui.input.slice(c, e) + "\x1b[27m" + ui.input.slice(e)
-      }
-    } else {
-      inputBody = `${before}${cursorMark}${after}`
-    }
-    const inputDecorated = `${stateIndicator}${imgTag}${inputBody}`
-    const inputLogical = inputDecorated.split("\n")
-    const inputWrapped = []
-    for (const logicalLine of inputLogical) {
-      const wrapped = wrapPlainLine(logicalLine, inputInnerWidth)
-      for (const part of wrapped) inputWrapped.push(part)
-    }
     const inputVisibleRows = Math.max(1, Math.min(5, Math.floor(height * 0.2)))
-    const visibleInput = inputWrapped.slice(-inputVisibleRows)
+    const inputLayout = layoutInputText({
+      value: ui.input,
+      cursor: ui.inputCursor,
+      width: inputInnerWidth,
+      maxRows: inputVisibleRows,
+      prefix: `${stateIndicator}${imgTag}`,
+      selection: ui.inputSelection
+    })
+    ui.inputCursor = inputLayout.normalizedCursor
+    ui.inputLayout = inputLayout
+    const visibleInput = inputLayout.lines
     let busyLine
     if (ui.busy && ui.currentActivity) {
       const spinner = BUSY_SPINNER_FRAMES[ui.spinnerIndex]
@@ -1913,11 +2121,19 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       } else if (ui.currentActivity.type === "writing") {
         busyLine = `${paint(spinner, "green")} ${paint("writing", "green", { bold: true })}${stepTag}`
       } else {
-        busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint("thinking", ctx.themeState.theme.semantic.warn, { bold: true })}${stepTag}`
+        const elapsed = ui.thinkingStartedAt
+          ? formatThinkingDuration(Date.now() - ui.thinkingStartedAt)
+          : "0.0s"
+        const dots = ".".repeat((ui.spinnerIndex % 3) + 1)
+        busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint(`Thinking${dots} · ${elapsed}`, ctx.themeState.theme.semantic.warn, { bold: true })}${stepTag}`
       }
     } else if (ui.busy) {
       const spinner = BUSY_SPINNER_FRAMES[ui.spinnerIndex]
-      busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint("thinking", ctx.themeState.theme.semantic.warn, { bold: true })}`
+      const elapsed = ui.thinkingStartedAt
+        ? formatThinkingDuration(Date.now() - ui.thinkingStartedAt)
+        : "0.0s"
+      const dots = ".".repeat((ui.spinnerIndex % 3) + 1)
+      busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint(`Thinking${dots} · ${elapsed}`, ctx.themeState.theme.semantic.warn, { bold: true })}`
     } else {
       busyLine = ""
     }
@@ -1931,9 +2147,17 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     const permissionLines = []
     if (ui.pendingPermission) {
       const perm = ui.pendingPermission
-      const target = perm.command || (perm.pattern && perm.pattern !== "*" ? perm.pattern : "")
-      const toolInfo = `tool: ${perm.tool}  risk: ${perm.risk || 0}/10`
-      const reasonInfo = perm.reason ? `  ${perm.reason}` : ""
+      const displayPerm = sanitizeTerminalValue({
+        tool: perm.tool,
+        command: perm.command,
+        pattern: perm.pattern,
+        risk: perm.risk,
+        reason: perm.reason
+      })
+      const target = displayPerm.command ||
+        (displayPerm.pattern && displayPerm.pattern !== "*" ? displayPerm.pattern : "")
+      const toolInfo = `tool: ${displayPerm.tool}  risk: ${displayPerm.risk || 0}/10`
+      const reasonInfo = displayPerm.reason ? `  ${displayPerm.reason}` : ""
       permissionLines.push(
         paint(`Permission Request  ↑↓ navigate  Enter select  Esc deny`, ctx.themeState.theme.semantic.warn, { bold: true })
       )
@@ -2018,6 +2242,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
     // --- Question panel ---
     const questionLines = []
+    let questionCursor = null
     if (ui.pendingQuestion) {
       const pq = ui.pendingQuestion
       const questions = pq.questions || []
@@ -2058,15 +2283,33 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       }
       questionLines.push(paint(`│${"─".repeat(Math.max(1, width - 4))}│`, ctx.themeState.theme.base.border))
 
-      if (ui.questionCustomMode) {
-        // Custom input mode
-        const inputDisplay = ui.questionCustomInput || ""
+      if (ui.questionCustomMode || options.length === 0) {
+        // Custom/free-text mode uses the same grapheme-aware layout as the
+        // main composer so the hardware cursor and IME stay anchored here.
+        const questionInputLayout = layoutInputText({
+          value: ui.questionCustomInput,
+          cursor: ui.questionCustomCursor,
+          width: Math.max(1, width - 5),
+          maxRows: 3,
+          prefix: ""
+        })
+        ui.questionCustomCursor = questionInputLayout.normalizedCursor
         questionLines.push(
-          paint(`│ ${padRight("Custom input:", Math.max(1, width - 5))}│`, ctx.themeState.theme.base.muted)
+          paint(`│ ${padRight(options.length ? "Custom input:" : "Answer:", Math.max(1, width - 5))}│`, ctx.themeState.theme.base.muted)
         )
-        questionLines.push(
-          paint(`│ ${padRight(inputDisplay || "(type your answer)", Math.max(1, width - 5))}│`, ctx.themeState.theme.base.fg)
-        )
+        const questionInputStart = questionLines.length
+        for (const [index, inputLine] of questionInputLayout.lines.entries()) {
+          const visible = inputLine || (index === 0
+            ? paint("(type your answer)", ctx.themeState.theme.base.muted, { dim: true })
+            : "")
+          questionLines.push(
+            `│ ${padRight(visible, Math.max(1, width - 5))}│`
+          )
+        }
+        questionCursor = {
+          row: questionInputStart + questionInputLayout.cursor.row,
+          col: 3 + questionInputLayout.cursor.col
+        }
       } else if (options.length) {
         // Options list
         const multiSelected = ui.questionMultiSelected[currentQ.id] || new Set()
@@ -2102,12 +2345,6 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
               : paint(`│${padRight(customLine, Math.max(1, width - 5))}│`, ctx.themeState.theme.base.muted)
           )
         }
-      } else {
-        // No options — free text only
-        const inputDisplay = ui.questionCustomInput || ""
-        questionLines.push(
-          paint(`│ ${padRight(inputDisplay || "(type your answer)", Math.max(1, width - 5))}│`, ctx.themeState.theme.base.fg)
-        )
       }
 
       // Footer
@@ -2137,7 +2374,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
     const logRows = Math.max(2, height - lines.length - fixedRows)
     const transcriptViewport = buildTranscriptViewport({
-      logs: ui.logs,
+      logs: transcript.getItems(),
       width,
       logRows,
       scrollOffset: ui.scrollOffset,
@@ -2178,12 +2415,14 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       for (const line of permissionLines) lines.push(clipAnsiLine(line, width))
     }
 
+    let questionStartRow = null
     if (questionLines.length) {
+      questionStartRow = lines.length
       for (const line of questionLines) lines.push(clipAnsiLine(line, width))
     }
 
     lines.push(clipAnsiLine(status, width))
-    lines.push(clipAnsiLine(busyLine, width))
+    lines.push(clipAnsiLine(renderToastLine() || busyLine, width))
 
     const inputTop = paint(`┌${"─".repeat(Math.max(1, width - 2))}┐`, ctx.themeState.theme.base.border)
     const inputBottom = paint(`└${"─".repeat(Math.max(1, width - 2))}┘`, ctx.themeState.theme.base.border)
@@ -2198,7 +2437,10 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     lines.push(inputBottom)
     lines.push(clipAnsiLine(paint("↵ send  ⌃J newline  ⌃Y auto-copy  /paste image  ? help", ctx.themeState.theme.base.muted, { dim: true }), width))
 
-    const final = lines.slice(0, Math.max(1, height))
+    // In very small terminals, preserve the composer and its real cursor by
+    // trimming overflow from the top rather than cutting off the bottom pane.
+    const frameStartRow = Math.max(0, lines.length - Math.max(1, height))
+    const final = lines.slice(frameStartRow, frameStartRow + Math.max(1, height))
     while (final.length < height) final.push(" ".repeat(width))
 
     // 鼠标选择高亮：对选中区域应用反色
@@ -2208,40 +2450,60 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
     // 存储布局元数据供鼠标事件使用（行号均为 1-based 屏幕坐标）
     ui.layoutMeta = {
-      logStartRow: logStartRow + 1,
-      logEndRow: logEndRow,
-      inputStartRow: inputStartRow + 1,
-      inputEndRow: inputEndRow,
+      logStartRow: logStartRow + 1 - frameStartRow,
+      logEndRow: logEndRow - frameStartRow,
+      inputStartRow: inputStartRow + 1 - frameStartRow,
+      inputEndRow: inputEndRow - frameStartRow,
       inputInnerOffset: 3,  // "│ " 占 2 个可见字符 + 1 (1-based)
-      width
+      width,
+      transcriptHitRegions: (transcriptViewport.hitRegions || []).map((region) => ({
+        ...region,
+        row: logStartRow + region.viewportRow + 1 - frameStartRow
+      }))
     }
 
-    return { lines: final, width, height, wrappedLogs }
+    const composerCursor = {
+      row: inputStartRow + inputLayout.cursor.row + 1 - frameStartRow,
+      col: Math.max(1, Math.min(width, 3 + inputLayout.cursor.col)),
+      visible: true
+    }
+    const modalCursor = questionCursor && questionStartRow !== null
+      ? {
+          row: questionStartRow + questionCursor.row + 1 - frameStartRow,
+          col: Math.max(1, Math.min(width, questionCursor.col)),
+          visible: true
+        }
+      : null
+
+    return {
+      lines: final,
+      width,
+      height,
+      wrappedLogs,
+      cursor: modalCursor || composerCursor
+    }
   }
 
   function paintFrame(frame) {
+    if (disposed || terminalSuspended) return
     if (!frame || !Array.isArray(frame.lines)) return
     _lastFrame = frame  // 保存帧数据供鼠标选择使用
-    const patches = []
-
-    if (forceFullPaint || frame.width !== lastFrameWidth || lastFrame.length !== frame.lines.length) {
-      patches.push("\x1b[H")
-      patches.push(frame.lines.join("\n"))
-    } else {
-      for (let i = 0; i < frame.lines.length; i++) {
-        const next = frame.lines[i]
-        const prev = lastFrame[i]
-        if (next !== prev) patches.push(`\x1b[${i + 1};1H${next}`)
-      }
-    }
-
-    if (patches.length) output.write(patches.join(""))
+    const fullPaint = forceFullPaint || frame.width !== lastFrameWidth || lastFrame.length !== frame.lines.length
+    output.write(renderTerminalFrame({
+      lines: frame.lines,
+      previousLines: lastFrame,
+      width: frame.width,
+      height: frame.height,
+      cursor: frame.cursor,
+      force: fullPaint
+    }))
     lastFrame = frame.lines
     lastFrameWidth = frame.width
     forceFullPaint = false
   }
 
   function requestRender({ force = false } = {}) {
+    if (disposed || terminalSuspended) return
     if (force) forceFullPaint = true
     if (renderScheduled) return
     renderScheduled = true
@@ -2280,7 +2542,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       if (confirmed) {
         // 用户确认继续用 longagent，清除 abort 状态
         ui.longagentAborted = false
-        appendLog(paint("继续使用 longagent 模式执行。", ctx.themeState.theme.semantic.info))
+        showToast("继续使用 LongAgent", { topic: "mode", tone: "success" })
         ui.input = ""
         ui.inputCursor = 0
         requestRender()
@@ -2288,7 +2550,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       } else {
         // 用户拒绝，切换到建议模式
         state.mode = confirm.suggestedMode
-        appendLog(paint(`已切换到 ${confirm.suggestedMode} 模式。`, ctx.themeState.theme.semantic.success))
+        showToast(`Mode · ${confirm.suggestedMode}`, { topic: "mode", tone: "success" })
         ui.input = ""
         ui.inputCursor = 0
         requestRender()
@@ -2365,31 +2627,13 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
             setCustomCommands: (next) => { localCustomCommands = next },
             wizard: ui.wizard,
             setWizard: (next) => { ui.wizard = next },
-            print: appendLog,
+            print: printTui,
             streamSink: appendStreamChunk,
             showTurnStatus: false,
             pendingImages: ui.pendingImages,
             clearPendingImages: () => { ui.pendingImages = [] },
             signal: aborter.signal,
-            suspendTui: async (fn) => {
-              stopBusySpinner()
-              if (onKey) process.stdin.removeListener("keypress", onKey)
-              if (onData) process.stdin.removeListener("data", onData)
-              if (process.stdin.isTTY) process.stdin.setRawMode(false)
-              stopTuiFrame()
-              process.stdout.write("\x1b[2J\x1b[H")
-              try { await fn() } finally {
-                process.stdout.write("\x1b[2J\x1b[H")
-                startTuiFrame()
-                emitKeypressEvents(process.stdin)
-                if (process.stdin.isTTY) process.stdin.setRawMode(true)
-                process.stdin.resume()
-                if (onKey) process.stdin.on("keypress", onKey)
-                if (onData) process.stdin.on("data", onData)
-                forceFullPaint = true
-                requestRender()
-              }
-            }
+            suspendTui: withSuspendedTui
           })
           if (action.turnResult) {
             ui.metrics.tokenMeter = action.turnResult.tokenMeter || ui.metrics.tokenMeter
@@ -2401,8 +2645,10 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           }
           if (action.exit) ui.quitting = true
         } catch (error) {
-          if (error.name !== "AbortError") appendLog(`error: ${error.message}`)
+          if (error.name !== "AbortError") appendLog(`error: ${sanitizeTerminalText(error.message)}`)
         } finally {
+          finalizeThinking()
+          finalizeTextStream()
           if (aborter.signal.aborted && state.mode === "longagent") {
             ui.longagentAborted = true
             ui.lastLongAgentPrompt = mergedPrompt
@@ -2472,7 +2718,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         continuedTransaction: Boolean(activeAgentContinuation)
       })
       if (routeFeedback.changedMessage) {
-        appendLog(paint(routeFeedback.changedMessage, ctx.themeState.theme.semantic.info, { dim: true }))
+        showToast(stripAnsi(routeFeedback.changedMessage), { topic: "route", tone: "info" })
         state.mode = route.mode
       } else if (routeFeedback.forcedMessage) {
         // 用户强制 longagent 但任务看起来是简单任务 → 需要确认
@@ -2484,12 +2730,12 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         requestRender()
         return
       } else if (routeFeedback.suggestionMessage) {
-        appendLog(paint(routeFeedback.suggestionMessage, ctx.themeState.theme.base.muted, { dim: true }))
+        showToast(stripAnsi(routeFeedback.suggestionMessage), { topic: "route", tone: "info" })
       } else if (routeFeedback.stayedMessage) {
-        appendLog(paint(routeFeedback.stayedMessage, ctx.themeState.theme.base.muted, { dim: true }))
+        showToast(stripAnsi(routeFeedback.stayedMessage), { topic: "route", tone: "info" })
       }
       if (routeFeedback.summaryMessage) {
-        appendLog(paint(routeFeedback.summaryMessage, ctx.themeState.theme.base.muted, { dim: true }))
+        showToast(stripAnsi(routeFeedback.summaryMessage), { topic: "route-summary", tone: "info" })
       }
 
       if (state.mode === "agent") {
@@ -2536,47 +2782,22 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         },
         wizard: ui.wizard,
         setWizard: (next) => { ui.wizard = next },
-        print: appendLog,
+        print: printTui,
         streamSink: appendStreamChunk,
         showTurnStatus: false,
         pendingImages: ui.pendingImages,
         clearPendingImages: () => { ui.pendingImages = [] },
         signal: aborter.signal,
-        suspendTui: async (fn) => {
-          stopBusySpinner()
-          // Detach listeners before raw mode change to avoid ghost events
-          if (onKey) process.stdin.removeListener("keypress", onKey)
-          if (onData) process.stdin.removeListener("data", onData)
-          if (process.stdin.isTTY) process.stdin.setRawMode(false)
-          // Switch back to normal screen, then clear it
-          stopTuiFrame()
-          process.stdout.write("\x1b[2J\x1b[H")
-          try {
-            await fn()
-          } finally {
-            // Clear any onboarding remnants before switching back
-            process.stdout.write("\x1b[2J\x1b[H")
-            // Re-enter alternate screen and restore raw mode
-            startTuiFrame()
-            emitKeypressEvents(process.stdin)
-            if (process.stdin.isTTY) process.stdin.setRawMode(true)
-            process.stdin.resume()
-            // Re-attach listeners
-            if (onKey) process.stdin.on("keypress", onKey)
-            if (onData) process.stdin.on("data", onData)
-            forceFullPaint = true
-            requestRender()
-          }
-        }
+        suspendTui: withSuspendedTui
       })
 
       if (action.cleared) {
-        ui.logs = []
+        transcript.clear()
       }
       if (action.dashboardRefresh) {
         localRecentSessions = action.recentSessions || localRecentSessions
         ui.showDashboard = true
-        appendLog("dashboard refreshed")
+        showToast("Dashboard refreshed", { topic: "dashboard", tone: "success" })
       }
       if (action.turnResult) {
         ui.metrics.tokenMeter = action.turnResult.tokenMeter || ui.metrics.tokenMeter
@@ -2606,8 +2827,10 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         ui.quitting = true
       }
     } catch (error) {
-      if (error.name !== "AbortError") appendLog(`error: ${error.message}`)
+      if (error.name !== "AbortError") appendLog(`error: ${sanitizeTerminalText(error.message)}`)
     } finally {
+      finalizeThinking()
+      finalizeTextStream()
       // Task 3: 检测 longagent 被中止，提示用户可补充需求
       if (aborter.signal.aborted && state.mode === "longagent" && ui.lastLongAgentPrompt) {
         ui.longagentAborted = true
@@ -2666,7 +2889,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   function cycleModeForwardAndNotify() {
     const next = nextMode(state.mode, MODE_CYCLE_ORDER)
     state.mode = next
-    appendLog(`mode switched: ${next}`)
+    showToast(`Mode · ${next}`, { topic: "mode", tone: "success" })
     requestRender()
   }
 
@@ -2674,66 +2897,82 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     const permission = ctx.configState.config.permission || (ctx.configState.config.permission = {})
     const next = nextPermissionLevel(permission)
     ctx.configState.config.permission = applyPermissionLevel(next, permission)
-    appendLog(`permission level switched: ${next}`)
+    showToast(`Permission · ${next}`, { topic: "permission", tone: "success" })
     requestRender()
   }
 
-  startTuiFrame()
-  setPermissionPromptHandler(({ tool, sessionId, reason = "", pattern = "*", command = "", args = {}, risk = 0, defaultAction = "deny" }) =>
-    new Promise((resolve) => {
-      queuePermissionPrompt({
-        tool,
-        sessionId,
-        reason,
-        pattern,
-        command,
-        args,
-        risk,
-        defaultAction,
-        resolve
-      })
-    })
-  )
-  setQuestionPromptHandler(({ questions }) =>
-    new Promise((resolve) => {
-      queueQuestionPrompt({ questions, resolve })
-    })
-  )
-  emitKeypressEvents(process.stdin)
+  function questionAcceptsTextInput() {
+    if (!ui.pendingQuestion) return false
+    const questions = ui.pendingQuestion.questions || []
+    const current = questions[ui.questionIndex] || {}
+    const options = Array.isArray(current.options) ? current.options : []
+    return ui.questionCustomMode || options.length === 0
+  }
+
+  function insertQuestionText(value) {
+    if (!questionAcceptsTextInput()) return false
+    const text = String(value || "").replace(/\r\n?/g, "\n")
+    if (!text) return false
+    const cursor = Math.max(0, Math.min(
+      ui.questionCustomInput.length,
+      ui.questionCustomCursor
+    ))
+    ui.questionCustomInput =
+      ui.questionCustomInput.slice(0, cursor) +
+      text +
+      ui.questionCustomInput.slice(cursor)
+    ui.questionCustomCursor = cursor + text.length
+    return true
+  }
 
   // Monkey-patch stdin.emit 拦截鼠标事件，防止 readline 将其解析为键盘输入
   let _lastFrame = null  // 保存最近一帧用于文本提取
-  const _origStdinEmit = process.stdin.emit.bind(process.stdin)
-  process.stdin.emit = function (event, ...args) {
+  const _origStdinEmit = process.stdin.emit
+  const mouseDecoder = createSgrMouseDecoder()
+  const pasteDecoder = createBracketedPasteDecoder()
+  const interceptStdinEmit = function (event, ...args) {
     if (event === "data") {
       const raw = args[0]
-      const text = Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw || "")
-      if (SGR_MOUSE_RE.test(text)) {
-        const mouseEvents = parseSgrMouseEvents(text)
-        for (const ev of mouseEvents) {
-          handleMouseEvent(ev)
+      const mouse = terminalFeatures.mouse
+        ? mouseDecoder.feed(raw)
+        : { events: [], text: Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw || "") }
+      for (const ev of mouse.events) handleMouseEvent(ev)
+      const pasted = terminalFeatures.bracketedPaste
+        ? pasteDecoder.feed(mouse.text)
+        : { text: mouse.text, pastes: [] }
+      for (const value of pasted.pastes) {
+        if (questionAcceptsTextInput()) {
+          insertQuestionText(value)
+        } else if (!ui.busy) {
+          insertAtCursor(String(value || "").replace(/\r\n?/g, "\n"))
         }
-        if (mouseEvents.length > 0) requestRender()
-        const cleaned = text.replace(SGR_MOUSE_RE, "")
-        if (!cleaned) return false
-        args[0] = Buffer.from(cleaned, "utf8")
       }
+      if (mouse.events.length > 0 || pasted.pastes.length > 0) requestRender()
+      if (!pasted.text) return false
+      args[0] = Buffer.from(pasted.text, "utf8")
     }
-    return _origStdinEmit(event, ...args)
+    return _origStdinEmit.call(process.stdin, event, ...args)
   }
 
   function handleMouseEvent(ev) {
-    const btn = ev.button
+    const action = classifySgrMouseEvent(ev)
     // 滚轮
-    if (btn === 64) { scrollBy(3); return }
-    if (btn === 65) { scrollBy(-3); return }
+    if (action === "wheel-up") { scrollBy(3); return }
+    if (action === "wheel-down") { scrollBy(-3); return }
 
     const row = ev.y  // 1-based 屏幕行
     const col = ev.x  // 1-based 屏幕列
     const layout = ui.layoutMeta
 
+    // Right-click copies the current application selection when the terminal
+    // has delegated mouse input to KK Code.
+    if (action === "secondary-press" && ui.mouseSelection) {
+      finishSelection(true)
+      return
+    }
+
     // 左键按下 (button 0, press)
-    if (btn === 0 && !ev.release) {
+    if (action === "primary-press") {
       // 清除之前的选择
       clearSelections()
       // 点击输入区 → 定位光标 + 准备拖拽
@@ -2745,17 +2984,21 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       ui.mouseSelection = {
         startRow: row, startCol: col,
         endRow: row, endCol: col,
-        active: true
+        active: true,
+        moved: false
       }
       return
     }
 
     // 左键拖拽 (button 32 = motion with left held)
-    if (btn === 32) {
+    if (action === "primary-drag") {
       // 日志区拖拽
       if (ui.mouseSelection?.active) {
         ui.mouseSelection.endRow = row
         ui.mouseSelection.endCol = col
+        if (row !== ui.mouseSelection.startRow || col !== ui.mouseSelection.startCol) {
+          ui.mouseSelection.moved = true
+        }
         return
       }
       // 输入框拖拽选择
@@ -2773,11 +3016,14 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     }
 
     // 左键释放 (button 0, release)
-    if (btn === 0 && ev.release) {
+    if (action === "primary-release") {
       // 日志区选择完成
       if (ui.mouseSelection?.active) {
         ui.mouseSelection.endRow = row
         ui.mouseSelection.endCol = col
+        if (row !== ui.mouseSelection.startRow || col !== ui.mouseSelection.startCol) {
+          ui.mouseSelection.moved = true
+        }
         ui.mouseSelection.active = false
         finishSelection()
         return
@@ -2799,10 +3045,10 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     const textCol = Math.max(0, col - layout.inputInnerOffset)
     const inputLineIdx = row - layout.inputStartRow
     if (inputLineIdx < 0) return 0
-    const statePrefix = 2  // "❯ "
-    const imgPrefix = ui.pendingImages.length ? `[${ui.pendingImages.length} img] `.length : 0
-    const adjusted = Math.max(0, textCol - statePrefix - imgPrefix)
-    return Math.min(adjusted, ui.input.length)
+    return Math.min(
+      ui.input.length,
+      inputIndexAtPosition(ui.inputLayout, inputLineIdx, textCol)
+    )
   }
 
   // 点击输入框 → 定位光标到对应位置
@@ -2816,8 +3062,13 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
   // 清除所有选择状态
   function clearSelections() {
-    if (ui.mouseSelection) { ui.mouseSelection = null }
-    if (ui.inputSelection) { ui.inputSelection = null; ui.inputDragAnchor = -1 }
+    ui.mouseSelection = null
+    ui.inputSelection = null
+    ui.inputDragAnchor = -1
+    if (selectionClearTimer) {
+      clearTimeout(selectionClearTimer)
+      selectionClearTimer = null
+    }
   }
 
   // 删除输入框中选中的文本，返回 true 表示有选择被删除
@@ -2834,35 +3085,44 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   // 完成文本选择 → 根据 autoCopy 决定是否复制
-  function finishSelection() {
+  function finishSelection(forceCopy = false) {
     const sel = ui.mouseSelection
     if (!sel) return
     if (!_lastFrame?.lines) { ui.mouseSelection = null; return }
 
-    // 规范化选择范围（确保 start <= end）
-    let r1 = sel.startRow - 1, c1 = sel.startCol - 1  // 转为 0-based
-    let r2 = sel.endRow - 1, c2 = sel.endCol - 1
-    if (r1 > r2 || (r1 === r2 && c1 > c2)) {
-      ;[r1, c1, r2, c2] = [r2, c2, r1, c1]
-    }
+    const {
+      startRow: r1,
+      startCol: c1,
+      endRow: r2,
+      endCol: c2,
+      isClick
+    } = normalizeMouseSelection(sel)
 
     // 如果起止相同，视为单击而非选择
-    if (r1 === r2 && c1 === c2) {
+    if (isClick) {
+      const hit = ui.layoutMeta.transcriptHitRegions?.find((region) =>
+        region.row === r1 + 1 &&
+        c1 + 1 >= region.columnStart &&
+        c1 + 1 <= region.columnEnd
+      )
+      if (hit?.itemId && hit.action === "toggle") {
+        transcript.toggleLog(hit.itemId)
+      }
       ui.mouseSelection = null
       return
     }
 
     // autoCopy 开启时提取文本并复制
-    if (ui.autoCopy) {
+    if (ui.autoCopy || forceCopy) {
       const lines = []
       for (let r = r1; r <= r2; r++) {
         const plain = extractPlainText(_lastFrame.lines, r)
         if (r === r1 && r === r2) {
-          lines.push(plain.slice(c1, c2))
+          lines.push(splitTextByCellRange(plain, c1, c2).selected)
         } else if (r === r1) {
-          lines.push(plain.slice(c1))
+          lines.push(splitTextByCellRange(plain, c1, displayWidth(plain)).selected)
         } else if (r === r2) {
-          lines.push(plain.slice(0, c2))
+          lines.push(splitTextByCellRange(plain, 0, c2).selected)
         } else {
           lines.push(plain)
         }
@@ -2870,7 +3130,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       const selectedText = lines.join("\n").trimEnd()
       if (selectedText) copyToClipboard(selectedText)
       // 短暂保留高亮后清除
-      setTimeout(() => {
+      if (selectionClearTimer) clearTimeout(selectionClearTimer)
+      selectionClearTimer = setTimeout(() => {
+        selectionClearTimer = null
         ui.mouseSelection = null
         requestRender()
       }, 200)
@@ -2878,20 +3140,194 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     // autoCopy 关闭时：保留高亮，等待下次点击或按键清除
   }
 
-  if (process.stdin.isTTY) process.stdin.setRawMode(true)
-  process.stdin.resume()
+  function cancelPendingFrame() {
+    if (renderTimer) clearTimeout(renderTimer)
+    renderTimer = null
+    renderScheduled = false
+  }
 
-  paintFrame(buildFrame())
+  function detachTuiInputListeners() {
+    if (onKey) process.stdin.removeListener("keypress", onKey)
+    if (onData) process.stdin.removeListener("data", onData)
+  }
 
-  let onResize = null
-  let onKey = null
-  let onData = null
-  let onSigint = null
+  function attachTuiInputListeners() {
+    if (onKey) {
+      process.stdin.removeListener("keypress", onKey)
+      process.stdin.on("keypress", onKey)
+    }
+    if (onData) {
+      process.stdin.removeListener("data", onData)
+      process.stdin.on("data", onData)
+    }
+  }
+
+  /**
+   * Stop all application-owned terminal behavior before borrowing the normal
+   * screen, suspending the process, or exiting. Pausing stdin on final teardown
+   * is essential because readline's internal keypress decoder keeps a data
+   * listener installed and otherwise refs the TTY handle indefinitely.
+   */
+  function deactivateTerminal({ pauseInput = false } = {}) {
+    terminalSuspended = true
+    cancelPendingFrame()
+    detachTuiInputListeners()
+
+    if (rawModeActive && process.stdin.isTTY) {
+      try { process.stdin.setRawMode(false) } catch {}
+    }
+    rawModeActive = false
+
+    if (stdinEmitPatched) {
+      process.stdin.emit = _origStdinEmit
+      stdinEmitPatched = false
+    }
+    mouseDecoder.reset()
+    pasteDecoder.reset()
+
+    if (terminalFrameActive) {
+      terminalFrameActive = false
+      try { stopTuiFrame(terminalFeatures) } catch {}
+    }
+    if (pauseInput) {
+      try { process.stdin.pause() } catch {}
+    }
+  }
+
+  function activateTerminal({ repaint = false } = {}) {
+    if (disposed || terminalFrameActive) return false
+    terminalSuspended = true
+    try {
+      startTuiFrame(terminalFeatures)
+      terminalFrameActive = true
+      if (!keypressDecoderStarted) {
+        emitKeypressEvents(process.stdin)
+        keypressDecoderStarted = true
+      }
+      process.stdin.emit = interceptStdinEmit
+      stdinEmitPatched = true
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(true)
+        rawModeActive = true
+      }
+      attachTuiInputListeners()
+      process.stdin.resume()
+      terminalSuspended = false
+      if (repaint) {
+        forceFullPaint = true
+        paintFrame(buildFrame())
+      }
+      return true
+    } catch (error) {
+      deactivateTerminal({ pauseInput: true })
+      throw error
+    }
+  }
+
+  /**
+   * Temporarily return ownership to a cooked-mode prompt without allowing
+   * timers, resize handlers, toasts, or EventBus callbacks to paint over it.
+   */
+  async function withSuspendedTui(fn) {
+    const shouldResumeSpinner = Boolean(spinnerTimer)
+    stopBusySpinner()
+    deactivateTerminal()
+    try {
+      return await fn()
+    } finally {
+      // A termination signal may have completed the outer REPL while the
+      // borrowed prompt was still awaiting input. Never resurrect the TUI.
+      if (!disposed && activateTerminal({ repaint: true }) && shouldResumeSpinner && ui.busy) {
+        startBusySpinner()
+      }
+    }
+  }
+
+  function continueAfterJobControl() {
+    if (!jobControlSuspended) return
+    jobControlSuspended = false
+    if (onSuspend && process.platform !== "win32") {
+      process.on("SIGTSTP", onSuspend)
+    }
+    if (
+      !disposed &&
+      resumeTerminalAfterContinue &&
+      activateTerminal({ repaint: true }) &&
+      resumeSpinnerAfterContinue &&
+      ui.busy
+    ) {
+      startBusySpinner()
+    }
+    resumeTerminalAfterContinue = false
+    resumeSpinnerAfterContinue = false
+  }
+
+  function suspendForJobControl() {
+    if (disposed || jobControlSuspended || process.platform === "win32") return
+    jobControlSuspended = true
+    resumeTerminalAfterContinue = terminalFrameActive
+    resumeSpinnerAfterContinue = Boolean(spinnerTimer) && terminalFrameActive
+    stopBusySpinner()
+    deactivateTerminal({ pauseInput: true })
+
+    // Consume the first SIGTSTP so terminal state can be restored, then resend
+    // it with the default disposition. SIGCONT reactivates the application.
+    if (onSuspend) process.removeListener("SIGTSTP", onSuspend)
+    try {
+      process.kill(process.pid, "SIGTSTP")
+    } catch {
+      continueAfterJobControl()
+    }
+  }
+
+  try {
+    setPermissionPromptHandler(({ tool, sessionId, reason = "", pattern = "*", command = "", args = {}, risk = 0, defaultAction = "deny" }) =>
+      new Promise((resolve) => {
+        queuePermissionPrompt({
+          tool,
+          sessionId,
+          reason,
+          pattern,
+          command,
+          args,
+          risk,
+          defaultAction,
+          resolve
+        })
+      })
+    )
+    setQuestionPromptHandler(({ questions }) =>
+      new Promise((resolve) => {
+        queueQuestionPrompt({ questions, resolve })
+      })
+    )
+    activateTerminal()
+    paintFrame(buildFrame())
+  } catch (error) {
+    disposed = true
+    cancelPendingFrame()
+    if (selectionClearTimer) clearTimeout(selectionClearTimer)
+    textStreamBatcher.dispose()
+    deactivateTerminal({ pauseInput: true })
+    setPermissionPromptHandler(null)
+    setQuestionPromptHandler(null)
+    stopBusySpinner()
+    activityRenderer.stop()
+    uiEventUnsub()
+    transcriptUnsub()
+    toastUnsub()
+    toastStore.dispose()
+    await saveHistoryLines(HIST_FILE, HIST_SIZE, ui.history).catch(() => {})
+    throw error
+  }
+
   try {
     await new Promise((resolve) => {
       let finished = false
       const finish = () => {
         if (finished) return
+        ui.quitting = true
+        abortTurnAndPromptsForExit()
         finished = true
         resolve()
       }
@@ -2899,6 +3335,26 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       onResize = () => requestRender({ force: true })
       onKey = async (str, key = {}) => {
         if (ui.quitting) return
+
+        if (key.ctrl && key.name === "z" && process.platform !== "win32") {
+          suspendForJobControl()
+          return
+        }
+
+        // A visible selection owns Ctrl+C. With no selection, Ctrl+C keeps its
+        // established interrupt/exit behavior.
+        if (key.ctrl && key.name === "c" && ui.mouseSelection) {
+          finishSelection(true)
+          requestRender()
+          return
+        }
+        if (key.ctrl && key.name === "c" && ui.inputSelection) {
+          const start = Math.min(ui.inputSelection.start, ui.inputSelection.end)
+          const end = Math.max(ui.inputSelection.start, ui.inputSelection.end)
+          copyToClipboard(ui.input.slice(start, end))
+          requestRender()
+          return
+        }
 
         // 任意按键清除日志区鼠标选择（不清除输入框选择，由具体按键处理）
         if (ui.mouseSelection) {
@@ -2923,18 +3379,16 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           // Idle: require double Ctrl+C within 2s to exit
           const now = Date.now()
           if (now - ui.lastCtrlCTime < 2000) {
-            ui.quitting = true
             finish()
           } else {
             ui.lastCtrlCTime = now
-            appendLog("Press Ctrl+C again to exit")
+            showToast("Press Ctrl+C again to exit", { topic: "exit", tone: "warning" })
             requestRender()
           }
           return
         }
 
         if (key.ctrl && key.name === "d" && ui.input.length === 0) {
-          ui.quitting = true
           finish()
           return
         }
@@ -3016,30 +3470,45 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
             }
             if (key.name === "backspace") {
               if (ui.questionCustomCursor > 0) {
-                const before = ui.questionCustomInput.slice(0, ui.questionCustomCursor - 1)
+                const previous = moveGraphemeCursor(
+                  ui.questionCustomInput,
+                  ui.questionCustomCursor,
+                  -1
+                )
+                const before = ui.questionCustomInput.slice(0, previous)
                 const after = ui.questionCustomInput.slice(ui.questionCustomCursor)
                 ui.questionCustomInput = before + after
-                ui.questionCustomCursor -= 1
+                ui.questionCustomCursor = previous
               }
               requestRender()
               return
             }
             if (key.name === "left") {
-              ui.questionCustomCursor = Math.max(0, ui.questionCustomCursor - 1)
+              ui.questionCustomCursor = moveGraphemeCursor(
+                ui.questionCustomInput,
+                ui.questionCustomCursor,
+                -1
+              )
               requestRender()
               return
             }
             if (key.name === "right") {
-              ui.questionCustomCursor = Math.min(ui.questionCustomInput.length, ui.questionCustomCursor + 1)
+              ui.questionCustomCursor = moveGraphemeCursor(
+                ui.questionCustomInput,
+                ui.questionCustomCursor,
+                1
+              )
               requestRender()
               return
             }
             // Printable character
-            if (str && !key.ctrl && !key.meta && str.length === 1 && str.charCodeAt(0) >= 32) {
-              const before = ui.questionCustomInput.slice(0, ui.questionCustomCursor)
-              const after = ui.questionCustomInput.slice(ui.questionCustomCursor)
-              ui.questionCustomInput = before + str + after
-              ui.questionCustomCursor += 1
+            if (
+              str &&
+              !key.ctrl &&
+              !key.meta &&
+              !/[\u0000-\u001f\u007f-\u009f]/u.test(str)
+            ) {
+              insertQuestionText(str)
               requestRender()
               return
             }
@@ -3207,31 +3676,29 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
         // Ctrl+V: try image first, fall back to text paste
         if (key.ctrl && key.name === "v") {
-          appendLog("reading clipboard...")
+          showToast("Reading clipboard…", { topic: "clipboard", tone: "info", durationMs: 0 })
           requestRender()
           const clipBlock = await readClipboardImage({
             onStatus: (msg) => {
-              if (msg) {
-                // Update the last log line with status
-                if (ui.logs.length && ui.logs[ui.logs.length - 1].startsWith("reading clipboard") || ui.logs[ui.logs.length - 1].startsWith("processing image")) {
-                  ui.logs[ui.logs.length - 1] = msg
-                }
-              }
+              if (msg) showToast(msg, { topic: "clipboard", tone: "info", durationMs: 0 })
               requestRender()
             }
           })
-          // Remove status line
-          if (ui.logs.length && (ui.logs[ui.logs.length - 1].startsWith("reading clipboard") || ui.logs[ui.logs.length - 1].startsWith("processing image"))) {
-            ui.logs.pop()
-          }
           if (clipBlock && clipBlock.type === "image") {
             ui.pendingImages.push(clipBlock)
-            appendLog(`image pasted (${ui.pendingImages.length} attached)`)
+            showToast(`Image pasted · ${ui.pendingImages.length} attached`, {
+              topic: "clipboard",
+              tone: "success"
+            })
             requestRender()
             return
           }
           if (clipBlock && clipBlock.type === "error") {
-            appendLog(`paste failed: ${clipBlock.message}`)
+            showToast(`Paste failed: ${clipBlock.message}`, {
+              topic: "clipboard",
+              tone: "error",
+              durationMs: 5000
+            })
             requestRender()
             return
           }
@@ -3239,6 +3706,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           const clipText = await readClipboardText()
           if (clipText) {
             insertAtCursor(clipText)
+            showToast("Text pasted", { topic: "clipboard", tone: "success" })
+          } else {
+            showToast("Clipboard is empty", { topic: "clipboard", tone: "warning" })
           }
           requestRender()
           return
@@ -3270,10 +3740,11 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
         if (key.name === "backspace") {
           if (!deleteInputSelection() && ui.inputCursor > 0) {
-            const head = ui.input.slice(0, ui.inputCursor - 1)
+            const previousCursor = moveGraphemeCursor(ui.input, ui.inputCursor, -1)
+            const head = ui.input.slice(0, previousCursor)
             const tail = ui.input.slice(ui.inputCursor)
             ui.input = `${head}${tail}`
-            ui.inputCursor -= 1
+            ui.inputCursor = previousCursor
           }
           ui.selectedSuggestion = 0
           ui.suggestionOffset = 0
@@ -3283,8 +3754,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
         if (key.name === "delete") {
           if (!deleteInputSelection()) {
+            const nextCursor = moveGraphemeCursor(ui.input, ui.inputCursor, 1)
             const head = ui.input.slice(0, ui.inputCursor)
-            const tail = ui.input.slice(ui.inputCursor + 1)
+            const tail = ui.input.slice(nextCursor)
             ui.input = `${head}${tail}`
           }
           ui.selectedSuggestion = 0
@@ -3354,11 +3826,26 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         }
 
         if (key.ctrl && key.name === "t") {
-          ui.thinkingHidden = !ui.thinkingHidden
-          appendLog(paint(`● Thinking ${ui.thinkingHidden ? "hidden" : "visible"} (Ctrl+T to toggle)`, null, { dim: true }))
-          if (!ui.thinkingHidden && ui.thinkingBuffer) {
-            appendLog(ui.thinkingBuffer)
-            ui.thinkingBuffer = ""
+          if (ui.lastThinkingId) {
+            transcript.toggleLog(ui.lastThinkingId)
+            showToast("Thinking details toggled", { topic: "thinking", tone: "info" })
+          } else {
+            showToast("No thinking details in this turn", { topic: "thinking", tone: "info" })
+          }
+          requestRender()
+          return
+        }
+
+        if (key.ctrl && key.name === "e") {
+          const expandable = transcript.getItems().findLast((item) => item.collapsible && item.details.length)
+          if (expandable) {
+            transcript.toggleLog(expandable.id)
+            showToast(`${expandable.kind} details ${expandable.expanded ? "collapsed" : "expanded"}`, {
+              topic: "details",
+              tone: "info"
+            })
+          } else {
+            showToast("No expandable details", { topic: "details", tone: "info" })
           }
           requestRender()
           return
@@ -3372,13 +3859,16 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
         if (key.ctrl && key.name === "y") {
           ui.autoCopy = !ui.autoCopy
-          appendLog(paint(`● Auto-copy ${ui.autoCopy ? "ON" : "OFF"} (Ctrl+Y to toggle)`, null, { dim: true }))
+          showToast(`Auto-copy ${ui.autoCopy ? "ON" : "OFF"}`, {
+            topic: "auto-copy",
+            tone: ui.autoCopy ? "success" : "info"
+          })
           requestRender()
           return
         }
 
         if (key.ctrl && key.name === "l" && !key.shift) {
-          ui.logs = []
+          transcript.clear()
           requestRender()
           return
         }
@@ -3413,34 +3903,54 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           return
         }
         if (now - ui.lastCtrlCTime < 2000) {
-          ui.quitting = true
           finish()
         } else {
           ui.lastCtrlCTime = now
-          appendLog("Press Ctrl+C again to exit")
+          showToast("Press Ctrl+C again to exit", { topic: "exit", tone: "warning" })
           requestRender()
         }
       }
+      onTerminate = finish
+      onSuspend = suspendForJobControl
+      onContinue = continueAfterJobControl
 
       process.stdout.on("resize", onResize)
-      process.stdin.on("keypress", onKey)
-      process.stdin.on("data", onData)
+      attachTuiInputListeners()
       process.on("SIGINT", onSigint)
+      process.on("SIGTERM", onTerminate)
+      process.on("SIGHUP", onTerminate)
+      if (process.platform !== "win32") {
+        process.on("SIGTSTP", onSuspend)
+        process.on("SIGCONT", onContinue)
+      }
     })
   } finally {
-    if (renderTimer) clearTimeout(renderTimer)
+    disposed = true
+    abortTurnAndPromptsForExit()
+    cancelPendingFrame()
+    if (selectionClearTimer) clearTimeout(selectionClearTimer)
+    textStreamBatcher.dispose()
     stopBusySpinner()
     activityRenderer.stop()
     uiEventUnsub()
+    transcriptUnsub()
+    toastUnsub()
+    toastStore.dispose()
     setPermissionPromptHandler(null)
     setQuestionPromptHandler(null)
     if (onResize) process.stdout.removeListener("resize", onResize)
     if (onKey) process.stdin.removeListener("keypress", onKey)
     if (onData) process.stdin.removeListener("data", onData)
     if (onSigint) process.removeListener("SIGINT", onSigint)
-    if (process.stdin.isTTY) process.stdin.setRawMode(false)
-    process.stdin.emit = _origStdinEmit  // 还原 stdin.emit
-    stopTuiFrame()
+    if (onTerminate) {
+      process.removeListener("SIGTERM", onTerminate)
+      process.removeListener("SIGHUP", onTerminate)
+    }
+    if (process.platform !== "win32") {
+      if (onSuspend) process.removeListener("SIGTSTP", onSuspend)
+      if (onContinue) process.removeListener("SIGCONT", onContinue)
+    }
+    deactivateTerminal({ pauseInput: true })
     await saveHistoryLines(HIST_FILE, HIST_SIZE, ui.history)
   }
 }
@@ -3513,16 +4023,20 @@ export async function startRepl({ trust = false } = {}) {
     console.log(paint("  ⚠ workspace not trusted — tools are blocked. Run /trust to enable.", ctx.themeState.theme.semantic.warning))
   }
 
-  await runReplController({
-    ctx,
-    state,
-    providersConfigured,
-    customCommands,
-    recentSessions,
-    historyLines,
-    mcpStatusLines,
-    startTuiRepl,
-    startLineRepl,
-    clearScreenFn: clearScreen
-  })
+  try {
+    await runReplController({
+      ctx,
+      state,
+      providersConfigured,
+      customCommands,
+      recentSessions,
+      historyLines,
+      mcpStatusLines,
+      startTuiRepl,
+      startLineRepl,
+      clearScreenFn: clearScreen
+    })
+  } finally {
+    await McpRegistry.shutdown()
+  }
 }

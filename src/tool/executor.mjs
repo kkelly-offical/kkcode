@@ -40,6 +40,35 @@ function rawError(raw, status, output) {
 
 function eventMetadataSummary(metadata = {}) {
   const fileChanges = Array.isArray(metadata.fileChanges) ? metadata.fileChanges : []
+  const rawMutations = [
+    ...(metadata.mutation && typeof metadata.mutation === "object" ? [metadata.mutation] : []),
+    ...(Array.isArray(metadata.mutations) ? metadata.mutations : [])
+  ]
+  let remainingPatchLines = 120
+  const mutations = rawMutations.slice(0, 12).map((mutation) => ({
+    operation: String(mutation.operation || ""),
+    filePath: String(mutation.filePath || ""),
+    addedLines: Number(mutation.addedLines || 0),
+    removedLines: Number(mutation.removedLines || 0),
+    structuredPatch: (Array.isArray(mutation.structuredPatch) ? mutation.structuredPatch : [])
+      .slice(0, 12)
+      .map((hunk) => {
+        const lines = (Array.isArray(hunk.lines) ? hunk.lines : [])
+          .slice(0, Math.max(0, remainingPatchLines))
+          .map((line) => ({
+            type: String(line?.type || "context"),
+            text: String(line?.text || "").slice(0, 300)
+          }))
+        remainingPatchLines = Math.max(0, remainingPatchLines - lines.length)
+        return {
+          oldStart: Number(hunk.oldStart || 0),
+          oldLineCount: Number(hunk.oldLineCount || 0),
+          newStart: Number(hunk.newStart || 0),
+          newLineCount: Number(hunk.newLineCount || 0),
+          lines
+        }
+      })
+  }))
   const observability = metadata.observability?.contract
     ? metadata.observability
     : buildMutationObservability(metadata)
@@ -57,11 +86,12 @@ function eventMetadataSummary(metadata = {}) {
       }
     : null
 
-  if (!fileChanges.length && !observability?.changes?.length && !diagnostics) return null
-  return { fileChanges, observability, diagnostics }
+  if (!fileChanges.length && !mutations.length && !observability?.changes?.length && !diagnostics) return null
+  return { fileChanges, mutations, observability, diagnostics }
 }
 
-export async function executeTool({ tool, args, sessionId, turnId, context, signal = null }) {
+export async function executeTool({ tool, args, sessionId, turnId, invocationId = null, context, signal = null }) {
+  const toolInvocationId = String(invocationId || `${turnId || "turn"}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`)
   return withAudit({
     sessionId,
     turnId,
@@ -76,6 +106,7 @@ export async function executeTool({ tool, args, sessionId, turnId, context, sign
         sessionId,
         turnId,
         payload: {
+          invocationId: toolInvocationId,
           tool: tool.name,
           args
         }
@@ -94,6 +125,7 @@ export async function executeTool({ tool, args, sessionId, turnId, context, sign
             sessionId,
             turnId,
             payload: {
+              invocationId: toolInvocationId,
               tool: tool.name,
               status: cancelled.status,
               output: cancelled.output,
@@ -138,6 +170,7 @@ export async function executeTool({ tool, args, sessionId, turnId, context, sign
           sessionId,
           turnId,
           payload: {
+            invocationId: toolInvocationId,
             tool: tool.name,
             status: result.status,
             args,
@@ -165,6 +198,7 @@ export async function executeTool({ tool, args, sessionId, turnId, context, sign
           sessionId,
           turnId,
           payload: {
+            invocationId: toolInvocationId,
             tool: tool.name,
             status: result.status,
             error: result.error,

@@ -13,7 +13,7 @@ export const DEFAULT_CONFIG = {
       stream_idle_timeout_ms: 120000,
       max_tokens: 32768,
       context_limit: null,
-      retry_attempts: 3,
+      retry_attempts: 5,
       retry_base_delay_ms: 800,
       stream: true,
       thinking: null
@@ -27,7 +27,7 @@ export const DEFAULT_CONFIG = {
       stream_idle_timeout_ms: 120000,
       max_tokens: 32768,
       context_limit: null,
-      retry_attempts: 3,
+      retry_attempts: 5,
       retry_base_delay_ms: 800,
       stream: true,
       thinking: null
@@ -42,7 +42,7 @@ export const DEFAULT_CONFIG = {
       stream_idle_timeout_ms: 180000,
       max_tokens: 32768,
       context_limit: 1048576,
-      retry_attempts: 3,
+      retry_attempts: 5,
       retry_base_delay_ms: 800,
       stream: true,
       reasoning_effort: "high",
@@ -56,7 +56,7 @@ export const DEFAULT_CONFIG = {
       stream_idle_timeout_ms: 300000,
       max_tokens: 32768,
       context_limit: null,
-      retry_attempts: 1,
+      retry_attempts: 5,
       retry_base_delay_ms: 1000,
       stream: true,
       thinking: null
@@ -309,6 +309,13 @@ export const DEFAULT_CONFIG = {
     },
     layout: "compact",
     markdown_render: true,
+    terminal: {
+      alternate_screen: "auto",
+      mouse: "auto",
+      bracketed_paste: true,
+      copy_on_select: true,
+      toast_duration_ms: 2600
+    },
     status: {
       show_cost: true,
       show_token_meter: true

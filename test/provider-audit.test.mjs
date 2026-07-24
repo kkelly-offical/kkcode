@@ -73,6 +73,8 @@ test("OpenAI and Anthropic inference reuse caller correlation identity", async (
 
   const traceId = "trace-provider-identity"
   const reviewId = "review-provider-identity"
+  const sessionId = "session-provider-identity"
+  const turnId = "turn-provider-identity"
   const openaiRequestId = "11111111-1111-4111-8111-111111111111"
   const anthropicRequestId = "22222222-2222-4222-8222-222222222222"
   try {
@@ -89,6 +91,8 @@ test("OpenAI and Anthropic inference reuse caller correlation identity", async (
       tools: [],
       traceId,
       reviewId,
+      sessionId,
+      turnId,
       requestId: openaiRequestId
     })
     await requestProvider({
@@ -104,6 +108,8 @@ test("OpenAI and Anthropic inference reuse caller correlation identity", async (
       tools: [],
       traceId,
       reviewId,
+      sessionId,
+      turnId,
       requestId: anthropicRequestId
     })
 
@@ -118,6 +124,8 @@ test("OpenAI and Anthropic inference reuse caller correlation identity", async (
     const serialized = JSON.stringify(entries)
     assert.equal(entries.filter((entry) => entry.type === "provider.request.finish").length, 2)
     assert.ok(entries.every((entry) => entry.reviewId === reviewId))
+    assert.ok(entries.every((entry) => entry.sessionId === sessionId))
+    assert.ok(entries.every((entry) => entry.turnId === turnId))
     assert.ok(entries.some((entry) => entry.upstreamRequestId === "openai-upstream"))
     assert.ok(entries.some((entry) => entry.upstreamRequestId === "anthropic-upstream"))
     assert.doesNotMatch(serialized, /private (?:system|user|output)|test-secret/)
@@ -173,6 +181,8 @@ test("Anthropic token counting reuses identity and emits a body-free audit span"
   }
   const traceId = "trace-token-count"
   const requestId = "33333333-3333-4333-8333-333333333333"
+  const sessionId = "session-token-count"
+  const turnId = "turn-token-count"
   try {
     const count = await countTokensProvider({
       configState: configFor("anthropic-count", {
@@ -185,7 +195,9 @@ test("Anthropic token counting reuses identity and emits a body-free audit span"
       messages: [{ role: "user", content: "private count prompt" }],
       tools: [],
       traceId,
-      requestId
+      requestId,
+      sessionId,
+      turnId
     })
     assert.equal(count, 17)
     assert.equal(observedHeaders["X-KK-Code-Request-Id"], requestId)
@@ -194,6 +206,8 @@ test("Anthropic token counting reuses identity and emits a body-free audit span"
     const finished = entries.find((entry) => entry.type === "provider.token_count.finish")
     assert.equal(finished.tokenCount, 17)
     assert.equal(finished.upstreamRequestId, "count-upstream")
+    assert.equal(finished.sessionId, sessionId)
+    assert.equal(finished.turnId, turnId)
     assert.doesNotMatch(JSON.stringify(entries), /private count|count-secret/)
   } finally {
     global.fetch = originalFetch
@@ -248,6 +262,8 @@ test("completed provider streams audit usage without streamed content", async ()
     }
   })
   const traceId = "trace-provider-stream"
+  const sessionId = "session-provider-stream"
+  const turnId = "turn-provider-stream"
   const chunks = []
   for await (const chunk of requestProviderStream({
     configState: configFor("stream-gateway", {
@@ -260,7 +276,9 @@ test("completed provider streams audit usage without streamed content", async ()
     system: "private system",
     messages: [{ role: "user", content: "private prompt" }],
     tools: [],
-    traceId
+    traceId,
+    sessionId,
+    turnId
   })) {
     chunks.push(chunk)
   }
@@ -271,7 +289,107 @@ test("completed provider streams audit usage without streamed content", async ()
   assert.deepEqual(finished.usage, { input: 8, output: 5, cacheRead: 2, cacheWrite: 0 })
   assert.equal(finished.stopReason, "end_turn")
   assert.equal(finished.upstreamRequestId, "stream-upstream")
+  assert.equal(finished.sessionId, sessionId)
+  assert.equal(finished.turnId, turnId)
   assert.doesNotMatch(JSON.stringify(entries), /private streamed output|private prompt|stream-secret/)
+})
+
+test("provider audit records bounded reconnect telemetry", async () => {
+  const driver = `audit-retry-${Date.now()}`
+  registerProvider(driver, {
+    async request(input) {
+      await input.retry.onRetry({
+        retryAttempt: 1,
+        maxRetries: 5,
+        requestAttempt: 1,
+        totalAttempts: 6,
+        classification: "network",
+        delayMs: 0
+      })
+      await input.retry.onRetry({
+        retryAttempt: 2,
+        maxRetries: 5,
+        requestAttempt: 2,
+        totalAttempts: 6,
+        classification: "server",
+        delayMs: 0
+      })
+      return { text: "private result", usage: {}, toolCalls: [] }
+    },
+    async *requestStream() {}
+  })
+  const traceId = "trace-provider-retry-audit"
+
+  await requestProvider({
+    configState: configFor("retry-audit-gateway", {
+      type: driver,
+      protocol: "openai",
+      base_url: "https://retry-audit.example.test/v1",
+      api_key: "retry-audit-secret"
+    }),
+    providerType: "retry-audit-gateway",
+    system: "",
+    messages: [],
+    tools: [],
+    traceId,
+    sessionId: "session-provider-retry-audit",
+    turnId: "turn-provider-retry-audit"
+  })
+
+  const entries = await listAuditEntries({ traceId })
+  const finished = entries.find((entry) => entry.type === "provider.request.finish")
+  assert.equal(finished.retryCount, 2)
+  assert.deepEqual(finished.retryClasses, ["network", "server"])
+  assert.equal(finished.lastRetryClass, "server")
+  assert.equal(finished.attemptsObserved, 3)
+  assert.equal(finished.retryBudgetAttempts, 6)
+  assert.doesNotMatch(JSON.stringify(entries), /retry-audit-secret|private result/)
+})
+
+test("caller abort remains an error when a provider stream exits quietly", async () => {
+  const driver = `audit-abort-${Date.now()}`
+  registerProvider(driver, {
+    async request() {
+      return { text: "", usage: {}, toolCalls: [] }
+    },
+    async *requestStream(input) {
+      await new Promise((resolve) => {
+        if (input.signal?.aborted) {
+          resolve()
+          return
+        }
+        input.signal?.addEventListener("abort", resolve, { once: true })
+      })
+    }
+  })
+  const traceId = "trace-provider-quiet-abort"
+  const controller = new AbortController()
+  const iterator = requestProviderStream({
+    configState: configFor("quiet-abort-gateway", {
+      type: driver,
+      protocol: "openai",
+      base_url: "https://quiet-abort.example.test/v1",
+      api_key: "quiet-abort-secret"
+    }),
+    providerType: "quiet-abort-gateway",
+    system: "",
+    messages: [],
+    tools: [],
+    traceId,
+    signal: controller.signal
+  })
+
+  const pending = iterator.next()
+  controller.abort()
+  await assert.rejects(
+    pending,
+    (error) => error.reason === "cancelled" && error.errorClass === "aborted"
+  )
+
+  const entries = await listAuditEntries({ traceId })
+  const cancelled = entries.find((entry) => entry.type === "provider.request.error")
+  assert.equal(cancelled.status, "cancelled")
+  assert.equal(cancelled.reason, "cancelled")
 })
 
 test("closing a provider stream early records cancellation without changing iterator semantics", async () => {
