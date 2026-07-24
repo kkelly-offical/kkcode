@@ -202,9 +202,8 @@ test("TUI restores job-control state and exits without a referenced stdin handle
     }, { message: "TUI process pid was not recorded" }))
     assert.ok(Number.isInteger(nodePid) && nodePid > 1)
 
-    // The frame-enter sequence is written just before signal listeners attach.
-    // Give the synchronous startup path time to finish before exercising it.
-    await new Promise((resolve) => setTimeout(resolve, 150))
+    // Job-control handlers are installed before the alternate screen starts,
+    // so even a signal during a slow first paint must restore the terminal.
     const entersBeforeSuspend = countOccurrences(output, "\x1b[?1049h")
     const suspendOutputStart = output.length
     process.kill(nodePid, "SIGTSTP")

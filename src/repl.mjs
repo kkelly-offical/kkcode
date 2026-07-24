@@ -3364,6 +3364,16 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     }
   }
 
+  // Install Unix job-control handlers before entering the alternate screen.
+  // Painting the first frame can be comparatively slow under coverage or on a
+  // loaded machine; SIGTSTP must still restore terminal state during that gap.
+  onSuspend = suspendForJobControl
+  onContinue = continueAfterJobControl
+  if (process.platform !== "win32") {
+    process.on("SIGTSTP", onSuspend)
+    process.on("SIGCONT", onContinue)
+  }
+
   try {
     // `exit` is the last synchronous point at which Node can give the shell
     // back a usable terminal after process.exit() or an uncaught exception.
@@ -3413,6 +3423,10 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     if (onProcessExit) {
       process.removeListener("exit", onProcessExit)
       onProcessExit = null
+    }
+    if (process.platform !== "win32") {
+      if (onSuspend) process.removeListener("SIGTSTP", onSuspend)
+      if (onContinue) process.removeListener("SIGCONT", onContinue)
     }
     throw error
   }
@@ -4008,8 +4022,6 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       }
       onTerminate = finish
       onSigbreak = finish
-      onSuspend = suspendForJobControl
-      onContinue = continueAfterJobControl
 
       process.stdout.on("resize", onResize)
       attachTuiInputListeners()
@@ -4018,9 +4030,6 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       process.on("SIGHUP", onTerminate)
       if (process.platform === "win32") {
         process.on("SIGBREAK", onSigbreak)
-      } else {
-        process.on("SIGTSTP", onSuspend)
-        process.on("SIGCONT", onContinue)
       }
     })
   } finally {
