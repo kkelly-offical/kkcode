@@ -2,7 +2,7 @@ import { appendFile, access, copyFile, mkdir } from "node:fs/promises"
 import path from "node:path"
 import { readJson, writeJson } from "../storage/json-store.mjs"
 import { ensureBackgroundTaskRuntimeDir, backgroundTaskCheckpointPath, backgroundTaskLogPath } from "../storage/paths.mjs"
-import { buildContext } from "../context.mjs"
+import { buildContext, resolveExtensionPolicy } from "../context.mjs"
 import { ToolRegistry } from "../tool/registry.mjs"
 import { executeTurn } from "../session/engine.mjs"
 import { flushNow, forkSession, getSession } from "../session/store.mjs"
@@ -132,12 +132,16 @@ async function runDelegateTask(task, signal) {
 
   const ctx = await buildContext({ cwd: effectiveCwd })
   _maxLogLines = Number(ctx.configState.config?.background?.max_log_lines || 300)
+  const extensionPolicy = resolveExtensionPolicy(ctx.configState)
   await ToolRegistry.initialize({
-    config: ctx.configState.config,
-    cwd: effectiveCwd
+    config: extensionPolicy.config,
+    cwd: effectiveCwd,
+    allowProjectSources: extensionPolicy.allowProjectSources
   })
   const { CustomAgentRegistry } = await import("../agent/custom-agent-loader.mjs")
-  await CustomAgentRegistry.initialize(effectiveCwd)
+  await CustomAgentRegistry.initialize(effectiveCwd, {
+    allowProjectSources: extensionPolicy.allowProjectSources
+  })
 
   const providerType = payload.providerType || ctx.configState.config.provider.default
   const providerDefault = ctx.configState.config.provider[providerType]

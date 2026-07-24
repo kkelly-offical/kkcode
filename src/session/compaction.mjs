@@ -303,7 +303,9 @@ export async function compactSession({
   keepRecent = DEFAULT_KEEP_RECENT,
   keepRecentTurns = DEFAULT_KEEP_RECENT_TURNS,
   baseUrl = null,
-  apiKeyEnv = null
+  apiKeyEnv = null,
+  traceId = "",
+  parentEventId = ""
 }) {
   const history = await getConversationHistory(sessionId, 9999, { includeMetadata: true })
   if (history.length <= keepRecent + 2) return { compacted: false, reason: "too few messages" }
@@ -359,7 +361,9 @@ export async function compactSession({
       messages: [{ role: "user", content: summaryPrompt }],
       tools: [],
       baseUrl,
-      apiKeyEnv
+      apiKeyEnv,
+      traceId,
+      parentEventId
     })
     summaryText = (response.text || "").trim()
     compactionUsage = response.usage || null

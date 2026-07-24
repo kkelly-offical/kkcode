@@ -4,8 +4,8 @@
 # 配置文件加载优先级：项目配置 > 用户配置 > 默认配置
 #
 # 配置文件位置：
-#   用户级：~/.config/kkcode/config.yaml
-#   项目级：.kkcode/config.yaml 或项目根目录 kkcode.yaml
+#   用户级：~/.kkcode/config.yaml
+#   项目级：.kkcode/config.yaml 或项目根目录 kkcode.config.yaml
 #
 # 支持格式：YAML (.yaml/.yml) 和 JSON (.json)
 # =============================================================================
@@ -36,6 +36,26 @@ provider:
     api_key_env: "ANTHROPIC_API_KEY"
     default_model: "claude-sonnet-4-6"
     models: [claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5-20251001]
+    timeout_ms: 120000
+    max_tokens: 32768
+    retry_attempts: 3
+    stream: true
+
+  # --- 统一网关（从用户配置的 Base URL 动态读取模型）---
+  # 将 default 切换为 gateway 后启用。protocol 决定本次推理使用哪套协议。
+  gateway:
+    type: "gateway"
+    protocol: "openai"       # openai | anthropic
+    base_url: "https://gateway.example.com"
+    endpoints:
+      openai: "/v1"
+      anthropic: "/anthropic/v1"
+      models: "/v1/models"
+    api_key_env: "KK_GATEWAY_API_KEY"
+    default_model: "model-id-from-the-catalog"
+    discovery:
+      enabled: true
+      cache_ttl_ms: 900000
     timeout_ms: 120000
     max_tokens: 32768
     retry_attempts: 3

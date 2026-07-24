@@ -1,5 +1,5 @@
 import { Command } from "commander"
-import { buildContext, printContextWarnings } from "../context.mjs"
+import { buildContext, printContextWarnings, resolveExtensionPolicy } from "../context.mjs"
 import { ensureEventSinks, executeTurn, formatPublicModeSummary, getPublicModeContract, newSessionId, resolveMode, resolvePromptMode, summarizeRouteDecision } from "../session/engine.mjs"
 import { emitRouteDecisionEvent } from "../session/routing-observability.mjs"
 import { renderStatusBar } from "../theme/status-bar.mjs"
@@ -36,7 +36,10 @@ export function createChatCommand() {
       const ctx = await buildContext()
       printContextWarnings(ctx)
       PermissionEngine.setTrusted(ctx.trustState?.trusted !== false)
-      await SkillRegistry.initialize(ctx.configState.config, process.cwd())
+      const extensionPolicy = resolveExtensionPolicy(ctx.configState)
+      await SkillRegistry.initialize(extensionPolicy.config, process.cwd(), {
+        allowProjectSources: extensionPolicy.allowProjectSources
+      })
       let prompt = promptParts.join(" ").trim()
       if (prompt.startsWith("$") || prompt.startsWith("/")) {
         const sigil = prompt.startsWith("$") ? "$" : "/"
@@ -54,7 +57,9 @@ export function createChatCommand() {
           })
           prompt = typeof expanded === "object" && expanded?.contextFork ? expanded.prompt || "" : String(expanded || "")
         } else {
-          const commands = await loadCustomCommands(process.cwd())
+          const commands = await loadCustomCommands(process.cwd(), {
+            allowProjectSources: extensionPolicy.allowProjectSources
+          })
           const custom = commands.find((item) => item.name === name)
           if (custom) {
             prompt = applyCommandTemplate(custom.template, args, {
@@ -74,11 +79,14 @@ export function createChatCommand() {
       const sessionId = options.session || newSessionId()
 
       await ToolRegistry.initialize({
-        config: ctx.configState.config,
-        cwd: process.cwd()
+        config: extensionPolicy.config,
+        cwd: process.cwd(),
+        allowProjectSources: extensionPolicy.allowProjectSources
       })
 
-      await initHookBus()
+      await initHookBus(process.cwd(), extensionPolicy.config, {
+        allowProjectSources: extensionPolicy.allowProjectSources
+      })
       const chatParams = await HookBus.chatParams({
         prompt,
         mode,

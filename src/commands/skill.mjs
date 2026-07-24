@@ -1,6 +1,6 @@
 import { Command } from "commander"
 import { ensureDefaultSkillPack, SkillRegistry } from "../skill/registry.mjs"
-import { buildContext } from "../context.mjs"
+import { buildContext, resolveExtensionPolicy } from "../context.mjs"
 import { userRootDir } from "../storage/paths.mjs"
 
 function formatSummary(scopeResults) {
@@ -27,7 +27,14 @@ export function createSkillCommand() {
     .option("--json", "print structured output", false)
     .action(async (options) => {
       const ctx = await buildContext()
-      await SkillRegistry.initialize({ ...ctx.configState.config, skills: { ...(ctx.configState.config.skills || {}), auto_seed: false } }, process.cwd())
+      const extensionPolicy = resolveExtensionPolicy(ctx.configState)
+      const extensionConfig = {
+        ...extensionPolicy.config,
+        skills: { ...(extensionPolicy.config.skills || {}), auto_seed: false }
+      }
+      await SkillRegistry.initialize(extensionConfig, process.cwd(), {
+        allowProjectSources: extensionPolicy.allowProjectSources
+      })
       const skills = SkillRegistry.list()
       if (options.json) {
         console.log(JSON.stringify({

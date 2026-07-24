@@ -40,8 +40,13 @@ test("e2e: --version exits 0", () => {
 
 // doctor
 test("e2e: doctor exits 0", () => {
-  const { stdout } = run(["doctor"])
-  assert.ok(stdout.includes("node"), "should check node")
+  const home = mkdtempSync(join(tmpdir(), "kkcode-e2e-doctor-text-"))
+  try {
+    const { stdout } = run(["doctor"], { env: { KKCODE_HOME: home } })
+    assert.ok(stdout.includes("node"), "should check node")
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
 })
 
 test("e2e: doctor --json exits 0 and outputs structured json", () => {
@@ -53,6 +58,7 @@ test("e2e: doctor --json exits 0 and outputs structured json", () => {
     assert.ok(parsed.config)
     assert.ok(parsed.storage)
     assert.ok(parsed.background)
+    assert.ok(!parsed.runtime.providersConfigured.some((provider) => provider.name === "model_context"))
   } finally {
     rmSync(home, { recursive: true, force: true })
   }

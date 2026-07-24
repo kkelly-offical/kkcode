@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
   push:
     tags:
-      - "v0.3.1"
-      - "v0.3.1-rc.*"
+      - "v0.3.2"
+      - "v0.3.2-rc.*"
 
 permissions:
   contents: write
@@ -29,18 +29,83 @@ jobs:
       - name: Enable npm trusted publishing
         run: npm install --global npm@11.13.0
       - run: npm ci
+      - name: Resolve release metadata
+        id: release
+        shell: bash
+        run: |
+          package_version="$(node -p "require('./package.json').version")"
+
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "release_version=${package_version}" >> "$GITHUB_OUTPUT"
+            echo "dist_tag=" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [[ ! "${tag_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+            echo "::error::Unsupported release tag: ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+
+          if [[ "${package_version}" != "${tag_version}" ]]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} must point to a commit whose package version is ${tag_version}, found ${package_version}"
+            exit 1
+          fi
+
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+          echo "release_version=${tag_version}" >> "$GITHUB_OUTPUT"
+          if [[ "${tag_version}" == *-rc.* ]]; then
+            echo "dist_tag=next" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "dist_tag=latest" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
       - run: npm run release:verify
       - name: Audit production dependencies
         run: npm audit --registry=https://registry.npmjs.org --omit=dev --audit-level=high
       - name: Generate CycloneDX SBOM
-        run: npm sbom --sbom-format=cyclonedx > kkcode-${{ github.ref_name }}.cdx.json
+        env:
+          SBOM_FILE: kkcode-${{ steps.release.outputs.release_version }}.cdx.json
+        run: npm sbom --sbom-format=cyclonedx > "$SBOM_FILE"
       - uses: actions/upload-artifact@v4
         with:
-          name: kkcode-${{ github.ref_name }}-sbom
-          path: kkcode-${{ github.ref_name }}.cdx.json
-      - name: Publish release candidate
-        if: startsWith(github.ref_name, 'v0.3.1-rc.')
-        run: npm publish --provenance --tag next
-      - name: Publish stable
-        if: github.ref_name == 'v0.3.1'
-        run: npm publish --provenance --tag latest
+          name: kkcode-${{ steps.release.outputs.release_version }}-sbom
+          path: kkcode-${{ steps.release.outputs.release_version }}.cdx.json
+      - name: Publish npm package
+        if: steps.release.outputs.publish == 'true'
+        env:
+          DIST_TAG: ${{ steps.release.outputs.dist_tag }}
+          RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
+        shell: bash
+        run: |
+          package_name="$(node -p "require('./package.json').name")"
+          published_version="$(npm view "${package_name}@${RELEASE_VERSION}" version --registry=https://registry.npmjs.org 2>/dev/null || true)"
+          if [[ "${published_version}" == "${RELEASE_VERSION}" ]]; then
+            echo "${package_name}@${RELEASE_VERSION} is already published; skipping npm publish."
+          else
+            npm publish --provenance --tag "$DIST_TAG"
+          fi
+      - name: Create or update GitHub Release
+        if: steps.release.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ steps.release.outputs.prerelease }}
+          SBOM_FILE: kkcode-${{ steps.release.outputs.release_version }}.cdx.json
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            if [[ "$PRERELEASE" == "true" ]]; then
+              gh release edit "$tag" --title "$tag" --prerelease
+            else
+              gh release edit "$tag" --title "$tag" --latest
+            fi
+          elif [[ "$PRERELEASE" == "true" ]]; then
+            gh release create "$tag" --title "$tag" --generate-notes --verify-tag --prerelease
+          else
+            gh release create "$tag" --title "$tag" --generate-notes --verify-tag --latest
+          fi
+          gh release upload "$tag" "$SBOM_FILE" --clobber

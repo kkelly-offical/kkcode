@@ -1,3 +1,9 @@
-export const PACKAGE_NAME = "@kkelly-offical/kkcode"
-export const PACKAGE_VERSION = "0.3.1"
-export const RELEASE_LABEL = "0.3.1"
+import { readFileSync } from "node:fs"
+
+const packageMetadata = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8")
+)
+
+export const PACKAGE_NAME = packageMetadata.name
+export const PACKAGE_VERSION = packageMetadata.version
+export const RELEASE_LABEL = PACKAGE_VERSION

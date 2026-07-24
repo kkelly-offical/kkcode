@@ -1,0 +1,39 @@
+# KK Code v0.3.2 — unified OpenAI / Anthropic gateway
+#
+# 1. Set the credential outside YAML:
+#      export KK_GATEWAY_API_KEY="..."
+# 2. Choose one protocol below.
+# 3. Run `kkcode model list --provider company-gateway --refresh`.
+# 4. Set `default_model` to one of the model IDs returned by your gateway.
+
+config_version: 1
+
+provider:
+  default: company-gateway
+
+  company-gateway:
+    type: gateway
+    protocol: openai # openai | anthropic
+
+    # A gateway may expose different inference URLs for each protocol and a
+    # shared model-catalog URL. Protocol endpoints resolve from base_url;
+    # the model endpoint resolves from the selected protocol endpoint.
+    base_url: https://gateway.example.com
+    endpoints:
+      openai: /v1
+      anthropic: /anthropic/v1
+      models: /v1/models
+
+    api_key_env: KK_GATEWAY_API_KEY
+    default_model: replace-with-a-discovered-model-id
+
+    discovery:
+      enabled: true
+      cache_ttl_ms: 900000
+
+    timeout_ms: 120000
+    stream_idle_timeout_ms: 120000
+    max_tokens: 32768
+    retry_attempts: 3
+    retry_base_delay_ms: 800
+    stream: true

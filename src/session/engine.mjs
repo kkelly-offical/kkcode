@@ -12,6 +12,7 @@ import { SkillRegistry } from "../skill/registry.mjs"
 import { resolveAgentForMode } from "../agent/agent.mjs"
 import { estimateStringTokens } from "./compaction.mjs"
 import { classifyTaskMode, explainTaskModeReason } from "./longagent-utils.mjs"
+import { resolveExtensionPolicy } from "../context.mjs"
 
 let sinkReady = false
 
@@ -249,11 +250,15 @@ export async function executeTurn({
 
   const resolvedProviderType = providerType || configState.config.provider.default
   const agent = resolveAgentForMode(mode)
+  const extensionPolicy = resolveExtensionPolicy(configState)
   await ToolRegistry.initialize({
-    config: configState.config,
-    cwd: process.cwd()
+    config: extensionPolicy.config,
+    cwd: process.cwd(),
+    allowProjectSources: extensionPolicy.allowProjectSources
   })
-  await SkillRegistry.initialize(configState.config, process.cwd())
+  await SkillRegistry.initialize(extensionPolicy.config, process.cwd(), {
+    allowProjectSources: extensionPolicy.allowProjectSources
+  })
   // Auto-name session from first user prompt (truncated to 50 chars)
   const autoTitle = typeof prompt === "string"
     ? prompt.replace(/\s+/g, " ").trim().slice(0, 50)

@@ -1,5 +1,5 @@
 import { Command } from "commander"
-import { buildContext, printContextWarnings } from "../context.mjs"
+import { buildContext, printContextWarnings, resolveExtensionPolicy } from "../context.mjs"
 import { LongAgentManager } from "../orchestration/longagent-manager.mjs"
 import { listAgents } from "../agent/agent.mjs"
 import { CustomAgentRegistry } from "../agent/custom-agent-loader.mjs"
@@ -16,7 +16,10 @@ export function createAgentCommand() {
     .action(async (options) => {
       const ctx = await buildContext()
       printContextWarnings(ctx)
-      await CustomAgentRegistry.initialize(process.cwd())
+      const extensionPolicy = resolveExtensionPolicy(ctx.configState)
+      await CustomAgentRegistry.initialize(process.cwd(), {
+        allowProjectSources: extensionPolicy.allowProjectSources
+      })
       const configured = ctx.configState.config.agent?.subagents || {}
       if (options.configured) {
         console.log(JSON.stringify(configured, null, 2))

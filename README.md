@@ -1,6 +1,6 @@
 # kkcode
 
-[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=v0.3.1)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
+[![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=v0.3.2)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 [![GitHub Release](https://img.shields.io/github/v/release/kkelly-offical/kkcode)](https://github.com/kkelly-offical/kkcode/releases)
 ![Node](https://img.shields.io/badge/Node.js-%3E%3D22-green)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
@@ -332,6 +332,7 @@ For a deeper boundary matrix, see [CLI General Assistant Capability Matrix](docs
 - `skill`
 - `config`
 - `doctor`
+- `model`
 - `usage`
 - `review`
 - `audit`
@@ -350,6 +351,63 @@ Run `kkcode --help` or `kkcode <command> --help` for the full surface.
 - usage and budget limits
 - UI / theme settings
 - MCP and extension loading
+
+### Dynamic models and unified gateway / 动态模型与统一网关
+
+`v0.3.2` reads the model catalog from the Base URL you configure. OpenAI-compatible
+and Anthropic-compatible services can share one gateway entry:
+
+```yaml
+provider:
+  default: company-gateway
+  company-gateway:
+    type: gateway
+    protocol: openai # or anthropic
+    base_url: https://gateway.example.com
+    endpoints:
+      openai: /v1
+      anthropic: /anthropic/v1
+      models: /v1/models
+    api_key_env: KK_GATEWAY_API_KEY
+    default_model: model-id-from-the-catalog
+    discovery:
+      enabled: true
+      cache_ttl_ms: 900000
+```
+
+```bash
+kkcode model list --provider company-gateway --refresh
+kkcode model test --provider company-gateway --model model-id
+kkcode model test --provider company-gateway --model model-id --probe
+```
+
+The last command is the only one above that performs a potentially billable
+inference request. Catalog redirects and pagination must remain on the configured
+origin. Discovery failures are explicit; KK Code may report a stale cache, but
+does not silently substitute a built-in model list. Project-controlled provider
+URLs and credential settings are blocked until the workspace is trusted.
+Credential-bearing connections require HTTPS; authentication-free local HTTP
+gateways remain available for development. See
+[Gateway and model discovery](docs/gateway-model-discovery.md) and
+[`configs/config-gateway.yaml`](configs/config-gateway.yaml).
+
+### Audit and branch review / 审计与分支审查
+
+```bash
+kkcode audit verify
+kkcode audit list --provider company-gateway --since 2h
+kkcode review branch --base origin/main --include-working-tree
+kkcode review gate
+kkcode review waive <finding-id> --reason "accepted risk"
+kkcode review branch --pr 123 --publish
+```
+
+Audit records form a rotating SHA-256 chain and keep prompts/model output out of
+the log body. Branch review combines deterministic checks with structured model
+findings; stale, incomplete, critical, and high-severity reports fail closed.
+One review trace correlates its model calls, permission decision, PR publication,
+waiver, and gate result. Candidate credentials are redacted before a diff is sent
+to the review model.
 
 ### Project structure / 项目结构
 - `src/repl.mjs` — main REPL assembly surface
@@ -422,13 +480,13 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current release / 当前版本**: `v0.3.1`
+**Current release / 当前版本**: `v0.3.2`
 
 Use the Kimi Code preset without placing credentials in YAML:
 
 ```bash
 export KIMI_CODE_API_KEY="..."
-cp configs/config-kimi-code.yaml .kkcode.yaml
+cp configs/config-kimi-code.yaml kkcode.config.yaml
 kkcode doctor --http
 kkcode chat "review this repository" --output-format text
 ```
@@ -442,6 +500,7 @@ with authorization values redacted.
 **Package / 包地址**: [npm](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 
 **English**
+- `0.3.2` discovers models from user-configured OpenAI/Anthropic-compatible endpoints, adds unified gateway routing, traceable audit records, and AI-assisted branch/PR review.
 - `0.3.1` gives every outbound request a consistent `KK-Code/0.3.1` identity, adds the Kimi Code Coding API preset, and improves terminal, tool, and orchestration reliability.
 - `0.2.5` updates the YAML parser dependency to the latest stable release and clears the Dependabot advisory for deeply nested YAML collections.
 - `0.2.4` separates skills into the `$` namespace while keeping legacy `/skill` compatibility, and establishes a production local compatibility baseline for kkcode, Claude Code, Codex, and OpenCode `SKILL.md` / plugin layouts.
@@ -451,6 +510,7 @@ with authorization values redacted.
 - `0.2.1` rebuilt kkcode around Assistant as the default general-purpose lane, with dedicated Agent and LongAgent modes for coding work.
 
 **中文**
+- `0.3.2` 从用户配置的 OpenAI/Anthropic 兼容端点动态发现模型，并加入统一 Gateway 路由、可追踪审计和 AI 分支/PR 审查。
 - `0.3.1` 为所有出站请求统一添加 `KK-Code/0.3.1` 身份，加入 Kimi Code Coding API 预设，并提升终端、工具与编排的可靠性。
 - `0.2.5` 将 YAML 解析器依赖更新到最新稳定版本，并清除深层嵌套 YAML collection 相关的 Dependabot 告警。
 - `0.2.4` 将 Skill 分离到 `$` 命名空间，同时保留旧版 `/skill` 兼容，并建立 kkcode / Claude Code / Codex / OpenCode 的本地 `SKILL.md` 与插件布局生产兼容基线。

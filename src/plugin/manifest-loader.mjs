@@ -245,7 +245,9 @@ async function candidateManifestFiles(cwd) {
   })
 }
 
-export async function discoverLocalPluginManifests(cwd = process.cwd(), config = {}) {
+export async function discoverLocalPluginManifests(cwd = process.cwd(), config = {}, {
+  allowProjectSources = true
+} = {}) {
   const compatCandidates = await discoverCompatPluginManifestCandidates(cwd, config)
   const legacyFiles = (await candidateManifestFiles(cwd)).map((file) => ({
     file,
@@ -269,6 +271,7 @@ export async function discoverLocalPluginManifests(cwd = process.cwd(), config =
     const file = item.file
     if (!(await exists(file))) continue
     const scope = isWithin(cwd, file) ? "project" : "global"
+    if (!allowProjectSources && scope === "project") continue
     const loaded = await loadManifest(file, scope, item)
     if (loaded.plugin) plugins.push(loaded.plugin)
     errors.push(...loaded.errors.map((message) => `${file}: ${message}`))
@@ -282,6 +285,7 @@ export async function discoverLocalPluginManifests(cwd = process.cwd(), config =
   for (const file of await discoverOpenCodePluginFiles(cwd, config)) {
     const ext = path.extname(file)
     const scope = isWithin(cwd, file) ? "project" : "global"
+    if (!allowProjectSources && scope === "project") continue
     plugins.push({
       name: path.basename(file, ext),
       version: null,

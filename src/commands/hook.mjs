@@ -1,6 +1,6 @@
 import { Command } from "commander"
 import { initHookBus, HookBus } from "../plugin/hook-bus.mjs"
-import { buildContext } from "../context.mjs"
+import { buildContext, resolveExtensionPolicy } from "../context.mjs"
 
 export function createHookCommand() {
   const cmd = new Command("hook").description("inspect loaded hooks")
@@ -10,7 +10,10 @@ export function createHookCommand() {
     .description("list loaded hooks and loading errors")
     .action(async () => {
       const ctx = await buildContext()
-      await initHookBus(process.cwd(), ctx.configState.config)
+      const extensionPolicy = resolveExtensionPolicy(ctx.configState)
+      await initHookBus(process.cwd(), extensionPolicy.config, {
+        allowProjectSources: extensionPolicy.allowProjectSources
+      })
       const hooks = HookBus.list()
       const errors = HookBus.errors()
       console.log(`supported events: ${HookBus.supportedEvents().join(", ")}`)

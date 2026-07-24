@@ -47,7 +47,9 @@ export function usageStorePath() {
 }
 
 export function trustFilePath(cwd = process.cwd()) {
-  return path.join(projectRootDir(cwd), "trust.json")
+  const workspace = path.resolve(cwd)
+  const hash = createHash("sha256").update(workspace).digest("hex")
+  return path.join(userRootDir(), "trusted-workspaces", `${hash}.json`)
 }
 
 export function reviewStorePath(cwd = process.cwd()) {
@@ -109,6 +111,10 @@ export function eventLogPath() {
 
 export function auditStorePath() {
   return path.join(userRootDir(), "audit-log.json")
+}
+
+export function auditLogPath() {
+  return path.join(userRootDir(), "audit-log.jsonl")
 }
 
 export function updateStatePath() {

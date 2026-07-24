@@ -1,7 +1,15 @@
 import path from "node:path"
 import { access, readFile, writeFile, mkdir } from "node:fs/promises"
 import { spawn } from "node:child_process"
-import { readReviewState } from "../review/review-store.mjs"
+import { readReviewState, writeReviewState } from "../review/review-store.mjs"
+import {
+  captureLocalReview,
+  capturePullRequestReview,
+  evaluateReviewGate,
+  markReportStaleness
+} from "../review/branch-review.mjs"
+import { getStoredToken } from "../github/auth.mjs"
+import * as githubReviewApi from "../github/api.mjs"
 import { fsckSessionStore, getSession } from "./store.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
@@ -10,24 +18,9 @@ import { userRootDir } from "../storage/paths.mjs"
 const DEFAULT_GATE_TIMEOUT_MS = 15 * 60 * 1000
 const GATE_PREFS_FILE = path.join(userRootDir(), "gate-preferences.json")
 
-// --- Gate result cache (5-min TTL, only caches passing results) ---
-const gateCache = new Map()
-const GATE_CACHE_TTL_MS = 5 * 60 * 1000
-
-function getCachedGate(key) {
-  const entry = gateCache.get(key)
-  if (!entry) return null
-  if (Date.now() - entry.ts > GATE_CACHE_TTL_MS) { gateCache.delete(key); return null }
-  return entry.result
-}
-
-function setCachedGate(key, result) {
-  if (result.status === "pass" || result.status === "not_applicable") {
-    gateCache.set(key, { result, ts: Date.now() })
-  }
-}
-
-export function clearGateCache() { gateCache.clear() }
+// Kept as a compatibility hook. Correctness gates are deliberately re-run:
+// source, tests, health, and budget state can all change between invocations.
+export function clearGateCache() {}
 
 // --- Gate preference persistence ---
 let cachedPrefs = null
@@ -182,7 +175,6 @@ async function runCommand({ command, args, cwd, timeoutMs = DEFAULT_GATE_TIMEOUT
 }
 
 async function checkBuildGate({ cwd, config }) {
-  const cached = getCachedGate("build"); if (cached) return cached
   if (!isEnabled(config, "build")) {
     return { enabled: false, status: "disabled", reason: "build gate disabled" }
   }
@@ -199,8 +191,7 @@ async function checkBuildGate({ cwd, config }) {
     cwd
   })
   if (result.ok) {
-    const r = { enabled: true, status: "pass", reason: "build succeeded" }
-    setCachedGate("build", r); return r
+    return { enabled: true, status: "pass", reason: "build succeeded" }
   }
   return {
     enabled: true,
@@ -211,7 +202,6 @@ async function checkBuildGate({ cwd, config }) {
 }
 
 async function checkTestGate({ cwd, config }) {
-  const cached = getCachedGate("test"); if (cached) return cached
   if (!isEnabled(config, "test")) {
     return { enabled: false, status: "disabled", reason: "test gate disabled" }
   }
@@ -241,8 +231,7 @@ async function checkTestGate({ cwd, config }) {
   }
 
   if (result.ok) {
-    const r = { enabled: true, status: "pass", reason: "tests succeeded" }
-    setCachedGate("test", r); return r
+    return { enabled: true, status: "pass", reason: "tests succeeded" }
   }
   return {
     enabled: true,
@@ -252,14 +241,96 @@ async function checkTestGate({ cwd, config }) {
   }
 }
 
+export function evaluateStoredBranchReviewGate(report) {
+  if (!report || typeof report !== "object") {
+    return { enabled: true, status: "fail", reason: "branch review report is invalid" }
+  }
+  if (
+    report.schema !== "kk.review.v1" ||
+    !String(report.id || "").trim() ||
+    !/^[a-f0-9]{64}$/i.test(String(report.diffHash || "")) ||
+    !["local", "pull_request"].includes(report.source?.kind)
+  ) {
+    return { enabled: true, status: "fail", reason: "branch review report schema is invalid" }
+  }
+  if (report.stale === true || report.gate?.stale === true) {
+    return {
+      enabled: true,
+      status: "fail",
+      reason: "branch review report is stale",
+      output: (report.staleReasons || []).join(", ")
+    }
+  }
+  if (report.coverage?.complete !== true) {
+    return {
+      enabled: true,
+      status: "fail",
+      reason: "branch review coverage is incomplete",
+      output: (report.coverage?.errors || []).join(" | ")
+    }
+  }
+  const evaluated = evaluateReviewGate(report)
+  const blockingIds = new Set(evaluated.blockingFindingIds)
+  const blocking = (report.findings || []).filter((finding) => blockingIds.has(finding.id))
+  if (blocking.length) {
+    return {
+      enabled: true,
+      status: "fail",
+      reason: `${blocking.length} unwaived critical/high branch review finding(s)`,
+      output: blocking.slice(0, 5).map((finding) => finding.id || finding.title).join(", ")
+    }
+  }
+  return {
+    enabled: true,
+    status: "pass",
+    reason: evaluated.warningCount
+      ? `branch review passed with ${evaluated.warningCount} non-blocking warning(s)`
+      : "branch review passed"
+  }
+}
+
 async function checkReviewGate({ cwd, config, sessionId }) {
-  const cached = getCachedGate("review"); if (cached) return cached
   if (!isEnabled(config, "review")) {
     return { enabled: false, status: "disabled", reason: "review gate disabled" }
   }
   const state = await readReviewState(cwd)
+  if (state.branchReport) {
+    const report = state.branchReport
+    if (["local", "pull_request"].includes(report.source?.kind)) {
+      try {
+        let current
+        if (report.source.kind === "pull_request") {
+          const auth = await getStoredToken()
+          if (!auth?.token) throw new Error("GitHub authentication is unavailable")
+          current = await capturePullRequestReview({
+            cwd,
+            pullRequest: `https://github.com/${report.source.owner}/${report.source.repo}/pull/${report.source.number}`,
+            token: auth.token,
+            github: githubReviewApi
+          })
+        } else {
+          current = await captureLocalReview({
+            cwd,
+            base: report.source.baseRef || null,
+            head: report.source.headRef || "HEAD",
+            includeWorkingTree: report.source.includeWorkingTree !== false
+          })
+        }
+        state.branchReport = markReportStaleness(report, current)
+        await writeReviewState(state, cwd)
+      } catch (error) {
+        return {
+          enabled: true,
+          status: "fail",
+          reason: "branch review could not be revalidated",
+          output: error?.message || "unknown review validation error"
+        }
+      }
+    }
+    return evaluateStoredBranchReviewGate(state.branchReport)
+  }
   if (!state.files.length) {
-    return { enabled: true, status: "not_applicable", reason: "no review file state" }
+    return { enabled: true, status: "not_applicable", reason: "branch review has not been run" }
   }
   if (state.sessionId && sessionId && state.sessionId !== sessionId) {
     return {
@@ -277,19 +348,16 @@ async function checkReviewGate({ cwd, config, sessionId }) {
       output: pending.slice(0, 5).map((item) => item.path).join(", ")
     }
   }
-  const r = { enabled: true, status: "pass", reason: "all review items approved" }
-  setCachedGate("review", r); return r
+  return { enabled: true, status: "pass", reason: "all review items approved" }
 }
 
 async function checkHealthGate({ config }) {
-  const cached = getCachedGate("health"); if (cached) return cached
   if (!isEnabled(config, "health")) {
     return { enabled: false, status: "disabled", reason: "health gate disabled" }
   }
   const report = await fsckSessionStore()
   if (report.ok) {
-    const r = { enabled: true, status: "pass", reason: "session fsck passed" }
-    setCachedGate("health", r); return r
+    return { enabled: true, status: "pass", reason: "session fsck passed" }
   }
   return {
     enabled: true,
@@ -300,7 +368,6 @@ async function checkHealthGate({ config }) {
 }
 
 async function checkBudgetGate({ config, sessionId }) {
-  const cached = getCachedGate("budget"); if (cached) return cached
   if (!isEnabled(config, "budget")) {
     return { enabled: false, status: "disabled", reason: "budget gate disabled" }
   }
@@ -326,8 +393,7 @@ async function checkBudgetGate({ config, sessionId }) {
       output: budgetState.warnings.join(" | ")
     }
   }
-  const r = { enabled: true, status: "pass", reason: "budget gate passed" }
-  setCachedGate("budget", r); return r
+  return { enabled: true, status: "pass", reason: "budget gate passed" }
 }
 
 function isPassingStatus(status) {

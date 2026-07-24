@@ -34,10 +34,15 @@ async function loadDir(dir, scope) {
   return output
 }
 
-export async function loadCustomCommands(cwd = process.cwd()) {
+export async function loadCustomCommands(cwd = process.cwd(), {
+  allowProjectSources = true
+} = {}) {
   const userDir = path.join(userRootDir(), "commands")
   const projectDir = path.join(cwd, ".kkcode", "commands")
-  const [globalCommands, projectCommands] = await Promise.all([loadDir(userDir, "global"), loadDir(projectDir, "project")])
+  const [globalCommands, projectCommands] = await Promise.all([
+    loadDir(userDir, "global"),
+    allowProjectSources ? loadDir(projectDir, "project") : []
+  ])
   const map = new Map()
   for (const cmd of [...globalCommands, ...projectCommands]) {
     map.set(cmd.name, cmd)

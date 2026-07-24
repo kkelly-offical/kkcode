@@ -93,6 +93,10 @@ function timeoutSignal(ms, parentSignal = null) {
   return AbortSignal.any([parentSignal, own])
 }
 
+function notifyResponse(input, response) {
+  try { input.onResponse?.(response) } catch { /* audit metadata must not affect requests */ }
+}
+
 // --- Non-streaming ---
 export async function requestOllama(input) {
   const { baseUrl, model, system, messages, tools, timeoutMs = 300000, signal = null } = input
@@ -111,12 +115,15 @@ export async function requestOllama(input) {
     headers: buildRequestHeaders({
       target: "llm",
       provider: input.provider || "ollama",
+      protocol: input.protocol || "ollama",
+      requestId: input.requestId || "",
       accept: "application/json",
       contentType: "application/json"
     }),
     body: JSON.stringify(payload),
     signal: timeoutSignal(timeoutMs, signal)
   })
+  notifyResponse(input, response)
 
   if (!response.ok) {
     const text = await response.text().catch(() => "")
@@ -167,12 +174,15 @@ export async function* requestOllamaStream(input) {
     headers: buildRequestHeaders({
       target: "llm",
       provider: input.provider || "ollama",
+      protocol: input.protocol || "ollama",
+      requestId: input.requestId || "",
       accept: "application/x-ndjson, application/json",
       contentType: "application/json"
     }),
     body: JSON.stringify(payload),
     signal: timeoutSignal(timeoutMs, signal)
   })
+  notifyResponse(input, response)
 
   if (!response.ok) {
     const text = await response.text().catch(() => "")

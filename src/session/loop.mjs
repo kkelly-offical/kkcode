@@ -32,6 +32,8 @@ import { saveCheckpoint } from "./checkpoint.mjs"
 import { askPlanApproval } from "../tool/question-prompt.mjs"
 import { createValidator } from "./task-validator.mjs"
 import { runSpecRole } from "../orchestration/run-spec.mjs"
+import { createRequestContext } from "../http/identity.mjs"
+import { resolveExtensionPolicy } from "../context.mjs"
 
 // Max chars kept in active context per tool_result — process output beyond this is truncated
 const TOOL_RESULT_ACTIVE_LIMIT = 3000
@@ -192,7 +194,10 @@ export async function processTurnLoop({
   runSpec = null
 }) {
   const cwd = process.cwd()
-  await initHookBus(cwd)
+  const extensionPolicy = resolveExtensionPolicy(configState)
+  await initHookBus(cwd, extensionPolicy.config, {
+    allowProjectSources: extensionPolicy.allowProjectSources
+  })
 
   if (depth > 8) {
     return {
@@ -207,6 +212,7 @@ export async function processTurnLoop({
   }
 
   const turnId = newId("turn")
+  const turnTraceContext = createRequestContext()
   const configMaxSteps = Math.max(1, Number(configState.config.agent.max_steps || 128))
   const maxSteps = (subagent?.maxTurns > 0) ? Math.min(configMaxSteps, subagent.maxTurns) : configMaxSteps
   const verifyCompletion = configState.config.agent?.verify_completion !== false
@@ -365,7 +371,9 @@ export async function processTurnLoop({
       const realCount = await countTokensProvider({
         configState, providerType, model,
         system: systemPrompt, messages: history, tools,
-        baseUrl, apiKeyEnv
+        baseUrl, apiKeyEnv,
+        traceId: turnTraceContext.traceId,
+        signal
       })
       if (realCount != null) {
         contextTokens = realCount
@@ -421,7 +429,8 @@ export async function processTurnLoop({
         realTokenCount: realCount != null ? contextTokens : null
       })) {
           const compactResult = await compactSession({
-            sessionId, model, providerType, configState, baseUrl, apiKeyEnv
+            sessionId, model, providerType, configState, baseUrl, apiKeyEnv,
+            traceId: turnTraceContext.traceId
           })
           if (compactResult.compacted) {
             await EventBus.emit({ type: EVENT_TYPES.SESSION_COMPACTED, sessionId, turnId, payload: compactResult })
@@ -436,6 +445,7 @@ export async function processTurnLoop({
         }
 
       const messages = await HookBus.messagesTransform([...history])
+      const stepRequestContext = createRequestContext({ traceId: turnTraceContext.traceId })
 
       let response
       try {
@@ -448,6 +458,8 @@ export async function processTurnLoop({
           tools,
           baseUrl,
           apiKeyEnv,
+          traceId: stepRequestContext.traceId,
+          requestId: stepRequestContext.requestId,
           signal,
           compaction: useNativeCompaction ? { trigger: nativeCompactionTrigger } : null
         })
@@ -543,7 +555,8 @@ export async function processTurnLoop({
       } catch (error) {
         if (error.needsCompaction) {
           const compactResult = await compactSession({
-            sessionId, model, providerType, configState, baseUrl, apiKeyEnv
+            sessionId, model, providerType, configState, baseUrl, apiKeyEnv,
+            traceId: turnTraceContext.traceId
           })
           if (compactResult.compacted) {
             await EventBus.emit({ type: EVENT_TYPES.SESSION_COMPACTED, sessionId, turnId, payload: compactResult })
@@ -781,6 +794,9 @@ export async function processTurnLoop({
             await PermissionEngine.check({
               config: permissionConfig,
               sessionId,
+              turnId,
+              traceId: stepRequestContext.traceId,
+              requestId: stepRequestContext.requestId,
               tool: call.name,
               mode,
               pattern,
@@ -806,6 +822,8 @@ export async function processTurnLoop({
                   context: {
                     cwd,
                     mode,
+                    traceId: stepRequestContext.traceId,
+                    requestId: stepRequestContext.requestId,
                     delegateTask,
                     signal,
                     sessionId,

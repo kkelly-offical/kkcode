@@ -30,6 +30,7 @@ const state = {
   lastSignature: "",
   lastCwd: "",
   lastConfig: null,
+  lastAllowProjectSources: true,
   refreshing: false
 }
 
@@ -69,9 +70,10 @@ async function savePlanFile(cwd, plan, files = []) {
   return path.relative(cwd, filePath)
 }
 
-function signatureFor(config = {}, cwd = process.cwd()) {
+function signatureFor(config = {}, cwd = process.cwd(), allowProjectSources = true) {
   const payload = {
     cwd,
+    allowProjectSources,
     tool: config.tool || {},
     mcp: config.mcp || {},
     runtime: config.runtime || {}
@@ -86,6 +88,12 @@ async function exists(target) {
   } catch {
     return false
   }
+}
+
+function isWithinWorkspace(cwd, target) {
+  const root = path.resolve(cwd)
+  const resolved = path.resolve(target)
+  return resolved === root || resolved.startsWith(root + path.sep)
 }
 
 async function listDir(dir) {
@@ -1649,9 +1657,14 @@ function toolAllowedByMode(toolName, mode) {
 }
 
 export const ToolRegistry = {
-  async initialize({ config = {}, cwd = process.cwd(), force = false } = {}) {
+  async initialize({
+    config = {},
+    cwd = process.cwd(),
+    force = false,
+    allowProjectSources = true
+  } = {}) {
     const ttlMs = Math.max(0, Number(config.runtime?.tool_registry_cache_ttl_ms || 30000))
-    const sig = signatureFor(config, cwd)
+    const sig = signatureFor(config, cwd, allowProjectSources)
     const cacheValid =
       state.initialized &&
       !force &&
@@ -1667,17 +1680,21 @@ export const ToolRegistry = {
     }
 
     if (config.tool?.sources?.local !== false) {
-      const localDirs = (config.tool?.local_dirs || []).map((dir) => path.resolve(cwd, dir))
+      const localDirs = (config.tool?.local_dirs || [])
+        .map((dir) => path.resolve(cwd, dir))
+        .filter((dir) => allowProjectSources || !isWithinWorkspace(cwd, dir))
       tools.push(...(await loadDynamicTools(localDirs)))
     }
 
     if (config.tool?.sources?.plugin !== false) {
-      const pluginDirs = (config.tool?.plugin_dirs || []).map((dir) => path.resolve(cwd, dir))
+      const pluginDirs = (config.tool?.plugin_dirs || [])
+        .map((dir) => path.resolve(cwd, dir))
+        .filter((dir) => allowProjectSources || !isWithinWorkspace(cwd, dir))
       tools.push(...(await loadDynamicTools(pluginDirs)))
     }
 
     if (config.tool && config.tool?.sources?.mcp !== false) {
-      await McpRegistry.initialize(config, { cwd })
+      await McpRegistry.initialize(config, { cwd, allowProjectSources })
       tools.push(...mcpTools())
     }
 
@@ -1687,18 +1704,36 @@ export const ToolRegistry = {
     state.lastSignature = sig
     state.lastCwd = cwd
     state.lastConfig = config
+    state.lastAllowProjectSources = allowProjectSources
   },
 
   isReady() {
     return state.initialized
   },
 
-  async list({ mode, cwd = process.cwd(), config = undefined } = {}) {
+  async list({
+    mode,
+    cwd = process.cwd(),
+    config = undefined,
+    allowProjectSources = undefined
+  } = {}) {
     const resolvedConfig = config === undefined ? state.lastConfig || {} : config
+    const resolvedAllowProjectSources = allowProjectSources === undefined
+      ? state.lastAllowProjectSources
+      : allowProjectSources
     if (!state.initialized) {
-      await this.initialize({ config: resolvedConfig, cwd })
+      await this.initialize({
+        config: resolvedConfig,
+        cwd,
+        allowProjectSources: resolvedAllowProjectSources
+      })
     } else {
-      await this.initialize({ config: resolvedConfig, cwd, force: false })
+      await this.initialize({
+        config: resolvedConfig,
+        cwd,
+        force: false,
+        allowProjectSources: resolvedAllowProjectSources
+      })
     }
     return state.tools
       .filter((tool) => toolAllowedByMode(tool.name, mode))

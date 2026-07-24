@@ -6,6 +6,29 @@ import { configureAuditStore } from "./storage/audit-store.mjs"
 import { checkWorkspaceTrust } from "./permission/workspace-trust.mjs"
 import { loadProfile } from "./onboarding.mjs"
 
+export function applyWorkspaceTrustPolicy(configState, trustState, cwd = process.cwd()) {
+  const trusted = trustState?.trusted === true
+  configState.workspaceTrust = {
+    cwd,
+    trusted
+  }
+  configState.allowProjectSources = trusted
+  configState.extensionConfig = trusted
+    ? configState.config
+    : (configState.userConfig || configState.config)
+  return configState
+}
+
+export function resolveExtensionPolicy(configState) {
+  const allowProjectSources = configState?.allowProjectSources !== false
+  return {
+    allowProjectSources,
+    config: allowProjectSources
+      ? (configState?.config || {})
+      : (configState?.extensionConfig || configState?.userConfig || configState?.config || {})
+  }
+}
+
 export async function buildContext(options = {}) {
   const configState = await loadConfig(options.cwd ?? process.cwd())
 
@@ -24,6 +47,7 @@ export async function buildContext(options = {}) {
   const themeState = await loadTheme(configState, options.themeFile ?? null)
   const cwd = options.cwd ?? process.cwd()
   const trustState = options.trustState ?? await checkWorkspaceTrust({ cwd, cliTrust: Boolean(options.trust), isTTY: process.stdin.isTTY })
+  applyWorkspaceTrustPolicy(configState, trustState, cwd)
   const profile = await loadProfile()
   return {
     configState,

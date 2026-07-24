@@ -2,9 +2,17 @@ import { requestAnthropic, requestAnthropicStream, countTokensAnthropic } from "
 import { requestOpenAI, requestOpenAIStream, countTokensOpenAI } from "./openai.mjs"
 import { request as requestOAICompat, requestStream as requestStreamOAICompat } from "./openai-compatible.mjs"
 import { requestOllama, requestOllamaStream } from "./ollama.mjs"
+import { requestGateway, requestGatewayStream, countTokensGateway } from "./gateway.mjs"
 import { ProviderError } from "../core/errors.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
+import { startAuditSpan } from "../audit/event.mjs"
+import { createRequestContext } from "../http/identity.mjs"
+import {
+  assertCredentialTransport,
+  assertProviderOutboundAllowed
+} from "./security.mjs"
+import { validateModelId } from "./model-id.mjs"
 
 // --- Provider Registry ---
 const registry = new Map()
@@ -29,6 +37,20 @@ registerProvider("openai", { request: requestOpenAI, requestStream: requestOpenA
 registerProvider("anthropic", { request: requestAnthropic, requestStream: requestAnthropicStream, countTokens: countTokensAnthropic })
 registerProvider("openai-compatible", { request: requestOAICompat, requestStream: requestStreamOAICompat, countTokens: countTokensOpenAI })
 registerProvider("ollama", { request: requestOllama, requestStream: requestOllamaStream })
+registerProvider("gateway", { request: requestGateway, requestStream: requestGatewayStream, countTokens: countTokensGateway })
+
+function resolveProtocolBaseUrl(provider, protocol) {
+  const endpoint = provider.endpoints?.[protocol]
+  if (!endpoint) return provider.base_url
+  try {
+    const relativeTo = provider.base_url
+      ? `${String(provider.base_url).replace(/\/+$/, "")}/`
+      : undefined
+    return new URL(endpoint, relativeTo).toString().replace(/\/+$/, "")
+  } catch {
+    return endpoint
+  }
+}
 
 // --- Settings Resolution ---
 function resolveSettings(configState, providerType, overrides = {}) {
@@ -58,16 +80,26 @@ function resolveSettings(configState, providerType, overrides = {}) {
 
   // Read config from original provider name (e.g. "deepseek"), not resolved type
   const defaults = llm[providerType] || llm[resolvedType] || {}
-  const normalizedModel = String(overrides.model || defaults.default_model || "").includes("/")
-    ? String(overrides.model || defaults.default_model).split("/").slice(1).join("/")
-    : String(overrides.model || defaults.default_model || "")
+  const protocol = defaults.protocol ||
+    (resolvedType === "anthropic" ? "anthropic" : resolvedType === "ollama" ? "ollama" : "openai")
+  const protocolBaseUrl = resolveProtocolBaseUrl(defaults, protocol)
+  const requestedModel = validateModelId(overrides.model || defaults.default_model || "", {
+    label: `provider "${providerType}" model`,
+    allowEmpty: true
+  })
+  const separator = requestedModel.indexOf("/")
+  const modelPrefix = separator > 0 ? requestedModel.slice(0, separator) : ""
+  const normalizedModel = separator > 0 && [providerType, resolvedType].includes(modelPrefix)
+    ? requestedModel.slice(separator + 1)
+    : requestedModel
   return {
     providerType: resolvedType,
     configKey: providerType,
     model: normalizedModel,
-    baseUrl: overrides.baseUrl || defaults.base_url,
+    baseUrl: overrides.baseUrl || protocolBaseUrl,
     apiKeyEnv: overrides.apiKeyEnv || defaults.api_key_env,
-    apiKeyDirect: defaults.api_key || null
+    apiKeyDirect: defaults.api_key || null,
+    protocol
   }
 }
 
@@ -114,6 +146,45 @@ function normalizeProviderError(error, providerType, model) {
   return wrapped
 }
 
+function safeProviderEndpoint(baseUrl, providerType, protocol, operation = "inference") {
+  const suffix = operation === "token_count"
+    ? (protocol === "anthropic" ? "messages/count_tokens" : "token-count")
+    : providerType === "ollama"
+      ? "api/chat"
+      : protocol === "anthropic" ? "messages" : "chat/completions"
+  try {
+    const url = new URL(String(baseUrl || ""))
+    url.pathname = `${url.pathname.replace(/\/+$/, "")}/${suffix}`
+    url.username = ""
+    url.password = ""
+    url.search = ""
+    url.hash = ""
+    return url.toString()
+  } catch {
+    return `(invalid-base-url)/${suffix}`
+  }
+}
+
+function upstreamRequestId(response) {
+  const headers = response?.headers
+  if (!headers?.get) return null
+  return headers.get("x-request-id") ||
+    headers.get("request-id") ||
+    headers.get("x-amzn-requestid") ||
+    null
+}
+
+function auditFailureMetadata(error, signal) {
+  const cancelled = Boolean(signal?.aborted)
+  const classified = classifyProviderFailure(error)
+  return {
+    status: cancelled ? "cancelled" : "error",
+    reason: cancelled ? "cancelled" : error?.name === "AbortError" && classified === "unknown" ? "timeout" : classified,
+    errorClass: error?.errorClass || null,
+    httpStatus: Number(error?.httpStatus || error?.status || 0) || null
+  }
+}
+
 // --- Non-streaming Request ---
 export async function requestProvider({
   configState,
@@ -124,6 +195,11 @@ export async function requestProvider({
   tools,
   baseUrl = null,
   apiKeyEnv = null,
+  maxTokens = null,
+  traceId = "",
+  requestId = "",
+  parentEventId = "",
+  reviewId = "",
   signal = null
 }) {
   const resolvedProviderType = providerType || configState.config.provider.default
@@ -132,26 +208,50 @@ export async function requestProvider({
     baseUrl,
     apiKeyEnv
   })
-  const apiKey = settings.apiKeyDirect || process.env[settings.apiKeyEnv] || ""
+  await assertProviderOutboundAllowed(configState, {
+    providerName: settings.configKey,
+    protocol: settings.protocol,
+    operation: "provider inference",
+    baseUrlOverride: baseUrl,
+    apiKeyEnvOverride: apiKeyEnv
+  })
+  const apiKey = settings.apiKeyDirect ||
+    (settings.apiKeyEnv ? process.env[settings.apiKeyEnv] : "") ||
+    ""
+  assertCredentialTransport({
+    baseUrl: settings.baseUrl,
+    apiKey,
+    providerName: settings.configKey,
+    operation: "provider inference"
+  })
   const providerCfg = configState.config.provider[settings.configKey] || configState.config.provider[settings.providerType] || {}
+  const requestContext = createRequestContext({ traceId, requestId, parentEventId })
+  let responseStatus = null
+  let responseRequestId = null
 
   const input = {
     apiKey,
     baseUrl: settings.baseUrl,
     apiKeyEnv: settings.apiKeyEnv,
     provider: settings.configKey,
+    protocol: settings.protocol,
     model: settings.model,
     system,
     messages,
     tools,
     timeoutMs: Number(providerCfg.timeout_ms || 120000),
-    maxTokens: Number(providerCfg.max_tokens || 16384),
+    maxTokens: Number(maxTokens || providerCfg.max_tokens || 16384),
     retry: {
       attempts: Number(providerCfg.retry_attempts || 3),
       baseDelayMs: Number(providerCfg.retry_base_delay_ms || 800)
     },
     thinking: providerCfg.thinking || null,
     reasoningEffort: providerCfg.reasoning_effort || null,
+    ...requestContext,
+    onResponse(response) {
+      responseStatus = Number(response?.status || 0) || null
+      responseRequestId = upstreamRequestId(response)
+    },
     signal
   }
 
@@ -159,10 +259,36 @@ export async function requestProvider({
   if (!provider) {
     throw new Error(`unknown provider: ${settings.providerType}. registered: ${listProviders().join(", ")}`)
   }
+  const auditSpan = await startAuditSpan({
+    type: "provider.request",
+    ...requestContext,
+    provider: settings.configKey,
+    providerType: settings.providerType,
+    protocol: settings.protocol,
+    model: settings.model,
+    reviewId: reviewId || null,
+    endpoint: safeProviderEndpoint(settings.baseUrl, settings.providerType, settings.protocol),
+    stream: false
+  }).catch(() => null)
   try {
-    return await provider.request(input)
+    const result = await provider.request(input)
+    await auditSpan?.finish({
+      status: "ok",
+      httpStatus: responseStatus,
+      upstreamRequestId: responseRequestId,
+      usage: result?.usage || null
+    })
+    return result
   } catch (error) {
-    throw normalizeProviderError(error, settings.providerType, settings.model)
+    const normalized = normalizeProviderError(error, settings.providerType, settings.model)
+    await auditSpan?.fail(
+      new Error(signal?.aborted ? "provider request cancelled" : "provider request failed"),
+      {
+        ...auditFailureMetadata(error, signal),
+        upstreamRequestId: responseRequestId
+      }
+    )
+    throw normalized
   }
 }
 
@@ -176,6 +302,10 @@ export async function* requestProviderStream({
   tools,
   baseUrl = null,
   apiKeyEnv = null,
+  traceId = "",
+  requestId = "",
+  parentEventId = "",
+  reviewId = "",
   signal = null,
   compaction = null
 }) {
@@ -185,12 +315,28 @@ export async function* requestProviderStream({
     baseUrl,
     apiKeyEnv
   })
-  const apiKey = settings.apiKeyDirect || process.env[settings.apiKeyEnv] || ""
+  await assertProviderOutboundAllowed(configState, {
+    providerName: settings.configKey,
+    protocol: settings.protocol,
+    operation: "provider inference",
+    baseUrlOverride: baseUrl,
+    apiKeyEnvOverride: apiKeyEnv
+  })
+  const apiKey = settings.apiKeyDirect ||
+    (settings.apiKeyEnv ? process.env[settings.apiKeyEnv] : "") ||
+    ""
+  assertCredentialTransport({
+    baseUrl: settings.baseUrl,
+    apiKey,
+    providerName: settings.configKey,
+    operation: "provider inference"
+  })
   const providerCfg = configState.config.provider[settings.configKey] || configState.config.provider[settings.providerType] || {}
 
   if (providerCfg.stream === false) {
     const result = await requestProvider({
-      configState, providerType, model, system, messages, tools, baseUrl, apiKeyEnv, signal
+      configState, providerType, model, system, messages, tools, baseUrl, apiKeyEnv,
+      traceId, requestId, parentEventId, reviewId, signal
     })
     if (result.reasoning) {
       yield { type: "thinking", content: result.reasoning, source: "reasoning_content" }
@@ -201,11 +347,15 @@ export async function* requestProviderStream({
     return
   }
 
+  const requestContext = createRequestContext({ traceId, requestId, parentEventId })
+  let responseStatus = null
+  let responseRequestId = null
   const input = {
     apiKey,
     baseUrl: settings.baseUrl,
     apiKeyEnv: settings.apiKeyEnv,
     provider: settings.configKey,
+    protocol: settings.protocol,
     model: settings.model,
     system,
     messages,
@@ -219,6 +369,11 @@ export async function* requestProviderStream({
     },
     thinking: providerCfg.thinking || null,
     reasoningEffort: providerCfg.reasoning_effort || null,
+    ...requestContext,
+    onResponse(response) {
+      responseStatus = Number(response?.status || 0) || null
+      responseRequestId = upstreamRequestId(response)
+    },
     signal,
     compaction
   }
@@ -227,25 +382,162 @@ export async function* requestProviderStream({
   if (!provider) {
     throw new Error(`unknown provider: ${settings.providerType}. registered: ${listProviders().join(", ")}`)
   }
+  const auditSpan = await startAuditSpan({
+    type: "provider.request",
+    ...requestContext,
+    provider: settings.configKey,
+    providerType: settings.providerType,
+    protocol: settings.protocol,
+    model: settings.model,
+    reviewId: reviewId || null,
+    endpoint: safeProviderEndpoint(settings.baseUrl, settings.providerType, settings.protocol),
+    stream: true
+  }).catch(() => null)
+  let auditClosed = false
+  let streamCompleted = false
+  let usage = null
+  let stopReason = null
   try {
-    yield* provider.requestStream(input)
+    for await (const chunk of provider.requestStream(input)) {
+      if (chunk?.type === "usage") usage = chunk.usage || null
+      if (chunk?.type === "stop") stopReason = chunk.reason || null
+      yield chunk
+    }
+    streamCompleted = true
+    if (signal?.aborted) {
+      auditClosed = true
+      await auditSpan?.fail(new Error("provider stream cancelled"), {
+        status: "cancelled",
+        reason: "cancelled",
+        httpStatus: responseStatus,
+        upstreamRequestId: responseRequestId,
+        usage,
+        stopReason
+      })
+      return
+    }
+    auditClosed = true
+    await auditSpan?.finish({
+      status: "ok",
+      httpStatus: responseStatus,
+      upstreamRequestId: responseRequestId,
+      usage,
+      stopReason
+    })
   } catch (error) {
+    auditClosed = true
+    await auditSpan?.fail(
+      new Error(signal?.aborted ? "provider stream cancelled" : "provider stream failed"),
+      {
+        ...auditFailureMetadata(error, signal),
+        upstreamRequestId: responseRequestId,
+        usage,
+        stopReason
+      }
+    )
     throw normalizeProviderError(error, settings.providerType, settings.model)
+  } finally {
+    if (!auditClosed && !streamCompleted) {
+      if (stopReason && !signal?.aborted) {
+        await auditSpan?.finish({
+          status: "ok",
+          httpStatus: responseStatus,
+          upstreamRequestId: responseRequestId,
+          usage,
+          stopReason
+        })
+      } else {
+        await auditSpan?.fail(new Error("provider stream consumer closed"), {
+          status: "cancelled",
+          reason: "consumer_closed",
+          httpStatus: responseStatus,
+          upstreamRequestId: responseRequestId,
+          usage,
+          stopReason
+        })
+      }
+    }
   }
 }
 
 // --- Token Counting (Anthropic only, returns null for other providers) ---
 export async function countTokensProvider({
   configState, providerType, model, system, messages, tools,
-  baseUrl = null, apiKeyEnv = null
+  baseUrl = null, apiKeyEnv = null,
+  traceId = "", requestId = "", parentEventId = "", reviewId = "", signal = null
 }) {
   const resolvedProviderType = providerType || configState.config.provider.default
   const settings = resolveSettings(configState, resolvedProviderType, { model, baseUrl, apiKeyEnv })
   const provider = registry.get(settings.providerType)
   if (!provider?.countTokens) return null
-  const apiKey = process.env[settings.apiKeyEnv] || ""
-  return provider.countTokens({
-    apiKey, baseUrl: settings.baseUrl, model: settings.model,
-    system, messages, tools
+  const apiKey = settings.apiKeyDirect ||
+    (settings.apiKeyEnv ? process.env[settings.apiKeyEnv] : "") ||
+    ""
+  const requestContext = createRequestContext({ traceId, requestId, parentEventId })
+  const providerCfg = configState.config.provider[settings.configKey] || {}
+  let responseStatus = null
+  let responseRequestId = null
+  const input = {
+    apiKey,
+    apiKeyEnv: settings.apiKeyEnv,
+    baseUrl: settings.baseUrl,
+    model: settings.model,
+    system,
+    messages,
+    tools,
+    protocol: settings.protocol,
+    provider: settings.configKey,
+    timeoutMs: Math.min(Number(providerCfg.timeout_ms || 10000), 30000),
+    signal,
+    ...requestContext,
+    onResponse(response) {
+      responseStatus = Number(response?.status || 0) || null
+      responseRequestId = upstreamRequestId(response)
+    }
+  }
+  // OpenAI-compatible APIs have no portable count-only endpoint, so their
+  // implementation is local and should not create a misleading HTTP span.
+  const isRemoteCount = settings.protocol === "anthropic"
+  if (!isRemoteCount) return provider.countTokens(input)
+  await assertProviderOutboundAllowed(configState, {
+    providerName: settings.configKey,
+    protocol: settings.protocol,
+    operation: "provider token count",
+    baseUrlOverride: baseUrl,
+    apiKeyEnvOverride: apiKeyEnv
   })
+  assertCredentialTransport({
+    baseUrl: settings.baseUrl,
+    apiKey,
+    providerName: settings.configKey,
+    operation: "provider token count"
+  })
+
+  const auditSpan = await startAuditSpan({
+    type: "provider.token_count",
+    ...requestContext,
+    provider: settings.configKey,
+    providerType: settings.providerType,
+    protocol: settings.protocol,
+    model: settings.model,
+    reviewId: reviewId || null,
+    endpoint: safeProviderEndpoint(settings.baseUrl, settings.providerType, settings.protocol, "token_count")
+  }).catch(() => null)
+  try {
+    const count = await provider.countTokens(input)
+    await auditSpan?.finish({
+      ok: Number.isFinite(count),
+      status: Number.isFinite(count) ? "ok" : "unavailable",
+      httpStatus: responseStatus,
+      upstreamRequestId: responseRequestId,
+      tokenCount: Number.isFinite(count) ? count : null
+    })
+    return count
+  } catch (error) {
+    await auditSpan?.fail(new Error("provider token count failed"), {
+      ...auditFailureMetadata(error, signal),
+      upstreamRequestId: responseRequestId
+    })
+    throw error
+  }
 }

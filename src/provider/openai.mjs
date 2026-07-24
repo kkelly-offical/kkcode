@@ -170,6 +170,10 @@ function timeoutSignal(ms, parentSignal = null) {
   return AbortSignal.any([parentSignal, own])
 }
 
+function notifyResponse(input, response) {
+  try { input.onResponse?.(response) } catch { /* audit metadata must not affect requests */ }
+}
+
 export async function countTokensOpenAI(input) {
   // Chat Completions has no portable count-only endpoint. A one-token
   // completion adds latency and billable usage, so callers use local estimates.
@@ -179,7 +183,7 @@ export async function countTokensOpenAI(input) {
 
 export async function requestOpenAI(input) {
   const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 120000, maxTokens, reasoningEffort = null, retry = {}, signal = null } = input
-  if (!apiKey) {
+  if (!apiKey && input.apiKeyEnv !== "") {
     throw new ProviderError(`missing API key for openai provider (env: ${input.apiKeyEnv || "unknown"})`, {
       provider: "openai"
     })
@@ -208,13 +212,17 @@ export async function requestOpenAI(input) {
         headers: buildRequestHeaders({
           target: "llm",
           provider: input.provider || "openai",
+          protocol: input.protocol || "openai",
+          requestId: input.requestId || "",
+          openAIClientRequestId: true,
           accept: "application/json",
           contentType: "application/json",
-          authorization: `Bearer ${apiKey}`
+          authorization: apiKey ? `Bearer ${apiKey}` : ""
         }),
         body: JSON.stringify(payload),
         signal: timeoutSignal(timeoutMs, signal)
       })
+      notifyResponse(input, response)
 
       if (!response.ok) {
         const text = await response.text().catch(() => "")
@@ -256,7 +264,7 @@ export async function requestOpenAI(input) {
 
 export async function* requestOpenAIStream(input) {
   const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 120000, streamIdleTimeoutMs = 120000, maxTokens, reasoningEffort = null, retry = {}, signal = null } = input
-  if (!apiKey) {
+  if (!apiKey && input.apiKeyEnv !== "") {
     throw new ProviderError(`missing API key for openai provider (env: ${input.apiKeyEnv || "unknown"})`, {
       provider: "openai"
     })
@@ -296,13 +304,17 @@ export async function* requestOpenAIStream(input) {
         headers: buildRequestHeaders({
           target: "llm",
           provider: input.provider || "openai",
+          protocol: input.protocol || "openai",
+          requestId: input.requestId || "",
+          openAIClientRequestId: true,
           accept: "text/event-stream, application/json",
           contentType: "application/json",
-          authorization: `Bearer ${apiKey}`
+          authorization: apiKey ? `Bearer ${apiKey}` : ""
         }),
         body: JSON.stringify(payload),
         signal: fetchSignal
       })
+      notifyResponse(input, response)
       clearTimeout(connTimer)
 
       if (!response.ok) {

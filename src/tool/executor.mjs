@@ -65,6 +65,8 @@ export async function executeTool({ tool, args, sessionId, turnId, context, sign
   return withAudit({
     sessionId,
     turnId,
+    traceId: context?.traceId || "",
+    requestId: context?.requestId || "",
     toolName: tool.name,
     args,
     run: async () => {

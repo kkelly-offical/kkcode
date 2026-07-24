@@ -9,6 +9,7 @@ import { BackgroundManager } from "../src/orchestration/background-manager.mjs"
 import { appendAssistantMessage, appendUserMessage, flushNow, touchSession } from "../src/session/store.mjs"
 import { readJson } from "../src/storage/json-store.mjs"
 import { sessionDataPath, sessionIndexPath } from "../src/storage/paths.mjs"
+import { persistTrust } from "../src/permission/workspace-trust.mjs"
 
 let home = ""
 let project = ""
@@ -70,8 +71,8 @@ beforeEach(async () => {
   oldCwd = process.cwd()
   process.chdir(project)
   process.env.KKCODE_HOME = home
-  process.env.OPENAI_API_KEY = "test-key"
   await startMockOpenAIServer()
+  await persistTrust(project)
 
   await writeFile(
     join(project, "kkcode.config.json"),
@@ -82,7 +83,7 @@ beforeEach(async () => {
           local: {
             type: "openai-compatible",
             base_url: serverUrl,
-            api_key_env: "OPENAI_API_KEY",
+            api_key_env: "",
             default_model: "test-model",
             stream: false,
             timeout_ms: 15000,
@@ -131,7 +132,6 @@ afterEach(async () => {
   process.chdir(oldCwd)
   await stopMockServer()
   delete process.env.KKCODE_HOME
-  delete process.env.OPENAI_API_KEY
   await rm(home, { recursive: true, force: true })
   await rm(project, { recursive: true, force: true })
 })

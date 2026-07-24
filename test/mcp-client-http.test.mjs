@@ -2,6 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import http from "node:http"
 import { createHttpMcpClient } from "../src/mcp/client-http.mjs"
+import { PACKAGE_VERSION } from "../src/version.mjs"
 
 async function startServer(handler) {
   const server = http.createServer(handler)
@@ -83,7 +84,7 @@ test("http mcp requests include KK Code identity", async () => {
   try {
     const client = createHttpMcpClient("identitySrv", { type: "http", url: srv.url, timeout_ms: 500 })
     await client.listTools()
-    assert.match(headers["user-agent"], /^KK-Code\/0\.3\.1 /)
+    assert.match(headers["user-agent"], new RegExp(`^KK-Code/${PACKAGE_VERSION.replaceAll(".", "\\.")} `))
     assert.equal(headers["x-kk-code-client"], "cli")
   } finally {
     await srv.close()

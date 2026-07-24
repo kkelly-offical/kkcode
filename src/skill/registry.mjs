@@ -45,6 +45,12 @@ function toStringArray(value) {
     .filter(Boolean)
 }
 
+function isWithin(rootDir, targetPath) {
+  const root = path.resolve(rootDir)
+  const target = path.resolve(targetPath)
+  return target === root || target.startsWith(root + path.sep)
+}
+
 async function exists(target) {
   try {
     await access(target)
@@ -486,7 +492,9 @@ export const SkillRegistry = {
   /**
    * Load all skills from all sources.
    */
-  async initialize(config, cwd = process.cwd()) {
+  async initialize(config, cwd = process.cwd(), {
+    allowProjectSources = true
+  } = {}) {
     state.skills.clear()
     state.plugins = []
     state.pluginErrors = []
@@ -494,7 +502,12 @@ export const SkillRegistry = {
     const autoSeed = config?.skills?.auto_seed !== false
     if (autoSeed) {
       try {
-        await ensureDefaultSkillPack({ cwd, force: false, includeProject: true, includeGlobal: true })
+        await ensureDefaultSkillPack({
+          cwd,
+          force: false,
+          includeProject: allowProjectSources,
+          includeGlobal: true
+        })
       } catch {
         // Ignore seed failures (e.g., read-only mode)
       }
@@ -514,17 +527,20 @@ export const SkillRegistry = {
     }
 
     // Source 1: Custom commands (.md templates)
-    const customCommands = await loadCustomCommands(cwd)
+    const customCommands = await loadCustomCommands(cwd, { allowProjectSources })
     for (const skill of customCommandsToSkills(customCommands)) {
       addSkill(skill)
     }
 
     // Source 2: Programmable skills (.mjs) + SKILL.md directories
-    const pluginManifestState = await discoverLocalPluginManifests(cwd, config)
+    const pluginManifestState = await discoverLocalPluginManifests(cwd, config, {
+      allowProjectSources
+    })
     state.plugins = pluginManifestState.plugins
     state.pluginErrors = pluginManifestState.errors
     const rawCustomDirs = Array.isArray(config?.skills?.dirs) ? config.skills.dirs : []
-    const defaultDirs = await discoverCompatSkillRoots(cwd, config)
+    const defaultDirs = (await discoverCompatSkillRoots(cwd, config))
+      .filter((entry) => allowProjectSources || entry.scope !== "project")
     const pluginDirs = pluginComponentDirs(state.plugins, "skills")
     // Custom dirs from config (resolve relative to cwd)
     const extraDirs = rawCustomDirs
@@ -537,6 +553,7 @@ export const SkillRegistry = {
           ecosystem: "custom"
         }
       })
+      .filter((entry) => allowProjectSources || !isWithin(cwd, entry.dir))
     const seenDirSet = new Set()
     const allSkillDirs = [...pluginDirs, ...defaultDirs, ...extraDirs].filter((entry) => {
       const resolved = path.resolve(entry.dir)

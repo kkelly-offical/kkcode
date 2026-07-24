@@ -40,7 +40,8 @@ export function validateConfig(config) {
       err(errors, "provider", "must be object")
     } else {
       const providerTypes = getValidProviderTypes()
-      const providerKeys = new Set([...providerTypes, ...Object.keys(config.provider).filter(k => k !== "default")])
+      const providerMetaKeys = new Set(["default", "strict_mode", "model_context"])
+      const providerKeys = new Set([...providerTypes, ...Object.keys(config.provider).filter(k => !providerMetaKeys.has(k))])
       if (config.provider.default !== undefined && !providerKeys.has(config.provider.default)) {
         err(errors, "provider.default", `must be one of ${[...providerKeys].join(", ")}`)
       }
@@ -52,12 +53,58 @@ export function validateConfig(config) {
           continue
         }
         if (p.type !== undefined && typeof p.type !== "string") err(errors, `provider.${key}.type`, "must be string")
+        if (p.protocol !== undefined && !["openai", "anthropic"].includes(p.protocol)) {
+          err(errors, `provider.${key}.protocol`, "must be openai|anthropic")
+        }
+        if (p.type === "gateway" && !["openai", "anthropic"].includes(p.protocol)) {
+          err(errors, `provider.${key}.protocol`, "is required for gateway providers")
+        }
         if (p.base_url !== undefined && typeof p.base_url !== "string") err(errors, `provider.${key}.base_url`, "must be string")
         if (p.api_key !== undefined && typeof p.api_key !== "string") err(errors, `provider.${key}.api_key`, "must be string")
         if (p.api_key_env !== undefined && typeof p.api_key_env !== "string") err(errors, `provider.${key}.api_key_env`, "must be string")
         if (p.default_model !== undefined && typeof p.default_model !== "string") err(errors, `provider.${key}.default_model`, "must be string")
         if (p.models !== undefined && (!Array.isArray(p.models) || p.models.some((model) => typeof model !== "string" || !model.trim()))) {
           err(errors, `provider.${key}.models`, "must be an array of non-empty strings")
+        }
+        if (p.endpoints !== undefined) {
+          if (!isObj(p.endpoints)) err(errors, `provider.${key}.endpoints`, "must be object")
+          else {
+            for (const endpoint of ["openai", "anthropic", "models"]) {
+              if (p.endpoints[endpoint] !== undefined && p.endpoints[endpoint] !== null && typeof p.endpoints[endpoint] !== "string") {
+                err(errors, `provider.${key}.endpoints.${endpoint}`, "must be string or null")
+              }
+            }
+          }
+        }
+        if (p.type === "gateway" && ["openai", "anthropic"].includes(p.protocol)) {
+          const selectedEndpoint = isObj(p.endpoints) ? p.endpoints[p.protocol] : null
+          const hasBaseUrl = typeof p.base_url === "string" && p.base_url.trim()
+          const hasSelectedEndpoint = typeof selectedEndpoint === "string" && selectedEndpoint.trim()
+          if (!hasBaseUrl && !hasSelectedEndpoint) {
+            err(
+              errors,
+              `provider.${key}`,
+              `gateway requires base_url or endpoints.${p.protocol}`
+            )
+          }
+          if (!hasBaseUrl && hasSelectedEndpoint && !/^https?:\/\//i.test(selectedEndpoint)) {
+            err(
+              errors,
+              `provider.${key}.endpoints.${p.protocol}`,
+              "must be an absolute http(s) URL when base_url is omitted"
+            )
+          }
+        }
+        if (p.discovery !== undefined) {
+          if (!isObj(p.discovery)) err(errors, `provider.${key}.discovery`, "must be object")
+          else {
+            if (p.discovery.enabled !== undefined && typeof p.discovery.enabled !== "boolean") {
+              err(errors, `provider.${key}.discovery.enabled`, "must be boolean")
+            }
+            if (p.discovery.cache_ttl_ms !== undefined) {
+              checkInt(errors, `provider.${key}.discovery.cache_ttl_ms`, p.discovery.cache_ttl_ms, 0)
+            }
+          }
         }
         if (p.timeout_ms !== undefined) checkInt(errors, `provider.${key}.timeout_ms`, p.timeout_ms, 1000)
         if (p.stream_idle_timeout_ms !== undefined) checkInt(errors, `provider.${key}.stream_idle_timeout_ms`, p.stream_idle_timeout_ms, 1000)

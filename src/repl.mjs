@@ -6,7 +6,12 @@ import { emitKeypressEvents } from "node:readline"
 import { readFile, writeFile, mkdir } from "node:fs/promises"
 import { basename, dirname, join, resolve as resolvePath } from "node:path"
 import YAML from "yaml"
-import { buildContext, printContextWarnings } from "./context.mjs"
+import {
+  applyWorkspaceTrustPolicy,
+  buildContext,
+  printContextWarnings,
+  resolveExtensionPolicy
+} from "./context.mjs"
 import { ensureEventSinks, newSessionId, resolveMode, routeMode } from "./session/engine.mjs"
 import { summarizeRouteDecision } from "./session/engine.mjs"
 import { buildAgentContinuationPrompt, summarizeAgentTransaction } from "./session/agent-transaction.mjs"
@@ -16,7 +21,9 @@ import {
   emitRouteDecisionEvent
 } from "./session/routing-observability.mjs"
 import { listProviders } from "./provider/router.mjs"
-import { createWizardState, startWizard, startEditWizard, handleWizardInput, VENDOR_PRESETS } from "./provider/wizard.mjs"
+import { createWizardState, startWizard, startEditWizard, handleWizardInput } from "./provider/wizard.mjs"
+import { discoverModelsForProvider } from "./provider/model-catalog.mjs"
+import { escapeTerminalText, validateModelId } from "./provider/model-id.mjs"
 import { loadCustomCommands, applyCommandTemplate } from "./command/custom-commands.mjs"
 import { SkillRegistry } from "./skill/registry.mjs"
 import { renderMarkdown, createStreamRenderer } from "./theme/markdown.mjs"
@@ -280,31 +287,40 @@ function displayUserRootPath() {
   return userRoot
 }
 
-/**
- * 获取所有已配置 provider 的模型列表。
- * 优先使用 config 中的 models 数组，fallback 到 VENDOR_PRESETS。
- * 返回 [{ provider, model, label }]
- */
-function allProviderModels(config) {
-  const items = []
-  const seen = new Set()
-  for (const [name, conf] of Object.entries(config.provider || {})) {
-    if (name === "default" || name === "strict_mode" || name === "model_context") continue
-    if (!conf || typeof conf !== "object") continue
-    // 模型列表：config > VENDOR_PRESETS
-    const models = conf.models || VENDOR_PRESETS[name]?.models || []
-    const defaultModel = conf.default_model || VENDOR_PRESETS[name]?.default_model
-    // 如果连 models 和 default_model 都没有，跳过
-    if (!models.length && !defaultModel) continue
-    const modelList = models.length ? models : (defaultModel ? [defaultModel] : [])
-    for (const model of modelList) {
-      const key = `${name}/${model}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      items.push({ provider: name, model, label: `${name} / ${model}` })
+export async function loadProviderModelItems(configState, providerName, {
+  refresh = false,
+  discover = discoverModelsForProvider
+} = {}) {
+  try {
+    const catalog = await discover(configState, { providerName, refresh })
+    const seen = new Set()
+    const items = []
+    for (const entry of catalog.models || []) {
+      const model = String(entry?.id || "").trim()
+      if (!model || seen.has(model)) continue
+      seen.add(model)
+      items.push({
+        provider: providerName,
+        model,
+        label: `${escapeTerminalText(providerName)} / ${escapeTerminalText(model)}`
+      })
+    }
+    return {
+      items,
+      source: catalog.source,
+      stale: Boolean(catalog.stale),
+      warning: catalog.warning || null,
+      error: null
+    }
+  } catch (error) {
+    return {
+      items: [],
+      source: null,
+      stale: false,
+      warning: null,
+      error: error?.message || "model discovery failed"
     }
   }
-  return items
 }
 
 function parseConfigByPath(filePath, raw) {
@@ -492,11 +508,18 @@ async function processInputLine({
   }
 
   if (["/reload"].includes(normalized)) {
-    const reloaded = await loadCustomCommands(process.cwd())
+    const extensionPolicy = resolveExtensionPolicy(ctx.configState)
+    const reloaded = await loadCustomCommands(process.cwd(), {
+      allowProjectSources: extensionPolicy.allowProjectSources
+    })
     setCustomCommands(reloaded)
-    await SkillRegistry.initialize(ctx.configState.config, process.cwd())
+    await SkillRegistry.initialize(extensionPolicy.config, process.cwd(), {
+      allowProjectSources: extensionPolicy.allowProjectSources
+    })
     const { CustomAgentRegistry } = await import("./agent/custom-agent-loader.mjs")
-    await CustomAgentRegistry.initialize(process.cwd())
+    await CustomAgentRegistry.initialize(process.cwd(), {
+      allowProjectSources: extensionPolicy.allowProjectSources
+    })
     const skillCount = SkillRegistry.isReady() ? SkillRegistry.list().length : 0
     const agentCount = CustomAgentRegistry.list().length
     print(describeReloadSummary({ commandCount: reloaded.length, skillCount, agentCount }))
@@ -505,14 +528,60 @@ async function processInputLine({
 
   if (["/trust"].includes(normalized)) {
     await persistTrust(process.cwd())
+    ctx.trustState = { trusted: true }
+    applyWorkspaceTrustPolicy(ctx.configState, ctx.trustState, process.cwd())
+    const extensionPolicy = resolveExtensionPolicy(ctx.configState)
+    await ToolRegistry.initialize({
+      config: extensionPolicy.config,
+      cwd: process.cwd(),
+      force: true,
+      allowProjectSources: extensionPolicy.allowProjectSources
+    })
+    await SkillRegistry.initialize(extensionPolicy.config, process.cwd(), {
+      allowProjectSources: extensionPolicy.allowProjectSources
+    })
+    const { CustomAgentRegistry } = await import("./agent/custom-agent-loader.mjs")
+    await CustomAgentRegistry.initialize(process.cwd(), {
+      allowProjectSources: extensionPolicy.allowProjectSources
+    })
+    await initHookBus(process.cwd(), extensionPolicy.config, {
+      allowProjectSources: extensionPolicy.allowProjectSources,
+      force: true
+    })
+    setCustomCommands(await loadCustomCommands(process.cwd(), {
+      allowProjectSources: extensionPolicy.allowProjectSources
+    }))
     PermissionEngine.setTrusted(true)
     print("workspace trusted")
     return { exit: false }
   }
   if (["/untrust"].includes(normalized)) {
     await revokeTrust(process.cwd())
+    ctx.trustState = { trusted: false }
+    applyWorkspaceTrustPolicy(ctx.configState, ctx.trustState, process.cwd())
+    const extensionPolicy = resolveExtensionPolicy(ctx.configState)
+    await ToolRegistry.initialize({
+      config: extensionPolicy.config,
+      cwd: process.cwd(),
+      force: true,
+      allowProjectSources: extensionPolicy.allowProjectSources
+    })
+    await SkillRegistry.initialize(extensionPolicy.config, process.cwd(), {
+      allowProjectSources: extensionPolicy.allowProjectSources
+    })
+    const { CustomAgentRegistry } = await import("./agent/custom-agent-loader.mjs")
+    await CustomAgentRegistry.initialize(process.cwd(), {
+      allowProjectSources: extensionPolicy.allowProjectSources
+    })
+    await initHookBus(process.cwd(), extensionPolicy.config, {
+      allowProjectSources: extensionPolicy.allowProjectSources,
+      force: true
+    })
+    setCustomCommands(await loadCustomCommands(process.cwd(), {
+      allowProjectSources: extensionPolicy.allowProjectSources
+    }))
     PermissionEngine.setTrusted(false)
-    print("workspace trust revoked — tools are now blocked")
+    print("workspace trust revoked — project tools and extensions are now blocked")
     return { exit: false }
   }
 
@@ -745,36 +814,51 @@ async function processInputLine({
     state.providerType = next
     state.model = resolveProviderDefaultModel(ctx.configState.config, next, state.model)
     print(`provider switched: ${next} (model: ${state.model})`)
-    // 展示该 provider 下可用模型
-    const providerModels = allProviderModels(ctx.configState.config).filter(m => m.provider === next)
-    if (providerModels.length > 1) {
-      print("  可用模型: " + providerModels.map(m => m.model).join(", "))
+    const catalog = await loadProviderModelItems(ctx.configState, next)
+    if (catalog.items.length > 1) {
+      print(`  可用模型 (${catalog.source}${catalog.stale ? ", stale" : ""}): ` + catalog.items.map(m => m.model).join(", "))
     }
+    if (catalog.warning) print(`  模型目录提示: ${catalog.warning}`)
+    if (catalog.error) print(`  模型目录不可用: ${catalog.error}；仍可使用 /model <model-id> 手动设置`)
     return { exit: false }
   }
 
-  if (normalized === "/model") {
+  if (normalized === "/model" || normalized === "/model refresh") {
+    const refresh = normalized.endsWith(" refresh")
     print(`current: ${state.providerType} / ${state.model}`)
-    const items = allProviderModels(ctx.configState.config)
+    const catalog = await loadProviderModelItems(ctx.configState, state.providerType, { refresh })
+    const items = catalog.items
     if (items.length) {
       print("")
-      print("  可用模型：")
+      print(`  可用模型 (${catalog.source}${catalog.stale ? ", stale" : ""})：`)
       for (const item of items) {
         const marker = (item.provider === state.providerType && item.model === state.model) ? " ●" : ""
         print(`    ${item.label}${marker}`)
       }
       print("")
-      print("  用法: /model <model-id>  或  /provider <name> 切换厂商")
+      print("  用法: /model <model-id>，/model refresh 刷新目录")
+    } else {
+      print(`  模型目录不可用${catalog.error ? `: ${catalog.error}` : ""}`)
+      print("  使用 /model <model-id> 手动设置；离线列表需在 provider.models 中由用户显式配置。")
     }
-    return { exit: false, openModelPicker: true }
+    if (catalog.warning) print(`  模型目录提示: ${catalog.warning}`)
+    return {
+      exit: false,
+      openModelPicker: items.length > 0,
+      modelPickerItems: items
+    }
   }
 
   if (normalized.startsWith("/model ")) {
     const next = normalized.replace("/model ", "").trim()
     if (!next) print("usage: /model <model-id>")
     else {
-      state.model = next
-      print(`model switched: ${next}`)
+      try {
+        state.model = validateModelId(next)
+        print(`model switched: ${escapeTerminalText(state.model)}`)
+      } catch (error) {
+        print(`invalid model id: ${escapeTerminalText(error.message)}`)
+      }
     }
     return { exit: false }
   }
@@ -922,7 +1006,10 @@ async function processInputLine({
       const savedPath = await saveSkillGlobal(skill.filename, skill.content)
       print(`saved to: ${savedPath}`)
       // Reload skills
-      await SkillRegistry.initialize(ctx.configState.config, process.cwd())
+      const extensionPolicy = resolveExtensionPolicy(ctx.configState)
+      await SkillRegistry.initialize(extensionPolicy.config, process.cwd(), {
+        allowProjectSources: extensionPolicy.allowProjectSources
+      })
       print(`skill /${skill.name} is now available`)
     } catch (error) {
       print(`skill generation error: ${error.message}`)
@@ -960,7 +1047,10 @@ async function processInputLine({
       print(`saved to: ${savedPath}`)
       // Reload custom agents
       const { CustomAgentRegistry } = await import("./agent/custom-agent-loader.mjs")
-      await CustomAgentRegistry.initialize(process.cwd())
+      const extensionPolicy = resolveExtensionPolicy(ctx.configState)
+      await CustomAgentRegistry.initialize(process.cwd(), {
+        allowProjectSources: extensionPolicy.allowProjectSources
+      })
       print(`agent "${agent.name}" is now available as a sub-agent`)
     } catch (error) {
       print(`agent generation error: ${error.message}`)
@@ -1581,14 +1671,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     requestRender({ force: true })
   }
 
-  function buildModelPickerItems() {
-    return allProviderModels(ctx.configState.config)
-  }
-
-  function openModelPicker() {
-    const items = buildModelPickerItems()
+  function openModelPicker(items = []) {
     if (!items.length) {
-      appendLog(paint("No models configured. Add `models` array to provider config.", ctx.themeState.theme.semantic.error))
+      appendLog(paint("No models discovered. Use /model <model-id> for manual selection.", ctx.themeState.theme.semantic.error))
       requestRender()
       return
     }
@@ -2512,7 +2597,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       }
       // logo 显示由 Ctrl+B 手动切换，不再自动隐藏
       if (action.openModelPicker) {
-        openModelPicker()
+        openModelPicker(action.modelPickerItems)
       }
       if (action.openPolicyPicker) {
         openPolicyPicker()
@@ -3376,21 +3461,32 @@ export async function startRepl({ trust = false } = {}) {
   const ctx = await buildContext({ trust, trustState })
   printContextWarnings(ctx)
   void maybeNotifyUpdateOnStartup(ctx.configState.config, { currentVersion: PACKAGE_VERSION })
+  const extensionPolicy = resolveExtensionPolicy(ctx.configState)
 
   splash.update("loading tools & MCP servers...")
-  await ToolRegistry.initialize({ config: ctx.configState.config, cwd: process.cwd() })
+  await ToolRegistry.initialize({
+    config: extensionPolicy.config,
+    cwd: process.cwd(),
+    allowProjectSources: extensionPolicy.allowProjectSources
+  })
 
   // Collect MCP status for later display
   const mcpHealth = McpRegistry.healthSnapshot()
   const mcpStatusLines = collectMcpStatusLines(ctx.themeState.theme, mcpHealth, McpRegistry.listTools())
 
   splash.update("loading skills & agents...")
-  await SkillRegistry.initialize(ctx.configState.config, process.cwd())
+  await SkillRegistry.initialize(extensionPolicy.config, process.cwd(), {
+    allowProjectSources: extensionPolicy.allowProjectSources
+  })
   const { CustomAgentRegistry } = await import("./agent/custom-agent-loader.mjs")
-  await CustomAgentRegistry.initialize(process.cwd())
+  await CustomAgentRegistry.initialize(process.cwd(), {
+    allowProjectSources: extensionPolicy.allowProjectSources
+  })
 
   splash.update("loading hooks & history...")
-  await initHookBus()
+  await initHookBus(process.cwd(), extensionPolicy.config, {
+    allowProjectSources: extensionPolicy.allowProjectSources
+  })
   const historyLines = await loadHistoryLines(HIST_FILE, HIST_SIZE)
 
   splash.update("preparing workspace...")
@@ -3404,7 +3500,9 @@ export async function startRepl({ trust = false } = {}) {
     state.memoryLoaded = false
   }
 
-  const customCommands = await loadCustomCommands(process.cwd())
+  const customCommands = await loadCustomCommands(process.cwd(), {
+    allowProjectSources: extensionPolicy.allowProjectSources
+  })
   const providersConfigured = configuredProviders(ctx.configState.config, listProviders)
   const recentSessions = await listSessions({ cwd: process.cwd(), limit: 6, includeChildren: false }).catch(() => [])
 

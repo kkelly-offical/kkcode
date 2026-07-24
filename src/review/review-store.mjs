@@ -6,13 +6,24 @@ export function defaultReviewState() {
     createdAt: Date.now(),
     sessionId: null,
     currentIndex: 0,
-    files: []
+    files: [],
+    branchReport: null
   }
 }
 
 export async function readReviewState(cwd = process.cwd()) {
   await ensureProjectRoot(cwd)
-  return readJson(reviewStorePath(cwd), defaultReviewState())
+  const fallback = defaultReviewState()
+  const stored = await readJson(reviewStorePath(cwd), fallback)
+  if (!stored || typeof stored !== "object") return fallback
+  return {
+    ...fallback,
+    ...stored,
+    files: Array.isArray(stored.files) ? stored.files : [],
+    branchReport: stored.branchReport && typeof stored.branchReport === "object"
+      ? stored.branchReport
+      : null
+  }
 }
 
 export async function writeReviewState(state, cwd = process.cwd()) {

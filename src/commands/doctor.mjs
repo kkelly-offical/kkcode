@@ -1,15 +1,16 @@
 import { Command } from "commander"
 import { exec as execCb } from "node:child_process"
 import { promisify } from "node:util"
-import { buildContext } from "../context.mjs"
+import { buildContext, resolveExtensionPolicy } from "../context.mjs"
 import { listProviders } from "../provider/router.mjs"
 import { eventLogStats } from "../storage/event-log.mjs"
-import { auditStats } from "../storage/audit-store.mjs"
+import { auditStats, verifyAuditChain } from "../storage/audit-store.mjs"
 import { fsckSessionStore, flushNow } from "../session/store.mjs"
 import { BackgroundManager } from "../orchestration/background-manager.mjs"
 import { McpRegistry } from "../mcp/registry.mjs"
 import { SkillRegistry } from "../skill/registry.mjs"
 import { buildRequestHeaders, redactHeaders } from "../http/identity.mjs"
+import { resolveProviderConnection } from "../provider/model-catalog.mjs"
 
 const exec = promisify(execCb)
 
@@ -53,25 +54,55 @@ export async function buildDoctorReport({ includeHttp = false } = {}) {
   const config = ctx.configState.config
   const providers = []
   for (const [name, provider] of Object.entries(config.provider || {})) {
-    if (name === "default") continue
+    if (["default", "strict_mode", "model_context"].includes(name)) continue
     if (!provider || typeof provider !== "object") continue
     const keyEnv = provider.api_key_env || ""
+    const type = provider.type || name
+    const supportsCatalog = ["openai", "openai-compatible", "anthropic", "gateway"].includes(type)
+    let connection = null
+    let modelCatalogError = null
+    if (supportsCatalog) {
+      try {
+        connection = resolveProviderConnection(ctx.configState, name)
+      } catch (error) {
+        modelCatalogError = error?.message || "invalid model catalog configuration"
+      }
+    }
+    const protocol = connection?.protocol || provider.protocol ||
+      (type === "anthropic" ? "anthropic" : type === "ollama" ? "ollama" : "openai")
+    const baseUrl = connection?.baseUrl || provider.endpoints?.[protocol] || provider.base_url || null
+    const modelsUrl = connection?.modelsUrl || null
     providers.push({
       name,
-      type: provider.type || name,
+      type,
+      protocol,
       model: provider.default_model || null,
-      baseUrl: provider.base_url || null,
+      baseUrl,
+      modelsUrl,
+      modelCatalogError,
       apiKeyEnv: keyEnv || null,
-      apiKeyConfigured: keyEnv ? Boolean(process.env[keyEnv]) : true
+      usesCredential: Boolean(provider.api_key || keyEnv),
+      apiKeyConfigured: Boolean(provider.api_key || !keyEnv || process.env[keyEnv])
     })
   }
 
   const events = await eventLogStats()
   const audit = await auditStats()
+  const auditIntegrity = await verifyAuditChain()
   const storage = await fsckSessionStore()
   const backgroundTasks = await BackgroundManager.list()
-  await McpRegistry.initialize(config)
-  await SkillRegistry.initialize({ ...config, skills: { ...(config.skills || {}), auto_seed: false } }, process.cwd())
+  const extensionPolicy = resolveExtensionPolicy(ctx.configState)
+  const extensionConfig = {
+    ...extensionPolicy.config,
+    skills: { ...(extensionPolicy.config.skills || {}), auto_seed: false }
+  }
+  await McpRegistry.initialize(extensionPolicy.config, {
+    cwd: process.cwd(),
+    allowProjectSources: extensionPolicy.allowProjectSources
+  })
+  await SkillRegistry.initialize(extensionConfig, process.cwd(), {
+    allowProjectSources: extensionPolicy.allowProjectSources
+  })
   const mcpSnapshot = McpRegistry.healthSnapshot()
   const mcpHealthy = mcpSnapshot.filter((item) => item.ok).length
   const skillList = SkillRegistry.list()
@@ -104,18 +135,28 @@ export async function buildDoctorReport({ includeHttp = false } = {}) {
     providers: providers.map((provider) => ({
       name: provider.name,
       baseUrl: provider.baseUrl,
+      modelsUrl: provider.modelsUrl,
+      modelCatalogError: provider.modelCatalogError,
+      protocol: provider.protocol,
       headers: redactHeaders(buildRequestHeaders({
-        target: "model-api",
+        target: "model-discovery",
         provider: provider.name,
+        protocol: provider.protocol,
+        openAIClientRequestId: provider.protocol === "openai",
         accept: "application/json",
         contentType: "application/json",
-        authorization: provider.apiKeyConfigured && provider.apiKeyEnv ? "Bearer configured" : ""
+        authorization: provider.protocol === "openai" && provider.apiKeyConfigured && provider.usesCredential
+          ? "Bearer configured"
+          : "",
+        customHeaders: provider.protocol === "anthropic" && provider.apiKeyConfigured && provider.usesCredential
+          ? { "x-api-key": "configured", "anthropic-version": "2023-06-01" }
+          : {}
       }))
     }))
   } : undefined
 
   return {
-    ok: storage.ok && !strictCompatFailed,
+    ok: storage.ok && auditIntegrity.ok && !strictCompatFailed,
     timestamp: new Date().toISOString(),
     cwd: process.cwd(),
     themeWarnings: ctx.themeState.errors,
@@ -141,7 +182,10 @@ export async function buildDoctorReport({ includeHttp = false } = {}) {
     storage: {
       sessions: storage,
       eventLog: events,
-      audit
+      audit: {
+        ...audit,
+        integrity: auditIntegrity
+      }
     },
     background: summarizeBackground(backgroundTasks),
     ...(http ? { http } : {})
@@ -165,7 +209,7 @@ function printTextReport(report, themeWarnings = []) {
   }
   for (const p of report.runtime.providersConfigured) {
     console.log(
-      `provider:${p.name} type=${p.type} model=${p.model || "?"} env=${p.apiKeyEnv || "-"} (${p.apiKeyConfigured ? "set" : "missing"})`
+      `provider:${p.name} type=${p.type} protocol=${p.protocol} model=${p.model || "?"} env=${p.apiKeyEnv || "-"} (${p.apiKeyConfigured ? "set" : "missing"})`
     )
   }
   console.log(`check node=${report.checks.node ? "ok" : "missing"} rg=${report.checks.rg ? "ok" : "missing"} git=${report.checks.git ? "ok" : "missing"}`)
@@ -183,7 +227,7 @@ function printTextReport(report, themeWarnings = []) {
   }
   console.log(`sessions: ok=${report.storage.sessions.ok} index=${report.storage.sessions.sessionsInIndex} files=${report.storage.sessions.filesOnDisk}`)
   console.log(`events: active=${report.storage.eventLog.activeBytes} rotated=${report.storage.eventLog.rotatedFiles}`)
-  console.log(`audit: total=${report.storage.audit.total} error1h=${report.storage.audit.error1h} error24h=${report.storage.audit.error24h}`)
+  console.log(`audit: total=${report.storage.audit.total} error1h=${report.storage.audit.error1h} error24h=${report.storage.audit.error24h} chain=${report.storage.audit.integrity.ok ? "ok" : "invalid"}`)
   console.log(
     `background: total=${report.background.total} running=${report.background.running} pending=${report.background.pending} interrupted=${report.background.interrupted} error=${report.background.error}`
   )
@@ -193,7 +237,8 @@ function printTextReport(report, themeWarnings = []) {
       console.log(`  ${name}: ${value}`)
     }
     for (const provider of report.http.providers) {
-      console.log(`http provider:${provider.name} url=${provider.baseUrl || "(none)"}`)
+      console.log(`http provider:${provider.name} protocol=${provider.protocol} url=${provider.baseUrl || "(none)"} models=${provider.modelsUrl || "(none)"}`)
+      if (provider.modelCatalogError) console.log(`  model catalog error: ${provider.modelCatalogError}`)
       for (const [name, value] of Object.entries(provider.headers)) {
         console.log(`  ${name}: ${value}`)
       }
@@ -211,11 +256,11 @@ export function createDoctorCommand() {
         const report = await buildDoctorReport({ includeHttp: options.http })
         if (options.json) {
           console.log(JSON.stringify(report, null, 2))
-          if (report.compat.strictFailed) process.exitCode = 1
+          if (!report.ok) process.exitCode = 1
           return
         }
         printTextReport(report, report.themeWarnings || [])
-        if (report.compat.strictFailed) process.exitCode = 1
+        if (!report.ok) process.exitCode = 1
       } finally {
         McpRegistry.shutdown()
       }

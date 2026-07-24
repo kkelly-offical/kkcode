@@ -2,6 +2,8 @@ import path from "node:path"
 import { readFile, writeFile, mkdir } from "node:fs/promises"
 import YAML from "yaml"
 import { userRootDir } from "../storage/paths.mjs"
+import { discoverModelsForProvider } from "./model-catalog.mjs"
+import { escapeTerminalText, validateModelId } from "./model-id.mjs"
 
 // --- 标准厂商预设 ---
 export const VENDOR_PRESETS = {
@@ -147,6 +149,7 @@ function userConfigPathLabel() {
 // --- 编辑模式的可配置字段 ---
 const EDIT_FIELDS = [
   { key: "type",            label: "Provider 类型",        type: "provider_type" },
+  { key: "protocol",        label: "Gateway 协议",         type: "protocol" },
   { key: "base_url",        label: "Base URL",             type: "string" },
   { key: "api_key_env",     label: "API Key 环境变量",     type: "string" },
   { key: "default_model",   label: "默认模型",             type: "string" },
@@ -166,8 +169,12 @@ export function createWizardState() {
     customName: null,
     customBaseUrl: null,
     customType: null,
+    customProtocol: null,
     apiKeyEnv: null,
     defaultModel: null,
+    discoveredModels: [],
+    modelCatalogSource: null,
+    discoveryError: null,
     contextLimit: null,
     thinking: false,
     // edit 模式
@@ -236,7 +243,11 @@ function _promptEditField(wiz, print) {
       : "关闭"
   } else if (field.type === "provider_type") {
     current = cfg[field.key] || wiz.editName
-    print(`  ${field.label} [${current}]（可选: openai-compatible, anthropic, openai, ollama；0=保留）：`)
+    print(`  ${field.label} [${current}]（可选: gateway, openai-compatible, anthropic, openai, ollama；0=保留）：`)
+    return
+  } else if (field.type === "protocol") {
+    current = cfg[field.key] || "(未设置)"
+    print(`  ${field.label} [${current}]（可选: openai, anthropic；0=保留）：`)
     return
   } else {
     current = cfg[field.key] ?? "(未设置)"
@@ -252,14 +263,16 @@ function buildVendorMenu() {
   const base = VENDOR_KEYS.length
   lines.push(`  ${base + 1}. 自定义 OpenAI 兼容 API`)
   lines.push(`  ${base + 2}. 自定义 Anthropic 兼容 API`)
+  lines.push(`  ${base + 3}. 自定义统一 Gateway（OpenAI / Anthropic）`)
   lines.push("")
   lines.push("  输入编号（q 取消）：")
   return lines.join("\n")
 }
 
 // --- 处理向导输入，返回 { done, cancelled, providerName } ---
-export async function handleWizardInput(wiz, input, print) {
+export async function handleWizardInput(wiz, input, print, options = {}) {
   const val = String(input || "").trim()
+  const discover = options.discoverModels || discoverModelsForProvider
 
   if (val.toLowerCase() === "q" || val.toLowerCase() === "quit") {
     wiz.active = false
@@ -268,12 +281,14 @@ export async function handleWizardInput(wiz, input, print) {
   }
 
   switch (wiz.step) {
-    case "vendor": return _stepVendor(wiz, val, print)
-    case "protocol": return _stepProtocol(wiz, val, print)
+    case "vendor": return _stepVendor(wiz, val, print, discover, options)
+    case "protocol": return _stepProtocol(wiz, val, print, discover, options)
+    case "custom_protocol": return _stepCustomProtocol(wiz, val, print)
     case "custom_name": return _stepCustomName(wiz, val, print)
     case "custom_url": return _stepCustomUrl(wiz, val, print)
-    case "apikey": return _stepApiKey(wiz, val, print)
+    case "apikey": return _stepApiKey(wiz, val, print, discover, options)
     case "model": return _stepModel(wiz, val, print)
+    case "model_manual": return _stepModelManual(wiz, val, print)
     case "context": return _stepContext(wiz, val, print)
     case "thinking": return _stepThinking(wiz, val, print)
     case "confirm": return _stepConfirm(wiz, val, print)
@@ -286,7 +301,7 @@ export async function handleWizardInput(wiz, input, print) {
   }
 }
 
-function _stepProtocol(wiz, val, print) {
+async function _stepProtocol(wiz, val, print, discover, options) {
   const protoKeys = Object.keys(wiz.preset.protocols)
   const idx = parseInt(val, 10) - 1
   if (isNaN(idx) || idx < 0 || idx >= protoKeys.length) {
@@ -297,23 +312,25 @@ function _stepProtocol(wiz, val, print) {
   // 将选中的协议信息写入 preset（覆盖 type / base_url）
   wiz.preset = { ...wiz.preset, type: chosen.type, base_url: chosen.base_url }
   wiz.apiKeyEnv = wiz.preset.key_env
-  wiz.step = "model"
-  print(`\n  凭据将从环境变量 ${wiz.apiKeyEnv} 读取，不会写入配置。\n  默认模型 [${wiz.defaultModel}]（0=使用默认，或输入模型名）：`)
+  print(`\n  凭据将从环境变量 ${wiz.apiKeyEnv} 读取，不会写入配置。`)
+  await _discoverWizardModels(wiz, print, discover, options)
   return { done: false }
 }
 
-function _stepVendor(wiz, val, print) {
+async function _stepVendor(wiz, val, print, discover, options) {
 
   const total = VENDOR_KEYS.length
   const idx = parseInt(val, 10) - 1
-  if (isNaN(idx) || idx < 0 || idx > total + 1) {
-    print(`  请输入 1-${total + 2} 之间的编号：`)
+  if (isNaN(idx) || idx < 0 || idx > total + 2) {
+    print(`  请输入 1-${total + 3} 之间的编号：`)
     return { done: false }
   }
   if (idx < total) {
     wiz.vendorKey = VENDOR_KEYS[idx]
     wiz.preset = VENDOR_PRESETS[wiz.vendorKey]
-    wiz.defaultModel = wiz.preset.default_model
+    // Presets provide connection hints only. The selected model must come
+    // from the provider catalog or explicit user input.
+    wiz.defaultModel = null
     if (wiz.preset.protocols) {
       wiz.step = "protocol"
       const protoKeys = Object.keys(wiz.preset.protocols)
@@ -326,11 +343,12 @@ function _stepVendor(wiz, val, print) {
       print(lines.join("\n"))
     } else if (wiz.preset.type === "ollama") {
       wiz.step = "model"
-      print(`\n  默认模型 [${wiz.defaultModel}]（0=使用默认，或输入模型名）：`)
+      wiz.discoveryError = "Ollama 不使用 OpenAI/Anthropic 模型目录"
+      print("\n  此 Provider 不支持 /models 动态目录，请手动输入模型 ID：")
     } else {
       wiz.apiKeyEnv = wiz.preset.key_env
-      wiz.step = "model"
-      print(`\n  凭据将从环境变量 ${wiz.apiKeyEnv} 读取，不会写入配置。\n  默认模型 [${wiz.defaultModel}]（0=使用默认）：`)
+      print(`\n  凭据将从环境变量 ${wiz.apiKeyEnv} 读取，不会写入配置。`)
+      await _discoverWizardModels(wiz, print, discover, options)
     }
   } else if (idx === total) {
     wiz.isCustom = true
@@ -338,11 +356,30 @@ function _stepVendor(wiz, val, print) {
     wiz.step = "custom_name"
     print("\n  自定义 Provider 名称（如 moonshot、kimi）：")
   } else {
+    if (idx === total + 1) {
+      wiz.isCustom = true
+      wiz.customType = "anthropic"
+      wiz.customProtocol = "anthropic"
+      wiz.step = "custom_name"
+      print("\n  自定义 Provider 名称（如 my-claude）：")
+      return { done: false }
+    }
     wiz.isCustom = true
-    wiz.customType = "anthropic"
-    wiz.step = "custom_name"
-    print("\n  自定义 Provider 名称（如 my-claude）：")
+    wiz.customType = "gateway"
+    wiz.step = "custom_protocol"
+    print("\n  Gateway 使用的推理协议：\n  1. OpenAI\n  2. Anthropic\n\n  输入编号：")
   }
+  return { done: false }
+}
+
+function _stepCustomProtocol(wiz, val, print) {
+  if (val !== "1" && val !== "2") {
+    print("  请输入 1 或 2：")
+    return { done: false }
+  }
+  wiz.customProtocol = val === "1" ? "openai" : "anthropic"
+  wiz.step = "custom_name"
+  print("\n  自定义 Gateway 名称（如 company-gateway）：")
   return { done: false }
 }
 
@@ -362,25 +399,152 @@ function _stepCustomUrl(wiz, val, print) {
   wiz.customBaseUrl = val
   wiz.step = "apikey"
   const suggested = `${String(wiz.customName || "CUSTOM").replace(/[^a-z0-9]/gi, "_").toUpperCase()}_API_KEY`
-  print(`\n  API Key 环境变量名 [${suggested}]（不会保存密钥本身，0=使用建议值）：`)
+  print(`\n  API Key 环境变量名 [${suggested}]（不会保存密钥本身，0=使用建议值，-=无需凭据）：`)
   return { done: false }
 }
 
-function _stepApiKey(wiz, val, print) {
+async function _stepApiKey(wiz, val, print, discover, options) {
   const suggested = `${String(wiz.customName || "CUSTOM").replace(/[^a-z0-9]/gi, "_").toUpperCase()}_API_KEY`
-  wiz.apiKeyEnv = (val && val !== "0") ? val : suggested
-  wiz.step = "model"
-  const defModel = wiz.preset?.default_model || ""
-  print(`\n  默认模型${defModel ? ` [${defModel}]` : ""}（0=使用默认）：`)
+  wiz.apiKeyEnv = ["-", "none", "无"].includes(val.toLowerCase())
+    ? ""
+    : (val && val !== "0") ? val : suggested
+  await _discoverWizardModels(wiz, print, discover, options)
   return { done: false }
 }
 
 function _stepModel(wiz, val, print) {
-  wiz.defaultModel = (val && val !== "0") ? val : (wiz.preset?.default_model || "")
+  const models = wiz.discoveredModels || []
+  if (models.length) {
+    if (val.toLowerCase() === "m" || val.toLowerCase() === "manual") {
+      wiz.step = "model_manual"
+      print("\n  手动输入模型 ID：")
+      return { done: false }
+    }
+    if (val === "0") {
+      wiz.defaultModel = models[0]
+    } else if (/^\d+$/.test(val)) {
+      const index = Number(val) - 1
+      if (index < 0 || index >= models.length) {
+        print(`  请输入 1-${models.length}、0（第一个）或 m（手动输入）：`)
+        return { done: false }
+      }
+      wiz.defaultModel = models[index]
+    } else if (val) {
+      // Direct model IDs remain available for catalogs that omit aliases.
+      try {
+        wiz.defaultModel = validateModelId(val)
+      } catch (error) {
+        print(`  ${escapeTerminalText(error.message)}：`)
+        return { done: false }
+      }
+    } else {
+      print("  请选择模型编号，或输入 m 手动填写：")
+      return { done: false }
+    }
+  } else {
+    if (!val || val === "0") {
+      print("  动态目录不可用，必须明确输入模型 ID：")
+      return { done: false }
+    }
+    try {
+      wiz.defaultModel = validateModelId(val)
+    } catch (error) {
+      print(`  ${escapeTerminalText(error.message)}：`)
+      return { done: false }
+    }
+  }
+  return _advanceAfterModel(wiz, print)
+}
+
+function _stepModelManual(wiz, val, print) {
+  if (!val || val === "0") {
+    print("  模型 ID 不能为空：")
+    return { done: false }
+  }
+  try {
+    wiz.defaultModel = validateModelId(val)
+  } catch (error) {
+    print(`  ${escapeTerminalText(error.message)}：`)
+    return { done: false }
+  }
+  return _advanceAfterModel(wiz, print)
+}
+
+function _advanceAfterModel(wiz, print) {
   wiz.step = "context"
   const ctxHint = wiz.preset?.context_limit ? ` [${wiz.preset.context_limit}]` : ""
   print(`\n  上下文长度（tokens，如 32768，0=使用默认${ctxHint}）：`)
   return { done: false }
+}
+
+function _wizardProviderDraft(wiz) {
+  const name = wiz.customName || wiz.vendorKey
+  const entry = {}
+  if (wiz.isCustom) {
+    entry.type = wiz.customType
+    entry.base_url = wiz.customBaseUrl
+    if (wiz.customType === "gateway") entry.protocol = wiz.customProtocol
+  } else {
+    const preset = wiz.preset
+    const needExplicitType = preset.type !== "openai" && preset.type !== "anthropic" && preset.type !== "ollama"
+    const hasProtocols = VENDOR_PRESETS[wiz.vendorKey]?.protocols
+    if (needExplicitType || hasProtocols) entry.type = preset.type
+    entry.base_url = preset.base_url
+  }
+  if (wiz.apiKeyEnv) entry.api_key_env = wiz.apiKeyEnv
+  return { name, entry }
+}
+
+async function _discoverWizardModels(wiz, print, discover, options = {}) {
+  wiz.discoveredModels = []
+  wiz.modelCatalogSource = null
+  wiz.discoveryError = null
+  const { name, entry } = _wizardProviderDraft(wiz)
+  if (entry.api_key_env && !process.env[entry.api_key_env]) {
+    wiz.step = "model"
+    wiz.discoveryError = `环境变量 ${entry.api_key_env} 未设置`
+    print(`\n  无法读取模型目录：${wiz.discoveryError}。\n  请先设置凭据后重试，或在此手动输入模型 ID：`)
+    return
+  }
+  try {
+    const configState = {
+      config: { provider: { default: name, [name]: entry } },
+      source: {
+        userRaw: { provider: { [name]: entry } },
+        projectRaw: {},
+        envOverlay: {}
+      }
+    }
+    const result = await discover(configState, {
+      providerName: name,
+      refresh: true,
+      timeoutMs: Number(options.discoveryTimeoutMs || 10000)
+    })
+    wiz.discoveredModels = result.models.map((model) => model.id)
+    wiz.modelCatalogSource = result.source
+    wiz.discoveryError = result.warning || null
+    wiz.step = "model"
+    if (!wiz.discoveredModels.length) {
+      print("\n  Provider 返回了空模型目录，请手动输入模型 ID：")
+      return
+    }
+    const lines = [
+      "",
+      `  已从 ${result.source}${result.stale ? "（离线缓存）" : ""} 读取 ${wiz.discoveredModels.length} 个模型：`
+    ]
+    const visible = wiz.discoveredModels.slice(0, 50)
+    visible.forEach((model, index) => lines.push(`  ${index + 1}. ${escapeTerminalText(model)}`))
+    if (visible.length < wiz.discoveredModels.length) {
+      lines.push(`  … 另有 ${wiz.discoveredModels.length - visible.length} 个模型，可直接输入模型 ID`)
+    }
+    if (result.warning) lines.push(`  提示: ${result.warning}`)
+    lines.push("", "  输入编号选择，0=第一个，m=手动输入模型 ID：")
+    print(lines.join("\n"))
+  } catch (error) {
+    wiz.step = "model"
+    wiz.discoveryError = error?.message || "模型目录请求失败"
+    print(`\n  无法读取模型目录：${wiz.discoveryError}。\n  可检查 Base URL/凭据后重试向导，或在此手动输入模型 ID：`)
+  }
 }
 
 function _stepContext(wiz, val, print) {
@@ -434,6 +598,7 @@ function _buildConfirmPrompt(wiz) {
     "  配置摘要：",
     `    名称:     ${name}`,
     `    类型:     ${wiz.preset?.type || wiz.customType}`,
+    (wiz.customType === "gateway" ? `    协议:     ${wiz.customProtocol}` : null),
     `    Base URL: ${wiz.preset?.base_url || wiz.customBaseUrl}`,
     `    API Key:  ${keyDisplay}`,
     `    模型:     ${wiz.defaultModel || "(未设置)"}`,
@@ -453,6 +618,7 @@ function _buildProviderConfig(wiz) {
   if (wiz.isCustom) {
     entry.type = wiz.customType
     entry.base_url = wiz.customBaseUrl
+    if (wiz.customType === "gateway") entry.protocol = wiz.customProtocol
   } else {
     // 内置 openai/anthropic/ollama 不需要 type 字段（直接用 key 名匹配）
     // 但 Coding Plan 等带 protocols 的 preset 必须显式指定 type
@@ -476,9 +642,15 @@ function _stepEditField(wiz, val, print) {
   const field = EDIT_FIELDS[wiz.editFieldIdx]
   if (val && val !== "0") {
     if (field.type === "provider_type") {
-      const valid = ["openai", "openai-compatible", "anthropic", "ollama"]
+      const valid = ["gateway", "openai", "openai-compatible", "anthropic", "ollama"]
       if (!valid.includes(val)) {
         print(`  无效类型，可选: ${valid.join(", ")}；输入 0 保留：`)
+        return { done: false }
+      }
+      wiz.editChanges[field.key] = val
+    } else if (field.type === "protocol") {
+      if (!["openai", "anthropic"].includes(val)) {
+        print("  无效协议，可选: openai, anthropic；输入 0 保留：")
         return { done: false }
       }
       wiz.editChanges[field.key] = val

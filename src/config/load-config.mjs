@@ -3,7 +3,7 @@ import { access, readFile } from "node:fs/promises"
 import YAML from "yaml"
 import { DEFAULT_CONFIG } from "./defaults.mjs"
 import { validateConfig } from "./schema.mjs"
-import { projectConfigCandidates, userConfigCandidates, envFileCandidates } from "../storage/paths.mjs"
+import { projectConfigCandidates, userConfigCandidates, envFileCandidates, userRootDir } from "../storage/paths.mjs"
 
 async function exists(file) {
   try {
@@ -92,15 +92,18 @@ async function loadOne(filePath) {
 }
 
 export async function loadConfig(cwd = process.cwd()) {
+  const resolvedCwd = path.resolve(cwd)
   const userPath = await firstExisting(userConfigCandidates())
   const projectPath = await firstExisting(projectConfigCandidates(cwd))
 
   const userLoaded = await loadOne(userPath)
   const projectLoaded = await loadOne(projectPath)
-  let merged = mergeObject(mergeObject(DEFAULT_CONFIG, userLoaded.config), projectLoaded.config)
+  let userConfig = mergeObject(DEFAULT_CONFIG, userLoaded.config)
+  let merged = mergeObject(userConfig, projectLoaded.config)
 
   // .env overlay — highest priority, KKCODE_ prefixed vars
   let envPath = null
+  let envScope = null
   let envOverlay = {}
   const envCandidate = await firstExisting(envFileCandidates(cwd))
   if (envCandidate) {
@@ -109,12 +112,17 @@ export async function loadConfig(cwd = process.cwd()) {
       envOverlay = parseEnvOverlay(raw)
       if (Object.keys(envOverlay).length > 0) {
         envPath = envCandidate
+        envScope = path.resolve(envCandidate) === path.resolve(userRootDir(), ".env")
+          ? "user"
+          : "project"
+        if (envScope === "user") userConfig = mergeObject(userConfig, envOverlay)
         merged = mergeObject(merged, envOverlay)
       }
     } catch { /* ignore unreadable .env */ }
   }
 
   const source = {
+    cwd: resolvedCwd,
     userPath,
     userDir: userPath ? path.dirname(userPath) : null,
     userRaw: userLoaded.config,
@@ -122,11 +130,13 @@ export async function loadConfig(cwd = process.cwd()) {
     projectDir: projectPath ? path.dirname(projectPath) : null,
     projectRaw: projectLoaded.config,
     envPath,
+    envScope,
     envOverlay
   }
 
   return {
     config: merged,
+    userConfig,
     source,
     errors: [...userLoaded.errors, ...projectLoaded.errors]
   }

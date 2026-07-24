@@ -70,13 +70,34 @@ describe("loadConfig .env overlay", () => {
   })
 
   it("reports envPath in source when .env has KKCODE_ vars", async () => {
-    await writeFile(path.join(tmpDir, ".env"), "KKCODE_LANGUAGE=en\n")
+    await writeFile(path.join(tmpDir, ".env"), "KKCODE_LANGUAGE=zh\n")
 
     const { loadConfig } = await import("../src/config/load-config.mjs")
     const result = await loadConfig(tmpDir)
 
     assert.equal(result.source.envPath, path.join(tmpDir, ".env"))
+    assert.equal(result.source.envScope, "project")
     assert.ok(result.source.envOverlay.language !== undefined)
+    assert.equal(result.config.language, "zh")
+    assert.equal(result.userConfig.language, "en")
+  })
+
+  it("attributes the user-level .env overlay to userConfig", async () => {
+    const userHome = path.join(os.tmpdir(), `kkcode-env-home-${Date.now()}`)
+    await mkdir(userHome, { recursive: true })
+    process.env.KKCODE_HOME = userHome
+    try {
+      await writeFile(path.join(userHome, ".env"), "KKCODE_LANGUAGE=zh\n")
+      const { loadConfig } = await import("../src/config/load-config.mjs")
+      const result = await loadConfig(tmpDir)
+
+      assert.equal(result.source.envScope, "user")
+      assert.equal(result.config.language, "zh")
+      assert.equal(result.userConfig.language, "zh")
+    } finally {
+      delete process.env.KKCODE_HOME
+      await rm(userHome, { recursive: true, force: true })
+    }
   })
 
   it("envPath is null when no .env or no KKCODE_ vars", async () => {

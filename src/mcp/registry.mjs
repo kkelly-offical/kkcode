@@ -86,11 +86,13 @@ function setHealth(name, serverConfig = {}, patch = {}) {
  *   .kkcode/mcp.json         — kkcode-specific
  *   <KKCODE_HOME>/mcp.json    — global user-level
  */
-async function discoverProjectServers(cwd) {
+async function discoverProjectServers(cwd, allowProjectSources = true) {
   const candidates = [
-    join(cwd, ".mcp.json"),
-    join(cwd, ".mcp", "config.json"),
-    join(cwd, ".kkcode", "mcp.json"),
+    ...(allowProjectSources ? [
+      join(cwd, ".mcp.json"),
+      join(cwd, ".mcp", "config.json"),
+      join(cwd, ".kkcode", "mcp.json")
+    ] : []),
     join(userRootDir(), "mcp.json")
   ]
   const merged = {}
@@ -189,14 +191,19 @@ async function connectServer(name, server) {
   return client
 }
 
-async function reinitialize(config, { force = false, cwd = null } = {}) {
+async function reinitialize(config, {
+  force = false,
+  cwd = null,
+  allowProjectSources = true
+} = {}) {
   state.shuttingDown = false
   const ttlMs = Math.max(0, Number(config?.runtime?.mcp_refresh_ttl_ms || 60000))
   const effectiveCwd = cwd || process.cwd()
   const sig = JSON.stringify({
     mcp: config?.mcp || {},
     runtime: config?.runtime || {},
-    cwd: effectiveCwd
+    cwd: effectiveCwd,
+    allowProjectSources
   })
 
   const cacheValid = state.loaded && !force && state.lastSignature === sig && Date.now() - state.loadedAt <= ttlMs
@@ -226,9 +233,11 @@ async function reinitialize(config, { force = false, cwd = null } = {}) {
   }
   const configServers = config?.mcp?.servers || {}
   const discoveredServers = config?.mcp?.auto_discover !== false
-    ? await discoverProjectServers(effectiveCwd)
+    ? await discoverProjectServers(effectiveCwd, allowProjectSources)
     : {}
-  const pluginState = await discoverLocalPluginManifests(effectiveCwd, config)
+  const pluginState = await discoverLocalPluginManifests(effectiveCwd, config, {
+    allowProjectSources
+  })
   const rawPluginServers = pluginMcpServers(pluginState.plugins)
   const pluginServers = {}
   for (const [name, server] of Object.entries(rawPluginServers)) {
@@ -292,12 +301,16 @@ async function reinitialize(config, { force = false, cwd = null } = {}) {
 }
 
 export const McpRegistry = {
-  async initialize(config, { force = false, cwd = null } = {}) {
+  async initialize(config, {
+    force = false,
+    cwd = null,
+    allowProjectSources = true
+  } = {}) {
     if (state.initPromise) {
       await state.initPromise
       if (!force) return
     }
-    state.initPromise = reinitialize(config, { force, cwd })
+    state.initPromise = reinitialize(config, { force, cwd, allowProjectSources })
     try {
       await state.initPromise
     } finally {

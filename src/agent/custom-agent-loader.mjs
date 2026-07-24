@@ -2,7 +2,7 @@ import path from "node:path"
 import { access, readdir, readFile } from "node:fs/promises"
 import { pathToFileURL } from "node:url"
 import { parseYaml } from "../util/yaml.mjs"
-import { defineAgent, getAgent } from "./agent.mjs"
+import { defineAgent, resetCustomAgents } from "./agent.mjs"
 import { userRootDir } from "../storage/paths.mjs"
 
 const state = {
@@ -109,14 +109,17 @@ async function loadAgentsFromDir(dir, scope) {
 }
 
 export const CustomAgentRegistry = {
-  async initialize(cwd = process.cwd()) {
+  async initialize(cwd = process.cwd(), {
+    allowProjectSources = true
+  } = {}) {
     state.agents.clear()
+    resetCustomAgents()
     const globalDir = path.join(userRootDir(), "agents")
     const projectDir = path.join(cwd, ".kkcode", "agents")
 
     const [globalAgents, projectAgents] = await Promise.all([
       loadAgentsFromDir(globalDir, "global"),
-      loadAgentsFromDir(projectDir, "project")
+      allowProjectSources ? loadAgentsFromDir(projectDir, "project") : []
     ])
 
     // Project agents override global agents with same name

@@ -144,9 +144,13 @@ function timeoutSignal(ms, parentSignal = null) {
   return AbortSignal.any([parentSignal, own])
 }
 
+function notifyResponse(input, response) {
+  try { input.onResponse?.(response) } catch { /* audit metadata must not affect requests */ }
+}
+
 export async function requestAnthropic(input) {
   const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 120000, maxTokens = 16384, retry = {}, signal = null } = input
-  if (!apiKey) {
+  if (!apiKey && input.apiKeyEnv !== "") {
     throw new ProviderError(`missing API key for anthropic provider (env: ${input.apiKeyEnv || "unknown"})`, {
       provider: "anthropic"
     })
@@ -176,10 +180,12 @@ export async function requestAnthropic(input) {
         headers: buildRequestHeaders({
           target: "llm",
           provider: input.provider || "anthropic",
+          protocol: input.protocol || "anthropic",
+          requestId: input.requestId || "",
           accept: "application/json",
           contentType: "application/json",
           customHeaders: {
-            "x-api-key": apiKey,
+            ...(apiKey ? { "x-api-key": apiKey } : {}),
             "anthropic-version": "2023-06-01",
             "anthropic-beta": "prompt-caching-2024-07-31"
           }
@@ -187,6 +193,7 @@ export async function requestAnthropic(input) {
         body: JSON.stringify(payload),
         signal: timeoutSignal(timeoutMs, signal)
       })
+      notifyResponse(input, response)
       if (!response.ok) {
         const text = await response.text().catch(() => "")
         const error = new ProviderError(`anthropic request failed: ${response.status} ${text}`, {
@@ -217,7 +224,7 @@ export async function requestAnthropic(input) {
 
 export async function countTokensAnthropic(input) {
   const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 10000 } = input
-  if (!apiKey) return null
+  if (!apiKey && input.apiKeyEnv !== "") return null
   const endpoint = `${baseUrl.replace(/\/$/, "")}/messages/count_tokens`
   const mappedTools = mapTools(tools)
   const payload = {
@@ -232,16 +239,19 @@ export async function countTokensAnthropic(input) {
       headers: buildRequestHeaders({
         target: "llm-token-count",
         provider: input.provider || "anthropic",
+        protocol: input.protocol || "anthropic",
+        requestId: input.requestId || "",
         accept: "application/json",
         contentType: "application/json",
         customHeaders: {
-          "x-api-key": apiKey,
+          ...(apiKey ? { "x-api-key": apiKey } : {}),
           "anthropic-version": "2023-06-01"
         }
       }),
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(timeoutMs)
+      signal: timeoutSignal(timeoutMs, input.signal || null)
     })
+    notifyResponse(input, res)
     if (!res.ok) return null
     const json = await res.json()
     return json?.input_tokens ?? null
@@ -252,7 +262,7 @@ export async function countTokensAnthropic(input) {
 
 export async function* requestAnthropicStream(input) {
   const { apiKey, baseUrl, model, system, messages, tools, timeoutMs = 120000, streamIdleTimeoutMs = 120000, maxTokens = 16384, retry = {}, signal = null, compaction = null } = input
-  if (!apiKey) {
+  if (!apiKey && input.apiKeyEnv !== "") {
     throw new ProviderError(`missing API key for anthropic provider (env: ${input.apiKeyEnv || "unknown"})`, {
       provider: "anthropic"
     })
@@ -293,10 +303,12 @@ export async function* requestAnthropicStream(input) {
         headers: buildRequestHeaders({
           target: "llm",
           provider: input.provider || "anthropic",
+          protocol: input.protocol || "anthropic",
+          requestId: input.requestId || "",
           accept: "text/event-stream, application/json",
           contentType: "application/json",
           customHeaders: {
-            "x-api-key": apiKey,
+            ...(apiKey ? { "x-api-key": apiKey } : {}),
             "anthropic-version": "2023-06-01",
             "anthropic-beta": compaction ? "prompt-caching-2024-07-31,compact-2026-01-12" : "prompt-caching-2024-07-31"
           }
@@ -304,6 +316,7 @@ export async function* requestAnthropicStream(input) {
         body: JSON.stringify(payload),
         signal: fetchSignal
       })
+      notifyResponse(input, response)
       clearTimeout(connTimer)
 
       if (!response.ok) {

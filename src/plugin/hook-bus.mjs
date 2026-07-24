@@ -20,7 +20,8 @@ const state = {
   loaded: false,
   hooks: [],
   errors: [],
-  warnedPluginAlias: false
+  warnedPluginAlias: false,
+  signature: ""
 }
 
 function normalizeHook(mod, source) {
@@ -62,8 +63,19 @@ async function loadModule(file) {
   }
 }
 
-export async function initHookBus(cwd = process.cwd(), config = {}) {
-  if (state.loaded) return state
+export async function initHookBus(cwd = process.cwd(), config = {}, {
+  allowProjectSources = true,
+  force = false
+} = {}) {
+  const signature = JSON.stringify({
+    cwd: path.resolve(cwd),
+    allowProjectSources,
+    compat: config?.compat || {}
+  })
+  if (state.loaded && !force && state.signature === signature) return state
+  state.loaded = false
+  state.hooks = []
+  state.errors = []
   // Built-in hooks ship with kkcode (lowest priority — user hooks can override)
   const builtinHooks = path.join(__dirname, "builtin-hooks")
   const userHooks = path.join(userRootDir(), "hooks")
@@ -72,8 +84,10 @@ export async function initHookBus(cwd = process.cwd(), config = {}) {
   // Load order: builtin → user → project plugin alias → project hooks
   // `.kkcode/plugins` remains a compatibility alias for hook scripts while
   // `.kkcode/hooks` is the explicit project hook path.
-  const pluginAliasFiles = await discover(projectPluginHooks)
-  const manifestState = await discoverLocalPluginManifests(cwd, config)
+  const pluginAliasFiles = allowProjectSources ? await discover(projectPluginHooks) : []
+  const manifestState = await discoverLocalPluginManifests(cwd, config, {
+    allowProjectSources
+  })
   state.errors.push(...manifestState.errors)
   const manifestHookDirs = manifestState.plugins
     .filter((plugin) => plugin.enabled !== false && plugin.hooksEnabled !== false)
@@ -90,7 +104,7 @@ export async function initHookBus(cwd = process.cwd(), config = {}) {
     ...(await discover(userHooks)),
     ...pluginAliasFiles,
     ...manifestHookFiles,
-    ...(await discover(projectHooks))
+    ...(allowProjectSources ? await discover(projectHooks) : [])
   ]
   for (const file of files) {
     const loaded = await loadModule(file)
@@ -101,6 +115,7 @@ export async function initHookBus(cwd = process.cwd(), config = {}) {
     if (loaded.hook) state.hooks.push(loaded.hook)
   }
   state.loaded = true
+  state.signature = signature
   return state
 }
 

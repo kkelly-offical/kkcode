@@ -715,7 +715,7 @@ async function runParallelLongAgent({
           recoveryCount,
           lastGateFailures: [],
           iterations: iteration,
-          lastMessage: "parallel stages and usability gates passed"
+          lastMessage: "parallel stages and applicable usability gates passed"
         })
         await markSessionStatus(sessionId, "completed")
         break

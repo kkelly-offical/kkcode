@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url"
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const registry = new Map()
+const baseRegistry = new Map()
 
 function promptPath(name) {
   return path.join(__dirname, "prompt", `${name}.txt`)
@@ -36,7 +37,15 @@ export function defineAgent(spec) {
     _source: spec._source || null
   }
   registry.set(agent.name, agent)
+  if (!agent._customAgent) baseRegistry.set(agent.name, agent)
   return agent
+}
+
+export function resetCustomAgents() {
+  for (const [name, agent] of registry) {
+    if (agent._customAgent) registry.delete(name)
+  }
+  for (const [name, agent] of baseRegistry) registry.set(name, agent)
 }
 
 export async function getAgentPrompt(name) {

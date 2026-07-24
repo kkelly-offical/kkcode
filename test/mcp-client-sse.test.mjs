@@ -1,5 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { PACKAGE_VERSION } from "../src/version.mjs"
 import http from "node:http"
 import { createSseMcpClient } from "../src/mcp/client-sse.mjs"
 
@@ -162,8 +163,8 @@ test("sse mcp initialize identifies KK Code in headers and clientInfo", async ()
   try {
     const client = createSseMcpClient("identitySse", { url: srv.url, timeout_ms: 1000 })
     await client.listTools()
-    assert.match(observedHeaders["user-agent"], /^KK-Code\/0\.3\.1 /)
-    assert.deepEqual(observedClientInfo, { name: "KK Code", version: "0.3.1" })
+    assert.match(observedHeaders["user-agent"], new RegExp(`^KK-Code/${PACKAGE_VERSION.replaceAll(".", "\\.")} `))
+    assert.deepEqual(observedClientInfo, { name: "KK Code", version: PACKAGE_VERSION })
     client.shutdown()
   } finally {
     await srv.close()

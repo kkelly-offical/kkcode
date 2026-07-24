@@ -1,5 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { PACKAGE_VERSION } from "../src/version.mjs"
 import { mkdtemp, rm, readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
@@ -92,7 +93,7 @@ test("registry update request identifies KK Code instead of Node", async () => {
         }
       }
     })
-    assert.match(received["User-Agent"], /^KK-Code\/0\.3\.1 /)
+    assert.match(received["User-Agent"], new RegExp(`^KK-Code/${PACKAGE_VERSION.replaceAll(".", "\\.")} `))
     assert.equal(received["X-KK-Code-Client"], "cli")
   } finally {
     await rm(dir, { recursive: true, force: true })

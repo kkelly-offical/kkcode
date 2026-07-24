@@ -40,7 +40,7 @@ test("custom provider with type field resolves correctly", async () => {
         deepseek: {
           type: "openai-compatible",
           base_url: mock.baseUrl,
-          api_key_env: "TEST_DEEPSEEK_KEY",
+          api_key_env: "",
           default_model: "deepseek-chat",
           timeout_ms: 5000,
           retry_attempts: 1,
@@ -49,7 +49,6 @@ test("custom provider with type field resolves correctly", async () => {
       }
     }
   }
-  process.env.TEST_DEEPSEEK_KEY = "test-key"
   try {
     const result = await requestProvider({
       configState,
@@ -61,7 +60,6 @@ test("custom provider with type field resolves correctly", async () => {
     assert.equal(result.text, "from deepseek")
     assert.equal(result.usage.input, 10)
   } finally {
-    delete process.env.TEST_DEEPSEEK_KEY
     await stopServer(mock.server)
   }
 })
@@ -78,7 +76,7 @@ test("unknown type falls back to openai", async () => {
         custom: {
           type: "nonexistent-type",
           base_url: mock.baseUrl,
-          api_key_env: "TEST_CUSTOM_KEY",
+          api_key_env: "",
           default_model: "test-model",
           timeout_ms: 5000,
           retry_attempts: 1,
@@ -87,7 +85,6 @@ test("unknown type falls back to openai", async () => {
       }
     }
   }
-  process.env.TEST_CUSTOM_KEY = "test-key"
   try {
     const result = await requestProvider({
       configState,
@@ -98,7 +95,6 @@ test("unknown type falls back to openai", async () => {
     })
     assert.equal(result.text, "fallback")
   } finally {
-    delete process.env.TEST_CUSTOM_KEY
     await stopServer(mock.server)
   }
 })
@@ -114,7 +110,7 @@ test("direct openai-compatible providerType works", async () => {
         default: "openai-compatible",
         "openai-compatible": {
           base_url: mock.baseUrl,
-          api_key_env: "TEST_OAI_COMPAT_KEY",
+          api_key_env: "",
           default_model: "test-model",
           timeout_ms: 5000,
           retry_attempts: 1,
@@ -123,7 +119,6 @@ test("direct openai-compatible providerType works", async () => {
       }
     }
   }
-  process.env.TEST_OAI_COMPAT_KEY = "test-key"
   try {
     const result = await requestProvider({
       configState,
@@ -134,7 +129,6 @@ test("direct openai-compatible providerType works", async () => {
     })
     assert.equal(result.text, "direct")
   } finally {
-    delete process.env.TEST_OAI_COMPAT_KEY
     await stopServer(mock.server)
   }
 })

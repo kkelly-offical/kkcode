@@ -1,7 +1,7 @@
 import { Command } from "commander"
 import { access, mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { buildContext, printContextWarnings } from "../context.mjs"
+import { buildContext, printContextWarnings, resolveExtensionPolicy } from "../context.mjs"
 import { McpRegistry } from "../mcp/registry.mjs"
 import { ensureDefaultSkillPack } from "../skill/registry.mjs"
 import { userRootDir } from "../storage/paths.mjs"
@@ -20,8 +20,12 @@ const DEFAULT_MCP_INIT_CONFIG = {
 async function withInitializedMcp(run) {
   const ctx = await buildContext()
   printContextWarnings(ctx)
+  const extensionPolicy = resolveExtensionPolicy(ctx.configState)
   try {
-    await McpRegistry.initialize(ctx.configState.config)
+    await McpRegistry.initialize(extensionPolicy.config, {
+      cwd: process.cwd(),
+      allowProjectSources: extensionPolicy.allowProjectSources
+    })
     return await run(ctx)
   } finally {
     McpRegistry.shutdown()

@@ -23,6 +23,7 @@ import { createPluginCommand } from "./commands/plugin.mjs"
 import { startRepl } from "./repl.mjs"
 import { PACKAGE_VERSION } from "./version.mjs"
 import { createUpdateCommand } from "./commands/update.mjs"
+import { createModelCommand } from "./commands/model.mjs"
 
 async function main() {
   const hasTrust = process.argv.includes("--trust")
@@ -80,6 +81,7 @@ async function main() {
   program.addCommand(createSkillCommand())
   program.addCommand(createPluginCommand())
   program.addCommand(createUpdateCommand())
+  program.addCommand(createModelCommand())
   await program.parseAsync(process.argv)
 }
 

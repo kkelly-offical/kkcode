@@ -5,7 +5,7 @@ import { exportSession, getSession, listSessions, forkSession, fsckSessionStore,
 import { newSessionId, executeTurn } from "../session/engine.mjs"
 import { listRecoverableSessions, getResumeContext, isRecoveryEnabled, summarizeResumeContext } from "../session/recovery.mjs"
 import { summarizeSessionRuntimeState } from "../session/runtime-state.mjs"
-import { buildContext } from "../context.mjs"
+import { buildContext, resolveExtensionPolicy } from "../context.mjs"
 import { ToolRegistry } from "../tool/registry.mjs"
 
 function assertRecoveryEnabled(config, commandName) {
@@ -191,6 +191,7 @@ export function createSessionCommand() {
     .action(async (options) => {
       const ctx = await buildContext()
       if (!assertRecoveryEnabled(ctx.configState.config, "session resume")) return
+      const extensionPolicy = resolveExtensionPolicy(ctx.configState)
 
       const resumeCtx = await getResumeContext(options.id, { enabled: true })
       if (!resumeCtx) {
@@ -203,7 +204,11 @@ export function createSessionCommand() {
         process.exitCode = 1
         return
       }
-      await ToolRegistry.initialize({ config: ctx.configState.config, cwd: process.cwd() })
+      await ToolRegistry.initialize({
+        config: extensionPolicy.config,
+        cwd: process.cwd(),
+        allowProjectSources: extensionPolicy.allowProjectSources
+      })
       const mode = options.mode || resumeCtx.session.mode
       const model = options.model || resumeCtx.session.model
       console.log(`resuming session ${options.id} (${resumeCtx.messageCount} messages)`)
@@ -226,6 +231,7 @@ export function createSessionCommand() {
     .action(async (options) => {
       const ctx = await buildContext()
       if (!assertRecoveryEnabled(ctx.configState.config, "session retry")) return
+      const extensionPolicy = resolveExtensionPolicy(ctx.configState)
 
       const resumeCtx = await getResumeContext(options.id, { enabled: true })
       if (!resumeCtx) {
@@ -243,7 +249,11 @@ export function createSessionCommand() {
         process.exitCode = 1
         return
       }
-      await ToolRegistry.initialize({ config: ctx.configState.config, cwd: process.cwd() })
+      await ToolRegistry.initialize({
+        config: extensionPolicy.config,
+        cwd: process.cwd(),
+        allowProjectSources: extensionPolicy.allowProjectSources
+      })
       console.log(`retrying failed turn in session ${options.id}`)
       const result = await executeTurn({
         prompt: resumeCtx.lastPrompt,

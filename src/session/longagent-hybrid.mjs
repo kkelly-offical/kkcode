@@ -203,6 +203,11 @@ function parseBlueprintOutput(reply, objective, defaults) {
   return { architectureText: reply, stagePlan: defaultStagePlan(objective, defaults), parseErrors }
 }
 
+export function resolveHybridCompletionStatus({ completionMarkerSeen, usabilityGatesPassed }) {
+  if (!usabilityGatesPassed) return "failed"
+  return completionMarkerSeen ? "completed" : "done"
+}
+
 export async function runHybridLongAgent({
   prompt, model, providerType, sessionId, configState,
   baseUrl = null, apiKeyEnv = null, agent = null,
@@ -769,15 +774,15 @@ export async function runHybridLongAgent({
         const stageFiles = (stageResult.fileChanges || []).map(f => f.path).filter(Boolean)
         if (stageFiles.length > 0) {
           const miniGate = await runUsabilityGates({
-            sessionId, configState, model, providerType, baseUrl, apiKeyEnv, signal, toolContext,
-            objective: `Verify stage ${stage.stageId}: ${stage.name || ""}`, fileChanges: stageResult.fileChanges || [],
-            gatesConfig: { ...gatesConfig, lint: true, typecheck: true, test: false, security: false, build: false }, allowQuestion: false
+            sessionId,
+            config: configState.config,
+            cwd,
+            iteration
           })
-          if (miniGate.usage) accumulateUsage(miniGate)
-          gateStatus[`gate_${stage.stageId}`] = { status: miniGate.allPassed ? "pass" : "warn" }
-          await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_INCREMENTAL_GATE, sessionId, payload: { stageId: stage.stageId, passed: miniGate.allPassed } })
+          gateStatus[`gate_${stage.stageId}`] = { status: miniGate.allPass ? "pass" : "warn" }
+          await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_INCREMENTAL_GATE, sessionId, payload: { stageId: stage.stageId, passed: miniGate.allPass } })
           // #18: Feed gate results into priorContext so subsequent stages see lint/typecheck feedback
-          if (!miniGate.allPassed && miniGate.failures?.length) {
+          if (!miniGate.allPass && miniGate.failures?.length) {
             const gateFeedback = miniGate.failures.slice(0, 3).map(f => `${f.gate}: ${(f.reason || "").slice(0, 150)}`).join("; ")
             priorContext += `\n### Incremental Gate Warning (${stage.stageId})\n${gateFeedback}\n`
           }
@@ -1119,20 +1124,22 @@ export async function runHybridLongAgent({
   }
 
   let gateAttempt = 0
+  let usabilityGatesPassed = false
 
   while (gateAttempt < maxGateAttempts) {
     gateAttempt++
     if (stopFlag || signal?.aborted) break
 
     const gateResult = await runUsabilityGates({
-      sessionId, configState, model, providerType,
-      baseUrl, apiKeyEnv, signal, toolContext,
-      objective: prompt, fileChanges,
-      gatesConfig, allowQuestion
+      sessionId,
+      config: configState.config,
+      cwd,
+      iteration
     })
-    if (gateResult.usage) accumulateUsage(gateResult)
 
-    if (gateResult.allPassed) {
+    if (gateResult.allPass) {
+      usabilityGatesPassed = true
+      lastGateFailures = []
       gateStatus.usabilityGates = { status: "pass", attempt: gateAttempt }
       break
     }
@@ -1177,12 +1184,12 @@ export async function runHybridLongAgent({
     iteration++
   }
 
-  if (gateAttempt >= maxGateAttempts && lastGateFailures.length) {
+  if (!usabilityGatesPassed) {
     gateStatus.usabilityGates = { status: "fail", attempt: gateAttempt, failures: summarizeGateFailures(lastGateFailures) }
   }
 
   // ========== H7: GIT MERGE (原子性保护) ==========
-  if (gitActive && gitBaseBranch && gitBranch) {
+  if (usabilityGatesPassed && gitActive && gitBaseBranch && gitBranch) {
     await setPhase("H7", "git_merge")
     try {
       if (gitConfig.auto_merge !== false) {
@@ -1308,9 +1315,15 @@ export async function runHybridLongAgent({
   // ========== 完成 ==========
   unsubscribeStop()
   const elapsed = Math.round((Date.now() - startTime) / 1000)
-  const finalStatus = completionMarkerSeen ? "completed" : "done"
-  await LongAgentManager.update(sessionId, { status: finalStatus, lastMessage: "hybrid longagent complete", elapsed })
-  await markSessionStatus(sessionId, finalStatus === "completed" ? "completed" : "active")
+  const finalStatus = resolveHybridCompletionStatus({ completionMarkerSeen, usabilityGatesPassed })
+  const finalMessage = finalStatus === "failed"
+    ? "hybrid longagent failed usability gates"
+    : "hybrid longagent complete"
+  await LongAgentManager.update(sessionId, { status: finalStatus, lastMessage: finalMessage, elapsed })
+  await markSessionStatus(
+    sessionId,
+    finalStatus === "completed" ? "completed" : finalStatus === "failed" ? "failed" : "active"
+  )
 
   const stats = stageProgressStats(taskProgress)
 
@@ -1329,7 +1342,9 @@ export async function runHybridLongAgent({
 
   return {
     sessionId, turnId: `turn_long_${Date.now()}`,
-    reply: finalReply || "hybrid longagent complete",
+    reply: finalStatus === "failed"
+      ? [finalReply, finalMessage].filter(Boolean).join("\n\n")
+      : finalReply || finalMessage,
     usage: aggregateUsage, toolEvents, iterations: iteration,
     status: finalStatus, phase: currentPhase,
     gateStatus, currentGate, lastGateFailures, recoveryCount,
