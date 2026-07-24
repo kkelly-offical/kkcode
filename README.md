@@ -349,10 +349,11 @@ Windows, macOS, Linux, SSH/tmux, clipboard, and fallback matrix.
 
 Automated protocol and layout tests cannot validate a GUI terminal's actual
 mouse reporting, clipboard permissions, or IME candidate-window placement.
-Before release, Windows Terminal + PowerShell, macOS Terminal/iTerm2, and
-representative Linux Wayland/X11 terminals still require manual mouse and IME
-acceptance; `0.3.3` on `main` remains a user-verification build until that
-matrix is signed off.
+`v0.3.3` ships these terminal paths with automated coverage and documented
+fallbacks. Behavior can still vary across Windows Terminal + PowerShell,
+macOS Terminal/iTerm2, and Linux Wayland/X11 environments; please report mouse,
+clipboard, or IME regressions with the terminal emulator, shell, and multiplexer
+details.
 
 ### Main CLI commands / 主要 CLI 子命令
 - `chat`
@@ -512,10 +513,12 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current development version / 当前开发版本**: `v0.3.3` on `main`
+**Current stable version / 当前稳定版本**: `v0.3.3`
 
-`v0.3.3` is staged for user verification. Pushing `main` does not publish npm or
-create a GitHub Release; publication remains tag-gated.
+`v0.3.3` is the current stable npm and GitHub release. The `main` branch remains
+the development line for subsequent fixes.
+
+`v0.3.3` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
 
 Use the Kimi Code preset without placing credentials in YAML:
 
