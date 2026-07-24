@@ -2,6 +2,10 @@
 #
 # Keep credentials outside this file:
 #   export KIMI_CODE_API_KEY="your-kimi-code-key"
+#
+# Every model on this endpoint is thinking-only, so reasoning tokens come out
+# of max_tokens. Keep it generous — a small budget can be consumed entirely by
+# reasoning and return empty content.
 
 config_version: 1
 
@@ -10,6 +14,7 @@ provider:
 
   model_context:
     k3: 1048576
+    k3-256k: 262144
     kimi-for-coding: 262144
     kimi-for-coding-highspeed: 262144
 
@@ -19,14 +24,22 @@ provider:
     api_key_env: KIMI_CODE_API_KEY
     default_model: k3
     models:
-      - k3
-      - kimi-for-coding
-      - kimi-for-coding-highspeed
+      - k3                          # K3 — 1M context
+      - k3-256k                     # K3 — 256K context
+      - kimi-for-coding             # K2.7 Coding
+      - kimi-for-coding-highspeed   # K2.7 Coding Highspeed
     context_limit: 1048576
-    timeout_ms: 180000
-    stream_idle_timeout_ms: 180000
+    timeout_ms: 240000
+    stream_idle_timeout_ms: 240000
     max_tokens: 32768
     retry_attempts: 5
     retry_base_delay_ms: 800
     stream: true
     reasoning_effort: high
+
+# 0.4.0 model roles. fast powers inline ghost text and session titles; it is
+# only ever used for cheap helper calls, so point it at the highspeed model.
+models:
+  main: k3
+  fast: kimi-for-coding-highspeed
+  subagent: kimi-for-coding
