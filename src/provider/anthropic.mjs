@@ -133,6 +133,11 @@ function mapMessages(messages) {
 function parseContentBlocks(content) {
   const blocks = Array.isArray(content) ? content : []
   const text = blocks.filter((block) => block.type === "text").map((block) => block.text || "").join("\n")
+  const reasoning = blocks
+    .filter((block) => block.type === "thinking" || block.type === "redacted_thinking")
+    .map((block) => block.type === "thinking" && typeof block.thinking === "string" ? block.thinking : "")
+    .filter(Boolean)
+    .join("\n")
   const toolCalls = blocks
     .filter((block) => block.type === "tool_use" && block.name)
     .map((block) => ({
@@ -140,7 +145,7 @@ function parseContentBlocks(content) {
       name: block.name,
       args: block.input || {}
     }))
-  return { text, toolCalls }
+  return { text, reasoning, toolCalls }
 }
 
 function timeoutSignal(ms, parentSignal = null) {
@@ -253,7 +258,7 @@ export async function requestAnthropic(input) {
         cacheRead: json?.usage?.cache_read_input_tokens ?? 0,
         cacheWrite: json?.usage?.cache_creation_input_tokens ?? 0
       }
-      return { text: parsed.text, usage, toolCalls: parsed.toolCalls }
+      return { text: parsed.text, reasoning: parsed.reasoning, usage, toolCalls: parsed.toolCalls }
     }
   })
 }

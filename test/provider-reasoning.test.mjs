@@ -75,6 +75,46 @@ test("OpenAI-compatible response preserves Kimi reasoning and KK Code identity",
   }
 })
 
+test("Anthropic response preserves readable thinking without exposing protected fields", async () => {
+  let receivedBody
+  const mock = await startServer((req, res) => {
+    let body = ""
+    req.on("data", (chunk) => { body += chunk })
+    req.on("end", () => {
+      receivedBody = JSON.parse(body)
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(JSON.stringify({
+        content: [
+          { type: "thinking", thinking: "first thought", signature: "secret-signature-1" },
+          { type: "redacted_thinking", data: "encrypted-redacted-thinking" },
+          { type: "thinking", thinking: "second thought", signature: "secret-signature-2" },
+          { type: "text", text: "final answer" },
+          { type: "tool_use", id: "toolu_1", name: "read", input: { path: "README.md" } }
+        ],
+        usage: { input_tokens: 4, output_tokens: 2 }
+      }))
+    })
+  })
+  try {
+    const result = await requestAnthropic({
+      ...input(mock.baseUrl),
+      provider: "anthropic",
+      thinking: { type: "enabled", budget_tokens: 2048 }
+    })
+    assert.equal(result.text, "final answer")
+    assert.equal(result.reasoning, "first thought\nsecond thought")
+    assert.deepEqual(result.toolCalls, [{
+      id: "toolu_1",
+      name: "read",
+      args: { path: "README.md" }
+    }])
+    assert.deepEqual(receivedBody.thinking, { type: "enabled", budget_tokens: 2048 })
+    assert.doesNotMatch(JSON.stringify(result), /secret-signature|encrypted-redacted-thinking/)
+  } finally {
+    await stopServer(mock.server)
+  }
+})
+
 test("Anthropic and Ollama requests use the same KK Code identity", async () => {
   const captured = []
   const mock = await startServer((req, res) => {

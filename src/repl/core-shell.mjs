@@ -2,6 +2,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 import { paint } from "../theme/color.mjs"
 import { resolveMode } from "../session/engine.mjs"
+import { PACKAGE_VERSION } from "../version.mjs"
 
 export function configuredProviders(config, listProvidersFn) {
   const builtins = new Set(listProvidersFn())
@@ -82,7 +83,7 @@ export function collectMcpStatusLines(theme, entries, tools) {
 export function startSplash({
   paintFn = paint,
   stdout = process.stdout,
-  version = "v0.1.27"
+  version = `v${PACKAGE_VERSION}`
 } = {}) {
   if (!stdout?.isTTY) return { update() {}, stop() {} }
 

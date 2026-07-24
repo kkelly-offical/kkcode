@@ -21,7 +21,10 @@
   Move mode/model/provider/permission changes into transient bottom toasts,
   mute tool activity, and expose bounded red/green mutation diffs on demand.
 - Show animated elapsed `Thinking · Ns` state during model reasoning and retain
-  the completed reasoning as a collapsed, inspectable transcript block.
+  the completed reasoning as a collapsed, inspectable transcript block. Promote
+  the waiting animation into native reasoning without emitting a duplicate empty
+  block, and preserve readable Anthropic thinking in non-streaming responses
+  without retaining signatures or redacted payloads.
 - Treat `retry_attempts: 5` as five reconnects after the initial request.
   OpenAI, Anthropic, compatible gateways, Kimi, and Ollama retry transient
   connection/rate/server failures before the first streamed event, honor
@@ -39,6 +42,10 @@
   intact across transport chunks, then deliver a bare Escape without Readline's
   extra delay. Native clipboard fallbacks now run asynchronously, cancel stale
   copies, and use PowerShell UTF-8/Base64 transport for CJK and emoji on Windows.
+- Read Linux Wayland image and text clipboards through `wl-paste`, retaining
+  `xclip`/`xsel` fallbacks and bounded, timeout-protected reads. Leave detached
+  worktrees before cleanup so Windows does not hold the directory open, and
+  source the splash version directly from the package release metadata.
 
 ### 中文
 
@@ -54,7 +61,8 @@
 - 增量解析模型 Markdown，避免流式分片破坏格式；模式、模型、Provider、权限切换
   改为底部瞬时 Toast；工具日志降为浅灰色，代码修改可按需查看受限长度的红绿 Diff。
 - 模型思考时显示带动效和耗时的 `Thinking · Ns`，完成后保存为默认折叠、可检查的
-  对话块。
+  对话块；等待动画会直接升级为原生 reasoning，不再额外生成空白 Thinking 行。
+  Anthropic 非流式响应也会保留可读思考内容，但不会记录签名或 redacted 密文。
 - 将 `retry_attempts: 5` 明确定义为首次请求之后最多重连 5 次。OpenAI、
   Anthropic、兼容网关、Kimi 与 Ollama 会在首个流式事件前重试网络、限流与服务端
   瞬时错误，遵循 `Retry-After`；确定性客户端错误立即失败，流式内容开始后绝不重放。
@@ -67,6 +75,9 @@
 - 对单独到达的 ESC 保留 35 ms 判定窗口，避免鼠标与粘贴协议跨分片时被拆散；
   确认为裸 Escape 后不再叠加 Readline 延迟。原生剪贴板回退改为异步执行并取消
   过期复制，Windows 通过 PowerShell UTF-8/Base64 通道可靠复制中文与 emoji。
+- Linux Wayland 的图片与文本剪贴板优先通过 `wl-paste` 读取，同时保留
+  `xclip`/`xsel` 回退、超时和大小限制；清理 detached worktree 前先离开该目录，
+  避免 Windows 持有目录锁；启动动画版本号统一读取 package 发布元数据。
 
 ## 0.3.2
 

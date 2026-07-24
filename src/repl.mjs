@@ -117,6 +117,15 @@ import { createToastStore } from "./ui/toast-store.mjs"
 import { shouldApplyActiveTurnEvent } from "./ui/event-scope.mjs"
 import { createFrameBatcher } from "./ui/frame-batcher.mjs"
 import {
+  appendThinkingDelta,
+  buildThinkingTranscriptItem,
+  createThinkingState,
+  finishThinking as finishThinkingState,
+  formatThinkingDuration,
+  startThinkingStream,
+  startThinkingWait
+} from "./ui/thinking-state.mjs"
+import {
   sanitizeTerminalStyledText,
   sanitizeTerminalText,
   sanitizeTerminalValue
@@ -1412,9 +1421,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     currentActivity: null,
     currentStep: 0,
     maxSteps: 0,
-    inThinkingStream: false,
-    thinkingStartedAt: 0,
-    thinkingRaw: "",
+    thinking: createThinkingState(),
     lastThinkingId: null,
     streamLogId: null,
     streamRaw: "",
@@ -1535,11 +1542,6 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     // screen and prevents a second Markdown rendering pass.
   }
 
-  function formatThinkingDuration(ms) {
-    const seconds = Math.max(0, Number(ms) || 0) / 1000
-    return seconds < 10 ? `${seconds.toFixed(1)}s` : `${Math.round(seconds)}s`
-  }
-
   function renderToastLine() {
     const toast = toastStore.getToasts({ pruneExpired: false }).at(-1)
     if (!toast) return null
@@ -1554,28 +1556,26 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     return `${paint(symbols[tone], palette[tone], { bold: true })} ${paint(toast.message, palette[tone])}`
   }
 
-  function finalizeThinking() {
-    if (!ui.inThinkingStream && !ui.thinkingStartedAt) return null
-    const durationMs = Math.max(0, Date.now() - (ui.thinkingStartedAt || Date.now()))
-    const raw = sanitizeTerminalText(ui.thinkingRaw || "").trim()
-    const details = raw
-      ? raw.split(/\r?\n/).map((line) => paint(`  ${line}`, "#777777"))
-      : []
+  function applyThinkingTransition(transition) {
+    ui.thinking = transition.state
+    if (!transition.completed) return null
+    const item = buildThinkingTranscriptItem({
+      ...transition.completed,
+      raw: sanitizeTerminalText(transition.completed.raw)
+    })
     const id = appendLog(
-      paint(`Thinking · ${formatThinkingDuration(durationMs)}`, "#8a8a8a", { dim: true }),
+      paint(item.summary, "#8a8a8a", { dim: true }),
       {
-        kind: "thinking",
-        details,
-        collapsible: details.length > 0,
-        expanded: false,
-        metadata: { durationMs }
+        ...item,
+        details: item.details.map((line) => paint(`  ${line}`, "#777777"))
       }
     )
     ui.lastThinkingId = id
-    ui.inThinkingStream = false
-    ui.thinkingStartedAt = 0
-    ui.thinkingRaw = ""
     return id
+  }
+
+  function finalizeThinking(now = Date.now()) {
+    return applyThinkingTransition(finishThinkingState(ui.thinking, { now }))
   }
 
   function renderTextStreamFrame() {
@@ -1634,11 +1634,10 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         break
       case EVENT_TYPES.TURN_STEP_START: {
         finalizeTextStream()
-        finalizeThinking()
+        applyThinkingTransition(startThinkingWait(ui.thinking, { now: Date.now() }))
         ui.currentStep = payload.step || 0
         ui.maxSteps = Number(ctx.configState.config.agent?.max_steps) || 25
         ui.currentActivity = { type: "thinking" }
-        ui.thinkingStartedAt = Date.now()
         requestRender()
         break
       }
@@ -1668,17 +1667,20 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       }
       case EVENT_TYPES.STREAM_THINKING_START:
         finalizeTextStream()
-        finalizeThinking()
-        ui.inThinkingStream = true
-        if (!ui.thinkingStartedAt) ui.thinkingStartedAt = Date.now()
-        ui.thinkingRaw = ""
+        applyThinkingTransition(startThinkingStream(ui.thinking, { now: Date.now() }))
         ui.currentActivity = { type: "thinking" }
         requestRender()
         break
-      case EVENT_TYPES.STREAM_THINKING_DELTA:
-        ui.thinkingRaw += String(payload.text || payload.content || "")
+      case EVENT_TYPES.STREAM_THINKING_DELTA: {
+        const transition = appendThinkingDelta(
+          ui.thinking,
+          payload.text || payload.content || "",
+          { now: Date.now() }
+        )
+        ui.thinking = transition.state
         requestRender()
         break
+      }
       case EVENT_TYPES.TURN_USAGE_UPDATE: {
         const u = payload.usage || {}
         ui.metrics.tokenMeter = {
@@ -2139,16 +2141,16 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       } else if (ui.currentActivity.type === "writing") {
         busyLine = `${paint(spinner, "green")} ${paint("writing", "green", { bold: true })}${stepTag}`
       } else {
-        const elapsed = ui.thinkingStartedAt
-          ? formatThinkingDuration(Date.now() - ui.thinkingStartedAt)
+        const elapsed = ui.thinking.startedAt
+          ? formatThinkingDuration(Date.now() - ui.thinking.startedAt)
           : "0.0s"
         const dots = ".".repeat((ui.spinnerIndex % 3) + 1)
         busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint(`Thinking${dots} · ${elapsed}`, ctx.themeState.theme.semantic.warn, { bold: true })}${stepTag}`
       }
     } else if (ui.busy) {
       const spinner = BUSY_SPINNER_FRAMES[ui.spinnerIndex]
-      const elapsed = ui.thinkingStartedAt
-        ? formatThinkingDuration(Date.now() - ui.thinkingStartedAt)
+      const elapsed = ui.thinking.startedAt
+        ? formatThinkingDuration(Date.now() - ui.thinking.startedAt)
         : "0.0s"
       const dots = ".".repeat((ui.spinnerIndex % 3) + 1)
       busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint(`Thinking${dots} · ${elapsed}`, ctx.themeState.theme.semantic.warn, { bold: true })}`

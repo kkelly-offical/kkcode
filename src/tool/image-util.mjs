@@ -23,6 +23,20 @@ const MIME_MAP = {
 }
 
 const MAX_IMAGE_SIZE = 20 * 1024 * 1024 // 20MB
+const MAX_CLIPBOARD_TEXT_SIZE = 1024 * 1024 // Match execFile's historical 1MB default
+const CLIPBOARD_READ_TIMEOUT_MS = 5000
+
+function clipboardReadOptions({ binary = false } = {}) {
+  return {
+    timeout: CLIPBOARD_READ_TIMEOUT_MS,
+    maxBuffer: binary ? MAX_IMAGE_SIZE : MAX_CLIPBOARD_TEXT_SIZE,
+    encoding: binary ? "buffer" : "utf8"
+  }
+}
+
+function commandExitedNonZero(err) {
+  return Number.isInteger(err?.code) && !err?.killed && !err?.signal
+}
 
 export function isImagePath(filePath) {
   const ext = path.extname(String(filePath || "")).toLowerCase()
@@ -122,14 +136,19 @@ export async function readImageAsBlock(filePath) {
 /**
  * Read an image from the system clipboard.
  * Returns a content block { type: "image", mediaType, data } or null if no image.
- * Supports Windows (PowerShell), macOS (pngpaste/osascript), Linux (xclip).
+ * Supports Windows (PowerShell), macOS (pngpaste/osascript), Linux
+ * (wl-paste with xclip fallback).
  */
-export async function readClipboardImage({ onStatus } = {}) {
+export async function readClipboardImage({
+  onStatus,
+  platform = process.platform,
+  executeFile = execFileAsync
+} = {}) {
   const tempPath = path.join(tmpdir(), `kkcode-clip-${Date.now()}.png`)
   const status = typeof onStatus === "function" ? onStatus : () => {}
 
   try {
-    if (process.platform === "win32") {
+    if (platform === "win32") {
       status("reading clipboard...")
       // Use escaped path for PowerShell; try multiple clipboard formats
       const psPath = tempPath.replace(/\\/g, "\\\\").replace(/'/g, "''")
@@ -164,27 +183,47 @@ export async function readClipboardImage({ onStatus } = {}) {
         "}",
         "Write-Output 'empty'"
       ].join("\n")
-      const { stdout } = await execFileAsync("powershell", [
+      const { stdout } = await executeFile("powershell", [
         "-NoProfile", "-NonInteractive", "-Command", psScript
       ], { timeout: 10000 })
       if (!stdout.includes("saved")) {
         status("")
         return null
       }
-    } else if (process.platform === "darwin") {
+    } else if (platform === "darwin") {
       status("reading clipboard...")
       try {
-        await execFileAsync("pngpaste", [tempPath], { timeout: 5000 })
+        await executeFile("pngpaste", [tempPath], { timeout: 5000 })
       } catch {
         const script = `set theFile to POSIX file "${tempPath}"\ntry\n  set theImage to the clipboard as «class PNGf»\n  set fp to open for access theFile with write permission\n  write theImage to fp\n  close access fp\non error\n  return "empty"\nend try`
-        const { stdout } = await execFileAsync("osascript", ["-e", script], { timeout: 5000 })
+        const { stdout } = await executeFile("osascript", ["-e", script], { timeout: 5000 })
         if (stdout.includes("empty")) { status(""); return null }
       }
     } else {
       status("reading clipboard...")
-      const result = await execFileAsync("xclip", [
-        "-selection", "clipboard", "-t", "image/png", "-o"
-      ], { timeout: 5000, maxBuffer: MAX_IMAGE_SIZE, encoding: "buffer" })
+      let result
+      let waylandError = null
+      try {
+        result = await executeFile("wl-paste", [
+          "--type", "image/png"
+        ], clipboardReadOptions({ binary: true }))
+      } catch (err) {
+        waylandError = err
+        try {
+          result = await executeFile("xclip", [
+            "-selection", "clipboard", "-t", "image/png", "-o"
+          ], clipboardReadOptions({ binary: true }))
+        } catch (xclipError) {
+          // wl-paste uses a non-zero exit when the clipboard exists but does
+          // not offer image/png. Treat that as "no image" so Ctrl+V can try
+          // the text MIME next, even on pure Wayland where xclip is absent.
+          if (commandExitedNonZero(waylandError) && xclipError?.code === "ENOENT") {
+            status("")
+            return null
+          }
+          throw xclipError
+        }
+      }
       if (!result.stdout || !result.stdout.length) { status(""); return null }
       await fsWriteFile(tempPath, result.stdout)
     }
@@ -205,28 +244,39 @@ export async function readClipboardImage({ onStatus } = {}) {
  * Read text from the system clipboard.
  * Returns string or null if clipboard is empty / not text.
  */
-export async function readClipboardText() {
+export async function readClipboardText({
+  platform = process.platform,
+  executeFile = execFileAsync
+} = {}) {
   try {
-    if (process.platform === "win32") {
-      const { stdout } = await execFileAsync("powershell", [
+    if (platform === "win32") {
+      const { stdout } = await executeFile("powershell", [
         "-NoProfile", "-NonInteractive", "-Command", "Get-Clipboard"
-      ], { timeout: 5000 })
+      ], clipboardReadOptions())
       return stdout || null
-    } else if (process.platform === "darwin") {
-      const { stdout } = await execFileAsync("pbpaste", [], { timeout: 5000 })
+    } else if (platform === "darwin") {
+      const { stdout } = await executeFile("pbpaste", [], clipboardReadOptions())
       return stdout || null
     } else {
-      // Try xclip first, fall back to xsel
+      // Generic "text" lets wl-paste select the offered text/plain charset.
       try {
-        const { stdout } = await execFileAsync("xclip", [
-          "-selection", "clipboard", "-o"
-        ], { timeout: 5000 })
+        const { stdout } = await executeFile("wl-paste", [
+          "--no-newline", "--type", "text"
+        ], clipboardReadOptions())
         return stdout || null
       } catch {
-        const { stdout } = await execFileAsync("xsel", [
-          "--clipboard", "--output"
-        ], { timeout: 5000 })
-        return stdout || null
+        // Keep the existing X11 fallback chain for mixed/X11 sessions.
+        try {
+          const { stdout } = await executeFile("xclip", [
+            "-selection", "clipboard", "-o"
+          ], clipboardReadOptions())
+          return stdout || null
+        } catch {
+          const { stdout } = await executeFile("xsel", [
+            "--clipboard", "--output"
+          ], clipboardReadOptions())
+          return stdout || null
+        }
       }
     }
   } catch {
