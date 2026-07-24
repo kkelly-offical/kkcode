@@ -232,6 +232,21 @@ test("TUI restores job-control state and exits without a referenced stdin handle
     child.stdin.write("\x1b")
     await new Promise((resolve) => setTimeout(resolve, 80))
 
+    // Shift+Tab (\x1b[Z) cycles the five public modes. Verify it reaches the
+    // keymap through the mouse/paste decoders in a real terminal rather than
+    // being swallowed as an escape prefix.
+    const modeProbeStart = output.length
+    child.stdin.write("\x1b[Z")
+    await waitFor(
+      () => /Agent · Auto|AGENT · AUTO/.test(output.slice(modeProbeStart)),
+      { message: `Shift+Tab did not cycle the mode:\n${output.slice(-1600)}` }
+    )
+    child.stdin.write("\x1b[Z")
+    await waitFor(
+      () => /Ultra|ULTRA/.test(output.slice(modeProbeStart)),
+      { message: `Shift+Tab did not reach Ultra:\n${output.slice(-1600)}` }
+    )
+
     child.stdin.write("/exit\r")
     const result = await withTimeout(
       exitResult,

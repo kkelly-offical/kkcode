@@ -139,7 +139,7 @@ import {
   terminalCellWidth,
   wrapAnsiLine
 } from "./repl/text-layout.mjs"
-import { copyTerminalText, copyableFrameLine } from "./repl/clipboard.mjs"
+import { copyTerminalText } from "./repl/clipboard.mjs"
 import { createTranscriptModel } from "./ui/transcript-model.mjs"
 import { createToastStore } from "./ui/toast-store.mjs"
 import { shouldApplyActiveTurnEvent } from "./ui/event-scope.mjs"
@@ -1610,6 +1610,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   let renderTimer = null
   let spinnerTimer = null
   let selectionClearTimer = null
+  // 拖选到日志区边缘外时的自动滚动定时器
+  let autoScrollTimer = null
+  let autoScrollState = null
   let protocolFlushTimer = null
   let clipboardAbortController = null
   let disposed = false
@@ -2222,31 +2225,31 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   // 从渲染后的屏幕行中提取纯文本（用于选择复制）
-  function extractPlainText(frameLines, row) {
-    return copyableFrameLine(frameLines, row, {
-      logStartRow: ui.layoutMeta.logStartRow,
-      logEndRow: ui.layoutMeta.logEndRow,
-      showScrollbar: ui.scrollMeta.totalRows > ui.scrollMeta.logRows
-    })
-  }
-
-  // 对屏幕行数组应用选择高亮（反色）
+  // 对屏幕行数组应用选择高亮（反色）。选区存的是 transcript 绝对行，
+  // 这里换算回当前视口的屏幕行；滚出视口的部分自然不绘制。
   function applySelectionHighlight(frameLines, sel) {
     if (!sel) return
     const {
-      startRow: r1,
+      startRow: a1,
       startCol: c1,
-      endRow: r2,
+      endRow: a2,
       endCol: c2,
       isClick
-    } = normalizeMouseSelection(sel)
+    } = normalizeMouseSelection({
+      startRow: (sel.startAbs ?? 0) + 1,
+      startCol: sel.startCol,
+      endRow: (sel.endAbs ?? 0) + 1,
+      endCol: sel.endCol,
+      moved: sel.moved
+    })
     if (isClick) return
 
-    for (let r = r1; r <= r2; r++) {
-      if (r < 0 || r >= frameLines.length) continue
+    for (let abs = a1; abs <= a2; abs++) {
+      const r = screenRowFromAbsolute(abs, ui.layoutMeta)
+      if (r === null || r < 0 || r >= frameLines.length) continue
       const plain = stripAnsi(frameLines[r])
-      const sc = r === r1 ? c1 : 0
-      const ec = r === r2 ? c2 : displayWidth(plain)
+      const sc = abs === a1 ? c1 : 0
+      const ec = abs === a2 ? c2 : displayWidth(plain)
       if (sc >= ec || sc >= displayWidth(plain)) continue
 
       const { before, selected, after } = splitTextByCellRange(plain, sc, ec)
@@ -2662,7 +2665,15 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     }
 
     lines.push(clipAnsiLine(status, width))
-    lines.push(clipAnsiLine(renderToastLine() || busyLine, width))
+    // Toast 与 `Thinking · Ns` 此前抢同一行，toast 一出现就会盖掉思考计时。
+    // 忙碌时把 toast 挤到状态栏那侧，两者同时可见。
+    const toastLine = renderToastLine()
+    if (toastLine && ui.busy && busyLine) {
+      const half = Math.max(20, Math.floor(width / 2))
+      lines.push(clipAnsiLine(`${padRight(clipAnsiLine(busyLine, half - 1), half)}${toastLine}`, width))
+    } else {
+      lines.push(clipAnsiLine(toastLine || busyLine, width))
+    }
 
     const inputTop = paint(`┌${"─".repeat(Math.max(1, width - 2))}┐`, ctx.themeState.theme.base.border)
     const inputBottom = paint(`└${"─".repeat(Math.max(1, width - 2))}┘`, ctx.themeState.theme.base.border)
@@ -2696,6 +2707,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       inputEndRow: inputEndRow - frameStartRow,
       inputInnerOffset: 3,  // "│ " 占 2 个可见字符 + 1 (1-based)
       width,
+      // 屏幕行 ↔ transcript 绝对行的换算基准
+      visibleStartIndex: transcriptViewport.visibleStartIndex,
+      transcriptLines: transcriptViewport.allLines,
       transcriptHitRegions: (transcriptViewport.hitRegions || []).map((region) => ({
         ...region,
         row: logStartRow + region.viewportRow + 1 - frameStartRow
@@ -3288,6 +3302,96 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     return _origStdinEmit.call(process.stdin, event, ...args)
   }
 
+  /**
+   * 屏幕行 → transcript 绝对行。选区锚点必须存绝对行，否则边选边滚时
+   * 屏幕行下的内容会变，松手取到的就是另一段文字。
+   */
+  function absoluteRowFromScreen(row, layout) {
+    const viewportRow = Math.max(0, row - layout.logStartRow)
+    return (layout.visibleStartIndex || 0) + viewportRow
+  }
+
+  /** transcript 绝对行 → 屏幕行；不在当前视口内时返回 null。 */
+  function screenRowFromAbsolute(absRow, layout) {
+    const viewportRow = absRow - (layout.visibleStartIndex || 0)
+    if (viewportRow < 0) return null
+    const row = layout.logStartRow + viewportRow
+    return row > layout.logEndRow ? null : row
+  }
+
+  function updateDragSelection(row, col, layout) {
+    const sel = ui.mouseSelection
+    if (!sel?.active) return
+    // 拖到日志区外时把行钳制回边界，配合自动滚动继续扩展选区
+    const clampedRow = Math.min(Math.max(row, layout.logStartRow), layout.logEndRow)
+    sel.endRow = clampedRow
+    sel.endCol = col
+    sel.endAbs = absoluteRowFromScreen(clampedRow, layout)
+    if (sel.endAbs !== sel.startAbs || col !== sel.startCol) sel.moved = true
+    requestRender()
+  }
+
+  /**
+   * 边缘自动滚动。SGR 1002 只在跨 cell 移动时上报，鼠标停在边缘不动是
+   * 收不到任何事件的，所以必须由定时器驱动，并在松手/清选区/挂起/退出
+   * 四处全部停掉。
+   */
+  function stopAutoScroll() {
+    if (autoScrollTimer) {
+      clearInterval(autoScrollTimer)
+      autoScrollTimer = null
+    }
+    autoScrollState = null
+  }
+
+  function autoScrollStep(overshoot) {
+    const distance = Math.abs(overshoot)
+    if (distance >= 6) return { lines: 4, intervalMs: 60 }
+    if (distance >= 3) return { lines: 2, intervalMs: 80 }
+    return { lines: 1, intervalMs: 120 }
+  }
+
+  function updateAutoScroll(row, col, layout) {
+    if (!ui.mouseSelection?.active) {
+      stopAutoScroll()
+      return
+    }
+    const above = layout.logStartRow - row
+    const below = row - layout.logEndRow
+    const overshoot = above > 0 ? above : below > 0 ? -below : 0
+    if (!overshoot) {
+      stopAutoScroll()
+      return
+    }
+
+    const { lines, intervalMs } = autoScrollStep(overshoot)
+    const direction = overshoot > 0 ? lines : -lines
+    if (autoScrollState?.intervalMs === intervalMs && autoScrollState?.direction === direction) {
+      autoScrollState.col = col
+      return
+    }
+
+    stopAutoScroll()
+    autoScrollState = { direction, intervalMs, col }
+    autoScrollTimer = setInterval(() => {
+      if (disposed || !ui.mouseSelection?.active) {
+        stopAutoScroll()
+        return
+      }
+      const before = ui.scrollOffset
+      scrollBy(autoScrollState.direction)
+      if (ui.scrollOffset === before) {
+        // 已经到顶或到底，继续滚没有意义
+        stopAutoScroll()
+        return
+      }
+      const edgeRow = autoScrollState.direction > 0
+        ? ui.layoutMeta.logStartRow
+        : ui.layoutMeta.logEndRow
+      updateDragSelection(edgeRow, autoScrollState.col, ui.layoutMeta)
+    }, intervalMs)
+  }
+
   function handleMouseEvent(ev) {
     const action = classifySgrMouseEvent(ev)
     // 滚轮
@@ -3314,10 +3418,14 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         handleInputClick(row, col, layout)
         return
       }
-      // 点击日志区 → 开始文本选择
+      // 点击日志区 → 开始文本选择。落在状态栏/输入框等区域时不建选区，
+      // 否则自动滚动会把这些行一起选进去。
+      if (!isScreenRowWithin(row, layout.logStartRow, layout.logEndRow)) return
+      const anchorAbs = absoluteRowFromScreen(row, layout)
       ui.mouseSelection = {
         startRow: row, startCol: col,
         endRow: row, endCol: col,
+        startAbs: anchorAbs, endAbs: anchorAbs,
         active: true,
         moved: false
       }
@@ -3328,11 +3436,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     if (action === "primary-drag") {
       // 日志区拖拽
       if (ui.mouseSelection?.active) {
-        ui.mouseSelection.endRow = row
-        ui.mouseSelection.endCol = col
-        if (row !== ui.mouseSelection.startRow || col !== ui.mouseSelection.startCol) {
-          ui.mouseSelection.moved = true
-        }
+        updateDragSelection(row, col, layout)
+        updateAutoScroll(row, col, layout)
         return
       }
       // 输入框拖拽选择
@@ -3353,11 +3458,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     if (action === "primary-release") {
       // 日志区选择完成
       if (ui.mouseSelection?.active) {
-        ui.mouseSelection.endRow = row
-        ui.mouseSelection.endCol = col
-        if (row !== ui.mouseSelection.startRow || col !== ui.mouseSelection.startCol) {
-          ui.mouseSelection.moved = true
-        }
+        stopAutoScroll()
+        updateDragSelection(row, col, layout)
         ui.mouseSelection.active = false
         finishSelection()
         return
@@ -3396,6 +3498,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
   // 清除所有选择状态
   function clearSelections() {
+    stopAutoScroll()
     ui.mouseSelection = null
     ui.inputSelection = null
     ui.inputDragAnchor = -1
@@ -3425,18 +3528,27 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     if (!sel) return
     if (!_lastFrame?.lines) { ui.mouseSelection = null; return }
 
+    // 行用 transcript 绝对行而非屏幕行：边选边滚之后屏幕行下的内容已经
+    // 换了，只有绝对行还指向用户当初框住的那几行。
     const {
       startRow: r1,
       startCol: c1,
       endRow: r2,
       endCol: c2,
       isClick
-    } = normalizeMouseSelection(sel)
+    } = normalizeMouseSelection({
+      startRow: (sel.startAbs ?? 0) + 1,
+      startCol: sel.startCol,
+      endRow: (sel.endAbs ?? 0) + 1,
+      endCol: sel.endCol,
+      moved: sel.moved
+    })
 
     // 如果起止相同，视为单击而非选择
     if (isClick) {
-      const hit = ui.layoutMeta.transcriptHitRegions?.find((region) =>
-        region.row === r1 + 1 &&
+      const screenRow = screenRowFromAbsolute(r1, ui.layoutMeta)
+      const hit = screenRow === null ? null : ui.layoutMeta.transcriptHitRegions?.find((region) =>
+        region.row === screenRow &&
         c1 + 1 >= region.columnStart &&
         c1 + 1 <= region.columnEnd
       )
@@ -3450,8 +3562,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     // autoCopy 开启时提取文本并复制
     if (ui.autoCopy || forceCopy) {
       const lines = []
+      const transcriptLines = ui.layoutMeta.transcriptLines || []
       for (let r = r1; r <= r2; r++) {
-        const plain = extractPlainText(_lastFrame.lines, r)
+        const plain = stripAnsi(String(transcriptLines[r] ?? ""))
         if (r === r1 && r === r2) {
           lines.push(splitTextByCellRange(plain, c1, c2).selected)
         } else if (r === r1) {
@@ -3609,6 +3722,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     resumeTerminalAfterContinue = terminalFrameActive
     resumeSpinnerAfterContinue = Boolean(spinnerTimer) && terminalFrameActive
     stopBusySpinner()
+    // 挂起期间收不到鼠标事件，自动滚动必须停，否则恢复后仍在滚
+    stopAutoScroll()
     deactivateTerminal({ pauseInput: true })
 
     // Consume the first SIGTSTP so terminal state can be restored, then resend
@@ -3675,6 +3790,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     disposed = true
     cancelPendingFrame()
     if (selectionClearTimer) clearTimeout(selectionClearTimer)
+    stopAutoScroll()
     textStreamBatcher.dispose()
     ghostPredictor.dispose()
     deactivateTerminal({ pauseInput: true })
@@ -4356,6 +4472,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     abortTurnAndPromptsForExit()
     cancelPendingFrame()
     if (selectionClearTimer) clearTimeout(selectionClearTimer)
+    stopAutoScroll()
     textStreamBatcher.dispose()
     ghostPredictor.dispose()
     stopBusySpinner()

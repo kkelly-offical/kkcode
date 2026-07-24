@@ -127,6 +127,11 @@ export function buildTranscriptViewport({
     wrappedLogs,
     visibleLineMeta,
     hitRegions,
-    clickableRegions: hitRegions
+    clickableRegions: hitRegions,
+    // 视口首行在完整 transcript 里的绝对行号。拖选跨滚动时必须把屏幕行
+    // 换算成绝对行，否则滚动一次锚点就指向了别的内容。
+    visibleStartIndex: start,
+    // 全部换行后的纯文本，供选区跨滚动取文本用
+    allLines: wrappedAllLineMeta.map((line) => line.text)
   }
 }

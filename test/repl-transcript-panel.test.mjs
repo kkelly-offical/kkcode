@@ -83,3 +83,40 @@ test("buildTranscriptViewport preserves structured item hit regions", () => {
     [1, 2, 3]
   )
 })
+
+function viewportOf(logs, { logRows = 2, scrollOffset = 0 } = {}) {
+  return buildTranscriptViewport({
+    logs,
+    width: 20,
+    logRows,
+    scrollOffset,
+    wrapLogLines(lines) { return lines },
+    clipAnsiLine(text) { return text },
+    paint(text) { return text },
+    theme: DEFAULT_THEME
+  })
+}
+
+test("buildTranscriptViewport reports where the viewport starts in the full transcript", () => {
+  // drag-selection stores absolute transcript rows, so it needs this offset to
+  // convert screen rows and survive scrolling mid-drag
+  const bottom = viewportOf(["one", "two", "three", "four"])
+  assert.equal(bottom.visibleStartIndex, 2)
+  assert.deepEqual(bottom.wrappedLogs, ["three", "four"])
+
+  const scrolledUp = viewportOf(["one", "two", "three", "four"], { scrollOffset: 2 })
+  assert.equal(scrolledUp.visibleStartIndex, 0)
+  assert.deepEqual(scrolledUp.wrappedLogs, ["one", "two"])
+})
+
+test("buildTranscriptViewport exposes every wrapped line for off-screen selection", () => {
+  const viewport = viewportOf(["one", "two", "three", "four"])
+  // selection can extend past the viewport, so the copy path reads from here
+  // rather than from the last painted frame
+  assert.deepEqual(viewport.allLines, ["one", "two", "three", "four"])
+})
+
+test("visibleStartIndex stays zero when everything fits on screen", () => {
+  const viewport = viewportOf(["one", "two"], { logRows: 5 })
+  assert.equal(viewport.visibleStartIndex, 0)
+})
