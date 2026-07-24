@@ -243,9 +243,8 @@ describe("Git Auto - Integration Tests", () => {
         created = await createDetachedWorktree(testRepoPath, "worker-safety")
         assert.strictEqual(created.ok, true)
 
-        const relativeTarget = path.relative(process.cwd(), created.path)
         for (const invalidTarget of [
-          relativeTarget,
+          path.join("relative-worktree", "target"),
           `${created.path}\0suffix`,
           `${created.path}\rsuffix`,
           `${created.path}\nsuffix`
