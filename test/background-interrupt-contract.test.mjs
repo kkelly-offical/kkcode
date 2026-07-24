@@ -72,8 +72,10 @@ test("background cancel stamps user_cancel and retry clears interruptionReason",
   })
 
   await BackgroundManager.cancel(task.id)
-  await new Promise((resolve) => setTimeout(resolve, 30))
-  const cancelled = await BackgroundManager.get(task.id)
+  const cancelled = await BackgroundManager.waitForTask(task.id, {
+    timeoutMs: 1000,
+    tickMs: 10
+  })
   assert.equal(cancelled.status, "cancelled")
   assert.equal(cancelled.interruptionReason, INTERRUPTION_REASONS.USER_CANCEL)
 
