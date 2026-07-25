@@ -53,6 +53,11 @@ async function copyWorkspaceConfigFiles(sourceRoot, targetRoot) {
 }
 
 async function removeDetachedWorktree(worktree, repoCwd) {
+  // 撤销为 worktree 落的临时信任记录（见 setup 处的 persistTrust）
+  try {
+    const { revokeTrust } = await import("../permission/workspace-trust.mjs")
+    await revokeTrust(worktree.path)
+  } catch { /* 撤不掉也只是留下一条无害的 trusted:false 记录 */ }
   // Windows keeps the process working directory locked. Leave the detached
   // worktree before asking Git (or the rm fallback) to remove it.
   process.chdir(repoCwd)
@@ -156,6 +161,15 @@ async function runDelegateTask(task, signal) {
     }
     worktree = created
     effectiveCwd = created.path
+    // 信任按 cwd 哈希存 —— worktree 是新路径，天然不在信任存储里。父仓库
+    // 已受信任时把信任带给 worktree（内容是同一份已授信的提交，不扩大
+    // 攻击面）；不带的话 provider 供应链防护会拿 worktree 路径重查存储，
+    // 项目配置里定义了 provider 的仓库在 worktree 里全部拒绝推理 ——
+    // worker 空转、任务被静默错误检测拦下。清理时撤销（见 removeDetachedWorktree）。
+    if (inheritedTrustState?.trusted === true) {
+      const { persistTrust } = await import("../permission/workspace-trust.mjs")
+      await persistTrust(effectiveCwd).catch(() => {})
+    }
   }
 
   let out
@@ -311,20 +325,25 @@ function detectSilentError(result, payload) {
   const remainingFiles = Array.isArray(result?.remaining_files) ? result.remaining_files : []
 
   // Guard: tasks without plannedFiles (review/analysis) skip all detection
-  if (plannedFiles.length === 0) return { hasError: false, errorMessage: "" }
-
   // Guard: [TASK_COMPLETE] marker present — trust the agent's self-report
   if (reply.toLowerCase().includes("[task_complete]")) return { hasError: false, errorMessage: "" }
 
   // Guard: has tool activity and substantial reply — likely real work done
   if (toolEvents > 0 && reply.length >= 200) return { hasError: false, errorMessage: "" }
 
-  // Pattern matching: known provider error signatures in reply
+  // Pattern matching: known provider error signatures in reply.
+  // 0.5.2 之前这里对 plannedFiles 为空的任务整体短路 —— 兜底计划的任务恰好
+  // 都没有 plannedFiles，一句 "provider error: authentication failed (403)"
+  // 的回复被原样记成 completed（既没工具活动也没产物），真实验收里因此
+  // 出现「秒完成、零产物」的空转轮次。错误签名与文件无关，先查。
   for (const pattern of SILENT_ERROR_PATTERNS) {
     if (pattern.test(reply)) {
       return { hasError: true, errorMessage: `silent provider error detected: ${reply.slice(0, 200)}` }
     }
   }
+
+  // 文件类启发式只对声明了 plannedFiles 的任务有意义
+  if (plannedFiles.length === 0) return { hasError: false, errorMessage: "" }
 
   // Heuristic: planned files exist but none completed, low activity
   if (completedFiles.length === 0

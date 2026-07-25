@@ -1,6 +1,6 @@
 {
   "name": "@kkelly-offical/kkcode",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "CLI-first unified Assistant with explicit Plan and LongAgent workflows, governed permissions, MCP integrations, and extensible automation.",
   "type": "module",
   "packageManager": "npm@11.13.0",

@@ -135,7 +135,10 @@ export async function verifyCriterion(criterion, ctx = {}) {
         const timeoutMs = Number(criterion.spec.timeoutMs)
           || Number(criteriaConfig(ctx.config).command_timeout_ms)
           || DEFAULT_COMMAND_TIMEOUT_MS
-        const result = await runFn({ command: criterion.spec.command, args: criterion.spec.args || [], cwd, timeoutMs })
+        // allow_shell（默认 false）：判据命令来自 LLM 生成的计划，默认绝不过
+        // shell；显式打开才允许 shell 解释（需要管道/通配的判据）
+        const allowShell = criteriaConfig(ctx.config).allow_shell === true
+        const result = await runFn({ command: criterion.spec.command, args: criterion.spec.args || [], cwd, shell: allowShell, timeoutMs })
         const evidence = {
           command: commandLine,
           exitCode: result.code,

@@ -55,7 +55,7 @@ export function classifyError(errorText, bgStatus) {
   if (
     text.includes("timeout") || text.includes("timed out") ||
     text.includes("econnreset") || text.includes("econnrefused") ||
-    text.includes("enotfound") || text.includes("socket hang up") ||
+    text.includes("enotfound") || text.includes("etimedout") || text.includes("socket hang up") ||
     text.includes("rate limit") || text.includes("429") ||
     text.includes("503") || text.includes("502") ||
     text.includes("worker disappeared") || text.includes("background worker disappeared") ||

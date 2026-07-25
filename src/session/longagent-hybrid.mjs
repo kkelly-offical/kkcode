@@ -711,9 +711,19 @@ async function runHybridPipeline({
   await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_PLAN_FROZEN, sessionId, payload: { planId: stagePlan.planId, stageCount: stagePlan.stages.length, errors: [] } })
   await syncState({ planFrozen: true, lastMessage: `H2: blueprint complete, ${stagePlan.stages.length} stage(s)` })
 
-  // 尝试台账：重规划的输入、受阻报告的唯一数据源、ultra report 的落盘依据
-  ledger = await openLedger({ sessionId, cwd, objective: prompt, goal })
-  ledger.markRoundStart()
+  // 尝试台账：重规划的输入、受阻报告的唯一数据源、ultra report 的落盘依据。
+  // ledger.enabled: false 时不落盘 —— 受阻报告与 ultra report/board 将不可用，
+  // 这是用户显式选择的裸奔模式。
+  if (ultraCfg.ledger?.enabled !== false) {
+    ledger = await openLedger({
+      sessionId, cwd, objective: prompt, goal,
+      // resume 需要知道原 run 用的渠道 —— 0.5.2 之前 resume 一律回落到默认
+      // provider，用 --provider aliyun 起的会话续跑时会悄悄换到 kimi
+      providerType, model,
+      maxRoundsKept: Number(ultraCfg.ledger?.max_rounds_kept ?? 10)
+    })
+    ledger.markRoundStart()
+  }
 
   // #9 Blueprint 语义验证
   if (hybridConfig.blueprint_validation !== false && stagePlan.stages.length > 0) {
@@ -812,8 +822,13 @@ async function runHybridPipeline({
   } else {
     // 恢复路径：goal 与计划来自 checkpoint，台账续写同一份文件
     goal = stagePlan.goal || goal
-    ledger = await openLedger({ sessionId, cwd, objective: prompt, goal })
-    ledger.markRoundStart()
+    if (ultraCfg.ledger?.enabled !== false) {
+      ledger = await openLedger({
+        sessionId, cwd, objective: prompt, goal, providerType, model,
+        maxRoundsKept: Number(ultraCfg.ledger?.max_rounds_kept ?? 10)
+      })
+      ledger.markRoundStart()
+    }
     await syncState({ planFrozen: true, lastMessage: `resumed: plan restored with ${stagePlan.stages.length} stage(s)` })
   }
 
@@ -1917,7 +1932,33 @@ async function runHybridPipeline({
           }).catch(() => goalVerification)
           if (goalVerification?.status === GOAL_MET && usabilityGatesPassed) break
         } else {
-          break
+          // 没人能确认 manual 判据（无头）。但如果还有没做完的可执行工作，
+          // 不能就此收工 —— t3b 实测：兜底计划的任务因 provider 故障空转，
+          // 目标是 manual-only，第一轮就 blocked_manual 交卷，可做的部分
+          // 一根手指都没动。有活先干活，停不停由停滞检测与预算说了算；
+          // 终局状态仍会如实报 blocked_manual。
+          const mstats = stageProgressStats(taskProgress)
+          let hasUnfinishedWork =
+            Object.values(taskProgress).some((t) => !["completed", "skipped"].includes(t.status)) ||
+            mstats.done < mstats.total
+          if (!hasUnfinishedWork && longagentConfig.resume_incomplete_files !== false) {
+            // completed 但声称的产物缺失 —— 下一轮开始会被降级重做，也算没做完
+            const { stat: statCheck2 } = await import("node:fs/promises")
+            const statFn2 = io.stat || statCheck2
+            checkLoop: for (const stage of stagePlan.stages) {
+              for (const task of stage.tasks) {
+                const tp = taskProgress[task.taskId]
+                if (!tp || tp.status !== "completed" || !(task.plannedFiles || []).length) continue
+                for (const file of task.plannedFiles) {
+                  try {
+                    const info = await statFn2(path.resolve(cwd, file))
+                    if (!info.isFile() || info.size === 0) { hasUnfinishedWork = true; break checkLoop }
+                  } catch { hasUnfinishedWork = true; break checkLoop }
+                }
+              }
+            }
+          }
+          if (!hasUnfinishedWork) break
         }
       }
 
@@ -2156,6 +2197,10 @@ async function runHybridPipeline({
         const { requestFast } = await import("../provider/fast-model.mjs")
         const summaryText = await requestFast({
           configState,
+          // 摘要模型优先级：models.ultra.report → models.fast（requestFast 内部）。
+          // 两者都没配就跳过 —— 为一段可选摘要烧主模型的钱不值当，
+          // 模板版报告本就完整。
+          model: configState.config.models?.ultra?.report || undefined,
           system: [
             "你是排障分析员。根据 Ultra 运行记录输出两段：",
             "## 关键判断 —— 一句话（≤120字）说清卡在哪一层：环境/依赖/设计/需求歧义/权限",
@@ -2176,14 +2221,41 @@ async function runHybridPipeline({
     }
     try {
       blockedReport = buildBlockedReport(ledger, { status: finalStatus, llmSummary })
-      const { writeFile: writeFileFs, mkdir: mkdirFs } = await import("node:fs/promises")
-      const dir = ultraSessionDir(sessionId, cwd)
-      await mkdirFs(dir, { recursive: true })
-      reportPath = `${dir}/report.md`
-      await writeFileFs(reportPath, renderBlockedReportMarkdown(blockedReport), "utf8")
-      blockedReport.reportPath = reportPath
-      await ledger.setFinal({ status: finalStatus, reportPath }).catch(() => {})
+      if (ultraCfg.report?.write_markdown !== false) {
+        const { writeFile: writeFileFs, mkdir: mkdirFs } = await import("node:fs/promises")
+        const dir = ultraSessionDir(sessionId, cwd)
+        await mkdirFs(dir, { recursive: true })
+        reportPath = `${dir}/report.md`
+        await writeFileFs(reportPath, renderBlockedReportMarkdown(blockedReport), "utf8")
+        blockedReport.reportPath = reportPath
+        await ledger.setFinal({ status: finalStatus, reportPath }).catch(() => {})
+      }
     } catch { /* 报告生成失败不拦截结果返回 */ }
+  }
+
+  // 跨会话教训回写：反复失败的判据提炼进 project_memory.knownPitfalls
+  // （≤5 条，只写不读 —— 回注规划走 use_pitfalls 且默认关闭，避免行为不可复现）
+  if (ledger && finalStatus !== ULTRA_STATUS.COMPLETED && hybridConfig.project_memory !== false) {
+    try {
+      const memory = await loadProjectMemory(cwd)
+      if (!Array.isArray(memory.knownPitfalls)) memory.knownPitfalls = []
+      const seen = new Set(memory.knownPitfalls.map((k) => k.signature))
+      for (const blocker of (ledger.data.blockers || []).slice(0, 5)) {
+        const signature = `criterion:${blocker.criterionId}`
+        if (seen.has(signature)) {
+          const hit = memory.knownPitfalls.find((k) => k.signature === signature)
+          if (hit) hit.lastSeenAt = new Date().toISOString()
+          continue
+        }
+        memory.knownPitfalls.push({
+          signature,
+          note: `「${String(blocker.text).slice(0, 80)}」失败 ${blocker.attempts} 次：${String(blocker.reason).slice(0, 120)}`,
+          lastSeenAt: new Date().toISOString()
+        })
+      }
+      memory.knownPitfalls = memory.knownPitfalls.slice(-20)
+      await saveProjectMemory(cwd, memory)
+    } catch { /* 教训写不进去不影响结果 */ }
   }
 
   // Phase 11: 恢复建议生成

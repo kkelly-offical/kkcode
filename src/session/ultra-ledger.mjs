@@ -52,11 +52,12 @@ function normalizeGates(gates) {
 }
 
 export class UltraLedger {
-  constructor({ sessionId, cwd = process.cwd(), data }) {
+  constructor({ sessionId, cwd = process.cwd(), data, maxRoundsKept = 10 }) {
     this.sessionId = sessionId
     this.cwd = cwd
     this.path = ledgerPath(sessionId, cwd)
     this.data = data
+    this.maxRoundsKept = Math.max(1, Number(maxRoundsKept) || 10)
   }
 
   /** 记一轮。stages / criteria / gates 已在这里裁剪，调用方不必操心大小。 */
@@ -111,7 +112,12 @@ export class UltraLedger {
       verdict
     })
     this.pendingRoundStart = null
+    // max_rounds_kept：轮次记录只保留最近 N 条 —— blockers 聚合在裁剪前
+    // 已经跨全部轮次算过，丢的是旧轮次的明细，不是受阻点的历史
     this._updateBlockers()
+    if (this.data.rounds.length > this.maxRoundsKept) {
+      this.data.rounds = this.data.rounds.slice(-this.maxRoundsKept)
+    }
     await this.flush()
   }
 
@@ -232,12 +238,15 @@ export class UltraLedger {
 }
 
 /** 打开（或续写）一个会话的台账。 */
-export async function openLedger({ sessionId, cwd = process.cwd(), objective = "", goal = null }) {
+export async function openLedger({ sessionId, cwd = process.cwd(), objective = "", goal = null, providerType = "", model = "", maxRoundsKept = 10 }) {
   const file = ledgerPath(sessionId, cwd)
   const existing = await readJson(file, null)
   const data = existing && existing.version === LEDGER_VERSION ? existing : {
     version: LEDGER_VERSION,
     sessionId,
+    // resume 用：原 run 的渠道与模型 —— 不记这个，续跑会悄悄换到默认渠道
+    providerType: String(providerType || ""),
+    model: String(model || ""),
     objective: String(objective || "").slice(0, 500),
     startedAt: new Date().toISOString(),
     endedAt: null,
@@ -249,8 +258,17 @@ export async function openLedger({ sessionId, cwd = process.cwd(), objective = "
     planDefects: [],
     errorSignatures: {}
   }
-  const ledger = new UltraLedger({ sessionId, cwd, data })
-  if (goal) await ledger.setGoal(goal)
+  // 续写已有台账时也补记渠道（老台账没有该字段）
+  if (existing && providerType && !data.providerType) {
+    data.providerType = String(providerType)
+    data.model = String(model || "")
+  }
+  const ledger = new UltraLedger({ sessionId, cwd, data, maxRoundsKept })
+  if (goal) {
+    await ledger.setGoal(goal)   // setGoal 内部 flush
+  } else if (!existing) {
+    await ledger.flush()          // 新台账没有 goal 也要立即落盘，否则文件根本不存在
+  }
   return ledger
 }
 

@@ -70,7 +70,7 @@ async function waitFor(taskId, predicate, { timeoutMs = 20000, tickMs = 200, con
     await new Promise((resolve) => setTimeout(resolve, tickMs))
   }
   const finalTask = await BackgroundManager.get(taskId)
-  throw new Error(`timeout waiting for task state. last status=${finalTask?.status || "missing"}`)
+  throw new Error(`timeout waiting for task state. last status=${finalTask?.status || "missing"} error=${finalTask?.error || ""} reply=${String(finalTask?.result?.reply || "").slice(0, 200)}`)
 }
 
 beforeEach(async () => {

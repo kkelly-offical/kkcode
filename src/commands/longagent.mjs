@@ -145,7 +145,10 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
         const width = Math.max(60, process.stdout.columns || 120)
         if (options.watch) console.clear()
         const heartbeatAgeMs = record.heartbeatAt ? Date.now() - record.heartbeatAt : 0
-        const stale = record.status === "running" && heartbeatAgeMs > 120000
+        const heartbeatTimeoutMs = Number(
+          (await loadConfig().catch(() => null))?.config?.agent?.longagent?.heartbeat_timeout_ms
+        ) || 120000
+        const stale = record.status === "running" && heartbeatAgeMs > heartbeatTimeoutMs
           ? ` ⚠ 心跳已停 ${Math.round(heartbeatAgeMs / 1000)}s（可能卡死或已被杀）`
           : ""
         console.log(`session ${options.session} · ${record.status || "?"} · ${record.lastMessage || ""}${stale}`)
@@ -216,9 +219,15 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
         process.exitCode = 1
         return
       }
-      const providerKey = configState.config.provider.default
+      // 优先用原 run 的渠道与模型（记在台账里）—— 0.5.2 之前一律回落默认
+      // provider：--provider aliyun 起的会话续跑时会悄悄换到 kimi
+      const recorded = ledger.data.providerType
+      const providerKey = (recorded && configState.config.provider[recorded])
+        ? recorded
+        : configState.config.provider.default
       const providerConf = configState.config.provider[providerKey] || {}
-      const model = providerConf.default_model
+      const model = (ledger.data.model && providerKey === recorded ? ledger.data.model : null)
+        || providerConf.default_model
       if (!model) {
         console.error(`no model configured for provider "${providerKey}"`)
         process.exitCode = 1

@@ -1,5 +1,70 @@
 # Changelog / 更新日志
 
+## 0.5.3
+
+Settles the debts 0.5.0 left to itself: every config key it introduced now
+does what it says, and three behavioural gaps found during real-model
+acceptance are closed.
+
+### English
+
+- Wire the five 0.5.0 config keys that were shipped inert:
+  `ultra.criteria.allow_shell` (criterion commands may opt into shell
+  interpretation; still off by default), `ultra.report.write_markdown`,
+  `ultra.ledger.enabled`, `ultra.ledger.max_rounds_kept` (round records are
+  trimmed; blocker aggregation is unaffected), and `models.ultra.report`
+  (summary model priority ultra.report → fast, with provider/model qualifiers).
+  The board's heartbeat-stale warning now reads `heartbeat_timeout_ms` instead
+  of a hardcoded 120s.
+- `ultra resume` resumes on the original run's provider and model, recorded in
+  the ledger — previously a session started with `--provider aliyun` silently
+  resumed on the default channel.
+- Silent-error detection no longer skips tasks with no planned files. The
+  fallback plan's tasks have none, so a worker reply of "provider error:
+  authentication failed" was recorded as completed with zero work — the exact
+  vacuous-completion shape seen in real-model acceptance. Error signatures are
+  now checked regardless; file-based heuristics still require planned files.
+  (`ETIMEDOUT` also joins the transient error class.)
+- A manual-only goal no longer surrenders after round one while executable
+  work remains. Work that is unfinished — including "completed" tasks whose
+  claimed artifacts are missing — keeps the loop going under the usual stall
+  and budget constraints; the final status still honestly reports
+  blocked_manual.
+- Repeatedly failing criteria are distilled into
+  `project_memory.knownPitfalls` (≤5 per run, write-only; feeding them back
+  into planning stays opt-in and off by default).
+- Worktree-isolated workers inherit workspace trust from the parent repo. Trust
+  is keyed by path, a worktree is a new path, so in any repo whose project
+  config defines a provider the supply-chain guard refused inference inside
+  worktrees — every worktree task span was a vacuous no-op that the new
+  silent-error detection immediately exposed. The temporary trust record is
+  revoked when the worktree is cleaned up.
+
+### 中文
+
+- 接通 0.5.0 引入却未生效的五个配置键：`ultra.criteria.allow_shell`（判据
+  命令可显式启用 shell 解释，默认仍关）、`ultra.report.write_markdown`、
+  `ultra.ledger.enabled`、`ultra.ledger.max_rounds_kept`（轮次记录裁剪，
+  受阻点聚合不受影响）、`models.ultra.report`（摘要模型优先级
+  ultra.report → fast，支持 provider/model 跨渠道限定）。看板的心跳超时
+  提示改读 `heartbeat_timeout_ms`，不再硬编码 120 秒。
+- `ultra resume` 按台账里记录的原渠道与模型续跑 —— 此前用
+  `--provider aliyun` 起的会话续跑时会悄悄换回默认渠道。
+- 静默错误检测不再放过没有 plannedFiles 的任务。兜底计划的任务恰好都没有，
+  于是 worker 回复「provider error: authentication failed」也被记成 completed
+  零产物空转 —— 真实模型验收里撞见的正是这个形态。错误签名现在一律先查；
+  文件类启发式仍只对声明了文件的任务生效。（`ETIMEDOUT` 同时归入瞬时错误。）
+- manual-only 目标不再在第一轮就交卷：只要还有可执行的工作没做完 ——
+  包括「标记完成但产物缺失」的任务 —— 循环在停滞与预算约束下继续；
+  终局状态仍如实报 blocked_manual。
+- 反复失败的判据提炼进 `project_memory.knownPitfalls`（每次 ≤5 条，只写
+  不读；回注规划仍是默认关闭的显式开关）。
+- worktree 隔离的 worker 继承父仓库的工作区信任。信任按路径哈希存储，
+  worktree 是新路径 —— 项目配置里定义了 provider 的仓库，供应链防护会在
+  worktree 里拒绝一切推理，每个 worktree 任务都在空转，而新的静默错误
+  检测立刻揭穿了这一点。临时信任记录随 worktree 清理一并撤销。
+
+
 ## 0.5.2
 
 ### English

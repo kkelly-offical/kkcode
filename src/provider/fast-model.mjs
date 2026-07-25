@@ -31,11 +31,13 @@ export async function requestFast({
   system = "",
   maxTokens = 48,
   providerType = null,
+  // 调用方可覆盖模型（如 models.ultra.report）；同样支持 provider/model 限定
+  model: modelOverride = null,
   signal = null,
   timeoutMs = FAST_MODEL_TIMEOUT_MS,
   deps = {}
 }) {
-  let model = fastModelId(configState)
+  let model = modelOverride || fastModelId(configState)
   if (!model) return null
   if (!String(prompt || "").trim()) return null
 
