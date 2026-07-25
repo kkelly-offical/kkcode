@@ -600,7 +600,7 @@ async function _stepConfirm(wiz, val, print) {
   }
   const cfg = _buildProviderConfig(wiz)
   const name = wiz.customName || wiz.vendorKey
-  await _saveProviderConfig(cfg)
+  await saveProviderConfig(cfg)
   wiz.active = false
   print(`\n  已保存 provider "${name}" 到 ${userConfigPathLabel()}，已生效。`)
   return { done: true, cancelled: false, providerName: name, configPatch: cfg }
@@ -760,13 +760,18 @@ async function _stepEditConfirm(wiz, val, print) {
     }
   }
   const saveCfg = { provider: { [wiz.editName]: merged } }
-  await _saveProviderConfig(saveCfg, false)
+  await saveProviderConfig(saveCfg, false)
   wiz.active = false
   print(`\n  已更新 provider "${wiz.editName}" 到 ${userConfigPathLabel()}，已生效。`)
   return { done: true, cancelled: false, providerName: wiz.editName, configPatch: saveCfg }
 }
 
-async function _saveProviderConfig(newCfg, setDefault = true) {
+/**
+ * 写回 provider 配置：逐 provider 逐字段合并，未触及的字段（内联 api_key、
+ * 超时调优、models 列表）原样保留。向导与 `kkcode provider` 命令共用 ——
+ * 不要在别处再实现一份写回逻辑。
+ */
+export async function saveProviderConfig(newCfg, setDefault = true) {
   const configPath = path.join(userRootDir(), "config.yaml")
   await mkdir(path.dirname(configPath), { recursive: true })
 

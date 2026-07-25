@@ -1,5 +1,41 @@
 # Changelog / 更新日志
 
+## 0.5.2
+
+### English
+
+- Add `kkcode provider` — list / switch / current for configured providers,
+  plus an interactive numbered picker, all persisting through the shared
+  field-merging save path (contributed by @MrMark019, thanks!). The REPL's
+  `/provider` grows the same picker: bare `/provider` lists everything with the
+  active model and takes a number or name; the wizard now auto-switches the
+  session to a provider it just configured.
+- Straighten the subcommand vocabulary from the contribution before it ships:
+  `add` now *adds* (opens the wizard) and picking lives on bare `/provider` —
+  upstream had `add` meaning "list & switch" and `set` meaning "add", inverted
+  from what anyone would type first. `set` prints a one-line pointer for one
+  release. The picker also releases any `/`-prefixed input back to normal
+  command handling instead of matching it as a provider name.
+- Deduplicate the config write path: the wizard's field-merging
+  `saveProviderConfig` is exported and shared, so the 0.5.1 fix for wiped
+  `api_key`/timeouts cannot regress in a second implementation. Covered by new
+  command-level tests.
+
+### 中文
+
+- 新增 `kkcode provider` —— 列出 / 切换 / 查看当前 provider，外加编号交互
+  选择，全部经共用的逐字段合并路径写回（来自 @MrMark019 的贡献，感谢！）。
+  REPL 的 `/provider` 获得同款选择器：裸 `/provider` 列出全部（带当前模型），
+  输入编号或名称即切换；向导配置完成后自动把会话切到新 provider。
+- 上线前把贡献里的子命令词汇归位：`add` 现在就是**添加**（打开向导），
+  列出并选择归裸 `/provider` —— 上游分支里 add 是「列出切换」而 set 是
+  「添加」，与任何人的第一直觉相反。`set` 保留一个版本的指路提示。
+  选择模式对 `/` 开头的输入放行回正常命令处理，不再当 provider 名去匹配。
+- 写回路径去重：向导的逐字段合并 `saveProviderConfig` 导出共用 ——
+  0.5.1 修掉的「抹掉 api_key/超时」事故不可能在第二份实现里复活。
+  新增命令级测试覆盖。
+
+
 ## 0.5.1
 
 ### English

@@ -1,44 +1,13 @@
-import path from "node:path"
 import readline from "node:readline"
-import { readFile, writeFile, mkdir } from "node:fs/promises"
 import { Command } from "commander"
-import YAML from "yaml"
 import { loadConfig } from "../config/load-config.mjs"
-import { VENDOR_PRESETS } from "../provider/wizard.mjs"
-import { userRootDir } from "../storage/paths.mjs"
-
-// --- Save provider config (same pattern as wizard's _saveProviderConfig) ---
-
-async function saveProviderConfig(newCfg, setDefault = true) {
-  const configPath = path.join(userRootDir(), "config.yaml")
-  await mkdir(path.dirname(configPath), { recursive: true })
-
-  let existing = {}
-  try {
-    const raw = await readFile(configPath, "utf8")
-    existing = YAML.parse(raw) || {}
-  } catch {
-    // File doesn't exist, start fresh
-  }
-
-  if (!existing.provider) existing.provider = {}
-  for (const [key, value] of Object.entries(newCfg.provider)) {
-    if (key === "default") continue
-    existing.provider[key] =
-      value && typeof value === "object"
-        ? { ...(existing.provider[key] || {}), ...value }
-        : value
-  }
-  if (setDefault && newCfg.provider.default) {
-    existing.provider.default = newCfg.provider.default
-  }
-
-  await writeFile(configPath, YAML.stringify(existing), "utf8")
-}
+// 写回逻辑与向导共用一份（逐字段合并、保留未触及字段）—— 0.5.1 修过的
+// 整条目替换事故不能在第二份实现里复活
+import { VENDOR_PRESETS, saveProviderConfig } from "../provider/wizard.mjs"
 
 // --- Resolve configured providers ---
 
-function getConfiguredProviders(configState) {
+export function getConfiguredProviders(configState) {
   const provider = configState.config.provider || {}
   const metaKeys = new Set(["default", "strict_mode", "model_context"])
   const names = Object.keys(provider).filter((k) => !metaKeys.has(k))
@@ -185,6 +154,15 @@ export function createProviderCommand() {
 
       await saveProviderConfig({ provider: { default: name } })
       console.log(`已切换到 "${name}" → ~/.kkcode/config.yaml`)
+    })
+
+  // add subcommand — 指路：交互式向导在 REPL 里
+  command
+    .command("add")
+    .description("add a new provider (opens the interactive wizard in the REPL)")
+    .action(() => {
+      console.log("添加 provider 请在交互终端里运行 kkcode 后输入 /provider add（配置向导需要交互）。")
+      console.log("也可以直接编辑 ~/.kkcode/config.yaml 的 provider 段。")
     })
 
   // current subcommand

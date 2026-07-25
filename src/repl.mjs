@@ -530,20 +530,27 @@ async function processInputLine({
   // --- Provider 选择模式：拦截输入 ---
   if (providerPicker) {
     const list = providerPicker
-    if (setProviderPicker) setProviderPicker(null)
     const input = normalized
-    if (!input) { print("  已取消。"); return { exit: false } }
-    let target = null
-    const num = Number(input)
-    if (!isNaN(num) && num >= 1 && num <= list.length) {
-      target = list[num - 1]
+    // 用户改主意敲了别的命令 —— 取消选择模式，让命令正常执行，
+    // 而不是把 "/help" 当 provider 名去匹配然后报「找不到」
+    if (input.startsWith("/")) {
+      if (setProviderPicker) setProviderPicker(null)
+      print("  已退出 provider 选择。")
     } else {
-      target = providersConfigured.find((p) => p === input)
+      if (setProviderPicker) setProviderPicker(null)
+      if (!input) { print("  已取消。"); return { exit: false } }
+      let target = null
+      const num = Number(input)
+      if (!isNaN(num) && num >= 1 && num <= list.length) {
+        target = list[num - 1]
+      } else {
+        target = list.find((p) => p === input)
+      }
+      if (!target) { print(`  找不到 provider: "${input}"（可用: ${list.join(", ")}）`); return { exit: false } }
+      if (target === state.providerType) { print(`  "${target}" 已经是当前 provider。`); return { exit: false } }
+      await switchActiveProvider(target)
+      return { exit: false }
     }
-    if (!target) { print(`  找不到 provider: "${input}"`); return { exit: false } }
-    if (target === state.providerType) { print(`  "${target}" 已经是当前 provider。`); return { exit: false } }
-    await switchActiveProvider(target)
-    return { exit: false }
   }
 
   // --- 向导模式：拦截所有输入 ---
@@ -933,41 +940,40 @@ async function processInputLine({
   }
 
   if (normalized === "/provider" || normalized === "/p") {
+    // 裸 /provider = 最常用的动作：列出并选择。add/edit 各司其名。
+    if (!providersConfigured.length) {
+      print("没有已配置的 provider，使用 /provider add 添加。")
+      return { exit: false }
+    }
     print("")
-    print("  /provider <名称>         切换 provider")
-    print("  /provider add            列出已配置的 provider")
-    print("  /provider set            添加新的 provider")
-    print("  /provider edit <名称>    编辑已有 provider")
+    providersConfigured.forEach((name, i) => {
+      const model = ctx.configState.config.provider?.[name]?.default_model || ""
+      const marker = name === state.providerType ? "  ✓ 当前" : ""
+      print(`  ${i + 1}. ${name}${model ? `  [${model}]` : ""}${marker}`)
+    })
     print("")
-    print("  已配置: " + providersConfigured.join(", "))
+    print("  输入编号或名称切换（/ 开头的输入会退出选择）")
+    print("  /provider add 添加新 provider · /provider edit <名称> 编辑")
+    if (setProviderPicker) setProviderPicker(providersConfigured)
     return { exit: false }
   }
 
   if (normalized.startsWith("/provider ") || normalized.startsWith("/p ")) {
     const rest = normalized.replace(/^\/(provider|p)\s+/, "").trim()
 
-    // /provider set — 添加新 provider（原 /provider 向导）
-    if (rest === "set") {
+    // /provider add — 添加新 provider（启动向导）。
+    // 上游分支里 add 是「列出并切换」而 set 是「添加」—— 与词义相反，
+    // 用户想添加 provider 第一反应就是敲 add。归位：add 即添加，
+    // 列出并选择归裸 /provider。set 作为一次性别名指路后移除。
+    if (rest === "add") {
       if (wizard && setWizard) {
         startWizard(wizard, print)
         setWizard({ ...wizard })
       }
       return { exit: false }
     }
-
-    // /provider add — 列出 provider 并等待编号/名称输入
-    if (rest === "add") {
-      if (!providersConfigured.length) {
-        print("没有已配置的 provider，使用 /provider set 添加。")
-        return { exit: false }
-      }
-      print("")
-      providersConfigured.forEach((name, i) => {
-        const marker = name === state.providerType ? "  ✓ 当前" : ""
-        print(`  ${i + 1}. ${name}${marker}`)
-      })
-      print("  输入编号或名称切换 (直接输入，无需 /provider 前缀):")
-      if (setProviderPicker) setProviderPicker(providersConfigured)
+    if (rest === "set") {
+      print("`/provider set` 已更名为 `/provider add`（添加新 provider）；列出并切换用裸 `/provider`。")
       return { exit: false }
     }
 

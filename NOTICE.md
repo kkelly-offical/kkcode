@@ -5,7 +5,7 @@ This file contains attribution notices and third-party acknowledgments for the k
 ## Project
 
 - **Name**: kkcode
-- **Version**: 0.5.1
+- **Version**: 0.5.2
 - **License**: GPL-3.0
 - **Copyright**: Copyright (C) 2026 kkcode team
 - **Repository**: https://github.com/kkelly-offical/kkcode
