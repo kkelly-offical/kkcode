@@ -21,12 +21,17 @@ import { buildBlockedReport, renderBlockedReportText } from "../session/blocked-
 async function applyCliTrust(configState, { trust = false } = {}) {
   const { checkWorkspaceTrust } = await import("../permission/workspace-trust.mjs")
   const { applyWorkspaceTrustPolicy } = await import("../context.mjs")
+  const { PermissionEngine } = await import("../permission/engine.mjs")
   const trustState = await checkWorkspaceTrust({
     cwd: process.cwd(),
     cliTrust: Boolean(trust),
     isTTY: process.stdin.isTTY
   })
   applyWorkspaceTrustPolicy(configState, trustState, process.cwd())
+  // PermissionEngine 有自己的模块级 trusted 标志，工具审批在它上面短路 ——
+  // 只改 configState 不设它，--trust 后所有工具照样拒绝（chat/review 的
+  // CLI 路径也是这么做的，见 commands/chat.mjs:41）。
+  PermissionEngine.setTrusted(trustState?.trusted === true)
   return trustState
 }
 
