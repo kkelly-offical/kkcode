@@ -26,7 +26,10 @@ const ALL_FILES = ["src/a.mjs", "src/b.mjs", "test/a.test.mjs"]
 
 function statFor(existing) {
   return async (abs) => {
-    const hit = existing.find((f) => abs.endsWith(f))
+    // Windows 的 path.resolve 产生反斜杠路径 —— 正斜杠的 endsWith 永不匹配，
+    // 这一个字符让 verify 矩阵的 Windows job 从 0.4.2 红到 0.5.3。
+    const normalized = String(abs).replaceAll("\\", "/")
+    const hit = existing.find((f) => normalized.endsWith(f))
     if (!hit) throw new Error("ENOENT")
     return { isFile: () => true, size: 10 }
   }
