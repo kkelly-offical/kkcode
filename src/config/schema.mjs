@@ -267,6 +267,9 @@ export function validateConfig(config) {
                   if (config.agent.longagent.planner.intake_questions.max_rounds !== undefined) {
                     checkInt(errors, "agent.longagent.planner.intake_questions.max_rounds", config.agent.longagent.planner.intake_questions.max_rounds, 1)
                   }
+                  if (config.agent.longagent.planner.intake_questions.max_questions !== undefined) {
+                    checkInt(errors, "agent.longagent.planner.intake_questions.max_questions", config.agent.longagent.planner.intake_questions.max_questions, 1)
+                  }
                 }
               }
               if (config.agent.longagent.planner.ask_user_after_plan_frozen !== undefined && typeof config.agent.longagent.planner.ask_user_after_plan_frozen !== "boolean") {
@@ -291,6 +294,12 @@ export function validateConfig(config) {
             } else {
               const hy = config.agent.longagent.hybrid
               if (hy.enabled !== undefined && typeof hy.enabled !== "boolean") err(errors, "agent.longagent.hybrid.enabled", "must be boolean")
+              // intake_user_confirm 此前只被代码读取，不在 defaults 也不在 schema —— 隐藏开关转正
+              for (const key of ["intake", "intake_user_confirm", "blueprint_review"]) {
+                if (hy[key] !== undefined && typeof hy[key] !== "boolean") {
+                  err(errors, `agent.longagent.hybrid.${key}`, "must be boolean")
+                }
+              }
               if (hy.separate_models !== undefined) {
                 if (!isObj(hy.separate_models)) err(errors, "agent.longagent.hybrid.separate_models", "must be object")
                 else {

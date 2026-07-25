@@ -113,10 +113,15 @@ export const DEFAULT_CONFIG = {
         poll_interval_ms: 300
       },
       planner: {
+        // 0.6.0：这一段终于名副实 —— enabled 控制的是「向用户提澄清问题」，
+        // 由 intake-questions.mjs 读取；此前它无人读取，真正的门是 hybrid.intake。
         intake_questions: {
           enabled: true,
-          max_rounds: 6
+          max_rounds: 6,
+          max_questions: 5          // 单次澄清最多问几题（上限 5）
         },
+        // 计划冻结后再让用户过目一次。0.5.x 里这个键只存在于 defaults 与
+        // schema，运行时零读取点 —— 0.6.0 接线到 H2 之后的审查关卡。
         ask_user_after_plan_frozen: false
       },
       hybrid: {
@@ -125,7 +130,12 @@ export const DEFAULT_CONFIG = {
         debugging_max_iterations: 20,
         max_coding_rollbacks: 2,
         parallel_preview: true,
+        // 判定是 `!== false`，所以默认 false = 关闭（与旧注释「默认 ON」相反，
+        // 以这里为准）。要开启计划审查请用 planner.ask_user_after_plan_frozen，
+        // 它走结构化提问而不是「让模型自己调 question 工具」。
         blueprint_review: false,
+        // H0 澄清关卡的开关（此前是只被读取、不在 defaults/schema 里的隐藏键）
+        intake_user_confirm: true,
         blueprint_validation: true,
         tdd_mode: false,
         cross_review: true,

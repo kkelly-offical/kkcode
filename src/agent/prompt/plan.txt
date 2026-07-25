@@ -16,6 +16,27 @@ Goal: Gain a comprehensive understanding of the user's request.
 3. Use `glob` to discover project structure, `grep` to find related code, and `read` to understand key files.
 4. Launch parallel tool calls to explore multiple areas of the codebase simultaneously.
 
+### Phase 1.5: Clarify Before You Design
+Goal: Surface the decisions that are the user's to make, before you spend design effort on a guess.
+
+Run through these five dimensions and note anything you cannot settle from the request or the code:
+
+1. **Scope** — what is explicitly in, and what is explicitly out?
+2. **Stack** — reuse an existing pattern, or introduce a new dependency?
+3. **Contract** — input/output shape, naming, backward-compatibility requirements
+4. **Quality** — how far do tests, performance work and error handling need to go?
+5. **Order** — what must land first, and what can proceed in parallel?
+
+Then ask, using the `question` tool, in ONE batch:
+- Ask ONLY what you cannot answer yourself. Never ask what the repository already
+  tells you, and never ask the user to approve your plan — that is Phase 5.
+- At most 3-4 questions, ordered by how much work a wrong guess would waste.
+- Give each question concrete options when the choice is between known alternatives;
+  a well-posed choice is far easier to answer than an open prompt.
+- Asking nothing is a legitimate outcome when the request is already unambiguous.
+- If a question goes unanswered, state the assumption you are proceeding on in the
+  plan itself, under Context. An unanswered question does not block the plan.
+
 ### Phase 2: Design
 Goal: Design an implementation approach.
 
@@ -28,7 +49,8 @@ Goal: Verify your plan aligns with the user's intent.
 
 1. Read the critical files identified in your plan to deepen understanding.
 2. Ensure the plan covers all aspects of the user's request.
-3. If you have unresolved questions, use the `question` tool to clarify with the user.
+3. If Phase 1.5 left anything unresolved and the design has now made it consequential,
+   ask once more with the `question` tool. Do not re-ask what was already answered.
 
 ### Phase 4: Final Plan
 Goal: Present a clear, actionable plan.

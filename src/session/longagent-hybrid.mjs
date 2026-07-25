@@ -23,6 +23,7 @@ import {
   parseGateSelection
 } from "./usability-gates.mjs"
 import { runIntakeDialogue, validateAndNormalizeStagePlan, defaultStagePlan } from "./longagent-plan.mjs"
+import { askIntakeQuestions, renderIntakeAnswers } from "./intake-questions.mjs"
 import { createValidator } from "./task-validator.mjs"
 import { detectStageComplete, detectReturnToCoding, buildStageWrapper, ULTRA_STAGES, ACCEPTANCE_RULES, buildGoalPlanContract } from "./ultra-stages.mjs"
 import { classifyGoalIntent, normalizeGoal, freezeGoal, intentProfile, planSignature } from "./goal-model.mjs"
@@ -497,13 +498,13 @@ async function runHybridPipeline({
   }
 
   // ========== H0: INTAKE (需求澄清) ==========
+  const plannerConfig = longagentConfig.planner || {}
   let intakeSummary = prompt
   if (hybridConfig.intake !== false && !planFrozen) {
     await setPhase("H0", "intake")
     await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_INTAKE_STARTED, sessionId, payload: { objective: prompt } })
     await syncState({ lastMessage: "H0: intake dialogue — clarifying requirements" })
 
-    const plannerConfig = longagentConfig.planner || {}
     const intakeConfig = plannerConfig.intake_questions || {}
     const intake = await runIntakeDialogue({
       objective: prompt,
@@ -516,41 +517,31 @@ async function runHybridPipeline({
     gateStatus.intake = { status: "pass", rounds: intake.transcript.length, summary: intakeSummary.slice(0, 500) }
     await syncState({ lastMessage: `H0: intake complete (${intake.transcript.length} qa pairs)` })
 
-    // Task 2: 用户可见的需求确认 — 展示 intake 摘要，请用户确认或补充
-    if (allowQuestion && hybridConfig.intake_user_confirm !== false) {
-      const confirmPrompt = [
-        "[SYSTEM] H0 需求分析完成。以下是对任务的理解摘要：",
-        "",
-        intakeSummary.slice(0, 1200),
-        "",
-        "请使用 question 工具询问用户：",
-        "1. 以上需求理解是否准确？",
-        "2. 是否有需要补充或修改的地方？",
-        "3. 如果没有补充，回复 [确认] 或 [继续] 即可开始执行。",
-        "",
-        "根据用户的回复更新 intakeSummary（如有补充则合并到需求中）。"
-      ].join("\n")
-      const confirmOut = await processTurnLoop({
-        prompt: confirmPrompt,
-        mode: "assistant", model, providerType, sessionId, configState,
-        baseUrl, apiKeyEnv, agent, signal, allowQuestion: true, toolContext, output
+    // 真正向用户提问的澄清关卡（0.6.0）。
+    //
+    // 此前这里是「发一段中文 [SYSTEM] 指令，指望模型去调 question 工具，
+    // 再用关键词匹配解析它的回复」—— 既不可靠也不可测，而且 intake 本身
+    // 被要求对每个问题「给出最佳假设」，实际上一个问题都不会到用户面前。
+    // 现在直调 askIntakeQuestions，收口语义与 askBlockedDecision 同源。
+    const intakeAnswers = await askIntakeQuestions({
+      questions: intake.userQuestions || [],
+      allowQuestion,
+      config: configState.config
+    })
+    const clarified = renderIntakeAnswers(intakeAnswers)
+    if (clarified) {
+      intakeSummary = `${intakeSummary}\n\n${clarified}`
+      gateStatus.intake = {
+        ...gateStatus.intake,
+        userConfirmed: intakeAnswers.asked,
+        clarifications: intakeAnswers.answers.length,
+        ...(intakeAnswers.why ? { skipped: intakeAnswers.why } : {})
+      }
+      await syncState({
+        lastMessage: intakeAnswers.asked
+          ? `H0: ${intakeAnswers.answers.filter((a) => a.source === "user").length} requirements clarified by the user`
+          : `H0: proceeding on assumptions (${intakeAnswers.why})`
       })
-      accumulateUsage(confirmOut)
-      // 如果用户提供了补充，将其合并到 intakeSummary
-      const userAddition = String(confirmOut.reply || "").trim()
-      const cancelKeywords = ["abort", "cancel", "取消", "中止", "停止"]
-      if (cancelKeywords.some(k => userAddition.toLowerCase().includes(k))) {
-        await LongAgentManager.update(sessionId, { status: "aborted", lastMessage: "user cancelled at intake confirmation" })
-        await markSessionStatus(sessionId, "active")
-        return { sessionId, turnId: `turn_long_${Date.now()}`, reply: "用户在需求确认阶段取消了任务。", usage: aggregateUsage, toolEvents, iterations: iteration, status: "aborted", phase: "H0", gateStatus, currentGate, lastGateFailures: [], recoveryCount: 0, progress: lastProgress, elapsed: Math.round((Date.now() - startTime) / 1000), stageIndex: 0, stageCount: 0, planFrozen: false, taskProgress: {}, fileChanges: [], stageProgress: { done: 0, total: 0 }, remainingFilesCount: 0 }
-      }
-      if (userAddition && !["确认", "继续", "ok", "yes", "是", "好", "没有", "no addition"].some(k => userAddition.toLowerCase().includes(k))) {
-        intakeSummary = `${intakeSummary}\n\n[用户补充]\n${userAddition}`
-        gateStatus.intake = { ...gateStatus.intake, userConfirmed: true, userAddition: userAddition.slice(0, 200) }
-      } else {
-        gateStatus.intake = { ...gateStatus.intake, userConfirmed: true }
-      }
-      await syncState({ lastMessage: "H0: user confirmed requirements" })
     }
   }
 
@@ -710,6 +701,36 @@ async function runHybridPipeline({
   await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_BLUEPRINT_COMPLETE, sessionId, payload: { planId: stagePlan.planId, stageCount: stagePlan.stages.length } })
   await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_PLAN_FROZEN, sessionId, payload: { planId: stagePlan.planId, stageCount: stagePlan.stages.length, errors: [] } })
   await syncState({ planFrozen: true, lastMessage: `H2: blueprint complete, ${stagePlan.stages.length} stage(s)` })
+
+  // planner.ask_user_after_plan_frozen（0.6.0 接线）：计划冻结后让用户过目。
+  // 这个键从 0.4.0 起就在 defaults 与 schema 里，运行时却零读取点。走结构化
+  // 提问而不是「让模型自己调 question 工具再关键词匹配回复」。
+  if (plannerConfig.ask_user_after_plan_frozen === true) {
+    const planSummary = stagePlan.stages
+      .map((stage, index) => `${index + 1}. ${stage.name || stage.stageId} — ${(stage.tasks || []).length} task(s)`)
+      .join("\n")
+    const review = await askIntakeQuestions({
+      questions: [{
+        id: "plan_review",
+        header: "计划确认",
+        text: "计划已冻结，是否按此执行？",
+        why: planSummary.slice(0, 600),
+        options: [
+          { label: "开始执行", value: "proceed" },
+          { label: "我要调整", value: "revise" }
+        ],
+        assumption: "proceed"
+      }],
+      allowQuestion,
+      config: configState.config
+    })
+    const decision = review.answers[0]
+    if (decision && decision.source === "user" && !/^proceed$|开始执行/i.test(decision.answer)) {
+      // 用户的自由文本一律当作对计划的修改意见，并入目标交给下一轮重规划
+      userGuidance = [userGuidance, decision.answer].filter(Boolean).join("\n")
+      await syncState({ lastMessage: "H2: user asked to revise the frozen plan" })
+    }
+  }
 
   // 尝试台账：重规划的输入、受阻报告的唯一数据源、ultra report 的落盘依据。
   // ledger.enabled: false 时不落盘 —— 受阻报告与 ultra report/board 将不可用，

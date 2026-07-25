@@ -197,6 +197,7 @@ export async function runIntakeDialogue({
   const rounds = Math.max(1, Number(maxRounds || 6))
   const transcript = []
   let summary = ""
+  const pendingUserQuestions = []
 
   for (let i = 1; i <= rounds; i++) {
     const prompt = [
@@ -239,8 +240,15 @@ export async function runIntakeDialogue({
       "- Be specific: 'use HS256 JWT with 24h expiry' not 'implement auth'.",
       "- Set enough=true ONLY when you have sufficient clarity to generate a concrete file-level execution plan.",
       "",
+      "## Questions that genuinely need the user",
+      "- Put in `ask_user` ONLY the decisions you cannot settle from the objective or the codebase:",
+      "  a product choice, an unstated preference, an ambiguity where guessing wrong wastes real work.",
+      "- Never ask what you can read from the repository, and never ask for approval of your own plan.",
+      "- At most 5, ordered by how expensive it is to guess wrong. Empty is a valid and common answer.",
+      "- Each one still carries your best assumption, so the run can proceed unattended if nobody answers.",
+      "",
       "Return STRICT JSON (no markdown wrapping):",
-      `{"enough":boolean,"summary":"technical summary with ALL resolved assumptions and concrete decisions","qa":[{"q":"specific question","a":"concrete answer with implementation detail"}]}`,
+      `{"enough":boolean,"summary":"technical summary with ALL resolved assumptions and concrete decisions","qa":[{"q":"specific question","a":"concrete answer with implementation detail"}],"ask_user":[{"question":"...","why":"what breaks if this is guessed wrong","options":["option a","option b"],"assumption":"what you will do if unanswered","dimension":"scope|stack|contract|quality|order"}]}`,
       "",
       `Round: ${i}/${rounds}`,
       `Objective: ${objective}`,
@@ -263,6 +271,19 @@ export async function runIntakeDialogue({
     })
 
     const parsed = parseJsonLoose(out.reply)
+    if (parsed && Array.isArray(parsed.ask_user)) {
+      for (const item of parsed.ask_user.slice(0, 5)) {
+        const question = String(item?.question || "").trim()
+        if (!question) continue
+        pendingUserQuestions.push({
+          text: question,
+          why: String(item?.why || "").trim(),
+          header: String(item?.dimension || "需求澄清").slice(0, 12),
+          options: Array.isArray(item?.options) ? item.options.slice(0, 4) : [],
+          assumption: String(item?.assumption || "").trim()
+        })
+      }
+    }
     if (parsed && Array.isArray(parsed.qa)) {
       for (const item of parsed.qa.slice(0, 10)) {
         const q = String(item?.q || "").trim()
@@ -285,7 +306,10 @@ export async function runIntakeDialogue({
 
   return {
     transcript,
-    summary: summary || String(objective || "").trim()
+    summary: summary || String(objective || "").trim(),
+    // 真正需要人来定的问题。0.6.0 之前这个概念根本不存在 —— 模型被要求
+    // 对每个问题「给出最佳假设」，于是没有任何东西会送到用户面前。
+    userQuestions: pendingUserQuestions.slice(0, 5)
   }
 }
 
