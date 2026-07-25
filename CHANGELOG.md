@@ -1,5 +1,102 @@
 # Changelog / 更新日志
 
+## 0.4.3
+
+Everything here is a repair to Ultra machinery that existed but did not work.
+No new features; no configuration changes.
+
+### English
+
+- Make the stage objective check reachable. It read the gate result as
+  `gates.results.build` while `runUsabilityGates` returns the gate at
+  `gates.gates.build`; both paths yielded `undefined`, and the resulting empty
+  object both passed the "gate is decisive" filter and failed the "gate is
+  passing" one. A stage with every planned file on disk and every gate green
+  still came back unmet with the reason `gates failed: ; `. The escape hatch
+  0.4.2 announced was never reachable in production. Gate results now go through
+  a single `readGate()` that throws on shape drift instead of reading
+  `undefined`, all gate test doubles come from one factory, and a contract test
+  compares that factory against the real function key by key.
+- Make the degradation chain degrade. It only advanced its level when a strategy
+  reported success, and the default `fallback_model: null` made the first
+  strategy always fail, so the level never moved off zero, `graceful_stop` was
+  unreachable, and the four breaks that waited for it — H4 phase timeout, token
+  budget ceiling, max-recoveries abort, H5 phase timeout — were all dead. The
+  level now advances unconditionally, skipping strategies that do not apply.
+  `degradation.enabled`, previously read by no code at all, now switches the
+  chain off. The "degradation applied" notice is only emitted when something was
+  actually degraded; under the default config it used to be false.
+- Stop a headless run from disabling every quality gate a user has. The gate
+  preference prompt ran with no TTY, where the answer is an empty string, which
+  parsed as "all five gates off" and was written to the user-level
+  `~/.kkcode/gate-preferences.json` — silently, for every project on that
+  machine. The prompt is now skipped when the user cannot be reached, an
+  unparseable answer writes nothing, and an all-off record without an explicit
+  marker is treated as damage from 0.4.x and re-asked once.
+- Deliver Ultra's failure diagnosis. `generateRecoverySuggestions` has produced
+  a structured post-mortem since 0.3.x — failed tasks with error categories,
+  manual investigation steps, a resume hint — and `engine.mjs` dropped it in both
+  of the two places that enumerated the result fields. The repo had zero
+  consumers. Those two enumerations are now one function, and the REPL and
+  `kkcode ultra start` both render the diagnosis.
+- Guarantee teardown. The stop-event listener was unsubscribed on three of four
+  return paths, and thrown errors skipped teardown entirely, leaving a leaked
+  listener and a session pinned at `running-longagent`. A single `finally` now
+  owns it, and `runStageBarrier`'s throws for dependency cycles and file-ownership
+  overlap are caught as plan defects rather than discarding the whole turn.
+- Give alerts a reason. Seven of twelve `LONGAGENT_ALERT` emitters never set the
+  field the renderer reads, so the terminal showed a bare `alert [stuck_warning]`
+  with nothing after it. A static check now enforces the field. Two declared
+  events that had a renderer and no emitter are now emitted, and three that were
+  emitted with no renderer are now shown.
+- Give the gate-repair prompt the error output it is told to read. It instructed
+  the model to find the root cause from output it was never given —
+  `build:build failed with code 1` — while the captured twelve lines sat unread
+  in the gate result.
+- `kkcode ultra start` printed `done` for every run because it read a field that
+  does not exist on the result; it now reports the real status and exits non-zero
+  on failure. `currentStageId` was read by the status bar but never returned, so
+  the bar always degraded to `2/5` instead of naming the stage.
+
+### 中文
+
+- 让 stage 目标核验重新可达。它把门禁结果读作 `gates.results.build`，而
+  `runUsabilityGates` 返回的门禁在 `gates.gates.build`；两条路径都取到
+  `undefined`，得到的空对象既通过了「门禁有发言权」的过滤，又被判为「没通过」。
+  于是文件全部落地、门禁全绿的 stage 仍然返回未达成，理由是毫无意义的
+  `gates failed: ; `。0.4.2 宣称的那道逃生门在生产路径上从未可达。现在门禁结果
+  统一经 `readGate()` 读取——形状不对会抛而不是取到 `undefined`，全仓门禁替身
+  只能由一个工厂构造，契约测试拿真函数的输出与它逐键比对。
+- 让降级链真的会降级。它只在策略生效时才推进档位，而默认的
+  `fallback_model: null` 让第一档恒定失败——档位永远停在 0，`graceful_stop`
+  不可达，依赖它的四处 break（H4 阶段超时、token 预算上限、重试次数耗尽、
+  H5 阶段超时）全部失效。现在档位无条件前进，跳过不适用的策略。
+  `degradation.enabled` 此前没有任何代码读取，现在能真正关闭整条链。
+  「已降级」的提示只在确实降了级时才发——默认配置下它一直在说谎。
+- 阻止无终端运行关掉用户的全部质量门禁。门禁偏好询问在没有 TTY 时照样执行，
+  而那里的答案是空串，被解析成「五个门禁全关」并写进用户级的
+  `~/.kkcode/gate-preferences.json`——静默生效，影响该机器上的所有项目。
+  现在问不到用户就跳过，解析不出答案就不写盘，而没有显式标记的「全关」记录
+  会被当作 0.4.x 的事故遗留，重新询问一次。
+- 把 Ultra 的失败诊断送到用户面前。`generateRecoverySuggestions` 从 0.3.x 起就
+  在生成结构化的事后分析——失败任务及其错误分类、手动排查步骤、恢复提示——而
+  `engine.mjs` 在两处逐字段枚举结果的地方都把它丢掉了，全代码库零消费者。
+  两处枚举现已收敛为一个函数，REPL 与 `kkcode ultra start` 都会渲染这份诊断。
+- 保证收尾。stop 事件的监听器只在四条返回路径中的三条退订，而抛出的异常会
+  完全跳过收尾——监听器泄漏，会话永久停在 `running-longagent`。现在退订只有
+  一处 `finally`；`runStageBarrier` 因依赖环与文件所有权冲突抛出的错误会被
+  当作计划缺陷捕获，而不是让整个回合连同已完成的工作一起丢掉。
+- 让告警说出原因。十二个 `LONGAGENT_ALERT` 发射点里有七个从不设置渲染器要读
+  的那个字段，终端上只会出现一行 `alert [stuck_warning]`，后面空空如也。
+  现在有静态检查兜底。两个「有渲染器没有发射者」的事件补上了发射，三个
+  「有发射者没有渲染器」的事件补上了显示。
+- 让门禁修复提示词拿到它被要求阅读的错误输出。它一边让模型「从错误输出里找出
+  根因」，一边只给出 `build:build failed with code 1`，而采集好的末 12 行输出
+  就躺在门禁结果里没人读。
+- `kkcode ultra start` 因为读了一个结果对象上并不存在的字段，对每一次运行都打印
+  `done`；现在会报告真实状态并在失败时以非零码退出。`currentStageId` 被状态栏
+  读取却从未被返回，所以状态栏永远退化成 `2/5` 而不是阶段名。
+
 ## 0.4.2
 
 ### English

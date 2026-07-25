@@ -557,12 +557,12 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current stable version / 当前稳定版本**: `v0.4.2`
+**Current stable version / 当前稳定版本**: `v0.4.3`
 
-`v0.4.2` is the current stable npm and GitHub release. The `main` branch remains
+`v0.4.3` is the current stable npm and GitHub release. The `main` branch remains
 the development line for subsequent fixes.
 
-`v0.4.2` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
+`v0.4.3` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
 
 Use the Kimi Code preset without placing credentials in YAML:
 
@@ -582,6 +582,12 @@ with authorization values redacted.
 **Package / 包地址**: [npm](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 
 **English**
+- `0.4.3` repairs the Ultra machinery that 0.4.2 shipped inert: the stage
+  objective check read the wrong field and could never report success, the
+  degradation chain never advanced past its first strategy so four of its exit
+  paths were dead, a headless run could permanently disable every quality gate a
+  user has, and the failure diagnosis Ultra had been generating since 0.3.x was
+  dropped before it reached anyone.
 - `0.4.2` restores the Ultra stage prompts (four agents had been running with no
   role instructions because their prompt files were never resolved), stops
   injecting the mode contract twice, and adds `kkcode preflight` for a fast
@@ -605,6 +611,10 @@ with authorization values redacted.
 - `0.2.1` rebuilt kkcode around Assistant as the default general-purpose lane, with dedicated Agent and LongAgent modes for coding work.
 
 **中文**
+- `0.4.3` 修复 0.4.2 里装上却没生效的那套 Ultra 机制：stage 目标核验读错字段，
+  永远判不出「已达成」；降级链从不越过第一档，依赖它的四条退出路径全是死的；
+  无终端运行会永久关掉用户的全部质量门禁；而 Ultra 从 0.3.x 起就在生成的失败
+  诊断，在送到用户面前之前被丢弃了。
 - `0.4.2` 恢复 Ultra 的阶段提示词（四个 agent 因提示词文件名未解析，一直在没有
   角色指令的情况下运行），消除模式契约的重复注入，并新增 `kkcode preflight`
   快速启动自检。
