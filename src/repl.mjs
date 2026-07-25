@@ -157,6 +157,7 @@ import {
   startThinkingWait
 } from "./ui/thinking-state.mjs"
 import { mergeConfigObject } from "./config/merge.mjs"
+import { renderSelectOverlay } from "./ui/overlay-select.mjs"
 import {
   sanitizeTerminalStyledText,
   sanitizeTerminalText,
@@ -2464,7 +2465,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       busyLine = ""
     }
 
-    const suggestionBlock = suggestionLines.length ? suggestionLines.length + 1 : 0
+    const suggestionsTitleLine = paint("Commands", ctx.themeState.theme.base.muted, { bold: true })
     const PERM_CHOICES = PERMISSION_PROMPT_CHOICES
     const permissionLines = []
     if (ui.pendingPermission) {
@@ -2480,110 +2481,89 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         (displayPerm.pattern && displayPerm.pattern !== "*" ? displayPerm.pattern : "")
       const toolInfo = `tool: ${displayPerm.tool}  risk: ${displayPerm.risk || 0}/10`
       const reasonInfo = displayPerm.reason ? `  ${displayPerm.reason}` : ""
-      permissionLines.push(
-        paint(`Permission Request  ↑↓ navigate  Enter select  Esc deny`, ctx.themeState.theme.semantic.warn, { bold: true })
-      )
-      permissionLines.push(paint(`┌${"─".repeat(Math.max(1, width - 4))}┐`, ctx.themeState.theme.base.border))
-      permissionLines.push(paint(`│ ${padRight(toolInfo, Math.max(1, width - 5))}│`, ctx.themeState.theme.base.fg))
-      if (target) {
-        permissionLines.push(paint(`│ ${padRight(`target: ${target}`, Math.max(1, width - 5))}│`, ctx.themeState.theme.semantic.warn))
-      }
-      if (reasonInfo) {
-        permissionLines.push(paint(`│ ${padRight(reasonInfo, Math.max(1, width - 5))}│`, ctx.themeState.theme.base.muted))
-      }
-      permissionLines.push(paint(`│${"─".repeat(Math.max(1, width - 4))}│`, ctx.themeState.theme.base.border))
-      for (let i = 0; i < PERM_CHOICES.length; i++) {
-        const choice = PERM_CHOICES[i]
-        const active = i === ui.permissionSelected
-        const prefix = active ? "▸" : " "
-        const line = ` ${prefix} ${i + 1}. ${choice.label}`
-        permissionLines.push(
-          active
-            ? paint(`│${padRight(line, Math.max(1, width - 5))}│`, "#111111", { bg: ctx.themeState.theme.semantic.warn, bold: true })
-            : paint(`│${padRight(line, Math.max(1, width - 5))}│`, ctx.themeState.theme.base.fg)
-        )
-      }
-      permissionLines.push(paint(`└${"─".repeat(Math.max(1, width - 4))}┘`, ctx.themeState.theme.base.border))
+      const permHeader = [{ text: toolInfo, color: ctx.themeState.theme.base.fg }]
+      if (target) permHeader.push({ text: `target: ${target}`, color: ctx.themeState.theme.semantic.warn })
+      if (reasonInfo) permHeader.push({ text: reasonInfo, color: ctx.themeState.theme.base.muted })
+      permissionLines.push(...renderSelectOverlay({
+        title: "Permission Request",
+        hint: "↑↓ navigate  Enter select  Esc deny",
+        items: PERM_CHOICES.map((choice) => ({ label: choice.label })),
+        selected: ui.permissionSelected,
+        width,
+        theme: ctx.themeState.theme,
+        accent: ctx.themeState.theme.semantic.warn,
+        paint,
+        padRight,
+        header: permHeader,
+        numbered: true
+      }).lines)
     }
     const modelPickerLines = []
     if (ui.modelPicker) {
       const mp = ui.modelPicker
-      const visible = Math.min(mp.items.length, MAX_MODEL_PICKER_VISIBLE)
-      let start = Math.max(0, Math.min(mp.offset, mp.items.length - visible))
-      if (mp.selected < start) start = mp.selected
-      if (mp.selected >= start + visible) start = mp.selected - visible + 1
-      mp.offset = start
-      const end = Math.min(mp.items.length, start + visible)
-      modelPickerLines.push(
-        paint(`Select Model (${mp.selected + 1}/${mp.items.length})  ↑↓ navigate  Enter select  Esc cancel`, ctx.themeState.theme.semantic.info, { bold: true })
-      )
-      modelPickerLines.push(paint(`┌${"─".repeat(Math.max(1, width - 4))}┐`, ctx.themeState.theme.base.border))
-      for (let i = start; i < end; i++) {
-        const item = mp.items[i]
-        const active = i === mp.selected
-        const current = item.model === state.model && item.provider === state.providerType
-        const marker = current ? "●" : " "
-        const prefix = active ? "▸" : " "
-        const line = ` ${prefix} ${marker} ${item.label}`
-        const padded = padRight(line, Math.max(1, width - 5))
-        modelPickerLines.push(
-          active
-            ? paint(`│${padded}│`, "#111111", { bg: ctx.themeState.theme.semantic.info, bold: true })
-            : paint(`│${padded}│`, current ? ctx.themeState.theme.semantic.success : ctx.themeState.theme.base.fg)
-        )
-      }
-      modelPickerLines.push(paint(`└${"─".repeat(Math.max(1, width - 4))}┘`, ctx.themeState.theme.base.border))
-      if (mp.items.length > visible) {
-        modelPickerLines.push(paint(`  ${start + 1}-${end} of ${mp.items.length}`, ctx.themeState.theme.base.muted))
-      }
+      const rendered = renderSelectOverlay({
+        title: `Select Model (${mp.selected + 1}/${mp.items.length})`,
+        hint: "↑↓ navigate  Enter select  Esc cancel",
+        items: mp.items.map((item) => ({
+          label: item.label,
+          current: item.model === state.model && item.provider === state.providerType
+        })),
+        selected: mp.selected,
+        offset: mp.offset,
+        maxVisible: MAX_MODEL_PICKER_VISIBLE,
+        width,
+        theme: ctx.themeState.theme,
+        accent: ctx.themeState.theme.semantic.info,
+        paint,
+        padRight,
+        markers: true
+      })
+      mp.offset = rendered.offset
+      modelPickerLines.push(...rendered.lines)
     }
-    const modelPickerBlock = modelPickerLines.length ? modelPickerLines.length : 0
     const modePickerLines = []
     if (ui.modePicker) {
       const currentModeId = state.modeId || resolveModeId(state.mode)
-      modePickerLines.push(
-        paint(`Mode  ↑↓ navigate  Enter select  Esc cancel  (Shift+Tab cycles)`, ctx.themeState.theme.semantic.info, { bold: true })
-      )
-      modePickerLines.push(paint(`┌${"─".repeat(Math.max(1, width - 4))}┐`, ctx.themeState.theme.base.border))
-      for (let i = 0; i < MODE_PICKER_CHOICES.length; i++) {
-        const choice = MODE_PICKER_CHOICES[i]
-        const active = i === ui.modePicker.selected
-        const current = choice.value === currentModeId
-        const marker = current ? "●" : " "
-        const prefix = active ? "▸" : " "
-        modePickerLines.push(
-          active
-            ? paint(`│${padRight(` ${prefix} ${marker} ${choice.label}  ${choice.desc}`, Math.max(1, width - 5))}│`, "#111111", { bg: ctx.themeState.theme.semantic.info, bold: true })
-            : paint(`│${padRight(` ${prefix} ${marker} ${choice.label}`, 22)}${padRight(choice.desc, Math.max(1, width - 27))}│`, current ? ctx.themeState.theme.semantic.success : ctx.themeState.theme.base.fg)
-        )
-      }
-      modePickerLines.push(paint(`└${"─".repeat(Math.max(1, width - 4))}┘`, ctx.themeState.theme.base.border))
+      modePickerLines.push(...renderSelectOverlay({
+        title: "Mode",
+        hint: "↑↓ navigate  Enter select  Esc cancel  (Shift+Tab cycles)",
+        items: MODE_PICKER_CHOICES.map((choice) => ({
+          label: choice.label,
+          desc: choice.desc,
+          current: choice.value === currentModeId
+        })),
+        selected: ui.modePicker.selected,
+        width,
+        theme: ctx.themeState.theme,
+        accent: ctx.themeState.theme.semantic.info,
+        paint,
+        padRight,
+        layout: "two-column",
+        markers: true
+      }).lines)
     }
 
     const policyPickerLines = []
     if (ui.policyPicker) {
       const currentPolicy = ctx.configState.config.permission?.level || ctx.configState.config.permission?.mode || ctx.configState.config.permission?.default_policy || "auto"
-      policyPickerLines.push(
-        paint(`Permission Policy  ↑↓ navigate  Enter select  Esc cancel`, ctx.themeState.theme.semantic.info, { bold: true })
-      )
-      policyPickerLines.push(paint(`┌${"─".repeat(Math.max(1, width - 4))}┐`, ctx.themeState.theme.base.border))
-      for (let i = 0; i < POLICY_CHOICES.length; i++) {
-        const choice = POLICY_CHOICES[i]
-        const active = i === ui.policyPicker.selected
-        const current = choice.value === currentPolicy
-        const marker = current ? "●" : " "
-        const prefix = active ? "▸" : " "
-        policyPickerLines.push(
-          active
-            ? paint(`│${padRight(` ${prefix} ${marker} ${choice.label}  ${choice.desc}`, Math.max(1, width - 5))}│`, "#111111", { bg: ctx.themeState.theme.semantic.info, bold: true })
-            : paint(`│${padRight(` ${prefix} ${marker} ${choice.label}`, 22)}${padRight(choice.desc, Math.max(1, width - 27))}│`, current ? ctx.themeState.theme.semantic.success : ctx.themeState.theme.base.fg)
-        )
-      }
-      policyPickerLines.push(paint(`└${"─".repeat(Math.max(1, width - 4))}┘`, ctx.themeState.theme.base.border))
+      policyPickerLines.push(...renderSelectOverlay({
+        title: "Permission Policy",
+        hint: "↑↓ navigate  Enter select  Esc cancel",
+        items: POLICY_CHOICES.map((choice) => ({
+          label: choice.label,
+          desc: choice.desc,
+          current: choice.value === currentPolicy
+        })),
+        selected: ui.policyPicker.selected,
+        width,
+        theme: ctx.themeState.theme,
+        accent: ctx.themeState.theme.semantic.info,
+        paint,
+        padRight,
+        layout: "two-column",
+        markers: true
+      }).lines)
     }
-    const policyPickerBlock = policyPickerLines.length
-    const modePickerBlock = modePickerLines.length
-    const permissionBlock = permissionLines.length
 
     // --- Question panel ---
     const questionLines = []
@@ -2700,17 +2680,26 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       questionLines.push(paint(`│ ${padRight(footerText, Math.max(1, width - 5))}│`, ctx.themeState.theme.base.muted))
       questionLines.push(paint(`└${"─".repeat(Math.max(1, width - 4))}┘`, ctx.themeState.theme.base.border))
     }
-    const questionBlock = questionLines.length
+
+    // 对话区之下的全部浮层块。求和与推入都遍历这个列表 —— 唯一来源。
+    //
+    // 此前 fixedRows 是一串手写加法，与下面一串手写 push 各说各话：新增一个
+    // UI 块只要漏掉其中一边，logRows 就算错，而 buildFrame 在测试里够不着，
+    // CI 全绿、真终端上对话区被挤没。让两边同源，这个错就犯不出来了。
+    const overlayBlocks = [
+      { name: "suggestions", lines: suggestionLines.length ? [suggestionsTitleLine, ...suggestionLines] : [] },
+      { name: "modelPicker", lines: modelPickerLines },
+      { name: "policyPicker", lines: policyPickerLines },
+      { name: "modePicker", lines: modePickerLines },
+      { name: "permission", lines: permissionLines },
+      { name: "question", lines: questionLines }
+    ]
+    const overlayRows = overlayBlocks.reduce((total, block) => total + block.lines.length, 0)
 
     const fixedRows =
       1 + // activity title
       1 + // scroll hint
-      suggestionBlock +
-      modelPickerBlock +
-      policyPickerBlock +
-      modePickerBlock +
-      permissionBlock +
-      questionBlock +
+      overlayRows +
       1 + // status bar
       1 + // busy indicator
       1 + // input top border
@@ -2744,30 +2733,11 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
     lines.push(clipAnsiLine(scrollHint, width))
 
-    if (suggestionLines.length) {
-      lines.push(clipAnsiLine(paint("Commands", ctx.themeState.theme.base.muted, { bold: true }), width))
-      for (const line of suggestionLines) lines.push(clipAnsiLine(line, width))
-    }
-
-    if (modelPickerLines.length) {
-      for (const line of modelPickerLines) lines.push(clipAnsiLine(line, width))
-    }
-
-    if (policyPickerLines.length) {
-      for (const line of policyPickerLines) lines.push(clipAnsiLine(line, width))
-    }
-    if (modePickerLines.length) {
-      for (const line of modePickerLines) lines.push(clipAnsiLine(line, width))
-    }
-
-    if (permissionLines.length) {
-      for (const line of permissionLines) lines.push(clipAnsiLine(line, width))
-    }
-
     let questionStartRow = null
-    if (questionLines.length) {
-      questionStartRow = lines.length
-      for (const line of questionLines) lines.push(clipAnsiLine(line, width))
+    for (const block of overlayBlocks) {
+      if (!block.lines.length) continue
+      if (block.name === "question") questionStartRow = lines.length
+      for (const line of block.lines) lines.push(clipAnsiLine(line, width))
     }
 
     lines.push(clipAnsiLine(status, width))
