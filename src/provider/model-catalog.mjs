@@ -269,13 +269,56 @@ function normalizeModels(json) {
       label: "model catalog id",
       reason: "bad_response"
     })
+    const contextLength = readContextLength(item)
     return {
       id,
       ...(item.display_name || item.displayName ? { displayName: item.display_name || item.displayName } : {}),
       ...(item.owned_by || item.ownedBy ? { ownedBy: item.owned_by || item.ownedBy } : {}),
-      ...(item.created_at || item.created ? { created: item.created_at || item.created } : {})
+      ...(item.created_at || item.created ? { created: item.created_at || item.created } : {}),
+      ...(contextLength ? { contextLength } : {})
     }
   }).filter(Boolean)
+}
+
+/**
+ * 从目录条目里提取上下文窗口长度。
+ *
+ * 0.6.0 之前 normalizeModels 只保留 4 个字段 —— provider 即使在 /models 里
+ * 返回了上下文长度也被丢弃，于是这个数字永远只能人肉填进
+ * provider.model_context。各家字段名不一，逐个试。
+ */
+function readContextLength(item) {
+  const candidates = [
+    item.context_length, item.contextLength,
+    item.context_window, item.contextWindow,
+    item.max_context_window_tokens, item.max_context_length,
+    item.max_input_tokens, item.input_token_limit
+  ]
+  for (const value of candidates) {
+    const n = Number(value)
+    if (Number.isFinite(n) && n >= 1024) return Math.floor(n)
+  }
+  return 0
+}
+
+/**
+ * 把发现到的上下文长度合并进 configState 的 provider.model_context（仅内存，
+ * 不落盘）。用户显式写过的键绝不覆盖 —— 手工配置优先于 API 自报。
+ * 返回本次新增的条数，调用方可据此提示。
+ */
+export function applyDiscoveredContextLimits(configState, models = []) {
+  const provider = configState?.config?.provider
+  if (!provider) return 0
+  let added = 0
+  const mc = { ...(provider.model_context || {}) }
+  for (const model of models) {
+    if (!model?.id || !model.contextLength) continue
+    if (mc[model.id] !== undefined) continue
+    mc[model.id] = model.contextLength
+    added += 1
+  }
+  if (added > 0) provider.model_context = mc
+  return added
 }
 
 function nextPageUrl(json, current, protocol) {

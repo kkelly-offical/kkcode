@@ -23,7 +23,7 @@ import {
 } from "./session/routing-observability.mjs"
 import { listProviders } from "./provider/router.mjs"
 import { createWizardState, startWizard, startEditWizard, handleWizardInput } from "./provider/wizard.mjs"
-import { discoverModelsForProvider } from "./provider/model-catalog.mjs"
+import { discoverModelsForProvider, applyDiscoveredContextLimits } from "./provider/model-catalog.mjs"
 import { escapeTerminalText, validateModelId } from "./provider/model-id.mjs"
 import { loadCustomCommands, applyCommandTemplate } from "./command/custom-commands.mjs"
 import { SkillRegistry } from "./skill/registry.mjs"
@@ -158,6 +158,7 @@ import {
 } from "./ui/thinking-state.mjs"
 import { mergeConfigObject } from "./config/merge.mjs"
 import { renderSelectOverlay } from "./ui/overlay-select.mjs"
+import { formatTokenCount } from "./theme/status-bar.mjs"
 import {
   sanitizeTerminalStyledText,
   sanitizeTerminalText,
@@ -343,6 +344,9 @@ export async function loadProviderModelItems(configState, providerName, {
 } = {}) {
   try {
     const catalog = await discover(configState, { providerName, refresh })
+    // 目录里带上下文长度的模型，顺手合并进内存里的 model_context ——
+    // 上限与状态栏百分比从此不用人肉填（用户显式写过的键不覆盖）。
+    applyDiscoveredContextLimits(configState, catalog.models || [])
     const seen = new Set()
     const items = []
     for (const entry of catalog.models || []) {
@@ -1944,6 +1948,16 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         )
         ui.thinking = transition.state
         requestRender()
+        break
+      }
+      case EVENT_TYPES.SESSION_COMPACTED: {
+        // D3：静默压缩 + toast。压缩本身不打断工作流，这里只报一句结果。
+        const before = Number(event.payload?.beforeTokens) || 0
+        const after = Number(event.payload?.afterTokens) || 0
+        const detail = before > 0 && after > 0
+          ? `${formatTokenCount(before)} → ${formatTokenCount(after)}`
+          : `${event.payload?.summarizedCount ?? "?"} messages summarized`
+        showToast(`Context compacted · ${detail}`, { topic: "compaction", tone: "success" })
         break
       }
       case EVENT_TYPES.TURN_USAGE_UPDATE: {
@@ -4606,6 +4620,16 @@ export async function startRepl({ trust = false } = {}) {
   void maybeNotifyUpdateOnStartup(ctx.configState.config, { currentVersion: PACKAGE_VERSION })
     .then((result) => { startupUpdateResult = result })
     .catch(() => {})
+  // 启动即异步刷新默认 provider 的模型目录（0.6.0）：让 /model 秒开、并把
+  // API 自报的上下文长度合并进内存的 model_context。此前没有任何启动路径
+  // 触发发现，列表与上限全靠上次手动 /model refresh 或人肉配置。
+  // 绝不阻塞启动：失败静默，缓存 TTL 15 分钟由 catalog 层负责。
+  {
+    const startupProvider = ctx.configState.config?.provider?.default
+    if (startupProvider) {
+      void loadProviderModelItems(ctx.configState, startupProvider).catch(() => {})
+    }
+  }
   const extensionPolicy = resolveExtensionPolicy(ctx.configState)
 
   splash.update("loading tools & MCP servers...")

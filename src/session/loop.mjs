@@ -233,7 +233,7 @@ export async function processTurnLoop({
   const thresholdMessages = Number(configState.config.session?.compaction_threshold_messages ?? 50)
   const cachePointsEnabled = configState.config.session?.context_cache_points !== false
   const useNativeCompaction = supportsNativeCompaction(providerType, model)
-  const nativeCompactionTrigger = useNativeCompaction ? Math.floor(modelContextLimit(model, configState) * thresholdRatio) : 0
+  const nativeCompactionTrigger = useNativeCompaction ? Math.floor(modelContextLimit(model, configState, providerType) * thresholdRatio) : 0
   const effectiveAgent = runSpecRole(runSpec) || subagent || agent
   const permissionConfig = tightenPermissionConfig(configState.config, effectiveAgent?.permission)
 
@@ -392,7 +392,7 @@ export async function processTurnLoop({
       } else if (contextCachePoint) {
         contextCachePoint = null
       }
-      const contextLimit = modelContextLimit(model, configState)
+      const contextLimit = modelContextLimit(model, configState, providerType)
       const contextRatio = contextLimit > 0 ? Math.min(1, contextTokens / contextLimit) : 0
       lastContextMeter = {
         tokens: contextTokens,
@@ -434,6 +434,7 @@ export async function processTurnLoop({
         thresholdMessages,
         thresholdRatio,
         configState,
+        providerType,
         realTokenCount: realCount != null ? contextTokens : null
       })) {
           const compactResult = await compactSession({
@@ -442,9 +443,14 @@ export async function processTurnLoop({
             turnId
           })
           if (compactResult.compacted) {
-            await EventBus.emit({ type: EVENT_TYPES.SESSION_COMPACTED, sessionId, turnId, payload: compactResult })
+            const beforeTokens = Number(lastContextMeter?.tokens) || 0
             history = await getConversationHistory(sessionId, 9999)
-            const compactedMeter = contextUtilization(history.map(normalizeMessageForCache), model, configState)
+            const compactedMeter = contextUtilization(history.map(normalizeMessageForCache), model, configState, providerType)
+            // 事件带上前后 token 数 —— UI 层的「已压缩，193.4K → 42.1K」提示全靠它
+            await EventBus.emit({
+              type: EVENT_TYPES.SESSION_COMPACTED, sessionId, turnId,
+              payload: { ...compactResult, beforeTokens, afterTokens: compactedMeter.tokens, limit: compactedMeter.limit }
+            })
             lastContextMeter = { ...compactedMeter, fromCache: false }
             contextCachePoint = {
               messages: history.map(normalizeMessageForCache),
@@ -611,7 +617,7 @@ export async function processTurnLoop({
       const u = response.usage || {}
       const totalInput = (u.input || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0)
       if (totalInput > 0) {
-        const contextLimit = modelContextLimit(model, configState)
+        const contextLimit = modelContextLimit(model, configState, providerType)
         const contextRatio = contextLimit > 0 ? Math.min(1, totalInput / contextLimit) : 0
         lastContextMeter = {
           tokens: totalInput,

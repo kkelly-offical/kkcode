@@ -271,8 +271,10 @@ export const DEFAULT_CONFIG = {
   session: {
     max_history: 30,
     recovery: true,
-    compaction_threshold_ratio: 0.7,
-    compaction_threshold_messages: 50,
+    // 0.6.0：主判据是占用比例（85%），消息数从并列触发器降级为高位安全网
+    // —— 0.5.x 的 50 条 OR 语义让长会话几乎总是消息数先撞线，比例形同虚设。
+    compaction_threshold_ratio: 0.85,
+    compaction_threshold_messages: 200,
     context_cache_points: true
   },
   review: {

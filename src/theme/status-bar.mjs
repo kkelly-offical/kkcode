@@ -5,6 +5,14 @@ function formatNumber(value) {
   return Intl.NumberFormat("en-US").format(Math.round(value))
 }
 
+/** 193400 → "193.4K"，1250000 → "1.3M"，950 → "950" */
+export function formatTokenCount(tokens) {
+  const n = Number(tokens) || 0
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`
+  return String(n)
+}
+
 function formatCost(amount) {
   if (amount === null || amount === undefined || !Number.isFinite(amount)) return "—"
   return `$${amount.toFixed(4)}`
@@ -105,7 +113,10 @@ export function renderStatusBar({
       const hitPct = total > 0 ? Math.round((contextMeter.cacheRead || 0) / total * 100) : 0
       suffix = ` Cache:${hitPct}%`
     }
-    const text = tight ? `CTX ${pct}%` : `CONTEXT ${pct}%${suffix}`
+    // 绝对量比百分比更能回答「还剩多少」——193.4K (18%) 这种形式一眼可读。
+    // tokens 缺失（早期帧）时退回纯百分比。
+    const abs = Number(contextMeter.tokens) > 0 ? `${formatTokenCount(contextMeter.tokens)} ` : ""
+    const text = tight ? `CTX ${pct}%` : `CONTEXT ${abs}(${pct}%)${suffix}`
     segments.push(badge(text, contrastText(ctxBg), ctxBg, { bold: false }))
   }
   if (memoryLoaded && !tight) {

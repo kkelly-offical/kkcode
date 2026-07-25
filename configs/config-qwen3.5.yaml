@@ -109,8 +109,8 @@ agent:
 session:
   max_history: 50
   recovery: true
-  compaction_threshold_ratio: 0.7
-  compaction_threshold_messages: 50
+  compaction_threshold_ratio: 0.85
+  compaction_threshold_messages: 200
   context_cache_points: true
 permission:
   mode: yolo

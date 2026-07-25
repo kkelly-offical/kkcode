@@ -175,6 +175,8 @@ export function createChatCommand() {
         showTokenMeter: ctx.configState.config.ui.status.show_token_meter,
         theme: ctx.themeState.theme,
         layout: ctx.configState.config.ui.layout,
+        // headless 此前从不传 contextMeter —— CLI 下看不到上下文占用
+        contextMeter: result.context || null,
         longagentState: effectiveMode === "longagent" ? result.longagent : null
       })
 

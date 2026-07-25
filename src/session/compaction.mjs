@@ -37,8 +37,12 @@ Rules:
 - Preserve exact errors, failing test names, package versions, release labels, and user constraints in evidence
 - Be concise but never drop actionable information`
 
-const DEFAULT_THRESHOLD_MESSAGES = 50
-const DEFAULT_THRESHOLD_RATIO = 0.7
+// 0.6.0 起自动压缩以「上下文占用 85%」为主判据。消息数不再是并列触发器
+// —— 0.5.x 时它是 50 条 OR 起跳，长会话几乎总是消息数先撞线，把比例阈值
+// 架空（调 ratio 根本不生效）。现在它是高位安全网：即使 token 估算说还早，
+// 超长历史本身也会拖垮 provider 与检索质量，所以保留一个宽松的绝对上限。
+const DEFAULT_THRESHOLD_MESSAGES = 200
+const DEFAULT_THRESHOLD_RATIO = 0.85
 const DEFAULT_KEEP_RECENT = 6
 const DEFAULT_KEEP_RECENT_TURNS = 3
 const TOOL_RESULT_PREVIEW_LIMIT = 200
@@ -246,7 +250,7 @@ const BUILTIN_CONTEXT = {
   "deepseek": 64000, "qwen": 128000
 }
 
-export function modelContextLimit(model, configState = null) {
+export function modelContextLimit(model, configState = null, providerType = "") {
   const m = String(model || "").toLowerCase()
   // 1) Check provider-level context_limit for the active provider
   const providerCfg = configState?.config?.provider
@@ -259,8 +263,10 @@ export function modelContextLimit(model, configState = null) {
         if (m.startsWith(key.toLowerCase())) return mc[key]
       }
     }
-    // Provider-level context_limit
-    const active = providerCfg[providerCfg.default]
+    // Provider-level context_limit。必须用「本轮实际使用的 provider」——
+    // /provider 切换只改 state.providerType 不改 config.provider.default，
+    // 0.6.0 之前这里读 default，会话内切渠道后上限与状态栏百分比全部失准。
+    const active = providerCfg[providerType || providerCfg.default]
     if (active?.context_limit > 0) return active.context_limit
   }
   // 2) Builtin prefix match
@@ -270,9 +276,9 @@ export function modelContextLimit(model, configState = null) {
   return 128000
 }
 
-export function contextUtilization(messages, model, configState = null) {
+export function contextUtilization(messages, model, configState = null, providerType = "") {
   const tokens = estimateTokenCount(messages)
-  const limit = modelContextLimit(model, configState)
+  const limit = modelContextLimit(model, configState, providerType)
   const ratio = limit > 0 ? Math.min(1, tokens / limit) : 0
   return {
     tokens,
@@ -288,9 +294,9 @@ export function supportsNativeCompaction(providerType, model) {
   return m.includes("claude") && (m.includes("opus") || m.includes("sonnet"))
 }
 
-export function shouldCompact({ messages, model, thresholdMessages = DEFAULT_THRESHOLD_MESSAGES, thresholdRatio = DEFAULT_THRESHOLD_RATIO, configState = null, realTokenCount = null }) {
+export function shouldCompact({ messages, model, thresholdMessages = DEFAULT_THRESHOLD_MESSAGES, thresholdRatio = DEFAULT_THRESHOLD_RATIO, configState = null, providerType = "", realTokenCount = null }) {
   if (messages.length >= thresholdMessages) return true
-  const limit = modelContextLimit(model, configState)
+  const limit = modelContextLimit(model, configState, providerType)
   const tokens = realTokenCount != null ? realTokenCount : estimateTokenCount(messages)
   return tokens >= limit * thresholdRatio
 }
