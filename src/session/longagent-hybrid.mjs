@@ -25,6 +25,7 @@ import { runIntakeDialogue, validateAndNormalizeStagePlan, defaultStagePlan } fr
 import { createValidator } from "./task-validator.mjs"
 import { detectStageComplete, detectReturnToCoding, buildStageWrapper, ULTRA_STAGES } from "./ultra-stages.mjs"
 import { verifyStageObjective, OBJECTIVE_MET } from "./stage-objective.mjs"
+import { hasPromptHandler } from "../tool/question-prompt.mjs"
 import {
   isComplete,
   isLikelyActionableObjective,
@@ -1247,7 +1248,25 @@ async function runHybridPipeline({
   const shouldPromptGates = gatesConfig.prompt_user === "first_run" || gatesConfig.prompt_user === "always"
   if (shouldPromptGates && allowQuestion) {
     const hasPrefs = await hasGatePreferences()
-    if (!hasPrefs || gatesConfig.prompt_user === "always") {
+    const needsAsking = !hasPrefs || gatesConfig.prompt_user === "always"
+    // 问得出结果吗？没有 TUI handler 又没有 TTY，askQuestionInteractive 只会
+    // 返回空串 —— 那不是用户的选择，不能当成回答。必须现场判断，不能缓存：
+    // REPL 退出流程会把 handler 置空。
+    const canAskUser = hasPromptHandler() || Boolean(process.stdout.isTTY && process.stdin.isTTY)
+
+    if (needsAsking && !canAskUser) {
+      // 0.4.x 在这里照问不误：空回复被 parseGateSelection 解析成「全部关闭」，
+      // 再被 saveGatePreferences 永久写进用户级 gate-preferences.json，
+      // 此后该用户所有项目、所有 Ultra 会话的门禁统统失效且毫无提示。
+      await EventBus.emit({
+        type: EVENT_TYPES.LONGAGENT_ALERT,
+        sessionId,
+        payload: {
+          kind: "gate_prefs_skipped",
+          message: "非交互环境，跳过门禁偏好询问，沿用当前配置（不写入用户偏好）"
+        }
+      })
+    } else if (needsAsking) {
       const gateAssistantResult = await processTurnLoop({
         prompt: buildGatePromptText(),
         mode: "assistant", model, providerType, sessionId, configState,
@@ -1255,10 +1274,22 @@ async function runHybridPipeline({
       })
       accumulateUsage(gateAssistantResult)
       const gatePrefs = parseGateSelection(gateAssistantResult.reply)
-      await saveGatePreferences(gatePrefs)
-      for (const [gate, enabled] of Object.entries(gatePrefs)) {
-        if (configState.config.agent.longagent.usability_gates[gate]) {
-          configState.config.agent.longagent.usability_gates[gate].enabled = enabled
+      if (!gatePrefs) {
+        // 回复里一个门禁名都没有 —— 没问出结果，别乱写盘
+        await EventBus.emit({
+          type: EVENT_TYPES.LONGAGENT_ALERT,
+          sessionId,
+          payload: {
+            kind: "gate_prefs_unparsed",
+            message: `无法从回复中解析门禁选择，沿用当前配置：${String(gateAssistantResult.reply || "").slice(0, 80)}`
+          }
+        })
+      } else {
+        await saveGatePreferences(gatePrefs)
+        for (const [gate, enabled] of Object.entries(gatePrefs)) {
+          if (configState.config.agent.longagent.usability_gates[gate]) {
+            configState.config.agent.longagent.usability_gates[gate].enabled = enabled
+          }
         }
       }
     } else {

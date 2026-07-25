@@ -14,7 +14,7 @@ import { fsckSessionStore, getSession } from "./store.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { userRootDir } from "../storage/paths.mjs"
-import { isPassingGateStatus } from "./gate-contract.mjs"
+import { isPassingGateStatus, GATE_NAMES } from "./gate-contract.mjs"
 
 const DEFAULT_GATE_TIMEOUT_MS = 15 * 60 * 1000
 const GATE_PREFS_FILE = path.join(userRootDir(), "gate-preferences.json")
@@ -26,11 +26,29 @@ export function clearGateCache() {}
 // --- Gate preference persistence ---
 let cachedPrefs = null
 
+/**
+ * 「五个门禁全关」且没有 explicit 标记 —— 视为 0.4.x 的事故遗留。
+ *
+ * 那个版本在非交互环境下也会询问门禁偏好，askQuestionInteractive 返回空串，
+ * parseGateSelection 把空串解析成「全部关闭」，然后永久写进用户级的
+ * ~/.kkcode/gate-preferences.json。此后该用户**所有项目、所有 Ultra 会话**
+ * 的质量门禁全部失效，而且没有任何提示 —— 用户只会觉得 Ultra 变得很容易
+ * 「完成」。这里一次性自愈：忽略这份偏好并重新询问。
+ *
+ * 代价是：0.4.x 里真的手动选了 none 的用户会被多问一次。可以接受。
+ */
+function isAccidentalAllFalse(prefs) {
+  if (!prefs || typeof prefs !== "object" || prefs.explicit === true) return false
+  return GATE_NAMES.every((gate) => prefs[gate] === false)
+}
+
 async function loadGatePreferences() {
   if (cachedPrefs) return cachedPrefs
   try {
     const raw = await readFile(GATE_PREFS_FILE, "utf8")
-    cachedPrefs = JSON.parse(raw)
+    const parsed = JSON.parse(raw)
+    if (isAccidentalAllFalse(parsed)) return null
+    cachedPrefs = parsed
     return cachedPrefs
   } catch {
     return null
@@ -38,9 +56,12 @@ async function loadGatePreferences() {
 }
 
 export async function saveGatePreferences(prefs) {
-  cachedPrefs = prefs
+  // explicit 标记表示「这是用户真的做过的选择」，用来把它与上面那种
+  // 被空答案写坏的记录区分开。
+  const record = { ...prefs, explicit: true }
+  cachedPrefs = record
   await mkdir(path.dirname(GATE_PREFS_FILE), { recursive: true })
-  await writeFile(GATE_PREFS_FILE, JSON.stringify(prefs, null, 2), "utf8")
+  await writeFile(GATE_PREFS_FILE, JSON.stringify(record, null, 2), "utf8")
 }
 
 export async function hasGatePreferences() {
@@ -49,7 +70,10 @@ export async function hasGatePreferences() {
 }
 
 export async function getGatePreferences() {
-  return loadGatePreferences()
+  const prefs = await loadGatePreferences()
+  if (!prefs) return null
+  const { explicit: _explicit, ...gates } = prefs
+  return gates
 }
 
 export function buildGatePromptText() {
@@ -70,19 +94,29 @@ export function buildGatePromptText() {
   ].join("\n")
 }
 
+/**
+ * 解析门禁选择。
+ *
+ * @returns {Record<string, boolean>|null} 无法解析时返回 **null**，而不是
+ *   「全部关闭」。0.4.x 返回的是后者，于是空回复（非交互环境下的常态）
+ *   会被当成用户主动要求关掉所有门禁并永久落盘。调用方必须区分
+ *   「用户说不要」和「没问出结果」。
+ */
 export function parseGateSelection(answer) {
   const text = String(answer || "").toLowerCase().trim()
-  const gates = ["build", "test", "review", "health", "budget"]
+  if (!text) return null
   if (text === "all" || text === "全部" || text === "所有") {
-    return Object.fromEntries(gates.map(g => [g, true]))
+    return Object.fromEntries(GATE_NAMES.map(g => [g, true]))
   }
   if (text === "none" || text === "无" || text === "不需要" || text === "跳过") {
-    return Object.fromEntries(gates.map(g => [g, false]))
+    return Object.fromEntries(GATE_NAMES.map(g => [g, false]))
   }
   const selected = new Set(
     text.split(/[,，\s]+/).map(s => s.trim()).filter(Boolean)
   )
-  return Object.fromEntries(gates.map(g => [g, selected.has(g)]))
+  // 一个门禁名都没提到 —— 这不是「一个都不要」，而是压根没回答这个问题。
+  if (!GATE_NAMES.some(g => selected.has(g))) return null
+  return Object.fromEntries(GATE_NAMES.map(g => [g, selected.has(g)]))
 }
 
 function isEnabled(config, gateName) {

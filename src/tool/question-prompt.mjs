@@ -7,6 +7,18 @@ export function setQuestionPromptHandler(handler) {
   customPromptHandler = typeof handler === "function" ? handler : null
 }
 
+/**
+ * 当前是否有 TUI 注册的提问处理器。
+ *
+ * 必须在**要提问的那一刻**调用，不能在启动时缓存结果 —— REPL 在退出流程里
+ * 会 setQuestionPromptHandler(null)，缓存下来的判断会恰好在最需要它的时候
+ * 是错的。调用方据此判断「现在问得出结果吗」，问不出就必须显式收口，
+ * 不能把空答案当成用户的选择。
+ */
+export function hasPromptHandler() {
+  return customPromptHandler !== null
+}
+
 export async function askQuestionInteractive({ questions }) {
   if (!Array.isArray(questions) || questions.length === 0) {
     return {}
