@@ -11,6 +11,25 @@ import { buildBlockedReport, renderBlockedReportText } from "../session/blocked-
  * Ultra 会话管理。0.4.0 起主命令是 `kkcode ultra`，`kkcode longagent`
  * 作为别名保留到 0.5.0。
  */
+
+/**
+ * 无头 CLI 也要应用工作区信任 —— 0.4.x 只有 REPL 启动时做这件事，
+ * `ultra start` / `resume` 从不检查：项目里写好的 trust.json 完全被忽略，
+ * 未受信任的限制让所有文件工具拒绝工作，而模型只能一遍遍报告
+ * 「workspace not trusted」。--trust 显式授信（等价 REPL 里的 /trust）。
+ */
+async function applyCliTrust(configState, { trust = false } = {}) {
+  const { checkWorkspaceTrust } = await import("../permission/workspace-trust.mjs")
+  const { applyWorkspaceTrustPolicy } = await import("../context.mjs")
+  const trustState = await checkWorkspaceTrust({
+    cwd: process.cwd(),
+    cliTrust: Boolean(trust),
+    isTTY: process.stdin.isTTY
+  })
+  applyWorkspaceTrustPolicy(configState, trustState, process.cwd())
+  return trustState
+}
+
 export function createLongagentCommand({ name = "ultra" } = {}) {
   const cmd = new Command(name)
     .alias(name === "ultra" ? "longagent" : "ultra")
@@ -162,6 +181,7 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
     .requiredOption("--session <id>", "session id")
     .option("--guidance <text>", "steer the next round (injected as top-priority context)")
     .option("--clear-only", "only clear the stop flag without re-running (0.4.x behaviour)")
+    .option("--trust", "trust this workspace (equivalent to /trust in the REPL)")
     .action(async (options) => {
       const cleared = await LongAgentManager.clearStop(options.session)
       if (!cleared) {
@@ -184,6 +204,13 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
         return
       }
       const configState = await loadConfig()
+      const trustState = await applyCliTrust(configState, { trust: options.trust })
+      if (!trustState.trusted) {
+        console.error("workspace is not trusted — file tools will refuse to work.")
+        console.error("re-run with --trust, or run /trust once in the REPL here.")
+        process.exitCode = 1
+        return
+      }
       const providerKey = configState.config.provider.default
       const providerConf = configState.config.provider[providerKey] || {}
       const model = providerConf.default_model
@@ -317,8 +344,16 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
     .option("--model <model>", "override model")
     .option("--provider <type>", "override provider type")
     .option("--max-iterations <n>", "max iterations (0=unlimited)", "0")
+    .option("--trust", "trust this workspace (equivalent to /trust in the REPL)")
     .action(async (prompt, options) => {
       const configState = await loadConfig()
+      const trustState = await applyCliTrust(configState, { trust: options.trust })
+      if (!trustState.trusted) {
+        console.error("workspace is not trusted — file tools will refuse to work.")
+        console.error("re-run with --trust, or run /trust once in the REPL here.")
+        process.exitCode = 1
+        return
+      }
       const providerKey = options.provider || configState.config.provider.default
       const providerConf = configState.config.provider[providerKey] || {}
       const model = options.model || providerConf.default_model
