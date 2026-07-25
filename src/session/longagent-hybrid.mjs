@@ -323,6 +323,9 @@ async function runHybridPipeline({
   // 本轮内的处置记录（进台账）与控制标志
   let roundDispositions = [], roundReplanRequest = "", roundAborted = false
   const deferredStageIds = new Set()
+  // 已达成子目标拥有的 stage：下一轮整段跳过（多目标分解的效率收益所在，
+  // 也顺带消除了这些 stage 被重新脚手架的任何可能）
+  let metSubGoalStageIds = new Set()
   let taskProgress = {}, fileChanges = []
   let completionMarkerSeen = false
   let gitBranch = null, gitBaseBranch = null, gitActive = false
@@ -787,6 +790,8 @@ async function runHybridPipeline({
       ? [...goalVerification.results, ...goalVerification.subGoals.flatMap(sg => sg.results)]
           .filter(r => r.status !== "pass")
       : []
+    const subGoalLines = (goalVerification?.subGoals || []).map(sg =>
+      `- [${sg.status === "met" ? "✓已达成，不要重做" : sg.status}] ${sg.title}（stage: ${(sg.stageIds || []).join(",") || "?"}）`)
     const doneFiles = [...new Set(fileChanges.map(f => f.path))]
     const replanModel = getModelForStage("blueprint")
     const revisePrompt = [
@@ -794,6 +799,9 @@ async function runHybridPipeline({
       "",
       "## 已冻结的验收判据（只能新增，不能删除）",
       ...(goal?.criteria || []).map(c => `- [${c.id}][${c.kind}] ${c.text}`),
+      "",
+      subGoalLines.length ? "## 子目标状态" : "",
+      ...subGoalLines,
       "",
       failing.length ? "## 尚未达成的判据" : "",
       ...failing.map(r => `- [${r.id}] ${r.text} — ${r.reason}`),
@@ -948,8 +956,12 @@ async function runHybridPipeline({
     stageIndex = 0
     const codingPhaseStart = Date.now()
 
-    // DEFER 需要「挪到本轮末尾」的能力 —— 遍历本地执行序，不动 stagePlan
-    const executionOrder = [...stagePlan.stages]
+    // DEFER 需要「挪到本轮末尾」的能力 —— 遍历本地执行序，不动 stagePlan。
+    // 轮次作用域：round > 1 时，已达成子目标的 stage 整段跳过 —— 重跑它们
+    // 只是白费模型往返，重规划的作用域也因此天然收窄到未达成的部分。
+    const executionOrder = [...stagePlan.stages].filter(
+      (s) => !(round > 1 && metSubGoalStageIds.has(s.stageId))
+    )
 
     /** 记失败并跳过：一个 stage 卡死不再没收其余无关工作（0.4.x 是 break 一切）。 */
     function markStageSkipped(stage, reason) {
@@ -1743,6 +1755,12 @@ async function runHybridPipeline({
       usage: { input: aggregateUsage.input, output: aggregateUsage.output },
       verdict: `stages ${stats0.done}/${stats0.total}`
     }).catch(() => {})
+  }
+
+  if (goalVerification?.subGoals?.length) {
+    metSubGoalStageIds = new Set(
+      goalVerification.subGoals.filter((sg) => sg.status === "met").flatMap((sg) => sg.stageIds || [])
+    )
   }
 
   return { snapshot, progress }

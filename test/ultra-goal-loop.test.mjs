@@ -187,6 +187,82 @@ test("barrier 抛错（依赖环）不穿透：重规划兜住，监听器归零
   assert.equal(record.status, "completed")
 })
 
+test("多目标：已达成子目标的 stage 下一轮整段跳过", async () => {
+  // 子目标 A 首轮达成；子目标 B 首轮失败需换路线。第二轮必须只跑 B 的
+  // stage —— A 的任务不得被重新派发（那是白费往返，也是重新脚手架的风险面）。
+  const PLAN_TREE = {
+    planId: "pt", objective: "two deliverables",
+    goal: {
+      objective: "two deliverables", intent: "code",
+      subGoals: [
+        { title: "part A", criteria: [{ kind: "file_exists", text: "A 在", spec: { path: "src/partA.mjs" } }], stageIds: ["stage_a"] },
+        { title: "part B", criteria: [{ kind: "content_match", text: "B 用 MODE_RIGHT", spec: { path: "src/partB.mjs", pattern: "MODE_RIGHT" } }], stageIds: ["stage_b"] }
+      ]
+    },
+    stages: [
+      { stageId: "stage_a", name: "A", tasks: [{ taskId: "t_a", prompt: "write TOKEN_PART_A file", plannedFiles: ["src/partA.mjs"], acceptance: ["src/partA.mjs"] }] },
+      { stageId: "stage_b", name: "B", tasks: [{ taskId: "t_b", prompt: "write part B the MODE_WRONG way", plannedFiles: ["src/partB.mjs"], acceptance: ["src/partB.mjs"] }] }
+    ]
+  }
+  const PLAN_B_FIXED = {
+    planId: "pb", objective: "two deliverables",
+    stages: [
+      { stageId: "stage_b2", name: "B fixed", tasks: [{ taskId: "t_b2", prompt: "write part B the MODE_RIGHT way", plannedFiles: ["src/partB.mjs"], acceptance: ["src/partB.mjs"] }] }
+    ]
+  }
+
+  const dispatched = []
+  const unsubscribe = EventBus.subscribe((e) => {
+    if (e.type === "longagent.stage.task.dispatched" && e.sessionId === "gl_subgoal") {
+      dispatched.push(e.payload?.taskId || e.payload?.logicalTaskId || "?")
+    }
+  })
+
+  const result = await withMocks({
+    providerRules: [
+      { match: /重规划原因/, reply: stagePlanFence(PLAN_B_FIXED) },
+      { stage: 1, reply: "Findings: ok." },
+      { stage: 2, reply: stagePlanFence(PLAN_TREE) },
+      { stage: 4, reply: "checks pass\n[STAGE 4/4: DEBUGGING - COMPLETE]\n[TASK_COMPLETE]" }
+    ],
+    behavior: async (payload) => {
+      // 同一个坑的又一变体：payload.prompt 是组合提示词，计划锚点里带着目标
+      // 语句 "deliver part A and part B" —— 用自然语言 /part A/ 判定会把 B 的
+      // 修复任务也误判成 A。开关只能用目标语句里不存在的标记。
+      const prompt = payload?.prompt || ""
+      if (/TOKEN_PART_A/.test(prompt)) {
+        const target = path.resolve(process.cwd(), "src/partA.mjs")
+        await mkdir(path.dirname(target), { recursive: true })
+        await writeFile(target, "export const a = true\n", "utf8")
+        return null
+      }
+      const mode = /MODE_RIGHT/.test(prompt) ? "MODE_RIGHT" : "MODE_WRONG"
+      const target = path.resolve(process.cwd(), "src/partB.mjs")
+      await mkdir(path.dirname(target), { recursive: true })
+      await writeFile(target, `export const mode = "${mode}"\n`, "utf8")
+      return null
+    }
+  }, () => runHybridLongAgent({
+    prompt: "deliver part A and part B",
+    model: "mock-model", providerType: "mock_goalloop",
+    sessionId: "gl_subgoal", configState: ultraConfig({ providerName: "mock_goalloop" })
+  }))
+  unsubscribe()
+
+  assert.equal(result.status, "completed")
+  assert.equal(result.goalVerification.subGoals.length, 2)
+  assert.ok(result.goalVerification.subGoals.every((sg) => sg.status === "met"))
+
+  // stage_a 的任务只在第一轮派发过一次 —— 第二轮的作用域收窄到了未达成的 B
+  const aDispatches = dispatched.filter((id) => id === "t_a").length
+  assert.equal(aDispatches, 1, `t_a 被派发了 ${aDispatches} 次，已达成子目标的 stage 不该重跑`)
+
+  const ledger = await loadLedger("gl_subgoal", tmpProject)
+  const round1Subs = ledger.data.rounds[0].subGoals
+  assert.equal(round1Subs.find((sg) => sg.title === "part A").status, "met")
+  assert.equal(round1Subs.find((sg) => sg.title === "part B").status, "unmet")
+})
+
 test("用户指引进入下一轮的上下文", async () => {
   // 第一轮判据失败 → 停滞路径受阻询问 → 注入的交互给出指引 → 指引出现在
   // 重规划 prompt → 第二轮按指引完成
