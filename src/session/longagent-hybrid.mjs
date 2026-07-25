@@ -304,6 +304,30 @@ export async function runHybridLongAgent({
     })
   }
 
+  /**
+   * 尝试降级一档，并在**真的降了级时**才通知用户。
+   *
+   * 0.4.x 的四个降级点各自内联了同一段代码，并且无条件 emit
+   * LONGAGENT_DEGRADATION_APPLIED —— 不看 apply() 的返回值。默认配置下
+   * 没有任何一档能生效，用户看到的那行「switch_model applied in H4」是假的。
+   *
+   * @returns {{applied: boolean, strategy: string|null, level?: number,
+   *            skipped: string[], exhausted?: boolean, disabled?: boolean}}
+   */
+  async function tryDegrade({ phase, reason = "" }) {
+    const ctx = { model, taskProgress, configState, shouldStop: false }
+    const deg = degradationChain.apply(ctx)
+    if (ctx.model !== model) model = ctx.model
+    if (deg.applied) {
+      await EventBus.emit({
+        type: EVENT_TYPES.LONGAGENT_DEGRADATION_APPLIED,
+        sessionId,
+        payload: { strategy: deg.strategy, level: deg.level, phase, reason, skipped: deg.skipped }
+      })
+    }
+    return deg
+  }
+
   // Phase 2: 事件驱动 stop 检测 — 用内存标志替代磁盘轮询
   let stopFlag = false
   const unsubscribeStop = EventBus.subscribe((evt) => {
@@ -678,15 +702,10 @@ export async function runHybridLongAgent({
       // Phase 2: 阶段超时检测
       if (Date.now() - codingPhaseStart > codingPhaseTimeoutMs) {
         await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_PHASE_TIMEOUT, sessionId, payload: { phase: "H4", elapsed: Date.now() - codingPhaseStart } })
-        if (degradationChain.canDegrade()) {
-          const degCtx = { model, taskProgress, configState, shouldStop: false }
-          const deg = degradationChain.apply(degCtx)
-          if (degCtx.model !== model) model = degCtx.model
-          await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_DEGRADATION_APPLIED, sessionId, payload: { strategy: deg.strategy, phase: "H4" } })
-          if (deg.applied && deg.strategy === "graceful_stop") break
-        } else {
-          break
-        }
+        // 降不动了就停。0.4.x 在 apply() 返回 !applied 时既不 break 也不降级，
+        // 于是每次迭代都重新 emit 一遍超时事件，刷屏且永不收敛。
+        const deg = await tryDegrade({ phase: "H4", reason: "phase_timeout" })
+        if (!deg.applied || deg.strategy === "graceful_stop") break
       }
 
       iteration++
@@ -824,16 +843,8 @@ export async function runHybridLongAgent({
         }
         if (totalTokens > budgetLimit) {
           // Phase 6: 尝试降级而非直接 break
-          if (degradationChain.canDegrade()) {
-            const degCtx2 = { model, taskProgress, configState, shouldStop: false }
-            const deg = degradationChain.apply(degCtx2)
-            if (degCtx2.model !== model) model = degCtx2.model
-            await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_DEGRADATION_APPLIED, sessionId, payload: { strategy: deg.strategy, phase: "H4", reason: "budget_exceeded" } })
-            if (deg.applied && deg.strategy === "graceful_stop") {
-              await syncState({ status: "budget_exceeded", lastMessage: `H4: budget exceeded, graceful stop` })
-              break
-            }
-          } else {
+          const deg = await tryDegrade({ phase: "H4", reason: "budget_exceeded" })
+          if (!deg.applied || deg.strategy === "graceful_stop") {
             await syncState({ status: "budget_exceeded", lastMessage: `H4: budget exceeded (${totalTokens}/${budgetLimit})` })
             break
           }
@@ -874,29 +885,26 @@ export async function runHybridLongAgent({
         const maxStageRecoveries = Number(longagentConfig.max_stage_recoveries ?? 3)
         if (recoveryCount >= maxStageRecoveries) {
           // Phase 6: 尝试降级而非直接 abort
-          if (degradationChain.canDegrade()) {
-            const degCtx3 = { model, taskProgress, configState, shouldStop: false }
-            const deg = degradationChain.apply(degCtx3)
-            if (degCtx3.model !== model) model = degCtx3.model
-            await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_DEGRADATION_APPLIED, sessionId, payload: { strategy: deg.strategy, phase: "H4", reason: "max_recoveries" } })
-            if (deg.applied && deg.strategy === "graceful_stop") {
-              await syncState({ status: "error", lastMessage: `stage ${stage.stageId} aborted after degradation` })
-              break
-            }
-            // 降级成功但非 graceful_stop，重置 recoveryCount 继续。
-            // 但要记总账：不然每次降级都清零计数，同一个 stage 可以一直
-            // 重跑到阶段超时为止。
-            stageAttempts += recoveryCount
-            recoveryCount = 0
-            if (stageAttempts >= maxStageAttempts) {
-              await syncState({
-                status: "error",
-                lastMessage: `stage ${stage.stageId} aborted after ${stageAttempts} total attempts`
-              })
-              break
-            }
-          } else {
-            await syncState({ status: "error", lastMessage: `stage ${stage.stageId} aborted after ${recoveryCount} recoveries` })
+          const deg = await tryDegrade({ phase: "H4", reason: "max_recoveries" })
+          if (!deg.applied || deg.strategy === "graceful_stop") {
+            await syncState({
+              status: "error",
+              lastMessage: deg.applied
+                ? `stage ${stage.stageId} aborted after degradation`
+                : `stage ${stage.stageId} aborted after ${recoveryCount} recoveries`
+            })
+            break
+          }
+          // 降级成功但非 graceful_stop，重置 recoveryCount 继续。
+          // 但要记总账：不然每次降级都清零计数，同一个 stage 可以一直
+          // 重跑到阶段超时为止。
+          stageAttempts += recoveryCount
+          recoveryCount = 0
+          if (stageAttempts >= maxStageAttempts) {
+            await syncState({
+              status: "error",
+              lastMessage: `stage ${stage.stageId} aborted after ${stageAttempts} total attempts`
+            })
             break
           }
         }
@@ -991,15 +999,8 @@ export async function runHybridLongAgent({
       // Phase 2: debugging 阶段超时检测
       if (Date.now() - debugPhaseStart > debuggingPhaseTimeoutMs) {
         await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_PHASE_TIMEOUT, sessionId, payload: { phase: "H5", elapsed: Date.now() - debugPhaseStart } })
-        if (degradationChain.canDegrade()) {
-          const degCtx4 = { model, taskProgress, configState, shouldStop: false }
-          const deg = degradationChain.apply(degCtx4)
-          if (degCtx4.model !== model) model = degCtx4.model
-          await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_DEGRADATION_APPLIED, sessionId, payload: { strategy: deg.strategy, phase: "H5" } })
-          if (deg.applied && deg.strategy === "graceful_stop") break
-        } else {
-          break
-        }
+        const deg = await tryDegrade({ phase: "H5", reason: "phase_timeout" })
+        if (!deg.applied || deg.strategy === "graceful_stop") break
       }
 
       const effectiveDebugPrompt = debugRecoveryHint ? `${debugRecoveryHint}\n\n${debugPrompt}` : debugPrompt

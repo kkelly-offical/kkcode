@@ -400,18 +400,35 @@ export function createDegradationChain(config = {}) {
     }
   ]
 
+  // `degradation.enabled` 在 0.4.x 从未被读取 —— 配成 false 也关不掉任何东西。
+  const enabled = config.enabled !== false
   let currentLevel = 0
 
   return {
-    canDegrade() { return currentLevel < strategies.length },
+    get enabled() { return enabled },
+    canDegrade() { return enabled && currentLevel < strategies.length },
     currentStrategy() { return strategies[currentLevel] || null },
     nextStrategy() { return strategies[currentLevel] || null },
+    /**
+     * 降一档。**级别无条件前进**，本次调用内跳过不适用的策略。
+     *
+     * 0.4.x 只在 applied 为真时 currentLevel++，而默认 fallback_model 是 null，
+     * switch_model 恒返回 false —— 于是级别永远停在 0，canDegrade() 恒为真，
+     * reduce_scope / serial_mode / graceful_stop 三档永不可达，四处依赖
+     * graceful_stop 的 break 全部失效，降级链整体等于没有。
+     */
     apply(ctx) {
-      if (currentLevel >= strategies.length) return { applied: false, strategy: null }
-      const strategy = strategies[currentLevel]
-      const applied = strategy.apply(ctx)
-      if (applied) currentLevel++
-      return { applied, strategy: strategy.name }
+      if (!enabled) return { applied: false, strategy: null, skipped: [], disabled: true }
+      const skipped = []
+      while (currentLevel < strategies.length) {
+        const strategy = strategies[currentLevel]
+        currentLevel++
+        if (strategy.apply(ctx)) {
+          return { applied: true, strategy: strategy.name, level: currentLevel, skipped }
+        }
+        skipped.push(strategy.name)
+      }
+      return { applied: false, strategy: null, skipped, exhausted: true }
     },
     get level() { return currentLevel }
   }

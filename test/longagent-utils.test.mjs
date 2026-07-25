@@ -337,11 +337,16 @@ describe("createDegradationChain", () => {
 
     assert.equal(chain.canDegrade(), false)
   })
-  it("skips switch_model when already on fallback", () => {
+  it("falls through to the next strategy when switch_model is unavailable", () => {
+    // 0.4.x 在这里返回 applied:false 且级别不前进，于是 canDegrade() 恒为真、
+    // 调用方原地打转。现在「不可用」只意味着被跳过，链条继续往下找能用的那档。
     const chain = createDegradationChain({ fallback_model: "same" })
     const ctx = { model: "same" }
     const r = chain.apply(ctx)
-    assert.equal(r.applied, false)
+    assert.equal(r.applied, true)
+    assert.equal(r.strategy, "graceful_stop")
+    assert.ok(r.skipped.includes("switch_model"))
+    assert.equal(ctx.model, "same", "模型不该被改动")
   })
 })
 
