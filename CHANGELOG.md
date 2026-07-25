@@ -1,5 +1,31 @@
 # Changelog / 更新日志
 
+## 0.5.1
+
+### English
+
+- Fix the provider wizard ignoring an inline `api_key` (issue #3). Model-catalog
+  discovery only checked the preset's environment variable and failed with
+  "environment variable not set" even when the user had already put `api_key`
+  directly in `~/.kkcode/config.yaml`. The wizard now sees the existing provider
+  config: an inline key is used for discovery (with a notice), and the error
+  message — shown only when neither source exists — names both ways out.
+- Fix the wizard's save step wiping fields it never touched. Saving replaced the
+  whole provider entry, so re-running the wizard for an existing provider erased
+  the stored `api_key`, timeout tuning and models list. Entries are now merged
+  per field: what the wizard set wins, everything else survives.
+
+### 中文
+
+- 修复 provider 向导无视内联 `api_key`（issue #3）。模型目录发现只查预设的
+  环境变量，用户明明已在 `~/.kkcode/config.yaml` 里直接写了 `api_key`，向导
+  仍报「环境变量未设置」。现在向导能看到现有配置：内联密钥直接用于发现
+  （并有提示），两个来源都没有时错误信息会把两条出路都说清楚。
+- 修复向导保存时抹掉没动过的字段。写回原先是整条目替换 —— 对已有 provider
+  重跑向导会把存好的 `api_key`、超时调优、models 列表全部清掉。现在逐字段
+  合并：向导设置的生效，其余原样保留。
+
+
 ## 0.5.0
 
 Ultra becomes goal-driven: it keeps working while it makes progress, and

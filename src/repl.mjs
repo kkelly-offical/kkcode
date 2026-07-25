@@ -515,7 +515,10 @@ async function processInputLine({
 
   // --- 向导模式：拦截所有输入 ---
   if (wizard?.active) {
-    const result = await handleWizardInput(wizard, line, print)
+    const result = await handleWizardInput(wizard, line, print, {
+      // Issue #3：向导需要看到现有配置才能识别内联 api_key
+      existingProviders: ctx.configState.config.provider || {}
+    })
     if (result.done && setWizard) setWizard({ ...wizard })
     // 热更新内存中的 config
     if (result.configPatch?.provider) {

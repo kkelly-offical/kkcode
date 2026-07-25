@@ -312,7 +312,12 @@ async function _stepProtocol(wiz, val, print, discover, options) {
   // 将选中的协议信息写入 preset（覆盖 type / base_url）
   wiz.preset = { ...wiz.preset, type: chosen.type, base_url: chosen.base_url }
   wiz.apiKeyEnv = wiz.preset.key_env
-  print(`\n  凭据将从环境变量 ${wiz.apiKeyEnv} 读取，不会写入配置。`)
+  const existingKey = options?.existingProviders?.[wiz.customName || wiz.vendorKey]?.api_key
+  if (existingKey) {
+    print(`\n  检测到配置中已有该 provider 的 api_key，将直接使用（环境变量 ${wiz.apiKeyEnv} 可选）。`)
+  } else {
+    print(`\n  凭据将从环境变量 ${wiz.apiKeyEnv} 读取，不会写入配置。`)
+  }
   await _discoverWizardModels(wiz, print, discover, options)
   return { done: false }
 }
@@ -347,7 +352,12 @@ async function _stepVendor(wiz, val, print, discover, options) {
       print("\n  此 Provider 不支持 /models 动态目录，请手动输入模型 ID：")
     } else {
       wiz.apiKeyEnv = wiz.preset.key_env
-      print(`\n  凭据将从环境变量 ${wiz.apiKeyEnv} 读取，不会写入配置。`)
+      const existingKey2 = options?.existingProviders?.[wiz.customName || wiz.vendorKey]?.api_key
+      if (existingKey2) {
+        print(`\n  检测到配置中已有该 provider 的 api_key，将直接使用（环境变量 ${wiz.apiKeyEnv} 可选）。`)
+      } else {
+        print(`\n  凭据将从环境变量 ${wiz.apiKeyEnv} 读取，不会写入配置。`)
+      }
       await _discoverWizardModels(wiz, print, discover, options)
     }
   } else if (idx === total) {
@@ -500,10 +510,16 @@ async function _discoverWizardModels(wiz, print, discover, options = {}) {
   wiz.modelCatalogSource = null
   wiz.discoveryError = null
   const { name, entry } = _wizardProviderDraft(wiz)
-  if (entry.api_key_env && !process.env[entry.api_key_env]) {
+  // Issue #3：用户已在 config.yaml 里写了内联 api_key 时，向导只查环境变量
+  // 会误报「环境变量未设置」。内联密钥优先 —— 带进发现请求的临时配置里。
+  const existingEntry = options.existingProviders?.[name]
+  if (!entry.api_key && existingEntry?.api_key) {
+    entry.api_key = existingEntry.api_key
+  }
+  if (!entry.api_key && entry.api_key_env && !process.env[entry.api_key_env]) {
     wiz.step = "model"
-    wiz.discoveryError = `环境变量 ${entry.api_key_env} 未设置`
-    print(`\n  无法读取模型目录：${wiz.discoveryError}。\n  请先设置凭据后重试，或在此手动输入模型 ID：`)
+    wiz.discoveryError = `环境变量 ${entry.api_key_env} 未设置，且配置中没有 api_key`
+    print(`\n  无法读取模型目录：${wiz.discoveryError}。\n  请设置环境变量、或在 ~/.kkcode/config.yaml 的该 provider 下写入 api_key 后重试；也可在此直接手动输入模型 ID：`)
     return
   }
   try {
@@ -763,8 +779,15 @@ async function _saveProviderConfig(newCfg, setDefault = true) {
   }
 
   if (!existing.provider) existing.provider = {}
-  // 合并 provider 配置，保留已有的其他 provider
-  Object.assign(existing.provider, newCfg.provider)
+  // 逐 provider 深合并：向导设置的字段生效，**没动的字段原样保留** ——
+  // 0.5.0 之前这里是整条目替换，对已有 provider 重跑向导会把配置里的
+  // 内联 api_key、timeout、models 列表等全部抹掉（issue #3 的姊妹问题）。
+  for (const [key, value] of Object.entries(newCfg.provider)) {
+    if (key === "default") continue
+    existing.provider[key] = value && typeof value === "object"
+      ? { ...(existing.provider[key] || {}), ...value }
+      : value
+  }
   if (setDefault && newCfg.provider.default) {
     existing.provider.default = newCfg.provider.default
   }
