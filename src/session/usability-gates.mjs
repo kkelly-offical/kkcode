@@ -14,6 +14,7 @@ import { fsckSessionStore, getSession } from "./store.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { userRootDir } from "../storage/paths.mjs"
+import { isPassingGateStatus } from "./gate-contract.mjs"
 
 const DEFAULT_GATE_TIMEOUT_MS = 15 * 60 * 1000
 const GATE_PREFS_FILE = path.join(userRootDir(), "gate-preferences.json")
@@ -420,9 +421,8 @@ async function checkBudgetGate({ config, sessionId }) {
   return { enabled: true, status: "pass", reason: "budget gate passed" }
 }
 
-function isPassingStatus(status) {
-  return status === "pass" || status === "not_applicable"
-}
+// 「通过」的定义与 gate-contract.mjs 共用一份，避免消费方与生产方各判各的。
+const isPassingStatus = isPassingGateStatus
 
 export async function runUsabilityGates({
   sessionId,

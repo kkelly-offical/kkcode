@@ -1,16 +1,30 @@
 import { stat } from "node:fs/promises"
 import path from "node:path"
+import { readGate, isDecisiveGate, isPassingGateStatus } from "./gate-contract.mjs"
 
 /**
  * Stage 目标达成核验。
  *
- * 0.4.1 之前，一个 stage 是否算完成完全取决于 worker 有没有在回复里吐出
- * `[TASK_COMPLETE]` 标记。标记没吐出来，stage 就 !allSuccess，H4 循环
- * `continue` 重跑同一个 stage —— 哪怕文件早就写好、测试早就通过了。
- * 加上降级链会把 recoveryCount 重置为 0，重跑可以持续到阶段超时为止。
+ * H4 判定一个 stage 成功与否看的是 allSuccess，而 allSuccess 的真实判据是
+ * 「该 stage 每个 task 声明的 plannedFiles 都被 write 或 edit 工具动过」
+ * （stage-scheduler.mjs 的 allSuccess 计算 + background-worker.mjs 的
+ * remainingFiles 推导）—— 与 `[TASK_COMPLETE]` 标记无关，那个标记只影响
+ * 最终 status 是 completed 还是 done。
  *
- * 这里补上客观判据：不问 worker 说了什么，只看目标有没有真的达成。
+ * 问题在于这个判据看的是「工具调用有没有覆盖到声明的文件」，不是「东西有
+ * 没有真的做出来」。worker 换了个文件名、或把内容并进了别的文件，
+ * remainingFiles 就清不空，stage 判失败，H4 重跑同一个 stage —— 哪怕文件
+ * 早就写好、测试早就通过。加上降级链会把 recoveryCount 重置为 0，重跑可以
+ * 持续到阶段超时为止。
+ *
+ * 这里补上客观判据：不问工具调用覆盖了什么，只看目标有没有真的达成 ——
  * 声明的 plannedFiles 全部落地，且 build / test 门禁通过，就认定完成。
+ *
+ * ⚠ 0.4.2 引入这套判据时门禁结果的读取字段写错了（读 `gates.results.build`，
+ * 而实际在 `gates.gates.build`），取到 undefined 后空对象既算「门禁生效」
+ * 又算「判定失败」，于是文件齐备时必然返回 unmet，OBJECTIVE_MET 生产不可达，
+ * 而单测因为 mock 了那个不存在的形状全绿。0.5.0 起门禁一律经
+ * gate-contract.mjs 的 readGate() 读取 —— 形状不对会抛，不会静默取空。
  */
 
 export const OBJECTIVE_MET = "met"
@@ -84,13 +98,27 @@ export async function verifyStageObjective({
     return { status: OBJECTIVE_UNKNOWN, reason: "gate run failed", missing: [], gates: null }
   }
 
-  const build = gates.results?.build || gates.build || {}
-  const test = gates.results?.test || gates.test || {}
-  const decisive = [build, test].filter((g) => g && g.enabled !== false && g.status !== "disabled")
+  let build, test
+  try {
+    build = readGate(gates, "build")
+    test = readGate(gates, "test")
+  } catch (err) {
+    // 门禁返回形状漂移。宁可报 unknown 也不能猜 —— 猜错的代价是把没做完的
+    // stage 判成完成，那比多跑一轮严重得多。
+    return {
+      status: OBJECTIVE_UNKNOWN,
+      reason: `gate contract drift: ${err.message}`,
+      missing: [],
+      gates,
+      contractError: err.message
+    }
+  }
+
+  const decisive = [build, test].filter(isDecisiveGate)
   if (!decisive.length) {
     return { status: OBJECTIVE_UNKNOWN, reason: "build and test gates are disabled", missing: [], gates }
   }
-  const failed = decisive.filter((g) => g.status !== "pass" && g.status !== "not_applicable")
+  const failed = decisive.filter((g) => !isPassingGateStatus(g.status))
   if (failed.length) {
     return {
       status: OBJECTIVE_UNMET,
