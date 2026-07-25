@@ -1,5 +1,31 @@
 # Changelog / 更新日志
 
+## 0.5.4
+
+Makes the CI verify matrix trustworthy again — and green on every platform.
+
+### English
+
+- Fix the stage-objective test stat helper matching paths with forward-slash
+  `endsWith` while Windows `path.resolve` produces backslashes. Seven subtests
+  had been failing on the verify matrix's Windows job since 0.4.2; separators
+  are now normalized before matching. Production code was never affected —
+  real filesystem paths stat correctly on every platform.
+- Process change: releases are now gated on the full verify matrix
+  (ubuntu 22/24, windows 22, macos 22) plus CodeQL being green on the release
+  commit — previous releases only watched the ubuntu-only release workflow,
+  which is how the red Windows job went unnoticed across four releases.
+
+### 中文
+
+- 修复 stage-objective 测试的 stat 替身用正斜杠 `endsWith` 匹配路径的问题 ——
+  Windows 的 `path.resolve` 产生反斜杠，导致 verify 矩阵的 Windows job 上
+  七个用例自 0.4.2 起持续失败；现比较前先归一化分隔符。生产代码从未受影响，
+  真实文件系统路径在各平台均正常。
+- 流程变更：发布现在以发布提交上完整 verify 矩阵（ubuntu 22/24、windows 22、
+  macos 22）加 CodeQL 全绿为门槛 —— 此前只盯 ubuntu 单 job 的 release 工作流，
+  红着的 Windows job 因此连续四个版本无人察觉。
+
 ## 0.5.3
 
 Settles the debts 0.5.0 left to itself: every config key it introduced now
