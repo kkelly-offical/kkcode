@@ -368,8 +368,23 @@ export function formatRecovery(reason, recoveryCount) {
   return `${paint(SYM.recovery, "yellow", { bold: true })} ${paint("recovery", "yellow", { bold: true })} #${recoveryCount} ${paint(reason || "", null, { dim: true })}`
 }
 
-export function formatAlert(kind, message) {
-  return `${paint(SYM.alert, "red", { bold: true })} ${paint("alert", "red", { bold: true })} [${kind}] ${paint(message || "", null, { dim: true })}`
+/**
+ * 告警行。
+ *
+ * payload 兜底不是可选的：0.4.x 有一半的 emit 点压根没有 message 字段
+ * （blueprint_parse_retry 用 errors、stuck_warning 用 reason、
+ * semantic_force_exit 用 error、budget_breaker 只有数字），而这里只读
+ * message —— 用户看到的是 `⚠ alert [stuck_warning]` 后面一片空白，
+ * 告警了但没说为什么。emit 端现已统一补上 message，这里的兜底留给
+ * 历史事件日志与外部来源的事件。
+ */
+export function formatAlert(kind, message, payload = {}) {
+  const detail = message ||
+    payload.reason ||
+    payload.error ||
+    (Array.isArray(payload.errors) ? payload.errors.join("; ") : "") ||
+    ""
+  return `${paint(SYM.alert, "red", { bold: true })} ${paint("alert", "red", { bold: true })} [${kind}] ${paint(clipText(detail, 160), null, { dim: true })}`
 }
 
 export function formatIntakeStarted(objective) {
@@ -478,6 +493,10 @@ export function formatHybridMemorySaved(techStackCount) {
 
 export function formatGitBranchCreated(branch, baseBranch) {
   return `  ${paint(SYM.dot, "green")} ${paint("git branch", "green")} ${paint(branch, "white", { bold: true })} ${paint(`← ${baseBranch}`, null, { dim: true })}`
+}
+
+export function formatTaskSkipped(taskId, reason) {
+  return `   ${paint(SYM.dot, "#666666")} ${paint("task", null, { dim: true })} ${paint(taskId || "", "yellow")} ${paint(`skipped (${reason || "unknown"})`, null, { dim: true })}`
 }
 
 export function formatGitStageCommitted(stageId, message) {
@@ -716,6 +735,12 @@ export function createActivityRenderer({ output, theme = null, eventFilter = nul
         log(formatTaskFinished(payload.taskId, payload.status))
         break
       }
+      // 这个事件一直有人发，却从来没有渲染分支 —— 被依赖失败连累而跳过的任务
+      // 在终端上完全不可见，用户只会觉得「这个任务凭空消失了」。
+      case EVENT_TYPES.LONGAGENT_STAGE_TASK_SKIPPED: {
+        log(formatTaskSkipped(payload.taskId, payload.reason))
+        break
+      }
 
       case EVENT_TYPES.LONGAGENT_HEARTBEAT: {
         log(formatHeartbeat(
@@ -740,7 +765,7 @@ export function createActivityRenderer({ output, theme = null, eventFilter = nul
       }
 
       case EVENT_TYPES.LONGAGENT_ALERT: {
-        log(formatAlert(payload.kind, payload.message))
+        log(formatAlert(payload.kind, payload.message, payload))
         break
       }
 
@@ -809,6 +834,16 @@ export function createActivityRenderer({ output, theme = null, eventFilter = nul
       }
       case EVENT_TYPES.LONGAGENT_HYBRID_CHECKPOINT_RESUMED: {
         log(formatHybridCheckpointResumed(payload.stageIndex, payload.iteration))
+        break
+      }
+      // 检查点被判定为无效时会静默丢弃并从头开始 —— 用户以为自己在续跑，
+      // 实际上前面的进度已经不作数了，这件事必须说出来。
+      case EVENT_TYPES.LONGAGENT_HYBRID_CHECKPOINT_INVALID: {
+        log(formatAlert("checkpoint_invalid", `检查点无效，将从头开始：${payload.reason || "unknown"}`, payload))
+        break
+      }
+      case EVENT_TYPES.LONGAGENT_STOP_REQUESTED: {
+        log(formatAlert("stop_requested", "已收到停止请求，将在下一个安全点结束", payload))
         break
       }
       case EVENT_TYPES.LONGAGENT_HYBRID_REPLAN: {

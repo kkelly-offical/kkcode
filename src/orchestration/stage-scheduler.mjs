@@ -673,7 +673,13 @@ export async function runStageBarrier({
         await EventBus.emit({
           type: EVENT_TYPES.LONGAGENT_ALERT,
           sessionId,
-          payload: { kind: "budget_breaker", spent, limit: cfg.budgetLimitUsd, stageId: stage.stageId }
+          payload: {
+            kind: "budget_breaker",
+            message: `stage ${stage.stageId} 触发预算熔断：已花费 $${Number(spent).toFixed(2)} / 上限 $${cfg.budgetLimitUsd}`,
+            spent,
+            limit: cfg.budgetLimitUsd,
+            stageId: stage.stageId
+          }
         })
         break
       }

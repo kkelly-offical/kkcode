@@ -310,7 +310,11 @@ async function injectDynamicContext(template, cwd, config) {
       result = result.replace(m[0], `[blocked: ${m[1]}]`)
       EventBus.emit({
         type: EVENT_TYPES.LONGAGENT_ALERT,
-        payload: { kind: "skill_command_blocked", command: m[1] }
+        payload: {
+          kind: "skill_command_blocked",
+          message: `技能里的命令未在允许列表中，已拦截：${m[1]}`,
+          command: m[1]
+        }
       }).catch(() => {})
       continue
     }
@@ -343,7 +347,12 @@ async function loadAuxFiles(skillDir) {
       if (!filePath.startsWith(resolvedSkillDir + path.sep) && filePath !== resolvedSkillDir) {
         EventBus.emit({
           type: EVENT_TYPES.LONGAGENT_ALERT,
-          payload: { kind: "skill_path_traversal", file: e.name, skillDir }
+          payload: {
+            kind: "skill_path_traversal",
+            message: `技能文件越出目录范围，已跳过：${e.name}（技能目录 ${skillDir}）`,
+            file: e.name,
+            skillDir
+          }
         }).catch(() => {})
         continue
       }
@@ -673,7 +682,12 @@ export const SkillRegistry = {
               prompt = prompt.replace(m[0], `[blocked: path traversal: ${m[1]}]`)
               EventBus.emit({
                 type: EVENT_TYPES.LONGAGENT_ALERT,
-                payload: { kind: "skill_path_traversal", file: m[1], skillDir: skill.skillDir }
+                payload: {
+                  kind: "skill_path_traversal",
+                  message: `技能引用的路径越出目录范围，已拦截：${m[1]}（技能目录 ${skill.skillDir}）`,
+                  file: m[1],
+                  skillDir: skill.skillDir
+                }
               }).catch(() => {})
               continue
             }

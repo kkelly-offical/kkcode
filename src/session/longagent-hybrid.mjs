@@ -545,7 +545,12 @@ async function runHybridPipeline({
     for (let retryIdx = 0; retryIdx < maxBlueprintRetries; retryIdx++) {
       await EventBus.emit({
         type: EVENT_TYPES.LONGAGENT_ALERT, sessionId,
-        payload: { kind: "blueprint_parse_retry", attempt: retryIdx + 1, errors: parseErrors }
+        payload: {
+          kind: "blueprint_parse_retry",
+          message: `第 ${retryIdx + 1} 次重解析 blueprint：${parseErrors.join("; ").slice(0, 200)}`,
+          attempt: retryIdx + 1,
+          errors: parseErrors
+        }
       })
       const repairPrompt = [
         "Your previous blueprint output could not be parsed into a valid stage plan.",
@@ -858,6 +863,12 @@ async function runHybridPipeline({
       if (gitActive && stageResult.allSuccess && gitConfig.auto_commit_stages !== false) {
         const msg = `[kkcode-hybrid] stage ${stage.stageId} completed (${stageIndex + 1}/${stagePlan.stages.length})`
         await git.commitAll(msg, cwd)
+        // LONGAGENT_GIT_STAGE_COMMITTED 的渲染分支一直都在，只是从来没有人发过。
+        await EventBus.emit({
+          type: EVENT_TYPES.LONGAGENT_GIT_STAGE_COMMITTED,
+          sessionId,
+          payload: { stageId: stage.stageId, message: msg }
+        })
       }
 
       // #10 增量门控：每个 stage 完成后运行轻量检查
@@ -942,6 +953,18 @@ async function runHybridPipeline({
 
         recoveryCount++
         const backoffMs = Math.min(1000 * 2 ** (recoveryCount - 1), 30000)
+        // 同上：渲染分支早就写好了，但没有任何地方发这个事件 —— 于是 stage
+        // 反复重跑时用户只看到长时间没有输出，不知道后台正在退避重试。
+        await EventBus.emit({
+          type: EVENT_TYPES.LONGAGENT_RECOVERY_ENTERED,
+          sessionId,
+          payload: {
+            recoveryCount,
+            reason: `stage ${stage.stageId} 失败 ${stageResult.failCount} 个任务，${Math.round(backoffMs / 1000)}s 后重试`,
+            stageId: stage.stageId,
+            backoffMs
+          }
+        })
         await new Promise(r => setTimeout(r, backoffMs))
         const maxStageRecoveries = Number(longagentConfig.max_stage_recoveries ?? 3)
         if (recoveryCount >= maxStageRecoveries) {
@@ -1081,7 +1104,13 @@ async function runHybridPipeline({
           stuckTracker.resetReadOnlyCount()
           await EventBus.emit({
             type: EVENT_TYPES.LONGAGENT_ALERT, sessionId,
-            payload: { kind: "stuck_warning", stage: "H5:debugging", reason: stuckResult.reason, debugIter }
+            payload: {
+              kind: "stuck_warning",
+              message: `H5 第 ${debugIter} 轮原地打转：${stuckResult.reason}`,
+              stage: "H5:debugging",
+              reason: stuckResult.reason,
+              debugIter
+            }
           })
           await syncState({ lastMessage: `H5: stuck detected (${stuckResult.reason}), iter ${debugIter}` })
           // Phase 2 改进: 注入恢复提示，引导 agent 换策略
@@ -1110,7 +1139,17 @@ async function runHybridPipeline({
         if (semResult.count >= maxSemanticRepeats) {
           debugDone = true
           gateStatus.debugging = { status: "force_exit", reason: "semantic_repeat_limit", error: (semResult.error || "").slice(0, 200), iterations: debugIter }
-          await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_ALERT, sessionId, payload: { kind: "semantic_force_exit", count: semResult.count, error: semResult.error, debugIter } })
+          await EventBus.emit({
+            type: EVENT_TYPES.LONGAGENT_ALERT,
+            sessionId,
+            payload: {
+              kind: "semantic_force_exit",
+              message: `同一个错误重复 ${semResult.count} 次，强制退出 H5：${String(semResult.error || "").slice(0, 120)}`,
+              count: semResult.count,
+              error: semResult.error,
+              debugIter
+            }
+          })
           await syncState({ lastMessage: `H5: force exit — same error repeated ${semResult.count} times` })
         }
       }
