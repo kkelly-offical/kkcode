@@ -77,6 +77,9 @@ export const DEFAULT_CONFIG = {
       no_progress_warning: 3,
       no_progress_limit: 5,
       max_stage_recoveries: 3,
+      // 同一 stage 的累计尝试硬上限；降级会清零 max_stage_recoveries，
+      // 这个总账不清零，防止无限重跑
+      max_stage_attempts: 12,
       heartbeat_timeout_ms: 120000,
       checkpoint_interval: 5,
       lock_timeout_ms: 5000,

@@ -408,6 +408,7 @@ details.
 - `skill`
 - `config`
 - `doctor`
+- `preflight`
 - `model`
 - `usage`
 - `review`
@@ -556,12 +557,12 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current stable version / 当前稳定版本**: `v0.4.1`
+**Current stable version / 当前稳定版本**: `v0.4.2`
 
-`v0.4.1` is the current stable npm and GitHub release. The `main` branch remains
+`v0.4.2` is the current stable npm and GitHub release. The `main` branch remains
 the development line for subsequent fixes.
 
-`v0.4.1` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
+`v0.4.2` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
 
 Use the Kimi Code preset without placing credentials in YAML:
 
@@ -581,6 +582,10 @@ with authorization values redacted.
 **Package / 包地址**: [npm](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 
 **English**
+- `0.4.2` restores the Ultra stage prompts (four agents had been running with no
+  role instructions because their prompt files were never resolved), stops
+  injecting the mode contract twice, and adds `kkcode preflight` for a fast
+  startup self-check.
 - `0.4.0` collapses the mode vocabulary into a five-mode `Shift+Tab` cycle
   (Plan / Agent / Agent · Auto / Ultra / YOLO), folds six permission levels into
   four, makes Always Allow persist across restarts, keeps one Ultra
@@ -600,6 +605,9 @@ with authorization values redacted.
 - `0.2.1` rebuilt kkcode around Assistant as the default general-purpose lane, with dedicated Agent and LongAgent modes for coding work.
 
 **中文**
+- `0.4.2` 恢复 Ultra 的阶段提示词（四个 agent 因提示词文件名未解析，一直在没有
+  角色指令的情况下运行），消除模式契约的重复注入，并新增 `kkcode preflight`
+  快速启动自检。
 - `0.4.0` 将模式词汇收敛为 `Shift+Tab` 五档循环（Plan / Agent / Agent · Auto /
   Ultra / YOLO），权限六级合并为四级，Always Allow 授权重启后依然有效，
   Ultra 只保留一套编排，新增 `models.fast` 通道与输入框 ghost text，

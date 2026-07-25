@@ -9,6 +9,7 @@ import { createAgentCommand } from "./commands/agent.mjs"
 import { createMcpCommand } from "./commands/mcp.mjs"
 import { createPermissionCommand } from "./commands/permission.mjs"
 import { createDoctorCommand } from "./commands/doctor.mjs"
+import { createPreflightCommand } from "./commands/preflight.mjs"
 import { createConfigCommand } from "./commands/config.mjs"
 import { createPromptCommand } from "./commands/prompt.mjs"
 import { createLongagentCommand } from "./commands/longagent.mjs"
@@ -68,6 +69,7 @@ async function main() {
   program.addCommand(createMcpCommand())
   program.addCommand(createPermissionCommand())
   program.addCommand(createDoctorCommand())
+  program.addCommand(createPreflightCommand())
   program.addCommand(createConfigCommand())
   program.addCommand(createSessionCommand())
   program.addCommand(createPromptCommand())

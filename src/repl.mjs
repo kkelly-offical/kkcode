@@ -1,5 +1,6 @@
 import { PACKAGE_VERSION } from "./version.mjs"
 import { maybeNotifyUpdateOnStartup } from "./update/checker.mjs"
+import { buildPreflightReport } from "./cli/preflight.mjs"
 import { stdin as input, stdout as output } from "node:process"
 import { createInterface } from "node:readline/promises"
 import { emitKeypressEvents } from "node:readline"
@@ -4521,7 +4522,11 @@ export async function startRepl({ trust = false } = {}) {
 
   const ctx = await buildContext({ trust, trustState })
   printContextWarnings(ctx)
+  // 不阻塞启动：命中本地缓存时会很快回填，preflight 读到什么就报什么
+  let startupUpdateResult = null
   void maybeNotifyUpdateOnStartup(ctx.configState.config, { currentVersion: PACKAGE_VERSION })
+    .then((result) => { startupUpdateResult = result })
+    .catch(() => {})
   const extensionPolicy = resolveExtensionPolicy(ctx.configState)
 
   splash.update("loading tools & MCP servers...")
@@ -4567,11 +4572,30 @@ export async function startRepl({ trust = false } = {}) {
   const providersConfigured = configuredProviders(ctx.configState.config, listProviders)
   const recentSessions = await listSessions({ cwd: process.cwd(), limit: 6, includeChildren: false }).catch(() => [])
 
+  // 启动自检：只看「现在能不能干活」的几项，重活留给 kkcode doctor
+  const preflight = buildPreflightReport({
+    configState: ctx.configState,
+    mcp: McpRegistry.healthSnapshot?.() || mcpHealth,
+    skills: { total: SkillRegistry.list?.().length || 0 },
+    update: startupUpdateResult
+  })
+
   splash.stop()
 
   PermissionEngine.setTrusted(ctx.trustState?.trusted !== false)
   if (!ctx.trustState?.trusted) {
     console.log(paint("  ⚠ workspace not trusted — tools are blocked. Run /trust to enable.", ctx.themeState.theme.semantic.warning))
+  }
+  // 只在有问题时打印，一切正常就不打扰。update 有自己的通知路径，不在这里重复。
+  const preflightProblems = preflight.problems.filter((p) => p.name !== "update")
+  if (preflightProblems.length) {
+    const tone = preflightProblems.some((p) => p.status === "fail")
+      ? ctx.themeState.theme.semantic.error || ctx.themeState.theme.semantic.warn
+      : ctx.themeState.theme.semantic.warn
+    console.log(paint("  preflight", tone, { bold: true }))
+    for (const problem of preflightProblems) {
+      console.log(paint(`    ${problem.status}  ${problem.name}: ${problem.detail}`, tone))
+    }
   }
 
   try {

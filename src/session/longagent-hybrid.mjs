@@ -24,6 +24,7 @@ import {
 import { runIntakeDialogue, validateAndNormalizeStagePlan, defaultStagePlan } from "./longagent-plan.mjs"
 import { createValidator } from "./task-validator.mjs"
 import { detectStageComplete, detectReturnToCoding, buildStageWrapper, ULTRA_STAGES } from "./ultra-stages.mjs"
+import { verifyStageObjective, OBJECTIVE_MET } from "./stage-objective.mjs"
 import {
   isComplete,
   isLikelyActionableObjective,
@@ -246,6 +247,9 @@ export async function runHybridLongAgent({
   }
 
   let iteration = 0, recoveryCount = 0, stageIndex = 0
+  // 同一 stage 的累计尝试次数。recoveryCount 会在每次降级后清零，
+  // 这个总账不清零，作为无限重跑的硬上限。
+  let stageAttempts = 0
   let currentPhase = "H0", currentGate = "init"
   let gateStatus = {}, lastGateFailures = []
   let lastProgress = { percentage: 0, currentStep: 0, totalSteps: 0 }
@@ -261,6 +265,7 @@ export async function runHybridLongAgent({
   const degradationChain = createDegradationChain(hybridConfig.degradation || {})
   // Phase 2: 阶段超时配置
   const codingPhaseTimeoutMs = Number(hybridConfig.coding_phase_timeout_ms || 1800000)
+  const maxStageAttempts = Number(longagentConfig.max_stage_attempts ?? 12)
   const debuggingPhaseTimeoutMs = Number(hybridConfig.debugging_phase_timeout_ms || 600000)
   // #4 TaskBus
   const taskBus = hybridConfig.task_bus !== false ? new TaskBus() : null
@@ -836,6 +841,33 @@ export async function runHybridLongAgent({
       }
 
       if (!stageResult.allSuccess) {
+        // 重跑之前先问一句「目标是不是其实已经达成了」。allSuccess 只反映
+        // worker 有没有吐出完成标记；文件早就写好、测试早就通过却因为缺个
+        // 标记而重跑整个 stage，是 H4 迟迟不收敛的主因。
+        const objective = await verifyStageObjective({
+          stage,
+          cwd: process.cwd(),
+          config: configState.config,
+          sessionId,
+          iteration,
+          deps: { runUsabilityGates }
+        })
+        if (objective.status === OBJECTIVE_MET) {
+          await EventBus.emit({
+            type: EVENT_TYPES.LONGAGENT_STAGE_FINISHED,
+            sessionId,
+            payload: { stageId: stage.stageId, via: "objective_verified", reason: objective.reason }
+          })
+          await syncState({
+            stageStatus: "pass",
+            lastMessage: `H4: ${stage.stageId} objective verified (${objective.reason})`
+          })
+          stageIndex++
+          recoveryCount = 0
+          stageAttempts = 0
+          continue
+        }
+
         recoveryCount++
         const backoffMs = Math.min(1000 * 2 ** (recoveryCount - 1), 30000)
         await new Promise(r => setTimeout(r, backoffMs))
@@ -851,8 +883,18 @@ export async function runHybridLongAgent({
               await syncState({ status: "error", lastMessage: `stage ${stage.stageId} aborted after degradation` })
               break
             }
-            // 降级成功但非 graceful_stop，重置 recoveryCount 继续
+            // 降级成功但非 graceful_stop，重置 recoveryCount 继续。
+            // 但要记总账：不然每次降级都清零计数，同一个 stage 可以一直
+            // 重跑到阶段超时为止。
+            stageAttempts += recoveryCount
             recoveryCount = 0
+            if (stageAttempts >= maxStageAttempts) {
+              await syncState({
+                status: "error",
+                lastMessage: `stage ${stage.stageId} aborted after ${stageAttempts} total attempts`
+              })
+              break
+            }
           } else {
             await syncState({ status: "error", lastMessage: `stage ${stage.stageId} aborted after ${recoveryCount} recoveries` })
             break
@@ -874,6 +916,7 @@ export async function runHybridLongAgent({
 
       stageIndex++
       recoveryCount = 0  // reset per-stage recovery counter after successful stage
+      stageAttempts = 0
       await saveCheckpoint(sessionId, { name: `hybrid_stage_${stage.stageId}`, iteration, currentPhase, stageIndex, stagePlan, taskProgress, planFrozen, lastProgress })
     }
 

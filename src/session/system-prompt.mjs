@@ -96,15 +96,20 @@ export async function agentPrompt(agent) {
 }
 
 // Layer 4: Mode reminder (stable within mode)
+/**
+ * 模式提醒。
+ *
+ * 刻意不再拼接 renderPublicModeContract()：该契约由 mode_contract 块单独
+ * 注入，两处都带会让同一段文字在系统提示词里出现两次（约占 8%）。
+ */
 export async function modeReminder(mode) {
-  const contractBlock = renderPublicModeContract()
-  if (mode === "assistant") return `${contractBlock}\n\nAssistant mode active. Treat this as the default unified CLI assistant for questions, code inspection, edits, tests, reviews, local automation, web lookup, Git/GitHub assistance, notes, and task organization within the current permission level. Suggest /longagent only for staged multi-file or system-level delivery. When the user explicitly asks to summon, call, delegate to, or run one or more subagents, you must use task for one subagent or task_group for multiple parallel subagents. Use inherit_context=true or execution_mode=fork_context only for read-only sidecar work that needs the parent transcript; use fresh_agent for implementation work.`
-  if (mode === "plan") return `${contractBlock}\n\n${await loadSessionPrompt("plan.txt")}`
-  if (mode === "agent") return `${contractBlock}\n\nAssistant compatibility lane active. Agent/code/coding are aliases for the unified assistant in 0.3.0; handle inspect/patch/verify work directly within the current permission level.`
+  if (mode === "assistant") return "Assistant mode active. Treat this as the default unified CLI assistant for questions, code inspection, edits, tests, reviews, local automation, web lookup, Git/GitHub assistance, notes, and task organization within the current permission level. Suggest Ultra only for staged multi-file or system-level delivery. When the user explicitly asks to summon, call, delegate to, or run one or more subagents, you must use task for one subagent or task_group for multiple parallel subagents. Use inherit_context=true or execution_mode=fork_context only for read-only sidecar work that needs the parent transcript; use fresh_agent for implementation work."
+  if (mode === "plan") return await loadSessionPrompt("plan.txt")
+  if (mode === "agent") return "Assistant compatibility lane active. Agent/code/coding are aliases for the unified assistant; handle inspect/patch/verify work directly within the current permission level."
   if (mode === "longagent") {
-    return `${contractBlock}\n\nLongAgent mode active. Treat this as the heavyweight staged delivery lane for multi-file or system-level work. Keep explicit gates, ownership, and recovery behavior intact.`
+    return "Ultra mode active. Treat this as the heavyweight staged delivery lane for multi-file or system-level work. Keep explicit gates, ownership, and recovery behavior intact."
   }
-  return contractBlock
+  return ""
 }
 
 // Layer 5: Tool descriptions (stable across session — ideal cache target)
@@ -215,11 +220,11 @@ export async function buildSystemPromptBlocks({ mode, model, cwd, agent = null, 
     "",
     "Prefer the lightest path that completes the next step well:",
     "- answer directly for short questions",
-    "- treat assistant as the default unified lane for terminal-native questions, code work, reviews, and automation",
-    "- treat agent/code/coding as compatibility aliases for assistant",
+    "- treat the Agent modes as the default lane for terminal-native questions, code work, reviews, and automation",
+    "- the difference between Agent, Agent · Auto and YOLO is the approval level, not the lane; never assume an edit is pre-approved",
     "- handle small local inspect/run/summarize tasks without over-upgrading to heavyweight execution",
     "- continue an interrupted local transaction when the follow-up still fits the same bounded scope",
-    "- reserve longagent-style behavior for structured multi-file or system-level delivery with explicit heavy evidence",
+    "- reserve Ultra for structured multi-file or system-level delivery with explicit heavy evidence",
     "",
     "Current safe capability boundary:",
     "- coding and patching",

@@ -194,10 +194,15 @@ defineAgent({
   hidden: true
 })
 
-// 4-Stage LongAgent agents
+// Ultra stage agents.
+//
+// promptFile must be spelled out: it defaults to the agent name, but these
+// prompts live under the longagent- prefix. Without it getAgentPrompt() silently
+// returned "" and every stage ran with no role instructions at all.
 defineAgent({
   name: "preview-agent",
-  description: "4-Stage LongAgent: Stage 1 - Previewing Agent. Explores codebase, extracts requirements, no editing allowed.",
+  promptFile: "longagent-preview-agent",
+  description: "Ultra stage 1 - Previewing Agent. Explores codebase, extracts requirements, no editing allowed.",
   mode: "subagent",
   permission: "readonly",
   tools: ["read", "glob", "grep", "list", "bash", "question", "todowrite"]
@@ -205,7 +210,8 @@ defineAgent({
 
 defineAgent({
   name: "blueprint-agent",
-  description: "4-Stage LongAgent: Stage 2 - Blueprint Agent. Creates detailed implementation plan, function designs, architecture.",
+  promptFile: "longagent-blueprint-agent",
+  description: "Ultra stage 2 - Blueprint Agent. Creates detailed implementation plan, function designs, architecture.",
   mode: "subagent",
   permission: "readonly",
   tools: ["read", "glob", "grep", "list", "bash", "question", "todowrite"]
@@ -213,7 +219,8 @@ defineAgent({
 
 defineAgent({
   name: "coding-agent",
-  description: "4-Stage LongAgent: Stage 3 - Coding Agent. Implements code strictly according to blueprint.",
+  promptFile: "longagent-coding-agent",
+  description: "Ultra stage 3 - Coding Agent. Implements code strictly according to blueprint.",
   mode: "subagent",
   permission: "full",
   tools: null
@@ -221,7 +228,8 @@ defineAgent({
 
 defineAgent({
   name: "debugging-agent",
-  description: "4-Stage LongAgent: Stage 4 - Debugging Agent. Verifies implementation, runs tests, finds and fixes bugs.",
+  promptFile: "longagent-debugging-agent",
+  description: "Ultra stage 4 - Debugging Agent. Verifies implementation, runs tests, finds and fixes bugs.",
   mode: "subagent",
   permission: "full",
   tools: null

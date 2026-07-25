@@ -1,5 +1,57 @@
 # Changelog / 更新日志
 
+## 0.4.2
+
+### English
+
+- Restore the Ultra stage prompts. `preview-agent`, `blueprint-agent`,
+  `coding-agent` and `debugging-agent` derive their prompt file from the agent
+  name, but the files ship under a `longagent-` prefix, so `getAgentPrompt()`
+  silently returned an empty string and all four stages had been running with no
+  role instructions at all. 229 lines of specialist prompting are live again.
+- Stop injecting the mode contract twice. `modeReminder()` prepended it while a
+  dedicated `mode_contract` block emitted the same text, so roughly 8% of every
+  system prompt was a verbatim duplicate paid for on every request.
+- Update the CLI assistant contract to the 0.4.0 vocabulary and state explicitly
+  that Agent, Agent · Auto and YOLO differ by approval level, not by lane, so a
+  wider mode is never read as pre-approval for edits.
+- Add `kkcode preflight`: a fast startup self-check covering config, provider
+  credentials, MCP, skills and version. It stays deliberately lighter than
+  `doctor`, which also runs session fsck and audit-chain verification. The TUI
+  runs it on startup and prints only what is wrong.
+- Honour `KKCODE_AUTO_UPDATE` for startup auto-install, overriding
+  `update.auto_install` in both directions. The default remains notify-only.
+- Stop Ultra from re-running a finished stage. `stageIndex` only advanced when
+  every task reported `[TASK_COMPLETE]`, so a stage whose files were already
+  written and whose tests already passed would loop until the phase timed out —
+  and each degradation reset the recovery counter to zero, removing the only
+  ceiling. Stages now verify the objective directly (declared files present,
+  build and test passing) before retrying, and a separate running total caps
+  total attempts at `max_stage_attempts` regardless of degradations.
+- Remove the orphaned `max-steps.txt` prompt.
+
+### 中文
+
+- 恢复 Ultra 的阶段提示词。`preview-agent`、`blueprint-agent`、`coding-agent`、
+  `debugging-agent` 的提示词文件名默认取 agent 名，而文件实际带 `longagent-`
+  前缀，`getAgentPrompt()` 一直静默返回空串——四个阶段从来没有加载过角色指令。
+  229 行专家提示词重新生效。
+- 模式契约不再重复注入。`modeReminder()` 会拼接它，而 `mode_contract` 块又发
+  一遍同样的文字，约占系统提示词的 8%，每个请求都在为这份重复付费。
+- CLI assistant 契约同步到 0.4.0 词汇，并明确写出 Agent、Agent · Auto、YOLO
+  的区别在审批档而非航道，避免模型把更宽的模式当成编辑已获批准。
+- 新增 `kkcode preflight`：快速启动自检，覆盖配置、provider 凭据、MCP、skills
+  与版本。它刻意比 `doctor` 轻——后者还会做 session fsck 与审计链校验。TUI
+  启动时会自动跑一遍，只在有问题时打印。
+- 支持用 `KKCODE_AUTO_UPDATE` 控制启动自动升级，双向覆盖 `update.auto_install`；
+  默认仍然只提示不自装。
+- Ultra 不再重跑已经完成的 stage。`stageIndex` 只在所有 task 都报出
+  `[TASK_COMPLETE]` 时推进，于是文件早已写好、测试早已通过的 stage 会一直
+  重跑到阶段超时；而每次降级又把 recovery 计数清零，唯一的上限也随之失效。
+  现在重试前会直接核验目标是否达成（声明的文件是否落地、build/test 是否通过），
+  并用一个不清零的累计计数把总尝试次数限制在 `max_stage_attempts`。
+- 删除零引用的 `max-steps.txt`。
+
 ## 0.4.1
 
 ### English

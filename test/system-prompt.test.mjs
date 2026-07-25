@@ -41,8 +41,13 @@ test("system prompt assembles stable tool and skill blocks", async () => {
   assert.match(prompt.text, /`plan`: produce a spec\/plan only; do not execute file mutations/i)
   assert.match(prompt.text, /longagent.*staged multi-file delivery lane/i)
   assert.match(prompt.text, /CLI-first personal assistant/)
-  assert.match(prompt.text, /assistant.*default unified lane/i)
-  assert.match(prompt.text, /agent\/code\/coding.*compatibility aliases/i)
+  assert.match(prompt.text, /Agent modes as the default lane/i)
+  // the approval level is what separates Agent / Agent · Auto / YOLO, and the
+  // model must not treat a wider mode as pre-approval for edits
+  assert.match(prompt.text, /approval level, not the lane/i)
+  // this now comes from the mode contract block, which spells the aliases with
+  // backticks and separators rather than as a bare agent/code/coding run
+  assert.match(prompt.text, /`agent` \/ `code` \/ `coding`: compatibility aliases/i)
   assert.match(prompt.text, /continue an interrupted local transaction/i)
   assert.match(prompt.text, /Do not imply unsupported product surfaces/)
   assert.match(prompt.text, /\$compat-skill: compat description/)
@@ -95,4 +100,24 @@ test("assistant mode prompt requires explicit subagent delegation tools", async 
   assert.match(modeBlock.text, /explicitly asks to summon/)
   assert.match(modeBlock.text, /task_group/)
   assert.match(modeBlock.text, /inherit_context=true/)
+})
+
+test("the mode contract is injected exactly once", async () => {
+  // modeReminder used to prepend renderPublicModeContract() while a dedicated
+  // mode_contract block emitted the same text, so ~8% of every prompt was a
+  // verbatim duplicate.
+  for (const mode of ["assistant", "plan", "longagent"]) {
+    const prompt = await buildSystemPromptBlocks({
+      mode,
+      model: "gpt-4o-mini",
+      cwd: process.cwd(),
+      tools: [],
+      skills: [],
+      userInstructions: "",
+      projectContext: "",
+      language: "en"
+    })
+    const occurrences = prompt.text.split("# Mode Contract").length - 1
+    assert.equal(occurrences, 1, `${mode} mode injected the contract ${occurrences} times`)
+  }
 })

@@ -4,6 +4,7 @@ import { dirname } from "node:path"
 import { mkdir } from "node:fs/promises"
 import { PACKAGE_NAME, PACKAGE_VERSION } from "../version.mjs"
 import { updateStatePath } from "../storage/paths.mjs"
+import { shouldAutoInstallUpdate } from "../cli/preflight.mjs"
 import { buildRequestHeaders } from "../http/identity.mjs"
 
 const DEFAULT_REGISTRY = "https://registry.npmjs.org"
@@ -155,7 +156,8 @@ export async function maybeNotifyUpdateOnStartup(config = {}, options = {}) {
     if (message) {
       const print = options.print || console.error
       print(message)
-      if (cfg.autoInstall) {
+      // KKCODE_AUTO_UPDATE 优先于 update.auto_install，方便容器/CI 里显式开启
+      if (shouldAutoInstallUpdate(config, options.env || process.env)) {
         const install = await installUpdate(config, { channel: result.channel, stdio: "ignore" })
         if (install.ok) print(`kkcode update installed ${result.latestVersion}; restart kkcode to use it.`)
         else print(`kkcode auto-update failed: ${install.error}`)
