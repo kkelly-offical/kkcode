@@ -1,5 +1,103 @@
 # Changelog / 更新日志
 
+## 0.5.0
+
+Ultra becomes goal-driven: it keeps working while it makes progress, and
+reports honestly — with evidence — the moment it stops.
+
+### English
+
+- **An executable definition of done.** Acceptance criteria are now structures
+  the system runs — file existence, content match, command exit codes, tests,
+  gates — not prose pasted into prompts. Anything that cannot be mechanised
+  becomes a `manual` criterion that no code path can auto-pass: the goal parks
+  at `blocked_manual` until a human answers. `[TASK_COMPLETE]` is demoted from
+  verdict to self-report; alone it never yields `completed`.
+- **The goal loop.** `max_rounds` defaults to unlimited; the constraint is
+  evidence of progress (criteria/gate transitions, newly completed tasks, file
+  changes without verbatim-repeated errors), backed by stall detection
+  (2 rounds), a 2h deadline and the token budget. `goal_mode: false` restores
+  the exact 0.4.x single-round behaviour.
+- **Failure is triaged, not fatal.** Stage failures route through a decision
+  table — retry / degrade / defer / skip / replan — instead of 0.4.x's
+  "retry or abandon everything". Permanent errors no longer burn 12 hopeless
+  backoff retries; a replan feeds the ledger's failure evidence back to the
+  blueprint agent, capped and deduplicated by plan signature.
+- **Honest reporting.** Every round is recorded in
+  `.kkcode/ultra/<session>/ledger.json`; the blocked report shows each
+  criterion's verdict with the twelve lines of command output 0.4.x discarded,
+  attempt counts across rounds, any dropped acceptance criterion with its
+  stated reason, and optional fast-model "key judgment / next steps". Rendered
+  in the REPL, `kkcode ultra report`, and `report.md`.
+- **When blocked, it asks.** In a TTY: continue / give guidance / deliver
+  what's done / stop — guidance steers the next round. Headless runs close over
+  explicitly: an empty answer is never "continue", and a stalled unattended run
+  with nothing achieved exits 2 (`blocked`), never a quiet success.
+- **Sub-goals and the board.** Blueprints may decompose the objective into
+  ≤6 independently deliverable sub-goals; rounds re-execute only the pending
+  ones. `/board` and `kkcode ultra board --watch` render five columns — todo /
+  doing / blocked / pending-check / done — where "pending-check" holds work the
+  model claims but criteria have not verified.
+- **Machinery that finally works**: cross-process `ultra stop` takes effect
+  (the flag was written but never read); `ultra resume` actually resumes from
+  the checkpoint — H0/H1/H2 are skipped, the interrupted stage continues, and
+  `--guidance` steers it (0.4.x resume only cleared a flag); worker log lines
+  are forwarded so H4 is no longer minutes of silence; checkpoints carry the
+  plan context that makes restore real; `checkpoint_interval` and the heartbeat
+  event are implemented; `models.ultra.*` per-stage overrides land.
+- Statuses now tell the truth: `completed` / `partial` / `blocked` /
+  `blocked_manual` / `user_stopped` / `budget_exhausted` / `deadline_exhausted`
+  / `needs_objective` / `fatal`, with meaningful exit codes. Session state
+  `failed` is reserved for fatal errors. H7 merges to the base branch only on
+  `completed`. Research / docs / ops objectives are first-class: they skip
+  scaffold and build gates and verify against document-shaped criteria.
+- Deprecated with one-time notices: `no_progress_limit` / `no_progress_warning`
+  (superseded by `ultra.no_progress_rounds` — note the semantic change from
+  iterations to rounds). The 0.4.0 legacy mode/permission aliases keep working
+  with notices; their removal moves to 0.6.0 — pulling the rug now, mid-upgrade,
+  costs users more than the vocabulary costs us.
+
+### 中文
+
+- **可执行的「完成」定义。** 验收判据成为系统会执行的结构 —— 文件存在、内容
+  匹配、命令退出码、测试、门禁 —— 而不是贴进提示词的散文。无法机器化的判据
+  一律成为 `manual`：没有任何代码路径能把它自动判过，目标会停在
+  `blocked_manual` 等人点头。`[TASK_COMPLETE]` 从判据降级为自我声明，单独
+  永远不产生 `completed`。
+- **目标循环。** `max_rounds` 默认不限；约束是进展证据（判据/门禁跃迁、新完成
+  的任务、错误没有原样重复的文件变更），由停滞检测（2 轮）、2 小时时限与
+  token 预算兜底。`goal_mode: false` 一行退回 0.4.x 单轮行为。
+- **失败分档处置，不再一票崩塌。** stage 失败走决策表 —— 重试/降级/延后/跳过/
+  重规划 —— 取代 0.4.x 的「重试，或放弃当前与所有后续 stage」。永久性错误不再
+  烧 12 次无望的退避；重规划把台账里的失败证据喂回 blueprint，有次数上限，
+  且按计划签名去重。
+- **如实汇报。** 每一轮记入 `.kkcode/ultra/<会话>/ledger.json`；受阻报告逐条
+  展示判据结论与 0.4.x 丢弃的那 12 行命令输出、跨轮尝试次数、被删除的验收
+  判据及其理由，以及可选的快速模型「关键判断 / 下一步」。REPL、
+  `kkcode ultra report` 与落盘的 report.md 三处同源。
+- **受阻时会问你。** TTY 下四个选项：继续 / 给指引 / 交付已完成部分 / 停止 ——
+  指引直接进入下一轮。无终端运行显式收口：空答案绝不当「继续」，零达成的
+  停滞运行以退出码 2（blocked）结束，绝不静默通过。
+- **子目标与看板。** blueprint 可把目标分解为 ≤6 个可独立交付的子目标，
+  后续轮次只重跑未达成的部分。`/board` 与 `kkcode ultra board --watch` 渲染
+  五列：待办 / 进行中 / 受阻 / 待验收 / 已达成 ——「待验收」收纳模型声称完成
+  但判据尚未核验的工作。
+- **终于真的能用的机制**：跨进程 `ultra stop` 生效（旧版把标志写盘但无人读）；
+  `ultra resume` 真的从 checkpoint 续跑 —— 跳过 H0/H1/H2、从中断的 stage
+  继续，`--guidance` 可以指路（0.4.x 的 resume 只清一个标志）；worker 日志
+  逐行转发，H4 不再是几分钟的空白；checkpoint 补齐了让恢复成立的计划上下文；
+  `checkpoint_interval` 与心跳事件落地；`models.ultra.*` 分阶段模型上线。
+- 状态说真话：`completed` / `partial` / `blocked` / `blocked_manual` /
+  `user_stopped` / `budget_exhausted` / `deadline_exhausted` /
+  `needs_objective` / `fatal`，退出码各有含义。会话 `failed` 只留给内部错误。
+  H7 只在 `completed` 时并入主干。调研 / 文档 / 运维目标成为一等公民：跳过
+  脚手架与 build 门禁，按文档形态的判据核验。
+- 一次性弃用提示：`no_progress_limit` / `no_progress_warning`（由
+  `ultra.no_progress_rounds` 取代 —— 注意语义从迭代变为轮次）。0.4.0 的旧模式
+  与权限别名继续可用并带提示；移除推迟到 0.6.0 —— 升级进行到一半抽走梯子，
+  用户付出的代价远大于我们维护几个别名的成本。
+
+
 ## 0.4.3
 
 Everything here is a repair to Ultra machinery that existed but did not work.

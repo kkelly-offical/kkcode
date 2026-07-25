@@ -188,9 +188,11 @@ Press `Shift+Tab` to walk the five public modes. `/mode` opens a picker,
 ### Compatibility / 兼容旧写法
 
 0.3.x spellings keep working and map automatically, printing a one-time
-deprecation notice. Removal is planned for 0.5.0.
+deprecation notice. Removal is planned for 0.6.0 — 0.5.0 keeps them because
+pulling aliases mid-upgrade costs users more than keeping them costs us.
 
-0.3.x 的写法继续可用并自动映射，首次使用时打印一次性弃用提示，计划在 0.5.0 移除。
+0.3.x 的写法继续可用并自动映射，首次使用时打印一次性弃用提示。移除推迟到
+0.6.0 —— 升级进行中抽走别名，用户付出的代价远大于我们维护它们的成本。
 
 | 0.3.x | 0.4.0 |
 | --- | --- |
@@ -557,12 +559,12 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current stable version / 当前稳定版本**: `v0.4.3`
+**Current stable version / 当前稳定版本**: `v0.5.0`
 
-`v0.4.3` is the current stable npm and GitHub release. The `main` branch remains
+`v0.5.0` is the current stable npm and GitHub release. The `main` branch remains
 the development line for subsequent fixes.
 
-`v0.4.3` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
+`v0.5.0` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
 
 Use the Kimi Code preset without placing credentials in YAML:
 
@@ -582,6 +584,15 @@ with authorization values redacted.
 **Package / 包地址**: [npm](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 
 **English**
+- `0.5.0` makes Ultra goal-driven: acceptance criteria the system actually
+  executes (with a `manual` kind no code path can auto-pass), an unbounded
+  round loop constrained by evidence of progress with stall detection, triaged
+  stage failure (retry/degrade/defer/skip/replan) instead of abandon-everything,
+  a per-round attempt ledger feeding an honest blocked report with real command
+  output, blocked-time interaction (continue / guide / deliver / stop) with an
+  explicit headless closure, sub-goal decomposition with round scoping, a
+  five-column goal board (`/board`, `ultra board --watch`), working
+  cross-process stop, and a resume that actually resumes with `--guidance`.
 - `0.4.3` repairs the Ultra machinery that 0.4.2 shipped inert: the stage
   objective check read the wrong field and could never report success, the
   degradation chain never advanced past its first strategy so four of its exit
@@ -611,6 +622,12 @@ with authorization values redacted.
 - `0.2.1` rebuilt kkcode around Assistant as the default general-purpose lane, with dedicated Agent and LongAgent modes for coding work.
 
 **中文**
+- `0.5.0` 让 Ultra 成为目标驱动的智能体：系统真正执行的验收判据（`manual`
+  类判据没有任何代码路径能自动判过）、以进展证据为约束的无上限轮次循环与
+  停滞检测、分档处置的 stage 失败（重试/降级/延后/跳过/重规划）取代一票崩塌、
+  逐轮台账支撑的受阻报告（带真实命令输出）、受阻时的四选项交互与无终端显式
+  收口、子目标分解与轮次作用域、五列目标看板（`/board`、`ultra board
+  --watch`）、真正生效的跨进程停止、以及带 `--guidance` 的真续跑。
 - `0.4.3` 修复 0.4.2 里装上却没生效的那套 Ultra 机制：stage 目标核验读错字段，
   永远判不出「已达成」；降级链从不越过第一档，依赖它的四条退出路径全是死的；
   无终端运行会永久关掉用户的全部质量门禁；而 Ultra 从 0.3.x 起就在生成的失败
