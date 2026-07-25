@@ -148,7 +148,12 @@ test("e2e: mcp init does not preload Context7", () => {
 // permission show
 test("e2e: permission show exits 0 and shows policy", () => {
   const { stdout } = run(["permission", "show"])
-  assert.ok(stdout.includes("default_policy"), "should show default_policy")
+  // 0.4.0: permission.level is the only approval switch. default_policy and
+  // mode were dropped from DEFAULT_CONFIG, so a clean environment no longer
+  // prints them — this used to pass only because a stale user config supplied
+  // default_policy locally.
+  assert.ok(stdout.includes("level"), "should show permission.level")
+  assert.ok(stdout.includes("non_tty_default"), "should show non_tty_default")
 })
 
 // prompt list

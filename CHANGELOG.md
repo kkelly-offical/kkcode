@@ -1,5 +1,20 @@
 # Changelog / 更新日志
 
+## 0.4.1
+
+### English
+
+- Fix a CLI end-to-end test that still expected `permission.default_policy` in
+  `kkcode permission show`. The key was removed from `DEFAULT_CONFIG` in 0.4.0,
+  so a clean install no longer prints it; the test only passed locally because a
+  stale user config supplied the field. No runtime behaviour changed.
+
+### 中文
+
+- 修复一条仍然期待 `kkcode permission show` 输出 `permission.default_policy`
+  的端到端测试。该键在 0.4.0 已从 `DEFAULT_CONFIG` 移除，干净安装不再打印；
+  此前只因本地遗留的用户配置提供了该字段才通过。运行时行为不变。
+
 ## 0.4.0
 
 ### English
