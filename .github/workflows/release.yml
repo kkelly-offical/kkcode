@@ -83,6 +83,25 @@ jobs:
             exit 1
           fi
 
+          lock_version="$(node -p "require('./package-lock.json').version")"
+          if [[ "${lock_version}" != "${tag_version}" ]]; then
+            echo "::error::package-lock.json says ${lock_version}, expected ${tag_version} — run 'npm install --package-lock-only'"
+            exit 1
+          fi
+
+          # 只有 main 上的提交可以发布。打在功能分支或游离提交上的 tag
+          # 会跳过 main 的分支保护与检查，属于绕过门禁的口子。
+          # tag 检出不带 origin/main 引用，必须显式抓取；抓不到就直接失败，
+          # 绝不因为「查不到」而放行。
+          if ! git fetch --no-tags origin main; then
+            echo "::error::Could not fetch origin/main to verify the tag's ancestry"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" FETCH_HEAD; then
+            echo "::error::Tag ${GITHUB_REF_NAME} points at a commit that is not on origin/main"
+            exit 1
+          fi
+
           echo "publish=true" >> "$GITHUB_OUTPUT"
           echo "release_version=${tag_version}" >> "$GITHUB_OUTPUT"
           if [[ "${tag_version}" == *-rc.* ]]; then

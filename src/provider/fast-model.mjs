@@ -17,6 +17,46 @@ import { resolveRoleModel } from "./model-roles.mjs"
 
 export const FAST_MODEL_TIMEOUT_MS = 4000
 
+/**
+ * 连续多少次「请求成功但正文为空」判定该模型不适合当 fast 模型。
+ *
+ * thinking-only 的模型（kimi 的 coding 系列、各家的 reasoning 模型）会把
+ * 32–48 token 的预算全花在思考上，正文恒为空。没有这个断路器时，ghost text
+ * 会在每次打字停顿后继续发请求 —— 用户看不到任何东西，调用又刻意不进审计
+ * 与成本统计，于是变成一条完全无声的烧钱通道。
+ */
+const FAST_EMPTY_STRIKES = 3
+
+/** key = `${providerType}/${model}` → { emptyStreak, reasoningSeen, disabled } */
+const fastHealth = new Map()
+
+function healthKey(providerType, model) {
+  return `${providerType || "default"}/${model}`
+}
+
+/**
+ * fast 通道的运行时健康状态，供 preflight / doctor 展示。
+ * @returns {Array<{model, reason}>} 已被停用的 fast 模型
+ */
+export function fastModelIssues() {
+  const issues = []
+  for (const [key, state] of fastHealth) {
+    if (!state.disabled) continue
+    issues.push({
+      model: key,
+      reason: state.reasoningSeen
+        ? "只输出思考内容、正文为空（thinking-only 模型不适合 fast 通道）"
+        : "连续多次返回空正文"
+    })
+  }
+  return issues
+}
+
+/** 测试与 `/provider` 切换后重置断路器。 */
+export function resetFastModelHealth() {
+  fastHealth.clear()
+}
+
 export function fastModelId(configState) {
   return resolveRoleModel(configState?.config, "fast")
 }
@@ -55,6 +95,11 @@ export async function requestFast({
     }
   }
 
+  const key = healthKey(resolvedProviderType || configState?.config?.provider?.default, model)
+  const health = fastHealth.get(key)
+  // 已判定不可用的模型直接短路：不再发请求，也就不再无声烧钱
+  if (health?.disabled) return null
+
   const request = deps.requestProvider || requestProvider
   const controller = new AbortController()
   const abortOnOuter = () => controller.abort()
@@ -76,9 +121,22 @@ export async function requestFast({
       signal: controller.signal,
       audit: false
     })
-    return String(result?.text || "").trim() || null
+    const text = String(result?.text || "").trim()
+    if (text) {
+      fastHealth.delete(key)
+      return text
+    }
+
+    // 请求成功但没有正文。累计到阈值就停用这个模型 —— 区别于 catch 分支的
+    // 网络失败：那是暂时的，这是模型本身产不出可用输出。
+    const state = fastHealth.get(key) || { emptyStreak: 0, reasoningSeen: false, disabled: false }
+    state.emptyStreak += 1
+    if (String(result?.reasoning || "").trim()) state.reasoningSeen = true
+    if (state.emptyStreak >= FAST_EMPTY_STRIKES) state.disabled = true
+    fastHealth.set(key, state)
+    return null
   } catch {
-    // 辅助调用失败一律静默：它永远不该影响主流程
+    // 网络/超时/取消一律静默且不计入断路器：它永远不该影响主流程
     return null
   } finally {
     clearTimeout(timer)

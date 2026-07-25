@@ -4,6 +4,7 @@ import YAML from "yaml"
 import { DEFAULT_CONFIG } from "./defaults.mjs"
 import { validateConfig } from "./schema.mjs"
 import { projectConfigCandidates, userConfigCandidates, envFileCandidates, userRootDir } from "../storage/paths.mjs"
+import { noteDeprecation } from "../core/deprecations.mjs"
 
 async function exists(file) {
   try {
@@ -92,19 +93,50 @@ async function loadOne(filePath) {
 }
 
 /**
+ * goal 模式的配置段键名（`agent.longagent.ultra.*`）。
+ * 与 longagent 顶层键无一重名 —— 顶层出现这些键必然是写错了层级。
+ */
+const ULTRA_SECTION_KEYS = Object.freeze([
+  "goal_mode", "max_rounds", "deadline_ms", "no_progress_rounds", "no_progress_warn_rounds",
+  "on_blocked_non_tty", "confirm_acceptance", "stage_failure", "criteria", "report", "ledger"
+])
+
+/**
+ * 把写在 longagent 顶层的 goal 模式键搬进 `.ultra` 段。
+ *
+ * 「Ultra 的配置」直觉上就该写在 `agent.ultra` 下，但 `agent.ultra` 是
+ * 0.4.0 给 `agent.longagent` 起的别名，平铺后 `agent.ultra.goal_mode`
+ * 落到没人读的 `agent.longagent.goal_mode` —— 校验通过、静默失效，
+ * 只有反直觉的 `agent.ultra.ultra.goal_mode` 才真正生效（0.5.5 修复）。
+ * 已经写对位置的值优先，不被顶层的错位值覆盖。
+ */
+function hoistUltraSectionKeys(longagent) {
+  const misplaced = ULTRA_SECTION_KEYS.filter((key) => longagent[key] !== undefined)
+  if (misplaced.length === 0) return longagent
+
+  const next = { ...longagent, ultra: { ...(longagent.ultra || {}) } }
+  for (const key of misplaced) {
+    if (next.ultra[key] === undefined) next.ultra[key] = next[key]
+    delete next[key]
+  }
+  noteDeprecation(
+    "config.agent.ultra.section",
+    `${misplaced.map((k) => `agent.ultra.${k}`).join("、")} 应写在 agent.ultra.ultra.${misplaced[0]} 段下；` +
+    "已自动归位，下一个大版本会移除这层兼容"
+  )
+  return next
+}
+
+/**
  * 把 0.4.0 的 `agent.ultra` 归一到内部仍在使用的 `agent.longagent`。
  * 两个键同时存在时 ultra 优先——它是新写法。
  */
 function normalizeUltraKey(raw) {
-  if (!raw?.agent?.ultra) return raw
+  if (!raw?.agent) return raw
   const { ultra, ...agentRest } = raw.agent
-  return {
-    ...raw,
-    agent: {
-      ...agentRest,
-      longagent: mergeObject(agentRest.longagent || {}, ultra)
-    }
-  }
+  const longagent = ultra ? mergeObject(agentRest.longagent || {}, ultra) : agentRest.longagent
+  if (!longagent) return raw
+  return { ...raw, agent: { ...agentRest, longagent: hoistUltraSectionKeys(longagent) } }
 }
 
 export async function loadConfig(cwd = process.cwd()) {

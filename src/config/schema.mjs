@@ -8,6 +8,9 @@ const ACCEPTED_PERMISSION_LEVELS = [...APPROVAL_LEVELS, "review", "auto", "edit"
 
 const HEX = /^#([A-Fa-f0-9]{6})$/
 
+/** models.ultra.<stage> 的合法键 —— 与 longagent-hybrid 的 getModelForStage 对齐。 */
+export const ULTRA_MODEL_STAGES = Object.freeze(["preview", "blueprint", "coding", "debugging", "report"])
+
 function err(list, field, message) {
   list.push(`${field}: ${message}`)
 }
@@ -464,8 +467,25 @@ export function validateConfig(config) {
           err(errors, `models.${role}`, "must be string or null")
         }
       }
+      // models.ultra 是分阶段覆盖，不是角色。0.5.0 起默认配置就带着它，
+      // 而校验器只认三个角色 —— 于是任何显式写出 models.ultra 的配置文件
+      // 都会以 "unknown role" 被整份丢弃（0.5.5 修复）。
+      if (config.models.ultra !== undefined) {
+        if (!isObj(config.models.ultra)) err(errors, "models.ultra", "must be object")
+        else {
+          for (const [key, value] of Object.entries(config.models.ultra)) {
+            if (!ULTRA_MODEL_STAGES.includes(key)) {
+              err(errors, `models.ultra.${key}`, `unknown stage (${ULTRA_MODEL_STAGES.join("|")})`)
+            } else if (value !== null && typeof value !== "string") {
+              err(errors, `models.ultra.${key}`, "must be string or null")
+            }
+          }
+        }
+      }
       for (const key of Object.keys(config.models)) {
-        if (!MODEL_ROLES.includes(key)) err(errors, `models.${key}`, `unknown role (${MODEL_ROLES.join("|")})`)
+        if (!MODEL_ROLES.includes(key) && key !== "ultra") {
+          err(errors, `models.${key}`, `unknown role (${MODEL_ROLES.join("|")}|ultra)`)
+        }
       }
     }
   }

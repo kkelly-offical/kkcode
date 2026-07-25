@@ -1,7 +1,9 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { resolveRoleModel, hasFastModel, providerDefaultModel, MODEL_ROLES } from "../src/provider/model-roles.mjs"
-import { requestFast, fastModelId, isFastModelConfigured } from "../src/provider/fast-model.mjs"
+import {
+  requestFast, fastModelId, isFastModelConfigured, fastModelIssues, resetFastModelHealth
+} from "../src/provider/fast-model.mjs"
 import { resetDeprecations } from "../src/core/deprecations.mjs"
 
 function makeConfig(overrides = {}) {
@@ -172,6 +174,7 @@ test("an outer abort cancels the in-flight fast request", async () => {
 })
 
 test("an empty model reply becomes null instead of an empty suggestion", async () => {
+  resetFastModelHealth()
   const configState = { config: makeConfig({ models: { fast: "gpt-tiny" } }) }
   const out = await requestFast({
     configState,
@@ -179,4 +182,65 @@ test("an empty model reply becomes null instead of an empty suggestion", async (
     deps: { requestProvider: async () => ({ text: "   " }) }
   })
   assert.equal(out, null)
+  resetFastModelHealth()
+})
+
+// 0.5.6：thinking-only 模型（kimi coding 系列、各家 reasoning 模型）会把
+// 32 token 的预算全花在思考上，正文恒为空。ghost text 每次打字停顿都会
+// 再发一次 —— 用户什么都看不到，而调用刻意不进审计与成本统计，于是成为
+// 一条无声的烧钱通道。断路器让它自己停下来并可被 preflight 看见。
+test("a thinking-only fast model is disabled after repeated empty replies", async () => {
+  resetFastModelHealth()
+  const configState = { config: makeConfig({ models: { fast: "thinker" } }) }
+  let calls = 0
+  const deps = {
+    requestProvider: async () => {
+      calls += 1
+      return { text: "", reasoning: "推理内容把预算烧光了" }
+    }
+  }
+
+  for (let i = 0; i < 3; i++) {
+    assert.equal(await requestFast({ configState, prompt: "hi", deps }), null)
+  }
+  assert.equal(calls, 3)
+
+  // 第四次不该再发出请求
+  assert.equal(await requestFast({ configState, prompt: "hi", deps }), null)
+  assert.equal(calls, 3, "停用后必须短路，不再发请求")
+
+  const issues = fastModelIssues()
+  assert.equal(issues.length, 1)
+  assert.match(issues[0].model, /thinker/)
+  assert.match(issues[0].reason, /thinking-only/)
+  resetFastModelHealth()
+})
+
+test("network failures do not trip the breaker, and a good reply resets it", async () => {
+  resetFastModelHealth()
+  const configState = { config: makeConfig({ models: { fast: "flaky" } }) }
+  let calls = 0
+
+  // 连续失败：暂时性问题，不该判模型死刑
+  for (let i = 0; i < 5; i++) {
+    await requestFast({
+      configState,
+      prompt: "hi",
+      deps: { requestProvider: async () => { calls += 1; throw new Error("ETIMEDOUT") } }
+    })
+  }
+  assert.equal(calls, 5, "网络失败不进断路器")
+  assert.deepEqual(fastModelIssues(), [])
+
+  // 两次空回复后来了一次正常回复 → 计数清零
+  const empty = { requestProvider: async () => ({ text: "" }) }
+  await requestFast({ configState, prompt: "hi", deps: empty })
+  await requestFast({ configState, prompt: "hi", deps: empty })
+  assert.equal(
+    await requestFast({ configState, prompt: "hi", deps: { requestProvider: async () => ({ text: "ok" }) } }),
+    "ok"
+  )
+  await requestFast({ configState, prompt: "hi", deps: empty })
+  assert.deepEqual(fastModelIssues(), [], "一次成功即清零，不该被历史空回复拖垮")
+  resetFastModelHealth()
 })

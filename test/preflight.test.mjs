@@ -130,8 +130,8 @@ test("formatted lines stay aligned and cover every check", (t) => {
     mcp: healthyMcp,
     skills: someSkills
   }))
-  assert.equal(lines.length, 6)
-  for (const name of ["config", "provider", "permission", "mcp", "skills", "update"]) {
+  assert.equal(lines.length, 7)
+  for (const name of ["config", "provider", "fastModel", "permission", "mcp", "skills", "update"]) {
     assert.ok(lines.some((l) => l.includes(name)), `missing ${name}`)
   }
   // the detail column must line up across rows

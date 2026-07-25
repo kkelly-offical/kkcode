@@ -1,5 +1,71 @@
 # Changelog / 更新日志
 
+## 0.5.6
+
+Closes seven ways the tool failed without saying so. Every item here shares a
+shape: the code took a wrong turn and nothing — no error, no warning, no log
+line — told anyone.
+
+### English
+
+- **`models.ultra.*` was unusable from YAML.** The schema knew only the three
+  model roles, so any config file spelling out `models.ultra` was rejected as
+  an unknown role — and a rejected file is discarded *whole*, taking every
+  other setting in it along. Per-stage overrides now validate (with per-stage
+  key checking), and a new test asserts the invariant that broke this:
+  `DEFAULT_CONFIG` must pass its own schema.
+- **`agent.ultra.goal_mode` silently did nothing.** `agent.ultra` is the 0.4.0
+  alias for `agent.longagent`, so goal-mode keys written there landed at a path
+  nothing reads; only the counter-intuitive `agent.ultra.ultra.goal_mode`
+  worked. Misplaced keys are now hoisted into the section that runs them, with
+  a deprecation notice; correctly placed values still win.
+- **Preflight reported OK on a discarded config.** It read
+  `configState.warnings`, a field `loadConfig` never produces, while the real
+  `errors` array went unread — so the check that exists to catch a broken
+  config passed with exit code 0. It now fails, names the offending key, and
+  says the file was ignored in full. Startup and `doctor` say so too, instead
+  of calling a whole-file discard a "warning".
+- **The fast channel could burn tokens forever with nothing to show.** A
+  thinking-only model spends the 32-token helper budget on reasoning and
+  returns empty text, so ghost text requested a completion after every typing
+  pause, rendered nothing, and — by design — recorded nothing in the audit
+  chain or cost stats. Three consecutive empty replies now disable that model
+  for the fast channel; `preflight` surfaces it. Network failures do not count,
+  and one good reply resets it.
+- The Kimi preset no longer points `models.fast` at a thinking-only model; it
+  ships unset with a comment showing the cross-channel form
+  (`fast: aliyun/qwen3.7-flash`).
+- Release gating: publishing now also verifies `package-lock.json` matches the
+  tag version and that the tagged commit is an ancestor of `origin/main`, so a
+  tag on a side branch cannot bypass main's checks.
+- The v0.4.0 GitHub Release, lost to a failed release run, has been recreated
+  from the changelog.
+
+### 中文
+
+- **`models.ultra.*` 在 YAML 里根本用不了。** 校验器只认三个模型角色，写出
+  `models.ultra` 的配置文件会以「未知角色」被拒 —— 而被拒的文件是**整份丢弃**，
+  同一文件里其他设置一并失效。现在分阶段覆盖可以通过校验（并逐个校验阶段名），
+  同时新增测试锁住肇事的不变量：`DEFAULT_CONFIG` 必须通过自己的 schema。
+- **`agent.ultra.goal_mode` 静默无效。** `agent.ultra` 是 0.4.0 给
+  `agent.longagent` 起的别名，写在那里的 goal 模式键会落到没人读的位置，
+  只有反直觉的 `agent.ultra.ultra.goal_mode` 才真正生效。现在错位的键会自动
+  归位到运行时读取的段并给出弃用提示；已经写对位置的值优先。
+- **Preflight 对被丢弃的配置报 OK。** 它读的是 `configState.warnings` ——
+  `loadConfig` 从不产生这个字段，而真正的 `errors` 无人读取，于是专门用来
+  发现配置损坏的自检以退出码 0 通过。现在会报 fail、指出出错的键、并说明
+  文件已被整份忽略；启动横幅与 `doctor` 同样不再把整份丢弃称作 warning。
+- **fast 通道可能长期烧 token 却什么都产不出。** thinking-only 模型会把 32
+  token 的辅助预算全花在推理上、正文为空，于是 ghost text 每次打字停顿都发
+  一次请求、什么都不显示，而这类调用按设计不进审计链与成本统计。现在连续
+  三次空回复即停用该模型，`preflight` 会显示原因；网络失败不计入，一次正常
+  回复即清零。
+- Kimi 预设不再把 `models.fast` 指向 thinking-only 模型，改为留空并在注释里
+  给出跨渠道写法（`fast: aliyun/qwen3.7-flash`）。
+- 发布门槛加严：现在还会校验 `package-lock.json` 与 tag 版本一致、且被打
+  tag 的提交必须是 `origin/main` 的祖先，杜绝在旁支上打 tag 绕过 main 的检查。
+- 补建了因发布工作流失败而缺失的 v0.4.0 GitHub Release。
+
 ## 0.5.4
 
 Makes the CI verify matrix trustworthy again — and green on every platform.

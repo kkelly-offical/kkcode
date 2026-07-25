@@ -58,10 +58,15 @@ export async function buildContext(options = {}) {
 }
 
 export function printContextWarnings(ctx) {
-  for (const error of ctx.configState.errors) {
-    console.error(`config warning: ${error}`)
+  // 校验失败的配置文件是被「整份丢弃」的，不是某一行被忽略 —— 叫它
+  // warning 会让人以为其余设置还生效，实际上整个文件都没进内存。
+  const configErrors = ctx.configState?.errors || []
+  if (configErrors.length) {
+    console.error("config error: 配置文件校验未通过，已整份忽略，当前使用默认配置")
+    for (const error of configErrors) console.error(`  - ${error}`)
+    console.error("  修正后重新运行；`kkcode preflight` 可复查")
   }
-  for (const error of ctx.themeState.errors) {
+  for (const error of ctx.themeState?.errors || []) {
     console.error(`theme warning: ${error}`)
   }
 }

@@ -200,8 +200,9 @@ function printTextReport(report, themeWarnings = []) {
   console.log(`config.user: ${report.config.userPath || "(none)"}`)
   console.log(`config.project: ${report.config.projectPath || "(none)"}`)
   if (report.config.warnings.length) {
+    console.log("config error: 以下文件校验未通过，已整份忽略（当前使用默认配置）")
     for (const warning of report.config.warnings) {
-      console.log(`config warning: ${warning}`)
+      console.log(`  - ${warning}`)
     }
   }
   for (const warning of themeWarnings) {

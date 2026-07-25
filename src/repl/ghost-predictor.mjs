@@ -90,15 +90,22 @@ export function createGhostPredictor({
   }
 
   async function run(input) {
-    controller = new AbortController()
-    const signal = controller.signal
-    const text = await request({
-      configState,
-      system: SYSTEM_PROMPT,
-      prompt: input,
-      maxTokens: 32,
-      signal
-    })
+    const own = new AbortController()
+    controller = own
+    const signal = own.signal
+    let text = null
+    try {
+      text = await request({
+        configState,
+        system: SYSTEM_PROMPT,
+        prompt: input,
+        maxTokens: 32,
+        signal
+      })
+    } finally {
+      // 请求结束就交还 controller，否则 pending 会在首次请求后永远为真
+      if (controller === own) controller = null
+    }
     if (disposed || signal.aborted) return
     // 输入在请求途中变过 → 结果已经陈旧，丢弃
     if (input !== baseInput) return

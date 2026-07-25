@@ -1,5 +1,6 @@
 import { normalizePermissionLevel } from "../permission/rules.mjs"
 import { resolveRoleModel } from "../provider/model-roles.mjs"
+import { fastModelIssues } from "../provider/fast-model.mjs"
 import { PACKAGE_VERSION } from "../version.mjs"
 
 /**
@@ -48,6 +49,26 @@ function providerCheck(configState) {
   return { status: PREFLIGHT_OK, name, model, detail: hasKey ? "key set" : "authless local endpoint" }
 }
 
+/**
+ * fast 通道：未配置是正常状态（对应功能关闭），被断路器停用才是问题 ——
+ * 那意味着 ghost text 一直在发请求却什么都产不出来。
+ */
+function fastModelCheck(configState, issues) {
+  const model = resolveRoleModel(configState?.config || {}, "fast")
+  if (!model) {
+    return { status: PREFLIGHT_OK, model: "", detail: "not configured (ghost text off)", issues: [] }
+  }
+  if (issues.length) {
+    return {
+      status: PREFLIGHT_WARN,
+      model,
+      detail: `${issues[0].model}: ${issues[0].reason}；已自动停用，可改用其他渠道的即答模型（models.fast: "provider/model"）`,
+      issues
+    }
+  }
+  return { status: PREFLIGHT_OK, model, detail: model, issues: [] }
+}
+
 function mcpCheck(mcp = {}) {
   const configured = Number(mcp.configured || 0)
   const healthy = Number(mcp.healthy || 0)
@@ -72,14 +93,29 @@ function configCheck(configState) {
   const source = configState?.source || {}
   const warnings = Array.isArray(configState?.warnings) ? configState.warnings : []
   const paths = [source.userPath, source.projectPath].filter(Boolean)
+
+  // loadConfig 校验失败时整份文件被丢弃、只留 errors —— 而这里原先只读
+  // warnings（loadConfig 从不产生这个字段），于是「配置全丢了」的会话
+  // preflight 照样报 ok、退出码 0。这正是自检最该拦住的一种状态。
+  const errors = Array.isArray(configState?.errors) ? configState.errors : []
+  if (errors.length) {
+    return {
+      status: PREFLIGHT_FAIL,
+      paths,
+      detail: `${errors[0]}（该文件已被整份忽略，正在使用默认配置）`,
+      errors,
+      warnings
+    }
+  }
   if (warnings.length) {
-    return { status: PREFLIGHT_WARN, paths, detail: warnings[0], warnings }
+    return { status: PREFLIGHT_WARN, paths, detail: warnings[0], warnings, errors: [] }
   }
   return {
     status: PREFLIGHT_OK,
     paths,
     detail: paths.length ? paths.join(", ") : "defaults only",
-    warnings: []
+    warnings: [],
+    errors: []
   }
 }
 
@@ -96,10 +132,11 @@ function updateCheck(update) {
 /**
  * @returns {{status, checks, problems}} status 取最坏的一项
  */
-export function buildPreflightReport({ configState, mcp, skills, update = null } = {}) {
+export function buildPreflightReport({ configState, mcp, skills, update = null, fastIssues = null } = {}) {
   const checks = {
     config: configCheck(configState),
     provider: providerCheck(configState),
+    fastModel: fastModelCheck(configState, fastIssues || fastModelIssues()),
     permission: {
       status: PREFLIGHT_OK,
       level: normalizePermissionLevel(configState?.config?.permission || {}),
@@ -129,7 +166,7 @@ const LABEL_WIDTH = 12
 export function formatPreflightLines(report) {
   if (!report) return []
   const mark = { [PREFLIGHT_OK]: "ok  ", [PREFLIGHT_WARN]: "warn", [PREFLIGHT_FAIL]: "fail" }
-  const order = ["config", "provider", "permission", "mcp", "skills", "update"]
+  const order = ["config", "provider", "fastModel", "permission", "mcp", "skills", "update"]
   return order.map((name) => {
     const check = report.checks[name]
     if (!check) return ""

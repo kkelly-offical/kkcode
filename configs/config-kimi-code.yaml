@@ -37,9 +37,18 @@ provider:
     stream: true
     reasoning_effort: high
 
-# 0.4.0 model roles. fast powers inline ghost text and session titles; it is
-# only ever used for cheap helper calls, so point it at the highspeed model.
+# 0.4.0 model roles. fast powers inline ghost text and session titles.
+#
+# fast is deliberately left unset: every model on this channel is thinking-only,
+# and the fast channel gives helper calls a 32-token budget with a 4s timeout —
+# the reasoning pass consumes the whole budget and the visible text comes back
+# empty every time. Pointing fast here does not merely fail, it fails silently
+# while still spending tokens on each keystroke pause.
+#
+# To enable ghost text, point fast at an instant-answer model on another
+# channel using the provider/model form, e.g.:
+#   fast: aliyun/qwen3.7-flash
 models:
   main: k3
-  fast: kimi-for-coding-highspeed
+  fast: null
   subagent: kimi-for-coding
