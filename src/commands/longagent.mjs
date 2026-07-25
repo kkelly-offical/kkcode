@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises"
 import { LongAgentManager } from "../orchestration/longagent-manager.mjs"
 import { loadConfig } from "../config/load-config.mjs"
 import { eventLogPath } from "../storage/paths.mjs"
+import { formatRecoverySuggestions } from "../ui/activity-renderer.mjs"
 
 /**
  * Ultra 会话管理。0.4.0 起主命令是 `kkcode ultra`，`kkcode longagent`
@@ -212,7 +213,17 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
           maxIterations: Number(options.maxIterations) || 0,
           output: { write: (t) => process.stdout.write(t) }
         })
-        console.log(`\nsession ${sessionId} finished (status: ${result.status || "done"})`)
+        // executeTurn 返回的对象没有顶层 status —— 它在 result.longagent.status。
+        // 0.4.x 读的是 result.status，恒为 undefined，所以这行**永远**打印 done，
+        // 哪怕这一轮其实是 failed 或 aborted。
+        const ultra = result.longagent || {}
+        console.log(`\nsession ${sessionId} finished (status: ${ultra.status || "unknown"})`)
+        if (ultra.recoverySuggestions) {
+          for (const line of formatRecoverySuggestions(ultra.recoverySuggestions)) {
+            console.log(line)
+          }
+        }
+        if (ultra.status === "failed") process.exitCode = 1
       } catch (err) {
         console.error(`longagent error: ${err.message}`)
         process.exitCode = 1

@@ -43,7 +43,7 @@ import { paint } from "./theme/color.mjs"
 import { PermissionEngine } from "./permission/engine.mjs"
 import { setPermissionPromptHandler } from "./permission/prompt.mjs"
 import { setQuestionPromptHandler } from "./tool/question-prompt.mjs"
-import { createActivityRenderer, formatPlanProgress } from "./ui/activity-renderer.mjs"
+import { createActivityRenderer, formatPlanProgress, formatRecoverySuggestions } from "./ui/activity-renderer.mjs"
 import { buildTranscriptViewport } from "./ui/repl-transcript-panel.mjs"
 import { createAppState, reduceAppState } from "./ui/app-state.mjs"
 import { renderTaskProgressPanel } from "./ui/repl-task-panel.mjs"
@@ -1305,6 +1305,11 @@ async function processInputLine({
       print(`longagent: phase=${result.longagent.phase || "-"} stage=${stg} gate=${result.longagent.currentGate || "-"}`)
       if (result.longagent.taskProgress && Object.keys(result.longagent.taskProgress).length) {
         for (const line of renderTaskProgressPanel(result.longagent.taskProgress, formatPlanProgress)) print(line)
+      }
+      // generateRecoverySuggestions 从 0.3.x 起就在生成这份诊断，但 engine 打包
+      // 结果时没有透传，全代码库零消费者 —— 用户从来没见过它。
+      if (result.longagent.recoverySuggestions) {
+        for (const line of formatRecoverySuggestions(result.longagent.recoverySuggestions)) print(line)
       }
     }
     if (fileChanges.length) {

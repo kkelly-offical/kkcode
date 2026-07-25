@@ -240,6 +240,40 @@ function evaluateBudget(config, meter) {
   return { warnings, exceeded, strategy }
 }
 
+/**
+ * 把 Ultra（longagent）的回合结果打包给上层消费。
+ *
+ * 0.4.x 在两处（预算阻断路径与正常路径）各手写了一份**逐字段枚举**的同样的
+ * 对象，于是新增字段只会被加进其中一处；`recoverySuggestions` 更是两处都漏了
+ * —— runHybridLongAgent 认真地生成了失败诊断（失败任务分类、手动排查步骤、
+ * 恢复提示），放进返回值，然后在这里被静默丢弃，全代码库零消费者，用户从来
+ * 没见过它。收敛成一个函数，两处共用。
+ */
+export function packLongAgent(turn) {
+  return {
+    status: turn.status,
+    phase: turn.phase,
+    gateStatus: turn.gateStatus,
+    currentGate: turn.currentGate,
+    lastGateFailures: turn.lastGateFailures || [],
+    iterations: turn.iterations,
+    recoveryCount: turn.recoveryCount,
+    progress: turn.progress,
+    elapsed: turn.elapsed,
+    stageIndex: turn.stageIndex,
+    stageCount: turn.stageCount,
+    currentStageId: turn.currentStageId || null,
+    planFrozen: turn.planFrozen,
+    taskProgress: turn.taskProgress,
+    stageProgress: turn.stageProgress,
+    remainingFilesCount: turn.remainingFilesCount,
+    fileChanges: turn.fileChanges || [],
+    gitBranch: turn.gitBranch || null,
+    gitBaseBranch: turn.gitBaseBranch || null,
+    recoverySuggestions: turn.recoverySuggestions || null
+  }
+}
+
 export async function executeTurn({
   prompt,
   contentBlocks = null,
@@ -368,27 +402,7 @@ export async function executeTurn({
       budgetWarnings: budgetResult.warnings,
       budgetExceeded: true,
       toolEvents: turn.toolEvents,
-      longagent: mode === "longagent"
-        ? {
-            status: turn.status,
-            phase: turn.phase,
-            gateStatus: turn.gateStatus,
-            currentGate: turn.currentGate,
-            lastGateFailures: turn.lastGateFailures || [],
-            iterations: turn.iterations,
-            recoveryCount: turn.recoveryCount,
-            progress: turn.progress,
-            elapsed: turn.elapsed,
-            stageIndex: turn.stageIndex,
-            stageCount: turn.stageCount,
-            currentStageId: turn.currentStageId,
-            planFrozen: turn.planFrozen,
-            taskProgress: turn.taskProgress,
-            stageProgress: turn.stageProgress,
-            remainingFilesCount: turn.remainingFilesCount,
-            fileChanges: turn.fileChanges || []
-          }
-        : null
+      longagent: mode === "longagent" ? packLongAgent(turn) : null
     }
   }
 
@@ -409,26 +423,6 @@ export async function executeTurn({
     toolEvents: turn.toolEvents,
     // Plan 审批选择的执行航道，由 REPL 消费后真正切模式
     planHandoff: turn.planHandoff || null,
-    longagent: mode === "longagent"
-      ? {
-          status: turn.status,
-          phase: turn.phase,
-          gateStatus: turn.gateStatus,
-          currentGate: turn.currentGate,
-          lastGateFailures: turn.lastGateFailures || [],
-          iterations: turn.iterations,
-          recoveryCount: turn.recoveryCount,
-          progress: turn.progress,
-          elapsed: turn.elapsed,
-          stageIndex: turn.stageIndex,
-          stageCount: turn.stageCount,
-          currentStageId: turn.currentStageId,
-          planFrozen: turn.planFrozen,
-          taskProgress: turn.taskProgress,
-          stageProgress: turn.stageProgress,
-          remainingFilesCount: turn.remainingFilesCount,
-          fileChanges: turn.fileChanges || []
-        }
-      : null
+    longagent: mode === "longagent" ? packLongAgent(turn) : null
   }
 }

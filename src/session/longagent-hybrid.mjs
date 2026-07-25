@@ -286,7 +286,7 @@ async function runHybridPipeline({
   // 同一 stage 的累计尝试次数。recoveryCount 会在每次降级后清零，
   // 这个总账不清零，作为无限重跑的硬上限。
   let stageAttempts = 0
-  let currentPhase = "H0", currentGate = "init"
+  let currentPhase = "H0", currentGate = "init", currentStageId = null
   let gateStatus = {}, lastGateFailures = []
   let lastProgress = { percentage: 0, currentStep: 0, totalSteps: 0 }
   let finalReply = "", planFrozen = false, stagePlan = null
@@ -332,7 +332,7 @@ async function runHybridPipeline({
     await LongAgentManager.update(sessionId, {
       status: patch.status || "running", phase: currentPhase, gateStatus, currentGate,
       recoveryCount, lastGateFailures, iterations: iteration, heartbeatAt: Date.now(),
-      progress: lastProgress, planFrozen, stageIndex,
+      progress: lastProgress, planFrozen, stageIndex, currentStageId,
       stageCount: stagePlan?.stages?.length || 0,
       taskProgress, stageProgress: { done: stats.done, total: stats.total },
       remainingFilesCount: stats.remainingFilesCount,
@@ -751,6 +751,7 @@ async function runHybridPipeline({
       iteration++
       const stage = stagePlan.stages[stageIndex]
       currentGate = `stage:${stage.stageId}`
+      currentStageId = stage.stageId
       await syncState({ stageStatus: "running", lastMessage: `H4: running ${stage.stageId} (${stageIndex + 1}/${stagePlan.stages.length})` })
 
       const seeded = Object.fromEntries(
@@ -1530,6 +1531,9 @@ async function runHybridPipeline({
     gateStatus, currentGate, lastGateFailures, recoveryCount,
     progress: lastProgress, elapsed,
     stageIndex, stageCount: stagePlan?.stages?.length || 0,
+    // status-bar.mjs 与 repl.mjs 一直在读 currentStageId，而这里从来没返回过它，
+    // 于是状态栏永远退化成 "i/n" 而不是阶段名。
+    currentStageId,
     planFrozen, taskProgress, fileChanges,
     stageProgress: { done: stats.done, total: stats.total },
     remainingFilesCount: stats.remainingFilesCount,
