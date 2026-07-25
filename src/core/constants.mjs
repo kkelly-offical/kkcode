@@ -74,6 +74,7 @@ export const EVENT_TYPES = {
   LONGAGENT_CHECKPOINT_CLEANED: "longagent.checkpoint.cleaned",
   LONGAGENT_HYBRID_CHECKPOINT_INVALID: "longagent.hybrid.checkpoint_invalid",
   LONGAGENT_STAGE_TASK_SKIPPED: "longagent.stage.task.skipped",
+  LONGAGENT_STAGE_TASK_PROGRESS: "longagent.stage.task.progress",
   LONGAGENT_STOP_REQUESTED: "longagent.stop.requested",
   PROVIDER_FALLBACK: "provider.fallback",
   PROVIDER_RETRY: "provider.retry"

@@ -735,6 +735,10 @@ export function createActivityRenderer({ output, theme = null, eventFilter = nul
         log(formatTaskFinished(payload.taskId, payload.status))
         break
       }
+      case EVENT_TYPES.LONGAGENT_STAGE_TASK_PROGRESS: {
+        log(`   ${paint("·", "#666666")} ${paint(`task ${payload.taskId}`, null, { dim: true })} ${paint(clipText(payload.line || "", 90), null, { dim: true })}`)
+        break
+      }
       // 这个事件一直有人发，却从来没有渲染分支 —— 被依赖失败连累而跳过的任务
       // 在终端上完全不可见，用户只会觉得「这个任务凭空消失了」。
       case EVENT_TYPES.LONGAGENT_STAGE_TASK_SKIPPED: {

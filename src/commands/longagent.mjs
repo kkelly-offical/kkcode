@@ -86,6 +86,53 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
     })
 
   cmd
+    .command("board")
+    .description("render the goal board for a longagent session (todo / doing / blocked / pending-check / done)")
+    .requiredOption("--session <id>", "session id")
+    .option("--watch", "re-render every 2s (watch a running session from another terminal)")
+    .action(async (options) => {
+      const { buildBoardModel, renderUltraBoard } = await import("../ui/ultra-board.mjs")
+      const render = async () => {
+        const record = await LongAgentManager.get(options.session)
+        if (!record) {
+          console.error(`not found: ${options.session}`)
+          process.exitCode = 1
+          return false
+        }
+        const ledger = await loadLedger(options.session)
+        const lastRound = ledger?.data.rounds[ledger.data.rounds.length - 1]
+        const verification = lastRound?.criteria?.length
+          ? { results: lastRound.criteria, subGoals: [] }
+          : null
+        // 进行中任务的实时详情来自后台任务的日志尾巴
+        const liveTasks = {}
+        try {
+          const { BackgroundManager } = await import("../orchestration/background-manager.mjs")
+          for (const task of await BackgroundManager.list()) {
+            if (task.status === "running" && task.logical_task_id) {
+              liveTasks[task.logical_task_id] = { lastLine: (task.log_tail || []).at(-1) || "" }
+            }
+          }
+        } catch { /* 后台任务列表读不到就不带实时详情 */ }
+        const board = buildBoardModel({
+          goal: record.goal, stagePlan: record.stagePlan,
+          taskProgress: record.taskProgress || {}, verification, liveTasks
+        })
+        const width = Math.max(60, process.stdout.columns || 120)
+        if (options.watch) console.clear()
+        console.log(`session ${options.session} · ${record.status || "?"} · ${record.lastMessage || ""}`)
+        for (const line of renderUltraBoard(board, { width })) console.log(line)
+        return true
+      }
+      if (!(await render())) return
+      if (options.watch) {
+        // 让另一个终端能看着后台 Ultra 跑 —— 补上 `ultra start` 之后完全
+        // 看不见内部的空白
+        setInterval(() => { render().catch(() => {}) }, 2000)
+      }
+    })
+
+  cmd
     .command("stop")
     .description("emergency stop for a running longagent session")
     .requiredOption("--session <id>", "session id")

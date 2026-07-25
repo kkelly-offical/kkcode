@@ -2084,7 +2084,7 @@ async function runHybridPipeline({
     // status-bar.mjs 与 repl.mjs 一直在读 currentStageId，而这里从来没返回过它，
     // 于是状态栏永远退化成 "i/n" 而不是阶段名。
     currentStageId,
-    goal, goalVerification, blockedReport, reportPath,
+    goal, goalVerification, stagePlan, blockedReport, reportPath,
     ledgerPath: ledger?.path || null,
     planFrozen, taskProgress, fileChanges,
     stageProgress: { done: stats.done, total: stats.total },

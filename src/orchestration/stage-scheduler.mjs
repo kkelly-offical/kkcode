@@ -526,6 +526,21 @@ export async function runStageBarrier({
       }
       if (!["completed", "error", "interrupted", "cancelled"].includes(bg.status)) {
         pending += 1
+        // H4 子进程可见性：worker 的 EventBus 与父进程不通，0.4.x 里任务
+        // 启动到结束之间是几分钟的完全空白（看板的「进行中」列也会因此
+        // 永远空着）。worker 在写日志 —— 增量转发最新一行给父进程事件。
+        const logCount = Array.isArray(bg.logs) ? bg.logs.length : 0
+        if (logCount > (item._forwardedLogCount || 0)) {
+          item._forwardedLogCount = logCount
+          const lastLine = String(bg.logs[logCount - 1] || "").slice(0, 160)
+          if (lastLine) {
+            EventBus.emit({
+              type: EVENT_TYPES.LONGAGENT_STAGE_TASK_PROGRESS,
+              sessionId,
+              payload: { taskId: item.taskId, stageId: stage.stageId, line: lastLine, logCount }
+            }).catch(() => {})
+          }
+        }
         continue
       }
 

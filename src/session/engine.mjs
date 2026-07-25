@@ -273,6 +273,7 @@ export function packLongAgent(turn) {
     recoverySuggestions: turn.recoverySuggestions || null,
     goal: turn.goal || null,
     goalVerification: turn.goalVerification || null,
+    stagePlan: turn.stagePlan || null,
     blockedReport: turn.blockedReport || null,
     reportPath: turn.reportPath || null,
     ledgerPath: turn.ledgerPath || null

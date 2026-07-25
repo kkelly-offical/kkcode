@@ -45,6 +45,7 @@ import { setPermissionPromptHandler } from "./permission/prompt.mjs"
 import { setQuestionPromptHandler } from "./tool/question-prompt.mjs"
 import { createActivityRenderer, formatPlanProgress, formatRecoverySuggestions } from "./ui/activity-renderer.mjs"
 import { renderBlockedReportText } from "./session/blocked-report.mjs"
+import { buildBoardModel, renderUltraBoard } from "./ui/ultra-board.mjs"
 import { buildTranscriptViewport } from "./ui/repl-transcript-panel.mjs"
 import { createAppState, reduceAppState } from "./ui/app-state.mjs"
 import { renderTaskProgressPanel } from "./ui/repl-task-panel.mjs"
@@ -828,6 +829,30 @@ async function processInputLine({
     ].join("\n")
   }
 
+  if (normalized === "/board") {
+    // 目标看板：判据 + stage/task 投影成五列（待办/进行中/受阻/待验收/已达成）。
+    // 数据来自会话状态与台账 —— 与 `kkcode ultra board` 是同一条码。
+    const { LongAgentManager } = await import("./orchestration/longagent-manager.mjs")
+    const { loadLedger } = await import("./session/ultra-ledger.mjs")
+    const record = await LongAgentManager.get(state.sessionId)
+    if (!record?.goal && !record?.stagePlan) {
+      print("当前会话还没有 Ultra 目标。用 /ultra 模式跑一个目标后再看。")
+      return { exit: false }
+    }
+    const ledger = await loadLedger(state.sessionId)
+    const lastRound = ledger?.data.rounds[ledger.data.rounds.length - 1]
+    const verification = lastRound?.criteria?.length
+      ? { results: lastRound.criteria, subGoals: [] }
+      : null
+    const board = buildBoardModel({
+      goal: record.goal, stagePlan: record.stagePlan,
+      taskProgress: record.taskProgress || {}, verification
+    })
+    const width = Math.max(60, process.stdout.columns || 120)
+    for (const line of renderUltraBoard(board, { width, paint })) print(line)
+    return { exit: false }
+  }
+
   if (["/assistant", "/plan", "/agent", "/code", "/coding", "/longagent", "/ultra", "/yolo"].includes(normalized)) {
     const raw = normalized.slice(1)
     if (raw === "longagent") {
@@ -1300,10 +1325,22 @@ async function processInputLine({
 
   if (state.mode === "longagent") {
     if (result.longagent) {
-      const stg = result.longagent.currentStageId
-        ? result.longagent.currentStageId
-        : `${(result.longagent.stageIndex || 0) + 1}/${Math.max(1, result.longagent.stageCount || 1)}`
-      print(`longagent: phase=${result.longagent.phase || "-"} stage=${stg} gate=${result.longagent.currentGate || "-"}`)
+      if (result.longagent.goal) {
+        // 0.5.0：目标看板的紧凑形态（每个子目标一行进度 + 受阻/待验收计数），
+        // 取代旧的 "longagent: phase=… stage=…" 单行
+        const board = buildBoardModel({
+          goal: result.longagent.goal,
+          stagePlan: result.longagent.stagePlan,
+          taskProgress: result.longagent.taskProgress || {},
+          verification: result.longagent.goalVerification
+        })
+        for (const line of renderUltraBoard(board, { compact: true, paint })) print(line)
+      } else {
+        const stg = result.longagent.currentStageId
+          ? result.longagent.currentStageId
+          : `${(result.longagent.stageIndex || 0) + 1}/${Math.max(1, result.longagent.stageCount || 1)}`
+        print(`longagent: phase=${result.longagent.phase || "-"} stage=${stg} gate=${result.longagent.currentGate || "-"}`)
+      }
       if (result.longagent.taskProgress && Object.keys(result.longagent.taskProgress).length) {
         for (const line of renderTaskProgressPanel(result.longagent.taskProgress, formatPlanProgress)) print(line)
       }
