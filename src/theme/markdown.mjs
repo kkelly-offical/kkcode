@@ -1,4 +1,4 @@
-import { paint } from "./color.mjs"
+import { paint, isColorEnabled } from "./color.mjs"
 import { sanitizeTerminalText } from "./terminal-sanitize.mjs"
 
 const COLORS = {
@@ -20,7 +20,9 @@ const TOKEN_RE = /\uE000(\d+)\uE001/g
 const ESCAPABLE_MARKDOWN = /\\([\\`*_[\]{}()#+\-.!|~>])/g
 
 function strike(text) {
-  if (!process.stdout.isTTY || process.env.NO_COLOR) return text
+  // 删除线是手写 SGR 而非走 paint()，开关必须走同一个判定，否则
+  // setColorEnabled 打开后其他元素上色、唯独删除线还是裸文本。
+  if (!isColorEnabled()) return text
   return `\u001b[9m${text}\u001b[29m`
 }
 

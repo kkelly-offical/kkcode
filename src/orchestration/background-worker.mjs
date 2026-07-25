@@ -10,6 +10,7 @@ import { flushNow, forkSession, getSession } from "../session/store.mjs"
 import { extractEditFeedbackFromToolEvents } from "../observability/edit-diagnostics.mjs"
 import { INTERRUPTION_REASONS, normalizeInterruptionReason } from "./interruption-reason.mjs"
 import { checkWorkspaceTrust } from "../permission/workspace-trust.mjs"
+import { PermissionEngine } from "../permission/engine.mjs"
 import * as git from "../util/git.mjs"
 
 function now() {
@@ -183,6 +184,12 @@ async function runDelegateTask(task, signal) {
       cwd: effectiveCwd,
       ...(inheritedTrustState ? { trustState: inheritedTrustState } : {})
     })
+    // PermissionEngine 的信任标志是模块级的，每个进程都得自己设一次。worker
+    // 是独立进程入口，此前从不设置 —— 于是 engine.check() 的第一行就抛
+    // "workspace not trusted"，被 loop 吞成 tool error，后台子智能体只能纯
+    // 文本作答，任务还标成 completed。REPL/CLI 的六个入口早就这么做了
+    // （见 commands/longagent.mjs:34），漏的只有这里。
+    PermissionEngine.setTrusted(ctx.trustState?.trusted === true)
     _maxLogLines = Number(ctx.configState.config?.background?.max_log_lines || 300)
     const extensionPolicy = resolveExtensionPolicy(ctx.configState)
     await ToolRegistry.initialize({
@@ -314,7 +321,12 @@ const SILENT_ERROR_PATTERNS = [
   /missing api key/i,
   /stream idle timeout/i,
   /\b(econnreset|econnrefused|etimedout)\b/i,
-  /budget exceeded/i
+  /budget exceeded/i,
+  // 权限被拒也是一种「模型只能干说话」的静默失败。worker 缺 setTrusted 那个
+  // bug 期间，每次工具调用都抛这句、被吞成 tool error，任务照样标 completed ——
+  // 加进模式表，让同类问题下次能被认出来是失败，而不是又躲过一整轮验收。
+  /workspace not trusted/i,
+  /permissionerror/i
 ]
 
 function detectSilentError(result, payload) {

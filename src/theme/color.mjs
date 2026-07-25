@@ -49,8 +49,28 @@ function bgColorCode(color) {
   return ""
 }
 
+/**
+ * 上色开关。
+ *
+ * 默认跟随环境（TTY 且未设 NO_COLOR），但可以显式覆盖 —— 这是**测试可见性**
+ * 的前提：测试进程不是 TTY，`paint()` 于是恒返回原文，意味着任何配色回归在
+ * CI 里完全观测不到（结构改动会红，颜色改错不会）。想断言配色的测试必须能
+ * 打开它，用完在 after 钩子里 `setColorEnabled(null)` 还原。
+ */
+let colorOverride = null
+
+export function setColorEnabled(value) {
+  colorOverride = value === null || value === undefined ? null : Boolean(value)
+}
+
+export function isColorEnabled() {
+  if (colorOverride !== null) return colorOverride
+  return Boolean(process.stdout.isTTY) && !process.env.NO_COLOR
+}
+
 export function paint(text, color, options = {}) {
-  if (!process.stdout.isTTY || process.env.NO_COLOR) return text
+  const enabled = options.enabled === undefined ? isColorEnabled() : Boolean(options.enabled)
+  if (!enabled) return text
   const styles = []
   if (options.bold) styles.push(ANSI.bold)
   if (options.dim) styles.push(ANSI.dim)

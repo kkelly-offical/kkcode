@@ -1,5 +1,53 @@
 # Changelog / 更新日志
 
+## 0.5.8
+
+Every background subagent had been unable to use tools. This is the first
+slice of the 0.6.0 work, shipped early because the defect is live.
+
+### English
+
+- **Background workers could not use any tool.** The worker is a separate
+  process entry point, but it never called `PermissionEngine.setTrusted()` —
+  and the engine's first line refuses every check when its module-level trust
+  flag is false, which is its default. So each tool call raised
+  `workspace not trusted`, the loop swallowed it as a tool error, the subagent
+  answered from text alone, and the task was still recorded as `completed`.
+  This affected every `task(run_in_background: true)` delegation and every
+  parallel Ultra stage task. The same two-layer trap was fixed for
+  `ultra start/resume` in 0.5.0; that fix reached the CLI entry point and
+  missed this one.
+  The regression test now makes the mock provider issue a real `write` call
+  and asserts the file lands on disk — the previous end-to-end test only ever
+  returned plain text, which is why a completely broken tool path stayed green
+  through four releases. Verified by reverting the fix: the file is absent.
+- Permission denials join the silent-error patterns, so a subagent that can
+  only talk is reported as failed rather than completed.
+- `paint()` gains an explicit color switch (`setColorEnabled`). It read
+  `process.stdout.isTTY` directly, so in a test process it always returned
+  plain text — meaning **color regressions were invisible to CI**: structural
+  breakage turned red, wrong colors never did. Markdown's hand-written
+  strikethrough now follows the same switch instead of testing the environment
+  on its own.
+
+### 中文
+
+- **后台子智能体的工具调用全都是坏的。** worker 是独立进程入口，却从不调用
+  `PermissionEngine.setTrusted()`，而权限引擎第一行就在模块级信任标志为假时
+  拒绝一切检查（默认正是假）。于是每次工具调用都抛 `workspace not trusted`，
+  被会话循环吞成 tool error，子智能体只能凭文本作答，任务却照样记为
+  `completed`。影响每一个 `task(run_in_background: true)` 委派与全部 Ultra
+  并行阶段任务。同样的两层陷阱 0.5.0 为 `ultra start/resume` 修过一次 ——
+  那次补上了 CLI 入口，漏了这个。
+  回归测试现在让 mock provider 发出一次真实的 `write` 调用并断言产物落盘 ——
+  此前的端到端测试永远只回纯文本，所以一条完全断掉的工具链路绿了四个版本。
+  已用「撤销修复」反向验证：产物确实不存在。
+- 权限拒绝加入静默错误模式表，只会说话的子智能体今后报失败而不是完成。
+- `paint()` 增加显式上色开关（`setColorEnabled`）。它原先直读
+  `process.stdout.isTTY`，测试进程里恒返回原文 —— 意味着**配色回归在 CI 中
+  完全不可见**：结构坏了会红，颜色错了不会。markdown 里手写的删除线也改为
+  跟随同一个开关，不再自行判断环境。
+
 ## 0.5.7
 
 Works through the CodeQL backlog. Three real findings fixed, seven false

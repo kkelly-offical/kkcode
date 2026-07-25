@@ -1,6 +1,6 @@
 import test, { beforeEach, afterEach } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import http from "node:http"
@@ -26,8 +26,13 @@ function git(...args) {
   })
 }
 
+// 用例可以覆盖它来编排逐次回复（例如先发一次工具调用再收尾）。
+// 返回 null 表示走默认行为。
+let mockResponder = null
+
 async function startMockOpenAIServer() {
   requestCount = 0
+  mockResponder = null
   server = http.createServer(async (req, res) => {
     if (req.method !== "POST" || req.url !== "/chat/completions") {
       res.statusCode = 404
@@ -35,6 +40,13 @@ async function startMockOpenAIServer() {
       return
     }
     requestCount += 1
+
+    const scripted = mockResponder ? await mockResponder(requestCount) : null
+    if (scripted) {
+      res.setHeader("content-type", "application/json")
+      res.end(JSON.stringify(scripted))
+      return
+    }
 
     if (requestCount === 1) {
       await new Promise((resolve) => setTimeout(resolve, 5000))
@@ -336,4 +348,77 @@ test("background delegate cleans a detached worktree after a post-setup error", 
     git("worktree", "list", "--porcelain").includes(`kkcode-worktree-${task.id}-`),
     false
   )
+})
+
+// 0.5.8：这条用例存在的唯一理由，是此前整个后台通道的工具调用都是坏的而
+// 测试全绿。worker 是独立进程入口，却从不调用 PermissionEngine.setTrusted()，
+// 而 engine.check() 第一行就在信任为假时抛错 —— 每次工具调用都被拒、被吞成
+// tool error、子智能体降级为纯文本作答，任务照样标 completed。原来的 mock
+// 只回纯文本，永远走不到权限检查那一步，所以这个 bug 活了下来。
+//
+// 因此这里必须发一次真实的工具调用，并断言产物真的落到磁盘上 —— 只断言
+// 任务状态是不够的，那正是当年漏掉它的原因。
+test("background worker can actually use tools: a delegated write lands on disk", async () => {
+  const config = {
+    background: { mode: "worker_process", max_parallel: 1, worker_timeout_ms: 30000 }
+  }
+
+  // 默认的 e2e 配置关掉了全部内建工具且 max_steps=1，工具调用无从谈起。
+  const raw = JSON.parse(await readFile(join(project, "kkcode.config.json"), "utf8"))
+  raw.tool.sources.builtin = true
+  raw.agent.max_steps = 3
+  await writeFile(join(project, "kkcode.config.json"), `${JSON.stringify(raw, null, 2)}\n`, "utf8")
+
+  const target = "delegated-artifact.txt"
+  const contents = "written by the background worker\n"
+  mockResponder = (count) => {
+    if (count === 1) {
+      return {
+        id: "chatcmpl-tool",
+        choices: [{
+          index: 0,
+          finish_reason: "tool_calls",
+          message: {
+            role: "assistant",
+            content: "",
+            tool_calls: [{
+              id: "call_write_1",
+              type: "function",
+              function: { name: "write", arguments: JSON.stringify({ path: target, content: contents }) }
+            }]
+          }
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 }
+      }
+    }
+    return {
+      id: "chatcmpl-done",
+      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "wrote the file" } }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    }
+  }
+
+  const task = await BackgroundManager.launchDelegateTask({
+    description: "e2e delegated tool call",
+    payload: {
+      workerType: "delegate_task",
+      cwd: project,
+      prompt: `write ${target}`,
+      parentSessionId: "ses_parent_tooluse",
+      subSessionId: `ses_sub_tooluse_${Date.now()}`,
+      providerType: "local",
+      model: "test-model"
+    },
+    config
+  })
+
+  const done = await waitFor(task.id, (it) => ["completed", "error"].includes(it.status), { config, timeoutMs: 30000 })
+  assert.equal(done.status, "completed", `task failed: ${done.error || ""}`)
+
+  // 核心断言：产物真的存在。信任标志没设时这里会 ENOENT。
+  const written = await readFile(join(project, target), "utf8")
+  assert.equal(written, contents)
+
+  assert.ok(Number(done.result?.tool_events || 0) > 0, "工具事件计数必须非零")
+  assert.doesNotMatch(String(done.result?.reply || ""), /not trusted/i)
 })
