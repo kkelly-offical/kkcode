@@ -67,10 +67,22 @@ function renderItem(item, { paint, theme } = {}) {
   const clickable = item.collapsible && item.details.length > 0
   const rendered = []
 
+  // 按说话人上色（0.6.0）。item.kind 一直是一等字段，渲染时却完全不消费 ——
+  // 用户输入与模型回复在屏幕上除了前缀毫无区别。markdown 已着色的正文不再
+  // 二次上色（否则 SGR 嵌套会把内层颜色截断）。
+  const roles = theme?.roles || {}
+  const roleColor = item.kind === "user" ? roles.user
+    : item.kind === "assistant" ? roles.assistant
+    : item.kind === "system" ? roles.system
+    : null
+
   for (let index = 0; index < summaryLines.length; index++) {
     const prefix = index === 0 ? colorize(chevronFor(item), muted, { dim: true }) : "  "
+    const body = roleColor && !summaryLines[index].includes("\u001b[")
+      ? colorize(summaryLines[index], roleColor)
+      : summaryLines[index]
     rendered.push({
-      text: `${prefix}${summaryLines[index]}`,
+      text: `${prefix}${body}`,
       itemId: item.id,
       kind: item.kind,
       section: "summary",

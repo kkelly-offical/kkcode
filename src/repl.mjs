@@ -158,6 +158,7 @@ import {
 } from "./ui/thinking-state.mjs"
 import { mergeConfigObject } from "./config/merge.mjs"
 import { renderSelectOverlay } from "./ui/overlay-select.mjs"
+import { setMarkdownColors } from "./theme/markdown.mjs"
 import { formatTokenCount } from "./theme/status-bar.mjs"
 import {
   sanitizeTerminalStyledText,
@@ -3000,7 +3001,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         ui.history.push(line)
         if (ui.history.length > HIST_SIZE) ui.history.splice(0, ui.history.length - HIST_SIZE)
         ui.historyIndex = ui.history.length
-        appendLog(paint("❯ ", ctx.themeState.theme.semantic.success) + paint(line, "#e2e8f0"))
+        appendLog(paint("❯ ", ctx.themeState.theme.semantic.success) + paint(line, ctx.themeState.theme.roles?.user), { kind: "user" })
         appendLog("")
         ui.input = ""
         ui.inputCursor = 0
@@ -3084,7 +3085,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     if (ui.history.length > HIST_SIZE) ui.history.splice(0, ui.history.length - HIST_SIZE)
     ui.historyIndex = ui.history.length
 
-    appendLog(paint("❯ ", ctx.themeState.theme.semantic.success) + paint(line, "#e2e8f0"))
+    appendLog(paint("❯ ", ctx.themeState.theme.semantic.success) + paint(line, ctx.themeState.theme.roles?.user), { kind: "user" })
     appendLog("")
     ui.input = ""
     ui.inputCursor = 0
@@ -4670,7 +4671,9 @@ export async function startRepl({ trust = false } = {}) {
   // 触发发现，列表与上限全靠上次手动 /model refresh 或人肉配置。
   // 绝不阻塞启动：失败静默，缓存 TTL 15 分钟由 catalog 层负责。
   {
-    const startupProvider = ctx.configState.config?.provider?.default
+    // 主题的 markdown 分组注入渲染器：换主题时对话里的 markdown 跟着变
+  setMarkdownColors(ctx.themeState.theme?.markdown)
+  const startupProvider = ctx.configState.config?.provider?.default
     if (startupProvider) {
       void loadProviderModelItems(ctx.configState, startupProvider).catch(() => {})
     }

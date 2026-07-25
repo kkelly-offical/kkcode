@@ -195,7 +195,9 @@ test("renderMarkdown: returns ANSI styles without re-rendering opaque spans", ()
       "[link_with_underscores](https://example.com/a_b) `**literal**` ~~removed~~"
     )
     assert.match(result, /\u001b\[4m/)
-    assert.match(result, /\u001b\[36m\*\*literal\*\*\u001b\[0m/)
+    // 0.6.0 起行内代码走主题色（truecolor），不再是写死的具名 cyan。
+    // 断言的重点始终是「代码跨度不被二次解析」——里面的 ** 必须保持字面量。
+    assert.match(result, /\u001b\[38;2;\d+;\d+;\d+m\*\*literal\*\*\u001b\[0m/)
     assert.match(result, /\u001b\[9mremoved\u001b\[29m/)
     assert.ok(result.includes("https://example.com/a_b"))
   } finally {

@@ -241,6 +241,36 @@ function createRetryTelemetry({
 }
 
 // --- Non-streaming Request ---
+/**
+ * 两条请求路径（流式 / 非流式）共用的准备段：解析设置 → 出网与凭据前置校验
+ * → 取 provider 配置。0.6.0 之前这段在两个函数里各写了一遍，任何一条安全
+ * 校验的调整都必须记得改两处 —— 而漏改的那一处不会有任何报错。
+ */
+async function prepareProviderCall(configState, { providerType, model, baseUrl, apiKeyEnv }) {
+  const resolvedProviderType = providerType || configState.config.provider.default
+  const settings = resolveSettings(configState, resolvedProviderType, { model, baseUrl, apiKeyEnv })
+  await assertProviderOutboundAllowed(configState, {
+    providerName: settings.configKey,
+    protocol: settings.protocol,
+    operation: "provider inference",
+    baseUrlOverride: baseUrl,
+    apiKeyEnvOverride: apiKeyEnv
+  })
+  const apiKey = settings.apiKeyDirect ||
+    (settings.apiKeyEnv ? process.env[settings.apiKeyEnv] : "") ||
+    ""
+  assertCredentialTransport({
+    baseUrl: settings.baseUrl,
+    apiKey,
+    providerName: settings.configKey,
+    operation: "provider inference"
+  })
+  const providerCfg = configState.config.provider[settings.configKey]
+    || configState.config.provider[settings.providerType]
+    || {}
+  return { settings, apiKey, providerCfg }
+}
+
 export async function requestProvider({
   configState,
   providerType,
@@ -263,29 +293,7 @@ export async function requestProvider({
   // kk.audit.v1 里真正需要追溯的模型请求
   audit = true
 }) {
-  const resolvedProviderType = providerType || configState.config.provider.default
-  const settings = resolveSettings(configState, resolvedProviderType, {
-    model,
-    baseUrl,
-    apiKeyEnv
-  })
-  await assertProviderOutboundAllowed(configState, {
-    providerName: settings.configKey,
-    protocol: settings.protocol,
-    operation: "provider inference",
-    baseUrlOverride: baseUrl,
-    apiKeyEnvOverride: apiKeyEnv
-  })
-  const apiKey = settings.apiKeyDirect ||
-    (settings.apiKeyEnv ? process.env[settings.apiKeyEnv] : "") ||
-    ""
-  assertCredentialTransport({
-    baseUrl: settings.baseUrl,
-    apiKey,
-    providerName: settings.configKey,
-    operation: "provider inference"
-  })
-  const providerCfg = configState.config.provider[settings.configKey] || configState.config.provider[settings.providerType] || {}
+  const { settings, apiKey, providerCfg } = await prepareProviderCall(configState, { providerType, model, baseUrl, apiKeyEnv })
   const requestContext = createRequestContext({ traceId, requestId, parentEventId })
   let responseStatus = null
   let responseRequestId = null
@@ -388,29 +396,7 @@ export async function* requestProviderStream({
   temperature = null,
   compaction = null
 }) {
-  const resolvedProviderType = providerType || configState.config.provider.default
-  const settings = resolveSettings(configState, resolvedProviderType, {
-    model,
-    baseUrl,
-    apiKeyEnv
-  })
-  await assertProviderOutboundAllowed(configState, {
-    providerName: settings.configKey,
-    protocol: settings.protocol,
-    operation: "provider inference",
-    baseUrlOverride: baseUrl,
-    apiKeyEnvOverride: apiKeyEnv
-  })
-  const apiKey = settings.apiKeyDirect ||
-    (settings.apiKeyEnv ? process.env[settings.apiKeyEnv] : "") ||
-    ""
-  assertCredentialTransport({
-    baseUrl: settings.baseUrl,
-    apiKey,
-    providerName: settings.configKey,
-    operation: "provider inference"
-  })
-  const providerCfg = configState.config.provider[settings.configKey] || configState.config.provider[settings.providerType] || {}
+  const { settings, apiKey, providerCfg } = await prepareProviderCall(configState, { providerType, model, baseUrl, apiKeyEnv })
 
   if (providerCfg.stream === false) {
     const result = await requestProvider({

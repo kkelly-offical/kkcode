@@ -1,18 +1,17 @@
 import { paint, isColorEnabled } from "./color.mjs"
+import { DEFAULT_THEME } from "./default-theme.mjs"
+import { highlightLine } from "./syntax-highlight.mjs"
 import { sanitizeTerminalText } from "./terminal-sanitize.mjs"
 
-const COLORS = {
-  code: "cyan",
-  codeBlock: "#a9b7c6",
-  codeFence: "#555555",
-  heading: "white",
-  quote: "#8da3b9",
-  listMarker: "#8a8a8a",
-  link: "#78a9ff",
-  linkTarget: "#777777",
-  taskDone: "#78a889",
-  tableBorder: "#606060",
-  tableHeader: "#d0d0d0"
+/**
+ * 0.6.0：配色改为从主题读取。此前这是个硬编码常量，与整个主题系统零关联 ——
+ * 换主题时对话里的 markdown 纹丝不动。缺省值仍是原来那套，所以不传 theme
+ * 的旧调用点行为不变。
+ */
+let COLORS = { ...DEFAULT_THEME.markdown }
+
+export function setMarkdownColors(markdownTheme) {
+  COLORS = { ...DEFAULT_THEME.markdown, ...(markdownTheme || {}) }
 }
 
 const ANSI_RE = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g
@@ -85,11 +84,11 @@ function renderInline(text, depth = 0) {
   // Replace completed spans with opaque tokens so later expressions cannot
   // accidentally re-render Markdown characters inside already styled content.
   rendered = rendered
-    .replace(/\*\*([^*\n]+)\*\*/g, (_, content) => hold(paint(content, null, { bold: true })))
-    .replace(/__([^_\n]+)__/g, (_, content) => hold(paint(content, null, { bold: true })))
+    .replace(/\*\*([^*\n]+)\*\*/g, (_, content) => hold(paint(content, COLORS.bold, { bold: true })))
+    .replace(/__([^_\n]+)__/g, (_, content) => hold(paint(content, COLORS.bold, { bold: true })))
     .replace(/~~([^~\n]+)~~/g, (_, content) => hold(strike(content)))
-    .replace(/(?<![\w*])\*([^*\n]+)\*(?![\w*])/g, (_, content) => hold(paint(content, null, { italic: true })))
-    .replace(/(?<![\w_])_([^_\n]+)_(?![\w_])/g, (_, content) => hold(paint(content, null, { italic: true })))
+    .replace(/(?<![\w*])\*([^*\n]+)\*(?![\w*])/g, (_, content) => hold(paint(content, COLORS.italic, { italic: true })))
+    .replace(/(?<![\w_])_([^_\n]+)_(?![\w_])/g, (_, content) => hold(paint(content, COLORS.italic, { italic: true })))
 
   return restoreTokens(rendered, tokens)
 }
@@ -100,7 +99,9 @@ function renderLine(line) {
     const level = headingMatch[1].length
     const content = headingMatch[2]
     const indent = level > 1 ? "  ".repeat(level - 1) : ""
-    return `${indent}${paint(renderInline(content), COLORS.heading, { bold: level <= 2 })}`
+    // h1/h2/h3+ 分层色差：原先六级同色，层级结构只能靠缩进看
+    const headingColor = level === 1 ? COLORS.heading1 : level === 2 ? COLORS.heading2 : COLORS.heading3
+    return `${indent}${paint(renderInline(content), headingColor, { bold: level <= 2 })}`
   }
 
   if (line.trimStart().startsWith("> ")) {
@@ -119,6 +120,11 @@ function renderLine(line) {
   const ulMatch = line.match(/^(\s*)([-*+])\s+(.*)/)
   if (ulMatch) {
     return `${ulMatch[1]}${paint("\u2022", COLORS.listMarker)} ${renderInline(ulMatch[3])}`
+  }
+
+  // 水平线此前完全不识别，`---` 会被当成普通正文原样输出
+  if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+    return paint("─".repeat(Math.min(60, Math.max(10, line.trim().length * 3))), COLORS.rule)
   }
 
   const olMatch = line.match(/^(\s*)(\d+)\.\s+(.*)/)
@@ -296,7 +302,7 @@ export function renderMarkdown(text) {
         out.push(renderFenceEnd())
         fence = null
       } else {
-        out.push(paint(`  ${line}`, COLORS.codeBlock))
+        out.push(`  ${highlightLine(line, fence.language, COLORS) || paint(line, COLORS.codeBlock)}`)
       }
       continue
     }

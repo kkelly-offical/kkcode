@@ -41,5 +41,21 @@ export function validateTheme(theme) {
       validateColor(theme.modes[key], `modes.${key}`, errors)
     }
   }
+  // 0.6.0 的三组是**可选**的：只在用户写了某个键时校验它的取值。
+  // 加进必填列表会让所有已存在的主题文件突然不合法 —— 而 load-theme 对
+  // 不合法主题是静默回落默认，用户只会看到「配色莫名其妙变了」。
+  // markdown.text 允许 null（表示正文不着色）。
+  for (const group of ["roles", "markdown", "overlay"]) {
+    const section = theme[group]
+    if (section === undefined) continue
+    if (!section || typeof section !== "object" || Array.isArray(section)) {
+      errors.push(`${group} must be an object`)
+      continue
+    }
+    for (const [key, value] of Object.entries(section)) {
+      if (value === null) continue
+      validateColor(value, `${group}.${key}`, errors)
+    }
+  }
   return { valid: errors.length === 0, errors }
 }
