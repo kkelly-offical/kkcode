@@ -1005,6 +1005,40 @@ async function runHybridPipeline({
     stageIndex = 0
     const codingPhaseStart = Date.now()
 
+    // 证据级进度校验（resume_incomplete_files，0.4.x 起有 defaults 有 schema
+    // 但零读取点）：task 标着 completed 而它声称的产物在磁盘上缺失或为空 ——
+    // 典型来源是被信任墙/权限拦截废掉的旧 run 留下的种子进度 —— 降级回
+    // retrying 让 worker 重做。不校验这一步，resume 后没人会重写这些文件，
+    // 判据每轮失败而 H4 每轮秒过，实测空转 5 轮。
+    if (longagentConfig.resume_incomplete_files !== false) {
+      const { stat: statCheck } = await import("node:fs/promises")
+      const statFn = io.stat || statCheck
+      for (const stage of stagePlan.stages) {
+        for (const task of stage.tasks) {
+          const tp = taskProgress[task.taskId]
+          if (!tp || tp.status !== "completed" || !(task.plannedFiles || []).length) continue
+          let missing = false
+          for (const file of task.plannedFiles) {
+            try {
+              const info = await statFn(path.resolve(cwd, file))
+              if (!info.isFile() || info.size === 0) { missing = true; break }
+            } catch { missing = true; break }
+          }
+          if (missing) {
+            taskProgress[task.taskId] = { ...tp, status: "retrying", attempt: 0, skipReason: "" }
+            await EventBus.emit({
+              type: EVENT_TYPES.LONGAGENT_ALERT, sessionId,
+              payload: {
+                kind: "stale_completion",
+                message: `task ${task.taskId} 标记为已完成但产物缺失，降级重做`,
+                taskId: task.taskId
+              }
+            }).catch(() => {})
+          }
+        }
+      }
+    }
+
     // DEFER 需要「挪到本轮末尾」的能力 —— 遍历本地执行序，不动 stagePlan。
     // 轮次作用域：round > 1 时，已达成子目标的 stage 整段跳过 —— 重跑它们
     // 只是白费模型往返，重规划的作用域也因此天然收窄到未达成的部分。
