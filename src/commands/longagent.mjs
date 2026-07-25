@@ -4,6 +4,8 @@ import { LongAgentManager } from "../orchestration/longagent-manager.mjs"
 import { loadConfig } from "../config/load-config.mjs"
 import { eventLogPath } from "../storage/paths.mjs"
 import { formatRecoverySuggestions } from "../ui/activity-renderer.mjs"
+import { loadLedger } from "../session/ultra-ledger.mjs"
+import { buildBlockedReport, renderBlockedReportText } from "../session/blocked-report.mjs"
 
 /**
  * Ultra 会话管理。0.4.0 起主命令是 `kkcode ultra`，`kkcode longagent`
@@ -50,6 +52,37 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
         return
       }
       console.log(JSON.stringify(item.stagePlan, null, 2))
+      if (item.goal) {
+        console.log("\n=== goal ===")
+        console.log(`objective: ${item.goal.objective}`)
+        console.log(`intent: ${item.goal.intent}`)
+        for (const c of item.goal.criteria || []) {
+          console.log(`  [${c.kind}] ${c.text}`)
+        }
+        for (const s of item.goal.subGoals || []) {
+          console.log(`  subgoal ${s.title} (${(s.stageIds || []).join(",")})${s.optional ? " [optional]" : ""}`)
+        }
+      }
+    })
+
+  cmd
+    .command("report")
+    .description("render the goal report for a longagent session from its ledger")
+    .requiredOption("--session <id>", "session id")
+    .option("--json", "print the structured report as JSON")
+    .action(async (options) => {
+      const ledger = await loadLedger(options.session)
+      if (!ledger) {
+        console.error(`no ledger found for session: ${options.session}`)
+        process.exitCode = 1
+        return
+      }
+      const report = buildBlockedReport(ledger)
+      if (options.json) {
+        console.log(JSON.stringify(report, null, 2))
+        return
+      }
+      for (const line of renderBlockedReportText(report)) console.log(line)
     })
 
   cmd
@@ -218,11 +251,15 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
         // 哪怕这一轮其实是 failed 或 aborted。
         const ultra = result.longagent || {}
         console.log(`\nsession ${sessionId} finished (status: ${ultra.status || "unknown"})`)
-        if (ultra.recoverySuggestions) {
+        if (ultra.blockedReport) {
+          console.log("")
+          for (const line of renderBlockedReportText(ultra.blockedReport)) console.log(line)
+        } else if (ultra.recoverySuggestions) {
           for (const line of formatRecoverySuggestions(ultra.recoverySuggestions)) {
             console.log(line)
           }
         }
+        if (ultra.reportPath) console.log(`\nreport: ${ultra.reportPath}`)
         if (ultra.status === "failed") process.exitCode = 1
       } catch (err) {
         console.error(`longagent error: ${err.message}`)

@@ -26,6 +26,8 @@ import { createValidator } from "./task-validator.mjs"
 import { detectStageComplete, detectReturnToCoding, buildStageWrapper, ULTRA_STAGES, ACCEPTANCE_RULES, buildGoalPlanContract } from "./ultra-stages.mjs"
 import { classifyGoalIntent, normalizeGoal, freezeGoal, intentProfile, planSignature } from "./goal-model.mjs"
 import { verifyGoal, GOAL_MET, GOAL_BLOCKED_MANUAL } from "./goal-verifier.mjs"
+import { openLedger, ultraSessionDir } from "./ultra-ledger.mjs"
+import { buildBlockedReport, renderBlockedReportMarkdown } from "./blocked-report.mjs"
 import { verifyStageObjective, OBJECTIVE_MET } from "./stage-objective.mjs"
 import { hasPromptHandler, askQuestionInteractive } from "../tool/question-prompt.mjs"
 import {
@@ -303,6 +305,7 @@ async function runHybridPipeline({
   let gateStatus = {}, lastGateFailures = []
   let lastProgress = { percentage: 0, currentStep: 0, totalSteps: 0 }
   let finalReply = "", planFrozen = false, stagePlan = null, goal = null, goalVerification = null
+  let ledger = null, blockedReport = null, reportPath = null
   let taskProgress = {}, fileChanges = []
   let completionMarkerSeen = false
   let gitBranch = null, gitBaseBranch = null, gitActive = false
@@ -347,6 +350,9 @@ async function runHybridPipeline({
       recoveryCount, lastGateFailures, iterations: iteration, heartbeatAt: Date.now(),
       progress: lastProgress, planFrozen, stageIndex, currentStageId,
       stageCount: stagePlan?.stages?.length || 0,
+      // stagePlan 从 0.3.x 起就没写进状态文件，`kkcode ultra plan` 因此对任何
+      // 会话都输出 no frozen plan found。goal 一并携带。
+      stagePlan, goal,
       taskProgress, stageProgress: { done: stats.done, total: stats.total },
       remainingFilesCount: stats.remainingFilesCount,
       ...patch
@@ -642,6 +648,10 @@ async function runHybridPipeline({
   await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_BLUEPRINT_COMPLETE, sessionId, payload: { planId: stagePlan.planId, stageCount: stagePlan.stages.length } })
   await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_PLAN_FROZEN, sessionId, payload: { planId: stagePlan.planId, stageCount: stagePlan.stages.length, errors: [] } })
   await syncState({ planFrozen: true, lastMessage: `H2: blueprint complete, ${stagePlan.stages.length} stage(s)` })
+
+  // 尝试台账：重规划的输入、受阻报告的唯一数据源、ultra report 的落盘依据
+  ledger = await openLedger({ sessionId, cwd, objective: prompt, goal })
+  ledger.markRoundStart()
 
   // #9 Blueprint 语义验证
   if (hybridConfig.blueprint_validation !== false && stagePlan.stages.length > 0) {
@@ -1451,6 +1461,34 @@ async function runHybridPipeline({
     }
   }
 
+  // 台账记账：本轮全貌（阶段 4 的重规划与停滞检测都吃它）
+  if (ledger) {
+    const stats0 = stageProgressStats(taskProgress)
+    await ledger.appendRound({
+      round: 1,
+      planSignature: planSignature(stagePlan),
+      stages: stagePlan.stages.map((stage) => ({
+        stageId: stage.stageId,
+        name: stage.name,
+        disposition: gateStatus[stage.stageId]?.status === "pass" ? "" : "failed",
+        reason: gateStatus[stage.stageId]?.kind === "plan_defect" ? gateStatus[stage.stageId].reason : "",
+        attempts: 1,
+        failedTasks: Object.values(taskProgress)
+          .filter((t) => t.status === "error" && stage.tasks.some((task) => task.taskId === t.taskId))
+          .map((t) => ({ taskId: t.taskId, errorCategory: classifyError(t.lastError), error: t.lastError || "" }))
+      })),
+      fileChanges,
+      gates: lastGateResult?.gates || {},
+      criteria: goalVerification
+        ? [...goalVerification.results, ...goalVerification.subGoals.flatMap((s) => s.results)]
+        : [],
+      subGoals: goalVerification?.subGoals || [],
+      progress: null,   // 单轮无从对比；阶段 4 的轮次循环接入 progress-signal
+      usage: { input: aggregateUsage.input, output: aggregateUsage.output },
+      verdict: `stages ${stats0.done}/${stats0.total}`
+    }).catch(() => {})
+  }
+
   // ========== H7: GIT MERGE (原子性保护) ==========
   if (usabilityGatesPassed && gitActive && gitBaseBranch && gitBranch) {
     await setPhase("H7", "git_merge")
@@ -1589,6 +1627,22 @@ async function runHybridPipeline({
 
   const stats = stageProgressStats(taskProgress)
 
+  // 受阻报告：只读 ledger 生成，落盘 report.md。completed 也写 —— 成功一样
+  // 值得留一份「哪些判据、什么证据」的记录。
+  if (ledger) {
+    await ledger.setFinal({ status: finalStatus, reply: finalReply }).catch(() => {})
+    try {
+      blockedReport = buildBlockedReport(ledger, { status: finalStatus })
+      const { writeFile: writeFileFs, mkdir: mkdirFs } = await import("node:fs/promises")
+      const dir = ultraSessionDir(sessionId, cwd)
+      await mkdirFs(dir, { recursive: true })
+      reportPath = `${dir}/report.md`
+      await writeFileFs(reportPath, renderBlockedReportMarkdown(blockedReport), "utf8")
+      blockedReport.reportPath = reportPath
+      await ledger.setFinal({ status: finalStatus, reportPath }).catch(() => {})
+    } catch { /* 报告生成失败不拦截结果返回 */ }
+  }
+
   // Phase 11: 恢复建议生成
   let recoverySuggestions = null
   if (finalStatus !== "completed") {
@@ -1615,7 +1669,8 @@ async function runHybridPipeline({
     // status-bar.mjs 与 repl.mjs 一直在读 currentStageId，而这里从来没返回过它，
     // 于是状态栏永远退化成 "i/n" 而不是阶段名。
     currentStageId,
-    goal, goalVerification,
+    goal, goalVerification, blockedReport, reportPath,
+    ledgerPath: ledger?.path || null,
     planFrozen, taskProgress, fileChanges,
     stageProgress: { done: stats.done, total: stats.total },
     remainingFilesCount: stats.remainingFilesCount,

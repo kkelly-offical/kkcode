@@ -272,7 +272,10 @@ export function packLongAgent(turn) {
     gitBaseBranch: turn.gitBaseBranch || null,
     recoverySuggestions: turn.recoverySuggestions || null,
     goal: turn.goal || null,
-    goalVerification: turn.goalVerification || null
+    goalVerification: turn.goalVerification || null,
+    blockedReport: turn.blockedReport || null,
+    reportPath: turn.reportPath || null,
+    ledgerPath: turn.ledgerPath || null
   }
 }
 
