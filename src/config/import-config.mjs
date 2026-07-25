@@ -1,16 +1,7 @@
 import { DEFAULT_CONFIG } from "./defaults.mjs"
+import { mergeConfigObject } from "./merge.mjs"
 
-function mergeObject(base, override) {
-  if (override === undefined || override === null) return base
-  if (Array.isArray(override)) return [...override]
-  if (!base || typeof base !== "object" || Array.isArray(base)) return override
-  if (typeof override !== "object") return override
-  const out = { ...base }
-  for (const key of Object.keys(override)) {
-    out[key] = mergeObject(base[key], override[key])
-  }
-  return out
-}
+const mergeObject = mergeConfigObject
 
 function normalizePermissionRules(inputRules = {}) {
   const rules = []

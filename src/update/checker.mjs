@@ -15,7 +15,9 @@ function normalizeRegistry(registry = DEFAULT_REGISTRY) {
 }
 
 function encodePackageName(name) {
-  return String(name).replace("/", "%2F")
+  // replaceAll：字符串模式的 replace 只换第一个匹配。今天的包名只有一个
+  // 斜杠所以看不出问题，但这是个等着被更深的命名空间踩中的坑。
+  return String(name).replaceAll("/", "%2F")
 }
 
 function parseVersion(version) {

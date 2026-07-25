@@ -5,6 +5,7 @@ import { DEFAULT_CONFIG } from "./defaults.mjs"
 import { validateConfig } from "./schema.mjs"
 import { projectConfigCandidates, userConfigCandidates, envFileCandidates, userRootDir } from "../storage/paths.mjs"
 import { noteDeprecation } from "../core/deprecations.mjs"
+import { mergeConfigObject } from "./merge.mjs"
 
 async function exists(file) {
   try {
@@ -20,17 +21,7 @@ function parseConfigFile(filePath, content) {
   return YAML.parse(content)
 }
 
-function mergeObject(base, override) {
-  if (override === undefined || override === null) return base
-  if (Array.isArray(override)) return [...override]
-  if (!base || typeof base !== "object" || Array.isArray(base)) return override
-  if (typeof override !== "object") return override
-  const out = { ...base }
-  for (const key of Object.keys(override)) {
-    out[key] = mergeObject(base[key], override[key])
-  }
-  return out
-}
+const mergeObject = mergeConfigObject
 
 async function firstExisting(candidates) {
   for (const candidate of candidates) {

@@ -3,6 +3,7 @@ import { access, readFile } from "node:fs/promises"
 import YAML from "yaml"
 import { DEFAULT_THEME } from "./default-theme.mjs"
 import { validateTheme } from "./schema.mjs"
+import { mergeConfigObject } from "../config/merge.mjs"
 
 async function exists(file) {
   try {
@@ -18,17 +19,8 @@ function parseTheme(file, raw) {
   return YAML.parse(raw)
 }
 
-function deepMerge(base, override) {
-  if (override === null || override === undefined) return base
-  if (Array.isArray(override)) return [...override]
-  if (typeof override !== "object") return override
-  if (!base || typeof base !== "object" || Array.isArray(base)) return override
-  const out = { ...base }
-  for (const key of Object.keys(override)) {
-    out[key] = deepMerge(base[key], override[key])
-  }
-  return out
-}
+// 主题文件同样来自项目目录，与配置合并共用同一份防护
+const deepMerge = mergeConfigObject
 
 function resolveConfiguredThemePath(configState) {
   const projectTheme = configState.source.projectRaw?.ui?.theme_file

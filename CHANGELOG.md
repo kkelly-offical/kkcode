@@ -1,5 +1,58 @@
 # Changelog / 更新日志
 
+## 0.5.7
+
+Works through the CodeQL backlog. Three real findings fixed, seven false
+positives dismissed with reasons — and the most interesting defect was one
+CodeQL did not report.
+
+### English
+
+- **A project config file could replace the merged config's prototype.**
+  YAML and JSON both turn `__proto__:` into an own enumerable property, so the
+  deep merge's `out[key] = ...` hit the prototype setter instead of writing a
+  key. A `.kkcode/config.yaml` in any repository you opened could therefore
+  make keys absent from the defaults resolve to attacker-supplied values —
+  invisibly, since they never appear as own properties and `JSON.stringify`
+  does not show them. The schema does not reject unknown top-level keys, so
+  nothing stopped it earlier in the chain. Global `Object.prototype` was never
+  affected. Four byte-identical copies of that merge function (config loading,
+  config import, the REPL, theme loading) are now one implementation in
+  `src/config/merge.mjs` that skips `__proto__`, `constructor` and `prototype`
+  — the same key set `config set` has guarded since 0.3.x.
+- Registry lookups encode the package name with `replaceAll` instead of
+  `replace`, which substitutes only the first match.
+- `verify.yml` declares `permissions: contents: read`; a test matrix that runs
+  third-party dependency code has no business holding the default token scope.
+- Dismissed as false positives, with reasons recorded on each alert: the
+  "clear-text logging" pair (both print the *name* of an api-key env var and
+  a set/missing flag, never a key), the "weak password hash" pair (sha256 as a
+  model-cache fingerprint, not password storage), the "bad HTML filtering"
+  finding (output goes to a terminal and to JSON; the repository renders no
+  HTML), the URL-substring finding (a test assertion), and the prototype
+  pollution finding in `config set` (already guarded since 0.3.x; the rule
+  does not recognize a `.some()` precondition).
+
+### 中文
+
+- **项目配置文件可以替换合并后配置对象的原型。** YAML 与 JSON 都会把
+  `__proto__:` 变成自有可枚举属性，深度合并的 `out[key] = ...` 因此命中原型
+  setter 而不是写入一个键。于是你打开的任意仓库里的 `.kkcode/config.yaml`
+  都能让**默认配置里不存在的键**读出攻击者写的值 —— 而且无声无息：它们从不
+  作为自有属性出现，`JSON.stringify` 也看不见。schema 不拦顶层未知键，链路
+  上游同样没有阻挡。全局 `Object.prototype` 始终未受影响。四份逐字相同的
+  合并函数（配置加载、配置导入、REPL、主题加载）现已收敛为
+  `src/config/merge.mjs` 一份实现，跳过 `__proto__`、`constructor`、
+  `prototype` —— 与 `config set` 自 0.3.x 起就有的守卫同一套键。
+- 版本检查对包名改用 `replaceAll` 编码；字符串模式的 `replace` 只替换第一处匹配。
+- `verify.yml` 声明 `permissions: contents: read`：一个会执行第三方依赖代码的
+  测试矩阵没有理由持有默认的令牌权限。
+- 以下告警判为误报并在每条上记录了理由：两条「明文记录敏感信息」（打印的是
+  api_key 环境变量**名**与 set/missing 状态，从不打印密钥）、两条「口令哈希
+  强度不足」（sha256 用作模型缓存指纹，非口令存储）、「HTML 过滤正则有缺陷」
+  （输出去向是终端与 JSON，全仓无 HTML 渲染）、URL 子串校验（一条测试断言）、
+  以及 `config set` 的原型污染（自 0.3.x 已有守卫，规则未识别 `.some()` 前置校验）。
+
 ## 0.5.6
 
 Closes seven ways the tool failed without saying so. Every item here shares a

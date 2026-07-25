@@ -5,6 +5,11 @@ on:
     branches: ["main"]
   pull_request:
 
+# 这个工作流只需要读代码。不声明时 GITHUB_TOKEN 拿的是仓库默认权限，
+# 可能含写权限 —— 对一个跑第三方依赖代码的测试矩阵来说是不必要的授权。
+permissions:
+  contents: read
+
 jobs:
   verify:
     strategy:

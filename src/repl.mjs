@@ -156,6 +156,7 @@ import {
   startThinkingStream,
   startThinkingWait
 } from "./ui/thinking-state.mjs"
+import { mergeConfigObject } from "./config/merge.mjs"
 import {
   sanitizeTerminalStyledText,
   sanitizeTerminalText,
@@ -381,17 +382,7 @@ function stringifyConfigByPath(filePath, data) {
   return YAML.stringify(data)
 }
 
-function mergeObject(base, override) {
-  if (override === undefined || override === null) return base
-  if (Array.isArray(override)) return [...override]
-  if (!base || typeof base !== "object" || Array.isArray(base)) return override
-  if (typeof override !== "object") return override
-  const out = { ...base }
-  for (const key of Object.keys(override)) {
-    out[key] = mergeObject(base[key], override[key])
-  }
-  return out
-}
+const mergeObject = mergeConfigObject
 
 function pickConfigPathForScope(scope, source, cwd = process.cwd()) {
   if (scope === "user") return source?.userPath || userConfigCandidates()[0]
