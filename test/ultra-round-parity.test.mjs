@@ -106,7 +106,8 @@ async function runScenario(sessionId, { prompt, config }) {  // config 由 ultra
   capture.stop()
   return {
     result,
-    ultraEvents: capture.types().filter((type) => type.startsWith("longagent.")),
+    // heartbeat 是节流的保活信号，不属于编排语义，快照不锁它
+    ultraEvents: capture.types().filter((type) => type.startsWith("longagent.") && type !== "longagent.heartbeat"),
     state: await LongAgentManager.get(sessionId)
   }
 }

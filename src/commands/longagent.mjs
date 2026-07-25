@@ -120,7 +120,11 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
         })
         const width = Math.max(60, process.stdout.columns || 120)
         if (options.watch) console.clear()
-        console.log(`session ${options.session} · ${record.status || "?"} · ${record.lastMessage || ""}`)
+        const heartbeatAgeMs = record.heartbeatAt ? Date.now() - record.heartbeatAt : 0
+        const stale = record.status === "running" && heartbeatAgeMs > 120000
+          ? ` ⚠ 心跳已停 ${Math.round(heartbeatAgeMs / 1000)}s（可能卡死或已被杀）`
+          : ""
+        console.log(`session ${options.session} · ${record.status || "?"} · ${record.lastMessage || ""}${stale}`)
         for (const line of renderUltraBoard(board, { width })) console.log(line)
         return true
       }
@@ -154,16 +158,64 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
 
   cmd
     .command("resume")
-    .description("clear stop flag for session")
+    .description("resume an interrupted session from its checkpoint (optionally with guidance)")
     .requiredOption("--session <id>", "session id")
+    .option("--guidance <text>", "steer the next round (injected as top-priority context)")
+    .option("--clear-only", "only clear the stop flag without re-running (0.4.x behaviour)")
     .action(async (options) => {
-      const result = await LongAgentManager.clearStop(options.session)
-      if (!result) {
+      const cleared = await LongAgentManager.clearStop(options.session)
+      if (!cleared) {
         console.error(`not found: ${options.session}`)
         process.exitCode = 1
         return
       }
-      console.log(`stop flag cleared: ${options.session}`)
+      if (options.clearOnly) {
+        console.log(`stop flag cleared: ${options.session}`)
+        return
+      }
+      // 0.4.x 的 resume 只清 stop 标志、不重启执行 —— 用户以为在续跑，
+      // 实际什么都没发生。现在真的续：目标取自台账，checkpoint 恢复负责
+      // 跳过 H0/H1/H2 并从中断的 stage 继续。
+      const ledger = await loadLedger(options.session)
+      const objective = ledger?.data.objective
+      if (!objective) {
+        console.error(`no ledger/objective found for session: ${options.session} — cannot resume`)
+        process.exitCode = 1
+        return
+      }
+      const configState = await loadConfig()
+      const providerKey = configState.config.provider.default
+      const providerConf = configState.config.provider[providerKey] || {}
+      const model = providerConf.default_model
+      if (!model) {
+        console.error(`no model configured for provider "${providerKey}"`)
+        process.exitCode = 1
+        return
+      }
+      console.log(`resuming session ${options.session} — ${objective.slice(0, 80)}`)
+      const { runLongAgent } = await import("../session/longagent.mjs")
+      try {
+        const result = await runLongAgent({
+          prompt: objective,
+          model,
+          providerType: providerKey,
+          sessionId: options.session,
+          configState: { config: configState.config, source: configState.source },
+          baseUrl: providerConf.base_url || null,
+          apiKeyEnv: providerConf.api_key_env || null,
+          guidance: options.guidance || "",
+          output: { write: (t) => process.stdout.write(t) }
+        })
+        console.log(`\nsession ${options.session} finished (status: ${result.status || "unknown"})`)
+        if (result.blockedReport) {
+          for (const line of renderBlockedReportText(result.blockedReport)) console.log(line)
+        }
+        const { exitCodeForUltraStatus } = await import("../session/ultra-status.mjs")
+        process.exitCode = exitCodeForUltraStatus(result.status)
+      } catch (err) {
+        console.error(`resume failed: ${err.message}`)
+        process.exitCode = 1
+      }
     })
 
   cmd

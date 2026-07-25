@@ -161,11 +161,64 @@ export function validateConfig(config) {
           if (config.agent.longagent.max_iterations !== undefined) {
             checkInt(errors, "agent.longagent.max_iterations", config.agent.longagent.max_iterations, 0)
           }
+          // no_progress_warning / no_progress_limit：0.5.0 起由
+          // ultra.no_progress_rounds 取代（语义从迭代变轮次）。旧键仍通过校验
+          // （读取时打一次性弃用提示），0.6.0 移除。
           if (config.agent.longagent.no_progress_warning !== undefined) {
             checkInt(errors, "agent.longagent.no_progress_warning", config.agent.longagent.no_progress_warning, 1)
           }
           if (config.agent.longagent.no_progress_limit !== undefined) {
             checkInt(errors, "agent.longagent.no_progress_limit", config.agent.longagent.no_progress_limit, 1)
+          }
+          if (config.agent.longagent.ultra !== undefined) {
+            const ultra = config.agent.longagent.ultra
+            if (!isObj(ultra)) err(errors, "agent.longagent.ultra", "must be object")
+            else {
+              if (ultra.goal_mode !== undefined && typeof ultra.goal_mode !== "boolean") {
+                err(errors, "agent.longagent.ultra.goal_mode", "must be boolean")
+              }
+              if (ultra.max_rounds !== undefined) checkInt(errors, "agent.longagent.ultra.max_rounds", ultra.max_rounds, 0)
+              if (ultra.deadline_ms !== undefined) checkInt(errors, "agent.longagent.ultra.deadline_ms", ultra.deadline_ms, 0)
+              if (ultra.no_progress_rounds !== undefined) checkInt(errors, "agent.longagent.ultra.no_progress_rounds", ultra.no_progress_rounds, 1)
+              if (ultra.on_blocked_non_tty !== undefined && !["deliver_partial", "stop", "continue"].includes(ultra.on_blocked_non_tty)) {
+                err(errors, "agent.longagent.ultra.on_blocked_non_tty", "must be deliver_partial|stop|continue")
+              }
+              if (ultra.stage_failure !== undefined) {
+                if (!isObj(ultra.stage_failure)) err(errors, "agent.longagent.ultra.stage_failure", "must be object")
+                else {
+                  for (const key of ["allow_skip", "allow_defer"]) {
+                    if (ultra.stage_failure[key] !== undefined && typeof ultra.stage_failure[key] !== "boolean") {
+                      err(errors, `agent.longagent.ultra.stage_failure.${key}`, "must be boolean")
+                    }
+                  }
+                  if (ultra.stage_failure.max_replans !== undefined) {
+                    checkInt(errors, "agent.longagent.ultra.stage_failure.max_replans", ultra.stage_failure.max_replans, 0)
+                  }
+                }
+              }
+              if (ultra.criteria !== undefined) {
+                if (!isObj(ultra.criteria)) err(errors, "agent.longagent.ultra.criteria", "must be object")
+                else {
+                  if (ultra.criteria.allow_shell !== undefined && typeof ultra.criteria.allow_shell !== "boolean") {
+                    err(errors, "agent.longagent.ultra.criteria.allow_shell", "must be boolean")
+                  }
+                  if (ultra.criteria.command_timeout_ms !== undefined) {
+                    checkInt(errors, "agent.longagent.ultra.criteria.command_timeout_ms", ultra.criteria.command_timeout_ms, 1000)
+                  }
+                  if (ultra.criteria.command_allowlist !== undefined) {
+                    if (!Array.isArray(ultra.criteria.command_allowlist) || ultra.criteria.command_allowlist.some((x) => typeof x !== "string")) {
+                      err(errors, "agent.longagent.ultra.criteria.command_allowlist", "must be string array")
+                    }
+                  }
+                }
+              }
+              if (ultra.report !== undefined && !isObj(ultra.report)) {
+                err(errors, "agent.longagent.ultra.report", "must be object")
+              }
+              if (ultra.ledger !== undefined && !isObj(ultra.ledger)) {
+                err(errors, "agent.longagent.ultra.ledger", "must be object")
+              }
+            }
           }
           if (config.agent.longagent.heartbeat_timeout_ms !== undefined) {
             checkInt(errors, "agent.longagent.heartbeat_timeout_ms", config.agent.longagent.heartbeat_timeout_ms, 1000)

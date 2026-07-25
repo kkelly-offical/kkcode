@@ -73,9 +73,30 @@ export const DEFAULT_CONFIG = {
     default_mode: "assistant",
     max_steps: 8,
     longagent: {
+      // 总 LLM 轮次硬上限（0 = 不限）。0.5.0 起真正生效：超限以
+      // budget_exhausted 结束。轮次层面的约束见 ultra.* 段。
       max_iterations: 0,
-      no_progress_warning: 3,
-      no_progress_limit: 5,
+      // 0.5.0 goal 模式：不达目的不放弃，约束是「有没有进展」而非轮次
+      ultra: {
+        goal_mode: true,                    // false = 退回 0.4.x 单轮语义（逃生阀）
+        max_rounds: 0,                      // 0 = 不限，由停滞/时限/预算兜底
+        deadline_ms: 7200000,               // 2 小时；0 = 不限
+        no_progress_rounds: 2,              // 连续 N 轮无强进展判受阻
+        on_blocked_non_tty: "deliver_partial",  // deliver_partial | stop | continue
+        stage_failure: {
+          allow_skip: true,
+          allow_defer: true,
+          max_replans: 2
+        },
+        criteria: {
+          allow_shell: false,
+          command_timeout_ms: 120000,
+          command_allowlist: ["node", "npm", "npx", "pnpm", "yarn", "python", "python3",
+            "pytest", "go", "cargo", "make", "tsc", "eslint", "jest", "vitest", "mocha", "git"]
+        },
+        report: { llm_summary: true, write_markdown: true },
+        ledger: { enabled: true, max_rounds_kept: 10 }
+      },
       max_stage_recoveries: 3,
       // 同一 stage 的累计尝试硬上限；降级会清零 max_stage_recoveries，
       // 这个总账不清零，防止无限重跑
@@ -199,7 +220,16 @@ export const DEFAULT_CONFIG = {
   models: {
     main: null,
     fast: null,
-    subagent: null
+    subagent: null,
+    // Ultra 分阶段模型（0.4.0 推迟的能力）。缺省 null = 沿用 main；
+    // report 缺省走 fast → main。旧的 hybrid.separate_models 仍然生效。
+    ultra: {
+      preview: null,
+      blueprint: null,
+      coding: null,
+      debugging: null,
+      report: null
+    }
   },
   permission: {
     level: "manual",

@@ -35,6 +35,7 @@ import { resolveUltraStatus, exitCodeForUltraStatus, sessionStatusForUltraStatus
 import { buildBlockedReport, renderBlockedReportMarkdown } from "./blocked-report.mjs"
 import { verifyStageObjective, OBJECTIVE_MET } from "./stage-objective.mjs"
 import { hasPromptHandler, askQuestionInteractive } from "../tool/question-prompt.mjs"
+import { noteDeprecation } from "../core/deprecations.mjs"
 import {
   isComplete,
   isLikelyActionableObjective,
@@ -266,6 +267,7 @@ async function runHybridPipeline({
   baseUrl = null, apiKeyEnv = null, agent = null,
   maxIterations = 0, signal = null, output = null,
   allowQuestion = true, toolContext = {}, runSpec: _runSpec = null,
+  guidance = "",
   // 测试缝。生产不传，全部落到真实实现；测试据此控制门禁结果与用户交互，
   // 其余（模型回复、后台任务）走 provider 与 BackgroundManager 的既有 mock 通道。
   deps = {}
@@ -281,7 +283,12 @@ async function runHybridPipeline({
   const hybridConfig = longagentConfig.hybrid || {}
   const parallelConfig = longagentConfig.parallel || {}
   const gitConfig = longagentConfig.git || {}
-  const noProgressLimit = Number(longagentConfig.no_progress_limit || 5)
+  if (longagentConfig.no_progress_limit != null || longagentConfig.no_progress_warning != null) {
+    noteDeprecation(
+      "longagent.no_progress",
+      "no_progress_limit / no_progress_warning 已被 agent.longagent.ultra.no_progress_rounds 取代（语义从迭代变为轮次），旧键不再生效"
+    )
+  }
   const maxGateAttempts = Number(longagentConfig.max_gate_attempts || 5)
   const fileChangesLimit = Math.max(20, Number(longagentConfig.file_changes_limit || LONGAGENT_FILE_CHANGES_LIMIT))
 
@@ -291,6 +298,9 @@ async function runHybridPipeline({
   const adaptiveModels = hybridConfig.adaptive_models || {}
   const useAdaptiveModels = adaptiveModels.enabled === true
   function getModelForStage(stage) {
+    // 0.5.0 正式路径：models.ultra.<stage>；旧的 hybrid.separate_models 仍然生效
+    const ultraModels = configState.config.models?.ultra || {}
+    if (ultraModels[stage]) return { model: ultraModels[stage], providerType }
     if (!useSeparateModels) return { model, providerType }
     const m = { preview: separateModels.preview_model, blueprint: separateModels.blueprint_model, debugging: separateModels.debugging_model }
     return m[stage] ? { model: m[stage], providerType } : { model, providerType }
@@ -311,11 +321,13 @@ async function runHybridPipeline({
   let lastProgress = { percentage: 0, currentStep: 0, totalSteps: 0 }
   let finalReply = "", planFrozen = false, stagePlan = null, goal = null, goalVerification = null
   let ledger = null, blockedReport = null, reportPath = null
+  let restoredPreviewFindings = "", restoredArchitectureText = "", resumedStageIndex = 0
+  const planDefaults = { timeoutMs: Number(parallelConfig.task_timeout_ms || 600000), maxRetries: Number(parallelConfig.task_max_retries ?? 2) }
   // 轮次循环状态（0.5.0 goal 模式）
   const ultraCfg = longagentConfig.ultra || {}
   const goalMode = ultraCfg.goal_mode !== false
   let usabilityGatesPassed = false, lastGateResult = null, gateAttempt = 0
-  let exhaustedFlag = "", userGuidance = "", userDecision = ""
+  let exhaustedFlag = "", userGuidance = String(guidance || ""), userDecision = ""
   let manualConfirmed = new Set()
   let maxStageIndexReached = 0
   let replansUsed = 0
@@ -365,7 +377,7 @@ async function runHybridPipeline({
 
   async function syncState(patch = {}) {
     const stats = stageProgressStats(taskProgress)
-    await LongAgentManager.update(sessionId, {
+    const updated = await LongAgentManager.update(sessionId, {
       status: patch.status || "running", phase: currentPhase, gateStatus, currentGate,
       recoveryCount, lastGateFailures, iterations: iteration, heartbeatAt: Date.now(),
       progress: lastProgress, planFrozen, stageIndex, currentStageId,
@@ -377,7 +389,27 @@ async function runHybridPipeline({
       remainingFilesCount: stats.remainingFilesCount,
       ...patch
     })
+    // 跨进程 stop：`kkcode ultra stop` 只能写状态文件（EventBus 是纯内存的，
+    // 别的进程发的事件这里收不到）。0.4.x 里 stopRequested 写盘后**没有任何
+    // 代码读它**，停止命令从另一个终端发出时完全无效。syncState 每次本来
+    // 就在读写状态文件 —— 顺路读回，零额外 IO。
+    if (updated?.stopRequested && !stopFlag) {
+      stopFlag = true
+      await EventBus.emit({
+        type: EVENT_TYPES.LONGAGENT_ALERT, sessionId,
+        payload: { kind: "stop_requested", message: "收到跨进程停止请求，将在下一个安全点结束" }
+      }).catch(() => {})
+    }
+    // 心跳事件（渲染分支从 0.3.x 起就存在，从没有人发过）：节流到 30s 一次
+    if (Date.now() - (lastHeartbeatEmit || 0) > 30000) {
+      lastHeartbeatEmit = Date.now()
+      await EventBus.emit({
+        type: EVENT_TYPES.LONGAGENT_HEARTBEAT, sessionId,
+        payload: { phase: currentPhase, iteration, stageIndex }
+      }).catch(() => {})
+    }
   }
+  let lastHeartbeatEmit = 0
 
   /**
    * 尝试降级一档，并在**真的降了级时**才通知用户。
@@ -435,6 +467,9 @@ async function runHybridPipeline({
         } else {
           stagePlan = cp.stagePlan; stageIndex = cp.stageIndex; planFrozen = true
           goal = stagePlan.goal || null   // goal 随 stagePlan 一起冻结与恢复
+          restoredPreviewFindings = String(cp.previewFindings || "")
+          restoredArchitectureText = String(cp.architectureText || "")
+          resumedStageIndex = Number(cp.stageIndex) || 0
           taskProgress = cp.taskProgress || {}; lastProgress = cp.lastProgress || lastProgress
           iteration = cp.iteration || 0
           // #22: Load task-level checkpoints to recover intra-stage progress
@@ -520,27 +555,35 @@ async function runHybridPipeline({
   }
 
   // ========== H1: PREVIEW (只读探索) ==========
-  await setPhase("H1", "preview")
-  currentGate = "preview"
-  await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_PREVIEW_START, sessionId, payload: { objective: prompt } })
-  await syncState({ lastMessage: "H1: preview agent exploring codebase" })
+  // checkpoint 恢复时整段跳过。0.4.x 恢复后 H1/H2 无条件重跑、新计划覆盖
+  // 恢复出来的计划、stageIndex 被硬置回 0 —— 「恢复」实际只剩 taskProgress，
+  // 而用户看到的是 checkpoint resumed stage N。
+  let previewFindings = restoredPreviewFindings || ""
+  if (!planFrozen) {
+    await setPhase("H1", "preview")
+    currentGate = "preview"
+    await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_PREVIEW_START, sessionId, payload: { objective: prompt } })
+    await syncState({ lastMessage: "H1: preview agent exploring codebase" })
 
-  const previewModel = getModelForStage("preview")
-  // #5 注入 project memory 到 preview prompt
-  const memCtx = projectMemory ? memoryToContext(projectMemory) : ""
-  const previewPrompt = buildStageWrapper(ULTRA_STAGES.PREVIEW, { preview: null, blueprint: null, coding: null }, memCtx ? `${memCtx}\n\n${intakeSummary}` : intakeSummary)
-  const previewOut = await processTurnLoop({
-    prompt: previewPrompt, mode: "agent", agent: getAgent("preview-agent"),
-    model: previewModel.model, providerType: previewModel.providerType,
-    sessionId, configState, baseUrl, apiKeyEnv, signal, output, allowQuestion, toolContext
-  })
-  accumulateUsage(previewOut)
-  const previewFindings = previewOut.reply || ""
+    const previewModel = getModelForStage("preview")
+    // #5 注入 project memory 到 preview prompt
+    const memCtx = projectMemory ? memoryToContext(projectMemory) : ""
+    const previewPrompt = buildStageWrapper(ULTRA_STAGES.PREVIEW, { preview: null, blueprint: null, coding: null }, memCtx ? `${memCtx}\n\n${intakeSummary}` : intakeSummary)
+    const previewOut = await processTurnLoop({
+      prompt: previewPrompt, mode: "agent", agent: getAgent("preview-agent"),
+      model: previewModel.model, providerType: previewModel.providerType,
+      sessionId, configState, baseUrl, apiKeyEnv, signal, output, allowQuestion, toolContext
+    })
+    accumulateUsage(previewOut)
+    previewFindings = previewOut.reply || ""
 
-  gateStatus.preview = { status: "pass", findingsLength: previewFindings.length }
-  await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_PREVIEW_COMPLETE, sessionId, payload: { findingsLength: previewFindings.length } })
-  await syncState({ lastMessage: `H1: preview complete (${previewFindings.length} chars)` })
+    gateStatus.preview = { status: "pass", findingsLength: previewFindings.length }
+    await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_PREVIEW_COMPLETE, sessionId, payload: { findingsLength: previewFindings.length } })
+    await syncState({ lastMessage: `H1: preview complete (${previewFindings.length} chars)` })
+  }
 
+  let architectureText = restoredArchitectureText || "", parsedPlan = null, parseErrors = []
+  if (!planFrozen) {
   // ========== H2: BLUEPRINT (只读规划 + 结构化 stagePlan) ==========
   await setPhase("H2", "blueprint")
   currentGate = "blueprint"
@@ -581,8 +624,7 @@ async function runHybridPipeline({
   })
   accumulateUsage(blueprintOut)
 
-  const planDefaults = { timeoutMs: Number(parallelConfig.task_timeout_ms || 600000), maxRetries: Number(parallelConfig.task_max_retries ?? 2) }
-  let { architectureText, stagePlan: parsedPlan, parseErrors } = parseBlueprintOutput(blueprintOut.reply || "", prompt, planDefaults)
+  ;({ architectureText, stagePlan: parsedPlan, parseErrors } = parseBlueprintOutput(blueprintOut.reply || "", prompt, planDefaults))
 
   // Blueprint 解析失败重试：用 repair prompt 要求 LLM 只输出合法 JSON
   const maxBlueprintRetries = Number(hybridConfig.blueprint_parse_retries || 1)
@@ -766,6 +808,13 @@ async function runHybridPipeline({
         }
       }
     }
+  }
+  } else {
+    // 恢复路径：goal 与计划来自 checkpoint，台账续写同一份文件
+    goal = stagePlan.goal || goal
+    ledger = await openLedger({ sessionId, cwd, objective: prompt, goal })
+    ledger.markRoundStart()
+    await syncState({ planFrozen: true, lastMessage: `resumed: plan restored with ${stagePlan.stages.length} stage(s)` })
   }
 
   // ========== 轮次循环（0.5.0 goal 模式核心） ==========
@@ -960,7 +1009,9 @@ async function runHybridPipeline({
     // 轮次作用域：round > 1 时，已达成子目标的 stage 整段跳过 —— 重跑它们
     // 只是白费模型往返，重规划的作用域也因此天然收窄到未达成的部分。
     const executionOrder = [...stagePlan.stages].filter(
-      (s) => !(round > 1 && metSubGoalStageIds.has(s.stageId))
+      (s, idx) => !(round > 1 && metSubGoalStageIds.has(s.stageId)) &&
+        // checkpoint 恢复的首轮从中断的 stage 继续，不重放已完成的前缀
+        !(round === 1 && resumedStageIndex > 0 && idx < resumedStageIndex)
     )
 
     /** 记失败并跳过：一个 stage 卡死不再没收其余无关工作（0.4.x 是 break 一切）。 */
@@ -1301,7 +1352,12 @@ async function runHybridPipeline({
       stageIndex++
       recoveryCount = 0  // reset per-stage recovery counter after successful stage
       stageAttempts = 0
-      await saveCheckpoint(sessionId, { name: `hybrid_stage_${stage.stageId}`, iteration, currentPhase, stageIndex, stagePlan, taskProgress, planFrozen, lastProgress })
+      await saveCheckpoint(sessionId, {
+        name: `hybrid_stage_${stage.stageId}`, iteration, currentPhase, stageIndex, stagePlan,
+        taskProgress, planFrozen, lastProgress, round,
+        previewFindings: previewFindings.slice(0, 4000),
+        architectureText: architectureText.slice(0, 6000)
+      })
     }
 
     // #11 Cross-review + H5 ghost commit 并行化
@@ -1472,6 +1528,17 @@ async function runHybridPipeline({
       }
 
       if (/\[TASK_COMPLETE\]/i.test(finalReply)) { completionMarkerSeen = true; debugDone = true }
+      // checkpoint_interval：0.4.x 有 defaults 有 schema 校验但零读取点。
+      // stage 边界之外每 N 次迭代也存一次，长调试阶段中断后不必从头再来。
+      const checkpointInterval = Number(longagentConfig.checkpoint_interval || 0)
+      if (checkpointInterval > 0 && iteration % checkpointInterval === 0) {
+        await saveCheckpoint(sessionId, {
+          name: `debug_iter_${iteration}`, iteration, currentPhase, stageIndex, stagePlan,
+          taskProgress, planFrozen, lastProgress, round,
+          previewFindings: previewFindings.slice(0, 4000),
+          architectureText: architectureText.slice(0, 6000)
+        }).catch(() => {})
+      }
       await syncState({ lastMessage: `H5: debugging iteration ${debugIter}/${maxDebugIterations}` })
     }
 
@@ -2046,8 +2113,35 @@ async function runHybridPipeline({
   // 值得留一份「哪些判据、什么证据」的记录。
   if (ledger) {
     await ledger.setFinal({ status: finalStatus, reply: finalReply }).catch(() => {})
+    // LLM 摘要：「关键判断 + 需要你做什么」。可选增强 —— models.fast 未配置或
+    // 调用失败时，模板版报告必须完整可用（测试锁了这一点）。
+    let llmSummary = null
+    const reportCfg = ultraCfg.report || {}
+    if (finalStatus !== ULTRA_STATUS.COMPLETED && reportCfg.llm_summary !== false) {
+      try {
+        const { requestFast } = await import("../provider/fast-model.mjs")
+        const summaryText = await requestFast({
+          configState,
+          system: [
+            "你是排障分析员。根据 Ultra 运行记录输出两段：",
+            "## 关键判断 —— 一句话（≤120字）说清卡在哪一层：环境/依赖/设计/需求歧义/权限",
+            "## 需要你做什么 —— ≤5 条祈使句，每条可执行、带具体命令或文件位置",
+            "禁止：声称已完成、推测未验证的原因、把「再试一次」当唯一步骤、复述原始错误文本。纯文本输出。"
+          ].join("\n"),
+          prompt: ledger.snapshotForReplan({ maxChars: 4000 }) || "无记录",
+          maxTokens: 400,
+          timeoutMs: 10000,
+          signal
+        })
+        if (summaryText) {
+          const headline = summaryText.match(/## 关键判断\s*\n+([^#]+)/)?.[1]?.trim().slice(0, 200) || ""
+          const steps = [...summaryText.matchAll(/^\s*\d+\.\s*(.+)$/gm)].map((m) => m[1].trim()).slice(0, 5)
+          if (headline || steps.length) llmSummary = { headline, nextSteps: steps }
+        }
+      } catch { /* 摘要失败不影响报告 */ }
+    }
     try {
-      blockedReport = buildBlockedReport(ledger, { status: finalStatus })
+      blockedReport = buildBlockedReport(ledger, { status: finalStatus, llmSummary })
       const { writeFile: writeFileFs, mkdir: mkdirFs } = await import("node:fs/promises")
       const dir = ultraSessionDir(sessionId, cwd)
       await mkdirFs(dir, { recursive: true })
