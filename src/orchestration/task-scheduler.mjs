@@ -4,6 +4,8 @@ import { flushNow, forkSession, getSession } from "../session/store.mjs"
 import { extractEditFeedbackFromToolEvents } from "../observability/edit-diagnostics.mjs"
 import { createRunSpec } from "./run-spec.mjs"
 import { resolveRoleModel } from "../provider/model-roles.mjs"
+import { EventBus } from "../core/events.mjs"
+import { EVENT_TYPES } from "../core/constants.mjs"
 
 const SUPPORTED_EXECUTION_MODES = new Set(["fresh_agent", "fork_context"])
 const SUPPORTED_ISOLATION_MODES = new Set(["default", "worktree"])
@@ -212,6 +214,17 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
       subagentType: args.subagent_type || null,
       category: args.category || null
     })
+    // 未知的 subagent_type 此前静默降级为全权 build agent —— fallback/reason
+    // 字段写了没人读，模型和用户都不知道要的 agent 不存在。改为显式报错，
+    // 让模型换一个名字重试，而不是拿满权限继续跑。
+    if (subagent.fallback) {
+      const { listAgents } = await import("../agent/agent.mjs")
+      const known = [
+        ...listAgents().filter((a) => a.mode === "subagent").map((a) => a.name),
+        ...Object.keys(config.agent?.subagents || {})
+      ]
+      return { error: `${subagent.reason}. Available subagent types: ${[...new Set(known)].sort().join(", ")}` }
+    }
 
     const subSessionId = String(args.session_id || `sub_${parentSessionId}_${Date.now()}`)
     const prompt = buildDelegationPrompt({ ...args, execution_mode: executionMode })
@@ -250,6 +263,11 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
         subSessionId
       })
       await log(`task started (${subagent.name})`)
+      await EventBus.emit({
+        type: EVENT_TYPES.SUBAGENT_DELEGATED,
+        sessionId: parentSessionId,
+        payload: { subagent: subagent.name, subSessionId, description: String(args.description || args.objective || "").slice(0, 120) }
+      })
       const out = await runSubtask({
         prompt,
         sessionId: subSessionId,
@@ -265,6 +283,11 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
       if (isCancelled()) return { cancelled: true }
       const fileChanges = extractFileChanges(out.toolEvents || [])
       const editFeedback = extractEditFeedbackFromToolEvents(out.toolEvents || [])
+      await EventBus.emit({
+        type: EVENT_TYPES.SUBAGENT_SETTLED,
+        sessionId: parentSessionId,
+        payload: { subagent: subagent.name, subSessionId, toolEvents: out.toolEvents?.length || 0, files: fileChanges.length }
+      })
       return {
         session_id: subSessionId,
         parent_session_id: parentSessionId,

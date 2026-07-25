@@ -203,6 +203,8 @@ function formatBusyToolDetail(toolName, args) {
 
 const BUILTIN_SLASH = [
   { name: "help", desc: "show help" },
+  { name: "agents", desc: "list subagents with their permission tier" },
+  { name: "tasks", desc: "list background tasks (add stop <id> / retry <id>)" },
   { name: "dash", desc: "redraw dashboard" },
   { name: "clear", desc: "clear terminal" },
   { name: "new", desc: "new session" },
@@ -1255,6 +1257,49 @@ async function processInputLine({
   }
 
   // /create-agent — AI generates a new sub-agent from description
+  if (normalized === "/agents") {
+    // CLI 侧一直有 `kkcode agent list`，REPL 里却看不到子智能体的存在与权限档。
+    const { listAgents } = await import("./agent/agent.mjs")
+    const configured = ctx.configState.config.agent?.subagents || {}
+    const rows = listAgents()
+      .filter((agent) => agent.mode === "subagent")
+      .map((agent) => {
+        const override = configured[agent.name]
+        const permission = override?.permission || agent.permission || "default"
+        const tools = (override?.tools || agent.tools)
+        return `  ${agent.name.padEnd(20)} ${String(permission).padEnd(10)} ${tools ? `tools: ${tools.join(", ")}` : "tools: all"}`
+      })
+    print(["subagents (name / permission / tools)", ...rows].join("\n"))
+    return null
+  }
+
+  if (normalized === "/tasks" || normalized.startsWith("/tasks ")) {
+    const { BackgroundManager } = await import("./orchestration/background-manager.mjs")
+    const rest = normalized.slice("/tasks".length).trim()
+    const [action, taskId] = rest.split(/\s+/).filter(Boolean)
+    if (action === "stop" && taskId) {
+      await BackgroundManager.cancel(taskId).catch(() => null)
+      print(`task ${taskId} cancellation requested`)
+      return null
+    }
+    if (action === "retry" && taskId) {
+      const retried = await BackgroundManager.retry(taskId, ctx.configState.config).catch(() => null)
+      print(retried ? `task ${taskId} retried (attempt ${retried.attempt})` : `task ${taskId} could not be retried`)
+      return null
+    }
+    const tasks = await BackgroundManager.list().catch(() => [])
+    if (!tasks.length) {
+      print("no background tasks")
+      return null
+    }
+    const rows = tasks.slice(-20).map((task) => {
+      const desc = String(task.description || "").slice(0, 48)
+      return `  ${String(task.id).padEnd(24)} ${String(task.status).padEnd(12)} ${desc}`
+    })
+    print(["background tasks (id / status / description)", ...rows, "  /tasks stop <id> · /tasks retry <id>"].join("\n"))
+    return null
+  }
+
   if (normalized === "/create-agent" || normalized.startsWith("/create-agent ")) {
     const description = normalized.replace(/^\/create-agent\s*/, "").trim()
     if (!description) {

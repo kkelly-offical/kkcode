@@ -245,7 +245,7 @@ export const DEFAULT_CONFIG = {
   background: {
     mode: "worker_process",
     worker_timeout_ms: 900000,
-    max_parallel: 2,
+    max_parallel: 4,
     max_log_lines: 300
   },
   runtime: {

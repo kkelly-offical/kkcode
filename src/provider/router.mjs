@@ -251,6 +251,7 @@ export async function requestProvider({
   baseUrl = null,
   apiKeyEnv = null,
   maxTokens = null,
+  temperature = null,
   traceId = "",
   requestId = "",
   parentEventId = "",
@@ -315,6 +316,7 @@ export async function requestProvider({
     },
     thinking: providerCfg.thinking || null,
     reasoningEffort: providerCfg.reasoning_effort || null,
+    ...(Number.isFinite(temperature) ? { temperature } : {}),
     ...requestContext,
     onResponse(response) {
       responseStatus = Number(response?.status || 0) || null
@@ -383,6 +385,7 @@ export async function* requestProviderStream({
   turnId = null,
   reviewId = "",
   signal = null,
+  temperature = null,
   compaction = null
 }) {
   const resolvedProviderType = providerType || configState.config.provider.default

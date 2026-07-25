@@ -200,6 +200,7 @@ export async function requestAnthropic(input) {
   const payload = {
     model,
     max_tokens: maxTokens,
+    ...(Number.isFinite(input.temperature) ? { temperature: input.temperature } : {}),
     metadata: { user_id: "kkcode" },
     system: systemWithCacheControl(system),
     messages: mapMessages(messages),
@@ -342,6 +343,7 @@ export async function* requestAnthropicStream(input) {
   const payload = {
     model,
     max_tokens: maxTokens,
+    ...(Number.isFinite(input.temperature) ? { temperature: input.temperature } : {}),
     metadata: { user_id: "kkcode" },
     system: systemWithCacheControl(system),
     messages: mapMessages(messages),

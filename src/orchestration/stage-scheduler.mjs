@@ -3,6 +3,8 @@ import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { getAgent } from "../agent/agent.mjs"
 import { classifyError, ERROR_CATEGORIES } from "../session/longagent-utils.mjs"
+import { resolveSubagent } from "./subagent-router.mjs"
+import { createRunSpec } from "./run-spec.mjs"
 
 // #19: Agent capability scoring — multi-pattern weighted routing
 const AGENT_HINTS = [
@@ -288,6 +290,27 @@ async function launchTask({
 
   const autoAgent = !task.subagentType ? inferSubagentType(logicalTask.prompt, task.taskId) : null
 
+  // 0.6.0：阶段任务同样带 runSpec。此前 payload 只有 subagentType 字符串，
+  // worker 侧 runSpec 为 null 时回落成全权 build agent —— 声明的子智能体
+  // 类型（含它的权限档与 tools 白名单）在并行阶段完全不生效。
+  const stageAgentType = task.subagentType || autoAgent || null
+  const stageSubagent = stageAgentType
+    ? resolveSubagent({ config: config || {}, subagentType: stageAgentType })
+    : null
+  const stageRunSpec = stageSubagent && !stageSubagent.fallback
+    ? createRunSpec({
+        sessionId: logicalTask.subSessionId,
+        parentSessionId: sessionId,
+        mode: "agent",
+        model,
+        provider: providerType,
+        role: stageSubagent,
+        workspace: { root: process.cwd(), cwd: process.cwd(), isolation: "default", writeScope: null },
+        limits: {},
+        toolContext: { stageId: stage.stageId, logicalTaskId: task.taskId }
+      })
+    : null
+
   const payload = {
     parentSessionId: sessionId,
     subSessionId: logicalTask.subSessionId,
@@ -303,7 +326,8 @@ async function launchTask({
     plannedFiles: logicalTask.plannedFiles,
     remainingFiles: logicalTask.remainingFiles,
     attempt: logicalTask.attempt,
-    workerTimeoutMs: logicalTask.timeoutMs
+    workerTimeoutMs: logicalTask.timeoutMs,
+    runSpec: stageRunSpec
   }
 
   const taskDescription = `${stage.stageId}:${task.taskId}#${logicalTask.attempt}`

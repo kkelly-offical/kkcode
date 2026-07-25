@@ -183,7 +183,10 @@ export async function buildSystemPromptBlocks({ mode, model, cwd, agent = null, 
   }
 
   // Block 1: Agent prompt (stable — loaded once per agent)
-  const agentText = agent ? await getAgentPrompt(agent.name) : ""
+  // agentPrompt() 优先取内联 prompt（config.agent.subagents.<n>.prompt 与
+  // 自定义 .md agent 的正文）。0.6.0 之前这里直接按名字查注册表，内联
+  // prompt 在生产路径被整个忽略 —— 而测试测的恰是另一条无人调用的路径。
+  const agentText = agent ? await agentPrompt(agent) : ""
   if (agentText) {
     blocks.push({ label: "agent", text: agentText, cacheable: true })
   }

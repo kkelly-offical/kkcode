@@ -903,6 +903,20 @@ export function createActivityRenderer({ output, theme = null, eventFilter = nul
         break
       }
 
+      case EVENT_TYPES.SUBAGENT_DELEGATED: {
+        // 子智能体跑在子会话里，它自己的工具事件被 event-scope 按安全边界
+        // 挡掉（这是对的）。父会话至少要看见「谁在跑、跑完了没」，否则
+        // 委派期间几十秒一片空白。
+        const label = payload.description ? ` · ${payload.description}` : ""
+        log(`${paint(SYM.phase, "cyan")} ${paint(`subagent ${payload.subagent} started${label}`, "cyan", { dim: true })}`)
+        break
+      }
+      case EVENT_TYPES.SUBAGENT_SETTLED: {
+        const detail = `${payload.toolEvents || 0} tool calls${payload.files ? `, ${payload.files} files` : ""}`
+        log(`${paint(SYM.toolOk, "cyan")} ${paint(`subagent ${payload.subagent} finished · ${detail}`, "cyan", { dim: true })}`)
+        break
+      }
+
       case EVENT_TYPES.SESSION_COMPACTED: {
         log(`${paint(SYM.phase, "magenta")} ${paint("context compacted", "magenta", { dim: true })}`)
         break

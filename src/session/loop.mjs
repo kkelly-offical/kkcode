@@ -6,7 +6,8 @@ import { ToolRegistry } from "../tool/registry.mjs"
 import { executeTool } from "../tool/executor.mjs"
 import { isToolSuccess } from "../core/types.mjs"
 import { PermissionEngine } from "../permission/engine.mjs"
-import { normalizePermissionLevel } from "../permission/rules.mjs"
+import { normalizePermissionLevel, toolCapability } from "../permission/rules.mjs"
+import { loadPricing, calculateCost } from "../usage/pricing.mjs"
 import { APPROVAL_LEVELS, approvalFromAgentPermission } from "../core/modes.mjs"
 import { createTaskDelegate } from "../orchestration/task-scheduler.mjs"
 import { loadInstructions } from "./instruction-loader.mjs"
@@ -229,8 +230,8 @@ export async function processTurnLoop({
   // Plan 审批后的执行航道交接，由调用方（REPL）真正切换模式并续跑
   let planHandoff = null
   let contextCachePoint = null
-  const thresholdRatio = Number(configState.config.session?.compaction_threshold_ratio ?? 0.7)
-  const thresholdMessages = Number(configState.config.session?.compaction_threshold_messages ?? 50)
+  const thresholdRatio = Number(configState.config.session?.compaction_threshold_ratio ?? 0.85)
+  const thresholdMessages = Number(configState.config.session?.compaction_threshold_messages ?? 200)
   const cachePointsEnabled = configState.config.session?.context_cache_points !== false
   const useNativeCompaction = supportsNativeCompaction(providerType, model)
   const nativeCompactionTrigger = useNativeCompaction ? Math.floor(modelContextLimit(model, configState, providerType) * thresholdRatio) : 0
@@ -459,6 +460,24 @@ export async function processTurnLoop({
           }
         }
 
+      // runSpec.limits 是委派方给子智能体立的硬约束。0.6.0 之前两个字段
+      // 写进 runSpec 后全仓无读取点 —— 立了规矩没人执行。
+      const limits = runSpec?.limits || null
+      if (limits?.deadlineAt && Date.now() > Number(limits.deadlineAt)) {
+        finalReply = `${finalReply}\n[deadline exceeded — stopping]`.trim()
+        break
+      }
+      if (limits?.budgetUsd > 0 && usage.input + usage.output > 0) {
+        try {
+          const { pricing } = await loadPricing(configState)
+          const { amount } = calculateCost(pricing, model, usage)
+          if (amount >= limits.budgetUsd) {
+            finalReply = `${finalReply}\n[budget ${limits.budgetUsd} USD exhausted — stopping]`.trim()
+            break
+          }
+        } catch { /* 计价表缺失时预算检查静默跳过 */ }
+      }
+
       const messages = await HookBus.messagesTransform([...history])
       const stepRequestContext = createRequestContext({ traceId: turnTraceContext.traceId })
 
@@ -468,6 +487,8 @@ export async function processTurnLoop({
           configState,
           providerType,
           model,
+          // 子智能体定义里的 temperature 此前全仓零消费者
+          ...(Number.isFinite(effectiveAgent?.temperature) ? { temperature: effectiveAgent.temperature } : {}),
           system: systemPrompt,
           messages,
           tools,
@@ -843,12 +864,38 @@ export async function processTurnLoop({
             })
 
             const tool = await ToolRegistry.get(call.name)
+            // 白名单在执行期强制。0.6.0 之前它只过滤「广告给模型的清单」
+            // （上面 systemTools.filter），执行走 ToolRegistry.get 不做校验 ——
+            // 模型报出一个没被广告的工具名（幻觉、或 fork_context 继承的历史
+            // 里出现过）就能执行，对只读子智能体是实打实的越权口子。
+            const deniedByAllowlist = Boolean(
+              effectiveAgent?.tools && !effectiveAgent.tools.includes(call.name)
+            )
+            // write_scope 此前只被拼进委派 prompt 文本，没有运行时拦截。
+            const scope = String(runSpec?.workspace?.writeScope || "").trim().toLowerCase()
+            const readOnlyScope = /^(read[-_ ]?only|none|no[-_ ]?mutations?)$/.test(scope)
+            const deniedByWriteScope = readOnlyScope
+              && ["write", "edit"].includes(toolCapability(call.name, call.args?.command || ""))
             result = !tool
               ? {
                   name: call.name,
                   status: "error",
                   output: `unknown tool: ${call.name}`,
                   error: `unknown tool: ${call.name}`
+                }
+              : deniedByAllowlist
+              ? {
+                  name: call.name,
+                  status: "error",
+                  output: `tool "${call.name}" is not in this agent's allowlist (${(effectiveAgent.tools || []).join(", ")})`,
+                  error: "tool not allowed for this agent"
+                }
+              : deniedByWriteScope
+              ? {
+                  name: call.name,
+                  status: "error",
+                  output: `this delegation is ${scope}; "${call.name}" mutates the workspace and is blocked`,
+                  error: "write blocked by write_scope"
                 }
               : await executeTool({
                   tool,

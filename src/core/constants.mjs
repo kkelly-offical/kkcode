@@ -75,6 +75,11 @@ export const EVENT_TYPES = {
   LONGAGENT_HYBRID_CHECKPOINT_INVALID: "longagent.hybrid.checkpoint_invalid",
   LONGAGENT_STAGE_TASK_SKIPPED: "longagent.stage.task.skipped",
   LONGAGENT_STAGE_TASK_PROGRESS: "longagent.stage.task.progress",
+  // 子智能体委派的可见性（0.6.0）。刻意不进 ACTIVE_TURN_EVENT_TYPES ——
+  // 那套按 sessionId 收敛的过滤是安全边界，而子智能体跑在子会话里，
+  // 它的事件本就该被挡住。这两个事件带 parentSessionId，由父会话渲染。
+  SUBAGENT_DELEGATED: "subagent.delegated",
+  SUBAGENT_SETTLED: "subagent.settled",
   LONGAGENT_STOP_REQUESTED: "longagent.stop.requested",
   PROVIDER_FALLBACK: "provider.fallback",
   PROVIDER_RETRY: "provider.retry"

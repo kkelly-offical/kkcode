@@ -232,7 +232,8 @@ export async function requestOpenAI(input) {
     tools: mapTools(tools),
     tool_choice: tools?.length ? "auto" : undefined,
     ...(reasoningEffort && reasoningEffort !== "none" ? { reasoning_effort: reasoningEffort } : {}),
-    ...(maxTokens ? { max_tokens: maxTokens } : {})
+    ...(maxTokens ? { max_tokens: maxTokens } : {}),
+    ...(Number.isFinite(input.temperature) ? { temperature: input.temperature } : {})
   }
   const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`
 
@@ -344,6 +345,7 @@ export async function* requestOpenAIStream(input) {
     tool_choice: tools?.length ? "auto" : undefined,
     ...(reasoningEffort && reasoningEffort !== "none" ? { reasoning_effort: reasoningEffort } : {}),
     ...(maxTokens ? { max_tokens: maxTokens } : {}),
+    ...(Number.isFinite(input.temperature) ? { temperature: input.temperature } : {}),
     stream: true,
     stream_options: { include_usage: true }
   }
