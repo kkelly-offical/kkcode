@@ -1,6 +1,7 @@
 import { newId } from "../core/types.mjs"
 import { processTurnLoop } from "./loop.mjs"
 import { stripFence, parseJsonLoose } from "./longagent-utils.mjs"
+import { normalizeAcceptance, normalizeGoal } from "./goal-model.mjs"
 
 function normalizeFileList(value) {
   if (!Array.isArray(value)) return []
@@ -27,13 +28,20 @@ function normalizeTask(task, stageId, defaults = {}) {
   const maxRetries = Number(task?.maxRetries ?? defaults.maxRetries ?? 2)
   const complexity = ["low", "medium", "high"].includes(task?.complexity) ? task.complexity : "medium"
   const dependsOn = normalizeStringList(task?.dependsOn || [])
+  // acceptance 保持字符串形态 —— stage-scheduler 与 scaffold 直接把它拼进
+  // 提示词（`- ${criterion}`），换成对象会渲染成 [object Object]，老 checkpoint
+  // 里也存的是字符串。结构化判据放进**并行字段** acceptanceChecks，
+  // 供 goal-verifier 执行；两个字段来自同一份输入，不会漂移。
+  const rawAcceptance = Array.isArray(task?.acceptance) ? task.acceptance : []
+  const acceptanceChecks = normalizeAcceptance(rawAcceptance, { owner: taskId })
   return {
     taskId,
     prompt,
     subagentType: task?.subagentType ? String(task.subagentType) : undefined,
     category: task?.category ? String(task.category) : undefined,
     plannedFiles: normalizeFileList(task?.plannedFiles),
-    acceptance: normalizeStringList(task?.acceptance),
+    acceptance: normalizeStringList(rawAcceptance.map((item) => typeof item === "string" ? item : item?.text || "")),
+    acceptanceChecks,
     dependsOn,
     complexity,
     timeoutMs: Number.isFinite(timeoutMs) && timeoutMs >= 1000 ? timeoutMs : 600000,
@@ -70,7 +78,11 @@ export function defaultStagePlan(objective, defaults = {}) {
             taskId: `${stageId}_task_1`,
             prompt: String(objective || "").trim(),
             plannedFiles: [],
-            acceptance: ["Task objective is fully usable"],
+            // 兜底计划无从得知会产出什么文件，唯一诚实的判据就是问人。
+            // 这句散文会被 parseCriterionString 归为 manual —— 永不自动判过，
+            // 目标会停在 blocked_manual 等用户确认，而不是像 0.4.x 那样
+            // 「Task objective is fully usable」形同自动通过。
+            acceptance: [`请人工确认目标已达成：${String(objective || "").trim().slice(0, 120)}`],
             timeoutMs: Number(defaults.timeoutMs || 600000),
             maxRetries: Number(defaults.maxRetries ?? 2)
           }
@@ -91,6 +103,17 @@ export function validateAndNormalizeStagePlan(input, { objective = "", defaults 
     stages: Array.isArray(input.stages)
       ? input.stages.map((s, idx) => normalizeStage(s, defaults, idx))
       : []
+  }
+
+  // 0.5.0：blueprint 可以随计划输出 goal 块（目标树 + 验收判据）。
+  // 归一化失败不阻塞计划 —— goal 缺失时由调用方按目标类型合成兜底判据。
+  if (input.goal && typeof input.goal === "object") {
+    const { goal, errors: goalErrors } = normalizeGoal(input.goal, {
+      objective: plan.objective,
+      stageIds: plan.stages.map((s) => s.stageId)
+    })
+    if (goal) plan.goal = goal
+    if (goalErrors.length) plan.goalErrors = goalErrors
   }
 
   const errors = []

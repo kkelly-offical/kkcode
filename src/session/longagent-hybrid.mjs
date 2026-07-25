@@ -23,9 +23,11 @@ import {
 } from "./usability-gates.mjs"
 import { runIntakeDialogue, validateAndNormalizeStagePlan, defaultStagePlan } from "./longagent-plan.mjs"
 import { createValidator } from "./task-validator.mjs"
-import { detectStageComplete, detectReturnToCoding, buildStageWrapper, ULTRA_STAGES } from "./ultra-stages.mjs"
+import { detectStageComplete, detectReturnToCoding, buildStageWrapper, ULTRA_STAGES, ACCEPTANCE_RULES, buildGoalPlanContract } from "./ultra-stages.mjs"
+import { classifyGoalIntent, normalizeGoal, freezeGoal, intentProfile, planSignature } from "./goal-model.mjs"
+import { verifyGoal, GOAL_MET, GOAL_BLOCKED_MANUAL } from "./goal-verifier.mjs"
 import { verifyStageObjective, OBJECTIVE_MET } from "./stage-objective.mjs"
-import { hasPromptHandler } from "../tool/question-prompt.mjs"
+import { hasPromptHandler, askQuestionInteractive } from "../tool/question-prompt.mjs"
 import {
   isComplete,
   isLikelyActionableObjective,
@@ -256,8 +258,18 @@ async function runHybridPipeline({
   prompt, model, providerType, sessionId, configState,
   baseUrl = null, apiKeyEnv = null, agent = null,
   maxIterations = 0, signal = null, output = null,
-  allowQuestion = true, toolContext = {}, runSpec: _runSpec = null
+  allowQuestion = true, toolContext = {}, runSpec: _runSpec = null,
+  // 测试缝。生产不传，全部落到真实实现；测试据此控制门禁结果与用户交互，
+  // 其余（模型回复、后台任务）走 provider 与 BackgroundManager 的既有 mock 通道。
+  deps = {}
 }, lifecycle) {
+  const io = {
+    runUsabilityGates: deps.runUsabilityGates || runUsabilityGates,
+    verifyStageObjective: deps.verifyStageObjective || verifyStageObjective,
+    askQuestionInteractive: deps.askQuestionInteractive || askQuestionInteractive,
+    hasPromptHandler: deps.hasPromptHandler || hasPromptHandler,
+    stat: deps.stat || null
+  }
   const longagentConfig = configState.config.agent.longagent || {}
   const hybridConfig = longagentConfig.hybrid || {}
   const parallelConfig = longagentConfig.parallel || {}
@@ -290,7 +302,7 @@ async function runHybridPipeline({
   let currentPhase = "H0", currentGate = "init", currentStageId = null
   let gateStatus = {}, lastGateFailures = []
   let lastProgress = { percentage: 0, currentStep: 0, totalSteps: 0 }
-  let finalReply = "", planFrozen = false, stagePlan = null
+  let finalReply = "", planFrozen = false, stagePlan = null, goal = null, goalVerification = null
   let taskProgress = {}, fileChanges = []
   let completionMarkerSeen = false
   let gitBranch = null, gitBaseBranch = null, gitActive = false
@@ -396,6 +408,7 @@ async function runHybridPipeline({
           await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_CHECKPOINT_INVALID, sessionId, payload: { reason: "structure_validation_failed" } })
         } else {
           stagePlan = cp.stagePlan; stageIndex = cp.stageIndex; planFrozen = true
+          goal = stagePlan.goal || null   // goal 随 stagePlan 一起冻结与恢复
           taskProgress = cp.taskProgress || {}; lastProgress = cp.lastProgress || lastProgress
           iteration = cp.iteration || 0
           // #22: Load task-level checkpoints to recover intra-stage progress
@@ -514,6 +527,7 @@ async function runHybridPipeline({
   const frontendBlock = isFrontend
     ? "\n\n" + buildFrontendDesignPrompt(configState.config.agent?.design_style || "")
     : ""
+  const goalIntent = classifyGoalIntent(prompt)
   const blueprintPrompt = buildStageWrapper(ULTRA_STAGES.BLUEPRINT, { preview: previewFindings, blueprint: null, coding: null }, prompt)
     + frontendBlock
     + [
@@ -521,15 +535,18 @@ async function runHybridPipeline({
       "In addition to your architecture design, you MUST output a machine-parseable stage plan.",
       "",
       "Wrap it in a ```stage_plan_json ... ``` fenced block. Schema:",
-      '{"planId":"...","objective":"...","stages":[{"stageId":"...","name":"...","passRule":"all_success","tasks":[{"taskId":"...","prompt":"detailed task prompt for sub-agent","plannedFiles":["file1.mjs","file2.mjs"],"acceptance":["node --check file1.mjs","node --test test/file1.test.mjs"],"timeoutMs":600000,"maxRetries":2,"complexity":"low|medium|high"}]}]}',
+      '{"planId":"...","objective":"...","goal":{...see GOAL CONTRACT below...},"stages":[{"stageId":"...","name":"...","passRule":"all_success","tasks":[{"taskId":"...","prompt":"detailed task prompt for sub-agent","plannedFiles":["file1.mjs","file2.mjs"],"acceptance":["node --check file1.mjs","node --test test/file1.test.mjs"],"timeoutMs":600000,"maxRetries":2,"complexity":"low|medium|high"}]}]}',
       "",
       "Rules for the stage plan:",
       "- Each task prompt must be SELF-CONTAINED: the sub-agent has NO access to your blueprint text",
       "- plannedFiles must list EVERY file the task will create or modify (no file in multiple tasks)",
-      "- acceptance must be machine-verifiable commands (not subjective criteria)",
+      // 判据书写规则单一来源（ultra-stages.mjs），三处重复合并于此
+      ...ACCEPTANCE_RULES,
       "- Files that import each other MUST be in the same task",
       "- A module and its test file MUST be in the same task",
-      "- Order stages by dependency: shared types → core logic → integration → validation"
+      "- Order stages by dependency: shared types → core logic → integration → validation",
+      "",
+      buildGoalPlanContract(goalIntent)
     ].join("\n")
   const blueprintOut = await processTurnLoop({
     prompt: blueprintPrompt, mode: "agent", agent: getAgent("blueprint-agent"),
@@ -583,6 +600,37 @@ async function runHybridPipeline({
 
   stagePlan = parsedPlan
   planFrozen = true
+
+  // ===== Goal 冻结 =====
+  // blueprint 随计划输出的 goal 块（validateAndNormalizeStagePlan 已归一化到
+  // plan.goal）。没有输出时按目标类型合成兜底：task 级 acceptanceChecks 提升为
+  // goal 判据；一条都没有就落一条 manual —— 目标至少要有一个「谁说了算」，
+  // 而「没人说了算」的诚实答案是问用户。
+  goal = stagePlan.goal || null
+  let goalSource = "blueprint"
+  if (!goal) {
+    goalSource = "synthesized"
+    const promoted = stagePlan.stages
+      .flatMap((s) => (s.tasks || []).flatMap((t) => t.acceptanceChecks || []))
+      .slice(0, 8)
+    const { goal: synthesized } = normalizeGoal({
+      objective: prompt,
+      intent: goalIntent,
+      criteria: promoted.length ? promoted : [`请人工确认目标已达成：${prompt.slice(0, 120)}`]
+    }, { objective: prompt, stageIds: stagePlan.stages.map((s) => s.stageId) })
+    goal = synthesized
+  } else if (stagePlan.goalErrors?.length) {
+    goalSource = "blueprint_with_errors"
+  }
+  goal = freezeGoal(goal, { round: 1 })
+  stagePlan.goal = goal
+  gateStatus.goal = {
+    status: "frozen",
+    intent: goal.intent,
+    criteriaCount: goal.criteria.length,
+    subGoalCount: goal.subGoals.length,
+    source: goalSource
+  }
 
   const blueprintFellBack = parseErrors.length > 0
   gateStatus.blueprint = {
@@ -878,7 +926,7 @@ async function runHybridPipeline({
       if (hybridConfig.incremental_gates !== false && stageResult.allSuccess && stageIndex < stagePlan.stages.length - 1) {
         const stageFiles = (stageResult.fileChanges || []).map(f => f.path).filter(Boolean)
         if (stageFiles.length > 0) {
-          const miniGate = await runUsabilityGates({
+          const miniGate = await io.runUsabilityGates({
             sessionId,
             config: configState.config,
             cwd,
@@ -930,13 +978,13 @@ async function runHybridPipeline({
         // 重跑之前先问一句「目标是不是其实已经达成了」。allSuccess 只反映
         // worker 有没有吐出完成标记；文件早就写好、测试早就通过却因为缺个
         // 标记而重跑整个 stage，是 H4 迟迟不收敛的主因。
-        const objective = await verifyStageObjective({
+        const objective = await io.verifyStageObjective({
           stage,
           cwd: process.cwd(),
           config: configState.config,
           sessionId,
           iteration,
-          deps: { runUsabilityGates }
+          deps: { runUsabilityGates: io.runUsabilityGates, ...(io.stat ? { stat: io.stat } : {}) }
         })
         if (objective.status === OBJECTIVE_MET) {
           await EventBus.emit({
@@ -1254,7 +1302,7 @@ async function runHybridPipeline({
     // 问得出结果吗？没有 TUI handler 又没有 TTY，askQuestionInteractive 只会
     // 返回空串 —— 那不是用户的选择，不能当成回答。必须现场判断，不能缓存：
     // REPL 退出流程会把 handler 置空。
-    const canAskUser = hasPromptHandler() || Boolean(process.stdout.isTTY && process.stdin.isTTY)
+    const canAskUser = io.hasPromptHandler() || Boolean(process.stdout.isTTY && process.stdin.isTTY)
 
     if (needsAsking && !canAskUser) {
       // 0.4.x 在这里照问不误：空回复被 parseGateSelection 解析成「全部关闭」，
@@ -1308,17 +1356,19 @@ async function runHybridPipeline({
 
   let gateAttempt = 0
   let usabilityGatesPassed = false
+  let lastGateResult = null   // 交给目标核验复用，同一轮里不重复跑 build/test
 
   while (gateAttempt < maxGateAttempts) {
     gateAttempt++
     if (stopFlag || signal?.aborted) break
 
-    const gateResult = await runUsabilityGates({
+    const gateResult = await io.runUsabilityGates({
       sessionId,
       config: configState.config,
       cwd,
       iteration
     })
+    lastGateResult = gateResult
 
     if (gateResult.allPass) {
       usabilityGatesPassed = true
@@ -1371,6 +1421,34 @@ async function runHybridPipeline({
 
   if (!usabilityGatesPassed) {
     gateStatus.usabilityGates = { status: "fail", attempt: gateAttempt, failures: summarizeGateFailures(lastGateFailures) }
+  }
+
+  // ========== 目标核验 ==========
+  // 0.5.0 阶段 2：先只记录，不改变控制流 —— 让真实模型验收先观察判据质量，
+  // 阶段 4 的轮次循环才开始消费这个结果。gateResult 复用 H6 的最后一次，
+  // 避免同一轮里重复跑 build/test。
+  if (goal) {
+    try {
+      goalVerification = await verifyGoal({
+        goal,
+        cwd,
+        config: configState.config,
+        gateResult: lastGateResult,
+        deps: io.stat ? { stat: io.stat } : {}
+      })
+      gateStatus.goalVerification = {
+        status: goalVerification.status,
+        passed: goalVerification.passed,
+        failed: goalVerification.failed,
+        unknown: goalVerification.unknown,
+        manual: goalVerification.manual
+      }
+      await syncState({
+        lastMessage: `goal: ${goalVerification.status} (${goalVerification.passed} pass / ${goalVerification.failed} fail / ${goalVerification.manual} manual)`
+      })
+    } catch (verifyErr) {
+      gateStatus.goalVerification = { status: "error", reason: String(verifyErr?.message || verifyErr).slice(0, 200) }
+    }
   }
 
   // ========== H7: GIT MERGE (原子性保护) ==========
@@ -1537,6 +1615,7 @@ async function runHybridPipeline({
     // status-bar.mjs 与 repl.mjs 一直在读 currentStageId，而这里从来没返回过它，
     // 于是状态栏永远退化成 "i/n" 而不是阶段名。
     currentStageId,
+    goal, goalVerification,
     planFrozen, taskProgress, fileChanges,
     stageProgress: { done: stats.done, total: stats.total },
     remainingFilesCount: stats.remainingFilesCount,

@@ -161,7 +161,11 @@ function npmInvocation(args) {
   return { command: "npm.cmd", args, shell: true }
 }
 
-function outputSnippet(result) {
+/**
+ * 取命令输出的末 12 行压成单行。goal-verifier 的判据证据也用它 ——
+ * 报告里门禁输出与判据证据保持同一种形态。
+ */
+export function outputSnippet(result) {
   const lines = `${result.stdout || ""}\n${result.stderr || ""}`
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -169,7 +173,12 @@ function outputSnippet(result) {
   return lines.slice(-12).join(" | ")
 }
 
-async function runCommand({ command, args, cwd, shell = false, timeoutMs = DEFAULT_GATE_TIMEOUT_MS }) {
+/**
+ * 受控地跑一条命令：shell:false、windowsHide、超时 kill、stdout/stderr 收集。
+ * goal-verifier 的 command 类判据复用它（改名导出为 runGateCommand），
+ * 不要在别处再写一个裸 spawn。
+ */
+export async function runGateCommand({ command, args, cwd, shell = false, timeoutMs = DEFAULT_GATE_TIMEOUT_MS }) {
   return new Promise((resolve) => {
     let done = false
     let stdout = ""
@@ -234,6 +243,9 @@ async function runCommand({ command, args, cwd, shell = false, timeoutMs = DEFAU
     })
   })
 }
+
+// 内部沿用旧名，导出名是 runGateCommand
+const runCommand = runGateCommand
 
 async function checkBuildGate({ cwd, config }) {
   if (!isEnabled(config, "build")) {

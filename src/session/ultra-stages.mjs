@@ -12,6 +12,58 @@ export const ULTRA_STAGES = {
   DEBUGGING: "debugging"
 }
 
+/**
+ * 验收判据的书写规则 —— **单一来源**。
+ * 0.4.x 这段话在三处逐字重复（这里、longagent-hybrid 的 HYBRID MODE 块、
+ * blueprint 提示词文件），改一处漏两处。现在 hybrid 与阶段包装都从这里取。
+ */
+export const ACCEPTANCE_RULES = Object.freeze([
+  "- Every task MUST have machine-verifiable acceptance criteria",
+  "- Valid: 'node --check src/foo.mjs passes', 'npm test -- --grep auth passes', 'function X is exported from Y'",
+  "- Invalid: 'code is clean', 'implementation is correct', 'works as expected'",
+  "- Criteria that genuinely need human judgment must be written as plain statements — they will be routed to the user for confirmation, never auto-passed",
+  "- Never dress a human judgment up as a command, and never write 'the code is done' as a criterion — done is not the same as achieved",
+  "- The FINAL task must include: 'all modified files parse without errors AND project builds AND tests pass'"
+])
+
+/**
+ * Goal 契约：要求 blueprint 在 stage plan 之外输出目标树与验收判据。
+ * H0 会把这些判据展示给用户确认后冻结，此后它们是「目标达成」的唯一标准。
+ */
+export function buildGoalPlanContract(intent = "code") {
+  const kindHints = {
+    code: "Prefer command_exit / test_pass / file_exists / gate_pass. Use manual only for genuinely human judgments.",
+    research: "The deliverable is a document: use file_exists (the report) + content_match (questions it must cover) + manual (is the conclusion trustworthy). Do NOT write npm test style criteria.",
+    docs: "Use file_exists + content_match on the documents. A lint command is fine; build/test gates are not applicable.",
+    ops: "Use command_exit (health checks, dry-runs) + content_match (config content) + manual (go/no-go).",
+    mixed: "Mix kinds per deliverable: code parts get commands/tests, document parts get file_exists/content_match."
+  }
+  return [
+    "## GOAL CONTRACT (REQUIRED)",
+    "Alongside the stage plan, output a goal block INSIDE the same stage_plan_json object, under the key \"goal\". Schema:",
+    "",
+    '"goal": {"objective": "<user objective, verbatim>", "intent": "code|research|docs|ops|mixed",',
+    '  "criteria": [   // 1-8 blocking criteria that define DONE for the whole goal',
+    '    {"kind": "command_exit", "text": "npm test passes", "spec": {"run": "npm test"}},',
+    '    {"kind": "file_exists", "text": "report exists", "spec": {"path": "docs/x.md", "minBytes": 500}},',
+    '    {"kind": "content_match", "text": "exports verifyGoal", "spec": {"path": "src/a.mjs", "pattern": "export function verifyGoal"}},',
+    '    {"kind": "manual", "text": "UI looks right", "spec": {"question": "Does the UI look correct?"}}',
+    "  ],",
+    '  "nonGoals": ["..."],',
+    '  "subGoals": [   // OPTIONAL — only when the objective contains independently deliverable outcomes',
+    '    {"title": "...", "criteria": [...], "stageIds": ["stage_1"], "optional": false}',
+    "  ]}",
+    "",
+    "Rules for the goal block:",
+    "- criteria define when the WHOLE goal is achieved — not when a single task finished",
+    `- ${kindHints[intent] || kindHints.code}`,
+    "- Anything machine-verifiable must NOT be written as manual; anything needing human eyes must NOT be dressed up as a command",
+    "- Commands must exist in this repository — read package.json first and use real script names",
+    "- At most 6 subGoals, no nesting; every stage belongs to exactly ONE subGoal",
+    "- root criteria are the cross-subGoal integration checks (e.g. 'the whole project builds'), not the union of subGoal criteria"
+  ].join("\n")
+}
+
 export function detectStageComplete(text, stage) {
   const str = String(text || "")
   const markers = {
@@ -111,10 +163,7 @@ export function buildStageWrapper(stage, context, userPrompt, warningMsg = null)
       "- Order tasks into stages: infrastructure → core logic → integration → validation",
       "",
       "### 4. Acceptance Criteria",
-      "- Every task MUST have machine-verifiable acceptance criteria",
-      "- Valid: 'node --check src/foo.mjs passes', 'npm test -- --grep auth passes', 'function X is exported from Y'",
-      "- Invalid: 'code is clean', 'implementation is correct', 'works as expected'",
-      "- The FINAL task must include: 'all modified files parse without errors AND project builds AND tests pass'",
+      ...ACCEPTANCE_RULES,
       "",
       "### 5. Edge Cases & Error Handling Strategy",
       "- List edge cases for each major function (null input, empty arrays, concurrent access, network failure)",
