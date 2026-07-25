@@ -25,6 +25,8 @@ export function buildHelpText({ providers = [], userRootPath = "" } = {}) {
   lines.push(row("/ultra [request]", "explicit persistent staged development mode"))
   lines.push(row("/longagent [request]", "deprecated alias for /ultra"))
   lines.push(row("/provider <type>,/p <type>", `switch provider (${providers.join("|") || "configured"})`))
+  lines.push(row("/provider add", "list configured providers and switch"))
+  lines.push(row("/provider set", "add a new provider"))
   lines.push(row("/provider edit <name>", "edit existing provider config"))
   lines.push(row("/model <id>", "set active model"))
   lines.push(row("/mode [id]", "open the mode picker or switch directly (Shift+Tab cycles)"))

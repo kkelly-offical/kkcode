@@ -503,6 +503,8 @@ async function processInputLine({
   setCustomCommands,
   wizard,
   setWizard,
+  providerPicker,
+  setProviderPicker,
   print,
   streamSink = null,
   showTurnStatus = true,
@@ -512,6 +514,37 @@ async function processInputLine({
   suspendTui = null
 }) {
   let normalized = normalizeSlashAlias(String(line || "").trim())
+
+  async function switchActiveProvider(name) {
+    state.providerType = name
+    state.model = resolveProviderDefaultModel(ctx.configState.config, name, state.model)
+    print(`provider switched: ${name} (model: ${state.model})`)
+    const catalog = await loadProviderModelItems(ctx.configState, name)
+    if (catalog.items.length > 1) {
+      print(`  可用模型 (${catalog.source}${catalog.stale ? ", stale" : ""}): ` + catalog.items.map(m => m.model).join(", "))
+    }
+    if (catalog.warning) print(`  模型目录提示: ${catalog.warning}`)
+    if (catalog.error) print(`  模型目录不可用: ${catalog.error}；仍可使用 /model <model-id> 手动设置`)
+  }
+
+  // --- Provider 选择模式：拦截输入 ---
+  if (providerPicker) {
+    const list = providerPicker
+    if (setProviderPicker) setProviderPicker(null)
+    const input = normalized
+    if (!input) { print("  已取消。"); return { exit: false } }
+    let target = null
+    const num = Number(input)
+    if (!isNaN(num) && num >= 1 && num <= list.length) {
+      target = list[num - 1]
+    } else {
+      target = providersConfigured.find((p) => p === input)
+    }
+    if (!target) { print(`  找不到 provider: "${input}"`); return { exit: false } }
+    if (target === state.providerType) { print(`  "${target}" 已经是当前 provider。`); return { exit: false } }
+    await switchActiveProvider(target)
+    return { exit: false }
+  }
 
   // --- 向导模式：拦截所有输入 ---
   if (wizard?.active) {
@@ -527,6 +560,10 @@ async function processInputLine({
       if (result.configPatch.provider.default) {
         ctx.configState.config.provider.default = result.configPatch.provider.default
       }
+    }
+    // 向导保存后自动切换当前会话的 provider
+    if (result.done && !result.cancelled && result.providerName) {
+      await switchActiveProvider(result.providerName)
     }
     return { exit: false }
   }
@@ -896,17 +933,43 @@ async function processInputLine({
   }
 
   if (normalized === "/provider" || normalized === "/p") {
-    if (wizard && setWizard) {
-      startWizard(wizard, print)
-      setWizard({ ...wizard })
-    } else {
-      print(`available providers: ${providersConfigured.join(", ")}`)
-    }
+    print("")
+    print("  /provider <名称>         切换 provider")
+    print("  /provider add            列出已配置的 provider")
+    print("  /provider set            添加新的 provider")
+    print("  /provider edit <名称>    编辑已有 provider")
+    print("")
+    print("  已配置: " + providersConfigured.join(", "))
     return { exit: false }
   }
 
   if (normalized.startsWith("/provider ") || normalized.startsWith("/p ")) {
     const rest = normalized.replace(/^\/(provider|p)\s+/, "").trim()
+
+    // /provider set — 添加新 provider（原 /provider 向导）
+    if (rest === "set") {
+      if (wizard && setWizard) {
+        startWizard(wizard, print)
+        setWizard({ ...wizard })
+      }
+      return { exit: false }
+    }
+
+    // /provider add — 列出 provider 并等待编号/名称输入
+    if (rest === "add") {
+      if (!providersConfigured.length) {
+        print("没有已配置的 provider，使用 /provider set 添加。")
+        return { exit: false }
+      }
+      print("")
+      providersConfigured.forEach((name, i) => {
+        const marker = name === state.providerType ? "  ✓ 当前" : ""
+        print(`  ${i + 1}. ${name}${marker}`)
+      })
+      print("  输入编号或名称切换 (直接输入，无需 /provider 前缀):")
+      if (setProviderPicker) setProviderPicker(providersConfigured)
+      return { exit: false }
+    }
 
     // /provider edit <name> — 编辑已有 provider 配置
     if (rest.startsWith("edit ") || rest === "edit") {
@@ -933,15 +996,7 @@ async function processInputLine({
       print(`provider must be one of: ${providersConfigured.join(", ")}`)
       return { exit: false }
     }
-    state.providerType = next
-    state.model = resolveProviderDefaultModel(ctx.configState.config, next, state.model)
-    print(`provider switched: ${next} (model: ${state.model})`)
-    const catalog = await loadProviderModelItems(ctx.configState, next)
-    if (catalog.items.length > 1) {
-      print(`  可用模型 (${catalog.source}${catalog.stale ? ", stale" : ""}): ` + catalog.items.map(m => m.model).join(", "))
-    }
-    if (catalog.warning) print(`  模型目录提示: ${catalog.warning}`)
-    if (catalog.error) print(`  模型目录不可用: ${catalog.error}；仍可使用 /model <model-id> 手动设置`)
+    await switchActiveProvider(next)
     return { exit: false }
   }
 
@@ -1406,6 +1461,7 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
   const rl = createInterface({ input, output, history: historyLines, historySize: HIST_SIZE })
   let localCustomCommands = customCommands
   let localWizard = createWizardState()
+  let localProviderPicker = null
   const entered = [...historyLines]
   const lastTurn = {
     tokenMeter: {
@@ -1463,6 +1519,8 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
       },
       wizard: localWizard,
       setWizard: (next) => { localWizard = next },
+      providerPicker: localProviderPicker,
+      setProviderPicker: (next) => { localProviderPicker = next },
       print: (text) => console.log(text),
       pendingImages: linePendingImages,
       clearPendingImages: () => { linePendingImages = [] }
@@ -1640,6 +1698,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     // 屏幕布局元数据（buildFrame 中更新）
     layoutMeta: { logStartRow: 0, logEndRow: 0, inputStartRow: 0, inputEndRow: 0 },
     wizard: createWizardState(),
+    providerPicker: null,
     metrics: {
       tokenMeter: {
         estimated: false,
@@ -2936,6 +2995,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
             setCustomCommands: (next) => { localCustomCommands = next },
             wizard: ui.wizard,
             setWizard: (next) => { ui.wizard = next },
+            providerPicker: ui.providerPicker,
+            setProviderPicker: (next) => { ui.providerPicker = next },
             print: printTui,
             streamSink: appendStreamChunk,
             showTurnStatus: false,
@@ -3091,6 +3152,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         },
         wizard: ui.wizard,
         setWizard: (next) => { ui.wizard = next },
+        providerPicker: ui.providerPicker,
+        setProviderPicker: (next) => { ui.providerPicker = next },
         print: printTui,
         streamSink: appendStreamChunk,
         showTurnStatus: false,
