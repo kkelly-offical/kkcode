@@ -10,7 +10,38 @@ permissions:
   contents: write
 
 jobs:
+  # 发布前先过完整 verify 矩阵 —— 与 verify.yml 同一组平台。
+  # 0.4.2–0.5.3 期间四个版本在 main verify（Windows job）红着的情况下发了出去：
+  # release 工作流只有 ubuntu 单 job，tag 推送又不触发 verify.yml，
+  # 跨平台失败对发布流程完全不可见。发布必须被全矩阵挡住。
+  matrix_verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            node: 22
+          - os: ubuntu-latest
+            node: 24
+          - os: windows-latest
+            node: 22
+          - os: macos-latest
+            node: 22
+    runs-on: ${{ matrix.os }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+
   release_verify:
+    needs: matrix_verify
     environment: npm-release
     runs-on: ubuntu-latest
     env:
