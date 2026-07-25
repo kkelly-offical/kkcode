@@ -35,9 +35,23 @@ export async function requestFast({
   timeoutMs = FAST_MODEL_TIMEOUT_MS,
   deps = {}
 }) {
-  const model = fastModelId(configState)
+  let model = fastModelId(configState)
   if (!model) return null
   if (!String(prompt || "").trim()) return null
+
+  // fast 模型支持 "provider/model" 跨渠道限定：快模型经常不在主渠道上
+  // （例如主渠道是 kimi —— 其 coding 模型全是 thinking-only，小 token 预算下
+  // 正文为空 —— 而便宜的即答模型在 qwen 渠道）。前缀命中已配置的 provider
+  // 才拆分，否则按字面模型名走默认渠道。
+  let resolvedProviderType = providerType
+  const slash = model.indexOf("/")
+  if (slash > 0) {
+    const prefix = model.slice(0, slash)
+    if (configState?.config?.provider?.[prefix]) {
+      resolvedProviderType = prefix
+      model = model.slice(slash + 1)
+    }
+  }
 
   const request = deps.requestProvider || requestProvider
   const controller = new AbortController()
@@ -51,7 +65,7 @@ export async function requestFast({
   try {
     const result = await request({
       configState,
-      providerType: providerType || configState?.config?.provider?.default,
+      providerType: resolvedProviderType || configState?.config?.provider?.default,
       model,
       system,
       messages: [{ role: "user", content: String(prompt) }],

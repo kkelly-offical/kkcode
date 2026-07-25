@@ -77,6 +77,33 @@ test("requestFast returns null when no fast model is configured", async () => {
   assert.equal(called, false, "must not reach the provider at all")
 })
 
+test("models.fast accepts a provider/model qualifier for cross-channel fast models", async () => {
+  // 快模型经常不在主渠道上：主渠道是 kimi（coding 模型全是 thinking-only，
+  // 小 token 预算下正文为空），而即答的便宜模型在 qwen 渠道。
+  const configState = {
+    config: makeConfig({
+      models: { fast: "aliyun/qwen-flash" },
+      provider: { default: "kimi", kimi: { default_model: "k3" }, aliyun: { default_model: "qwen-plus" } }
+    })
+  }
+  const seen = []
+  const out = await requestFast({
+    configState,
+    prompt: "x",
+    deps: { requestProvider: async (args) => { seen.push(args); return { text: "ok" } } }
+  })
+  assert.equal(out, "ok")
+  assert.equal(seen[0].providerType, "aliyun", "前缀命中已配置 provider 时切换渠道")
+  assert.equal(seen[0].model, "qwen-flash", "模型名剥掉前缀")
+
+  // 前缀不是已配置的 provider → 按字面模型名走默认渠道（不误拆 org/model 形态的 id）
+  const literal = { config: makeConfig({ models: { fast: "org/some-model" }, provider: { default: "kimi", kimi: {} } }) }
+  const seen2 = []
+  await requestFast({ configState: literal, prompt: "x", deps: { requestProvider: async (a) => { seen2.push(a); return { text: "y" } } } })
+  assert.equal(seen2[0].providerType, "kimi")
+  assert.equal(seen2[0].model, "org/some-model")
+})
+
 test("requestFast uses the non-streaming path with a bounded maxTokens and no audit", async () => {
   const configState = { config: makeConfig({ models: { fast: "gpt-tiny" } }) }
   const seen = []
