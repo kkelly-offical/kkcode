@@ -95,7 +95,7 @@ test("早退路径不泄漏 stop 监听器", async () => {
       sessionId: `lifecycle_blocked_${i}`,
       configState: configState()
     })
-    assert.equal(result.status, "blocked")
+    assert.equal(result.status, "needs_objective")
   }
 
   assert.equal(EventBus.listenerCount(), before,

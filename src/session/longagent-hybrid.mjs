@@ -4,6 +4,7 @@
  *
  * 流程: H0:Intake → H1:Preview → H2:Blueprint → H2.5:Git → H3:Scaffold → H4:Coding(并行) → H5:Debugging(回滚) → H5.5:Validation → H6:Gates → H7:GitMerge
  */
+import path from "node:path"
 import { LongAgentManager } from "../orchestration/longagent-manager.mjs"
 import { processTurnLoop } from "./loop.mjs"
 import { markSessionStatus } from "./store.mjs"
@@ -27,6 +28,10 @@ import { detectStageComplete, detectReturnToCoding, buildStageWrapper, ULTRA_STA
 import { classifyGoalIntent, normalizeGoal, freezeGoal, intentProfile, planSignature } from "./goal-model.mjs"
 import { verifyGoal, GOAL_MET, GOAL_BLOCKED_MANUAL } from "./goal-verifier.mjs"
 import { openLedger, ultraSessionDir } from "./ultra-ledger.mjs"
+import { decideStageDisposition, hasDependents, DISPOSITION } from "./stage-disposition.mjs"
+import { snapshotRound, diffSnapshots, errorSignature } from "./progress-signal.mjs"
+import { askBlockedDecision, confirmManualCriteria } from "./ultra-interaction.mjs"
+import { resolveUltraStatus, exitCodeForUltraStatus, sessionStatusForUltraStatus, ULTRA_STATUS } from "./ultra-status.mjs"
 import { buildBlockedReport, renderBlockedReportMarkdown } from "./blocked-report.mjs"
 import { verifyStageObjective, OBJECTIVE_MET } from "./stage-objective.mjs"
 import { hasPromptHandler, askQuestionInteractive } from "../tool/question-prompt.mjs"
@@ -306,6 +311,18 @@ async function runHybridPipeline({
   let lastProgress = { percentage: 0, currentStep: 0, totalSteps: 0 }
   let finalReply = "", planFrozen = false, stagePlan = null, goal = null, goalVerification = null
   let ledger = null, blockedReport = null, reportPath = null
+  // 轮次循环状态（0.5.0 goal 模式）
+  const ultraCfg = longagentConfig.ultra || {}
+  const goalMode = ultraCfg.goal_mode !== false
+  let usabilityGatesPassed = false, lastGateResult = null, gateAttempt = 0
+  let exhaustedFlag = "", userGuidance = "", userDecision = ""
+  let manualConfirmed = new Set()
+  let maxStageIndexReached = 0
+  let replansUsed = 0
+  const maxReplans = Number(ultraCfg.stage_failure?.max_replans ?? 2)
+  // 本轮内的处置记录（进台账）与控制标志
+  let roundDispositions = [], roundReplanRequest = "", roundAborted = false
+  const deferredStageIds = new Set()
   let taskProgress = {}, fileChanges = []
   let completionMarkerSeen = false
   let gitBranch = null, gitBaseBranch = null, gitActive = false
@@ -397,10 +414,10 @@ async function runHybridPipeline({
 
   // 前置检查
   if (!isLikelyActionableObjective(prompt)) {
-    const blocked = "LongAgent 需要明确的编码目标。请直接描述要实现/修复的内容。"
-    await LongAgentManager.update(sessionId, { status: "blocked", phase: "H0", lastMessage: blocked })
+    const blocked = "Ultra 需要一个可执行的目标。可以是实现、修复、调研、文档或运维任务，请描述你想达成什么。"
+    await LongAgentManager.update(sessionId, { status: "needs_objective", phase: "H0", lastMessage: blocked })
     await markSessionStatus(sessionId, "active")
-    return { sessionId, turnId: `turn_long_${Date.now()}`, reply: blocked, usage: aggregateUsage, toolEvents, iterations: 0, status: "blocked", phase: "H0", gateStatus: {}, currentGate: "init", lastGateFailures: [], recoveryCount: 0, progress: lastProgress, elapsed: 0, stageIndex: 0, stageCount: 0, planFrozen: false, taskProgress: {}, fileChanges: [], stageProgress: { done: 0, total: 0 }, remainingFilesCount: 0 }
+    return { sessionId, turnId: `turn_long_${Date.now()}`, reply: blocked, usage: aggregateUsage, toolEvents, iterations: 0, status: "needs_objective", phase: "H0", gateStatus: {}, currentGate: "init", lastGateFailures: [], recoveryCount: 0, progress: lastProgress, elapsed: 0, stageIndex: 0, stageCount: 0, planFrozen: false, taskProgress: {}, fileChanges: [], stageProgress: { done: 0, total: 0 }, remainingFilesCount: 0 }
   }
 
   // #15 Checkpoint 恢复：如果有之前的检查点，跳过已完成阶段
@@ -748,16 +765,151 @@ async function runHybridPipeline({
     }
   }
 
+  // ========== 轮次循环（0.5.0 goal 模式核心） ==========
+  // H0/H1/H2/H2.5 只跑一次；每轮 = (重规划) → H3 → H4 → H5 → H5.5 → H6 → 目标核验。
+  // 约束是「有没有进展」，不是「跑了几轮」：max_rounds 默认 0（不限），
+  // 停滞检测 + 时限 + 预算兜底。goal_mode: false 退回 0.4.x 单轮语义。
+  const maxRounds = goalMode ? Number(ultraCfg.max_rounds ?? 0) : 1
+  const stallRounds = Math.max(1, Number(ultraCfg.no_progress_rounds ?? 2))
+  const deadlineMs = Number(ultraCfg.deadline_ms ?? 7200000)
+  const deadlineAt = deadlineMs > 0 ? startTime + deadlineMs : Infinity
+
+  /**
+   * 针对未达成的部分修订剩余计划。只允许修订 stage，冻结的 goal 判据不可改；
+   * 失败证据来自 ledger（这正是台账存在的意义）。模型可输出 [GOAL_BLOCKED: 原因]
+   * 主动认输。planSignature 去重堵死「每轮吐出同一份计划」的死循环。
+   */
+  async function reviseRemainingPlan(round, reason) {
+    if (!goalMode || replansUsed >= maxReplans) return { ok: false, why: "replan budget exhausted" }
+    replansUsed++
+    const evidence = ledger ? ledger.snapshotForReplan({ maxChars: 6000 }) : ""
+    const failing = goalVerification
+      ? [...goalVerification.results, ...goalVerification.subGoals.flatMap(sg => sg.results)]
+          .filter(r => r.status !== "pass")
+      : []
+    const doneFiles = [...new Set(fileChanges.map(f => f.path))]
+    const replanModel = getModelForStage("blueprint")
+    const revisePrompt = [
+      "## 目标（不可更改）", goal?.objective || prompt,
+      "",
+      "## 已冻结的验收判据（只能新增，不能删除）",
+      ...(goal?.criteria || []).map(c => `- [${c.id}][${c.kind}] ${c.text}`),
+      "",
+      failing.length ? "## 尚未达成的判据" : "",
+      ...failing.map(r => `- [${r.id}] ${r.text} — ${r.reason}`),
+      "",
+      doneFiles.length ? `## 已完成的产出（不要重做、不要覆盖）\n${doneFiles.join(", ")}` : "",
+      "",
+      "## 上一轮做了什么、为什么失败",
+      evidence || "(首轮无记录)",
+      userGuidance ? `\n## 用户指引（最高优先级）\n${userGuidance}` : "",
+      "",
+      `## 重规划原因\n${reason}`,
+      "",
+      "## 你的任务",
+      "只为「尚未达成的判据」输出新的 stage_plan_json（schema 同上一次）。可以拆小、换路线、缩范围。",
+      "禁止：重复上一轮已经试过且失败的同一条路线（证据里列出来了）。",
+      "禁止：把已完成文件重新列进 plannedFiles（会被脚手架覆盖成桩）。",
+      "如果你判断目标在当前条件下不可达，输出 [GOAL_BLOCKED: 原因] 并说明需要用户做什么。"
+    ].filter(Boolean).join("\n")
+
+    const out = await processTurnLoop({
+      prompt: revisePrompt, mode: "agent", agent: getAgent("blueprint-agent"),
+      model: replanModel.model, providerType: replanModel.providerType,
+      sessionId, configState, baseUrl, apiKeyEnv, signal, allowQuestion: false,
+      output: { write: () => {} }, toolContext
+    })
+    accumulateUsage(out)
+    iteration++
+
+    const blockedMatch = String(out.reply || "").match(/\[GOAL_BLOCKED:\s*([\s\S]*?)\]/)
+    if (blockedMatch) {
+      await ledger?.appendPlanDefect({ stageId: "", message: `GOAL_BLOCKED: ${blockedMatch[1].slice(0, 200)}`, round })
+      return { ok: false, goalBlocked: blockedMatch[1].trim() }
+    }
+
+    const parsed = parseBlueprintOutput(out.reply || "", prompt, planDefaults)
+    if (parsed.parseErrors.length || !parsed.stagePlan?.stages?.length) {
+      return { ok: false, why: `replan output unparseable: ${parsed.parseErrors.join("; ").slice(0, 200)}` }
+    }
+    const newPlan = parsed.stagePlan
+    if (newPlan.stages.length > stagePlan.stages.length + 3) {
+      return { ok: false, why: `replan grew the plan too much (${newPlan.stages.length} stages)` }
+    }
+    if (planSignature(newPlan) === planSignature(stagePlan)) {
+      return { ok: false, why: "replan produced the same plan structure" }
+    }
+    // 冻结的 goal 不接受重规划输出的替换 —— 判据修订必须走 reviseGoal 留痕
+    newPlan.goal = goal
+    stagePlan = newPlan
+    await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_REPLAN, sessionId, payload: { newStageCount: newPlan.stages.length, round, reason: String(reason).slice(0, 200) } })
+    await syncState({ lastMessage: `round ${round}: replanned to ${newPlan.stages.length} stage(s)` })
+    return { ok: true }
+  }
+
+  /**
+   * 一轮交付。**每轮重置什么，全部写在函数开头这一处** —— 散落的重置点
+   * 漏一个就是「第二轮一开始就判定卡住」这类端到端也测不出的静默 bug。
+   * @returns {{earlyExit?: "replan"|"abort", snapshot, progress}}
+   */
+  async function runDeliveryRound(round, prevSnapshot) {
+    // —— 每轮重置 ——
+    stageIndex = 0
+    recoveryCount = 0
+    stageAttempts = 0
+    roundDispositions = []
+    roundReplanRequest = ""
+    roundAborted = false
+    gateAttempt = 0
+    usabilityGatesPassed = false
+    lastGateResult = null
+    goalVerification = null
+    // 进展判定只看**本轮新增**的变更。fileChanges 是跨轮累计的，而且 seeded
+    // 的已完成任务每轮会把同一批变更重报一遍 —— 拿累计值去 diff，每一轮都
+    // 显得「文件有新变更」，停滞检测永远不触发（实测 267 轮不收敛）。
+    const fileChangesBaseline = fileChanges.length
+    ledger?.markRoundStart()
+    // 跨轮携带：taskProgress（完成项种子）、fileChanges、goal、ledger、
+    // manualConfirmed、deferredStageIds（每 stage 只许延后一次，跨轮生效）
+
   // ========== H3: SCAFFOLD (脚手架) ==========
-  const scaffoldEnabled = longagentConfig.scaffold?.enabled !== false
-  if (scaffoldEnabled && stagePlan.stages.length > 0) {
+  let scaffoldEnabled = longagentConfig.scaffold?.enabled !== false
+  // 非编码目标不需要桩文件（research/docs/ops 的产出不是代码骨架）
+  if (goal && intentProfile(goal.intent).scaffold === false) scaffoldEnabled = false
+  let scaffoldPlan = stagePlan
+  if (scaffoldEnabled && round > 1) {
+    // ⚠ 第二轮防护：scaffold 的提示词是「Create EVERY file listed above」。
+    // 修订计划若仍列着已实现的文件，这里会用桩把上一轮的成品覆盖掉 ——
+    // 这是整个轮次循环唯一会破坏已完成工作的路径。已存在且非空的文件
+    // 一律从脚手架计划里剔除。
+    const { stat: statForScaffold } = await import("node:fs/promises")
+    const statFn = io.stat || statForScaffold
+    const filteredStages = []
+    for (const stage of stagePlan.stages) {
+      const tasks = []
+      for (const task of stage.tasks) {
+        const missing = []
+        for (const file of task.plannedFiles || []) {
+          try {
+            const info = await statFn(path.resolve(cwd, file))
+            if (!info.isFile() || info.size === 0) missing.push(file)
+          } catch { missing.push(file) }
+        }
+        if (missing.length) tasks.push({ ...task, plannedFiles: missing })
+      }
+      if (tasks.length) filteredStages.push({ ...stage, tasks })
+    }
+    scaffoldPlan = { ...stagePlan, stages: filteredStages }
+    if (!filteredStages.length) scaffoldEnabled = false
+  }
+  if (scaffoldEnabled && scaffoldPlan.stages.length > 0) {
     await setPhase("H3", "scaffolding")
     currentGate = "scaffold"
     await syncState({ lastMessage: "H3: creating stub files" })
 
     const scaffoldResult = await runScaffoldPhase({
       objective: `${prompt}\n\n=== BLUEPRINT ARCHITECTURE ===\n${architectureText.slice(0, 4000)}`,
-      stagePlan, model, providerType, sessionId, configState,
+      stagePlan: scaffoldPlan, model, providerType, sessionId, configState,
       baseUrl, apiKeyEnv, agent, signal, toolContext,
       tddMode: hybridConfig.tdd_mode === true
     })
@@ -776,6 +928,7 @@ async function runHybridPipeline({
   // ========== H4+H5: CODING(并行) + DEBUGGING(回滚) 循环 ==========
   const gatesConfig = longagentConfig.usability_gates || {}
   let priorContext = [
+    userGuidance ? `## 用户指引（最高优先级）\n${userGuidance}\n` : "",
     "### Preview Findings", previewFindings.slice(0, 2000), "",
     "### Blueprint Architecture", architectureText.slice(0, 3000)
   ].join("\n")
@@ -795,7 +948,21 @@ async function runHybridPipeline({
     stageIndex = 0
     const codingPhaseStart = Date.now()
 
-    while (stageIndex < stagePlan.stages.length) {
+    // DEFER 需要「挪到本轮末尾」的能力 —— 遍历本地执行序，不动 stagePlan
+    const executionOrder = [...stagePlan.stages]
+
+    /** 记失败并跳过：一个 stage 卡死不再没收其余无关工作（0.4.x 是 break 一切）。 */
+    function markStageSkipped(stage, reason) {
+      gateStatus[stage.stageId] = { status: "fail", kind: "skipped", reason: String(reason).slice(0, 200) }
+      for (const task of stage.tasks) {
+        const tp = taskProgress[task.taskId]
+        if (tp && tp.status !== "completed") {
+          taskProgress[task.taskId] = { ...tp, status: "skipped", skipReason: String(reason).slice(0, 120) }
+        }
+      }
+    }
+
+    while (stageIndex < executionOrder.length) {
       if (stopFlag || signal?.aborted) break
 
       // Phase 2: 阶段超时检测
@@ -808,8 +975,9 @@ async function runHybridPipeline({
       }
 
       iteration++
-      const stage = stagePlan.stages[stageIndex]
+      const stage = executionOrder[stageIndex]
       currentGate = `stage:${stage.stageId}`
+      maxStageIndexReached = Math.max(maxStageIndexReached, stageIndex)
       currentStageId = stage.stageId
       await syncState({ stageStatus: "running", lastMessage: `H4: running ${stage.stageId} (${stageIndex + 1}/${stagePlan.stages.length})` })
 
@@ -978,6 +1146,7 @@ async function runHybridPipeline({
           // Phase 6: 尝试降级而非直接 break
           const deg = await tryDegrade({ phase: "H4", reason: "budget_exceeded" })
           if (!deg.applied || deg.strategy === "graceful_stop") {
+            exhaustedFlag = "budget"
             await syncState({ status: "budget_exceeded", lastMessage: `H4: budget exceeded (${totalTokens}/${budgetLimit})` })
             break
           }
@@ -986,8 +1155,8 @@ async function runHybridPipeline({
 
       if (!stageResult.allSuccess) {
         // 重跑之前先问一句「目标是不是其实已经达成了」。allSuccess 只反映
-        // worker 有没有吐出完成标记；文件早就写好、测试早就通过却因为缺个
-        // 标记而重跑整个 stage，是 H4 迟迟不收敛的主因。
+        // 工具调用有没有覆盖到声明的文件；文件早就写好、测试早就通过却因为
+        // 覆盖判定不满足而重跑整个 stage，是 H4 迟迟不收敛的主因。
         const objective = await io.verifyStageObjective({
           stage,
           cwd: process.cwd(),
@@ -1012,59 +1181,109 @@ async function runHybridPipeline({
           continue
         }
 
-        recoveryCount++
-        const backoffMs = Math.min(1000 * 2 ** (recoveryCount - 1), 30000)
-        // 同上：渲染分支早就写好了，但没有任何地方发这个事件 —— 于是 stage
-        // 反复重跑时用户只看到长时间没有输出，不知道后台正在退避重试。
-        await EventBus.emit({
-          type: EVENT_TYPES.LONGAGENT_RECOVERY_ENTERED,
-          sessionId,
-          payload: {
-            recoveryCount,
-            reason: `stage ${stage.stageId} 失败 ${stageResult.failCount} 个任务，${Math.round(backoffMs / 1000)}s 后重试`,
-            stageId: stage.stageId,
-            backoffMs
-          }
-        })
-        await new Promise(r => setTimeout(r, backoffMs))
-        const maxStageRecoveries = Number(longagentConfig.max_stage_recoveries ?? 3)
-        if (recoveryCount >= maxStageRecoveries) {
-          // Phase 6: 尝试降级而非直接 abort
-          const deg = await tryDegrade({ phase: "H4", reason: "max_recoveries" })
-          if (!deg.applied || deg.strategy === "graceful_stop") {
-            await syncState({
-              status: "error",
-              lastMessage: deg.applied
-                ? `stage ${stage.stageId} aborted after degradation`
-                : `stage ${stage.stageId} aborted after ${recoveryCount} recoveries`
-            })
-            break
-          }
-          // 降级成功但非 graceful_stop，重置 recoveryCount 继续。
-          // 但要记总账：不然每次降级都清零计数，同一个 stage 可以一直
-          // 重跑到阶段超时为止。
-          stageAttempts += recoveryCount
-          recoveryCount = 0
-          if (stageAttempts >= maxStageAttempts) {
-            await syncState({
-              status: "error",
-              lastMessage: `stage ${stage.stageId} aborted after ${stageAttempts} total attempts`
-            })
-            break
-          }
+        // 分档处置。0.4.x 只有「重试」或「break 掉整个 stage 循环、放弃当前
+        // 与所有后续 stage」两种结局；PERMANENT 错误还会保证烧满 12 次退避。
+        const stageTaskIds = new Set(stage.tasks.map(t => t.taskId))
+        const failedEntries = Object.values(taskProgress)
+          .filter(t => stageTaskIds.has(t.taskId) && (t.status === "error" || t.status === "retrying"))
+        for (const entry of failedEntries) {
+          if (entry.lastError && ledger) ledger.noteErrorSignature(errorSignature(entry.lastError))
         }
-        // Phase 1: 根据错误类别决定是否重试
-        for (const [taskId, tp] of Object.entries(taskProgress)) {
-          if (tp.status === "error") {
-            const category = classifyError(tp.lastError)
-            if (category === ERROR_CATEGORIES.PERMANENT || category === ERROR_CATEGORIES.UNKNOWN) {
-              taskProgress[taskId] = { ...tp, status: "error", skipReason: `${category} error` }
-            } else {
-              taskProgress[taskId] = { ...tp, status: "retrying", attempt: 0 }
+        const maxStageRecoveries = Number(longagentConfig.max_stage_recoveries ?? 3)
+        const decision = decideStageDisposition({
+          stopped: stopFlag || Boolean(signal?.aborted),
+          recoveries: recoveryCount,
+          maxRecoveries: maxStageRecoveries,
+          attempts: stageAttempts + recoveryCount,
+          maxAttempts: maxStageAttempts,
+          errorCategories: failedEntries.map(t => classifyError(t.lastError)),
+          stageHasDependents: hasDependents({ stages: executionOrder }, stageIndex),
+          alreadyDeferred: deferredStageIds.has(stage.stageId),
+          alreadyReplanned: Boolean(roundReplanRequest) || replansUsed >= maxReplans,
+          canDegrade: degradationChain.canDegrade(),
+          roundsLeft: goalMode,
+          allowSkip: ultraCfg.stage_failure?.allow_skip !== false,
+          allowDefer: ultraCfg.stage_failure?.allow_defer !== false
+        })
+        roundDispositions.push({
+          stageId: stage.stageId, disposition: decision.disposition, reason: decision.reason,
+          attempts: stageAttempts + recoveryCount,
+          failedTasks: failedEntries.map(t => ({ taskId: t.taskId, errorCategory: classifyError(t.lastError), error: t.lastError || "" }))
+        })
+        if (decision.disposition !== DISPOSITION.RETRY) {
+          await EventBus.emit({
+            type: EVENT_TYPES.LONGAGENT_ALERT, sessionId,
+            payload: { kind: "stage_disposition", message: `stage ${stage.stageId}: ${decision.disposition} — ${decision.reason}`, stageId: stage.stageId, disposition: decision.disposition }
+          })
+        }
+
+        if (decision.disposition === DISPOSITION.RETRY || decision.disposition === DISPOSITION.DEGRADE) {
+          if (decision.disposition === DISPOSITION.DEGRADE) {
+            const deg = await tryDegrade({ phase: "H4", reason: "max_recoveries" })
+            stageAttempts += recoveryCount
+            recoveryCount = 0
+            if (!deg.applied || deg.strategy === "graceful_stop") {
+              // 降级链也走完了 —— 记失败、跳过本 stage，不没收后续工作
+              markStageSkipped(stage, `降级链耗尽（${stageAttempts} 次尝试）`)
+              stageIndex++
+              recoveryCount = 0; stageAttempts = 0
+              continue
+            }
+          } else {
+            recoveryCount++
+            const backoffMs = Math.min(1000 * 2 ** (recoveryCount - 1), 30000)
+            await EventBus.emit({
+              type: EVENT_TYPES.LONGAGENT_RECOVERY_ENTERED,
+              sessionId,
+              payload: {
+                recoveryCount,
+                reason: `stage ${stage.stageId} 失败 ${stageResult.failCount} 个任务，${Math.round(backoffMs / 1000)}s 后重试`,
+                stageId: stage.stageId,
+                backoffMs
+              }
+            })
+            await new Promise(r => setTimeout(r, backoffMs))
+          }
+          // 按错误类别决定各 task 是否参与重试
+          for (const [taskId, tp] of Object.entries(taskProgress)) {
+            if (tp.status === "error" && stageTaskIds.has(taskId)) {
+              const category = classifyError(tp.lastError)
+              if (category === ERROR_CATEGORIES.PERMANENT || category === ERROR_CATEGORIES.UNKNOWN) {
+                taskProgress[taskId] = { ...tp, status: "error", skipReason: `${category} error` }
+              } else {
+                taskProgress[taskId] = { ...tp, status: "retrying", attempt: 0 }
+              }
             }
           }
+          continue
         }
-        continue
+
+        if (decision.disposition === DISPOSITION.DEFER) {
+          deferredStageIds.add(stage.stageId)
+          executionOrder.push(stage)   // 挪到本轮末尾再试一次
+          stageIndex++
+          recoveryCount = 0; stageAttempts = 0
+          await syncState({ lastMessage: `H4: ${stage.stageId} 延后到本轮末尾` })
+          continue
+        }
+
+        if (decision.disposition === DISPOSITION.SKIP) {
+          markStageSkipped(stage, decision.reason)
+          stageIndex++
+          recoveryCount = 0; stageAttempts = 0
+          continue
+        }
+
+        if (decision.disposition === DISPOSITION.REPLAN) {
+          roundReplanRequest = decision.reason
+          await syncState({ lastMessage: `H4: ${stage.stageId} 触发重规划 — ${decision.reason}` })
+          break
+        }
+
+        // ABORT：用户停止或无路可走
+        roundAborted = true
+        await syncState({ status: "error", lastMessage: `H4: ${stage.stageId} 中止 — ${decision.reason}` })
+        break
       }
 
       stageIndex++
@@ -1252,6 +1471,28 @@ async function runHybridPipeline({
     await syncState({ lastMessage: rerunCoding ? `H5: rollback to coding (attempt ${codingRollbackCount})` : `H5: debugging complete` })
   } // end while(rerunCoding)
 
+  // 本轮被重规划请求或中止打断：跳过 H5.5/H6/核验，记账后交回外层循环
+  if (roundReplanRequest || roundAborted) {
+    await ledger?.appendRound({
+      round,
+      replanReason: roundReplanRequest,
+      planSignature: planSignature(stagePlan),
+      stages: roundDispositions,
+      fileChanges,
+      gates: {},
+      criteria: [],
+      subGoals: [],
+      progress: { madeProgress: false, reason: roundAborted ? "本轮被中止" : `触发重规划：${roundReplanRequest}`, signals: {} },
+      usage: { input: aggregateUsage.input, output: aggregateUsage.output },
+      verdict: roundAborted ? "aborted" : "replan"
+    }).catch(() => {})
+    return {
+      earlyExit: roundAborted ? "abort" : "replan",
+      snapshot: prevSnapshot,
+      progress: { madeProgress: false, reason: roundAborted ? "aborted" : "replan requested", signals: {} }
+    }
+  }
+
   // ========== H5.5: COMPLETION VALIDATION ==========
   if (hybridConfig.completion_validation !== false) {
     await setPhase("H5.5", "completion_validation")
@@ -1364,9 +1605,9 @@ async function runHybridPipeline({
     }
   }
 
-  let gateAttempt = 0
-  let usabilityGatesPassed = false
-  let lastGateResult = null   // 交给目标核验复用，同一轮里不重复跑 build/test
+  gateAttempt = 0
+  usabilityGatesPassed = false
+  lastGateResult = null   // 交给目标核验复用，同一轮里不重复跑 build/test
 
   while (gateAttempt < maxGateAttempts) {
     gateAttempt++
@@ -1434,16 +1675,16 @@ async function runHybridPipeline({
   }
 
   // ========== 目标核验 ==========
-  // 0.5.0 阶段 2：先只记录，不改变控制流 —— 让真实模型验收先观察判据质量，
-  // 阶段 4 的轮次循环才开始消费这个结果。gateResult 复用 H6 的最后一次，
-  // 避免同一轮里重复跑 build/test。
-  if (goal) {
+  // goal 是「达成与否」的唯一标准；gateResult 复用 H6 的最后一次，
+  // 同一轮里不重复跑 build/test。
+  if (goal && (goalMode || !goalVerification)) {
     try {
       goalVerification = await verifyGoal({
         goal,
         cwd,
         config: configState.config,
         gateResult: lastGateResult,
+        manualConfirmed,
         deps: io.stat ? { stat: io.stat } : {}
       })
       gateStatus.goalVerification = {
@@ -1454,43 +1695,194 @@ async function runHybridPipeline({
         manual: goalVerification.manual
       }
       await syncState({
-        lastMessage: `goal: ${goalVerification.status} (${goalVerification.passed} pass / ${goalVerification.failed} fail / ${goalVerification.manual} manual)`
+        lastMessage: `round ${round} goal: ${goalVerification.status} (${goalVerification.passed} pass / ${goalVerification.failed} fail / ${goalVerification.manual} manual)`
       })
     } catch (verifyErr) {
       gateStatus.goalVerification = { status: "error", reason: String(verifyErr?.message || verifyErr).slice(0, 200) }
     }
   }
 
-  // 台账记账：本轮全貌（阶段 4 的重规划与停滞检测都吃它）
+  // 本轮快照 + 与上一轮 diff —— 停滞判定的唯一依据
+  const snapshot = snapshotRound({
+    verification: goalVerification,
+    gateResult: lastGateResult,
+    taskProgress,
+    fileChanges: fileChanges.slice(fileChangesBaseline),
+    planSig: planSignature(stagePlan),
+    maxStageIndexReached
+  })
+  const progress = diffSnapshots(prevSnapshot, snapshot)
+
+  // 台账记账：本轮全貌（重规划与受阻报告都吃它）
   if (ledger) {
     const stats0 = stageProgressStats(taskProgress)
+    const dispositionByStage = new Map(roundDispositions.map((d) => [d.stageId, d]))
     await ledger.appendRound({
-      round: 1,
-      planSignature: planSignature(stagePlan),
-      stages: stagePlan.stages.map((stage) => ({
-        stageId: stage.stageId,
-        name: stage.name,
-        disposition: gateStatus[stage.stageId]?.status === "pass" ? "" : "failed",
-        reason: gateStatus[stage.stageId]?.kind === "plan_defect" ? gateStatus[stage.stageId].reason : "",
-        attempts: 1,
-        failedTasks: Object.values(taskProgress)
-          .filter((t) => t.status === "error" && stage.tasks.some((task) => task.taskId === t.taskId))
-          .map((t) => ({ taskId: t.taskId, errorCategory: classifyError(t.lastError), error: t.lastError || "" }))
-      })),
+      round,
+      planSignature: snapshot.planSig,
+      stages: stagePlan.stages.map((stage) => {
+        const d = dispositionByStage.get(stage.stageId)
+        return {
+          stageId: stage.stageId,
+          name: stage.name,
+          disposition: d?.disposition || (gateStatus[stage.stageId]?.status === "pass" ? "" : "failed"),
+          reason: d?.reason || (gateStatus[stage.stageId]?.kind ? gateStatus[stage.stageId].reason : ""),
+          attempts: d?.attempts ?? 1,
+          failedTasks: d?.failedTasks || Object.values(taskProgress)
+            .filter((t) => t.status === "error" && stage.tasks.some((task) => task.taskId === t.taskId))
+            .map((t) => ({ taskId: t.taskId, errorCategory: classifyError(t.lastError), error: t.lastError || "" }))
+        }
+      }),
       fileChanges,
       gates: lastGateResult?.gates || {},
       criteria: goalVerification
         ? [...goalVerification.results, ...goalVerification.subGoals.flatMap((s) => s.results)]
         : [],
       subGoals: goalVerification?.subGoals || [],
-      progress: null,   // 单轮无从对比；阶段 4 的轮次循环接入 progress-signal
+      progress,
       usage: { input: aggregateUsage.input, output: aggregateUsage.output },
       verdict: `stages ${stats0.done}/${stats0.total}`
     }).catch(() => {})
   }
 
+  return { snapshot, progress }
+  } // end runDeliveryRound
+
+  // ========== 轮次循环执行 ==========
+  {
+    let round = 0
+    let prevSnapshot = null
+    let noProgressStreak = 0
+    let replanReason = ""
+
+    for (;;) {
+      round++
+      if (round > 1 && replanReason) {
+        const revised = await reviseRemainingPlan(round, replanReason)
+        if (revised.goalBlocked) {
+          // 模型主动认输 —— 这就是受阻，带着它的说明去汇报
+          await EventBus.emit({
+            type: EVENT_TYPES.LONGAGENT_ALERT, sessionId,
+            payload: { kind: "goal_blocked", message: `模型判断目标不可达：${revised.goalBlocked.slice(0, 200)}` }
+          })
+          break
+        }
+        // 修不出新计划时沿用旧计划再试 —— 瞬时错误场景下重试本身仍有意义
+      }
+
+      const outcome = await runDeliveryRound(round, prevSnapshot)
+      prevSnapshot = outcome.snapshot || prevSnapshot
+
+      if (outcome.earlyExit === "abort" || stopFlag || signal?.aborted) break
+      if (exhaustedFlag) break
+
+      // 目标达成？
+      if (goalVerification?.status === GOAL_MET && usabilityGatesPassed) break
+
+      // manual 待确认：TTY 下当场逐条问；确认后重新核验。
+      // 非 TTY 没人能点头 —— 结束并以 blocked_manual 如实汇报。
+      if (goalMode && goalVerification?.status === GOAL_BLOCKED_MANUAL) {
+        const pending = [...goalVerification.results, ...goalVerification.subGoals.flatMap((sg) => sg.results)]
+          .filter((r) => r.status === "pending_manual")
+          .map((r) => ({ id: r.id, text: r.text, question: r.reason }))
+        const confirmed = await confirmManualCriteria({
+          pending, allowQuestion,
+          deps: { askQuestionInteractive: io.askQuestionInteractive, hasPromptHandler: io.hasPromptHandler }
+        })
+        if (confirmed.size) {
+          for (const id of confirmed) manualConfirmed.add(id)
+          for (const id of confirmed) await ledger?.appendInteraction({ question: `manual:${id}`, answer: "confirmed", action: "confirm_manual", source: "user" })
+          goalVerification = await verifyGoal({
+            goal, cwd, config: configState.config, gateResult: lastGateResult, manualConfirmed,
+            deps: io.stat ? { stat: io.stat } : {}
+          }).catch(() => goalVerification)
+          if (goalVerification?.status === GOAL_MET && usabilityGatesPassed) break
+        } else {
+          break
+        }
+      }
+
+      if (!goalMode) break   // 0.4.x 单轮语义
+
+      // 硬性预算：总 LLM 轮次 / 时限
+      if (maxIterations > 0 && iteration >= maxIterations) { exhaustedFlag = "iterations"; break }
+      if (Date.now() > deadlineAt) { exhaustedFlag = "deadline"; break }
+
+      const roundProgress = outcome.progress || { madeProgress: false, reason: "no progress info" }
+      noProgressStreak = roundProgress.madeProgress ? 0 : noProgressStreak + 1
+      if (noProgressStreak >= 1 && !roundProgress.madeProgress) {
+        await EventBus.emit({
+          type: EVENT_TYPES.LONGAGENT_ALERT, sessionId,
+          payload: { kind: "no_progress", message: `第 ${round} 轮无实质进展：${roundProgress.reason}（连续 ${noProgressStreak} 轮）`, round, streak: noProgressStreak }
+        })
+      }
+
+      const stuck = noProgressStreak >= stallRounds
+      const outOfRounds = maxRounds > 0 && round >= maxRounds
+
+      if (stuck || outOfRounds) {
+        // 受阻：拿着报告问用户。非 TTY 显式收口（默认 deliver_partial），
+        // 空答案绝不当「继续」。
+        let interimReport = null
+        try { interimReport = ledger ? buildBlockedReport(ledger, { status: "blocked" }) : null } catch { interimReport = null }
+        const decision = await askBlockedDecision({
+          report: interimReport, allowQuestion, config: configState.config,
+          deps: { askQuestionInteractive: io.askQuestionInteractive, hasPromptHandler: io.hasPromptHandler }
+        })
+        await ledger?.appendInteraction({
+          question: stuck ? `连续 ${noProgressStreak} 轮无进展` : `已达轮次上限 ${maxRounds}`,
+          answer: decision.text || decision.action, action: decision.action, source: decision.source
+        })
+        if (decision.action === "stop") { userDecision = "stop"; break }
+        if (decision.action === "deliver_partial") {
+          // 用户亲选的「交付部分」才作为决定记入；非 TTY 收口只是结束循环，
+          // 终局状态仍由核验事实（passed 数、产出）决定 —— 停滞的无人值守
+          // 运行必须以 blocked（非零退出码）结束，而不是被收口抬成 partial
+          if (decision.source === "user") userDecision = "deliver_partial"
+          break
+        }
+        if (decision.action === "guidance") {
+          userGuidance = decision.text
+          noProgressStreak = 0
+        } else if (decision.action === "continue") {
+          // 只有**用户亲口**说继续才允许越过轮次上限；配置里的无人值守
+          // continue 不能把上限变成无限 —— 那是烧预算的死循环
+          if (outOfRounds && decision.source !== "user") { exhaustedFlag = "iterations"; break }
+          noProgressStreak = 0
+        }
+      }
+
+      replanReason = outcome.earlyExit === "replan"
+        ? roundReplanRequest
+        : [
+            ...(goalVerification ? [...goalVerification.results, ...goalVerification.subGoals.flatMap((sg) => sg.results)]
+              .filter((r) => r.status === "fail").map((r) => `判据 ${r.id} 未过: ${r.reason}`) : []),
+            ...(usabilityGatesPassed ? [] : [`门禁未过: ${summarizeGateFailures(lastGateFailures)}`]),
+            ...(roundProgress.madeProgress ? [] : [`无进展: ${roundProgress.reason}`])
+          ].join("; ").slice(0, 400) || "上一轮未达成目标"
+    }
+  }
+
+  // ========== 终局裁定 ==========
+  // completionMarker 是模型的自我声明，不是证据 —— 它单独永远不产生 completed。
+  const hadOutput = fileChanges.length > 0 ||
+    Object.values(taskProgress).some((t) => t.status === "completed")
+  const finalUltraStatus = resolveUltraStatus({
+    fatalError: null,
+    stopped: stopFlag || Boolean(signal?.aborted),
+    userDecision,
+    exhausted: exhaustedFlag,
+    verification: goalMode ? goalVerification : null,
+    usabilityGatesPassed,
+    completionMarkerSeen,
+    hadOutput
+  })
+
   // ========== H7: GIT MERGE (原子性保护) ==========
-  if (usabilityGatesPassed && gitActive && gitBaseBranch && gitBranch) {
+  // 只有 completed 才合进主干。0.4.x 的条件是「门禁过了就合」——加上轮次循环
+  // 后那会把「尽力了但没达成」的产物合进 base 分支。partial/blocked 保留
+  // feature 分支，报告里给出分支名。
+  if (finalUltraStatus === ULTRA_STATUS.COMPLETED && gitActive && gitBaseBranch && gitBranch) {
     await setPhase("H7", "git_merge")
     try {
       if (gitConfig.auto_merge !== false) {
@@ -1615,15 +2007,20 @@ async function runHybridPipeline({
 
   // ========== 完成 ==========
   const elapsed = Math.round((Date.now() - startTime) / 1000)
-  const finalStatus = resolveHybridCompletionStatus({ completionMarkerSeen, usabilityGatesPassed })
-  const finalMessage = finalStatus === "failed"
-    ? "hybrid longagent failed usability gates"
-    : "hybrid longagent complete"
+  const finalStatus = finalUltraStatus
+  const STATUS_MESSAGES = {
+    [ULTRA_STATUS.COMPLETED]: "goal achieved — all acceptance criteria pass",
+    [ULTRA_STATUS.PARTIAL]: "partial delivery — some acceptance criteria remain",
+    [ULTRA_STATUS.BLOCKED]: "goal blocked — see the report for what is stuck and why",
+    [ULTRA_STATUS.BLOCKED_MANUAL]: "awaiting human confirmation of manual criteria",
+    [ULTRA_STATUS.USER_STOPPED]: "stopped by user",
+    [ULTRA_STATUS.BUDGET_EXHAUSTED]: "budget exhausted before the goal was met",
+    [ULTRA_STATUS.DEADLINE_EXHAUSTED]: "deadline exhausted before the goal was met",
+    [ULTRA_STATUS.FATAL]: "internal error"
+  }
+  const finalMessage = STATUS_MESSAGES[finalStatus] || "hybrid longagent finished"
   await LongAgentManager.update(sessionId, { status: finalStatus, lastMessage: finalMessage, elapsed })
-  await markSessionStatus(
-    sessionId,
-    finalStatus === "completed" ? "completed" : finalStatus === "failed" ? "failed" : "active"
-  )
+  await markSessionStatus(sessionId, sessionStatusForUltraStatus(finalStatus))
 
   const stats = stageProgressStats(taskProgress)
 
@@ -1645,7 +2042,7 @@ async function runHybridPipeline({
 
   // Phase 11: 恢复建议生成
   let recoverySuggestions = null
-  if (finalStatus !== "completed") {
+  if (finalStatus !== ULTRA_STATUS.COMPLETED) {
     recoverySuggestions = generateRecoverySuggestions({
       status: finalStatus,
       taskProgress,
@@ -1658,9 +2055,9 @@ async function runHybridPipeline({
 
   return {
     sessionId, turnId: `turn_long_${Date.now()}`,
-    reply: finalStatus === "failed"
-      ? [finalReply, finalMessage].filter(Boolean).join("\n\n")
-      : finalReply || finalMessage,
+    reply: finalStatus === ULTRA_STATUS.COMPLETED
+      ? (finalReply || finalMessage)
+      : [finalReply, finalMessage].filter(Boolean).join("\n\n"),
     usage: aggregateUsage, toolEvents, iterations: iteration,
     status: finalStatus, phase: currentPhase,
     gateStatus, currentGate, lastGateFailures, recoveryCount,

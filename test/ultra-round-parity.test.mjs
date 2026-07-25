@@ -98,7 +98,7 @@ const FULL_RUN_EVENTS = [
   "longagent.gate.checked"
 ]
 
-async function runScenario(sessionId, { prompt, config }) {
+async function runScenario(sessionId, { prompt, config }) {  // config 由 ultraConfig(gates, {ultra}) 构造
   const capture = captureEvents()
   const result = await runHybridLongAgent({
     prompt, model: "mock-model", providerType: "mock_ultra", sessionId, configState: config
@@ -118,11 +118,12 @@ test("不可执行的目标在 H0 之前返回，不产生任何编排事件", a
   })
 
   assert.deepEqual(ultraEvents, [], "早退路径不该发出任何编排事件")
-  assert.equal(result.status, "blocked")
+  // 0.5.0 起改名 needs_objective —— 原来的 "blocked" 与受阻语义撞词
+  assert.equal(result.status, "needs_objective")
   assert.equal(result.phase, "H0")
   assert.equal(result.stageCount, 0)
   assert.deepEqual(result.taskProgress, {})
-  assert.equal(state.status, "blocked")
+  assert.equal(state.status, "needs_objective")
 })
 
 test("完整一轮：H1 到 H6 的事件序列与产物", async () => {
@@ -154,34 +155,59 @@ test("完整一轮：H1 到 H6 的事件序列与产物", async () => {
   assert.equal(state.stageCount, 2)
 })
 
-test("门禁失败只改变结果，不改变编排路径", async () => {
+test("门禁失败（单轮）：编排路径不变，状态诚实地报 partial", async () => {
   const { result, ultraEvents, state } = await runScenario("parity_gatefail", {
     prompt: "build two independent modules and wire them together",
-    config: ultraConfig({ gates: { build: { enabled: true } } })
+    // max_rounds: 1 钉住单轮语义；非 TTY 收口为 deliver_partial
+    config: ultraConfig({ gates: { build: { enabled: true } } }, { ultra: { max_rounds: 1 } })
   })
 
   // 与成功路径逐字相同：差别只在门禁结论，不在编排
-  assert.deepEqual(ultraEvents, FULL_RUN_EVENTS)
+  assert.deepEqual(ultraEvents.filter((t) => t !== "longagent.alert"), FULL_RUN_EVENTS)
 
-  assert.equal(result.status, "failed")
+  // 0.4.x 报 "failed"。判据其实全过、产物都在，只是门禁没绿 ——
+  // 诚实的说法是 partial（部分交付），且会话保持 active 可续跑。
+  assert.equal(result.status, "partial")
   assert.equal(result.stageIndex, 2, "门禁失败不该回滚已完成的 stage")
   assert.deepEqual(result.fileChanges.map((f) => f.path), ["src/core.mjs", "src/wire.mjs"])
   assert.equal(result.gateStatus.usabilityGates.status, "fail")
   assert.match(result.gateStatus.usabilityGates.failures, /build:/)
-  assert.match(result.reply, /failed usability gates/)
+  assert.equal(result.goalVerification.status, "met", "判据本身是过的 —— 卡的是门禁")
 
-  // 只有 fatal 才配得上 failed 会话状态；门禁没过说明活没干完，不是会话坏了
-  assert.equal(state.status, "failed")
+  // failed 只留给 fatal；活没干完 ≠ 会话坏了
+  assert.equal(state.status, "partial")
 })
 
-test("失败路径带上可交付给用户的诊断", async () => {
-  const { result } = await runScenario("parity_recovery", {
+test("门禁失败（多轮）：停滞检测在两轮无进展后受阻收口", async () => {
+  const { result } = await runScenario("parity_gatefail_rounds", {
     prompt: "build two independent modules and wire them together",
-    config: ultraConfig({ gates: { build: { enabled: true } } })
+    config: ultraConfig({ gates: { build: { enabled: true } } })   // max_rounds 默认 0 = 不限
   })
 
-  assert.equal(result.status, "failed")
+  // 轮次循环：第 1 轮有产出 → 第 2、3 轮无进展 → 停滞 → 非 TTY 收口 deliver_partial
+  assert.equal(result.status, "partial")
+  const { loadLedger } = await import("../src/session/ultra-ledger.mjs")
+  const ledger = await loadLedger("parity_gatefail_rounds", tmpProject)
+  assert.ok(ledger, "台账必须落盘")
+  assert.equal(ledger.data.rounds.length, 3, "1 轮产出 + 2 轮无进展 = 停滞阈值")
+  assert.equal(ledger.data.rounds[2].progress.madeProgress, false)
+  assert.match(ledger.data.rounds[2].progress.reason, /没有.*跃迁|计划结构/)
+  const interaction = ledger.data.userInteractions.find((i) => i.action === "deliver_partial")
+  assert.ok(interaction, "非 TTY 收口的决定必须记进台账")
+  assert.equal(interaction.source, "non_tty_default")
+})
+
+test("未达成路径带上可交付给用户的报告与诊断", async () => {
+  const { result } = await runScenario("parity_recovery", {
+    prompt: "build two independent modules and wire them together",
+    config: ultraConfig({ gates: { build: { enabled: true } } }, { ultra: { max_rounds: 1 } })
+  })
+
+  assert.equal(result.status, "partial")
   assert.ok(result.recoverySuggestions, "非 completed 的结果必须带诊断")
   assert.ok(result.recoverySuggestions.summary)
-  assert.ok(Array.isArray(result.recoverySuggestions.manualSteps))
+  assert.ok(result.blockedReport, "受阻报告必须随结果返回")
+  assert.equal(result.blockedReport.status, "partial")
+  assert.ok(result.reportPath, "report.md 必须落盘")
+  assert.ok(result.ledgerPath)
 })

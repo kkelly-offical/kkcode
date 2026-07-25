@@ -67,6 +67,10 @@ function baseConfig(longagentOverrides = {}) {
           },
           scaffold: { enabled: false },
           git: { enabled: false },
+          // 这个文件测的是 0.4.x 的遗留阈值语义（no_progress/maxIterations 是
+          // 警告不是硬停）。goal 模式下这些语义已被轮次循环取代 —— 显式关掉，
+          // 让用例继续测它声称测的东西。
+          ultra: { goal_mode: false },
           ...longagentOverrides
         }
       },

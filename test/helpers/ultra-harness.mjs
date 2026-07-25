@@ -142,7 +142,7 @@ export function normalize(value) {
 }
 
 /** 构造一份最小可用的 Ultra 配置，交互阶段默认全关。 */
-export function ultraConfig({ providerName = "mock_ultra", longagent = {}, hybrid = {}, gates = {} } = {}) {
+export function ultraConfig({ providerName = "mock_ultra", longagent = {}, hybrid = {}, gates = {} } = {}, { ultra = {} } = {}) {
   return {
     config: {
       provider: {
@@ -175,6 +175,7 @@ export function ultraConfig({ providerName = "mock_ultra", longagent = {}, hybri
           },
           scaffold: { enabled: false },
           git: { enabled: false },
+          ultra: { ...ultra },
           usability_gates: {
             prompt_user: "never",
             build: { enabled: false }, test: { enabled: false }, review: { enabled: false },

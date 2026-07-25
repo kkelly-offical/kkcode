@@ -1,3 +1,5 @@
+import path from "node:path"
+import { mkdir, writeFile } from "node:fs/promises"
 import { BackgroundManager } from "../../src/orchestration/background-manager.mjs"
 import { writeJson } from "../../src/storage/json-store.mjs"
 import { backgroundTaskCheckpointPath, ensureBackgroundTaskRuntimeDir } from "../../src/storage/paths.mjs"
@@ -24,9 +26,12 @@ function now() { return Date.now() }
  * @param {object} options
  * @param {string} options.reply            任务的回复文本
  * @param {boolean} options.completeFiles   是否把 plannedFiles 全部标记为已完成
+ * @param {boolean} options.writeFiles      是否**真的写出** plannedFiles（默认写）。
+ *   0.5.0 起目标核验会拿 stat / node --check 验证产物 —— 只声称完成而不写文件
+ *   的 mock 会被判据当场揭穿，测试就该在那时失败而不是假装成功。
  * @param {(payload) => object|null} options.behavior  可选：按 payload 定制结果
  */
-export function installBackgroundMock({ reply = "[TASK_COMPLETE] done", completeFiles = true, behavior = null } = {}) {
+export function installBackgroundMock({ reply = "[TASK_COMPLETE] done", completeFiles = true, writeFiles = true, behavior = null } = {}) {
   if (originalLaunch) return
   originalLaunch = BackgroundManager.launchDelegateTask.bind(BackgroundManager)
   originalTick = BackgroundManager.tick.bind(BackgroundManager)
@@ -62,7 +67,23 @@ export function installBackgroundMock({ reply = "[TASK_COMPLETE] done", complete
     await new Promise((r) => setTimeout(r, 5))
 
     const planned = task.payload?.plannedFiles || []
-    const custom = behavior ? behavior(task.payload) : null
+    if (writeFiles && completeFiles) {
+      for (const file of planned) {
+        const target = path.resolve(process.cwd(), file)
+        try {
+          await mkdir(path.dirname(target), { recursive: true })
+          // 合法 JS，让 node --check 类判据能过；其它扩展名当纯文本也无害
+          await writeFile(target, `// mock output for ${file}\nexport const ok = true\n`, "utf8")
+        } catch { /* 写不了就让判据如实报失败 */ }
+      }
+    }
+    const custom = behavior ? await behavior(task.payload) : null
+    if (custom && custom.error) {
+      await writeJson(backgroundTaskCheckpointPath(id), {
+        ...task, status: "error", error: custom.error, endedAt: now(), updatedAt: now()
+      })
+      return
+    }
     const result = custom || {
       reply,
       completed_files: completeFiles ? planned : [],

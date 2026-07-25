@@ -181,7 +181,10 @@ describe("resolveUltraStatus", () => {
     assert.equal(resolveUltraStatus({ verification: verified("blocked_manual", { manual: 1 }) }), ULTRA_STATUS.BLOCKED_MANUAL)
     assert.equal(resolveUltraStatus({ verification: verified("unmet"), hadOutput: true }), ULTRA_STATUS.PARTIAL, "有 pass 有产出 → partial")
     assert.equal(resolveUltraStatus({ verification: verified("unmet", { passed: 0 }), hadOutput: true }), ULTRA_STATUS.BLOCKED)
-    assert.equal(resolveUltraStatus({ userDecision: "deliver_partial", verification: verified("unmet", { passed: 0 }) }), ULTRA_STATUS.PARTIAL)
+    // 「交付已完成部分」的前提是有已完成的部分 —— 零达成时 deliver_partial
+    // 也不能把 blocked 抬成 partial，否则 CI 里彻底停滞的运行以退出码 0 静默通过
+    assert.equal(resolveUltraStatus({ userDecision: "deliver_partial", verification: verified("unmet") }), ULTRA_STATUS.PARTIAL)
+    assert.equal(resolveUltraStatus({ userDecision: "deliver_partial", verification: verified("unmet", { passed: 0 }) }), ULTRA_STATUS.BLOCKED)
   })
 
   it("goal_mode 关闭时退回 0.4.x 二值语义", () => {

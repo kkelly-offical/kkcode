@@ -45,7 +45,11 @@ export function resolveUltraStatus({
   if (verification) {
     if (verification.status === GOAL_MET && usabilityGatesPassed) return ULTRA_STATUS.COMPLETED
     if (verification.status === GOAL_BLOCKED_MANUAL) return ULTRA_STATUS.BLOCKED_MANUAL
-    if (userDecision === "deliver_partial") return ULTRA_STATUS.PARTIAL
+    // 「交付已完成部分」的前提是**有**已完成的部分 —— 零达成时仍是 blocked，
+    // 否则 CI 里一次彻底停滞的运行会以退出码 0 静默通过
+    if (userDecision === "deliver_partial") {
+      return verification.passed > 0 ? ULTRA_STATUS.PARTIAL : ULTRA_STATUS.BLOCKED
+    }
     if (verification.passed > 0 && hadOutput) return ULTRA_STATUS.PARTIAL
     // 纯 unknown（如没有任何可执行判据）时，完成标记最多把 blocked 抬到 partial
     if (verification.status === "unknown" && completionMarkerSeen && hadOutput) return ULTRA_STATUS.PARTIAL
