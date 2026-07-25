@@ -32,6 +32,7 @@ import {
   mergeCappedFileChanges,
   stageProgressStats,
   summarizeGateFailures,
+  formatGateFailureDetail,
   LONGAGENT_FILE_CHANGES_LIMIT,
   createStuckTracker,
   classifyError,
@@ -1341,13 +1342,15 @@ async function runHybridPipeline({
       } catch { /* autofix failed, fall through to agent */ }
     }
 
-    const gateFailureSummary = summarizeGateFailures(lastGateFailures)
+    // 给模型的是**完整详情**（含末 12 行输出），不是状态栏那句一行摘要 ——
+    // 下面的 Fix Protocol 第一条就是「读错误输出」，得先真的有错误输出。
+    const gateFailureDetail = formatGateFailureDetail(lastGateFailures)
     const fixPrompt = [
       `## Quality Gate Failures — Attempt ${gateAttempt}/${maxGateAttempts}`,
       "",
       `${strategy.prefix || "Fix the following quality gate failures:"}`,
       "",
-      gateFailureSummary,
+      gateFailureDetail,
       "",
       "## Fix Protocol",
       "1. Read the error output carefully — identify the ROOT CAUSE, not just the symptom",

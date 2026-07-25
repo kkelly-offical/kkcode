@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import {
   stripFence, parseJsonLoose, classifyError, ERROR_CATEGORIES,
   classifyTaskMode,
-  isComplete, isLikelyActionableObjective, summarizeGateFailures,
+  isComplete, isLikelyActionableObjective, summarizeGateFailures, formatGateFailureDetail,
   stageProgressStats, normalizeFileChange, isReadOnlyTool,
   detectExplorationLoop, detectToolCycle, createStuckTracker,
   mergeCappedFileChanges, createSemanticErrorTracker, createDegradationChain,
@@ -161,6 +161,43 @@ describe("summarizeGateFailures", () => {
     const many = Array.from({ length: 10 }, (_, i) => ({ gate: `g${i}`, reason: "fail" }))
     const parts = summarizeGateFailures(many).split(";")
     assert.equal(parts.length, 5)
+  })
+  it("deliberately drops output — it is the status-bar one-liner", () => {
+    const line = summarizeGateFailures([{ gate: "build", reason: "exit 1", output: "SyntaxError at a.mjs:3" }])
+    assert.ok(!line.includes("SyntaxError"), "一行摘要不该塞进多行输出")
+  })
+})
+
+describe("formatGateFailureDetail", () => {
+  const failures = [
+    { gate: "build", status: "fail", reason: "build failed with code 1", output: "src/a.mjs:3 SyntaxError | at Module._compile" },
+    { gate: "test", status: "fail", reason: "tests failed with code 1", output: "2 failing | AssertionError" }
+  ]
+
+  it("keeps the captured output that the fix prompt actually needs", () => {
+    // H6 的修复提示词写着「Read the error output carefully — identify the ROOT
+    // CAUSE」，而 0.4.x 只给它 `build:build failed with code 1` —— 既没有出错
+    // 文件也没有错误信息，模型只能猜，然后在 5 次尝试里反复猜错。
+    const detail = formatGateFailureDetail(failures)
+    assert.match(detail, /### gate: build \(fail\)/)
+    assert.match(detail, /src\/a\.mjs:3 SyntaxError/)
+    assert.match(detail, /AssertionError/)
+    assert.match(detail, /output \(last 12 lines\)/)
+  })
+
+  it("says so explicitly when no output was captured", () => {
+    const detail = formatGateFailureDetail([{ gate: "health", status: "fail", reason: "store corrupt" }])
+    assert.match(detail, /未采集到输出/)
+  })
+
+  it("caps the number of gates so the prompt stays bounded", () => {
+    const many = Array.from({ length: 5 }, (_, i) => ({ gate: `g${i}`, reason: "fail", output: "x" }))
+    const detail = formatGateFailureDetail(many)
+    assert.equal(detail.split("### gate:").length - 1, 3)
+  })
+
+  it("returns empty for no failures", () => {
+    assert.equal(formatGateFailureDetail([]), "")
   })
 })
 

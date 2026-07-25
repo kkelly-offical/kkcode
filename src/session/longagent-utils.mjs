@@ -117,12 +117,38 @@ export function isLikelyActionableObjective(prompt) {
   return true
 }
 
+/** 一行摘要，给状态栏与状态文件用。**会丢掉 output**，不要拿它去修 bug。 */
 export function summarizeGateFailures(failures = []) {
   if (!failures.length) return ""
   return failures
     .slice(0, 5)
     .map((item) => `${item.gate}:${item.reason}`)
     .join("; ")
+}
+
+/**
+ * 门禁失败的完整详情，含 runUsabilityGates 采集的末 12 行输出。
+ *
+ * H6 的修复提示词一边写着「Read the error output carefully — identify the ROOT
+ * CAUSE」，一边只给模型 summarizeGateFailures 的产物 ——
+ * `build:build failed with code 1`。里面既没有报错文件也没有报错信息，模型
+ * 只能靠猜，然后在 maxGateAttempts 次里反复猜错。而完整输出一直都在
+ * `failures[].output` 里，只是从来没人读。
+ */
+export function formatGateFailureDetail(failures = [], { maxGates = 3, maxLines = 12 } = {}) {
+  if (!failures.length) return ""
+  return failures
+    .slice(0, maxGates)
+    .map((item) => {
+      const lines = [`### gate: ${item.gate} (${item.status || "fail"})`, `reason: ${item.reason || "unknown"}`]
+      if (item.output) {
+        lines.push(`output (last ${maxLines} lines):`, item.output)
+      } else {
+        lines.push("output: (未采集到输出)")
+      }
+      return lines.join("\n")
+    })
+    .join("\n\n")
 }
 
 export function stageProgressStats(taskProgress = {}) {
