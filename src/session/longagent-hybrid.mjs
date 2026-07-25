@@ -210,17 +210,52 @@ export function resolveHybridCompletionStatus({ completionMarkerSeen, usabilityG
 }
 
 /**
+ * Ultra 的入口。真正的流水线在 runHybridPipeline 里，这一层只管生命周期收尾。
+ *
+ * 0.4.x 没有这一层，代价是：Ctrl+C 抛出的 "provider stream cancelled"、
+ * provider 异常、以及 runStageBarrier 对依赖环 / 文件所有权冲突抛出的错误，
+ * 都会直接穿透整个函数 —— EventBus 上的 stop 监听器不退订（每中断一次泄漏
+ * 一个），LongAgentManager 里的会话永久停在 running-longagent，checkpoint
+ * 不清理。此外 blueprint 审查被拒的**正常**返回路径也漏了退订（另外两条
+ * 早退路径有）。
+ *
+ * 现在退订只有一处：下面的 finally。
+ */
+export async function runHybridLongAgent(args) {
+  const lifecycle = { unsubscribeStop: null }
+  try {
+    return await runHybridPipeline(args, lifecycle)
+  } catch (err) {
+    const sessionId = args?.sessionId
+    if (sessionId) {
+      // 中断是用户意图不是故障：会话保持 active 以便 resume；其余才算失败。
+      const aborted = Boolean(args?.signal?.aborted) ||
+        err?.code === "ABORT_ERR" || err?.errorClass === "aborted"
+      const detail = String(err?.message || err).slice(0, 300)
+      await LongAgentManager.update(sessionId, {
+        status: aborted ? "aborted" : "fatal",
+        lastMessage: `${aborted ? "已中断" : "内部错误"}: ${detail}`
+      }).catch(() => {})
+      await markSessionStatus(sessionId, aborted ? "active" : "failed").catch(() => {})
+    }
+    throw err
+  } finally {
+    lifecycle.unsubscribeStop?.()
+  }
+}
+
+/**
  * runSpec 被显式接收但不向阶段透传：runSpecRole() 会整体覆盖 agent，而
  * Ultra 的每个阶段都有自己的角色（preview / blueprint / debugging），
  * 覆盖会抹掉阶段语义。0.3.x 靠解构签名里没有这个字段来「静默丢弃」，
  * 这里改为写明意图。
  */
-export async function runHybridLongAgent({
+async function runHybridPipeline({
   prompt, model, providerType, sessionId, configState,
   baseUrl = null, apiKeyEnv = null, agent = null,
   maxIterations = 0, signal = null, output = null,
   allowQuestion = true, toolContext = {}, runSpec: _runSpec = null
-}) {
+}, lifecycle) {
   const longagentConfig = configState.config.agent.longagent || {}
   const hybridConfig = longagentConfig.hybrid || {}
   const parallelConfig = longagentConfig.parallel || {}
@@ -330,7 +365,8 @@ export async function runHybridLongAgent({
 
   // Phase 2: 事件驱动 stop 检测 — 用内存标志替代磁盘轮询
   let stopFlag = false
-  const unsubscribeStop = EventBus.subscribe((evt) => {
+  // 退订句柄交给外层的 finally，见 runHybridLongAgent。
+  lifecycle.unsubscribeStop = EventBus.subscribe((evt) => {
     if (evt.type === EVENT_TYPES.LONGAGENT_STOP_REQUESTED && evt.sessionId === sessionId) {
       stopFlag = true
     }
@@ -344,7 +380,6 @@ export async function runHybridLongAgent({
     const blocked = "LongAgent 需要明确的编码目标。请直接描述要实现/修复的内容。"
     await LongAgentManager.update(sessionId, { status: "blocked", phase: "H0", lastMessage: blocked })
     await markSessionStatus(sessionId, "active")
-    unsubscribeStop()
     return { sessionId, turnId: `turn_long_${Date.now()}`, reply: blocked, usage: aggregateUsage, toolEvents, iterations: 0, status: "blocked", phase: "H0", gateStatus: {}, currentGate: "init", lastGateFailures: [], recoveryCount: 0, progress: lastProgress, elapsed: 0, stageIndex: 0, stageCount: 0, planFrozen: false, taskProgress: {}, fileChanges: [], stageProgress: { done: 0, total: 0 }, remainingFilesCount: 0 }
   }
 
@@ -431,7 +466,6 @@ export async function runHybridLongAgent({
       if (cancelKeywords.some(k => userAddition.toLowerCase().includes(k))) {
         await LongAgentManager.update(sessionId, { status: "aborted", lastMessage: "user cancelled at intake confirmation" })
         await markSessionStatus(sessionId, "active")
-        unsubscribeStop()
         return { sessionId, turnId: `turn_long_${Date.now()}`, reply: "用户在需求确认阶段取消了任务。", usage: aggregateUsage, toolEvents, iterations: iteration, status: "aborted", phase: "H0", gateStatus, currentGate, lastGateFailures: [], recoveryCount: 0, progress: lastProgress, elapsed: Math.round((Date.now() - startTime) / 1000), stageIndex: 0, stageCount: 0, planFrozen: false, taskProgress: {}, fileChanges: [], stageProgress: { done: 0, total: 0 }, remainingFilesCount: 0 }
       }
       if (userAddition && !["确认", "继续", "ok", "yes", "是", "好", "没有", "no addition"].some(k => userAddition.toLowerCase().includes(k))) {
@@ -724,16 +758,43 @@ export async function runHybridLongAgent({
       }).join("\n")
       const planAnchor = `## 计划锚点\n目标: ${stagePlan.objective || prompt}\n进度: ${stageIndex + 1}/${stagePlan.stages.length}\n${stageStatuses}\n\n`
 
-      const stageResult = await runStageBarrier({
-        stage, sessionId, config: configState.config, model, providerType,
-        seedTaskProgress: seeded, objective: prompt,
-        stageIndex, stageCount: stagePlan.stages.length, priorContext: planAnchor + priorContext,
-        stuckTracker,
-        onTaskComplete: async (taskData) => {
-          await saveTaskCheckpoint(sessionId, taskData.stageId, taskData.taskId, taskData)
-        },
-        taskBus
-      })
+      let stageResult
+      try {
+        stageResult = await runStageBarrier({
+          stage, sessionId, config: configState.config, model, providerType,
+          seedTaskProgress: seeded, objective: prompt,
+          stageIndex, stageCount: stagePlan.stages.length, priorContext: planAnchor + priorContext,
+          stuckTracker,
+          onTaskComplete: async (taskData) => {
+            await saveTaskCheckpoint(sessionId, taskData.stageId, taskData.taskId, taskData)
+          },
+          taskBus
+        })
+      } catch (barrierErr) {
+        // 计划结构缺陷：文件所有权重叠、或 task 之间存在依赖环。
+        // stage-scheduler 对这两种情况直接 throw，而 0.4.x 这里没有 try/catch,
+        // 异常穿透整个 runHybridLongAgent —— 用户拿到一句裸错误，已完成的
+        // 工作全部丢失。这是计划本身的毛病，重跑同一个计划不会有任何改善，
+        // 所以放弃 H4 但带着已有产物走完后续流程。
+        // （0.5.0 阶段 4 会把这里改成触发重规划而不是放弃。）
+        const detail = String(barrierErr?.message || barrierErr).slice(0, 300)
+        gateStatus[stage.stageId] = { status: "fail", kind: "plan_defect", reason: detail }
+        await EventBus.emit({
+          type: EVENT_TYPES.LONGAGENT_ALERT,
+          sessionId,
+          payload: {
+            kind: "plan_defect",
+            message: `stage ${stage.stageId} 计划缺陷：${detail}`,
+            stageId: stage.stageId
+          }
+        })
+        await syncState({
+          status: "error",
+          stageStatus: "fail",
+          lastMessage: `H4: ${stage.stageId} 计划缺陷，放弃编码阶段 — ${detail}`
+        })
+        break
+      }
 
       // 合并结果
       for (const [taskId, progress] of Object.entries(stageResult.taskProgress || {})) {
@@ -1363,7 +1424,6 @@ export async function runHybridLongAgent({
   }
 
   // ========== 完成 ==========
-  unsubscribeStop()
   const elapsed = Math.round((Date.now() - startTime) / 1000)
   const finalStatus = resolveHybridCompletionStatus({ completionMarkerSeen, usabilityGatesPassed })
   const finalMessage = finalStatus === "failed"
