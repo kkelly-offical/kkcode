@@ -1,5 +1,78 @@
 # Changelog / 更新日志
 
+## 0.7.0
+
+粘贴：剪贴板里是图片就附图，是文字就粘文字，长文字折叠成一个标记。
+三条路此前有两条是坏的。
+
+### English
+
+- **Pasting an image now leaves a mark you can see and delete.** Ctrl+V puts an
+  inline `[Image #1]` marker at the cursor instead of silently bumping a counter
+  in the corner. One Backspace at the marker's right edge removes the whole
+  marker — never a `[Image #1` stump that no longer parses and no longer sends.
+- **The input text is the single source of truth for which attachments are
+  sent.** The registry only stores content; `resolve(text)` derives the payload
+  from the markers actually present. Deleting a marker cancels the attachment,
+  undoing the edit brings it back, copying a marker references the same image
+  twice, reordering markers reorders the payload — all of it falls out, with no
+  second piece of state to keep in sync. There is deliberately no
+  `removeAttachment()` API: it would put the answer in two places.
+- **A long paste folds into `[Pasted text #1 +326 chars]` and expands verbatim on
+  send.** The input viewport is five rows; pasting 500 lines used to blow it out.
+  Folding is a display concern only — the model receives exactly what was
+  pasted. Both triggers matter: a single unwrapped paragraph is always one line,
+  so a line-count test alone would never fold it.
+- **Fixed: clipboard text was being attached as a fake PNG.** `xclip -t image/png
+  -o` exits 0 and returns the *text* when the clipboard holds no image, and the
+  bytes were never checked. `HELLO_FROM_CLIPBOARD` became an `image/png`
+  attachment, and the text fallback was unreachable. Image data is now identified
+  by magic bytes (PNG/JPEG/GIF/WebP) at every entry point, overriding whatever
+  the extension or `content-type` claimed.
+- **Fixed: an empty clipboard showed a raw shell command.** A non-zero exit is
+  how xclip, wl-paste, pngpaste, osascript and PowerShell all say "no such
+  content" — it was classified as an error, so Ctrl+V printed `Paste failed:
+  Command failed: xclip -selection clipboard -t image/png -o` and never fell back
+  to text. Only a timeout or an oversized image is an error now; everything else
+  means "no image, try text". Between this and the previous item, Ctrl+V could
+  not paste text at all on any Linux box with xclip installed.
+- **Fixed: Ollama silently dropped images**, and `.svg`/`.bmp`/`.ico` were sent
+  as image blocks that both Anthropic and OpenAI reject. Image extension tables
+  existed in two hand-written copies that had already drifted apart; there is now
+  one, plus a separate explicit set for "what a model actually accepts".
+- **Fixed: dragging a file into the terminal usually did nothing.** Quoted paths,
+  backslash-escaped spaces and `~/` — the three most common things a terminal
+  produces on drop — were all unrecognised.
+
+### 中文
+
+- **粘贴图片会留下一个看得见、删得掉的标记。** Ctrl+V 在光标处插入内联的
+  `[Image #1]`，而不是在角落里偷偷加个计数。在标记右端按一次退格，整块一起消失
+  —— 不会留下 `[Image #1` 这种既不再是标记、又还像个标记的残骸。
+- **输入文本是「哪些附件会被发送」的唯一真相。** 登记本只存内容，`resolve(text)`
+  按文本里实际出现的标记推导要发什么。删掉标记＝取消附件、撤销编辑＝附件回来、
+  复制标记＝同一张图引用两次、调换标记顺序＝调换发送顺序 —— 全部自然成立，没有
+  第二处状态需要同步。**故意不提供** `removeAttachment()`：一旦有它，答案就同时
+  写在两个地方。
+- **长粘贴折叠成 `[Pasted text #1 +326 chars]`，提交时逐字还原。** 输入视口只有
+  五行，粘 500 行会把它炸掉。折叠纯粹是显示层的事，模型收到的仍是原文。两个触发
+  条件都必要：一整段没换行的文本行数恒为 1，只看行数永远不会折。
+- **修复：剪贴板里的文字被当成假 PNG 附件挂上去。** 剪贴板没有图片时
+  `xclip -t image/png -o` 退出码是 0，并把**文本**原样吐回来，而代码从不校验字节。
+  于是 `HELLO_FROM_CLIPBOARD` 变成了一个 `image/png` 附件，文本回落分支永远走不到。
+  现在所有入口都按魔数（PNG/JPEG/GIF/WebP）识别真实格式，压过扩展名与 content-type。
+- **修复：剪贴板为空时弹出一行原始 shell 命令。** 非零退出是 xclip、wl-paste、
+  pngpaste、osascript、PowerShell **共同**用来表示「没有这种内容」的信号，却被归
+  成了错误：Ctrl+V 打印 `Paste failed: Command failed: xclip -selection clipboard
+  -t image/png -o` 然后停下，不再尝试文本。现在只有超时与超限算错误，其余一律是
+  「没有图，去试文本」。这条与上一条合起来意味着：在任何装了 xclip 的 Linux 机器上，
+  Ctrl+V 此前**根本粘不了文字**。
+- **修复：Ollama 静默丢图**；`.svg`/`.bmp`/`.ico` 会被当成 image block 发出去，而
+  Anthropic 与 OpenAI 都不接受。图片扩展名清单原本有两份手写拷贝且已经漂移，现在
+  只此一份，另有一份明确的「模型收得下什么」。
+- **修复：把文件拖进终端基本无效。** 带引号的路径、反斜杠转义的空格、`~/` 开头 ——
+  终端拖拽最常产生的三种形态，一种都认不出来。
+
 ## 0.6.28
 
 修 0.6.27 的结构守卫在 Windows 上失败 —— 第四次栽在同一类分歧上。

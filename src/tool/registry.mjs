@@ -25,6 +25,7 @@ import { validateExistingFileMutation } from "./mutation-guard.mjs"
 import { buildMutationObservability } from "../observability/edit-diagnostics.mjs"
 import { resolveWorkspacePath } from "./workspace-fs.mjs"
 import { buildRequestHeaders } from "../http/identity.mjs"
+import { IMAGE_EXTENSIONS, IMAGE_MIME_TYPES } from "./image-util.mjs"
 
 const exec = promisify(execCb)
 
@@ -538,8 +539,8 @@ function builtinTools(config) {
     }
   }
 
-  const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp", ".ico"])
-  const IMAGE_MIME = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".svg": "image/svg+xml", ".webp": "image/webp", ".bmp": "image/bmp", ".ico": "image/x-icon" }
+  // 扩展名与 MIME 表来自 image-util.mjs（本文件顶部 import）—— 这里曾经是
+  // 第二份手写拷贝，与那份靠记忆保持同步，实际上已经漂移。
 
   function readNotebook(raw) {
     const notebook = JSON.parse(raw)
@@ -711,7 +712,7 @@ function builtinTools(config) {
       if (IMAGE_EXTENSIONS.has(ext)) {
         const buffer = await readFile(target)
         const base64 = buffer.toString("base64")
-        const mime = IMAGE_MIME[ext] || "application/octet-stream"
+        const mime = IMAGE_MIME_TYPES[ext] || "application/octet-stream"
         return {
           type: "image",
           output: `Image file: ${args.path} (${buffer.length} bytes, ${mime})`,

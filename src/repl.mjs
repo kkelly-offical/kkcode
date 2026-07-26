@@ -84,6 +84,7 @@ import { createLifecycleKeyScope, createScrollKeyScope } from "./repl/keys/globa
 import { createEditorKeyScope } from "./repl/keys/editor-keys.mjs"
 import { createTranscriptWriter } from "./repl/transcript-writer.mjs"
 import { createReplUiState, openUserOverlay, closeUserOverlay } from "./repl/ui-state.mjs"
+import { createAttachmentInput } from "./repl/attachment-input.mjs"
 import { createGhostPredictor } from "./repl/ghost-predictor.mjs"
 import { buildReplRuntimeSnapshot } from "./repl/runtime-facade.mjs"
 import { POLICY_CHOICES, PERMISSION_PROMPT_VALUES } from "./repl/permission-flow.mjs"
@@ -182,6 +183,11 @@ async function processInputLine({
   showTurnStatus = true,
   pendingImages = [],
   clearPendingImages = null,
+  /**
+   * 把一张图片挂到「下一条消息」上，返回给用户看的标记文本（TUI 下是 `[Image #N]`）。
+   * TUI 会把标记插进输入框；行模式没有可编辑的输入框，就退化成推进待发数组、返回 ""。
+   */
+  attachImage = null,
   signal = null,
   suspendTui = null,
   // 只读信息浮层。TUI 会话里由 startTuiRepl 注入；行模式（无 TTY）下缺省为
@@ -302,6 +308,7 @@ async function processInputLine({
       setProviderPicker,
       pendingImages,
       clearPendingImages,
+      attachImage,
       streamSink,
       showTurnStatus,
       signal,
@@ -445,7 +452,9 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
       setProviderPicker: (next) => { localProviderPicker = next },
       print: (text) => console.log(text),
       pendingImages: linePendingImages,
-      clearPendingImages: () => { linePendingImages = [] }
+      clearPendingImages: () => { linePendingImages = [] },
+      // 行模式没有可编辑的输入框，插不了标记 —— 退回「挂着，下一条消息带上」。
+      attachImage: (block) => { linePendingImages.push(block); return "" }
     })) || {}
 
     if (action.cleared) clearScreen()
@@ -818,6 +827,15 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     onInputChanged()
   }
 
+  // 附件动作（粘图 / 粘长文本 / 提交前解析）在 repl/attachment-input.mjs。
+  // 构造点必须在 showToast 之后 —— 它是上面解构出来的 const，早一步就是 TDZ，
+  // 而 TDZ 在这个闭包里的表现是「单测全绿、TUI 起不来」（0.6.23 栽过一次）。
+  const { attachImage, insertPastedText, resolveAttachments } = createAttachmentInput({
+    store: ui.attachments,
+    insertAtCursor,
+    showToast
+  })
+
   /**
    * 任何改动输入内容的路径都必须经过这里：作废当前 ghost 并重新排期预测。
    * 陈旧的 ghost 比没有 ghost 更糟——它会让用户以为按 Tab 补的是别的内容。
@@ -1046,7 +1064,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         requestRender()
         try {
           const action = (await processInputLine({
-            line: mergedPrompt,
+            ...resolveAttachments(mergedPrompt),
             state, ctx, providersConfigured,
             customCommands: localCustomCommands,
             setCustomCommands: (next) => { localCustomCommands = next },
@@ -1062,8 +1080,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
             print: printTui,
             streamSink: appendStreamChunk,
             showTurnStatus: false,
-            pendingImages: ui.pendingImages,
-            clearPendingImages: () => { ui.pendingImages = [] },
+            attachImage,
             signal: aborter.signal,
             suspendTui: withSuspendedTui,
             openPanel: openInfoPanel
@@ -1205,7 +1222,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
     try {
       const action = (await processInputLine({
-        line: submittedLine,
+        ...resolveAttachments(submittedLine),
         state,
         ctx,
         providersConfigured,
@@ -1225,8 +1242,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         print: printTui,
         streamSink: appendStreamChunk,
         showTurnStatus: false,
-        pendingImages: ui.pendingImages,
-        clearPendingImages: () => { ui.pendingImages = [] },
+        attachImage,
         signal: aborter.signal,
         suspendTui: withSuspendedTui,
         openPanel: openInfoPanel
@@ -1476,6 +1492,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         showToast,
         transcript,
         insertAtCursor,
+        attachImage,
+        insertPastedText,
         deleteInputSelection,
         moveCursor,
         setCursor,
@@ -1513,7 +1531,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       if (questionAcceptsTextInput()) {
         insertQuestionText(value)
       } else if (!ui.busy) {
-        insertAtCursor(String(value || "").replace(/\r\n?/g, "\n"))
+        insertPastedText(value)
       }
     }
     if (mouseEventCount > 0 || pasted.pastes.length > 0) requestRender()

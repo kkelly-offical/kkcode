@@ -26,6 +26,15 @@ function resolveSystemText(system) {
   return String(system)
 }
 
+// Ollama 原生的图片字段是消息级的 `images: [base64]`，而且只收裸 base64 —— 带
+// `data:image/png;base64,` 前缀会被当成图片字节直接解码失败。
+function collectImages(content) {
+  return content
+    .filter((block) => block?.type === "image" && block.data)
+    .map((block) => String(block.data).replace(/^data:[^;,]*;base64,/i, ""))
+    .filter(Boolean)
+}
+
 function mapMessages(system, messages) {
   const mapped = [{ role: "system", content: resolveSystemText(system) }]
   for (const msg of messages) {
@@ -64,12 +73,22 @@ function mapMessages(system, messages) {
           content: String(result.content || "")
         })
       }
+      // 与 openai.mjs 在 0.6.11 修掉的是同一个缺陷：read 读到的图片挂在
+      // tool_result 之后的同一条消息里，而这里直接 continue，把它们连同整条
+      // 消息一起丢掉。role:"tool" 消息装不下图片，所以另起一条 user 消息。
+      const images = collectImages(content)
+      if (images.length > 0) {
+        mapped.push({ role: "user", content: "", images })
+      }
       continue
     }
 
-    // Fallback: plain text extraction
+    // Fallback: plain text extraction + 同级的 images 字段
     const text = content.filter((b) => b.type === "text").map((b) => b.text || "").join("\n")
-    mapped.push({ role: msg.role, content: text || String(content) })
+    const images = collectImages(content)
+    const message = { role: msg.role, content: text || (images.length ? "" : String(content)) }
+    if (images.length > 0) message.images = images
+    mapped.push(message)
   }
   return mapped
 }

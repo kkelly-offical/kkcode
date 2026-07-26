@@ -19,6 +19,8 @@
  * 主动打开的那六个：开一个，关掉另外五个。
  */
 
+import { createAttachmentStore } from "./attachments.mjs"
+
 import { createThinkingState } from "../ui/thinking-state.mjs"
 import { createWizardState } from "../provider/wizard.mjs"
 
@@ -43,7 +45,11 @@ export function createReplUiState({ historyLines = [], terminalFeatures = {} } =
     input: "",
     inputCursor: 0,
     busy: false,
-    pendingImages: [],
+    /**
+     * 附件登记本。**它不记录「谁会被发送」** —— 那是输入文本里的标记说了算，
+     * 见 attachments.mjs 的文件头。这里只存内容。
+     */
+    attachments: createAttachmentStore(),
     permissionQueue: [],
     pendingPermission: null,
     permissionSelected: 0,

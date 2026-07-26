@@ -166,7 +166,9 @@ export function buildFrame({
   }
 
   const inputInnerWidth = Math.max(8, width - 4)
-  const imgTag = ui.pendingImages.length ? `[${ui.pendingImages.length} img] ` : ""
+  // 0.7.0 之前这里有个 `[2 img]` 前缀。附件改成在输入文本里内联标记（`[Image #1]`）
+  // 之后它就是重复信息了 —— 而且是会骗人的重复：前缀数的是登记本，标记数的是文本，
+  // 用户删掉标记时两者会当场分叉。留标记，去前缀。
   const stateIndicator = ui.busy
     ? paint("● ", ctx.themeState.theme.semantic.warn)
     : ui.paused
@@ -178,7 +180,7 @@ export function buildFrame({
     cursor: ui.inputCursor,
     width: inputInnerWidth,
     maxRows: inputVisibleRows,
-    prefix: `${stateIndicator}${imgTag}`,
+    prefix: stateIndicator,
     selection: ui.inputSelection,
     ghost: ui.inputSelection ? "" : ui.ghostText
   })
@@ -606,7 +608,7 @@ export function buildFrame({
   }
   const inputEndRow = lines.length  // 输入区内容结束行（不含）
   lines.push(inputBottom)
-  lines.push(clipAnsiLine(paint("↵ send  ⌃J newline  ⌃Y auto-copy  /paste image  ? help", ctx.themeState.theme.base.muted, { dim: true }), width))
+  lines.push(clipAnsiLine(paint("↵ send  ⌃J newline  ⌃V paste image/text  ⌃Y auto-copy  ? help", ctx.themeState.theme.base.muted, { dim: true }), width))
 
   // In very small terminals, preserve the composer and its real cursor by
   // trimming overflow from the top rather than cutting off the bottom pane.

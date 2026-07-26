@@ -40,7 +40,7 @@ export function buildHelpText({ providers = [], userRootPath = "" } = {}) {
   lines.push("")
   lines.push("  Tools & Display")
   lines.push(row("/permission [...]", "adjust permission level/policy"))
-  lines.push(row("/paste [text]", "paste clipboard image"))
+  lines.push(row("/paste [text]", "attach clipboard image (Ctrl+V does the same, inline)"))
   lines.push(row("/status", "show current runtime state"))
   lines.push(row("/dash,/home", "redraw dashboard"))
   lines.push(row("/clear,/cls", "clear terminal"))
@@ -104,7 +104,10 @@ export function buildShortcutLegend() {
     "TUI keys:",
     "  Enter choose slash suggestion / submit prompt",
     "  Ctrl+J insert newline (Shift+Enter if terminal supports)",
-    "  /paste paste image from clipboard (Ctrl+V if terminal supports)",
+    "  Ctrl+V paste — image if the clipboard holds one, otherwise text",
+    "         images become an inline [Image #N] marker; delete it to drop the image",
+    "         a long paste folds into [Pasted text #N +M chars] and expands on send",
+    "  /paste attach a clipboard image without leaving the keyboard",
     "  Up/Down navigate suggestion/history",
     "  Left/Right/Home/End edit cursor",
     "  Ctrl+Up/Down scroll log   Ctrl+Home/End oldest/latest",

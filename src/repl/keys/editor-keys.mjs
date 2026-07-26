@@ -9,12 +9,15 @@
  */
 
 import { on } from "../key-dispatch.mjs"
+import { markerSpanAt } from "../attachments.mjs"
 
 export function createEditorKeyScope({
   requestRender,
   showToast,
   transcript,
   insertAtCursor,
+  attachImage,
+  insertPastedText,
   deleteInputSelection,
   moveCursor,
   setCursor,
@@ -59,8 +62,10 @@ export function createEditorKeyScope({
             }
           })
           if (clipBlock && clipBlock.type === "image") {
-            ui.pendingImages.push(clipBlock)
-            showToast(`Image pasted · ${ui.pendingImages.length} attached`, { topic: "clipboard", tone: "success" })
+            // 图片进登记本，光标处插一个 `[Image #N]` 标记。标记就是「这里有张图」的
+            // 提示本身 —— 看得见、删得掉、位置明确，而且提交时它决定这张图发不发。
+            const marker = attachImage(clipBlock)
+            showToast(`Image attached · ${marker}`, { topic: "clipboard", tone: "success" })
             requestRender()
             return
           }
@@ -72,8 +77,10 @@ export function createEditorKeyScope({
           // 剪贴板里没有图片 —— 退回文本粘贴
           const clipText = await readClipboardText()
           if (clipText) {
-            insertAtCursor(clipText)
-            showToast("Text pasted", { topic: "clipboard", tone: "success" })
+            // 走与括号粘贴同一条入口：够长就折叠成 `[Pasted text #N +M lines]`。
+            // 两条粘贴路径共用一份折叠策略，免得同样的文本从 Ctrl+V 进来会折、
+            // 从终端粘贴进来不会折。
+            showToast(insertPastedText(clipText), { topic: "clipboard", tone: "success" })
           } else {
             showToast("Clipboard is empty", { topic: "clipboard", tone: "warning" })
           }
@@ -112,7 +119,11 @@ export function createEditorKeyScope({
         when: on.key("backspace"),
         run: ({ ui }) => {
           if (!deleteInputSelection() && ui.inputCursor > 0) {
-            const previousCursor = moveGraphemeCursor(ui.input, ui.inputCursor, -1)
+            // 光标停在 `[Image #1]` 的右括号之后时，退格删掉**整个标记**。
+            // 按字素删只会留下 `[Image #1` 这样的残骸 —— 它既不再匹配标记（那张图
+            // 于是悄悄不发了），看上去又还像个标记，用户无从判断发生了什么。
+            const marker = markerSpanAt(ui.input, ui.inputCursor)
+            const previousCursor = marker ? marker.start : moveGraphemeCursor(ui.input, ui.inputCursor, -1)
             const head = ui.input.slice(0, previousCursor)
             const tail = ui.input.slice(ui.inputCursor)
             ui.input = `${head}${tail}`

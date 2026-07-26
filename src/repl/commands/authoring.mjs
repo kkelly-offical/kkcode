@@ -260,7 +260,7 @@ export const authoringCommands = [
     names: ["paste"],
     desc: "paste image from clipboard",
     argMode: "optional",
-    run: async ({ args, print, pendingImages, clearPendingImages, runPromptTurn }) => {
+    run: async ({ args, print, pendingImages, clearPendingImages, attachImage, runPromptTurn }) => {
       print("reading clipboard...")
       const clipBlock = await readClipboardImage({ onStatus: (msg) => { if (msg) print(msg) } })
       if (!clipBlock || clipBlock.type === "error") {
@@ -268,9 +268,17 @@ export const authoringCommands = [
         return { exit: false }
       }
       if (!args) {
-        // Just attach — store for next message
-        pendingImages.push(clipBlock)
-        print(`image pasted from clipboard (${pendingImages.length} image(s) attached, send a message to include)`, { channel: "notice", topic: "command" })
+        // TUI：把 `[Image #N]` 插进输入框，让「这里有张图」看得见也删得掉。
+        // 行模式：没有输入框可插，attachImage 退化成挂进待发数组并返回空串。
+        let marker = ""
+        if (attachImage) marker = attachImage(clipBlock)
+        else pendingImages.push(clipBlock)
+        print(
+          marker
+            ? `image attached — ${marker} inserted, delete the marker to drop it`
+            : "image pasted from clipboard (attached, send a message to include)",
+          { channel: "notice", topic: "command" }
+        )
         return { exit: false, pastedImage: true }
       }
       // Has text — send immediately with the image

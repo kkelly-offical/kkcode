@@ -185,7 +185,9 @@ test("each overlay branch renders — a missed closure variable would throw here
       thinking: { ...createThinkingState(), active: true, startedAt: 1_699_999_990_000, text: "在想一件事" }
     },
     暂停态: { paused: true, busy: true },
-    带图片: { pendingImages: [{ path: "a.png" }, { path: "b.png" }] },
+    // 0.7.0 前这里喂的是 ui.pendingImages（渲染成 `[2 img]` 前缀）。附件改成输入文本里
+    // 的内联标记之后，那个字段没人读了 —— 继续喂它就是一条对着空气成立的用例。
+    带附件标记: { input: "看这两张 [Image #1] [Image #2] 有什么区别", inputCursor: 12 },
     仪表盘: { showDashboard: true },
     输入框选区: { input: "选中一段文字", inputCursor: 3, inputSelection: { start: 1, end: 4 } }
   }
