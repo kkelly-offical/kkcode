@@ -4,16 +4,10 @@ import { buildPreflightReport } from "./cli/preflight.mjs"
 import { stdin as input, stdout as output } from "node:process"
 import { createInterface } from "node:readline/promises"
 import { emitKeypressEvents } from "node:readline"
-import { readFile, writeFile, mkdir } from "node:fs/promises"
-import { basename, dirname, join, resolve as resolvePath } from "node:path"
-import YAML from "yaml"
-import {
-  applyWorkspaceTrustPolicy,
-  buildContext,
-  printContextWarnings,
-  resolveExtensionPolicy
-} from "./context.mjs"
-import { ensureEventSinks, newSessionId, resolveMode, routeMode } from "./session/engine.mjs"
+import { readFile } from "node:fs/promises"
+import { basename, join } from "node:path"
+import { buildContext, printContextWarnings, resolveExtensionPolicy } from "./context.mjs"
+import { ensureEventSinks, newSessionId, routeMode } from "./session/engine.mjs"
 import { summarizeRouteDecision } from "./session/engine.mjs"
 import { buildAgentContinuationPrompt, summarizeAgentTransaction } from "./session/agent-transaction.mjs"
 import {
@@ -22,42 +16,28 @@ import {
   emitRouteDecisionEvent
 } from "./session/routing-observability.mjs"
 import { listProviders } from "./provider/router.mjs"
-import { createWizardState, startWizard, startEditWizard, handleWizardInput } from "./provider/wizard.mjs"
-import { discoverModelsForProvider, applyDiscoveredContextLimits, applyDiscoveredCapabilities } from "./provider/model-catalog.mjs"
-import { escapeTerminalText, validateModelId } from "./provider/model-id.mjs"
+import { createWizardState, handleWizardInput } from "./provider/wizard.mjs"
 import { loadCustomCommands, applyCommandTemplate } from "./command/custom-commands.mjs"
 import { SkillRegistry } from "./skill/registry.mjs"
 import { renderMarkdown } from "./theme/markdown.mjs"
-import { listSessions, getConversationHistory } from "./session/store.mjs"
-import { compactSession } from "./session/compaction.mjs"
+import { listSessions } from "./session/store.mjs"
 import { ToolRegistry } from "./tool/registry.mjs"
 import { McpRegistry } from "./mcp/registry.mjs"
 import { initHookBus } from "./plugin/hook-bus.mjs"
-import { renderReplDashboard, renderReplLogo, renderStartupHint } from "./ui/repl-dashboard.mjs"
-import { renderCapabilityPanel } from "./ui/repl-capability-panel.mjs"
-import { buildHelpText, buildShortcutLegend } from "./ui/repl-help.mjs"
+import { renderReplDashboard } from "./ui/repl-dashboard.mjs"
 import { buildRouteFeedback } from "./ui/repl-route-feedback.mjs"
-import { formatRuntimeStateText, normalizeDiagnostics, normalizeFileChanges, renderDiagnosticsLines, renderFileChangeLines } from "./ui/repl-turn-summary.mjs"
-import { renderFrameDashboardHeader, renderReplStatusLine, renderRuntimeDashboardView, renderStartupScreen } from "./ui/repl-status-view.mjs"
+import { renderReplStatusLine, renderStartupScreen } from "./ui/repl-status-view.mjs"
 import { paint } from "./theme/color.mjs"
 import { PermissionEngine } from "./permission/engine.mjs"
 import { setPermissionPromptHandler } from "./permission/prompt.mjs"
 import { setQuestionPromptHandler } from "./tool/question-prompt.mjs"
-import { createActivityRenderer, formatPlanProgress, formatRecoverySuggestions } from "./ui/activity-renderer.mjs"
-import { renderBlockedReportText } from "./session/blocked-report.mjs"
-import { buildBoardModel, renderUltraBoard } from "./ui/ultra-board.mjs"
-import { buildTranscriptViewport } from "./ui/repl-transcript-panel.mjs"
+import { createActivityRenderer } from "./ui/activity-renderer.mjs"
 import { createAppState, reduceAppState } from "./ui/app-state.mjs"
-import { renderTaskProgressPanel } from "./ui/repl-task-panel.mjs"
 import { EventBus } from "./core/events.mjs"
 import { EVENT_TYPES } from "./core/constants.mjs"
 import { readClipboardImage, readClipboardText } from "./tool/image-util.mjs"
-import { generateSkill, saveSkillGlobal } from "./skill/generator.mjs"
-import { userRootDir, userConfigCandidates, projectConfigCandidates, memoryFilePath } from "./storage/paths.mjs"
-import { persistTrust, revokeTrust } from "./permission/workspace-trust.mjs"
-import { confirmRollback, executeRollback } from "./session/rollback.mjs"
+import { userRootDir, memoryFilePath } from "./storage/paths.mjs"
 import { loadProfile, runOnboarding } from "./onboarding.mjs"
-import { MODE_CYCLE_ORDER, nextMode } from "./repl/keymap.mjs"
 import {
   configuredProviders,
   loadHistoryLines,
@@ -77,27 +57,22 @@ import {
 export { collectInput } from "./repl/input-engine.mjs"
 // 帧度量与拼装原语。此前 repl.mjs 自带一份，与 repl-dashboard / activity-renderer /
 // repl-help / text-layout 各自的副本互不一致 —— 见 frame-primitives.mjs 的说明。
-import {
-  stripAnsi, displayWidth, clipPlainByWidth, padRight, clipAnsiLine,
-  wrapPlainLine, wrapLogLines, frameTop, frameBottom, frameDivider, frameRow,
-  pageSize, ageLabel
-} from "./repl/frame-primitives.mjs"
-import {
-  buildFrame as buildFrameLines,
-  formatBusyToolDetail,
-  renderSuggestions
-} from "./repl/frame-builder.mjs"
-import {
-  slashSuggestions,
-  applySuggestionToInput,
-  normalizeSlashAlias
-} from "./repl/slash-router.mjs"
-import { renderInstalledCommandSurface, describeReloadSummary } from "./repl/command-surface.mjs"
-import { executePromptTurn } from "./repl/turn-controller.mjs"
+import { stripAnsi, displayWidth, pageSize } from "./repl/frame-primitives.mjs"
+import { buildFrame as buildFrameLines } from "./repl/frame-builder.mjs"
+import { slashSuggestions, applySuggestionToInput, normalizeSlashAlias } from "./repl/slash-router.mjs"
+// 命令层。目录与分发同源，命令本体按领域分文件 —— 此前是一个 1090 行的
+// 顺序 if 链，加一条命令要在两份手写清单里各改一处。
+import { resolveCommand, buildBuiltinSlashCatalog } from "./repl/commands/registry.mjs"
+import { sessionCommands } from "./repl/commands/session.mjs"
+import { providerCommands } from "./repl/commands/provider.mjs"
+import { permissionCommands } from "./repl/commands/permission.mjs"
+import { modeCommands } from "./repl/commands/mode.mjs"
+import { authoringCommands } from "./repl/commands/authoring.mjs"
+import { presentPromptTurn } from "./repl/turn-presenter.mjs"
+import { loadProviderModelItems } from "./repl/provider-catalog.mjs"
+import { persistLearnedGrant } from "./repl/config-persistence.mjs"
 import { createGhostPredictor } from "./repl/ghost-predictor.mjs"
-import { buildCapabilitySnapshot } from "./repl/capability-facade.mjs"
 import { buildReplRuntimeSnapshot } from "./repl/runtime-facade.mjs"
-import { buildOperatorSnapshot } from "./repl/operator-surface.mjs"
 import {
   activateNextQuestionState,
   commitQuestionAnswer,
@@ -108,30 +83,18 @@ import {
   POLICY_CHOICES,
   createPolicyPickerState,
   applyPolicyChoice,
-  applyPermissionLevel,
-  nextPermissionLevel,
-  PERMISSION_PROMPT_CHOICES,
   PERMISSION_PROMPT_VALUES,
   defaultPermissionChoiceIndex
 } from "./repl/permission-flow.mjs"
-import { approvalFromLegacy, modeIdFromLegacy, nextModeId, MODE_IDS } from "./core/modes.mjs"
-import { noteDeprecation } from "./core/deprecations.mjs"
+import { nextModeId } from "./core/modes.mjs"
 import {
   applyModeSelection,
   resolveModeId,
   createModePickerState,
-  formatModeBadge,
+  switchModeInPlace,
   MODE_PICKER_CHOICES
 } from "./repl/mode-flow.mjs"
-import { normalizePermissionLevel } from "./permission/rules.mjs"
-import {
-  buildLearnedRule,
-  appendLearnedRule,
-  listLearnedRules,
-  removeLearnedRules,
-  isLearnedRule,
-  describeRule
-} from "./permission/learned-rules.mjs"
+import { describeRule } from "./permission/learned-rules.mjs"
 import {
   classifySgrMouseEvent,
   createBracketedPasteDecoder,
@@ -144,12 +107,7 @@ import {
   renderTerminalFrame,
   resolveTerminalFeatures
 } from "./repl/terminal-protocol.mjs"
-import {
-  inputIndexAtPosition,
-  layoutInputText,
-  moveGraphemeCursor,
-  splitTextByCellRange
-} from "./repl/text-layout.mjs"
+import { inputIndexAtPosition, moveGraphemeCursor, splitTextByCellRange } from "./repl/text-layout.mjs"
 import { copyTerminalText } from "./repl/clipboard.mjs"
 import { createTranscriptModel } from "./ui/transcript-model.mjs"
 import { createToastStore } from "./ui/toast-store.mjs"
@@ -160,21 +118,13 @@ import {
   buildThinkingTranscriptItem,
   createThinkingState,
   finishThinking as finishThinkingState,
-  formatThinkingDuration,
   startThinkingStream,
   startThinkingWait
 } from "./ui/thinking-state.mjs"
-import { mergeConfigObject } from "./config/merge.mjs"
-import { renderSelectOverlay } from "./ui/overlay-select.mjs"
-import { thinkingPreviewLines } from "./ui/thinking-preview.mjs"
 import { rewindLastTurn } from "./session/rewind.mjs"
 import { setMarkdownColors } from "./theme/markdown.mjs"
 import { formatTokenCount } from "./theme/status-bar.mjs"
-import {
-  sanitizeTerminalStyledText,
-  sanitizeTerminalText,
-  sanitizeTerminalValue
-} from "./theme/terminal-sanitize.mjs"
+import { sanitizeTerminalStyledText, sanitizeTerminalText, sanitizeTerminalValue } from "./theme/terminal-sanitize.mjs"
 
 const HIST_DIR = userRootDir()
 const HIST_FILE = join(HIST_DIR, "repl_history")
@@ -191,206 +141,23 @@ const KEYPRESS_ESCAPE_TIMEOUT_MS = 10
 
 
 
-const BUILTIN_SLASH = [
-  { name: "help", desc: "show help" },
-  { name: "agents", desc: "list subagents with their permission tier" },
-  { name: "tasks", desc: "list background tasks (add stop <id> / retry <id>)" },
-  { name: "dash", desc: "redraw dashboard" },
-  { name: "clear", desc: "clear terminal" },
-  { name: "new", desc: "new session" },
-  { name: "resume", desc: "resume session" },
-  { name: "history", desc: "list sessions" },
-  { name: "compact", desc: "summarize conversation to free context" },
-  { name: "undo", desc: "undo last code changes" },
-  { name: "mode", desc: "switch explicit mode" },
-  { name: "plan", desc: "read-only development plan" },
-  { name: "agent", desc: "assistant compatibility alias" },
-  { name: "ultra", desc: "persistent staged development" },
-  { name: "longagent", desc: "deprecated alias for /ultra" },
-  { name: "provider", desc: "switch provider" },
-  { name: "model", desc: "open model picker" },
-  { name: "profile", desc: "view or edit your user profile" },
-  { name: "like", desc: "show welcome screen / re-run onboarding" },
-  { name: "trust", desc: "trust this workspace" },
-  { name: "untrust", desc: "revoke workspace trust" },
-  { name: "permission", desc: "permission policy / cache" },
-  { name: "paste", desc: "paste image from clipboard" },
-  { name: "status", desc: "runtime state" },
-  { name: "keys", desc: "show key map" },
-  { name: "session", desc: "show session id" },
-  { name: "commands", desc: "list custom slash commands" },
-  { name: "create-skill", desc: "generate a new skill via AI" },
-  { name: "create-agent", desc: "generate a new sub-agent via AI" },
-  { name: "reload", desc: "reload custom commands" },
-  // 以下几条一直可以执行，却从未出现在补全菜单里 —— 目录与分发是两份
-  // 各写各的清单，加命令时只改分发是最自然的疏忽。test/repl-slash-catalog
-  // 现在会比对两者，漏一个就红。
-  { name: "board", desc: "ultra goal board" },
-  { name: "cls", desc: "clear terminal (alias of /clear)" },
-  { name: "home", desc: "back to the dashboard view" },
-  { name: "dashboard", desc: "redraw dashboard (alias of /dash)" },
-  { name: "assistant", desc: "conversational mode" },
-  { name: "code", desc: "coding mode" },
-  { name: "coding", desc: "coding mode (alias of /code)" },
-  { name: "yolo", desc: "unattended mode — approvals off" },
-  { name: "exit", desc: "quit" }
+/**
+ * 内建斜杠命令。目录（补全菜单）与分发（谁来处理）从此**同源** ——
+ * 此前是两份手写清单，加命令时只改分发是最自然的疏忽。
+ */
+const BUILTIN_COMMANDS = [
+  ...sessionCommands,
+  ...providerCommands,
+  ...permissionCommands,
+  ...modeCommands,
+  ...authoringCommands
 ]
 
-function displayUserRootPath() {
-  const userRoot = userRootDir()
-  const home = process.env.HOME || process.env.USERPROFILE
-  if (!home) return userRoot
-  const homeNorm = resolvePath(home).replace(/\\/g, "/")
-  const rootNorm = resolvePath(userRoot).replace(/\\/g, "/")
-  if (rootNorm === homeNorm) return "~"
-  if (rootNorm.startsWith(`${homeNorm}/`)) return `~${rootNorm.slice(homeNorm.length)}`
-  return userRoot
-}
+const BUILTIN_SLASH = buildBuiltinSlashCatalog(BUILTIN_COMMANDS)
 
-export async function loadProviderModelItems(configState, providerName, {
-  refresh = false,
-  discover = discoverModelsForProvider
-} = {}) {
-  try {
-    const catalog = await discover(configState, { providerName, refresh })
-    // 目录里带上下文长度的模型，顺手合并进内存里的 model_context ——
-    // 上限与状态栏百分比从此不用人肉填（用户显式写过的键不覆盖）。
-    applyDiscoveredContextLimits(configState, catalog.models || [])
-    applyDiscoveredCapabilities(configState, providerName, catalog.models || [])
-    const seen = new Set()
-    const items = []
-    for (const entry of catalog.models || []) {
-      const model = String(entry?.id || "").trim()
-      if (!model || seen.has(model)) continue
-      seen.add(model)
-      items.push({
-        provider: providerName,
-        model,
-        label: `${escapeTerminalText(providerName)} / ${escapeTerminalText(model)}`
-      })
-    }
-    return {
-      items,
-      source: catalog.source,
-      stale: Boolean(catalog.stale),
-      warning: catalog.warning || null,
-      error: null
-    }
-  } catch (error) {
-    return {
-      items: [],
-      source: null,
-      stale: false,
-      warning: null,
-      error: error?.message || "model discovery failed"
-    }
-  }
-}
-
-function parseConfigByPath(filePath, raw) {
-  if (filePath.endsWith(".json")) return JSON.parse(raw)
-  return YAML.parse(raw)
-}
-
-function stringifyConfigByPath(filePath, data) {
-  if (filePath.endsWith(".json")) return JSON.stringify(data, null, 2) + "\n"
-  return YAML.stringify(data)
-}
-
-const mergeObject = mergeConfigObject
-
-function pickConfigPathForScope(scope, source, cwd = process.cwd()) {
-  if (scope === "user") return source?.userPath || userConfigCandidates()[0]
-  if (scope === "project") return source?.projectPath || projectConfigCandidates(cwd)[0]
-  return null
-}
-
-/**
- * 就地切换模式：同时写 state.modeId、state.mode（航道）与
- * permission.level（审批档）。TUI 与行模式共用。
- */
-function switchModeInPlace(state, ctx, modeId) {
-  const permission = ctx.configState.config.permission || (ctx.configState.config.permission = {})
-  const next = applyModeSelection(modeId, { permissionConfig: permission })
-  state.modeId = next.modeId
-  state.mode = next.mode
-  ctx.configState.config.permission = next.permissionConfig
-  return next
-}
-
-async function readConfigFile(target) {
-  try {
-    const raw = await readFile(target, "utf8")
-    return parseConfigByPath(target, raw) || {}
-  } catch {
-    return {}
-  }
-}
-
-async function writeConfigFile(target, data) {
-  await mkdir(dirname(target), { recursive: true })
-  await writeFile(target, stringifyConfigByPath(target, data), "utf8")
-}
-
-/**
- * 把一次「Always Allow」写入用户级配置。
- *
- * 刻意选用户级而非项目级：用户仓库的 .gitignore 未必忽略 .kkcode/，
- * 项目级会把授权记录提交出去。规则带 workspace 限定生效范围。
- */
-async function persistLearnedGrant({ ctx, tool, pattern, command, workspace }) {
-  const rule = buildLearnedRule({ tool, pattern, command, workspace: workspace || process.cwd() })
-  if (!rule) return { added: false, reason: "invalid", rule: null }
-
-  const target = pickConfigPathForScope("user", ctx.configState?.source, process.cwd())
-  if (!target) return { added: false, reason: "no_target", rule }
-
-  const existing = await readConfigFile(target)
-  const currentRules = existing?.permission?.rules
-  const outcome = appendLearnedRule(currentRules, rule)
-  if (!outcome.added) return { added: false, reason: outcome.reason, rule }
-
-  await writeConfigFile(target, {
-    ...existing,
-    permission: { ...(existing.permission || {}), rules: outcome.rules }
-  })
-
-  // 让本次会话立即生效，无需重启
-  const live = ctx.configState.config.permission || (ctx.configState.config.permission = {})
-  live.rules = appendLearnedRule(live.rules, rule).rules
-  ctx.configState.source.userPath = target
-  return { added: true, reason: "added", rule }
-}
-
-async function persistPermissionConfig({ scope, ctx, values }) {
-  const source = ctx.configState?.source || {}
-  const target = pickConfigPathForScope(scope, source, process.cwd())
-  if (!target) throw new Error(`unable to resolve ${scope} config path`)
-
-  const existing = await readConfigFile(target)
-  const merged = mergeObject(existing, { permission: { ...values } })
-  await writeConfigFile(target, merged)
-
-  if (scope === "user") {
-    ctx.configState.source.userPath = target
-    ctx.configState.source.userDir = dirname(target)
-    ctx.configState.source.userRaw = merged
-  } else if (scope === "project") {
-    ctx.configState.source.projectPath = target
-    ctx.configState.source.projectDir = dirname(target)
-    ctx.configState.source.projectRaw = merged
-  }
-
-  return target
-}
-
-function help(providers = []) {
-  return buildHelpText({ providers, userRootPath: displayUserRootPath() })
-}
-
-function shortcutLegend() {
-  return buildShortcutLegend()
-}
+// 模型目录的取用点有三处（/model、切 provider 后的提示、启动预热），
+// 实现已移到 repl/provider-catalog.mjs；这里转发导出保持既有调用方不变。
+export { loadProviderModelItems }
 
 function slashRouterOptions(customCommands = []) {
   return {
@@ -400,6 +167,15 @@ function slashRouterOptions(customCommands = []) {
   }
 }
 
+/**
+ * 一行输入 → 一个动作。
+ *
+ * 曾经是 1090 行、49 个顺序 `if`；现在只做四件事：拦截两种输入模式、查注册表、
+ * 跑命令、剩下的当提示词。命令本体在 `repl/commands/*.mjs`。
+ *
+ * 返回的 action 必须是**对象** —— 三个调用点直接读它的字段。裸 null 曾让行模式的
+ * REPL 整个崩掉（v0.6.0 → v0.6.14），所以调用点也做了归一化兜底。
+ */
 async function processInputLine({
   line,
   state,
@@ -502,831 +278,58 @@ async function processInputLine({
 
   if (!normalized) return { exit: false }
   if (normalized === "/") return { exit: false }
-  if (["/exit", "/quit", "/q"].includes(normalized)) return { exit: true }
 
-  if (["/help", "/h", "/?"].includes(normalized)) {
-    showInfo("help · slash commands and shortcuts", help(providersConfigured), { maxRows: 18 })
-    return { exit: false }
-  }
+  const runPromptTurn = ({ prompt, images = [] }) => presentPromptTurn({
+    prompt,
+    images,
+    state,
+    ctx,
+    print,
+    streamSink,
+    showTurnStatus,
+    signal,
+    switchModeInPlace
+  })
 
-  if (["/keys", "/k"].includes(normalized)) {
-    showInfo("keyboard shortcuts", shortcutLegend(), { maxRows: 16 })
-    return { exit: false }
-  }
-
-  if (["/session", "/s"].includes(normalized)) {
-    // 单行事实，不值得占一条对话记录
-    print(`session=${state.sessionId}`, { channel: "notice", topic: "session" })
-    return { exit: false }
-  }
-
-  if (["/status"].includes(normalized)) {
-    const runtimeView = await buildReplRuntimeSnapshot({
-      cwd: process.cwd(),
-      state,
-      customCommands,
-      providers: providersConfigured,
-      mcpRegistry: McpRegistry,
-      skillRegistry: SkillRegistry,
-      recoveryEnabled: ctx.configState.config.session?.recovery !== false
-    })
-    runtimeView.operatorSnapshot = buildOperatorSnapshot({
-      runtimeSummary: runtimeView.runtimeSummary,
-      backgroundSummary: runtimeView.backgroundSummary
-    })
-    // 内容按浮层内宽排版：runtime 视图自己也画框，宽度不匹配时外层折行会把
-    // 它的边框折成两段（实测截图里就是 `+-----` 换行成 `---+`）。
-    showInfo("runtime status", (innerWidth) => renderRuntimeDashboardView({
-      theme: ctx.themeState.theme,
-      columns: innerWidth,
-      ...runtimeView
-    }), { maxRows: 18 })
-    return { exit: false }
-  }
-
-  if (["/clear", "/cls"].includes(normalized)) {
-    return { exit: false, cleared: true }
-  }
-
-  if (["/dash", "/dashboard", "/home"].includes(normalized)) {
-    const recent = await listSessions({ cwd: process.cwd(), limit: 6, includeChildren: false }).catch(() => [])
-    return { exit: false, dashboardRefresh: true, recentSessions: recent }
-  }
-
-  if (["/commands"].includes(normalized)) {
-    const skills = SkillRegistry.isReady() ? SkillRegistry.list() : []
-    const { CustomAgentRegistry } = await import("./agent/custom-agent-loader.mjs")
-    const capabilitySnapshot = await buildCapabilitySnapshot({
-      mode: state.mode,
-      cwd: process.cwd(),
-      configState: ctx.configState,
-      customCommands,
-      skillRegistry: SkillRegistry,
-      toolRegistry: ToolRegistry,
-      mcpRegistry: McpRegistry,
-      listAgents: () => CustomAgentRegistry.list()
-    })
-    showInfo("commands & capabilities", [
-      ...renderInstalledCommandSurface({ customCommands, skills }),
-      "",
-      ...renderCapabilityPanel(capabilitySnapshot)
-    ].join("\n"), { maxRows: 18 })
-    return { exit: false }
-  }
-
-  if (["/reload"].includes(normalized)) {
-    const extensionPolicy = resolveExtensionPolicy(ctx.configState)
-    const reloaded = await loadCustomCommands(process.cwd(), {
-      allowProjectSources: extensionPolicy.allowProjectSources
-    })
-    setCustomCommands(reloaded)
-    await SkillRegistry.initialize(extensionPolicy.config, process.cwd(), {
-      allowProjectSources: extensionPolicy.allowProjectSources
-    })
-    const { CustomAgentRegistry } = await import("./agent/custom-agent-loader.mjs")
-    await CustomAgentRegistry.initialize(process.cwd(), {
-      allowProjectSources: extensionPolicy.allowProjectSources
-    })
-    const skillCount = SkillRegistry.isReady() ? SkillRegistry.list().length : 0
-    const agentCount = CustomAgentRegistry.list().length
-    print(describeReloadSummary({ commandCount: reloaded.length, skillCount, agentCount }), { channel: "notice", topic: "command" })
-    return { exit: false }
-  }
-
-  if (["/trust"].includes(normalized)) {
-    await persistTrust(process.cwd())
-    ctx.trustState = { trusted: true }
-    applyWorkspaceTrustPolicy(ctx.configState, ctx.trustState, process.cwd())
-    const extensionPolicy = resolveExtensionPolicy(ctx.configState)
-    await ToolRegistry.initialize({
-      config: extensionPolicy.config,
-      cwd: process.cwd(),
-      force: true,
-      allowProjectSources: extensionPolicy.allowProjectSources
-    })
-    await SkillRegistry.initialize(extensionPolicy.config, process.cwd(), {
-      allowProjectSources: extensionPolicy.allowProjectSources
-    })
-    const { CustomAgentRegistry } = await import("./agent/custom-agent-loader.mjs")
-    await CustomAgentRegistry.initialize(process.cwd(), {
-      allowProjectSources: extensionPolicy.allowProjectSources
-    })
-    await initHookBus(process.cwd(), extensionPolicy.config, {
-      allowProjectSources: extensionPolicy.allowProjectSources,
-      force: true
-    })
-    setCustomCommands(await loadCustomCommands(process.cwd(), {
-      allowProjectSources: extensionPolicy.allowProjectSources
-    }))
-    PermissionEngine.setTrusted(true)
-    print("workspace trusted", { channel: "notice", topic: "command" })
-    return { exit: false }
-  }
-  if (["/untrust"].includes(normalized)) {
-    await revokeTrust(process.cwd())
-    ctx.trustState = { trusted: false }
-    applyWorkspaceTrustPolicy(ctx.configState, ctx.trustState, process.cwd())
-    const extensionPolicy = resolveExtensionPolicy(ctx.configState)
-    await ToolRegistry.initialize({
-      config: extensionPolicy.config,
-      cwd: process.cwd(),
-      force: true,
-      allowProjectSources: extensionPolicy.allowProjectSources
-    })
-    await SkillRegistry.initialize(extensionPolicy.config, process.cwd(), {
-      allowProjectSources: extensionPolicy.allowProjectSources
-    })
-    const { CustomAgentRegistry } = await import("./agent/custom-agent-loader.mjs")
-    await CustomAgentRegistry.initialize(process.cwd(), {
-      allowProjectSources: extensionPolicy.allowProjectSources
-    })
-    await initHookBus(process.cwd(), extensionPolicy.config, {
-      allowProjectSources: extensionPolicy.allowProjectSources,
-      force: true
-    })
-    setCustomCommands(await loadCustomCommands(process.cwd(), {
-      allowProjectSources: extensionPolicy.allowProjectSources
-    }))
-    PermissionEngine.setTrusted(false)
-    print("workspace trust revoked — project tools and extensions are now blocked", { channel: "notice", topic: "command" })
-    return { exit: false }
-  }
-
-  if (["/compact"].includes(normalized)) {
-    try {
-      print("compacting conversation...")
-      const result = await compactSession({
-        sessionId: state.sessionId,
-        model: state.model,
-        providerType: state.providerType,
-        configState: ctx.configState
-      })
-      if (result.compacted) {
-        print(`compacted: ${result.summarizedCount} messages summarized, ${result.keptCount} kept`, { channel: "notice", topic: "command" })
-      } else {
-        print(`skipped: ${result.reason}`, { channel: "notice", topic: "command" })
-      }
-    } catch (err) {
-      print(`compact failed: ${err.message}`, { channel: "notice", topic: "command", tone: "error" })
-    }
-    return { exit: false }
-  }
-
-  if (["/new", "/n"].includes(normalized)) {
-    state.sessionId = newSessionId()
-    print(`new session: ${state.sessionId}`, { channel: "notice", topic: "command" })
-    return { exit: false }
-  }
-
-  if (["/history"].includes(normalized)) {
-    const sessions = await listSessions({ cwd: process.cwd(), limit: 20, includeChildren: false })
-    if (!sessions.length) {
-      print("no sessions found", { channel: "notice", topic: "session" })
-      return { exit: false }
-    }
-    const rows = sessions.map((s) => {
-      const age = ageLabel(Date.now() - s.updatedAt)
-      const title = s.title || `${s.mode}:${s.model || "?"}`
-      const titleClipped = title.length > 35 ? title.slice(0, 32) + "..." : title
-      return `  ${s.id.slice(0, 12)}  ${padRight(titleClipped, 36)} ${padRight(s.mode, 9)} ${padRight(s.status || "-", 10)} ${age}`
-    })
-    // 浮层能滚，所以取 20 条而不是 8 条 —— 此前的条数上限是为了不刷屏
-    showInfo(`sessions (${sessions.length})`, [
-      `  ${padRight("id", 12)}  ${padRight("title", 36)} ${padRight("mode", 9)} ${padRight("status", 10)} age`,
-      ...rows,
-      "",
-      "  /resume <id> 续跑其中一个"
-    ].join("\n"))
-    return { exit: false }
-  }
-
-  if (normalized === "/resume" || normalized.startsWith("/resume ") || normalized === "/r" || normalized.startsWith("/r ")) {
-    const arg = normalized.replace(/^\/(resume|r)/, "").trim()
-    const sessions = await listSessions({ cwd: process.cwd(), limit: 20, includeChildren: false })
-
-    if (!sessions.length) {
-      print("no sessions found in current directory", { channel: "notice", topic: "command", tone: "error" })
-      return { exit: false }
-    }
-
-    let target = null
-
-    if (!arg) {
-      // 裸 /resume 是「列出并选一个」，和 /provider 同构 —— 走选择器，
-      // Enter 直接续跑，不必让用户在滚动的对话记录里数编号再手敲。
-      const items = sessions.map((session) => {
-        const title = session.title || `${session.mode}:${session.model || "?"}`
-        const age = ageLabel(Date.now() - session.updatedAt)
-        return {
-          id: session.id,
-          label: title.length > 45 ? `${title.slice(0, 42)}...` : title,
-          desc: `${session.mode} · ${session.status || "-"} · ${age}`
-        }
-      })
-      if (openPanel) {
-        return { exit: false, openSessionPicker: true, sessionPickerItems: items }
-      }
-      // 行模式：没有帧可浮，回落到编号列表
-      print(`\n  Sessions in ${paint(process.cwd(), "cyan")}:\n`)
-      items.forEach((item, i) => {
-        const num = paint(`  ${String(i + 1).padStart(2)}.`, "yellow")
-        print(`${num} ${padRight(item.label, 46)} ${paint(item.desc, null, { dim: true })}`)
-      })
-      print(`\n  usage: ${paint("/resume <number>", "yellow")} or ${paint("/resume <session-id>", "yellow")}`)
-      return { exit: false }
-    }
-
-    // Try numeric index first (1-based)
-    const idx = parseInt(arg, 10)
-    if (!Number.isNaN(idx) && idx >= 1 && idx <= sessions.length) {
-      target = sessions[idx - 1]
-    } else {
-      // Fallback to ID prefix match
-      target = sessions.find((s) => s.id === arg || s.id.startsWith(arg)) || null
-    }
-
-    if (!target) {
-      print(`no session matching "${arg}"`, { channel: "notice", topic: "command", tone: "error" })
-      return { exit: false }
-    }
-
-    state.sessionId = target.id
-    state.mode = target.mode || state.mode
-    state.providerType = target.providerType || state.providerType
-    state.model = target.model || state.model
-    const title = target.title || `${target.mode}:${target.model || "?"}`
-    print(`resumed: ${paint(title, "cyan")} (${target.mode}, ${target.model || "?"})`, { channel: "notice", topic: "command" })
-    const msgs = await getConversationHistory(target.id, 3)
-    for (const m of msgs) {
-      const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content)
-      const preview = text.length > 84 ? `${text.slice(0, 84)}...` : text
-      print(`  [${m.role}] ${preview}`)
-    }
-    return { exit: false }
-  }
-
-  if (normalized === "/undo") {
-    const language = ctx.configState.config.language || "en"
-    const cwd = process.cwd()
-    const confirmation = await confirmRollback({ cwd, language })
-    print(confirmation.message)
-    if (!confirmation.confirmed) return { exit: false }
-    const result = await executeRollback({
-      cwd,
-      commitHash: confirmation.commitHash,
-      sessionId: state.sessionId,
-      language
-    })
-    print(result.message)
-    return { exit: false }
-  }
-
-  if (normalized === "/profile" || normalized === "/profile edit") {
-    const { loadProfile: lp, runOnboarding: ro } = await import("./onboarding.mjs")
-    const current = await lp()
-    if (normalized === "/profile" && current) {
-      const lines = ["Current profile:"]
-      if (current.beginner) {
-        lines.push("  mode: beginner (using defaults)")
-      } else {
-        if (current.languages?.length) lines.push(`  languages: ${current.languages.join(", ")}`)
-        if (current.tech_stack?.length) lines.push(`  tech stack: ${current.tech_stack.join(", ")}`)
-        if (current.design_style) lines.push(`  style: ${current.design_style}`)
-        if (current.extra_notes) lines.push(`  notes: ${current.extra_notes}`)
-      }
-      lines.push("")
-      lines.push("Run /profile edit to update your profile.")
-      print(lines.join("\n"))
-      return { exit: false }
-    }
-    if (suspendTui) await suspendTui(ro)
-    else await ro()
-    return { exit: false }
-  }
-
-  if (normalized === "/like") {
-    const { runOnboarding: ro } = await import("./onboarding.mjs")
-    if (suspendTui) await suspendTui(ro)
-    else await ro()
-    return { exit: false }
-  }
-
-  if (normalized.startsWith("/plan ")) {
-    const objective = normalized.replace(/^\/plan\s+/, "").trim()
-    state.mode = "plan"
-    normalized = [
-      "Create a read-only development plan for this request.",
-      "Do not edit project source files. Inspect the repository as needed, then call enter_plan and exit_plan with the complete plan.",
-      "The plan must include goal, scope, implementation steps, impacted modules, tests, risks, and acceptance criteria.",
-      "",
-      `Request: ${objective}`
-    ].join("\n")
-  }
-
-  if (normalized === "/board") {
-    // 目标看板：判据 + stage/task 投影成五列（待办/进行中/受阻/待验收/已达成）。
-    // 数据来自会话状态与台账 —— 与 `kkcode ultra board` 是同一条码。
-    const { LongAgentManager } = await import("./orchestration/longagent-manager.mjs")
-    const { loadLedger } = await import("./session/ultra-ledger.mjs")
-    const record = await LongAgentManager.get(state.sessionId)
-    if (!record?.goal && !record?.stagePlan) {
-      print("当前会话还没有 Ultra 目标。用 /ultra 模式跑一个目标后再看。", { channel: "notice", topic: "board", tone: "warn" })
-      return { exit: false }
-    }
-    const ledger = await loadLedger(state.sessionId)
-    const lastRound = ledger?.data.rounds[ledger.data.rounds.length - 1]
-    const verification = lastRound?.criteria?.length
-      ? { results: lastRound.criteria, subGoals: [] }
-      : null
-    const board = buildBoardModel({
-      goal: record.goal, stagePlan: record.stagePlan,
-      taskProgress: record.taskProgress || {}, verification
-    })
-    showInfo("ultra board",
-      (innerWidth) => renderUltraBoard(board, { width: Math.max(60, innerWidth), paint }).join("\n"),
-      { maxRows: 20 })
-    return { exit: false }
-  }
-
-  if (["/assistant", "/plan", "/agent", "/code", "/coding", "/longagent", "/ultra", "/yolo"].includes(normalized)) {
-    const raw = normalized.slice(1)
-    if (raw === "longagent") {
-      noteDeprecation("mode.longagent", "`/longagent` 已更名为 `/ultra`")
-    }
-    const next = switchModeInPlace(state, ctx, raw)
-    print(`mode switched: ${next.icon} ${next.label} (${next.hint})`, { channel: "notice", topic: "mode" })
-    return { exit: false }
-  }
-
-  if (normalized.startsWith("/longagent ") || normalized.startsWith("/ultra ")) {
-    const rawSub = normalized.replace(/^\/(longagent|ultra)\s+/, "").trim()
-    const sub = rawSub.toLowerCase()
-    switchModeInPlace(state, ctx, "ultra")
-    if (sub === "4stage" || sub === "hybrid") {
-      // 0.4.0 只剩一套 Ultra 编排，impl 子命令不再有意义
-      print(`Ultra 现在只有一套编排，/${sub} 子命令已移除`)
-      return { exit: false }
-    }
-    normalized = rawSub
-  }
-
-  if (normalized === "/mode" || normalized === "/m") {
-    print(`mode: ${formatModeBadge(state.modeId || state.mode)}`, { channel: "notice", topic: "command" })
-    return { exit: false, openModePicker: true }
-  }
-
-  if (normalized.startsWith("/mode ") || normalized.startsWith("/m ")) {
-    const requested = normalized.replace(/^\/(mode|m)\s+/, "").trim()
-    const modeId = modeIdFromLegacy(requested)
-    if (!modeId) {
-      print(`unknown mode: ${escapeTerminalText(requested)} (${MODE_IDS.join(" | ")})`, { channel: "notice", topic: "command", tone: "error" })
-      return { exit: false }
-    }
-    const next = switchModeInPlace(state, ctx, modeId)
-    print(`mode switched: ${next.icon} ${next.label} (${next.hint})`, { channel: "notice", topic: "mode" })
-    return { exit: false }
-  }
-
-  if (normalized === "/provider" || normalized === "/p") {
-    // 裸 /provider = 最常用的动作：列出并选择。add/edit 各司其名。
-    if (!providersConfigured.length) {
-      print("没有已配置的 provider，使用 /provider add 添加。", { channel: "notice", topic: "provider", tone: "warn" })
-      return { exit: false }
-    }
-    const items = providersConfigured.map((name) => {
-      const model = ctx.configState.config.provider?.[name]?.default_model || ""
-      return { name, label: name, desc: model ? `model: ${model}` : "" }
-    })
-    // TUI 里这是个选择动作 —— 走可视化选择器，和 /model 一致。
-    // 行模式（无 TTY）没有帧可浮，回落到编号输入：先打列表再进选择态。
-    if (openPanel) {
-      return { exit: false, openProviderPicker: true, providerPickerItems: items }
-    }
-    print("")
-    items.forEach((item, i) => {
-      const marker = item.name === state.providerType ? "  ✓ 当前" : ""
-      print(`  ${i + 1}. ${item.name}${item.desc ? `  [${item.desc}]` : ""}${marker}`)
-    })
-    print("")
-    print("  输入编号或名称切换（/ 开头的输入会退出选择）")
-    print("  /provider add 添加新 provider · /provider edit <名称> 编辑")
-    if (setProviderPicker) setProviderPicker(providersConfigured)
-    return { exit: false }
-  }
-
-  if (normalized.startsWith("/provider ") || normalized.startsWith("/p ")) {
-    const rest = normalized.replace(/^\/(provider|p)\s+/, "").trim()
-
-    // /provider add — 添加新 provider（启动向导）。
-    // 上游分支里 add 是「列出并切换」而 set 是「添加」—— 与词义相反，
-    // 用户想添加 provider 第一反应就是敲 add。归位：add 即添加，
-    // 列出并选择归裸 /provider。set 作为一次性别名指路后移除。
-    if (rest === "add") {
-      if (wizard && setWizard) {
-        startWizard(wizard, print)
-        setWizard({ ...wizard })
-      }
-      return { exit: false }
-    }
-    if (rest === "set") {
-      print("`/provider set` 已更名为 `/provider add`（添加新 provider）；列出并切换用裸 `/provider`。")
-      return { exit: false }
-    }
-
-    // /provider edit <name> — 编辑已有 provider 配置
-    if (rest.startsWith("edit ") || rest === "edit") {
-      const editName = rest.replace(/^edit\s*/, "").trim()
-      if (!editName) {
-        print("usage: /provider edit <name>", { channel: "notice", topic: "command", tone: "error" })
-        return { exit: false }
-      }
-      const providerCfg = ctx.configState.config?.provider?.[editName]
-      if (!providerCfg || typeof providerCfg !== "object") {
-        print(`provider "${editName}" 未找到，可用: ${providersConfigured.join(", ")}`, { channel: "notice", topic: "command", tone: "error" })
-        return { exit: false }
-      }
-      if (wizard && setWizard) {
-        startEditWizard(wizard, editName, providerCfg, print)
-        setWizard({ ...wizard })
-      }
-      return { exit: false }
-    }
-
-    // /provider <name> — 切换 provider
-    const next = rest
-    if (!providersConfigured.includes(next)) {
-      print(`provider must be one of: ${providersConfigured.join(", ")}`, { channel: "notice", topic: "command", tone: "error" })
-      return { exit: false }
-    }
-    await switchActiveProvider(next)
-    return { exit: false }
-  }
-
-  if (normalized === "/model" || normalized === "/model refresh") {
-    const refresh = normalized.endsWith(" refresh")
-    print(`current: ${state.providerType} / ${state.model}`)
-    const catalog = await loadProviderModelItems(ctx.configState, state.providerType, { refresh })
-    const items = catalog.items
-    if (items.length) {
-      print("")
-      print(`  可用模型 (${catalog.source}${catalog.stale ? ", stale" : ""})：`)
-      for (const item of items) {
-        const marker = (item.provider === state.providerType && item.model === state.model) ? " ●" : ""
-        print(`    ${item.label}${marker}`)
-      }
-      print("")
-      print("  用法: /model <model-id>，/model refresh 刷新目录")
-    } else {
-      print(`  模型目录不可用${catalog.error ? `: ${catalog.error}` : ""}`)
-      print("  使用 /model <model-id> 手动设置；离线列表需在 provider.models 中由用户显式配置。")
-    }
-    if (catalog.warning) print(`  模型目录提示: ${catalog.warning}`)
-    return {
-      exit: false,
-      openModelPicker: items.length > 0,
-      modelPickerItems: items
-    }
-  }
-
-  if (normalized.startsWith("/model ")) {
-    const next = normalized.replace("/model ", "").trim()
-    if (!next) print("usage: /model <model-id>", { channel: "notice", topic: "command", tone: "error" })
-    else {
-      try {
-        state.model = validateModelId(next)
-        print(`model switched: ${escapeTerminalText(state.model)}`, { channel: "notice", topic: "switch" })
-      } catch (error) {
-        print(`invalid model id: ${escapeTerminalText(error.message)}`, { channel: "notice", topic: "command", tone: "error" })
-      }
-    }
-    return { exit: false }
-  }
-
-  if (normalized === "/permission" || normalized.startsWith("/permission ")) {
-    const tokens = normalized.split(/\s+/).slice(1)
-    const sub = (tokens[0] || "show").toLowerCase()
-    const permission = ctx.configState.config.permission || (ctx.configState.config.permission = {})
-
-    if (sub === "show") {
-      // 档位、非交互默认值、以及当前生效的规则一起给全 —— 此前只打两行档位，
-      // 想看规则还要另外记得 /permission list。
-      const all = Array.isArray(permission.rules) ? permission.rules : []
-      const learned = listLearnedRules(all)
-      const manual = all.filter((rule) => !isLearnedRule(rule))
-      const lines = [
-        `level:    ${normalizePermissionLevel(permission)}`,
-        `non_tty:  ${permission.non_tty_default || "deny"}`,
-        ""
-      ]
-      if (manual.length) {
-        lines.push(`configured rules (${manual.length}):`)
-        for (const rule of manual) lines.push(`  ${escapeTerminalText(describeRule(rule))}`)
-        lines.push("")
-      }
-      if (learned.length) {
-        lines.push(`always-allow rules (${learned.length}) — /permission forget <n>:`)
-        for (const [index, rule] of learned.entries()) {
-          lines.push(`  [${index}] ${escapeTerminalText(describeRule(rule))}`)
-        }
-        lines.push("")
-      }
-      if (!all.length) lines.push("no permission rules configured", "")
-      lines.push("  /permission <readonly|manual|accept-edits|yolo> 切档 · /permission save 落盘")
-      showInfo("permission", lines.join("\n"), { maxRows: 18 })
-      return { exit: false, openPolicyPicker: true }
-    }
-
-    if (sub === "cycle") {
-      // Shift+Tab 在 0.4.0 改切模式，审批档单独用这条命令循环
-      const next = nextPermissionLevel(permission)
-      ctx.configState.config.permission = applyPermissionLevel(next, permission)
-      print(`permission.level -> ${next} (runtime)`, { channel: "notice", topic: "permission" })
-      return { exit: false }
-    }
-
-    if (sub === "list" || sub === "rules") {
-      const all = Array.isArray(permission.rules) ? permission.rules : []
-      const learned = listLearnedRules(all)
-      const manual = all.filter((rule) => !isLearnedRule(rule))
-      if (!all.length) {
-        print("no permission rules configured", { channel: "notice", topic: "permission" })
-        return { exit: false }
-      }
-      const lines = []
-      if (manual.length) {
-        lines.push(`configured rules (${manual.length}):`)
-        for (const rule of manual) lines.push(`  ${escapeTerminalText(describeRule(rule))}`)
-        if (learned.length) lines.push("")
-      }
-      if (learned.length) {
-        lines.push(`always-allow rules (${learned.length}) — /permission forget <n>:`)
-        for (const [index, rule] of learned.entries()) {
-          lines.push(`  [${index}] ${escapeTerminalText(describeRule(rule))}`)
-        }
-      }
-      showInfo(`permission rules (${all.length})`, lines.join("\n"), { maxRows: 18 })
-      return { exit: false }
-    }
-
-    if (sub === "forget") {
-      const arg = String(tokens[1] || "").toLowerCase()
-      const all = arg === "--learned" || arg === "all"
-      if (!all && !/^\d+$/.test(arg)) {
-        print("usage: /permission forget <n|all>", { channel: "notice", topic: "command", tone: "error" })
-        return { exit: false }
-      }
-      const outcome = removeLearnedRules(permission.rules, all ? { all: true } : { index: Number(arg) })
-      if (!outcome.removed.length) {
-        print("no matching always-allow rule", { channel: "notice", topic: "command", tone: "error" })
-        return { exit: false }
-      }
-      permission.rules = outcome.rules
-      try {
-        const target = pickConfigPathForScope("user", ctx.configState?.source, process.cwd())
-        const existing = await readConfigFile(target)
-        const persisted = removeLearnedRules(existing?.permission?.rules, all ? { all: true } : { index: Number(arg) })
-        await writeConfigFile(target, {
-          ...existing,
-          permission: { ...(existing.permission || {}), rules: persisted.rules }
-        })
-        print(`forgot ${outcome.removed.length} always-allow rule(s) -> ${target}`, { channel: "notice", topic: "permission" })
-      } catch (error) {
-        print(`forgot ${outcome.removed.length} rule(s) in this session, but saving failed: ${escapeTerminalText(error.message)}`)
-      }
-      return { exit: false }
-    }
-
-    if (approvalFromLegacy(sub)) {
-      const applied = applyPermissionLevel(sub, permission)
-      ctx.configState.config.permission = applied
-      print(applied.level === sub
-        ? `permission.level -> ${applied.level} (runtime)`
-        : `permission.level -> ${applied.level} (runtime, ${sub} 已合并为 ${applied.level})`,
-        { channel: "notice", topic: "permission" })
-      return { exit: false }
-    }
-
-    if (["ask", "allow", "deny"].includes(sub)) {
-      // 0.3.x 这里只写 mode/default_policy，而判定链只看 level，实际是静默 no-op。
-      const mapped = sub === "allow" ? "accept-edits" : sub === "deny" ? "readonly" : "manual"
-      ctx.configState.config.permission = applyPermissionLevel(mapped, permission)
-      print(`/permission ${sub} 已弃用，已映射为 permission.level -> ${mapped} (runtime)`)
-      return { exit: false }
-    }
-
-    if (sub === "non-tty") {
-      const value = String(tokens[1] || "").toLowerCase()
-      if (!["allow_once", "deny"].includes(value)) {
-        print("usage: /permission non-tty <allow_once|deny>", { channel: "notice", topic: "command", tone: "error" })
-        return { exit: false }
-      }
-      permission.non_tty_default = value
-      print(`permission.non_tty_default -> ${value} (runtime)`, { channel: "notice", topic: "permission" })
-      return { exit: false }
-    }
-
-    if (sub === "save") {
-      const scope = String(tokens[1] || "project").toLowerCase()
-      if (!["project", "user"].includes(scope)) {
-        print("usage: /permission save [project|user]", { channel: "notice", topic: "command", tone: "error" })
-        return { exit: false }
-      }
-      try {
-        const target = await persistPermissionConfig({
-          scope,
-          ctx,
-          values: {
-            level: normalizePermissionLevel(permission),
-            non_tty_default: permission.non_tty_default || "deny"
-          }
-        })
-        print(`permission saved (${scope}) -> ${target}`, { channel: "notice", topic: "command" })
-      } catch (error) {
-        print(`permission save failed: ${error.message}`, { channel: "notice", topic: "command", tone: "error" })
-      }
-      return { exit: false }
-    }
-
-    if (sub === "session-clear" || sub === "reset") {
-      PermissionEngine.clearSession(state.sessionId)
-      print(`permission session cache cleared: ${state.sessionId}`, { channel: "notice", topic: "command" })
-      return { exit: false }
-    }
-
-    print("usage: /permission [show|readonly|review|auto|edit|full-auto|yolo|non-tty <allow_once|deny>|save [project|user]|session-clear]")
-    return { exit: false }
-  }
-
-  // /paste — read clipboard image, optionally with prompt text
-  if (normalized === "/paste" || normalized.startsWith("/paste ")) {
-    const pasteText = normalized.replace(/^\/paste\s*/, "").trim()
-    print("reading clipboard...")
-    const clipBlock = await readClipboardImage({ onStatus: (msg) => { if (msg) print(msg) } })
-    if (!clipBlock || clipBlock.type === "error") {
-      print(clipBlock?.message ? `paste failed: ${clipBlock.message}` : "no image found in clipboard")
-      return { exit: false }
-    }
-    if (!pasteText) {
-      // Just attach — store for next message
-      pendingImages.push(clipBlock)
-      print(`image pasted from clipboard (${pendingImages.length} image(s) attached, send a message to include)`, { channel: "notice", topic: "command" })
-      return { exit: false, pastedImage: true }
-    }
-    // Has text — send immediately with the image
-    const allImages = [...pendingImages, clipBlock]
-    if (clearPendingImages) clearPendingImages()
-    const turn = await executePromptTurn({
-      prompt: pasteText,
+  // --- 命令分发 ---
+  const hit = resolveCommand(normalized, BUILTIN_COMMANDS)
+  if (hit) {
+    const outcome = await hit.entry.run({
+      line,
+      normalized,
+      name: hit.name,
+      args: hit.args,
       state,
       ctx,
-      streamSink: state.mode === "longagent" ? null : streamSink,
-      pendingImages: allImages,
-      signal
+      print,
+      showInfo,
+      providersConfigured,
+      customCommands,
+      setCustomCommands,
+      wizard,
+      setWizard,
+      providerPicker,
+      setProviderPicker,
+      pendingImages,
+      clearPendingImages,
+      streamSink,
+      showTurnStatus,
+      signal,
+      suspendTui,
+      openPanel,
+      switchActiveProvider,
+      switchModeInPlace,
+      runPromptTurn
     })
-    const result = turn.result
-    const status = renderReplStatusLine({
-      state,
-      configState: ctx.configState,
-      theme: ctx.themeState.theme,
-      tokenMeter: result.tokenMeter,
-      cost: result.cost,
-      costSavings: result.costSavings,
-      contextMeter: result.context,
-      longagentState: result.longagent
-    })
-    if (showTurnStatus) print(status)
-    if (!result.emittedText) {
-      const mdEnabled = ctx.configState.config.ui?.markdown_render !== false
-      print(mdEnabled ? renderMarkdown(result.reply) : result.reply)
-    }
-    return { exit: false, turnResult: { tokenMeter: result.tokenMeter, cost: result.cost, costSavings: result.costSavings, context: result.context, longagent: result.longagent, toolEvents: result.toolEvents } }
+    // `{ rewrite }` = 改写输入后继续走提示词路径（`/plan <目标>`、`/ultra <目标>`）。
+    // 改写后的文本**不再**过一遍命令分发：它是用户交给模型的目标，不是命令。
+    // 拆分前这里是「重新赋值 normalized 然后顺着流下去」，于是 `/ultra /model k3`
+    // 会去切模型 —— 那是 `if` 顺序的副产物，不是设计。
+    if (outcome && typeof outcome.rewrite === "string") normalized = outcome.rewrite
+    else return outcome || { exit: false }
   }
 
-  // /create-skill — AI generates a new skill from description
-  if (normalized === "/create-skill" || normalized.startsWith("/create-skill ")) {
-    const description = normalized.replace(/^\/create-skill\s*/, "").trim()
-    if (!description) {
-      print("usage: /create-skill <description of what the skill should do>", { channel: "notice", topic: "command", tone: "error" })
-      print("example: /create-skill review code for security vulnerabilities")
-      return { exit: false }
-    }
-    print(`generating skill: ${description}`)
-    try {
-      const skill = await generateSkill({
-        description,
-        configState: ctx.configState,
-        providerType: state.providerType,
-        model: state.model,
-        baseUrl: null,
-        apiKeyEnv: null
-      })
-      if (!skill) {
-        print("skill generation failed — no output from model", { channel: "notice", topic: "command", tone: "error" })
-        return { exit: false }
-      }
-      print(`--- ${skill.filename} ---`)
-      print(skill.content)
-      print("---")
-      const savedPath = await saveSkillGlobal(skill.filename, skill.content)
-      print(`saved to: ${savedPath}`)
-      // Reload skills
-      const extensionPolicy = resolveExtensionPolicy(ctx.configState)
-      await SkillRegistry.initialize(extensionPolicy.config, process.cwd(), {
-        allowProjectSources: extensionPolicy.allowProjectSources
-      })
-      print(`skill /${skill.name} is now available`, { channel: "notice", topic: "command" })
-    } catch (error) {
-      print(`skill generation error: ${error.message}`, { channel: "notice", topic: "command", tone: "error" })
-    }
-    return { exit: false }
-  }
-
-  // /create-agent — AI generates a new sub-agent from description
-  if (normalized === "/agents") {
-    // CLI 侧一直有 `kkcode agent list`，REPL 里却看不到子智能体的存在与权限档。
-    const { listAgents } = await import("./agent/agent.mjs")
-    const configured = ctx.configState.config.agent?.subagents || {}
-    const rows = listAgents()
-      .filter((agent) => agent.mode === "subagent")
-      .map((agent) => {
-        const override = configured[agent.name]
-        const permission = override?.permission || agent.permission || "default"
-        const tools = (override?.tools || agent.tools)
-        return `  ${agent.name.padEnd(20)} ${String(permission).padEnd(10)} ${tools ? `tools: ${tools.join(", ")}` : "tools: all"}`
-      })
-    showInfo(`subagents (${rows.length})`, ["subagents (name / permission / tools)", ...rows].join("\n"))
-    return { exit: false }
-  }
-
-  if (normalized === "/tasks" || normalized.startsWith("/tasks ")) {
-    const { BackgroundManager } = await import("./orchestration/background-manager.mjs")
-    const rest = normalized.slice("/tasks".length).trim()
-    const [action, taskId] = rest.split(/\s+/).filter(Boolean)
-    if (action === "stop" && taskId) {
-      await BackgroundManager.cancel(taskId).catch(() => null)
-      print(`task ${taskId} cancellation requested`, { channel: "notice", topic: "task" })
-      return { exit: false }
-    }
-    if (action === "retry" && taskId) {
-      const retried = await BackgroundManager.retry(taskId, ctx.configState.config).catch(() => null)
-      print(retried ? `task ${taskId} retried (attempt ${retried.attempt})` : `task ${taskId} could not be retried`,
-        { channel: "notice", topic: "task", tone: retried ? "success" : "warn" })
-      return { exit: false }
-    }
-    const tasks = await BackgroundManager.list().catch(() => [])
-    if (!tasks.length) {
-      print("no background tasks", { channel: "notice", topic: "task" })
-      return { exit: false }
-    }
-    const rows = tasks.slice(-20).map((task) => {
-      const desc = String(task.description || "").slice(0, 48)
-      return `  ${String(task.id).padEnd(24)} ${String(task.status).padEnd(12)} ${desc}`
-    })
-    showInfo(`background tasks (${tasks.length})`,
-      ["background tasks (id / status / description)", ...rows, "", "  /tasks stop <id> · /tasks retry <id>"].join("\n"))
-    return { exit: false }
-  }
-
-  if (normalized === "/create-agent" || normalized.startsWith("/create-agent ")) {
-    const description = normalized.replace(/^\/create-agent\s*/, "").trim()
-    if (!description) {
-      print("usage: /create-agent <description of what the agent should do>", { channel: "notice", topic: "command", tone: "error" })
-      print("example: /create-agent code reviewer that focuses on security vulnerabilities")
-      return { exit: false }
-    }
-    print(`generating agent: ${description}`)
-    try {
-      const { generateAgent, saveAgentGlobal } = await import("./agent/generator.mjs")
-      const agent = await generateAgent({
-        description,
-        configState: ctx.configState,
-        providerType: state.providerType,
-        model: state.model,
-        baseUrl: null,
-        apiKeyEnv: null
-      })
-      if (!agent) {
-        print("agent generation failed — no output from model", { channel: "notice", topic: "command", tone: "error" })
-        return { exit: false }
-      }
-      print(`--- ${agent.filename} ---`)
-      print(agent.content)
-      print("---")
-      const savedPath = await saveAgentGlobal(agent.filename, agent.content)
-      print(`saved to: ${savedPath}`)
-      // Reload custom agents
-      const { CustomAgentRegistry } = await import("./agent/custom-agent-loader.mjs")
-      const extensionPolicy = resolveExtensionPolicy(ctx.configState)
-      await CustomAgentRegistry.initialize(process.cwd(), {
-        allowProjectSources: extensionPolicy.allowProjectSources
-      })
-      print(`agent "${agent.name}" is now available as a sub-agent`, { channel: "notice", topic: "command" })
-    } catch (error) {
-      print(`agent generation error: ${error.message}`, { channel: "notice", topic: "command", tone: "error" })
-    }
-    return { exit: false }
-  }
-
+  // --- 提示词路径：技能与自定义命令展开，然后跑一个回合 ---
   let prompt = normalized
   if (normalized.startsWith("$") || normalized.startsWith("/")) {
     const sigil = normalized.startsWith("$") ? "$" : "/"
@@ -1379,116 +382,7 @@ async function processInputLine({
   const images = pendingImages.length ? [...pendingImages] : []
   if (clearPendingImages && images.length) clearPendingImages()
 
-  const turn = await executePromptTurn({
-    prompt,
-    state,
-    ctx,
-    streamSink: state.mode === "longagent" ? null : streamSink,
-    pendingImages: images,
-    signal
-  })
-  const result = turn.result
-
-  const status = renderReplStatusLine({
-    state,
-    configState: ctx.configState,
-    theme: ctx.themeState.theme,
-    tokenMeter: result.tokenMeter,
-    cost: result.cost,
-    costSavings: result.costSavings,
-    contextMeter: result.context,
-    longagentState: result.longagent
-  })
-  if (showTurnStatus) print(status)
-
-  const toolFileChanges = normalizeFileChanges(result.toolEvents)
-  const longagentFileChanges = normalizeFileChanges(
-    Array.isArray(result.longagent?.fileChanges)
-      ? result.longagent.fileChanges.map((item) => ({
-          name: "write",
-          metadata: { fileChanges: [item] }
-        }))
-      : []
-  )
-  const fileChanges = state.mode === "longagent" && longagentFileChanges.length
-    ? longagentFileChanges
-    : toolFileChanges
-  const diagnostics = normalizeDiagnostics(result.toolEvents)
-
-  if (state.mode === "longagent") {
-    if (result.longagent) {
-      if (result.longagent.goal) {
-        // 0.5.0：目标看板的紧凑形态（每个子目标一行进度 + 受阻/待验收计数），
-        // 取代旧的 "longagent: phase=… stage=…" 单行
-        const board = buildBoardModel({
-          goal: result.longagent.goal,
-          stagePlan: result.longagent.stagePlan,
-          taskProgress: result.longagent.taskProgress || {},
-          verification: result.longagent.goalVerification
-        })
-        for (const line of renderUltraBoard(board, { compact: true, paint })) print(line)
-      } else {
-        const stg = result.longagent.currentStageId
-          ? result.longagent.currentStageId
-          : `${(result.longagent.stageIndex || 0) + 1}/${Math.max(1, result.longagent.stageCount || 1)}`
-        print(`longagent: phase=${result.longagent.phase || "-"} stage=${stg} gate=${result.longagent.currentGate || "-"}`)
-      }
-      if (result.longagent.taskProgress && Object.keys(result.longagent.taskProgress).length) {
-        for (const line of renderTaskProgressPanel(result.longagent.taskProgress, formatPlanProgress)) print(line)
-      }
-      // 受阻报告优先（从 ledger 生成的结构化报告，带判据与证据）；
-      // 没有报告时退回 recoverySuggestions —— 后者从 0.3.x 起就在生成，
-      // 但 engine 打包时没有透传，全代码库零消费者，用户从来没见过它。
-      if (result.longagent.blockedReport && result.longagent.status !== "completed") {
-        for (const line of renderBlockedReportText(result.longagent.blockedReport, { paint })) print(line)
-      } else if (result.longagent.recoverySuggestions) {
-        for (const line of formatRecoverySuggestions(result.longagent.recoverySuggestions)) print(line)
-      }
-    }
-    if (fileChanges.length) {
-      print(paint("changed files:", "cyan", { bold: true }))
-      for (const line of renderFileChangeLines(fileChanges)) print(line)
-    }
-    if (diagnostics.length) {
-      print(paint("diagnostics:", "yellow", { bold: true }))
-      for (const line of renderDiagnosticsLines(diagnostics, 6)) print(line)
-    } else if (!result.emittedText && result.reply) {
-      const mdEnabled = ctx.configState.config.ui?.markdown_render !== false
-      print(mdEnabled ? renderMarkdown(result.reply) : result.reply)
-    }
-  } else {
-    if (!result.emittedText) {
-      const mdEnabled = ctx.configState.config.ui?.markdown_render !== false
-      print(mdEnabled ? renderMarkdown(result.reply) : result.reply)
-    }
-    if (fileChanges.length) {
-      print(paint("changed files:", "cyan", { bold: true }))
-      for (const line of renderFileChangeLines(fileChanges, 10)) print(line)
-    }
-    if (diagnostics.length) {
-      print(paint("diagnostics:", "yellow", { bold: true }))
-      for (const line of renderDiagnosticsLines(diagnostics, 6)) print(line)
-    }
-  }
-  // Plan 审批选择了执行航道 → 真正切模式（0.3.x 只把选择塞回提示词）
-  let planHandoff = null
-  if (result.planHandoff?.modeId) {
-    const next = switchModeInPlace(state, ctx, result.planHandoff.modeId)
-    planHandoff = { ...result.planHandoff, label: next.label, icon: next.icon }
-    print(`mode switched: ${next.icon} ${next.label} (plan build)`, { channel: "notice", topic: "mode" })
-  }
-
-  return {
-    exit: false,
-    planHandoff,
-    turnResult: {
-      tokenMeter: result.tokenMeter,
-      cost: result.cost,
-      context: result.context,
-      longagent: result.longagent,
-      toolEvents: result.toolEvents
-    }
-  }
+  return runPromptTurn({ prompt, images })
 }
 
 async function startLineRepl({ ctx, state, providersConfigured, customCommands, recentSessions, historyLines }) {

@@ -167,25 +167,16 @@ test("a string-array providerPicker (line mode) does not render an overlay", () 
   assert.doesNotMatch(frame.lines.map(stripAnsi).join("\n"), /Select Provider/)
 })
 
-// --- 源码契约：只读查询不得进对话记录 ---
+// --- 通道契约 ---
+//
+// 「哪些命令走浮层」现在由 test/repl-commands.test.mjs 用**行为**断言覆盖
+// （真的调用命令，看它往哪个通道写）。这里只留下两条仍然属于 repl.mjs 的性质。
 
-test("read-only queries go through showInfo, not the transcript", async () => {
+test("the folded-panel channel survives only as showInfo's line-mode fallback", async () => {
   const src = await readFile(path.join(ROOT, "src", "repl.mjs"), "utf8")
-  // 这些命令回答的是「现在的状态是什么」。它们的输出进了对话记录就会随会话
-  // 发给模型、被 /clear 清掉、且关不掉。
-  for (const title of [
-    "help · slash commands and shortcuts",
-    "keyboard shortcuts",
-    "runtime status",
-    "commands & capabilities",
-    "ultra board",
-    "permission"
-  ]) {
-    assert.match(src, new RegExp(`showInfo\\(\\s*["\`]${title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
-      `「${title}」应通过 showInfo 呈现`)
-  }
-  // 反向：不该再有 channel: "panel" 的残留**调用** —— 那是旧的对话记录折叠通道。
-  // 按行数，跳过注释：注释里提到它是在解释两者的区别，不算调用。
+  // `channel: "panel"` 是 0.6.0 的旧通道：它把输出折叠成**对话记录里的一条**，
+  // 于是只读查询仍会随会话发给模型、被 /clear 清掉。唯一正当的残留是行模式
+  // （无 TTY，没有帧可浮）的回落。多出一处就说明有命令又走回了对话记录。
   const panelCalls = src.split("\n").filter((line) => {
     const trimmed = line.trim()
     if (trimmed.startsWith("//") || trimmed.startsWith("*")) return false
@@ -193,6 +184,23 @@ test("read-only queries go through showInfo, not the transcript", async () => {
   })
   assert.equal(panelCalls.length, 1,
     `channel: "panel" 只该保留在 showInfo 的行模式回落里，实际 ${panelCalls.length} 处：\n${panelCalls.join("\n")}`)
+})
+
+test("every usage message in the command layer is a toast", async () => {
+  // 枚举驱动，不是手写清单：命令模块里**所有** `usage:` 文案都必须走 notice 通道。
+  // 「usage: …」是对被拒命令的反馈，不是对话内容 —— 进对话记录就会被发给模型。
+  // 手写要检查哪几条文案的话，下一条新命令的 usage 就会静默漏掉。
+  const modules = ["session", "provider", "permission", "mode", "authoring"]
+  const offenders = []
+  for (const name of modules) {
+    const src = await readFile(path.join(ROOT, "src", "repl", "commands", `${name}.mjs`), "utf8")
+    for (const match of src.matchAll(/print\(\s*(["`])usage:[\s\S]{0,200}?\)\n/g)) {
+      if (!/channel: "notice"/.test(match[0])) {
+        offenders.push(`${name}.mjs: ${match[0].split("\n")[0].trim()}`)
+      }
+    }
+  }
+  assert.deepEqual(offenders, [], `这些 usage 文案没走 notice 通道:\n  ${offenders.join("\n  ")}`)
 })
 
 test("showInfo falls back to a folded entry when there is no frame", async () => {
@@ -235,31 +243,33 @@ test("pickers confirm through the normal submit path, not a second copy of the l
   }
 })
 
-test("command errors and action confirmations are toasts, not conversation", async () => {
-  const src = await readFile(path.join(ROOT, "src", "repl.mjs"), "utf8")
-  // 「usage: …」是对被拒命令的反馈，「workspace trusted」是报告刚发生了什么。
-  // 两者都不是对话内容 —— 进了对话记录就会随会话发给模型。
-  const shouldBeToast = [
-    "usage: /model <model-id>",
-    "usage: /permission save [project|user]",
-    "workspace trusted",
-    "no matching always-allow rule"
-  ]
-  for (const literal of shouldBeToast) {
+test("action confirmations are toasts, not conversation", async () => {
+  // 「刚发生了什么」类的确认不是对话内容 —— 进了对话记录就会随会话发给模型。
+  // 这两条需要真实的注册表初始化/配置落盘才能行为覆盖，所以仍靠源码断言；
+  // 但锚点必须**确认找得到**，否则搬家之后会变成空洞通过（见下一条的教训）。
+  const src = await readFile(path.join(ROOT, "src", "repl", "commands", "permission.mjs"), "utf8")
+  for (const literal of ["workspace trusted", "no matching always-allow rule"]) {
     const idx = src.indexOf(literal)
-    assert.notEqual(idx, -1, `找不到文案：${literal}`)
-    // 取该调用所在的一小段，确认带了 notice 通道
-    const around = src.slice(idx, idx + 220)
-    assert.match(around, /channel: "notice"/, `「${literal}」应走 notice 通道`)
+    assert.notEqual(idx, -1, `找不到文案：${literal} —— 它搬走了，这条断言需要跟着更新`)
+    assert.match(src.slice(idx, idx + 220), /channel: "notice"/, `「${literal}」应走 notice 通道`)
   }
 })
 
 test("model replies and file changes stay in the conversation", async () => {
-  const src = await readFile(path.join(ROOT, "src", "repl.mjs"), "utf8")
   // 反向保护：模型回复、文件变更、诊断是对话的一部分，不该被顺手改成瞬时提示 ——
   // 瞬时提示会消失，而这些内容用户需要回看。
-  const replyCall = src.slice(src.indexOf("mdEnabled ? renderMarkdown(result.reply)"))
-  assert.doesNotMatch(replyCall.slice(0, 160), /channel: "notice"/, "模型回复必须留在对话记录里")
-  const changedFiles = src.slice(src.indexOf('paint("changed files:"'))
-  assert.doesNotMatch(changedFiles.slice(0, 160), /channel: "notice"/, "文件变更必须留在对话记录里")
+  //
+  // 这条断言此前锚在 repl.mjs 上。回合呈现搬进 turn-presenter.mjs 之后
+  // `indexOf` 返回 -1，`slice(-1)` 只剩一个字符，`doesNotMatch` 于是**空洞通过** ——
+  // 测试还在绿着，但什么都没验。所以现在每个锚点都先断言找得到。
+  const src = await readFile(path.join(ROOT, "src", "repl", "turn-presenter.mjs"), "utf8")
+  for (const [anchor, label] of [
+    ["mdEnabled ? renderMarkdown(result.reply)", "模型回复"],
+    ['paint("changed files:"', "文件变更"],
+    ['paint("diagnostics:"', "诊断"]
+  ]) {
+    const idx = src.indexOf(anchor)
+    assert.notEqual(idx, -1, `找不到锚点「${anchor}」—— 代码搬走了，这条断言需要跟着更新`)
+    assert.doesNotMatch(src.slice(idx, idx + 160), /channel: "notice"/, `${label}必须留在对话记录里`)
+  }
 })

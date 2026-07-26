@@ -52,6 +52,23 @@ export function cycleModeSelection(currentModeId, { permissionConfig = {} } = {}
   return applyModeSelection(nextModeId(resolveModeId(currentModeId)), { permissionConfig })
 }
 
+/**
+ * 就地切换模式：同时写 state.modeId、state.mode（航道）与
+ * permission.level（审批档）。TUI 与行模式共用。
+ *
+ * 和 `applyModeSelection` 的分工是刻意的：那个是纯函数（算结果），这个负责
+ * 落到 state 与 config 上。三处必须一起改 —— 只改 state.mode 会让判定链继续
+ * 按旧审批档放行，只改 permission.level 会让状态栏显示旧模式。
+ */
+export function switchModeInPlace(state, ctx, modeId) {
+  const permission = ctx.configState.config.permission || (ctx.configState.config.permission = {})
+  const next = applyModeSelection(modeId, { permissionConfig: permission })
+  state.modeId = next.modeId
+  state.mode = next.mode
+  ctx.configState.config.permission = next.permissionConfig
+  return next
+}
+
 export function createModePickerState(currentModeId = DEFAULT_MODE_ID) {
   const index = MODE_IDS.indexOf(resolveModeId(currentModeId))
   return { selected: Math.max(0, index) }

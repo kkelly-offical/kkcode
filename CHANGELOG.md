@@ -1,5 +1,88 @@
 # Changelog / 更新日志
 
+## 0.6.16
+
+`repl.mjs` 拆分第一阶段：1090 行的命令路由变成注册表 + 六个命令模块。
+
+### English
+
+- **The command router is a registry now.** `processInputLine` was 1090 lines and
+  49 sequential `if`s; it is 208 lines and looks up a table. Commands live in
+  `src/repl/commands/{session,provider,permission,mode,authoring}.mjs`, one entry
+  per command instead of one-to-four scattered branches. `repl.mjs` went from
+  4563 to 3456 lines.
+- **The completion catalog is derived from the registry.** `BUILTIN_SLASH` was a
+  hand-written array of 39 rows sitting a thousand lines away from the dispatch it
+  was supposed to mirror; eight commands (`/board`, `/cls`, `/home`, `/yolo` …)
+  had been executable but invisible in completion because only the dispatch was
+  updated when they were added. 0.6.0 papered over that with a regex that scanned
+  the source and compared the two lists. The catalog is now computed from the same
+  table that dispatches, so the drift is structurally impossible and the scan is
+  gone. The derived catalog was verified row-for-row identical to the hand-written
+  one — same 39 names, same descriptions.
+- **Seven source-text assertions became behaviour assertions.** Nothing in the
+  router was exported, so its contracts could only be tested by reading
+  `repl.mjs` and matching regexes — assertions that verify a string exists in a
+  file, and break the moment code moves. Commands are importable data now, so the
+  tests call them and check which channel they wrote to. One of the old ones had
+  already rotted into a vacuous pass: it anchored on a literal that had moved, so
+  `indexOf` returned −1, `slice(-1)` left one character, and `doesNotMatch`
+  succeeded against nothing. Every anchor now asserts it was found first.
+- **Cache savings were computed, displayed, and dropped in between.** The turn
+  result was assembled in two places — the normal submit path and `/paste <text>` —
+  and the normal one omitted `costSavings`. So the `↓$0.0042` next to `COST` in
+  the status bar, which reports how much prompt caching saved, only ever appeared
+  after a `/paste`. Both paths are one `turn-presenter.mjs` now, with a single
+  definition of what a turn result contains.
+- **An enumeration-driven test found a missed toast.** 0.6.14 moved command
+  errors off the transcript using a hand-picked list of four strings; the new test
+  asserts *every* `usage:` message in the command layer is a toast, and caught the
+  `/permission` fall-back usage line still going into the conversation.
+- **78 dead imports removed** — 23 of them left behind by the 0.6.12 and 0.6.13
+  splits, which moved code out without cleaning up what it had imported.
+- **Two deliberate behaviour changes.** `/paste <text>` now also lists file
+  changes and diagnostics, which it should always have done — that was lost when
+  the turn path was copied. And a rewritten `/ultra <goal>` no longer runs the
+  goal through command dispatch: `/ultra /model k3` used to switch the model,
+  because the rewritten text fell through into the `if`s that came later. That was
+  a by-product of statement order, not a design.
+- **Verified in a real 100×32 terminal**, not just in unit tests: `/status`,
+  `/agents`, `/provider`, `/mode` overlays, the picker→submit→registry round trip
+  (status bar really does change to the selected provider), and `/exit`.
+
+### 中文
+
+- **命令路由变成注册表。** `processInputLine` 从 1090 行、49 个顺序 `if` 变成
+  208 行的查表。命令本体在 `src/repl/commands/` 下按领域分成五个文件，一条命令
+  一个注册项，而不是散在四处的分支。`repl.mjs` 从 4563 行降到 3456 行。
+- **补全目录由注册表派生。** `BUILTIN_SLASH` 是一份 39 行的手写数组，和它本该
+  镜像的分发隔着一千行；`/board`、`/cls`、`/home`、`/yolo` 等八条命令曾长期能
+  执行却在补全里看不见，因为加它们时只改了分发。0.6.0 用一条扫源码的正则把这个
+  问题糊住了。现在目录与分发同源，漂移在结构上不可能发生，那条扫描也删了。派生
+  出的目录与手写版逐条核对过 —— 39 个名字、描述全部一致。
+- **七处源码文本断言换成行为断言。** 路由里什么都没导出，它的契约只能靠读
+  `repl.mjs` 打正则来验 —— 那种断言只证明「文件里有某个字符串」，且代码一搬就
+  失效。现在命令是可导入的数据，测试直接调用它们、看它们往哪个通道写。其中一条
+  旧断言已经烂成了**空洞通过**：它锚定的字面量搬走了，`indexOf` 返回 −1，
+  `slice(-1)` 只剩一个字符，`doesNotMatch` 于是对着空气成立。现在每个锚点都先
+  断言自己找得到。
+- **缓存节省算出来了、有地方显示、中间被丢了。** 回合结果在两处组装 —— 正常提交
+  一处、`/paste <文字>` 一处 —— 而正常那处漏了 `costSavings`。于是状态栏 `COST`
+  旁边那个报告提示词缓存省了多少的 `↓$0.0042`，只在 `/paste` 之后出现过。两条路
+  现在合并成一个 `turn-presenter.mjs`，「回合结果有哪些字段」只有一个答案。
+- **枚举驱动的测试抓到一处漏掉的提示。** 0.6.14 把命令报错移出对话记录时用的是
+  手写的四条文案清单；新测试断言命令层里**所有** `usage:` 文案都必须是瞬时提示，
+  于是抓到 `/permission` 的兜底 usage 仍在往对话记录里写。
+- **删掉 78 个死导入** —— 其中 23 个是 0.6.12、0.6.13 那两次拆分留下的：代码搬走了，
+  它当初引入的依赖没跟着清。
+- **两处有意的行为变化。** `/paste <文字>` 现在也会列出文件变更与诊断 —— 那本来就
+  该有，是当初复制回合路径时丢的。以及 `/ultra <目标>` 改写后的文本不再过一遍命令
+  分发：此前 `/ultra /model k3` 会去切模型，因为改写后的文本顺着流进了后面的
+  `if`。那是语句顺序的副产物，不是设计。
+- **在真实 100×32 终端里验过**，不只是单测：`/status`、`/agents`、`/provider`、
+  `/mode` 四个浮层，选择器→提交→注册表的完整闭环（状态栏确实切到了所选渠道），
+  以及 `/exit`。
+
 ## 0.6.15
 
 修一个从 0.6.0 起就在的崩溃：`/agents` 与 `/tasks` 会打死行模式的 REPL。

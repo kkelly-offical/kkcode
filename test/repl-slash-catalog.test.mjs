@@ -3,53 +3,62 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
+import { buildBuiltinSlashCatalog, allCommandNames } from "../src/repl/commands/registry.mjs"
+import { sessionCommands } from "../src/repl/commands/session.mjs"
+import { providerCommands } from "../src/repl/commands/provider.mjs"
+import { permissionCommands } from "../src/repl/commands/permission.mjs"
+import { modeCommands } from "../src/repl/commands/mode.mjs"
+import { authoringCommands } from "../src/repl/commands/authoring.mjs"
 
 /**
- * 0.6.0：补全菜单与实际分发必须同源。
+ * 补全目录与实际分发必须同源。
  *
- * BUILTIN_SLASH（补全目录）和 processInputLine 里的一长串 if（实际分发）
- * 是两份各写各的清单。加命令时只改分发是最自然的疏忽 —— /board、/cls、
- * /home、/yolo 等八条就这样一直能执行、却从不出现在补全里。
+ * 0.6.0 这条测试是**扫源码正则**：`BUILTIN_SLASH` 是手写数组，分发是
+ * `processInputLine` 里 49 个顺序 `if`，两份清单各写各的，`/board`、`/cls`、
+ * `/home`、`/yolo` 等八条就这样一直能执行、却从不出现在补全里。当时只能用
+ * 静态扫描去比对两份清单。
  *
- * 静态扫描很粗糙，但正是这种「下一个漏网点」需要的那类结构性检查。
+ * 现在目录由注册表派生，漂移在结构上不可能发生 —— 所以这个文件要守的性质变了：
+ * **repl.mjs 不许再手写一份目录**。真正的目录内容与分发一致性由
+ * `test/repl-commands.test.mjs` 用行为断言覆盖。
  */
 
-const replPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "repl.mjs")
-const source = readFileSync(replPath, "utf8")
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..")
+const replSource = readFileSync(path.join(ROOT, "src", "repl.mjs"), "utf8")
 
-function declaredCommands() {
-  const block = source.slice(source.indexOf("const BUILTIN_SLASH = ["), source.indexOf("]", source.indexOf("const BUILTIN_SLASH = [")))
-  return new Set([...block.matchAll(/\{ name: "([a-z-]+)"/g)].map((m) => m[1]))
-}
+const ALL = [
+  ...sessionCommands,
+  ...providerCommands,
+  ...permissionCommands,
+  ...modeCommands,
+  ...authoringCommands
+]
 
-function dispatchedCommands() {
-  const found = new Set()
-  for (const m of source.matchAll(/normalized === "\/([a-z-]+)"/g)) found.add(m[1])
-  for (const m of source.matchAll(/normalized\.startsWith\("\/([a-z-]+)[ "]/g)) found.add(m[1])
-  // 数组形式里混着 "/?" 这类非字母别名，逐项取而不是要求整个数组同构，
-  // 否则 ["/help", "/h", "/?"] 会因为最后一项而整条漏掉。
-  for (const m of source.matchAll(/\[\s*("\/[^\]]+?")\s*\]\.includes\(normalized\)/g)) {
-    for (const item of m[1].matchAll(/"\/([a-z-]+)"/g)) found.add(item[1])
-  }
-  return found
-}
-
-// 别名由 DEFAULT_SLASH_ALIASES 或同一分支展开，不必单独占一条补全项
-const ALIAS_ONLY = new Set(["h", "n", "s", "k", "r", "m", "p", "q", "quit", "cls"])
-
-test("every dispatched slash command appears in the completion catalog", () => {
-  const declared = declaredCommands()
-  const dispatched = dispatchedCommands()
-  assert.ok(declared.size > 20, `catalog looks empty: ${declared.size}`)
-  assert.ok(dispatched.size > 20, `dispatch scan looks empty: ${dispatched.size}`)
-
-  const missing = [...dispatched].filter((name) => !declared.has(name) && !ALIAS_ONLY.has(name)).sort()
-  assert.deepEqual(missing, [], `可执行但不在补全目录里: ${missing.join(", ")}`)
+test("the catalog in repl.mjs is derived, not hand-written", () => {
+  const assignment = replSource.match(/const BUILTIN_SLASH = ([^\n]*)/)
+  assert.ok(assignment, "repl.mjs 应该仍然有 BUILTIN_SLASH（补全菜单读它）")
+  assert.match(assignment[1], /buildBuiltinSlashCatalog\(/,
+    "BUILTIN_SLASH 必须由注册表派生。手写数组会重新引入「目录与分发两份清单」的漂移。")
+  assert.doesNotMatch(assignment[1], /^\s*\[/,
+    "BUILTIN_SLASH 不该是字面数组")
 })
 
-test("the catalog does not advertise commands that cannot run", () => {
-  const declared = declaredCommands()
-  const dispatched = dispatchedCommands()
-  const phantom = [...declared].filter((name) => !dispatched.has(name)).sort()
-  assert.deepEqual(phantom, [], `补全里有但分发不认的命令: ${phantom.join(", ")}`)
+test("repl.mjs no longer dispatches commands by a chain of string comparisons", () => {
+  // 拆分前是 49 个 `normalized === "/x"` / `startsWith("/x ")`。命令搬进注册表后
+  // 这些判断不该再回到 repl.mjs —— 回来一条就意味着一条命令绕过了目录。
+  const comparisons = [
+    ...replSource.matchAll(/normalized\s*===\s*"\/[a-z-]+"/g),
+    ...replSource.matchAll(/normalized\.startsWith\("\/[a-z-]+\s/g)
+  ].map((m) => m[0])
+  assert.deepEqual(comparisons, [],
+    `repl.mjs 里出现了绕过注册表的命令判断:\n  ${comparisons.join("\n  ")}`)
+})
+
+test("the derived catalog covers every command that is meant to be discoverable", () => {
+  const catalog = buildBuiltinSlashCatalog(ALL)
+  const names = allCommandNames(ALL)
+  assert.ok(catalog.length > 20, `目录看起来是空的: ${catalog.length}`)
+  for (const row of catalog) {
+    assert.ok(names.has(row.name), `目录里的 /${row.name} 没有命令能执行`)
+  }
 })

@@ -123,17 +123,12 @@ describe("provider current / list", () => {
   })
 })
 
-describe("REPL 语义归位（静态锁定）", () => {
-  it("add = 添加（启动向导），列出并选择归裸 /provider，set 只留指路提示", async () => {
+describe("REPL 语义归位", () => {
+  // add/set/edit 的语义现在由 test/repl-commands.test.mjs 行为覆盖（真的调用命令、
+  // 断言向导是否被启动）。这里留下的是仍然属于 repl.mjs 的那一条。
+  it("provider 选择态放行斜杠命令，不把它当 provider 名匹配", async () => {
     const source = await readFile(new URL("../src/repl.mjs", import.meta.url), "utf8")
-    // add 分支必须启动向导
-    const addBlock = source.slice(source.indexOf('if (rest === "add")'), source.indexOf('if (rest === "set")'))
-    assert.match(addBlock, /startWizard/, "「add」必须是添加：上游分支里 add 是列出、set 是添加，与词义相反")
-    // set 只是迁移提示，不再是功能
-    const setBlock = source.slice(source.indexOf('if (rest === "set")'), source.indexOf('if (rest === "set")') + 400)
-    assert.match(setBlock, /已更名/)
-    assert.doesNotMatch(setBlock, /startWizard/)
-    // 选择模式对斜杠输入放行，不吞命令
-    assert.match(source, /input\.startsWith\("\/"\)/, "选择模式必须放行斜杠命令而不是当 provider 名匹配")
+    assert.match(source, /input\.startsWith\("\/"\)/,
+      "用户在选择态改主意敲了别的命令，应退出选择让命令执行，而不是报「找不到 provider: /help」")
   })
 })
