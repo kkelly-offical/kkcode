@@ -1,5 +1,84 @@
 # Changelog / 更新日志
 
+## 0.6.12
+
+`repl.mjs` 拆分的第一刀：4782 → 4284 行，抽出 `frame-primitives.mjs` 与
+`frame-builder.mjs`。拆的过程本身找出四个真实缺陷 —— 这是拆分的实际收益，
+不是副产品。
+
+### English
+
+- **Frame primitives existed in five divergent copies.** `stripAnsi`,
+  `displayWidth`, `padRight` and friends were reimplemented in `repl.mjs`,
+  `repl-dashboard.mjs`, `activity-renderer.mjs`, `repl-help.mjs` and
+  `text-layout.mjs`, with four different ANSI patterns between them. `repl.mjs`
+  and `repl-dashboard.mjs` matched SGR only, so `padRight` returned a string
+  still carrying OSC hyperlink and cursor-movement bytes while presenting it as
+  plain text — a tool that emits a hyperlink (npm and pnpm do) put escape bytes
+  into a frame cell, and the terminal acted on them at paint time.
+  `repl-help.mjs` aligned by JS string length, which is wrong for CJK and for
+  colour codes; that one is latent only because the help table's first column
+  happens to be ASCII commands. One implementation now, in
+  `src/repl/frame-primitives.mjs`.
+- **Two off-by-one layout bugs, found by the new tests.** Clipping to a cell
+  budget can land inside a wide character; the clip stops one cell short and
+  nobody padded the remainder. So `padRight("中文中文", 5)` returned 4 cells and
+  `frameRow` came out one cell narrow whenever content contained CJK — the row
+  shifts left and the border stops aligning. Both now pad the shortfall.
+- **The status bar was still reading `process.stdout.columns` itself.** 0.6.1
+  fixed *which* segment gets dropped when the bar does not fit; it did not fix
+  where the width comes from. So the frame would lay out at 86 columns while the
+  status bar laid itself out at 120 (or at whatever the test process reported,
+  which is nothing), and the frame then hard-clipped the overflow from the right
+  — dropping PERMISSION regardless of its priority. The priority mechanism never
+  got to participate. Width is now a parameter, and the frame passes its own.
+  Verified in a real 86-column terminal: TOKENS and COST drop, PERMISSION stays.
+- **`buildFrame` is testable at all now.** It was 456 lines inside
+  `startTuiRepl`, reading width and height straight from `process.stdout` —
+  which in a test process is `undefined`, so every width branch collapsed to the
+  120×40 path. That is how the 0.6.1 status-bar regression passed 1148 tests.
+  Width, height and `now` are parameters; the new suite renders every overlay
+  branch (permission prompt, single/multi/custom question, three pickers,
+  thinking, paused, images, dashboard, input selection) across six widths and
+  asserts every line is exactly the terminal width.
+- One extraction bug caught before release, worth recording: replacing
+  `Date.now()` with the new `now` parameter also rewrote the parameter's own
+  default into `now = now`, a TDZ error that only fires when the caller omits
+  `now` — which the real caller does and the new tests did not. The e2e TUI test
+  caught it; there is now a unit test that takes the default path.
+
+### 中文
+
+- **帧原语此前有五份互不一致的副本。** `stripAnsi`、`displayWidth`、`padRight`
+  这几个在 `repl.mjs`、`repl-dashboard.mjs`、`activity-renderer.mjs`、
+  `repl-help.mjs`、`text-layout.mjs` 各写了一遍，四种不同的 ANSI 正则。
+  `repl.mjs` 与 `repl-dashboard.mjs` 只认 SGR，于是 `padRight` 返回的字符串仍
+  带着 OSC 超链接与光标序列的字节，却被当作纯文本填进帧格 —— 工具输出超链接时
+  （npm、pnpm 都会）转义字节就进了帧，绘制时终端会真的执行它。
+  `repl-help.mjs` 按 JS 字符串长度对齐，对中文和颜色码都是错的；它只是潜在，
+  因为帮助表第一列恰好全是 ASCII 命令。现在只有一份，在
+  `src/repl/frame-primitives.mjs`。
+- **两个差一格的错位 bug，由新测试找出。** 按单元格预算裁剪可能落在宽字符
+  中间，裁剪结果比预算少一格，而没人补上那一格。于是
+  `padRight("中文中文", 5)` 返回 4 格宽、`frameRow` 在内容含中文时窄一格 ——
+  整行左移、边框对不齐。两处现在都补足差额。
+- **状态栏此前仍在自己读 `process.stdout.columns`。** 0.6.1 修的是「装不下时
+  丢哪个段」，没修宽度来自哪里。于是帧按 86 列排版、状态栏按 120 列排版
+  （测试进程里干脆读不到），超出部分被帧从右边硬切 —— 不论优先级如何，
+  被切掉的都是最右的 PERMISSION，优先级机制根本没参与判断。现在宽度是参数，
+  帧把自己的宽度传下去。86 列真实终端确认：TOKENS 与 COST 被丢弃，PERMISSION
+  保留。
+- **`buildFrame` 现在才第一次可测。** 它是 `startTuiRepl` 内部的 456 行，宽高
+  直读 `process.stdout` —— 测试进程里那是 `undefined`，所有宽度分支塌缩成
+  120×40 一条路。0.6.1 的状态栏回归就是这么通过 1148 条测试的。宽、高、`now`
+  都成了参数；新测试把每个浮层分支（权限提示、单选/多选/自定义提问、三种
+  选择器、思考、暂停、图片、仪表盘、输入选区）在六个宽度下各渲染一遍，
+  断言每一行恰好等于终端宽度。
+- 一个在发布前被拦下的抽取错误，值得记下：把 `Date.now()` 换成新参数 `now`
+  时，参数自己的默认值也被改写成了 `now = now` —— TDZ 错误，且只在调用方
+  **省略** `now` 时触发，而真实调用方正是省略它、新测试却总是显式传值。
+  e2e 的 TUI 测试抓到了它；现在有一条走默认值路径的单测。
+
 ## 0.6.11
 
 0.6.10 说图片读取「未能验证」。用视觉模型（aliyun qwen3.7-plus）真跑之后发现，

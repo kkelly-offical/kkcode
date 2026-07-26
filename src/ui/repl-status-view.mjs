@@ -12,9 +12,11 @@ export function renderReplStatusLine({
   cost,
   costSavings = 0,
   contextMeter = null,
-  longagentState = null
+  longagentState = null,
+  width = null
 }) {
   return renderStatusBar({
+    width,
     mode: state.mode,
     modeId: state.modeId,
     model: state.model,

@@ -68,9 +68,14 @@ export function renderStatusBar({
   theme,
   layout = "compact",
   longagentState = null,
-  memoryLoaded = false
+  memoryLoaded = false,
+  // 排版宽度由调用方给。0.6.1 修了「装不下时丢哪个段」，但宽度仍直读
+  // process.stdout.columns —— 测试进程里它恒为 undefined（回落 120），所以
+  // 分档逻辑永远走同一条路，而真实的 86 列终端上状态栏按 120 排完再被帧硬截，
+  // 尾部的 PERMISSION 照样丢失。优先级机制在那种情况下根本没参与判断。
+  width: widthOverride = null
 }) {
-  const width = Number(process.stdout.columns || 120)
+  const width = Number(widthOverride ?? process.stdout.columns ?? 120) || 120
   const dense = width < 110
   const tight = width < 86
   const modelLabel = clipModel(model, tight ? 18 : dense ? 28 : 44)

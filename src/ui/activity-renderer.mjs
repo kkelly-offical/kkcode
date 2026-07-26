@@ -7,8 +7,7 @@ import {
   sanitizeTerminalValue
 } from "../theme/terminal-sanitize.mjs"
 
-const ANSI_RE = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*\x07)/g
-function stripAnsi(text) { return String(text || "").replace(ANSI_RE, "") }
+import { stripAnsi } from "../repl/frame-primitives.mjs"
 
 const TOOL_MUTED_COLOR = "#8a8f98"
 const MAX_TOOL_DETAIL_LINES = 80

@@ -1,10 +1,7 @@
 import { homedir } from "node:os"
 import { resolve } from "node:path"
 import { paint } from "../theme/color.mjs"
-
-function stripAnsi(text) {
-  return String(text || "").replace(/\x1B\[[0-9;]*m/g, "")
-}
+import { stripAnsi, ageLabel } from "../repl/frame-primitives.mjs"
 
 function isFullWidthCodePoint(code) {
   if (Number.isNaN(code)) return false
@@ -150,14 +147,6 @@ function renderTag(theme, label, fg = "#0b0b0b", bg = theme.base.accent) {
   return paint(` ${label} `, fg, { bg, bold: true })
 }
 
-function ageLabel(ms) {
-  const mins = Math.round(ms / 60000)
-  if (mins < 1) return "just now"
-  if (mins < 60) return `${mins}m ago`
-  const hours = Math.round(mins / 60)
-  if (hours < 24) return `${hours}h ago`
-  return `${Math.round(hours / 24)}d ago`
-}
 
 function flattenSections(sections, width) {
   const lines = []

@@ -1,7 +1,4 @@
-function padRight(text, width) {
-  const value = String(text || "")
-  return value.length >= width ? value : value + " ".repeat(width - value.length)
-}
+import { padRight } from "../repl/frame-primitives.mjs"
 
 export function buildHelpText({ providers = [], userRootPath = "" } = {}) {
   const W = 30

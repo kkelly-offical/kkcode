@@ -75,6 +75,18 @@ import {
   shouldApplySuggestionOnEnter as shouldApplySlashSuggestionOnEnter
 } from "./repl/input-engine.mjs"
 export { collectInput } from "./repl/input-engine.mjs"
+// 帧度量与拼装原语。此前 repl.mjs 自带一份，与 repl-dashboard / activity-renderer /
+// repl-help / text-layout 各自的副本互不一致 —— 见 frame-primitives.mjs 的说明。
+import {
+  stripAnsi, displayWidth, clipPlainByWidth, padRight, clipAnsiLine,
+  wrapPlainLine, wrapLogLines, frameTop, frameBottom, frameDivider, frameRow,
+  pageSize, ageLabel
+} from "./repl/frame-primitives.mjs"
+import {
+  buildFrame as buildFrameLines,
+  formatBusyToolDetail,
+  renderSuggestions
+} from "./repl/frame-builder.mjs"
 import {
   slashSuggestions,
   applySuggestionToInput,
@@ -133,14 +145,10 @@ import {
   resolveTerminalFeatures
 } from "./repl/terminal-protocol.mjs"
 import {
-  clipAnsiByWidth,
   inputIndexAtPosition,
   layoutInputText,
   moveGraphemeCursor,
-  splitGraphemes,
-  splitTextByCellRange,
-  terminalCellWidth,
-  wrapAnsiLine
+  splitTextByCellRange
 } from "./repl/text-layout.mjs"
 import { copyTerminalText } from "./repl/clipboard.mjs"
 import { createTranscriptModel } from "./ui/transcript-model.mjs"
@@ -177,34 +185,11 @@ const DOUBLE_ESCAPE_MS = 1200
 const MAX_TUI_SUGGESTIONS = 5
 const MAX_MODEL_PICKER_VISIBLE = 8
 const TUI_FRAME_MS = 16
-const ANSI_RE = /\x1B\[[0-9;]*m/g
-const SCROLL_PAGE_RATIO = 0.75
 const BUSY_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 const ESCAPE_SEQUENCE_TIMEOUT_MS = 35
 const KEYPRESS_ESCAPE_TIMEOUT_MS = 10
 
-function clipBusy(text, max) {
-  const s = String(text || "").trim().split("\n")[0]
-  return s.length > max ? s.slice(0, max - 3) + "..." : s
-}
 
-function formatBusyToolDetail(toolName, args) {
-  if (!args) return ""
-  switch (toolName) {
-    case "bash": return args.command ? paint(` ${clipBusy(args.command, 60)}`, null, { dim: true }) : ""
-    case "read": return args.path ? paint(` ${clipBusy(args.path, 60)}`, null, { dim: true }) : ""
-    case "write": return args.path ? paint(` ${clipBusy(args.path, 60)}`, null, { dim: true }) : ""
-    case "edit": return args.path ? paint(` ${clipBusy(args.path, 60)}`, null, { dim: true }) : ""
-    case "notebookedit": return args.path ? paint(` ${clipBusy(args.path, 50)} cell ${args.cell_number ?? 0}`, null, { dim: true }) : ""
-    case "grep": return args.pattern ? paint(` ${clipBusy(args.pattern, 40)}`, null, { dim: true }) : ""
-    case "glob": return args.pattern ? paint(` ${clipBusy(args.pattern, 40)}`, null, { dim: true }) : ""
-    case "patch": return args.path ? paint(` ${clipBusy(args.path, 40)} L${args.start_line || "?"}-${args.end_line || "?"}`, null, { dim: true }) : ""
-    case "task": return args.description ? paint(` ${clipBusy(args.description, 50)}`, null, { dim: true }) : ""
-    case "enter_plan": return args.reason ? paint(` ${clipBusy(args.reason, 50)}`, null, { dim: true }) : paint(" planning...", null, { dim: true })
-    case "exit_plan": return paint(" submitting plan...", null, { dim: true })
-    default: return ""
-  }
-}
 
 const BUILTIN_SLASH = [
   { name: "help", desc: "show help" },
@@ -250,100 +235,6 @@ const BUILTIN_SLASH = [
   { name: "yolo", desc: "unattended mode — approvals off" },
   { name: "exit", desc: "quit" }
 ]
-
-function stripAnsi(text) {
-  return String(text || "").replace(ANSI_RE, "")
-}
-
-function displayWidth(text) {
-  return terminalCellWidth(text)
-}
-
-function clipPlainByWidth(text, maxWidth) {
-  if (maxWidth <= 0) return ""
-  let out = ""
-  let used = 0
-  for (const segment of splitGraphemes(String(text || ""))) {
-    const w = terminalCellWidth(segment.text)
-    if (used + w > maxWidth) break
-    out += segment.text
-    used += w
-  }
-  return out
-}
-
-function padRight(text, width) {
-  const raw = stripAnsi(text)
-  const used = displayWidth(raw)
-  if (used >= width) return clipPlainByWidth(raw, width)
-  return raw + " ".repeat(width - used)
-}
-
-function clipAnsiLine(text, width) {
-  const raw = stripAnsi(text)
-  const used = displayWidth(raw)
-  if (used <= width) return `${String(text || "")}${" ".repeat(Math.max(0, width - used))}`
-  if (width <= 1) return clipAnsiByWidth(text, Math.max(0, width))
-  return `${clipAnsiByWidth(text, width - 1)}~`
-}
-
-function wrapPlainLine(text, width) {
-  const raw = stripAnsi(text)
-  if (width <= 0) return [""]
-  if (!raw) return [""]
-  const out = []
-  let rest = raw
-  while (displayWidth(rest) > width) {
-    const chunk = clipPlainByWidth(rest, width)
-    out.push(chunk)
-    rest = rest.slice(chunk.length)
-  }
-  out.push(rest)
-  return out
-}
-
-function wrapLogLines(lines, width, maxRows = null) {
-  const wrapped = []
-  for (const line of lines) {
-    const parts = wrapAnsiLine(line, width)
-    for (const part of parts) wrapped.push(part)
-  }
-  if (!Number.isInteger(maxRows) || maxRows < 0) return wrapped
-  if (wrapped.length <= maxRows) return wrapped
-  return wrapped.slice(wrapped.length - maxRows)
-}
-
-function frameTop(width, color) {
-  return paint(`┌${"─".repeat(Math.max(1, width - 2))}┐`, color)
-}
-
-function frameBottom(width, color) {
-  return paint(`└${"─".repeat(Math.max(1, width - 2))}┘`, color)
-}
-
-function frameDivider(width, color) {
-  return paint(`├${"─".repeat(Math.max(1, width - 2))}┤`, color)
-}
-
-function frameRow(content, width, color) {
-  const inner = Math.max(1, width - 4)
-  const left = paint("│ ", color)
-  const right = paint(" │", color)
-  return `${left}${clipAnsiLine(content, inner)}${right}`
-}
-
-function pageSize(rows) {
-  return Math.max(1, Math.floor(rows * SCROLL_PAGE_RATIO))
-}
-
-function ageLabel(ms) {
-  const mins = Math.round(ms / 60000)
-  if (mins < 1) return "just now"
-  if (mins < 60) return `${mins}m ago`
-  const hours = Math.round(mins / 60)
-  if (hours < 24) return `${hours}h ago`
-  return `${Math.round(hours / 24)}d ago`
-}
 
 function displayUserRootPath() {
   const userRoot = userRootDir()
@@ -1648,47 +1539,6 @@ function isCommandLikeInput(line) {
   return value.startsWith("/") || value.startsWith("$")
 }
 
-function renderSuggestions({ inputLine, suggestions, selected, offset, maxVisible, theme, width }) {
-  const sigil = String(inputLine || "").startsWith("$") ? "$" : String(inputLine || "").startsWith("/") ? "/" : null
-  if (!sigil || !suggestions.length) {
-    return { lines: [], offset: 0 }
-  }
-  const visible = Math.max(1, maxVisible || MAX_TUI_SUGGESTIONS)
-  let start = Math.max(0, Math.min(offset || 0, Math.max(0, suggestions.length - visible)))
-  if (selected < start) start = selected
-  if (selected >= start + visible) start = selected - visible + 1
-
-  const end = Math.min(suggestions.length, start + visible)
-  const view = suggestions.slice(start, end)
-  const lines = [
-    paint(
-      `${sigil === "$" ? "Skills" : "Slash Commands"} (${selected + 1}/${suggestions.length})  Enter choose, Enter again execute`,
-      theme.base.muted,
-      { bold: true }
-    )
-  ]
-  for (let i = 0; i < view.length; i++) {
-    const item = view[i]
-    const index = start + i
-    const active = index === selected
-    const prefix = active ? ">" : " "
-    const line = `${prefix} ${sigil}${padRight(item.name, 14)} ${item.desc}`
-    lines.push(
-      active
-        ? paint(line, "#111111", { bg: theme.semantic.info, bold: true })
-        : paint(line, theme.base.fg)
-    )
-  }
-  if (suggestions.length > visible) {
-    lines.push(
-      paint(`scroll: ${start + 1}-${end}/${suggestions.length} (Up/Down)`, theme.base.muted)
-    )
-  }
-  return {
-    lines: lines.map((line) => clipAnsiLine(line, width)),
-    offset: start
-  }
-}
 
 async function startTuiRepl({ ctx, state, providersConfigured, customCommands, recentSessions, historyLines, mcpStatusLines = [] }) {
   let localCustomCommands = customCommands
@@ -2506,460 +2356,19 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   function buildFrame() {
-    const width = Number(process.stdout.columns || 120)
-    const height = Number(process.stdout.rows || 40)
-
-    const dashboardLines = renderFrameDashboardHeader({
-      showDashboard: ui.showDashboard,
-      theme: ctx.themeState.theme,
-      columns: width
-    })
-
-    const suggestions = slashSuggestions(ui.input, slashRouterOptions(localCustomCommands))
-    if (suggestions.length === 0) {
-      ui.selectedSuggestion = 0
-      ui.suggestionOffset = 0
-    } else if (ui.selectedSuggestion >= suggestions.length) {
-      ui.selectedSuggestion = suggestions.length - 1
-    }
-    const suggestionRender = renderSuggestions({
-      inputLine: ui.input,
-      suggestions,
-      selected: ui.selectedSuggestion,
-      offset: ui.suggestionOffset,
-      maxVisible: MAX_TUI_SUGGESTIONS,
-      theme: ctx.themeState.theme,
-      width: Math.max(1, width - 4)
-    })
-    const suggestionLines = suggestionRender.lines
-    ui.suggestionOffset = suggestionRender.offset
-
-    const status = renderReplStatusLine({
+    // 宽高在这里读一次并传下去 —— frame-builder 不碰 process.stdout，
+    // 所以任意宽度都能在测试里断言（见 test/frame-builder.test.mjs）。
+    return buildFrameLines({
+      ui,
+      ctx,
       state,
-      configState: ctx.configState,
-      theme: ctx.themeState.theme,
-      tokenMeter: ui.metrics.tokenMeter,
-      cost: ui.metrics.cost,
-      costSavings: ui.metrics.costSavings,
-      contextMeter: ui.metrics.context,
-      longagentState: ui.metrics.longagent
+      transcript,
+      width: Number(process.stdout.columns || 120),
+      height: Number(process.stdout.rows || 40),
+      slashOptions: slashRouterOptions(localCustomCommands),
+      applySelectionHighlight,
+      renderToastLine
     })
-
-    const lines = []
-    let dashboardRows = 0
-    if (ui.showDashboard && dashboardLines.length) {
-      dashboardRows = Math.min(dashboardLines.length, Math.max(5, Math.floor(height * 0.22)))
-      lines.push(...dashboardLines.slice(0, dashboardRows).map((line) => clipAnsiLine(line, width)))
-      lines.push(" ".repeat(width))
-    }
-
-    const inputInnerWidth = Math.max(8, width - 4)
-    const imgTag = ui.pendingImages.length ? `[${ui.pendingImages.length} img] ` : ""
-    const stateIndicator = ui.busy
-      ? paint("● ", ctx.themeState.theme.semantic.warn)
-      : ui.paused
-        ? paint("⏸ ", ctx.themeState.theme.base.muted)
-        : paint("❯ ", ctx.themeState.theme.semantic.success)
-    const inputVisibleRows = Math.max(1, Math.min(5, Math.floor(height * 0.2)))
-    const inputLayout = layoutInputText({
-      value: ui.input,
-      cursor: ui.inputCursor,
-      width: inputInnerWidth,
-      maxRows: inputVisibleRows,
-      prefix: `${stateIndicator}${imgTag}`,
-      selection: ui.inputSelection,
-      ghost: ui.inputSelection ? "" : ui.ghostText
-    })
-    ui.inputCursor = inputLayout.normalizedCursor
-    ui.inputLayout = inputLayout
-    const visibleInput = inputLayout.lines
-    let busyLine
-    if (ui.busy && ui.currentActivity) {
-      const spinner = BUSY_SPINNER_FRAMES[ui.spinnerIndex]
-      const stepTag = ui.currentStep > 0
-        ? paint(` [${ui.currentStep}/${ui.maxSteps || "?"}]`, "cyan", { dim: true })
-        : ""
-      if (ui.currentActivity.type === "tool") {
-        const toolName = ui.currentActivity.tool || "tool"
-        const toolColor = toolName === "edit" || toolName === "write" || toolName === "notebookedit" ? "yellow"
-          : toolName === "bash" ? "magenta"
-          : "cyan"
-        busyLine = `${paint(spinner, toolColor)} ${paint(toolName, toolColor, { bold: true })}${formatBusyToolDetail(toolName, ui.currentActivity.args)}${stepTag}`
-      } else if (ui.currentActivity.type === "writing") {
-        busyLine = `${paint(spinner, "green")} ${paint("writing", "green", { bold: true })}${stepTag}`
-      } else {
-        const elapsed = ui.thinking.startedAt
-          ? formatThinkingDuration(Date.now() - ui.thinking.startedAt)
-          : "0.0s"
-        const dots = ".".repeat((ui.spinnerIndex % 3) + 1)
-        busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint(`Thinking${dots} · ${elapsed}`, ctx.themeState.theme.semantic.warn, { bold: true })}${stepTag}`
-      }
-    } else if (ui.busy) {
-      const spinner = BUSY_SPINNER_FRAMES[ui.spinnerIndex]
-      const elapsed = ui.thinking.startedAt
-        ? formatThinkingDuration(Date.now() - ui.thinking.startedAt)
-        : "0.0s"
-      const dots = ".".repeat((ui.spinnerIndex % 3) + 1)
-      busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint(`Thinking${dots} · ${elapsed}`, ctx.themeState.theme.semantic.warn, { bold: true })}`
-    } else {
-      busyLine = ""
-    }
-
-    const suggestionsTitleLine = paint("Commands", ctx.themeState.theme.base.muted, { bold: true })
-    const PERM_CHOICES = PERMISSION_PROMPT_CHOICES
-    const permissionLines = []
-    if (ui.pendingPermission) {
-      const perm = ui.pendingPermission
-      const displayPerm = sanitizeTerminalValue({
-        tool: perm.tool,
-        command: perm.command,
-        pattern: perm.pattern,
-        risk: perm.risk,
-        reason: perm.reason
-      })
-      const target = displayPerm.command ||
-        (displayPerm.pattern && displayPerm.pattern !== "*" ? displayPerm.pattern : "")
-      const toolInfo = `tool: ${displayPerm.tool}  risk: ${displayPerm.risk || 0}/10`
-      const reasonInfo = displayPerm.reason ? `  ${displayPerm.reason}` : ""
-      const permHeader = [{ text: toolInfo, color: ctx.themeState.theme.base.fg }]
-      if (target) permHeader.push({ text: `target: ${target}`, color: ctx.themeState.theme.semantic.warn })
-      if (reasonInfo) permHeader.push({ text: reasonInfo, color: ctx.themeState.theme.base.muted })
-      permissionLines.push(...renderSelectOverlay({
-        title: "Permission Request",
-        hint: "↑↓ navigate  Enter select  Esc deny",
-        items: PERM_CHOICES.map((choice) => ({ label: choice.label })),
-        selected: ui.permissionSelected,
-        width,
-        theme: ctx.themeState.theme,
-        accent: ctx.themeState.theme.semantic.warn,
-        paint,
-        padRight,
-        header: permHeader,
-        numbered: true
-      }).lines)
-    }
-    const modelPickerLines = []
-    if (ui.modelPicker) {
-      const mp = ui.modelPicker
-      const rendered = renderSelectOverlay({
-        title: `Select Model (${mp.selected + 1}/${mp.items.length})`,
-        hint: "↑↓ navigate  Enter select  Esc cancel",
-        items: mp.items.map((item) => ({
-          label: item.label,
-          current: item.model === state.model && item.provider === state.providerType
-        })),
-        selected: mp.selected,
-        offset: mp.offset,
-        maxVisible: MAX_MODEL_PICKER_VISIBLE,
-        width,
-        theme: ctx.themeState.theme,
-        accent: ctx.themeState.theme.semantic.info,
-        paint,
-        padRight,
-        markers: true
-      })
-      mp.offset = rendered.offset
-      modelPickerLines.push(...rendered.lines)
-    }
-    const modePickerLines = []
-    if (ui.modePicker) {
-      const currentModeId = state.modeId || resolveModeId(state.mode)
-      modePickerLines.push(...renderSelectOverlay({
-        title: "Mode",
-        hint: "↑↓ navigate  Enter select  Esc cancel  (Shift+Tab cycles)",
-        items: MODE_PICKER_CHOICES.map((choice) => ({
-          label: choice.label,
-          desc: choice.desc,
-          current: choice.value === currentModeId
-        })),
-        selected: ui.modePicker.selected,
-        width,
-        theme: ctx.themeState.theme,
-        accent: ctx.themeState.theme.semantic.info,
-        paint,
-        padRight,
-        layout: "two-column",
-        markers: true
-      }).lines)
-    }
-
-    const policyPickerLines = []
-    if (ui.policyPicker) {
-      const currentPolicy = ctx.configState.config.permission?.level || ctx.configState.config.permission?.mode || ctx.configState.config.permission?.default_policy || "auto"
-      policyPickerLines.push(...renderSelectOverlay({
-        title: "Permission Policy",
-        hint: "↑↓ navigate  Enter select  Esc cancel",
-        items: POLICY_CHOICES.map((choice) => ({
-          label: choice.label,
-          desc: choice.desc,
-          current: choice.value === currentPolicy
-        })),
-        selected: ui.policyPicker.selected,
-        width,
-        theme: ctx.themeState.theme,
-        accent: ctx.themeState.theme.semantic.info,
-        paint,
-        padRight,
-        layout: "two-column",
-        markers: true
-      }).lines)
-    }
-
-    // --- Question panel ---
-    const questionLines = []
-    let questionCursor = null
-    if (ui.pendingQuestion) {
-      const pq = ui.pendingQuestion
-      const questions = pq.questions || []
-      const qCount = questions.length
-      const currentQ = questions[ui.questionIndex] || {}
-      const options = Array.isArray(currentQ.options) ? currentQ.options : []
-      const answered = Object.keys(ui.questionAnswers).length
-
-      // Header
-      const hintKeys = ui.questionCustomMode
-        ? "Enter confirm  Esc back"
-        : "↑↓ select  Enter confirm  Tab switch  Esc skip  Ctrl+Enter submit all"
-      questionLines.push(
-        paint(`Question (${ui.questionIndex + 1}/${qCount})  ${hintKeys}`, ctx.themeState.theme.semantic.info, { bold: true })
-      )
-      questionLines.push(paint(`┌${"─".repeat(Math.max(1, width - 4))}┐`, ctx.themeState.theme.base.border))
-
-      // Tab bar (multi-question)
-      if (qCount > 1) {
-        let tabBar = ""
-        for (let i = 0; i < qCount; i++) {
-          const qId = questions[i].id
-          const done = qId in ui.questionAnswers
-          const isCurrent = i === ui.questionIndex
-          const marker = done ? "✓" : " "
-          const tabLabel = (questions[i].header || `Q${i + 1}`).slice(0, 12)
-          tabBar += isCurrent ? `[${marker}${tabLabel}]` : ` ${marker}${tabLabel} `
-          if (i < qCount - 1) tabBar += " "
-        }
-        questionLines.push(paint(`│ ${padRight(tabBar, Math.max(1, width - 5))}│`, ctx.themeState.theme.base.fg))
-        questionLines.push(paint(`│${"─".repeat(Math.max(1, width - 4))}│`, ctx.themeState.theme.base.border))
-      }
-
-      // Question text
-      questionLines.push(paint(`│ ${padRight(currentQ.text || "", Math.max(1, width - 5))}│`, ctx.themeState.theme.base.fg))
-      if (currentQ.description) {
-        questionLines.push(paint(`│ ${padRight(currentQ.description, Math.max(1, width - 5))}│`, ctx.themeState.theme.base.muted))
-      }
-      questionLines.push(paint(`│${"─".repeat(Math.max(1, width - 4))}│`, ctx.themeState.theme.base.border))
-
-      if (ui.questionCustomMode || options.length === 0) {
-        // Custom/free-text mode uses the same grapheme-aware layout as the
-        // main composer so the hardware cursor and IME stay anchored here.
-        const questionInputLayout = layoutInputText({
-          value: ui.questionCustomInput,
-          cursor: ui.questionCustomCursor,
-          width: Math.max(1, width - 5),
-          maxRows: 3,
-          prefix: ""
-        })
-        ui.questionCustomCursor = questionInputLayout.normalizedCursor
-        questionLines.push(
-          paint(`│ ${padRight(options.length ? "Custom input:" : "Answer:", Math.max(1, width - 5))}│`, ctx.themeState.theme.base.muted)
-        )
-        const questionInputStart = questionLines.length
-        for (const [index, inputLine] of questionInputLayout.lines.entries()) {
-          const visible = inputLine || (index === 0
-            ? paint("(type your answer)", ctx.themeState.theme.base.muted, { dim: true })
-            : "")
-          questionLines.push(
-            `│ ${padRight(visible, Math.max(1, width - 5))}│`
-          )
-        }
-        questionCursor = {
-          row: questionInputStart + questionInputLayout.cursor.row,
-          col: 3 + questionInputLayout.cursor.col
-        }
-      } else if (options.length) {
-        // Options list
-        const multiSelected = ui.questionMultiSelected[currentQ.id] || new Set()
-        for (let i = 0; i < options.length; i++) {
-          const opt = options[i]
-          const active = i === ui.questionOptionSelected
-          const prefix = active ? "▸" : " "
-          let marker
-          if (currentQ.multi) {
-            marker = multiSelected.has(i) ? "☑" : "☐"
-          } else {
-            marker = active ? "●" : "○"
-          }
-          const optLine = ` ${prefix} ${marker} ${opt.label}`
-          questionLines.push(
-            active
-              ? paint(`│${padRight(optLine, Math.max(1, width - 5))}│`, "#111111", { bg: ctx.themeState.theme.semantic.info, bold: true })
-              : paint(`│${padRight(optLine, Math.max(1, width - 5))}│`, ctx.themeState.theme.base.fg)
-          )
-          if (opt.description) {
-            questionLines.push(paint(`│${padRight(`       ${opt.description}`, Math.max(1, width - 5))}│`, ctx.themeState.theme.base.muted))
-          }
-        }
-        // Custom option
-        if (currentQ.allowCustom !== false) {
-          const customIdx = options.length
-          const active = ui.questionOptionSelected === customIdx
-          const prefix = active ? "▸" : " "
-          const customLine = ` ${prefix}   Custom...`
-          questionLines.push(
-            active
-              ? paint(`│${padRight(customLine, Math.max(1, width - 5))}│`, "#111111", { bg: ctx.themeState.theme.semantic.info, bold: true })
-              : paint(`│${padRight(customLine, Math.max(1, width - 5))}│`, ctx.themeState.theme.base.muted)
-          )
-        }
-      }
-
-      // Footer
-      questionLines.push(paint(`│${"─".repeat(Math.max(1, width - 4))}│`, ctx.themeState.theme.base.border))
-      const multiCount = currentQ.multi ? (ui.questionMultiSelected[currentQ.id] || new Set()).size : 0
-      const multiHint = currentQ.multi && multiCount > 0 ? `  (${multiCount} selected)` : ""
-      const footerText = `Answered: ${answered}/${qCount}${multiHint}  [Ctrl+Enter submit all]`
-      questionLines.push(paint(`│ ${padRight(footerText, Math.max(1, width - 5))}│`, ctx.themeState.theme.base.muted))
-      questionLines.push(paint(`└${"─".repeat(Math.max(1, width - 4))}┘`, ctx.themeState.theme.base.border))
-    }
-
-    // 对话区之下的全部浮层块。求和与推入都遍历这个列表 —— 唯一来源。
-    //
-    // 此前 fixedRows 是一串手写加法，与下面一串手写 push 各说各话：新增一个
-    // UI 块只要漏掉其中一边，logRows 就算错，而 buildFrame 在测试里够不着，
-    // CI 全绿、真终端上对话区被挤没。让两边同源，这个错就犯不出来了。
-    // 思考实时预览：固定两行灰字，显示思考流的尾部。行数固定是硬约束 ——
-    // 会变高的块会让对话区随模型输出上下抖动（fixedRows 按实际行数计费）。
-    const thinkingPreview = (ui.busy && ui.thinking?.phase === "streaming" && ui.thinking.raw)
-      ? thinkingPreviewLines(ui.thinking.raw, Math.max(20, width - 4))
-          .map((line) => clipAnsiLine(`  ${paint(line, ctx.themeState.theme.base.muted, { dim: true })}`, width))
-      : []
-
-    const overlayBlocks = [
-      { name: "thinkingPreview", lines: thinkingPreview },
-      { name: "suggestions", lines: suggestionLines.length ? [suggestionsTitleLine, ...suggestionLines] : [] },
-      { name: "modelPicker", lines: modelPickerLines },
-      { name: "policyPicker", lines: policyPickerLines },
-      { name: "modePicker", lines: modePickerLines },
-      { name: "permission", lines: permissionLines },
-      { name: "question", lines: questionLines }
-    ]
-    const overlayRows = overlayBlocks.reduce((total, block) => total + block.lines.length, 0)
-
-    const fixedRows =
-      1 + // activity title
-      1 + // scroll hint
-      overlayRows +
-      1 + // status bar
-      1 + // busy indicator
-      1 + // input top border
-      visibleInput.length +
-      1 + // input bottom border
-      1 // footer hint
-
-    const logRows = Math.max(2, height - lines.length - fixedRows)
-    const transcriptViewport = buildTranscriptViewport({
-      logs: transcript.getItems(),
-      width,
-      logRows,
-      scrollOffset: ui.scrollOffset,
-      wrapLogLines,
-      clipAnsiLine,
-      paint,
-      theme: ctx.themeState.theme
-    })
-    const wrappedLogs = transcriptViewport.wrappedLogs
-    ui.scrollOffset = transcriptViewport.scrollOffset
-    ui.scrollMeta = transcriptViewport.scrollMeta
-    const scrollHint = transcriptViewport.scrollHint
-
-    lines.push(clipAnsiLine(paint("─".repeat(Math.min(40, width)), ctx.themeState.theme.base.border, { dim: true }), width))
-
-    // 记录日志区起始行号（0-based in lines array, 1-based on screen）
-    const logStartRow = lines.length
-    lines.push(...transcriptViewport.lines)
-
-    const logEndRow = lines.length  // 日志区结束行号（不含）
-
-    lines.push(clipAnsiLine(scrollHint, width))
-
-    let questionStartRow = null
-    for (const block of overlayBlocks) {
-      if (!block.lines.length) continue
-      if (block.name === "question") questionStartRow = lines.length
-      for (const line of block.lines) lines.push(clipAnsiLine(line, width))
-    }
-
-    lines.push(clipAnsiLine(status, width))
-    // Toast 与 `Thinking · Ns` 此前抢同一行，toast 一出现就会盖掉思考计时。
-    // 忙碌时把 toast 挤到状态栏那侧，两者同时可见。
-    const toastLine = renderToastLine()
-    if (toastLine && ui.busy && busyLine) {
-      const half = Math.max(20, Math.floor(width / 2))
-      lines.push(clipAnsiLine(`${padRight(clipAnsiLine(busyLine, half - 1), half)}${toastLine}`, width))
-    } else {
-      lines.push(clipAnsiLine(toastLine || busyLine, width))
-    }
-
-    const inputTop = paint(`┌${"─".repeat(Math.max(1, width - 2))}┐`, ctx.themeState.theme.base.border)
-    const inputBottom = paint(`└${"─".repeat(Math.max(1, width - 2))}┘`, ctx.themeState.theme.base.border)
-    lines.push(inputTop)
-    const inputStartRow = lines.length  // 输入区内容起始行
-    for (const inputLine of visibleInput) {
-      const left = paint("│ ", ctx.themeState.theme.base.border)
-      const right = paint(" │", ctx.themeState.theme.base.border)
-      lines.push(`${left}${clipAnsiLine(inputLine, inputInnerWidth)}${right}`)
-    }
-    const inputEndRow = lines.length  // 输入区内容结束行（不含）
-    lines.push(inputBottom)
-    lines.push(clipAnsiLine(paint("↵ send  ⌃J newline  ⌃Y auto-copy  /paste image  ? help", ctx.themeState.theme.base.muted, { dim: true }), width))
-
-    // In very small terminals, preserve the composer and its real cursor by
-    // trimming overflow from the top rather than cutting off the bottom pane.
-    const frameStartRow = Math.max(0, lines.length - Math.max(1, height))
-    const final = lines.slice(frameStartRow, frameStartRow + Math.max(1, height))
-    while (final.length < height) final.push(" ".repeat(width))
-
-    // 鼠标选择高亮：对选中区域应用反色
-    if (ui.mouseSelection) {
-      applySelectionHighlight(final, ui.mouseSelection)
-    }
-
-    // 存储布局元数据供鼠标事件使用（行号均为 1-based 屏幕坐标）
-    ui.layoutMeta = {
-      logStartRow: logStartRow + 1 - frameStartRow,
-      logEndRow: logEndRow - frameStartRow,
-      inputStartRow: inputStartRow + 1 - frameStartRow,
-      inputEndRow: inputEndRow - frameStartRow,
-      inputInnerOffset: 3,  // "│ " 占 2 个可见字符 + 1 (1-based)
-      width,
-      // 屏幕行 ↔ transcript 绝对行的换算基准
-      visibleStartIndex: transcriptViewport.visibleStartIndex,
-      transcriptLines: transcriptViewport.allLines,
-      transcriptHitRegions: (transcriptViewport.hitRegions || []).map((region) => ({
-        ...region,
-        row: logStartRow + region.viewportRow + 1 - frameStartRow
-      }))
-    }
-
-    const composerCursor = {
-      row: inputStartRow + inputLayout.cursor.row + 1 - frameStartRow,
-      col: Math.max(1, Math.min(width, 3 + inputLayout.cursor.col)),
-      visible: true
-    }
-    const modalCursor = questionCursor && questionStartRow !== null
-      ? {
-          row: questionStartRow + questionCursor.row + 1 - frameStartRow,
-          col: Math.max(1, Math.min(width, questionCursor.col)),
-          visible: true
-        }
-      : null
-
-    return {
-      lines: final,
-      width,
-      height,
-      wrappedLogs,
-      cursor: modalCursor || composerCursor
-    }
   }
 
   function paintFrame(frame) {

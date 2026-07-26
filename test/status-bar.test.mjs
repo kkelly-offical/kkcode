@@ -111,3 +111,47 @@ test("formatTokenCount 的三个量级", () => {
   assert.equal(formatTokenCount(193400), "193.4K")
   assert.equal(formatTokenCount(1250000), "1.3M")
 })
+
+test("width is a parameter, so the caller's width is the one that matters", () => {
+  // 0.6.1 修的是「装不下时丢哪个段」，但宽度仍直读 process.stdout.columns。
+  // 后果在 0.7.0 抽出 frame-builder 时才暴露：帧按 86 列排，状态栏按
+  // process.stdout（测试里是 120）排，超出部分被帧从右边硬切 —— 于是
+  // 优先级机制根本没参与判断，被切掉的还是最右边的 PERMISSION。
+  const args = {
+    mode: "agent", modeId: "agent", model: "some-long-model-name",
+    permission: "manual", theme: DEFAULT_THEME,
+    tokenMeter: { estimated: false, turn: { input: 12345, output: 6789 }, session: { input: 99999, output: 88888 }, global: { input: 1234567, output: 7654321 } },
+    cost: { session: 1.2345, turn: 0.0456 },
+    contextMeter: { tokens: 95000, limit: 128000, ratio: 0.74, percent: 74 }
+  }
+
+  // 显式宽度必须压过 process.stdout.columns
+  Object.defineProperty(process.stdout, "columns", { value: 200, configurable: true })
+  const narrow = strip(renderStatusBar({ ...args, width: 86 }))
+  const wide = strip(renderStatusBar({ ...args, width: 200 }))
+  assert.notEqual(narrow, wide, "同一状态在两个宽度下必须排得不一样")
+
+  for (const [label, line, width] of [["86 列", narrow, 86], ["200 列", wide, 200]]) {
+    assert.ok(strip(line).length <= width, `${label}: 排版结果 ${strip(line).length} 字符，超过 ${width}`)
+    assert.match(line, /PERMISSION/, `${label}: 权限段是优先级 0，永不丢弃`)
+    assert.match(line, /AGENT/, `${label}: 模式段是优先级 0，永不丢弃`)
+  }
+
+  // 窄宽度下该丢的是低优先级段，而不是靠硬截断
+  assert.doesNotMatch(narrow, /~$/, "不该出现硬截断标记 —— 那意味着优先级没起作用")
+})
+
+test("width falls back to process.stdout when the caller gives none", () => {
+  // 既有调用方没传 width 时行为不变，避免这次改动变成隐式的破坏
+  Object.defineProperty(process.stdout, "columns", { value: 120, configurable: true })
+  const withoutWidth = strip(renderStatusBar({
+    mode: "agent", modeId: "agent", model: "m", permission: "yolo", theme: DEFAULT_THEME,
+    tokenMeter: { estimated: false, turn: { input: 1, output: 1 }, session: { input: 1, output: 1 }, global: { input: 1, output: 1 } }
+  }))
+  const withWidth = strip(renderStatusBar({
+    mode: "agent", modeId: "agent", model: "m", permission: "yolo", theme: DEFAULT_THEME,
+    tokenMeter: { estimated: false, turn: { input: 1, output: 1 }, session: { input: 1, output: 1 }, global: { input: 1, output: 1 } },
+    width: 120
+  }))
+  assert.equal(withoutWidth, withWidth)
+})
