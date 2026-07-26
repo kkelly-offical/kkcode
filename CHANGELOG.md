@@ -1,5 +1,47 @@
 # Changelog / 更新日志
 
+## 0.6.15
+
+修一个从 0.6.0 起就在的崩溃：`/agents` 与 `/tasks` 会打死行模式的 REPL。
+
+### English
+
+- **`/agents` and `/tasks` crashed the line-mode REPL.** Every command branch in
+  the router returns an action object, and the three call sites read its fields
+  directly (`action.cleared`, `action.exit`). These two branches returned a bare
+  `null`, so the next line dereferenced it. In the TUI an enclosing `try/catch`
+  swallowed it into one stray `error: Cannot read properties of null` line in the
+  transcript — which is why it survived 15 releases. The line-mode loop (piped
+  stdin, no TTY) has no `try/catch`, so the whole REPL died and never reached
+  `/exit`.
+- **Fixed in two layers, not one.** The five bare `return null` became
+  `return { exit: false }`, and — the part that matters — all three call sites now
+  normalize the result (`(await processInputLine(…)) || {}`). The first fixes
+  today's instance; the second makes the whole class harmless, since a future
+  branch that forgets to return an object now degrades to a no-op action instead
+  of killing the process.
+- **Regression cover.** A structural test asserts every call site normalizes and
+  that no branch returns a bare null, plus an end-to-end test that runs a real
+  line-mode process through the read-only commands and asserts it exits 0. The
+  end-to-end one is the layer that would actually have caught this: the defect
+  was invisible to unit tests because nothing in the router was exported.
+
+### 中文
+
+- **`/agents` 与 `/tasks` 会打死行模式的 REPL。** 命令路由的每个分支都返回一个
+  action 对象，三个调用点直接读它的字段（`action.cleared`、`action.exit`）。这
+  两个分支返回的是裸 `null`，下一行就解引用了它。TUI 外面有 `try/catch`，把它
+  咽成对话记录里一行多余的 `error: Cannot read properties of null` —— 这正是它
+  活过 15 个版本的原因。而行模式（管道输入、无 TTY）的循环没有 `try/catch`，
+  整个 REPL 直接死掉，`/exit` 根本执行不到。
+- **修两层，不是一层。** 5 处裸 `return null` 改成 `return { exit: false }`；更
+  要紧的是三个调用点现在都做归一化（`(await processInputLine(…)) || {}`）。前者
+  修的是这一次，后者让整类问题无害化 —— 将来某个分支忘了返回对象，只会退化成
+  一次空动作，而不是杀掉进程。
+- **回归防线。** 一条结构性测试断言每个调用点都归一化、且没有分支返回裸 null；
+  另加一条端到端测试，真的起一个行模式进程把只读命令跑一遍，断言它以 0 退出。
+  后者才是本该拦住这个缺陷的那一层：路由里什么都没导出，单测根本够不着它。
+
 ## 0.6.14
 
 弹窗审查的第二半：`/resume` 也成了选择器，剩下 36 处输出按性质归位。

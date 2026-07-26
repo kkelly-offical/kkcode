@@ -1255,7 +1255,7 @@ async function processInputLine({
         return `  ${agent.name.padEnd(20)} ${String(permission).padEnd(10)} ${tools ? `tools: ${tools.join(", ")}` : "tools: all"}`
       })
     showInfo(`subagents (${rows.length})`, ["subagents (name / permission / tools)", ...rows].join("\n"))
-    return null
+    return { exit: false }
   }
 
   if (normalized === "/tasks" || normalized.startsWith("/tasks ")) {
@@ -1265,18 +1265,18 @@ async function processInputLine({
     if (action === "stop" && taskId) {
       await BackgroundManager.cancel(taskId).catch(() => null)
       print(`task ${taskId} cancellation requested`, { channel: "notice", topic: "task" })
-      return null
+      return { exit: false }
     }
     if (action === "retry" && taskId) {
       const retried = await BackgroundManager.retry(taskId, ctx.configState.config).catch(() => null)
       print(retried ? `task ${taskId} retried (attempt ${retried.attempt})` : `task ${taskId} could not be retried`,
         { channel: "notice", topic: "task", tone: retried ? "success" : "warn" })
-      return null
+      return { exit: false }
     }
     const tasks = await BackgroundManager.list().catch(() => [])
     if (!tasks.length) {
       print("no background tasks", { channel: "notice", topic: "task" })
-      return null
+      return { exit: false }
     }
     const rows = tasks.slice(-20).map((task) => {
       const desc = String(task.description || "").slice(0, 48)
@@ -1284,7 +1284,7 @@ async function processInputLine({
     })
     showInfo(`background tasks (${tasks.length})`,
       ["background tasks (id / status / description)", ...rows, "", "  /tasks stop <id> · /tasks retry <id>"].join("\n"))
-    return null
+    return { exit: false }
   }
 
   if (normalized === "/create-agent" || normalized.startsWith("/create-agent ")) {
@@ -1542,7 +1542,11 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
     if (!line) continue
     entered.push(line)
 
-    const action = await processInputLine({
+    // `|| {}` 不是防御性冗余：调用点直接读 action 的字段，而命令分支曾经
+    // 返回过裸 null（/agents、/tasks，v0.6.0 起），行模式这条 while 循环没有
+    // try/catch，于是整个 REPL 崩在下一行的 action.cleared 上。归一化让
+    // 「某个分支忘了返回对象」退化成无害的默认动作。
+    const action = (await processInputLine({
       line,
       state,
       ctx,
@@ -1558,7 +1562,7 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
       print: (text) => console.log(text),
       pendingImages: linePendingImages,
       clearPendingImages: () => { linePendingImages = [] }
-    })
+    })) || {}
 
     if (action.cleared) clearScreen()
     if (action.dashboardRefresh) {
@@ -2699,7 +2703,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         startBusySpinner()
         requestRender()
         try {
-          const action = await processInputLine({
+          const action = (await processInputLine({
             line: mergedPrompt,
             state, ctx, providersConfigured,
             customCommands: localCustomCommands,
@@ -2716,7 +2720,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
             signal: aborter.signal,
             suspendTui: withSuspendedTui,
             openPanel: openInfoPanel
-          })
+          })) || {}
           if (action.turnResult) {
             ui.metrics.tokenMeter = action.turnResult.tokenMeter || ui.metrics.tokenMeter
             ui.metrics.cost = Number.isFinite(action.turnResult.cost) ? action.turnResult.cost : ui.metrics.cost
@@ -2853,7 +2857,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     requestRender()
 
     try {
-      const action = await processInputLine({
+      const action = (await processInputLine({
         line: submittedLine,
         state,
         ctx,
@@ -2874,7 +2878,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         signal: aborter.signal,
         suspendTui: withSuspendedTui,
         openPanel: openInfoPanel
-      })
+      })) || {}
 
       if (action.cleared) {
         transcript.clear()
