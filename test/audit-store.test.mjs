@@ -172,6 +172,33 @@ describe("audit-store", () => {
     assert.equal(result.entries, 24)
   })
 
+  it("treats every platform's lock-contention error code as contention, not as fatal", async () => {
+    // 这条锁的是**平台差异**，不能靠 Windows runner 偶发抖动来发现。
+    // `open(file, "wx")` 在锁被别人持有时：POSIX 给 EEXIST，而 Windows 在
+    // 文件存在且被其他进程持有打开句柄时给 **EPERM**（并发 unlink 进行中时
+    // 还可能是 EBUSY/EACCES）。只认 EEXIST 的版本会把这些抛出去，于是多个
+    // kkcode 进程同时写审计日志时 Windows 上会崩 —— 而审计链的可靠性正是
+    // 这个锁存在的理由。0.6.7 的发布就是被这条卡住的。
+    const source = await readFile(new URL("../src/storage/audit-store.mjs", import.meta.url), "utf8")
+    for (const code of ["EEXIST", "EPERM", "EBUSY", "EACCES"]) {
+      assert.match(source, new RegExp(`"${code}"`), `锁竞争码必须包含 ${code}`)
+    }
+    // 不能退回「只认 EEXIST」的写法
+    assert.doesNotMatch(source, /error\?\.code !== "EEXIST"/,
+      "改回只比较 EEXIST 会让 Windows 上的锁竞争变成崩溃")
+  })
+
+  it("survives lock contention that surfaces as EPERM", async () => {
+    // 直接占住锁文件，再让 appendAuditEntry 去抢 —— 它必须重试而不是抛错。
+    const lockPath = path.join(tmpDir, "audit-log.jsonl.lock")
+    // 写一个持有者已死的锁（pid 1 之外的不存在 pid），走 stale 回收路径
+    await writeFile(lockPath, JSON.stringify({ token: "other", pid: 2147483646, createdAt: Date.now() }), "utf8")
+    await appendAuditEntry({ type: "after-contention" })
+    const result = await verifyAuditChain()
+    assert.equal(result.ok, true)
+    assert.ok(result.entries >= 1)
+  })
+
   it("detects tampering", async () => {
     await appendAuditEntry({ type: "tool.start", tool: "read" })
     await appendAuditEntry({ type: "tool.finish", tool: "read" })

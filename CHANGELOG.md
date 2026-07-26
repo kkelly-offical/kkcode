@@ -1,5 +1,78 @@
 # Changelog / 更新日志
 
+## 0.6.8
+
+阶段 2 的三条遗留 —— 0.6.5 交付了编辑诊断与 multiedit 修复，但计划里同阶段的
+另外三项（全文回灌、图片读取、PDF 提取）当时没做完，这一版补齐。
+
+### English
+
+- **Reading an image now actually shows the model the image.** `read` returned a
+  base64 data URI and `makeToolResult`'s field whitelist dropped it, so the model
+  received one line — `Image file: x.png (12345 bytes)` — while the tool
+  description promised visual analysis. The provider layers had supported
+  `{type: "image", data, mediaType}` blocks all along; the missing piece was
+  these three hops. The image is now attached after its `tool_result` block,
+  which is the only shape both Anthropic and OpenAI accept, and the text line
+  stays for models without vision.
+- **PDF extraction works on real PDFs.** The old code decoded the whole file as
+  latin1 and regexed for parenthesized strings — which finds parentheses that
+  happen to occur inside compressed bytes, and returns them as prose. Content
+  streams are FlateDecode by default, meaning it failed on essentially every
+  modern PDF. Streams are now inflated with `node:zlib` first, and text comes
+  only from the `Tj`/`TJ`/`'`/`"` show operators. Scanned PDFs say they are
+  scanned instead of returning binary. No new dependency.
+- **`pages` does something.** It was declared in the schema and never read. It
+  now filters, and says outright that content streams do not map 1:1 to pages
+  rather than implying a precision it cannot deliver.
+- **A failed edit re-injects the file when it is small.** Cline's approach: the
+  most common reason an edit fails is that the model's copy is stale, and window
+  evidence only lets it infer that. Files up to 400 lines come back in full,
+  marked as authoritative; larger ones get a concrete `offset=N, limit=60`
+  instead of a vague suggestion to re-read.
+- **A Windows lock bug that cost this release.** `acquireAuditLock` treated
+  anything other than `EEXIST` as fatal, but Windows reports a held lock as
+  **`EPERM`** when another process has the file open (and `EBUSY`/`EACCES` when
+  an unlink is in flight). So several kkcode processes writing audit entries
+  concurrently would crash on Windows instead of retrying — and audit-chain
+  reliability is the entire reason that lock exists. It surfaced as a
+  nondeterministic test failure that blocked the 0.6.7 release. The assertion is
+  now in the unit test and fails on Linux too; relying on a Windows runner to
+  hit a race is not a test.
+- `removeStaleAuditLock` no longer reports success when `unlink` fails with
+  `EPERM` — that turned the caller's retry into a busy loop.
+
+### 中文
+
+- **读图片现在真的把图给模型看了。** `read` 返回的是 base64 data URI，而
+  `makeToolResult` 的字段白名单把它丢掉了，于是模型只收到一行
+  `Image file: x.png (12345 bytes)` —— 而工具描述承诺「可视觉分析」。
+  provider 层（anthropic.mjs / openai.mjs）一直支持
+  `{type:"image", data, mediaType}` 块，缺的只是中间这三跳。图片现在挂在它
+  对应的 `tool_result` 之后 —— 这是 Anthropic 与 OpenAI 都接受的唯一形状 ——
+  文本说明保留，供不支持视觉的模型使用。
+- **PDF 提取对真实 PDF 有效了。** 旧代码把整个文件按 latin1 解码后正则抓
+  括号内的字符串，抓到的是压缩字节里偶然出现的括号，然后当正文吐出来。
+  内容流默认是 FlateDecode，也就是说它对**几乎所有现代 PDF 都失效**。
+  现在先用 `node:zlib` 解压流，再只从 `Tj`/`TJ`/`'`/`"` 这几个显示操作符里
+  取文本。扫描版 PDF 会说自己是扫描件，而不是返回二进制。不引入新依赖。
+- **`pages` 参数开始起作用了。** 它在 schema 里声明了，代码从头到尾没读过。
+  现在会真的过滤，并明说内容流与页面不是一一对应 —— 而不是暗示一个它给不了
+  的精度。
+- **编辑失败时小文件回灌全文。** 抄 Cline 的做法：编辑失败最常见的根因是
+  模型手里的副本已经过期，而窗口式证据只能让它推断这一点。400 行以内的文件
+  整份回传并标注「这是权威版本」；更大的文件给出具体的 `offset=N, limit=60`，
+  而不是一句含糊的「重读一下」。
+- **一个卡住了本次发布的 Windows 锁 bug。** `acquireAuditLock` 把除
+  `EEXIST` 以外的错误一律当致命错抛出，但 Windows 在文件被其他进程持有打开
+  句柄时报的是 **`EPERM`**（并发 unlink 进行中时还可能是 `EBUSY`/`EACCES`）。
+  于是多个 kkcode 进程同时写审计日志时，Windows 上会崩而不是重试 ——
+  而审计链的可靠性正是这个锁存在的全部理由。它表现为一次非确定性的测试失败，
+  卡住了 0.6.7 的发布。现在断言写在单元测试里、在 Linux 上也会红：
+  指望 Windows runner 去撞上一个竞态，那不叫测试。
+- `removeStaleAuditLock` 在 `unlink` 因 `EPERM` 失败时不再报告成功 ——
+  那会让调用方的重试变成忙循环。
+
 ## 0.6.7
 
 ### English

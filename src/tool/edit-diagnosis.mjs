@@ -24,6 +24,16 @@ const CONTEXT_LINES = 4
 const MAX_DIAGNOSE_LINES = 20000
 
 /**
+ * 小到可以直接回灌全文的阈值。
+ *
+ * 抄 Cline 的 diffError 做法：编辑失败时把当前文件全文交回给模型，直接消掉
+ * 「模型手里是陈旧内容」这个根因，而不是让它再猜一轮。只对小文件这么做 ——
+ * 大文件回灌会把上下文吃光，那时带行号的窗口更有用。
+ */
+const REINJECT_MAX_LINES = 400
+const REINJECT_MAX_CHARS = 20000
+
+/**
  * 归一化后的行相似度（0..1）。
  *
  * 先做「视觉等价」归一化：折叠空白、去掉首尾空格。绝大多数失配就是缩进或
@@ -136,7 +146,29 @@ export function diagnoseNoMatch({ path: filePath, content, before }) {
     "Surrounding Content:",
     numbered(window, from)
   )
-  return head.join("\n")
+  return head.concat(reinjectedFile(fileLines, content, best.startLine)).join("\n")
+}
+
+/**
+ * 文件够小就把全文回灌。
+ *
+ * 「模型手里的内容已经过期」是编辑失败最常见的根因，而窗口式的证据只能让它
+ * 推断这一点。全文直接消除推断步骤。返回数组便于调用方 concat 而不必判空。
+ */
+function reinjectedFile(fileLines, content, anchorLine = 1) {
+  if (fileLines.length > REINJECT_MAX_LINES || String(content).length > REINJECT_MAX_CHARS) {
+    const offset = Math.max(1, anchorLine - 20)
+    return [
+      "",
+      `(File is ${fileLines.length} lines — too large to include here. `
+        + `If the window above is not enough, re-read with offset=${offset}, limit=60.)`
+    ]
+  }
+  return [
+    "",
+    `Current file contents (${fileLines.length} lines) — this is the authoritative version, your snippet did not match it:`,
+    numbered(fileLines, 1)
+  ]
 }
 
 /** 差异是否只在空白 —— 这是最常见的失配原因，值得单独指出来 */

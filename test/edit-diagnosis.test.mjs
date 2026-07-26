@@ -109,3 +109,25 @@ test("守卫目前无调用点 —— 它是为将来引入宽松匹配预备的
   // 静默整块替换」—— 不可逆的数据损失，且模型不会察觉。
   assert.equal(typeof guardProportion, "function")
 })
+
+test("a small file is re-injected in full, so the model is not guessing at stale content", () => {
+  // 抄 Cline 的 diffError：编辑失败最常见的根因是「模型手里的内容已经过期」，
+  // 窗口式证据只能让它推断这一点，全文直接消除推断步骤。
+  const content = Array.from({ length: 8 }, (_, i) => `line ${i + 1} const value = ${i}`).join("\n")
+  const out = diagnoseNoMatch({ path: "/x/small.mjs", content, before: "line 3 const value = 99" })
+  assert.match(out, /Current file contents \(8 lines\)/)
+  assert.match(out, /authoritative version/)
+  // 全部八行都要在里面，不能只给窗口
+  for (let i = 1; i <= 8; i++) {
+    assert.match(out, new RegExp(`${i}→line ${i} `), `第 ${i} 行应出现在回灌全文里`)
+  }
+})
+
+test("a large file gets a concrete offset instead of the whole thing", () => {
+  const content = Array.from({ length: 600 }, (_, i) => `line ${i + 1} const value = ${i}`).join("\n")
+  const out = diagnoseNoMatch({ path: "/x/big.mjs", content, before: "line 300 const value = 99999" })
+  assert.doesNotMatch(out, /Current file contents/, "大文件回灌会把上下文吃光")
+  // 指引必须是可执行的具体数字，而不是「重读一下」
+  assert.match(out, /offset=\d+, limit=\d+/)
+  assert.doesNotMatch(out, /around line 1\b/, "锚点行号不能是硬编码的 1")
+})

@@ -1184,6 +1184,14 @@ export async function processTurnLoop({
           content,
           is_error: isError
         })
+
+        // 图片紧跟在它的 tool_result 之后。Anthropic 与 OpenAI 都不接受
+        // tool_result 内部嵌图，所以只能作为同一条 user 消息里的后续块 ——
+        // 这也是 read 的「可视觉分析」承诺唯一能落地的方式。
+        const image = entry?.result?.image
+        if (image?.data) {
+          resultContent.push({ type: "image", data: image.data, mediaType: image.mediaType })
+        }
       }
       await appendMessage(sessionId, "user", resultContent, {
         mode,

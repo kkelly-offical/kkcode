@@ -105,6 +105,9 @@ function rotatedPath(index) {
   return `${auditLogPath()}.${index}`
 }
 
+/** 「锁被别人持有」的错误码集合。EEXIST 是 POSIX，其余三个是 Windows 的表现。 */
+const LOCK_CONTENTION_CODES = new Set(["EEXIST", "EPERM", "EBUSY", "EACCES"])
+
 function auditLockPath() {
   return `${auditLogPath()}.lock`
 }
@@ -133,7 +136,11 @@ async function removeStaleAuditLock(file) {
     if (metadata && processIsAlive(Number(metadata.pid))) return false
     await unlink(file)
     return true
-  } catch {
+  } catch (error) {
+    // Windows 上 unlink 一个仍有打开句柄的文件会失败（EPERM/EBUSY）。那说明
+    // 锁确实还被人持有 —— 报告「没清掉」让调用方退避重试，而不是报告「清掉了」
+    // 让它立刻重试 open 而变成忙循环。
+    if (error?.code === "EPERM" || error?.code === "EBUSY" || error?.code === "EACCES") return false
     return true
   }
 }
@@ -151,7 +158,12 @@ async function acquireAuditLock() {
       return { file, token }
     } catch (error) {
       await handle?.close().catch(() => {})
-      if (error?.code !== "EEXIST") throw error
+      // 「锁已被别人持有」在不同平台有不同错误码：POSIX 给 EEXIST，而
+      // **Windows 在文件存在且被其他进程持有打开句柄时给 EPERM**（并发 unlink
+      // 进行中时也可能给 EBUSY/EACCES）。只认 EEXIST 的版本会把这些直接抛出去，
+      // 于是多个 kkcode 进程同时写审计日志时，Windows 上会崩而不是重试 ——
+      // 审计链的可靠性恰恰是这个锁存在的理由。
+      if (!LOCK_CONTENTION_CODES.has(error?.code)) throw error
       if (await removeStaleAuditLock(file)) continue
       await new Promise((resolve) => setTimeout(resolve, 25))
     }

@@ -13,6 +13,7 @@ import { McpRegistry } from "../mcp/registry.mjs"
 import { SkillRegistry } from "../skill/registry.mjs"
 import { askQuestionInteractive } from "./question-prompt.mjs"
 import { checkBashAllowed } from "../permission/exec-policy.mjs"
+import { inflateSync } from "node:zlib"
 import { truncationNotice, completeNotice } from "./output-budget.mjs"
 import { guardedFetch, allowPrivateHosts } from "../net/url-guard.mjs"
 import { fileOpsTools } from "./file-ops.mjs"
@@ -564,22 +565,128 @@ function builtinTools(config) {
     return lines.join("\n")
   }
 
-  function extractPdfText(buffer) {
-    // Basic PDF text extraction: find text between BT/ET operators and parenthesized strings
-    const str = buffer.toString("latin1")
-    const texts = []
-    const tjRegex = /\(([^)]*)\)/g
-    // Extract strings from content streams
-    let match
-    while ((match = tjRegex.exec(str)) !== null) {
-      const decoded = match[1]
-        .replace(/\\n/g, "\n").replace(/\\r/g, "\r")
-        .replace(/\\t/g, "\t").replace(/\\\\/g, "\\")
-        .replace(/\\([()])/g, "$1")
-      if (decoded.trim()) texts.push(decoded)
+  /**
+   * 解出 PDF 里所有内容流的明文。
+   *
+   * 此前的实现直接对整个文件按 latin1 解码后正则抓括号内的字符串。那对
+   * **几乎所有现代 PDF 都无效** —— 内容流默认用 FlateDecode 压缩，抓到的是
+   * 压缩字节里偶然出现的括号，产出一堆乱码当正文。而 `pages` 参数虽然在
+   * schema 里声明了，代码从头到尾没读过。
+   *
+   * 这里先按 `stream ... endstream` 切出流、对 FlateDecode 的用 zlib 解压，
+   * 再从解压后的内容里抓文本操作符。不引依赖：inflate 在 node:zlib 里。
+   */
+  function pdfContentStreams(buffer) {
+    const streams = []
+    const marker = Buffer.from("stream")
+    const endMarker = Buffer.from("endstream")
+    let cursor = 0
+    while (cursor < buffer.length) {
+      const start = buffer.indexOf(marker, cursor)
+      if (start === -1) break
+      const end = buffer.indexOf(endMarker, start)
+      if (end === -1) break
+
+      // 流字典在 stream 关键字之前，看它有没有声明 FlateDecode
+      const dictStart = Math.max(0, start - 400)
+      const dict = buffer.slice(dictStart, start).toString("latin1")
+
+      // stream 之后是 CRLF 或 LF
+      let dataStart = start + marker.length
+      if (buffer[dataStart] === 0x0d) dataStart++
+      if (buffer[dataStart] === 0x0a) dataStart++
+      const raw = buffer.slice(dataStart, end)
+
+      if (/\/FlateDecode/.test(dict)) {
+        try {
+          streams.push(inflateSync(raw).toString("latin1"))
+        } catch {
+          // 损坏或用了这里不支持的过滤器（LZW/DCT 等）—— 跳过而不是塞乱码
+        }
+      } else if (!/\/(DCTDecode|JPXDecode|CCITTFaxDecode|JBIG2Decode)/.test(dict)) {
+        streams.push(raw.toString("latin1"))
+      }
+      cursor = end + endMarker.length
     }
-    if (texts.length === 0) return "(PDF contains no extractable text — may be image-based or encrypted)"
-    return texts.join(" ").replace(/\s+/g, " ").trim()
+    return streams
+  }
+
+  /** 从一个已解压的内容流里抽文本：只认 Tj / TJ / ' / " 这几个显示操作符。 */
+  function textFromContentStream(content) {
+    const out = []
+    // (字符串) Tj  |  [(a) -2 (b)] TJ  |  (s) '  |  (s) "
+    const showRegex = /\((?:\\.|[^\\()])*\)|<[0-9A-Fa-f\s]+>/g
+    const opRegex = /(\[(?:[^\][]|\[[^\]]*\])*\]|\((?:\\.|[^\\()])*\))\s*(TJ|Tj|'|")/g
+    let match
+    while ((match = opRegex.exec(content)) !== null) {
+      const operand = match[1]
+      let piece = ""
+      let literal
+      showRegex.lastIndex = 0
+      while ((literal = showRegex.exec(operand)) !== null) {
+        piece += literal[0].startsWith("<")
+          ? hexStringToText(literal[0])
+          : decodePdfLiteral(literal[0].slice(1, -1))
+      }
+      if (piece.trim()) out.push(piece)
+    }
+    return out
+  }
+
+  function hexStringToText(token) {
+    const hex = token.slice(1, -1).replace(/\s+/g, "")
+    let text = ""
+    for (let i = 0; i + 1 < hex.length; i += 2) {
+      const code = parseInt(hex.slice(i, i + 2), 16)
+      if (code >= 32 || code === 10 || code === 9) text += String.fromCharCode(code)
+    }
+    return text
+  }
+
+  function decodePdfLiteral(body) {
+    return body
+      .replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\t/g, "\t")
+      .replace(/\\b/g, "\b").replace(/\\f/g, "\f")
+      .replace(/\\([0-7]{1,3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8)))
+      .replace(/\\([()\\])/g, "$1")
+  }
+
+  /** `pages` 形如 "1-5" / "3" / "2-" —— 返回 1-based 的判定函数。 */
+  function parsePageRange(spec) {
+    const text = String(spec || "").trim()
+    if (!text) return null
+    const match = /^(\d+)\s*(?:-\s*(\d*))?$/.exec(text)
+    if (!match) return null
+    const from = Number(match[1])
+    const to = match[2] === undefined ? from : match[2] === "" ? Infinity : Number(match[2])
+    if (!from || to < from) return null
+    return (page) => page >= from && page <= to
+  }
+
+  function extractPdfText(buffer, pagesSpec = "") {
+    const streams = pdfContentStreams(buffer)
+    if (!streams.length) {
+      return "(PDF contains no extractable text — it may be image-based, encrypted, or use an unsupported filter)"
+    }
+
+    // 内容流与页面不是严格一一对应（一页可以拆成多个流），但按流序号过滤是
+    // 无外部依赖前提下最接近 `pages` 语义的做法。做不到精确时说清楚，
+    // 而不是假装 pages 生效了 —— 声明了却不实现是这个参数原本的问题。
+    const inRange = parsePageRange(pagesSpec)
+    const selected = inRange ? streams.filter((_, index) => inRange(index + 1)) : streams
+    if (inRange && !selected.length) {
+      return `(no content streams in range ${pagesSpec}; the PDF has ${streams.length})`
+    }
+
+    const texts = selected.flatMap((content) => textFromContentStream(content))
+    if (!texts.length) {
+      return "(PDF content streams decoded, but contain no text-showing operators — likely scanned images)"
+    }
+    const body = texts.join(" ").replace(/[ \t]+/g, " ").replace(/\s*\n\s*/g, "\n").trim()
+    const note = inRange
+      ? `\n\n[pages ${pagesSpec}: ${selected.length} of ${streams.length} content stream(s); streams do not map 1:1 to pages]`
+      : ""
+    return body + note
   }
 
   const readTool = {
@@ -615,7 +722,7 @@ function builtinTools(config) {
       // PDF files: extract text
       if (ext === ".pdf") {
         const buffer = await readFile(target)
-        return extractPdfText(buffer)
+        return extractPdfText(buffer, args.pages)
       }
 
       // Jupyter notebooks: parse cells

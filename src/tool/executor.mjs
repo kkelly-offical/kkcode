@@ -1,4 +1,19 @@
 import { makeToolResult, isToolSuccess } from "../core/types.mjs"
+/**
+ * 从工具返回值里取出图片附件。
+ *
+ * read 返回的是 data URI（`data:image/png;base64,...`），而 provider 层要的是
+ * 拆开的 { data, mediaType }。两种写法都接受：已拆开的直接用。
+ */
+function parseImagePayload(raw) {
+  if (!raw || typeof raw !== "object") return null
+  if (raw.image?.data) return { data: raw.image.data, mediaType: raw.image.mediaType || "image/png" }
+  if (raw.type !== "image" || typeof raw.data !== "string") return null
+  const match = /^data:([^;,]+);base64,(.+)$/s.exec(raw.data)
+  if (match) return { data: match[2], mediaType: match[1] }
+  return { data: raw.data, mediaType: raw.mediaType || "image/png" }
+}
+
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { withAudit } from "./audit-wrapper.mjs"
@@ -163,7 +178,11 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
           error: rawError(raw, status, output),
           durationMs: Date.now() - startedAt,
           metadata,
-          evidence
+          evidence,
+          // read 的图片分支返回 { type:"image", data:"data:image/png;base64,..." }。
+          // 这里拆成 provider 层要的 { data, mediaType } —— 0.7.0 之前这个值
+          // 到 makeToolResult 就被白名单丢掉了。
+          image: parseImagePayload(raw)
         })
         await EventBus.emit({
           type: isToolSuccess(result) ? EVENT_TYPES.TOOL_FINISH : EVENT_TYPES.TOOL_ERROR,

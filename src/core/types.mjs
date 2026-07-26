@@ -41,7 +41,8 @@ export function makeToolResult({
   error = null,
   durationMs = 0,
   metadata = {},
-  evidence = {}
+  evidence = {},
+  image = null
 }) {
   let normalizedStatus = TOOL_RESULT_STATUSES.has(status)
     ? status
@@ -59,7 +60,12 @@ export function makeToolResult({
     error,
     durationMs,
     metadata,
-    evidence
+    evidence,
+    // 图片附件（{data, mediaType}）。此前 read 返回的 base64 在这里被白名单
+    // 丢掉，模型只收到一行 `Image file: x.png (12345 bytes)` —— 而工具描述
+    // 承诺「可视觉分析」。provider 层（anthropic.mjs / openai.mjs）早就支持
+    // { type: "image", data, mediaType } 块，缺的一直只是这一段。
+    image: image && image.data ? { data: String(image.data), mediaType: String(image.mediaType || "image/png") } : null
   }
 }
 
