@@ -1,5 +1,54 @@
 # Changelog / 更新日志
 
+## 0.6.21
+
+事件桥抽出来了，顺带删掉一份没人读、也没有上限的并行状态。
+
+### English
+
+- **Engine events → UI state is a module now.** The 118-line `switch` that decides
+  how "what the model is doing" appears on screen lived inside the TUI closure and
+  could not be tested. It is `repl/event-bridge.mjs` with 19 tests, including the
+  ones that matter for correctness rather than cosmetics: a live usage update must
+  never show a cost (provider and model pricing is only resolved after the turn, so
+  a hard-coded rate would be a precise-looking invented number), text deltas must
+  not repaint per token, and a retry toast must be dismissed when the turn ends or
+  it reads as still retrying.
+- **Deleted a parallel state nobody read.** Every event also ran
+  `ui.appState = reduceAppState(ui.appState, event)`. `app-state.mjs` is a complete
+  reducer, but **nothing in the codebase reads `ui.appState`** — rendering goes
+  entirely through the transcript model. Meanwhile its `appendBlock`/`appendDelta`
+  copy the whole array on every call, and `stream.text.delta` arrives per chunk.
+  Measured: after 200 turns it holds **2.8 MB across 200 blocks**, with no bound —
+  it grows for as long as the session stays open, all for a value with no reader.
+  `src/ui/app-state.mjs` stays (the reducer is fine and has its own tests); if it
+  is ever wired into rendering, that is where to start.
+- **The event-scope guard got tests it never had.** Turn-scoped events fail closed:
+  a missing correlation id is not a wildcard, so late events from a finished turn
+  and events from background sub-agents cannot mutate the foreground transcript,
+  and an overlapping `turn.start` cannot steal the foreground. That is a state-
+  isolation boundary, and it was previously only exercised indirectly.
+- `repl.mjs` 2736 → 2640 lines; `startTuiRepl` 2088 → 1991.
+
+### 中文
+
+- **引擎事件 → 界面状态成为模块。** 那段决定「模型正在做什么」如何呈现的 118 行
+  `switch` 此前在 TUI 闭包里，测不到。现在是 `repl/event-bridge.mjs`，带 19 条测试，
+  其中几条验的是正确性而非外观：回合进行中的用量更新**绝不能显示费用**（渠道与模型
+  的计价要等回合结束才确定，写死费率会给出一个看起来精确、实际是编的数字）；文本
+  增量不能逐 token 重绘；重连提示必须在回合结束时主动撤掉，否则看起来像还在重试。
+- **删掉一份没人读的并行状态。** 每个事件此前还会跑一句
+  `ui.appState = reduceAppState(ui.appState, event)`。`app-state.mjs` 是一套完整的
+  reducer，但**全代码库没有一处读 `ui.appState`** —— 渲染完全走 transcript 模型。
+  而它的 `appendBlock`/`appendDelta` 每次调用都全量复制数组，`stream.text.delta`
+  又是逐块到达的。实测：200 轮之后它持有 **2.8 MB、200 个 block**，没有上限 ——
+  会话开多久涨多久，全部为了一个没有读取方的值。`src/ui/app-state.mjs` 保留
+  （reducer 本身是好的，有独立测试）；将来若要接进渲染，从那里接。
+- **事件归属判定第一次有了测试。** 回合内事件是**默认拒绝**的：缺失关联 ID 不当
+  通配符，所以已结束回合的迟到事件、后台子智能体的事件都改不动前台对话，重叠的
+  `turn.start` 也抢不走前台。这是一条状态隔离边界，此前只被间接覆盖过。
+- `repl.mjs` 2736 → 2640 行；`startTuiRepl` 2088 → 1991 行。
+
 ## 0.6.20
 
 监听器的释放从手写清单变成登记本。

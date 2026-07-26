@@ -21,7 +21,6 @@
 
 import { createThinkingState } from "../ui/thinking-state.mjs"
 import { createWizardState } from "../provider/wizard.mjs"
-import { createAppState } from "../ui/app-state.mjs"
 
 /** 用户主动打开、彼此互斥的浮层。 */
 export const USER_OVERLAY_KINDS = Object.freeze([
@@ -81,7 +80,6 @@ export function createReplUiState({ historyLines = [], terminalFeatures = {} } =
     lastThinkingId: null,
     streamLogId: null,
     streamRaw: "",
-    appState: createAppState(),
     activeTurnId: null,
     paused: false,
     turnAbortController: null,

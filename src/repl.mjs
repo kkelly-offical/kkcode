@@ -73,6 +73,7 @@ import { loadProviderModelItems } from "./repl/provider-catalog.mjs"
 import { persistLearnedGrant } from "./repl/config-persistence.mjs"
 import { createRenderScheduler } from "./repl/render-scheduler.mjs"
 import { createListenerRegistry } from "./repl/listener-registry.mjs"
+import { subscribeSessionEvents } from "./repl/event-bridge.mjs"
 import { createKeyDispatcher } from "./repl/key-dispatch.mjs"
 import { createOverlayKeyScopes } from "./repl/keys/overlay-keys.mjs"
 import { createLifecycleKeyScope, createScrollKeyScope } from "./repl/keys/global-keys.mjs"
@@ -753,123 +754,26 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   // 的定时重绘恰好掩盖了这一点，所以从没被注意到）。
   const toastUnsub = toastStore.subscribe(() => requestRender())
 
-  const uiEventUnsub = EventBus.subscribe((event) => {
-    const { type, payload } = event
-    if (!shouldApplyActiveTurnEvent(event, {
-      sessionId: state.sessionId,
-      turnId: ui.activeTurnId
-    })) {
-      return
-    }
-    ui.appState = reduceAppState(ui.appState, event)
-    switch (type) {
-      case EVENT_TYPES.TURN_START:
-        ui.activeTurnId = event.turnId || null
-        break
-      case EVENT_TYPES.TURN_STEP_START: {
-        finalizeTextStream()
-        applyThinkingTransition(startThinkingWait(ui.thinking, { now: Date.now() }))
-        ui.currentStep = payload.step || 0
-        ui.maxSteps = Number(ctx.configState.config.agent?.max_steps) || 25
-        ui.currentActivity = { type: "thinking" }
-        requestRender()
-        break
-      }
-      case EVENT_TYPES.TOOL_START:
-        finalizeTextStream()
-        finalizeThinking()
-        ui.currentActivity = { type: "tool", tool: payload.tool, args: payload.args }
-        requestRender()
-        break
-      case EVENT_TYPES.TOOL_FINISH:
-      case EVENT_TYPES.TOOL_ERROR:
-        ui.currentActivity = { type: "thinking" }
-        requestRender()
-        break
-      case EVENT_TYPES.STREAM_TEXT_START:
-        finalizeTextStream()
-        finalizeThinking()
-        ui.streamRaw = ""
-        ui.streamLogId = appendLog("", { kind: "assistant", status: "streaming" })
-        ui.currentActivity = { type: "writing" }
-        requestRender()
-        break
-      case EVENT_TYPES.STREAM_TEXT_DELTA: {
-        ui.streamRaw += String(payload.text || payload.content || "")
-        textStreamBatcher.schedule()
-        break
-      }
-      case EVENT_TYPES.STREAM_THINKING_START:
-        finalizeTextStream()
-        applyThinkingTransition(startThinkingStream(ui.thinking, { now: Date.now() }))
-        ui.currentActivity = { type: "thinking" }
-        requestRender()
-        break
-      case EVENT_TYPES.STREAM_THINKING_DELTA: {
-        const transition = appendThinkingDelta(
-          ui.thinking,
-          payload.text || payload.content || "",
-          { now: Date.now() }
-        )
-        ui.thinking = transition.state
-        requestRender()
-        break
-      }
-      case EVENT_TYPES.SESSION_COMPACTED: {
-        // D3：静默压缩 + toast。压缩本身不打断工作流，这里只报一句结果。
-        const before = Number(event.payload?.beforeTokens) || 0
-        const after = Number(event.payload?.afterTokens) || 0
-        const detail = before > 0 && after > 0
-          ? `${formatTokenCount(before)} → ${formatTokenCount(after)}`
-          : `${event.payload?.summarizedCount ?? "?"} messages summarized`
-        showToast(`Context compacted · ${detail}`, { topic: "compaction", tone: "success" })
-        break
-      }
-      case EVENT_TYPES.TURN_USAGE_UPDATE: {
-        const u = payload.usage || {}
-        ui.metrics.tokenMeter = {
-          ...ui.metrics.tokenMeter,
-          estimated: true,
-          turn: { input: u.input || 0, output: u.output || 0 }
-        }
-        // Provider/model pricing is resolved after the turn. Never present a
-        // hard-coded model rate as a live cost estimate.
-        ui.metrics.cost = null
-        if (payload.context) ui.metrics.context = payload.context
-        requestRender()
-        break
-      }
-      case EVENT_TYPES.PROVIDER_RETRY:
-        showToast(
-          `Reconnecting ${payload.retryAttempt}/${payload.maxRetries} · ${payload.classification}`,
-          {
-            topic: "provider-retry",
-            tone: "warning",
-            durationMs: Math.max(1200, Number(payload.delayMs || 0) + 500)
-          }
-        )
-        ui.currentActivity = { type: "thinking" }
-        requestRender()
-        break
-      case EVENT_TYPES.TURN_FINISH:
-        finalizeThinking()
-        finalizeTextStream()
-        toastStore.dismissTopic("provider-retry")
-        ui.currentActivity = null
-        ui.currentStep = 0
-        ui.activeTurnId = null
-        requestRender()
-        break
-      case EVENT_TYPES.TURN_ERROR:
-        finalizeThinking()
-        finalizeTextStream("error")
-        toastStore.dismissTopic("provider-retry")
-        ui.currentActivity = null
-        ui.currentStep = 0
-        ui.activeTurnId = null
-        requestRender()
-        break
-    }
+  /**
+   * 会话事件 → TUI 状态。实现在 repl/event-bridge.mjs。
+   *
+   * 这里原本还有一句 `ui.appState = reduceAppState(ui.appState, event)` ——
+   * 一套完整的 reducer，但全代码库没有一处读它（渲染走的是 transcript 模型）。
+   * 实测 200 轮之后它持有 2.8 MB、200 个 block，无上限。已删除。
+   */
+  const uiEventUnsub = subscribeSessionEvents({
+    eventBus: EventBus,
+    ui,
+    ctx,
+    state,
+    toastStore,
+    textStreamBatcher,
+    requestRender,
+    appendLog,
+    showToast,
+    applyThinkingTransition,
+    finalizeThinking,
+    finalizeTextStream
   })
   // Subscribe activity logs after typed stream state so a completed Thinking
   // block is inserted before the tool block that follows it.
