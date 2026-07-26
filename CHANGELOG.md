@@ -1,5 +1,59 @@
 # Changelog / 更新日志
 
+## 0.6.27
+
+结构守卫：让这十几个版本的拆分不会在半年内长回去。
+
+### English
+
+- **Nine rules, each tied to a mistake actually made, not to abstract tidiness.**
+  No module under `src/repl/` may import `repl.mjs` (that would be a cycle back
+  into the composition root); no relative import escapes `src/`; `repl.mjs` has a
+  line budget it cannot exceed; modules stay under 700 lines; and a factory that
+  takes a bag of collaborators must name them.
+- **The plan's own rule did not survive contact with the code.** It said "no
+  function over 120 lines". Measuring showed that flags the wrong things:
+  `createEditorKeyScope` is 276 lines with **26** decision points — it is a
+  declarative key table — while `submitCurrentInput` is 368 lines with **86**.
+  One reads as a table, the other is a state machine. The cap is on decision
+  points now (`if`/`for`/`while`/`case`/`catch`/`&&`/`||`/`??`), which is the
+  thing that predicts "hard to change safely".
+- **A ratchet, not a wall.** Three functions are over the cap today
+  (`startTuiRepl` 189, `submitCurrentInput` 86, `buildFrame` 72). They are listed
+  explicitly with their current budget, and the list can only shrink: if one of
+  them grows, or a new function exceeds the cap, the test fails. A separate
+  assertion fails if a listed function disappears, so the list cannot rot into
+  stale entries that mask new problems.
+- **The "bag of collaborators" rule is measurable, not a naming taboo.** It first
+  flagged `createModePickerState(modeId)` — which takes one domain value, not a
+  bag. The rule now counts how many distinct keys are read off a positional
+  parameter; more than three is a bag.
+- **Every rule was verified by breaking the code and watching it go red** —
+  a reverse import, a padded `repl.mjs`, an inflated `submitCurrentInput`, and a
+  new god-object factory.
+
+### 中文
+
+- **九条规则，每条都对应一个真踩过的坑，不是抽象的整洁度偏好。** `src/repl/` 下的
+  模块不得 import `repl.mjs`（那是回头依赖组装根的循环）；相对导入不得越出 `src/`；
+  `repl.mjs` 有一个不能超的行数预算；模块不超过 700 行；收了一袋协作者的工厂必须
+  把它们点名。
+- **计划里我自己写的那条规则没能通过与代码的对质。** 原话是「任何函数 ≤ 120 行」。
+  量完发现它抓错了东西：`createEditorKeyScope` 有 276 行但只有 **26** 个判定点
+  （它是一张声明式的按键表），而 `submitCurrentInput` 368 行有 **86** 个。前者读起来
+  是一张表，后者是一台状态机。所以阈值改为按判定点
+  （`if`/`for`/`while`/`case`/`catch`/`&&`/`||`/`??`）—— 那才是预测「改起来危不危险」
+  的量。
+- **是棘轮，不是墙。** 今天有三个函数超标（`startTuiRepl` 189、`submitCurrentInput` 86、
+  `buildFrame` 72）。它们连同当前预算被显式列出，而这份清单只能变短：其中任何一个
+  变复杂、或者出现新的超标函数，测试就红。另有一条断言在清单里的函数消失时报错 ——
+  免得清单烂成一堆陈旧条目，反而掩盖新问题。
+- **「一袋协作者」这条是可测量的判据，不是命名禁忌。** 它最初误报了
+  `createModePickerState(modeId)` —— 那收的是一个领域值，不是袋子。现在的判据是
+  **位置参数上被读取了几个不同的键**，多于三个才算袋子。
+- **每条规则都用「改坏代码、看它变红」验过** —— 反向 import、撑大的 `repl.mjs`、
+  灌水的 `submitCurrentInput`、以及一个新的万能对象工厂。
+
 ## 0.6.26
 
 终端设备的所有权抽成模块。
