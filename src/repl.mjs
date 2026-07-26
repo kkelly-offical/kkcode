@@ -72,6 +72,8 @@ import { presentPromptTurn } from "./repl/turn-presenter.mjs"
 import { loadProviderModelItems } from "./repl/provider-catalog.mjs"
 import { persistLearnedGrant } from "./repl/config-persistence.mjs"
 import { createRenderScheduler } from "./repl/render-scheduler.mjs"
+import { createKeyDispatcher } from "./repl/key-dispatch.mjs"
+import { createOverlayKeyScopes } from "./repl/keys/overlay-keys.mjs"
 import { createTranscriptWriter } from "./repl/transcript-writer.mjs"
 import { createReplUiState, openUserOverlay, closeUserOverlay } from "./repl/ui-state.mjs"
 import { createGhostPredictor } from "./repl/ghost-predictor.mjs"
@@ -1804,6 +1806,40 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     return true
   }
 
+  /**
+   * 浮层类按键的分派表。
+   *
+   * 此前这是 onKey 里 326 行的顺序 `if`，按键优先级的唯一载体是「哪个 if 写在
+   * 前面」—— 比如「信息浮层打开时必须先吃掉 ↑↓，否则会同时滚浮层和翻输入历史」。
+   * 现在优先级是有序数据，`describeOrder()` 能把它打出来，测试能断言它。
+   */
+  const { dispatchKey: dispatchOverlayKey } = createKeyDispatcher({
+    scopes: createOverlayKeyScopes({
+      requestRender,
+      closeInfoPanel,
+      scrollInfoPanel,
+      resolvePermissionPrompt,
+      resolveQuestionPrompt,
+      commitCurrentQuestionAnswer,
+      advanceOrSubmitQuestion,
+      insertQuestionText,
+      moveGraphemeCursor,
+      closeProviderPicker,
+      confirmProviderPicker,
+      closeSessionPicker,
+      confirmSessionPicker,
+      closeModelPicker,
+      confirmModelPicker,
+      closePolicyPicker,
+      confirmPolicyPicker,
+      closeModePicker,
+      confirmModePicker,
+      PERMISSION_PROMPT_VALUES,
+      POLICY_CHOICES,
+      MODE_PICKER_CHOICES
+    })
+  })
+
   // Monkey-patch stdin.emit 拦截鼠标事件，防止 readline 将其解析为键盘输入
   const _origStdinEmit = process.stdin.emit
   const mouseDecoder = createSgrMouseDecoder()
@@ -2487,332 +2523,10 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
         // 信息浮层排在所有浮层之前：它是模态的，打开时应吃掉导航键，
         // 否则 ↑↓ 会同时滚浮层和翻输入历史。
-        if (ui.infoPanel) {
-          if (key.name === "escape" || (key.ctrl && key.name === "c") || key.name === "q") {
-            closeInfoPanel()
-            return
-          }
-          if (key.name === "up") { scrollInfoPanel(-1); return }
-          if (key.name === "down") { scrollInfoPanel(1); return }
-          if (key.name === "pageup") { scrollInfoPanel(-Math.max(1, (ui.infoPanel.maxRows || 14) - 1)); return }
-          if (key.name === "pagedown") { scrollInfoPanel(Math.max(1, (ui.infoPanel.maxRows || 14) - 1)); return }
-          if (key.name === "home") { scrollInfoPanel(-Number.MAX_SAFE_INTEGER); return }
-          if (key.name === "end") { scrollInfoPanel(Number.MAX_SAFE_INTEGER); return }
-          // Enter 也关：读完就走是最常见的动作，不该只有 Esc 一条路
-          if (key.name === "return" || key.name === "enter") { closeInfoPanel(); return }
-          // 其余按键忽略，避免在浮层打开时误改输入框
-          return
-        }
-
-        if (ui.pendingPermission) {
-          const PERM_VALUES = PERMISSION_PROMPT_VALUES
-          if (["1", "2", "3", "4"].includes(str)) {
-            resolvePermissionPrompt(PERM_VALUES[Number(str) - 1])
-            return
-          }
-          if (key.name === "escape") {
-            resolvePermissionPrompt("deny")
-            return
-          }
-          if (key.name === "return") {
-            resolvePermissionPrompt(PERM_VALUES[ui.permissionSelected] || "deny")
-            return
-          }
-          if (key.name === "up") {
-            ui.permissionSelected = Math.max(0, ui.permissionSelected - 1)
-            requestRender()
-            return
-          }
-          if (key.name === "down") {
-            ui.permissionSelected = Math.min(PERM_VALUES.length - 1, ui.permissionSelected + 1)
-            requestRender()
-            return
-          }
-          return
-        }
-
-        if (ui.pendingQuestion) {
-          const questions = ui.pendingQuestion.questions || []
-          const currentQ = questions[ui.questionIndex] || {}
-          const options = Array.isArray(currentQ.options) ? currentQ.options : []
-          const maxOptIdx = options.length + (currentQ.allowCustom !== false ? 1 : 0) - 1
-
-          // Ctrl+Enter: submit all answers immediately
-          if (key.ctrl && key.name === "return") {
-            commitCurrentQuestionAnswer()
-            resolveQuestionPrompt()
-            return
-          }
-
-          if (ui.questionCustomMode || options.length === 0) {
-            // Custom text input mode / free text question
-            if (key.name === "escape" && options.length > 0) {
-              // Back to options list
-              ui.questionCustomMode = false
-              requestRender()
-              return
-            }
-            if (key.name === "escape" && options.length === 0) {
-              // Skip this question
-              ui.questionAnswers[currentQ.id] = "(skipped)"
-              if (ui.questionIndex < questions.length - 1) {
-                ui.questionIndex += 1
-                ui.questionCustomInput = ""
-                ui.questionCustomCursor = 0
-              } else {
-                resolveQuestionPrompt()
-              }
-              requestRender()
-              return
-            }
-            if (key.name === "return") {
-              ui.questionAnswers[currentQ.id] = ui.questionCustomInput || ""
-              ui.questionCustomMode = false
-              ui.questionCustomInput = ""
-              ui.questionCustomCursor = 0
-              if (ui.questionIndex < questions.length - 1) {
-                ui.questionIndex += 1
-                ui.questionOptionSelected = 0
-              } else {
-                resolveQuestionPrompt()
-              }
-              requestRender()
-              return
-            }
-            if (key.name === "backspace") {
-              if (ui.questionCustomCursor > 0) {
-                const previous = moveGraphemeCursor(
-                  ui.questionCustomInput,
-                  ui.questionCustomCursor,
-                  -1
-                )
-                const before = ui.questionCustomInput.slice(0, previous)
-                const after = ui.questionCustomInput.slice(ui.questionCustomCursor)
-                ui.questionCustomInput = before + after
-                ui.questionCustomCursor = previous
-              }
-              requestRender()
-              return
-            }
-            if (key.name === "left") {
-              ui.questionCustomCursor = moveGraphemeCursor(
-                ui.questionCustomInput,
-                ui.questionCustomCursor,
-                -1
-              )
-              requestRender()
-              return
-            }
-            if (key.name === "right") {
-              ui.questionCustomCursor = moveGraphemeCursor(
-                ui.questionCustomInput,
-                ui.questionCustomCursor,
-                1
-              )
-              requestRender()
-              return
-            }
-            // Printable character
-            if (
-              str &&
-              !key.ctrl &&
-              !key.meta &&
-              !/[\u0000-\u001f\u007f-\u009f]/u.test(str)
-            ) {
-              insertQuestionText(str)
-              requestRender()
-              return
-            }
-            return
-          }
-
-          // Options mode
-          if (key.name === "escape") {
-            // Skip current question
-            ui.questionAnswers[currentQ.id] = "(skipped)"
-            if (ui.questionIndex < questions.length - 1) {
-              ui.questionIndex += 1
-              ui.questionOptionSelected = 0
-            } else {
-              resolveQuestionPrompt()
-            }
-            requestRender()
-            return
-          }
-          if (key.name === "up") {
-            ui.questionOptionSelected = Math.max(0, ui.questionOptionSelected - 1)
-            requestRender()
-            return
-          }
-          if (key.name === "down") {
-            ui.questionOptionSelected = Math.min(maxOptIdx, ui.questionOptionSelected + 1)
-            requestRender()
-            return
-          }
-          if (key.name === "tab") {
-            // Switch between questions
-            if (key.shift) {
-              ui.questionIndex = ui.questionIndex > 0 ? ui.questionIndex - 1 : questions.length - 1
-            } else {
-              ui.questionIndex = (ui.questionIndex + 1) % questions.length
-            }
-            ui.questionOptionSelected = 0
-            ui.questionCustomMode = false
-            requestRender()
-            return
-          }
-          if (key.name === "space" && currentQ.multi) {
-            // Toggle multi-select checkbox
-            if (ui.questionOptionSelected < options.length) {
-              if (!ui.questionMultiSelected[currentQ.id]) {
-                ui.questionMultiSelected[currentQ.id] = new Set()
-              }
-              const set = ui.questionMultiSelected[currentQ.id]
-              if (set.has(ui.questionOptionSelected)) {
-                set.delete(ui.questionOptionSelected)
-              } else {
-                set.add(ui.questionOptionSelected)
-              }
-              requestRender()
-            }
-            return
-          }
-          if (key.name === "return") {
-            // Custom... option selected
-            if (ui.questionOptionSelected === options.length && currentQ.allowCustom !== false) {
-              ui.questionCustomMode = true
-              ui.questionCustomInput = ""
-              ui.questionCustomCursor = 0
-              requestRender()
-              return
-            }
-            // Regular option selected
-            advanceOrSubmitQuestion()
-            return
-          }
-          return
-        }
-
-        // provider 选择器：注意它的 items 是结构化对象数组。行模式下
-        // ui.providerPicker 会被设成字符串数组（编号输入态），那种形态没有
-        // items 字段，不该走这里 —— 用 Array.isArray(items) 区分。
-        if (ui.providerPicker && Array.isArray(ui.providerPicker.items)) {
-          if (key.name === "escape") {
-            closeProviderPicker()
-            return
-          }
-          if (key.name === "return") {
-            void confirmProviderPicker()
-            return
-          }
-          if (key.name === "up") {
-            ui.providerPicker.selected = Math.max(0, ui.providerPicker.selected - 1)
-            requestRender()
-            return
-          }
-          if (key.name === "down") {
-            ui.providerPicker.selected = Math.min(ui.providerPicker.items.length - 1, ui.providerPicker.selected + 1)
-            requestRender()
-            return
-          }
-          return
-        }
-
-        if (ui.sessionPicker && Array.isArray(ui.sessionPicker.items)) {
-          if (key.name === "escape") {
-            closeSessionPicker()
-            return
-          }
-          if (key.name === "return") {
-            void confirmSessionPicker()
-            return
-          }
-          if (key.name === "up") {
-            ui.sessionPicker.selected = Math.max(0, ui.sessionPicker.selected - 1)
-            requestRender()
-            return
-          }
-          if (key.name === "down") {
-            ui.sessionPicker.selected = Math.min(ui.sessionPicker.items.length - 1, ui.sessionPicker.selected + 1)
-            requestRender()
-            return
-          }
-          return
-        }
-
-        if (ui.modelPicker) {
-          if (key.name === "escape") {
-            closeModelPicker()
-            return
-          }
-          if (key.name === "return") {
-            confirmModelPicker()
-            return
-          }
-          if (key.name === "up") {
-            ui.modelPicker.selected = Math.max(0, ui.modelPicker.selected - 1)
-            requestRender()
-            return
-          }
-          if (key.name === "down") {
-            ui.modelPicker.selected = Math.min(ui.modelPicker.items.length - 1, ui.modelPicker.selected + 1)
-            requestRender()
-            return
-          }
-          return
-        }
-
-        if (ui.policyPicker) {
-          if (key.name === "escape") {
-            closePolicyPicker()
-            return
-          }
-          if (key.name === "return") {
-            confirmPolicyPicker()
-            return
-          }
-          if (key.name === "up") {
-            ui.policyPicker.selected = Math.max(0, ui.policyPicker.selected - 1)
-            requestRender()
-            return
-          }
-          if (key.name === "down") {
-            ui.policyPicker.selected = Math.min(POLICY_CHOICES.length - 1, ui.policyPicker.selected + 1)
-            requestRender()
-            return
-          }
-          return
-        }
-
-        if (ui.modePicker) {
-          if (key.name === "escape") {
-            closeModePicker()
-            return
-          }
-          if (key.name === "return") {
-            confirmModePicker()
-            return
-          }
-          if (key.name === "tab") {
-            // 面板打开时 Shift+Tab 继续循环，手感与关闭时一致
-            const delta = key.shift ? 1 : -1
-            const count = MODE_PICKER_CHOICES.length
-            ui.modePicker.selected = (ui.modePicker.selected + delta + count) % count
-            requestRender()
-            return
-          }
-          if (key.name === "up") {
-            ui.modePicker.selected = Math.max(0, ui.modePicker.selected - 1)
-            requestRender()
-            return
-          }
-          if (key.name === "down") {
-            ui.modePicker.selected = Math.min(MODE_PICKER_CHOICES.length - 1, ui.modePicker.selected + 1)
-            requestRender()
-            return
-          }
-          return
-        }
+        // 浮层类按键走分派表：优先级是有序数据，不再是「哪个 if 写在前面」。
+        // 这些作用域都是模态的 —— 未命中的按键被吞掉，不会漏到输入框去。
+        const overlayResult = await dispatchOverlayKey({ ui, key, str })
+        if (overlayResult.handled) return
 
         // Scrolling keys work even when busy
         if (key.name === "pageup") {

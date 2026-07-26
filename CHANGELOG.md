@@ -1,5 +1,63 @@
 # Changelog / 更新日志
 
+## 0.6.18
+
+按键优先级从「哪个 if 写在前面」变成可断言的有序数据。浮层类按键先走。
+
+### English
+
+- **Key precedence is data now.** In the 685-line `onKey`, the only thing
+  expressing a rule like *"an open info panel must eat ↑↓, or they scroll the
+  panel and walk input history at the same time"* was the fact that
+  `if (ui.infoPanel)` appeared earlier in the function than `if (key.name ===
+  "up")`. Nothing could state, check, or test that. Move a block for an unrelated
+  reason and the rule breaks silently. The same held for *"a visible selection
+  owns Ctrl+C"*. Both are now assertions against an ordered table, and
+  `describeOrder()` prints the precedence.
+- **Modal scopes are explicit.** The old shape — a block wrapped in
+  `if (overlay) { … ; return }` with a bare `return` at the end — encoded two
+  things at once: which keys the overlay handles, and that everything else is
+  *swallowed* rather than falling through to the input box. Swallowing is
+  deliberate (typing `a` with a picker open must not edit your prompt), and it is
+  now a declared property of a scope rather than an easily-deleted trailing
+  statement.
+- **326 lines out of `onKey`, nine overlay scopes in.** Info panel, permission
+  prompt, question prompt (two sub-shapes: option list and free text), and five
+  pickers. Four of the five pickers were literally identical apart from the state
+  field and the confirm/close pair, so they come from one factory now.
+  `onKey` is 685 → 363 lines; `startTuiRepl` 2816 → 2381.
+- **Verified in a real terminal**, since the dispatcher is only constructed when
+  the TUI actually starts and no unit test runs that path: panel scrolling
+  (`1-18/76` → `4-21/76`), picker navigation (`3/6` → `4/6`), and the swallow
+  rule — typing `abc` with a picker open leaves the input box empty.
+- **Still in the if-chain, next release:** the editor keys (cursor, delete,
+  selection, Tab/ghost, history) and the global keys (Ctrl+C/D/Z/L/T/B/Y/O/E,
+  scrolling, Esc). Those are non-modal and simpler; splitting them is the same
+  operation applied to the other 363 lines.
+
+### 中文
+
+- **按键优先级变成了数据。** 在 685 行的 `onKey` 里，表达「信息浮层打开时必须先
+  吃掉 ↑↓，否则会同时滚浮层和翻输入历史」这条规则的，唯一载体是
+  `if (ui.infoPanel)` 恰好写在 `if (key.name === "up")` 前面。没有任何东西能陈述、
+  检查或测试它 —— 有人为了别的原因挪一下代码块，规则就悄悄破了。「有可见选区时
+  Ctrl+C 归选区」也一样。现在两条都是对有序表的断言，`describeOrder()` 能把优先级
+  直接打出来。
+- **模态语义是显式声明的了。** 旧写法是 `if (浮层) { … ; return }` 整块包住、末尾
+  一个裸 `return`，它同时编码了两件事：这个浮层管哪些键，以及**其余按键被吞掉**而
+  不是漏到输入框。吞掉是刻意的（选择器开着时敲 `a` 不该改到你的提示词），现在它是
+  作用域的一个声明属性，而不是一句删了也不报错的收尾语句。
+- **从 `onKey` 搬出 326 行，换进九个浮层作用域。** 信息面板、权限提示、提问提示
+  （两种子形态：选项列表与自由文本）、五个选择器。五个选择器里有四个逐字相同，
+  只有状态字段与确认/关闭这一对不同，现在由同一个工厂生成。
+  `onKey` 685 → 363 行；`startTuiRepl` 2816 → 2381 行。
+- **在真实终端里验过** —— 分派器只在 TUI 真正启动时才构造，没有任何单测会走那条
+  路：浮层滚动（`1-18/76` → `4-21/76`）、选择器移动（`3/6` → `4/6`）、以及吞键规则
+  （选择器开着时敲 `abc`，输入框仍是空的）。
+- **仍在 if 链里、下一版处理：** 编辑器按键（光标、删除、选区、Tab/ghost、历史）
+  与全局按键（Ctrl+C/D/Z/L/T/B/Y/O/E、滚动、Esc）。它们是非模态的、形状更简单，
+  拆法就是把同一套操作用在剩下的 363 行上。
+
 ## 0.6.17
 
 拆分第二阶段：帧调度、输出通道、UI 状态各自成模块。真实终端验收查出一个窄终端的渲染缺陷。
