@@ -13,6 +13,7 @@ import { McpRegistry } from "../mcp/registry.mjs"
 import { SkillRegistry } from "../skill/registry.mjs"
 import { askQuestionInteractive } from "./question-prompt.mjs"
 import { checkBashAllowed } from "../permission/exec-policy.mjs"
+import { normalizePermissionLevel } from "../permission/rules.mjs"
 import { gitAutoTools } from "./git-auto.mjs"
 import { gitFullAutoTools } from "./git-full-auto.mjs"
 import { markFileRead, refreshFileReadStateFromDisk } from "./file-read-state.mjs"
@@ -852,8 +853,12 @@ function builtinTools(config) {
       const configBashTimeout = Number(ctx.config?.tool?.bash_timeout_ms || BASH_TIMEOUT_MS)
       const timeoutMs = Math.min(Math.max(Number(args.timeout) || configBashTimeout, 1000), 600_000)
 
-      // 执行策略检查
-      const policyCheck = checkBashAllowed(command, ctx.config)
+      // 执行策略检查。审批档必须传进去 —— exec-policy 与 PermissionEngine 是
+      // 两套互不通话的权限词汇，不传的话 YOLO 档在这里等同于最严格档，
+      // 而模式说明写的是「每个审批提示都跳过」。
+      const policyCheck = checkBashAllowed(command, ctx.config, {
+        approvalLevel: normalizePermissionLevel(ctx.config?.permission || {})
+      })
       if (!policyCheck.allowed) {
         return {
           ok: false,

@@ -45,6 +45,34 @@ const READ_ONLY_TOOLS = new Set([
   "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch", "background_output", "todowrite", "enter_plan"
 ])
 
+/**
+ * 只读委派（write_scope: read-only）下确定不会改动工作区的工具。
+ *
+ * 采取**默认拒绝**姿态：不在这张表里的工具一律视为可能改动。新增工具时
+ * 忘了登记，后果是「只读子智能体多被拦一次」——比反过来安全得多。
+ * bash 不在表里，它单独按命令判定（见 canMutateWorkspace）。
+ */
+const NON_MUTATING_TOOLS = new Set([
+  ...READ_ONLY_TOOLS,
+  "sysinfo", "question", "task_list", "task_get", "task_output", "task_parallel",
+  "git_status", "git_info", "git_list_snapshots", "exit_plan"
+])
+
+/**
+ * 这次调用是否可能改动工作区。
+ *
+ * bash 单独处理：只读档下一律视为可改动，除非命令命中已有的可信只读白名单
+ * （`git status`、`ls`、`cat` 之类）。这正是 0.6.2 那版漏掉的口子 ——
+ * 按能力名判定时 bash 的能力是 risky-shell，两个字符串都对不上。
+ */
+function canMutateWorkspace(toolName, args = {}) {
+  const name = String(toolName || "")
+  if (name === "bash") {
+    return toolCapability("bash", String(args?.command || "")) !== "safe-shell"
+  }
+  return !NON_MUTATING_TOOLS.has(name)
+}
+
 const PERMISSION_RANK = new Map(APPROVAL_LEVELS.map((level, index) => [level, index]))
 
 /**
@@ -872,10 +900,15 @@ export async function processTurnLoop({
               effectiveAgent?.tools && !effectiveAgent.tools.includes(call.name)
             )
             // write_scope 此前只被拼进委派 prompt 文本，没有运行时拦截。
+            //
+            // 0.6.2 加的第一版判的是 `["write","edit"].includes(capability)`，
+            // 而 toolCapability 的返回值域里根本没有 "write" —— 那半个条件是
+            // 死值，且真正的漏洞是它拦不住 bash（能力是 risky-shell）：
+            // 只读子智能体照样能用 shell 改工作区。改为按「这个工具是否可能
+            // 改动工作区」判定，而不是猜能力名。
             const scope = String(runSpec?.workspace?.writeScope || "").trim().toLowerCase()
             const readOnlyScope = /^(read[-_ ]?only|none|no[-_ ]?mutations?)$/.test(scope)
-            const deniedByWriteScope = readOnlyScope
-              && ["write", "edit"].includes(toolCapability(call.name, call.args?.command || ""))
+            const deniedByWriteScope = readOnlyScope && canMutateWorkspace(call.name, call.args)
             result = !tool
               ? {
                   name: call.name,

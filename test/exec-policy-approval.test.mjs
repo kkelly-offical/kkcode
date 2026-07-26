@@ -71,3 +71,35 @@ describe("普通命令不受影响", () => {
     }
   })
 })
+
+/**
+ * 端到端：0.6.2 的教训 —— 上面所有断言都是直接调函数并显式传档，
+ * 所以函数改对了它们就全绿，而真实路径上调用点没接线时它们**察觉不到**。
+ * 这一组从工具层验证，是唯一能证明「用户开了 YOLO 真的能提交」的断言。
+ */
+describe("工具层：审批档真的传到了 exec-policy", () => {
+  it("bash 工具在 YOLO 配置下放行 git commit", async () => {
+    const { ToolRegistry } = await import("../src/tool/registry.mjs")
+    await ToolRegistry.initialize({
+      config: { tool: { sources: { builtin: true, local: false, plugin: false, mcp: false } } },
+      cwd: process.cwd(),
+      allowProjectSources: false
+    })
+    const bash = await ToolRegistry.get("bash")
+    assert.ok(bash, "bash 工具应当已注册")
+
+    // 只走到策略闸门就够了：命令本身故意写成不会有副作用的形式
+    const denied = await bash.execute(
+      { command: "git commit --dry-run -m probe" },
+      { cwd: process.cwd(), config: { permission: { level: "manual" } } }
+    )
+    assert.equal(denied.blocked, true, "manual 档应当仍被策略拦下")
+    assert.equal(denied.error, "execution_policy_violation")
+
+    const allowed = await bash.execute(
+      { command: "git commit --dry-run -m probe" },
+      { cwd: process.cwd(), config: { permission: { level: "yolo" } } }
+    )
+    assert.notEqual(allowed?.blocked, true, "YOLO 档不该被策略拦下")
+  })
+})

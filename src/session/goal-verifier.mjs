@@ -127,6 +127,11 @@ export async function verifyCriterion(criterion, ctx = {}) {
           )
         }
         // 第 1 层：exec-policy 闸门。被禁 = 计划缺陷 = fail，让用户看见。
+        //
+        // approvalLevel: 有意不传。这里判定的是**验收判据**里声明的命令，
+        // 而一条会 commit/push 的判据本身就是错的 —— 它不该因为用户开了
+        // YOLO 就变成合理的。放开审批档是为了「不打断你干活」，不是为了
+        // 让错误的验收标准通过。
         const policy = checkBashAllowed(commandLine, ctx.config || {})
         if (policy && policy.allowed === false) {
           return done(CRITERION_FAIL, `判据命令被执行策略拒绝：${policy.reason}`, { command: commandLine })

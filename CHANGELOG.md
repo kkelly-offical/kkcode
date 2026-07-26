@@ -1,5 +1,60 @@
 # Changelog / 更新日志
 
+## 0.6.3
+
+0.6.2 claimed to fix YOLO refusing commands. It did not — the fix landed in the
+function and never reached the call sites. This release actually wires it, and
+adds a check so this particular failure shape stops recurring.
+
+### English
+
+- **`checkBashAllowed` now receives the approval level at its call site.** The
+  parameter was added in 0.6.2 but `src/tool/registry.mjs` still called it with
+  two arguments, so the internal check read `undefined` and every tier behaved
+  like the strictest one. The tests passed because they called the function
+  directly and supplied the level themselves — the exact blind spot the fix was
+  supposed to close.
+  A new end-to-end assertion exercises the bash tool rather than the function,
+  which is the only way to prove that turning on YOLO actually lets a commit
+  through.
+- **`write_scope: read-only` blocks `bash`.** The 0.6.2 check tested
+  `["write","edit"].includes(capability)`, and `toolCapability` never returns
+  `"write"` — half the condition was dead, and the half that worked missed the
+  hole that mattered: bash reports as `risky-shell`, so a read-only subagent
+  could still reshape the workspace through a shell. It now asks whether the
+  call can mutate the workspace at all, defaulting to yes for anything not
+  explicitly known to be read-only, with bash judged per command against the
+  existing trusted-read-only patterns.
+- **`test/wiring-contract.test.mjs`** scans for this failure shape: a security
+  parameter that exists in a signature but is missing at a call site, and a
+  comparison against a capability string the producing function can never
+  return. Four defects in this repository have had exactly that shape
+  (`setTrusted` in the background worker, and both of the above). Verified by
+  reverting the fix and watching the check go red. Deliberate omissions are
+  exempted by stating the reason next to the call — the criterion verifier
+  omits the approval level on purpose, since a criterion that commits is a bad
+  criterion regardless of which tier the user selected.
+
+### 中文
+
+- **`checkBashAllowed` 在调用点终于收到了审批档。** 这个参数是 0.6.2 加的，
+  但 `src/tool/registry.mjs` 仍以两个实参调用，函数内部读到 `undefined`，
+  于是任何档位都等同于最严格档。测试之所以全绿，是因为它们直接调函数并自己
+  传档 —— 正是这个修复本该堵上的那个盲区。
+  新增的端到端断言从 bash 工具而非函数出发，那是唯一能证明「用户开了 YOLO
+  真的能提交」的方式。
+- **`write_scope: read-only` 现在拦得住 `bash`。** 0.6.2 那版判的是
+  `["write","edit"].includes(capability)`，而 `toolCapability` 从不返回
+  `"write"` —— 一半条件是死值，能工作的另一半又恰好漏掉了真正要紧的口子：
+  bash 的能力是 `risky-shell`，只读子智能体照样能用 shell 改工作区。现在改问
+  「这次调用是否可能改动工作区」，未明确登记为只读的一律视为可能，bash 按命令
+  对照既有的可信只读白名单单独判定。
+- **`test/wiring-contract.test.mjs`** 专扫这一类缺陷形状：签名里有、调用点没传
+  的安全参数；以及与一个永远不会被返回的能力名做比较。本仓库已有四个缺陷是这个
+  形状（后台 worker 的 `setTrusted`，以及上面两条）。已用「撤销修复看它变红」
+  反向验证。有意不传的情形在调用点旁写明理由即可豁免 —— 判据校验器就是有意不传，
+  因为一条会提交的验收判据本身就是错的，与用户选了哪一档无关。
+
 ## 0.6.2
 
 ### English
