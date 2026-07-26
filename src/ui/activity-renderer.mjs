@@ -99,6 +99,17 @@ export function formatToolStart(toolName, args) {
       return null // handled by result preview only
     case "webfetch":
       return `  ${prefix} ${name} ${toolMuted(clipText(args?.url, 60))}`
+    case "http_request":
+      return `  ${prefix} ${name} ${toolMuted(`${String(args?.method || "GET").toUpperCase()} ${clipText(args?.url, 50)}`)}`
+    case "move":
+    case "copy":
+      return `  ${prefix} ${name} ${toolMuted(`${clipText(args?.from, 28)} → ${clipText(args?.to, 28)}`)}`
+    case "remove":
+      return `  ${prefix} ${name} ${toolMuted(clipText(args?.path, 50))}`
+    case "mkdir":
+      return `  ${prefix} ${name} ${toolMuted(clipText(args?.path, 50))}`
+    case "archive":
+      return `  ${prefix} ${name} ${toolMuted(clipText(args?.source, 50))}`
     case "websearch":
       return `  ${prefix} ${name} ${toolMuted(clipText(args?.query, 60))}`
     case "question":

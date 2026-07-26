@@ -16,6 +16,7 @@ const TOOL_CAPABILITIES = {
   sysinfo: "read",
   websearch: "network",
   webfetch: "network",
+  http_request: "network",
   background_output: "read",
   task_list: "read",
   task_get: "read",
@@ -30,6 +31,13 @@ const TOOL_CAPABILITIES = {
   patch: "edit",
   multiedit: "edit",
   notebookedit: "edit",
+  // 0.7.0 阶段 3 新增的文件管理工具。remove 默认进回收站（可恢复），
+  // 但它仍是 edit 能力 —— 删错文件的代价不因为可恢复就变小。
+  move: "edit",
+  copy: "edit",
+  remove: "edit",
+  mkdir: "edit",
+  archive: "edit",
   task: "task",
   task_group: "task",
   task_stop: "task",

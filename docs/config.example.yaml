@@ -193,6 +193,20 @@ agent:
       auto_commit_stages: true
       auto_merge: true
 
+    # 可用性门禁。六道：build / test / review / health / budget / smoke
+    usability_gates:
+      # smoke 是唯一会「把产物真的跑起来」的一道 —— 其余五道全是静态检查，
+      # 接不住「编译过了但一启动就崩」（改入口文件、改 import 图、删掉还有人
+      # 引用的导出时最容易出现，而那正是 agent 最爱做的改动）。
+      smoke:
+        enabled: true
+        # 留空时自动发现入口：package.json 的 bin（跑 --version）或 main
+        # （import 一次）。都找不到就判 not_applicable —— 乱猜启动命令会在
+        # 别人的项目里制造假失败，比没有这道门禁更糟。
+        # command: "npm"
+        # args: ["run", "start:check"]
+        timeout_ms: 20000
+
 # =============================================================================
 # 权限配置（详见 configs/permission-*.yaml 模板）
 # =============================================================================
@@ -254,6 +268,14 @@ tool:
   # 单次工具输出占模型上下文的比例。上限随模型上下文变化，压在
   # [16000, 200000] 字符之间 —— 128k 模型和 1M 模型不该用同一个数字。
   output_budget_ratio: 0.08
+
+  # 出网工具（webfetch / http_request）
+  http:
+    # 允许访问回环与内网地址。默认关闭：`webfetch` 曾能把
+    # http://127.0.0.1:PORT/admin 的响应体原样读回来，也就是可以当内网扫描器
+    # 用。云元数据端点（169.254.169.254 等）**无论这项怎么配都拒绝** ——
+    # 它返回的是实例凭证，不是数据。
+    allow_private_hosts: false
 
   # 需要额外确认的文件模式。这里写的会**并入**内置默认（.env、.env.*、
   # .github/workflows/** 等），不会替换它们 —— 想加一条不该顺带减掉六条。

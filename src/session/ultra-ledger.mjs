@@ -47,6 +47,20 @@ function normalizeGates(gates) {
       reason: String(gate.reason || "").slice(0, 300),
       outputSnippet: clampSnippet(gate.output || gate.outputSnippet || "")
     }
+    // smoke 门禁带 evidence（入口点、退出码、崩溃签名）—— 那是全套门禁里
+    // 唯一的运行时证据，也是成功路径最值得留档的一项：静态检查全过只说明
+    // 「看起来没坏」，evidence 说明「真的跑起来了，而且是这么跑的」。
+    if (gate.evidence && typeof gate.evidence === "object") {
+      out[name].evidence = {
+        target: String(gate.evidence.target || "").slice(0, 200),
+        kind: String(gate.evidence.kind || ""),
+        exitCode: gate.evidence.exitCode ?? null,
+        timedOut: Boolean(gate.evidence.timedOut),
+        crashSignatures: Array.isArray(gate.evidence.crashSignatures)
+          ? gate.evidence.crashSignatures.slice(0, 5)
+          : []
+      }
+    }
   }
   return out
 }

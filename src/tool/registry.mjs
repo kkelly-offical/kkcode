@@ -14,6 +14,8 @@ import { SkillRegistry } from "../skill/registry.mjs"
 import { askQuestionInteractive } from "./question-prompt.mjs"
 import { checkBashAllowed } from "../permission/exec-policy.mjs"
 import { truncationNotice, completeNotice } from "./output-budget.mjs"
+import { guardedFetch, allowPrivateHosts } from "../net/url-guard.mjs"
+import { fileOpsTools } from "./file-ops.mjs"
 import { normalizePermissionLevel } from "../permission/rules.mjs"
 import { gitAutoTools } from "./git-auto.mjs"
 import { gitFullAutoTools } from "./git-full-auto.mjs"
@@ -1239,23 +1241,99 @@ function builtinTools(config) {
       },
       required: ["url"]
     },
-    async execute(args) {
+    async execute(args, ctx = {}) {
       const url = String(args.url || "")
-      if (!url.startsWith("http://") && !url.startsWith("https://")) {
-        return "error: URL must start with http:// or https://"
-      }
       try {
-        const response = await fetch(url, {
+        // 出网校验（SSRF）。此前只检查 URL 前缀，于是
+        // `http://127.0.0.1:38412/admin` 的响应体会被原样读回来 —— 实测确认。
+        // 逐跳校验重定向，否则只校验第一个 URL 等于没校验。
+        const { response } = await guardedFetch(url, {
           headers: buildRequestHeaders({
             target: "webfetch",
             accept: "text/html, text/plain, application/json"
           }),
           signal: AbortSignal.timeout(30000)
-        })
+        }, { allowPrivate: allowPrivateHosts(ctx.config) })
         if (!response.ok) return `error: HTTP ${response.status}`
         const text = await response.text()
-        const truncated = text.length > 50000 ? text.slice(0, 50000) + "\n...(truncated)" : text
-        return truncated
+        const limit = Math.max(4000, Number(ctx.toolResultLimit) || 50000)
+        return text.length > limit
+          ? `${text.slice(0, limit)}\n${truncationNotice({
+              shown: limit,
+              total: text.length,
+              unit: "chars",
+              hint: "Fetch a more specific URL or path to see the rest."
+            })}`
+          : text
+      } catch (error) {
+        return `error: ${error.message}`
+      }
+    }
+  }
+
+  const httpRequestTool = {
+    name: "http_request",
+    description: "Make an HTTP request with a chosen method, headers, and body. Use this for APIs (POST/PUT/PATCH/DELETE, JSON payloads, auth headers). For simply reading a public page as text, use `webfetch`. Private and loopback addresses and cloud metadata endpoints are blocked.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: schema("string", "target URL (http or https)"),
+        method: schema("string", "HTTP method: GET, POST, PUT, PATCH, DELETE, HEAD (default: GET)"),
+        headers: schema("object", "request headers, e.g. {\"Content-Type\":\"application/json\"}"),
+        body: schema("string", "request body as a string; JSON must be pre-serialized"),
+        timeout_ms: schema("number", "timeout in milliseconds (default 30000, max 120000)")
+      },
+      required: ["url"]
+    },
+    async execute(args, ctx = {}) {
+      const method = String(args.method || "GET").toUpperCase()
+      const ALLOWED = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+      if (!ALLOWED.includes(method)) {
+        return `error: unsupported method "${method}". Allowed: ${ALLOWED.join(", ")}`
+      }
+      if ((method === "GET" || method === "HEAD") && args.body) {
+        return `error: ${method} cannot carry a body`
+      }
+
+      const headers = buildRequestHeaders({
+        target: "http_request",
+        accept: "application/json, text/plain, */*",
+        customHeaders: args.headers && typeof args.headers === "object" && !Array.isArray(args.headers)
+          ? Object.fromEntries(
+              Object.entries(args.headers)
+                // 头名按 RFC 7230 token；带控制字符的名字能撑开请求走私
+                .filter(([k]) => /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(k))
+                .map(([k, v]) => [k, String(v).replace(/[\r\n]/g, "")])
+            )
+          : {}
+      })
+
+      const timeoutMs = Math.min(Math.max(Number(args.timeout_ms) || 30000, 1000), 120_000)
+      try {
+        const { response, url: finalUrl, redirects } = await guardedFetch(String(args.url || ""), {
+          method,
+          headers,
+          body: args.body === undefined ? undefined : String(args.body),
+          signal: AbortSignal.timeout(timeoutMs)
+        }, { allowPrivate: allowPrivateHosts(ctx.config) })
+
+        const text = method === "HEAD" ? "" : await response.text()
+        const limit = Math.max(4000, Number(ctx.toolResultLimit) || 50000)
+        const shownBody = text.length > limit
+          ? `${text.slice(0, limit)}\n${truncationNotice({
+              shown: limit,
+              total: text.length,
+              unit: "chars",
+              hint: "Narrow the request (query params, Range header, or a more specific endpoint)."
+            })}`
+          : text
+
+        const lines = [`HTTP ${response.status} ${response.statusText}`.trim()]
+        if (redirects > 0) lines.push(`(after ${redirects} redirect${redirects > 1 ? "s" : ""} → ${finalUrl.href})`)
+        const contentType = response.headers.get("content-type")
+        if (contentType) lines.push(`content-type: ${contentType}`)
+        if (shownBody) lines.push("", shownBody)
+        return lines.join("\n")
       } catch (error) {
         return `error: ${error.message}`
       }
@@ -1768,7 +1846,7 @@ function builtinTools(config) {
   const gitTools = config?.git_auto?.enabled !== false ? gitAutoTools : []
   const gitFullAutoToolsList = config?.git_auto?.full_auto === true ? gitFullAutoTools : []
   
-  return [listTool, sysinfoTool, readTool, writeTool, editTool, patchTool, multieditTool, globTool, grepTool, bashTool, createTaskTool(), createTaskGroupTool(), outputTool, cancelTool, taskListTool, taskParallelTool, taskGetTool, taskStopTool, taskOutputTool, todowriteTool, questionTool, skillTool, webfetchTool, websearchTool, codesearchTool, notebookeditTool, enterPlanTool, exitPlanTool, ...gitTools, ...gitFullAutoToolsList]
+  return [listTool, sysinfoTool, readTool, writeTool, editTool, patchTool, multieditTool, globTool, grepTool, bashTool, createTaskTool(), createTaskGroupTool(), outputTool, cancelTool, taskListTool, taskParallelTool, taskGetTool, taskStopTool, taskOutputTool, todowriteTool, questionTool, skillTool, webfetchTool, httpRequestTool, websearchTool, codesearchTool, notebookeditTool, enterPlanTool, exitPlanTool, ...fileOpsTools, ...gitTools, ...gitFullAutoToolsList]
 }
 
 function mcpTools() {

@@ -1,5 +1,10 @@
 /**
- * Ultra 受阻汇报：从 ledger 组装结构化报告，渲染成终端文本或 Markdown。
+ * Ultra 结果汇报：从 ledger 组装结构化报告，渲染成终端文本或 Markdown。
+ *
+ * 名字里的 "blocked" 是历史遗留 —— 它同时服务**成功路径**（`status:
+ * "completed"` 时也走这里），而成功时最该留档的恰恰是「凭什么说做完了」：
+ * 判据逐条的判定与证据、改过哪些文件、以及门禁跑出来的结果。
+ * 0.7.0 补上最后一项：门禁结果一直存在 ledger 里，却从未出现在报告中。
  *
  * 三个铁律：
  *   1. **只读 ledger**，不读运行期变量 —— 会话结束时的渲染与事后
@@ -76,6 +81,33 @@ export function buildBlockedReport(ledger, { status = "", llmSummary = null } = 
   const subGoals = lastRound?.subGoals || []
   const totals = { pass: achieved.length, total: criteria.length }
 
+  // 门禁结果。此前 ledger 里存着但报告从不读 —— 于是「六道门禁全过」这个
+  // 结论只存在于日志里，报告读者无从确认。禁用的门禁不列：它没有发言权，
+  // 列出来只会让人以为它通过了。
+  const gateEntries = Object.entries(lastRound?.gates || {})
+    .filter(([, gate]) => gate && gate.status !== "disabled")
+    .map(([name, gate]) => ({
+      gate: name,
+      status: gate.status,
+      reason: gate.reason || "",
+      outputSnippet: gate.outputSnippet || "",
+      evidence: gate.evidence || null
+    }))
+
+  // 运行时证据：架构图里 Runtime → Logs 那一段的落点。其余五道门禁都是静态
+  // 检查，只有 smoke 真的把产物跑起来过，所以只有它能回答「跑起来了吗」。
+  const smoke = gateEntries.find((g) => g.gate === "smoke")
+  const runtimeEvidence = smoke?.evidence
+    ? {
+        ran: smoke.status === "pass",
+        target: smoke.evidence.target,
+        kind: smoke.evidence.kind,
+        exitCode: smoke.evidence.exitCode,
+        timedOut: smoke.evidence.timedOut,
+        crashSignatures: smoke.evidence.crashSignatures || []
+      }
+    : null
+
   return {
     status: finalStatus,
     statusLabel: STATUS_LABELS[finalStatus] || finalStatus,
@@ -87,6 +119,7 @@ export function buildBlockedReport(ledger, { status = "", llmSummary = null } = 
     nextSteps: llmSummary?.nextSteps || [],
     totals, achieved, blocked, unknown, manualPending, criteriaChanged,
     subGoals, attempts, filesChanged,
+    gates: gateEntries, runtimeEvidence,
     userInteractions: data.userInteractions,
     planDefects: data.planDefects,
     resumeHint: `kkcode ultra resume --session ${data.sessionId}`,
@@ -165,6 +198,32 @@ export function renderBlockedReportText(report, { paint = (t) => t } = {}) {
     lines.push("")
   }
 
+  if (report.gates.length) {
+    const marks = { pass: MARKS.pass, not_applicable: "–" }
+    lines.push(bold("门禁", "cyan"))
+    for (const gate of report.gates) {
+      const mark = marks[gate.status] || MARKS.fail
+      const color = gate.status === "pass" ? null : gate.status === "not_applicable" ? null : "red"
+      lines.push(`  ${mark} ${gate.gate}${gate.reason ? dim(` — ${gate.reason}`) : ""}`)
+      if (gate.status !== "pass" && gate.status !== "not_applicable" && gate.outputSnippet) {
+        lines.push(`      ${dim(gate.outputSnippet)}`)
+      }
+      void color
+    }
+    lines.push("")
+  }
+
+  // 运行时证据独立成段：其余门禁答的是「看起来没坏」，这段答的是
+  // 「真的跑起来了，而且是这么跑的」—— 成功路径上最值得留档的一句。
+  if (report.runtimeEvidence) {
+    const rt = report.runtimeEvidence
+    lines.push(bold("运行时证据", rt.ran ? "green" : "red"))
+    lines.push(`  ${rt.ran ? MARKS.pass : MARKS.fail} ${rt.target}${dim(` (exit ${rt.exitCode ?? "?"})`)}`)
+    if (rt.timedOut) lines.push(`      ${dim("超时被终止")}`)
+    for (const sig of rt.crashSignatures) lines.push(`      ${dim(sig)}`)
+    lines.push("")
+  }
+
   if (report.filesChanged.length) {
     lines.push(dim(`文件变更 ${report.filesChanged.length} 个：` +
       report.filesChanged.slice(0, 8).map((f) => f.path).join(", ") +
@@ -226,6 +285,24 @@ export function renderBlockedReportMarkdown(report) {
       if (attempt.madeProgress != null) lines.push(`- 进展: ${attempt.madeProgress ? "有" : "无"} — ${attempt.progressReason}`)
       lines.push("")
     }
+  }
+  if (report.gates.length) {
+    lines.push("## 门禁", "")
+    for (const gate of report.gates) {
+      const icon = gate.status === "pass" ? "✅" : gate.status === "not_applicable" ? "➖" : "❌"
+      lines.push(`- ${icon} **${gate.gate}** — ${gate.reason || gate.status}`)
+      if (gate.status !== "pass" && gate.status !== "not_applicable" && gate.outputSnippet) {
+        lines.push("", "  ```", ...gate.outputSnippet.split(" | ").slice(0, 12).map((r) => `  ${r}`), "  ```", "")
+      }
+    }
+    lines.push("")
+  }
+  if (report.runtimeEvidence) {
+    const rt = report.runtimeEvidence
+    lines.push("## 运行时证据", "")
+    lines.push(`- ${rt.ran ? "✅" : "❌"} \`${rt.target}\` — exit ${rt.exitCode ?? "?"}${rt.timedOut ? "（超时被终止）" : ""}`)
+    for (const sig of rt.crashSignatures) lines.push(`  - ${sig}`)
+    lines.push("")
   }
   if (report.filesChanged.length) {
     lines.push("## 文件变更", "")

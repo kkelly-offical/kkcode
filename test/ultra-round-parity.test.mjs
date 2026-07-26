@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, writeFile, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import { GATE_NAMES } from "../src/session/gate-contract.mjs"
 
 /**
  * Ultra 行为快照。
@@ -91,11 +92,10 @@ const FULL_RUN_EVENTS = [
   "longagent.hybrid.debugging.start",
   "longagent.hybrid.debugging.complete",
   "longagent.phase.changed",              // → H6
-  "longagent.gate.checked",
-  "longagent.gate.checked",
-  "longagent.gate.checked",
-  "longagent.gate.checked",
-  "longagent.gate.checked"
+  // 每道门禁发一条 gate.checked。从 GATE_NAMES 推导而非手写 —— 手写的
+  // 五个在 0.7.0 加入 smoke 时全线报错，而这条基线要锁的是「事件顺序与
+  // 阶段划分」，不是门禁有几道。
+  ...GATE_NAMES.map(() => "longagent.gate.checked")
 ]
 
 async function runScenario(sessionId, { prompt, config }) {  // config 由 ultraConfig(gates, {ultra}) 构造

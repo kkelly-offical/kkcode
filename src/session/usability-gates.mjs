@@ -1,6 +1,9 @@
 import path from "node:path"
 import { access, readFile, writeFile, mkdir } from "node:fs/promises"
-import { spawn } from "node:child_process"
+import { runGateCommand, outputSnippet, DEFAULT_GATE_TIMEOUT_MS } from "./gate-command.mjs"
+import { checkSmokeGate } from "./smoke-gate.mjs"
+// 既有调用方（goal-verifier 等）沿用从这里 import，不必跟着改
+export { runGateCommand, outputSnippet }
 import { readReviewState, writeReviewState } from "../review/review-store.mjs"
 import {
   captureLocalReview,
@@ -16,7 +19,6 @@ import { EVENT_TYPES } from "../core/constants.mjs"
 import { userRootDir } from "../storage/paths.mjs"
 import { isPassingGateStatus, GATE_NAMES } from "./gate-contract.mjs"
 
-const DEFAULT_GATE_TIMEOUT_MS = 15 * 60 * 1000
 const GATE_PREFS_FILE = path.join(userRootDir(), "gate-preferences.json")
 
 // Kept as a compatibility hook. Correctness gates are deliberately re-run:
@@ -27,7 +29,7 @@ export function clearGateCache() {}
 let cachedPrefs = null
 
 /**
- * 「五个门禁全关」且没有 explicit 标记 —— 视为 0.4.x 的事故遗留。
+ * 「记录里的门禁全关」且没有 explicit 标记 —— 视为 0.4.x 的事故遗留。
  *
  * 那个版本在非交互环境下也会询问门禁偏好，askQuestionInteractive 返回空串，
  * parseGateSelection 把空串解析成「全部关闭」，然后永久写进用户级的
@@ -36,10 +38,17 @@ let cachedPrefs = null
  * 「完成」。这里一次性自愈：忽略这份偏好并重新询问。
  *
  * 代价是：0.4.x 里真的手动选了 none 的用户会被多问一次。可以接受。
+ *
+ * 判定按「记录里出现的门禁键」而非 GATE_NAMES 全集。写成全集的版本在 0.7.0
+ * 加入 smoke 时**对它本来要救的记录恰好失效了** —— 0.4.x 的记录只有五个键，
+ * `prefs.smoke` 是 undefined 而非 false，every 直接返回假，事故记录被当成
+ * 正常偏好放行。一个随枚举增长而静默失效的安全判定，比没有更危险。
  */
 function isAccidentalAllFalse(prefs) {
   if (!prefs || typeof prefs !== "object" || prefs.explicit === true) return false
-  return GATE_NAMES.every((gate) => prefs[gate] === false)
+  const present = GATE_NAMES.filter((gate) => gate in prefs)
+  if (!present.length) return false
+  return present.every((gate) => prefs[gate] === false)
 }
 
 async function loadGatePreferences() {
@@ -165,84 +174,6 @@ function npmInvocation(args) {
  * 取命令输出的末 12 行压成单行。goal-verifier 的判据证据也用它 ——
  * 报告里门禁输出与判据证据保持同一种形态。
  */
-export function outputSnippet(result) {
-  const lines = `${result.stdout || ""}\n${result.stderr || ""}`
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-  return lines.slice(-12).join(" | ")
-}
-
-/**
- * 受控地跑一条命令：shell:false、windowsHide、超时 kill、stdout/stderr 收集。
- * goal-verifier 的 command 类判据复用它（改名导出为 runGateCommand），
- * 不要在别处再写一个裸 spawn。
- */
-export async function runGateCommand({ command, args, cwd, shell = false, timeoutMs = DEFAULT_GATE_TIMEOUT_MS }) {
-  return new Promise((resolve) => {
-    let done = false
-    let stdout = ""
-    let stderr = ""
-    let timedOut = false
-
-    let child
-    try {
-      child = spawn(command, args, {
-        cwd,
-        windowsHide: true,
-        shell,
-        stdio: ["ignore", "pipe", "pipe"]
-      })
-    } catch (error) {
-      resolve({
-        ok: false,
-        code: null,
-        stdout,
-        stderr: String(error?.message || error),
-        timedOut: false
-      })
-      return
-    }
-
-    const timer = setTimeout(() => {
-      timedOut = true
-      child.kill()
-    }, timeoutMs)
-
-    child.stdout.on("data", (buf) => {
-      stdout += String(buf)
-    })
-    child.stderr.on("data", (buf) => {
-      stderr += String(buf)
-    })
-
-    child.on("error", (error) => {
-      if (done) return
-      done = true
-      clearTimeout(timer)
-      resolve({
-        ok: false,
-        code: null,
-        stdout,
-        stderr: `${stderr}\n${error.message}`.trim(),
-        timedOut: false
-      })
-    })
-
-    child.on("close", (code) => {
-      if (done) return
-      done = true
-      clearTimeout(timer)
-      resolve({
-        ok: !timedOut && code === 0,
-        code,
-        stdout,
-        stderr,
-        timedOut
-      })
-    })
-  })
-}
 
 // 内部沿用旧名，导出名是 runGateCommand
 const runCommand = runGateCommand
@@ -476,14 +407,15 @@ export async function runUsabilityGates({
   cwd = process.cwd(),
   iteration = 0
 }) {
-  const [build, test, review, health, budget] = await Promise.all([
+  const [build, test, review, health, budget, smoke] = await Promise.all([
     checkBuildGate({ cwd, config }),
     checkTestGate({ cwd, config }),
     checkReviewGate({ cwd, config, sessionId }),
     checkHealthGate({ config }),
-    checkBudgetGate({ config, sessionId })
+    checkBudgetGate({ config, sessionId }),
+    checkSmokeGate({ cwd, config })
   ])
-  const checks = { build, test, review, health, budget }
+  const checks = { build, test, review, health, budget, smoke }
 
   for (const [gate, result] of Object.entries(checks)) {
     await EventBus.emit({

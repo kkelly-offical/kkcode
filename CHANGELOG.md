@@ -1,5 +1,109 @@
 # Changelog / 更新日志
 
+## 0.6.7
+
+### English
+
+- **`webfetch` could read your internal network.** The old check was a string
+  prefix test for `http://`, so `http://127.0.0.1:PORT/admin` returned the
+  response body verbatim — verified against a live local server, not inferred.
+  The 0.7.0 plan said `http_request` would "reuse the existing egress checks";
+  there were none. Now loopback, private ranges, carrier-grade NAT,
+  IPv4-mapped IPv6 and URL-embedded credentials are all refused, and cloud
+  metadata endpoints (`169.254.169.254` and friends) are refused unconditionally
+  — what they return is instance credentials, not data. Redirects are followed
+  manually and re-checked at every hop, because validating only the first URL is
+  the same as not validating. Set `tool.http.allow_private_hosts: true` to reach
+  local services on purpose.
+- **`http_request`**: methods, headers, and bodies, for APIs that need more than
+  a GET. Header names that fail the RFC 7230 token rule are dropped and CR/LF is
+  stripped from values, since either one opens request smuggling.
+- **Five file-management tools that did not exist: `move`, `copy`, `remove`,
+  `mkdir`, `archive`.** "Tidy up this directory" was previously impossible — the
+  model had to fall back to `bash`, which is exactly the path that bypasses
+  `resolveWorkspacePath`. These go through it, including the symlink-escape
+  check, and they refuse protected paths, so tidying a directory cannot install
+  a pre-commit hook. `remove` moves to `.kkcode/trash` by default rather than
+  unlinking: deleting the wrong file is the least reversible step in everyday
+  cleanup, and repeated deletes of the same name no longer overwrite each other
+  in the trash. `archive` writes a real ustar tarball with no new dependency.
+- **A sixth gate that actually runs the thing: `smoke`.** The five existing
+  gates are all static. `npm run build` exiting 0 means it compiled; `npm test`
+  passing means the covered paths still work. Neither catches "compiles fine,
+  crashes on startup" — the failure mode you get from editing an entry point,
+  changing the import graph, or deleting an export something still imports,
+  which is precisely what an agent does most. It discovers the entry point from
+  `package.json` (`bin` → `--version`, or `main` → one import) and reports
+  `not_applicable` when it cannot, because a gate that guesses at a start
+  command manufactures false failures in other people's projects. A crash
+  signature outweighs a zero exit code, since a process can print
+  `ERR_MODULE_NOT_FOUND` and still exit 0.
+- **Gate results now reach the report.** They were being stored in the ledger
+  and never read — so "all six gates green" existed only in the logs, with no
+  way for a reader of the report to confirm it. Both the terminal and Markdown
+  renderers now show each gate, and the smoke gate's runtime evidence gets its
+  own section: the other five answer "it looks unbroken", this one answers "it
+  ran, and here is how".
+- **A self-healing check had silently stopped working.** `isAccidentalAllFalse`
+  detects the 0.4.x accident where an empty answer disabled every gate
+  permanently. It tested `GATE_NAMES.every(g => prefs[g] === false)` — so adding
+  `smoke` broke it for exactly the records it existed to rescue, since a 0.4.x
+  record has five keys and `prefs.smoke` is `undefined`, not `false`. It now
+  keys off the gates present in the record. Three other places hard-coded the
+  same five-gate list; all now derive from `GATE_NAMES`.
+- `runGateCommand` moved to `src/session/gate-command.mjs`. The smoke gate needs
+  it and `runUsabilityGates` needs the smoke gate — ESM function hoisting makes
+  that cycle work by accident, and it breaks the moment someone adds a
+  module-level `const`, far from where the error surfaces.
+
+### 中文
+
+- **`webfetch` 能读到你的内网。** 旧检查只是对 `http://` 做字符串前缀判断，
+  于是 `http://127.0.0.1:PORT/admin` 的响应体会被原样返回 —— 这是对着一个
+  真实的本地服务实测出来的，不是推断。0.7.0 的计划里写「`http_request` 复用
+  现有出网校验」，而那样的校验并不存在。现在回环、内网段、运营商级 NAT、
+  IPv4-mapped IPv6、URL 内嵌凭证一律拒绝，云元数据端点
+  （`169.254.169.254` 等）**无条件**拒绝 —— 它返回的是实例凭证，不是数据。
+  重定向改为手动跟随并逐跳复检，因为只校验第一个 URL 等于没校验。
+  确实要访问本地服务时写 `tool.http.allow_private_hosts: true`。
+- **`http_request`**：支持 method、headers、body，给那些不止一个 GET 的 API。
+  头名不符合 RFC 7230 token 规则的直接丢弃，头值里的 CR/LF 清掉 ——
+  这两样任何一个都能撑开请求走私。
+- **五个此前根本不存在的文件管理工具：`move`、`copy`、`remove`、`mkdir`、
+  `archive`。** 「整理一下这个目录」以前在物理上做不到，模型只能退回 `bash`，
+  而那恰好是绕过 `resolveWorkspacePath` 的那条路。这些工具都过它，包含
+  symlink 逃逸检查，并且拒绝受保护路径 —— 整理目录不该能装上 pre-commit
+  钩子。`remove` 默认移入 `.kkcode/trash` 而非 unlink：删错文件是日常整理里
+  最不可逆的一步；同名文件重复删除也不会在回收站里互相覆盖。`archive` 生成
+  真正的 ustar tarball，不引入新依赖。
+- **第六道门禁，而且它真的把东西跑起来：`smoke`。** 现有五道全是静态检查。
+  `npm run build` 退出 0 只说明编译通过，`npm test` 通过只说明覆盖到的路径
+  没坏 —— 两者都接不住「编译过了但一启动就崩」，而那正是改入口文件、改
+  import 图、删掉还有人引用的导出时的典型失败，也正是 agent 最常做的改动。
+  它从 `package.json` 发现入口（`bin` → `--version`，或 `main` → import 一次），
+  发现不了就报 `not_applicable` —— 一个乱猜启动命令的门禁会在别人的项目里
+  制造假失败。崩溃签名优先于退出码：一个进程可以打印 `ERR_MODULE_NOT_FOUND`
+  之后仍以 0 退出。
+- **门禁结果终于进入报告。** 它们一直存在 ledger 里却从未被读取 ——
+  于是「六道门禁全绿」这个结论只存在于日志中，报告读者无从确认。现在终端与
+  Markdown 两个渲染器都会逐条显示，smoke 的运行时证据独立成段：其余五道回答
+  的是「看起来没坏」，这一段回答的是「真的跑起来了，而且是这么跑的」。
+- **一个自愈检查已经静默失效了。** `isAccidentalAllFalse` 负责识别 0.4.x 那个
+  「空答案永久关掉所有门禁」的事故，它的判定是
+  `GATE_NAMES.every(g => prefs[g] === false)` —— 加入 `smoke` 之后，它对
+  自己本来要救的那类记录**恰好失效了**：0.4.x 的记录只有五个键，
+  `prefs.smoke` 是 `undefined` 而不是 `false`。现在按记录里实际出现的门禁键
+  判定。另有三处也硬编码了同一份五门禁清单，全部改为从 `GATE_NAMES` 推导。
+- `runGateCommand` 移到 `src/session/gate-command.mjs`。smoke 门禁要用它，而
+  `runUsabilityGates` 要用 smoke 门禁 —— ESM 的函数提升让这个循环恰好能跑，
+  但谁在里面加一个模块级 `const` 就会炸，而炸的现场离原因很远。
+
+**关于计划的一处修正**：计划里把 `http_request` 的出网校验写成「复用现有的」，
+实际上一条都没有，所以这道闸是新增工具的**前置条件**而非配套增强 ——
+带任意 method 与 body 的 `http_request` 会把「能读内网」放大成「能对内网服务
+发 POST」。另外计划中的 `data_query` 按调研结论不做：没有一家前沿工具内置
+数据处理，而 kkcode 做不了的根因（bash 输出被砍到 3000 字符）已在阶段 1 修掉。
+
 ## 0.6.6
 
 ### English

@@ -4,7 +4,7 @@
  * 契约（见 usability-gates.mjs 的 runUsabilityGates 返回语句）：
  *
  *   { allPass:  boolean,
- *     gates:    { build, test, review, health, budget },  // 每个 { enabled, status, reason, output? }
+ *     gates:    { build, test, review, health, budget, smoke },  // 每个 { enabled, status, reason, output? }
  *     failures: [{ gate, status, reason, output }] }
  *
  * 为什么要专门为「读一个字段」建一个模块：
@@ -24,8 +24,13 @@
  * test/helpers/gate-fixture.mjs 是全仓门禁替身的唯一构造器。
  */
 
-/** 门禁名称与顺序。runUsabilityGates 的 gates 字段恰好含这五个键。 */
-export const GATE_NAMES = Object.freeze(["build", "test", "review", "health", "budget"])
+/**
+ * 门禁名称与顺序。runUsabilityGates 的 gates 字段恰好含这六个键。
+ *
+ * 0.7.0 加入 smoke：前五道全是静态检查（编译过、测试过、review 过、存储健康、
+ * 预算够），没有一道会把产物真的跑起来 —— 接不住「编译过了但一启动就崩」。
+ */
+export const GATE_NAMES = Object.freeze(["build", "test", "review", "health", "budget", "smoke"])
 
 /** 形状漂移。继承 TypeError，所以 assert.throws(fn, TypeError) 仍然成立。 */
 export class GateContractError extends TypeError {

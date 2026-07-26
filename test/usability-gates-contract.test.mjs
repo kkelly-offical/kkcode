@@ -30,13 +30,13 @@ const { readGate, isDecisiveGate, isPassingGateStatus, GATE_NAMES, GateContractE
   await import("../src/session/gate-contract.mjs")
 const { makeGateResult } = await import("./helpers/gate-fixture.mjs")
 
+// 从 GATE_NAMES 生成，而不是手写五项。手写的那份在 0.7.0 加入 smoke 时
+// 漏掉了新门禁，于是「全部禁用」的用例里 smoke 仍在跑真命令 —— 一份必须
+// 跟着枚举走的清单，就不该由人来同步。
 const ALL_DISABLED = {
   agent: {
     longagent: {
-      usability_gates: {
-        build: { enabled: false }, test: { enabled: false }, review: { enabled: false },
-        health: { enabled: false }, budget: { enabled: false }
-      }
+      usability_gates: Object.fromEntries(GATE_NAMES.map((name) => [name, { enabled: false }]))
     }
   }
 }

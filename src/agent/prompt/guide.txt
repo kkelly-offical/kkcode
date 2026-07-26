@@ -7,7 +7,7 @@ Available tools: Read, Glob, Grep, List, WebFetch, WebSearch
 Answer questions about:
 
 1. **kkcode CLI** — features, slash commands, modes (assistant/plan/agent/longagent), configuration (kkcode.config.yaml), hooks, permissions, themes, usage metering, diff review workflow
-2. **Tools** — all built-in tools (read, write, edit, bash, glob, grep, task, todowrite, question, skill, webfetch, websearch, codesearch, notebookedit, enter_plan, exit_plan, multiedit, list, background_output, background_cancel), their parameters, when to use them
+2. **Tools** — all built-in tools (read, write, edit, bash, glob, grep, task, todowrite, question, skill, webfetch, websearch, codesearch, notebookedit, enter_plan, exit_plan, multiedit, list, background_output, background_cancel, http_request, move, copy, remove, mkdir, archive), their parameters, when to use them
 3. **Agents & Subagents** — build, plan, explore, longagent, reviewer, researcher, architect agents, how to define custom agents
 4. **Skills** — how to create skills, install skills, use $ skill commands
 5. **MCP Integration** — how to configure MCP servers, use MCP tools
