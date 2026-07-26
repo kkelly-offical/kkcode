@@ -1416,16 +1416,32 @@ function builtinTools(config) {
       // Phase 2: apply all changes
       const applied = []
       try {
+        // 同一文件的多个 change 必须逐个叠加。此前每个 change 都从
+        // `snap.original`（批次前的原始内容）算起，于是同一文件出现两次时
+        // 第二个 change 会覆盖掉第一个 —— 静默丢改动，没有任何报错。
+        const workingCopy = new Map()
         for (const change of resolved) {
           if (change.isCreate) {
             await atomicWriteFile(change.target, String(change.after))
+            workingCopy.set(change.target, String(change.after))
           } else {
             const snap = snapshots.find(s => s.path === change.target)
-            const content = snap?.original ?? await readFile(change.target, "utf8")
+            const content = workingCopy.has(change.target)
+              ? workingCopy.get(change.target)
+              : snap?.original ?? await readFile(change.target, "utf8")
+            if (!content.includes(change.before)) {
+              // 前一个 change 把它改掉了。Phase 1 的预检基于原始内容，看不到
+              // 这种批次内的相互作用 —— 与其静默产出错误结果，不如整批回滚。
+              throw new Error(
+                `change ${resolved.indexOf(change) + 1} for ${change.path} no longer matches after an earlier change in this batch. `
+                + "Split it into separate multiedit calls, or provide a snippet that survives the earlier edit."
+              )
+            }
             const next = change.replace_all
               ? content.replaceAll(change.before, change.after)
               : content.replace(change.before, change.after)
             await atomicWriteFile(change.target, next)
+            workingCopy.set(change.target, next)
           }
           await refreshFileReadStateFromDisk(change.target).catch(() => {})
           applied.push(change.target)

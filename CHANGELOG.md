@@ -1,5 +1,59 @@
 # Changelog / 更新日志
 
+## 0.6.5
+
+### English
+
+- **`multiedit` was silently dropping changes.** Every change computed its
+  result from `snapshot.original` — the content as it was *before* the batch —
+  so when the same file appeared twice, the second change overwrote the first.
+  The tool reported `2 file(s) updated atomically` and produced two diffs that
+  both claimed success, while only half the edit reached disk. That is the
+  hardest kind of data loss to notice: nothing fails.
+  Changes now accumulate through a working copy. If a later change's anchor was
+  removed by an earlier one in the same batch — which the pre-flight check
+  cannot see, since it validates against the original content — the whole batch
+  rolls back and says so, rather than producing a half-applied file.
+- **`edit` explains itself when it finds nothing.** It used to return two words:
+  `no match`. The only move left to the model was re-reading the whole file and
+  guessing again — the most expensive self-correction path there is. It now
+  reports the file length, your snippet's size, the similarity of the closest
+  block with its line number, that block with line numbers, and the surrounding
+  window. When the difference is only whitespace it says so outright, which is
+  the most common cause by far.
+  Matching stays exact. A proportion guard is in place for the day loose
+  matching arrives, because the dangerous failure there is not "no match" —
+  which errors and can be recovered — but matching a much larger span and
+  swallowing it silently.
+
+**Note on 0.6.4:** the edit diagnosis code shipped in 0.6.4 without being
+mentioned in its changelog. A background release ran `git add -A` while this
+work was still in progress, so the commit captured it. It passed all six checks
+on every platform, but its tests only arrive here — a release should contain
+what its changelog says it contains, and that one did not.
+
+### 中文
+
+- **`multiedit` 在静默丢改动。** 每个 change 都从 `snapshot.original`（批次
+  **之前**的内容）算起，于是同一文件出现两次时，第二个 change 覆盖掉第一个。
+  工具报告 `2 file(s) updated atomically` 并给出两份都声称成功的 diff，而磁盘
+  上只落了一半 —— 这是最难发现的一类数据丢失：什么都没有失败。
+  改动现在通过一份工作副本逐个叠加。若后一个 change 的锚点已被同批次的前一个
+  改掉（预检基于原始内容，看不到这种批次内相互作用），整批回滚并明说原因，
+  而不是产出一个改了一半的文件。
+- **`edit` 找不到时会解释自己。** 它此前只返回两个词 `no match`，模型唯一能做
+  的是重读整个文件再猜一次 —— 最贵的自我纠正路径。现在给出文件行数、你的片段
+  规模、最接近块的相似度与起始行号、带行号的该块、以及周边窗口。差异只在空白
+  时直接说出来 —— 那是最常见的失配原因。
+  匹配仍然是精确的。不成比例守卫已就位，为将来引入宽松匹配预备：那时危险的
+  失败不是「匹配不到」（会报错、可恢复），而是匹配到一个大得多的块然后静默
+  吞掉它。
+
+**关于 0.6.4：** 编辑诊断的代码随 0.6.4 发布了，但没写进它的更新日志 ——
+后台发布任务的 `git add -A` 在这项工作还没完成时把它收走了。它在六个平台的
+检查全都通过，但测试直到这一版才补上。一个版本应当包含它的更新日志所说的内容，
+那一版没做到。
+
 ## 0.6.4
 
 ### English
