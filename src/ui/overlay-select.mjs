@@ -11,12 +11,35 @@
  *
  * 无色可用性：选中行除了反白背景，永远还有 `▸` 前缀 —— NO_COLOR 或不支持
  * truecolor 的终端下背景色不可见，前缀是唯一的选中线索，不能省。
+ *
+ * ## 打字过滤（0.7.3）
+ *
+ * `/resume` 列 30 个会话时只能一路按下箭头。选择器现在接受打字过滤，匹配引擎
+ * 就在本文件下半部分 —— 它是纯函数，`overlay-keys` 与 `overlay-controller`
+ * 都 import 它，没有第二份实现。
+ *
+ * 命中区间用**方括号**标进 label，而不是用颜色：
+ *
+ *   1. `padRight` 会 `stripAnsi` 后再补位（frame-primitives.mjs:59），行内插的
+ *      颜色码会被它吃掉，而且嵌在选中行的反白背景里还会把背景截断；
+ *   2. 方括号在 NO_COLOR / 不支持 truecolor 的终端下同样可见 —— 这与「选中行
+ *      必带 ▸ 前缀」是同一条约定：可用性信息不能只存在于颜色里。
+ *
+ * 区间同时保留在 `picker.matches[i].ranges` 里，将来渲染层要改成 ANSI 高亮时
+ * 不必重算。
  */
 
 const SELECTED_PREFIX = "▸"
 const CURRENT_MARKER = "●"
 /** 选中行的前景色：反白背景上用近黑色保证对比度 */
 const SELECTED_FG = "#111111"
+/**
+ * 过滤后一个都没剩时的提示行。
+ *
+ * 不能什么都不画 —— 空框看起来和「卡住了」一模一样，用户不会知道是自己敲的
+ * 过滤串把候选滤光了。
+ */
+const NO_MATCH_HINT = "no match · Backspace deletes · Esc clears filter"
 
 /**
  * 计算滚动窗口，保证选中项始终可见。
@@ -89,6 +112,12 @@ export function renderSelectOverlay({
     lines.push(paint(`├${"─".repeat(inner)}┤`, border))
   }
 
+  // 一个候选都没有 = 过滤把它们滤光了（空列表的选择器压根不会打开，见
+  // overlay-controller 的 listPicker.open）。这里必须说一声，不能留个空框。
+  if (!items.length) {
+    lines.push(paint(`│${padRight(` ${NO_MATCH_HINT}`, cell)}│`, theme?.base?.muted))
+  }
+
   const win = scrollWindow({ total: items.length, selected, offset, maxVisible: maxVisible || items.length })
   for (let i = win.start; i < win.end; i++) {
     const item = items[i]
@@ -121,4 +150,157 @@ export function renderSelectOverlay({
   }
 
   return { lines, offset: win.start }
+}
+
+// --- 打字过滤 ---
+
+/**
+ * 匹配档位。排序时**先按档位**：前缀命中排在子串命中前面，子串又排在
+ * 零散的子序列命中前面。否则输 "gpt" 时 `deepseek-r1` 这种「碰巧按顺序含有
+ * g、p、t」的项会和 `gpt-5` 混在一起，等于没排序。
+ */
+export const MATCH_TIER = Object.freeze({ prefix: 0, substring: 1, subsequence: 2 })
+
+/** 相邻或重叠的区间并成一段：`[a][u][t]h` 读起来不如 `[aut]h`。 */
+function mergeRanges(ranges) {
+  const merged = []
+  for (const [start, end] of ranges) {
+    const last = merged[merged.length - 1]
+    if (last && start <= last[1]) last[1] = Math.max(last[1], end)
+    else merged.push([start, end])
+  }
+  return merged
+}
+
+/**
+ * 单个候选的模糊匹配。大小写不敏感。
+ *
+ * @param {string} text  候选文本
+ * @param {string} query 过滤串
+ * @returns {{tier: number, start: number, ranges: Array<[number, number]>}|null}
+ *   不匹配返回 null。空过滤串返回「全体命中、无区间」。
+ */
+export function matchFilter(text, query) {
+  const q = String(query ?? "").toLowerCase()
+  if (!q) return { tier: -1, start: 0, ranges: [] }
+  // text 缺失时不要 String(undefined) —— 那会变成字面量 "undefined"，
+  // 于是输 "n" 能匹配上一个没有 label 的候选。
+  if (text === null || text === undefined) return null
+  const raw = String(text)
+  const lower = raw.toLowerCase()
+
+  if (lower.startsWith(q)) return { tier: MATCH_TIER.prefix, start: 0, ranges: [[0, q.length]] }
+  const at = lower.indexOf(q)
+  if (at > 0) return { tier: MATCH_TIER.substring, start: at, ranges: [[at, at + q.length]] }
+
+  // 子序列：过滤串的每个字符按顺序出现即可，中间可以隔开
+  const hits = []
+  let cursor = 0
+  for (const ch of q) {
+    const idx = lower.indexOf(ch, cursor)
+    if (idx === -1) return null
+    hits.push([idx, idx + ch.length])
+    cursor = idx + ch.length
+  }
+  return { tier: MATCH_TIER.subsequence, start: hits[0][0], ranges: mergeRanges(hits) }
+}
+
+/**
+ * 过滤并排序一组候选。
+ *
+ * @returns {Array<{sourceIndex: number, tier: number, start: number, ranges: Array}>}
+ *   与过滤后的显示顺序一一对应；`sourceIndex` 指回原数组。
+ */
+export function filterOverlayItems(items = [], query = "", { field = "label" } = {}) {
+  const q = String(query ?? "")
+  if (!q) return items.map((_, index) => ({ sourceIndex: index, tier: -1, start: 0, ranges: [] }))
+
+  const hits = []
+  items.forEach((item, index) => {
+    const match = matchFilter(item?.[field], q)
+    if (match) hits.push({ sourceIndex: index, ...match })
+  })
+  // 同档位内按命中位置靠前优先，再按原顺序 —— 原顺序是有意义的
+  // （会话按时间倒序、模型按目录顺序），不该被打乱。
+  hits.sort((a, b) => a.tier - b.tier || a.start - b.start || a.sourceIndex - b.sourceIndex)
+  return hits
+}
+
+/** 把命中区间用方括号标进文本。见文件头「为什么不用颜色」。 */
+export function markMatchRanges(text, ranges = []) {
+  const raw = text === null || text === undefined ? "" : String(text)
+  if (!ranges.length) return raw
+  let out = ""
+  let cursor = 0
+  for (const [start, end] of ranges) {
+    // 区间是在 toLowerCase 之后算的，个别字符小写后长度会变（如 İ）。
+    // 越界就整段放弃标注，而不是把字符串切坏。
+    if (start < cursor || end > raw.length) return raw
+    out += `${raw.slice(cursor, start)}[${raw.slice(start, end)}]`
+    cursor = end
+  }
+  return out + raw.slice(cursor)
+}
+
+/**
+ * 选择器的初始状态。`all` 是永远不变的原始候选，`items` 是渲染方看到的那份。
+ *
+ * frame-builder 只拿得到 `items`（它 `.map()` 成 `{label, desc, current}` 再交给
+ * 渲染函数），所以过滤必须体现在 `items` 本身上 —— 见 `applyOverlayFilter`。
+ */
+export function createPickerFilterState(items = [], selected = 0) {
+  return {
+    all: items,
+    items,
+    matches: filterOverlayItems(items, ""),
+    filter: "",
+    selected: Math.max(0, Math.min(items.length - 1, selected)),
+    offset: 0
+  }
+}
+
+/**
+ * 过滤状态的唯一转移函数：原地改写 picker 状态。
+ *
+ * **选中项跟随**是这里最容易写错的一处：过滤后候选的下标全变了，把 `selected`
+ * 留在原位等于选中了另一个东西（对 `/resume` 来说就是续跑错的会话）。所以先
+ * 记下当前选中项在 `all` 里的下标，过滤完再找回去；找不到才归零。
+ */
+export function applyOverlayFilter(picker, query) {
+  if (!picker) return picker
+  // 兼容手工构造的旧形状（只有 items，没有 all/matches）
+  const all = Array.isArray(picker.all) ? picker.all
+    : (Array.isArray(picker.items) ? picker.items : [])
+  const previous = picker.matches?.[picker.selected]?.sourceIndex ?? picker.selected ?? 0
+
+  const filter = String(query ?? "")
+  const matches = filterOverlayItems(all, filter)
+  picker.all = all
+  picker.filter = filter
+  picker.matches = matches
+  picker.items = filter
+    ? matches.map((match) => ({
+      ...all[match.sourceIndex],
+      label: markMatchRanges(all[match.sourceIndex]?.label, match.ranges)
+    }))
+    : all
+
+  const kept = matches.findIndex((match) => match.sourceIndex === previous)
+  picker.selected = kept >= 0 ? kept : 0
+  // 过滤后窗口重来：留着旧 offset 会在短列表上显示成一片空白
+  picker.offset = 0
+  return picker
+}
+
+/**
+ * 取出当前选中的**原始**候选。
+ *
+ * 不能直接返回 `picker.items[selected]` —— 过滤态下那是一份 label 被标了方括号的
+ * 副本，确认动作要的是原件。
+ */
+export function resolvePickerChoice(picker) {
+  if (!picker?.items) return null
+  const match = picker.matches?.[picker.selected]
+  if (match && Array.isArray(picker.all)) return picker.all[match.sourceIndex] ?? null
+  return picker.items[picker.selected] ?? null
 }

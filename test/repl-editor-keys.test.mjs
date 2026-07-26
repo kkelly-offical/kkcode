@@ -48,7 +48,9 @@ function harness({ busy = false } = {}) {
     onInputChanged: () => {},
     acceptGhost: () => { calls.push("acceptGhost"); return Boolean(ui.ghostText) },
     cancelGhost: spy("cancelGhost"),
-    hasSlashSuggestions: () => ui.input.startsWith("/"),
+    // 三种候选（`/` 命令、`$` 技能、`@` 文件）在这张按键表眼里是同一件事：
+    // 「有没有候选」。种类差异在 suggestion-source 里分派，不在这里。
+    hasSuggestions: () => ui.input.startsWith("/") || /(^|\s)@/.test(ui.input),
     shouldApplySuggestionOnEnter: () => Boolean(ui._applySuggestion),
     applyCurrentSuggestion: spy("applySuggestion"),
     handleUpDownSuggestions: () => Boolean(ui._suggestionNav),
@@ -217,7 +219,7 @@ test("Enter takes a pending suggestion before it submits", async () => {
   assert.ok(!h.calls.includes("submit"), "第一次 Enter 是选中候选，不是提交")
 })
 
-test("Tab prefers slash completion over the ghost", async () => {
+test("Tab prefers completion over the ghost", async () => {
   const withSlash = harness()
   withSlash.ui.input = "/he"
   withSlash.ui.ghostText = "预测"
@@ -230,6 +232,18 @@ test("Tab prefers slash completion over the ghost", async () => {
   noSlash.ui.ghostText = "预测"
   await noSlash.dispatchKey({ ui: noSlash.ui, ...press("tab") })
   assert.ok(noSlash.calls.includes("acceptGhost"))
+})
+
+test("Tab takes a file candidate mid-sentence, not the ghost", async () => {
+  // `@` 候选可以出现在句子中间，而 Tab 的闸门此前问的是「输入是不是像命令」——
+  // 那个判据对句中的 `@` 恒为假，于是 Tab 会去接受 ghost、把补全吃掉。
+  const h = harness()
+  h.ui.input = "看看 @src/rep"
+  h.ui.inputCursor = h.ui.input.length
+  h.ui.ghostText = "预测"
+  await h.dispatchKey({ ui: h.ui, ...press("tab") })
+  assert.ok(h.calls.includes("applySuggestion"))
+  assert.ok(!h.calls.includes("acceptGhost"), "句中的 @ 候选同样该拦住 Tab")
 })
 
 test("Shift+Tab cycles the mode instead of completing", async () => {

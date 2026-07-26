@@ -1,8 +1,9 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { createKeyDispatcher } from "../src/repl/key-dispatch.mjs"
-import { createOverlayKeyScopes } from "../src/repl/keys/overlay-keys.mjs"
+import { createOverlayKeyScopes, PICKER_DEFS } from "../src/repl/keys/overlay-keys.mjs"
 import { createReplUiState } from "../src/repl/ui-state.mjs"
+import { createPickerFilterState } from "../src/ui/overlay-select.mjs"
 
 /**
  * 真实浮层作用域的行为。
@@ -13,8 +14,15 @@ import { createReplUiState } from "../src/repl/ui-state.mjs"
  */
 
 const PERMISSION_PROMPT_VALUES = ["allow_once", "allow_always", "deny", "deny_always"]
-const POLICY_CHOICES = [1, 2, 3, 4]
-const MODE_PICKER_CHOICES = [1, 2, 3, 4, 5]
+// 带 label 的形状与真实常量一致（permission-flow.mjs / mode-flow.mjs）——
+// 这两个选择器的列表由 frame-builder 直接读常量渲染，打字只能跳选中项。
+const POLICY_CHOICES = [
+  { label: "Readonly" }, { label: "Manual" }, { label: "Accept Edits" }, { label: "YOLO" }
+]
+const MODE_PICKER_CHOICES = [
+  { label: "🤖 Agent" }, { label: "📝 Plan" }, { label: "💬 Chat" },
+  { label: "🔍 Review" }, { label: "🛠 Build" }
+]
 
 function harness() {
   const calls = []
@@ -180,6 +188,254 @@ test("the policy picker is bounded by its own choice count", async () => {
   ui.policyPicker = { selected: 0 }
   for (let i = 0; i < 10; i++) await dispatchKey({ ui, ...press("down") })
   assert.equal(ui.policyPicker.selected, POLICY_CHOICES.length - 1)
+})
+
+// --- 打字过滤 ---
+//
+// 全部由 `PICKER_DEFS` 驱动生成。手写五份的话，第六个选择器加进来时会静默
+// 漏测 —— 这个仓库栽过这一条。
+
+// 顺序刻意排成「过滤后会被完全打乱」：s4 前缀 → s3 子串 → s1 子序列，s2 被滤掉。
+// 过滤前后下标恰好一样的话，「选中跟随」的用例在实现坏掉时也会绿。
+const FILTER_ITEMS = [
+  { id: "s1", label: "align user token help" },  // 子序列命中
+  { id: "s2", label: "rewrite the parser" },     // 不命中
+  { id: "s3", label: "refactor auth module" },   // 子串命中
+  { id: "s4", label: "authorize the deploy" }    // 前缀命中
+]
+const CHOICES = { policyPicker: POLICY_CHOICES, modePicker: MODE_PICKER_CHOICES }
+const FILTER_DEFS = PICKER_DEFS.filter((def) => def.typing === "filter")
+const JUMP_DEFS = PICKER_DEFS.filter((def) => def.typing === "jump")
+
+const typeChar = (str) => ({ key: {}, str })
+
+/** providerPicker -> closeProvider / confirmProvider（harness 里的 spy 名） */
+function spyOf(verb, kind) {
+  const stem = kind.replace(/Picker$/, "")
+  return `${verb}${stem[0].toUpperCase()}${stem.slice(1)}`
+}
+
+function openPicker(ui, def) {
+  ui[def.kind] = def.typing === "filter"
+    ? createPickerFilterState(FILTER_ITEMS, 0)
+    : { selected: 0 }
+  return ui[def.kind]
+}
+
+/**
+ * 只出现在某一项、且那项不是第一项的字符。
+ * 用它验证「打字真的把选中项移到了匹配的那项」，而不是碰巧停在原地。
+ */
+function uniqueProbe(choices) {
+  for (const ch of "abcdefghijklmnopqrstuvwxyz") {
+    const hits = choices
+      .map((choice, index) => ({ index, has: String(choice.label).toLowerCase().includes(ch) }))
+      .filter((entry) => entry.has)
+    if (hits.length === 1 && hits[0].index > 0) return { ch, index: hits[0].index }
+  }
+  throw new Error("测试数据里找不到唯一命中字符 —— 用例没法验证跳转")
+}
+
+async function typeAll(dispatchKey, ui, text) {
+  for (const ch of text) await dispatchKey({ ui, ...typeChar(ch) })
+}
+
+test("the definition table covers exactly the picker scopes that exist", () => {
+  // 两边分叉的话，新选择器要么漏掉过滤、要么漏掉全部用例
+  const { scopes } = harness()
+  const inDispatcher = scopes.map((scope) => scope.id).filter((id) => id.endsWith("Picker"))
+  assert.deepEqual(inDispatcher, PICKER_DEFS.map((def) => def.kind))
+})
+
+test("typing filters the list pickers and jumps the selection on the constant-list ones", async () => {
+  for (const def of PICKER_DEFS) {
+    const { dispatchKey } = harness()
+    const ui = createReplUiState()
+    const picker = openPicker(ui, def)
+
+    if (def.typing === "filter") {
+      await typeAll(dispatchKey, ui, "auth")
+      assert.equal(picker.filter, "auth", `${def.kind}: 可打印字符应追加到 filter`)
+      assert.deepEqual(picker.items.map((item) => item.id), ["s4", "s3", "s1"],
+        `${def.kind}: 渲染方读的就是 items，它必须是过滤后的那份（且按档位排好）`)
+      assert.equal(picker.items[0].label, "[auth]orize the deploy",
+        `${def.kind}: 命中区间要标出来，无色终端下也看得见`)
+    } else {
+      // frame-builder 画的是模块常量，过滤它的 items 影响不到画面 ——
+      // 所以这两个的打字是「跳到最匹配的一项」
+      const probe = uniqueProbe(CHOICES[def.kind])
+      const result = await dispatchKey({ ui, ...typeChar(probe.ch) })
+      assert.equal(result.handler, "jumpToMatch", `${def.kind}: 打字应跳转`)
+      assert.equal(picker.selected, probe.index, `${def.kind}: 应停在唯一命中的那项`)
+    }
+  }
+})
+
+test("Backspace takes one character back off the filter", async () => {
+  for (const def of FILTER_DEFS) {
+    const { dispatchKey } = harness()
+    const ui = createReplUiState()
+    const picker = openPicker(ui, def)
+    await typeAll(dispatchKey, ui, "auth")
+
+    const result = await dispatchKey({ ui, ...press("backspace") })
+    assert.equal(result.handler, "filterBackspace", `${def.kind}: Backspace 应删过滤串`)
+    assert.equal(picker.filter, "aut", `${def.kind}: 一次删一个字符`)
+    assert.equal(picker.items.length, 3, `${def.kind}: 列表要跟着重算`)
+  }
+})
+
+test("the selection follows the row it was standing on", async () => {
+  for (const def of FILTER_DEFS) {
+    const { dispatchKey } = harness()
+    const ui = createReplUiState()
+    const picker = openPicker(ui, def)
+
+    assert.equal(picker.items[picker.selected].id, "s1", "先停在会排到末尾的那一项上")
+    await typeAll(dispatchKey, ui, "auth")            // s1 仍在结果里，但排到了第 3 行
+    assert.equal(picker.selected, 2)
+    assert.equal(picker.items[picker.selected].id, "s1",
+      `${def.kind}: 过滤后把 selected 留在原位就会选中另一个东西`)
+  }
+})
+
+test("the selection drops to the top when its row is filtered away", async () => {
+  for (const def of FILTER_DEFS) {
+    const { dispatchKey } = harness()
+    const ui = createReplUiState()
+    const picker = openPicker(ui, def)
+
+    await dispatchKey({ ui, ...press("down") })
+    assert.equal(picker.items[picker.selected].id, "s2", "先停在会被滤掉的那一项上")
+    await typeAll(dispatchKey, ui, "auth")
+    assert.equal(picker.selected, 0, `${def.kind}: 选中项不在了就归零`)
+    assert.equal(picker.items[0].id, "s4")
+  }
+})
+
+test("Esc clears the filter first and only then closes the overlay", async () => {
+  for (const def of FILTER_DEFS) {
+    const { dispatchKey, calls } = harness()
+    const ui = createReplUiState()
+    const picker = openPicker(ui, def)
+    await typeAll(dispatchKey, ui, "auth")
+
+    const first = await dispatchKey({ ui, ...press("escape") })
+    assert.equal(first.handler, "clearFilter", `${def.kind}: 第一下 Esc 清过滤`)
+    assert.equal(picker.filter, "")
+    assert.equal(picker.items.length, FILTER_ITEMS.length, "列表要复原")
+    assert.deepEqual(calls, [], `${def.kind}: 敲了半天过滤串按 Esc 就整个关掉太粗暴`)
+
+    const second = await dispatchKey({ ui, ...press("escape") })
+    assert.equal(second.handler, "cancel")
+    assert.deepEqual(calls, [spyOf("close", def.kind)], `${def.kind}: 第二下才关`)
+  }
+})
+
+test("Esc closes right away when there is no filter to clear", async () => {
+  for (const def of PICKER_DEFS) {
+    const { dispatchKey, calls } = harness()
+    const ui = createReplUiState()
+    openPicker(ui, def)
+    const result = await dispatchKey({ ui, ...press("escape") })
+    assert.equal(result.handler, "cancel", `${def.kind}: 没有过滤串时 Esc 直接关`)
+    assert.deepEqual(calls, [spyOf("close", def.kind)])
+  }
+})
+
+test("a digit goes into the filter, whether or not the filter is empty", async () => {
+  // 五个选择器都没有「按数字直选」：frame-builder 只给权限浮层传了 numbered: true
+  // （overlay-keys 里 permission.pickByNumber 是唯一的数字直选，本次不动它）。
+  // 行前没有编号可看的话，数字直选是不可见的功能，所以数字一律进过滤串。
+  // 将来若给选择器加了编号行，规则应当是「filter 为空时数字直选」。
+  for (const def of FILTER_DEFS) {
+    const { dispatchKey } = harness()
+    const ui = createReplUiState()
+    const picker = openPicker(ui, def)
+
+    const empty = await dispatchKey({ ui, ...typeChar("3") })
+    assert.equal(empty.handler, "filterInsert", `${def.kind}: filter 为空时数字仍进过滤串`)
+    assert.equal(picker.filter, "3")
+
+    await dispatchKey({ ui, ...press("escape") })
+    await typeAll(dispatchKey, ui, "auth")
+    await dispatchKey({ ui, ...typeChar("3") })
+    assert.equal(picker.filter, "auth3", `${def.kind}: filter 非空时数字照样追加`)
+  }
+})
+
+test("Enter confirms nothing while the filter matches nothing", async () => {
+  for (const def of FILTER_DEFS) {
+    const { dispatchKey, calls } = harness()
+    const ui = createReplUiState()
+    const picker = openPicker(ui, def)
+    await typeAll(dispatchKey, ui, "zzz")
+    assert.deepEqual(picker.items, [], "先确认真的一个都没剩")
+
+    const result = await dispatchKey({ ui, ...press("return") })
+    assert.equal(result.swallowed, true, `${def.kind}: Enter 应被吞掉`)
+    assert.deepEqual(calls, [], `${def.kind}: 确认会取出 undefined 并把浮层关掉`)
+
+    await dispatchKey({ ui, ...press("down") })
+    assert.equal(picker.selected, 0, `${def.kind}: 空结果里下箭头不该把下标推到 -1`)
+  }
+})
+
+test("the typing handler is declared after the navigation keys", async () => {
+  // 行为断言挡不住这条：↑↓/Enter/Esc 的 str 都是控制字符，本来就进不了过滤器，
+  // 所以把打字处理器挪到最前面**行为上仍然是绿的**，直到某天有人放宽了控制字符
+  // 判定。优先级在这个仓库是**可断言的数据**，就按数据断言。
+  const { describeOrder } = harness()
+  const order = describeOrder()
+  for (const def of PICKER_DEFS) {
+    const typing = def.typing === "filter" ? "filterInsert" : "jumpToMatch"
+    const at = (id) => order.indexOf(`${def.kind}.${id}`)
+    assert.notEqual(at(typing), -1, `${def.kind}: 找不到打字处理器 ${typing}`)
+    for (const nav of ["clearFilter", "cancel", "confirm", "prev", "next"]) {
+      assert.notEqual(at(nav), -1, `${def.kind}: 找不到 ${nav} —— 锚点没了，这条断言得跟着改`)
+      assert.ok(at(nav) < at(typing), `${def.kind}: ${nav} 必须排在打字之前`)
+    }
+  }
+})
+
+test("the typing handler never swallows navigation, Enter or Esc", async () => {
+  // 作用域内首个 when 命中即停：过滤处理器排到导航键前面的话，j/k/Enter 都会
+  // 被它吃掉，而模态作用域又不会让这些键漏出去 —— 表现为浮层彻底按不动。
+  for (const def of PICKER_DEFS) {
+    const { dispatchKey } = harness()
+    const ui = createReplUiState()
+    openPicker(ui, def)
+    if (def.typing === "filter") await typeAll(dispatchKey, ui, "auth")
+
+    const expected = [
+      ["down", "next"], ["up", "prev"], ["return", "confirm"],
+      ["escape", def.typing === "filter" ? "clearFilter" : "cancel"]
+    ]
+    for (const [key, handler] of expected) {
+      const result = await dispatchKey({ ui, ...press(key) })
+      assert.equal(result.handler, handler, `${def.kind}: ${key} 该归 ${handler}`)
+    }
+  }
+})
+
+test("Tab still cycles the mode picker instead of landing in a filter", async () => {
+  const { dispatchKey } = harness()
+  const ui = createReplUiState()
+  ui.modePicker = { selected: 0 }
+  const result = await dispatchKey({ ui, ...press("tab", { str: "\t" }) })
+  assert.equal(result.handler, "cycle", "Tab 的 str 是 \\t —— 控制字符不该被当成打字")
+})
+
+test("a control character never reaches the filter", async () => {
+  for (const def of FILTER_DEFS) {
+    const { dispatchKey } = harness()
+    const ui = createReplUiState()
+    const picker = openPicker(ui, def)
+    await dispatchKey({ ui, key: {}, str: "\t" })
+    assert.equal(picker.filter, "",
+      `${def.kind}: 看不见却匹配不上任何东西的字符会让列表莫名其妙变空`)
+    assert.equal(picker.items.length, FILTER_ITEMS.length)
+  }
 })
 
 // --- 提问提示的两种子形态 ---

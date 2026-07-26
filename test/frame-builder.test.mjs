@@ -79,7 +79,7 @@ function makeCtx() {
   }
 }
 
-function render(uiPatch = {}, { width = 120, height = 40, transcriptItems = [] } = {}) {
+function render(uiPatch = {}, { width = 120, height = 40, transcriptItems = [], suggestions } = {}) {
   const transcript = createTranscriptModel({ maxItems: 200 })
   for (const item of transcriptItems) transcript.append(item)
   return buildFrame({
@@ -89,11 +89,27 @@ function render(uiPatch = {}, { width = 120, height = 40, transcriptItems = [] }
     transcript,
     width,
     height,
-    slashOptions: { builtinSlash: [], customCommands: [], skills: [] },
+    // 候选表是**算好的**传进来的（0.7.1 起）。此前这里传的是 `slashOptions`，
+    // buildFrame 自己再调一次 slashSuggestions —— 那是全仓第四处独立求值。
+    suggestions,
     applySelectionHighlight: (frameLines) => frameLines,
     renderToastLine: () => null,
     now: 1_700_000_000_000
   })
+}
+
+/** 文件候选表，形状与 suggestion-source.compute() 的返回值一致。 */
+function fileSuggestions(names, extra = {}) {
+  return {
+    kind: "mention",
+    sigil: "@",
+    query: "rep",
+    items: names.map((name) => ({ name, desc: "", matched: [] })),
+    total: names.length,
+    truncated: false,
+    maxFiles: 20000,
+    ...extra
+  }
 }
 
 /** 每一行都必须恰好是 width 个单元格 —— 少一格就是边框错位，多一格就是换行溢出。 */
@@ -263,11 +279,63 @@ test("omitting now uses the real clock instead of throwing", () => {
       transcript,
       width: 100,
       height: 30,
-      slashOptions: { builtinSlash: [], customCommands: [], skills: [] },
       applySelectionHighlight: (l) => l,
       renderToastLine: () => null
-      // now 有意不传
+      // now 与 suggestions 有意不传
     })
   })
   assertExactWidth(frame, 100, "省略 now")
+})
+
+test("a file candidate list still fills every line exactly, at every width", () => {
+  // 文件路径比命令名长得多，而候选行此前只画过 `padRight(name, 14)` 的命令名。
+  // 一条长路径把候选行撑过帧宽的话，整帧的边框会当场错位。
+  const suggestions = fileSuggestions([
+    "src/repl/keys/editor-keys.mjs",
+    "src/repl/suggestion-source.mjs",
+    "README.md"
+  ])
+  for (const width of WIDTHS) {
+    const frame = render({ input: "看看 @src/rep", inputCursor: 12 }, { width, suggestions })
+    assertExactWidth(frame, width, `文件候选 @ ${width}`)
+  }
+})
+
+test("the file candidate list reaches the frame", () => {
+  const frame = render(
+    { input: "看看 @src/rep", inputCursor: 12 },
+    { suggestions: fileSuggestions(["src/repl.mjs", "README.md"]) }
+  )
+  const text = frame.lines.map((line) => stripAnsi(line)).join("\n")
+  assert.match(text, /Files \(1\/2\)/)
+  assert.match(text, /@src\/repl\.mjs/)
+})
+
+test("the candidate block carries its own title — no hardcoded 'Commands' header", () => {
+  // 此前候选块上面还有一行写死的 "Commands"：对文件候选是错的，对命令候选是重复的
+  // （下一行就是 "Slash Commands (1/1) …"）。
+  const frame = render(
+    { input: "/he", inputCursor: 3 },
+    {
+      suggestions: {
+        kind: "slash",
+        sigil: "/",
+        query: "he",
+        items: [{ name: "help", desc: "show help" }],
+        total: 1,
+        truncated: false,
+        maxFiles: 0
+      }
+    }
+  )
+  const lines = frame.lines.map((line) => stripAnsi(line).trim())
+  assert.ok(lines.some((line) => line.startsWith("Slash Commands (1/1)")), "命令候选的标题还在")
+  assert.equal(lines.filter((line) => line === "Commands").length, 0)
+})
+
+test("no candidates means no candidate rows", () => {
+  const frame = render({ input: "普通输入", inputCursor: 4 })
+  const text = frame.lines.map((line) => stripAnsi(line)).join("\n")
+  assert.doesNotMatch(text, /Files \(/)
+  assert.doesNotMatch(text, /Slash Commands \(/)
 })

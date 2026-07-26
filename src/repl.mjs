@@ -49,17 +49,16 @@ import {
   startSplash
 } from "./repl/core-shell.mjs"
 import { runReplController } from "./repl/controller-entry.mjs"
-import {
-  collectInput,
-  resolveHistoryNavigation,
-  shouldApplySuggestionOnEnter as shouldApplySlashSuggestionOnEnter
-} from "./repl/input-engine.mjs"
+import { collectInput, resolveHistoryNavigation } from "./repl/input-engine.mjs"
 export { collectInput } from "./repl/input-engine.mjs"
 // 帧度量与拼装原语。此前 repl.mjs 自带一份，与 repl-dashboard / activity-renderer /
 // repl-help / text-layout 各自的副本互不一致 —— 见 frame-primitives.mjs 的说明。
 import { stripAnsi, displayWidth, pageSize } from "./repl/frame-primitives.mjs"
 import { buildFrame as buildFrameLines } from "./repl/frame-builder.mjs"
-import { slashSuggestions, applySuggestionToInput, normalizeSlashAlias } from "./repl/slash-router.mjs"
+import { normalizeSlashAlias } from "./repl/slash-router.mjs"
+// 补全候选（斜杠 / 技能 / `@` 文件）的唯一来源。此前候选在四处独立求值 ——
+// 三处在这个文件里、一处在 frame-builder 里，加第三种候选就是四处手写清单。
+import { createSuggestionSource } from "./repl/suggestion-source.mjs"
 // 命令层。目录与分发同源，命令本体按领域分文件 —— 此前是一个 1090 行的
 // 顺序 if 链，加一条命令要在两份手写清单里各改一处。
 import { resolveCommand, buildBuiltinSlashCatalog } from "./repl/commands/registry.mjs"
@@ -123,7 +122,6 @@ const HIST_SIZE = 500
 const MAX_TUI_LOG_LINES = 1200
 /** 连按两下 Esc 判定为回溯的时间窗 */
 const DOUBLE_ESCAPE_MS = 1200
-const MAX_TUI_SUGGESTIONS = 5
 const MAX_MODEL_PICKER_VISIBLE = 8
 const TUI_FRAME_MS = 16
 const BUSY_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -529,6 +527,12 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
   // TUI 状态。形状与浮层互斥不变量在 repl/ui-state.mjs（有独立测试）。
   const ui = createReplUiState({ historyLines, terminalFeatures })
+  // 补全候选的唯一来源。构造在这里是安全的：它不捕获任何后面才声明的闭包，
+  // 而文件索引在里面是懒的 —— 第一次真的需要文件候选才走盘，启动时不扫。
+  const suggestionSource = createSuggestionSource({
+    getSlashOptions: () => slashRouterOptions(localCustomCommands)
+  })
+  const currentSuggestions = () => suggestionSource.compute(ui.input, ui.inputCursor)
   let protocolFlushTimer = null
   let clipboardAbortController = null
   let disposed = false
@@ -960,7 +964,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       transcript,
       width: Number(process.stdout.columns || 120),
       height: Number(process.stdout.rows || 40),
-      slashOptions: slashRouterOptions(localCustomCommands),
+      suggestions: currentSuggestions(),
       applySelectionHighlight,
       renderToastLine
     })
@@ -1336,16 +1340,10 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   function handleUpDownSuggestions(keyName) {
-    const suggestions = slashSuggestions(ui.input, slashRouterOptions(localCustomCommands))
-    if (suggestions.length > 0 && isCommandLikeInput(ui.input)) {
-      if (keyName === "up") {
-        ui.selectedSuggestion = Math.max(0, ui.selectedSuggestion - 1)
-      } else {
-        ui.selectedSuggestion = Math.min(suggestions.length - 1, ui.selectedSuggestion + 1)
-      }
-      return true
-    }
-    return false
+    const next = suggestionSource.nextSelection(currentSuggestions(), ui.selectedSuggestion, keyName)
+    if (next === null) return false
+    ui.selectedSuggestion = next
+    return true
   }
 
   function navigateHistory(keyName) {
@@ -1356,20 +1354,17 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   function applyCurrentSuggestion() {
-    const suggestions = slashSuggestions(ui.input, slashRouterOptions(localCustomCommands))
-    if (!suggestions.length) return
-    const chosen = suggestions[Math.max(0, Math.min(ui.selectedSuggestion, suggestions.length - 1))]
-    ui.input = applySuggestionToInput(ui.input, chosen.name)
-    ui.inputCursor = ui.input.length
+    // 写回语义按候选种类分派（命令整行替换、文件只换光标处那个 token），
+    // 分派表在 suggestion-source 里 —— 这里只负责把结果装回 ui。
+    const applied = suggestionSource.apply(ui.input, ui.inputCursor, currentSuggestions(), ui.selectedSuggestion)
+    if (!applied) return
+    ui.input = applied.text
+    ui.inputCursor = applied.cursor
     onInputChanged()
   }
 
   function shouldApplySuggestionOnEnter() {
-    return shouldApplySlashSuggestionOnEnter(
-      ui.input,
-      slashSuggestions(ui.input, slashRouterOptions(localCustomCommands)),
-      ui.selectedSuggestion
-    )
+    return suggestionSource.shouldApplyOnEnter(ui.input, currentSuggestions(), ui.selectedSuggestion)
   }
 
   /**
@@ -1501,8 +1496,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         onInputChanged,
         acceptGhost,
         cancelGhost: () => ghostPredictor?.cancel(),
-        hasSlashSuggestions: (uiState) =>
-          slashSuggestions(uiState.input, slashRouterOptions(localCustomCommands)).length > 0,
+        hasSuggestions: (uiState) =>
+          suggestionSource.compute(uiState.input, uiState.inputCursor).items.length > 0,
         shouldApplySuggestionOnEnter,
         applyCurrentSuggestion,
         handleUpDownSuggestions,

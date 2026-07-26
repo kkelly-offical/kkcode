@@ -25,6 +25,31 @@ import { buildBoardModel, renderUltraBoard } from "../ui/ultra-board.mjs"
 import { renderTaskProgressPanel } from "../ui/repl-task-panel.mjs"
 import { formatPlanProgress, formatRecoverySuggestions } from "../ui/activity-renderer.mjs"
 import { executePromptTurn } from "./turn-controller.mjs"
+import { expandFileMentions } from "./file-mention.mjs"
+
+/**
+ * `@` 引用展开的失败项 → 一条提示，没有失败时返回空串。
+ *
+ * **展开失败不能让回合发不出去。** 打错一个文件名就把整句话卡住，比少注入一个文件糟得多 ——
+ * 用户会以为是回车没生效，然后再按一次。所以这里只产出一条提示，回合照常发送。
+ *
+ * 提示走瞬时通道（notice / toast），不进对话记录：它是「这次展开发生了什么」的即时反馈，
+ * 进了记录就会随会话发给模型，还会被 /clear 连带清掉。
+ */
+export function formatMentionNotice({ missing = [], skipped = [] } = {}) {
+  const reasons = {
+    binary: "二进制",
+    "too-large": "太大",
+    unreadable: "读不了",
+    "total-budget": "超出本轮注入预算"
+  }
+  const parts = []
+  if (missing.length) parts.push(`未找到 ${missing.map((item) => item.path).join("、")}`)
+  if (skipped.length) {
+    parts.push(`跳过 ${skipped.map((item) => `${item.path}（${reasons[item.reason] || item.reason}）`).join("、")}`)
+  }
+  return parts.length ? `@ 引用：${parts.join("；")}` : ""
+}
 
 /** 回合结果里要回传给 UI 的字段。单一定义 —— 此前两处各写一份，一处漏了 costSavings。 */
 function toTurnResult(result) {
@@ -41,6 +66,17 @@ function toTurnResult(result) {
 /**
  * 跑一个回合并把结果呈现出来。
  *
+ * ## 为什么 `@` 引用在这里展开
+ *
+ * 这是 TUI 与行模式**共同的、且只有提示词才经过的**入口：`processInputLine` 里 `/undo`、
+ * `/model` 那些命令在到达这里之前就 return 了，走到这儿的只有「要发给模型的一句话」
+ * （含 `/plan <目标>` 改写后的文本与 `/paste` 直接送来的文本 —— 那两者也是提示词）。
+ * 放在按键层就得在 TUI 与行模式各写一遍，放在 engine 里则连命令都会被展开。
+ *
+ * 展开与图片链路的顺序是：先 `expandFileMentions`（只在末尾追加引用块，原句一个字不改），
+ * 再由 `executePromptTurn` 里的 `extractImageRefs` 抽图片。`expandFileMentions` 见到图片
+ * 扩展名一律跳过，所以 `@shot.png` 原封不动地留给图片链路 —— 这条有回归测试钉着。
+ *
  * @param {object} p
  * @param {string} p.prompt
  * @param {object[]} [p.images]  随本轮发送的图片
@@ -51,6 +87,9 @@ function toTurnResult(result) {
  * @param {boolean} [p.showTurnStatus] 行模式打状态行；TUI 有状态栏，不重复打
  * @param {AbortSignal|null} [p.signal]
  * @param {Function} [p.switchModeInPlace] Plan 审批选了执行航道时用它真正切模式
+ * @param {string} [p.cwd] `@` 引用的解析根
+ * @param {Function} [p.runTurn] 回合执行器。可替换是为了让「展开后的文本真的进了回合」
+ *                               成为可断言的事 —— 断言展开函数被调用过是空洞的。
  * @returns {Promise<object>} action
  */
 export async function presentPromptTurn({
@@ -62,10 +101,16 @@ export async function presentPromptTurn({
   streamSink = null,
   showTurnStatus = true,
   signal = null,
-  switchModeInPlace = null
+  switchModeInPlace = null,
+  cwd = process.cwd(),
+  runTurn = executePromptTurn
 }) {
-  const turn = await executePromptTurn({
-    prompt,
+  const mentions = await expandFileMentions(prompt, { cwd })
+  const mentionNotice = formatMentionNotice(mentions)
+  if (mentionNotice) print(mentionNotice, { channel: "notice", topic: "mention", tone: "warning" })
+
+  const turn = await runTurn({
+    prompt: mentions.text,
     state,
     ctx,
     streamSink: state.mode === "longagent" ? null : streamSink,

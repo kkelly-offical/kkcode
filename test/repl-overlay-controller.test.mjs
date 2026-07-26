@@ -2,6 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { createOverlayController } from "../src/repl/overlay-controller.mjs"
 import { createReplUiState, activeUserOverlay } from "../src/repl/ui-state.mjs"
+import { applyOverlayFilter } from "../src/ui/overlay-select.mjs"
 import { DEFAULT_CONFIG } from "../src/config/defaults.mjs"
 
 /**
@@ -119,6 +120,42 @@ test("confirming a model just sets the two fields — there is no command to reu
   assert.equal(state.model, "gpt")
   assert.ok(!calls.some((c) => c.startsWith("submit(")), "没有既有命令路径可复用时就直接改")
   assert.equal(activeUserOverlay(ui), null)
+})
+
+// --- 打字过滤 ---
+
+test("a picker opens ready to filter, showing everything", () => {
+  const { controller, ui } = harness()
+  controller.openProviderPicker(PROVIDERS)
+  assert.equal(ui.providerPicker.filter, "")
+  assert.equal(ui.providerPicker.all, PROVIDERS, "原始候选要留着，清过滤时得复原")
+  assert.equal(ui.providerPicker.items, PROVIDERS, "没过滤时渲染方拿到的就是原件")
+  assert.equal(ui.providerPicker.matches.length, PROVIDERS.length)
+})
+
+test("confirming after a filter picks the row you were looking at", async () => {
+  // 这是过滤最容易出的事故：过滤后下标全变了，按原下标取件就会续跑错的会话。
+  const { controller, ui, calls } = harness()
+  controller.openSessionPicker([
+    { id: "ses_a", label: "整理目录" },
+    { id: "ses_b", label: "authorize deploy" },
+    { id: "ses_c", label: "refactor auth" }
+  ])
+  applyOverlayFilter(ui.sessionPicker, "auth")
+  ui.sessionPicker.selected = 1                 // 过滤后的第 2 行 = 原列表的第 3 项
+  await controller.confirmSessionPicker()
+  assert.deepEqual(calls, ["submit(/resume ses_c)"], "要按过滤后的下标取回原件")
+})
+
+test("the bracket marks on a filtered row never leak into the action", async () => {
+  // 过滤态下 items 里是 label 标了方括号的副本 —— 确认动作要的是原件，
+  // 否则 /provider "[openai]" 这种命令会直接切换失败
+  const { controller, ui, calls } = harness({ providerType: "kimi" })
+  controller.openProviderPicker(PROVIDERS)
+  applyOverlayFilter(ui.providerPicker, "open")
+  assert.equal(ui.providerPicker.items[0].label, "[open]ai", "先确认它确实被标注了")
+  await controller.confirmProviderPicker()
+  assert.deepEqual(calls, ["submit(/provider openai)"])
 })
 
 test("confirming with nothing open is a no-op", async () => {

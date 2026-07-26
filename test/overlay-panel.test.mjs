@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { renderPanelOverlay, panelWindow } from "../src/ui/overlay-panel.mjs"
+import { createPickerFilterState, applyOverlayFilter } from "../src/ui/overlay-select.mjs"
 import { buildFrame } from "../src/repl/frame-builder.mjs"
 import { clipAnsiLine, wrapLogLines, displayWidth, stripAnsi } from "../src/repl/frame-primitives.mjs"
 import { paint } from "../src/theme/color.mjs"
@@ -228,6 +229,36 @@ test("the session picker renders as an overlay and marks the current session", (
   assert.match(text, /Resume Session \(1\/2\)/)
   assert.match(text, /Enter resume/)
   assert.match(text, /把工具层做到同行水平/)
+  frame.lines.forEach((line, i) => assert.equal(displayWidth(stripAnsi(line)), 100, `第 ${i + 1} 行`))
+})
+
+test("a filtered picker renders the matches — the frame builder needs no change for it", () => {
+  // 过滤状态整个活在 picker 状态里：frame-builder 渲染的就是 `items`，
+  // 把 items 换成过滤结果，画面自然就是过滤后的列表。
+  const picker = createPickerFilterState([
+    { id: "s1", label: "authorize the deploy", desc: "agent · active · 5m ago" },
+    { id: "s2", label: "重构文档目录", desc: "agent · done · 1h ago" },
+    { id: "s3", label: "refactor auth module", desc: "agent · done · 2h ago" }
+  ], 0)
+  applyOverlayFilter(picker, "auth")
+
+  const frame = renderFrame({ sessionPicker: picker })
+  const text = frame.lines.map(stripAnsi).join("\n")
+  assert.match(text, /Resume Session \(1\/2\)/, "分母是命中数，不是总数")
+  assert.match(text, /\[auth\]orize the deploy/, "命中区间用方括号标出 —— 无色终端下也看得见")
+  // 未选中行走两列布局，label 列只有 22 格，长标题本来就会被截（与过滤无关）
+  assert.match(text, /refactor \[auth\]/)
+  assert.doesNotMatch(text, /重构文档目录/, "没命中的行不该还留在框里")
+  frame.lines.forEach((line, i) => assert.equal(displayWidth(stripAnsi(line)), 100, `第 ${i + 1} 行`))
+})
+
+test("a filter that matches nothing says so instead of drawing an empty box", () => {
+  const picker = createPickerFilterState([{ id: "s1", label: "authorize the deploy" }], 0)
+  applyOverlayFilter(picker, "zzz")
+
+  const frame = renderFrame({ sessionPicker: picker })
+  const text = frame.lines.map(stripAnsi).join("\n")
+  assert.match(text, /no match/, "空框看起来和卡住一模一样")
   frame.lines.forEach((line, i) => assert.equal(displayWidth(stripAnsi(line)), 100, `第 ${i + 1} 行`))
 })
 

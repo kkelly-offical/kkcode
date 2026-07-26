@@ -1,5 +1,56 @@
 # Changelog / 更新日志
 
+## 0.7.1
+
+`@` 引用任意文件；思考预览不再逐字符乱跳；选择器浮层可以直接打字过滤。
+
+### English
+
+- **`@` now references any file, not just images.** Typing `@` anywhere in the
+  line opens a fuzzy path completion; choosing one inserts `@path` and the file's
+  contents are attached on send. `@` is cursor-aware, so it works mid-sentence —
+  unlike `/` and `$`, which are only meaningful at the start of the line.
+  `@screenshot.png` still goes down the image path exactly as before.
+- **The completion list had four independent implementations.** Three in
+  `repl.mjs` and a fourth inside `frame-builder`, each calling `slashSuggestions`
+  on its own. Adding a third kind of candidate would have meant four hand-written
+  sites to keep in step, and missing one would not have turned anything red.
+  Candidates are now computed once in `repl/suggestion-source.mjs`; the frame
+  only draws what it is handed.
+- **The file index is lazy and bounded**, honours `.gitignore`, and *says so*
+  when it hits its cap. A silent cap reads as "not in the completion means not in
+  the repo", which sends people looking for a file that is right there.
+- **Fixed: the two-line thinking preview scrolled one character at a time.** The
+  line boundaries were anchored at the *end* of the stream, so every new
+  character shifted the whole window left by one — two lines of text sliding
+  continuously, which is unreadable. Boundaries are now anchored at the start:
+  row *k* always covers the same span, so a completed row never changes and the
+  window scrolls a whole line at a time.
+- **Selector overlays filter as you type.** `/resume` with thirty sessions no
+  longer means thirty presses of the down arrow. Esc clears the filter before it
+  closes the overlay, and the selection follows the filtered list — it stays on
+  the same entry if that entry survives, rather than silently pointing at
+  whatever moved into its old index.
+
+### 中文
+
+- **`@` 可以引用任意文件了，不再只认图片。** 在行内任意位置输入 `@` 会打开路径模糊
+  补全，选中后插入 `@路径`，提交时把文件内容一并带上。`@` 是**光标感知**的，所以句子
+  中间也能用 —— 这一点与只在行首才有意义的 `/`、`$` 不同。`@截图.png` 仍然原样走
+  图片管线。
+- **候选表此前有四份彼此独立的实现。** `repl.mjs` 里三处、`frame-builder` 里还有
+  一处，各自调一次 `slashSuggestions`。加第三种候选就意味着四处手写清单要同步，而
+  漏改任何一处都不会让测试变红。现在候选只在 `repl/suggestion-source.mjs` 里算一次，
+  帧只负责画。
+- **文件索引是惰性的、有上限的**，尊重 `.gitignore`，并且**在触顶时说出来**。悄悄封顶
+  会让人以为「补全里没有就是仓库里没有」，然后去找一个其实就在那儿的文件。
+- **修复：两行思考预览在逐字符滚动。** 行边界锚在流的**尾部**，于是每多一个字符整个
+  窗口就左移一格 —— 两行字持续地滑，根本没法读。现在锚在开头：第 k 行永远覆盖同一
+  区间，成型的行不再变化，窗口整行整行地滚。
+- **选择器浮层支持打字过滤。** 三十个会话的 `/resume` 不必再按三十次下箭头。Esc 先清
+  过滤再关浮层；选中项跟着过滤后的列表走 —— 原来那条还在就继续选它，而不是悄悄指向
+  挪进它旧下标的另一个东西。
+
 ## 0.7.0
 
 粘贴：剪贴板里是图片就附图，是文字就粘文字，长文字折叠成一个标记。

@@ -25,7 +25,7 @@ export function createEditorKeyScope({
   onInputChanged,
   acceptGhost,
   cancelGhost,
-  hasSlashSuggestions,
+  hasSuggestions,
   shouldApplySuggestionOnEnter,
   applyCurrentSuggestion,
   handleUpDownSuggestions,
@@ -198,8 +198,10 @@ export function createEditorKeyScope({
         id: "tabComplete",
         when: on.key("tab"),
         run: ({ ui }) => {
-          // Tab 早已被 slash 补全占用，仅在没有补全候选时才用于接受 ghost
-          if (!hasSlashSuggestions(ui) && acceptGhost()) return
+          // Tab 早已被补全占用，仅在没有候选时才用于接受 ghost。
+          // 候选有三种（`/` 命令、`$` 技能、`@` 文件），写回语义各不相同 ——
+          // 分派在 applyCurrentSuggestion 背后的 suggestion-source 里，这张表不认种类。
+          if (!hasSuggestions(ui) && acceptGhost()) return
           applyCurrentSuggestion()
         }
       },

@@ -6,7 +6,8 @@ import { renderSelectOverlay } from "../ui/overlay-select.mjs"
 import { renderPanelOverlay } from "../ui/overlay-panel.mjs"
 import { formatThinkingDuration } from "../ui/thinking-state.mjs"
 import { thinkingPreviewLines } from "../ui/thinking-preview.mjs"
-import { slashSuggestions } from "./slash-router.mjs"
+import { NO_SUGGESTIONS } from "./suggestion-source.mjs"
+import { renderSuggestions, MAX_TUI_SUGGESTIONS } from "./suggestion-view.mjs"
 import { POLICY_CHOICES, PERMISSION_PROMPT_CHOICES } from "./permission-flow.mjs"
 import { resolveModeId, MODE_PICKER_CHOICES } from "./mode-flow.mjs"
 import { layoutInputText } from "./text-layout.mjs"
@@ -28,13 +29,17 @@ import { clipAnsiLine, padRight, wrapLogLines } from "./frame-primitives.mjs"
  * 整帧不可断言。
  *
  * 依赖分三类，都显式传入而非闭包捕获：
- *   - 状态：ui / ctx / state / transcript
+ *   - 状态：ui / ctx / state / transcript / suggestions
  *   - 尺寸与时间：width / height / now
- *   - 宿主回调：slashOptions（斜杠候选来源）、applySelectionHighlight（选区高亮）、
- *     renderToastLine（提示条）—— 它们依赖 REPL 运行期的东西，不适合搬进来
+ *   - 宿主回调：applySelectionHighlight（选区高亮）、renderToastLine（提示条）——
+ *     它们依赖 REPL 运行期的东西，不适合搬进来
+ *
+ * `suggestions` 是**算好的**候选表，不是候选来源。0.7.1 之前这里收的是 `slashOptions`
+ * 然后自己调一次 `slashSuggestions` —— 那是全仓第四处独立求值，另外三处在 repl.mjs。
+ * 加第三种候选（`@` 文件）时四处都得改，而漏改任何一处都不会红。现在候选只在
+ * `repl/suggestion-source.mjs` 里算一次，这里只负责画。
  */
 
-const MAX_TUI_SUGGESTIONS = 5
 const MAX_MODEL_PICKER_VISIBLE = 8
 const BUSY_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
@@ -61,48 +66,6 @@ export function formatBusyToolDetail(toolName, args) {
   }
 }
 
-export function renderSuggestions({ inputLine, suggestions, selected, offset, maxVisible, theme, width }) {
-  const sigil = String(inputLine || "").startsWith("$") ? "$" : String(inputLine || "").startsWith("/") ? "/" : null
-  if (!sigil || !suggestions.length) {
-    return { lines: [], offset: 0 }
-  }
-  const visible = Math.max(1, maxVisible || MAX_TUI_SUGGESTIONS)
-  let start = Math.max(0, Math.min(offset || 0, Math.max(0, suggestions.length - visible)))
-  if (selected < start) start = selected
-  if (selected >= start + visible) start = selected - visible + 1
-
-  const end = Math.min(suggestions.length, start + visible)
-  const view = suggestions.slice(start, end)
-  const lines = [
-    paint(
-      `${sigil === "$" ? "Skills" : "Slash Commands"} (${selected + 1}/${suggestions.length})  Enter choose, Enter again execute`,
-      theme.base.muted,
-      { bold: true }
-    )
-  ]
-  for (let i = 0; i < view.length; i++) {
-    const item = view[i]
-    const index = start + i
-    const active = index === selected
-    const prefix = active ? ">" : " "
-    const line = `${prefix} ${sigil}${padRight(item.name, 14)} ${item.desc}`
-    lines.push(
-      active
-        ? paint(line, "#111111", { bg: theme.semantic.info, bold: true })
-        : paint(line, theme.base.fg)
-    )
-  }
-  if (suggestions.length > visible) {
-    lines.push(
-      paint(`scroll: ${start + 1}-${end}/${suggestions.length} (Up/Down)`, theme.base.muted)
-    )
-  }
-  return {
-    lines: lines.map((line) => clipAnsiLine(line, width)),
-    offset: start
-  }
-}
-
 export function buildFrame({
   ui,
   ctx,
@@ -110,7 +73,9 @@ export function buildFrame({
   transcript,
   width,
   height,
-  slashOptions,
+  // 算好的候选表（见文件头）。缺省是「一条也没有」而不是自己去算 —— 这里没有
+  // 候选来源，也不该有第二个。
+  suggestions = NO_SUGGESTIONS,
   applySelectionHighlight,
   renderToastLine,
   // 时间也当参数：思考计时用它算已耗时，写死 Date.now() 会让整帧不可断言。
@@ -123,15 +88,14 @@ export function buildFrame({
     columns: width
   })
 
-  const suggestions = slashSuggestions(ui.input, slashOptions)
-  if (suggestions.length === 0) {
+  const suggestionCount = suggestions.items.length
+  if (suggestionCount === 0) {
     ui.selectedSuggestion = 0
     ui.suggestionOffset = 0
-  } else if (ui.selectedSuggestion >= suggestions.length) {
-    ui.selectedSuggestion = suggestions.length - 1
+  } else if (ui.selectedSuggestion >= suggestionCount) {
+    ui.selectedSuggestion = suggestionCount - 1
   }
   const suggestionRender = renderSuggestions({
-    inputLine: ui.input,
     suggestions,
     selected: ui.selectedSuggestion,
     offset: ui.suggestionOffset,
@@ -219,7 +183,6 @@ export function buildFrame({
     busyLine = ""
   }
 
-  const suggestionsTitleLine = paint("Commands", ctx.themeState.theme.base.muted, { bold: true })
   const PERM_CHOICES = PERMISSION_PROMPT_CHOICES
   const permissionLines = []
   if (ui.pendingPermission) {
@@ -531,7 +494,9 @@ export function buildFrame({
   const overlayBlocks = [
     { name: "infoPanel", lines: infoPanelLines },
     { name: "thinkingPreview", lines: thinkingPreview },
-    { name: "suggestions", lines: suggestionLines.length ? [suggestionsTitleLine, ...suggestionLines] : [] },
+    // 候选块自带标题（"Files (2/30)" / "Slash Commands (1/8)"）。此前它上面还有一行
+    // 写死的 "Commands" —— 对文件候选是错的，对命令候选是重复的。
+    { name: "suggestions", lines: suggestionLines },
     { name: "modelPicker", lines: modelPickerLines },
     { name: "providerPicker", lines: providerPickerLines },
     { name: "sessionPicker", lines: sessionPickerLines },

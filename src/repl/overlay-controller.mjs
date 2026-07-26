@@ -20,6 +20,7 @@
  */
 
 import { openUserOverlay, closeUserOverlay } from "./ui-state.mjs"
+import { createPickerFilterState, resolvePickerChoice } from "../ui/overlay-select.mjs"
 import { createModePickerState, resolveModeId, MODE_PICKER_CHOICES } from "./mode-flow.mjs"
 import { createPolicyPickerState, POLICY_CHOICES, applyPolicyChoice } from "./permission-flow.mjs"
 import { stripAnsi } from "./frame-primitives.mjs"
@@ -54,11 +55,9 @@ export function createOverlayController({
           requestRender()
           return false
         }
-        openUserOverlay(ui, kind, {
-          items,
-          selected: Math.max(0, currentIndex(items)),
-          offset: 0
-        })
+        // 打字过滤的状态与列表在一起：`all` 是原始候选，`items` 是渲染方
+        // 看到的那份（过滤后就是过滤结果）。见 ui/overlay-select.mjs。
+        openUserOverlay(ui, kind, createPickerFilterState(items, Math.max(0, currentIndex(items))))
         requestRender({ force: true })
         return true
       },
@@ -70,7 +69,8 @@ export function createOverlayController({
       take() {
         const picker = ui[kind]
         if (!picker?.items) return null
-        const chosen = picker.items[picker.selected] || null
+        // 过滤态下 items 里是 label 标了方括号的副本，确认要的是原件
+        const chosen = resolvePickerChoice(picker)
         closeUserOverlay(ui, kind)
         if (!chosen) requestRender({ force: true })
         return chosen
