@@ -273,3 +273,60 @@ test("model replies and file changes stay in the conversation", async () => {
     assert.doesNotMatch(src.slice(idx, idx + 160), /channel: "notice"/, `${label}必须留在对话记录里`)
   }
 })
+
+// --- 自带边框的内容不能被折行 ---
+
+test("self-framed content is clipped, not folded, when the panel is narrower", async () => {
+  // 真实终端验收（100 列开 /status 后缩窄窗口）暴露的缺陷：
+  //
+  //   renderRuntimeDashboardView 有 60 列的**最小宽度** —— 请求 40 列它照样输出
+  //   60 格宽的行。浮层内宽是「终端宽 − 4」，所以终端窄于 64 列时内容溢出，
+  //   被 wrapLines 折行，于是它自己画的 `+------+` 边框被折成两段：
+  //
+  //     +-------------------------------------------------------
+  //     +
+  //     | Workspace
+  //     |
+  //
+  //   折行对散文（帮助、会话列表）是对的，对自带边框的内容是毁灭性的。
+  //   区分信号本来就有：`text` 是函数意味着「我会按给定宽度自己排版」，
+  //   即自带边框 —— 这种内容超宽时应当裁掉右边，而不是折行。
+  const { renderRuntimeDashboardView } = await import("../src/ui/repl-status-view.mjs")
+  const { buildReplRuntimeSnapshot } = await import("../src/repl/runtime-facade.mjs")
+  const { McpRegistry } = await import("../src/mcp/registry.mjs")
+  const { SkillRegistry } = await import("../src/skill/registry.mjs")
+
+  const view = await buildReplRuntimeSnapshot({
+    cwd: process.cwd(),
+    state: { sessionId: "s", mode: "assistant", model: "k3", providerType: "p" },
+    customCommands: [],
+    providers: ["p"],
+    mcpRegistry: McpRegistry,
+    skillRegistry: SkillRegistry,
+    recoveryEnabled: true
+  })
+
+  for (const width of [50, 56, 62, 63]) {
+    const inner = Math.max(20, width - 4)
+    const content = renderRuntimeDashboardView({ theme: DEFAULT_THEME, columns: inner, ...view })
+    const panel = renderPanelOverlay({
+      title: "runtime status",
+      lines: String(content).split("\n"),
+      width,
+      maxRows: 12,
+      theme: DEFAULT_THEME,
+      paint,
+      clipAnsiLine,
+      wrapLines: wrapLogLines,
+      wrap: false
+    })
+    panel.lines.forEach((line, i) =>
+      assert.equal(displayWidth(stripAnsi(line)), width, `${width} 列：第 ${i + 1} 行宽度不对`))
+    // 内容自己那条 `+---...---+` 必须仍在一行里，不该被折成两段
+    const orphanBorder = panel.lines
+      .map(stripAnsi)
+      .filter((line) => /^\s*│\s*\+-*\s*│\s*$/.test(line) && line.replace(/[^+-]/g, "").length <= 2)
+    assert.deepEqual(orphanBorder, [],
+      `${width} 列下自带边框被折断了:\n${panel.lines.map(stripAnsi).join("\n")}`)
+  }
+})

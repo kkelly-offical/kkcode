@@ -1,5 +1,93 @@
 # Changelog / 更新日志
 
+## 0.6.17
+
+拆分第二阶段：帧调度、输出通道、UI 状态各自成模块。真实终端验收查出一个窄终端的渲染缺陷。
+
+### English
+
+- **Frame scheduling is a module with tests.** Six bare `let`s in the TUI closure
+  (`lastFrame`, `lastFrameWidth`, `forceFullPaint`, `renderScheduled`,
+  `renderTimer`, `spinnerTimer`) decided diff-vs-full painting, and any of the
+  ~2800 lines around them could write to any of them. They had **no tests at
+  all** — frame coalescing (100 requests → one paint), the full-paint triggers
+  (first frame, width change, line-count change, explicit force), and
+  "don't paint while suspended" were only ever verified by eye in a real
+  terminal. All of that is now asserted with injected timers. Each of the four
+  behaviours was checked by breaking the implementation and confirming the test
+  goes red.
+- **Output channels are a module with tests.** Where a message goes — conversation,
+  toast, or folded panel — is now testable, as is the sanitization that turns
+  model and tool output into inert text. A test asserts a clear-screen sequence
+  and an OSC window-retitle cannot reach the terminal through the transcript,
+  while SGR colour codes survive.
+- **The overlay mutual-exclusion invariant is real code now, not a comment.** Six
+  overlay fields were independently assignable, and the comment claiming they were
+  mutually exclusive was not backed by anything. The frame **stacks** overlays —
+  every non-empty block is concatenated and their row counts summed — so two open
+  at once means both drawn, the conversation squeezed to its 2-line minimum, and
+  only one of them responding to keys. It is reachable: a background task's
+  question prompt arrives asynchronously while a picker is open. Opening one user
+  overlay now closes the other five. Tool-driven prompts (permission, question) are
+  deliberately exempt: they are waiting for an answer, and dropping one leaves a
+  tool call hanging forever.
+- **Fixed: self-framed panel content folded on narrow terminals.** Found by real-
+  terminal acceptance, not by tests. The runtime view has a **60-column minimum** —
+  ask it for 40 and it still emits 60-cell lines. The panel's content area is
+  `terminal width − 4`, so below 64 columns the content overflowed and the panel
+  wrapped it, folding the `+------+` border it draws itself into two pieces.
+  Wrapping is right for prose and destructive for framed content, and the signal
+  to tell them apart already existed: passing a *function* to `showInfo` means
+  "I lay myself out at a given width". Such content is clipped now, not wrapped.
+  `/status` also clamps to 60 the way `/board` always did.
+- **Two provable no-ops removed.** `const follow = ui.scrollOffset === 0; … if
+  (follow) ui.scrollOffset = 0` and its twin in the transcript subscription. They
+  expressed an intent that was never implemented — and the un-implemented half is
+  the opposite one: when you have scrolled up and new content arrives, the view
+  drifts, because the offset is a distance from the bottom and nothing increments
+  it. Noted, not changed.
+- **Known, pre-existing, not fixed:** after a programmatic resize the frame's top
+  rows (an open panel's title bar and top border) are not visible. It reproduces
+  identically on released 0.6.16, so this refactor did not cause it. The frame
+  itself measures correctly at every height, SIGWINCH is delivered, and painting
+  uses absolute positioning after a clear — which points at the terminal's viewport
+  after a programmatic resize rather than at the frame. Confirming that needs a
+  real terminal instead of Xvfb + xdotool.
+
+### 中文
+
+- **帧调度成为带测试的模块。** TUI 闭包里六个裸 `let`（`lastFrame`、
+  `lastFrameWidth`、`forceFullPaint`、`renderScheduled`、`renderTimer`、
+  `spinnerTimer`）决定差分还是全量绘制，而周围两千八百行里任何一段都能改它们。
+  它们**完全没有测试** —— 帧合并（100 次请求合成一次绘制）、四种全量重画触发
+  （首帧、宽度变、行数变、显式强制）、以及「挂起时不画」，此前只能靠人眼在真实
+  终端里发现。现在定时器注入，全部可断言。四条行为都用「改坏实现确认测试变红」
+  验过。
+- **输出通道成为带测试的模块。** 一条消息去哪（对话记录、瞬时提示、折叠面板）
+  现在可测，把模型与工具输出变成惰性文本的消毒也可测。有一条断言清屏序列与
+  OSC 改窗口标题不能经对话记录到达终端，同时 SGR 颜色码要保留。
+- **浮层互斥从注释变成了代码。** 六个浮层字段此前各自可赋值，而声称它们互斥的
+  注释没有任何东西兜着。帧对浮层是**叠加**的 —— 每个非空块都拼进去、行数相加 ——
+  所以两个同开就是两个都画、对话区被挤到最小的 2 行、而只有一个响应按键。这是
+  可达的：后台任务的提问提示会在选择器开着时异步到达。现在开一个用户浮层会关掉
+  另外五个。工具层的提示（权限、提问）刻意豁免：它们在等一个回答，丢掉一个就意味着
+  一次工具调用永远悬着。
+- **修复：窄终端下自带边框的浮层内容被折断。** 这是真实终端验收查出来的，测试没查出来。
+  runtime 视图有 **60 列的最小宽度** —— 请求 40 列它照样输出 60 格宽的行。浮层内容区
+  是「终端宽 − 4」，所以终端窄于 64 列时内容溢出，被浮层折行，于是它自己画的
+  `+------+` 边框折成两段。折行对散文是对的、对自带边框的内容是毁灭性的，而区分
+  两者的信号本来就有：给 `showInfo` 传**函数**意味着「我会按给定宽度自己排版」。
+  这类内容现在裁剪而非折行。`/status` 也像 `/board` 一直做的那样钳到 60 列。
+- **删掉两处可证明的空操作。** `const follow = ui.scrollOffset === 0; … if (follow)
+  ui.scrollOffset = 0` 以及它在 transcript 订阅里的孪生兄弟。它们表达了一个从未实现的
+  意图 —— 而没实现的恰好是相反的那半：用户**已经向上滚**时来了新内容，视图会往下漂，
+  因为偏移量是到底部的距离、没有任何东西去增加它。记下来，未改。
+- **已知的预存问题，未修：** 程序化 resize 之后帧的顶部若干行（打开着的浮层的标题栏与
+  上边框）看不见。这个在已发布的 0.6.16 上同样复现，所以不是这次重构造成的。帧本身在
+  任何高度下测出来都是正确的，SIGWINCH 也确实送达，绘制用的是清屏后的绝对定位 ——
+  指向的是终端在程序化 resize 之后的视口，而不是帧。要定论需要真实终端，Xvfb + xdotool
+  不够。
+
 ## 0.6.16
 
 `repl.mjs` 拆分第一阶段：1090 行的命令路由变成注册表 + 六个命令模块。

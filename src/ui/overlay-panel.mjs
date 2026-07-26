@@ -36,6 +36,7 @@ export function panelWindow({ total, offset, maxVisible }) {
  * @param {Function} p.clipAnsiLine 行裁剪（保留颜色）
  * @param {Function} p.wrapLines  按宽度折行
  * @param {string} [p.hint]   底部快捷键提示；缺省按是否可滚动自动生成
+ * @param {boolean} [p.wrap]  内容是否可折行。自带边框的内容必须传 false（见下）
  * @returns {{lines: string[], offset: number, maxOffset: number, totalRows: number}}
  */
 export function renderPanelOverlay({
@@ -49,13 +50,31 @@ export function renderPanelOverlay({
   paint,
   clipAnsiLine,
   wrapLines,
-  hint = ""
+  hint = "",
+  wrap = true
 }) {
   const border = accent || theme?.base?.border || null
   const inner = Math.max(8, width - 4)
 
-  // 先按内容区宽度折行，再算滚动 —— 顺序反了的话滚动位置会随宽度变化而漂移
-  const wrapped = wrapLines(lines.length ? lines : [""], inner)
+  /**
+   * 折行对散文（帮助文本、会话列表）是对的，对**自带边框的内容**是毁灭性的。
+   *
+   * runtime 视图与 ultra 看板自己画 `+------+` 框，而且有 60 列的最小宽度 ——
+   * 请求 40 列它照样输出 60 格宽的行。终端窄于 64 列时（内宽 < 60）内容就溢出，
+   * 折行会把那条边框折成两段：
+   *
+   *     +---------------------------------------
+   *     +
+   *     | Workspace
+   *     |
+   *
+   * 这种内容超宽时应当裁掉右边 —— 丢掉表格右缘，但框还是框。
+   */
+  const source = lines.length ? lines : [""]
+  const wrapped = wrap
+    // 先按内容区宽度折行，再算滚动 —— 顺序反了的话滚动位置会随宽度变化而漂移
+    ? wrapLines(source, inner)
+    : source
   const win = panelWindow({ total: wrapped.length, offset, maxVisible: maxRows })
   const visibleLines = wrapped.slice(win.start, win.end)
 

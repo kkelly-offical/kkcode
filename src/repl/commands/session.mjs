@@ -56,11 +56,15 @@ export const sessionCommands = [
         runtimeSummary: runtimeView.runtimeSummary,
         backgroundSummary: runtimeView.backgroundSummary
       })
-      // 内容按浮层内宽排版：runtime 视图自己也画框，宽度不匹配时外层折行会把
-      // 它的边框折成两段（实测截图里就是 `+-----` 换行成 `---+`）。
+      // 内容按浮层内宽排版：runtime 视图自己也画框，宽度不匹配时它的边框会被
+      // 折成两段（实测截图里就是 `+-----` 换行成 `---+`）。
+      //
+      // 钳到 60 是因为这个视图有 60 列的最小宽度 —— 请求更窄它照样输出 60 格宽的
+      // 行。与其让它在窄终端里悄悄溢出，不如按最小宽度排版然后由浮层裁掉右边
+      // （浮层对自带边框的内容裁而不折）。`/board` 一直是这么做的，这里对齐。
       showInfo("runtime status", (innerWidth) => renderRuntimeDashboardView({
         theme: ctx.themeState.theme,
-        columns: innerWidth,
+        columns: Math.max(60, innerWidth),
         ...runtimeView
       }), { maxRows: 18 })
       return { exit: false }

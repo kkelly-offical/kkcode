@@ -515,7 +515,10 @@ export function buildFrame({
       accent: ctx.themeState.theme.base.accent,
       paint,
       clipAnsiLine,
-      wrapLines: (lines, w) => wrapLogLines(lines, w)
+      wrapLines: (lines, w) => wrapLogLines(lines, w),
+      // 自带边框的内容（runtime 视图、ultra 看板）不能折行 —— 折了框就断成两段。
+      // 缺省 true 是为了兼容没带这个字段的旧浮层状态。
+      wrap: ui.infoPanel.wrap !== false
     })
     // 回写夹紧后的 offset 与总行数，键盘处理据此判断能否继续滚
     ui.infoPanel.offset = panel.offset

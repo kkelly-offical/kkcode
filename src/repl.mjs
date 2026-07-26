@@ -32,7 +32,7 @@ import { PermissionEngine } from "./permission/engine.mjs"
 import { setPermissionPromptHandler } from "./permission/prompt.mjs"
 import { setQuestionPromptHandler } from "./tool/question-prompt.mjs"
 import { createActivityRenderer } from "./ui/activity-renderer.mjs"
-import { createAppState, reduceAppState } from "./ui/app-state.mjs"
+import { reduceAppState } from "./ui/app-state.mjs"
 import { EventBus } from "./core/events.mjs"
 import { EVENT_TYPES } from "./core/constants.mjs"
 import { readClipboardImage, readClipboardText } from "./tool/image-util.mjs"
@@ -71,6 +71,9 @@ import { authoringCommands } from "./repl/commands/authoring.mjs"
 import { presentPromptTurn } from "./repl/turn-presenter.mjs"
 import { loadProviderModelItems } from "./repl/provider-catalog.mjs"
 import { persistLearnedGrant } from "./repl/config-persistence.mjs"
+import { createRenderScheduler } from "./repl/render-scheduler.mjs"
+import { createTranscriptWriter } from "./repl/transcript-writer.mjs"
+import { createReplUiState, openUserOverlay, closeUserOverlay } from "./repl/ui-state.mjs"
 import { createGhostPredictor } from "./repl/ghost-predictor.mjs"
 import { buildReplRuntimeSnapshot } from "./repl/runtime-facade.mjs"
 import {
@@ -528,92 +531,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   })
   for (const line of mcpStatusLines) transcript.appendLog(sanitizeTerminalStyledText(line))
 
-  const ui = {
-    input: "",
-    inputCursor: 0,
-    busy: false,
-    pendingImages: [],
-    permissionQueue: [],
-    pendingPermission: null,
-    permissionSelected: 0,
-    questionQueue: [],
-    pendingQuestion: null,
-    lastEscapeAt: 0,
-    questionIndex: 0,
-    questionOptionSelected: 0,
-    questionMultiSelected: {},
-    questionCustomMode: false,
-    questionCustomInput: "",
-    questionCustomCursor: 0,
-    questionAnswers: {},
-    modelPicker: null,
-    policyPicker: null,
-    modePicker: null,
-    selectedSuggestion: 0,
-    suggestionOffset: 0,
-    history: [...historyLines],
-    historyIndex: historyLines.length,
-    scrollOffset: 0,
-    quitting: false,
-    showDashboard: true,
-    scrollMeta: {
-      logRows: 0,
-      totalRows: 0,
-      maxOffset: 0
-    },
-    spinnerIndex: 0,
-    currentActivity: null,
-    currentStep: 0,
-    maxSteps: 0,
-    thinking: createThinkingState(),
-    lastThinkingId: null,
-    streamLogId: null,
-    streamRaw: "",
-    appState: createAppState(),
-    activeTurnId: null,
-    paused: false,
-    turnAbortController: null,
-    lastCtrlCTime: 0,
-    agentContinuation: null,
-    lastLongAgentPrompt: null,
-    longagentAborted: false,
-    agentTransaction: null,
-    agentAborted: false,
-    pendingModeConfirm: null,
-    // 鼠标文本选择状态
-    mouseSelection: null,  // { startRow, startCol, endRow, endCol, active }
-    autoCopy: terminalFeatures.copyOnSelect, // 全屏鼠标模式下默认选中即复制
-    inputSelection: null,  // { start, end } 输入框内的选择范围（字符位置）
-    inputDragAnchor: -1,   // 输入框拖拽起始字符位置
-    ghostText: "",         // 小模型预测的下一句（纯视觉，不参与光标计算）
-    inputLayout: null,
-    // 屏幕布局元数据（buildFrame 中更新）
-    layoutMeta: { logStartRow: 0, logEndRow: 0, inputStartRow: 0, inputEndRow: 0 },
-    wizard: createWizardState(),
-    providerPicker: null,
-    sessionPicker: null,
-    // 只读信息浮层：{ title, lines, offset, maxOffset, maxRows }
-    // 与选择器互斥 —— 打开它时不该同时有别的浮层抢屏。
-    infoPanel: null,
-    metrics: {
-      tokenMeter: {
-        estimated: false,
-        turn: { input: 0, output: 0 },
-        session: { input: 0, output: 0 },
-        global: { input: 0, output: 0 }
-      },
-      cost: null,
-      context: null,
-      longagent: null,
-      toolEvents: []
-    }
-  }
-  let lastFrame = []
-  let lastFrameWidth = 0
-  let forceFullPaint = true
-  let renderScheduled = false
-  let renderTimer = null
-  let spinnerTimer = null
+  // TUI 状态。形状与浮层互斥不变量在 repl/ui-state.mjs（有独立测试）。
+  const ui = createReplUiState({ historyLines, terminalFeatures })
   let selectionClearTimer = null
   // 拖选到日志区边缘外时的自动滚动定时器
   let autoScrollTimer = null
@@ -639,76 +558,46 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   let onSuspend = null
   let onContinue = null
 
-  function sanitizeTranscriptRecord(input, options = {}) {
-    const source = input && typeof input === "object" && !Array.isArray(input)
-      ? { ...input, ...options }
-      : { ...options, summary: String(input ?? "").replace(/\r/g, "") }
-    const safe = sanitizeTerminalValue(source)
-    for (const key of ["summary", "title", "text"]) {
-      if (source[key] !== undefined) safe[key] = sanitizeTerminalStyledText(source[key])
+  /**
+   * 帧调度。差分绘制的状态（上一帧、上次宽度、是否强制全量、定时器）都关在
+   * 模块里 —— 此前是这个闭包里六个谁都能改的裸 `let`。
+   *
+   * `canPaint` 是终端层的话事权：挂起（Ctrl+Z）或已 dispose 时写转义序列会污染
+   * 用户的 shell，所以「现在能不能画」由这里回答，而不是让调度器自己去猜。
+   */
+  const renderScheduler = createRenderScheduler({
+    buildFrame: () => buildFrame(),
+    write: (text) => output.write(text),
+    renderFrame: renderTerminalFrame,
+    canPaint: () => !disposed && !terminalSuspended,
+    frameIntervalMs: TUI_FRAME_MS,
+    spinnerIntervalMs: 120,
+    onSpinnerTick: () => {
+      ui.spinnerIndex = (ui.spinnerIndex + 1) % BUSY_SPINNER_FRAMES.length
     }
-    if (source.details !== undefined) {
-      const details = Array.isArray(source.details) ? source.details : [source.details]
-      safe.details = details.flatMap((line) =>
-        sanitizeTerminalStyledText(line).split(/\r?\n/)
-      )
-    }
-    return safe
-  }
-
-  function appendLog(text = "", options = {}) {
-    const follow = ui.scrollOffset === 0
-    const id = transcript.appendLog(sanitizeTranscriptRecord(text, options))
-    if (follow) ui.scrollOffset = 0
-    return id
-  }
+  })
+  // 解构出来沿用原名：requestRender 单在 onKey 里就有 63 个调用点，
+  // 改成 renderScheduler.requestRender 只是让每一处都变长，不增加任何清晰度。
+  const {
+    requestRender,
+    paintFrame,
+    cancelPendingFrame,
+    startBusySpinner,
+    stopBusySpinner
+  } = renderScheduler
 
   /**
-   * 命令输出的通道。
-   *
-   * 0.6.0 之前这里靠**正则嗅探**决定一条消息是瞬时提示还是对话记录 ——
-   * 只认四个英文动词加 "switched:"，中文文案与多行输出一律漏网，于是
-   * /help（80+ 行）、/status、/board 的看板全都灌进对话记录，还会被
-   * /clear 一起清掉。现在由调用点显式声明意图。
-   *
-   * @param {string} text
-   * @param {{channel?: "transcript"|"notice"|"panel", topic?: string, tone?: string, title?: string}} options
+   * 输出通道。实现在 repl/transcript-writer.mjs —— 消毒规则与通道路由
+   * 在那里有独立测试（此前它们在这个闭包里，测不到）。
    */
-  function printTui(text = "", options = {}) {
-    const channel = options.channel || "transcript"
-    if (channel === "notice") {
-      showToast(stripAnsi(text).trim(), {
-        topic: options.topic || "status",
-        tone: options.tone || "success"
-      })
-      return null
-    }
-    if (channel === "panel") {
-      // 面板类输出（帮助、状态、看板）折叠成一条可展开的条目：占一行，
-      // 展开才铺开，既不刷屏也不丢内容。
-      const lines = String(text).split("\n")
-      return appendLog({
-        summary: options.title || lines[0] || "output",
-        details: lines.length > 1 ? lines.slice(options.title ? 0 : 1) : [],
-        kind: "system",
-        collapsible: lines.length > 1
-      })
-    }
-    return appendLog(text)
-  }
-
-  function updateLog(id, patch) {
-    if (!patch || typeof patch !== "object") return transcript.updateLog(id, patch)
-    return transcript.updateLog(id, sanitizeTranscriptRecord(patch))
-  }
-
-  function showToast(message, {
-    topic = "status",
-    tone = "info",
-    durationMs
-  } = {}) {
-    return toastStore.show(sanitizeTerminalText(message), { topic, tone, durationMs })
-  }
+  const transcriptWriter = createTranscriptWriter({ transcript, toastStore })
+  const {
+    appendLog,
+    updateLog,
+    showToast,
+    print: printTui,
+    sanitizeRecord: sanitizeTranscriptRecord
+  } = transcriptWriter
 
   /**
    * 回溯上一轮对话。撤回的那句输入会填回输入框 —— 「退回去改一下再问」
@@ -836,8 +725,11 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       })
   })
 
+  // 注意：这里曾有一句 `if (ui.scrollOffset === 0) ui.scrollOffset = 0` ——
+  // 可证明的空操作。它想表达的是「用户在底部时保持跟随」，但 scrollOffset 是
+  // 到底部的距离，追加内容本来就不会改它，所以跟随是自动的。真正没实现的是
+  // 反面：用户**已经向上滚**时来了新内容，视图会跟着往下漂（偏移量没随之增加）。
   const transcriptUnsub = transcript.subscribe(() => {
-    if (ui.scrollOffset === 0) ui.scrollOffset = 0
     requestRender()
   })
   // toast 过期要自己触发重绘。此前 store 的 subscribe 无人订阅 —— 空闲时
@@ -1130,19 +1022,19 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       return
     }
     const currentIdx = items.findIndex((item) => item.name === state.providerType)
-    ui.providerPicker = { items, selected: Math.max(0, currentIdx), offset: 0 }
+    openUserOverlay(ui, "providerPicker", { items, selected: Math.max(0, currentIdx), offset: 0 })
     requestRender({ force: true })
   }
 
   function closeProviderPicker() {
-    ui.providerPicker = null
+    closeUserOverlay(ui, "providerPicker")
     requestRender({ force: true })
   }
 
   async function confirmProviderPicker() {
     if (!ui.providerPicker?.items) return
     const chosen = ui.providerPicker.items[ui.providerPicker.selected]
-    ui.providerPicker = null
+    closeUserOverlay(ui, "providerPicker")
     if (!chosen) {
       requestRender({ force: true })
       return
@@ -1165,19 +1057,19 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       requestRender()
       return
     }
-    ui.sessionPicker = { items, selected: 0, offset: 0 }
+    openUserOverlay(ui, "sessionPicker", { items, selected: 0, offset: 0 })
     requestRender({ force: true })
   }
 
   function closeSessionPicker() {
-    ui.sessionPicker = null
+    closeUserOverlay(ui, "sessionPicker")
     requestRender({ force: true })
   }
 
   async function confirmSessionPicker() {
     if (!ui.sessionPicker?.items) return
     const chosen = ui.sessionPicker.items[ui.sessionPicker.selected]
-    ui.sessionPicker = null
+    closeUserOverlay(ui, "sessionPicker")
     if (!chosen) {
       requestRender({ force: true })
       return
@@ -1199,16 +1091,16 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       return
     }
     const currentIdx = items.findIndex((it) => it.model === state.model && it.provider === state.providerType)
-    ui.modelPicker = {
+    openUserOverlay(ui, "modelPicker", {
       items,
       selected: Math.max(0, currentIdx),
       offset: 0
-    }
+    })
     requestRender({ force: true })
   }
 
   function closeModelPicker() {
-    ui.modelPicker = null
+    closeUserOverlay(ui, "modelPicker")
     requestRender({ force: true })
   }
 
@@ -1238,7 +1130,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     // 边框折断。内宽 = 终端宽 - 左右边框与内边距（各 2 格）。
     const innerWidth = Math.max(20, (Number(process.stdout.columns) || 120) - 4)
     const resolved = typeof text === "function" ? text(innerWidth) : text
-    ui.infoPanel = {
+    openUserOverlay(ui, "infoPanel", {
       title,
       lines: String(resolved ?? "").split("\n"),
       offset: 0,
@@ -1246,14 +1138,17 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       maxRows,
       // 记下排版时的宽度：终端 resize 后据此重算，而不是让内容错位
       renderedAt: innerWidth,
-      source: typeof text === "function" ? text : null
-    }
+      source: typeof text === "function" ? text : null,
+      // 传函数意味着「我会按给定宽度自己排版」—— 即自带边框。这种内容超宽时
+      // 必须裁掉右边而不是折行，否则它画的框会被折成两段（窄终端实测踩过）。
+      wrap: typeof text !== "function"
+    })
     requestRender({ force: true })
   }
 
   function closeInfoPanel() {
     if (!ui.infoPanel) return false
-    ui.infoPanel = null
+    closeUserOverlay(ui, "infoPanel")
     requestRender({ force: true })
     return true
   }
@@ -1266,12 +1161,12 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   function openModePicker() {
-    ui.modePicker = createModePickerState(state.modeId || resolveModeId(state.mode))
+    openUserOverlay(ui, "modePicker", createModePickerState(state.modeId || resolveModeId(state.mode)))
     requestRender({ force: true })
   }
 
   function closeModePicker() {
-    ui.modePicker = null
+    closeUserOverlay(ui, "modePicker")
     requestRender({ force: true })
   }
 
@@ -1284,12 +1179,12 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
   function openPolicyPicker() {
     const current = ctx.configState.config.permission || {}
-    ui.policyPicker = createPolicyPickerState(current)
+    openUserOverlay(ui, "policyPicker", createPolicyPickerState(current))
     requestRender({ force: true })
   }
 
   function closePolicyPicker() {
-    ui.policyPicker = null
+    closeUserOverlay(ui, "policyPicker")
     requestRender({ force: true })
   }
 
@@ -1456,50 +1351,6 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     })
   }
 
-  function paintFrame(frame) {
-    if (disposed || terminalSuspended) return
-    if (!frame || !Array.isArray(frame.lines)) return
-    _lastFrame = frame  // 保存帧数据供鼠标选择使用
-    const fullPaint = forceFullPaint || frame.width !== lastFrameWidth || lastFrame.length !== frame.lines.length
-    output.write(renderTerminalFrame({
-      lines: frame.lines,
-      previousLines: lastFrame,
-      width: frame.width,
-      height: frame.height,
-      cursor: frame.cursor,
-      force: fullPaint
-    }))
-    lastFrame = frame.lines
-    lastFrameWidth = frame.width
-    forceFullPaint = false
-  }
-
-  function requestRender({ force = false } = {}) {
-    if (disposed || terminalSuspended) return
-    if (force) forceFullPaint = true
-    if (renderScheduled) return
-    renderScheduled = true
-    renderTimer = setTimeout(() => {
-      renderScheduled = false
-      renderTimer = null
-      paintFrame(buildFrame())
-    }, TUI_FRAME_MS)
-  }
-
-  function startBusySpinner() {
-    if (spinnerTimer) return
-    spinnerTimer = setInterval(() => {
-      ui.spinnerIndex = (ui.spinnerIndex + 1) % BUSY_SPINNER_FRAMES.length
-      requestRender()
-    }, 120)
-  }
-
-  function stopBusySpinner() {
-    if (!spinnerTimer) return
-    clearInterval(spinnerTimer)
-    spinnerTimer = null
-  }
-
   let pendingPlanBuild = null
 
   async function submitCurrentInput() {
@@ -1605,7 +1456,12 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
             wizard: ui.wizard,
             setWizard: (next) => { ui.wizard = next },
             providerPicker: ui.providerPicker,
-            setProviderPicker: (next) => { ui.providerPicker = next },
+            setProviderPicker: (next) => {
+              // TUI 里这个回调只用来退出选择态（传 null）；行模式的编号数组
+              // 不会走到这里 —— 有 openPanel 时命令走的是浮层分支。
+              if (next) openUserOverlay(ui, "providerPicker", next)
+              else closeUserOverlay(ui, "providerPicker")
+            },
             print: printTui,
             streamSink: appendStreamChunk,
             showTurnStatus: false,
@@ -1763,7 +1619,12 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         wizard: ui.wizard,
         setWizard: (next) => { ui.wizard = next },
         providerPicker: ui.providerPicker,
-        setProviderPicker: (next) => { ui.providerPicker = next },
+        setProviderPicker: (next) => {
+              // TUI 里这个回调只用来退出选择态（传 null）；行模式的编号数组
+              // 不会走到这里 —— 有 openPanel 时命令走的是浮层分支。
+              if (next) openUserOverlay(ui, "providerPicker", next)
+              else closeUserOverlay(ui, "providerPicker")
+            },
         print: printTui,
         streamSink: appendStreamChunk,
         showTurnStatus: false,
@@ -1944,7 +1805,6 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   // Monkey-patch stdin.emit 拦截鼠标事件，防止 readline 将其解析为键盘输入
-  let _lastFrame = null  // 保存最近一帧用于文本提取
   const _origStdinEmit = process.stdin.emit
   const mouseDecoder = createSgrMouseDecoder()
   const pasteDecoder = createBracketedPasteDecoder()
@@ -2256,6 +2116,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   function finishSelection(forceCopy = false) {
     const sel = ui.mouseSelection
     if (!sel) return
+    // 最近画出去的那一帧由调度器保管 —— 屏幕坐标换算成字符位置要靠它的布局元数据
+    const _lastFrame = renderScheduler.lastPaintedFrame()
     if (!_lastFrame?.lines) { ui.mouseSelection = null; return }
 
     // 行用 transcript 绝对行而非屏幕行：边选边滚之后屏幕行下的内容已经
@@ -2316,12 +2178,6 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       }, 200)
     }
     // autoCopy 关闭时：保留高亮，等待下次点击或按键清除
-  }
-
-  function cancelPendingFrame() {
-    if (renderTimer) clearTimeout(renderTimer)
-    renderTimer = null
-    renderScheduled = false
   }
 
   function detachTuiInputListeners() {
@@ -2398,7 +2254,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       process.stdin.resume()
       terminalSuspended = false
       if (repaint) {
-        forceFullPaint = true
+        renderScheduler.forceNextPaintFull()
         paintFrame(buildFrame())
       }
       return true
@@ -2413,7 +2269,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
    * timers, resize handlers, toasts, or EventBus callbacks to paint over it.
    */
   async function withSuspendedTui(fn) {
-    const shouldResumeSpinner = Boolean(spinnerTimer)
+    const shouldResumeSpinner = renderScheduler.isSpinnerRunning()
     stopBusySpinner()
     deactivateTerminal()
     try {
@@ -2450,7 +2306,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     if (disposed || jobControlSuspended || process.platform === "win32") return
     jobControlSuspended = true
     resumeTerminalAfterContinue = terminalFrameActive
-    resumeSpinnerAfterContinue = Boolean(spinnerTimer) && terminalFrameActive
+    resumeSpinnerAfterContinue = renderScheduler.isSpinnerRunning() && terminalFrameActive
     stopBusySpinner()
     // 挂起期间收不到鼠标事件，自动滚动必须停，否则恢复后仍在滚
     stopAutoScroll()
@@ -3298,12 +3154,12 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   } finally {
     disposed = true
     abortTurnAndPromptsForExit()
-    cancelPendingFrame()
+    // 排队的帧与 spinner 一起停 —— 这两个都是「进程不退出」的经典来源
+    renderScheduler.dispose()
     if (selectionClearTimer) clearTimeout(selectionClearTimer)
     stopAutoScroll()
     textStreamBatcher.dispose()
     ghostPredictor.dispose()
-    stopBusySpinner()
     activityRenderer.stop()
     uiEventUnsub()
     transcriptUnsub()
