@@ -1,5 +1,121 @@
 # Changelog / 更新日志
 
+## 0.6.0
+
+A release about the layer you actually look at: what the terminal shows, what
+subagents are doing, whether anyone asked you before starting, and whether the
+context window manages itself. Most of the capability was already in the tree —
+unwired, duplicated, or silent when it failed.
+
+### English
+
+**Subagents you can control and see.** The tools allowlist is enforced where
+tools execute, not just where the list is advertised to the model; `write_scope`
+blocks mutating tools instead of being prose in a prompt; `budget_usd` and
+`deadline_at` abort a delegation instead of being fields nothing reads. Config
+overrides merge with the registry definition rather than replacing it — setting
+`agent.subagents.explore.model` used to drop explore's readonly tier and its
+allowlist with it. An unknown `subagent_type` now reports the available types
+instead of quietly falling back to a full-permission agent. `maxTurns`,
+`temperature` and `model: "inherit"` all reach their destinations for the first
+time, and `agent.prompt` is read on the production path (`buildSystemPrompt`
+looked the agent up by name; the function honouring an inline prompt was only
+reachable from dead code the tests happened to cover). Ultra stage tasks carry
+a runSpec, so a declared subagent keeps its permission tier in parallel stages.
+Delegations emit start/finish events on the parent session, `/agents` and
+`/tasks` bring the CLI surface into the REPL, and delegated replies come back
+as text with a metadata footer rather than JSON truncated mid-escape.
+
+**It asks before it starts.** `planner.intake_questions` never asked anyone
+anything: its prompt tells the model to answer every question with its own best
+assumption. Intake now separates what it can settle from the codebase from what
+genuinely belongs to the user, and routes the latter through a real prompt that
+borrows its shape from the blocked-decision flow — probe for a handler at the
+moment of asking, never read an empty answer as a choice, fall back to a stated
+assumption with an explicit reason. Plan mode gets a Phase 1.5 that clarifies
+before designing rather than after. Dead config settled: `intake_questions.
+enabled` is wired, `ask_user_after_plan_frozen` finally does something, and
+`intake_user_confirm` is promoted out of hiding.
+
+**The context window manages itself.** Model discovery keeps the context length
+providers already report and merges it into `provider.model_context` (explicit
+config always wins); startup refreshes the catalog asynchronously. Compaction
+keys on 85% utilization — the old 50-message OR threshold fired first in nearly
+every long session, which made the ratio knob dead — and reports through a
+toast instead of interrupting. `modelContextLimit` follows the active provider;
+it read `provider.default`, which `/provider` never changes, so switching
+channels mid-session skewed the limit, the status bar and the compaction
+trigger together. The status bar shows absolute tokens beside the percentage,
+and headless chat finally passes its context meter through.
+
+**Terminal experience.** Four hand-drawn pickers became one overlay component —
+which surfaced a defect all four shared: item rows were one character narrower
+than their borders, so every box had a ragged right edge. Frame accounting now
+derives from the block list instead of a parallel hand-written sum, so adding a
+UI block can no longer silently miscount the transcript height. Command output
+declares its channel explicitly (`/help`, `/status`, `/board`, `/agents`,
+`/tasks` collapse into expandable panels instead of flooding the transcript);
+the previous mechanism sniffed message text for four English verbs, so any
+Chinese or multi-line output leaked into the conversation. Toasts now trigger
+their own repaint — nothing subscribed to expiry, so an idle toast lingered
+until the next keypress. Eight commands that were dispatchable but missing from
+completion are listed, with a test that compares the two lists.
+
+**Colors and syntax highlighting.** Markdown's palette follows the theme
+instead of being a hardcoded constant; bold, italic, strikethrough, heading
+levels and horizontal rules all had no color at all. User and assistant text
+take their color from `theme.roles` — `item.kind` was a first-class field the
+renderer never read. Fenced code blocks are syntax-highlighted across ~17
+languages plus diff, line by line with no cross-line state (the stream renderer
+guarantees output cannot depend on chunk boundaries) and adding only SGR
+sequences, so stripping color returns the source byte for byte.
+
+**Internals.** The streaming and non-streaming provider paths share one
+preparation step instead of each carrying a copy of settings resolution,
+outbound checks, credential checks and telemetry — a security check adjusted in
+one copy and not the other would have failed silently.
+
+### 中文
+
+**子智能体可控、可见。** 工具白名单在执行处强制，而不只是过滤给模型看的清单；
+`write_scope` 真的拦截写工具，不再只是提示词里的一句话；`budget_usd` 与
+`deadline_at` 会中止委派，不再是无人读取的字段。配置覆盖与注册表定义**合并**
+而非替换 —— 此前只改一个 model 会连带丢掉 explore 的只读档与白名单。未知的
+`subagent_type` 会报出可用类型，不再静默回落成全权 agent。`maxTurns`、
+`temperature`、`model: "inherit"` 首次真正生效；`agent.prompt` 接上生产路径
+（此前测试覆盖的是一条无人调用的死路径）。Ultra 阶段任务带上 runSpec，声明的
+子智能体在并行阶段保住自己的权限档。委派会在父会话发出起止事件，`/agents`
+与 `/tasks` 把 CLI 能力带进 REPL，委派结果以正文加元数据返回，不再是被从中间
+截断的 JSON。
+
+**开工前会问你。** `planner.intake_questions` 从不问任何人 —— 它的提示词要求
+模型对每个问题「给出自己的最佳假设」。现在 intake 区分「能从代码里查到的」与
+「只有你能定的」，后者走真实提问，收口语义沿用受阻交互那套成熟做法：提问那一
+刻探测、空答案绝不当成选择、回落到明示的假设并记录原因。plan 模式新增
+Phase 1.5，先澄清后设计。死配置一并清理。
+
+**上下文自己管好。** 模型发现保留 provider 已经返回的上下文长度并合并进
+`provider.model_context`（手工配置优先）；启动异步刷新目录。压缩以 85% 占用为
+判据 —— 旧的 50 条消息 OR 阈值在长会话里几乎总是先撞线，让比例形同虚设 ——
+并以提示条告知而不打断。`modelContextLimit` 跟随当前 provider：它此前读的是
+配置默认值，而 `/provider` 切换从不改那个键。状态栏显示绝对 token 数，headless
+也终于能看到上下文占用。
+
+**终端体验。** 四个手绘选单合并为一个浮层组件，并暴露出它们共有的缺陷：项目行
+比边框窄一个字符，方框右边缘一直是参差的。帧的行数记账改为由块列表推导，新增
+UI 块不再可能算错对话区高度。命令输出显式声明通道（`/help`、`/status`、
+`/board`、`/agents`、`/tasks` 折叠成可展开面板，不再灌进对话记录）—— 此前靠
+嗅探四个英文动词，中文与多行输出一律漏网。提示条到期会自己触发重绘。八个能
+执行却不在补全里的命令已补齐，并有测试比对两份清单。
+
+**配色与语法高亮。** markdown 配色跟随主题；粗体、斜体、删除线、标题层级、
+水平线此前完全没有颜色。用户与模型文本取自 `theme.roles`。围栏代码块支持
+约 17 种语言加 diff 的语法高亮，逐行独立、只加颜色不改字符 —— 去掉颜色能逐字
+还原源码。
+
+**内部。** provider 的流式与非流式路径共用同一段准备逻辑，不再各自持有一份
+设置解析、出网校验、凭据校验与遥测 —— 只改其中一份的安全校验不会有任何报错。
+
 ## 0.5.8
 
 Every background subagent had been unable to use tools. This is the first

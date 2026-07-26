@@ -233,6 +233,17 @@ const BUILTIN_SLASH = [
   { name: "create-skill", desc: "generate a new skill via AI" },
   { name: "create-agent", desc: "generate a new sub-agent via AI" },
   { name: "reload", desc: "reload custom commands" },
+  // 以下几条一直可以执行，却从未出现在补全菜单里 —— 目录与分发是两份
+  // 各写各的清单，加命令时只改分发是最自然的疏忽。test/repl-slash-catalog
+  // 现在会比对两者，漏一个就红。
+  { name: "board", desc: "ultra goal board" },
+  { name: "cls", desc: "clear terminal (alias of /clear)" },
+  { name: "home", desc: "back to the dashboard view" },
+  { name: "dashboard", desc: "redraw dashboard (alias of /dash)" },
+  { name: "assistant", desc: "conversational mode" },
+  { name: "code", desc: "coding mode" },
+  { name: "coding", desc: "coding mode (alias of /code)" },
+  { name: "yolo", desc: "unattended mode — approvals off" },
   { name: "exit", desc: "quit" }
 ]
 
@@ -517,7 +528,7 @@ async function processInputLine({
   async function switchActiveProvider(name) {
     state.providerType = name
     state.model = resolveProviderDefaultModel(ctx.configState.config, name, state.model)
-    print(`provider switched: ${name} (model: ${state.model})`)
+    print(`provider switched: ${name} (model: ${state.model})`, { channel: "notice", topic: "switch" })
     const catalog = await loadProviderModelItems(ctx.configState, name)
     if (catalog.items.length > 1) {
       print(`  可用模型 (${catalog.source}${catalog.stale ? ", stale" : ""}): ` + catalog.items.map(m => m.model).join(", "))
@@ -579,7 +590,7 @@ async function processInputLine({
   if (["/exit", "/quit", "/q"].includes(normalized)) return { exit: true }
 
   if (["/help", "/h", "/?"].includes(normalized)) {
-    print(help(providersConfigured))
+    print(help(providersConfigured), { channel: "panel", title: "help · slash commands and shortcuts" })
     return { exit: false }
   }
 
@@ -610,7 +621,7 @@ async function processInputLine({
     print(renderRuntimeDashboardView({
       theme: ctx.themeState.theme,
       ...runtimeView
-    }))
+    }), { channel: "panel", title: "runtime status" })
     return { exit: false }
   }
 
@@ -895,7 +906,7 @@ async function processInputLine({
       taskProgress: record.taskProgress || {}, verification
     })
     const width = Math.max(60, process.stdout.columns || 120)
-    for (const line of renderUltraBoard(board, { width, paint })) print(line)
+    print(renderUltraBoard(board, { width, paint }).join("\n"), { channel: "panel", title: "ultra board" })
     return { exit: false }
   }
 
@@ -905,7 +916,7 @@ async function processInputLine({
       noteDeprecation("mode.longagent", "`/longagent` 已更名为 `/ultra`")
     }
     const next = switchModeInPlace(state, ctx, raw)
-    print(`mode switched: ${next.icon} ${next.label} (${next.hint})`)
+    print(`mode switched: ${next.icon} ${next.label} (${next.hint})`, { channel: "notice", topic: "mode" })
     return { exit: false }
   }
 
@@ -934,7 +945,7 @@ async function processInputLine({
       return { exit: false }
     }
     const next = switchModeInPlace(state, ctx, modeId)
-    print(`mode switched: ${next.icon} ${next.label} (${next.hint})`)
+    print(`mode switched: ${next.icon} ${next.label} (${next.hint})`, { channel: "notice", topic: "mode" })
     return { exit: false }
   }
 
@@ -1037,7 +1048,7 @@ async function processInputLine({
     else {
       try {
         state.model = validateModelId(next)
-        print(`model switched: ${escapeTerminalText(state.model)}`)
+        print(`model switched: ${escapeTerminalText(state.model)}`, { channel: "notice", topic: "switch" })
       } catch (error) {
         print(`invalid model id: ${escapeTerminalText(error.message)}`)
       }
@@ -1270,7 +1281,7 @@ async function processInputLine({
         const tools = (override?.tools || agent.tools)
         return `  ${agent.name.padEnd(20)} ${String(permission).padEnd(10)} ${tools ? `tools: ${tools.join(", ")}` : "tools: all"}`
       })
-    print(["subagents (name / permission / tools)", ...rows].join("\n"))
+    print(["subagents (name / permission / tools)", ...rows].join("\n"), { channel: "panel", title: `subagents (${rows.length})` })
     return null
   }
 
@@ -1297,7 +1308,7 @@ async function processInputLine({
       const desc = String(task.description || "").slice(0, 48)
       return `  ${String(task.id).padEnd(24)} ${String(task.status).padEnd(12)} ${desc}`
     })
-    print(["background tasks (id / status / description)", ...rows, "  /tasks stop <id> · /tasks retry <id>"].join("\n"))
+    print(["background tasks (id / status / description)", ...rows, "  /tasks stop <id> · /tasks retry <id>"].join("\n"), { channel: "panel", title: `background tasks (${tasks.length})` })
     return null
   }
 
@@ -1489,7 +1500,7 @@ async function processInputLine({
   if (result.planHandoff?.modeId) {
     const next = switchModeInPlace(state, ctx, result.planHandoff.modeId)
     planHandoff = { ...result.planHandoff, label: next.label, icon: next.icon }
-    print(`mode switched: ${next.icon} ${next.label} (plan build)`)
+    print(`mode switched: ${next.icon} ${next.label} (plan build)`, { channel: "notice", topic: "mode" })
   }
 
   return {
@@ -1815,15 +1826,36 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     return id
   }
 
-  function printTui(text = "") {
-    const plain = stripAnsi(text).trim()
-    if (/^(?:mode|model|provider|permission(?: level)?) switched:/i.test(plain)) {
-      showToast(plain, { topic: "switch", tone: "success" })
+  /**
+   * 命令输出的通道。
+   *
+   * 0.6.0 之前这里靠**正则嗅探**决定一条消息是瞬时提示还是对话记录 ——
+   * 只认四个英文动词加 "switched:"，中文文案与多行输出一律漏网，于是
+   * /help（80+ 行）、/status、/board 的看板全都灌进对话记录，还会被
+   * /clear 一起清掉。现在由调用点显式声明意图。
+   *
+   * @param {string} text
+   * @param {{channel?: "transcript"|"notice"|"panel", topic?: string, tone?: string, title?: string}} options
+   */
+  function printTui(text = "", options = {}) {
+    const channel = options.channel || "transcript"
+    if (channel === "notice") {
+      showToast(stripAnsi(text).trim(), {
+        topic: options.topic || "status",
+        tone: options.tone || "success"
+      })
       return null
     }
-    if (/^dashboard refreshed$/i.test(plain)) {
-      showToast(plain, { topic: "dashboard", tone: "success" })
-      return null
+    if (channel === "panel") {
+      // 面板类输出（帮助、状态、看板）折叠成一条可展开的条目：占一行，
+      // 展开才铺开，既不刷屏也不丢内容。
+      const lines = String(text).split("\n")
+      return appendLog({
+        summary: options.title || lines[0] || "output",
+        details: lines.length > 1 ? lines.slice(options.title ? 0 : 1) : [],
+        kind: "system",
+        collapsible: lines.length > 1
+      })
     }
     return appendLog(text)
   }
@@ -1932,6 +1964,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     if (ui.scrollOffset === 0) ui.scrollOffset = 0
     requestRender()
   })
+  // toast 过期要自己触发重绘。此前 store 的 subscribe 无人订阅 —— 空闲时
+  // 一条提示会一直挂在屏幕上，直到用户碰下一个键才消失（忙碌时 spinner
+  // 的定时重绘恰好掩盖了这一点，所以从没被注意到）。
   const toastUnsub = toastStore.subscribe(() => requestRender())
 
   const uiEventUnsub = EventBus.subscribe((event) => {
