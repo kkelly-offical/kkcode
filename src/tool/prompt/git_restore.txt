@@ -1,0 +1,11 @@
+Restores the working directory to a previously created ghost commit snapshot.
+
+This OVERWRITES current changes with the snapshot state. Anything written since that
+snapshot and not captured elsewhere is gone.
+
+Parameters:
+- snapshot_id (required): from `git_list_snapshots`.
+- restore_index (optional): also restore the staging area (default: false).
+
+Before restoring, consider taking a fresh snapshot of the current state — otherwise the
+recovery itself becomes unrecoverable. Tell the user what will be discarded.

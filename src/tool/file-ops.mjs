@@ -58,7 +58,7 @@ async function pathKind(target) {
 
 export const moveTool = {
   name: "move",
-  description: "Move or rename a file or directory within the workspace. Fails if the destination exists unless overwrite is true. Parent directories of the destination are created automatically.",
+  description: "Move or rename a file or directory. Use this instead of `bash` with mv: paths are validated against the workspace boundary (including symlink escapes), protected files are refused, and the destination is never silently clobbered. Parent directories are created automatically.",
   inputSchema: {
     type: "object",
     properties: {
@@ -98,7 +98,7 @@ export const moveTool = {
 
 export const copyTool = {
   name: "copy",
-  description: "Copy a file or directory within the workspace. Directories are copied recursively. Fails if the destination exists unless overwrite is true.",
+  description: "Copy a file or directory. Use this instead of `bash` with cp: paths are validated against the workspace boundary, protected files are refused, copying a directory into itself is caught, and the destination is never silently clobbered.",
   inputSchema: {
     type: "object",
     properties: {
@@ -137,7 +137,7 @@ export const copyTool = {
 
 export const removeTool = {
   name: "remove",
-  description: "Delete a file or directory. By default it moves the target into .kkcode/trash so it can be restored — pass permanent: true to delete outright. Directories need recursive: true.",
+  description: "Delete a file or directory. Use this instead of `bash` with rm: the target moves into .kkcode/trash so it can be restored, paths are validated, protected files are refused, and the workspace root cannot be deleted. Pass permanent: true to delete outright; directories need recursive: true.",
   inputSchema: {
     type: "object",
     properties: {
@@ -191,7 +191,7 @@ export const removeTool = {
 
 export const mkdirTool = {
   name: "mkdir",
-  description: "Create a directory, including any missing parent directories. Succeeds silently if it already exists.",
+  description: "Create a directory, including missing parents. Use this instead of `bash` with mkdir: the path is validated against the workspace boundary and protected locations are refused. Succeeds quietly if it already exists.",
   inputSchema: {
     type: "object",
     properties: {
@@ -232,7 +232,7 @@ async function collectFiles(root, dir, out = [], budget = { left: MAX_ARCHIVE_EN
 
 export const archiveTool = {
   name: "archive",
-  description: "Create a .tar.gz archive of a file or directory. Skips .git and node_modules. Use this to bundle logs, back up a directory before a risky change, or produce a deliverable.",
+  description: "Create a .tar.gz archive of a file or directory. Use this instead of `bash` with tar: paths are validated and .git/node_modules are skipped. Good for bundling logs, backing up a directory before a risky change, or producing a deliverable.",
   inputSchema: {
     type: "object",
     properties: {

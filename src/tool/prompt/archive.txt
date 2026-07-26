@@ -1,0 +1,12 @@
+Creates a .tar.gz archive of a file or directory.
+
+Use this instead of `bash` with tar. Paths go through the workspace boundary check, and
+.git and node_modules are skipped so archives stay small and do not carry repository state.
+
+Usage:
+- source: file or directory to archive, relative to the workspace root.
+- output: must end in .tar.gz or .tgz. Defaults to <source>.tar.gz.
+- Good for: bundling logs to hand over, backing up a directory before a risky change,
+  producing a deliverable.
+- The result reports how many files went in. If it says [capped], the archive is incomplete —
+  narrow the source rather than shipping a partial bundle.

@@ -1,0 +1,24 @@
+Makes an HTTP request with a chosen method, headers, and body.
+
+Use this for APIs: POST/PUT/PATCH/DELETE, JSON payloads, auth headers. Use `webfetch` when
+you only need to read a public page as text. NEVER use curl or wget through `bash` — that
+path skips the egress checks below entirely.
+
+Usage:
+- url: http or https only.
+- method: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS. Default GET.
+- headers: an object. Header names must be valid tokens; CR/LF is stripped from values.
+- body: a string. JSON must be serialized before you pass it. GET and HEAD cannot carry one.
+- timeout_ms: default 30000, max 120000.
+- The response comes back as status line, content-type, then body. Non-2xx is reported, not
+  thrown — read the status before trusting the body.
+
+Refused, by design:
+- Loopback, private ranges, carrier-grade NAT, and IPv4-mapped equivalents. A hostname is
+  judged by the address it resolves to, so DNS pointing at an internal IP is caught too.
+- Cloud metadata endpoints (169.254.169.254 and equivalents) — unconditionally, since what
+  they return is instance credentials.
+- Credentials embedded in the URL.
+- Redirects are re-checked at every hop, so a public URL cannot redirect into an internal one.
+To reach a local development server on purpose, the user must set
+tool.http.allow_private_hosts: true in their config.

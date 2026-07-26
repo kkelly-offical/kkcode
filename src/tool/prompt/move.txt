@@ -1,0 +1,17 @@
+Moves or renames a file or directory inside the workspace.
+
+Use this instead of `bash` with mv. Going through `bash` skips the workspace boundary
+check (including symlink escapes) and the protected-path list, and lets a typo overwrite
+the destination silently.
+
+Usage:
+- from, to: paths relative to the workspace root.
+- Parent directories of the destination are created automatically.
+- The destination is NEVER overwritten silently — you get an error naming what is already
+  there. Pass overwrite: true only when replacing it is what you intend.
+- Works across filesystems (falls back to copy+delete when rename cannot cross devices).
+
+Refused, by design:
+- Anything outside the workspace, or reachable only through a symlink that leaves it.
+- Protected paths: .git/, .kkcode/, .github/workflows/, shell rc files (.bashrc, .zshrc,
+  .envrc), package-manager configs (.npmrc, .yarnrc, bunfig.toml), .mcp.json.

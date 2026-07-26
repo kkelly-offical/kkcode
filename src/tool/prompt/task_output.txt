@@ -1,0 +1,10 @@
+Retrieves a delegated background task's output, result payload, and next-action guidance.
+
+This is the normal way to collect a finished task. Prefer it over `task_get` when you want
+what the task produced rather than its bookkeeping.
+
+Parameters:
+- task_id (required): from the launch call or `task_list`.
+
+If the task is still running you get its partial output — that is a signal to wait, not a
+reason to launch a second copy of the same work.

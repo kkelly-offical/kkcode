@@ -1,0 +1,8 @@
+Deletes a ghost commit snapshot by id.
+
+Parameters:
+- snapshot_id (required): from `git_list_snapshots`.
+
+This removes the metadata; the underlying git object may survive until garbage collection.
+Do not treat it as a way to erase content. Deleting a snapshot removes a recovery point —
+only do it when asked, or for snapshots you created and no longer need.

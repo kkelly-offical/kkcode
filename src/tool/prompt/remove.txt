@@ -1,0 +1,17 @@
+Deletes a file or directory.
+
+Use this instead of `bash` with rm. The important difference is recoverability: the target
+moves into .kkcode/trash instead of being unlinked, so a wrong delete can be undone.
+Deleting the wrong file is the least reversible step in everyday cleanup, and `rm` through
+`bash` gives you no way back.
+
+Usage:
+- path: relative to the workspace root.
+- A non-empty directory needs recursive: true — the error tells you how many entries it has.
+- permanent: true unlinks instead of moving to trash. Only use it when the user asked for
+  an irreversible delete, or for files you created moments ago and know are disposable.
+- Repeated deletes of the same name do not overwrite each other in the trash; they get a
+  numeric suffix.
+
+Refused, by design: the workspace root itself, anything outside the workspace, and
+protected paths (.git/, .kkcode/, shell rc files, package-manager configs, .mcp.json).

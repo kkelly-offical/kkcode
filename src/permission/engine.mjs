@@ -38,6 +38,17 @@ async function auditPermission(type, context, payload) {
   })
 }
 
+/**
+ * 拒绝消息。带上判定来源与理由 —— 「为什么被拒」决定了模型下一步该做什么：
+ * 档位不够可以请用户升档，撞了保护清单则应当换目标或请用户手动处理。
+ */
+function denialMessage(tool, decision) {
+  const parts = [`permission denied for tool ${tool}`]
+  if (decision?.source) parts.push(`(${decision.source})`)
+  const detail = decision?.reason || (decision?.protectedPath ? `${decision.protectedPath} is protected` : "")
+  return detail ? `${parts.join(" ")}: ${detail}` : parts.join(" ")
+}
+
 export const PermissionEngine = {
   setTrusted(value) { workspaceTrusted = Boolean(value) },
   isTrusted() { return workspaceTrusted },
@@ -107,16 +118,23 @@ export const PermissionEngine = {
       await auditPermission("permission.decided", auditContext, {
         decision: "deny", source: decision.source, mode, pattern, risk
       })
-      throw new PermissionError(`permission denied for tool ${tool}`)
+      // decision.reason 必须带出去。保护路径这类拒绝的价值全在理由里 ——
+      // 只说「permission denied for tool write」的话，模型既不知道自己撞的是
+      // 保护清单（而非档位不够），也无法向用户解释或换个可行的做法。
+      throw new PermissionError(denialMessage(tool, decision))
     }
 
+    // 策略层给出的理由（保护路径等）要并进提示：它解释的是「为什么这一次
+     // 需要确认」，而调用方传的 reason 说的是「这次调用要做什么」。缺了前者，
+    // 无 TTY 场景下拒绝消息就只剩一句空洞的 permission denied。
+    const askReason = [reason, decision.reason].filter(Boolean).join(" — ")
     await EventBus.emit({
       type: EVENT_TYPES.PERMISSION_ASKED,
       sessionId,
-      payload: { tool, mode, pattern, command, args, reason, risk }
+      payload: { tool, mode, pattern, command, args, reason: askReason, risk, source: decision.source }
     })
     await auditPermission("permission.asked", auditContext, {
-      mode, pattern, command, args, reason, risk
+      mode, pattern, command, args, reason: askReason, risk
     })
     const reply = await askPermissionInteractive({
       tool,
@@ -125,7 +143,7 @@ export const PermissionEngine = {
       command,
       args,
       risk,
-      reason,
+      reason: askReason,
       defaultAction: config.permission?.non_tty_default || "deny"
     })
     if (reply === "allow_session" || reply === "allow_always") {
@@ -174,6 +192,10 @@ export const PermissionEngine = {
     await auditPermission("permission.decided", auditContext, {
       decision: "deny", source: "interactive", mode, pattern, risk
     })
-    throw new PermissionError(`permission denied for tool ${tool}`)
+    throw new PermissionError(
+      decision.reason
+        ? `permission denied for tool ${tool} (${decision.source}): ${decision.reason}`
+        : `permission denied for tool ${tool} (you declined it)`
+    )
   }
 }

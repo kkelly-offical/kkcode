@@ -1,0 +1,10 @@
+Creates a directory, including any missing parent directories.
+
+Use this instead of `bash` with mkdir, so the path goes through the workspace boundary check
+and the protected-path list.
+
+Usage:
+- path: relative to the workspace root.
+- Missing parents are created — no need for a separate call per level.
+- Succeeds quietly if the directory already exists. It is an error if the path exists as a file.
+- `write` already creates parent directories, so you do not need this before writing a file.

@@ -6,7 +6,22 @@ CRITICAL — tool selection rules. Do NOT use `bash` when a dedicated tool exist
 - Find files → use `glob` (NEVER bash find/ls/dir)
 - Write files → use `write` (NEVER echo/cat heredoc)
 - Edit files → use `edit` (NEVER sed/awk)
-Only use `bash` for: git, npm, pip, docker, make, cargo, go, python, node, and other system commands.
+- Move or rename → use `move` (NEVER mv)
+- Copy → use `copy` (NEVER cp)
+- Delete → use `remove` (NEVER rm) — it moves the target to .kkcode/trash so it can be restored
+- Create directories → use `mkdir` tool (NEVER bash mkdir)
+- Archive → use `archive` (NEVER bash tar/zip)
+- HTTP requests → use `http_request` for anything beyond a plain page fetch, `webfetch` to read a page
+  (NEVER curl/wget/Invoke-WebRequest)
+
+These are not style preferences. The dedicated tools validate paths against the workspace
+boundary (including symlink escapes), refuse protected files such as .git and shell rc files,
+make deletion recoverable, and apply the egress checks that block internal addresses and cloud
+metadata endpoints. Going through `bash` skips every one of those.
+
+Only use `bash` for: git, npm, pip, docker, make, cargo, go, python, node, and other system
+commands — including `python3`/`node` one-liners for data processing (CSV/JSON aggregation and
+similar), which is the intended path for that work.
 
 Parameters:
 - command (required): shell command to execute

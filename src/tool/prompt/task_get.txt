@@ -1,0 +1,8 @@
+Retrieves one delegated background task's summary and result payload by task_id.
+
+Use this when you need the structured record of a task: its status, inputs, and result
+object. When you only want the produced text or logs, `task_output` is the better fit —
+it also carries next-action guidance.
+
+Parameters:
+- task_id (required): the id returned when the task was launched, or listed by `task_list`.

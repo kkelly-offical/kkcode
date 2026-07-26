@@ -33,10 +33,14 @@ export function createChatCommand() {
     .option("--output-format <format>", "text|json|stream-json|legacy")
     .option("--max-iterations <n>", "longagent max iterations (0 = unlimited)")
     .option("--session <id>", "session id")
+    // 无头 chat 此前完全没法信任工作区：buildContext 一直接受 options.trust，
+    // 而这里从不传 —— 于是所有工具（含 read/grep）在脚本与 CI 里一律被拒，
+    // 唯一出路是先开 REPL 手敲 /trust。ultra 早在 0.5.0 补了同一个缺口。
+    .option("--trust", "trust this workspace (equivalent to /trust in the REPL)")
     .action(async (promptParts, options) => {
       const outputFormat = resolveOutputFormat(options.outputFormat)
       const reporter = createOutputReporter(outputFormat)
-      const ctx = await buildContext()
+      const ctx = await buildContext({ trust: Boolean(options.trust) })
       printContextWarnings(ctx)
       PermissionEngine.setTrusted(ctx.trustState?.trusted !== false)
       const extensionPolicy = resolveExtensionPolicy(ctx.configState)

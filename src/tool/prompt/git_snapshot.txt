@@ -1,0 +1,14 @@
+Creates a ghost commit snapshot of the working directory.
+
+A snapshot captures the current state WITHOUT creating a regular commit and without touching
+the user's staging area (it uses a temporary index). Use it before a risky or wide-reaching
+change so you can get back.
+
+Parameters:
+- message (optional): what this state represents. Write it for a reader who has forgotten
+  the context.
+- paths (optional): limit the snapshot to specific paths.
+- auto (optional): mark it as automatically created.
+
+Take a snapshot before, not after. Restore with `git_restore`, list with
+`git_list_snapshots`. Snapshots expire after 7 days.

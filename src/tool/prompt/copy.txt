@@ -1,0 +1,10 @@
+Copies a file or directory inside the workspace. Directories are copied recursively.
+
+Use this instead of `bash` with cp. Going through `bash` skips the workspace boundary check
+and the protected-path list.
+
+Usage:
+- from, to: paths relative to the workspace root.
+- Parent directories of the destination are created automatically.
+- The destination is NEVER overwritten silently. Pass overwrite: true when that is intended.
+- Copying a directory into its own subtree is refused rather than recursing forever.

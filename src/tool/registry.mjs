@@ -1055,7 +1055,7 @@ function builtinTools(config) {
 
   const bashTool = {
     name: "bash",
-    description: "Run a shell command in cwd. ONLY use for commands that have no dedicated tool (e.g. git, npm, pip, docker). Do NOT use for: reading files (use `read`), searching files (use `grep`/`glob`), writing files (use `write`/`edit`). Long-running commands (dev servers, watchers) must use run_in_background: true. Supports `cwd` and per-command `env`. Non-zero exits are reported as `[exit N]`.",
+    description: "Run a shell command in cwd. ONLY use for commands that have no dedicated tool (e.g. git, npm, pip, docker). Do NOT use for: reading files (use `read`), searching files (use `grep`/`glob`), writing files (use `write`/`edit`), moving/copying/deleting/creating directories/archiving (use `move`/`copy`/`remove`/`mkdir`/`archive` — those validate paths, refuse protected files, and make deletion recoverable, none of which `bash` does), or HTTP requests (use `http_request`/`webfetch` — `curl` through `bash` skips the egress checks that block internal addresses and cloud metadata endpoints). Long-running commands (dev servers, watchers) must use run_in_background: true. Supports `cwd` and per-command `env`. Non-zero exits are reported as `[exit N]`.",
     inputSchema: {
       type: "object",
       properties: {

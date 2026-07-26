@@ -1,0 +1,12 @@
+Invokes a registered skill by name.
+
+Skills are prepared prompt templates or programmable modules for recurring work in this
+project. Use one when the task matches a skill listed in the system prompt, or when the
+user types a skill command like `$commit`.
+
+Parameters:
+- skill (required): the name without the `$` or `/` prefix.
+- args (optional): arguments passed through to the skill.
+
+Prefer a matching skill over improvising the same work: it encodes decisions the project
+already made. If no skill matches, do the work directly rather than forcing a near-fit.

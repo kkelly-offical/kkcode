@@ -1,5 +1,102 @@
 # Changelog / 更新日志
 
+## 0.6.10
+
+第一次对 0.7.0 工具层做真实模型验收（kimi k3，全部通过 `kkcode chat` 本身驱动）。
+它找到的问题和单测找到的完全不是同一类：**工具建好了、注册了、测试全绿，
+但模型从不用它。**
+
+### English
+
+- **The five file tools and `http_request` were never announced, so the model
+  never used them.** Asked to tidy a directory, it ran one `bash` call —
+  `mkdir && mv && rm && tar` — and none of `move`/`copy`/`remove`/`mkdir`/
+  `archive` were touched. Asked to POST to an API, it reached for `curl`. The
+  cause: `src/tool/prompt/bash.txt` carries a CRITICAL tool-selection list that
+  names `read`, `grep`, `glob`, `write` and `edit`, and the new tools were never
+  added to it. That list is what the model actually follows.
+  After adding them, the same directory task made 12 calls, all through the
+  dedicated tools, zero `bash`. The same HTTP request went through
+  `http_request`. This matters beyond tidiness: `bash` is precisely the path that
+  skips `resolveWorkspacePath`, the protected-path list, and the egress checks —
+  the reasons those tools exist at all. Unused, they protected nothing.
+- **Nineteen tools had no prompt file at all** — the six new ones plus every
+  `git_*` tool, `skill`, and the `task_*` query tools. A missing file is silent:
+  the tool still works, it just reaches the model as one short line. All 42 now
+  have one, and a test asserts every registered builtin does.
+- **A denial now says what it hit.** The model received exactly
+  `permission denied for tool write` — no indication that it had hit the
+  protected-path list rather than an insufficient approval level, so it could
+  neither explain the refusal nor propose an alternative. `evaluatePermission`
+  had been returning a precise reason all along and both denial paths dropped it.
+  With the reason attached, the model explained the block correctly and offered
+  three workable alternatives.
+- **`kkcode chat` gained `--trust`.** Headless `chat` had no way to trust a
+  workspace, so every tool — including `read` — was refused in scripts and CI,
+  with the only escape being to open the REPL and type `/trust`. `buildContext`
+  had accepted `options.trust` all along; `chat` never passed it. `ultra` got the
+  same fix back in 0.5.0.
+- The bash rules now also state explicitly that `python3`/`node` one-liners for
+  CSV/JSON work belong in `bash`. The plan deliberately dropped a `data_query`
+  tool on the grounds that no frontier tool builds one; that only holds if the
+  shell path is clearly sanctioned, or the model stalls between "do not use bash"
+  and "there is no other tool".
+
+**Verified working against the real model:** read truncation steering (it
+switched to `grep` for a needle, and used `offset`/`limit` to reach line 2600 of
+a 3000-line file); edit self-correction (a whitespace-mismatched anchor produced
+the 84%-similarity diagnosis and it fixed the edit on the very next call, one
+round); protected paths holding under YOLO; recoverable delete landing in
+`.kkcode/trash`; the archive unpacking correctly with system `tar`; a 400-row CSV
+aggregation whose numbers matched an independent recomputation exactly; plan mode
+refusing to write.
+
+**Not verified:** image reading. The image block reaches the message history with
+the correct `mediaType` and base64 payload — the 0.6.8 wiring is sound end to end
+— but k3 answered by sampling pixels through `bash` instead of looking at it,
+which is what a text-only reasoning model would do. Confirming the visual path
+needs a vision-capable model.
+
+### 中文
+
+- **五个文件工具和 `http_request` 从未被通告，所以模型从来不用它们。** 让它整理
+  一个目录，它用一条 `bash` 干完 `mkdir && mv && rm && tar`，
+  `move`/`copy`/`remove`/`mkdir`/`archive` 一个都没碰；让它向 API 发 POST，
+  它伸手就是 `curl`。原因是 `src/tool/prompt/bash.txt` 里那份 CRITICAL 工具选择
+  清单只列了 `read`、`grep`、`glob`、`write`、`edit`，新工具从没被加进去 ——
+  而模型实际遵循的是那份清单。
+  补上之后，同一个整理任务变成 12 次调用、全部走专用工具、`bash` 零调用；
+  同一个 HTTP 请求走了 `http_request`。这件事的分量不在整齐：`bash` 恰恰就是
+  绕过 `resolveWorkspacePath`、保护路径清单和出网校验的那条路 —— 也就是这些
+  工具存在的全部理由。没人用，它们就什么也没保护到。
+- **十九个工具根本没有 prompt 文件** —— 六个新工具，加上全部 `git_*`、`skill`
+  和 `task_*` 查询工具。缺文件是静默的：工具照样能用，只是在模型眼里只剩一行
+  短描述。现在 42 个工具全部有了，并有测试断言每个内置工具都必须有。
+- **拒绝现在会说清撞了什么。** 模型收到的原文只有
+  `permission denied for tool write` —— 它无从判断自己撞的是保护路径清单还是
+  档位不够，既没法解释也没法换做法。`evaluatePermission` 一直在返回精确的理由，
+  而两条拒绝路径都把它丢掉了。带上理由之后，模型准确解释了拦截原因并给出三个
+  可行替代方案。
+- **`kkcode chat` 补上了 `--trust`。** 无头 `chat` 此前完全没法信任工作区，
+  于是脚本与 CI 里所有工具（包括 `read`）一律被拒，唯一出路是开 REPL 手敲
+  `/trust`。`buildContext` 一直接受 `options.trust`，只是 `chat` 从不传 ——
+  `ultra` 在 0.5.0 就修过同一个缺口。
+- bash 规则里也明确写上了：CSV/JSON 这类数据处理的 `python3`/`node` 一行流
+  就该走 `bash`。计划有意不做 `data_query`（理由是没有一家前沿工具内置它），
+  但这个结论成立的前提是 shell 那条路被明确许可，否则模型会卡在「不许用 bash」
+  和「没有别的工具」之间。
+
+**真模型验证通过的**：读取截断的引导作用（找一个特征串时它改用 `grep`，
+需要精确区间时用 `offset`/`limit` 直取 3000 行文件的第 2600 行）；编辑自纠
+（缩进不匹配的锚点触发 84% 相似度诊断，它**下一次调用就改对了**，一轮完成）；
+YOLO 档下保护路径依然拦住；可恢复删除确实进了 `.kkcode/trash`；归档能被系统
+`tar` 正常解开；400 行 CSV 的聚合结果与独立复算逐项吻合；plan 档拒绝写入。
+
+**未能验证的**：图片读取。图片块带着正确的 `mediaType` 与 base64 进入了消息
+历史 —— 0.6.8 的接线端到端是通的 —— 但 k3 是通过 `bash` 采样像素来回答的，
+而不是去看那张图，这符合一个纯文本推理模型的行为。要确认视觉链路需要一个
+具备视觉能力的模型。
+
 ## 0.6.9
 
 0.7.0 计划的最后一条（阶段 2-5 的降级半边）。

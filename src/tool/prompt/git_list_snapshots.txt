@@ -1,0 +1,7 @@
+Lists ghost commit snapshots for this repository, newest first.
+
+Use this to find a snapshot_id for `git_restore`, or to check whether a safety snapshot
+was actually taken before a risky change.
+
+Parameters:
+- include_expired (optional): also show snapshots past the 7-day expiry.

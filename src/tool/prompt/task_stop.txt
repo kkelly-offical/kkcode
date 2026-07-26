@@ -1,0 +1,11 @@
+Cancels a delegated background task by task_id.
+
+Use this when a task is no longer needed — the plan changed, the answer arrived another
+way, or it is clearly stuck. Leaving work running costs tokens and can produce writes you
+no longer want.
+
+Parameters:
+- task_id (required): from the launch call or `task_list`.
+
+Cancellation is not instant: a task in the middle of a tool call finishes that call first.
+Check `task_list` afterwards rather than assuming it stopped.

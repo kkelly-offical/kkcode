@@ -1,0 +1,11 @@
+Reports git status: working tree changes, staged changes, and optionally the diffs.
+
+Use this instead of `bash` with git status. It returns a structured result, and it is
+classified as a read operation, so it stays available in read-only approval levels where
+an unclassified shell command would be refused.
+
+Parameters:
+- include_diff (optional): include the actual diffs, not just the file list.
+
+Read the diff before writing a commit message — a message drafted from filenames alone
+describes what changed, not why.

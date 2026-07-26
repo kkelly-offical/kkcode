@@ -1,0 +1,8 @@
+Lists delegated background tasks with concise lifecycle summaries.
+
+Use this to see what you already delegated before delegating again — re-dispatching work
+that is still running is the most common waste in multi-task runs.
+
+Returns one line per task: id, description, status, and how long it has been running.
+Follow up with `task_output` for the result of a finished task, or `task_get` for its
+full summary payload.

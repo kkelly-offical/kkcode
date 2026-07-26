@@ -1,0 +1,5 @@
+Deletes expired ghost commit snapshots across all repositories (older than 7 days).
+
+Housekeeping only. Run it when asked, or when snapshot listings have grown unwieldy —
+never as a reflex before other work, since it removes recovery points that may still
+matter to the user.

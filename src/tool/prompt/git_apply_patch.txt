@@ -1,0 +1,17 @@
+Applies a unified diff to the working directory, with 3-way merge for conflicts.
+
+A preflight check runs first: if the patch cannot apply cleanly you get the conflicts back
+without anything being written.
+
+Parameters:
+- diff (required): the unified diff.
+- preflight_only (optional): check applicability without applying.
+- threeway (optional): use 3-way merge (default: true).
+
+Prefer `edit` for changes you can express as a snippet replacement — it gives better failure
+diagnostics. Reach for this when you already have a diff (from a review, a patch file, or a
+generated change).
+
+Target paths are checked: a patch that writes to .git/, shell rc files, package-manager
+configs, or .github/workflows/ is refused, since a diff would otherwise be a way to install
+a hook or redirect installs.

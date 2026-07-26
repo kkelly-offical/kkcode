@@ -1,0 +1,5 @@
+Reports repository context: current branch, commit hash, remote URLs, and working tree state.
+
+Use this instead of `bash` with git rev-parse / git remote. Worth calling before any change
+whose correctness depends on where you are — which branch, whether a remote exists, whether
+the tree is already dirty.
