@@ -145,6 +145,7 @@ the active request, and removes the reconnect toast.
 | `Ctrl+C` | Copy an active selection; otherwise interrupt/exit confirmation |
 | `Ctrl+T` | Toggle latest Thinking details |
 | `Ctrl+E` / `Ctrl+O` | Toggle latest expandable transcript item (clicking works too) |
+| `Esc` `Esc` | Rewind one conversation turn (empty composer; file changes stay — use `/undo`) |
 | `Ctrl+Y` | Toggle automatic copy-on-select |
 | `Ctrl+Z` | Unix: restore terminal state and suspend; `fg` redraws the TUI |
 | `Ctrl+Up` / `Ctrl+Down` | Scroll transcript |

@@ -159,6 +159,7 @@ import {
 import { mergeConfigObject } from "./config/merge.mjs"
 import { renderSelectOverlay } from "./ui/overlay-select.mjs"
 import { thinkingPreviewLines } from "./ui/thinking-preview.mjs"
+import { rewindLastTurn } from "./session/rewind.mjs"
 import { setMarkdownColors } from "./theme/markdown.mjs"
 import { formatTokenCount } from "./theme/status-bar.mjs"
 import {
@@ -171,6 +172,8 @@ const HIST_DIR = userRootDir()
 const HIST_FILE = join(HIST_DIR, "repl_history")
 const HIST_SIZE = 500
 const MAX_TUI_LOG_LINES = 1200
+/** 连按两下 Esc 判定为回溯的时间窗 */
+const DOUBLE_ESCAPE_MS = 1200
 const MAX_TUI_SUGGESTIONS = 5
 const MAX_MODEL_PICKER_VISIBLE = 8
 const TUI_FRAME_MS = 16
@@ -1708,6 +1711,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     permissionSelected: 0,
     questionQueue: [],
     pendingQuestion: null,
+    lastEscapeAt: 0,
     questionIndex: 0,
     questionOptionSelected: 0,
     questionMultiSelected: {},
@@ -1873,6 +1877,45 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     durationMs
   } = {}) {
     return toastStore.show(sanitizeTerminalText(message), { topic, tone, durationMs })
+  }
+
+  /**
+   * 回溯上一轮对话。撤回的那句输入会填回输入框 —— 「退回去改一下再问」
+   * 应该是一步，而不是先退再重打一遍。
+   */
+  async function handleRewind() {
+    if (ui.busy) {
+      showToast("正在生成中，先按 Esc 中断", { topic: "rewind", tone: "warning" })
+      return
+    }
+    try {
+      const result = await rewindLastTurn(state.sessionId)
+      if (!result.ok) {
+        showToast(result.reason === "empty_session" ? "会话是空的，没有可回溯的内容" : "没有可回溯的轮次", {
+          topic: "rewind",
+          tone: "info"
+        })
+        return
+      }
+      // 对话记录同步回退到上一条用户输入之前（含它本身）
+      const items = transcript.getItems()
+      const lastUserIndex = items.findLastIndex((item) => item.kind === "user")
+      if (lastUserIndex >= 0) {
+        for (const item of items.slice(lastUserIndex)) transcript.removeLog(item.id)
+      }
+
+      if (result.prompt) {
+        ui.input = result.prompt
+        ui.inputCursor = result.prompt.length
+      }
+      showToast(`已回溯一轮（${result.removed} 条消息）· 文件改动请用 /undo`, {
+        topic: "rewind",
+        tone: "success"
+      })
+    } catch (error) {
+      showToast(`回溯失败：${error?.message || error}`, { topic: "rewind", tone: "error" })
+    }
+    requestRender()
   }
 
   function appendStreamChunk() {
@@ -4480,6 +4523,23 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           if (ui.ghostText) {
             ui.ghostText = ""
             ghostPredictor?.cancel()
+            requestRender()
+            return
+          }
+          // 输入框已空时，连按两下 Esc 回溯上一轮对话。
+          // 说错了、模型跑偏了、或只是想换个问法，应该能退回去重来，而不是
+          // 被迫在一段已经歪掉的上下文里继续往前顶。
+          // 只回溯对话，不动磁盘 —— 文件改动归 /undo，退一句话很轻，
+          // 退一批文件改动有风险，不该被同一个手势同时触发。
+          if (!ui.input) {
+            const now = Date.now()
+            if (ui.lastEscapeAt && now - ui.lastEscapeAt < DOUBLE_ESCAPE_MS) {
+              ui.lastEscapeAt = 0
+              void handleRewind()
+              return
+            }
+            ui.lastEscapeAt = now
+            showToast("再按一次 Esc 回溯上一轮", { topic: "rewind", tone: "info", durationMs: DOUBLE_ESCAPE_MS })
             requestRender()
             return
           }

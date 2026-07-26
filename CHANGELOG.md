@@ -1,5 +1,74 @@
 # Changelog / 更新日志
 
+## 0.6.2
+
+### English
+
+- **YOLO was still refusing commands.** `checkBashAllowed` never looked at the
+  approval level — it read only `config.git_auto` — so a mode documented as
+  "every approval prompt is skipped" still denied `git commit` and `git push`.
+  The level is passed in now and YOLO relaxes the `git_safety` category.
+  It does not relax everything, and that distinction is the point: `rm -rf /`,
+  writing to a device, formatting a filesystem, piping a download into a shell
+  and privilege escalation stay forbidden at every tier. YOLO means "don't
+  interrupt me", not "you may format the disk". Refusals now say which class
+  they belong to, so you can tell a config flip from a genuine no.
+- Writing that test exposed a real hole: the `mkfs` rule matched the bare token
+  while what people actually run is `mkfs.ext4` / `mkfs.xfs`. Every variant
+  slipped past. Now covered, along with `mke2fs` and the partitioners.
+- **Thinking is visible while it happens** — a fixed two-line grey tail of the
+  reasoning stream instead of a lone `Thinking · 5.1s`. Two lines is a hard
+  constraint, not a taste call: the frame bills rows by their actual count, so
+  a block that grows would make the transcript jitter with every token.
+- **Writes read like a file, not a diff.** New files render with line numbers
+  and syntax highlighting rather than `+` prefixes — a write is "this is what
+  the file now is", and line numbers let you say "change line 57" while looking
+  at the screen.
+- **Thinking effort has four tiers** (low/medium/high/max, plus off), expressed
+  as a proportion of the model's own output budget. Anthropic's `budget_tokens`
+  was hardcoded at 10000: too timid for a 200K-context model, potentially over
+  a small model's output ceiling. Model discovery reads max output tokens and
+  declared capabilities from the catalog and writes them into the provider
+  config, so switching models changes no numbers — the config states intent.
+- **`Esc` `Esc` rewinds one conversation turn.** Said it wrong, or the model
+  went sideways: back up and retry instead of pushing forward through context
+  that already drifted. The withdrawn prompt returns to the composer so
+  "rewind, tweak, ask again" is one step. It rewinds the conversation only —
+  file changes remain, and `/undo` handles those; unwinding a sentence is
+  cheap, unwinding a batch of edits is not, and one gesture should not do both.
+  Two message shapes wear the `user` role without being user speech —
+  compaction summaries and tool results — and treating either as a turn
+  boundary would rewind half a turn or discard compacted history.
+- `Ctrl+O` toggles the latest collapsed block alongside `Ctrl+E` and clicking.
+
+### 中文
+
+- **YOLO 档下命令仍被拒。** `checkBashAllowed` 从不看审批档，只读
+  `config.git_auto` —— 于是一个说明写着「每个审批提示都跳过」的模式，
+  照样拒绝 `git commit` 与 `git push`。现在传入审批档，YOLO 放开 `git_safety`。
+  但不是全部放开，这个区分正是重点：清空根目录、写裸设备、格式化文件系统、
+  把下载管道进 shell、提权，在任何档位都禁止。YOLO 的含义是「不要打断我」，
+  不是「可以格盘」。拒绝理由会说清属于哪一类，你才知道这是改个配置就行，
+  还是我们真的不做。
+- 写这条测试时发现一个真实漏洞：`mkfs` 规则匹配的是裸 token，而实际用的是
+  `mkfs.ext4` / `mkfs.xfs` —— 所有变体全部溜过去了。现已覆盖，连同 `mke2fs`
+  与分区工具。
+- **思考过程可见** —— 固定两行灰字显示推理流的尾部，取代孤零零的
+  `Thinking · 5.1s`。两行是硬约束而非审美取舍：帧按块的实际行数计费，
+  会变高的块会让对话区随每个 token 抖动。
+- **写入读起来像文件，不像 diff。** 新建文件带行号与语法高亮，而不是 `+`
+  前缀 —— 写入是「文件现在就长这样」，行号让你能对着屏幕说「第 57 行改一下」。
+- **思考强度分四档**（low/medium/high/max 与 off），表达为模型自身输出预算的
+  比例。Anthropic 的 `budget_tokens` 此前硬编码 10000：对 200K 上下文的模型
+  太保守，对小模型又可能超出它的输出上限。模型发现会从目录读出输出上限与
+  声明的能力并写回 provider 配置，于是换模型不用改任何数字 —— 配置里写的是意图。
+- **连按两下 `Esc` 回溯一轮对话。** 说错了、或模型跑偏了：退回去重来，而不是
+  在一段已经歪掉的上下文里继续往前顶。撤回的那句会填回输入框，「退回去改一下
+  再问」是一步。只回溯对话 —— 文件改动保留，由 `/undo` 负责；退一句话很轻，
+  退一批改动不轻，一个手势不该同时做两件事。有两类消息挂着 `user` 角色却不是
+  用户说的话（压缩摘要与工具结果），把它们当轮次边界会退半轮或丢掉压缩历史。
+- `Ctrl+O` 与 `Ctrl+E`、鼠标点击并列，都能展开最近的折叠块。
+
 ## 0.6.1
 
 Fixes a 0.6.0 regression found by running kkcode in an actual terminal on a
