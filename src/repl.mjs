@@ -74,6 +74,8 @@ import { persistLearnedGrant } from "./repl/config-persistence.mjs"
 import { createRenderScheduler } from "./repl/render-scheduler.mjs"
 import { createKeyDispatcher } from "./repl/key-dispatch.mjs"
 import { createOverlayKeyScopes } from "./repl/keys/overlay-keys.mjs"
+import { createLifecycleKeyScope, createScrollKeyScope } from "./repl/keys/global-keys.mjs"
+import { createEditorKeyScope } from "./repl/keys/editor-keys.mjs"
 import { createTranscriptWriter } from "./repl/transcript-writer.mjs"
 import { createReplUiState, openUserOverlay, closeUserOverlay } from "./repl/ui-state.mjs"
 import { createGhostPredictor } from "./repl/ghost-predictor.mjs"
@@ -1813,8 +1815,29 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
    * 前面」—— 比如「信息浮层打开时必须先吃掉 ↑↓，否则会同时滚浮层和翻输入历史」。
    * 现在优先级是有序数据，`describeOrder()` 能把它打出来，测试能断言它。
    */
-  const { dispatchKey: dispatchOverlayKey } = createKeyDispatcher({
-    scopes: createOverlayKeyScopes({
+  /**
+   * `finish()` 定义在退出 Promise 内部，而生命周期按键（Ctrl+C 两连击、
+   * Ctrl+D）需要它。用一个可后填的引用而不是把 finish 提到外面 —— 提出来
+   * 就得把 resolve 也一起提出来，那会让退出路径更难读。
+   */
+  let requestExitFn = () => {}
+
+  const { dispatchKey: dispatchLifecycleKey } = createKeyDispatcher({
+    scopes: [createLifecycleKeyScope({
+      requestRender,
+      appendLog,
+      showToast,
+      finishSelection,
+      copyToClipboard,
+      suspendForJobControl,
+      requestExit: () => requestExitFn(),
+      state
+    })]
+  })
+
+  const { dispatchKey } = createKeyDispatcher({
+    scopes: [
+      ...createOverlayKeyScopes({
       requestRender,
       closeInfoPanel,
       scrollInfoPanel,
@@ -1837,7 +1860,43 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       PERMISSION_PROMPT_VALUES,
       POLICY_CHOICES,
       MODE_PICKER_CHOICES
-    })
+      }),
+      createScrollKeyScope({
+        requestRender,
+        scrollBy,
+        scrollToTop,
+        scrollToBottom,
+        pageSize,
+        appendLog,
+        state
+      }),
+      createEditorKeyScope({
+        requestRender,
+        showToast,
+        transcript,
+        insertAtCursor,
+        deleteInputSelection,
+        moveCursor,
+        setCursor,
+        moveGraphemeCursor,
+        onInputChanged,
+        acceptGhost,
+        cancelGhost: () => ghostPredictor?.cancel(),
+        hasSlashSuggestions: (uiState) =>
+          slashSuggestions(uiState.input, slashRouterOptions(localCustomCommands)).length > 0,
+        shouldApplySuggestionOnEnter,
+        applyCurrentSuggestion,
+        handleUpDownSuggestions,
+        navigateHistory,
+        submitCurrentInput,
+        requestExitIfQuitting: () => { if (ui.quitting) requestExitFn() },
+        cycleModeForwardAndNotify,
+        handleRewind,
+        readClipboardImage,
+        readClipboardText,
+        doubleEscapeMs: DOUBLE_ESCAPE_MS
+      })
+    ]
   })
 
   // Monkey-patch stdin.emit 拦截鼠标事件，防止 readline 将其解析为键盘输入
@@ -2446,6 +2505,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         finished = true
         resolve()
       }
+      // 生命周期按键（Ctrl+C 两连击、Ctrl+D）要能触发退出，而 finish 只在这个
+      // 作用域里存在 —— 把它填给上面建好的分派器。
+      requestExitFn = finish
 
       onResize = () => {
         // 浮层内容若是按内宽排版出来的（自带边框的面板），resize 后必须重排 ——
@@ -2464,365 +2526,19 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       onKey = async (str, key = {}) => {
         if (ui.quitting) return
 
-        if (key.ctrl && key.name === "z" && process.platform !== "win32") {
-          suspendForJobControl()
-          return
-        }
-
-        // A visible selection owns Ctrl+C. With no selection, Ctrl+C keeps its
-        // established interrupt/exit behavior.
-        if (key.ctrl && key.name === "c" && ui.mouseSelection) {
-          finishSelection(true)
-          requestRender()
-          return
-        }
-        if (key.ctrl && key.name === "c" && ui.inputSelection) {
-          const start = Math.min(ui.inputSelection.start, ui.inputSelection.end)
-          const end = Math.max(ui.inputSelection.start, ui.inputSelection.end)
-          void copyToClipboard(ui.input.slice(start, end))
-          requestRender()
-          return
-        }
-
-        // 任意按键清除日志区鼠标选择（不清除输入框选择，由具体按键处理）
+        // 任意按键清除日志区鼠标选择（不清除输入框选择，由具体按键处理）。
+        // 这是分派之前的副作用，不是处理器 —— 它对所有按键都发生，而且不消费按键。
+        // 注意它必须排在 lifecycle 之后：Ctrl+C 在选区存在时的含义是「复制」，
+        // 先清掉选区就把那条规则抹了。
+        const beforeLifecycle = await dispatchLifecycleKey({ ui, key, str })
+        if (beforeLifecycle.handled) return
         if (ui.mouseSelection) {
           ui.mouseSelection = null
           requestRender()
         }
 
-        if (key.ctrl && key.name === "c") {
-          // Busy: abort current turn (same as ESC)
-          if (ui.busy) {
-            if (ui.turnAbortController) {
-              ui.turnAbortController.abort()
-              ui.turnAbortController = null
-            }
-            ui.paused = true
-            appendLog(state.mode === "agent"
-              ? "[paused] agent turn interrupted — enter a follow-up message to continue the same task"
-              : "[paused] turn interrupted — enter a new message or command to continue")
-            requestRender()
-            return
-          }
-          // Idle: require double Ctrl+C within 2s to exit
-          const now = Date.now()
-          if (now - ui.lastCtrlCTime < 2000) {
-            finish()
-          } else {
-            ui.lastCtrlCTime = now
-            showToast("Press Ctrl+C again to exit", { topic: "exit", tone: "warning" })
-            requestRender()
-          }
-          return
-        }
-
-        if (key.ctrl && key.name === "d" && ui.input.length === 0) {
-          finish()
-          return
-        }
-
-        // 信息浮层排在所有浮层之前：它是模态的，打开时应吃掉导航键，
-        // 否则 ↑↓ 会同时滚浮层和翻输入历史。
-        // 浮层类按键走分派表：优先级是有序数据，不再是「哪个 if 写在前面」。
-        // 这些作用域都是模态的 —— 未命中的按键被吞掉，不会漏到输入框去。
-        const overlayResult = await dispatchOverlayKey({ ui, key, str })
-        if (overlayResult.handled) return
-
-        // Scrolling keys work even when busy
-        if (key.name === "pageup") {
-          scrollBy(pageSize(ui.scrollMeta.logRows))
-          requestRender()
-          return
-        }
-
-        if (key.name === "pagedown") {
-          scrollBy(-pageSize(ui.scrollMeta.logRows))
-          requestRender()
-          return
-        }
-
-        // Ctrl+Up/Down: scroll log area (3 lines at a time)
-        if (key.ctrl && (key.name === "up" || key.name === "down")) {
-          scrollBy(key.name === "up" ? 3 : -3)
-          requestRender()
-          return
-        }
-
-        if (key.name === "home" && (key.ctrl || key.shift)) {
-          scrollToTop()
-          requestRender()
-          return
-        }
-
-        if (key.name === "end" && (key.ctrl || key.shift)) {
-          scrollToBottom()
-          requestRender()
-          return
-        }
-
-        // Esc while busy: pause current turn
-        if (key.name === "escape" && ui.busy) {
-          if (ui.turnAbortController) {
-            ui.turnAbortController.abort()
-            ui.turnAbortController = null
-          }
-          ui.paused = true
-          appendLog(state.mode === "agent"
-            ? "[paused] agent turn interrupted — enter a follow-up message to continue the same task"
-            : "[paused] turn interrupted — enter a new message or command to continue")
-          requestRender()
-          return
-        }
-
-        if (ui.busy) return
-
-        // Ctrl+V: try image first, fall back to text paste
-        if (key.ctrl && key.name === "v") {
-          showToast("Reading clipboard…", { topic: "clipboard", tone: "info", durationMs: 0 })
-          requestRender()
-          const clipBlock = await readClipboardImage({
-            onStatus: (msg) => {
-              if (msg) showToast(msg, { topic: "clipboard", tone: "info", durationMs: 0 })
-              requestRender()
-            }
-          })
-          if (clipBlock && clipBlock.type === "image") {
-            ui.pendingImages.push(clipBlock)
-            showToast(`Image pasted · ${ui.pendingImages.length} attached`, {
-              topic: "clipboard",
-              tone: "success"
-            })
-            requestRender()
-            return
-          }
-          if (clipBlock && clipBlock.type === "error") {
-            showToast(`Paste failed: ${clipBlock.message}`, {
-              topic: "clipboard",
-              tone: "error",
-              durationMs: 5000
-            })
-            requestRender()
-            return
-          }
-          // No image — try text clipboard
-          const clipText = await readClipboardText()
-          if (clipText) {
-            insertAtCursor(clipText)
-            showToast("Text pasted", { topic: "clipboard", tone: "success" })
-          } else {
-            showToast("Clipboard is empty", { topic: "clipboard", tone: "warning" })
-          }
-          requestRender()
-          return
-        }
-
-        if (key.name === "return") {
-          if (key.shift) {
-            insertAtCursor("\n")
-            requestRender()
-            return
-          }
-          if (shouldApplySuggestionOnEnter()) {
-            applyCurrentSuggestion()
-            ui.selectedSuggestion = 0
-            ui.suggestionOffset = 0
-            requestRender()
-            return
-          }
-          await submitCurrentInput()
-          if (ui.quitting) finish()
-          return
-        }
-
-        if (key.ctrl && key.name === "j") {
-          insertAtCursor("\n")
-          requestRender()
-          return
-        }
-
-        if (key.name === "backspace") {
-          if (!deleteInputSelection() && ui.inputCursor > 0) {
-            const previousCursor = moveGraphemeCursor(ui.input, ui.inputCursor, -1)
-            const head = ui.input.slice(0, previousCursor)
-            const tail = ui.input.slice(ui.inputCursor)
-            ui.input = `${head}${tail}`
-            ui.inputCursor = previousCursor
-            onInputChanged()
-          }
-          ui.selectedSuggestion = 0
-          ui.suggestionOffset = 0
-          requestRender()
-          return
-        }
-
-        if (key.name === "delete") {
-          if (!deleteInputSelection()) {
-            const nextCursor = moveGraphemeCursor(ui.input, ui.inputCursor, 1)
-            const head = ui.input.slice(0, ui.inputCursor)
-            const tail = ui.input.slice(nextCursor)
-            ui.input = `${head}${tail}`
-            onInputChanged()
-          }
-          ui.selectedSuggestion = 0
-          ui.suggestionOffset = 0
-          requestRender()
-          return
-        }
-
-        if (key.name === "escape") {
-          // 先撤掉 ghost，第二次 Esc 才清空输入
-          if (ui.ghostText) {
-            ui.ghostText = ""
-            ghostPredictor?.cancel()
-            requestRender()
-            return
-          }
-          // 输入框已空时，连按两下 Esc 回溯上一轮对话。
-          // 说错了、模型跑偏了、或只是想换个问法，应该能退回去重来，而不是
-          // 被迫在一段已经歪掉的上下文里继续往前顶。
-          // 只回溯对话，不动磁盘 —— 文件改动归 /undo，退一句话很轻，
-          // 退一批文件改动有风险，不该被同一个手势同时触发。
-          if (!ui.input) {
-            const now = Date.now()
-            if (ui.lastEscapeAt && now - ui.lastEscapeAt < DOUBLE_ESCAPE_MS) {
-              ui.lastEscapeAt = 0
-              void handleRewind()
-              return
-            }
-            ui.lastEscapeAt = now
-            showToast("再按一次 Esc 回溯上一轮", { topic: "rewind", tone: "info", durationMs: DOUBLE_ESCAPE_MS })
-            requestRender()
-            return
-          }
-          ui.input = ""
-          ui.inputCursor = 0
-          ui.selectedSuggestion = 0
-          ui.suggestionOffset = 0
-          ghostPredictor?.cancel()
-          requestRender()
-          return
-        }
-
-        if (key.name === "tab") {
-          if (key.shift) {
-            cycleModeForwardAndNotify()
-            return
-          }
-          // Tab 早已被 slash 补全占用，仅在没有补全候选时才用于接受 ghost
-          const hasSuggestions = slashSuggestions(ui.input, slashRouterOptions(localCustomCommands)).length > 0
-          if (!hasSuggestions && acceptGhost()) return
-          applyCurrentSuggestion()
-          return
-        }
-
-        // Ctrl+F 无歧义地接受 ghost，不与补全争抢
-        if (key.ctrl && key.name === "f") {
-          acceptGhost()
-          return
-        }
-
-        if (key.name === "left") {
-          moveCursor(-1)
-          requestRender()
-          return
-        }
-
-        if (key.name === "right") {
-          moveCursor(1)
-          requestRender()
-          return
-        }
-
-        if (key.name === "home") {
-          if (key.ctrl || key.shift) {
-            // Ctrl+Home or Shift+Home: scroll to top of logs
-            scrollToTop()
-            requestRender()
-          } else {
-            // Home: move input cursor to start
-            setCursor(0)
-            requestRender()
-          }
-          return
-        }
-
-        if (key.name === "end") {
-          if (key.ctrl || key.shift) {
-            // Ctrl+End or Shift+End: scroll to bottom of logs
-            scrollToBottom()
-            requestRender()
-          } else {
-            // End: move input cursor to end
-            setCursor(ui.input.length)
-            requestRender()
-          }
-          return
-        }
-
-        if (key.name === "up" || key.name === "down") {
-          const handled = handleUpDownSuggestions(key.name)
-          if (!handled) navigateHistory(key.name)
-          requestRender()
-          return
-        }
-
-        if (key.ctrl && key.name === "t") {
-          if (ui.lastThinkingId) {
-            transcript.toggleLog(ui.lastThinkingId)
-            showToast("Thinking details toggled", { topic: "thinking", tone: "info" })
-          } else {
-            showToast("No thinking details in this turn", { topic: "thinking", tone: "info" })
-          }
-          requestRender()
-          return
-        }
-
-        // Ctrl+O 与 Ctrl+E 并列绑定：折叠块该有多条路进得去（鼠标点击、
-        // Ctrl+E、Ctrl+O），而不是只记得住一个组合键。
-        if (key.ctrl && (key.name === "e" || key.name === "o")) {
-          const expandable = transcript.getItems().findLast((item) => item.collapsible && item.details.length)
-          if (expandable) {
-            transcript.toggleLog(expandable.id)
-            showToast(`${expandable.kind} details ${expandable.expanded ? "collapsed" : "expanded"}`, {
-              topic: "details",
-              tone: "info"
-            })
-          } else {
-            showToast("No expandable details", { topic: "details", tone: "info" })
-          }
-          requestRender()
-          return
-        }
-
-        if (key.ctrl && key.name === "b") {
-          ui.showDashboard = !ui.showDashboard
-          requestRender()
-          return
-        }
-
-        if (key.ctrl && key.name === "y") {
-          ui.autoCopy = !ui.autoCopy
-          showToast(`Auto-copy ${ui.autoCopy ? "ON" : "OFF"}`, {
-            topic: "auto-copy",
-            tone: ui.autoCopy ? "success" : "info"
-          })
-          requestRender()
-          return
-        }
-
-        if (key.ctrl && key.name === "l" && !key.shift) {
-          transcript.clear()
-          requestRender()
-          return
-        }
-
-        if (typeof str === "string" && str.length > 0 && !key.ctrl && !key.meta) {
-          deleteInputSelection()  // 有选择时先删除选中文本
-          insertAtCursor(str)
-          ui.selectedSuggestion = 0
-          ui.suggestionOffset = 0
-          requestRender()
-        }
+        const result = await dispatchKey({ ui, key, str })
+        if (result.handled) return
       }
       onData = async (chunk) => {
         if (ui.quitting) return

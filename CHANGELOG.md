@@ -1,5 +1,53 @@
 # Changelog / 更新日志
 
+## 0.6.19
+
+`onKey` 归零：编辑器与全局按键也进了分派表。
+
+### English
+
+- **`onKey` is 685 → 17 lines.** The remaining 363 lines became three scopes:
+  `lifecycle` (Ctrl+Z, the three meanings of Ctrl+C, Ctrl+D), `scroll` (paging,
+  jump-to-end, Esc-while-busy), and `editor` (cursor, delete, selection,
+  completion/ghost, history, view toggles, insert). `repl.mjs` is 3026 → 2743
+  lines and `startTuiRepl` 2381 → 2095.
+- **The lone `if (ui.busy) return` became a scope boundary.** That one statement
+  was an invisible dividing line: keys above it worked while the model was
+  generating, keys below it did not. Which side a handler was on could only be
+  determined by counting lines. It is `active: (ctx) => !ctx.ui.busy` on the
+  editor scope now, and there is a test asserting scrolling still works mid-turn
+  while typing does not.
+- **Removed unreachable code.** `home`/`end` with Ctrl or Shift are consumed by
+  the scroll block, and the editor block below re-implemented the same
+  Ctrl/Shift branch — code that could never run.
+- **Three-level Esc, now stated.** Dismiss the ghost → clear the input → (input
+  already empty) press twice to rewind. Three separate handlers with an
+  assertion per level, including that a stale first press restarts the window
+  rather than rewinding.
+- **Verified in a real terminal** — typing including CJK, grapheme-wise
+  backspace, Home, Esc, Ctrl+B, Tab completion, Enter, history recall, Ctrl+L,
+  and Ctrl+C twice to exit. Then locked down with 16 unit tests, since the
+  dispatcher is only built when the TUI starts.
+
+### 中文
+
+- **`onKey` 从 685 行降到 17 行。** 剩下的 363 行变成三个作用域：`lifecycle`
+  （Ctrl+Z、Ctrl+C 的三种含义、Ctrl+D）、`scroll`（翻页、跳转、忙碌时的 Esc）、
+  `editor`（光标、删除、选区、补全/ghost、历史、视图开关、插入）。
+  `repl.mjs` 3026 → 2743 行，`startTuiRepl` 2381 → 2095 行。
+- **那句孤零零的 `if (ui.busy) return` 变成了作用域边界。** 它此前是一条看不见的
+  分界线：它上面的按键在模型生成时仍然生效，下面的不生效 —— 而一个处理器在哪一侧，
+  只能靠数行数才知道。现在它是编辑器作用域的 `active`，并且有测试断言「生成中仍能
+  翻页、但打字不生效」。
+- **删掉不可达代码。** 带 Ctrl/Shift 的 `home`/`end` 已被滚动块接走，而下面的编辑器块
+  又把同样的 Ctrl/Shift 分支重写了一遍 —— 那段永远走不到。
+- **Esc 的三级语义现在是写出来的。** 先撤 ghost → 再清空输入 →（输入已空）连按两次
+  才回溯。三个独立处理器，每一级一条断言，包括「上一次按得太久之前时应重新计时而
+  不是直接回溯」。
+- **在真实终端里验过** —— 含中文的输入、按字符退格、Home、Esc、Ctrl+B、Tab 补全、
+  Enter 提交、历史回填、Ctrl+L、以及 Ctrl+C 两连击退出。随后用 16 条单测钉住，
+  因为分派器只在 TUI 启动时才构造。
+
 ## 0.6.18
 
 按键优先级从「哪个 if 写在前面」变成可断言的有序数据。浮层类按键先走。
