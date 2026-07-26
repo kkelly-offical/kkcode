@@ -24,7 +24,27 @@ import { extractImageRefs } from "../src/tool/image-util.mjs"
  *
  * 第二大的风险是 Windows。相对路径一律 `/` 分隔这条不变量，靠的是「喂 `path.win32` +
  * 反斜杠形态的假 fs」的那条测试，它**在 Linux 上也会红**（本项目已经在 Windows/POSIX
- * 分歧上栽过四次，每次都是等 Windows 用户报上来才知道）。
+ * 分歧上栽过五次，每次都是等 Windows 用户报上来才知道）。
+ *
+ * ## 假 fs 与 pathApi 是一对，必须一起注入
+ *
+ * 这是 0.7.1 在 Windows 上红 17 条的原因，也是这个文件唯一需要提前知道的规矩。
+ *
+ * 假 fs 的键是 POSIX 形态；而 `pathApi` **不注入**时取的是 `node:path` 的平台默认值 ——
+ * 在 Windows 上那就是 `path.win32`。于是 `pathApi.join("/proj", "src")` 给出 `\proj\src`，
+ * 假 fs 一个键都查不到：索引空掉、展开全判 missing，一连串断言跟着倒。
+ *
+ * **注入了一半比完全没注入更危险。** 上一段写着「靠喂 `path.win32` 守住 Windows」，
+ * win32 那一侧确实有覆盖，于是这件事看起来已经处理过了；真正漏的是 POSIX 这一侧 ——
+ * 那些用例只注入了 fs，宿主是什么形态它们就是什么形态，等于把「跑在哪个平台」写进了
+ * 断言。有注入口而不用，比没有注入口更难发现。
+ *
+ * 所以 `fakeWorkspace()` 返回的是 `{ cwd, fs, pathApi }` 三件套，调用方一律 `{ ...ws }`
+ * 摊开 —— 结构上就没有「只注入 fs」这个选项。两条真实 fs 的冒烟是仅有的例外，它们用
+ * 宿主的 fs，就必须配宿主的 path，那里显式写出 `pathApi: path` 表明是故意的。
+ *
+ * 复核办法：把 `file-index.mjs` / `file-mention.mjs` 里 `pathApi` 的默认值临时改成
+ * `nodePath.win32`（Windows 上的真实情形），整个文件必须仍然全绿。
  *
  * 索引与展开一律用注入的假 fs，不依赖真实仓库的文件布局 —— 那样测试会随仓库改动而漂。
  * 末尾留两条真实 fs 的冒烟，确保接口和 node:fs 真的对得上。
@@ -33,16 +53,22 @@ import { extractImageRefs } from "../src/tool/image-util.mjs"
 // --- 假文件系统 ---
 
 /**
- * 最小可用的 fs：`{ readdirSync, statSync, readFileSync, existsSync }`。
+ * 一个假工作区：`{ cwd, fs, pathApi }`。三件套一起给，调用方 `{ ...ws }` 摊开即可。
  *
- * - `sep` / `root`：设成 Windows 形态就能复现「路径分隔符」那类分歧。
+ * 为什么是三件套而不是只给 fs，见文件头「假 fs 与 pathApi 是一对」。简单说：假 fs 的
+ * 键是 POSIX 形态，`pathApi` 漏注入时会取到宿主的平台默认值，Windows 上一个键都查不到。
+ *
+ * fs 部分是最小可用的 `{ readdirSync, statSync, readFileSync, existsSync }`：
+ *
+ * - `sep` / `root`：设成 Windows 形态就能复现「路径分隔符」那类分歧。`pathApi` 跟着
+ *   `sep` 走 —— 反斜杠形态的假 fs 配 `path.win32`，正斜杠形态配 `path.posix`。
  * - `dirents: false`（默认）：readdirSync 忽略 withFileTypes 只给名字，逼实现走 stat 回退 ——
  *   真实世界里的老实现与各种 fs 垫片就是这么表现的。
  * - `links: { linked: "" }`：`linked` 是一个指向 `""`（根）的符号链接。**statSync 会跟随它**
  *   （真实 fs 就是这个语义），lstatSync 不会。用来造真正的环。
  * - `lstat: false`：不提供 lstatSync，模拟只有 statSync 的实现 —— 那时链接看起来就是普通目录。
  */
-function createFakeFs({
+function fakeWorkspace({
   files = {},
   root = "/proj",
   sep = "/",
@@ -154,7 +180,9 @@ function createFakeFs({
       return statFor(key)
     }
   }
-  return fake
+  // pathApi 跟着 sep 走。这个绑定就是「一对」的落点 —— 假 fs 认什么分隔符，
+  // 路径运算就得用什么分隔符，两者对不上的话假数据根本查不到。
+  return { cwd: root, fs: fake, pathApi: sep === "\\" ? path.win32 : path.posix }
 }
 
 const countOccurrences = (haystack, needle) => haystack.split(needle).length - 1
@@ -220,18 +248,18 @@ test("换行后的行首也是词边界", () => {
 // --- 2. 索引 ---
 
 test("默认忽略清单生效", () => {
-  const fs = createFakeFs({
+  const ws = fakeWorkspace({
     files: {
       "a.txt": "", "src/keep.ts": "",
       "node_modules/pkg/index.js": "", ".git/config": "", "dist/bundle.js": "", "target/out.rs": ""
     }
   })
-  const index = createFileIndex({ cwd: "/proj", fs })
+  const index = createFileIndex({ ...ws })
   assert.deepEqual(index.list(), ["a.txt", "src/keep.ts"])
 })
 
 test(".gitignore 生效：前导 / 锚定、尾部 / 限目录、! 反选", () => {
-  const fs = createFakeFs({
+  const ws = fakeWorkspace({
     files: {
       ".gitignore": "# 注释\n\n*.log\n!keep.log\n/root-only.txt\nsub/nested/\n",
       "a.log": "", "keep.log": "",
@@ -239,7 +267,7 @@ test(".gitignore 生效：前导 / 锚定、尾部 / 限目录、! 反选", () =
       "sub/nested/deep.txt": "", "sub/keep.txt": ""
     }
   })
-  const index = createFileIndex({ cwd: "/proj", fs })
+  const index = createFileIndex({ ...ws })
   assert.deepEqual(index.list(), [".gitignore", "keep.log", "sub/keep.txt", "sub/root-only.txt"])
 })
 
@@ -252,90 +280,91 @@ test("认不出的 .gitignore 模式跳过而不是崩", () => {
   assert.equal(isIgnored("a/ok", true), true)
   assert.equal(isIgnored("normal.ts", false), false)
 
-  const fs = createFakeFs({ files: { ".gitignore": "bad[z-a].txt\n", "keep.ts": "" } })
-  assert.deepEqual(createFileIndex({ cwd: "/proj", fs }).list(), [".gitignore", "keep.ts"])
+  const ws = fakeWorkspace({ files: { ".gitignore": "bad[z-a].txt\n", "keep.ts": "" } })
+  assert.deepEqual(createFileIndex({ ...ws }).list(), [".gitignore", "keep.ts"])
 })
 
 test("maxFiles 封顶时 stats().truncated 为真 —— 悄悄封顶会让人以为仓库里没这个文件", () => {
   const files = {}
   for (let i = 0; i < 10; i++) files[`f${i}.txt`] = ""
-  const fs = createFakeFs({ files })
-  const capped = createFileIndex({ cwd: "/proj", fs, maxFiles: 4 })
+  const ws = fakeWorkspace({ files })
+  const capped = createFileIndex({ ...ws, maxFiles: 4 })
   assert.equal(capped.list().length, 4)
   assert.equal(capped.stats().truncated, true)
   assert.equal(capped.stats().files, 4)
 
-  const full = createFileIndex({ cwd: "/proj", fs: createFakeFs({ files }), maxFiles: 50 })
+  const full = createFileIndex({ ...fakeWorkspace({ files }), maxFiles: 50 })
   assert.equal(full.list().length, 10)
   assert.equal(full.stats().truncated, false, "没到顶就不该标 truncated，否则这个标记等于没有")
 })
 
 test("读不了的目录跳过而不是让整份索引失败", () => {
-  const fs = createFakeFs({
+  const ws = fakeWorkspace({
     files: { "ok.txt": "", "locked/secret.txt": "", "other/fine.txt": "" },
     unreadable: ["locked"]
   })
-  const index = createFileIndex({ cwd: "/proj", fs })
+  const index = createFileIndex({ ...ws })
   assert.deepEqual(index.list(), ["ok.txt", "other/fine.txt"])
   assert.equal(index.stats().unreadable, 1, "跳过了要计数，否则「少了个文件」查不出原因")
 })
 
 test("符号链接不进清单（Dirent 形态：它既不是文件也不是目录）", () => {
-  const fs = createFakeFs({ files: { "a.txt": "" }, links: { linked: "" }, dirents: true })
-  const index = createFileIndex({ cwd: "/proj", fs })
+  const ws = fakeWorkspace({ files: { "a.txt": "" }, links: { linked: "" }, dirents: true })
+  const index = createFileIndex({ ...ws })
   assert.deepEqual(index.list(), ["a.txt"])
-  assert.equal(fs.calls.readdir, 1, "只该读根目录一层；读了第二层说明钻进链接里去了")
+  assert.equal(ws.fs.calls.readdir, 1, "只该读根目录一层；读了第二层说明钻进链接里去了")
 })
 
 test("指向被忽略目录的链接不会把 node_modules 从后门放进来", () => {
   // pnpm / npm workspace 会造出一堆指向 node_modules 里面的链接。dev:ino 去重挡不住这种
   // ——那棵子树本来就被忽略、从没访问过、也就没有身份记录。挡住它的是「用 lstat 而不是
   // 会跟随链接的 stat」。换成 stat 的话，下面会索引出 shortcut/index.js。
-  const fs = createFakeFs({
+  const ws = fakeWorkspace({
     files: { "a.txt": "", "node_modules/pkg/index.js": "" },
     links: { shortcut: "node_modules/pkg" }
   })
-  assert.deepEqual(createFileIndex({ cwd: "/proj", fs }).list(), ["a.txt"])
+  assert.deepEqual(createFileIndex({ ...ws }).list(), ["a.txt"])
 })
 
 test("只有 statSync 的 fs 上，指回祖先的链接不会让遍历转出一棵假树", () => {
   // 这条才是真正扛环的那一条。statSync **跟随**链接，所以 `linked` 在它眼里就是一个普通
   // 目录 —— 光靠「跳过符号链接」挡不住，靠的是 dev:ino 去重。少了那道守卫的话，下面会
   // 索引出 linked/a.txt、linked/linked/a.txt … 一路到深度上限。
-  const fs = createFakeFs({
+  const ws = fakeWorkspace({
     files: { "a.txt": "", "sub/b.txt": "" },
     links: { linked: "" },
     lstat: false
   })
-  const index = createFileIndex({ cwd: "/proj", fs })
+  const index = createFileIndex({ ...ws })
   assert.deepEqual(index.list(), ["a.txt", "sub/b.txt"])
   assert.equal(index.stats().dirs, 2, "走过的目录数应当是「根 + sub」，多出来的就是转环转出来的")
 })
 
 test("懒构建 + 可失效：按键路径上不许走盘", () => {
-  const fs = createFakeFs({ files: { "a.txt": "", "src/b.ts": "" } })
-  const index = createFileIndex({ cwd: "/proj", fs })
-  assert.equal(fs.calls.readdir, 0, "还没 list() 就走盘了 —— 建索引必须是懒的")
+  const ws = fakeWorkspace({ files: { "a.txt": "", "src/b.ts": "" } })
+  const index = createFileIndex({ ...ws })
+  assert.equal(ws.fs.calls.readdir, 0, "还没 list() 就走盘了 —— 建索引必须是懒的")
   index.list()
-  const afterFirst = fs.calls.readdir
+  const afterFirst = ws.fs.calls.readdir
   assert.ok(afterFirst > 0)
   index.list()
   index.list()
-  assert.equal(fs.calls.readdir, afterFirst, "第二次 list() 又走了盘：缓存没生效，逐键补全会卡死")
+  assert.equal(ws.fs.calls.readdir, afterFirst, "第二次 list() 又走了盘：缓存没生效，逐键补全会卡死")
   index.refresh()
-  assert.ok(fs.calls.readdir > afterFirst, "refresh() 必须真的重建")
+  assert.ok(ws.fs.calls.readdir > afterFirst, "refresh() 必须真的重建")
 })
 
 test("Windows 形态的 fs 也必须吐出 / 分隔的相对路径", () => {
   // 这条在 Linux 上也会红：喂 path.win32 时若用 pathApi.join 拼相对路径就会得到 `\`。
   // 排序、高亮偏移、写回输入框、注入给模型的 path 属性四处都用它做主键，变形一处就全歪。
   // 假 fs 的键仍用 / 表达层级，但它收到的绝对路径与认的分隔符都是 Windows 形态
-  const winFs = createFakeFs({
+  const winWs = fakeWorkspace({
     files: { "src/foo.ts": "", "src/deep/bar.ts": "", "top.md": "" },
     root: "C:\\proj",
     sep: "\\"
   })
-  const index = createFileIndex({ cwd: "C:\\proj", fs: winFs, pathApi: path.win32 })
+  assert.equal(winWs.pathApi, path.win32, "前提没成立：反斜杠形态的假 fs 必须配 path.win32")
+  const index = createFileIndex({ ...winWs })
   const listed = index.list()
   assert.deepEqual(listed, ["src/deep/bar.ts", "src/foo.ts", "top.md"])
   for (const item of listed) {
@@ -474,8 +503,7 @@ const SAMPLE_FILES = {
 }
 
 const expandWith = (text, options = {}) => expandFileMentions(text, {
-  cwd: "/proj",
-  fs: createFakeFs({ files: SAMPLE_FILES, dirents: true }),
+  ...fakeWorkspace({ files: SAMPLE_FILES, dirents: true }),
   ...options
 })
 
@@ -532,8 +560,7 @@ test("目录条目超上限时说明省了多少，不是悄悄截断", async ()
   const files = {}
   for (let i = 0; i < 12; i++) files[`many/f${i}.txt`] = ""
   const out = await expandFileMentions("@many", {
-    cwd: "/proj",
-    fs: createFakeFs({ files }),
+    ...fakeWorkspace({ files }),
     maxDirEntries: 5
   })
   assert.ok(out.text.includes("… [7 more entries omitted]"), out.text)
@@ -560,8 +587,7 @@ test("同一个文件引用多次只注入一次", async () => {
 test("超过 maxFileBytes 时截断，并注明少了多少字节", async () => {
   const content = "0123456789\n".repeat(10)   // 110 字节
   const out = await expandFileMentions("@big.txt", {
-    cwd: "/proj",
-    fs: createFakeFs({ files: { "big.txt": content } }),
+    ...fakeWorkspace({ files: { "big.txt": content } }),
     maxFileBytes: 25
   })
   // 截断点落在行边界上：前两行 22 字节
@@ -571,11 +597,10 @@ test("超过 maxFileBytes 时截断，并注明少了多少字节", async () => 
 })
 
 test("总量到顶后停止追加，剩下的进 skipped", async () => {
-  const fs = createFakeFs({ files: { "a.txt": "AAAA", "b.txt": "BBBB", "c.txt": "CCCC" } })
+  const ws = fakeWorkspace({ files: { "a.txt": "AAAA", "b.txt": "BBBB", "c.txt": "CCCC" } })
   const oneBlock = Buffer.byteLength('<file path="a.txt">\nAAAA\n</file>')
   const out = await expandFileMentions("@a.txt @b.txt @c.txt", {
-    cwd: "/proj",
-    fs,
+    ...ws,
     maxTotalBytes: oneBlock + 1
   })
   assert.deepEqual(out.attached.map((item) => item.path), ["a.txt"])
@@ -599,10 +624,10 @@ test("没有 mention 时返回的就是原字符串，什么都不做", async ()
 })
 
 test("引号包裹与转义空格的引用都能展开", async () => {
-  const fs = createFakeFs({ files: { "my docs/a b.ts": "spaced" } })
-  const quoted = await expandFileMentions('read @"my docs/a b.ts"', { cwd: "/proj", fs })
+  const ws = fakeWorkspace({ files: { "my docs/a b.ts": "spaced" } })
+  const quoted = await expandFileMentions('read @"my docs/a b.ts"', { ...ws })
   assert.deepEqual(quoted.attached.map((item) => item.path), ["my docs/a b.ts"])
-  const escaped = await expandFileMentions("read @my\\ docs/a\\ b.ts", { cwd: "/proj", fs })
+  const escaped = await expandFileMentions("read @my\\ docs/a\\ b.ts", { ...ws })
   assert.deepEqual(escaped.attached.map((item) => item.path), ["my docs/a b.ts"])
 })
 
@@ -610,8 +635,12 @@ test("引号包裹与转义空格的引用都能展开", async () => {
 
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..")
 
+// 这两条是「fs 与 pathApi 成对」规矩的**唯一例外**，也正因为是例外才要显式写出
+// `pathApi: path`：它们用的是宿主的真实 fs，就必须配宿主的 path。写死成 posix 会在
+// Windows 上错，不写又会被上面那条「默认值临时改成 win32」的复核误伤 —— 那时它们
+// 会红，而红的原因与被测行为无关。
 test("真实仓库上的索引：拿得到 package.json，拿不到 node_modules", () => {
-  const index = createFileIndex({ cwd: REPO_ROOT, fs: realFs })
+  const index = createFileIndex({ cwd: REPO_ROOT, fs: realFs, pathApi: path })
   const files = index.list()
   assert.ok(files.includes("package.json"), "连 package.json 都没索引到")
   assert.ok(files.includes("src/repl/file-mention.mjs"))
@@ -620,7 +649,7 @@ test("真实仓库上的索引：拿得到 package.json，拿不到 node_modules
 })
 
 test("真实 fs 上的展开：node:fs 的接口对得上", async () => {
-  const out = await expandFileMentions("read @package.json", { cwd: REPO_ROOT, fs: realFs })
+  const out = await expandFileMentions("read @package.json", { cwd: REPO_ROOT, fs: realFs, pathApi: path })
   assert.deepEqual(out.missing, [])
   assert.equal(out.attached[0]?.path, "package.json")
   assert.ok(out.text.includes('<file path="package.json">'))
