@@ -202,3 +202,64 @@ test("showInfo falls back to a folded entry when there is no frame", async () =>
   assert.match(fn, /if \(openPanel\)/, "有浮层时走浮层")
   assert.match(fn, /channel: "panel"/, "没有浮层时回落到折叠面板")
 })
+
+test("the session picker renders as an overlay and marks the current session", () => {
+  // 裸 /resume 是「列出并选一个」，和 /provider 同构 —— 此前它打一份编号列表
+  // 到对话记录，然后要用户手敲 /resume <编号>。
+  const frame = renderFrame({
+    sessionPicker: {
+      items: [
+        { id: "ses_aaa", label: "把工具层做到同行水平", desc: "agent · active · 5m ago" },
+        { id: "s1", label: "整理目录", desc: "agent · done · 1h ago" }
+      ],
+      selected: 0,
+      offset: 0
+    }
+  })
+  const text = frame.lines.map(stripAnsi).join("\n")
+  assert.match(text, /Resume Session \(1\/2\)/)
+  assert.match(text, /Enter resume/)
+  assert.match(text, /把工具层做到同行水平/)
+  frame.lines.forEach((line, i) => assert.equal(displayWidth(stripAnsi(line)), 100, `第 ${i + 1} 行`))
+})
+
+test("pickers confirm through the normal submit path, not a second copy of the logic", async () => {
+  const src = await readFile(path.join(ROOT, "src", "repl.mjs"), "utf8")
+  // 切渠道要重取模型目录、校验凭据；续跑要恢复渠道、模型、历史。那些逻辑
+  // 只应存在一处 —— 选择器确认时把命令填进输入框走正常提交，而不是复制一份。
+  for (const [fn, command] of [["confirmProviderPicker", "/provider "], ["confirmSessionPicker", "/resume "]]) {
+    const body = src.slice(src.indexOf(`async function ${fn}(`))
+    const scoped = body.slice(0, body.indexOf("\n  }") + 4)
+    assert.match(scoped, new RegExp(`ui\\.input = \`${command.replace("/", "\\/")}`), `${fn} 应复用提交路径`)
+    assert.match(scoped, /await submitCurrentInput\(\)/, `${fn} 应走 submitCurrentInput`)
+  }
+})
+
+test("command errors and action confirmations are toasts, not conversation", async () => {
+  const src = await readFile(path.join(ROOT, "src", "repl.mjs"), "utf8")
+  // 「usage: …」是对被拒命令的反馈，「workspace trusted」是报告刚发生了什么。
+  // 两者都不是对话内容 —— 进了对话记录就会随会话发给模型。
+  const shouldBeToast = [
+    "usage: /model <model-id>",
+    "usage: /permission save [project|user]",
+    "workspace trusted",
+    "no matching always-allow rule"
+  ]
+  for (const literal of shouldBeToast) {
+    const idx = src.indexOf(literal)
+    assert.notEqual(idx, -1, `找不到文案：${literal}`)
+    // 取该调用所在的一小段，确认带了 notice 通道
+    const around = src.slice(idx, idx + 220)
+    assert.match(around, /channel: "notice"/, `「${literal}」应走 notice 通道`)
+  }
+})
+
+test("model replies and file changes stay in the conversation", async () => {
+  const src = await readFile(path.join(ROOT, "src", "repl.mjs"), "utf8")
+  // 反向保护：模型回复、文件变更、诊断是对话的一部分，不该被顺手改成瞬时提示 ——
+  // 瞬时提示会消失，而这些内容用户需要回看。
+  const replyCall = src.slice(src.indexOf("mdEnabled ? renderMarkdown(result.reply)"))
+  assert.doesNotMatch(replyCall.slice(0, 160), /channel: "notice"/, "模型回复必须留在对话记录里")
+  const changedFiles = src.slice(src.indexOf('paint("changed files:"'))
+  assert.doesNotMatch(changedFiles.slice(0, 160), /channel: "notice"/, "文件变更必须留在对话记录里")
+})

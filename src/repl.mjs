@@ -589,7 +589,7 @@ async function processInputLine({
     })
     const skillCount = SkillRegistry.isReady() ? SkillRegistry.list().length : 0
     const agentCount = CustomAgentRegistry.list().length
-    print(describeReloadSummary({ commandCount: reloaded.length, skillCount, agentCount }))
+    print(describeReloadSummary({ commandCount: reloaded.length, skillCount, agentCount }), { channel: "notice", topic: "command" })
     return { exit: false }
   }
 
@@ -619,7 +619,7 @@ async function processInputLine({
       allowProjectSources: extensionPolicy.allowProjectSources
     }))
     PermissionEngine.setTrusted(true)
-    print("workspace trusted")
+    print("workspace trusted", { channel: "notice", topic: "command" })
     return { exit: false }
   }
   if (["/untrust"].includes(normalized)) {
@@ -648,7 +648,7 @@ async function processInputLine({
       allowProjectSources: extensionPolicy.allowProjectSources
     }))
     PermissionEngine.setTrusted(false)
-    print("workspace trust revoked — project tools and extensions are now blocked")
+    print("workspace trust revoked — project tools and extensions are now blocked", { channel: "notice", topic: "command" })
     return { exit: false }
   }
 
@@ -662,19 +662,19 @@ async function processInputLine({
         configState: ctx.configState
       })
       if (result.compacted) {
-        print(`compacted: ${result.summarizedCount} messages summarized, ${result.keptCount} kept`)
+        print(`compacted: ${result.summarizedCount} messages summarized, ${result.keptCount} kept`, { channel: "notice", topic: "command" })
       } else {
-        print(`skipped: ${result.reason}`)
+        print(`skipped: ${result.reason}`, { channel: "notice", topic: "command" })
       }
     } catch (err) {
-      print(`compact failed: ${err.message}`)
+      print(`compact failed: ${err.message}`, { channel: "notice", topic: "command", tone: "error" })
     }
     return { exit: false }
   }
 
   if (["/new", "/n"].includes(normalized)) {
     state.sessionId = newSessionId()
-    print(`new session: ${state.sessionId}`)
+    print(`new session: ${state.sessionId}`, { channel: "notice", topic: "command" })
     return { exit: false }
   }
 
@@ -705,25 +705,33 @@ async function processInputLine({
     const sessions = await listSessions({ cwd: process.cwd(), limit: 20, includeChildren: false })
 
     if (!sessions.length) {
-      print("no sessions found in current directory")
+      print("no sessions found in current directory", { channel: "notice", topic: "command", tone: "error" })
       return { exit: false }
     }
 
     let target = null
 
     if (!arg) {
-      // Show interactive numbered list
-      print(`\n  Sessions in ${paint(process.cwd(), "cyan")}:\n`)
-      for (let i = 0; i < sessions.length; i++) {
-        const s = sessions[i]
-        const num = paint(`  ${String(i + 1).padStart(2)}.`, "yellow")
-        const title = s.title || `${s.mode}:${s.model || "?"}`
-        const titleClipped = title.length > 45 ? title.slice(0, 42) + "..." : title
-        const age = ageLabel(Date.now() - s.updatedAt)
-        const mode = paint(padRight(s.mode, 9), "cyan")
-        const status = s.status === "active" ? paint("active", "green") : paint(s.status || "-", null, { dim: true })
-        print(`${num} ${padRight(titleClipped, 46)} ${mode} ${padRight(status, 14)} ${paint(age, null, { dim: true })}`)
+      // 裸 /resume 是「列出并选一个」，和 /provider 同构 —— 走选择器，
+      // Enter 直接续跑，不必让用户在滚动的对话记录里数编号再手敲。
+      const items = sessions.map((session) => {
+        const title = session.title || `${session.mode}:${session.model || "?"}`
+        const age = ageLabel(Date.now() - session.updatedAt)
+        return {
+          id: session.id,
+          label: title.length > 45 ? `${title.slice(0, 42)}...` : title,
+          desc: `${session.mode} · ${session.status || "-"} · ${age}`
+        }
+      })
+      if (openPanel) {
+        return { exit: false, openSessionPicker: true, sessionPickerItems: items }
       }
+      // 行模式：没有帧可浮，回落到编号列表
+      print(`\n  Sessions in ${paint(process.cwd(), "cyan")}:\n`)
+      items.forEach((item, i) => {
+        const num = paint(`  ${String(i + 1).padStart(2)}.`, "yellow")
+        print(`${num} ${padRight(item.label, 46)} ${paint(item.desc, null, { dim: true })}`)
+      })
       print(`\n  usage: ${paint("/resume <number>", "yellow")} or ${paint("/resume <session-id>", "yellow")}`)
       return { exit: false }
     }
@@ -738,7 +746,7 @@ async function processInputLine({
     }
 
     if (!target) {
-      print(`no session matching "${arg}"`)
+      print(`no session matching "${arg}"`, { channel: "notice", topic: "command", tone: "error" })
       return { exit: false }
     }
 
@@ -747,7 +755,7 @@ async function processInputLine({
     state.providerType = target.providerType || state.providerType
     state.model = target.model || state.model
     const title = target.title || `${target.mode}:${target.model || "?"}`
-    print(`resumed: ${paint(title, "cyan")} (${target.mode}, ${target.model || "?"})`)
+    print(`resumed: ${paint(title, "cyan")} (${target.mode}, ${target.model || "?"})`, { channel: "notice", topic: "command" })
     const msgs = await getConversationHistory(target.id, 3)
     for (const m of msgs) {
       const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content)
@@ -863,7 +871,7 @@ async function processInputLine({
   }
 
   if (normalized === "/mode" || normalized === "/m") {
-    print(`mode: ${formatModeBadge(state.modeId || state.mode)}`)
+    print(`mode: ${formatModeBadge(state.modeId || state.mode)}`, { channel: "notice", topic: "command" })
     return { exit: false, openModePicker: true }
   }
 
@@ -871,7 +879,7 @@ async function processInputLine({
     const requested = normalized.replace(/^\/(mode|m)\s+/, "").trim()
     const modeId = modeIdFromLegacy(requested)
     if (!modeId) {
-      print(`unknown mode: ${escapeTerminalText(requested)} (${MODE_IDS.join(" | ")})`)
+      print(`unknown mode: ${escapeTerminalText(requested)} (${MODE_IDS.join(" | ")})`, { channel: "notice", topic: "command", tone: "error" })
       return { exit: false }
     }
     const next = switchModeInPlace(state, ctx, modeId)
@@ -929,12 +937,12 @@ async function processInputLine({
     if (rest.startsWith("edit ") || rest === "edit") {
       const editName = rest.replace(/^edit\s*/, "").trim()
       if (!editName) {
-        print("usage: /provider edit <name>")
+        print("usage: /provider edit <name>", { channel: "notice", topic: "command", tone: "error" })
         return { exit: false }
       }
       const providerCfg = ctx.configState.config?.provider?.[editName]
       if (!providerCfg || typeof providerCfg !== "object") {
-        print(`provider "${editName}" 未找到，可用: ${providersConfigured.join(", ")}`)
+        print(`provider "${editName}" 未找到，可用: ${providersConfigured.join(", ")}`, { channel: "notice", topic: "command", tone: "error" })
         return { exit: false }
       }
       if (wizard && setWizard) {
@@ -947,7 +955,7 @@ async function processInputLine({
     // /provider <name> — 切换 provider
     const next = rest
     if (!providersConfigured.includes(next)) {
-      print(`provider must be one of: ${providersConfigured.join(", ")}`)
+      print(`provider must be one of: ${providersConfigured.join(", ")}`, { channel: "notice", topic: "command", tone: "error" })
       return { exit: false }
     }
     await switchActiveProvider(next)
@@ -982,13 +990,13 @@ async function processInputLine({
 
   if (normalized.startsWith("/model ")) {
     const next = normalized.replace("/model ", "").trim()
-    if (!next) print("usage: /model <model-id>")
+    if (!next) print("usage: /model <model-id>", { channel: "notice", topic: "command", tone: "error" })
     else {
       try {
         state.model = validateModelId(next)
         print(`model switched: ${escapeTerminalText(state.model)}`, { channel: "notice", topic: "switch" })
       } catch (error) {
-        print(`invalid model id: ${escapeTerminalText(error.message)}`)
+        print(`invalid model id: ${escapeTerminalText(error.message)}`, { channel: "notice", topic: "command", tone: "error" })
       }
     }
     return { exit: false }
@@ -1064,12 +1072,12 @@ async function processInputLine({
       const arg = String(tokens[1] || "").toLowerCase()
       const all = arg === "--learned" || arg === "all"
       if (!all && !/^\d+$/.test(arg)) {
-        print("usage: /permission forget <n|all>")
+        print("usage: /permission forget <n|all>", { channel: "notice", topic: "command", tone: "error" })
         return { exit: false }
       }
       const outcome = removeLearnedRules(permission.rules, all ? { all: true } : { index: Number(arg) })
       if (!outcome.removed.length) {
-        print("no matching always-allow rule")
+        print("no matching always-allow rule", { channel: "notice", topic: "command", tone: "error" })
         return { exit: false }
       }
       permission.rules = outcome.rules
@@ -1109,7 +1117,7 @@ async function processInputLine({
     if (sub === "non-tty") {
       const value = String(tokens[1] || "").toLowerCase()
       if (!["allow_once", "deny"].includes(value)) {
-        print("usage: /permission non-tty <allow_once|deny>")
+        print("usage: /permission non-tty <allow_once|deny>", { channel: "notice", topic: "command", tone: "error" })
         return { exit: false }
       }
       permission.non_tty_default = value
@@ -1120,7 +1128,7 @@ async function processInputLine({
     if (sub === "save") {
       const scope = String(tokens[1] || "project").toLowerCase()
       if (!["project", "user"].includes(scope)) {
-        print("usage: /permission save [project|user]")
+        print("usage: /permission save [project|user]", { channel: "notice", topic: "command", tone: "error" })
         return { exit: false }
       }
       try {
@@ -1132,16 +1140,16 @@ async function processInputLine({
             non_tty_default: permission.non_tty_default || "deny"
           }
         })
-        print(`permission saved (${scope}) -> ${target}`)
+        print(`permission saved (${scope}) -> ${target}`, { channel: "notice", topic: "command" })
       } catch (error) {
-        print(`permission save failed: ${error.message}`)
+        print(`permission save failed: ${error.message}`, { channel: "notice", topic: "command", tone: "error" })
       }
       return { exit: false }
     }
 
     if (sub === "session-clear" || sub === "reset") {
       PermissionEngine.clearSession(state.sessionId)
-      print(`permission session cache cleared: ${state.sessionId}`)
+      print(`permission session cache cleared: ${state.sessionId}`, { channel: "notice", topic: "command" })
       return { exit: false }
     }
 
@@ -1161,7 +1169,7 @@ async function processInputLine({
     if (!pasteText) {
       // Just attach — store for next message
       pendingImages.push(clipBlock)
-      print(`image pasted from clipboard (${pendingImages.length} image(s) attached, send a message to include)`)
+      print(`image pasted from clipboard (${pendingImages.length} image(s) attached, send a message to include)`, { channel: "notice", topic: "command" })
       return { exit: false, pastedImage: true }
     }
     // Has text — send immediately with the image
@@ -1198,7 +1206,7 @@ async function processInputLine({
   if (normalized === "/create-skill" || normalized.startsWith("/create-skill ")) {
     const description = normalized.replace(/^\/create-skill\s*/, "").trim()
     if (!description) {
-      print("usage: /create-skill <description of what the skill should do>")
+      print("usage: /create-skill <description of what the skill should do>", { channel: "notice", topic: "command", tone: "error" })
       print("example: /create-skill review code for security vulnerabilities")
       return { exit: false }
     }
@@ -1213,7 +1221,7 @@ async function processInputLine({
         apiKeyEnv: null
       })
       if (!skill) {
-        print("skill generation failed — no output from model")
+        print("skill generation failed — no output from model", { channel: "notice", topic: "command", tone: "error" })
         return { exit: false }
       }
       print(`--- ${skill.filename} ---`)
@@ -1226,9 +1234,9 @@ async function processInputLine({
       await SkillRegistry.initialize(extensionPolicy.config, process.cwd(), {
         allowProjectSources: extensionPolicy.allowProjectSources
       })
-      print(`skill /${skill.name} is now available`)
+      print(`skill /${skill.name} is now available`, { channel: "notice", topic: "command" })
     } catch (error) {
-      print(`skill generation error: ${error.message}`)
+      print(`skill generation error: ${error.message}`, { channel: "notice", topic: "command", tone: "error" })
     }
     return { exit: false }
   }
@@ -1282,7 +1290,7 @@ async function processInputLine({
   if (normalized === "/create-agent" || normalized.startsWith("/create-agent ")) {
     const description = normalized.replace(/^\/create-agent\s*/, "").trim()
     if (!description) {
-      print("usage: /create-agent <description of what the agent should do>")
+      print("usage: /create-agent <description of what the agent should do>", { channel: "notice", topic: "command", tone: "error" })
       print("example: /create-agent code reviewer that focuses on security vulnerabilities")
       return { exit: false }
     }
@@ -1298,7 +1306,7 @@ async function processInputLine({
         apiKeyEnv: null
       })
       if (!agent) {
-        print("agent generation failed — no output from model")
+        print("agent generation failed — no output from model", { channel: "notice", topic: "command", tone: "error" })
         return { exit: false }
       }
       print(`--- ${agent.filename} ---`)
@@ -1312,9 +1320,9 @@ async function processInputLine({
       await CustomAgentRegistry.initialize(process.cwd(), {
         allowProjectSources: extensionPolicy.allowProjectSources
       })
-      print(`agent "${agent.name}" is now available as a sub-agent`)
+      print(`agent "${agent.name}" is now available as a sub-agent`, { channel: "notice", topic: "command" })
     } catch (error) {
-      print(`agent generation error: ${error.message}`)
+      print(`agent generation error: ${error.message}`, { channel: "notice", topic: "command", tone: "error" })
     }
     return { exit: false }
   }
@@ -1329,7 +1337,7 @@ async function processInputLine({
     const skill = SkillRegistry.isReady() ? SkillRegistry.get(name) : null
     if (sigil === "$" || skill) {
       if (!skill) {
-        print(`unknown skill: $${name}`)
+        print(`unknown skill: $${name}`, { channel: "notice", topic: "command", tone: "error" })
         return { exit: false }
       }
       const expanded = await SkillRegistry.execute(name, args, {
@@ -1340,7 +1348,7 @@ async function processInputLine({
         config: ctx.configState?.config || null
       })
       if (!expanded) {
-        print(`skill $${name} returned no output`)
+        print(`skill $${name} returned no output`, { channel: "notice", topic: "command", tone: "error" })
         return { exit: false }
       }
       // contextFork skills return { prompt, contextFork, model }
@@ -1354,7 +1362,7 @@ async function processInputLine({
       // Fallback: check raw custom commands (in case SkillRegistry not ready)
       const custom = customCommands.find((item) => item.name === name)
       if (!custom) {
-        print(`unknown slash command: /${name}`)
+        print(`unknown slash command: /${name}`, { channel: "notice", topic: "command", tone: "error" })
         return { exit: false }
       }
       prompt = applyCommandTemplate(custom.template, args, {
@@ -1685,6 +1693,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     layoutMeta: { logStartRow: 0, logEndRow: 0, inputStartRow: 0, inputEndRow: 0 },
     wizard: createWizardState(),
     providerPicker: null,
+    sessionPicker: null,
     // 只读信息浮层：{ title, lines, offset, maxOffset, maxRows }
     // 与选择器互斥 —— 打开它时不该同时有别的浮层抢屏。
     infoPanel: null,
@@ -2248,6 +2257,35 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     // 走用户手敲 `/provider <name>` 的同一条码：切渠道要重取模型目录、
     // 校验凭据、回写状态，那些逻辑只应存在一处。
     ui.input = `/provider ${chosen.name}`
+    ui.inputCursor = ui.input.length
+    await submitCurrentInput()
+  }
+
+  function openSessionPicker(items = []) {
+    if (!items.length) {
+      showToast("没有可续跑的会话", { topic: "session", tone: "warn" })
+      requestRender()
+      return
+    }
+    ui.sessionPicker = { items, selected: 0, offset: 0 }
+    requestRender({ force: true })
+  }
+
+  function closeSessionPicker() {
+    ui.sessionPicker = null
+    requestRender({ force: true })
+  }
+
+  async function confirmSessionPicker() {
+    if (!ui.sessionPicker?.items) return
+    const chosen = ui.sessionPicker.items[ui.sessionPicker.selected]
+    ui.sessionPicker = null
+    if (!chosen) {
+      requestRender({ force: true })
+      return
+    }
+    // 走 `/resume <id>` 的同一条码：续跑要恢复渠道、模型、历史，那些逻辑只应有一处
+    ui.input = `/resume ${chosen.id}`
     ui.inputCursor = ui.input.length
     await submitCurrentInput()
   }
@@ -2869,6 +2907,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       }
       if (action.openProviderPicker) {
         openProviderPicker(action.providerPickerItems)
+      }
+      if (action.openSessionPicker) {
+        openSessionPicker(action.sessionPickerItems)
       }
       if (action.openPolicyPicker) {
         openPolicyPicker()
@@ -3917,6 +3958,28 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           }
           if (key.name === "down") {
             ui.providerPicker.selected = Math.min(ui.providerPicker.items.length - 1, ui.providerPicker.selected + 1)
+            requestRender()
+            return
+          }
+          return
+        }
+
+        if (ui.sessionPicker && Array.isArray(ui.sessionPicker.items)) {
+          if (key.name === "escape") {
+            closeSessionPicker()
+            return
+          }
+          if (key.name === "return") {
+            void confirmSessionPicker()
+            return
+          }
+          if (key.name === "up") {
+            ui.sessionPicker.selected = Math.max(0, ui.sessionPicker.selected - 1)
+            requestRender()
+            return
+          }
+          if (key.name === "down") {
+            ui.sessionPicker.selected = Math.min(ui.sessionPicker.items.length - 1, ui.sessionPicker.selected + 1)
             requestRender()
             return
           }

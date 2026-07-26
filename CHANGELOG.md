@@ -1,5 +1,48 @@
 # Changelog / 更新日志
 
+## 0.6.14
+
+弹窗审查的第二半：`/resume` 也成了选择器，剩下 36 处输出按性质归位。
+
+### English
+
+- **`/resume` is a picker.** Bare `/resume` printed a numbered session list into
+  the transcript and then asked you to type `/resume <number>` — read a number
+  off a scrolling log, then type it back. It is the same shape as `/provider`, so
+  it gets the same overlay: current session marked, mode/status/age per row,
+  Enter resumes. Both pickers confirm by feeding the equivalent slash command
+  through the normal submit path, so the channel-switch and session-restore logic
+  stays in one place instead of being copied into the picker.
+- **36 outputs moved off the transcript.** Two groups. Command errors — `usage:
+  /model <model-id>`, `no session matching …`, `invalid model id`, generation
+  failures — are feedback on a rejected command. Action confirmations —
+  `workspace trusted`, `new session: …`, `permission saved`, `compacted: N
+  messages` — report that something just happened. Neither is conversation, and
+  both were being sent to the model along with the session. They are toasts now.
+  Plain `print()` calls in the command router went from 103 to 67.
+- **What deliberately stayed.** Model replies, file-change lists, diagnostics,
+  generated skill/agent content, and Ultra's stage output remain in the
+  transcript — a toast disappears, and those are things you need to scroll back
+  to. There is a test asserting the reply and file-change paths did not get
+  swept up in the conversion.
+
+### 中文
+
+- **`/resume` 现在是选择器。** 裸 `/resume` 此前把编号会话列表打进对话记录，
+  然后要你敲 `/resume <编号>` —— 在滚动的日志里读一个数字，再手打回去。
+  它和 `/provider` 同构，所以给同样的浮层：当前会话带标记、每行显示
+  模式/状态/时间、Enter 直接续跑。两个选择器确认时都把等价的斜杠命令送进正常
+  提交路径，所以切渠道与恢复会话的逻辑留在一处，而不是在选择器里复制一份。
+- **36 处输出从对话记录移出。** 分两类。命令报错 —— `usage: /model <model-id>`、
+  `no session matching …`、`invalid model id`、生成失败 —— 是对被拒命令的反馈。
+  动作确认 —— `workspace trusted`、`new session: …`、`permission saved`、
+  `compacted: N messages` —— 报告的是刚刚发生了什么。两者都不是对话内容，
+  而它们此前都会随会话一起发给模型。现在都是瞬时提示。命令路由里的裸
+  `print()` 从 103 处降到 67 处。
+- **有意保留的部分。** 模型回复、文件变更清单、诊断、生成出来的 skill/agent
+  内容、Ultra 的阶段输出仍留在对话记录里 —— 瞬时提示会消失，而这些是需要
+  回看的东西。有一条测试专门断言回复与文件变更这两条路径没被这轮转换顺手扫走。
+
 ## 0.6.13
 
 只读查询改走浮层，`/provider` 改成可视化选择器。

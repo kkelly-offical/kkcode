@@ -302,6 +302,33 @@ export function buildFrame({
     providerPickerLines.push(...rendered.lines)
   }
 
+  // 会话选择器（裸 /resume）。与 provider 选择器同构。
+  const sessionPickerLines = []
+  if (ui.sessionPicker && Array.isArray(ui.sessionPicker.items)) {
+    const sp = ui.sessionPicker
+    const rendered = renderSelectOverlay({
+      title: `Resume Session (${sp.selected + 1}/${sp.items.length})`,
+      hint: "↑↓ navigate  Enter resume  Esc cancel",
+      items: sp.items.map((item) => ({
+        label: item.label,
+        desc: item.desc,
+        current: item.id === state.sessionId
+      })),
+      selected: sp.selected,
+      offset: sp.offset || 0,
+      maxVisible: MAX_MODEL_PICKER_VISIBLE,
+      width,
+      theme: ctx.themeState.theme,
+      accent: ctx.themeState.theme.semantic.info,
+      paint,
+      padRight,
+      markers: true,
+      layout: "two-column"
+    })
+    sp.offset = rendered.offset
+    sessionPickerLines.push(...rendered.lines)
+  }
+
   const modePickerLines = []
   if (ui.modePicker) {
     const currentModeId = state.modeId || resolveModeId(state.mode)
@@ -502,6 +529,7 @@ export function buildFrame({
     { name: "suggestions", lines: suggestionLines.length ? [suggestionsTitleLine, ...suggestionLines] : [] },
     { name: "modelPicker", lines: modelPickerLines },
     { name: "providerPicker", lines: providerPickerLines },
+    { name: "sessionPicker", lines: sessionPickerLines },
     { name: "policyPicker", lines: policyPickerLines },
     { name: "modePicker", lines: modePickerLines },
     { name: "permission", lines: permissionLines },
