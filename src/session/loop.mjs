@@ -37,9 +37,14 @@ import { createValidator } from "./task-validator.mjs"
 import { runSpecRole } from "../orchestration/run-spec.mjs"
 import { createRequestContext } from "../http/identity.mjs"
 import { resolveExtensionPolicy } from "../context.mjs"
+import { toolOutputBudget, truncationNotice } from "../tool/output-budget.mjs"
 
-// Max chars kept in active context per tool_result — process output beyond this is truncated
-const TOOL_RESULT_ACTIVE_LIMIT = 3000
+// 每条 tool_result 进入活动上下文的字符上限。0.6.3 之前是硬编码 3000 ——
+// 一个 268 行的普通源文件有 12494 字符，模型只能看到四分之一，而且不知道
+// 自己没读全。同行量级：opencode 50KB、Codex 1MiB、Claude Code 约 100KB。
+// 现在按当前模型的上下文动态推算，见 tool/output-budget.mjs。
+// 保留常量名作为兜底（拿不到模型信息时用）。
+const TOOL_RESULT_FALLBACK_LIMIT = 16000
 
 const READ_ONLY_TOOLS = new Set([
   "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch", "background_output", "todowrite", "enter_plan"
@@ -245,6 +250,9 @@ export async function processTurnLoop({
   }
 
   const turnId = newId("turn")
+  // 工具输出预算按当前模型的上下文算一次，本轮复用
+  const toolResultLimit = toolOutputBudget({ model, providerType, config: configState.config }).chars
+    || TOOL_RESULT_FALLBACK_LIMIT
   const turnTraceContext = createRequestContext()
   const configMaxSteps = Math.max(1, Number(configState.config.agent.max_steps || 128))
   const maxSteps = (subagent?.maxTurns > 0) ? Math.min(configMaxSteps, subagent.maxTurns) : configMaxSteps
@@ -946,6 +954,11 @@ export async function processTurnLoop({
                     sessionId,
                     turnId,
                     config: configState.config,
+                    // 工具需要知道当前模型与渠道才能算输出预算（动态上限）。
+                    // 0.6.3 之前 ctx 只有 config，于是任何按模型能力调整的
+                    // 工具行为都无从下手。
+                    model,
+                    providerType,
                     ...toolContext
                   },
                   signal
@@ -1114,14 +1127,19 @@ export async function processTurnLoop({
       })
 
       // User message: tool_result blocks (one per tool call, in order)
-      // Process output beyond TOOL_RESULT_ACTIVE_LIMIT is truncated to keep context lean
+      // 超出本轮输出预算的部分会被截断，并附上「还剩多少、怎么取」的提示
       const resultContent = []
       for (const call of response.toolCalls) {
         const entry = callResults.get(call.id)
         const rawOutput = entry?.result?.output || ""
         const isError = !isToolSuccess(entry?.result)
-        const content = rawOutput.length > TOOL_RESULT_ACTIVE_LIMIT
-          ? `${rawOutput.slice(0, TOOL_RESULT_ACTIVE_LIMIT)}\n[...过程输出已截断，共 ${rawOutput.length} 字符，仅保留前 ${TOOL_RESULT_ACTIVE_LIMIT} 字符]`
+        const content = rawOutput.length > toolResultLimit
+          ? `${rawOutput.slice(0, toolResultLimit)}\n${truncationNotice({
+              shown: toolResultLimit,
+              total: rawOutput.length,
+              unit: "chars",
+              hint: "Narrow the request (grep instead of read, or read with offset/limit) rather than repeating it."
+            })}`
           : rawOutput
         resultContent.push({
           type: "tool_result",

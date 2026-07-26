@@ -4,8 +4,9 @@ Assume this tool is able to read all files on the machine. If the user provides 
 ## Usage
 
 - The path parameter can be absolute or relative to the working directory.
-- By default, it reads up to 2000 lines starting from the beginning of the file. You can optionally specify offset and limit for large files.
-- Any lines longer than 2000 characters will be truncated.
+- By default it reads up to 2000 lines from the start of the file, caps a single line at 2000 characters, and caps one call at 50 KB — whichever comes first.
+- Every read ends with its own status: `[complete: N lines]` when you have the whole file, or `[truncated: showing X of Y ...]` with the exact `offset` to continue from. Read that line. Do not assume you saw the whole file.
+- Prefer one larger window over many small slices. If you find yourself reading 30 lines at a time, read a bigger range or use grep to locate what you need first.
 - Results are returned with line numbers in "     1→content" format.
 
 ## File Type Support

@@ -13,6 +13,7 @@ import { McpRegistry } from "../mcp/registry.mjs"
 import { SkillRegistry } from "../skill/registry.mjs"
 import { askQuestionInteractive } from "./question-prompt.mjs"
 import { checkBashAllowed } from "../permission/exec-policy.mjs"
+import { truncationNotice, completeNotice } from "./output-budget.mjs"
 import { normalizePermissionLevel } from "../permission/rules.mjs"
 import { gitAutoTools } from "./git-auto.mjs"
 import { gitFullAutoTools } from "./git-full-auto.mjs"
@@ -237,6 +238,31 @@ const LONG_RUNNING_PATTERNS = [
   /\bnpm\s+run\s+serve\b/i,
   /\bnpm\s+run\s+watch\b/i
 ]
+
+/**
+ * read 的四层限制。此前 2000 行与 2000 字符都是内联魔数，且没有字节帽 ——
+ * 一个 2000 行的 minified 文件仍能一次吃掉整个上下文预算。
+ *
+ * 行数上限保留（同行共识，且是有意的行为塑形：逼模型用 grep 定位而不是
+ * 整文件倾倒），补的是字节帽与「截断必须发声」。
+ */
+const READ_DEFAULT_LINES = 2000
+const READ_MAX_LINE_CHARS = 2000
+/** 单次读取的字节帽，与 opencode 同量级 */
+const READ_MAX_BYTES = 50 * 1024
+/** 整个文件的大小闸：超过这个数连读都不读，让模型改用 grep */
+const READ_MAX_FILE_BYTES = 10 * 1024 * 1024
+
+/**
+ * 二进制探测：NUL 字节，或替换字符（U+FFFD）占比过高。
+ * 后者是 utf8 解码失败的痕迹 —— 只看扩展名会漏掉没有扩展名的可执行文件。
+ */
+export function looksBinary(text) {
+  const sample = text.slice(0, 8192)
+  if (sample.includes("\u0000")) return true
+  const replacements = (sample.match(/\uFFFD/g) || []).length
+  return sample.length > 0 && replacements / sample.length > 0.1
+}
 
 const BASH_TIMEOUT_MS = 120_000
 const IS_WIN = process.platform === "win32"
@@ -582,26 +608,80 @@ function builtinTools(config) {
 
       // Default: text file with line numbers
       const encoding = args.encoding || "utf8"
-      const content = await readFile(target, encoding)
       const fileStat = await stat(target)
+
+      // 大小预检：此前没有任何检查，一个 2GB 的文件会直接读进内存
+      if (fileStat.size > READ_MAX_FILE_BYTES) {
+        return `error: file is ${fileStat.size} bytes, over the ${READ_MAX_FILE_BYTES} byte read limit. `
+          + "Use grep to search it, or read with offset/limit to take a slice."
+      }
+
+      const content = await readFile(target, encoding)
+
+      // 二进制探测：此前没有，读 .so/.zip 会按 utf8 解成一屏 U+FFFD
+      // 然后带着行号进上下文，白白吃掉输出预算
+      if (looksBinary(content)) {
+        return `error: ${args.path} looks like a binary file (${fileStat.size} bytes). `
+          + "Reading it as text would fill the context with replacement characters."
+      }
+
       const allLines = content.split("\n")
       const start = Math.max(0, (Number(args.offset) || 1) - 1)
-      const count = Number(args.limit) || Math.min(allLines.length, 2000)
-      const slice = allLines.slice(start, start + count)
-      const isPartialView = start > 0 || start + count < allLines.length
+      if (allLines.length > 0 && start >= allLines.length) {
+        // 越界 offset 此前静默返回空串，状态还是 completed
+        return `error: offset ${start + 1} is past the end of the file (${allLines.length} lines).`
+      }
+      const slice = allLines.slice(start, start + (Number(args.limit) || READ_DEFAULT_LINES))
+
+      const numbered = []
+      let bytesUsed = 0
+      let cappedByBytes = false
+      for (let i = 0; i < slice.length; i++) {
+        const line = slice[i]
+        const clipped = line.length > READ_MAX_LINE_CHARS
+          ? line.slice(0, READ_MAX_LINE_CHARS) + truncationNotice({ shown: READ_MAX_LINE_CHARS, total: line.length, unit: "chars" })
+          : line
+        // 字节帽：行数与单行上限都拦不住 minified 或宽表文件。先到先停。
+        if (bytesUsed + clipped.length > READ_MAX_BYTES) {
+          cappedByBytes = true
+          break
+        }
+        bytesUsed += clipped.length
+        numbered.push(`${String(start + i + 1).padStart(6)}→${clipped}`)
+      }
+
+      const lastLine = start + numbered.length
+      const isPartialView = start > 0 || lastLine < allLines.length
+
       markFileRead(target, {
-        content: isPartialView ? slice.join("\n") : content,
+        // 存模型实际看到的内容。此前存未截断原文，模型照着截断行去 edit
+        // 必然 no match，而且无从判断原因。
+        content: isPartialView ? slice.slice(0, numbered.length).join("\n") : content,
         timestamp: fileStat.mtimeMs,
         offset: isPartialView ? start + 1 : undefined,
-        limit: isPartialView ? count : undefined,
+        limit: isPartialView ? numbered.length : undefined,
         isPartialView
       })
-      const numbered = slice.map((line, i) => {
-        const num = String(start + i + 1).padStart(6)
-        const truncated = line.length > 2000 ? line.slice(0, 2000) + "... (truncated)" : line
-        return `${num}→${truncated}`
-      })
-      return numbered.join("\n")
+
+      // 截断必须发声并说清怎么续读。此前完全静默 —— 读一个 3000 行的文件
+      // 在第 2000 行戛然而止，模型以为自己读完了整个文件。
+      const footer = cappedByBytes
+        ? truncationNotice({
+            shown: bytesUsed,
+            total: content.length,
+            unit: "chars",
+            hint: `Output capped at ${READ_MAX_BYTES} bytes. Use read with offset=${lastLine + 1} to continue.`
+          })
+        : lastLine < allLines.length
+          ? truncationNotice({
+              shown: numbered.length,
+              total: allLines.length,
+              unit: "lines",
+              hint: `Use read with offset=${lastLine + 1} to continue.`
+            })
+          : completeNotice({ total: allLines.length, unit: "lines" })
+
+      return `${numbered.join("\n")}\n${footer}`
     }
   }
 

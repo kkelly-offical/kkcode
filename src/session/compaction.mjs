@@ -242,12 +242,26 @@ export function pruneForSummary(messages, previewLimit = TOOL_RESULT_PREVIEW_LIM
   })
 }
 
+/**
+ * 兜底的模型上下文表。优先级最低 —— provider.model_context 与目录发现
+ * （applyDiscoveredContextLimits）都排在它前面。
+ *
+ * 前缀匹配，长前缀要写在短前缀之前（`Object.entries` 按声明序遍历，
+ * `claude` 若排在 `claude-opus-4` 前面会把后者吃掉）。
+ */
 const BUILTIN_CONTEXT = {
+  // kimi：k3 是 1M，coding 系列是 256K。此前整个 kimi 族缺失，
+  // k3 走默认 128000 —— 少算了八倍，压缩因此提前触发。
+  "k3-256k": 262144, "k3": 1048576,
+  "kimi-for-coding": 262144, "kimi": 262144,
   "gpt-5": 272000, "o3": 200000, "o1": 200000,
-  "claude-opus-4": 200000, "claude-3-5": 200000, "claude-3.5": 200000, "claude": 200000,
+  "claude-opus-4": 200000, "claude-sonnet-4": 200000,
+  "claude-3-5": 200000, "claude-3.5": 200000, "claude": 200000,
   "gemini-2": 1048576, "gemini-1.5": 1048576, "gemini": 128000,
   "gpt-4o": 128000, "gpt-4": 128000, "gpt-3.5": 16000,
-  "deepseek": 64000, "qwen": 128000
+  "deepseek-r": 128000, "deepseek": 64000,
+  "qwen3": 262144, "qwen": 128000,
+  "glm-4": 128000, "glm": 128000
 }
 
 export function modelContextLimit(model, configState = null, providerType = "") {
