@@ -937,11 +937,16 @@ function builtinTools(config) {
     },
     async execute(args, ctx) {
       const target = await resolveWorkspacePath(ctx.cwd, args.path, { mustExist: true })
+      let staleNotice = ""
       if (await exists(target)) {
         const validation = await validateExistingFileMutation({
           targetPath: target,
           displayPath: String(args.path || target),
-          operation: "editing it"
+          operation: "editing it",
+          // 锚点：外部改动后若它仍精确且唯一匹配，落点没有歧义 —— 放行而不是
+          // 让模型重读全文。replace_all 时锚点本就会命中多处，降级条件不成立，
+          // 自然回到硬失败，这是对的。
+          anchor: args.replace_all ? "" : String(args.before || "")
         })
         if (!validation.ok) {
           return {
@@ -949,6 +954,8 @@ function builtinTools(config) {
             metadata: { blocked: true, reason: validation.reason, fileChanges: [] }
           }
         }
+        // 降级放行必须让模型知道文件变过 —— 否则它会以为自己手里的副本还是新的
+        if (validation.notice) staleNotice = validation.notice
       }
       const options = lockOptions(ctx)
       const runEdit = async () =>
@@ -974,7 +981,7 @@ function builtinTools(config) {
       const updatedContent = await readFile(target, "utf8").catch(() => null)
       await refreshFileReadStateFromDisk(target, { content: updatedContent ?? undefined }).catch(() => {})
       return {
-        output: result.output,
+        output: staleNotice ? `${staleNotice}\n${result.output}` : result.output,
         metadata: mutationMetadata({
           operation: "edit",
           filePath: String(args.path || target),
@@ -1604,6 +1611,7 @@ function builtinTools(config) {
       // Phase 1: validate all changes and collect original content for rollback
       const snapshots = [] // { path, original, isNew }
       const resolved = []
+      const staleNotices = []
       for (const change of changes) {
         const target = await resolveWorkspacePath(ctx.cwd, change.path)
         const originalExists = await exists(target)
@@ -1625,9 +1633,11 @@ function builtinTools(config) {
           const validation = await validateExistingFileMutation({
             targetPath: target,
             displayPath: String(change.path || target),
-            operation: "applying this multiedit change"
+            operation: "applying this multiedit change",
+            anchor: change.replace_all ? "" : String(change.before || "")
           })
           if (!validation.ok) return validation.message
+          if (validation.notice) staleNotices.push(validation.notice)
           const matches = (original || "").split(change.before).length - 1
           if (matches === 0) return `error: no match for "before" in ${change.path}. Re-read the file and check your snippet.`
           if (matches > 1 && !change.replace_all) return `error: ${matches} matches in ${change.path} — set replace_all: true or provide more context.`
@@ -1689,7 +1699,10 @@ function builtinTools(config) {
       // Phase 3: summarize
       const summary = resolved.map(c => `  ${c.isCreate ? "+" : "~"} ${c.path}`).join("\n")
       return {
-        output: `${resolved.length} file(s) updated atomically:\n${summary}`,
+        output: [
+          ...staleNotices,
+          `${resolved.length} file(s) updated atomically:\n${summary}`
+        ].join("\n"),
         metadata: {
           fileChanges: resolved.map(c => ({
             path: String(c.path || c.target),

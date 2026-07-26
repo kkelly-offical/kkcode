@@ -1,5 +1,50 @@
 # Changelog / 更新日志
 
+## 0.6.9
+
+0.7.0 计划的最后一条（阶段 2-5 的降级半边）。
+
+### English
+
+- **An external change elsewhere in a file no longer kills an unambiguous edit.**
+  kkcode is multi-agent by design: another agent, or your editor, touching the
+  far end of a file used to reject the whole edit, leaving the model to re-read
+  everything and try again. Claude Code added this downgrade in v2.1.208 for the
+  same reason — the false-rejection rate is high when several agents share a
+  workspace. The edit is applied and the model is told the file changed.
+- **Three conditions, all required, because two are not enough.** The anchor must
+  match exactly once in the new content, exactly once in the content that was
+  read, *and* the line it spans must be byte-identical in both. That third
+  condition is not decoration: an anchor of `const a = 1` matches exactly once in
+  a file an external change turned into `const a = 10` — one occurrence, but no
+  longer the same token, and the replacement would silently produce
+  `const a = 20` with the model none the wiser. An existing test caught this
+  while the weaker two-condition version was in the tree; both the dangerous case
+  and a same-line comment edit are now pinned down.
+- `write`, `patch` and `notebookedit` keep failing hard, deliberately: a
+  whole-file replacement would swallow the external change, and a line range no
+  longer points where it did. Neither has an anchor whose survival could be
+  checked. `replace_all` also keeps failing hard, since its anchor is expected to
+  match many times.
+
+### 中文
+
+- **文件另一头被外部改动，不再连带否掉一次无歧义的编辑。** kkcode 本来就是
+  多 agent 的：另一个 agent 或你的编辑器碰一下文件另一端，此前会让整次编辑
+  被拒，模型只能重读全文再来一遍。Claude Code 在 v2.1.208 加这个降级是同一个
+  理由 —— 多个 agent 共用工作区时，误杀率很高。现在编辑照做，并明确告诉模型
+  文件变过了。
+- **三个条件同时成立才放行，因为两个不够。** 锚点必须在新内容里精确且唯一
+  匹配、在读到的旧内容里也精确且唯一匹配，**并且**它所跨的整行在新旧内容里
+  逐字节相同。第三条不是装饰：锚点 `const a = 1` 在被外部改成 `const a = 10`
+  的文件里确实只匹配一次 —— 一处，但已经不是同一个 token 了，替换会静默产出
+  `const a = 20`，而模型毫不知情。这是仓库里一条既有测试在弱版本（只有两个
+  条件）还在树上时抓到的；现在这个危险场景和「同一行加个注释」都被固化成了
+  测试。
+- `write`、`patch`、`notebookedit` 有意保持硬失败：整文件替换会吞掉外部改动，
+  而行号区间早已不指向原处 —— 两者都没有可供验证存活的锚点。`replace_all`
+  同样保持硬失败，因为它的锚点本就应当命中多处。
+
 ## 0.6.8
 
 阶段 2 的三条遗留 —— 0.6.5 交付了编辑诊断与 multiedit 修复，但计划里同阶段的
