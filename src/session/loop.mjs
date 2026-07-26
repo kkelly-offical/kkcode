@@ -46,9 +46,21 @@ import { toolOutputBudget, truncationNotice } from "../tool/output-budget.mjs"
 // 保留常量名作为兜底（拿不到模型信息时用）。
 const TOOL_RESULT_FALLBACK_LIMIT = 16000
 
-const READ_ONLY_TOOLS = new Set([
-  "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch", "background_output", "todowrite", "enter_plan"
-])
+/**
+ * plan 档下允许执行的工具。
+ *
+ * 从 toolCapability 推导而非手写名单：手写的那份漏了 sysinfo、question、
+ * task_list/get/output、git_status/info/list_snapshots —— 全都是纯读，却在
+ * 制定计划时被拦，而制定计划恰恰最需要看仓库现状。漏登记的代价由用户承担，
+ * 而这份名单和 TOOL_CAPABILITIES 表达的是同一件事，没有理由维护两份。
+ */
+const PLAN_ALLOWED_CAPABILITIES = new Set(["read", "search", "network", "safe-shell"])
+
+export function planModeAllows(toolName, args = {}) {
+  if (toolName === "enter_plan" || toolName === "exit_plan") return true
+  const cap = toolCapability(toolName, String(args?.command || ""))
+  return PLAN_ALLOWED_CAPABILITIES.has(cap)
+}
 
 /**
  * 只读委派（write_scope: read-only）下确定不会改动工作区的工具。
@@ -58,9 +70,22 @@ const READ_ONLY_TOOLS = new Set([
  * bash 不在表里，它单独按命令判定（见 canMutateWorkspace）。
  */
 const NON_MUTATING_TOOLS = new Set([
-  ...READ_ONLY_TOOLS,
+  "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch",
+  "background_output", "todowrite", "enter_plan", "exit_plan",
   "sysinfo", "question", "task_list", "task_get", "task_output", "task_parallel",
-  "git_status", "git_info", "git_list_snapshots", "exit_plan"
+  "git_status", "git_info", "git_list_snapshots"
+])
+
+/**
+ * 可并行执行的工具（无副作用，顺序无关）。
+ *
+ * 与 NON_MUTATING_TOOLS 的差别是有意的：`todowrite` 与 `enter_plan` 会改会话
+ * 状态，不改工作区，所以进得了只读委派但不该并行 —— 并行会让写入次序不确定。
+ */
+const PARALLELIZABLE_TOOLS = new Set([
+  "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch",
+  "background_output", "sysinfo", "task_list", "task_get", "task_output",
+  "git_status", "git_info", "git_list_snapshots"
 ])
 
 /**
@@ -253,6 +278,14 @@ export async function processTurnLoop({
   // 工具输出预算按当前模型的上下文算一次，本轮复用
   const toolResultLimit = toolOutputBudget({ model, providerType, config: configState.config }).chars
     || TOOL_RESULT_FALLBACK_LIMIT
+
+  // plan 档的执行层闸门。此前 _planMode 只有模型自愿调 enter_plan 才会被设，
+  // 而 CLI 的 `/plan` 只注入了一段「请勿修改源文件」的提示词 —— 也就是说
+  // plan 模式的全部约束力来自模型听不听话，一个不听话的模型照样能写文件。
+  // mode 是调用方明确声明的意图，闸门该认它。
+  if (mode === "plan" && toolContext._planMode === undefined) {
+    toolContext._planMode = true
+  }
   const turnTraceContext = createRequestContext()
   const configMaxSteps = Math.max(1, Number(configState.config.agent.max_steps || 128))
   const maxSteps = (subagent?.maxTurns > 0) ? Math.min(configMaxSteps, subagent.maxTurns) : configMaxSteps
@@ -876,7 +909,7 @@ export async function processTurnLoop({
           }
 
           // Plan mode enforcement: block write tools when _planMode is active
-          if (toolContext._planMode && !READ_ONLY_TOOLS.has(call.name) && call.name !== "exit_plan") {
+          if (toolContext._planMode && !planModeAllows(call.name, call.arguments || call.args || {})) {
             result = {
               name: call.name,
               status: "error",
@@ -959,6 +992,10 @@ export async function processTurnLoop({
                     // 工具行为都无从下手。
                     model,
                     providerType,
+                    // 单次工具输出的字符预算。工具内部若有自己的硬编码上限
+                    // （bash 曾是 30000），应改读这个值，否则「动态预算」只
+                    // 管到 loop 这一层，工具那一层照旧按固定数字砍。
+                    toolResultLimit,
                     ...toolContext
                   },
                   signal
@@ -1051,7 +1088,7 @@ export async function processTurnLoop({
       const readOnlyCalls = []
       const writeCalls = []
       for (const call of response.toolCalls) {
-        if (READ_ONLY_TOOLS.has(call.name)) {
+        if (PARALLELIZABLE_TOOLS.has(call.name)) {
           readOnlyCalls.push(call)
         } else {
           writeCalls.push(call)

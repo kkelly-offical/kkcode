@@ -1,5 +1,106 @@
 # Changelog / 更新日志
 
+## 0.6.6
+
+### English
+
+- **Protected paths, checked before your own allow rules.** Writes to `.git/`,
+  `.kkcode/`, `.github/workflows/`, every shell rc (`.bashrc`, `.zshrc`,
+  `.envrc`), package-manager configs (`.npmrc`, `.yarnrc`, `bunfig.toml`) and
+  `.mcp.json` now always require confirmation — yolo included. These are the
+  one class of change git cannot undo for you: break `.git` and the snapshot
+  system that would have saved you is gone with it.
+  The ordering is the security property. The check runs *before* `permission.
+  rules` is evaluated, so a checked-in `{tool: "write", pattern: ".git/**",
+  action: "allow"}` cannot switch it off — and that rule might have arrived in
+  a repository you just cloned. `bash` is covered too, by scanning commands
+  that look like writes; `cat ~/.bashrc` and `.gitignore` are deliberately not
+  caught.
+- **Long-running commands can finally go to the background.** The foreground
+  block told the model "or use `run_in_background: true`" — and the background
+  branch blocked the same commands again. The one escape hatch the tool
+  documented did not exist. Now background accepts them, which is what
+  background is for.
+- **Thirteen git tools were unregistered, not restricted.** `TOOL_CAPABILITIES`
+  covered 24 tools; every `git_*` tool, `task_group` and `task_parallel` fell
+  through to `"unknown"`, which readonly denies wholesale and accept-edits asks
+  about wholesale. `git_status` was denied in the readonly tier while
+  `TRUSTED_BASH_PATTERNS` and exec-policy's `allow_git_status` both called it
+  safe — three layers disagreeing about the same command. Read-only shell is
+  now allowed in the readonly tier, which is what "readonly" should have meant.
+- **`/plan` had no execution-layer gate.** It set `state.mode = "plan"` and
+  injected a "do not edit source files" instruction, but the gate keyed off
+  `_planMode`, which only the model's own `enter_plan` call ever set. Plan mode's
+  entire binding force was the model choosing to comply. The gate now derives
+  from the declared mode, and from tool capability rather than a hand-written
+  list — that list had been missing `sysinfo`, `question`, `task_list` and
+  `git_status`, all pure reads, blocked precisely when you are surveying a
+  repository to plan against it.
+- **`sensitive_file_patterns` merges instead of replacing.** Adding one pattern
+  to protect `secrets/**` used to delete the protection for `.env` and five
+  others, silently. Wanting one more should not cost you six. Pass
+  `sensitive_file_patterns_replace: true` to actually drop the defaults.
+  Both this and `skills.allowed_commands` were absent from
+  `docs/config.example.yaml`; both are documented now.
+- **`bash` reports exit codes and accepts `cwd` and `env`.** The exit code was
+  swallowed by the catch block, so the model could not tell a failed command
+  from one that succeeded while writing progress to stderr — which npm, pip and
+  git all do. `cwd` is resolved through the workspace boundary, so `cwd: "../.."`
+  cannot relocate the root that every later path check depends on. A third
+  hard-coded output cap (30000 chars, missed in 0.6.4) now follows the model's
+  context budget and says how to get the rest.
+- **`git_apply_patch` checks the diff's target paths.** `git apply` refuses
+  `.git/**` and `../` escapes on its own — verified, not assumed — but it will
+  happily create a repo-local `.bashrc` or `.github/workflows/ci.yml`, and this
+  tool never passes a path through `evaluatePermission`, so the protected-path
+  list could not see them. One diff was enough to install a pre-commit hook.
+
+### 中文
+
+- **保护路径清单，且排在你自己的 allow 规则之前。** `.git/`、`.kkcode/`、
+  `.github/workflows/`、全套 shell rc（`.bashrc`/`.zshrc`/`.envrc`）、包管理器
+  配置（`.npmrc`/`.yarnrc`/`bunfig.toml`）、`.mcp.json` 的写入一律需要确认，
+  yolo 也不例外。这是唯一一类 git 帮不了你的改动 —— `.git` 被改坏，本该救你的
+  快照系统跟着一起没了。
+  **顺序本身就是安全属性**：检查排在 `permission.rules` 求值之前，所以仓库里
+  checked-in 的一条 `{tool: "write", pattern: ".git/**", action: "allow"}`
+  关不掉它 —— 而那条规则可能来自你刚 clone 的别人的仓库。`bash` 同样覆盖，
+  按"像在写"的命令特征扫描；`cat ~/.bashrc` 与 `.gitignore` 有意不拦。
+- **长命令终于能进后台了。** 前台拦截的提示原文是「或者用
+  `run_in_background: true`」，而后台分支把同一批命令又拦了一遍 —— 工具文档
+  承诺的唯一逃生口在代码里不存在。现在后台接收它们，后台本来就是干这个的。
+- **十三个 git 工具是漏登记，不是被限制。** `TOOL_CAPABILITIES` 只覆盖 24 个
+  工具，全部 `git_*`、`task_group`、`task_parallel` 落到 `"unknown"` ——
+  只读档一律拒、接受编辑档一律问。`git status` 在只读档被拒，而
+  `TRUSTED_BASH_PATTERNS` 与 exec-policy 的 `allow_git_status` 都判它安全，
+  三层对同一条命令的判定互相矛盾。现在只读 shell 在只读档放行，这才是
+  「只读」该有的意思。
+- **`/plan` 在执行层没有闸门。** 它设了 `state.mode = "plan"` 并注入一段
+  「请勿修改源文件」的提示，但闸门认的是 `_planMode`，而那个只有模型自愿调
+  `enter_plan` 才会被设 —— plan 模式的全部约束力来自模型听不听话。现在闸门
+  从声明的 mode 推导，判定依据从手写名单改为工具能力：那份名单漏了
+  `sysinfo`、`question`、`task_list`、`git_status`，全是纯读，偏偏在你勘察
+  仓库准备制定计划时被拦。
+- **`sensitive_file_patterns` 改为合并而非替换。** 此前为了保护 `secrets/**`
+  加一条模式，会静默删掉 `.env` 等六条内置保护 —— 想加一条不该赔上六条。
+  真要丢掉默认值，写 `sensitive_file_patterns_replace: true`。这一项与
+  `skills.allowed_commands` 都从未出现在 `docs/config.example.yaml` 里，
+  现在都补上了。
+- **`bash` 上报 exit code，并支持 `cwd` 与 `env`。** exit code 此前被 catch
+  整个吞掉，模型无法区分「命令失败」与「命令成功但往 stderr 写了进度」——
+  后者在 npm、pip、git 里天天发生。`cwd` 过工作区边界解析，`cwd: "../.."`
+  不能把后续所有路径判定所依赖的根挪走。第三处硬编码输出上限（30000 字符，
+  0.6.4 漏掉的）改为跟随模型上下文预算，并说明怎么取剩下的部分。
+- **`git_apply_patch` 检查 diff 的目标路径。** `git apply` 自己会拒
+  `.git/**` 与 `../` 逃逸 —— 这是实测确认的，不是假设 —— 但它照样会凭空创建
+  仓库内的 `.bashrc` 或 `.github/workflows/ci.yml`，而本工具从不带路径走
+  `evaluatePermission`，保护清单看不到它们。一个 diff 就足够装上 pre-commit 钩子。
+
+**关于计划的两处修正**：0.7.0 计划里写 `git_restore` 绕过路径校验 —— 它只吃
+`snapshot_id`，没有路径入参，没有可校验的东西，这条不成立。另一条写
+`git_apply_patch` 绕过路径校验，实测后发现只对了一半：路径遍历与 `.git` 写入
+是 `git apply` 自己拦住的，真正漏的是仓库内的受保护文件。
+
 ## 0.6.5
 
 ### English

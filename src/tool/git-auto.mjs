@@ -2,6 +2,7 @@ import path from "node:path"
 import { mkdir } from "node:fs/promises"
 import { userRootDir } from "../storage/paths.mjs"
 import { readJson, writeJson } from "../storage/json-store.mjs"
+import { findProtectedTarget } from "../permission/protected-paths.mjs"
 import {
   isGitRepo,
   createGhostCommit,
@@ -261,6 +262,26 @@ export const gitListSnapshotsTool = {
 // Tool: git_apply_patch - 应用 AI 生成的 diff 补丁
 // ============================================================================
 
+/**
+ * 从 unified diff 里抽出所有会被写入的路径。
+ *
+ * 为什么需要这个：`git apply` 自己会拦 `.git/**` 与 `../` 逃逸（实测确认），
+ * 但它照样会凭空创建仓库内的 `.bashrc`、`.npmrc`、`.github/workflows/*`。
+ * 而 git_apply_patch 从不带 pattern 走 evaluatePermission，于是保护路径清单
+ * 这一层完全看不到这些目标 —— 一个 diff 就能装上 pre-commit 钩子。
+ */
+function diffTargetPaths(diff) {
+  const paths = new Set()
+  for (const line of String(diff || "").split(/\r?\n/)) {
+    const plus = /^\+\+\+\s+(?:b\/)?(.+?)(?:\t.*)?$/.exec(line)
+    if (plus && plus[1] !== "/dev/null") paths.add(plus[1].trim())
+    const minus = /^---\s+(?:a\/)?(.+?)(?:\t.*)?$/.exec(line)
+    if (minus && minus[1] !== "/dev/null") paths.add(minus[1].trim())
+  }
+  return [...paths]
+}
+
+
 export const gitApplyPatchTool = {
   name: "git_apply_patch",
   description: "Apply a unified diff/patch to the working directory. Supports 3-way merge for conflict resolution. First runs a preflight check to validate the patch can be applied, then applies it if valid.",
@@ -302,6 +323,18 @@ export const gitApplyPatchTool = {
         ok: false,
         error: "empty_diff",
         message: "Diff content is empty"
+      }
+    }
+
+    // 保护路径必须在这里自查：本工具不带 pattern 走 evaluatePermission，
+    // 那一层的保护清单看不到 diff 里的目标路径。
+    const blocked = findProtectedTarget(diffTargetPaths(diff))
+    if (blocked) {
+      return {
+        ok: false,
+        error: "protected_path",
+        message: `This patch writes to ${blocked.path}: ${blocked.reason}`,
+        suggestion: "Remove that file from the diff, or ask the user to apply it manually."
       }
     }
 

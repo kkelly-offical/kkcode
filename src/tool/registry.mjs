@@ -273,12 +273,20 @@ function isLongRunningCommand(command) {
   return LONG_RUNNING_PATTERNS.some((re) => re.test(cmd))
 }
 
-async function runBash(command, cwd, timeoutMs = BASH_TIMEOUT_MS) {
+async function runBash(command, cwd, timeoutMs = BASH_TIMEOUT_MS, options = {}) {
   if (isLongRunningCommand(command)) {
     return `[blocked] "${command}" looks like a long-running/dev-server command that would block execution. Please tell the user to run it manually in their terminal, or use run_in_background: true.`
   }
-  const out = await exec(wrapCmd(command), { cwd, timeout: timeoutMs, encoding: "utf8" }).catch((error) => {
+  const { env: extraEnv = null, maxChars = 30000 } = options
+  const env = extraEnv ? { ...process.env, ...extraEnv } : process.env
+  // exitCode 此前被 catch 整个吞掉：模型只看到 stderr 文本，无法区分「命令
+  // 失败」和「命令成功但往 stderr 写了进度」—— 后者在 npm/pip/git 里极常见。
+  let exitCode = 0
+  let timedOut = false
+  const out = await exec(wrapCmd(command), { cwd, timeout: timeoutMs, encoding: "utf8", env }).catch((error) => {
+    exitCode = Number.isInteger(error.code) ? error.code : 1
     if (error.killed || error.signal === "SIGTERM") {
+      timedOut = true
       return {
         stdout: error.stdout ?? "",
         stderr: `${error.stderr || ""}\n[timeout] command killed after ${timeoutMs / 1000}s`
@@ -290,8 +298,22 @@ async function runBash(command, cwd, timeoutMs = BASH_TIMEOUT_MS) {
     }
   })
   const raw = `${out.stdout || ""}${out.stderr || ""}`.trim() || "(empty output)"
-  if (raw.length > 30000) return raw.slice(0, 30000) + `\n\n[truncated] output exceeded 30000 chars (total: ${raw.length})`
-  return raw
+  const status = timedOut
+    ? "[timed out]"
+    : exitCode === 0 ? "" : `[exit ${exitCode}]`
+
+  // 上限跟着模型上下文走（见 tool/output-budget.mjs），并且截断要说清怎么拿更多
+  // —— 此前是硬编码 30000 且只说「超了」，模型无从判断该缩范围还是该分页。
+  const limit = Math.max(4000, Number(maxChars) || 30000)
+  const body = raw.length > limit
+    ? `${raw.slice(0, limit)}\n\n${truncationNotice({
+        shown: limit,
+        total: raw.length,
+        unit: "chars",
+        hint: "Re-run with a narrower command (add a filter, head/tail, or --quiet) to see the rest."
+      })}`
+    : raw
+  return status ? `${status}\n${body}` : body
 }
 
 function lockOptions(ctx = {}) {
@@ -917,14 +939,16 @@ function builtinTools(config) {
 
   const bashTool = {
     name: "bash",
-    description: "Run a shell command in cwd. ONLY use for commands that have no dedicated tool (e.g. git, npm, pip, docker). Do NOT use for: reading files (use `read`), searching files (use `grep`/`glob`), writing files (use `write`/`edit`). Long-running commands are blocked unless run_in_background is true.",
+    description: "Run a shell command in cwd. ONLY use for commands that have no dedicated tool (e.g. git, npm, pip, docker). Do NOT use for: reading files (use `read`), searching files (use `grep`/`glob`), writing files (use `write`/`edit`). Long-running commands (dev servers, watchers) must use run_in_background: true. Supports `cwd` and per-command `env`. Non-zero exits are reported as `[exit N]`.",
     inputSchema: {
       type: "object",
       properties: {
         command: schema("string", "shell command"),
         timeout: schema("number", "timeout in ms (default 120000, max 600000)"),
         description: schema("string", "human-readable description of what this command does (optional)"),
-        run_in_background: schema("boolean", "run as background task, returns task_id immediately (optional)")
+        run_in_background: schema("boolean", "run as background task, returns task_id immediately (optional). Use this for long-running commands (dev servers, watchers, builds) — they are blocked in the foreground."),
+        cwd: schema("string", "working directory, relative to the workspace root (optional, default: workspace root)"),
+        env: schema("object", "extra environment variables for this command only, e.g. {\"NODE_ENV\":\"test\"} (optional). Added on top of the inherited environment.")
       },
       required: ["command"]
     },
@@ -949,16 +973,31 @@ function builtinTools(config) {
         }
       }
 
+      // cwd 必须过 resolveWorkspacePath —— 否则 `cwd: "../.."` 就能把整个
+      // 工作区边界抬走，后续所有相对路径判定都在错误的根下做。
+      const runCwd = args.cwd
+        ? await resolveWorkspacePath(ctx.cwd, String(args.cwd), { mustExist: true })
+        : ctx.cwd
+      const extraEnv = args.env && typeof args.env === "object" && !Array.isArray(args.env)
+        ? Object.fromEntries(
+            Object.entries(args.env)
+              .filter(([key]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key))
+              .map(([key, value]) => [key, String(value)])
+          )
+        : null
+      const maxChars = Number(ctx.toolResultLimit) || 30000
+
       if (args.run_in_background) {
-        if (isLongRunningCommand(command)) {
-          return `[blocked] "${command}" appears to be a long-running command. Run it manually in your terminal.`
-        }
-        // Launch as background task
+        // 这里**不**再拦长命令。前台那道拦截的提示语原文是「或者用
+        // run_in_background: true」，而这里又把它堵回去 —— 文档承诺的唯一
+        // 逃生口在代码里不存在，模型照提示改参数后拿到的还是 blocked。
+        // 后台本来就是长命令该去的地方：它有独立超时，不阻塞对话。
         const task = await BackgroundManager.launch({
           description: args.description || command,
-          payload: { command, cwd: ctx.cwd },
+          payload: { command, cwd: runCwd },
           run: async () => {
-            const out = await exec(wrapCmd(command), { cwd: ctx.cwd, timeout: 600_000, encoding: "utf8" })
+            const env = extraEnv ? { ...process.env, ...extraEnv } : process.env
+            const out = await exec(wrapCmd(command), { cwd: runCwd, timeout: 600_000, encoding: "utf8", env })
               .catch(e => ({ stdout: e.stdout ?? "", stderr: e.stderr ?? e.message }))
             return `${out.stdout || ""}${out.stderr || ""}`.trim() || "(empty output)"
           },
@@ -967,7 +1006,7 @@ function builtinTools(config) {
         return `background task launched: ${task.id}\nUse background_output to check results.`
       }
 
-      return runBash(command, ctx.cwd, timeoutMs)
+      return runBash(command, runCwd, timeoutMs, { env: extraEnv, maxChars })
     }
   }
 

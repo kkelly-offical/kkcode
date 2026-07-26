@@ -104,11 +104,21 @@ test("legacy permission.mode auto maps to manual instead of widening edits", () 
   assert.equal(decision.source, "level:manual")
 })
 
-test("readonly level denies edits and every shell command", () => {
-  assert.equal(decide({ level: "readonly", rules: [] }, { tool: "edit", pattern: "README.md" }).source, "level:readonly")
-  assert.equal(decide({ level: "readonly", rules: [] }, { tool: "edit", pattern: "README.md" }).action, "deny")
-  assert.equal(decide({ level: "readonly", rules: [] }, { tool: "bash", command: "git status" }).action, "deny")
-  assert.equal(decide({ level: "readonly", rules: [] }, { tool: "read", pattern: "README.md" }).action, "allow")
+test("readonly level denies mutation but allows verified read-only shell", () => {
+  const ro = { level: "readonly", rules: [] }
+  assert.equal(decide(ro, { tool: "edit", pattern: "README.md" }).source, "level:readonly")
+  assert.equal(decide(ro, { tool: "edit", pattern: "README.md" }).action, "deny")
+  assert.equal(decide(ro, { tool: "read", pattern: "README.md" }).action, "allow")
+
+  // 0.7.0 行为变更：safe-shell 在只读档放行。它的定义就是「已判定为只读的
+  // 命令」，而 exec-policy 的 allow_git_status 与 TRUSTED_BASH_PATTERNS 都
+  // 判 git status 安全 —— 此前三处判定互相矛盾，用户在最该畅通的档位被挡。
+  assert.equal(decide(ro, { tool: "bash", command: "git status" }).action, "allow")
+  assert.equal(decide(ro, { tool: "bash", command: "ls -la" }).action, "allow")
+
+  // 但不在白名单里的 shell 命令仍然一律拒绝 —— 放开的只是「已验证只读」那一类
+  assert.equal(decide(ro, { tool: "bash", command: "npm install" }).action, "deny")
+  assert.equal(decide(ro, { tool: "bash", command: "rm -f x" }).action, "deny")
 })
 
 test("legacy review folds into manual, so edits now ask instead of being denied", () => {

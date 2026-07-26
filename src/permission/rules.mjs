@@ -1,4 +1,5 @@
 import { getSensitiveEditPolicy } from "./file-edit-policy.mjs"
+import { findProtectedAccess } from "./protected-paths.mjs"
 import { matchGlob, matchPatterns, normalizePath } from "../util/glob.mjs"
 import { APPROVAL_LEVELS, DEFAULT_APPROVAL } from "../core/modes.mjs"
 import { noteDeprecation } from "../core/deprecations.mjs"
@@ -30,9 +31,29 @@ const TOOL_CAPABILITIES = {
   multiedit: "edit",
   notebookedit: "edit",
   task: "task",
+  task_group: "task",
   task_stop: "task",
   background_cancel: "task",
-  skill: "task"
+  skill: "task",
+
+  // 0.7.0：以下工具此前全部落到 "unknown"，后果不是策略决定而是漏登记 ——
+  // readonly 档下 unknown 一律 deny、accept-edits 档下一律 ask，于是
+  // `git status` 这种纯读操作在只读档被拒、在「接受编辑」档还要弹窗，
+  // 而同族的 task_list 放行、task_parallel 要问，区别只在于名字有没有
+  // 被手写进这张表。
+  task_parallel: "read",
+  git_status: "read",
+  git_info: "read",
+  git_list_snapshots: "read",
+  git_snapshot: "edit",
+  git_restore: "edit",
+  git_delete_snapshot: "edit",
+  git_cleanup: "edit",
+  git_apply_patch: "edit",
+  git_auto_stage: "edit",
+  git_auto_commit: "edit",
+  git_auto_push: "risky-shell",
+  git_full_auto_status: "read"
 }
 
 const TRUSTED_BASH_PATTERNS = [
@@ -92,7 +113,12 @@ function levelAllowsTool({ level, tool, command = "" }) {
   const cap = toolCapability(tool, command)
   if (level === "yolo") return "allow"
   if (level === "readonly") {
-    return ["read", "search", "network"].includes(cap) ? "allow" : "deny"
+    // safe-shell 归入放行：它的定义就是「已判定为只读的命令」——
+    // `git status`、`ls`、`cat`、`rg` 之类（见 TRUSTED_BASH_PATTERNS）。
+    // 此前把它排除在外，导致 git status 在只读档被拒，而 exec-policy 的
+    // allow_git_status 与 TRUSTED_BASH_PATTERNS 都判它安全 —— 三处判定
+    // 互相矛盾，用户在最该畅通的档位上反而被挡。
+    return ["read", "search", "network", "safe-shell"].includes(cap) ? "allow" : "deny"
   }
   if (level === "accept-edits") {
     if (["read", "search", "network", "safe-shell", "edit", "task"].includes(cap)) return "allow"
@@ -168,6 +194,22 @@ export function evaluatePermission({ config, tool, mode, pattern = "*", command 
   const permission = config.permission || { rules: [] }
   const permissionLevel = normalizePermissionLevel(permission)
   const rules = Array.isArray(permission.rules) ? permission.rules : []
+
+  // 保护路径检查排在**用户规则之前**，这个顺序本身就是安全属性：
+  // 否则仓库里 checked-in 的一条 `{tool:"write", pattern:".git/**",
+  // action:"allow"}` 就能把整套保护绕掉 —— 而那条规则可能来自你刚 clone
+  // 的别人的仓库。yolo 也不例外：这些位置的写入无法靠 git 回滚补救。
+  const protectedHit = findProtectedAccess({ tool, pattern, command })
+  if (protectedHit) {
+    return {
+      action: "ask",
+      source: "protected_path",
+      rule: null,
+      level: permissionLevel,
+      protectedPath: protectedHit.path,
+      reason: protectedHit.reason
+    }
+  }
 
   for (const rule of rules) {
     if (matchRule(rule, { tool, mode, pattern, command, risk, workspace })) {
