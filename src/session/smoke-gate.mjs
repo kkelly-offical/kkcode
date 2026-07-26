@@ -1,4 +1,5 @@
 import path from "node:path"
+import { pathToFileURL } from "node:url"
 import { readFile, access } from "node:fs/promises"
 import { runGateCommand, outputSnippet } from "./gate-command.mjs"
 
@@ -94,7 +95,10 @@ export async function resolveSmokeTarget(cwd, config) {
     return {
       kind: "entry",
       command: process.execPath,
-      args: ["--input-type=module", "-e", `await import(${JSON.stringify(path.resolve(cwd, entryPath))})`],
+      // 必须转成 file:// URL：Windows 上 `await import("C:\\x\\index.mjs")` 里的
+      // `C:` 会被当成 URL scheme，抛 ERR_UNSUPPORTED_ESM_URL_SCHEME —— 那会让
+      // 这道门禁在每一个 Windows 库项目上都报假失败。
+      args: ["--input-type=module", "-e", `await import(${JSON.stringify(pathToFileURL(path.resolve(cwd, entryPath)).href)})`],
       shell: false,
       describe: `import ${entryPath}`
     }

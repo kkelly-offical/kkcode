@@ -51,6 +51,12 @@
   record has five keys and `prefs.smoke` is `undefined`, not `false`. It now
   keys off the gates present in the record. Three other places hard-coded the
   same five-gate list; all now derive from `GATE_NAMES`.
+- The smoke gate's library-entry check builds a `file://` URL. A bare Windows
+  path is not a valid ESM specifier — `C:` parses as a URL scheme — so the check
+  would have failed on every Windows library project. The release gate caught it
+  (5/6 green, tag not pushed). This class of defect has now appeared three times
+  in this repository, so the assertion lives in the unit test and fails on Linux
+  too, rather than waiting for a Windows runner.
 - `runGateCommand` moved to `src/session/gate-command.mjs`. The smoke gate needs
   it and `runUsabilityGates` needs the smoke gate — ESM function hoisting makes
   that cycle work by accident, and it breaks the moment someone adds a
@@ -94,6 +100,11 @@
   自己本来要救的那类记录**恰好失效了**：0.4.x 的记录只有五个键，
   `prefs.smoke` 是 `undefined` 而不是 `false`。现在按记录里实际出现的门禁键
   判定。另有三处也硬编码了同一份五门禁清单，全部改为从 `GATE_NAMES` 推导。
+- smoke 门禁的库入口检查改为构造 `file://` URL。裸 Windows 路径不是合法的
+  ESM specifier（`C:` 会被解析成 URL scheme），这道检查本会在**每一个**
+  Windows 库项目上假失败。发布门槛拦住了它（5/6 绿，tag 未推）。这类缺陷在
+  本仓已出现三次，所以断言写进了单元测试、在 Linux 上也会红，不再等
+  Windows runner 去发现。
 - `runGateCommand` 移到 `src/session/gate-command.mjs`。smoke 门禁要用它，而
   `runUsabilityGates` 要用 smoke 门禁 —— ESM 的函数提升让这个循环恰好能跑，
   但谁在里面加一个模块级 `const` 就会炸，而炸的现场离原因很远。

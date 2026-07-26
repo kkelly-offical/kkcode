@@ -179,3 +179,21 @@ test("a program that can never finish is a failure, not a pass", async () => {
     assert.equal(result.evidence.exitCode, 13)
   })
 })
+
+test("the import specifier is a file:// URL, so it works on Windows too", async () => {
+  // 这条在 Linux 上也能抓到 Windows bug：`await import("C:\\x\\index.mjs")` 里的
+  // `C:` 会被当成 URL scheme 抛 ERR_UNSUPPORTED_ESM_URL_SCHEME，于是这道门禁
+  // 在每一个 Windows 库项目上都报假失败。0.6.7 的 verify 就是这么红的。
+  // 「新代码里的 Windows 路径问题」在本仓已出现三次，所以断言写在这里而不是
+  // 依赖 Windows runner 去发现。
+  await withProject({
+    "package.json": JSON.stringify({ name: "lib", version: "1.0.0", main: "index.mjs", type: "module" }),
+    "index.mjs": "export const value = 42\n"
+  }, async (dir) => {
+    const target = await resolveSmokeTarget(dir, {})
+    const specifier = target.args.find((a) => a.includes("await import"))
+    assert.ok(specifier, "入口检查必须通过一次 import 完成")
+    assert.match(specifier, /await import\("file:\/\/\//, `必须是 file:// URL，实际: ${specifier}`)
+    assert.doesNotMatch(specifier, /\\\\/, "specifier 里不能出现反斜杠")
+  })
+})
