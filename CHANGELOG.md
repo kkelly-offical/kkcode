@@ -1,5 +1,66 @@
 # Changelog / 更新日志
 
+## 0.6.4
+
+### English
+
+- **Tool output was capped at 3000 characters, and truncation was silent.** A
+  268-line source file is 12494 characters, so the model saw a quarter of any
+  ordinary file — and read's 2000-line limit had never once taken effect,
+  because the real ceiling was 1/25 of it. Against peers that is one to two
+  orders of magnitude low: opencode caps at 50 KB, Codex at 1 MiB of shell
+  output, Claude Code at roughly 100 KB.
+  The budget now derives from the active model's context window instead of a
+  frozen number: k3 gets 35840 characters, gpt-5 76160, a 64K model 17920.
+  Floor 16000 so reading one ordinary file always fits; ceiling 200000 so one
+  call cannot dominate the context and drag compaction forward.
+  This is not "remove the limits" — a line cap is what every peer does and it
+  is deliberate; Anthropic's own guidance is that truncation should steer the
+  agent toward more targeted retrieval. What was missing is that ours never
+  said so.
+- **Every read now reports its own state**: `[complete: 340 lines]`, or
+  `[truncated: showing 2000 of 3000 lines, 1000 remaining. Use read with
+  offset=2001 to continue.]`. Silence was the worse half: a read of a 3000-line
+  file stopped dead at line 2000 with no footer, so a quarter of a file passed
+  for the whole thing — and it was separately marked a partial view, which then
+  failed the model's later write for a reason it could not see.
+- read also gains a 50 KB byte cap (line and per-line caps cannot stop a
+  minified file), a size check before loading (nothing stopped a 2 GB file from
+  going straight into memory), binary detection (a `.so` read as UTF-8 filled
+  the context with replacement characters), and an error instead of a silent
+  empty string for an out-of-range offset. The read-state cache now stores what
+  the model actually saw rather than the untruncated original — that mismatch
+  made edits against a truncated line fail with no way to work out why.
+- **`BUILTIN_CONTEXT` gains the kimi family.** `k3` was falling through to the
+  128000 default when it is a 1M model, so compaction fired eight times too
+  early. Long prefixes are now ordered ahead of short ones, since the lookup
+  walks in declaration order and `k3` would otherwise swallow `k3-256k`.
+
+### 中文
+
+- **工具输出被砍到 3000 字符，而且截断不发声。** 一个 268 行的源文件有 12494
+  字符，模型只能看到普通文件的四分之一 —— 而 read 那个 2000 行的上限**从未
+  生效过**，真正的天花板是它的 1/25。对比同行低了一到两个数量级：opencode
+  50KB、Codex 1MiB shell 输出、Claude Code 约 100KB。
+  预算现在按当前模型的上下文推算而非写死：k3 得 35840 字符、gpt-5 得 76160、
+  64K 模型得 17920。下限 16000 保证读一个普通文件总能读全；上限 200000 防止
+  单次调用主导上下文、把压缩提前拖来。
+  这不是「取消上限」—— 行数上限是同行共识且刻意为之，Anthropic 自己的指导是
+  截断应当把 agent 引向更精确的检索。我们缺的从来是「说出来」。
+- **每次读取都自报状态**：`[complete: 340 lines]`，或 `[truncated: showing
+  2000 of 3000 lines, 1000 remaining. Use read with offset=2001 to continue.]`。
+  沉默是这个缺陷更糟的那一半：读 3000 行的文件在第 2000 行戛然而止、没有任何
+  footer，四分之一就当成了全文 —— 而且它还被单独标记成部分读取，导致模型后续
+  的写入失败，且它看不出原因。
+- read 另补：50KB 字节帽（行数与单行上限都拦不住 minified 文件）、加载前的
+  大小预检（此前没有任何东西阻止一个 2GB 文件直接进内存）、二进制探测（`.so`
+  按 UTF-8 读会用替换字符填满上下文）、越界 offset 改为报错而非静默返回空串。
+  读状态缓存现在存模型实际看到的内容而非未截断原文 —— 这个错位让「照着被截断
+  的行去编辑」必然失败，且无从判断原因。
+- **`BUILTIN_CONTEXT` 补上 kimi 族。** `k3` 此前落到 128000 默认值，而它是 1M
+  模型 —— 压缩因此提前八倍触发。长前缀现在排在短前缀之前，因为查表按声明序
+  遍历，否则 `k3` 会把 `k3-256k` 吃掉。
+
 ## 0.6.3
 
 0.6.2 claimed to fix YOLO refusing commands. It did not — the fix landed in the

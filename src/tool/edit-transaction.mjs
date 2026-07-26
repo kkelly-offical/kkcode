@@ -1,5 +1,6 @@
 import path from "node:path"
 import { readFile, writeFile, rename, unlink, mkdir } from "node:fs/promises"
+import { diagnoseNoMatch } from "./edit-diagnosis.mjs"
 
 function tmpPath(target) {
   return `${target}.kkcode.tmp`
@@ -112,7 +113,13 @@ export async function replaceInFileTransactional(target, before, after) {
   const content = await readFile(absolute, "utf8")
   const matches = content.split(before).length - 1
   if (matches <= 0) {
-    return { ok: false, output: "no match", matches: 0, addedLines: 0, removedLines: 0 }
+    // 此前只返回两个词 "no match" —— 模型唯一能做的是重读整个文件再猜。
+    // 现在给出相似度、带行号的最接近匹配与周边原文，让它一轮内能改对。
+    return {
+      ok: false,
+      output: diagnoseNoMatch({ path: absolute, content, before }),
+      matches: 0, addedLines: 0, removedLines: 0
+    }
   }
   if (matches > 1) {
     return { ok: false, output: `ambiguous: found ${matches} occurrences, expected exactly 1. Provide more surrounding context to match uniquely.`, matches, addedLines: 0, removedLines: 0 }
@@ -134,7 +141,11 @@ export async function replaceAllInFileTransactional(target, before, after) {
   const content = await readFile(absolute, "utf8")
   const matches = content.split(before).length - 1
   if (matches <= 0) {
-    return { ok: false, output: "no match", matches: 0, addedLines: 0, removedLines: 0 }
+    return {
+      ok: false,
+      output: diagnoseNoMatch({ path: absolute, content, before }),
+      matches: 0, addedLines: 0, removedLines: 0
+    }
   }
   const next = content.replaceAll(before, after)
   await atomicWriteFile(absolute, next)
