@@ -193,7 +193,9 @@ function toolPatternFromArgs(args) {
       .filter(Boolean)
       .join(",")
   }
-  return String(args.path || args.command || args.pattern || args.task_id || "*")
+  // args.skill：不提取的话技能调用的 pattern 恒为 "*"，规则没法针对某个技能，
+  // 审批弹窗也说不出用户正在批准哪一个。
+  return String(args.path || args.command || args.pattern || args.task_id || args.skill || "*")
 }
 
 function normalizeMessageForCache(msg) {
@@ -916,8 +918,12 @@ export async function processTurnLoop({
               output: `[PLAN MODE] Cannot execute '${call.name}' in plan mode. Finish your plan outline and call exit_plan to present it for user approval.`
             }
           } else {
+            // 先取工具：有些工具的能力取决于参数（技能是模板展开还是执行代码），
+            // 由工具自己回答比在权限层里堆特例更准。
+            const pendingTool = await ToolRegistry.get(call.name)
             await PermissionEngine.check({
               config: permissionConfig,
+              capability: pendingTool?.capabilityFor?.(call.args) || null,
               sessionId,
               turnId,
               traceId: stepRequestContext.traceId,
@@ -932,7 +938,7 @@ export async function processTurnLoop({
               reason: `tool call from model at step ${step}`
             })
 
-            const tool = await ToolRegistry.get(call.name)
+            const tool = pendingTool
             // 白名单在执行期强制。0.6.0 之前它只过滤「广告给模型的清单」
             // （上面 systemTools.filter），执行走 ToolRegistry.get 不做校验 ——
             // 模型报出一个没被广告的工具名（幻觉、或 fork_context 继承的历史

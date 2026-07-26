@@ -1,5 +1,88 @@
 # Changelog / 更新日志
 
+## 0.6.22
+
+技能能被模型读到、却调不动 —— 修好了。
+
+### English
+
+- **The model could read the skill catalogue but never invoke it.** Everything
+  looked wired: the `skill` tool is registered, described, and 15 skills appear in
+  the system prompt with the `$name` syntax spelled out. A real run says otherwise:
+
+  ```
+  {"name":"skill","args":{"skill":"test-plan"},"status":"error",
+   "output":"permission denied for tool skill (you declined it)"}
+  ```
+
+  That run passed `--trust` and was **non-interactive** — nobody was there to
+  decline anything.
+- **Root cause: one capability for two very different things.** `skill` was
+  classified as `task`, the same tier as spawning a sub-agent. At the default
+  `manual` level `task` means *ask*, and in a non-interactive session an *ask*
+  falls through to `permission.non_tty_default`, which defaults to `deny`. So
+  skills were dead in `kkcode chat`, in CI, and behind a pipe — and in the TUI
+  every skill cost an approval.
+- **The fix classifies by what a skill actually does, not by its tool name.**
+  `template` and `skill_md` skills expand a template into a prompt: no filesystem,
+  no network, no shell. That is equivalent to the user typing the text themselves,
+  and whatever the expanded prompt then asks for goes through the normal tool
+  permissions anyway. They are a new `prompt` capability, allowed at every level
+  including `readonly`. `mjs` skills call `run()` and execute arbitrary JavaScript,
+  so they stay on `task` and still require approval. An unknown skill, an empty
+  name, or an uninitialised registry all fail closed to `task`.
+- **Tools may now report their own capability.** `bash` has always worked this way
+  — the command decides between `safe-shell` and `risky-shell`. Skills are the same
+  shape: a single tool name cannot carry a fixed risk tier when the risk depends on
+  the argument.
+- **The permission layer can see which skill is being invoked.**
+  `toolPatternFromArgs` did not extract `args.skill`, so every skill call had the
+  pattern `*` — rules could not target one skill and the approval prompt could not
+  say which one you were approving.
+- **A non-interactive denial no longer blames the user.** "you declined it" is
+  false in `kkcode chat`, CI, or behind a pipe; it sends people looking for an
+  approval dialog that does not exist. It now names `permission.non_tty_default`
+  and says how to change it.
+- **Verified against the real model, both directions.** `$test-plan` (skill_md)
+  goes from `permission denied` to `completed` with the expanded prompt actually
+  driving the turn; `$commit` (mjs) is still denied, now with a message that
+  explains itself. The `$` completion menu in the TUI was already fine — the
+  user-facing half was never broken.
+
+### 中文
+
+- **模型读得到技能清单，却一个也调不动。** 纸面上全都接好了：`skill` 工具注册了、
+  描述写了，15 个技能连同 `$name` 语法都在系统提示里。真跑一次却是：
+
+  ```
+  {"name":"skill","args":{"skill":"test-plan"},"status":"error",
+   "output":"permission denied for tool skill (you declined it)"}
+  ```
+
+  那次运行带着 `--trust`，而且是**非交互**的 —— 根本没有人可以「declined」。
+- **根因是把两件性质完全不同的事归成了一个能力。** `skill` 被归为 `task`，
+  与派生子智能体同级。默认 `manual` 档下 `task` 判 `ask`，而非交互环境的 `ask`
+  会落到 `permission.non_tty_default`（默认 `deny`）。于是技能在 `kkcode chat`、
+  CI、管道输入里彻底不可用；TUI 里则是每次调用都要批一次。
+- **修法是按技能实际做什么分类，而不是按工具名。** `template` 与 `skill_md`
+  技能只是把模板展开成一段提示词：不碰文件系统、不联网、不起 shell。那等价于
+  用户自己把那段话打出来 —— 展开后的提示词要做什么，每一步仍然各自过权限。
+  它们归入新的 `prompt` 能力，各档位（含 `readonly`）一律放行。`mjs` 技能会
+  调 `run()` 执行任意 JavaScript，保持 `task`，仍需审批。未知技能、空名字、
+  注册表未就绪，一律 fail closed 到 `task`。
+- **工具现在可以自报能力。** `bash` 一直就是这样 —— 命令决定它算 `safe-shell`
+  还是 `risky-shell`。技能是同一种形状：风险取决于参数的工具，一个名字扛不起
+  一个固定档位。
+- **权限层现在看得见调的是哪个技能。** `toolPatternFromArgs` 没有提取
+  `args.skill`，所以每次技能调用的 pattern 都是 `*` —— 规则没法针对某一个技能，
+  审批弹窗也说不出你正在批准哪一个。
+- **非交互下的拒绝不再赖用户。**「you declined it」在 `kkcode chat`、CI、管道输入里
+  是假的，只会让人去找一个根本不存在的审批弹窗。现在它点名
+  `permission.non_tty_default` 并给出改法。
+- **用真实模型双向验证。** `$test-plan`（skill_md）从 `permission denied` 变成
+  `completed`，展开的提示词真的驱动了这一轮；`$commit`（mjs）仍然被拒，但报错
+  说清了原因。TUI 里的 `$` 补全菜单本来就是好的 —— 用户侧那一半从未坏过。
+
 ## 0.6.21
 
 事件桥抽出来了，顺带删掉一份没人读、也没有上限的并行状态。

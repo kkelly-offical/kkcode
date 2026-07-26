@@ -1457,6 +1457,25 @@ function builtinTools(config) {
   const skillTool = {
     name: "skill",
     description: "Invoke a registered skill by name. Skills are pre-built prompt templates or programmable modules that provide specialized capabilities. Use this when a task matches an available skill listed in the system prompt, or when the user mentions a skill command like '$commit'.",
+    /**
+     * 技能的风险取决于它是哪一种，一个工具名对应不了一个固定档位：
+     *
+     *   - `template` / `skill_md`：把模板展开成一段提示词，对系统零副作用。
+     *     等价于用户自己把那段话打出来 —— 展开之后模型要做什么，每一步仍然
+     *     各自过权限。归 `prompt`（与只读同档）。
+     *   - `mjs`：调用 skill.run()，**执行任意 JS**。归 `task`，需要审批。
+     *
+     * 此前一律归 `task`，后果是技能在非交互环境里彻底不可用：`ask` 会落到
+     * permission.non_tty_default（默认 deny），于是模型能在系统提示里读到
+     * 完整的技能清单，却一个也调不动。
+     */
+    capabilityFor(args) {
+      const name = String(args?.skill || "").trim()
+      if (!name || !SkillRegistry.isReady()) return "task"
+      const skill = SkillRegistry.get(name)
+      if (!skill) return "task"
+      return skill.type === "mjs" ? "task" : "prompt"
+    },
     inputSchema: {
       type: "object",
       properties: {

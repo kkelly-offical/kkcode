@@ -88,7 +88,20 @@ export function normalizePermissionLevel(permission = {}) {
   return APPROVAL_LEVELS.includes(rawLevel) ? rawLevel : DEFAULT_APPROVAL
 }
 
-export function toolCapability(tool, command = "") {
+/**
+ * 工具的能力分类。
+ *
+ * `capability` 是**工具自报的能力**，优先于静态表 —— 有些工具的风险取决于参数，
+ * 一个名字对应不了一个固定档位：
+ *
+ *   - `bash` 早就是这样：命令在白名单里算 safe-shell，否则 risky-shell
+ *   - `skill` 同理：`template`/`skill_md` 技能只是把一段模板展开成提示词，
+ *     对系统零副作用（展开后的提示词让模型做什么，仍然要过正常的工具权限）；
+ *     而 `mjs` 技能会执行任意 JS。一刀切归成 `task` 的后果是技能在非交互
+ *     环境里彻底不可用 —— `ask` 会落到 non_tty_default（默认 deny）。
+ */
+export function toolCapability(tool, command = "", { capability = null } = {}) {
+  if (capability) return capability
   const name = String(tool || "")
   if (name === "bash") return trustedBashCommand(command) ? "safe-shell" : "risky-shell"
   return TOOL_CAPABILITIES[name] || "unknown"
@@ -104,21 +117,29 @@ function trustedBashCommand(command) {
 /** @deprecated 旧 `auto` 档的判定，保留供既有测试与迁移期比对，0.5.0 移除。 */
 function autoAllowsTool({ tool, command = "" }) {
   const cap = toolCapability(tool, command)
-  return ["read", "search", "network", "safe-shell"].includes(cap)
+  return SELF_CONTAINED_CAPABILITIES.includes(cap)
 }
+
+/**
+ * 「不改变系统状态」的能力。
+ *
+ * `prompt` 指把模板展开成一段提示词 —— 它等价于用户自己把那段话打出来，
+ * 因此和只读同档：展开之后模型要做什么，每一步仍然各自过权限。
+ */
+const SELF_CONTAINED_CAPABILITIES = ["read", "search", "network", "safe-shell", "prompt"]
 
 /**
  * 四档审批矩阵。能力分类见 TOOL_CAPABILITIES；bash 另按命令白名单拆成
  * safe-shell / risky-shell。
  *
- *              read/search/network  safe-shell  risky-shell  edit   task
+ *              read/search/network/prompt  safe-shell  risky-shell  edit   task
  *   readonly          allow            deny        deny      deny   deny
  *   manual            allow           allow         ask       ask    ask
  *   accept-edits      allow           allow         ask     allow  allow
  *   yolo              allow           allow       allow     allow  allow
  */
-function levelAllowsTool({ level, tool, command = "" }) {
-  const cap = toolCapability(tool, command)
+function levelAllowsTool({ level, tool, command = "", capability = null }) {
+  const cap = toolCapability(tool, command, { capability })
   if (level === "yolo") return "allow"
   if (level === "readonly") {
     // safe-shell 归入放行：它的定义就是「已判定为只读的命令」——
@@ -126,14 +147,14 @@ function levelAllowsTool({ level, tool, command = "" }) {
     // 此前把它排除在外，导致 git status 在只读档被拒，而 exec-policy 的
     // allow_git_status 与 TRUSTED_BASH_PATTERNS 都判它安全 —— 三处判定
     // 互相矛盾，用户在最该畅通的档位上反而被挡。
-    return ["read", "search", "network", "safe-shell"].includes(cap) ? "allow" : "deny"
+    return SELF_CONTAINED_CAPABILITIES.includes(cap) ? "allow" : "deny"
   }
   if (level === "accept-edits") {
-    if (["read", "search", "network", "safe-shell", "edit", "task"].includes(cap)) return "allow"
+    if ([...SELF_CONTAINED_CAPABILITIES, "edit", "task"].includes(cap)) return "allow"
     return "ask"
   }
   // manual（默认）：只读与白名单 shell 自动放行，其余一律询问
-  if (["read", "search", "network", "safe-shell"].includes(cap)) return "allow"
+  if (SELF_CONTAINED_CAPABILITIES.includes(cap)) return "allow"
   return "ask"
 }
 
@@ -198,7 +219,7 @@ export function matchRule(rule, input) {
  * 但 DEFAULT_CONFIG 恒定注入 permission.level，那三条路径永远不可达。0.4.0 起
  * normalizePermissionLevel 总能给出四档之一，分支随之删除。
  */
-export function evaluatePermission({ config, tool, mode, pattern = "*", command = "", risk = 0, workspace = "" }) {
+export function evaluatePermission({ config, tool, mode, pattern = "*", command = "", risk = 0, workspace = "", capability = null }) {
   const permission = config.permission || { rules: [] }
   const permissionLevel = normalizePermissionLevel(permission)
   const rules = Array.isArray(permission.rules) ? permission.rules : []
@@ -231,7 +252,7 @@ export function evaluatePermission({ config, tool, mode, pattern = "*", command 
     }
   }
 
-  const action = levelAllowsTool({ level: permissionLevel, tool, command })
+  const action = levelAllowsTool({ level: permissionLevel, tool, command, capability })
   const decision = {
     action,
     source: `level:${permissionLevel}`,

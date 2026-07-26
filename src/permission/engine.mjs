@@ -2,7 +2,7 @@ import { PermissionError } from "../core/errors.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { EventBus } from "../core/events.mjs"
 import { evaluatePermission } from "./rules.mjs"
-import { askPermissionInteractive } from "./prompt.mjs"
+import { askPermissionInteractive, canAskInteractively } from "./prompt.mjs"
 import { safeAppendAuditEntry } from "../storage/audit-store.mjs"
 import { sanitizeAuditMetadata, summarizeAuditContent } from "../audit/event.mjs"
 
@@ -79,7 +79,10 @@ export const PermissionEngine = {
     args = {},
     risk = 0,
     reason = "",
-    workspace = ""
+    workspace = "",
+    // 工具自报的能力，优先于静态分类表。风险取决于参数的工具需要它 ——
+    // 例如技能：模板展开是纯提示词，可编程技能会执行任意 JS。
+    capability = null
   }) {
     if (!workspaceTrusted) throw new PermissionError("workspace not trusted — run /trust to enable tools")
     const auditContext = { sessionId, turnId, traceId, requestId, reviewId, tool }
@@ -97,7 +100,7 @@ export const PermissionEngine = {
       return { decision: "allow_session", granted: true }
     }
 
-    const decision = evaluatePermission({ config, tool, mode, pattern, command, risk, workspace })
+    const decision = evaluatePermission({ config, tool, mode, pattern, command, risk, workspace, capability })
     if (decision.action === "allow") {
       await EventBus.emit({
         type: EVENT_TYPES.PERMISSION_DECIDED,
@@ -192,10 +195,16 @@ export const PermissionEngine = {
     await auditPermission("permission.decided", auditContext, {
       decision: "deny", source: "interactive", mode, pattern, risk
     })
+    // 非交互环境（kkcode chat、CI、管道输入）里没有人可以「declined」——
+    // 拒绝来自 permission.non_tty_default。照抄交互文案会让人去找一个
+    // 根本不存在的审批弹窗。
+    const interactive = canAskInteractively()
     throw new PermissionError(
       decision.reason
         ? `permission denied for tool ${tool} (${decision.source}): ${decision.reason}`
-        : `permission denied for tool ${tool} (you declined it)`
+        : interactive
+          ? `permission denied for tool ${tool} (you declined it)`
+          : `permission denied for tool ${tool}: no TTY to ask for approval, and permission.non_tty_default is "${config.permission?.non_tty_default || "deny"}". Raise the approval level (e.g. --yolo) or set permission.non_tty_default: allow_once.`
     )
   }
 }

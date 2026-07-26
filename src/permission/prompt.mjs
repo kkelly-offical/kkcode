@@ -7,6 +7,17 @@ export function setPermissionPromptHandler(handler) {
   customPromptHandler = typeof handler === "function" ? handler : null
 }
 
+/**
+ * 现在有没有人可以回答审批？
+ *
+ * TUI 会注册 customPromptHandler；否则要靠 stdin/stdout 都是 TTY。两者都没有时
+ * （`kkcode chat`、CI、管道输入）审批不是「被拒绝」，是**根本问不到人**，
+ * 判定落到 permission.non_tty_default。
+ */
+export function canAskInteractively() {
+  return Boolean(customPromptHandler) || Boolean(process.stdout.isTTY && process.stdin.isTTY)
+}
+
 export async function askPermissionInteractive({
   tool,
   sessionId,
