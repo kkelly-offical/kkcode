@@ -1,5 +1,46 @@
 # Changelog / 更新日志
 
+## 0.6.24
+
+工具层的两种模态提示（权限审批、提问）抽成模块，18 条测试。
+
+### English
+
+- **148 lines out, and the first tests this code has ever had.** What it governs
+  is whether a Promise ever settles: every prompt has an un-settled tool call
+  behind it. Miss one `resolve` and the symptom is "some background task is
+  stuck and there is no way to tell why"; at exit it means a process that will
+  not quit.
+- **Three properties now asserted that were only ever assumed.** Parallel
+  sub-agents ask for approval at the same time, so prompts *queue* — without a
+  queue a later prompt overwrites the earlier one and its Promise waits forever.
+  A `resolve` that throws must not wedge the queue, because one caller blowing up
+  cannot be allowed to strand every other waiting call. And on teardown every
+  pending prompt is settled: permissions fail closed to `deny`, unfinished
+  questions return explicit skipped values.
+- **Verified the whole loop in a real terminal**, not just in units: the approval
+  overlay renders with `Deny` preselected from the request's own `defaultAction`,
+  answering it resolves the Promise, the write tool runs, and the file actually
+  lands on disk. The status bar also shows `Cache:99%` — the prompt-cache saving
+  that 0.6.16 stopped dropping on the floor.
+- **14 more dead imports removed.** `repl.mjs` 2381 → 2218 lines;
+  `startTuiRepl` 1732 → 1583.
+
+### 中文
+
+- **搬出 148 行，并给这块代码写了它有史以来的第一批测试。** 它管的是「一个 Promise
+  会不会 settle」：每一条提示背后都挂着一次没有结束的工具调用。少 resolve 一个，
+  表现就是「有个后台任务卡住了，看不出为什么」；退出时则是进程不肯退。
+- **三条此前只是假设、现在被断言的性质。** 并行子智能体会同时要审批，所以提示要
+  **排队** —— 没有队列的话后到的会覆盖前一个，前一个的 Promise 永远等不到。
+  resolve 抛错不能把队列卡住，一个调用方炸了不该拖死其余所有等待中的调用。
+  以及退出时每一条都要结掉：权限一律 fail closed 到 `deny`，未答完的问题返回
+  明确的「跳过」值。
+- **完整闭环在真实终端里验过**，不只是单测：审批浮层按请求自带的 `defaultAction`
+  预选 `Deny`，答完之后 Promise 结束、write 工具执行、文件真的落盘。状态栏还能
+  看到 `Cache:99%` —— 那正是 0.6.16 修好、不再被丢掉的提示词缓存节省。
+- **又清掉 14 个死导入。** `repl.mjs` 2381 → 2218 行；`startTuiRepl` 1732 → 1583 行。
+
 ## 0.6.23
 
 鼠标交互抽成模块，第一次有了测试。

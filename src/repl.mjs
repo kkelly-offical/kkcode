@@ -75,6 +75,7 @@ import { createRenderScheduler } from "./repl/render-scheduler.mjs"
 import { createListenerRegistry } from "./repl/listener-registry.mjs"
 import { subscribeSessionEvents } from "./repl/event-bridge.mjs"
 import { createMouseSelection, screenRowFromAbsolute } from "./repl/mouse-selection.mjs"
+import { createPromptQueue } from "./repl/prompt-queue.mjs"
 import { createKeyDispatcher } from "./repl/key-dispatch.mjs"
 import { createOverlayKeyScopes } from "./repl/keys/overlay-keys.mjs"
 import { createLifecycleKeyScope, createScrollKeyScope } from "./repl/keys/global-keys.mjs"
@@ -84,17 +85,10 @@ import { createReplUiState, openUserOverlay, closeUserOverlay } from "./repl/ui-
 import { createGhostPredictor } from "./repl/ghost-predictor.mjs"
 import { buildReplRuntimeSnapshot } from "./repl/runtime-facade.mjs"
 import {
-  activateNextQuestionState,
-  commitQuestionAnswer,
-  advanceQuestionState,
-  finalizeQuestionAnswers
-} from "./repl/dialog-router.mjs"
-import {
   POLICY_CHOICES,
   createPolicyPickerState,
   applyPolicyChoice,
-  PERMISSION_PROMPT_VALUES,
-  defaultPermissionChoiceIndex
+  PERMISSION_PROMPT_VALUES
 } from "./repl/permission-flow.mjs"
 import { nextModeId } from "./core/modes.mjs"
 import {
@@ -106,35 +100,25 @@ import {
 } from "./repl/mode-flow.mjs"
 import { describeRule } from "./permission/learned-rules.mjs"
 import {
-  classifySgrMouseEvent,
   createBracketedPasteDecoder,
   createSgrMouseDecoder,
   createUtf8TextDecoder,
   enterTerminalSequence,
   exitTerminalSequence,
-  isScreenRowWithin,
   normalizeMouseSelection,
   renderTerminalFrame,
   resolveTerminalFeatures
 } from "./repl/terminal-protocol.mjs"
-import { inputIndexAtPosition, moveGraphemeCursor, splitTextByCellRange } from "./repl/text-layout.mjs"
+import { moveGraphemeCursor, splitTextByCellRange } from "./repl/text-layout.mjs"
 import { copyTerminalText } from "./repl/clipboard.mjs"
 import { createTranscriptModel } from "./ui/transcript-model.mjs"
 import { createToastStore } from "./ui/toast-store.mjs"
 import { shouldApplyActiveTurnEvent } from "./ui/event-scope.mjs"
 import { createFrameBatcher } from "./ui/frame-batcher.mjs"
-import {
-  appendThinkingDelta,
-  buildThinkingTranscriptItem,
-  createThinkingState,
-  finishThinking as finishThinkingState,
-  startThinkingStream,
-  startThinkingWait
-} from "./ui/thinking-state.mjs"
+import { buildThinkingTranscriptItem, finishThinking as finishThinkingState } from "./ui/thinking-state.mjs"
 import { rewindLastTurn } from "./session/rewind.mjs"
 import { setMarkdownColors } from "./theme/markdown.mjs"
-import { formatTokenCount } from "./theme/status-bar.mjs"
-import { sanitizeTerminalStyledText, sanitizeTerminalText, sanitizeTerminalValue } from "./theme/terminal-sanitize.mjs"
+import { sanitizeTerminalStyledText, sanitizeTerminalText } from "./theme/terminal-sanitize.mjs"
 
 const HIST_DIR = userRootDir()
 const HIST_FILE = join(HIST_DIR, "repl_history")
@@ -776,153 +760,25 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   // block is inserted before the tool block that follows it.
   activityRenderer.start()
 
-  function queuePermissionPrompt(request) {
-    ui.permissionQueue.push(request)
-    if (!ui.pendingPermission) {
-      ui.pendingPermission = ui.permissionQueue.shift() || null
-      ui.permissionSelected = defaultPermissionIndex(ui.pendingPermission)
-    }
-    requestRender({ force: true })
-  }
-
-  function resolvePermissionPrompt(decision) {
-    if (!ui.pendingPermission) return
-    const current = ui.pendingPermission
-    ui.pendingPermission = null
-    ui.permissionSelected = 0
-    try {
-      current.resolve(decision)
-    } catch {}
-    if (ui.permissionQueue.length) {
-      ui.pendingPermission = ui.permissionQueue.shift() || null
-      ui.permissionSelected = defaultPermissionIndex(ui.pendingPermission)
-    }
-    requestRender({ force: true })
-  }
-
-  function defaultPermissionIndex(perm) {
-    return defaultPermissionChoiceIndex(perm?.defaultAction)
-  }
-
-  function queueQuestionPrompt(request) {
-    ui.questionQueue.push({
-      ...request,
-      questions: sanitizeTerminalValue(request?.questions || [])
-    })
-    if (!ui.pendingQuestion) {
-      activateNextQuestion()
-    }
-    requestRender({ force: true })
-  }
-
-  function activateNextQuestion() {
-    const next = activateNextQuestionState(ui.questionQueue)
-    if (next.queue) ui.questionQueue = next.queue
-    ui.pendingQuestion = next.pendingQuestion
-    ui.questionIndex = next.questionIndex
-    ui.questionOptionSelected = next.questionOptionSelected
-    ui.questionMultiSelected = next.questionMultiSelected
-    ui.questionCustomMode = next.questionCustomMode
-    ui.questionCustomInput = next.questionCustomInput
-    ui.questionCustomCursor = next.questionCustomCursor
-    ui.questionAnswers = next.questionAnswers
-  }
-
-  function commitCurrentQuestionAnswer() {
-    const next = commitQuestionAnswer({
-      pendingQuestion: ui.pendingQuestion,
-      questionIndex: ui.questionIndex,
-      questionOptionSelected: ui.questionOptionSelected,
-      questionMultiSelected: ui.questionMultiSelected,
-      questionCustomMode: ui.questionCustomMode,
-      questionCustomInput: ui.questionCustomInput,
-      questionAnswers: ui.questionAnswers
-    })
-    ui.questionAnswers = next.questionAnswers
-    ui.questionCustomMode = next.questionCustomMode
-    ui.questionCustomInput = next.questionCustomInput
-    ui.questionCustomCursor = next.questionCustomCursor
-  }
-
-  function advanceOrSubmitQuestion() {
-    commitCurrentQuestionAnswer()
-    const next = advanceQuestionState({
-      pendingQuestion: ui.pendingQuestion,
-      questionIndex: ui.questionIndex,
-      questionOptionSelected: ui.questionOptionSelected,
-      questionCustomMode: ui.questionCustomMode,
-      questionCustomInput: ui.questionCustomInput,
-      questionCustomCursor: ui.questionCustomCursor
-    })
-    if (!next.shouldSubmit) {
-      ui.questionIndex = next.questionIndex
-      ui.questionOptionSelected = next.questionOptionSelected
-      ui.questionCustomMode = next.questionCustomMode
-      ui.questionCustomInput = next.questionCustomInput
-      ui.questionCustomCursor = next.questionCustomCursor
-      requestRender({ force: true })
-    } else {
-      resolveQuestionPrompt()
-    }
-  }
-
-  function resolveQuestionPrompt() {
-    if (!ui.pendingQuestion) return
-    const current = ui.pendingQuestion
-    const answers = finalizeQuestionAnswers(current, ui.questionAnswers)
-    ui.pendingQuestion = null
-    ui.questionIndex = 0
-    ui.questionOptionSelected = 0
-    ui.questionMultiSelected = {}
-    ui.questionCustomMode = false
-    ui.questionCustomInput = ""
-    ui.questionCustomCursor = 0
-    ui.questionAnswers = {}
-    try {
-      current.resolve(answers)
-    } catch {}
-    activateNextQuestion()
-    requestRender({ force: true })
-  }
-
   /**
-   * Resolve every application-owned modal before teardown. Permission prompts
-   * fail closed; unfinished questions return explicit skipped values. This
-   * prevents an awaiting tool turn from surviving after the terminal UI exits.
+   * 工具层的两种模态提示（权限审批、提问）。实现在 repl/prompt-queue.mjs。
+   *
+   * 它们不参与用户浮层的互斥：每一条背后都挂着一个没有 settle 的 Promise，
+   * 顺手关掉一个，那次工具调用就永远悬着。
    */
-  function settlePendingPromptsForExit() {
-    const permissions = [
-      ...(ui.pendingPermission ? [ui.pendingPermission] : []),
-      ...ui.permissionQueue
-    ]
-    ui.pendingPermission = null
-    ui.permissionQueue = []
-    ui.permissionSelected = 0
-    for (const permission of permissions) {
-      try { permission.resolve("deny") } catch {}
-    }
+  const prompts = createPromptQueue({ ui, requestRender })
+  const {
+    queuePermissionPrompt,
+    resolvePermissionPrompt,
+    queueQuestionPrompt,
+    commitCurrentQuestionAnswer,
+    advanceOrSubmitQuestion,
+    resolveQuestionPrompt,
+    questionAcceptsTextInput,
+    insertQuestionText,
+    settlePendingPromptsForExit
+  } = prompts
 
-    const questions = [
-      ...(ui.pendingQuestion
-        ? [{ request: ui.pendingQuestion, answers: ui.questionAnswers }]
-        : []),
-      ...ui.questionQueue.map((request) => ({ request, answers: {} }))
-    ]
-    ui.pendingQuestion = null
-    ui.questionQueue = []
-    ui.questionIndex = 0
-    ui.questionOptionSelected = 0
-    ui.questionMultiSelected = {}
-    ui.questionCustomMode = false
-    ui.questionCustomInput = ""
-    ui.questionCustomCursor = 0
-    ui.questionAnswers = {}
-    for (const { request, answers } of questions) {
-      try {
-        request.resolve(finalizeQuestionAnswers(request, answers))
-      } catch {}
-    }
-  }
 
   function abortTurnAndPromptsForExit() {
     if (ui.turnAbortController) {
@@ -1697,29 +1553,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     selectModeAndNotify(nextModeId(state.modeId || resolveModeId(state.mode)))
   }
 
-  function questionAcceptsTextInput() {
-    if (!ui.pendingQuestion) return false
-    const questions = ui.pendingQuestion.questions || []
-    const current = questions[ui.questionIndex] || {}
-    const options = Array.isArray(current.options) ? current.options : []
-    return ui.questionCustomMode || options.length === 0
-  }
 
-  function insertQuestionText(value) {
-    if (!questionAcceptsTextInput()) return false
-    const text = String(value || "").replace(/\r\n?/g, "\n")
-    if (!text) return false
-    const cursor = Math.max(0, Math.min(
-      ui.questionCustomInput.length,
-      ui.questionCustomCursor
-    ))
-    ui.questionCustomInput =
-      ui.questionCustomInput.slice(0, cursor) +
-      text +
-      ui.questionCustomInput.slice(cursor)
-    ui.questionCustomCursor = cursor + text.length
-    return true
-  }
 
   /**
    * 浮层类按键的分派表。
