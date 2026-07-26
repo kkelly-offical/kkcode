@@ -84,7 +84,9 @@ export function renderSelectOverlay({
     lines.push(paint(`│ ${padRight(row.text, headerCell)}│`, row.color || theme?.base?.fg))
   }
   if (header.length) {
-    lines.push(paint(`│${"─".repeat(inner)}│`, border))
+    // 丁字接头而非竖线：`│──│` 的两端与方框侧边不相连，在真实终端里看着像
+    // 一条浮在框内的断线。四份副本里原本都是竖线，合并后才看出来。
+    lines.push(paint(`├${"─".repeat(inner)}┤`, border))
   }
 
   const win = scrollWindow({ total: items.length, selected, offset, maxVisible: maxVisible || items.length })
