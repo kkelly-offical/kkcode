@@ -569,12 +569,12 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current stable version / 当前稳定版本**: `v0.6.19`
+**Current stable version / 当前稳定版本**: `v0.6.20`
 
-`v0.6.19` is the current stable npm and GitHub release. The `main` branch remains
+`v0.6.20` is the current stable npm and GitHub release. The `main` branch remains
 the development line for subsequent fixes.
 
-`v0.6.19` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
+`v0.6.20` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
 
 Use the Kimi Code preset without placing credentials in YAML:
 

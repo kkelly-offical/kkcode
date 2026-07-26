@@ -1,5 +1,60 @@
 # Changelog / 更新日志
 
+## 0.6.20
+
+监听器的释放从手写清单变成登记本。
+
+### English
+
+- **Attaching a process listener now registers how to remove it.** Exiting the
+  REPL means detaching eight process-level listeners (resize, SIGINT, SIGTERM,
+  SIGHUP, SIGBREAK, SIGTSTP, SIGCONT, exit). Attaching was spread across four
+  places; detaching was ten lines of `if (onX) removeListener(...)` in `finally`
+  plus a win32/posix branch — **and a second, near-identical copy in the `catch`
+  path**. One hand-written list that had to stay in sync with attachment in
+  another. Forgetting the removal when adding a listener is the natural mistake,
+  and it costs you either a process that will not exit or one that still answers
+  signals after it has.
+- **This is the same shape as the completion-catalog problem** fixed in 0.6.16:
+  two lists that must agree, kept in agreement by memory. Releasing is now
+  walking the register backwards, and a test asserts no one-shot process listener
+  is attached or removed by hand.
+- **Two categories, deliberately kept apart.** `keypress`/`data` are attached and
+  detached repeatedly as the terminal activates and suspends; `SIGTSTP`/`SIGCONT`
+  are *intentionally* removed during job control, so Ctrl+Z can re-raise the
+  signal with its default disposition and SIGCONT can restore the handler. Those
+  are "many times", not "once at exit", and putting them in the register would
+  leave a stale disposer behind on the second attach. The test states both
+  exceptions explicitly rather than loosening the rule.
+- **One test caught itself passing vacuously.** The structural assertion first
+  anchored on `  } finally {` — and the file has two, so `indexOf` found the
+  wrong one and the test went green before the code was changed. It scans the
+  whole file now. This is the second time this exact trap has appeared in this
+  refactor.
+- **Verified both exit paths in reality**: line mode exits 0, and the TUI's
+  double Ctrl+C leaves no process behind.
+
+### 中文
+
+- **挂上监听器的同时就登记好怎么摘。** 退出 REPL 要摘掉八个进程级监听器
+  （resize、SIGINT、SIGTERM、SIGHUP、SIGBREAK、SIGTSTP、SIGCONT、exit）。挂载散在
+  四处；释放是 `finally` 里十行 `if (onX) removeListener(...)` 加 win32/posix 分支，
+  **而且 `catch` 路径里还有几乎一模一样的第二份**。一份手写清单，必须和另一处的
+  挂载保持同步。加监听器时忘了加移除是最自然的疏忽，代价是进程不退出、或者退出后
+  仍在响应信号。
+- **这和 0.6.16 修掉的补全目录问题是同一种形状**：两份必须一致的清单，靠记性维持
+  一致。现在释放就是把登记本倒着走一遍，并有测试断言没有一次性进程级监听器是手写
+  挂载或手写移除的。
+- **两类刻意区分开。** `keypress`/`data` 随终端激活与挂起反复装卸；`SIGTSTP`/
+  `SIGCONT` 在作业控制里是**有意**被临时摘掉的 —— Ctrl+Z 时先摘掉自己的处理器，
+  把信号按默认行为重发一次，SIGCONT 恢复时再挂回来。它们是「多次」而不是「退出时
+  一次」，混进登记本会在第二次挂载时留下一个失效的释放项。测试把这两条例外显式
+  写出来，而不是把规则放宽。
+- **一条测试自己抓到了自己在空洞通过。** 那条结构断言最初锚在 `  } finally {` 上，
+  而文件里有两个，`indexOf` 取到了前一个，于是代码还没改测试就绿了。现在改成全文件
+  扫描。这是本次重构里第二次遇到完全相同的陷阱。
+- **两条退出路径都实测过**：行模式退出码 0，TUI 里 Ctrl+C 两连击之后没有残留进程。
+
 ## 0.6.19
 
 `onKey` 归零：编辑器与全局按键也进了分派表。

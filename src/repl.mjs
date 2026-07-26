@@ -72,6 +72,7 @@ import { presentPromptTurn } from "./repl/turn-presenter.mjs"
 import { loadProviderModelItems } from "./repl/provider-catalog.mjs"
 import { persistLearnedGrant } from "./repl/config-persistence.mjs"
 import { createRenderScheduler } from "./repl/render-scheduler.mjs"
+import { createListenerRegistry } from "./repl/listener-registry.mjs"
 import { createKeyDispatcher } from "./repl/key-dispatch.mjs"
 import { createOverlayKeyScopes } from "./repl/keys/overlay-keys.mjs"
 import { createLifecycleKeyScope, createScrollKeyScope } from "./repl/keys/global-keys.mjs"
@@ -561,6 +562,17 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   let onProcessExit = null
   let onSuspend = null
   let onContinue = null
+
+  /**
+   * 一次性进程级监听器的登记本：挂上就登记好怎么摘。
+   *
+   * 此前挂载散在四处、释放是 `finally` 里十行 `if (onX) removeListener(...)`
+   * 加 win32/posix 分支 —— 一份必须和挂载保持同步的手写清单。漏一项的后果是
+   * 进程不退出，或者退出后仍在响应信号。
+   *
+   * keypress / data 不走这里：它们随终端激活与挂起反复装卸，生命周期是「多次」。
+   */
+  const listeners = createListenerRegistry()
 
   /**
    * 帧调度。差分绘制的状态（上一帧、上次宽度、是否强制全量、定时器）都关在
@@ -2423,8 +2435,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   onSuspend = suspendForJobControl
   onContinue = continueAfterJobControl
   if (process.platform !== "win32") {
-    process.on("SIGTSTP", onSuspend)
-    process.on("SIGCONT", onContinue)
+    listeners.on(process, "SIGTSTP", onSuspend)
+    listeners.on(process, "SIGCONT", onContinue)
   }
 
   try {
@@ -2435,7 +2447,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     onProcessExit = () => {
       deactivateTerminal()
     }
-    process.on("exit", onProcessExit)
+    listeners.on(process, "exit", onProcessExit)
     setPermissionPromptHandler(({ tool, sessionId, reason = "", pattern = "*", command = "", args = {}, risk = 0, defaultAction = "deny" }) =>
       new Promise((resolve) => {
         queuePermissionPrompt({
@@ -2484,14 +2496,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     toastUnsub()
     toastStore.dispose()
     await saveHistoryLines(HIST_FILE, HIST_SIZE, ui.history).catch(() => {})
-    if (onProcessExit) {
-      process.removeListener("exit", onProcessExit)
-      onProcessExit = null
-    }
-    if (process.platform !== "win32") {
-      if (onSuspend) process.removeListener("SIGTSTP", onSuspend)
-      if (onContinue) process.removeListener("SIGCONT", onContinue)
-    }
+    // 错误路径的清理与正常退出走同一个登记本，不再各写一份
+    listeners.disposeAll()
+    onProcessExit = null
     throw error
   }
 
@@ -2572,13 +2579,13 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       onTerminate = finish
       onSigbreak = finish
 
-      process.stdout.on("resize", onResize)
+      listeners.on(process.stdout, "resize", onResize)
       attachTuiInputListeners()
-      process.on("SIGINT", onSigint)
-      process.on("SIGTERM", onTerminate)
-      process.on("SIGHUP", onTerminate)
+      listeners.on(process, "SIGINT", onSigint)
+      listeners.on(process, "SIGTERM", onTerminate)
+      listeners.on(process, "SIGHUP", onTerminate)
       if (process.platform === "win32") {
-        process.on("SIGBREAK", onSigbreak)
+        listeners.on(process, "SIGBREAK", onSigbreak)
       }
     })
   } finally {
@@ -2597,25 +2604,12 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     toastStore.dispose()
     setPermissionPromptHandler(null)
     setQuestionPromptHandler(null)
-    if (onResize) process.stdout.removeListener("resize", onResize)
-    if (onKey) process.stdin.removeListener("keypress", onKey)
-    if (onData) process.stdin.removeListener("data", onData)
-    if (onSigint) process.removeListener("SIGINT", onSigint)
-    if (onTerminate) {
-      process.removeListener("SIGTERM", onTerminate)
-      process.removeListener("SIGHUP", onTerminate)
-    }
-    if (process.platform === "win32") {
-      if (onSigbreak) process.removeListener("SIGBREAK", onSigbreak)
-    } else {
-      if (onSuspend) process.removeListener("SIGTSTP", onSuspend)
-      if (onContinue) process.removeListener("SIGCONT", onContinue)
-    }
+    // 一次性进程级监听器：登记本倒着走一遍，不再是手写清单
+    listeners.disposeAll()
+    // keypress / data 是反复装卸的那一类，随终端一起停
+    detachTuiInputListeners()
     deactivateTerminal({ pauseInput: true })
-    if (onProcessExit) {
-      process.removeListener("exit", onProcessExit)
-      onProcessExit = null
-    }
+    onProcessExit = null
     await saveHistoryLines(HIST_FILE, HIST_SIZE, ui.history)
   }
 }
