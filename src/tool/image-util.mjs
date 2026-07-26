@@ -171,10 +171,22 @@ const PATH_START = String.raw`(?:[A-Za-z]:[\\/]|~[\\/]|[.\\/])`
 // 惰性字符类，后面紧跟一个字面量扩展名 —— 没有嵌套量词，不会灾难性回溯。
 const PATH_BODY = String.raw`[\w\-.\\/: ]*?`
 
+// 盘符开头（`C:\`、`C:/`）或 UNC（`\\srv\share`）—— 这两种形状**只可能**是
+// Windows 绝对路径，没有任何 POSIX 解读。下面的转义空格规则据此收窄。
+const WINDOWS_ABSOLUTE = /^(?:[A-Za-z]:[\\/]|\\\\)/
+
 /**
  * 还原终端拖拽落下来的路径。
  * GNOME Terminal / iTerm2 在路径含空格时必定加引号或用反斜杠转义空格，
  * 而 `~/` 是用户手打时最自然的写法 —— 三种形态此前一种都进不了图片管线。
+ *
+ * 这个函数**刻意不碰 node:path**：它拿到的是用户敲进输入框的原始串，形态未必与
+ * 当前平台一致（Windows 路径粘进 Linux 会话、MSYS 的 `/c/` 形态出现在 Windows 上
+ * 都是常事）。用 `path.join` 展开 `~` 会把分隔符改写成当前平台的，同一个输入在两个
+ * 平台上产出两种结果，断言就只能跟着 `path.join` 写 —— 那种测试测的是 node:path，
+ * 不是我们。这里只做字符串还原、保留用户写下的分隔符，落到磁盘形态是调用方
+ * `path.resolve` 的事。于是这个函数在任何平台上对同一输入给同一输出，可以直接
+ * 断言精确字符串。
  */
 export function normalizeDroppedPath(raw, { home = homedir() } = {}) {
   let value = String(raw || "").trim()
@@ -182,10 +194,22 @@ export function normalizeDroppedPath(raw, { home = homedir() } = {}) {
   if (value.length >= 2 && ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'")))) {
     value = value.slice(1, -1)
   }
-  // 反斜杠转义的空格还原成真空格；`\` 后面不是空格时（Windows 分隔符）原样保留。
-  value = value.replace(/\\ /g, " ")
+  // `\ ` 还原成真空格 —— 但这是 **POSIX shell 的转义约定**，不是通用规则。
+  // Windows 终端（cmd / PowerShell / Windows Terminal）拖拽含空格的文件给的是**加
+  // 引号**的路径，从不用反斜杠转义；而在一条 Windows 绝对路径里，`\ ` 恰恰是
+  // 「分隔符 + 一个以空格开头的目录名」的合法写法。对这种串做还原只会把合法路径
+  // 拆坏，且拆坏之后没有任何办法还原回去。
+  //
+  // 所以判据是**形状**而不是 `process.platform`：只有盘符 / UNC 开头这两种形状是
+  // 无歧义的 Windows 绝对路径，跳过还原。其余一律还原 —— 注意「含反斜杠」本身
+  // 不能当判据，POSIX 的转义空格串（`/home/me/my\ shot.png`）里就带着反斜杠。
+  // 按形状判还有一个好处：行为不随运行平台变，Linux 上就能把两边都测出来。
+  if (!WINDOWS_ABSOLUTE.test(value)) value = value.replace(/\\ /g, " ")
   if (value === "~") return home
-  if (value.startsWith("~/") || value.startsWith("~\\")) return path.join(home, value.slice(2))
+  // 用户写的是 `~/` 还是 `~\`，展开后就还用哪个 —— slice(1) 把分隔符一起留下。
+  if (value.startsWith("~/") || value.startsWith("~\\")) {
+    return home.replace(/[\\/]+$/, "") + value.slice(1)
+  }
   return value
 }
 

@@ -20,6 +20,21 @@ import { ToolRegistry } from "../src/tool/registry.mjs"
 
 const CWD = "/work"
 
+/**
+ * `extractImageRefs` 的契约是「**绝对路径、当前平台形态**」—— 它最后要交给 fs。
+ * 在 Windows 上 `path.resolve("/work", "/home/me/a.png")` 得到 `D:\home\me\a.png`
+ * （盘符来自进程 cwd），这是对的，不是 bug。
+ *
+ * 所以期望值写成「规范化之后**应该长什么样**」的字面量 + 同一个 `path.resolve`：
+ * 断言的内容是那个字面量（规范化做对了没有），resolve 只负责把它落到当前平台的
+ * 形态上。把 POSIX 形态直接写死，测的就成了「CI 跑在哪个平台」—— 0.7.0 的
+ * Windows 格就是这么红的，六条全是同一个原因。
+ *
+ * 与平台真正无关的那一半（引号剥没剥掉、`\ ` 还原没有、`~` 展开没有、收了几个）
+ * 归 `normalizeDroppedPath`，它不碰 node:path，下面直接断言精确字符串。
+ */
+const resolved = (...refs) => refs.map((ref) => path.resolve(CWD, ref))
+
 // 1x1 透明 PNG
 const TINY_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==",
@@ -57,11 +72,11 @@ test("终端拖拽的引号路径被识别，引号不留在文本里", () => {
   // GNOME Terminal / iTerm2 在路径含空格时必定加引号。此前 barePattern 从引号
   // 内部开始匹配，路径能拿到，但两个引号会留在发给模型的文本里。
   const single = extractImageRefs("看看 '/home/me/a.png' 这张", CWD)
-  assert.deepEqual(single.imagePaths, ["/home/me/a.png"])
+  assert.deepEqual(single.imagePaths, resolved("/home/me/a.png"))
   assert.equal(single.text, "看看 这张")
 
   const double = extractImageRefs("看看 \"/home/me/my shot.png\" 这张", CWD)
-  assert.deepEqual(double.imagePaths, ["/home/me/my shot.png"])
+  assert.deepEqual(double.imagePaths, resolved("/home/me/my shot.png"))
   assert.equal(double.text, "看看 这张")
 })
 
@@ -69,51 +84,95 @@ test("反斜杠转义的空格还原成真空格", () => {
   // 拖拽不加引号时，终端会把空格转义成 `\ `。此前这串会被原样 resolve，
   // 得到一个带字面反斜杠的路径 —— 必然读不到文件。
   const result = extractImageRefs("/home/me/my\\ shot.png 这张", CWD)
-  assert.deepEqual(result.imagePaths, ["/home/me/my shot.png"])
+  assert.deepEqual(result.imagePaths, resolved("/home/me/my shot.png"))
   assert.equal(result.text, "这张")
 })
 
 test("开头的 ~/ 展开成 home 目录", () => {
   const result = extractImageRefs("~/pics/a.png 看下", CWD)
-  assert.deepEqual(result.imagePaths, [path.join(os.homedir(), "pics/a.png")])
+  assert.deepEqual(result.imagePaths, resolved(`${os.homedir()}/pics/a.png`))
   assert.equal(result.text, "看下")
 })
 
 test("引号与 @ 引用里的 ~/ 和转义空格同样被还原", () => {
   // 规范化必须发生在收集路径的那一处，否则引号分支与 @ 分支各走各的。
   const quotedTilde = extractImageRefs("看 '~/pics/a.png' 好", CWD)
-  assert.deepEqual(quotedTilde.imagePaths, [path.join(os.homedir(), "pics/a.png")])
+  assert.deepEqual(quotedTilde.imagePaths, resolved(`${os.homedir()}/pics/a.png`))
 
   const quotedEscape = extractImageRefs("看 \"/tmp/my\\ shot.png\" 好", CWD)
-  assert.deepEqual(quotedEscape.imagePaths, ["/tmp/my shot.png"])
+  assert.deepEqual(quotedEscape.imagePaths, resolved("/tmp/my shot.png"))
 
   const atTilde = extractImageRefs("@~/pics/b.png 好", CWD)
-  assert.deepEqual(atTilde.imagePaths, [path.join(os.homedir(), "pics/b.png")])
+  assert.deepEqual(atTilde.imagePaths, resolved(`${os.homedir()}/pics/b.png`))
 })
 
 test("normalizeDroppedPath 只展开开头的 ~，路径中间的 ~ 不动", () => {
+  // 期望值是精确字面量而不是 path.join(...) —— 用 path.join 写期望等于让期望跟着
+  // 平台走，两边永远相等，`~` 展开这件事本身就没被测到。
   assert.equal(normalizeDroppedPath("~", { home: "/H" }), "/H")
-  assert.equal(normalizeDroppedPath("~/pics/a.png", { home: "/H" }), path.join("/H", "pics/a.png"))
-  assert.equal(normalizeDroppedPath("~\\pics\\a.png", { home: "/H" }), path.join("/H", "pics\\a.png"))
+  assert.equal(normalizeDroppedPath("~/pics/a.png", { home: "/H" }), "/H/pics/a.png")
   // 中间的 ~ 与 ~foo 形式（另一个用户的 home）都不能动
   assert.equal(normalizeDroppedPath("/var/tmp~1/a.png", { home: "/H" }), "/var/tmp~1/a.png")
   assert.equal(normalizeDroppedPath("~other/a.png", { home: "/H" }), "~other/a.png")
+  // home 自带尾分隔符时不能拼出双分隔符
+  assert.equal(normalizeDroppedPath("~/a.png", { home: "/" }), "/a.png")
+  assert.equal(normalizeDroppedPath("~\\a.png", { home: "C:\\" }), "C:\\a.png")
 })
 
-test("normalizeDroppedPath 不把 Windows 分隔符当成转义符", () => {
-  // `\` 后面不是空格时必须原样保留，否则 Windows 路径会被拆坏。
+test("normalizeDroppedPath 对 Windows 形态的输入给 Windows 形态的结果（在 Linux 上也会红）", () => {
+  // 这一组喂的全是 Windows 拖拽/手打会产生的串。home 可注入、函数不碰 node:path，
+  // 所以它们在 Linux 上一样能跑 —— 不必等 Windows 的 CI 告诉我们。
+  //
+  // Windows 终端含空格的路径**一定**是加引号的，不是反斜杠转义的。
+  assert.equal(normalizeDroppedPath("\"C:\\Users\\me\\a b.png\"", { home: "/H" }), "C:\\Users\\me\\a b.png")
+  // `\` 后面不是空格时必须原样保留，否则 Windows 路径会被拆坏
   assert.equal(normalizeDroppedPath("C:\\Users\\me\\a.png", { home: "/H" }), "C:\\Users\\me\\a.png")
   assert.equal(normalizeDroppedPath("\"C:\\Users\\me\\my shot.png\"", { home: "/H" }), "C:\\Users\\me\\my shot.png")
-  assert.equal(normalizeDroppedPath("C:\\Users\\me\\my\\ shot.png", { home: "/H" }), "C:\\Users\\me\\my shot.png")
+  // `~\` 是 Windows 形态的 home 引用；展开后用的还是用户写的那个分隔符
+  assert.equal(normalizeDroppedPath("~\\shots\\a.png", { home: "C:\\Users\\me" }), "C:\\Users\\me\\shots\\a.png")
+  // POSIX 那一半：单引号、转义空格
+  assert.equal(normalizeDroppedPath("'/home/me/a b.png'", { home: "/H" }), "/home/me/a b.png")
+  assert.equal(normalizeDroppedPath("/home/me/my\\ shot.png", { home: "/H" }), "/home/me/my shot.png")
+})
+
+test("反斜杠转义空格只在非 Windows 绝对路径上还原", () => {
+  // `\ ` 是 POSIX shell 的转义约定。在一条 Windows 绝对路径里，`\ ` 是「分隔符 +
+  // 以空格开头的目录名」的合法写法，还原它就是把合法路径拆坏。判据是**形状**
+  // （盘符 / UNC）而不是 process.platform，所以两边在任何平台上都测得到。
+  assert.equal(normalizeDroppedPath("/home/me/my\\ shot.png", { home: "/H" }), "/home/me/my shot.png")
+  assert.equal(normalizeDroppedPath("./my\\ shot.png", { home: "/H" }), "./my shot.png")
+  assert.equal(normalizeDroppedPath("~/my\\ shot.png", { home: "/H" }), "/H/my shot.png")
+  // 「含反斜杠」不能当判据 —— 上面这几条里就带着反斜杠。只有盘符与 UNC 无歧义。
+  assert.equal(normalizeDroppedPath("C:\\Users\\me\\ shot.png", { home: "/H" }), "C:\\Users\\me\\ shot.png")
+  assert.equal(normalizeDroppedPath("C:/Users/me/\\ shot.png", { home: "/H" }), "C:/Users/me/\\ shot.png")
+  assert.equal(normalizeDroppedPath("\\\\srv\\share\\ shot.png", { home: "/H" }), "\\\\srv\\share\\ shot.png")
+  // 引号先剥，规则再看剥完之后的形状
+  assert.equal(normalizeDroppedPath("\"D:\\shots\\ a.png\"", { home: "/H" }), "D:\\shots\\ a.png")
+})
+
+test("Windows 形态的拖拽路径被认出来，形态不被改写（在 Linux 上也会红）", () => {
+  // 正则认不认得盘符路径、引号剥没剥掉，都与运行平台无关 —— 期望值里的字面量
+  // 就是「规范化之后的样子」，resolve 只把它落到当前平台形态。
+  const quoted = extractImageRefs("看看 \"C:\\Users\\me\\my shot.png\" 这张", CWD)
+  assert.deepEqual(quoted.imagePaths, resolved("C:\\Users\\me\\my shot.png"))
+  assert.equal(quoted.text, "看看 这张")
+
+  const bare = extractImageRefs("D:\\shots\\a.png 看", CWD)
+  assert.deepEqual(bare.imagePaths, resolved("D:\\shots\\a.png"))
+  assert.equal(bare.text, "看")
+
+  const at = extractImageRefs("@C:\\shots\\b.jpeg 看", CWD)
+  assert.deepEqual(at.imagePaths, resolved("C:\\shots\\b.jpeg"))
+  assert.equal(at.text, "看")
 })
 
 test("已有的 @ 引用与裸 URL 行为不变", () => {
   const quoted = extractImageRefs("@\"/tmp/with space.png\" 看", CWD)
-  assert.deepEqual(quoted.imagePaths, ["/tmp/with space.png"])
+  assert.deepEqual(quoted.imagePaths, resolved("/tmp/with space.png"))
   assert.equal(quoted.text, "看")
 
   const relative = extractImageRefs("@shot.jpeg 看", CWD)
-  assert.deepEqual(relative.imagePaths, [path.resolve(CWD, "shot.jpeg")])
+  assert.deepEqual(relative.imagePaths, resolved("shot.jpeg"))
 
   const atUrl = extractImageRefs("@https://ex.com/a.png 看", CWD)
   assert.deepEqual(atUrl.imageUrls, ["https://ex.com/a.png"])
@@ -132,7 +191,7 @@ test("已有的 @ 引用与裸 URL 行为不变", () => {
 
 test("同一路径出现多次只收一份", () => {
   const result = extractImageRefs("/tmp/a.png 和 '/tmp/a.png'", CWD)
-  assert.deepEqual(result.imagePaths, ["/tmp/a.png"])
+  assert.deepEqual(result.imagePaths, resolved("/tmp/a.png"))
 })
 
 // --- 缺陷 2 · 扩展名清单只此一份 ---
@@ -141,11 +200,11 @@ test("正则的扩展名分支从 IMAGE_EXTENSIONS 派生，不是第三份手�
   // 枚举驱动：清单里任何一个扩展名都必须能从裸路径、引号路径、@ 引用里认出来。
   for (const ext of IMAGE_EXTENSIONS) {
     const bare = extractImageRefs(`看 /tmp/a${ext} 好`, CWD)
-    assert.deepEqual(bare.imagePaths, [`/tmp/a${ext}`], `裸路径漏了 ${ext}`)
+    assert.deepEqual(bare.imagePaths, resolved(`/tmp/a${ext}`), `裸路径漏了 ${ext}`)
     const quoted = extractImageRefs(`看 '/tmp/a${ext}' 好`, CWD)
-    assert.deepEqual(quoted.imagePaths, [`/tmp/a${ext}`], `引号路径漏了 ${ext}`)
+    assert.deepEqual(quoted.imagePaths, resolved(`/tmp/a${ext}`), `引号路径漏了 ${ext}`)
     const at = extractImageRefs(`看 @/tmp/a${ext} 好`, CWD)
-    assert.deepEqual(at.imagePaths, [`/tmp/a${ext}`], `@ 引用漏了 ${ext}`)
+    assert.deepEqual(at.imagePaths, resolved(`/tmp/a${ext}`), `@ 引用漏了 ${ext}`)
     assert.equal(isImagePath(`/tmp/a${ext}`), true, `isImagePath 漏了 ${ext}`)
   }
 })
