@@ -1,5 +1,64 @@
 # Changelog / 更新日志
 
+## 0.6.23
+
+鼠标交互抽成模块，第一次有了测试。
+
+### English
+
+- **284 lines of mouse handling moved out, with 23 tests where there were none.**
+  Log-area text selection, input-box cursor placement and drag-select, and
+  edge auto-scroll all lived in the TUI closure. Two things in there are easy to
+  get wrong and were never covered: selections are anchored on **absolute
+  transcript rows**, not screen rows (scroll while selecting and the screen row
+  now shows different content — only the absolute row still points at what the
+  user framed); and edge auto-scroll must be timer-driven, because SGR 1002 only
+  reports on cross-cell movement, so a pointer resting at the edge produces no
+  events at all.
+- **Both timers are private now.** The auto-scroll interval and the
+  highlight-hold timeout were bare `let`s that any of two thousand lines could
+  touch. They are module state with one `dispose()`, called from the exit and the
+  error path — a missed one keeps the process alive.
+- **The end-to-end test earned its keep.** The extraction introduced a temporal
+  dead zone: the key dispatcher captures `deleteInputSelection` and
+  `finishSelection` **by value** at construction, and the mouse module was
+  constructed later. Unit tests all passed; the TUI simply never reached the
+  alternate screen. This is the same class as the `now = now` dead zone in
+  0.6.13 — it only fires when the TUI actually starts, so no unit test can see it.
+- **Removed a shadowing landmine.** `dispatchDecodedInput(mouse, …)` took a
+  parameter named `mouse`, which now shadows the mouse module of the same name.
+  It works, but the next person writing `mouse.dispose()` in there would call the
+  decoder result instead.
+- `repl.mjs` 2640 → 2381 lines; `startTuiRepl` 1991 → 1732.
+- **Not verified:** whether a synthetic `xdotool` drag reaches the app under
+  Xvfb. The TUI survives mouse input without leaking escape sequences into the
+  prompt, and the decode-to-handler wiring is unchanged from 0.6.22, but no
+  selection highlight appeared in the screenshot and I could not tell the harness
+  apart from the app. The logic itself is covered by the 23 unit tests.
+
+### 中文
+
+- **284 行鼠标处理搬出来了，并从零到 23 条测试。** 日志区文本选择、输入框光标定位
+  与拖选、边缘自动滚动此前都在 TUI 闭包里。其中两件事很容易搞错、而且从未被覆盖：
+  选区锚定的是 **transcript 绝对行**而不是屏幕行（边选边滚之后同一个屏幕行下面的
+  内容已经换了，只有绝对行还指向用户当初框住的那几行）；边缘自动滚动必须由定时器
+  驱动，因为 SGR 1002 只在**跨 cell 移动**时上报，鼠标停在边缘不动是收不到任何事件的。
+- **两个定时器现在是私有的。** 自动滚动的 interval 与高亮保留的 timeout 此前是裸
+  `let`，两千行内任何一段都能改。现在是模块状态，只有一个 `dispose()`，退出与错误
+  两条路径都调 —— 漏掉任何一处，进程都不会退出。
+- **端到端测试这次真的救了场。** 抽取引入了一个 TDZ：按键分派器在构造时**按值**
+  捕获 `deleteInputSelection` 与 `finishSelection`，而鼠标模块建得比它晚。单测全绿，
+  TUI 却压根进不了备用屏。这与 0.6.13 那个 `now = now` 是同一类 —— 只在 TUI 真正
+  启动时才炸，任何单测都看不到。
+- **拆掉一个变量遮蔽的地雷。** `dispatchDecodedInput(mouse, …)` 的参数叫 `mouse`，
+  现在会遮蔽同名的鼠标模块。能跑，但下一个在里面写 `mouse.dispose()` 的人会调到
+  解码结果上。
+- `repl.mjs` 2640 → 2381 行；`startTuiRepl` 1991 → 1732 行。
+- **没验成的一件事：** Xvfb 下 `xdotool` 的合成拖拽到底有没有送达应用。TUI 在鼠标
+  输入下存活、没有把转义序列漏进输入框，解码到处理器的接线也与 0.6.22 完全一致，
+  但截图里没有出现选区高亮，而我分辨不出是验收工具还是应用的问题。逻辑本身由那
+  23 条单测覆盖。
+
 ## 0.6.22
 
 技能能被模型读到、却调不动 —— 修好了。
