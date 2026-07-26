@@ -21,13 +21,33 @@ export DISPLAY="$DISPLAY_NUM"
 
 mkdir -p "$ACCEPT_DIR"
 
+# 窗口管理器是必需的，不是可选的：没有 WM 时窗口拿不到输入焦点，
+# xdotool 的按键会被静默丢弃 —— 命令返回 0、截图看起来正常、按键没生效。
+# 这个脚本此前只起 Xvfb，能跑通只是因为环境里恰好残留着一个 openbox 进程。
+ensure_wm() {
+  pgrep -x openbox >/dev/null 2>&1 && return 0
+  if ! command -v openbox >/dev/null 2>&1; then
+    echo "缺少 openbox：没有窗口管理器时 xdotool 按键会静默失败" >&2
+    echo "  安装：apt-get install -y openbox" >&2
+    return 1
+  fi
+  openbox --sm-disable >"$ACCEPT_DIR/openbox.log" 2>&1 &
+  for _ in $(seq 1 20); do pgrep -x openbox >/dev/null 2>&1 && { sleep 0.5; return 0; }; sleep 0.25; done
+  echo "openbox 起不来" >&2
+  return 1
+}
+
 ensure_x() {
   if ! xdpyinfo >/dev/null 2>&1; then
     Xvfb "$DISPLAY_NUM" -screen 0 "${TTY_SCREEN:-1400x900x24}" >"$ACCEPT_DIR/xvfb.log" 2>&1 &
-    for _ in $(seq 1 40); do xdpyinfo >/dev/null 2>&1 && return 0; sleep 0.25; done
-    echo "X display $DISPLAY_NUM 起不来" >&2
-    return 1
+    local up=""
+    for _ in $(seq 1 40); do xdpyinfo >/dev/null 2>&1 && { up=1; break; }; sleep 0.25; done
+    if [ -z "$up" ]; then
+      echo "X display $DISPLAY_NUM 起不来" >&2
+      return 1
+    fi
   fi
+  ensure_wm
 }
 
 case "${1:-}" in
@@ -64,6 +84,7 @@ case "${1:-}" in
     ;;
   stop)
     pkill -f "xterm -geometry" 2>/dev/null
+    pkill -x openbox 2>/dev/null
     pkill Xvfb 2>/dev/null
     echo "已停止"
     ;;

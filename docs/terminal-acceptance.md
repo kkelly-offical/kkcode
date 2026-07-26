@@ -24,11 +24,11 @@ apt-get install -y xvfb openbox xterm xdotool xclip imagemagick fonts-noto-cjk
 `xdotool key` 会静静地什么也不做（只在 stderr 留下一句
 `XGetInputFocus returned the focused window of 1`），你会以为按键送到了。
 
-```bash
-export DISPLAY=:99
-Xvfb :99 -screen 0 1400x900x24 &
-openbox --sm-disable &
+脚本现在自己拉起 Xvfb 与 openbox，不需要手动起。此前它只起 Xvfb ——
+能跑通是因为开发机上恰好残留着一个 openbox 进程，换台机器就会变成
+「按键全部无效但一切看起来正常」，而那种失败没有任何报错可循。
 
+```bash
 scripts/tty-acceptance.sh shot 01-start 110x32 "node src/index.mjs"
 scripts/tty-acceptance.sh key y Return          # 应答工作区信任
 scripts/tty-acceptance.sh type "写一个 js 闭包例子"
