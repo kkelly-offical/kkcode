@@ -78,6 +78,15 @@ export function createKeyDispatcher({ scopes }) {
 export const on = {
   key: (name) => (ctx) => ctx.key.name === name,
   ctrl: (name) => (ctx) => Boolean(ctx.key.ctrl) && ctx.key.name === name,
+  /**
+   * Alt 组合。node 的 keypress 把 `ESC` + 某键解析成 `{ name, meta: true }`，
+   * 所以 Alt+B 在这里是 `on.meta("b")` 而不是某个独立的键名。
+   *
+   * 排除 ctrl 是为了与 `on.ctrl` **不重叠**：后者不看 meta，若这里也不看 ctrl，
+   * Ctrl+Alt+B 会同时满足两条谓词，谁接到就只取决于谁写在前面 —— 那正是这张表
+   * 想消灭的那种隐式规则。
+   */
+  meta: (name) => (ctx) => Boolean(ctx.key.meta) && !ctx.key.ctrl && ctx.key.name === name,
   anyKey: (...names) => (ctx) => names.includes(ctx.key.name),
   /** 可打印字符：不带 ctrl/meta 的非空 str。 */
   printable: (ctx) =>

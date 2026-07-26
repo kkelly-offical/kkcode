@@ -84,6 +84,8 @@ import { createEditorKeyScope } from "./repl/keys/editor-keys.mjs"
 import { createTranscriptWriter } from "./repl/transcript-writer.mjs"
 import { createReplUiState, openUserOverlay, closeUserOverlay } from "./repl/ui-state.mjs"
 import { createAttachmentInput } from "./repl/attachment-input.mjs"
+import { createPromptOutbox } from "./repl/prompt-outbox.mjs"
+import { createNotifier } from "./repl/notify.mjs"
 import { createGhostPredictor } from "./repl/ghost-predictor.mjs"
 import { buildReplRuntimeSnapshot } from "./repl/runtime-facade.mjs"
 import { POLICY_CHOICES, PERMISSION_PROMPT_VALUES } from "./repl/permission-flow.mjs"
@@ -95,10 +97,8 @@ import {
   MODE_PICKER_CHOICES
 } from "./repl/mode-flow.mjs"
 import { describeRule } from "./permission/learned-rules.mjs"
+import { createInputDecoderChain } from "./repl/input-decoders.mjs"
 import {
-  createBracketedPasteDecoder,
-  createSgrMouseDecoder,
-  createUtf8TextDecoder,
   enterTerminalSequence,
   exitTerminalSequence,
   normalizeMouseSelection,
@@ -746,11 +746,23 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
    * 一套完整的 reducer，但全代码库没有一处读它（渲染走的是 transcript 模型）。
    * 实测 200 轮之后它持有 2.8 MB、200 个 block，无上限。已删除。
    */
+  /**
+   * 通知：终端标题、响铃、桌面通知。实现在 repl/notify.mjs。
+   *
+   * 构造在事件订阅之前，因为事件桥要拿着它 —— 传 null 就是完全不通知，
+   * 所以这条依赖是可选的，行模式与测试都不必造一个假的。
+   */
+  const notifier = createNotifier({ config: ctx.configState.config })
+  // 走登记本而不是往两处退出路径各加一行 —— 那正是 0.6.20 修掉的形状。
+  // 不恢复标题的话，用户退出后终端标签页会一直挂着上一次的思考状态。
+  listeners.add(() => notifier.dispose())
+
   const uiEventUnsub = subscribeSessionEvents({
     eventBus: EventBus,
     ui,
     ctx,
     state,
+    notifier,
     toastStore,
     textStreamBatcher,
     requestRender,
@@ -770,7 +782,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
    * 它们不参与用户浮层的互斥：每一条背后都挂着一个没有 settle 的 Promise，
    * 顺手关掉一个，那次工具调用就永远悬着。
    */
-  const prompts = createPromptQueue({ ui, requestRender })
+  const prompts = createPromptQueue({ ui, requestRender, notifier })
   const {
     queuePermissionPrompt,
     resolvePermissionPrompt,
@@ -839,6 +851,30 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     insertAtCursor,
     showToast
   })
+
+  // 待发队列（模型干活时敲的消息）。实现在 repl/prompt-outbox.mjs。
+  const outbox = createPromptOutbox({ ui, showToast, requestRender })
+
+  /**
+   * 提交，然后把排队的消息依次发完。
+   *
+   * 包在 `submitCurrentInput` **外面**而不是写进去：那个函数已经是 86 个判定点的
+   * 回合状态机，被结构守卫的棘轮盯着只能变简单。排干的循环与它没有任何共享状态，
+   * 放外面既不碰它的复杂度，也让「排队」这件事在一个地方读得完。
+   */
+  async function submitAndDrain() {
+    await submitCurrentInput()
+    await outbox.drain(async (text) => {
+      // 按过 Esc 就是不想让它继续 —— 排在后面的都不该再发出去
+      if (ui.paused) {
+        outbox.clear()
+        return
+      }
+      ui.input = text
+      ui.inputCursor = text.length
+      await submitCurrentInput()
+    })
+  }
 
   /**
    * 任何改动输入内容的路径都必须经过这里：作废当前 ghost 并重新排期预测。
@@ -1489,6 +1525,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         insertAtCursor,
         attachImage,
         insertPastedText,
+        // 忙碌时 Enter 走排队而不是提交；提交则换成「发完再把队列排干」的包装。
+        queuePrompt: outbox.queue,
         deleteInputSelection,
         moveCursor,
         setCursor,
@@ -1502,7 +1540,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         applyCurrentSuggestion,
         handleUpDownSuggestions,
         navigateHistory,
-        submitCurrentInput,
+        submitCurrentInput: submitAndDrain,
         requestExitIfQuitting: () => { if (ui.quitting) requestExitFn() },
         cycleModeForwardAndNotify,
         handleRewind,
@@ -1515,9 +1553,15 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
   // Monkey-patch stdin.emit 拦截鼠标事件，防止 readline 将其解析为键盘输入
   const _origStdinEmit = process.stdin.emit
-  const mouseDecoder = createSgrMouseDecoder()
-  const pasteDecoder = createBracketedPasteDecoder()
-  const plainTextDecoder = createUtf8TextDecoder()
+  /**
+   * 鼠标 → 焦点 → 括号粘贴。实现在 repl/input-decoders.mjs —— 三层各自扣着的
+   * 跨 chunk 尾字节要按下游顺序放出来，写在这里过一次就会漏一层。
+   */
+  const inputDecoders = createInputDecoderChain({
+    features: terminalFeatures,
+    onMouseEvent: handleMouseEvent,
+    onFocus: (focused) => notifier.setFocused(focused)
+  })
 
   function dispatchPasteResult(pasted, mouseEventCount = 0, {
     immediateEscape = false
@@ -1547,44 +1591,18 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     )
   }
 
-  // 参数原名 `mouse`，会遮蔽鼠标模块那个同名常量 —— 能跑，但以后谁在这里写
-  // `mouse.dispose()` 就会调到解码结果上。改名消除遮蔽。
-  function dispatchDecodedInput(decoded, options = {}) {
-    for (const ev of decoded.events) handleMouseEvent(ev)
-    const pasted = terminalFeatures.bracketedPaste
-      ? pasteDecoder.feed(decoded.text)
-      : { text: decoded.text, pastes: [] }
-    return dispatchPasteResult(pasted, decoded.events.length, options)
-  }
-
   function cancelProtocolFlush() {
     if (protocolFlushTimer) clearTimeout(protocolFlushTimer)
     protocolFlushTimer = null
   }
 
   function scheduleProtocolFlush() {
-    if (
-      !mouseDecoder.hasPending() &&
-      !(terminalFeatures.bracketedPaste && pasteDecoder.hasPending())
-    ) return
+    if (!inputDecoders.hasPending()) return
     cancelProtocolFlush()
     protocolFlushTimer = setTimeout(() => {
       protocolFlushTimer = null
       if (disposed || terminal.isSuspended()) return
-      const mouseText = terminalFeatures.mouse
-        ? mouseDecoder.flush()
-        : plainTextDecoder.flush()
-      dispatchDecodedInput(
-        { events: [], text: mouseText },
-        { immediateEscape: true }
-      )
-      if (terminalFeatures.bracketedPaste && pasteDecoder.hasPending()) {
-        dispatchPasteResult(
-          pasteDecoder.flush(),
-          0,
-          { immediateEscape: true }
-        )
-      }
+      dispatchPasteResult(inputDecoders.flush(), 0, { immediateEscape: true })
     }, ESCAPE_SEQUENCE_TIMEOUT_MS)
     protocolFlushTimer.unref?.()
   }
@@ -1592,11 +1610,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   const interceptStdinEmit = function (event, ...args) {
     if (event === "data") {
       cancelProtocolFlush()
-      const raw = args[0]
-      const mouse = terminalFeatures.mouse
-        ? mouseDecoder.feed(raw)
-        : { events: [], text: plainTextDecoder.feed(raw) }
-      const emitted = dispatchDecodedInput(mouse)
+      const decoded = inputDecoders.feed(args[0])
+      const emitted = dispatchPasteResult(decoded, decoded.mouseEvents)
       scheduleProtocolFlush()
       return emitted
     }
@@ -1633,7 +1648,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     emitKeypressEvents,
     interceptStdinEmit,
     originalStdinEmit: _origStdinEmit,
-    decoders: [mouseDecoder, pasteDecoder, plainTextDecoder],
+    decoders: [inputDecoders],
     keypressEscapeTimeoutMs: KEYPRESS_ESCAPE_TIMEOUT_MS,
     cancelPendingFrame,
     cancelProtocolFlush,

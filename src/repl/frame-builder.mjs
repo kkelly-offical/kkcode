@@ -573,7 +573,12 @@ export function buildFrame({
   }
   const inputEndRow = lines.length  // 输入区内容结束行（不含）
   lines.push(inputBottom)
-  lines.push(clipAnsiLine(paint("↵ send  ⌃J newline  ⌃V paste image/text  ⌃Y auto-copy  ? help", ctx.themeState.theme.base.muted, { dim: true }), width))
+  // 排队计数挂在**已有的**提示行上，不新起一行 —— 帧的行数记账按块的实际行数计费，
+  // 一个时有时无的行会让对话区随排队与否上下跳。
+  const queued = ui.queuedPrompts?.length
+    ? `  ⏳ ${ui.queuedPrompts.length} queued`
+    : ""
+  lines.push(clipAnsiLine(paint(`↵ send  ⌃J newline  ⌃V paste image/text  ⌃Y auto-copy  ? help${queued}`, ctx.themeState.theme.base.muted, { dim: true }), width))
 
   // In very small terminals, preserve the composer and its real cursor by
   // trimming overflow from the top rather than cutting off the bottom pane.

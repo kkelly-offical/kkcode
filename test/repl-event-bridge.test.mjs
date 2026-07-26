@@ -1,6 +1,10 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { subscribeSessionEvents } from "../src/repl/event-bridge.mjs"
+import {
+  subscribeSessionEvents,
+  describeReplTitle,
+  isUserInterruptedTurn
+} from "../src/repl/event-bridge.mjs"
 import { createReplUiState } from "../src/repl/ui-state.mjs"
 import { EVENT_TYPES } from "../src/core/constants.mjs"
 import { DEFAULT_CONFIG } from "../src/config/defaults.mjs"
@@ -10,9 +14,30 @@ import { DEFAULT_CONFIG } from "../src/config/defaults.mjs"
  * 而它决定的是「模型正在做什么」在屏幕上如何呈现。
  */
 
-function harness({ autoStartTurn = "turn_1" } = {}) {
+/**
+ * 假通知器。所有调用记在一条**有序**日志里 —— 「通知写完标题之后有没有人把它
+ * 盖掉」这种问题，只看两个分开的数组是答不出来的。
+ */
+function fakeNotifier({ alertResult = { title: true, bell: false, desktop: false } } = {}) {
+  const log = []
+  return {
+    log,
+    titles: () => log.filter((entry) => entry.kind === "title").map((entry) => entry.text),
+    alerts: () => log.filter((entry) => entry.kind === "alert"),
+    setTitle(text) { log.push({ kind: "title", text }); return alertResult.title },
+    clearTitle() { log.push({ kind: "clear" }); return true },
+    alert(kind, detail) { log.push({ kind: "alert", alert: kind, detail }); return alertResult },
+    setFocused() {},
+    dispose() { log.push({ kind: "dispose" }) }
+  }
+}
+
+const START_TIME = 1_700_000_000_000
+
+function harness({ autoStartTurn = "turn_1", notifier = null, cwd = "/home/me/demo-project" } = {}) {
   const calls = []
   let handler = null
+  const clock = { now: START_TIME }
   const eventBus = {
     subscribe(fn) { handler = fn; return () => { handler = null } }
   }
@@ -20,7 +45,13 @@ function harness({ autoStartTurn = "turn_1" } = {}) {
   const unsub = subscribeSessionEvents({
     eventBus,
     ui,
+    notifier,
+    // cwd 是 subscribeSessionEvents 的**显式参数**，不是 ctx 的字段。
+    // 0.7.2 之前这里写的是 `ctx.cwd`，而生产代码构造的 ctx 上根本没有它 ——
+    // 测试自己造了一个只在测试里为真的世界，于是标题里的项目名从没显示过，
+    // 而断言一直是绿的。两边现在喂的是同一个入口。
     ctx: { configState: { config: structuredClone(DEFAULT_CONFIG) } },
+    cwd,
     state: { sessionId: "ses_1", mode: "agent" },
     toastStore: { dismissTopic: (topic) => calls.push(`dismiss(${topic})`) },
     textStreamBatcher: { schedule: () => calls.push("batch") },
@@ -30,8 +61,9 @@ function harness({ autoStartTurn = "turn_1" } = {}) {
     applyThinkingTransition: (transition) => { ui.thinking = transition.state },
     finalizeThinking: () => calls.push("finalizeThinking"),
     finalizeTextStream: (status) => calls.push(`finalizeStream(${status ?? "default"})`),
-    now: () => 1_700_000_000_000
+    now: () => clock.now
   })
+  const advance = (ms) => { clock.now += ms }
   /** 发一个事件。缺省带上当前会话与回合，以通过归属判定。 */
   const emit = (type, payload = {}, extra = {}) =>
     handler({ type, payload, sessionId: "ses_1", turnId: ui.activeTurnId, ...extra })
@@ -42,8 +74,9 @@ function harness({ autoStartTurn = "turn_1" } = {}) {
   if (autoStartTurn) {
     emit(EVENT_TYPES.TURN_START, {}, { turnId: autoStartTurn })
     calls.length = 0
+    notifier?.log.splice(0)
   }
-  return { emit, ui, calls, unsub }
+  return { emit, ui, calls, unsub, advance }
 }
 
 test("events from another session are ignored", () => {
@@ -197,6 +230,173 @@ test("a turn error closes the stream in the error state", () => {
 test("an unknown event type is ignored rather than throwing", () => {
   const { emit } = harness()
   assert.doesNotThrow(() => emit("some.future.event", {}))
+})
+
+/**
+ * 通知（0.7.2）。这里只决定「什么时候值得把人叫回来」——「怎么叫」（响铃、桌面
+ * 通知、min_duration_ms 阈值）全在 repl/notify.mjs，有它自己的测试。
+ */
+
+test("without a notifier the bridge behaves exactly as before", () => {
+  // 不传就完全不通知。这条防的是 `notifier.setTitle(...)` 少一层保护 ——
+  // 那会在没有通知器的会话里每个事件抛一次 TypeError。
+  const run = (notifier) => {
+    const h = harness({ notifier })
+    h.emit(EVENT_TYPES.TURN_STEP_START, { step: 1 })
+    h.emit(EVENT_TYPES.TOOL_START, { tool: "bash" })
+    h.emit(EVENT_TYPES.STREAM_TEXT_START, {})
+    h.emit(EVENT_TYPES.STREAM_TEXT_DELTA, { text: "hi" })
+    h.emit(EVENT_TYPES.TURN_FINISH, { reply: "hi" })
+    return h.calls
+  }
+  let quiet = null
+  assert.doesNotThrow(() => { quiet = run(null) })
+  assert.deepEqual(quiet, run(fakeNotifier()), "接上通知器不该改变界面侧的行为")
+})
+
+test("a finished turn is announced with the time it actually took", () => {
+  const notifier = fakeNotifier()
+  const { emit, advance } = harness({ notifier })
+  advance(45_000)
+  emit(EVENT_TYPES.TURN_FINISH, { reply: "改完了\n还有别的" })
+  assert.deepEqual(notifier.alerts(), [{
+    kind: "alert",
+    alert: "turn-done",
+    detail: { durationMs: 45_000, summary: "改完了" }
+  }])
+})
+
+test("the duration threshold is not second-guessed here", () => {
+  // 阈值判定只有一处（notify.mjs）。这里再判一次的话，配置改了阈值也不生效。
+  const notifier = fakeNotifier()
+  const { emit, advance } = harness({ notifier })
+  advance(1_200)
+  emit(EVENT_TYPES.TURN_FINISH, { reply: "秒回" })
+  assert.deepEqual(notifier.alerts().map((entry) => entry.detail.durationMs), [1_200],
+    "短回合也要照常上报时长，由 notify 决定弹不弹")
+})
+
+test("someone else's turn ending never notifies you", () => {
+  // 通知也得在归属判定之后 —— 后台任务与子智能体共用同一条总线，判定挪到通知
+  // 后面的话，别人的回合跑完会响你的铃。同时这也保证了 durationMs 一定有锚点：
+  // 能被接受的 TURN_FINISH，前面必然有一个被接受的 TURN_START。
+  const notifier = fakeNotifier()
+  const { emit } = harness({ notifier })
+  emit(EVENT_TYPES.TURN_FINISH, { reply: "别人的结果" }, { sessionId: "ses_other" })
+  emit(EVENT_TYPES.TURN_FINISH, { reply: "别的回合" }, { turnId: "turn_other" })
+  assert.deepEqual(notifier.alerts(), [])
+
+  const late = harness({ notifier: fakeNotifier(), autoStartTurn: null })
+  late.emit(EVENT_TYPES.TURN_FINISH, { reply: "迟到的结束" }, { turnId: "turn_old" })
+  assert.deepEqual(late.calls, [], "没有活跃回合时，迟到的结束事件整条都该被挡住")
+})
+
+test("a failed turn reports the error instead of a completion", () => {
+  // 两条一起发的话，一次失败会响两遍铃、弹两个窗（error 不受时长阈值约束，
+  // turn-done 受）。回合终结时只发一条。
+  const notifier = fakeNotifier()
+  const { emit, advance } = harness({ notifier })
+  advance(60_000)
+  emit(EVENT_TYPES.TURN_ERROR, { error: "provider 502" })
+  assert.deepEqual(notifier.alerts(), [{
+    kind: "alert",
+    alert: "error",
+    detail: { message: "provider 502" }
+  }])
+})
+
+test("a turn the user interrupted is not announced at all", () => {
+  // Esc / Ctrl+C：人就在键盘前，他刚按的键。既不是完成，也不值得弹窗。
+  const notifier = fakeNotifier()
+  const { emit, ui, advance } = harness({ notifier })
+  ui.paused = true   // 按键处理器在中断时立起来的那一位
+  advance(120_000)
+  emit(EVENT_TYPES.TURN_ERROR, { error: "provider stream cancelled" })
+  assert.deepEqual(notifier.alerts(), [])
+})
+
+test("an interrupted turn is recognised even without the paused flag", () => {
+  assert.equal(isUserInterruptedTurn({ paused: false }, { error: "provider stream cancelled" }), true)
+  assert.equal(isUserInterruptedTurn({ paused: false }, { aborted: true }), true)
+  assert.equal(isUserInterruptedTurn({ paused: false }, { error: "The operation was aborted" }), true)
+  assert.equal(isUserInterruptedTurn({ paused: false }, { error: "provider 502" }), false)
+  assert.equal(isUserInterruptedTurn({}, {}), false)
+})
+
+test("the terminal title says what is happening, and where you are when nothing is", () => {
+  assert.equal(describeReplTitle({ activity: null, cwd: "/home/me/demo-project" }), "kkcode · demo-project")
+  // Windows 上 cwd 是反斜杠。只切 `/` 的话整条路径会当成项目名写进标题。
+  assert.equal(describeReplTitle({ activity: null, cwd: "C:\\Users\\me\\demo-project" }), "kkcode · demo-project")
+  assert.equal(describeReplTitle({ activity: null, cwd: "" }), "kkcode")
+  assert.equal(describeReplTitle({ activity: { type: "thinking" } }), "● kkcode · thinking")
+  assert.equal(describeReplTitle({ activity: { type: "writing" } }), "● kkcode · writing")
+  assert.equal(describeReplTitle({ activity: { type: "tool", tool: "bash" } }), "● kkcode · bash")
+})
+
+test("a stream of deltas writes the title once, not once per token", () => {
+  // 每个 delta 一条 OSC 2 会把终端刷爆 —— 而且是**在用户的终端上**刷爆。
+  const notifier = fakeNotifier()
+  const { emit, advance } = harness({ notifier })
+  advance(300)
+  emit(EVENT_TYPES.STREAM_TEXT_START, {})
+  for (let i = 0; i < 100; i++) {
+    advance(10)   // 100 个 token 摊在一秒里，节流窗口会开好几次
+    emit(EVENT_TYPES.STREAM_TEXT_DELTA, { text: "字" })
+  }
+  assert.deepEqual(notifier.titles(), ["● kkcode · writing"],
+    "标题内容没变就不该再写一次")
+})
+
+test("a flapping activity cannot machine-gun the title", () => {
+  const notifier = fakeNotifier()
+  const { emit, advance } = harness({ notifier })
+  advance(300)
+  // 一串快工具：tool → thinking → tool …，全发生在同一毫秒里
+  for (let i = 0; i < 50; i++) {
+    emit(EVENT_TYPES.TOOL_START, { tool: "bash" })
+    emit(EVENT_TYPES.TOOL_FINISH, { tool: "bash" })
+  }
+  assert.deepEqual(notifier.titles(), ["● kkcode · bash"], "节流窗口内的横跳应当被丢掉")
+
+  // 但节流不能变成静音：窗口过去之后，新状态必须能落地
+  advance(300)
+  emit(EVENT_TYPES.TOOL_START, { tool: "read" })
+  assert.deepEqual(notifier.titles(), ["● kkcode · bash", "● kkcode · read"])
+})
+
+test("the completion notice is not overwritten by the idle title", () => {
+  // alert() 自己会把结果写进标题。紧接着再写一次空闲标题，用户切回来就只看到项目名 ——
+  // 回合结束通知的全部意义就没了。
+  const notifier = fakeNotifier()
+  const { emit, advance } = harness({ notifier })
+  advance(45_000)
+  emit(EVENT_TYPES.TURN_FINISH, { reply: "done" })
+  assert.equal(notifier.log.at(-1).kind, "alert", "通知之后不该再有标题写入")
+
+  // 也不能被回合**之后**的事件盖掉。压缩提示、MCP 心跳这些不属于任何回合，
+  // 归属判定放行，会一路走到标题同步 —— 而那时用户可能还没切回窗口。
+  advance(5_000)
+  emit(EVENT_TYPES.SESSION_COMPACTED, { beforeTokens: 120_000, afterTokens: 30_000 })
+  assert.equal(notifier.log.at(-1).kind, "alert", "回合之后的事件也不能盖掉通知文案")
+})
+
+test("when nothing was announced the title falls back to the project", () => {
+  // notify 因为时长不够没弹时（alert 返回 title:false），标题得自己收回空闲态，
+  // 否则会一直停在「● kkcode · thinking」。
+  const notifier = fakeNotifier({ alertResult: { title: false, bell: false, desktop: false } })
+  const { emit, advance } = harness({ notifier })
+  advance(2_000)
+  emit(EVENT_TYPES.TURN_FINISH, { reply: "done" })
+  assert.equal(notifier.titles().at(-1), "kkcode · demo-project")
+})
+
+test("the idle title lands even inside the throttle window", () => {
+  // 回合结束是终态：它后面可能一个事件都没有了，被节流丢掉就永远补不回来。
+  const notifier = fakeNotifier({ alertResult: { title: false, bell: false, desktop: false } })
+  const { emit } = harness({ notifier })
+  emit(EVENT_TYPES.TOOL_START, { tool: "bash" })   // 与回合开始同一毫秒
+  emit(EVENT_TYPES.TURN_FINISH, { reply: "done" })
+  assert.equal(notifier.titles().at(-1), "kkcode · demo-project")
 })
 
 test("the bridge no longer maintains a state nobody reads", async () => {

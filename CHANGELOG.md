@@ -1,5 +1,61 @@
 # Changelog / 更新日志
 
+## 0.7.2
+
+生成时可以继续打字并排队；长任务跑完会把你叫回来；补齐 emacs 行编辑键。
+
+### English
+
+- **You can type while the model works.** The whole editor scope used to be
+  `active: !ui.busy` — every keystroke during a turn was discarded, so thinking
+  of your next message meant waiting, then typing it again. Now the input box
+  stays live and Enter queues instead of submitting; queued messages go out in
+  order once the turn ends. Esc drops the queue along with the turn, and says how
+  many it dropped.
+- **The queue drain re-reads the queue every step** rather than iterating a
+  snapshot. A snapshot passes almost every test and still sends the rest of the
+  queue after you hit Esc — which is precisely what Esc was meant to prevent.
+- **Notifications**: the terminal title tracks what is happening (`● kkcode ·
+  bash`, `kkcode · project` when idle), with an optional bell and desktop
+  notification when a long turn finishes or a tool is waiting for approval.
+  Focus reporting (DECSET 1004) keeps it quiet while you are actually looking at
+  the window. Off by default in SSH sessions, where a desktop notification would
+  fire on the wrong machine. All of it is configurable under `ui.notify`.
+- **Emacs line editing**: Ctrl+A/E for line start/end, Ctrl+W, Ctrl+U, Ctrl+K,
+  Alt+B/F/D. Word boundaries understand CJK — Chinese has no spaces, so a run of
+  Han characters counts as one word — and never split an emoji or a combining
+  sequence. Ctrl+E now means end-of-line; expand/collapse is Ctrl+O alone, which
+  it already was in duplicate.
+- **Fixed: a bare Escape swallowed the key after it.** Focus reporting has to
+  hold a lone ESC in case it turns out to be `ESC [ I`, but the escape-timeout
+  fallback never flushed that layer, so the held ESC merged with the next key and
+  both vanished. The three decoders (mouse, focus, bracketed paste) are now one
+  chain that flushes all of them.
+- **Fixed: the terminal title never showed the project name.** It read `ctx.cwd`,
+  a field the production ctx does not have — the tests supplied one, so the
+  assertions were green against a world that only existed in tests.
+
+### 中文
+
+- **模型干活时可以继续打字。** 整个编辑器作用域此前是 `active: !ui.busy`，回合期间
+  敲的每个键都被丢弃 —— 想到下一句只能等，等完还得重打一遍。现在输入框保持可用，
+  Enter 不提交而是排队，回合结束后依次发出。按 Esc 会连同队列一起丢弃，并说出丢了几条。
+- **排干队列时每一步都重新读队列**，而不是遍历一份快照。快照写法能过掉几乎所有用例，
+  却会在你按下 Esc 之后把剩下的照发不误 —— 那正是 Esc 想阻止的事。
+- **通知**：终端标题跟着当前活动走（`● kkcode · bash`，空闲时 `kkcode · 项目名`），
+  长回合结束或工具在等审批时可选响铃与桌面通知。焦点上报（DECSET 1004）保证你正看着
+  窗口时不打扰。SSH 会话里默认关闭桌面通知 —— 那会弹在服务器上。全部可在 `ui.notify`
+  下配置。
+- **emacs 行编辑键**：Ctrl+A/E 行首行尾、Ctrl+W、Ctrl+U、Ctrl+K、Alt+B/F/D。词边界认
+  中文（中文没有空格，连续汉字算一个词），并且不会劈开 emoji 与组合字符。Ctrl+E 现在
+  是行尾；展开折叠由 Ctrl+O 单独承担 —— 它本来就是重复绑定的两个入口之一。
+- **修复：裸 Esc 会吞掉紧跟着的那个键。** 焦点上报必须把孤立的 ESC 扣住等后续字节
+  （它可能是 `ESC [ I`），但转义超时的兜底从不 flush 这一层，于是扣着的 ESC 与下一个键
+  拼成一条转义序列，两个键一起消失。三个解码器（鼠标、焦点、括号粘贴）现在是一条链，
+  flush 会把三层都放出来。
+- **修复：终端标题从没显示过项目名。** 它读的是 `ctx.cwd`，而生产代码构造的 ctx 上
+  根本没有这个字段 —— 测试自己造了一个，于是断言对着一个只在测试里为真的世界，一直是绿的。
+
 ## 0.7.1
 
 `@` 引用任意文件；思考预览不再逐字符乱跳；选择器浮层可以直接打字过滤。

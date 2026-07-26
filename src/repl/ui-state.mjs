@@ -50,6 +50,8 @@ export function createReplUiState({ historyLines = [], terminalFeatures = {} } =
      * 见 attachments.mjs 的文件头。这里只存内容。
      */
     attachments: createAttachmentStore(),
+    /** 忙碌时敲下的消息，回合结束后依次发出。见 repl/prompt-outbox.mjs。 */
+    queuedPrompts: [],
     permissionQueue: [],
     pendingPermission: null,
     permissionSelected: 0,

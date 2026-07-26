@@ -337,6 +337,12 @@ ui:
     bracketed_paste: true      # 多行粘贴作为一个输入块，不会误提交多次
     copy_on_select: true       # 在应用鼠标模式中，拖选后自动复制
     toast_duration_ms: 2600    # 模式/模型/权限切换提示的显示时间
+  notify:
+    enabled: true              # 总开关：关掉则标题/响铃/桌面通知一律不发
+    title: true                # 终端标题（OSC 2），tmux/screen 下自动包 passthrough
+    bell: false                # 终端响铃，默认关
+    desktop: "auto"            # auto | always | never；auto = 非 SSH 且平台支持
+    min_duration_ms: 30000     # 回合超过这个时长才通知；审批/提问不看时长
   mode_colors:
     assistant: "#22d3ee"
     plan: "#00b7c2"

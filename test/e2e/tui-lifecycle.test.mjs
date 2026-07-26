@@ -193,6 +193,9 @@ test("TUI restores job-control state and exits without a referenced stdin handle
       () => output.includes("\x1b[?1049h"),
       { message: `TUI did not enter the alternate screen:\n${output.slice(-1200)}` }
     )
+    // Focus reporting (DECSET 1004) is what tells the notifier whether the user
+    // is looking. It has to reach a real terminal, not just the feature object.
+    assert.match(output, /\x1b\[\?1004h/)
     nodePid = Number(await waitFor(async () => {
       try {
         return await readFile(pidFile, "utf8")
@@ -256,6 +259,9 @@ test("TUI restores job-control state and exits without a referenced stdin handle
     assert.deepEqual(result, { code: 0, signal: null })
     assert.match(output, /\x1b\[\?1002l/)
     assert.match(output, /\x1b\[\?2004l/)
+    // Leaving 1004 on strands the user's shell with a `^[[I` on every window
+    // switch — the shell has no idea what that is.
+    assert.match(output, /\x1b\[\?1004l/)
   } finally {
     if (!exited) {
       if (nodePid) {

@@ -218,6 +218,20 @@ test("each overlay branch renders — a missed closure variable would throw here
   }
 })
 
+test("排队中的消息数显示在提示行上，且不新增一行", () => {
+  // 计数挂在已有的提示行上而不是自己起一行：帧按块的实际行数记账，
+  // 一个时有时无的行会让对话区随排队与否上下跳。
+  const idle = render({})
+  const queued = render({ queuedPrompts: ["一", "二"] })
+  assert.equal(queued.lines.length, idle.lines.length, "排队不该改变帧的行数")
+
+  const text = queued.lines.map(stripAnsi).join("\n")
+  assert.match(text, /2 queued/, "排队数必须看得见，否则用户不知道自己排的东西还在不在")
+  assert.doesNotMatch(idle.lines.map(stripAnsi).join("\n"), /queued/, "没排队时不该占用提示行的宽度")
+
+  for (const width of [60, 120]) assertExactWidth(render({ queuedPrompts: ["一"] }, { width }), width, `排队提示 @ ${width}`)
+})
+
 test("transcript content is clipped, not allowed to overflow", () => {
   const items = [
     { id: "1", kind: "text", role: "assistant", text: "x".repeat(400) },

@@ -206,3 +206,20 @@ test("the predicates match what the old if-chain matched", () => {
   assert.equal(on.printable(ctx({ str: "", key: {} })), false)
   assert.equal(on.printable(ctx({ str: "中", key: {} })), true, "中文输入必须算可打印")
 })
+
+test("on.meta matches Alt chords without colliding with on.ctrl", () => {
+  // node 的 keypress 把 Alt+B 解析成 `{ name: "b", meta: true }` —— 没有独立键名，
+  // 所以 Alt 组合只能靠这个谓词认。
+  assert.equal(on.meta("b")(ctx({ key: { meta: true, name: "b" } })), true)
+  assert.equal(on.meta("b")(ctx({ key: { name: "b" } })), false, "不带 meta 不算")
+  assert.equal(on.meta("d")(ctx({ key: { meta: true, name: "d" } })), true)
+
+  // 两条谓词必须互斥：都命中的话，Ctrl+Alt+B 归谁只取决于谁写在前面，
+  // 而这张表存在的意义正是消灭那种隐式规则。
+  const ctrlAlt = ctx({ key: { ctrl: true, meta: true, name: "b" } })
+  assert.equal(on.meta("b")(ctrlAlt), false, "Ctrl+Alt+B 不算 Alt+B")
+  assert.equal(on.ctrl("b")(ctrlAlt), true)
+
+  assert.equal(on.printable(ctx({ str: "b", key: { meta: true, name: "b" } })), false,
+    "Alt 组合不能同时被当成可打印字符插进输入框")
+})

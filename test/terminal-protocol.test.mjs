@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import {
   classifySgrMouseEvent,
   createBracketedPasteDecoder,
+  createFocusDecoder,
   createSgrMouseDecoder,
   createUtf8TextDecoder,
   enterTerminalSequence,
@@ -232,6 +233,130 @@ test("bracketed paste flush releases an ambiguous Escape into its current stream
   })
 })
 
+/**
+ * 焦点上报（DECSET 1004）。
+ *
+ * 这一层历来的 bug 全是「跨 chunk 切分」引起的，所以下面几条按切点穷举，而不是
+ * 挑一个好切的位置意思一下。漏掉一次，用户切回窗口时输入框里就会多一个 `I`。
+ */
+test("focus reports are lifted out of the keyboard stream", () => {
+  const decoder = createFocusDecoder()
+  assert.deepEqual(decoder.feed("\x1b[I"), { events: [{ focused: true }], text: "" })
+  assert.deepEqual(decoder.feed("\x1b[O"), { events: [{ focused: false }], text: "" })
+})
+
+test("focus reports mixed into typed text leave the text intact", () => {
+  const decoder = createFocusDecoder()
+  const result = decoder.feed("ab\x1b[Icd\x1b[Oef")
+  assert.equal(result.text, "abcdef")
+  assert.deepEqual(result.events, [{ focused: true }, { focused: false }])
+})
+
+test("a focus report never leaks a stray letter, whichever byte the chunk breaks on", () => {
+  // 终端与复用器可以在任意字节处断开。`ESC [ I` 只要有一个字节漏过去，readline
+  // 就会把 `I` 当成用户敲的字母插进输入框。
+  const stream = "x\x1b[Iy\x1b[Oz"
+  for (let cut = 1; cut < stream.length; cut++) {
+    const decoder = createFocusDecoder()
+    const first = decoder.feed(stream.slice(0, cut))
+    const second = decoder.feed(stream.slice(cut))
+    const text = first.text + second.text + decoder.flush()
+    const events = [...first.events, ...second.events]
+    assert.equal(text, "xyz", `切在第 ${cut} 字节时文本被改动了: ${JSON.stringify(text)}`)
+    assert.deepEqual(events, [{ focused: true }, { focused: false }],
+      `切在第 ${cut} 字节时焦点事件丢了`)
+  }
+})
+
+test("focus decoder holds an ambiguous Escape until it is flushed", () => {
+  // 和鼠标解码器同一条约定：单独一个 ESC 可能是 Esc 键，也可能是序列的开头。
+  // 由调用方在转义超时后显式 flush，这里绝不擅自决定。
+  const decoder = createFocusDecoder()
+  assert.deepEqual(decoder.feed("\x1b"), { events: [], text: "" })
+  assert.equal(decoder.hasPending(), true)
+  assert.equal(decoder.flush(), "\x1b")
+  assert.equal(decoder.hasPending(), false)
+
+  assert.deepEqual(decoder.feed("a\x1b["), { events: [], text: "a" })
+  assert.equal(decoder.flush(), "\x1b[")
+})
+
+test("focus decoder passes other escape sequences through untouched", () => {
+  // 它只认 1004 的两条上报。鼠标上报、光标键、粘贴标记都不归它管，
+  // 少一个字节都会让下游解码器错位。
+  const decoder = createFocusDecoder()
+  const passthrough = "\x1b[<0;4;7M\x1b[200~p\x1b[201~\x1b[A\x1b[2~"
+  assert.deepEqual(decoder.feed(passthrough), { events: [], text: passthrough })
+  assert.equal(decoder.hasPending(), false)
+})
+
+test("focus reports survive being interleaved with mouse reports", () => {
+  // repl 里的链是 鼠标 → 焦点 → 括号粘贴。焦点上报可能紧贴着鼠标上报到达。
+  const mouse = createSgrMouseDecoder()
+  const focus = createFocusDecoder()
+  const decoded = focus.feed(mouse.feed("\x1b[<0;4;7M\x1b[Ohi").text)
+  assert.equal(decoded.text, "hi")
+  assert.deepEqual(decoded.events, [{ focused: false }])
+})
+
+test("the full decoder chain survives a byte-at-a-time stream", () => {
+  // 逐字节喂是跨 chunk 切分的极端形态：每一个转义序列都被切开了。
+  // 这条链的形状必须和 repl.mjs 的 dispatchDecodedInput 一致：鼠标 → 焦点 → 粘贴。
+  const mouse = createSgrMouseDecoder()
+  const focus = createFocusDecoder()
+  const paste = createBracketedPasteDecoder()
+  const stream = Buffer.from(
+    "你\x1b[<0;4;7M\x1b[Ohi\x1b[200~pasted\nline\x1b[201~\x1b[Iz",
+    "utf8"
+  )
+
+  let text = ""
+  const mouseEvents = []
+  const focusEvents = []
+  const pastes = []
+  for (const byte of stream) {
+    const m = mouse.feed(Buffer.from([byte]))
+    const f = focus.feed(m.text)
+    const p = paste.feed(f.text)
+    mouseEvents.push(...m.events)
+    focusEvents.push(...f.events)
+    pastes.push(...p.pastes)
+    text += p.text
+  }
+
+  assert.equal(text, "你hiz", "键盘字节被解码器吃掉或改写了")
+  assert.deepEqual(pastes, ["pasted\nline"], "粘贴载荷必须原样整块交付")
+  assert.equal(mouseEvents.length, 1)
+  assert.deepEqual(focusEvents, [{ focused: false }, { focused: true }])
+  assert.equal(focus.hasPending(), false)
+})
+
+test("focus reporting is on for capable terminals and off for dumb ones", () => {
+  const capable = resolveTerminalFeatures({}, { TERM: "xterm-256color" })
+  assert.equal(capable.focusReporting, true)
+  assert.equal(resolveTerminalFeatures({}, { TERM: "dumb" }).focusReporting, false)
+  // 配置能单独关掉它（有些复用器会把 1004 透传成垃圾字节）
+  assert.equal(
+    resolveTerminalFeatures({ focus_reporting: "never" }, { TERM: "xterm-256color" }).focusReporting,
+    false
+  )
+  assert.equal(
+    resolveTerminalFeatures({ focus_reporting: "always" }, { TERM: "dumb" }).focusReporting,
+    true
+  )
+})
+
+test("focus reporting is enabled and disabled together with the rest of the terminal state", () => {
+  // 只发 1004h 不发 1004l 的后果落在**用户的 shell 上**：回到 shell 之后每次切
+  // 窗口都会收到一串 `^[[I`。
+  const features = resolveTerminalFeatures({}, { TERM: "xterm-256color" })
+  assert.match(enterTerminalSequence(features), /\x1b\[\?1004h/)
+  assert.match(exitTerminalSequence(features), /\x1b\[\?1004l/)
+  const off = { ...features, focusReporting: false }
+  assert.doesNotMatch(enterTerminalSequence(off), /1004h/)
+  assert.doesNotMatch(exitTerminalSequence(off), /1004l/)
+})
+
 test("terminal feature modes and enter/exit sequences are symmetric", () => {
   const features = resolveTerminalFeatures({
     alternate_screen: "never",
@@ -243,7 +368,8 @@ test("terminal feature modes and enter/exit sequences are symmetric", () => {
     alternateScreen: false,
     mouse: true,
     bracketedPaste: true,
-    copyOnSelect: true
+    copyOnSelect: true,
+    focusReporting: true
   })
   assert.doesNotMatch(enterTerminalSequence(features), /1049h/)
   assert.match(enterTerminalSequence(features), /1002h/)

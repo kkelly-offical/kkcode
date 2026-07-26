@@ -26,10 +26,17 @@ import {
   finalizeQuestionAnswers
 } from "./dialog-router.mjs"
 
-export function createPromptQueue({ ui, requestRender }) {
+/**
+ * @param {object} p
+ * @param {object|null} [p.notifier] 可选。工具在**等回答**时把用户叫回来 ——
+ *   审批与提问一旦无人应答，那次工具调用就永远悬着。传 null 即完全不通知。
+ */
+export function createPromptQueue({ ui, requestRender, notifier = null }) {
   const defaultPermissionIndex = (perm) => defaultPermissionChoiceIndex(perm?.defaultAction)
 
   function queuePermissionPrompt(request) {
+    // 不看时长：审批是**阻塞**的，等一秒和等一分钟都一样卡着
+    notifier?.alert("permission", { tool: request?.tool || "" })
     ui.permissionQueue.push(request)
     if (!ui.pendingPermission) {
       ui.pendingPermission = ui.permissionQueue.shift() || null
@@ -53,6 +60,7 @@ export function createPromptQueue({ ui, requestRender }) {
   }
 
   function queueQuestionPrompt(request) {
+    notifier?.alert("question", { header: request?.questions?.[0]?.header || "" })
     ui.questionQueue.push({
       // 问题文本来自模型与工具，可能带终端控制序列
       ...request,

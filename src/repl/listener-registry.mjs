@@ -48,6 +48,27 @@ export function createListenerRegistry() {
     return dispose
   }
 
+  /**
+   * 登记一个**不是监听器**的清理动作（终端标题恢复、定时器、外部资源）。
+   *
+   * 它们的生命周期与监听器完全一致 —— 建一次、退出时收一次 —— 所以走同一个
+   * 登记本。退出路径有正常与异常两条，各写一份清理清单正是 0.6.20 修掉的那个
+   * 缺陷：加东西时最自然的疏忽就是只往其中一条里加。
+   *
+   * @returns {Function} 单独提前释放它的函数（幂等）
+   */
+  function add(dispose) {
+    if (typeof dispose !== "function") return () => {}
+    let released = false
+    const wrapped = () => {
+      if (released) return
+      released = true
+      dispose()
+    }
+    disposers.push(wrapped)
+    return wrapped
+  }
+
   /** 倒序释放所有登记项。倒序是为了后挂的先摘，与挂载顺序对称。 */
   function disposeAll() {
     while (disposers.length) {
@@ -57,5 +78,5 @@ export function createListenerRegistry() {
     }
   }
 
-  return { on, disposeAll, size: () => disposers.length }
+  return { on, add, disposeAll, size: () => disposers.length }
 }

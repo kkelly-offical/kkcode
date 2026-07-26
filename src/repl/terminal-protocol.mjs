@@ -7,6 +7,10 @@ const COMPLETE_SGR_MOUSE_RE = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/g
 const POSSIBLE_MOUSE_SUFFIX_RE = /\x1b(?:\[|\[<[\d;]*)?$/
 const BRACKETED_PASTE_START = "\x1b[200~"
 const BRACKETED_PASTE_END = "\x1b[201~"
+// DECSET 1004 焦点上报：获得焦点 ESC [ I，失去焦点 ESC [ O。
+const FOCUS_EVENT_RE = /\x1b\[([IO])/g
+// 与鼠标上报同理：chunk 可能正好断在 ESC 或 ESC [ 之后，尾部的歧义字节要留到下一次。
+const POSSIBLE_FOCUS_SUFFIX_RE = /\x1b\[?$/
 
 export function createUtf8TextDecoder() {
   let decoder = new StringDecoder("utf8")
@@ -67,6 +71,59 @@ export function createSgrMouseDecoder() {
       COMPLETE_SGR_MOUSE_RE.lastIndex = 0
 
       const suffix = source.match(POSSIBLE_MOUSE_SUFFIX_RE)
+      if (suffix && suffix.index !== undefined && suffix[0]) {
+        pending = suffix[0]
+        source = source.slice(0, suffix.index)
+      }
+
+      return { events, text: source }
+    },
+
+    hasPending() {
+      return pending.length > 0
+    },
+
+    flush() {
+      const text = pending + utf8.flush()
+      pending = ""
+      return text
+    },
+
+    reset() {
+      pending = ""
+      utf8.reset()
+    }
+  }
+}
+
+/**
+ * 摘出终端的焦点上报（DECSET 1004）。
+ *
+ * 必须和鼠标、括号粘贴在**同一层**被吃掉：`ESC [ I` 只要漏进 readline，`I` 就会
+ * 变成一个字符插进输入框 —— 用户切回窗口，输入框里多了个字母。
+ *
+ * 形状与 `createSgrMouseDecoder` 完全一致（feed → {text, events}、hasPending、
+ * flush、reset），所以它能直接串进 `dispatchDecodedInput` 那条链：
+ * 鼠标 → 焦点 → 括号粘贴。放在粘贴之前，是为了让焦点上报不会掉进粘贴载荷里
+ * （鼠标上报同理，这条链本来就是这个顺序）。
+ */
+export function createFocusDecoder() {
+  let pending = ""
+  const utf8 = createUtf8TextDecoder()
+
+  return {
+    feed(chunk) {
+      let source = pending + utf8.feed(chunk)
+      pending = ""
+      const events = []
+
+      source = source.replace(FOCUS_EVENT_RE, (_match, letter) => {
+        events.push({ focused: letter === "I" })
+        return ""
+      })
+      FOCUS_EVENT_RE.lastIndex = 0
+
+      const suffix = source.match(POSSIBLE_FOCUS_SUFFIX_RE)
       if (suffix && suffix.index !== undefined && suffix[0]) {
         pending = suffix[0]
         source = source.slice(0, suffix.index)
@@ -198,7 +255,10 @@ export function resolveTerminalFeatures(config = {}, env = process.env) {
     alternateScreen: resolveMode(config.alternate_screen, capable),
     mouse: resolveMode(config.mouse, capable),
     bracketedPaste: config.bracketed_paste !== false,
-    copyOnSelect: config.copy_on_select !== false
+    copyOnSelect: config.copy_on_select !== false,
+    // 开着它才有人喂通知模块的 setFocused。这一位同时管两件事：要不要发 1004h，
+    // 以及要不要在输入链上串焦点解码器 —— 只做一半的话，`ESC [ I` 会漏进输入框。
+    focusReporting: resolveMode(config.focus_reporting, capable)
   }
 }
 
@@ -241,6 +301,7 @@ export function enterTerminalSequence(features = {}) {
   let sequence = ""
   if (features.alternateScreen !== false) sequence += "\x1b[?1049h"
   if (features.bracketedPaste !== false) sequence += "\x1b[?2004h"
+  if (features.focusReporting !== false) sequence += "\x1b[?1004h"
   if (features.mouse !== false) sequence += "\x1b[?1002h\x1b[?1006h"
   return sequence
 }
@@ -248,6 +309,9 @@ export function enterTerminalSequence(features = {}) {
 export function exitTerminalSequence(features = {}) {
   let sequence = ""
   if (features.mouse !== false) sequence += "\x1b[?1002l\x1b[?1006l"
+  // 关掉 1004 比关掉鼠标更要紧：留着它，用户回到 shell 之后每次切窗口都会
+  // 收到一串 `^[[I` —— 而 shell 不认识它。
+  if (features.focusReporting !== false) sequence += "\x1b[?1004l"
   if (features.bracketedPaste !== false) sequence += "\x1b[?2004l"
   sequence += "\x1b[?7h\x1b[?25h\x1b[0m"
   if (features.alternateScreen !== false) {

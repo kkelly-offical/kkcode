@@ -340,6 +340,13 @@ export const DEFAULT_CONFIG = {
       copy_on_select: true,
       toast_duration_ms: 2600
     },
+    notify: {
+      enabled: true,
+      title: true,              // 终端标题：被动通道，回合状态永远写在标签页上
+      bell: false,              // 响铃默认关：很多人把它当噪音
+      desktop: "auto",          // auto = 非 SSH 且平台支持；always | never 强制
+      min_duration_ms: 30000    // 回合超过这个时长才值得把人叫回来
+    },
     status: {
       show_cost: true,
       show_token_meter: true

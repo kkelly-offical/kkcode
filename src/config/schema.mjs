@@ -792,6 +792,24 @@ export function validateConfig(config) {
           }
         }
       }
+      if (config.ui.notify !== undefined) {
+        if (!isObj(config.ui.notify)) err(errors, "ui.notify", "must be object")
+        else {
+          for (const key of ["enabled", "title", "bell"]) {
+            const value = config.ui.notify[key]
+            if (value !== undefined && typeof value !== "boolean") {
+              err(errors, `ui.notify.${key}`, "must be boolean")
+            }
+          }
+          const desktop = config.ui.notify.desktop
+          if (desktop !== undefined && typeof desktop !== "boolean" && !["auto", "always", "never"].includes(desktop)) {
+            err(errors, "ui.notify.desktop", "must be auto|always|never|boolean")
+          }
+          if (config.ui.notify.min_duration_ms !== undefined) {
+            checkInt(errors, "ui.notify.min_duration_ms", config.ui.notify.min_duration_ms, 0)
+          }
+        }
+      }
       if (config.ui.status !== undefined) {
         if (!isObj(config.ui.status)) err(errors, "ui.status", "must be object")
         else {

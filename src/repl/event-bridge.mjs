@@ -10,6 +10,13 @@
  * `shouldApplyActiveTurnEvent` 挡住的是**别的会话或别的回合**的事件：后台任务
  * 与子智能体共用同一条总线，不判定的话它们的流式增量会画进当前对话。
  *
+ * ## 通知（可选的 `notifier`）
+ *
+ * 这里只回答「什么时候值得把人叫回来」，不回答「怎么叫」—— 响铃/桌面通知/阈值
+ * 全在 `repl/notify.mjs` 里。所以时长只量不判：`min_duration_ms` 在那边。
+ * 权限与提问的通知不走这条链（它们是 `repl/prompt-queue.mjs` 的时机），
+ * 这里只管回合生命周期与终端标题。
+ *
  * ## 曾经在这里的一份死状态
  *
  * 这里原本还有一句 `ui.appState = reduceAppState(ui.appState, event)`。
@@ -31,6 +38,90 @@ import {
   appendThinkingDelta
 } from "../ui/thinking-state.mjs"
 
+const APP_TITLE = "kkcode"
+const BUSY_MARK = "●"
+/**
+ * 标题写入的最小间隔。
+ *
+ * 真正压住流量的是「内容没变就不写」：一整段流式输出的标题文本是同一个串，
+ * 一千个 delta 也只有第一次会写。这个间隔管的是另一种情况 —— 活动态在极短时间里
+ * 反复横跳（快工具串行调用时 tool → thinking → tool …），每跳一次写一条 OSC 2。
+ * 250ms 让最坏情况有上界，同时标题最多只落后四分之一秒。
+ */
+const TITLE_THROTTLE_MS = 250
+// Esc / Ctrl+C 的中断在引擎里被分类成 aborted，但 TURN_ERROR 的载荷只带 message。
+const ABORTED_MESSAGE_RE = /\babort(ed)?\b|stream cancelled/i
+
+function projectNameFrom(cwd) {
+  // 两种分隔符都切：Windows 上 cwd 是 `C:\Users\me\proj`
+  const parts = String(cwd || "").split(/[\\/]/).filter(Boolean)
+  return parts.length > 0 ? parts[parts.length - 1] : ""
+}
+
+/**
+ * 终端标题的文本。忙碌时说正在做什么，空闲时说这是哪个项目。
+ *
+ * 前面那个 `●` 和输入行的忙碌指示是同一个符号：扫一眼标签页就知道它还在跑。
+ */
+export function describeReplTitle({ activity = null, cwd = "" } = {}) {
+  if (activity?.type === "tool") return `${BUSY_MARK} ${APP_TITLE} · ${activity.tool || "tool"}`
+  if (activity?.type === "writing") return `${BUSY_MARK} ${APP_TITLE} · writing`
+  if (activity) return `${BUSY_MARK} ${APP_TITLE} · thinking`
+  const project = projectNameFrom(cwd)
+  return project ? `${APP_TITLE} · ${project}` : APP_TITLE
+}
+
+function firstLineOf(text) {
+  const line = String(text || "").split("\n").find((candidate) => candidate.trim())
+  return line ? line.trim() : ""
+}
+
+/**
+ * 这一轮是用户自己按 Esc / Ctrl+C 停的，还是真出错了。
+ *
+ * 中断不该弹通知：人就在键盘前，他刚按的键。按键处理器会先把 `ui.paused` 立起来，
+ * 引擎随后才抛出 abort 错误走 TURN_ERROR —— 所以这一位在事件到达时是可信的。
+ * 另外两条是给不经过按键的中断留的后路（退出流程、上游取消）。
+ */
+export function isUserInterruptedTurn(ui, payload) {
+  if (ui?.paused === true) return true
+  if (payload?.aborted === true) return true
+  return ABORTED_MESSAGE_RE.test(String(payload?.error || payload?.message || ""))
+}
+
+/**
+ * 标题写入器：去重 + 节流，并且知道「通知自己也会写标题」这件事。
+ */
+function createTitleWriter({ notifier, now }) {
+  let last = null
+  let lastAt = -Infinity
+
+  return {
+    write(text, { force = false } = {}) {
+      if (!notifier || !text || text === last) return false
+      const at = now()
+      if (!force && at - lastAt < TITLE_THROTTLE_MS) return false
+      last = text
+      lastAt = at
+      notifier.setTitle(text)
+      return true
+    },
+
+    /**
+     * `alert()` 内部会把标题写成通知文案（「kkcode · done — …」）。那条文案就是
+     * 这一轮的空闲标题：把它登记成 `text`（调用方传空闲标题），后续任何一次
+     * 「回到空闲」的同步都会被去重挡掉，而下一轮忙碌起来的标题照写。
+     *
+     * 少了这一步，回合结束后随便来一个非回合事件（压缩提示、MCP 心跳）都会把
+     * 刚写上去的结果盖成项目名 —— 用户切回窗口时通知已经没了。
+     */
+    adopt(text) {
+      last = text
+      lastAt = now()
+    }
+  }
+}
+
 /**
  * @returns {Function} 取消订阅
  */
@@ -47,8 +138,55 @@ export function subscribeSessionEvents({
   applyThinkingTransition,
   finalizeThinking,
   finalizeTextStream,
+  // 不传就完全不通知 —— 通知是可选通道，缺席时这里的行为和 0.7.2 之前一模一样
+  notifier = null,
+  /**
+   * 空闲标题里的项目名。
+   *
+   * 这里原本写的是 `ctx.cwd` —— 而 `ctx` 上**根本没有这个字段**（全仓只有这一处
+   * 引用它）。于是 `projectNameFrom(undefined)` 恒为空，标题永远退化成裸的
+   * `kkcode`，项目名一次都没显示过。多开几个终端时，标签页正是靠它区分的。
+   *
+   * 显式参数是为了让这件事可断言：默认值取自调用方，测试直接喂一个路径。
+   */
+  cwd = process.cwd(),
   now = () => Date.now()
 }) {
+  const title = createTitleWriter({ notifier, now })
+  // 回合时长的锚点。拿不到开始时间就不填 durationMs：notify 那边「拿不到时长
+  // 就不打扰」是保守的正确读法，宁可少响一次。
+  let turnStartedAt = null
+
+  const syncTitle = (options) => title.write(describeReplTitle({
+    // 回合在跑但还没有具体活动（TURN_START 到第一个 step 之间）也算忙碌
+    activity: ui.activeTurnId ? (ui.currentActivity || { type: "thinking" }) : null,
+    cwd
+  }), options)
+
+  /**
+   * 回合终结时的唯一一次通知。
+   *
+   * 成功与失败各发一条、互斥：两条一起发的话，一次失败会响两遍铃、弹两个窗
+   * （`turn-done` 受 min_duration_ms 约束，`error` 不受，所以它们不是同一条）。
+   * 阈值判定留在 notify 模块里，这里只负责把 durationMs 量准。
+   */
+  const notifyTurnEnd = (type, payload) => {
+    const durationMs = turnStartedAt === null ? undefined : now() - turnStartedAt
+    turnStartedAt = null
+    if (!notifier) return
+    const interrupted = type === EVENT_TYPES.TURN_ERROR && isUserInterruptedTurn(ui, payload)
+    const fired = interrupted
+      ? null
+      : type === EVENT_TYPES.TURN_ERROR
+        ? notifier.alert("error", { message: payload?.error || payload?.message })
+        : notifier.alert("turn-done", { durationMs, summary: firstLineOf(payload?.reply) })
+    // 通知已经把结果写进标题了，别再拿空闲标题盖掉它 —— 那正是回合结束通知的全部意义
+    if (fired?.title) title.adopt(describeReplTitle({ cwd }))
+    // 一条都没发（时长不够、或被中断）时标题得自己收回空闲态，否则会一直停在
+    // 「● kkcode · thinking」。强制写：回合结束是终态，被节流丢掉就再没有人来补。
+    else syncTitle({ force: true })
+  }
+
   return eventBus.subscribe((event) => {
     const { type, payload } = event
     // 后台任务与子智能体共用同一条总线；不判定归属的话它们的增量会画进当前对话
@@ -62,6 +200,7 @@ export function subscribeSessionEvents({
     switch (type) {
       case EVENT_TYPES.TURN_START:
         ui.activeTurnId = event.turnId || null
+        turnStartedAt = now()
         break
 
       case EVENT_TYPES.TURN_STEP_START: {
@@ -169,7 +308,12 @@ export function subscribeSessionEvents({
         ui.currentStep = 0
         ui.activeTurnId = null
         requestRender()
+        notifyTurnEnd(type, payload)
         break
     }
+
+    // 一处同步，而不是在每个 case 里各写一行 —— 漏掉哪个 case 都会让标题卡在旧状态。
+    // 高频事件（每个 token 一个 delta）在这里靠「内容没变就不写」挡住。
+    syncTitle()
   })
 }
