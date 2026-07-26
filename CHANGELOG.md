@@ -70,10 +70,28 @@ languages plus diff, line by line with no cross-line state (the stream renderer
 guarantees output cannot depend on chunk boundaries) and adding only SGR
 sequences, so stripping color returns the source byte for byte.
 
+**Breaking: the 0.4.0 permission vocabulary is gone.** `permission.mode`,
+`permission.default_policy` and the legacy level names (`review`, `auto`,
+`edit`, `full-auto`) are now rejected rather than mapped. They are rejected
+rather than ignored on purpose: a permission tier decides which tools run
+without asking, and silently falling back to a default would leave someone
+believing they are still locked down while they may in fact be looser. Each
+error names the exact replacement, so migrating is a one-line edit —
+`mode` → `level`, `default_policy: allow` → `level: accept-edits`,
+`review`/`auto` → `manual`, `edit`/`full-auto` → `accept-edits`. At runtime a
+legacy value that bypasses validation resolves to the default tier, never the
+wider tier it used to mean. `kkcode init` was still generating
+`default_policy` — a config the tool would then refuse to load.
+
 **Internals.** The streaming and non-streaming provider paths share one
 preparation step instead of each carrying a copy of settings resolution,
 outbound checks, credential checks and telemetry — a security check adjusted in
-one copy and not the other would have failed silently.
+one copy and not the other would have failed silently. Seven self-contained
+helpers move out of `longagent-hybrid.mjs`; they were only reachable by running
+a whole Ultra pipeline, so they were effectively untested, and writing their
+first direct assertions corrected three wrong assumptions about their
+contracts. The orchestrator function itself is untouched — splitting it needs
+the run-context extraction first.
 
 ### 中文
 
@@ -113,8 +131,21 @@ UI 块不再可能算错对话区高度。命令输出显式声明通道（`/hel
 约 17 种语言加 diff 的语法高亮，逐行独立、只加颜色不改字符 —— 去掉颜色能逐字
 还原源码。
 
+**破坏性变更：0.4.0 的旧权限词汇已移除。** `permission.mode`、
+`permission.default_policy` 与旧等级名（`review`、`auto`、`edit`、`full-auto`）
+不再被映射，而是**报错**。选择报错而非静默忽略是有意的：权限档决定哪些工具
+不经确认就能跑，悄悄回落到默认值会让人以为自己还锁着、实际可能更松。报错会
+指出确切的新写法，改一行即可 —— `mode` → `level`，`default_policy: allow` →
+`level: accept-edits`，`review`/`auto` → `manual`，`edit`/`full-auto` →
+`accept-edits`。运行时若有旧值绕过校验，回落到默认档，绝不解析成它当年那个
+更宽松的档位。`kkcode init` 此前仍在生成 `default_policy` —— 一份 kkcode
+自己会拒绝加载的配置。
+
 **内部。** provider 的流式与非流式路径共用同一段准备逻辑，不再各自持有一份
 设置解析、出网校验、凭据校验与遥测 —— 只改其中一份的安全校验不会有任何报错。
+七个自包含的辅助函数从 `longagent-hybrid.mjs` 抽出：它们此前只能靠跑完整条
+Ultra 流水线间接覆盖，等于基本没被测过；补上第一批直接断言时纠正了我对它们
+契约的三处误解。编排主体本身未动 —— 拆它需要先做 run context 抽取。
 
 ## 0.5.8
 
