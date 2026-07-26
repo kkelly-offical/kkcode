@@ -1,5 +1,49 @@
 # Changelog / 更新日志
 
+## 0.6.11
+
+0.6.10 说图片读取「未能验证」。用视觉模型（aliyun qwen3.7-plus）真跑之后发现，
+那不是未验证 —— 是坏的。
+
+### English
+
+- **An image next to a tool_result never reached the model.** The
+  openai-compatible mapper handled the `tool_result` blocks in a user message and
+  then `continue`d, which discarded every remaining block in that message — and
+  since 0.6.8 the image `read` produces sits exactly there. The image was intact
+  in the session history with the right `mediaType` and payload, so the wiring
+  looked correct end to end; it simply never entered the request. The model saw
+  only `Image file: x.png (137 bytes, image/png)`, which made "supports visual
+  analysis" an empty promise.
+  Images now go out as their own `user` message, because OpenAI's `role: "tool"`
+  messages only accept string content and cannot carry `image_url`. Verified with
+  a vision model: one `read` call, no pixel-sampling through `bash`, correct
+  answer straight from the image.
+  The Anthropic path was already fine — it maps each block individually rather
+  than dropping siblings.
+- **Why 0.6.10 could not see this:** k3 is a text-only reasoning model, so its
+  fallback to `bash` pixel sampling was indistinguishable from "the model cannot
+  see images". Only a vision-capable model separates "not sent" from "cannot
+  read". Worth remembering when a capability check comes back ambiguous — pick a
+  model that can actually exercise the path.
+
+### 中文
+
+- **挂在 tool_result 旁边的图片从未到达模型。** openai 兼容层处理完一条 user
+  消息里的 `tool_result` 块之后直接 `continue`，把该消息中剩下的块全部丢掉 ——
+  而 0.6.8 起 `read` 产出的图片正好挂在那里。图片在会话历史里带着正确的
+  `mediaType` 和数据完好存在，所以接线看起来端到端都对；它只是从未进入请求。
+  模型看到的只有 `Image file: x.png (137 bytes, image/png)`，「可视觉分析」
+  是句空话。
+  图片现在作为独立的 `user` 消息发出 —— OpenAI 的 `role: "tool"` 消息只接受
+  字符串 content，装不了 `image_url`。视觉模型实测确认：只调一次 `read`，
+  不再用 `bash` 采样像素，直接看图给出正确答案。
+  Anthropic 路径本来就没问题，它逐块映射，不会丢弃兄弟块。
+- **为什么 0.6.10 没能发现：** k3 是纯文本推理模型，它退回 `bash` 采样像素的
+  行为，和「模型看不了图」无法区分。只有具备视觉能力的模型才能把「没发出去」
+  和「读不了」分开。能力类验收结论含糊时值得记住这一点 —— 换一个真能走通那条
+  路径的模型。
+
 ## 0.6.10
 
 第一次对 0.7.0 工具层做真实模型验收（kimi k3，全部通过 `kkcode chat` 本身驱动）。

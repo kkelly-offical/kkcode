@@ -85,6 +85,18 @@ function mapMessages(messages, { preserveReasoning = false } = {}) {
           content: String(result.content || "")
         })
       }
+      // 图片必须单独补一条 user 消息。OpenAI 的 role:"tool" 消息只接受字符串
+      // content，装不了 image_url —— 而 0.6.8 起 read 读到的图片正是挂在
+      // tool_result 之后的同一条消息里。此前这里直接 continue，把它们连同
+      // 整条消息一起丢掉：图片在会话历史里完好，却从未进入请求，于是模型
+      // 只看到那行 `Image file: x.png (137 bytes)`，「可视觉分析」是句空话。
+      const imageBlocks = content.filter((b) => b.type === "image" && b.data)
+      if (imageBlocks.length > 0) {
+        mapped.push({
+          role: "user",
+          content: imageBlocks.map(mapContentBlock)
+        })
+      }
       continue
     }
 
