@@ -3,6 +3,7 @@ import { sanitizeTerminalValue } from "../theme/terminal-sanitize.mjs"
 import { renderFrameDashboardHeader, renderReplStatusLine } from "../ui/repl-status-view.mjs"
 import { buildTranscriptViewport } from "../ui/repl-transcript-panel.mjs"
 import { renderSelectOverlay } from "../ui/overlay-select.mjs"
+import { renderPanelOverlay } from "../ui/overlay-panel.mjs"
 import { formatThinkingDuration } from "../ui/thinking-state.mjs"
 import { thinkingPreviewLines } from "../ui/thinking-preview.mjs"
 import { slashSuggestions } from "./slash-router.mjs"
@@ -272,6 +273,35 @@ export function buildFrame({
     mp.offset = rendered.offset
     modelPickerLines.push(...rendered.lines)
   }
+  // provider 选择器。0.6.13 之前 `/provider` 打印一份编号列表到对话记录，
+  // 然后进一个「输入编号」的模式 —— 配置 provider 是个选择动作，理应和
+  // /model 一样是可视化选择器，而不是让用户在滚动的对话记录里数行号。
+  const providerPickerLines = []
+  if (ui.providerPicker && Array.isArray(ui.providerPicker.items)) {
+    const pp = ui.providerPicker
+    const rendered = renderSelectOverlay({
+      title: `Select Provider (${pp.selected + 1}/${pp.items.length})`,
+      hint: "↑↓ navigate  Enter select  Esc cancel  (/provider add 新增)",
+      items: pp.items.map((item) => ({
+        label: item.label,
+        desc: item.desc,
+        current: item.name === state.providerType
+      })),
+      selected: pp.selected,
+      offset: pp.offset || 0,
+      maxVisible: MAX_MODEL_PICKER_VISIBLE,
+      width,
+      theme: ctx.themeState.theme,
+      accent: ctx.themeState.theme.semantic.info,
+      paint,
+      padRight,
+      markers: true,
+      layout: "two-column"
+    })
+    pp.offset = rendered.offset
+    providerPickerLines.push(...rendered.lines)
+  }
+
   const modePickerLines = []
   if (ui.modePicker) {
     const currentModeId = state.modeId || resolveModeId(state.mode)
@@ -444,10 +474,34 @@ export function buildFrame({
         .map((line) => clipAnsiLine(`  ${paint(line, ctx.themeState.theme.base.muted, { dim: true })}`, width))
     : []
 
+  // 只读信息浮层（/status、/permission、/keys 之类）。放在最前面是因为它
+  // 与选择器互斥：打开它时不该同时有别的浮层在抢屏。
+  const infoPanelLines = []
+  if (ui.infoPanel) {
+    const panel = renderPanelOverlay({
+      title: ui.infoPanel.title || "info",
+      lines: ui.infoPanel.lines || [],
+      offset: ui.infoPanel.offset || 0,
+      width,
+      maxRows: Math.max(4, Math.min(Number(ui.infoPanel.maxRows) || 14, Math.floor(height * 0.6))),
+      theme: ctx.themeState.theme,
+      accent: ctx.themeState.theme.base.accent,
+      paint,
+      clipAnsiLine,
+      wrapLines: (lines, w) => wrapLogLines(lines, w)
+    })
+    // 回写夹紧后的 offset 与总行数，键盘处理据此判断能否继续滚
+    ui.infoPanel.offset = panel.offset
+    ui.infoPanel.maxOffset = panel.maxOffset
+    infoPanelLines.push(...panel.lines)
+  }
+
   const overlayBlocks = [
+    { name: "infoPanel", lines: infoPanelLines },
     { name: "thinkingPreview", lines: thinkingPreview },
     { name: "suggestions", lines: suggestionLines.length ? [suggestionsTitleLine, ...suggestionLines] : [] },
     { name: "modelPicker", lines: modelPickerLines },
+    { name: "providerPicker", lines: providerPickerLines },
     { name: "policyPicker", lines: policyPickerLines },
     { name: "modePicker", lines: modePickerLines },
     { name: "permission", lines: permissionLines },

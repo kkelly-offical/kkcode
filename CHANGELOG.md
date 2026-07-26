@@ -1,5 +1,64 @@
 # Changelog / 更新日志
 
+## 0.6.13
+
+只读查询改走浮层，`/provider` 改成可视化选择器。
+
+### English
+
+- **Read-only queries no longer land in the conversation.** `/status`, `/help`,
+  `/keys`, `/permission`, `/commands`, `/board`, `/agents`, `/tasks` and
+  `/history` used to fold their output into a transcript entry. 0.6.0 solved the
+  "80-line help floods the screen" problem, but left the output inside the
+  conversation, which has three consequences: it gets sent to the model along
+  with the session — and it is written for a person, not a model; `/clear` wipes
+  it even though it has nothing to do with the conversation; and once read you
+  cannot dismiss it, only scroll past. They now open a scrollable overlay
+  (`↑↓`/PgUp/PgDn, Esc or Enter to close) that never touches the transcript. Line
+  mode, which has no frame to float over, still falls back to a folded entry.
+- **`/provider` is a picker now.** It printed a numbered list into the transcript
+  and then entered a "type the number" mode. Configuring a channel is a
+  selection, so it gets the same visual overlay as `/model`: current channel
+  marked, model shown per row, Enter to switch, Esc to cancel. Confirming feeds
+  `/provider <name>` through the normal submit path rather than duplicating the
+  channel-switch logic.
+- **A panel inside a panel was being wrapped apart.** `/status` renders its own
+  box, and the overlay wrapped it at its inner width, breaking `+---...` onto a
+  second line ending in `---+`. Content can now be a function of the available
+  inner width; the runtime view and the ultra board both use it. A terminal
+  resize re-renders them at the new width instead of leaving the border broken.
+- **One-line action results became toasts.** `/session`, `/tasks stop`,
+  `/tasks retry`, `permission.level -> …` and similar were transcript entries.
+  They report that something just happened; they are not conversation.
+- `scripts/tty-acceptance.sh` used `pkill -f "xterm -geometry"`, which matches
+  any process whose command line contains that text — including the shell that
+  invoked the script. It killed my own shell twice during this session's
+  acceptance run. Matches by process name now.
+
+### 中文
+
+- **只读查询不再进入对话。** `/status`、`/help`、`/keys`、`/permission`、
+  `/commands`、`/board`、`/agents`、`/tasks`、`/history` 此前把输出折叠成一条
+  对话记录。0.6.0 解决的是「80 行帮助刷屏」，但把输出留在了对话里，带来三个
+  后果：它会随会话一起发给模型 —— 而它是写给人看的，不是给模型看的；`/clear`
+  会把它清掉，尽管它和对话内容无关；看完之后关不掉，只能往下滚过去。现在它们
+  打开一个可滚动浮层（`↑↓`/PgUp/PgDn，Esc 或 Enter 关闭），完全不碰对话记录。
+  行模式没有帧可浮，仍然回落到折叠条目。
+- **`/provider` 现在是选择器。** 它此前把编号列表打进对话记录，然后进一个
+  「输入编号」的模式。配置渠道是个选择动作，所以给它和 `/model` 一样的可视化
+  浮层：当前渠道带标记、每行显示模型、Enter 切换、Esc 取消。确认时走用户手敲
+  `/provider <name>` 的同一条码，而不是把切渠道的逻辑复制一份。
+- **面板套面板会被折断。** `/status` 自己也画框，而浮层按内宽折行，把
+  `+---...` 折成第二行以 `---+` 结尾。现在内容可以是「可用内宽的函数」，
+  runtime 视图与 ultra 看板都用这种形式。终端 resize 后会按新宽度重排，
+  而不是留着一个断掉的边框。
+- **单行动作结果改为瞬时提示。** `/session`、`/tasks stop`、`/tasks retry`、
+  `permission.level -> …` 之类此前都是对话记录条目。它们报告的是「刚刚发生了
+  什么」，不是对话内容。
+- `scripts/tty-acceptance.sh` 里的 `pkill -f "xterm -geometry"` 会匹配任何
+  命令行含这段文字的进程 —— 包括调用它的那个 shell。这次验收过程中它两次杀掉
+  了我自己的 shell。改为按进程名匹配。
+
 ## 0.6.12
 
 `repl.mjs` 拆分的第一刀：4782 → 4284 行，抽出 `frame-primitives.mjs` 与

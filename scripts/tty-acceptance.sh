@@ -54,7 +54,9 @@ case "${1:-}" in
   shot)
     name="$2"; geom="$3"; shift 3
     ensure_x || exit 1
-    pkill -f "xterm -geometry" 2>/dev/null; sleep 0.5
+    # 按进程名而非命令行匹配：`pkill -f "xterm -geometry"` 会匹配到任何
+    # 命令行里含这段文字的进程，包括调用方自己的 shell（实测踩过）。
+    pkill -x xterm 2>/dev/null; sleep 0.5
     # 保持终端存活，便于后续发按键；命令结束后挂住而不是关窗
     xterm -geometry "$geom" -fa "$FONT" -fs "$FONT_SIZE" \
       -bg "${TTY_BG:-#0b0b0b}" -fg "${TTY_FG:-#f5f7fa}" \
@@ -83,7 +85,7 @@ case "${1:-}" in
     echo "$ACCEPT_DIR/$2.png"
     ;;
   stop)
-    pkill -f "xterm -geometry" 2>/dev/null
+    pkill -x xterm 2>/dev/null
     pkill -x openbox 2>/dev/null
     pkill Xvfb 2>/dev/null
     echo "已停止"

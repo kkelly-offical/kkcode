@@ -417,9 +417,28 @@ async function processInputLine({
   pendingImages = [],
   clearPendingImages = null,
   signal = null,
-  suspendTui = null
+  suspendTui = null,
+  // 只读信息浮层。TUI 会话里由 startTuiRepl 注入；行模式（无 TTY）下缺省为
+  // null，此时回落到 print —— 那里没有帧可以浮，浮层无从存在。
+  openPanel = null
 }) {
   let normalized = normalizeSlashAlias(String(line || "").trim())
+
+  /**
+   * 只读信息的统一出口。
+   *
+   * 这类输出（`/status`、`/permission`、`/keys`…）是**查询当前状态**，给人看的：
+   * 它不该进对话记录，否则会随会话发给模型、被 /clear 连带清掉，而且看完关不掉。
+   * TUI 会话里走浮层；行模式（无 TTY，没有帧可浮）回落到折叠面板。
+   */
+  function showInfo(title, text, options = {}) {
+    if (openPanel) {
+      openPanel(title, text, options)
+      return
+    }
+    print(typeof text === "function" ? text(Math.max(60, (process.stdout.columns || 120) - 4)) : text,
+      { channel: "panel", title })
+  }
 
   async function switchActiveProvider(name) {
     state.providerType = name
@@ -486,17 +505,18 @@ async function processInputLine({
   if (["/exit", "/quit", "/q"].includes(normalized)) return { exit: true }
 
   if (["/help", "/h", "/?"].includes(normalized)) {
-    print(help(providersConfigured), { channel: "panel", title: "help · slash commands and shortcuts" })
+    showInfo("help · slash commands and shortcuts", help(providersConfigured), { maxRows: 18 })
     return { exit: false }
   }
 
   if (["/keys", "/k"].includes(normalized)) {
-    print(shortcutLegend())
+    showInfo("keyboard shortcuts", shortcutLegend(), { maxRows: 16 })
     return { exit: false }
   }
 
   if (["/session", "/s"].includes(normalized)) {
-    print(`session=${state.sessionId}`)
+    // 单行事实，不值得占一条对话记录
+    print(`session=${state.sessionId}`, { channel: "notice", topic: "session" })
     return { exit: false }
   }
 
@@ -514,10 +534,13 @@ async function processInputLine({
       runtimeSummary: runtimeView.runtimeSummary,
       backgroundSummary: runtimeView.backgroundSummary
     })
-    print(renderRuntimeDashboardView({
+    // 内容按浮层内宽排版：runtime 视图自己也画框，宽度不匹配时外层折行会把
+    // 它的边框折成两段（实测截图里就是 `+-----` 换行成 `---+`）。
+    showInfo("runtime status", (innerWidth) => renderRuntimeDashboardView({
       theme: ctx.themeState.theme,
+      columns: innerWidth,
       ...runtimeView
-    }), { channel: "panel", title: "runtime status" })
+    }), { maxRows: 18 })
     return { exit: false }
   }
 
@@ -532,7 +555,6 @@ async function processInputLine({
 
   if (["/commands"].includes(normalized)) {
     const skills = SkillRegistry.isReady() ? SkillRegistry.list() : []
-    for (const line of renderInstalledCommandSurface({ customCommands, skills })) print(line)
     const { CustomAgentRegistry } = await import("./agent/custom-agent-loader.mjs")
     const capabilitySnapshot = await buildCapabilitySnapshot({
       mode: state.mode,
@@ -544,8 +566,11 @@ async function processInputLine({
       mcpRegistry: McpRegistry,
       listAgents: () => CustomAgentRegistry.list()
     })
-    print("")
-    for (const line of renderCapabilityPanel(capabilitySnapshot)) print(line)
+    showInfo("commands & capabilities", [
+      ...renderInstalledCommandSurface({ customCommands, skills }),
+      "",
+      ...renderCapabilityPanel(capabilitySnapshot)
+    ].join("\n"), { maxRows: 18 })
     return { exit: false }
   }
 
@@ -654,16 +679,24 @@ async function processInputLine({
   }
 
   if (["/history"].includes(normalized)) {
-    const sessions = await listSessions({ cwd: process.cwd(), limit: 8, includeChildren: false })
-    if (!sessions.length) print("no sessions found")
-    else {
-      for (const s of sessions) {
-        const age = ageLabel(Date.now() - s.updatedAt)
-        const title = s.title || `${s.mode}:${s.model || "?"}`
-        const titleClipped = title.length > 35 ? title.slice(0, 32) + "..." : title
-        print(`  ${s.id.slice(0, 12)}  ${padRight(titleClipped, 36)} ${padRight(s.mode, 9)} ${padRight(s.status || "-", 10)} ${age}`)
-      }
+    const sessions = await listSessions({ cwd: process.cwd(), limit: 20, includeChildren: false })
+    if (!sessions.length) {
+      print("no sessions found", { channel: "notice", topic: "session" })
+      return { exit: false }
     }
+    const rows = sessions.map((s) => {
+      const age = ageLabel(Date.now() - s.updatedAt)
+      const title = s.title || `${s.mode}:${s.model || "?"}`
+      const titleClipped = title.length > 35 ? title.slice(0, 32) + "..." : title
+      return `  ${s.id.slice(0, 12)}  ${padRight(titleClipped, 36)} ${padRight(s.mode, 9)} ${padRight(s.status || "-", 10)} ${age}`
+    })
+    // 浮层能滚，所以取 20 条而不是 8 条 —— 此前的条数上限是为了不刷屏
+    showInfo(`sessions (${sessions.length})`, [
+      `  ${padRight("id", 12)}  ${padRight("title", 36)} ${padRight("mode", 9)} ${padRight("status", 10)} age`,
+      ...rows,
+      "",
+      "  /resume <id> 续跑其中一个"
+    ].join("\n"))
     return { exit: false }
   }
 
@@ -789,7 +822,7 @@ async function processInputLine({
     const { loadLedger } = await import("./session/ultra-ledger.mjs")
     const record = await LongAgentManager.get(state.sessionId)
     if (!record?.goal && !record?.stagePlan) {
-      print("当前会话还没有 Ultra 目标。用 /ultra 模式跑一个目标后再看。")
+      print("当前会话还没有 Ultra 目标。用 /ultra 模式跑一个目标后再看。", { channel: "notice", topic: "board", tone: "warn" })
       return { exit: false }
     }
     const ledger = await loadLedger(state.sessionId)
@@ -801,8 +834,9 @@ async function processInputLine({
       goal: record.goal, stagePlan: record.stagePlan,
       taskProgress: record.taskProgress || {}, verification
     })
-    const width = Math.max(60, process.stdout.columns || 120)
-    print(renderUltraBoard(board, { width, paint }).join("\n"), { channel: "panel", title: "ultra board" })
+    showInfo("ultra board",
+      (innerWidth) => renderUltraBoard(board, { width: Math.max(60, innerWidth), paint }).join("\n"),
+      { maxRows: 20 })
     return { exit: false }
   }
 
@@ -848,14 +882,22 @@ async function processInputLine({
   if (normalized === "/provider" || normalized === "/p") {
     // 裸 /provider = 最常用的动作：列出并选择。add/edit 各司其名。
     if (!providersConfigured.length) {
-      print("没有已配置的 provider，使用 /provider add 添加。")
+      print("没有已配置的 provider，使用 /provider add 添加。", { channel: "notice", topic: "provider", tone: "warn" })
       return { exit: false }
     }
-    print("")
-    providersConfigured.forEach((name, i) => {
+    const items = providersConfigured.map((name) => {
       const model = ctx.configState.config.provider?.[name]?.default_model || ""
-      const marker = name === state.providerType ? "  ✓ 当前" : ""
-      print(`  ${i + 1}. ${name}${model ? `  [${model}]` : ""}${marker}`)
+      return { name, label: name, desc: model ? `model: ${model}` : "" }
+    })
+    // TUI 里这是个选择动作 —— 走可视化选择器，和 /model 一致。
+    // 行模式（无 TTY）没有帧可浮，回落到编号输入：先打列表再进选择态。
+    if (openPanel) {
+      return { exit: false, openProviderPicker: true, providerPickerItems: items }
+    }
+    print("")
+    items.forEach((item, i) => {
+      const marker = item.name === state.providerType ? "  ✓ 当前" : ""
+      print(`  ${i + 1}. ${item.name}${item.desc ? `  [${item.desc}]` : ""}${marker}`)
     })
     print("")
     print("  输入编号或名称切换（/ 开头的输入会退出选择）")
@@ -958,8 +1000,31 @@ async function processInputLine({
     const permission = ctx.configState.config.permission || (ctx.configState.config.permission = {})
 
     if (sub === "show") {
-      print(`level: ${normalizePermissionLevel(permission)}`)
-      print(`non_tty: ${permission.non_tty_default || "deny"}`)
+      // 档位、非交互默认值、以及当前生效的规则一起给全 —— 此前只打两行档位，
+      // 想看规则还要另外记得 /permission list。
+      const all = Array.isArray(permission.rules) ? permission.rules : []
+      const learned = listLearnedRules(all)
+      const manual = all.filter((rule) => !isLearnedRule(rule))
+      const lines = [
+        `level:    ${normalizePermissionLevel(permission)}`,
+        `non_tty:  ${permission.non_tty_default || "deny"}`,
+        ""
+      ]
+      if (manual.length) {
+        lines.push(`configured rules (${manual.length}):`)
+        for (const rule of manual) lines.push(`  ${escapeTerminalText(describeRule(rule))}`)
+        lines.push("")
+      }
+      if (learned.length) {
+        lines.push(`always-allow rules (${learned.length}) — /permission forget <n>:`)
+        for (const [index, rule] of learned.entries()) {
+          lines.push(`  [${index}] ${escapeTerminalText(describeRule(rule))}`)
+        }
+        lines.push("")
+      }
+      if (!all.length) lines.push("no permission rules configured", "")
+      lines.push("  /permission <readonly|manual|accept-edits|yolo> 切档 · /permission save 落盘")
+      showInfo("permission", lines.join("\n"), { maxRows: 18 })
       return { exit: false, openPolicyPicker: true }
     }
 
@@ -967,7 +1032,7 @@ async function processInputLine({
       // Shift+Tab 在 0.4.0 改切模式，审批档单独用这条命令循环
       const next = nextPermissionLevel(permission)
       ctx.configState.config.permission = applyPermissionLevel(next, permission)
-      print(`permission.level -> ${next} (runtime)`)
+      print(`permission.level -> ${next} (runtime)`, { channel: "notice", topic: "permission" })
       return { exit: false }
     }
 
@@ -976,19 +1041,22 @@ async function processInputLine({
       const learned = listLearnedRules(all)
       const manual = all.filter((rule) => !isLearnedRule(rule))
       if (!all.length) {
-        print("no permission rules configured")
+        print("no permission rules configured", { channel: "notice", topic: "permission" })
         return { exit: false }
       }
+      const lines = []
       if (manual.length) {
-        print(`configured rules (${manual.length}):`)
-        for (const rule of manual) print(`  ${escapeTerminalText(describeRule(rule))}`)
+        lines.push(`configured rules (${manual.length}):`)
+        for (const rule of manual) lines.push(`  ${escapeTerminalText(describeRule(rule))}`)
+        if (learned.length) lines.push("")
       }
       if (learned.length) {
-        print(`always-allow rules (${learned.length}) — /permission forget <n>:`)
+        lines.push(`always-allow rules (${learned.length}) — /permission forget <n>:`)
         for (const [index, rule] of learned.entries()) {
-          print(`  [${index}] ${escapeTerminalText(describeRule(rule))}`)
+          lines.push(`  [${index}] ${escapeTerminalText(describeRule(rule))}`)
         }
       }
+      showInfo(`permission rules (${all.length})`, lines.join("\n"), { maxRows: 18 })
       return { exit: false }
     }
 
@@ -1013,7 +1081,7 @@ async function processInputLine({
           ...existing,
           permission: { ...(existing.permission || {}), rules: persisted.rules }
         })
-        print(`forgot ${outcome.removed.length} always-allow rule(s) -> ${target}`)
+        print(`forgot ${outcome.removed.length} always-allow rule(s) -> ${target}`, { channel: "notice", topic: "permission" })
       } catch (error) {
         print(`forgot ${outcome.removed.length} rule(s) in this session, but saving failed: ${escapeTerminalText(error.message)}`)
       }
@@ -1025,7 +1093,8 @@ async function processInputLine({
       ctx.configState.config.permission = applied
       print(applied.level === sub
         ? `permission.level -> ${applied.level} (runtime)`
-        : `permission.level -> ${applied.level} (runtime, ${sub} 已合并为 ${applied.level})`)
+        : `permission.level -> ${applied.level} (runtime, ${sub} 已合并为 ${applied.level})`,
+        { channel: "notice", topic: "permission" })
       return { exit: false }
     }
 
@@ -1044,7 +1113,7 @@ async function processInputLine({
         return { exit: false }
       }
       permission.non_tty_default = value
-      print(`permission.non_tty_default -> ${value} (runtime)`)
+      print(`permission.non_tty_default -> ${value} (runtime)`, { channel: "notice", topic: "permission" })
       return { exit: false }
     }
 
@@ -1177,7 +1246,7 @@ async function processInputLine({
         const tools = (override?.tools || agent.tools)
         return `  ${agent.name.padEnd(20)} ${String(permission).padEnd(10)} ${tools ? `tools: ${tools.join(", ")}` : "tools: all"}`
       })
-    print(["subagents (name / permission / tools)", ...rows].join("\n"), { channel: "panel", title: `subagents (${rows.length})` })
+    showInfo(`subagents (${rows.length})`, ["subagents (name / permission / tools)", ...rows].join("\n"))
     return null
   }
 
@@ -1187,24 +1256,26 @@ async function processInputLine({
     const [action, taskId] = rest.split(/\s+/).filter(Boolean)
     if (action === "stop" && taskId) {
       await BackgroundManager.cancel(taskId).catch(() => null)
-      print(`task ${taskId} cancellation requested`)
+      print(`task ${taskId} cancellation requested`, { channel: "notice", topic: "task" })
       return null
     }
     if (action === "retry" && taskId) {
       const retried = await BackgroundManager.retry(taskId, ctx.configState.config).catch(() => null)
-      print(retried ? `task ${taskId} retried (attempt ${retried.attempt})` : `task ${taskId} could not be retried`)
+      print(retried ? `task ${taskId} retried (attempt ${retried.attempt})` : `task ${taskId} could not be retried`,
+        { channel: "notice", topic: "task", tone: retried ? "success" : "warn" })
       return null
     }
     const tasks = await BackgroundManager.list().catch(() => [])
     if (!tasks.length) {
-      print("no background tasks")
+      print("no background tasks", { channel: "notice", topic: "task" })
       return null
     }
     const rows = tasks.slice(-20).map((task) => {
       const desc = String(task.description || "").slice(0, 48)
       return `  ${String(task.id).padEnd(24)} ${String(task.status).padEnd(12)} ${desc}`
     })
-    print(["background tasks (id / status / description)", ...rows, "  /tasks stop <id> · /tasks retry <id>"].join("\n"), { channel: "panel", title: `background tasks (${tasks.length})` })
+    showInfo(`background tasks (${tasks.length})`,
+      ["background tasks (id / status / description)", ...rows, "", "  /tasks stop <id> · /tasks retry <id>"].join("\n"))
     return null
   }
 
@@ -1614,6 +1685,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     layoutMeta: { logStartRow: 0, logEndRow: 0, inputStartRow: 0, inputEndRow: 0 },
     wizard: createWizardState(),
     providerPicker: null,
+    // 只读信息浮层：{ title, lines, offset, maxOffset, maxRows }
+    // 与选择器互斥 —— 打开它时不该同时有别的浮层抢屏。
+    infoPanel: null,
     metrics: {
       tokenMeter: {
         estimated: false,
@@ -2142,6 +2216,42 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     settlePendingPromptsForExit()
   }
 
+  function openProviderPicker(items = []) {
+    if (!items.length) {
+      showToast("没有已配置的 provider · /provider add 添加", { topic: "provider", tone: "warn" })
+      requestRender()
+      return
+    }
+    const currentIdx = items.findIndex((item) => item.name === state.providerType)
+    ui.providerPicker = { items, selected: Math.max(0, currentIdx), offset: 0 }
+    requestRender({ force: true })
+  }
+
+  function closeProviderPicker() {
+    ui.providerPicker = null
+    requestRender({ force: true })
+  }
+
+  async function confirmProviderPicker() {
+    if (!ui.providerPicker?.items) return
+    const chosen = ui.providerPicker.items[ui.providerPicker.selected]
+    ui.providerPicker = null
+    if (!chosen) {
+      requestRender({ force: true })
+      return
+    }
+    if (chosen.name === state.providerType) {
+      showToast(`Provider · ${chosen.name}（已是当前渠道）`, { topic: "provider" })
+      requestRender({ force: true })
+      return
+    }
+    // 走用户手敲 `/provider <name>` 的同一条码：切渠道要重取模型目录、
+    // 校验凭据、回写状态，那些逻辑只应存在一处。
+    ui.input = `/provider ${chosen.name}`
+    ui.inputCursor = ui.input.length
+    await submitCurrentInput()
+  }
+
   function openModelPicker(items = []) {
     if (!items.length) {
       showToast("No models discovered · use /model <model-id>", {
@@ -2178,6 +2288,45 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       })
     }
     closeModelPicker()
+  }
+
+  /**
+   * 打开只读信息浮层。
+   *
+   * 与 `printTui(text, { channel: "panel" })` 的区别是它**不进对话记录**：
+   * `/status`、`/permission` 这类查询当前状态的输出是给人看的，进了对话记录
+   * 就会随会话一起发给模型，还会被 /clear 连带清掉，看完也关不掉。
+   */
+  function openInfoPanel(title, text, { maxRows = 14 } = {}) {
+    // text 可以是函数：内容自己画框时需要知道浮层内宽，否则外层折行会把它的
+    // 边框折断。内宽 = 终端宽 - 左右边框与内边距（各 2 格）。
+    const innerWidth = Math.max(20, (Number(process.stdout.columns) || 120) - 4)
+    const resolved = typeof text === "function" ? text(innerWidth) : text
+    ui.infoPanel = {
+      title,
+      lines: String(resolved ?? "").split("\n"),
+      offset: 0,
+      maxOffset: 0,
+      maxRows,
+      // 记下排版时的宽度：终端 resize 后据此重算，而不是让内容错位
+      renderedAt: innerWidth,
+      source: typeof text === "function" ? text : null
+    }
+    requestRender({ force: true })
+  }
+
+  function closeInfoPanel() {
+    if (!ui.infoPanel) return false
+    ui.infoPanel = null
+    requestRender({ force: true })
+    return true
+  }
+
+  function scrollInfoPanel(delta) {
+    if (!ui.infoPanel) return
+    const max = Number(ui.infoPanel.maxOffset) || 0
+    ui.infoPanel.offset = Math.max(0, Math.min(max, (ui.infoPanel.offset || 0) + delta))
+    requestRender()
   }
 
   function openModePicker() {
@@ -2527,7 +2676,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
             pendingImages: ui.pendingImages,
             clearPendingImages: () => { ui.pendingImages = [] },
             signal: aborter.signal,
-            suspendTui: withSuspendedTui
+            suspendTui: withSuspendedTui,
+            openPanel: openInfoPanel
           })
           if (action.turnResult) {
             ui.metrics.tokenMeter = action.turnResult.tokenMeter || ui.metrics.tokenMeter
@@ -2684,7 +2834,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         pendingImages: ui.pendingImages,
         clearPendingImages: () => { ui.pendingImages = [] },
         signal: aborter.signal,
-        suspendTui: withSuspendedTui
+        suspendTui: withSuspendedTui,
+        openPanel: openInfoPanel
       })
 
       if (action.cleared) {
@@ -2715,6 +2866,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       // logo 显示由 Ctrl+B 手动切换，不再自动隐藏
       if (action.openModelPicker) {
         openModelPicker(action.modelPickerItems)
+      }
+      if (action.openProviderPicker) {
+        openProviderPicker(action.providerPickerItems)
       }
       if (action.openPolicyPicker) {
         openPolicyPicker()
@@ -3462,7 +3616,20 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         resolve()
       }
 
-      onResize = () => requestRender({ force: true })
+      onResize = () => {
+        // 浮层内容若是按内宽排版出来的（自带边框的面板），resize 后必须重排 ——
+        // 否则新宽度下它的边框会被外层折行折断。
+        if (ui.infoPanel?.source) {
+          const innerWidth = Math.max(20, (Number(process.stdout.columns) || 120) - 4)
+          if (innerWidth !== ui.infoPanel.renderedAt) {
+            const resolved = ui.infoPanel.source(innerWidth)
+            ui.infoPanel.lines = String(resolved ?? "").split("\n")
+            ui.infoPanel.renderedAt = innerWidth
+            ui.infoPanel.offset = 0
+          }
+        }
+        requestRender({ force: true })
+      }
       onKey = async (str, key = {}) => {
         if (ui.quitting) return
 
@@ -3520,6 +3687,25 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
         if (key.ctrl && key.name === "d" && ui.input.length === 0) {
           finish()
+          return
+        }
+
+        // 信息浮层排在所有浮层之前：它是模态的，打开时应吃掉导航键，
+        // 否则 ↑↓ 会同时滚浮层和翻输入历史。
+        if (ui.infoPanel) {
+          if (key.name === "escape" || (key.ctrl && key.name === "c") || key.name === "q") {
+            closeInfoPanel()
+            return
+          }
+          if (key.name === "up") { scrollInfoPanel(-1); return }
+          if (key.name === "down") { scrollInfoPanel(1); return }
+          if (key.name === "pageup") { scrollInfoPanel(-Math.max(1, (ui.infoPanel.maxRows || 14) - 1)); return }
+          if (key.name === "pagedown") { scrollInfoPanel(Math.max(1, (ui.infoPanel.maxRows || 14) - 1)); return }
+          if (key.name === "home") { scrollInfoPanel(-Number.MAX_SAFE_INTEGER); return }
+          if (key.name === "end") { scrollInfoPanel(Number.MAX_SAFE_INTEGER); return }
+          // Enter 也关：读完就走是最常见的动作，不该只有 Esc 一条路
+          if (key.name === "return" || key.name === "enter") { closeInfoPanel(); return }
+          // 其余按键忽略，避免在浮层打开时误改输入框
           return
         }
 
@@ -3707,6 +3893,31 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
             }
             // Regular option selected
             advanceOrSubmitQuestion()
+            return
+          }
+          return
+        }
+
+        // provider 选择器：注意它的 items 是结构化对象数组。行模式下
+        // ui.providerPicker 会被设成字符串数组（编号输入态），那种形态没有
+        // items 字段，不该走这里 —— 用 Array.isArray(items) 区分。
+        if (ui.providerPicker && Array.isArray(ui.providerPicker.items)) {
+          if (key.name === "escape") {
+            closeProviderPicker()
+            return
+          }
+          if (key.name === "return") {
+            void confirmProviderPicker()
+            return
+          }
+          if (key.name === "up") {
+            ui.providerPicker.selected = Math.max(0, ui.providerPicker.selected - 1)
+            requestRender()
+            return
+          }
+          if (key.name === "down") {
+            ui.providerPicker.selected = Math.min(ui.providerPicker.items.length - 1, ui.providerPicker.selected + 1)
+            requestRender()
             return
           }
           return
