@@ -1,0 +1,8 @@
+# 源码一律以 LF 签出。
+#
+# 没有这条时 Windows 上 git 会按 core.autocrlf 转成 CRLF，而按 "\n" 切行的工具
+# （结构守卫、源码扫描类测试）会在每行尾部留下 "\r"，导致函数边界匹配不上 ——
+# 0.6.27 就是这么只在 Windows 上红的。
+* text=auto eol=lf
+*.png binary
+*.ico binary

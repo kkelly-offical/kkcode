@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { measureFunctions, countLines, stripCommentsAndStrings } from "../src/util/source-metrics.mjs"
 
 /**
  * 结构守卫：让 0.6.15–0.6.26 这十几个版本的拆分不会在半年内长回去。
@@ -27,35 +28,19 @@ function walk(dir) {
 const MODULES = walk(REPL_DIR)
 const rel = (file) => path.relative(ROOT, file).replace(/\\/g, "/")
 
-/** 剥掉注释与字符串 —— 否则文案里的 `if`、`||` 会被算成判定点。 */
-function strip(text) {
-  return text
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/\/\/[^\n]*/g, " ")
-    .replace(/"(?:\\.|[^"\\])*"/g, '""')
-    .replace(/`(?:\\.|[^`\\])*`/g, "``")
-    .replace(/'(?:\\.|[^'\\])*'/g, "''")
+/**
+ * 度量用 src/util/source-metrics.mjs，不在这里自己切行。
+ *
+ * 原因是 0.6.27 在 Windows 上红了：仓库没有 .gitattributes，git 可能按 CRLF 签出，
+ * 而按 `\n` 切行后每行尾部带着 `\r`，函数边界一个都找不到、判定点爆表。
+ * 那个模块把行尾归一，并且有**在 Linux 上也会红**的测试守着（test/source-metrics）。
+ */
+function functionsIn(file) {
+  return measureFunctions(fs.readFileSync(file, "utf8"))
+    .map((fn) => ({ ...fn, file }))
 }
 
-function functionsIn(file) {
-  const src = fs.readFileSync(file, "utf8").split("\n")
-  const out = []
-  for (let i = 0; i < src.length; i++) {
-    const match = src[i].match(/^(\s*)(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/)
-    if (!match) continue
-    const indent = match[1].length
-    let j = i + 1
-    while (j < src.length && src[j] !== " ".repeat(indent) + "}") j++
-    const body = strip(src.slice(i, j + 1).join("\n"))
-    out.push({
-      file,
-      name: match[2],
-      lines: j - i + 1,
-      decisions: (body.match(/\b(if|for|while|case|catch)\b|&&|\|\||\?\?/g) || []).length
-    })
-  }
-  return out
-}
+const linesOf = (file) => countLines(fs.readFileSync(file, "utf8"))
 
 // --- 依赖方向 ---
 
@@ -146,7 +131,7 @@ test("a factory that takes a bag of collaborators must name them", () => {
       if (!first || first.startsWith("{")) continue   // 无参或解构：依赖写在签名里
       const param = first.split(",")[0].split("=")[0].trim()
       if (!/^[A-Za-z_$][\w$]*$/.test(param)) continue
-      const body = strip(src.slice(m.index))
+      const body = stripCommentsAndStrings(src.slice(m.index))
       const keys = new Set(
         [...body.matchAll(new RegExp(`(?<![\\w$])${param}\\.([A-Za-z_$][\\w$]*)`, "g"))]
           .map((hit) => hit[1])
@@ -167,7 +152,7 @@ const REPL_LINE_BUDGET = 2050
 test("repl.mjs does not grow back", () => {
   // 起点 4563 行。没有这条的话，下一次「就先加在 repl.mjs 里吧」会开始把它涨回去 ——
   // 那正是它当初变成 4563 行的过程。拆下去时把预算一起调小。
-  const lines = fs.readFileSync(path.join(ROOT, "src", "repl.mjs"), "utf8").split("\n").length
+  const lines = linesOf(path.join(ROOT, "src", "repl.mjs"))
   assert.ok(lines <= REPL_LINE_BUDGET,
     `repl.mjs 有 ${lines} 行，超过预算 ${REPL_LINE_BUDGET}。` +
     "新代码应当进 src/repl/ 下的模块；确实该留在组装根的话，把预算调大并说明理由。")
@@ -175,7 +160,7 @@ test("repl.mjs does not grow back", () => {
 
 test("the line budget is not left far above reality", () => {
   // 预算比现实高太多就等于没有 —— 会悄悄给回涨留出空间
-  const lines = fs.readFileSync(path.join(ROOT, "src", "repl.mjs"), "utf8").split("\n").length
+  const lines = linesOf(path.join(ROOT, "src", "repl.mjs"))
   assert.ok(REPL_LINE_BUDGET - lines <= 300,
     `预算 ${REPL_LINE_BUDGET} 比实际 ${lines} 行高出太多，请调紧`)
 })
@@ -185,7 +170,7 @@ test("the line budget is not left far above reality", () => {
 test("every module stays small enough to hold in your head", () => {
   const BUDGET = 700
   const big = MODULES
-    .map((file) => ({ file: rel(file), lines: fs.readFileSync(file, "utf8").split("\n").length }))
+    .map((file) => ({ file: rel(file), lines: linesOf(file) }))
     .filter((m) => m.lines > BUDGET)
   assert.deepEqual(big, [],
     `这些模块超过 ${BUDGET} 行:\n  ` + big.map((m) => `${m.file} (${m.lines})`).join("\n  "))

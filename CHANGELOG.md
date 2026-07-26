@@ -1,5 +1,52 @@
 # Changelog / 更新日志
 
+## 0.6.28
+
+修 0.6.27 的结构守卫在 Windows 上失败 —— 第四次栽在同一类分歧上。
+
+### English
+
+- **The guards added in 0.6.27 were red on Windows and green everywhere else.**
+  The repository has no `.gitattributes`, so git may check out CRLF on Windows.
+  Splitting on `"\n"` then leaves a trailing `"\r"` on every line, so the test
+  for "is this line exactly indent + `}`" never matches — no function boundary is
+  ever found, every function is measured to end-of-file, and the decision-point
+  cap blows up. 0.6.27 shipped with all six checks green *except* Windows.
+- **This is the fourth time this project has been caught by a Windows/POSIX
+  divergence** (previously: a bare path is not a valid ESM specifier; `EPERM` vs
+  `EEXIST` for a held lock; path separators). So the fix is not a patch at the
+  read site. The measurement moved into `src/util/source-metrics.mjs` as pure
+  functions over **text**, and the assertions live in a test that feeds it CRLF
+  and CR directly — **it goes red on Linux too**. Removing the normalisation
+  turns four of its nine cases red immediately.
+- **One test states the failure mode itself**: after a broken boundary, a
+  function measures as nearly the whole file. That is the symptom Windows showed,
+  and now it is named rather than inferred.
+- **`.gitattributes` added** (`* text=auto eol=lf`) so the divergence cannot
+  arise in the first place. Belt and braces: the metric is robust *and* the
+  checkout is normalised.
+- Verified by converting a full copy of `src/` and `test/` to CRLF and running
+  the guards against it — 18/18 pass, which is the Windows situation reproduced
+  on Linux.
+
+### 中文
+
+- **0.6.27 加的结构守卫在 Windows 上是红的，别处全绿。** 仓库没有 `.gitattributes`，
+  Windows 上 git 可能按 CRLF 签出。按 `"\n"` 切行之后每行尾部带着 `"\r"`，于是
+  「这一行是不是恰好等于缩进 + `}`」永远为假 —— 函数边界一个都找不到、每个函数
+  都被算到文件末尾、判定点上限自然爆表。0.6.27 是带着「六项里五项绿」发出去的。
+- **这是本项目第四次栽在 Windows 与 POSIX 的分歧上**（前三次：裸路径不是合法的
+  ESM specifier、占用中的锁 `EPERM` vs `EEXIST`、路径分隔符）。所以修法不是在读
+  文件那一处打补丁。度量搬进了 `src/util/source-metrics.mjs`，成为接受**文本**的
+  纯函数，断言则写在一条直接喂 CRLF 与 CR 的测试里 —— **它在 Linux 上也会红**。
+  把行尾归一去掉，九条里立刻有四条变红。
+- **有一条测试把失败模式本身写了下来**：边界断掉之后，函数会被量成几乎整个文件。
+  那正是 Windows 上呈现的现象，现在它被点名，而不是靠推断。
+- **补上 `.gitattributes`**（`* text=auto eol=lf`），让这种分歧从源头不再发生。
+  两道保险：度量本身健壮，签出也归一。
+- 验证方式是把 `src/` 与 `test/` 整份复制后转成 CRLF 再跑守卫 —— 18/18 通过，
+  也就是把 Windows 的处境在 Linux 上复现了一遍。
+
 ## 0.6.27
 
 结构守卫：让这十几个版本的拆分不会在半年内长回去。
