@@ -1,5 +1,57 @@
 # Changelog / 更新日志
 
+## 0.6.26
+
+终端设备的所有权抽成模块。
+
+### English
+
+- **145 lines out — the only place in the REPL that changes state outside the
+  process.** Raw mode, the alternate screen, and the `stdin.emit` patch are all
+  global. Getting them wrong does not garble the display, it breaks the user's
+  shell: raw mode left on means no echo after exit; the alternate screen left on
+  loses the screen contents; stdin left un-paused means the process never quits
+  (readline's keypress decoder keeps a data listener referencing the TTY handle).
+  All six device flags are private to the module now — activate, deactivate,
+  suspend and resume are the only ways to change them.
+- **Why Ctrl+Z consumes and re-raises its own signal, now written down.** Letting
+  the default disposition take over stops the process with the alternate screen
+  and raw mode still on, so returning to the shell shows garbage. Instead the
+  handler is removed, terminal state is restored, and the signal is re-raised
+  with its default behaviour; SIGCONT re-enters the alternate screen. That is
+  also why `SIGTSTP`/`SIGCONT` are excluded from the listener register added in
+  0.6.20 — they are deliberately attached and detached over and over.
+- **`activate` rolls back on failure.** A throw halfway through would otherwise
+  leave raw mode or the alternate screen on with no owner.
+- **Verified by the pty-based lifecycle test**, which drives a real SIGTSTP and
+  SIGCONT and asserts the terminal is restored and no stdin handle is left
+  referenced. The Xvfb screenshot harness cannot check this: it runs the CLI
+  under `bash -c`, which is non-interactive and has no job control, so `fg` does
+  not exist there. What the screenshot did confirm is the half that matters most
+  — after Ctrl+Z the shell echoes again, so raw mode was released.
+- `repl.mjs` 2038 → 1968 lines; `startTuiRepl` 1408 → 1337. Inside it,
+  `submitCurrentInput` (368 lines) is now the only block over 34 lines.
+
+### 中文
+
+- **搬出 145 行 —— 整个 REPL 里唯一改动进程外部状态的地方。** 原始模式、备用屏、
+  `stdin.emit` 补丁都是全局的。做错的后果不是显示错乱，是用户的 shell 坏掉：
+  原始模式没恢复，退出后终端不回显；备用屏没退出，屏幕内容丢失；stdin 没 pause，
+  进程永远不退出（readline 的 keypress 解码器会一直挂着一个 data 监听器引用着
+  TTY handle）。六个设备标志现在全部私有，只能通过激活/停用/挂起/恢复改变。
+- **Ctrl+Z 为什么要「吞掉再重发」自己的信号，现在写下来了。** 直接让默认行为接管，
+  进程会带着备用屏和原始模式停住 —— 回到 shell 看到的是一团乱码。所以先摘掉自己的
+  处理器、恢复终端状态、再把信号按默认行为重发一次；SIGCONT 回来时重新进备用屏。
+  这也正是 0.6.20 加的监听器登记本要把 `SIGTSTP`/`SIGCONT` 排除在外的原因 ——
+  它们是**有意反复装卸**的。
+- **`activate` 失败时会回滚。** 否则半途抛错会留下一个没有主人的原始模式或备用屏。
+- **由基于 pty 的生命周期测试验证** —— 它发真实的 SIGTSTP 与 SIGCONT，断言终端状态
+  被恢复、没有残留被引用的 stdin handle。Xvfb 截图工具验不了这个：它用 `bash -c`
+  跑 CLI，那是非交互的、没有作业控制，`fg` 在那里不存在。截图确认的是最要紧的那一半 ——
+  Ctrl+Z 之后 shell 重新开始回显，说明原始模式确实被释放了。
+- `repl.mjs` 2038 → 1968 行；`startTuiRepl` 1408 → 1337 行。它内部除
+  `submitCurrentInput`（368 行）之外，已经没有超过 34 行的块。
+
 ## 0.6.25
 
 六个浮层的开/关/确认抽成模块，16 条测试。

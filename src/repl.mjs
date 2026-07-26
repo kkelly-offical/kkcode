@@ -77,6 +77,7 @@ import { subscribeSessionEvents } from "./repl/event-bridge.mjs"
 import { createMouseSelection, screenRowFromAbsolute } from "./repl/mouse-selection.mjs"
 import { createPromptQueue } from "./repl/prompt-queue.mjs"
 import { createOverlayController } from "./repl/overlay-controller.mjs"
+import { createTerminalSession } from "./repl/terminal-session.mjs"
 import { createKeyDispatcher } from "./repl/key-dispatch.mjs"
 import { createOverlayKeyScopes } from "./repl/keys/overlay-keys.mjs"
 import { createLifecycleKeyScope, createScrollKeyScope } from "./repl/keys/global-keys.mjs"
@@ -522,13 +523,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   let protocolFlushTimer = null
   let clipboardAbortController = null
   let disposed = false
-  let terminalSuspended = true
-  let terminalFrameActive = false
-  let keypressDecoderStarted = false
-  let stdinEmitPatched = false
-  let rawModeActive = false
-  let jobControlSuspended = false
-  let resumeTerminalAfterContinue = false
+  // spinner 是否要在 SIGCONT 之后接着转 —— 终端状态归 terminal-session 管，
+  // 但 spinner 属于渲染层，所以这一位留在这里。
   let resumeSpinnerAfterContinue = false
   let onResize = null
   let onKey = null
@@ -562,7 +558,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     buildFrame: () => buildFrame(),
     write: (text) => output.write(text),
     renderFrame: renderTerminalFrame,
-    canPaint: () => !disposed && !terminalSuspended,
+    canPaint: () => !disposed && !terminal.isSuspended(),
     frameIntervalMs: TUI_FRAME_MS,
     spinnerIntervalMs: 120,
     onSpinnerTick: () => {
@@ -1561,7 +1557,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     cancelProtocolFlush()
     protocolFlushTimer = setTimeout(() => {
       protocolFlushTimer = null
-      if (disposed || terminalSuspended) return
+      if (disposed || terminal.isSuspended()) return
       const mouseText = terminalFeatures.mouse
         ? mouseDecoder.flush()
         : plainTextDecoder.flush()
@@ -1602,6 +1598,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   function attachTuiInputListeners() {
+    // 先摘再挂：重复挂载会让每个按键触发两次
     if (onKey) {
       process.stdin.removeListener("keypress", onKey)
       process.stdin.on("keypress", onKey)
@@ -1613,136 +1610,69 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 
   /**
-   * Stop all application-owned terminal behavior before borrowing the normal
-   * screen, suspending the process, or exiting. Pausing stdin on final teardown
-   * is essential because readline's internal keypress decoder keeps a data
-   * listener installed and otherwise refs the TTY handle indefinitely.
+   * 终端设备的所有权。实现在 repl/terminal-session.mjs —— 原始模式、备用屏、
+   * stdin 补丁都是**进程外部状态**，做错了坏的是用户的 shell，不只是显示。
    */
-  function deactivateTerminal({ pauseInput = false } = {}) {
-    terminalSuspended = true
-    cancelPendingFrame()
-    cancelProtocolFlush()
-    clipboardAbortController?.abort()
-    clipboardAbortController = null
-    detachTuiInputListeners()
+  const terminal = createTerminalSession({
+    features: terminalFeatures,
+    startFrame: startTuiFrame,
+    stopFrame: stopTuiFrame,
+    emitKeypressEvents,
+    interceptStdinEmit,
+    originalStdinEmit: _origStdinEmit,
+    decoders: [mouseDecoder, pasteDecoder, plainTextDecoder],
+    keypressEscapeTimeoutMs: KEYPRESS_ESCAPE_TIMEOUT_MS,
+    cancelPendingFrame,
+    cancelProtocolFlush,
+    detachInputListeners: detachTuiInputListeners,
+    attachInputListeners: attachTuiInputListeners,
+    abortClipboard: () => {
+      clipboardAbortController?.abort()
+      clipboardAbortController = null
+    },
+    repaint: () => {
+      renderScheduler.forceNextPaintFull()
+      paintFrame(buildFrame())
+    },
+    isDisposed: () => disposed
+  })
 
-    if (rawModeActive && process.stdin.isTTY) {
-      try { process.stdin.setRawMode(false) } catch {}
-    }
-    rawModeActive = false
+  const deactivateTerminal = (options) => terminal.deactivate(options)
+  const activateTerminal = (options) => terminal.activate(options)
 
-    if (stdinEmitPatched) {
-      process.stdin.emit = _origStdinEmit
-      stdinEmitPatched = false
-    }
-    mouseDecoder.reset()
-    pasteDecoder.reset()
-    plainTextDecoder.reset()
-
-    if (terminalFrameActive) {
-      terminalFrameActive = false
-      try { stopTuiFrame(terminalFeatures) } catch {}
-    }
-    if (pauseInput) {
-      try { process.stdin.pause() } catch {}
-    }
-  }
-
-  function activateTerminal({ repaint = false } = {}) {
-    if (disposed || terminalFrameActive) return false
-    terminalSuspended = true
-    try {
-      startTuiFrame(terminalFeatures)
-      terminalFrameActive = true
-      if (!keypressDecoderStarted) {
-        emitKeypressEvents(process.stdin, {
-          escapeCodeTimeout: KEYPRESS_ESCAPE_TIMEOUT_MS
-        })
-        keypressDecoderStarted = true
-      }
-      process.stdin.emit = interceptStdinEmit
-      stdinEmitPatched = true
-      if (process.stdin.isTTY) {
-        process.stdin.setRawMode(true)
-        rawModeActive = true
-      }
-      attachTuiInputListeners()
-      process.stdin.resume()
-      terminalSuspended = false
-      if (repaint) {
-        renderScheduler.forceNextPaintFull()
-        paintFrame(buildFrame())
-      }
-      return true
-    } catch (error) {
-      deactivateTerminal({ pauseInput: true })
-      throw error
-    }
-  }
-
-  /**
-   * Temporarily return ownership to a cooked-mode prompt without allowing
-   * timers, resize handlers, toasts, or EventBus callbacks to paint over it.
-   */
+  /** 把终端暂时还给 cooked 模式的提示（向导、引导流程），期间不许有人画上去。 */
   async function withSuspendedTui(fn) {
     const shouldResumeSpinner = renderScheduler.isSpinnerRunning()
     stopBusySpinner()
-    deactivateTerminal()
-    try {
-      return await fn()
-    } finally {
-      // A termination signal may have completed the outer REPL while the
-      // borrowed prompt was still awaiting input. Never resurrect the TUI.
-      if (!disposed && activateTerminal({ repaint: true }) && shouldResumeSpinner && ui.busy) {
-        startBusySpinner()
-      }
-    }
-  }
-
-  function continueAfterJobControl() {
-    if (!jobControlSuspended) return
-    jobControlSuspended = false
-    if (onSuspend && process.platform !== "win32") {
-      process.on("SIGTSTP", onSuspend)
-    }
-    if (
-      !disposed &&
-      resumeTerminalAfterContinue &&
-      activateTerminal({ repaint: true }) &&
-      resumeSpinnerAfterContinue &&
-      ui.busy
-    ) {
-      startBusySpinner()
-    }
-    resumeTerminalAfterContinue = false
-    resumeSpinnerAfterContinue = false
+    return terminal.withSuspended(fn, {
+      onResume: () => { if (shouldResumeSpinner && ui.busy) startBusySpinner() }
+    })
   }
 
   function suspendForJobControl() {
-    if (disposed || jobControlSuspended || process.platform === "win32") return
-    jobControlSuspended = true
-    resumeTerminalAfterContinue = terminalFrameActive
-    resumeSpinnerAfterContinue = renderScheduler.isSpinnerRunning() && terminalFrameActive
-    stopBusySpinner()
-    // 挂起期间收不到鼠标事件，自动滚动必须停，否则恢复后仍在滚
-    stopAutoScroll()
-    deactivateTerminal({ pauseInput: true })
-
-    // Consume the first SIGTSTP so terminal state can be restored, then resend
-    // it with the default disposition. SIGCONT reactivates the application.
-    if (onSuspend) process.removeListener("SIGTSTP", onSuspend)
-    try {
-      process.kill(process.pid, "SIGTSTP")
-    } catch {
-      continueAfterJobControl()
-    }
+    const shouldResumeSpinner = renderScheduler.isSpinnerRunning() && terminal.isFrameActive()
+    terminal.suspendForJobControl({
+      beforeSuspend: () => {
+        stopBusySpinner()
+        // 挂起期间收不到鼠标事件，自动滚动必须停，否则恢复后仍在滚
+        stopAutoScroll()
+        resumeSpinnerAfterContinue = shouldResumeSpinner
+      }
+    })
   }
 
-  // Install Unix job-control handlers before entering the alternate screen.
-  // Painting the first frame can be comparatively slow under coverage or on a
-  // loaded machine; SIGTSTP must still restore terminal state during that gap.
+  function continueAfterJobControl() {
+    const resumed = terminal.continueAfterJobControl()
+    if (resumed && resumeSpinnerAfterContinue && ui.busy) startBusySpinner()
+    resumeSpinnerAfterContinue = false
+  }
+
+
   onSuspend = suspendForJobControl
   onContinue = continueAfterJobControl
+  // SIGTSTP 由 terminal-session 在挂起/恢复时自己摘挂 —— 它是「有意反复装卸」
+  // 的那一类，不归监听器登记本管。
+  terminal.registerJobControlHandlers({ onSuspend, onResume: () => {} })
   if (process.platform !== "win32") {
     listeners.on(process, "SIGTSTP", onSuspend)
     listeners.on(process, "SIGCONT", onContinue)
