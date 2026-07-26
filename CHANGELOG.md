@@ -1,5 +1,48 @@
 # Changelog / 更新日志
 
+## 0.6.1
+
+Fixes a 0.6.0 regression found by running kkcode in an actual terminal on a
+Linux desktop — the first time this release had been looked at rather than
+asserted about.
+
+### English
+
+- **The status bar dropped `PERMISSION` to make room for a token count.**
+  0.6.0 added absolute tokens to the context badge (`CONTEXT 20.2K (2%)`),
+  about six characters wider. At 110 columns that pushed the rightmost segment
+  past the edge, and the terminal clipped it — so the badge telling you whether
+  the agent can edit files without asking was the one sacrificed for a
+  decorative number. At 86 columns the bar had already been overflowing before
+  0.6.0.
+  Segments now carry a priority and the bar drops the least important ones
+  until it fits, instead of being concatenated and cut from the right in an
+  order that was historical rather than meaningful. Mode and permission are
+  never dropped; context survives down to 70 columns; cost, token counters and
+  the memory flag go first. Verified in a real 88-column xterm.
+- `renderStatusBar`'s width tiers had never been tested — it reads
+  `process.stdout.columns` directly, which is undefined in a test process, so
+  every assertion silently exercised the widest layout. The new tests fake the
+  column count and assert the bar fits at 70/86/100/110/120/160.
+- `scripts/tty-acceptance.sh`: the harness used to find this. Xvfb plus a
+  window manager, a real terminal emulator, synthetic input and screenshots —
+  enough to check what unit tests structurally cannot.
+
+### 中文
+
+- **状态栏为了给 token 数腾地方，丢掉了 `PERMISSION`。** 0.6.0 给上下文徽章
+  加了绝对 token 数（`CONTEXT 20.2K (2%)`），宽了约六个字符。110 列时最右边的
+  段被挤出边界、被终端硬切 —— 于是「agent 能不能不问就改文件」这个信号，为一个
+  装饰性的数字让了位。而 86 列下整条状态栏在 0.6.0 之前就已经溢出。
+  现在每个段带优先级，装不下时从最不重要的开始丢，而不是拼接后从右边切
+  （那个顺序是历史形成的，与重要性无关）。模式与权限永不丢弃，上下文一直保留到
+  70 列，成本、token 计数与内存标记最先让路。已在真实的 88 列 xterm 中验证。
+- `renderStatusBar` 的宽度分档从来没被测过 —— 它直读 `process.stdout.columns`，
+  测试进程里恒为 undefined，所以此前所有断言走的都是最宽的那套布局。新测试伪造
+  列数，断言 70/86/100/110/120/160 各档都装得下。
+- `scripts/tty-acceptance.sh`：找出这个问题的工具。Xvfb 加窗口管理器、真实终端
+  模拟器、合成输入与截图 —— 足以检查单元测试在结构上就检查不到的东西。
+
 ## 0.6.0
 
 A release about the layer you actually look at: what the terminal shows, what

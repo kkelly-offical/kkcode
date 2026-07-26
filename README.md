@@ -187,12 +187,22 @@ Press `Shift+Tab` to walk the five public modes. `/mode` opens a picker,
 
 ### Compatibility / 兼容旧写法
 
-0.3.x spellings keep working and map automatically, printing a one-time
-deprecation notice. Removal is planned for 0.6.0 — 0.5.0 keeps them because
-pulling aliases mid-upgrade costs users more than keeping them costs us.
+0.3.x spellings were removed in 0.6.0. `permission.mode`,
+`permission.default_policy` and the old level names now raise a config error
+that names the replacement — they are rejected rather than ignored, because a
+permission tier decides what runs without asking and silently defaulting would
+leave you believing you are locked down when you may not be.
 
-0.3.x 的写法继续可用并自动映射，首次使用时打印一次性弃用提示。移除推迟到
-0.6.0 —— 升级进行中抽走别名，用户付出的代价远大于我们维护它们的成本。
+| Old / 旧写法 | New / 新写法 |
+| --- | --- |
+| `permission.mode` | `permission.level` |
+| `default_policy: allow` | `level: accept-edits` |
+| `review` / `auto` | `manual` |
+| `edit` / `full-auto` | `accept-edits` |
+
+0.3.x 的写法已在 0.6.0 移除。`permission.mode`、`permission.default_policy`
+与旧等级名现在会报配置错误并指出替代写法 —— 选择报错而不是忽略，是因为权限档
+决定哪些工具不经确认就能跑，静默回落会让你以为自己还锁着。
 
 | 0.3.x | 0.4.0 |
 | --- | --- |
@@ -559,12 +569,12 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current stable version / 当前稳定版本**: `v0.6.0`
+**Current stable version / 当前稳定版本**: `v0.6.1`
 
-`v0.6.0` is the current stable npm and GitHub release. The `main` branch remains
+`v0.6.1` is the current stable npm and GitHub release. The `main` branch remains
 the development line for subsequent fixes.
 
-`v0.6.0` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
+`v0.6.1` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
 
 Use the Kimi Code preset without placing credentials in YAML:
 

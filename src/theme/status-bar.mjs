@@ -75,13 +75,18 @@ export function renderStatusBar({
   const tight = width < 86
   const modelLabel = clipModel(model, tight ? 18 : dense ? 28 : 44)
 
+  // 段落带优先级：拼不下时从**最不重要**的开始丢，而不是让终端从右边硬切。
+  // 0.6.0 给 CONTEXT 加了绝对 token 数（宽约 6 字符），在 110 列的终端上
+  // 恰好把 PERMISSION 挤出了边界 —— 被截掉的偏偏是「能不能不问就改文件」
+  // 这个最该看见的信号。而 86 列下整条状态栏此前就已经溢出，属于既有缺陷。
   const segments = []
+  const add = (text, priority = 5) => segments.push({ text, priority })
   // 颜色仍按航道取（theme.modes 的键是 0.3.x 航道名），标签用 0.4.0 的公开模式名
   const modeBg = theme.modes[mode] || theme.base.accent
   const modeInfo = modeId ? getMode(modeId) : null
   const modeLabel = modeInfo ? `${modeInfo.icon} ${modeInfo.label.toUpperCase()}` : String(mode).toUpperCase()
-  segments.push(badge(modeLabel, contrastText(modeBg), modeBg))
-  segments.push(badge(`MODEL ${modelLabel}`, theme.base.fg, theme.components.panel || theme.base.border, { bold: false }))
+  add(badge(modeLabel, contrastText(modeBg), modeBg), 0)
+  add(badge(`MODEL ${modelLabel}`, theme.base.fg, theme.components.panel || theme.base.border, { bold: false }), 3)
 
   if (showTokenMeter && tokenMeter) {
     const t = tokenMeter.turn
@@ -92,13 +97,13 @@ export function renderStatusBar({
     if (!tight && aggregation.includes("session")) tokenSegments.push(`S:${formatNumber(s.input + s.output)}`)
     if (!dense && aggregation.includes("global")) tokenSegments.push(`G:${formatNumber(g.input + g.output)}`)
     const tokenText = `TOKENS ${tokenSegments.join(" ")}${tokenMeter.estimated ? " ~" : ""}`
-    segments.push(
+    add(
       badge(tokenText, theme.base.fg, "#2d3748", { bold: false })
     )
   }
   if (showCost) {
     const savingsStr = savings > 0 ? ` ↓${formatCost(savings)}` : ""
-    segments.push(badge(`COST ${formatCost(cost)}${savingsStr}`, contrastText(theme.semantic.warn), theme.semantic.warn, { bold: false }))
+    add(badge(`COST ${formatCost(cost)}${savingsStr}`, contrastText(theme.semantic.warn), theme.semantic.warn, { bold: false }), 6)
   }
   if (contextMeter && Number.isFinite(contextMeter.percent)) {
     const pct = Math.max(0, Math.min(100, Math.round(contextMeter.percent)))
@@ -117,13 +122,13 @@ export function renderStatusBar({
     // tokens 缺失（早期帧）时退回纯百分比。
     const abs = Number(contextMeter.tokens) > 0 ? `${formatTokenCount(contextMeter.tokens)} ` : ""
     const text = tight ? `CTX ${pct}%` : `CONTEXT ${abs}(${pct}%)${suffix}`
-    segments.push(badge(text, contrastText(ctxBg), ctxBg, { bold: false }))
+    add(badge(text, contrastText(ctxBg), ctxBg, { bold: false }), 1)
   }
   if (memoryLoaded && !tight) {
-    segments.push(badge("MEM", contrastText(theme.semantic.info), theme.semantic.info, { bold: false }))
+    add(badge("MEM", contrastText(theme.semantic.info), theme.semantic.info, { bold: false }), 7)
   }
   const permBg = permissionColor(permission, theme)
-  segments.push(badge(`PERMISSION ${permission.toUpperCase()}`, contrastText(permBg), permBg, { bold: false }))
+  add(badge(`PERMISSION ${permission.toUpperCase()}`, contrastText(permBg), permBg, { bold: false }), 0)
   if (longagentState && mode === "longagent") {
     const parts = []
     if (longagentState.currentStageId) {
@@ -167,12 +172,48 @@ export function renderStatusBar({
       parts.push(`R:${longagentState.recoveryCount}`)
     }
     if (parts.length) {
-      segments.push(badge(`LONG ${parts.join(" ")}`, contrastText(theme.semantic.success), theme.semantic.success, { bold: false }))
+      add(badge(`LONG ${parts.join(" ")}`, contrastText(theme.semantic.success), theme.semantic.success, { bold: false }), 2)
     }
   }
 
-  if (layout === "comfortable") {
-    return segments.join("  ")
+  const gap = layout === "comfortable" ? "  " : " "
+  return fitSegments(segments, width, gap)
+}
+
+/** SGR 序列不占屏幕宽度，量长度前必须剥掉 */
+const SGR_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g")
+
+function visibleLength(text) {
+  return String(text).replace(SGR_RE, "").length
+}
+
+/**
+ * 按优先级装配：拼不下时从**优先级数字最大**的段开始丢。
+ *
+ * 此前是无脑 join 后交给调用方从右边硬截断 —— 于是最右边的段被牺牲，
+ * 而顺序是历史形成的、与重要性无关。实测中 110 列的终端上被切掉的是
+ * PERMISSION（「能不能不问就改文件」），为的是给一个装饰性的 token 数
+ * 让位；86 列下整条状态栏更是本来就装不下。
+ *
+ * priority 0 的段（模式、权限）永不丢弃：它们装不下时宁可仍然溢出，
+ * 也好过让人看不见自己处在什么权限档。
+ */
+export function fitSegments(segments, width, gap = " ") {
+  const kept = segments.slice()
+  const total = () => kept.reduce((n, s) => n + visibleLength(s.text), 0) + gap.length * Math.max(0, kept.length - 1)
+
+  while (total() > width && kept.length > 1) {
+    let worstIndex = -1
+    let worstPriority = 0
+    for (let i = 0; i < kept.length; i++) {
+      if (kept[i].priority > worstPriority) {
+        worstPriority = kept[i].priority
+        worstIndex = i
+      }
+    }
+    if (worstIndex < 0) break   // 只剩不可丢弃的段，接受溢出
+    kept.splice(worstIndex, 1)
   }
-  return segments.join(" ")
+
+  return kept.map((s) => s.text).join(gap)
 }
