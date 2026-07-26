@@ -30,7 +30,10 @@ test("init --yes creates valid config.yaml", async () => {
   const content = await readFile(join(dir, ".kkcode", "config.yaml"), "utf8")
   const config = YAML.parse(content)
   assert.equal(config.provider.default, "openai")
-  assert.equal(config.permission.default_policy, "ask")
+  // 0.6.0：init 生成新的 permission.level。旧的 default_policy 已被移除，
+  // 继续生成它会产出一份 kkcode 自己拒绝加载的配置。
+  assert.equal(config.permission.level, "manual")
+  assert.equal(config.permission.default_policy, undefined)
 
   const check = validateConfig(config)
   assert.ok(check.valid, `config invalid: ${check.errors.join(", ")}`)

@@ -100,14 +100,17 @@ test("an available update warns but never fails", (t) => {
   assert.equal(offline.checks.update.status, PREFLIGHT_OK)
 })
 
-test("legacy permission levels surface as their 0.4.0 equivalent", (t) => {
+test("a removed permission level falls back to the default tier, never a wider one", (t) => {
   process.env.ACME_KEY = "x"
   t.after(() => { delete process.env.ACME_KEY })
 
+  // 0.6.0 移除了旧等级名。schema 会拒绝并给出迁移写法；自检这一层的职责
+  // 是：万一旧值绕过校验进来，显示的必须是保守的默认档，而不是它当年
+  // 对应的那个更宽松的档位。
   const legacy = configState()
   legacy.config.permission = { level: "full-auto" }
   const report = buildPreflightReport({ configState: legacy, mcp: healthyMcp, skills: someSkills })
-  assert.equal(report.checks.permission.level, "accept-edits")
+  assert.equal(report.checks.permission.level, "manual")
 })
 
 test("config warnings downgrade the report to warn", (t) => {

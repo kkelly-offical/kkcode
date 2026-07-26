@@ -58,7 +58,9 @@ function buildConfig(answers) {
       default: answers.provider
     },
     permission: {
-      default_policy: answers.permissionPolicy || "ask"
+      // 0.6.0：生成新键。旧的 default_policy 已随 0.4.0 弃用期结束被移除，
+      // 再生成它等于让 kkcode init 产出一份自己拒绝加载的配置。
+      level: answers.permissionLevel || "manual"
     }
   }
   const block = {}
@@ -96,14 +98,14 @@ async function runInteractive(rl) {
     model = await askQuestion(rl, "default model", defaults.default_model)
   }
 
-  const permissionPolicy = await askChoice(
+  const permissionLevel = await askChoice(
     rl,
-    "default permission policy:",
-    ["allow", "ask", "deny"],
-    "ask"
+    "default approval level:",
+    ["readonly", "manual", "accept-edits", "yolo"],
+    "manual"
   )
 
-  return { provider, baseUrl, apiKeyEnv, model, permissionPolicy }
+  return { provider, baseUrl, apiKeyEnv, model, permissionLevel }
 }
 
 export function createInitCommand() {
@@ -133,7 +135,7 @@ export function createInitCommand() {
           baseUrl: defaults.base_url || "",
           apiKeyEnv: defaults.api_key_env || "",
           model: defaults.default_model || "",
-          permissionPolicy: "ask"
+          permissionLevel: "manual"
         }
       } else {
         const rl = createInterface({ input: process.stdin, output: process.stdout })

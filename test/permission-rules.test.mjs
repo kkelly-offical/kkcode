@@ -50,7 +50,7 @@ test("sensitive-path escalation applies to multiedit path lists", () => {
   const decision = evaluatePermission({
     config: {
       permission: {
-        default_policy: "allow",
+        level: "accept-edits",
         rules: []
       },
       tool: {
@@ -135,9 +135,14 @@ test("accept-edits allows normal edits and subagents while sensitive paths still
   assert.equal(risky.action, "ask")
 })
 
-test("legacy edit and full-auto both fold into accept-edits", () => {
-  assert.equal(decide({ level: "edit", rules: [] }, { tool: "write", pattern: "a.mjs" }).source, "level:accept-edits")
-  assert.equal(decide({ level: "full-auto", rules: [] }, { tool: "write", pattern: "a.mjs" }).source, "level:accept-edits")
+// 0.6.0：旧等级名已移除。schema 会带着迁移写法报错（见 config-legacy-removal
+// 的断言）；万一有内部调用绕过校验塞进旧名，运行时必须回落到默认档 ——
+// 猜一个更宽松的档位正是这次移除要杜绝的事故。
+test("legacy level names no longer resolve to a permissive tier", () => {
+  for (const level of ["edit", "full-auto", "review", "auto"]) {
+    const decision = decide({ level, rules: [] }, { tool: "write", pattern: "a.mjs" })
+    assert.equal(decision.source, "level:manual", `${level} 不该解析成任何具体旧档`)
+  }
 })
 
 test("yolo allows sensitive edits unless an explicit rule denies them", () => {
@@ -157,17 +162,19 @@ test("yolo allows sensitive edits unless an explicit rule denies them", () => {
   assert.equal(denied.source, "rule")
 })
 
-test("legacy permission.mode yolo still bypasses prompts", () => {
-  const decision = decide({ mode: "yolo", default_policy: "ask", rules: [] }, { tool: "write", pattern: "AGENTS.md" })
-  assert.equal(decision.action, "allow")
-  assert.equal(decision.source, "level:yolo")
+test("permission.mode no longer grants anything on its own", () => {
+  // 旧键被移除后，只写 mode: yolo 不再能放开权限 —— 它在 schema 层就会
+  // 被拒；即使绕过，运行时也只看 permission.level。
+  const decision = decide({ mode: "yolo", rules: [] }, { tool: "write", pattern: "AGENTS.md" })
+  assert.equal(decision.source, "level:manual")
+  assert.notEqual(decision.action, "allow")
 })
 
 test("legacy file_pattern remains a working alias for file_patterns", () => {
   const allowed = evaluatePermission({
     config: {
       permission: {
-        default_policy: "deny",
+        level: "readonly",
         rules: [{ tool: "write", action: "allow", file_pattern: "src/**" }]
       },
       tool: { sensitive_file_patterns: [] }
@@ -179,7 +186,7 @@ test("legacy file_pattern remains a working alias for file_patterns", () => {
   const denied = evaluatePermission({
     config: {
       permission: {
-        default_policy: "deny",
+        level: "readonly",
         rules: [{ tool: "write", action: "allow", file_pattern: "src/**" }]
       },
       tool: { sensitive_file_patterns: [] }

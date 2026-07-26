@@ -10,9 +10,11 @@ test("subagent permission may tighten but never elevate global permission", () =
   assert.equal(base.permission.level, "accept-edits")
 })
 
-test("legacy global levels are normalized before tightening", () => {
+test("a removed global level tightens from the default tier, not its old meaning", () => {
+  // "edit" 曾映射到 accept-edits。0.6.0 移除后它不再有任何含义 ——
+  // 收紧的起点是默认档，子智能体不会因为一个失效的旧名拿到更宽的权限。
   const base = { permission: { level: "edit", non_tty_default: "deny" } }
-  assert.equal(tightenPermissionConfig(base, "yolo").permission.level, "accept-edits")
+  assert.equal(tightenPermissionConfig(base, "yolo").permission.level, "manual")
 })
 
 test("agent permission vocabulary maps instead of collapsing to one level", () => {

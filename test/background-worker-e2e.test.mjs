@@ -112,7 +112,7 @@ beforeEach(async () => {
           }
         },
         permission: {
-          default_policy: "allow",
+          level: "accept-edits",
           non_tty_default: "allow_once",
           rules: []
         },

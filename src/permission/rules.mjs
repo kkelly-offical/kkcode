@@ -1,10 +1,8 @@
 import { getSensitiveEditPolicy } from "./file-edit-policy.mjs"
 import { matchGlob, matchPatterns, normalizePath } from "../util/glob.mjs"
-import { APPROVAL_LEVELS, DEFAULT_APPROVAL, approvalFromLegacy, isLegacyApprovalName } from "../core/modes.mjs"
+import { APPROVAL_LEVELS, DEFAULT_APPROVAL } from "../core/modes.mjs"
 import { noteDeprecation } from "../core/deprecations.mjs"
 
-/** @deprecated 0.4.0 起审批档只有 APPROVAL_LEVELS 一套词汇，0.5.0 移除。 */
-export const PERMISSION_MODES = ["auto", "manual", "yolo"]
 export const PERMISSION_LEVELS = APPROVAL_LEVELS
 export const LEGACY_PERMISSION_POLICIES = ["ask", "allow", "deny"]
 
@@ -45,15 +43,6 @@ const TRUSTED_BASH_PATTERNS = [
   /^(node|npm|pnpm|yarn)\s+(--version|-v|version|root|list|ls)\b/i
 ]
 
-/** @deprecated 仅供旧配置迁移期读取 permission.mode，0.5.0 移除。 */
-function normalizePermissionMode(permission = {}) {
-  const mode = String(permission.mode || "").toLowerCase()
-  if (PERMISSION_MODES.includes(mode)) return mode
-  const legacy = String(permission.default_policy || "").toLowerCase()
-  if (legacy === "auto" || legacy === "yolo") return legacy
-  return "manual"
-}
-
 /**
  * 归一为 0.4.0 的四档审批级别。
  *
@@ -63,34 +52,11 @@ function normalizePermissionMode(permission = {}) {
  */
 export function normalizePermissionLevel(permission = {}) {
   const rawLevel = String(permission.level || "").toLowerCase().trim()
-  if (rawLevel) {
-    const mapped = approvalFromLegacy(rawLevel)
-    if (mapped) {
-      if (isLegacyApprovalName(rawLevel)) {
-        noteDeprecation(
-          `permission.level.${rawLevel}`,
-          `权限等级 \`${rawLevel}\` 已合并为 \`${mapped}\``
-        )
-      }
-      return mapped
-    }
-  }
-
-  const rawMode = String(permission.mode || "").toLowerCase().trim()
-  const rawPolicy = String(permission.default_policy || "").toLowerCase().trim()
-  if (rawMode || rawPolicy) {
-    noteDeprecation(
-      "permission.mode",
-      "`permission.mode` 与 `permission.default_policy` 已被 `permission.level` 取代"
-    )
-  }
-
-  const mode = normalizePermissionMode(permission)
-  if (mode === "yolo") return "yolo"
-  if (mode === "auto") return "manual"
-  if (rawPolicy === "allow") return "accept-edits"
-  if (rawPolicy === "deny") return "readonly"
-  return DEFAULT_APPROVAL
+  if (!rawLevel) return DEFAULT_APPROVAL
+  // 0.6.0 起只认四档。旧名（review/auto/edit/full-auto）与 permission.mode /
+  // permission.default_policy 已在 schema 层被拒并给出迁移写法，所以能走到
+  // 这里的旧名只可能来自绕过校验的内部调用 —— 回落到默认档而不是猜。
+  return APPROVAL_LEVELS.includes(rawLevel) ? rawLevel : DEFAULT_APPROVAL
 }
 
 export function toolCapability(tool, command = "") {
@@ -201,7 +167,6 @@ export function matchRule(rule, input) {
 export function evaluatePermission({ config, tool, mode, pattern = "*", command = "", risk = 0, workspace = "" }) {
   const permission = config.permission || { rules: [] }
   const permissionLevel = normalizePermissionLevel(permission)
-  const permissionMode = normalizePermissionMode(permission)
   const rules = Array.isArray(permission.rules) ? permission.rules : []
 
   for (const rule of rules) {
@@ -210,7 +175,6 @@ export function evaluatePermission({ config, tool, mode, pattern = "*", command 
         action: rule.action,
         source: "rule",
         rule,
-        mode: permissionMode,
         level: permissionLevel
       }
       return applySensitiveEscalation(matchedDecision, { tool, pattern, config, level: permissionLevel })
@@ -222,11 +186,10 @@ export function evaluatePermission({ config, tool, mode, pattern = "*", command 
     action,
     source: `level:${permissionLevel}`,
     rule: null,
-    mode: permissionMode,
     level: permissionLevel
   }
   return applySensitiveEscalation(decision, { tool, pattern, config, level: permissionLevel })
 }
 
 // Exported for testing
-export { matchGlob, matchPatterns, matchCommandPrefix, normalizePermissionMode, trustedBashCommand, autoAllowsTool, levelAllowsTool }
+export { matchGlob, matchPatterns, matchCommandPrefix, trustedBashCommand, autoAllowsTool, levelAllowsTool }

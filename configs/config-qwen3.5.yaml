@@ -113,8 +113,7 @@ session:
   compaction_threshold_messages: 200
   context_cache_points: true
 permission:
-  mode: yolo
-  default_policy: allow
+  level: yolo
   non_tty_default: allow_once
   rules:
     - tool: read

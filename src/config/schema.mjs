@@ -3,8 +3,19 @@ import { APPROVAL_LEVELS } from "../core/modes.mjs"
 import { noteDeprecation } from "../core/deprecations.mjs"
 import { MODEL_ROLES } from "../provider/model-roles.mjs"
 
-/** 新四档 + 0.3.x 旧六级，旧值在读取时映射并提示弃用。 */
-const ACCEPTED_PERMISSION_LEVELS = [...APPROVAL_LEVELS, "review", "auto", "edit", "full-auto"]
+/**
+ * 0.3.x 旧权限等级 → 0.4.0 四档。0.6.0 起不再接受旧名，只用这张表
+ * 在报错信息里指出对应的新写法。
+ *
+ * 注意 `auto` 映射到 `manual` 而不是 `accept-edits`：0.3.x 的 auto 语义是
+ * 「安全工具自动、编辑仍需确认」。同名不同义是升级时静默放宽权限的经典来源。
+ */
+const LEGACY_LEVEL_MIGRATION = Object.freeze({
+  review: "manual",
+  auto: "manual",
+  edit: "accept-edits",
+  "full-auto": "accept-edits"
+})
 
 const HEX = /^#([A-Fa-f0-9]{6})$/
 
@@ -502,16 +513,26 @@ export function validateConfig(config) {
   if (config.permission !== undefined) {
     if (!isObj(config.permission)) err(errors, "permission", "must be object")
     else {
-      // permission.mode / permission.default_policy 自 0.4.0 起弃用，
-      // 仍然校验通过并在读取时映射到 permission.level，0.5.0 移除。
-      if (config.permission.mode !== undefined && !["auto", "manual", "yolo"].includes(config.permission.mode)) {
-        err(errors, "permission.mode", "must be auto|manual|yolo")
+      // permission.mode / permission.default_policy 自 0.4.0 起弃用，0.6.0 移除。
+      //
+      // 这里是**报错**而不是静默忽略：权限档决定哪些工具不经确认就能跑，
+      // 悄悄回落到默认值可能让用户的权限比他写的更松。宁可拒绝启动、
+      // 指着替代写法，也不要让人以为自己还锁着。
+      if (config.permission.mode !== undefined) {
+        err(errors, "permission.mode", `已在 0.6.0 移除，请改用 permission.level（${APPROVAL_LEVELS.join("|")}）`)
       }
-      if (config.permission.level !== undefined && !ACCEPTED_PERMISSION_LEVELS.includes(config.permission.level)) {
-        err(errors, "permission.level", `must be ${APPROVAL_LEVELS.join("|")} (legacy readonly|review|auto|edit|full-auto still accepted)`)
+      if (config.permission.default_policy !== undefined) {
+        err(errors, "permission.default_policy", `已在 0.6.0 移除，请改用 permission.level（allow→accept-edits，deny→readonly，ask→manual）`)
       }
-      if (config.permission.default_policy !== undefined && !["allow", "deny", "ask"].includes(config.permission.default_policy)) {
-        err(errors, "permission.default_policy", "must be allow|deny|ask")
+      if (config.permission.level !== undefined && !APPROVAL_LEVELS.includes(config.permission.level)) {
+        const migration = LEGACY_LEVEL_MIGRATION[String(config.permission.level).toLowerCase()]
+        err(
+          errors,
+          "permission.level",
+          migration
+            ? `\`${config.permission.level}\` 已在 0.6.0 移除，请改写为 \`${migration}\``
+            : `must be ${APPROVAL_LEVELS.join("|")}`
+        )
       }
       if (config.permission.non_tty_default !== undefined && !["allow_once", "deny"].includes(config.permission.non_tty_default)) {
         err(errors, "permission.non_tty_default", "must be allow_once|deny")

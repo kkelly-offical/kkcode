@@ -198,7 +198,9 @@ agent:
 # =============================================================================
 permission:
   # readonly | manual | accept-edits | yolo
-  # 旧的 review/auto -> manual，edit/full-auto -> accept-edits，自动映射
+  # 0.6.0 起旧名（review/auto/edit/full-auto）与 permission.mode /
+  # permission.default_policy 一并移除：写旧名会报错并指出对应的新写法，
+  # 而不是静默映射 —— 权限档悄悄变松是最不该发生的一类升级事故。
   level: "manual"
   non_tty_default: "deny"     # allow_once | deny
   # 审批弹窗里选择 "Always Allow" 时，规则会自动追加到用户级配置的
