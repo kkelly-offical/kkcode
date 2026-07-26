@@ -231,17 +231,9 @@ test("the session picker renders as an overlay and marks the current session", (
   frame.lines.forEach((line, i) => assert.equal(displayWidth(stripAnsi(line)), 100, `第 ${i + 1} 行`))
 })
 
-test("pickers confirm through the normal submit path, not a second copy of the logic", async () => {
-  const src = await readFile(path.join(ROOT, "src", "repl.mjs"), "utf8")
-  // 切渠道要重取模型目录、校验凭据；续跑要恢复渠道、模型、历史。那些逻辑
-  // 只应存在一处 —— 选择器确认时把命令填进输入框走正常提交，而不是复制一份。
-  for (const [fn, command] of [["confirmProviderPicker", "/provider "], ["confirmSessionPicker", "/resume "]]) {
-    const body = src.slice(src.indexOf(`async function ${fn}(`))
-    const scoped = body.slice(0, body.indexOf("\n  }") + 4)
-    assert.match(scoped, new RegExp(`ui\\.input = \`${command.replace("/", "\\/")}`), `${fn} 应复用提交路径`)
-    assert.match(scoped, /await submitCurrentInput\(\)/, `${fn} 应走 submitCurrentInput`)
-  }
-})
+// 「选择器确认时复用既有命令路径」这条已改由 test/repl-overlay-controller.test.mjs
+// 用行为断言覆盖（真的开、真的确认，看它提交了什么）。此前它锚在 repl.mjs 的
+// `async function confirmProviderPicker(` 上 —— 函数搬进模块后那条断言就失效了。
 
 test("action confirmations are toasts, not conversation", async () => {
   // 「刚发生了什么」类的确认不是对话内容 —— 进了对话记录就会随会话发给模型。

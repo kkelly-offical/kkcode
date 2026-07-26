@@ -76,6 +76,7 @@ import { createListenerRegistry } from "./repl/listener-registry.mjs"
 import { subscribeSessionEvents } from "./repl/event-bridge.mjs"
 import { createMouseSelection, screenRowFromAbsolute } from "./repl/mouse-selection.mjs"
 import { createPromptQueue } from "./repl/prompt-queue.mjs"
+import { createOverlayController } from "./repl/overlay-controller.mjs"
 import { createKeyDispatcher } from "./repl/key-dispatch.mjs"
 import { createOverlayKeyScopes } from "./repl/keys/overlay-keys.mjs"
 import { createLifecycleKeyScope, createScrollKeyScope } from "./repl/keys/global-keys.mjs"
@@ -84,17 +85,11 @@ import { createTranscriptWriter } from "./repl/transcript-writer.mjs"
 import { createReplUiState, openUserOverlay, closeUserOverlay } from "./repl/ui-state.mjs"
 import { createGhostPredictor } from "./repl/ghost-predictor.mjs"
 import { buildReplRuntimeSnapshot } from "./repl/runtime-facade.mjs"
-import {
-  POLICY_CHOICES,
-  createPolicyPickerState,
-  applyPolicyChoice,
-  PERMISSION_PROMPT_VALUES
-} from "./repl/permission-flow.mjs"
+import { POLICY_CHOICES, PERMISSION_PROMPT_VALUES } from "./repl/permission-flow.mjs"
 import { nextModeId } from "./core/modes.mjs"
 import {
   applyModeSelection,
   resolveModeId,
-  createModePickerState,
   switchModeInPlace,
   MODE_PICKER_CHOICES
 } from "./repl/mode-flow.mjs"
@@ -788,196 +783,29 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     settlePendingPromptsForExit()
   }
 
-  function openProviderPicker(items = []) {
-    if (!items.length) {
-      showToast("没有已配置的 provider · /provider add 添加", { topic: "provider", tone: "warn" })
-      requestRender()
-      return
-    }
-    const currentIdx = items.findIndex((item) => item.name === state.providerType)
-    openUserOverlay(ui, "providerPicker", { items, selected: Math.max(0, currentIdx), offset: 0 })
-    requestRender({ force: true })
-  }
-
-  function closeProviderPicker() {
-    closeUserOverlay(ui, "providerPicker")
-    requestRender({ force: true })
-  }
-
-  async function confirmProviderPicker() {
-    if (!ui.providerPicker?.items) return
-    const chosen = ui.providerPicker.items[ui.providerPicker.selected]
-    closeUserOverlay(ui, "providerPicker")
-    if (!chosen) {
-      requestRender({ force: true })
-      return
-    }
-    if (chosen.name === state.providerType) {
-      showToast(`Provider · ${chosen.name}（已是当前渠道）`, { topic: "provider" })
-      requestRender({ force: true })
-      return
-    }
-    // 走用户手敲 `/provider <name>` 的同一条码：切渠道要重取模型目录、
-    // 校验凭据、回写状态，那些逻辑只应存在一处。
-    ui.input = `/provider ${chosen.name}`
-    ui.inputCursor = ui.input.length
-    await submitCurrentInput()
-  }
-
-  function openSessionPicker(items = []) {
-    if (!items.length) {
-      showToast("没有可续跑的会话", { topic: "session", tone: "warn" })
-      requestRender()
-      return
-    }
-    openUserOverlay(ui, "sessionPicker", { items, selected: 0, offset: 0 })
-    requestRender({ force: true })
-  }
-
-  function closeSessionPicker() {
-    closeUserOverlay(ui, "sessionPicker")
-    requestRender({ force: true })
-  }
-
-  async function confirmSessionPicker() {
-    if (!ui.sessionPicker?.items) return
-    const chosen = ui.sessionPicker.items[ui.sessionPicker.selected]
-    closeUserOverlay(ui, "sessionPicker")
-    if (!chosen) {
-      requestRender({ force: true })
-      return
-    }
-    // 走 `/resume <id>` 的同一条码：续跑要恢复渠道、模型、历史，那些逻辑只应有一处
-    ui.input = `/resume ${chosen.id}`
-    ui.inputCursor = ui.input.length
-    await submitCurrentInput()
-  }
-
-  function openModelPicker(items = []) {
-    if (!items.length) {
-      showToast("No models discovered · use /model <model-id>", {
-        topic: "model",
-        tone: "error",
-        durationMs: 5000
-      })
-      requestRender()
-      return
-    }
-    const currentIdx = items.findIndex((it) => it.model === state.model && it.provider === state.providerType)
-    openUserOverlay(ui, "modelPicker", {
-      items,
-      selected: Math.max(0, currentIdx),
-      offset: 0
-    })
-    requestRender({ force: true })
-  }
-
-  function closeModelPicker() {
-    closeUserOverlay(ui, "modelPicker")
-    requestRender({ force: true })
-  }
-
-  function confirmModelPicker() {
-    if (!ui.modelPicker) return
-    const chosen = ui.modelPicker.items[ui.modelPicker.selected]
-    if (chosen) {
-      state.providerType = chosen.provider
-      state.model = chosen.model
-      showToast(`Model · ${chosen.provider} / ${chosen.model}`, {
-        topic: "model",
-        tone: "success"
-      })
-    }
-    closeModelPicker()
-  }
-
   /**
-   * 打开只读信息浮层。
-   *
-   * 与 `printTui(text, { channel: "panel" })` 的区别是它**不进对话记录**：
-   * `/status`、`/permission` 这类查询当前状态的输出是给人看的，进了对话记录
-   * 就会随会话一起发给模型，还会被 /clear 连带清掉，看完也关不掉。
+   * 六个用户浮层的开/关/确认。实现在 repl/overlay-controller.mjs。
+   * 互斥由 ui-state 的 openUserOverlay 保证；这里管各自的内容与确认动作。
    */
-  function openInfoPanel(title, text, { maxRows = 14 } = {}) {
-    // text 可以是函数：内容自己画框时需要知道浮层内宽，否则外层折行会把它的
-    // 边框折断。内宽 = 终端宽 - 左右边框与内边距（各 2 格）。
-    const innerWidth = Math.max(20, (Number(process.stdout.columns) || 120) - 4)
-    const resolved = typeof text === "function" ? text(innerWidth) : text
-    openUserOverlay(ui, "infoPanel", {
-      title,
-      lines: String(resolved ?? "").split("\n"),
-      offset: 0,
-      maxOffset: 0,
-      maxRows,
-      // 记下排版时的宽度：终端 resize 后据此重算，而不是让内容错位
-      renderedAt: innerWidth,
-      source: typeof text === "function" ? text : null,
-      // 传函数意味着「我会按给定宽度自己排版」—— 即自带边框。这种内容超宽时
-      // 必须裁掉右边而不是折行，否则它画的框会被折成两段（窄终端实测踩过）。
-      wrap: typeof text !== "function"
-    })
-    requestRender({ force: true })
-  }
+  const overlays = createOverlayController({
+    ui,
+    state,
+    ctx,
+    requestRender,
+    showToast,
+    submitCurrentInput: () => submitCurrentInput(),
+    selectModeAndNotify: (modeId) => selectModeAndNotify(modeId),
+    clearPermissionSession: (sessionId) => PermissionEngine.clearSession(sessionId)
+  })
+  const {
+    openProviderPicker, closeProviderPicker, confirmProviderPicker,
+    openSessionPicker, closeSessionPicker, confirmSessionPicker,
+    openModelPicker, closeModelPicker, confirmModelPicker,
+    openInfoPanel, closeInfoPanel, scrollInfoPanel, relayoutInfoPanel,
+    openModePicker, closeModePicker, confirmModePicker,
+    openPolicyPicker, closePolicyPicker, confirmPolicyPicker
+  } = overlays
 
-  function closeInfoPanel() {
-    if (!ui.infoPanel) return false
-    closeUserOverlay(ui, "infoPanel")
-    requestRender({ force: true })
-    return true
-  }
-
-  function scrollInfoPanel(delta) {
-    if (!ui.infoPanel) return
-    const max = Number(ui.infoPanel.maxOffset) || 0
-    ui.infoPanel.offset = Math.max(0, Math.min(max, (ui.infoPanel.offset || 0) + delta))
-    requestRender()
-  }
-
-  function openModePicker() {
-    openUserOverlay(ui, "modePicker", createModePickerState(state.modeId || resolveModeId(state.mode)))
-    requestRender({ force: true })
-  }
-
-  function closeModePicker() {
-    closeUserOverlay(ui, "modePicker")
-    requestRender({ force: true })
-  }
-
-  function confirmModePicker() {
-    if (!ui.modePicker) return
-    const chosen = MODE_PICKER_CHOICES[ui.modePicker.selected]
-    closeModePicker()
-    if (chosen) selectModeAndNotify(chosen.value)
-  }
-
-  function openPolicyPicker() {
-    const current = ctx.configState.config.permission || {}
-    openUserOverlay(ui, "policyPicker", createPolicyPickerState(current))
-    requestRender({ force: true })
-  }
-
-  function closePolicyPicker() {
-    closeUserOverlay(ui, "policyPicker")
-    requestRender({ force: true })
-  }
-
-  function confirmPolicyPicker() {
-    if (!ui.policyPicker) return
-    const chosen = POLICY_CHOICES[ui.policyPicker.selected]
-    if (chosen) {
-      const permission = ctx.configState.config.permission || (ctx.configState.config.permission = {})
-      const result = applyPolicyChoice(chosen, {
-        permissionConfig: permission,
-        sessionId: state.sessionId,
-        clearSession: (sessionId) => PermissionEngine.clearSession(sessionId)
-      })
-      ctx.configState.config.permission = result.permissionConfig
-      if (result.message) {
-        showToast(stripAnsi(result.message), { topic: "permission", tone: "success" })
-      }
-    }
-    closePolicyPicker()
-  }
 
   function setInputFromHistory(value) {
     ui.input = value || ""
@@ -2000,15 +1828,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       onResize = () => {
         // 浮层内容若是按内宽排版出来的（自带边框的面板），resize 后必须重排 ——
         // 否则新宽度下它的边框会被外层折行折断。
-        if (ui.infoPanel?.source) {
-          const innerWidth = Math.max(20, (Number(process.stdout.columns) || 120) - 4)
-          if (innerWidth !== ui.infoPanel.renderedAt) {
-            const resolved = ui.infoPanel.source(innerWidth)
-            ui.infoPanel.lines = String(resolved ?? "").split("\n")
-            ui.infoPanel.renderedAt = innerWidth
-            ui.infoPanel.offset = 0
-          }
-        }
+        relayoutInfoPanel()
         requestRender({ force: true })
       }
       onKey = async (str, key = {}) => {

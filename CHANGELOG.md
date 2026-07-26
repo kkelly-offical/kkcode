@@ -1,5 +1,50 @@
 # Changelog / 更新日志
 
+## 0.6.25
+
+六个浮层的开/关/确认抽成模块，16 条测试。
+
+### English
+
+- **191 lines out, and one more source-regex assertion retired.** The rule
+  "pickers confirm by feeding the equivalent slash command through the normal
+  submit path" could previously only be checked by grepping `repl.mjs` for the
+  literal `` ui.input = `/provider ` ``. The controller is importable now, so the
+  test opens a picker, confirms it, and asserts what got submitted.
+- **Why that rule exists, now written down.** Switching provider re-fetches the
+  model catalogue, validates credentials, and writes state back; resuming a
+  session restores provider, model, and history. Implementing that a second time
+  inside the picker guarantees the two copies drift, and the drifted one has no
+  test behind it. Model and mode pickers deliberately do *not* go that route —
+  their confirm is two field assignments with no existing command path to reuse.
+  The test states both sides.
+- **The four list pickers were the same shape four times over** — empty-list
+  toast, preselect what is currently in effect, force a full repaint on close.
+  One factory now, with the distinct confirm logic still written out explicitly.
+- **Resize re-layout moved in with it.** `relayoutInfoPanel` is what keeps a
+  self-framed panel from having its border folded after the terminal changes
+  width; there is a test asserting plain text is *not* re-laid-out (nothing to
+  recompute) and that the scroll offset resets, since the old offset would point
+  at a row that no longer exists.
+- `repl.mjs` 2218 → 2038 lines; `startTuiRepl` 1583 → 1408.
+
+### 中文
+
+- **搬出 191 行，又退役一条源码正则断言。**「选择器确认时把等价的斜杠命令填进
+  输入框走正常提交」这条规则，此前只能靠在 `repl.mjs` 里 grep
+  `` ui.input = `/provider ` `` 这样的字面量来检查。控制器现在可导入，测试直接
+  开一个选择器、确认它、断言提交了什么。
+- **这条规则为什么存在，现在写下来了。** 切渠道要重取模型目录、校验凭据、回写
+  状态；续跑要恢复渠道、模型、历史。在选择器里再实现一遍必然导致两份分叉，而
+  分叉的那一半没有测试兜着。模型与模式选择器**刻意**不走这条路 —— 它们的确认就是
+  改两个字段，没有既有命令路径可复用。测试把两侧都写明。
+- **四个列表选择器是同一个形状重复了四遍** —— 空列表给提示、预选当前生效项、
+  关闭时强制全量重绘。现在由一个工厂生成，各自不同的确认逻辑仍然显式写出。
+- **resize 重排跟着搬了进去。** `relayoutInfoPanel` 是终端改宽度之后防止自带边框
+  的浮层被折断的那一步；有测试断言纯文本**不**重排（没有可重算的东西），以及重排后
+  滚动位置要归零 —— 旧偏移量会指向一个已经不存在的行。
+- `repl.mjs` 2218 → 2038 行；`startTuiRepl` 1583 → 1408 行。
+
 ## 0.6.24
 
 工具层的两种模态提示（权限审批、提问）抽成模块，18 条测试。
