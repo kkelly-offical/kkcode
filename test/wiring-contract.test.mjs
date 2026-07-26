@@ -34,7 +34,11 @@ function sourceFiles(dir = SRC, acc = []) {
 }
 
 const FILES = sourceFiles().map((file) => ({
-  path: path.relative(ROOT, file),
+  // 归一化成正斜杠：path.relative 在 Windows 上产生反斜杠，而下面所有比对
+  // 都写的是 "src/permission/rules.mjs" 这种字面量 —— 不归一化的话整个
+  // 扫描器在 Windows 上静默失效（find 返回 undefined、endsWith 永不命中）。
+  // 0.5.4 的 stage-objective 测试栽在同一个地方，verify 矩阵红了四个版本。
+  path: path.relative(ROOT, file).split(path.sep).join("/"),
   text: readFileSync(file, "utf8")
 }))
 
@@ -103,4 +107,18 @@ describe("判定用的字符串必须真的可能出现", () => {
 
 test("被扫描的源文件数量合理 —— 防止扫描器自己失效", () => {
   assert.ok(FILES.length > 100, `只扫到 ${FILES.length} 个源文件，扫描器可能坏了`)
+})
+
+test("路径一律用正斜杠 —— 否则整个扫描器在 Windows 上静默失效", () => {
+  // 这条断言的存在是因为它已经发生过：本文件第一版用 path.relative 的原始
+  // 输出与 "src/permission/rules.mjs" 这类字面量比对，Windows 下反斜杠让
+  // find 恒返回 undefined、endsWith 恒不命中 —— 扫描器不报错，只是什么都
+  // 查不到。同一个坑 0.5.4 的 stage-objective 测试也栽过，红了四个版本。
+  const withBackslash = FILES.filter((f) => f.path.includes("\\"))
+  assert.deepEqual(withBackslash.map((f) => f.path), [], "路径里不该出现反斜杠")
+
+  // 关键的几个锚点必须真的能命中，而不是恰好没人用
+  for (const anchor of ["src/permission/rules.mjs", "src/session/loop.mjs", "src/tool/registry.mjs"]) {
+    assert.ok(FILES.some((f) => f.path === anchor), `锚点 ${anchor} 没被扫到`)
+  }
 })
