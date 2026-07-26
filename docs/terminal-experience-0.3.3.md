@@ -35,7 +35,7 @@ by the manual acceptance matrix below.
   chunk boundaries.
 - Tool summaries are muted gray. Editing tools show a compact line summary and
   keep bounded red `-` / green `+` details behind a collapsible row.
-- Press `Ctrl+E` to toggle the latest expandable Thinking or tool block.
+- Press `Ctrl+E` or `Ctrl+O` (or click it) to toggle the latest expandable Thinking or tool block.
 - Mode, model, provider, permission, reconnect, dashboard, and clipboard notices
   replace each other by topic in a transient bottom toast.
 
@@ -144,7 +144,7 @@ the active request, and removes the reconnect toast.
 | `Ctrl+J` | Insert newline |
 | `Ctrl+C` | Copy an active selection; otherwise interrupt/exit confirmation |
 | `Ctrl+T` | Toggle latest Thinking details |
-| `Ctrl+E` | Toggle latest expandable transcript item |
+| `Ctrl+E` / `Ctrl+O` | Toggle latest expandable transcript item (clicking works too) |
 | `Ctrl+Y` | Toggle automatic copy-on-select |
 | `Ctrl+Z` | Unix: restore terminal state and suspend; `fg` redraws the TUI |
 | `Ctrl+Up` / `Ctrl+Down` | Scroll transcript |

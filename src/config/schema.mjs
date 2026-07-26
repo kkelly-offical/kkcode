@@ -2,6 +2,7 @@ import { VALID_MODES, VALID_PROVIDER_TYPES, VALID_REVIEW_SORT, getValidProviderT
 import { APPROVAL_LEVELS } from "../core/modes.mjs"
 import { noteDeprecation } from "../core/deprecations.mjs"
 import { MODEL_ROLES } from "../provider/model-roles.mjs"
+import { THINKING_TIERS } from "../provider/thinking-effort.mjs"
 
 /**
  * 0.3.x 旧权限等级 → 0.4.0 四档。0.6.0 起不再接受旧名，只用这张表
@@ -132,8 +133,16 @@ export function validateConfig(config) {
         if (p.retry_attempts !== undefined) checkInt(errors, `provider.${key}.retry_attempts`, p.retry_attempts, 0)
         if (p.retry_base_delay_ms !== undefined) checkInt(errors, `provider.${key}.retry_base_delay_ms`, p.retry_base_delay_ms, 100)
         if (p.stream !== undefined && typeof p.stream !== "boolean") err(errors, `provider.${key}.stream`, "must be boolean")
-        if (p.reasoning_effort !== undefined && !["low", "high", "max", "none"].includes(p.reasoning_effort)) {
-          err(errors, `provider.${key}.reasoning_effort`, "must be low|high|max|none")
+        if (p.reasoning_effort !== undefined && !["low", "medium", "high", "max", "none"].includes(p.reasoning_effort)) {
+          err(errors, `provider.${key}.reasoning_effort`, "must be low|medium|high|max|none")
+        }
+        // 0.6.2：思考强度的推荐写法。档位表达意图，具体预算按模型能力推算，
+        // 换模型不用改数字。
+        if (p.thinking_effort !== undefined && !THINKING_TIERS.includes(p.thinking_effort)) {
+          err(errors, `provider.${key}.thinking_effort`, `must be ${THINKING_TIERS.join("|")}`)
+        }
+        if (p.max_output_tokens !== undefined && p.max_output_tokens !== null) {
+          checkInt(errors, `provider.${key}.max_output_tokens`, p.max_output_tokens, 256)
         }
         if (p.context_limit !== undefined && p.context_limit !== null) {
           if (!Number.isInteger(p.context_limit) || p.context_limit < 1024) err(errors, `provider.${key}.context_limit`, "must be integer >= 1024 or null")

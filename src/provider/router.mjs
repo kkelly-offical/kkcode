@@ -13,6 +13,7 @@ import {
   assertProviderOutboundAllowed
 } from "./security.mjs"
 import { validateModelId } from "./model-id.mjs"
+import { resolveThinkingParams } from "./thinking-effort.mjs"
 
 // --- Provider Registry ---
 const registry = new Map()
@@ -322,8 +323,17 @@ export async function requestProvider({
       baseDelayMs: Number(providerCfg.retry_base_delay_ms || 800),
       onRetry: retryTelemetry.onRetry
     },
-    thinking: providerCfg.thinking || null,
-    reasoningEffort: providerCfg.reasoning_effort || null,
+    // 0.6.2：思考强度按档位解析，并按模型自身的输出预算算绝对值 ——
+    // 此前 Anthropic 侧的 budget_tokens 是硬编码 10000，对大模型太少、
+    // 对小模型可能超过它的输出上限。显式写的 thinking/reasoning_effort 仍然优先。
+    ...resolveThinkingParams({
+      tier: providerCfg.thinking_effort || providerCfg.reasoning_effort || "high",
+      protocol: settings.protocol,
+      maxOutputTokens: Number(providerCfg.max_output_tokens) || Number(providerCfg.max_tokens) || 0,
+      contextLimit: Number(providerCfg.context_limit) || 0
+    }),
+    ...(providerCfg.thinking ? { thinking: providerCfg.thinking } : {}),
+    ...(providerCfg.reasoning_effort ? { reasoningEffort: providerCfg.reasoning_effort } : {}),
     ...(Number.isFinite(temperature) ? { temperature } : {}),
     ...requestContext,
     onResponse(response) {
@@ -440,8 +450,17 @@ export async function* requestProviderStream({
       baseDelayMs: Number(providerCfg.retry_base_delay_ms || 800),
       onRetry: retryTelemetry.onRetry
     },
-    thinking: providerCfg.thinking || null,
-    reasoningEffort: providerCfg.reasoning_effort || null,
+    // 0.6.2：思考强度按档位解析，并按模型自身的输出预算算绝对值 ——
+    // 此前 Anthropic 侧的 budget_tokens 是硬编码 10000，对大模型太少、
+    // 对小模型可能超过它的输出上限。显式写的 thinking/reasoning_effort 仍然优先。
+    ...resolveThinkingParams({
+      tier: providerCfg.thinking_effort || providerCfg.reasoning_effort || "high",
+      protocol: settings.protocol,
+      maxOutputTokens: Number(providerCfg.max_output_tokens) || Number(providerCfg.max_tokens) || 0,
+      contextLimit: Number(providerCfg.context_limit) || 0
+    }),
+    ...(providerCfg.thinking ? { thinking: providerCfg.thinking } : {}),
+    ...(providerCfg.reasoning_effort ? { reasoningEffort: providerCfg.reasoning_effort } : {}),
     ...requestContext,
     onResponse(response) {
       responseStatus = Number(response?.status || 0) || null

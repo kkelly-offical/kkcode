@@ -1,6 +1,7 @@
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { paint } from "../theme/color.mjs"
+import { highlightLine } from "../theme/syntax-highlight.mjs"
 import {
   sanitizeTerminalText,
   sanitizeTerminalValue
@@ -142,6 +143,12 @@ function clippedDiffLine(value) {
  * executor intentionally keeps event metadata compact, so edit arguments are
  * the safest source for the red/green detail view.
  */
+/** 从路径推断语法高亮用的语言标识 */
+function languageFromPath(filePath) {
+  const ext = String(filePath || "").split(".").pop().toLowerCase()
+  return ext && ext !== filePath ? ext : ""
+}
+
 export function formatToolDiffDetails(toolName, args = {}, {
   maxLines = MAX_TOOL_DETAIL_LINES,
   theme = null,
@@ -190,9 +197,20 @@ export function formatToolDiffDetails(toolName, args = {}, {
   }
 
   switch (String(toolName || "").toLowerCase()) {
-    case "write":
-      add("+ ", args.content ?? "", diffAdd(theme))
+    case "write": {
+      // 新建文件带行号与语法高亮：写入是「这就是文件现在的样子」，不是
+      // 「这几行变了」，用 diff 的 +/- 语汇反而读不出结构。行号让人能直接
+      // 对着终端说「第 57 行那个值改成 0.5」。
+      const language = languageFromPath(args.path)
+      const source = rawDiffLines(args.content ?? "")
+      for (let i = 0; i < source.length; i++) {
+        if (rows.length >= limit) { truncated = true; break }
+        const lineNo = String(i + 1).padStart(4, " ")
+        const body = clippedDiffLine(source[i])
+        rows.push(`    ${toolMuted(lineNo)}  ${highlightLine(body, language, theme?.markdown) || paint(body, diffAdd(theme), { dim: true })}`)
+      }
       break
+    }
     case "edit": {
       const before = args.before ?? args.old_string ?? ""
       const after = args.after ?? args.new_string ?? ""

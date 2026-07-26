@@ -117,9 +117,12 @@ const DEFAULT_RULES = [
   },
   {
     name: "forbid_mkfs",
-    pattern: ["mkfs"],
+    // token 精确匹配只拦得住裸 `mkfs`，而实际用的都是 `mkfs.ext4` /
+    // `mkfs.xfs` 这类带文件系统后缀的形式 —— 全部从这条规则底下溜过去了。
+    // 一并覆盖 mke2fs 与 fdisk/parted 这些同族工具。
+    pattern: [/\bmkfs(\.[a-z0-9]+)?\b/i, /\bmke2fs\b/i, /\b(fdisk|parted|sgdisk)\b/i],
     decision: Decision.FORBID,
-    reason: "Filesystem formatting operations are forbidden.",
+    reason: "Filesystem formatting and partitioning operations are forbidden.",
     category: "fs_safety"
   },
   
@@ -265,17 +268,37 @@ export function evaluateCommand(command, options = {}) {
  * @param {Object} config - 配置
  * @returns {{allowed: boolean, reason?: string, warning?: string}}
  */
-export function checkBashAllowed(command, config = {}) {
+/**
+ * YOLO 档可以放开的类别。
+ *
+ * `git_safety`（commit/push/reset --hard/clean -fd）是**工作流约束** ——
+ * 「AI 不该替你提交」。用户显式选了 YOLO（文档写的是「每个审批提示都跳过」、
+ * 无人值守），这层约束就该让位，否则模式名与实际行为对不上。
+ *
+ * `fs_safety` / `network_safety` / `privilege`（`rm -rf /`、`dd of=/dev/`、
+ * `mkfs`、`curl | sh`、提权）**永不放开**：它们是不可逆的、作用域在工作区
+ * 之外的破坏，与「免去确认」是两回事。YOLO 的含义是不打断你，不是可以格盘。
+ */
+const YOLO_RELAXABLE_CATEGORIES = new Set(["git_safety"])
+
+/**
+ * @param {string} command
+ * @param {object} config
+ * @param {{approvalLevel?: string}} [options] 当前审批档。0.6.2 之前这个函数
+ *   完全不看权限档 —— YOLO 模式下 git commit 照样被拒，与模式的承诺矛盾。
+ */
+export function checkBashAllowed(command, config = {}, options = {}) {
   // 全自动化模式检查
   const fullAuto = config.git_auto?.full_auto === true
   const allowDangerous = config.git_auto?.allow_dangerous_ops === true
+  const yolo = String(options.approvalLevel || "").toLowerCase() === "yolo"
   
   // 检查是否配置了全局禁止 git commit/push
   // 全自动化模式下，如果 auto_commit/auto_push 启用，则允许
   const autoCommit = fullAuto && config.git_auto?.auto_commit === true
   const autoPush = fullAuto && config.git_auto?.auto_push === true
   
-  if (!autoCommit && config.git_auto?.forbid_commit !== false) {
+  if (!yolo && !autoCommit && config.git_auto?.forbid_commit !== false) {
     const commitPattern = /^git\s+commit\b/i
     if (commitPattern.test(command)) {
       return {
@@ -285,7 +308,7 @@ export function checkBashAllowed(command, config = {}) {
     }
   }
   
-  if (!autoPush && config.git_auto?.forbid_push !== false) {
+  if (!yolo && !autoPush && config.git_auto?.forbid_push !== false) {
     const pushPattern = /^git\s+push\b/i
     if (pushPattern.test(command)) {
       return {
@@ -306,11 +329,23 @@ export function checkBashAllowed(command, config = {}) {
         warning: `Dangerous git operation allowed in full-auto mode: ${result.reason}`
       }
     }
+    if (yolo && YOLO_RELAXABLE_CATEGORIES.has(result.category)) {
+      return {
+        allowed: true,
+        warning: `YOLO: ${result.reason}`
+      }
+    }
 
-    // 其他 forbidden 类别（fs_safety, network_safety 等）始终禁止
+    // 不可逆的系统级破坏（fs_safety / network_safety / privilege）任何档位
+    // 都不放开。拒绝理由要说清是哪一类，用户才知道这是「改个配置就行」
+    // 还是「我们真的不做」。
     return {
       allowed: false,
-      reason: result.reason
+      category: result.category,
+      relaxable: YOLO_RELAXABLE_CATEGORIES.has(result.category),
+      reason: YOLO_RELAXABLE_CATEGORIES.has(result.category)
+        ? result.reason
+        : `${result.reason}（${result.category}：不可逆或作用域在工作区之外，任何审批档都不放开）`
     }
   }
   

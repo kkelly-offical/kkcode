@@ -270,8 +270,12 @@ function normalizeModels(json) {
       reason: "bad_response"
     })
     const contextLength = readContextLength(item)
+    const maxOutput = readMaxOutput(item)
+    const supported = Array.isArray(item.supported_parameters) ? item.supported_parameters : null
     return {
       id,
+      ...(maxOutput ? { maxOutputTokens: maxOutput } : {}),
+      ...(supported ? { supportedParameters: supported } : {}),
       ...(item.display_name || item.displayName ? { displayName: item.display_name || item.displayName } : {}),
       ...(item.owned_by || item.ownedBy ? { ownedBy: item.owned_by || item.ownedBy } : {}),
       ...(item.created_at || item.created ? { created: item.created_at || item.created } : {}),
@@ -287,6 +291,20 @@ function normalizeModels(json) {
  * 返回了上下文长度也被丢弃，于是这个数字永远只能人肉填进
  * provider.model_context。各家字段名不一，逐个试。
  */
+/** 输出上限：思考预算按它的比例推算，拿不到就退回按上下文推 */
+function readMaxOutput(item) {
+  const candidates = [
+    item.max_output_tokens, item.maxOutputTokens,
+    item.max_completion_tokens, item.output_token_limit,
+    item.top_provider?.max_completion_tokens
+  ]
+  for (const value of candidates) {
+    const n = Number(value)
+    if (Number.isFinite(n) && n >= 256) return Math.floor(n)
+  }
+  return 0
+}
+
 function readContextLength(item) {
   const candidates = [
     item.context_length, item.contextLength,
@@ -319,6 +337,31 @@ export function applyDiscoveredContextLimits(configState, models = []) {
   }
   if (added > 0) provider.model_context = mc
   return added
+}
+
+/**
+ * 把发现到的模型能力（输出上限、是否支持思考）写回该 provider 的内存配置。
+ *
+ * 这是「不让用户手动填」的落点：思考预算按输出上限的比例推算，输出上限
+ * 又能从目录直接读到，于是换模型不需要动任何数字。用户显式写过的值不覆盖。
+ */
+export function applyDiscoveredCapabilities(configState, providerName, models = []) {
+  const provider = configState?.config?.provider?.[providerName]
+  if (!provider) return false
+  const active = provider.default_model
+  const match = models.find((m) => m?.id === active)
+  if (!match) return false
+
+  let changed = false
+  if (match.maxOutputTokens && provider.max_output_tokens === undefined) {
+    provider.max_output_tokens = match.maxOutputTokens
+    changed = true
+  }
+  if (match.contextLength && (provider.context_limit === undefined || provider.context_limit === null)) {
+    provider.context_limit = match.contextLength
+    changed = true
+  }
+  return changed
 }
 
 function nextPageUrl(json, current, protocol) {

@@ -23,7 +23,7 @@ import {
 } from "./session/routing-observability.mjs"
 import { listProviders } from "./provider/router.mjs"
 import { createWizardState, startWizard, startEditWizard, handleWizardInput } from "./provider/wizard.mjs"
-import { discoverModelsForProvider, applyDiscoveredContextLimits } from "./provider/model-catalog.mjs"
+import { discoverModelsForProvider, applyDiscoveredContextLimits, applyDiscoveredCapabilities } from "./provider/model-catalog.mjs"
 import { escapeTerminalText, validateModelId } from "./provider/model-id.mjs"
 import { loadCustomCommands, applyCommandTemplate } from "./command/custom-commands.mjs"
 import { SkillRegistry } from "./skill/registry.mjs"
@@ -158,6 +158,7 @@ import {
 } from "./ui/thinking-state.mjs"
 import { mergeConfigObject } from "./config/merge.mjs"
 import { renderSelectOverlay } from "./ui/overlay-select.mjs"
+import { thinkingPreviewLines } from "./ui/thinking-preview.mjs"
 import { setMarkdownColors } from "./theme/markdown.mjs"
 import { formatTokenCount } from "./theme/status-bar.mjs"
 import {
@@ -361,6 +362,7 @@ export async function loadProviderModelItems(configState, providerName, {
     // 目录里带上下文长度的模型，顺手合并进内存里的 model_context ——
     // 上限与状态栏百分比从此不用人肉填（用户显式写过的键不覆盖）。
     applyDiscoveredContextLimits(configState, catalog.models || [])
+    applyDiscoveredCapabilities(configState, providerName, catalog.models || [])
     const seen = new Set()
     const items = []
     for (const entry of catalog.models || []) {
@@ -2781,7 +2783,15 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     // 此前 fixedRows 是一串手写加法，与下面一串手写 push 各说各话：新增一个
     // UI 块只要漏掉其中一边，logRows 就算错，而 buildFrame 在测试里够不着，
     // CI 全绿、真终端上对话区被挤没。让两边同源，这个错就犯不出来了。
+    // 思考实时预览：固定两行灰字，显示思考流的尾部。行数固定是硬约束 ——
+    // 会变高的块会让对话区随模型输出上下抖动（fixedRows 按实际行数计费）。
+    const thinkingPreview = (ui.busy && ui.thinking?.phase === "streaming" && ui.thinking.raw)
+      ? thinkingPreviewLines(ui.thinking.raw, Math.max(20, width - 4))
+          .map((line) => clipAnsiLine(`  ${paint(line, ctx.themeState.theme.base.muted, { dim: true })}`, width))
+      : []
+
     const overlayBlocks = [
+      { name: "thinkingPreview", lines: thinkingPreview },
       { name: "suggestions", lines: suggestionLines.length ? [suggestionsTitleLine, ...suggestionLines] : [] },
       { name: "modelPicker", lines: modelPickerLines },
       { name: "policyPicker", lines: policyPickerLines },
@@ -4556,7 +4566,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           return
         }
 
-        if (key.ctrl && key.name === "e") {
+        // Ctrl+O 与 Ctrl+E 并列绑定：折叠块该有多条路进得去（鼠标点击、
+        // Ctrl+E、Ctrl+O），而不是只记得住一个组合键。
+        if (key.ctrl && (key.name === "e" || key.name === "o")) {
           const expandable = transcript.getItems().findLast((item) => item.collapsible && item.details.length)
           if (expandable) {
             transcript.toggleLog(expandable.id)

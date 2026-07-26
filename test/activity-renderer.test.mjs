@@ -85,8 +85,10 @@ test("activity renderer remains compatible with plain appendLog outputs", async 
     })
 
     assert.ok(logs.every((line) => typeof line === "string"))
-    assert.ok(logs.some((line) => line.includes("+ alpha")))
-    assert.ok(logs.some((line) => line.includes("+ beta")))
+    // 0.6.2：新建文件按「文件现在的样子」渲染 —— 带行号，而不是 diff 的 +/-。
+    // 写入不是「这几行变了」，行号让人能直接对着终端说「第 2 行改一下」。
+    assert.ok(logs.some((line) => /\s1\s+alpha/.test(line)), `缺少带行号的 alpha: ${JSON.stringify(logs)}`)
+    assert.ok(logs.some((line) => /\s2\s+beta/.test(line)), `缺少带行号的 beta: ${JSON.stringify(logs)}`)
   } finally {
     renderer.stop()
   }
