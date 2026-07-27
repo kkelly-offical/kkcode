@@ -1,5 +1,35 @@
 # Changelog / 更新日志
 
+## 0.7.4
+
+Startup update notice surfaces inside the TUI; one-click upgrade documented as
+`kkcode update --install`; the version number now sits at the right end of the
+bottom hint line. 启动更新提示接入 TUI toast；一键升级为 `kkcode update --install`；
+版本号常驻底部提示行右侧。
+
+### English
+
+- **Update notice reaches the TUI.** The startup check used to print to stderr,
+  which the TUI frame could overwrite (or be corrupted by). In interactive
+  sessions the notice now arrives as a toast: `Update available: kkcode x -> y.
+  Run: kkcode update --install`. Non-TTY sessions keep the stderr notice.
+- **The notice tells the truth.** It previously suggested `kkcode update
+  --channel <x>`, a command that only checks. It now points at
+  `kkcode update --install`, the one-click upgrade.
+- **Version at a glance.** The current version is right-aligned on the bottom
+  hint line of the TUI; on narrow terminals it yields to the key hints instead
+  of overflowing.
+
+### 中文
+
+- **更新提示进入 TUI。** 启动检查原来只写 stderr，TUI 接管屏幕后可能看不见甚至
+  写花帧。现在交互会话里以 toast 提示新版本，并给出 `kkcode update --install`
+  一键升级命令；非 TTY 会话保留 stderr 提示。
+- **提示文案修正。** 此前引导用户运行只检查不安装的 `kkcode update --channel`，
+  现改为真正执行升级的 `kkcode update --install`。
+- **版本号常驻。** 当前版本右对齐显示在 TUI 底部提示行；窄终端下自动让位给
+  快捷键提示，不溢出行宽。
+
 ## 0.7.3
 
 `/provider add` 变成真正的表单；API Key 直接输入并写进配置；不再预置任何 provider；

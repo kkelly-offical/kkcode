@@ -6,6 +6,7 @@ import { createThinkingState } from "../src/ui/thinking-state.mjs"
 import { createTranscriptModel } from "../src/ui/transcript-model.mjs"
 import { DEFAULT_THEME } from "../src/theme/default-theme.mjs"
 import { DEFAULT_CONFIG } from "../src/config/defaults.mjs"
+import { PACKAGE_VERSION } from "../src/version.mjs"
 
 /**
  * buildFrame 此前在 startTuiRepl 内部，宽高直接读 process.stdout —— 测试进程里
@@ -352,4 +353,21 @@ test("no candidates means no candidate rows", () => {
   const text = frame.lines.map((line) => stripAnsi(line)).join("\n")
   assert.doesNotMatch(text, /Files \(/)
   assert.doesNotMatch(text, /Slash Commands \(/)
+})
+
+test("版本号右对齐在底部提示行末端，与快捷键提示同一行", () => {
+  const frame = render({}, { width: 120 })
+  const footer = stripAnsi(frame.lines.at(-1))
+  assert.match(footer, /↵ send/, "左侧快捷键提示还在")
+  assert.ok(footer.endsWith(`v${PACKAGE_VERSION}`), `末行应以版本号结尾: ${JSON.stringify(footer)}`)
+  assertExactWidth(frame, 120, "版本号右对齐 @ 120")
+})
+
+test("窄终端让版本号让位而不是溢出", () => {
+  const versionPattern = new RegExp(`v${PACKAGE_VERSION.replaceAll(".", "\\.")}`)
+  for (const [width, height] of [[40, 10], [30, 8], [20, 6]]) {
+    const frame = render({}, { width, height })
+    assertExactWidth(frame, width, `窄宽版本让位 @ ${width}`)
+    assert.doesNotMatch(stripAnsi(frame.lines.at(-1)), versionPattern, `${width} 列下不该硬塞版本号`)
+  }
 })

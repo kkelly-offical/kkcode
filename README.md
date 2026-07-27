@@ -549,6 +549,8 @@ Reviewed source pages on 2026-05-27: [OpenAI models](https://developers.openai.c
 
 KKCode checks npm dist-tags in the background on startup and caches the result under `~/.kkcode/update-state.json`. By default it only prints a notice; it does not modify your global install unless you explicitly run the updater.
 
+One-click upgrade / 一键升级: `kkcode update --install`. When a newer release is found, the TUI shows a startup toast with the same command, and the current version stays visible at the right end of the bottom hint line. 启动时发现新版本会在 TUI 里弹出提示；当前版本号常驻显示在底部提示行右侧。
+
 ```bash
 kkcode update --check
 kkcode update --install --channel latest
@@ -569,12 +571,12 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current stable version / 当前稳定版本**: `v0.7.3`
+**Current stable version / 当前稳定版本**: `v0.7.4`
 
-`v0.7.3` is the current stable npm and GitHub release. The `main` branch remains
+`v0.7.4` is the current stable npm and GitHub release. The `main` branch remains
 the development line for subsequent fixes.
 
-`v0.7.3` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
+`v0.7.4` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
 
 Use the Kimi Code preset without placing credentials in YAML:
 

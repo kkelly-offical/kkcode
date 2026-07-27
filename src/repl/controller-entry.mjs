@@ -6,6 +6,7 @@ export async function runReplController({
   recentSessions,
   historyLines,
   mcpStatusLines = [],
+  startupUpdatePromise = null,
   startTuiRepl,
   startLineRepl,
   clearScreenFn,
@@ -21,7 +22,8 @@ export async function runReplController({
       customCommands,
       recentSessions,
       historyLines,
-      mcpStatusLines
+      mcpStatusLines,
+      startupUpdatePromise
     })
     return "tui"
   }

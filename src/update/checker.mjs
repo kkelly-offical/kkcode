@@ -146,7 +146,7 @@ export async function checkForUpdate(config = {}, options = {}) {
 
 export function updateMessage(result) {
   if (!result?.hasUpdate) return null
-  return `Update available: kkcode ${result.currentVersion} -> ${result.latestVersion} (${result.channel}). Run: kkcode update --channel ${result.channel}`
+  return `Update available: kkcode ${result.currentVersion} -> ${result.latestVersion} (${result.channel}). Run: kkcode update --install`
 }
 
 export async function maybeNotifyUpdateOnStartup(config = {}, options = {}) {

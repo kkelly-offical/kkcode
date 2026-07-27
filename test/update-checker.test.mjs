@@ -35,6 +35,7 @@ test("checkForUpdate reads the configured npm dist-tag and writes cache", async 
     assert.equal(result.hasUpdate, true)
     assert.equal(result.latestVersion, "0.2.3-preview.1")
     assert.match(updateMessage(result), /kkcode 0\.2\.1 -> 0\.2\.3-preview\.1/)
+    assert.match(updateMessage(result), /Run: kkcode update --install/)
     const saved = JSON.parse(await readFile(stateFile, "utf8"))
     assert.equal(saved.channel, "preview")
   } finally {

@@ -1,5 +1,6 @@
 import { PACKAGE_VERSION } from "./version.mjs"
 import { maybeNotifyUpdateOnStartup } from "./update/checker.mjs"
+import { notifyUpdateToast } from "./update/startup-toast.mjs"
 import { buildPreflightReport } from "./cli/preflight.mjs"
 import { stdin as input, stdout as output } from "node:process"
 import { createInterface } from "node:readline/promises"
@@ -487,7 +488,7 @@ function isCommandLikeInput(line) {
 }
 
 
-async function startTuiRepl({ ctx, state, providersConfigured, customCommands, recentSessions, historyLines, mcpStatusLines = [] }) {
+async function startTuiRepl({ ctx, state, providersConfigured, customCommands, recentSessions, historyLines, mcpStatusLines = [], startupUpdatePromise = null }) {
   let localCustomCommands = customCommands
   let localRecentSessions = recentSessions
   const terminalFeatures = resolveTerminalFeatures(ctx.configState.config.ui?.terminal || {})
@@ -573,6 +574,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     print: printTui,
     sanitizeRecord: sanitizeTranscriptRecord
   } = transcriptWriter
+
+  notifyUpdateToast({ promise: startupUpdatePromise, showToast })
 
   /**
    * 回溯上一轮对话。撤回的那句输入会填回输入框 —— 「退回去改一下再问」
@@ -1859,9 +1862,15 @@ export async function startRepl({ trust = false } = {}) {
   printContextWarnings(ctx)
   // 不阻塞启动：命中本地缓存时会很快回填，preflight 读到什么就报什么
   let startupUpdateResult = null
-  void maybeNotifyUpdateOnStartup(ctx.configState.config, { currentVersion: PACKAGE_VERSION })
-    .then((result) => { startupUpdateResult = result })
-    .catch(() => {})
+  // TUI 路径下 stderr 提示改由 toast 承担：检查最晚 2.5s 才返回，那时 TUI 已
+  // 接管屏幕，直接 console.error 会把帧写花。判据与 controller-entry 一致。
+  const willUseTui = Boolean(process.stdout.isTTY && process.stdin.isTTY)
+  const startupUpdatePromise = maybeNotifyUpdateOnStartup(ctx.configState.config, {
+    currentVersion: PACKAGE_VERSION,
+    ...(willUseTui ? { print: () => {} } : {})
+  })
+    .then((result) => { startupUpdateResult = result; return result })
+    .catch(() => null)
   // 启动即异步刷新默认 provider 的模型目录（0.6.0）：让 /model 秒开、并把
   // API 自报的上下文长度合并进内存的 model_context。此前没有任何启动路径
   // 触发发现，列表与上限全靠上次手动 /model refresh 或人肉配置。
@@ -1954,6 +1963,7 @@ export async function startRepl({ trust = false } = {}) {
       recentSessions,
       historyLines,
       mcpStatusLines,
+      startupUpdatePromise,
       startTuiRepl,
       startLineRepl,
       clearScreenFn: clearScreen

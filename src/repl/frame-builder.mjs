@@ -12,7 +12,8 @@ import { renderSuggestions, MAX_TUI_SUGGESTIONS } from "./suggestion-view.mjs"
 import { POLICY_CHOICES, PERMISSION_PROMPT_CHOICES } from "./permission-flow.mjs"
 import { resolveModeId, MODE_PICKER_CHOICES } from "./mode-flow.mjs"
 import { layoutInputText } from "./text-layout.mjs"
-import { clipAnsiLine, padRight, wrapLogLines } from "./frame-primitives.mjs"
+import { clipAnsiLine, displayWidth, padRight, wrapLogLines } from "./frame-primitives.mjs"
+import { PACKAGE_VERSION } from "../version.mjs"
 
 /**
  * 整帧组装：把 UI 状态渲染成一屏文本行。
@@ -490,7 +491,14 @@ export function buildFrame({
   const queued = ui.queuedPrompts?.length
     ? `  ⏳ ${ui.queuedPrompts.length} queued`
     : ""
-  lines.push(clipAnsiLine(paint(`↵ send  ⌃J newline  ⌃V paste image/text  ⌃Y auto-copy  ? help${queued}`, ctx.themeState.theme.base.muted, { dim: true }), width))
+  const footerHint = `↵ send  ⌃J newline  ⌃V paste image/text  ⌃Y auto-copy  ? help${queued}`
+  // 版本号右对齐挂在同一行：宽度不够就让位给提示，而不是把行撑溢出。
+  const footerVersion = `v${PACKAGE_VERSION}`
+  const footerGap = width - displayWidth(footerHint) - displayWidth(footerVersion)
+  const footerLine = footerGap >= 2
+    ? `${paint(footerHint, ctx.themeState.theme.base.muted, { dim: true })}${" ".repeat(footerGap)}${paint(footerVersion, ctx.themeState.theme.base.muted, { dim: true })}`
+    : paint(footerHint, ctx.themeState.theme.base.muted, { dim: true })
+  lines.push(clipAnsiLine(footerLine, width))
 
   // In very small terminals, preserve the composer and its real cursor by
   // trimming overflow from the top rather than cutting off the bottom pane.
