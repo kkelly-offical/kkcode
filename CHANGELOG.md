@@ -1,5 +1,44 @@
 # Changelog / 更新日志
 
+## 0.7.3
+
+`/provider add` 变成真正的表单；API Key 直接输入并写进配置；不再预置任何 provider；
+`/skills` 与 Plan 后的 Yolo Build（issue #4）。
+
+### English
+
+- **`/provider add` is a modal form now**, not twelve lines of Q&A printed into
+  the transcript. Fields are paged with Tab, the base URL is shown and editable
+  (it used to be written behind your back), and the confirmation page previews
+  exactly what will be written — nothing more.
+- **API keys are entered directly** and stored in `~/.kkcode/config.yaml` as
+  `api_key`. Input is masked, the preview shows only the last four characters,
+  and the file lands with permissions 0600. Leave the field blank to use the
+  vendor's environment variable instead.
+- **Only fields you typed or confirmed are written.** The old wizard smuggled in
+  the preset's base_url, a silently inherited context_limit, and a hardcoded
+  thinking budget that differed between two code paths.
+- **No more preset providers.** A fresh install used to show four "configured"
+  providers with no credentials. Now the provider list shows what you have —
+  nothing, at first — and the first command tells you how to add one.
+- **`/skills`** lists registered skills, their source and how to invoke them
+  (issue #4). **Yolo Build** joins the post-plan menu: execute the plan with
+  approvals off, cost stated on its face (issue #4).
+
+### 中文
+
+- **`/provider add` 是真正的表单了**，不再是往对话里打印十二行问答。字段用 Tab
+  分页，Base URL 显示出来、可编辑（此前它被背着用户写进配置），确认页预览的
+  就是将要写入的全部内容 —— 一个字不多。
+- **API Key 直接输入**，明文保存到 `~/.kkcode/config.yaml` 的 `api_key`。输入时
+  遮蔽、预览只显示末四位、文件权限 0600。留空则改用厂商的环境变量。
+- **只写你输入或确认过的字段。** 旧向导会偷偷塞进预设的 base_url、静默继承的
+  context_limit、以及两条路径还不一致的硬编码 thinking budget。
+- **不再预置任何 provider。** 全新安装此前会显示四个「已配置」但没有凭据的
+  provider。现在列表里就是你拥有的 —— 一开始是空的，第一条命令会告诉你怎么加。
+- **`/skills`** 列出已注册技能、来源与调用方式（issue #4）。Plan 完成后新增
+  **Yolo Build**：免审批执行计划，代价写在选项脸上（issue #4）。
+
 ## 0.7.2
 
 生成时可以继续打字并排队；长任务跑完会把你叫回来；补齐 emacs 行编辑键。
