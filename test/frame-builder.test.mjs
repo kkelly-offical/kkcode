@@ -196,7 +196,7 @@ test("each overlay branch renders — a missed closure variable would throw here
     策略选择器: { policyPicker: { selected: 0 } },
     忙碌与思考: {
       busy: true,
-      currentActivity: { tool: "bash", args: { command: "npm test" } },
+      currentActivity: { type: "tool", tool: "bash", args: { command: "npm test" } },
       currentStep: 3,
       maxSteps: 10,
       thinking: { ...createThinkingState(), active: true, startedAt: 1_699_999_990_000, text: "在想一件事" }
@@ -370,4 +370,80 @@ test("窄终端让版本号让位而不是溢出", () => {
     assertExactWidth(frame, width, `窄宽版本让位 @ ${width}`)
     assert.doesNotMatch(stripAnsi(frame.lines.at(-1)), versionPattern, `${width} 列下不该硬塞版本号`)
   }
+})
+
+test("busy 状态行按实际阶段显示对应文案，而不是统一 Thinking", () => {
+  const frameText = (patch, width = 120) => {
+    const frame = render({ busy: true, ...patch }, { width })
+    assertExactWidth(frame, width, `busy 状态 @ ${width}`)
+    return frame.lines.map(stripAnsi).join("\n")
+  }
+  const thinkingBase = { currentActivity: { type: "thinking" } }
+
+  // 提交后空窗：回合已忙但第一个 step 事件还没到。此前显示 Thinking · 0.0s（冻结）。
+  const starting = frameText({})
+  assert.match(starting, /Starting\.+/, "空窗期是 Starting")
+  assert.doesNotMatch(starting, /0\.0s/, "没有计时锚点就不该摆一个冻结的 0.0s")
+
+  // longagent 阶段间隙：同样没有 currentActivity，但它不是「刚启动」
+  const working = frameText({ metrics: { ...makeUi().metrics, longagent: { phase: "build" } } })
+  assert.match(working, /Working\.+/, "longagent 间隙是 Working")
+
+  // 等首个 token：phase=waiting 有锚点，带计时
+  const waiting = frameText({
+    ...thinkingBase,
+    thinking: { ...createThinkingState(), phase: "waiting", startedAt: 1_699_999_990_000 }
+  })
+  assert.match(waiting, /Waiting\.+\s+· 10s/, "等首 token 是 Waiting 且计时")
+  assert.doesNotMatch(waiting, /Thinking/, "等待与推理不能混为一个词")
+
+  // 工具结束到下一 step 的间隙：activity=thinking 但 phase 已回 idle，无锚点不计时
+  const gap = frameText({ ...thinkingBase })
+  assert.match(gap, /Waiting\.+/, "step 间隙仍是 Waiting")
+  assert.doesNotMatch(gap, /0\.0s/, "无锚点间隙不该显示 0.0s")
+
+  // 推理流：真正的 thinking 内容在到达
+  const thinking = frameText({
+    ...thinkingBase,
+    thinking: { ...createThinkingState(), phase: "streaming", startedAt: 1_699_999_990_000 }
+  })
+  assert.match(thinking, /Thinking\.+\s+· 10s/, "推理流才是 Thinking")
+
+  // provider 重试：次数与原因都要看得见
+  const retry = frameText({ currentActivity: { type: "retry", attempt: 2, max: 5, classification: "timeout" } })
+  assert.match(retry, /Retrying 2\/5\.+/, "重试要带进度")
+  assert.match(retry, /· timeout/, "重试要带原因")
+
+  // 上下文压缩
+  assert.match(frameText({ currentActivity: { type: "compacting" } }), /Compacting\.+/)
+
+  // 正文流与工具：原有行为保持
+  assert.match(frameText({ currentActivity: { type: "writing" } }), /writing/)
+  assert.match(frameText({ currentActivity: { type: "tool", tool: "bash", args: { command: "npm test" } } }), /bash/)
+
+  // 窄宽下所有状态都不溢出
+  for (const patch of [{}, thinkingBase, { currentActivity: { type: "retry", attempt: 2, max: 5, classification: "timeout" } }, { currentActivity: { type: "compacting" } }]) {
+    frameText(patch, 60)
+  }
+})
+
+test("thinking 点数动画不推动计时：· 的列位置跨帧固定", () => {
+  // 此前 dots 是 1~3 个点的变宽字符串，· 03s 随点数左右横跳。
+  // 补到固定 3 格之后，无论 spinnerIndex 是多少，· 必须停在同一列。
+  const thinkingAt = (spinnerIndex) => {
+    const frame = render({
+      busy: true,
+      currentActivity: { type: "thinking" },
+      spinnerIndex,
+      thinking: { ...createThinkingState(), active: true, phase: "streaming", startedAt: 1_699_999_990_000 }
+    }, { width: 120 })
+    const line = frame.lines.map(stripAnsi).find((l) => l.includes("Thinking"))
+    assert.ok(line, "推理流帧里应有 Thinking 行")
+    return line
+  }
+  const a = thinkingAt(0)
+  const b = thinkingAt(2)
+  assert.equal(a.indexOf("·"), b.indexOf("·"), "· 的列位置不能随点数动画漂移")
+  assert.match(a, /Thinking\.\s+·/, "spinnerIndex 0 是 1 个点")
+  assert.match(b, /Thinking\.{3} ·/, "spinnerIndex 2 是 3 个点")
 })

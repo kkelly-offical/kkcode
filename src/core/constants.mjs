@@ -60,6 +60,7 @@ export const EVENT_TYPES = {
   LONGAGENT_HYBRID_REPLAN: "longagent.hybrid.replan",
   LONGAGENT_HYBRID_MEMORY_LOADED: "longagent.hybrid.memory_loaded",
   LONGAGENT_HYBRID_MEMORY_SAVED: "longagent.hybrid.memory_saved",
+  SESSION_COMPACTING: "session.compacting",
   SESSION_COMPACTED: "session.compacted",
   TURN_USAGE_UPDATE: "turn.usage.update",
   STREAM_TEXT_START: "stream.text.start",

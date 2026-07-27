@@ -66,6 +66,8 @@ function projectNameFrom(cwd) {
 export function describeReplTitle({ activity = null, cwd = "" } = {}) {
   if (activity?.type === "tool") return `${BUSY_MARK} ${APP_TITLE} · ${activity.tool || "tool"}`
   if (activity?.type === "writing") return `${BUSY_MARK} ${APP_TITLE} · writing`
+  if (activity?.type === "retry") return `${BUSY_MARK} ${APP_TITLE} · retrying`
+  if (activity?.type === "compacting") return `${BUSY_MARK} ${APP_TITLE} · compacting`
   if (activity) return `${BUSY_MARK} ${APP_TITLE} · thinking`
   const project = projectNameFrom(cwd)
   return project ? `${APP_TITLE} · ${project}` : APP_TITLE
@@ -259,6 +261,11 @@ export function subscribeSessionEvents({
         break
       }
 
+      case EVENT_TYPES.SESSION_COMPACTING:
+        ui.currentActivity = { type: "compacting" }
+        requestRender()
+        break
+
       case EVENT_TYPES.SESSION_COMPACTED: {
         // 静默压缩 + 提示。压缩本身不打断工作流，这里只报一句结果。
         const before = Number(event.payload?.beforeTokens) || 0
@@ -267,6 +274,12 @@ export function subscribeSessionEvents({
           ? `${formatTokenCount(before)} → ${formatTokenCount(after)}`
           : `${event.payload?.summarizedCount ?? "?"} messages summarized`
         showToast(`Context compacted · ${detail}`, { topic: "compaction", tone: "success" })
+        // 压缩结束回到思考态 —— 但只收自己立起来的那一位：
+        // 回合结束后迟到的 compacted 不该把 null 活动改回 thinking。
+        if (ui.currentActivity?.type === "compacting") {
+          ui.currentActivity = { type: "thinking" }
+          requestRender()
+        }
         break
       }
 
@@ -294,7 +307,12 @@ export function subscribeSessionEvents({
             durationMs: Math.max(1200, Number(payload.delayMs || 0) + 500)
           }
         )
-        ui.currentActivity = { type: "thinking" }
+        ui.currentActivity = {
+          type: "retry",
+          attempt: payload.retryAttempt,
+          max: payload.maxRetries,
+          classification: payload.classification
+        }
         requestRender()
         break
 

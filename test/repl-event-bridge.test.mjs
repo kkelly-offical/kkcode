@@ -204,7 +204,24 @@ test("a provider retry is announced and shown as still working", () => {
   const toast = calls.find((c) => c.startsWith("toast[provider-retry]"))
   assert.match(toast, /2\/5/)
   assert.match(toast, /timeout/, "要说明为什么在重试")
-  assert.deepEqual(ui.currentActivity, { type: "thinking" })
+  // 重试不是「还在想」：次数与原因进活动态，busy 行直接显示 Retrying 2/5
+  assert.deepEqual(ui.currentActivity, { type: "retry", attempt: 2, max: 5, classification: "timeout" })
+})
+
+test("compaction shows a compacting activity and settles back when done", () => {
+  const { emit, ui, calls } = harness()
+  emit(EVENT_TYPES.SESSION_COMPACTING, {})
+  assert.deepEqual(ui.currentActivity, { type: "compacting" }, "压缩进行中要有自己的状态")
+  emit(EVENT_TYPES.SESSION_COMPACTED, { beforeTokens: 120000, afterTokens: 30000 })
+  assert.deepEqual(ui.currentActivity, { type: "thinking" }, "压缩结束后回到思考态")
+  assert.ok(calls.find((c) => c.startsWith("toast[compaction]")), "结果提示保留")
+})
+
+test("a late compacted event does not resurrect an activity after the turn ended", () => {
+  const { emit, ui } = harness()
+  emit(EVENT_TYPES.TURN_FINISH, {})
+  emit(EVENT_TYPES.SESSION_COMPACTED, { beforeTokens: 120000, afterTokens: 30000 })
+  assert.equal(ui.currentActivity, null, "回合已结束，迟到的 compacted 不该把活动改回 thinking")
 })
 
 test("finishing a turn clears the activity and dismisses the retry toast", () => {
@@ -331,6 +348,8 @@ test("the terminal title says what is happening, and where you are when nothing 
   assert.equal(describeReplTitle({ activity: { type: "thinking" } }), "● kkcode · thinking")
   assert.equal(describeReplTitle({ activity: { type: "writing" } }), "● kkcode · writing")
   assert.equal(describeReplTitle({ activity: { type: "tool", tool: "bash" } }), "● kkcode · bash")
+  assert.equal(describeReplTitle({ activity: { type: "retry" } }), "● kkcode · retrying")
+  assert.equal(describeReplTitle({ activity: { type: "compacting" } }), "● kkcode · compacting")
 })
 
 test("a stream of deltas writes the title once, not once per token", () => {

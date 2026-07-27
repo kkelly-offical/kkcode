@@ -154,6 +154,8 @@ export function buildFrame({
   ui.inputLayout = inputLayout
   const visibleInput = inputLayout.lines
   let busyLine
+  // 点数动画统一补到固定 3 格：不补的话后面的 · 03s 会跟着点左右横跳。
+  const dots = ".".repeat((ui.spinnerIndex % 3) + 1).padEnd(3)
   if (ui.busy && ui.currentActivity) {
     const spinner = BUSY_SPINNER_FRAMES[ui.spinnerIndex]
     const stepTag = ui.currentStep > 0
@@ -167,20 +169,35 @@ export function buildFrame({
       busyLine = `${paint(spinner, toolColor)} ${paint(toolName, toolColor, { bold: true })}${formatBusyToolDetail(toolName, ui.currentActivity.args)}${stepTag}`
     } else if (ui.currentActivity.type === "writing") {
       busyLine = `${paint(spinner, "green")} ${paint("writing", "green", { bold: true })}${stepTag}`
-    } else {
+    } else if (ui.currentActivity.type === "retry") {
+      const attempt = ui.currentActivity.attempt || "?"
+      const max = ui.currentActivity.max || "?"
+      const why = ui.currentActivity.classification
+        ? paint(` · ${ui.currentActivity.classification}`, null, { dim: true })
+        : ""
+      busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint(`Retrying ${attempt}/${max}${dots}`, ctx.themeState.theme.semantic.warn, { bold: true })}${why}${stepTag}`
+    } else if (ui.currentActivity.type === "compacting") {
+      busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint(`Compacting${dots}`, ctx.themeState.theme.semantic.warn, { bold: true })}${stepTag}`
+    } else if (ui.thinking.phase === "streaming") {
+      // 推理流：有真实的 thinking 内容在到达，计时从等待起点累计
       const elapsed = ui.thinking.startedAt
         ? formatThinkingDuration(now - ui.thinking.startedAt)
         : "0.0s"
-      const dots = ".".repeat((ui.spinnerIndex % 3) + 1)
       busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint(`Thinking${dots} · ${elapsed}`, ctx.themeState.theme.semantic.warn, { bold: true })}${stepTag}`
+    } else {
+      // 等首个 token（含工具结束到下一 step 的间隙）：thinking 与 waiting 是两个状态。
+      // phase 不是 waiting 时没有计时锚点（startedAt=0），宁缺毋滥 —— 不显示 0.0s。
+      const timer = ui.thinking.startedAt
+        ? ` · ${formatThinkingDuration(now - ui.thinking.startedAt)}`
+        : ""
+      busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint(`Waiting${dots}${timer}`, ctx.themeState.theme.semantic.warn, { bold: true })}${stepTag}`
     }
   } else if (ui.busy) {
+    // 回合已提交但第一个 step 事件还没到（路由/读历史/压缩检查），以及
+    // longagent 阶段之间的间隙：此前这里显示 Thinking · 0.0s，计时是冻结的。
     const spinner = BUSY_SPINNER_FRAMES[ui.spinnerIndex]
-    const elapsed = ui.thinking.startedAt
-      ? formatThinkingDuration(now - ui.thinking.startedAt)
-      : "0.0s"
-    const dots = ".".repeat((ui.spinnerIndex % 3) + 1)
-    busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint(`Thinking${dots} · ${elapsed}`, ctx.themeState.theme.semantic.warn, { bold: true })}`
+    const label = ui.metrics?.longagent ? "Working" : "Starting"
+    busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint(`${label}${dots}`, ctx.themeState.theme.semantic.warn, { bold: true })}`
   } else {
     busyLine = ""
   }

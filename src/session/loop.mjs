@@ -553,6 +553,7 @@ export async function processTurnLoop({
         providerType,
         realTokenCount: realCount != null ? contextTokens : null
       })) {
+          await EventBus.emit({ type: EVENT_TYPES.SESSION_COMPACTING, sessionId, turnId, payload: {} })
           const compactResult = await compactSession({
             sessionId, model, providerType, configState, baseUrl, apiKeyEnv,
             traceId: turnTraceContext.traceId,
@@ -723,6 +724,7 @@ export async function processTurnLoop({
         }
       } catch (error) {
         if (error.needsCompaction) {
+          await EventBus.emit({ type: EVENT_TYPES.SESSION_COMPACTING, sessionId, turnId, payload: {} })
           const compactResult = await compactSession({
             sessionId, model, providerType, configState, baseUrl, apiKeyEnv,
             traceId: turnTraceContext.traceId,
