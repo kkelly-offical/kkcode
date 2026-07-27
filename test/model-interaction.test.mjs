@@ -1,101 +1,177 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
 import YAML from "yaml"
-import { VENDOR_PRESETS, createWizardState, handleWizardInput } from "../src/provider/wizard.mjs"
+import { runProviderAddForm } from "../src/provider/wizard-form.mjs"
 import { loadProviderModelItems } from "../src/repl.mjs"
 
-test("provider wizard discovers gateway models and saves only the selected default", async () => {
-  const temporaryHome = await mkdtemp(path.join(os.tmpdir(), "kkcode-wizard-models-"))
-  process.env.KKCODE_HOME = temporaryHome
-  process.env.TEST_WIZARD_KEY = "test-key"
-  const wizard = createWizardState()
-  const lines = []
-  let discoveredConfig = null
-  const options = {
-    discoverModels: async (configState) => {
-      discoveredConfig = configState.config
-      return {
-        models: [{ id: "gateway-a" }, { id: "gateway-b" }],
-        source: "network",
-        stale: false
-      }
+/**
+ * `/provider add` 表单流程的行为测试（0.7.3 起走 wizard-form，旧的十二步逐行
+ * 状态机已删除）。`ask` 是表单唯一的交互出口，注入一个「按题回答」的假实现即可
+ * 驱动全流程 —— 不模拟按键、不依赖 TTY，测的是每一轮问了什么、最后写了什么。
+ */
+
+/** 逐题回答：按 id 从答案表里取；没写的题用它的 default（等于用户直接回车）。 */
+function scriptedAsk(answerBook, transcript = []) {
+  return async ({ questions }) => {
+    transcript.push(questions)
+    const out = {}
+    for (const q of questions) {
+      out[q.id] = Object.prototype.hasOwnProperty.call(answerBook, q.id)
+        ? answerBook[q.id]
+        : (q.default ?? "")
     }
+    return out
   }
-  const input = async (value) => handleWizardInput(wizard, value, (line) => lines.push(line), options)
+}
+
+async function withTempHome(run) {
+  const home = await mkdtemp(path.join(os.tmpdir(), "kkcode-form-"))
+  process.env.KKCODE_HOME = home
   try {
-    await input(String(Object.keys(VENDOR_PRESETS).length + 3))
-    assert.equal(wizard.step, "custom_protocol")
-    await input("1")
-    await input("company-gateway")
-    await input("https://gateway.example/v1")
-    await input("TEST_WIZARD_KEY")
+    return await run(home)
+  } finally {
+    delete process.env.KKCODE_HOME
+    await rm(home, { recursive: true, force: true })
+  }
+}
 
-    assert.equal(wizard.step, "model")
-    assert.deepEqual(wizard.discoveredModels, ["gateway-a", "gateway-b"])
+test("custom gateway end to end: discovery sees the draft, only chosen fields are saved", async () => {
+  await withTempHome(async (home) => {
+    let discoveredConfig = null
+    const result = await runProviderAddForm({
+      configState: { config: { provider: {} } },
+      ask: scriptedAsk({
+        vendor: "custom-gateway",
+        protocol: "openai",
+        name: "company-gateway",
+        base_url: "https://gateway.example/v1",
+        api_key: "sk-secret-1234",
+        context_limit: "",
+        model: "gateway-b",
+        confirm: "save"
+      }),
+      discover: async (configState) => {
+        discoveredConfig = configState.config
+        return { models: [{ id: "gateway-a" }, { id: "gateway-b" }] }
+      }
+    })
+
+    assert.equal(result.saved, true)
+    assert.equal(result.name, "company-gateway")
+    // 发现用的 draft 里已带用户刚输入的 key —— 它能连上私有网关正是因为这个
+    assert.equal(discoveredConfig.provider["company-gateway"].api_key, "sk-secret-1234")
     assert.equal(discoveredConfig.provider["company-gateway"].type, "gateway")
-    assert.equal(discoveredConfig.provider["company-gateway"].protocol, "openai")
-    assert.match(lines.join("\n"), /gateway-b/)
 
-    await input("2")
-    assert.equal(wizard.defaultModel, "gateway-b")
-    await input("0")
-    assert.equal(wizard.step, "confirm")
-    await input("y")
-
-    const saved = YAML.parse(await readFile(path.join(temporaryHome, "config.yaml"), "utf8"))
+    const saved = YAML.parse(await readFile(path.join(home, "config.yaml"), "utf8"))
     const provider = saved.provider["company-gateway"]
     assert.equal(provider.type, "gateway")
     assert.equal(provider.protocol, "openai")
+    assert.equal(provider.base_url, "https://gateway.example/v1")
+    assert.equal(provider.api_key, "sk-secret-1234", "用户输入的密钥明文写入 —— 0.7.3 的显式要求")
     assert.equal(provider.default_model, "gateway-b")
+    // 只写用户给的：这些一个都不该出现
     assert.equal(provider.models, undefined)
-  } finally {
-    delete process.env.TEST_WIZARD_KEY
-    delete process.env.KKCODE_HOME
-    await rm(temporaryHome, { recursive: true, force: true })
-  }
-})
-
-test("provider wizard requires explicit manual input when discovery cannot run", async () => {
-  const wizard = createWizardState()
-  const lines = []
-  const input = (value) => handleWizardInput(wizard, value, (line) => lines.push(line))
-
-  await input(String(Object.keys(VENDOR_PRESETS).length + 1))
-  await input("offline-gateway")
-  await input("https://offline.example/v1")
-  await input("UNSET_WIZARD_API_KEY")
-  assert.equal(wizard.step, "model")
-  assert.equal(wizard.defaultModel, null)
-  assert.deepEqual(wizard.discoveredModels, [])
-
-  await input("0")
-  assert.equal(wizard.step, "model")
-  assert.equal(wizard.defaultModel, null)
-  await input("manual-model")
-  assert.equal(wizard.step, "context")
-  assert.equal(wizard.defaultModel, "manual-model")
-  assert.match(lines.join("\n"), /必须明确输入模型 ID/)
-})
-
-test("provider wizard can discover an authentication-free local gateway", async () => {
-  const wizard = createWizardState()
-  let observedProvider = null
-  const input = (value) => handleWizardInput(wizard, value, () => {}, {
-    discoverModels: async (configState) => {
-      observedProvider = configState.config.provider.local
-      return { models: [{ id: "local-model" }], source: "network", stale: false }
-    }
+    assert.equal(provider.context_limit, undefined, "留空的 context_limit 不写")
+    assert.equal(provider.thinking, undefined, "没答过的 thinking 不写")
+    assert.equal(provider.api_key_env, undefined, "填了明文 key 就不再写环境变量名")
+    assert.equal(saved.provider.default, "company-gateway")
   })
-  await input(String(Object.keys(VENDOR_PRESETS).length + 3))
-  await input("1")
-  await input("local")
-  await input("http://127.0.0.1:8080/v1")
-  await input("-")
-  assert.equal(observedProvider.api_key_env, undefined)
-  assert.deepEqual(wizard.discoveredModels, ["local-model"])
+})
+
+test("the config file lands with 0600 once a key can be inside", async (t) => {
+  if (process.platform === "win32") { t.skip("POSIX 权限位"); return }
+  await withTempHome(async (home) => {
+    await runProviderAddForm({
+      configState: { config: { provider: {} } },
+      ask: scriptedAsk({
+        vendor: "custom-openai", name: "p", base_url: "https://x.example/v1",
+        api_key: "sk-abc", model: "m1", confirm: "save"
+      }),
+      discover: async () => ({ models: [] })
+    })
+    const mode = (await stat(path.join(home, "config.yaml"))).mode & 0o777
+    assert.equal(mode, 0o600, `明文密钥的配置文件必须是 0600，实际 ${mode.toString(8)}`)
+  })
+})
+
+test("discovery failure degrades to manual model input, not an error", async () => {
+  await withTempHome(async (home) => {
+    const asked = []
+    const result = await runProviderAddForm({
+      configState: { config: { provider: {} } },
+      ask: scriptedAsk({
+        vendor: "custom-openai",
+        name: "offline-box",
+        base_url: "https://box.local/v1",
+        api_key: "",
+        model: "local-model",
+        confirm: "save"
+      }, asked),
+      discover: async () => { throw new Error("network down") }
+    })
+    assert.equal(result.saved, true)
+    const saved = YAML.parse(await readFile(path.join(home, "config.yaml"), "utf8"))
+    assert.equal(saved.provider["offline-box"].default_model, "local-model")
+    assert.equal(saved.provider["offline-box"].api_key, undefined, "留空的 key 不写")
+    // 发现失败时不该出现「从列表里选」那一轮 —— 只有手动输入
+    const modelRounds = asked.filter((qs) => qs.some((q) => q.id === "model"))
+    assert.equal(modelRounds.length, 1, "只该有手动输入这一轮")
+    assert.equal(modelRounds[0].find((q) => q.id === "model").options, undefined)
+  })
+})
+
+test("cancelling at the confirm page writes nothing", async () => {
+  await withTempHome(async (home) => {
+    const result = await runProviderAddForm({
+      configState: { config: { provider: {} } },
+      ask: scriptedAsk({
+        vendor: "custom-openai", name: "nope", base_url: "https://x.example/v1",
+        api_key: "sk-x", model: "m", confirm: "cancel"
+      }),
+      discover: async () => ({ models: [] })
+    })
+    assert.equal(result.saved, false)
+    await assert.rejects(readFile(path.join(home, "config.yaml"), "utf8"), undefined, "取消后不该有配置文件")
+  })
+})
+
+test("non-interactive empty answers cancel at the first round", async () => {
+  // askQuestionInteractive 在非 TTY 下返回全空 —— 表单必须把它当成取消，
+  // 而不是拿空串往下配出一个残废 provider
+  await withTempHome(async (home) => {
+    const result = await runProviderAddForm({
+      configState: { config: { provider: {} } },
+      ask: async ({ questions }) => Object.fromEntries(questions.map((q) => [q.id, ""])),
+      discover: async () => ({ models: [] })
+    })
+    assert.equal(result.saved, false)
+    assert.equal(result.reason, "cancelled")
+    await assert.rejects(readFile(path.join(home, "config.yaml"), "utf8"))
+  })
+})
+
+test("the api key question is marked secret and the preview only shows the tail", async () => {
+  // 遮蔽是渲染层与确认页两处的契约：表单必须把 secret 标出来，预览不给全文
+  await withTempHome(async () => {
+    const asked = []
+    await runProviderAddForm({
+      configState: { config: { provider: {} } },
+      ask: scriptedAsk({
+        vendor: "custom-openai", name: "p", base_url: "https://x.example/v1",
+        api_key: "sk-verylongsecret-tail9999", model: "m1", confirm: "save"
+      }, asked),
+      discover: async () => ({ models: [] })
+    })
+    const keyQ = asked.flat().find((q) => q.id === "api_key")
+    assert.equal(keyQ.secret, true, "密钥题必须带 secret 标记，浮层据此遮蔽")
+    const confirmQ = asked.flat().find((q) => q.id === "confirm")
+    assert.doesNotMatch(confirmQ.text, /sk-verylongsecret/, "确认页不得出现密钥全文")
+    assert.match(confirmQ.text, /9999/, "末四位要显示，让用户能核对贴对了没有")
+    assert.match(confirmQ.text, /明文保存/, "明文落盘这件事要在确认页说出来")
+  })
 })
 
 test("REPL model items use only the requested dynamic provider catalog", async () => {

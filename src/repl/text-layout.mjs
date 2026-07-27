@@ -196,6 +196,30 @@ export function moveGraphemeCursor(value, cursor, delta) {
   return boundaries[next]
 }
 
+/**
+ * 把一段文本换成等长（按**字素簇**计）的遮蔽串，并给出遮蔽串里的光标位置。
+ *
+ * 遮蔽必须停留在**渲染层**：真值仍然存在 `ui.questionCustomInput` 里，编辑键
+ * （左右、Backspace、插入）照旧作用在真值上。这里只回答一个问题 ——「这段真值
+ * 画出来是什么、光标画在第几格」。
+ *
+ * 逐字素簇替换而不是 `"•".repeat(text.length)`：后者会按 UTF-16 码元数出格子，
+ * 一个 emoji 或一个带组合符的字会多画出好几个点，光标当场错位。返回的
+ * `normalizedCursor` 是**真值坐标系**里对齐到簇边界的光标，调用方回写它即可，
+ * 不会把遮蔽串的下标写回真值。
+ */
+export function maskSecretText(value, cursor, maskChar = "•") {
+  const text = String(value || "")
+  const normalizedCursor = normalizeCursor(text, cursor)
+  let masked = ""
+  let maskedCursor = 0
+  for (const cluster of splitGraphemes(text)) {
+    if (cluster.end <= normalizedCursor) maskedCursor += maskChar.length
+    masked += maskChar
+  }
+  return { value: masked, cursor: maskedCursor, normalizedCursor }
+}
+
 export function layoutInputText({
   value = "",
   cursor = 0,

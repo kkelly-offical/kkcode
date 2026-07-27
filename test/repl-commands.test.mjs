@@ -1,6 +1,5 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { createWizardState } from "../src/provider/wizard.mjs"
 import { DEFAULT_CONFIG } from "../src/config/defaults.mjs"
 import { DEFAULT_THEME } from "../src/theme/default-theme.mjs"
 import {
@@ -67,8 +66,6 @@ function makeCmd(patch = {}) {
     providersConfigured: ["test", "other"],
     customCommands: [],
     setCustomCommands: () => {},
-    wizard: createWizardState(),
-    setWizard: () => {},
     providerPicker: null,
     setProviderPicker: () => {},
     pendingImages: [],
@@ -293,24 +290,20 @@ test("bare /provider asks for a picker when a frame exists, prints a list otherw
   assert.match(lineMode.writes.transcript.map((w) => w.text).join("\n"), /1\. test/)
 })
 
-test("/provider add starts the wizard; /provider set only points at add", async () => {
-  // 上游分支里 add 是「列出并切换」而 set 是「添加」—— 与词义相反。
-  // 用户想添加 provider 第一反应就是敲 add，所以这里 add 必须是添加。
-  const wizard = createWizardState()
-  const added = await run("provider", "add", { wizard, setWizard: () => {} })
-  assert.equal(wizard.active, true, "/provider add 必须启动向导")
+test("/provider add cancels cleanly when the form cannot interact; set only points at add", async () => {
+  // 0.7.3 起 add 走提问浮层表单（wizard-form.mjs）。这个 harness 没有注册
+  // 提问 handler 也不是 TTY，askQuestionInteractive 返回全空 —— 表单必须把它
+  // 当成取消：不写任何配置、给一句人话，而不是拿空串配出一个残废 provider。
+  const added = await run("provider", "add")
   assert.ok(!added.action.exit)
+  assert.match(added.writes.notice.map((w) => w.text).join("\n"), /取消|未写入/)
 
-  const wizard2 = createWizardState()
-  const set = await run("provider", "set", { wizard: wizard2, setWizard: () => {} })
-  assert.equal(wizard2.active, false, "/provider set 不再是功能，只是指路")
+  const set = await run("provider", "set")
   assert.match(set.writes.transcript.map((w) => w.text).join("\n"), /已更名/)
 })
 
 test("/provider edit <name> refuses an unknown provider", async () => {
-  const wizard = createWizardState()
-  const { writes } = await run("provider", "edit 不存在", { wizard, setWizard: () => {} })
-  assert.equal(wizard.active, false)
+  const { writes } = await run("provider", "edit 不存在")
   assert.match(writes.notice.map((w) => w.text).join("\n"), /未找到/)
 })
 

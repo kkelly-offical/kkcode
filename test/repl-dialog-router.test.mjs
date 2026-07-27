@@ -44,8 +44,13 @@ test("commitQuestionAnswer preserves free text for an options-less Ctrl+Enter su
     details: "Use the staging database"
   })
   assert.equal(next.questionCustomMode, false)
-  assert.equal(next.questionCustomInput, "")
-  assert.equal(next.questionCustomCursor, 0)
+  // 0.7.3 起 commit **保留**编辑缓冲区（光标在末尾），不再清空。
+  // 表单化（provider add）引入了「回到已答过的题」：进入题目时缓冲区由
+  // advanceQuestionState 从答案或 question.default 恢复 —— commit 若清空，
+  // Tab 回到本题的瞬间用户会看到自己刚写的内容闪没。提交后的清理归
+  // resolveQuestionPrompt 的 resetQuestionState，职责没有丢。
+  assert.equal(next.questionCustomInput, "Use the staging database")
+  assert.equal(next.questionCustomCursor, "Use the staging database".length)
 })
 
 test("advanceQuestionState advances until submit", () => {

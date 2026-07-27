@@ -16,7 +16,6 @@ import {
   emitRouteDecisionEvent
 } from "./session/routing-observability.mjs"
 import { listProviders } from "./provider/router.mjs"
-import { createWizardState, handleWizardInput } from "./provider/wizard.mjs"
 import { loadCustomCommands, applyCommandTemplate } from "./command/custom-commands.mjs"
 import { SkillRegistry } from "./skill/registry.mjs"
 import { renderMarkdown } from "./theme/markdown.mjs"
@@ -172,8 +171,6 @@ async function processInputLine({
   providersConfigured,
   customCommands,
   setCustomCommands,
-  wizard,
-  setWizard,
   providerPicker,
   setProviderPicker,
   print,
@@ -248,28 +245,9 @@ async function processInputLine({
     }
   }
 
-  // --- 向导模式：拦截所有输入 ---
-  if (wizard?.active) {
-    const result = await handleWizardInput(wizard, line, print, {
-      // Issue #3：向导需要看到现有配置才能识别内联 api_key
-      existingProviders: ctx.configState.config.provider || {}
-    })
-    if (result.done && setWizard) setWizard({ ...wizard })
-    // 热更新内存中的 config
-    if (result.configPatch?.provider) {
-      if (!ctx.configState.config.provider) ctx.configState.config.provider = {}
-      Object.assign(ctx.configState.config.provider, result.configPatch.provider)
-      if (result.configPatch.provider.default) {
-        ctx.configState.config.provider.default = result.configPatch.provider.default
-      }
-    }
-    // 向导保存后自动切换当前会话的 provider
-    if (result.done && !result.cancelled && result.providerName) {
-      await switchActiveProvider(result.providerName)
-    }
-    return { exit: false }
-  }
-
+  // 0.7.3 起 `/provider add` 走提问浮层表单（wizard-form.mjs），输入由模态作用域
+  // 直接接住 —— 这里曾有一个 `wizard?.active` 拦截分支，向导输入要先穿过模式
+  // 自动路由、busy spinner 和 `@` 引用解析才能到它。表单化后那条路在结构上不存在。
   if (!normalized) return { exit: false }
   if (normalized === "/") return { exit: false }
 
@@ -300,8 +278,6 @@ async function processInputLine({
       providersConfigured,
       customCommands,
       setCustomCommands,
-      wizard,
-      setWizard,
       providerPicker,
       setProviderPicker,
       pendingImages,
@@ -383,7 +359,6 @@ async function processInputLine({
 async function startLineRepl({ ctx, state, providersConfigured, customCommands, recentSessions, historyLines }) {
   const rl = createInterface({ input, output, history: historyLines, historySize: HIST_SIZE })
   let localCustomCommands = customCommands
-  let localWizard = createWizardState()
   let localProviderPicker = null
   const entered = [...historyLines]
   const lastTurn = {
@@ -444,8 +419,6 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
       setCustomCommands: (next) => {
         localCustomCommands = next
       },
-      wizard: localWizard,
-      setWizard: (next) => { localWizard = next },
       providerPicker: localProviderPicker,
       setProviderPicker: (next) => { localProviderPicker = next },
       print: (text) => console.log(text),
@@ -1108,8 +1081,6 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
             state, ctx, providersConfigured,
             customCommands: localCustomCommands,
             setCustomCommands: (next) => { localCustomCommands = next },
-            wizard: ui.wizard,
-            setWizard: (next) => { ui.wizard = next },
             providerPicker: ui.providerPicker,
             setProviderPicker: (next) => {
               // TUI 里这个回调只用来退出选择态（传 null）；行模式的编号数组
@@ -1270,8 +1241,6 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         setCustomCommands: (next) => {
           localCustomCommands = next
         },
-        wizard: ui.wizard,
-        setWizard: (next) => { ui.wizard = next },
         providerPicker: ui.providerPicker,
         setProviderPicker: (next) => {
               // TUI 里这个回调只用来退出选择态（传 null）；行模式的编号数组

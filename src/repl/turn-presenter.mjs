@@ -207,6 +207,13 @@ export async function presentPromptTurn({
     const next = switchModeInPlace(state, ctx, result.planHandoff.modeId)
     planHandoff = { ...result.planHandoff, label: next.label, icon: next.icon }
     print(`mode switched: ${next.icon} ${next.label} (plan build)`, { channel: "notice", topic: "mode" })
+    // Yolo Build 关掉的是审批本身，所以**不**在计划跑完后自动切回来：
+    // 悄悄还原会让审批档在用户不知情的情况下反复横跳，而「现在还免不免审批」
+    // 恰恰是必须一眼看得见的事。留在 YOLO，并把这件事说出来。
+    if (next.modeId === "yolo") {
+      print("审批已关闭：工具调用不再逐个确认。计划执行完仍停在 YOLO，用 /mode 或 Shift+Tab 切回。",
+        { channel: "notice", topic: "mode", tone: "warn" })
+    }
   }
 
   return {

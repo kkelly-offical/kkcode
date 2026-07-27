@@ -22,6 +22,7 @@
 
 import { on } from "../key-dispatch.mjs"
 import { applyOverlayFilter, filterOverlayItems } from "../../ui/overlay-select.mjs"
+import { questionTextBuffer } from "../dialog-router.mjs"
 
 /**
  * 五个选择器的定义表。
@@ -243,6 +244,23 @@ export function createOverlayKeyScopes({
           run: () => { commitCurrentQuestionAnswer(); resolveQuestionPrompt() }
         },
         {
+          // 自由文本形态也要能 Tab 翻页。此前只有 questionOptions 作用域接 Tab，
+          // 而 questionText 排在它前面且是模态的 —— 一页里全是文本字段（provider
+          // 表单就是）时 Tab 会被吞掉，用户根本切不到下一个字段。
+          id: "switchQuestion",
+          when: (ctx) => ctx.key.name === "tab" && (ctx.ui.pendingQuestion?.questions || []).length > 1,
+          run: (ctx) => {
+            const { ui, key } = ctx
+            const questions = ui.pendingQuestion.questions || []
+            ui.questionAnswers[currentQuestion(ctx).id] = ui.questionCustomInput || ""
+            const next = key.shift
+              ? (ui.questionIndex > 0 ? ui.questionIndex - 1 : questions.length - 1)
+              : (ui.questionIndex + 1) % questions.length
+            enterQuestion(ui, next)
+            requestRender()
+          }
+        },
+        {
           id: "backToOptions",
           when: (ctx) => ctx.key.name === "escape" && questionOptions(ctx).length > 0,
           run: ({ ui }) => { ui.questionCustomMode = false; requestRender() }
@@ -255,9 +273,7 @@ export function createOverlayKeyScopes({
             const questions = ui.pendingQuestion.questions || []
             ui.questionAnswers[currentQuestion(ctx).id] = "(skipped)"
             if (ui.questionIndex < questions.length - 1) {
-              ui.questionIndex += 1
-              ui.questionCustomInput = ""
-              ui.questionCustomCursor = 0
+              enterQuestion(ui, ui.questionIndex + 1)
             } else {
               resolveQuestionPrompt()
             }
@@ -272,11 +288,8 @@ export function createOverlayKeyScopes({
             const questions = ui.pendingQuestion.questions || []
             ui.questionAnswers[currentQuestion(ctx).id] = ui.questionCustomInput || ""
             ui.questionCustomMode = false
-            ui.questionCustomInput = ""
-            ui.questionCustomCursor = 0
             if (ui.questionIndex < questions.length - 1) {
-              ui.questionIndex += 1
-              ui.questionOptionSelected = 0
+              enterQuestion(ui, ui.questionIndex + 1)
             } else {
               resolveQuestionPrompt()
             }
@@ -341,8 +354,7 @@ export function createOverlayKeyScopes({
             const questions = ui.pendingQuestion.questions || []
             ui.questionAnswers[currentQuestion(ctx).id] = "(skipped)"
             if (ui.questionIndex < questions.length - 1) {
-              ui.questionIndex += 1
-              ui.questionOptionSelected = 0
+              enterQuestion(ui, ui.questionIndex + 1)
             } else {
               resolveQuestionPrompt()
             }
@@ -371,13 +383,10 @@ export function createOverlayKeyScopes({
           when: on.key("tab"),
           run: ({ ui, key }) => {
             const questions = ui.pendingQuestion.questions || []
-            if (key.shift) {
-              ui.questionIndex = ui.questionIndex > 0 ? ui.questionIndex - 1 : questions.length - 1
-            } else {
-              ui.questionIndex = (ui.questionIndex + 1) % questions.length
-            }
-            ui.questionOptionSelected = 0
-            ui.questionCustomMode = false
+            const next = key.shift
+              ? (ui.questionIndex > 0 ? ui.questionIndex - 1 : questions.length - 1)
+              : (ui.questionIndex + 1) % questions.length
+            enterQuestion(ui, next)
             requestRender()
           }
         },
@@ -449,6 +458,21 @@ export function createOverlayKeyScopes({
 
 function currentQuestion(ctx) {
   return (ctx.ui.pendingQuestion?.questions || [])[ctx.ui.questionIndex] || {}
+}
+
+/**
+ * 切到第 index 题：编辑缓冲区跟着换成**那一题**的内容。
+ *
+ * 见 dialog-router 的 `questionTextBuffer` —— 缓冲区不跟着问题走的话，一页多个
+ * 文本字段会互相串味，切回去还拿不回已答的内容。
+ */
+function enterQuestion(ui, index) {
+  ui.questionIndex = index
+  ui.questionOptionSelected = 0
+  ui.questionCustomMode = false
+  const question = (ui.pendingQuestion?.questions || [])[index]
+  ui.questionCustomInput = questionTextBuffer(question, ui.questionAnswers)
+  ui.questionCustomCursor = ui.questionCustomInput.length
 }
 
 function questionOptions(ctx) {

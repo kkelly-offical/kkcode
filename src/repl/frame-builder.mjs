@@ -4,6 +4,7 @@ import { renderFrameDashboardHeader, renderReplStatusLine } from "../ui/repl-sta
 import { buildTranscriptViewport } from "../ui/repl-transcript-panel.mjs"
 import { renderSelectOverlay } from "../ui/overlay-select.mjs"
 import { renderPanelOverlay } from "../ui/overlay-panel.mjs"
+import { renderQuestionOverlay } from "../ui/overlay-question.mjs"
 import { formatThinkingDuration } from "../ui/thinking-state.mjs"
 import { thinkingPreviewLines } from "../ui/thinking-preview.mjs"
 import { NO_SUGGESTIONS } from "./suggestion-source.mjs"
@@ -339,119 +340,30 @@ export function buildFrame({
   }
 
   // --- Question panel ---
+  // 整块渲染在 repl/ui/overlay-question.mjs：它要处理遮蔽输入与多行描述，留在
+  // 这里会把 buildFrame 的判定点顶上去（结构守卫里它是只减不增的）。
   const questionLines = []
   let questionCursor = null
   if (ui.pendingQuestion) {
-    const pq = ui.pendingQuestion
-    const questions = pq.questions || []
-    const qCount = questions.length
-    const currentQ = questions[ui.questionIndex] || {}
-    const options = Array.isArray(currentQ.options) ? currentQ.options : []
-    const answered = Object.keys(ui.questionAnswers).length
-
-    // Header
-    const hintKeys = ui.questionCustomMode
-      ? "Enter confirm  Esc back"
-      : "↑↓ select  Enter confirm  Tab switch  Esc skip  Ctrl+Enter submit all"
-    questionLines.push(
-      paint(`Question (${ui.questionIndex + 1}/${qCount})  ${hintKeys}`, ctx.themeState.theme.semantic.info, { bold: true })
-    )
-    questionLines.push(paint(`┌${"─".repeat(Math.max(1, width - 4))}┐`, ctx.themeState.theme.base.border))
-
-    // Tab bar (multi-question)
-    if (qCount > 1) {
-      let tabBar = ""
-      for (let i = 0; i < qCount; i++) {
-        const qId = questions[i].id
-        const done = qId in ui.questionAnswers
-        const isCurrent = i === ui.questionIndex
-        const marker = done ? "✓" : " "
-        const tabLabel = (questions[i].header || `Q${i + 1}`).slice(0, 12)
-        tabBar += isCurrent ? `[${marker}${tabLabel}]` : ` ${marker}${tabLabel} `
-        if (i < qCount - 1) tabBar += " "
-      }
-      questionLines.push(paint(`│ ${padRight(tabBar, Math.max(1, width - 5))}│`, ctx.themeState.theme.base.fg))
-      questionLines.push(paint(`│${"─".repeat(Math.max(1, width - 4))}│`, ctx.themeState.theme.base.border))
-    }
-
-    // Question text
-    questionLines.push(paint(`│ ${padRight(currentQ.text || "", Math.max(1, width - 5))}│`, ctx.themeState.theme.base.fg))
-    if (currentQ.description) {
-      questionLines.push(paint(`│ ${padRight(currentQ.description, Math.max(1, width - 5))}│`, ctx.themeState.theme.base.muted))
-    }
-    questionLines.push(paint(`│${"─".repeat(Math.max(1, width - 4))}│`, ctx.themeState.theme.base.border))
-
-    if (ui.questionCustomMode || options.length === 0) {
-      // Custom/free-text mode uses the same grapheme-aware layout as the
-      // main composer so the hardware cursor and IME stay anchored here.
-      const questionInputLayout = layoutInputText({
-        value: ui.questionCustomInput,
-        cursor: ui.questionCustomCursor,
-        width: Math.max(1, width - 5),
-        maxRows: 3,
-        prefix: ""
-      })
-      ui.questionCustomCursor = questionInputLayout.normalizedCursor
-      questionLines.push(
-        paint(`│ ${padRight(options.length ? "Custom input:" : "Answer:", Math.max(1, width - 5))}│`, ctx.themeState.theme.base.muted)
-      )
-      const questionInputStart = questionLines.length
-      for (const [index, inputLine] of questionInputLayout.lines.entries()) {
-        const visible = inputLine || (index === 0
-          ? paint("(type your answer)", ctx.themeState.theme.base.muted, { dim: true })
-          : "")
-        questionLines.push(
-          `│ ${padRight(visible, Math.max(1, width - 5))}│`
-        )
-      }
-      questionCursor = {
-        row: questionInputStart + questionInputLayout.cursor.row,
-        col: 3 + questionInputLayout.cursor.col
-      }
-    } else if (options.length) {
-      // Options list
-      const multiSelected = ui.questionMultiSelected[currentQ.id] || new Set()
-      for (let i = 0; i < options.length; i++) {
-        const opt = options[i]
-        const active = i === ui.questionOptionSelected
-        const prefix = active ? "▸" : " "
-        let marker
-        if (currentQ.multi) {
-          marker = multiSelected.has(i) ? "☑" : "☐"
-        } else {
-          marker = active ? "●" : "○"
-        }
-        const optLine = ` ${prefix} ${marker} ${opt.label}`
-        questionLines.push(
-          active
-            ? paint(`│${padRight(optLine, Math.max(1, width - 5))}│`, "#111111", { bg: ctx.themeState.theme.semantic.info, bold: true })
-            : paint(`│${padRight(optLine, Math.max(1, width - 5))}│`, ctx.themeState.theme.base.fg)
-        )
-        if (opt.description) {
-          questionLines.push(paint(`│${padRight(`       ${opt.description}`, Math.max(1, width - 5))}│`, ctx.themeState.theme.base.muted))
-        }
-      }
-      // Custom option
-      if (currentQ.allowCustom !== false) {
-        const customIdx = options.length
-        const active = ui.questionOptionSelected === customIdx
-        const prefix = active ? "▸" : " "
-        const customLine = ` ${prefix}   Custom...`
-        questionLines.push(
-          active
-            ? paint(`│${padRight(customLine, Math.max(1, width - 5))}│`, "#111111", { bg: ctx.themeState.theme.semantic.info, bold: true })
-            : paint(`│${padRight(customLine, Math.max(1, width - 5))}│`, ctx.themeState.theme.base.muted)
-        )
-      }
-    }
-
-    // Footer
-    questionLines.push(paint(`│${"─".repeat(Math.max(1, width - 4))}│`, ctx.themeState.theme.base.border))
-    const multiCount = currentQ.multi ? (ui.questionMultiSelected[currentQ.id] || new Set()).size : 0
-    const multiHint = currentQ.multi && multiCount > 0 ? `  (${multiCount} selected)` : ""
-    const footerText = `Answered: ${answered}/${qCount}${multiHint}  [Ctrl+Enter submit all]`
-    questionLines.push(paint(`│ ${padRight(footerText, Math.max(1, width - 5))}│`, ctx.themeState.theme.base.muted))
-    questionLines.push(paint(`└${"─".repeat(Math.max(1, width - 4))}┘`, ctx.themeState.theme.base.border))
+    const rendered = renderQuestionOverlay({
+      pendingQuestion: ui.pendingQuestion,
+      questionIndex: ui.questionIndex,
+      questionAnswers: ui.questionAnswers,
+      questionOptionSelected: ui.questionOptionSelected,
+      questionMultiSelected: ui.questionMultiSelected,
+      questionCustomMode: ui.questionCustomMode,
+      questionCustomInput: ui.questionCustomInput,
+      questionCustomCursor: ui.questionCustomCursor,
+      width,
+      theme: ctx.themeState.theme,
+      paint,
+      padRight,
+      layoutInputText
+    })
+    // 回写的是**真值坐标系**里对齐到字素簇边界的光标 —— 遮蔽串的下标绝不回写。
+    ui.questionCustomCursor = rendered.textCursor
+    questionCursor = rendered.cursor
+    questionLines.push(...rendered.lines)
   }
 
   // 对话区之下的全部浮层块。求和与推入都遍历这个列表 —— 唯一来源。

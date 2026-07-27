@@ -22,7 +22,6 @@
 import { createAttachmentStore } from "./attachments.mjs"
 
 import { createThinkingState } from "../ui/thinking-state.mjs"
-import { createWizardState } from "../provider/wizard.mjs"
 
 /** 用户主动打开、彼此互斥的浮层。 */
 export const USER_OVERLAY_KINDS = Object.freeze([
@@ -107,7 +106,6 @@ export function createReplUiState({ historyLines = [], terminalFeatures = {} } =
     inputLayout: null,
     // 屏幕布局元数据（buildFrame 中更新）
     layoutMeta: { logStartRow: 0, logEndRow: 0, inputStartRow: 0, inputEndRow: 0 },
-    wizard: createWizardState(),
     providerPicker: null,
     sessionPicker: null,
     // 只读信息浮层：{ title, lines, offset, maxOffset, maxRows }

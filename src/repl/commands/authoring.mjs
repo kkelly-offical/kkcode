@@ -10,7 +10,13 @@
 import { resolve as resolvePath } from "node:path"
 import { buildHelpText, buildShortcutLegend } from "../../ui/repl-help.mjs"
 import { renderCapabilityPanel } from "../../ui/repl-capability-panel.mjs"
-import { renderInstalledCommandSurface, describeReloadSummary } from "../command-surface.mjs"
+import {
+  renderInstalledCommandSurface,
+  describeReloadSummary,
+  renderSkillDirectory,
+  describeNoSkills
+} from "../command-surface.mjs"
+import { buildSkillCatalog } from "../slash-router.mjs"
 import { buildCapabilitySnapshot } from "../capability-facade.mjs"
 import { loadCustomCommands } from "../../command/custom-commands.mjs"
 import { resolveExtensionPolicy } from "../../context.mjs"
@@ -194,6 +200,42 @@ export const authoringCommands = [
       })
       showInfo(`background tasks (${tasks.length})`,
         ["background tasks (id / status / description)", ...rows, "", "  /tasks stop <id> · /tasks retry <id>"].join("\n"))
+      return { exit: false }
+    }
+  },
+
+  {
+    names: ["skills"],
+    desc: "list registered skills and how to invoke them",
+    argMode: "none",
+    run: ({ print, showInfo, customCommands }) => {
+      // REPL 里能用 `$名字` 调用、能 /create-skill 创建，却一直没法看有哪些技能 ——
+      // 只能退出去跑 `kkcode skill list`。
+      //
+      // 走 showInfo（浮层；行模式回落到 panel 通道）而不是对话记录：这是**查询
+      // 当前状态**，进了对话记录就会随会话发给模型、被 /clear 连带清掉，且关不掉。
+      // 与 /agents、/status 同通道。
+      if (!SkillRegistry.isReady()) {
+        print("skill registry not loaded — 先 /reload 装载技能", { channel: "notice", topic: "command", tone: "warn" })
+        return { exit: false }
+      }
+      const skills = SkillRegistry.list()
+      // `$` 补全读的就是 buildSkillCatalog —— 这里复用同一份枚举，
+      // 而不是再扫一遍注册表。两份清单迟早分叉，且分叉时什么都不会红。
+      const catalog = buildSkillCatalog({ customCommands, skills })
+      const userSkillDir = `${displayUserRootPath()}/skills`
+      const projectSkillDir = ".kkcode/skills"
+      if (!catalog.length) {
+        print(describeNoSkills({ userSkillDir, projectSkillDir }), { channel: "notice", topic: "command" })
+        return { exit: false }
+      }
+      showInfo(`skills (${catalog.length})`, (innerWidth) => renderSkillDirectory({
+        catalog,
+        skills,
+        userSkillDir,
+        projectSkillDir,
+        width: Math.max(60, innerWidth)
+      }).join("\n"), { maxRows: 18 })
       return { exit: false }
     }
   },

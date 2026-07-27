@@ -1,5 +1,28 @@
 export const QUESTION_SKIPPED = "(skipped)"
 
+/**
+ * 进入某个问题时，自由文本编辑区里该放什么。
+ *
+ * 不变量：**编辑缓冲区永远是「当前问题的答案」**。此前它是一个跨问题共用的
+ * 全局缓冲：Tab 切到下一题时不清空，两道文本题会互相看到对方的半截输入；
+ * 而切回上一题时又拿不回已经答过的内容。单问题的提示看不出来，一页多个文本
+ * 字段（provider 表单：base_url / api_key / api_key_env）一上来就是错的。
+ *
+ * 取值顺序：已答过的取答案（哪怕是空串 —— 用户特意清空的字段不该被默认值填回去），
+ * 没答过的取 `question.default`。
+ */
+export function questionTextBuffer(question, answers = {}) {
+  if (!question) return ""
+  const stored = answers[question.id]
+  if (typeof stored === "string" && stored !== QUESTION_SKIPPED) return stored
+  return typeof question.default === "string" ? question.default : ""
+}
+
+function bufferState(question, answers) {
+  const text = questionTextBuffer(question, answers)
+  return { questionCustomInput: text, questionCustomCursor: text.length }
+}
+
 export function activateNextQuestionState(queue = []) {
   if (!queue.length) {
     return {
@@ -22,8 +45,7 @@ export function activateNextQuestionState(queue = []) {
     questionOptionSelected: 0,
     questionMultiSelected: {},
     questionCustomMode: false,
-    questionCustomInput: "",
-    questionCustomCursor: 0,
+    ...bufferState((pendingQuestion.questions || [])[0], {}),
     questionAnswers: {}
   }
 }
@@ -41,8 +63,8 @@ export function commitQuestionAnswer(state) {
       ...state,
       questionAnswers: nextAnswers,
       questionCustomMode: false,
-      questionCustomInput: "",
-      questionCustomCursor: 0
+      questionCustomInput: state.questionCustomInput || "",
+      questionCustomCursor: (state.questionCustomInput || "").length
     }
   }
 
@@ -66,13 +88,13 @@ export function commitQuestionAnswer(state) {
 export function advanceQuestionState(state) {
   const questions = state.pendingQuestion?.questions || []
   if (state.questionIndex < questions.length - 1) {
+    const nextIndex = state.questionIndex + 1
     return {
       ...state,
-      questionIndex: state.questionIndex + 1,
+      questionIndex: nextIndex,
       questionOptionSelected: 0,
       questionCustomMode: false,
-      questionCustomInput: "",
-      questionCustomCursor: 0
+      ...bufferState(questions[nextIndex], state.questionAnswers)
     }
   }
   return { ...state, shouldSubmit: true }

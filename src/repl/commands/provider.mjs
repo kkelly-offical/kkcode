@@ -9,7 +9,7 @@
  * set 是「添加」，与词义相反。用户想添加 provider 第一反应就是敲 add。
  */
 
-import { startWizard, startEditWizard } from "../../provider/wizard.mjs"
+import { runProviderAddForm, runProviderEditForm } from "../../provider/wizard-form.mjs"
 import { escapeTerminalText, validateModelId } from "../../provider/model-id.mjs"
 import { loadProviderModelItems } from "../provider-catalog.mjs"
 
@@ -20,7 +20,7 @@ export const providerCommands = [
     argMode: "optional",
     run: async ({
       args, print, state, ctx, providersConfigured,
-      wizard, setWizard, setProviderPicker, openPanel, switchActiveProvider
+      setProviderPicker, openPanel, switchActiveProvider
     }) => {
       if (!args) {
         // 裸 /provider = 最常用的动作：列出并选择。add/edit 各司其名。
@@ -51,12 +51,18 @@ export const providerCommands = [
 
       const rest = args
 
-      // /provider add — 添加新 provider（启动向导）
+      // /provider add — 表单流程（TUI 浮层 / readline 逐题，见 wizard-form.mjs）
       if (rest === "add") {
-        if (wizard && setWizard) {
-          startWizard(wizard, print)
-          setWizard({ ...wizard })
+        const result = await runProviderAddForm({ configState: ctx.configState })
+        if (!result.saved) {
+          print(result.reason === "cancelled" ? "已取消，未写入任何配置。" : "未保存。", { channel: "notice", topic: "command" })
+          return { exit: false }
         }
+        // 热更新内存配置，让新 provider 立即可用（写盘的是原始 YAML，内存是 merged）
+        if (!ctx.configState.config.provider) ctx.configState.config.provider = {}
+        Object.assign(ctx.configState.config.provider, result.configPatch.provider)
+        print(`provider "${result.name}" 已保存到 ~/.kkcode/config.yaml`, { channel: "notice", topic: "command", tone: "success" })
+        await switchActiveProvider(result.name)
         return { exit: false }
       }
       if (rest === "set") {
@@ -76,10 +82,13 @@ export const providerCommands = [
           print(`provider "${editName}" 未找到，可用: ${providersConfigured.join(", ")}`, { channel: "notice", topic: "command", tone: "error" })
           return { exit: false }
         }
-        if (wizard && setWizard) {
-          startEditWizard(wizard, editName, providerCfg, print)
-          setWizard({ ...wizard })
+        const result = await runProviderEditForm({ name: editName, existing: providerCfg })
+        if (!result.saved) {
+          print(result.reason === "unchanged" ? "没有改动。" : "已取消。", { channel: "notice", topic: "command" })
+          return { exit: false }
         }
+        Object.assign(ctx.configState.config.provider, result.configPatch.provider)
+        print(`provider "${editName}" 已更新（${result.changed.join(", ")}）`, { channel: "notice", topic: "command", tone: "success" })
         return { exit: false }
       }
 

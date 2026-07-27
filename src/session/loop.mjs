@@ -103,6 +103,50 @@ function canMutateWorkspace(toolName, args = {}) {
   return !NON_MUTATING_TOOLS.has(name)
 }
 
+/**
+ * 计划审批的选择 → 执行这份计划时切到的模式 id。
+ *
+ * 走模式 id（而不是各自设一个标志位）是刻意的：REPL 拿到 planHandoff 后调的是
+ * `switchModeInPlace`，和 `/yolo`、`/ultra` 完全同一条路 —— 航道、审批档、
+ * 状态栏三处一起改。少走这条路就会出现「显示是 YOLO、判定链还按 manual 拦」
+ * 这类只改一半的状态。
+ */
+const PLAN_BUILD_MODE = Object.freeze({
+  assistant: "agent",
+  compact_assistant: "agent",
+  longagent: "ultra",
+  compact_longagent: "ultra",
+  yolo: "yolo"
+})
+
+/**
+ * 计划审批的选择 → 执行模式 id。不认识的选择返回 null，**不**默默回落到 agent：
+ * 回落写在这里的话，「新加了一个选项但忘了登记」会得到一个合法的模式 id，
+ * 于是任何「每个选项都映射得出模式」的断言都会对着回落值成立、永远不红。
+ * 回落留在调用点。
+ */
+export function planBuildModeId(action) {
+  return PLAN_BUILD_MODE[action] || null
+}
+
+/**
+ * 计划审批的选择 → 回给模型的指令。
+ *
+ * 与 planBuildModeId 分工：那个决定切到哪个模式，这个告诉模型接下来做什么。
+ * 同样按选项枚举，缺一项就会静默退化成一句泛化的「按所选路径继续」。
+ */
+export function planApprovalInstruction(action, planPath = "") {
+  const at = planPath ? ` at ${planPath}` : ""
+  return {
+    plan_saved: `The plan is saved${at}. This is a non-interactive run, so no build follows: report the plan location and stop. Do NOT call exit_plan again.`,
+    assistant: `User selected Build. Implement the saved plan${at} in the unified assistant lane using the current permission level.`,
+    longagent: `User selected Ultra Build. The session is switching to Ultra; implement the saved plan${at} as a staged delivery.`,
+    compact_assistant: `User selected Compact + Build. Compact the relevant context first, then implement the saved plan${at} in the unified assistant lane.`,
+    compact_longagent: `User selected Compact + Ultra Build. Compact the relevant context first; the session is switching to Ultra to deliver the saved plan${at} in stages.`,
+    yolo: `User selected Yolo Build. The session is switching to YOLO: approvals are OFF, so tool calls no longer stop for confirmation. Implement the saved plan${at} end to end and report what you changed.`
+  }[action] || null
+}
+
 const PERMISSION_RANK = new Map(APPROVAL_LEVELS.map((level, index) => [level, index]))
 
 /**
@@ -1044,21 +1088,14 @@ export async function processTurnLoop({
             planPath: result.metadata.planPath || ""
           })
           const planPath = approval.planPath || result.metadata.planPath || ""
-          const actionText = {
-            plan_saved: `The plan is saved${planPath ? ` at ${planPath}` : ""}. This is a non-interactive run, so no build follows: report the plan location and stop. Do NOT call exit_plan again.`,
-            assistant: `User selected Build. Implement the saved plan${planPath ? ` at ${planPath}` : ""} in the unified assistant lane using the current permission level.`,
-            longagent: `User selected Ultra Build. The session is switching to Ultra; implement the saved plan${planPath ? ` at ${planPath}` : ""} as a staged delivery.`,
-            compact_assistant: `User selected Compact + Build. Compact the relevant context first, then implement the saved plan${planPath ? ` at ${planPath}` : ""} in the unified assistant lane.`,
-            compact_longagent: `User selected Compact + Ultra Build. Compact the relevant context first; the session is switching to Ultra to deliver the saved plan${planPath ? ` at ${planPath}` : ""} in stages.`
-          }[approval.action]
+          const actionText = planApprovalInstruction(approval.action, planPath)
 
           // 0.3.x 只把这段文字塞回模型，从不真的切换执行航道。0.4.0 把选择
           // 结果作为 planHandoff 冒泡到 turn 结果，由 REPL 真正切模式并续跑。
           // plan_saved 是非交互收口，没有人选过执行航道，因此不产生交接
           if (approval.approved && approval.action !== "plan_saved") {
-            const wantsUltra = approval.action === "longagent" || approval.action === "compact_longagent"
             planHandoff = {
-              modeId: wantsUltra ? "ultra" : "agent",
+              modeId: planBuildModeId(approval.action) || "agent",
               compactFirst: approval.action.startsWith("compact_"),
               planPath
             }

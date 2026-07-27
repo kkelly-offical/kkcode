@@ -107,7 +107,9 @@ export function createPromptQueue({ ui, requestRender, notifier = null }) {
       questionOptionSelected: ui.questionOptionSelected,
       questionCustomMode: ui.questionCustomMode,
       questionCustomInput: ui.questionCustomInput,
-      questionCustomCursor: ui.questionCustomCursor
+      questionCustomCursor: ui.questionCustomCursor,
+      // 下一题的编辑缓冲区要从答案里取回来（或取它的默认值），所以必须带上答案
+      questionAnswers: ui.questionAnswers
     })
     if (next.shouldSubmit) {
       resolveQuestionPrompt()
