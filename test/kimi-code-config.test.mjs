@@ -8,13 +8,15 @@ import { VENDOR_PRESETS } from "../src/provider/wizard.mjs"
 import { runProviderAddForm } from "../src/provider/wizard-form.mjs"
 
 test("official Kimi Code preset uses coding endpoint and environment credential", async () => {
-  const preset = DEFAULT_CONFIG.provider["kimi-code"]
+  // 0.7.3 起 DEFAULT_CONFIG 不再预置 provider 条目（用户有什么就显示什么），
+  // 厂商知识只在 VENDOR_PRESETS（/provider add 表单的数据源）—— 断言跟着数据搬家。
+  const preset = VENDOR_PRESETS["kimi-code"]
   assert.equal(preset.base_url, "https://api.kimi.com/coding/v1")
-  assert.equal(preset.api_key_env, "KIMI_CODE_API_KEY")
+  assert.equal(preset.key_env, "KIMI_CODE_API_KEY")
   assert.equal(preset.default_model, "k3")
   assert.ok(preset.models.includes("kimi-for-coding"))
-  assert.equal(DEFAULT_CONFIG.provider.model_context.k3, 1048576)
-  assert.equal(VENDOR_PRESETS["kimi-code"].key_env, "KIMI_CODE_API_KEY")
+  assert.equal(DEFAULT_CONFIG.provider["kimi-code"], undefined, "预置条目不得回潮")
+  assert.equal(DEFAULT_CONFIG.provider.model_context.k3, 1048576, "模型知识库保留")
 
   const template = YAML.parse(await readFile(new URL("../configs/config-kimi-code.yaml", import.meta.url), "utf8"))
   assert.equal(template.provider.default, "kimi-code")

@@ -25,7 +25,9 @@ export function importConfig(input = {}) {
     for (const key of ["openai", "anthropic"]) {
       if (!input.llm[key]) continue
       const src = input.llm[key]
-      const dst = next.provider[key]
+      // DEFAULT_CONFIG 从 0.7.3 起不再预置 provider 条目 —— 导入的就是
+      // 用户配置的全部来源，条目在这里创建而不是覆盖预置。
+      const dst = next.provider[key] ?? (next.provider[key] = {})
       if (src.base_url) dst.base_url = src.base_url
       if (src.api_key_env) dst.api_key_env = src.api_key_env
       if (src.default_model) dst.default_model = src.default_model

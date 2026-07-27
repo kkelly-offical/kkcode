@@ -15,8 +15,21 @@ test("provider router accepts provider/model formatted model id", async () => {
     })
   })
 
+  // 0.7.3 起 DEFAULT_CONFIG 不再预置 provider —— 测试像真实用户一样自带条目。
+  // 此前直接用 DEFAULT_CONFIG，测的其实是「预置恰好存在」而不是路由本身。
   const configState = {
-    config: DEFAULT_CONFIG
+    config: {
+      ...DEFAULT_CONFIG,
+      provider: {
+        ...DEFAULT_CONFIG.provider,
+        default: "openai",
+        openai: {
+          base_url: "https://api.openai.com/v1",
+          api_key_env: "OPENAI_API_KEY",
+          default_model: "gpt-4o-mini"
+        }
+      }
+    }
   }
   try {
     const result = await requestProvider({

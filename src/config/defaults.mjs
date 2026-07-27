@@ -3,66 +3,25 @@ import { DEFAULT_SENSITIVE_FILE_PATTERNS } from "../permission/file-edit-policy.
 export const DEFAULT_CONFIG = {
   config_version: 1,
   language: "en",
+  /**
+   * 0.7.3 之前这里预置了四个完整的 provider 条目（openai / anthropic /
+   * kimi-code / ollama）。它们在内存 merge 时混进配置，后果是一个零配置的
+   * 新用户，`/provider` 也会列出四个「已配置」但没有任何凭据的 provider ——
+   * 而「没有已配置的 provider，请 /provider add」那句提示永远不可达。
+   *
+   * 现在**用户有什么就显示什么**。删除是安全的：
+   *   - 每个字段在读取点都有代码级缺省（router 的 `retry_attempts ?? 5`、
+   *     `timeout_ms || 120000`、`max_tokens || 16384`）—— 用户自建的 provider
+   *     从来就没有这些字段，那条路一直在被走。
+   *   - 没有 default provider 时，preflight 的 "no default provider configured"
+   *     失败路径接住（它此前因为恒有预置而不可达）。
+   *   - 厂商的推荐 base_url / 模型清单在 VENDOR_PRESETS（wizard.mjs）——
+   *     那是 `/provider add` 表单的数据源，不是配置。
+   *
+   * `model_context` 不是 provider，是「已知模型的上下文长度」知识库，保留。
+   */
   provider: {
-    default: "openai",
     strict_mode: false,
-    openai: {
-      base_url: "https://api.openai.com/v1",
-      api_key_env: "OPENAI_API_KEY",
-      default_model: "gpt-5.5",
-      models: ["gpt-5.5", "gpt-5.5-pro", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"],
-      timeout_ms: 120000,
-      stream_idle_timeout_ms: 120000,
-      max_tokens: 32768,
-      context_limit: null,
-      retry_attempts: 5,
-      retry_base_delay_ms: 800,
-      stream: true,
-      thinking: null
-    },
-    anthropic: {
-      base_url: "https://api.anthropic.com/v1",
-      api_key_env: "ANTHROPIC_API_KEY",
-      default_model: "claude-sonnet-4-6",
-      models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
-      timeout_ms: 120000,
-      stream_idle_timeout_ms: 120000,
-      max_tokens: 32768,
-      context_limit: null,
-      retry_attempts: 5,
-      retry_base_delay_ms: 800,
-      stream: true,
-      thinking: null
-    },
-    "kimi-code": {
-      type: "openai-compatible",
-      base_url: "https://api.kimi.com/coding/v1",
-      api_key_env: "KIMI_CODE_API_KEY",
-      default_model: "k3",
-      models: ["k3", "kimi-for-coding", "kimi-for-coding-highspeed"],
-      timeout_ms: 180000,
-      stream_idle_timeout_ms: 180000,
-      max_tokens: 32768,
-      context_limit: 1048576,
-      retry_attempts: 5,
-      retry_base_delay_ms: 800,
-      stream: true,
-      reasoning_effort: "high",
-      thinking: null
-    },
-    ollama: {
-      base_url: "http://localhost:11434",
-      api_key_env: "",
-      default_model: "llama3.1",
-      timeout_ms: 300000,
-      stream_idle_timeout_ms: 300000,
-      max_tokens: 32768,
-      context_limit: null,
-      retry_attempts: 5,
-      retry_base_delay_ms: 1000,
-      stream: true,
-      thinking: null
-    },
     model_context: {
       k3: 1048576,
       "kimi-for-coding": 262144,

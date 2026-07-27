@@ -84,9 +84,13 @@ export function createChatCommand() {
         ctx.configState.config.permission || {}
       )
       const providerType = options.providerType ?? ctx.configState.config.provider.default
-      const providerDefaults = ctx.configState.config.provider[providerType]
+      const providerDefaults = providerType ? ctx.configState.config.provider[providerType] : null
       if (!providerDefaults) {
-        throw new Error(`unknown provider type: ${providerType}`)
+        // 0.7.3 起没有预置 provider，零配置用户第一条命令就会走到这里 ——
+        // 报错必须说清下一步，而不是一句 "unknown provider type: undefined"。
+        throw new Error(providerType
+          ? `provider "${providerType}" 未配置。运行 kkcode 后输入 /provider add 添加（或检查 ~/.kkcode/config.yaml）。`
+          : "没有配置任何 provider。运行 kkcode 后输入 /provider add 添加一个（或手动编辑 ~/.kkcode/config.yaml）。")
       }
       const model = options.model ?? providerDefaults.default_model
       const sessionId = options.session || newSessionId()

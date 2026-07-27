@@ -249,6 +249,11 @@ function createRetryTelemetry({
  */
 async function prepareProviderCall(configState, { providerType, model, baseUrl, apiKeyEnv }) {
   const resolvedProviderType = providerType || configState.config.provider.default
+  // 0.7.3 起 DEFAULT_CONFIG 不再预置 provider，零配置用户会真的走到这里 ——
+  // 「unknown provider type: undefined」对他没有任何可操作性，要说清下一步。
+  if (!resolvedProviderType) {
+    throw new Error("没有配置任何 provider。运行 kkcode 后输入 /provider add 添加一个（或手动编辑 ~/.kkcode/config.yaml）。")
+  }
   const settings = resolveSettings(configState, resolvedProviderType, { model, baseUrl, apiKeyEnv })
   await assertProviderOutboundAllowed(configState, {
     providerName: settings.configKey,
