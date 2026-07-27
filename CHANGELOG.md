@@ -19,6 +19,12 @@ bottom hint line. 启动更新提示接入 TUI toast；一键升级为 `kkcode u
 - **Version at a glance.** The current version is right-aligned on the bottom
   hint line of the TUI; on narrow terminals it yields to the key hints instead
   of overflowing.
+- **The busy line says what is actually happening.** It used to read
+  `Thinking · 0.0s` for everything. It now distinguishes Starting (turn
+  submitted, first step pending), Waiting (for the first token), Thinking
+  (reasoning is streaming, with a live timer), Retrying n/m with the reason,
+  and Compacting — and the terminal title follows. A late compaction event
+  after the turn ends can no longer resurrect a stale activity.
 
 ### 中文
 
@@ -29,6 +35,10 @@ bottom hint line. 启动更新提示接入 TUI toast；一键升级为 `kkcode u
   现改为真正执行升级的 `kkcode update --install`。
 - **版本号常驻。** 当前版本右对齐显示在 TUI 底部提示行；窄终端下自动让位给
   快捷键提示，不溢出行宽。
+- **忙碌状态行说真话。** 此前任何阶段都显示 `Thinking · 0.0s`。现在区分
+  Starting（回合已提交、首个 step 未到）、Waiting（等首个 token）、Thinking
+  （推理流式到达，计时真实累计）、Retrying n/m（带重试原因）与 Compacting ——
+  终端标题同步跟随。回合结束后迟到的压缩事件不会再复活一个过期的活动状态。
 
 ## 0.7.3
 
