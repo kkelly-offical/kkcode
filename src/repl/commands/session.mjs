@@ -76,7 +76,8 @@ export const sessionCommands = [
         providers: providersConfigured,
         mcpRegistry: McpRegistry,
         skillRegistry: SkillRegistry,
-        recoveryEnabled: ctx.configState.config.session?.recovery !== false
+        recoveryEnabled: ctx.configState.config.session?.recovery !== false,
+        config: ctx.configState.config
       })
       runtimeView.operatorSnapshot = buildOperatorSnapshot({
         runtimeSummary: runtimeView.runtimeSummary,

@@ -12,6 +12,7 @@ import { McpRegistry } from "../mcp/registry.mjs"
 import { SkillRegistry } from "../skill/registry.mjs"
 import { buildRequestHeaders, redactHeaders } from "../http/identity.mjs"
 import { resolveProviderConnection } from "../provider/model-catalog.mjs"
+import { inspectSandboxStatus, formatSandboxLine } from "../tool/sandbox.mjs"
 
 const exec = promisify(execCb)
 
@@ -86,6 +87,10 @@ export async function buildDoctorReport({ includeHttp = false } = {}) {
       apiKeyConfigured: Boolean(provider.api_key || !keyEnv || process.env[keyEnv])
     })
   }
+
+  // 沙箱只有「写在配置里」是不够的：mode=auto 但 bwrap 不在的机器上，命令
+  // 照跑不误。doctor 必须把「真实生效的后端」摆出来，而不是复述配置。
+  const sandbox = await inspectSandboxStatus(config)
 
   const events = await eventLogStats()
   const audit = await auditStats()
@@ -172,6 +177,7 @@ export async function buildDoctorReport({ includeHttp = false } = {}) {
       providersConfigured: providers
     },
     checks,
+    sandbox,
     mcp: {
       configured: mcpSnapshot.length,
       healthy: mcpHealthy,
@@ -215,6 +221,7 @@ function printTextReport(report, themeWarnings = []) {
     )
   }
   console.log(`check node=${report.checks.node ? "ok" : "missing"} rg=${report.checks.rg ? "ok" : "missing"} git=${report.checks.git ? "ok" : "missing"}`)
+  console.log(formatSandboxLine(report.sandbox))
   console.log(`mcp: configured=${report.mcp.configured} healthy=${report.mcp.healthy} unhealthy=${report.mcp.unhealthy}`)
   console.log(`skills: total=${report.skills.total} template=${report.skills.template + report.skills.skillMd} mcp=${report.skills.mcpPrompt} programmable=${report.skills.programmable}`)
   console.log(`compat: ecosystems=${report.compat.ecosystems.join(",") || "-"} plugins=${report.compat.plugins} diagnostics=${report.compat.diagnostics.length}`)

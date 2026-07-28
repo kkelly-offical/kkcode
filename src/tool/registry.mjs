@@ -1,8 +1,8 @@
 import path from "node:path"
 import os from "node:os"
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
-import { access, stat, statfs, unlink } from "node:fs/promises"
-import { exec as execCb, spawn } from "node:child_process"
+import { access, realpath, stat, statfs, unlink } from "node:fs/promises"
+import { exec as execCb, execFile as execFileCb, spawn } from "node:child_process"
 import { promisify } from "node:util"
 import { pathToFileURL } from "node:url"
 import { atomicWriteFile, replaceInFileTransactional, replaceAllInFileTransactional, diffLineCount, buildStructuredPatch } from "./edit-transaction.mjs"
@@ -26,8 +26,18 @@ import { buildMutationObservability } from "../observability/edit-diagnostics.mj
 import { resolveWorkspacePath } from "./workspace-fs.mjs"
 import { buildRequestHeaders } from "../http/identity.mjs"
 import { IMAGE_EXTENSIONS, IMAGE_MIME_TYPES } from "./image-util.mjs"
+import {
+  readSandboxConfig,
+  inspectSandboxStatus,
+  buildSandboxedCommand,
+  resolveWritableDir,
+  takeSandboxUnavailableNotice,
+  sandboxFailureHint
+} from "./sandbox.mjs"
+import { userRootDir } from "../storage/paths.mjs"
 
 const exec = promisify(execCb)
+const execFile = promisify(execFileCb)
 
 const state = {
   initialized: false,
@@ -277,17 +287,86 @@ function isLongRunningCommand(command) {
   return LONG_RUNNING_PATTERNS.some((re) => re.test(cmd))
 }
 
+/**
+ * 一条命令的实际执行。沙箱与非沙箱只在这里分叉：
+ * - 无沙箱：走 exec，即 `/bin/sh -c <命令>`，与 0.8.0 逐字节相同的路径。
+ * - 有沙箱：走 execFile，命令文本作为 `sh -c` 的一个 argv 传给 bwrap，
+ *   全程不拼字符串 —— 拼接方案下命令里的引号会被沙箱参数表二次解释。
+ */
+function spawnShell({ command, cwd, timeoutMs, env, sandbox = null }) {
+  if (sandbox) {
+    return execFile(sandbox.command, sandbox.args, { cwd, timeout: timeoutMs, encoding: "utf8", env })
+  }
+  return exec(wrapCmd(command), { cwd, timeout: timeoutMs, encoding: "utf8", env })
+}
+
+/**
+ * 组装本次 bash 调用的沙箱形态。
+ *
+ * mode!=auto 时立刻返回，不探测、不 mkdir —— 默认档必须与 0.8.0 完全同路径。
+ * 后端不可用时回落现状，但带一行可见说明（每进程一次）：模型必须知道自己
+ * 没被隔离。包装成功后若 bwrap 自己起不来，错误在 runBash 里原样透出，
+ * 这里**不**做二次回落。
+ */
+async function prepareBashSandbox(ctx = {}, command = "") {
+  const config = ctx?.config || ctx?.configState?.config || null
+  const raw = readSandboxConfig(config)
+  if (raw.mode !== "auto") return { spawn: null, notice: "", hint: "" }
+
+  const status = await inspectSandboxStatus(config)
+  if (!status.available) {
+    return { spawn: null, notice: takeSandboxUnavailableNotice(status), hint: "" }
+  }
+
+  const workspaceDir = await realPathOrSelf(path.resolve(ctx?.cwd || process.cwd()))
+  const tmpDir = await realPathOrSelf(os.tmpdir())
+  const homeStateDir = userRootDir()
+  // bwrap 的 --bind 源目录不存在就整条命令失败，而 ~/.kkcode 在全新安装里
+  // 可能还没建过
+  await mkdir(homeStateDir, { recursive: true }).catch(() => {})
+  const extraWritableDirs = []
+  for (const entry of raw.writableDirs) {
+    const dir = resolveWritableDir(entry, { workspaceDir })
+    // 配置里的陈旧条目不该让每一条命令都挂掉，所以不存在就跳过
+    if (dir && await exists(dir)) extraWritableDirs.push(await realPathOrSelf(dir))
+  }
+
+  const spawnSpec = buildSandboxedCommand({
+    backend: status.backend,
+    command,
+    workspaceDir,
+    tmpDir,
+    homeStateDir: await realPathOrSelf(homeStateDir),
+    extraWritableDirs,
+    network: status.network
+  })
+  if (!spawnSpec) return { spawn: null, notice: "", hint: "" }
+  return {
+    spawn: spawnSpec,
+    notice: "",
+    hint: sandboxFailureHint({
+      backend: status.backend,
+      network: status.network,
+      writableDirs: [workspaceDir, tmpDir, homeStateDir, ...extraWritableDirs]
+    })
+  }
+}
+
+async function realPathOrSelf(target) {
+  return realpath(target).catch(() => target)
+}
+
 async function runBash(command, cwd, timeoutMs = BASH_TIMEOUT_MS, options = {}) {
   if (isLongRunningCommand(command)) {
     return `[blocked] "${command}" looks like a long-running/dev-server command that would block execution. Please tell the user to run it manually in their terminal, or use run_in_background: true.`
   }
-  const { env: extraEnv = null, maxChars = 30000 } = options
+  const { env: extraEnv = null, maxChars = 30000, sandbox = null, sandboxHint = "" } = options
   const env = extraEnv ? { ...process.env, ...extraEnv } : process.env
   // exitCode 此前被 catch 整个吞掉：模型只看到 stderr 文本，无法区分「命令
   // 失败」和「命令成功但往 stderr 写了进度」—— 后者在 npm/pip/git 里极常见。
   let exitCode = 0
   let timedOut = false
-  const out = await exec(wrapCmd(command), { cwd, timeout: timeoutMs, encoding: "utf8", env }).catch((error) => {
+  const out = await spawnShell({ command, cwd, timeoutMs, env, sandbox }).catch((error) => {
     exitCode = Number.isInteger(error.code) ? error.code : 1
     if (error.killed || error.signal === "SIGTERM") {
       timedOut = true
@@ -317,7 +396,10 @@ async function runBash(command, cwd, timeoutMs = BASH_TIMEOUT_MS, options = {}) 
         hint: "Re-run with a narrower command (add a filter, head/tail, or --quiet) to see the rest."
       })}`
     : raw
-  return status ? `${status}\n${body}` : body
+  // 沙箱里失败时补一句「哪些目录可写」：EROFS / Permission denied 在沙箱内是
+  // 预期结果，不加这行的话模型会把它当成环境损坏，然后开始瞎修
+  const tail = sandboxHint && exitCode !== 0 ? `\n${sandboxHint}` : ""
+  return status ? `${status}\n${body}${tail}` : `${body}${tail}`
 }
 
 function lockOptions(ctx = {}) {
@@ -1104,6 +1186,10 @@ function builtinTools(config) {
         : null
       const maxChars = Number(ctx.toolResultLimit) || 30000
 
+      // 第三层防护：OS 级隔离。默认 off，此时下面两条执行路径与 0.8.0 完全相同。
+      // 后台任务也包 —— 否则 run_in_background: true 就是一个绕过沙箱的开关。
+      const sandbox = await prepareBashSandbox(ctx, command)
+
       if (args.run_in_background) {
         // 这里**不**再拦长命令。前台那道拦截的提示语原文是「或者用
         // run_in_background: true」，而这里又把它堵回去 —— 文档承诺的唯一
@@ -1114,16 +1200,23 @@ function builtinTools(config) {
           payload: { command, cwd: runCwd },
           run: async () => {
             const env = extraEnv ? { ...process.env, ...extraEnv } : process.env
-            const out = await exec(wrapCmd(command), { cwd: runCwd, timeout: 600_000, encoding: "utf8", env })
+            const out = await spawnShell({ command, cwd: runCwd, timeoutMs: 600_000, env, sandbox: sandbox.spawn })
               .catch(e => ({ stdout: e.stdout ?? "", stderr: e.stderr ?? e.message }))
             return `${out.stdout || ""}${out.stderr || ""}`.trim() || "(empty output)"
           },
           config: ctx.config
         })
-        return `background task launched: ${task.id}\nUse background_output to check results.`
+        const launched = `background task launched: ${task.id}\nUse background_output to check results.`
+        return sandbox.notice ? `${sandbox.notice}\n${launched}` : launched
       }
 
-      return runBash(command, runCwd, timeoutMs, { env: extraEnv, maxChars })
+      const output = await runBash(command, runCwd, timeoutMs, {
+        env: extraEnv,
+        maxChars,
+        sandbox: sandbox.spawn,
+        sandboxHint: sandbox.hint
+      })
+      return sandbox.notice ? `${sandbox.notice}\n${output}` : output
     }
   }
 
