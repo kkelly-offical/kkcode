@@ -52,12 +52,12 @@ export function resolveSandboxBackend({
  * 去重不是洁癖 —— 参数表是要逐条断言的，重复的 --bind 会让断言随环境漂移
  * （比如 KKCODE_HOME 被指到工作区里的时候）。
  */
-function normalizeDirs(dirs = []) {
+function normalizeDirs(dirs = [], pathApi = path) {
   const seen = new Set()
   const out = []
   for (const dir of dirs) {
     if (!dir) continue
-    const resolved = path.resolve(String(dir))
+    const resolved = pathApi.resolve(String(dir))
     if (seen.has(resolved)) continue
     seen.add(resolved)
     out.push(resolved)
@@ -86,11 +86,17 @@ export function buildSandboxedCommand({
   homeStateDir = userRootDir(),
   extraWritableDirs = [],
   network = true,
-  shell = "/bin/sh"
+  shell = "/bin/sh",
+  /**
+   * 路径运算必须可注入（老课：pathApi 与假数据成对注入）：bwrap/sandbox-exec
+   * 只在 POSIX 上运行，但**测试**要在任何平台跑同一套断言 —— Windows CI 上
+   * 宿主 path 会把 /ws 解析成 C:\ws，参数表全体漂移。运行时不传即宿主 path。
+   */
+  pathApi = path
 } = {}) {
   const text = String(command || "")
   if (!text.trim()) return null
-  const writable = normalizeDirs([workspaceDir, tmpDir, homeStateDir, ...extraWritableDirs])
+  const writable = normalizeDirs([workspaceDir, tmpDir, homeStateDir, ...extraWritableDirs], pathApi)
 
   if (backend === "bwrap") {
     const args = [
@@ -109,7 +115,8 @@ export function buildSandboxedCommand({
   }
 
   if (backend === "sandbox-exec") {
-    const profile = buildSandboxExecProfile({ writableDirs: writable, network })
+    // writable 已经 normalize 过；再传 pathApi 只为 profile 单测的独立入口一致
+    const profile = buildSandboxExecProfile({ writableDirs: writable, network, pathApi })
     return { command: "sandbox-exec", args: ["-p", profile, shell, "-c", text] }
   }
 
@@ -130,8 +137,8 @@ function quoteProfilePath(value) {
  * （→ /private/tmp、/private/var），传软链进来的话规则不会命中，写入照样被拒。
  * 解析交给调用方（registry 那边 realpath 过），这里保持纯函数。
  */
-export function buildSandboxExecProfile({ writableDirs = [], network = true } = {}) {
-  const dirs = normalizeDirs(writableDirs)
+export function buildSandboxExecProfile({ writableDirs = [], network = true, pathApi = path } = {}) {
+  const dirs = normalizeDirs(writableDirs, pathApi)
   const lines = [
     "(version 1)",
     "(allow default)",
@@ -257,12 +264,12 @@ export function readSandboxConfig(config = null) {
  * 把 `~` 与相对路径落成绝对路径。相对路径按工作区解 —— 配置里写
  * `node_modules/.cache` 时，用户想的显然是工作区里的那个。
  */
-export function resolveWritableDir(entry, { workspaceDir = process.cwd(), homeDir = os.homedir() } = {}) {
+export function resolveWritableDir(entry, { workspaceDir = process.cwd(), homeDir = os.homedir(), pathApi = path } = {}) {
   const text = String(entry || "").trim()
   if (!text) return ""
   if (text === "~") return homeDir
-  if (text.startsWith("~/")) return path.join(homeDir, text.slice(2))
-  return path.resolve(workspaceDir, text)
+  if (text.startsWith("~/")) return pathApi.join(homeDir, text.slice(2))
+  return pathApi.resolve(workspaceDir, text)
 }
 
 let unavailableNoticeShown = false

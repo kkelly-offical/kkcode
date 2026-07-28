@@ -25,6 +25,9 @@ function bwrapArgs(overrides = {}) {
     workspaceDir: WS,
     tmpDir: TMP,
     homeStateDir: STATE,
+    // 夹具是 POSIX 形态的路径，pathApi 必须成对跟上（Windows CI 上宿主 path
+    // 会把 /ws 解析成 C:\ws，参数表全体漂移 —— 这个仓库栽过的老课）
+    pathApi: path.posix,
     ...overrides
   })
   return spec.args
@@ -38,11 +41,15 @@ test("resolveSandboxBackend covers the platform matrix", () => {
   assert.equal(resolveSandboxBackend({ platform: "darwin", hasSandboxExec: false }), "none")
   assert.equal(resolveSandboxBackend({ platform: "win32", hasBwrap: true }), "none")
   assert.equal(resolveSandboxBackend({ platform: "freebsd", hasBwrap: true }), "none")
-  assert.equal(resolveSandboxBackend({}), "none")
+  // 不留裸 resolveSandboxBackend({}) 的断言：它的答案取决于**跑测试的宿主**
+  // （darwin 上是 sandbox-exec）—— macOS CI 抓到的第一条宿主耦合
+  assert.equal(resolveSandboxBackend({ platform: "linux" }), "none")
+  assert.equal(resolveSandboxBackend({ platform: "win32" }), "none")
 })
 
 test("bwrap arg table: read-only root, three writable binds, no net isolation by default", () => {
   assert.deepEqual(buildSandboxedCommand({
+    pathApi: path.posix,
     backend: "bwrap",
     command: "echo hi",
     workspaceDir: WS,
@@ -105,7 +112,8 @@ test("sandbox-exec profile denies writes by default and allows only the three ro
     workspaceDir: "/Users/dev/project",
     tmpDir: "/private/var/folders/xx/T",
     homeStateDir: "/Users/dev/.kkcode",
-    network: true
+    network: true,
+    pathApi: path.posix
   })
   assert.equal(spec.command, "sandbox-exec")
   assert.equal(spec.args[0], "-p")
@@ -126,14 +134,14 @@ test("sandbox-exec profile denies writes by default and allows only the three ro
 })
 
 test("sandbox-exec profile denies network only when network is off", () => {
-  const profile = buildSandboxExecProfile({ writableDirs: ["/Users/dev/project"], network: false })
+  const profile = buildSandboxExecProfile({ writableDirs: ["/Users/dev/project"], network: false, pathApi: path.posix })
   assert.ok(profile.includes("(deny network*)"))
   // deny network* 必须在最后，前面的 (allow default) 才盖不住它
   assert.equal(profile.split("\n").at(-1), "(deny network*)")
 })
 
 test("sandbox-exec profile escapes quotes in paths", () => {
-  const profile = buildSandboxExecProfile({ writableDirs: ['/Users/dev/we"ird'] })
+  const profile = buildSandboxExecProfile({ writableDirs: ['/Users/dev/we"ird'], pathApi: path.posix })
   assert.match(profile, /\(subpath "\/Users\/dev\/we\\"ird"\)/)
 })
 
@@ -150,10 +158,10 @@ test("readSandboxConfig defaults to off and treats unknown modes as off", () => 
 })
 
 test("resolveWritableDir expands ~ and resolves relatives against the workspace", () => {
-  assert.equal(resolveWritableDir("~/.cache", { homeDir: "/home/dev" }), "/home/dev/.cache")
+  assert.equal(resolveWritableDir("~/.cache", { homeDir: "/home/dev", pathApi: path.posix }), "/home/dev/.cache")
   assert.equal(resolveWritableDir("~", { homeDir: "/home/dev" }), "/home/dev")
-  assert.equal(resolveWritableDir("build", { workspaceDir: WS }), path.join(WS, "build"))
-  assert.equal(resolveWritableDir("/var/cache", { workspaceDir: WS }), "/var/cache")
+  assert.equal(resolveWritableDir("build", { workspaceDir: WS, pathApi: path.posix }), `${WS}/build`)
+  assert.equal(resolveWritableDir("/var/cache", { workspaceDir: WS, pathApi: path.posix }), "/var/cache")
   assert.equal(resolveWritableDir("  ", { workspaceDir: WS }), "")
 })
 

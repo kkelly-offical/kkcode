@@ -159,10 +159,14 @@ test("background bash is sandboxed too", { skip: hasBwrap ? false : skipReason }
   assert.match(text, /Read-only file system|Permission denied/)
 })
 
-test("mode=auto with no backend falls back loudly, never silently", async () => {
-  // bwrap 探测走 PATH，清空 PATH 即可在任何机器上复现「想开但开不了」。
-  // /bin/sh 是绝对路径、echo 是内建命令，所以命令本身照样能跑。
+test("mode=auto with no backend falls back loudly, never silently", async (t) => {
+  if (process.platform === "win32") { t.skip("需要 POSIX shell 跑 echo 探针"); return }
+  // bwrap 探测走 PATH，清空 PATH 复现「想开但开不了」——但这只对 linux 成立：
+  // darwin 的 sandbox-exec 是系统自带、不走 PATH 探测，macOS CI 上沙箱会
+  // **真的激活**（0.8.1 第一轮 CI 抓到的宿主耦合）。所以把 platform 一并钉死。
   const previousPath = process.env.PATH
+  const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform")
+  Object.defineProperty(process, "platform", { value: "linux", configurable: true })
   process.env.PATH = path.join(workspace, "no-such-bin")
   resetSandboxSupportCache()
   resetSandboxNotices()
@@ -178,6 +182,7 @@ test("mode=auto with no backend falls back loudly, never silently", async () => 
     assert.match(second, /still-ran/)
   } finally {
     process.env.PATH = previousPath
+    Object.defineProperty(process, "platform", platformDescriptor)
     resetSandboxSupportCache()
     resetSandboxNotices()
   }
@@ -208,4 +213,28 @@ test("mode=off leaves bash byte-for-byte on the 0.8.0 path", async () => {
   } finally {
     await rm(outside, { force: true })
   }
+})
+
+test("real sandbox-exec on macOS: allows workspace writes, blocks the rest", {
+  skip: process.platform !== "darwin" ? "sandbox-exec 只在 macOS 上（CI 的 macos 格负责跑它）" : false
+}, async () => {
+  // 0.8.1 首轮 CI 之前 darwin 分支只有 profile 文本的单测 —— 「sandbox-exec
+  // 真的按 profile 办事」没有任何证据。CI 恰好有 mac，让它当真机。
+  const inside = await runBashTool(
+    { command: "printf ok > mac-probe.txt && cat mac-probe.txt" },
+    workspace,
+    { sandbox: { mode: "auto", network: true } }
+  )
+  assert.match(inside, /ok/, "工作区内写入必须照常")
+  assert.doesNotMatch(inside, /\[sandbox\] requested/, "有后端就不该出现回落提示")
+
+  const outside = await runBashTool(
+    { command: "touch /etc/kkcode-mac-probe" },
+    workspace,
+    { sandbox: { mode: "auto", network: true } }
+  )
+  assert.match(outside, /Operation not permitted|Read-only file system|Permission denied/,
+    "工作区外写入必须被 profile 拦下")
+  assert.match(outside, /\[sandbox\] active \(sandbox-exec/,
+    "失败时要有 trailer，模型才不会把 EPERM 当成机器坏了")
 })
