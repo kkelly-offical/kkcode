@@ -1,5 +1,60 @@
 # Changelog / 更新日志
 
+## 0.8.1
+
+OS 级沙箱（opt-in，bwrap / sandbox-exec）；可配置状态栏（ui.status.segments）；
+AFK 提问打发（挂机不再被一个问题卡死）；头部视觉重做（方块 K 侧标、通宽分隔线）。
+
+### English
+
+- **OS-level sandbox (opt-in).** With `permission.sandbox.mode: auto`,
+  model-initiated bash commands run under bubblewrap (Linux) or sandbox-exec
+  (macOS): the whole filesystem is read-only except the workspace, system tmp,
+  `~/.kkcode`, and any `writable_dirs` you add; `network: false` additionally
+  cuts the network (own netns — localhost included). Background tasks are
+  wrapped too — an unwrapped background lane would just be a bypass switch.
+  Your own `!` commands are never sandboxed. The effective backend shows in
+  `/status` and `kkcode doctor`; when `auto` finds no backend the tool output
+  says so once instead of pretending isolation. Sandboxed failures carry a
+  trailer naming the writable roots, so the model diagnoses EROFS as policy,
+  not as a broken machine. Note: npm/pip may need `writable_dirs` entries like
+  `~/.npm` / `~/.cache`.
+- **Configurable status bar.** `ui.status.segments` picks which segments show
+  and in what order (`mode | model | tokens | cost | context | memory |
+  permission | longagent`); unset keeps today's bar byte-for-byte. Unknown
+  names are schema errors, and the overflow rule is unchanged — safety signals
+  still never drop.
+- **AFK question auto-skip.** A model question left unanswered with no
+  keypress for `ui.afk_question_timeout_s` seconds (default 600, 0 disables)
+  resolves as "skipped": the turn continues instead of hanging until you're
+  back, with a transcript line telling you what happened. Any key resets the
+  clock. Permission prompts are never auto-answered — in either direction.
+- **Visual polish.** The top-left mascot is now a gradient block-K matching
+  the logo's visual language (four candidates compared in a real terminal);
+  the transcript divider spans the full width instead of stopping at 40
+  columns.
+
+### 中文
+
+- **OS 级沙箱（默认关闭）。** `permission.sandbox.mode: auto` 后，模型发起的
+  bash 命令经 bubblewrap（Linux）/ sandbox-exec（macOS）执行：整个文件系统
+  只读，仅工作区、系统 tmp、`~/.kkcode` 与你补充的 `writable_dirs` 可写；
+  `network: false` 另断网络（独立 netns，连 localhost 一起断）。后台任务同样
+  包住 —— 不包它就成了绕过沙箱的开关。你自己敲的 `!` 命令永远不进沙箱。
+  生效后端在 `/status` 与 `kkcode doctor` 里可见；auto 但后端不可用时工具
+  输出会说明一次，而不是假装隔离。沙箱内失败带一行提示指明可写目录 ——
+  模型把 EROFS 读成策略而不是机器坏了。注意：npm/pip 可能需要把 `~/.npm`、
+  `~/.cache` 加进 writable_dirs。
+- **可配置状态栏。** `ui.status.segments` 决定显示哪些段、按什么顺序；不配
+  则与现状逐字节一致。段名写错是 schema 报错；「装不下丢谁」的规则不变 ——
+  安全信号永不被丢弃。
+- **AFK 提问打发。** 提问挂起且无任何按键超过 `ui.afk_question_timeout_s`
+  秒（默认 600，0 关闭）即按「跳过」结掉：挂机的长任务不再被一个问题卡死，
+  对话记录里留一行说明。任何按键都会把表拨回起点。权限审批永不自动处理 ——
+  批与拒两个方向都不。
+- **视觉打磨。** 左上角侧标换成与主 logo 同视觉语言的渐变方块 K（四个候选
+  真机对比选定）；对话分隔线通宽，不再是 40 列的断线。
+
 ## 0.8.0
 
 `/provider add` 去模板化：接口形式 → URL/密钥 → 自动读取模型、上下文与 thinking
