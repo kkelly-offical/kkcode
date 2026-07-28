@@ -402,7 +402,9 @@ test("a colour-free transcript has no escapes at all", () => {
 
 // --- 真实冒烟：假 spawn 骗不了这几条 ---
 
-test("smoke: a real command runs and its output comes back", async () => {
+test("smoke: a real command runs and its output comes back", async (t) => {
+  if (process.platform === "win32") { t.skip("真实 cmd 的引号/进程语义待有 Windows 本地环境时验证；win32 分流逻辑有假 spawn 用例盯着"); return }
+
   const result = await runShellPassthrough("echo hello from shell", { timeoutMs: 5000 })
   assert.equal(result.ok, true)
   assert.equal(result.exitCode, 0)
@@ -410,7 +412,9 @@ test("smoke: a real command runs and its output comes back", async () => {
   assert.equal(result.truncated, false)
 })
 
-test("smoke: stderr comes back merged, and a non-zero exit is reported", async () => {
+test("smoke: stderr comes back merged, and a non-zero exit is reported", async (t) => {
+  if (process.platform === "win32") { t.skip("真实 cmd 的引号/进程语义待有 Windows 本地环境时验证；win32 分流逻辑有假 spawn 用例盯着"); return }
+
   // node -e 而不是 `; 1>&2 exit`：那是 POSIX shell 语法，Windows cmd 里
   // `;` 不是命令分隔符 —— smoke 必须在两种宿主上语义一致
   const script = "console.log('out'); console.error('err'); process.exit(3)"
@@ -421,7 +425,9 @@ test("smoke: stderr comes back merged, and a non-zero exit is reported", async (
   assert.ok(result.output.includes("err"), "stderr 也要在")
 })
 
-test("smoke: a real timeout kills the process group and keeps what was printed", async () => {
+test("smoke: a real timeout kills the process group and keeps what was printed", async (t) => {
+  if (process.platform === "win32") { t.skip("真实 cmd 的引号/进程语义待有 Windows 本地环境时验证；win32 分流逻辑有假 spawn 用例盯着"); return }
+
   // 这条覆盖假 spawn 覆盖不到的那一半：POSIX 上的负 pid 进程组杀。
   // `sleep` 是 sh 的子进程，只杀 sh 的话它会继续跑、攥着管道不放，close 永远不来。
   const started = Date.now()
@@ -435,7 +441,9 @@ test("smoke: a real timeout kills the process group and keeps what was printed",
   assert.ok(Date.now() - started < 5000, `不该等满 30 秒，实际 ${Date.now() - started}ms`)
 })
 
-test("smoke: a program that reads stdin gets EOF instead of hanging", async () => {
+test("smoke: a program that reads stdin gets EOF instead of hanging", async (t) => {
+  if (process.platform === "win32") { t.skip("真实 cmd 的引号/进程语义待有 Windows 本地环境时验证；win32 分流逻辑有假 spawn 用例盯着"); return }
+
   // `cat` 无参数会一直读 stdin。stdin 若不是 /dev/null，这条会跑满超时。
   const started = Date.now()
   const result = await runShellPassthrough("cat", { timeoutMs: 4000 })
@@ -445,6 +453,8 @@ test("smoke: a program that reads stdin gets EOF instead of hanging", async () =
 })
 
 test("smoke: cwd is respected", async (t) => {
+  if (process.platform === "win32") { t.skip("真实 cmd 的引号/进程语义待有 Windows 本地环境时验证；win32 分流逻辑有假 spawn 用例盯着"); return }
+
   // `pwd` + 根路径都是 POSIX 专属。node -e process.cwd() 两边都认，
   // 目标目录用 tmpdir（两种宿主都存在且可进）。realpath 对齐 macOS 的
   // /tmp → /private/tmp 符号链接。

@@ -66,7 +66,11 @@ export function buildSpawnPlan(command, { cwd, env, platform } = {}) {
     return {
       file: env?.ComSpec || "cmd.exe",
       args: ["/d", "/s", "/c", command],
-      options: { ...shared, detached: false }
+      // verbatim 是关键：不设的话 Node 会按 MS C 运行时规则给参数重新加引号，
+      // `!node -e "console.log('x')"` 里的引号被转义拆坏，cmd 收到的命令面目全非
+      // （CI 实测退出码 1 而不是脚本里的 3）。Node 自己的 shell:true 对 cmd.exe
+      // 正是这么做的 —— 我们手动拼 cmd 调用，就要照抄它的语义。
+      options: { ...shared, detached: false, windowsVerbatimArguments: true }
     }
   }
   return {
