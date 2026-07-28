@@ -1,6 +1,17 @@
 import { paint } from "./color.mjs"
 import { getMode } from "../core/modes.mjs"
 
+/**
+ * 可配置状态栏（0.8.1）的段名清单 —— **唯一来源**。
+ *
+ * `ui.status.segments` 的合法值、schema 校验、渲染表都从这里派生；
+ * 手写第二份清单的话，加段时 schema 与渲染就会静默分叉（枚举清单的老课）。
+ * 顺序即缺省显示顺序。
+ */
+export const STATUS_SEGMENT_IDS = Object.freeze([
+  "mode", "model", "tokens", "cost", "context", "memory", "permission", "longagent"
+])
+
 function formatNumber(value) {
   return Intl.NumberFormat("en-US").format(Math.round(value))
 }
@@ -69,6 +80,12 @@ export function renderStatusBar({
   layout = "compact",
   longagentState = null,
   memoryLoaded = false,
+  /**
+   * `ui.status.segments`：要显示哪些段、按什么顺序（0.8.1）。
+   * null/空 = 全量按缺省顺序（现状不变）。段名以 STATUS_SEGMENT_IDS 为准，
+   * 列了但当前不适用的段（如非 longagent 模式下的 longagent）静默跳过。
+   */
+  segments: segmentOrder = null,
   // 排版宽度由调用方给。0.6.1 修了「装不下时丢哪个段」，但宽度仍直读
   // process.stdout.columns —— 测试进程里它恒为 undefined（回落 120），所以
   // 分档逻辑永远走同一条路，而真实的 86 列终端上状态栏按 120 排完再被帧硬截，
@@ -84,14 +101,17 @@ export function renderStatusBar({
   // 0.6.0 给 CONTEXT 加了绝对 token 数（宽约 6 字符），在 110 列的终端上
   // 恰好把 PERMISSION 挤出了边界 —— 被截掉的偏偏是「能不能不问就改文件」
   // 这个最该看见的信号。而 86 列下整条状态栏此前就已经溢出，属于既有缺陷。
-  const segments = []
-  const add = (text, priority = 5) => segments.push({ text, priority })
+  //
+  // 0.8.1 起段先按 id 建好（built），再按 segmentOrder 选序 —— 配置决定
+  // 「显示什么、什么顺序」，优先级机制继续决定「装不下丢什么」，两者正交。
+  const built = {}
+  const add = (id, text, priority = 5) => { built[id] = { text, priority } }
   // 颜色仍按航道取（theme.modes 的键是 0.3.x 航道名），标签用 0.4.0 的公开模式名
   const modeBg = theme.modes[mode] || theme.base.accent
   const modeInfo = modeId ? getMode(modeId) : null
   const modeLabel = modeInfo ? `${modeInfo.icon} ${modeInfo.label.toUpperCase()}` : String(mode).toUpperCase()
-  add(badge(modeLabel, contrastText(modeBg), modeBg), 0)
-  add(badge(`MODEL ${modelLabel}`, theme.base.fg, theme.components.panel || theme.base.border, { bold: false }), 3)
+  add("mode", badge(modeLabel, contrastText(modeBg), modeBg), 0)
+  add("model", badge(`MODEL ${modelLabel}`, theme.base.fg, theme.components.panel || theme.base.border, { bold: false }), 3)
 
   if (showTokenMeter && tokenMeter) {
     const t = tokenMeter.turn
@@ -102,13 +122,11 @@ export function renderStatusBar({
     if (!tight && aggregation.includes("session")) tokenSegments.push(`S:${formatNumber(s.input + s.output)}`)
     if (!dense && aggregation.includes("global")) tokenSegments.push(`G:${formatNumber(g.input + g.output)}`)
     const tokenText = `TOKENS ${tokenSegments.join(" ")}${tokenMeter.estimated ? " ~" : ""}`
-    add(
-      badge(tokenText, theme.base.fg, "#2d3748", { bold: false })
-    )
+    add("tokens", badge(tokenText, theme.base.fg, "#2d3748", { bold: false }))
   }
   if (showCost) {
     const savingsStr = savings > 0 ? ` ↓${formatCost(savings)}` : ""
-    add(badge(`COST ${formatCost(cost)}${savingsStr}`, contrastText(theme.semantic.warn), theme.semantic.warn, { bold: false }), 6)
+    add("cost", badge(`COST ${formatCost(cost)}${savingsStr}`, contrastText(theme.semantic.warn), theme.semantic.warn, { bold: false }), 6)
   }
   if (contextMeter && Number.isFinite(contextMeter.percent)) {
     const pct = Math.max(0, Math.min(100, Math.round(contextMeter.percent)))
@@ -127,13 +145,13 @@ export function renderStatusBar({
     // tokens 缺失（早期帧）时退回纯百分比。
     const abs = Number(contextMeter.tokens) > 0 ? `${formatTokenCount(contextMeter.tokens)} ` : ""
     const text = tight ? `CTX ${pct}%` : `CONTEXT ${abs}(${pct}%)${suffix}`
-    add(badge(text, contrastText(ctxBg), ctxBg, { bold: false }), 1)
+    add("context", badge(text, contrastText(ctxBg), ctxBg, { bold: false }), 1)
   }
   if (memoryLoaded && !tight) {
-    add(badge("MEM", contrastText(theme.semantic.info), theme.semantic.info, { bold: false }), 7)
+    add("memory", badge("MEM", contrastText(theme.semantic.info), theme.semantic.info, { bold: false }), 7)
   }
   const permBg = permissionColor(permission, theme)
-  add(badge(`PERMISSION ${permission.toUpperCase()}`, contrastText(permBg), permBg, { bold: false }), 0)
+  add("permission", badge(`PERMISSION ${permission.toUpperCase()}`, contrastText(permBg), permBg, { bold: false }), 0)
   if (longagentState && mode === "longagent") {
     const parts = []
     if (longagentState.currentStageId) {
@@ -177,12 +195,15 @@ export function renderStatusBar({
       parts.push(`R:${longagentState.recoveryCount}`)
     }
     if (parts.length) {
-      add(badge(`LONG ${parts.join(" ")}`, contrastText(theme.semantic.success), theme.semantic.success, { bold: false }), 2)
+      add("longagent", badge(`LONG ${parts.join(" ")}`, contrastText(theme.semantic.success), theme.semantic.success, { bold: false }), 2)
     }
   }
 
   const gap = layout === "comfortable" ? "  " : " "
-  return fitSegments(segments, width, gap)
+  // 配置里没列的段不显示；列了但没建出来的（当前不适用/被 show_* 关掉）跳过
+  const order = Array.isArray(segmentOrder) && segmentOrder.length ? segmentOrder : STATUS_SEGMENT_IDS
+  const chosen = order.map((id) => built[id]).filter(Boolean)
+  return fitSegments(chosen, width, gap)
 }
 
 /** SGR 序列不占屏幕宽度，量长度前必须剥掉 */

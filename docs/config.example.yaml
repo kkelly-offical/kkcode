@@ -229,6 +229,16 @@ permission:
     - tool: list
       action: allow
 
+  # OS 级沙箱（0.8.1，默认关闭）：审批与规则之外的第三道防线。
+  # mode=auto 时模型侧 bash 经 bwrap（Linux）/ sandbox-exec（macOS）执行：
+  # 整个文件系统只读，仅工作区、系统 tmp、~/.kkcode 与 writable_dirs 可写。
+  # Windows 无后端，保持现状执行并在工具输出里注明。`!` 直通的命令是你自己
+  # 敲的，永远不进沙箱。生效后端可用 /status 或 `kkcode doctor` 查看。
+  sandbox:
+    mode: "off"                # off | auto
+    network: true              # false = 断网（bwrap 独立 netns，连 localhost 一起断）
+    writable_dirs: []          # npm/pip 需要时补，如 ["~/.npm", "~/.cache"]
+
 # =============================================================================
 # Git 自动化配置
 # =============================================================================
@@ -351,3 +361,11 @@ ui:
   status:
     show_cost: true
     show_token_meter: true
+    # 0.8.1：状态栏显示哪些段、按什么顺序。不配 = 全量缺省顺序。
+    # 可选：mode | model | tokens | cost | context | memory | permission | longagent
+    # segments: [mode, model, context, permission]
+
+  # 0.8.1：AFK 提问打发 —— 提问挂起且无任何按键超过这个秒数，按「跳过」自动
+  # 结掉，模型自行继续（挂机的长任务不再被一个问题卡死）。0 = 关闭。
+  # 只作用于提问；权限审批是安全决策，无论挂多久都等人。
+  afk_question_timeout_s: 600

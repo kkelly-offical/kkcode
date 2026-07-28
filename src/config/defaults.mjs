@@ -203,7 +203,19 @@ export const DEFAULT_CONFIG = {
   permission: {
     level: "manual",
     non_tty_default: "deny",
-    rules: []
+    rules: [],
+    /**
+     * OS 级沙箱（0.8.1，opt-in）：mode=auto 时模型侧 bash 经 bwrap（Linux）/
+     * sandbox-exec（macOS）执行 —— 整个文件系统只读，仅工作区、系统 tmp、
+     * ~/.kkcode 与 writable_dirs 可写；network=false 另断网络（连 localhost
+     * 一起断）。npm/pip 这类要写 ~/.npm、~/.cache 的工具需要自行补进
+     * writable_dirs。`!` 直通是用户自己的命令，永远不包。
+     */
+    sandbox: {
+      mode: "off",
+      network: true,
+      writable_dirs: []
+    }
   },
   storage: {
     session_shard_enabled: true,
@@ -313,7 +325,13 @@ export const DEFAULT_CONFIG = {
     status: {
       show_cost: true,
       show_token_meter: true
-    }
+    },
+    /**
+     * AFK 提问打发（0.8.1）：提问挂起且期间无任何按键超过这个秒数，按「跳过」
+     * 语义自动结掉，模型自行继续。0 = 关闭。只作用于提问 —— 权限审批是安全
+     * 决策，无论挂多久都等人。
+     */
+    afk_question_timeout_s: 600
   }
 }
 

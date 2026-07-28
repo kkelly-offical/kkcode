@@ -76,6 +76,7 @@ import { createListenerRegistry } from "./repl/listener-registry.mjs"
 import { subscribeSessionEvents } from "./repl/event-bridge.mjs"
 import { createMouseSelection, screenRowFromAbsolute } from "./repl/mouse-selection.mjs"
 import { createPromptQueue } from "./repl/prompt-queue.mjs"
+import { createAfkAutoSkip } from "./repl/afk-auto-skip.mjs"
 import { createOverlayController } from "./repl/overlay-controller.mjs"
 import { createTerminalSession } from "./repl/terminal-session.mjs"
 import { createKeyDispatcher } from "./repl/key-dispatch.mjs"
@@ -813,7 +814,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
    * 它们不参与用户浮层的互斥：每一条背后都挂着一个没有 settle 的 Promise，
    * 顺手关掉一个，那次工具调用就永远悬着。
    */
-  const prompts = createPromptQueue({ ui, requestRender, notifier })
+  // resolveQuestionPrompt 用箭头延迟取值：afk 与 prompts 互相引用，直接传会 TDZ
+  const afk = createAfkAutoSkip({ ui, timeoutMs: 1000 * (ctx.configState.config.ui.afk_question_timeout_s ?? 600), resolveQuestionPrompt: () => prompts.resolveQuestionPrompt(), showToast, appendLog, listeners })
+  const prompts = createPromptQueue({ ui, requestRender, notifier, afk })
   const {
     queuePermissionPrompt,
     resolvePermissionPrompt,
@@ -859,7 +862,6 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     openPolicyPicker, closePolicyPicker, confirmPolicyPicker,
     openThemePicker, closeThemePicker, confirmThemePicker, previewThemePicker
   } = overlays
-
 
   function setInputFromHistory(value) {
     ui.input = value || ""
@@ -1521,8 +1523,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       closeSessionPicker,
       confirmSessionPicker,
       closeModelPicker,
-      confirmModelPicker,
-      closeThinkingPicker, confirmThinkingPicker,
+      confirmModelPicker, closeThinkingPicker, confirmThinkingPicker,
       closePolicyPicker,
       confirmPolicyPicker,
       closeModePicker,
@@ -1849,7 +1850,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           requestRender()
         }
 
-        const result = await dispatchKey({ ui, key, str })
+        afk.noteActivity(); const result = await dispatchKey({ ui, key, str })
         if (result.handled) return
       }
       onData = async (chunk) => {

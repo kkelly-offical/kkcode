@@ -3,6 +3,7 @@ import { normalizePermissionLevel } from "../permission/rules.mjs"
 import { renderReplDashboard, renderReplLogo, renderStartupHint } from "./repl-dashboard.mjs"
 import { formatRuntimeStateText } from "./repl-turn-summary.mjs"
 import { renderOperatorPanel } from "./repl-operator-panel.mjs"
+import { formatSandboxLine } from "../tool/sandbox.mjs"
 
 export function renderReplStatusLine({
   state,
@@ -28,6 +29,8 @@ export function renderReplStatusLine({
     contextMeter,
     showCost: configState.config.ui.status.show_cost,
     showTokenMeter: configState.config.ui.status.show_token_meter,
+    // 0.8.1：ui.status.segments 决定显示哪些段、什么顺序；不配 = 全量现状
+    segments: configState.config.ui.status.segments || null,
     theme,
     layout: configState.config.ui.layout,
     longagentState: state.mode === "longagent" ? longagentState : null,
@@ -45,6 +48,7 @@ export function renderRuntimeDashboardView({
   backgroundSummary,
   runtimeSummary,
   operatorSnapshot = null,
+  sandboxStatus = null,
   customCommandCount,
   cwd,
   columns = null
@@ -64,6 +68,9 @@ export function renderRuntimeDashboardView({
     }),
     "",
     formatRuntimeStateText(state, mcpSummary, skillSummary, backgroundSummary, runtimeSummary),
+    // 沙箱状态跟着运行时一行走：用户问的是「我现在被隔离了吗」，
+    // 而不是「配置文件里写了什么」
+    ...(sandboxStatus ? [formatSandboxLine(sandboxStatus)] : []),
     ...(operatorSnapshot ? ["", ...renderOperatorPanel(operatorSnapshot)] : [])
   ].join("\n")
 }

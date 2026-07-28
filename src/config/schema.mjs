@@ -3,6 +3,7 @@ import { APPROVAL_LEVELS } from "../core/modes.mjs"
 import { noteDeprecation } from "../core/deprecations.mjs"
 import { MODEL_ROLES } from "../provider/model-roles.mjs"
 import { THINKING_TIERS } from "../provider/thinking-effort.mjs"
+import { STATUS_SEGMENT_IDS } from "../theme/status-bar.mjs"
 
 /**
  * 0.3.x 旧权限等级 → 0.4.0 四档。0.6.0 起不再接受旧名，只用这张表
@@ -609,6 +610,29 @@ export function validateConfig(config) {
           }
         }
       }
+      // 0.8.1：OS 级沙箱（模型侧 bash 的第三道防线，opt-in）。mode 打错必须
+      // **报错**而不是静默忽略：运行时把认不出的 mode 当 off（往安全方向落），
+      // 但用户会以为自己在沙箱里跑 —— 这个误解只能靠 schema 报错来拆。
+      if (config.permission.sandbox !== undefined) {
+        if (!isObj(config.permission.sandbox)) err(errors, "permission.sandbox", "must be object")
+        else {
+          if (config.permission.sandbox.mode !== undefined && !["off", "auto"].includes(config.permission.sandbox.mode)) {
+            err(errors, "permission.sandbox.mode", "must be off|auto")
+          }
+          if (config.permission.sandbox.network !== undefined && typeof config.permission.sandbox.network !== "boolean") {
+            err(errors, "permission.sandbox.network", "must be boolean")
+          }
+          if (config.permission.sandbox.writable_dirs !== undefined) {
+            if (!Array.isArray(config.permission.sandbox.writable_dirs)) {
+              err(errors, "permission.sandbox.writable_dirs", "must be array of strings")
+            } else {
+              for (const dir of config.permission.sandbox.writable_dirs) {
+                if (typeof dir !== "string") err(errors, "permission.sandbox.writable_dirs", "each entry must be string")
+              }
+            }
+          }
+        }
+      }
     }
   }
 
@@ -784,6 +808,10 @@ export function validateConfig(config) {
       if (config.ui.layout !== undefined && !["compact", "comfortable"].includes(config.ui.layout)) {
         err(errors, "ui.layout", "must be compact|comfortable")
       }
+      // 0.8.1：AFK 提问打发的超时秒数。0 = 关闭；只作用于提问，权限审批永远等人
+      if (config.ui.afk_question_timeout_s !== undefined) {
+        checkInt(errors, "ui.afk_question_timeout_s", config.ui.afk_question_timeout_s, 0)
+      }
       if (config.ui.markdown_render !== undefined && typeof config.ui.markdown_render !== "boolean") {
         err(errors, "ui.markdown_render", "must be boolean")
       }
@@ -842,6 +870,18 @@ export function validateConfig(config) {
           }
           if (config.ui.status.show_token_meter !== undefined && typeof config.ui.status.show_token_meter !== "boolean") {
             err(errors, "ui.status.show_token_meter", "must be boolean")
+          }
+          // 0.8.1：状态栏段的显示与顺序。合法段名与渲染表同源（STATUS_SEGMENT_IDS）
+          if (config.ui.status.segments !== undefined) {
+            if (!Array.isArray(config.ui.status.segments)) {
+              err(errors, "ui.status.segments", `must be an array of ${STATUS_SEGMENT_IDS.join("|")}`)
+            } else {
+              for (const seg of config.ui.status.segments) {
+                if (!STATUS_SEGMENT_IDS.includes(seg)) {
+                  err(errors, "ui.status.segments", `unknown segment "${seg}" — must be one of ${STATUS_SEGMENT_IDS.join("|")}`)
+                }
+              }
+            }
           }
         }
       }

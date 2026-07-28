@@ -337,14 +337,16 @@ export function renderReplLogo({ theme, columns = null }) {
   coreLines.push(paint("AI Coding Agent", theme.base.fg, { bold: true }))
   coreLines.push(paint("Type /status to open Workspace & Runtime panel", theme.base.muted))
 
+  // 0.8.1：侧标从「火箭形 ASCII 拼画」换成方块字形的 K —— 与主 logo 同一种
+  // 视觉语言（块状 + 渐变），一眼读得出是品牌记号而不是一堆斜杠。四个候选
+  // （楔形提示符 / 方块 K / 菱形 / 旧版）在真实终端里逐一渲染比较后选定。
   const mascotRaw = [
-    "      /\\      ",
-    "     /__\\     ",
-    "    /|[]|\\    ",
-    "   /_|__|_\\   ",
-    "     /||\\     ",
-    "    /_||_\\    ",
-    "      /\\      "
+    "██  ▗▛",
+    "██ ▟▛ ",
+    "██▟▛  ",
+    "██▜▙  ",
+    "██ ▜▙ ",
+    "██  ▝▙"
   ]
   const mascotPalette = [
     "#6ec1ff",
@@ -352,8 +354,7 @@ export function renderReplLogo({ theme, columns = null }) {
     "#36d8d3",
     "#3fd487",
     "#f1c55b",
-    "#f39b52",
-    "#ff7f6e"
+    "#f39b52"
   ]
   const mascotLines = mascotRaw.map((line, idx) => paint(line, mascotPalette[idx % mascotPalette.length], { bold: true }))
 

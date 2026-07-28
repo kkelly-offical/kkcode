@@ -30,8 +30,11 @@ import {
  * @param {object} p
  * @param {object|null} [p.notifier] 可选。工具在**等回答**时把用户叫回来 ——
  *   审批与提问一旦无人应答，那次工具调用就永远悬着。传 null 即完全不通知。
+ * @param {object|null} [p.afk] 可选。AFK 打发器（repl/afk-auto-skip.mjs）：
+ *   提问成为当前项时起表、没有提问挂起时收表。不传 = 零 AFK 行为 ——
+ *   自动打发提问是副作用，不能因为引入了模块就默认发生。
  */
-export function createPromptQueue({ ui, requestRender, notifier = null }) {
+export function createPromptQueue({ ui, requestRender, notifier = null, afk = null }) {
   const defaultPermissionIndex = (perm) => defaultPermissionChoiceIndex(perm?.defaultAction)
 
   function queuePermissionPrompt(request) {
@@ -83,6 +86,10 @@ export function createPromptQueue({ ui, requestRender, notifier = null }) {
     ui.questionCustomCursor = next.questionCustomCursor
     ui.questionFilter = next.questionFilter
     ui.questionAnswers = next.questionAnswers
+    // AFK 表跟着「当前提问」走：换了新提问就重新起表，没有了就收表。
+    // 必须在 ui.pendingQuestion 赋值**之后** —— arm() 是从 ui 上读的。
+    if (ui.pendingQuestion) afk?.questionShown()
+    else afk?.questionSettled()
   }
 
   function commitCurrentQuestionAnswer() {
@@ -143,6 +150,8 @@ export function createPromptQueue({ ui, requestRender, notifier = null }) {
 
   function resetQuestionState() {
     ui.pendingQuestion = null
+    // 在清空**之后**收表 —— questionSettled 以 ui.pendingQuestion 为准
+    afk?.questionSettled()
     ui.questionIndex = 0
     ui.questionOptionSelected = 0
     ui.questionOptionOffset = 0

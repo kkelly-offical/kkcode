@@ -518,7 +518,9 @@ export function buildFrame({
   ui.scrollMeta = transcriptViewport.scrollMeta
   const scrollHint = transcriptViewport.scrollHint
 
-  lines.push(clipAnsiLine(paint("─".repeat(Math.min(40, width)), ctx.themeState.theme.base.border, { dim: true }), width))
+  // 0.8.1：分隔线通宽。此前 Math.min(40, width) 在宽终端上是一截 40 列的
+  // 断线，与全宽的输入框边框摆在同一屏里显得像没画完。
+  lines.push(clipAnsiLine(paint("─".repeat(Math.max(1, width)), ctx.themeState.theme.base.border, { dim: true }), width))
 
   // 记录日志区起始行号（0-based in lines array, 1-based on screen）
   const logStartRow = lines.length

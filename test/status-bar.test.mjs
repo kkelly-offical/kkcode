@@ -1,6 +1,6 @@
 import test, { describe, it, afterEach } from "node:test"
 import assert from "node:assert/strict"
-import { renderStatusBar, fitSegments, formatTokenCount } from "../src/theme/status-bar.mjs"
+import { renderStatusBar, fitSegments, formatTokenCount, STATUS_SEGMENT_IDS } from "../src/theme/status-bar.mjs"
 import { DEFAULT_THEME } from "../src/theme/default-theme.mjs"
 
 /**
@@ -154,4 +154,59 @@ test("width falls back to process.stdout when the caller gives none", () => {
     width: 120
   }))
   assert.equal(withoutWidth, withWidth)
+})
+
+// --- 可配置状态栏（0.8.1 ui.status.segments） ---
+
+test("segments 配置决定显示哪些段与顺序", () => {
+  const line = atWidth(200, { segments: ["permission", "model", "context"] })
+  assert.ok(line.includes("PERMISSION"), "列了的段要在")
+  assert.ok(line.includes("MODEL"), "列了的段要在")
+  assert.ok(!line.includes("TOKENS"), "没列的段不显示")
+  assert.ok(!line.includes("COST"), "没列的段不显示")
+  assert.ok(line.indexOf("PERMISSION") < line.indexOf("MODEL"),
+    "顺序按配置来，不按内置缺省 —— 配置的意义正在于此")
+})
+
+test("segments 为空或未配时行为与 0.8.0 完全一致", () => {
+  const unset = atWidth(200)
+  const empty = atWidth(200, { segments: [] })
+  const explicitNull = atWidth(200, { segments: null })
+  assert.equal(empty, unset, "空数组 = 不配（防手滑把状态栏配没了）")
+  assert.equal(explicitNull, unset)
+})
+
+test("列了但当前不适用的段静默跳过，不渲染空壳", () => {
+  // longagent 段只在 longagent 模式下建；memory 段只在 memoryLoaded 时建
+  const line = atWidth(200, {
+    segments: ["mode", "longagent", "memory", "permission"],
+    memoryLoaded: false
+  })
+  assert.ok(!line.includes("LONG"), "非 longagent 模式下没有 LONG 段")
+  assert.ok(!line.includes("MEM"), "memory 没加载时列了也不渲染")
+  assert.ok(line.includes("PERMISSION"))
+})
+
+test("STATUS_SEGMENT_IDS 与渲染表同源 —— 每个 id 都真的能渲染出一个段", () => {
+  // 枚举驱动：加了段名却没接渲染（或反之）时这条会红。逐个单独渲染，
+  // 用「只列它 + 全量条件都满足」的输入证明它建得出来。
+  const fullConditions = {
+    memoryLoaded: true,
+    longagentState: { currentStageId: "s1", phase: "code" },
+    mode: "longagent"
+  }
+  for (const id of STATUS_SEGMENT_IDS) {
+    const line = atWidth(200, { segments: [id], ...fullConditions })
+    assert.ok(strip(line).trim().length > 0,
+      `段 "${id}" 在条件满足时渲染不出任何内容 —— 清单与渲染表分叉了`)
+  }
+})
+
+test("schema 拒绝未知段名，合法值与渲染清单同源", async () => {
+  const { validateConfig } = await import("../src/config/schema.mjs")
+  assert.equal(validateConfig({ ui: { status: { segments: ["mode", "permission"] } } }).valid, true)
+  const bad = validateConfig({ ui: { status: { segments: ["mode", "nonsense"] } } })
+  assert.equal(bad.valid, false)
+  assert.ok(bad.errors.some((e) => e.includes("nonsense")), "报错要点名是哪个段写错了")
+  assert.equal(validateConfig({ ui: { status: { segments: "mode" } } }).valid, false, "必须是数组")
 })
