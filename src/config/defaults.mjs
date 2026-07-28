@@ -280,6 +280,10 @@ export const DEFAULT_CONFIG = {
   },
   ui: {
     theme_file: null,
+    // 运行时主题：dark | light | auto（跟随终端背景探测）| theme_file 的文件名。
+    // 默认 null = 不覆盖，沿用 theme_file 或内置深色主题 —— 写死 "dark" 会让
+    // 配了 theme_file 的用户在第一次 /theme 之后莫名其妙被切回内置主题。
+    theme: null,
     mode_colors: {
       assistant: "#22d3ee",
       plan: "#00b7c2",

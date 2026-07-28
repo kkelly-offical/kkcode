@@ -44,6 +44,7 @@ function makeUi(patch = {}) {
     modelPicker: null,
     policyPicker: null,
     modePicker: null,
+    themePicker: null,
     selectedSuggestion: 0,
     suggestionOffset: 0,
     scrollOffset: 0,
@@ -194,6 +195,19 @@ test("each overlay branch renders — a missed closure variable would throw here
     },
     模式选择器: { modePicker: { selected: 0 } },
     策略选择器: { policyPicker: { selected: 0 } },
+    // 主题选择器的候选是运行期算出来的（dark/light/auto + 可选的文件主题），
+    // 所以它画的是状态里的 items，不像模式/策略那样读模块常量。
+    主题选择器: {
+      themePicker: {
+        items: [
+          { id: "dark", label: "dark", desc: "深色背景（默认）", current: true },
+          { id: "light", label: "light", desc: "浅色背景" },
+          { id: "auto", label: "auto", desc: "跟随终端背景（OSC 11 探测）" }
+        ],
+        selected: 1,
+        restore: "dark"
+      }
+    },
     忙碌与思考: {
       busy: true,
       currentActivity: { type: "tool", tool: "bash", args: { command: "npm test" } },

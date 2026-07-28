@@ -261,6 +261,14 @@ export function subscribeSessionEvents({
         break
       }
 
+      case EVENT_TYPES.TURN_STEER_INJECTED:
+        // 插话已进入回合 —— 上屏让用户看到它落在对话里的位置。
+        // kind 用 user：它就是一条 user 消息，只是到达方式不同。
+        appendLog(`❯ (插话) ${String(payload?.text || "")}`, { kind: "user" })
+        showToast("插话已进入当前回合", { topic: "outbox", tone: "success" })
+        requestRender()
+        break
+
       case EVENT_TYPES.SESSION_COMPACTING:
         ui.currentActivity = { type: "compacting" }
         requestRender()

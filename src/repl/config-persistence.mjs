@@ -78,6 +78,45 @@ export async function persistLearnedGrant({ ctx, tool, pattern, command, workspa
   return { added: true, reason: "added", rule }
 }
 
+/**
+ * 把界面偏好（目前只有 `ui.theme`）写进**用户级**配置。
+ *
+ * 只写用户级是有意的：主题是「这台机器上这个人喜欢什么颜色」，写进项目级会跟着
+ * 仓库提交出去，把个人口味强加给所有协作者 —— 与 persistLearnedGrant 同一条理由。
+ *
+ * 合并而不是整段替换 `ui`：那一节里还有 theme_file、mode_colors、notify 等
+ * 十来个字段，整段写回等于把用户没动过的设置抹平。
+ *
+ * 签名与同文件的 `persistPermissionConfig({scope, ctx, values})` 不同形，是有理由的：
+ * 这个函数会被当作**回调**交出去（`createThemeSwitcher({ saveUiConfig })` 收的是
+ * `(values) => …`）。`values` 放第一位，直接把它作为回调传过去就是对的；写成
+ * 一袋参数的话 `saveUiConfig: persistUiConfig` 会静默把整袋当 values 收下，
+ * 于是配置被原样写回、主题没存上，而界面已经切好了 —— 没有任何地方会报错。
+ *
+ * `ctx` 可选：给了就顺带把 configState 的用户级来源同步好，不给就只写盘。
+ */
+export async function persistUiConfig(values, { ctx = null, cwd = process.cwd() } = {}) {
+  if (!values || typeof values !== "object" || Array.isArray(values) || !Object.keys(values).length) {
+    throw new Error("persistUiConfig(values): values 必须是非空对象，如 { theme: \"light\" }")
+  }
+  const target = pickConfigPathForScope("user", ctx?.configState?.source, cwd)
+  if (!target) throw new Error("unable to resolve user config path")
+
+  const existing = await readConfigFile(target)
+  const merged = { ...existing, ui: { ...(existing.ui || {}), ...values } }
+  await writeConfigFile(target, merged)
+
+  // 本次会话立即一致，无需重启
+  if (ctx?.configState) {
+    ctx.configState.config.ui = { ...(ctx.configState.config.ui || {}), ...values }
+    ctx.configState.source = ctx.configState.source || {}
+    ctx.configState.source.userPath = target
+    ctx.configState.source.userDir = dirname(target)
+    ctx.configState.source.userRaw = merged
+  }
+  return target
+}
+
 export async function persistPermissionConfig({ scope, ctx, values }) {
   const source = ctx.configState?.source || {}
   const target = pickConfigPathForScope(scope, source, process.cwd())

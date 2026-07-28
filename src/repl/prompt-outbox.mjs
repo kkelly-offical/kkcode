@@ -28,6 +28,7 @@ export function createPromptOutbox({
   maxQueued = DEFAULT_MAX_QUEUED
 }) {
   if (!Array.isArray(ui.queuedPrompts)) ui.queuedPrompts = []
+  if (!Array.isArray(ui.steerPrompts)) ui.steerPrompts = []
 
   /**
    * 排一条。**同步**，返回值调用方可以忽略 —— 去空白、判空、上限、提示都在这里做完。
@@ -44,7 +45,7 @@ export function createPromptOutbox({
       return false
     }
     ui.queuedPrompts.push(value)
-    showToast(`已排队（${ui.queuedPrompts.length}）· 当前回合结束后发送`, {
+    showToast(`已排队（${ui.queuedPrompts.length}）· 回合结束后发送，再按一次 Enter 立即插话`, {
       topic: "outbox",
       tone: "info"
     })
@@ -70,11 +71,43 @@ export function createPromptOutbox({
     }
   }
 
+  /**
+   * 把**最后排队的那条**升级为「插话」：不等回合结束，在当前回合的下一个
+   * step 边界直接注入。交互约定是「Enter 排队，再按一次 Enter 升级」——
+   * 第二次 Enter 发生在输入框已清空时，语义无歧义。
+   *
+   * 升级的是最后一条而不是队头：用户刚敲完的那句才是他此刻想让模型立刻
+   * 看到的；队头可能是几分钟前排的、本来就愿意等的。
+   */
+  function promoteLastToSteer() {
+    if (!ui.queuedPrompts.length) return null
+    const text = ui.queuedPrompts.pop()
+    ui.steerPrompts.push(text)
+    showToast("已升级为插话 · 将在下一个工具调用后进入回合", { topic: "outbox", tone: "info" })
+    requestRender()
+    return text
+  }
+
+  /**
+   * 回合循环在每个 step 边界调用：取走全部待插话并清空。
+   *
+   * 取走即负责送达 —— 调用方（session/loop）会把它们写进会话再继续这个 step，
+   * 这里不保留副本，否则中断后 clear 会把「其实已经送达」的条目报成被丢弃。
+   */
+  function takeSteer() {
+    if (!ui.steerPrompts.length) return []
+    const taken = [...ui.steerPrompts]
+    ui.steerPrompts.length = 0
+    requestRender()
+    return taken
+  }
+
   /** 中断时调用。被丢掉的条数要说出来，否则用户不知道自己排的东西没了。 */
   function clear() {
-    const dropped = ui.queuedPrompts.length
+    const dropped = ui.queuedPrompts.length + ui.steerPrompts.length
     if (!dropped) return 0
     ui.queuedPrompts.length = 0
+    ui.steerPrompts.length = 0
     showToast(`已丢弃 ${dropped} 条待发消息`, { topic: "outbox", tone: "warning" })
     requestRender()
     return dropped
@@ -84,7 +117,10 @@ export function createPromptOutbox({
     queue,
     drain,
     clear,
+    promoteLastToSteer,
+    takeSteer,
     size: () => ui.queuedPrompts.length,
+    steerSize: () => ui.steerPrompts.length,
     list: () => [...ui.queuedPrompts]
   }
 }

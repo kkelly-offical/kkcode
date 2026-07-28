@@ -357,6 +357,31 @@ export function buildFrame({
     }).lines)
   }
 
+  // 主题选择器。它的候选是运行期算出来的（dark / light / auto + 可选的文件主题），
+  // 所以画的是 picker 状态里的 items，而不是像模式/策略那样读模块常量。
+  const themePickerLines = []
+  if (ui.themePicker) {
+    themePickerLines.push(...renderSelectOverlay({
+      title: "Theme",
+      // 提示写「preview」不是「navigate」：上下键会当场把主题换上去，
+      // 用户得知道这不是白看 —— 以及 Esc 会还原，不是「保持刚才看到的」。
+      hint: "↑↓ preview  Enter apply  Esc restore",
+      items: (ui.themePicker.items || []).map((item) => ({
+        label: item.label,
+        desc: item.desc,
+        current: item.current
+      })),
+      selected: ui.themePicker.selected,
+      width,
+      theme: ctx.themeState.theme,
+      accent: ctx.themeState.theme.semantic.info,
+      paint,
+      padRight,
+      layout: "two-column",
+      markers: true
+    }).lines)
+  }
+
   // --- Question panel ---
   // 整块渲染在 repl/ui/overlay-question.mjs：它要处理遮蔽输入与多行描述，留在
   // 这里会把 buildFrame 的判定点顶上去（结构守卫里它是只减不增的）。
@@ -432,6 +457,7 @@ export function buildFrame({
     { name: "sessionPicker", lines: sessionPickerLines },
     { name: "policyPicker", lines: policyPickerLines },
     { name: "modePicker", lines: modePickerLines },
+    { name: "themePicker", lines: themePickerLines },
     { name: "permission", lines: permissionLines },
     { name: "question", lines: questionLines }
   ]

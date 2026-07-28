@@ -26,6 +26,8 @@ import { McpRegistry } from "../../mcp/registry.mjs"
 import { generateSkill, saveSkillGlobal } from "../../skill/generator.mjs"
 import { readClipboardImage } from "../../tool/image-util.mjs"
 import { userRootDir } from "../../storage/paths.mjs"
+import { createThemeSwitcher } from "../theme-switch.mjs"
+import { persistUiConfig } from "../config-persistence.mjs"
 
 function displayUserRootPath() {
   const userRoot = userRootDir()
@@ -96,6 +98,47 @@ export const authoringCommands = [
     argMode: "none",
     run: ({ showInfo }) => {
       showInfo("keyboard shortcuts", buildShortcutLegend(), { maxRows: 16 })
+      return { exit: false }
+    }
+  },
+
+  {
+    names: ["theme"],
+    desc: "switch color theme (dark | light | auto)",
+    argMode: "optional",
+    // TUI 与行模式共用这一条：裸 `/theme` 在 TUI 里开浮层（宿主读
+    // `openThemePicker`），在行模式里就是把清单打出来 —— 与 `/mode` 同形。
+    run: async ({ args, print, ctx, themeSwitcher }) => {
+      const switcher = themeSwitcher || createThemeSwitcher({
+        themeState: ctx.themeState,
+        config: ctx.configState.config,
+        saveUiConfig: (values) => persistUiConfig(values, { ctx })
+      })
+      const items = switcher.list()
+      if (!args) {
+        print([
+          `theme: ${switcher.current()}`,
+          ...items.map((item) => `  ${item.current ? "●" : " "} ${item.label.padEnd(12)} ${item.desc}`),
+          "",
+          "  /theme <name> 直接切换"
+        ].join("\n"), { channel: "notice", topic: "theme" })
+        return { exit: false, openThemePicker: true }
+      }
+      const name = args.trim()
+      const result = switcher.apply(name)
+      if (!result.applied) {
+        print(`unknown theme: ${name} (${items.map((item) => item.id).join(" | ")})`,
+          { channel: "notice", topic: "theme", tone: "error" })
+        return { exit: false }
+      }
+      // 落盘失败只影响「下次启动记不记得」，不回滚画面 —— 但要说出来
+      const saved = await result.saved
+      if (saved?.error) {
+        print(`theme applied, but saving it failed: ${saved.error.message}`,
+          { channel: "notice", topic: "theme", tone: "warn" })
+        return { exit: false }
+      }
+      print(`theme switched: ${name}`, { channel: "notice", topic: "theme", tone: "success" })
       return { exit: false }
     }
   },

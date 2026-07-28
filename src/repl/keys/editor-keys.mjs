@@ -81,6 +81,8 @@ export function createEditorKeyScope({
   navigateHistory,
   submitCurrentInput,
   queuePrompt,
+  promoteQueuedToSteer,
+  hasQueuedPrompts,
   requestExitIfQuitting,
   cycleModeForwardAndNotify,
   handleRewind,
@@ -196,6 +198,14 @@ export function createEditorKeyScope({
         when: on.key("return"),
         run: async ({ ui }) => {
           if (ui.busy) {
+            // 空输入框上再按一次 Enter = 把刚排的那条**升级为插话**（steer）：
+            // 不等回合结束，在下一个 step 边界直接注入。两次 Enter 的语义无歧义 ——
+            // 第一次时输入框有内容（排队并清空），第二次时已空（升级）。
+            // 误触安全：队列为空时这个分支不命中，空 Enter 依旧什么都不做。
+            if (!ui.input && hasQueuedPrompts?.() && promoteQueuedToSteer) {
+              promoteQueuedToSteer()
+              return
+            }
             // 忙碌时 Enter 是**排队**而不是提交：想到下一句就能打下来，不必等
             // spinner 停，更不能在这里真的 submit —— 那是并发发起第二个回合。
             //

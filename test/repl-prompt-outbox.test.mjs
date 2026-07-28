@@ -141,3 +141,46 @@ test("每次入队与出队都请求重绘，否则计数不会更新", async ()
   await h.outbox.drain(async () => {})
   assert.ok(h.renders() > mid, "出队也要重绘")
 })
+
+test("再按一次 Enter：最后排队的那条升级为插话，从队列移入 steer", () => {
+  const { ui, outbox, toasts } = harness()
+  outbox.queue("早排的")
+  outbox.queue("刚敲的")
+  const promoted = outbox.promoteLastToSteer()
+  assert.equal(promoted, "刚敲的", "升级的是最后一条 —— 用户此刻想让模型立刻看到的是刚敲的那句")
+  assert.deepEqual(ui.queuedPrompts, ["早排的"], "早排的留在队列里照常等回合结束")
+  assert.deepEqual(ui.steerPrompts, ["刚敲的"])
+  assert.match(toasts.at(-1).message, /插话/)
+})
+
+test("队列为空时升级是空操作 —— 空输入框上的 Enter 不该有副作用", () => {
+  const { ui, outbox, toasts } = harness()
+  assert.equal(outbox.promoteLastToSteer(), null)
+  assert.deepEqual(ui.steerPrompts, [])
+  assert.deepEqual(toasts, [], "没升级任何东西就别弹提示")
+})
+
+test("takeSteer 取走全部并清空 —— 取走即负责送达，不留副本", () => {
+  const { ui, outbox } = harness()
+  outbox.queue("a"); outbox.promoteLastToSteer()
+  outbox.queue("b"); outbox.promoteLastToSteer()
+  assert.deepEqual(outbox.takeSteer(), ["a", "b"], "按升级顺序")
+  assert.deepEqual(ui.steerPrompts, [], "取走后必须清空 —— 否则同一条会被注入两次")
+  assert.deepEqual(outbox.takeSteer(), [], "再取是空的")
+})
+
+test("clear 连 steer 一起丢，且计数包含它们", () => {
+  const { ui, outbox, toasts } = harness()
+  outbox.queue("a"); outbox.promoteLastToSteer()
+  outbox.queue("b")
+  assert.equal(outbox.clear(), 2, "1 条排队 + 1 条插话")
+  assert.deepEqual(ui.steerPrompts, [])
+  assert.match(toasts.at(-1).message, /丢弃 2 条/)
+})
+
+test("steerSize 与 ui.steerPrompts 同源", () => {
+  const { ui, outbox } = harness()
+  outbox.queue("x"); outbox.promoteLastToSteer()
+  assert.equal(outbox.steerSize(), 1)
+  assert.equal(ui.steerPrompts.length, 1)
+})

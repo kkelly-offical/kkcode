@@ -11,6 +11,11 @@ const BRACKETED_PASTE_END = "\x1b[201~"
 const FOCUS_EVENT_RE = /\x1b\[([IO])/g
 // 与鼠标上报同理：chunk 可能正好断在 ESC 或 ESC [ 之后，尾部的歧义字节要留到下一次。
 const POSSIBLE_FOCUS_SUFFIX_RE = /\x1b\[?$/
+// OSC 11 背景色查询的响应：ESC ] 11 ; rgb:RRRR/GGGG/BBBB，BEL 或 ST(ESC \) 结尾。
+// 只认 11 —— 别的 OSC（比如我们自己发的标题 OSC 2）不该被这里吃掉。
+const OSC11_RESPONSE_RE = /\x1b\]11;([^\x07\x1b]*)(?:\x07|\x1b\\)/g
+// 可能是响应开头的尾巴：从 ESC 到 "\x1b]11;" 的任意前缀，扣住等下一个 chunk
+const POSSIBLE_OSC11_SUFFIX_RE = /\x1b(?:\](?:1(?:1;?[^\x07\x1b]*)?)?)?$/
 
 export function createUtf8TextDecoder() {
   let decoder = new StringDecoder("utf8")
@@ -107,6 +112,58 @@ export function createSgrMouseDecoder() {
  * 鼠标 → 焦点 → 括号粘贴。放在粘贴之前，是为了让焦点上报不会掉进粘贴载荷里
  * （鼠标上报同理，这条链本来就是这个顺序）。
  */
+/**
+ * 摘出 OSC 11（终端背景色查询）的响应。
+ *
+ * 我们在 TUI 启动时发一次 `ESC ] 11 ; ? BEL`，支持的终端会把背景色作为同格式
+ * 的序列**从 stdin** 送回来 —— 不摘掉的话它会漏进 readline，用户输入框里凭空
+ * 多出一串 `rgb:1e1e/1e1e/1e1e`。形状与 createFocusDecoder 完全一致（feed →
+ * {text, responses}、hasPending、flush、reset），串进解码链的同一层。
+ *
+ * 不支持查询的终端**根本不回**（这就是探测要带超时的原因），所以这层在绝大多
+ * 数字节上是纯透传；扣字节只发生在文本尾部恰好像响应前缀时（`ESC ]`、`ESC ]1`…），
+ * 由转义超时的 flush 兜底放出 —— 与焦点解码器同一套安全网。
+ */
+export function createOsc11Decoder() {
+  let pending = ""
+
+  return {
+    feed(text) {
+      let source = pending + text
+      pending = ""
+      const responses = []
+
+      source = source.replace(OSC11_RESPONSE_RE, (_match, payload) => {
+        responses.push(payload)
+        return ""
+      })
+      OSC11_RESPONSE_RE.lastIndex = 0
+
+      const suffix = source.match(POSSIBLE_OSC11_SUFFIX_RE)
+      if (suffix && suffix.index !== undefined && suffix[0]) {
+        pending = suffix[0]
+        source = source.slice(0, suffix.index)
+      }
+
+      return { responses, text: source }
+    },
+
+    hasPending() {
+      return pending.length > 0
+    },
+
+    flush() {
+      const text = pending
+      pending = ""
+      return text
+    },
+
+    reset() {
+      pending = ""
+    }
+  }
+}
+
 export function createFocusDecoder() {
   let pending = ""
   const utf8 = createUtf8TextDecoder()

@@ -300,7 +300,13 @@ export async function processTurnLoop({
   agent = null,
   allowQuestion = true,
   toolContext = {},
-  runSpec = null
+  runSpec = null,
+  /**
+   * 插话来源：() => string[]。每个 step 边界取一次，取到的文本作为 user 消息
+   * 写进会话，本 step 的模型请求立刻能看到 —— 这就是 TUI 里「排队后再按一次
+   * Enter」的送达端。null 表示宿主不支持插话（行模式、子代理、后台任务）。
+   */
+  steerSource = null
 }) {
   const cwd = process.cwd()
   const extensionPolicy = resolveExtensionPolicy(configState)
@@ -469,6 +475,21 @@ export async function processTurnLoop({
   try {
     for (let step = 1; step <= maxSteps; step++) {
       await markTurnInProgress(sessionId, turnId, step, recoveryEnabled)
+      // 插话在 step 边界送达：写进会话后，下面 getConversationHistory 自然带上，
+      // 本 step 的模型请求就能看到。放在这里而不是工具执行中间，是因为消息序
+      // 必须落在两次 assistant 响应之间 —— 夹进 tool_result 的中间会打乱
+      // 「assistant → tool → assistant」的配对，部分 provider 会直接拒收。
+      if (steerSource) {
+        for (const steered of steerSource()) {
+          await appendMessage(sessionId, "user", steered)
+          await EventBus.emit({
+            type: EVENT_TYPES.TURN_STEER_INJECTED,
+            sessionId,
+            turnId,
+            payload: { text: steered, step }
+          })
+        }
+      }
       await EventBus.emit({
         type: EVENT_TYPES.TURN_STEP_START,
         sessionId,

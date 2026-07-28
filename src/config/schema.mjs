@@ -749,6 +749,11 @@ export function validateConfig(config) {
       if (config.ui.theme_file !== undefined && config.ui.theme_file !== null && typeof config.ui.theme_file !== "string") {
         err(errors, "ui.theme_file", "must be string|null")
       }
+      // 取值不枚举成 dark|light|auto：它还可以是 theme_file 的文件名，
+      // 而那个名字只有运行时才知道。认不出来的名字由 /theme 当场报错。
+      if (config.ui.theme !== undefined && config.ui.theme !== null && typeof config.ui.theme !== "string") {
+        err(errors, "ui.theme", "must be string|null")
+      }
       if (config.ui.mode_colors !== undefined) {
         if (!isObj(config.ui.mode_colors)) err(errors, "ui.mode_colors", "must be object")
         else {

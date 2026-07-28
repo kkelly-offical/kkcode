@@ -217,3 +217,67 @@ test("reset clears a paste that was still open", () => {
   assert.equal(decoded.text, "done\x1b[201~", "reset 之后不该还以为自己在粘贴里")
   assert.deepEqual(decoded.pastes, [])
 })
+
+
+// --- OSC 11 背景色响应（0.7.5 主题自动探测） ---
+
+import { createOsc11Decoder } from "../src/repl/terminal-protocol.mjs"
+
+const ESC = "\u001b"
+const BEL = "\u0007"
+
+test("OSC 11 响应被摘出，正文原样透传", () => {
+  const osc = createOsc11Decoder()
+  const fed = osc.feed(`abc${ESC}]11;rgb:1e1e/1e1e/1e1e${BEL}def`)
+  assert.deepEqual(fed.responses, ["rgb:1e1e/1e1e/1e1e"])
+  assert.equal(fed.text, "abcdef", "响应两侧的正文一个字都不能丢")
+})
+
+test("ST 结尾（ESC 反斜杠）与 BEL 结尾都认", () => {
+  const osc = createOsc11Decoder()
+  const fed = osc.feed(`${ESC}]11;rgb:ffff/ffff/ffff${ESC}\\x`)
+  assert.deepEqual(fed.responses, ["rgb:ffff/ffff/ffff"])
+  assert.equal(fed.text, "x")
+})
+
+test("响应被 chunk 切开时跨块拼合 —— 这是这层存在的全部理由", () => {
+  const osc = createOsc11Decoder()
+  const first = osc.feed(`hi${ESC}]11;rgb:12`)
+  assert.equal(first.text, "hi", "疑似前缀被扣住，正文先放行")
+  assert.ok(osc.hasPending())
+  const second = osc.feed(`34/5678/9abc${BEL}bye`)
+  assert.deepEqual(second.responses, ["rgb:1234/5678/9abc"])
+  assert.equal(second.text, "bye")
+  assert.equal(osc.hasPending(), false)
+})
+
+test("OSC 2（标题）不被这层吃掉 —— 只认 11", () => {
+  const osc = createOsc11Decoder()
+  const fed = osc.feed(`${ESC}]2;my title${BEL}rest`)
+  assert.deepEqual(fed.responses, [])
+  assert.equal(fed.text, `${ESC}]2;my title${BEL}rest`)
+})
+
+test("flush 放出扣住的疑似前缀 —— 孤立 ESC 不能永远消失", () => {
+  const osc = createOsc11Decoder()
+  osc.feed(`${ESC}]1`)
+  assert.equal(osc.flush(), `${ESC}]1`, "转义超时后要原样放出来")
+  assert.equal(osc.hasPending(), false)
+})
+
+test("解码链：没有 onOscResponse 时整层透传 —— 关掉的层不改文本", () => {
+  const chain = createInputDecoderChain({ features: {} })
+  const fed = chain.feed(Buffer.from(`a${ESC}]11;rgb:0000/0000/0000${BEL}b`, "utf8"))
+  assert.match(fed.text, /rgb:0000/, "未启用时不做任何摘除")
+})
+
+test("解码链：带 onOscResponse 时响应到回调、正文干净", () => {
+  const got = []
+  const chain = createInputDecoderChain({
+    features: {},
+    onOscResponse: (payload) => got.push(payload)
+  })
+  const fed = chain.feed(Buffer.from(`a${ESC}]11;rgb:fdfd/f6f6/e3e3${BEL}b`, "utf8"))
+  assert.deepEqual(got, ["rgb:fdfd/f6f6/e3e3"])
+  assert.equal(fed.text, "ab", "响应绝不能漏进输入框")
+})

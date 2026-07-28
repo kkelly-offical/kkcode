@@ -12,6 +12,7 @@ import { compactSession } from "../../session/compaction.mjs"
 import { confirmRollback, executeRollback } from "../../session/rollback.mjs"
 import { buildBoardModel, renderUltraBoard } from "../../ui/ultra-board.mjs"
 import { renderRuntimeDashboardView } from "../../ui/repl-status-view.mjs"
+import { runBtwQuery } from "../btw-query.mjs"
 import { McpRegistry } from "../../mcp/registry.mjs"
 import { SkillRegistry } from "../../skill/registry.mjs"
 import { paint } from "../../theme/color.mjs"
@@ -34,6 +35,31 @@ export const sessionCommands = [
     run: ({ print, state }) => {
       // 单行事实，不值得占一条对话记录
       print(`session=${state.sessionId}`, { channel: "notice", topic: "session" })
+      return { exit: false }
+    }
+  },
+
+  {
+    names: ["btw"],
+    desc: "ask a side question — sees the conversation, never changes it",
+    argMode: "required",
+    accepts: "<question>",
+    run: async ({ args, showInfo, print, state, ctx }) => {
+      // 旁路问答（0.7.5）：带着当前对话的上下文问一个「顺便问一下」，
+      // 不写入会话、不触发工具。答案走只读浮层 —— 它和 /status 一样是
+      // 查询，进对话记录就会被发给模型、被 /clear 清掉。
+      print("(btw) 正在思考…", { channel: "notice", topic: "btw" })
+      const result = await runBtwQuery({
+        question: args,
+        sessionId: state.sessionId,
+        state,
+        configState: ctx.configState
+      })
+      if (!result.ok) {
+        print(`btw 失败：${result.error}`, { channel: "notice", topic: "btw", tone: "error" })
+        return { exit: false }
+      }
+      showInfo(`btw · ${args.slice(0, 40)}${args.length > 40 ? "…" : ""}`, result.answer, { maxRows: 16 })
       return { exit: false }
     }
   },

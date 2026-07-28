@@ -242,3 +242,79 @@ test("loop: permission deny causes tool error", async () => {
   assert.equal(result.toolEvents[0].status, "error")
   assert.ok(result.toolEvents[0].output.includes("permission denied"))
 })
+
+test("loop: steer messages land between steps, as user messages the model sees", async () => {
+  // 「排队后再按一次 Enter」的送达端：steerSource 在 step 边界被取走，
+  // 文本作为 user 消息写进会话，同一 step 的模型请求立刻看到。
+  const seenInputs = []
+  const provider = createMockProvider([
+    (input) => { seenInputs.push(input); return toolCallResponse("glob", { pattern: "*.md" }) },
+    (input) => { seenInputs.push(input); return textResponse("done, and I saw your note.") }
+  ])
+  registerProvider("mock", provider)
+
+  // step1 边界给空（回合刚开始，还没人插话）；step2 边界给一条
+  const steerBatches = [[], ["顺便：改动别碰 legacy 目录"]]
+  let steerCalls = 0
+  const injected = []
+  const unsub = EventBus.subscribe((event) => {
+    if (event.type === EVENT_TYPES.TURN_STEER_INJECTED) injected.push(event.payload)
+  })
+
+  try {
+    const result = await runLoop({
+      prompt: "list markdown files",
+      mode: "agent",
+      model: "test",
+      providerType: "mock",
+      sessionId: `ses_steer_${Date.now()}`,
+      configState: baseConfig({ maxSteps: 3 }),
+      steerSource: () => steerBatches[Math.min(steerCalls++, steerBatches.length - 1)]
+    })
+
+    assert.ok(result.reply.includes("saw your note"))
+    assert.ok(steerCalls >= 2, "每个 step 边界都要问一次 steerSource")
+    // 事件：注入被广播（TUI 靠它上屏）
+    assert.equal(injected.length, 1)
+    assert.equal(injected[0].text, "顺便：改动别碰 legacy 目录")
+    assert.equal(injected[0].step, 2, "插话在第 2 个 step 边界送达")
+
+    // 消息序：第二次模型请求里，插话是一条 user 消息，且在 tool 结果之后 ——
+    // 夹进 assistant→tool 配对中间的话部分 provider 会拒收
+    const second = seenInputs[1]
+    const flat = second.messages.map((m) => ({
+      role: m.role,
+      text: typeof m.content === "string" ? m.content : JSON.stringify(m.content)
+    }))
+    const steerIdx = flat.findIndex((m) => m.role === "user" && m.text.includes("legacy 目录"))
+    assert.ok(steerIdx >= 0, `插话必须出现在第二次请求里，实际消息: ${JSON.stringify(flat.map((m) => m.role))}`)
+    const toolIdx = flat.findIndex((m) => m.role === "tool" || m.text.includes("glob"))
+    assert.ok(steerIdx > toolIdx, "插话要落在工具结果之后，不能拆开 assistant→tool 配对")
+  } finally {
+    unsub()
+  }
+})
+
+test("loop: no steerSource means no steer machinery at all", async () => {
+  // 行模式 / 子代理 / 后台任务不传 steerSource —— 这条钉住缺省路径零开销、零事件
+  const provider = createMockProvider([textResponse("plain")])
+  registerProvider("mock", provider)
+  const injected = []
+  const unsub = EventBus.subscribe((event) => {
+    if (event.type === EVENT_TYPES.TURN_STEER_INJECTED) injected.push(event)
+  })
+  try {
+    const result = await runLoop({
+      prompt: "hi",
+      mode: "agent",
+      model: "test",
+      providerType: "mock",
+      sessionId: `ses_nosteer_${Date.now()}`,
+      configState: baseConfig()
+    })
+    assert.ok(result.reply)
+    assert.equal(injected.length, 0)
+  } finally {
+    unsub()
+  }
+})

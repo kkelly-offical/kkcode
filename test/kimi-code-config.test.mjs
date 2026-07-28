@@ -6,6 +6,9 @@ import { DEFAULT_CONFIG } from "../src/config/defaults.mjs"
 import { validateConfig } from "../src/config/schema.mjs"
 import { VENDOR_PRESETS } from "../src/provider/wizard.mjs"
 import { runProviderAddForm } from "../src/provider/wizard-form.mjs"
+import { mkdtemp, rm } from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
 
 test("official Kimi Code preset uses coding endpoint and environment credential", async () => {
   // 0.7.3 起 DEFAULT_CONFIG 不再预置 provider 条目（用户有什么就显示什么），
@@ -25,6 +28,17 @@ test("official Kimi Code preset uses coding endpoint and environment credential"
 })
 
 test("the form accepts a plaintext key for kimi-code and records the env var only when the key is blank", async () => {
+  /**
+   * 事故记录（2026-07-28）：这条测试此前**没有隔离 KKCODE_HOME**，而它的
+   * confirm: "save" 会让 runProviderAddForm 真的调 saveProviderConfig ——
+   * 于是假密钥 "sk-kimi-direct" 被写进了开发者真实的 ~/.kkcode/config.yaml，
+   * 把真凭据整个覆盖（401 排查了一圈才找到）。**凡是会走到写盘的表单测试，
+   * KKCODE_HOME 必须指向临时目录**，没有例外。
+   */
+  const home = await mkdtemp(path.join(os.tmpdir(), "kkcode-kimi-form-"))
+  const prevHome = process.env.KKCODE_HOME
+  process.env.KKCODE_HOME = home
+  try {
   // 0.7.3 之前这条断言的是**反面**（「向导不接受明文 key」）—— 那正是用户要求
   // 推翻的行为：跑完整个向导仍然配不上凭据。现在两条路都要成立：
   //   填了 key  → 写 api_key（明文），不写 api_key_env
@@ -55,6 +69,11 @@ test("the form accepts a plaintext key for kimi-code and records the env var onl
   // （它们没有预设默认值），必须在带默认值的厂商上钉。
   assert.equal(withKey.configPatch.provider["kimi-code"].context_limit, undefined,
     "留空的 context_limit 不得从预设继承进配置文件")
+  } finally {
+    if (prevHome === undefined) delete process.env.KKCODE_HOME
+    else process.env.KKCODE_HOME = prevHome
+    await rm(home, { recursive: true, force: true })
+  }
 })
 
 test("provider schema validates model and reasoning fields", () => {

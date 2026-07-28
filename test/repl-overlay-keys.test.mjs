@@ -1,5 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
+import { fileURLToPath } from "node:url"
 import { createKeyDispatcher } from "../src/repl/key-dispatch.mjs"
 import { createOverlayKeyScopes, PICKER_DEFS } from "../src/repl/keys/overlay-keys.mjs"
 import { createReplUiState } from "../src/repl/ui-state.mjs"
@@ -22,6 +24,12 @@ const POLICY_CHOICES = [
 const MODE_PICKER_CHOICES = [
   { label: "🤖 Agent" }, { label: "📝 Plan" }, { label: "💬 Chat" },
   { label: "🔍 Review" }, { label: "🛠 Build" }
+]
+// 主题选择器的候选是运行期算出来的，所以它躺在 picker 状态里而不是模块常量里
+// （形状与 repl/theme-switch.mjs 的 list() 一致）。
+const THEME_ITEMS = [
+  { id: "dark", label: "dark" }, { id: "light", label: "light" },
+  { id: "auto", label: "auto" }, { id: "mine.yaml", label: "mine.yaml" }
 ]
 
 function harness() {
@@ -47,6 +55,9 @@ function harness() {
     confirmPolicyPicker: spy("confirmPolicy"),
     closeModePicker: spy("closeMode"),
     confirmModePicker: spy("confirmMode"),
+    closeThemePicker: spy("closeTheme"),
+    confirmThemePicker: spy("confirmTheme"),
+    previewThemePicker: spy("previewTheme"),
     PERMISSION_PROMPT_VALUES,
     POLICY_CHOICES,
     MODE_PICKER_CHOICES
@@ -203,7 +214,13 @@ const FILTER_ITEMS = [
   { id: "s3", label: "refactor auth module" },   // 子串命中
   { id: "s4", label: "authorize the deploy" }    // 前缀命中
 ]
-const CHOICES = { policyPicker: POLICY_CHOICES, modePicker: MODE_PICKER_CHOICES }
+const CHOICES = {
+  policyPicker: POLICY_CHOICES,
+  modePicker: MODE_PICKER_CHOICES,
+  themePicker: THEME_ITEMS
+}
+/** 候选放在 picker 状态里而不是模块常量里的那些（列表是运行期算的）。 */
+const STATE_CARRIED = new Set(["themePicker"])
 const FILTER_DEFS = PICKER_DEFS.filter((def) => def.typing === "filter")
 const JUMP_DEFS = PICKER_DEFS.filter((def) => def.typing === "jump")
 
@@ -216,9 +233,13 @@ function spyOf(verb, kind) {
 }
 
 function openPicker(ui, def) {
-  ui[def.kind] = def.typing === "filter"
-    ? createPickerFilterState(FILTER_ITEMS, 0)
-    : { selected: 0 }
+  if (def.typing === "filter") {
+    ui[def.kind] = createPickerFilterState(FILTER_ITEMS, 0)
+  } else {
+    ui[def.kind] = STATE_CARRIED.has(def.kind)
+      ? { selected: 0, items: CHOICES[def.kind] }
+      : { selected: 0 }
+  }
   return ui[def.kind]
 }
 
@@ -239,6 +260,46 @@ function uniqueProbe(choices) {
 async function typeAll(dispatchKey, ui, text) {
   for (const ch of text) await dispatchKey({ ui, ...typeChar(ch) })
 }
+
+/** 从 `name(` 开始按括号配平取出整个实参块。锚点失效时返回 null，而不是半截。 */
+function callArguments(source, name) {
+  const start = source.indexOf(`${name}(`)
+  if (start === -1) return null
+  let depth = 0
+  for (let i = start + name.length; i < source.length; i++) {
+    if (source[i] === "(") depth += 1
+    else if (source[i] === ")") {
+      depth -= 1
+      if (depth === 0) return source.slice(start, i + 1)
+    }
+  }
+  return null
+}
+
+test("repl.mjs wires close/confirm for every picker in the table", () => {
+  // 组装根少传一个 `close<X>Picker`，构造时不会报错 —— 那个函数是 undefined，
+  // 直到用户真的打开那个浮层按下 Esc 才炸。单测这边照绿：harness 自己传全了。
+  //
+  // 所以这条按 PICKER_DEFS 扫组装根。手写一份清单的话，下一个选择器加进来时
+  // 它会静默漏掉那一个 —— 这个仓库栽过同一条。
+  const replSource = readFileSync(fileURLToPath(new URL("../src/repl.mjs", import.meta.url)), "utf8")
+  const block = callArguments(replSource, "createOverlayKeyScopes")
+  assert.ok(block, "找不到 createOverlayKeyScopes 的调用 —— 锚点没了，这条断言得跟着改")
+  // 防空转：锚点还在但取到的是空壳时，下面的 includes 会全部为假而不是全部为真，
+  // 不过取到「一小段」仍可能让断言变得没意义，所以先钉一个已知一定在里面的参数。
+  assert.ok(block.includes("closeModePicker"), `取到的实参块不像是那个调用: ${block.slice(0, 120)}`)
+
+  const missing = []
+  for (const def of PICKER_DEFS) {
+    const stem = `${def.kind[0].toUpperCase()}${def.kind.slice(1)}`
+    for (const verb of ["close", "confirm"]) {
+      if (!new RegExp(`(^|[^\\w])${verb}${stem}\\b`).test(block)) missing.push(`${verb}${stem}`)
+    }
+  }
+  assert.deepEqual(missing, [],
+    "这些接线没传进 createOverlayKeyScopes —— 对应浮层的 Esc/Enter 会调到 undefined:\n  " +
+    missing.join("\n  "))
+})
 
 test("the definition table covers exactly the picker scopes that exist", () => {
   // 两边分叉的话，新选择器要么漏掉过滤、要么漏掉全部用例
@@ -269,6 +330,41 @@ test("typing filters the list pickers and jumps the selection on the constant-li
       assert.equal(picker.selected, probe.index, `${def.kind}: 应停在唯一命中的那项`)
     }
   }
+})
+
+test("moving the theme selection previews it immediately; other pickers have no such side effect", async () => {
+  // 颜色是唯一一种「描述不出来、只能看」的设置。要求先 Enter 再判断好不好看，
+  // 等于每换一次都得来回开关浮层。所以上下键就把主题真的换上去（不落盘）。
+  const themeDef = PICKER_DEFS.find((def) => def.kind === "themePicker")
+  const { dispatchKey, calls } = harness()
+  const ui = createReplUiState()
+  const picker = openPicker(ui, themeDef)
+
+  await dispatchKey({ ui, ...press("down") })
+  assert.deepEqual(calls, ["previewTheme"], "下移之后要预览")
+  await dispatchKey({ ui, ...press("up") })
+  assert.deepEqual(calls, ["previewTheme", "previewTheme"], "上移同样")
+
+  // 打字跳转也是「移动选中项」，同样该预览
+  await dispatchKey({ ui, ...typeChar("g") })
+  assert.equal(picker.selected, 1, "g 只在 light 里有")
+  assert.equal(calls.length, 3, "跳转之后漏预览的话，打字选中的那项看不到效果")
+
+  const other = harness()
+  const otherUi = createReplUiState()
+  otherUi.modePicker = { selected: 0 }
+  await other.dispatchKey({ ui: otherUi, ...press("down") })
+  assert.deepEqual(other.calls, [], "别的选择器移动时不该有任何副作用")
+})
+
+test("the theme picker counts the rows it is actually showing", async () => {
+  // 它的候选在 picker 状态里（列表是运行期算的）。若 count 去读某个模块常量，
+  // 下箭头会停在错误的位置 —— 多按几下停不下来，或者提前到底。
+  const { dispatchKey } = harness()
+  const ui = createReplUiState()
+  const picker = openPicker(ui, PICKER_DEFS.find((def) => def.kind === "themePicker"))
+  for (let i = 0; i < 10; i++) await dispatchKey({ ui, ...press("down") })
+  assert.equal(picker.selected, THEME_ITEMS.length - 1)
 })
 
 test("Backspace takes one character back off the filter", async () => {

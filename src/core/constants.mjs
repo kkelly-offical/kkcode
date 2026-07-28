@@ -61,6 +61,7 @@ export const EVENT_TYPES = {
   LONGAGENT_HYBRID_MEMORY_LOADED: "longagent.hybrid.memory_loaded",
   LONGAGENT_HYBRID_MEMORY_SAVED: "longagent.hybrid.memory_saved",
   SESSION_COMPACTING: "session.compacting",
+  TURN_STEER_INJECTED: "turn.steer.injected",
   SESSION_COMPACTED: "session.compacted",
   TURN_USAGE_UPDATE: "turn.usage.update",
   STREAM_TEXT_START: "stream.text.start",

@@ -295,7 +295,8 @@ export async function executeTurn({
   output = null,
   allowQuestion = true,
   toolContext = {},
-  runSpec = null
+  runSpec = null,
+  steerSource = null
 }) {
   ensureEventSinks()
 
@@ -368,7 +369,8 @@ export async function executeTurn({
           signal,
           allowQuestion,
           toolContext,
-          runSpec
+          runSpec,
+          steerSource
         })
 
   const usage = { ...turn.usage }

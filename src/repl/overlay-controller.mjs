@@ -1,7 +1,7 @@
 /**
- * 用户主动打开的六个浮层的开/关/确认。
+ * 用户主动打开的那几个浮层（`USER_OVERLAY_KINDS`）的开/关/确认。
  *
- * 互斥由 `ui-state.mjs` 的 `openUserOverlay` 保证 —— 开一个就关掉另外五个。
+ * 互斥由 `ui-state.mjs` 的 `openUserOverlay` 保证 —— 开一个就关掉其余全部。
  * 这里管的是各自的内容与确认动作。
  *
  * ## 确认时不要复制一份切换逻辑
@@ -34,7 +34,10 @@ export function createOverlayController({
   submitCurrentInput,
   selectModeAndNotify,
   clearPermissionSession,
-  terminalColumns = () => Number(process.stdout.columns) || 120
+  terminalColumns = () => Number(process.stdout.columns) || 120,
+  // 主题切换器（repl/theme-switch.mjs）。可选：行模式与不带换肤能力的宿主
+  // 可以不传，那时主题选择器打不开而不是崩在按键上。
+  themeSwitcher = null
 }) {
   /**
    * 四个列表型选择器的共同形状：空列表给提示、打开时预选当前项、关闭时强制重绘。
@@ -233,6 +236,61 @@ export function createOverlayController({
     closePolicyPicker()
   }
 
+  /**
+   * 主题选择器。它与另外五个有一处不同：**选中即预览**。
+   *
+   * 颜色是唯一一种「描述不出来、只能看」的设置 —— 让人选中 light 之后先按 Enter
+   * 再判断好不好看，等于每换一次都要来回开关浮层。所以上下键就把主题真的换上去，
+   * 只是不落盘；Enter 才写配置，Esc 还原成打开浮层那一刻的主题。
+   *
+   * `restore` 记的是**打开时**的 id 而不是「上一次预览的」：连按五下箭头之后
+   * Esc 要回到起点，不是回到第四下。
+   */
+  function openThemePicker() {
+    if (!themeSwitcher) return false
+    const items = themeSwitcher.list()
+    if (!items.length) {
+      showToast("没有可切换的主题", { topic: "theme", tone: "warn" })
+      requestRender()
+      return false
+    }
+    openUserOverlay(ui, "themePicker", {
+      items,
+      selected: Math.max(0, items.findIndex((item) => item.current)),
+      restore: themeSwitcher.current()
+    })
+    requestRender({ force: true })
+    return true
+  }
+
+  /** 上下键移动之后的即时预览：换画面，不写配置。 */
+  function previewThemePicker() {
+    if (!themeSwitcher || !ui.themePicker) return
+    const chosen = ui.themePicker.items[ui.themePicker.selected]
+    if (!chosen) return
+    themeSwitcher.apply(chosen.id, { persist: false })
+  }
+
+  /** Esc / 外部关闭：把预览过的主题还原回打开时那个。 */
+  function closeThemePicker() {
+    const restore = ui.themePicker?.restore
+    closeUserOverlay(ui, "themePicker")
+    if (themeSwitcher && restore) themeSwitcher.apply(restore, { persist: false })
+    requestRender({ force: true })
+  }
+
+  function confirmThemePicker() {
+    if (!ui.themePicker) return
+    const chosen = ui.themePicker.items[ui.themePicker.selected]
+    // 先关再切：closeThemePicker 会还原，这里不能走它
+    closeUserOverlay(ui, "themePicker")
+    if (themeSwitcher && chosen) {
+      themeSwitcher.apply(chosen.id)
+      showToast(`Theme · ${chosen.label}`, { topic: "theme", tone: "success" })
+    }
+    requestRender({ force: true })
+  }
+
   return {
     openProviderPicker: providerPicker.open,
     closeProviderPicker: providerPicker.close,
@@ -252,6 +310,10 @@ export function createOverlayController({
     confirmModePicker,
     openPolicyPicker,
     closePolicyPicker,
-    confirmPolicyPicker
+    confirmPolicyPicker,
+    openThemePicker,
+    closeThemePicker,
+    confirmThemePicker,
+    previewThemePicker
   }
 }

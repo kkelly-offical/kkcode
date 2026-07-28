@@ -20,7 +20,8 @@ import { listProviders } from "./provider/router.mjs"
 import { loadCustomCommands, applyCommandTemplate } from "./command/custom-commands.mjs"
 import { SkillRegistry } from "./skill/registry.mjs"
 import { renderMarkdown } from "./theme/markdown.mjs"
-import { listSessions } from "./session/store.mjs"
+import { listSessions, appendMessage } from "./session/store.mjs"
+import { runShellPassthrough, formatForTranscript as formatShellForTranscript, formatForContext as formatShellForContext } from "./repl/shell-passthrough.mjs"
 import { ToolRegistry } from "./tool/registry.mjs"
 import { McpRegistry } from "./mcp/registry.mjs"
 import { initHookBus } from "./plugin/hook-bus.mjs"
@@ -98,6 +99,10 @@ import {
 } from "./repl/mode-flow.mjs"
 import { describeRule } from "./permission/learned-rules.mjs"
 import { createInputDecoderChain } from "./repl/input-decoders.mjs"
+import { parseOsc11Response, isLightBackground, OSC11_QUERY } from "./theme/background-probe.mjs"
+import { createThemeSwitcher, createBackgroundProbeHandler } from "./repl/theme-switch.mjs"
+import { applyPickerActions } from "./repl/picker-actions.mjs"
+import { persistUiConfig } from "./repl/config-persistence.mjs"
 import {
   enterTerminalSequence,
   exitTerminalSequence,
@@ -185,12 +190,28 @@ async function processInputLine({
    */
   attachImage = null,
   signal = null,
+  /** 插话来源（() => string[]），只有 TUI 传；见 session/loop.mjs 的 steerSource。 */
+  steerSource = null,
+  /** 运行时主题切换器（0.7.5）。行模式不传 —— /theme 命令里有回落自建。 */
+  themeSwitcher = null,
   suspendTui = null,
   // 只读信息浮层。TUI 会话里由 startTuiRepl 注入；行模式（无 TTY）下缺省为
   // null，此时回落到 print —— 那里没有帧可以浮，浮层无从存在。
   openPanel = null
 }) {
   let normalized = normalizeSlashAlias(String(line || "").trim())
+
+  // `!` 前缀：shell 直通。用户本人敲的命令，等价于他切出去在终端跑 —— 不走审批、
+  // 不发给模型；输出上屏，并作为一条 user 消息进入会话（模型下一轮看得见
+  // 「用户自己跑了这个、结果如此」）。执行器在 repl/shell-passthrough.mjs。
+  // 排除 `!=` 这类误写：`!` 后必须紧跟非空白非 = 的内容才算命令。
+  if (/^![^\s=]/.test(normalized)) {
+    const command = normalized.slice(1).trim()
+    const result = await runShellPassthrough(command)
+    print(formatShellForTranscript(command, result), { channel: "transcript" })
+    await appendMessage(state.sessionId, "user", formatShellForContext(command, result)).catch(() => {})
+    return { exit: false }
+  }
 
   /**
    * 只读信息的统一出口。
@@ -261,7 +282,8 @@ async function processInputLine({
     streamSink,
     showTurnStatus,
     signal,
-    switchModeInPlace
+    switchModeInPlace,
+    steerSource
   })
 
   // --- 命令分发 ---
@@ -284,6 +306,7 @@ async function processInputLine({
       pendingImages,
       clearPendingImages,
       attachImage,
+      themeSwitcher,
       streamSink,
       showTurnStatus,
       signal,
@@ -482,9 +505,12 @@ function hasShiftEnterSequence(dataChunk) {
   )
 }
 
-function isCommandLikeInput(line) {
+export function isCommandLikeInput(line) {
   const value = String(line || "").trimStart()
-  return value.startsWith("/") || value.startsWith("$")
+  // `!命令` 是 shell 直通（0.7.5）：它和 `/`、`$` 一样不是「给模型的话」——
+  // 不参与模式自动路由、不清 agent transaction、不进中断续跑的合并。
+  // `!=` 开头的数学表达式不算（与 processInputLine 的判据保持一致）。
+  return value.startsWith("/") || value.startsWith("$") || /^![^\s=]/.test(value)
 }
 
 
@@ -729,6 +755,24 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
    * 所以这条依赖是可选的，行模式与测试都不必造一个假的。
    */
   const notifier = createNotifier({ config: ctx.configState.config })
+
+  /**
+   * 运行时主题切换（0.7.5，实现在 repl/theme-switch.mjs）。构造要在 inputDecoders
+   * 之前 —— 解码链的 OSC 回调引用它。回调是 stdin 数据到达时才触发的，但依赖
+   * 构造顺序的隐式约定在这个闭包里栽过一次（0.6.23 的 TDZ），显式排序。
+   */
+  const themeSwitcher = createThemeSwitcher({
+    themeState: ctx.themeState,
+    config: ctx.configState.config,
+    saveUiConfig: persistUiConfig,
+    requestFullRepaint: () => requestRender({ force: true })
+  })
+  // 启动应用配置里的主题（dark 是缺省调色板本身，不用动）。auto 此刻探测还没
+  // 回来，先按回落（dark）画第一帧，onOscResponse 到了再切。
+  {
+    const configuredTheme = ctx.configState.config.ui?.theme || "dark"
+    if (configuredTheme !== "dark") themeSwitcher.apply(configuredTheme, { persist: false })
+  }
   // 走登记本而不是往两处退出路径各加一行 —— 那正是 0.6.20 修掉的形状。
   // 不恢复标题的话，用户退出后终端标签页会一直挂着上一次的思考状态。
   listeners.add(() => notifier.dispose())
@@ -792,7 +836,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     showToast,
     submitCurrentInput: () => submitCurrentInput(),
     selectModeAndNotify: (modeId) => selectModeAndNotify(modeId),
-    clearPermissionSession: (sessionId) => PermissionEngine.clearSession(sessionId)
+    clearPermissionSession: (sessionId) => PermissionEngine.clearSession(sessionId),
+    themeSwitcher
   })
   const {
     openProviderPicker, closeProviderPicker, confirmProviderPicker,
@@ -800,7 +845,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     openModelPicker, closeModelPicker, confirmModelPicker,
     openInfoPanel, closeInfoPanel, scrollInfoPanel, relayoutInfoPanel,
     openModePicker, closeModePicker, confirmModePicker,
-    openPolicyPicker, closePolicyPicker, confirmPolicyPicker
+    openPolicyPicker, closePolicyPicker, confirmPolicyPicker,
+    openThemePicker, closeThemePicker, confirmThemePicker, previewThemePicker
   } = overlays
 
 
@@ -1096,6 +1142,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
             showTurnStatus: false,
             attachImage,
             signal: aborter.signal,
+            steerSource: outbox.takeSteer,
+            themeSwitcher,
             suspendTui: withSuspendedTui,
             openPanel: openInfoPanel
           })) || {}
@@ -1256,6 +1304,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         showTurnStatus: false,
         attachImage,
         signal: aborter.signal,
+        steerSource: outbox.takeSteer,
+        themeSwitcher,
         suspendTui: withSuspendedTui,
         openPanel: openInfoPanel
       })) || {}
@@ -1286,21 +1336,12 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         }
       }
       // logo 显示由 Ctrl+B 手动切换，不再自动隐藏
-      if (action.openModelPicker) {
-        openModelPicker(action.modelPickerItems)
-      }
-      if (action.openProviderPicker) {
-        openProviderPicker(action.providerPickerItems)
-      }
-      if (action.openSessionPicker) {
-        openSessionPicker(action.sessionPickerItems)
-      }
-      if (action.openPolicyPicker) {
-        openPolicyPicker()
-      }
-      if (action.openModePicker) {
-        openModePicker()
-      }
+      // 六种 open*Picker 的映射在 repl/picker-actions.mjs —— 此前是六个连续 if，
+      // 每加一个选择器就得来这里多写一个，0.7.5 加 theme 时顶破了判定点棘轮。
+      applyPickerActions(action, {
+        openModelPicker, openProviderPicker, openSessionPicker,
+        openPolicyPicker, openModePicker, openThemePicker
+      })
       if (action.planHandoff?.modeId) {
         // switchModeInPlace 已经改过 state；这里只同步 UI 并排队续跑
         pendingPlanBuild = action.planHandoff
@@ -1477,6 +1518,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       confirmPolicyPicker,
       closeModePicker,
       confirmModePicker,
+      closeThemePicker,
+      confirmThemePicker,
+      previewThemePicker,
       PERMISSION_PROMPT_VALUES,
       POLICY_CHOICES,
       MODE_PICKER_CHOICES
@@ -1498,7 +1542,10 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         attachImage,
         insertPastedText,
         // 忙碌时 Enter 走排队而不是提交；提交则换成「发完再把队列排干」的包装。
+        // 空输入框上再按一次 Enter = 把刚排的那条升级为插话（steer）。
         queuePrompt: outbox.queue,
+        promoteQueuedToSteer: outbox.promoteLastToSteer,
+        hasQueuedPrompts: () => outbox.size() > 0,
         deleteInputSelection,
         moveCursor,
         setCursor,
@@ -1532,8 +1579,24 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   const inputDecoders = createInputDecoderChain({
     features: terminalFeatures,
     onMouseEvent: handleMouseEvent,
-    onFocus: (focused) => notifier.setFocused(focused)
+    onFocus: (focused) => notifier.setFocused(focused),
+    // OSC 11 背景色探测（0.7.5）：启动后发一次查询（见下面 probeTerminalBackground），
+    // 支持的终端把背景色从 stdin 送回来 —— 在这里摘掉并写进 themeState，
+    // `auto` 主题据此选明暗。不支持的终端根本不回，靠超时兜底。
+    onOscResponse: createBackgroundProbeHandler({
+      themeState: ctx.themeState,
+      config: ctx.configState.config,
+      themeSwitcher,
+      parse: parseOsc11Response,
+      isLight: isLightBackground
+    })
   })
+
+  /** 发一次背景色查询。写在函数里而不是内联，是为了挂起/恢复后能再探一次。 */
+  function probeTerminalBackground() {
+    if (!process.stdout.isTTY) return
+    try { output.write(OSC11_QUERY) } catch { /* 写失败就当不支持 */ }
+  }
 
   function dispatchPasteResult(pasted, mouseEventCount = 0, {
     immediateEscape = false
@@ -1718,6 +1781,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     )
     activateTerminal()
     paintFrame(buildFrame())
+    // 背景色探测要在终端激活**之后**发：查询响应走 stdin，解码链此刻才在听。
+    probeTerminalBackground()
   } catch (error) {
     disposed = true
     cancelPendingFrame()

@@ -1,6 +1,7 @@
 import {
   createBracketedPasteDecoder,
   createFocusDecoder,
+  createOsc11Decoder,
   createSgrMouseDecoder,
   createUtf8TextDecoder
 } from "./terminal-protocol.mjs"
@@ -19,13 +20,16 @@ import {
  * 关掉的那一层是**透传**，不是「跳过但顺手改一下文本」—— 鼠标关掉时仍然要有人
  * 做 UTF-8 边界缓冲，否则被 chunk 切开的多字节字符会碎成替换符。
  */
-export function createInputDecoderChain({ features = {}, onMouseEvent, onFocus } = {}) {
+export function createInputDecoderChain({ features = {}, onMouseEvent, onFocus, onOscResponse } = {}) {
   const mouseEnabled = Boolean(features.mouse)
   const focusEnabled = Boolean(features.focusReporting)
   const pasteEnabled = Boolean(features.bracketedPaste)
+  // OSC 11 响应只在我们主动查询后出现（背景色探测，0.7.5）。没有回调就整层透传。
+  const oscEnabled = typeof onOscResponse === "function"
 
   const mouseDecoder = createSgrMouseDecoder()
   const focusDecoder = createFocusDecoder()
+  const oscDecoder = createOsc11Decoder()
   const pasteDecoder = createBracketedPasteDecoder()
   // 鼠标解码器自带 UTF-8 缓冲；关掉它之后这一层顶上，链的入口始终能收 Buffer。
   const plainTextDecoder = createUtf8TextDecoder()
@@ -35,6 +39,13 @@ export function createInputDecoderChain({ features = {}, onMouseEvent, onFocus }
     const focused = focusDecoder.feed(text)
     for (const ev of focused.events) onFocus?.(ev.focused)
     return focused.text
+  }
+
+  function throughOsc(text) {
+    if (!oscEnabled) return text
+    const osc = oscDecoder.feed(text)
+    for (const payload of osc.responses) onOscResponse(payload)
+    return osc.text
   }
 
   function throughPaste(text) {
@@ -50,13 +61,14 @@ export function createInputDecoderChain({ features = {}, onMouseEvent, onFocus }
         ? mouseDecoder.feed(chunk)
         : { events: [], text: plainTextDecoder.feed(chunk) }
       for (const ev of mouse.events) onMouseEvent?.(ev)
-      const pasted = throughPaste(throughFocus(mouse.text))
+      const pasted = throughPaste(throughOsc(throughFocus(mouse.text)))
       return { ...pasted, mouseEvents: mouse.events.length }
     },
 
     hasPending() {
       return (mouseEnabled && mouseDecoder.hasPending()) ||
         (focusEnabled && focusDecoder.hasPending()) ||
+        (oscEnabled && oscDecoder.hasPending()) ||
         (pasteEnabled && pasteDecoder.hasPending())
     },
 
@@ -71,8 +83,9 @@ export function createInputDecoderChain({ features = {}, onMouseEvent, onFocus }
      */
     flush() {
       const buffered = mouseEnabled ? mouseDecoder.flush() : plainTextDecoder.flush()
-      let text = throughFocus(buffered)
+      let text = throughOsc(throughFocus(buffered))
       if (focusEnabled) text += focusDecoder.flush()
+      if (oscEnabled) text += oscDecoder.flush()
       const pasted = throughPaste(text)
       if (!pasteEnabled) return { ...pasted, mouseEvents: 0 }
       const tail = pasteDecoder.flush()
@@ -86,6 +99,7 @@ export function createInputDecoderChain({ features = {}, onMouseEvent, onFocus }
     reset() {
       mouseDecoder.reset()
       focusDecoder.reset()
+      oscDecoder.reset()
       pasteDecoder.reset()
       plainTextDecoder.reset()
     }

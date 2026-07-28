@@ -1,5 +1,59 @@
 # Changelog / 更新日志
 
+## 0.7.5
+
+流式中插话（排队后再按一次 Enter）；`!` 直通 shell；`/theme` 运行时换肤带背景
+自动探测与选中即预览；`/btw` 旁路提问；`/provider add` 支持多选模型并写入各自的
+上下文长度。
+
+### English
+
+- **Steer a running turn.** Queue a message with Enter while the model works,
+  press Enter once more on the empty input and it is promoted to an interjection:
+  injected at the next step boundary as a user message, so the model sees it
+  before finishing — verified end-to-end (a mid-turn "end the summary with an
+  exclamation mark" changed the final reply). Injection happens only at step
+  boundaries: splicing into an assistant→tool pair would be rejected by
+  providers.
+- **`!command` runs in your shell, output lands in context.** Your own command,
+  so no approval; stdout+stderr interleaved in arrival order, middle-truncated
+  (errors live at the tail, the echo at the head), ANSI stripped before it
+  reaches the model, and recorded as a user-ran-shell-command block the model
+  can see next turn.
+- **`/theme` switches at runtime** — dark / light / auto, arrow keys preview
+  instantly, Enter persists, Esc restores. `auto` probes the terminal background
+  via OSC 11 (response parsed out of the input stream by a dedicated decoder
+  layer so it can never leak into the composer). Fixed along the way: the dark
+  baseline had to be snapshotted at module load — themeState shares the object
+  with DEFAULT_THEME, so previewing light painted the default itself and Esc
+  had nothing clean to restore to.
+- **`/btw <question>`** asks a side question that sees the conversation but
+  never changes it: answers in a read-only panel, no tools, no history writes.
+- **`/provider add` now discovers models with their context windows**, lets you
+  multi-select which to add (labels show `gpt-4o (128k)`), asks which one is the
+  default when you pick several, and writes each model's context into
+  `provider.model_context` — merged, never clobbering entries you already had.
+
+### 中文
+
+- **给正在跑的回合插话。** 忙碌时 Enter 排队，空输入框上再按一次 Enter 升级为
+  插话：在下一个 step 边界作为 user 消息注入，模型收尾前就能看到 —— 端到端
+  验证过（回合中途插入「总结用感叹号结尾」，最终回复照做了）。只在 step 边界
+  注入：夹进 assistant→tool 配对中间会被 provider 拒收。
+- **`!命令` 直通 shell，输出进上下文。** 你自己敲的命令，不走审批；stdout 与
+  stderr 按到达顺序合流、从中间截断（报错在尾、回显在头）、剥掉 ANSI 后进
+  会话 —— 模型下一轮看得见「用户自己跑了这个、结果如此」。
+- **`/theme` 运行时换肤** —— dark / light / auto，上下键即时预览、Enter 保存、
+  Esc 还原。`auto` 用 OSC 11 探测终端背景（响应由专门的解码层从输入流里摘出，
+  永远不会漏进输入框）。顺带修掉一个共享引用事故：dark 基线必须在模块加载时
+  快照 —— themeState 与 DEFAULT_THEME 共享对象，预览 light 会把默认主题本身
+  涂脏，Esc 就无干净可还原了。
+- **`/btw <问题>`** 旁路提问：看得见对话、改不了历史 —— 答案进只读面板，
+  不带工具、不写会话。
+- **`/provider add` 发现模型时连上下文一起拿**，支持多选（选项显示
+  `gpt-4o (128k)`），选了多个会追问哪个当默认，各模型的上下文写进
+  `provider.model_context` —— 合并写入，不会抹掉你已有的条目。
+
 ## 0.7.4
 
 Startup update notice surfaces inside the TUI; one-click upgrade documented as

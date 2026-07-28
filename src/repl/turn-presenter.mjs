@@ -102,6 +102,7 @@ export async function presentPromptTurn({
   showTurnStatus = true,
   signal = null,
   switchModeInPlace = null,
+  steerSource = null,
   cwd = process.cwd(),
   runTurn = executePromptTurn
 }) {
@@ -115,7 +116,8 @@ export async function presentPromptTurn({
     ctx,
     streamSink: state.mode === "longagent" ? null : streamSink,
     pendingImages: images,
-    signal
+    signal,
+    steerSource
   })
   const result = turn.result
 

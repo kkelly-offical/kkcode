@@ -4,6 +4,9 @@ import { createOverlayController } from "../src/repl/overlay-controller.mjs"
 import { createReplUiState, activeUserOverlay } from "../src/repl/ui-state.mjs"
 import { applyOverlayFilter } from "../src/ui/overlay-select.mjs"
 import { DEFAULT_CONFIG } from "../src/config/defaults.mjs"
+import { createThemeSwitcher } from "../src/repl/theme-switch.mjs"
+import { DEFAULT_THEME } from "../src/theme/default-theme.mjs"
+import { LIGHT_THEME } from "../src/theme/light-theme.mjs"
 
 /**
  * 六个用户浮层的开/关/确认。
@@ -255,4 +258,109 @@ test("self-framed content is re-laid-out on resize, plain text is not", () => {
   controller.openInfoPanel("散文", "就是一段文字")
   columns = 40
   assert.equal(controller.relayoutInfoPanel(), false, "没有排版函数的内容不需要重排")
+})
+
+// --- 主题选择器：选中即预览 ---
+//
+// 用真的切换器而不是打桩：这一组要验的正是「预览把颜色真的换上去了」与
+// 「Esc 把它换回来了」，打桩之后剩下的只是「控制器调了某个方法」，
+// 而那恰恰是最不容易错的部分。
+
+function themeHarness() {
+  const calls = []
+  const ui = createReplUiState()
+  const themeState = { theme: structuredClone(DEFAULT_THEME), source: "default", errors: [], detectedBackground: null }
+  const config = structuredClone(DEFAULT_CONFIG)
+  const saves = []
+  const controller = createOverlayController({
+    ui,
+    state: { providerType: "p", model: "m", sessionId: "s", mode: "agent", modeId: "agent" },
+    ctx: { configState: { config }, themeState },
+    requestRender: () => {},
+    showToast: (message, options) => calls.push(`toast[${options?.topic}](${message})`),
+    submitCurrentInput: async () => {},
+    selectModeAndNotify: () => {},
+    clearPermissionSession: () => {},
+    themeSwitcher: createThemeSwitcher({
+      themeState,
+      config,
+      saveUiConfig: (values) => { saves.push(values) }
+    })
+  })
+  return { controller, ui, themeState, saves, calls }
+}
+
+/** 打开浮层并把选中项移到 light 上（不触发预览，由调用方决定何时预览）。 */
+function selectLight(ui) {
+  const index = ui.themePicker.items.findIndex((item) => item.id === "light")
+  assert.ok(index >= 0, "列表里应该有 light")
+  ui.themePicker.selected = index
+}
+
+test("the theme picker opens on whatever is in effect", () => {
+  const { controller, ui } = themeHarness()
+  assert.equal(controller.openThemePicker(), true)
+  assert.equal(activeUserOverlay(ui), "themePicker")
+  assert.equal(ui.themePicker.items[ui.themePicker.selected].id, "dark", "当前主题要被预选中")
+  assert.equal(ui.themePicker.restore, "dark", "进来时是什么，Esc 就该回到什么")
+})
+
+test("previewing swaps the colors for real, without writing the config", () => {
+  const { controller, ui, themeState, saves } = themeHarness()
+  controller.openThemePicker()
+  selectLight(ui)
+  controller.previewThemePicker()
+  assert.equal(themeState.theme.name, LIGHT_THEME.name, "预览得真的换色，否则等于没预览")
+  assert.deepEqual(saves, [], "预览落盘的话，Esc 之后配置里会留着没选中的那个主题")
+})
+
+test("Esc restores the theme that was in effect when the picker opened", () => {
+  const { controller, ui, themeState, saves } = themeHarness()
+  controller.openThemePicker()
+  selectLight(ui)
+  controller.previewThemePicker()
+  assert.equal(themeState.theme.name, LIGHT_THEME.name, "前提：预览确实换了色")
+
+  controller.closeThemePicker()
+  assert.equal(activeUserOverlay(ui), null)
+  assert.equal(themeState.theme.name, DEFAULT_THEME.name,
+    "取消之后还留着预览的颜色，等于 Esc 变成了「确认但不保存」")
+  assert.deepEqual(saves, [])
+})
+
+test("Esc goes back to the starting point, not to the previous preview", () => {
+  // 连按几下箭头之后 Esc 该回到起点。restore 若记的是「上一次预览的」，
+  // 就会停在倒数第二个预览上。
+  const { controller, ui, themeState } = themeHarness()
+  controller.openThemePicker()
+  for (const id of ["light", "auto", "light"]) {
+    ui.themePicker.selected = ui.themePicker.items.findIndex((item) => item.id === id)
+    controller.previewThemePicker()
+  }
+  controller.closeThemePicker()
+  assert.equal(themeState.theme.name, DEFAULT_THEME.name)
+})
+
+test("Enter keeps the previewed theme and persists it", async () => {
+  const { controller, ui, themeState, saves, calls } = themeHarness()
+  controller.openThemePicker()
+  selectLight(ui)
+  controller.previewThemePicker()
+  controller.confirmThemePicker()
+
+  assert.equal(activeUserOverlay(ui), null)
+  assert.equal(themeState.theme.name, LIGHT_THEME.name, "确认之后不能被还原逻辑顺手抹掉")
+  assert.deepEqual(saves, [{ theme: "light" }])
+  assert.ok(calls.some((c) => c.startsWith("toast[theme]")), "换完要说一声")
+})
+
+test("a host without a theme switcher gets no theme picker instead of a crash", () => {
+  // 行模式与不带换肤能力的宿主不传切换器。那时浮层不该打开 ——
+  // 打开了的话按键会去调一个 null 上的方法。
+  const { controller, ui } = harness()
+  assert.equal(controller.openThemePicker(), false)
+  assert.equal(activeUserOverlay(ui), null)
+  assert.doesNotThrow(() => controller.closeThemePicker())
+  assert.doesNotThrow(() => controller.previewThemePicker())
+  assert.doesNotThrow(() => controller.confirmThemePicker())
 })

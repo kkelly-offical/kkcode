@@ -1,11 +1,12 @@
 /**
- * 浮层类按键：信息面板、权限提示、提问提示、五个选择器。
+ * 浮层类按键：信息面板、权限提示、提问提示、六个选择器。
  *
  * 全部是**模态作用域** —— 打开时未命中的按键被吞掉，而不是漏到输入框去。
  * 这对应拆分前那种「整块包住、末尾一个裸 `return`」的写法。
  *
- * 五个选择器里有四个逐字相同，只有状态字段与确认/关闭函数不同，所以用
- * `pickerScope` 生成。`modePicker` 多一个 Tab 循环，从 `lead` 插进去。
+ * 选择器彼此逐字相同，只有状态字段与确认/关闭函数不同，所以用 `pickerScope`
+ * 生成。`modePicker` 多一个 Tab 循环，从 `lead` 插进去；`themePicker` 多一个
+ * 「选中即预览」，从 `onMove` 插进去。
  *
  * ## 打字：两种语义，取决于列表从哪来
  *
@@ -13,11 +14,15 @@
  *
  * - `filter` —— provider / session / model：frame-builder 渲染 `ui[kind].items`，
  *   所以把 `items` 换成过滤后的那份，界面立刻就是过滤后的列表。
- * - `jump`   —— policy / mode：frame-builder 直接读模块常量 `POLICY_CHOICES` /
- *   `MODE_PICKER_CHOICES` 来渲染，picker 状态里只有一个 `selected`。过滤这两个
- *   的 `items` 影响不到画面，反而会让 `selected` 指向一份没人画的列表 ——
- *   于是它们的打字改成「跳到最匹配的一项」，选中项的移动是可见的，语义完整。
- *   要把它们也做成真过滤，得让 frame-builder 改读 picker 状态。
+ * - `jump`   —— policy / mode / theme：打字「跳到最匹配的一项」，不留过滤串。
+ *   policy 与 mode 是因为 frame-builder 直接读模块常量 `POLICY_CHOICES` /
+ *   `MODE_PICKER_CHOICES` 渲染，过滤它们的 `items` 影响不到画面，反而会让
+ *   `selected` 指向一份没人画的列表；theme 的画面读的是 `ui.themePicker.items`，
+ *   但它只有三四项且是选中即预览的（见 PICKER_DEFS 上的注释）。
+ *
+ * 所以 `choices` 收的是 **ui**：常量型的忽略它直接返回模块常量，动态型的从
+ * picker 状态里取。两种都必须与 frame-builder 画的那份是同一个来源，否则
+ * 「按了几下才到底」和「看见几行」会对不上。
  */
 
 import { on } from "../key-dispatch.mjs"
@@ -25,9 +30,9 @@ import { applyOverlayFilter, filterOverlayItems } from "../../ui/overlay-select.
 import { questionTextBuffer } from "../dialog-router.mjs"
 
 /**
- * 五个选择器的定义表。
+ * 选择器的定义表。
  *
- * 测试遍历它生成用例 —— 手写五份的话，第六个选择器加进来时会静默漏测。
+ * 测试遍历它生成用例 —— 手写几份的话，下一个选择器加进来时会静默漏测。
  * `createOverlayKeyScopes` 也按它组装，两边不会分叉。
  */
 export const PICKER_DEFS = Object.freeze([
@@ -35,7 +40,13 @@ export const PICKER_DEFS = Object.freeze([
   Object.freeze({ kind: "sessionPicker", typing: "filter" }),
   Object.freeze({ kind: "modelPicker", typing: "filter" }),
   Object.freeze({ kind: "policyPicker", typing: "jump" }),
-  Object.freeze({ kind: "modePicker", typing: "jump" })
+  Object.freeze({ kind: "modePicker", typing: "jump" }),
+  // 主题选择器是 `jump` 而不是 `filter`，两条理由：
+  //   1. 项目只有 3–4 个（dark / light / auto / 文件主题），过滤一个四行的列表
+  //      省不下按键，却要用户先猜「这里能打字吗」；
+  //   2. 它是**选中即预览**的：每次移动选中项就把主题真的换上去。过滤会让
+  //      「移动」同时意味着「列表变了」，预览到底在预览哪一项就说不清了。
+  Object.freeze({ kind: "themePicker", typing: "jump" })
 ])
 
 /**
@@ -52,17 +63,20 @@ const printableText = (ctx) => Boolean(ctx.str) && !ctx.key.ctrl && !ctx.key.met
  *
  * @param {{kind: string, typing: "filter"|"jump"}} def
  * @param {object} p
- * @param {Function} [p.choices]  () => 选项数组；`jump` 型必需
+ * @param {Function} [p.choices]  (ui) => 选项数组；`jump` 型必需
  * @param {Function} p.confirm
  * @param {Function} p.close
  * @param {Function} p.requestRender
  * @param {Function} p.moveGraphemeCursor  Backspace 按字素簇退，不切开 emoji
  * @param {Array}    [p.lead]     插在最前面的额外处理器
+ * @param {Function} [p.onMove]   选中项**移动之后**的回调（themePicker 的即时预览）
  */
-function pickerScope({ kind, typing }, { choices, confirm, close, requestRender, moveGraphemeCursor, lead = [] }) {
+function pickerScope({ kind, typing }, { choices, confirm, close, requestRender, moveGraphemeCursor, lead = [], onMove = null }) {
   const filters = typing === "filter"
-  // 候选数：过滤型的列表在 picker 状态里（过滤后会变短），跳转型的在常量里
-  const count = (ui) => filters ? (ui[kind].items?.length || 0) : choices().length
+  // 候选数：过滤型的列表在 picker 状态里（过滤后会变短），跳转型的问 choices
+  const count = (ui) => filters ? (ui[kind].items?.length || 0) : choices(ui).length
+  // 移动之后的副作用。默认什么都不做 —— 只有 themePicker 用它做即时预览。
+  const moved = () => { if (onMove) onMove() }
 
   const typingHandlers = filters
     ? [
@@ -91,8 +105,9 @@ function pickerScope({ kind, typing }, { choices, confirm, close, requestRender,
         id: "jumpToMatch",
         when: printableText,
         run: ({ ui, str }) => {
-          const [best] = filterOverlayItems(choices(), str)
+          const [best] = filterOverlayItems(choices(ui), str)
           if (best) ui[kind].selected = best.sourceIndex
+          moved()
           requestRender()
         }
       }
@@ -123,6 +138,7 @@ function pickerScope({ kind, typing }, { choices, confirm, close, requestRender,
         when: on.key("up"),
         run: ({ ui }) => {
           ui[kind].selected = Math.max(0, ui[kind].selected - 1)
+          moved()
           requestRender()
         }
       },
@@ -132,6 +148,7 @@ function pickerScope({ kind, typing }, { choices, confirm, close, requestRender,
         run: ({ ui }) => {
           // 外层的 max(0) 是给空结果准备的：count 为 0 时 min(-1, …) 会是 -1
           ui[kind].selected = Math.max(0, Math.min(count(ui) - 1, ui[kind].selected + 1))
+          moved()
           requestRender()
         }
       },
@@ -161,6 +178,11 @@ export function createOverlayKeyScopes({
   confirmPolicyPicker,
   closeModePicker,
   confirmModePicker,
+  closeThemePicker,
+  confirmThemePicker,
+  // 选中即预览。宿主没接的话退化成「Enter 才生效」，浮层其余部分照常可用 ——
+  // 所以给一个空实现，而不是让它 undefined 崩在按键处理里。
+  previewThemePicker = () => {},
   PERMISSION_PROMPT_VALUES,
   POLICY_CHOICES,
   MODE_PICKER_CHOICES
@@ -424,7 +446,7 @@ export function createOverlayKeyScopes({
       ]
     },
 
-    // 五个选择器按 PICKER_DEFS 组装。少一条接线会当场抛错，而不是悄悄
+    // 选择器按 PICKER_DEFS 组装。少一条接线会当场抛错，而不是悄悄
     // 少掉一个作用域 —— 少掉的话那个浮层的按键会漏到输入框里去。
     ...PICKER_DEFS.map((def) => {
       const wiring = {
@@ -432,6 +454,14 @@ export function createOverlayKeyScopes({
         sessionPicker: { confirm: () => { void confirmSessionPicker() }, close: closeSessionPicker },
         modelPicker: { confirm: confirmModelPicker, close: closeModelPicker },
         policyPicker: { confirm: confirmPolicyPicker, close: closePolicyPicker, choices: () => POLICY_CHOICES },
+        themePicker: {
+          confirm: confirmThemePicker,
+          close: closeThemePicker,
+          // 主题列表是运行期算出来的（dark/light/auto + 可选的文件主题），
+          // 没有模块常量可读 —— 与 frame-builder 画的是同一份 ui.themePicker.items。
+          choices: (ui) => ui.themePicker?.items || [],
+          onMove: previewThemePicker
+        },
         modePicker: {
           confirm: confirmModePicker,
           close: closeModePicker,

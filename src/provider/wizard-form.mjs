@@ -35,7 +35,34 @@ const clean = (value) => {
   return text === QUESTION_SKIPPED ? "" : text
 }
 
+/**
+ * 多选题的答案 → 值数组。
+ *
+ * 浮层把多选结果拼成 `"a, b, c"` 交回来（dialog-router 的 commitQuestionAnswer），
+ * 所以这里按逗号拆。readline 降级路径**不支持多选**，回来的是单个值 —— 拆完
+ * 正好是一个元素，同一段代码两边都对。
+ */
+const parseSelection = (value) => {
+  const text = clean(value)
+  if (!text) return []
+  return [...new Set(text.split(/[,\n]/).map((part) => part.trim()).filter(Boolean))]
+}
+
 const maskKey = (key) => (key.length > 4 ? `…${key.slice(-4)}` : "…set")
+
+/**
+ * 上下文长度 → 短标签：128000 → `128k`，1048576 → `1m`，拿不到 → `—`。
+ *
+ * 按十进制而不是 1024 换算：这个数字是给人看的，而各家标称的「128k」本来就是
+ * 十进制口径。**不做「凑整到最近的漂亮数字」** —— 显示的必须是 API 真报的值，
+ * 否则确认页就不再是所见即所写。
+ */
+export function formatContext(tokens) {
+  const n = Number(tokens)
+  if (!Number.isFinite(n) || n < 1024) return "—"
+  if (n >= 1000000) return `${(Math.round(n / 100000) / 10).toString().replace(/\.0$/, "")}m`
+  return `${Math.round(n / 1000)}k`
+}
 
 const CUSTOM_VENDORS = [
   { label: "Custom (OpenAI-compatible)", value: "custom-openai", type: "openai-compatible" },
@@ -151,35 +178,93 @@ function draftConfigState(name, entry) {
   }
 }
 
-/**
- * 轮 D：选模型。发现成功给单选（前 30 个 + 手动），失败直接自由文本。
- * 发现失败不是错误 —— 本地服务、离线、密钥权限不足都会走到，手动输入永远可用。
- */
-async function askModel({ name, entry, defaultModel, ask, discover }) {
-  let discovered = []
+const MANUAL_MODEL = "(manual input)"
+
+/** 发现结果归一成 `[{ id, contextLength }]`；发现失败当「没有列表」，不是错误。 */
+async function discoverModelChoices({ name, entry, discover }) {
   try {
     const result = await discover(draftConfigState(name, entry), name, { refresh: true })
-    discovered = (result?.models || []).map((m) => (typeof m === "string" ? m : m.id)).filter(Boolean)
+    return (result?.models || [])
+      .map((m) => (typeof m === "string" ? { id: m } : m))
+      .filter((m) => m && m.id)
+      .map((m) => ({
+        id: m.id,
+        // model-catalog 的 readContextLength 已经把各家字段名统一过，并且只在
+        // >= 1024 时给值 —— 这里不再二次判断，也不为拿不到的模型编一个数字。
+        contextLength: Number.isFinite(Number(m.contextLength)) ? Number(m.contextLength) : 0
+      }))
   } catch {
-    discovered = []
+    return []
   }
+}
+
+const labelWithContext = (id, contextLength) => `${id} (${formatContext(contextLength)})`
+
+/**
+ * 多选之后追问默认模型。**不悄悄拿第一个** —— 那是背着用户做决定，而默认模型
+ * 是每次对话真正用到的那个。答案不在候选里（非交互的空答案也在内）一律当取消。
+ */
+async function askDefaultModel({ chosen, contextOf, ask }) {
+  const answers = await ask({
+    questions: [{
+      id: "default_model",
+      header: "Default",
+      text: `哪个作为默认模型？（已选 ${chosen.length} 个，其余仍写进配置备用）`,
+      allowCustom: false,
+      options: chosen.map((id) => ({ label: labelWithContext(id, contextOf(id)), value: id, description: "" }))
+    }]
+  })
+  const picked = clean(answers.default_model)
+  return chosen.includes(picked) ? picked : ""
+}
+
+/**
+ * 轮 D：选模型。发现成功给**多选**（前 30 个 + 手动），失败直接自由文本。
+ * 发现失败不是错误 —— 本地服务、离线、密钥权限不足都会走到，手动输入永远可用。
+ *
+ * 选项标签带上下文（`gpt-4o (128k)`）：这正是用户挑模型时要比的那个数，而在
+ * 0.7.4 之前它只能事后人肉查文档再手填 provider.model_context。
+ *
+ * @returns {Promise<{models: string[], defaultModel: string, contexts: Record<string, number>}>}
+ */
+async function askModel({ name, entry, defaultModel, ask, discover }) {
+  const discovered = await discoverModelChoices({ name, entry, discover })
+  const empty = { models: [], defaultModel: "", contexts: {} }
 
   if (discovered.length) {
-    const MANUAL = "(manual input)"
     const picked = await ask({
       questions: [{
         id: "model",
-        header: "Model",
-        text: `默认模型（发现 ${discovered.length} 个）`,
+        header: "Models",
+        text: `选择要加入配置的模型（空格多选、回车确认；发现 ${discovered.length} 个）`,
         allowCustom: false,
+        multi: true,
         options: [
-          ...discovered.slice(0, 30).map((id) => ({ label: id, value: id, description: "" })),
-          { label: MANUAL, value: MANUAL, description: "手动输入模型 ID" }
+          ...discovered.slice(0, 30).map((m) => ({
+            label: labelWithContext(m.id, m.contextLength),
+            value: m.id,
+            description: m.contextLength ? `上下文 ${m.contextLength} tokens（写入 provider.model_context）` : ""
+          })),
+          { label: MANUAL_MODEL, value: MANUAL_MODEL, description: "手动输入模型 ID" }
         ]
       }]
     })
-    const chosen = clean(picked.model)
-    if (chosen && chosen !== MANUAL) return chosen
+    // 手动项和真模型一起选中时以真模型为准：那一项的意思是「列表里没有我要的」，
+    // 而列表里已经选出了东西
+    const chosen = parseSelection(picked.model).filter((id) => id !== MANUAL_MODEL)
+    if (chosen.length) {
+      const byId = new Map(discovered.map((m) => [m.id, m.contextLength]))
+      const contextOf = (id) => byId.get(id) || 0
+      const chosenDefault = chosen.length === 1
+        ? chosen[0]
+        : await askDefaultModel({ chosen, contextOf, ask })
+      if (!chosenDefault) return empty
+      const contexts = {}
+      // 发现不到上下文的模型**不写** —— 编一个数字会让压缩阈值静默算错，
+      // 而运行时本来就有兜底表
+      for (const id of chosen) if (contextOf(id)) contexts[id] = contextOf(id)
+      return { models: chosen, defaultModel: chosenDefault, contexts }
+    }
   }
 
   const manual = await ask({
@@ -190,7 +275,8 @@ async function askModel({ name, entry, defaultModel, ask, discover }) {
       default: defaultModel || ""
     }]
   })
-  return clean(manual.model)
+  const typed = clean(manual.model)
+  return typed ? { models: [typed], defaultModel: typed, contexts: {} } : empty
 }
 
 /**
@@ -198,7 +284,7 @@ async function askModel({ name, entry, defaultModel, ask, discover }) {
  * 旧向导在这一步塞过三样用户没答过的东西（preset 的 base_url、静默继承的
  * context_limit、硬编码的 budget_tokens: 8000），一样都不许再有。
  */
-function buildEntry({ base, protocol, answers, apiKey, model }) {
+function buildEntry({ base, protocol, answers, apiKey, model, models = [] }) {
   const entry = {}
   if (base.type) entry.type = base.type
   if (base.needsProtocol && protocol) {
@@ -215,19 +301,37 @@ function buildEntry({ base, protocol, answers, apiKey, model }) {
   if (apiKey) entry.api_key = apiKey
   else if (base.preset?.key_env) entry.api_key_env = base.preset.key_env
   if (model) entry.default_model = model
+  // 选中的模型全部写进 models。除了「配置里有哪些模型可用」之外还有一层收益：
+  // model-catalog 的 explicitOfflineModels 读的就是这个数组 —— 断网时 /model
+  // 列出来的正是这几个，而不是空列表。
+  if (models.length) entry.models = [...models]
   const contextLimit = Number.parseInt(clean(answers.context_limit), 10)
   if (Number.isFinite(contextLimit) && contextLimit >= 1024) entry.context_limit = contextLimit
   if (clean(answers.thinking) === "enabled") entry.thinking = { type: "enabled" }
   return entry
 }
 
-/** 确认页文本：所见即所写。密钥只给末四位。 */
-export function previewEntry(name, entry, { setDefault = true } = {}) {
+/**
+ * 确认页文本：所见即所写。密钥只给末四位。
+ *
+ * `models` 逐行列出并跟上上下文（`gpt-4o (128k)` / `o3-mini (—)`）：`—` 表示
+ * 这个模型的上下文没发现到、`provider.model_context` 里也就不会有它 ——
+ * 用户在按下保存之前就该看见这个区别，而不是事后翻 YAML 才发现少了一半。
+ */
+export function previewEntry(name, entry, { setDefault = true, modelContext = {} } = {}) {
   const lines = [`provider.${name}:`]
   for (const [key, value] of Object.entries(entry)) {
     if (key === "api_key") lines.push(`  api_key: ${maskKey(String(value))}（明文保存）`)
     else if (key === "thinking") lines.push("  thinking: { type: enabled }")
-    else lines.push(`  ${key}: ${value}`)
+    else if (key === "models" && Array.isArray(value)) {
+      lines.push("  models:")
+      for (const id of value) lines.push(`    - ${labelWithContext(id, modelContext[id])}`)
+    } else lines.push(`  ${key}: ${value}`)
+  }
+  const contextEntries = Object.entries(modelContext)
+  if (contextEntries.length) {
+    lines.push("provider.model_context:")
+    for (const [id, tokens] of contextEntries) lines.push(`  ${id}: ${tokens}`)
   }
   if (setDefault) lines.push(`provider.default: ${name}`)
   return lines.join("\n")
@@ -293,7 +397,7 @@ export async function runProviderAddForm({
   if (!apiKey && typeof existingKey === "string" && existingKey) {
     probeEntry.api_key = existingKey
   }
-  const model = await askModel({
+  const { models, defaultModel: model, contexts } = await askModel({
     name,
     entry: probeEntry,
     defaultModel: base.preset?.default_model,
@@ -302,12 +406,15 @@ export async function runProviderAddForm({
   })
   if (!model) return { saved: false, reason: "cancelled" }
 
-  const entry = buildEntry({ base, protocol, answers, apiKey, model })
+  const entry = buildEntry({ base, protocol, answers, apiKey, model, models })
+  const preview = previewEntry(name, entry, { modelContext: contexts })
   const confirm = await ask({
     questions: [{
       id: "confirm",
       header: "Confirm",
-      text: `将写入 ~/.kkcode/config.yaml：\n\n${previewEntry(name, entry)}`,
+      text: `将写入 ~/.kkcode/config.yaml：\n\n${preview}${
+        models.length > 1 ? "\n\nmodels 里的每个模型都能用 /model 切换；断网时它也是可选清单。" : ""
+      }`,
       allowCustom: false,
       options: [
         { label: "保存", value: "save", description: "写入配置并切换到该 provider" },
@@ -318,6 +425,9 @@ export async function runProviderAddForm({
   if (clean(confirm.confirm) !== "save") return { saved: false, reason: "cancelled" }
 
   const configPatch = { provider: { default: name, [name]: entry } }
+  // model_context 是 provider 段下的顶层 map（不是条目内字段）。saveProviderConfig
+  // 对它走的是同一套浅合并 —— 新模型的上下文并进去，别的模型的原样留着。
+  if (Object.keys(contexts).length) configPatch.provider.model_context = { ...contexts }
   await saveProviderConfig(configPatch, true)
   return { saved: true, name, configPatch }
 }

@@ -12,6 +12,7 @@ export function buildHelpText({ providers = [], userRootPath = "" } = {}) {
   lines.push(row("/history", "list recent sessions"))
   lines.push(row("/session,/s", "print current session id"))
   lines.push(row("/compact", "summarize conversation to free context"))
+  lines.push(row("/btw <question>", "side question — sees the chat, never changes it"))
   lines.push(row("/undo", "undo last code changes"))
 
   lines.push("")

@@ -3,7 +3,7 @@
  *
  * ## 为什么浮层需要一个不变量
  *
- * 六个「用户主动打开」的浮层此前是六个各自独立的可空字段，谁都能直接赋值。
+ * 「用户主动打开」的浮层此前是一组各自独立的可空字段，谁都能直接赋值。
  * `repl.mjs:1697` 的注释声称 infoPanel「与选择器互斥」，但没有任何代码保证这件事。
  *
  * 而 `frame-builder` 的浮层是**叠加**的：每个非空块都会被拼进帧，`overlayRows`
@@ -16,7 +16,7 @@
  *
  * `pendingPermission` 与 `pendingQuestion` 不是用户打开的，是工具执行**在等回答**。
  * 它们有自己的队列，丢掉一个就意味着一次工具调用永远悬着。所以互斥只管用户
- * 主动打开的那六个：开一个，关掉另外五个。
+ * 主动打开的那几个（`USER_OVERLAY_KINDS`）：开一个，关掉其余全部。
  */
 
 import { createAttachmentStore } from "./attachments.mjs"
@@ -30,7 +30,8 @@ export const USER_OVERLAY_KINDS = Object.freeze([
   "sessionPicker",
   "modelPicker",
   "modePicker",
-  "policyPicker"
+  "policyPicker",
+  "themePicker"
 ])
 
 /**
@@ -51,6 +52,8 @@ export function createReplUiState({ historyLines = [], terminalFeatures = {} } =
     attachments: createAttachmentStore(),
     /** 忙碌时敲下的消息，回合结束后依次发出。见 repl/prompt-outbox.mjs。 */
     queuedPrompts: [],
+    /** 升级为「插话」的消息：下一个 step 边界直接注入当前回合，不等它结束。 */
+    steerPrompts: [],
     permissionQueue: [],
     pendingPermission: null,
     permissionSelected: 0,
@@ -67,6 +70,9 @@ export function createReplUiState({ historyLines = [], terminalFeatures = {} } =
     modelPicker: null,
     policyPicker: null,
     modePicker: null,
+    // 主题选择器：{ items, selected, restore }。restore 是打开那一刻生效的主题 id ——
+    // 上下键是「选中即预览」，Esc 要能把预览过的颜色还原回去。
+    themePicker: null,
     selectedSuggestion: 0,
     suggestionOffset: 0,
     history: [...historyLines],
@@ -147,7 +153,7 @@ export function activeUserOverlay(ui) {
 }
 
 /**
- * 打开一个用户浮层，同时关掉其余五个。
+ * 打开一个用户浮层，同时关掉其余全部。
  *
  * 传 null 等于关掉它（此时不动其它浮层）。
  */

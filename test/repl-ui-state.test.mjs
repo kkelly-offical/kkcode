@@ -40,10 +40,10 @@ test("a fresh state has no overlay open", () => {
   for (const kind of USER_OVERLAY_KINDS) assert.equal(ui[kind], null, `${kind} 应为 null`)
 })
 
-test("opening any overlay closes the other five", () => {
+test("opening any overlay closes all the others", () => {
   for (const kind of USER_OVERLAY_KINDS) {
     const ui = createReplUiState()
-    // 先把六个全打开（模拟拆分前谁都能直接赋值的状态）
+    // 先把全部打开（模拟拆分前谁都能直接赋值的状态）
     for (const other of USER_OVERLAY_KINDS) ui[other] = overlayValue(other)
     openUserOverlay(ui, kind, overlayValue(kind))
     assert.equal(activeUserOverlay(ui), kind)

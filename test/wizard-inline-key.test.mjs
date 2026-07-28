@@ -121,3 +121,30 @@ test("saveProviderConfig 逐字段合并：重跑不会抹掉没动过的字段"
   assert.deepEqual(entry.models, ["k3", "kimi-for-coding"], "models 列表不能被抹掉")
   assert.equal(saved.provider.aliyun.api_key, "sk-other", "其它 provider 不受影响")
 })
+
+test("saveProviderConfig 合并 model_context：新模型的上下文不会抹掉已有的条目", async () => {
+  // 0.7.4 起表单会把发现到的上下文写进 provider.model_context。那是个**顶层 map**
+  // （不是 provider 条目内的字段），整段替换的话，再加一个 provider 就会把之前
+  // 攒下的所有模型上下文清掉 —— 而这件事没有任何报错，只会在下次压缩时算错阈值。
+  const configPath = path.join(tmpHome, "config.yaml")
+  await writeFile(configPath, YAML.stringify({
+    provider: {
+      default: "kimi-code",
+      model_context: { k3: 1048576, "gpt-4o": 128000 },
+      "kimi-code": { type: "openai-compatible" }
+    }
+  }), "utf8")
+
+  await saveProviderConfig({
+    provider: {
+      default: "deepseek",
+      deepseek: { type: "openai-compatible", default_model: "deepseek-chat", models: ["deepseek-chat"] },
+      model_context: { "deepseek-chat": 65536 }
+    }
+  }, true)
+
+  const mc = YAML.parse(await readFile(configPath, "utf8")).provider.model_context
+  assert.equal(mc["deepseek-chat"], 65536, "新模型的上下文要写进去")
+  assert.equal(mc.k3, 1048576, "已有条目不能被抹掉")
+  assert.equal(mc["gpt-4o"], 128000, "已有条目不能被抹掉")
+})
