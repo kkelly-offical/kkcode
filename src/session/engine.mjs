@@ -353,6 +353,9 @@ export async function executeTurn({
           allowQuestion,
           toolContext,
           runSpec,
+          // Ultra 跑得最久，最需要插话这条通道 —— 这里此前漏了它，于是「排队后
+          // 再按一次 Enter」在 longagent 航道上完全无效（消息排进去，没人来取）。
+          steerSource
         })
       : await processTurnLoop({
           prompt,

@@ -20,6 +20,7 @@ const originalCwd = process.cwd()
 process.chdir(tmpProject)
 
 const { EventBus } = await import("../src/core/events.mjs")
+const { EVENT_TYPES } = await import("../src/core/constants.mjs")
 const { registerProvider } = await import("../src/provider/router.mjs")
 const { runHybridLongAgent } = await import("../src/session/longagent-hybrid.mjs")
 const { loadLedger } = await import("../src/session/ultra-ledger.mjs")
@@ -261,6 +262,219 @@ test("多目标：已达成子目标的 stage 下一轮整段跳过", async () =
   const round1Subs = ledger.data.rounds[0].subGoals
   assert.equal(round1Subs.find((sg) => sg.title === "part A").status, "met")
   assert.equal(round1Subs.find((sg) => sg.title === "part B").status, "unmet")
+})
+
+/**
+ * [GOAL_ACHIEVED] —— [GOAL_BLOCKED] 的对称信号（0.8.0）。
+ *
+ * 全部三条用例守的是同一条线：**声明是时机，不是结论**。它买到的只有「现在就
+ * 核验」，达成与否永远由判据说了算。这条线一旦松掉，Ultra 就退回成「模型说完了
+ * 就算完了」——而那正是 completionMarkerSeen 被刻意降权的原因。
+ */
+
+test("[GOAL_ACHIEVED] 提前触发核验：判据真的满足，当轮结束", async () => {
+  const PLAN = {
+    planId: "pca", objective: "ship the artifact",
+    goal: {
+      objective: "ship the artifact", intent: "code",
+      criteria: [{ kind: "file_exists", text: "产物在", spec: { path: "src/claim_a.mjs" } }]
+    },
+    stages: [{ stageId: "s_a", name: "A", tasks: [{ taskId: "t_ca", prompt: "write the artifact", plannedFiles: ["src/claim_a.mjs"], acceptance: ["src/claim_a.mjs"] }] }]
+  }
+
+  const result = await withMocks({
+    providerRules: [
+      { stage: 1, reply: "Findings: ok." },
+      { stage: 2, reply: stagePlanFence(PLAN) },
+      // 关键：既没有 [STAGE 4/4 - COMPLETE] 也没有 [TASK_COMPLETE]。
+      // 能结束 H5 调试循环（上限 20 轮）的只有这条结构化声明。
+      { stage: 4, reply: "产物已写好。\n[GOAL_ACHIEVED: 判据都满足了]" }
+    ],
+    behavior: async () => {
+      const target = path.resolve(process.cwd(), "src/claim_a.mjs")
+      await mkdir(path.dirname(target), { recursive: true })
+      await writeFile(target, "export const ok = true\n", "utf8")
+      return null
+    }
+  }, () => runHybridLongAgent({
+    prompt: "ship the artifact",
+    model: "mock-model", providerType: "mock_goalloop",
+    sessionId: "gl_claim_ok", configState: ultraConfig({ providerName: "mock_goalloop" })
+  }))
+
+  assert.equal(result.status, "completed")
+  assert.equal(
+    result.gateStatus.debugging.status,
+    "goal_achieved_claim",
+    "结束调试循环的必须是声明本身，而不是别的标记"
+  )
+  assert.equal(result.gateStatus.debugging.iterations, 1, "声明的收益就是省掉剩下的 19 轮空转")
+
+  const ledger = await loadLedger("gl_claim_ok", tmpProject)
+  assert.equal(ledger.data.rounds.length, 1, "达成了就不该有第二轮")
+  assert.deepEqual(ledger.data.planDefects, [], "说对了不算缺陷")
+})
+
+test("假声明：判据没过就记进台账、并入下一轮重规划输入，循环继续", async () => {
+  // 判据要 version = 2，第一轮的计划只写得出 version = 1 —— 模型却声明达成。
+  // 这种分歧是 goal 模式里最有价值的信号：模型的世界模型第一次与现实对不上。
+  const PLAN_V1 = {
+    planId: "pcb1", objective: "ship v2",
+    goal: {
+      objective: "ship v2", intent: "code",
+      criteria: [{ kind: "content_match", text: "claim_b 有 version 2", spec: { path: "src/claim_b.mjs", pattern: "export const version = 2" } }]
+    },
+    stages: [{ stageId: "s_b1", name: "B1", tasks: [{ taskId: "t_cb1", prompt: "write MODE_V1 file", plannedFiles: ["src/claim_b.mjs"], acceptance: ["src/claim_b.mjs"] }] }]
+  }
+  const PLAN_V2 = {
+    planId: "pcb2", objective: "ship v2",
+    stages: [{ stageId: "s_b2", name: "B2", tasks: [{ taskId: "t_cb2", prompt: "write MODE_V2 file", plannedFiles: ["src/claim_b.mjs"], acceptance: ["src/claim_b.mjs"] }] }]
+  }
+
+  const replanPrompts = []
+  const result = await withMocks({
+    providerRules: [
+      { match: /重规划原因/, reply: stagePlanFence(PLAN_V2) },
+      { stage: 1, reply: "Findings: ok." },
+      { stage: 2, reply: stagePlanFence(PLAN_V1) },
+      { stage: 4, reply: "全都搞定了。\n[GOAL_ACHIEVED: 我认为判据都满足了]" }
+    ],
+    onRequest: ({ last }) => { if (/重规划原因/.test(last)) replanPrompts.push(last) },
+    behavior: async (payload) => {
+      const version = /MODE_V2/.test(payload?.prompt || "") ? 2 : 1
+      const target = path.resolve(process.cwd(), "src/claim_b.mjs")
+      await mkdir(path.dirname(target), { recursive: true })
+      await writeFile(target, `export const version = ${version}\n`, "utf8")
+      return null
+    }
+  }, () => runHybridLongAgent({
+    prompt: "ship version two of claim_b",
+    model: "mock-model", providerType: "mock_goalloop",
+    sessionId: "gl_claim_false", configState: ultraConfig({ providerName: "mock_goalloop" })
+  }))
+
+  assert.equal(result.status, "completed", "第二轮换路线后才真的达成")
+
+  const ledger = await loadLedger("gl_claim_false", tmpProject)
+  assert.equal(ledger.data.rounds.length, 2, "假声明不得终结循环")
+  const defect = ledger.data.planDefects.find((d) => /模型自称目标已达成/.test(d.message))
+  assert.ok(defect, `分歧必须留痕，实际缺陷: ${JSON.stringify(ledger.data.planDefects)}`)
+  assert.match(defect.message, /version = 2/, "留痕要说清是哪一条判据没满足")
+
+  assert.equal(replanPrompts.length, 1)
+  // 必须落在「重规划原因」那一段里，不能只在台账证据里出现 ——
+  // ledger.snapshotForReplan() 本来就会把 planDefects 一并喂进来，
+  // 对整份 prompt 做匹配的话，就算 replanReason 完全没带上分歧也照样绿。
+  const reasonSection = replanPrompts[0].split("## 重规划原因")[1]?.split("## 你的任务")[0] || ""
+  assert.match(
+    reasonSection,
+    /模型自称目标已达成/,
+    `分歧必须并入重规划原因，让模型直面「你以为完成了，实际没有」。实际那一段：${reasonSection}`
+  )
+})
+
+test("只有声明、判据始终不过：绝不产生 completed", async () => {
+  // 声明喊得再响也抬不动终局状态。这条钉的是 completionMarkerSeen 被降权的
+  // 同一条原则：自我声明不是证据。
+  const PLAN = {
+    planId: "pcc", objective: "impossible",
+    goal: {
+      objective: "impossible", intent: "code",
+      criteria: [{ kind: "file_exists", text: "永远不会被写出来的产物", spec: { path: "src/claim_c_never.mjs" } }]
+    },
+    stages: [{ stageId: "s_c", name: "C", tasks: [{ taskId: "t_cc", prompt: "write something else", plannedFiles: ["src/claim_c_other.mjs"], acceptance: ["src/claim_c_other.mjs"] }] }]
+  }
+
+  const result = await withMocks({
+    providerRules: [
+      { match: /重规划原因/, reply: stagePlanFence(PLAN) },
+      { stage: 1, reply: "Findings: ok." },
+      { stage: 2, reply: stagePlanFence(PLAN) },
+      { stage: 4, reply: "任务完成。\n[GOAL_ACHIEVED: 全部达成]" }
+    ],
+    behavior: async () => {
+      const target = path.resolve(process.cwd(), "src/claim_c_other.mjs")
+      await mkdir(path.dirname(target), { recursive: true })
+      await writeFile(target, "export const other = true\n", "utf8")
+      return null
+    }
+  }, () => runHybridLongAgent({
+    prompt: "do the impossible",
+    model: "mock-model", providerType: "mock_goalloop",
+    sessionId: "gl_claim_never",
+    configState: ultraConfig({ providerName: "mock_goalloop" }, { ultra: { max_rounds: 1 } })
+  }))
+
+  // 先证明声明真的送达了 —— 否则这条用例只是「没达成的任务没达成」，空过。
+  assert.equal(
+    result.gateStatus.debugging.status,
+    "goal_achieved_claim",
+    "声明必须真的被识别，这条用例才有意义"
+  )
+  assert.notEqual(result.status, "completed", "声明不得产生 completed")
+  assert.notEqual(result.goalVerification.status, "met")
+
+  const ledger = await loadLedger("gl_claim_never", tmpProject)
+  assert.ok(
+    ledger.data.planDefects.some((d) => /模型自称目标已达成/.test(d.message)),
+    "分歧必须留痕"
+  )
+})
+
+test("插话送得到 Ultra：executeTurn → runLongAgent → H5 调试循环", async () => {
+  // longagent 分支此前**根本没往下传 steerSource** —— 用户在 Ultra 里排队再按
+  // 一次 Enter，消息进了 ui.steerPrompts 就再没人来取。而 Ultra 是跑得最久、
+  // 最需要中途纠正的航道。这里走真实的 executeTurn，把 engine 的转发和 hybrid
+  // 的接收一起钉住。
+  const { executeTurn } = await import("../src/session/engine.mjs")
+  const PLAN = {
+    planId: "pst", objective: "steerable run",
+    goal: {
+      objective: "steerable run", intent: "code",
+      criteria: [{ kind: "file_exists", text: "产物在", spec: { path: "src/steer_target.mjs" } }]
+    },
+    stages: [{ stageId: "s_st", name: "S", tasks: [{ taskId: "t_st", prompt: "write the target", plannedFiles: ["src/steer_target.mjs"], acceptance: ["src/steer_target.mjs"] }] }]
+  }
+
+  // 取走即负责送达：只交出一次，否则每个 step 边界都会再注入一遍。
+  let pending = ["顺便看一眼 legacy 目录"]
+  const injected = []
+  const unsubscribe = EventBus.subscribe((event) => {
+    if (event.type === EVENT_TYPES.TURN_STEER_INJECTED && event.sessionId === "gl_steer") {
+      injected.push(event.payload?.text)
+    }
+  })
+
+  try {
+    const result = await withMocks({
+      providerRules: [
+        { stage: 1, reply: "Findings: ok." },
+        { stage: 2, reply: stagePlanFence(PLAN) },
+        { stage: 4, reply: "checks pass\n[STAGE 4/4: DEBUGGING - COMPLETE]\n[TASK_COMPLETE]" }
+      ],
+      behavior: async () => {
+        const target = path.resolve(process.cwd(), "src/steer_target.mjs")
+        await mkdir(path.dirname(target), { recursive: true })
+        await writeFile(target, "export const target = true\n", "utf8")
+        return null
+      }
+    }, () => executeTurn({
+      prompt: "build the steerable target",
+      mode: "longagent",
+      model: "mock-model", providerType: "mock_goalloop",
+      sessionId: "gl_steer",
+      // executeTurn 比 runHybridLongAgent 多走一段计价/预算收尾，那里读的是
+      // configState.source（ultraConfig 只造 .config）。空来源 = 用内置费率表。
+      configState: { ...ultraConfig({ providerName: "mock_goalloop" }), source: {} },
+      steerSource: () => pending.splice(0)
+    }))
+
+    assert.equal(result.longagent?.status ?? result.status, "completed")
+    assert.deepEqual(injected, ["顺便看一眼 legacy 目录"], "插话必须恰好注入一次")
+    assert.deepEqual(pending, [], "取走即清空 —— 留着副本会被反复注入")
+  } finally {
+    unsubscribe()
+  }
 })
 
 test("用户指引进入下一轮的上下文", async () => {

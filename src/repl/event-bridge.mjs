@@ -79,6 +79,24 @@ function firstLineOf(text) {
 }
 
 /**
+ * 后台任务完成时送回主代理的那条消息。
+ *
+ * 写成给模型看的一段话而不是一个 JSON：它会作为 user 消息进会话，模型读到的
+ * 是「有件事完成了，去看看，然后接着干原来的活」。最后一句必须有 ——
+ * 没有它，模型会把这条注入当成新任务，把手上的工作丢掉。
+ */
+export function describeBackgroundWake(payload = {}) {
+  const description = String(payload.description || payload.id || "后台任务").trim()
+  const status = String(payload.status || "unknown")
+  const preview = String(payload.resultPreview || "").trim()
+  return [
+    `[后台任务完成] ${description}（状态 ${status}）`,
+    `结果摘要：${preview || "（无摘要，用 background_output 查看完整结果）"}`,
+    "请检查结果并继续先前的工作。"
+  ].join("\n")
+}
+
+/**
  * 这一轮是用户自己按 Esc / Ctrl+C 停的，还是真出错了。
  *
  * 中断不该弹通知：人就在键盘前，他刚按的键。按键处理器会先把 `ui.paused` 立起来，
@@ -142,6 +160,13 @@ export function subscribeSessionEvents({
   finalizeTextStream,
   // 不传就完全不通知 —— 通知是可选通道，缺席时这里的行为和 0.7.2 之前一模一样
   notifier = null,
+  /**
+   * 后台任务完成时把结果送回主代理（`outbox.pushSystemPrompt`）。
+   *
+   * 同样是可选的：不传就只上屏、只提示，不会自动开新回合。自动提交是有副作用的
+   * 动作，不能因为多了一个事件类型就在所有宿主（行模式、测试）里默认发生。
+   */
+  pushSystemPrompt = null,
   /**
    * 空闲标题里的项目名。
    *
@@ -268,6 +293,32 @@ export function subscribeSessionEvents({
         showToast("插话已进入当前回合", { topic: "outbox", tone: "success" })
         requestRender()
         break
+
+      case EVENT_TYPES.TASK_SETTLED: {
+        // 后台任务在独立子进程里跑完了。三件事：上屏留痕、提示、把人叫回来。
+        const label = String(payload?.description || payload?.id || "后台任务")
+        const status = String(payload?.status || "unknown")
+        const ok = status === "completed"
+        appendLog(`${ok ? "✓" : "✗"} 后台任务 ${status} · ${label}`, { kind: "system" })
+        showToast(`后台任务${ok ? "完成" : status} · ${label}`, {
+          topic: "background-task",
+          tone: ok ? "success" : "warning"
+        })
+        const fired = notifier?.alert("task-done", { summary: label, status })
+        if (fired?.title) {
+          // alert() 已经把通知文案写进了标题，而写入器并不知道 —— 它以为屏幕上
+          // 还是自己上次写的那个串，于是内容去重会挡掉后面所有同值写入。先登记
+          // 一个「已经不是我写的了」的值，再按当前状态决定要不要抢回来：
+          // 回合还在跑就强制写回忙碌指示（否则标题会一直停在这条后台通知上），
+          // 空闲时则让通知留着 —— 那正是通知的意义。
+          title.adopt(describeReplTitle({ cwd }))
+          if (ui.activeTurnId) syncTitle({ force: true })
+        }
+        // 送回主代理。回合在跑就插话，空闲就排队并唤醒 —— 时机由 outbox 判定。
+        pushSystemPrompt?.(describeBackgroundWake(payload || {}))
+        requestRender()
+        break
+      }
 
       case EVENT_TYPES.SESSION_COMPACTING:
         ui.currentActivity = { type: "compacting" }

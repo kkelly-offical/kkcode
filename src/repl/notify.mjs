@@ -110,6 +110,10 @@ function formatDuration(ms) {
 
 const KIND_LABELS = {
   "turn-done": "done",
+  // 后台任务的完成。刻意与 turn-done 分开：它不受 min_duration_ms 约束 ——
+  // 那个阈值量的是「这一轮跑了多久，值不值得打扰」，而后台任务本来就是
+  // 用户放手去做别的事之后完成的，多短都该报。
+  "task-done": "background task",
   permission: "needs permission",
   question: "waiting on you",
   error: "error"
@@ -117,6 +121,10 @@ const KIND_LABELS = {
 
 function describeBody(kind, detail) {
   if (kind === "turn-done") return detail.summary || formatDuration(detail.durationMs)
+  if (kind === "task-done") {
+    const summary = detail.summary || detail.description || "background task"
+    return detail.status ? `${summary} (${detail.status})` : summary
+  }
   if (kind === "permission") return detail.tool ? `${detail.tool} needs approval` : "needs approval"
   if (kind === "question") return detail.question || detail.summary || "waiting for your answer"
   if (kind === "error") return detail.message || "something went wrong"

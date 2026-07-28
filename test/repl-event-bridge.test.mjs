@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import {
   subscribeSessionEvents,
   describeReplTitle,
+  describeBackgroundWake,
   isUserInterruptedTurn
 } from "../src/repl/event-bridge.mjs"
 import { createReplUiState } from "../src/repl/ui-state.mjs"
@@ -34,7 +35,13 @@ function fakeNotifier({ alertResult = { title: true, bell: false, desktop: false
 
 const START_TIME = 1_700_000_000_000
 
-function harness({ autoStartTurn = "turn_1", notifier = null, cwd = "/home/me/demo-project" } = {}) {
+function harness({
+  autoStartTurn = "turn_1",
+  notifier = null,
+  cwd = "/home/me/demo-project",
+  // null = 宿主没接唤醒通道（行模式、测试）。传数组形态的收集器时才有回送。
+  pushSystemPrompt = null
+} = {}) {
   const calls = []
   let handler = null
   const clock = { now: START_TIME }
@@ -61,6 +68,7 @@ function harness({ autoStartTurn = "turn_1", notifier = null, cwd = "/home/me/de
     applyThinkingTransition: (transition) => { ui.thinking = transition.state },
     finalizeThinking: () => calls.push("finalizeThinking"),
     finalizeTextStream: (status) => calls.push(`finalizeStream(${status ?? "default"})`),
+    pushSystemPrompt,
     now: () => clock.now
   })
   const advance = (ms) => { clock.now += ms }
@@ -416,6 +424,100 @@ test("the idle title lands even inside the throttle window", () => {
   emit(EVENT_TYPES.TOOL_START, { tool: "bash" })   // 与回合开始同一毫秒
   emit(EVENT_TYPES.TURN_FINISH, { reply: "done" })
   assert.equal(notifier.titles().at(-1), "kkcode · demo-project")
+})
+
+/**
+ * 后台任务完成（0.8.0）。三条通道各干各的：上屏留痕、瞬时提示、把人叫回来，
+ * 外加把结果送回主代理。
+ */
+
+test("a settled background task lands on screen, toasts, and notifies", () => {
+  const notifier = fakeNotifier()
+  const { emit, calls } = harness({ notifier })
+  emit(EVENT_TYPES.TASK_SETTLED, {
+    id: "bg_1",
+    status: "completed",
+    description: "重建符号索引",
+    resultPreview: "索引了 1204 个文件"
+  })
+  assert.ok(calls.some((c) => c.startsWith("appendLog")), "必须留在对话记录里 —— toast 会消失")
+  assert.ok(calls.some((c) => c.includes("toast[background-task]")), `实际: ${calls.join(",")}`)
+  const alert = notifier.alerts().at(-1)
+  assert.equal(alert.alert, "task-done")
+  assert.equal(alert.detail.status, "completed")
+})
+
+test("a failed background task is announced as a failure, not silently", () => {
+  const notifier = fakeNotifier()
+  const { emit, calls } = harness({ notifier })
+  emit(EVENT_TYPES.TASK_SETTLED, { id: "bg_2", status: "error", description: "跑测试" })
+  const toast = calls.find((c) => c.includes("toast[background-task]"))
+  assert.ok(toast, "失败也要提示")
+  assert.equal(notifier.alerts().at(-1).detail.status, "error")
+})
+
+test("a settled background task is not filtered by turn scoping", () => {
+  // 归属判定挡的是「别的会话的回合事件」。后台任务的 sessionId 是**父会话**，
+  // 而且它落地时前台常常没有活跃回合 —— 把它当回合事件过滤，等于永远收不到。
+  const { emit, calls } = harness({ autoStartTurn: null })
+  emit(
+    EVENT_TYPES.TASK_SETTLED,
+    { id: "bg_3", status: "completed", description: "后台活" },
+    { sessionId: "ses_other", turnId: null }
+  )
+  assert.ok(calls.some((c) => c.startsWith("appendLog")), "没有活跃回合时也必须上屏")
+})
+
+test("the settled task is handed back to the main agent as a system prompt", () => {
+  const pushed = []
+  const { emit } = harness({ pushSystemPrompt: (text) => pushed.push(text) })
+  emit(EVENT_TYPES.TASK_SETTLED, {
+    id: "bg_4",
+    status: "completed",
+    description: "重建符号索引",
+    resultPreview: "索引了 1204 个文件"
+  })
+  assert.equal(pushed.length, 1)
+  assert.match(pushed[0], /重建符号索引/)
+  assert.match(pushed[0], /completed/)
+  assert.match(pushed[0], /索引了 1204 个文件/)
+  // 少了这句，模型会把回送当成新任务，把手上的工作丢掉
+  assert.match(pushed[0], /继续先前的工作/)
+})
+
+test("without a wake channel a settled task still shows, and nothing explodes", () => {
+  // 缺省宿主（行模式、测试）不接 pushSystemPrompt —— 自动开新回合是副作用，
+  // 不能因为多了一个事件类型就在所有宿主里默认发生。
+  const { emit, calls } = harness()
+  emit(EVENT_TYPES.TASK_SETTLED, { id: "bg_5", status: "completed", description: "后台活" })
+  assert.ok(calls.some((c) => c.startsWith("appendLog")))
+})
+
+test("the wake text degrades honestly when there is no result preview", () => {
+  const text = describeBackgroundWake({ id: "bg_6", status: "interrupted" })
+  assert.match(text, /bg_6/, "没有描述时至少要能定位到是哪个任务")
+  assert.match(text, /interrupted/)
+  assert.doesNotMatch(text, /undefined|null/)
+  assert.match(text, /background_output/, "拿不到摘要就得告诉模型去哪儿取全文")
+})
+
+test("a settled background task hands the busy title back mid-turn", () => {
+  // alert() 把通知文案写进了标题。回合还在跑，标题必须抢回忙碌指示 ——
+  // 否则它会一直停在这条后台通知上，直到回合结束都不再更新。
+  const notifier = fakeNotifier()
+  const { emit } = harness({ notifier })
+  emit(EVENT_TYPES.TURN_STEP_START, { step: 1 })
+  emit(EVENT_TYPES.TASK_SETTLED, { id: "bg_7", status: "completed", description: "后台活" })
+  assert.equal(notifier.log.at(-1).kind, "title", "通知之后必须再写一次标题")
+  assert.equal(notifier.titles().at(-1), "● kkcode · thinking")
+})
+
+test("a settled background task keeps its notice in the title when idle", () => {
+  // 空闲时反过来：通知文案要留住，别被项目名盖掉 —— 用户切回窗口就是来看它的。
+  const notifier = fakeNotifier()
+  const { emit } = harness({ notifier, autoStartTurn: null })
+  emit(EVENT_TYPES.TASK_SETTLED, { id: "bg_8", status: "completed", description: "后台活" })
+  assert.equal(notifier.log.at(-1).kind, "alert", "通知之后不该再有标题写入")
 })
 
 test("the bridge no longer maintains a state nobody reads", async () => {

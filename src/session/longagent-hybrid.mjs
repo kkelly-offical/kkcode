@@ -77,6 +77,45 @@ export function resolveHybridCompletionStatus({ completionMarkerSeen, usabilityG
 }
 
 /**
+ * `[GOAL_ACHIEVED: 简述]` —— [GOAL_BLOCKED] 的对称信号。
+ *
+ * 它**只是一个时机信号**：模型认为判据已满足，希望现在就核验，从而省掉本轮
+ * 剩下的无效执行。它不是结论 —— 「达成」永远只能由 verifyGoal 给出。
+ * 这与 [TASK_COMPLETE] 的处理原则是同一条（见 ultra-status.mjs 文件头）：
+ * 自我声明不是证据。
+ */
+const GOAL_ACHIEVED_RE = /\[GOAL_ACHIEVED:\s*([\s\S]*?)\]/i
+
+export function parseGoalAchievedClaim(text) {
+  const match = String(text || "").match(GOAL_ACHIEVED_RE)
+  return match ? match[1].trim() : ""
+}
+
+/** 告知模型这两个信号的存在与后果。放在同一段，因为它们是一对。 */
+export const GOAL_SIGNAL_INSTRUCTIONS = [
+  "## 完成信号",
+  "当你认为目标的全部验收判据都已满足时，输出 [GOAL_ACHIEVED: 一句话说明]。",
+  "它**立刻触发判据核验**，而不是直接结束任务 —— 核验不通过的话，具体是哪一条没满足会原样回传给你，你需要继续做。",
+  "所以不要拿它提前收工：与核验结果不符的声明会被记入台账，并出现在下一轮的输入里。",
+  "如果你判断目标在当前条件下不可达，输出 [GOAL_BLOCKED: 原因] 并说明需要用户做什么。"
+].join("\n")
+
+/**
+ * 「模型说达成，判据说没有」——这是 goal 模式里最有价值的一条信号：
+ * 模型的世界模型与现实第一次公开对不上。它只被记录与转达，永不参与判定。
+ */
+export function describeGoalClaimDivergence(claim, verification) {
+  const failing = verification
+    ? [...verification.results, ...verification.subGoals.flatMap((sg) => sg.results)]
+        .filter((r) => r.status !== "pass")
+    : []
+  const detail = failing.length
+    ? failing.map((r) => `判据 ${r.id}（${r.text}）未满足：${r.reason || r.status}`).join("；")
+    : `核验状态为 ${verification?.status || "unknown"}`
+  return `模型自称目标已达成（${String(claim || "").slice(0, 120)}），但核验不通过 —— ${detail}`.slice(0, 400)
+}
+
+/**
  * Ultra 的入口。真正的流水线在 runHybridPipeline 里，这一层只管生命周期收尾。
  *
  * 0.4.x 没有这一层，代价是：Ctrl+C 抛出的 "provider stream cancelled"、
@@ -123,6 +162,14 @@ async function runHybridPipeline({
   maxIterations = 0, signal = null, output = null,
   allowQuestion = true, toolContext = {}, runSpec: _runSpec = null,
   guidance = "",
+  /**
+   * 插话来源（() => string[]）。只接到 H5 调试循环上 —— 它是 Ultra 里唯一会
+   * 反复迭代、也最占墙钟的阶段，用户的中途纠正落在那里才谈得上「立刻生效」。
+   * 别的阶段不取：单轮的 H1/H2 取了也只是把消息提前一个 step 送达，
+   * 而多点取用会让「这条插话进了哪一次请求」变得说不清。排着的不会丢，
+   * 下一次进 H5 时一并送到。
+   */
+  steerSource = null,
   // 测试缝。生产不传，全部落到真实实现；测试据此控制门禁结果与用户交互，
   // 其余（模型回复、后台任务）走 provider 与 BackgroundManager 的既有 mock 通道。
   deps = {}
@@ -195,6 +242,10 @@ async function runHybridPipeline({
   let metSubGoalStageIds = new Set()
   let taskProgress = {}, fileChanges = []
   let completionMarkerSeen = false
+  // 本轮里模型输出的 [GOAL_ACHIEVED] 声明（每轮重置），以及它与核验结果的分歧。
+  // 分歧刻意**不**跟着轮次重置：它产生于轮末（或重规划时），要活到下一轮的
+  // 重规划原因被拼出来的那一刻，由那里消费并清空。
+  let goalAchievedClaim = "", goalClaimDivergence = ""
   let gitBranch = null, gitBaseBranch = null, gitActive = false
   const aggregateUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   const toolEvents = []
@@ -757,7 +808,7 @@ async function runHybridPipeline({
       "只为「尚未达成的判据」输出新的 stage_plan_json（schema 同上一次）。可以拆小、换路线、缩范围。",
       "禁止：重复上一轮已经试过且失败的同一条路线（证据里列出来了）。",
       "禁止：把已完成文件重新列进 plannedFiles（会被脚手架覆盖成桩）。",
-      "如果你判断目标在当前条件下不可达，输出 [GOAL_BLOCKED: 原因] 并说明需要用户做什么。"
+      GOAL_SIGNAL_INSTRUCTIONS
     ].filter(Boolean).join("\n")
 
     const out = await processTurnLoop({
@@ -774,6 +825,11 @@ async function runHybridPipeline({
       await ledger?.appendPlanDefect({ stageId: "", message: `GOAL_BLOCKED: ${blockedMatch[1].slice(0, 200)}`, round })
       return { ok: false, goalBlocked: blockedMatch[1].trim() }
     }
+
+    // 「不需要新计划，已经达成了」。交回外层立刻核验 —— 这里不做任何判定，
+    // 也不返回 ok:true：没有新计划就是没有新计划。
+    const achievedClaim = parseGoalAchievedClaim(out.reply || "")
+    if (achievedClaim) return { ok: false, goalAchieved: achievedClaim }
 
     const parsed = parseBlueprintOutput(out.reply || "", prompt, planDefaults)
     if (parsed.parseErrors.length || !parsed.stagePlan?.stages?.length) {
@@ -795,6 +851,43 @@ async function runHybridPipeline({
   }
 
   /**
+   * 模型声明达成 → 立刻核验一次。
+   *
+   * 返回值只回答「判据过了没有」，声明本身从不进入这个判断 —— 声明的全部作用
+   * 是把核验**提前**到这里，省掉本轮剩下的无效执行。不一致时把分歧记进台账
+   * 并留给下一轮的重规划原因。
+   */
+  async function verifyGoalOnClaim(round, claim) {
+    if (!goal) return { met: false }
+    try {
+      goalVerification = await verifyGoal({
+        goal, cwd, config: configState.config,
+        gateResult: lastGateResult, manualConfirmed,
+        deps: io.stat ? { stat: io.stat } : {}
+      })
+    } catch (verifyErr) {
+      gateStatus.goalVerification = { status: "error", reason: String(verifyErr?.message || verifyErr).slice(0, 200) }
+      return { met: false }
+    }
+    await syncState({ lastMessage: `round ${round} goal (claimed): ${goalVerification.status}` })
+    if (goalVerification.status === GOAL_MET) return { met: true }
+    await recordGoalClaimDivergence(round, claim)
+    return { met: false }
+  }
+
+  /** 分歧的唯一记账口 —— 台账、事件、下一轮的重规划原因都从这里出。 */
+  async function recordGoalClaimDivergence(round, claim) {
+    const divergence = describeGoalClaimDivergence(claim, goalVerification)
+    goalClaimDivergence = divergence
+    await ledger?.appendPlanDefect({ stageId: "", message: divergence, round }).catch(() => {})
+    await EventBus.emit({
+      type: EVENT_TYPES.LONGAGENT_ALERT, sessionId,
+      payload: { kind: "goal_claim_divergence", message: divergence, round }
+    }).catch(() => {})
+    return divergence
+  }
+
+  /**
    * 一轮交付。**每轮重置什么，全部写在函数开头这一处** —— 散落的重置点
    * 漏一个就是「第二轮一开始就判定卡住」这类端到端也测不出的静默 bug。
    * @returns {{earlyExit?: "replan"|"abort", snapshot, progress}}
@@ -811,6 +904,7 @@ async function runHybridPipeline({
     usabilityGatesPassed = false
     lastGateResult = null
     goalVerification = null
+    goalAchievedClaim = ""
     // 进展判定只看**本轮新增**的变更。fileChanges 是跨轮累计的，而且 seeded
     // 的已完成任务每轮会把同一批变更重报一遍 —— 拿累计值去 diff，每一轮都
     // 显得「文件有新变更」，停滞检测永远不触发（实测 267 轮不收敛）。
@@ -1335,11 +1429,16 @@ async function runHybridPipeline({
     await syncState({ lastMessage: "H5: debugging agent verifying implementation" })
 
     const debugModel = getModelForStage("debugging")
-    const debugPrompt = buildStageWrapper(ULTRA_STAGES.DEBUGGING, {
+    const debugPromptBase = buildStageWrapper(ULTRA_STAGES.DEBUGGING, {
       preview: previewFindings.slice(0, 2000),
       blueprint: architectureText.slice(0, 3000),
       coding: priorContext.slice(0, 4000)
     }, prompt)
+    // goal 模式才谈得上「判据核验」。关掉 goal_mode 时没有判据可核，
+    // 教模型输出一个不会被验证的信号只会让它更愿意提前收工。
+    const debugPrompt = goalMode && goal
+      ? `${debugPromptBase}\n\n${GOAL_SIGNAL_INSTRUCTIONS}`
+      : debugPromptBase
 
     let debugIter = 0
     let debugDone = false
@@ -1363,7 +1462,8 @@ async function runHybridPipeline({
       const debugOut = await processTurnLoop({
         prompt: effectiveDebugPrompt, mode: "agent", agent: getAgent("debugging-agent"),
         model: debugModel.model, providerType: debugModel.providerType,
-        sessionId, configState, baseUrl, apiKeyEnv, signal, output, allowQuestion, toolContext
+        sessionId, configState, baseUrl, apiKeyEnv, signal, output, allowQuestion, toolContext,
+        steerSource
       })
       accumulateUsage(debugOut)
       finalReply = debugOut.reply || ""
@@ -1452,6 +1552,26 @@ async function runHybridPipeline({
       }
 
       if (/\[TASK_COMPLETE\]/i.test(finalReply)) { completionMarkerSeen = true; debugDone = true }
+
+      // [GOAL_ACHIEVED]：结束调试迭代，直接去核验。刻意**不**碰
+      // completionMarkerSeen —— 那一位喂给 resolveUltraStatus，让声明沾上它
+      // 就等于让自我声明参与终局裁定。这里它只买到一个时机。
+      const achievedClaim = goalMode && goal ? parseGoalAchievedClaim(finalReply) : ""
+      if (achievedClaim) {
+        goalAchievedClaim = achievedClaim
+        debugDone = true
+        if (!gateStatus.debugging) {
+          gateStatus.debugging = { status: "goal_achieved_claim", iterations: debugIter }
+        }
+        await EventBus.emit({
+          type: EVENT_TYPES.LONGAGENT_ALERT, sessionId,
+          payload: {
+            kind: "goal_achieved_claim",
+            message: `模型声明目标已达成，提前进入判据核验：${achievedClaim.slice(0, 120)}`,
+            round
+          }
+        })
+      }
       // checkpoint_interval：0.4.x 有 defaults 有 schema 校验但零读取点。
       // stage 边界之外每 N 次迭代也存一次，长调试阶段中断后不必从头再来。
       const checkpointInterval = Number(longagentConfig.checkpoint_interval || 0)
@@ -1705,6 +1825,12 @@ async function runHybridPipeline({
     }
   }
 
+  // 声明与核验的对照。放在核验**之后**：判据是唯一标准，声明只是这一轮里
+  // 值得记录的一件事。达成时不记 —— 说对了不算缺陷。
+  if (goalAchievedClaim && goalVerification?.status !== GOAL_MET) {
+    await recordGoalClaimDivergence(round, goalAchievedClaim)
+  }
+
   // 本轮快照 + 与上一轮 diff —— 停滞判定的唯一依据
   const snapshot = snapshotRound({
     verification: goalVerification,
@@ -1775,6 +1901,12 @@ async function runHybridPipeline({
             payload: { kind: "goal_blocked", message: `模型判断目标不可达：${revised.goalBlocked.slice(0, 200)}` }
           })
           break
+        }
+        if (revised.goalAchieved) {
+          // 模型说「不用改计划了，已经达成」。立刻核验 —— 达成的话省下的
+          // 是一整轮交付。break 的条件与下面那处完全一致：声明不参与判定。
+          const verdict = await verifyGoalOnClaim(round, revised.goalAchieved)
+          if (verdict.met && usabilityGatesPassed) break
         }
         // 修不出新计划时沿用旧计划再试 —— 瞬时错误场景下重试本身仍有意义
       }
@@ -1887,9 +2019,14 @@ async function runHybridPipeline({
         }
       }
 
+      // 分歧摆在最前面：让模型直面「你以为完成了，实际没有」比再列一遍失败
+      // 判据更有信息量。取走即清空 —— 它只属于产生它的那一轮。
+      const claimNote = goalClaimDivergence
+      goalClaimDivergence = ""
       replanReason = outcome.earlyExit === "replan"
-        ? roundReplanRequest
+        ? [claimNote, roundReplanRequest].filter(Boolean).join("; ").slice(0, 400)
         : [
+            ...(claimNote ? [claimNote] : []),
             ...(goalVerification ? [...goalVerification.results, ...goalVerification.subGoals.flatMap((sg) => sg.results)]
               .filter((r) => r.status === "fail").map((r) => `判据 ${r.id} 未过: ${r.reason}`) : []),
             ...(usabilityGatesPassed ? [] : [`门禁未过: ${summarizeGateFailures(lastGateFailures)}`]),

@@ -25,7 +25,15 @@ export function createPromptOutbox({
   ui,
   showToast,
   requestRender,
-  maxQueued = DEFAULT_MAX_QUEUED
+  maxQueued = DEFAULT_MAX_QUEUED,
+  /**
+   * 空闲时被 `pushSystemPrompt` 排进队列后调一次，请求宿主把队列排干。
+   *
+   * 不传就完全没有唤醒行为 —— 队列照排，等用户下一次按 Enter 时跟着一起发出去。
+   * 行模式与测试都走这条缺省路径，这是刻意的：唤醒会**自动开一个新回合**，
+   * 那种副作用不能因为引入一个新事件类型就默认发生。
+   */
+  wakeIdle = null
 }) {
   if (!Array.isArray(ui.queuedPrompts)) ui.queuedPrompts = []
   if (!Array.isArray(ui.steerPrompts)) ui.steerPrompts = []
@@ -54,6 +62,27 @@ export function createPromptOutbox({
   }
 
   /**
+   * 回合已经结束、却还留在 steer 队列里的条目 → 转入待发队列。
+   *
+   * 这种滞留是真实时序（0.8.0 e2e 抓到）：后台任务在**最后一个 step 之后**才
+   * 落地时，`pushSystemPrompt` 看到 busy 走了 steer 通道，但那个回合再也没有
+   * step 边界可注入 —— 不回收的话，结果要等用户下一次随便说点什么才捎带送到，
+   * 「自动唤醒」在这个窗口里静默失效。
+   *
+   * 队列满时余下的留在 steer 里（下一个回合的 step 1 仍会取走），不丢。
+   */
+  function reclaimStranded() {
+    if (ui.busy || !ui.steerPrompts.length) return 0
+    let moved = 0
+    while (ui.steerPrompts.length && ui.queuedPrompts.length < maxQueued) {
+      ui.queuedPrompts.push(ui.steerPrompts.shift())
+      moved += 1
+    }
+    if (moved) requestRender()
+    return moved
+  }
+
+  /**
    * 把队列排干。
    *
    * 用循环而不是递归：队列上限虽然只有 8，但「提交里再触发提交」这种形状在这个
@@ -62,10 +91,16 @@ export function createPromptOutbox({
    *
    * 每轮**重新读** `ui.queuedPrompts`：排队期间用户可以继续加，也可以中断后清空 ——
    * 一次性拷出快照再遍历的话，中断之后剩下的还是会被发出去。
+   *
+   * 每轮开头先回收滞留的 steer：上一条 submit 跑掉的回合期间若有后台任务落地
+   * 在末 step 之后，这里接着发 —— 两个排干入口（用户 Enter 与空闲唤醒）都经过
+   * 本函数，回收放在别处就总有一个入口漏掉。
    */
   async function drain(submitOne) {
-    while (ui.queuedPrompts.length) {
+    while (true) {
+      if (!ui.queuedPrompts.length) reclaimStranded()
       const next = ui.queuedPrompts.shift()
+      if (next === undefined) break
       requestRender()
       await submitOne(next)
     }
@@ -102,6 +137,43 @@ export function createPromptOutbox({
     return taken
   }
 
+  /**
+   * 非用户来源的注入：后台任务跑完了，把结果送回主代理。
+   *
+   * 与 `queue()` 走的是同两条通道，但入口分开是因为**来源不同就该有不同的时机**：
+   * - 回合进行中 → 直接进 steer，下一个 step 边界注入。用户排队的消息要等回合结束
+   *   （那是他自己的选择），而后台结果等不得 —— 主代理正在做的事很可能就依赖它。
+   * - 空闲 → 进队列并请求排干，由 `wakeIdle` 真正开一个新回合。
+   *
+   * 上限沿用 `maxQueued`：队列排满意味着用户正在跟一个跑飞的回合较劲，那时再往里
+   * 塞系统消息只会更糟。丢掉的不是结果本身 —— 它在 checkpoint 里，`/background`
+   * 随时能查回来。
+   *
+   * @returns {"steer"|"queued"|null} 走了哪条通道；null = 没排进去
+   */
+  function pushSystemPrompt(text) {
+    const value = String(text || "").trim()
+    if (!value) return null
+    if (ui.busy) {
+      ui.steerPrompts.push(value)
+      showToast("后台任务完成 · 结果将插入当前回合", { topic: "outbox", tone: "success" })
+      requestRender()
+      return "steer"
+    }
+    if (ui.queuedPrompts.length >= maxQueued) {
+      showToast(`待发队列已满（${maxQueued}）· 后台结果未送达，用 /background 查看`, {
+        topic: "outbox",
+        tone: "warning"
+      })
+      requestRender()
+      return null
+    }
+    ui.queuedPrompts.push(value)
+    requestRender()
+    wakeIdle?.()
+    return "queued"
+  }
+
   /** 中断时调用。被丢掉的条数要说出来，否则用户不知道自己排的东西没了。 */
   function clear() {
     const dropped = ui.queuedPrompts.length + ui.steerPrompts.length
@@ -118,6 +190,8 @@ export function createPromptOutbox({
     drain,
     clear,
     promoteLastToSteer,
+    pushSystemPrompt,
+    reclaimStranded,
     takeSteer,
     size: () => ui.queuedPrompts.length,
     steerSize: () => ui.steerPrompts.length,

@@ -6,6 +6,8 @@ import { join } from "node:path"
 import http from "node:http"
 import { execFileSync } from "node:child_process"
 import { BackgroundManager } from "../src/orchestration/background-manager.mjs"
+import { EventBus } from "../src/core/events.mjs"
+import { EVENT_TYPES } from "../src/core/constants.mjs"
 import { appendAssistantMessage, appendUserMessage, flushNow, touchSession } from "../src/session/store.mjs"
 import { readJson } from "../src/storage/json-store.mjs"
 import { sessionDataPath, sessionIndexPath } from "../src/storage/paths.mjs"
@@ -197,6 +199,67 @@ test("background worker kill -> interrupted -> retry -> completed", async () => 
   const completed = await waitFor(task.id, (it) => it.status === "completed", { config, timeoutMs: 30000 })
   assert.equal(completed.status, "completed")
   assert.equal(completed.result?.reply, "background completed")
+})
+
+// 0.8.0：跨进程的终态广播。这条用例存在的理由是父子进程的观察差：
+// worker 是在**它自己的进程**里把 checkpoint 写成 completed 的，父进程的
+// patchTask 从没见过那次跨越 —— 换句话说，父进程唯一可能知道任务完成的
+// 途径就是 child 的 exit 回调加一次回读复核。而 exit 只说明「进程没了」，
+// 拿退出码当终态会把崩溃报成完成，所以复核不能省。
+//
+// 单进程的 inline 任务测不到这条：那里 patchTask 自己就看见了跨越。
+test("worker 在自己进程里落地：父进程靠退出后复核广播 TASK_SETTLED，且只广播一次", async () => {
+  const config = {
+    background: { mode: "worker_process", max_parallel: 1, worker_timeout_ms: 30000 }
+  }
+  // 默认 mock 会在第一次请求上睡 5 秒；这条用例只关心落地通道。
+  mockResponder = () => ({
+    id: "chatcmpl-settled",
+    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "background completed" } }],
+    usage: { prompt_tokens: 1, completion_tokens: 1 }
+  })
+
+  const settled = []
+  const unsubscribe = EventBus.subscribe((event) => {
+    if (event.type === EVENT_TYPES.TASK_SETTLED) settled.push(event)
+  })
+
+  try {
+    const task = await BackgroundManager.launchDelegateTask({
+      description: "e2e settled broadcast",
+      payload: {
+        workerType: "delegate_task",
+        cwd: project,
+        prompt: "run once",
+        parentSessionId: "ses_parent_settled",
+        subSessionId: `ses_sub_settled_${Date.now()}`,
+        providerType: "local",
+        model: "test-model"
+      },
+      config
+    })
+
+    await waitFor(task.id, (it) => it.status === "completed", { config, timeoutMs: 30000 })
+
+    // checkpoint 先落地，exit 回调随后到 —— 等的是广播，不是状态。
+    const deadline = Date.now() + 15000
+    while (settled.length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    assert.equal(settled.length, 1, "worker 落地必须广播一次")
+    const payload = settled[0].payload
+    assert.equal(payload.id, task.id)
+    // "exited" 是进程语义，绝不能作为任务状态漏出去
+    assert.equal(payload.status, "completed")
+    assert.equal(settled[0].sessionId, "ses_parent_settled")
+
+    // 再 tick 几次：两条观察路径都不该产生第二条
+    for (let i = 0; i < 3; i++) await BackgroundManager.tick(config)
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    assert.equal(settled.length, 1, "同一次落地不得广播两次")
+  } finally {
+    unsubscribe()
+  }
 })
 
 test("background fork_context task inherits parent session transcript", async () => {

@@ -5,6 +5,8 @@ import { readdir, unlink } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { EventEmitter } from "node:events"
 import { readJson, writeJson } from "../storage/json-store.mjs"
+import { EventBus } from "../core/events.mjs"
+import { EVENT_TYPES } from "../core/constants.mjs"
 import { INTERRUPTION_REASONS } from "./interruption-reason.mjs"
 import {
   ensureBackgroundTaskRuntimeDir,
@@ -39,6 +41,64 @@ function extractTaskResultPreview(task) {
   if (task?.error) return clipText(task.error, 180)
   if (task?.interruptionReason) return clipText(task.interruptionReason, 120)
   return ""
+}
+
+/**
+ * 已经广播过终态的 `id#attempt`。
+ *
+ * 一次落地有两条互不知情的观察路径（父进程内的 patchTask 跨越、worker 退出后的
+ * 回读复核），两条都会走到广播 —— 去重放在这里，而不是让每个订阅者各自防抖。
+ *
+ * 键里带 attempt 而不是只用 id：`retry()` 是同一个 id 的**第二次生命**，它的结果
+ * 同样要把主代理叫回来。只按 id 去重的话，重试成功后没有任何人会知道。
+ */
+const settledEmittedKeys = new Set()
+/** 去重记忆的上限。没有上限的话，长跑会话里它只涨不落。 */
+const SETTLED_MEMORY_LIMIT = 500
+
+/**
+ * 向全局 EventBus 广播一次任务终态。同一个 id 只广播一次，返回是否真的发了。
+ *
+ * sessionId 取父会话：后台任务自己的 subSessionId 对界面没有意义，
+ * 而父会话才是「谁在等这个结果」。
+ */
+async function emitTaskSettled(task) {
+  if (!task?.id || !TERMINAL_STATES.has(task.status)) return false
+  const key = `${task.id}#${Number(task.attempt || 1)}`
+  if (settledEmittedKeys.has(key)) return false
+  settledEmittedKeys.add(key)
+  if (settledEmittedKeys.size > SETTLED_MEMORY_LIMIT) {
+    const keep = [...settledEmittedKeys].slice(-Math.floor(SETTLED_MEMORY_LIMIT / 2))
+    settledEmittedKeys.clear()
+    for (const id of keep) settledEmittedKeys.add(id)
+  }
+  await EventBus.emit({
+    type: EVENT_TYPES.TASK_SETTLED,
+    sessionId: task.payload?.parentSessionId || null,
+    payload: {
+      id: task.id,
+      status: task.status,
+      attempt: Number(task.attempt || 1),
+      description: String(task.description || ""),
+      resultPreview: extractTaskResultPreview(task),
+      subagent: task.payload?.subagent || task.payload?.subagentType || null,
+      subSessionId: task.payload?.subSessionId || null
+    }
+  }).catch(() => {})
+  return true
+}
+
+/**
+ * worker 进程退出后的终态复核。
+ *
+ * worker 是在**自己的进程**里把 checkpoint 写成 completed 的 —— 父进程的 patchTask
+ * 从没见过那次跨越，所以父进程唯一可靠的观察点就是 child 的 exit 回调。而
+ * 「进程退出」不等于「任务终态」（可能是崩溃、可能状态还停在 running），
+ * 必须回读 checkpoint 确认，不能拿退出码当结论。
+ */
+async function confirmSettledAfterExit(taskId) {
+  const task = await loadTask(taskId).catch(() => null)
+  return emitTaskSettled(task)
 }
 
 function nextActionForTask(task) {
@@ -181,6 +241,9 @@ async function saveTask(task) {
 let patchLock = Promise.resolve()
 
 async function patchTask(id, updater, { maxRetries = 3 } = {}) {
+  // 跨入终态的那一份记在这里，广播放到锁外做 —— 订阅者（TUI 唤醒会提交一个新回合）
+  // 可能跑很久，在锁里发会把后面所有 patchTask 都排在它后面。
+  let crossedIntoTerminal = null
   const run = async () => {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       const current = await loadTask(id)
@@ -203,6 +266,7 @@ async function patchTask(id, updater, { maxRetries = 3 } = {}) {
       // Emit settlement notification when task reaches a terminal state
       if (TERMINAL_STATES.has(next.status) && !TERMINAL_STATES.has(current.status)) {
         settledEmitter.emit("task-settled", { id: next.id, status: next.status })
+        crossedIntoTerminal = next
       }
       return next
     }
@@ -210,7 +274,9 @@ async function patchTask(id, updater, { maxRetries = 3 } = {}) {
   }
   const result = patchLock.then(run, run)
   patchLock = result.then(() => undefined, () => undefined)
-  return result
+  const next = await result
+  if (crossedIntoTerminal) await emitTaskSettled(crossedIntoTerminal)
+  return next
 }
 
 async function listTaskIds() {
@@ -261,23 +327,29 @@ function spawnWorker(taskId) {
     if (stderrFd !== null) {
       try { closeSync(stderrFd) } catch { /* already closed */ }
     }
-    if (code && code !== 0) {
-      patchTask(taskId, (current) => {
-        if (current.status === "running") {
-          return {
-            status: "error",
-            error: `worker process exited with code ${code}`,
-            endedAt: now()
+    const settle = async () => {
+      if (code && code !== 0) {
+        await patchTask(taskId, (current) => {
+          if (current.status === "running") {
+            return {
+              status: "error",
+              error: `worker process exited with code ${code}`,
+              endedAt: now()
+            }
           }
-        }
-        return
-      }).catch((err) => {
-        console.warn(`[kkcode] patchTask failed for exited worker ${taskId}: ${err?.message || err}`)
-      })
-    } else {
-      // Worker exited cleanly (code 0) — notify waiters so they re-check status
-      settledEmitter.emit("task-settled", { id: taskId, status: "exited", code: 0 })
+          return
+        })
+      } else {
+        // Worker exited cleanly (code 0) — notify waiters so they re-check status
+        settledEmitter.emit("task-settled", { id: taskId, status: "exited", code: 0 })
+      }
+      // 两条分支都要复核：worker 可能已经在自己进程里写好了终态（上面的 patchTask
+      // 因此看不到跨越），也可能只是进程没了而 checkpoint 还停在 running。
+      await confirmSettledAfterExit(taskId)
     }
+    settle().catch((err) => {
+      console.warn(`[kkcode] background settle failed for exited worker ${taskId}: ${err?.message || err}`)
+    })
   })
   child.unref()
   return child.pid

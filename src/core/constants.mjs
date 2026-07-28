@@ -82,6 +82,11 @@ export const EVENT_TYPES = {
   // 它的事件本就该被挡住。这两个事件带 parentSessionId，由父会话渲染。
   SUBAGENT_DELEGATED: "subagent.delegated",
   SUBAGENT_SETTLED: "subagent.settled",
+  // 后台任务的终态广播（0.8.0）。SUBAGENT_SETTLED 只走前台委派那条路径，
+  // run_in_background 的任务跑在独立子进程里，父进程从来收不到它的结束 ——
+  // 界面因此永远不知道后台任务什么时候完成。同样不进 ACTIVE_TURN_EVENT_TYPES：
+  // 它的 sessionId 是父会话，但事件本身与「当前回合」无关。
+  TASK_SETTLED: "task.settled",
   LONGAGENT_STOP_REQUESTED: "longagent.stop.requested",
   PROVIDER_FALLBACK: "provider.fallback",
   PROVIDER_RETRY: "provider.retry"

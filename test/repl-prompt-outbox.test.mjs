@@ -10,7 +10,7 @@ import { createPromptOutbox, DEFAULT_MAX_QUEUED } from "../src/repl/prompt-outbo
  * 那正是用户按 Esc 想阻止的事。
  */
 
-function harness({ maxQueued } = {}) {
+function harness({ maxQueued, wakeIdle } = {}) {
   const ui = {}
   const toasts = []
   let renders = 0
@@ -18,7 +18,8 @@ function harness({ maxQueued } = {}) {
     ui,
     showToast: (message, options) => toasts.push({ message, options }),
     requestRender: () => { renders++ },
-    maxQueued
+    maxQueued,
+    wakeIdle
   })
   return { ui, toasts, outbox, renders: () => renders }
 }
@@ -183,4 +184,111 @@ test("steerSize 与 ui.steerPrompts 同源", () => {
   outbox.queue("x"); outbox.promoteLastToSteer()
   assert.equal(outbox.steerSize(), 1)
   assert.equal(ui.steerPrompts.length, 1)
+})
+
+/**
+ * 后台任务完成后的回送（0.8.0）。
+ *
+ * 与用户排队走的是同两条通道，但时机判定完全不同 —— 用户排的消息等回合结束
+ * 是他自己的选择，后台结果等不得：主代理正在做的事很可能就依赖它。
+ */
+
+test("回合进行中：后台结果直接进插话，不去队列后面排着", () => {
+  const { ui, outbox, toasts } = harness()
+  ui.busy = true
+  outbox.queue("用户排的")
+  assert.equal(outbox.pushSystemPrompt("[后台任务完成] 索引重建"), "steer")
+  assert.deepEqual(ui.steerPrompts, ["[后台任务完成] 索引重建"])
+  assert.deepEqual(ui.queuedPrompts, ["用户排的"], "不得挤进用户的队列")
+  assert.match(toasts.at(-1).message, /后台任务完成/)
+})
+
+test("空闲：进队列并请求一次排干 —— 排完没人来取就等于没唤醒", () => {
+  let wakes = 0
+  const { ui, outbox } = harness({ wakeIdle: () => { wakes++ } })
+  ui.busy = false
+  assert.equal(outbox.pushSystemPrompt("[后台任务完成] 索引重建"), "queued")
+  assert.deepEqual(ui.queuedPrompts, ["[后台任务完成] 索引重建"])
+  assert.deepEqual(ui.steerPrompts, [])
+  assert.equal(wakes, 1)
+})
+
+test("没接 wakeIdle 就零唤醒行为 —— 自动开新回合是副作用，不能默认发生", () => {
+  // 行模式、子代理、测试宿主都不传 wakeIdle。这条钉住缺省路径：消息照排，
+  // 但绝不会有人替用户按下 Enter。
+  const { ui, outbox } = harness()
+  assert.equal(outbox.pushSystemPrompt("[后台任务完成] x"), "queued")
+  assert.deepEqual(ui.queuedPrompts, ["[后台任务完成] x"])
+})
+
+test("空文本什么都不做，也不会白唤醒一次", () => {
+  let wakes = 0
+  const { ui, outbox, toasts } = harness({ wakeIdle: () => { wakes++ } })
+  assert.equal(outbox.pushSystemPrompt("   "), null)
+  assert.equal(outbox.pushSystemPrompt(null), null)
+  assert.deepEqual(ui.queuedPrompts, [])
+  assert.deepEqual(toasts, [])
+  assert.equal(wakes, 0)
+})
+
+test("队列排满时说清楚结果去哪儿找，而不是悄悄丢掉", () => {
+  let wakes = 0
+  const { ui, outbox, toasts } = harness({ maxQueued: 1, wakeIdle: () => { wakes++ } })
+  outbox.queue("用户排的")
+  assert.equal(outbox.pushSystemPrompt("[后台任务完成] x"), null)
+  assert.deepEqual(ui.queuedPrompts, ["用户排的"])
+  assert.match(toasts.at(-1).message, /background/)
+  assert.equal(toasts.at(-1).options.tone, "warning")
+  assert.equal(wakes, 0, "没排进去就不该请求排干")
+})
+
+// --- 滞留 steer 的回收（0.8.0 e2e 抓到的时序） ---
+
+test("落在末 step 之后的后台结果，回合结束的排干会接着送达", async () => {
+  // 时序：回合进行中 settle 到达 → 进 steer；但那已是最后一个 step，
+  // 回合内再无注入点 → 滞留。回合结束的 drain 必须把它回收发出去，
+  // 否则「自动唤醒」在这个窗口静默失效，结果要等用户下次随便说句话才捎到。
+  const { ui, outbox } = harness()
+  ui.busy = true
+  assert.equal(outbox.pushSystemPrompt("[后台任务完成] 秋诗已写好"), "steer")
+  ui.busy = false   // 回合结束，steer 里还躺着一条
+  const sent = []
+  await outbox.drain(async (text) => sent.push(text))
+  assert.deepEqual(sent, ["[后台任务完成] 秋诗已写好"])
+  assert.equal(ui.steerPrompts.length, 0)
+  assert.equal(ui.queuedPrompts.length, 0)
+})
+
+test("排干期间跑掉的回合又滞留了一条 —— 同一次 drain 连它一起发完", async () => {
+  const { ui, outbox } = harness()
+  outbox.queue("第一条")
+  const sent = []
+  await outbox.drain(async (text) => {
+    sent.push(text)
+    if (text === "第一条") {
+      // 模拟：这条 submit 跑出的回合期间，后台任务在末 step 之后落地
+      ui.busy = true
+      outbox.pushSystemPrompt("迟到的结果")
+      ui.busy = false
+    }
+  })
+  assert.deepEqual(sent, ["第一条", "迟到的结果"])
+})
+
+test("回合仍在进行时 reclaim 不动 steer —— 那是 takeSteer 的地盘", () => {
+  const { ui, outbox } = harness()
+  ui.busy = true
+  outbox.pushSystemPrompt("插话中")
+  assert.equal(outbox.reclaimStranded(), 0, "busy 时回收是空操作")
+  assert.equal(ui.steerPrompts.length, 1)
+})
+
+test("队列满时回收只搬得下的，剩下的留在 steer 不丢", () => {
+  const { ui, outbox } = harness({ maxQueued: 2 })
+  ui.busy = true
+  outbox.pushSystemPrompt("a"); outbox.pushSystemPrompt("b"); outbox.pushSystemPrompt("c")
+  ui.busy = false
+  assert.equal(outbox.reclaimStranded(), 2)
+  assert.deepEqual(ui.queuedPrompts, ["a", "b"])
+  assert.deepEqual(ui.steerPrompts, ["c"], "搬不下的留着 —— 下一个回合的 step 1 仍会取走")
 })
