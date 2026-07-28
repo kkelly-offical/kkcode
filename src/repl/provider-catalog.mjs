@@ -15,6 +15,21 @@ import {
   applyDiscoveredCapabilities
 } from "../provider/model-catalog.mjs"
 import { escapeTerminalText } from "../provider/model-id.mjs"
+import { formatContext } from "../provider/wizard-form.mjs"
+import { supportsThinking } from "../provider/thinking-effort.mjs"
+
+/**
+ * 这个模型支不支持扩展思考。三级判据，前者优先：
+ *   1. 配置的 `provider.model_thinking`（/provider add 检测或用户补答的结论）
+ *   2. 目录自报的 supported_parameters
+ *   3. 模型名族启发式
+ * 拿不准返回 null —— /model 的档位选择器把 null 当「让用户自己判断」处理。
+ */
+export function modelThinkingSupport({ config, model, supportedParameters = null }) {
+  const configured = config?.provider?.model_thinking?.[model]
+  if (typeof configured === "boolean") return configured
+  return supportsThinking({ modelId: model, supportedParameters })
+}
 
 export async function loadProviderModelItems(configState, providerName, {
   refresh = false,
@@ -26,16 +41,31 @@ export async function loadProviderModelItems(configState, providerName, {
     // 上限与状态栏百分比从此不用人肉填（用户显式写过的键不覆盖）。
     applyDiscoveredContextLimits(configState, catalog.models || [])
     applyDiscoveredCapabilities(configState, providerName, catalog.models || [])
+    const config = configState?.config || {}
     const seen = new Set()
     const items = []
     for (const entry of catalog.models || []) {
       const model = String(entry?.id || "").trim()
       if (!model || seen.has(model)) continue
       seen.add(model)
+      // 上下文：目录报的优先，其次配置/发现累积的 model_context —— 这正是
+      // 0.7.x 丢掉的那截（explorer 报告：「上下文刚被读出来，却没跟着进选择器」）
+      const contextLength = Number(entry?.contextLength)
+        || Number(config.provider?.model_context?.[model])
+        || 0
+      const thinking = modelThinkingSupport({
+        config,
+        model,
+        supportedParameters: Array.isArray(entry?.supportedParameters) ? entry.supportedParameters : null
+      })
       items.push({
         provider: providerName,
         model,
+        contextLength,
+        thinking,
         label: `${escapeTerminalText(providerName)} / ${escapeTerminalText(model)}`
+          + (contextLength ? ` (${formatContext(contextLength)})` : "")
+          + (thinking === true ? " · 思考" : "")
       })
     }
     return {

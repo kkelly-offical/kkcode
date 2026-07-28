@@ -23,6 +23,15 @@ const HEX = /^#([A-Fa-f0-9]{6})$/
 /** models.ultra.<stage> 的合法键 —— 与 longagent-hybrid 的 getModelForStage 对齐。 */
 export const ULTRA_MODEL_STAGES = Object.freeze(["preview", "blueprint", "coding", "debugging", "report"])
 
+/**
+ * provider 段里**不是 provider 条目**的键 —— 唯一来源。
+ *
+ * 0.7.x 时这张清单在五处各手写一份（schema / doctor / commands/provider /
+ * core-shell / wizard-form），0.8.0 加 model_thinking 时差点五处漏三处 ——
+ * 正是「枚举驱动的清单不能手写」那一课的形状。过滤 provider 条目一律 import 它。
+ */
+export const PROVIDER_META_KEYS = Object.freeze(["default", "strict_mode", "model_context", "model_thinking"])
+
 function err(list, field, message) {
   list.push(`${field}: ${message}`)
 }
@@ -61,7 +70,7 @@ export function validateConfig(config) {
       err(errors, "provider", "must be object")
     } else {
       const providerTypes = getValidProviderTypes()
-      const providerMetaKeys = new Set(["default", "strict_mode", "model_context"])
+      const providerMetaKeys = new Set(PROVIDER_META_KEYS)
       const providerKeys = new Set([...providerTypes, ...Object.keys(config.provider).filter(k => !providerMetaKeys.has(k))])
       if (config.provider.default !== undefined && !providerKeys.has(config.provider.default)) {
         err(errors, "provider.default", `must be one of ${[...providerKeys].join(", ")}`)
@@ -165,6 +174,16 @@ export function validateConfig(config) {
         else {
           for (const [mk, mv] of Object.entries(config.provider.model_context)) {
             if (!Number.isInteger(mv) || mv < 1024) err(errors, `provider.model_context.${mk}`, "must be integer >= 1024")
+          }
+        }
+      }
+      // 模型 → 是否支持扩展思考。true/false 都有意义：false 让 /model 不再
+      // 对它弹思考档位。/provider add 自动检测写入，检测不出的由用户补答。
+      if (config.provider.model_thinking !== undefined) {
+        if (!isObj(config.provider.model_thinking)) err(errors, "provider.model_thinking", "must be object")
+        else {
+          for (const [mk, mv] of Object.entries(config.provider.model_thinking)) {
+            if (typeof mv !== "boolean") err(errors, `provider.model_thinking.${mk}`, "must be boolean")
           }
         }
       }

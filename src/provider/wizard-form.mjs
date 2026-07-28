@@ -12,22 +12,34 @@
  * 上面那串问题在结构上不存在。降级也是现成的 —— 无 TUI 时 readline 逐题问，
  * 非交互时返回空答案（表单据此取消）。
  *
- * ## 三条纪律（对应 0.7.3 的用户要求）
+ * ## 0.8.0：去模板化 —— 「能自动读到的就不问」
+ *
+ * 0.7.x 的第一轮是 14 个厂商模板。用户的反馈是对的：模板是**我们**的知识，
+ * 不是**用户**的输入 —— 用户真正拥有的只有三样东西：接口形式（OpenAI 还是
+ * Anthropic 兼容）、base URL、密钥。其余一切都应该从 API 自己读回来：
+ *
+ *   - 模型列表      → GET /models（两种协议都有）
+ *   - 上下文长度    → 目录条目的 context_length 等八种字段名（model-catalog）
+ *   - thinking 支持 → supported_parameters 或模型名族启发式（thinking-effort）
+ *
+ * **只有读不到的才问**：目录没报上下文的模型追问一轮数字；能力判不出的模型
+ * 追问一轮「支持/不支持/跳过」。名称从 URL host 推导，确认页上可改。
+ *
+ * ## 三条纪律（0.7.3 定下，继续有效）
  *
  * 1. **API Key 直接输入**，明文写进 `~/.kkcode/config.yaml` 的 `api_key`。
  *    输入时遮蔽（`secret: true`），确认页只显示末四位，不进对话记录与日志。
- *    这是用户明确要求并确认过的行为。留空 = 不写凭据（本地服务，或走预设的
- *    环境变量）。
- * 2. **只写用户提供或确认过的字段**。`base_url` 预填预设值但显示出来可编辑；
- *    `context_limit` 留空就不写；`thinking` 明确选了才写，且只写
- *    `{ type: "enabled" }` —— `budget_tokens` 用户没给过，运行时自有缺省。
+ * 2. **只写用户提供或确认过的字段**。自动读到的（上下文、thinking 支持）都在
+ *    确认页逐条列出后才落盘 —— 自动发现不是背着用户写配置的许可。
  * 3. **确认页所见即所写**：预览里的每一行就是将要落盘的字段，没有背后追加。
  */
 
-import { VENDOR_PRESETS, saveProviderConfig } from "./wizard.mjs"
+import { saveProviderConfig } from "./wizard.mjs"
 import { discoverModelsForProvider } from "./model-catalog.mjs"
+import { supportsThinking } from "./thinking-effort.mjs"
 import { askQuestionInteractive } from "../tool/question-prompt.mjs"
 import { QUESTION_SKIPPED } from "../repl/dialog-router.mjs"
+import { PROVIDER_META_KEYS } from "../config/schema.mjs"
 
 /** 表单答案 → 干净字符串。跳过哨兵与 undefined 一律折成空串。 */
 const clean = (value) => {
@@ -64,110 +76,51 @@ export function formatContext(tokens) {
   return `${Math.round(n / 1000)}k`
 }
 
-const CUSTOM_VENDORS = [
-  { label: "Custom (OpenAI-compatible)", value: "custom-openai", type: "openai-compatible" },
-  { label: "Custom (Anthropic-compatible)", value: "custom-anthropic", type: "anthropic" },
-  { label: "Custom (Gateway)", value: "custom-gateway", type: "gateway" }
-]
-
-/** 轮 A：选厂商。选项从 VENDOR_PRESETS 派生 —— 不手写第二份清单。 */
-function vendorQuestion() {
-  return {
-    id: "vendor",
-    header: "Provider",
-    text: "选择要添加的 Provider",
-    allowCustom: false,
-    options: [
-      ...Object.entries(VENDOR_PRESETS).map(([key, preset]) => ({
-        label: preset.label || key,
-        value: key,
-        description: preset.base_url || (preset.protocols ? "multi-protocol" : "")
-      })),
-      ...CUSTOM_VENDORS.map(({ label, value }) => ({ label, value, description: "" }))
-    ]
-  }
-}
-
-/**
- * 解析轮 A 的选择成一份「基底」：type / base_url 默认值 / 建议名称。
- * coding-plan 这类多协议预设与自定义 gateway 需要补问协议，由 needsProtocol 标记。
- */
-function resolveVendorBase(vendorValue) {
-  const custom = CUSTOM_VENDORS.find((c) => c.value === vendorValue)
-  if (custom) {
-    return {
-      isCustom: true,
-      preset: null,
-      suggestedName: "",
-      type: custom.type,
-      baseUrl: "",
-      needsProtocol: custom.type === "gateway"
-    }
-  }
-  const preset = VENDOR_PRESETS[vendorValue]
-  if (!preset) return null
-  return {
-    isCustom: false,
-    preset,
-    suggestedName: vendorValue,
-    type: preset.type || null,
-    baseUrl: preset.base_url || "",
-    needsProtocol: Boolean(preset.protocols)
-  }
-}
-
 const sanitizeName = (raw) => clean(raw).replace(/[^a-z0-9_-]/gi, "_").toLowerCase()
 
 /**
- * 轮 C：细节表单。字段按「这次配置真的需要什么」出，不问用不上的。
- * 每个字段的 default 会被预填进编辑缓冲区（dialog-router 的 bufferState），
- * 所以「预设值可见、可编辑」不需要任何额外机制。
+ * 从 base URL 推导 provider 名称。
+ *
+ * 规则：host 去掉 TLD 尾巴，从左往右取第一个**有语义**的标签 ——
+ * `api.moonshot.ai` → moonshot、`llm-api.ecupl.edu.cn` → ecupl、
+ * `open.bigmodel.cn` → bigmodel。IP 与 localhost 没有语义，退回 "local"。
+ * 只是**建议值**：确认页上有「修改名称」，推错了不需要重走流程。
  */
-function detailQuestions(base, { existingNames }) {
-  const questions = [
-    {
-      id: "name",
-      header: "Name",
-      text: "Provider 名称（写进配置的键名，小写字母/数字/-/_）",
-      default: base.suggestedName,
-      description: existingNames.length ? `已有：${existingNames.join(", ")}（重名会合并更新）` : ""
-    },
-    {
-      id: "base_url",
-      header: "Base URL",
-      text: "API Base URL —— 确认或修改后落盘，写进配置的就是这里显示的值",
-      default: base.baseUrl
-    },
-    {
-      id: "api_key",
-      header: "API Key",
-      text: "API Key（输入时不回显，明文保存到 ~/.kkcode/config.yaml）",
-      secret: true,
-      description: base.preset?.key_env
-        ? `留空 = 不保存密钥，运行时从环境变量 ${base.preset.key_env} 读取`
-        : "留空 = 不配置凭据（本地服务通常不需要）"
-    },
-    {
-      id: "context_limit",
-      header: "Context",
-      text: "上下文长度（tokens）。留空 = 不写入配置，运行时用内置缺省",
-      default: ""
-    }
-  ]
-  if (base.preset?.supports_thinking) {
-    questions.push({
-      id: "thinking",
-      header: "Thinking",
-      text: "启用 thinking（扩展思考）模式？",
-      allowCustom: false,
-      options: [
-        { label: "不写入配置", value: "skip", description: "留给运行时决定（默认）" },
-        { label: "启用", value: "enabled", description: "写入 thinking: { type: enabled }" }
-      ]
-    })
-  }
-  return questions
+export function suggestProviderName(baseUrl) {
+  let host = ""
+  try { host = new URL(String(baseUrl)).hostname } catch { return "" }
+  if (!host) return ""
+  if (host === "localhost" || /^[0-9.:[\]]+$/.test(host)) return "local"
+  const TLDS = new Set([
+    "com", "net", "org", "ai", "io", "cn", "co", "uk", "us", "jp",
+    "edu", "gov", "dev", "app", "cloud", "tech", "xyz", "info"
+  ])
+  const parts = host.toLowerCase().split(".").filter(Boolean)
+  while (parts.length > 1 && TLDS.has(parts[parts.length - 1])) parts.pop()
+  // 「api.xxx」「www.xxx」里的前缀不是名字 —— 但整个 host 只剩它时也只能用它
+  const GENERIC = new Set([
+    "api", "www", "gateway", "open", "openapi", "llm", "llm-api",
+    "platform", "console", "coding", "chat", "service", "services"
+  ])
+  const meaningful = parts.find((part) => !GENERIC.has(part))
+  return sanitizeName(meaningful || parts[parts.length - 1] || "")
 }
+
+/** 轮 A：接口形式。用户拥有的三样输入之一 —— 这决定请求与鉴权的协议形状。 */
+const PROTOCOL_CHOICES = [
+  {
+    label: "OpenAI 兼容接口",
+    value: "openai",
+    type: "openai-compatible",
+    description: "chat/completions + Bearer 鉴权（OpenAI、DeepSeek、Kimi、Qwen、GLM、Ollama…）"
+  },
+  {
+    label: "Anthropic 兼容接口",
+    value: "anthropic",
+    type: "anthropic",
+    description: "messages + x-api-key 鉴权（Claude 及其兼容网关）"
+  }
+]
 
 /** 用表单当前值拼一份临时 configState，让模型发现走与 /model 完全相同的链路。 */
 function draftConfigState(name, entry) {
@@ -180,10 +133,18 @@ function draftConfigState(name, entry) {
 
 const MANUAL_MODEL = "(manual input)"
 
-/** 发现结果归一成 `[{ id, contextLength }]`；发现失败当「没有列表」，不是错误。 */
+/**
+ * 发现结果归一成 `[{ id, contextLength, supportedParameters }]`；
+ * 发现失败当「没有列表」，不是错误。
+ *
+ * 0.8.0 顺带修掉一个真缺陷：这里此前调的是 `discover(draft, name, {refresh})`，
+ * 而 discoverModelsForProvider 的签名是 `(configState, options)` —— name 被当成
+ * options 解构（字符串上什么都解不出来），`refresh: true` 整个丢失，表单的
+ * 模型发现一直在吃 15 分钟的缓存。
+ */
 async function discoverModelChoices({ name, entry, discover }) {
   try {
-    const result = await discover(draftConfigState(name, entry), name, { refresh: true })
+    const result = await discover(draftConfigState(name, entry), { providerName: name, refresh: true })
     return (result?.models || [])
       .map((m) => (typeof m === "string" ? { id: m } : m))
       .filter((m) => m && m.id)
@@ -191,7 +152,8 @@ async function discoverModelChoices({ name, entry, discover }) {
         id: m.id,
         // model-catalog 的 readContextLength 已经把各家字段名统一过，并且只在
         // >= 1024 时给值 —— 这里不再二次判断，也不为拿不到的模型编一个数字。
-        contextLength: Number.isFinite(Number(m.contextLength)) ? Number(m.contextLength) : 0
+        contextLength: Number.isFinite(Number(m.contextLength)) ? Number(m.contextLength) : 0,
+        supportedParameters: Array.isArray(m.supportedParameters) ? m.supportedParameters : null
       }))
   } catch {
     return []
@@ -219,28 +181,30 @@ async function askDefaultModel({ chosen, contextOf, ask }) {
 }
 
 /**
- * 轮 D：选模型。发现成功给**多选**（前 30 个 + 手动），失败直接自由文本。
+ * 轮 C：选模型。发现成功给**多选**（全量列出 + 手动项），失败直接自由文本。
  * 发现失败不是错误 —— 本地服务、离线、密钥权限不足都会走到，手动输入永远可用。
  *
- * 选项标签带上下文（`gpt-4o (128k)`）：这正是用户挑模型时要比的那个数，而在
- * 0.7.4 之前它只能事后人肉查文档再手填 provider.model_context。
+ * 0.8.0 起不再 slice(0, 30)：浮层有了滚动窗口与打字过滤（overlay-question），
+ * 60 个模型的列表打几个字符就到 —— 截断反而是「第 31 个起根本看不见」的静默丢失。
  *
- * @returns {Promise<{models: string[], defaultModel: string, contexts: Record<string, number>}>}
+ * 选项标签带上下文（`gpt-4o (128k)`）：这正是用户挑模型时要比的那个数。
+ *
+ * @returns {Promise<{models: string[], defaultModel: string, contexts: Record<string, number>, discovered: Array}>}
  */
-async function askModel({ name, entry, defaultModel, ask, discover }) {
+async function askModel({ name, entry, ask, discover }) {
   const discovered = await discoverModelChoices({ name, entry, discover })
-  const empty = { models: [], defaultModel: "", contexts: {} }
+  const empty = { models: [], defaultModel: "", contexts: {}, discovered }
 
   if (discovered.length) {
     const picked = await ask({
       questions: [{
         id: "model",
         header: "Models",
-        text: `选择要加入配置的模型（空格多选、回车确认；发现 ${discovered.length} 个）`,
+        text: `选择要加入配置的模型（空格多选、回车确认、打字过滤；发现 ${discovered.length} 个）`,
         allowCustom: false,
         multi: true,
         options: [
-          ...discovered.slice(0, 30).map((m) => ({
+          ...discovered.map((m) => ({
             label: labelWithContext(m.id, m.contextLength),
             value: m.id,
             description: m.contextLength ? `上下文 ${m.contextLength} tokens（写入 provider.model_context）` : ""
@@ -258,12 +222,12 @@ async function askModel({ name, entry, defaultModel, ask, discover }) {
       const chosenDefault = chosen.length === 1
         ? chosen[0]
         : await askDefaultModel({ chosen, contextOf, ask })
-      if (!chosenDefault) return empty
+      if (!chosenDefault) return { ...empty, cancelled: true }
       const contexts = {}
-      // 发现不到上下文的模型**不写** —— 编一个数字会让压缩阈值静默算错，
-      // 而运行时本来就有兜底表
+      // 发现不到上下文的模型**不写** —— 编一个数字会让压缩阈值静默算错；
+      // 读不到的那几个由 askMissingContexts 追问，用户不答仍然不写
       for (const id of chosen) if (contextOf(id)) contexts[id] = contextOf(id)
-      return { models: chosen, defaultModel: chosenDefault, contexts }
+      return { models: chosen, defaultModel: chosenDefault, contexts, discovered }
     }
   }
 
@@ -272,42 +236,98 @@ async function askModel({ name, entry, defaultModel, ask, discover }) {
       id: "model",
       header: "Model",
       text: "默认模型 ID（如 gpt-4o、claude-sonnet-4-5）",
-      default: defaultModel || ""
+      default: ""
     }]
   })
   const typed = clean(manual.model)
-  return typed ? { models: [typed], defaultModel: typed, contexts: {} } : empty
+  return typed ? { models: [typed], defaultModel: typed, contexts: {}, discovered } : empty
 }
 
 /**
- * 组装将要写盘的条目。**这里出现的每个字段都来自用户的输入或确认** ——
+ * 目录没报上下文的模型，一轮补问。**这是「只有缺失信息才要用户动手」的落点**：
+ * 读到了就一个字都不问，读不到的逐个给一格数字输入，留空 = 不写、运行时用
+ * 内置缺省表 —— 与「不编数字」同一条纪律。
+ */
+async function askMissingContexts({ chosen, contexts, ask }) {
+  const missing = chosen.filter((id) => !contexts[id])
+  if (!missing.length) return {}
+  const answers = await ask({
+    questions: missing.map((id) => ({
+      id: `ctx:${id}`,
+      header: "Context",
+      text: `${id} 的上下文长度（tokens）`,
+      description: "API 目录没有报告这个模型的上下文。留空 = 不写入，运行时用内置缺省表。",
+      default: ""
+    }))
+  })
+  const out = {}
+  for (const id of missing) {
+    const n = Number.parseInt(clean(answers[`ctx:${id}`]), 10)
+    if (Number.isFinite(n) && n >= 1024) out[id] = n
+  }
+  return out
+}
+
+/**
+ * thinking 支持：能自动判的自动判，判不出的才问。
+ *
+ * 判据优先级与 supportsThinking 一致：目录报了 supported_parameters 以它为准
+ * （OpenRouter 等会报），否则按模型名族启发式；两者都拿不准返回 null —— 那才
+ * 轮到用户。结果进 `provider.model_thinking`（true/false 都记：知道「不支持」
+ * 同样有价值，/model 据此不再对它弹 thinking 档位）。
+ */
+function detectThinkingSupport(chosen, discovered) {
+  const byId = new Map(discovered.map((m) => [m.id, m]))
+  const known = {}
+  const unknown = []
+  for (const id of chosen) {
+    const meta = byId.get(id)
+    const verdict = supportsThinking({ modelId: id, supportedParameters: meta?.supportedParameters ?? null })
+    if (verdict === true || verdict === false) known[id] = verdict
+    else unknown.push(id)
+  }
+  return { known, unknown }
+}
+
+async function askMissingThinking({ unknown, ask }) {
+  if (!unknown.length) return {}
+  const answers = await ask({
+    questions: unknown.map((id) => ({
+      id: `think:${id}`,
+      header: "Thinking",
+      text: `${id} 支持扩展思考（thinking / reasoning）吗？`,
+      description: "目录没报能力、模型名也认不出。答了才写入 provider.model_thinking；跳过 = 不写。",
+      allowCustom: false,
+      options: [
+        { label: "支持", value: "yes", description: "/model 选它之后会提供思考档位" },
+        { label: "不支持", value: "no", description: "/model 不再问它的思考档位" },
+        { label: "不确定（跳过）", value: "skip", description: "不写入配置" }
+      ]
+    }))
+  })
+  const out = {}
+  for (const id of unknown) {
+    const value = clean(answers[`think:${id}`])
+    if (value === "yes") out[id] = true
+    if (value === "no") out[id] = false
+  }
+  return out
+}
+
+/**
+ * 组装将要写盘的条目。**这里出现的每个字段都来自用户的输入或确认页** ——
  * 旧向导在这一步塞过三样用户没答过的东西（preset 的 base_url、静默继承的
  * context_limit、硬编码的 budget_tokens: 8000），一样都不许再有。
  */
-function buildEntry({ base, protocol, answers, apiKey, model, models = [] }) {
-  const entry = {}
-  if (base.type) entry.type = base.type
-  if (base.needsProtocol && protocol) {
-    if (base.isCustom) entry.protocol = protocol
-    else {
-      // 多协议预设（coding-plan）：协议决定 type 与 base_url 的**默认值**，
-      // base_url 仍以用户在表单里确认过的为准（已在 answers 里）。
-      const chosen = base.preset.protocols[protocol]
-      if (chosen?.type) entry.type = chosen.type
-    }
-  }
-  const baseUrl = clean(answers.base_url)
+function buildEntry({ type, baseUrl, apiKey, model, models = [] }) {
+  const entry = { type }
   if (baseUrl) entry.base_url = baseUrl
   if (apiKey) entry.api_key = apiKey
-  else if (base.preset?.key_env) entry.api_key_env = base.preset.key_env
   if (model) entry.default_model = model
   // 选中的模型全部写进 models。除了「配置里有哪些模型可用」之外还有一层收益：
   // model-catalog 的 explicitOfflineModels 读的就是这个数组 —— 断网时 /model
   // 列出来的正是这几个，而不是空列表。
   if (models.length) entry.models = [...models]
-  const contextLimit = Number.parseInt(clean(answers.context_limit), 10)
-  if (Number.isFinite(contextLimit) && contextLimit >= 1024) entry.context_limit = contextLimit
-  if (clean(answers.thinking) === "enabled") entry.thinking = { type: "enabled" }
   return entry
 }
 
@@ -318,11 +338,10 @@ function buildEntry({ base, protocol, answers, apiKey, model, models = [] }) {
  * 这个模型的上下文没发现到、`provider.model_context` 里也就不会有它 ——
  * 用户在按下保存之前就该看见这个区别，而不是事后翻 YAML 才发现少了一半。
  */
-export function previewEntry(name, entry, { setDefault = true, modelContext = {} } = {}) {
+export function previewEntry(name, entry, { setDefault = true, modelContext = {}, modelThinking = {} } = {}) {
   const lines = [`provider.${name}:`]
   for (const [key, value] of Object.entries(entry)) {
     if (key === "api_key") lines.push(`  api_key: ${maskKey(String(value))}（明文保存）`)
-    else if (key === "thinking") lines.push("  thinking: { type: enabled }")
     else if (key === "models" && Array.isArray(value)) {
       lines.push("  models:")
       for (const id of value) lines.push(`    - ${labelWithContext(id, modelContext[id])}`)
@@ -333,12 +352,20 @@ export function previewEntry(name, entry, { setDefault = true, modelContext = {}
     lines.push("provider.model_context:")
     for (const [id, tokens] of contextEntries) lines.push(`  ${id}: ${tokens}`)
   }
+  const thinkingEntries = Object.entries(modelThinking)
+  if (thinkingEntries.length) {
+    lines.push("provider.model_thinking:")
+    for (const [id, supported] of thinkingEntries) lines.push(`  ${id}: ${supported ? "支持" : "不支持"}`)
+  }
   if (setDefault) lines.push(`provider.default: ${name}`)
   return lines.join("\n")
 }
 
 /**
- * `/provider add` 的入口。
+ * `/provider add` 的入口（0.8.0 去模板化流程）。
+ *
+ * 轮次：接口形式 → base_url + api_key → 模型多选（自动发现）→（缺上下文才有的）
+ * 补问 →（判不出 thinking 才有的）补问 → 确认（可改名）。
  *
  * @returns {Promise<{saved: boolean, name?: string, configPatch?: object, reason?: string}>}
  */
@@ -347,87 +374,123 @@ export async function runProviderAddForm({
   ask = askQuestionInteractive,
   discover = discoverModelsForProvider
 } = {}) {
-  // provider 段里混着非 provider 的配置键（default / strict_mode / model_context）。
-  // 真实终端验收时它们全被当成「已有 provider」列了出来 —— 判据改成
-  // 「值是对象、且不在保留键里」，与 core-shell 的 configuredProviders 同一套。
-  const RESERVED = new Set(["default", "strict_mode", "model_context"])
+  // provider 段里混着非 provider 的配置键（default / strict_mode / model_context /
+  // model_thinking）。判据与 schema 的 PROVIDER_META_KEYS 同源 —— 0.7.3 版在这里
+  // 手写过一份三个键的清单，加第四个键时它就会静默漏。
+  const RESERVED = new Set(PROVIDER_META_KEYS)
   const providerBag = configState?.config?.provider || {}
   const existingNames = Object.keys(providerBag)
     .filter((k) => !RESERVED.has(k) && providerBag[k] && typeof providerBag[k] === "object")
 
-  const vendorAnswers = await ask({ questions: [vendorQuestion()] })
-  const vendorValue = clean(vendorAnswers.vendor)
-  if (!vendorValue) return { saved: false, reason: "cancelled" }
-  const base = resolveVendorBase(vendorValue)
-  if (!base) return { saved: false, reason: "cancelled" }
+  const protocolAnswers = await ask({
+    questions: [{
+      id: "protocol",
+      header: "Protocol",
+      text: "这个服务是什么形式的接口？",
+      allowCustom: false,
+      options: PROTOCOL_CHOICES.map(({ label, value, description }) => ({ label, value, description }))
+    }]
+  })
+  const protocol = PROTOCOL_CHOICES.find((p) => p.value === clean(protocolAnswers.protocol))
+  if (!protocol) return { saved: false, reason: "cancelled" }
 
-  let protocol = ""
-  if (base.needsProtocol) {
-    const options = base.isCustom
-      ? [
-          { label: "OpenAI-compatible", value: "openai", description: "" },
-          { label: "Anthropic-compatible", value: "anthropic", description: "" }
-        ]
-      : Object.keys(base.preset.protocols).map((key) => ({
-          label: key,
-          value: key,
-          description: base.preset.protocols[key]?.base_url || ""
-        }))
-    const protocolAnswers = await ask({
-      questions: [{ id: "protocol", header: "Protocol", text: "选择 API 协议", allowCustom: false, options }]
-    })
-    protocol = clean(protocolAnswers.protocol)
-    if (!protocol) return { saved: false, reason: "cancelled" }
-    if (!base.isCustom) {
-      const chosen = base.preset.protocols[protocol]
-      if (chosen?.base_url) base.baseUrl = chosen.base_url
-    }
-  }
+  const connection = await ask({
+    questions: [
+      {
+        id: "base_url",
+        header: "Base URL",
+        text: "API Base URL（模型列表、上下文、thinking 能力都将从它自动读取）",
+        default: ""
+      },
+      {
+        id: "api_key",
+        header: "API Key",
+        text: "API Key（输入时不回显，明文保存到 ~/.kkcode/config.yaml）",
+        secret: true,
+        description: "留空 = 不配置凭据（本地服务通常不需要）"
+      }
+    ]
+  })
+  const baseUrl = clean(connection.base_url).replace(/\/+$/, "")
+  if (!baseUrl) return { saved: false, reason: "cancelled" }
+  const apiKey = clean(connection.api_key)
 
-  const answers = await ask({ questions: detailQuestions(base, { existingNames }) })
-  const name = sanitizeName(answers.name) || base.suggestedName
-  if (!name) return { saved: false, reason: "cancelled" }
-  const apiKey = clean(answers.api_key)
+  // 名称推导：同一个 base_url 已经配过 → 沿用那个名字（重配即合并更新，
+  // issue #3 的语义在新流程里靠它保住）；否则从 host 推导，确认页可改。
+  const sameUrl = existingNames.find((n) => {
+    const configured = providerBag[n]?.base_url
+    return typeof configured === "string" && configured.replace(/\/+$/, "") === baseUrl
+  })
+  let name = sameUrl || suggestProviderName(baseUrl) || "custom"
+  if (RESERVED.has(name)) name = `${name}-provider`
 
-  const probeEntry = buildEntry({ base, protocol, answers, apiKey, model: "" })
-  // Issue #3 在表单世界的形态：对已有 provider 重跑 add、key 留空时，模型发现
-  // 要用配置里已有的内联 api_key —— 用户不该因为「没重打一遍密钥」而被降级到
-  // 手动输入。只进发现的 draft，不写盘（写盘的 merge 语义本来就保留旧字段）。
-  const existingKey = configState?.config?.provider?.[name]?.api_key
+  const probeEntry = buildEntry({ type: protocol.type, baseUrl, apiKey, model: "" })
+  // 对已有 provider 重跑 add、key 留空时，模型发现要用配置里已有的内联 api_key ——
+  // 用户不该因为「没重打一遍密钥」而被降级到手动输入。只进发现的 draft，不写盘
+  // （写盘的 merge 语义本来就保留旧字段）。
+  const existingKey = providerBag[name]?.api_key
   if (!apiKey && typeof existingKey === "string" && existingKey) {
     probeEntry.api_key = existingKey
   }
-  const { models, defaultModel: model, contexts } = await askModel({
-    name,
-    entry: probeEntry,
-    defaultModel: base.preset?.default_model,
-    ask,
-    discover
-  })
+
+  const modelResult = await askModel({ name, entry: probeEntry, ask, discover })
+  const { models, defaultModel: model, discovered } = modelResult
   if (!model) return { saved: false, reason: "cancelled" }
 
-  const entry = buildEntry({ base, protocol, answers, apiKey, model, models })
-  const preview = previewEntry(name, entry, { modelContext: contexts })
-  const confirm = await ask({
-    questions: [{
-      id: "confirm",
-      header: "Confirm",
-      text: `将写入 ~/.kkcode/config.yaml：\n\n${preview}${
-        models.length > 1 ? "\n\nmodels 里的每个模型都能用 /model 切换；断网时它也是可选清单。" : ""
-      }`,
-      allowCustom: false,
-      options: [
-        { label: "保存", value: "save", description: "写入配置并切换到该 provider" },
-        { label: "取消", value: "cancel", description: "不写任何东西" }
-      ]
-    }]
-  })
-  if (clean(confirm.confirm) !== "save") return { saved: false, reason: "cancelled" }
+  const contexts = {
+    ...modelResult.contexts,
+    ...(await askMissingContexts({ chosen: models, contexts: modelResult.contexts, ask }))
+  }
+  const { known, unknown } = detectThinkingSupport(models, discovered)
+  const thinkingMap = { ...known, ...(await askMissingThinking({ unknown, ask })) }
+
+  const entry = buildEntry({ type: protocol.type, baseUrl, apiKey, model, models })
+
+  // 确认循环：保存 / 修改名称 / 取消。名称是唯一推导出来（而非用户输入）的
+  // 落盘键名，所以必须给一条不重走全流程的修改路径。
+  for (;;) {
+    const preview = previewEntry(name, entry, { modelContext: contexts, modelThinking: thinkingMap })
+    const confirm = await ask({
+      questions: [{
+        id: "confirm",
+        header: "Confirm",
+        text: `将写入 ~/.kkcode/config.yaml：\n\n${preview}${
+          models.length > 1 ? "\n\nmodels 里的每个模型都能用 /model 切换；断网时它也是可选清单。" : ""
+        }`,
+        description: existingNames.includes(name)
+          ? `同名 provider「${name}」已存在：保存 = 合并更新，未触及的字段原样保留`
+          : "",
+        allowCustom: false,
+        options: [
+          { label: "保存", value: "save", description: "写入配置并切换到该 provider" },
+          { label: "修改名称", value: "rename", description: `当前：${name}（从 URL 推导）` },
+          { label: "取消", value: "cancel", description: "不写任何东西" }
+        ]
+      }]
+    })
+    const choice = clean(confirm.confirm)
+    if (choice === "rename") {
+      const renamed = await ask({
+        questions: [{
+          id: "name",
+          header: "Name",
+          text: "Provider 名称（写进配置的键名，小写字母/数字/-/_）",
+          default: name
+        }]
+      })
+      const nextName = sanitizeName(renamed.name)
+      if (nextName && !RESERVED.has(nextName)) name = nextName
+      continue
+    }
+    if (choice !== "save") return { saved: false, reason: "cancelled" }
+    break
+  }
 
   const configPatch = { provider: { default: name, [name]: entry } }
-  // model_context 是 provider 段下的顶层 map（不是条目内字段）。saveProviderConfig
-  // 对它走的是同一套浅合并 —— 新模型的上下文并进去，别的模型的原样留着。
+  // model_context / model_thinking 是 provider 段下的顶层 map（不是条目内字段）。
+  // saveProviderConfig 对它们走同一套浅合并 —— 新模型的条目并进去，别的原样留着。
   if (Object.keys(contexts).length) configPatch.provider.model_context = { ...contexts }
+  if (Object.keys(thinkingMap).length) configPatch.provider.model_thinking = { ...thinkingMap }
   await saveProviderConfig(configPatch, true)
   return { saved: true, name, configPatch }
 }

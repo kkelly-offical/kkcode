@@ -38,7 +38,8 @@ test.after(async () => {
 })
 
 test("重跑 add 且密钥题留空时，发现用配置里已有的内联 api_key（issue #3 的表单形态）", async () => {
-  delete process.env.KIMI_CODE_API_KEY
+  // 0.8.0 去模板化后，「重配同一个服务」的识别从厂商模板改成 **base_url 匹配**：
+  // 输入的 URL 与已有 provider 相同 → 沿用那个名字 → 发现拿它的内联密钥。
   const discovered = []
   const result = await runProviderAddForm({
     configState: {
@@ -49,7 +50,8 @@ test("重跑 add 且密钥题留空时，发现用配置里已有的内联 api_k
       }
     },
     ask: scriptedAsk({
-      vendor: "kimi-code",
+      protocol: "openai",
+      base_url: "https://api.kimi.com/coding/v1",
       api_key: "",          // 留空 —— 关键场景：用户不想重打一遍已配好的密钥
       model: "k3",
       confirm: "save"
@@ -60,35 +62,37 @@ test("重跑 add 且密钥题留空时，发现用配置里已有的内联 api_k
     }
   })
   assert.equal(result.saved, true)
+  assert.equal(result.name, "kimi-code", "同 URL 沿用既有名字 —— 这是合并更新而不是造第二个条目")
   assert.equal(discovered[0].api_key, "sk-kimi-inline-secret", "内联密钥必须传进发现请求")
   // 只进发现的 draft，不因此把 key 重写一遍 —— 写盘留给 merge 保留旧值
   assert.equal(result.configPatch.provider["kimi-code"].api_key, undefined)
 })
 
 test("既无输入也无内联密钥时，发现失败降级到手动输入而不是报错中断", async () => {
-  delete process.env.KIMI_CODE_API_KEY
   const modelQuestionRounds = []
   const result = await runProviderAddForm({
     configState: { config: { provider: {} } },
     ask: async ({ questions }) => {
       if (questions.some((q) => q.id === "model")) modelQuestionRounds.push(questions)
       return Object.fromEntries(questions.map((q) => {
-        if (q.id === "vendor") return [q.id, "kimi-code"]
+        if (q.id === "protocol") return [q.id, "openai"]
+        if (q.id === "base_url") return [q.id, "https://api.kimi.com/coding/v1"]
         if (q.id === "api_key") return [q.id, ""]
         if (q.id === "model") return [q.id, "k3"]
         if (q.id === "confirm") return [q.id, "save"]
-        if (q.id === "thinking") return [q.id, "skip"]
         return [q.id, q.default ?? ""]
       }))
     },
     // 无凭据时目录发现抛错 —— 表单应当把它当「没有列表」而不是把流程打断
-    discover: async () => { throw new Error("KIMI_CODE_API_KEY is not set") }
+    discover: async () => { throw new Error("missing API key") }
   })
   assert.equal(result.saved, true)
   assert.equal(modelQuestionRounds.length, 1, "降级后只该有手动输入这一轮")
   assert.equal(modelQuestionRounds[0].find((q) => q.id === "model").options, undefined)
-  // 预设有 key_env 且用户没给明文 → 写环境变量名（运行时的凭据来源，必要信息）
-  assert.equal(result.configPatch.provider["kimi-code"].api_key_env, "KIMI_CODE_API_KEY")
+  // 0.8.0 去模板化：没有预设也就没有 key_env 可以静默写入 ——
+  // 留空的 key 就是「不配置凭据」，一个凭据字段都不该出现
+  assert.equal(result.configPatch.provider.kimi.api_key_env, undefined)
+  assert.equal(result.configPatch.provider.kimi.api_key, undefined)
 })
 
 test("saveProviderConfig 逐字段合并：重跑不会抹掉没动过的字段", async () => {

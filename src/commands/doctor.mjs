@@ -3,6 +3,7 @@ import { exec as execCb } from "node:child_process"
 import { promisify } from "node:util"
 import { buildContext, resolveExtensionPolicy } from "../context.mjs"
 import { listProviders } from "../provider/router.mjs"
+import { PROVIDER_META_KEYS } from "../config/schema.mjs"
 import { eventLogStats } from "../storage/event-log.mjs"
 import { auditStats, verifyAuditChain } from "../storage/audit-store.mjs"
 import { fsckSessionStore, flushNow } from "../session/store.mjs"
@@ -54,7 +55,7 @@ export async function buildDoctorReport({ includeHttp = false } = {}) {
   const config = ctx.configState.config
   const providers = []
   for (const [name, provider] of Object.entries(config.provider || {})) {
-    if (["default", "strict_mode", "model_context"].includes(name)) continue
+    if (PROVIDER_META_KEYS.includes(name)) continue
     if (!provider || typeof provider !== "object") continue
     const keyEnv = provider.api_key_env || ""
     const type = provider.type || name

@@ -4,12 +4,13 @@ import { loadConfig } from "../config/load-config.mjs"
 // 写回逻辑与向导共用一份（逐字段合并、保留未触及字段）—— 0.5.1 修过的
 // 整条目替换事故不能在第二份实现里复活
 import { VENDOR_PRESETS, saveProviderConfig } from "../provider/wizard.mjs"
+import { PROVIDER_META_KEYS } from "../config/schema.mjs"
 
 // --- Resolve configured providers ---
 
 export function getConfiguredProviders(configState) {
   const provider = configState.config.provider || {}
-  const metaKeys = new Set(["default", "strict_mode", "model_context"])
+  const metaKeys = new Set(PROVIDER_META_KEYS)
   const names = Object.keys(provider).filter((k) => !metaKeys.has(k))
   return names.map((name) => ({
     name,

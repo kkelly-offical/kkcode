@@ -5,14 +5,13 @@ import { resolveMode } from "../session/engine.mjs"
 import { modeIdFromLegacy } from "../core/modes.mjs"
 import { restoreModeId } from "./mode-flow.mjs"
 import { PACKAGE_VERSION } from "../version.mjs"
+import { PROVIDER_META_KEYS } from "../config/schema.mjs"
 
 export function configuredProviders(config, listProvidersFn) {
   const builtins = new Set(listProvidersFn())
   const out = []
   for (const [name, value] of Object.entries(config.provider || {})) {
-    if (name === "default") continue
-    if (name === "strict_mode") continue
-    if (name === "model_context") continue
+    if (PROVIDER_META_KEYS.includes(name)) continue
     if (!value || typeof value !== "object") continue
     const type = value.type || name
     if (builtins.has(type)) out.push(name)
