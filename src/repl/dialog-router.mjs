@@ -1,3 +1,5 @@
+import { visibleQuestionOptions } from "../ui/overlay-question.mjs"
+
 export const QUESTION_SKIPPED = "(skipped)"
 
 /**
@@ -29,10 +31,12 @@ export function activateNextQuestionState(queue = []) {
       pendingQuestion: null,
       questionIndex: 0,
       questionOptionSelected: 0,
+      questionOptionOffset: 0,
       questionMultiSelected: {},
       questionCustomMode: false,
       questionCustomInput: "",
       questionCustomCursor: 0,
+      questionFilter: "",
       questionAnswers: {}
     }
   }
@@ -43,9 +47,11 @@ export function activateNextQuestionState(queue = []) {
     pendingQuestion,
     questionIndex: 0,
     questionOptionSelected: 0,
+    questionOptionOffset: 0,
     questionMultiSelected: {},
     questionCustomMode: false,
     ...bufferState((pendingQuestion.questions || [])[0], {}),
+    questionFilter: "",
     questionAnswers: {}
   }
 }
@@ -69,6 +75,8 @@ export function commitQuestionAnswer(state) {
   }
 
   if (current.multi) {
+    // 集合里存的是 sourceIndex（原始选项下标，见 visibleQuestionOptions 的
+    // 注释）—— 过滤只改显示位置，不改集合语义，这里直接按原数组取即可。
     const selected = state.questionMultiSelected[current.id] || new Set()
     const values = [...selected]
       .map((index) => {
@@ -80,8 +88,11 @@ export function commitQuestionAnswer(state) {
     return { ...state, questionAnswers: nextAnswers }
   }
 
-  const option = options[state.questionOptionSelected]
-  if (option) nextAnswers[current.id] = option.value || option.label
+  // 单选的 questionOptionSelected 是**显示位置**：过滤态下它指向过滤后的
+  // 列表，直接当原数组下标用会提交到另一个选项 —— 必须经同一个派生函数换算。
+  const visible = visibleQuestionOptions(current, state.questionFilter || "")
+  const entry = visible[state.questionOptionSelected]
+  if (entry) nextAnswers[current.id] = entry.option.value || entry.option.label
   return { ...state, questionAnswers: nextAnswers }
 }
 
@@ -93,7 +104,10 @@ export function advanceQuestionState(state) {
       ...state,
       questionIndex: nextIndex,
       questionOptionSelected: 0,
+      questionOptionOffset: 0,
       questionCustomMode: false,
+      // 过滤串属于「这一题」：带到下一题会让新列表被一个看不见的旧串滤空
+      questionFilter: "",
       ...bufferState(questions[nextIndex], state.questionAnswers)
     }
   }

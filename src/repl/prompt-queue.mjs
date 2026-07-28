@@ -76,10 +76,12 @@ export function createPromptQueue({ ui, requestRender, notifier = null }) {
     ui.pendingQuestion = next.pendingQuestion
     ui.questionIndex = next.questionIndex
     ui.questionOptionSelected = next.questionOptionSelected
+    ui.questionOptionOffset = next.questionOptionOffset
     ui.questionMultiSelected = next.questionMultiSelected
     ui.questionCustomMode = next.questionCustomMode
     ui.questionCustomInput = next.questionCustomInput
     ui.questionCustomCursor = next.questionCustomCursor
+    ui.questionFilter = next.questionFilter
     ui.questionAnswers = next.questionAnswers
   }
 
@@ -91,6 +93,9 @@ export function createPromptQueue({ ui, requestRender, notifier = null }) {
       questionMultiSelected: ui.questionMultiSelected,
       questionCustomMode: ui.questionCustomMode,
       questionCustomInput: ui.questionCustomInput,
+      // 过滤态下 questionOptionSelected 是过滤后列表的下标 —— 提交必须带上
+      // 过滤串才能换算回原选项（见 dialog-router 的单选提交路径）
+      questionFilter: ui.questionFilter,
       questionAnswers: ui.questionAnswers
     })
     ui.questionAnswers = next.questionAnswers
@@ -117,9 +122,11 @@ export function createPromptQueue({ ui, requestRender, notifier = null }) {
     }
     ui.questionIndex = next.questionIndex
     ui.questionOptionSelected = next.questionOptionSelected
+    ui.questionOptionOffset = next.questionOptionOffset
     ui.questionCustomMode = next.questionCustomMode
     ui.questionCustomInput = next.questionCustomInput
     ui.questionCustomCursor = next.questionCustomCursor
+    ui.questionFilter = next.questionFilter
     requestRender({ force: true })
   }
 
@@ -138,10 +145,12 @@ export function createPromptQueue({ ui, requestRender, notifier = null }) {
     ui.pendingQuestion = null
     ui.questionIndex = 0
     ui.questionOptionSelected = 0
+    ui.questionOptionOffset = 0
     ui.questionMultiSelected = {}
     ui.questionCustomMode = false
     ui.questionCustomInput = ""
     ui.questionCustomCursor = 0
+    ui.questionFilter = ""
     ui.questionAnswers = {}
   }
 

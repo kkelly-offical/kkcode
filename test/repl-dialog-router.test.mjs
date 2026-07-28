@@ -83,3 +83,80 @@ test("finalizeQuestionAnswers fills skipped placeholders", () => {
   )
   assert.deepEqual(answers, { q1: "done", q2: QUESTION_SKIPPED })
 })
+
+// --- 过滤态下的提交换算（0.8.0） ---
+
+test("a filtered single-select commits the option the user sees, not the raw index", () => {
+  const question = {
+    id: "model",
+    options: [
+      { label: "gpt-5.5", value: "gpt-5.5" },
+      { label: "claude-sonnet-4-6", value: "claude-sonnet-4-6" },
+      { label: "kimi-k2.6", value: "kimi-k2.6" }
+    ]
+  }
+  // 过滤 "kimi" 后显示位置 0 是 kimi-k2.6（原下标 2）。
+  // 不做换算的话 options[0] 会把 gpt-5.5 交出去 —— 用户看着 kimi 按的回车。
+  const next = commitQuestionAnswer({
+    pendingQuestion: { questions: [question] },
+    questionIndex: 0,
+    questionOptionSelected: 0,
+    questionFilter: "kimi",
+    questionMultiSelected: {},
+    questionCustomMode: false,
+    questionCustomInput: "",
+    questionAnswers: {}
+  })
+  assert.equal(next.questionAnswers.model, "kimi-k2.6")
+})
+
+test("a filtered-to-nothing single-select commits no answer at all", () => {
+  const next = commitQuestionAnswer({
+    pendingQuestion: { questions: [{ id: "m", options: [{ label: "甲" }] }] },
+    questionIndex: 0,
+    questionOptionSelected: 0,
+    questionFilter: "zzz",
+    questionMultiSelected: {},
+    questionCustomMode: false,
+    questionCustomInput: "",
+    questionAnswers: {}
+  })
+  assert.equal(next.questionAnswers.m, undefined,
+    "零命中时不能把 undefined 折成某个选项交出去")
+})
+
+test("multi-select commit reads source indices regardless of any filter", () => {
+  const question = {
+    id: "models",
+    multi: true,
+    options: [
+      { label: "a", value: "a" }, { label: "b", value: "b" }, { label: "c", value: "c" }
+    ]
+  }
+  // 集合存的是 sourceIndex —— 过滤串在提交时是什么都不影响勾选内容
+  const next = commitQuestionAnswer({
+    pendingQuestion: { questions: [question] },
+    questionIndex: 0,
+    questionOptionSelected: 0,
+    questionFilter: "b",
+    questionMultiSelected: { models: new Set([0, 2]) },
+    questionCustomMode: false,
+    questionCustomInput: "",
+    questionAnswers: {}
+  })
+  assert.equal(next.questionAnswers.models, "a, c")
+})
+
+test("advancing to the next question clears the filter", () => {
+  const advanced = advanceQuestionState({
+    pendingQuestion: { questions: [{ id: "a" }, { id: "b" }] },
+    questionIndex: 0,
+    questionOptionSelected: 1,
+    questionFilter: "leftover",
+    questionCustomMode: false,
+    questionCustomInput: "",
+    questionCustomCursor: 0
+  })
+  assert.equal(advanced.questionFilter, "")
+  assert.equal(advanced.questionOptionOffset, 0)
+})

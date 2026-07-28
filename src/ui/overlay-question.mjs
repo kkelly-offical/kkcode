@@ -17,13 +17,39 @@
  */
 
 import { maskSecretText } from "../repl/text-layout.mjs"
+import { scrollWindow, filterOverlayItems, markMatchRanges } from "./overlay-select.mjs"
 
 const SECRET_MASK = "•"
+
+/**
+ * 选项超过这个数就进滚动窗口（0.8.0）。此前是无窗口全量遍历 —— /provider add
+ * 的模型多选轮发现 60 个模型时，整帧直接超出终端高度，对话区被压到 2 行。
+ */
+export const MAX_QUESTION_OPTIONS_VISIBLE = 8
 
 /** 当前问题是否处在自由文本形态（自定义模式，或它本来就没有选项）。 */
 export function questionIsTextMode(question, customMode) {
   const options = Array.isArray(question?.options) ? question.options : []
   return Boolean(customMode) || options.length === 0
+}
+
+/**
+ * 过滤后的可见选项视图：`[{ option, sourceIndex, ranges }]`。
+ *
+ * **唯一的派生函数** —— 渲染（本文件）、按键（overlay-keys 的 questionOptions
+ * 作用域）、提交（dialog-router 的 commitQuestionAnswer）三方都用它。三处各算
+ * 一份的话，「界面上高亮的」「空格勾中的」「最终写进答案的」会是三个东西。
+ *
+ * 多选集合（questionMultiSelected）存的是 **sourceIndex**（原始选项下标），
+ * 不是显示位置：过滤会重排显示位置，显示位置一进集合，清掉过滤串后勾选就
+ * 全体错位。`questionOptionSelected` 则始终是**显示位置**（0..visible.length，
+ * 末尾越界一格代表 Custom 伪项）——两个坐标系只在这里换算。
+ */
+export function visibleQuestionOptions(question, filter = "") {
+  const options = Array.isArray(question?.options) ? question.options : []
+  if (!filter) return options.map((option, index) => ({ option, sourceIndex: index, ranges: [] }))
+  return filterOverlayItems(options, filter, { field: "label" })
+    .map((match) => ({ option: options[match.sourceIndex], sourceIndex: match.sourceIndex, ranges: match.ranges }))
 }
 
 export function renderQuestionOverlay({
@@ -35,6 +61,8 @@ export function renderQuestionOverlay({
   questionCustomMode = false,
   questionCustomInput = "",
   questionCustomCursor = 0,
+  questionFilter = "",
+  questionOptionOffset = 0,
   width,
   theme,
   paint,
@@ -88,6 +116,8 @@ export function renderQuestionOverlay({
 
   let cursor = null
   let textCursor = questionCustomCursor
+  // 滚动窗口起点，调用方回写（与 renderSelectOverlay 的 offset 约定一致）
+  let optionOffset = questionOptionOffset
   if (questionIsTextMode(currentQ, questionCustomMode)) {
     const secret = currentQ.secret === true
     const masked = secret ? maskSecretText(questionCustomInput, questionCustomCursor, SECRET_MASK) : null
@@ -110,32 +140,57 @@ export function renderQuestionOverlay({
     cursor = { row: inputStart + layout.cursor.row, col: 3 + layout.cursor.col }
   } else if (options.length) {
     const multiSelected = questionMultiSelected[currentQ.id] || new Set()
-    for (let i = 0; i < options.length; i++) {
-      const opt = options[i]
+    const visible = visibleQuestionOptions(currentQ, questionFilter)
+    const allowCustom = currentQ.allowCustom !== false
+    // Custom 伪项参与窗口计算 —— 它是列表的最后一行，滚到底才看得见，
+    // 否则窗口滚动时它会把可见行数顶到 maxVisible + 1。
+    const total = visible.length + (allowCustom ? 1 : 0)
+    const win = scrollWindow({
+      total,
+      selected: Math.min(questionOptionSelected, Math.max(0, total - 1)),
+      offset: questionOptionOffset,
+      maxVisible: MAX_QUESTION_OPTIONS_VISIBLE
+    })
+    // 窗口化时不画 description 行：窗口按**选项数**算，行数却按渲染行数长 ——
+    // 8 个带描述的选项就是 16 行，等于没窗口。列表短时保留描述，信息不丢。
+    const windowed = total > win.visible
+
+    if (!visible.length && questionFilter) {
+      row("no match · Backspace deletes · Esc clears filter", theme.base.muted)
+    }
+    for (let i = win.start; i < win.end; i++) {
       const active = i === questionOptionSelected
       const prefix = active ? "▸" : " "
+      if (i >= visible.length) {
+        const customLine = ` ${prefix}   Custom...`
+        lines.push(
+          active
+            ? paint(`│${padRight(customLine, inner)}│`, "#111111", { bg: theme.semantic.info, bold: true })
+            : paint(`│${padRight(customLine, inner)}│`, theme.base.muted)
+        )
+        continue
+      }
+      const entry = visible[i]
       const marker = currentQ.multi
-        ? (multiSelected.has(i) ? "☑" : "☐")
+        ? (multiSelected.has(entry.sourceIndex) ? "☑" : "☐")
         : (active ? "●" : "○")
-      const optLine = ` ${prefix} ${marker} ${opt.label}`
+      const label = questionFilter ? markMatchRanges(entry.option.label, entry.ranges) : entry.option.label
+      const optLine = ` ${prefix} ${marker} ${label}`
       lines.push(
         active
           ? paint(`│${padRight(optLine, inner)}│`, "#111111", { bg: theme.semantic.info, bold: true })
           : paint(`│${padRight(optLine, inner)}│`, theme.base.fg)
       )
-      if (opt.description) {
-        lines.push(paint(`│${padRight(`       ${opt.description}`, inner)}│`, theme.base.muted))
+      if (entry.option.description && !windowed) {
+        lines.push(paint(`│${padRight(`       ${entry.option.description}`, inner)}│`, theme.base.muted))
       }
     }
-    if (currentQ.allowCustom !== false) {
-      const active = questionOptionSelected === options.length
-      const customLine = ` ${active ? "▸" : " "}   Custom...`
-      lines.push(
-        active
-          ? paint(`│${padRight(customLine, inner)}│`, "#111111", { bg: theme.semantic.info, bold: true })
-          : paint(`│${padRight(customLine, inner)}│`, theme.base.muted)
-      )
+    if (windowed || questionFilter) {
+      const range = windowed ? `${win.start + 1}-${win.end} of ${total}` : ""
+      const filterNote = questionFilter ? `filter: ${questionFilter}` : "type to filter"
+      row([range, filterNote].filter(Boolean).join("  ·  "), theme.base.muted)
     }
+    optionOffset = win.start
   }
 
   lines.push(paint(`│${"─".repeat(rule)}│`, theme.base.border))
@@ -144,5 +199,5 @@ export function renderQuestionOverlay({
   row(`Answered: ${answered}/${qCount}${multiHint}  [Ctrl+Enter submit all]`, theme.base.muted)
   lines.push(paint(`└${"─".repeat(rule)}┘`, theme.base.border))
 
-  return { lines, cursor, textCursor }
+  return { lines, cursor, textCursor, optionOffset }
 }

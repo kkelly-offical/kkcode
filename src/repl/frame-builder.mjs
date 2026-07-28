@@ -382,6 +382,29 @@ export function buildFrame({
     }).lines)
   }
 
+  // 思考档位选择器（0.8.0）：/model 选完支持思考的模型后弹出。五个静态档位，
+  // 与 mode/policy 一样不需要滚动；● 标当前档。
+  const thinkingPickerLines = []
+  if (ui.thinkingPicker) {
+    thinkingPickerLines.push(...renderSelectOverlay({
+      title: `Thinking · ${ui.thinkingPicker.model || ""}`,
+      hint: "↑↓ navigate  Enter apply  Esc skip",
+      items: (ui.thinkingPicker.items || []).map((item) => ({
+        label: item.label,
+        desc: item.desc,
+        current: item.current
+      })),
+      selected: ui.thinkingPicker.selected,
+      width,
+      theme: ctx.themeState.theme,
+      accent: ctx.themeState.theme.semantic.info,
+      paint,
+      padRight,
+      layout: "two-column",
+      markers: true
+    }).lines)
+  }
+
   // --- Question panel ---
   // 整块渲染在 repl/ui/overlay-question.mjs：它要处理遮蔽输入与多行描述，留在
   // 这里会把 buildFrame 的判定点顶上去（结构守卫里它是只减不增的）。
@@ -397,6 +420,8 @@ export function buildFrame({
       questionCustomMode: ui.questionCustomMode,
       questionCustomInput: ui.questionCustomInput,
       questionCustomCursor: ui.questionCustomCursor,
+      questionFilter: ui.questionFilter,
+      questionOptionOffset: ui.questionOptionOffset,
       width,
       theme: ctx.themeState.theme,
       paint,
@@ -405,6 +430,8 @@ export function buildFrame({
     })
     // 回写的是**真值坐标系**里对齐到字素簇边界的光标 —— 遮蔽串的下标绝不回写。
     ui.questionCustomCursor = rendered.textCursor
+    // 滚动窗口起点回写（与选择器的 mp.offset = rendered.offset 同一约定）
+    ui.questionOptionOffset = rendered.optionOffset
     questionCursor = rendered.cursor
     questionLines.push(...rendered.lines)
   }
@@ -453,6 +480,7 @@ export function buildFrame({
     // 写死的 "Commands" —— 对文件候选是错的，对命令候选是重复的。
     { name: "suggestions", lines: suggestionLines },
     { name: "modelPicker", lines: modelPickerLines },
+    { name: "thinkingPicker", lines: thinkingPickerLines },
     { name: "providerPicker", lines: providerPickerLines },
     { name: "sessionPicker", lines: sessionPickerLines },
     { name: "policyPicker", lines: policyPickerLines },

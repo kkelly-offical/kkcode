@@ -27,6 +27,7 @@
 
 import { on } from "../key-dispatch.mjs"
 import { applyOverlayFilter, filterOverlayItems } from "../../ui/overlay-select.mjs"
+import { visibleQuestionOptions } from "../../ui/overlay-question.mjs"
 import { questionTextBuffer } from "../dialog-router.mjs"
 
 /**
@@ -39,6 +40,9 @@ export const PICKER_DEFS = Object.freeze([
   Object.freeze({ kind: "providerPicker", typing: "filter" }),
   Object.freeze({ kind: "sessionPicker", typing: "filter" }),
   Object.freeze({ kind: "modelPicker", typing: "filter" }),
+  // 思考档位（0.8.0）：五个静态档位，列表在 picker 状态里（current 标记开时算好）。
+  // jump 的理由同 themePicker —— 五行的列表过滤省不下按键。
+  Object.freeze({ kind: "thinkingPicker", typing: "jump" }),
   Object.freeze({ kind: "policyPicker", typing: "jump" }),
   Object.freeze({ kind: "modePicker", typing: "jump" }),
   // 主题选择器是 `jump` 而不是 `filter`，两条理由：
@@ -174,6 +178,8 @@ export function createOverlayKeyScopes({
   confirmSessionPicker,
   closeModelPicker,
   confirmModelPicker,
+  closeThinkingPicker,
+  confirmThinkingPicker,
   closePolicyPicker,
   confirmPolicyPicker,
   closeModePicker,
@@ -369,6 +375,13 @@ export function createOverlayKeyScopes({
           run: () => { commitCurrentQuestionAnswer(); resolveQuestionPrompt() }
         },
         {
+          // 两级 Esc：先清过滤串，再走跳过 —— 与选择器的 clearFilter 同一约定。
+          // 必须排在 skip 前面：处理器按序命中，反过来 Esc 永远轮不到清过滤。
+          id: "clearFilter",
+          when: (ctx) => ctx.key.name === "escape" && Boolean(ctx.ui.questionFilter),
+          run: (ctx) => { setQuestionFilter(ctx, ""); requestRender() }
+        },
+        {
           id: "skip",
           when: on.key("escape"),
           run: (ctx) => {
@@ -418,11 +431,14 @@ export function createOverlayKeyScopes({
           run: (ctx) => {
             const { ui } = ctx
             const current = currentQuestion(ctx)
-            if (ui.questionOptionSelected >= questionOptions(ctx).length) return
+            // 集合存 sourceIndex：过滤重排的是显示位置，勾选必须钉在原选项上，
+            // 否则清掉过滤串后 ☑ 会整体错位（见 visibleQuestionOptions 的注释）
+            const entry = questionVisible(ctx)[ui.questionOptionSelected]
+            if (!entry) return
             if (!ui.questionMultiSelected[current.id]) ui.questionMultiSelected[current.id] = new Set()
             const set = ui.questionMultiSelected[current.id]
-            if (set.has(ui.questionOptionSelected)) set.delete(ui.questionOptionSelected)
-            else set.add(ui.questionOptionSelected)
+            if (set.has(entry.sourceIndex)) set.delete(entry.sourceIndex)
+            else set.add(entry.sourceIndex)
             requestRender()
           }
         },
@@ -431,16 +447,40 @@ export function createOverlayKeyScopes({
           when: on.key("return"),
           run: (ctx) => {
             const { ui } = ctx
-            const options = questionOptions(ctx)
+            const visible = questionVisible(ctx)
             // 选中的是「自定义…」那一项 → 进自由文本形态
-            if (ui.questionOptionSelected === options.length && currentQuestion(ctx).allowCustom !== false) {
+            if (ui.questionOptionSelected === visible.length && currentQuestion(ctx).allowCustom !== false) {
               ui.questionCustomMode = true
               ui.questionCustomInput = ""
               ui.questionCustomCursor = 0
+              setQuestionFilter(ctx, "")
               requestRender()
               return
             }
+            // 过滤到一个不剩且没有自定义项时 Enter 不该提交 —— 那会把
+            // 「没选中任何东西」当成一个答案交出去
+            if (!visible.length) return
             advanceOrSubmitQuestion()
+          }
+        },
+        {
+          id: "filterBackspace",
+          when: (ctx) => ctx.key.name === "backspace" && Boolean(ctx.ui.questionFilter),
+          run: (ctx) => {
+            const filter = ctx.ui.questionFilter
+            setQuestionFilter(ctx, filter.slice(0, moveGraphemeCursor(filter, filter.length, -1)))
+            requestRender()
+          }
+        },
+        {
+          // 打字过滤（0.8.0）。空格整个排除在过滤串之外：多选题的空格是勾选
+          // （上面的 toggleMulti 先命中），单选题的空格历来是「吞掉不做事」——
+          // 候选 label（模型 ID、provider 名）里也不会有空格，排除它不损失什么。
+          id: "filterInsert",
+          when: (ctx) => printableText(ctx) && ctx.str !== " ",
+          run: (ctx) => {
+            setQuestionFilter(ctx, `${ctx.ui.questionFilter || ""}${ctx.str}`)
+            requestRender()
           }
         }
       ]
@@ -453,6 +493,13 @@ export function createOverlayKeyScopes({
         providerPicker: { confirm: () => { void confirmProviderPicker() }, close: closeProviderPicker },
         sessionPicker: { confirm: () => { void confirmSessionPicker() }, close: closeSessionPicker },
         modelPicker: { confirm: confirmModelPicker, close: closeModelPicker },
+        thinkingPicker: {
+          confirm: confirmThinkingPicker,
+          close: closeThinkingPicker,
+          // 档位列表在打开时算好（current 标记来自当时的配置）—— 与 theme 一样
+          // 读 picker 状态，不读模块常量。
+          choices: (ui) => ui.thinkingPicker?.items || []
+        },
         policyPicker: { confirm: confirmPolicyPicker, close: closePolicyPicker, choices: () => POLICY_CHOICES },
         themePicker: {
           confirm: confirmThemePicker,
@@ -499,7 +546,10 @@ function currentQuestion(ctx) {
 function enterQuestion(ui, index) {
   ui.questionIndex = index
   ui.questionOptionSelected = 0
+  ui.questionOptionOffset = 0
   ui.questionCustomMode = false
+  // 过滤串属于「这一题」—— 带着切题会让下一题的列表被旧串滤空
+  ui.questionFilter = ""
   const question = (ui.pendingQuestion?.questions || [])[index]
   ui.questionCustomInput = questionTextBuffer(question, ui.questionAnswers)
   ui.questionCustomCursor = ui.questionCustomInput.length
@@ -510,7 +560,33 @@ function questionOptions(ctx) {
   return Array.isArray(options) ? options : []
 }
 
+/** 过滤后的可见选项。与渲染（overlay-question）、提交（dialog-router）同源。 */
+function questionVisible(ctx) {
+  return visibleQuestionOptions(currentQuestion(ctx), ctx.ui.questionFilter || "")
+}
+
+/**
+ * 改过滤串，并做**选中项跟随**（对齐 applyOverlayFilter 的语义）：先记住当前
+ * 选中的 sourceIndex，过滤完在新列表里找回去；找不到才归零。选中在 Custom
+ * 伪项上时保持在伪项上 —— 它不参与过滤，永远在列表末尾。
+ */
+function setQuestionFilter(ctx, next) {
+  const { ui } = ctx
+  const before = questionVisible(ctx)
+  const onCustom = ui.questionOptionSelected >= before.length
+  const selectedSource = onCustom ? null : before[ui.questionOptionSelected]?.sourceIndex
+  ui.questionFilter = next
+  ui.questionOptionOffset = 0
+  const after = questionVisible(ctx)
+  if (onCustom) {
+    ui.questionOptionSelected = after.length
+    return
+  }
+  const kept = after.findIndex((entry) => entry.sourceIndex === selectedSource)
+  ui.questionOptionSelected = kept >= 0 ? kept : 0
+}
+
 function maxOptionIndex(ctx) {
   const current = currentQuestion(ctx)
-  return questionOptions(ctx).length + (current.allowCustom !== false ? 1 : 0) - 1
+  return questionVisible(ctx).length + (current.allowCustom !== false ? 1 : 0) - 1
 }

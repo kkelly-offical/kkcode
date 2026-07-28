@@ -51,6 +51,8 @@ function harness() {
     confirmSessionPicker: spy("confirmSession"),
     closeModelPicker: spy("closeModel"),
     confirmModelPicker: spy("confirmModel"),
+    closeThinkingPicker: spy("closeThinking"),
+    confirmThinkingPicker: spy("confirmThinking"),
     closePolicyPicker: spy("closePolicy"),
     confirmPolicyPicker: spy("confirmPolicy"),
     closeModePicker: spy("closeMode"),
@@ -214,13 +216,19 @@ const FILTER_ITEMS = [
   { id: "s3", label: "refactor auth module" },   // 子串命中
   { id: "s4", label: "authorize the deploy" }    // 前缀命中
 ]
+// 思考档位的形状与真实构造一致（overlay-controller 的 openThinkingPicker）
+const THINKING_ITEMS = [
+  { id: "off", label: "off" }, { id: "low", label: "low" }, { id: "medium", label: "medium" },
+  { id: "high", label: "high", current: true }, { id: "max", label: "max" }
+]
 const CHOICES = {
   policyPicker: POLICY_CHOICES,
   modePicker: MODE_PICKER_CHOICES,
-  themePicker: THEME_ITEMS
+  themePicker: THEME_ITEMS,
+  thinkingPicker: THINKING_ITEMS
 }
 /** 候选放在 picker 状态里而不是模块常量里的那些（列表是运行期算的）。 */
-const STATE_CARRIED = new Set(["themePicker"])
+const STATE_CARRIED = new Set(["themePicker", "thinkingPicker"])
 const FILTER_DEFS = PICKER_DEFS.filter((def) => def.typing === "filter")
 const JUMP_DEFS = PICKER_DEFS.filter((def) => def.typing === "jump")
 
@@ -620,4 +628,107 @@ test("a control character is not inserted as question text", async () => {
   const ui = questionUi({ options: [] })
   await dispatchKey({ ui, key: {}, str: String.fromCharCode(27) })
   assert.deepEqual(calls, [], "转义字符不是文本输入")
+})
+
+// --- 提问选项的打字过滤与滚动（0.8.0） ---
+
+const MANY_OPTIONS = [
+  { label: "gpt-5.5" }, { label: "gpt-5.4-mini" }, { label: "claude-sonnet-4-6" },
+  { label: "claude-opus-4-7" }, { label: "deepseek-v4-pro" }, { label: "kimi-k2.6" },
+  { label: "qwen3.5-plus" }, { label: "glm-5.1" }, { label: "grok-4.3" }, { label: "moonshot-v1-128k" }
+]
+
+test("typing filters question options and Enter commits the option the user sees", async () => {
+  const { dispatchKey } = harness()
+  const ui = questionUi({ options: MANY_OPTIONS })
+  for (const ch of "kimi") await dispatchKey({ ui, key: {}, str: ch })
+  assert.equal(ui.questionFilter, "kimi")
+  // 过滤后显示位置 0 是 kimi-k2.6（原下标 5）。提交换算在 dialog-router 侧钉。
+  assert.equal(ui.questionOptionSelected, 0)
+  const result = await dispatchKey({ ui, ...press("return") })
+  assert.equal(result.scope, "questionOptions")
+})
+
+test("multi-select checkmarks are pinned to source options across filtering", async () => {
+  const { dispatchKey } = harness()
+  const ui = questionUi({ options: MANY_OPTIONS, multi: true })
+  // 无过滤勾选第 0 项（gpt-5.5）
+  await dispatchKey({ ui, ...press("space") })
+  assert.deepEqual([...ui.questionMultiSelected.q1], [0])
+  // 过滤到 kimi，再勾选显示位置 0 —— 应该勾中原下标 5，而不是把 0 又切掉
+  for (const ch of "kimi") await dispatchKey({ ui, key: {}, str: ch })
+  await dispatchKey({ ui, ...press("space") })
+  assert.deepEqual([...ui.questionMultiSelected.q1].sort(), [0, 5],
+    "过滤态下的勾选必须钉在原选项上，否则清掉过滤串后 ☑ 整体错位")
+  // 清掉过滤串，两个勾还在原来的选项上
+  await dispatchKey({ ui, ...press("escape") })
+  assert.equal(ui.questionFilter, "")
+  assert.deepEqual([...ui.questionMultiSelected.q1].sort(), [0, 5])
+})
+
+test("Esc clears the question filter first and only skips on the second press", async () => {
+  const { dispatchKey, calls } = harness()
+  const ui = questionUi({ options: MANY_OPTIONS })
+  await dispatchKey({ ui, key: {}, str: "g" })
+  assert.equal(ui.questionFilter, "g")
+  await dispatchKey({ ui, ...press("escape") })
+  assert.equal(ui.questionFilter, "", "第一下 Esc 只清过滤")
+  assert.equal(ui.questionAnswers.q1, undefined, "不该跳过")
+  await dispatchKey({ ui, ...press("escape") })
+  assert.equal(ui.questionAnswers.q1, "(skipped)", "第二下才是跳过")
+  assert.ok(calls.includes("resolveQuestion"))
+})
+
+test("selection follows the highlighted option through filter changes", async () => {
+  const { dispatchKey } = harness()
+  const ui = questionUi({ options: MANY_OPTIONS })
+  // 高亮移到 claude-sonnet-4-6（下标 2）
+  await dispatchKey({ ui, ...press("down") })
+  await dispatchKey({ ui, ...press("down") })
+  assert.equal(ui.questionOptionSelected, 2)
+  // 过滤到 claude：son 排在 opus 前（原顺序），选中项跟随到新位置 0
+  for (const ch of "claude") await dispatchKey({ ui, key: {}, str: ch })
+  assert.equal(ui.questionOptionSelected, 0, "选中项按 sourceIndex 找回，不是停在旧位置")
+  // Backspace 清一个字符不丢跟随
+  await dispatchKey({ ui, ...press("backspace") })
+  assert.equal(ui.questionFilter, "claud")
+  assert.equal(ui.questionOptionSelected, 0)
+})
+
+test("filtered-to-nothing keeps Enter from committing but Custom stays reachable", async () => {
+  const { dispatchKey, calls } = harness()
+  const ui = questionUi({ options: MANY_OPTIONS })
+  for (const ch of "zzz") await dispatchKey({ ui, key: {}, str: ch })
+  // 过滤空了：可见列表 0 项 + Custom 伪项。选中位置钉在 Custom（0 == visible.length）。
+  assert.equal(ui.questionOptionSelected, 0)
+  await dispatchKey({ ui, ...press("return") })
+  assert.equal(ui.questionCustomMode, true, "零命中时 Enter 落在 Custom 上 → 进自由文本")
+  assert.equal(ui.questionFilter, "", "进自由文本时过滤串清掉")
+  assert.deepEqual(calls, [], "没有任何提交发生")
+})
+
+test("switching questions resets the filter so the next list is not silently emptied", async () => {
+  const { dispatchKey } = harness()
+  const ui = createReplUiState()
+  ui.pendingQuestion = {
+    questions: [
+      { id: "q1", text: "A", options: MANY_OPTIONS, allowCustom: true },
+      { id: "q2", text: "B", options: [{ label: "东" }, { label: "西" }], allowCustom: true }
+    ],
+    resolve: () => {}
+  }
+  for (const ch of "gpt") await dispatchKey({ ui, key: {}, str: ch })
+  assert.equal(ui.questionFilter, "gpt")
+  await dispatchKey({ ui, ...press("tab") })
+  assert.equal(ui.questionIndex, 1)
+  assert.equal(ui.questionFilter, "", "旧过滤串带到下一题会把「东/西」滤成空列表")
+  assert.equal(ui.questionOptionOffset, 0)
+})
+
+test("single-select space is still swallowed, not fed into the filter", async () => {
+  const { dispatchKey } = harness()
+  const ui = questionUi({ options: MANY_OPTIONS, multi: false })
+  const result = await dispatchKey({ ui, key: { name: "space" }, str: " " })
+  assert.equal(result.swallowed, true)
+  assert.equal(ui.questionFilter, "", "空格不进过滤串 —— 单选题的空格历来不做事")
 })

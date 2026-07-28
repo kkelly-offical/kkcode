@@ -29,6 +29,7 @@ export const USER_OVERLAY_KINDS = Object.freeze([
   "providerPicker",
   "sessionPicker",
   "modelPicker",
+  "thinkingPicker",
   "modePicker",
   "policyPicker",
   "themePicker"
@@ -62,12 +63,18 @@ export function createReplUiState({ historyLines = [], terminalFeatures = {} } =
     lastEscapeAt: 0,
     questionIndex: 0,
     questionOptionSelected: 0,
+    /** 选项滚动窗口起点（0.8.0 起选项超过可视高度会滚动） */
+    questionOptionOffset: 0,
     questionMultiSelected: {},
     questionCustomMode: false,
     questionCustomInput: "",
     questionCustomCursor: 0,
+    /** 选项态的打字过滤串。语义见 overlay-question 的 visibleQuestionOptions。 */
+    questionFilter: "",
     questionAnswers: {},
     modelPicker: null,
+    /** 思考档位选择器：{ items, selected, provider, model }。/model 选完模型后弹出。 */
+    thinkingPicker: null,
     policyPicker: null,
     modePicker: null,
     // 主题选择器：{ items, selected, restore }。restore 是打开那一刻生效的主题 id ——

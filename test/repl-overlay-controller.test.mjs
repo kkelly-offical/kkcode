@@ -21,6 +21,7 @@ function harness({ providerType = "kimi", model = "k3" } = {}) {
   const ui = createReplUiState()
   const state = { providerType, model, modeId: "agent", mode: "agent", sessionId: "ses_1" }
   const ctx = { configState: { config: structuredClone(DEFAULT_CONFIG) } }
+  const persisted = []
   const controller = createOverlayController({
     ui,
     state,
@@ -30,9 +31,11 @@ function harness({ providerType = "kimi", model = "k3" } = {}) {
     submitCurrentInput: async () => calls.push(`submit(${ui.input})`),
     selectModeAndNotify: (modeId) => calls.push(`mode(${modeId})`),
     clearPermissionSession: (id) => calls.push(`clearSession(${id})`),
-    terminalColumns: () => 100
+    terminalColumns: () => 100,
+    // 必须注入：缺省实现写真实 ~/.kkcode/config.yaml（KKCODE_HOME 事故的教训）
+    persistProviderConfig: async (patch, setDefault) => { persisted.push({ patch, setDefault }) }
   })
-  return { controller, ui, state, ctx, calls }
+  return { controller, ui, state, ctx, calls, persisted }
 }
 
 const PROVIDERS = [{ name: "kimi", label: "kimi" }, { name: "openai", label: "openai" }]
@@ -122,7 +125,56 @@ test("confirming a model just sets the two fields — there is no command to reu
   assert.equal(state.providerType, "openai")
   assert.equal(state.model, "gpt")
   assert.ok(!calls.some((c) => c.startsWith("submit(")), "没有既有命令路径可复用时就直接改")
+  // "gpt" 的 thinking 能力判不出（null）→ 档位选择器就是那份缺失信息的补充入口
+  assert.equal(activeUserOverlay(ui), "thinkingPicker")
+})
+
+// --- 思考档位选择器（0.8.0）---
+
+test("a model known not to think goes straight through — no tier picker", () => {
+  const { controller, ui, state } = harness()
+  controller.openModelPicker([{ provider: "openai", model: "embed-3", label: "openai/embed-3", thinking: false }])
+  controller.confirmModelPicker()
+  assert.equal(state.model, "embed-3")
+  assert.equal(activeUserOverlay(ui), null, "明确不支持思考的模型一步都不该多问")
+})
+
+test("the tier picker opens on the provider's current tier, not always high", () => {
+  const { controller, ui, ctx } = harness()
+  ctx.configState.config.provider.openai = { reasoning_effort: "low" }
+  controller.openModelPicker([{ provider: "openai", model: "o3", label: "openai/o3", thinking: true }])
+  controller.confirmModelPicker()
+  assert.equal(activeUserOverlay(ui), "thinkingPicker")
+  const { items, selected } = ui.thinkingPicker
+  assert.deepEqual(items.map((i) => i.id), ["off", "low", "medium", "high", "max"])
+  assert.equal(items[selected].id, "low", "当前档从配置读（reasoning_effort 兼容口径）")
+  assert.equal(items.find((i) => i.current).id, "low")
+})
+
+test("confirming a tier takes effect in memory immediately and persists", async () => {
+  const { controller, ui, ctx, persisted } = harness()
+  ctx.configState.config.provider.openai = {}
+  controller.openModelPicker([{ provider: "openai", model: "o3", label: "openai/o3", thinking: true }])
+  controller.confirmModelPicker()
+  ui.thinkingPicker.selected = ui.thinkingPicker.items.findIndex((i) => i.id === "max")
+  controller.confirmThinkingPicker()
   assert.equal(activeUserOverlay(ui), null)
+  // 内存立即生效 —— router 每次请求都读 providerCfg.thinking_effort
+  assert.equal(ctx.configState.config.provider.openai.thinking_effort, "max")
+  await Promise.resolve()
+  assert.deepEqual(persisted, [{ patch: { provider: { openai: { thinking_effort: "max" } } }, setDefault: false }],
+    "落盘走注入的写回，且绝不动 provider.default")
+})
+
+test("Esc on the tier picker writes nothing — it is the skip path", () => {
+  const { controller, ui, ctx, persisted } = harness()
+  ctx.configState.config.provider.openai = {}
+  controller.openModelPicker([{ provider: "openai", model: "o3", label: "openai/o3", thinking: true }])
+  controller.confirmModelPicker()
+  controller.closeThinkingPicker()
+  assert.equal(activeUserOverlay(ui), null)
+  assert.equal(ctx.configState.config.provider.openai.thinking_effort, undefined)
+  assert.equal(persisted.length, 0, "跳过就是跳过，不该有任何写盘")
 })
 
 // --- 打字过滤 ---

@@ -24,6 +24,18 @@ import { createPickerFilterState, resolvePickerChoice } from "../ui/overlay-sele
 import { createModePickerState, resolveModeId, MODE_PICKER_CHOICES } from "./mode-flow.mjs"
 import { createPolicyPickerState, POLICY_CHOICES, applyPolicyChoice } from "./permission-flow.mjs"
 import { stripAnsi } from "./frame-primitives.mjs"
+import { THINKING_TIERS, normalizeThinkingTier } from "../provider/thinking-effort.mjs"
+import { modelThinkingSupport } from "./provider-catalog.mjs"
+import { saveProviderConfig } from "../provider/wizard.mjs"
+
+/** 思考档位的展示行。desc 说的是**语义**（预算比例），不是各家参数名。 */
+export const THINKING_TIER_CHOICES = Object.freeze({
+  off: "关闭扩展思考",
+  low: "浅想 · 约 15% 输出预算",
+  medium: "适中 · 约 35% 输出预算",
+  high: "深想 · 约 60% 输出预算（缺省）",
+  max: "全力 · 约 85% 输出预算"
+})
 
 export function createOverlayController({
   ui,
@@ -37,7 +49,9 @@ export function createOverlayController({
   terminalColumns = () => Number(process.stdout.columns) || 120,
   // 主题切换器（repl/theme-switch.mjs）。可选：行模式与不带换肤能力的宿主
   // 可以不传，那时主题选择器打不开而不是崩在按键上。
-  themeSwitcher = null
+  themeSwitcher = null,
+  // 档位落盘。注入以便测试不碰真配置文件（KKCODE_HOME 事故的教训）。
+  persistProviderConfig = saveProviderConfig
 }) {
   /**
    * 四个列表型选择器的共同形状：空列表给提示、打开时预选当前项、关闭时强制重绘。
@@ -132,6 +146,63 @@ export function createOverlayController({
       state.providerType = chosen.provider
       state.model = chosen.model
       showToast(`Model · ${chosen.provider} / ${chosen.model}`, { topic: "model", tone: "success" })
+      // 支持思考的模型（含「不知道」—— 档位选择器就是那份缺失信息的补充入口，
+      // Esc 即跳过）接着选档位；明确不支持的一步都不多问。
+      const thinking = typeof chosen.thinking === "boolean"
+        ? chosen.thinking
+        : modelThinkingSupport({ config: ctx.configState.config, model: chosen.model })
+      if (thinking !== false) {
+        openThinkingPicker({ provider: chosen.provider, model: chosen.model })
+        return
+      }
+    }
+    requestRender({ force: true })
+  }
+
+  /**
+   * 思考档位选择器（0.8.0）。/model 选完模型后弹出：档位是「意图」（想多深），
+   * 落盘为 provider.<name>.thinking_effort，请求构造时按协议翻译成
+   * reasoning_effort（OpenAI 系）或 budget_tokens（Anthropic）。
+   */
+  function openThinkingPicker({ provider, model }) {
+    const providerCfg = ctx.configState.config.provider?.[provider] || {}
+    const current = normalizeThinkingTier(providerCfg.thinking_effort || providerCfg.reasoning_effort, "high")
+    const items = THINKING_TIERS.map((tier) => ({
+      id: tier,
+      label: tier,
+      desc: THINKING_TIER_CHOICES[tier],
+      current: tier === current
+    }))
+    openUserOverlay(ui, "thinkingPicker", {
+      items,
+      selected: Math.max(0, items.findIndex((item) => item.current)),
+      provider,
+      model
+    })
+    requestRender({ force: true })
+    return true
+  }
+
+  function closeThinkingPicker() {
+    closeUserOverlay(ui, "thinkingPicker")
+    requestRender({ force: true })
+  }
+
+  function confirmThinkingPicker() {
+    if (!ui.thinkingPicker) return
+    const { items, selected, provider } = ui.thinkingPicker
+    const chosen = items[selected]
+    closeUserOverlay(ui, "thinkingPicker")
+    if (chosen && provider) {
+      // 内存立即生效：router 每次请求都读 providerCfg.thinking_effort
+      const bag = ctx.configState.config.provider || (ctx.configState.config.provider = {})
+      const entry = bag[provider] || (bag[provider] = {})
+      entry.thinking_effort = chosen.id
+      showToast(`Thinking · ${chosen.id}`, { topic: "model", tone: "success" })
+      // 落盘失败不回滚界面 —— 本次会话已经生效，只是下次启动不记得
+      void Promise.resolve(
+        persistProviderConfig({ provider: { [provider]: { thinking_effort: chosen.id } } }, false)
+      ).catch(() => {})
     }
     requestRender({ force: true })
   }
@@ -301,6 +372,9 @@ export function createOverlayController({
     openModelPicker: modelPicker.open,
     closeModelPicker: modelPicker.close,
     confirmModelPicker,
+    openThinkingPicker,
+    closeThinkingPicker,
+    confirmThinkingPicker,
     openInfoPanel,
     closeInfoPanel,
     scrollInfoPanel,

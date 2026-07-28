@@ -86,6 +86,7 @@ import { createTranscriptWriter } from "./repl/transcript-writer.mjs"
 import { createReplUiState, openUserOverlay, closeUserOverlay } from "./repl/ui-state.mjs"
 import { createAttachmentInput } from "./repl/attachment-input.mjs"
 import { createPromptOutbox } from "./repl/prompt-outbox.mjs"
+import { createTaskWake } from "./repl/task-wake.mjs"
 import { createNotifier } from "./repl/notify.mjs"
 import { createGhostPredictor } from "./repl/ghost-predictor.mjs"
 import { buildReplRuntimeSnapshot } from "./repl/runtime-facade.mjs"
@@ -777,6 +778,15 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   // 不恢复标题的话，用户退出后终端标签页会一直挂着上一次的思考状态。
   listeners.add(() => notifier.dispose())
 
+  // 构造点在 showToast/requestRender 之后（早一步就是 TDZ）、subscribeSessionEvents
+  // 之前 —— 事件桥要拿 pushSystemPrompt 才把后台结果送得回主代理。
+  const outbox = createPromptOutbox({ ui, showToast, requestRender, wakeIdle: () => { void taskWake.drain() } })
+  const taskWake = createTaskWake({
+    ui, outbox, listeners,
+    submitOne: async (text) => { ui.input = text; ui.inputCursor = text.length; await submitCurrentInput() },
+    isBlocked: () => disposed
+  })
+
   const uiEventUnsub = subscribeSessionEvents({
     eventBus: EventBus,
     ui,
@@ -790,7 +800,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     showToast,
     applyThinkingTransition,
     finalizeThinking,
-    finalizeTextStream
+    finalizeTextStream,
+    pushSystemPrompt: outbox.pushSystemPrompt
   })
   // Subscribe activity logs after typed stream state so a completed Thinking
   // block is inserted before the tool block that follows it.
@@ -842,7 +853,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   const {
     openProviderPicker, closeProviderPicker, confirmProviderPicker,
     openSessionPicker, closeSessionPicker, confirmSessionPicker,
-    openModelPicker, closeModelPicker, confirmModelPicker,
+    openModelPicker, closeModelPicker, confirmModelPicker, closeThinkingPicker, confirmThinkingPicker,
     openInfoPanel, closeInfoPanel, scrollInfoPanel, relayoutInfoPanel,
     openModePicker, closeModePicker, confirmModePicker,
     openPolicyPicker, closePolicyPicker, confirmPolicyPicker,
@@ -873,9 +884,6 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     insertAtCursor,
     showToast
   })
-
-  // 待发队列（模型干活时敲的消息）。实现在 repl/prompt-outbox.mjs。
-  const outbox = createPromptOutbox({ ui, showToast, requestRender })
 
   /**
    * 提交，然后把排队的消息依次发完。
@@ -1514,6 +1522,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       confirmSessionPicker,
       closeModelPicker,
       confirmModelPicker,
+      closeThinkingPicker, confirmThinkingPicker,
       closePolicyPicker,
       confirmPolicyPicker,
       closeModePicker,
