@@ -155,10 +155,14 @@ test("truncation works across many small chunks, not just one big write", async 
 })
 
 // --- 超时：两级升级 ---
+//
+// 这一组测的是 **POSIX** 的信号升级链，platform 必须显式固定成 "linux"：
+// 缺省取宿主 platform，在 Windows CI 上会走 win32 分支（无信号名的 kill），
+// signals 变成 [null,null] —— 三条一起红。win32 行为有自己的专门用例。
 
 test("a timeout escalates SIGTERM to SIGKILL when the process ignores it", async () => {
   // 只发 SIGTERM 的话，任何装了 SIGTERM 处理器又不退出的程序都能把 REPL 挂死。
-  const { promise, child } = start("sleep 999", { timeoutMs: 20, killGraceMs: 20 })
+  const { promise, child } = start("sleep 999", { platform: "linux", timeoutMs: 20, killGraceMs: 20 })
   child.stdout.emit("data", Buffer.from("started\n"))
   // 故意不 emit exit/close：模拟无视信号的进程
   const result = await promise
@@ -170,7 +174,7 @@ test("a timeout escalates SIGTERM to SIGKILL when the process ignores it", async
 })
 
 test("a process that dies on SIGTERM is not SIGKILLed", async () => {
-  const { promise, child } = start("sleep 999", { timeoutMs: 20, killGraceMs: 200 })
+  const { promise, child } = start("sleep 999", { platform: "linux", timeoutMs: 20, killGraceMs: 200 })
   child.on("__term", () => {})
   setTimeout(() => finish(child, null, "SIGTERM"), 60)
   const result = await promise
@@ -185,7 +189,7 @@ test("an abort signal kills the command without claiming it timed out", async ()
   // 要把 REPL 按满 30 秒超时。走同一套两级升级，但状态行不能说「超时」——
   // 「我按了 Ctrl-C」和「它跑太久被杀了」是两个不同的事实。
   const controller = new AbortController()
-  const { promise, child } = start("sleep 300", { timeoutMs: 30_000, killGraceMs: 20, signal: controller.signal })
+  const { promise, child } = start("sleep 300", { platform: "linux", timeoutMs: 30_000, killGraceMs: 20, signal: controller.signal })
   child.stdout.emit("data", Buffer.from("working\n"))
   controller.abort()
   setTimeout(() => finish(child, null, "SIGTERM"), 10)
@@ -274,7 +278,9 @@ test("win32 honours ComSpec when the shell has been relocated", () => {
 
 test("the platform option actually reaches spawn", async () => {
   // 上面三条测的是纯函数。这条确认执行器真的用了它，而不是各算各的。
-  const { promise, child, spawn } = start("dir", { platform: "win32" })
+  // env 固定为空对象：宿主的 ComSpec（Windows 上是全路径 C:\\Windows\\system32\\cmd.exe）
+  // 不该改变这条断言的期望 —— 测的是「platform 到达 spawn」，不是宿主环境。
+  const { promise, child, spawn } = start("dir", { platform: "win32", env: {} })
   finish(child, 0)
   await promise
   assert.equal(spawn.calls[0].file, "cmd.exe")
@@ -405,7 +411,10 @@ test("smoke: a real command runs and its output comes back", async () => {
 })
 
 test("smoke: stderr comes back merged, and a non-zero exit is reported", async () => {
-  const result = await runShellPassthrough("echo out; echo err 1>&2; exit 3", { timeoutMs: 5000 })
+  // node -e 而不是 `; 1>&2 exit`：那是 POSIX shell 语法，Windows cmd 里
+  // `;` 不是命令分隔符 —— smoke 必须在两种宿主上语义一致
+  const script = "console.log('out'); console.error('err'); process.exit(3)"
+  const result = await runShellPassthrough(`node -e "${script}"`, { timeoutMs: 5000 })
   assert.equal(result.ok, false)
   assert.equal(result.exitCode, 3)
   assert.ok(result.output.includes("out"), "stdout 要在")
@@ -416,7 +425,8 @@ test("smoke: a real timeout kills the process group and keeps what was printed",
   // 这条覆盖假 spawn 覆盖不到的那一半：POSIX 上的负 pid 进程组杀。
   // `sleep` 是 sh 的子进程，只杀 sh 的话它会继续跑、攥着管道不放，close 永远不来。
   const started = Date.now()
-  const result = await runShellPassthrough("echo before sleeping; sleep 30", {
+  const hang = "console.log('before sleeping'); setTimeout(() => {}, 30000)"
+  const result = await runShellPassthrough(`node -e "${hang}"`, {
     timeoutMs: 300, killGraceMs: 100
   })
   assert.equal(result.timedOut, true)
@@ -434,7 +444,13 @@ test("smoke: a program that reads stdin gets EOF instead of hanging", async () =
   assert.ok(Date.now() - started < 3000)
 })
 
-test("smoke: cwd is respected", async () => {
-  const result = await runShellPassthrough("pwd", { cwd: "/", timeoutMs: 5000 })
-  assert.equal(result.output.trim(), "/")
+test("smoke: cwd is respected", async (t) => {
+  // `pwd` + 根路径都是 POSIX 专属。node -e process.cwd() 两边都认，
+  // 目标目录用 tmpdir（两种宿主都存在且可进）。realpath 对齐 macOS 的
+  // /tmp → /private/tmp 符号链接。
+  const os = await import("node:os")
+  const fsp = await import("node:fs/promises")
+  const dir = await fsp.realpath(os.tmpdir())
+  const result = await runShellPassthrough('node -e "console.log(process.cwd())"', { cwd: dir, timeoutMs: 5000 })
+  assert.equal(await fsp.realpath(result.output.trim()), dir)
 })
