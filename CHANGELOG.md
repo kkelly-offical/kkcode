@@ -1,5 +1,84 @@
 # Changelog / 更新日志
 
+## 0.8.0
+
+`/provider add` 去模板化：接口形式 → URL/密钥 → 自动读取模型、上下文与 thinking
+能力，只有读不到的才问；提问浮层支持滚动与打字过滤；`/model` 带上下文/思考标注，
+选完模型可选思考档位并落盘；后台任务完成自动唤醒主代理；Ultra 模式新增
+`[GOAL_ACHIEVED]` 结构化完成信号（声明触发核验，核验才是结论）。
+
+### English
+
+- **`/provider add` is template-free.** Pick the interface shape (OpenAI- or
+  Anthropic-compatible), give a base URL and a key — everything else is read
+  from the API itself: the model list, each model's context window (eight
+  field-name variants understood), and thinking support (from
+  `supported_parameters` or model-family heuristics). Only what cannot be read
+  is asked: a per-model context question for models the catalog didn't report,
+  a support/no/skip question for models the heuristics can't classify. The
+  provider name is derived from the URL host (`api.moonshot.ai` → `moonshot`,
+  editable on the confirm page), and re-adding the same base URL merges into
+  the existing entry, so a blank key reuses the configured one. Fixed a real
+  defect on the way: the form's discovery call had misaligned arguments, so
+  `refresh: true` was silently lost and the form always read a 15-minute-old
+  cache.
+- **Question overlays scroll and filter.** Option lists longer than eight rows
+  render as a window (`1-8 of 31` footer) instead of overflowing the terminal;
+  typing filters with bracket-marked matches, Esc clears the filter first and
+  skips second, and multi-select checkmarks are pinned to the underlying option
+  so filtering can never silently toggle the wrong model.
+- **`/model` knows contexts and thinking.** Picker rows read
+  `kimi-code / k3 (1m) · 思考`; after picking a thinking-capable model a
+  five-tier picker follows (off/low/medium/high/max, semantic descriptions,
+  current tier marked), Enter applies immediately and persists
+  `thinking_effort`, Esc skips without writing. Capability knowledge lives in
+  `provider.model_thinking` — `false` is stored too, so known-non-thinking
+  models skip the tier picker entirely.
+- **Background tasks wake the agent.** When a `run_in_background` task settles,
+  the parent process re-reads the checkpoint to confirm the terminal state,
+  emits `task.settled` exactly once (dedup key includes the retry attempt),
+  shows the result in the transcript and notifications, and delivers it to the
+  model: mid-turn it is injected at the next step boundary; idle, a new turn
+  starts automatically — but never over a half-typed draft, never past a
+  pending permission or question prompt. A settle landing after a turn's last
+  step is reclaimed at turn end (caught live in acceptance) instead of waiting
+  for the user's next message.
+- **Ultra mode has a structured completion signal.** The model can declare
+  `[GOAL_ACHIEVED: …]`; the declaration triggers immediate criteria
+  verification but never produces completion by itself — a claim the verifier
+  rejects is recorded in the ledger and fed into the next round's replan reason
+  as the exact disagreement between the model's world-model and reality. Ultra
+  also accepts steering now (the longagent branch finally receives
+  `steerSource`).
+
+### 中文
+
+- **`/provider add` 去模板化。** 首轮直接选接口形式（OpenAI / Anthropic 兼容），
+  给 base URL 和密钥 —— 其余全部从 API 自己读回来：模型列表、每个模型的上下文
+  （兼容八种字段名）、thinking 支持（`supported_parameters` 或模型名族启发式）。
+  **只有读不到的才问**：目录没报上下文的模型补一格数字，能力判不出的补一道
+  「支持/不支持/跳过」。名称从 URL host 推导（`api.moonshot.ai` → `moonshot`，
+  确认页可改）；重配同一 base URL 合并进已有条目，密钥留空即复用配置里的。
+  顺手修了个真缺陷：表单的发现调用传参错位，`refresh: true` 一直丢失，表单
+  始终在吃 15 分钟缓存。
+- **提问浮层会滚动、能搜索。** 选项超过 8 行进滚动窗口（页脚 `1-8 of 31`），
+  不再把整帧顶出终端；打字过滤、方括号标注命中，Esc 先清过滤再跳过；多选勾选
+  钉在原始选项上，过滤重排绝不会让 ☑ 错位选错模型。
+- **`/model` 带上下文与思考标注。** 列表行如 `kimi-code / k3 (1m) · 思考`；
+  选完支持思考的模型接一个五档选择器（off/low/medium/high/max，语义化描述、
+  ● 标当前档），Enter 立即生效并落盘 `thinking_effort`，Esc 跳过不写。能力
+  知识存在 `provider.model_thinking` —— `false` 也存：明确不支持的模型一步
+  都不多问。
+- **后台任务完成自动唤醒。** `run_in_background` 任务落地时，父进程回读
+  checkpoint 复核终态、只广播一次 `task.settled`（去重键含重试次数），结果上屏
+  并通知，然后送回模型：回合进行中在下一个 step 边界注入；空闲则自动开新回合
+  —— 但绝不覆盖写了一半的草稿、绝不越过等待中的审批与提问。落在末 step 之后
+  的结果由回合结束的排干接着送达（真机验收抓到的时序），不用等用户下次说话。
+- **Ultra 模式结构化完成信号。** 模型可以声明 `[GOAL_ACHIEVED: …]`：声明触发
+  立即核验，但**永不单独产生完成** —— 声明被判据驳回时记入台账，并把「模型
+  自称达成 vs 判据未满足」的分歧精确并入下一轮重规划理由。Ultra 现在也能
+  插话了（longagent 分支补上了 `steerSource`）。
+
 ## 0.7.5
 
 流式中插话（排队后再按一次 Enter）；`!` 直通 shell；`/theme` 运行时换肤带背景
