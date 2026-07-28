@@ -184,7 +184,7 @@ function failedResult(err, startedAt) {
 }
 
 function waitForChild(child, ctx) {
-  const { sink, startedAt, timeoutMs, killGraceMs, platform, abortSignal } = ctx
+  const { sink, startedAt, timeoutMs, killGraceMs, platform, abortSignal, setTimer, clearTimer } = ctx
   return new Promise((resolve) => {
     let settled = false
     let timedOut = false
@@ -193,12 +193,17 @@ function waitForChild(child, ctx) {
     let exitSignal = null
     const timers = new Set()
 
-    // 一律 unref：测试里注入假 spawn 时没有真句柄撑着事件循环，未 unref 的
-    // 30 秒定时器会让测试进程空转到超时才退出。真实运行里管道是 ref 的，
-    // 不影响定时器触发。
+    // 一律 unref：真实运行里管道是 ref 的，unref 只保证「定时器不会成为进程
+    // 退不出去的最后一根句柄」。
+    //
+    // 定时器本身**必须可注入**（默认全局 setTimeout）：注入假 spawn 的测试没有
+    // 真句柄撑事件循环，unref 定时器在空循环里永远不触发 —— Node 22 的 test
+    // runner 会当场判 "promise pending but event loop resolved"（Node 24 的
+    // runner 自带常驻句柄，恰好掩盖了这一点：本地 24 全绿、CI 22 三格红）。
+    // 测试注入不带 unref 的定时器即可撑住循环，形状与 render-scheduler 一致。
     const later = (fn, ms) => {
-      const timer = setTimeout(fn, ms)
-      timer.unref?.()
+      const timer = setTimer(fn, ms)
+      timer?.unref?.()
       timers.add(timer)
       return timer
     }
@@ -206,7 +211,7 @@ function waitForChild(child, ctx) {
     const settle = () => {
       if (settled) return
       settled = true
-      for (const timer of timers) clearTimeout(timer)
+      for (const timer of timers) clearTimer(timer)
       timers.clear()
       abortSignal?.removeEventListener?.("abort", onAbort)
       const { output, truncated } = sink.finish()
@@ -297,7 +302,10 @@ export async function runShellPassthrough(command, options = {}) {
     spawn = nodeSpawn,
     platform = process.platform,
     killGraceMs = DEFAULT_KILL_GRACE_MS,
-    signal: abortSignal = null
+    signal: abortSignal = null,
+    // 可注入的定时器（理由见 waitForChild 的 later）
+    setTimer = setTimeout,
+    clearTimer = clearTimeout
   } = options
 
   // 只敲了个 `!` 就回车：不 spawn（`sh -c ""` 会起一个进程只为立刻退出），
@@ -316,7 +324,7 @@ export async function runShellPassthrough(command, options = {}) {
     return failedResult(err, startedAt)
   }
   return await waitForChild(child, {
-    sink, startedAt, timeoutMs, killGraceMs, platform, abortSignal
+    sink, startedAt, timeoutMs, killGraceMs, platform, abortSignal, setTimer, clearTimer
   })
 }
 

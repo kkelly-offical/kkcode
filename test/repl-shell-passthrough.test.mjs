@@ -52,7 +52,21 @@ function fakeSpawn() {
 /** 起一次执行并拿到那个假 child（spawn 是同步调用的，所以调用后立刻就在）。 */
 function start(command, options = {}) {
   const spawn = options.spawn || fakeSpawn()
-  const promise = runShellPassthrough(command, { spawn, ...options })
+  // 注入 **ref 的**定时器：实现内部会对定时器 unref（防真句柄泄漏挂进程），
+  // 但假 spawn 没有句柄撑事件循环 —— unref 定时器在空循环里永远不触发，
+  // Node 22 的 test runner 会判 "promise pending but event loop resolved"
+  //（Node 24 的 runner 自带常驻句柄，恰好掩盖：本地 24 绿、CI 22 三格红）。
+  // 句柄包装成不带 unref 的哑对象：实现会对返回值 `?.unref?.()`（生产正确 ——
+  // 定时器不该是进程退不出去的最后一根句柄），直接返回真 Timeout 就会被 unref，
+  // 假 spawn 又没有别的句柄撑事件循环 —— Node 22 的 runner 当场判
+  // "promise pending but event loop resolved"（Node 24 的 runner 自带常驻句柄，
+  // 恰好掩盖；CI 三格红全因为这个）。
+  const promise = runShellPassthrough(command, {
+    setTimer: (fn, ms) => ({ t: setTimeout(fn, ms) }),
+    clearTimer: (h) => clearTimeout(h?.t),
+    spawn,
+    ...options
+  })
   return { promise, spawn, child: spawn.calls[0]?.child }
 }
 
