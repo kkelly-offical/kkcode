@@ -1,6 +1,6 @@
 {
   "name": "@kkelly-offical/kkcode",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "description": "CLI-first unified Assistant with explicit Plan and LongAgent workflows, governed permissions, MCP integrations, and extensible automation.",
   "type": "module",
   "packageManager": "npm@11.13.0",
@@ -39,7 +39,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12.0"
   },
   "scripts": {
     "start": "node ./src/index.mjs",
@@ -53,12 +53,12 @@
     "release:verify": "node ./scripts/release-verify.mjs"
   },
   "dependencies": {
-    "commander": "^14.0.3",
+    "commander": "^15.0.0",
     "yaml": "^2.9.0"
   },
   "devDependencies": {
-    "@types/node": "^24.1.0",
-    "eslint": "^9.39.5",
-    "typescript": "^5.9.3"
+    "@types/node": "^26.1.2",
+    "eslint": "^10.8.0",
+    "typescript": "^7.0.2"
   }
 }

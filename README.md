@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=npm)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 [![GitHub Release](https://img.shields.io/github/v/release/kkelly-offical/kkcode)](https://github.com/kkelly-offical/kkcode/releases)
-![Node](https://img.shields.io/badge/Node.js-%3E%3D22-green)
+![Node](https://img.shields.io/badge/Node.js-%3E%3D22.12-green)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 
@@ -78,7 +78,7 @@ kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同�
 ## Installation / 安装
 
 **Requirements / 环境要求**
-- Node.js `>=22`
+- Node.js `>=22.12`
 - npm or pnpm
 - A modern terminal on Windows, macOS, or Linux
 
@@ -571,12 +571,12 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current stable version / 当前稳定版本**: `v0.8.1`
+**Current stable version / 当前稳定版本**: `v0.9.0`
 
-`v0.8.1` is the current stable npm and GitHub release. The `main` branch remains
+`v0.9.0` is the current stable npm and GitHub release. The `main` branch remains
 the development line for subsequent fixes.
 
-`v0.8.1` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
+`v0.9.0` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
 
 Use the Kimi Code preset without placing credentials in YAML:
 

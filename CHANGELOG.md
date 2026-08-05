@@ -1,5 +1,56 @@
 # Changelog / 更新日志
 
+## 0.9.0
+
+依赖大版本升级：commander 15、eslint 10、typescript 7、@types/node 26。
+没有功能变更；唯一对用户可见的是 Node 门槛从 `>=22` 提到 `>=22.12`（commander 15
+的硬要求）—— 因为它改变现有用户的安装条件，所以走 minor 而不是 patch。
+
+### English
+
+- **commander 14 → 15.** v15 is ESM-only; kkcode has always been `"type":
+  "module"` and imports `{ Command }` directly, so there was nothing to
+  migrate. The other two breaking changes were checked against the actual
+  call sites rather than assumed away: the `--no-*` default-value change only
+  bites when a positive and a negative option share one key, and both negated
+  options here are lone (`--no-update-check` in `preflight`, `--no-working-tree`
+  in `review branch` — its positive form is `--include-working-tree`, a
+  *different* key, so commander never pairs them); both consumers already read
+  the value with `!== false`. The removed `commander/esm.mjs` export was never
+  imported.
+- **Node.js `>=22.12`.** commander 15 declares `>=22.12.0`, so the package now
+  declares it too instead of promising a floor it cannot honour. Node
+  22.0–22.11 is the only range affected. CI is unchanged: `node: 22` in the
+  matrix resolves to the latest 22.x, which is well past 22.12 (and past the
+  `^22.13.0` that eslint 10 wants).
+- **eslint 9 → 10, typescript 5 → 7, @types/node 24 → 26.** Dev-only. None of
+  the ESLint 10 migration items apply: the config has been flat config from the
+  start, there are no `.eslintrc` files and no `/* eslint-env */` comments, and
+  the rule list is written out by hand rather than extending
+  `eslint:recommended` — so the three rules newly promoted into recommended
+  change nothing here.
+- **No behaviour change.** All 2267 tests pass item-for-item with the
+  pre-upgrade baseline, and the six-step `release:verify` gate is green.
+
+### 中文
+
+- **commander 14 → 15。** v15 是 ESM-only；kkcode 本来就是 `"type": "module"`
+  且直接 `import { Command }`，这条没有迁移成本。另外两条破坏性变更是对着真实
+  调用点核验的，不是想当然放过：`--no-*` 默认值的变化只在「正负选项共用一个
+  key」时才咬人，而这里两处负向选项都是孤立的（`preflight` 的
+  `--no-update-check`、`review branch` 的 `--no-working-tree` —— 它的正向形式叫
+  `--include-working-tree`，是**另一个** key，commander 不会把两者配对）；两处
+  消费点本来就用 `!== false` 读值。被移除的 `commander/esm.mjs` 导出从未引用。
+- **Node.js `>=22.12`。** commander 15 声明 `>=22.12.0`，所以本包也照实声明，
+  而不是承诺一个自己兑现不了的下限。受影响的只有 Node 22.0–22.11 这一段。CI
+  不动：矩阵里的 `node: 22` 解析为最新 22.x，远高于 22.12（也高于 eslint 10
+  要的 `^22.13.0`）。
+- **eslint 9 → 10、typescript 5 → 7、@types/node 24 → 26。** 仅开发期依赖。
+  ESLint 10 的迁移项一条都不命中：配置从一开始就是 flat config，没有
+  `.eslintrc`，没有 `/* eslint-env */` 注释，规则表是手写的而非继承
+  `eslint:recommended` —— 所以新进 recommended 的那三条规则在这里什么都不改。
+- **无行为变更。** 2267 项测试与升级前基线逐项一致，六步 `release:verify` 全绿。
+
 ## 0.8.1
 
 OS 级沙箱（opt-in，bwrap / sandbox-exec）；可配置状态栏（ui.status.segments）；
