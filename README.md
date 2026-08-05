@@ -143,8 +143,10 @@ kkcode doctor
 | Mode cycle / 模式循环 | Supported | `Shift+Tab` cycles Plan · Agent · Agent·Auto · Ultra · YOLO |
 | Ultra / 长程编排 | Supported | Multi-stage execution, retries, gates, resumable flow |
 | Permissions / 权限治理 | Supported | `readonly` / `manual` / `accept-edits` / `yolo` levels plus persistent Always Allow |
+| OS sandbox / OS 级沙箱 | Supported (opt-in) | `permission.sandbox.mode: auto` wraps model-initiated bash in bubblewrap (Linux) or sandbox-exec (macOS) |
+| Shell passthrough / Shell 直通 | Supported | `!<command>` runs in your own shell — never sandboxed, never sent to the model |
 | Ghost text / 输入预测 | Supported | Inline next-phrase prediction when `models.fast` is configured |
-| Background tasks / 后台任务 | Supported | Launch, inspect, wait, retry, cancel |
+| Background tasks / 后台任务 | Supported | Launch, inspect, wait, retry, cancel; completion wakes the main agent |
 | MCP / 模型上下文协议 | Supported | Local MCP discovery and registry |
 | Skills / Commands / Hooks | Supported | Local-first extensibility surface |
 | Plugins / 插件包 | Preview | Local kkcode / Claude Code / Codex / OpenCode compatibility baseline |
@@ -273,6 +275,45 @@ Manage them with `/permission list` and `/permission forget <n|all>`.
 有效，同时不会泄漏到其他仓库或用户的 git 历史。可用 `/permission list` 查看、
 `/permission forget <n|all>` 撤销。
 
+**OS-level sandbox / OS 级沙箱（0.8.1, opt-in）**
+
+Permission rules decide *whether* a command runs; the sandbox bounds *what it
+can reach* if it does. It is the third line of defence behind rules and
+approvals, and it is **off by default** — turning it on changes how existing
+commands execute, so it is never enabled for you.
+
+```yaml
+permission:
+  sandbox:
+    mode: "off"          # off | auto
+    network: true        # false = no network at all (own netns, localhost included)
+    writable_dirs: []    # add what your toolchain needs, e.g. ["~/.npm", "~/.cache"]
+```
+
+With `mode: auto`, model-initiated bash runs under **bubblewrap** (Linux) or
+**sandbox-exec** (macOS): the whole filesystem is read-only except the
+workspace, the system tmp dir, `~/.kkcode`, and anything you add to
+`writable_dirs`. Background tasks are wrapped too — leaving that lane
+unwrapped would just be a bypass switch. Commands **you** type with `!` are
+never sandboxed. The effective backend is visible in `/status` and
+`kkcode doctor`; when `auto` finds no usable backend the tool output says so
+once rather than pretending isolation is active. A misspelled `mode` is a
+schema error, not a silent fallback — the runtime would treat it as `off`,
+and you would think you were sandboxed.
+
+权限规则决定命令**能不能跑**，沙箱决定它跑起来**够得到什么**，是规则与审批之后
+的第三道防线。**默认关闭**：打开会改变现有命令的执行方式，所以绝不替你启用。
+`mode: auto` 后，模型发起的 bash 经 bubblewrap（Linux）/ sandbox-exec（macOS）
+执行 —— 整个文件系统只读，仅工作区、系统 tmp、`~/.kkcode` 和你补充的
+`writable_dirs` 可写；`network: false` 另断网络（独立 netns，连 localhost 一起
+断）。后台任务同样包住，否则它就是一个绕过沙箱的开关；你自己敲的 `!` 命令永远
+不进沙箱。生效后端在 `/status` 与 `kkcode doctor` 里可见；`auto` 但后端不可用时
+工具输出会说明一次，而不是假装隔离生效。`mode` 打错是 schema 报错而非静默回落
+—— 运行时会当成 `off`，而你以为自己在沙箱里。
+
+沙箱内的失败会带一行提示指明可写目录，让模型把 `EROFS` 读成策略而不是机器坏了。
+注意 npm/pip 这类工具通常需要把 `~/.npm`、`~/.cache` 加进 `writable_dirs`。
+
 ---
 
 <a id="delegation-and-subagents"></a>
@@ -369,13 +410,56 @@ Manage them with `/permission list` and `/permission forget <n|all>`.
 - `/commands` — inspect command / skill / capability surface
 - `/reload` — reload commands, skills, and agents
 - `/new`, `/resume`, `/history` — session lifecycle
-- `/provider`, `/model` — provider/model switching
+- `/provider`, `/model` — provider/model switching; `/model` also offers a
+  thinking-effort tier that is persisted per model
 - `/permission` — permission policy management
+- `/theme` — switch dark / light / auto at runtime, with live preview on the
+  arrow keys, `Enter` to save and `Esc` to revert (`auto` probes the terminal
+  background via OSC 11)
+- `/btw <question>` — side question: it can see the conversation but cannot
+  change it. No tools, no main system prompt, answer renders in a read-only
+  panel and never enters the transcript, so it costs nothing on later turns
 - `/create-skill`, `/create-agent` — generate local extensions
 - `$<skill> [args]` — invoke a registered skill; `/` remains for built-in slash commands
+- `!<command>` — run a command in your own shell (see below)
 
 **Interrupt semantics / 中断语义**
 - `Esc` 可用于**中断当前 turn**、退出部分选择态或拒绝当前交互式请求，具体行为取决于当前上下文。
+
+**Steering a running turn / 给正在跑的回合插话**
+
+Press `Enter` while the model is working to queue a message; press `Enter`
+once more on the empty input and it is promoted to an **interjection**,
+injected as a user message at the next step boundary so the model sees it
+before finishing. Injection only happens at step boundaries — splicing into an
+assistant→tool pair would be rejected by the provider.
+
+忙碌时 `Enter` 排队，空输入框上再按一次 `Enter` 升级为插话，在下一个 step 边界
+作为 user 消息注入，模型收尾前就能看到。
+
+**Shell passthrough / Shell 直通**
+
+`!<command>` runs in your own shell. It is *your* command, so it skips
+approval and is never sandboxed; stdout and stderr interleave in arrival
+order, get middle-truncated (errors at the tail, echo at the head) and land in
+the conversation with ANSI stripped — so the model's next turn can see that
+you ran it and what came back. `!=` at the start is treated as an expression,
+not a command.
+
+`!命令` 在你自己的 shell 里跑：是你的命令，所以不走审批、永不进沙箱；输出剥掉
+ANSI 后进会话，模型下一轮看得见。`!=` 开头按表达式处理，不当命令。
+
+**AFK question auto-skip / 挂机提问打发**
+
+A model question left unanswered with no keypress for
+`ui.afk_question_timeout_s` seconds (default `600`, `0` disables) resolves as
+"skipped" so a long run does not hang on one question while you are away; any
+key resets the clock. **Permission prompts are never auto-answered** — in
+either direction.
+
+提问挂起且无任何按键超过 `ui.afk_question_timeout_s` 秒（默认 600，0 关闭）即按
+「跳过」结掉，挂机的长任务不再被一个问题卡死；任何按键都会把表拨回起点。
+**权限审批永不自动处理** —— 批与拒两个方向都不。
 
 ### v0.3.3 terminal interaction / 终端交互
 
@@ -434,12 +518,20 @@ Run `kkcode --help` or `kkcode <command> --help` for the full surface.
 ## Configuration & Project Layout / 配置与项目结构
 
 ### Key config themes / 关键配置主题
-- provider/model selection
+- provider/model selection — including per-model thinking effort
 - permission and trust policy
+- OS sandbox — `permission.sandbox.{mode,network,writable_dirs}` (opt-in)
 - mode, approval and Ultra behavior
 - usage and budget limits
-- UI / theme settings
+- UI / theme settings — `ui.status.segments` picks which status-bar segments
+  show and in what order (`mode | model | tokens | cost | context | memory |
+  permission | longagent`); leaving it unset keeps the current bar
+  byte-for-byte, and unknown names are schema errors
+- `ui.afk_question_timeout_s` — auto-skip an unattended question (default 600s)
 - MCP and extension loading
+
+The annotated reference config is [docs/config.example.yaml](docs/config.example.yaml);
+it tracks the schema, so prefer it over this summary when the two disagree.
 
 ### Dynamic models and unified gateway / 动态模型与统一网关
 
@@ -526,21 +618,28 @@ The `configs/` directory contains provider-ready templates for current OpenAI-co
 
 | Provider | Default template model | Notes |
 | --- | --- | --- |
-| OpenAI | `gpt-5.5` | Latest high-capability API default, with `gpt-5.4` and `gpt-5.3-codex` listed for cost/coding lanes |
-| Anthropic | `claude-sonnet-4-6` | Balanced default; `claude-opus-4-7` is listed for highest-complexity work |
-| DashScope / Qwen | `qwen3.5-plus` | Balanced long-context default; `qwen3.5-flash` is listed for faster lower-cost work |
-| DeepSeek | `deepseek-v4-flash` | Replaces old `deepseek-chat` / `deepseek-reasoner` aliases before their 2026-07-24 deprecation |
+| OpenAI | `gpt-5.6-terra` | The balanced tier of the 5.6 family; `gpt-5.6-sol` for the hardest work, `gpt-5.6-luna` for cost, `gpt-5.3-codex` for the coding lane |
+| Anthropic | `claude-sonnet-5` | Balanced default; `claude-opus-5` for highest-complexity work, `claude-haiku-4-5` for the fast lane |
+| DashScope / Qwen | `qwen3.5-plus` | The `qwen3.5` template tracks that series. Alibaba's current lineup is `qwen3.7-max` / `qwen3.7-plus` / `qwen3.6-flash` — a 3.7 template is [on the roadmap](docs/ROADMAP.md) |
+| DeepSeek | `deepseek-v4-flash` | Current, alongside `deepseek-v4-pro`; replaces the old `deepseek-chat` / `deepseek-reasoner` aliases |
 | Zhipu GLM | `glm-5.1` | New GLM default with `glm-5` and `glm-4.5` kept as fallback choices |
-| Google Gemini | `gemini-3.5-flash` | Uses Gemini's OpenAI-compatible endpoint |
+| Google Gemini | `gemini-3.6-flash` | Uses Gemini's OpenAI-compatible endpoint; `gemini-3.5-flash` kept as a fallback |
 | Kimi Code | `k3` | Uses the dedicated Coding API and `KIMI_CODE_API_KEY`; also includes Kimi for Coding variants |
-| Moonshot Kimi | `kimi-k2.6` | Current Kimi model for coding/agent work; old K2 aliases are avoided |
-| xAI Grok | `grok-4.3` | xAI's current general chat default |
+| Moonshot Kimi | `kimi-k3` | Current Kimi model for coding/agent work; `kimi-k2.7-code` and `kimi-k2.6` kept as fallbacks |
+| xAI Grok | `grok-4.5` | xAI's current default for both chat and code; `grok-4.3` kept as a fallback |
 
 **日本語**: 最新テンプレートは安定版エイリアスを優先し、移行中の旧モデル名は互換用途としてのみ残しています。  
 **한국어**: 최신 템플릿은 안정 별칭을 우선 사용하고, 이전 모델명은 마이그레이션 호환용으로만 유지합니다.  
 **Español**: las plantillas priorizan alias estables y conservan nombres antiguos solo para migración.
 
-Reviewed source pages on 2026-05-27: [OpenAI models](https://developers.openai.com/api/docs/models/all), [Claude models](https://platform.claude.com/docs/en/about-claude/models/overview), [Alibaba Cloud Model Studio models](https://www.alibabacloud.com/help/en/model-studio/models), [DeepSeek API](https://api-docs.deepseek.com/), [Gemini OpenAI compatibility](https://ai.google.dev/gemini-api/docs/openai), [Kimi model list](https://platform.kimi.ai/docs/models), and [xAI models](https://docs.x.ai/developers/models).
+Reviewed source pages on 2026-08-06: [OpenAI models](https://developers.openai.com/api/docs/models/all),
+[Claude models](https://platform.claude.com/docs/en/about-claude/models/overview),
+[Alibaba Cloud Model Studio models](https://www.alibabacloud.com/help/en/model-studio/models),
+[DeepSeek API](https://api-docs.deepseek.com/), [Gemini models](https://ai.google.dev/gemini-api/docs/models),
+[Kimi model list](https://platform.kimi.ai/docs/models), and [xAI models](https://docs.x.ai/developers/models).
+**Zhipu GLM was not re-verified in this pass** — its docs site renders the model
+list client-side, so the GLM row still reflects the 2026-05-27 review. Treat that
+one row as older than the rest rather than assuming it was checked.
 
 ---
 
@@ -571,12 +670,12 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current stable version / 当前稳定版本**: `v0.9.0`
+**Current stable version / 当前稳定版本**: `v0.9.1`
 
-`v0.9.0` is the current stable npm and GitHub release. The `main` branch remains
+`v0.9.1` is the current stable npm and GitHub release. The `main` branch remains
 the development line for subsequent fixes.
 
-`v0.9.0` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
+`v0.9.1` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
 
 Use the Kimi Code preset without placing credentials in YAML:
 
@@ -742,6 +841,8 @@ See [LICENSE](LICENSE) for the full text.
 <a id="further-reading"></a>
 ## Further Reading / 延伸阅读
 
+- [Roadmap / 路线图](docs/ROADMAP.md) — known gaps, each with a checkable fact
+- [Reference config / 参考配置](docs/config.example.yaml) — annotated, tracks the schema
 - [CLI General Assistant Capability Matrix](docs/cli-general-assistant-capability-matrix.md)
 - [0.1.13 Mode Lane Contract](docs/kkcode-0.1.13-mode-lane-contract.md)
 - [Task Delegation Contract Matrix](docs/task-delegation-contract-matrix.md)

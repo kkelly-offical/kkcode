@@ -71,11 +71,11 @@ provider:
   anthropic:
     type: anthropic
     api_key_env: ANTHROPIC_API_KEY
-    default_model: claude-sonnet-4-6
+    default_model: claude-sonnet-5
     models:
-      - claude-opus-4-7
-      - claude-sonnet-4-6
-      - claude-haiku-4-5-20251001
+      - claude-opus-5
+      - claude-sonnet-5
+      - claude-haiku-4-5
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
     max_tokens: 32768
@@ -87,12 +87,14 @@ provider:
     type: openai
     base_url: https://api.openai.com/v1
     api_key_env: OPENAI_API_KEY
-    default_model: gpt-5.5
+    default_model: gpt-5.6-terra
     models:
+      # 5.6 家族：sol 最强、terra 平衡、luna 低成本
+      - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5.6-luna
       - gpt-5.5
-      - gpt-5.5-pro
       - gpt-5.4
-      - gpt-5.4-mini
       - gpt-5.3-codex
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
@@ -105,8 +107,9 @@ provider:
     type: openai-compatible
     base_url: https://generativelanguage.googleapis.com/v1beta/openai/
     api_key_env: GEMINI_API_KEY
-    default_model: gemini-3.5-flash
+    default_model: gemini-3.6-flash
     models:
+      - gemini-3.6-flash
       - gemini-3.5-flash
       - gemini-3.1-pro
       - gemini-3.1-flash-lite
@@ -121,12 +124,11 @@ provider:
     type: openai-compatible
     base_url: https://api.moonshot.ai/v1
     api_key_env: MOONSHOT_API_KEY
-    default_model: kimi-k2.6
+    default_model: kimi-k3
     models:
+      - kimi-k3
+      - kimi-k2.7-code
       - kimi-k2.6
-      - kimi-k2.5
-      - moonshot-v1-128k
-      - moonshot-v1-32k
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
     max_tokens: 32768
@@ -138,10 +140,10 @@ provider:
     type: openai-compatible
     base_url: https://api.x.ai/v1
     api_key_env: XAI_API_KEY
-    default_model: grok-4.3
+    default_model: grok-4.5
     models:
+      - grok-4.5
       - grok-4.3
-      - grok-4.3-latest
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
     max_tokens: 32768

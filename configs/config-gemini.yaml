@@ -11,9 +11,10 @@ provider:
     type: openai-compatible
     base_url: https://generativelanguage.googleapis.com/v1beta/openai/
     api_key_env: GEMINI_API_KEY
-    default_model: gemini-3.5-flash
+    default_model: gemini-3.6-flash
     models:
       # Stable frontier coding / agentic model
+      - gemini-3.6-flash
       - gemini-3.5-flash
       # Preview pro model for complex tasks
       - gemini-3.1-pro

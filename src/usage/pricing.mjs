@@ -6,6 +6,13 @@ const DEFAULT_PRICING = {
   currency: "USD",
   per_tokens: 1000000,
   models: {
+    // Claude 5 家族。cache_read = 0.1×input，cache_write = 1.25×input（5 分钟 TTL）。
+    "claude-fable-5": { input: 10, output: 50, cache_read: 1, cache_write: 12.5 },
+    "claude-opus-5": { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
+    // Sonnet 5 的挂牌价是 3/15；2026-08-31 前有 2/10 的introductory 价。
+    // 这里记挂牌价 —— 优惠会过期，而成本高估比低估安全。
+    "claude-sonnet-5": { input: 3, output: 15, cache_read: 0.3, cache_write: 3.75 },
+    "claude-opus-4-8": { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
     "claude-opus-4-6": { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
     "claude-opus-4-7": { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
     "claude-opus-4-5": { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
@@ -16,8 +23,12 @@ const DEFAULT_PRICING = {
     "claude-sonnet-4": { input: 3, output: 15, cache_read: 0.3, cache_write: 3.75 },
     "claude-haiku-4-5": { input: 1, output: 5, cache_read: 0.1, cache_write: 1.25 },
     "claude-haiku-3-5": { input: 0.8, output: 4, cache_read: 0.08, cache_write: 1 },
-    "gpt-5.3-codex": { input: 15, output: 60, cache_read: 7.5, cache_write: 15 },
-    "gpt-5.5": { input: 5, output: 30, cache_read: 2.5, cache_write: 5 },
+    "gpt-5.6-sol": { input: 5, output: 30, cache_read: 0.5, cache_write: 5 },
+    "gpt-5.6-terra": { input: 2, output: 12, cache_read: 0.2, cache_write: 2 },
+    "gpt-5.6-luna": { input: 0.2, output: 1.2, cache_read: 0.02, cache_write: 0.2 },
+    // 曾经记成 15/60 —— 高了 8.6 倍。2026-08-06 对着官方定价页核过。
+    "gpt-5.3-codex": { input: 1.75, output: 14, cache_read: 0.175, cache_write: 1.75 },
+    "gpt-5.5": { input: 5, output: 30, cache_read: 0.5, cache_write: 5 },
     "gpt-5.4": { input: 2.5, output: 15, cache_read: 1.25, cache_write: 2.5 },
     "gpt-5.4-mini": { input: 0.75, output: 4.5, cache_read: 0.375, cache_write: 0.75 },
     "gpt-4o": { input: 2.5, output: 10, cache_read: 1.25, cache_write: 2.5 },
@@ -28,6 +39,7 @@ const DEFAULT_PRICING = {
     "deepseek-v3.2": { input: 0.28, output: 0.41, cache_read: 0.03, cache_write: 0.28 },
     "deepseek-v4-flash": { input: 0.14, output: 0.28, cache_read: 0.0028, cache_write: 0.14 },
     "deepseek-v4-pro": { input: 0.435, output: 0.87, cache_read: 0.003625, cache_write: 0.435 },
+    "gemini-3.6-flash": { input: 1.5, output: 7.5, cache_read: 0.15, cache_write: 1.5 },
     "gemini-3.5-flash": { input: 1.5, output: 9, cache_read: 0.15, cache_write: 1.5 },
     "gemini-3.1-pro": { input: 2, output: 12, cache_read: 0.2, cache_write: 2 },
     "gemini-3.1-flash-lite": { input: 0.25, output: 1.5, cache_read: 0.025, cache_write: 0.25 },
@@ -54,6 +66,7 @@ const DEFAULT_PRICING = {
     "glm-5.1": { input: 0.55, output: 3.05, cache_read: 0, cache_write: 0 },
     "glm-4.7": { input: 0.41, output: 1.93, cache_read: 0, cache_write: 0 },
     "glm-4.6": { input: 0.28, output: 1.1, cache_read: 0, cache_write: 0 },
+    "grok-4.5": { input: 2, output: 6, cache_read: 0, cache_write: 0 },
     "grok-4.3": { input: 1.25, output: 2.5, cache_read: 0, cache_write: 0 }
   },
   default: {
@@ -112,12 +125,20 @@ export async function loadPricing(configState) {
 
 function findPricingEntry(models, model) {
   if (models[model]) return models[model]
-  // Fuzzy: try prefix match (e.g. "claude-opus-4-6-20250601" → "claude-opus-4-6")
+  // 前缀回落（"claude-opus-5-20260101" → "claude-opus-5"）。
+  //
+  // 必须取**最长**匹配，不能拿遍历到的第一个：价目表里有互为前缀的键
+  // （gpt-5.4 / gpt-5.4-mini、minimax-m2.5 / minimax-m2.5-highspeed、
+  // glm-5 / glm-5.1）。按插入顺序返回首个匹配时，`gpt-5.4-mini-2026`
+  // 会落到 gpt-5.4 上 —— 单价高 3.3 倍，而且是静默的：算出来的钱看着
+  // 完全正常，只是错的。
   const m = String(model).toLowerCase()
+  let best = null
   for (const key of Object.keys(models)) {
-    if (m.startsWith(key)) return models[key]
+    if (!m.startsWith(key)) continue
+    if (best === null || key.length > best.length) best = key
   }
-  return null
+  return best === null ? null : models[best]
 }
 
 export function calculateCost(pricing, model, usage) {

@@ -11,11 +11,12 @@ provider:
     type: openai-compatible
     base_url: https://api.moonshot.ai/v1
     api_key_env: MOONSHOT_API_KEY
-    default_model: kimi-k2.6
+    default_model: kimi-k3
     models:
-      # Kimi K2.6 is the current recommended model for new Agent/coding work.
+      # kimi-k3 is the current recommended model for new Agent/coding work.
+      - kimi-k3
+      - kimi-k2.7-code
       - kimi-k2.6
-      - kimi-k2.5
       - moonshot-v1-128k
       - moonshot-v1-32k
     timeout_ms: 120000

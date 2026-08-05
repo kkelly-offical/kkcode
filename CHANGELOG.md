@@ -1,5 +1,89 @@
 # Changelog / 更新日志
 
+## 0.9.1
+
+仓库维护：类型守护从 5 个文件扩到 130 个；GitHub Actions 全部升到 v7；README
+补上 0.7.0–0.9.0 三个 minor 一直没写进去的功能。无运行时改动。
+
+### English
+
+- **Typecheck now guards 130 files instead of 5.** `tsconfig.json` had five
+  files in `include`, so one of the six release-gate steps was effectively
+  idling. Turning `checkJs` on for all 290 source files reports 510 errors
+  (mostly TS2339 noise on unannotated JS, not real defects), and excluding the
+  dirty files does **not** work — a whitelisted file that imports a dirty one
+  drags it back into the check, which left 509 of the 510 errors in place. What
+  does work is the closure: 130 files that are clean *and* whose transitive
+  imports are all clean. Verified red-then-green — an injected type error is
+  caught and fails the gate. No production code changed; the list only grows.
+- **GitHub Actions upgraded to v7.** `checkout`, `setup-node` and
+  `upload-artifact` were all on v4, whose Node 20 runtime is deprecated and was
+  being force-run on Node 24 via `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24`. That
+  workaround is now removed along with the old versions. The two v7 breaking
+  changes were checked and neither applies: `checkout`'s stricter PR default
+  only affects `pull_request_target` / `workflow_run` (these workflows use
+  `push` / `pull_request`), and `setup-node` dropping its dummy
+  `NODE_AUTH_TOKEN` export doesn't matter because the publish step passes the
+  real token explicitly.
+- **README caught up with 0.7.0–0.9.0.** The OS sandbox, `!` shell passthrough,
+  turn steering, `/btw`, `/theme`, AFK question auto-skip, per-model thinking
+  effort and `ui.status.segments` had shipped but appeared nowhere in the
+  README. All are documented now, against the actual schema and call sites
+  rather than from memory.
+- **Model templates re-reviewed against vendor docs** (previous pass:
+  2026-05-27). Anthropic → the Claude 5 family, OpenAI → the `gpt-5.6` family,
+  Gemini → `gemini-3.6-flash`, Kimi → `kimi-k3`, xAI → `grok-4.5`; DeepSeek was
+  already current. **Zhipu GLM could not be verified** — its docs render the
+  model list client-side — so that row is explicitly marked as older than the
+  rest instead of being silently presented as checked.
+- **Two real pricing defects, found while doing that review.** `gpt-5.3-codex`
+  was recorded as $15/$60 per MTok against an actual $1.75/$14 — an 8.6× over-
+  estimate. And the prefix fallback in `findPricingEntry` returned the *first*
+  matching key rather than the longest, so `gpt-5.4-mini-<suffix>` billed at
+  `gpt-5.4`'s rate (3.3× high) and `minimax-m2.5-highspeed-<suffix>` at
+  `minimax-m2.5`'s (2× low). Both fixed, with tests. The Claude 5 models were
+  missing from the table entirely and fell through to the default rate, which
+  under-charged Opus 5 by 40%.
+- **`update.md` removed; `docs/ROADMAP.md` added.** The root-level file was a
+  stale scratchpad — all three of its items had either shipped (`/longagent
+  4stage` removal in 0.4.0, turn steering in 0.7.5, the onboarding form) or
+  been deleted. The new roadmap replaces it with known gaps, each stated as a
+  checkable fact rather than an intention.
+
+### 中文
+
+- **类型守护从 5 个文件扩到 130 个。** `tsconfig.json` 的 `include` 只列了五个
+  文件，六步发布门槛里的 typecheck 长期在空转。对全部 290 个源文件开 `checkJs`
+  会报 510 个错误（多数是无类型标注 JS 上的 TS2339 噪音，不是真缺陷），而用
+  `exclude` 排除脏文件**没有用** —— 白名单里的文件只要 import 了脏文件就会把它
+  拽回来检查，实测 510 个错误里 509 个原样保留。真正有效的是闭包：自身干净、
+  且传递依赖也全干净的 130 个文件。红绿都验过 —— 注入一个类型错误确实会被抓住
+  并让门槛变红。未改动任何生产代码；清单只增不减。
+- **GitHub Actions 升到 v7。** `checkout`、`setup-node`、`upload-artifact` 都还
+  停在 v4，其 Node 20 运行时已弃用，靠 `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` 强制
+  跑在 Node 24 上；这个 workaround 随旧版本一起移除。v7 的两条破坏性变更核验后
+  都不命中：`checkout` 收紧的 PR 默认值只影响 `pull_request_target` /
+  `workflow_run`（本仓库用的是 `push` / `pull_request`），`setup-node` 去掉的
+  dummy `NODE_AUTH_TOKEN` 导出也无关 —— 发布步骤本来就显式传真 token。
+- **README 补上 0.7.0–0.9.0。** OS 沙箱、`!` shell 直通、回合插话、`/btw`、
+  `/theme`、AFK 提问打发、按模型的思考档位、`ui.status.segments` 早就发出去了，
+  README 里却一个字都没有。现在全部补齐，且是对着 schema 与调用点写的，不是凭
+  记忆。
+- **模型模板逐家对着厂商文档复核**（上一次是 2026-05-27）。Anthropic → Claude 5
+  家族，OpenAI → `gpt-5.6` 家族，Gemini → `gemini-3.6-flash`，Kimi →
+  `kimi-k3`，xAI → `grok-4.5`；DeepSeek 本来就是最新的。**智谱 GLM 没核实成**
+  —— 它的文档站把模型清单放在客户端渲染 —— 所以那一行明确标注为「比其余各行旧」，
+  而不是假装也查过了。
+- **复核过程中抓到两个真实的计费缺陷。** `gpt-5.3-codex` 被记成 15/60，实际是
+  1.75/14 —— 高估 8.6 倍。以及 `findPricingEntry` 的前缀回落返回**首个**匹配而
+  不是最长匹配，于是 `gpt-5.4-mini-<后缀>` 按 `gpt-5.4` 计价（高 3.3 倍）、
+  `minimax-m2.5-highspeed-<后缀>` 按 `minimax-m2.5` 计价（低 2 倍）。两处都修了
+  并补了测试。Claude 5 家族则是整个不在表里、直接落到 default 单价上 —— Opus 5
+  因此少算 40%。
+- **删掉 `update.md`，新增 `docs/ROADMAP.md`。** 根目录那份是过期草稿：三条内容
+  要么已经发了（`/longagent 4stage` 在 0.4.0 移除、回合插话在 0.7.5、首启填表页
+  已实现），要么已经删了。新的路线图用「可当场核对的事实」替代「意向描述」。
+
 ## 0.9.0
 
 依赖大版本升级：commander 15、eslint 10、typescript 7、@types/node 26。

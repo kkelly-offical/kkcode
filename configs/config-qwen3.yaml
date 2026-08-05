@@ -26,11 +26,11 @@ provider:
     type: anthropic
     base_url: https://code.newcli.com/claude/aws/v1
     api_key_env: ANTHROPIC_API_KEY
-    default_model: claude-sonnet-4-6
+    default_model: claude-sonnet-5
     models:
-      - claude-opus-4-7
-      - claude-sonnet-4-6
-      - claude-haiku-4-5-20251001
+      - claude-opus-5
+      - claude-sonnet-5
+      - claude-haiku-4-5
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
     max_tokens: 32768
@@ -41,12 +41,13 @@ provider:
     type: openai
     base_url: https://code.newcli.com/codex/v1
     api_key_env: OPENAI_API_KEY
-    default_model: gpt-5.5
+    default_model: gpt-5.6-terra
     models:
+      - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5.6-luna
       - gpt-5.5
-      - gpt-5.5-pro
       - gpt-5.4
-      - gpt-5.4-mini
       - gpt-5.3-codex
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
@@ -58,10 +59,11 @@ provider:
     type: openai-compatible
     base_url: https://api.moonshot.ai/v1
     api_key_env: MOONSHOT_API_KEY
-    default_model: kimi-k2.6
+    default_model: kimi-k3
     models:
+      - kimi-k3
+      - kimi-k2.7-code
       - kimi-k2.6
-      - kimi-k2.5
   ollama:
     type: ollama
     base_url: http://localhost:11434

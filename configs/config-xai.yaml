@@ -11,10 +11,10 @@ provider:
     type: openai-compatible
     base_url: https://api.x.ai/v1
     api_key_env: XAI_API_KEY
-    default_model: grok-4.3
+    default_model: grok-4.5
     models:
+      - grok-4.5
       - grok-4.3
-      - grok-4.3-latest
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
     max_tokens: 32768
