@@ -205,8 +205,9 @@ test("long-running detection: watch-mode vitest is blocked, one-shot vitest is n
   // 一次性参数只能影响它所在的 vitest 命令段，不能穿过 shell 分隔符。
   assert.equal(isLongRunningCommand("vitest; echo --run"), true)
   assert.equal(isLongRunningCommand("vitest && printf -- --run"), true)
-  // POSIX shell 里 # 后面是注释，不能影响前面这个 vitest 进程。
-  assert.equal(isLongRunningCommand("vitest # --run"), true)
+  // POSIX shell 里 # 后面是注释，不能影响前面这个 vitest 进程；
+  // Windows 的实际执行面是 cmd.exe，裸 # 则是普通 argv 内容。
+  assert.equal(isLongRunningCommand("vitest # --run"), process.platform !== "win32")
   assert.equal(isLongRunningCommand("echo --run | vitest"), true)
 
   // 显式 watch 与 false 布尔值的优先级不能靠子串猜。
