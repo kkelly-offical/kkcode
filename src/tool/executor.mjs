@@ -21,7 +21,9 @@ import { autoSnapshotBeforeEdit } from "../session/checkpoint.mjs"
 import { buildMutationObservability } from "../observability/edit-diagnostics.mjs"
 
 const FILE_EDIT_TOOLS = new Set(["write", "edit", "multiedit", "patch", "notebookedit"])
-const snapshotted = new Set()
+// 同一 turn 可能并行触发多个编辑工具。只记一个 boolean 会让第二个工具越过仍在
+// 进行的快照，因此这里缓存 Promise：首个编辑创建，所有并发编辑都等待同一份。
+const snapshotPromises = new Map()
 
 function outputFailureStatus(output) {
   const text = String(output || "").trim()
@@ -152,10 +154,35 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
         }
 
         // Auto snapshot before first file edit per turn
-        if (FILE_EDIT_TOOLS.has(tool.name) && !snapshotted.has(turnId)) {
-          snapshotted.add(turnId)
-          if (snapshotted.size > 200) snapshotted.clear()
-          autoSnapshotBeforeEdit(sessionId, context.cwd, context.config).catch(() => {})
+        if (FILE_EDIT_TOOLS.has(tool.name)) {
+          const snapshotKey = [sessionId || "", context?.cwd || "", turnId || toolInvocationId].join("\0")
+          let snapshotPromise = snapshotPromises.get(snapshotKey)
+          if (!snapshotPromise) {
+            snapshotPromise = autoSnapshotBeforeEdit(sessionId, context.cwd, context.config).then(
+              (result) => {
+                // A failed attempt must not permanently mark the turn as snapshotted.
+                // Concurrent edits still share and await this attempt; a later edit may retry.
+                if (result?.ok === false && snapshotPromises.get(snapshotKey) === snapshotPromise) {
+                  snapshotPromises.delete(snapshotKey)
+                }
+                return result
+              },
+              () => {
+                if (snapshotPromises.get(snapshotKey) === snapshotPromise) {
+                  snapshotPromises.delete(snapshotKey)
+                }
+                return null
+              }
+            )
+            snapshotPromises.set(snapshotKey, snapshotPromise)
+            if (snapshotPromises.size > 200) {
+              const oldest = snapshotPromises.keys().next().value
+              if (oldest !== snapshotKey) snapshotPromises.delete(oldest)
+            }
+          }
+          // 快照失败仍沿用既有策略：不阻断编辑；但无论成功失败，都必须在写入前落定，
+          // 否则 fire-and-forget 会把工具执行后的状态误记成“修改前”。
+          await snapshotPromise
         }
 
         const raw = await tool.execute(args || {}, context)

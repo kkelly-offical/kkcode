@@ -31,7 +31,7 @@ export const PUBLIC_MODE_CONTRACT = Object.freeze([
   {
     mode: "agent",
     summary: "compatibility alias for assistant",
-    guarantee: "agent/code/coding resolve to the unified assistant in 0.3.0"
+    guarantee: "agent/code/coding resolve to the unified assistant (since 0.3.0)"
   },
   {
     mode: "longagent",
@@ -73,13 +73,13 @@ export function renderPublicModeContract() {
     "",
     "- `assistant`: default CLI personal assistant lane for bounded terminal-native personal work, explanation, and analysis.",
     "- `plan`: produce a spec/plan only; do not execute file mutations.",
-    "- `agent` / `code` / `coding`: compatibility aliases for `assistant` in 0.3.0.",
+    "- `agent` / `code` / `coding`: compatibility aliases for `assistant` (since 0.3.0).",
     "- `longagent`: heavyweight staged multi-file delivery lane with explicit gates.",
     "- Keep everyday Q&A, coding mutation, debugging, refactoring, and test repair in `assistant`.",
     "- Suggest `longagent` only when heavy multi-file or system-level evidence appears; do not auto-switch.",
     "- Keep `plan` explicit and mutation-free even when later execution is likely.",
     "",
-    "The user-facing 0.4.0 names for these lanes are Plan, Agent, Agent · Auto,",
+    "The user-facing names for these lanes (since 0.4.0) are Plan, Agent, Agent · Auto,",
     "Ultra and YOLO; Ultra is the `longagent` lane and the rest run on `assistant`.",
     "The difference between Agent, Agent · Auto and YOLO is the approval level, not",
     "the lane: never assume an edit is pre-approved, always let the permission layer decide."

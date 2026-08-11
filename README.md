@@ -670,12 +670,12 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current stable version / 当前稳定版本**: `v0.9.1`
+**Current stable version / 当前稳定版本**: `v0.9.2`
 
-`v0.9.1` is the current stable npm and GitHub release. The `main` branch remains
+`v0.9.2` is the current stable npm and GitHub release. The `main` branch remains
 the development line for subsequent fixes.
 
-`v0.9.1` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
+`v0.9.2` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
 
 Use the Kimi Code preset without placing credentials in YAML:
 
@@ -695,6 +695,11 @@ with authorization values redacted.
 **Package / 包地址**: [npm](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 
 **English**
+- `0.9.2` hardens undo snapshots, layered configuration validation, stable
+  transcript scrolling, Vitest foreground detection, and release secret/type
+  gates. Release CI now scans and publishes the same immutable tarball. It also
+  separates pruned config warnings from rejected layers in startup, preflight,
+  and doctor output.
 - `0.5.0` makes Ultra goal-driven: acceptance criteria the system actually
   executes (with a `manual` kind no code path can auto-pass), an unbounded
   round loop constrained by evidence of progress with stall detection, triaged
@@ -733,6 +738,10 @@ with authorization values redacted.
 - `0.2.1` rebuilt kkcode around Assistant as the default general-purpose lane, with dedicated Agent and LongAgent modes for coding work.
 
 **中文**
+- `0.9.2` 加固了按会话隔离的撤销快照、逐层配置验证、稳定对话滚动、
+  Vitest 前台长驻判定，以及密钥/类型发布门槛；发布 CI 改为扫描并发布
+  同一份不可变 tarball。启动、preflight 和 doctor 也会清楚区分被裁剪的
+  warning 与被拒绝的配置层。
 - `0.5.0` 让 Ultra 成为目标驱动的智能体：系统真正执行的验收判据（`manual`
   类判据没有任何代码路径能自动判过）、以进展证据为约束的无上限轮次循环与
   停滞检测、分档处置的 stage 失败（重试/降级/延后/跳过/重规划）取代一票崩塌、

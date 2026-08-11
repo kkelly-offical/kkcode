@@ -92,7 +92,7 @@ function skillCheck(skills = {}) {
 function configCheck(configState) {
   const source = configState?.source || {}
   const warnings = Array.isArray(configState?.warnings) ? configState.warnings : []
-  const paths = [source.userPath, source.projectPath].filter(Boolean)
+  const paths = [source.userPath, source.projectPath, source.envPath].filter(Boolean)
 
   // loadConfig 校验失败时整份文件被丢弃、只留 errors —— 而这里原先只读
   // warnings（loadConfig 从不产生这个字段），于是「配置全丢了」的会话
@@ -102,7 +102,7 @@ function configCheck(configState) {
     return {
       status: PREFLIGHT_FAIL,
       paths,
-      detail: `${errors[0]}（该文件已被整份忽略，正在使用默认配置）`,
+      detail: `${errors[0]}（对应配置层已忽略；其余已验证配置继续生效）`,
       errors,
       warnings
     }

@@ -5,11 +5,13 @@ import path from "node:path"
 const rootDir = process.cwd()
 const tsconfigPath = path.join(rootDir, 'tsconfig.json')
 
+// tsconfig.json 是常驻门槛（0.9.1 起白名单 130 个文件）。它缺失只可能是被
+// 误删 —— 这里曾静默跳过并 exit 0，typecheck 这一步会假绿；现在改为硬失败。
 try {
   await access(tsconfigPath)
 } catch {
-  console.log('typecheck skipped: no tsconfig.json')
-  process.exit(0)
+  console.error('typecheck failed: tsconfig.json not found (it is a permanent release gate; restore it)')
+  process.exit(1)
 }
 
 await new Promise((resolve, reject) => {

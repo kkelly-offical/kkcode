@@ -1,8 +1,8 @@
 export const name = "commit"
 export const description = "Stage changes and create a git commit with a descriptive message using AI-powered git automation"
 
-export async function run(args, context = {}) {
-  const hasGitAuto = context.config?.git_auto?.enabled !== false
+export async function run(ctx = {}) {
+  const hasGitAuto = ctx.config?.git_auto?.enabled !== false
   
   return `Review the current git status and create a well-structured commit.
 

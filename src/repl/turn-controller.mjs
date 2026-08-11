@@ -1,6 +1,7 @@
 import { executeTurn } from "../session/engine.mjs"
 import { HookBus } from "../plugin/hook-bus.mjs"
 import { extractImageRefs, buildContentBlocks } from "../tool/image-util.mjs"
+import { handleRollbackIfNeeded } from "../session/rollback.mjs"
 
 export async function executePromptTurn({
   prompt,
@@ -17,10 +18,45 @@ export async function executePromptTurn({
   const buildContentBlocksFn = deps.buildContentBlocks || buildContentBlocks
   const chatParamsFn = deps.chatParams || HookBus.chatParams.bind(HookBus)
   const executeTurnFn = deps.executeTurn || executeTurn
+  const handleRollbackFn = deps.handleRollbackIfNeeded || handleRollbackIfNeeded
   const cwd = deps.cwd || process.cwd()
 
   const { text: cleanedPrompt, imagePaths, imageUrls = [] } = extractImageRefsFn(prompt, cwd)
   const effectivePrompt = cleanedPrompt ?? prompt
+
+  // 自然语言撤销只在前台 REPL 的真实用户回合入口处拦截。放在
+  // processTurnLoop 里会误伤子代理/Ultra 内部提示词中的 rollback 字样；
+  // 放在模型请求之后又已经太晚。这里拥有前台 sessionId、cwd 和语言，
+  // 因此能在不启动 provider 的情况下安全收口。
+  const rollback = await handleRollbackFn({
+    prompt: effectivePrompt,
+    cwd,
+    sessionId: state.sessionId,
+    language: ctx.configState.config.language || "en"
+  })
+  if (rollback.handled) {
+    return {
+      result: {
+        reply: rollback.reply,
+        mode: state.mode,
+        model: state.model,
+        sessionId: state.sessionId,
+        turnId: null,
+        emittedText: false,
+        context: null,
+        tokenMeter: null,
+        cost: 0,
+        costSavings: 0,
+        pricingWarnings: [],
+        budgetWarnings: [],
+        budgetExceeded: false,
+        toolEvents: [],
+        planHandoff: null,
+        longagent: null
+      }
+    }
+  }
+
   let contentBlocks = null
 
   if (imagePaths.length || imageUrls.length || pendingImages.length) {

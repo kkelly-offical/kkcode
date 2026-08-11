@@ -732,9 +732,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   })
 
   // 注意：这里曾有一句 `if (ui.scrollOffset === 0) ui.scrollOffset = 0` ——
-  // 可证明的空操作。它想表达的是「用户在底部时保持跟随」，但 scrollOffset 是
-  // 到底部的距离，追加内容本来就不会改它，所以跟随是自动的。真正没实现的是
-  // 反面：用户**已经向上滚**时来了新内容，视图会跟着往下漂（偏移量没随之增加）。
+  // 可证明的空操作。scrollOffset 是到底部的距离，底部跟随本来就是自动的；
+  // 反面（用户已上滚时来新内容视图往下漂）在 0.9.2 修复：buildTranscriptViewport
+  // 用上一帧的稳定行身份重新找锚点，因此展开、折叠、resize 和浮层变高也不漂。
   const transcriptUnsub = transcript.subscribe(() => {
     requestRender()
   })

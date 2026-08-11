@@ -114,7 +114,7 @@ function trustedBashCommand(command) {
   return TRUSTED_BASH_PATTERNS.some((pattern) => pattern.test(cmd))
 }
 
-/** @deprecated 旧 `auto` 档的判定，保留供既有测试与迁移期比对，0.5.0 移除。 */
+/** @deprecated 旧 `auto` 档的判定，保留供既有测试与迁移期比对，1.0.0 移除。 */
 function autoAllowsTool({ tool, command = "" }) {
   const cap = toolCapability(tool, command)
   return SELF_CONTAINED_CAPABILITIES.includes(cap)

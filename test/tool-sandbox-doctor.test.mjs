@@ -61,3 +61,23 @@ test("doctor shows the real backend when sandbox is opted in", () => {
     assert.doesNotMatch(stdout, /^sandbox: off/m)
   })
 })
+
+test("doctor reports pruned warnings separately from hard config errors", () => {
+  withHome((home) => {
+    const configPath = path.join(home, "config.json")
+    writeFileSync(configPath, JSON.stringify({ agent: { max_steps: "bad" } }))
+    const warningRun = runDoctor(["--json"], home)
+    assert.equal(warningRun.status, 0)
+    const warningReport = JSON.parse(warningRun.stdout)
+    assert.equal(warningReport.config.errors.length, 0)
+    assert.ok(warningReport.config.warnings.some((warning) => warning.includes("agent.max_steps")))
+
+    writeFileSync(configPath, JSON.stringify({ permission: { level: "full-auto" } }))
+    const errorRun = runDoctor(["--json"], home)
+    assert.equal(errorRun.status, 1, "hard config errors must make doctor fail")
+    const errorReport = JSON.parse(errorRun.stdout)
+    assert.ok(errorReport.config.errors.some((error) => error.includes("permission.level")))
+    assert.equal(errorReport.config.warnings.length, 0)
+    assert.equal(errorReport.ok, false)
+  })
+})

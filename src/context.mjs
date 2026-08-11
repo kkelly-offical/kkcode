@@ -58,12 +58,18 @@ export async function buildContext(options = {}) {
 }
 
 export function printContextWarnings(ctx) {
-  // 校验失败的配置文件是被「整份丢弃」的，不是某一行被忽略 —— 叫它
-  // warning 会让人以为其余设置还生效，实际上整个文件都没进内存。
   const configErrors = ctx.configState?.errors || []
   if (configErrors.length) {
-    console.error("config error: 配置文件校验未通过，已整份忽略，当前使用默认配置")
+    // error 表示对应配置层未应用；别说「当前使用默认配置」，因为用户层、项目层、
+    // .env 是独立的，其余已验证层仍可能生效。
+    console.error("config error: 以下配置层未通过校验，已忽略；其余已验证配置继续生效")
     for (const error of configErrors) console.error(`  - ${error}`)
+    console.error("  修正后重新运行；`kkcode preflight` 可复查")
+  }
+  const configWarnings = ctx.configState?.warnings || []
+  if (configWarnings.length) {
+    console.error("config warning: 以下无效配置项已忽略；同层其余配置继续生效")
+    for (const warning of configWarnings) console.error(`  - ${warning}`)
     console.error("  修正后重新运行；`kkcode preflight` 可复查")
   }
   for (const error of ctx.themeState?.errors || []) {

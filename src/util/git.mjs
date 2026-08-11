@@ -544,6 +544,7 @@ export function generateBranchName(sessionId, objective = "") {
  * @property {string} message - 提交信息
  * @property {number} createdAt - 创建时间戳
  * @property {string[]} files - 包含的文件列表
+ * @property {string} [sessionId] - 创建该快照的 KK Code 会话（旧记录可缺省）
  */
 
 /**

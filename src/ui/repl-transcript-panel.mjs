@@ -14,9 +14,16 @@ function isTranscriptItem(value) {
 
 function toLineMetadata(logs, { paint, theme }) {
   const lines = []
-  for (const value of logs) {
+  for (let sourceIndex = 0; sourceIndex < logs.length; sourceIndex++) {
+    const value = logs[sourceIndex]
     if (isTranscriptItem(value)) {
-      lines.push(...renderTranscriptItems([value], { paint, theme }))
+      const sectionCounts = new Map()
+      for (const rendered of renderTranscriptItems([value], { paint, theme })) {
+        const section = rendered.section || "line"
+        const logicalLineIndex = sectionCounts.get(section) || 0
+        sectionCounts.set(section, logicalLineIndex + 1)
+        lines.push({ ...rendered, sourceIndex, section, logicalLineIndex })
+      }
       continue
     }
     if (value && typeof value === "object" && !Array.isArray(value)) {
@@ -24,6 +31,9 @@ function toLineMetadata(logs, { paint, theme }) {
         ...value,
         text: String(value.text ?? ""),
         itemId: value.itemId ?? value.id ?? null,
+        sourceIndex,
+        section: value.section || "line",
+        logicalLineIndex: Number.isInteger(value.logicalLineIndex) ? value.logicalLineIndex : 0,
         clickable: Boolean(value.clickable),
         action: value.action || null
       })
@@ -32,6 +42,9 @@ function toLineMetadata(logs, { paint, theme }) {
     lines.push({
       text: String(value ?? ""),
       itemId: null,
+      sourceIndex,
+      section: "line",
+      logicalLineIndex: 0,
       clickable: false,
       action: null
     })
@@ -55,11 +68,64 @@ function wrapMetadataLines(lines, width, wrapLogLines) {
   return wrapped
 }
 
+function lineAnchor(line, viewportRow) {
+  return {
+    itemId: line.itemId ?? null,
+    sourceIndex: line.sourceIndex,
+    section: line.section || "line",
+    logicalLineIndex: Number(line.logicalLineIndex) || 0,
+    wrappedIndex: Number(line.wrappedIndex) || 0,
+    viewportRow
+  }
+}
+
+function sameLogicalLine(line, anchor) {
+  const sameOwner = anchor.itemId !== null
+    ? line.itemId === anchor.itemId
+    : line.itemId == null && line.sourceIndex === anchor.sourceIndex
+  return sameOwner
+    && (line.section || "line") === anchor.section
+    && (Number(line.logicalLineIndex) || 0) === anchor.logicalLineIndex
+}
+
+function findAnchorIndex(lines, anchor) {
+  let nearest = -1
+  let nearestDistance = Infinity
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index]
+    if (!sameLogicalLine(line, anchor)) continue
+    const wrappedIndex = Number(line.wrappedIndex) || 0
+    if (wrappedIndex === anchor.wrappedIndex) return index
+    const distance = Math.abs(wrappedIndex - anchor.wrappedIndex)
+    if (distance < nearestDistance) {
+      nearest = index
+      nearestDistance = distance
+    }
+  }
+  return nearest
+}
+
+function offsetForPreviousAnchor(lines, previousScrollMeta, logRows) {
+  const candidates = Array.isArray(previousScrollMeta?.anchorCandidates)
+    ? previousScrollMeta.anchorCandidates
+    : []
+  for (const anchor of candidates) {
+    const index = findAnchorIndex(lines, anchor)
+    if (index < 0) continue
+    const desiredStart = Math.max(0, index - Math.max(0, Number(anchor.viewportRow) || 0))
+    return Math.max(0, lines.length - desiredStart - logRows)
+  }
+  return null
+}
+
 export function buildTranscriptViewport({
   logs = [],
   width,
   logRows,
   scrollOffset,
+  // 上一帧的 scrollMeta。它保存可见行的稳定身份，而不只是总行数：
+  // 展开/折叠、streaming 重排、resize 都会改变 totalRows，只看差值会锚错位置。
+  previousScrollMeta = null,
   wrapLogLines,
   clipAnsiLine,
   paint,
@@ -67,8 +133,23 @@ export function buildTranscriptViewport({
 }) {
   const sourceLines = toLineMetadata(logs, { paint, theme })
   const wrappedAllLineMeta = wrapMetadataLines(sourceLines, width, wrapLogLines)
+  let anchoredOffset = scrollOffset
+  const sameUserOffset = Number.isFinite(previousScrollMeta?.scrollOffset)
+    && previousScrollMeta.scrollOffset === scrollOffset
+  if (scrollOffset > 0 && sameUserOffset) {
+    const resolved = offsetForPreviousAnchor(wrappedAllLineMeta, previousScrollMeta, logRows)
+    if (resolved !== null) anchoredOffset = resolved
+    else if (
+      previousScrollMeta.width === width &&
+      Number.isFinite(previousScrollMeta.totalRows) &&
+      wrappedAllLineMeta.length > previousScrollMeta.totalRows
+    ) {
+      // 无 itemId 的旧式纯文本才退回总行数差；仅处理尾部增长。
+      anchoredOffset += wrappedAllLineMeta.length - previousScrollMeta.totalRows
+    }
+  }
   const maxOffset = Math.max(0, wrappedAllLineMeta.length - logRows)
-  const clampedOffset = Math.max(0, Math.min(maxOffset, scrollOffset))
+  const clampedOffset = Math.max(0, Math.min(maxOffset, anchoredOffset))
   const end = Math.max(0, wrappedAllLineMeta.length - clampedOffset)
   const start = Math.max(0, end - logRows)
   const visibleLineMeta = wrappedAllLineMeta.slice(start, end)
@@ -76,7 +157,10 @@ export function buildTranscriptViewport({
   const scrollMeta = {
     logRows,
     totalRows: wrappedAllLineMeta.length,
-    maxOffset
+    maxOffset,
+    width,
+    scrollOffset: clampedOffset,
+    anchorCandidates: visibleLineMeta.map((line, viewportRow) => lineAnchor(line, viewportRow))
   }
 
   const scrollHint = clampedOffset > 0

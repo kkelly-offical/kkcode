@@ -44,6 +44,30 @@ describe("detectRollbackIntent", () => {
     }
   })
 
+  it("does not turn rollback discussions or questions into file operations", () => {
+    const cases = [
+      "How does git rollback work?",
+      "what is the difference between rollback and revert",
+      "explain rollback implementation",
+      "rollback semantics",
+      "如何回滚到上一版？",
+      "解释 rollback 的实现",
+      "回滚的原理",
+      "undo?"
+    ]
+    for (const text of cases) {
+      const result = detectRollbackIntent(text)
+      assert.equal(result.isRollback, false, `discussion must reach the model: "${text}"`)
+    }
+  })
+
+  it("still detects explicit polite rollback commands without a question form", () => {
+    const cases = ["please undo last change", "could you revert the edit", "麻烦你帮我撤销刚才修改"]
+    for (const text of cases) {
+      assert.equal(detectRollbackIntent(text).isRollback, true, `explicit command should be detected: "${text}"`)
+    }
+  })
+
   it("ignores long messages (>200 chars)", () => {
     const longText = "undo ".repeat(50)
     const result = detectRollbackIntent(longText)

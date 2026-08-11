@@ -10,10 +10,11 @@ permissions:
   contents: write
 
 jobs:
-  # 发布前先过完整 verify 矩阵 —— 与 verify.yml 同一组平台。
+  # 发布前先过跨平台 lint + test 矩阵；完整 release:verify 在后续
+  # Ubuntu 22 发布 job 中单独运行。平台组合与 verify.yml 一致。
   # 0.4.2–0.5.3 期间四个版本在 main verify（Windows job）红着的情况下发了出去：
   # release 工作流只有 ubuntu 单 job，tag 推送又不触发 verify.yml，
-  # 跨平台失败对发布流程完全不可见。发布必须被全矩阵挡住。
+  # 跨平台失败对发布流程完全不可见。发布必须被该矩阵挡住。
   matrix_verify:
     strategy:
       fail-fast: false
@@ -114,20 +115,64 @@ jobs:
         env:
           SBOM_FILE: kkcode-${{ steps.release.outputs.release_version }}.cdx.json
         run: npm sbom --sbom-format=cyclonedx > "$SBOM_FILE"
+      - name: Build immutable npm package
+        id: package
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
+        shell: bash
+        run: |
+          package_dir="${RUNNER_TEMP}/kkcode-package"
+          mkdir -p "$package_dir"
+          pack_json="$(npm pack --ignore-scripts --json --pack-destination "$package_dir")"
+          tarball_name="$(PACK_JSON="$pack_json" node -p 'JSON.parse(process.env.PACK_JSON)[0].filename')"
+          tarball="${package_dir}/${tarball_name}"
+          if [[ ! -f "$tarball" ]]; then
+            echo "::error::npm pack did not create the expected tarball"
+            exit 1
+          fi
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum "$tarball" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+      - name: Verify immutable npm package
+        env:
+          KKCODE_PACKAGE_TARBALL: ${{ steps.package.outputs.tarball }}
+        run: npm run package:verify-artifact
+      - name: Confirm npm package stayed immutable
+        env:
+          PACKAGE_TARBALL: ${{ steps.package.outputs.tarball }}
+          EXPECTED_SHA256: ${{ steps.package.outputs.sha256 }}
+        shell: bash
+        run: |
+          actual_sha256="$(sha256sum "$PACKAGE_TARBALL" | awk '{print $1}')"
+          if [[ "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
+            echo "::error::The verified npm tarball changed after it was built."
+            exit 1
+          fi
       - uses: actions/upload-artifact@v7
         with:
           name: kkcode-${{ steps.release.outputs.release_version }}-sbom
           path: kkcode-${{ steps.release.outputs.release_version }}.cdx.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kkcode-${{ steps.release.outputs.release_version }}-npm-package
+          path: ${{ steps.package.outputs.tarball }}
       - name: Publish npm package
         if: steps.release.outputs.publish == 'true'
         env:
           DIST_TAG: ${{ steps.release.outputs.dist_tag }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
+          PACKAGE_TARBALL: ${{ steps.package.outputs.tarball }}
+          EXPECTED_SHA256: ${{ steps.package.outputs.sha256 }}
         shell: bash
         run: |
           if [[ -z "${NODE_AUTH_TOKEN}" ]]; then
             echo "::error::The npm-release environment is missing the NPM_TOKEN secret."
+            exit 1
+          fi
+
+          actual_sha256="$(sha256sum "$PACKAGE_TARBALL" | awk '{print $1}')"
+          if [[ "$actual_sha256" != "$EXPECTED_SHA256" ]]; then
+            echo "::error::Refusing to publish: the npm tarball changed after verification."
             exit 1
           fi
 
@@ -136,7 +181,9 @@ jobs:
           if [[ "${published_version}" == "${RELEASE_VERSION}" ]]; then
             echo "${package_name}@${RELEASE_VERSION} is already published; skipping npm publish."
           else
-            npm publish --access public --tag "$DIST_TAG"
+            # Publish the exact tarball that package:verify-artifact unpacked and scanned.
+            # --ignore-scripts prevents a second lifecycle hook from changing it.
+            npm publish "$PACKAGE_TARBALL" --ignore-scripts --access public --tag "$DIST_TAG"
           fi
       - name: Create or update GitHub Release
         if: steps.release.outputs.publish == 'true'

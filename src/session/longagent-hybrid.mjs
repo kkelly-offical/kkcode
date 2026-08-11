@@ -197,8 +197,6 @@ async function runHybridPipeline({
   // 每阶段模型选择
   const separateModels = hybridConfig.separate_models || {}
   const useSeparateModels = separateModels.enabled === true
-  const adaptiveModels = hybridConfig.adaptive_models || {}
-  const useAdaptiveModels = adaptiveModels.enabled === true
   function getModelForStage(stage) {
     // 0.5.0 正式路径：models.ultra.<stage>；旧的 hybrid.separate_models 仍然生效
     const ultraModels = configState.config.models?.ultra || {}
@@ -207,12 +205,9 @@ async function runHybridPipeline({
     const m = { preview: separateModels.preview_model, blueprint: separateModels.blueprint_model, debugging: separateModels.debugging_model }
     return m[stage] ? { model: m[stage], providerType } : { model, providerType }
   }
-  // #8 自适应模型路由：根据 task complexity 选择模型
-  function getModelForTask(task) {
-    if (!useAdaptiveModels) return model
-    const tier = task?.complexity || "medium"
-    return adaptiveModels[tier] || model
-  }
+  // 曾有一个 getModelForTask（按 task.complexity 从 hybrid.adaptive_models 选模型），
+  // 定义后从未被调用，因此删除。老配置的 low/high 仍由
+  // model-roles.mjs 作为 models.fast/main 的兼容回退；medium 没有消费方。
 
   let iteration = 0, recoveryCount = 0, stageIndex = 0
   // 同一 stage 的累计尝试次数。recoveryCount 会在每次降级后清零，

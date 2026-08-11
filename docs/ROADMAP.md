@@ -3,7 +3,7 @@
 已知欠账与下一步方向。每条都标注了**当前事实**（可以直接核对的数字或文件），
 而不是意向描述 —— 路线图最容易烂掉的方式就是写下一堆无法验证的愿望。
 
-更新于 0.9.1。
+更新于 0.9.2。
 
 ---
 
@@ -45,8 +45,8 @@ git-auto 需要写 `.git`），不能套用 bash 那套包法。需要先定清�
 
 | 模块 | 行数 |
 | --- | --- |
-| `src/session/longagent-hybrid.mjs` | 2307 |
-| `src/tool/registry.mjs` | 2237 |
+| `src/session/longagent-hybrid.mjs` | 2302 |
+| `src/tool/registry.mjs` | 2571 |
 | `src/repl.mjs` | 2049 |
 | `src/session/loop.mjs` | 1355 |
 
@@ -97,3 +97,34 @@ Linux 侧链路（这台开发机就是 Ubuntu，不需要虚拟机）。
 倍），以及前缀回落取首个匹配导致 `gpt-5.4-mini-*` 串到 `gpt-5.4` 的价上。
 两处都修了并有测试（`test/pricing-model-table.test.mjs`）—— 加新模型时连价格
 一起加，别只改模型名。
+
+---
+
+## 6. MCP 协议版本升级 / MCP protocol version
+
+**现状**：`src/mcp/constants.mjs` 的 `MCP_PROTOCOL_VERSION` 钉在
+`2024-11-05`，`initialize` 请求的 `capabilities` 恒为空对象。
+`client-http.mjs` 是项目自定义的 REST adapter，而 registry 目前把配置中的
+`streamable-http` 映射到 SSE client；因此它还不是 MCP 规范的正式
+Streamable HTTP 实现。可核对：`grep -n "2024-11-05" src/mcp/constants.mjs`
+以及 `src/mcp/registry.mjs`的 transport 映射。
+
+协议在这之后已有多轮修订（含 Streamable HTTP 的正式化、能力协商的扩展）。
+现状能与主流服务器互通是因为服务器普遍向后兼容 —— 但这层兼容不受我们控制，
+新服务器随时可以只接受新版本。
+
+**下一步**：这不是改一个常量的事。升级意味着逐条核对新旧规范的差异
+（initialize 握手、能力声明、通知语义、三种传输的帧格式），实现真正的
+Streamable HTTP，并对 `client-stdio.mjs` / `client-sse.mjs` / 新 HTTP client
+的解析路径做回归。0.9.2 时被评估为独立的兼容性工程，刻意不塞进补丁版本。
+
+---
+
+## 7. 弃用通知真正接入用户界面 / User-visible deprecations
+
+**现状**：`src/core/deprecations.mjs` 已统一把现存兼容别名的移除目标记为
+1.0.0，但生产路径没有消费 `onDeprecation()` / `drainDeprecations()`；这些目标
+目前仍是内部元数据，不能宣称用户已看到弃用 notice。
+
+**下一步**：CLI 无头模式将 notice 写到 stderr，TUI 以一次性 toast 展示，
+两条路径都要有从真实旧配置到用户可见文案的集成测试。

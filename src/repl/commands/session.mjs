@@ -263,7 +263,7 @@ export const sessionCommands = [
     run: async ({ print, state, ctx }) => {
       const language = ctx.configState.config.language || "en"
       const cwd = process.cwd()
-      const confirmation = await confirmRollback({ cwd, language })
+      const confirmation = await confirmRollback({ cwd, sessionId: state.sessionId, language })
       print(confirmation.message)
       if (!confirmation.confirmed) return { exit: false }
       const result = await executeRollback({

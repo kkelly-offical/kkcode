@@ -97,8 +97,11 @@ subagent name.
 
 ## 6. Compatibility
 
-Every 0.3.x spelling keeps working and maps automatically, printing a
-one-time deprecation notice. Removal is planned for 0.5.0.
+Every 0.3.x spelling kept working during the migration window. Permission
+spellings removed in 0.6.0 are rejected with migration guidance; surviving
+command/config aliases are scheduled for removal in 1.0.0. Deprecation
+metadata exists, while user-visible notice delivery is still tracked in the
+roadmap.
 
 | 0.3.x | 0.4.0 |
 | --- | --- |

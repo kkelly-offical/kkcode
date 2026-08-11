@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from "node:test"
 import assert from "node:assert/strict"
-import { writeFile, mkdir, rm } from "node:fs/promises"
+import { writeFile, mkdir, mkdtemp, rm } from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
 
@@ -11,12 +11,21 @@ import os from "node:os"
 const tmpDir = path.join(os.tmpdir(), `kkcode-env-test-${Date.now()}`)
 
 describe("loadConfig .env overlay", () => {
+  let isolatedHome
+  let previousKkcodeHome
+
   beforeEach(async () => {
     await mkdir(tmpDir, { recursive: true })
+    isolatedHome = await mkdtemp(path.join(os.tmpdir(), "kkcode-env-home-"))
+    previousKkcodeHome = process.env.KKCODE_HOME
+    process.env.KKCODE_HOME = isolatedHome
   })
 
   afterEach(async () => {
+    if (previousKkcodeHome === undefined) delete process.env.KKCODE_HOME
+    else process.env.KKCODE_HOME = previousKkcodeHome
     await rm(tmpDir, { recursive: true, force: true })
+    await rm(isolatedHome, { recursive: true, force: true })
   })
 
   it("loads KKCODE_ prefixed vars from .env", async () => {
@@ -83,21 +92,13 @@ describe("loadConfig .env overlay", () => {
   })
 
   it("attributes the user-level .env overlay to userConfig", async () => {
-    const userHome = path.join(os.tmpdir(), `kkcode-env-home-${Date.now()}`)
-    await mkdir(userHome, { recursive: true })
-    process.env.KKCODE_HOME = userHome
-    try {
-      await writeFile(path.join(userHome, ".env"), "KKCODE_LANGUAGE=zh\n")
-      const { loadConfig } = await import("../src/config/load-config.mjs")
-      const result = await loadConfig(tmpDir)
+    await writeFile(path.join(isolatedHome, ".env"), "KKCODE_LANGUAGE=zh\n")
+    const { loadConfig } = await import("../src/config/load-config.mjs")
+    const result = await loadConfig(tmpDir)
 
-      assert.equal(result.source.envScope, "user")
-      assert.equal(result.config.language, "zh")
-      assert.equal(result.userConfig.language, "zh")
-    } finally {
-      delete process.env.KKCODE_HOME
-      await rm(userHome, { recursive: true, force: true })
-    }
+    assert.equal(result.source.envScope, "user")
+    assert.equal(result.config.language, "zh")
+    assert.equal(result.userConfig.language, "zh")
   })
 
   it("envPath is null when no .env or no KKCODE_ vars", async () => {

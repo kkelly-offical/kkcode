@@ -245,7 +245,6 @@ const LONG_RUNNING_PATTERNS = [
   /\bwebpack\s+serve\b/i,
   /\bwebpack\s+--watch\b/i,
   /\bjest\s+--watch\b/i,
-  /\bvitest(?!\s+--run)\b.*(?!--run)/i,
   /\bnodemon\b/i,
   /\btsc\s+--watch\b/i,
   /\btailwindcss\s+--watch\b/i,
@@ -282,9 +281,344 @@ const BASH_TIMEOUT_MS = 120_000
 const IS_WIN = process.platform === "win32"
 function wrapCmd(cmd) { return IS_WIN ? `chcp 65001 >nul & ${cmd}` : cmd }
 
-function isLongRunningCommand(command) {
+/** 按顶层 shell 分隔符分段；引号内容不拆，# 注释不泄漏到前一条命令的 argv。 */
+function splitShellSegments(command, { hashComments = !IS_WIN } = {}) {
+  const segments = []
+  let current = ""
+  let quote = ""
+  let escaped = false
+  let comment = false
+  const push = () => {
+    const segment = current.trim()
+    if (segment) segments.push(segment)
+    current = ""
+  }
+  for (let index = 0; index < command.length; index++) {
+    const char = command[index]
+    if (comment) {
+      if (char === "\n") {
+        comment = false
+        push()
+      }
+      continue
+    }
+    if (escaped) {
+      current += char
+      escaped = false
+      continue
+    }
+    if (char === "\\") {
+      current += char
+      escaped = true
+      continue
+    }
+    if (quote) {
+      current += char
+      if (char === quote) quote = ""
+      continue
+    }
+    if (char === "\"" || char === "'") {
+      quote = char
+      current += char
+      continue
+    }
+    if (char === "#" && (!current || /\s$/.test(current))) {
+      // `#` is a comment introducer for the POSIX shell used on Unix, but it is
+      // an ordinary argv character in cmd.exe.  Keep it when the process itself
+      // runs under cmd (Windows) or when an explicit `cmd /c|/k` invocation is
+      // being inspected on another platform.
+      const segmentShell = executableName(splitShellWords(current)[0])
+      if (hashComments && segmentShell !== "cmd") {
+        comment = true
+        continue
+      }
+    }
+    if (char === ";" || char === "\n" || char === "&" || char === "|") {
+      push()
+      if (command[index + 1] === char) index++
+      continue
+    }
+    current += char
+  }
+  push()
+  return segments
+}
+
+/** 只做长驻判定所需的轻量 argv 切分，不执行展开。 */
+function splitShellWords(segment) {
+  const words = []
+  let current = ""
+  let quote = ""
+  const push = () => {
+    if (current) words.push(current)
+    current = ""
+  }
+  for (let index = 0; index < segment.length; index++) {
+    const char = segment[index]
+    if (quote) {
+      if (char === quote) quote = ""
+      else if (quote === '"' && char === "\\" && /["\\$`]/.test(segment[index + 1] || "")) {
+        current += segment[++index]
+      }
+      else current += char
+      continue
+    }
+    if (char === "\"" || char === "'") {
+      quote = char
+      continue
+    }
+    if (char === "\\") {
+      const next = segment[index + 1] || ""
+      // 空白/引号前是 shell escape；字母前保留反斜杠，才能识别 Windows 路径。
+      if (next && /[\s'"\\]/.test(next)) current += segment[++index]
+      else current += char
+      continue
+    }
+    if (/\s/.test(char)) push()
+    else current += char
+  }
+  push()
+  return words
+}
+
+function executableName(token) {
+  return String(token || "").split(/[\\/]/).at(-1).toLowerCase().replace(/\.(?:cmd|exe)$/i, "")
+}
+
+function isVitestExecutable(token) {
+  const name = executableName(token)
+  return name === "vitest" || /^vitest@[^@]+$/.test(name)
+}
+
+function wrapperName(token) {
+  const name = executableName(token)
+  // npx accepts package specs as commands (`npx cross-env@7 ...`).
+  return name.replace(/@[^@]+$/, "")
+}
+
+function skipCommandWrappers(words, start = 0) {
+  let index = start
+  while (index < words.length) {
+    while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index] || "")) index++
+
+    const wrapper = wrapperName(words[index])
+    if (wrapper === "env") {
+      index++
+      while (index < words.length) {
+        const token = words[index]
+        if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) {
+          index++
+          continue
+        }
+        if (token === "--") {
+          index++
+          break
+        }
+        if (["-u", "--unset", "-C", "--chdir", "-S", "--split-string"].includes(token)) {
+          index += 2
+          continue
+        }
+        if (token.startsWith("-")) {
+          index++
+          continue
+        }
+        break
+      }
+      continue
+    }
+
+    if (["command", "exec", "call"].includes(wrapper)) {
+      index++
+      while ((words[index] || "").startsWith("-")) index++
+      continue
+    }
+
+    if (!["time", "sudo", "nice", "nohup", "stdbuf", "cross-env", "xvfb-run"].includes(wrapper)) break
+    index++
+    const valueOptions = wrapper === "sudo"
+      ? new Set(["-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt", "-c", "--close-from"])
+      : wrapper === "time"
+        ? new Set(["-f", "--format", "-o", "--output"])
+        : wrapper === "nice"
+          ? new Set(["-n", "--adjustment"])
+          : wrapper === "stdbuf"
+            ? new Set(["-i", "--input", "-o", "--output", "-e", "--error"])
+            : wrapper === "xvfb-run"
+              ? new Set([
+                  "-e", "--error-file", "-f", "--auth-file", "-n", "--server-num",
+                  "-s", "--server-args", "-p", "--xauth-protocol"
+                ])
+            : new Set()
+    if (wrapper === "cross-env") {
+      while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index] || "")) index++
+      if (words[index] === "--") index++
+      continue
+    }
+    while ((words[index] || "").startsWith("-")) {
+      const token = String(words[index])
+      if (token === "--") {
+        index++
+        break
+      }
+      index += valueOptions.has(token.toLowerCase()) ? 2 : 1
+    }
+  }
+  return index
+}
+
+function vitestArgv(words) {
+  let index = skipCommandWrappers(words)
+
+  if (isVitestExecutable(words[index])) return words.slice(index + 1)
+
+  // Running Vitest's published Node entrypoint directly has the same watch
+  // defaults as the `vitest` bin.  Limit this to a node_modules/vitest path so
+  // arbitrary scripts merely containing "vitest" are not blocked.
+  if (["node", "nodejs"].includes(executableName(words[index]))) {
+    index++
+    const nodeValueOptions = new Set([
+      "-r", "--require", "--import", "--loader", "--conditions", "--inspect-port"
+    ])
+    while ((words[index] || "").startsWith("-")) {
+      const option = String(words[index]).toLowerCase()
+      if (option === "--") {
+        index++
+        break
+      }
+      index += nodeValueOptions.has(option) ? 2 : 1
+    }
+    const script = String(words[index] || "").replace(/\\/g, "/").toLowerCase()
+    if (/(?:^|\/)node_modules\/(?:\.pnpm\/[^/]+\/node_modules\/)?vitest\/(?:vitest\.mjs|dist\/cli\.js)$/.test(script)) {
+      return words.slice(index + 1)
+    }
+    return null
+  }
+
+  const launcher = executableName(words[index])
+  if (!["npx", "pnpx", "bunx", "pnpm", "yarn", "npm", "bun"].includes(launcher)) return null
+  index++
+  if (["npm", "pnpm", "yarn", "bun"].includes(launcher) && executableName(words[index]) === "run") {
+    index++
+    if (!isVitestExecutable(words[index])) return null
+    index++
+    if (words[index] === "--") index++
+    return words.slice(index)
+  }
+  if (["exec", "dlx", "x"].includes(executableName(words[index]))) index++
+  while ((words[index] || "").startsWith("-")) {
+    const token = words[index]
+    if (["-p", "--package", "-c", "--call", "--cache", "--userconfig"].includes(token)) index += 2
+    else index++
+  }
+  if (isVitestExecutable(words[index])) return words.slice(index + 1)
+
+  // Package launchers can themselves launch cross-env/nice/stdbuf wrappers.
+  // Re-enter only the wrapper consumer (not the launcher parser) to avoid an
+  // accidental recursive loop on malformed argv.
+  index = skipCommandWrappers(words, index)
+  return isVitestExecutable(words[index]) ? words.slice(index + 1) : null
+}
+
+// 这些 option 的下一个 argv 是值，不能把值恰好叫 run/list
+// 时误当成一次性 subcommand。未知形态保守地按默认 watch 处理。
+const VITEST_OPTIONS_WITH_VALUE = new Set([
+  "--config", "-c", "--root", "-r", "--dir", "--project", "-p", "--workspace",
+  "--pool", "--environment", "--reporter", "--outputfile", "--testnamepattern", "-t",
+  "--maxworkers", "--minworkers", "--shard", "--inspect", "--inspectbrk",
+  "--mode", "--exclude", "--setupfiles", "--inspecthost", "--attachmentsdir",
+  "--coverage.include", "--coverage.exclude", "--api.host", "--api.port"
+])
+
+function firstVitestPositional(args) {
+  for (let index = 0; index < args.length; index++) {
+    const arg = String(args[index] || "")
+    const lowered = arg.toLowerCase()
+    // `--` 之后是测试文件 filter，不再是 CLI subcommand。
+    if (arg === "--") return ""
+    if (VITEST_OPTIONS_WITH_VALUE.has(lowered)) {
+      index++
+      continue
+    }
+    if (lowered.startsWith("-")) continue
+    return lowered
+  }
+  return ""
+}
+
+function vitestInvocationIsLongRunning(args) {
+  const lowered = args.map((arg) => String(arg).toLowerCase())
+  const positional = firstVitestPositional(args)
+  const informational = lowered.some((arg) => ["--help", "-h", "--version", "-v"].includes(arg))
+  if (informational) return false
+
+  const explicitWatch = positional === "watch" || positional === "dev" || lowered.some((arg) =>
+    arg === "--watch" || arg === "--watch=true" || arg === "--run=false"
+  )
+  if (explicitWatch) return true
+
+  const oneShot = ["run", "list", "init", "related"].includes(positional) || lowered.some((arg) =>
+    arg === "--run" || arg === "--run=true" || arg === "--watch=false" ||
+    arg === "--clearcache" || arg === "--listtags"
+  )
+  return !(informational || oneShot)
+}
+
+function isLongRunningVitest(command, shellSyntax = {}) {
+  for (const segment of splitShellSegments(command, shellSyntax)) {
+    const words = splitShellWords(segment)
+    const args = vitestArgv(words)
+    if (args && vitestInvocationIsLongRunning(args)) return true
+
+    // `sh -c 'vitest ...'` 是真实执行面，不能因外层 wrapper 而漏判。
+    const shell = executableName(words[0])
+    const commandIndex = ["sh", "bash", "dash", "zsh"].includes(shell)
+      ? words.findIndex((word) => /^-[a-z]*c[a-z]*$/i.test(word) || word.toLowerCase() === "/c")
+      : -1
+    if (
+      commandIndex >= 0 &&
+      words[commandIndex + 1] &&
+      isLongRunningVitest(words[commandIndex + 1], { hashComments: true })
+    ) return true
+
+    // cmd /c 把 /c 后全部 argv 当作命令行；与 POSIX sh -c 的「只有
+    // 紧邻一个 argv 是 command string，其余是 $0/$1」不同。
+    if (shell === "cmd") {
+      const cmdCommandIndex = words.findIndex((word) => ["/c", "/k"].includes(word.toLowerCase()))
+      if (
+        cmdCommandIndex >= 0 &&
+        words[cmdCommandIndex + 1] &&
+        isLongRunningVitest(words.slice(cmdCommandIndex + 1).join(" "), { hashComments: false })
+      ) return true
+      // `/k` deliberately keeps cmd.exe open after the child exits.  It is
+      // therefore long-running even when the nested Vitest form is one-shot.
+      if (cmdCommandIndex >= 0 && words[cmdCommandIndex].toLowerCase() === "/k") return true
+    }
+
+    // PowerShell 的 -Command 可以是单个引号字符串，也可以是后续多个 argv。
+    // 后者需要全部拼回内层命令，否则会丢掉 --run/--watch。
+    if (["pwsh", "powershell"].includes(shell)) {
+      const powershellCommandIndex = words.findIndex((word) =>
+        ["-c", "-command", "-commandwithargs"].includes(word.toLowerCase())
+      )
+      if (
+        powershellCommandIndex >= 0 &&
+        words[powershellCommandIndex + 1] &&
+        isLongRunningVitest(words.slice(powershellCommandIndex + 1).join(" "), { hashComments: true })
+      ) return true
+    }
+
+    if (shell === "cross-env-shell") {
+      let innerIndex = 1
+      while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[innerIndex] || "")) innerIndex++
+      if (words[innerIndex] && isLongRunningVitest(words.slice(innerIndex).join(" "), shellSyntax)) return true
+    }
+  }
+  return false
+}
+
+export function isLongRunningCommand(command) {
   const cmd = String(command || "").trim()
-  return LONG_RUNNING_PATTERNS.some((re) => re.test(cmd))
+  return isLongRunningVitest(cmd) || LONG_RUNNING_PATTERNS.some((re) => re.test(cmd))
 }
 
 /**

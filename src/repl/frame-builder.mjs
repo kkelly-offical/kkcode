@@ -508,6 +508,7 @@ export function buildFrame({
     width,
     logRows,
     scrollOffset: ui.scrollOffset,
+    previousScrollMeta: ui.scrollMeta,
     wrapLogLines,
     clipAnsiLine,
     paint,

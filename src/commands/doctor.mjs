@@ -162,7 +162,7 @@ export async function buildDoctorReport({ includeHttp = false } = {}) {
   } : undefined
 
   return {
-    ok: storage.ok && auditIntegrity.ok && !strictCompatFailed,
+    ok: storage.ok && auditIntegrity.ok && !strictCompatFailed && (ctx.configState.errors || []).length === 0,
     timestamp: new Date().toISOString(),
     cwd: process.cwd(),
     themeWarnings: ctx.themeState.errors,
@@ -170,7 +170,8 @@ export async function buildDoctorReport({ includeHttp = false } = {}) {
       defaultProvider: config.provider?.default || null,
       userPath: ctx.configState.source.userPath,
       projectPath: ctx.configState.source.projectPath,
-      warnings: ctx.configState.errors
+      errors: ctx.configState.errors || [],
+      warnings: ctx.configState.warnings || []
     },
     runtime: {
       providersRegistered: listProviders(),
@@ -206,8 +207,14 @@ function printTextReport(report, themeWarnings = []) {
   console.log(`default provider: ${report.config.defaultProvider}`)
   console.log(`config.user: ${report.config.userPath || "(none)"}`)
   console.log(`config.project: ${report.config.projectPath || "(none)"}`)
+  if (report.config.errors.length) {
+    console.log("config error: 以下配置层未通过校验，已忽略；其余已验证配置继续生效")
+    for (const error of report.config.errors) {
+      console.log(`  - ${error}`)
+    }
+  }
   if (report.config.warnings.length) {
-    console.log("config error: 以下文件校验未通过，已整份忽略（当前使用默认配置）")
+    console.log("config warning: 以下无效配置项已忽略；同层其余配置继续生效")
     for (const warning of report.config.warnings) {
       console.log(`  - ${warning}`)
     }

@@ -1,23 +1,48 @@
 import { isGitRepo } from "../util/git.mjs"
-import { getLatestGhostCommit, listGhostCommits } from "../storage/ghost-commit-store.mjs"
 import { restoreGhostCommit } from "../util/git.mjs"
+import { getSessionSnapshots } from "./checkpoint.mjs"
 import { askQuestionInteractive } from "../tool/question-prompt.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 
 /**
- * 回溯意图检测关键词
- * 分为中文和英文两组，按置信度排序
+ * 只识别「现在执行撤销」的命令/祈使句，不做单纯关键词搜索。
+ *
+ * 这是一道行为边界：输入「How does git rollback work?」时应该让模型
+ * 解释，不能弹出真实的代码回滚确认框。因此执行形态从句首匹配，
+ * 讨论/问句形态先行排除。
  */
 const ROLLBACK_PATTERNS = [
-  // 高置信度 — 明确的回退指令（中文不用 \b，英文保留）
-  { pattern: /(回退|撤销|撤回|回滚|还原)/i, confidence: 0.9 },
-  { pattern: /\b(undo|rollback|revert)\b/i, confidence: 0.9 },
-  // 中置信度 — 需要上下文
-  { pattern: /(恢复到|恢复之前|回到之前|退回|取消(刚才|上次|之前)的(修改|更改|变更|操作))/i, confidence: 0.8 },
-  { pattern: /\b(restore previous|go back|undo (last|previous|recent))\b/i, confidence: 0.8 },
-  // 低置信度 — 可能是回退也可能不是
-  { pattern: /(不要了|算了不改了|改回去|恢复原样)/i, confidence: 0.7 }
+  // 高置信度 — 明确以撤销动作开始，允许常见礼貌前缀。
+  {
+    pattern: /^(?:(?:请|麻烦)(?:你)?(?:帮我)?|帮我|给我|现在|马上|立刻)?\s*(回退|撤销|撤回|回滚|还原)/i,
+    confidence: 0.9
+  },
+  {
+    pattern: /^(?:please[\s,]+)?(?:(?:can|could|would|will)\s+you\s+)?(undo|rollback|roll\s+back|revert)\b/i,
+    confidence: 0.9
+  },
+  // 中置信度 — 不使用上面动词，但句子本身仍是明确指令。
+  {
+    pattern: /^(?:(?:请|麻烦)(?:你)?(?:帮我)?|帮我|现在)?\s*(恢复到|恢复之前|回到之前|退回|取消(?:刚才|上次|之前)的(?:修改|更改|变更|操作))/i,
+    confidence: 0.8
+  },
+  {
+    pattern: /^(?:please[\s,]+)?(?:(?:can|could|would|will)\s+you\s+)?(restore\s+(?:the\s+)?previous|go\s+back(?:\s+to\s+before)?)/i,
+    confidence: 0.8
+  },
+  // 低置信度 — 口语化但仍是独立的取消指令。
+  { pattern: /^(不要了|算了不改了|改回去|恢复原样)(?:\s|吧|。|!|！|$)/i, confidence: 0.7 }
+]
+
+const ROLLBACK_DISCUSSION_PATTERNS = [
+  // 疑问词、解释/分析类动词出现在句首，表明用户要信息而不是执行。
+  /^(?:how|what|why|when|where)\b/i,
+  /^(?:please\s+)?(?:explain|describe|discuss|compare|analy[sz]e|tell\s+me|show\s+me)\b/i,
+  /^(?:如何|怎么|怎样|为什么|为何|什么是|解释|说明|讲讲|介绍|分析|讨论|比较|对比)/,
+  // 「rollback 的实现/原理」不一定以疑问词开头，也必须排除。
+  /\b(?:undo|rollback|revert)\b.*\b(?:implementation|mechanism|semantics|meaning|works?)\b/i,
+  /(?:回退|撤销|撤回|回滚|还原)(?:的)?(?:实现|原理|机制|逻辑|含义|区别|用法)/
 ]
 
 /**
@@ -36,6 +61,12 @@ export function detectRollbackIntent(text) {
     return { isRollback: false, confidence: 0, matchedPattern: "" }
   }
 
+  // 问号是「在询问」的强信号。自然语言回滚会引发真实文件
+  // 操作，宁可让带问号的礼貌请求交给模型，也不把讨论误当指令。
+  if (/[?？]/.test(normalized) || ROLLBACK_DISCUSSION_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return { isRollback: false, confidence: 0, matchedPattern: "" }
+  }
+
   for (const { pattern, confidence } of ROLLBACK_PATTERNS) {
     const match = normalized.match(pattern)
     if (match) {
@@ -50,7 +81,7 @@ export function detectRollbackIntent(text) {
  * 向用户确认是否执行回滚，并展示可用快照
  * @returns {{ confirmed: boolean, snapshotId: string|null, message: string }}
  */
-export async function confirmRollback({ cwd, language = "en" }) {
+export async function confirmRollback({ cwd, sessionId, language = "en" }) {
   const inGit = await isGitRepo(cwd)
   if (!inGit) {
     return {
@@ -62,7 +93,10 @@ export async function confirmRollback({ cwd, language = "en" }) {
     }
   }
 
-  const latest = await getLatestGhostCommit(cwd)
+  // /undo 必须严格限定当前会话。仓库级 latest 会让会话 A
+  // 误撤销会话 B 的更新快照；缺少会话身份时也必须 fail closed。
+  const snapshots = sessionId ? await getSessionSnapshots(sessionId, cwd) : []
+  const latest = snapshots[0]
   if (!latest) {
     return {
       confirmed: false,
@@ -81,14 +115,14 @@ export async function confirmRollback({ cwd, language = "en" }) {
     `找到最近的快照: ${shortHash} (${snapDate})`,
     `包含 ${fileCount} 个文件: ${(latest.files || []).slice(0, 5).join(", ")}${fileCount > 5 ? " ..." : ""}`,
     "",
-    "⚠ 注意: 回滚只能恢复文件变更。已执行的 bash 命令（如安装依赖、删除文件等）无法自动撤销。"
+    "⚠ 注意: 回滚会覆盖快照中已知文件；之后新增的未跟踪文件会为避免误删而保留。已执行的 bash 命令（如安装依赖等）也无法自动撤销。"
   ].join("\n")
 
   const enWarning = [
     `Latest snapshot: ${shortHash} (${snapDate})`,
     `Contains ${fileCount} file(s): ${(latest.files || []).slice(0, 5).join(", ")}${fileCount > 5 ? " ..." : ""}`,
     "",
-    "Warning: Rollback only restores file changes. Bash commands (installs, deletions, etc.) cannot be undone."
+    "Warning: Rollback overwrites files known to the snapshot; later untracked files are retained to avoid data loss. Bash commands and other external side effects cannot be undone."
   ].join("\n")
 
   const answers = await askQuestionInteractive({
@@ -155,8 +189,8 @@ export async function executeRollback({ cwd, commitHash, sessionId, language = "
     return {
       ok: true,
       message: language === "zh"
-        ? `已成功回滚到快照 ${commitHash.slice(0, 8)}。文件已恢复，但已执行的 bash 命令无法撤销。`
-        : `Rolled back to snapshot ${commitHash.slice(0, 8)}. Files restored, but executed bash commands cannot be undone.`
+        ? `已成功回滚到快照 ${commitHash.slice(0, 8)}。快照中的文件已恢复；为避免误删用户文件，之后新增的未跟踪文件会保留，已执行的 bash 命令也无法撤销。`
+        : `Rolled back to snapshot ${commitHash.slice(0, 8)}. Snapshot files were restored; later untracked files are kept to avoid deleting user data, and executed bash commands cannot be undone.`
     }
   } catch (err) {
     return {
@@ -170,7 +204,7 @@ export async function executeRollback({ cwd, commitHash, sessionId, language = "
 
 /**
  * 完整的回溯流程：检测 → 确认 → 执行
- * 在 loop.mjs 的 processTurnLoop 入口调用
+ * 在前台 REPL 的 executePromptTurn 入口调用
  *
  * @returns {{ handled: boolean, reply: string }}
  *   handled=true 表示消息已被回溯流程处理，不需要再发给模型
@@ -181,7 +215,7 @@ export async function handleRollbackIfNeeded({ prompt, cwd, sessionId, language 
     return { handled: false, reply: "" }
   }
 
-  const confirmation = await confirmRollback({ cwd, language })
+  const confirmation = await confirmRollback({ cwd, sessionId, language })
   if (!confirmation.confirmed) {
     return { handled: true, reply: confirmation.message }
   }

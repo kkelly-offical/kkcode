@@ -140,10 +140,13 @@ export async function autoSnapshotBeforeEdit(sessionId, cwd, config = {}, option
   }
 
   try {
+    // message 里始终带 session 标记：新记录靠 sessionId 字段过滤，
+    // 但 message 是 git_list_snapshots 等入口给人看的唯一线索。
+    const reason = options.reason || "Auto snapshot before AI edit"
     const result = await gitSnapshotTool.execute(
       {
         auto: true,
-        message: options.reason || `Auto snapshot before AI edit (session: ${sessionId})`
+        message: `${reason} (session: ${sessionId})`
       },
       { cwd, sessionId, config }
     )
@@ -183,10 +186,14 @@ export async function getSessionSnapshots(sessionId, cwd) {
   }
 
   const snapshots = await listGhostCommits(cwd)
-  // 过滤出当前会话的快照
-  return snapshots.filter(s => 
-    s.message?.includes(`session: ${sessionId}`) ||
-    s.message?.includes("Auto snapshot")
+  // 过滤出当前会话的快照。首选记录里的 sessionId 字段；老记录（没有该字段）
+  // 退回 message 里的 session 标记。这里绝不能按 "Auto snapshot" 之类的
+  // 通用文案匹配 —— 同一仓库下其他会话的自动快照也带这段文案，曾导致
+  // restoreLastSessionSnapshot 可能恢复到别的会话的快照。
+  return snapshots.filter(s =>
+    s.sessionId
+      ? s.sessionId === sessionId
+      : s.message?.endsWith(`(session: ${sessionId})`)
   )
 }
 

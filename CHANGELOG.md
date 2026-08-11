@@ -1,5 +1,108 @@
 # Changelog / 更新日志
 
+## 0.9.2
+
+历史遗留修复与发布门槛加固。全量共 2340 个测试：2339 通过、
+1 个平台专属用例跳过、0 失败。
+
+### English
+
+- **Session-safe, ordered undo snapshots.** Ghost-commit records now persist
+  `sessionId`, and both `/undo` and natural-language undo select only the
+  current session's snapshots. Legacy records fall back to an exact trailing
+  `(session: <id>)` marker. The executor now awaits one shared pre-edit
+  snapshot promise before concurrent mutation tools run; a failed attempt can
+  be retried by a later edit in the same turn. Repository paths are normalized
+  at the storage boundary, and later untracked files are retained deliberately
+  instead of risking deletion of user-created data.
+- **Layered configuration is validated as it is actually merged.** User,
+  project, and `.env` overlays are canonicalized, merged, validated, safely
+  pruned, and revalidated in priority order. Explicit invalid `null` values no
+  longer hide behind inheritance; array failures discard the whole bad item;
+  prototype-bearing error paths cannot escape into inherited objects; and an
+  unlocatable error rejects the physical layer. Permission-policy and sandbox
+  errors always reject the whole layer rather than silently relaxing policy.
+- **`agent.ultra` now has lossless fallback semantics.** The compatibility
+  alias is validated as a separate higher-priority sublayer. Valid alias
+  siblings override `agent.longagent`, while invalid alias fields fall back to
+  same-layer canonical values. Flat goal-mode keys are hoisted safely after
+  validation, including the case where a nested `ultra` value is malformed.
+  CLI startup, preflight, and doctor distinguish pruned warnings from rejected
+  layers and report the actual source path.
+- **Scrolled transcripts use stable line identities.** A manually scrolled
+  viewport stays on the same logical content across appends, expansion and
+  collapse, terminal rewrap, deleted first anchors, and overlays changing the
+  available log rows. Explicit user scrolling wins over automatic anchoring;
+  bottom-follow at offset zero is unchanged.
+- **Vitest foreground detection is argv-aware.** Shell segments, comments,
+  environment wrappers, `sh`/`cmd`/PowerShell command wrappers, package
+  launchers, versioned `vitest@...` executables, and value-taking Vitest flags
+  are parsed conservatively. Default/watch invocations are blocked in the
+  foreground, while explicit `run`, `list`, `--run`, help, and version forms
+  remain one-shot.
+- **The secret release gate now scans what can actually ship.** It detects npm,
+  GitHub (classic and fine-grained), Anthropic, OpenAI project, Google, Kimi,
+  AWS, and private-key credentials; scans lockfiles, unusual NUL-delimited Git
+  names, worktree content, staged index blobs, and files selected by the real
+  npm pack manifest; and fails closed on unreadable tracked files or malformed
+  manifests. Release CI builds one script-disabled tarball, installs and scans
+  its unpacked payload, then publishes that exact tarball instead of repacking
+  mutable source. Paths are terminal-escaped and credentials are never echoed.
+- **Builtin skill and type gates no longer produce false greens.** The commit
+  skill now follows the single-argument `run(ctx)` contract, with an
+  enumeration test covering every builtin. A missing `tsconfig.json` is now a
+  hard typecheck failure rather than a successful no-op.
+- **Compatibility debt is stated precisely.** The unused adaptive per-task
+  router and its default block are removed. Legacy `adaptive_models.low` and
+  `.high` remain compatibility fallbacks for `models.fast` and `models.main`;
+  `.medium` has no runtime consumer. Alias removal metadata now targets 1.0.0;
+  user-facing deprecation delivery is still a roadmap item.
+- **Known and deliberately deferred:** the MCP protocol version stays pinned
+  at `2024-11-05`. `client-http.mjs` remains a custom REST adapter and the
+  current `streamable-http` spelling maps to SSE; implementing formal
+  Streamable HTTP is a separate compatibility project recorded in the roadmap.
+
+### 中文
+
+- **快照撤销按会话隔离，且严格先于编辑。** 幽灵提交落盘 `sessionId`，
+  `/undo` 和自然语言撤销都只选当前会话；老记录仅按尾部精确的
+  `(session: <id>)` 标记兼容。多个并发写工具会先共享并等待同一个编辑前
+  快照；快照失败不会把整个 turn 永久标记为已快照，后续编辑会重试。
+  存储边界统一仓库绝对路径。撤销会恢复快照文件，但刻意保留后续
+  untracked 文件，避免误删用户并行创建的数据。
+- **配置按真实合并顺序逐层验证。** user、project、`.env` 每层都会先归一、
+  合并、校验、安全裁剪再复验。显式坏 `null` 不再被继承值遮住，坏数组项整项
+  删除，错误路径不能沿原型链下钻；无法安全定位时整个物理层 fail closed。
+  权限策略或沙箱写错始终拒绝整层，不会静默放宽权限。
+- **`agent.ultra` 别名拥有无损回退语义。** 别名作为高优先级子层独立验证：
+  合法 sibling 覆盖 `agent.longagent`，无效字段回退到同层 canonical 值。
+  平铺 goal 键在验证后安全归位，即使 nested `ultra` 本身写坏也不会把字符串
+  spread 成数字键。启动、preflight 和 doctor 现在区分「局部裁剪 warning」与
+  「整层拒绝 error」，并报真实来源路径。
+- **上滚阅读改用稳定行身份锚定。** 新内容追加、展开/折叠、终端重排、首锚点被删、
+  浮层改变日志区高度时，仍保持同一段逻辑内容。用户手动滚动优先于自动锚定；
+  offset 为 0 的底部跟随不变。
+- **Vitest 前台长驻判定改为 argv 级解析。** 现在识别 shell 分段与注释、env、
+  `sh`/`cmd`/PowerShell wrapper、包管理器、`vitest@...` 版本后缀和需要取值的
+  Vitest flag。默认/watch 形态在前台拦截，显式 `run`、`list`、`--run`、help 和
+  version 形态正常放行。
+- **密钥门槛改为扫描真正可能发布的内容。** 新增 npm、GitHub classic/
+  fine-grained、Anthropic、OpenAI project、Google 等模式；扫描 lockfile、NUL 分隔
+  的异常 Git 文件名、worktree、已暂存 index blob 与 npm pack 清单选中的文件。
+  不可读文件或畸形 pack manifest 都 fail closed。发布 CI 只构建一份禁用脚本的
+  tarball，解包扫描与安装冒烟后发布同一文件，不再临发布从可变源码重新打包。
+  日志中的路径会转义终端控制字符，且绝不回显凭据。
+- **技能契约与类型门槛不再假绿。** commit 技能改为真正匹配调用方的
+  `run(ctx)`，并用枚举测试覆盖全部 builtin。`tsconfig.json` 缺失时 typecheck
+  现在硬失败，不再成功 no-op。
+- **兼容欠账按真实消费路径描述。** 删除从未调用的 adaptive per-task router 和
+  默认段；老配置的 `adaptive_models.low/high` 仍作为 `models.fast/main` 兼容回退，
+  `medium` 没有运行时消费方。别名移除的元数据目标改为 1.0.0；用户可见的弃用
+  通知接线仍列入路线图。
+- **已知且刻意搁置：** MCP 协议版本仍钉在 `2024-11-05`；升级是一个兼容性
+  工程。`client-http.mjs` 仍是自定义 REST adapter，当前 `streamable-http` 写法
+  实际映射到 SSE；正式 Streamable HTTP 已记入 `docs/ROADMAP.md`。
+
 ## 0.9.1
 
 仓库维护：类型守护从 5 个文件扩到 130 个；GitHub Actions 全部升到 v7；README

@@ -11,7 +11,9 @@
  *   - CLI  在命令收尾处 drainDeprecations() 写 stderr
  */
 
-const REMOVAL_VERSION = "0.5.0"
+// 旧别名的移除目标。曾写 0.5.0，但三套别名一路活到了 0.9.x —— 提示语里
+// 承诺一个已经过去的版本比不承诺更糟。现锚定到 1.0.0：大版本才允许破坏兼容。
+const REMOVAL_VERSION = "1.0.0"
 
 const seen = new Set()
 const listeners = new Set()

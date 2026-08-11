@@ -99,13 +99,13 @@ describe("agent.ultra 下的 goal 模式键自动归位", () => {
 describe("preflight 不再对被丢弃的配置报 ok", () => {
   const base = { source: { userPath: "/u/config.yaml", projectPath: null }, config: DEFAULT_CONFIG }
 
-  it("configState.errors 非空 → FAIL，并说清文件被整份忽略", () => {
+  it("configState.errors 非空 → FAIL，并说清对应配置层被忽略", () => {
     const report = buildPreflightReport({
       configState: { ...base, errors: ["/u/config.yaml: models.zzz: unknown role"] }
     })
     assert.equal(report.checks.config.status, PREFLIGHT_FAIL)
     assert.match(report.checks.config.detail, /unknown role/)
-    assert.match(report.checks.config.detail, /整份忽略/)
+    assert.match(report.checks.config.detail, /对应配置层已忽略/)
     assert.equal(report.status, PREFLIGHT_FAIL, "整体状态必须变红，否则退出码仍是 0")
   })
 

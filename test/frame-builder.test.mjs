@@ -100,6 +100,20 @@ function render(uiPatch = {}, { width = 120, height = 40, transcriptItems = [], 
   })
 }
 
+function renderWithState(ui, transcript, { width = 120, height = 40 } = {}) {
+  return buildFrame({
+    ui,
+    ctx: makeCtx(),
+    state: { mode: "agent", model: "test-model", sessionId: "s1" },
+    transcript,
+    width,
+    height,
+    applySelectionHighlight: (frameLines) => frameLines,
+    renderToastLine: () => null,
+    now: 1_700_000_000_000
+  })
+}
+
 /** 文件候选表，形状与 suggestion-source.compute() 的返回值一致。 */
 function fileSuggestions(names, extra = {}) {
   return {
@@ -257,6 +271,42 @@ test("transcript content is clipped, not allowed to overflow", () => {
     const frame = render({}, { width, transcriptItems: items })
     assertExactWidth(frame, width, `长内容与超链接 @ ${width}`)
   }
+})
+
+test("buildFrame keeps a scrolled transcript anchored across consecutive frames", () => {
+  const ui = makeUi({ scrollOffset: 3 })
+  const transcript = createTranscriptModel({ maxItems: 200 })
+  for (let i = 0; i < 30; i++) transcript.append({ id: `line-${i}`, summary: `line-${i}` })
+
+  const before = renderWithState(ui, transcript, { width: 80, height: 24 })
+  const topBefore = stripAnsi(before.wrappedLogs[0])
+  const offsetBefore = ui.scrollOffset
+  transcript.append({ id: "new-a", summary: "new-a" })
+  transcript.append({ id: "new-b", summary: "new-b" })
+
+  const after = renderWithState(ui, transcript, { width: 80, height: 24 })
+  assert.equal(stripAnsi(after.wrappedLogs[0]), topBefore,
+    "产品调用链必须传入上一帧 scrollMeta，不能只有 panel 单测生效")
+  assert.ok(ui.scrollOffset > offsetBefore, "到底部的距离应随尾部新行增加")
+})
+
+test("opening an overlay does not move a manually scrolled transcript", () => {
+  const ui = makeUi({ scrollOffset: 5 })
+  const transcript = createTranscriptModel({ maxItems: 200 })
+  for (let index = 0; index < 40; index++) transcript.append({ id: `line-${index}`, summary: `line-${index}` })
+
+  const before = renderWithState(ui, transcript, { width: 80, height: 28 })
+  const topBefore = stripAnsi(before.wrappedLogs[0])
+  ui.modelPicker = {
+    selected: 0,
+    offset: 0,
+    items: Array.from({ length: 6 }, (_, index) => ({
+      label: `model-${index}`, model: `model-${index}`, provider: "test"
+    }))
+  }
+  const after = renderWithState(ui, transcript, { width: 80, height: 28 })
+  assert.equal(stripAnsi(after.wrappedLogs[0]), topBefore,
+    "picker 浮层改变 logRows 时也必须传递稳定行锚点")
 })
 
 test("the frame fits the terminal height", () => {

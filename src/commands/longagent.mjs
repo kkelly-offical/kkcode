@@ -9,7 +9,7 @@ import { buildBlockedReport, renderBlockedReportText } from "../session/blocked-
 
 /**
  * Ultra 会话管理。0.4.0 起主命令是 `kkcode ultra`，`kkcode longagent`
- * 作为别名保留到 0.5.0。
+ * 作为别名保留到 1.0.0。
  */
 
 /**

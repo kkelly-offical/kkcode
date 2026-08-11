@@ -23,8 +23,9 @@ export function getGhostCommitDir() {
 
 /** 获取仓库的存储目录（基于 repoPath 的哈希） */
 function getRepoDir(repoPath) {
+  const normalizedRepoPath = path.resolve(repoPath)
   // 使用简单的哈希来避免路径中的特殊字符问题
-  const hash = Buffer.from(repoPath).toString("base64url")
+  const hash = Buffer.from(normalizedRepoPath).toString("base64url")
   return path.join(getGhostCommitDir(), hash)
 }
 
@@ -46,19 +47,21 @@ async function ensureDir(dir) {
  * @param {string[]} ghostCommit.files - 包含的文件列表
  */
 export async function saveGhostCommit(ghostCommit) {
-  const repoDir = getRepoDir(ghostCommit.repoPath)
+  const normalizedRepoPath = path.resolve(ghostCommit.repoPath)
+  const repoDir = getRepoDir(normalizedRepoPath)
   await ensureDir(repoDir)
 
   const filePath = path.join(repoDir, `${ghostCommit.id}.json`)
   const data = {
     ...ghostCommit,
+    repoPath: normalizedRepoPath,
     savedAt: Date.now()
   }
 
   await writeFile(filePath, JSON.stringify(data, null, 2), "utf8")
 
   // 清理旧的幽灵提交
-  await cleanupOldGhostCommits(ghostCommit.repoPath)
+  await cleanupOldGhostCommits(normalizedRepoPath)
 
   return { ok: true, path: filePath }
 }
@@ -153,11 +156,12 @@ export async function deleteGhostCommit(repoPath, ghostCommitId) {
  * @param {string} repoPath - 仓库路径
  */
 export async function cleanupOldGhostCommits(repoPath) {
+  const normalizedRepoPath = path.resolve(repoPath)
   // 同一 repo 的 cleanup 串行化，防止并发竞态
-  if (cleanupLocks.get(repoPath)) return
-  cleanupLocks.set(repoPath, true)
+  if (cleanupLocks.get(normalizedRepoPath)) return
+  cleanupLocks.set(normalizedRepoPath, true)
   try {
-    const commits = await listGhostCommits(repoPath, { includeExpired: true })
+    const commits = await listGhostCommits(normalizedRepoPath, { includeExpired: true })
 
     if (commits.length <= MAX_GHOST_COMMITS_PER_REPO) {
       return
@@ -166,10 +170,10 @@ export async function cleanupOldGhostCommits(repoPath) {
     // 删除多余的旧提交
     const toDelete = commits.slice(MAX_GHOST_COMMITS_PER_REPO)
     for (const commit of toDelete) {
-      await deleteGhostCommit(repoPath, commit.id)
+      await deleteGhostCommit(normalizedRepoPath, commit.id)
     }
   } finally {
-    cleanupLocks.delete(repoPath)
+    cleanupLocks.delete(normalizedRepoPath)
   }
 }
 

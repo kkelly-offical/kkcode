@@ -110,7 +110,10 @@ export const gitSnapshotTool = {
       }
     }
 
-    // 持久化存储
+    // 持久化存储。sessionId 必须落进记录本身：按会话过滤快照时靠它精确匹配，
+    // 不能靠 message 文本 —— 曾因所有自动快照的 message 都含 "Auto snapshot"
+    // 而把别的会话的快照也算进来（restore 可能恢复到别人的快照）。
+    result.ghostCommit.sessionId = sessionId
     await saveGhostCommit(result.ghostCommit)
 
     // 更新会话状态
@@ -146,7 +149,7 @@ export const gitSnapshotTool = {
 
 export const gitRestoreTool = {
   name: "git_restore",
-  description: "Restore the working directory to a previously created ghost commit snapshot. This will overwrite current changes with the snapshot state.",
+  description: "Restore files represented by a ghost commit snapshot. Known file changes are overwritten; later untracked files are retained for safety.",
   inputSchema: {
     type: "object",
     properties: {
@@ -205,7 +208,7 @@ export const gitRestoreTool = {
         message: ghostCommit.message,
         createdAt: ghostCommit.createdAt
       },
-      message: `Restored to snapshot ${ghostCommit.commitHash.slice(0, 8)}: ${ghostCommit.message}`
+      message: `Restored snapshot files to ${ghostCommit.commitHash.slice(0, 8)}: ${ghostCommit.message}. Later untracked files were retained.`
     }
   }
 }
@@ -556,4 +559,3 @@ export async function getLastSnapshotId(sessionId) {
   const state = await loadSnapshotState(sessionId)
   return state.lastSnapshotId
 }
-

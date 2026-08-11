@@ -124,6 +124,28 @@ test("config warnings downgrade the report to warn", (t) => {
   assert.equal(report.checks.config.detail, "unknown key agent.bogus")
 })
 
+test("config errors name every source layer without claiming a global defaults reset", (t) => {
+  process.env.ACME_KEY = "x"
+  t.after(() => { delete process.env.ACME_KEY })
+
+  const broken = configState()
+  broken.errors = ["/repo/.kkcode/config.yaml: permission.level: invalid"]
+  broken.source = {
+    userPath: "/home/u/.kkcode/config.yaml",
+    projectPath: "/repo/.kkcode/config.yaml",
+    envPath: "/repo/.env"
+  }
+  const report = buildPreflightReport({ configState: broken, mcp: healthyMcp, skills: someSkills })
+  assert.equal(report.checks.config.status, PREFLIGHT_FAIL)
+  assert.deepEqual(report.checks.config.paths, [
+    "/home/u/.kkcode/config.yaml",
+    "/repo/.kkcode/config.yaml",
+    "/repo/.env"
+  ])
+  assert.match(report.checks.config.detail, /对应配置层已忽略/)
+  assert.doesNotMatch(report.checks.config.detail, /默认配置/)
+})
+
 test("formatted lines stay aligned and cover every check", (t) => {
   process.env.ACME_KEY = "x"
   t.after(() => { delete process.env.ACME_KEY })

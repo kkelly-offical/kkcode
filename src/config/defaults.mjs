@@ -118,13 +118,10 @@ export const DEFAULT_CONFIG = {
           preview_model: null,
           blueprint_model: null,
           debugging_model: null
-        },
-        adaptive_models: {
-          enabled: false,
-          low: null,
-          medium: null,
-          high: null
         }
+        // adaptive_models 已弃用：按 task.complexity 的 per-task router 从未有调用点，
+        // 0.9.2 删除。schema 仍接受老配置；model-roles.mjs 会把 low/high
+        // 作为 models.fast/main 的兼容回退并记录弃用，medium 没有消费方。
       },
       resume_incomplete_files: true,
       scaffold: {

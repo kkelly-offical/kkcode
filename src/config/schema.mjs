@@ -206,7 +206,7 @@ export function validateConfig(config) {
           }
           // no_progress_warning / no_progress_limit：0.5.0 起由
           // ultra.no_progress_rounds 取代（语义从迭代变轮次）。旧键仍通过校验
-          // （读取时打一次性弃用提示），0.6.0 移除。
+          // （读取时记录一次性弃用元数据），1.0.0 移除。
           if (config.agent.longagent.no_progress_warning !== undefined) {
             checkInt(errors, "agent.longagent.no_progress_warning", config.agent.longagent.no_progress_warning, 1)
           }
