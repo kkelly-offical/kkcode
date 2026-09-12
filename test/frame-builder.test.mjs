@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { buildFrame } from "../src/repl/frame-builder.mjs"
-import { displayWidth, stripAnsi } from "../src/repl/frame-primitives.mjs"
+import { displayWidth, stripAnsi } from "../src/util/frame-primitives.mjs"
 import { createThinkingState } from "../src/ui/thinking-state.mjs"
 import { createTranscriptModel } from "../src/ui/transcript-model.mjs"
 import { DEFAULT_THEME } from "../src/theme/default-theme.mjs"

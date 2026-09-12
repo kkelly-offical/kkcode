@@ -9,8 +9,6 @@ import {
   clipAnsiByWidth, moveGraphemeCursor, maskSecretText, layoutInputText,
   inputIndexAtPosition, splitTextByCellRange
 } from "../src/util/text-layout.mjs"
-import * as replFramePrimitives from "../src/repl/frame-primitives.mjs"
-import * as replTextLayout from "../src/repl/text-layout.mjs"
 import { QUESTION_SKIPPED } from "../src/core/constants.mjs"
 import { QUESTION_SKIPPED as ROUTER_QUESTION_SKIPPED } from "../src/repl/dialog-router.mjs"
 
@@ -19,18 +17,12 @@ const BEL = String.fromCharCode(7)
 const sgr = (code, text) => `${ESC}[${code}m${text}${ESC}[0m`
 const osc8 = (url, text) => `${ESC}]8;;${url}${BEL}${text}${ESC}]8;;${BEL}`
 
-// 1.0.0 阶段 1c：这些纯函数从 src/repl/ 逐字搬到 src/util/。
-// 本文件钉住两件事：新家路径下的行为与旧契约一致；旧路径（repl/ 转出口、
-// dialog-router 的再导出）与新路径是**同一份实现**（引用相等），不存在第二份副本。
+// 1.0.0 阶段 1c：这些纯函数从 src/repl/ 逐字搬到 src/util/；阶段 2c 退役了
+// repl/ 下的兼容转出口，全部调用方直指 src/util/。本文件钉住两件事：新家路径
+// 下的行为与旧契约一致；dialog-router 的再导出与新路径是**同一份实现**
+// （引用相等），不存在第二份副本。
 
-test("shims re-export the very same function objects", () => {
-  assert.equal(replFramePrimitives.stripAnsi, stripAnsi)
-  assert.equal(replFramePrimitives.padRight, padRight)
-  assert.equal(replFramePrimitives.ageLabel, ageLabel)
-  assert.equal(replTextLayout.stripTerminalAnsi, stripTerminalAnsi)
-  assert.equal(replTextLayout.wrapAnsiLine, wrapAnsiLine)
-  assert.equal(replTextLayout.maskSecretText, maskSecretText)
-  assert.equal(replTextLayout.layoutInputText, layoutInputText)
+test("dialog-router re-exports the very same constant", () => {
   assert.equal(ROUTER_QUESTION_SKIPPED, QUESTION_SKIPPED)
   assert.equal(QUESTION_SKIPPED, "(skipped)")
 })

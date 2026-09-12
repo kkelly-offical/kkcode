@@ -1,7 +1,7 @@
 import { Command } from "commander"
-import { buildContext, printContextWarnings, resolveExtensionPolicy } from "../context.mjs"
-import { McpRegistry } from "../mcp/registry.mjs"
-import { SkillRegistry } from "../skill/registry.mjs"
+import { printContextWarnings } from "../context.mjs"
+import { createKernel } from "../kernel/index.mjs"
+import { loadTheme } from "../theme/load-theme.mjs"
 import { checkForUpdate } from "../update/checker.mjs"
 import { buildPreflightReport, formatPreflightLines, PREFLIGHT_FAIL } from "../cli/preflight.mjs"
 
@@ -20,25 +20,30 @@ export function createPreflightCommand() {
     .option("--json", "emit the report as JSON")
     .option("--no-update-check", "skip the registry version lookup")
     .action(async (options) => {
-      const ctx = await buildContext()
-      if (!options.json) printContextWarnings(ctx)
+      // boot:false —— preflight 只按需初始化技能注册表，不拉起整套扩展
+      const kernel = await createKernel({ cwd: process.cwd(), boot: false })
+      if (!options.json) {
+        const themeState = await loadTheme(kernel.configState)
+        printContextWarnings({ configState: kernel.configState, themeState })
+      }
 
-      const policy = resolveExtensionPolicy(ctx.configState)
-      await SkillRegistry.initialize(policy.config, process.cwd(), {
+      const policy = kernel.extensionPolicy
+      const skillRegistry = kernel.extensions.skills
+      await skillRegistry.initialize(policy.config, process.cwd(), {
         allowProjectSources: policy.allowProjectSources
       }).catch(() => {})
 
       let update = null
       if (options.updateCheck !== false) {
-        update = await checkForUpdate(ctx.configState.config).catch(() => null)
+        update = await checkForUpdate(kernel.configState.config).catch(() => null)
         // checkForUpdate 的字段名与 preflight 的输入对齐
         if (update) update = { latest: update.latestVersion, updateAvailable: update.hasUpdate, error: update.error }
       }
 
       const report = buildPreflightReport({
-        configState: ctx.configState,
-        mcp: McpRegistry.healthSnapshot(),
-        skills: { total: SkillRegistry.list().length },
+        configState: kernel.configState,
+        mcp: kernel.extensions.mcp.healthSnapshot(),
+        skills: { total: skillRegistry.list().length },
         update
       })
 
@@ -53,7 +58,7 @@ export function createPreflightCommand() {
         }
       }
 
-      await McpRegistry.shutdown().catch(() => {})
+      await kernel.shutdown().catch(() => {})
       if (report.status === PREFLIGHT_FAIL) process.exitCode = 1
     })
 }

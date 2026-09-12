@@ -2,6 +2,7 @@ import { Command } from "commander"
 import { readFile } from "node:fs/promises"
 import { LongAgentManager } from "../orchestration/longagent-manager.mjs"
 import { loadConfig } from "../config/load-config.mjs"
+import { createKernel } from "../kernel/index.mjs"
 import { eventLogPath } from "../storage/paths.mjs"
 import { formatRecoverySuggestions } from "../ui/activity-renderer.mjs"
 import { loadLedger } from "../session/ultra-ledger.mjs"
@@ -17,24 +18,14 @@ import { buildBlockedReport, renderBlockedReportText } from "../session/blocked-
  * `ultra start` / `resume` 从不检查：项目里写好的 trust.json 完全被忽略，
  * 未受信任的限制让所有文件工具拒绝工作，而模型只能一遍遍报告
  * 「workspace not trusted」。--trust 显式授信（等价 REPL 里的 /trust）。
+ *
+ * 1.0.0 阶段 2c 起收口为 createKernel()：信任探测、信任策略应用与扩展 boot
+ * （含 PermissionEngine 信任标志 —— 经 2b 桥装到进程级默认引擎）全在句柄内
+ * 完成；只改 configState 不走 kernel 的话，--trust 后工具照样拒绝。
  */
 async function applyCliTrust(configState, { trust = false } = {}) {
-  const { checkWorkspaceTrust } = await import("../permission/workspace-trust.mjs")
-  const { applyWorkspaceTrustPolicy, bootstrapKernelExtensions } = await import("../context.mjs")
-  const trustState = await checkWorkspaceTrust({
-    cwd: process.cwd(),
-    cliTrust: Boolean(trust),
-    isTTY: process.stdin.isTTY
-  })
-  applyWorkspaceTrustPolicy(configState, trustState, process.cwd())
-  // PermissionEngine 的模块级 trusted 标志与各注册表初始化统一由 bootstrap 承担
-  // （1.0.0 阶段 1a 收口）；只改 configState 不走 bootstrap 的话，--trust 后工具照样拒绝。
-  await bootstrapKernelExtensions({
-    cwd: process.cwd(),
-    configState,
-    trustState
-  })
-  return trustState
+  const kernel = await createKernel({ cwd: process.cwd(), config: configState, trust: Boolean(trust) })
+  return kernel
 }
 
 export function createLongagentCommand({ name = "ultra" } = {}) {
@@ -214,8 +205,8 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
         return
       }
       const configState = await loadConfig()
-      const trustState = await applyCliTrust(configState, { trust: options.trust })
-      if (!trustState.trusted) {
+      const kernel = await applyCliTrust(configState, { trust: options.trust })
+      if (!kernel.trustState.trusted) {
         console.error("workspace is not trusted — file tools will refuse to work.")
         console.error("re-run with --trust, or run /trust once in the REPL here.")
         process.exitCode = 1
@@ -363,8 +354,8 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
     .option("--trust", "trust this workspace (equivalent to /trust in the REPL)")
     .action(async (prompt, options) => {
       const configState = await loadConfig()
-      const trustState = await applyCliTrust(configState, { trust: options.trust })
-      if (!trustState.trusted) {
+      const kernel = await applyCliTrust(configState, { trust: options.trust })
+      if (!kernel.trustState.trusted) {
         console.error("workspace is not trusted — file tools will refuse to work.")
         console.error("re-run with --trust, or run /trust once in the REPL here.")
         process.exitCode = 1
@@ -378,13 +369,11 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
         process.exitCode = 1
         return
       }
-      const { executeTurn } = await import("../session/engine.mjs")
-      const { newSessionId } = await import("../session/engine.mjs")
-      const sessionId = newSessionId()
+      const sessionId = kernel.turns.newSessionId()
       console.log(`starting longagent session: ${sessionId}`)
       console.log(`model: ${model}, provider: ${providerKey}`)
       try {
-        const result = await executeTurn({
+        const result = await kernel.executeTurn({
           prompt,
           mode: "longagent",
           model,

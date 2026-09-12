@@ -2,10 +2,10 @@ import path from "node:path"
 import { writeFile } from "node:fs/promises"
 import { Command } from "commander"
 import { exportSession, getSession, listSessions, forkSession, fsckSessionStore, gcSessionStore, flushNow } from "../session/store.mjs"
-import { newSessionId, executeTurn } from "../session/engine.mjs"
+import { newSessionId } from "../session/engine.mjs"
 import { listRecoverableSessions, getResumeContext, isRecoveryEnabled, summarizeResumeContext } from "../session/recovery.mjs"
 import { summarizeSessionRuntimeState } from "../session/runtime-state.mjs"
-import { bootstrapKernelExtensions, buildContext } from "../context.mjs"
+import { createKernel } from "../kernel/index.mjs"
 
 function assertRecoveryEnabled(config, commandName) {
   if (isRecoveryEnabled(config)) return true
@@ -90,11 +90,11 @@ export function createSessionCommand() {
     .option("--id <id>", "session id")
     .option("--json", "print as json", false)
     .action(async (options) => {
-      const ctx = await buildContext()
+      const kernel = await createKernel({ cwd: process.cwd(), boot: false })
       const summary = await summarizeSessionRuntimeState({
         sessionId: options.id || null,
         cwd: process.cwd(),
-        recoveryEnabled: isRecoveryEnabled(ctx.configState.config)
+        recoveryEnabled: isRecoveryEnabled(kernel.configState.config)
       })
 
       if (options.json) {
@@ -188,8 +188,10 @@ export function createSessionCommand() {
     .option("--mode <mode>", "override mode")
     .option("--model <model>", "override model")
     .action(async (options) => {
-      const ctx = await buildContext()
-      if (!assertRecoveryEnabled(ctx.configState.config, "session resume")) return
+      // boot 推迟到确认真的要跑回合之后（原 bootstrapKernelExtensions 的位置
+      // 语义：session 不存在/无可续时不 spawn MCP）
+      const kernel = await createKernel({ cwd: process.cwd(), boot: false })
+      if (!assertRecoveryEnabled(kernel.configState.config, "session resume")) return
 
       const resumeCtx = await getResumeContext(options.id, { enabled: true })
       if (!resumeCtx) {
@@ -202,21 +204,16 @@ export function createSessionCommand() {
         process.exitCode = 1
         return
       }
-      await bootstrapKernelExtensions({
-        cwd: process.cwd(),
-        configState: ctx.configState,
-        trustState: ctx.trustState
-      })
+      await kernel.bootExtensions()
       const mode = options.mode || resumeCtx.session.mode
       const model = options.model || resumeCtx.session.model
       console.log(`resuming session ${options.id} (${resumeCtx.messageCount} messages)`)
       console.log(`last prompt: ${resumeCtx.lastPrompt.slice(0, 100)}${resumeCtx.lastPrompt.length > 100 ? "..." : ""}`)
-      const result = await executeTurn({
+      const result = await kernel.executeTurn({
         prompt: resumeCtx.lastPrompt,
         mode,
         model,
         sessionId: options.id,
-        configState: ctx.configState,
         providerType: resumeCtx.session.providerType
       })
       console.log(result.reply)
@@ -227,8 +224,8 @@ export function createSessionCommand() {
     .description("retry the last failed turn in a session")
     .requiredOption("--id <id>", "session id to retry")
     .action(async (options) => {
-      const ctx = await buildContext()
-      if (!assertRecoveryEnabled(ctx.configState.config, "session retry")) return
+      const kernel = await createKernel({ cwd: process.cwd(), boot: false })
+      if (!assertRecoveryEnabled(kernel.configState.config, "session retry")) return
 
       const resumeCtx = await getResumeContext(options.id, { enabled: true })
       if (!resumeCtx) {
@@ -246,18 +243,13 @@ export function createSessionCommand() {
         process.exitCode = 1
         return
       }
-      await bootstrapKernelExtensions({
-        cwd: process.cwd(),
-        configState: ctx.configState,
-        trustState: ctx.trustState
-      })
+      await kernel.bootExtensions()
       console.log(`retrying failed turn in session ${options.id}`)
-      const result = await executeTurn({
+      const result = await kernel.executeTurn({
         prompt: resumeCtx.lastPrompt,
         mode: resumeCtx.session.mode,
         model: resumeCtx.session.model,
         sessionId: options.id,
-        configState: ctx.configState,
         providerType: resumeCtx.session.providerType
       })
       console.log(result.reply)
@@ -268,8 +260,8 @@ export function createSessionCommand() {
     .description("list sessions that can be resumed or retried")
     .option("--json", "print as json", false)
     .action(async (options) => {
-      const ctx = await buildContext()
-      if (!assertRecoveryEnabled(ctx.configState.config, "session recoverable")) return
+      const kernel = await createKernel({ cwd: process.cwd(), boot: false })
+      if (!assertRecoveryEnabled(kernel.configState.config, "session recoverable")) return
 
       const sessions = await listRecoverableSessions({
         cwd: process.cwd(),

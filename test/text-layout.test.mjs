@@ -8,7 +8,7 @@ import {
   stripTerminalAnsi,
   terminalCellWidth,
   wrapAnsiLine
-} from "../src/repl/text-layout.mjs"
+} from "../src/util/text-layout.mjs"
 
 test("ANSI wrapping preserves styles on every physical row", () => {
   const source = "\x1b[2mabcdef\x1b[0m"

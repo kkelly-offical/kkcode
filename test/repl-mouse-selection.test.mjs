@@ -7,7 +7,7 @@ import {
   screenRowFromAbsolute
 } from "../src/repl/mouse-selection.mjs"
 import { createReplUiState } from "../src/repl/ui-state.mjs"
-import { layoutInputText } from "../src/repl/text-layout.mjs"
+import { layoutInputText } from "../src/util/text-layout.mjs"
 
 /** 用真实的排版函数生成 inputLayout —— 伪造的形状会漏掉 cells/endIndex 这些字段。 */
 function layoutFor(ui, width = 40) {

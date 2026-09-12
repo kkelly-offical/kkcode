@@ -1,5 +1,7 @@
 import { Command } from "commander"
-import { buildContext, printContextWarnings } from "../context.mjs"
+import { printContextWarnings } from "../context.mjs"
+import { createKernel } from "../kernel/index.mjs"
+import { loadTheme } from "../theme/load-theme.mjs"
 import { PermissionEngine } from "../permission/engine.mjs"
 
 export function createPermissionCommand() {
@@ -9,9 +11,10 @@ export function createPermissionCommand() {
     .command("show")
     .description("show configured permission policy")
     .action(async () => {
-      const ctx = await buildContext()
-      printContextWarnings(ctx)
-      console.log(JSON.stringify(ctx.configState.config.permission, null, 2))
+      const kernel = await createKernel({ cwd: process.cwd(), boot: false })
+      const themeState = await loadTheme(kernel.configState)
+      printContextWarnings({ configState: kernel.configState, themeState })
+      console.log(JSON.stringify(kernel.configState.config.permission, null, 2))
     })
 
   cmd

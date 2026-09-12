@@ -1,12 +1,11 @@
 import { Command } from "commander"
 import { applyCommandTemplate, loadCustomCommands } from "../command/custom-commands.mjs"
-import { buildContext, resolveExtensionPolicy } from "../context.mjs"
+import { createKernel } from "../kernel/index.mjs"
 
 async function commandsForWorkspace() {
-  const ctx = await buildContext()
-  const extensionPolicy = resolveExtensionPolicy(ctx.configState)
+  const kernel = await createKernel({ cwd: process.cwd(), boot: false })
   return loadCustomCommands(process.cwd(), {
-    allowProjectSources: extensionPolicy.allowProjectSources
+    allowProjectSources: kernel.extensionPolicy.allowProjectSources
   })
 }
 

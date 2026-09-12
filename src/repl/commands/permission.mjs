@@ -5,10 +5,11 @@
  * 看当前档位与规则、切档、以及把档位落盘。三件事挤在一条命令里是刻意的 ——
  * 用户脑子里它们是同一个话题。
  *
- * `/trust` 与 `/untrust` 的两段初始化几乎对称，只有最后传给 `setTrusted` 的
- * 布尔值与提示文案不同，所以共用一个 `reinitializeExtensions`：信任状态改变后
- * 必须重建工具、技能、子智能体、钩子与自定义命令五套注册表，漏一套就会出现
- * 「已经 /trust 了但项目工具还是被拦」这类不一致。
+ * `/trust` 与 `/untrust` 对称：信任状态改变后工具、技能、子智能体与钩子注册表
+ * 必须一起重建，漏一套就会出现「已经 /trust 了但项目工具还是被拦」这类不一致。
+ * 1.0.0 阶段 2c 起重建收口为 kernel 句柄方法 `kernel.applyTrustState()`
+ * （M3 耦合点 6：此前这里手工重建五套注册表）；自定义命令是 REPL 前端状态，
+ * 仍由这里 reload 后经 setCustomCommands 写回。
  */
 
 import { PermissionEngine } from "../../permission/engine.mjs"
@@ -20,10 +21,6 @@ import {
   isLearnedRule,
   describeRule
 } from "../../permission/learned-rules.mjs"
-import { applyWorkspaceTrustPolicy, resolveExtensionPolicy } from "../../context.mjs"
-import { ToolRegistry } from "../../tool/registry.mjs"
-import { SkillRegistry } from "../../skill/registry.mjs"
-import { initHookBus } from "../../plugin/hook-bus.mjs"
 import { loadCustomCommands } from "../../command/custom-commands.mjs"
 import { escapeTerminalText } from "../../provider/model-id.mjs"
 import { approvalFromLegacy } from "../../core/modes.mjs"
@@ -35,35 +32,6 @@ import {
   persistPermissionConfig
 } from "../config-persistence.mjs"
 
-/**
- * 信任状态变了 → 五套注册表全部重建。
- *
- * 顺序无关，但**数量**有关：少重建一套就会留下一个仍按旧信任状态工作的子系统。
- */
-async function reinitializeExtensions(ctx, setCustomCommands) {
-  const extensionPolicy = resolveExtensionPolicy(ctx.configState)
-  await ToolRegistry.initialize({
-    config: extensionPolicy.config,
-    cwd: process.cwd(),
-    force: true,
-    allowProjectSources: extensionPolicy.allowProjectSources
-  })
-  await SkillRegistry.initialize(extensionPolicy.config, process.cwd(), {
-    allowProjectSources: extensionPolicy.allowProjectSources
-  })
-  const { CustomAgentRegistry } = await import("../../agent/custom-agent-loader.mjs")
-  await CustomAgentRegistry.initialize(process.cwd(), {
-    allowProjectSources: extensionPolicy.allowProjectSources
-  })
-  await initHookBus(process.cwd(), extensionPolicy.config, {
-    allowProjectSources: extensionPolicy.allowProjectSources,
-    force: true
-  })
-  setCustomCommands(await loadCustomCommands(process.cwd(), {
-    allowProjectSources: extensionPolicy.allowProjectSources
-  }))
-}
-
 export const permissionCommands = [
   {
     names: ["trust"],
@@ -72,9 +40,10 @@ export const permissionCommands = [
     run: async ({ print, ctx, setCustomCommands }) => {
       await persistTrust(process.cwd())
       ctx.trustState = { trusted: true }
-      applyWorkspaceTrustPolicy(ctx.configState, ctx.trustState, process.cwd())
-      await reinitializeExtensions(ctx, setCustomCommands)
-      PermissionEngine.setTrusted(true)
+      const extensionPolicy = await ctx.kernel.applyTrustState(ctx.trustState)
+      setCustomCommands(await loadCustomCommands(process.cwd(), {
+        allowProjectSources: extensionPolicy.allowProjectSources
+      }))
       print("workspace trusted", { channel: "notice", topic: "command" })
       return { exit: false }
     }
@@ -87,9 +56,10 @@ export const permissionCommands = [
     run: async ({ print, ctx, setCustomCommands }) => {
       await revokeTrust(process.cwd())
       ctx.trustState = { trusted: false }
-      applyWorkspaceTrustPolicy(ctx.configState, ctx.trustState, process.cwd())
-      await reinitializeExtensions(ctx, setCustomCommands)
-      PermissionEngine.setTrusted(false)
+      const extensionPolicy = await ctx.kernel.applyTrustState(ctx.trustState)
+      setCustomCommands(await loadCustomCommands(process.cwd(), {
+        allowProjectSources: extensionPolicy.allowProjectSources
+      }))
       print("workspace trust revoked — project tools and extensions are now blocked", { channel: "notice", topic: "command" })
       return { exit: false }
     }

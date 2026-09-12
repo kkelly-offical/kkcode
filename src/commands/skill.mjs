@@ -1,6 +1,6 @@
 import { Command } from "commander"
-import { ensureDefaultSkillPack, SkillRegistry } from "../skill/registry.mjs"
-import { buildContext, resolveExtensionPolicy } from "../context.mjs"
+import { ensureDefaultSkillPack } from "../skill/registry.mjs"
+import { createKernel } from "../kernel/index.mjs"
 import { userRootDir } from "../storage/paths.mjs"
 
 function formatSummary(scopeResults) {
@@ -26,16 +26,19 @@ export function createSkillCommand() {
     .description("list loaded skills")
     .option("--json", "print structured output", false)
     .action(async (options) => {
-      const ctx = await buildContext()
-      const extensionPolicy = resolveExtensionPolicy(ctx.configState)
+      // boot:false —— skill list 用 auto_seed:false 自行初始化技能注册表，
+      // 不在只读命令里往磁盘写种子包
+      const kernel = await createKernel({ cwd: process.cwd(), boot: false })
+      const extensionPolicy = kernel.extensionPolicy
       const extensionConfig = {
         ...extensionPolicy.config,
         skills: { ...(extensionPolicy.config.skills || {}), auto_seed: false }
       }
-      await SkillRegistry.initialize(extensionConfig, process.cwd(), {
+      const skillRegistry = kernel.extensions.skills
+      await skillRegistry.initialize(extensionConfig, process.cwd(), {
         allowProjectSources: extensionPolicy.allowProjectSources
       })
-      const skills = SkillRegistry.list()
+      const skills = skillRegistry.list()
       if (options.json) {
         console.log(JSON.stringify({
           ok: true,
@@ -52,7 +55,7 @@ export function createSkillCommand() {
             pluginName: skill.plugin?.name || null,
             skillRoot: skill.skillRoot || skill.skillDir || null
           })),
-          diagnostics: SkillRegistry.compatDiagnostics()
+          diagnostics: skillRegistry.compatDiagnostics()
         }, null, 2))
         return
       }
@@ -61,7 +64,7 @@ export function createSkillCommand() {
         const ecosystem = skill.sourceEcosystem || "kkcode"
         console.log(`- $${label} [${ecosystem}] ${skill.description || ""}`.trim())
       }
-      const diagnostics = SkillRegistry.compatDiagnostics()
+      const diagnostics = skillRegistry.compatDiagnostics()
       if (diagnostics.length) {
         console.log("diagnostics:")
         for (const item of diagnostics) console.log(`- ${item}`)

@@ -11,7 +11,7 @@ import {
 } from "../src/repl/ui-state.mjs"
 import { buildFrame } from "../src/repl/frame-builder.mjs"
 import { createTranscriptModel } from "../src/ui/transcript-model.mjs"
-import { displayWidth, stripAnsi } from "../src/repl/frame-primitives.mjs"
+import { displayWidth, stripAnsi } from "../src/util/frame-primitives.mjs"
 import { DEFAULT_THEME } from "../src/theme/default-theme.mjs"
 import { DEFAULT_CONFIG } from "../src/config/defaults.mjs"
 

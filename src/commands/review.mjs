@@ -2,7 +2,9 @@ import path from "node:path"
 import { readFile } from "node:fs/promises"
 import { execSync } from "node:child_process"
 import { Command } from "commander"
-import { bootstrapKernelExtensions, buildContext, printContextWarnings } from "../context.mjs"
+import { printContextWarnings } from "../context.mjs"
+import { createKernel } from "../kernel/index.mjs"
+import { loadTheme } from "../theme/load-theme.mjs"
 import { parseUnifiedDiff, previewLines } from "../review/diff-parser.mjs"
 import { scoreRisk, sortReviewFiles } from "../review/risk-score.mjs"
 import { defaultReviewState, readReviewState, writeReviewState } from "../review/review-store.mjs"
@@ -148,7 +150,12 @@ export function createReviewCommand() {
     .option("--session <id>", "bind review decisions to this session id")
     .option("--lines <n>", "preview lines per file")
     .action(async (options) => {
-      const ctx = await buildContext()
+      const kernel = await createKernel({ cwd: process.cwd(), boot: false })
+      const ctx = {
+        configState: kernel.configState,
+        themeState: await loadTheme(kernel.configState),
+        trustState: kernel.trustState
+      }
       printContextWarnings(ctx)
       const config = ctx.configState.config
       const theme = ctx.themeState.theme
@@ -220,13 +227,14 @@ export function createReviewCommand() {
       let activeDiffHash = ""
       try {
         validateBranchReviewOptions(options)
-        const ctx = await buildContext()
+        const kernel = await createKernel({ cwd: process.cwd() })
+        const ctx = {
+          configState: kernel.configState,
+          themeState: await loadTheme(kernel.configState),
+          trustState: kernel.trustState,
+          kernel
+        }
         printContextWarnings(ctx)
-        await bootstrapKernelExtensions({
-          cwd: process.cwd(),
-          configState: ctx.configState,
-          trustState: ctx.trustState
-        })
         const cwd = process.cwd()
         const storedAuth = options.pr ? await getStoredToken() : null
         if (options.pr && !storedAuth?.token) {
@@ -425,9 +433,9 @@ export function createReviewCommand() {
     .command("next")
     .description("move to next file preview")
     .action(async () => {
-      const ctx = await buildContext()
-      const config = ctx.configState.config
-      const theme = ctx.themeState.theme
+      const kernel = await createKernel({ cwd: process.cwd(), boot: false })
+      const config = kernel.configState.config
+      const theme = (await loadTheme(kernel.configState)).theme
       const state = await readReviewState()
       if (!state.files.length) {
         console.error("review state empty. Run `kkcode review open` first.")
@@ -444,9 +452,9 @@ export function createReviewCommand() {
     .description("expand current or selected file preview")
     .option("--index <n>", "file index, zero-based")
     .action(async (options) => {
-      const ctx = await buildContext()
-      const theme = ctx.themeState.theme
-      const config = ctx.configState.config
+      const kernel = await createKernel({ cwd: process.cwd(), boot: false })
+      const theme = (await loadTheme(kernel.configState)).theme
+      const config = kernel.configState.config
       const state = await readReviewState()
       if (!state.files.length) {
         console.error("review state empty. Run `kkcode review open` first.")

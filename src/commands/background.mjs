@@ -1,13 +1,17 @@
 import { Command } from "commander"
 import { BackgroundManager } from "../orchestration/background-manager.mjs"
 import { applyWorktreeResult, discardWorktreeResult } from "../orchestration/worktree-handoff.mjs"
-import { buildContext, printContextWarnings } from "../context.mjs"
+import { printContextWarnings } from "../context.mjs"
+import { createKernel } from "../kernel/index.mjs"
+import { loadTheme } from "../theme/load-theme.mjs"
 
 async function withContext(action) {
-  const ctx = await buildContext()
-  printContextWarnings(ctx)
-  await BackgroundManager.tick(ctx.configState.config)
-  return action(ctx)
+  // boot:false —— background 巡检只读 checkpoint 文件，不拉起扩展
+  const kernel = await createKernel({ cwd: process.cwd(), boot: false })
+  const themeState = await loadTheme(kernel.configState)
+  printContextWarnings({ configState: kernel.configState, themeState })
+  await BackgroundManager.tick(kernel.configState.config)
+  return action(kernel)
 }
 
 function printTaskSummary(task) {
@@ -116,10 +120,10 @@ export function createBackgroundCommand() {
     .option("--timeout <ms>", "wait timeout in milliseconds", "30000")
     .option("--json", "print raw JSON")
     .action(async (options) => {
-      await withContext(async (ctx) => {
+      await withContext(async (kernel) => {
         const task = await BackgroundManager.waitForTask(options.id, {
           timeoutMs: Number(options.timeout || 30000),
-          config: ctx.configState.config
+          config: kernel.configState.config
         })
         if (!task) {
           console.error(`not found: ${options.id}`)
@@ -233,8 +237,8 @@ export function createBackgroundCommand() {
     .description("retry one interrupted/error background task")
     .requiredOption("--id <id>", "task id")
     .action(async (options) => {
-      await withContext(async (ctx) => {
-        const task = await BackgroundManager.retry(options.id, ctx.configState.config)
+      await withContext(async (kernel) => {
+        const task = await BackgroundManager.retry(options.id, kernel.configState.config)
         if (!task) {
           console.error(`task not retryable or not found: ${options.id}`)
           process.exitCode = 1

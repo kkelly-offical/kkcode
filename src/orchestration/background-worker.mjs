@@ -2,15 +2,11 @@ import { appendFile, access, copyFile, mkdir } from "node:fs/promises"
 import path from "node:path"
 import { readJson, writeJson } from "../storage/json-store.mjs"
 import { ensureBackgroundTaskRuntimeDir, backgroundTaskCheckpointPath, backgroundTaskLogPath } from "../storage/paths.mjs"
-import { buildContext, resolveExtensionPolicy } from "../context.mjs"
-import { ToolRegistry } from "../tool/registry.mjs"
-import { McpRegistry } from "../mcp/registry.mjs"
-import { executeTurn } from "../session/engine.mjs"
-import { flushNow, forkSession, getSession } from "../session/store.mjs"
+import { createKernel } from "../kernel/index.mjs"
+import { flushNow } from "../session/store.mjs"
 import { extractEditFeedbackFromToolEvents } from "../observability/edit-diagnostics.mjs"
 import { INTERRUPTION_REASONS, normalizeInterruptionReason } from "./interruption-reason.mjs"
 import { checkWorkspaceTrust } from "../permission/workspace-trust.mjs"
-import { PermissionEngine } from "../permission/engine.mjs"
 import { removeDetachedWorktree } from "./worktree-handoff.mjs"
 import * as git from "../util/git.mjs"
 
@@ -101,14 +97,14 @@ async function appendTaskLog(taskId, line) {
   }
 }
 
-async function ensureDelegatedSession({ executionMode, parentSessionId, subSessionId }) {
+async function ensureDelegatedSession({ kernel, executionMode, parentSessionId, subSessionId }) {
   if (executionMode !== "fork_context") return
   if (!parentSessionId) throw new Error("fork_context requires a parent session")
 
-  const existing = await getSession(subSessionId)
+  const existing = await kernel.sessions.getSession(subSessionId)
   if (existing) return
 
-  const forked = await forkSession({
+  const forked = await kernel.sessions.forkSession({
     sessionId: parentSessionId,
     newSessionId: subSessionId,
     title: `fork:${subSessionId}`
@@ -163,51 +159,48 @@ async function runDelegateTask(task, signal) {
   }
 
   let out
+  let kernel = null
   try {
     if (worktree) {
       await copyWorkspaceConfigFiles(repoCwd, effectiveCwd)
     }
     process.chdir(effectiveCwd)
 
-    const ctx = await buildContext({
+    // 1.0.0 阶段 2c：worker 是独立进程入口，createKernel() 在这里重启内核
+    // （§7.3 显式契约，见 src/kernel/kernel.mjs 头注释）。配置加载、storage
+    // 层注入与信任策略在句柄内完成；进程级默认引擎的信任标志由 2b 桥安装 ——
+    // 此前 worker 从不设置它，engine.check() 第一行就抛 "workspace not trusted"，
+    // 被 loop 吞成 tool error，后台子智能体只能纯文本作答，任务还标成 completed
+    // （0.5.8 修的就是这个）。
+    //
+    // boot 推迟到 ensureDelegatedSession 之后：fork_context 的父会话校验属于输入
+    // 校验，必须先于扩展启动出局 —— boot 的副作用（技能种子包落盘等）会弄脏
+    // worktree，让错误路径的 isClean 清理误判（background-worker-e2e 钉住这条）。
+    kernel = await createKernel({
       cwd: effectiveCwd,
+      boot: false,
       ...(inheritedTrustState ? { trustState: inheritedTrustState } : {})
     })
-    // PermissionEngine 的信任标志是模块级的，每个进程都得自己设一次。worker
-    // 是独立进程入口，此前从不设置 —— 于是 engine.check() 的第一行就抛
-    // "workspace not trusted"，被 loop 吞成 tool error，后台子智能体只能纯
-    // 文本作答，任务还标成 completed。REPL/CLI 的六个入口早就这么做了
-    // （见 commands/longagent.mjs:34），漏的只有这里。
-    PermissionEngine.setTrusted(ctx.trustState?.trusted === true)
-    _maxLogLines = Number(ctx.configState.config?.background?.max_log_lines || 300)
-    const extensionPolicy = resolveExtensionPolicy(ctx.configState)
-    await ToolRegistry.initialize({
-      config: extensionPolicy.config,
-      cwd: effectiveCwd,
-      allowProjectSources: extensionPolicy.allowProjectSources
-    })
-    const { CustomAgentRegistry } = await import("../agent/custom-agent-loader.mjs")
-    await CustomAgentRegistry.initialize(effectiveCwd, {
-      allowProjectSources: extensionPolicy.allowProjectSources
-    })
+    _maxLogLines = Number(kernel.configState.config?.background?.max_log_lines || 300)
 
-    const providerType = payload.providerType || ctx.configState.config.provider.default
-    const providerDefault = ctx.configState.config.provider[providerType]
+    const providerType = payload.providerType || kernel.configState.config.provider.default
+    const providerDefault = kernel.configState.config.provider[providerType]
     const model = payload.model || providerDefault?.default_model
 
     await ensureDelegatedSession({
+      kernel,
       executionMode,
       parentSessionId: payload.parentSessionId || null,
       subSessionId: payload.subSessionId
     })
+    await kernel.bootExtensions()
 
-    out = await executeTurn({
+    out = await kernel.executeTurn({
       prompt: String(payload.prompt || ""),
       mode: "agent",
       model,
       providerType,
       sessionId: payload.subSessionId,
-      configState: ctx.configState,
       signal,
       runSpec: payload.runSpec || null,
       allowQuestion: false,
@@ -220,7 +213,7 @@ async function runDelegateTask(task, signal) {
     await flushNow()
   } catch (error) {
     if (worktree) {
-      await McpRegistry.shutdown().catch(() => {})
+      await (kernel?.shutdown() ?? Promise.resolve()).catch(() => {})
       process.chdir(repoCwd)
       const clean = await git.isClean(worktree.path, 5000).catch(() => false)
       if (clean) {
@@ -236,7 +229,9 @@ async function runDelegateTask(task, signal) {
     }
     throw error
   } finally {
-    await McpRegistry.shutdown().catch(() => {})
+    // shutdown 幂等；若 catch 路径的 shutdown 失败，这里重试（与旧的双
+    // McpRegistry.shutdown 语义一致），kernel 为 null（boot 失败）时跳过
+    await (kernel?.shutdown() ?? Promise.resolve()).catch(() => {})
     if (worktree) {
       process.chdir(repoCwd)
     }

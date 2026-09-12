@@ -7,8 +7,8 @@ import {
 } from "../src/ui/overlay-question.mjs"
 import { DEFAULT_THEME } from "../src/theme/default-theme.mjs"
 import { paint } from "../src/theme/color.mjs"
-import { padRight, stripAnsi } from "../src/repl/frame-primitives.mjs"
-import { layoutInputText } from "../src/repl/text-layout.mjs"
+import { padRight, stripAnsi } from "../src/util/frame-primitives.mjs"
+import { layoutInputText } from "../src/util/text-layout.mjs"
 
 /**
  * 提问浮层的滚动窗口与打字过滤（0.8.0）。

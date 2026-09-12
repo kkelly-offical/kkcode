@@ -1,15 +1,13 @@
 import { Command } from "commander"
 import { exec as execCb } from "node:child_process"
 import { promisify } from "node:util"
-import { buildContext, resolveExtensionPolicy } from "../context.mjs"
-import { listProviders } from "../provider/router.mjs"
+import { createKernel } from "../kernel/index.mjs"
+import { loadTheme } from "../theme/load-theme.mjs"
 import { PROVIDER_META_KEYS } from "../config/schema.mjs"
 import { eventLogStats } from "../storage/event-log.mjs"
 import { auditStats, verifyAuditChain } from "../storage/audit-store.mjs"
 import { fsckSessionStore, flushNow } from "../session/store.mjs"
 import { BackgroundManager } from "../orchestration/background-manager.mjs"
-import { McpRegistry } from "../mcp/registry.mjs"
-import { SkillRegistry } from "../skill/registry.mjs"
 import { buildRequestHeaders, redactHeaders } from "../http/identity.mjs"
 import { resolveProviderConnection } from "../provider/model-catalog.mjs"
 import { inspectSandboxStatus, formatSandboxLine } from "../tool/sandbox.mjs"
@@ -43,7 +41,11 @@ function summarizeBackground(tasks) {
 }
 
 export async function buildDoctorReport({ includeHttp = false } = {}) {
-  const ctx = await buildContext()
+  // boot:false —— doctor 按需只初始化 MCP 与技能（auto_seed:false）两个注册表
+  const kernel = await createKernel({ cwd: process.cwd(), boot: false })
+  try {
+  const themeState = await loadTheme(kernel.configState)
+  const ctx = { configState: kernel.configState, themeState }
   await flushNow()
   await BackgroundManager.tick(ctx.configState.config)
 
@@ -97,21 +99,22 @@ export async function buildDoctorReport({ includeHttp = false } = {}) {
   const auditIntegrity = await verifyAuditChain()
   const storage = await fsckSessionStore()
   const backgroundTasks = await BackgroundManager.list()
-  const extensionPolicy = resolveExtensionPolicy(ctx.configState)
+  const extensionPolicy = kernel.extensionPolicy
   const extensionConfig = {
     ...extensionPolicy.config,
     skills: { ...(extensionPolicy.config.skills || {}), auto_seed: false }
   }
-  await McpRegistry.initialize(extensionPolicy.config, {
+  await kernel.extensions.mcp.initialize(extensionPolicy.config, {
     cwd: process.cwd(),
     allowProjectSources: extensionPolicy.allowProjectSources
   })
-  await SkillRegistry.initialize(extensionConfig, process.cwd(), {
+  const skillRegistry = kernel.extensions.skills
+  await skillRegistry.initialize(extensionConfig, process.cwd(), {
     allowProjectSources: extensionPolicy.allowProjectSources
   })
-  const mcpSnapshot = McpRegistry.healthSnapshot()
+  const mcpSnapshot = kernel.extensions.mcp.healthSnapshot()
   const mcpHealthy = mcpSnapshot.filter((item) => item.ok).length
-  const skillList = SkillRegistry.list()
+  const skillList = skillRegistry.list()
   const skillSummary = {
     enabled: config.skills?.enabled !== false,
     autoSeed: config.skills?.auto_seed !== false,
@@ -121,8 +124,8 @@ export async function buildDoctorReport({ includeHttp = false } = {}) {
     mcpPrompt: skillList.filter((s) => s.type === "mcp_prompt").length,
     programmable: skillList.filter((s) => s.type === "mjs").length
   }
-  const pluginManifests = SkillRegistry.listPluginManifests()
-  const compatDiagnostics = SkillRegistry.compatDiagnostics()
+  const pluginManifests = skillRegistry.listPluginManifests()
+  const compatDiagnostics = skillRegistry.compatDiagnostics()
   const strictCompatFailed = config.compat?.diagnostics?.strict === true && compatDiagnostics.length > 0
   const compatSummary = {
     ecosystems: [...new Set([
@@ -174,7 +177,7 @@ export async function buildDoctorReport({ includeHttp = false } = {}) {
       warnings: ctx.configState.warnings || []
     },
     runtime: {
-      providersRegistered: listProviders(),
+      providersRegistered: kernel.providers.listProviders(),
       providersConfigured: providers
     },
     checks,
@@ -197,6 +200,10 @@ export async function buildDoctorReport({ includeHttp = false } = {}) {
     },
     background: summarizeBackground(backgroundTasks),
     ...(http ? { http } : {})
+  }
+  } finally {
+    // kernel.shutdown 收口：2b 桥释放 + McpRegistry.shutdown() + session flushNow()
+    await kernel.shutdown()
   }
 }
 
@@ -268,17 +275,13 @@ export function createDoctorCommand() {
     .option("--json", "print structured diagnostics", false)
     .option("--http", "show effective, redacted HTTP identity headers", false)
     .action(async (options) => {
-      try {
-        const report = await buildDoctorReport({ includeHttp: options.http })
-        if (options.json) {
-          console.log(JSON.stringify(report, null, 2))
-          if (!report.ok) process.exitCode = 1
-          return
-        }
-        printTextReport(report, report.themeWarnings || [])
+      const report = await buildDoctorReport({ includeHttp: options.http })
+      if (options.json) {
+        console.log(JSON.stringify(report, null, 2))
         if (!report.ok) process.exitCode = 1
-      } finally {
-        await McpRegistry.shutdown()
+        return
       }
+      printTextReport(report, report.themeWarnings || [])
+      if (!report.ok) process.exitCode = 1
     })
 }
