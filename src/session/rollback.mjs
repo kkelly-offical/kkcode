@@ -1,7 +1,7 @@
 import { isGitRepo } from "../util/git.mjs"
 import { restoreGhostCommit } from "../util/git.mjs"
 import { getSessionSnapshots } from "./checkpoint.mjs"
-import { askQuestionInteractive } from "../tool/question-prompt.mjs"
+import { askQuestionInteractive } from "../kernel/tool/question-prompt.mjs"
 import { EventBus } from "../kernel/core/events.mjs"
 import { EVENT_TYPES } from "../kernel/core/constants.mjs"
 

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os"
 import { createKernel } from "../src/kernel/index.mjs"
 import { registerProvider } from "../src/provider/router.mjs"
 import { defaultPermissionPromptChannel } from "../src/kernel/permission/prompt.mjs"
-import { defaultQuestionPromptChannel } from "../src/tool/question-prompt.mjs"
+import { defaultQuestionPromptChannel } from "../src/kernel/tool/question-prompt.mjs"
 import { checkWorkspaceTrust } from "../src/kernel/permission/workspace-trust.mjs"
 
 /**

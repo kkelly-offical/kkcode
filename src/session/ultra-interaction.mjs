@@ -1,4 +1,4 @@
-import { askQuestionInteractive, hasPromptHandler } from "../tool/question-prompt.mjs"
+import { askQuestionInteractive, hasPromptHandler } from "../kernel/tool/question-prompt.mjs"
 import { renderBlockedReportText } from "./blocked-report.mjs"
 
 /**

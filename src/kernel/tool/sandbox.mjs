@@ -22,7 +22,7 @@ import os from "node:os"
 import path from "node:path"
 import { execFile as execFileCb } from "node:child_process"
 import { promisify } from "node:util"
-import { userRootDir } from "../storage/paths.mjs"
+import { userRootDir } from "../../storage/paths.mjs"
 
 const execFile = promisify(execFileCb)
 

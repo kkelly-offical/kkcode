@@ -9,7 +9,7 @@ import { getAgentPrompt, listAgents } from "../agent/agent.mjs"
 import { loadAutoMemory } from "./memory-loader.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const TOOL_PROMPT_DIR = path.join(__dirname, "..", "tool", "prompt")
+const TOOL_PROMPT_DIR = path.join(__dirname, "..", "kernel", "tool", "prompt")
 
 const toolPromptCache = new Map()
 

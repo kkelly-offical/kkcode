@@ -15,8 +15,8 @@ import {
   normalizeDroppedPath,
   readImageAsBlock,
   sniffImageMediaType
-} from "../src/tool/image-util.mjs"
-import { ToolRegistry } from "../src/tool/registry.mjs"
+} from "../src/kernel/tool/image-util.mjs"
+import { ToolRegistry } from "../src/kernel/tool/registry.mjs"
 
 const CWD = "/work"
 

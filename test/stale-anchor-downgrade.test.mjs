@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import path from "node:path"
 import os from "node:os"
 import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises"
-import { ToolRegistry } from "../src/tool/registry.mjs"
+import { ToolRegistry } from "../src/kernel/tool/registry.mjs"
 
 const registryConfig = { tool: { sources: { builtin: true, local: false, plugin: false, mcp: false } } }
 

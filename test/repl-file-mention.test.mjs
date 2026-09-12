@@ -13,7 +13,7 @@ import {
   createIgnoreMatcher,
   rankCandidates
 } from "../src/repl/file-mention.mjs"
-import { extractImageRefs } from "../src/tool/image-util.mjs"
+import { extractImageRefs } from "../src/kernel/tool/image-util.mjs"
 
 /**
  * `@` 引用任意文件。

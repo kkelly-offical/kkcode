@@ -1,4 +1,4 @@
-import { askQuestionInteractive, hasPromptHandler } from "../tool/question-prompt.mjs"
+import { askQuestionInteractive, hasPromptHandler } from "../kernel/tool/question-prompt.mjs"
 
 /**
  * 开工前的需求澄清 —— Ultra 与 plan 模式共用。

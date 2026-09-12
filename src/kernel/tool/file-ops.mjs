@@ -4,7 +4,7 @@ import { createWriteStream, createReadStream } from "node:fs"
 import { createGzip } from "node:zlib"
 import { pipeline } from "node:stream/promises"
 import { resolveWorkspacePath } from "./workspace-fs.mjs"
-import { findProtectedTarget } from "../kernel/permission/protected-paths.mjs"
+import { findProtectedTarget } from "../permission/protected-paths.mjs"
 
 /**
  * 文件管理工具：move / copy / remove / mkdir / archive。

@@ -3,7 +3,7 @@ import { normalizePermissionLevel } from "../kernel/permission/rules.mjs"
 import { renderReplDashboard, renderReplLogo, renderStartupHint } from "./repl-dashboard.mjs"
 import { formatRuntimeStateText } from "./repl-turn-summary.mjs"
 import { renderOperatorPanel } from "./repl-operator-panel.mjs"
-import { formatSandboxLine } from "../tool/sandbox.mjs"
+import { formatSandboxLine } from "../kernel/tool/sandbox.mjs"
 
 export function renderReplStatusLine({
   state,

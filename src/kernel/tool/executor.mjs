@@ -1,4 +1,4 @@
-import { makeToolResult, isToolSuccess } from "../kernel/core/types.mjs"
+import { makeToolResult, isToolSuccess } from "../core/types.mjs"
 /**
  * 从工具返回值里取出图片附件。
  *
@@ -14,11 +14,11 @@ function parseImagePayload(raw) {
   return { data: raw.data, mediaType: raw.mediaType || "image/png" }
 }
 
-import { EventBus } from "../kernel/core/events.mjs"
-import { EVENT_TYPES } from "../kernel/core/constants.mjs"
+import { EventBus } from "../core/events.mjs"
+import { EVENT_TYPES } from "../core/constants.mjs"
 import { withAudit } from "./audit-wrapper.mjs"
-import { autoSnapshotBeforeEdit } from "../session/checkpoint.mjs"
-import { buildMutationObservability } from "../observability/edit-diagnostics.mjs"
+import { autoSnapshotBeforeEdit } from "../../session/checkpoint.mjs"
+import { buildMutationObservability } from "../../observability/edit-diagnostics.mjs"
 
 const FILE_EDIT_TOOLS = new Set(["write", "edit", "multiedit", "patch", "notebookedit"])
 // 同一 turn 可能并行触发多个编辑工具。只记一个 boolean 会让第二个工具越过仍在

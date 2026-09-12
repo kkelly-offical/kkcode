@@ -1,4 +1,4 @@
-import { startAuditSpan, summarizeAuditContent } from "../audit/event.mjs"
+import { startAuditSpan, summarizeAuditContent } from "../../audit/event.mjs"
 
 export async function withAudit({
   sessionId,

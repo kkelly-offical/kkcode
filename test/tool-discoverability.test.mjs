@@ -3,12 +3,12 @@ import assert from "node:assert/strict"
 import path from "node:path"
 import { readFile, readdir } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
-import { ToolRegistry } from "../src/tool/registry.mjs"
+import { ToolRegistry } from "../src/kernel/tool/registry.mjs"
 import { PermissionEngine } from "../src/kernel/permission/engine.mjs"
 import { PermissionError } from "../src/kernel/core/errors.mjs"
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
-const PROMPT_DIR = path.join(ROOT, "src", "tool", "prompt")
+const PROMPT_DIR = path.join(ROOT, "src", "kernel", "tool", "prompt")
 const registryConfig = { tool: { sources: { builtin: true, local: false, plugin: false, mcp: false } } }
 
 /**
@@ -30,7 +30,7 @@ async function listTools(mode = "agent") {
 }
 
 test("every registered builtin tool has a prompt file, since that is what the model reads", async () => {
-  // 工具的 description 很短，模型看到的详细说明来自 src/tool/prompt/<name>.txt
+  // 工具的 description 很短，模型看到的详细说明来自 src/kernel/tool/prompt/<name>.txt
   // （system-prompt 的第 5 层）。缺文件不会报错，只会让工具在模型眼里模糊不清。
   const tools = await listTools()
   const files = new Set((await readdir(PROMPT_DIR)).map((f) => f.replace(/\.txt$/, "")))

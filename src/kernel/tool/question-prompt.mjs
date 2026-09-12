@@ -1,4 +1,4 @@
-import { noteDeprecation } from "../kernel/core/deprecations.mjs"
+import { noteDeprecation } from "../core/deprecations.mjs"
 
 /**
  * 计划做完之后的去向。**顺序即编号** —— 下面解析答案时的数字回落由这个数组

@@ -188,7 +188,7 @@ describe("getSessionSnapshots session isolation", () => {
 
   it("awaits the automatic snapshot before the first edit tool mutates the workspace", async () => {
     const { execFileSync } = await import("node:child_process")
-    const { executeTool } = await import("../src/tool/executor.mjs")
+    const { executeTool } = await import("../src/kernel/tool/executor.mjs")
     const { restoreLastSessionSnapshot } = await import("../src/session/checkpoint.mjs")
 
     const repoDir = path.join(tmpDir, "executor-snapshot-repo")
@@ -228,7 +228,7 @@ describe("getSessionSnapshots session isolation", () => {
 
   it("retries a failed snapshot before a later edit in the same turn", async () => {
     const { execFileSync } = await import("node:child_process")
-    const { executeTool } = await import("../src/tool/executor.mjs")
+    const { executeTool } = await import("../src/kernel/tool/executor.mjs")
     const { getSessionSnapshots, restoreLastSessionSnapshot } = await import("../src/session/checkpoint.mjs")
 
     const repoDir = path.join(tmpDir, "executor-snapshot-retry-repo")

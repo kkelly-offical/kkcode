@@ -3,8 +3,8 @@ import assert from "node:assert/strict"
 import { mkdtemp, writeFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { toolOutputBudget, truncationNotice, completeNotice } from "../src/tool/output-budget.mjs"
-import { ToolRegistry, looksBinary } from "../src/tool/registry.mjs"
+import { toolOutputBudget, truncationNotice, completeNotice } from "../src/kernel/tool/output-budget.mjs"
+import { ToolRegistry, looksBinary } from "../src/kernel/tool/registry.mjs"
 import { modelContextLimit } from "../src/session/compaction.mjs"
 
 /**

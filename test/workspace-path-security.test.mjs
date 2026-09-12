@@ -3,8 +3,8 @@ import assert from "node:assert/strict"
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { ToolRegistry } from "../src/tool/registry.mjs"
-import { resolveWorkspacePath, WorkspaceFs, WorkspacePathError } from "../src/tool/workspace-fs.mjs"
+import { ToolRegistry } from "../src/kernel/tool/registry.mjs"
+import { resolveWorkspacePath, WorkspaceFs, WorkspacePathError } from "../src/kernel/tool/workspace-fs.mjs"
 
 const config = {
   tool: {

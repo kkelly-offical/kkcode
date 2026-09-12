@@ -1,7 +1,7 @@
 import path from "node:path"
 import { createHash } from "node:crypto"
 import { mkdir, open, unlink, writeFile } from "node:fs/promises"
-import { userRootDir } from "../storage/paths.mjs"
+import { userRootDir } from "../../storage/paths.mjs"
 
 const LOCK_POLL_MS = 80
 

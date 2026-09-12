@@ -13,7 +13,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { DEFAULT_THEME } from "../src/theme/default-theme.mjs"
 import { renderRuntimeDashboardView } from "../src/ui/repl-status-view.mjs"
 import { buildReplRuntimeSnapshot } from "../src/repl/runtime-facade.mjs"
-import { formatSandboxLine, describeSandboxStatus, resetSandboxSupportCache } from "../src/tool/sandbox.mjs"
+import { formatSandboxLine, describeSandboxStatus, resetSandboxSupportCache } from "../src/kernel/tool/sandbox.mjs"
 
 const baseState = {
   sessionId: "ses_sandbox",

@@ -35,7 +35,7 @@ import { askBlockedDecision, confirmManualCriteria } from "./ultra-interaction.m
 import { resolveUltraStatus, exitCodeForUltraStatus, sessionStatusForUltraStatus, ULTRA_STATUS } from "./ultra-status.mjs"
 import { buildBlockedReport, renderBlockedReportMarkdown } from "./blocked-report.mjs"
 import { verifyStageObjective, OBJECTIVE_MET } from "./stage-objective.mjs"
-import { hasPromptHandler, askQuestionInteractive } from "../tool/question-prompt.mjs"
+import { hasPromptHandler, askQuestionInteractive } from "../kernel/tool/question-prompt.mjs"
 import { noteDeprecation } from "../kernel/core/deprecations.mjs"
 import {
   isComplete,

@@ -146,7 +146,7 @@ test("a 302 downgrades POST to GET and drops the body, as the spec requires", as
 })
 
 test("http_request supports methods, headers and body; webfetch stays GET-only", async () => {
-  const { ToolRegistry } = await import("../src/tool/registry.mjs")
+  const { ToolRegistry } = await import("../src/kernel/tool/registry.mjs")
   const seen = []
   const { server, port } = await listen((req, res) => {
     const chunks = []
@@ -193,7 +193,7 @@ test("http_request supports methods, headers and body; webfetch stays GET-only",
 })
 
 test("header names with control characters are dropped, not forwarded", async () => {
-  const { ToolRegistry } = await import("../src/tool/registry.mjs")
+  const { ToolRegistry } = await import("../src/kernel/tool/registry.mjs")
   const { server, port } = await listen((req, res) => res.end("ok"))
   try {
     const config = {

@@ -124,7 +124,7 @@ test("路径一律用正斜杠 —— 否则整个扫描器在 Windows 上静默
   assert.deepEqual(withBackslash.map((f) => f.path), [], "路径里不该出现反斜杠")
 
   // 关键的几个锚点必须真的能命中，而不是恰好没人用
-  for (const anchor of ["src/kernel/permission/rules.mjs", "src/session/loop.mjs", "src/tool/registry.mjs"]) {
+  for (const anchor of ["src/kernel/permission/rules.mjs", "src/session/loop.mjs", "src/kernel/tool/registry.mjs"]) {
     assert.ok(FILES.some((f) => f.path === anchor), `锚点 ${anchor} 没被扫到`)
   }
 })

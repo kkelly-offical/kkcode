@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { createTaskGroupTool, createTaskTool } from "../src/tool/task-tool.mjs"
+import { createTaskGroupTool, createTaskTool } from "../src/kernel/tool/task-tool.mjs"
 
 test("task tool exposes delegation-focused schema fields", () => {
   const tool = createTaskTool()

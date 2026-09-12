@@ -14,8 +14,8 @@ import path from "node:path"
 import os from "node:os"
 import http from "node:http"
 import { mkdtemp, rm, readFile, readlink, realpath } from "node:fs/promises"
-import { ToolRegistry } from "../src/tool/registry.mjs"
-import { probeBwrap, resetSandboxSupportCache, resetSandboxNotices } from "../src/tool/sandbox.mjs"
+import { ToolRegistry } from "../src/kernel/tool/registry.mjs"
+import { probeBwrap, resetSandboxSupportCache, resetSandboxNotices } from "../src/kernel/tool/sandbox.mjs"
 
 const hasBwrap = process.platform === "linux" ? await probeBwrap() : false
 const skipReason = process.platform !== "linux"

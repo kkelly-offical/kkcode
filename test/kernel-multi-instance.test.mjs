@@ -11,7 +11,7 @@ import { createKernel } from "../src/kernel/index.mjs"
 // shutdown 重试）需要观察进程级默认值，故直接引用默认引擎/槽位/总线。
 import { PermissionEngine } from "../src/kernel/permission/engine.mjs"
 import { defaultPermissionPromptChannel } from "../src/kernel/permission/prompt.mjs"
-import { defaultQuestionPromptChannel } from "../src/tool/question-prompt.mjs"
+import { defaultQuestionPromptChannel } from "../src/kernel/tool/question-prompt.mjs"
 import { defaultEventBus } from "../src/kernel/core/events.mjs"
 import { configureSessionStore } from "../src/session/store.mjs"
 import { sessionDataPath } from "../src/storage/paths.mjs"

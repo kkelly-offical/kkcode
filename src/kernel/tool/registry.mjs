@@ -7,24 +7,24 @@ import { promisify } from "node:util"
 import { pathToFileURL } from "node:url"
 import { atomicWriteFile, replaceInFileTransactional, replaceAllInFileTransactional, diffLineCount, buildStructuredPatch } from "./edit-transaction.mjs"
 import { withFileLock } from "./file-lock-manager.mjs"
-import { BackgroundManager } from "../orchestration/background-manager.mjs"
+import { BackgroundManager } from "../../orchestration/background-manager.mjs"
 import { createTaskTool, createTaskGroupTool } from "./task-tool.mjs"
-import { McpRegistry } from "../mcp/registry.mjs"
-import { SkillRegistry } from "../skill/registry.mjs"
+import { McpRegistry } from "../../mcp/registry.mjs"
+import { SkillRegistry } from "../../skill/registry.mjs"
 import { askQuestionInteractive } from "./question-prompt.mjs"
-import { checkBashAllowed } from "../kernel/permission/exec-policy.mjs"
+import { checkBashAllowed } from "../permission/exec-policy.mjs"
 import { inflateSync } from "node:zlib"
 import { truncationNotice, completeNotice } from "./output-budget.mjs"
-import { guardedFetch, allowPrivateHosts } from "../net/url-guard.mjs"
+import { guardedFetch, allowPrivateHosts } from "../../net/url-guard.mjs"
 import { fileOpsTools } from "./file-ops.mjs"
-import { normalizePermissionLevel } from "../kernel/permission/rules.mjs"
+import { normalizePermissionLevel } from "../permission/rules.mjs"
 import { gitAutoTools } from "./git-auto.mjs"
 import { gitFullAutoTools } from "./git-full-auto.mjs"
 import { markFileRead, refreshFileReadStateFromDisk } from "./file-read-state.mjs"
 import { validateExistingFileMutation } from "./mutation-guard.mjs"
-import { buildMutationObservability } from "../observability/edit-diagnostics.mjs"
+import { buildMutationObservability } from "../../observability/edit-diagnostics.mjs"
 import { resolveWorkspacePath } from "./workspace-fs.mjs"
-import { buildRequestHeaders } from "../http/identity.mjs"
+import { buildRequestHeaders } from "../../http/identity.mjs"
 import { IMAGE_EXTENSIONS, IMAGE_MIME_TYPES } from "./image-util.mjs"
 import {
   readSandboxConfig,
@@ -34,8 +34,8 @@ import {
   takeSandboxUnavailableNotice,
   sandboxFailureHint
 } from "./sandbox.mjs"
-import { userRootDir } from "../storage/paths.mjs"
-import { deprecatedSingletonAlias } from "../kernel/core/deprecations.mjs"
+import { userRootDir } from "../../storage/paths.mjs"
+import { deprecatedSingletonAlias } from "../core/deprecations.mjs"
 
 const exec = promisify(execCb)
 const execFile = promisify(execFileCb)

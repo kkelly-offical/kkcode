@@ -3,7 +3,7 @@ import { readdir, readFile } from "node:fs/promises"
 import { Command } from "commander"
 
 const SESSION_PROMPT_DIR = path.resolve("src/session/prompt")
-const TOOL_PROMPT_DIR = path.resolve("src/tool/prompt")
+const TOOL_PROMPT_DIR = path.resolve("src/kernel/tool/prompt")
 
 async function listFiles(dir) {
   const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])

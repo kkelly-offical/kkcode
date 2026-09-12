@@ -4,7 +4,7 @@ import { homedir, tmpdir } from "node:os"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import path from "node:path"
-import { buildRequestHeaders } from "../http/identity.mjs"
+import { buildRequestHeaders } from "../../http/identity.mjs"
 
 const execFileAsync = promisify(execFile)
 

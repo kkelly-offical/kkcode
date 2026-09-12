@@ -1,8 +1,8 @@
 import path from "node:path"
 import { mkdir } from "node:fs/promises"
-import { userRootDir } from "../storage/paths.mjs"
-import { readJson, writeJson } from "../storage/json-store.mjs"
-import { findProtectedTarget } from "../kernel/permission/protected-paths.mjs"
+import { userRootDir } from "../../storage/paths.mjs"
+import { readJson, writeJson } from "../../storage/json-store.mjs"
+import { findProtectedTarget } from "../permission/protected-paths.mjs"
 import {
   isGitRepo,
   createGhostCommit,
@@ -12,7 +12,7 @@ import {
   getGitInfo,
   getDiff,
   getStagedDiff
-} from "../util/git.mjs"
+} from "../../util/git.mjs"
 import {
   saveGhostCommit,
   loadGhostCommit,
@@ -20,7 +20,7 @@ import {
   deleteGhostCommit,
   getLatestGhostCommit,
   cleanupAllExpired
-} from "../storage/ghost-commit-store.mjs"
+} from "../../storage/ghost-commit-store.mjs"
 
 /**
  * Git 自动化工具模块

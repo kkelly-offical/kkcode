@@ -24,7 +24,7 @@ const PREFS = path.join(tmpHome, "gate-preferences.json")
 const { parseGateSelection, saveGatePreferences, getGatePreferences, hasGatePreferences } =
   await import("../src/session/usability-gates.mjs")
 const { hasPromptHandler, setQuestionPromptHandler } =
-  await import("../src/tool/question-prompt.mjs")
+  await import("../src/kernel/tool/question-prompt.mjs")
 
 test.after(async () => {
   await rm(tmpHome, { recursive: true, force: true }).catch(() => {})

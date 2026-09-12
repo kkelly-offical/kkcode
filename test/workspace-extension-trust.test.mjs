@@ -9,7 +9,7 @@ import {
 } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { ToolRegistry } from "../src/tool/registry.mjs"
+import { ToolRegistry } from "../src/kernel/tool/registry.mjs"
 import { SkillRegistry } from "../src/skill/registry.mjs"
 import { HookBus, initHookBus } from "../src/plugin/hook-bus.mjs"
 import { McpRegistry } from "../src/mcp/registry.mjs"

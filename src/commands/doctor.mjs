@@ -10,7 +10,7 @@ import { fsckSessionStore, flushNow } from "../session/store.mjs"
 import { BackgroundManager } from "../orchestration/background-manager.mjs"
 import { buildRequestHeaders, redactHeaders } from "../http/identity.mjs"
 import { resolveProviderConnection } from "../provider/model-catalog.mjs"
-import { inspectSandboxStatus, formatSandboxLine } from "../tool/sandbox.mjs"
+import { inspectSandboxStatus, formatSandboxLine } from "../kernel/tool/sandbox.mjs"
 
 const exec = promisify(execCb)
 

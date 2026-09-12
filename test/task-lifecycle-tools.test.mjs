@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { ToolRegistry } from "../src/tool/registry.mjs"
+import { ToolRegistry } from "../src/kernel/tool/registry.mjs"
 import { BackgroundManager } from "../src/orchestration/background-manager.mjs"
 
 const TEST_CONFIG = {

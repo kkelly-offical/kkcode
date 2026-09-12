@@ -6,7 +6,7 @@ import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises"
 import {
   readClipboardImage,
   readClipboardText
-} from "../src/tool/image-util.mjs"
+} from "../src/kernel/tool/image-util.mjs"
 
 // 剪贴板里拿到的字节必须真的是图片。fixture 也得是真的 —— 用 "mock png" 这种
 // 文本当图片，测出来的就只是「代码没看字节」这个 bug 本身。
