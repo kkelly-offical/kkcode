@@ -3,6 +3,7 @@ import { access, readdir } from "node:fs/promises"
 import { pathToFileURL, fileURLToPath } from "node:url"
 import { userRootDir } from "../storage/paths.mjs"
 import { discoverLocalPluginManifests } from "./manifest-loader.mjs"
+import { noteDeprecation, deprecatedSingletonAlias } from "../core/deprecations.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -15,14 +16,6 @@ const HOOK_EVENTS = [
   "event",
   "session.compacting"
 ]
-
-const state = {
-  loaded: false,
-  hooks: [],
-  errors: [],
-  warnedPluginAlias: false,
-  signature: ""
-}
 
 function normalizeHook(mod, source) {
   const hook = mod.default || mod
@@ -63,62 +56,6 @@ async function loadModule(file) {
   }
 }
 
-export async function initHookBus(cwd = process.cwd(), config = {}, {
-  allowProjectSources = true,
-  force = false
-} = {}) {
-  const signature = JSON.stringify({
-    cwd: path.resolve(cwd),
-    allowProjectSources,
-    compat: config?.compat || {}
-  })
-  if (state.loaded && !force && state.signature === signature) return state
-  state.loaded = false
-  state.hooks = []
-  state.errors = []
-  // Built-in hooks ship with kkcode (lowest priority — user hooks can override)
-  const builtinHooks = path.join(__dirname, "builtin-hooks")
-  const userHooks = path.join(userRootDir(), "hooks")
-  const projectPluginHooks = path.join(cwd, ".kkcode", "plugins")
-  const projectHooks = path.join(cwd, ".kkcode", "hooks")
-  // Load order: builtin → user → project plugin alias → project hooks
-  // `.kkcode/plugins` remains a compatibility alias for hook scripts while
-  // `.kkcode/hooks` is the explicit project hook path.
-  const pluginAliasFiles = allowProjectSources ? await discover(projectPluginHooks) : []
-  const manifestState = await discoverLocalPluginManifests(cwd, config, {
-    allowProjectSources
-  })
-  state.errors.push(...manifestState.errors)
-  const manifestHookDirs = manifestState.plugins
-    .filter((plugin) => plugin.enabled !== false && plugin.hooksEnabled !== false)
-    .filter((plugin) => (plugin.sourceEcosystem || plugin.ecosystem || "kkcode") === "kkcode" || config?.compat?.plugins?.execute_external_hooks === true)
-    .flatMap((plugin) => plugin.hooks || [])
-  const manifestHookFiles = []
-  for (const dir of manifestHookDirs) manifestHookFiles.push(...await discover(dir))
-  if (pluginAliasFiles.length && !state.warnedPluginAlias) {
-    state.errors.push("deprecated hook path: .kkcode/plugins is a compatibility alias for loose hook scripts; prefer .kkcode/hooks or a plugin.json package boundary")
-    state.warnedPluginAlias = true
-  }
-  const files = [
-    ...(await discover(builtinHooks)),
-    ...(await discover(userHooks)),
-    ...pluginAliasFiles,
-    ...manifestHookFiles,
-    ...(allowProjectSources ? await discover(projectHooks) : [])
-  ]
-  for (const file of files) {
-    const loaded = await loadModule(file)
-    if (loaded.error) {
-      state.errors.push(loaded.error)
-      continue
-    }
-    if (loaded.hook) state.hooks.push(loaded.hook)
-  }
-  state.loaded = true
-  state.signature = signature
-  return state
-}
-
 async function applyTransformChain(initial, chain) {
   let current = initial
   for (const fn of chain) {
@@ -128,66 +65,160 @@ async function applyTransformChain(initial, chain) {
   return current
 }
 
-export const HookBus = {
-  supportedEvents() {
-    return [...HOOK_EVENTS]
-  },
-  list() {
-    return state.hooks.map((hook) => ({ name: hook.name, source: hook.source }))
-  },
-  errors() {
-    return [...state.errors]
-  },
-  async chatParams(payload) {
-    const chain = state.hooks
-      .map((hook) => hook.chat?.params)
-      .filter((fn) => typeof fn === "function")
-      .map((fn) => async (current) => fn(current))
-    return applyTransformChain(payload, chain)
-  },
-  async chatMessage(payload) {
-    const chain = state.hooks
-      .map((hook) => hook.chat?.message)
-      .filter((fn) => typeof fn === "function")
-      .map((fn) => async (current) => fn(current))
-    return applyTransformChain(payload, chain)
-  },
-  async messagesTransform(payload) {
-    const chain = state.hooks
-      .map((hook) => hook.chat?.messagesTransform)
-      .filter((fn) => typeof fn === "function")
-      .map((fn) => async (current) => fn(current))
-    return applyTransformChain(payload, chain)
-  },
-  async toolBefore(payload) {
-    const chain = state.hooks
-      .map((hook) => hook.tool?.before)
-      .filter((fn) => typeof fn === "function")
-      .map((fn) => async (current) => fn(current))
-    return applyTransformChain(payload, chain)
-  },
-  async toolAfter(payload) {
-    const chain = state.hooks
-      .map((hook) => hook.tool?.after)
-      .filter((fn) => typeof fn === "function")
-      .map((fn) => async (current) => fn(current))
-    return applyTransformChain(payload, chain)
-  },
-  async emit(eventType, payload) {
-    for (const hook of state.hooks) {
-      if (!hook.event) continue
-      try {
-        await hook.event({ type: eventType, payload })
-      } catch (err) {
-        console.error(`[hook-bus] emit error in ${hook.name}:`, err?.message || err)
-      }
-    }
-  },
-  async sessionCompacting(payload) {
-    const chain = state.hooks
-      .map((hook) => hook.session?.compacting)
-      .filter((fn) => typeof fn === "function")
-      .map((fn) => async (current) => fn(current))
-    return applyTransformChain(payload, chain)
+/**
+ * HookBus 工厂（1.0.0 阶段 2a）：hook 列表 / 错误 / 签名缓存收编为实例字段
+ * （M3 §四.2），每个 kernel 实例一份。`initialize` 即原模块级 initHookBus。
+ */
+export function createHookBus() {
+  const state = {
+    loaded: false,
+    hooks: [],
+    errors: [],
+    warnedPluginAlias: false,
+    signature: ""
   }
+
+  async function initialize(cwd = process.cwd(), config = {}, {
+    allowProjectSources = true,
+    force = false
+  } = {}) {
+    const signature = JSON.stringify({
+      cwd: path.resolve(cwd),
+      allowProjectSources,
+      compat: config?.compat || {}
+    })
+    if (state.loaded && !force && state.signature === signature) return state
+    state.loaded = false
+    state.hooks = []
+    state.errors = []
+    // Built-in hooks ship with kkcode (lowest priority — user hooks can override)
+    const builtinHooks = path.join(__dirname, "builtin-hooks")
+    const userHooks = path.join(userRootDir(), "hooks")
+    const projectPluginHooks = path.join(cwd, ".kkcode", "plugins")
+    const projectHooks = path.join(cwd, ".kkcode", "hooks")
+    // Load order: builtin → user → project plugin alias → project hooks
+    // `.kkcode/plugins` remains a compatibility alias for hook scripts while
+    // `.kkcode/hooks` is the explicit project hook path.
+    const pluginAliasFiles = allowProjectSources ? await discover(projectPluginHooks) : []
+    const manifestState = await discoverLocalPluginManifests(cwd, config, {
+      allowProjectSources
+    })
+    state.errors.push(...manifestState.errors)
+    const manifestHookDirs = manifestState.plugins
+      .filter((plugin) => plugin.enabled !== false && plugin.hooksEnabled !== false)
+      .filter((plugin) => (plugin.sourceEcosystem || plugin.ecosystem || "kkcode") === "kkcode" || config?.compat?.plugins?.execute_external_hooks === true)
+      .flatMap((plugin) => plugin.hooks || [])
+    const manifestHookFiles = []
+    for (const dir of manifestHookDirs) manifestHookFiles.push(...await discover(dir))
+    if (pluginAliasFiles.length && !state.warnedPluginAlias) {
+      state.errors.push("deprecated hook path: .kkcode/plugins is a compatibility alias for loose hook scripts; prefer .kkcode/hooks or a plugin.json package boundary")
+      state.warnedPluginAlias = true
+    }
+    const files = [
+      ...(await discover(builtinHooks)),
+      ...(await discover(userHooks)),
+      ...pluginAliasFiles,
+      ...manifestHookFiles,
+      ...(allowProjectSources ? await discover(projectHooks) : [])
+    ]
+    for (const file of files) {
+      const loaded = await loadModule(file)
+      if (loaded.error) {
+        state.errors.push(loaded.error)
+        continue
+      }
+      if (loaded.hook) state.hooks.push(loaded.hook)
+    }
+    state.loaded = true
+    state.signature = signature
+    return state
+  }
+
+  return {
+    initialize,
+    supportedEvents() {
+      return [...HOOK_EVENTS]
+    },
+    list() {
+      return state.hooks.map((hook) => ({ name: hook.name, source: hook.source }))
+    },
+    errors() {
+      return [...state.errors]
+    },
+    async chatParams(payload) {
+      const chain = state.hooks
+        .map((hook) => hook.chat?.params)
+        .filter((fn) => typeof fn === "function")
+        .map((fn) => async (current) => fn(current))
+      return applyTransformChain(payload, chain)
+    },
+    async chatMessage(payload) {
+      const chain = state.hooks
+        .map((hook) => hook.chat?.message)
+        .filter((fn) => typeof fn === "function")
+        .map((fn) => async (current) => fn(current))
+      return applyTransformChain(payload, chain)
+    },
+    async messagesTransform(payload) {
+      const chain = state.hooks
+        .map((hook) => hook.chat?.messagesTransform)
+        .filter((fn) => typeof fn === "function")
+        .map((fn) => async (current) => fn(current))
+      return applyTransformChain(payload, chain)
+    },
+    async toolBefore(payload) {
+      const chain = state.hooks
+        .map((hook) => hook.tool?.before)
+        .filter((fn) => typeof fn === "function")
+        .map((fn) => async (current) => fn(current))
+      return applyTransformChain(payload, chain)
+    },
+    async toolAfter(payload) {
+      const chain = state.hooks
+        .map((hook) => hook.tool?.after)
+        .filter((fn) => typeof fn === "function")
+        .map((fn) => async (current) => fn(current))
+      return applyTransformChain(payload, chain)
+    },
+    async emit(eventType, payload) {
+      for (const hook of state.hooks) {
+        if (!hook.event) continue
+        try {
+          await hook.event({ type: eventType, payload })
+        } catch (err) {
+          console.error(`[hook-bus] emit error in ${hook.name}:`, err?.message || err)
+        }
+      }
+    },
+    async sessionCompacting(payload) {
+      const chain = state.hooks
+        .map((hook) => hook.session?.compacting)
+        .filter((fn) => typeof fn === "function")
+        .map((fn) => async (current) => fn(current))
+      return applyTransformChain(payload, chain)
+    }
+  }
+}
+
+const defaultHookBus = createHookBus()
+
+/**
+ * 兼容别名（deprecated）：进程级默认 HookBus 实例。旧 import 路径继续工作，
+ * 每次方法调用经 deprecations.mjs 记录；新代码用 createKernel() 句柄的
+ * `extensions.hooks`。
+ */
+export const HookBus = deprecatedSingletonAlias(
+  "kernel.singleton.hook-bus",
+  "模块级单例 `HookBus` 已收编为 kernel 实例字段：新代码改用 createKernel() 句柄的 `extensions.hooks`",
+  defaultHookBus
+)
+
+/** 兼容别名（deprecated）：等价于默认实例的 `initialize`。 */
+export function initHookBus(cwd = process.cwd(), config = {}, options = {}) {
+  noteDeprecation(
+    "kernel.singleton.hook-bus",
+    "模块级 `initHookBus` 已收编为 kernel 实例方法：新代码改用 createKernel() 句柄的 `extensions.hooks.initialize`",
+    { removal: "1.x" }
+  )
+  return defaultHookBus.initialize(cwd, config, options)
 }
