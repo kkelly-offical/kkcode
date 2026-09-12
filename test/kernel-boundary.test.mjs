@@ -38,14 +38,24 @@ test("扫描器三种 import 形态都看得见 —— 防止扫描器静默失�
     `import { a } from "../kernel/session/store.mjs"`,
     `export { b } from "../kernel/core/modes.mjs"`,
     `const { c } = await import("../kernel/session/engine.mjs")`,
+    // review round 1 P2-1：行中形态（return/if 后的动态 import）在旧的行首
+    // 锚定版本下整条逃逸，必须能抓到
+    `export async function f() { return await import("../kernel/session/store.mjs") }`,
+    `if (cond) await import("../kernel/provider/router.mjs")`,
     `// import { fake } from "../kernel/comment-literal.mjs"`,
+    `// return await import("../kernel/comment-dynamic.mjs")`,
+    // 模板字符串里的文档示例不是边（src/kernel/skill/builtin/frontend.mjs 的
+    // Vue/React 路由示例就是这种形态，实测会命中无锚动态规则）
+    "const doc = `- Lazy-load pages: () => import('../views/About.vue')`",
     `const text = "import(\\"../kernel/string-literal.mjs\\")"`
   ].join("\n"))
   assert.deepEqual(specs, [
     "../kernel/session/store.mjs",
     "../kernel/core/modes.mjs",
-    "../kernel/session/engine.mjs"
-  ], "静态/再导出/动态三种形态必须全部提取，注释与字符串字面量不得算边")
+    "../kernel/session/engine.mjs",
+    "../kernel/session/store.mjs",
+    "../kernel/provider/router.mjs"
+  ], "静态/再导出/动态（含行中形态）必须全部提取，注释与字符串字面量不得算边")
 
   // 端到端：在一棵假树上同时种正/反向违规与一条 facade 白名单边，
   // 违规必须逐条命中、白名单必须豁免。
@@ -60,8 +70,9 @@ test("扫描器三种 import 形态都看得见 —— 防止扫描器静默失�
       `import { x } from "../kernel/index.mjs"\nexport { x }\n`)
     await writeFile(path.join(fake, "src/repl/bad.mjs"),
       `import { y } from "../kernel/session/store.mjs"\nexport { y }\n`)
+    // review round 1 P2-1 的种植形态：行中 return await import（行首锚定会漏）
     await writeFile(path.join(fake, "src/ui/bad-dynamic.mjs"),
-      `export async function load() {\n  const { z } = await import("../kernel/session/store.mjs")\n  return z\n}\n`)
+      `export async function load() {\n  return await import("../kernel/session/store.mjs")\n}\n`)
     await writeFile(path.join(fake, "src/kernel/session/reverse.mjs"),
       `import { w } from "../../ui/bad-dynamic.mjs"\nexport { w }\n`)
 
