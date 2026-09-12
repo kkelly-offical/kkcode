@@ -73,7 +73,7 @@ export const EVENT_TYPES = {
   STREAM_THINKING_DELTA: "stream.thinking.delta",
   // 阶段 3a（渲染解耦）：loop 的用户可见输出纯化为数据事件，ANSI/markdown
   // 渲染移到 frontends 的字节渲染 sink（src/theme/stream-byte-renderer.mjs，
-  // 经 session/render-stream.mjs 的注册槽接入）。这四个类型补齐原字节流里
+  // 经 session/render-stream.mjs 的注册槽接入）。这些类型补齐原字节流里
   // 只有 ANSI 没有事件的语义点：流内工具调用、provider 端压缩提示、流结束、
   // 以及两条回合级通知（自动续写 / 任务验证跳过）。
   STREAM_TOOL_CALL: "stream.tool_call",

@@ -9,7 +9,7 @@ import { ToolRegistry } from "../src/tool/registry.mjs"
 import { EventBus } from "../src/core/events.mjs"
 import { EVENT_TYPES } from "../src/core/constants.mjs"
 import { processTurnLoop } from "../src/session/loop.mjs"
-import { registerStreamByteRenderer } from "../src/session/render-stream.mjs"
+import { createRenderStream, registerStreamByteRenderer } from "../src/session/render-stream.mjs"
 import { setColorEnabled } from "../src/theme/color.mjs"
 import { createStreamByteRenderer, installStreamByteRenderer } from "../src/theme/stream-byte-renderer.mjs"
 
@@ -236,6 +236,37 @@ test("渲染快照：新增数据事件按语义出现在纯化后的 output 通
   } finally {
     setColorEnabled(null)
   }
+})
+
+test("渲染快照：turn.validation_skipped 事件语义与相对顺序（直接驱动 render-stream）", async () => {
+  // validationSkipped 在 loop 里生于 validator 的 catch（流收尾之后、回合结束之前），
+  // mock provider 无法稳定构造那条路径 —— 直接驱动渲染流，钉住与其余四个新事件
+  // 对称的事件语义：类型、payload（step + message）、envelope（sessionId/turnId）、
+  // 以及它落在 stream.end 之后的相对顺序。
+  const events = []
+  const render = createRenderStream({
+    output: null,
+    renderMarkdown: false,
+    eventBus: { emit: async (event) => { events.push(event); return event } },
+    sessionId: "ses_validation_event",
+    turnId: "turn_validation_event"
+  })
+
+  render.beginStep(1)
+  await render.textDelta(1, "正文\n")
+  await render.streamEnd(1)
+  await render.validationSkipped(1, "boom")
+
+  assert.deepEqual(events.map((event) => event.type), [
+    EVENT_TYPES.STREAM_TEXT_START,
+    EVENT_TYPES.STREAM_TEXT_DELTA,
+    EVENT_TYPES.STREAM_END,
+    EVENT_TYPES.TURN_VALIDATION_SKIPPED
+  ], "validation_skipped 应落在 stream.end 之后（与 loop 的 validator catch 位置一致）")
+  const event = events.at(-1)
+  assert.deepEqual(event.payload, { step: 1, message: "boom" })
+  assert.equal(event.sessionId, "ses_validation_event")
+  assert.equal(event.turnId, "turn_validation_event")
 })
 
 test("字节渲染器：通知模板与迁移前 paint() 输出逐字节一致", async () => {
