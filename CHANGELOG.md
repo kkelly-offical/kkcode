@@ -1,5 +1,48 @@
 # Changelog / 更新日志
 
+## 0.9.3
+
+后台 worktree 成果回收：handoff / apply / discard 生命周期补全。
+
+### English
+
+- **Worktree handoff closes the loop.** A background task delegated with
+  `isolation="worktree"` keeps its changes in a preserved detached worktree;
+  `kkcode background apply --id <task_id>` now brings them back into the main
+  checkout, and `kkcode background discard --id <task_id>` drops them. Apply
+  is all-or-nothing by default: an overlapping-uncommitted-change guard
+  (`--force` to bypass), a `git apply --check` preflight, a ghost-commit
+  snapshot recorded before mutation, and an atomic apply. `--3way` is an
+  explicit opt-in because it can leave conflict markers; `--dry-run` reports
+  the file list and applicability without touching anything. On success the
+  worktree is removed through the same guarded removal path, its temporary
+  trust record is revoked, and the task checkpoint records
+  `worktree_applied`, `applied_files`, and the snapshot hash.
+- **Discovery instead of silent divergence.** Task summaries and the
+  `task.settled` wake message now state explicitly that worktree changes are
+  NOT yet in the workspace, with the exact apply/discard commands as the
+  task's `next_action`. `kkcode background clean` skips tasks with preserved
+  worktrees instead of orphaning them in the temp dir.
+- **Fixes.** `applyPatch()` no longer leaks its temporary directory (an
+  unimported `rmdir` call threw silently on the cleanup path).
+
+### 中文
+
+- **worktree 回收闭环。** 以 `isolation="worktree"` 委派的后台任务把变更保留
+  在独立 detached worktree 里；`kkcode background apply --id <task_id>` 现在能
+  把它们收回主 checkout，`kkcode background discard --id <task_id>` 则直接丢弃。
+  apply 默认全有或全无：脏区重叠守卫（`--force` 越过）、`git apply --check`
+  预检、变更前落幽灵提交快照、原子应用。`--3way` 是显式开关（可能留下冲突
+  标记）；`--dry-run` 只报告文件清单与可应用性，不碰任何文件。成功后 worktree
+  走同一套带防护的删除路径移除、临时信任记录被撤销，任务 checkpoint 记录
+  `worktree_applied`、`applied_files` 与快照 hash。
+- **可发现性，而不是静默分叉。** 任务摘要与 `task.settled` 唤醒消息现在会
+  明确说明变更尚未进入工作区，`next_action` 直接给出 apply/discard 命令。
+  `kkcode background clean` 会跳过保留 worktree 的任务，不再把它们孤儿化在
+  临时目录里。
+- **修复。** `applyPatch()` 不再泄漏临时目录（清理路径上未导入的 `rmdir`
+  调用此前一直静默抛错）。
+
 ## 0.9.2
 
 历史遗留修复与发布门槛加固。全量共 2340 个测试：2339 通过、

@@ -82,7 +82,9 @@ async function emitTaskSettled(task) {
       description: String(task.description || ""),
       resultPreview: extractTaskResultPreview(task),
       subagent: task.payload?.subagent || task.payload?.subagentType || null,
-      subSessionId: task.payload?.subSessionId || null
+      subSessionId: task.payload?.subSessionId || null,
+      worktreePreserved: task.result?.worktree_preserved === true,
+      worktreePath: task.result?.worktree_path || null
     }
   }).catch(() => {})
   return true
@@ -108,6 +110,9 @@ function nextActionForTask(task) {
     case "running":
       return "wait for completion or inspect logs with background show/background_output"
     case "completed":
+      if (task?.result?.worktree_preserved === true && task.result?.worktree_path) {
+        return `changes are held in a preserved worktree, NOT in the workspace; apply with: kkcode background apply --id ${task.id} (or discard with: kkcode background discard --id ${task.id})`
+      }
       return "read the final result and file changes via background_output"
     case "error":
       return "inspect the error/log tail and use background retry if the task is safe to rerun"
@@ -143,7 +148,9 @@ function summarizeTask(task) {
     next_action: nextActionForTask(task),
     log_lines: Array.isArray(task.logs) ? task.logs.length : 0,
     log_tail: Array.isArray(task.logs) ? task.logs.slice(-10) : [],
-    result_preview: extractTaskResultPreview(task)
+    result_preview: extractTaskResultPreview(task),
+    worktree_preserved: task.result?.worktree_preserved === true,
+    worktree_path: task.result?.worktree_path || null
   }
 }
 
@@ -598,14 +605,22 @@ export const BackgroundManager = {
     const tasks = await readAllTasks()
     const cutoff = now() - maxAge
     const removed = []
+    const skippedPreserved = []
     for (const task of tasks) {
       if (!TERMINAL_STATES.has(task.status)) continue
       if (task.updatedAt > cutoff) continue
+      // 保留了 worktree 的任务不能连记录一起删：checkpoint 是找回
+      // worktree_path 的唯一线索，删了它 tmpdir 里的副本就成永久孤儿。
+      // 先 background apply / discard 处置掉，记录才允许随 clean 过期。
+      if (task.result?.worktree_preserved === true && task.result?.worktree_path) {
+        skippedPreserved.push(task.id)
+        continue
+      }
       await unlink(backgroundTaskCheckpointPath(task.id)).catch(() => {})
       await unlink(backgroundTaskLogPath(task.id)).catch(() => {})
       removed.push(task.id)
     }
-    return removed
+    return { removed, skipped_preserved: skippedPreserved }
   },
 
   /**

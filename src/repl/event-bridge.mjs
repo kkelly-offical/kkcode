@@ -89,11 +89,20 @@ export function describeBackgroundWake(payload = {}) {
   const description = String(payload.description || payload.id || "后台任务").trim()
   const status = String(payload.status || "unknown")
   const preview = String(payload.resultPreview || "").trim()
-  return [
+  const lines = [
     `[后台任务完成] ${description}（状态 ${status}）`,
-    `结果摘要：${preview || "（无摘要，用 background_output 查看完整结果）"}`,
-    "请检查结果并继续先前的工作。"
-  ].join("\n")
+    `结果摘要：${preview || "（无摘要，用 background_output 查看完整结果）"}`
+  ]
+  // worktree 隔离的任务完成 ≠ 变更落地。不说清楚的话，模型会把「任务完成」
+  // 读成「文件已经在工作区」，接着在一份没有这些变更的代码上继续干。
+  if (payload.worktreePreserved === true && payload.worktreePath) {
+    lines.push(
+      `变更保存在独立 worktree（${payload.worktreePath}），尚未进入当前工作区；` +
+      `用户可运行 kkcode background apply --id ${payload.id} 回收。不要假设这些文件已存在于工作区。`
+    )
+  }
+  lines.push("请检查结果并继续先前的工作。")
+  return lines.join("\n")
 }
 
 /**

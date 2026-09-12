@@ -11,6 +11,7 @@ import { extractEditFeedbackFromToolEvents } from "../observability/edit-diagnos
 import { INTERRUPTION_REASONS, normalizeInterruptionReason } from "./interruption-reason.mjs"
 import { checkWorkspaceTrust } from "../permission/workspace-trust.mjs"
 import { PermissionEngine } from "../permission/engine.mjs"
+import { removeDetachedWorktree } from "./worktree-handoff.mjs"
 import * as git from "../util/git.mjs"
 
 function now() {
@@ -51,18 +52,6 @@ async function copyWorkspaceConfigFiles(sourceRoot, targetRoot) {
     await mkdir(path.dirname(to), { recursive: true })
     await copyFile(from, to)
   }
-}
-
-async function removeDetachedWorktree(worktree, repoCwd) {
-  // 撤销为 worktree 落的临时信任记录（见 setup 处的 persistTrust）
-  try {
-    const { revokeTrust } = await import("../permission/workspace-trust.mjs")
-    await revokeTrust(worktree.path)
-  } catch { /* 撤不掉也只是留下一条无害的 trusted:false 记录 */ }
-  // Windows keeps the process working directory locked. Leave the detached
-  // worktree before asking Git (or the rm fallback) to remove it.
-  process.chdir(repoCwd)
-  return git.removeWorktree(worktree.path, repoCwd)
 }
 
 async function readTask(taskId) {

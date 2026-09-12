@@ -62,6 +62,21 @@ export async function isClean(cwd = process.cwd(), timeoutMs = GIT_TIMEOUT_MS) {
   return result.ok && !result.stdout.trim()
 }
 
+/** List dirty paths in the working tree (porcelain output; rename 取新路径) */
+export async function dirtyPaths(cwd = process.cwd()) {
+  const result = await run(["status", "--porcelain"], cwd)
+  if (!result.ok) return []
+  return result.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const body = line.slice(2).trim()
+      const arrow = body.lastIndexOf(" -> ")
+      return (arrow >= 0 ? body.slice(arrow + 4) : body).replace(/^"|"$/g, "")
+    })
+}
+
 /** Create and checkout a new branch */
 export async function createBranch(name, cwd = process.cwd()) {
   const result = await run(["checkout", "-b", name], cwd)
@@ -506,6 +521,40 @@ export async function removeWorktree(worktreePath, cwd = process.cwd(), {
   }
 }
 
+/**
+ * 导出 detached worktree 相对 HEAD 的全部变更（含新文件与二进制）。
+ *
+ * worktree 是用完即弃的隔离副本，这里直接暂存它的 index（add -A）再取
+ * --cached diff。excludePaths 排除 worker 复制进去的工作区配置文件，免得
+ * 回收时把它们误当成子智能体的产出带回主 checkout。
+ */
+export async function exportWorktreePatch(worktreePath, { excludePaths = [] } = {}) {
+  if (!(await isGitRepo(worktreePath))) {
+    return { ok: false, error: "not a git repository" }
+  }
+  const excludes = (Array.isArray(excludePaths) ? excludePaths : [])
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .map((item) => `:(exclude)${item}`)
+  const addResult = await run(["add", "-A", "--", ".", ...excludes], worktreePath)
+  if (!addResult.ok) {
+    return { ok: false, error: `git add failed: ${addResult.stderr}` }
+  }
+  const filesResult = await run(["diff", "--cached", "--name-only", "HEAD"], worktreePath)
+  if (!filesResult.ok) {
+    return { ok: false, error: `git diff failed: ${filesResult.stderr}` }
+  }
+  const files = filesResult.stdout.trim().split("\n").filter(Boolean)
+  if (files.length === 0) {
+    return { ok: true, patch: "", files: [], empty: true }
+  }
+  const patchResult = await run(["diff", "--cached", "--binary", "HEAD"], worktreePath)
+  if (!patchResult.ok) {
+    return { ok: false, error: `git diff failed: ${patchResult.stderr}` }
+  }
+  return { ok: true, patch: `${patchResult.stdout}\n`, files, empty: false }
+}
+
 /** Stash current changes */
 export async function stash(message = "auto-stash", cwd = process.cwd()) {
   const result = await run(["stash", "push", "-m", message], cwd)
@@ -762,7 +811,7 @@ export async function applyPatch(repoPath, diff, options = {}) {
       try {
         const tmpDir = path.dirname(patchPath)
         await unlink(patchPath)
-        await rmdir(tmpDir)
+        await rm(tmpDir, { recursive: true, force: true })
       } catch { /* ignore cleanup errors */ }
     }
   }

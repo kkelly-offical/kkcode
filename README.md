@@ -341,6 +341,7 @@ and you would think you were sandboxed.
 - 通过 `background_output` 查看后台任务输出
 - 通过 `kkcode background parallel` 查看并行子智能体分组和 lane 状态
 - 通过 `background_cancel` 取消后台任务
+- `isolation="worktree"` 的任务完成后变更保存在独立 worktree，**不会**自动进入工作区；用 `kkcode background apply --id <task_id>` 回收（`--dry-run` 预检、`--force` 越过脏区重叠保护），或用 `kkcode background discard --id <task_id>` 丢弃
 - 终态固定为 `completed` / `cancelled` / `error` / `interrupted`
 
 **Further reading / 延伸阅读**
@@ -670,12 +671,12 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current stable version / 当前稳定版本**: `v0.9.2`
+**Current stable version / 当前稳定版本**: `v0.9.3`
 
-`v0.9.2` is the current stable npm and GitHub release. The `main` branch remains
+`v0.9.3` is the current stable npm and GitHub release. The `main` branch remains
 the development line for subsequent fixes.
 
-`v0.9.2` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
+`v0.9.3` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
 
 Use the Kimi Code preset without placing credentials in YAML:
 
@@ -695,6 +696,17 @@ with authorization values redacted.
 **Package / 包地址**: [npm](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 
 **English**
+- `0.9.3` closes the worktree handoff loop: a background task delegated with
+  `isolation="worktree"` keeps its changes in a preserved detached worktree,
+  and `kkcode background apply --id <task_id>` now brings them back into the
+  main checkout while `kkcode background discard --id <task_id>` drops them.
+  Apply is all-or-nothing by default — overlapping-uncommitted-change guard
+  (`--force` to bypass), `git apply --check` preflight, a ghost-commit
+  snapshot recorded before mutation, and an atomic apply; `--3way` is an
+  explicit opt-in, `--dry-run` inspects without touching anything. Task
+  summaries and the completion wake now state that worktree changes are NOT
+  yet in the workspace, and `background clean` skips preserved worktrees
+  instead of orphaning them.
 - `0.9.2` hardens undo snapshots, layered configuration validation, stable
   transcript scrolling, Vitest foreground detection, and release secret/type
   gates. Release CI now scans and publishes the same immutable tarball. It also
@@ -738,6 +750,13 @@ with authorization values redacted.
 - `0.2.1` rebuilt kkcode around Assistant as the default general-purpose lane, with dedicated Agent and LongAgent modes for coding work.
 
 **中文**
+- `0.9.3` 补上 worktree 回收闭环：`isolation="worktree"` 的后台委派任务把变更
+  保留在独立 worktree 里，`kkcode background apply --id <task_id>` 现在能把它们
+  收回主 checkout，`kkcode background discard --id <task_id>` 则直接丢弃。apply
+  默认全有或全无 —— 脏区重叠守卫（`--force` 越过）、`git apply --check` 预检、
+  变更前落幽灵提交快照、原子应用；`--3way` 为显式开关，`--dry-run` 只检查不落地。
+  任务摘要与完成唤醒现在会明确说明变更尚未进入工作区，`background clean` 也会
+  跳过保留 worktree 的任务而不是把它们静默孤儿化。
 - `0.9.2` 加固了按会话隔离的撤销快照、逐层配置验证、稳定对话滚动、
   Vitest 前台长驻判定，以及密钥/类型发布门槛；发布 CI 改为扫描并发布
   同一份不可变 tarball。启动、preflight 和 doctor 也会清楚区分被裁剪的
