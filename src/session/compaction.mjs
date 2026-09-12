@@ -1,6 +1,6 @@
 import { requestProvider } from "../kernel/provider/router.mjs"
 import { getConversationHistory, replaceMessages } from "./store.mjs"
-import { HookBus } from "../plugin/hook-bus.mjs"
+import { HookBus } from "../kernel/plugin/hook-bus.mjs"
 import { saveCheckpoint } from "./checkpoint.mjs"
 import { recordTurn } from "../usage/usage-meter.mjs"
 import { loadPricing, calculateCost } from "../usage/pricing.mjs"

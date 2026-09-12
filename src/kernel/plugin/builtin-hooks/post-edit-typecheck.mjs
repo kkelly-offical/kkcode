@@ -9,7 +9,7 @@ import {
   extractTouchedFiles,
   isDiagnosticsEligibleFile,
   isMutationTool
-} from "../../observability/edit-diagnostics.mjs"
+} from "../../../observability/edit-diagnostics.mjs"
 
 function normalizeToolName(payload = {}) {
   return String(payload.toolName || payload.tool || "").trim()

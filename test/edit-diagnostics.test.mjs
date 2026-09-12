@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { chmod, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises"
 import { join, delimiter } from "node:path"
 import { tmpdir } from "node:os"
-import postEditTypecheck from "../src/plugin/builtin-hooks/post-edit-typecheck.mjs"
+import postEditTypecheck from "../src/kernel/plugin/builtin-hooks/post-edit-typecheck.mjs"
 
 let tempDir = ""
 let binDir = ""

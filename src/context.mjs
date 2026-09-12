@@ -8,7 +8,7 @@ import { PermissionEngine } from "./kernel/permission/engine.mjs"
 import { ToolRegistry } from "./kernel/tool/registry.mjs"
 import { SkillRegistry } from "./kernel/skill/registry.mjs"
 import { CustomAgentRegistry } from "./agent/custom-agent-loader.mjs"
-import { initHookBus } from "./plugin/hook-bus.mjs"
+import { initHookBus } from "./kernel/plugin/hook-bus.mjs"
 import { loadProfile } from "./onboarding.mjs"
 
 export function applyWorkspaceTrustPolicy(configState, trustState, cwd = process.cwd()) {

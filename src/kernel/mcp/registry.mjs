@@ -7,7 +7,7 @@ import { EVENT_TYPES } from "../core/constants.mjs"
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { userRootDir } from "../../storage/paths.mjs"
-import { discoverLocalPluginManifests, pluginMcpServers } from "../../plugin/manifest-loader.mjs"
+import { discoverLocalPluginManifests, pluginMcpServers } from "../plugin/manifest-loader.mjs"
 import { deprecatedSingletonAlias } from "../core/deprecations.mjs"
 
 /**

@@ -1,5 +1,5 @@
 import { executeTurn } from "../session/engine.mjs"
-import { HookBus } from "../plugin/hook-bus.mjs"
+import { HookBus } from "../kernel/plugin/hook-bus.mjs"
 import { extractImageRefs, buildContentBlocks } from "../kernel/tool/image-util.mjs"
 import { handleRollbackIfNeeded } from "../session/rollback.mjs"
 

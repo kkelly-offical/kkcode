@@ -76,7 +76,7 @@ import { createQuestionPromptChannel, defaultQuestionPromptChannel } from "./too
 import { createToolRegistry, ToolRegistry } from "./tool/registry.mjs"
 import { McpRegistry } from "./mcp/registry.mjs"
 import { createSkillRegistry, SkillRegistry } from "./skill/registry.mjs"
-import { createHookBus, initHookBus } from "../plugin/hook-bus.mjs"
+import { createHookBus, initHookBus } from "./plugin/hook-bus.mjs"
 import { CustomAgentRegistry } from "../agent/custom-agent-loader.mjs"
 import { createProviderRegistry } from "./provider/router.mjs"
 import {

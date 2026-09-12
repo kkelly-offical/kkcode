@@ -1,10 +1,10 @@
 import path from "node:path"
 import { access, readFile, readdir } from "node:fs/promises"
-import { userRootDir } from "../storage/paths.mjs"
+import { userRootDir } from "../../storage/paths.mjs"
 import {
   discoverCompatPluginManifestCandidates,
   discoverOpenCodePluginFiles
-} from "../compat/ecosystem-discovery.mjs"
+} from "../../compat/ecosystem-discovery.mjs"
 
 async function exists(target) {
   try {

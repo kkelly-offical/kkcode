@@ -26,7 +26,7 @@ import {
 } from "./store.mjs"
 import { pendingRejections, markRejectionsConsumed } from "../review/rejection-queue.mjs"
 import { isRecoveryEnabled, markTurnFinished, markTurnInProgress } from "./recovery.mjs"
-import { HookBus, initHookBus } from "../plugin/hook-bus.mjs"
+import { HookBus, initHookBus } from "../kernel/plugin/hook-bus.mjs"
 import { shouldCompact, compactSession, estimateTokenCount, modelContextLimit, contextUtilization, supportsNativeCompaction } from "./compaction.mjs"
 import { saveCheckpoint } from "./checkpoint.mjs"
 import { createRenderStream } from "./render-stream.mjs"

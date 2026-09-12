@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { tmpdir } from "node:os"
-import { discoverLocalPluginManifests, pluginMcpServers } from "../src/plugin/manifest-loader.mjs"
+import { discoverLocalPluginManifests, pluginMcpServers } from "../src/kernel/plugin/manifest-loader.mjs"
 import { SkillRegistry } from "../src/kernel/skill/registry.mjs"
 
 let homeDir

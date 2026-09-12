@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { pathToFileURL } from "node:url"
-import { HookBus } from "../src/plugin/hook-bus.mjs"
+import { HookBus } from "../src/kernel/plugin/hook-bus.mjs"
 
 test("hook bus exposes supported events", () => {
   const events = HookBus.supportedEvents()
@@ -29,7 +29,7 @@ test("hook bus loads .kkcode/plugins as a compatibility alias for hook scripts",
       }
     `, "utf8")
 
-    const mod = await import(`${pathToFileURL(join(process.cwd(), "src/plugin/hook-bus.mjs")).href}?t=${Date.now()}`)
+    const mod = await import(`${pathToFileURL(join(process.cwd(), "src/kernel/plugin/hook-bus.mjs")).href}?t=${Date.now()}`)
     await mod.initHookBus(cwd)
     const transformed = await mod.HookBus.toolBefore({ tool: "task" })
     const loadedSources = mod.HookBus.list().map((item) => item.source)

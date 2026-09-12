@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import hook from "../src/plugin/builtin-hooks/post-edit-typecheck.mjs"
+import hook from "../src/kernel/plugin/builtin-hooks/post-edit-typecheck.mjs"
 import {
   buildEditDiagnosticsReport,
   buildMutationObservability,

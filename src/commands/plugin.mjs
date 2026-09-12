@@ -1,6 +1,6 @@
 import { Command } from "commander"
 import { createKernel } from "../kernel/index.mjs"
-import { discoverLocalPluginManifests } from "../plugin/manifest-loader.mjs"
+import { discoverLocalPluginManifests } from "../kernel/plugin/manifest-loader.mjs"
 
 export function createPluginCommand() {
   const cmd = new Command("plugin").description("inspect local plugin compatibility packages")
