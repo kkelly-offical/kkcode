@@ -1,5 +1,5 @@
 import { Command } from "commander"
-import { ensureDefaultSkillPack } from "../skill/registry.mjs"
+import { ensureDefaultSkillPack } from "../kernel/skill/registry.mjs"
 import { createKernel } from "../kernel/index.mjs"
 import { userRootDir } from "../storage/paths.mjs"
 

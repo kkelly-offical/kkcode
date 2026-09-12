@@ -317,7 +317,7 @@ test("self-framed content is clipped, not folded, when the panel is narrower", a
   const { renderRuntimeDashboardView } = await import("../src/ui/repl-status-view.mjs")
   const { buildReplRuntimeSnapshot } = await import("../src/repl/runtime-facade.mjs")
   const { McpRegistry } = await import("../src/kernel/mcp/registry.mjs")
-  const { SkillRegistry } = await import("../src/skill/registry.mjs")
+  const { SkillRegistry } = await import("../src/kernel/skill/registry.mjs")
 
   const view = await buildReplRuntimeSnapshot({
     cwd: process.cwd(),

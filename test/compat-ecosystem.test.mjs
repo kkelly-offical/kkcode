@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { tmpdir } from "node:os"
 import { discoverLocalPluginManifests, pluginMcpServers } from "../src/plugin/manifest-loader.mjs"
-import { SkillRegistry } from "../src/skill/registry.mjs"
+import { SkillRegistry } from "../src/kernel/skill/registry.mjs"
 
 let homeDir
 let projectDir

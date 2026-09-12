@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { PermissionEngine } from "../src/kernel/permission/engine.mjs"
 import { ToolRegistry } from "../src/kernel/tool/registry.mjs"
-import { SkillRegistry } from "../src/skill/registry.mjs"
+import { SkillRegistry } from "../src/kernel/skill/registry.mjs"
 import { CustomAgentRegistry } from "../src/agent/custom-agent-loader.mjs"
 import { bootstrapKernelExtensions } from "../src/context.mjs"
 

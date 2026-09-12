@@ -67,7 +67,7 @@ test("a tool may report its own capability, overriding the static table", () => 
 })
 
 test("the skill tool classifies by skill type, and fails closed on the unknown", async () => {
-  const { SkillRegistry } = await import("../src/skill/registry.mjs")
+  const { SkillRegistry } = await import("../src/kernel/skill/registry.mjs")
   const { ToolRegistry } = await import("../src/kernel/tool/registry.mjs")
   await SkillRegistry.initialize({}, ROOT, { allowProjectSources: true })
   await ToolRegistry.initialize({ config: {}, cwd: ROOT, allowProjectSources: true })

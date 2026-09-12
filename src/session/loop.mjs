@@ -15,7 +15,7 @@ import { buildSystemPromptBlocks } from "./system-prompt.mjs"
 import { detectProjectContext } from "./project-context.mjs"
 import { renderRulesPrompt } from "../rules/load-rules.mjs"
 import { loadProfile } from "../onboarding.mjs"
-import { SkillRegistry } from "../skill/registry.mjs"
+import { SkillRegistry } from "../kernel/skill/registry.mjs"
 import {
   touchSession,
   appendMessage,
