@@ -13,77 +13,23 @@ import { SkillRegistry } from "../skill/registry.mjs"
 import { resolveAgentForMode } from "../agent/agent.mjs"
 import { estimateStringTokens } from "./compaction.mjs"
 import { classifyTaskMode, explainTaskModeReason } from "./longagent-utils.mjs"
+import { getPublicModeContract, resolveMode } from "./mode-contract.mjs"
 import { resolveExtensionPolicy } from "../context.mjs"
 
 let sinkReady = false
 
-export const PUBLIC_MODE_CONTRACT = Object.freeze([
-  {
-    mode: "assistant",
-    summary: "default CLI personal assistant lane",
-    guarantee: "assistant handles bounded terminal-native personal assistant work under normal tool permissions"
-  },
-  {
-    mode: "plan",
-    summary: "produce a spec/plan only",
-    guarantee: "plan does not execute file mutations"
-  },
-  {
-    mode: "agent",
-    summary: "compatibility alias for assistant",
-    guarantee: "agent/code/coding resolve to the unified assistant (since 0.3.0)"
-  },
-  {
-    mode: "longagent",
-    summary: "heavyweight staged multi-file delivery lane",
-    guarantee: "longagent stays reserved for structured multi-file or system-level work"
-  }
-])
+// 航道契约的实现已下沉到无依赖叶子 mode-contract.mjs（破 system-prompt → engine
+// 回向边，1.0.0 阶段 1b）；这里保持原样再导出，既有 import 路径与导出面不变。
+export {
+  PUBLIC_MODE_CONTRACT,
+  resolveMode,
+  getPublicModeContract,
+  formatPublicModeSummary,
+  renderPublicModeContract
+} from "./mode-contract.mjs"
 
 function estimateTokens(text) {
   return Math.max(1, estimateStringTokens(text || ""))
-}
-
-/**
- * 归一到执行航道。0.4.0 的公开模式名（agent / agent-auto / ultra）在这里
- * 也被接受，但航道取值刻意保持 0.3.x 的三个值，运行时无需改动。
- */
-export function resolveMode(inputMode = "assistant") {
-  const mode = String(inputMode || "assistant").toLowerCase()
-  if (mode === "ultra") return "longagent"
-  if (mode === "agent-auto" || mode === "yolo") return "assistant"
-  if (mode === "agent" || mode === "code" || mode === "coding" || mode === "ask") return "assistant"
-  if (["assistant", "plan", "longagent"].includes(mode)) return mode
-  return "assistant"
-}
-
-export function getPublicModeContract(inputMode = "assistant") {
-  const mode = resolveMode(inputMode)
-  return PUBLIC_MODE_CONTRACT.find((item) => item.mode === mode) || PUBLIC_MODE_CONTRACT[0]
-}
-
-export function formatPublicModeSummary(inputMode = "assistant") {
-  const contract = getPublicModeContract(inputMode)
-  return `${contract.mode}: ${contract.summary}`
-}
-
-export function renderPublicModeContract() {
-  return [
-    "# Mode Contract",
-    "",
-    "- `assistant`: default CLI personal assistant lane for bounded terminal-native personal work, explanation, and analysis.",
-    "- `plan`: produce a spec/plan only; do not execute file mutations.",
-    "- `agent` / `code` / `coding`: compatibility aliases for `assistant` (since 0.3.0).",
-    "- `longagent`: heavyweight staged multi-file delivery lane with explicit gates.",
-    "- Keep everyday Q&A, coding mutation, debugging, refactoring, and test repair in `assistant`.",
-    "- Suggest `longagent` only when heavy multi-file or system-level evidence appears; do not auto-switch.",
-    "- Keep `plan` explicit and mutation-free even when later execution is likely.",
-    "",
-    "The user-facing names for these lanes (since 0.4.0) are Plan, Agent, Agent · Auto,",
-    "Ultra and YOLO; Ultra is the `longagent` lane and the rest run on `assistant`.",
-    "The difference between Agent, Agent · Auto and YOLO is the approval level, not",
-    "the lane: never assume an edit is pre-approved, always let the permission layer decide."
-  ].join("\n")
 }
 
 function summarizeRouteEvidence(classification) {
