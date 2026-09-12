@@ -1,5 +1,29 @@
 # Changelog / 更新日志
 
+## 0.9.4
+
+测试可移植性 hotfix（Windows CRLF）：修复 Windows CI 测试断言，打通全自动化发布管线。无运行时行为变更。
+
+### English
+
+- **Test-portability hotfix (Windows CRLF).** Windows runners with
+  `autocrlf=true` check out workspace files as CRLF, which broke the strict
+  LF equality assertions in the background-apply tests and left the 0.9.3
+  release workflow blocked at `matrix_verify`. Read-back content is now
+  normalized to LF before asserting, and the temporary test repos pin
+  `core.autocrlf=false`. No runtime behavior changes — this release exists so
+  the fully automated pipeline (`matrix_verify` → `release_verify` → npm
+  publish → GitHub release) runs green end to end on an immutable tag.
+
+### 中文
+
+- **测试可移植性 hotfix（Windows CRLF）。** Windows runner 在 `autocrlf=true`
+  下会把工作区文件检出为 CRLF，使 background-apply 测试的 LF 严格相等断言
+  失败，0.9.3 的 release workflow 因此被 `matrix_verify` 挡住。现在读回内容
+  在断言前统一归一化为 LF，临时测试仓库固定 `core.autocrlf=false`。无运行时
+  行为变更 —— 本次发布只为让全自动化管线（`matrix_verify` → `release_verify`
+  → npm publish → GitHub release）在不可变 tag 上端到端跑通一次。
+
 ## 0.9.3
 
 后台 worktree 成果回收：handoff / apply / discard 生命周期补全。
