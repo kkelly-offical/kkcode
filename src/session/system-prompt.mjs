@@ -4,7 +4,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { createHash } from "node:crypto"
 import { loadSessionPrompt } from "./prompt-loader.mjs"
-import { renderPublicModeContract } from "./engine.mjs"
+import { renderPublicModeContract } from "./mode-contract.mjs"
 import { getAgentPrompt, listAgents } from "../agent/agent.mjs"
 import { loadAutoMemory } from "./memory-loader.mjs"
 
