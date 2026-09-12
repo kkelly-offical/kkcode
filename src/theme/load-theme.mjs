@@ -4,6 +4,7 @@ import YAML from "yaml"
 import { DEFAULT_THEME } from "./default-theme.mjs"
 import { validateTheme } from "./schema.mjs"
 import { mergeConfigObject } from "../config/merge.mjs"
+import { installStreamByteRenderer } from "./stream-byte-renderer.mjs"
 
 async function exists(file) {
   try {
@@ -35,6 +36,10 @@ function resolveConfiguredThemePath(configState) {
 }
 
 export async function loadTheme(configState, fileOverride = null) {
+  // 加载主题 = 本进程有前端渲染在场：登记 ANSI 流字节渲染器，旧 output
+  // 字节轨（§7.5 双轨）随之可用。幂等；纯 headless 宿主不加载主题，
+  // 输出契约是 kernel 事件而不是字节。
+  installStreamByteRenderer()
   const target = fileOverride ? path.resolve(fileOverride) : resolveConfiguredThemePath(configState)
   if (!target || !(await exists(target))) {
     return { theme: deepMerge(DEFAULT_THEME, { modes: configState.config.ui.mode_colors }), source: "default", errors: [] }

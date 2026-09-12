@@ -77,7 +77,7 @@ export function isHighlightable(language) {
  * 高亮一行代码。
  * @param {string} line 已 sanitize 的纯文本行
  * @param {string} language fence 上标注的语言
- * @param {object} colors 主题的 markdown 分组
+ * @param {Record<string, string | undefined>} [colors] 主题的 markdown 分组
  * @returns {string} 原文或带 SGR 的文本
  */
 export function highlightLine(line, language, colors = {}) {

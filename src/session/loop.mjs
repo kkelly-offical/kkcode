@@ -28,10 +28,8 @@ import { pendingRejections, markRejectionsConsumed } from "../review/rejection-q
 import { isRecoveryEnabled, markTurnFinished, markTurnInProgress } from "./recovery.mjs"
 import { HookBus, initHookBus } from "../plugin/hook-bus.mjs"
 import { shouldCompact, compactSession, estimateTokenCount, modelContextLimit, contextUtilization, supportsNativeCompaction } from "./compaction.mjs"
-import { createStreamRenderer } from "../theme/markdown.mjs"
-import { paint } from "../theme/color.mjs"
-import { sanitizeTerminalText } from "../theme/terminal-sanitize.mjs"
 import { saveCheckpoint } from "./checkpoint.mjs"
+import { createRenderStream } from "./render-stream.mjs"
 import { askPlanApproval } from "../tool/question-prompt.mjs"
 import { createValidator } from "./task-validator.mjs"
 import { runSpecRole } from "../orchestration/run-spec.mjs"
@@ -469,9 +467,15 @@ export async function processTurnLoop({
   let totalContinueCount = 0
   let nudgeCount = 0
   let finalReply = ""
-  const sinkWrite = typeof output?.write === "function"
-    ? output.write
-    : () => {}
+  // 渲染流（阶段 3a）：用户可见输出纯化为数据事件；旧 output 字节轨经
+  // 前端登记的渲染器驱动（双轨期，见 session/render-stream.mjs 头注释）。
+  const render = createRenderStream({
+    output,
+    renderMarkdown: configState.config.ui?.markdown_render !== false && output?.renderMarkdown !== false,
+    eventBus: EventBus,
+    sessionId,
+    turnId
+  })
   try {
     for (let step = 1; step <= maxSteps; step++) {
       await markTurnInProgress(sessionId, turnId, step, recoveryEnabled)
@@ -643,11 +647,7 @@ export async function processTurnLoop({
         const streamToolCalls = []
         let streamUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
         let streamStopReason = "end_turn"
-        const mdEnabled = configState.config.ui?.markdown_render !== false && output?.renderMarkdown !== false
-        const streamRenderer = mdEnabled ? createStreamRenderer() : null
-        let inThinking = false
-        let streamPhase = null
-        let thinkingLineStart = true
+        render.beginStep(step)
 
         for await (const chunk of chunks) {
           if (signal?.aborted) {
@@ -659,61 +659,18 @@ export async function processTurnLoop({
           if (chunk.type === "thinking") {
             const text = chunk.content || ""
             thinkingParts.push(text)
-            if (streamPhase !== "thinking") {
-              streamPhase = "thinking"
-              inThinking = true
-              thinkingLineStart = true
-              await EventBus.emit({ type: EVENT_TYPES.STREAM_THINKING_START, sessionId, turnId, payload: { step } })
-              sinkWrite(paint("●", "#666666") + " " + paint("Thinking", null, { dim: true }) + " " + paint("∨", null, { dim: true }) + "\n")
-            }
-            await EventBus.emit({
-              type: EVENT_TYPES.STREAM_THINKING_DELTA,
-              sessionId,
-              turnId,
-              payload: { step, text }
-            })
-            // 只在行首加缩进，避免 chunk 中间出现多余空格
-            const indented = sanitizeTerminalText(text).replace(/^|\n/g, (m) => {
-              if (m === "\n") { thinkingLineStart = true; return "\n" }
-              if (thinkingLineStart) { thinkingLineStart = false; return "  " }
-              return ""
-            })
-            // 如果 chunk 末尾是换行，标记下一个 chunk 需要缩进
-            if (text.endsWith("\n")) thinkingLineStart = true
-            sinkWrite(paint(indented, null, { dim: true }))
+            await render.thinkingDelta(step, text)
           } else if (chunk.type === "text") {
-            if (inThinking) {
-              sinkWrite("\n")
-              inThinking = false
-            }
-            if (streamPhase !== "text") {
-              streamPhase = "text"
-              await EventBus.emit({ type: EVENT_TYPES.STREAM_TEXT_START, sessionId, turnId, payload: { step } })
-            }
-            await EventBus.emit({
-              type: EVENT_TYPES.STREAM_TEXT_DELTA,
-              sessionId,
-              turnId,
-              payload: { step, text: chunk.content || "" }
-            })
-            if (streamRenderer) {
-              const rendered = streamRenderer.push(chunk.content)
-              if (rendered) sinkWrite(rendered)
-            } else {
-              sinkWrite(sanitizeTerminalText(chunk.content))
-            }
-            textParts.push(chunk.content)
+            const text = chunk.content || ""
+            await render.textDelta(step, text)
+            textParts.push(text)
           } else if (chunk.type === "tool_call") {
-            if (inThinking) {
-              sinkWrite("\n")
-              inThinking = false
-            }
-            streamPhase = "tool_call"
+            await render.toolCallChunk(step, chunk.call)
             streamToolCalls.push(chunk.call)
           } else if (chunk.type === "usage") {
             streamUsage = chunk.usage
           } else if (chunk.type === "compaction") {
-            sinkWrite(paint("\n  ↻ context compacted by provider\n", "cyan", { dim: true }))
+            await render.providerCompaction(step)
           } else if (chunk.type === "stop") {
             streamStopReason = chunk.reason || "end_turn"
           }
@@ -724,15 +681,8 @@ export async function processTurnLoop({
           error.errorClass = "aborted"
           throw error
         }
-        if (inThinking) {
-          sinkWrite("\n")
-        }
-        if (streamRenderer) {
-          const tail = streamRenderer.flush()
-          if (tail) sinkWrite(tail)
-        }
+        await render.streamEnd(step)
         if (textParts.length) {
-          sinkWrite("\n")
           emittedAnyText = true
         }
 
@@ -802,7 +752,7 @@ export async function processTurnLoop({
       if (response.stopReason === "max_tokens" && continueCount < MAX_CONTINUES && totalContinueCount < MAX_TOTAL_CONTINUES) {
         continueCount++
         totalContinueCount++
-        sinkWrite(paint(`\n  ↳ output truncated, auto-continuing (${continueCount}/${MAX_CONTINUES})...\n`, "yellow", { dim: true }))
+        await render.autoContinue(step, { continueCount, maxContinues: MAX_CONTINUES })
 
         // Drop any tool calls with parse errors (truncated JSON from cutoff)
         const validToolCalls = (response.toolCalls || []).filter(tc => !tc.args?.__parse_error)
@@ -889,7 +839,7 @@ export async function processTurnLoop({
               continue
             }
           } catch (validationError) {
-            sinkWrite(paint(`\n  ⚠ Task validation skipped: ${validationError.message}\n`, "yellow", { dim: true }))
+            await render.validationSkipped(step, validationError.message)
           }
         }
         

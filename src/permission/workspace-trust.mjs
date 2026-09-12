@@ -1,6 +1,5 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises"
 import path from "node:path"
-import { createInterface } from "node:readline"
 import { trustFilePath } from "../storage/paths.mjs"
 
 async function readTrustFile(cwd) {
@@ -11,20 +10,23 @@ async function readTrustFile(cwd) {
   }
 }
 
-export async function checkWorkspaceTrust({ cwd, cliTrust = false, isTTY = process.stdin.isTTY }) {
+/**
+ * 工作区信任探测（1.0.0 阶段 3b，M3 耦合点 15）：本函数不再自开终端行
+ * 读取。TTY 下的交互询问由前端注入 `prompt`（REPL 启动时传入自己的行式
+ * 提问实现）；未注入 prompt 的宿主（headless/CI/管道输入）得到确定性
+ * untrusted —— 显式授信走 --trust / /trust。
+ */
+export async function checkWorkspaceTrust({ cwd, cliTrust = false, isTTY = process.stdin.isTTY, prompt = null }) {
   if (cliTrust) {
     await persistTrust(cwd)
     return { trusted: true }
   }
   const data = await readTrustFile(cwd)
   if (data?.trusted === true) return { trusted: true }
-  if (!isTTY) return { trusted: false }
+  if (!isTTY || typeof prompt !== "function") return { trusted: false }
 
-  const rl = createInterface({ input: process.stdin, output: process.stdout })
-  const answer = await new Promise((resolve) => {
-    rl.question("Do you trust this workspace? [y/N] ", (ans) => { rl.close(); resolve(ans) })
-  })
-  if (/^y(es)?$/i.test(String(answer).trim())) {
+  const answer = await prompt("Do you trust this workspace? [y/N] ")
+  if (/^y(es)?$/i.test(String(answer ?? "").trim())) {
     await persistTrust(cwd)
     return { trusted: true }
   }
