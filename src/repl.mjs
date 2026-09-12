@@ -7,7 +7,7 @@ import { createInterface } from "node:readline/promises"
 import { emitKeypressEvents } from "node:readline"
 import { readFile } from "node:fs/promises"
 import { basename, join } from "node:path"
-import { buildContext, printContextWarnings, resolveExtensionPolicy } from "./context.mjs"
+import { bootstrapKernelExtensions, buildContext, printContextWarnings } from "./context.mjs"
 import { ensureEventSinks, newSessionId, routeMode } from "./session/engine.mjs"
 import { summarizeRouteDecision } from "./session/engine.mjs"
 import { buildAgentContinuationPrompt, summarizeAgentTransaction } from "./session/agent-transaction.mjs"
@@ -22,9 +22,7 @@ import { SkillRegistry } from "./skill/registry.mjs"
 import { renderMarkdown } from "./theme/markdown.mjs"
 import { listSessions, appendMessage } from "./session/store.mjs"
 import { runShellPassthrough, formatForTranscript as formatShellForTranscript, formatForContext as formatShellForContext } from "./repl/shell-passthrough.mjs"
-import { ToolRegistry } from "./tool/registry.mjs"
 import { McpRegistry } from "./mcp/registry.mjs"
-import { initHookBus } from "./plugin/hook-bus.mjs"
 import { renderReplDashboard } from "./ui/repl-dashboard.mjs"
 import { buildRouteFeedback } from "./ui/repl-route-feedback.mjs"
 import { renderReplStatusLine, renderStartupScreen } from "./ui/repl-status-view.mjs"
@@ -1958,13 +1956,11 @@ export async function startRepl({ trust = false } = {}) {
       void loadProviderModelItems(ctx.configState, startupProvider).catch(() => {})
     }
   }
-  const extensionPolicy = resolveExtensionPolicy(ctx.configState)
-
   splash.update("loading tools & MCP servers...")
-  await ToolRegistry.initialize({
-    config: extensionPolicy.config,
+  const extensionPolicy = await bootstrapKernelExtensions({
     cwd: process.cwd(),
-    allowProjectSources: extensionPolicy.allowProjectSources
+    configState: ctx.configState,
+    trustState: ctx.trustState
   })
 
   // Collect MCP status for later display
@@ -1972,18 +1968,7 @@ export async function startRepl({ trust = false } = {}) {
   const mcpStatusLines = collectMcpStatusLines(ctx.themeState.theme, mcpHealth, McpRegistry.listTools())
 
   splash.update("loading skills & agents...")
-  await SkillRegistry.initialize(extensionPolicy.config, process.cwd(), {
-    allowProjectSources: extensionPolicy.allowProjectSources
-  })
-  const { CustomAgentRegistry } = await import("./agent/custom-agent-loader.mjs")
-  await CustomAgentRegistry.initialize(process.cwd(), {
-    allowProjectSources: extensionPolicy.allowProjectSources
-  })
-
   splash.update("loading hooks & history...")
-  await initHookBus(process.cwd(), extensionPolicy.config, {
-    allowProjectSources: extensionPolicy.allowProjectSources
-  })
   const historyLines = await loadHistoryLines(HIST_FILE, HIST_SIZE)
 
   splash.update("preparing workspace...")
@@ -2013,7 +1998,6 @@ export async function startRepl({ trust = false } = {}) {
 
   splash.stop()
 
-  PermissionEngine.setTrusted(ctx.trustState?.trusted !== false)
   if (!ctx.trustState?.trusted) {
     console.log(paint("  ⚠ workspace not trusted — tools are blocked. Run /trust to enable.", ctx.themeState.theme.semantic.warning))
   }

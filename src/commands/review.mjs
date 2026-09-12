@@ -2,7 +2,7 @@ import path from "node:path"
 import { readFile } from "node:fs/promises"
 import { execSync } from "node:child_process"
 import { Command } from "commander"
-import { buildContext, printContextWarnings } from "../context.mjs"
+import { bootstrapKernelExtensions, buildContext, printContextWarnings } from "../context.mjs"
 import { parseUnifiedDiff, previewLines } from "../review/diff-parser.mjs"
 import { scoreRisk, sortReviewFiles } from "../review/risk-score.mjs"
 import { defaultReviewState, readReviewState, writeReviewState } from "../review/review-store.mjs"
@@ -222,6 +222,11 @@ export function createReviewCommand() {
         validateBranchReviewOptions(options)
         const ctx = await buildContext()
         printContextWarnings(ctx)
+        await bootstrapKernelExtensions({
+          cwd: process.cwd(),
+          configState: ctx.configState,
+          trustState: ctx.trustState
+        })
         const cwd = process.cwd()
         const storedAuth = options.pr ? await getStoredToken() : null
         if (options.pr && !storedAuth?.token) {
@@ -264,7 +269,6 @@ export function createReviewCommand() {
         await writeReviewState(state, cwd)
 
         if (options.publish) {
-          PermissionEngine.setTrusted(ctx.trustState?.trusted === true)
           await appendAuditEntry({
             type: "review.publish.request",
             traceId: report.traceId,

@@ -4,6 +4,11 @@ import { configureSessionStore } from "./session/store.mjs"
 import { configureEventLog } from "./storage/event-log.mjs"
 import { configureAuditStore } from "./storage/audit-store.mjs"
 import { checkWorkspaceTrust } from "./permission/workspace-trust.mjs"
+import { PermissionEngine } from "./permission/engine.mjs"
+import { ToolRegistry } from "./tool/registry.mjs"
+import { SkillRegistry } from "./skill/registry.mjs"
+import { CustomAgentRegistry } from "./agent/custom-agent-loader.mjs"
+import { initHookBus } from "./plugin/hook-bus.mjs"
 import { loadProfile } from "./onboarding.mjs"
 
 export function applyWorkspaceTrustPolicy(configState, trustState, cwd = process.cwd()) {
@@ -27,6 +32,29 @@ export function resolveExtensionPolicy(configState) {
       ? (configState?.config || {})
       : (configState?.extensionConfig || configState?.userConfig || configState?.config || {})
   }
+}
+
+// 内核 boot 序列的唯一归属（1.0.0 阶段 1a）：原先 6+ 个入口各自复制这段初始化，
+// 顺序漂移互不感知。所有入口改调本函数；初始化顺序逐字保持现状：
+// PermissionEngine.setTrusted → ToolRegistry → SkillRegistry → CustomAgentRegistry → initHookBus。
+export async function bootstrapKernelExtensions({ cwd, configState, trustState }) {
+  PermissionEngine.setTrusted(trustState?.trusted === true)
+  const extensionPolicy = resolveExtensionPolicy(configState)
+  await ToolRegistry.initialize({
+    config: extensionPolicy.config,
+    cwd,
+    allowProjectSources: extensionPolicy.allowProjectSources
+  })
+  await SkillRegistry.initialize(extensionPolicy.config, cwd, {
+    allowProjectSources: extensionPolicy.allowProjectSources
+  })
+  await CustomAgentRegistry.initialize(cwd, {
+    allowProjectSources: extensionPolicy.allowProjectSources
+  })
+  await initHookBus(cwd, extensionPolicy.config, {
+    allowProjectSources: extensionPolicy.allowProjectSources
+  })
+  return extensionPolicy
 }
 
 export async function buildContext(options = {}) {
