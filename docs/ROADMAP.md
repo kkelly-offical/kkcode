@@ -128,3 +128,18 @@ Streamable HTTP，并对 `client-stdio.mjs` / `client-sse.mjs` / 新 HTTP client
 
 **下一步**：CLI 无头模式将 notice 写到 stderr，TUI 以一次性 toast 展示，
 两条路径都要有从真实旧配置到用户可见文案的集成测试。
+
+---
+
+## 8. 内核 / SDK 分层架构（1.0.0）/ Kernel & SDK layering
+
+**现状**：仓库没有内核/SDK 分层 —— UI 层 76 个文件直接 import 47 个内核
+文件，内核启动序列在 6+ 个入口复制，session/ 内有 8 文件静态循环，9 组
+模块级单例。目标分层、`createKernel()` 公开 API 面、Codex / Kimi Code
+对照分析、分阶段迁移路线图与回退策略见
+[docs/architecture-kernel-sdk-1.0.0.md](architecture-kernel-sdk-1.0.0.md)。
+
+**范围**：1.0.0 只做进程内分层（`src/kernel/`、`src/sdk/` 包内目录边界）；
+独立 npm 包拆分（`packages/` workspace）是 1.x 评估项。迁移第一阶段是
+不改任何行为的纯边界整理，全程 `npm run lint && npm run typecheck &&
+npm test` 保持绿。
