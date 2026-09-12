@@ -13,7 +13,8 @@ import { PermissionEngine } from "../src/permission/engine.mjs"
 import { defaultPermissionPromptChannel } from "../src/permission/prompt.mjs"
 import { defaultQuestionPromptChannel } from "../src/tool/question-prompt.mjs"
 import { defaultEventBus } from "../src/core/events.mjs"
-import { sessionIndexPath } from "../src/storage/paths.mjs"
+import { configureSessionStore } from "../src/session/store.mjs"
+import { sessionDataPath } from "../src/storage/paths.mjs"
 
 let homeDir
 let workDirA
@@ -185,31 +186,61 @@ test("bridge lifecycle: failed createKernel rolls back bridge, slots and trust (
 })
 
 test("bridge lifecycle: failed shutdown stays retryable and still flushes sessions (P2-2)", async () => {
+  // 钉住 P2-2 的两个半边（review round 2 变异验证没过 round 1 的版本）：
+  //  - flushNow 必达：断言钉 sessionDataPath —— 只有 flushUnsafe 会写会话数据
+  //    文件（touchSession 的迁移/加载路径会 eager 写 session index，钉
+  //    sessionIndexPath 不经 flushNow 也能过，round 1 的测试因此钉不住缺陷）
+  //  - 失败可重试：失败的 shutdown 之后弄脏第二个会话，再断言重试真的发生了
+  //    （旧代码 shutdownDone 提前置位 → 重试 no-op：第二个会话永不落盘、
+  //    mcp.shutdown 也不会被再次调用）
+  //
+  // 防抖窗口：flushIntervalMs 调到 10s，断言全部落在 ~100ms 窗口内，定时器
+  // 不可能抢先落盘（100x 余量）。不用 reviewer 建议的 0：实测 0（<=0）会让
+  // 所有 mutator eager flush（touchSession 内 if <=0 await flushUnsafe()），
+  // 「脏而未落盘」的状态根本造不出来，判别力反而消失。10s 定时器在测试后
+  // 自行触发并自清（flushNow 空转），不阻塞套件。
+  configureSessionStore({ flushIntervalMs: 10_000 })
   const kernel = await createKernel({
     cwd: workDirA,
     config: configWith({ builtinTools: false }),
     trustState: { trusted: false }
   })
-  await rm(sessionIndexPath(), { force: true })
   await kernel.sessions.touchSession({
-    sessionId: "ses_p22",
+    sessionId: "ses_p22_a",
     mode: "agent",
     model: "mock-model",
     providerType: "openai",
     cwd: workDirA
   })
+  // 防抖窗口内：数据文件尚未落盘
+  await assert.rejects(access(sessionDataPath("ses_p22_a")))
 
+  let mcpShutdownCalls = 0
   const mcp = kernel.extensions.mcp
   const originalShutdown = mcp.shutdown
-  mcp.shutdown = async () => { throw new Error("mcp shutdown boom") }
+  mcp.shutdown = async () => {
+    mcpShutdownCalls += 1
+    if (mcpShutdownCalls === 1) throw new Error("mcp shutdown boom")
+  }
   try {
     await assert.rejects(kernel.shutdown(), /mcp shutdown boom/)
-    // flushNow 在 finally 中必达：脏会话索引即使 mcp.shutdown 抛错也已写盘
-    await access(sessionIndexPath())
+    // flushNow 在 finally 中必达：首个会话的数据文件即使 mcp 抛错也已写盘
+    await access(sessionDataPath("ses_p22_a"))
+
+    // 失败后再弄脏第二个会话 —— 只有真的重试才会把它写盘
+    await kernel.sessions.touchSession({
+      sessionId: "ses_p22_b",
+      mode: "agent",
+      model: "mock-model",
+      providerType: "openai",
+      cwd: workDirA
+    })
+    await assert.rejects(access(sessionDataPath("ses_p22_b")))
+    await kernel.shutdown()
+    assert.equal(mcpShutdownCalls, 2, "retry must actually re-run shutdown")
+    await access(sessionDataPath("ses_p22_b"))
   } finally {
     mcp.shutdown = originalShutdown
+    configureSessionStore({ flushIntervalMs: 1000 })
   }
-
-  // shutdownDone 未提前置位：故障恢复后重试成功
-  await kernel.shutdown()
 })
