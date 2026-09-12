@@ -1,5 +1,5 @@
 import { visibleQuestionOptions } from "../ui/overlay-question.mjs"
-import { QUESTION_SKIPPED } from "../kernel/core/constants.mjs"
+import { QUESTION_SKIPPED } from "../kernel/index.mjs"
 
 export { QUESTION_SKIPPED }
 

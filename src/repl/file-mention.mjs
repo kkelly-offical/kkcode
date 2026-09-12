@@ -26,7 +26,7 @@
 
 import nodeFs from "node:fs"
 import nodePath from "node:path"
-import { isImagePath, normalizeDroppedPath } from "../kernel/tool/image-util.mjs"
+import { isImagePath, normalizeDroppedPath } from "../kernel/index.mjs"
 import { toPosixPath, comparePaths } from "./file-index.mjs"
 
 export { createFileIndex, createIgnoreMatcher, parseGitignore, DEFAULT_IGNORE, DEFAULT_MAX_FILES } from "./file-index.mjs"

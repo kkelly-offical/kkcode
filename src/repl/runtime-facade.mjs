@@ -1,8 +1,10 @@
-import { listSessions } from "../kernel/session/store.mjs"
-import { BackgroundManager } from "../kernel/orchestration/background-manager.mjs"
-import { summarizeSessionRuntimeState } from "../kernel/session/runtime-state.mjs"
+import {
+  listSessions,
+  BackgroundManager,
+  summarizeSessionRuntimeState,
+  inspectSandboxStatus
+} from "../kernel/index.mjs"
 import { collectMcpSummary, collectSkillSummary } from "./state-store.mjs"
-import { inspectSandboxStatus } from "../kernel/tool/sandbox.mjs"
 
 export async function buildReplRuntimeSnapshot({
   cwd = process.cwd(),

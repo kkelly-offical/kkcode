@@ -1,7 +1,4 @@
-import { executeTurn } from "../kernel/session/engine.mjs"
-import { HookBus } from "../kernel/plugin/hook-bus.mjs"
-import { extractImageRefs, buildContentBlocks } from "../kernel/tool/image-util.mjs"
-import { handleRollbackIfNeeded } from "../kernel/session/rollback.mjs"
+import { executeTurn, defaultHookBus, extractImageRefs, buildContentBlocks, handleRollbackIfNeeded } from "../kernel/index.mjs"
 
 export async function executePromptTurn({
   prompt,
@@ -21,9 +18,15 @@ export async function executePromptTurn({
   // （1.0.0 阶段 2c）；无句柄的调用方（测试、旧路径）保持原默认。
   const kernelHooks = ctx?.kernel?.extensions?.hooks
   const chatParamsFn = deps.chatParams
-    || (kernelHooks ? kernelHooks.chatParams.bind(kernelHooks) : HookBus.chatParams.bind(HookBus))
-  const executeTurnFn = deps.executeTurn || executeTurn
-  const handleRollbackFn = deps.handleRollbackIfNeeded || handleRollbackIfNeeded
+    || (kernelHooks ? kernelHooks.chatParams.bind(kernelHooks) : defaultHookBus.chatParams.bind(defaultHookBus))
+  // 阶段 4（耦合点 11 核销）：回合执行与回滚拦截优先走 kernel 句柄；句柄的
+  // executeTurn 在缺省时注入 configState/output，这里两者都显式给足，等价。
+  const executeTurnFn = deps.executeTurn
+    || (ctx?.kernel ? ctx.kernel.executeTurn : null)
+    || executeTurn
+  const handleRollbackFn = deps.handleRollbackIfNeeded
+    || (ctx?.kernel?.sessions?.handleRollbackIfNeeded ?? null)
+    || handleRollbackIfNeeded
   const cwd = deps.cwd || process.cwd()
 
   const { text: cleanedPrompt, imagePaths, imageUrls = [] } = extractImageRefsFn(prompt, cwd)

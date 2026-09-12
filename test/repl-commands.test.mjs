@@ -14,6 +14,9 @@ import { permissionCommands } from "../src/repl/commands/permission.mjs"
 import { modeCommands } from "../src/repl/commands/mode.mjs"
 import { authoringCommands } from "../src/repl/commands/authoring.mjs"
 import { DEFAULT_SLASH_ALIASES } from "../src/repl/slash-router.mjs"
+// kernel 句柄桩：命令层 1.0.0 阶段 4 起经 ctx.kernel 句柄取内核能力
+// （耦合点 7–12 核销），测试注入同形桩即可，不必真建 kernel。
+import { newSessionId } from "../src/kernel/session/engine.mjs"
 
 /**
  * 命令层的行为测试。
@@ -52,7 +55,18 @@ function makeCmd(patch = {}) {
     ctx: {
       configState: { config: structuredClone(DEFAULT_CONFIG), source: {} },
       themeState: { theme: DEFAULT_THEME },
-      trustState: { trusted: false }
+      trustState: { trusted: false },
+      kernel: {
+        turns: { newSessionId },
+        sessions: {
+          listSessions: async () => [],
+          getConversationHistory: async () => [],
+          compactSession: async () => ({ compacted: false, reason: "stub" }),
+          confirmRollback: async () => ({ confirmed: false, message: "stub" }),
+          executeRollback: async () => ({ message: "stub" })
+        },
+        applyTrustState: async (trustState) => ({ allowProjectSources: Boolean(trustState?.trusted) })
+      }
     },
     print: (text, options = {}) => {
       const channel = options.channel === "notice" ? "notice"

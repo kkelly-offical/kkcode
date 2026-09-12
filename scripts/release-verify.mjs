@@ -2,6 +2,9 @@ import { spawn } from "node:child_process"
 
 const steps = [
   { label: 'lint', cmd: 'npm', args: ['run', 'lint'] },
+  // 1.0.0 阶段 4（M8 建议的 CI 常驻）：静态 import 环检测进发布门槛。
+  // 边界检查（check-boundaries）已由 npm run lint 覆盖，这里不重复挂。
+  { label: 'import cycles', cmd: 'node', args: ['scripts/check-import-cycles.mjs'] },
   { label: 'typecheck', cmd: 'npm', args: ['run', 'typecheck'] },
   { label: 'secret scan', cmd: 'npm', args: ['run', 'security:scan'] },
   { label: 'coverage', cmd: 'npm', args: ['run', 'coverage'] },

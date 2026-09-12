@@ -32,4 +32,7 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      # 1.0.0 阶段 4：import 环检测在 release:verify 里已常驻，这里单列一步
+      # 让环回归在 CI 矩阵里一眼定位（只加步骤，不改既有门禁）。
+      - run: node scripts/check-import-cycles.mjs
       - run: npm run release:verify

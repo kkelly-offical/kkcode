@@ -595,9 +595,10 @@ to the review model.
 - `src/repl.mjs` — main REPL assembly surface
 - `src/repl/` — extracted REPL seams
 - `src/ui/` — REPL panels and render helpers
-- `src/session/` — execution loop, memory, recovery, prompts
-- `src/orchestration/` — background and Ultra orchestration
-- `src/skill/`, `src/plugin/`, `src/mcp/` — extension systems
+- `src/kernel/` — the kernel: `session/` (execution loop, memory, recovery, prompts),
+  `orchestration/` (background and Ultra orchestration), `skill/` / `plugin/` / `mcp/`
+  (extension systems), `tool/` / `permission/` / `provider/` / `core/`;
+  frontends import only `src/kernel/index.mjs` (facade whitelist, enforced in CI)
 
 **Useful docs / 推荐文档**
 - [Example config](docs/config.example.yaml)

@@ -200,7 +200,9 @@ export function createHookBus() {
   }
 }
 
-const defaultHookBus = createHookBus()
+// 进程级默认 HookBus。2b 过渡期 executeTurn 路径（loop 懒初始化）仍读它；
+// frontends 经 facade 白名单取用（repl/turn-controller.mjs 的无句柄回落）。
+export const defaultHookBus = createHookBus()
 
 /**
  * 兼容别名（deprecated）：进程级默认 HookBus 实例。旧 import 路径继续工作，

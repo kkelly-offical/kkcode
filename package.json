@@ -43,7 +43,7 @@
   },
   "scripts": {
     "start": "node ./src/index.mjs",
-    "lint": "eslint src scripts test && node ./scripts/check-node-syntax.mjs",
+    "lint": "eslint src scripts test && node ./scripts/check-node-syntax.mjs && node ./scripts/check-boundaries.mjs",
     "test": "node ./scripts/run-node-tests.mjs",
     "test:e2e": "node --test test/e2e/*.mjs",
     "typecheck": "node ./scripts/check-types.mjs",

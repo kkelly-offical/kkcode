@@ -11,9 +11,9 @@ The goal is to make edit results **diagnosable and reusable** without weakening 
 
 Before any Tranche 1 implementation lands, the current repository already provides three useful building blocks:
 
-1. `src/tool/registry.mjs` returns structured mutation metadata for write/edit-style tools, including `fileChanges`, `addedLines`, `removedLines`, and `structuredPatch`.
-2. `src/plugin/builtin-hooks/post-edit-typecheck.mjs` already runs a limited post-edit TypeScript check for TS/TSX edits when a local `tsconfig.json` exists, but it currently appends a warning string instead of returning a reusable diagnostics object.
-3. `src/orchestration/background-manager.mjs` and `src/orchestration/background-worker.mjs` already expose deterministic task terminal states plus `completed_files`, `remaining_files`, and `file_changes`.
+1. `src/kernel/tool/registry.mjs` returns structured mutation metadata for write/edit-style tools, including `fileChanges`, `addedLines`, `removedLines`, and `structuredPatch`.
+2. `src/kernel/plugin/builtin-hooks/post-edit-typecheck.mjs` already runs a limited post-edit TypeScript check for TS/TSX edits when a local `tsconfig.json` exists, but it currently appends a warning string instead of returning a reusable diagnostics object.
+3. `src/kernel/orchestration/background-manager.mjs` and `src/kernel/orchestration/background-worker.mjs` already expose deterministic task terminal states plus `completed_files`, `remaining_files`, and `file_changes`.
 
 This document therefore describes the **next compatible step**: keep those foundations, but converge them on one minimal diagnostics contract.
 

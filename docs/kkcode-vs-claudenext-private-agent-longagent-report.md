@@ -31,10 +31,10 @@ Grounding context: `.omx/context/agent-longagent-prompt-skills-compat-20260411T0
 
 #### kkcode strengths
 
-- `src/session/longagent-plan.mjs:178-266` runs an explicit intake dialogue that forces assumptions, contracts, quality constraints, and dependency order to be resolved before planning.
-- `src/session/longagent-plan.mjs:282-340` generates a stage plan with hard file-assignment rules, self-contained task prompts, and machine-verifiable acceptance requirements.
-- `src/orchestration/stage-scheduler.mjs:141-337` builds enriched per-task prompts, injects file ownership and sibling-task boundaries, and launches isolated worker processes.
-- `src/orchestration/background-worker.mjs:60-126` executes delegated work in a separate worker process with its own context/tool registry and tracks completed vs remaining files.
+- `src/kernel/session/longagent-plan.mjs:178-266` runs an explicit intake dialogue that forces assumptions, contracts, quality constraints, and dependency order to be resolved before planning.
+- `src/kernel/session/longagent-plan.mjs:282-340` generates a stage plan with hard file-assignment rules, self-contained task prompts, and machine-verifiable acceptance requirements.
+- `src/kernel/orchestration/stage-scheduler.mjs:141-337` builds enriched per-task prompts, injects file ownership and sibling-task boundaries, and launches isolated worker processes.
+- `src/kernel/orchestration/background-worker.mjs:60-126` executes delegated work in a separate worker process with its own context/tool registry and tracks completed vs remaining files.
 
 #### kkcode gaps
 
@@ -63,13 +63,13 @@ This should reuse the existing background-worker infrastructure instead of repla
 
 #### kkcode strengths
 
-- `src/session/system-prompt.mjs:121-233` already builds prompt blocks by layer (provider / agent / mode / tools / skills / subagents / project / language / memory / env / user instructions).
-- `src/session/system-prompt.mjs:136-163` caches the assembled block set by a hashed signature and refreshes only the environment block when possible.
-- `src/session/system-prompt.mjs:192-202` adds an explicit “large output strategy”, which is a practical reliability optimization.
+- `src/kernel/session/system-prompt.mjs:121-233` already builds prompt blocks by layer (provider / agent / mode / tools / skills / subagents / project / language / memory / env / user instructions).
+- `src/kernel/session/system-prompt.mjs:136-163` caches the assembled block set by a hashed signature and refreshes only the environment block when possible.
+- `src/kernel/session/system-prompt.mjs:192-202` adds an explicit “large output strategy”, which is a practical reliability optimization.
 
 #### kkcode gaps
 
-- Custom subagent listing is static text inside the system prompt (`src/session/system-prompt.mjs:211-228`), so agent-catalog churn still risks cache invalidation.
+- Custom subagent listing is static text inside the system prompt (`src/kernel/session/system-prompt.mjs:211-228`), so agent-catalog churn still risks cache invalidation.
 - LongAgent’s planning prompts are strong for implementation, but there is no parallel Claude-style guidance for:
   - fork vs fresh-agent choice,
   - how to brief subagents concisely but sufficiently,
@@ -93,9 +93,9 @@ Low-risk catch-up for `kkcode`:
 
 #### kkcode strengths
 
-- `src/skill/registry.mjs:365-440` loads skills from built-ins, custom commands, global/project/custom skill dirs, and MCP prompts.
-- `src/skill/registry.mjs:294-324` supports directory-format `SKILL.md` skills with auxiliary files.
-- `src/skill/registry.mjs:241-265` allows controlled command substitution in skill templates while guarding via an allowlist.
+- `src/kernel/skill/registry.mjs:365-440` loads skills from built-ins, custom commands, global/project/custom skill dirs, and MCP prompts.
+- `src/kernel/skill/registry.mjs:294-324` supports directory-format `SKILL.md` skills with auxiliary files.
+- `src/kernel/skill/registry.mjs:241-265` allows controlled command substitution in skill templates while guarding via an allowlist.
 - The format is simple and hackable: `.md`, `.mjs`, or `SKILL.md` directories.
 
 #### kkcode gaps
@@ -133,8 +133,8 @@ This gives kkcode a practical **skill portability layer** without needing Claude
 #### kkcode today
 
 `kkcode` has extension points, but not a mature plugin packaging/runtime contract:
-- `src/plugin/hook-bus.mjs` is a lightweight hook loader for built-in/user/project hook files.
-- `src/mcp/registry.mjs:71-94` already auto-discovers MCP config from `.mcp.json`, `.mcp/config.json`, `.kkcode/mcp.json`, and a global config, which is a good compatibility anchor.
+- `src/kernel/plugin/hook-bus.mjs` is a lightweight hook loader for built-in/user/project hook files.
+- `src/kernel/mcp/registry.mjs:71-94` already auto-discovers MCP config from `.mcp.json`, `.mcp/config.json`, `.kkcode/mcp.json`, and a global config, which is a good compatibility anchor.
 - There is no manifest-based plugin loader that unifies commands, skills, agents, hooks, MCP, and output styles under one package boundary.
 
 #### claudenext-private strengths

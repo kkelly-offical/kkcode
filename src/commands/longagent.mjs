@@ -1,12 +1,19 @@
 import { Command } from "commander"
 import { readFile } from "node:fs/promises"
-import { LongAgentManager } from "../kernel/orchestration/longagent-manager.mjs"
 import { loadConfig } from "../config/load-config.mjs"
-import { createKernel } from "../kernel/index.mjs"
+import {
+  createKernel,
+  LongAgentManager,
+  loadLedger,
+  buildBlockedReport,
+  renderBlockedReportText,
+  BackgroundManager,
+  runLongAgent,
+  exitCodeForUltraStatus
+} from "../kernel/index.mjs"
 import { eventLogPath } from "../storage/paths.mjs"
 import { formatRecoverySuggestions } from "../ui/activity-renderer.mjs"
-import { loadLedger } from "../kernel/session/ultra-ledger.mjs"
-import { buildBlockedReport, renderBlockedReportText } from "../kernel/session/blocked-report.mjs"
+import { createTtyPromptHandlers } from "../cli/tty-prompts.mjs"
 
 /**
  * Ultra 会话管理。0.4.0 起主命令是 `kkcode ultra`，`kkcode longagent`
@@ -22,9 +29,18 @@ import { buildBlockedReport, renderBlockedReportText } from "../kernel/session/b
  * 1.0.0 阶段 2c 起收口为 createKernel()：信任探测、信任策略应用与扩展 boot
  * （含 PermissionEngine 信任标志 —— 经 2b 桥装到进程级默认引擎）全在句柄内
  * 完成；只改 configState 不走 kernel 的话，--trust 后工具照样拒绝。
+ *
+ * 阶段 4（M12 补位）：TTY 下注入前端审批/提问 handler —— Ultra 的阶段确认
+ * 与工具审批在 3b 后必须经宿主 handler 才问得到人。
  */
 async function applyCliTrust(configState, { trust = false } = {}) {
-  const kernel = await createKernel({ cwd: process.cwd(), config: configState, trust: Boolean(trust) })
+  const ttyHandlers = createTtyPromptHandlers()
+  const kernel = await createKernel({
+    cwd: process.cwd(),
+    config: configState,
+    trust: Boolean(trust),
+    ...(ttyHandlers ? { handlers: ttyHandlers } : {})
+  })
   return kernel
 }
 
@@ -124,7 +140,6 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
         // 进行中任务的实时详情来自后台任务的日志尾巴
         const liveTasks = {}
         try {
-          const { BackgroundManager } = await import("../kernel/orchestration/background-manager.mjs")
           for (const task of await BackgroundManager.list()) {
             if (task.status === "running" && task.logical_task_id) {
               liveTasks[task.logical_task_id] = { lastLine: (task.log_tail || []).at(-1) || "" }
@@ -227,7 +242,6 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
         return
       }
       console.log(`resuming session ${options.session} — ${objective.slice(0, 80)}`)
-      const { runLongAgent } = await import("../kernel/session/longagent.mjs")
       try {
         const result = await runLongAgent({
           prompt: objective,
@@ -244,7 +258,6 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
         if (result.blockedReport) {
           for (const line of renderBlockedReportText(result.blockedReport)) console.log(line)
         }
-        const { exitCodeForUltraStatus } = await import("../kernel/session/ultra-status.mjs")
         process.exitCode = exitCodeForUltraStatus(result.status)
       } catch (err) {
         console.error(`resume failed: ${err.message}`)

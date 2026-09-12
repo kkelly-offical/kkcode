@@ -1,6 +1,4 @@
-import { normalizePermissionLevel } from "../kernel/permission/rules.mjs"
-import { resolveRoleModel } from "../kernel/provider/model-roles.mjs"
-import { fastModelIssues } from "../kernel/provider/fast-model.mjs"
+import { normalizePermissionLevel, resolveRoleModel, fastModelIssues } from "../kernel/index.mjs"
 import { PACKAGE_VERSION } from "../version.mjs"
 
 /**
