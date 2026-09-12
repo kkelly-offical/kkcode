@@ -1,8 +1,7 @@
 import { Command } from "commander"
 import { printContextWarnings } from "../context.mjs"
-import { createKernel } from "../kernel/index.mjs"
+import { createKernel, LongAgentManager } from "../kernel/index.mjs"
 import { loadTheme } from "../theme/load-theme.mjs"
-import { LongAgentManager } from "../kernel/orchestration/longagent-manager.mjs"
 import { listAgents } from "../agent/agent.mjs"
 import { CustomAgentRegistry } from "../agent/custom-agent-loader.mjs"
 

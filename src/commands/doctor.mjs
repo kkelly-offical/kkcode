@@ -1,16 +1,12 @@
 import { Command } from "commander"
 import { exec as execCb } from "node:child_process"
 import { promisify } from "node:util"
-import { createKernel } from "../kernel/index.mjs"
+import { createKernel, fsckSessionStore, flushNow, BackgroundManager, resolveProviderConnection, inspectSandboxStatus, formatSandboxLine } from "../kernel/index.mjs"
 import { loadTheme } from "../theme/load-theme.mjs"
 import { PROVIDER_META_KEYS } from "../config/schema.mjs"
 import { eventLogStats } from "../storage/event-log.mjs"
 import { auditStats, verifyAuditChain } from "../storage/audit-store.mjs"
-import { fsckSessionStore, flushNow } from "../kernel/session/store.mjs"
-import { BackgroundManager } from "../kernel/orchestration/background-manager.mjs"
 import { buildRequestHeaders, redactHeaders } from "../http/identity.mjs"
-import { resolveProviderConnection } from "../kernel/provider/model-catalog.mjs"
-import { inspectSandboxStatus, formatSandboxLine } from "../kernel/tool/sandbox.mjs"
 
 const exec = promisify(execCb)
 

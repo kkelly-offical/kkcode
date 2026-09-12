@@ -19,13 +19,11 @@ import {
   waiveFinding
 } from "../review/branch-review.mjs"
 import { paint } from "../theme/color.mjs"
-import { applyReviewDecision, getSession, listSessions } from "../kernel/session/store.mjs"
+import { applyReviewDecision, getSession, listSessions, defaultPermissionEngine, escapeTerminalText } from "../kernel/index.mjs"
 import { getStoredToken } from "../github/auth.mjs"
 import * as githubReviewApi from "../github/api.mjs"
-import { PermissionEngine } from "../kernel/permission/engine.mjs"
 import { appendAuditEntry } from "../storage/audit-store.mjs"
 import { startAuditSpan, summarizeAuditContent } from "../audit/event.mjs"
-import { escapeTerminalText } from "../kernel/provider/model-id.mjs"
 
 function getGitDiff() {
   try {
@@ -286,7 +284,7 @@ export function createReviewCommand() {
             repository: `${source.owner}/${source.repo}`,
             pullRequest: source.number
           })
-          await PermissionEngine.check({
+          await defaultPermissionEngine.check({
             config: ctx.configState.config,
             sessionId: report.id,
             traceId: report.traceId,

@@ -24,11 +24,11 @@ The best next move for kkcode is **not** to clone Claude's full product surface.
 
 ### Keep from kkcode
 
-- **Deterministic LongAgent orchestration** with explicit stages, task ownership, gates, and recovery (`src/session/longagent-hybrid.mjs`, `src/session/longagent-plan.mjs`, `src/orchestration/longagent-manager.mjs`)
-- **Checkpoint-heavy long-run execution** (`src/session/checkpoint.mjs`, `src/session/longagent*.mjs`)
-- **Prompt block caching** and lightweight provider routing (`src/session/system-prompt.mjs`, `src/session/loop.mjs`)
-- **Simple extension loading** from project/global folders for tools, skills, and agents (`src/tool/registry.mjs`, `src/skill/registry.mjs`, `src/agent/custom-agent-loader.mjs`)
-- **MCP prompt → skill bridging**, which is already a useful portability primitive (`src/skill/registry.mjs`)
+- **Deterministic LongAgent orchestration** with explicit stages, task ownership, gates, and recovery (`src/kernel/session/longagent-hybrid.mjs`, `src/kernel/session/longagent-plan.mjs`, `src/kernel/orchestration/longagent-manager.mjs`)
+- **Checkpoint-heavy long-run execution** (`src/kernel/session/checkpoint.mjs`, `src/kernel/session/longagent*.mjs`)
+- **Prompt block caching** and lightweight provider routing (`src/kernel/session/system-prompt.mjs`, `src/kernel/session/loop.mjs`)
+- **Simple extension loading** from project/global folders for tools, skills, and agents (`src/kernel/tool/registry.mjs`, `src/kernel/skill/registry.mjs`, `src/agent/custom-agent-loader.mjs`)
+- **MCP prompt → skill bridging**, which is already a useful portability primitive (`src/kernel/skill/registry.mjs`)
 
 ### Adopt from claudenext-private
 
@@ -45,10 +45,10 @@ The best next move for kkcode is **not** to clone Claude's full product surface.
 #### kkcode strengths
 
 - kkcode has a real long-run orchestrator, not just subagent spawning.
-- `runHybridLongAgent()` includes intake, preview, blueprint, scaffold, coding, debugging, validation, gates, and git merge phases (`src/session/longagent-hybrid.mjs`).
-- Stage plans are normalized and validated with file-ownership checks before execution (`src/session/longagent-plan.mjs`).
-- LongAgent state is durable and lock-protected (`src/orchestration/longagent-manager.mjs`).
-- Checkpoint + resume support is first-class (`src/session/checkpoint.mjs`, `src/session/longagent-hybrid.mjs`).
+- `runHybridLongAgent()` includes intake, preview, blueprint, scaffold, coding, debugging, validation, gates, and git merge phases (`src/kernel/session/longagent-hybrid.mjs`).
+- Stage plans are normalized and validated with file-ownership checks before execution (`src/kernel/session/longagent-plan.mjs`).
+- LongAgent state is durable and lock-protected (`src/kernel/orchestration/longagent-manager.mjs`).
+- Checkpoint + resume support is first-class (`src/kernel/session/checkpoint.mjs`, `src/kernel/session/longagent-hybrid.mjs`).
 
 #### claudenext-private strengths
 
@@ -70,7 +70,7 @@ The best next move for kkcode is **not** to clone Claude's full product surface.
 
 #### Gap for kkcode
 
-kkcode's LongAgent is stronger for structured multi-stage delivery, but its **single delegated-task UX** is weaker. `task` only exposes prompt/description/subagent/background/session/planned_files and leaves most delegation quality to the model (`src/tool/task-tool.mjs`). There is no Claude-level built-in fork discipline, worktree isolation, or cache-preserving delegation contract.
+kkcode's LongAgent is stronger for structured multi-stage delivery, but its **single delegated-task UX** is weaker. `task` only exposes prompt/description/subagent/background/session/planned_files and leaves most delegation quality to the model (`src/kernel/tool/task-tool.mjs`). There is no Claude-level built-in fork discipline, worktree isolation, or cache-preserving delegation contract.
 
 #### Recommendation
 
@@ -87,8 +87,8 @@ This is a high-value, moderate-risk catch-up item.
 
 #### kkcode today
 
-- kkcode has a solid block-based system prompt builder with cacheable sections for provider, agent, mode, tools, skills, subagents, project context, memory, and env (`src/session/system-prompt.mjs`).
-- The OpenAI/Anthropic session prompts are serviceable and tool-disciplined (`src/session/prompt/beast.txt`, `src/session/prompt/anthropic.txt`).
+- kkcode has a solid block-based system prompt builder with cacheable sections for provider, agent, mode, tools, skills, subagents, project context, memory, and env (`src/kernel/session/system-prompt.mjs`).
+- The OpenAI/Anthropic session prompts are serviceable and tool-disciplined (`src/kernel/session/prompt/beast.txt`, `src/kernel/session/prompt/anthropic.txt`).
 - LongAgent has a dedicated orchestration prompt with plan, task ownership, acceptance criteria, and gate expectations (`src/agent/prompt/longagent.txt`).
 
 #### claudenext-private advantage
@@ -126,7 +126,7 @@ kkcode skill loading is flexible but intentionally simple:
 - directory-format `SKILL.md`
 - optional dynamic context injection guarded by a command allowlist
 - MCP prompts exposed as skills
-(`src/skill/registry.mjs`)
+(`src/kernel/skill/registry.mjs`)
 
 This is a good base and already maps well to kkcode's terminal-first workflow.
 
@@ -171,10 +171,10 @@ This would make Claude-style skills much easier to port without breaking kkcode'
 
 kkcode currently has extension directories, not a full plugin product:
 
-- dynamic tools from `.kkcode/tools` and `.kkcode/plugins` (`src/tool/registry.mjs`)
-- hook scripts from builtin/global/project hook directories (`src/plugin/hook-bus.mjs`)
+- dynamic tools from `.kkcode/tools` and `.kkcode/plugins` (`src/kernel/tool/registry.mjs`)
+- hook scripts from builtin/global/project hook directories (`src/kernel/plugin/hook-bus.mjs`)
 - custom agents from global/project agent directories (`src/agent/custom-agent-loader.mjs`)
-- skills from global/project skill directories (`src/skill/registry.mjs`)
+- skills from global/project skill directories (`src/kernel/skill/registry.mjs`)
 
 This is simple and easy to reason about, but it is not a manifest-driven ecosystem.
 

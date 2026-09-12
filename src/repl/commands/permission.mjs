@@ -12,18 +12,19 @@
  * 仍由这里 reload 后经 setCustomCommands 写回。
  */
 
-import { PermissionEngine } from "../../kernel/permission/engine.mjs"
-import { persistTrust, revokeTrust } from "../../kernel/permission/workspace-trust.mjs"
-import { normalizePermissionLevel } from "../../kernel/permission/rules.mjs"
 import {
+  defaultPermissionEngine,
+  persistTrust,
+  revokeTrust,
+  normalizePermissionLevel,
   listLearnedRules,
   removeLearnedRules,
   isLearnedRule,
-  describeRule
-} from "../../kernel/permission/learned-rules.mjs"
+  describeRule,
+  escapeTerminalText,
+  approvalFromLegacy
+} from "../../kernel/index.mjs"
 import { loadCustomCommands } from "../../command/custom-commands.mjs"
-import { escapeTerminalText } from "../../kernel/provider/model-id.mjs"
-import { approvalFromLegacy } from "../../kernel/core/modes.mjs"
 import { applyPermissionLevel, nextPermissionLevel } from "../permission-flow.mjs"
 import {
   pickConfigPathForScope,
@@ -215,7 +216,9 @@ export const permissionCommands = [
       }
 
       if (sub === "session-clear" || sub === "reset") {
-        PermissionEngine.clearSession(state.sessionId)
+        // 进程级默认引擎是 2b 过渡期 executeTurn 路径实际读的那份（facade 头注
+        // 第 3 组）；清实例引擎的清不到回合判定在用的缓存。
+        defaultPermissionEngine.clearSession(state.sessionId)
         print(`permission session cache cleared: ${state.sessionId}`, { channel: "notice", topic: "command" })
         return { exit: false }
       }

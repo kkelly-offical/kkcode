@@ -1,8 +1,7 @@
 import { Command } from "commander"
 import { printContextWarnings } from "../context.mjs"
-import { createKernel } from "../kernel/index.mjs"
+import { createKernel, defaultPermissionEngine } from "../kernel/index.mjs"
 import { loadTheme } from "../theme/load-theme.mjs"
-import { PermissionEngine } from "../kernel/permission/engine.mjs"
 
 export function createPermissionCommand() {
   const cmd = new Command("permission").description("inspect permission rules and session grants")
@@ -22,7 +21,7 @@ export function createPermissionCommand() {
     .description("show granted allow_session keys for one session")
     .requiredOption("--id <id>", "session id")
     .action(async (options) => {
-      const list = PermissionEngine.listSession(options.id)
+      const list = defaultPermissionEngine.listSession(options.id)
       console.log(JSON.stringify(list, null, 2))
     })
 
@@ -31,7 +30,7 @@ export function createPermissionCommand() {
     .description("clear in-memory grants for one session")
     .requiredOption("--id <id>", "session id")
     .action(async (options) => {
-      PermissionEngine.clearSession(options.id)
+      defaultPermissionEngine.clearSession(options.id)
       console.log(`permission cache cleared for session ${options.id}`)
     })
 

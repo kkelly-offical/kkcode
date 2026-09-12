@@ -16,9 +16,9 @@ The catch-up direction is sound **if it stays compatibility-first**:
 
 Current repo evidence shows a terminology mismatch:
 
-- `src/plugin/hook-bus.mjs` loads hook scripts from `.kkcode/hooks`
+- `src/kernel/plugin/hook-bus.mjs` loads hook scripts from `.kkcode/hooks`
 - `README.md` and some UI/help strings still present `.kkcode/plugins` as the hook location
-- `src/tool/registry.mjs` already treats plugin directories as a separate concept for tool loading
+- `src/kernel/tool/registry.mjs` already treats plugin directories as a separate concept for tool loading
 
 **Risk:** users will keep conflating hooks with plugins, and plugin-manifest work will inherit that confusion.
 
@@ -71,7 +71,7 @@ A local manifest layer is the right next step, but it should reuse existing load
 
 ### 5. Stable prompt blocks should stay stable
 
-`src/session/system-prompt.mjs` already separates cacheable blocks from dynamic ones. Delegation guidance upgrades should preserve that split.
+`src/kernel/session/system-prompt.mjs` already separates cacheable blocks from dynamic ones. Delegation guidance upgrades should preserve that split.
 
 **Why it matters:** stuffing fast-changing runtime details into stable blocks will hurt prompt caching and make behavior drift harder to reason about.
 

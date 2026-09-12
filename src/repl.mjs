@@ -8,33 +8,41 @@ import { emitKeypressEvents } from "node:readline"
 import { readFile } from "node:fs/promises"
 import { basename, join } from "node:path"
 import { printContextWarnings } from "./context.mjs"
-import { createKernel } from "./kernel/index.mjs"
-import { loadTheme } from "./theme/load-theme.mjs"
-import { ensureEventSinks, newSessionId, routeMode } from "./kernel/session/engine.mjs"
-import { summarizeRouteDecision } from "./kernel/session/engine.mjs"
-import { buildAgentContinuationPrompt, summarizeAgentTransaction } from "./kernel/session/agent-transaction.mjs"
+// 内核一律走 facade 白名单（架构 §4.2.1；default* 进程级值见 facade 头注第 3 组）
 import {
+  createKernel,
+  ensureEventSinks,
+  newSessionId,
+  routeMode,
+  summarizeRouteDecision,
+  buildAgentContinuationPrompt,
+  summarizeAgentTransaction,
   emitAgentContinuationInterrupted,
   emitAgentContinuationResumed,
-  emitRouteDecisionEvent
-} from "./kernel/session/routing-observability.mjs"
+  emitRouteDecisionEvent,
+  defaultPermissionEngine,
+  defaultPermissionPromptChannel,
+  defaultQuestionPromptChannel,
+  defaultEventBus,
+  EVENT_TYPES,
+  readClipboardImage,
+  readClipboardText,
+  nextModeId,
+  describeRule,
+  rewindLastTurn,
+  checkWorkspaceTrust
+} from "./kernel/index.mjs"
+import { loadTheme } from "./theme/load-theme.mjs"
 import { loadCustomCommands, applyCommandTemplate } from "./command/custom-commands.mjs"
 import { renderMarkdown } from "./theme/markdown.mjs"
-import { listSessions, appendMessage } from "./kernel/session/store.mjs"
 import { runShellPassthrough, formatForTranscript as formatShellForTranscript, formatForContext as formatShellForContext } from "./repl/shell-passthrough.mjs"
 import { renderReplDashboard } from "./ui/repl-dashboard.mjs"
 import { buildRouteFeedback } from "./ui/repl-route-feedback.mjs"
 import { renderReplStatusLine, renderStartupScreen } from "./ui/repl-status-view.mjs"
 import { paint } from "./theme/color.mjs"
-import { PermissionEngine } from "./kernel/permission/engine.mjs"
-import { setPermissionPromptHandler } from "./kernel/permission/prompt.mjs"
-import { setQuestionPromptHandler } from "./kernel/tool/question-prompt.mjs"
 import { promptWorkspaceTrust } from "./repl/trust-prompt.mjs"
 import { createActivityRenderer } from "./ui/activity-renderer.mjs"
 import { reduceAppState } from "./ui/app-state.mjs"
-import { EventBus } from "./kernel/core/events.mjs"
-import { EVENT_TYPES } from "./kernel/core/constants.mjs"
-import { readClipboardImage, readClipboardText } from "./kernel/tool/image-util.mjs"
 import { userRootDir, memoryFilePath } from "./storage/paths.mjs"
 import { loadProfile, runOnboarding } from "./onboarding.mjs"
 import {
@@ -90,14 +98,12 @@ import { createNotifier } from "./repl/notify.mjs"
 import { createGhostPredictor } from "./repl/ghost-predictor.mjs"
 import { buildReplRuntimeSnapshot } from "./repl/runtime-facade.mjs"
 import { POLICY_CHOICES, PERMISSION_PROMPT_VALUES } from "./repl/permission-flow.mjs"
-import { nextModeId } from "./kernel/core/modes.mjs"
 import {
   applyModeSelection,
   resolveModeId,
   switchModeInPlace,
   MODE_PICKER_CHOICES
 } from "./repl/mode-flow.mjs"
-import { describeRule } from "./kernel/permission/learned-rules.mjs"
 import { createInputDecoderChain } from "./repl/input-decoders.mjs"
 import { parseOsc11Response, isLightBackground, OSC11_QUERY } from "./theme/background-probe.mjs"
 import { createThemeSwitcher, createBackgroundProbeHandler } from "./repl/theme-switch.mjs"
@@ -117,7 +123,6 @@ import { createToastStore } from "./ui/toast-store.mjs"
 import { shouldApplyActiveTurnEvent } from "./ui/event-scope.mjs"
 import { createFrameBatcher } from "./ui/frame-batcher.mjs"
 import { buildThinkingTranscriptItem, finishThinking as finishThinkingState } from "./ui/thinking-state.mjs"
-import { rewindLastTurn } from "./kernel/session/rewind.mjs"
 import { setMarkdownColors } from "./theme/markdown.mjs"
 import { sanitizeTerminalStyledText, sanitizeTerminalText } from "./theme/terminal-sanitize.mjs"
 
@@ -209,7 +214,7 @@ async function processInputLine({
     const command = normalized.slice(1).trim()
     const result = await runShellPassthrough(command)
     print(formatShellForTranscript(command, result), { channel: "transcript" })
-    await appendMessage(state.sessionId, "user", formatShellForContext(command, result)).catch(() => {})
+    await ctx.kernel.sessions.appendMessage(state.sessionId, "user", formatShellForContext(command, result)).catch(() => {})
     return { exit: false }
   }
 
@@ -788,7 +793,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   })
 
   const uiEventUnsub = subscribeSessionEvents({
-    eventBus: EventBus,
+    eventBus: defaultEventBus,
     ui,
     ctx,
     state,
@@ -849,7 +854,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     showToast,
     submitCurrentInput: () => submitCurrentInput(),
     selectModeAndNotify: (modeId) => selectModeAndNotify(modeId),
-    clearPermissionSession: (sessionId) => PermissionEngine.clearSession(sessionId),
+    clearPermissionSession: (sessionId) => defaultPermissionEngine.clearSession(sessionId),
     themeSwitcher
   })
   const {
@@ -1078,7 +1083,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       if (summary && line.trim()) {
         submittedLine = buildAgentContinuationPrompt(summary, line.trim())
         route = routeMode(submittedLine, state.mode, { continuation: summary, continued: true })
-        await EventBus.emit({
+        await defaultEventBus.emit({
           type: EVENT_TYPES.ROUTE_DECISION,
           sessionId: state.sessionId,
           payload: {
@@ -1087,7 +1092,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
             continuedTransaction: true
           }
         })
-        await EventBus.emit({
+        await defaultEventBus.emit({
           type: EVENT_TYPES.AGENT_CONTINUATION_RESUMED,
           sessionId: state.sessionId,
           payload: {
@@ -1759,7 +1764,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       deactivateTerminal()
     }
     listeners.on(process, "exit", onProcessExit)
-    setPermissionPromptHandler(({ tool, sessionId, reason = "", pattern = "*", command = "", args = {}, risk = 0, defaultAction = "deny" }) =>
+    defaultPermissionPromptChannel.setPermissionPromptHandler(({ tool, sessionId, reason = "", pattern = "*", command = "", args = {}, risk = 0, defaultAction = "deny" }) =>
       new Promise((resolve) => {
         queuePermissionPrompt({
           tool,
@@ -1774,7 +1779,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         })
       })
     )
-    PermissionEngine.setPersistGrantHandler(async ({ tool, pattern, command, workspace }) => {
+    defaultPermissionEngine.setPersistGrantHandler(async ({ tool, pattern, command, workspace }) => {
       const result = await persistLearnedGrant({ ctx, tool, pattern, command, workspace })
       if (result.added) {
         showToast(`Always allow · ${describeRule(result.rule)}`, { topic: "permission", tone: "success" })
@@ -1783,7 +1788,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       }
       return result.added
     })
-    setQuestionPromptHandler(({ questions }) =>
+    defaultQuestionPromptChannel.setQuestionPromptHandler(({ questions }) =>
       new Promise((resolve) => {
         queueQuestionPrompt({ questions, resolve })
       })
@@ -1800,8 +1805,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     textStreamBatcher.dispose()
     ghostPredictor.dispose()
     deactivateTerminal({ pauseInput: true })
-    setPermissionPromptHandler(null)
-    setQuestionPromptHandler(null)
+    defaultPermissionPromptChannel.setPermissionPromptHandler(null)
+    defaultQuestionPromptChannel.setQuestionPromptHandler(null)
     stopBusySpinner()
     activityRenderer.stop()
     uiEventUnsub()
@@ -1907,8 +1912,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     transcriptUnsub()
     toastUnsub()
     toastStore.dispose()
-    setPermissionPromptHandler(null)
-    setQuestionPromptHandler(null)
+    defaultPermissionPromptChannel.setPermissionPromptHandler(null)
+    defaultQuestionPromptChannel.setQuestionPromptHandler(null)
     // 一次性进程级监听器：登记本倒着走一遍，不再是手写清单
     listeners.disposeAll()
     // keypress / data 是反复装卸的那一类，随终端一起停
@@ -1927,7 +1932,6 @@ export async function startRepl({ trust = false } = {}) {
   }
 
   // Trust check BEFORE splash — readline prompt must not compete with splash screen clearing
-  const { checkWorkspaceTrust } = await import("./kernel/permission/workspace-trust.mjs")
   // 阶段 3b：内核的信任探测不再碰 TTY，交互提问由前端注入（行式提问，见
   // repl/trust-prompt.mjs）；headless 宿主注入不了 prompt，得到确定性 untrusted。
   const trustState = await checkWorkspaceTrust({
@@ -1996,7 +2000,7 @@ export async function startRepl({ trust = false } = {}) {
     allowProjectSources: extensionPolicy.allowProjectSources
   })
   const providersConfigured = configuredProviders(ctx.configState.config, kernel.providers.listProviders)
-  const recentSessions = await listSessions({ cwd: process.cwd(), limit: 6, includeChildren: false }).catch(() => [])
+  const recentSessions = await kernel.sessions.listSessions({ cwd: process.cwd(), limit: 6, includeChildren: false }).catch(() => [])
 
   // 启动自检：只看「现在能不能干活」的几项，重活留给 kkcode doctor
   const preflight = buildPreflightReport({

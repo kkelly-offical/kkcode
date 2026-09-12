@@ -28,7 +28,7 @@ M3 对全部 291 个 `.mjs` 的静态 import 扫描（含 Tarjan SCC 环检测�
 | 内核内部静态循环 | session/ 内 **8 文件 SCC**（engine↔loop↔system-prompt↔longagent 家族） | M3 §四.1 |
 | 目录级双向依赖 | session↔tool、session↔orchestration、provider↔repl 共 3 组 | M3 §四.1 |
 | 模块级单例 | **9 组**（EventBus、PermissionEngine、ToolRegistry、McpRegistry、SkillRegistry、HookBus、两个 prompt handler 槽位、provider 注册表） | M3 §四.2 |
-| 层级倒置 | session/loop.mjs import theme/；permission/prompt.mjs 内核自己开 readline 碰 TTY | M3 §二.C（耦合点 13–15） |
+| 层级倒置 | kernel/session/loop.mjs import theme/；kernel/permission/prompt.mjs 内核自己开 readline 碰 TTY | M3 §二.C（耦合点 13–15） |
 | 测试印证的 de facto 内核面 | test/ 引用最多：tool/registry(16)、session/store(12)、provider/router(11)、orchestration/background-manager(9)、core/events(6) | M3 §一 |
 
 后果已经在发生：boot 职责无归属（调用方引导一次、`executeTurn` 内部再引导一次，
@@ -65,19 +65,22 @@ M3 耦合点 5）；`/trust` 的 `reinitializeExtensions` 要手工重建五套�
 └──────────────────────────────────────────────────────────────────────────────────────┘
                     │
 ┌────────────────────────────── platform / 持久化层 ──────────────────────────────────┐
-│ src/config/（分层配置加载）  src/storage/（路径与落盘）  src/session/store（会话存储）│
+│ src/config/（分层配置加载）  src/storage/（路径与落盘）  src/kernel/session/store（会话存储）│
 │ src/audit/  src/observability/  src/net/  src/http/                                   │
 │ ~/.kkcode/（会话、background task checkpoint、credentials）                          │
 └──────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-目录落位说明：
+目录落位说明（阶段 4 收尾时的现状）：
 
 - **1.0.0 不新建 `packages/`**。`src/kernel/`、`src/sdk/` 是包内目录边界，不是
   发布单元；发布形态仍然是单包 `@kkelly-offical/kkcode`（package.json 不变）。
-- 现有子域目录（`src/session/` 等）**先不搬家**：阶段 1–2 只新增 `src/kernel/`
-  组合根与 facade 并反转依赖方向；目录物理迁移放到阶段 3 逐域进行，每步独立
-  可回退（§7.1）。
+- 子域目录已在阶段 3c 全部迁入 `src/kernel/`：core、permission、tool、
+  provider、mcp、skill、plugin、orchestration、session 九域各一个子目录，
+  逐域独立 PR、纯机械搬迁（每域一次 rename，文件内容不变）。
+  frontends 对内核的引用在阶段 4 全部收敛到 `src/kernel/index.mjs` facade，
+  边界由 eslint `no-restricted-imports` 与 `scripts/check-boundaries.mjs`
+  在 CI 强制（§4.2.2）。
 - `src/theme/`、`src/ui/`、`src/repl/` 永远留在 frontends 层；`src/config/`、
   `src/storage/` 属于 platform 层，被 kernel 单向依赖。
 
@@ -100,7 +103,8 @@ lint 规则强制（§6 阶段 4 的完成判据）。
 ## 4. Kernel 公开 API 面：`createKernel()` 组合根
 
 API 面基于 M3 §三归纳的**现有真实接口**（本节每个签名都已在 `48afacc` 核对到
-文件与行号），不是新发明的能力。`createKernel()` 是唯一的组合根：收口 6+ 份
+文件与行号；路径已随阶段 3c 刷新为 `src/kernel/` 现状，行号为迁移前核对值 ——
+3c 是纯机械搬迁，文件内容未变），不是新发明的能力。`createKernel()` 是唯一的组合根：收口 6+ 份
 boot 序列（M3 §二.A），把 9 组模块级单例收编为实例字段（M3 §四.2）。
 
 ```js
@@ -120,34 +124,40 @@ export async function createKernel(options = {}) {
 
 | 命名空间 | 成员 | 现状来源（已核对） | 说明 |
 | --- | --- | --- | --- |
-| `kernel` | `shutdown()` | M3 §三 | 收口 McpRegistry.shutdown + `flushNow()`（session/store.mjs:137） |
-| `kernel.turns` | `executeTurn(options)` | session/engine.mjs:283 | 单对象参数 16 字段：prompt, contentBlocks, mode, model, sessionId, configState, providerType, baseUrl, apiKeyEnv, maxIterations, signal, output, allowQuestion, toolContext, runSpec, steerSource（勘误见 §9） |
-| | `routeMode(prompt, mode, opts)` · `resolvePromptMode(...)` · `resolveMode(...)` · `getPublicModeContract(...)` | engine.mjs:152 / 199 / 51 / 60 | 模式路由四件套 |
-| | `newSessionId()` | engine.mjs:210（勘误见 §9） | |
-| `kernel.sessions` | `touchSession` `updateSession` `appendMessage` `appendPart` `replaceMessages` `getSession` `listSessions` `getConversationHistory` `forkSession` `markSessionStatus` `appendUserMessage` `appendAssistantMessage` | session/store.mjs:205–423 | 会话存储读写面 |
-| | `compactSession(...)` | session/compaction.mjs:318 | |
-| | `confirmRollback` `executeRollback` `handleRollbackIfNeeded` | session/rollback.mjs:84 / 170 / 212 | |
-| `kernel.permissions` | `check` `setTrusted` `isTrusted` `clearSession` `setPersistGrantHandler` | permission/engine.mjs:52 | PermissionEngine 的方法集原样成为实例方法 |
-| `kernel.tools` | `initialize` `list` `get`（ToolRegistry）+ `executeTool(...)` | tool/registry.mjs:2444、tool/executor.mjs:110 | |
-| `kernel.extensions` | SkillRegistry · McpRegistry（`initialize/listTools/healthSnapshot/shutdown`）· HookBus / `initHookBus` | skill/registry.mjs:500、mcp/registry.mjs:272、plugin/hook-bus.mjs:131 / 66 | |
-| `kernel.background` | `launch` `launchDelegateTask` `get` `list` `summary` · `createTaskDelegate` | orchestration/background-manager.mjs:477、task-scheduler.mjs:200 | 进程模型契约见 §7.3 |
-| `kernel.providers` | `listProviders` `getProvider` `requestProvider` `requestProviderStream` `countTokensProvider` | provider/router.mjs:28 / 32 / 280 / 395 / 567 | |
-| `kernel.events` | `subscribe` `registerSink` `listenerCount` + `EVENT_TYPES` | core/events.mjs:6、core/constants.mjs:11 | 现成的内核→宿主通知通道，是 SDK 事件契约的骨干（M3 §三末条） |
+| `kernel` | `shutdown()` | M3 §三 | 收口 McpRegistry.shutdown + `flushNow()`（kernel/session/store.mjs:137） |
+| `kernel.turns` | `executeTurn(options)` | kernel/session/engine.mjs:283 | 单对象参数 16 字段：prompt, contentBlocks, mode, model, sessionId, configState, providerType, baseUrl, apiKeyEnv, maxIterations, signal, output, allowQuestion, toolContext, runSpec, steerSource（勘误见 §9） |
+| | `routeMode(prompt, mode, opts)` · `resolvePromptMode(...)` · `resolveMode(...)` · `getPublicModeContract(...)` | kernel/session/engine.mjs:152 / 199 / 51 / 60 | 模式路由四件套 |
+| | `newSessionId()` | kernel/session/engine.mjs:210（勘误见 §9） | |
+| `kernel.sessions` | `touchSession` `updateSession` `appendMessage` `appendPart` `replaceMessages` `getSession` `listSessions` `getConversationHistory` `forkSession` `markSessionStatus` `appendUserMessage` `appendAssistantMessage` | kernel/session/store.mjs:205–423 | 会话存储读写面 |
+| | `compactSession(...)` | kernel/session/compaction.mjs:318 | |
+| | `confirmRollback` `executeRollback` `handleRollbackIfNeeded` | kernel/session/rollback.mjs:84 / 170 / 212 | |
+| `kernel.permissions` | `check` `setTrusted` `isTrusted` `clearSession` `setPersistGrantHandler` | kernel/permission/engine.mjs:52 | PermissionEngine 的方法集原样成为实例方法 |
+| `kernel.tools` | `initialize` `list` `get`（ToolRegistry）+ `executeTool(...)` | kernel/tool/registry.mjs:2444、kernel/tool/executor.mjs:110 | |
+| `kernel.extensions` | SkillRegistry · McpRegistry（`initialize/listTools/healthSnapshot/shutdown`）· HookBus / `initHookBus` | kernel/skill/registry.mjs:500、kernel/mcp/registry.mjs:272、kernel/plugin/hook-bus.mjs:131 / 66 | |
+| `kernel.background` | `launch` `launchDelegateTask` `get` `list` `summary` · `createTaskDelegate` | kernel/orchestration/background-manager.mjs:477、kernel/orchestration/task-scheduler.mjs:200 | 进程模型契约见 §7.3 |
+| `kernel.providers` | `listProviders` `getProvider` `requestProvider` `requestProviderStream` `countTokensProvider` | kernel/provider/router.mjs:28 / 32 / 280 / 395 / 567 | |
+| `kernel.events` | `subscribe` `registerSink` `listenerCount` + `EVENT_TYPES` | kernel/core/events.mjs:6、kernel/core/constants.mjs:11 | 现成的内核→宿主通知通道，是 SDK 事件契约的骨干（M3 §三末条） |
 
 ### 4.2 边界纪律
 
-1. **白名单导出**：`src/kernel/index.mjs` 只 re-export 上表成员；其余内核文件
+1. **白名单导出**：`src/kernel/index.mjs` 只 re-export 白名单成员；其余内核文件
    一律视为私有。对照 Codex 门面 crate `codex-core-api` 的
    `#![deny(private_interfaces)]` 纪律（M1 §1、§4.2）。
+   阶段 4 落地后的白名单 = §4.1 句柄面（createKernel）+ facade 头注登记的两组
+   扩展：frontends 实际消费的无状态契约面（模式/事件常量、provider 目录与向导等
+   纯函数）与 §7.2/§7.3 的进程级显式例外（会话存储、BackgroundManager、
+   默认事件总线/默认权限引擎/默认 HookBus/两个默认提示通道）。新增导出必须在
+   facade 头注登记归属组与理由。
 2. **deep-import 禁令**：frontends 只允许 `import ... from "../kernel/index.mjs"`
    与 `../sdk/…`；由 eslint `no-restricted-imports` + 边界脚本在 CI 强制
-   （阶段 4 完成判据）。
+   （阶段 4 完成判据，已落地：`scripts/check-boundaries.mjs` 接进
+   `npm run lint`，frontends → kernel 内部边数与 kernel → frontends 边数均为 0）。
 3. **输出纪律**：kernel 内禁止 `process.stdout.write` / `console.log`；一切
    用户可见输出走 `kernel.events` 与宿主注入的 `handlers.onOutput`。对照
    Codex core 的 `#![deny(clippy::print_stdout)]`（M1 §2.1）与 exec 的 stdout
    契约（M1 §2.4）。现有 `output` 参数在阶段 3 纯化为数据事件通道（§7.5）。
 4. **交互纪律**：kernel 不得自行在 `process.stdin/stdout` 上开 readline
-   （现状 M3 耦合点 15：permission/prompt.mjs:44-48、tool/question-prompt.mjs）；
+   （现状 M3 耦合点 15：kernel/permission/prompt.mjs、kernel/tool/question-prompt.mjs）；
     approval/question 一律挂起为事件，由宿主 handler 解决 —— 即 Kimi Code 的
    「审批建模为可寻址资源」原则的进程内形态（M2 四.5）。
 
@@ -159,11 +169,11 @@ export async function createKernel(options = {}) {
 
 | # | Codex 原则（证据） | kkcode 1.0.0 落点 |
 | --- | --- | --- |
-| C1 | 先抽纯类型协议包，内核只暴露 Manager→Thread 两类型 + submit/nextEvent 两动词（SQ/EQ；M1 §2.1、§4.1） | 进程内等价物已存在：`EventBus` + `EVENT_TYPES`（core/events.mjs:6、core/constants.mjs:11）就是 EQ；`kernel.turns.executeTurn` 就是 submit 动词。1.0.0 把 EVENT_TYPES 的稳定子集固化为 `src/sdk/events.mjs` 事件契约；独立的 `@kkcode/protocol` 类型包留到 1.x（§8） |
+| C1 | 先抽纯类型协议包，内核只暴露 Manager→Thread 两类型 + submit/nextEvent 两动词（SQ/EQ；M1 §2.1、§4.1） | 进程内等价物已存在：`EventBus` + `EVENT_TYPES`（kernel/core/events.mjs:6、kernel/core/constants.mjs:11）就是 EQ；`kernel.turns.executeTurn` 就是 submit 动词。1.0.0 把 EVENT_TYPES 的稳定子集固化为 `src/sdk/events.mjs` 事件契约；独立的 `@kkcode/protocol` 类型包留到 1.x（§8） |
 | C2 | 门面包隔离公共 API + 官方 sample 证明门面自足（codex-core-api、thread-manager-sample；M1 §3.1、§4.2） | `src/kernel/index.mjs` 白名单 facade（§4.2.1）；CI 增加 smoke 脚本跑通「createKernel → executeTurn 最小 turn → 收事件 → shutdown」全链路（§6 阶段 2 完成判据） |
 | C3 | 所有前端收敛到一条带版本的服务协议，前端零内核依赖（tui 依赖表无 codex-core；M1 §2.2、§4.3） | 1.0.0 取进程内形态：76 个 UI 文件的 deep-import 收敛为只依赖 facade，UI 对内核内部文件 import 数 → 0（M3 §一基线 47 个文件）；网络服务层（JSON-RPC/REST）是 1.x 评估项（§8） |
 | C4 | headless 模式即 SDK 机器契约，stdout 纪律用 lint 保证（exec JSONL；M1 §2.4、§3.2、§4.4） | 阶段 5 固化 headless `--output-format json` 的 stdout JSONL 契约（thinking/进度走 stderr）；kernel 禁 print 进 lint（§4.2.3）。TS SDK 薄封装 spawn CLI 的形态照抄 Codex sdk/typescript，列为 1.x |
-| C5 | 单版本列车 + 「协议并存 → deprecated alias → feature flag → 删除」兼容流水线（M1 §3.4、§4.5） | kkcode 已是单包单版本；`src/core/deprecations.mjs` 已把兼容别名移除目标钉在 1.0.0（docs/ROADMAP.md §7）。1.0.0 补齐：内核公开面变更必须带 deprecated alias 一个 minor 周期，事件契约变更必须带版本标记 |
+| C5 | 单版本列车 + 「协议并存 → deprecated alias → feature flag → 删除」兼容流水线（M1 §3.4、§4.5） | kkcode 已是单包单版本；`src/kernel/core/deprecations.mjs` 已把兼容别名移除目标钉在 1.0.0（docs/ROADMAP.md §7）。1.0.0 补齐：内核公开面变更必须带 deprecated alias 一个 minor 周期，事件契约变更必须带版本标记 |
 
 ### 5.2 Kimi Code 五原则（M2 §四）映射
 
@@ -171,7 +181,7 @@ export async function createKernel(options = {}) {
 | --- | --- | --- |
 | K1 | 单一内核、多客户端表面（0.33.0 CLI 全表面跑 agent-core-v2、0.24.0 web 切入同一引擎；M2 一、四.1） | boot 序列 6+ 份 → 1 份（阶段 1）；`src/commands/`（chat/resume/retry/longagent/review）与 REPL 逐一改为只拿 kernel 句柄（阶段 2、4）。现状证据：M3 耦合点 1–6 |
 | K2 | 协议先行、规范即契约（OpenAPI/AsyncAPI 与运行时 schema 同源，"the live spec wins"；M2 二.1、四.2） | 进程内形态：`src/sdk/events.mjs` 是事件的单一事实源，类型由它生成/校验，文档与实现冲突时以代码契约为准；事件面标 `experimental` 争取演进空间。REST/WS 活规范是 1.x（§8） |
-| K3 | 事件溯源持久化 + 可重同步事件流（wire.jsonl 版本化、seq/epoch 重放；M2 三、四.3） | kkcode 会话存储已是 append 式（appendMessage/appendPart，store.mjs:260/288）但有 flush 缓冲与索引态。1.0.0 只做半步走：把「UI 状态即真相」改为「store 即真相、UI 为投影」写进分层规则（§3），并给 store 记录加 schema 版本字段；完整 wire.jsonl 式重放是 1.x |
+| K3 | 事件溯源持久化 + 可重同步事件流（wire.jsonl 版本化、seq/epoch 重放；M2 三、四.3） | kkcode 会话存储已是 append 式（appendMessage/appendPart，kernel/session/store.mjs:260/288）但有 flush 缓冲与索引态。1.0.0 只做半步走：把「UI 状态即真相」改为「store 即真相、UI 为投影」写进分层规则（§3），并给 store 记录加 schema 版本字段；完整 wire.jsonl 式重放是 1.x |
 | K4 | 子智能体一等公民隔离（独立 wire.jsonl、tasks/ 生命周期、委派白名单；M2 四.4） | 已有骨架：`BackgroundManager` + `createTaskDelegate` + 独立 worker 进程（M3 §四.3）。1.0.0 把 worker 入口与跨进程状态传递写成显式契约（§7.3），delegate 生命周期事件进 EVENT_TYPES 契约面 |
 | K5 | 审批/问答建模为会话级可寻址资源（REST 列出/解决 + WS 推送；M2 四.5） | 进程内形态：PermissionEngine 挂起 → `permission.asked` 事件（EVENT_TYPES 已有）→ 宿主 handler 解决；取代内核自开 readline 的现状（M3 耦合点 15）。任意 frontend（TUI/headless/未来 server）都能解决同一会话的审批 |
 
@@ -228,8 +238,8 @@ export async function createKernel(options = {}) {
 
 ### 阶段 3 —— 渲染解耦与目录物理迁移
 
-- 3a. **消除内核 → theme 倒置**（M3 耦合点 14：session/loop.mjs:31-33、
-  session-title.mjs:4 import theme/）：`output` 通道纯化为数据事件（经
+- 3a. **消除内核 → theme 倒置**（M3 耦合点 14：kernel/session/loop.mjs:31-33、
+  kernel/session/session-title.mjs:4 import theme/）：`output` 通道纯化为数据事件（经
   EventBus/registered sinks），ANSI 着色与 markdown 渲染移到 frontends 的 sink。
 - 3b. **内核不碰 TTY**（M3 耦合点 15）：permission/question prompt 一律经
   createKernel 注入的 handler；删除内核 fallback readline（headless 宿主必须
@@ -299,13 +309,13 @@ export async function createKernel(options = {}) {
 
 ### 7.2 模块级单例（M3 §四.2，9 组）
 
-- **清单**：EventBus listeners/sinks（core/events.mjs:3-4）、PermissionEngine
-  sessionAllow/workspaceTrusted/persistGrantHandler（permission/engine.mjs:8-10）、
-  ToolRegistry state（tool/registry.mjs:41-51）、McpRegistry state 含
-  initPromise 单飞锁（mcp/registry.mjs:272+）、SkillRegistry state、HookBus
-  state（plugin/hook-bus.mjs:19）、两个 customPromptHandler 槽位
-  （permission/prompt.mjs:4、tool/question-prompt.mjs:4）、provider 全局注册表
-  （provider/router.mjs:21）。
+- **清单**：EventBus listeners/sinks（kernel/core/events.mjs:3-4）、PermissionEngine
+  sessionAllow/workspaceTrusted/persistGrantHandler（kernel/permission/engine.mjs:8-10）、
+  ToolRegistry state（kernel/tool/registry.mjs:41-51）、McpRegistry state 含
+  initPromise 单飞锁（kernel/mcp/registry.mjs:272+）、SkillRegistry state、HookBus
+  state（kernel/plugin/hook-bus.mjs:19）、两个 customPromptHandler 槽位
+  （kernel/permission/prompt.mjs:4、kernel/tool/question-prompt.mjs:4）、provider 全局注册表
+  （kernel/provider/router.mjs:21）。
 - **风险**：收编为实例字段后，某处漏改的旧路径仍读模块级默认实例，出现
   「半迁移」状态分裂（/trust 五套注册表问题的泛化版，M3 耦合点 6）。
 - **缓解**：默认实例 alias + deprecations.mjs 记录每个旧路径的调用点；阶段 2
@@ -370,15 +380,20 @@ export async function createKernel(options = {}) {
    Codex sdk/typescript，M1 §3.2）—— 1.0.0 的 JSONL 契约（阶段 5）是其前置。
 4. **完整事件溯源**：wire.jsonl 式版本化事件流 + 重放恢复（对照 K3，M2 四.3）。
 5. **ACP / IDE 入口**（对照 M2 二.2）。
+6. **facade 闭包的类型清扫**：阶段 4 把 frontends 全部收敛到
+   `src/kernel/index.mjs` 后，facade 的传递闭包带着 283 个存量 checkJs 错误
+   （45 个内核文件从未进过 typecheck 面）；`src/repl/config-persistence.mjs` 与
+   `src/ui/event-scope.mjs` 因此暂时退出 tsconfig include 白名单（见 tsconfig
+   头注）。逐域清零后把两个文件加回白名单。
 
 ---
 
 ## 9. 对 M3 的勘误（本文件核对于 48afacc）
 
 1. M3 §三称 `executeTurn` 为 15 参；实际签名为单对象 **16 字段**
-   （session/engine.mjs:283-299，§4.1 已逐字段列出）。
+   （kernel/session/engine.mjs:283-299，§4.1 已逐字段列出）。
 2. M3 §三把 `newSessionId` 归入 session/store.mjs；实际定义在
-   **session/engine.mjs:210**，store.mjs 中只有 forkSession 的同名参数。
+   **kernel/session/engine.mjs:210**，store.mjs 中只有 forkSession 的同名参数。
 3. M3 §三称 buildContext 位于 src/context.mjs:78；实际 `export async function
    buildContext` 起始于 **src/context.mjs:32**（函数体约 78 行之长，
    应为行数描述）。

@@ -12,11 +12,11 @@
 import {
   discoverModelsForProvider,
   applyDiscoveredContextLimits,
-  applyDiscoveredCapabilities
-} from "../kernel/provider/model-catalog.mjs"
-import { escapeTerminalText } from "../kernel/provider/model-id.mjs"
-import { formatContext } from "../kernel/provider/wizard-form.mjs"
-import { supportsThinking } from "../kernel/provider/thinking-effort.mjs"
+  applyDiscoveredCapabilities,
+  escapeTerminalText,
+  formatContext,
+  supportsThinking
+} from "../kernel/index.mjs"
 
 /**
  * 这个模型支不支持扩展思考。三级判据，前者优先：

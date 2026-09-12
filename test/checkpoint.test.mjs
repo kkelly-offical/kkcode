@@ -305,6 +305,9 @@ describe("getSessionSnapshots session isolation", () => {
       createdAt: Date.now(), files: []
     })
     const undo = sessionCommands.find((command) => command.names.includes("undo"))
+    // 1.0.0 阶段 4 起 slash 命令经 ctx.kernel 句柄取内核能力（耦合点 10 核销）；
+    // 测试要验的是真实 confirmRollback 的会话隔离，所以句柄桩直通真函数。
+    const { confirmRollback, executeRollback } = await import("../src/kernel/session/rollback.mjs")
     const output = []
     const originalCwd = process.cwd()
     try {
@@ -312,7 +315,10 @@ describe("getSessionSnapshots session isolation", () => {
       await undo.run({
         print: (line) => output.push(String(line)),
         state: { sessionId: "sessA" },
-        ctx: { configState: { config: { language: "en" } } }
+        ctx: {
+          configState: { config: { language: "en" } },
+          kernel: { sessions: { confirmRollback, executeRollback } }
+        }
       })
     } finally {
       process.chdir(originalCwd)

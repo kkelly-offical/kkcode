@@ -1,5 +1,4 @@
-import { EventBus } from "../kernel/core/events.mjs"
-import { EVENT_TYPES } from "../kernel/core/constants.mjs"
+import { defaultEventBus, EVENT_TYPES } from "../kernel/index.mjs"
 import { paint } from "../theme/color.mjs"
 import { highlightLine } from "../theme/syntax-highlight.mjs"
 import {
@@ -961,7 +960,7 @@ export function createActivityRenderer({ output, theme = null, eventFilter = nul
   return {
     start() {
       if (unsubscribe) return
-      unsubscribe = EventBus.subscribe(handleEvent)
+      unsubscribe = defaultEventBus.subscribe(handleEvent)
     },
     stop() {
       if (unsubscribe) {

@@ -1,14 +1,26 @@
 import { Command } from "commander"
 import { printContextWarnings } from "../context.mjs"
-import { createKernel } from "../kernel/index.mjs"
+import {
+  createKernel,
+  ensureEventSinks,
+  formatPublicModeSummary,
+  getPublicModeContract,
+  resolvePromptMode,
+  summarizeRouteDecision,
+  emitRouteDecisionEvent,
+  listProviders,
+  MODE_IDS,
+  DEFAULT_MODE_ID,
+  modeIdFromLegacy,
+  laneOf,
+  approvalOf,
+  getMode
+} from "../kernel/index.mjs"
 import { loadTheme } from "../theme/load-theme.mjs"
-import { ensureEventSinks, formatPublicModeSummary, getPublicModeContract, resolvePromptMode, summarizeRouteDecision } from "../kernel/session/engine.mjs"
-import { emitRouteDecisionEvent } from "../kernel/session/routing-observability.mjs"
 import { renderStatusBar } from "../theme/status-bar.mjs"
 import { applyCommandTemplate, loadCustomCommands } from "../command/custom-commands.mjs"
-import { listProviders } from "../kernel/provider/router.mjs"
 import { createOutputReporter, resolveOutputFormat } from "../cli/output-format.mjs"
-import { MODE_IDS, DEFAULT_MODE_ID, modeIdFromLegacy, laneOf, approvalOf, getMode } from "../kernel/core/modes.mjs"
+import { createTtyPromptHandlers } from "../cli/tty-prompts.mjs"
 import { applyPermissionLevel } from "../repl/permission-flow.mjs"
 
 export function resolveChatExecutionMode(prompt, requestedMode) {
@@ -38,7 +50,17 @@ export function createChatCommand() {
       const reporter = createOutputReporter(outputFormat)
       // 1.0.0 阶段 2c：createKernel() 是唯一组合根；theme 属 frontends 层，
       // 在 kernel 之外加载
-      const kernel = await createKernel({ cwd: process.cwd(), trust: Boolean(options.trust) })
+      // 阶段 4（M12 补位）：TTY 下注入前端审批/提问 handler —— 3b 删内核
+      // fallback 后，交互式 chat 没这一步就只剩确定性 deny/空答案。结构化输出
+      // 时提示写 stderr，stdout 的机器可读契约不被审批行污染。
+      const ttyHandlers = createTtyPromptHandlers({
+        output: (outputFormat === "json" || outputFormat === "stream-json") ? process.stderr : process.stdout
+      })
+      const kernel = await createKernel({
+        cwd: process.cwd(),
+        trust: Boolean(options.trust),
+        ...(ttyHandlers ? { handlers: ttyHandlers } : {})
+      })
       const ctx = {
         configState: kernel.configState,
         themeState: await loadTheme(kernel.configState),

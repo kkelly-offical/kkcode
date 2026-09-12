@@ -24,9 +24,9 @@
 
 ## 2. 沙箱执行面覆盖 / Sandbox coverage
 
-**现状**：OS 级沙箱（0.8.1）只接在 `src/tool/registry.mjs` 的 bash 工具上。
+**现状**：OS 级沙箱（0.8.1）只接在 `src/kernel/tool/registry.mjs` 的 bash 工具上。
 
-`grep` 可核对：`src/mcp/`、`src/skill/`、`src/tool/git-full-auto.mjs` 都没有
+`grep` 可核对：`src/kernel/mcp/`、`src/kernel/skill/`、`src/kernel/tool/git-full-auto.mjs` 都没有
 引用 `sandbox.mjs`。也就是说 MCP 服务器进程、skill 执行、git 自动化这三个
 执行面目前不受沙箱约束。
 
@@ -45,10 +45,10 @@ git-auto 需要写 `.git`），不能套用 bash 那套包法。需要先定清�
 
 | 模块 | 行数 |
 | --- | --- |
-| `src/session/longagent-hybrid.mjs` | 2302 |
-| `src/tool/registry.mjs` | 2571 |
+| `src/kernel/session/longagent-hybrid.mjs` | 2302 |
+| `src/kernel/tool/registry.mjs` | 2571 |
 | `src/repl.mjs` | 2049 |
-| `src/session/loop.mjs` | 1355 |
+| `src/kernel/session/loop.mjs` | 1355 |
 
 `repl.mjs` 已从 4803 行拆到 2049（0.6.12 起）。
 
@@ -102,12 +102,12 @@ Linux 侧链路（这台开发机就是 Ubuntu，不需要虚拟机）。
 
 ## 6. MCP 协议版本升级 / MCP protocol version
 
-**现状**：`src/mcp/constants.mjs` 的 `MCP_PROTOCOL_VERSION` 钉在
+**现状**：`src/kernel/mcp/constants.mjs` 的 `MCP_PROTOCOL_VERSION` 钉在
 `2024-11-05`，`initialize` 请求的 `capabilities` 恒为空对象。
 `client-http.mjs` 是项目自定义的 REST adapter，而 registry 目前把配置中的
 `streamable-http` 映射到 SSE client；因此它还不是 MCP 规范的正式
-Streamable HTTP 实现。可核对：`grep -n "2024-11-05" src/mcp/constants.mjs`
-以及 `src/mcp/registry.mjs`的 transport 映射。
+Streamable HTTP 实现。可核对：`grep -n "2024-11-05" src/kernel/mcp/constants.mjs`
+以及 `src/kernel/mcp/registry.mjs`的 transport 映射。
 
 协议在这之后已有多轮修订（含 Streamable HTTP 的正式化、能力协商的扩展）。
 现状能与主流服务器互通是因为服务器普遍向后兼容 —— 但这层兼容不受我们控制，
@@ -122,7 +122,7 @@ Streamable HTTP，并对 `client-stdio.mjs` / `client-sse.mjs` / 新 HTTP client
 
 ## 7. 弃用通知真正接入用户界面 / User-visible deprecations
 
-**现状**：`src/core/deprecations.mjs` 已统一把现存兼容别名的移除目标记为
+**现状**：`src/kernel/core/deprecations.mjs` 已统一把现存兼容别名的移除目标记为
 1.0.0，但生产路径没有消费 `onDeprecation()` / `drainDeprecations()`；这些目标
 目前仍是内部元数据，不能宣称用户已看到弃用 notice。
 

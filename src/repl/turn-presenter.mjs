@@ -20,7 +20,7 @@ import {
   renderDiagnosticsLines,
   renderFileChangeLines
 } from "../ui/repl-turn-summary.mjs"
-import { renderBlockedReportText } from "../kernel/session/blocked-report.mjs"
+import { renderBlockedReportText } from "../kernel/index.mjs"
 import { buildBoardModel, renderUltraBoard } from "../ui/ultra-board.mjs"
 import { renderTaskProgressPanel } from "../ui/repl-task-panel.mjs"
 import { formatPlanProgress, formatRecoverySuggestions } from "../ui/activity-renderer.mjs"

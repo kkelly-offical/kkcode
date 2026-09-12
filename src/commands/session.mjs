@@ -1,11 +1,23 @@
 import path from "node:path"
 import { writeFile } from "node:fs/promises"
 import { Command } from "commander"
-import { exportSession, getSession, listSessions, forkSession, fsckSessionStore, gcSessionStore, flushNow } from "../kernel/session/store.mjs"
-import { newSessionId } from "../kernel/session/engine.mjs"
-import { listRecoverableSessions, getResumeContext, isRecoveryEnabled, summarizeResumeContext } from "../kernel/session/recovery.mjs"
-import { summarizeSessionRuntimeState } from "../kernel/session/runtime-state.mjs"
-import { createKernel } from "../kernel/index.mjs"
+import {
+  createKernel,
+  exportSession,
+  getSession,
+  listSessions,
+  forkSession,
+  fsckSessionStore,
+  gcSessionStore,
+  flushNow,
+  newSessionId,
+  listRecoverableSessions,
+  getResumeContext,
+  isRecoveryEnabled,
+  summarizeResumeContext,
+  summarizeSessionRuntimeState
+} from "../kernel/index.mjs"
+import { createTtyPromptHandlers } from "../cli/tty-prompts.mjs"
 
 function assertRecoveryEnabled(config, commandName) {
   if (isRecoveryEnabled(config)) return true
@@ -190,7 +202,14 @@ export function createSessionCommand() {
     .action(async (options) => {
       // boot 推迟到确认真的要跑回合之后（原 bootstrapKernelExtensions 的位置
       // 语义：session 不存在/无可续时不 spawn MCP）
-      const kernel = await createKernel({ cwd: process.cwd(), boot: false })
+      // 阶段 4（M12 补位）：TTY 下注入前端审批/提问 handler，恢复交互式
+      // resume 的审批能力（3b 后内核自身不再碰 TTY）。
+      const ttyHandlers = createTtyPromptHandlers()
+      const kernel = await createKernel({
+        cwd: process.cwd(),
+        boot: false,
+        ...(ttyHandlers ? { handlers: ttyHandlers } : {})
+      })
       if (!assertRecoveryEnabled(kernel.configState.config, "session resume")) return
 
       const resumeCtx = await getResumeContext(options.id, { enabled: true })
@@ -224,7 +243,13 @@ export function createSessionCommand() {
     .description("retry the last failed turn in a session")
     .requiredOption("--id <id>", "session id to retry")
     .action(async (options) => {
-      const kernel = await createKernel({ cwd: process.cwd(), boot: false })
+      // 与 resume 同：TTY 下注入前端审批/提问 handler（M12 补位）
+      const ttyHandlers = createTtyPromptHandlers()
+      const kernel = await createKernel({
+        cwd: process.cwd(),
+        boot: false,
+        ...(ttyHandlers ? { handlers: ttyHandlers } : {})
+      })
       if (!assertRecoveryEnabled(kernel.configState.config, "session retry")) return
 
       const resumeCtx = await getResumeContext(options.id, { enabled: true })

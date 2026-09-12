@@ -6,10 +6,7 @@
  * 走 `notice`（瞬时提示），需要回看的内容才留在对话记录里。
  */
 
-import { newSessionId } from "../../kernel/session/engine.mjs"
-import { listSessions, getConversationHistory } from "../../kernel/session/store.mjs"
-import { compactSession } from "../../kernel/session/compaction.mjs"
-import { confirmRollback, executeRollback } from "../../kernel/session/rollback.mjs"
+import { LongAgentManager, loadLedger } from "../../kernel/index.mjs"
 import { buildBoardModel, renderUltraBoard } from "../../ui/ultra-board.mjs"
 import { renderRuntimeDashboardView } from "../../ui/repl-status-view.mjs"
 import { runBtwQuery } from "../btw-query.mjs"
@@ -118,8 +115,8 @@ export const sessionCommands = [
       { name: "home", desc: "back to the dashboard view" }
     ],
     argMode: "none",
-    run: async () => {
-      const recent = await listSessions({ cwd: process.cwd(), limit: 6, includeChildren: false }).catch(() => [])
+    run: async ({ ctx }) => {
+      const recent = await ctx.kernel.sessions.listSessions({ cwd: process.cwd(), limit: 6, includeChildren: false }).catch(() => [])
       return { exit: false, dashboardRefresh: true, recentSessions: recent }
     }
   },
@@ -131,7 +128,7 @@ export const sessionCommands = [
     run: async ({ print, state, ctx }) => {
       try {
         print("compacting conversation...")
-        const result = await compactSession({
+        const result = await ctx.kernel.sessions.compactSession({
           sessionId: state.sessionId,
           model: state.model,
           providerType: state.providerType,
@@ -153,8 +150,8 @@ export const sessionCommands = [
     names: ["new", "n"],
     desc: "new session",
     argMode: "none",
-    run: ({ print, state }) => {
-      state.sessionId = newSessionId()
+    run: ({ print, state, ctx }) => {
+      state.sessionId = ctx.kernel.turns.newSessionId()
       print(`new session: ${state.sessionId}`, { channel: "notice", topic: "command" })
       return { exit: false }
     }
@@ -164,8 +161,8 @@ export const sessionCommands = [
     names: ["history"],
     desc: "list sessions",
     argMode: "none",
-    run: async ({ print, showInfo }) => {
-      const sessions = await listSessions({ cwd: process.cwd(), limit: 20, includeChildren: false })
+    run: async ({ print, showInfo, ctx }) => {
+      const sessions = await ctx.kernel.sessions.listSessions({ cwd: process.cwd(), limit: 20, includeChildren: false })
       if (!sessions.length) {
         print("no sessions found", { channel: "notice", topic: "session" })
         return { exit: false }
@@ -191,8 +188,8 @@ export const sessionCommands = [
     names: ["resume", "r"],
     desc: "resume session",
     argMode: "optional",
-    run: async ({ args, print, state, openPanel }) => {
-      const sessions = await listSessions({ cwd: process.cwd(), limit: 20, includeChildren: false })
+    run: async ({ args, print, state, openPanel, ctx }) => {
+      const sessions = await ctx.kernel.sessions.listSessions({ cwd: process.cwd(), limit: 20, includeChildren: false })
 
       if (!sessions.length) {
         print("no sessions found in current directory", { channel: "notice", topic: "command", tone: "error" })
@@ -246,7 +243,7 @@ export const sessionCommands = [
       state.model = target.model || state.model
       const title = target.title || `${target.mode}:${target.model || "?"}`
       print(`resumed: ${paint(title, "cyan")} (${target.mode}, ${target.model || "?"})`, { channel: "notice", topic: "command" })
-      const msgs = await getConversationHistory(target.id, 3)
+      const msgs = await ctx.kernel.sessions.getConversationHistory(target.id, 3)
       for (const m of msgs) {
         const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content)
         const preview = text.length > 84 ? `${text.slice(0, 84)}...` : text
@@ -263,10 +260,10 @@ export const sessionCommands = [
     run: async ({ print, state, ctx }) => {
       const language = ctx.configState.config.language || "en"
       const cwd = process.cwd()
-      const confirmation = await confirmRollback({ cwd, sessionId: state.sessionId, language })
+      const confirmation = await ctx.kernel.sessions.confirmRollback({ cwd, sessionId: state.sessionId, language })
       print(confirmation.message)
       if (!confirmation.confirmed) return { exit: false }
-      const result = await executeRollback({
+      const result = await ctx.kernel.sessions.executeRollback({
         cwd,
         commitHash: confirmation.commitHash,
         sessionId: state.sessionId,
@@ -284,8 +281,6 @@ export const sessionCommands = [
     run: async ({ print, showInfo, state }) => {
       // 目标看板：判据 + stage/task 投影成五列（待办/进行中/受阻/待验收/已达成）。
       // 数据来自会话状态与台账 —— 与 `kkcode ultra board` 是同一条码。
-      const { LongAgentManager } = await import("../../kernel/orchestration/longagent-manager.mjs")
-      const { loadLedger } = await import("../../kernel/session/ultra-ledger.mjs")
       const record = await LongAgentManager.get(state.sessionId)
       if (!record?.goal && !record?.stagePlan) {
         print("当前会话还没有 Ultra 目标。用 /ultra 模式跑一个目标后再看。", { channel: "notice", topic: "board", tone: "warn" })

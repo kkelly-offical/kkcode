@@ -221,7 +221,11 @@ export function createPermissionEngine({ promptChannel = defaultPermissionPrompt
   }
 }
 
-const defaultPermissionEngine = createPermissionEngine()
+// 进程级默认引擎。2b 过渡期 executeTurn 路径（engine→loop→executor）仍读它
+// （src/kernel/kernel.mjs 头注），frontends 经 facade 白名单取用它做
+// setPersistGrantHandler / clearSession / check 等进程级操作；kernel 实例的
+// permissions 命名空间是每实例字段，两者在 2b 期间并存。
+export const defaultPermissionEngine = createPermissionEngine()
 
 /**
  * 兼容别名（deprecated）：进程级默认引擎实例。旧 import 路径继续工作，

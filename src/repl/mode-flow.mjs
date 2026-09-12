@@ -8,7 +8,7 @@ import {
   nextModeId,
   modeIdFromLegacy,
   modeIdFromLaneAndApproval
-} from "../kernel/core/modes.mjs"
+} from "../kernel/index.mjs"
 import { applyPermissionLevel } from "./permission-flow.mjs"
 
 /**

@@ -11,12 +11,12 @@ Grounded comparison for kkcode against the reconstructed `claudenext-private/` r
 
 Primary evidence came from:
 
-- `src/session/system-prompt.mjs:136-227`
-- `src/session/longagent-plan.mjs:282-348`
-- `src/session/longagent-hybrid.mjs:441-530`
-- `src/skill/registry.mjs:17-120,141-214`
+- `src/kernel/session/system-prompt.mjs:136-227`
+- `src/kernel/session/longagent-plan.mjs:282-348`
+- `src/kernel/session/longagent-hybrid.mjs:441-530`
+- `src/kernel/skill/registry.mjs:17-120,141-214`
 - `src/agent/custom-agent-loader.mjs:18-145`
-- `src/plugin/hook-bus.mjs:63-80`
+- `src/kernel/plugin/hook-bus.mjs:63-80`
 - `README.md:250-260`
 - `claudenext-private/src/tools/AgentTool/builtInAgents.ts:24-70`
 - `claudenext-private/src/tools/AgentTool/prompt.ts:66-153`
@@ -42,7 +42,7 @@ The recommended path for kkcode is **compatibility-first, not clone-first**: ado
 
 ### 1. LongAgent planning is more explicit and more production-oriented
 
-kkcode's LongAgent planner already forces a machine-readable stage plan, explicit file ownership, task-local acceptance criteria, and integration constraints (`src/session/longagent-plan.mjs:282-348`).
+kkcode's LongAgent planner already forces a machine-readable stage plan, explicit file ownership, task-local acceptance criteria, and integration constraints (`src/kernel/session/longagent-plan.mjs:282-348`).
 
 That is stronger than Claude's general agent system for large repo changes because kkcode already encodes:
 
@@ -53,13 +53,13 @@ That is stronger than Claude's general agent system for large repo changes becau
 
 ### 2. LongAgent hybrid mode already has useful recovery rails
 
-The hybrid blueprint flow requires structured `stage_plan_json`, retries blueprint parsing when the LLM drifts, freezes the plan, and validates stage/task/file counts before execution (`src/session/longagent-hybrid.mjs:441-523`).
+The hybrid blueprint flow requires structured `stage_plan_json`, retries blueprint parsing when the LLM drifts, freezes the plan, and validates stage/task/file counts before execution (`src/kernel/session/longagent-hybrid.mjs:441-523`).
 
 That is worth preserving. Claude is stronger on agent ergonomics, but kkcode is stronger on explicit orchestration guardrails.
 
 ### 3. Prompt block caching is already pointed in the right direction
 
-kkcode's system prompt builder separates provider, agent, mode, tools, skills, subagents, project context, memory, and env blocks for cache reuse (`src/session/system-prompt.mjs:136-227`).
+kkcode's system prompt builder separates provider, agent, mode, tools, skills, subagents, project context, memory, and env blocks for cache reuse (`src/kernel/session/system-prompt.mjs:136-227`).
 
 This is already philosophically aligned with Claude's cache-conscious runtime. kkcode should extend this, not replace it.
 
@@ -76,13 +76,13 @@ Claude's AgentTool prompt does more than list agents. It teaches:
 
 See `claudenext-private/src/tools/AgentTool/prompt.ts:76-153`.
 
-kkcode currently exposes subagents and custom agents, but its runtime prompt surface is much thinner by comparison (`src/session/system-prompt.mjs:211-227`, `src/tool/task-tool.mjs:1-25`, `src/agent/agent.mjs:1-224`).
+kkcode currently exposes subagents and custom agents, but its runtime prompt surface is much thinner by comparison (`src/kernel/session/system-prompt.mjs:211-227`, `src/kernel/tool/task-tool.mjs:1-25`, `src/agent/agent.mjs:1-224`).
 
 **Implication:** kkcode's orchestration runtime is strong, but the coordinator prompt is leaving quality on the table.
 
 ### 2. Claude's skill contract is richer and more portable
 
-kkcode supports project/global skills, markdown frontmatter, programmable `.mjs` skills, and `SKILL.md` directories (`src/skill/registry.mjs:49-92,141-214`).
+kkcode supports project/global skills, markdown frontmatter, programmable `.mjs` skills, and `SKILL.md` directories (`src/kernel/skill/registry.mjs:49-92,141-214`).
 
 But Claude's skill system is broader:
 
@@ -105,13 +105,13 @@ kkcode does **not** currently have an equivalent packaged plugin manifest/runtim
 
 - custom skills under `.kkcode/skills/`
 - custom agents under `.kkcode/agents/`
-- hook loading from `~/.kkcode/hooks` and `.kkcode/hooks` (`src/plugin/hook-bus.mjs:63-80`)
+- hook loading from `~/.kkcode/hooks` and `.kkcode/hooks` (`src/kernel/plugin/hook-bus.mjs:63-80`)
 
 This means kkcode is currently closer to a **customization filesystem** than to a **plugin platform**.
 
 ### 4. kkcode's extension docs currently overstate plugin support
 
-The README says `插件/Hook | .kkcode/plugins/ | Hook 事件脚本` (`README.md:252-259`), but the actual hook loader reads `.kkcode/hooks`, not `.kkcode/plugins/` (`src/plugin/hook-bus.mjs:63-80`).
+The README says `插件/Hook | .kkcode/plugins/ | Hook 事件脚本` (`README.md:252-259`), but the actual hook loader reads `.kkcode/hooks`, not `.kkcode/plugins/` (`src/kernel/plugin/hook-bus.mjs:63-80`).
 
 That mismatch is small but important:
 
@@ -218,7 +218,7 @@ That is a good security property and worth preserving from day one.
 
 ### P3 — make tool concurrency capability-based, not just read-only-based
 
-kkcode currently parallelizes read-only tool calls and serializes writes (`src/session/loop.mjs:803-845`). Claude's runtime goes one step further by batching tools using per-tool `isConcurrencySafe(...)` checks and applying context modifiers after concurrent completion (`claudenext-private/src/services/tools/toolOrchestration.ts:19-116`).
+kkcode currently parallelizes read-only tool calls and serializes writes (`src/kernel/session/loop.mjs:803-845`). Claude's runtime goes one step further by batching tools using per-tool `isConcurrencySafe(...)` checks and applying context modifiers after concurrent completion (`claudenext-private/src/services/tools/toolOrchestration.ts:19-116`).
 
 kkcode does not urgently need this, but it is a real optimization opportunity for:
 
