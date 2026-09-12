@@ -690,8 +690,12 @@ kkcode chat "review this repository" --output-format text
 
 `--output-format` supports `text`, `json`, `stream-json`, and the interactive-compatible
 `legacy` format. In non-interactive use, progress goes to stderr and the final answer
-goes to stdout. `doctor --http` shows the effective `KK-Code/<version>` request identity
-with authorization values redacted.
+goes to stdout. With `json` / `stream-json`, stdout is a pure JSONL machine contract —
+one JSON event per line, every line carrying `schemaVersion` and a `type` from the
+contract table (`turn.result`, `assistant.delta`); see
+[docs/headless-jsonl-contract.md](docs/headless-jsonl-contract.md) for the event table
+and stability commitments. `doctor --http` shows the effective `KK-Code/<version>`
+request identity with authorization values redacted.
 
 **Latest releases / 最新发布**: [GitHub Releases](https://github.com/kkelly-offical/kkcode/releases)  
 **Package / 包地址**: [npm](https://www.npmjs.com/package/@kkelly-offical/kkcode)

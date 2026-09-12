@@ -55,7 +55,22 @@ export default [
           regex: "^\\.{1,2}/(?:\\.\\./)*(repl\\.mjs|repl/|ui/|commands/|cli/|theme/)",
           message: "kernel 不得 import frontends（repl/ui/commands/cli/theme，架构 §3 依赖方向严格单向）"
         }]
-      }]
+      }],
+      // 1.0.0 阶段 5（架构 §4.2.3，对照 Codex core 的 deny(print_stdout)）：
+      // kernel 不得直写 stdout —— 用户可见输出走 kernel.events / 宿主 handler。
+      // console.error/warn 写 stderr，是 headless JSONL 契约的诊断通道，允许；
+      // process.stdout.isTTY 等读取不受影响。scripts/check-boundaries.mjs 的
+      // findKernelStdoutViolations 是同一规则的脚本兜底。
+      "no-restricted-syntax": ["error",
+        {
+          selector: "CallExpression[callee.object.name='console'][callee.property.name=/^(log|info|debug|dir)$/]",
+          message: "kernel 禁止 console.log/info/debug/dir（stdout 直写，架构 §4.2.3）；用户可见输出走 kernel.events，诊断用 console.error/warn"
+        },
+        {
+          selector: "CallExpression[callee.object.object.name='process'][callee.object.property.name='stdout'][callee.property.name='write']",
+          message: "kernel 禁止 process.stdout.write（架构 §4.2.3）；headless stdout 是纯 JSONL 契约面（docs/headless-jsonl-contract.md）"
+        }
+      ]
     }
   }
 ]
