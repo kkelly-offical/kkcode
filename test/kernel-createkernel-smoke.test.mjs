@@ -11,7 +11,7 @@ import { createKernel } from "../src/kernel/index.mjs"
 // 2b 过渡：executeTurn 执行路径仍从进程级默认 provider 注册表解析（2c 才改为
 // 实例注入），所以 mock provider 目前注册到默认注册表 —— 与现存全部
 // loop/executeTurn 测试同款做法。
-import { registerProvider } from "../src/provider/router.mjs"
+import { registerProvider } from "../src/kernel/provider/router.mjs"
 
 const PROVIDER = "mock_kernel_smoke"
 

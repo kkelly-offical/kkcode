@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { parseSSE } from "../src/provider/sse.mjs"
+import { parseSSE } from "../src/kernel/provider/sse.mjs"
 
 function makeStream(chunks) {
   const encoder = new TextEncoder()

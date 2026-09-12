@@ -13,7 +13,7 @@ import {
   listAuditEntries,
   verifyAuditChain
 } from "../src/storage/audit-store.mjs"
-import { PermissionEngine } from "../src/permission/engine.mjs"
+import { PermissionEngine } from "../src/kernel/permission/engine.mjs"
 
 test("audit metadata stores content hashes instead of content", () => {
   const result = sanitizeAuditMetadata({

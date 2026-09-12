@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { LongAgentManager } from "../src/orchestration/longagent-manager.mjs"
+import { LongAgentManager } from "../src/kernel/orchestration/longagent-manager.mjs"
 
 test("longagent manager stop and clear flow", async () => {
   const sessionId = `ses_test_${Date.now()}`

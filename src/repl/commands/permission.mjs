@@ -12,18 +12,18 @@
  * 仍由这里 reload 后经 setCustomCommands 写回。
  */
 
-import { PermissionEngine } from "../../permission/engine.mjs"
-import { persistTrust, revokeTrust } from "../../permission/workspace-trust.mjs"
-import { normalizePermissionLevel } from "../../permission/rules.mjs"
+import { PermissionEngine } from "../../kernel/permission/engine.mjs"
+import { persistTrust, revokeTrust } from "../../kernel/permission/workspace-trust.mjs"
+import { normalizePermissionLevel } from "../../kernel/permission/rules.mjs"
 import {
   listLearnedRules,
   removeLearnedRules,
   isLearnedRule,
   describeRule
-} from "../../permission/learned-rules.mjs"
+} from "../../kernel/permission/learned-rules.mjs"
 import { loadCustomCommands } from "../../command/custom-commands.mjs"
-import { escapeTerminalText } from "../../provider/model-id.mjs"
-import { approvalFromLegacy } from "../../core/modes.mjs"
+import { escapeTerminalText } from "../../kernel/provider/model-id.mjs"
+import { approvalFromLegacy } from "../../kernel/core/modes.mjs"
 import { applyPermissionLevel, nextPermissionLevel } from "../permission-flow.mjs"
 import {
   pickConfigPathForScope,

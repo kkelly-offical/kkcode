@@ -8,7 +8,7 @@ import {
   isRetryableRequestError,
   requestWithRetry,
   retryAfterMsFromHeaders
-} from "../src/provider/retry-policy.mjs"
+} from "../src/kernel/provider/retry-policy.mjs"
 
 function httpError(status, message = `HTTP ${status}`) {
   const error = new Error(message)
@@ -20,7 +20,7 @@ test("provider retry defaults reconnect five times after the initial request", a
   // 0.7.3 起 DEFAULT_CONFIG 不再预置 provider 条目。「默认重试 5 次」的载体
   // 是 router 读取点的 `retry_attempts ?? 5` —— 用户自建的 provider 从来没有
   // 这个字段，走的一直是这条路。这里断言源码里的缺省仍是 5：
-  const routerSrc = await readFile(new URL("../src/provider/router.mjs", import.meta.url), "utf8")
+  const routerSrc = await readFile(new URL("../src/kernel/provider/router.mjs", import.meta.url), "utf8")
   const defaults = [...routerSrc.matchAll(/retry_attempts \?\? (\d+)/g)].map((m) => m[1])
   assert.ok(defaults.length >= 2, "router 里应有 retry_attempts ?? N 的缺省")
   assert.ok(defaults.every((n) => n === "5"), `代码级缺省应为 5，实际 ${defaults}`)

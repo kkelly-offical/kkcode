@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { createTaskDelegate } from "../src/orchestration/task-scheduler.mjs"
-import { BackgroundManager } from "../src/orchestration/background-manager.mjs"
+import { createTaskDelegate } from "../src/kernel/orchestration/task-scheduler.mjs"
+import { BackgroundManager } from "../src/kernel/orchestration/background-manager.mjs"
 
 test("task delegate requires a prompt for new delegated sessions", async () => {
   const delegateTask = createTaskDelegate({

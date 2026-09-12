@@ -1,8 +1,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { EventBus } from "../src/core/events.mjs"
-import { EVENT_TYPES } from "../src/core/constants.mjs"
-import { requestProvider } from "../src/provider/router.mjs"
+import { EventBus } from "../src/kernel/core/events.mjs"
+import { EVENT_TYPES } from "../src/kernel/core/constants.mjs"
+import { requestProvider } from "../src/kernel/provider/router.mjs"
 
 test("provider retry events preserve correlation and expose reconnect numbering", async () => {
   const providerName = `retry-event-${Date.now()}`

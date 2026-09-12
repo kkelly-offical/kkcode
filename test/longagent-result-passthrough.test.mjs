@@ -22,9 +22,9 @@ process.env.KKCODE_HOME = tmpHome
 const originalCwd = process.cwd()
 process.chdir(tmpProject)
 
-const { packLongAgent } = await import("../src/session/engine.mjs")
-const { registerProvider } = await import("../src/provider/router.mjs")
-const { runHybridLongAgent } = await import("../src/session/longagent-hybrid.mjs")
+const { packLongAgent } = await import("../src/kernel/session/engine.mjs")
+const { registerProvider } = await import("../src/kernel/provider/router.mjs")
+const { runHybridLongAgent } = await import("../src/kernel/session/longagent-hybrid.mjs")
 
 registerProvider("mock_passthrough", {
   async request() { return { text: "ok", toolCalls: [], usage: {} } },

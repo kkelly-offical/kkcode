@@ -2,7 +2,7 @@ import test, { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { validateConfig } from "../src/config/schema.mjs"
 import { DEFAULT_CONFIG } from "../src/config/defaults.mjs"
-import { normalizePermissionLevel } from "../src/permission/rules.mjs"
+import { normalizePermissionLevel } from "../src/kernel/permission/rules.mjs"
 
 /**
  * 0.6.0：0.4.0 弃用期到期，旧权限词汇移除。

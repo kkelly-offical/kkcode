@@ -9,8 +9,8 @@
  * set 是「添加」，与词义相反。用户想添加 provider 第一反应就是敲 add。
  */
 
-import { runProviderAddForm, runProviderEditForm } from "../../provider/wizard-form.mjs"
-import { escapeTerminalText, validateModelId } from "../../provider/model-id.mjs"
+import { runProviderAddForm, runProviderEditForm } from "../../kernel/provider/wizard-form.mjs"
+import { escapeTerminalText, validateModelId } from "../../kernel/provider/model-id.mjs"
 import { loadProviderModelItems } from "../provider-catalog.mjs"
 
 export const providerCommands = [

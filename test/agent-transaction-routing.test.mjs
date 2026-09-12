@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { classifyTaskMode, explainTaskModeReason } from "../src/session/longagent-utils.mjs"
-import { routeMode } from "../src/session/engine.mjs"
+import { classifyTaskMode, explainTaskModeReason } from "../src/kernel/session/longagent-utils.mjs"
+import { routeMode } from "../src/kernel/session/engine.mjs"
 
 test("transaction-aware routing keeps inspect + patch + verify work in agent", () => {
   const prompt = "Check ./logs/app.log, update README.md with the corrected npm command, then run npm test to verify the fix."

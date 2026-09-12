@@ -1,6 +1,6 @@
 import path from "node:path"
 import { mkdir, writeFile } from "node:fs/promises"
-import { BackgroundManager } from "../../src/orchestration/background-manager.mjs"
+import { BackgroundManager } from "../../src/kernel/orchestration/background-manager.mjs"
 import { writeJson } from "../../src/storage/json-store.mjs"
 import { backgroundTaskCheckpointPath, ensureBackgroundTaskRuntimeDir } from "../../src/storage/paths.mjs"
 

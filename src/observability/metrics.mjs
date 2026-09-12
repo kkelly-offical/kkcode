@@ -1,4 +1,4 @@
-import { EVENT_TYPES } from "../core/constants.mjs"
+import { EVENT_TYPES } from "../kernel/core/constants.mjs"
 
 function createHistogram() {
   const values = []

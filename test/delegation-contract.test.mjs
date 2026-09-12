@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { buildSystemPromptBlocks } from "../src/session/system-prompt.mjs"
+import { buildSystemPromptBlocks } from "../src/kernel/session/system-prompt.mjs"
 
 test("task tool prompt encodes fork-context and no-peek delegation contract", async () => {
   const prompt = await buildSystemPromptBlocks({

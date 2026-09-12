@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import http from "node:http"
-import { createHttpMcpClient } from "../src/mcp/client-http.mjs"
+import { createHttpMcpClient } from "../src/kernel/mcp/client-http.mjs"
 import { PACKAGE_VERSION } from "../src/version.mjs"
 
 async function startServer(handler) {

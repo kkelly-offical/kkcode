@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { ToolRegistry } from "../src/tool/registry.mjs"
+import { ToolRegistry } from "../src/kernel/tool/registry.mjs"
 
 /**
  * 0.7.0 阶段 2：multiedit 同一文件多次编辑不能丢改动。

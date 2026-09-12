@@ -1,6 +1,6 @@
 import { Command } from "commander"
-import { BackgroundManager } from "../orchestration/background-manager.mjs"
-import { applyWorktreeResult, discardWorktreeResult } from "../orchestration/worktree-handoff.mjs"
+import { BackgroundManager } from "../kernel/orchestration/background-manager.mjs"
+import { applyWorktreeResult, discardWorktreeResult } from "../kernel/orchestration/worktree-handoff.mjs"
 import { printContextWarnings } from "../context.mjs"
 import { createKernel } from "../kernel/index.mjs"
 import { loadTheme } from "../theme/load-theme.mjs"

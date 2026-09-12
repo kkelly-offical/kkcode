@@ -3,8 +3,8 @@ import assert from "node:assert/strict"
 import { mkdtemp, rm } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { executeTool } from "../src/tool/executor.mjs"
-import { isToolSuccess, makeToolResult, toolStatusKind } from "../src/core/types.mjs"
+import { executeTool } from "../src/kernel/tool/executor.mjs"
+import { isToolSuccess, makeToolResult, toolStatusKind } from "../src/kernel/core/types.mjs"
 
 async function run(raw, signal = null) {
   const auditDir = await mkdtemp(join(tmpdir(), "kkcode-result-contract-"))

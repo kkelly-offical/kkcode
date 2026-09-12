@@ -20,8 +20,8 @@ import { buildSkillCatalog } from "../slash-router.mjs"
 import { buildCapabilitySnapshot } from "../capability-facade.mjs"
 import { loadCustomCommands } from "../../command/custom-commands.mjs"
 import { resolveExtensionPolicy } from "../../context.mjs"
-import { generateSkill, saveSkillGlobal } from "../../skill/generator.mjs"
-import { readClipboardImage } from "../../tool/image-util.mjs"
+import { generateSkill, saveSkillGlobal } from "../../kernel/skill/generator.mjs"
+import { readClipboardImage } from "../../kernel/tool/image-util.mjs"
 import { userRootDir } from "../../storage/paths.mjs"
 import { createThemeSwitcher } from "../theme-switch.mjs"
 import { persistUiConfig } from "../config-persistence.mjs"
@@ -220,7 +220,7 @@ export const authoringCommands = [
     desc: "list background tasks (add stop <id> / retry <id>)",
     argMode: "optional",
     run: async ({ args, print, showInfo, ctx }) => {
-      const { BackgroundManager } = await import("../../orchestration/background-manager.mjs")
+      const { BackgroundManager } = await import("../../kernel/orchestration/background-manager.mjs")
       const [action, taskId] = args.split(/\s+/).filter(Boolean)
       if (action === "stop" && taskId) {
         await BackgroundManager.cancel(taskId).catch(() => null)

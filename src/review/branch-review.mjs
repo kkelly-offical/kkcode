@@ -6,9 +6,9 @@ import path from "node:path"
 import { promisify } from "node:util"
 import { parseUnifiedDiff } from "./diff-parser.mjs"
 import { scoreRisk } from "./risk-score.mjs"
-import { requestProvider } from "../provider/router.mjs"
+import { requestProvider } from "../kernel/provider/router.mjs"
 import { redactSensitive } from "../http/identity.mjs"
-import { escapeTerminalText } from "../provider/model-id.mjs"
+import { escapeTerminalText } from "../kernel/provider/model-id.mjs"
 import { validateGitHubRepository } from "../github/api.mjs"
 
 const execFile = promisify(execFileCallback)

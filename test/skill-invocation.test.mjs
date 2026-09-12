@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
-import { evaluatePermission, toolCapability } from "../src/permission/rules.mjs"
+import { evaluatePermission, toolCapability } from "../src/kernel/permission/rules.mjs"
 
 /**
  * 技能可调用性。
@@ -67,8 +67,8 @@ test("a tool may report its own capability, overriding the static table", () => 
 })
 
 test("the skill tool classifies by skill type, and fails closed on the unknown", async () => {
-  const { SkillRegistry } = await import("../src/skill/registry.mjs")
-  const { ToolRegistry } = await import("../src/tool/registry.mjs")
+  const { SkillRegistry } = await import("../src/kernel/skill/registry.mjs")
+  const { ToolRegistry } = await import("../src/kernel/tool/registry.mjs")
   await SkillRegistry.initialize({}, ROOT, { allowProjectSources: true })
   await ToolRegistry.initialize({ config: {}, cwd: ROOT, allowProjectSources: true })
   const skillTool = await ToolRegistry.get("skill")
@@ -95,7 +95,7 @@ test("the skill tool classifies by skill type, and fails closed on the unknown",
 
 test("the permission layer can see which skill is being invoked", async () => {
   // pattern 恒为 "*" 的话，规则没法针对某个技能，审批弹窗也说不出用户在批准哪一个
-  const src = await readFile(path.join(ROOT, "src", "session", "loop.mjs"), "utf8")
+  const src = await readFile(path.join(ROOT, "src", "kernel", "session", "loop.mjs"), "utf8")
   const fn = src.slice(src.indexOf("function toolPatternFromArgs("))
   const body = fn.slice(0, fn.indexOf("\n}") + 2)
   assert.notEqual(body.length, 2, "找不到 toolPatternFromArgs —— 这条断言需要更新")
@@ -105,7 +105,7 @@ test("the permission layer can see which skill is being invoked", async () => {
 test("a non-interactive denial explains itself instead of blaming the user", async () => {
   // 「you declined it」在 kkcode chat / CI / 管道输入里是假的：那里没有人被问过。
   // 照抄交互文案会让人去找一个根本不存在的审批弹窗。
-  const src = await readFile(path.join(ROOT, "src", "permission", "engine.mjs"), "utf8")
+  const src = await readFile(path.join(ROOT, "src", "kernel", "permission", "engine.mjs"), "utf8")
   const idx = src.indexOf("you declined it")
   assert.notEqual(idx, -1, "找不到交互文案 —— 这条断言需要更新")
   const around = src.slice(Math.max(0, idx - 600), idx + 600)
@@ -114,7 +114,7 @@ test("a non-interactive denial explains itself instead of blaming the user", asy
 })
 
 test("canAskInteractively is what decides, not a guess about stdout alone", async () => {
-  const { canAskInteractively, setPermissionPromptHandler } = await import("../src/permission/prompt.mjs")
+  const { canAskInteractively, setPermissionPromptHandler } = await import("../src/kernel/permission/prompt.mjs")
   setPermissionPromptHandler(null)
   const withoutHandler = canAskInteractively()
   setPermissionPromptHandler(() => "deny")

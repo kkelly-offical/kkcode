@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { createStdioMcpClient } from "../src/mcp/client-stdio.mjs"
+import { createStdioMcpClient } from "../src/kernel/mcp/client-stdio.mjs"
 
 function nodeCommand(script) {
   return [process.execPath, "-e", script]

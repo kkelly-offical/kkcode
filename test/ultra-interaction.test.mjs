@@ -1,6 +1,6 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { askBlockedDecision, confirmManualCriteria } from "../src/session/ultra-interaction.mjs"
+import { askBlockedDecision, confirmManualCriteria } from "../src/kernel/session/ultra-interaction.mjs"
 
 /**
  * 受阻交互的非 TTY 收口。0.4.1 的 plan 死循环与门禁偏好事故是同一类根因：

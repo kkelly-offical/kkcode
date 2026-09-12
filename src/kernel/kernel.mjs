@@ -67,18 +67,18 @@
  */
 import { loadConfig } from "../config/load-config.mjs"
 import { applyWorkspaceTrustPolicy, bootstrapKernelExtensions, resolveExtensionPolicy } from "../context.mjs"
-import { checkWorkspaceTrust } from "../permission/workspace-trust.mjs"
-import { createEventBus, defaultEventBus } from "../core/events.mjs"
-import { EVENT_TYPES } from "../core/constants.mjs"
-import { createPermissionEngine, PermissionEngine } from "../permission/engine.mjs"
-import { createPermissionPromptChannel, defaultPermissionPromptChannel } from "../permission/prompt.mjs"
-import { createQuestionPromptChannel, defaultQuestionPromptChannel } from "../tool/question-prompt.mjs"
-import { createToolRegistry, ToolRegistry } from "../tool/registry.mjs"
-import { McpRegistry } from "../mcp/registry.mjs"
-import { createSkillRegistry, SkillRegistry } from "../skill/registry.mjs"
-import { createHookBus, initHookBus } from "../plugin/hook-bus.mjs"
+import { checkWorkspaceTrust } from "./permission/workspace-trust.mjs"
+import { createEventBus, defaultEventBus } from "./core/events.mjs"
+import { EVENT_TYPES } from "./core/constants.mjs"
+import { createPermissionEngine, PermissionEngine } from "./permission/engine.mjs"
+import { createPermissionPromptChannel, defaultPermissionPromptChannel } from "./permission/prompt.mjs"
+import { createQuestionPromptChannel, defaultQuestionPromptChannel } from "./tool/question-prompt.mjs"
+import { createToolRegistry, ToolRegistry } from "./tool/registry.mjs"
+import { McpRegistry } from "./mcp/registry.mjs"
+import { createSkillRegistry, SkillRegistry } from "./skill/registry.mjs"
+import { createHookBus, initHookBus } from "./plugin/hook-bus.mjs"
 import { CustomAgentRegistry } from "../agent/custom-agent-loader.mjs"
-import { createProviderRegistry } from "../provider/router.mjs"
+import { createProviderRegistry } from "./provider/router.mjs"
 import {
   executeTurn as executeEngineTurn,
   routeMode,
@@ -86,7 +86,7 @@ import {
   resolveMode,
   getPublicModeContract,
   newSessionId
-} from "../session/engine.mjs"
+} from "./session/engine.mjs"
 import {
   touchSession,
   updateSession,
@@ -102,14 +102,14 @@ import {
   appendAssistantMessage,
   configureSessionStore,
   flushNow
-} from "../session/store.mjs"
+} from "./session/store.mjs"
 import { configureEventLog } from "../storage/event-log.mjs"
 import { configureAuditStore } from "../storage/audit-store.mjs"
-import { compactSession } from "../session/compaction.mjs"
-import { confirmRollback, executeRollback, handleRollbackIfNeeded } from "../session/rollback.mjs"
-import { executeTool } from "../tool/executor.mjs"
-import { BackgroundManager } from "../orchestration/background-manager.mjs"
-import { createTaskDelegate } from "../orchestration/task-scheduler.mjs"
+import { compactSession } from "./session/compaction.mjs"
+import { confirmRollback, executeRollback, handleRollbackIfNeeded } from "./session/rollback.mjs"
+import { executeTool } from "./tool/executor.mjs"
+import { BackgroundManager } from "./orchestration/background-manager.mjs"
+import { createTaskDelegate } from "./orchestration/task-scheduler.mjs"
 
 /**
  * 2b 过渡桥的进程级账本。

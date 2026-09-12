@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import path from "node:path"
 import os from "node:os"
 import { mkdtemp, rm, mkdir, writeFile, readFile, readdir, symlink } from "node:fs/promises"
-import { moveTool, copyTool, removeTool, mkdirTool, archiveTool } from "../src/tool/file-ops.mjs"
+import { moveTool, copyTool, removeTool, mkdirTool, archiveTool } from "../src/kernel/tool/file-ops.mjs"
 
 async function withWorkspace(fn) {
   const dir = await mkdtemp(path.join(os.tmpdir(), "kkcode-fops-"))

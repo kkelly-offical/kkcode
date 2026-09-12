@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import path from "node:path"
 import os from "node:os"
 import { mkdtemp, rm, mkdir } from "node:fs/promises"
-import { ToolRegistry } from "../src/tool/registry.mjs"
+import { ToolRegistry } from "../src/kernel/tool/registry.mjs"
 
 const yoloConfig = {
   permission: { level: "yolo", rules: [] },
@@ -114,7 +114,7 @@ test("bash output truncation follows the context budget and says how to get more
 // 两侧同时钉住。
 // ---------------------------------------------------------------------------
 test("long-running detection: watch-mode vitest is blocked, one-shot vitest is not", async () => {
-  const { isLongRunningCommand } = await import("../src/tool/registry.mjs")
+  const { isLongRunningCommand } = await import("../src/kernel/tool/registry.mjs")
 
   // watch 形态（默认长驻）—— 必须判长驻
   assert.equal(isLongRunningCommand("vitest"), true)

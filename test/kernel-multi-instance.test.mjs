@@ -9,11 +9,11 @@ import { tmpdir } from "node:os"
 import { createKernel } from "../src/kernel/index.mjs"
 // 桥生命周期回归（review round 1：P1 非 LIFO 恢复、P2-1 失败回滚、P2-2
 // shutdown 重试）需要观察进程级默认值，故直接引用默认引擎/槽位/总线。
-import { PermissionEngine } from "../src/permission/engine.mjs"
-import { defaultPermissionPromptChannel } from "../src/permission/prompt.mjs"
-import { defaultQuestionPromptChannel } from "../src/tool/question-prompt.mjs"
-import { defaultEventBus } from "../src/core/events.mjs"
-import { configureSessionStore } from "../src/session/store.mjs"
+import { PermissionEngine } from "../src/kernel/permission/engine.mjs"
+import { defaultPermissionPromptChannel } from "../src/kernel/permission/prompt.mjs"
+import { defaultQuestionPromptChannel } from "../src/kernel/tool/question-prompt.mjs"
+import { defaultEventBus } from "../src/kernel/core/events.mjs"
+import { configureSessionStore } from "../src/kernel/session/store.mjs"
 import { sessionDataPath } from "../src/storage/paths.mjs"
 
 let homeDir

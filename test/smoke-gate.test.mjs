@@ -3,8 +3,8 @@ import assert from "node:assert/strict"
 import path from "node:path"
 import os from "node:os"
 import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises"
-import { checkSmokeGate, resolveSmokeTarget } from "../src/session/smoke-gate.mjs"
-import { GATE_NAMES, readGate, isDecisiveGate } from "../src/session/gate-contract.mjs"
+import { checkSmokeGate, resolveSmokeTarget } from "../src/kernel/session/smoke-gate.mjs"
+import { GATE_NAMES, readGate, isDecisiveGate } from "../src/kernel/session/gate-contract.mjs"
 
 async function withProject(files, fn) {
   const dir = await mkdtemp(path.join(os.tmpdir(), "kkcode-smoke-"))
@@ -142,7 +142,7 @@ test("smoke can be disabled and then has no say", async () => {
 })
 
 test("runUsabilityGates surfaces smoke through the contract", async () => {
-  const { runUsabilityGates } = await import("../src/session/usability-gates.mjs")
+  const { runUsabilityGates } = await import("../src/kernel/session/usability-gates.mjs")
   await withProject({
     "package.json": JSON.stringify({ name: "ok", version: "1.0.0", bin: "cli.mjs", type: "module" }),
     "cli.mjs": 'console.log("ok")\n'

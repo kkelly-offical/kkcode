@@ -6,11 +6,11 @@ import { loadTheme } from "../theme/load-theme.mjs"
 import { PROVIDER_META_KEYS } from "../config/schema.mjs"
 import { eventLogStats } from "../storage/event-log.mjs"
 import { auditStats, verifyAuditChain } from "../storage/audit-store.mjs"
-import { fsckSessionStore, flushNow } from "../session/store.mjs"
-import { BackgroundManager } from "../orchestration/background-manager.mjs"
+import { fsckSessionStore, flushNow } from "../kernel/session/store.mjs"
+import { BackgroundManager } from "../kernel/orchestration/background-manager.mjs"
 import { buildRequestHeaders, redactHeaders } from "../http/identity.mjs"
-import { resolveProviderConnection } from "../provider/model-catalog.mjs"
-import { inspectSandboxStatus, formatSandboxLine } from "../tool/sandbox.mjs"
+import { resolveProviderConnection } from "../kernel/provider/model-catalog.mjs"
+import { inspectSandboxStatus, formatSandboxLine } from "../kernel/tool/sandbox.mjs"
 
 const exec = promisify(execCb)
 

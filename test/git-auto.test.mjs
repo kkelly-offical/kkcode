@@ -33,7 +33,7 @@ import {
   checkBashAllowed,
   evaluateCommand,
   Decision
-} from "../src/permission/exec-policy.mjs"
+} from "../src/kernel/permission/exec-policy.mjs"
 
 describe("Git Auto - Unit Tests", () => {
   describe("Execution Policy", () => {

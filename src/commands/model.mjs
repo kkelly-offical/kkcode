@@ -1,8 +1,8 @@
 import { Command } from "commander"
 import { loadConfig } from "../config/load-config.mjs"
-import { discoverModelsForProvider, resolveProviderConnection } from "../provider/model-catalog.mjs"
-import { escapeTerminalText, validateModelId } from "../provider/model-id.mjs"
-import { requestProvider } from "../provider/router.mjs"
+import { discoverModelsForProvider, resolveProviderConnection } from "../kernel/provider/model-catalog.mjs"
+import { escapeTerminalText, validateModelId } from "../kernel/provider/model-id.mjs"
+import { requestProvider } from "../kernel/provider/router.mjs"
 
 function selectedProvider(configState, requested) {
   return requested || configState.config.provider?.default

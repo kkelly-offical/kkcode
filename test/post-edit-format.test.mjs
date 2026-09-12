@@ -4,7 +4,7 @@ import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { tmpdir } from "node:os"
 import { mkdtemp } from "node:fs/promises"
-import postEditFormat from "../src/plugin/builtin-hooks/post-edit-format.mjs"
+import postEditFormat from "../src/kernel/plugin/builtin-hooks/post-edit-format.mjs"
 
 async function exists(filePath) {
   try {

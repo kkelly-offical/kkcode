@@ -3,9 +3,9 @@ import assert from "node:assert/strict"
 import { mkdtemp, writeFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { toolOutputBudget, truncationNotice, completeNotice } from "../src/tool/output-budget.mjs"
-import { ToolRegistry, looksBinary } from "../src/tool/registry.mjs"
-import { modelContextLimit } from "../src/session/compaction.mjs"
+import { toolOutputBudget, truncationNotice, completeNotice } from "../src/kernel/tool/output-budget.mjs"
+import { ToolRegistry, looksBinary } from "../src/kernel/tool/registry.mjs"
+import { modelContextLimit } from "../src/kernel/session/compaction.mjs"
 
 /**
  * 0.7.0 阶段 1：解开工具输出瓶颈，并让每一次截断都说清「还剩多少、怎么取」。

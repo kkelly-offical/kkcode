@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
 import YAML from "yaml"
-import { runProviderAddForm, suggestProviderName } from "../src/provider/wizard-form.mjs"
+import { runProviderAddForm, suggestProviderName } from "../src/kernel/provider/wizard-form.mjs"
 import { loadProviderModelItems } from "../src/repl.mjs"
 import { modelThinkingSupport } from "../src/repl/provider-catalog.mjs"
 

@@ -5,8 +5,8 @@ import {
   formatToolDiffDetails
 } from "../src/ui/activity-renderer.mjs"
 import { createTranscriptModel } from "../src/ui/transcript-model.mjs"
-import { EventBus } from "../src/core/events.mjs"
-import { EVENT_TYPES } from "../src/core/constants.mjs"
+import { EventBus } from "../src/kernel/core/events.mjs"
+import { EVENT_TYPES } from "../src/kernel/core/constants.mjs"
 
 test("activity renderer updates one collapsed structured tool block", async () => {
   const transcript = createTranscriptModel()

@@ -1,8 +1,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { checkProtectedPath, findProtectedAccess, bashTouchesProtected } from "../src/permission/protected-paths.mjs"
-import { evaluatePermission, toolCapability } from "../src/permission/rules.mjs"
-import { getSensitiveFilePatterns } from "../src/permission/file-edit-policy.mjs"
+import { checkProtectedPath, findProtectedAccess, bashTouchesProtected } from "../src/kernel/permission/protected-paths.mjs"
+import { evaluatePermission, toolCapability } from "../src/kernel/permission/rules.mjs"
+import { getSensitiveFilePatterns } from "../src/kernel/permission/file-edit-policy.mjs"
 
 test("protected paths cover the four classes that git cannot undo", () => {
   for (const p of [".git/config", ".git/hooks/pre-commit", "sub/.git/index"]) {
@@ -127,7 +127,7 @@ test("readonly tier lets read-only git tools through", () => {
 test("plan mode allows read-only work including git inspection", async () => {
   // plan 闸门此前是手写名单，漏了 sysinfo / question / task_list / git_status ——
   // 全是纯读，却在制定计划时被拦，而制定计划恰恰最需要看仓库现状。
-  const { planModeAllows } = await import("../src/session/loop.mjs")
+  const { planModeAllows } = await import("../src/kernel/session/loop.mjs")
   assert.equal(typeof planModeAllows, "function", "闸门函数必须可测 —— 不可测就等于没有闸门")
 
   for (const name of ["read", "grep", "glob", "list", "sysinfo", "question",

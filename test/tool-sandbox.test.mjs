@@ -12,7 +12,7 @@ import {
   resetSandboxNotices,
   probeSandboxSupport,
   resetSandboxSupportCache
-} from "../src/tool/sandbox.mjs"
+} from "../src/kernel/tool/sandbox.mjs"
 
 const WS = "/home/dev/project"
 const TMP = "/tmp"

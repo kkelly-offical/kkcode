@@ -1,12 +1,12 @@
 import { Command } from "commander"
 import { readFile } from "node:fs/promises"
-import { LongAgentManager } from "../orchestration/longagent-manager.mjs"
+import { LongAgentManager } from "../kernel/orchestration/longagent-manager.mjs"
 import { loadConfig } from "../config/load-config.mjs"
 import { createKernel } from "../kernel/index.mjs"
 import { eventLogPath } from "../storage/paths.mjs"
 import { formatRecoverySuggestions } from "../ui/activity-renderer.mjs"
-import { loadLedger } from "../session/ultra-ledger.mjs"
-import { buildBlockedReport, renderBlockedReportText } from "../session/blocked-report.mjs"
+import { loadLedger } from "../kernel/session/ultra-ledger.mjs"
+import { buildBlockedReport, renderBlockedReportText } from "../kernel/session/blocked-report.mjs"
 
 /**
  * Ultra 会话管理。0.4.0 起主命令是 `kkcode ultra`，`kkcode longagent`
@@ -124,7 +124,7 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
         // 进行中任务的实时详情来自后台任务的日志尾巴
         const liveTasks = {}
         try {
-          const { BackgroundManager } = await import("../orchestration/background-manager.mjs")
+          const { BackgroundManager } = await import("../kernel/orchestration/background-manager.mjs")
           for (const task of await BackgroundManager.list()) {
             if (task.status === "running" && task.logical_task_id) {
               liveTasks[task.logical_task_id] = { lastLine: (task.log_tail || []).at(-1) || "" }
@@ -227,7 +227,7 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
         return
       }
       console.log(`resuming session ${options.session} — ${objective.slice(0, 80)}`)
-      const { runLongAgent } = await import("../session/longagent.mjs")
+      const { runLongAgent } = await import("../kernel/session/longagent.mjs")
       try {
         const result = await runLongAgent({
           prompt: objective,
@@ -244,7 +244,7 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
         if (result.blockedReport) {
           for (const line of renderBlockedReportText(result.blockedReport)) console.log(line)
         }
-        const { exitCodeForUltraStatus } = await import("../session/ultra-status.mjs")
+        const { exitCodeForUltraStatus } = await import("../kernel/session/ultra-status.mjs")
         process.exitCode = exitCodeForUltraStatus(result.status)
       } catch (err) {
         console.error(`resume failed: ${err.message}`)

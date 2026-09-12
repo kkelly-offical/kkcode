@@ -1,6 +1,6 @@
 import test, { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { rewindLastTurn, countRewindableTurns } from "../src/session/rewind.mjs"
+import { rewindLastTurn, countRewindableTurns } from "../src/kernel/session/rewind.mjs"
 
 /**
  * 0.6.2：上下文回溯（连按两下 Esc）。

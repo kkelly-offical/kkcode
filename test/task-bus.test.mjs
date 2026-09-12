@@ -1,6 +1,6 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { TaskBus } from "../src/session/longagent-task-bus.mjs"
+import { TaskBus } from "../src/kernel/session/longagent-task-bus.mjs"
 
 describe("TaskBus", () => {
   it("publish and get", () => {

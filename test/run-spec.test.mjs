@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { createRunSpec, runSpecRole } from "../src/orchestration/run-spec.mjs"
+import { createRunSpec, runSpecRole } from "../src/kernel/orchestration/run-spec.mjs"
 
 test("RunSpec is immutable and normalizes role execution fields", () => {
   const spec = createRunSpec({

@@ -1,6 +1,6 @@
 import test, { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { checkBashAllowed } from "../src/permission/exec-policy.mjs"
+import { checkBashAllowed } from "../src/kernel/permission/exec-policy.mjs"
 
 /**
  * 0.6.2：exec-policy 终于认识审批档。
@@ -79,7 +79,7 @@ describe("普通命令不受影响", () => {
  */
 describe("工具层：审批档真的传到了 exec-policy", () => {
   it("bash 工具在 YOLO 配置下放行 git commit", async () => {
-    const { ToolRegistry } = await import("../src/tool/registry.mjs")
+    const { ToolRegistry } = await import("../src/kernel/tool/registry.mjs")
     await ToolRegistry.initialize({
       config: { tool: { sources: { builtin: true, local: false, plugin: false, mcp: false } } },
       cwd: process.cwd(),

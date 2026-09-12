@@ -3,7 +3,7 @@ import { Command } from "commander"
 import { loadConfig } from "../config/load-config.mjs"
 // 写回逻辑与向导共用一份（逐字段合并、保留未触及字段）—— 0.5.1 修过的
 // 整条目替换事故不能在第二份实现里复活
-import { VENDOR_PRESETS, saveProviderConfig } from "../provider/wizard.mjs"
+import { VENDOR_PRESETS, saveProviderConfig } from "../kernel/provider/wizard.mjs"
 import { PROVIDER_META_KEYS } from "../config/schema.mjs"
 
 // --- Resolve configured providers ---

@@ -1,4 +1,4 @@
-import { requestFast, isFastModelConfigured } from "../provider/fast-model.mjs"
+import { requestFast, isFastModelConfigured } from "../kernel/provider/fast-model.mjs"
 import { sanitizeTerminalText } from "../theme/terminal-sanitize.mjs"
 
 /**

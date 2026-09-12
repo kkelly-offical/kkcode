@@ -4,10 +4,10 @@ import { mkdtemp, rm, readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { createKernel } from "../src/kernel/index.mjs"
-import { registerProvider } from "../src/provider/router.mjs"
-import { defaultPermissionPromptChannel } from "../src/permission/prompt.mjs"
-import { defaultQuestionPromptChannel } from "../src/tool/question-prompt.mjs"
-import { checkWorkspaceTrust } from "../src/permission/workspace-trust.mjs"
+import { registerProvider } from "../src/kernel/provider/router.mjs"
+import { defaultPermissionPromptChannel } from "../src/kernel/permission/prompt.mjs"
+import { defaultQuestionPromptChannel } from "../src/kernel/tool/question-prompt.mjs"
+import { checkWorkspaceTrust } from "../src/kernel/permission/workspace-trust.mjs"
 
 /**
  * 1.0.0 阶段 3b 的硬判据（§6 阶段 3 完成判据 3，M3 耦合点 15）：内核不碰 TTY。

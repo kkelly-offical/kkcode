@@ -1,5 +1,5 @@
-import { EventBus } from "../core/events.mjs"
-import { EVENT_TYPES } from "../core/constants.mjs"
+import { EventBus } from "../kernel/core/events.mjs"
+import { EVENT_TYPES } from "../kernel/core/constants.mjs"
 import { paint } from "../theme/color.mjs"
 import { highlightLine } from "../theme/syntax-highlight.mjs"
 import {

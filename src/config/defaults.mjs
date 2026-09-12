@@ -1,4 +1,4 @@
-import { DEFAULT_SENSITIVE_FILE_PATTERNS } from "../permission/file-edit-policy.mjs"
+import { DEFAULT_SENSITIVE_FILE_PATTERNS } from "../kernel/permission/file-edit-policy.mjs"
 
 export const DEFAULT_CONFIG = {
   config_version: 1,
@@ -334,7 +334,7 @@ export const DEFAULT_CONFIG = {
 
 export const VALID_PROVIDER_TYPES = ["openai", "anthropic", "ollama", "openai-compatible", "gateway"]
 
-import { listProviders } from "../provider/router.mjs"
+import { listProviders } from "../kernel/provider/router.mjs"
 export function getValidProviderTypes() {
   return listProviders()
 }

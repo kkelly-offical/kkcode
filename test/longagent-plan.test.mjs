@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { defaultStagePlan, validateAndNormalizeStagePlan } from "../src/session/longagent-plan.mjs"
+import { defaultStagePlan, validateAndNormalizeStagePlan } from "../src/kernel/session/longagent-plan.mjs"
 
 test("defaultStagePlan returns single-stage executable plan", () => {
   const plan = defaultStagePlan("build a CLI")

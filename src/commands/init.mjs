@@ -3,7 +3,7 @@ import { mkdir, writeFile, access } from "node:fs/promises"
 import { createInterface } from "node:readline/promises"
 import { Command } from "commander"
 import YAML from "yaml"
-import { listProviders } from "../provider/router.mjs"
+import { listProviders } from "../kernel/provider/router.mjs"
 import { validateConfig } from "../config/schema.mjs"
 
 async function exists(target) {

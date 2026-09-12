@@ -1,0 +1,2595 @@
+import path from "node:path"
+import os from "node:os"
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
+import { access, realpath, stat, statfs, unlink } from "node:fs/promises"
+import { exec as execCb, execFile as execFileCb, spawn } from "node:child_process"
+import { promisify } from "node:util"
+import { pathToFileURL } from "node:url"
+import { atomicWriteFile, replaceInFileTransactional, replaceAllInFileTransactional, diffLineCount, buildStructuredPatch } from "./edit-transaction.mjs"
+import { withFileLock } from "./file-lock-manager.mjs"
+import { BackgroundManager } from "../orchestration/background-manager.mjs"
+import { createTaskTool, createTaskGroupTool } from "./task-tool.mjs"
+import { McpRegistry } from "../mcp/registry.mjs"
+import { SkillRegistry } from "../skill/registry.mjs"
+import { askQuestionInteractive } from "./question-prompt.mjs"
+import { checkBashAllowed } from "../permission/exec-policy.mjs"
+import { inflateSync } from "node:zlib"
+import { truncationNotice, completeNotice } from "./output-budget.mjs"
+import { guardedFetch, allowPrivateHosts } from "../../net/url-guard.mjs"
+import { fileOpsTools } from "./file-ops.mjs"
+import { normalizePermissionLevel } from "../permission/rules.mjs"
+import { gitAutoTools } from "./git-auto.mjs"
+import { gitFullAutoTools } from "./git-full-auto.mjs"
+import { markFileRead, refreshFileReadStateFromDisk } from "./file-read-state.mjs"
+import { validateExistingFileMutation } from "./mutation-guard.mjs"
+import { buildMutationObservability } from "../../observability/edit-diagnostics.mjs"
+import { resolveWorkspacePath } from "./workspace-fs.mjs"
+import { buildRequestHeaders } from "../../http/identity.mjs"
+import { IMAGE_EXTENSIONS, IMAGE_MIME_TYPES } from "./image-util.mjs"
+import {
+  readSandboxConfig,
+  inspectSandboxStatus,
+  buildSandboxedCommand,
+  resolveWritableDir,
+  takeSandboxUnavailableNotice,
+  sandboxFailureHint
+} from "./sandbox.mjs"
+import { userRootDir } from "../../storage/paths.mjs"
+import { deprecatedSingletonAlias } from "../core/deprecations.mjs"
+
+const exec = promisify(execCb)
+const execFile = promisify(execFileCb)
+
+function schema(type, description) {
+  return { type, description }
+}
+
+function safeStringify(value) {
+  if (typeof value === "string") return value
+  return JSON.stringify(value, null, 2)
+}
+
+function planSlug(text = "") {
+  const raw = String(text || "plan")
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+  return (raw || "plan").slice(0, 48)
+}
+
+async function savePlanFile(cwd, plan, files = []) {
+  const dir = path.join(cwd, ".kkcode", "plans")
+  await mkdir(dir, { recursive: true })
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-")
+  const firstHeading = String(plan || "").split("\n").find((line) => line.trim()) || "plan"
+  const filePath = path.join(dir, `${stamp}-${planSlug(firstHeading)}.md`)
+  const body = [
+    "---",
+    `created_at: ${new Date().toISOString()}`,
+    `files: ${JSON.stringify(Array.isArray(files) ? files : [])}`,
+    "---",
+    "",
+    String(plan || "").trim(),
+    ""
+  ].join("\n")
+  await writeFile(filePath, body, "utf8")
+  return path.relative(cwd, filePath)
+}
+
+function signatureFor(config = {}, cwd = process.cwd(), allowProjectSources = true) {
+  const payload = {
+    cwd,
+    allowProjectSources,
+    tool: config.tool || {},
+    mcp: config.mcp || {},
+    runtime: config.runtime || {}
+  }
+  return JSON.stringify(payload)
+}
+
+async function exists(target) {
+  try {
+    await access(target)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function isWithinWorkspace(cwd, target) {
+  const root = path.resolve(cwd)
+  const resolved = path.resolve(target)
+  return resolved === root || resolved.startsWith(root + path.sep)
+}
+
+async function listDir(dir) {
+  const items = await readdir(dir, { withFileTypes: true })
+  return items.map((item) => `${item.isDirectory() ? "d" : "f"} ${item.name}`).join("\n")
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0)
+  if (!Number.isFinite(value) || value <= 0) return "0 B"
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"]
+  let size = value
+  let unitIndex = 0
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024
+    unitIndex += 1
+  }
+  const decimals = size >= 10 || unitIndex === 0 ? 0 : 1
+  return `${size.toFixed(decimals)} ${units[unitIndex]}`
+}
+
+function detectShellInfo() {
+  if (process.platform === "win32") {
+    return process.env.ComSpec || process.env.SHELL || "powershell/cmd"
+  }
+  return process.env.SHELL || "/bin/sh"
+}
+
+async function detectGitRepo(cwd) {
+  try {
+    await exec("git rev-parse --is-inside-work-tree", { cwd, timeout: 3000 })
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function detectPackageManagers(cwd) {
+  const candidates = [
+    ["npm", "package-lock.json"],
+    ["pnpm", "pnpm-lock.yaml"],
+    ["yarn", "yarn.lock"],
+    ["bun", "bun.lockb"]
+  ]
+  const present = []
+  for (const [name, file] of candidates) {
+    if (await exists(path.join(cwd, file))) present.push(name)
+  }
+  return present
+}
+
+function runRg(args, cwd, timeoutMs = 30000) {
+  return new Promise((resolve) => {
+    let stdout = "", stderr = "", done = false
+    const child = spawn("rg", ["--no-config", ...args], {
+      cwd, windowsHide: true, stdio: ["ignore", "pipe", "pipe"]
+    })
+    const timer = setTimeout(() => {
+      if (done) return
+      done = true
+      child.kill("SIGTERM")
+      setTimeout(() => { try { child.kill("SIGKILL") } catch {} }, 2000).unref()
+      resolve({ ok: false, stdout, stderr: "search timed out" })
+    }, timeoutMs)
+    child.stdout.on("data", (b) => { stdout += b })
+    child.stderr.on("data", (b) => { stderr += b })
+    child.on("error", (e) => {
+      if (done) return; done = true; clearTimeout(timer)
+      resolve({ ok: false, stdout, stderr: e.message })
+    })
+    child.on("close", (code) => {
+      if (done) return; done = true; clearTimeout(timer)
+      resolve({ ok: code === 0 || code === 1, stdout: stdout.trim(), stderr: stderr.trim() })
+    })
+  })
+}
+
+async function runGlob(pattern, cwd, searchPath) {
+  if (!pattern) return "pattern is required"
+  const target = searchPath
+    ? await resolveWorkspacePath(cwd, searchPath)
+    : "."
+  const { stdout } = await runRg(["--files", "--glob", pattern, target], cwd, 15000)
+  const text = stdout.trim()
+  if (!text) return "no files matched"
+  const lines = text.split("\n").filter(Boolean)
+  if (lines.length > 200) {
+    return lines.slice(0, 200).join("\n") + `\n... (+${lines.length - 200} more files)`
+  }
+  return `${lines.length} file(s):\n${text}`
+}
+
+async function runGrep(pattern, cwd, options = {}) {
+  if (!pattern) return "pattern is required"
+  const args = []
+  if (options.multiline) args.push("-U", "--multiline-dotall")
+  if (options.outputMode === "count") args.push("-c")
+  else if (options.outputMode === "files") args.push("-l")
+  else args.push("-n")
+  if (options.beforeContext) args.push("-B", String(options.beforeContext))
+  if (options.afterContext) args.push("-A", String(options.afterContext))
+  if (options.context) args.push("-C", String(options.context))
+  if (options.type) args.push("--type", options.type)
+  if (options.glob) args.push("--glob", options.glob)
+  if (options.maxCount) args.push("-m", String(options.maxCount))
+  if (options.ignoreCase) args.push("-i")
+  args.push(pattern)
+  args.push(options.path ? await resolveWorkspacePath(cwd, options.path) : ".")
+  const { stdout, stderr } = await runRg(args, cwd)
+  let text = stdout.trim()
+  if (!text && stderr) text = `[search error] ${stderr}`
+  if (text && (options.offset || options.headLimit)) {
+    const lines = text.split("\n")
+    const start = options.offset || 0
+    const limit = options.headLimit || lines.length
+    text = lines.slice(start, start + limit).join("\n")
+  }
+  return text || "no matches"
+}
+
+const LONG_RUNNING_PATTERNS = [
+  /\bnpm\s+run\s+dev\b/i,
+  /\bnpm\s+run\s+start\b/i,
+  /\bnpm\s+start\b/i,
+  /\byarn\s+dev\b/i,
+  /\byarn\s+start\b/i,
+  /\bpnpm\s+dev\b/i,
+  /\bpnpm\s+start\b/i,
+  /\bnpx\s+vite\b/i,
+  /\bnpx\s+next\s+dev\b/i,
+  /\bnpx\s+serve\b/i,
+  /\bnode\s+.*server/i,
+  /\bwebpack\s+serve\b/i,
+  /\bwebpack\s+--watch\b/i,
+  /\bjest\s+--watch\b/i,
+  /\bnodemon\b/i,
+  /\btsc\s+--watch\b/i,
+  /\btailwindcss\s+--watch\b/i,
+  /\bnpm\s+run\s+serve\b/i,
+  /\bnpm\s+run\s+watch\b/i
+]
+
+/**
+ * read 的四层限制。此前 2000 行与 2000 字符都是内联魔数，且没有字节帽 ——
+ * 一个 2000 行的 minified 文件仍能一次吃掉整个上下文预算。
+ *
+ * 行数上限保留（同行共识，且是有意的行为塑形：逼模型用 grep 定位而不是
+ * 整文件倾倒），补的是字节帽与「截断必须发声」。
+ */
+const READ_DEFAULT_LINES = 2000
+const READ_MAX_LINE_CHARS = 2000
+/** 单次读取的字节帽，与 opencode 同量级 */
+const READ_MAX_BYTES = 50 * 1024
+/** 整个文件的大小闸：超过这个数连读都不读，让模型改用 grep */
+const READ_MAX_FILE_BYTES = 10 * 1024 * 1024
+
+/**
+ * 二进制探测：NUL 字节，或替换字符（U+FFFD）占比过高。
+ * 后者是 utf8 解码失败的痕迹 —— 只看扩展名会漏掉没有扩展名的可执行文件。
+ */
+export function looksBinary(text) {
+  const sample = text.slice(0, 8192)
+  if (sample.includes("\u0000")) return true
+  const replacements = (sample.match(/\uFFFD/g) || []).length
+  return sample.length > 0 && replacements / sample.length > 0.1
+}
+
+const BASH_TIMEOUT_MS = 120_000
+const IS_WIN = process.platform === "win32"
+function wrapCmd(cmd) { return IS_WIN ? `chcp 65001 >nul & ${cmd}` : cmd }
+
+/** 按顶层 shell 分隔符分段；引号内容不拆，# 注释不泄漏到前一条命令的 argv。 */
+function splitShellSegments(command, { hashComments = !IS_WIN } = {}) {
+  const segments = []
+  let current = ""
+  let quote = ""
+  let escaped = false
+  let comment = false
+  const push = () => {
+    const segment = current.trim()
+    if (segment) segments.push(segment)
+    current = ""
+  }
+  for (let index = 0; index < command.length; index++) {
+    const char = command[index]
+    if (comment) {
+      if (char === "\n") {
+        comment = false
+        push()
+      }
+      continue
+    }
+    if (escaped) {
+      current += char
+      escaped = false
+      continue
+    }
+    if (char === "\\") {
+      current += char
+      escaped = true
+      continue
+    }
+    if (quote) {
+      current += char
+      if (char === quote) quote = ""
+      continue
+    }
+    if (char === "\"" || char === "'") {
+      quote = char
+      current += char
+      continue
+    }
+    if (char === "#" && (!current || /\s$/.test(current))) {
+      // `#` is a comment introducer for the POSIX shell used on Unix, but it is
+      // an ordinary argv character in cmd.exe.  Keep it when the process itself
+      // runs under cmd (Windows) or when an explicit `cmd /c|/k` invocation is
+      // being inspected on another platform.
+      const segmentShell = executableName(splitShellWords(current)[0])
+      if (hashComments && segmentShell !== "cmd") {
+        comment = true
+        continue
+      }
+    }
+    if (char === ";" || char === "\n" || char === "&" || char === "|") {
+      push()
+      if (command[index + 1] === char) index++
+      continue
+    }
+    current += char
+  }
+  push()
+  return segments
+}
+
+/** 只做长驻判定所需的轻量 argv 切分，不执行展开。 */
+function splitShellWords(segment) {
+  const words = []
+  let current = ""
+  let quote = ""
+  const push = () => {
+    if (current) words.push(current)
+    current = ""
+  }
+  for (let index = 0; index < segment.length; index++) {
+    const char = segment[index]
+    if (quote) {
+      if (char === quote) quote = ""
+      else if (quote === '"' && char === "\\" && /["\\$`]/.test(segment[index + 1] || "")) {
+        current += segment[++index]
+      }
+      else current += char
+      continue
+    }
+    if (char === "\"" || char === "'") {
+      quote = char
+      continue
+    }
+    if (char === "\\") {
+      const next = segment[index + 1] || ""
+      // 空白/引号前是 shell escape；字母前保留反斜杠，才能识别 Windows 路径。
+      if (next && /[\s'"\\]/.test(next)) current += segment[++index]
+      else current += char
+      continue
+    }
+    if (/\s/.test(char)) push()
+    else current += char
+  }
+  push()
+  return words
+}
+
+function executableName(token) {
+  return String(token || "").split(/[\\/]/).at(-1).toLowerCase().replace(/\.(?:cmd|exe)$/i, "")
+}
+
+function isVitestExecutable(token) {
+  const name = executableName(token)
+  return name === "vitest" || /^vitest@[^@]+$/.test(name)
+}
+
+function wrapperName(token) {
+  const name = executableName(token)
+  // npx accepts package specs as commands (`npx cross-env@7 ...`).
+  return name.replace(/@[^@]+$/, "")
+}
+
+function skipCommandWrappers(words, start = 0) {
+  let index = start
+  while (index < words.length) {
+    while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index] || "")) index++
+
+    const wrapper = wrapperName(words[index])
+    if (wrapper === "env") {
+      index++
+      while (index < words.length) {
+        const token = words[index]
+        if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) {
+          index++
+          continue
+        }
+        if (token === "--") {
+          index++
+          break
+        }
+        if (["-u", "--unset", "-C", "--chdir", "-S", "--split-string"].includes(token)) {
+          index += 2
+          continue
+        }
+        if (token.startsWith("-")) {
+          index++
+          continue
+        }
+        break
+      }
+      continue
+    }
+
+    if (["command", "exec", "call"].includes(wrapper)) {
+      index++
+      while ((words[index] || "").startsWith("-")) index++
+      continue
+    }
+
+    if (!["time", "sudo", "nice", "nohup", "stdbuf", "cross-env", "xvfb-run"].includes(wrapper)) break
+    index++
+    const valueOptions = wrapper === "sudo"
+      ? new Set(["-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt", "-c", "--close-from"])
+      : wrapper === "time"
+        ? new Set(["-f", "--format", "-o", "--output"])
+        : wrapper === "nice"
+          ? new Set(["-n", "--adjustment"])
+          : wrapper === "stdbuf"
+            ? new Set(["-i", "--input", "-o", "--output", "-e", "--error"])
+            : wrapper === "xvfb-run"
+              ? new Set([
+                  "-e", "--error-file", "-f", "--auth-file", "-n", "--server-num",
+                  "-s", "--server-args", "-p", "--xauth-protocol"
+                ])
+            : new Set()
+    if (wrapper === "cross-env") {
+      while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index] || "")) index++
+      if (words[index] === "--") index++
+      continue
+    }
+    while ((words[index] || "").startsWith("-")) {
+      const token = String(words[index])
+      if (token === "--") {
+        index++
+        break
+      }
+      index += valueOptions.has(token.toLowerCase()) ? 2 : 1
+    }
+  }
+  return index
+}
+
+function vitestArgv(words) {
+  let index = skipCommandWrappers(words)
+
+  if (isVitestExecutable(words[index])) return words.slice(index + 1)
+
+  // Running Vitest's published Node entrypoint directly has the same watch
+  // defaults as the `vitest` bin.  Limit this to a node_modules/vitest path so
+  // arbitrary scripts merely containing "vitest" are not blocked.
+  if (["node", "nodejs"].includes(executableName(words[index]))) {
+    index++
+    const nodeValueOptions = new Set([
+      "-r", "--require", "--import", "--loader", "--conditions", "--inspect-port"
+    ])
+    while ((words[index] || "").startsWith("-")) {
+      const option = String(words[index]).toLowerCase()
+      if (option === "--") {
+        index++
+        break
+      }
+      index += nodeValueOptions.has(option) ? 2 : 1
+    }
+    const script = String(words[index] || "").replace(/\\/g, "/").toLowerCase()
+    if (/(?:^|\/)node_modules\/(?:\.pnpm\/[^/]+\/node_modules\/)?vitest\/(?:vitest\.mjs|dist\/cli\.js)$/.test(script)) {
+      return words.slice(index + 1)
+    }
+    return null
+  }
+
+  const launcher = executableName(words[index])
+  if (!["npx", "pnpx", "bunx", "pnpm", "yarn", "npm", "bun"].includes(launcher)) return null
+  index++
+  if (["npm", "pnpm", "yarn", "bun"].includes(launcher) && executableName(words[index]) === "run") {
+    index++
+    if (!isVitestExecutable(words[index])) return null
+    index++
+    if (words[index] === "--") index++
+    return words.slice(index)
+  }
+  if (["exec", "dlx", "x"].includes(executableName(words[index]))) index++
+  while ((words[index] || "").startsWith("-")) {
+    const token = words[index]
+    if (["-p", "--package", "-c", "--call", "--cache", "--userconfig"].includes(token)) index += 2
+    else index++
+  }
+  if (isVitestExecutable(words[index])) return words.slice(index + 1)
+
+  // Package launchers can themselves launch cross-env/nice/stdbuf wrappers.
+  // Re-enter only the wrapper consumer (not the launcher parser) to avoid an
+  // accidental recursive loop on malformed argv.
+  index = skipCommandWrappers(words, index)
+  return isVitestExecutable(words[index]) ? words.slice(index + 1) : null
+}
+
+// 这些 option 的下一个 argv 是值，不能把值恰好叫 run/list
+// 时误当成一次性 subcommand。未知形态保守地按默认 watch 处理。
+const VITEST_OPTIONS_WITH_VALUE = new Set([
+  "--config", "-c", "--root", "-r", "--dir", "--project", "-p", "--workspace",
+  "--pool", "--environment", "--reporter", "--outputfile", "--testnamepattern", "-t",
+  "--maxworkers", "--minworkers", "--shard", "--inspect", "--inspectbrk",
+  "--mode", "--exclude", "--setupfiles", "--inspecthost", "--attachmentsdir",
+  "--coverage.include", "--coverage.exclude", "--api.host", "--api.port"
+])
+
+function firstVitestPositional(args) {
+  for (let index = 0; index < args.length; index++) {
+    const arg = String(args[index] || "")
+    const lowered = arg.toLowerCase()
+    // `--` 之后是测试文件 filter，不再是 CLI subcommand。
+    if (arg === "--") return ""
+    if (VITEST_OPTIONS_WITH_VALUE.has(lowered)) {
+      index++
+      continue
+    }
+    if (lowered.startsWith("-")) continue
+    return lowered
+  }
+  return ""
+}
+
+function vitestInvocationIsLongRunning(args) {
+  const lowered = args.map((arg) => String(arg).toLowerCase())
+  const positional = firstVitestPositional(args)
+  const informational = lowered.some((arg) => ["--help", "-h", "--version", "-v"].includes(arg))
+  if (informational) return false
+
+  const explicitWatch = positional === "watch" || positional === "dev" || lowered.some((arg) =>
+    arg === "--watch" || arg === "--watch=true" || arg === "--run=false"
+  )
+  if (explicitWatch) return true
+
+  const oneShot = ["run", "list", "init", "related"].includes(positional) || lowered.some((arg) =>
+    arg === "--run" || arg === "--run=true" || arg === "--watch=false" ||
+    arg === "--clearcache" || arg === "--listtags"
+  )
+  return !(informational || oneShot)
+}
+
+function isLongRunningVitest(command, shellSyntax = {}) {
+  for (const segment of splitShellSegments(command, shellSyntax)) {
+    const words = splitShellWords(segment)
+    const args = vitestArgv(words)
+    if (args && vitestInvocationIsLongRunning(args)) return true
+
+    // `sh -c 'vitest ...'` 是真实执行面，不能因外层 wrapper 而漏判。
+    const shell = executableName(words[0])
+    const commandIndex = ["sh", "bash", "dash", "zsh"].includes(shell)
+      ? words.findIndex((word) => /^-[a-z]*c[a-z]*$/i.test(word) || word.toLowerCase() === "/c")
+      : -1
+    if (
+      commandIndex >= 0 &&
+      words[commandIndex + 1] &&
+      isLongRunningVitest(words[commandIndex + 1], { hashComments: true })
+    ) return true
+
+    // cmd /c 把 /c 后全部 argv 当作命令行；与 POSIX sh -c 的「只有
+    // 紧邻一个 argv 是 command string，其余是 $0/$1」不同。
+    if (shell === "cmd") {
+      const cmdCommandIndex = words.findIndex((word) => ["/c", "/k"].includes(word.toLowerCase()))
+      if (
+        cmdCommandIndex >= 0 &&
+        words[cmdCommandIndex + 1] &&
+        isLongRunningVitest(words.slice(cmdCommandIndex + 1).join(" "), { hashComments: false })
+      ) return true
+      // `/k` deliberately keeps cmd.exe open after the child exits.  It is
+      // therefore long-running even when the nested Vitest form is one-shot.
+      if (cmdCommandIndex >= 0 && words[cmdCommandIndex].toLowerCase() === "/k") return true
+    }
+
+    // PowerShell 的 -Command 可以是单个引号字符串，也可以是后续多个 argv。
+    // 后者需要全部拼回内层命令，否则会丢掉 --run/--watch。
+    if (["pwsh", "powershell"].includes(shell)) {
+      const powershellCommandIndex = words.findIndex((word) =>
+        ["-c", "-command", "-commandwithargs"].includes(word.toLowerCase())
+      )
+      if (
+        powershellCommandIndex >= 0 &&
+        words[powershellCommandIndex + 1] &&
+        isLongRunningVitest(words.slice(powershellCommandIndex + 1).join(" "), { hashComments: true })
+      ) return true
+    }
+
+    if (shell === "cross-env-shell") {
+      let innerIndex = 1
+      while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[innerIndex] || "")) innerIndex++
+      if (words[innerIndex] && isLongRunningVitest(words.slice(innerIndex).join(" "), shellSyntax)) return true
+    }
+  }
+  return false
+}
+
+export function isLongRunningCommand(command) {
+  const cmd = String(command || "").trim()
+  return isLongRunningVitest(cmd) || LONG_RUNNING_PATTERNS.some((re) => re.test(cmd))
+}
+
+/**
+ * 一条命令的实际执行。沙箱与非沙箱只在这里分叉：
+ * - 无沙箱：走 exec，即 `/bin/sh -c <命令>`，与 0.8.0 逐字节相同的路径。
+ * - 有沙箱：走 execFile，命令文本作为 `sh -c` 的一个 argv 传给 bwrap，
+ *   全程不拼字符串 —— 拼接方案下命令里的引号会被沙箱参数表二次解释。
+ */
+function spawnShell({ command, cwd, timeoutMs, env, sandbox = null }) {
+  if (sandbox) {
+    return execFile(sandbox.command, sandbox.args, { cwd, timeout: timeoutMs, encoding: "utf8", env })
+  }
+  return exec(wrapCmd(command), { cwd, timeout: timeoutMs, encoding: "utf8", env })
+}
+
+/**
+ * 组装本次 bash 调用的沙箱形态。
+ *
+ * mode!=auto 时立刻返回，不探测、不 mkdir —— 默认档必须与 0.8.0 完全同路径。
+ * 后端不可用时回落现状，但带一行可见说明（每进程一次）：模型必须知道自己
+ * 没被隔离。包装成功后若 bwrap 自己起不来，错误在 runBash 里原样透出，
+ * 这里**不**做二次回落。
+ */
+async function prepareBashSandbox(ctx = {}, command = "") {
+  const config = ctx?.config || ctx?.configState?.config || null
+  const raw = readSandboxConfig(config)
+  if (raw.mode !== "auto") return { spawn: null, notice: "", hint: "" }
+
+  const status = await inspectSandboxStatus(config)
+  if (!status.available) {
+    return { spawn: null, notice: takeSandboxUnavailableNotice(status), hint: "" }
+  }
+
+  const workspaceDir = await realPathOrSelf(path.resolve(ctx?.cwd || process.cwd()))
+  const tmpDir = await realPathOrSelf(os.tmpdir())
+  const homeStateDir = userRootDir()
+  // bwrap 的 --bind 源目录不存在就整条命令失败，而 ~/.kkcode 在全新安装里
+  // 可能还没建过
+  await mkdir(homeStateDir, { recursive: true }).catch(() => {})
+  const extraWritableDirs = []
+  for (const entry of raw.writableDirs) {
+    const dir = resolveWritableDir(entry, { workspaceDir })
+    // 配置里的陈旧条目不该让每一条命令都挂掉，所以不存在就跳过
+    if (dir && await exists(dir)) extraWritableDirs.push(await realPathOrSelf(dir))
+  }
+
+  const spawnSpec = buildSandboxedCommand({
+    backend: status.backend,
+    command,
+    workspaceDir,
+    tmpDir,
+    homeStateDir: await realPathOrSelf(homeStateDir),
+    extraWritableDirs,
+    network: status.network
+  })
+  if (!spawnSpec) return { spawn: null, notice: "", hint: "" }
+  return {
+    spawn: spawnSpec,
+    notice: "",
+    hint: sandboxFailureHint({
+      backend: status.backend,
+      network: status.network,
+      writableDirs: [workspaceDir, tmpDir, homeStateDir, ...extraWritableDirs]
+    })
+  }
+}
+
+async function realPathOrSelf(target) {
+  return realpath(target).catch(() => target)
+}
+
+async function runBash(command, cwd, timeoutMs = BASH_TIMEOUT_MS, options = {}) {
+  if (isLongRunningCommand(command)) {
+    return `[blocked] "${command}" looks like a long-running/dev-server command that would block execution. Please tell the user to run it manually in their terminal, or use run_in_background: true.`
+  }
+  const { env: extraEnv = null, maxChars = 30000, sandbox = null, sandboxHint = "" } = options
+  const env = extraEnv ? { ...process.env, ...extraEnv } : process.env
+  // exitCode 此前被 catch 整个吞掉：模型只看到 stderr 文本，无法区分「命令
+  // 失败」和「命令成功但往 stderr 写了进度」—— 后者在 npm/pip/git 里极常见。
+  let exitCode = 0
+  let timedOut = false
+  const out = await spawnShell({ command, cwd, timeoutMs, env, sandbox }).catch((error) => {
+    exitCode = Number.isInteger(error.code) ? error.code : 1
+    if (error.killed || error.signal === "SIGTERM") {
+      timedOut = true
+      return {
+        stdout: error.stdout ?? "",
+        stderr: `${error.stderr || ""}\n[timeout] command killed after ${timeoutMs / 1000}s`
+      }
+    }
+    return {
+      stdout: error.stdout ?? "",
+      stderr: error.stderr ?? error.message
+    }
+  })
+  const raw = `${out.stdout || ""}${out.stderr || ""}`.trim() || "(empty output)"
+  const status = timedOut
+    ? "[timed out]"
+    : exitCode === 0 ? "" : `[exit ${exitCode}]`
+
+  // 上限跟着模型上下文走（见 tool/output-budget.mjs），并且截断要说清怎么拿更多
+  // —— 此前是硬编码 30000 且只说「超了」，模型无从判断该缩范围还是该分页。
+  const limit = Math.max(4000, Number(maxChars) || 30000)
+  const body = raw.length > limit
+    ? `${raw.slice(0, limit)}\n\n${truncationNotice({
+        shown: limit,
+        total: raw.length,
+        unit: "chars",
+        hint: "Re-run with a narrower command (add a filter, head/tail, or --quiet) to see the rest."
+      })}`
+    : raw
+  // 沙箱里失败时补一句「哪些目录可写」：EROFS / Permission denied 在沙箱内是
+  // 预期结果，不加这行的话模型会把它当成环境损坏，然后开始瞎修
+  const tail = sandboxHint && exitCode !== 0 ? `\n${sandboxHint}` : ""
+  return status ? `${status}\n${body}${tail}` : `${body}${tail}`
+}
+
+function lockOptions(ctx = {}) {
+  const mode = String(ctx?.config?.tool?.write_lock?.mode || "file_lock")
+  const waitTimeoutMs = Math.max(0, Number(ctx?.config?.tool?.write_lock?.wait_timeout_ms || 120000))
+  const owner = String(ctx?.taskId || ctx?.sessionId || ctx?.turnId || "kkcode")
+  return { mode, waitTimeoutMs, owner }
+}
+
+function mutationMetadata({
+  operation,
+  filePath,
+  originalContent = null,
+  updatedContent = null,
+  structuredPatch = [],
+  addedLines = 0,
+  removedLines = 0,
+  stageId = null,
+  taskId = null
+}) {
+  return {
+    fileChanges: [{
+      path: filePath,
+      tool: operation,
+      addedLines,
+      removedLines,
+      stageId,
+      taskId
+    }],
+    mutation: {
+      operation,
+      filePath,
+      originalContent,
+      updatedContent,
+      structuredPatch,
+      addedLines,
+      removedLines
+    },
+    observability: buildMutationObservability({
+      fileChanges: [{
+        path: filePath,
+        tool: operation,
+        addedLines,
+        removedLines,
+        stageId,
+        taskId
+      }],
+      mutation: {
+        operation,
+        filePath,
+        originalContent,
+        updatedContent,
+        structuredPatch,
+        addedLines,
+        removedLines
+      }
+    })
+  }
+}
+
+async function loadDynamicTools(dirs) {
+  const loaded = []
+  for (const dir of dirs) {
+    const absolute = path.resolve(dir)
+    if (!(await exists(absolute))) continue
+    const entries = await readdir(absolute, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isFile()) continue
+      if (![".mjs", ".js"].includes(path.extname(entry.name).toLowerCase())) continue
+      const file = path.join(absolute, entry.name)
+      try {
+        const mod = await import(pathToFileURL(file).href)
+        const def = mod.default || mod.tool || mod
+        if (!def || typeof def !== "object" || typeof def.name !== "string" || typeof def.execute !== "function") {
+          continue
+        }
+        loaded.push({
+          name: def.name,
+          description: def.description || `dynamic tool from ${file}`,
+          inputSchema: def.inputSchema || { type: "object", properties: {}, required: [] },
+          execute: def.execute
+        })
+      } catch {
+        // ignore invalid tool module
+      }
+    }
+  }
+  return loaded
+}
+
+function builtinTools(config) {
+  const listTool = {
+    name: "list",
+    description: "List files and subdirectories in a directory. Returns entry names with type prefix (d=directory, f=file). Use this for quick directory overview; use `glob` for recursive pattern matching.",
+    inputSchema: {
+      type: "object",
+      properties: { path: schema("string", "directory path") },
+      required: []
+    },
+    async execute(args, ctx) {
+      const target = await resolveWorkspacePath(ctx.cwd, args.path || ".", { mustExist: true })
+      return listDir(target)
+    }
+  }
+
+  const sysinfoTool = {
+    name: "sysinfo",
+    description: "Return structured, read-only system and runtime information for the current machine/workspace. Good for OS/runtime/workspace/cpu/memory/disk summaries without relying on raw shell output.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sections: {
+          type: "array",
+          description: "optional sections to return: os, runtime, workspace, cpu, memory, disk",
+          items: { type: "string" }
+        },
+        path: schema("string", "optional workspace path for disk/workspace inspection (default: cwd)")
+      },
+      required: []
+    },
+    async execute(args, ctx) {
+      const targetPath = await resolveWorkspacePath(ctx.cwd, String(args.path || "."), { mustExist: true })
+      const requestedSections = Array.isArray(args.sections) && args.sections.length
+        ? args.sections.map((item) => String(item || "").trim().toLowerCase()).filter(Boolean)
+        : ["os", "runtime", "workspace", "cpu", "memory", "disk"]
+      const sectionSet = new Set(requestedSections)
+
+      const result = {
+        generatedAt: new Date().toISOString(),
+        path: targetPath,
+        sections: {}
+      }
+
+      if (sectionSet.has("os")) {
+        result.sections.os = {
+          platform: process.platform,
+          arch: process.arch,
+          hostname: os.hostname(),
+          release: os.release(),
+          version: typeof os.version === "function" ? os.version() : null
+        }
+      }
+
+      if (sectionSet.has("runtime")) {
+        result.sections.runtime = {
+          nodeVersion: process.version,
+          shell: detectShellInfo(),
+          pid: process.pid,
+          uptimeSeconds: Math.round(process.uptime()),
+          uptimeHuman: `${Math.round(process.uptime())}s`
+        }
+      }
+
+      if (sectionSet.has("workspace")) {
+        const packageManagers = await detectPackageManagers(targetPath)
+        result.sections.workspace = {
+          cwd: targetPath,
+          isGitRepo: await detectGitRepo(targetPath),
+          packageManagers,
+          hasPackageJson: await exists(path.join(targetPath, "package.json")),
+          hasNodeModules: await exists(path.join(targetPath, "node_modules"))
+        }
+      }
+
+      if (sectionSet.has("cpu")) {
+        const cpus = os.cpus() || []
+        result.sections.cpu = {
+          cores: cpus.length,
+          model: cpus[0]?.model || null,
+          loadAverage: typeof os.loadavg === "function" ? os.loadavg() : []
+        }
+      }
+
+      if (sectionSet.has("memory")) {
+        const total = os.totalmem()
+        const free = os.freemem()
+        result.sections.memory = {
+          totalBytes: total,
+          freeBytes: free,
+          usedBytes: Math.max(0, total - free),
+          total: formatBytes(total),
+          free: formatBytes(free),
+          used: formatBytes(Math.max(0, total - free))
+        }
+      }
+
+      if (sectionSet.has("disk")) {
+        try {
+          const disk = await statfs(targetPath)
+          const blockSize = Number(disk.bsize || disk.frsize || 0)
+          const totalBytes = Number(disk.blocks || 0) * blockSize
+          const freeBytes = Number(disk.bavail || disk.bfree || 0) * blockSize
+          result.sections.disk = {
+            path: targetPath,
+            totalBytes,
+            freeBytes,
+            usedBytes: Math.max(0, totalBytes - freeBytes),
+            total: formatBytes(totalBytes),
+            free: formatBytes(freeBytes),
+            used: formatBytes(Math.max(0, totalBytes - freeBytes))
+          }
+        } catch (error) {
+          result.sections.disk = {
+            path: targetPath,
+            error: error.message
+          }
+        }
+      }
+
+      const summaryParts = []
+      if (result.sections.os) summaryParts.push(`${result.sections.os.platform}/${result.sections.os.arch}`)
+      if (result.sections.runtime) summaryParts.push(`node ${result.sections.runtime.nodeVersion}`)
+      if (result.sections.workspace) summaryParts.push(result.sections.workspace.isGitRepo ? "git repo" : "non-git cwd")
+      if (result.sections.memory) summaryParts.push(`mem ${result.sections.memory.used}/${result.sections.memory.total}`)
+      if (result.sections.disk?.total) summaryParts.push(`disk ${result.sections.disk.used}/${result.sections.disk.total}`)
+      result.summary = summaryParts.join(" · ")
+
+      return result
+    }
+  }
+
+  // 扩展名与 MIME 表来自 image-util.mjs（本文件顶部 import）—— 这里曾经是
+  // 第二份手写拷贝，与那份靠记忆保持同步，实际上已经漂移。
+
+  function readNotebook(raw) {
+    const notebook = JSON.parse(raw)
+    if (!notebook.cells || !Array.isArray(notebook.cells)) return "Not a valid .ipynb file (missing cells array)"
+    const lines = []
+    notebook.cells.forEach((cell, i) => {
+      const type = cell.cell_type || "unknown"
+      lines.push(`--- Cell ${i} [${type}] ---`)
+      const source = Array.isArray(cell.source) ? cell.source.join("") : String(cell.source || "")
+      lines.push(source)
+      if (cell.outputs && cell.outputs.length > 0) {
+        lines.push("[Output]:")
+        for (const out of cell.outputs) {
+          if (out.text) lines.push(Array.isArray(out.text) ? out.text.join("") : String(out.text))
+          else if (out.data?.["text/plain"]) {
+            const plain = out.data["text/plain"]
+            lines.push(Array.isArray(plain) ? plain.join("") : String(plain))
+          }
+        }
+      }
+      lines.push("")
+    })
+    return lines.join("\n")
+  }
+
+  /**
+   * 解出 PDF 里所有内容流的明文。
+   *
+   * 此前的实现直接对整个文件按 latin1 解码后正则抓括号内的字符串。那对
+   * **几乎所有现代 PDF 都无效** —— 内容流默认用 FlateDecode 压缩，抓到的是
+   * 压缩字节里偶然出现的括号，产出一堆乱码当正文。而 `pages` 参数虽然在
+   * schema 里声明了，代码从头到尾没读过。
+   *
+   * 这里先按 `stream ... endstream` 切出流、对 FlateDecode 的用 zlib 解压，
+   * 再从解压后的内容里抓文本操作符。不引依赖：inflate 在 node:zlib 里。
+   */
+  function pdfContentStreams(buffer) {
+    const streams = []
+    const marker = Buffer.from("stream")
+    const endMarker = Buffer.from("endstream")
+    let cursor = 0
+    while (cursor < buffer.length) {
+      const start = buffer.indexOf(marker, cursor)
+      if (start === -1) break
+      const end = buffer.indexOf(endMarker, start)
+      if (end === -1) break
+
+      // 流字典在 stream 关键字之前，看它有没有声明 FlateDecode
+      const dictStart = Math.max(0, start - 400)
+      const dict = buffer.slice(dictStart, start).toString("latin1")
+
+      // stream 之后是 CRLF 或 LF
+      let dataStart = start + marker.length
+      if (buffer[dataStart] === 0x0d) dataStart++
+      if (buffer[dataStart] === 0x0a) dataStart++
+      const raw = buffer.slice(dataStart, end)
+
+      if (/\/FlateDecode/.test(dict)) {
+        try {
+          streams.push(inflateSync(raw).toString("latin1"))
+        } catch {
+          // 损坏或用了这里不支持的过滤器（LZW/DCT 等）—— 跳过而不是塞乱码
+        }
+      } else if (!/\/(DCTDecode|JPXDecode|CCITTFaxDecode|JBIG2Decode)/.test(dict)) {
+        streams.push(raw.toString("latin1"))
+      }
+      cursor = end + endMarker.length
+    }
+    return streams
+  }
+
+  /** 从一个已解压的内容流里抽文本：只认 Tj / TJ / ' / " 这几个显示操作符。 */
+  function textFromContentStream(content) {
+    const out = []
+    // (字符串) Tj  |  [(a) -2 (b)] TJ  |  (s) '  |  (s) "
+    const showRegex = /\((?:\\.|[^\\()])*\)|<[0-9A-Fa-f\s]+>/g
+    const opRegex = /(\[(?:[^\][]|\[[^\]]*\])*\]|\((?:\\.|[^\\()])*\))\s*(TJ|Tj|'|")/g
+    let match
+    while ((match = opRegex.exec(content)) !== null) {
+      const operand = match[1]
+      let piece = ""
+      let literal
+      showRegex.lastIndex = 0
+      while ((literal = showRegex.exec(operand)) !== null) {
+        piece += literal[0].startsWith("<")
+          ? hexStringToText(literal[0])
+          : decodePdfLiteral(literal[0].slice(1, -1))
+      }
+      if (piece.trim()) out.push(piece)
+    }
+    return out
+  }
+
+  function hexStringToText(token) {
+    const hex = token.slice(1, -1).replace(/\s+/g, "")
+    let text = ""
+    for (let i = 0; i + 1 < hex.length; i += 2) {
+      const code = parseInt(hex.slice(i, i + 2), 16)
+      if (code >= 32 || code === 10 || code === 9) text += String.fromCharCode(code)
+    }
+    return text
+  }
+
+  function decodePdfLiteral(body) {
+    return body
+      .replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\t/g, "\t")
+      .replace(/\\b/g, "\b").replace(/\\f/g, "\f")
+      .replace(/\\([0-7]{1,3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8)))
+      .replace(/\\([()\\])/g, "$1")
+  }
+
+  /** `pages` 形如 "1-5" / "3" / "2-" —— 返回 1-based 的判定函数。 */
+  function parsePageRange(spec) {
+    const text = String(spec || "").trim()
+    if (!text) return null
+    const match = /^(\d+)\s*(?:-\s*(\d*))?$/.exec(text)
+    if (!match) return null
+    const from = Number(match[1])
+    const to = match[2] === undefined ? from : match[2] === "" ? Infinity : Number(match[2])
+    if (!from || to < from) return null
+    return (page) => page >= from && page <= to
+  }
+
+  function extractPdfText(buffer, pagesSpec = "") {
+    const streams = pdfContentStreams(buffer)
+    if (!streams.length) {
+      return "(PDF contains no extractable text — it may be image-based, encrypted, or use an unsupported filter)"
+    }
+
+    // 内容流与页面不是严格一一对应（一页可以拆成多个流），但按流序号过滤是
+    // 无外部依赖前提下最接近 `pages` 语义的做法。做不到精确时说清楚，
+    // 而不是假装 pages 生效了 —— 声明了却不实现是这个参数原本的问题。
+    const inRange = parsePageRange(pagesSpec)
+    const selected = inRange ? streams.filter((_, index) => inRange(index + 1)) : streams
+    if (inRange && !selected.length) {
+      return `(no content streams in range ${pagesSpec}; the PDF has ${streams.length})`
+    }
+
+    const texts = selected.flatMap((content) => textFromContentStream(content))
+    if (!texts.length) {
+      return "(PDF content streams decoded, but contain no text-showing operators — likely scanned images)"
+    }
+    const body = texts.join(" ").replace(/[ \t]+/g, " ").replace(/\s*\n\s*/g, "\n").trim()
+    const note = inRange
+      ? `\n\n[pages ${pagesSpec}: ${selected.length} of ${streams.length} content stream(s); streams do not map 1:1 to pages]`
+      : ""
+    return body + note
+  }
+
+  const readTool = {
+    name: "read",
+    description: "Read file content with line numbers. Supports text files, images (PNG/JPG/GIF/SVG/WebP/BMP/ICO as base64), PDF (text extraction), and Jupyter notebooks (.ipynb cell parsing). Use `offset` and `limit` to read specific line ranges. ALWAYS use this instead of `bash` with cat/head/tail. Existing-file write/edit/patch/notebookedit flows require a recent read first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: schema("string", "file path"),
+        offset: schema("number", "start line number (1-based, optional)"),
+        limit: schema("number", "max lines to return (optional)"),
+        encoding: schema("string", "file encoding (default: utf8)"),
+        pages: schema("string", "page range for PDF files, e.g. '1-5' (optional)")
+      },
+      required: ["path"]
+    },
+    async execute(args, ctx) {
+      const target = await resolveWorkspacePath(ctx.cwd, args.path, { mustExist: true })
+      const ext = path.extname(target).toLowerCase()
+
+      // Image files: return base64 data URI
+      if (IMAGE_EXTENSIONS.has(ext)) {
+        const buffer = await readFile(target)
+        const base64 = buffer.toString("base64")
+        const mime = IMAGE_MIME_TYPES[ext] || "application/octet-stream"
+        return {
+          type: "image",
+          output: `Image file: ${args.path} (${buffer.length} bytes, ${mime})`,
+          data: `data:${mime};base64,${base64}`
+        }
+      }
+
+      // PDF files: extract text
+      if (ext === ".pdf") {
+        const buffer = await readFile(target)
+        return extractPdfText(buffer, args.pages)
+      }
+
+      // Jupyter notebooks: parse cells
+      if (ext === ".ipynb") {
+        const raw = await readFile(target, "utf8")
+        const fileStat = await stat(target)
+        markFileRead(target, {
+          content: raw,
+          timestamp: fileStat.mtimeMs,
+          isPartialView: false
+        })
+        return readNotebook(raw)
+      }
+
+      // Default: text file with line numbers
+      const encoding = args.encoding || "utf8"
+      const fileStat = await stat(target)
+
+      // 大小预检：此前没有任何检查，一个 2GB 的文件会直接读进内存
+      if (fileStat.size > READ_MAX_FILE_BYTES) {
+        return `error: file is ${fileStat.size} bytes, over the ${READ_MAX_FILE_BYTES} byte read limit. `
+          + "Use grep to search it, or read with offset/limit to take a slice."
+      }
+
+      const content = await readFile(target, encoding)
+
+      // 二进制探测：此前没有，读 .so/.zip 会按 utf8 解成一屏 U+FFFD
+      // 然后带着行号进上下文，白白吃掉输出预算
+      if (looksBinary(content)) {
+        return `error: ${args.path} looks like a binary file (${fileStat.size} bytes). `
+          + "Reading it as text would fill the context with replacement characters."
+      }
+
+      const allLines = content.split("\n")
+      const start = Math.max(0, (Number(args.offset) || 1) - 1)
+      if (allLines.length > 0 && start >= allLines.length) {
+        // 越界 offset 此前静默返回空串，状态还是 completed
+        return `error: offset ${start + 1} is past the end of the file (${allLines.length} lines).`
+      }
+      const slice = allLines.slice(start, start + (Number(args.limit) || READ_DEFAULT_LINES))
+
+      const numbered = []
+      let bytesUsed = 0
+      let cappedByBytes = false
+      for (let i = 0; i < slice.length; i++) {
+        const line = slice[i]
+        const clipped = line.length > READ_MAX_LINE_CHARS
+          ? line.slice(0, READ_MAX_LINE_CHARS) + truncationNotice({ shown: READ_MAX_LINE_CHARS, total: line.length, unit: "chars" })
+          : line
+        // 字节帽：行数与单行上限都拦不住 minified 或宽表文件。先到先停。
+        if (bytesUsed + clipped.length > READ_MAX_BYTES) {
+          cappedByBytes = true
+          break
+        }
+        bytesUsed += clipped.length
+        numbered.push(`${String(start + i + 1).padStart(6)}→${clipped}`)
+      }
+
+      const lastLine = start + numbered.length
+      const isPartialView = start > 0 || lastLine < allLines.length
+
+      markFileRead(target, {
+        // 存模型实际看到的内容。此前存未截断原文，模型照着截断行去 edit
+        // 必然 no match，而且无从判断原因。
+        content: isPartialView ? slice.slice(0, numbered.length).join("\n") : content,
+        timestamp: fileStat.mtimeMs,
+        offset: isPartialView ? start + 1 : undefined,
+        limit: isPartialView ? numbered.length : undefined,
+        isPartialView
+      })
+
+      // 截断必须发声并说清怎么续读。此前完全静默 —— 读一个 3000 行的文件
+      // 在第 2000 行戛然而止，模型以为自己读完了整个文件。
+      const footer = cappedByBytes
+        ? truncationNotice({
+            shown: bytesUsed,
+            total: content.length,
+            unit: "chars",
+            hint: `Output capped at ${READ_MAX_BYTES} bytes. Use read with offset=${lastLine + 1} to continue.`
+          })
+        : lastLine < allLines.length
+          ? truncationNotice({
+              shown: numbered.length,
+              total: allLines.length,
+              unit: "lines",
+              hint: `Use read with offset=${lastLine + 1} to continue.`
+            })
+          : completeNotice({ total: allLines.length, unit: "lines" })
+
+      return `${numbered.join("\n")}\n${footer}`
+    }
+  }
+
+  const writeTool = {
+    name: "write",
+    description: "Create or overwrite a file atomically. Auto-creates parent directories. Supports three modes: 'overwrite' (default, full replacement), 'append' (add to end of file), 'insert' (insert at a specific line). Existing-file writes require a recent full read first. For large files (200+ lines), use mode='append' to build incrementally across multiple calls to avoid output truncation. Use `edit` instead when only a small part of an existing file needs to change.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: schema("string", "file path"),
+        content: schema("string", "file content to write"),
+        mode: schema("string", "write mode: 'overwrite' (default), 'append' (add to end), 'insert' (insert at line number)"),
+        insert_at_line: schema("number", "1-based line number for insert mode. Content is inserted BEFORE this line.")
+      },
+      required: ["path", "content"]
+    },
+    async execute(args, ctx) {
+      const target = await resolveWorkspacePath(ctx.cwd, args.path)
+      const content = String(args.content ?? "")
+      const mode = String(args.mode || "overwrite")
+
+      // Guard: detect empty/parse-error writes that would destroy existing content
+      if (args.__parse_error) {
+        return {
+          output: `error: tool call arguments were corrupted (JSON parse failed). The write was NOT executed. This usually means the response was truncated — try using write with mode="append" to build the file incrementally.`,
+          metadata: { blocked: true, reason: "parse_error" }
+        }
+      }
+      if (!content && !args.content && mode === "overwrite") {
+        return {
+          output: `error: content is empty or missing. The write was NOT executed. If you intended to create an empty file, pass content as an empty string explicitly.`,
+          metadata: { blocked: true, reason: "empty_content" }
+        }
+      }
+
+      if (await exists(target)) {
+        const validation = await validateExistingFileMutation({
+          targetPath: target,
+          displayPath: String(args.path || target),
+          operation: "writing to it",
+          requireFullRead: true
+        })
+        if (!validation.ok) {
+          return {
+            output: validation.message,
+            metadata: { blocked: true, reason: validation.reason, fileChanges: [] }
+          }
+        }
+      }
+
+      let previous = ""
+      const options = lockOptions(ctx)
+
+      const runWrite = async () => {
+        try {
+          previous = await readFile(target, "utf8")
+        } catch {
+          previous = ""
+        }
+
+        if (mode === "append") {
+          const separator = previous && !previous.endsWith("\n") ? "\n" : ""
+          await atomicWriteFile(target, previous + separator + content)
+        } else if (mode === "insert") {
+          const lineNum = Math.max(1, Number(args.insert_at_line) || 1)
+          const lines = previous ? previous.split("\n") : []
+          const insertIdx = Math.min(lineNum - 1, lines.length)
+          const newLines = content.split("\n")
+          lines.splice(insertIdx, 0, ...newLines)
+          await atomicWriteFile(target, lines.join("\n"))
+        } else {
+          // overwrite (default)
+          await atomicWriteFile(target, content)
+        }
+      }
+
+      if (options.mode === "file_lock") {
+        await withFileLock({
+          targetPath: target,
+          owner: options.owner,
+          waitTimeoutMs: options.waitTimeoutMs,
+          run: runWrite
+        })
+      } else {
+        await runWrite()
+      }
+
+      let finalContent
+      try { finalContent = await readFile(target, "utf8") } catch { finalContent = content }
+      await refreshFileReadStateFromDisk(target, { content: finalContent }).catch(() => {})
+      const diff = diffLineCount(previous, finalContent)
+      const modeLabel = mode === "append" ? "appended" : mode === "insert" ? "inserted" : "written"
+      return {
+        output: `${modeLabel}: ${target}`,
+        metadata: mutationMetadata({
+          operation: "write",
+          filePath: String(args.path || target),
+          originalContent: previous,
+          updatedContent: finalContent,
+          structuredPatch: buildStructuredPatch(previous, finalContent),
+          addedLines: diff.added,
+          removedLines: diff.removed,
+          stageId: ctx.stageId || null,
+          taskId: ctx.logicalTaskId || ctx.taskId || null
+        })
+      }
+    }
+  }
+
+  const editTool = {
+    name: "edit",
+    description: "Replace a specific text snippet in an existing file. Transactional with automatic rollback on failure. You MUST `read` the file first — edits on unread or stale files are rejected. Provide enough surrounding context in `before` to ensure a unique match. Set `replace_all: true` to replace ALL occurrences.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: schema("string", "file path"),
+        before: schema("string", "target snippet"),
+        after: schema("string", "replacement snippet"),
+        replace_all: schema("boolean", "replace all occurrences instead of requiring unique match (default: false)")
+      },
+      required: ["path", "before", "after"]
+    },
+    async execute(args, ctx) {
+      const target = await resolveWorkspacePath(ctx.cwd, args.path, { mustExist: true })
+      let staleNotice = ""
+      if (await exists(target)) {
+        const validation = await validateExistingFileMutation({
+          targetPath: target,
+          displayPath: String(args.path || target),
+          operation: "editing it",
+          // 锚点：外部改动后若它仍精确且唯一匹配，落点没有歧义 —— 放行而不是
+          // 让模型重读全文。replace_all 时锚点本就会命中多处，降级条件不成立，
+          // 自然回到硬失败，这是对的。
+          anchor: args.replace_all ? "" : String(args.before || "")
+        })
+        if (!validation.ok) {
+          return {
+            output: validation.message,
+            metadata: { blocked: true, reason: validation.reason, fileChanges: [] }
+          }
+        }
+        // 降级放行必须让模型知道文件变过 —— 否则它会以为自己手里的副本还是新的
+        if (validation.notice) staleNotice = validation.notice
+      }
+      const options = lockOptions(ctx)
+      const runEdit = async () =>
+        args.replace_all
+          ? replaceAllInFileTransactional(target, String(args.before), String(args.after))
+          : replaceInFileTransactional(target, String(args.before), String(args.after))
+      const result = options.mode === "file_lock"
+        ? await withFileLock({
+            targetPath: target,
+            owner: options.owner,
+            waitTimeoutMs: options.waitTimeoutMs,
+            run: runEdit
+          })
+        : await runEdit()
+      if (result?.ok === false) {
+        return {
+          ok: false,
+          error: "edit_failed",
+          output: result.output || "edit failed",
+          metadata: { fileChanges: [] }
+        }
+      }
+      const updatedContent = await readFile(target, "utf8").catch(() => null)
+      await refreshFileReadStateFromDisk(target, { content: updatedContent ?? undefined }).catch(() => {})
+      return {
+        output: staleNotice ? `${staleNotice}\n${result.output}` : result.output,
+        metadata: mutationMetadata({
+          operation: "edit",
+          filePath: String(args.path || target),
+          originalContent: String(args.before),
+          updatedContent: String(args.after),
+          structuredPatch: buildStructuredPatch(String(args.before), String(args.after)),
+          addedLines: Number(result.addedLines || 0),
+          removedLines: Number(result.removedLines || 0),
+          stageId: ctx.stageId || null,
+          taskId: ctx.logicalTaskId || ctx.taskId || null
+        })
+      }
+    }
+  }
+
+  const globTool = {
+    name: "glob",
+    description: "Find files by glob pattern recursively. Use this instead of `bash` with find/ls. Optionally specify a `path` to search within a specific directory. Returns up to 200 matching file paths.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        pattern: schema("string", "glob pattern, e.g. **/*.mjs, src/**/*.ts"),
+        path: schema("string", "directory to search in (default: cwd)")
+      },
+      required: ["pattern"]
+    },
+    async execute(args, ctx) {
+      return runGlob(String(args.pattern || ""), ctx.cwd, args.path || null)
+    }
+  }
+
+  const grepTool = {
+    name: "grep",
+    description: "Search file contents by regex pattern. Use this instead of `bash` with grep/rg. Supports searching within a specific file or directory via `path`, output modes (content/files/count), multiline matching, context lines, and pagination.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        pattern: schema("string", "regex or string pattern"),
+        path: schema("string", "file or directory to search in (default: cwd). Use this to search within a specific file."),
+        output_mode: schema("string", "output mode: 'content' (lines with numbers), 'files' (file paths only, default), 'count' (match counts per file)"),
+        type: schema("string", "file type filter, e.g. js, ts, py (optional)"),
+        glob: schema("string", "glob filter, e.g. *.mjs, src/**/*.ts (optional)"),
+        maxCount: schema("number", "max matches per file (optional)"),
+        context: schema("number", "lines of context around match, -C (optional)"),
+        before_context: schema("number", "lines before each match, -B (optional)"),
+        after_context: schema("number", "lines after each match, -A (optional)"),
+        ignoreCase: schema("boolean", "case insensitive search (optional)"),
+        multiline: schema("boolean", "enable cross-line matching (optional)"),
+        head_limit: schema("number", "limit output to first N lines/entries (optional)"),
+        offset: schema("number", "skip first N lines/entries before head_limit (optional)")
+      },
+      required: ["pattern"]
+    },
+    async execute(args, ctx) {
+      return runGrep(String(args.pattern || ""), ctx.cwd, {
+        path: args.path || null,
+        outputMode: args.output_mode || "files",
+        type: args.type || null,
+        glob: args.glob || null,
+        maxCount: args.maxCount || null,
+        context: args.context || null,
+        beforeContext: args.before_context || null,
+        afterContext: args.after_context || null,
+        ignoreCase: !!args.ignoreCase,
+        multiline: !!args.multiline,
+        headLimit: args.head_limit || null,
+        offset: args.offset || null
+      })
+    }
+  }
+
+  const bashTool = {
+    name: "bash",
+    description: "Run a shell command in cwd. ONLY use for commands that have no dedicated tool (e.g. git, npm, pip, docker). Do NOT use for: reading files (use `read`), searching files (use `grep`/`glob`), writing files (use `write`/`edit`), moving/copying/deleting/creating directories/archiving (use `move`/`copy`/`remove`/`mkdir`/`archive` — those validate paths, refuse protected files, and make deletion recoverable, none of which `bash` does), or HTTP requests (use `http_request`/`webfetch` — `curl` through `bash` skips the egress checks that block internal addresses and cloud metadata endpoints). Long-running commands (dev servers, watchers) must use run_in_background: true. Supports `cwd` and per-command `env`. Non-zero exits are reported as `[exit N]`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        command: schema("string", "shell command"),
+        timeout: schema("number", "timeout in ms (default 120000, max 600000)"),
+        description: schema("string", "human-readable description of what this command does (optional)"),
+        run_in_background: schema("boolean", "run as background task, returns task_id immediately (optional). Use this for long-running commands (dev servers, watchers, builds) — they are blocked in the foreground."),
+        cwd: schema("string", "working directory, relative to the workspace root (optional, default: workspace root)"),
+        env: schema("object", "extra environment variables for this command only, e.g. {\"NODE_ENV\":\"test\"} (optional). Added on top of the inherited environment.")
+      },
+      required: ["command"]
+    },
+    async execute(args, ctx) {
+      const command = String(args.command || "")
+      const configBashTimeout = Number(ctx.config?.tool?.bash_timeout_ms || BASH_TIMEOUT_MS)
+      const timeoutMs = Math.min(Math.max(Number(args.timeout) || configBashTimeout, 1000), 600_000)
+
+      // 执行策略检查。审批档必须传进去 —— exec-policy 与 PermissionEngine 是
+      // 两套互不通话的权限词汇，不传的话 YOLO 档在这里等同于最严格档，
+      // 而模式说明写的是「每个审批提示都跳过」。
+      const policyCheck = checkBashAllowed(command, ctx.config, {
+        approvalLevel: normalizePermissionLevel(ctx.config?.permission || {})
+      })
+      if (!policyCheck.allowed) {
+        return {
+          ok: false,
+          blocked: true,
+          error: "execution_policy_violation",
+          message: policyCheck.reason,
+          suggestion: "Use git_snapshot to create temporary snapshots, then manually commit when satisfied."
+        }
+      }
+
+      // cwd 必须过 resolveWorkspacePath —— 否则 `cwd: "../.."` 就能把整个
+      // 工作区边界抬走，后续所有相对路径判定都在错误的根下做。
+      const runCwd = args.cwd
+        ? await resolveWorkspacePath(ctx.cwd, String(args.cwd), { mustExist: true })
+        : ctx.cwd
+      const extraEnv = args.env && typeof args.env === "object" && !Array.isArray(args.env)
+        ? Object.fromEntries(
+            Object.entries(args.env)
+              .filter(([key]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key))
+              .map(([key, value]) => [key, String(value)])
+          )
+        : null
+      const maxChars = Number(ctx.toolResultLimit) || 30000
+
+      // 第三层防护：OS 级隔离。默认 off，此时下面两条执行路径与 0.8.0 完全相同。
+      // 后台任务也包 —— 否则 run_in_background: true 就是一个绕过沙箱的开关。
+      const sandbox = await prepareBashSandbox(ctx, command)
+
+      if (args.run_in_background) {
+        // 这里**不**再拦长命令。前台那道拦截的提示语原文是「或者用
+        // run_in_background: true」，而这里又把它堵回去 —— 文档承诺的唯一
+        // 逃生口在代码里不存在，模型照提示改参数后拿到的还是 blocked。
+        // 后台本来就是长命令该去的地方：它有独立超时，不阻塞对话。
+        const task = await BackgroundManager.launch({
+          description: args.description || command,
+          payload: { command, cwd: runCwd },
+          run: async () => {
+            const env = extraEnv ? { ...process.env, ...extraEnv } : process.env
+            const out = await spawnShell({ command, cwd: runCwd, timeoutMs: 600_000, env, sandbox: sandbox.spawn })
+              .catch(e => ({ stdout: e.stdout ?? "", stderr: e.stderr ?? e.message }))
+            return `${out.stdout || ""}${out.stderr || ""}`.trim() || "(empty output)"
+          },
+          config: ctx.config
+        })
+        const launched = `background task launched: ${task.id}\nUse background_output to check results.`
+        return sandbox.notice ? `${sandbox.notice}\n${launched}` : launched
+      }
+
+      const output = await runBash(command, runCwd, timeoutMs, {
+        env: extraEnv,
+        maxChars,
+        sandbox: sandbox.spawn,
+        sandboxHint: sandbox.hint
+      })
+      return sandbox.notice ? `${sandbox.notice}\n${output}` : output
+    }
+  }
+
+  const outputTool = {
+    name: "background_output",
+    description: "Retrieve status, logs, and result of a background task launched via `task` with `run_in_background: true`. Returns the task object including status and output.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: schema("string", "background task id")
+      },
+      required: ["task_id"]
+    },
+    async execute(args) {
+      const task = await BackgroundManager.get(String(args.task_id || ""))
+      if (!task) return "background task not found"
+      return {
+        ...BackgroundManager.summarize(task),
+        result: task.result,
+        error: task.error || null
+      }
+    }
+  }
+
+  const taskListTool = {
+    name: "task_list",
+    description: "List delegated background tasks with concise lifecycle summaries.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+    async execute() {
+      const tasks = await BackgroundManager.list()
+      return tasks.map((task) => BackgroundManager.summarize(task))
+    }
+  }
+
+
+  const taskParallelTool = {
+    name: "task_parallel",
+    description: "Show delegated background tasks grouped as parallel subagent lanes.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+    async execute() {
+      const tasks = await BackgroundManager.list()
+      return BackgroundManager.summarizeParallel(tasks)
+    }
+  }
+
+  const taskGetTool = {
+    name: "task_get",
+    description: "Retrieve one delegated background task summary and result payload by task_id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: schema("string", "background task id")
+      },
+      required: ["task_id"]
+    },
+    async execute(args) {
+      const task = await BackgroundManager.get(String(args.task_id || ""))
+      if (!task) return "background task not found"
+      return {
+        ...BackgroundManager.summarize(task),
+        result: task.result,
+        error: task.error || null
+      }
+    }
+  }
+
+  const taskStopTool = {
+    name: "task_stop",
+    description: "Cancel a delegated background task by task_id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: schema("string", "background task id")
+      },
+      required: ["task_id"]
+    },
+    async execute(args) {
+      const ok = await BackgroundManager.cancel(String(args.task_id || ""))
+      return ok ? "cancel requested" : "background task not found"
+    }
+  }
+
+  const taskOutputTool = {
+    name: "task_output",
+    description: "Retrieve delegated background task output with summary, result payload, and next-action guidance.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: schema("string", "background task id")
+      },
+      required: ["task_id"]
+    },
+    async execute(args) {
+      const task = await BackgroundManager.get(String(args.task_id || ""))
+      if (!task) return "background task not found"
+      return {
+        ...BackgroundManager.summarize(task),
+        result: task.result,
+        error: task.error || null
+      }
+    }
+  }
+
+  const cancelTool = {
+    name: "background_cancel",
+    description: "Cancel a running background task by its task_id. Only works on tasks launched via `task` with `run_in_background: true`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: schema("string", "background task id")
+      },
+      required: ["task_id"]
+    },
+    async execute(args) {
+      const ok = await BackgroundManager.cancel(String(args.task_id || ""))
+      return ok ? "cancel requested" : "background task not found"
+    }
+  }
+
+  const todowriteTool = {
+    name: "todowrite",
+    description: "Create or update a structured task list for tracking multi-step work. ALWAYS create a todo list before starting any task with 2+ steps. Mark items in_progress/completed as you work. Only ONE item should be in_progress at a time.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        todos: {
+          type: "array",
+          description: "The updated todo list",
+          items: {
+            type: "object",
+            properties: {
+              content: schema("string", "task description in imperative form (e.g. 'Run tests')"),
+              activeForm: schema("string", "present continuous form shown during execution (e.g. 'Running tests')"),
+              status: { type: "string", enum: ["pending", "in_progress", "completed"], description: "task status" }
+            },
+            required: ["content", "status"]
+          }
+        }
+      },
+      required: ["todos"]
+    },
+    async execute(args, ctx) {
+      const todos = args.todos || []
+      ctx._todoState = todos
+      const summary = todos.map((t) => {
+        const active = t.status === "in_progress" && t.activeForm ? ` (${t.activeForm})` : ""
+        return `[${t.status}] ${t.content}${active}`
+      }).join("\n")
+      return `Todo list updated (${todos.length} items):\n${summary}`
+    }
+  }
+
+  const questionTool = {
+    name: "question",
+    description: "Ask the user one or more structured questions and wait for their answers. Use when you need user input to proceed — e.g. ambiguous requirements, implementation choices, or missing information. Supports predefined options, multi-select, and custom text input. Returns actual user answers.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        questions: {
+          type: "array",
+          description: "questions to ask the user",
+          items: {
+            type: "object",
+            properties: {
+              id: schema("string", "unique question identifier"),
+              text: schema("string", "question text"),
+              header: schema("string", "short label for tab chip (max 12 chars)"),
+              description: schema("string", "supplementary description (optional)"),
+              options: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    label: schema("string", "option display text"),
+                    value: schema("string", "option value (defaults to label)"),
+                    description: schema("string", "option description (optional)")
+                  },
+                  required: ["label"]
+                },
+                description: "predefined choices (optional)"
+              },
+              multi: schema("boolean", "allow multiple selections (default false)"),
+              allowCustom: schema("boolean", "allow custom text input (default true)")
+            },
+            required: ["id", "text"]
+          }
+        }
+      },
+      required: ["questions"]
+    },
+    async execute(args) {
+      if (args && args._allowQuestion === false) {
+        return "question tool disabled in this phase"
+      }
+      const questions = Array.isArray(args.questions) ? args.questions : []
+      if (questions.length === 0) {
+        return "error: at least one question is required"
+      }
+      // Normalize questions
+      const normalized = questions.map((q, i) => ({
+        id: String(q.id || `q${i}`),
+        text: String(q.text || ""),
+        description: q.description ? String(q.description) : "",
+        options: Array.isArray(q.options) ? q.options.map((o) => ({
+          label: String(o.label || ""),
+          value: String(o.value || o.label || ""),
+          description: o.description ? String(o.description) : ""
+        })) : [],
+        multi: !!q.multi,
+        allowCustom: q.allowCustom !== false
+      }))
+      const answers = await askQuestionInteractive({ questions: normalized })
+      // Format response
+      const lines = normalized.map((q) => {
+        const answer = answers[q.id] ?? "(skipped)"
+        return `[${q.id}] ${q.text} → ${answer}`
+      })
+      return lines.join("\n")
+    }
+  }
+
+  const webfetchTool = {
+    name: "webfetch",
+    description: "Fetch content from a public URL and return it as text. HTML is converted to markdown. Content over 50KB is truncated. Only use for public, unauthenticated URLs. Do NOT use for local file reading — use `read` instead.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: schema("string", "URL to fetch"),
+        prompt: schema("string", "optional processing instruction")
+      },
+      required: ["url"]
+    },
+    async execute(args, ctx = {}) {
+      const url = String(args.url || "")
+      try {
+        // 出网校验（SSRF）。此前只检查 URL 前缀，于是
+        // `http://127.0.0.1:38412/admin` 的响应体会被原样读回来 —— 实测确认。
+        // 逐跳校验重定向，否则只校验第一个 URL 等于没校验。
+        const { response } = await guardedFetch(url, {
+          headers: buildRequestHeaders({
+            target: "webfetch",
+            accept: "text/html, text/plain, application/json"
+          }),
+          signal: AbortSignal.timeout(30000)
+        }, { allowPrivate: allowPrivateHosts(ctx.config) })
+        if (!response.ok) return `error: HTTP ${response.status}`
+        const text = await response.text()
+        const limit = Math.max(4000, Number(ctx.toolResultLimit) || 50000)
+        return text.length > limit
+          ? `${text.slice(0, limit)}\n${truncationNotice({
+              shown: limit,
+              total: text.length,
+              unit: "chars",
+              hint: "Fetch a more specific URL or path to see the rest."
+            })}`
+          : text
+      } catch (error) {
+        return `error: ${error.message}`
+      }
+    }
+  }
+
+  const httpRequestTool = {
+    name: "http_request",
+    description: "Make an HTTP request with a chosen method, headers, and body. Use this for APIs (POST/PUT/PATCH/DELETE, JSON payloads, auth headers). For simply reading a public page as text, use `webfetch`. Private and loopback addresses and cloud metadata endpoints are blocked.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: schema("string", "target URL (http or https)"),
+        method: schema("string", "HTTP method: GET, POST, PUT, PATCH, DELETE, HEAD (default: GET)"),
+        headers: schema("object", "request headers, e.g. {\"Content-Type\":\"application/json\"}"),
+        body: schema("string", "request body as a string; JSON must be pre-serialized"),
+        timeout_ms: schema("number", "timeout in milliseconds (default 30000, max 120000)")
+      },
+      required: ["url"]
+    },
+    async execute(args, ctx = {}) {
+      const method = String(args.method || "GET").toUpperCase()
+      const ALLOWED = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+      if (!ALLOWED.includes(method)) {
+        return `error: unsupported method "${method}". Allowed: ${ALLOWED.join(", ")}`
+      }
+      if ((method === "GET" || method === "HEAD") && args.body) {
+        return `error: ${method} cannot carry a body`
+      }
+
+      const headers = buildRequestHeaders({
+        target: "http_request",
+        accept: "application/json, text/plain, */*",
+        customHeaders: args.headers && typeof args.headers === "object" && !Array.isArray(args.headers)
+          ? Object.fromEntries(
+              Object.entries(args.headers)
+                // 头名按 RFC 7230 token；带控制字符的名字能撑开请求走私
+                .filter(([k]) => /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(k))
+                .map(([k, v]) => [k, String(v).replace(/[\r\n]/g, "")])
+            )
+          : {}
+      })
+
+      const timeoutMs = Math.min(Math.max(Number(args.timeout_ms) || 30000, 1000), 120_000)
+      try {
+        const { response, url: finalUrl, redirects } = await guardedFetch(String(args.url || ""), {
+          method,
+          headers,
+          body: args.body === undefined ? undefined : String(args.body),
+          signal: AbortSignal.timeout(timeoutMs)
+        }, { allowPrivate: allowPrivateHosts(ctx.config) })
+
+        const text = method === "HEAD" ? "" : await response.text()
+        const limit = Math.max(4000, Number(ctx.toolResultLimit) || 50000)
+        const shownBody = text.length > limit
+          ? `${text.slice(0, limit)}\n${truncationNotice({
+              shown: limit,
+              total: text.length,
+              unit: "chars",
+              hint: "Narrow the request (query params, Range header, or a more specific endpoint)."
+            })}`
+          : text
+
+        const lines = [`HTTP ${response.status} ${response.statusText}`.trim()]
+        if (redirects > 0) lines.push(`(after ${redirects} redirect${redirects > 1 ? "s" : ""} → ${finalUrl.href})`)
+        const contentType = response.headers.get("content-type")
+        if (contentType) lines.push(`content-type: ${contentType}`)
+        if (shownBody) lines.push("", shownBody)
+        return lines.join("\n")
+      } catch (error) {
+        return `error: ${error.message}`
+      }
+    }
+  }
+
+  const skillTool = {
+    name: "skill",
+    description: "Invoke a registered skill by name. Skills are pre-built prompt templates or programmable modules that provide specialized capabilities. Use this when a task matches an available skill listed in the system prompt, or when the user mentions a skill command like '$commit'.",
+    /**
+     * 技能的风险取决于它是哪一种，一个工具名对应不了一个固定档位：
+     *
+     *   - `template` / `skill_md`：把模板展开成一段提示词，对系统零副作用。
+     *     等价于用户自己把那段话打出来 —— 展开之后模型要做什么，每一步仍然
+     *     各自过权限。归 `prompt`（与只读同档）。
+     *   - `mjs`：调用 skill.run()，**执行任意 JS**。归 `task`，需要审批。
+     *
+     * 此前一律归 `task`，后果是技能在非交互环境里彻底不可用：`ask` 会落到
+     * permission.non_tty_default（默认 deny），于是模型能在系统提示里读到
+     * 完整的技能清单，却一个也调不动。
+     */
+    capabilityFor(args) {
+      const name = String(args?.skill || "").trim()
+      if (!name || !SkillRegistry.isReady()) return "task"
+      const skill = SkillRegistry.get(name)
+      if (!skill) return "task"
+      return skill.type === "mjs" ? "task" : "prompt"
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        skill: schema("string", "skill name without '/' prefix (e.g. 'commit', 'init', 'frontend')"),
+        args: schema("string", "optional arguments to pass to the skill (e.g. 'vue' for $init vue)")
+      },
+      required: ["skill"]
+    },
+    async execute(args, ctx) {
+      const name = String(args.skill || "").trim()
+      if (!name) return "error: skill name is required"
+      if (!SkillRegistry.isReady()) return "error: skill registry not initialized"
+      const skill = SkillRegistry.get(name)
+      if (!skill) {
+        const available = SkillRegistry.list().map(s => s.name).join(", ")
+        return `error: skill "${name}" not found. Available: ${available}`
+      }
+      const result = await SkillRegistry.execute(name, String(args.args || ""), {
+        cwd: ctx.cwd,
+        mode: ctx.mode || "agent",
+        model: ctx.model || "",
+        provider: ctx.provider || "",
+        config: ctx.config || null
+      })
+      if (!result) return `skill /${name} returned no output`
+      // contextFork skills return { prompt, contextFork, model }
+      if (typeof result === "object" && result.contextFork) {
+        return result.prompt || ""
+      }
+      return result
+    }
+  }
+
+  const EXA_MCP_URL = "https://mcp.exa.ai/mcp"
+  const EXA_TIMEOUT_MS = 25000
+
+  async function callExaMcp(toolName, args, signal) {
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: toolName, arguments: args }
+    })
+    const response = await fetch(EXA_MCP_URL, {
+      method: "POST",
+      headers: buildRequestHeaders({
+        target: "exa",
+        accept: "application/json, text/event-stream",
+        contentType: "application/json"
+      }),
+      body,
+      signal: signal || AbortSignal.timeout(EXA_TIMEOUT_MS)
+    })
+    if (!response.ok) {
+      const err = await response.text().catch(() => "")
+      throw new Error(`Exa search error (${response.status}): ${err}`)
+    }
+    const text = await response.text()
+    for (const line of text.split("\n")) {
+      if (line.startsWith("data: ")) {
+        const data = JSON.parse(line.slice(6))
+        if (data.result?.content?.[0]?.text) return data.result.content[0].text
+      }
+    }
+    return null
+  }
+
+  const websearchTool = {
+    name: "websearch",
+    description: "Search the web for up-to-date information. Use this PROACTIVELY when you are unsure about facts, APIs, library versions, error messages, or anything beyond your training data. Reduces hallucination by grounding answers in real search results. Returns relevant web page content.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: schema("string", "search query"),
+        numResults: schema("number", "number of results to return (default: 5)"),
+        type: schema("string", "search type: 'auto' (default), 'fast' (quick), 'deep' (comprehensive)")
+      },
+      required: ["query"]
+    },
+    async execute(args, ctx) {
+      const query = String(args.query || "").trim()
+      if (!query) return "error: query is required"
+      try {
+        const result = await callExaMcp("web_search_exa", {
+          query,
+          numResults: Number(args.numResults) || 5,
+          type: args.type || "auto",
+          livecrawl: "fallback"
+        }, ctx.signal)
+        return result || "No results found. Try a different query."
+      } catch (error) {
+        if (error.name === "AbortError" || error.name === "TimeoutError") return "error: search request timed out"
+        return `error: ${error.message}`
+      }
+    }
+  }
+
+  const codesearchTool = {
+    name: "codesearch",
+    description: "Search for code examples, API documentation, and SDK usage. Use this PROACTIVELY when working with unfamiliar libraries, frameworks, or APIs. Returns relevant code snippets and documentation from the web. Especially useful for: correct API signatures, configuration examples, migration guides, and best practices.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: schema("string", "search query for APIs, libraries, SDKs (e.g. 'Express.js middleware', 'React useState hook')"),
+        tokensNum: schema("number", "amount of context to return, 1000-50000 (default: 5000)")
+      },
+      required: ["query"]
+    },
+    async execute(args, ctx) {
+      const query = String(args.query || "").trim()
+      if (!query) return "error: query is required"
+      try {
+        const result = await callExaMcp("get_code_context_exa", {
+          query,
+          tokensNum: Math.min(Math.max(Number(args.tokensNum) || 5000, 1000), 50000)
+        }, ctx.signal)
+        return result || "No code context found. Try a more specific query."
+      } catch (error) {
+        if (error.name === "AbortError" || error.name === "TimeoutError") return "error: code search request timed out"
+        return `error: ${error.message}`
+      }
+    }
+  }
+
+  const multieditTool = {
+    name: "multiedit",
+    description: "Apply multiple file edits atomically in a single operation. All changes succeed together or are rolled back entirely. Use this instead of multiple sequential `edit` calls when modifying related code across files (e.g. renaming an export and updating all imports). Each file must have been `read` first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        changes: {
+          type: "array",
+          description: "list of file changes to apply atomically",
+          items: {
+            type: "object",
+            properties: {
+              path: schema("string", "file path"),
+              before: schema("string", "text to find (required for edits, omit for new file creation)"),
+              after: schema("string", "replacement text (for edits) or full content (for new files)"),
+              replace_all: schema("boolean", "replace all occurrences of before (default: false)")
+            },
+            required: ["path", "after"]
+          }
+        }
+      },
+      required: ["changes"]
+    },
+    async execute(args, ctx) {
+      const changes = Array.isArray(args.changes) ? args.changes : []
+      if (!changes.length) return "error: at least one change is required"
+
+      // Phase 1: validate all changes and collect original content for rollback
+      const snapshots = [] // { path, original, isNew }
+      const resolved = []
+      const staleNotices = []
+      for (const change of changes) {
+        const target = await resolveWorkspacePath(ctx.cwd, change.path)
+        const originalExists = await exists(target)
+        const hasBefore = Object.prototype.hasOwnProperty.call(change, "before")
+        const isCreate = !originalExists && !hasBefore
+        if (originalExists && !hasBefore) {
+          return `error: "${change.path}" already exists. Provide a "before" snippet for existing-file multiedit changes.`
+        }
+        let original = null
+        try {
+          original = await readFile(target, "utf8")
+        } catch { /* new file */ }
+
+        if (!isCreate && original === null) {
+          return `error: "${change.path}" does not exist. Omit "before" only for new-file creation.`
+        }
+
+        if (!isCreate && original !== null) {
+          const validation = await validateExistingFileMutation({
+            targetPath: target,
+            displayPath: String(change.path || target),
+            operation: "applying this multiedit change",
+            anchor: change.replace_all ? "" : String(change.before || "")
+          })
+          if (!validation.ok) return validation.message
+          if (validation.notice) staleNotices.push(validation.notice)
+          const matches = (original || "").split(change.before).length - 1
+          if (matches === 0) return `error: no match for "before" in ${change.path}. Re-read the file and check your snippet.`
+          if (matches > 1 && !change.replace_all) return `error: ${matches} matches in ${change.path} — set replace_all: true or provide more context.`
+        }
+
+        snapshots.push({ path: target, original, isNew: original === null })
+        resolved.push({ target, ...change, isCreate })
+      }
+
+      // Phase 2: apply all changes
+      const applied = []
+      try {
+        // 同一文件的多个 change 必须逐个叠加。此前每个 change 都从
+        // `snap.original`（批次前的原始内容）算起，于是同一文件出现两次时
+        // 第二个 change 会覆盖掉第一个 —— 静默丢改动，没有任何报错。
+        const workingCopy = new Map()
+        for (const change of resolved) {
+          if (change.isCreate) {
+            await atomicWriteFile(change.target, String(change.after))
+            workingCopy.set(change.target, String(change.after))
+          } else {
+            const snap = snapshots.find(s => s.path === change.target)
+            const content = workingCopy.has(change.target)
+              ? workingCopy.get(change.target)
+              : snap?.original ?? await readFile(change.target, "utf8")
+            if (!content.includes(change.before)) {
+              // 前一个 change 把它改掉了。Phase 1 的预检基于原始内容，看不到
+              // 这种批次内的相互作用 —— 与其静默产出错误结果，不如整批回滚。
+              throw new Error(
+                `change ${resolved.indexOf(change) + 1} for ${change.path} no longer matches after an earlier change in this batch. `
+                + "Split it into separate multiedit calls, or provide a snippet that survives the earlier edit."
+              )
+            }
+            const next = change.replace_all
+              ? content.replaceAll(change.before, change.after)
+              : content.replace(change.before, change.after)
+            await atomicWriteFile(change.target, next)
+            workingCopy.set(change.target, next)
+          }
+          await refreshFileReadStateFromDisk(change.target).catch(() => {})
+          applied.push(change.target)
+        }
+      } catch (error) {
+        // Rollback all applied changes
+        for (let i = applied.length - 1; i >= 0; i--) {
+          const snap = snapshots.find(s => s.path === applied[i])
+          if (!snap) continue
+          try {
+            if (snap.isNew) {
+              await unlink(applied[i]).catch(() => {})
+            } else if (snap.original !== null) {
+              await atomicWriteFile(applied[i], snap.original)
+            }
+          } catch { /* best effort rollback */ }
+        }
+        return `error: failed at ${applied.length + 1}/${resolved.length} — all changes rolled back. Cause: ${error.message}`
+      }
+
+      // Phase 3: summarize
+      const summary = resolved.map(c => `  ${c.isCreate ? "+" : "~"} ${c.path}`).join("\n")
+      return {
+        output: [
+          ...staleNotices,
+          `${resolved.length} file(s) updated atomically:\n${summary}`
+        ].join("\n"),
+        metadata: {
+          fileChanges: resolved.map(c => ({
+            path: String(c.path || c.target),
+            tool: "multiedit",
+            stageId: ctx.stageId || null,
+            taskId: ctx.logicalTaskId || ctx.taskId || null
+          })),
+          mutations: resolved.map((c) => {
+            const snap = snapshots.find((s) => s.path === c.target)
+            const originalContent = snap?.original ?? null
+            const updatedContent = c.isCreate
+              ? String(c.after)
+              : c.replace_all
+                ? String(originalContent ?? "").replaceAll(String(c.before), String(c.after))
+                : String(originalContent ?? "").replace(String(c.before), String(c.after))
+            const diff = diffLineCount(originalContent ?? "", updatedContent)
+            return {
+              operation: "multiedit",
+              filePath: String(c.path || c.target),
+              originalContent,
+              updatedContent,
+              structuredPatch: buildStructuredPatch(originalContent ?? "", updatedContent),
+              addedLines: diff.added,
+              removedLines: diff.removed
+            }
+          })
+        }
+      }
+    }
+  }
+
+  const enterPlanTool = {
+    name: "enter_plan",
+    description: "Enter planning mode. Use this PROACTIVELY when the task is non-trivial and requires architectural decisions, multi-file changes, or when multiple valid approaches exist. After calling this, outline your plan, then call `exit_plan` to present it to the user for approval.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        reason: schema("string", "why planning is needed (shown to user)")
+      },
+      required: []
+    },
+    async execute(args, ctx) {
+      ctx._planMode = true
+      return `Planning mode entered. Outline your plan now, then call exit_plan to present it for user approval.${args.reason ? ` Reason: ${args.reason}` : ""}`
+    }
+  }
+
+  const exitPlanTool = {
+    name: "exit_plan",
+    description: "Present your plan to the user for approval. The user will see the plan and can approve, reject, or request changes. Only call this after enter_plan and after you have outlined a complete plan in your response.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        plan: schema("string", "the complete plan text to present to the user"),
+        files: {
+          type: "array", items: { type: "string" },
+          description: "list of files that will be created or modified"
+        }
+      },
+      required: ["plan"]
+    },
+    async execute(args, ctx) {
+      if (!ctx._planMode) {
+        return {
+          output: "Cannot exit plan mode — you are not currently in plan mode. Call enter_plan first.",
+          metadata: {}
+        }
+      }
+      ctx._planMode = false
+      const plan = String(args.plan || "")
+      const files = Array.isArray(args.files) ? args.files : []
+      const planPath = await savePlanFile(ctx.cwd, plan, files)
+      return {
+        output: `Plan saved to ${planPath} and submitted for next-step selection.`,
+        metadata: {
+          planApproval: true,
+          plan,
+          files,
+          planPath
+        }
+      }
+    }
+  }
+
+  const notebookeditTool = {
+    name: "notebookedit",
+    description: "Edit a Jupyter notebook (.ipynb) cell. Supports replace, insert, and delete operations on individual cells. Use this instead of `write` when modifying notebooks — it preserves cell metadata and outputs. Notebooks must be read first and stale notebooks are rejected.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: schema("string", "notebook file path (.ipynb)"),
+        cell_number: schema("number", "0-indexed cell number to operate on (default: 0)"),
+        new_source: schema("string", "new cell source content"),
+        cell_type: { type: "string", enum: ["code", "markdown"], description: "cell type (required for insert)" },
+        edit_mode: { type: "string", enum: ["replace", "insert", "delete"], description: "operation type (default: replace)" }
+      },
+      required: ["path", "new_source"]
+    },
+    async execute(args, ctx) {
+      const target = await resolveWorkspacePath(ctx.cwd, args.path, { mustExist: true })
+      if (await exists(target)) {
+        const validation = await validateExistingFileMutation({
+          targetPath: target,
+          displayPath: String(args.path || target),
+          operation: "editing the notebook",
+          requireFullRead: true
+        })
+        if (!validation.ok) {
+          return {
+            output: validation.message,
+            metadata: { blocked: true, reason: validation.reason, fileChanges: [] }
+          }
+        }
+      }
+      const raw = await readFile(target, "utf8")
+      const notebook = JSON.parse(raw)
+      if (!notebook.cells || !Array.isArray(notebook.cells)) {
+        return "error: not a valid .ipynb file (missing cells array)"
+      }
+      const mode = args.edit_mode || "replace"
+      const cellNum = Number(args.cell_number ?? 0)
+      const source = String(args.new_source ?? "")
+      const sourceLines = source.split("\n").map((line, i, arr) => i < arr.length - 1 ? line + "\n" : line)
+
+      if (mode === "insert") {
+        const cellType = args.cell_type
+        if (!cellType || !["code", "markdown"].includes(cellType)) {
+          return "error: cell_type is required for insert mode (must be 'code' or 'markdown')"
+        }
+        const newCell = {
+          cell_type: cellType,
+          metadata: {},
+          source: sourceLines
+        }
+        if (cellType === "code") {
+          newCell.execution_count = null
+          newCell.outputs = []
+        }
+        const insertAt = cellNum < 0 ? 0 : Math.min(cellNum + 1, notebook.cells.length)
+        notebook.cells.splice(insertAt, 0, newCell)
+      } else if (mode === "delete") {
+        if (cellNum < 0 || cellNum >= notebook.cells.length) {
+          return `error: cell_number ${cellNum} out of range (0-${notebook.cells.length - 1})`
+        }
+        notebook.cells.splice(cellNum, 1)
+      } else {
+        // replace
+        if (cellNum < 0 || cellNum >= notebook.cells.length) {
+          return `error: cell_number ${cellNum} out of range (0-${notebook.cells.length - 1})`
+        }
+        const cell = notebook.cells[cellNum]
+        cell.source = sourceLines
+        if (args.cell_type && args.cell_type !== cell.cell_type) {
+          cell.cell_type = args.cell_type
+          if (args.cell_type === "markdown") {
+            delete cell.execution_count
+            delete cell.outputs
+          } else if (args.cell_type === "code") {
+            cell.execution_count = null
+            cell.outputs = []
+          }
+        }
+      }
+
+      const finalNotebook = JSON.stringify(notebook, null, 1) + "\n"
+      await atomicWriteFile(target, finalNotebook)
+      await refreshFileReadStateFromDisk(target, { content: finalNotebook }).catch(() => {})
+      const actionLabel = mode === "insert" ? "inserted" : mode === "delete" ? "deleted" : "replaced"
+      return {
+        output: `${actionLabel} cell ${cellNum} in ${args.path} (${notebook.cells.length} cells total)`,
+        metadata: mutationMetadata({
+          operation: "notebookedit",
+          filePath: String(args.path || target),
+          originalContent: raw,
+          updatedContent: finalNotebook,
+          structuredPatch: buildStructuredPatch(raw, finalNotebook),
+          addedLines: 0,
+          removedLines: 0,
+          stageId: ctx.stageId || null,
+          taskId: ctx.logicalTaskId || ctx.taskId || null
+        })
+      }
+    }
+  }
+
+  const patchTool = {
+    name: "patch",
+    description: "Replace a range of lines in a file by line numbers. Read the file first with `read` (use offset/limit for large files) to see line numbers, then specify the line range to replace. Lines are 1-based and inclusive. Ideal for modifying specific sections of large files without needing to match exact text.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: schema("string", "file path"),
+        start_line: schema("number", "first line to replace (1-based, inclusive)"),
+        end_line: schema("number", "last line to replace (1-based, inclusive)"),
+        content: schema("string", "replacement content (replaces the line range). Empty string deletes lines.")
+      },
+      required: ["path", "start_line", "end_line", "content"]
+    },
+    async execute(args, ctx) {
+      const target = await resolveWorkspacePath(ctx.cwd, args.path, { mustExist: true })
+
+      if (await exists(target)) {
+        const validation = await validateExistingFileMutation({
+          targetPath: target,
+          displayPath: String(args.path || target),
+          operation: "patching it"
+        })
+        if (!validation.ok) {
+          return {
+            output: validation.message,
+            metadata: { blocked: true, reason: validation.reason, fileChanges: [] }
+          }
+        }
+      }
+
+      const startLine = Math.max(1, Number(args.start_line) || 1)
+      const endLine = Math.max(startLine, Number(args.end_line) || startLine)
+      const content = String(args.content ?? "")
+
+      const options = lockOptions(ctx)
+      let result
+      const runPatch = async () => {
+        const existing = await readFile(target, "utf8")
+        const lines = existing.split("\n")
+        if (startLine > lines.length) {
+          throw new Error(`start_line ${startLine} exceeds file length (${lines.length} lines)`)
+        }
+        const startIdx = startLine - 1
+        const endIdx = Math.min(endLine, lines.length)
+        const newLines = content === "" ? [] : content.split("\n")
+        lines.splice(startIdx, endIdx - startIdx, ...newLines)
+        const final = lines.join("\n")
+        await atomicWriteFile(target, final)
+        return { removedCount: endIdx - startIdx, insertedCount: newLines.length, previous: existing, final }
+      }
+
+      if (options.mode === "file_lock") {
+        result = await withFileLock({ targetPath: target, owner: options.owner, waitTimeoutMs: options.waitTimeoutMs, run: runPatch })
+      } else {
+        result = await runPatch()
+      }
+
+      await refreshFileReadStateFromDisk(target, { content: result.final }).catch(() => {})
+      return {
+        output: `patched ${args.path}: replaced lines ${startLine}-${endLine} (removed ${result.removedCount}, inserted ${result.insertedCount})`,
+        metadata: mutationMetadata({
+          operation: "patch",
+          filePath: String(args.path || target),
+          originalContent: result.previous,
+          updatedContent: result.final,
+          structuredPatch: buildStructuredPatch(result.previous, result.final, { oldStart: startLine, newStart: startLine }),
+          addedLines: result.insertedCount,
+          removedLines: result.removedCount,
+          stageId: ctx.stageId || null,
+          taskId: ctx.logicalTaskId || ctx.taskId || null
+        })
+      }
+    }
+  }
+
+  const gitTools = config?.git_auto?.enabled !== false ? gitAutoTools : []
+  const gitFullAutoToolsList = config?.git_auto?.full_auto === true ? gitFullAutoTools : []
+  
+  return [listTool, sysinfoTool, readTool, writeTool, editTool, patchTool, multieditTool, globTool, grepTool, bashTool, createTaskTool(), createTaskGroupTool(), outputTool, cancelTool, taskListTool, taskParallelTool, taskGetTool, taskStopTool, taskOutputTool, todowriteTool, questionTool, skillTool, webfetchTool, httpRequestTool, websearchTool, codesearchTool, notebookeditTool, enterPlanTool, exitPlanTool, ...fileOpsTools, ...gitTools, ...gitFullAutoToolsList]
+}
+
+function mcpTools(mcpRegistry) {
+  return mcpRegistry.listTools().map((tool) => ({
+    name: tool.id,
+    description: `[mcp:${tool.server}] ${tool.description}`,
+    inputSchema: tool.inputSchema,
+    async execute(args, ctx) {
+      try {
+        const result = await mcpRegistry.callTool(tool.id, args || {}, ctx.signal || null)
+        return result.output
+      } catch (error) {
+        const reason = error.reason || "unknown"
+        const server = error.server || tool.server
+        return `[MCP Error: ${server} ${reason}] ${error.message}`
+      }
+    }
+  }))
+}
+
+function toolAllowedByMode(toolName, mode) {
+  if (mode === "plan") {
+    return !["write", "edit", "patch", "multiedit", "notebookedit", "bash", "task", "task_group", "git_snapshot", "git_restore", "git_apply_patch", "git_delete_snapshot"].includes(toolName)
+  }
+  return true
+}
+
+/**
+ * ToolRegistry 工厂（1.0.0 阶段 2a）：initialized/tools/签名缓存收编为实例
+ * 字段（M3 §四.2），每个 kernel 实例一份工具集。
+ *
+ * @param {object} [deps]
+ * @param {object} [deps.mcpRegistry] MCP 注册表（默认进程级连接池，§7.2 显式契约）
+ */
+export function createToolRegistry({ mcpRegistry = McpRegistry } = {}) {
+  const state = {
+    initialized: false,
+    tools: [],
+    loadedAt: 0,
+    lastSignature: "",
+    lastCwd: "",
+    lastConfig: null,
+    lastAllowProjectSources: true,
+    refreshing: false
+  }
+
+  const ToolRegistry = {
+    async initialize({
+      config = {},
+      cwd = process.cwd(),
+      force = false,
+      allowProjectSources = true
+    } = {}) {
+      const ttlMs = Math.max(0, Number(config.runtime?.tool_registry_cache_ttl_ms || 30000))
+      const sig = signatureFor(config, cwd, allowProjectSources)
+      const cacheValid =
+        state.initialized &&
+        !force &&
+        state.lastSignature === sig &&
+        state.lastCwd === cwd &&
+        Date.now() - state.loadedAt <= ttlMs
+      if (cacheValid) return
+
+      const tools = []
+
+      if (config.tool?.sources?.builtin !== false) {
+        tools.push(...builtinTools(config))
+      }
+
+      if (config.tool?.sources?.local !== false) {
+        const localDirs = (config.tool?.local_dirs || [])
+          .map((dir) => path.resolve(cwd, dir))
+          .filter((dir) => allowProjectSources || !isWithinWorkspace(cwd, dir))
+        tools.push(...(await loadDynamicTools(localDirs)))
+      }
+
+      if (config.tool?.sources?.plugin !== false) {
+        const pluginDirs = (config.tool?.plugin_dirs || [])
+          .map((dir) => path.resolve(cwd, dir))
+          .filter((dir) => allowProjectSources || !isWithinWorkspace(cwd, dir))
+        tools.push(...(await loadDynamicTools(pluginDirs)))
+      }
+
+      if (config.tool && config.tool?.sources?.mcp !== false) {
+        await mcpRegistry.initialize(config, { cwd, allowProjectSources })
+        tools.push(...mcpTools(mcpRegistry))
+      }
+
+      state.tools = tools
+      state.initialized = true
+      state.loadedAt = Date.now()
+      state.lastSignature = sig
+      state.lastCwd = cwd
+      state.lastConfig = config
+      state.lastAllowProjectSources = allowProjectSources
+    },
+
+    isReady() {
+      return state.initialized
+    },
+
+    async list({
+      mode,
+      cwd = process.cwd(),
+      config = undefined,
+      allowProjectSources = undefined
+    } = {}) {
+      const resolvedConfig = config === undefined ? state.lastConfig || {} : config
+      const resolvedAllowProjectSources = allowProjectSources === undefined
+        ? state.lastAllowProjectSources
+        : allowProjectSources
+      if (!state.initialized) {
+        await this.initialize({
+          config: resolvedConfig,
+          cwd,
+          allowProjectSources: resolvedAllowProjectSources
+        })
+      } else {
+        await this.initialize({
+          config: resolvedConfig,
+          cwd,
+          force: false,
+          allowProjectSources: resolvedAllowProjectSources
+        })
+      }
+      return state.tools
+        .filter((tool) => toolAllowedByMode(tool.name, mode))
+        .map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }))
+    },
+
+    async get(toolName) {
+      return state.tools.find((tool) => tool.name === toolName) || null
+    },
+
+    async call(toolName, args, ctx) {
+      const tool = await this.get(toolName)
+      if (!tool) {
+        return {
+          name: toolName,
+          status: "error",
+          output: `unknown tool: ${toolName}`,
+          error: `unknown tool: ${toolName}`
+        }
+      }
+      try {
+        const output = await tool.execute(args || {}, ctx)
+        return {
+          name: toolName,
+          status: "completed",
+          output: safeStringify(output)
+        }
+      } catch (error) {
+        return {
+          name: toolName,
+          status: "error",
+          output: error.message,
+          error: error.message
+        }
+      }
+    },
+
+    refreshMcpTools() {
+      if (!state.initialized || state.refreshing) return
+      state.refreshing = true
+      try {
+        // Atomic replacement: build new list, then assign once
+        const nonMcp = state.tools.filter((t) => !t.name.startsWith("mcp_"))
+        const newMcpTools = mcpTools(mcpRegistry)
+        state.tools = [...nonMcp, ...newMcpTools]
+      } finally {
+        state.refreshing = false
+      }
+    }
+  }
+  return ToolRegistry
+}
+
+const defaultToolRegistry = createToolRegistry()
+
+/**
+ * 兼容别名（deprecated）：进程级默认 ToolRegistry 实例。旧 import 路径继续
+ * 工作，每次方法调用经 deprecations.mjs 记录；新代码用 createKernel() 句柄
+ * 的 `tools` 命名空间。
+ */
+export const ToolRegistry = deprecatedSingletonAlias(
+  "kernel.singleton.tool-registry",
+  "模块级单例 `ToolRegistry` 已收编为 kernel 实例字段：新代码改用 createKernel() 句柄的 `tools` 命名空间",
+  defaultToolRegistry
+)

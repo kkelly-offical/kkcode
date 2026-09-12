@@ -1,5 +1,5 @@
-import { getConversationHistory } from "../session/store.mjs"
-import { requestProvider } from "../provider/router.mjs"
+import { getConversationHistory } from "../kernel/session/store.mjs"
+import { requestProvider } from "../kernel/provider/router.mjs"
 
 /**
  * `/btw`：顺便问一下。

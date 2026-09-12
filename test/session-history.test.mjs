@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, rm } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { getConversationHistory, touchSession, appendUserMessage, appendAssistantMessage } from "../src/session/store.mjs"
+import { getConversationHistory, touchSession, appendUserMessage, appendAssistantMessage } from "../src/kernel/session/store.mjs"
 
 let tmpDir
 before(async () => {

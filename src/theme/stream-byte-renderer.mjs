@@ -1,7 +1,7 @@
 import { paint } from "./color.mjs"
 import { createStreamRenderer } from "./markdown.mjs"
-import { sanitizeTerminalText } from "../core/terminal-sanitize.mjs"
-import { registerStreamByteRenderer } from "../session/render-stream.mjs"
+import { sanitizeTerminalText } from "../kernel/core/terminal-sanitize.mjs"
+import { registerStreamByteRenderer } from "../kernel/session/render-stream.mjs"
 
 /**
  * ANSI 流字节渲染器（1.0.0 阶段 3a 的 frontends sink，§7.5 双轨适配器）。

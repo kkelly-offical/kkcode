@@ -1,6 +1,6 @@
 import test, { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { diagnoseNoMatch, findClosestBlock, guardProportion } from "../src/tool/edit-diagnosis.mjs"
+import { diagnoseNoMatch, findClosestBlock, guardProportion } from "../src/kernel/tool/edit-diagnosis.mjs"
 
 /**
  * 0.7.0 阶段 2：编辑失败要能自纠。

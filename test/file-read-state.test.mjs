@@ -1,6 +1,6 @@
 import test, { beforeEach } from "node:test"
 import assert from "node:assert/strict"
-import { clearFileReadState, getFileReadState, markFileRead, extractTrackedView } from "../src/tool/file-read-state.mjs"
+import { clearFileReadState, getFileReadState, markFileRead, extractTrackedView } from "../src/kernel/tool/file-read-state.mjs"
 
 beforeEach(() => {
   clearFileReadState()

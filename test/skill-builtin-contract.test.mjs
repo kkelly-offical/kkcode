@@ -18,7 +18,7 @@ import path from "node:path"
 
 const BUILTIN_DIR = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
-  "..", "src", "skill", "builtin"
+  "..", "src", "kernel", "skill", "builtin"
 )
 
 test("every builtin skill declares exactly one ctx parameter", async () => {

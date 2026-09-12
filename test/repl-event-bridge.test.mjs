@@ -7,7 +7,7 @@ import {
   isUserInterruptedTurn
 } from "../src/repl/event-bridge.mjs"
 import { createReplUiState } from "../src/repl/ui-state.mjs"
-import { EVENT_TYPES } from "../src/core/constants.mjs"
+import { EVENT_TYPES } from "../src/kernel/core/constants.mjs"
 import { DEFAULT_CONFIG } from "../src/config/defaults.mjs"
 
 /**

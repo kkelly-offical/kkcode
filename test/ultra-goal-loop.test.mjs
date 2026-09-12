@@ -19,11 +19,11 @@ process.env.KKCODE_HOME = tmpHome
 const originalCwd = process.cwd()
 process.chdir(tmpProject)
 
-const { EventBus } = await import("../src/core/events.mjs")
-const { EVENT_TYPES } = await import("../src/core/constants.mjs")
-const { registerProvider } = await import("../src/provider/router.mjs")
-const { runHybridLongAgent } = await import("../src/session/longagent-hybrid.mjs")
-const { loadLedger } = await import("../src/session/ultra-ledger.mjs")
+const { EventBus } = await import("../src/kernel/core/events.mjs")
+const { EVENT_TYPES } = await import("../src/kernel/core/constants.mjs")
+const { registerProvider } = await import("../src/kernel/provider/router.mjs")
+const { runHybridLongAgent } = await import("../src/kernel/session/longagent-hybrid.mjs")
+const { loadLedger } = await import("../src/kernel/session/ultra-ledger.mjs")
 const { stagePlanFence, ultraConfig } = await import("./helpers/ultra-harness.mjs")
 const { installBackgroundMock, restoreBackgroundMock } = await import("./helpers/background-mock.mjs")
 const { mkdir, writeFile } = await import("node:fs/promises")
@@ -183,7 +183,7 @@ test("barrier 抛错（依赖环）不穿透：重规划兜住，监听器归零
   assert.ok(ledger.data.rounds.length >= 2, "至少两轮（缺陷轮 + 修复轮）")
 
   // 0.4.x 在这里是异常穿透：unsubscribeStop 泄漏、会话永久 running、工作全丢
-  const { LongAgentManager } = await import("../src/orchestration/longagent-manager.mjs")
+  const { LongAgentManager } = await import("../src/kernel/orchestration/longagent-manager.mjs")
   const record = await LongAgentManager.get("gl_cycle")
   assert.equal(record.status, "completed")
 })
@@ -426,7 +426,7 @@ test("插话送得到 Ultra：executeTurn → runLongAgent → H5 调试循环",
   // 一次 Enter，消息进了 ui.steerPrompts 就再没人来取。而 Ultra 是跑得最久、
   // 最需要中途纠正的航道。这里走真实的 executeTurn，把 engine 的转发和 hybrid
   // 的接收一起钉住。
-  const { executeTurn } = await import("../src/session/engine.mjs")
+  const { executeTurn } = await import("../src/kernel/session/engine.mjs")
   const PLAN = {
     planId: "pst", objective: "steerable run",
     goal: {

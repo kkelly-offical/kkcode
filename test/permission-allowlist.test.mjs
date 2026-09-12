@@ -10,10 +10,10 @@ import {
   isLearnedRule,
   describeRule,
   LEARNED_RULE_SOURCE
-} from "../src/permission/learned-rules.mjs"
-import { matchRule, evaluatePermission } from "../src/permission/rules.mjs"
-import { PermissionEngine } from "../src/permission/engine.mjs"
-import { setPermissionPromptHandler } from "../src/permission/prompt.mjs"
+} from "../src/kernel/permission/learned-rules.mjs"
+import { matchRule, evaluatePermission } from "../src/kernel/permission/rules.mjs"
+import { PermissionEngine } from "../src/kernel/permission/engine.mjs"
+import { setPermissionPromptHandler } from "../src/kernel/permission/prompt.mjs"
 
 test("bash grants remember a two-token command prefix", () => {
   assert.equal(commandPrefixOf("git status --short"), "git status")

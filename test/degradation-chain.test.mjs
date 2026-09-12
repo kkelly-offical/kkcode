@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { createDegradationChain } from "../src/session/longagent-utils.mjs"
+import { createDegradationChain } from "../src/kernel/session/longagent-utils.mjs"
 
 /**
  * 降级链在 0.4.x 是死的。

@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, writeFile, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { GATE_NAMES } from "../src/session/gate-contract.mjs"
+import { GATE_NAMES } from "../src/kernel/session/gate-contract.mjs"
 
 /**
  * Ultra 行为快照。
@@ -23,9 +23,9 @@ process.env.KKCODE_HOME = tmpHome
 const originalCwd = process.cwd()
 process.chdir(tmpProject)
 
-const { registerProvider } = await import("../src/provider/router.mjs")
-const { runHybridLongAgent } = await import("../src/session/longagent-hybrid.mjs")
-const { LongAgentManager } = await import("../src/orchestration/longagent-manager.mjs")
+const { registerProvider } = await import("../src/kernel/provider/router.mjs")
+const { runHybridLongAgent } = await import("../src/kernel/session/longagent-hybrid.mjs")
+const { LongAgentManager } = await import("../src/kernel/orchestration/longagent-manager.mjs")
 const { createScriptedProvider, stagePlanFence, captureEvents, ultraConfig } =
   await import("./helpers/ultra-harness.mjs")
 const { installBackgroundMock, restoreBackgroundMock } = await import("./helpers/background-mock.mjs")
@@ -187,7 +187,7 @@ test("门禁失败（多轮）：停滞检测在两轮无进展后受阻收口",
 
   // 轮次循环：第 1 轮有产出 → 第 2、3 轮无进展 → 停滞 → 非 TTY 收口 deliver_partial
   assert.equal(result.status, "partial")
-  const { loadLedger } = await import("../src/session/ultra-ledger.mjs")
+  const { loadLedger } = await import("../src/kernel/session/ultra-ledger.mjs")
   const ledger = await loadLedger("parity_gatefail_rounds", tmpProject)
   assert.ok(ledger, "台账必须落盘")
   assert.equal(ledger.data.rounds.length, 3, "1 轮产出 + 2 轮无进展 = 停滞阈值")

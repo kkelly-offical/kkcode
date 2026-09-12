@@ -6,7 +6,7 @@ import {
   OBJECTIVE_MET,
   OBJECTIVE_UNMET,
   OBJECTIVE_UNKNOWN
-} from "../src/session/stage-objective.mjs"
+} from "../src/kernel/session/stage-objective.mjs"
 import { makeGateResult, makeGateRunner } from "./helpers/gate-fixture.mjs"
 
 // 门禁替身一律走 makeGateResult()。0.4.2 这里每个用例各自手写了一个

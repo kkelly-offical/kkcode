@@ -3,9 +3,9 @@ import assert from "node:assert/strict"
 import { mkdtemp, rm } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { BackgroundManager } from "../src/orchestration/background-manager.mjs"
-import { EventBus } from "../src/core/events.mjs"
-import { EVENT_TYPES } from "../src/core/constants.mjs"
+import { BackgroundManager } from "../src/kernel/orchestration/background-manager.mjs"
+import { EventBus } from "../src/kernel/core/events.mjs"
+import { EVENT_TYPES } from "../src/kernel/core/constants.mjs"
 
 /**
  * 后台任务的终态广播（0.8.0）。

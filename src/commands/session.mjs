@@ -1,10 +1,10 @@
 import path from "node:path"
 import { writeFile } from "node:fs/promises"
 import { Command } from "commander"
-import { exportSession, getSession, listSessions, forkSession, fsckSessionStore, gcSessionStore, flushNow } from "../session/store.mjs"
-import { newSessionId } from "../session/engine.mjs"
-import { listRecoverableSessions, getResumeContext, isRecoveryEnabled, summarizeResumeContext } from "../session/recovery.mjs"
-import { summarizeSessionRuntimeState } from "../session/runtime-state.mjs"
+import { exportSession, getSession, listSessions, forkSession, fsckSessionStore, gcSessionStore, flushNow } from "../kernel/session/store.mjs"
+import { newSessionId } from "../kernel/session/engine.mjs"
+import { listRecoverableSessions, getResumeContext, isRecoveryEnabled, summarizeResumeContext } from "../kernel/session/recovery.mjs"
+import { summarizeSessionRuntimeState } from "../kernel/session/runtime-state.mjs"
 import { createKernel } from "../kernel/index.mjs"
 
 function assertRecoveryEnabled(config, commandName) {

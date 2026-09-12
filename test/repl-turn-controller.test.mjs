@@ -6,7 +6,7 @@ import os from "node:os"
 import path from "node:path"
 import { executePromptTurn } from "../src/repl/turn-controller.mjs"
 import { saveGhostCommit } from "../src/storage/ghost-commit-store.mjs"
-import { setQuestionPromptHandler } from "../src/tool/question-prompt.mjs"
+import { setQuestionPromptHandler } from "../src/kernel/tool/question-prompt.mjs"
 
 test("executePromptTurn forwards text-only turns without content blocks", async () => {
   let received = null

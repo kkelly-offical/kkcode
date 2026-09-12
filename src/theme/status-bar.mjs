@@ -1,5 +1,5 @@
 import { paint } from "./color.mjs"
-import { getMode } from "../core/modes.mjs"
+import { getMode } from "../kernel/core/modes.mjs"
 
 /**
  * 可配置状态栏（0.8.1）的段名清单 —— **唯一来源**。

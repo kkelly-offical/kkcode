@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { EVENT_TYPES } from "../src/core/constants.mjs"
+import { EVENT_TYPES } from "../src/kernel/core/constants.mjs"
 import { shouldApplyActiveTurnEvent } from "../src/ui/event-scope.mjs"
 
 test("foreign session streams cannot mutate the foreground transcript", () => {

@@ -1,6 +1,6 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { TaskValidator } from "../src/session/task-validator.mjs"
+import { TaskValidator } from "../src/kernel/session/task-validator.mjs"
 
 const validator = new TaskValidator({ cwd: process.cwd(), configState: {} })
 

@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path"
 import { printContextWarnings } from "../context.mjs"
 import { createKernel } from "../kernel/index.mjs"
 import { loadTheme } from "../theme/load-theme.mjs"
-import { ensureDefaultSkillPack } from "../skill/registry.mjs"
+import { ensureDefaultSkillPack } from "../kernel/skill/registry.mjs"
 import { userRootDir } from "../storage/paths.mjs"
 
 const DEFAULT_MCP_INIT_CONFIG = {

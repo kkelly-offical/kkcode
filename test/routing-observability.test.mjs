@@ -1,8 +1,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { routeMode } from "../src/session/engine.mjs"
+import { routeMode } from "../src/kernel/session/engine.mjs"
 import { createMetricsCollector } from "../src/observability/metrics.mjs"
-import { EVENT_TYPES } from "../src/core/constants.mjs"
+import { EVENT_TYPES } from "../src/kernel/core/constants.mjs"
 
 function makeEvent(type, payload = {}) {
   return {

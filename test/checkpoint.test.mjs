@@ -7,7 +7,7 @@ import os from "node:os"
 import {
   saveCheckpoint, loadCheckpoint, listCheckpoints,
   saveTaskCheckpoint, loadTaskCheckpoints
-} from "../src/session/checkpoint.mjs"
+} from "../src/kernel/session/checkpoint.mjs"
 
 let tmpDir
 
@@ -95,7 +95,7 @@ describe("task checkpoints", () => {
 describe("getSessionSnapshots session isolation", () => {
   it("excludes other sessions' auto snapshots, keeps legacy records with a session marker", async () => {
     const { execFileSync } = await import("node:child_process")
-    const { getSessionSnapshots } = await import("../src/session/checkpoint.mjs")
+    const { getSessionSnapshots } = await import("../src/kernel/session/checkpoint.mjs")
     const { saveGhostCommit } = await import("../src/storage/ghost-commit-store.mjs")
 
     const repoDir = path.join(tmpDir, "repo")
@@ -143,7 +143,7 @@ describe("getSessionSnapshots session isolation", () => {
       autoSnapshotBeforeEdit,
       getSessionSnapshots,
       restoreLastSessionSnapshot
-    } = await import("../src/session/checkpoint.mjs")
+    } = await import("../src/kernel/session/checkpoint.mjs")
     const { listGhostCommits } = await import("../src/storage/ghost-commit-store.mjs")
 
     const repoDir = path.join(tmpDir, "real-snapshot-repo")
@@ -188,8 +188,8 @@ describe("getSessionSnapshots session isolation", () => {
 
   it("awaits the automatic snapshot before the first edit tool mutates the workspace", async () => {
     const { execFileSync } = await import("node:child_process")
-    const { executeTool } = await import("../src/tool/executor.mjs")
-    const { restoreLastSessionSnapshot } = await import("../src/session/checkpoint.mjs")
+    const { executeTool } = await import("../src/kernel/tool/executor.mjs")
+    const { restoreLastSessionSnapshot } = await import("../src/kernel/session/checkpoint.mjs")
 
     const repoDir = path.join(tmpDir, "executor-snapshot-repo")
     execFileSync("git", ["init", repoDir], { stdio: "ignore" })
@@ -228,8 +228,8 @@ describe("getSessionSnapshots session isolation", () => {
 
   it("retries a failed snapshot before a later edit in the same turn", async () => {
     const { execFileSync } = await import("node:child_process")
-    const { executeTool } = await import("../src/tool/executor.mjs")
-    const { getSessionSnapshots, restoreLastSessionSnapshot } = await import("../src/session/checkpoint.mjs")
+    const { executeTool } = await import("../src/kernel/tool/executor.mjs")
+    const { getSessionSnapshots, restoreLastSessionSnapshot } = await import("../src/kernel/session/checkpoint.mjs")
 
     const repoDir = path.join(tmpDir, "executor-snapshot-retry-repo")
     execFileSync("git", ["init", repoDir], { stdio: "ignore" })
@@ -270,7 +270,7 @@ describe("getSessionSnapshots session isolation", () => {
 
   it("fails closed instead of offering another session's latest snapshot", async () => {
     const { execFileSync } = await import("node:child_process")
-    const { confirmRollback, handleRollbackIfNeeded } = await import("../src/session/rollback.mjs")
+    const { confirmRollback, handleRollbackIfNeeded } = await import("../src/kernel/session/rollback.mjs")
     const { saveGhostCommit } = await import("../src/storage/ghost-commit-store.mjs")
 
     const repoDir = path.join(tmpDir, "rollback-session-repo")

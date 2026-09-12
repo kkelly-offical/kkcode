@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { classifyTaskMode } from "../src/session/longagent-utils.mjs"
-import { resolvePromptMode } from "../src/session/engine.mjs"
+import { classifyTaskMode } from "../src/kernel/session/longagent-utils.mjs"
+import { resolvePromptMode } from "../src/kernel/session/engine.mjs"
 
 test("complex multi-file refactors still classify as longagent", () => {
   const prompt = "Refactor the routing, background orchestration, and plugin manifest flow across the entire repo, update tests, and deliver a staged migration plan."

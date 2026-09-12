@@ -1,6 +1,6 @@
 import test, { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { askIntakeQuestions, renderIntakeAnswers, MAX_INTAKE_QUESTIONS } from "../src/session/intake-questions.mjs"
+import { askIntakeQuestions, renderIntakeAnswers, MAX_INTAKE_QUESTIONS } from "../src/kernel/session/intake-questions.mjs"
 
 /**
  * 0.6.0 阶段 5：开工前真的问用户。

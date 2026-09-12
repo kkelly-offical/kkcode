@@ -7,7 +7,7 @@ import {
   extractFailedTaskIds,
   buildConflictResolutionPrompt,
   parseBlueprintOutput
-} from "../src/session/longagent-hybrid-helpers.mjs"
+} from "../src/kernel/session/longagent-hybrid-helpers.mjs"
 
 /**
  * 0.6.0：这些函数原本埋在 longagent-hybrid.mjs 里，只能通过跑整条 Ultra

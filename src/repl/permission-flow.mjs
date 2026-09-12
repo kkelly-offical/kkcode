@@ -1,4 +1,4 @@
-import { APPROVAL_LEVELS, DEFAULT_APPROVAL, approvalFromLegacy } from "../core/modes.mjs"
+import { APPROVAL_LEVELS, DEFAULT_APPROVAL, approvalFromLegacy } from "../kernel/core/modes.mjs"
 
 /**
  * 审批弹窗的选项。「Always Allow」把授权写入用户级配置的

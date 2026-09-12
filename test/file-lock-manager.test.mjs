@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, rm } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { withFileLock } from "../src/tool/file-lock-manager.mjs"
+import { withFileLock } from "../src/kernel/tool/file-lock-manager.mjs"
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))

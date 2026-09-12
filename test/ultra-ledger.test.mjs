@@ -3,10 +3,10 @@ import assert from "node:assert/strict"
 import { mkdtemp, rm, readFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { openLedger, loadLedger, ledgerPath } from "../src/session/ultra-ledger.mjs"
-import { buildBlockedReport, renderBlockedReportText, renderBlockedReportMarkdown } from "../src/session/blocked-report.mjs"
-import { resolveUltraStatus, exitCodeForUltraStatus, sessionStatusForUltraStatus, ULTRA_STATUS } from "../src/session/ultra-status.mjs"
-import { normalizeGoal, freezeGoal } from "../src/session/goal-model.mjs"
+import { openLedger, loadLedger, ledgerPath } from "../src/kernel/session/ultra-ledger.mjs"
+import { buildBlockedReport, renderBlockedReportText, renderBlockedReportMarkdown } from "../src/kernel/session/blocked-report.mjs"
+import { resolveUltraStatus, exitCodeForUltraStatus, sessionStatusForUltraStatus, ULTRA_STATUS } from "../src/kernel/session/ultra-status.mjs"
+import { normalizeGoal, freezeGoal } from "../src/kernel/session/goal-model.mjs"
 
 const tmp = await mkdtemp(path.join(os.tmpdir(), "kkcode-ledger-"))
 test.after(async () => { await rm(tmp, { recursive: true, force: true }).catch(() => {}) })

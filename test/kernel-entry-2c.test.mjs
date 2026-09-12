@@ -9,7 +9,7 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { createKernel } from "../src/kernel/index.mjs"
 // 观察 2b 桥对进程级默认值的作用，直接引用默认引擎（与 kernel-multi-instance 同款做法）
-import { PermissionEngine } from "../src/permission/engine.mjs"
+import { PermissionEngine } from "../src/kernel/permission/engine.mjs"
 import { trustFilePath } from "../src/storage/paths.mjs"
 
 let homeDir

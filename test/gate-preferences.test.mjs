@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, readFile, writeFile, mkdir, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { GATE_NAMES } from "../src/session/gate-contract.mjs"
+import { GATE_NAMES } from "../src/kernel/session/gate-contract.mjs"
 
 /**
  * 门禁偏好是**用户级**的（~/.kkcode/gate-preferences.json），写坏一次会影响
@@ -22,9 +22,9 @@ process.env.KKCODE_HOME = tmpHome
 const PREFS = path.join(tmpHome, "gate-preferences.json")
 
 const { parseGateSelection, saveGatePreferences, getGatePreferences, hasGatePreferences } =
-  await import("../src/session/usability-gates.mjs")
+  await import("../src/kernel/session/usability-gates.mjs")
 const { hasPromptHandler, setQuestionPromptHandler } =
-  await import("../src/tool/question-prompt.mjs")
+  await import("../src/kernel/tool/question-prompt.mjs")
 
 test.after(async () => {
   await rm(tmpHome, { recursive: true, force: true }).catch(() => {})
@@ -72,7 +72,7 @@ test("0.4.x 写坏的全 false 记录被识别为事故并自愈", async () => {
   }), "utf8")
 
   // 缓存会挡住重新读盘，用独立的模块实例验证
-  const fresh = await import(`../src/session/usability-gates.mjs?accident=${Date.now()}`)
+  const fresh = await import(`../src/kernel/session/usability-gates.mjs?accident=${Date.now()}`)
   assert.equal(await fresh.hasGatePreferences(), false,
     "被空答案写坏的记录应当被忽略，让用户重新被问一次")
   assert.equal(await fresh.getGatePreferences(), null)
@@ -88,7 +88,7 @@ test("自愈判定不因新增门禁而失效", async () => {
   await writeFile(PREFS, JSON.stringify(
     Object.fromEntries(GATE_NAMES.map((name) => [name, false]))
   ), "utf8")
-  const full = await import(`../src/session/usability-gates.mjs?full=${Date.now()}`)
+  const full = await import(`../src/kernel/session/usability-gates.mjs?full=${Date.now()}`)
   assert.equal(await full.hasGatePreferences(), false, "全量键全 false 仍是事故")
 
   // 有一项为 true：这是真实选择，不该被自愈吃掉
@@ -96,7 +96,7 @@ test("自愈判定不因新增门禁而失效", async () => {
     ...Object.fromEntries(GATE_NAMES.map((name) => [name, false])),
     build: true
   }), "utf8")
-  const mixed = await import(`../src/session/usability-gates.mjs?mixed=${Date.now()}`)
+  const mixed = await import(`../src/kernel/session/usability-gates.mjs?mixed=${Date.now()}`)
   assert.equal(await mixed.hasGatePreferences(), true, "只要有一项开启就是真实选择")
 })
 
@@ -105,7 +105,7 @@ test("用户主动选择 none 时留下的记录会被尊重", async () => {
     build: false, test: false, review: false, health: false, budget: false, explicit: true
   }), "utf8")
 
-  const fresh = await import(`../src/session/usability-gates.mjs?explicit=${Date.now()}`)
+  const fresh = await import(`../src/kernel/session/usability-gates.mjs?explicit=${Date.now()}`)
   assert.equal(await fresh.hasGatePreferences(), true, "有 explicit 标记就是用户的真实选择")
   const prefs = await fresh.getGatePreferences()
   assert.equal(prefs.build, false)

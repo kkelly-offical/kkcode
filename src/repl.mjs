@@ -10,31 +10,31 @@ import { basename, join } from "node:path"
 import { printContextWarnings } from "./context.mjs"
 import { createKernel } from "./kernel/index.mjs"
 import { loadTheme } from "./theme/load-theme.mjs"
-import { ensureEventSinks, newSessionId, routeMode } from "./session/engine.mjs"
-import { summarizeRouteDecision } from "./session/engine.mjs"
-import { buildAgentContinuationPrompt, summarizeAgentTransaction } from "./session/agent-transaction.mjs"
+import { ensureEventSinks, newSessionId, routeMode } from "./kernel/session/engine.mjs"
+import { summarizeRouteDecision } from "./kernel/session/engine.mjs"
+import { buildAgentContinuationPrompt, summarizeAgentTransaction } from "./kernel/session/agent-transaction.mjs"
 import {
   emitAgentContinuationInterrupted,
   emitAgentContinuationResumed,
   emitRouteDecisionEvent
-} from "./session/routing-observability.mjs"
+} from "./kernel/session/routing-observability.mjs"
 import { loadCustomCommands, applyCommandTemplate } from "./command/custom-commands.mjs"
 import { renderMarkdown } from "./theme/markdown.mjs"
-import { listSessions, appendMessage } from "./session/store.mjs"
+import { listSessions, appendMessage } from "./kernel/session/store.mjs"
 import { runShellPassthrough, formatForTranscript as formatShellForTranscript, formatForContext as formatShellForContext } from "./repl/shell-passthrough.mjs"
 import { renderReplDashboard } from "./ui/repl-dashboard.mjs"
 import { buildRouteFeedback } from "./ui/repl-route-feedback.mjs"
 import { renderReplStatusLine, renderStartupScreen } from "./ui/repl-status-view.mjs"
 import { paint } from "./theme/color.mjs"
-import { PermissionEngine } from "./permission/engine.mjs"
-import { setPermissionPromptHandler } from "./permission/prompt.mjs"
-import { setQuestionPromptHandler } from "./tool/question-prompt.mjs"
+import { PermissionEngine } from "./kernel/permission/engine.mjs"
+import { setPermissionPromptHandler } from "./kernel/permission/prompt.mjs"
+import { setQuestionPromptHandler } from "./kernel/tool/question-prompt.mjs"
 import { promptWorkspaceTrust } from "./repl/trust-prompt.mjs"
 import { createActivityRenderer } from "./ui/activity-renderer.mjs"
 import { reduceAppState } from "./ui/app-state.mjs"
-import { EventBus } from "./core/events.mjs"
-import { EVENT_TYPES } from "./core/constants.mjs"
-import { readClipboardImage, readClipboardText } from "./tool/image-util.mjs"
+import { EventBus } from "./kernel/core/events.mjs"
+import { EVENT_TYPES } from "./kernel/core/constants.mjs"
+import { readClipboardImage, readClipboardText } from "./kernel/tool/image-util.mjs"
 import { userRootDir, memoryFilePath } from "./storage/paths.mjs"
 import { loadProfile, runOnboarding } from "./onboarding.mjs"
 import {
@@ -90,14 +90,14 @@ import { createNotifier } from "./repl/notify.mjs"
 import { createGhostPredictor } from "./repl/ghost-predictor.mjs"
 import { buildReplRuntimeSnapshot } from "./repl/runtime-facade.mjs"
 import { POLICY_CHOICES, PERMISSION_PROMPT_VALUES } from "./repl/permission-flow.mjs"
-import { nextModeId } from "./core/modes.mjs"
+import { nextModeId } from "./kernel/core/modes.mjs"
 import {
   applyModeSelection,
   resolveModeId,
   switchModeInPlace,
   MODE_PICKER_CHOICES
 } from "./repl/mode-flow.mjs"
-import { describeRule } from "./permission/learned-rules.mjs"
+import { describeRule } from "./kernel/permission/learned-rules.mjs"
 import { createInputDecoderChain } from "./repl/input-decoders.mjs"
 import { parseOsc11Response, isLightBackground, OSC11_QUERY } from "./theme/background-probe.mjs"
 import { createThemeSwitcher, createBackgroundProbeHandler } from "./repl/theme-switch.mjs"
@@ -117,7 +117,7 @@ import { createToastStore } from "./ui/toast-store.mjs"
 import { shouldApplyActiveTurnEvent } from "./ui/event-scope.mjs"
 import { createFrameBatcher } from "./ui/frame-batcher.mjs"
 import { buildThinkingTranscriptItem, finishThinking as finishThinkingState } from "./ui/thinking-state.mjs"
-import { rewindLastTurn } from "./session/rewind.mjs"
+import { rewindLastTurn } from "./kernel/session/rewind.mjs"
 import { setMarkdownColors } from "./theme/markdown.mjs"
 import { sanitizeTerminalStyledText, sanitizeTerminalText } from "./theme/terminal-sanitize.mjs"
 
@@ -1927,7 +1927,7 @@ export async function startRepl({ trust = false } = {}) {
   }
 
   // Trust check BEFORE splash — readline prompt must not compete with splash screen clearing
-  const { checkWorkspaceTrust } = await import("./permission/workspace-trust.mjs")
+  const { checkWorkspaceTrust } = await import("./kernel/permission/workspace-trust.mjs")
   // 阶段 3b：内核的信任探测不再碰 TTY，交互提问由前端注入（行式提问，见
   // repl/trust-prompt.mjs）；headless 宿主注入不了 prompt，得到确定性 untrusted。
   const trustState = await checkWorkspaceTrust({

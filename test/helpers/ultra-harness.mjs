@@ -1,4 +1,4 @@
-import { EventBus } from "../../src/core/events.mjs"
+import { EventBus } from "../../src/kernel/core/events.mjs"
 
 /**
  * Ultra 端到端测试骨架。

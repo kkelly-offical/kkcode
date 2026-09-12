@@ -6,11 +6,11 @@ import path from "node:path"
 import {
   verifyCriterion, verifyGoal, commandAllowlist,
   GOAL_MET, GOAL_UNMET, GOAL_UNKNOWN, GOAL_BLOCKED_MANUAL
-} from "../src/session/goal-verifier.mjs"
+} from "../src/kernel/session/goal-verifier.mjs"
 import {
   parseCriterionString, normalizeGoal,
   CRITERION_PASS, CRITERION_FAIL, CRITERION_UNKNOWN, CRITERION_MANUAL
-} from "../src/session/goal-model.mjs"
+} from "../src/kernel/session/goal-model.mjs"
 import { makeGateResult } from "./helpers/gate-fixture.mjs"
 
 const tmp = await mkdtemp(path.join(os.tmpdir(), "kkcode-verifier-"))

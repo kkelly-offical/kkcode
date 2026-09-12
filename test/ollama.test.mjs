@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
-import { requestOllama, requestOllamaStream } from "../src/provider/ollama.mjs"
+import { requestOllama, requestOllamaStream } from "../src/kernel/provider/ollama.mjs"
 
 function startMockServer(handler) {
   return new Promise((resolve) => {

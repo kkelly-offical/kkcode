@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
-import { listProviders, requestProvider } from "../src/provider/router.mjs"
+import { listProviders, requestProvider } from "../src/kernel/provider/router.mjs"
 
 function listen(handler) {
   return new Promise((resolve) => {

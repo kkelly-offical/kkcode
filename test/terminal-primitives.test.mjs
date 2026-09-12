@@ -9,7 +9,7 @@ import {
   clipAnsiByWidth, moveGraphemeCursor, maskSecretText, layoutInputText,
   inputIndexAtPosition, splitTextByCellRange
 } from "../src/util/text-layout.mjs"
-import { QUESTION_SKIPPED } from "../src/core/constants.mjs"
+import { QUESTION_SKIPPED } from "../src/kernel/core/constants.mjs"
 import { QUESTION_SKIPPED as ROUTER_QUESTION_SKIPPED } from "../src/repl/dialog-router.mjs"
 
 const ESC = String.fromCharCode(27)

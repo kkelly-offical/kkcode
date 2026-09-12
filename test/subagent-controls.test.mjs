@@ -1,7 +1,7 @@
 import test, { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { resolveSubagent } from "../src/orchestration/subagent-router.mjs"
-import { formatTaskResult } from "../src/tool/task-tool.mjs"
+import { resolveSubagent } from "../src/kernel/orchestration/subagent-router.mjs"
+import { formatTaskResult } from "../src/kernel/tool/task-tool.mjs"
 
 /**
  * 0.6.0 阶段 4：子智能体可控。
