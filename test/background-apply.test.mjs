@@ -44,6 +44,11 @@ function git(args, cwd) {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim()
 }
 
+/** Windows 上 git autocrlf 可能把工作区文件检出为 CRLF，读回断言前统一归一化为 LF */
+async function readText(p) {
+  return (await readFile(p, "utf8")).replace(/\r\n/g, "\n")
+}
+
 /** 建一个带初始提交的临时仓库 */
 async function makeRepo() {
   repoCounter += 1
@@ -51,6 +56,8 @@ async function makeRepo() {
   git(["init"], repo)
   git(["config", "user.email", "test@example.com"], repo)
   git(["config", "user.name", "Test"], repo)
+  // Windows CI 上全局 autocrlf=true 会把检出内容转成 CRLF，测试仓库固定关掉
+  git(["config", "core.autocrlf", "false"], repo)
   await writeFile(path.join(repo, "app.txt"), "line1\nline2\nline3\n")
   git(["add", "-A"], repo)
   git(["commit", "-m", "init"], repo)
@@ -135,8 +142,8 @@ describe("worktree handoff", () => {
     assert.strictEqual(outcome.worktree, "removed")
     assert.ok(outcome.snapshot, "ghost snapshot hash recorded")
 
-    assert.strictEqual(await readFile(path.join(repo, "app.txt"), "utf8"), "line1\nAPPLIED\nline3\n")
-    assert.strictEqual(await readFile(path.join(repo, "added.txt"), "utf8"), "new file\n")
+    assert.strictEqual(await readText(path.join(repo, "app.txt")), "line1\nAPPLIED\nline3\n")
+    assert.strictEqual(await readText(path.join(repo, "added.txt")), "new file\n")
     assert.ok(!(await pathExists(created.path)), "worktree directory removed")
     const listed = git(["worktree", "list", "--porcelain"], repo)
     assert.ok(!listed.includes(created.path), "worktree registration removed")
@@ -206,7 +213,7 @@ describe("worktree handoff", () => {
     assert.ok(String(outcome.error).includes("patch") || String(outcome.error).includes("apply"))
     assert.ok(await pathExists(created.path), "worktree preserved after conflict")
     // 主 checkout 不被部分写入
-    assert.strictEqual(await readFile(path.join(repo, "app.txt"), "utf8"), "line1\nUPSTREAM-EDIT\nline3\n")
+    assert.strictEqual(await readText(path.join(repo, "app.txt")), "line1\nUPSTREAM-EDIT\nline3\n")
 
     await removeWorktree(created.path, repo)
     await rm(repo, { recursive: true, force: true })
@@ -223,7 +230,7 @@ describe("worktree handoff", () => {
     assert.strictEqual(outcome.ok, true)
     assert.strictEqual(outcome.dryRun, true)
     assert.ok(outcome.files.includes("app.txt"))
-    assert.strictEqual(await readFile(path.join(repo, "app.txt"), "utf8"), "line1\nline2\nline3\n")
+    assert.strictEqual(await readText(path.join(repo, "app.txt")), "line1\nline2\nline3\n")
     assert.ok(await pathExists(created.path), "worktree kept after dry-run")
 
     await removeWorktree(created.path, repo)
@@ -257,7 +264,7 @@ describe("worktree handoff", () => {
     process.chdir(originalCwd)
     assert.ok(outcome.ok, outcome.error)
     assert.ok(!(await pathExists(created.path)))
-    assert.strictEqual(await readFile(path.join(repo, "app.txt"), "utf8"), "line1\nline2\nline3\n")
+    assert.strictEqual(await readText(path.join(repo, "app.txt")), "line1\nline2\nline3\n")
 
     const checkpoint = await readCheckpoint(task.id)
     assert.strictEqual(checkpoint.result.worktree_discarded, true)

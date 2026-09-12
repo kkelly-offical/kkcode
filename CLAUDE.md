@@ -8,7 +8,7 @@
 ## Workflow Rules
 
 - 每次测试成功后，提交 commit 并推送到 GitHub 仓库。
-- 推送前核对所有版本号：`package.json`、`NOTICE.md`、`README.md`、`src/repl.mjs`、`src/index.mjs`、`src/mcp/constants.mjs` 必须一致。
+- 推送前核对所有版本号：`package.json`、`NOTICE.md`、`README.md`、`src/repl.mjs`、`src/index.mjs`、`src/mcp/constants.mjs` 必须一致，并同步核对 `test/package-artifact-verify.test.mjs` 的夹具版本号。
 
 ## Validation Rules
 
