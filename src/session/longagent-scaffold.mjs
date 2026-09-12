@@ -1,6 +1,6 @@
 import { processTurnLoop } from "./loop.mjs"
-import { EventBus } from "../core/events.mjs"
-import { EVENT_TYPES } from "../core/constants.mjs"
+import { EventBus } from "../kernel/core/events.mjs"
+import { EVENT_TYPES } from "../kernel/core/constants.mjs"
 import { stat } from "node:fs/promises"
 import path from "node:path"
 

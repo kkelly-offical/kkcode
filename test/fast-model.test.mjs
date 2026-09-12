@@ -4,7 +4,7 @@ import { resolveRoleModel, hasFastModel, providerDefaultModel, MODEL_ROLES } fro
 import {
   requestFast, fastModelId, isFastModelConfigured, fastModelIssues, resetFastModelHealth
 } from "../src/provider/fast-model.mjs"
-import { resetDeprecations } from "../src/core/deprecations.mjs"
+import { resetDeprecations } from "../src/kernel/core/deprecations.mjs"
 
 function makeConfig(overrides = {}) {
   return {

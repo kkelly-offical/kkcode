@@ -6,7 +6,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { deflateSync } from "node:zlib"
 import { ToolRegistry } from "../src/tool/registry.mjs"
 import { executeTool } from "../src/tool/executor.mjs"
-import { makeToolResult } from "../src/core/types.mjs"
+import { makeToolResult } from "../src/kernel/core/types.mjs"
 
 const registryConfig = { tool: { sources: { builtin: true, local: false, plugin: false, mcp: false } } }
 

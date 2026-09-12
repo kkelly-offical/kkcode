@@ -8,8 +8,8 @@ import path from "node:path"
 import { LongAgentManager } from "../orchestration/longagent-manager.mjs"
 import { processTurnLoop } from "./loop.mjs"
 import { markSessionStatus } from "./store.mjs"
-import { EventBus } from "../core/events.mjs"
-import { EVENT_TYPES } from "../core/constants.mjs"
+import { EventBus } from "../kernel/core/events.mjs"
+import { EVENT_TYPES } from "../kernel/core/constants.mjs"
 import { saveCheckpoint, loadCheckpoint, saveTaskCheckpoint, loadTaskCheckpoints, cleanupCheckpoints } from "./checkpoint.mjs"
 import { getAgent } from "../agent/agent.mjs"
 import { runStageBarrier } from "../orchestration/stage-scheduler.mjs"
@@ -36,7 +36,7 @@ import { resolveUltraStatus, exitCodeForUltraStatus, sessionStatusForUltraStatus
 import { buildBlockedReport, renderBlockedReportMarkdown } from "./blocked-report.mjs"
 import { verifyStageObjective, OBJECTIVE_MET } from "./stage-objective.mjs"
 import { hasPromptHandler, askQuestionInteractive } from "../tool/question-prompt.mjs"
-import { noteDeprecation } from "../core/deprecations.mjs"
+import { noteDeprecation } from "../kernel/core/deprecations.mjs"
 import {
   isComplete,
   isLikelyActionableObjective,

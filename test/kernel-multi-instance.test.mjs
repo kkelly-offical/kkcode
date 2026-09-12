@@ -12,7 +12,7 @@ import { createKernel } from "../src/kernel/index.mjs"
 import { PermissionEngine } from "../src/permission/engine.mjs"
 import { defaultPermissionPromptChannel } from "../src/permission/prompt.mjs"
 import { defaultQuestionPromptChannel } from "../src/tool/question-prompt.mjs"
-import { defaultEventBus } from "../src/core/events.mjs"
+import { defaultEventBus } from "../src/kernel/core/events.mjs"
 import { configureSessionStore } from "../src/session/store.mjs"
 import { sessionDataPath } from "../src/storage/paths.mjs"
 

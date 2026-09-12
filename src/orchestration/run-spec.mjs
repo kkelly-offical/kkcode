@@ -1,4 +1,4 @@
-import { newId } from "../core/types.mjs"
+import { newId } from "../kernel/core/types.mjs"
 
 function freezeObject(value) {
   if (!value || typeof value !== "object") return value

@@ -3,7 +3,7 @@ import { access, readdir } from "node:fs/promises"
 import { pathToFileURL, fileURLToPath } from "node:url"
 import { userRootDir } from "../storage/paths.mjs"
 import { discoverLocalPluginManifests } from "./manifest-loader.mjs"
-import { noteDeprecation, deprecatedSingletonAlias } from "../core/deprecations.mjs"
+import { noteDeprecation, deprecatedSingletonAlias } from "../kernel/core/deprecations.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 

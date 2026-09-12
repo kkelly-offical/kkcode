@@ -7,8 +7,8 @@ import { registerProvider } from "../src/provider/router.mjs"
 import { ToolRegistry } from "../src/tool/registry.mjs"
 import { PermissionEngine } from "../src/permission/engine.mjs"
 import { processTurnLoop } from "../src/session/loop.mjs"
-import { EventBus } from "../src/core/events.mjs"
-import { EVENT_TYPES } from "../src/core/constants.mjs"
+import { EventBus } from "../src/kernel/core/events.mjs"
+import { EVENT_TYPES } from "../src/kernel/core/constants.mjs"
 
 let tmpDir
 

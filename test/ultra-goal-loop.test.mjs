@@ -19,8 +19,8 @@ process.env.KKCODE_HOME = tmpHome
 const originalCwd = process.cwd()
 process.chdir(tmpProject)
 
-const { EventBus } = await import("../src/core/events.mjs")
-const { EVENT_TYPES } = await import("../src/core/constants.mjs")
+const { EventBus } = await import("../src/kernel/core/events.mjs")
+const { EVENT_TYPES } = await import("../src/kernel/core/constants.mjs")
 const { registerProvider } = await import("../src/provider/router.mjs")
 const { runHybridLongAgent } = await import("../src/session/longagent-hybrid.mjs")
 const { loadLedger } = await import("../src/session/ultra-ledger.mjs")

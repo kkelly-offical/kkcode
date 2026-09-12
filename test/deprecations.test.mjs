@@ -8,7 +8,7 @@ import {
   listDeprecations,
   formatDeprecation,
   resetDeprecations
-} from "../src/core/deprecations.mjs"
+} from "../src/kernel/core/deprecations.mjs"
 
 test("a deprecation key only fires once per process", (t) => {
   t.after(resetDeprecations)

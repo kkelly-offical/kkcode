@@ -18,7 +18,7 @@ import {
   approvalFromAgentPermission,
   modeIndex,
   modeIdFromLaneAndApproval
-} from "../src/core/modes.mjs"
+} from "../src/kernel/core/modes.mjs"
 
 test("mode cycle exposes the five public modes in order", () => {
   assert.deepEqual(MODE_IDS, ["plan", "agent", "agent-auto", "ultra", "yolo"])

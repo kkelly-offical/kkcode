@@ -23,7 +23,7 @@ import {
 } from "../../permission/learned-rules.mjs"
 import { loadCustomCommands } from "../../command/custom-commands.mjs"
 import { escapeTerminalText } from "../../provider/model-id.mjs"
-import { approvalFromLegacy } from "../../core/modes.mjs"
+import { approvalFromLegacy } from "../../kernel/core/modes.mjs"
 import { applyPermissionLevel, nextPermissionLevel } from "../permission-flow.mjs"
 import {
   pickConfigPathForScope,

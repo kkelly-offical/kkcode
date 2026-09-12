@@ -2,10 +2,10 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { createMetricsCollector } from "../src/observability/metrics.mjs"
 import { createTracer } from "../src/observability/tracer.mjs"
-import { EVENT_TYPES } from "../src/core/constants.mjs"
+import { EVENT_TYPES } from "../src/kernel/core/constants.mjs"
 
 import { initialize, shutdown, getMetrics, getTraces, exportReport } from "../src/observability/index.mjs"
-import { EventBus } from "../src/core/events.mjs"
+import { EventBus } from "../src/kernel/core/events.mjs"
 
 function makeEvent(type, payload = {}, overrides = {}) {
   return {

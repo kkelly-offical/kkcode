@@ -29,7 +29,7 @@
  * 有独立测试），将来若要接进渲染，从那里接。
  */
 
-import { EVENT_TYPES } from "../core/constants.mjs"
+import { EVENT_TYPES } from "../kernel/core/constants.mjs"
 import { shouldApplyActiveTurnEvent } from "../ui/event-scope.mjs"
 import { formatTokenCount } from "../theme/status-bar.mjs"
 import {

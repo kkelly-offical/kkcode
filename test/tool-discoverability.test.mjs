@@ -5,7 +5,7 @@ import { readFile, readdir } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { ToolRegistry } from "../src/tool/registry.mjs"
 import { PermissionEngine } from "../src/permission/engine.mjs"
-import { PermissionError } from "../src/core/errors.mjs"
+import { PermissionError } from "../src/kernel/core/errors.mjs"
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const PROMPT_DIR = path.join(ROOT, "src", "tool", "prompt")

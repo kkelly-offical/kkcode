@@ -13,8 +13,8 @@
  * `normalized` 然后依赖后续代码「顺着流下去」，读代码时极难看出来。
  */
 
-import { noteDeprecation } from "../../core/deprecations.mjs"
-import { modeIdFromLegacy, MODE_IDS } from "../../core/modes.mjs"
+import { noteDeprecation } from "../../kernel/core/deprecations.mjs"
+import { modeIdFromLegacy, MODE_IDS } from "../../kernel/core/modes.mjs"
 import { formatModeBadge } from "../mode-flow.mjs"
 import { escapeTerminalText } from "../../provider/model-id.mjs"
 

@@ -8,4 +8,4 @@ export {
   sanitizeTerminalText,
   sanitizeTerminalStyledText,
   sanitizeTerminalValue
-} from "../core/terminal-sanitize.mjs"
+} from "../kernel/core/terminal-sanitize.mjs"

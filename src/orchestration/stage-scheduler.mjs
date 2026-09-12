@@ -1,6 +1,6 @@
 import { BackgroundManager } from "./background-manager.mjs"
-import { EventBus } from "../core/events.mjs"
-import { EVENT_TYPES } from "../core/constants.mjs"
+import { EventBus } from "../kernel/core/events.mjs"
+import { EVENT_TYPES } from "../kernel/core/constants.mjs"
 import { getAgent } from "../agent/agent.mjs"
 import { classifyError, ERROR_CATEGORIES } from "../session/longagent-utils.mjs"
 import { resolveSubagent } from "./subagent-router.mjs"

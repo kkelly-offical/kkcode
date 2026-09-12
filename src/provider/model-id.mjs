@@ -1,4 +1,4 @@
-import { ProviderError } from "../core/errors.mjs"
+import { ProviderError } from "../kernel/core/errors.mjs"
 
 export const MAX_MODEL_ID_BYTES = 512
 

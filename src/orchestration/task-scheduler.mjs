@@ -4,8 +4,8 @@ import { flushNow, forkSession, getSession } from "../session/store.mjs"
 import { extractEditFeedbackFromToolEvents } from "../observability/edit-diagnostics.mjs"
 import { createRunSpec } from "./run-spec.mjs"
 import { resolveRoleModel } from "../provider/model-roles.mjs"
-import { EventBus } from "../core/events.mjs"
-import { EVENT_TYPES } from "../core/constants.mjs"
+import { EventBus } from "../kernel/core/events.mjs"
+import { EVENT_TYPES } from "../kernel/core/constants.mjs"
 
 const SUPPORTED_EXECUTION_MODES = new Set(["fresh_agent", "fork_context"])
 const SUPPORTED_ISOLATION_MODES = new Set(["default", "worktree"])

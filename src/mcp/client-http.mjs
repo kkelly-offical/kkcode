@@ -1,6 +1,6 @@
-import { McpError } from "../core/errors.mjs"
-import { EventBus } from "../core/events.mjs"
-import { EVENT_TYPES } from "../core/constants.mjs"
+import { McpError } from "../kernel/core/errors.mjs"
+import { EventBus } from "../kernel/core/events.mjs"
+import { EVENT_TYPES } from "../kernel/core/constants.mjs"
 import { normalizeToolResult } from "./tool-result.mjs"
 import { buildRequestHeaders } from "../http/identity.mjs"
 

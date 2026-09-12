@@ -1,8 +1,8 @@
 import { getSensitiveEditPolicy } from "./file-edit-policy.mjs"
 import { findProtectedAccess } from "./protected-paths.mjs"
 import { matchGlob, matchPatterns, normalizePath } from "../util/glob.mjs"
-import { APPROVAL_LEVELS, DEFAULT_APPROVAL } from "../core/modes.mjs"
-import { noteDeprecation } from "../core/deprecations.mjs"
+import { APPROVAL_LEVELS, DEFAULT_APPROVAL } from "../kernel/core/modes.mjs"
+import { noteDeprecation } from "../kernel/core/deprecations.mjs"
 
 export const PERMISSION_LEVELS = APPROVAL_LEVELS
 export const LEGACY_PERMISSION_POLICIES = ["ask", "allow", "deny"]

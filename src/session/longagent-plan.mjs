@@ -1,4 +1,4 @@
-import { newId } from "../core/types.mjs"
+import { newId } from "../kernel/core/types.mjs"
 import { processTurnLoop } from "./loop.mjs"
 import { stripFence, parseJsonLoose } from "./longagent-utils.mjs"
 import { normalizeAcceptance, normalizeGoal } from "./goal-model.mjs"

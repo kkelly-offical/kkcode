@@ -5,8 +5,8 @@ import { readdir, unlink } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { EventEmitter } from "node:events"
 import { readJson, writeJson } from "../storage/json-store.mjs"
-import { EventBus } from "../core/events.mjs"
-import { EVENT_TYPES } from "../core/constants.mjs"
+import { EventBus } from "../kernel/core/events.mjs"
+import { EVENT_TYPES } from "../kernel/core/constants.mjs"
 import { INTERRUPTION_REASONS } from "./interruption-reason.mjs"
 import {
   ensureBackgroundTaskRuntimeDir,

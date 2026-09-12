@@ -35,7 +35,7 @@ import {
   sandboxFailureHint
 } from "./sandbox.mjs"
 import { userRootDir } from "../storage/paths.mjs"
-import { deprecatedSingletonAlias } from "../core/deprecations.mjs"
+import { deprecatedSingletonAlias } from "../kernel/core/deprecations.mjs"
 
 const exec = promisify(execCb)
 const execFile = promisify(execFileCb)

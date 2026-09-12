@@ -1,4 +1,4 @@
-import { makeToolResult, isToolSuccess } from "../core/types.mjs"
+import { makeToolResult, isToolSuccess } from "../kernel/core/types.mjs"
 /**
  * 从工具返回值里取出图片附件。
  *
@@ -14,8 +14,8 @@ function parseImagePayload(raw) {
   return { data: raw.data, mediaType: raw.mediaType || "image/png" }
 }
 
-import { EventBus } from "../core/events.mjs"
-import { EVENT_TYPES } from "../core/constants.mjs"
+import { EventBus } from "../kernel/core/events.mjs"
+import { EVENT_TYPES } from "../kernel/core/constants.mjs"
 import { withAudit } from "./audit-wrapper.mjs"
 import { autoSnapshotBeforeEdit } from "../session/checkpoint.mjs"
 import { buildMutationObservability } from "../observability/edit-diagnostics.mjs"

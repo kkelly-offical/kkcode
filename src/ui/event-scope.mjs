@@ -1,4 +1,4 @@
-import { EVENT_TYPES } from "../core/constants.mjs"
+import { EVENT_TYPES } from "../kernel/core/constants.mjs"
 
 const ACTIVE_TURN_EVENT_TYPES = new Set([
   EVENT_TYPES.TURN_START,

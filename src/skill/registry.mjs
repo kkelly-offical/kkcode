@@ -6,12 +6,12 @@ import { promisify } from "node:util"
 import { parse as parseYaml } from "yaml"
 import { McpRegistry } from "../mcp/registry.mjs"
 import { loadCustomCommands, applyCommandTemplate } from "../command/custom-commands.mjs"
-import { EventBus } from "../core/events.mjs"
-import { EVENT_TYPES } from "../core/constants.mjs"
+import { EventBus } from "../kernel/core/events.mjs"
+import { EVENT_TYPES } from "../kernel/core/constants.mjs"
 import { discoverLocalPluginManifests, pluginComponentDirs } from "../plugin/manifest-loader.mjs"
 import { userRootDir } from "../storage/paths.mjs"
 import { discoverCompatSkillRoots } from "../compat/ecosystem-discovery.mjs"
-import { deprecatedSingletonAlias } from "../core/deprecations.mjs"
+import { deprecatedSingletonAlias } from "../kernel/core/deprecations.mjs"
 
 const execFileAsync = promisify(execFile)
 

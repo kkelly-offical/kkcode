@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { buildRequestHeaders, createRequestContext } from "../http/identity.mjs"
 import { userRootDir } from "../storage/paths.mjs"
-import { ProviderError } from "../core/errors.mjs"
+import { ProviderError } from "../kernel/core/errors.mjs"
 import { startAuditSpan } from "../audit/event.mjs"
 import {
   assertCredentialTransport,

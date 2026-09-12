@@ -1,4 +1,4 @@
-import { ProviderError } from "../core/errors.mjs"
+import { ProviderError } from "../kernel/core/errors.mjs"
 import { buildRequestHeaders } from "../http/identity.mjs"
 import {
   annotateRetryAfter,

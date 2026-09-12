@@ -14,8 +14,8 @@ import {
 import { getStoredToken } from "../github/auth.mjs"
 import * as githubReviewApi from "../github/api.mjs"
 import { fsckSessionStore, getSession } from "./store.mjs"
-import { EventBus } from "../core/events.mjs"
-import { EVENT_TYPES } from "../core/constants.mjs"
+import { EventBus } from "../kernel/core/events.mjs"
+import { EVENT_TYPES } from "../kernel/core/constants.mjs"
 import { userRootDir } from "../storage/paths.mjs"
 import { isPassingGateStatus, GATE_NAMES } from "./gate-contract.mjs"
 
