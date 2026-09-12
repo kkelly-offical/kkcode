@@ -27,8 +27,10 @@
  *
  * buildContext（src/context.mjs）的平台侧职责已收进 createKernel：storage 层
  * 配置注入（session store / event log / audit store 读 config.storage.*）与
- * 工作区信任探测（trustState 缺省时 checkWorkspaceTrust 读持久化存储，TTY 下
- * 保留交互提示）。theme/profile 属 frontends 层（§2），留在宿主侧。
+ * 工作区信任探测（trustState 缺省时 checkWorkspaceTrust 读持久化存储；内核
+ * 不碰 TTY —— 交互式信任询问由宿主在 createKernel 之前自行完成并传入
+ * trustState，见 repl.mjs 的 prompt 注入）。theme/profile 属 frontends 层
+ * （§2），留在宿主侧。
  * buildContext 仍按原样导出（兼容），但入口（repl.mjs、commands/*、
  * background-worker）一律经 createKernel 拿句柄，不再直接调它。
  *
@@ -173,7 +175,9 @@ export async function createKernel(options = {}) {
   configureAuditStore(auditStoreOptions)
 
   // 信任探测（原 buildContext 平台侧）：宿主没给 trustState 时读持久化信任
-  // 存储，TTY 下保留交互式提示；headless 宿主应显式传 trustState 或 trust。
+  // 存储；内核不碰 TTY（阶段 3b），交互式询问由宿主注入 —— REPL 在
+  // createKernel 之前用前端 prompt 探测好再传 trustState；headless 宿主应
+  // 显式传 trustState 或 trust，否则未持久化授信的工作区确定性 untrusted。
   let trustState = options.trustState ?? await checkWorkspaceTrust({
     cwd,
     cliTrust: Boolean(options.trust),

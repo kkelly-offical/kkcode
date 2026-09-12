@@ -29,6 +29,7 @@ import { paint } from "./theme/color.mjs"
 import { PermissionEngine } from "./permission/engine.mjs"
 import { setPermissionPromptHandler } from "./permission/prompt.mjs"
 import { setQuestionPromptHandler } from "./tool/question-prompt.mjs"
+import { promptWorkspaceTrust } from "./repl/trust-prompt.mjs"
 import { createActivityRenderer } from "./ui/activity-renderer.mjs"
 import { reduceAppState } from "./ui/app-state.mjs"
 import { EventBus } from "./core/events.mjs"
@@ -1927,7 +1928,14 @@ export async function startRepl({ trust = false } = {}) {
 
   // Trust check BEFORE splash — readline prompt must not compete with splash screen clearing
   const { checkWorkspaceTrust } = await import("./permission/workspace-trust.mjs")
-  const trustState = await checkWorkspaceTrust({ cwd: process.cwd(), cliTrust: trust, isTTY: process.stdin.isTTY })
+  // 阶段 3b：内核的信任探测不再碰 TTY，交互提问由前端注入（行式提问，见
+  // repl/trust-prompt.mjs）；headless 宿主注入不了 prompt，得到确定性 untrusted。
+  const trustState = await checkWorkspaceTrust({
+    cwd: process.cwd(),
+    cliTrust: trust,
+    isTTY: process.stdin.isTTY,
+    prompt: promptWorkspaceTrust
+  })
 
   const splash = startSplash({ version: `v${PACKAGE_VERSION}` })
 

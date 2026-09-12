@@ -1,11 +1,13 @@
-import { stdin as input, stdout as output } from "node:process"
-import { createInterface } from "node:readline/promises"
 import { noteDeprecation } from "../core/deprecations.mjs"
 
 /**
  * 审批提示通道工厂（1.0.0 阶段 2a）：customPromptHandler 槽位收编为实例字段
  * （M3 §四.2）。每个 kernel 实例一个通道，由 createKernel 的
  * handlers.onPermissionPrompt 注入；不再依赖模块级全局槽位。
+ *
+ * 阶段 3b（M3 耦合点 15）：内核不再自开终端行读取。没有宿主 handler 时
+ * 审批不会阻塞在 stdin 上，而是确定性收口：判定落到 defaultAction
+ * （来自 permission.non_tty_default，默认 deny）。
  */
 export function createPermissionPromptChannel() {
   let customPromptHandler = null
@@ -21,12 +23,12 @@ export function createPermissionPromptChannel() {
     /**
      * 现在有没有人可以回答审批？
      *
-     * TUI 会注册 customPromptHandler；否则要靠 stdin/stdout 都是 TTY。两者都没有时
-     * （`kkcode chat`、CI、管道输入）审批不是「被拒绝」，是**根本问不到人**，
-     * 判定落到 permission.non_tty_default。
+     * 唯一的提问途径是宿主注册的 customPromptHandler（TUI 浮层 / 宿主自己的
+     * 交互实现）。内核不碰 TTY：没注册就是问不到人（`kkcode chat`、CI、
+     * 管道输入），判定落到 permission.non_tty_default。
      */
     canAskInteractively() {
-      return Boolean(customPromptHandler) || Boolean(process.stdout.isTTY && process.stdin.isTTY)
+      return Boolean(customPromptHandler)
     },
     async askPermissionInteractive({
       tool,
@@ -52,28 +54,9 @@ export function createPermissionPromptChannel() {
         if (["allow_once", "allow_session", "allow_always", "deny"].includes(answer)) return answer
       }
 
-      if (!process.stdout.isTTY || !process.stdin.isTTY) {
-        if (defaultAction === "allow" || defaultAction === "allow_once") return "allow_once"
-        return "deny"
-      }
-      const rl = createInterface({ input, output })
-      try {
-        console.log("")
-        console.log(`Permission requested for tool: ${tool}`)
-        console.log(`session: ${sessionId}`)
-        if (command) console.log(`command: ${command}`)
-        else if (pattern && pattern !== "*") console.log(`target: ${pattern}`)
-        if (risk) console.log(`risk: ${risk}/10`)
-        if (reason) console.log(`reason: ${reason}`)
-        console.log("Choices: [1] allow once  [2] allow session  [3] always allow  [4] deny")
-        const answer = (await rl.question("> ")).trim().toLowerCase()
-        if (["1", "allow", "allow_once", "once", "y", "yes"].includes(answer)) return "allow_once"
-        if (["2", "session", "allow_session"].includes(answer)) return "allow_session"
-        if (["3", "always", "allow_always"].includes(answer)) return "allow_always"
-        return "deny"
-      } finally {
-        rl.close()
-      }
+      // headless 宿主未注入 handler：确定性收口，绝不阻塞读 stdin。
+      if (defaultAction === "allow" || defaultAction === "allow_once") return "allow_once"
+      return "deny"
     }
   }
 }

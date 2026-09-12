@@ -6,8 +6,14 @@ import {
   sanitizeTerminalText,
   sanitizeTerminalValue
 } from "../theme/terminal-sanitize.mjs"
+import { installStreamByteRenderer } from "../theme/stream-byte-renderer.mjs"
 
 import { stripAnsi } from "../util/frame-primitives.mjs"
+
+// 模块加载即登记 ANSI 流字节渲染器（§7.5 双轨适配器）：本进程既然加载了
+// 前端的活动渲染器，旧 output 字节轨就应可用。`kkcode ultra/longagent`
+// 入口不经过 loadTheme()，这里是该入口唯一的登记点；幂等。
+installStreamByteRenderer()
 
 const TOOL_MUTED_COLOR = "#8a8f98"
 const MAX_TOOL_DETAIL_LINES = 80

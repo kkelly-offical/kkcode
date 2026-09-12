@@ -207,14 +207,15 @@ export function createPermissionEngine({ promptChannel = defaultPermissionPrompt
       })
       // 非交互环境（kkcode chat、CI、管道输入）里没有人可以「declined」——
       // 拒绝来自 permission.non_tty_default。照抄交互文案会让人去找一个
-      // 根本不存在的审批弹窗。
+      // 根本不存在的审批弹窗。阶段 3b 起「问不到人」的判据只剩宿主有没有
+      // 注入审批 handler —— 内核自身不在终端上提问。
       const interactive = promptChannel.canAskInteractively()
       throw new PermissionError(
         decision.reason
           ? `permission denied for tool ${tool} (${decision.source}): ${decision.reason}`
           : interactive
             ? `permission denied for tool ${tool} (you declined it)`
-            : `permission denied for tool ${tool}: no TTY to ask for approval, and permission.non_tty_default is "${config.permission?.non_tty_default || "deny"}". Raise the approval level (e.g. --yolo) or set permission.non_tty_default: allow_once.`
+            : `permission denied for tool ${tool}: no approval handler injected by the host (kernel never prompts on the TTY itself), and permission.non_tty_default is "${config.permission?.non_tty_default || "deny"}". Raise the approval level (e.g. --yolo), run via a host with an approval UI, or set permission.non_tty_default: allow_once.`
       )
     }
   }
