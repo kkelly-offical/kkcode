@@ -1,6 +1,6 @@
 import { spawn as nodeSpawn } from "node:child_process"
 import { StringDecoder } from "node:string_decoder"
-import { stripAnsi } from "./frame-primitives.mjs"
+import { stripAnsi } from "../util/frame-primitives.mjs"
 import { paint } from "../theme/color.mjs"
 
 /**

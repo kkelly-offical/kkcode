@@ -8,6 +8,9 @@ export const DEFAULT_RETRY_ATTEMPTS = 5
 export const DEFAULT_LONGAGENT_RETRY_STORM_THRESHOLD = 3
 export const DEFAULT_LONGAGENT_TOKEN_ALERT_THRESHOLD = 120000
 
+/** 提问被跳过时的答案哨兵。对话路由（repl/dialog-router）与表单消费方（provider/wizard-form）共用，故沉到这个无依赖叶子。 */
+export const QUESTION_SKIPPED = "(skipped)"
+
 export const EVENT_TYPES = {
   ROUTE_DECISION: "route.decision",
   AGENT_CONTINUATION_INTERRUPTED: "agent.continuation.interrupted",

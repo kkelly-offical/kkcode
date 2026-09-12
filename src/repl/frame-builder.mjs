@@ -11,8 +11,8 @@ import { NO_SUGGESTIONS } from "./suggestion-source.mjs"
 import { renderSuggestions, MAX_TUI_SUGGESTIONS } from "./suggestion-view.mjs"
 import { POLICY_CHOICES, PERMISSION_PROMPT_CHOICES } from "./permission-flow.mjs"
 import { resolveModeId, MODE_PICKER_CHOICES } from "./mode-flow.mjs"
-import { layoutInputText } from "./text-layout.mjs"
-import { clipAnsiLine, displayWidth, padRight, wrapLogLines } from "./frame-primitives.mjs"
+import { layoutInputText } from "../util/text-layout.mjs"
+import { clipAnsiLine, displayWidth, padRight, wrapLogLines } from "../util/frame-primitives.mjs"
 import { PACKAGE_VERSION } from "../version.mjs"
 
 /**

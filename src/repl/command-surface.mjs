@@ -1,4 +1,4 @@
-import { padRight, displayWidth, clipPlainByWidth } from "./frame-primitives.mjs"
+import { padRight, displayWidth, clipPlainByWidth } from "../util/frame-primitives.mjs"
 
 export function renderInstalledCommandSurface({ customCommands = [], skills = [] } = {}) {
   const lines = []

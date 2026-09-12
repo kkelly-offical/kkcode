@@ -1,4 +1,4 @@
-import { padRight } from "../repl/frame-primitives.mjs"
+import { padRight } from "../util/frame-primitives.mjs"
 
 export function buildHelpText({ providers = [], userRootPath = "" } = {}) {
   const W = 30

@@ -21,7 +21,7 @@ import {
   sanitizeTerminalStyledText,
   sanitizeTerminalValue
 } from "../theme/terminal-sanitize.mjs"
-import { stripAnsi } from "./frame-primitives.mjs"
+import { stripAnsi } from "../util/frame-primitives.mjs"
 
 export function createTranscriptWriter({ transcript, toastStore }) {
   /** 把一条记录（字符串或结构化对象）消毒成可以安全渲染的形态。 */

@@ -17,7 +17,7 @@
 
 import { paint } from "../theme/color.mjs"
 import { markMatchRanges } from "../ui/overlay-select.mjs"
-import { clipAnsiLine, padRight } from "./frame-primitives.mjs"
+import { clipAnsiLine, padRight } from "../util/frame-primitives.mjs"
 
 /** 候选表最多同时显示几行。再多就靠上下键滚 —— 它挤的是对话区。 */
 export const MAX_TUI_SUGGESTIONS = 5
