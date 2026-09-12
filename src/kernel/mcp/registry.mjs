@@ -1,14 +1,14 @@
 import { createHttpMcpClient } from "./client-http.mjs"
 import { createStdioMcpClient } from "./client-stdio.mjs"
 import { createSseMcpClient } from "./client-sse.mjs"
-import { McpError } from "../kernel/core/errors.mjs"
-import { EventBus } from "../kernel/core/events.mjs"
-import { EVENT_TYPES } from "../kernel/core/constants.mjs"
+import { McpError } from "../core/errors.mjs"
+import { EventBus } from "../core/events.mjs"
+import { EVENT_TYPES } from "../core/constants.mjs"
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
-import { userRootDir } from "../storage/paths.mjs"
-import { discoverLocalPluginManifests, pluginMcpServers } from "../plugin/manifest-loader.mjs"
-import { deprecatedSingletonAlias } from "../kernel/core/deprecations.mjs"
+import { userRootDir } from "../../storage/paths.mjs"
+import { discoverLocalPluginManifests, pluginMcpServers } from "../../plugin/manifest-loader.mjs"
+import { deprecatedSingletonAlias } from "../core/deprecations.mjs"
 
 /**
  * McpRegistry 工厂（1.0.0 阶段 2a）：servers/tools/prompts/health/configured

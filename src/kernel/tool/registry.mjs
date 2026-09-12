@@ -9,7 +9,7 @@ import { atomicWriteFile, replaceInFileTransactional, replaceAllInFileTransactio
 import { withFileLock } from "./file-lock-manager.mjs"
 import { BackgroundManager } from "../../orchestration/background-manager.mjs"
 import { createTaskTool, createTaskGroupTool } from "./task-tool.mjs"
-import { McpRegistry } from "../../mcp/registry.mjs"
+import { McpRegistry } from "../mcp/registry.mjs"
 import { SkillRegistry } from "../../skill/registry.mjs"
 import { askQuestionInteractive } from "./question-prompt.mjs"
 import { checkBashAllowed } from "../permission/exec-policy.mjs"

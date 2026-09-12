@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { McpRegistry } from "../src/mcp/registry.mjs"
+import { McpRegistry } from "../src/kernel/mcp/registry.mjs"
 
 function makeNodeScript(body) {
   return [process.execPath, "-e", body]

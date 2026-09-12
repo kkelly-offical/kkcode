@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { createStdioFramingDecoder, encodeRpcMessage } from "../src/mcp/stdio-framing.mjs"
+import { createStdioFramingDecoder, encodeRpcMessage } from "../src/kernel/mcp/stdio-framing.mjs"
 
 test("stdio framing decoder parses content-length frame", () => {
   const decoder = createStdioFramingDecoder({ framing: "content-length" })

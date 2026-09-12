@@ -2,7 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { PACKAGE_VERSION } from "../src/version.mjs"
 import http from "node:http"
-import { createSseMcpClient } from "../src/mcp/client-sse.mjs"
+import { createSseMcpClient } from "../src/kernel/mcp/client-sse.mjs"
 
 function sseFrame(id, result) {
   const msg = JSON.stringify({ jsonrpc: "2.0", id, result })

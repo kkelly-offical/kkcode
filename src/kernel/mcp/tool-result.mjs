@@ -1,4 +1,4 @@
-import { McpError } from "../kernel/core/errors.mjs"
+import { McpError } from "../core/errors.mjs"
 
 export function normalizeToolResult(result, serverName, toolName) {
   if (result?.isError) {

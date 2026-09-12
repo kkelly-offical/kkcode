@@ -316,7 +316,7 @@ test("self-framed content is clipped, not folded, when the panel is narrower", a
   //   即自带边框 —— 这种内容超宽时应当裁掉右边，而不是折行。
   const { renderRuntimeDashboardView } = await import("../src/ui/repl-status-view.mjs")
   const { buildReplRuntimeSnapshot } = await import("../src/repl/runtime-facade.mjs")
-  const { McpRegistry } = await import("../src/mcp/registry.mjs")
+  const { McpRegistry } = await import("../src/kernel/mcp/registry.mjs")
   const { SkillRegistry } = await import("../src/skill/registry.mjs")
 
   const view = await buildReplRuntimeSnapshot({
