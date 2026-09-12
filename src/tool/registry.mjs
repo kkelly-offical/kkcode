@@ -35,20 +35,10 @@ import {
   sandboxFailureHint
 } from "./sandbox.mjs"
 import { userRootDir } from "../storage/paths.mjs"
+import { deprecatedSingletonAlias } from "../core/deprecations.mjs"
 
 const exec = promisify(execCb)
 const execFile = promisify(execFileCb)
-
-const state = {
-  initialized: false,
-  tools: [],
-  loadedAt: 0,
-  lastSignature: "",
-  lastCwd: "",
-  lastConfig: null,
-  lastAllowProjectSources: true,
-  refreshing: false
-}
 
 function schema(type, description) {
   return { type, description }
@@ -2416,14 +2406,14 @@ function builtinTools(config) {
   return [listTool, sysinfoTool, readTool, writeTool, editTool, patchTool, multieditTool, globTool, grepTool, bashTool, createTaskTool(), createTaskGroupTool(), outputTool, cancelTool, taskListTool, taskParallelTool, taskGetTool, taskStopTool, taskOutputTool, todowriteTool, questionTool, skillTool, webfetchTool, httpRequestTool, websearchTool, codesearchTool, notebookeditTool, enterPlanTool, exitPlanTool, ...fileOpsTools, ...gitTools, ...gitFullAutoToolsList]
 }
 
-function mcpTools() {
-  return McpRegistry.listTools().map((tool) => ({
+function mcpTools(mcpRegistry) {
+  return mcpRegistry.listTools().map((tool) => ({
     name: tool.id,
     description: `[mcp:${tool.server}] ${tool.description}`,
     inputSchema: tool.inputSchema,
     async execute(args, ctx) {
       try {
-        const result = await McpRegistry.callTool(tool.id, args || {}, ctx.signal || null)
+        const result = await mcpRegistry.callTool(tool.id, args || {}, ctx.signal || null)
         return result.output
       } catch (error) {
         const reason = error.reason || "unknown"
@@ -2441,131 +2431,165 @@ function toolAllowedByMode(toolName, mode) {
   return true
 }
 
-export const ToolRegistry = {
-  async initialize({
-    config = {},
-    cwd = process.cwd(),
-    force = false,
-    allowProjectSources = true
-  } = {}) {
-    const ttlMs = Math.max(0, Number(config.runtime?.tool_registry_cache_ttl_ms || 30000))
-    const sig = signatureFor(config, cwd, allowProjectSources)
-    const cacheValid =
-      state.initialized &&
-      !force &&
-      state.lastSignature === sig &&
-      state.lastCwd === cwd &&
-      Date.now() - state.loadedAt <= ttlMs
-    if (cacheValid) return
+/**
+ * ToolRegistry 工厂（1.0.0 阶段 2a）：initialized/tools/签名缓存收编为实例
+ * 字段（M3 §四.2），每个 kernel 实例一份工具集。
+ *
+ * @param {object} [deps]
+ * @param {object} [deps.mcpRegistry] MCP 注册表（默认进程级连接池，§7.2 显式契约）
+ */
+export function createToolRegistry({ mcpRegistry = McpRegistry } = {}) {
+  const state = {
+    initialized: false,
+    tools: [],
+    loadedAt: 0,
+    lastSignature: "",
+    lastCwd: "",
+    lastConfig: null,
+    lastAllowProjectSources: true,
+    refreshing: false
+  }
 
-    const tools = []
+  const ToolRegistry = {
+    async initialize({
+      config = {},
+      cwd = process.cwd(),
+      force = false,
+      allowProjectSources = true
+    } = {}) {
+      const ttlMs = Math.max(0, Number(config.runtime?.tool_registry_cache_ttl_ms || 30000))
+      const sig = signatureFor(config, cwd, allowProjectSources)
+      const cacheValid =
+        state.initialized &&
+        !force &&
+        state.lastSignature === sig &&
+        state.lastCwd === cwd &&
+        Date.now() - state.loadedAt <= ttlMs
+      if (cacheValid) return
 
-    if (config.tool?.sources?.builtin !== false) {
-      tools.push(...builtinTools(config))
-    }
+      const tools = []
 
-    if (config.tool?.sources?.local !== false) {
-      const localDirs = (config.tool?.local_dirs || [])
-        .map((dir) => path.resolve(cwd, dir))
-        .filter((dir) => allowProjectSources || !isWithinWorkspace(cwd, dir))
-      tools.push(...(await loadDynamicTools(localDirs)))
-    }
-
-    if (config.tool?.sources?.plugin !== false) {
-      const pluginDirs = (config.tool?.plugin_dirs || [])
-        .map((dir) => path.resolve(cwd, dir))
-        .filter((dir) => allowProjectSources || !isWithinWorkspace(cwd, dir))
-      tools.push(...(await loadDynamicTools(pluginDirs)))
-    }
-
-    if (config.tool && config.tool?.sources?.mcp !== false) {
-      await McpRegistry.initialize(config, { cwd, allowProjectSources })
-      tools.push(...mcpTools())
-    }
-
-    state.tools = tools
-    state.initialized = true
-    state.loadedAt = Date.now()
-    state.lastSignature = sig
-    state.lastCwd = cwd
-    state.lastConfig = config
-    state.lastAllowProjectSources = allowProjectSources
-  },
-
-  isReady() {
-    return state.initialized
-  },
-
-  async list({
-    mode,
-    cwd = process.cwd(),
-    config = undefined,
-    allowProjectSources = undefined
-  } = {}) {
-    const resolvedConfig = config === undefined ? state.lastConfig || {} : config
-    const resolvedAllowProjectSources = allowProjectSources === undefined
-      ? state.lastAllowProjectSources
-      : allowProjectSources
-    if (!state.initialized) {
-      await this.initialize({
-        config: resolvedConfig,
-        cwd,
-        allowProjectSources: resolvedAllowProjectSources
-      })
-    } else {
-      await this.initialize({
-        config: resolvedConfig,
-        cwd,
-        force: false,
-        allowProjectSources: resolvedAllowProjectSources
-      })
-    }
-    return state.tools
-      .filter((tool) => toolAllowedByMode(tool.name, mode))
-      .map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }))
-  },
-
-  async get(toolName) {
-    return state.tools.find((tool) => tool.name === toolName) || null
-  },
-
-  async call(toolName, args, ctx) {
-    const tool = await this.get(toolName)
-    if (!tool) {
-      return {
-        name: toolName,
-        status: "error",
-        output: `unknown tool: ${toolName}`,
-        error: `unknown tool: ${toolName}`
+      if (config.tool?.sources?.builtin !== false) {
+        tools.push(...builtinTools(config))
       }
-    }
-    try {
-      const output = await tool.execute(args || {}, ctx)
-      return {
-        name: toolName,
-        status: "completed",
-        output: safeStringify(output)
-      }
-    } catch (error) {
-      return {
-        name: toolName,
-        status: "error",
-        output: error.message,
-        error: error.message
-      }
-    }
-  },
 
-  refreshMcpTools() {
-    if (!state.initialized || state.refreshing) return
-    state.refreshing = true
-    try {
-      // Atomic replacement: build new list, then assign once
-      const nonMcp = state.tools.filter((t) => !t.name.startsWith("mcp_"))
-      const newMcpTools = mcpTools()
-      state.tools = [...nonMcp, ...newMcpTools]
-    } finally {
-      state.refreshing = false
+      if (config.tool?.sources?.local !== false) {
+        const localDirs = (config.tool?.local_dirs || [])
+          .map((dir) => path.resolve(cwd, dir))
+          .filter((dir) => allowProjectSources || !isWithinWorkspace(cwd, dir))
+        tools.push(...(await loadDynamicTools(localDirs)))
+      }
+
+      if (config.tool?.sources?.plugin !== false) {
+        const pluginDirs = (config.tool?.plugin_dirs || [])
+          .map((dir) => path.resolve(cwd, dir))
+          .filter((dir) => allowProjectSources || !isWithinWorkspace(cwd, dir))
+        tools.push(...(await loadDynamicTools(pluginDirs)))
+      }
+
+      if (config.tool && config.tool?.sources?.mcp !== false) {
+        await mcpRegistry.initialize(config, { cwd, allowProjectSources })
+        tools.push(...mcpTools(mcpRegistry))
+      }
+
+      state.tools = tools
+      state.initialized = true
+      state.loadedAt = Date.now()
+      state.lastSignature = sig
+      state.lastCwd = cwd
+      state.lastConfig = config
+      state.lastAllowProjectSources = allowProjectSources
+    },
+
+    isReady() {
+      return state.initialized
+    },
+
+    async list({
+      mode,
+      cwd = process.cwd(),
+      config = undefined,
+      allowProjectSources = undefined
+    } = {}) {
+      const resolvedConfig = config === undefined ? state.lastConfig || {} : config
+      const resolvedAllowProjectSources = allowProjectSources === undefined
+        ? state.lastAllowProjectSources
+        : allowProjectSources
+      if (!state.initialized) {
+        await this.initialize({
+          config: resolvedConfig,
+          cwd,
+          allowProjectSources: resolvedAllowProjectSources
+        })
+      } else {
+        await this.initialize({
+          config: resolvedConfig,
+          cwd,
+          force: false,
+          allowProjectSources: resolvedAllowProjectSources
+        })
+      }
+      return state.tools
+        .filter((tool) => toolAllowedByMode(tool.name, mode))
+        .map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }))
+    },
+
+    async get(toolName) {
+      return state.tools.find((tool) => tool.name === toolName) || null
+    },
+
+    async call(toolName, args, ctx) {
+      const tool = await this.get(toolName)
+      if (!tool) {
+        return {
+          name: toolName,
+          status: "error",
+          output: `unknown tool: ${toolName}`,
+          error: `unknown tool: ${toolName}`
+        }
+      }
+      try {
+        const output = await tool.execute(args || {}, ctx)
+        return {
+          name: toolName,
+          status: "completed",
+          output: safeStringify(output)
+        }
+      } catch (error) {
+        return {
+          name: toolName,
+          status: "error",
+          output: error.message,
+          error: error.message
+        }
+      }
+    },
+
+    refreshMcpTools() {
+      if (!state.initialized || state.refreshing) return
+      state.refreshing = true
+      try {
+        // Atomic replacement: build new list, then assign once
+        const nonMcp = state.tools.filter((t) => !t.name.startsWith("mcp_"))
+        const newMcpTools = mcpTools(mcpRegistry)
+        state.tools = [...nonMcp, ...newMcpTools]
+      } finally {
+        state.refreshing = false
+      }
     }
   }
+  return ToolRegistry
 }
+
+const defaultToolRegistry = createToolRegistry()
+
+/**
+ * 兼容别名（deprecated）：进程级默认 ToolRegistry 实例。旧 import 路径继续
+ * 工作，每次方法调用经 deprecations.mjs 记录；新代码用 createKernel() 句柄
+ * 的 `tools` 命名空间。
+ */
+export const ToolRegistry = deprecatedSingletonAlias(
+  "kernel.singleton.tool-registry",
+  "模块级单例 `ToolRegistry` 已收编为 kernel 实例字段：新代码改用 createKernel() 句柄的 `tools` 命名空间",
+  defaultToolRegistry
+)

@@ -11,6 +11,7 @@ import { EVENT_TYPES } from "../core/constants.mjs"
 import { discoverLocalPluginManifests, pluginComponentDirs } from "../plugin/manifest-loader.mjs"
 import { userRootDir } from "../storage/paths.mjs"
 import { discoverCompatSkillRoots } from "../compat/ecosystem-discovery.mjs"
+import { deprecatedSingletonAlias } from "../core/deprecations.mjs"
 
 const execFileAsync = promisify(execFile)
 
@@ -461,304 +462,328 @@ function mcpPromptsToSkills(prompts) {
   }))
 }
 
-const state = {
-  skills: new Map(),
-  loaded: false,
-  plugins: [],
-  pluginErrors: [],
-  diagnostics: []
-}
 
-function addSkill(skill) {
-  const canonicalName = skill.plugin ? `${skill.plugin.name}:${skill.name}` : (skill.canonicalName || skill.name)
-  const withNames = { ...skill, canonicalName, aliases: [...(skill.aliases || [])] }
-  if (state.skills.has(canonicalName)) {
-    state.diagnostics.push({
-      kind: "skill_name_collision",
-      name: canonicalName,
-      kept: withNames.source,
-      replaced: state.skills.get(canonicalName)?.source || null
-    })
+/**
+ * SkillRegistry 工厂（1.0.0 阶段 2a）：skills/plugins/diagnostics 收编为
+ * 实例字段（M3 §四.2），每个 kernel 实例一份。
+ *
+ * 注意：技能执行里对 MCP prompts 的引用（McpRegistry）仍取进程级默认
+ * 连接池 —— 与 §7.2 的 MCP 进程级契约一致。
+ */
+export function createSkillRegistry() {
+  const state = {
+    skills: new Map(),
+    loaded: false,
+    plugins: [],
+    pluginErrors: [],
+    diagnostics: []
   }
-  state.skills.set(canonicalName, withNames)
 
-  if (!skill.plugin && canonicalName !== skill.name) return
-  if (skill.plugin) {
-    if (!state.skills.has(skill.name)) {
-      state.skills.set(skill.name, { ...withNames, aliases: [...withNames.aliases, skill.name] })
-    } else {
+  function addSkill(skill) {
+    const canonicalName = skill.plugin ? `${skill.plugin.name}:${skill.name}` : (skill.canonicalName || skill.name)
+    const withNames = { ...skill, canonicalName, aliases: [...(skill.aliases || [])] }
+    if (state.skills.has(canonicalName)) {
       state.diagnostics.push({
-        kind: "skill_alias_collision",
-        name: skill.name,
-        canonicalName,
-        source: withNames.source
+        kind: "skill_name_collision",
+        name: canonicalName,
+        kept: withNames.source,
+        replaced: state.skills.get(canonicalName)?.source || null
       })
     }
-  }
-}
+    state.skills.set(canonicalName, withNames)
 
-export const SkillRegistry = {
-  /**
-   * Load all skills from all sources.
-   */
-  async initialize(config, cwd = process.cwd(), {
-    allowProjectSources = true
-  } = {}) {
-    state.skills.clear()
-    state.plugins = []
-    state.pluginErrors = []
-    state.diagnostics = []
-    const autoSeed = config?.skills?.auto_seed !== false
-    if (autoSeed) {
-      try {
-        await ensureDefaultSkillPack({
-          cwd,
-          force: false,
-          includeProject: allowProjectSources,
-          includeGlobal: true
+    if (!skill.plugin && canonicalName !== skill.name) return
+    if (skill.plugin) {
+      if (!state.skills.has(skill.name)) {
+        state.skills.set(skill.name, { ...withNames, aliases: [...withNames.aliases, skill.name] })
+      } else {
+        state.diagnostics.push({
+          kind: "skill_alias_collision",
+          name: skill.name,
+          canonicalName,
+          source: withNames.source
         })
-      } catch {
-        // Ignore seed failures (e.g., read-only mode)
       }
     }
+  }
 
-    // Respect skills.enabled config — if explicitly false, skip all loading
-    if (config?.skills?.enabled === false) {
-      state.loaded = true
-      return
-    }
-
-    // Source 0: Built-in skills (shipped with kkcode)
-    const builtinDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "builtin")
-    const builtinSkills = await loadMjsSkills(builtinDir, "builtin")
-    for (const skill of builtinSkills) {
-      addSkill(skill)
-    }
-
-    // Source 1: Custom commands (.md templates)
-    const customCommands = await loadCustomCommands(cwd, { allowProjectSources })
-    for (const skill of customCommandsToSkills(customCommands)) {
-      addSkill(skill)
-    }
-
-    // Source 2: Programmable skills (.mjs) + SKILL.md directories
-    const pluginManifestState = await discoverLocalPluginManifests(cwd, config, {
-      allowProjectSources
-    })
-    state.plugins = pluginManifestState.plugins
-    state.pluginErrors = pluginManifestState.errors
-    const rawCustomDirs = Array.isArray(config?.skills?.dirs) ? config.skills.dirs : []
-    const defaultDirs = (await discoverCompatSkillRoots(cwd, config))
-      .filter((entry) => allowProjectSources || entry.scope !== "project")
-    const pluginDirs = pluginComponentDirs(state.plugins, "skills")
-    // Custom dirs from config (resolve relative to cwd)
-    const extraDirs = rawCustomDirs
-      .filter((d) => typeof d === "string" && d.trim().length > 0)
-      .map((d) => {
-        const trimmed = d.trim()
-        return {
-          dir: path.isAbsolute(trimmed) ? trimmed : path.resolve(cwd, trimmed),
-          scope: "custom",
-          ecosystem: "custom"
+  const SkillRegistry = {
+    /**
+     * Load all skills from all sources.
+     */
+    async initialize(config, cwd = process.cwd(), {
+      allowProjectSources = true
+    } = {}) {
+      state.skills.clear()
+      state.plugins = []
+      state.pluginErrors = []
+      state.diagnostics = []
+      const autoSeed = config?.skills?.auto_seed !== false
+      if (autoSeed) {
+        try {
+          await ensureDefaultSkillPack({
+            cwd,
+            force: false,
+            includeProject: allowProjectSources,
+            includeGlobal: true
+          })
+        } catch {
+          // Ignore seed failures (e.g., read-only mode)
         }
-      })
-      .filter((entry) => allowProjectSources || !isWithin(cwd, entry.dir))
-    const seenDirSet = new Set()
-    const allSkillDirs = [...pluginDirs, ...defaultDirs, ...extraDirs].filter((entry) => {
-      const resolved = path.resolve(entry.dir)
-      if (seenDirSet.has(resolved)) return false
-      seenDirSet.add(resolved)
-      return true
-    })
+      }
 
-    const loadPromises = allSkillDirs.flatMap(({ dir, scope, plugin = null, ecosystem = plugin?.sourceEcosystem || "kkcode" }) => [
-      loadMarkdownSkills(dir, scope, plugin, ecosystem),
-      loadMjsSkills(dir, scope, plugin, ecosystem),
-      loadSkillDirs(dir, scope, plugin, ecosystem)
-    ])
-    const results = await Promise.all(loadPromises)
-    for (const skills of results) {
-      for (const skill of skills) {
+      // Respect skills.enabled config — if explicitly false, skip all loading
+      if (config?.skills?.enabled === false) {
+        state.loaded = true
+        return
+      }
+
+      // Source 0: Built-in skills (shipped with kkcode)
+      const builtinDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "builtin")
+      const builtinSkills = await loadMjsSkills(builtinDir, "builtin")
+      for (const skill of builtinSkills) {
         addSkill(skill)
       }
-    }
 
-    // Source 3: MCP prompts (if MCP is initialized)
-    if (McpRegistry.isReady()) {
-      const prompts = McpRegistry.listPrompts()
-      for (const skill of mcpPromptsToSkills(prompts)) {
-        // Include server name to avoid cross-server name collisions
-        const key = `mcp:${skill.server}:${skill.name}`
-        state.skills.set(key, { ...skill, name: key, canonicalName: key, aliases: [], sourceEcosystem: "mcp" })
+      // Source 1: Custom commands (.md templates)
+      const customCommands = await loadCustomCommands(cwd, { allowProjectSources })
+      for (const skill of customCommandsToSkills(customCommands)) {
+        addSkill(skill)
       }
-    }
 
-    state.loaded = true
-  },
-
-  isReady() {
-    return state.loaded
-  },
-
-  list() {
-    const seen = new Set()
-    const out = []
-    for (const skill of state.skills.values()) {
-      const key = skill.canonicalName || skill.name
-      if (seen.has(key)) continue
-      seen.add(key)
-      out.push(skill)
-    }
-    return out
-  },
-
-  get(name) {
-    return state.skills.get(name) || null
-  },
-
-  diagnostics() {
-    return [...state.diagnostics]
-  },
-
-  /**
-   * Execute a skill and return the expanded prompt string.
-   */
-  async execute(name, args = "", context = {}) {
-    const skill = state.skills.get(name)
-    if (!skill) return null
-
-    if (skill.type === "mjs" && skill.run) {
-      // Programmable skill — call run() to get prompt
-      try {
-        const result = await skill.run({
-          args,
-          cwd: context.cwd || process.cwd(),
-          mode: context.mode || "agent",
-          model: context.model || "",
-          provider: context.provider || "",
-          config: context.config || null
+      // Source 2: Programmable skills (.mjs) + SKILL.md directories
+      const pluginManifestState = await discoverLocalPluginManifests(cwd, config, {
+        allowProjectSources
+      })
+      state.plugins = pluginManifestState.plugins
+      state.pluginErrors = pluginManifestState.errors
+      const rawCustomDirs = Array.isArray(config?.skills?.dirs) ? config.skills.dirs : []
+      const defaultDirs = (await discoverCompatSkillRoots(cwd, config))
+        .filter((entry) => allowProjectSources || entry.scope !== "project")
+      const pluginDirs = pluginComponentDirs(state.plugins, "skills")
+      // Custom dirs from config (resolve relative to cwd)
+      const extraDirs = rawCustomDirs
+        .filter((d) => typeof d === "string" && d.trim().length > 0)
+        .map((d) => {
+          const trimmed = d.trim()
+          return {
+            dir: path.isAbsolute(trimmed) ? trimmed : path.resolve(cwd, trimmed),
+            scope: "custom",
+            ecosystem: "custom"
+          }
         })
-        return result == null ? "" : typeof result === "string" ? result : JSON.stringify(result)
-      } catch (error) {
-        return `skill execution error (${name}): ${error?.message || String(error)}`
-      }
-    }
-
-    if (skill.type === "template" && skill.template) {
-      // Template skill — expand $ARGUMENTS, $1, $2, etc.
-      return applyCommandTemplate(skill.template, args, {
-        path: context.cwd || process.cwd(),
-        mode: context.mode || "agent",
-        provider: context.provider || "",
-        cwd: context.cwd || process.cwd(),
-        project: path.basename(context.cwd || process.cwd())
+        .filter((entry) => allowProjectSources || !isWithin(cwd, entry.dir))
+      const seenDirSet = new Set()
+      const allSkillDirs = [...pluginDirs, ...defaultDirs, ...extraDirs].filter((entry) => {
+        const resolved = path.resolve(entry.dir)
+        if (seenDirSet.has(resolved)) return false
+        seenDirSet.add(resolved)
+        return true
       })
-    }
 
-    if (skill.type === "skill_md" && skill.template) {
-      const cwd = context.cwd || process.cwd()
-      let prompt = applyCommandTemplate(skill.template, args, {
-        path: cwd, mode: context.mode || "agent",
-        provider: context.provider || "", cwd, project: path.basename(cwd),
-        SKILL_ROOT: skill.skillRoot || skill.skillDir || path.dirname(skill.source),
-        SKILL_DIR: skill.skillRoot || skill.skillDir || path.dirname(skill.source),
-        CLAUDE_SKILL_DIR: skill.skillRoot || skill.skillDir || path.dirname(skill.source),
-        CLAUDE_EFFORT: skill.effort || context.effort || "",
-        SKILL_NAME: skill.name,
-        ARGUMENT_HINT: skill.argumentHint || "",
-        WHEN_TO_USE: skill.whenToUse || ""
-      })
-      // Resolve $FILE{name} references to auxiliary file contents
-      if (skill.auxFiles) {
-        const resolvedSkillDir = path.resolve(skill.skillDir)
-        const filePattern = /\$FILE\{([^}]+)\}/g
-        const fileMatches = [...prompt.matchAll(filePattern)]
-        for (const m of fileMatches) {
-          const filePath = skill.auxFiles[m[1]]
-          if (filePath) {
-            // Path traversal protection for $FILE{} references
-            const resolvedFile = path.resolve(filePath)
-            if (!resolvedFile.startsWith(resolvedSkillDir + path.sep)) {
-              prompt = prompt.replace(m[0], `[blocked: path traversal: ${m[1]}]`)
-              EventBus.emit({
-                type: EVENT_TYPES.LONGAGENT_ALERT,
-                payload: {
-                  kind: "skill_path_traversal",
-                  message: `技能引用的路径越出目录范围，已拦截：${m[1]}（技能目录 ${skill.skillDir}）`,
-                  file: m[1],
-                  skillDir: skill.skillDir
-                }
-              }).catch(() => {})
-              continue
-            }
-            try {
-              const content = await readFile(filePath, "utf8")
-              prompt = prompt.replace(m[0], content.trim())
-            } catch {
-              prompt = prompt.replace(m[0], `[file not found: ${m[1]}]`)
-            }
-          }
+      const loadPromises = allSkillDirs.flatMap(({ dir, scope, plugin = null, ecosystem = plugin?.sourceEcosystem || "kkcode" }) => [
+        loadMarkdownSkills(dir, scope, plugin, ecosystem),
+        loadMjsSkills(dir, scope, plugin, ecosystem),
+        loadSkillDirs(dir, scope, plugin, ecosystem)
+      ])
+      const results = await Promise.all(loadPromises)
+      for (const skills of results) {
+        for (const skill of skills) {
+          addSkill(skill)
         }
       }
-      prompt = await injectDynamicContext(prompt, cwd, context.config)
-      if (skill.contextFork) {
-        return { prompt, contextFork: true, model: skill.model }
-      }
-      return prompt
-    }
 
-    if (skill.type === "mcp_prompt" && skill.promptId) {
-      // MCP prompt — fetch from server
-      const promptArgs = {}
-      if (args) {
-        // Simple: pass entire args string as first argument
-        const argDefs = skill.arguments || []
-        if (argDefs.length === 1) {
-          promptArgs[argDefs[0].name] = args
-        } else if (argDefs.length > 1) {
-          // Split args by spaces for multiple arguments
-          const tokens = args.split(/\s+/)
-          for (let i = 0; i < argDefs.length && i < tokens.length; i++) {
-            promptArgs[argDefs[i].name] = tokens[i]
-          }
+      // Source 3: MCP prompts (if MCP is initialized)
+      if (McpRegistry.isReady()) {
+        const prompts = McpRegistry.listPrompts()
+        for (const skill of mcpPromptsToSkills(prompts)) {
+          // Include server name to avoid cross-server name collisions
+          const key = `mcp:${skill.server}:${skill.name}`
+          state.skills.set(key, { ...skill, name: key, canonicalName: key, aliases: [], sourceEcosystem: "mcp" })
         }
       }
-      const result = await McpRegistry.getPrompt(skill.promptId, promptArgs)
-      // MCP prompt result: { messages: [{ role, content: { type, text } }] }
-      if (result?.messages) {
-        return result.messages
-          .map((m) => {
-            if (typeof m.content === "string") return m.content
-            if (m.content?.text) return m.content.text
-            return ""
+
+      state.loaded = true
+    },
+
+    isReady() {
+      return state.loaded
+    },
+
+    list() {
+      const seen = new Set()
+      const out = []
+      for (const skill of state.skills.values()) {
+        const key = skill.canonicalName || skill.name
+        if (seen.has(key)) continue
+        seen.add(key)
+        out.push(skill)
+      }
+      return out
+    },
+
+    get(name) {
+      return state.skills.get(name) || null
+    },
+
+    diagnostics() {
+      return [...state.diagnostics]
+    },
+
+    /**
+     * Execute a skill and return the expanded prompt string.
+     */
+    async execute(name, args = "", context = {}) {
+      const skill = state.skills.get(name)
+      if (!skill) return null
+
+      if (skill.type === "mjs" && skill.run) {
+        // Programmable skill — call run() to get prompt
+        try {
+          const result = await skill.run({
+            args,
+            cwd: context.cwd || process.cwd(),
+            mode: context.mode || "agent",
+            model: context.model || "",
+            provider: context.provider || "",
+            config: context.config || null
           })
-          .filter(Boolean)
-          .join("\n\n")
+          return result == null ? "" : typeof result === "string" ? result : JSON.stringify(result)
+        } catch (error) {
+          return `skill execution error (${name}): ${error?.message || String(error)}`
+        }
       }
-      return JSON.stringify(result)
+
+      if (skill.type === "template" && skill.template) {
+        // Template skill — expand $ARGUMENTS, $1, $2, etc.
+        return applyCommandTemplate(skill.template, args, {
+          path: context.cwd || process.cwd(),
+          mode: context.mode || "agent",
+          provider: context.provider || "",
+          cwd: context.cwd || process.cwd(),
+          project: path.basename(context.cwd || process.cwd())
+        })
+      }
+
+      if (skill.type === "skill_md" && skill.template) {
+        const cwd = context.cwd || process.cwd()
+        let prompt = applyCommandTemplate(skill.template, args, {
+          path: cwd, mode: context.mode || "agent",
+          provider: context.provider || "", cwd, project: path.basename(cwd),
+          SKILL_ROOT: skill.skillRoot || skill.skillDir || path.dirname(skill.source),
+          SKILL_DIR: skill.skillRoot || skill.skillDir || path.dirname(skill.source),
+          CLAUDE_SKILL_DIR: skill.skillRoot || skill.skillDir || path.dirname(skill.source),
+          CLAUDE_EFFORT: skill.effort || context.effort || "",
+          SKILL_NAME: skill.name,
+          ARGUMENT_HINT: skill.argumentHint || "",
+          WHEN_TO_USE: skill.whenToUse || ""
+        })
+        // Resolve $FILE{name} references to auxiliary file contents
+        if (skill.auxFiles) {
+          const resolvedSkillDir = path.resolve(skill.skillDir)
+          const filePattern = /\$FILE\{([^}]+)\}/g
+          const fileMatches = [...prompt.matchAll(filePattern)]
+          for (const m of fileMatches) {
+            const filePath = skill.auxFiles[m[1]]
+            if (filePath) {
+              // Path traversal protection for $FILE{} references
+              const resolvedFile = path.resolve(filePath)
+              if (!resolvedFile.startsWith(resolvedSkillDir + path.sep)) {
+                prompt = prompt.replace(m[0], `[blocked: path traversal: ${m[1]}]`)
+                EventBus.emit({
+                  type: EVENT_TYPES.LONGAGENT_ALERT,
+                  payload: {
+                    kind: "skill_path_traversal",
+                    message: `技能引用的路径越出目录范围，已拦截：${m[1]}（技能目录 ${skill.skillDir}）`,
+                    file: m[1],
+                    skillDir: skill.skillDir
+                  }
+                }).catch(() => {})
+                continue
+              }
+              try {
+                const content = await readFile(filePath, "utf8")
+                prompt = prompt.replace(m[0], content.trim())
+              } catch {
+                prompt = prompt.replace(m[0], `[file not found: ${m[1]}]`)
+              }
+            }
+          }
+        }
+        prompt = await injectDynamicContext(prompt, cwd, context.config)
+        if (skill.contextFork) {
+          return { prompt, contextFork: true, model: skill.model }
+        }
+        return prompt
+      }
+
+      if (skill.type === "mcp_prompt" && skill.promptId) {
+        // MCP prompt — fetch from server
+        const promptArgs = {}
+        if (args) {
+          // Simple: pass entire args string as first argument
+          const argDefs = skill.arguments || []
+          if (argDefs.length === 1) {
+            promptArgs[argDefs[0].name] = args
+          } else if (argDefs.length > 1) {
+            // Split args by spaces for multiple arguments
+            const tokens = args.split(/\s+/)
+            for (let i = 0; i < argDefs.length && i < tokens.length; i++) {
+              promptArgs[argDefs[i].name] = tokens[i]
+            }
+          }
+        }
+        const result = await McpRegistry.getPrompt(skill.promptId, promptArgs)
+        // MCP prompt result: { messages: [{ role, content: { type, text } }] }
+        if (result?.messages) {
+          return result.messages
+            .map((m) => {
+              if (typeof m.content === "string") return m.content
+              if (m.content?.text) return m.content.text
+              return ""
+            })
+            .filter(Boolean)
+            .join("\n\n")
+        }
+        return JSON.stringify(result)
+      }
+
+      return null
+    },
+
+    /**
+     * Return skill metadata for system prompt inclusion.
+     */
+    listForSystemPrompt() {
+      return this.list()
+        .filter((s) => !s.disableModelInvocation && !String(s.canonicalName || s.name).startsWith("mcp:"))
+        .map((s) => ({ name: s.canonicalName || s.name, description: s.description }))
+    },
+
+    listPluginManifests() {
+      return [...state.plugins]
+    },
+
+    pluginErrors() {
+      return [...state.pluginErrors]
+    },
+
+    compatDiagnostics() {
+      return [...state.pluginErrors, ...state.diagnostics.map((item) => JSON.stringify(item))]
     }
-
-    return null
-  },
-
-  /**
-   * Return skill metadata for system prompt inclusion.
-   */
-  listForSystemPrompt() {
-    return this.list()
-      .filter((s) => !s.disableModelInvocation && !String(s.canonicalName || s.name).startsWith("mcp:"))
-      .map((s) => ({ name: s.canonicalName || s.name, description: s.description }))
-  },
-
-  listPluginManifests() {
-    return [...state.plugins]
-  },
-
-  pluginErrors() {
-    return [...state.pluginErrors]
-  },
-
-  compatDiagnostics() {
-    return [...state.pluginErrors, ...state.diagnostics.map((item) => JSON.stringify(item))]
   }
+  return SkillRegistry
 }
+
+const defaultSkillRegistry = createSkillRegistry()
+
+/**
+ * 兼容别名（deprecated）：进程级默认 SkillRegistry 实例。旧 import 路径继续
+ * 工作，每次方法调用经 deprecations.mjs 记录；新代码用 createKernel() 句柄
+ * 的 `extensions.skills`。
+ */
+export const SkillRegistry = deprecatedSingletonAlias(
+  "kernel.singleton.skill-registry",
+  "模块级单例 `SkillRegistry` 已收编为 kernel 实例字段：新代码改用 createKernel() 句柄的 `extensions.skills`",
+  defaultSkillRegistry
+)

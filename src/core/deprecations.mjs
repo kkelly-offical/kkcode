@@ -51,6 +51,34 @@ export function noteRenamed(key, { from, to, kind = "配置项" }) {
   })
 }
 
+/**
+ * 模块级默认实例的兼容别名（1.0.0 阶段 2b，M3 §四.2 单例收编）。
+ *
+ * 被收编的单例仍按原名字导出同一个默认实例 —— 旧 import 路径行为不变；
+ * 差别只在每次方法调用会经 noteDeprecation 记一笔（每 key 每进程只出一条），
+ * 用来盘点仍停留在模块级路径上的调用点。别名本身长期保留（§7.2 回退策略），
+ * 移除目标锚定 1.x 而非 1.0.0。
+ *
+ * @template {object} T
+ * @param {string} key 弃用 key（每进程只提示一次）
+ * @param {string} message 提示语
+ * @param {T} instance 默认实例
+ * @param {{ removal?: string }} [options]
+ * @returns {T} 与默认实例同型的代理
+ */
+export function deprecatedSingletonAlias(key, message, instance, { removal = "1.x" } = {}) {
+  return new Proxy(instance, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver)
+      if (typeof value !== "function") return value
+      return function aliasedSingletonMethod(...args) {
+        noteDeprecation(key, message, { removal })
+        return Reflect.apply(value, target, args)
+      }
+    }
+  })
+}
+
 export function onDeprecation(fn) {
   if (typeof fn !== "function") return () => {}
   listeners.add(fn)
