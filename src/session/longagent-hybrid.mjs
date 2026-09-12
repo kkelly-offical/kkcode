@@ -5,14 +5,14 @@
  * 流程: H0:Intake → H1:Preview → H2:Blueprint → H2.5:Git → H3:Scaffold → H4:Coding(并行) → H5:Debugging(回滚) → H5.5:Validation → H6:Gates → H7:GitMerge
  */
 import path from "node:path"
-import { LongAgentManager } from "../orchestration/longagent-manager.mjs"
+import { LongAgentManager } from "../kernel/orchestration/longagent-manager.mjs"
 import { processTurnLoop } from "./loop.mjs"
 import { markSessionStatus } from "./store.mjs"
 import { EventBus } from "../kernel/core/events.mjs"
 import { EVENT_TYPES } from "../kernel/core/constants.mjs"
 import { saveCheckpoint, loadCheckpoint, saveTaskCheckpoint, loadTaskCheckpoints, cleanupCheckpoints } from "./checkpoint.mjs"
 import { getAgent } from "../agent/agent.mjs"
-import { runStageBarrier } from "../orchestration/stage-scheduler.mjs"
+import { runStageBarrier } from "../kernel/orchestration/stage-scheduler.mjs"
 import { runScaffoldPhase } from "./longagent-scaffold.mjs"
 import {
   runUsabilityGates,

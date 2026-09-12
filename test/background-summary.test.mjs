@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { BackgroundManager } from "../src/orchestration/background-manager.mjs"
+import { BackgroundManager } from "../src/kernel/orchestration/background-manager.mjs"
 
 test("background summary exposes next action and concise preview for completed tasks", () => {
   const summary = BackgroundManager.summarize({

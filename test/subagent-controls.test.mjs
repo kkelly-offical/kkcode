@@ -1,6 +1,6 @@
 import test, { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { resolveSubagent } from "../src/orchestration/subagent-router.mjs"
+import { resolveSubagent } from "../src/kernel/orchestration/subagent-router.mjs"
 import { formatTaskResult } from "../src/kernel/tool/task-tool.mjs"
 
 /**

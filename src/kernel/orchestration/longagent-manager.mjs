@@ -1,9 +1,9 @@
 import path from "node:path"
 import { mkdir, writeFile, readFile, unlink, stat } from "node:fs/promises"
-import { readJson, writeJson } from "../storage/json-store.mjs"
-import { projectRootDir } from "../storage/paths.mjs"
-import { EventBus } from "../kernel/core/events.mjs"
-import { EVENT_TYPES } from "../kernel/core/constants.mjs"
+import { readJson, writeJson } from "../../storage/json-store.mjs"
+import { projectRootDir } from "../../storage/paths.mjs"
+import { EventBus } from "../core/events.mjs"
+import { EVENT_TYPES } from "../core/constants.mjs"
 
 function statePath(cwd = process.cwd()) {
   return path.join(projectRootDir(cwd), "longagent-state.json")

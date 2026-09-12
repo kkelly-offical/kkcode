@@ -284,7 +284,7 @@ export const sessionCommands = [
     run: async ({ print, showInfo, state }) => {
       // 目标看板：判据 + stage/task 投影成五列（待办/进行中/受阻/待验收/已达成）。
       // 数据来自会话状态与台账 —— 与 `kkcode ultra board` 是同一条码。
-      const { LongAgentManager } = await import("../../orchestration/longagent-manager.mjs")
+      const { LongAgentManager } = await import("../../kernel/orchestration/longagent-manager.mjs")
       const { loadLedger } = await import("../../session/ultra-ledger.mjs")
       const record = await LongAgentManager.get(state.sessionId)
       if (!record?.goal && !record?.stagePlan) {

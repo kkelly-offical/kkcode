@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, rm } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { BackgroundManager } from "../src/orchestration/background-manager.mjs"
+import { BackgroundManager } from "../src/kernel/orchestration/background-manager.mjs"
 import { ensureBackgroundTaskRuntimeDir, backgroundTaskCheckpointPath } from "../src/storage/paths.mjs"
 import { writeJson } from "../src/storage/json-store.mjs"
 

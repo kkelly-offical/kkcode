@@ -1,5 +1,5 @@
 import { listSessions } from "../session/store.mjs"
-import { BackgroundManager } from "../orchestration/background-manager.mjs"
+import { BackgroundManager } from "../kernel/orchestration/background-manager.mjs"
 import { summarizeSessionRuntimeState } from "../session/runtime-state.mjs"
 import { collectMcpSummary, collectSkillSummary } from "./state-store.mjs"
 import { inspectSandboxStatus } from "../kernel/tool/sandbox.mjs"

@@ -220,7 +220,7 @@ export const authoringCommands = [
     desc: "list background tasks (add stop <id> / retry <id>)",
     argMode: "optional",
     run: async ({ args, print, showInfo, ctx }) => {
-      const { BackgroundManager } = await import("../../orchestration/background-manager.mjs")
+      const { BackgroundManager } = await import("../../kernel/orchestration/background-manager.mjs")
       const [action, taskId] = args.split(/\s+/).filter(Boolean)
       if (action === "stop" && taskId) {
         await BackgroundManager.cancel(taskId).catch(() => null)

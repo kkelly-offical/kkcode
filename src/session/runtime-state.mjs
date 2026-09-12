@@ -1,7 +1,7 @@
 import { getSession, listSessions } from "./store.mjs"
 import { listRecoverableSessions } from "./recovery.mjs"
 import { auditStats } from "../storage/audit-store.mjs"
-import { BackgroundManager } from "../orchestration/background-manager.mjs"
+import { BackgroundManager } from "../kernel/orchestration/background-manager.mjs"
 
 function summarizeBackgroundCounts(tasks = []) {
   const counts = {

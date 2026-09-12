@@ -20,8 +20,8 @@ const {
 const {
   applyWorktreeResult,
   discardWorktreeResult
-} = await import("../src/orchestration/worktree-handoff.mjs")
-const { BackgroundManager } = await import("../src/orchestration/background-manager.mjs")
+} = await import("../src/kernel/orchestration/worktree-handoff.mjs")
+const { BackgroundManager } = await import("../src/kernel/orchestration/background-manager.mjs")
 const {
   ensureBackgroundTaskRuntimeDir,
   backgroundTaskCheckpointPath

@@ -1,11 +1,11 @@
 import { BackgroundManager } from "./background-manager.mjs"
 import { resolveSubagent } from "./subagent-router.mjs"
-import { flushNow, forkSession, getSession } from "../session/store.mjs"
-import { extractEditFeedbackFromToolEvents } from "../observability/edit-diagnostics.mjs"
+import { flushNow, forkSession, getSession } from "../../session/store.mjs"
+import { extractEditFeedbackFromToolEvents } from "../../observability/edit-diagnostics.mjs"
 import { createRunSpec } from "./run-spec.mjs"
-import { resolveRoleModel } from "../kernel/provider/model-roles.mjs"
-import { EventBus } from "../kernel/core/events.mjs"
-import { EVENT_TYPES } from "../kernel/core/constants.mjs"
+import { resolveRoleModel } from "../provider/model-roles.mjs"
+import { EventBus } from "../core/events.mjs"
+import { EVENT_TYPES } from "../core/constants.mjs"
 
 const SUPPORTED_EXECUTION_MODES = new Set(["fresh_agent", "fork_context"])
 const SUPPORTED_ISOLATION_MODES = new Set(["default", "worktree"])
@@ -218,7 +218,7 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
     // 字段写了没人读，模型和用户都不知道要的 agent 不存在。改为显式报错，
     // 让模型换一个名字重试，而不是拿满权限继续跑。
     if (subagent.fallback) {
-      const { listAgents } = await import("../agent/agent.mjs")
+      const { listAgents } = await import("../../agent/agent.mjs")
       const known = [
         ...listAgents().filter((a) => a.mode === "subagent").map((a) => a.name),
         ...Object.keys(config.agent?.subagents || {})

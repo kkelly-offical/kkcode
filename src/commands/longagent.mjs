@@ -1,6 +1,6 @@
 import { Command } from "commander"
 import { readFile } from "node:fs/promises"
-import { LongAgentManager } from "../orchestration/longagent-manager.mjs"
+import { LongAgentManager } from "../kernel/orchestration/longagent-manager.mjs"
 import { loadConfig } from "../config/load-config.mjs"
 import { createKernel } from "../kernel/index.mjs"
 import { eventLogPath } from "../storage/paths.mjs"
@@ -124,7 +124,7 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
         // 进行中任务的实时详情来自后台任务的日志尾巴
         const liveTasks = {}
         try {
-          const { BackgroundManager } = await import("../orchestration/background-manager.mjs")
+          const { BackgroundManager } = await import("../kernel/orchestration/background-manager.mjs")
           for (const task of await BackgroundManager.list()) {
             if (task.status === "running" && task.logical_task_id) {
               liveTasks[task.logical_task_id] = { lastLine: (task.log_tail || []).at(-1) || "" }

@@ -183,7 +183,7 @@ test("barrier 抛错（依赖环）不穿透：重规划兜住，监听器归零
   assert.ok(ledger.data.rounds.length >= 2, "至少两轮（缺陷轮 + 修复轮）")
 
   // 0.4.x 在这里是异常穿透：unsubscribeStop 泄漏、会话永久 running、工作全丢
-  const { LongAgentManager } = await import("../src/orchestration/longagent-manager.mjs")
+  const { LongAgentManager } = await import("../src/kernel/orchestration/longagent-manager.mjs")
   const record = await LongAgentManager.get("gl_cycle")
   assert.equal(record.status, "completed")
 })

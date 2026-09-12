@@ -25,7 +25,7 @@ process.chdir(tmpProject)
 
 const { registerProvider } = await import("../src/kernel/provider/router.mjs")
 const { runHybridLongAgent } = await import("../src/session/longagent-hybrid.mjs")
-const { LongAgentManager } = await import("../src/orchestration/longagent-manager.mjs")
+const { LongAgentManager } = await import("../src/kernel/orchestration/longagent-manager.mjs")
 const { createScriptedProvider, stagePlanFence, captureEvents, ultraConfig } =
   await import("./helpers/ultra-harness.mjs")
 const { installBackgroundMock, restoreBackgroundMock } = await import("./helpers/background-mock.mjs")

@@ -76,7 +76,7 @@ describe("安全参数必须传到调用点", () => {
     const kernel = FILES.find((f) => f.path === "src/kernel/kernel.mjs")
     assert.ok(kernel, "找不到 src/kernel/kernel.mjs")
     assert.match(kernel.text, /setTrusted\(/, "createKernel 没有设置权限引擎的信任标志")
-    const entryPoints = ["src/orchestration/background-worker.mjs", "src/repl.mjs", "src/commands/chat.mjs"]
+    const entryPoints = ["src/kernel/orchestration/background-worker.mjs", "src/repl.mjs", "src/commands/chat.mjs"]
     for (const entry of entryPoints) {
       const file = FILES.find((f) => f.path === entry)
       assert.ok(file, `找不到入口文件 ${entry}`)

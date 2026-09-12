@@ -1,6 +1,6 @@
-import { readJson, writeJson } from "../storage/json-store.mjs"
-import { backgroundTaskCheckpointPath } from "../storage/paths.mjs"
-import * as git from "../util/git.mjs"
+import { readJson, writeJson } from "../../storage/json-store.mjs"
+import { backgroundTaskCheckpointPath } from "../../storage/paths.mjs"
+import * as git from "../../util/git.mjs"
 
 // 与 background-worker 的 copyWorkspaceConfigFiles 保持一致：这些文件是 worker
 // 复制进 worktree 的运行配置，不是子智能体的产出，回收时必须排除。
@@ -41,7 +41,7 @@ async function patchTaskResult(taskId, resultPatch, extra = {}) {
  */
 export async function removeDetachedWorktree(worktree, repoCwd) {
   try {
-    const { revokeTrust } = await import("../kernel/permission/workspace-trust.mjs")
+    const { revokeTrust } = await import("../permission/workspace-trust.mjs")
     await revokeTrust(worktree.path)
   } catch { /* 撤不掉也只是留下一条无害的 trusted:false 记录 */ }
   try {

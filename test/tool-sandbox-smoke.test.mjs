@@ -141,7 +141,7 @@ test("network:false cuts the sandbox off from host services", { skip: hasBwrap ?
 
 test("background bash is sandboxed too", { skip: hasBwrap ? false : skipReason }, async () => {
   // 否则 run_in_background: true 就是一个绕过沙箱的开关
-  const { BackgroundManager } = await import("../src/orchestration/background-manager.mjs")
+  const { BackgroundManager } = await import("../src/kernel/orchestration/background-manager.mjs")
   const launched = await runBashTool(
     { command: "touch /etc/kkcode-sandbox-bg-probe", run_in_background: true },
     workspace,
