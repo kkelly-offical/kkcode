@@ -16,7 +16,7 @@ import { collectImportGraph, findSccs } from "../scripts/check-import-cycles.mjs
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..")
 const SRC = path.join(ROOT, "src")
-const SESSION = path.join(SRC, "session")
+const SESSION = path.join(SRC, "kernel", "session")
 
 // 归一化正斜杠：Windows 上 path.relative 产生反斜杠，断言比对一律用字面量
 const rel = (file) => path.relative(ROOT, file).split(path.sep).join("/")
@@ -24,7 +24,7 @@ const rel = (file) => path.relative(ROOT, file).split(path.sep).join("/")
 const { files, edges, unresolved } = await collectImportGraph(SRC)
 const sccs = findSccs(edges)
 
-test("src/session/ 不参与任何静态 import 环（M3 §四.1 八文件 SCC 防回归）", () => {
+test("src/kernel/session/ 不参与任何静态 import 环（M3 §四.1 八文件 SCC 防回归）", () => {
   const touching = sccs.filter((scc) => scc.some((f) => f.startsWith(SESSION + path.sep)))
   assert.deepEqual(
     touching.map((scc) => scc.map(rel)),
@@ -45,18 +45,18 @@ test("扫描器真的看见了 session/ 的图 —— 防止扫描器静默失�
     "longagent.mjs", "longagent-hybrid.mjs", "longagent-plan.mjs",
     "longagent-scaffold.mjs", "longagent-hybrid-helpers.mjs"
   ]) {
-    assert.ok(files.some((f) => rel(f) === `src/session/${anchor}`), `锚点 src/session/${anchor} 没被扫到`)
+    assert.ok(files.some((f) => rel(f) === `src/kernel/session/${anchor}`), `锚点 src/kernel/session/${anchor} 没被扫到`)
   }
 
   // 现状的前向边必须在（少了说明解析漏边）
-  assert.ok(edgeSet("engine.mjs").has("src/session/loop.mjs"), "engine -> loop 边丢失")
-  assert.ok(edgeSet("engine.mjs").has("src/session/longagent.mjs"), "engine -> longagent 边丢失")
-  assert.ok(edgeSet("loop.mjs").has("src/session/system-prompt.mjs"), "loop -> system-prompt 边丢失")
-  assert.ok(edgeSet("longagent-hybrid.mjs").has("src/session/loop.mjs"), "longagent-hybrid -> loop 边丢失")
-  assert.ok(edgeSet("system-prompt.mjs").has("src/session/mode-contract.mjs"), "system-prompt -> mode-contract 边丢失")
+  assert.ok(edgeSet("engine.mjs").has("src/kernel/session/loop.mjs"), "engine -> loop 边丢失")
+  assert.ok(edgeSet("engine.mjs").has("src/kernel/session/longagent.mjs"), "engine -> longagent 边丢失")
+  assert.ok(edgeSet("loop.mjs").has("src/kernel/session/system-prompt.mjs"), "loop -> system-prompt 边丢失")
+  assert.ok(edgeSet("longagent-hybrid.mjs").has("src/kernel/session/loop.mjs"), "longagent-hybrid -> loop 边丢失")
+  assert.ok(edgeSet("system-prompt.mjs").has("src/kernel/session/mode-contract.mjs"), "system-prompt -> mode-contract 边丢失")
 
   // 被破的闭环比绝不允许回来
-  assert.ok(!edgeSet("system-prompt.mjs").has("src/session/engine.mjs"), "system-prompt -> engine 回向边复活")
+  assert.ok(!edgeSet("system-prompt.mjs").has("src/kernel/session/engine.mjs"), "system-prompt -> engine 回向边复活")
 
   // 共享契约必须真的是无依赖叶子
   assert.deepEqual([...edgeSet("mode-contract.mjs")], [], "mode-contract.mjs 不再是叶子模块")

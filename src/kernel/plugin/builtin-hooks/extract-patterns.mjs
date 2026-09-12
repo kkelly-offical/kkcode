@@ -1,7 +1,7 @@
 // Extract patterns hook
 // Before compaction, analyzes the conversation for repeatable patterns and saves as instincts
 
-import { addInstinct } from "../../../session/instinct-manager.mjs"
+import { addInstinct } from "../../session/instinct-manager.mjs"
 
 // Patterns we look for in tool usage sequences
 const PATTERN_SIGNALS = [

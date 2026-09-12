@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { summarizeResumeContext } from "../src/session/recovery.mjs"
+import { summarizeResumeContext } from "../src/kernel/session/recovery.mjs"
 
 test("summarizeResumeContext reports in-progress sessions clearly", () => {
   const summary = summarizeResumeContext({

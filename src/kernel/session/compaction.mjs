@@ -1,9 +1,9 @@
-import { requestProvider } from "../kernel/provider/router.mjs"
+import { requestProvider } from "../provider/router.mjs"
 import { getConversationHistory, replaceMessages } from "./store.mjs"
-import { HookBus } from "../kernel/plugin/hook-bus.mjs"
+import { HookBus } from "../plugin/hook-bus.mjs"
 import { saveCheckpoint } from "./checkpoint.mjs"
-import { recordTurn } from "../usage/usage-meter.mjs"
-import { loadPricing, calculateCost } from "../usage/pricing.mjs"
+import { recordTurn } from "../../usage/usage-meter.mjs"
+import { loadPricing, calculateCost } from "../../usage/pricing.mjs"
 
 const COMPACTION_SYSTEM = `You are a conversation summarizer. Create a structured, merge-safe summary preserving all critical information for continued work.
 

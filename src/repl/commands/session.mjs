@@ -6,10 +6,10 @@
  * 走 `notice`（瞬时提示），需要回看的内容才留在对话记录里。
  */
 
-import { newSessionId } from "../../session/engine.mjs"
-import { listSessions, getConversationHistory } from "../../session/store.mjs"
-import { compactSession } from "../../session/compaction.mjs"
-import { confirmRollback, executeRollback } from "../../session/rollback.mjs"
+import { newSessionId } from "../../kernel/session/engine.mjs"
+import { listSessions, getConversationHistory } from "../../kernel/session/store.mjs"
+import { compactSession } from "../../kernel/session/compaction.mjs"
+import { confirmRollback, executeRollback } from "../../kernel/session/rollback.mjs"
 import { buildBoardModel, renderUltraBoard } from "../../ui/ultra-board.mjs"
 import { renderRuntimeDashboardView } from "../../ui/repl-status-view.mjs"
 import { runBtwQuery } from "../btw-query.mjs"
@@ -285,7 +285,7 @@ export const sessionCommands = [
       // 目标看板：判据 + stage/task 投影成五列（待办/进行中/受阻/待验收/已达成）。
       // 数据来自会话状态与台账 —— 与 `kkcode ultra board` 是同一条码。
       const { LongAgentManager } = await import("../../kernel/orchestration/longagent-manager.mjs")
-      const { loadLedger } = await import("../../session/ultra-ledger.mjs")
+      const { loadLedger } = await import("../../kernel/session/ultra-ledger.mjs")
       const record = await LongAgentManager.get(state.sessionId)
       if (!record?.goal && !record?.stagePlan) {
         print("当前会话还没有 Ultra 目标。用 /ultra 模式跑一个目标后再看。", { channel: "notice", topic: "board", tone: "warn" })

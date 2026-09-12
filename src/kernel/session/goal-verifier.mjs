@@ -2,7 +2,7 @@ import { stat as statFs, readFile } from "node:fs/promises"
 import path from "node:path"
 import { readGate, isDecisiveGate, isPassingGateStatus } from "./gate-contract.mjs"
 import { runGateCommand, outputSnippet } from "./usability-gates.mjs"
-import { checkBashAllowed } from "../kernel/permission/exec-policy.mjs"
+import { checkBashAllowed } from "../permission/exec-policy.mjs"
 import {
   CRITERION_PASS, CRITERION_FAIL, CRITERION_UNKNOWN, CRITERION_MANUAL
 } from "./goal-model.mjs"

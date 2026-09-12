@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { execFileSync } from "node:child_process"
-import { touchSession, flushNow } from "../src/session/store.mjs"
+import { touchSession, flushNow } from "../src/kernel/session/store.mjs"
 
 const CLI = resolve("src/index.mjs")
 const NODE = process.execPath

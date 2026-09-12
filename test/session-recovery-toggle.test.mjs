@@ -5,9 +5,9 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { execFileSync } from "node:child_process"
 import { registerProvider } from "../src/kernel/provider/router.mjs"
-import { processTurnLoop } from "../src/session/loop.mjs"
-import { getSession, touchSession, flushNow } from "../src/session/store.mjs"
-import { markTurnInProgress, markTurnFinished } from "../src/session/recovery.mjs"
+import { processTurnLoop } from "../src/kernel/session/loop.mjs"
+import { getSession, touchSession, flushNow } from "../src/kernel/session/store.mjs"
+import { markTurnInProgress, markTurnFinished } from "../src/kernel/session/recovery.mjs"
 
 const CLI = resolve("src/index.mjs")
 const NODE = process.execPath

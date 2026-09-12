@@ -10,7 +10,7 @@ import {
   gcSessionStore,
   flushNow,
   configureSessionStore
-} from "../src/session/store.mjs"
+} from "../src/kernel/session/store.mjs"
 import { sessionDataPath, ensureSessionShardRoot } from "../src/storage/paths.mjs"
 import { writeJson } from "../src/storage/json-store.mjs"
 

@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { refineSessionTitle, normalizeTitle } from "../src/session/session-title.mjs"
+import { refineSessionTitle, normalizeTitle } from "../src/kernel/session/session-title.mjs"
 
 function makeConfigState(fast = "gpt-tiny") {
   return {

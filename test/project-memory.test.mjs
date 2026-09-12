@@ -5,7 +5,7 @@ import path from "node:path"
 import os from "node:os"
 import {
   loadProjectMemory, saveProjectMemory, memoryToContext, parseMemoryFromPreview
-} from "../src/session/longagent-project-memory.mjs"
+} from "../src/kernel/session/longagent-project-memory.mjs"
 
 describe("project-memory", () => {
   let tmpDir

@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { registerProvider } from "../src/kernel/provider/router.mjs"
-import { runLongAgent } from "../src/session/longagent.mjs"
+import { runLongAgent } from "../src/kernel/session/longagent.mjs"
 import { installBackgroundMock, restoreBackgroundMock } from "./helpers/background-mock.mjs"
 
 let tmpHome = ""

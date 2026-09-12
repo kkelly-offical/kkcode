@@ -13,7 +13,7 @@ import { PermissionEngine } from "../src/kernel/permission/engine.mjs"
 import { defaultPermissionPromptChannel } from "../src/kernel/permission/prompt.mjs"
 import { defaultQuestionPromptChannel } from "../src/kernel/tool/question-prompt.mjs"
 import { defaultEventBus } from "../src/kernel/core/events.mjs"
-import { configureSessionStore } from "../src/session/store.mjs"
+import { configureSessionStore } from "../src/kernel/session/store.mjs"
 import { sessionDataPath } from "../src/storage/paths.mjs"
 
 let homeDir

@@ -4,19 +4,19 @@ import { runGateCommand, outputSnippet, DEFAULT_GATE_TIMEOUT_MS } from "./gate-c
 import { checkSmokeGate } from "./smoke-gate.mjs"
 // 既有调用方（goal-verifier 等）沿用从这里 import，不必跟着改
 export { runGateCommand, outputSnippet }
-import { readReviewState, writeReviewState } from "../review/review-store.mjs"
+import { readReviewState, writeReviewState } from "../../review/review-store.mjs"
 import {
   captureLocalReview,
   capturePullRequestReview,
   evaluateReviewGate,
   markReportStaleness
-} from "../review/branch-review.mjs"
-import { getStoredToken } from "../github/auth.mjs"
-import * as githubReviewApi from "../github/api.mjs"
+} from "../../review/branch-review.mjs"
+import { getStoredToken } from "../../github/auth.mjs"
+import * as githubReviewApi from "../../github/api.mjs"
 import { fsckSessionStore, getSession } from "./store.mjs"
-import { EventBus } from "../kernel/core/events.mjs"
-import { EVENT_TYPES } from "../kernel/core/constants.mjs"
-import { userRootDir } from "../storage/paths.mjs"
+import { EventBus } from "../core/events.mjs"
+import { EVENT_TYPES } from "../core/constants.mjs"
+import { userRootDir } from "../../storage/paths.mjs"
 import { isPassingGateStatus, GATE_NAMES } from "./gate-contract.mjs"
 
 const GATE_PREFS_FILE = path.join(userRootDir(), "gate-preferences.json")

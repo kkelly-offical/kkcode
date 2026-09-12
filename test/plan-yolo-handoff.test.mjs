@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { askPlanApproval, setQuestionPromptHandler } from "../src/kernel/tool/question-prompt.mjs"
-import { planBuildModeId, planApprovalInstruction } from "../src/session/loop.mjs"
+import { planBuildModeId, planApprovalInstruction } from "../src/kernel/session/loop.mjs"
 import { isModeId, approvalOf } from "../src/kernel/core/modes.mjs"
 
 /**

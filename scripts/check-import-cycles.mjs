@@ -187,7 +187,7 @@ function parseArgs(argv) {
 
 function toRel(file) {
   // 归一化正斜杠：Windows 上 path.relative 产生反斜杠，报告与断言都按
-  // "src/session/loop.mjs" 这种字面量比对（wiring-contract 测试栽过这个坑）
+  // "src/kernel/session/loop.mjs" 这种字面量比对（wiring-contract 测试栽过这个坑）
   return path.relative(REPO_ROOT, file).split(path.sep).join("/")
 }
 

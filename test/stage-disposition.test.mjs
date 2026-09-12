@@ -1,6 +1,6 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { decideStageDisposition, hasDependents, DISPOSITION } from "../src/session/stage-disposition.mjs"
+import { decideStageDisposition, hasDependents, DISPOSITION } from "../src/kernel/session/stage-disposition.mjs"
 
 /**
  * 决策表逐行验证。核心断言只有一条：**任何情况下都不再出现 0.4.x 那个

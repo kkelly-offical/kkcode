@@ -95,7 +95,7 @@ test("the skill tool classifies by skill type, and fails closed on the unknown",
 
 test("the permission layer can see which skill is being invoked", async () => {
   // pattern 恒为 "*" 的话，规则没法针对某个技能，审批弹窗也说不出用户在批准哪一个
-  const src = await readFile(path.join(ROOT, "src", "session", "loop.mjs"), "utf8")
+  const src = await readFile(path.join(ROOT, "src", "kernel", "session", "loop.mjs"), "utf8")
   const fn = src.slice(src.indexOf("function toolPatternFromArgs("))
   const body = fn.slice(0, fn.indexOf("\n}") + 2)
   assert.notEqual(body.length, 2, "找不到 toolPatternFromArgs —— 这条断言需要更新")

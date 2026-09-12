@@ -3,9 +3,9 @@ import assert from "node:assert/strict"
 import { mkdtemp, rm } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { compactSession, buildCompactionPrompt, collectEvidenceLedger, extractCompactionSummary } from "../src/session/compaction.mjs"
+import { compactSession, buildCompactionPrompt, collectEvidenceLedger, extractCompactionSummary } from "../src/kernel/session/compaction.mjs"
 import { registerProvider } from "../src/kernel/provider/router.mjs"
-import { appendAssistantMessage, appendMessage, appendUserMessage, getSession, touchSession } from "../src/session/store.mjs"
+import { appendAssistantMessage, appendMessage, appendUserMessage, getSession, touchSession } from "../src/kernel/session/store.mjs"
 
 let tmpDir
 let capturedRequest = null

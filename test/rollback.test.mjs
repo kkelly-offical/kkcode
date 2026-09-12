@@ -1,6 +1,6 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { detectRollbackIntent } from "../src/session/rollback.mjs"
+import { detectRollbackIntent } from "../src/kernel/session/rollback.mjs"
 
 describe("detectRollbackIntent", () => {
   it("detects Chinese rollback keywords", () => {

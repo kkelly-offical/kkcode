@@ -19,7 +19,7 @@ import {
   waiveFinding
 } from "../review/branch-review.mjs"
 import { paint } from "../theme/color.mjs"
-import { applyReviewDecision, getSession, listSessions } from "../session/store.mjs"
+import { applyReviewDecision, getSession, listSessions } from "../kernel/session/store.mjs"
 import { getStoredToken } from "../github/auth.mjs"
 import * as githubReviewApi from "../github/api.mjs"
 import { PermissionEngine } from "../kernel/permission/engine.mjs"

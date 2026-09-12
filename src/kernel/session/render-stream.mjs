@@ -1,4 +1,4 @@
-import { EVENT_TYPES } from "../kernel/core/constants.mjs"
+import { EVENT_TYPES } from "../core/constants.mjs"
 
 /**
  * 回合渲染流（1.0.0 阶段 3a，M3 耦合点 14 的收尾）。

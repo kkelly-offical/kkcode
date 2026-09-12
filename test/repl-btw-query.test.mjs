@@ -10,7 +10,7 @@ import {
   appendUserMessage,
   appendAssistantMessage,
   getSession
-} from "../src/session/store.mjs"
+} from "../src/kernel/session/store.mjs"
 
 /**
  * `/btw` 的回归网。

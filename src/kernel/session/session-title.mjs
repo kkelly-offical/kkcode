@@ -1,7 +1,7 @@
-import { requestFast, isFastModelConfigured } from "../kernel/provider/fast-model.mjs"
-import { getAgentPrompt } from "../agent/agent.mjs"
+import { requestFast, isFastModelConfigured } from "../provider/fast-model.mjs"
+import { getAgentPrompt } from "../../agent/agent.mjs"
 import { updateSession, getSession } from "./store.mjs"
-import { sanitizeTerminalText } from "../kernel/core/terminal-sanitize.mjs"
+import { sanitizeTerminalText } from "../core/terminal-sanitize.mjs"
 
 const MAX_TITLE_LENGTH = 50
 

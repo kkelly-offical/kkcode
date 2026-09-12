@@ -5,8 +5,8 @@ import { loadConfig } from "../config/load-config.mjs"
 import { createKernel } from "../kernel/index.mjs"
 import { eventLogPath } from "../storage/paths.mjs"
 import { formatRecoverySuggestions } from "../ui/activity-renderer.mjs"
-import { loadLedger } from "../session/ultra-ledger.mjs"
-import { buildBlockedReport, renderBlockedReportText } from "../session/blocked-report.mjs"
+import { loadLedger } from "../kernel/session/ultra-ledger.mjs"
+import { buildBlockedReport, renderBlockedReportText } from "../kernel/session/blocked-report.mjs"
 
 /**
  * Ultra 会话管理。0.4.0 起主命令是 `kkcode ultra`，`kkcode longagent`
@@ -227,7 +227,7 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
         return
       }
       console.log(`resuming session ${options.session} — ${objective.slice(0, 80)}`)
-      const { runLongAgent } = await import("../session/longagent.mjs")
+      const { runLongAgent } = await import("../kernel/session/longagent.mjs")
       try {
         const result = await runLongAgent({
           prompt: objective,
@@ -244,7 +244,7 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
         if (result.blockedReport) {
           for (const line of renderBlockedReportText(result.blockedReport)) console.log(line)
         }
-        const { exitCodeForUltraStatus } = await import("../session/ultra-status.mjs")
+        const { exitCodeForUltraStatus } = await import("../kernel/session/ultra-status.mjs")
         process.exitCode = exitCodeForUltraStatus(result.status)
       } catch (err) {
         console.error(`resume failed: ${err.message}`)

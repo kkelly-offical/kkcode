@@ -1,1 +1,1 @@
-export { resolveMode, newSessionId, executeTurn } from "./session/engine.mjs"
+export { resolveMode, newSessionId, executeTurn } from "./kernel/session/engine.mjs"

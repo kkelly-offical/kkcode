@@ -17,7 +17,7 @@ function parseImagePayload(raw) {
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { withAudit } from "./audit-wrapper.mjs"
-import { autoSnapshotBeforeEdit } from "../../session/checkpoint.mjs"
+import { autoSnapshotBeforeEdit } from "../session/checkpoint.mjs"
 import { buildMutationObservability } from "../../observability/edit-diagnostics.mjs"
 
 const FILE_EDIT_TOOLS = new Set(["write", "edit", "multiedit", "patch", "notebookedit"])

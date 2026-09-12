@@ -8,7 +8,7 @@ import {
   detectExplorationLoop, detectToolCycle, createStuckTracker,
   mergeCappedFileChanges, createSemanticErrorTracker, createDegradationChain,
   generateRecoverySuggestions
-} from "../src/session/longagent-utils.mjs"
+} from "../src/kernel/session/longagent-utils.mjs"
 
 describe("stripFence", () => {
   it("removes json code fence", () => {

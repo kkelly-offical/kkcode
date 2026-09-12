@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { renderPublicModeContract, resolveMode, routeMode } from "../src/session/engine.mjs"
-import { classifyTaskMode } from "../src/session/longagent-utils.mjs"
+import { renderPublicModeContract, resolveMode, routeMode } from "../src/kernel/session/engine.mjs"
+import { classifyTaskMode } from "../src/kernel/session/longagent-utils.mjs"
 
 test("routing keeps long narrative local when the task is a single command check", () => {
   const prompt = [

@@ -1,6 +1,6 @@
 import { loadConfig } from "./config/load-config.mjs"
 import { loadTheme } from "./theme/load-theme.mjs"
-import { configureSessionStore } from "./session/store.mjs"
+import { configureSessionStore } from "./kernel/session/store.mjs"
 import { configureEventLog } from "./storage/event-log.mjs"
 import { configureAuditStore } from "./storage/audit-store.mjs"
 import { checkWorkspaceTrust } from "./kernel/permission/workspace-trust.mjs"

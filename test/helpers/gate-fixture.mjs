@@ -1,4 +1,4 @@
-import { GATE_NAMES, isPassingGateStatus } from "../../src/session/gate-contract.mjs"
+import { GATE_NAMES, isPassingGateStatus } from "../../src/kernel/session/gate-contract.mjs"
 
 /**
  * 全仓门禁替身的**唯一**构造器。

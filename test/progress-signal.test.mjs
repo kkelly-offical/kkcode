@@ -1,6 +1,6 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { errorSignature, snapshotRound, diffSnapshots } from "../src/session/progress-signal.mjs"
+import { errorSignature, snapshotRound, diffSnapshots } from "../src/kernel/session/progress-signal.mjs"
 
 describe("errorSignature", () => {
   it("路径 / 行号 / hex / 时间戳抹平后相同错误同签名", () => {

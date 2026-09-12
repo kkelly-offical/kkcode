@@ -1,6 +1,6 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises"
 import path from "node:path"
-import { memoryDir } from "../storage/paths.mjs"
+import { memoryDir } from "../../storage/paths.mjs"
 
 /**
  * Instinct Manager — automatic pattern learning system.

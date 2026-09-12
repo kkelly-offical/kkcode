@@ -4,7 +4,7 @@ import {
   parseCriterionString, normalizeCriterionObject, normalizeAcceptance,
   classifyGoalIntent, intentProfile, normalizeGoal, freezeGoal, reviseGoal,
   planSignature, splitArgv, resetCriterionCounter
-} from "../src/session/goal-model.mjs"
+} from "../src/kernel/session/goal-model.mjs"
 
 beforeEach(() => resetCriterionCounter())
 

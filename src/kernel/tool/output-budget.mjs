@@ -1,4 +1,4 @@
-import { modelContextLimit } from "../../session/compaction.mjs"
+import { modelContextLimit } from "../session/compaction.mjs"
 
 /**
  * 工具输出预算。

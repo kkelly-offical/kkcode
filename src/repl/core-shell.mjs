@@ -1,7 +1,7 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
 import { paint } from "../theme/color.mjs"
-import { resolveMode } from "../session/engine.mjs"
+import { resolveMode } from "../kernel/session/engine.mjs"
 import { modeIdFromLegacy } from "../kernel/core/modes.mjs"
 import { restoreModeId } from "./mode-flow.mjs"
 import { PACKAGE_VERSION } from "../version.mjs"

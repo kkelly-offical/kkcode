@@ -22,8 +22,8 @@ process.chdir(tmpProject)
 const { EventBus } = await import("../src/kernel/core/events.mjs")
 const { EVENT_TYPES } = await import("../src/kernel/core/constants.mjs")
 const { registerProvider } = await import("../src/kernel/provider/router.mjs")
-const { runHybridLongAgent } = await import("../src/session/longagent-hybrid.mjs")
-const { loadLedger } = await import("../src/session/ultra-ledger.mjs")
+const { runHybridLongAgent } = await import("../src/kernel/session/longagent-hybrid.mjs")
+const { loadLedger } = await import("../src/kernel/session/ultra-ledger.mjs")
 const { stagePlanFence, ultraConfig } = await import("./helpers/ultra-harness.mjs")
 const { installBackgroundMock, restoreBackgroundMock } = await import("./helpers/background-mock.mjs")
 const { mkdir, writeFile } = await import("node:fs/promises")
@@ -426,7 +426,7 @@ test("插话送得到 Ultra：executeTurn → runLongAgent → H5 调试循环",
   // 一次 Enter，消息进了 ui.steerPrompts 就再没人来取。而 Ultra 是跑得最久、
   // 最需要中途纠正的航道。这里走真实的 executeTurn，把 engine 的转发和 hybrid
   // 的接收一起钉住。
-  const { executeTurn } = await import("../src/session/engine.mjs")
+  const { executeTurn } = await import("../src/kernel/session/engine.mjs")
   const PLAN = {
     planId: "pst", objective: "steerable run",
     goal: {

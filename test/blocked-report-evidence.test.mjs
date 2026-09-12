@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { buildBlockedReport, renderBlockedReportText, renderBlockedReportMarkdown } from "../src/session/blocked-report.mjs"
+import { buildBlockedReport, renderBlockedReportText, renderBlockedReportMarkdown } from "../src/kernel/session/blocked-report.mjs"
 
 /**
  * 直接构造 ledger.data 的替身，不落盘 —— buildBlockedReport 的铁律之一就是

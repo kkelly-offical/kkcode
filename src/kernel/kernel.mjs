@@ -86,7 +86,7 @@ import {
   resolveMode,
   getPublicModeContract,
   newSessionId
-} from "../session/engine.mjs"
+} from "./session/engine.mjs"
 import {
   touchSession,
   updateSession,
@@ -102,11 +102,11 @@ import {
   appendAssistantMessage,
   configureSessionStore,
   flushNow
-} from "../session/store.mjs"
+} from "./session/store.mjs"
 import { configureEventLog } from "../storage/event-log.mjs"
 import { configureAuditStore } from "../storage/audit-store.mjs"
-import { compactSession } from "../session/compaction.mjs"
-import { confirmRollback, executeRollback, handleRollbackIfNeeded } from "../session/rollback.mjs"
+import { compactSession } from "./session/compaction.mjs"
+import { confirmRollback, executeRollback, handleRollbackIfNeeded } from "./session/rollback.mjs"
 import { executeTool } from "./tool/executor.mjs"
 import { BackgroundManager } from "./orchestration/background-manager.mjs"
 import { createTaskDelegate } from "./orchestration/task-scheduler.mjs"

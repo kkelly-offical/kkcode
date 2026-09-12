@@ -8,8 +8,8 @@ import {
   clearGateCache,
   evaluateStoredBranchReviewGate,
   runUsabilityGates
-} from "../src/session/usability-gates.mjs"
-import { touchSession, flushNow } from "../src/session/store.mjs"
+} from "../src/kernel/session/usability-gates.mjs"
+import { touchSession, flushNow } from "../src/kernel/session/store.mjs"
 import { captureLocalReview } from "../src/review/branch-review.mjs"
 
 let home = ""

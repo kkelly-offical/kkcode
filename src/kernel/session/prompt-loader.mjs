@@ -1,7 +1,7 @@
 import path from "node:path"
 import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
-import { renderTemplate } from "../util/template.mjs"
+import { renderTemplate } from "../../util/template.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PROMPT_DIR = path.join(__dirname, "prompt")

@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { buildAgentContinuationPrompt, summarizeAgentTransaction } from "../src/session/agent-transaction.mjs"
+import { buildAgentContinuationPrompt, summarizeAgentTransaction } from "../src/kernel/session/agent-transaction.mjs"
 
 test("summarizeAgentTransaction captures bounded task hints", () => {
   const summary = summarizeAgentTransaction({

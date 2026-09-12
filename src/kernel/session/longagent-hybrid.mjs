@@ -5,14 +5,14 @@
  * 流程: H0:Intake → H1:Preview → H2:Blueprint → H2.5:Git → H3:Scaffold → H4:Coding(并行) → H5:Debugging(回滚) → H5.5:Validation → H6:Gates → H7:GitMerge
  */
 import path from "node:path"
-import { LongAgentManager } from "../kernel/orchestration/longagent-manager.mjs"
+import { LongAgentManager } from "../orchestration/longagent-manager.mjs"
 import { processTurnLoop } from "./loop.mjs"
 import { markSessionStatus } from "./store.mjs"
-import { EventBus } from "../kernel/core/events.mjs"
-import { EVENT_TYPES } from "../kernel/core/constants.mjs"
+import { EventBus } from "../core/events.mjs"
+import { EVENT_TYPES } from "../core/constants.mjs"
 import { saveCheckpoint, loadCheckpoint, saveTaskCheckpoint, loadTaskCheckpoints, cleanupCheckpoints } from "./checkpoint.mjs"
-import { getAgent } from "../agent/agent.mjs"
-import { runStageBarrier } from "../kernel/orchestration/stage-scheduler.mjs"
+import { getAgent } from "../../agent/agent.mjs"
+import { runStageBarrier } from "../orchestration/stage-scheduler.mjs"
 import { runScaffoldPhase } from "./longagent-scaffold.mjs"
 import {
   runUsabilityGates,
@@ -35,8 +35,8 @@ import { askBlockedDecision, confirmManualCriteria } from "./ultra-interaction.m
 import { resolveUltraStatus, exitCodeForUltraStatus, sessionStatusForUltraStatus, ULTRA_STATUS } from "./ultra-status.mjs"
 import { buildBlockedReport, renderBlockedReportMarkdown } from "./blocked-report.mjs"
 import { verifyStageObjective, OBJECTIVE_MET } from "./stage-objective.mjs"
-import { hasPromptHandler, askQuestionInteractive } from "../kernel/tool/question-prompt.mjs"
-import { noteDeprecation } from "../kernel/core/deprecations.mjs"
+import { hasPromptHandler, askQuestionInteractive } from "../tool/question-prompt.mjs"
+import { noteDeprecation } from "../core/deprecations.mjs"
 import {
   isComplete,
   isLikelyActionableObjective,
@@ -59,7 +59,7 @@ import {
 import { TaskBus } from "./longagent-task-bus.mjs"
 import { loadProjectMemory, saveProjectMemory, memoryToContext, parseMemoryFromPreview } from "./longagent-project-memory.mjs"
 import YAML from "yaml"
-import * as git from "../util/git.mjs"
+import * as git from "../../util/git.mjs"
 
 import {
   validateCheckpoint,
@@ -2201,7 +2201,7 @@ async function runHybridPipeline({
     const reportCfg = ultraCfg.report || {}
     if (finalStatus !== ULTRA_STATUS.COMPLETED && reportCfg.llm_summary !== false) {
       try {
-        const { requestFast } = await import("../kernel/provider/fast-model.mjs")
+        const { requestFast } = await import("../provider/fast-model.mjs")
         const summaryText = await requestFast({
           configState,
           // 摘要模型优先级：models.ultra.report → models.fast（requestFast 内部）。

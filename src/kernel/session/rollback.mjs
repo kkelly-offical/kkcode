@@ -1,9 +1,9 @@
-import { isGitRepo } from "../util/git.mjs"
-import { restoreGhostCommit } from "../util/git.mjs"
+import { isGitRepo } from "../../util/git.mjs"
+import { restoreGhostCommit } from "../../util/git.mjs"
 import { getSessionSnapshots } from "./checkpoint.mjs"
-import { askQuestionInteractive } from "../kernel/tool/question-prompt.mjs"
-import { EventBus } from "../kernel/core/events.mjs"
-import { EVENT_TYPES } from "../kernel/core/constants.mjs"
+import { askQuestionInteractive } from "../tool/question-prompt.mjs"
+import { EventBus } from "../core/events.mjs"
+import { EVENT_TYPES } from "../core/constants.mjs"
 
 /**
  * 只识别「现在执行撤销」的命令/祈使句，不做单纯关键词搜索。

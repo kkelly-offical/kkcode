@@ -1,7 +1,7 @@
 import path from "node:path"
 import { mkdir } from "node:fs/promises"
-import { readJson, writeJsonAtomic } from "../storage/json-store.mjs"
-import { projectRootDir } from "../storage/paths.mjs"
+import { readJson, writeJsonAtomic } from "../../storage/json-store.mjs"
+import { projectRootDir } from "../../storage/paths.mjs"
 
 /**
  * Ultra 尝试台账：每一轮做了什么、失败了什么、有没有进展。

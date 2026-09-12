@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { tightenPermissionConfig } from "../src/session/loop.mjs"
-import { agentPrompt } from "../src/session/system-prompt.mjs"
+import { tightenPermissionConfig } from "../src/kernel/session/loop.mjs"
+import { agentPrompt } from "../src/kernel/session/system-prompt.mjs"
 
 test("subagent permission may tighten but never elevate global permission", () => {
   const base = { permission: { level: "accept-edits", non_tty_default: "deny" } }

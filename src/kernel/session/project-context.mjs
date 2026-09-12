@@ -1,6 +1,6 @@
 import { readFile, access, readdir } from "node:fs/promises"
 import path from "node:path"
-import { loadKnowledge } from "../knowledge/loader.mjs"
+import { loadKnowledge } from "../../knowledge/loader.mjs"
 
 async function exists(file) {
   try { await access(file); return true } catch { return false }

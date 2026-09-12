@@ -9,8 +9,8 @@ import {
   legacySessionStorePath,
   sessionShardRootPath,
   sessionCheckpointRootPath
-} from "../storage/paths.mjs"
-import { readJson, writeJson } from "../storage/json-store.mjs"
+} from "../../storage/paths.mjs"
+import { readJson, writeJson } from "../../storage/json-store.mjs"
 
 function now() {
   return Date.now()

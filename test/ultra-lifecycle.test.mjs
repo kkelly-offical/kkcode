@@ -25,7 +25,7 @@ process.chdir(tmpProject)
 const { EventBus } = await import("../src/kernel/core/events.mjs")
 const { LongAgentManager } = await import("../src/kernel/orchestration/longagent-manager.mjs")
 const { registerProvider } = await import("../src/kernel/provider/router.mjs")
-const { runHybridLongAgent } = await import("../src/session/longagent-hybrid.mjs")
+const { runHybridLongAgent } = await import("../src/kernel/session/longagent-hybrid.mjs")
 
 test.after(async () => {
   process.chdir(originalCwd)

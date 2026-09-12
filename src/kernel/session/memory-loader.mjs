@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises"
-import { memoryDir, memoryFilePath, ensureMemoryDir } from "../storage/paths.mjs"
+import { memoryDir, memoryFilePath, ensureMemoryDir } from "../../storage/paths.mjs"
 import { formatInstinctsForPrompt } from "./instinct-manager.mjs"
 
 const MAX_MEMORY_LINES = 200

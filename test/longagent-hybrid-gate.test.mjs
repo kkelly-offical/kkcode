@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { resolveHybridCompletionStatus } from "../src/session/longagent-hybrid.mjs"
+import { resolveHybridCompletionStatus } from "../src/kernel/session/longagent-hybrid.mjs"
 
 test("hybrid completion cannot pass when usability gates failed", () => {
   assert.equal(resolveHybridCompletionStatus({

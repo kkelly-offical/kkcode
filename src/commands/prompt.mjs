@@ -2,7 +2,7 @@ import path from "node:path"
 import { readdir, readFile } from "node:fs/promises"
 import { Command } from "commander"
 
-const SESSION_PROMPT_DIR = path.resolve("src/session/prompt")
+const SESSION_PROMPT_DIR = path.resolve("src/kernel/session/prompt")
 const TOOL_PROMPT_DIR = path.resolve("src/kernel/tool/prompt")
 
 async function listFiles(dir) {

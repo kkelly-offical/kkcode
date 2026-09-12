@@ -1,10 +1,10 @@
 import path from "node:path"
 import { mkdir, readdir } from "node:fs/promises"
-import { readJson, writeJson } from "../storage/json-store.mjs"
-import { userRootDir } from "../storage/paths.mjs"
-import { isGitRepo } from "../util/git.mjs"
-import { gitSnapshotTool } from "../kernel/tool/git-auto.mjs"
-import { listGhostCommits, getLatestGhostCommit } from "../storage/ghost-commit-store.mjs"
+import { readJson, writeJson } from "../../storage/json-store.mjs"
+import { userRootDir } from "../../storage/paths.mjs"
+import { isGitRepo } from "../../util/git.mjs"
+import { gitSnapshotTool } from "../tool/git-auto.mjs"
+import { listGhostCommits, getLatestGhostCommit } from "../../storage/ghost-commit-store.mjs"
 
 function checkpointDir(sessionId) {
   return path.join(userRootDir(), "checkpoints", sessionId)
@@ -215,7 +215,7 @@ export async function restoreLastSessionSnapshot(sessionId, cwd) {
   }
 
   const latest = snapshots[0]
-  const { gitRestoreTool } = await import("../kernel/tool/git-auto.mjs")
+  const { gitRestoreTool } = await import("../tool/git-auto.mjs")
 
   const result = await gitRestoreTool.execute(
     { snapshot_id: latest.id },
@@ -282,7 +282,7 @@ export class CheckpointManager {
    */
   async restore() {
     if (this.lastSnapshotId) {
-      const { gitRestoreTool } = await import("../kernel/tool/git-auto.mjs")
+      const { gitRestoreTool } = await import("../tool/git-auto.mjs")
       return await gitRestoreTool.execute(
         { snapshot_id: this.lastSnapshotId },
         { cwd: this.cwd, sessionId: this.sessionId }

@@ -1,6 +1,6 @@
 import { BackgroundManager } from "./background-manager.mjs"
 import { resolveSubagent } from "./subagent-router.mjs"
-import { flushNow, forkSession, getSession } from "../../session/store.mjs"
+import { flushNow, forkSession, getSession } from "../session/store.mjs"
 import { extractEditFeedbackFromToolEvents } from "../../observability/edit-diagnostics.mjs"
 import { createRunSpec } from "./run-spec.mjs"
 import { resolveRoleModel } from "../provider/model-roles.mjs"

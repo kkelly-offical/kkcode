@@ -25,9 +25,9 @@ const tmpHome = await mkdtemp(path.join(os.tmpdir(), "kkcode-gate-home-"))
 const tmpCwd = await mkdtemp(path.join(os.tmpdir(), "kkcode-gate-cwd-"))
 process.env.KKCODE_HOME = tmpHome
 
-const { runUsabilityGates } = await import("../src/session/usability-gates.mjs")
+const { runUsabilityGates } = await import("../src/kernel/session/usability-gates.mjs")
 const { readGate, isDecisiveGate, isPassingGateStatus, GATE_NAMES, GateContractError } =
-  await import("../src/session/gate-contract.mjs")
+  await import("../src/kernel/session/gate-contract.mjs")
 const { makeGateResult } = await import("./helpers/gate-fixture.mjs")
 
 // 从 GATE_NAMES 生成，而不是手写五项。手写的那份在 0.7.0 加入 smoke 时
