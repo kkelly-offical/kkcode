@@ -1,7 +1,7 @@
 import test, { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { modelContextLimit, shouldCompact, contextUtilization } from "../src/session/compaction.mjs"
-import { applyDiscoveredContextLimits } from "../src/provider/model-catalog.mjs"
+import { applyDiscoveredContextLimits } from "../src/kernel/provider/model-catalog.mjs"
 import { formatTokenCount } from "../src/theme/status-bar.mjs"
 
 /**

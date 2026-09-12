@@ -23,7 +23,7 @@ const originalCwd = process.cwd()
 process.chdir(tmpProject)
 
 const { packLongAgent } = await import("../src/session/engine.mjs")
-const { registerProvider } = await import("../src/provider/router.mjs")
+const { registerProvider } = await import("../src/kernel/provider/router.mjs")
 const { runHybridLongAgent } = await import("../src/session/longagent-hybrid.mjs")
 
 registerProvider("mock_passthrough", {

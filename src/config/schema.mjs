@@ -1,8 +1,8 @@
 import { VALID_MODES, VALID_PROVIDER_TYPES, VALID_REVIEW_SORT, getValidProviderTypes } from "./defaults.mjs"
 import { APPROVAL_LEVELS } from "../kernel/core/modes.mjs"
 import { noteDeprecation } from "../kernel/core/deprecations.mjs"
-import { MODEL_ROLES } from "../provider/model-roles.mjs"
-import { THINKING_TIERS } from "../provider/thinking-effort.mjs"
+import { MODEL_ROLES } from "../kernel/provider/model-roles.mjs"
+import { THINKING_TIERS } from "../kernel/provider/thinking-effort.mjs"
 import { STATUS_SEGMENT_IDS } from "../theme/status-bar.mjs"
 
 /**

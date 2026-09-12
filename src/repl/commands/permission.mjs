@@ -22,7 +22,7 @@ import {
   describeRule
 } from "../../kernel/permission/learned-rules.mjs"
 import { loadCustomCommands } from "../../command/custom-commands.mjs"
-import { escapeTerminalText } from "../../provider/model-id.mjs"
+import { escapeTerminalText } from "../../kernel/provider/model-id.mjs"
 import { approvalFromLegacy } from "../../kernel/core/modes.mjs"
 import { applyPermissionLevel, nextPermissionLevel } from "../permission-flow.mjs"
 import {

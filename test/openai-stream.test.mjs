@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { requestOpenAIStream } from "../src/provider/openai.mjs"
+import { requestOpenAIStream } from "../src/kernel/provider/openai.mjs"
 
 function makeSSEStream(chunks) {
   const encoder = new TextEncoder()

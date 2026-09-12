@@ -18,8 +18,8 @@ import YAML from "yaml"
 const tmpHome = await mkdtemp(path.join(os.tmpdir(), "kkcode-wizard-key-"))
 process.env.KKCODE_HOME = tmpHome
 
-const { runProviderAddForm } = await import("../src/provider/wizard-form.mjs")
-const { saveProviderConfig } = await import("../src/provider/wizard.mjs")
+const { runProviderAddForm } = await import("../src/kernel/provider/wizard-form.mjs")
+const { saveProviderConfig } = await import("../src/kernel/provider/wizard.mjs")
 
 /** 逐题回答；没写的题用它的 default（等于直接回车）。 */
 const scriptedAsk = (answerBook) => async ({ questions }) => {

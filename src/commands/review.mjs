@@ -25,7 +25,7 @@ import * as githubReviewApi from "../github/api.mjs"
 import { PermissionEngine } from "../kernel/permission/engine.mjs"
 import { appendAuditEntry } from "../storage/audit-store.mjs"
 import { startAuditSpan, summarizeAuditContent } from "../audit/event.mjs"
-import { escapeTerminalText } from "../provider/model-id.mjs"
+import { escapeTerminalText } from "../kernel/provider/model-id.mjs"
 
 function getGitDiff() {
   try {

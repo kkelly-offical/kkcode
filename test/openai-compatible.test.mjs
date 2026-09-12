@@ -1,7 +1,7 @@
 import test, { before, after } from "node:test"
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
-import { listProviders, registerProvider, requestProvider } from "../src/provider/router.mjs"
+import { listProviders, registerProvider, requestProvider } from "../src/kernel/provider/router.mjs"
 
 function startMockServer(handler) {
   return new Promise((resolve) => {

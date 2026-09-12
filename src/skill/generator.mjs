@@ -1,6 +1,6 @@
 import { writeFile, mkdir } from "node:fs/promises"
 import { join, basename } from "node:path"
-import { requestProvider } from "../provider/router.mjs"
+import { requestProvider } from "../kernel/provider/router.mjs"
 import { userRootDir } from "../storage/paths.mjs"
 
 const SKILL_GEN_SYSTEM = `You are a skill generator for kkcode, a terminal AI coding agent.

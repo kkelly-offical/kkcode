@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { requestProvider } from "../src/provider/router.mjs"
+import { requestProvider } from "../src/kernel/provider/router.mjs"
 import { DEFAULT_CONFIG } from "../src/config/defaults.mjs"
 
 test("provider router accepts provider/model formatted model id", async () => {

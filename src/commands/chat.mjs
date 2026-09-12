@@ -6,7 +6,7 @@ import { ensureEventSinks, formatPublicModeSummary, getPublicModeContract, resol
 import { emitRouteDecisionEvent } from "../session/routing-observability.mjs"
 import { renderStatusBar } from "../theme/status-bar.mjs"
 import { applyCommandTemplate, loadCustomCommands } from "../command/custom-commands.mjs"
-import { listProviders } from "../provider/router.mjs"
+import { listProviders } from "../kernel/provider/router.mjs"
 import { createOutputReporter, resolveOutputFormat } from "../cli/output-format.mjs"
 import { MODE_IDS, DEFAULT_MODE_ID, modeIdFromLegacy, laneOf, approvalOf, getMode } from "../kernel/core/modes.mjs"
 import { applyPermissionLevel } from "../repl/permission-flow.mjs"

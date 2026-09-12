@@ -8,8 +8,8 @@ import {
   clearModelCatalogMemoryCache,
   discoverModelsForProvider,
   resolveProviderConnection
-} from "../src/provider/model-catalog.mjs"
-import { escapeTerminalText, validateModelId } from "../src/provider/model-id.mjs"
+} from "../src/kernel/provider/model-catalog.mjs"
+import { escapeTerminalText, validateModelId } from "../src/kernel/provider/model-id.mjs"
 import { validateConfig } from "../src/config/schema.mjs"
 
 function listen(handler) {

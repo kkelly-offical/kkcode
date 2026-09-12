@@ -21,7 +21,7 @@ process.chdir(tmpProject)
 
 const { EventBus } = await import("../src/kernel/core/events.mjs")
 const { EVENT_TYPES } = await import("../src/kernel/core/constants.mjs")
-const { registerProvider } = await import("../src/provider/router.mjs")
+const { registerProvider } = await import("../src/kernel/provider/router.mjs")
 const { runHybridLongAgent } = await import("../src/session/longagent-hybrid.mjs")
 const { loadLedger } = await import("../src/session/ultra-ledger.mjs")
 const { stagePlanFence, ultraConfig } = await import("./helpers/ultra-harness.mjs")

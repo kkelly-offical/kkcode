@@ -16,7 +16,7 @@
 import { noteDeprecation } from "../../kernel/core/deprecations.mjs"
 import { modeIdFromLegacy, MODE_IDS } from "../../kernel/core/modes.mjs"
 import { formatModeBadge } from "../mode-flow.mjs"
-import { escapeTerminalText } from "../../provider/model-id.mjs"
+import { escapeTerminalText } from "../../kernel/provider/model-id.mjs"
 
 /** 裸命令直达的航道。名字即传给 applyModeSelection 的 modeId。 */
 const DIRECT_MODES = [

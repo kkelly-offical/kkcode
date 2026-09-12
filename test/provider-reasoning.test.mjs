@@ -5,10 +5,10 @@ import {
   countTokensOpenAI,
   requestOpenAI,
   requestOpenAIStream
-} from "../src/provider/openai.mjs"
-import { requestAnthropic } from "../src/provider/anthropic.mjs"
-import { requestOllama } from "../src/provider/ollama.mjs"
-import { requestWithRetry } from "../src/provider/retry-policy.mjs"
+} from "../src/kernel/provider/openai.mjs"
+import { requestAnthropic } from "../src/kernel/provider/anthropic.mjs"
+import { requestOllama } from "../src/kernel/provider/ollama.mjs"
+import { requestWithRetry } from "../src/kernel/provider/retry-policy.mjs"
 
 function startServer(handler) {
   return new Promise((resolve) => {

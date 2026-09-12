@@ -1,4 +1,4 @@
-import { noteDeprecation } from "../kernel/core/deprecations.mjs"
+import { noteDeprecation } from "../core/deprecations.mjs"
 
 /**
  * 模型角色解析。

@@ -1,7 +1,7 @@
 import { newId } from "../kernel/core/types.mjs"
 import { EventBus } from "../kernel/core/events.mjs"
 import { EVENT_TYPES } from "../kernel/core/constants.mjs"
-import { requestProviderStream, countTokensProvider } from "../provider/router.mjs"
+import { requestProviderStream, countTokensProvider } from "../kernel/provider/router.mjs"
 import { ToolRegistry } from "../kernel/tool/registry.mjs"
 import { executeTool } from "../kernel/tool/executor.mjs"
 import { isToolSuccess } from "../kernel/core/types.mjs"

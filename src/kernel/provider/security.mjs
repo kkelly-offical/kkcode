@@ -1,5 +1,5 @@
-import { ProviderError } from "../kernel/core/errors.mjs"
-import { checkWorkspaceTrust } from "../kernel/permission/workspace-trust.mjs"
+import { ProviderError } from "../core/errors.mjs"
+import { checkWorkspaceTrust } from "../permission/workspace-trust.mjs"
 
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value || {}, key)
 

@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { compactSession, buildCompactionPrompt, collectEvidenceLedger, extractCompactionSummary } from "../src/session/compaction.mjs"
-import { registerProvider } from "../src/provider/router.mjs"
+import { registerProvider } from "../src/kernel/provider/router.mjs"
 import { appendAssistantMessage, appendMessage, appendUserMessage, getSession, touchSession } from "../src/session/store.mjs"
 
 let tmpDir

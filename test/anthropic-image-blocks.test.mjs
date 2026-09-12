@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { requestAnthropic } from "../src/provider/anthropic.mjs"
+import { requestAnthropic } from "../src/kernel/provider/anthropic.mjs"
 
 function stubFetch(capture) {
   return async (_url, options) => {

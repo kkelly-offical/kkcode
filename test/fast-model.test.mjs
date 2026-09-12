@@ -1,9 +1,9 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { resolveRoleModel, hasFastModel, providerDefaultModel, MODEL_ROLES } from "../src/provider/model-roles.mjs"
+import { resolveRoleModel, hasFastModel, providerDefaultModel, MODEL_ROLES } from "../src/kernel/provider/model-roles.mjs"
 import {
   requestFast, fastModelId, isFastModelConfigured, fastModelIssues, resetFastModelHealth
-} from "../src/provider/fast-model.mjs"
+} from "../src/kernel/provider/fast-model.mjs"
 import { resetDeprecations } from "../src/kernel/core/deprecations.mjs"
 
 function makeConfig(overrides = {}) {

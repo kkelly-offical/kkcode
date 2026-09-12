@@ -1,7 +1,7 @@
 import path from "node:path"
 import { readFile, writeFile, mkdir, chmod } from "node:fs/promises"
 import YAML from "yaml"
-import { userRootDir } from "../storage/paths.mjs"
+import { userRootDir } from "../../storage/paths.mjs"
 
 // --- 标准厂商预设 ---
 export const VENDOR_PRESETS = {

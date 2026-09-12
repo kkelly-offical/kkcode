@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { requestOpenAIStream } from "../src/provider/openai.mjs"
-import { requestAnthropicStream } from "../src/provider/anthropic.mjs"
+import { requestOpenAIStream } from "../src/kernel/provider/openai.mjs"
+import { requestAnthropicStream } from "../src/kernel/provider/anthropic.mjs"
 
 function bodyStream(text) {
   const encoder = new TextEncoder()

@@ -1,6 +1,6 @@
 import { requestAnthropic, requestAnthropicStream, countTokensAnthropic } from "./anthropic.mjs"
 import { requestOpenAI, requestOpenAIStream, countTokensOpenAI } from "./openai.mjs"
-import { ProviderError } from "../kernel/core/errors.mjs"
+import { ProviderError } from "../core/errors.mjs"
 
 function implementationFor(protocol) {
   if (protocol === "openai") {

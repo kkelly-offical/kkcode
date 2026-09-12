@@ -7,12 +7,12 @@ import {
   assertCredentialTransport,
   assertProviderOutboundAllowed,
   projectProviderControlReasons
-} from "../src/provider/security.mjs"
+} from "../src/kernel/provider/security.mjs"
 import {
   clearModelCatalogMemoryCache,
   discoverModelsForProvider
-} from "../src/provider/model-catalog.mjs"
-import { requestProvider } from "../src/provider/router.mjs"
+} from "../src/kernel/provider/model-catalog.mjs"
+import { requestProvider } from "../src/kernel/provider/router.mjs"
 import { persistTrust, revokeTrust } from "../src/kernel/permission/workspace-trust.mjs"
 import { trustFilePath } from "../src/storage/paths.mjs"
 

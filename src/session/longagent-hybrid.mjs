@@ -2201,7 +2201,7 @@ async function runHybridPipeline({
     const reportCfg = ultraCfg.report || {}
     if (finalStatus !== ULTRA_STATUS.COMPLETED && reportCfg.llm_summary !== false) {
       try {
-        const { requestFast } = await import("../provider/fast-model.mjs")
+        const { requestFast } = await import("../kernel/provider/fast-model.mjs")
         const summaryText = await requestFast({
           configState,
           // 摘要模型优先级：models.ultra.report → models.fast（requestFast 内部）。

@@ -334,7 +334,7 @@ export const DEFAULT_CONFIG = {
 
 export const VALID_PROVIDER_TYPES = ["openai", "anthropic", "ollama", "openai-compatible", "gateway"]
 
-import { listProviders } from "../provider/router.mjs"
+import { listProviders } from "../kernel/provider/router.mjs"
 export function getValidProviderTypes() {
   return listProviders()
 }

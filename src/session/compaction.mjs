@@ -1,4 +1,4 @@
-import { requestProvider } from "../provider/router.mjs"
+import { requestProvider } from "../kernel/provider/router.mjs"
 import { getConversationHistory, replaceMessages } from "./store.mjs"
 import { HookBus } from "../plugin/hook-bus.mjs"
 import { saveCheckpoint } from "./checkpoint.mjs"

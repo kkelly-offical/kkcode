@@ -8,7 +8,7 @@ import {
   registerProvider,
   requestProvider,
   requestProviderStream
-} from "../src/provider/router.mjs"
+} from "../src/kernel/provider/router.mjs"
 import {
   configureAuditStore,
   listAuditEntries,

@@ -24,9 +24,9 @@ import { createPickerFilterState, resolvePickerChoice } from "../ui/overlay-sele
 import { createModePickerState, resolveModeId, MODE_PICKER_CHOICES } from "./mode-flow.mjs"
 import { createPolicyPickerState, POLICY_CHOICES, applyPolicyChoice } from "./permission-flow.mjs"
 import { stripAnsi } from "../util/frame-primitives.mjs"
-import { THINKING_TIERS, normalizeThinkingTier } from "../provider/thinking-effort.mjs"
+import { THINKING_TIERS, normalizeThinkingTier } from "../kernel/provider/thinking-effort.mjs"
 import { modelThinkingSupport } from "./provider-catalog.mjs"
-import { saveProviderConfig } from "../provider/wizard.mjs"
+import { saveProviderConfig } from "../kernel/provider/wizard.mjs"
 
 /** 思考档位的展示行。desc 说的是**语义**（预算比例），不是各家参数名。 */
 export const THINKING_TIER_CHOICES = Object.freeze({

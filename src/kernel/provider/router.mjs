@@ -3,18 +3,18 @@ import { requestOpenAI, requestOpenAIStream, countTokensOpenAI } from "./openai.
 import { request as requestOAICompat, requestStream as requestStreamOAICompat } from "./openai-compatible.mjs"
 import { requestOllama, requestOllamaStream } from "./ollama.mjs"
 import { requestGateway, requestGatewayStream, countTokensGateway } from "./gateway.mjs"
-import { ProviderError } from "../kernel/core/errors.mjs"
-import { EventBus } from "../kernel/core/events.mjs"
-import { EVENT_TYPES } from "../kernel/core/constants.mjs"
-import { startAuditSpan } from "../audit/event.mjs"
-import { createRequestContext } from "../http/identity.mjs"
+import { ProviderError } from "../core/errors.mjs"
+import { EventBus } from "../core/events.mjs"
+import { EVENT_TYPES } from "../core/constants.mjs"
+import { startAuditSpan } from "../../audit/event.mjs"
+import { createRequestContext } from "../../http/identity.mjs"
 import {
   assertCredentialTransport,
   assertProviderOutboundAllowed
 } from "./security.mjs"
 import { validateModelId } from "./model-id.mjs"
 import { resolveThinkingParams } from "./thinking-effort.mjs"
-import { noteDeprecation } from "../kernel/core/deprecations.mjs"
+import { noteDeprecation } from "../core/deprecations.mjs"
 
 function classifyProviderFailure(error) {
   const cls = String(error?.errorClass || "").toLowerCase()

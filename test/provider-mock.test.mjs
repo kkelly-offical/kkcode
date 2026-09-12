@@ -1,7 +1,7 @@
 import test, { before, after } from "node:test"
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
-import { requestOpenAI, requestOpenAIStream } from "../src/provider/openai.mjs"
+import { requestOpenAI, requestOpenAIStream } from "../src/kernel/provider/openai.mjs"
 
 function startMockServer(handler) {
   return new Promise((resolve) => {

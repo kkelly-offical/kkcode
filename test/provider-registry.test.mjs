@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { registerProvider, listProviders, getProvider } from "../src/provider/router.mjs"
+import { registerProvider, listProviders, getProvider } from "../src/kernel/provider/router.mjs"
 
 test("listProviders includes built-in openai and anthropic", () => {
   const providers = listProviders()

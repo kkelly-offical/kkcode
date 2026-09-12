@@ -23,7 +23,7 @@ process.env.KKCODE_HOME = tmpHome
 const originalCwd = process.cwd()
 process.chdir(tmpProject)
 
-const { registerProvider } = await import("../src/provider/router.mjs")
+const { registerProvider } = await import("../src/kernel/provider/router.mjs")
 const { runHybridLongAgent } = await import("../src/session/longagent-hybrid.mjs")
 const { LongAgentManager } = await import("../src/orchestration/longagent-manager.mjs")
 const { createScriptedProvider, stagePlanFence, captureEvents, ultraConfig } =

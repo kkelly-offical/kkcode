@@ -6,8 +6,8 @@ import {
   resolveThinkingParams,
   thinkingBudgetTokens,
   supportsThinking
-} from "../src/provider/thinking-effort.mjs"
-import { applyDiscoveredCapabilities } from "../src/provider/model-catalog.mjs"
+} from "../src/kernel/provider/thinking-effort.mjs"
+import { applyDiscoveredCapabilities } from "../src/kernel/provider/model-catalog.mjs"
 
 /**
  * 0.6.2：思考强度分四档，预算按模型自身能力推算而不是写死。
