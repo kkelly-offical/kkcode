@@ -1,6 +1,6 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises"
 import path from "node:path"
-import { trustFilePath } from "../storage/paths.mjs"
+import { trustFilePath } from "../../storage/paths.mjs"
 
 async function readTrustFile(cwd) {
   try {

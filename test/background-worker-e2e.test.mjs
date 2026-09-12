@@ -11,7 +11,7 @@ import { EVENT_TYPES } from "../src/kernel/core/constants.mjs"
 import { appendAssistantMessage, appendUserMessage, flushNow, touchSession } from "../src/session/store.mjs"
 import { readJson } from "../src/storage/json-store.mjs"
 import { sessionDataPath, sessionIndexPath } from "../src/storage/paths.mjs"
-import { persistTrust } from "../src/permission/workspace-trust.mjs"
+import { persistTrust } from "../src/kernel/permission/workspace-trust.mjs"
 
 let home = ""
 let project = ""

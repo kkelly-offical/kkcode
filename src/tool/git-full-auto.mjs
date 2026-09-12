@@ -6,7 +6,7 @@ import {
   commitAll as gitCommitAll
 } from "../util/git.mjs"
 import { gitSnapshotTool } from "./git-auto.mjs"
-import { isFullAutoMode, getPolicyMode } from "../permission/exec-policy.mjs"
+import { isFullAutoMode, getPolicyMode } from "../kernel/permission/exec-policy.mjs"
 
 /**
  * 全自动化 Git 操作工具

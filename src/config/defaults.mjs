@@ -1,4 +1,4 @@
-import { DEFAULT_SENSITIVE_FILE_PATTERNS } from "../permission/file-edit-policy.mjs"
+import { DEFAULT_SENSITIVE_FILE_PATTERNS } from "../kernel/permission/file-edit-policy.mjs"
 
 export const DEFAULT_CONFIG = {
   config_version: 1,

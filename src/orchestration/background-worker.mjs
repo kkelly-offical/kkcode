@@ -6,7 +6,7 @@ import { createKernel } from "../kernel/index.mjs"
 import { flushNow } from "../session/store.mjs"
 import { extractEditFeedbackFromToolEvents } from "../observability/edit-diagnostics.mjs"
 import { INTERRUPTION_REASONS, normalizeInterruptionReason } from "./interruption-reason.mjs"
-import { checkWorkspaceTrust } from "../permission/workspace-trust.mjs"
+import { checkWorkspaceTrust } from "../kernel/permission/workspace-trust.mjs"
 import { removeDetachedWorktree } from "./worktree-handoff.mjs"
 import * as git from "../util/git.mjs"
 
@@ -153,7 +153,7 @@ async function runDelegateTask(task, signal) {
     // 项目配置里定义了 provider 的仓库在 worktree 里全部拒绝推理 ——
     // worker 空转、任务被静默错误检测拦下。清理时撤销（见 removeDetachedWorktree）。
     if (inheritedTrustState?.trusted === true) {
-      const { persistTrust } = await import("../permission/workspace-trust.mjs")
+      const { persistTrust } = await import("../kernel/permission/workspace-trust.mjs")
       await persistTrust(effectiveCwd).catch(() => {})
     }
   }

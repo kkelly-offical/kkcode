@@ -2,7 +2,7 @@ import path from "node:path"
 import { mkdir } from "node:fs/promises"
 import { userRootDir } from "../storage/paths.mjs"
 import { readJson, writeJson } from "../storage/json-store.mjs"
-import { findProtectedTarget } from "../permission/protected-paths.mjs"
+import { findProtectedTarget } from "../kernel/permission/protected-paths.mjs"
 import {
   isGitRepo,
   createGhostCommit,

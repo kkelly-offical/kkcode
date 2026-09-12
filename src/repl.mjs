@@ -26,8 +26,8 @@ import { renderReplDashboard } from "./ui/repl-dashboard.mjs"
 import { buildRouteFeedback } from "./ui/repl-route-feedback.mjs"
 import { renderReplStatusLine, renderStartupScreen } from "./ui/repl-status-view.mjs"
 import { paint } from "./theme/color.mjs"
-import { PermissionEngine } from "./permission/engine.mjs"
-import { setPermissionPromptHandler } from "./permission/prompt.mjs"
+import { PermissionEngine } from "./kernel/permission/engine.mjs"
+import { setPermissionPromptHandler } from "./kernel/permission/prompt.mjs"
 import { setQuestionPromptHandler } from "./tool/question-prompt.mjs"
 import { promptWorkspaceTrust } from "./repl/trust-prompt.mjs"
 import { createActivityRenderer } from "./ui/activity-renderer.mjs"
@@ -97,7 +97,7 @@ import {
   switchModeInPlace,
   MODE_PICKER_CHOICES
 } from "./repl/mode-flow.mjs"
-import { describeRule } from "./permission/learned-rules.mjs"
+import { describeRule } from "./kernel/permission/learned-rules.mjs"
 import { createInputDecoderChain } from "./repl/input-decoders.mjs"
 import { parseOsc11Response, isLightBackground, OSC11_QUERY } from "./theme/background-probe.mjs"
 import { createThemeSwitcher, createBackgroundProbeHandler } from "./repl/theme-switch.mjs"
@@ -1927,7 +1927,7 @@ export async function startRepl({ trust = false } = {}) {
   }
 
   // Trust check BEFORE splash — readline prompt must not compete with splash screen clearing
-  const { checkWorkspaceTrust } = await import("./permission/workspace-trust.mjs")
+  const { checkWorkspaceTrust } = await import("./kernel/permission/workspace-trust.mjs")
   // 阶段 3b：内核的信任探测不再碰 TTY，交互提问由前端注入（行式提问，见
   // repl/trust-prompt.mjs）；headless 宿主注入不了 prompt，得到确定性 untrusted。
   const trustState = await checkWorkspaceTrust({

@@ -1,8 +1,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { checkProtectedPath, findProtectedAccess, bashTouchesProtected } from "../src/permission/protected-paths.mjs"
-import { evaluatePermission, toolCapability } from "../src/permission/rules.mjs"
-import { getSensitiveFilePatterns } from "../src/permission/file-edit-policy.mjs"
+import { checkProtectedPath, findProtectedAccess, bashTouchesProtected } from "../src/kernel/permission/protected-paths.mjs"
+import { evaluatePermission, toolCapability } from "../src/kernel/permission/rules.mjs"
+import { getSensitiveFilePatterns } from "../src/kernel/permission/file-edit-policy.mjs"
 
 test("protected paths cover the four classes that git cannot undo", () => {
   for (const p of [".git/config", ".git/hooks/pre-commit", "sub/.git/index"]) {

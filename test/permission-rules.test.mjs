@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { evaluatePermission } from "../src/permission/rules.mjs"
+import { evaluatePermission } from "../src/kernel/permission/rules.mjs"
 
 test("sensitive edit paths are escalated from allow to ask", () => {
   const decision = evaluatePermission({

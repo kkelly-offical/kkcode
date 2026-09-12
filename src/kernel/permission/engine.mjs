@@ -1,11 +1,11 @@
-import { PermissionError } from "../kernel/core/errors.mjs"
-import { EVENT_TYPES } from "../kernel/core/constants.mjs"
-import { defaultEventBus } from "../kernel/core/events.mjs"
-import { deprecatedSingletonAlias } from "../kernel/core/deprecations.mjs"
+import { PermissionError } from "../core/errors.mjs"
+import { EVENT_TYPES } from "../core/constants.mjs"
+import { defaultEventBus } from "../core/events.mjs"
+import { deprecatedSingletonAlias } from "../core/deprecations.mjs"
 import { evaluatePermission } from "./rules.mjs"
 import { defaultPermissionPromptChannel } from "./prompt.mjs"
-import { safeAppendAuditEntry } from "../storage/audit-store.mjs"
-import { sanitizeAuditMetadata, summarizeAuditContent } from "../audit/event.mjs"
+import { safeAppendAuditEntry } from "../../storage/audit-store.mjs"
+import { sanitizeAuditMetadata, summarizeAuditContent } from "../../audit/event.mjs"
 
 function cacheKey(tool, pattern) {
   return `${tool}::${pattern || "*"}`

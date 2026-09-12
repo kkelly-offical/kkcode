@@ -41,7 +41,7 @@ async function patchTaskResult(taskId, resultPatch, extra = {}) {
  */
 export async function removeDetachedWorktree(worktree, repoCwd) {
   try {
-    const { revokeTrust } = await import("../permission/workspace-trust.mjs")
+    const { revokeTrust } = await import("../kernel/permission/workspace-trust.mjs")
     await revokeTrust(worktree.path)
   } catch { /* 撤不掉也只是留下一条无害的 trusted:false 记录 */ }
   try {

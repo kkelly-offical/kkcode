@@ -16,7 +16,7 @@ import { dirname } from "node:path"
 import YAML from "yaml"
 import { userConfigCandidates, projectConfigCandidates } from "../storage/paths.mjs"
 import { mergeConfigObject } from "../config/merge.mjs"
-import { appendLearnedRule, buildLearnedRule } from "../permission/learned-rules.mjs"
+import { appendLearnedRule, buildLearnedRule } from "../kernel/permission/learned-rules.mjs"
 
 export function parseConfigByPath(filePath, raw) {
   if (filePath.endsWith(".json")) return JSON.parse(raw)

@@ -2,7 +2,7 @@ import { Command } from "commander"
 import { printContextWarnings } from "../context.mjs"
 import { createKernel } from "../kernel/index.mjs"
 import { loadTheme } from "../theme/load-theme.mjs"
-import { PermissionEngine } from "../permission/engine.mjs"
+import { PermissionEngine } from "../kernel/permission/engine.mjs"
 
 export function createPermissionCommand() {
   const cmd = new Command("permission").description("inspect permission rules and session grants")

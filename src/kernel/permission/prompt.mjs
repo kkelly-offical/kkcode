@@ -1,4 +1,4 @@
-import { noteDeprecation } from "../kernel/core/deprecations.mjs"
+import { noteDeprecation } from "../core/deprecations.mjs"
 
 /**
  * 审批提示通道工厂（1.0.0 阶段 2a）：customPromptHandler 槽位收编为实例字段

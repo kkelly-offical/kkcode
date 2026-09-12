@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
-import { evaluatePermission, toolCapability } from "../src/permission/rules.mjs"
+import { evaluatePermission, toolCapability } from "../src/kernel/permission/rules.mjs"
 
 /**
  * 技能可调用性。
@@ -105,7 +105,7 @@ test("the permission layer can see which skill is being invoked", async () => {
 test("a non-interactive denial explains itself instead of blaming the user", async () => {
   // 「you declined it」在 kkcode chat / CI / 管道输入里是假的：那里没有人被问过。
   // 照抄交互文案会让人去找一个根本不存在的审批弹窗。
-  const src = await readFile(path.join(ROOT, "src", "permission", "engine.mjs"), "utf8")
+  const src = await readFile(path.join(ROOT, "src", "kernel", "permission", "engine.mjs"), "utf8")
   const idx = src.indexOf("you declined it")
   assert.notEqual(idx, -1, "找不到交互文案 —— 这条断言需要更新")
   const around = src.slice(Math.max(0, idx - 600), idx + 600)
@@ -114,7 +114,7 @@ test("a non-interactive denial explains itself instead of blaming the user", asy
 })
 
 test("canAskInteractively is what decides, not a guess about stdout alone", async () => {
-  const { canAskInteractively, setPermissionPromptHandler } = await import("../src/permission/prompt.mjs")
+  const { canAskInteractively, setPermissionPromptHandler } = await import("../src/kernel/permission/prompt.mjs")
   setPermissionPromptHandler(null)
   const withoutHandler = canAskInteractively()
   setPermissionPromptHandler(() => "deny")

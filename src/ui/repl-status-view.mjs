@@ -1,5 +1,5 @@
 import { renderStatusBar } from "../theme/status-bar.mjs"
-import { normalizePermissionLevel } from "../permission/rules.mjs"
+import { normalizePermissionLevel } from "../kernel/permission/rules.mjs"
 import { renderReplDashboard, renderReplLogo, renderStartupHint } from "./repl-dashboard.mjs"
 import { formatRuntimeStateText } from "./repl-turn-summary.mjs"
 import { renderOperatorPanel } from "./repl-operator-panel.mjs"

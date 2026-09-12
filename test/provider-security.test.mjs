@@ -13,7 +13,7 @@ import {
   discoverModelsForProvider
 } from "../src/provider/model-catalog.mjs"
 import { requestProvider } from "../src/provider/router.mjs"
-import { persistTrust, revokeTrust } from "../src/permission/workspace-trust.mjs"
+import { persistTrust, revokeTrust } from "../src/kernel/permission/workspace-trust.mjs"
 import { trustFilePath } from "../src/storage/paths.mjs"
 
 let workspace

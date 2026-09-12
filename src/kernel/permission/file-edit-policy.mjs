@@ -1,4 +1,4 @@
-import { globToRegex, normalizePath } from "../util/glob.mjs"
+import { globToRegex, normalizePath } from "../../util/glob.mjs"
 
 /** 这里的模式参数在前，且不支持 `!` 取反，因此不直接复用 util 的 matchGlob。 */
 function matchSensitiveGlob(pattern, value) {

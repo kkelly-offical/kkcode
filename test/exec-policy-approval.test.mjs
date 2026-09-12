@@ -1,6 +1,6 @@
 import test, { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { checkBashAllowed } from "../src/permission/exec-policy.mjs"
+import { checkBashAllowed } from "../src/kernel/permission/exec-policy.mjs"
 
 /**
  * 0.6.2：exec-policy 终于认识审批档。
