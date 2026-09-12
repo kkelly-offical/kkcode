@@ -10,7 +10,7 @@
  * 用法：
  *   node scripts/check-import-cycles.mjs                      # 扫描 src/，有环 exit 1
  *   node scripts/check-import-cycles.mjs --root src           # 指定扫描根
- *   node scripts/check-import-cycles.mjs --only src/session/  # 只报告触及该前缀的环
+ *   node scripts/check-import-cycles.mjs --only src/kernel/session/  # 只报告触及该前缀的环
  *   node scripts/check-import-cycles.mjs --json               # 机器可读输出
  *
  * 同时作为库被 test/session-import-cycle.test.mjs 复用（session/ 无环防回归）。
@@ -175,7 +175,7 @@ function parseArgs(argv) {
     else if (argv[i] === "--only") options.only = argv[++i]
     else if (argv[i] === "--json") options.json = true
     else if (argv[i] === "--help" || argv[i] === "-h") {
-      console.log("usage: node scripts/check-import-cycles.mjs [--root src] [--only src/session/] [--json]")
+      console.log("usage: node scripts/check-import-cycles.mjs [--root src] [--only src/kernel/session/] [--json]")
       process.exit(0)
     } else {
       console.error(`unknown argument: ${argv[i]}`)

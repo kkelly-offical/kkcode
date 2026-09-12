@@ -3,7 +3,7 @@
  *
  * ## 与既有图片链路的关系（读这一段再改代码）
  *
- * 在此之前 `@` 在本项目里**只有一个语义**：`src/tool/image-util.mjs` 的 `extractImageRefs`
+ * 在此之前 `@` 在本项目里**只有一个语义**：`src/kernel/tool/image-util.mjs` 的 `extractImageRefs`
  * 把 `@shot.png` 抽成图片附件，并**从文本里删掉**这个引用。那条链路必须原样活着。
  *
  * 所以这里的规矩是：**图片扩展名一律不碰**。`expandFileMentions` 见到 `@a.png` 直接跳过，

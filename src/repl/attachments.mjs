@@ -122,7 +122,7 @@ export function markerSpanAt(text, index) {
   return null
 }
 
-/** 交给下游的 image 内容块。字段与 `src/tool/image-util.mjs` 产出的块保持一致。 */
+/** 交给下游的 image 内容块。字段与 `src/kernel/tool/image-util.mjs` 产出的块保持一致。 */
 function toImageBlock(entry) {
   const block = { type: "image", data: entry.data, mediaType: entry.mediaType }
   if (entry.path !== undefined) block.path = entry.path
