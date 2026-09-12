@@ -5,7 +5,7 @@ import {
   THINKING_PREVIEW_ROWS,
   THINKING_PREVIEW_PAGE_CHARS
 } from "../src/ui/thinking-preview.mjs"
-import { displayWidth } from "../src/repl/frame-primitives.mjs"
+import { displayWidth } from "../src/util/frame-primitives.mjs"
 
 /**
  * 0.6.2：思考中显示两行灰字的实时尾部。

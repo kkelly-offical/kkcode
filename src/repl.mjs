@@ -7,7 +7,9 @@ import { createInterface } from "node:readline/promises"
 import { emitKeypressEvents } from "node:readline"
 import { readFile } from "node:fs/promises"
 import { basename, join } from "node:path"
-import { bootstrapKernelExtensions, buildContext, printContextWarnings } from "./context.mjs"
+import { printContextWarnings } from "./context.mjs"
+import { createKernel } from "./kernel/index.mjs"
+import { loadTheme } from "./theme/load-theme.mjs"
 import { ensureEventSinks, newSessionId, routeMode } from "./session/engine.mjs"
 import { summarizeRouteDecision } from "./session/engine.mjs"
 import { buildAgentContinuationPrompt, summarizeAgentTransaction } from "./session/agent-transaction.mjs"
@@ -16,13 +18,10 @@ import {
   emitAgentContinuationResumed,
   emitRouteDecisionEvent
 } from "./session/routing-observability.mjs"
-import { listProviders } from "./provider/router.mjs"
 import { loadCustomCommands, applyCommandTemplate } from "./command/custom-commands.mjs"
-import { SkillRegistry } from "./skill/registry.mjs"
 import { renderMarkdown } from "./theme/markdown.mjs"
 import { listSessions, appendMessage } from "./session/store.mjs"
 import { runShellPassthrough, formatForTranscript as formatShellForTranscript, formatForContext as formatShellForContext } from "./repl/shell-passthrough.mjs"
-import { McpRegistry } from "./mcp/registry.mjs"
 import { renderReplDashboard } from "./ui/repl-dashboard.mjs"
 import { buildRouteFeedback } from "./ui/repl-route-feedback.mjs"
 import { renderReplStatusLine, renderStartupScreen } from "./ui/repl-status-view.mjs"
@@ -51,8 +50,8 @@ import { runReplController } from "./repl/controller-entry.mjs"
 import { collectInput, resolveHistoryNavigation } from "./repl/input-engine.mjs"
 export { collectInput } from "./repl/input-engine.mjs"
 // 帧度量与拼装原语。此前 repl.mjs 自带一份，与 repl-dashboard / activity-renderer /
-// repl-help / text-layout 各自的副本互不一致 —— 见 frame-primitives.mjs 的说明。
-import { stripAnsi, displayWidth, pageSize } from "./repl/frame-primitives.mjs"
+// repl-help / text-layout 各自的副本互不一致 —— 见 util/frame-primitives.mjs 的说明。
+import { stripAnsi, displayWidth, pageSize } from "./util/frame-primitives.mjs"
 import { buildFrame as buildFrameLines } from "./repl/frame-builder.mjs"
 import { normalizeSlashAlias } from "./repl/slash-router.mjs"
 // 补全候选（斜杠 / 技能 / `@` 文件）的唯一来源。此前候选在四处独立求值 ——
@@ -110,7 +109,7 @@ import {
   renderTerminalFrame,
   resolveTerminalFeatures
 } from "./repl/terminal-protocol.mjs"
-import { moveGraphemeCursor, splitTextByCellRange } from "./repl/text-layout.mjs"
+import { moveGraphemeCursor, splitTextByCellRange } from "./util/text-layout.mjs"
 import { copyTerminalText } from "./repl/clipboard.mjs"
 import { createTranscriptModel } from "./ui/transcript-model.mjs"
 import { createToastStore } from "./ui/toast-store.mjs"
@@ -153,11 +152,11 @@ const BUILTIN_SLASH = buildBuiltinSlashCatalog(BUILTIN_COMMANDS)
 // 实现已移到 repl/provider-catalog.mjs；这里转发导出保持既有调用方不变。
 export { loadProviderModelItems }
 
-function slashRouterOptions(customCommands = []) {
+function slashRouterOptions(customCommands = [], skillRegistry = null) {
   return {
     builtinSlash: BUILTIN_SLASH,
     customCommands,
-    skills: SkillRegistry.isReady() ? SkillRegistry.list() : []
+    skills: skillRegistry?.isReady() ? skillRegistry.list() : []
   }
 }
 
@@ -332,13 +331,14 @@ async function processInputLine({
     const [name, ...argTokens] = body.split(/\s+/)
     const args = argTokens.join(" ").trim()
 
-    const skill = SkillRegistry.isReady() ? SkillRegistry.get(name) : null
+    const skillRegistry = ctx.kernel.extensions.skills
+    const skill = skillRegistry.isReady() ? skillRegistry.get(name) : null
     if (sigil === "$" || skill) {
       if (!skill) {
         print(`unknown skill: $${name}`, { channel: "notice", topic: "command", tone: "error" })
         return { exit: false }
       }
-      const expanded = await SkillRegistry.execute(name, args, {
+      const expanded = await skillRegistry.execute(name, args, {
         cwd: process.cwd(),
         mode: state.mode,
         model: state.model,
@@ -459,8 +459,8 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
         state,
         customCommands: localCustomCommands,
         providers: providersConfigured,
-        mcpRegistry: McpRegistry,
-        skillRegistry: SkillRegistry,
+        mcpRegistry: ctx.kernel.extensions.mcp,
+        skillRegistry: ctx.kernel.extensions.skills,
         recoveryEnabled: ctx.configState.config.session?.recovery !== false
       })
       runtimeView.recentSessions = action.recentSessions || runtimeView.recentSessions
@@ -530,7 +530,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   // 补全候选的唯一来源。构造在这里是安全的：它不捕获任何后面才声明的闭包，
   // 而文件索引在里面是懒的 —— 第一次真的需要文件候选才走盘，启动时不扫。
   const suggestionSource = createSuggestionSource({
-    getSlashOptions: () => slashRouterOptions(localCustomCommands)
+    getSlashOptions: () => slashRouterOptions(localCustomCommands, ctx.kernel.extensions.skills)
   })
   const currentSuggestions = () => suggestionSource.compute(ui.input, ui.inputCursor)
   let protocolFlushTimer = null
@@ -1931,7 +1931,13 @@ export async function startRepl({ trust = false } = {}) {
 
   const splash = startSplash({ version: `v${PACKAGE_VERSION}` })
 
-  const ctx = await buildContext({ trust, trustState })
+  // 1.0.0 阶段 2c：createKernel() 是唯一组合根 —— 配置加载、storage 层配置注入、
+  // 信任策略应用与扩展 boot 序列全部收口在内（取代原 context.mjs 入口装配与
+  // 手工 boot）。theme 属 frontends 层（架构 §2），在 kernel 之外加载。
+  splash.update("loading tools & MCP servers...")
+  const kernel = await createKernel({ cwd: process.cwd(), trustState })
+  const themeState = await loadTheme(kernel.configState)
+  const ctx = { configState: kernel.configState, themeState, trustState: kernel.trustState, kernel }
   printContextWarnings(ctx)
   // 不阻塞启动：命中本地缓存时会很快回填，preflight 读到什么就报什么
   let startupUpdateResult = null
@@ -1956,16 +1962,12 @@ export async function startRepl({ trust = false } = {}) {
       void loadProviderModelItems(ctx.configState, startupProvider).catch(() => {})
     }
   }
-  splash.update("loading tools & MCP servers...")
-  const extensionPolicy = await bootstrapKernelExtensions({
-    cwd: process.cwd(),
-    configState: ctx.configState,
-    trustState: ctx.trustState
-  })
+  // boot 序列已在 createKernel 内完成（作用于本实例注册表）；策略从句柄读
+  const extensionPolicy = kernel.extensionPolicy
 
   // Collect MCP status for later display
-  const mcpHealth = McpRegistry.healthSnapshot()
-  const mcpStatusLines = collectMcpStatusLines(ctx.themeState.theme, mcpHealth, McpRegistry.listTools())
+  const mcpHealth = kernel.extensions.mcp.healthSnapshot()
+  const mcpStatusLines = collectMcpStatusLines(ctx.themeState.theme, mcpHealth, kernel.extensions.mcp.listTools())
 
   splash.update("loading skills & agents...")
   splash.update("loading hooks & history...")
@@ -1985,14 +1987,14 @@ export async function startRepl({ trust = false } = {}) {
   const customCommands = await loadCustomCommands(process.cwd(), {
     allowProjectSources: extensionPolicy.allowProjectSources
   })
-  const providersConfigured = configuredProviders(ctx.configState.config, listProviders)
+  const providersConfigured = configuredProviders(ctx.configState.config, kernel.providers.listProviders)
   const recentSessions = await listSessions({ cwd: process.cwd(), limit: 6, includeChildren: false }).catch(() => [])
 
   // 启动自检：只看「现在能不能干活」的几项，重活留给 kkcode doctor
   const preflight = buildPreflightReport({
     configState: ctx.configState,
-    mcp: McpRegistry.healthSnapshot?.() || mcpHealth,
-    skills: { total: SkillRegistry.list?.().length || 0 },
+    mcp: kernel.extensions.mcp.healthSnapshot?.() || mcpHealth,
+    skills: { total: kernel.extensions.skills.list?.().length || 0 },
     update: startupUpdateResult
   })
 
@@ -2028,6 +2030,7 @@ export async function startRepl({ trust = false } = {}) {
       clearScreenFn: clearScreen
     })
   } finally {
-    await McpRegistry.shutdown()
+    // kernel.shutdown 收口：2b 桥释放 + McpRegistry.shutdown() + session flushNow()
+    await kernel.shutdown()
   }
 }

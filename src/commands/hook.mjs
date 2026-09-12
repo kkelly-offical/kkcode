@@ -1,6 +1,5 @@
 import { Command } from "commander"
-import { initHookBus, HookBus } from "../plugin/hook-bus.mjs"
-import { buildContext, resolveExtensionPolicy } from "../context.mjs"
+import { createKernel } from "../kernel/index.mjs"
 
 export function createHookCommand() {
   const cmd = new Command("hook").description("inspect loaded hooks")
@@ -9,18 +8,20 @@ export function createHookCommand() {
     .command("list")
     .description("list loaded hooks and loading errors")
     .action(async () => {
-      const ctx = await buildContext()
-      const extensionPolicy = resolveExtensionPolicy(ctx.configState)
-      await initHookBus(process.cwd(), extensionPolicy.config, {
+      // boot:false —— hook 巡检只初始化 hooks 这一个注册表
+      const kernel = await createKernel({ cwd: process.cwd(), boot: false })
+      const extensionPolicy = kernel.extensionPolicy
+      const hooks = kernel.extensions.hooks
+      await hooks.initialize(process.cwd(), extensionPolicy.config, {
         allowProjectSources: extensionPolicy.allowProjectSources
       })
-      const hooks = HookBus.list()
-      const errors = HookBus.errors()
-      console.log(`supported events: ${HookBus.supportedEvents().join(", ")}`)
-      if (!hooks.length) {
+      const loaded = hooks.list()
+      const errors = hooks.errors()
+      console.log(`supported events: ${hooks.supportedEvents().join(", ")}`)
+      if (!loaded.length) {
         console.log("no hooks loaded")
       } else {
-        for (const hook of hooks) {
+        for (const hook of loaded) {
           console.log(`- ${hook.name} (${hook.source})`)
         }
       }

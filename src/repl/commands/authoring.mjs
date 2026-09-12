@@ -20,9 +20,6 @@ import { buildSkillCatalog } from "../slash-router.mjs"
 import { buildCapabilitySnapshot } from "../capability-facade.mjs"
 import { loadCustomCommands } from "../../command/custom-commands.mjs"
 import { resolveExtensionPolicy } from "../../context.mjs"
-import { SkillRegistry } from "../../skill/registry.mjs"
-import { ToolRegistry } from "../../tool/registry.mjs"
-import { McpRegistry } from "../../mcp/registry.mjs"
 import { generateSkill, saveSkillGlobal } from "../../skill/generator.mjs"
 import { readClipboardImage } from "../../tool/image-util.mjs"
 import { userRootDir } from "../../storage/paths.mjs"
@@ -148,16 +145,19 @@ export const authoringCommands = [
     desc: "list custom slash commands",
     argMode: "none",
     run: async ({ showInfo, state, ctx, customCommands }) => {
-      const skills = SkillRegistry.isReady() ? SkillRegistry.list() : []
+      // 注册表一律走 kernel 句柄（1.0.0 阶段 2c）：进程级默认注册表在首个
+      // 回合前不初始化，直接读会拿到空清单
+      const skillRegistry = ctx.kernel.extensions.skills
+      const skills = skillRegistry.isReady() ? skillRegistry.list() : []
       const { CustomAgentRegistry } = await import("../../agent/custom-agent-loader.mjs")
       const capabilitySnapshot = await buildCapabilitySnapshot({
         mode: state.mode,
         cwd: process.cwd(),
         configState: ctx.configState,
         customCommands,
-        skillRegistry: SkillRegistry,
-        toolRegistry: ToolRegistry,
-        mcpRegistry: McpRegistry,
+        skillRegistry,
+        toolRegistry: ctx.kernel.tools,
+        mcpRegistry: ctx.kernel.extensions.mcp,
         listAgents: () => CustomAgentRegistry.list()
       })
       showInfo("commands & capabilities", [
@@ -179,14 +179,15 @@ export const authoringCommands = [
         allowProjectSources: extensionPolicy.allowProjectSources
       })
       setCustomCommands(reloaded)
-      await SkillRegistry.initialize(extensionPolicy.config, process.cwd(), {
+      const skillRegistry = ctx.kernel.extensions.skills
+      await skillRegistry.initialize(extensionPolicy.config, process.cwd(), {
         allowProjectSources: extensionPolicy.allowProjectSources
       })
       const { CustomAgentRegistry } = await import("../../agent/custom-agent-loader.mjs")
       await CustomAgentRegistry.initialize(process.cwd(), {
         allowProjectSources: extensionPolicy.allowProjectSources
       })
-      const skillCount = SkillRegistry.isReady() ? SkillRegistry.list().length : 0
+      const skillCount = skillRegistry.isReady() ? skillRegistry.list().length : 0
       const agentCount = CustomAgentRegistry.list().length
       print(describeReloadSummary({ commandCount: reloaded.length, skillCount, agentCount }), { channel: "notice", topic: "command" })
       return { exit: false }
@@ -251,18 +252,19 @@ export const authoringCommands = [
     names: ["skills"],
     desc: "list registered skills and how to invoke them",
     argMode: "none",
-    run: ({ print, showInfo, customCommands }) => {
+    run: ({ print, showInfo, ctx, customCommands }) => {
       // REPL 里能用 `$名字` 调用、能 /create-skill 创建，却一直没法看有哪些技能 ——
       // 只能退出去跑 `kkcode skill list`。
       //
       // 走 showInfo（浮层；行模式回落到 panel 通道）而不是对话记录：这是**查询
       // 当前状态**，进了对话记录就会随会话发给模型、被 /clear 连带清掉，且关不掉。
       // 与 /agents、/status 同通道。
-      if (!SkillRegistry.isReady()) {
+      const skillRegistry = ctx.kernel.extensions.skills
+      if (!skillRegistry.isReady()) {
         print("skill registry not loaded — 先 /reload 装载技能", { channel: "notice", topic: "command", tone: "warn" })
         return { exit: false }
       }
-      const skills = SkillRegistry.list()
+      const skills = skillRegistry.list()
       // `$` 补全读的就是 buildSkillCatalog —— 这里复用同一份枚举，
       // 而不是再扫一遍注册表。两份清单迟早分叉，且分叉时什么都不会红。
       const catalog = buildSkillCatalog({ customCommands, skills })
@@ -302,7 +304,7 @@ export const authoringCommands = [
         save: saveSkillGlobal,
         reload: async (context) => {
           const extensionPolicy = resolveExtensionPolicy(context.configState)
-          await SkillRegistry.initialize(extensionPolicy.config, process.cwd(), {
+          await context.kernel.extensions.skills.initialize(extensionPolicy.config, process.cwd(), {
             allowProjectSources: extensionPolicy.allowProjectSources
           })
         },

@@ -1,14 +1,12 @@
 import { Command } from "commander"
-import { bootstrapKernelExtensions, buildContext, printContextWarnings } from "../context.mjs"
-import { ensureEventSinks, executeTurn, formatPublicModeSummary, getPublicModeContract, newSessionId, resolvePromptMode, summarizeRouteDecision } from "../session/engine.mjs"
+import { printContextWarnings } from "../context.mjs"
+import { createKernel } from "../kernel/index.mjs"
+import { loadTheme } from "../theme/load-theme.mjs"
+import { ensureEventSinks, formatPublicModeSummary, getPublicModeContract, resolvePromptMode, summarizeRouteDecision } from "../session/engine.mjs"
 import { emitRouteDecisionEvent } from "../session/routing-observability.mjs"
 import { renderStatusBar } from "../theme/status-bar.mjs"
 import { applyCommandTemplate, loadCustomCommands } from "../command/custom-commands.mjs"
-import { SkillRegistry } from "../skill/registry.mjs"
-import { HookBus } from "../plugin/hook-bus.mjs"
 import { listProviders } from "../provider/router.mjs"
-import { EventBus } from "../core/events.mjs"
-import { EVENT_TYPES } from "../core/constants.mjs"
 import { createOutputReporter, resolveOutputFormat } from "../cli/output-format.mjs"
 import { MODE_IDS, DEFAULT_MODE_ID, modeIdFromLegacy, laneOf, approvalOf, getMode } from "../core/modes.mjs"
 import { applyPermissionLevel } from "../repl/permission-flow.mjs"
@@ -31,29 +29,34 @@ export function createChatCommand() {
     .option("--output-format <format>", "text|json|stream-json|legacy")
     .option("--max-iterations <n>", "longagent max iterations (0 = unlimited)")
     .option("--session <id>", "session id")
-    // 无头 chat 此前完全没法信任工作区：buildContext 一直接受 options.trust，
+    // 无头 chat 此前完全没法信任工作区：入口上下文装配一直接受 trust 选项，
     // 而这里从不传 —— 于是所有工具（含 read/grep）在脚本与 CI 里一律被拒，
     // 唯一出路是先开 REPL 手敲 /trust。ultra 早在 0.5.0 补了同一个缺口。
     .option("--trust", "trust this workspace (equivalent to /trust in the REPL)")
     .action(async (promptParts, options) => {
       const outputFormat = resolveOutputFormat(options.outputFormat)
       const reporter = createOutputReporter(outputFormat)
-      const ctx = await buildContext({ trust: Boolean(options.trust) })
+      // 1.0.0 阶段 2c：createKernel() 是唯一组合根；theme 属 frontends 层，
+      // 在 kernel 之外加载
+      const kernel = await createKernel({ cwd: process.cwd(), trust: Boolean(options.trust) })
+      const ctx = {
+        configState: kernel.configState,
+        themeState: await loadTheme(kernel.configState),
+        trustState: kernel.trustState,
+        kernel
+      }
       printContextWarnings(ctx)
-      const extensionPolicy = await bootstrapKernelExtensions({
-        cwd: process.cwd(),
-        configState: ctx.configState,
-        trustState: ctx.trustState
-      })
+      const extensionPolicy = kernel.extensionPolicy
       let prompt = promptParts.join(" ").trim()
       if (prompt.startsWith("$") || prompt.startsWith("/")) {
         const sigil = prompt.startsWith("$") ? "$" : "/"
         const [name, ...argTokens] = prompt.slice(1).split(/\s+/)
         const args = argTokens.join(" ").trim()
-        const skill = SkillRegistry.get(name)
+        const skillRegistry = kernel.extensions.skills
+        const skill = skillRegistry.get(name)
         if (sigil === "$" || skill) {
           if (!skill) throw new Error(`unknown skill: $${name}`)
-          const expanded = await SkillRegistry.execute(name, args, {
+          const expanded = await skillRegistry.execute(name, args, {
             cwd: process.cwd(),
             mode: options.mode || "assistant",
             model: options.model || "",
@@ -91,9 +94,9 @@ export function createChatCommand() {
           : "没有配置任何 provider。运行 kkcode 后输入 /provider add 添加一个（或手动编辑 ~/.kkcode/config.yaml）。")
       }
       const model = options.model ?? providerDefaults.default_model
-      const sessionId = options.session || newSessionId()
+      const sessionId = options.session || kernel.turns.newSessionId()
 
-      const chatParams = await HookBus.chatParams({
+      const chatParams = await kernel.extensions.hooks.chatParams({
         prompt,
         mode,
         model,
@@ -138,12 +141,11 @@ export function createChatCommand() {
       reporter.progress(`lane guarantee: ${effectiveContract.guarantee}`)
       reporter.progress(`route summary: ${summarizeRouteDecision(routedMode.route)}`)
 
-      const result = await executeTurn({
+      const result = await kernel.executeTurn({
         prompt: chatParams.prompt ?? prompt,
         mode: effectiveMode,
         model: chatParams.model ?? model,
         sessionId,
-        configState: ctx.configState,
         providerType: chatParams.providerType ?? providerType,
         baseUrl: chatParams.baseUrl ?? options.baseUrl ?? null,
         apiKeyEnv: chatParams.apiKeyEnv ?? options.apiKeyEnv ?? null,

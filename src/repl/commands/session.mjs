@@ -13,8 +13,6 @@ import { confirmRollback, executeRollback } from "../../session/rollback.mjs"
 import { buildBoardModel, renderUltraBoard } from "../../ui/ultra-board.mjs"
 import { renderRuntimeDashboardView } from "../../ui/repl-status-view.mjs"
 import { runBtwQuery } from "../btw-query.mjs"
-import { McpRegistry } from "../../mcp/registry.mjs"
-import { SkillRegistry } from "../../skill/registry.mjs"
 import { paint } from "../../theme/color.mjs"
 import { ageLabel, padRight } from "../../util/frame-primitives.mjs"
 import { buildReplRuntimeSnapshot } from "../runtime-facade.mjs"
@@ -69,13 +67,15 @@ export const sessionCommands = [
     desc: "runtime state",
     argMode: "none",
     run: async ({ showInfo, state, ctx, customCommands, providersConfigured }) => {
+      // 注册表走 kernel 句柄（1.0.0 阶段 2c）：进程级默认注册表在首个回合前
+      // 不初始化，直接读会拿到空清单
       const runtimeView = await buildReplRuntimeSnapshot({
         cwd: process.cwd(),
         state,
         customCommands,
         providers: providersConfigured,
-        mcpRegistry: McpRegistry,
-        skillRegistry: SkillRegistry,
+        mcpRegistry: ctx.kernel.extensions.mcp,
+        skillRegistry: ctx.kernel.extensions.skills,
         recoveryEnabled: ctx.configState.config.session?.recovery !== false,
         config: ctx.configState.config
       })

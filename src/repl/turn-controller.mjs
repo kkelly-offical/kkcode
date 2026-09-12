@@ -16,7 +16,12 @@ export async function executePromptTurn({
 }) {
   const extractImageRefsFn = deps.extractImageRefs || extractImageRefs
   const buildContentBlocksFn = deps.buildContentBlocks || buildContentBlocks
-  const chatParamsFn = deps.chatParams || HookBus.chatParams.bind(HookBus)
+  // 2b 过渡期进程级默认 HookBus 要到 loop 里才懒初始化；首回合的 chat.params
+  // 钩子会被静默跳过。kernel 实例的 hooks 在 createKernel 时已装好，优先走句柄
+  // （1.0.0 阶段 2c）；无句柄的调用方（测试、旧路径）保持原默认。
+  const kernelHooks = ctx?.kernel?.extensions?.hooks
+  const chatParamsFn = deps.chatParams
+    || (kernelHooks ? kernelHooks.chatParams.bind(kernelHooks) : HookBus.chatParams.bind(HookBus))
   const executeTurnFn = deps.executeTurn || executeTurn
   const handleRollbackFn = deps.handleRollbackIfNeeded || handleRollbackIfNeeded
   const cwd = deps.cwd || process.cwd()

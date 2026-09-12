@@ -23,6 +23,24 @@
  *   - 会话存储（session/store）与后台任务编排（BackgroundManager）：
  *     platform/持久化层，append 式落盘 + checkpoint 文件天然进程级。
  *
+ * ## 上下文构建收口（阶段 2c）
+ *
+ * buildContext（src/context.mjs）的平台侧职责已收进 createKernel：storage 层
+ * 配置注入（session store / event log / audit store 读 config.storage.*）与
+ * 工作区信任探测（trustState 缺省时 checkWorkspaceTrust 读持久化存储，TTY 下
+ * 保留交互提示）。theme/profile 属 frontends 层（§2），留在宿主侧。
+ * buildContext 仍按原样导出（兼容），但入口（repl.mjs、commands/*、
+ * background-worker）一律经 createKernel 拿句柄，不再直接调它。
+ *
+ * ## background worker 独立进程模型（§7.3 显式契约）
+ *
+ * BackgroundManager 以 `spawn(process.execPath, [background-worker.mjs, ...])`
+ * 起独立进程跑委派任务；worker 进程内 createKernel() 重启内核是自然形态。
+ * 主进程与 worker 的注册表/信任态/事件总线天然两份，跨进程状态只靠
+ * checkpoint JSON 与 payload 序列化传递；进程级例外（MCP 连接池、会话存储）
+ * 也随之每个进程各一份。每个入口进程保持一个 kernel 实例：同进程多 kernel
+ * 并发 executeTurn 时默认路径的信任态/提示槽位以后创建者为准（2b 已知限制）。
+ *
  * ## 2b 过渡桥（2c/阶段 3 移除）
  *
  * 当前 executeTurn 的执行路径（session/engine → loop → executor）仍读进程级
@@ -46,16 +64,18 @@
  * 连接池（进程级资源的代价，见上）。
  */
 import { loadConfig } from "../config/load-config.mjs"
-import { applyWorkspaceTrustPolicy, bootstrapKernelExtensions } from "../context.mjs"
+import { applyWorkspaceTrustPolicy, bootstrapKernelExtensions, resolveExtensionPolicy } from "../context.mjs"
+import { checkWorkspaceTrust } from "../permission/workspace-trust.mjs"
 import { createEventBus, defaultEventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { createPermissionEngine, PermissionEngine } from "../permission/engine.mjs"
 import { createPermissionPromptChannel, defaultPermissionPromptChannel } from "../permission/prompt.mjs"
 import { createQuestionPromptChannel, defaultQuestionPromptChannel } from "../tool/question-prompt.mjs"
-import { createToolRegistry } from "../tool/registry.mjs"
+import { createToolRegistry, ToolRegistry } from "../tool/registry.mjs"
 import { McpRegistry } from "../mcp/registry.mjs"
-import { createSkillRegistry } from "../skill/registry.mjs"
-import { createHookBus } from "../plugin/hook-bus.mjs"
+import { createSkillRegistry, SkillRegistry } from "../skill/registry.mjs"
+import { createHookBus, initHookBus } from "../plugin/hook-bus.mjs"
+import { CustomAgentRegistry } from "../agent/custom-agent-loader.mjs"
 import { createProviderRegistry } from "../provider/router.mjs"
 import {
   executeTurn as executeEngineTurn,
@@ -78,8 +98,11 @@ import {
   markSessionStatus,
   appendUserMessage,
   appendAssistantMessage,
+  configureSessionStore,
   flushNow
 } from "../session/store.mjs"
+import { configureEventLog } from "../storage/event-log.mjs"
+import { configureAuditStore } from "../storage/audit-store.mjs"
 import { compactSession } from "../session/compaction.mjs"
 import { confirmRollback, executeRollback, handleRollbackIfNeeded } from "../session/rollback.mjs"
 import { executeTool } from "../tool/executor.mjs"
@@ -109,18 +132,53 @@ const processBridgeLedger = {
  * @param {object} [options.config] 已加载的 configState（宿主覆盖项）；缺省时
  *   kernel 自己跑 loadConfig(cwd) —— loadConfig → extensionPolicy 链路的唯一
  *   归属（§7.4）。`configState` 是同义别名。
- * @param {object} [options.trustState] 工作区信任态（{ trusted }）；
- *   `options.trust === true` 是其简写。
+ * @param {object} [options.configState] `config` 的同义别名。
+ * @param {boolean} [options.trust] 命令行 --trust 简写：授信并持久化本工作区。
+ * @param {{ trusted?: boolean }} [options.trustState] 工作区信任态；缺省时按
+ *   buildContext 原语义探测（持久化信任存储 + TTY 交互提示）。
+ * @param {boolean} [options.boot] 置 false 跳过扩展 boot 序列（只读巡检命令用：
+ *   不 spawn MCP、不写技能种子包）；注册表仍可经句柄按需 initialize。
  * @param {object} [options.handlers] 宿主回调注入：
  *   onPermissionPrompt / onQuestionPrompt（取代模块级 set*PromptHandler 槽位）、
  *   onOutput（executeTurn 的默认 output 通道）、onEvent（订阅 kernel 事件流）。
+ * @param {Function} [options.handlers.onPermissionPrompt]
+ * @param {Function} [options.handlers.onQuestionPrompt]
+ * @param {Function} [options.handlers.onOutput]
+ * @param {Function} [options.handlers.onEvent]
  * @returns {Promise<object>} kernel 句柄（§4.1 API 面）
  */
 export async function createKernel(options = {}) {
   const cwd = options.cwd ?? process.cwd()
   const handlers = options.handlers || {}
   const configState = options.config ?? options.configState ?? await loadConfig(cwd)
-  const trustState = options.trustState ?? { trusted: options.trust === true }
+
+  // storage 层配置注入（原 buildContext 平台侧，阶段 2c 收口进组合根）。
+  // 只下发配置里显式出现的键：缺省键与平台模块默认值本就一致，跳过可避免
+  // 覆盖宿主在 createKernel 之前对存储层的自行配置。
+  const storageConfig = /** @type {any} */ (configState).config?.storage || {}
+  const sessionStoreOptions = {}
+  if (storageConfig.session_shard_enabled !== undefined) {
+    sessionStoreOptions.sessionShardEnabled = Boolean(storageConfig.session_shard_enabled)
+  }
+  if (storageConfig.flush_interval_ms !== undefined) {
+    sessionStoreOptions.flushIntervalMs = Number(storageConfig.flush_interval_ms)
+  }
+  configureSessionStore(sessionStoreOptions)
+  const eventLogOptions = {}
+  if (storageConfig.event_rotate_mb !== undefined) eventLogOptions.rotateMb = Number(storageConfig.event_rotate_mb)
+  if (storageConfig.event_retain_days !== undefined) eventLogOptions.retainDays = Number(storageConfig.event_retain_days)
+  configureEventLog(eventLogOptions)
+  const auditStoreOptions = {}
+  if (storageConfig.audit_max_entries !== undefined) auditStoreOptions.maxEntries = Number(storageConfig.audit_max_entries)
+  configureAuditStore(auditStoreOptions)
+
+  // 信任探测（原 buildContext 平台侧）：宿主没给 trustState 时读持久化信任
+  // 存储，TTY 下保留交互式提示；headless 宿主应显式传 trustState 或 trust。
+  let trustState = options.trustState ?? await checkWorkspaceTrust({
+    cwd,
+    cliTrust: Boolean(options.trust),
+    isTTY: process.stdin.isTTY
+  })
   applyWorkspaceTrustPolicy(configState, trustState, cwd)
 
   // --- 9 组单例 → 实例字段 ---
@@ -180,26 +238,74 @@ export async function createKernel(options = {}) {
   }
 
   // --- boot 序列（唯一归属：bootstrapKernelExtensions）作用于本实例注册表 ---
-  let extensionPolicy
-  try {
+  // options.boot === false 时推迟（只读巡检命令：不 spawn MCP、不写技能种子包），
+  // 句柄经 kernel.bootExtensions() 在确认要跑回合后再引导。
+  let extensionPolicy = resolveExtensionPolicy(configState)
+  let booted = false
+  async function bootExtensions() {
+    if (booted) return extensionPolicy
     extensionPolicy = await bootstrapKernelExtensions({
       cwd,
       configState,
       trustState,
       registries: { permissions, tools, skills, hooks }
     })
-  } catch (error) {
-    // 失败对称回滚：createKernel reject 不得泄漏已安装的桥/槽位/信任态
-    releaseProcessBridge()
-    throw error
+    booted = true
+    return extensionPolicy
+  }
+  if (options.boot !== false) {
+    try {
+      await bootExtensions()
+    } catch (error) {
+      // 失败对称回滚：createKernel reject 不得泄漏已安装的桥/槽位/信任态
+      releaseProcessBridge()
+      throw error
+    }
   }
 
+  /**
+   * @param {object} [turnOptions] 与 session/engine.mjs executeTurn 同形
+   *   （单对象 16 字段，§4.1）；configState/output 缺省时由句柄注入。
+   * @param {object} [turnOptions.configState]
+   * @param {object|null} [turnOptions.output]
+   */
   async function executeTurn(turnOptions = {}) {
-    return executeEngineTurn({
+    return executeEngineTurn(/** @type {any} */ ({
       ...turnOptions,
       configState: turnOptions.configState ?? configState,
       output: turnOptions.output ?? (typeof handlers.onOutput === "function" ? handlers.onOutput : null)
-    })
+    }))
+  }
+
+  /**
+   * /trust /untrust 的句柄方法（1.0.0 阶段 2c，M3 耦合点 6 收尾）。
+   *
+   * 信任态翻转后五套注册表（工具/技能/子智能体/钩子/自定义命令）必须一起重建，
+   * 漏一套就是「已 /trust 但项目工具仍被拦」。自定义命令是 REPL 前端状态，
+   * 由调用方（repl/commands/permission.mjs） reload；其余四套连同
+   * applyWorkspaceTrustPolicy 与信任标志一起收口在这里。
+   *
+   * 2b 过渡期 executeTurn 路径（engine→loop→executor）仍读进程级默认注册表，
+   * 所以实例注册表与默认注册表两侧都重建；阶段 3 执行路径迁入实例后，
+   * 默认侧随之消失。
+   */
+  async function applyTrustState(nextTrustState = {}) {
+    trustState = { trusted: nextTrustState.trusted === true }
+    applyWorkspaceTrustPolicy(configState, trustState, cwd)
+    extensionPolicy = resolveExtensionPolicy(configState)
+    permissions.setTrusted(trustState.trusted)
+    // 2b 桥：默认引擎/默认注册表是 executeTurn 路径实际读的那份（见文件头）
+    PermissionEngine.setTrusted(trustState.trusted)
+    const { allowProjectSources } = extensionPolicy
+    await tools.initialize({ config: extensionPolicy.config, cwd, force: true, allowProjectSources })
+    await skills.initialize(extensionPolicy.config, cwd, { allowProjectSources })
+    await hooks.initialize(cwd, extensionPolicy.config, { allowProjectSources, force: true })
+    // CustomAgentRegistry 尚未收编（不在 M3 §四.2 的 9 组里），模块级单例全局一份
+    await CustomAgentRegistry.initialize(cwd, { allowProjectSources })
+    await ToolRegistry.initialize({ config: extensionPolicy.config, cwd, force: true, allowProjectSources })
+    await SkillRegistry.initialize(extensionPolicy.config, cwd, { allowProjectSources })
+    await initHookBus(cwd, extensionPolicy.config, { allowProjectSources, force: true })
+    return extensionPolicy
   }
 
   let shutdownDone = false
@@ -216,7 +322,7 @@ export async function createKernel(options = {}) {
     shutdownDone = true
   }
 
-  return {
+  const handle = {
     executeTurn,
     turns: {
       executeTurn,
@@ -270,9 +376,13 @@ export async function createKernel(options = {}) {
       listenerCount: () => events.listenerCount(),
       EVENT_TYPES
     },
-    extensionPolicy,
+    get extensionPolicy() { return extensionPolicy },
     configState,
     cwd,
+    get trustState() { return trustState },
+    applyTrustState,
+    bootExtensions,
     shutdown
   }
+  return handle
 }

@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import {
   stripAnsi, displayWidth, clipPlainByWidth, padRight, clipAnsiLine,
   wrapPlainLine, wrapLogLines, frameRow, frameTop, pageSize, ageLabel
-} from "../src/repl/frame-primitives.mjs"
+} from "../src/util/frame-primitives.mjs"
 
 const ESC = String.fromCharCode(27)
 const BEL = String.fromCharCode(7)

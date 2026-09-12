@@ -102,10 +102,11 @@ test("a protected-path denial tells the model what it hit", async () => {
 })
 
 test("chat can trust a workspace headlessly", async () => {
-  // 无头 chat 此前完全没法信任工作区：buildContext 一直接受 options.trust，
+  // 无头 chat 此前完全没法信任工作区：入口上下文装配一直接受 trust 选项，
   // 而 chat 从不传 —— 于是脚本与 CI 里所有工具（含 read）一律被拒，唯一出路
   // 是先开 REPL 手敲 /trust。ultra 早在 0.5.0 补了同一个缺口。
+  // 1.0.0 阶段 2c 起信任透传给 createKernel()（信任探测与策略应用收进组合根）。
   const source = await readFile(path.join(ROOT, "src", "commands", "chat.mjs"), "utf8")
   assert.match(source, /--trust/, "chat 必须提供 --trust")
-  assert.match(source, /buildContext\(\{\s*trust:/, "而且必须真的把它传给 buildContext")
+  assert.match(source, /createKernel\(\{[^}]*trust:/, "而且必须真的把它传给 createKernel")
 })

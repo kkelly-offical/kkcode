@@ -2,7 +2,7 @@ import path from "node:path"
 import { writeFile } from "node:fs/promises"
 import { Command } from "commander"
 import { exportUsageCsv, readUsageStore, resetUsage } from "../usage/usage-meter.mjs"
-import { buildContext } from "../context.mjs"
+import { createKernel } from "../kernel/index.mjs"
 
 function printUsageLine(scope, usage) {
   console.log(
@@ -20,8 +20,8 @@ export function createUsageCommand() {
     .option("--json", "print as JSON", false)
     .action(async (options) => {
       const store = await readUsageStore()
-      const ctx = await buildContext().catch(() => null)
-      const budget = ctx?.configState?.config?.usage?.budget || {}
+      const kernel = await createKernel({ cwd: process.cwd(), boot: false }).catch(() => null)
+      const budget = kernel?.configState?.config?.usage?.budget || {}
       if (options.json) {
         if (options.session) {
           console.log(JSON.stringify(store.sessions[options.session] ?? null, null, 2))

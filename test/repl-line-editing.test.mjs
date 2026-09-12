@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { splitGraphemes } from "../src/repl/text-layout.mjs"
+import { splitGraphemes } from "../src/util/text-layout.mjs"
 import {
   deleteRange,
   deleteToLineEnd,

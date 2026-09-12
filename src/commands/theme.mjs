@@ -5,7 +5,9 @@ import { Command } from "commander"
 import { DEFAULT_THEME } from "../theme/default-theme.mjs"
 import { validateTheme } from "../theme/schema.mjs"
 import { ensureProjectRoot, projectRootDir } from "../storage/paths.mjs"
-import { buildContext, printContextWarnings } from "../context.mjs"
+import { printContextWarnings } from "../context.mjs"
+import { createKernel } from "../kernel/index.mjs"
+import { loadTheme } from "../theme/load-theme.mjs"
 import { renderStatusBar } from "../theme/status-bar.mjs"
 
 async function fileExists(file) {
@@ -67,10 +69,11 @@ export function createThemeCommand() {
     .description("preview theme status bars by mode")
     .option("--file <file>", "theme file path")
     .action(async (options) => {
-      const ctx = await buildContext({ themeFile: options.file ?? null })
-      printContextWarnings(ctx)
-      const theme = ctx.themeState.theme
-      const config = ctx.configState.config
+      const kernel = await createKernel({ cwd: process.cwd(), boot: false })
+      const themeState = await loadTheme(kernel.configState, options.file ?? null)
+      printContextWarnings({ configState: kernel.configState, themeState })
+      const theme = themeState.theme
+      const config = kernel.configState.config
       const modes = ["assistant", "plan", "agent", "longagent"]
       for (const mode of modes) {
         const line = renderStatusBar({
@@ -91,7 +94,7 @@ export function createThemeCommand() {
         })
         console.log(line)
       }
-      console.log(`theme source: ${ctx.themeState.source}`)
+      console.log(`theme source: ${themeState.source}`)
     })
 
   return cmd

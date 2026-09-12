@@ -2,7 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { renderSuggestions } from "../src/repl/suggestion-view.mjs"
 import { setColorEnabled } from "../src/theme/color.mjs"
-import { stripAnsi } from "../src/repl/frame-primitives.mjs"
+import { stripAnsi } from "../src/util/frame-primitives.mjs"
 import { DEFAULT_THEME } from "../src/theme/default-theme.mjs"
 
 /**

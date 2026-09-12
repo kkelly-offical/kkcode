@@ -7,7 +7,7 @@ import {
   ghostEnabled,
   GHOST_MAX_LENGTH
 } from "../src/repl/ghost-predictor.mjs"
-import { layoutInputText, inputIndexAtPosition } from "../src/repl/text-layout.mjs"
+import { layoutInputText, inputIndexAtPosition } from "../src/util/text-layout.mjs"
 
 function createFakeTimers() {
   let now = 0

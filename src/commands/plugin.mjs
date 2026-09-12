@@ -1,5 +1,5 @@
 import { Command } from "commander"
-import { buildContext } from "../context.mjs"
+import { createKernel } from "../kernel/index.mjs"
 import { discoverLocalPluginManifests } from "../plugin/manifest-loader.mjs"
 
 export function createPluginCommand() {
@@ -10,8 +10,8 @@ export function createPluginCommand() {
     .description("list discovered local plugin manifests")
     .option("--json", "print structured output", false)
     .action(async (options) => {
-      const ctx = await buildContext()
-      const result = await discoverLocalPluginManifests(process.cwd(), ctx.configState.config)
+      const kernel = await createKernel({ cwd: process.cwd(), boot: false })
+      const result = await discoverLocalPluginManifests(process.cwd(), kernel.configState.config)
       const plugins = result.plugins.map((plugin) => ({
         name: plugin.name,
         version: plugin.version,

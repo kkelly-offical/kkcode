@@ -12,7 +12,7 @@ import {
 } from "../src/ui/overlay-select.mjs"
 import { DEFAULT_THEME } from "../src/theme/default-theme.mjs"
 import { paint } from "../src/theme/color.mjs"
-import { padRight, displayWidth, stripAnsi } from "../src/repl/frame-primitives.mjs"
+import { padRight, displayWidth, stripAnsi } from "../src/util/frame-primitives.mjs"
 
 /**
  * 选择器的打字过滤引擎。

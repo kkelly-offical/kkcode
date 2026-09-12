@@ -1,8 +1,9 @@
 import { Command } from "commander"
 import { access, mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { buildContext, printContextWarnings, resolveExtensionPolicy } from "../context.mjs"
-import { McpRegistry } from "../mcp/registry.mjs"
+import { printContextWarnings } from "../context.mjs"
+import { createKernel } from "../kernel/index.mjs"
+import { loadTheme } from "../theme/load-theme.mjs"
 import { ensureDefaultSkillPack } from "../skill/registry.mjs"
 import { userRootDir } from "../storage/paths.mjs"
 
@@ -11,17 +12,20 @@ const DEFAULT_MCP_INIT_CONFIG = {
 }
 
 async function withInitializedMcp(run) {
-  const ctx = await buildContext()
-  printContextWarnings(ctx)
-  const extensionPolicy = resolveExtensionPolicy(ctx.configState)
+  // boot:false —— mcp 巡检只需要 MCP 连接池，不为它拉起整套扩展（技能种子等）
+  const kernel = await createKernel({ cwd: process.cwd(), boot: false })
+  const themeState = await loadTheme(kernel.configState)
+  printContextWarnings({ configState: kernel.configState, themeState })
+  const extensionPolicy = kernel.extensionPolicy
   try {
-    await McpRegistry.initialize(extensionPolicy.config, {
+    await kernel.extensions.mcp.initialize(extensionPolicy.config, {
       cwd: process.cwd(),
       allowProjectSources: extensionPolicy.allowProjectSources
     })
-    return await run(ctx)
+    return await run(kernel)
   } finally {
-    await McpRegistry.shutdown()
+    // kernel.shutdown 收口：2b 桥释放 + McpRegistry.shutdown() + session flushNow()
+    await kernel.shutdown()
   }
 }
 
@@ -122,8 +126,8 @@ export function createMcpCommand() {
     .command("list")
     .description("list configured and healthy MCP servers")
     .action(async () => {
-      await withInitializedMcp(async () => {
-        console.log(JSON.stringify(McpRegistry.listServers(), null, 2))
+      await withInitializedMcp(async (kernel) => {
+        console.log(JSON.stringify(kernel.extensions.mcp.listServers(), null, 2))
       })
     })
 
@@ -131,8 +135,8 @@ export function createMcpCommand() {
     .command("tools")
     .description("list tools for all MCP servers")
     .action(async () => {
-      await withInitializedMcp(async () => {
-        console.log(JSON.stringify(McpRegistry.listTools(), null, 2))
+      await withInitializedMcp(async (kernel) => {
+        console.log(JSON.stringify(kernel.extensions.mcp.listTools(), null, 2))
       })
     })
 
@@ -141,8 +145,8 @@ export function createMcpCommand() {
     .description("list resources for MCP server")
     .requiredOption("--server <name>", "server name")
     .action(async (options) => {
-      await withInitializedMcp(async () => {
-        const list = await McpRegistry.listResources(options.server)
+      await withInitializedMcp(async (kernel) => {
+        const list = await kernel.extensions.mcp.listResources(options.server)
         console.log(JSON.stringify(list, null, 2))
       })
     })
@@ -152,8 +156,8 @@ export function createMcpCommand() {
     .description("list templates for MCP server")
     .requiredOption("--server <name>", "server name")
     .action(async (options) => {
-      await withInitializedMcp(async () => {
-        const list = await McpRegistry.listTemplates(options.server)
+      await withInitializedMcp(async (kernel) => {
+        const list = await kernel.extensions.mcp.listTemplates(options.server)
         console.log(JSON.stringify(list, null, 2))
       })
     })
@@ -163,9 +167,9 @@ export function createMcpCommand() {
     .description("test MCP health and tool discovery")
     .option("--json", "print JSON output", false)
     .action(async (options) => {
-      await withInitializedMcp(async () => {
-        const snapshot = McpRegistry.healthSnapshot()
-        const tools = McpRegistry.listTools()
+      await withInitializedMcp(async (kernel) => {
+        const snapshot = kernel.extensions.mcp.healthSnapshot()
+        const tools = kernel.extensions.mcp.listTools()
         const healthy = snapshot.filter((item) => item.ok).length
         const unhealthy = snapshot.length - healthy
 

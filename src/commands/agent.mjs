@@ -1,5 +1,7 @@
 import { Command } from "commander"
-import { buildContext, printContextWarnings, resolveExtensionPolicy } from "../context.mjs"
+import { printContextWarnings } from "../context.mjs"
+import { createKernel } from "../kernel/index.mjs"
+import { loadTheme } from "../theme/load-theme.mjs"
 import { LongAgentManager } from "../orchestration/longagent-manager.mjs"
 import { listAgents } from "../agent/agent.mjs"
 import { CustomAgentRegistry } from "../agent/custom-agent-loader.mjs"
@@ -14,13 +16,16 @@ export function createAgentCommand() {
     .option("--configured", "print only config-defined agent.subagents overrides")
     .option("--include-hidden", "include hidden internal roles")
     .action(async (options) => {
-      const ctx = await buildContext()
-      printContextWarnings(ctx)
-      const extensionPolicy = resolveExtensionPolicy(ctx.configState)
+      // boot:false —— agent 巡检只初始化 CustomAgentRegistry（模块级，未收编），
+      // 不拉起整套扩展
+      const kernel = await createKernel({ cwd: process.cwd(), boot: false })
+      const themeState = await loadTheme(kernel.configState)
+      printContextWarnings({ configState: kernel.configState, themeState })
+      const extensionPolicy = kernel.extensionPolicy
       await CustomAgentRegistry.initialize(process.cwd(), {
         allowProjectSources: extensionPolicy.allowProjectSources
       })
-      const configured = ctx.configState.config.agent?.subagents || {}
+      const configured = kernel.configState.config.agent?.subagents || {}
       if (options.configured) {
         console.log(JSON.stringify(configured, null, 2))
         return
