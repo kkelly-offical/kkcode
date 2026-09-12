@@ -1,13 +1,11 @@
 import { Command } from "commander"
-import { buildContext, printContextWarnings, resolveExtensionPolicy } from "../context.mjs"
+import { bootstrapKernelExtensions, buildContext, printContextWarnings } from "../context.mjs"
 import { ensureEventSinks, executeTurn, formatPublicModeSummary, getPublicModeContract, newSessionId, resolvePromptMode, summarizeRouteDecision } from "../session/engine.mjs"
 import { emitRouteDecisionEvent } from "../session/routing-observability.mjs"
 import { renderStatusBar } from "../theme/status-bar.mjs"
 import { applyCommandTemplate, loadCustomCommands } from "../command/custom-commands.mjs"
-import { ToolRegistry } from "../tool/registry.mjs"
 import { SkillRegistry } from "../skill/registry.mjs"
-import { PermissionEngine } from "../permission/engine.mjs"
-import { HookBus, initHookBus } from "../plugin/hook-bus.mjs"
+import { HookBus } from "../plugin/hook-bus.mjs"
 import { listProviders } from "../provider/router.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
@@ -42,10 +40,10 @@ export function createChatCommand() {
       const reporter = createOutputReporter(outputFormat)
       const ctx = await buildContext({ trust: Boolean(options.trust) })
       printContextWarnings(ctx)
-      PermissionEngine.setTrusted(ctx.trustState?.trusted !== false)
-      const extensionPolicy = resolveExtensionPolicy(ctx.configState)
-      await SkillRegistry.initialize(extensionPolicy.config, process.cwd(), {
-        allowProjectSources: extensionPolicy.allowProjectSources
+      const extensionPolicy = await bootstrapKernelExtensions({
+        cwd: process.cwd(),
+        configState: ctx.configState,
+        trustState: ctx.trustState
       })
       let prompt = promptParts.join(" ").trim()
       if (prompt.startsWith("$") || prompt.startsWith("/")) {
@@ -95,15 +93,6 @@ export function createChatCommand() {
       const model = options.model ?? providerDefaults.default_model
       const sessionId = options.session || newSessionId()
 
-      await ToolRegistry.initialize({
-        config: extensionPolicy.config,
-        cwd: process.cwd(),
-        allowProjectSources: extensionPolicy.allowProjectSources
-      })
-
-      await initHookBus(process.cwd(), extensionPolicy.config, {
-        allowProjectSources: extensionPolicy.allowProjectSources
-      })
       const chatParams = await HookBus.chatParams({
         prompt,
         mode,

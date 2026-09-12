@@ -69,12 +69,17 @@ describe("安全参数必须传到调用点", () => {
 
   it("PermissionEngine.setTrusted 在每个进程入口都被调用", () => {
     // worker 是独立进程，模块级 trusted 标志默认 false —— 不设置的话
-    // 它的每次工具调用都会被拒（0.5.8 修的就是这个）
+    // 它的每次工具调用都会被拒（0.5.8 修的就是这个）。
+    // 1.0.0 阶段 1a 起入口统一改调 bootstrapKernelExtensions（src/context.mjs），
+    // setTrusted 由它内部承担；其内部初始化顺序由 kernel-bootstrap-contract.test.mjs 钉住。
+    const bootstrap = FILES.find((f) => f.path === "src/context.mjs")
+    assert.ok(bootstrap, "找不到 src/context.mjs")
+    assert.match(bootstrap.text, /setTrusted\(/, "bootstrapKernelExtensions 没有设置权限引擎的信任标志")
     const entryPoints = ["src/orchestration/background-worker.mjs", "src/repl.mjs", "src/commands/chat.mjs"]
     for (const entry of entryPoints) {
       const file = FILES.find((f) => f.path === entry)
       assert.ok(file, `找不到入口文件 ${entry}`)
-      assert.match(file.text, /setTrusted\(/, `${entry} 从未设置权限引擎的信任标志`)
+      assert.match(file.text, /setTrusted\(|bootstrapKernelExtensions\(/, `${entry} 从未设置权限引擎的信任标志`)
     }
   })
 })
