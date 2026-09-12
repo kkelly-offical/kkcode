@@ -28,7 +28,9 @@
  * 当前 executeTurn 的执行路径（session/engine → loop → executor）仍读进程级
  * 默认单例。为让 kernel 的配置对 executeTurn 真实生效，createKernel 会：
  *   1. 把 trustState 与 handlers.onPermissionPrompt/onQuestionPrompt 同步
- *      安装到进程级默认引擎/槽位（shutdown 时按位恢复）；
+ *      安装到进程级默认引擎/槽位（全部 kernel 关闭后一次性恢复为首个
+ *      createKernel 之前捕获的原始值，与关闭顺序无关 —— 见
+ *      processBridgeLedger；桥存活期间默认槽位归桥管）；
  *   2. 订阅进程级默认 EventBus，把事件流桥接进本实例的 events 总线
  *     （单向：默认 → 实例；实例内 emit 不回灌默认总线）。
  * 因此同一进程里多个 kernel 并发 executeTurn 时，默认路径上的信任态与提示
@@ -37,10 +39,11 @@
  *
  * ## shutdown
  *
- * 收口：事件桥与宿主回调退订 → 默认槽位/信任态按位恢复 →
- * McpRegistry.shutdown()（进程级连接池）→ session flushNow()。
- * 多 kernel 共存时，任一 kernel 的 shutdown 会关闭共享 MCP 连接池
- * （进程级资源的代价，见上）。
+ * 收口：事件桥与宿主回调退订 → 引用计数递减（归零时恢复默认槽位/信任态为
+ * 原始值）→ McpRegistry.shutdown()（进程级连接池）→ session flushNow()
+ * （try/finally 保证必达）。任一环节抛错则 shutdown reject 且不置完成位，
+ * 允许宿主重试。多 kernel 共存时，任一 kernel 的 shutdown 会关闭共享 MCP
+ * 连接池（进程级资源的代价，见上）。
  */
 import { loadConfig } from "../config/load-config.mjs"
 import { applyWorkspaceTrustPolicy, bootstrapKernelExtensions } from "../context.mjs"
@@ -84,6 +87,23 @@ import { BackgroundManager } from "../orchestration/background-manager.mjs"
 import { createTaskDelegate } from "../orchestration/task-scheduler.mjs"
 
 /**
+ * 2b 过渡桥的进程级账本。
+ *
+ * 桥安装会改写进程级默认信任态/审批/提问槽位；恢复必须回到「首个 kernel
+ * 创建之前」的原始值，而不是各 kernel 创建时保存的前值 —— 后者隐含 LIFO
+ * 假设：非 LIFO 关闭顺序下会把默认信任态恢复成错误值（信任门静默打开）、
+ * 让默认槽位指向已销毁 kernel 的死 handler（review round 1 P1 实跑复现）。
+ * 因此：首个 createKernel 捕获原始默认值，引用计数归零（全部 kernel
+ * shutdown 或 createKernel 失败回滚）时才一次性恢复。
+ */
+const processBridgeLedger = {
+  activeKernels: 0,
+  originalTrust: false,
+  originalPermissionHandler: null,
+  originalQuestionHandler: null
+}
+
+/**
  * @param {object} [options]
  * @param {string} [options.cwd] 工作目录（默认 process.cwd()）
  * @param {object} [options.config] 已加载的 configState（宿主覆盖项）；缺省时
@@ -121,31 +141,58 @@ export async function createKernel(options = {}) {
     questionPrompt.setQuestionPromptHandler(handlers.onQuestionPrompt)
   }
 
-  // --- 2b 过渡桥（详见文件头注释）---
+  // --- 2b 过渡桥（详见文件头注释；恢复语义见 processBridgeLedger）---
   const bridgeUnsubscribe = defaultEventBus.subscribe(async (event) => {
     await events.emit(event)
   })
   const onEventUnsubscribe = typeof handlers.onEvent === "function"
     ? events.subscribe(handlers.onEvent)
     : null
-  const previousDefaultTrust = PermissionEngine.isTrusted()
+  if (processBridgeLedger.activeKernels === 0) {
+    processBridgeLedger.originalTrust = PermissionEngine.isTrusted()
+    processBridgeLedger.originalPermissionHandler = defaultPermissionPromptChannel.getPermissionPromptHandler()
+    processBridgeLedger.originalQuestionHandler = defaultQuestionPromptChannel.getQuestionPromptHandler()
+  }
+  processBridgeLedger.activeKernels += 1
   PermissionEngine.setTrusted(trustState?.trusted === true)
-  const previousPermissionHandler = defaultPermissionPromptChannel.getPermissionPromptHandler()
   if (typeof handlers.onPermissionPrompt === "function") {
     defaultPermissionPromptChannel.setPermissionPromptHandler(handlers.onPermissionPrompt)
   }
-  const previousQuestionHandler = defaultQuestionPromptChannel.getQuestionPromptHandler()
   if (typeof handlers.onQuestionPrompt === "function") {
     defaultQuestionPromptChannel.setQuestionPromptHandler(handlers.onQuestionPrompt)
   }
 
+  // 桥释放 = 退订 + 引用计数递减；归零时把默认信任态/槽位恢复为桥安装前
+  // 捕获的原始值（与关闭顺序无关，消掉越权残留）。shutdown 与 createKernel
+  // 失败回滚共用这一段对称逻辑。
+  let bridgeReleased = false
+  function releaseProcessBridge() {
+    if (bridgeReleased) return
+    bridgeReleased = true
+    bridgeUnsubscribe()
+    if (onEventUnsubscribe) onEventUnsubscribe()
+    processBridgeLedger.activeKernels -= 1
+    if (processBridgeLedger.activeKernels === 0) {
+      PermissionEngine.setTrusted(processBridgeLedger.originalTrust)
+      defaultPermissionPromptChannel.setPermissionPromptHandler(processBridgeLedger.originalPermissionHandler)
+      defaultQuestionPromptChannel.setQuestionPromptHandler(processBridgeLedger.originalQuestionHandler)
+    }
+  }
+
   // --- boot 序列（唯一归属：bootstrapKernelExtensions）作用于本实例注册表 ---
-  const extensionPolicy = await bootstrapKernelExtensions({
-    cwd,
-    configState,
-    trustState,
-    registries: { permissions, tools, skills, hooks }
-  })
+  let extensionPolicy
+  try {
+    extensionPolicy = await bootstrapKernelExtensions({
+      cwd,
+      configState,
+      trustState,
+      registries: { permissions, tools, skills, hooks }
+    })
+  } catch (error) {
+    // 失败对称回滚：createKernel reject 不得泄漏已安装的桥/槽位/信任态
+    releaseProcessBridge()
+    throw error
+  }
 
   async function executeTurn(turnOptions = {}) {
     return executeEngineTurn({
@@ -158,22 +205,15 @@ export async function createKernel(options = {}) {
   let shutdownDone = false
   async function shutdown() {
     if (shutdownDone) return
+    releaseProcessBridge()
+    try {
+      await mcp.shutdown()
+    } finally {
+      // flushNow 必达：mcp.shutdown 抛错也要把会话缓冲写盘收口；
+      // shutdownDone 只在全链路成功后置位，失败允许宿主重试。
+      await flushNow()
+    }
     shutdownDone = true
-    bridgeUnsubscribe()
-    if (onEventUnsubscribe) onEventUnsubscribe()
-    // 恢复 2b 过渡桥改动的进程级默认槽位 —— 仅当槽位里仍是我们装的 handler，
-    // 避免踩掉 kernel 创建之后别的宿主注册的新 handler。
-    if (typeof handlers.onPermissionPrompt === "function"
-      && defaultPermissionPromptChannel.getPermissionPromptHandler() === handlers.onPermissionPrompt) {
-      defaultPermissionPromptChannel.setPermissionPromptHandler(previousPermissionHandler)
-    }
-    if (typeof handlers.onQuestionPrompt === "function"
-      && defaultQuestionPromptChannel.getQuestionPromptHandler() === handlers.onQuestionPrompt) {
-      defaultQuestionPromptChannel.setQuestionPromptHandler(previousQuestionHandler)
-    }
-    PermissionEngine.setTrusted(previousDefaultTrust)
-    await mcp.shutdown()
-    await flushNow()
   }
 
   return {

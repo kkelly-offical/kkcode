@@ -3,10 +3,17 @@
 // 有效（M3 §四.2 的「半迁移状态分裂」地雷排除）。
 import test, { before, after } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, rm, writeFile, access } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { createKernel } from "../src/kernel/index.mjs"
+// 桥生命周期回归（review round 1：P1 非 LIFO 恢复、P2-1 失败回滚、P2-2
+// shutdown 重试）需要观察进程级默认值，故直接引用默认引擎/槽位/总线。
+import { PermissionEngine } from "../src/permission/engine.mjs"
+import { defaultPermissionPromptChannel } from "../src/permission/prompt.mjs"
+import { defaultQuestionPromptChannel } from "../src/tool/question-prompt.mjs"
+import { defaultEventBus } from "../src/core/events.mjs"
+import { sessionIndexPath } from "../src/storage/paths.mjs"
 
 let homeDir
 let workDirA
@@ -114,4 +121,95 @@ test("two createKernel() instances have isolated trust state and tool sets", asy
     await kernelA.shutdown()
     await kernelB.shutdown()
   }
+})
+
+// --- review round 1 回归：2b 过渡桥生命周期（P1 / P2-1 / P2-2）---
+
+function resetProcessDefaults() {
+  PermissionEngine.setTrusted(false)
+  defaultPermissionPromptChannel.setPermissionPromptHandler(null)
+  defaultQuestionPromptChannel.setQuestionPromptHandler(null)
+}
+
+test("bridge lifecycle: non-LIFO shutdown restores original default trust/slots (P1)", async () => {
+  resetProcessDefaults()
+  const permissionHandlerA = async () => "deny"
+  const questionHandlerA = async () => ({})
+  const kernelA = await createKernel({
+    cwd: workDirA,
+    config: configWith({ builtinTools: false }),
+    trustState: { trusted: true },
+    handlers: { onPermissionPrompt: permissionHandlerA, onQuestionPrompt: questionHandlerA }
+  })
+  const kernelB = await createKernel({
+    cwd: workDirB,
+    config: configWith({ builtinTools: false }),
+    trustState: { trusted: false },
+    handlers: { onPermissionPrompt: async () => "deny" }
+  })
+
+  // 非 LIFO：先创建的先关。旧实现里这会把默认信任态恢复成 true（信任门静默
+  // 打开）、默认审批槽位指向已销毁 kernelA 的死 handler。
+  await kernelA.shutdown()
+  await kernelB.shutdown()
+
+  assert.equal(PermissionEngine.isTrusted(), false, "default trust must return to its pre-bridge value")
+  assert.equal(defaultPermissionPromptChannel.getPermissionPromptHandler(), null, "default permission slot must not point at a destroyed kernel's handler")
+  assert.equal(defaultQuestionPromptChannel.getQuestionPromptHandler(), null)
+})
+
+test("bridge lifecycle: failed createKernel rolls back bridge, slots and trust (P2-1)", async () => {
+  resetProcessDefaults()
+  const listenersBefore = defaultEventBus.listenerCount()
+
+  // tool.local_dirs 指向普通文件 → loadDynamicTools 的 readdir 抛 ENOTDIR，
+  // boot 失败（现实配置错误，reviewer 复现路径）。
+  const notADir = join(workDirA, "not-a-dir.txt")
+  await writeFile(notADir, "x")
+  const badConfig = configWith({ builtinTools: false })
+  badConfig.config.tool.sources.local = true
+  badConfig.config.tool.local_dirs = [notADir]
+
+  await assert.rejects(createKernel({
+    cwd: workDirA,
+    config: badConfig,
+    trustState: { trusted: true },
+    handlers: { onPermissionPrompt: async () => "allow_session" }
+  }))
+
+  // 对称回滚：默认信任态/槽位回到原始值，默认总线上的事件桥无泄漏
+  assert.equal(PermissionEngine.isTrusted(), false)
+  assert.equal(defaultPermissionPromptChannel.getPermissionPromptHandler(), null)
+  assert.equal(defaultQuestionPromptChannel.getQuestionPromptHandler(), null)
+  assert.equal(defaultEventBus.listenerCount(), listenersBefore)
+})
+
+test("bridge lifecycle: failed shutdown stays retryable and still flushes sessions (P2-2)", async () => {
+  const kernel = await createKernel({
+    cwd: workDirA,
+    config: configWith({ builtinTools: false }),
+    trustState: { trusted: false }
+  })
+  await rm(sessionIndexPath(), { force: true })
+  await kernel.sessions.touchSession({
+    sessionId: "ses_p22",
+    mode: "agent",
+    model: "mock-model",
+    providerType: "openai",
+    cwd: workDirA
+  })
+
+  const mcp = kernel.extensions.mcp
+  const originalShutdown = mcp.shutdown
+  mcp.shutdown = async () => { throw new Error("mcp shutdown boom") }
+  try {
+    await assert.rejects(kernel.shutdown(), /mcp shutdown boom/)
+    // flushNow 在 finally 中必达：脏会话索引即使 mcp.shutdown 抛错也已写盘
+    await access(sessionIndexPath())
+  } finally {
+    mcp.shutdown = originalShutdown
+  }
+
+  // shutdownDone 未提前置位：故障恢复后重试成功
+  await kernel.shutdown()
 })
