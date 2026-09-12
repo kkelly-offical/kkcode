@@ -12,6 +12,12 @@
  *   2. kernel → frontends：src/kernel/ 不得 import 任何 frontend 文件
  *      （含 src/theme/ 与 src/repl.mjs —— 层级倒置，M3 耦合点 13–15 的
  *      常驻防回归）。
+ *   3. kernel 输出纪律（1.0.0 阶段 5，架构 §4.2.3，对照 Codex core 的
+ *      deny(print_stdout)）：src/kernel/ 不得直写 stdout —— 禁止
+ *      process.stdout.write(...) 与 console.log/info/debug/dir(...)。
+ *      用户可见输出走 kernel.events / 宿主 handler；console.error/warn
+ *      写 stderr，是 headless 契约的诊断通道，允许。eslint 的
+ *      no-restricted-syntax 是同一规则的 AST 级兜底，两边任一命中都过不了 CI。
  *
  * 如实记录覆盖不到的地方，不假装检查了：
  *   - platform 层（src/config/、src/storage/ 等）与 kernel 之间仍有历史双向
@@ -154,12 +160,63 @@ export async function findBoundaryViolations(repoRoot = REPO_ROOT) {
   return { violations, unresolved }
 }
 
+/**
+ * 规则 3：kernel 输出纪律（架构 §4.2.3）。扫描 src/kernel/ 下直写 stdout 的调用：
+ *   - process.stdout.write(...)
+ *   - console.log / info / debug / dir(...)（这四个都写 stdout）
+ * console.error/warn 写 stderr，是 headless 契约（docs/headless-jsonl-contract.md）
+ * 的诊断通道，明确允许；process.stdout.isTTY 这类**读取**不是写，不算违规。
+ *
+ * 护栏与 import 扫描同款：行注释（match 之前同行已有 //）与模板字符串
+ * （未转义反引号奇数）里的字样不算。残留限定（如实记录）：块注释与普通
+ * 字符串字面量里的 "console.log(" 仍会误报 —— 误报 break lint 是可见的，
+ * 选择宁可见；内核现状（含 builtin-hooks/console-warn.mjs 的提示文案，
+ * 无调用括号）不触发。
+ *
+ * @param {string} [repoRoot]
+ * @returns {Promise<Array<{ file: string, line: number, match: string, rule: string }>>}
+ */
+export async function findKernelStdoutViolations(repoRoot = REPO_ROOT) {
+  const STDOUT_WRITE_RES = [
+    /\bprocess\.stdout\.write\s*\(/g,
+    /\bconsole\.(?:log|info|debug|dir)\s*\(/g
+  ]
+  const violations = []
+  const kernelDir = path.join(repoRoot, "src", "kernel")
+  const files = (await collectSourceFiles(kernelDir)).sort()
+  for (const file of files) {
+    const text = await readFile(file, "utf8")
+    const found = []
+    for (const re of STDOUT_WRITE_RES) {
+      re.lastIndex = 0
+      for (const match of text.matchAll(re)) {
+        const lineStart = text.lastIndexOf("\n", match.index) + 1
+        if (text.slice(lineStart, match.index).includes("//")) continue
+        if (insideTemplateLiteral(text, match.index)) continue
+        const line = text.slice(0, match.index).split("\n").length
+        found.push({
+          file: toRel(repoRoot, file),
+          line,
+          column: match.index - lineStart + 1,
+          match: match[0].replace(/\s*\($/, ""),
+          rule: "kernel-stdout-discipline"
+        })
+      }
+    }
+    // 报告按源码位置排序（扫描顺序是模式优先，不是位置优先）
+    found.sort((a, b) => a.line - b.line || a.column - b.column)
+    violations.push(...found)
+  }
+  return violations
+}
+
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 if (isMain) {
   const json = process.argv.includes("--json")
   const { violations, unresolved } = await findBoundaryViolations(REPO_ROOT)
+  const stdoutViolations = await findKernelStdoutViolations(REPO_ROOT)
   if (json) {
-    console.log(JSON.stringify({ violations, unresolved }, null, 2))
+    console.log(JSON.stringify({ violations, unresolved, stdoutViolations }, null, 2))
   } else {
     if (unresolved.length) {
       console.log(`warning: ${unresolved.length} relative import(s) could not be resolved (boundary graph may be incomplete):`)
@@ -171,6 +228,12 @@ if (isMain) {
       for (const v of violations) console.log(`  [${v.rule}] ${v.from} -> ${v.to}`)
       console.log(`\n${violations.length} boundary violation(s) — frontends 只允许 import src/kernel/index.mjs（架构 §4.2.2）`)
     }
+    if (stdoutViolations.length === 0) {
+      console.log("kernel stdout discipline: 0 direct stdout write(s) under src/kernel/（架构 §4.2.3）")
+    } else {
+      for (const v of stdoutViolations) console.log(`  [${v.rule}] ${v.file}:${v.line} ${v.match}`)
+      console.log(`\n${stdoutViolations.length} kernel stdout violation(s) — kernel 不得直写 stdout；用户可见输出走 kernel.events（架构 §4.2.3，docs/headless-jsonl-contract.md）`)
+    }
   }
-  process.exit(violations.length ? 1 : 0)
+  process.exit(violations.length || stdoutViolations.length ? 1 : 0)
 }

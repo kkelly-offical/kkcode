@@ -4,7 +4,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { findBoundaryViolations, parseBoundarySpecifiers } from "../scripts/check-boundaries.mjs"
+import { findBoundaryViolations, findKernelStdoutViolations, parseBoundarySpecifiers } from "../scripts/check-boundaries.mjs"
 
 /**
  * 分层边界归零防回归（1.0.0 阶段 4，docs/architecture-kernel-sdk-1.0.0.md
@@ -85,6 +85,52 @@ test("扫描器三种 import 形态都看得见 —— 防止扫描器静默失�
         "kernel->frontends:src/kernel/session/reverse.mjs->src/ui/bad-dynamic.mjs"
       ],
       "假树上的三条违规边必须逐条命中"
+    )
+  } finally {
+    await rm(fake, { recursive: true, force: true })
+  }
+})
+
+test("kernel 输出纪律：src/kernel/ 直写 stdout 的调用为 0（架构 §4.2.3，阶段 5）", async () => {
+  const violations = await findKernelStdoutViolations(ROOT)
+  assert.deepEqual(
+    violations,
+    [],
+    `kernel 出现 stdout 直写（用户可见输出必须走 kernel.events）：\n${violations.map((v) => `  ${v.file}:${v.line} ${v.match}`).join("\n")}`
+  )
+})
+
+test("输出纪律扫描器看得见种植违规、放行 stderr 与 isTTY —— 防扫描器静默失效", async () => {
+  const fake = await mkdtemp(path.join(tmpdir(), "kkcode-stdout-discipline-"))
+  try {
+    await mkdir(path.join(fake, "src/kernel/core"), { recursive: true })
+    await writeFile(path.join(fake, "src/kernel/core/clean.mjs"), [
+      `export function ok() {`,
+      `  console.error("diagnostic to stderr — allowed")`,
+      `  console.warn("also allowed")`,
+      `  const tty = Boolean(process.stdout.isTTY && process.stdin.isTTY) // 读取不是写`,
+      `  // console.log("commented out is not a write")`,
+      "  const doc = `docs mention console.log(x) inside a template — not a call`",
+      `  return tty`,
+      `}`
+    ].join("\n"))
+    await writeFile(path.join(fake, "src/kernel/core/bad.mjs"), [
+      `export function bad() {`,
+      `  console.log("planted")`,
+      `    process.stdout.write("planted")`,
+      `  console.info("planted")`,
+      `}`
+    ].join("\n"))
+
+    const violations = await findKernelStdoutViolations(fake)
+    assert.deepEqual(
+      violations.map((v) => `${v.file}:${v.line}:${v.match}`),
+      [
+        "src/kernel/core/bad.mjs:2:console.log",
+        "src/kernel/core/bad.mjs:3:process.stdout.write",
+        "src/kernel/core/bad.mjs:4:console.info"
+      ],
+      "种植的三处 stdout 直写必须逐条命中；stderr 诊断、isTTY 读取、行注释与模板字符串里的字样不得算违规"
     )
   } finally {
     await rm(fake, { recursive: true, force: true })

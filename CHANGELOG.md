@@ -1,5 +1,52 @@
 # Changelog / 更新日志
 
+## 1.0.0（预发布框架 / pre-release，尚未发布）
+
+> 本条目是 1.0.0 的预发布框架：内核/SDK 分层（docs/architecture-kernel-sdk-1.0.0.md）
+> 按阶段合入 `main` 的过程中持续补充，正式发布时定稿。当前 `main` 已合入阶段 1–5。
+
+### English
+
+- **In-process kernel/SDK layering (stages 1–4).** Boot sequence consolidated into
+  a single `createKernel()` composition root; the nine module-level singletons are
+  now kernel instance fields (deprecated module-level aliases retained); the
+  session/ 8-file static import cycle is broken; terminal primitives neutralized;
+  the kernel no longer imports themes or touches the TTY (permission/question
+  prompts are host-injected handlers — headless hosts get a deterministic deny);
+  the nine kernel subdomains live under `src/kernel/`; frontends consume the
+  kernel only through the `src/kernel/index.mjs` facade whitelist, enforced in CI
+  by eslint `no-restricted-imports` plus `scripts/check-boundaries.mjs` (both
+  directions, including dynamic imports).
+- **Headless JSONL machine contract (stage 5).** `kkcode chat
+  --output-format json|stream-json` now has a frozen stdout contract: pure JSONL,
+  one JSON event per line, every event carrying `schemaVersion` and a `type` from
+  the contract table (`turn.result` stable, `assistant.delta` experimental) —
+  progress, diagnostics, warnings, and prompts go to stderr only. The `json`
+  final result line gained a `type: "turn.result"` field (additive). Kernel-side
+  output discipline is lint-enforced: no `process.stdout.write` /
+  `console.log/info/debug/dir` under `src/kernel/`. Contract documentation:
+  [docs/headless-jsonl-contract.md](docs/headless-jsonl-contract.md). This is the
+  foundation for the 1.x TS SDK thin wrapper (spawn CLI → JSONL).
+
+### 中文
+
+- **进程内内核/SDK 分层（阶段 1–4）。** boot 序列收口进唯一的 `createKernel()`
+  组合根；九组模块级单例收编为 kernel 实例字段（模块级兼容别名保留）；
+  session/ 8 文件静态 import 环已破；终端原语中立化；内核不再 import theme、
+  不碰 TTY（审批/提问改由宿主注入 handler，headless 宿主得到确定性 deny）；
+  九个子域迁入 `src/kernel/`；frontends 只经 `src/kernel/index.mjs` facade
+  白名单消费内核，由 eslint `no-restricted-imports` 与
+  `scripts/check-boundaries.mjs` 在 CI 双向强制（含动态 import）。
+- **headless JSONL 机器契约（阶段 5）。** `kkcode chat --output-format
+  json|stream-json` 的 stdout 契约固化：纯 JSONL、一行一事件，每个事件带
+  `schemaVersion` 与命中契约表的 `type`（`turn.result` stable、
+  `assistant.delta` experimental）；进度、诊断、警告、提示一律只走 stderr。
+  `json` 格式的终态结果行新增 `type: "turn.result"` 字段（兼容追加）。内核
+  输出纪律进 lint：`src/kernel/` 禁止 `process.stdout.write` 与
+  `console.log/info/debug/dir`。契约文档见
+  [docs/headless-jsonl-contract.md](docs/headless-jsonl-contract.md)。这是 1.x
+  TS SDK 薄封装（spawn CLI 换 JSONL）的前置。
+
 ## 0.9.4
 
 测试可移植性 hotfix（Windows CRLF）：修复 Windows CI 测试断言，打通全自动化发布管线。无运行时行为变更。
