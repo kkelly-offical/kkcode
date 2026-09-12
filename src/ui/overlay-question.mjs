@@ -16,7 +16,7 @@
  * 调用方回写它 —— 不会把点串的下标写回真值。
  */
 
-import { maskSecretText } from "../repl/text-layout.mjs"
+import { maskSecretText } from "../util/text-layout.mjs"
 import { scrollWindow, filterOverlayItems, markMatchRanges } from "./overlay-select.mjs"
 
 const SECRET_MASK = "•"

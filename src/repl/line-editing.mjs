@@ -12,7 +12,7 @@
  * 且 grapheme 切分一律复用 text-layout 的导出，不在这里另起一套。
  */
 
-import { moveGraphemeCursor, splitGraphemes } from "./text-layout.mjs"
+import { moveGraphemeCursor, splitGraphemes } from "../util/text-layout.mjs"
 
 /**
  * 逻辑行的分隔符。输入框支持 Shift+Enter 换行，`ui.input` 里存的是真的换行符，

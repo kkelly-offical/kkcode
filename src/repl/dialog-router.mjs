@@ -1,6 +1,7 @@
 import { visibleQuestionOptions } from "../ui/overlay-question.mjs"
+import { QUESTION_SKIPPED } from "../core/constants.mjs"
 
-export const QUESTION_SKIPPED = "(skipped)"
+export { QUESTION_SKIPPED }
 
 /**
  * 进入某个问题时，自由文本编辑区里该放什么。

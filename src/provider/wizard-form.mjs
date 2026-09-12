@@ -38,7 +38,7 @@ import { saveProviderConfig } from "./wizard.mjs"
 import { discoverModelsForProvider } from "./model-catalog.mjs"
 import { supportsThinking } from "./thinking-effort.mjs"
 import { askQuestionInteractive } from "../tool/question-prompt.mjs"
-import { QUESTION_SKIPPED } from "../repl/dialog-router.mjs"
+import { QUESTION_SKIPPED } from "../core/constants.mjs"
 import { PROVIDER_META_KEYS } from "../config/schema.mjs"
 
 /** 表单答案 → 干净字符串。跳过哨兵与 undefined 一律折成空串。 */

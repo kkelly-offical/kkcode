@@ -7,7 +7,7 @@ import {
   sanitizeTerminalValue
 } from "../theme/terminal-sanitize.mjs"
 
-import { stripAnsi } from "../repl/frame-primitives.mjs"
+import { stripAnsi } from "../util/frame-primitives.mjs"
 
 const TOOL_MUTED_COLOR = "#8a8f98"
 const MAX_TOOL_DETAIL_LINES = 80

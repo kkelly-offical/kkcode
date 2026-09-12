@@ -22,7 +22,7 @@
  *      组合字符都不会被劈成两半），不另起一份宽度实现。
  */
 
-import { splitGraphemes, wrapAnsiLine } from "../repl/text-layout.mjs"
+import { splitGraphemes, wrapAnsiLine } from "../util/text-layout.mjs"
 
 export const THINKING_PREVIEW_ROWS = 2
 

@@ -16,7 +16,7 @@ import { runBtwQuery } from "../btw-query.mjs"
 import { McpRegistry } from "../../mcp/registry.mjs"
 import { SkillRegistry } from "../../skill/registry.mjs"
 import { paint } from "../../theme/color.mjs"
-import { ageLabel, padRight } from "../frame-primitives.mjs"
+import { ageLabel, padRight } from "../../util/frame-primitives.mjs"
 import { buildReplRuntimeSnapshot } from "../runtime-facade.mjs"
 import { buildOperatorSnapshot } from "../operator-surface.mjs"
 

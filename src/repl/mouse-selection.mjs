@@ -19,8 +19,8 @@
  */
 
 import { classifySgrMouseEvent, isScreenRowWithin, normalizeMouseSelection } from "./terminal-protocol.mjs"
-import { inputIndexAtPosition, splitTextByCellRange } from "./text-layout.mjs"
-import { stripAnsi, displayWidth } from "./frame-primitives.mjs"
+import { inputIndexAtPosition, splitTextByCellRange } from "../util/text-layout.mjs"
+import { stripAnsi, displayWidth } from "../util/frame-primitives.mjs"
 
 /** 越界越远滚得越快。三档就够 —— 再细用户也感觉不出来。 */
 export function autoScrollStep(overshoot) {

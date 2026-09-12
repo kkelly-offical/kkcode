@@ -1,7 +1,7 @@
 import { homedir } from "node:os"
 import { resolve } from "node:path"
 import { paint } from "../theme/color.mjs"
-import { stripAnsi, ageLabel } from "../repl/frame-primitives.mjs"
+import { stripAnsi, ageLabel } from "../util/frame-primitives.mjs"
 
 function isFullWidthCodePoint(code) {
   if (Number.isNaN(code)) return false
