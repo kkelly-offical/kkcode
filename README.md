@@ -671,12 +671,12 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current stable version / 当前稳定版本**: `v0.9.3`
+**Current stable version / 当前稳定版本**: `v0.9.4`
 
-`v0.9.3` is the current stable npm and GitHub release. The `main` branch remains
+`v0.9.4` is the current stable npm and GitHub release. The `main` branch remains
 the development line for subsequent fixes.
 
-`v0.9.3` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
+`v0.9.4` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
 
 Use the Kimi Code preset without placing credentials in YAML:
 
@@ -696,6 +696,13 @@ with authorization values redacted.
 **Package / 包地址**: [npm](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 
 **English**
+- `0.9.4` is a test-portability hotfix: the background-apply tests now
+  normalize CRLF line endings on read-back and pin `core.autocrlf=false` in
+  their temporary repos, so Windows runners with `autocrlf=true` no longer
+  break the strict LF assertions that blocked the 0.9.3 release workflow at
+  `matrix_verify`. No runtime behavior changes — this release exists so the
+  fully automated pipeline (`matrix_verify` → `release_verify` → npm publish
+  → GitHub release) runs green end to end on an immutable tag.
 - `0.9.3` closes the worktree handoff loop: a background task delegated with
   `isolation="worktree"` keeps its changes in a preserved detached worktree,
   and `kkcode background apply --id <task_id>` now brings them back into the
@@ -750,6 +757,12 @@ with authorization values redacted.
 - `0.2.1` rebuilt kkcode around Assistant as the default general-purpose lane, with dedicated Agent and LongAgent modes for coding work.
 
 **中文**
+- `0.9.4` 是测试可移植性 hotfix：background-apply 测试在读回内容时统一归一化
+  CRLF，并在临时测试仓库固定 `core.autocrlf=false`，Windows runner 的
+  `autocrlf=true` 不再破坏 LF 严格相等断言 —— 0.9.3 的 release workflow 正是
+  因此被 `matrix_verify` 挡住。无运行时行为变更；本次发布只为让全自动化管线
+  （`matrix_verify` → `release_verify` → npm publish → GitHub release）在
+  不可变 tag 上端到端跑通一次。
 - `0.9.3` 补上 worktree 回收闭环：`isolation="worktree"` 的后台委派任务把变更
   保留在独立 worktree 里，`kkcode background apply --id <task_id>` 现在能把它们
   收回主 checkout，`kkcode background discard --id <task_id>` 则直接丢弃。apply
