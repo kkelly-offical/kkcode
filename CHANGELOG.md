@@ -1,9 +1,10 @@
 # Changelog / 更新日志
 
-## 1.0.0（预发布框架 / pre-release，尚未发布）
+## 1.0.0（未发布 / unreleased）
 
-> 本条目是 1.0.0 的预发布框架：内核/SDK 分层（docs/architecture-kernel-sdk-1.0.0.md）
-> 按阶段合入 `main` 的过程中持续补充，正式发布时定稿。当前 `main` 已合入阶段 1–5。
+> 1.0.0 的五个阶段（内核/SDK 分层，见 docs/architecture-kernel-sdk-1.0.0.md）
+> 已全部合入 `main`，本条目为正式条目；npm 发布与 GitHub Release 待搭车
+> 功能选定后统一执行，当前 npm 最新稳定版仍是 0.9.4。
 
 ### English
 

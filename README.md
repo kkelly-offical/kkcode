@@ -674,10 +674,14 @@ update:
 
 **Current stable version / 当前稳定版本**: `v0.9.4`
 
-`v0.9.4` is the current stable npm and GitHub release. The `main` branch remains
-the development line for subsequent fixes.
+`v0.9.4` is the current stable npm and GitHub release. `1.0.0` is the next major
+version in development: all five stages of the kernel/SDK layering have merged into
+`main` and the working tree version is now `1.0.0`, but it has not been published
+to npm or tagged as a GitHub release yet.
 
-`v0.9.4` 是当前 npm 与 GitHub 正式稳定版本，`main` 分支继续承载后续修复与开发。
+`v0.9.4` 是当前 npm 与 GitHub 正式稳定版本。`1.0.0` 是开发中的下一主版本：
+内核/SDK 分层五个阶段已全部合入 `main`，工作区版本号已对齐 `1.0.0`，
+但尚未发布到 npm，也未打 GitHub Release。
 
 Use the Kimi Code preset without placing credentials in YAML:
 

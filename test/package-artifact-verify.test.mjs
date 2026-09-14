@@ -38,7 +38,7 @@ test("final artifact verification never executes the packaged entrypoint or chan
   const marker = path.join(dir, "entrypoint-executed")
   await writeFile(path.join(dir, "package.json"), JSON.stringify({
     name: "@kkelly-offical/kkcode",
-    version: "0.9.4",
+    version: "1.0.0",
     type: "module",
     bin: { kkcode: "src/index.mjs" },
     files: ["src"]
@@ -64,7 +64,7 @@ test("final artifact verification rejects a packaged secret without echoing it",
   const npmToken = ["npm", "_", "J".repeat(36)].join("")
   await writeFile(path.join(dir, "package.json"), JSON.stringify({
     name: "@kkelly-offical/kkcode",
-    version: "0.9.4",
+    version: "1.0.0",
     files: ["dist"]
   }))
   await writeFile(path.join(dir, "dist", "leak.txt"), npmToken)
