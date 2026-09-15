@@ -369,6 +369,10 @@ export async function executeTurn({
     model,
     sessionId,
     turnId: turn.turnId,
+    // provider 级失败的透传（loop catch 路径）：headless 契约据此给
+    // turn.result 的 status: "failed"；budget 阻断分支不转发 —— blocked
+    // 是独立终态，error 只在 failed 时非 null（契约 §3.1）。
+    error: turn.error || null,
     emittedText: turn.emittedText,
     context: turn.context,
     tokenMeter: { ...meter, estimated: estimated || costInfo.unknown },

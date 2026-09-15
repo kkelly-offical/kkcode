@@ -28,6 +28,17 @@
   `console.log/info/debug/dir` under `src/kernel/`. Contract documentation:
   [docs/headless-jsonl-contract.md](docs/headless-jsonl-contract.md). This is the
   foundation for the 1.x TS SDK thin wrapper (spawn CLI → JSONL).
+- **`turn.result` failure semantics tightened (contract fix, pre-release).**
+  Provider-level failures (timeouts, 5xx, exhausted retries) previously ended the
+  turn looking like a success to machine consumers: `status: "succeeded"`,
+  `error: null`, exit code 0 — the failure was only visible as a
+  `"provider error: …"` text prefix in `content`. Now such turns report
+  `status: "failed"` with the error message in `error`, and `kkcode chat` exits
+  non-zero, aligned with process-level failures. The `content`
+  `"provider error: "` prefix is deliberately kept unchanged for text consumers
+  (e.g. background task error detection); `status`/`error`/exit-code semantics
+  are the only intentional contract change, made before 1.0.0 ships because
+  changing them after release would be truly breaking.
 
 ### 中文
 
@@ -47,6 +58,15 @@
   `console.log/info/debug/dir`。契约文档见
   [docs/headless-jsonl-contract.md](docs/headless-jsonl-contract.md)。这是 1.x
   TS SDK 薄封装（spawn CLI 换 JSONL）的前置。
+- **`turn.result` 失败语义收紧（契约修复，发布前）。** provider 级失败
+  （超时、5xx、重试耗尽）此前在机器消费方眼里是「成功」：`status:
+  "succeeded"`、`error: null`、退出码 0 —— 失败只能从 `content` 的
+  `"provider error: …"` 文本前缀看出。现在这类回合如实报告 `status:
+  "failed"` 并在 `error` 带错误消息，`kkcode chat` 以非零退出，与进程级
+  失败对齐。`content` 的 `"provider error: "` 前缀刻意保持不动，文本
+  消费方（如后台任务的错误探测）不受影响；`status`/`error`/退出码语义是
+  本次唯一的 intentional 契约变更，赶在 1.0.0 发布前收紧 —— 发布后再改
+  才是真正的 breaking。
 
 ## 0.9.4
 

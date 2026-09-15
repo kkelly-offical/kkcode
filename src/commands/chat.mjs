@@ -178,6 +178,15 @@ export function createChatCommand() {
           : null
       })
 
+      // provider 级失败（loop catch 透传的 result.error）：回合跑了但失败了 ——
+      // 退出码与进程级失败对齐（非零），错误摘要走 stderr 诊断通道；
+      // turn.result 的 status/error 由 toPublicResult 从 result.error 推导，
+      // content 的 "provider error: " 前缀原样保留（文本消费方在匹配它）。
+      if (result.error) {
+        process.exitCode = 1
+        reporter.warning(`provider error: ${result.error}`)
+      }
+
       if (outputFormat !== "legacy") {
         for (const warning of result.pricingWarnings || []) reporter.warning(`pricing warning: ${warning}`)
         for (const warning of result.budgetWarnings || []) reporter.warning(`budget warning: ${warning}`)

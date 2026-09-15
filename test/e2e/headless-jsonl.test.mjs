@@ -45,6 +45,13 @@ before(async () => {
     req.on("end", () => {
       let payload = {}
       try { payload = JSON.parse(body) } catch { /* 非 JSON 请求体按非流式处理 */ }
+      if (payload.model === "mock-fail") {
+        // provider 级失败触发器（--model mock-fail）：HTTP 500 —— turn.result
+        // 必须是 status: "failed" + error 字段，且进程退出码非零（契约 §3.1）
+        res.writeHead(500, { "content-type": "application/json" })
+        res.end(JSON.stringify({ error: { message: "mock provider boom" } }))
+        return
+      }
       if (payload.stream) {
         res.writeHead(200, { "content-type": "text/event-stream" })
         res.end(sseBody(["Hello", " from mock"], { prompt_tokens: 11, completion_tokens: 7 }))
@@ -186,4 +193,38 @@ test("e2e headless 契约：进程级失败时 stdout 保持纯 JSONL（零事�
   } finally {
     rmSync(emptyHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
+})
+
+test("e2e headless 契约：provider 级失败 → turn.result status=failed、退出码非零、错误在 stderr", async () => {
+  const { stdout, stderr, exitCode } = await runCli(
+    ["chat", "say hi", "--output-format", "json", "--model", "mock-fail"]
+  )
+  assert.notEqual(exitCode, 0, "provider 级失败必须与进程级失败对齐：非零退出")
+
+  const events = parseJsonlContract(stdout)
+  assert.equal(events.length, 1, "失败路径上 json 格式仍恰好一行终态事件")
+  const [result] = events
+  assert.equal(result.type, "turn.result")
+  assert.equal(result.status, "failed", "provider 级失败不再恒 succeeded（1.0.0 契约收紧）")
+  assert.ok(typeof result.error === "string" && result.error.includes("500"),
+    `error 必须带失败详情，实际：${result.error}`)
+  assert.ok(result.content.startsWith("provider error: "),
+    "content 的 provider error 前缀保持兼容（文本消费方在匹配它）")
+  assert.ok(stderr.includes("provider error"), "失败摘要必须走 stderr 诊断通道")
+  assert.ok(!stderr.includes('"schemaVersion"'), "机器事件只属于 stdout")
+})
+
+test("e2e headless 契约：stream-json provider 级失败 → 终态事件 status=failed 且仍是最后一行", async () => {
+  const { stdout, stderr, exitCode } = await runCli(
+    ["chat", "say hi", "--output-format", "stream-json", "--model", "mock-fail"]
+  )
+  assert.notEqual(exitCode, 0, "provider 级失败必须非零退出")
+
+  const events = parseJsonlContract(stdout)
+  const results = events.filter((event) => event.type === "turn.result")
+  assert.equal(results.length, 1, "stream-json 恰好一条终态事件")
+  assert.equal(events.at(-1).type, "turn.result", "终态事件必须是最后一行")
+  assert.equal(results[0].status, "failed")
+  assert.ok(typeof results[0].error === "string" && results[0].error.length > 0)
+  assert.ok(stderr.includes("provider error"), "失败摘要必须走 stderr")
 })
