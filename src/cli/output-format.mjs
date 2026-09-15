@@ -16,7 +16,9 @@ export const OUTPUT_SCHEMA_VERSION = "1"
 export const HEADLESS_JSONL_EVENTS = Object.freeze({
   "turn.result": Object.freeze({
     stability: "stable",
-    summary: "回合终态结果。json 格式的唯一一行；stream-json 格式的最后一行。"
+    summary: "回合终态结果。json 格式的唯一一行；stream-json 格式的最后一行。" +
+      "status 取值：succeeded / failed（provider 级失败：error 带错误消息、进程退出码非零）/ " +
+      "blocked（预算阻断）/ longagent 终态；失败语义自 1.0.0 起为 stable 契约。"
   }),
   "assistant.delta": Object.freeze({
     stability: "experimental",

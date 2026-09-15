@@ -22,6 +22,10 @@ JSONL，对照 Codex sdk/typescript）以本契约为前置。
 
 - 进程级失败（配置缺失、参数错误、未捕获异常）：退出码非 0，stdout 保持纯
   JSONL（通常为零事件），错误文本只出现在 stderr。
+- provider 级失败（超时、5xx、重试耗尽）：退出码同样非 0 —— 与进程级失败
+  对齐；stdout 的终态 `turn.result` 仍在（`json` 下仍是唯一一行；`stream-json`
+  下前面可能有已流出的 `assistant.delta`），其 `status` 为 `"failed"`、`error`
+  带错误消息，错误摘要同时出现在 stderr（见 §3.1）。
 - 交互提示（权限审批、问答）：非 TTY 下不发生（内核确定性收口）；TTY 下提示
   写 stderr，stdout 契约不被污染（`src/cli/tty-prompts.mjs`）。
 - kernel 侧由 lint 强制同一纪律：`src/kernel/` 禁止 `process.stdout.write` 与
@@ -61,20 +65,29 @@ kkcode chat "summarize this repo" --output-format json | jq -r '.content'
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `sessionId` / `turnId` | string | 会话与回合 id（可用于 `kkcode session` 系列命令回访） |
-| `status` | string | `"succeeded"` / `"blocked"`（预算阻断）/ longagent 终态 |
+| `status` | string | `"succeeded"` / `"failed"`（provider 级失败）/ `"blocked"`（预算阻断）/ longagent 终态 |
 | `mode` / `model` | string | 实际执行航道与模型 |
 | `content` | string | 助手最终正文 |
 | `usage` | object | `{ input, output, estimated }` token 计数；`estimated` 为 true 表示估算值 |
 | `cost` | number | 本回合计价（USD） |
 | `toolResults` | array | 工具调用结果摘要 |
 | `warnings` | array | 计价/预算警告（同文本也会出现在 stderr） |
-| `error` | string \| null | 预留的失败详情字段 |
+| `error` | string \| null | 失败详情：`status` 为 `"failed"` 时是错误消息字符串，否则为 `null` |
 
-> **已知语义边界（experimental，1.x 可能收紧）**：provider 级失败（超时、
-> 5xx）当前以 `content: "provider error: …"` 的普通文本收尾，`status` 仍是
-> `"succeeded"`、`error` 为 null —— 这是 0.9.x 的既有行为，阶段 5 只固化
-> 不改造。机器消费方今天要判断失败，应同时看进程退出码与 `content` 前缀；
-> 待 `status`/`error` 的失败语义收紧后会按 §4 的变更政策公告。
+**退出码、`status`、`content` 前缀三者的关系（stable）**：
+
+| 场景 | 退出码 | `status` | `content` |
+| --- | --- | --- | --- |
+| 成功 | 0 | `"succeeded"` | 助手正文 |
+| provider 级失败（超时、5xx、重试耗尽） | 非 0 | `"failed"`，`error` 带错误消息 | 以 `"provider error: "` 前缀开头的失败文本 |
+| 预算阻断 | 0 | `"blocked"` | 阻断说明 |
+| 进程级失败（§1） | 非 0 | 无事件（stdout 零事件） | —— |
+
+- provider 级失败时 `content` 仍保留 `"provider error: "` 前缀：1.0.0 只收紧
+  `status`/`error`/退出码，不动既有文本形态，按前缀判断失败的文本消费方
+  不受影响。机器消费方应读 `status` 与 `error`，不要解析 `content`。
+- 失败摘要同时写 stderr（诊断通道）；stderr 文本不属于契约，机器消费方
+  不得解析。
 
 ### 3.2 `assistant.delta`（experimental）
 
@@ -97,8 +110,8 @@ kkcode chat "summarize this repo" --output-format json | jq -r '.content'
 1. **stable 的部分**：流纪律（§1）、事件信封（§2）、`turn.result` 的既有
    字段名与语义。在 `schemaVersion: "1"` 内只做**兼容追加**（可能新增字段，
    消费方必须忽略未知字段）；不改名、不改义、不删字段。
-2. **experimental 的部分**：`assistant.delta` 的 payload、§3.1 标注的失败
-   语义边界。可在次版本收紧，变更会进 CHANGELOG。
+2. **experimental 的部分**：`assistant.delta` 的 payload。可在次版本演进，
+   变更会进 CHANGELOG。
 3. **破坏性变更**（无论 stable/experimental）：递增 `schemaVersion` 并在
    CHANGELOG 与迁移说明中公告 —— 对照 Codex 单版本列车 + 兼容流水线
    （M1 §3.4/§4.5）与 Kimi「规范即契约」（M2 四.2）。

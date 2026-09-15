@@ -1295,7 +1295,11 @@ export async function processTurnLoop({
     return {
       sessionId,
       turnId,
+      // reply 的 "provider error: " 前缀不能动：background-worker 等文本消费方
+      // 在匹配它（background-worker.mjs 的 silent provider error 探测）。
+      // 结构化失败走 error 字段 —— turn.result 据此给 status: "failed"。
       reply: `provider error: ${error.message}`,
+      error: error.message,
       emittedText: emittedAnyText,
       context: lastContextMeter,
       usage,
