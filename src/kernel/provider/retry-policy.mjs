@@ -27,14 +27,14 @@ const CONTEXT_OVERFLOW_RE =
 
 export function abortableSleep(ms, signal = null) {
   if (signal?.aborted) {
-    const error = new Error("request aborted")
+    const error = /** @type {Error & { code: string }} */ (new Error("request aborted"))
     error.code = "ABORT_ERR"
     return Promise.reject(error)
   }
-  return new Promise((resolve, reject) => {
+  return /** @type {Promise<void>} */ (new Promise((resolve, reject) => {
     const onAbort = () => {
       clearTimeout(timer)
-      const error = new Error("request aborted")
+      const error = /** @type {Error & { code: string }} */ (new Error("request aborted"))
       error.code = "ABORT_ERR"
       reject(error)
     }
@@ -43,7 +43,7 @@ export function abortableSleep(ms, signal = null) {
       resolve()
     }, Math.max(0, Number(ms) || 0))
     signal?.addEventListener("abort", onAbort, { once: true })
-  })
+  }))
 }
 
 export function classifyHttpError(status) {
@@ -217,6 +217,10 @@ export function annotateRetryAfter(error, response) {
   return error
 }
 
+/**
+ * @param {{ execute: (attempt: number) => Promise<any>, retries?: number|null, attempts?: number|null, baseDelayMs?: number, signal?: AbortSignal|null, onRetry?: ((info: any) => any)|null }} options
+ *   retries 与 attempts 是二选一的预算写法（retryBudget），因此都标为可选。
+ */
 export async function requestWithRetry({
   execute,
   retries,
@@ -231,14 +235,14 @@ export async function requestWithRetry({
 
   for (let attempt = 1; attempt <= totalAttempts; attempt++) {
     if (signal?.aborted) {
-      const error = new Error("request aborted")
+      const error = /** @type {Error & { code: string }} */ (new Error("request aborted"))
       error.code = "ABORT_ERR"
       throw error
     }
     try {
       return await execute(attempt)
     } catch (caught) {
-      const error = caught instanceof Error ? caught : new Error(String(caught))
+      const error = /** @type {Error & Record<string, any>} */ (caught instanceof Error ? caught : new Error(String(caught)))
       lastError = error
       const classification = classifyRequestError(error, { signal })
 
@@ -292,6 +296,7 @@ export async function requestWithRetry({
  * Prime an async stream under the retry policy. Failures are retryable only
  * until the first outward chunk is obtained; callers then consume `iterator`
  * directly so a partially delivered response can never be replayed.
+ * @param {{ create: (attempt: number) => any, retries?: number|null, attempts?: number|null, baseDelayMs?: number, signal?: AbortSignal|null, onRetry?: ((info: any) => any)|null }} options
  */
 export async function primeRetriableStream({
   create,
@@ -311,14 +316,14 @@ export async function primeRetriableStream({
       const iterable = await create(requestAttempt)
       const iterator = iterable?.[Symbol.asyncIterator]?.()
       if (!iterator) {
-        const error = new Error("provider stream is not async iterable")
+        const error = /** @type {Error & { errorClass?: string }} */ (new Error("provider stream is not async iterable"))
         error.errorClass = "bad_request"
         throw error
       }
       try {
         const first = await iterator.next()
         if (first.done) {
-          const error = new Error("provider stream closed before the first event")
+          const error = /** @type {Error & { errorClass?: string }} */ (new Error("provider stream closed before the first event"))
           error.errorClass = "transient"
           throw error
         }

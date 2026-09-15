@@ -41,7 +41,7 @@ export function resolveSubagent({ config, subagentType = null, category = null }
       // 用户只想给 explore 换个模型（subagents.explore.model: x），就会连带
       // 丢掉它的 permission: readonly 与 tools 白名单 —— 静默升权成全量。
       const base = registeredAgent ? fromRegistry(subagentType, registeredAgent) : { name: subagentType, mode: "agent" }
-      const merged = { ...base }
+      const merged = /** @type {Record<string, any>} */ ({ ...base })
       for (const [key, value] of Object.entries(override)) {
         if (value !== undefined && value !== null) merged[key] = value
       }

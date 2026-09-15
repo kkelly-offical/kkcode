@@ -46,8 +46,8 @@ export function normalizeThinkingTier(value, fallback = "high") {
  * 把档位翻译成 provider 能理解的参数。
  *
  * @param {object} p
- * @param {string} p.tier off|low|medium|high|max
- * @param {string} p.protocol "openai" | "anthropic"
+ * @param {string} [p.tier] off|low|medium|high|max（缺省 "high"）
+ * @param {string} [p.protocol] "openai" | "anthropic"（缺省 "openai"）
  * @param {number} [p.maxOutputTokens] 模型自报的输出上限（目录发现或配置）
  * @param {number} [p.contextLimit] 上下文上限，作为输出上限的推算依据
  * @returns {{reasoningEffort?: string, thinking?: {type: string, budget_tokens: number}}}

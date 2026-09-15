@@ -41,7 +41,7 @@ const MAX_CHARS = 200000
  * @param {object} p
  * @param {string} [p.model] 当前模型
  * @param {string} [p.providerType] 当前 provider（不是配置里的默认值）
- * @param {object} [p.config] 完整配置，用于读 provider.model_context 与比例
+ * @param {Record<string, any>} [p.config] 完整配置，用于读 provider.model_context 与比例
  * @returns {{chars: number, ratio: number, contextLimit: number}}
  */
 export function toolOutputBudget({ model = "", providerType = "", config = null } = {}) {

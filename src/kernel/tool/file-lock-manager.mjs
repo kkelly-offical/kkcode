@@ -52,7 +52,7 @@ export async function acquireFileLock({
       await sleep(LOCK_POLL_MS)
     }
   }
-  const err = new Error(`file lock timeout: ${targetPath}`)
+  const err = /** @type {Error & { code: string }} */ (new Error(`file lock timeout: ${targetPath}`))
   err.code = "LOCK_TIMEOUT"
   throw err
 }

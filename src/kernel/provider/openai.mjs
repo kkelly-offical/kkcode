@@ -209,7 +209,7 @@ async function fetchStreamConnection(endpoint, init, timeoutMs, signal) {
     return await fetch(endpoint, { ...init, signal: fetchSignal })
   } catch (error) {
     if (timedOut && !signal?.aborted) {
-      const timeoutError = new Error(`openai connection timeout after ${timeout}ms`, { cause: error })
+      const timeoutError = /** @type {Error & { code: string }} */ (new Error(`openai connection timeout after ${timeout}ms`, { cause: error }))
       timeoutError.name = "TimeoutError"
       timeoutError.code = "ETIMEDOUT"
       throw timeoutError
@@ -274,11 +274,11 @@ export async function requestOpenAI(input) {
 
       if (!response.ok) {
         const text = await response.text().catch(() => "")
-        const error = new ProviderError(`openai request failed: ${response.status} ${text}`, {
+        const error = /** @type {ProviderError & { httpStatus?: number }} */ (new ProviderError(`openai request failed: ${response.status} ${text}`, {
           provider: "openai",
           model,
           endpoint
-        })
+        }))
         error.httpStatus = response.status
         annotateRetryAfter(error, response)
         throw error
@@ -386,9 +386,9 @@ export async function* requestOpenAIStream(input) {
 
       if (!candidate.ok) {
         const text = await candidate.text().catch(() => "")
-        const error = new ProviderError(`openai stream failed: ${candidate.status} ${text}`, {
+        const error = /** @type {ProviderError & { httpStatus?: number }} */ (new ProviderError(`openai stream failed: ${candidate.status} ${text}`, {
           provider: "openai", model, endpoint
-        })
+        }))
         error.httpStatus = candidate.status
         annotateRetryAfter(error, candidate)
         throw error
@@ -453,7 +453,7 @@ export async function* requestOpenAIStream(input) {
   }
 
   if (!sawValidSseEvent) {
-    const error = new Error("openai stream closed before the first valid SSE event")
+    const error = /** @type {Error & { errorClass?: string }} */ (new Error("openai stream closed before the first valid SSE event"))
     error.errorClass = "transient"
     throw error
   }

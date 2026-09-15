@@ -165,9 +165,9 @@ export async function requestOllama(input) {
 
   if (!response.ok) {
     const text = await response.text().catch(() => "")
-    const error = new ProviderError(`ollama request failed: ${response.status} ${text}`, {
+    const error = /** @type {ProviderError & { httpStatus?: number }} */ (new ProviderError(`ollama request failed: ${response.status} ${text}`, {
       provider: "ollama", model, endpoint
-    })
+    }))
     error.httpStatus = response.status
     annotateRetryAfter(error, response)
     throw error
@@ -249,9 +249,9 @@ export async function* requestOllamaStream(input) {
 
   if (!response.ok) {
     const text = await response.text().catch(() => "")
-    const error = new ProviderError(`ollama stream failed: ${response.status} ${text}`, {
+    const error = /** @type {ProviderError & { httpStatus?: number }} */ (new ProviderError(`ollama stream failed: ${response.status} ${text}`, {
       provider: "ollama", model, endpoint
-    })
+    }))
     error.httpStatus = response.status
     annotateRetryAfter(error, response)
     throw error

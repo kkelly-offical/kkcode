@@ -265,7 +265,7 @@ async function patchTask(id, updater, { maxRetries = 3 } = {}) {
       const check = await loadTask(id)
       if (check && (check._version || 0) !== (current._version || 0)) {
         if (attempt < maxRetries) continue // version changed, retry
-        const err = new Error(`patchTask(${id}): version conflict after ${maxRetries} retries (expected ${current._version}, got ${check._version})`)
+        const err = /** @type {Error & { code: string }} */ (new Error(`patchTask(${id}): version conflict after ${maxRetries} retries (expected ${current._version}, got ${check._version})`))
         err.code = "VERSION_CONFLICT"
         throw err
       }
@@ -496,7 +496,7 @@ export const BackgroundManager = {
       error: null,
       interruptionReason: null,
       cancelled: false,
-      backgroundMode: run ? "inline" : (config.background?.mode || "worker_process"),
+      backgroundMode: run ? "inline" : (/** @type {any} */ (config).background?.mode || "worker_process"),
       workerPid: null,
       lastHeartbeatAt: null,
       attempt: Number(payload?.attempt || 1),
@@ -628,7 +628,7 @@ export const BackgroundManager = {
    * Returns immediately if a settlement event fires before the deadline.
    */
   waitForSettled(timeoutMs = 300) {
-    return new Promise((resolve) => {
+    return /** @type {Promise<void>} */ (new Promise((resolve) => {
       const timer = setTimeout(() => {
         settledEmitter.removeListener("task-settled", onSettled)
         resolve()
@@ -639,7 +639,7 @@ export const BackgroundManager = {
         resolve()
       }
       settledEmitter.once("task-settled", onSettled)
-    })
+    }))
   },
 
   /**
@@ -648,7 +648,7 @@ export const BackgroundManager = {
    * settlements won't cause a spurious wakeup.
    * @param {string[]} taskIds - IDs to watch
    * @param {number} timeoutMs - max wait before resolving anyway
-   * @returns {Promise<{id:string,status:string}|null>} settled task info, or null on timeout
+   * @returns {Promise<{id:string,status:string}|null|void>} settled task info, null on timeout; void when delegating to waitForSettled (empty taskIds)
    */
   waitForAny(taskIds, timeoutMs = 300) {
     if (!taskIds || !taskIds.length) {

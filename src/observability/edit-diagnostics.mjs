@@ -293,6 +293,7 @@ export async function collectDiagnosticsSnapshot({ cwd = process.cwd(), files = 
   }
 }
 
+/** @param {{ cwd?: string, files?: string[], baseline?: Record<string, any>, current?: Record<string, any>, reason?: string }} [options] */
 export function buildEditDiagnosticsReport({ cwd = process.cwd(), files = [], baseline = {}, current = {}, reason = "" } = {}) {
   const baselineDiagnostics = sortDiagnostics(toArray(baseline.diagnostics || []).map((item) => normalizeDiagnostic(item, cwd)))
   const currentDiagnostics = sortDiagnostics(toArray(current.diagnostics || []).map((item) => normalizeDiagnostic(item, cwd)))
@@ -394,6 +395,7 @@ export function buildMutationObservability(metadata = {}) {
   }
 }
 
+/** @param {{ args?: Record<string, any>, metadata?: Record<string, any> }} [options] */
 export function extractTouchedFiles({ args = {}, metadata = {} } = {}) {
   const files = []
   if (args?.path) files.push(String(args.path))

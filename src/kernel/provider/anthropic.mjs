@@ -176,7 +176,7 @@ async function fetchStreamConnection(endpoint, init, timeoutMs, signal) {
     return await fetch(endpoint, { ...init, signal: fetchSignal })
   } catch (error) {
     if (timedOut && !signal?.aborted) {
-      const timeoutError = new Error(`anthropic connection timeout after ${timeout}ms`, { cause: error })
+      const timeoutError = /** @type {Error & { code: string }} */ (new Error(`anthropic connection timeout after ${timeout}ms`, { cause: error }))
       timeoutError.name = "TimeoutError"
       timeoutError.code = "ETIMEDOUT"
       throw timeoutError
@@ -197,7 +197,7 @@ export async function requestAnthropic(input) {
 
   const endpoint = `${baseUrl.replace(/\/$/, "")}/messages`
   const mappedTools = mapTools(tools)
-  const payload = {
+  const payload = /** @type {Record<string, any>} */ ({
     model,
     max_tokens: maxTokens,
     ...(Number.isFinite(input.temperature) ? { temperature: input.temperature } : {}),
@@ -205,7 +205,7 @@ export async function requestAnthropic(input) {
     system: systemWithCacheControl(system),
     messages: mapMessages(messages),
     tools: mappedTools.length ? mappedTools : undefined
-  }
+  })
   if (input.thinking?.type) {
     payload.thinking = { type: input.thinking.type, budget_tokens: input.thinking.budget_tokens || 10000 }
   }
@@ -237,11 +237,11 @@ export async function requestAnthropic(input) {
       notifyResponse(input, response)
       if (!response.ok) {
         const text = await response.text().catch(() => "")
-        const error = new ProviderError(`anthropic request failed: ${response.status} ${text}`, {
+        const error = /** @type {ProviderError & { httpStatus?: number }} */ (new ProviderError(`anthropic request failed: ${response.status} ${text}`, {
           provider: "anthropic",
           model,
           endpoint
-        })
+        }))
         error.httpStatus = response.status
         annotateRetryAfter(error, response)
         throw error
@@ -340,7 +340,7 @@ export async function* requestAnthropicStream(input) {
 
   const endpoint = `${baseUrl.replace(/\/$/, "")}/messages`
   const mappedTools = mapTools(tools)
-  const payload = {
+  const payload = /** @type {Record<string, any>} */ ({
     model,
     max_tokens: maxTokens,
     ...(Number.isFinite(input.temperature) ? { temperature: input.temperature } : {}),
@@ -350,7 +350,7 @@ export async function* requestAnthropicStream(input) {
     tools: mappedTools.length ? mappedTools : undefined,
     stream: true,
     ...(compaction ? { context_management: { edits: [{ type: "compact_20260112", trigger: { tokens: compaction.trigger || 150000 } }] } } : {})
-  }
+  })
   if (input.thinking?.type) {
     payload.thinking = { type: input.thinking.type, budget_tokens: input.thinking.budget_tokens || 10000 }
   }
@@ -381,9 +381,9 @@ export async function* requestAnthropicStream(input) {
 
       if (!candidate.ok) {
         const text = await candidate.text().catch(() => "")
-        const error = new ProviderError(`anthropic stream failed: ${candidate.status} ${text}`, {
+        const error = /** @type {ProviderError & { httpStatus?: number }} */ (new ProviderError(`anthropic stream failed: ${candidate.status} ${text}`, {
           provider: "anthropic", model, endpoint
-        })
+        }))
         error.httpStatus = candidate.status
         annotateRetryAfter(error, candidate)
         throw error

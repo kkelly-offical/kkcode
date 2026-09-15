@@ -161,7 +161,7 @@ export async function applyWorktreeResult(task, {
     }
   }
 
-  let cleanup = { ok: true, message: "kept" }
+  let cleanup = /** @type {{ ok: boolean, message?: string }} */ ({ ok: true, message: "kept" })
   if (!keepWorktree) {
     cleanup = await removeDetachedWorktree({ path: worktreePath }, repoCwd)
   }
