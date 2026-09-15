@@ -160,7 +160,7 @@ async function runHybridPipeline({
   prompt, model, providerType, sessionId, configState,
   baseUrl = null, apiKeyEnv = null, agent = null,
   maxIterations = 0, signal = null, output = null,
-  allowQuestion = true, toolContext = {}, runSpec: _runSpec = null,
+  allowQuestion = true, toolContext = /** @type {Record<string, any>} */ ({}), runSpec: _runSpec = null,
   guidance = "",
   /**
    * 插话来源（() => string[]）。只接到 H5 调试循环上 —— 它是 Ultra 里唯一会
@@ -172,7 +172,7 @@ async function runHybridPipeline({
   steerSource = null,
   // 测试缝。生产不传，全部落到真实实现；测试据此控制门禁结果与用户交互，
   // 其余（模型回复、后台任务）走 provider 与 BackgroundManager 的既有 mock 通道。
-  deps = {}
+  deps = /** @type {Record<string, any>} */ ({})
 }, lifecycle) {
   const io = {
     runUsabilityGates: deps.runUsabilityGates || runUsabilityGates,
@@ -319,8 +319,8 @@ async function runHybridPipeline({
    * LONGAGENT_DEGRADATION_APPLIED —— 不看 apply() 的返回值。默认配置下
    * 没有任何一档能生效，用户看到的那行「switch_model applied in H4」是假的。
    *
-   * @returns {{applied: boolean, strategy: string|null, level?: number,
-   *            skipped: string[], exhausted?: boolean, disabled?: boolean}}
+   * @returns {Promise<{applied: boolean, strategy: string|null, level?: number,
+   *            skipped: string[], exhausted?: boolean, disabled?: boolean}>}
    */
   async function tryDegrade({ phase, reason = "" }) {
     const ctx = { model, taskProgress, configState, shouldStop: false }
@@ -885,7 +885,7 @@ async function runHybridPipeline({
   /**
    * 一轮交付。**每轮重置什么，全部写在函数开头这一处** —— 散落的重置点
    * 漏一个就是「第二轮一开始就判定卡住」这类端到端也测不出的静默 bug。
-   * @returns {{earlyExit?: "replan"|"abort", snapshot, progress}}
+   * @returns {Promise<{earlyExit?: "replan"|"abort", snapshot, progress}>}
    */
   async function runDeliveryRound(round, prevSnapshot) {
     // —— 每轮重置 ——

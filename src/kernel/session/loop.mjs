@@ -297,7 +297,7 @@ export async function processTurnLoop({
   subagent = null,
   agent = null,
   allowQuestion = true,
-  toolContext = {},
+  toolContext = /** @type {Record<string, any>} */ ({}),
   runSpec = null,
   /**
    * 插话来源：() => string[]。每个 step 边界取一次，取到的文本作为 user 消息
@@ -647,11 +647,11 @@ export async function processTurnLoop({
         const streamToolCalls = []
         let streamUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
         let streamStopReason = "end_turn"
-        render.beginStep(step)
+        ;(/** @type {(step: number) => void} */ (render.beginStep))(step)
 
         for await (const chunk of chunks) {
           if (signal?.aborted) {
-            const error = new Error("provider stream cancelled")
+            const error = /** @type {Error & { code: string, errorClass: string }} */ (new Error("provider stream cancelled"))
             error.code = "ABORT_ERR"
             error.errorClass = "aborted"
             throw error
@@ -676,7 +676,7 @@ export async function processTurnLoop({
           }
         }
         if (signal?.aborted) {
-          const error = new Error("provider stream cancelled")
+          const error = /** @type {Error & { code: string, errorClass: string }} */ (new Error("provider stream cancelled"))
           error.code = "ABORT_ERR"
           error.errorClass = "aborted"
           throw error

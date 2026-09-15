@@ -24,7 +24,14 @@ export const ULTRA_STATUS = Object.freeze({
 
 /**
  * @param {object} p
- * @param {object} p.verification  verifyGoal 的结果（可为 null —— goal_mode 关闭时）
+ * @param {any} [p.fatalError]
+ * @param {boolean} [p.stopped]
+ * @param {string} [p.userDecision]      "" | "stop" | "deliver_partial"
+ * @param {string} [p.exhausted]         "" | "budget" | "iterations" | "deadline"
+ * @param {{status?: string, passed?: number}|null} [p.verification]  verifyGoal 的结果（可为 null —— goal_mode 关闭时）
+ * @param {boolean} [p.usabilityGatesPassed]
+ * @param {boolean} [p.completionMarkerSeen]
+ * @param {boolean} [p.hadOutput]        有没有实质产出（文件变更 / 完成的任务）
  * @returns {string} ULTRA_STATUS 之一
  */
 export function resolveUltraStatus({

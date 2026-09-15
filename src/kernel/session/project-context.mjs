@@ -298,6 +298,18 @@ async function globSimple(cwd, ext) {
   } catch { return [] }
 }
 
+/**
+ * @param {object} p
+ * @param {string} p.language
+ * @param {string} [p.version]
+ * @param {string} [p.module]
+ * @param {string} [p.buildTool]
+ * @param {string|null} [p.framework]
+ * @param {string|null} [p.projectType]
+ * @param {boolean} [p.hasTests]
+ * @param {boolean} [p.hasDocker]
+ * @param {string} [p.cwd] 各探测分支惯例上透传，本函数不消费
+ */
 async function buildNonJsContext({ language, version, module, buildTool, framework, projectType, hasTests, hasDocker }) {
   const lines = ["<project>"]
   lines.push(`  language: ${language}`)

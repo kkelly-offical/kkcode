@@ -108,7 +108,10 @@ export async function resolveSmokeTarget(cwd, config) {
 }
 
 /**
- * @returns {{enabled: boolean, status: string, reason: string, output?: string, evidence?: object}}
+ * @param {object} [p]
+ * @param {string} [p.cwd]
+ * @param {Record<string, any>} [p.config]
+ * @returns {Promise<{enabled: boolean, status: string, reason: string, output?: string, evidence?: object}>}
  *   形状与其余五道门禁一致（见 gate-contract.mjs 的契约说明）。
  */
 export async function checkSmokeGate({ cwd = process.cwd(), config = {} } = {}) {

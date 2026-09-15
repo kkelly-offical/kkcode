@@ -47,7 +47,7 @@ export function commandAllowlist(config) {
 
 /**
  * 执行一条判据。
- * @returns {{id, kind, text, severity, status, reason, evidence, durationMs}}
+ * @returns {Promise<{id, kind, text, severity, status, reason, evidence, durationMs}>}
  */
 export async function verifyCriterion(criterion, ctx = {}) {
   const started = Date.now()
@@ -204,11 +204,14 @@ function aggregate(results) {
 /**
  * 核验整棵目标树。
  *
- * @param {object} params
- * @param {object} params.goal          normalizeGoal 产出的目标（可含 subGoals）
- * @param {object} params.gateResult    本轮 runUsabilityGates 的结果，外部注入以免重复跑 build/test
- * @param {Set<string>} params.manualConfirmed 用户已确认的 manual 判据 id
- * @returns {{status, results, subGoals, passed, failed, unknown, manual, evaluatedAt}}
+ * @param {object} [params]
+ * @param {Record<string, any>} [params.goal]  normalizeGoal 产出的目标（可含 subGoals）
+ * @param {string} [params.cwd]
+ * @param {Record<string, any>} [params.config]
+ * @param {object} [params.gateResult]  本轮 runUsabilityGates 的结果，外部注入以免重复跑 build/test
+ * @param {Set<string>} [params.manualConfirmed] 用户已确认的 manual 判据 id
+ * @param {{stat?: Function, readFile?: Function, runGateCommand?: Function}} [params.deps] 测试注入点
+ * @returns {Promise<{status, results, subGoals, passed, failed, unknown, manual, evaluatedAt}>}
  *
  * 子目标聚合：root met = 全部非 optional 子目标 met **且** root 自身判据全过；
  * 任一子目标 blocked_manual → root blocked_manual。optional 子目标不影响 root，

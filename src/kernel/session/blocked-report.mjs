@@ -128,7 +128,7 @@ export function buildBlockedReport(ledger, { status = "", llmSummary = null } = 
 }
 
 /** 终端文本渲染。paint 注入以避免对 theme 的硬依赖（CLI 无色输出传恒等函数）。 */
-export function renderBlockedReportText(report, { paint = (t) => t } = {}) {
+export function renderBlockedReportText(report, { paint = /** @type {(text: string, color?: string|null, style?: object) => string} */ ((t) => t) } = {}) {
   const lines = []
   const dim = (t) => paint(t, null, { dim: true })
   const bold = (t, color) => paint(t, color, { bold: true })

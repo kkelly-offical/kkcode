@@ -256,8 +256,8 @@ export function intentProfile(intent) {
 /**
  * 归一化目标树。
  *
- * @param {object} input blueprint 输出的 goal 块
- * @param {{objective: string, stageIds?: string[]}} context
+ * @param {Record<string, any>} input blueprint 输出的 goal 块
+ * @param {{objective?: string, stageIds?: string[]}} [context]
  * @returns {{goal: object|null, errors: string[]}}
  *
  * 约束（violation 记进 errors，调用方决定是否要求 blueprint 重出）：
@@ -331,6 +331,9 @@ export function freezeGoal(goal, { round = 1 } = {}) {
  * 修订目标判据。新增自由；**删除 blocking 判据必须给非空理由**，且删除记录
  * 会被强制放进最终报告的「验收标准变更」小节 —— 不能靠禁止（模型总能重写
  * 计划），只能靠留痕并向用户展示。manual 判据永不可删。
+ *
+ * @param {Record<string, any>} goal
+ * @param {{round?: number, reason?: string, add?: any[], drop?: any[]}} [options]
  */
 export function reviseGoal(goal, { round, reason = "", add = [], drop = [] } = {}) {
   const errors = []

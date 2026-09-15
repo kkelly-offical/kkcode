@@ -68,10 +68,10 @@ function assumedAnswers(questions, why) {
  * 向用户提出澄清问题。
  *
  * @param {object} p
- * @param {Array} p.questions 模型生成的问题（每题可带 assumption 兜底）
- * @param {boolean} p.allowQuestion
- * @param {object} p.config
- * @param {object} p.deps 测试注入点
+ * @param {Array} [p.questions] 模型生成的问题（每题可带 assumption 兜底）
+ * @param {boolean} [p.allowQuestion]
+ * @param {Record<string, any>} [p.config]
+ * @param {{askQuestionInteractive?: Function, hasPromptHandler?: Function, isTTY?: boolean}} [p.deps] 测试注入点
  * @returns {Promise<{asked: boolean, why?: string, answers: Array<{id, question, answer, source}>}>}
  */
 export async function askIntakeQuestions({

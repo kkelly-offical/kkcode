@@ -320,7 +320,7 @@ export function mergeCappedFileChanges(current = [], incoming = [], limit = LONG
 
   const merged = [...map.values()]
   if (merged.length > maxEntries) {
-    const truncated = merged.slice(merged.length - maxEntries)
+    const truncated = /** @type {any} */ (merged.slice(merged.length - maxEntries))
     truncated._truncatedFrom = merged.length
     return truncated
   }
@@ -492,7 +492,7 @@ function countPromptMatches(patterns, input) {
 
 /**
  * 分析 prompt，判断最适合的执行模式
- * @returns {{ mode: 'assistant'|'plan'|'agent'|'longagent', confidence: 'high'|'medium'|'low', reason: string }}
+ * @returns {{ mode: 'assistant'|'plan'|'agent'|'longagent', confidence: 'high'|'medium'|'low', reason: string, evidence?: string[], topology?: string, pathHints?: string[], continuity?: string, explanation?: string }}
  */
 export function classifyTaskMode(prompt, options = {}) {
   const text = String(prompt || "").trim()

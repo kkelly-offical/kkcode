@@ -13,6 +13,15 @@ const MAX_TITLE_LENGTH = 50
  *
  * 三条约束：未配置 models.fast 就什么都不做；只覆盖自动生成的标题，不动
  * 用户改过的；失败一律静默，绝不影响这一轮对话。
+ *
+ * @param {object} p
+ * @param {object} p.configState
+ * @param {string} p.sessionId
+ * @param {string} p.prompt
+ * @param {string|null} [p.providerType]
+ * @param {string} [p.autoTitle]
+ * @param {{requestFast?: Function, getSession?: Function, updateSession?: Function, systemPrompt?: string}} [p.deps] 测试注入点
+ * @returns {Promise<string|null>}
  */
 export async function refineSessionTitle({
   configState,

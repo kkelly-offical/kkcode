@@ -14,13 +14,12 @@
   // 1.0.0 阶段 4 曾把 src/repl/config-persistence.mjs 与 src/ui/event-scope.mjs
   // 移出白名单：它们按分层边界规则（架构 §4.2.2）改走 facade
   // src/kernel/index.mjs，而 facade 的传递闭包带着 283 个存量 checkJs 错误。
-  // 1.0.0 类型清扫（M20）已把闭包内 kernel core/permission/tool/provider/mcp/
-  // orchestration、observability、storage 的 144 个错误清零（只动 JSDoc），
-  // 本清单相应扩入这 28 个文件（154 个）。facade 闭包残余 137 个错误全部在
-  // src/kernel/session/（20 个文件，M17 turn.result 热区，由后续任务清扫）——
-  // 因此 facade 本体、src/kernel/kernel.mjs 与上述两个 frontends 文件仍不能
-  // 归队：它们的传递闭包必然经过 session 脏文件。session 清零后把它们补进
-  // 本清单即完成归队（见 docs/architecture-kernel-sdk-1.0.0.md §8 跟进项）。
+  // 1.0.0 类型清扫（M20）清零闭包内 kernel core/permission/tool/provider/mcp/
+  // orchestration、observability、storage 的 144 个错误并扩入 28 个文件（154 个）；
+  // M22 清零 src/kernel/session/ 残余的 137 个错误（20 个文件，同样只动 JSDoc）
+  // 后，facade 本体、src/kernel/kernel.mjs 与两个 frontends 权宜文件归队 ——
+  // 清单 154 → 158，facade 的传递闭包即 kernel 全量，自此整体回到类型守护
+  // （docs/architecture-kernel-sdk-1.0.0.md §8 跟进项关闭）。
   "compilerOptions": {
     "allowJs": true,
     "checkJs": true,
@@ -48,6 +47,8 @@
     "src/kernel/core/events.mjs",
     "src/kernel/core/modes.mjs",
     "src/kernel/core/types.mjs",
+    "src/kernel/index.mjs",
+    "src/kernel/kernel.mjs",
     "src/github/api.mjs",
     "src/github/auth.mjs",
     "src/github/workspace.mjs",
@@ -100,6 +101,7 @@
     "src/kernel/provider/wizard-form.mjs",
     "src/repl/capability-facade.mjs",
     "src/repl/commands/registry.mjs",
+    "src/repl/config-persistence.mjs",
     "src/repl/controller-entry.mjs",
     "src/repl/file-rank.mjs",
     "src/repl/input-engine.mjs",
@@ -172,6 +174,7 @@
     "src/kernel/tool/task-tool.mjs",
     "src/kernel/tool/workspace-fs.mjs",
     "src/ui/app-state.mjs",
+    "src/ui/event-scope.mjs",
     "src/ui/repl-background-panel.mjs",
     "src/ui/repl-capability-panel.mjs",
     "src/ui/repl-dashboard.mjs",

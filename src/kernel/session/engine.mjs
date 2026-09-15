@@ -53,8 +53,14 @@ export function summarizeRouteDecision(route) {
 
 /**
  * 智能模式路由：根据 prompt 内容判断最适合的执行模式
- * @returns {{ mode: string, changed: boolean, reason: string, confidence: string, forced: boolean }}
+ * @returns {{ mode?: string, changed?: boolean, reason?: string, confidence?: string, forced?: boolean,
+ *   suggestion?: string, explanation?: string,
+ *   modeContract: object, topology: string, evidence: string[], pathHints: string[],
+ *   continuity: string, evidenceSummary: string, topologySummary: string,
+ *   upgradePath: string|null, observability: object }}
  *   forced=true 表示用户强制使用了不匹配的模式（需要确认）
+ *   mode/changed/reason/confidence/forced 来自 base 展开，调用方恒传 —— 标可选是
+ *   展开属性无法向编译器证明存在性，不是运行时可缺。
  */
 function finalizeRouteDecision(req, classification, base = {}) {
   const effectiveMode = base.changed ? base.mode : req
