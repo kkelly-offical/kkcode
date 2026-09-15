@@ -71,6 +71,7 @@ function unrecognizedImageBlock(source) {
  *
  * 只认模型收得下的四种；认不出就是认不出，由调用方决定降级还是回落。
  */
+/** @type {Array<{ media: string, parts: Array<[number, number[]]> }>} */
 const IMAGE_SIGNATURES = [
   { media: "image/png", parts: [[0, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]]] },
   { media: "image/jpeg", parts: [[0, [0xff, 0xd8, 0xff]]] },
@@ -140,6 +141,8 @@ const MAX_IMAGE_SIZE_MB = MAX_IMAGE_SIZE / 1024 / 1024
 /**
  * 给用户看的错误话术。不放命令行 —— `Command failed: xclip -selection clipboard
  * -t image/png -o` 对用户没有任何可操作性，只会吓人。
+ * @param {string} kind
+ * @param {{ bytes?: number }} [options]
  */
 function clipboardErrorBlock(kind, { bytes } = {}) {
   if (kind === "timeout") return { type: "error", message: "clipboard read timed out" }
@@ -353,6 +356,7 @@ export async function readImageAsBlock(filePath) {
  * Returns a content block { type: "image", mediaType, data } or null if no image.
  * Supports Windows (PowerShell), macOS (pngpaste/osascript), Linux
  * (wl-paste with xclip fallback).
+ * @param {{ onStatus?: (status: string) => void, platform?: string, executeFile?: typeof execFileAsync, tempDir?: string }} [options]
  */
 export async function readClipboardImage({
   onStatus,

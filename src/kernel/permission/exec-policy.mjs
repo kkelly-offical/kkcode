@@ -283,7 +283,7 @@ const YOLO_RELAXABLE_CATEGORIES = new Set(["git_safety"])
 
 /**
  * @param {string} command
- * @param {object} config
+ * @param {Record<string, any>} [config]
  * @param {{approvalLevel?: string}} [options] 当前审批档。0.6.2 之前这个函数
  *   完全不看权限档 —— YOLO 模式下 git commit 照样被拒，与模式的承诺矛盾。
  */
@@ -392,7 +392,7 @@ export function getForbiddenRules() {
     .filter(r => r.decision === Decision.FORBID)
     .map(r => ({
       name: r.name,
-      pattern: Array.isArray(r.pattern) ? r.pattern.join(" ") : r.pattern.toString(),
+      pattern: Array.isArray(r.pattern) ? r.pattern.join(" ") : /** @type {any} */ (r.pattern).toString(),
       reason: r.reason
     }))
 }

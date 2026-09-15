@@ -45,20 +45,23 @@ function classifyProviderFailure(error) {
 function normalizeProviderError(error, providerType, model) {
   const reason = classifyProviderFailure(error)
   if (error instanceof ProviderError) {
-    error.reason = error.reason || reason
-    error.details = {
-      ...(error.details || {}),
+    // ProviderError 实例在 provider 层会被陆续挂上 reason/errorClass/httpStatus/
+    // needsCompaction 等定位字段（KkError 未声明这些开放字段），这里按扩展形状用。
+    const enriched = /** @type {ProviderError & Record<string, any>} */ (error)
+    enriched.reason = enriched.reason || reason
+    enriched.details = {
+      ...(enriched.details || {}),
       provider: providerType,
       model,
-      reason: error.reason
+      reason: enriched.reason
     }
-    return error
+    return enriched
   }
-  const wrapped = new ProviderError(error?.message || "provider request failed", {
+  const wrapped = /** @type {ProviderError & Record<string, any>} */ (new ProviderError(error?.message || "provider request failed", {
     provider: providerType,
     model,
     reason
-  })
+  }))
   wrapped.reason = reason
   wrapped.cause = error
   wrapped.errorClass = error?.errorClass || reason
@@ -507,7 +510,7 @@ export function createProviderRegistry() {
     try {
       for await (const chunk of provider.requestStream(input)) {
         if (signal?.aborted) {
-          const error = new Error("provider stream cancelled")
+          const error = /** @type {Error & { code?: string, errorClass?: string }} */ (new Error("provider stream cancelled"))
           error.code = "ABORT_ERR"
           error.errorClass = "aborted"
           throw error
@@ -518,7 +521,7 @@ export function createProviderRegistry() {
       }
       streamCompleted = true
       if (signal?.aborted) {
-        const error = new Error("provider stream cancelled")
+        const error = /** @type {Error & { code?: string, errorClass?: string }} */ (new Error("provider stream cancelled"))
         error.code = "ABORT_ERR"
         error.errorClass = "aborted"
         throw error

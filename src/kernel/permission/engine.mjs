@@ -51,8 +51,8 @@ function denialMessage(tool, decision) {
  * persistGrantHandler 收编为实例字段（M3 §四.2），每个 kernel 实例一份。
  *
  * @param {object} [deps]
- * @param {object} [deps.promptChannel] 审批提示通道（默认进程级通道，见 prompt.mjs）
- * @param {object} [deps.eventBus] 事件总线（默认进程级默认总线，见 core/events.mjs）
+ * @param {typeof defaultPermissionPromptChannel} [deps.promptChannel] 审批提示通道（默认进程级通道，见 prompt.mjs）
+ * @param {typeof defaultEventBus} [deps.eventBus] 事件总线（默认进程级默认总线，见 core/events.mjs）
  */
 export function createPermissionEngine({ promptChannel = defaultPermissionPromptChannel, eventBus = defaultEventBus } = {}) {
   const sessionAllow = new Map()

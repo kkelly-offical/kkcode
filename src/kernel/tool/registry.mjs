@@ -1145,7 +1145,7 @@ function builtinTools(config) {
       }
 
       // Default: text file with line numbers
-      const encoding = args.encoding || "utf8"
+      const encoding = /** @type {BufferEncoding} */ (args.encoding || "utf8")
       const fileStat = await stat(target)
 
       // 大小预检：此前没有任何检查，一个 2GB 的文件会直接读进内存
@@ -2436,7 +2436,7 @@ function toolAllowedByMode(toolName, mode) {
  * 字段（M3 §四.2），每个 kernel 实例一份工具集。
  *
  * @param {object} [deps]
- * @param {object} [deps.mcpRegistry] MCP 注册表（默认进程级连接池，§7.2 显式契约）
+ * @param {typeof McpRegistry} [deps.mcpRegistry] MCP 注册表（默认进程级连接池，§7.2 显式契约）
  */
 export function createToolRegistry({ mcpRegistry = McpRegistry } = {}) {
   const state = {
@@ -2451,6 +2451,7 @@ export function createToolRegistry({ mcpRegistry = McpRegistry } = {}) {
   }
 
   const ToolRegistry = {
+    /** @param {{ config?: Record<string, any>, cwd?: string, force?: boolean, allowProjectSources?: boolean }} [options] */
     async initialize({
       config = {},
       cwd = process.cwd(),
@@ -2505,6 +2506,7 @@ export function createToolRegistry({ mcpRegistry = McpRegistry } = {}) {
       return state.initialized
     },
 
+    /** @param {{ mode?: string, cwd?: string, config?: Record<string, any>, allowProjectSources?: boolean }} [options] */
     async list({
       mode,
       cwd = process.cwd(),

@@ -409,6 +409,7 @@ export async function verifyAuditChain() {
   }
 }
 
+/** @param {{ format?: string } & Record<string, any>} [options] */
 export async function exportAuditEntries({ format = "json", ...filters } = {}) {
   const entries = (await listAuditEntries({ ...filters, limit: filters.limit || state.maxEntries })).reverse()
   if (format === "jsonl") return entries.map((entry) => JSON.stringify(entry)).join("\n") + (entries.length ? "\n" : "")

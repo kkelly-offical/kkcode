@@ -17,7 +17,7 @@ export async function* parseSSE(body, signal, options = {}) {
 
   function throwIfAborted() {
     if (!signal?.aborted) return
-    const error = new Error("stream aborted")
+    const error = /** @type {Error & { code: string }} */ (new Error("stream aborted"))
     error.code = "ABORT_ERR"
     throw error
   }
@@ -125,14 +125,14 @@ function idleTimeout(ms, signal) {
   let onAbort = null
   const promise = new Promise((resolve, reject) => {
     timer = setTimeout(() => {
-      const err = new Error(`stream idle timeout: no data received for ${ms}ms`)
+      const err = /** @type {Error & { code: string }} */ (new Error(`stream idle timeout: no data received for ${ms}ms`))
       err.code = "STREAM_IDLE_TIMEOUT"
       reject(err)
     }, ms)
     if (signal) {
       onAbort = () => {
         clearTimeout(timer)
-        const err = new Error("aborted")
+        const err = /** @type {Error & { code: string }} */ (new Error("aborted"))
         err.code = "ABORT_ERR"
         reject(err)
       }

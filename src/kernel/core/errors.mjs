@@ -38,8 +38,9 @@ export class ToolError extends KkError {
 export class McpError extends KkError {
   /**
    * @param {string} message
-   * @param {{ reason?: string, server?: string, action?: string }} [details]
+   * @param {{ reason?: string, server?: string, action?: string } & Record<string, any>} [details]
    * reason: "timeout" | "spawn_failed" | "connection_refused" | "bad_response" | "server_crash" | "protocol_error" | "unknown"
+   * （details 是透传给 KkError 的开放包：各 client 还会附 phase/code/tool/prompt 等定位字段。）
    */
   constructor(message, details = null) {
     super("MCP_ERROR", message, details)

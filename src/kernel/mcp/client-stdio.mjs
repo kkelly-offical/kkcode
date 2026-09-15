@@ -129,7 +129,7 @@ export function createStdioMcpClient(serverName, config = {}) {
     lifecycle = "starting"
     ignoreClose = false
 
-    await new Promise((resolve, reject) => {
+    await /** @type {Promise<void>} */ (new Promise((resolve, reject) => {
       let settled = false
       const proc = spawn(executable, spawnArgs, {
         stdio: ["pipe", "pipe", "pipe"],
@@ -245,7 +245,7 @@ export function createStdioMcpClient(serverName, config = {}) {
         )
         cleanupChild()
       })
-    })
+    }))
   }
 
   const shutdownTimeoutMs = Number(config.shutdown_timeout_ms || 5000)
@@ -257,7 +257,7 @@ export function createStdioMcpClient(serverName, config = {}) {
     ignoreClose = true
     try { proc.kill() } catch {}
     rejectPending("unknown", `mcp server "${serverName}" shutdown`, { phase: "shutdown" })
-    await new Promise((resolve) => {
+    await /** @type {Promise<void>} */ (new Promise((resolve) => {
       const killTimer = setTimeout(() => {
         try { proc.kill("SIGKILL") } catch {}
         resolve()
@@ -266,7 +266,7 @@ export function createStdioMcpClient(serverName, config = {}) {
         clearTimeout(killTimer)
         resolve()
       })
-    })
+    }))
     cleanupChild()
   }
 

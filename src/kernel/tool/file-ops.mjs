@@ -35,7 +35,7 @@ async function guardPath(root, requested, { mustExist = false, forWrite = true }
     const rel = path.relative(root, resolved).split(path.sep).join("/")
     const hit = findProtectedTarget([rel])
     if (hit) {
-      const error = new Error(`${hit.path} is protected: ${hit.reason}`)
+      const error = /** @type {Error & { code: string }} */ (new Error(`${hit.path} is protected: ${hit.reason}`))
       error.code = "PROTECTED_PATH"
       throw error
     }
@@ -271,7 +271,7 @@ export const archiveTool = {
       const done = pipeline(gzip, writeStream)
       for (const chunk of chunks) {
         if (chunk.file) {
-          await new Promise((resolve, reject) => {
+          await /** @type {Promise<void>} */ (new Promise((resolve, reject) => {
             const rs = createReadStream(chunk.file)
             rs.on("error", reject)
             rs.on("end", () => {
@@ -280,7 +280,7 @@ export const archiveTool = {
               resolve()
             })
             rs.pipe(gzip, { end: false })
-          })
+          }))
         } else {
           gzip.write(chunk)
         }

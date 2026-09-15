@@ -56,10 +56,12 @@ export const MODE_CYCLE = Object.freeze([
   })
 ])
 
+/** @type {readonly string[]} 查找面接受任意字符串，未知 id 由调用方回落，故键类型放宽为 string。 */
 export const MODE_IDS = Object.freeze(MODE_CYCLE.map((mode) => mode.id))
 
 export const DEFAULT_MODE_ID = "agent"
 
+/** @type {Map<string, (typeof MODE_CYCLE)[number]>} 键放宽为 string：get/has 传入的是未归一的用户输入。 */
 const MODE_BY_ID = new Map(MODE_CYCLE.map((mode) => [mode.id, mode]))
 
 /**

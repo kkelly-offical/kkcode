@@ -189,7 +189,7 @@ async function askDefaultModel({ chosen, contextOf, ask }) {
  *
  * 选项标签带上下文（`gpt-4o (128k)`）：这正是用户挑模型时要比的那个数。
  *
- * @returns {Promise<{models: string[], defaultModel: string, contexts: Record<string, number>, discovered: Array}>}
+ * @returns {Promise<{models: string[], defaultModel: string, contexts: Record<string, number>, discovered: Array, cancelled?: boolean}>}
  */
 async function askModel({ name, entry, ask, discover }) {
   const discovered = await discoverModelChoices({ name, entry, discover })
@@ -367,6 +367,7 @@ export function previewEntry(name, entry, { setDefault = true, modelContext = {}
  * 轮次：接口形式 → base_url + api_key → 模型多选（自动发现）→（缺上下文才有的）
  * 补问 →（判不出 thinking 才有的）补问 → 确认（可改名）。
  *
+ * @param {{ configState?: any, ask?: (request: any) => Promise<any>, discover?: typeof discoverModelsForProvider }} [options]
  * @returns {Promise<{saved: boolean, name?: string, configPatch?: object, reason?: string}>}
  */
 export async function runProviderAddForm({
@@ -486,7 +487,7 @@ export async function runProviderAddForm({
     break
   }
 
-  const configPatch = { provider: { default: name, [name]: entry } }
+  const configPatch = /** @type {{ provider: Record<string, any> }} */ ({ provider: { default: name, [name]: entry } })
   // model_context / model_thinking 是 provider 段下的顶层 map（不是条目内字段）。
   // saveProviderConfig 对它们走同一套浅合并 —— 新模型的条目并进去，别的原样留着。
   if (Object.keys(contexts).length) configPatch.provider.model_context = { ...contexts }
@@ -501,6 +502,7 @@ export async function runProviderAddForm({
  * 每个字段的当前值预填进输入框，改完落盘；留空的 api_key 表示保留现有密钥
  * （表单里已提示）。要删除字段，直接编辑 YAML —— 表单不做「置空即删除」这种
  * 一不小心就丢配置的隐式语义。
+ * @param {{ name?: string, existing?: Record<string, any>, ask?: (request: any) => Promise<any> }} [options]
  */
 export async function runProviderEditForm({
   name,
@@ -512,14 +514,14 @@ export async function runProviderEditForm({
   }
 
   const EDITABLE = ["type", "protocol", "base_url", "api_key_env", "default_model", "max_tokens", "context_limit"]
-  const questions = EDITABLE
+  const questions = /** @type {Array<Record<string, any>>} */ (EDITABLE
     .filter((key) => existing[key] !== undefined)
     .map((key) => ({
       id: key,
       header: key,
       text: `${key}（当前：${existing[key]}）`,
       default: String(existing[key])
-    }))
+    })))
   questions.push({
     id: "api_key",
     header: "API Key",

@@ -100,7 +100,7 @@ export async function requestFast({
   // 已判定不可用的模型直接短路：不再发请求，也就不再无声烧钱
   if (health?.disabled) return null
 
-  const request = deps.requestProvider || requestProvider
+  const request = /** @type {any} */ (deps).requestProvider || requestProvider
   const controller = new AbortController()
   const abortOnOuter = () => controller.abort()
   if (signal) {
