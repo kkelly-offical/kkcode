@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { tmpdir } from "node:os"
 import { PassThrough } from "node:stream"
@@ -101,8 +101,11 @@ function jsonResponse(data, status = 200) {
  * createKernel({handlers}) 经 2b 桥安装的是同一个槽位（kernel.mjs:220-225）。
  */
 async function runBranchPublish({ handler = null, extraArgs = [] } = {}) {
-  const cwd = await mkdtemp(join(tmpdir(), "kkcode-review-publish-cwd-"))
-  const home = await mkdtemp(join(tmpdir(), "kkcode-review-publish-home-"))
+  // realpath 对齐 process.cwd() 的物理路径：macOS 上 mkdtemp 返回
+  // /var/folders/...，chdir 后 process.cwd() 是 /private/var/folders/...，
+  // 而 workspace trust 以路径 SHA256 为键，符号链接路径会让 hash 错位。
+  const cwd = await realpath(await mkdtemp(join(tmpdir(), "kkcode-review-publish-cwd-")))
+  const home = await realpath(await mkdtemp(join(tmpdir(), "kkcode-review-publish-home-")))
   await writeFile(join(home, "github-token.json"), JSON.stringify({ token: "test-token", login: "kkcode-user" }), "utf8")
   await writeFile(join(cwd, "kkcode.config.json"), JSON.stringify({
     mcp: { auto_discover: false, servers: {} },
