@@ -6,7 +6,7 @@ import { tmpdir } from "node:os"
 import { PermissionEngine } from "../src/kernel/permission/engine.mjs"
 import { ToolRegistry } from "../src/kernel/tool/registry.mjs"
 import { SkillRegistry } from "../src/kernel/skill/registry.mjs"
-import { CustomAgentRegistry } from "../src/agent/custom-agent-loader.mjs"
+import { CustomAgentRegistry } from "../src/kernel/agent/custom-agent-loader.mjs"
 import { bootstrapKernelExtensions } from "../src/context.mjs"
 
 // 1.0.0 阶段 1a 的零行为变更契约（docs/architecture-kernel-sdk-1.0.0.md §6）：

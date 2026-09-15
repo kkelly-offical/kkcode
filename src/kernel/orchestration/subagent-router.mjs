@@ -1,4 +1,4 @@
-import { getAgent } from "../../agent/agent.mjs"
+import { getAgent } from "../agent/agent.mjs"
 
 /**
  * 从注册表 agent 提取委派需要的字段。

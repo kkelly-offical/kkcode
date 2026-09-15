@@ -1,9 +1,7 @@
 import { Command } from "commander"
 import { printContextWarnings } from "../context.mjs"
-import { createKernel, LongAgentManager } from "../kernel/index.mjs"
+import { createKernel, LongAgentManager, listAgents, CustomAgentRegistry } from "../kernel/index.mjs"
 import { loadTheme } from "../theme/load-theme.mjs"
-import { listAgents } from "../agent/agent.mjs"
-import { CustomAgentRegistry } from "../agent/custom-agent-loader.mjs"
 
 export function createAgentCommand() {
   const cmd = new Command("agent").description("inspect subagents and longagent runs")
@@ -15,7 +13,7 @@ export function createAgentCommand() {
     .option("--configured", "print only config-defined agent.subagents overrides")
     .option("--include-hidden", "include hidden internal roles")
     .action(async (options) => {
-      // boot:false —— agent 巡检只初始化 CustomAgentRegistry（模块级，未收编），
+      // boot:false —— agent 巡检只初始化 CustomAgentRegistry（kernel/agent 模块级单例），
       // 不拉起整套扩展
       const kernel = await createKernel({ cwd: process.cwd(), boot: false })
       const themeState = await loadTheme(kernel.configState)

@@ -218,7 +218,7 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
     // 字段写了没人读，模型和用户都不知道要的 agent 不存在。改为显式报错，
     // 让模型换一个名字重试，而不是拿满权限继续跑。
     if (subagent.fallback) {
-      const { listAgents } = await import("../../agent/agent.mjs")
+      const { listAgents } = await import("../agent/agent.mjs")
       const known = [
         ...listAgents().filter((a) => a.mode === "subagent").map((a) => a.name),
         ...Object.keys(config.agent?.subagents || {})

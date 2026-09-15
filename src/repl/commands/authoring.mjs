@@ -20,7 +20,7 @@ import { buildSkillCatalog } from "../slash-router.mjs"
 import { buildCapabilitySnapshot } from "../capability-facade.mjs"
 import { loadCustomCommands } from "../../command/custom-commands.mjs"
 import { resolveExtensionPolicy } from "../../context.mjs"
-import { generateSkill, saveSkillGlobal, readClipboardImage, BackgroundManager } from "../../kernel/index.mjs"
+import { generateSkill, saveSkillGlobal, readClipboardImage, BackgroundManager, listAgents, CustomAgentRegistry, generateAgent, saveAgentGlobal } from "../../kernel/index.mjs"
 import { userRootDir } from "../../storage/paths.mjs"
 import { createThemeSwitcher } from "../theme-switch.mjs"
 import { persistUiConfig } from "../config-persistence.mjs"
@@ -148,7 +148,6 @@ export const authoringCommands = [
       // 回合前不初始化，直接读会拿到空清单
       const skillRegistry = ctx.kernel.extensions.skills
       const skills = skillRegistry.isReady() ? skillRegistry.list() : []
-      const { CustomAgentRegistry } = await import("../../agent/custom-agent-loader.mjs")
       const capabilitySnapshot = await buildCapabilitySnapshot({
         mode: state.mode,
         cwd: process.cwd(),
@@ -182,7 +181,6 @@ export const authoringCommands = [
       await skillRegistry.initialize(extensionPolicy.config, process.cwd(), {
         allowProjectSources: extensionPolicy.allowProjectSources
       })
-      const { CustomAgentRegistry } = await import("../../agent/custom-agent-loader.mjs")
       await CustomAgentRegistry.initialize(process.cwd(), {
         allowProjectSources: extensionPolicy.allowProjectSources
       })
@@ -199,7 +197,6 @@ export const authoringCommands = [
     argMode: "none",
     run: async ({ showInfo, ctx }) => {
       // CLI 侧一直有 `kkcode agent list`，REPL 里却看不到子智能体的存在与权限档。
-      const { listAgents } = await import("../../agent/agent.mjs")
       const configured = ctx.configState.config.agent?.subagents || {}
       const rows = listAgents()
         .filter((agent) => agent.mode === "subagent")
@@ -322,7 +319,6 @@ export const authoringCommands = [
         print("example: /create-agent code reviewer that focuses on security vulnerabilities")
         return { exit: false }
       }
-      const { generateAgent, saveAgentGlobal } = await import("../../agent/generator.mjs")
       return runGenerator({
         kind: "agent",
         description: args,
@@ -330,7 +326,6 @@ export const authoringCommands = [
         generate: generateAgent,
         save: saveAgentGlobal,
         reload: async (context) => {
-          const { CustomAgentRegistry } = await import("../../agent/custom-agent-loader.mjs")
           const extensionPolicy = resolveExtensionPolicy(context.configState)
           await CustomAgentRegistry.initialize(process.cwd(), {
             allowProjectSources: extensionPolicy.allowProjectSources

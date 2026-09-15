@@ -97,25 +97,25 @@ test("单字符命中不标，双字符起才标 —— 阈值两侧各一条", 
 })
 
 test("散射式子序列命中：整条路径原样输出，不被拆碎", () => {
-  // `@src/[a]gen[t]/promp[t]/[a]r[ch]itect.txt` 这种已经读不出原本的路径了，
+  // `@src/kernel/[a]gen[t]/promp[t]/[a]r[ch]itect.txt` 这种已经读不出原本的路径了，
   // 而这类候选本来就排在后面 —— 用户需要的是一眼扫过去跳过它。
   const lines = render(mention([{
-    name: "src/agent/prompt/architect.txt",
+    name: "src/kernel/agent/prompt/architect.txt",
     desc: "",
-    // s0 r1 c2 /3 a4 g5 e6 n7 t8 /9 p10 r11 o12 m13 p14 t15 /16 a17 r18 c19 h20 …
-    matched: [[4, 5], [8, 9], [15, 16], [17, 18], [19, 21]]
+    // s0 r1 c2 /3 k4 e5 r6 n7 e8 l9 /10 a11 g12 e13 n14 t15 /16 p17 r18 o19 m20 p21 t22 /23 a24 r25 c26 h27 …
+    matched: [[11, 12], [15, 16], [22, 23], [24, 25], [26, 28]]
   }]))
-  assert.ok(lines[1].includes("@src/agent/prompt/ar[ch]itect.txt"), lines[1])
+  assert.ok(lines[1].includes("@src/kernel/agent/prompt/ar[ch]itect.txt"), lines[1])
   assert.equal((lines[1].match(/\[/g) || []).length, 1, "只该留下那一段长命中")
 })
 
 test("全是单字符命中时一个方括号都不留", () => {
   const lines = render(mention([{
-    name: "src/agent/prompt.txt",
+    name: "src/kernel/agent/prompt.txt",
     desc: "",
-    matched: [[0, 1], [4, 5], [10, 11]]
+    matched: [[0, 1], [11, 12], [17, 18]]
   }]))
-  assert.ok(lines[1].includes("@src/agent/prompt.txt"), lines[1])
+  assert.ok(lines[1].includes("@src/kernel/agent/prompt.txt"), lines[1])
   assert.ok(!lines[1].includes("["), `碎片全丢掉后应当原样输出：${lines[1]}`)
 })
 

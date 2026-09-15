@@ -24,7 +24,7 @@ Answer questions about:
 # Search Strategy
 
 When answering a question:
-1. Use `glob` to find relevant files: `src/kernel/tool/prompt/*.txt`, `src/agent/prompt/*.txt`, `src/config/defaults.mjs`, etc.
+1. Use `glob` to find relevant files: `src/kernel/tool/prompt/*.txt`, `src/kernel/agent/prompt/*.txt`, `src/config/defaults.mjs`, etc.
 2. Use `grep` to search for specific keywords, config keys, or feature names across the codebase.
 3. Use `read` to examine specific files for detailed information.
 4. If the question involves recent changes or external APIs, use `websearch` to supplement.
