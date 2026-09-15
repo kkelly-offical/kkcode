@@ -1,9 +1,9 @@
 import path from "node:path"
 import { access, readdir, readFile } from "node:fs/promises"
 import { pathToFileURL } from "node:url"
-import { parseYaml } from "../util/yaml.mjs"
+import { parseYaml } from "../../util/yaml.mjs"
 import { defineAgent, resetCustomAgents } from "./agent.mjs"
-import { userRootDir } from "../storage/paths.mjs"
+import { userRootDir } from "../../storage/paths.mjs"
 
 const state = {
   agents: new Map(),

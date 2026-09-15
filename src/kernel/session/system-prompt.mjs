@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url"
 import { createHash } from "node:crypto"
 import { loadSessionPrompt } from "./prompt-loader.mjs"
 import { renderPublicModeContract } from "./mode-contract.mjs"
-import { getAgentPrompt, listAgents } from "../../agent/agent.mjs"
+import { getAgentPrompt, listAgents } from "../agent/agent.mjs"
 import { loadAutoMemory } from "./memory-loader.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))

@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { defineAgent } from "../src/agent/agent.mjs"
+import { defineAgent } from "../src/kernel/agent/agent.mjs"
 import { buildSystemPromptBlocks, providerPromptByModel } from "../src/kernel/session/system-prompt.mjs"
 
 test("system prompt routes claude models to anthropic prompt", async () => {

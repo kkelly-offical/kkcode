@@ -61,6 +61,7 @@ M3 耦合点 5）；`/trust` 的 `reinitializeExtensions` 要手工重建五套�
 │ src/kernel/<子域>/       —— 由现有目录逐步迁入（见 §6 阶段 2–3）：                   │
 │   session/（engine、loop、store、compaction、rollback、longagent 家族）              │
 │   tool/  permission/  provider/  mcp/  skill/  plugin/  orchestration/  core/        │
+│   agent/（内建/自定义 agent 注册表与 prompt 资产，M23 自 src/agent/ 迁入）            │
 │ 规则：内核不得 import theme/、ui/、repl/、cli/、commands/；不得直接写 process.stdout │
 └──────────────────────────────────────────────────────────────────────────────────────┘
                     │
@@ -75,9 +76,12 @@ M3 耦合点 5）；`/trust` 的 `reinitializeExtensions` 要手工重建五套�
 
 - **1.0.0 不新建 `packages/`**。`src/kernel/`、`src/sdk/` 是包内目录边界，不是
   发布单元；发布形态仍然是单包 `@kkelly-offical/kkcode`（package.json 不变）。
-- 子域目录已在阶段 3c 全部迁入 `src/kernel/`：core、permission、tool、
-  provider、mcp、skill、plugin、orchestration、session 九域各一个子目录，
-  逐域独立 PR、纯机械搬迁（每域一次 rename，文件内容不变）。
+- 子域目录现有十个，均为纯机械搬迁（每域一次 rename，文件内容不变）：
+  阶段 3c 迁入 core、permission、tool、provider、mcp、skill、plugin、
+  orchestration、session 九域（逐域独立 PR）；M23 自 `src/agent/` 迁入
+  agent/ 为第十域（git mv 保历史）—— 内建/自定义 agent 注册表与 prompt
+  资产，是 boot 序列第 4 步与模式路由（resolveAgentForMode）的运行时依赖，
+  归属决策见 M18 调研；frontends 对其的消费经 facade 第 3 组导出。
   frontends 对内核的引用在阶段 4 全部收敛到 `src/kernel/index.mjs` facade，
   边界由 eslint `no-restricted-imports` 与 `scripts/check-boundaries.mjs`
   在 CI 强制（§4.2.2）。
@@ -146,7 +150,8 @@ export async function createKernel(options = {}) {
    阶段 4 落地后的白名单 = §4.1 句柄面（createKernel）+ facade 头注登记的两组
    扩展：frontends 实际消费的无状态契约面（模式/事件常量、provider 目录与向导等
    纯函数）与 §7.2/§7.3 的进程级显式例外（会话存储、BackgroundManager、
-   默认事件总线/默认权限引擎/默认 HookBus/两个默认提示通道）。新增导出必须在
+   默认事件总线/默认权限引擎/默认 HookBus/两个默认提示通道、agent 注册表
+   单例及其 authoring 面）。新增导出必须在
    facade 头注登记归属组与理由。
 2. **deep-import 禁令**：frontends 只允许 `import ... from "../kernel/index.mjs"`
    与 `../sdk/…`；由 eslint `no-restricted-imports` + 边界脚本在 CI 强制

@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { CustomAgentRegistry } from "../src/agent/custom-agent-loader.mjs"
+import { CustomAgentRegistry } from "../src/kernel/agent/custom-agent-loader.mjs"
 
 let home = ""
 let project = ""

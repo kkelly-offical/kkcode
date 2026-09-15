@@ -7,7 +7,7 @@ import { checkWorkspaceTrust } from "./kernel/permission/workspace-trust.mjs"
 import { PermissionEngine } from "./kernel/permission/engine.mjs"
 import { ToolRegistry } from "./kernel/tool/registry.mjs"
 import { SkillRegistry } from "./kernel/skill/registry.mjs"
-import { CustomAgentRegistry } from "./agent/custom-agent-loader.mjs"
+import { CustomAgentRegistry } from "./kernel/agent/custom-agent-loader.mjs"
 import { initHookBus } from "./kernel/plugin/hook-bus.mjs"
 import { loadProfile } from "./onboarding.mjs"
 

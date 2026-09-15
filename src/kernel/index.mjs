@@ -17,10 +17,12 @@
  *      frontends 按需取。
  *   3. 进程级显式例外（§7.2/§7.3 契约）：会话存储读写、BackgroundManager /
  *      LongAgentManager、默认事件总线 / 默认权限引擎 / 默认 HookBus / 两个
- *      默认提示通道。2b 过渡期 executeTurn 路径仍读进程级默认值（kernel.mjs
- *      头注），frontends 需要影响回合判定时必须拿这一组（例如 REPL 的
- *      setPersistGrantHandler）；deprecated 的 PermissionEngine/EventBus/
- *      HookBus 代理别名不经 facade 再导出。
+ *      默认提示通道、agent 注册表（模块级单例 CustomAgentRegistry 与内建
+ *      agent 目录 listAgents，以及配套 authoring 面 generateAgent /
+ *      saveAgentGlobal）。2b 过渡期 executeTurn 路径仍读进程级默认值
+ *      （kernel.mjs 头注），frontends 需要影响回合判定时必须拿这一组（例如
+ *      REPL 的 setPersistGrantHandler）；deprecated 的 PermissionEngine/
+ *      EventBus/HookBus 代理别名不经 facade 再导出。
  */
 
 // ── 1. 组合根 ─────────────────────────────────────────────────────────
@@ -142,3 +144,8 @@ export {
 } from "./session/store.mjs"
 export { compactSession } from "./session/compaction.mjs"
 export { confirmRollback, executeRollback, handleRollbackIfNeeded } from "./session/rollback.mjs"
+// agent 注册表单例（第十子域 src/kernel/agent/，M23 迁入）：内建 agent 目录
+// 与自定义 agent 注册表是模块级全局一份，authoring 命令经 facade 消费。
+export { listAgents } from "./agent/agent.mjs"
+export { CustomAgentRegistry } from "./agent/custom-agent-loader.mjs"
+export { generateAgent, saveAgentGlobal } from "./agent/generator.mjs"

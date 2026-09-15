@@ -1,5 +1,5 @@
 import { requestFast, isFastModelConfigured } from "../provider/fast-model.mjs"
-import { getAgentPrompt } from "../../agent/agent.mjs"
+import { getAgentPrompt } from "../agent/agent.mjs"
 import { updateSession, getSession } from "./store.mjs"
 import { sanitizeTerminalText } from "../core/terminal-sanitize.mjs"
 
