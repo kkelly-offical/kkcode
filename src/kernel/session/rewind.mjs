@@ -43,8 +43,8 @@ function isSyntheticUserMessage(message) {
  * 回溯最近一轮。
  *
  * @param {string} sessionId
- * @param {{deps?: object}} [options]
- * @returns {Promise<{ok: boolean, reason?: string, removed: number, prompt: string}>}
+ * @param {{deps?: {getConversationHistory?: Function, replaceMessages?: Function}}} [options]
+ * @returns {Promise<{ok: boolean, reason?: string, removed: number, prompt: string, keptCount?: number}>}
  *   `prompt` 是被撤回的那句用户输入 —— 调用方可以把它填回输入框，
  *   让「退回去改一下再问」变成一步而不是两步。
  */
@@ -89,6 +89,10 @@ function extractText(message) {
 /**
  * 会话里还有多少可回溯的轮次 —— 用于在没得可退时给出诚实的提示，
  * 而不是让 Esc 静默地什么也不做。
+ *
+ * @param {string} sessionId
+ * @param {{deps?: {getConversationHistory?: Function}}} [options]
+ * @returns {Promise<number>}
  */
 export async function countRewindableTurns(sessionId, { deps = {} } = {}) {
   const history = deps.getConversationHistory || getConversationHistory

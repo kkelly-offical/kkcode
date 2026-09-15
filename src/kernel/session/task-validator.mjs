@@ -164,7 +164,7 @@ export class TaskValidator {
 
   async globPattern(pattern) {
     try {
-      const { Glob } = await import("glob")
+      const { Glob } = await import(/** @type {any} */ ("glob"))
       const g = new Glob(pattern, {
         cwd: this.cwd,
         ignore: ["node_modules/**", ".git/**", "dist/**", "build/**"]

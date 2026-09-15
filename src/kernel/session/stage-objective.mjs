@@ -53,7 +53,14 @@ async function fileExists(cwd, relative, statFn) {
 }
 
 /**
- * @returns {{status, reason, missing: string[], gates: object|null}}
+ * @param {object} [p]
+ * @param {object} [p.stage]     含 plannedFiles 声明的 stage（缺失时判 unknown）
+ * @param {string} [p.cwd]
+ * @param {Record<string, any>} [p.config]
+ * @param {string} [p.sessionId]
+ * @param {number} [p.iteration]
+ * @param {{stat?: Function, runUsabilityGates?: Function}} [p.deps] 测试注入点
+ * @returns {Promise<{status, reason, missing: string[], gates: object|null, contractError?: string}>}
  *   met     — 目标已达成，调用方可以推进 stageIndex
  *   unmet   — 明确没达成，按原有重试逻辑走
  *   unknown — 无法判断（stage 没声明文件、门禁全禁用），不改变原有行为

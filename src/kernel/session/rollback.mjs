@@ -79,7 +79,7 @@ export function detectRollbackIntent(text) {
 
 /**
  * 向用户确认是否执行回滚，并展示可用快照
- * @returns {{ confirmed: boolean, snapshotId: string|null, message: string }}
+ * @returns {Promise<{ confirmed: boolean, snapshotId: string|null, commitHash?: string|null, message: string }>}
  */
 export async function confirmRollback({ cwd, sessionId, language = "en" }) {
   const inGit = await isGitRepo(cwd)
@@ -165,7 +165,7 @@ export async function confirmRollback({ cwd, sessionId, language = "en" }) {
 
 /**
  * 执行代码回滚
- * @returns {{ ok: boolean, message: string }}
+ * @returns {Promise<{ ok: boolean, message: string }>}
  */
 export async function executeRollback({ cwd, commitHash, sessionId, language = "en" }) {
   try {
@@ -206,7 +206,7 @@ export async function executeRollback({ cwd, commitHash, sessionId, language = "
  * 完整的回溯流程：检测 → 确认 → 执行
  * 在前台 REPL 的 executePromptTurn 入口调用
  *
- * @returns {{ handled: boolean, reply: string }}
+ * @returns {Promise<{ handled: boolean, reply: string }>}
  *   handled=true 表示消息已被回溯流程处理，不需要再发给模型
  */
 export async function handleRollbackIfNeeded({ prompt, cwd, sessionId, language = "en" }) {

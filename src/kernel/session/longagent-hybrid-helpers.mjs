@@ -1,3 +1,4 @@
+import YAML from "yaml"
 import { processTurnLoop } from "./loop.mjs"
 import { parseJsonLoose } from "./longagent-utils.mjs"
 import { validateAndNormalizeStagePlan, defaultStagePlan } from "./longagent-plan.mjs"

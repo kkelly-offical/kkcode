@@ -23,7 +23,12 @@ function nonInteractiveFallback(config, why) {
 }
 
 /**
- * @returns {{action: "continue"|"guidance"|"deliver_partial"|"stop", text: string, source: string, why?: string}}
+ * @param {object} [p]
+ * @param {object} [p.report]     buildBlockedReport 的产物，渲染进提问描述
+ * @param {boolean} [p.allowQuestion]
+ * @param {Record<string, any>} [p.config]
+ * @param {{askQuestionInteractive?: Function, hasPromptHandler?: Function, isTTY?: boolean}} [p.deps] 测试注入点
+ * @returns {Promise<{action: "continue"|"guidance"|"deliver_partial"|"stop", text: string, source: string, why?: string}>}
  */
 export async function askBlockedDecision({ report, allowQuestion = true, config = {}, deps = {} } = {}) {
   const askFn = deps.askQuestionInteractive || askQuestionInteractive
@@ -81,6 +86,12 @@ export async function askBlockedDecision({ report, allowQuestion = true, config 
 /**
  * TTY 下让用户逐条确认 manual 判据。返回确认通过的判据 id 集合。
  * 非 TTY 返回空集 —— manual 判据保持 pending，绝不代替用户点头。
+ *
+ * @param {object} [p]
+ * @param {Array<{id: string, text?: string, question?: string}>} [p.pending]
+ * @param {boolean} [p.allowQuestion]
+ * @param {{askQuestionInteractive?: Function, hasPromptHandler?: Function, isTTY?: boolean}} [p.deps] 测试注入点
+ * @returns {Promise<Set<string>>}
  */
 export async function confirmManualCriteria({ pending, allowQuestion = true, deps = {} } = {}) {
   const askFn = deps.askQuestionInteractive || askQuestionInteractive

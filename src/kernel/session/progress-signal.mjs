@@ -37,12 +37,12 @@ export function errorSignature(text) {
 /**
  * 拍一轮的快照。
  * @param {object} p
- * @param {object} p.verification verifyGoal 的结果（可 null）
- * @param {object} p.gateResult   runUsabilityGates 的结果（可 null）
- * @param {object} p.taskProgress
- * @param {Array}  p.fileChanges  [{path, addedLines, removedLines}]
- * @param {string} p.planSig      planSignature(stagePlan)
- * @param {number} p.maxStageIndexReached
+ * @param {{results?: Array<{id: string, status: string}>, subGoals?: Array<{results?: Array<{id: string, status: string}>}>}|null} [p.verification] verifyGoal 的结果（可 null）
+ * @param {{gates?: Record<string, {status?: string}>}|null} [p.gateResult]   runUsabilityGates 的结果（可 null）
+ * @param {Record<string, any>} [p.taskProgress]
+ * @param {Array}  [p.fileChanges]  [{path, addedLines, removedLines}]
+ * @param {string} [p.planSig]      planSignature(stagePlan)
+ * @param {number} [p.maxStageIndexReached]
  */
 export function snapshotRound({
   verification = null, gateResult = null, taskProgress = {},

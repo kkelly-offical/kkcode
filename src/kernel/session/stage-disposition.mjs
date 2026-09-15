@@ -49,7 +49,20 @@ export function hasDependents(stagePlan, index) {
 
 /**
  * @param {object} p
- * @param {string[]} p.errorCategories 失败 task 的错误分类（classifyError 的产物）
+ * @param {boolean} [p.stopped]
+ * @param {boolean} [p.planDefect]
+ * @param {number} [p.recoveries]
+ * @param {number} [p.maxRecoveries]
+ * @param {number} [p.attempts]
+ * @param {number} [p.maxAttempts]
+ * @param {string[]} [p.errorCategories] 失败 task 的错误分类（classifyError 的产物）
+ * @param {boolean} [p.stageHasDependents]
+ * @param {boolean} [p.alreadyDeferred]
+ * @param {boolean} [p.alreadyReplanned]
+ * @param {boolean} [p.canDegrade]
+ * @param {boolean} [p.roundsLeft]
+ * @param {boolean} [p.allowSkip]
+ * @param {boolean} [p.allowDefer]
  * @returns {{disposition: string, reason: string}}
  */
 export function decideStageDisposition({
