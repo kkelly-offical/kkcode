@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises"
 import { execSync } from "node:child_process"
 import { Command } from "commander"
 import { printContextWarnings } from "../context.mjs"
+import { createTtyPromptHandlers } from "../cli/tty-prompts.mjs"
 import { createKernel } from "../kernel/index.mjs"
 import { loadTheme } from "../theme/load-theme.mjs"
 import { parseUnifiedDiff, previewLines } from "../review/diff-parser.mjs"
@@ -91,6 +92,23 @@ export function validateBranchReviewOptions(options = {}) {
 
 export function resolveIncludeWorkingTree(options = {}) {
   return options.workingTree !== false && options.includeWorkingTree !== false
+}
+
+/**
+ * branch 子命令的 TTY 审批/提问 handler（照 chat.mjs 模式，M21 补 M19 审计的
+ * 漏网）：--publish 前的 defaultPermissionEngine.check 读的是进程级默认通道，
+ * 只有 createKernel({handlers}) 经 2b 桥把 handler 装进去，TTY 用户才看得到
+ * 审批弹窗。--json 时提示写 stderr，stdout 的机器可读契约不被审批行污染；
+ * 非 TTY 返回 null —— 保持 3b 的确定性收口（permission.non_tty_default）。
+ */
+export function createBranchReviewPromptHandlers(options = {}, io = {}) {
+  const input = io.input ?? process.stdin
+  const output = io.output ?? (options.json ? (io.stderr ?? process.stderr) : (io.stdout ?? process.stdout))
+  return createTtyPromptHandlers({
+    input,
+    output,
+    ...(io.isTTY !== undefined ? { isTTY: io.isTTY } : {})
+  })
 }
 
 async function captureReviewSource({ options, cwd, token = "", github = githubReviewApi }) {
@@ -219,13 +237,24 @@ export function createReviewCommand() {
     .option("--model <id>", "review model")
     .option("--publish", "create or update the KK Code PR summary comment", false)
     .option("--json", "print the versioned review report as JSON", false)
+    .option("--trust", "trust this workspace (equivalent to /trust in the REPL)")
     .action(async (options) => {
       let reviewSpan = null
       let activeReviewId = ""
       let activeDiffHash = ""
       try {
         validateBranchReviewOptions(options)
-        const kernel = await createKernel({ cwd: process.cwd() })
+        // TTY 下注入审批/提问 handler（M21）——没有这一步，:publish 前的
+        // defaultPermissionEngine.check({risk:7}) 在交互式终端也被确定性 deny，
+        // 用户永远看不到审批弹窗（M19 审计的唯一漏网）。非 TTY 自动保持确定性收口。
+        // --trust 与 chat/ultra 一致：未授信工作区走既有信任流程，不再直接抛
+        // "workspace not trusted" 而无旗标可解。
+        const ttyHandlers = createBranchReviewPromptHandlers(options)
+        const kernel = await createKernel({
+          cwd: process.cwd(),
+          trust: Boolean(options.trust),
+          ...(ttyHandlers ? { handlers: ttyHandlers } : {})
+        })
         const ctx = {
           configState: kernel.configState,
           themeState: await loadTheme(kernel.configState),
