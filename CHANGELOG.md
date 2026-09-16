@@ -1,10 +1,10 @@
 # Changelog / 更新日志
 
-## 1.0.0（未发布 / unreleased）
+## 1.0.0
 
-> 1.0.0 的五个阶段（内核/SDK 分层，见 docs/architecture-kernel-sdk-1.0.0.md）
-> 已全部合入 `main`，本条目为正式条目；npm 发布与 GitHub Release 待搭车
-> 功能选定后统一执行，当前 npm 最新稳定版仍是 0.9.4。
+> 1.0.0 于 2026-09-16 正式发布：npm 包与 GitHub Release 同步发出。五个阶段
+> （内核/SDK 分层，见 docs/architecture-kernel-sdk-1.0.0.md）、headless
+> JSONL 机器契约与四条 backlog 已全部合入 `main` 并随本版发布。
 
 ### English
 
@@ -14,7 +14,7 @@
   session/ 8-file static import cycle is broken; terminal primitives neutralized;
   the kernel no longer imports themes or touches the TTY (permission/question
   prompts are host-injected handlers — headless hosts get a deterministic deny);
-  the nine kernel subdomains live under `src/kernel/`; frontends consume the
+  the ten kernel subdomains live under `src/kernel/`; frontends consume the
   kernel only through the `src/kernel/index.mjs` facade whitelist, enforced in CI
   by eslint `no-restricted-imports` plus `scripts/check-boundaries.mjs` (both
   directions, including dynamic imports).
@@ -39,6 +39,31 @@
   (e.g. background task error detection); `status`/`error`/exit-code semantics
   are the only intentional contract change, made before 1.0.0 ships because
   changing them after release would be truly breaking.
+- **Typecheck gate closed over the kernel domains (backlog).** After 0.9.2
+  turned `checkJs` on for every source file, the gate kept tolerating a pinned
+  backlog of legacy errors; the 144 errors across 28 files in kernel
+  core/permission/tool/provider/mcp/orchestration plus observability/storage
+  are now cleaned out with JSDoc-only fixes (typedef keys relaxed, `@param`
+  completed or made optional, `Promise<void>` annotations, intersection casts
+  for `Error` extension fields) — no runtime semantics changed, and
+  `npm run typecheck` holds at zero errors with the include set widened from
+  126 to 154 files.
+- **`kkcode review branch --publish` wires TTY approval handlers (backlog).**
+  The branch action built its kernel without prompt handlers, so the
+  pre-publish permission check (`github_publish`, risk 7) was deterministically
+  denied even on an interactive terminal — the approval prompt could never
+  appear. It now installs TTY prompt handlers the same way `chat` does (under
+  `--json` the prompts go to stderr, keeping the stdout contract clean),
+  non-TTY keeps the deterministic deny, and a new `--trust` flag matches
+  `chat`/`ultra` for untrusted workspaces.
+- **`src/agent/` becomes the tenth kernel subdomain (backlog).** The agent
+  runtime (agent core, custom-agent loader, agent generator, and the 19 prompt
+  assets) moved wholesale from top-level `src/agent/` to
+  `src/kernel/agent/`; frontends now reach it only through the
+  `src/kernel/index.mjs` facade (new third export group:
+  `listAgents`/`CustomAgentRegistry`/`generateAgent`/`saveAgentGlobal`), and
+  the boundary lint needed zero rule changes — the `src/kernel/` prefix
+  enforcement applies automatically.
 
 ### 中文
 
@@ -46,7 +71,7 @@
   组合根；九组模块级单例收编为 kernel 实例字段（模块级兼容别名保留）；
   session/ 8 文件静态 import 环已破；终端原语中立化；内核不再 import theme、
   不碰 TTY（审批/提问改由宿主注入 handler，headless 宿主得到确定性 deny）；
-  九个子域迁入 `src/kernel/`；frontends 只经 `src/kernel/index.mjs` facade
+  十个子域迁入 `src/kernel/`；frontends 只经 `src/kernel/index.mjs` facade
   白名单消费内核，由 eslint `no-restricted-imports` 与
   `scripts/check-boundaries.mjs` 在 CI 双向强制（含动态 import）。
 - **headless JSONL 机器契约（阶段 5）。** `kkcode chat --output-format
@@ -67,6 +92,25 @@
   消费方（如后台任务的错误探测）不受影响；`status`/`error`/退出码语义是
   本次唯一的 intentional 契约变更，赶在 1.0.0 发布前收紧 —— 发布后再改
   才是真正的 breaking。
+- **typecheck 门禁按域清零存量错误（backlog）。** 0.9.2 把 `checkJs` 开到
+  全部源文件后，门禁一直容忍一批钉住的存量错误；本次把 kernel
+  core/permission/tool/provider/mcp/orchestration 与 observability/storage
+  的 144 个存量错误（28 文件）以纯 JSDoc 方式清零（typedef 键放宽、
+  `@param` 补全或改可选、`Promise<void>` 标注、`Error` 扩展字段交叉类型
+  cast），无运行时语义变更，`npm run typecheck` 在 include 从 126 扩到
+  154 个文件后保持 0 错误。
+- **`kkcode review branch --publish` 接入 TTY 审批 handler（backlog）。**
+  branch 子命令此前 createKernel 未传 handlers，publish 前的权限检查
+  （`github_publish`，risk 7）在交互终端上也被确定性 deny —— 用户永远
+  看不到审批弹窗。现在照 `chat` 的模式装入 TTY prompt handlers（`--json`
+  时提示写 stderr，stdout 契约不受污染），非 TTY 保持确定性收口，并补
+  `--trust` 旗标与 `chat`/`ultra` 对齐。
+- **`src/agent/` 迁为第十个内核子域（backlog）。** agent 运行时（agent
+  本体、custom-agent loader、agent generator 与 19 个 prompt 文件）整体
+  从顶层 `src/agent/` 迁入 `src/kernel/agent/`；frontends 改为只经
+  `src/kernel/index.mjs` facade 消费（新增第三组导出：
+  `listAgents`/`CustomAgentRegistry`/`generateAgent`/`saveAgentGlobal`），
+  边界 lint 零规则调整 —— `src/kernel/` 前缀强制自动生效。
 
 ## 0.9.4
 
