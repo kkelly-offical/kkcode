@@ -47,7 +47,7 @@
   completed or made optional, `Promise<void>` annotations, intersection casts
   for `Error` extension fields) — no runtime semantics changed, and
   `npm run typecheck` holds at zero errors with the include set widened from
-  127 to 154 files.
+  126 to 154 files.
 - **`kkcode review branch --publish` wires TTY approval handlers (backlog).**
   The branch action built its kernel without prompt handlers, so the
   pre-publish permission check (`github_publish`, risk 7) was deterministically
@@ -97,7 +97,7 @@
   core/permission/tool/provider/mcp/orchestration 与 observability/storage
   的 144 个存量错误（28 文件）以纯 JSDoc 方式清零（typedef 键放宽、
   `@param` 补全或改可选、`Promise<void>` 标注、`Error` 扩展字段交叉类型
-  cast），无运行时语义变更，`npm run typecheck` 在 include 从 127 扩到
+  cast），无运行时语义变更，`npm run typecheck` 在 include 从 126 扩到
   154 个文件后保持 0 错误。
 - **`kkcode review branch --publish` 接入 TTY 审批 handler（backlog）。**
   branch 子命令此前 createKernel 未传 handlers，publish 前的权限检查
