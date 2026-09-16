@@ -672,16 +672,14 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current stable version / 当前稳定版本**: `v0.9.4`
+**Current stable version / 当前稳定版本**: `v1.0.0`
 
-`v0.9.4` is the current stable npm and GitHub release. `1.0.0` is the next major
-version in development: all five stages of the kernel/SDK layering have merged into
-`main` and the working tree version is now `1.0.0`, but it has not been published
-to npm or tagged as a GitHub release yet.
+`v1.0.0` is the current stable npm and GitHub release: the five stages of the
+kernel/SDK layering, the frozen headless JSONL machine contract, and the four
+pre-release backlog items all merged into `main` and ship with this version.
 
-`v0.9.4` 是当前 npm 与 GitHub 正式稳定版本。`1.0.0` 是开发中的下一主版本：
-内核/SDK 分层五个阶段已全部合入 `main`，工作区版本号已对齐 `1.0.0`，
-但尚未发布到 npm，也未打 GitHub Release。
+`v1.0.0` 是当前 npm 与 GitHub 正式稳定版本：内核/SDK 分层五个阶段、固化的
+headless JSONL 机器契约与四条 backlog 已全部合入 `main` 并随本版发布。
 
 Use the Kimi Code preset without placing credentials in YAML:
 
@@ -705,6 +703,18 @@ request identity with authorization values redacted.
 **Package / 包地址**: [npm](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 
 **English**
+- `1.0.0` ships the five-stage in-process kernel/SDK layering and the frozen
+  headless JSONL machine contract: the boot sequence is consolidated into a
+  single `createKernel()` composition root, the kernel subdomains live under
+  `src/kernel/` behind a facade whitelist enforced by lint in CI, and `kkcode
+  chat --output-format json|stream-json` emits pure JSONL on stdout with
+  progress, diagnostics, and prompts kept to stderr. Four pre-release backlog
+  items land with it: `turn.result` failure semantics tightened (provider-level
+  failures now report `status: "failed"` and exit non-zero instead of looking
+  successful), the typecheck gate closed over the tree with the remaining
+  legacy `checkJs` errors cleaned out domain by domain, `kkcode review branch
+  --publish` wired into TTY approval handlers (plus a new `--trust` flag), and
+  `src/agent/` moved in as the tenth kernel subdomain.
 - `0.9.4` is a test-portability hotfix: the background-apply tests now
   normalize CRLF line endings on read-back and pin `core.autocrlf=false` in
   their temporary repos, so Windows runners with `autocrlf=true` no longer
@@ -766,6 +776,15 @@ request identity with authorization values redacted.
 - `0.2.1` rebuilt kkcode around Assistant as the default general-purpose lane, with dedicated Agent and LongAgent modes for coding work.
 
 **中文**
+- `1.0.0` 交付内核/SDK 分层五个阶段与固化的 headless JSONL 机器契约：boot
+  序列收口进唯一的 `createKernel()` 组合根，内核子域收编进 `src/kernel/`
+  并由 lint 在 CI 强制的 facade 白名单守护，`kkcode chat --output-format
+  json|stream-json` 的 stdout 输出纯 JSONL（进度、诊断与提示只走 stderr）。
+  四条发布前 backlog 随本版落地：`turn.result` 失败语义收紧（provider 级
+  失败现在如实报告 `status: "failed"` 并以非零退出，不再看似成功）、
+  typecheck 门禁按域清零存量 `checkJs` 错误、`kkcode review branch
+  --publish` 接入 TTY 审批 handler（新增 `--trust` 旗标）、`src/agent/`
+  迁为第十个内核子域。
 - `0.9.4` 是测试可移植性 hotfix：background-apply 测试在读回内容时统一归一化
   CRLF，并在临时测试仓库固定 `core.autocrlf=false`，Windows runner 的
   `autocrlf=true` 不再破坏 LF 严格相等断言 —— 0.9.3 的 release workflow 正是

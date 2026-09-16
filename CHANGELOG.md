@@ -1,10 +1,10 @@
 # Changelog / 更新日志
 
-## 1.0.0（未发布 / unreleased）
+## 1.0.0
 
-> 1.0.0 的五个阶段（内核/SDK 分层，见 docs/architecture-kernel-sdk-1.0.0.md）
-> 已全部合入 `main`，本条目为正式条目；npm 发布与 GitHub Release 待搭车
-> 功能选定后统一执行，当前 npm 最新稳定版仍是 0.9.4。
+> 1.0.0 于 2026-09-16 正式发布：npm 包与 GitHub Release 同步发出。五个阶段
+> （内核/SDK 分层，见 docs/architecture-kernel-sdk-1.0.0.md）、headless
+> JSONL 机器契约与四条 backlog 已全部合入 `main` 并随本版发布。
 
 ### English
 
