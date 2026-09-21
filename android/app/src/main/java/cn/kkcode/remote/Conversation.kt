@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -20,9 +21,9 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import org.json.JSONObject
 
-private val activityMuted = Color(0xFF99999F)
-private val addition = Color(0xFF75B68D)
-private val removal = Color(0xFFD47E89)
+private val activityMuted: Color @Composable get() = kkcodeColors.activityMuted
+private val addition: Color @Composable get() = kkcodeColors.diffAdd
+private val removal: Color @Composable get() = kkcodeColors.diffRemove
 
 internal fun toolMutations(payload: JSONObject?): List<JSONObject> {
     val metadata = payload?.optJSONObject("metadata") ?: return emptyList()
@@ -42,6 +43,7 @@ internal fun toolMutations(payload: JSONObject?): List<JSONObject> {
     val file = changes.firstOrNull()?.optString("filePath")?.takeIf { it.isNotBlank() } ?: args.optString("file_path", args.optString("path"))
     val basename = file.split('/', '\\').lastOrNull().orEmpty()
     val status = payload.optString("status", "completed")
+    val failed = status in listOf("error", "blocked", "cancelled")
     val action = when(status) { "running" -> "正在"; "error", "blocked", "cancelled" -> "未完成"; else -> "已" }
     val elapsed = item.durationMs ?: if(!item.done && item.startedAt > 0) (now - item.startedAt).coerceAtLeast(0) else null
     val title = when {
@@ -54,30 +56,36 @@ internal fun toolMutations(payload: JSONObject?): List<JSONObject> {
     Column(Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
             if((item.kind == "thinking" && !item.done) || status == "running") CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.5.dp, color = activityMuted)
-            else Icon(if(item.kind == "thinking") Icons.Outlined.Psychology else if(editing) Icons.Outlined.Edit else if(browsing) Icons.Outlined.FolderOpen else Icons.Outlined.Terminal, null, Modifier.size(16.dp), tint = activityMuted)
-            Text(title, Modifier.weight(1f, fill = false), fontSize = 12.sp, color = activityMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            else Icon(if(item.kind == "thinking") Icons.Outlined.Psychology else if(editing) Icons.Outlined.Edit else if(browsing) Icons.Outlined.FolderOpen else Icons.Outlined.Terminal, null, Modifier.size(16.dp), tint = if(failed) removal else activityMuted)
+            Text(title, Modifier.weight(1f, fill = false), fontSize = 12.sp, color = if(failed) removal else activityMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val added = changes.sumOf { it.optInt("addedLines") }; val removed = changes.sumOf { it.optInt("removedLines") }
             if(added + removed > 0) { Text("+$added", color = addition, fontSize = 10.sp); Text("−$removed", color = removal, fontSize = 10.sp) }
             Icon(if(expanded) Icons.Outlined.ExpandMore else Icons.Outlined.ChevronRight, if(expanded) "收起详情" else "展开详情", Modifier.size(14.dp), tint = activityMuted)
         }
         if(expanded) Column(Modifier.fillMaxWidth().padding(start = 22.dp, bottom = 10.dp)) {
-            changes.forEach { change ->
-                Text(change.optString("filePath"), color = activityMuted, fontSize = 11.sp, modifier = Modifier.padding(vertical = 8.dp))
-                SelectionContainer {
-                    Column(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                        change.optJSONArray("structuredPatch").objects().forEach { hunk ->
-                            Text("@@ −${hunk.optInt("oldStart")},${hunk.optInt("oldLineCount")} +${hunk.optInt("newStart")},${hunk.optInt("newLineCount")} @@", fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = activityMuted)
-                            hunk.optJSONArray("lines").objects().forEach { line ->
-                                val type = line.optString("type"); val color = if(type == "add") addition else if(type == "remove") removal else activityMuted
-                                Text((if(type == "add") "+ " else if(type == "remove") "− " else "  ") + line.optString("text"), color = color, fontSize = 11.sp, lineHeight = 18.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.fillMaxWidth().background(if(type == "add" || type == "remove") color.copy(alpha = .09f) else Color.Transparent).padding(horizontal = 5.dp))
+            Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .5f), RoundedCornerShape(14.dp)).padding(horizontal = 12.dp, vertical = 10.dp)) {
+                changes.forEach { change ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
+                        Icon(Icons.Outlined.Description, null, Modifier.size(12.dp), tint = activityMuted)
+                        Spacer(Modifier.width(6.dp))
+                        Text(change.optString("filePath"), color = activityMuted, fontSize = 11.sp, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    SelectionContainer {
+                        Column(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 4.dp)) {
+                            change.optJSONArray("structuredPatch").objects().forEach { hunk ->
+                                Text("@@ −${hunk.optInt("oldStart")},${hunk.optInt("oldLineCount")} +${hunk.optInt("newStart")},${hunk.optInt("newLineCount")} @@", fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = activityMuted, modifier = Modifier.padding(vertical = 3.dp))
+                                hunk.optJSONArray("lines").objects().forEach { line ->
+                                    val type = line.optString("type"); val color = if(type == "add") addition else if(type == "remove") removal else activityMuted
+                                    Text((if(type == "add") "+ " else if(type == "remove") "− " else "  ") + line.optString("text"), color = color, fontSize = 11.sp, lineHeight = 19.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.fillMaxWidth().background(if(type == "add" || type == "remove") color.copy(alpha = .1f) else Color.Transparent, RoundedCornerShape(4.dp)).padding(horizontal = 6.dp))
+                                }
                             }
                         }
                     }
                 }
+                val detail = if(item.kind == "thinking") item.text else item.detail.ifBlank { payload.optString("output", "") }
+                if(detail.isNotBlank()) SelectionContainer { Text(detail.take(20000), fontSize = 12.sp, color = activityMuted, lineHeight = 19.sp, fontFamily = if(item.kind == "thinking") null else FontFamily.Monospace, modifier = Modifier.padding(top = if(changes.isEmpty()) 0.dp else 6.dp)) }
+                if(args.length() > 0) { var showArgs by remember { mutableStateOf(false) }; TextButton(onClick = { showArgs = !showArgs }, contentPadding = PaddingValues(0.dp)) { Text("调用参数", fontSize = 11.sp, color = kkcodeColors.link) }; if(showArgs) SelectionContainer { Text(args.toString(2), fontSize = 11.sp, color = activityMuted, fontFamily = FontFamily.Monospace, lineHeight = 17.sp) } }
             }
-            val detail = if(item.kind == "thinking") item.text else item.detail.ifBlank { payload.optString("output", "") }
-            if(detail.isNotBlank()) SelectionContainer { Text(detail.take(20000), fontSize = 12.sp, color = activityMuted, lineHeight = 19.sp) }
-            if(args.length() > 0) { var showArgs by remember { mutableStateOf(false) }; TextButton(onClick = { showArgs = !showArgs }, contentPadding = PaddingValues(0.dp)) { Text("调用参数", fontSize = 11.sp, color = activityMuted) }; if(showArgs) SelectionContainer { Text(args.toString(2), fontSize = 11.sp, color = activityMuted, fontFamily = FontFamily.Monospace) } }
         }
     }
 }

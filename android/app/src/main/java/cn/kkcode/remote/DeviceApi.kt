@@ -1,6 +1,12 @@
 package cn.kkcode.remote
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -12,6 +18,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.net.URLEncoder
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.io.IOException
@@ -19,8 +26,11 @@ import kotlin.coroutines.resumeWithException
 
 class DeviceApiError(message: String, val status: Int, val code: String) : Exception(message)
 
+internal fun sseErrorField(json: String, name: String): String? = Regex("\"$name\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"").find(json)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
+
 class DeviceApi(var base: String, var token: String = "", var device: String = "", var relay: Boolean = true, var hostHeader: String? = null) {
     private val client = OkHttpClient.Builder().callTimeout(35, TimeUnit.SECONDS).build()
+    private val streamClient = client.newBuilder().callTimeout(0, TimeUnit.SECONDS).connectTimeout(15, TimeUnit.SECONDS).readTimeout(75, TimeUnit.SECONDS).build()
     private suspend fun execute(request: Request): Response = suspendCancellableCoroutine { continuation ->
         val call = client.newCall(request)
         continuation.invokeOnCancellation { call.cancel() }
@@ -55,4 +65,34 @@ class DeviceApi(var base: String, var token: String = "", var device: String = "
             }
         }
     }
+    fun streamEvents(sessionId: String, after: Long): Flow<SseFrame> = flow {
+        val path = (if (relay) "/api/v1/devices/$device/events/stream" else "/api/v1/events/stream") + "?sessionId=" + URLEncoder.encode(sessionId, "UTF-8") + "&after=" + after
+        val request = Request.Builder().url(base.trimEnd('/') + path).get()
+            .header("User-Agent", "KK Code/${BuildConfig.VERSION_NAME} (Android)")
+            .header("Accept", "text/event-stream")
+            .apply { hostHeader?.let { header("Host", it) }; if (token.isNotBlank()) header("Authorization", "Bearer $token") }
+            .build()
+        val call = streamClient.newCall(request)
+        currentCoroutineContext().job.invokeOnCompletion { call.cancel() }
+        call.execute().use { response ->
+            val source = response.body?.source()
+            if (!response.isSuccessful || source == null) {
+                val text = source?.readUtf8() ?: ""
+                throw DeviceApiError(sseErrorField(text, "message") ?: "HTTP ${response.code}", response.code, sseErrorField(text, "code") ?: "http_${response.code}")
+            }
+            if (response.header("Content-Type")?.contains("text/event-stream") != true) {
+                response.close()
+                throw DeviceApiError("此设备不支持实时事件流，已切换到兼容模式", response.code, "not_sse")
+            }
+            val pending = mutableListOf<SseFrame>()
+            val parser = SseParser { frame -> pending += frame }
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                val line = source.readUtf8Line() ?: break
+                pending.clear()
+                parser.line(line)
+                for (frame in pending) emit(frame)
+            }
+        }
+    }.flowOn(Dispatchers.IO)
 }

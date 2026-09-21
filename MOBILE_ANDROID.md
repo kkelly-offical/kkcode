@@ -5,6 +5,18 @@
 
 ---
 
+> **现状说明（1.0.1）**：本文档描述的是早期"内嵌 Termux 运行时"的调研方案，未实施。
+> 实际交付的 Android 客户端是**原生 Kotlin/Compose 远程客户端**（Relay 网关与 SSH 直连两条链路），
+> 不含本地 Agent runtime；运行时、签名与发布口径见 `docs/android-release.md`。
+>
+> 1.0.1 会话页能力：
+> - **实时流式**：会话页优先走 SSE 事件流（`GET /api/v1/devices/:id/events/stream?sessionId=&after=`，SSH 直连为 `/api/v1/events/stream`），assistant 正文/思考增量、工具状态、审批与 turn 状态实时刷新；断线按 `after=<seq>` 游标重连重放，`replay.gap` 时用 `sessions.get` 重载快照；旧设备（404/405/501 或非 SSE 响应）自动回退 1s `events.list` 轮询。
+> - **Composer 选择框**：模式（shield 图标）、权限（lock 图标，readonly/manual/accept-edits/yolo 中文标签）、模型（cloud 图标）三个独立 pill 选择框，会话内即时 `sessions.configure` 生效并同步其他客户端；只读共享会话不显示。
+> - **模型选择器**：渠道列表来自 `settings.get`，模型目录优先 `models.discover` 自动发现并标记来源（实时目录/缓存/本地配置，逐条目 `origin` auto/manual，默认模型带"默认"标记）；自动读取失败时才出现手动输入入口。
+> - **主题**：深色（纯黑底）/浅色（白底）两套完整设计令牌（背景、表面、正文、强调、成功/警告/危险、链接、diff 增删色），语义色经 `LocalKKCodeColors` 分发，两模式对比度由仪器测试保证。
+
+---
+
 ## 架构总览
 
 ```

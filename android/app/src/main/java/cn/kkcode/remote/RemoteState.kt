@@ -34,10 +34,14 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
     var busy by mutableStateOf(false)
     var loading by mutableStateOf(false)
     var mode by mutableStateOf("agent")
+    var approval by mutableStateOf("")
     var model by mutableStateOf("")
     var provider by mutableStateOf("")
     var modelOptions by mutableStateOf(emptyList<JSONObject>())
     var catalogProvider by mutableStateOf("")
+    var catalogSource by mutableStateOf("")
+    var catalogStale by mutableStateOf(false)
+    var catalogError by mutableStateOf("")
     var draft by mutableStateOf("")
     var attachments by mutableStateOf(emptyList<JSONObject>())
     var uploading by mutableStateOf(false)
@@ -197,7 +201,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         val snapshot = rpc("sessions.get", JSONObject().put("sessionId", selected)) as JSONObject
         applySnapshot(snapshot)
         attachments = emptyList(); draft = ""
-        startPolling(snapshot.optLong("eventCursor")); sheet = ""
+        startEvents(snapshot.optLong("eventCursor")); sheet = ""
     }
     private fun applySnapshot(snapshot: JSONObject) {
         messages = snapshotMessages(snapshot)
@@ -248,16 +252,58 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         val created = rpc("sessions.create", JSONObject().put("cwd", cwd)) as JSONObject
         val id = created.getString("id")
         rpc("control.acquire", JSONObject().put("sessionId", id))
-        try { applySelection(rpc("sessions.configure", JSONObject().put("sessionId", id).put("mode", mode).also { if(model.isNotBlank()) it.put("model", model); if(provider.isNotBlank()) it.put("provider", provider) }) as JSONObject) }
+        try { applySelection(rpc("sessions.configure", JSONObject().put("sessionId", id).put("mode", mode).also { if(model.isNotBlank()) it.put("model", model); if(provider.isNotBlank()) it.put("provider", provider); if(approval.isNotBlank()) it.put("approval", approval) }) as JSONObject) }
         finally { rpc("control.release", JSONObject().put("sessionId", id)) }
-        selected = created.getString("id"); messages = emptyList(); persistedSteps = emptySet(); persistedUserTurns = emptySet(); attachments = emptyList(); draft = ""; historyHasMore = false; historyBefore = ""; startPolling(0); refreshSessions(); sheet = ""
+        selected = created.getString("id"); messages = emptyList(); persistedSteps = emptySet(); persistedUserTurns = emptySet(); attachments = emptyList(); draft = ""; historyHasMore = false; historyBefore = ""; startEvents(0); refreshSessions(); sheet = ""
     }
-    private fun startPolling(initial: Long) {
+    private fun startEvents(initial: Long) {
         polling?.cancel(); val sessionId = selected
         polling = viewModelScope.launch {
             var cursor = initial
+            var streamUnsupported = false
+            var reconnectMs = 2000L
             while (isActive) {
-                try {
+                if (!streamUnsupported) {
+                    try {
+                        refreshToken()
+                        val client = api ?: return@launch
+                        client.streamEvents(sessionId, cursor).collect { frame ->
+                            if(selected != sessionId) throw CancellationException()
+                            val row = try { JSONObject(frame.data) } catch(_: Exception) { return@collect }
+                            val seq = row.optLong("seq", frame.id.toLongOrNull() ?: 0)
+                            if(seq > 0) {
+                                if(seq <= cursor) return@collect
+                                cursor = seq
+                            }
+                            when (frame.event) {
+                                "connected" -> {
+                                    busy = row.optBoolean("running"); connected = true
+                                    controlElsewhere = row.optJSONObject("control")?.optBoolean("yours") == false
+                                    approvals = row.optJSONArray("approvals").objects()
+                                }
+                                "session.state" -> {
+                                    busy = row.optBoolean("running")
+                                    controlElsewhere = row.optJSONObject("control")?.optBoolean("yours") == false
+                                }
+                                "replay.gap" -> {
+                                    val snapshot = rpc("sessions.get", JSONObject().put("sessionId", sessionId)) as JSONObject
+                                    if(selected != sessionId) throw CancellationException()
+                                    applySnapshot(snapshot); cursor = snapshot.optLong("eventCursor", cursor)
+                                    if(!snapshot.optBoolean("liveTruncated")) notice = "历史事件已归档，已重新同步完整会话"
+                                }
+                                "device.online" -> connected = true
+                                "device.offline" -> { connected = false; notice = "设备已离线，等待恢复" }
+                                else -> handleJournalEvent(row)
+                            }
+                        }
+                        reconnectMs = 2000
+                    } catch (e: CancellationException) { throw e }
+                    catch (e: Exception) {
+                        if(e is DeviceApiError && (e.status in listOf(404, 405, 501) || e.code == "not_sse")) { streamUnsupported = true; continue }
+                        connected = false; notice = e.message ?: "连接断开，正在重试"
+                    }
+                    delay(reconnectMs); reconnectMs = (reconnectMs * 2).coerceAtMost(15000)
+                } else try {
                     val batch = rpc("events.list", JSONObject().put("sessionId", sessionId).put("after", cursor)) as JSONObject
                     if(batch.optBoolean("gap")) {
                         val snapshot = rpc("sessions.get", JSONObject().put("sessionId", sessionId)) as JSONObject
@@ -267,27 +313,38 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
                         continue
                     }
                     for (event in batch.optJSONArray("events").objects()) {
-                        cursor = event.getLong("seq"); val type = event.getString("type"); val payload = event.optJSONObject("payload") ?: JSONObject()
-                        if(applyConversationEvent(event)) { if(type == "turn.result") refreshSessions(); continue }
-                        when(type) {
-                            "tool.start", "tool.finish", "tool.error" -> {
-                                finishThinking(event.optLong("timestamp"))
-                                val id = payload.optString("invocationId").ifBlank { event.getString("id") }
-                                if(!payload.has("status")) payload.put("status", if(type == "tool.start") "running" else if(type == "tool.error") "error" else "completed")
-                                val item = ChatItem(id, "tool", payload.optString("tool", "Tool"), payload.optString("output"), tool = payload, turnId = event.optString("turnId"), step = payload.stepOrNull())
-                                messages = if(messages.any { it.id == id }) messages.map { if(it.id == id) item else it } else messages + item
-                            }
-                            "session.compacted", "stream.provider_compaction" -> messages = messages + ChatItem(event.getString("id"), "compacted", "已精简上下文")
-                            "session.configured" -> applySelection(payload)
-                            "branch.changed", "session.branch.changed" -> { branchSnapshot = JSONObject(); if(sheet == "branches") loadBranches() }
-                        }
+                        cursor = event.getLong("seq")
+                        handleJournalEvent(event)
                     }
                     approvals = batch.optJSONArray("approvals").objects(); connected = true
                     busy = batch.optBoolean("running")
                     controlElsewhere = batch.optJSONObject("control")?.optBoolean("yours") == false
-                } catch (e: CancellationException) { throw e } catch (e: Exception) { connected = false; notice = e.message ?: "连接断开，正在重试" }
-                delay(1000)
+                    delay(1000)
+                } catch (e: CancellationException) { throw e } catch (e: Exception) { connected = false; notice = e.message ?: "连接断开，正在重试"; delay(1000) }
             }
+        }
+    }
+    private suspend fun handleJournalEvent(event: JSONObject) {
+        val type = event.getString("type"); val payload = event.optJSONObject("payload") ?: JSONObject()
+        if(applyConversationEvent(event)) { if(type == "turn.result") refreshSessions(); return }
+        when(type) {
+            "tool.start", "tool.finish", "tool.error" -> {
+                finishThinking(event.optLong("timestamp"))
+                val id = payload.optString("invocationId").ifBlank { event.getString("id") }
+                if(!payload.has("status")) payload.put("status", if(type == "tool.start") "running" else if(type == "tool.error") "error" else "completed")
+                val item = ChatItem(id, "tool", payload.optString("tool", "Tool"), payload.optString("output"), tool = payload, turnId = event.optString("turnId"), step = payload.stepOrNull())
+                messages = if(messages.any { it.id == id }) messages.map { if(it.id == id) item else it } else messages + item
+            }
+            "session.compacted", "stream.provider_compaction" -> messages = messages + ChatItem(event.getString("id"), "compacted", "已精简上下文")
+            "session.configured" -> applySelection(payload)
+            "branch.changed", "session.branch.changed" -> { branchSnapshot = JSONObject(); if(sheet == "branches") loadBranches() }
+            "approval.requested" -> {
+                val request = JSONObject(payload.toString())
+                val id = request.remove("id")?.toString() ?: event.getString("id")
+                val kind = request.remove("kind")?.toString() ?: "permission"
+                approvals = approvals.filterNot { it.optString("id") == id } + JSONObject().put("id", id).put("kind", kind).put("request", request)
+            }
+            "approval.resolved" -> approvals = approvals.filterNot { it.optString("id") == payload.optString("id") }
         }
     }
     private fun applyConversationEvent(event: JSONObject): Boolean {
@@ -345,7 +402,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
     fun stop() = action { rpc("control.acquire", JSONObject().put("sessionId", selected)); rpc("turns.cancel", JSONObject().put("sessionId", selected)) }
     fun answer(id: String, value: Any) = action { rpc("approvals.resolve", JSONObject().put("sessionId", selected).put("id", id).put("answer", value)) }
     fun takeControl() = action { rpc("control.acquire", JSONObject().put("sessionId", selected).put("takeover", true)); controlElsewhere = false }
-    private fun applySelection(value: JSONObject) { if(value.has("model")) model = value.optString("model"); if(value.has("providerType")) provider = value.optString("providerType"); if(value.has("modeId")) mode = value.optString("modeId") }
+    private fun applySelection(value: JSONObject) { if(value.has("model")) model = value.optString("model"); if(value.has("providerType")) provider = value.optString("providerType"); if(value.has("modeId")) mode = value.optString("modeId"); if(value.has("approval")) approval = value.optString("approval") }
     fun selectModel(name: String, id: String) = action {
         require(!sharedDevice) { "只有电脑所有者可以切换模型" }
         if(selected.isBlank()) { provider = name; model = id }
@@ -366,7 +423,50 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         }
         sheet = ""; notice = "执行模式已同步"
     }
-    fun discoverModels(name: String) = action { modelOptions = (rpc("models.discover", JSONObject().put("provider", name)) as JSONObject).optJSONArray("models").objects(); catalogProvider = name }
+    fun selectApproval(value: String) = action {
+        require(!sharedDevice) { "只有电脑所有者可以切换权限" }
+        if(selected.isBlank()) approval = value
+        else {
+            rpc("control.acquire", JSONObject().put("sessionId", selected))
+            try { applySelection(rpc("sessions.configure", JSONObject().put("sessionId", selected).put("approval", value)) as JSONObject) }
+            finally { rpc("control.release", JSONObject().put("sessionId", selected)) }
+        }
+        sheet = ""; notice = "权限已同步"
+    }
+    fun discoverModels(name: String) = action {
+        catalogError = ""
+        try {
+            val result = rpc("models.discover", JSONObject().put("provider", name)) as JSONObject
+            modelOptions = result.optJSONArray("models").objects(); catalogProvider = name
+            catalogSource = result.optString("source"); catalogStale = result.optBoolean("stale")
+            if(result.optString("warning").isNotBlank()) notice = result.optString("warning")
+        } catch(error: CancellationException) { throw error } catch(error: Exception) {
+            modelOptions = emptyList(); catalogProvider = name; catalogSource = ""; catalogStale = false; catalogError = error.message ?: "模型目录读取失败"
+        }
+    }
+    private suspend fun loadCatalog(name: String) {
+        val result = rpc("models.discover", JSONObject().put("provider", name)) as JSONObject
+        modelOptions = result.optJSONArray("models").objects(); catalogProvider = name
+        catalogSource = result.optString("source"); catalogStale = result.optBoolean("stale")
+    }
+    val modelLabel: String
+        get() {
+            if(model.isNotBlank()) return model
+            val fallback = settings.optJSONObject("provider")?.optJSONObject(provider)?.optString("default_model") ?: ""
+            return fallback.ifBlank { provider }.ifBlank { "模型" }
+        }
+    val approvalLabel: String get() = APPROVAL_LEVELS.firstOrNull { it.first == approval }?.second ?: approval.ifBlank { "权限" }
+    fun openModelPicker() = action {
+        require(!sharedDevice) { "共享会话不能切换模型" }
+        if(connected) settings = rpc("settings.get") as JSONObject
+        sheet = "model-picker"
+        catalogError = ""
+        if(provider.isNotBlank()) {
+            try { loadCatalog(provider) }
+            catch(error: CancellationException) { throw error }
+            catch(error: Exception) { modelOptions = emptyList(); catalogProvider = provider; catalogSource = ""; catalogStale = false; catalogError = error.message ?: "模型目录读取失败" }
+        }
+    }
     internal suspend fun handleCommandResult(command: String, result: JSONObject) {
         applySelection(result.optJSONObject("state") ?: result)
         commandItems = result.optJSONArray("items").objects()

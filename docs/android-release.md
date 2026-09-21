@@ -86,6 +86,16 @@ certificate verification for deployment.
   real diff folding, question IDs/options, read-only sharing, attachment and
   branch actions, explicit branch confirmation, dirty-repository guard, child
   approval source, SSO/profile separation, and persisted appearance.
+- `ComposerSelectorsTest`: composer mode/permission/model chips, shared-device
+  hiding, permission picker immediate application, and model picker discovery
+  source markers with manual entry as failure-only fallback.
+- `ThemeTest`: dark/light schemes are pairwise distinct across background,
+  surface, text, accent and semantic colors, and both keep readable contrast.
+- `EventStreamTest`, `DeviceApiStreamTest`: SSE frame parsing (multi-line data,
+  CRLF, keepalive comments, id persistence) and the event-stream transport
+  (relay/direct paths, auth headers, cursor query, pre-stream JSON errors, and
+  non-SSE fallback signaling).
+- `ComposerPickersTest`: catalog source labels and the canonical approval set.
 - `AttachmentInputTest`: exact-size bounded reading, unknown-size rejection,
   zero-byte provider reads, and protection against over-limit streams.
 - `GatewayUrlTest`: HTTPS/WireGuard addresses, debug-only emulator cleartext,
@@ -119,7 +129,7 @@ ANDROID_HOME=/path/to/android-sdk KKCODE_ANDROID_SERIAL=emulator-5582 \
   node scripts/android-release-smoke.mjs
 ```
 
-Validated locally: 14 Compose UI tests, 14 JVM tests, release
+Validated locally: 21 Compose UI tests, 29 JVM tests, release
 APK certificate/v2/v3/manifest checks, unsigned-release rejection, and a signed
 release install/launch on the isolated API 36 AVD. Launch verification checks
 the compact home, absence of configuration forms, a live process, and rejection
