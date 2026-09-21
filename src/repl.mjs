@@ -92,7 +92,7 @@ import { createTaskWake } from "./repl/task-wake.mjs"
 import { createNotifier } from "./repl/notify.mjs"
 import { createGhostPredictor } from "./repl/ghost-predictor.mjs"
 import { buildReplRuntimeSnapshot } from "./repl/runtime-facade.mjs"
-import { POLICY_CHOICES, PERMISSION_PROMPT_VALUES, applyPermissionLevel } from "./repl/permission-flow.mjs"
+import { POLICY_CHOICES, PERMISSION_PROMPT_VALUES } from "./repl/permission-flow.mjs"
 import {
   applyModeSelection,
   resolveModeId,
@@ -1929,9 +1929,6 @@ export async function startRepl({ trust = false, remoteService = null } = {}) {
   // 手工 boot）。theme 属 frontends 层（架构 §2），在 kernel 之外加载。
   splash.update("loading tools & MCP servers...")
   const kernel = await createKernel({ cwd: process.cwd(), trustState })
-  if (remoteService) {
-    remoteService.attachKernel(kernel)
-  }
   const themeState = await loadTheme(kernel.configState)
   const ctx = { configState: kernel.configState, themeState, trustState: kernel.trustState, kernel, remoteService }
   printContextWarnings(ctx)
@@ -1971,12 +1968,6 @@ export async function startRepl({ trust = false, remoteService = null } = {}) {
 
   splash.update("preparing workspace...")
   const state = createInitialReplState(ctx.configState.config, { newSessionIdFn: newSessionId })
-  const remoteSelectionUnsub = remoteService ? kernel.events.subscribe(event => {
-    if (event.type !== 'session.configured' || event.sessionId !== state.sessionId) return
-    const selected = event.payload
-    Object.assign(state, { model: selected.model, providerType: selected.providerType, modeId: selected.modeId, ...(selected.mode ? { mode: selected.mode } : {}) })
-    if (selected.approval) ctx.configState.config.permission = applyPermissionLevel(selected.approval, ctx.configState.config.permission || {})
-  }) : null
 
   // Check if auto memory file exists
   try {
@@ -2033,7 +2024,6 @@ export async function startRepl({ trust = false, remoteService = null } = {}) {
     })
   } finally {
     // kernel.shutdown 收口：2b 桥释放 + McpRegistry.shutdown() + session flushNow()
-    remoteSelectionUnsub?.()
     await kernel.shutdown()
   }
 }

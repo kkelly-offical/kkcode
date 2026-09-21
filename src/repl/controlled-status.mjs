@@ -131,7 +131,7 @@ function connectionLabel(connection) {
 
 function sessionLine(row, activityAt, now) {
   const status = paint(row.status.padEnd(10), SESSION_TONE[row.status] || "#888888")
-  const client = row.client ? `client=${shortClient(row.client)}` : "client=-"
+  const client = row.client ? `client=${oneLine(shortClient(row.client), 12)}` : "client=-"
   const age = ageLabel(activityAt.get(row.id) || row.updatedAt, now)
   const title = row.title ? `  ${oneLine(row.title, 40)}` : ""
   return `  ${shortId(row.id).padEnd(10)} ${status} ${client.padEnd(14)} ${age.padEnd(8)}${title}`.trimEnd()

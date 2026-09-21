@@ -1,6 +1,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { readFile } from "node:fs/promises"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
 import { EventEmitter } from "node:events"
 import {
   resolveTerminalMode,
@@ -297,4 +299,46 @@ test("runControlledTerminal stops when SIGINT arrives", async () => {
   process.emit("SIGINT")
   await running
   assert.match(stripAnsi(out.text()), /controlled terminal/)
+})
+
+// 真实 DeviceService + 真 startRepl 接线的端到端冒烟：面板渲染、真实事件管线
+// （record → liveView/replay → 'event' 发射）、SIGINT 停机、service.close 收口。
+test("startRepl controlled mode runs the panel on a real DeviceService", async () => {
+  const previousHome = process.env.KKCODE_HOME
+  const home = await mkdtemp(path.join(os.tmpdir(), "kkcode-m30-"))
+  process.env.KKCODE_HOME = home
+  const chunks = []
+  const originalWrite = process.stdout.write
+  process.stdout.write = (text, ...rest) => { chunks.push(String(text)); return true }
+  let service
+  try {
+    const { DeviceService } = await import("../src/device/service.mjs")
+    const { startRepl } = await import("../src/repl.mjs")
+    service = await new DeviceService({ cwd: process.cwd(), roots: [process.cwd()] }).initialize()
+    service.remoteStatus = "connected"
+    const running = startRepl({ remoteService: service })
+    const output = () => chunks.join("")
+    const deadline = Date.now() + 10000
+    while (!output().includes("controlled terminal") && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    const frame = stripAnsi(output())
+    assert.match(frame, /controlled terminal/)
+    assert.match(frame, new RegExp(`Device\\s+${os.hostname().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`))
+    assert.match(frame, /Relay\s+● connected/)
+    assert.match(frame, /no active sessions/)
+    await service.record({ type: "turn.start", sessionId: "ses_real1", turnId: "t1", payload: { prompt: "hello from web" } })
+    assert.match(output(), /ses_real1 turn\.start/)
+    process.emit("SIGINT")
+    await running
+    assert.match(output(), /Remote access stopped\./)
+    await service.close()
+    service = null
+  } finally {
+    process.stdout.write = originalWrite
+    if (service) await service.close().catch(() => {})
+    if (previousHome === undefined) delete process.env.KKCODE_HOME
+    else process.env.KKCODE_HOME = previousHome
+    await rm(home, { recursive: true, force: true })
+  }
 })
