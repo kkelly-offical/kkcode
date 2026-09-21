@@ -53,6 +53,7 @@ import {
   startSplash
 } from "./repl/core-shell.mjs"
 import { runReplController } from "./repl/controller-entry.mjs"
+import { resolveTerminalMode, runControlledTerminal } from "./repl/controlled-status.mjs"
 import { collectInput, resolveHistoryNavigation } from "./repl/input-engine.mjs"
 export { collectInput } from "./repl/input-engine.mjs"
 // 帧度量与拼装原语。此前 repl.mjs 自带一份，与 repl-dashboard / activity-renderer /
@@ -1899,6 +1900,12 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 }
 
 export async function startRepl({ trust = false, remoteService = null } = {}) {
+  // 受控端模式（M30）：绑定 SSO+网关并以 `kkcode remote` 运行时，终端只显示
+  // 远程连接状态面板；本地交互聊天保留在未绑定路径（无 remoteService）。
+  if (resolveTerminalMode({ remoteService }) === "controlled") {
+    return runControlledTerminal({ service: remoteService, trust })
+  }
+
   // First-run onboarding — must run before splash/readline to own the terminal
   const existingProfile = await loadProfile()
   if (!existingProfile || process.env.KKCODE_ONBOARDING === "1") {
