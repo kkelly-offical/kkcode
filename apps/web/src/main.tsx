@@ -8,6 +8,7 @@ import { Icon } from "./Icon";
 import { TranscriptRow } from "./TranscriptView";
 import { Composer } from "./Composer";
 import { buildTranscript, changeSummary } from "./transcript.mjs";
+import { eventsStreamPath, streamSessionEvents } from "./live.mjs";
 import { DeviceClient } from "../../../src/sdk/client.mjs";
 import { Approval } from "./Approval";
 import { attachmentMediaType, readAttachment, type Attachment } from "./Attachments";
@@ -40,7 +41,8 @@ function App() {
   const [prompt, setPrompt] = useState(""),
     [mode, setMode] = useState("agent"),
     [model, setModel] = useState(""),
-    [provider, setProvider] = useState("");
+    [provider, setProvider] = useState(""),
+    [permission, setPermission] = useState("");
   const [control, setControl] = useState<Item | null>(null);
   const [draftAttachments, setDraftAttachments] = useState<Record<string, Attachment[]>>({});
   const [uploading, setUploading] = useState(false), [branch, setBranch] = useState("");
@@ -68,6 +70,7 @@ function App() {
     if (value.model !== undefined) setModel(value.model);
     if (value.providerType) setProvider(value.providerType);
     if (value.modeId) setMode(value.modeId);
+    if (value.approval) setPermission(value.approval);
   }
   function applyLiveSnapshot(value: Item | null) {
     setEvents(value?.liveEvents || []);
@@ -95,7 +98,15 @@ function App() {
   };
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const apply = () => { document.documentElement.dataset.theme = theme === "auto" ? media.matches ? "dark" : "light" : theme; };
+    const apply = () => {
+      const resolved = theme === "auto" ? (media.matches ? "dark" : "light") : theme;
+      document.documentElement.dataset.theme = resolved;
+      document
+        .querySelectorAll('meta[name="theme-color"]')
+        .forEach((tag) =>
+          tag.setAttribute("content", resolved === "dark" ? "#0e100f" : "#faf9f6"),
+        );
+    };
     apply(); media.addEventListener("change", apply);
     try { localStorage.setItem("kkcode.web.theme", theme); } catch { /* Private browsing may disable storage. */ }
     return () => media.removeEventListener("change", apply);
@@ -212,64 +223,115 @@ function App() {
     if (!selected || !ready) return;
     let cancelled = false,
       timer: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
+    const pause = (ms: number) =>
+      new Promise((resolve) => setTimeout(resolve, ms));
+    const syncSnapshot = async () => {
+      const snapshot = await rpc("sessions.get", { sessionId: selected });
+      if (cancelled) return;
+      cursor.current = snapshot?.eventCursor || cursor.current;
+      setSession(current => {
+        if (!current || current.id !== snapshot?.id) return snapshot;
+        const unique = (items: Item[]) => [...new Map(items.map(item => [item.id, item])).values()];
+        return { ...snapshot, messages: unique([...(current.messages || []), ...(snapshot.messages || [])]), parts: unique([...(current.parts || []), ...(snapshot.parts || [])]), historyHasMore: current.historyHasMore, nextBefore: current.nextBefore };
+      });
+      applyLiveSnapshot(snapshot);
+    };
+    const watchError = (error: any) => {
+      if (cancelled) return false;
+      setNotice(error.message);
+      if ([401, 403, 404].includes(error.status)) { setSelected(""); setSession(null); setEvents([]); setApproval([]); cancelled = true; }
+      return true;
+    };
+    // One application path for both transports: SSE frames and events.list
+    // batches carry the same event objects (M26 contract).
+    const applyBatch = async (batch: Item) => {
+      if (cancelled) return;
+      if (batch.gap) {
+        const snapshot = await rpc("sessions.get", { sessionId: selected });
+        if (cancelled) return;
+        cursor.current = snapshot?.eventCursor || batch.cursor || 0;
+        setSession(snapshot); const limited = applyLiveSnapshot(snapshot); applySelection(snapshot || {});
+        if (batch.approvals !== undefined) setApproval(batch.approvals || []);
+        if (batch.running !== undefined) setBusy(Boolean(batch.running));
+        if (batch.control !== undefined) setControl(batch.control || null);
+        if (!limited) setNotice("实时记录已归档，已重新同步会话快照；较早消息可按需加载");
+        return;
+      }
+      const fresh = (batch.events || []).filter((event: Item) => typeof event.seq !== "number" || event.seq > cursor.current);
+      if (fresh.length) {
+        cursor.current = fresh.at(-1).seq ?? cursor.current;
+        setEvents((old) => [...old, ...fresh]);
+        for (const event of fresh) {
+          if (event.type === "turn.start") setBusy(true);
+          if (
+            ["turn.result", "turn.failed", "turn.finish"].includes(event.type)
+          )
+            setBusy(false);
+        }
+        if (
+          fresh.some((event: Item) =>
+            ["turn.result", "turn.failed"].includes(event.type),
+          )
+        )
+          await refreshSessions();
+      }
+      if (batch.approvals !== undefined) setApproval(batch.approvals || []);
+      if (batch.running !== undefined) setBusy(Boolean(batch.running));
+      if (batch.control !== undefined) setControl(batch.control || null);
+      for (const event of fresh) {
+        if (event.type === 'session.configured') applySelection(event.payload);
+        if (event.type === 'session.branch.changed') setBranch(event.payload.branch || '');
+      }
+      const turnEnded = fresh.some((event: Item) => ["turn.result", "turn.failed"].includes(event.type));
+      const stopped = batch.running === false || turnEnded;
+      if (stopped && (livePreviewLimited.current || turnEnded || (fresh.length && cursor.current % 1000 < fresh.length)))
+        await syncSnapshot();
+      // SSE delivers approval bodies as approval.* rows without the envelope's
+      // approvals array; one events.list refresh keeps that array authoritative.
+      if (!cancelled && fresh.some((event: Item) => String(event.type).startsWith("approval.")))
+        await applyBatch(await rpc("events.list", { sessionId: selected, after: cursor.current }));
+    };
     const poll = async () => {
       try {
-        const batch = await rpc("events.list", {
+        await applyBatch(await rpc("events.list", {
           sessionId: selected,
           after: cursor.current,
-        });
-        if (cancelled) return;
-        if (batch.gap) {
-          const snapshot = await rpc("sessions.get", { sessionId: selected });
-          if (cancelled) return;
-          cursor.current = snapshot?.eventCursor || batch.cursor || 0;
-          setSession(snapshot); const limited = applyLiveSnapshot(snapshot); applySelection(snapshot || {});
-          setApproval(batch.approvals || []); setBusy(Boolean(batch.running)); setControl(batch.control || null);
-          if (!limited) setNotice("实时记录已归档，已重新同步会话快照；较早消息可按需加载");
-          return;
-        }
-        if (batch.events.length) {
-          cursor.current = batch.events.at(-1).seq;
-          setEvents((old) => [...old, ...batch.events]);
-          for (const event of batch.events) {
-            if (event.type === "turn.start") setBusy(true);
-            if (
-              ["turn.result", "turn.failed", "turn.finish"].includes(event.type)
-            )
-              setBusy(false);
-          }
-          if (
-            batch.events.some((event: Item) =>
-              ["turn.result", "turn.failed"].includes(event.type),
-            )
-          )
-            await refreshSessions();
-        }
-        setApproval(batch.approvals || []);
-        setBusy(Boolean(batch.running)); setControl(batch.control || null);
-        for (const event of batch.events) {
-          if (event.type === 'session.configured') applySelection(event.payload);
-          if (event.type === 'session.branch.changed') setBranch(event.payload.branch || '');
-        }
-        const completedLimitedPreview = livePreviewLimited.current && !batch.running;
-        if (!batch.running && (completedLimitedPreview || (batch.events.length && cursor.current % 1000 < batch.events.length))) {
-          const snapshot = await rpc("sessions.get", { sessionId: selected });
-          if (cancelled) return;
-          cursor.current = snapshot?.eventCursor || cursor.current;
-          setSession(current => {
-            if (!current || current.id !== snapshot?.id) return snapshot;
-            const unique = (items: Item[]) => [...new Map(items.map(item => [item.id, item])).values()];
-            return { ...snapshot, messages: unique([...(current.messages || []), ...(snapshot.messages || [])]), parts: unique([...(current.parts || []), ...(snapshot.parts || [])]), historyHasMore: current.historyHasMore, nextBefore: current.nextBefore };
-          }); applyLiveSnapshot(snapshot);
-        }
+        }));
       } catch (error: any) {
-        if (!cancelled) {
-          setNotice(error.message);
-          if ([401, 403, 404].includes(error.status)) { setSelected(""); setSession(null); setEvents([]); setApproval([]); cancelled = true; }
-        }
+        watchError(error);
       } finally {
         if (!cancelled) timer = setTimeout(poll, 1000);
       }
+    };
+    const stream = async () => {
+      let failures = 0;
+      while (!cancelled) {
+        const started = Date.now();
+        try {
+          await streamSessionEvents({
+            url: eventsStreamPath({ gateway, deviceId, sessionId: selected, after: cursor.current }),
+            signal: controller.signal,
+            onEvent: (event: Item) => applyBatch({ events: [event] }).catch(watchError),
+            onMeta: (meta: Item) => applyBatch(meta).catch(watchError),
+            onGap: (gap: Item) => applyBatch({ gap: true, cursor: gap?.cursor }).catch(watchError),
+          });
+        } catch (error: any) {
+          if (cancelled || controller.signal.aborted) return;
+          // Devices before M26 answer 404/HTML here; polling is their transport.
+          if (error.code === "stream_unavailable") break;
+          if ([401, 403, 404].includes(error.status)) { watchError(error); return; }
+        }
+        if (cancelled) break;
+        // A long-lived connection that drops resets the backoff budget.
+        failures = Date.now() - started > 10000 ? 1 : failures + 1;
+        if (failures > 3) {
+          setNotice("实时推送连接不稳定，已回退到轮询刷新");
+          break;
+        }
+        await pause(800 * failures);
+      }
+      if (!cancelled) await poll();
     };
     void attempt(async () => {
       const snapshot = await rpc("sessions.get", { sessionId: selected });
@@ -279,10 +341,11 @@ function App() {
       applyLiveSnapshot(snapshot);
       if (snapshot) { applySelection(snapshot); setCwd(snapshot.cwd || cwd); }
       setBusy(Boolean(snapshot?.running));
-      await poll();
+      await stream();
     });
     return () => {
       cancelled = true;
+      controller.abort();
       clearTimeout(timer);
     };
   }, [selected, deviceId, ready, sessionRevision]);
@@ -296,7 +359,7 @@ function App() {
     const result = await rpc("sessions.create", { cwd });
     if (settings.provider?.default) {
       await rpc("control.acquire", { sessionId: result.id });
-      try { await rpc("sessions.configure", { sessionId: result.id, mode, model: model || undefined, provider: provider || undefined }); }
+      try { await rpc("sessions.configure", { sessionId: result.id, mode, model: model || undefined, provider: provider || undefined, approval: permission || undefined }); }
       finally { await rpc("control.release", { sessionId: result.id }).catch(() => {}); }
     }
     await refreshSessions();
@@ -491,7 +554,7 @@ function App() {
             onChange={(e) => {
               setDeviceId(e.target.value);
               setSelected("");
-              setProvider(""); setModel(""); setMode("agent");
+              setProvider(""); setModel(""); setMode("agent"); setPermission("");
             }}
           >
             {devices.map((d) => (
@@ -648,6 +711,11 @@ function App() {
               onPrompt={setPrompt}
               busy={busy}
               mode={mode}
+              permission={permission}
+              modes={commandResult.clientAction === "mode" && commandResult.items?.length ? commandResult.items : undefined}
+              model={model}
+              provider={provider}
+              settings={settings}
               uploading={uploading}
               attachments={attachments}
               branch={branch}
@@ -659,6 +727,25 @@ function App() {
                   await rpc("turns.cancel", { sessionId: selected });
                 })
               }
+              onMode={(value) =>
+                void attempt(async () => {
+                  await selectModel({ mode: value });
+                  setNotice(`执行模式已切换为 ${value}`);
+                })
+              }
+              onPermission={(value) =>
+                void attempt(async () => {
+                  await selectModel({ approval: value });
+                  setNotice("操作权限已更新");
+                })
+              }
+              onModel={(selection) =>
+                void attempt(async () => {
+                  await selectModel(selection);
+                  setNotice(`模型已切换为 ${selection.model}`);
+                })
+              }
+              onDiscoverModels={(name) => rpc("models.discover", { provider: name })}
               onPanel={setPanel}
               summary={changeSummary(messages)}
             />
@@ -709,7 +796,7 @@ function App() {
             setEvents([]);
             setSessions([]);
             setSettings({}); setCommands([]); setDraftAttachments({});
-            setProvider(""); setModel(""); setMode("agent");
+            setProvider(""); setModel(""); setMode("agent"); setPermission("");
           }}
           onCreate={createSession}
           onSettings={setSettings}
