@@ -141,6 +141,9 @@ function clampCursor(source, cursor) {
  *
  * 含空格时包引号；路径本身含引号时改用反斜杠转义空格 —— 因为 `readQuoted` 在第一个引号
  * 处就收尾，包起来会被读回成半截路径。**格式化与解析必须互为逆运算**，测试里有一条往返。
+ * This is the readToken grammar, not shell escaping: only backslash-space is
+ * decoded, while all other backslashes stay literal. Do not pass this output
+ * to a shell or double existing backslashes (that would change the filename).
  */
 export function formatMentionPath(candidate) {
   const value = String(candidate ?? "")

@@ -53,7 +53,7 @@ test("padRight does not split a wide character in half", () => {
 
 test("clipAnsiLine keeps colour but marks truncation", () => {
   const short = clipAnsiLine(sgr(31, "red"), 8)
-  assert.match(short, new RegExp(`${ESC.replace("[", "\\[")}\\[31m`), "未超宽时颜色码要保留")
+  assert.match(short, new RegExp(`${ESC}\\[31m`), "未超宽时颜色码要保留")
   assert.equal(displayWidth(short), 8)
 
   const long = clipAnsiLine("abcdefghij", 5)

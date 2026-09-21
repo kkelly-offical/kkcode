@@ -11,7 +11,10 @@ const DEFAULT_REGISTRY = "https://registry.npmjs.org"
 const DEFAULT_TIMEOUT_MS = 2500
 
 function normalizeRegistry(registry = DEFAULT_REGISTRY) {
-  return String(registry || DEFAULT_REGISTRY).replace(/\/+$/, "")
+  const value = String(registry || DEFAULT_REGISTRY)
+  let end = value.length
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end--
+  return value.slice(0, end)
 }
 
 function encodePackageName(name) {

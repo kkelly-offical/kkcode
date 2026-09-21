@@ -40,6 +40,7 @@ import { supportsThinking } from "./thinking-effort.mjs"
 import { askQuestionInteractive } from "../tool/question-prompt.mjs"
 import { QUESTION_SKIPPED } from "../core/constants.mjs"
 import { PROVIDER_META_KEYS } from "../../config/schema.mjs"
+import { trimTrailingSlashes } from "./url-path.mjs"
 
 /** 表单答案 → 干净字符串。跳过哨兵与 undefined 一律折成空串。 */
 const clean = (value) => {
@@ -412,7 +413,7 @@ export async function runProviderAddForm({
       }
     ]
   })
-  const baseUrl = clean(connection.base_url).replace(/\/+$/, "")
+  const baseUrl = trimTrailingSlashes(clean(connection.base_url))
   if (!baseUrl) return { saved: false, reason: "cancelled" }
   const apiKey = clean(connection.api_key)
 
@@ -420,7 +421,7 @@ export async function runProviderAddForm({
   // issue #3 的语义在新流程里靠它保住）；否则从 host 推导，确认页可改。
   const sameUrl = existingNames.find((n) => {
     const configured = providerBag[n]?.base_url
-    return typeof configured === "string" && configured.replace(/\/+$/, "") === baseUrl
+    return typeof configured === "string" && trimTrailingSlashes(configured) === baseUrl
   })
   let name = sameUrl || suggestProviderName(baseUrl) || "custom"
   if (RESERVED.has(name)) name = `${name}-provider`

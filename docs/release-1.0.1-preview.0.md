@@ -82,3 +82,6 @@ PostgreSQL 主从选举或异地灾备承诺。生产域名/证书、数据库�
 新版 SDK/客户端会保留原始 request ID 与 issuedAt；混用旧客户端时不能假设其具备
 相同的重试保障。MCP/Skills/插件的具体协议支持范围见
 [兼容性说明](protocol-compatibility-1.0.1.md)，不包含所有第三方插件运行时或交互式 MCP OAuth 登录。
+
+发布前另外审阅了 CodeQL 告警并补充边界回归。具体修复、误报判断和威胁前提见
+[安全复核记录](security-review-1.0.1-preview.0.md)；扫描任务成功不代表不存在开放告警或未知漏洞。

@@ -10,6 +10,7 @@ import {
   assertProviderOutboundAllowed
 } from "./security.mjs"
 import { validateModelId } from "./model-id.mjs"
+import { trimTrailingSlashes } from "./url-path.mjs"
 
 export const DEFAULT_MODEL_CACHE_TTL_MS = 15 * 60 * 1000
 const MAX_PAGES = 100
@@ -54,7 +55,7 @@ function resolveHttpUrl(value, label, relativeTo = null) {
 
 function appendModelsPath(baseUrl) {
   const url = resolveHttpUrl(baseUrl, "provider base_url")
-  url.pathname = `${url.pathname.replace(/\/+$/, "")}/models`
+  url.pathname = `${trimTrailingSlashes(url.pathname)}/models`
   url.search = ""
   return url
 }
@@ -107,7 +108,7 @@ export function resolveProviderConnection(configState, providerName = null) {
   const protocolEndpoint = provider.endpoints?.[protocol]
   const protocolBase = protocolEndpoint || provider.base_url
   const relativeTo = protocolEndpoint && provider.base_url
-    ? `${String(provider.base_url).replace(/\/+$/, "")}/`
+    ? `${trimTrailingSlashes(String(provider.base_url))}/`
     : null
   const baseUrl = resolveHttpUrl(
     protocolBase,
@@ -115,14 +116,14 @@ export function resolveProviderConnection(configState, providerName = null) {
     relativeTo
   )
   const modelsUrl = provider.endpoints?.models
-    ? resolveHttpUrl(provider.endpoints.models, `provider.${name}.endpoints.models`, `${baseUrl.toString().replace(/\/+$/, "")}/`)
+    ? resolveHttpUrl(provider.endpoints.models, `provider.${name}.endpoints.models`, `${trimTrailingSlashes(baseUrl.toString())}/`)
     : appendModelsPath(baseUrl.toString())
   const apiKeyEnv = provider.api_key_env || ""
   return {
     name,
     type: provider.type || name,
     protocol,
-    baseUrl: baseUrl.toString().replace(/\/+$/, ""),
+    baseUrl: trimTrailingSlashes(baseUrl.toString()),
     modelsUrl: modelsUrl.toString(),
     apiKeyEnv,
     apiKey: provider.api_key || (apiKeyEnv ? process.env[apiKeyEnv] : "") || "",
@@ -135,6 +136,9 @@ export function resolveProviderConnection(configState, providerName = null) {
 }
 
 function modelCacheKey(connection) {
+  // Partition catalog metadata by credential so key rotation cannot reuse another
+  // account's model list. This is a cache namespace, not a password verifier;
+  // cache entries contain only fetchedAt/models and never authenticate a caller.
   const credentialFingerprint = connection.apiKey
     ? createHash("sha256").update(connection.apiKey).digest("hex")
     : "anonymous"

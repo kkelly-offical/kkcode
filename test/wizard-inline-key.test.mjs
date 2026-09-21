@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import YAML from "yaml"
+import { Worker } from "node:worker_threads"
 
 /**
  * Issue #3：配置里写了内联 api_key 时，provider 向导只查环境变量。
@@ -66,6 +67,35 @@ test("重跑 add 且密钥题留空时，发现用配置里已有的内联 api_k
   assert.equal(discovered[0].api_key, "sk-kimi-inline-secret", "内联密钥必须传进发现请求")
   // 只进发现的 draft，不因此把 key 重写一遍 —— 写盘留给 merge 保留旧值
   assert.equal(result.configPatch.provider["kimi-code"].api_key, undefined)
+})
+
+test("长斜杠 URL 的规范化和既有渠道匹配在线性时间内完成", { timeout: 10000 }, async () => {
+  const worker = new Worker(`
+    const { parentPort, workerData } = require('node:worker_threads');
+    (async () => {
+      const { runProviderAddForm } = await import(workerData);
+      const base = 'https://provider.example.test/' + '/'.repeat(400000) + 'tail';
+      let matched = false;
+      const result = await runProviderAddForm({
+        configState: { config: { provider: { existing: { base_url: base, api_key: 'fixture-preserved-key' } } } },
+        ask: async ({ questions }) => Object.fromEntries(questions.map(question => [question.id, ({ protocol: 'openai', base_url: '  ' + base + '///  ', api_key: '', model: '' })[question.id] ?? ''])),
+        discover: async (draft, options) => {
+          matched = options.providerName === 'existing' && draft.config.provider.existing.base_url === base && draft.config.provider.existing.api_key === 'fixture-preserved-key';
+          return { models: [] };
+        }
+      });
+      parentPort.postMessage({ matched, cancelled: result.saved === false && result.reason === 'cancelled' });
+    })().catch(error => parentPort.postMessage({ error: error.message }));
+  `, { eval: true, workerData: new URL("../src/kernel/provider/wizard-form.mjs", import.meta.url).href })
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { void worker.terminate(); reject(new Error("Provider wizard URL normalization exceeded its 5 second deadline")) }, 5000)
+      worker.once("message", message => { clearTimeout(timer); resolve(message) })
+      worker.once("error", error => { clearTimeout(timer); reject(error) })
+      worker.once("exit", code => { if (code !== 0) { clearTimeout(timer); reject(new Error(`Provider wizard worker exited with ${code}`)) } })
+    })
+    assert.deepEqual(result, { matched: true, cancelled: true })
+  } finally { await worker.terminate() }
 })
 
 test("既无输入也无内联密钥时，发现失败降级到手动输入而不是报错中断", async () => {

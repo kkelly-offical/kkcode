@@ -4,7 +4,7 @@ import { PACKAGE_VERSION } from "../src/version.mjs"
 import { mkdtemp, rm, readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { compareVersions, checkForUpdate, updateMessage, installUpdate, maybeNotifyUpdateOnStartup } from "../src/update/checker.mjs"
+import { compareVersions, checkForUpdate, updateMessage, installUpdate, maybeNotifyUpdateOnStartup, fetchPackageMetadata } from "../src/update/checker.mjs"
 
 function mockFetch(body, status = 200) {
   return async (url) => ({
@@ -20,6 +20,18 @@ test("compareVersions handles stable and prerelease ordering", () => {
   assert.equal(compareVersions("0.2.3", "0.2.3-preview.9") > 0, true)
   assert.equal(compareVersions("0.2.3-preview.2", "0.2.3-preview.1") > 0, true)
   assert.equal(compareVersions("0.2.3-preview.1", "0.2.3") < 0, true)
+})
+
+test("registry normalization strips only its slash suffix and preserves long internal slash runs", async () => {
+  const slashes = '/'.repeat(40000)
+  for (const [registry, expected] of [
+    ['https://registry.test/root///', 'https://registry.test/root'],
+    [`https://registry.test/${slashes}tail/`, `https://registry.test/${slashes}tail`]
+  ]) {
+    let requested
+    await fetchPackageMetadata({ registry, fetchImpl: async url => { requested = url; return { ok: true, json: async () => ({}) } } })
+    assert.equal(requested, `${expected}/@kkelly-offical%2Fkkcode`)
+  }
 })
 
 test("checkForUpdate reads the configured npm dist-tag and writes cache", async () => {

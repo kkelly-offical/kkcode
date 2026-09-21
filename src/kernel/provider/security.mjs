@@ -1,6 +1,7 @@
 import { runtimeCwd } from "../core/runtime-context.mjs"
 import { ProviderError } from "../core/errors.mjs"
 import { checkWorkspaceTrust } from "../permission/workspace-trust.mjs"
+import { trimTrailingSlashes } from "./url-path.mjs"
 
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value || {}, key)
 
@@ -40,7 +41,7 @@ function sourceEndpoint(entry, protocol, effectiveProvider) {
   const endpoint = entry.endpoints?.[protocol]
   if (typeof endpoint !== "string" || !endpoint.trim()) return null
   const base = entry.base_url || effectiveProvider?.base_url
-  return comparableUrl(endpoint, base ? `${String(base).replace(/\/+$/, "")}/` : null)?.toString() || endpoint
+  return comparableUrl(endpoint, base ? `${trimTrailingSlashes(String(base))}/` : null)?.toString() || endpoint
 }
 
 function baseFieldIsEffective(entry, protocol, effectiveProvider, baseUrlOverride) {
@@ -51,7 +52,7 @@ function baseFieldIsEffective(entry, protocol, effectiveProvider, baseUrlOverrid
   if (!candidates.length) return []
   if (!baseUrlOverride) return candidates
   return candidates.filter((candidate) =>
-    String(candidate).replace(/\/+$/, "") === String(baseUrlOverride).replace(/\/+$/, "") ||
+    trimTrailingSlashes(String(candidate)) === trimTrailingSlashes(String(baseUrlOverride)) ||
     sameNetworkAuthority(candidate, baseUrlOverride)
   )
 }

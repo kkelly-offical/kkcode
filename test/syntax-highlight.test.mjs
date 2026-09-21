@@ -120,7 +120,8 @@ describe("接进 markdown 渲染", () => {
     const h1 = renderMarkdown("# one")
     const h3 = renderMarkdown("### three")
     assert.notEqual(stripSgr(h1), h1)
-    assert.notEqual(h1.replace(/one/, ""), h3.replace(/three/, ""), "h1 与 h3 应当用不同颜色")
+    // Compare the actual colour prefixes, not a text-removal sanitizer.
+    assert.notEqual(h1.slice(0, h1.indexOf("one")), h3.slice(0, h3.indexOf("three")), "h1 与 h3 应当用不同颜色")
   })
 
   it("水平线被识别（此前原样输出）", () => {

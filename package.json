@@ -49,6 +49,7 @@
     "configs/",
     "apps/gateway/main.mjs",
     "docs/release-1.0.1-preview.0.md",
+    "docs/security-review-1.0.1-preview.0.md",
     "docs/enterprise-deployment.md",
     "docs/enterprise-ha-recovery.md",
     "docs/device-lifecycle-1.0.1.md",

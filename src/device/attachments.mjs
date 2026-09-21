@@ -123,11 +123,13 @@ export class AttachmentStore {
   }
   remove({ sessionId, id }) {
     return this.exclusive(async () => {
-      validateSession(sessionId); await this.checkDirectory()
+      validateSession(sessionId)
+      if (typeof id !== 'string' || !idPattern.test(id)) throw new ProtocolError('attachment_missing', 'Attachment not found in this session', 404)
+      await this.checkDirectory()
       const record = this.records.get(id)
       if (!record || record.sessionId !== sessionId) throw new ProtocolError('attachment_missing', 'Attachment not found in this session', 404)
       if (this.pins.has(id)) throw new ProtocolError('attachment_busy', 'This attachment is being used by a running turn', 409)
-      await unlink(path.join(this.directory, `${id}.json`)).catch(error => { if (error.code !== 'ENOENT') throw error })
+      await unlink(path.join(this.directory, `${record.id}.json`)).catch(error => { if (error.code !== 'ENOENT') throw error })
       this.records.delete(id)
       return { removed: true }
     })

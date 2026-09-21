@@ -33,6 +33,11 @@ Opt-in preview (`npm @preview`, GitHub prerelease); stable `latest` stays at 1.0
 - npm packaging includes the gateway process entry and enterprise guidance;
   Docker/SSO/HA deployment uses the matching Git tag's source tree. Gateway and
   client health/version labels now follow package metadata, including previews.
+- Publication security review fixes the lab-only Dex proxy's request-target
+  forwarding, replaces quadratic URL suffix regexes with linear scans, and
+  strengthens device file/replay boundaries. Project-specific CodeQL findings
+  are traced and tested rather than globally suppressed; see the
+  [review record](docs/security-review-1.0.1-preview.0.md).
 
 ### Deployment boundaries / 部署边界
 

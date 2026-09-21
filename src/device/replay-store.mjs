@@ -1,13 +1,31 @@
 import path from 'node:path'
-import { createReadStream } from 'node:fs'
+import { constants } from 'node:fs'
 import { createInterface } from 'node:readline'
-import { appendFile, readFile, readdir, stat } from 'node:fs/promises'
+import { readdir, lstat, open } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { writePrivateFile } from '../storage/private-file.mjs'
 import { ProtocolError, PROTOCOL_VERSION } from '../protocol/index.mjs'
 
 export const REPLAY_DEFAULTS = Object.freeze({ maxEvents: 2000, sessionBytes: 8 * 1024 * 1024, totalBytes: 64 * 1024 * 1024, maxAgeMs: 7 * 86400000, maxEventBytes: 512 * 1024, maxResponseBytes: 4 * 1024 * 1024 })
 const validId = id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(id)
+const storageError = () => new ProtocolError('replay_storage', 'Replay storage must contain private regular files, not links', 409)
+
+/** Valid IDs prevent path traversal. Pin the actual inode as well so a replaced
+ * private-state entry cannot redirect replay reads/appends into another file.
+ * State-directory ownership remains a local OS-user responsibility.
+ */
+async function openReplayFile(file, { append = false, maxBytes } = {}) {
+  const before = await lstat(file, { bigint: true }).catch(error => { if (error.code === 'ENOENT') return null; throw error })
+  if (!before && !append) return null
+  if (before && (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n)) throw storageError()
+  const mode = append ? constants.O_WRONLY | constants.O_APPEND | (before ? 0 : constants.O_CREAT | constants.O_EXCL) : constants.O_RDONLY
+  const handle = await open(file, mode | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0), 0o600)
+  try {
+    const info = await handle.stat({ bigint: true }), current = await lstat(file, { bigint: true })
+    if (!info.isFile() || info.nlink !== 1n || current.isSymbolicLink() || info.ino !== current.ino || info.dev !== current.dev || before && (info.ino !== before.ino || info.dev !== before.dev) || maxBytes != null && info.size > BigInt(maxBytes)) throw storageError()
+    return { handle, info }
+  } catch (error) { await handle.close(); throw error }
+}
 
 /** Bounded transport replay, independent of canonical conversation history. */
 export class ReplayStore {
@@ -30,15 +48,20 @@ export class ReplayStore {
     if (this.states.has(id)) return this.states.get(id)
     const file = this.file(id), state = { cursor: 0, rows: [], bytes: 0, updatedAt: 0, needsRewrite: false }
     try {
-      const saved = JSON.parse(await readFile(this.meta(id), 'utf8'))
-      if (!Number.isSafeInteger(saved.cursor) || saved.cursor < 0) throw new Error('Invalid replay high-water mark')
-      state.cursor = saved.cursor
+      const cursor = await openReplayFile(this.meta(id), { maxBytes: 4096 })
+      if (cursor) {
+        try {
+          const saved = JSON.parse(await cursor.handle.readFile('utf8'))
+          if (!Number.isSafeInteger(saved.cursor) || saved.cursor < 0) throw new Error('Invalid replay high-water mark')
+          state.cursor = saved.cursor
+        } finally { await cursor.handle.close() }
+      }
     } catch (error) { if (error.code !== 'ENOENT') throw error }
-    const info = await stat(file).catch(error => { if (error.code === 'ENOENT') return null; throw error })
-    if (info) {
-      if (!info.isFile()) throw new Error('Replay journal must be a regular file')
-      const lines = createInterface({ input: createReadStream(file), crlfDelay: Infinity })
+    const journal = await openReplayFile(file), info = journal?.info
+    if (journal) {
+      const lines = createInterface({ input: journal.handle.createReadStream({ autoClose: false }), crlfDelay: Infinity })
       let previous = 0
+      try {
       for await (const line of lines) {
         let row; try { row = JSON.parse(line) } catch { continue }
         if (!Number.isSafeInteger(row.seq) || row.seq <= 0) continue
@@ -52,9 +75,10 @@ export class ReplayStore {
         state.rows.push({ row, bytes }); state.bytes += bytes
         this.trim(state)
       }
+      } finally { lines.close(); await journal.handle.close() }
     }
     this.states.set(id, state)
-    if (info && state.bytes !== info.size) await this.rewrite(id, state)
+    if (info && BigInt(state.bytes) !== info.size) await this.rewrite(id, state)
     return state
   }
   trim(state) {
@@ -113,7 +137,10 @@ export class ReplayStore {
       state.cursor = row.seq
       try {
         if (rotate) await this.rewrite(id, next)
-        else await appendFile(this.file(id), line + '\n', { mode: 0o600 })
+        else {
+          const journal = await openReplayFile(this.file(id), { append: true })
+          try { await journal.handle.appendFile(line + '\n') } finally { await journal.handle.close() }
+        }
       } catch (error) { state.needsRewrite = true; throw error }
       this.states.set(id, next)
       return stored

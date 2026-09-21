@@ -483,6 +483,14 @@ test("路径里带引号时改用转义空格 —— 引号包不住它", () => 
   assert.equal(mentionQueryAt(out.text, out.cursor - 1).query, weird)
 })
 
+test("mention escaping preserves literal backslashes and shell metacharacters in its own grammar", () => {
+  for (const candidate of [String.raw`a\ "q" b.ts`, String.raw`a\\ "q" b.ts`, String.raw`C:\work files\"q".ts`, 'notes "$(no-command);&|" x.ts']) {
+    const out = applyMention('@x', 2, candidate)
+    assert.equal(mentionQueryAt(out.text, out.cursor - 1).query, candidate)
+    assert.equal(scanMentions(out.text).length, 1)
+  }
+})
+
 test("光标不在 mention 上时原样返回", () => {
   const out = applyMention("hello world", 3, "x.ts")
   assert.equal(out.text, "hello world")

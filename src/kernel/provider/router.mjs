@@ -16,6 +16,7 @@ import {
 import { validateModelId } from "./model-id.mjs"
 import { resolveThinkingParams } from "./thinking-effort.mjs"
 import { noteDeprecation } from "../core/deprecations.mjs"
+import { trimTrailingSlashes } from "./url-path.mjs"
 
 function classifyProviderFailure(error) {
   const cls = String(error?.errorClass || "").toLowerCase()
@@ -79,7 +80,7 @@ function safeProviderEndpoint(baseUrl, providerType, protocol, operation = "infe
       : protocol === "anthropic" ? "messages" : "chat/completions"
   try {
     const url = new URL(String(baseUrl || ""))
-    url.pathname = `${url.pathname.replace(/\/+$/, "")}/${suffix}`
+    url.pathname = `${trimTrailingSlashes(url.pathname)}/${suffix}`
     url.username = ""
     url.password = ""
     url.search = ""
@@ -194,9 +195,9 @@ export function createProviderRegistry() {
     if (!endpoint) return provider.base_url
     try {
       const relativeTo = provider.base_url
-        ? `${String(provider.base_url).replace(/\/+$/, "")}/`
+        ? `${trimTrailingSlashes(String(provider.base_url))}/`
         : undefined
-      return new URL(endpoint, relativeTo).toString().replace(/\/+$/, "")
+      return trimTrailingSlashes(new URL(endpoint, relativeTo).toString())
     } catch {
       return endpoint
     }

@@ -2,7 +2,6 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { readFile, writeFile, mkdtemp, chown } from 'node:fs/promises'
 import { createServer } from 'node:https'
-import { request as httpRequest } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
 import path from 'node:path'
 import assert from 'node:assert/strict'
@@ -11,6 +10,7 @@ import YAML from 'yaml'
 import { createGateway } from '../src/remote/gateway.mjs'
 import { PostgresStore } from '../src/remote/store.mjs'
 import { loadLab, labBrowser } from './lab-browser.mjs'
+import { createLoopbackProxy } from './lab-loopback-proxy.mjs'
 
 const exec = promisify(execFile), lab = await loadLab()
 const directory = await mkdtemp(path.join(lab.directory, 'dex-acceptance-'))
@@ -45,10 +45,7 @@ try {
   const store = await new PostgresStore(connection.href).initialize()
   app = await createGateway({ origin, issuer, clientId: 'kkcode-gateway', clientSecret, store, organization: 'Dex Enterprise Acceptance', rolesClaim: 'groups', adminRole: 'kkcode-admin', scopes: 'openid profile email groups' })
   const backend = await app.listen({ host: '127.0.0.1', port: 0 })
-  proxy = createServer({ cert: certificate, key }, (req, res) => {
-    const forward = httpRequest(new URL(req.url, backend), { method: req.method, headers: req.headers }, response => { res.writeHead(response.statusCode, response.headers); response.pipe(res) })
-    forward.on('error', () => { res.writeHead(503); res.end() }); req.pipe(forward)
-  })
+  proxy = createServer({ cert: certificate, key }, createLoopbackProxy(Number(new URL(backend).port)))
   await new Promise(resolve => proxy.listen(18482, '10.0.0.2', resolve))
   browser = await labBrowser()
   const context = await browser.newContext({ ignoreHTTPSErrors: true }), page = await context.newPage()
