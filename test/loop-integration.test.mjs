@@ -7,13 +7,16 @@ import { registerProvider } from "../src/kernel/provider/router.mjs"
 import { ToolRegistry } from "../src/kernel/tool/registry.mjs"
 import { PermissionEngine } from "../src/kernel/permission/engine.mjs"
 import { processTurnLoop } from "../src/kernel/session/loop.mjs"
+import { flushNow } from "../src/kernel/session/store.mjs"
 import { EventBus } from "../src/kernel/core/events.mjs"
 import { EVENT_TYPES } from "../src/kernel/core/constants.mjs"
 
 let tmpDir
+let previousKkcodeHome
 
 before(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), "kkcode-test-loop-"))
+  previousKkcodeHome = process.env.KKCODE_HOME
   process.env.KKCODE_HOME = tmpDir
   PermissionEngine.setTrusted(true)
   await ToolRegistry.initialize({
@@ -22,8 +25,11 @@ before(async () => {
 })
 
 after(async () => {
-  PermissionEngine.setTrusted(false)
-  delete process.env.KKCODE_HOME
+  try { await flushNow() } finally {
+    PermissionEngine.setTrusted(false)
+    if (previousKkcodeHome === undefined) delete process.env.KKCODE_HOME
+    else process.env.KKCODE_HOME = previousKkcodeHome
+  }
   await rm(tmpDir, { recursive: true, force: true })
 })
 

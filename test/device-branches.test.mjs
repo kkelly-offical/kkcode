@@ -2,10 +2,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { mkdtemp, mkdir, readFile, rm, writeFile, access } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, writeFile, access, realpath, symlink } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { changeDeviceBranch, listDeviceBranches } from '../src/device/branches.mjs'
+import { changeDeviceBranch, listDeviceBranches, sameGitDirectory } from '../src/device/branches.mjs'
 
 const execute = promisify(execFile)
 const git = async (cwd, ...args) => (await execute('git', args, { cwd, windowsHide: true })).stdout.trimEnd()
@@ -14,6 +14,7 @@ async function repository(t) {
   await mkdir(cwd); t.after(() => rm(root, { recursive: true, force: true }))
   await git(cwd, 'init', '-b', 'main')
   await git(cwd, 'config', 'user.name', 'KK Code Test'); await git(cwd, 'config', 'user.email', 'test@example.invalid')
+  await git(cwd, 'config', 'core.autocrlf', 'false')
   await writeFile(path.join(cwd, 'data.txt'), 'preserved\n')
   await git(cwd, 'add', 'data.txt'); await git(cwd, '-c', 'commit.gpgsign=false', 'commit', '-m', 'initial')
   return { cwd, roots: [root], root }
@@ -104,19 +105,60 @@ test('submodules are inspected without their filters; dirty children and revisio
   const options = await repository(t), seed = path.join(options.root, 'module-seed')
   await mkdir(seed); await git(seed, 'init', '-b', 'main')
   await git(seed, 'config', 'user.name', 'KK Code Test'); await git(seed, 'config', 'user.email', 'test@example.invalid')
+  await git(seed, 'config', 'core.autocrlf', 'false')
   await writeFile(path.join(seed, 'child.txt'), 'child content\n')
-  await writeFile(path.join(seed, '.gitattributes'), 'child.txt filter=unsafe\n')
+  await writeFile(path.join(seed, '.gitattributes'), '* text eol=lf\nchild.txt filter=unsafe\n')
   await git(seed, 'add', '.'); await git(seed, '-c', 'commit.gpgsign=false', 'commit', '-m', 'child')
-  await git(options.cwd, '-c', 'protocol.file.allow=always', 'submodule', 'add', seed, 'modules/dep')
+  await git(options.cwd, '-c', 'core.autocrlf=false', '-c', 'protocol.file.allow=always', 'submodule', 'add', seed, 'modules/dep')
   await git(options.cwd, '-c', 'commit.gpgsign=false', 'commit', '-am', 'submodule')
   await git(options.cwd, 'branch', 'no-module', 'HEAD~1')
   const child = path.join(options.cwd, 'modules', 'dep'), marker = path.join(options.root, 'child-filter-ran')
+  await git(child, 'config', 'core.autocrlf', 'false')
   await git(child, 'config', 'filter.unsafe.clean', `sh -c "echo invoked > '${marker}'; cat"`)
-  assert.equal((await change(options, { name: 'compatible', create: true })).current, 'compatible')
+  const created = await change(options, { name: 'compatible', create: true })
+  assert.equal(created.current, 'compatible')
+  assert.equal(created.submodules[0].initialized, true)
+  assert.equal(created.submodules[0].clean, true)
   await assert.rejects(change(options, { name: 'no-module' }), { code: 'submodule_change' })
   await writeFile(path.join(child, 'child.txt'), 'unsaved child work\n')
   assert.equal((await listDeviceBranches(options.cwd, options.roots)).clean, false)
   await assert.rejects(change(options, { name: 'main' }), { code: 'worktree_dirty' })
   await assert.rejects(access(marker))
   assert.equal(await readFile(path.join(child, 'child.txt'), 'utf8'), 'unsaved child work\n')
+})
+
+test('Git directory identity normalizes Windows separators and recognizes case/8.3 aliases without conflating other directories', async () => {
+  const long = 'C:\\Users\\RunnerAdmin\\AppData\\Local\\Temp\\repo\\modules\\dep'
+  const short = 'C:/Users/RUNNER~1/AppData/Local/Temp/repo/modules/dep\r\n'
+  const received = []
+  const options = {
+    pathApi: path.win32,
+    realpathImpl: async value => { received.push(value); return value },
+    statImpl: async value => ({ isDirectory: () => true, dev: 3n, ino: value.endsWith('\\other') ? 102n : 101n })
+  }
+  assert.equal(await sameGitDirectory(short, long, options), true)
+  assert.ok(received.every(value => !value.includes('/') && !value.includes('\n') && !value.includes('\r')))
+  assert.equal(await sameGitDirectory('c:/users/runneradmin/AppData/Local/Temp/repo/modules/dep\n', long, options), true)
+  assert.equal(await sameGitDirectory('C:/Users/RunnerAdmin/AppData/Local/Temp/repo/modules/other\n', long, options), false)
+  await assert.rejects(sameGitDirectory('relative/path\n', long, options), { code: 'unsafe_git_path' })
+  assert.equal(await sameGitDirectory(short, long, { ...options, statImpl: async () => ({ isDirectory: () => true, dev: 3n, ino: 0n }) }), false)
+})
+
+test('Git directory comparison resolves real filesystem aliases and rejects sibling directories', async t => {
+  const options = await repository(t), alias = path.join(options.root, 'repository-alias')
+  await symlink(options.cwd, alias, 'junction')
+  assert.equal(await sameGitDirectory(`${alias}\r\n`, await realpath(options.cwd)), true)
+  assert.equal(await sameGitDirectory(`${options.root}\n`, options.cwd), false)
+})
+
+test('safe branch checkout respects repository CRLF settings instead of forcing the test fixture line endings', async t => {
+  const options = await repository(t)
+  await git(options.cwd, 'branch', 'other')
+  await writeFile(path.join(options.cwd, 'data.txt'), 'second committed content\n')
+  await git(options.cwd, 'add', 'data.txt'); await git(options.cwd, '-c', 'commit.gpgsign=false', 'commit', '-m', 'second version')
+  await git(options.cwd, 'config', 'core.autocrlf', 'true')
+  assert.equal((await change(options, { name: 'other' })).clean, true)
+  assert.equal(await readFile(path.join(options.cwd, 'data.txt'), 'utf8'), 'preserved\r\n')
+  assert.equal((await change(options, { name: 'main' })).clean, true)
+  assert.equal(await readFile(path.join(options.cwd, 'data.txt'), 'utf8'), 'second committed content\r\n')
 })

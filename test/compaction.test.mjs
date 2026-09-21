@@ -5,13 +5,15 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { compactSession, buildCompactionPrompt, collectEvidenceLedger, extractCompactionSummary } from "../src/kernel/session/compaction.mjs"
 import { registerProvider } from "../src/kernel/provider/router.mjs"
-import { appendAssistantMessage, appendMessage, appendUserMessage, getSession, touchSession } from "../src/kernel/session/store.mjs"
+import { appendAssistantMessage, appendMessage, appendUserMessage, getSession, touchSession, flushNow } from "../src/kernel/session/store.mjs"
 
 let tmpDir
+let previousKkcodeHome
 let capturedRequest = null
 
 before(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), "kkcode-compaction-test-"))
+  previousKkcodeHome = process.env.KKCODE_HOME
   process.env.KKCODE_HOME = tmpDir
   registerProvider("compaction-test", {
     request: async (input) => {
@@ -40,7 +42,10 @@ before(async () => {
 })
 
 after(async () => {
-  delete process.env.KKCODE_HOME
+  try { await flushNow() } finally {
+    if (previousKkcodeHome === undefined) delete process.env.KKCODE_HOME
+    else process.env.KKCODE_HOME = previousKkcodeHome
+  }
   await rm(tmpDir, { recursive: true, force: true })
 })
 

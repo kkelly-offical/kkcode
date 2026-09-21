@@ -3,15 +3,20 @@ import assert from "node:assert/strict"
 import { mkdtemp, rm } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { getConversationHistory, touchSession, appendUserMessage, appendAssistantMessage } from "../src/kernel/session/store.mjs"
+import { getConversationHistory, touchSession, appendUserMessage, appendAssistantMessage, flushNow } from "../src/kernel/session/store.mjs"
 
 let tmpDir
+let previousKkcodeHome
 before(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), "kkcode-test-hist-"))
+  previousKkcodeHome = process.env.KKCODE_HOME
   process.env.KKCODE_HOME = tmpDir
 })
 after(async () => {
-  delete process.env.KKCODE_HOME
+  try { await flushNow() } finally {
+    if (previousKkcodeHome === undefined) delete process.env.KKCODE_HOME
+    else process.env.KKCODE_HOME = previousKkcodeHome
+  }
   await rm(tmpDir, { recursive: true, force: true })
 })
 

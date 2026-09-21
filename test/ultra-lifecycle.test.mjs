@@ -18,6 +18,7 @@ import path from "node:path"
 
 const tmpHome = await mkdtemp(path.join(os.tmpdir(), "kkcode-ultra-home-"))
 const tmpProject = await mkdtemp(path.join(os.tmpdir(), "kkcode-ultra-proj-"))
+const previousKkcodeHome = process.env.KKCODE_HOME
 process.env.KKCODE_HOME = tmpHome
 const originalCwd = process.cwd()
 process.chdir(tmpProject)
@@ -26,11 +27,16 @@ const { EventBus } = await import("../src/kernel/core/events.mjs")
 const { LongAgentManager } = await import("../src/kernel/orchestration/longagent-manager.mjs")
 const { registerProvider } = await import("../src/kernel/provider/router.mjs")
 const { runHybridLongAgent } = await import("../src/kernel/session/longagent-hybrid.mjs")
+const { flushNow } = await import("../src/kernel/session/store.mjs")
 
 test.after(async () => {
-  process.chdir(originalCwd)
-  await rm(tmpHome, { recursive: true, force: true }).catch(() => {})
-  await rm(tmpProject, { recursive: true, force: true }).catch(() => {})
+  try { await flushNow() } finally {
+    process.chdir(originalCwd)
+    if (previousKkcodeHome === undefined) delete process.env.KKCODE_HOME
+    else process.env.KKCODE_HOME = previousKkcodeHome
+  }
+  await rm(tmpHome, { recursive: true, force: true })
+  await rm(tmpProject, { recursive: true, force: true })
 })
 
 // 一个只会炸的 provider。注意：provider 故障**不会**穿透出 runHybridLongAgent

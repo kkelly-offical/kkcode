@@ -32,7 +32,9 @@ async function fixture(run) {
       calls.set(id, count)
       if (parents.has(id) && count === 1) return { text: '', usage: {}, toolCalls: [{ id: `delegate_${id}`, name: 'task', args: { prompt: 'Write and ask one fixture question.', subagent_type: 'tdd-guide', allow_question: true } }] }
       if (!parents.has(id) && count === 1) return { text: '', usage: {}, toolCalls: [
-        { id: `write_${id}`, name: 'write', args: { path: path.join(directory, `${currentRuntime().parentSessionId}.txt`), content: 'approved child write' } },
+        // Use the session workspace coordinate system: macOS /var aliases and
+        // Windows 8.3 temp paths differ from DeviceService's canonical cwd.
+        { id: `write_${id}`, name: 'write', args: { path: `${currentRuntime().parentSessionId}.txt`, content: 'approved child write' } },
         { id: `question_${id}`, name: 'question', args: { questions: [{ id: 'choice', text: 'Continue?', options: [{ label: 'Continue', value: 'continue' }] }] } }
       ] }
       return { text: 'done', toolCalls: [], usage: {} }
@@ -74,6 +76,9 @@ test('another authenticated client approves child write and question from the pa
   assert.equal(question.sessionId, sessionId); assert.equal(question.request.originSessionId, childWrite.request.originSessionId)
   await resolve(sessionId, question, { choice: 'continue' })
   await until(() => !service.turns.has(sessionId), 'completed parent turn')
+  const child = await rpc('sessions.get', { sessionId: childWrite.request.originSessionId })
+  const writeResult = child.parts.find(part => part.tool === 'write' && part.status !== 'running')
+  assert.equal(writeResult?.status, 'completed', writeResult?.output || 'Missing child write result')
   assert.equal(await readFile(path.join(directory, `${sessionId}.txt`), 'utf8'), 'approved child write')
   const events = await service.readEvents(sessionId, 0)
   assert.equal(events.filter(event => event.type === 'approval.requested').length, 3)

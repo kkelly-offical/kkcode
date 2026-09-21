@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { BUILTIN_COMMANDS, COMMAND_CLIENT_ACTIONS, DEVICE_COMMAND_HANDLERS, publicCommandCatalog } from '../src/command/builtin.mjs'
@@ -120,7 +120,13 @@ test('profile preferences have validated fields and private atomic persistence',
   const saved = await updateDeviceProfile({ beginner: false, languages: ['中文'], tech_stack: ['Kotlin'], design_style: 'minimal', extra_notes: 'Brief answers' })
   assert.equal((await updateDeviceProfile({ extra_notes: 'Updated' })).created_at, saved.created_at)
   assert.equal((await getDeviceProfile()).languages[0], '中文')
-  assert.equal((await stat(path.join(process.env.KKCODE_HOME, 'profile.yaml'))).mode & 0o777, 0o600)
+  const file = path.join(process.env.KKCODE_HOME, 'profile.yaml')
+  assert.equal((await stat(file)).isFile(), true)
+  assert.match(await readFile(file, 'utf8'), /Updated/)
+  assert.equal((await readdir(process.env.KKCODE_HOME)).some(name => /^profile\.yaml\..*\.tmp$/.test(name)), false)
+  // Windows reports synthesized POSIX bits (0666); actual access is controlled
+  // by the containing profile directory's ACL, not these bits.
+  if (process.platform !== 'win32') assert.equal((await stat(file)).mode & 0o777, 0o600)
   for (const input of [{ organization: 'forged' }, { languages: 'not-array' }, { beginner: 'yes' }, JSON.parse('{"__proto__":{}}')]) await assert.rejects(updateDeviceProfile(input), error => error.code === 'invalid_profile')
 }))
 

@@ -9,6 +9,7 @@ import { ToolRegistry } from "../src/kernel/tool/registry.mjs"
 import { EventBus } from "../src/kernel/core/events.mjs"
 import { EVENT_TYPES } from "../src/kernel/core/constants.mjs"
 import { processTurnLoop } from "../src/kernel/session/loop.mjs"
+import { flushNow } from "../src/kernel/session/store.mjs"
 import { createRenderStream, registerStreamByteRenderer } from "../src/kernel/session/render-stream.mjs"
 import { setColorEnabled } from "../src/theme/color.mjs"
 import { createStreamByteRenderer, installStreamByteRenderer } from "../src/theme/stream-byte-renderer.mjs"
@@ -33,10 +34,12 @@ const FIXTURE_URL = new URL("./fixtures/render-snapshot-baseline.json", import.m
 let homeDir
 let workDir
 let originalCwd
+let previousKkcodeHome
 
 before(async () => {
   homeDir = await mkdtemp(join(tmpdir(), "kkcode-render-snap-home-"))
   workDir = await mkdtemp(join(tmpdir(), "kkcode-render-snap-cwd-"))
+  previousKkcodeHome = process.env.KKCODE_HOME
   process.env.KKCODE_HOME = homeDir
   originalCwd = process.cwd()
   await writeFile(join(workDir, "a.txt"), "alpha\n")
@@ -54,10 +57,15 @@ before(async () => {
 })
 
 after(async () => {
-  setColorEnabled(null)
-  process.chdir(originalCwd)
-  PermissionEngine.setTrusted(false)
-  delete process.env.KKCODE_HOME
+  // The canonical store binds deferred flushes to this fixture root. Drain them
+  // before deleting it, otherwise a late writer can recreate it during rm.
+  try { await flushNow() } finally {
+    setColorEnabled(null)
+    process.chdir(originalCwd)
+    PermissionEngine.setTrusted(false)
+    if (previousKkcodeHome === undefined) delete process.env.KKCODE_HOME
+    else process.env.KKCODE_HOME = previousKkcodeHome
+  }
   await rm(homeDir, { recursive: true, force: true })
   await rm(workDir, { recursive: true, force: true })
 })

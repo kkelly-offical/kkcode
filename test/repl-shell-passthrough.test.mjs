@@ -287,12 +287,23 @@ test("the platform option actually reaches spawn", async () => {
   assert.deepEqual(spawn.calls[0].args, ["/d", "/s", "/c", "dir"])
 })
 
-test("win32 kills without a signal name", async () => {
+test("win32 fallback kills once without a signal name", async () => {
   // Windows 没有 SIGTERM/SIGKILL 之分，TerminateProcess 是唯一手段
   const { promise, child } = start("hang", { platform: "win32", timeoutMs: 20, killGraceMs: 20 })
   const result = await promise
-  assert.deepEqual(child.signals, [null, null])
+  assert.deepEqual(child.signals, [null])
   assert.equal(result.timedOut, true)
+})
+
+test('win32 terminates the exact owned process tree once, never by image name', async () => {
+  const killed = []
+  const { promise, child } = start('hang', { platform: 'win32', timeoutMs: 20, killGraceMs: 20, killTree: target => killed.push(target.pid) })
+  // The kill implementation is injected: this fake PID is never sent to the OS.
+  child.pid = 812345
+  const result = await promise
+  assert.equal(result.timedOut, true)
+  assert.deepEqual(killed, [812345])
+  assert.deepEqual(child.signals, [])
 })
 
 // --- stdin ---
@@ -402,9 +413,7 @@ test("a colour-free transcript has no escapes at all", () => {
 
 // --- 真实冒烟：假 spawn 骗不了这几条 ---
 
-test("smoke: a real command runs and its output comes back", async (t) => {
-  if (process.platform === "win32") { t.skip("真实 cmd 的引号/进程语义待有 Windows 本地环境时验证；win32 分流逻辑有假 spawn 用例盯着"); return }
-
+test("smoke: a real command runs and its output comes back", async () => {
   const result = await runShellPassthrough("echo hello from shell", { timeoutMs: 5000 })
   assert.equal(result.ok, true)
   assert.equal(result.exitCode, 0)
@@ -412,9 +421,7 @@ test("smoke: a real command runs and its output comes back", async (t) => {
   assert.equal(result.truncated, false)
 })
 
-test("smoke: stderr comes back merged, and a non-zero exit is reported", async (t) => {
-  if (process.platform === "win32") { t.skip("真实 cmd 的引号/进程语义待有 Windows 本地环境时验证；win32 分流逻辑有假 spawn 用例盯着"); return }
-
+test("smoke: stderr comes back merged, and a non-zero exit is reported", async () => {
   // node -e 而不是 `; 1>&2 exit`：那是 POSIX shell 语法，Windows cmd 里
   // `;` 不是命令分隔符 —— smoke 必须在两种宿主上语义一致
   const script = "console.log('out'); console.error('err'); process.exit(3)"
@@ -425,36 +432,44 @@ test("smoke: stderr comes back merged, and a non-zero exit is reported", async (
   assert.ok(result.output.includes("err"), "stderr 也要在")
 })
 
-test("smoke: a real timeout kills the process group and keeps what was printed", async (t) => {
-  if (process.platform === "win32") { t.skip("真实 cmd 的引号/进程语义待有 Windows 本地环境时验证；win32 分流逻辑有假 spawn 用例盯着"); return }
-
+test("smoke: a real timeout kills the process group and keeps what was printed", async () => {
   // 这条覆盖假 spawn 覆盖不到的那一半：POSIX 上的负 pid 进程组杀。
   // `sleep` 是 sh 的子进程，只杀 sh 的话它会继续跑、攥着管道不放，close 永远不来。
   const started = Date.now()
-  const hang = "console.log('before sleeping'); setTimeout(() => {}, 30000)"
+  const hang = "const cp=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});console.log('descendant:'+cp.pid);console.log('before sleeping');setInterval(()=>{},1000)"
   const result = await runShellPassthrough(`node -e "${hang}"`, {
-    timeoutMs: 300, killGraceMs: 100
+    // The deadline includes Node startup on loaded hosted runners. Keep it
+    // bounded, but do not mistake scheduler delay for missing captured output.
+    timeoutMs: 2000,
+    killGraceMs: process.platform === 'win32' ? 500 : 100
   })
   assert.equal(result.timedOut, true)
   assert.equal(result.ok, false)
   assert.ok(result.output.includes("before sleeping"), "超时前的输出要保留")
-  assert.ok(Date.now() - started < 5000, `不该等满 30 秒，实际 ${Date.now() - started}ms`)
+  assert.ok(Date.now() - started < 10000, `不该留下运行中的后代，实际 ${Date.now() - started}ms`)
+  if (process.platform === 'win32') {
+    const pid = Number(result.output.match(/descendant:(\d+)/)?.[1])
+    assert.ok(Number.isSafeInteger(pid) && pid > 0, result.output)
+    const alive = () => { try { process.kill(pid, 0); return true } catch (error) { return error.code !== 'ESRCH' } }
+    try {
+      const deadline = Date.now() + 3000
+      while (alive() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50))
+      assert.equal(alive(), false, 'taskkill must terminate the owned descendant, not only cmd.exe')
+    } finally { if (alive()) { try { process.kill(pid) } catch { /* already exited */ } } }
+  }
 })
 
-test("smoke: a program that reads stdin gets EOF instead of hanging", async (t) => {
-  if (process.platform === "win32") { t.skip("真实 cmd 的引号/进程语义待有 Windows 本地环境时验证；win32 分流逻辑有假 spawn 用例盯着"); return }
-
-  // `cat` 无参数会一直读 stdin。stdin 若不是 /dev/null，这条会跑满超时。
+test("smoke: a program that reads stdin gets EOF instead of hanging", async () => {
+  // Node is available on every test host; cmd.exe has no POSIX `cat` builtin.
   const started = Date.now()
-  const result = await runShellPassthrough("cat", { timeoutMs: 4000 })
+  const result = await runShellPassthrough("node -e \"process.stdin.on('end',()=>console.log('EOF'));process.stdin.resume()\"", { timeoutMs: 4000 })
   assert.equal(result.timedOut, false, "stdin 应该立刻 EOF")
   assert.equal(result.exitCode, 0)
+  assert.equal(result.output.trim(), 'EOF')
   assert.ok(Date.now() - started < 3000)
 })
 
-test("smoke: cwd is respected", async (t) => {
-  if (process.platform === "win32") { t.skip("真实 cmd 的引号/进程语义待有 Windows 本地环境时验证；win32 分流逻辑有假 spawn 用例盯着"); return }
-
+test("smoke: cwd is respected", async () => {
   // `pwd` + 根路径都是 POSIX 专属。node -e process.cwd() 两边都认，
   // 目标目录用 tmpdir（两种宿主都存在且可进）。realpath 对齐 macOS 的
   // /tmp → /private/tmp 符号链接。

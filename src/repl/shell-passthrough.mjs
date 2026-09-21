@@ -1,4 +1,5 @@
 import { spawn as nodeSpawn } from "node:child_process"
+import path from 'node:path'
 import { StringDecoder } from "node:string_decoder"
 import { stripAnsi } from "../util/frame-primitives.mjs"
 import { paint } from "../theme/color.mjs"
@@ -147,9 +148,23 @@ function pipeInto(stream, sink) {
  * win32：没有 SIGTERM/SIGKILL 之分，也没有负 pid —— TerminateProcess 是唯一
  * 手段，两级升级在这里退化成一次强杀。
  */
-function signalChild(child, signal, platform) {
+function killWindowsTree(child) {
+  const file = path.win32.join(process.env.SystemRoot || process.env.SYSTEMROOT || 'C:\\Windows', 'System32', 'taskkill.exe')
+  try {
+    // Terminating only cmd.exe leaves npm/node descendants and their pipes alive.
+    // The PID is the exact child we spawned, never an image-name/global kill.
+    const killer = nodeSpawn(file, ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
+    const fallback = () => { try { child.kill() } catch { /* already exited */ } }
+    killer.once('error', fallback)
+    killer.once('exit', code => { if (code) fallback() })
+    killer.unref()
+  } catch { try { child.kill() } catch { /* already exited */ } }
+}
+
+function signalChild(child, signal, platform, killTree) {
   if (platform === "win32") {
-    try { child.kill() } catch { /* 已经死了 */ }
+    if (Number.isSafeInteger(child.pid) && child.pid > 0) killTree(child)
+    else { try { child.kill() } catch { /* 已经死了 */ } }
     return
   }
   if (child.pid) {
@@ -188,13 +203,14 @@ function failedResult(err, startedAt) {
 }
 
 function waitForChild(child, ctx) {
-  const { sink, startedAt, timeoutMs, killGraceMs, platform, abortSignal, setTimer, clearTimer } = ctx
+  const { sink, startedAt, timeoutMs, killGraceMs, platform, abortSignal, setTimer, clearTimer, killTree } = ctx
   return new Promise((resolve) => {
     let settled = false
     let timedOut = false
     let error = null
     let exitCode = null
     let exitSignal = null
+    let windowsKillStarted = false
     const timers = new Set()
 
     // 一律 unref：真实运行里管道是 ref 的，unref 只保证「定时器不会成为进程
@@ -232,9 +248,14 @@ function waitForChild(child, ctx) {
     }
 
     const escalateKill = () => {
-      signalChild(child, "SIGTERM", platform)
+      // A tree termination is a single operation on Windows. Never race a
+      // second taskkill against a PID that may already have exited/recycled.
+      if (platform !== 'win32' || !windowsKillStarted) {
+        windowsKillStarted = true
+        signalChild(child, "SIGTERM", platform, killTree)
+      }
       later(() => {
-        signalChild(child, "SIGKILL", platform)
+        if (platform !== 'win32') signalChild(child, "SIGKILL", platform, killTree)
         // 最后的保险：SIGKILL 之后还等不到 close，说明有个改了自己进程组的
         // 孙进程攥着管道。宁可少收一点输出，也不能把用户的 REPL 卡死。
         later(settle, killGraceMs)
@@ -309,7 +330,8 @@ export async function runShellPassthrough(command, options = {}) {
     signal: abortSignal = null,
     // 可注入的定时器（理由见 waitForChild 的 later）
     setTimer = setTimeout,
-    clearTimer = clearTimeout
+    clearTimer = clearTimeout,
+    killTree = killWindowsTree
   } = options
 
   // 只敲了个 `!` 就回车：不 spawn（`sh -c ""` 会起一个进程只为立刻退出），
@@ -328,7 +350,7 @@ export async function runShellPassthrough(command, options = {}) {
     return failedResult(err, startedAt)
   }
   return await waitForChild(child, {
-    sink, startedAt, timeoutMs, killGraceMs, platform, abortSignal, setTimer, clearTimer
+    sink, startedAt, timeoutMs, killGraceMs, platform, abortSignal, setTimer, clearTimer, killTree
   })
 }
 

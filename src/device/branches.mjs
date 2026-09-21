@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { access, lstat, realpath } from 'node:fs/promises'
+import { access, lstat, realpath, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -23,11 +23,27 @@ async function git(cwd, args, { acceptFailure = false, config = [] } = {}) {
     throw new ProtocolError('git_failed', 'Git could not safely complete this operation; inspect the repository locally', 409)
   }
 }
+const gitPathLine = output => output.replace(/\r?\n$/, '')
+/** Git for Windows prints forward slashes while Node returns native separators.
+ * realpath also does not guarantee case normalization; aliases such as NTFS 8.3
+ * paths must be compared by filesystem identity, not by lowercasing strings.
+ */
+export async function sameGitDirectory(output, expected, { pathApi = path, realpathImpl = realpath, statImpl = stat } = {}) {
+  if (typeof output !== 'string' || !output) return false
+  const reported = gitPathLine(output)
+  if (!pathApi.isAbsolute(reported)) throw new ProtocolError('unsafe_git_path', 'Git returned a non-absolute repository path', 409)
+  const [actual, wanted] = await Promise.all([realpathImpl(pathApi.resolve(reported)), realpathImpl(pathApi.resolve(expected))])
+  const [left, right] = await Promise.all([statImpl(actual, { bigint: true }), statImpl(wanted, { bigint: true })])
+  if (!left.isDirectory() || !right.isDirectory()) return false
+  if (actual === wanted) return true
+  // A filesystem without stable inode identifiers must fail closed for aliases.
+  return left.ino > 0n && right.ino > 0n && left.ino === right.ino && left.dev === right.dev
+}
 export async function deviceRepository(cwd, roots) {
   const directory = await resolveDevicePath(cwd, roots, { directory: true })
   const top = await git(directory, ['rev-parse', '--show-toplevel'], { acceptFailure: true })
   if (!top) throw new ProtocolError('not_repository', 'Choose a Git working directory', 409)
-  return resolveDevicePath(top.trimEnd(), roots, { directory: true })
+  return resolveDevicePath(gitPathLine(top), roots, { directory: true })
 }
 function gitlinks(output) {
   return output.split('\0').filter(row => row.startsWith('160000 ')).map(row => {
@@ -59,12 +75,16 @@ async function repositorySnapshot(cwd, depth = 0) {
     if (!exists.isDirectory() || exists.isSymbolicLink()) throw new ProtocolError('unsafe_submodule', 'Submodule paths must be regular directories', 409)
     const safeChild = await resolveDevicePath(child, [cwd], { directory: true })
     const childTop = await git(safeChild, ['rev-parse', '--show-toplevel'], { acceptFailure: true })
-    if (childTop?.trimEnd() !== safeChild) { submodules.push({ ...link, initialized: false, clean: true }); continue }
+    if (!await sameGitDirectory(childTop, safeChild)) {
+      const metadata = await lstat(path.join(safeChild, '.git')).catch(error => { if (error.code !== 'ENOENT') throw error; return null })
+      if (metadata) throw new ProtocolError('unsafe_submodule', 'Submodule Git metadata resolves to a different working directory; inspect it locally', 409)
+      submodules.push({ ...link, initialized: false, clean: true }); continue
+    }
     const state = await repositorySnapshot(safeChild, depth + 1)
     submodules.push({ ...link, initialized: true, clean: state.clean && state.head === link.commit, stateToken: state.stateToken })
   }
   const operationNames = ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply', 'sequencer', 'BISECT_LOG', 'index.lock', 'HEAD.lock']
-  const operations = (await Promise.all(operationNames.map(async name => { try { await access(path.join(gitDir.trimEnd(), name)); return name } catch { return null } }))).filter(Boolean)
+  const operations = (await Promise.all(operationNames.map(async name => { try { await access(path.join(gitPathLine(gitDir), name)); return name } catch { return null } }))).filter(Boolean)
   const branch = current?.trimEnd() || null
   const branches = refs.split('\n').filter(Boolean).map(row => {
     const [name, commit, checkout] = row.split('\0')

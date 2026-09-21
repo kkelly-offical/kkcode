@@ -9,7 +9,8 @@ import {
   touchSession,
   appendUserMessage,
   appendAssistantMessage,
-  getSession
+  getSession,
+  flushNow
 } from "../src/kernel/session/store.mjs"
 
 /**
@@ -22,16 +23,21 @@ import {
  */
 
 let tmpDir
+let previousKkcodeHome
 
 before(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), "kkcode-btw-test-"))
+  previousKkcodeHome = process.env.KKCODE_HOME
   process.env.KKCODE_HOME = tmpDir
   // 同步落盘：省掉 1s 的 flush 定时器，也就不会有悬着的 handle 拖住测试进程
   configureSessionStore({ flushIntervalMs: 0 })
 })
 
 after(async () => {
-  delete process.env.KKCODE_HOME
+  try { await flushNow() } finally {
+    if (previousKkcodeHome === undefined) delete process.env.KKCODE_HOME
+    else process.env.KKCODE_HOME = previousKkcodeHome
+  }
   await rm(tmpDir, { recursive: true, force: true })
 })
 
