@@ -1,28 +1,30 @@
 function taskProperties() {
+  // Property order is the reading order for the model: core delegation fields
+  // first, structured brief fields next, orchestration-internal fields last.
   return {
     prompt: { type: "string", description: "self-contained task brief for the delegated subagent" },
+    description: { type: "string", description: "short task description for background task tracking" },
+    subagent_type: { type: "string", description: "explicit subagent type" },
+    run_in_background: { type: "boolean", description: "run async in background for non-blocking sidecar work" },
+    execution_mode: { type: "string", enum: ["fresh_agent", "fork_context"], description: "delegation mode: fresh_agent for isolated work, fork_context for read-only sidecars that inherit the parent transcript" },
     objective: { type: "string", description: "primary outcome to achieve when synthesizing a delegation brief" },
     why: { type: "string", description: "context or decision pressure behind the delegated work" },
     write_scope: { type: "string", description: "explicit write scope such as read-only, specific files, or no mutations" },
-    budget_usd: { type: "number", description: "hard USD ceiling for this delegation; the subagent aborts when its own spend crosses it" },
-    deadline_at: { type: "number", description: "epoch-ms deadline; the subagent aborts past this timestamp" },
-    description: { type: "string", description: "short task description for background task tracking" },
-    subagent_type: { type: "string", description: "explicit subagent type" },
-    category: { type: "string", description: "routing category" },
-    session_id: { type: "string", description: "continue from an existing delegated sub-session instead of starting fresh" },
-    stage_id: { type: "string", description: "optional stage id for orchestration" },
-    task_id: { type: "string", description: "optional logical task id" },
-    group_id: { type: "string", description: "optional parallel group id for related delegated tasks" },
-    group_label: { type: "string", description: "optional human-readable parallel group label" },
     starting_points: { type: "array", items: { type: "string" }, description: "relevant files, symbols, tests, or commands the subagent should start from" },
     constraints: { type: "array", items: { type: "string" }, description: "architectural boundaries, forbidden edits, or safety constraints for the delegated run" },
     deliverable: { type: "string", description: "expected output from the subagent, such as a patch, findings, or a concise summary" },
-    execution_mode: { type: "string", enum: ["fresh_agent", "fork_context"], description: "delegation mode: fresh_agent for isolated work, fork_context for read-only sidecars that inherit the parent transcript" },
+    category: { type: "string", description: "routing category (alternative to subagent_type; mutually exclusive)" },
     inherit_context: { type: "boolean", description: "shortcut for execution_mode=fork_context; only valid for read-only sidecar work" },
+    session_id: { type: "string", description: "continue from an existing delegated sub-session instead of starting fresh" },
     isolation: { type: "string", enum: ["default", "worktree"], description: "execution isolation for delegated work" },
-    run_in_background: { type: "boolean", description: "run async in background for non-blocking sidecar work" },
+    allow_question: { type: "boolean", description: "allow question tool during delegated run; foreground only" },
     planned_files: { type: "array", items: { type: "string" }, description: "planned files for this task" },
-    allow_question: { type: "boolean", description: "allow question tool during delegated run; foreground only" }
+    budget_usd: { type: "number", description: "hard USD ceiling for this delegation; the subagent aborts when its own spend crosses it" },
+    deadline_at: { type: "number", description: "epoch-ms deadline; the subagent aborts past this timestamp" },
+    group_id: { type: "string", description: "optional parallel group id for related delegated tasks (orchestration)" },
+    group_label: { type: "string", description: "optional human-readable parallel group label (orchestration)" },
+    stage_id: { type: "string", description: "optional stage id (orchestration-internal)" },
+    task_id: { type: "string", description: "optional logical task id (orchestration-internal)" }
   }
 }
 

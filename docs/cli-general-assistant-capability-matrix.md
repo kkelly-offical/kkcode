@@ -93,3 +93,19 @@ Before shipping 0.3.0, confirm:
 - route-reason copy, continuation copy, and release docs tell the same story
 - tool surface still covers coding + local ops + shell + web + repo + delegation
 - routing tests keep heavy multi-file work on LongAgent
+
+## 1.0.1 follow-through
+
+The 1.0.1 tool/workflow review (`docs/agent-workflow-instruction-tools-compat-1.0.1.md`)
+kept every capability lane above intact while tightening the agent surface:
+
+- the `# Available Tools` system-prompt block is grouped (File / Search / Shell /
+  Web / Planning / Delegation / Git / Notebook / Skills / MCP) instead of one
+  flat list — the lane anchors in the table above are unchanged
+- `background_output` / `task_get` are documented aliases of `task_output`, and
+  `background_cancel` of `task_stop`; the registered names remain for
+  compatibility
+- plugin manifests' `agents` component now actually loads (with the manifest's
+  `allowedAgentPermissions` ceiling enforced), so packaged assistants extend
+  the delegation lane without escaping it
+

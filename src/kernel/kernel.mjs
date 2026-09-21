@@ -200,7 +200,7 @@ export async function createKernel(options = {}) {
     await skills.initialize(extensionPolicy.config, cwd, { allowProjectSources })
     await hooks.initialize(cwd, extensionPolicy.config, { allowProjectSources, force: true })
     // CustomAgentRegistry 是 kernel/agent 的模块级单例（第十子域，M23 迁入），全局一份
-    await CustomAgentRegistry.initialize(cwd, { allowProjectSources })
+    await CustomAgentRegistry.initialize(cwd, { allowProjectSources, config: extensionPolicy.config })
     return extensionPolicy
   }
 

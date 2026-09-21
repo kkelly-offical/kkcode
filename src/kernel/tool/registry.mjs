@@ -1432,11 +1432,11 @@ function builtinTools(config) {
         output_mode: schema("string", "output mode: 'content' (lines with numbers), 'files' (file paths only, default), 'count' (match counts per file)"),
         type: schema("string", "file type filter, e.g. js, ts, py (optional)"),
         glob: schema("string", "glob filter, e.g. *.mjs, src/**/*.ts (optional)"),
-        maxCount: schema("number", "max matches per file (optional)"),
+        max_count: schema("number", "max matches per file (optional)"),
         context: schema("number", "lines of context around match, -C (optional)"),
         before_context: schema("number", "lines before each match, -B (optional)"),
         after_context: schema("number", "lines after each match, -A (optional)"),
-        ignoreCase: schema("boolean", "case insensitive search (optional)"),
+        ignore_case: schema("boolean", "case insensitive search (optional)"),
         multiline: schema("boolean", "enable cross-line matching (optional)"),
         head_limit: schema("number", "limit output to first N lines/entries (optional)"),
         offset: schema("number", "skip first N lines/entries before head_limit (optional)")
@@ -1444,16 +1444,18 @@ function builtinTools(config) {
       required: ["pattern"]
     },
     async execute(args, ctx) {
+      // camelCase keys (maxCount/ignoreCase) are legacy aliases: accepted silently
+      // so saved sessions and older prompts keep working, but never advertised.
       return runGrep(String(args.pattern || ""), ctx.cwd, {
         path: args.path || null,
         outputMode: args.output_mode || "files",
         type: args.type || null,
         glob: args.glob || null,
-        maxCount: args.maxCount || null,
+        maxCount: args.max_count ?? args.maxCount ?? null,
         context: args.context || null,
         beforeContext: args.before_context || null,
         afterContext: args.after_context || null,
-        ignoreCase: !!args.ignoreCase,
+        ignoreCase: !!(args.ignore_case ?? args.ignoreCase),
         multiline: !!args.multiline,
         headLimit: args.head_limit || null,
         offset: args.offset || null
@@ -1547,7 +1549,7 @@ function builtinTools(config) {
 
   const outputTool = {
     name: "background_output",
-    description: "Retrieve status, logs, and result of a background task launched via `task` with `run_in_background: true`. Returns the task object including status and output.",
+    description: "Retrieve status, logs, and result of a background task by task_id. Covers every background source (`task` with run_in_background, background `bash`, longagent lanes). Alias of `task_output` — prefer `task_output` for new work.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1589,7 +1591,7 @@ function builtinTools(config) {
 
   const taskGetTool = {
     name: "task_get",
-    description: "Retrieve one delegated background task summary and result payload by task_id.",
+    description: "Retrieve one delegated background task summary and result payload by task_id. Alias of `task_output` — prefer `task_output` for new work.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1610,7 +1612,7 @@ function builtinTools(config) {
 
   const taskStopTool = {
     name: "task_stop",
-    description: "Cancel a delegated background task by task_id.",
+    description: "Cancel a delegated background task by task_id. Safe to call on tasks that already finished.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1647,7 +1649,7 @@ function builtinTools(config) {
 
   const cancelTool = {
     name: "background_cancel",
-    description: "Cancel a running background task by its task_id. Only works on tasks launched via `task` with `run_in_background: true`.",
+    description: "Cancel a running background task by its task_id. Covers every background source (`task` with run_in_background, background `bash`, longagent lanes). Alias of `task_stop` — prefer `task_stop` for new work.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1911,6 +1913,12 @@ function builtinTools(config) {
       if (!skill) {
         const available = SkillRegistry.list().map(s => s.name).join(", ")
         return `error: skill "${name}" not found. Available: ${available}`
+      }
+      // disable-model-invocation hides the skill from the system prompt listing;
+      // without this check the model could still invoke it by guessing the name
+      // (Kimi Code rejects these at the same boundary).
+      if (skill.disableModelInvocation) {
+        return `error: skill "${name}" is not model-invocable (disable-model-invocation). It can only be run by the user as $${name}.`
       }
       const result = await SkillRegistry.execute(name, String(args.args || ""), {
         cwd: ctx.cwd,

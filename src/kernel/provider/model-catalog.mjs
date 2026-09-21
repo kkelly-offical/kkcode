@@ -17,6 +17,13 @@ const MAX_PAGES = 100
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 const cacheMemory = new Map()
 
+// 每个模型条目都标出来源：auto = 自动发现（network/cache），manual = 手动
+// 维护的配置回退。上游（/model 选择器、远程 models.updated 事件）按条目渲染
+// 徽标，不用再解释顶层 source。origin 是返回时附加的，不写进磁盘缓存。
+function withOrigin(models, origin) {
+  return models.map((model) => ({ ...model, origin }))
+}
+
 function cachePath() {
   return path.join(userRootDir(), "cache", "models.json")
 }
@@ -513,7 +520,7 @@ export async function discoverModelsForProvider(configState, {
       const result = {
         provider: connection.name,
         protocol: connection.protocol,
-        models: offlineModels.map((id) => ({ id })),
+        models: withOrigin(offlineModels.map((id) => ({ id })), "manual"),
         source: "config",
         cached: false,
         stale: false,
@@ -545,7 +552,7 @@ export async function discoverModelsForProvider(configState, {
       const result = {
         provider: connection.name,
         protocol: connection.protocol,
-        models: cached.models,
+        models: withOrigin(cached.models, "auto"),
         source: "cache",
         cached: true,
         stale: false,
@@ -572,7 +579,7 @@ export async function discoverModelsForProvider(configState, {
       const result = {
         provider: connection.name,
         protocol: connection.protocol,
-        models: live.models,
+        models: withOrigin(live.models, "auto"),
         source: "network",
         cached: false,
         stale: false,
@@ -592,7 +599,7 @@ export async function discoverModelsForProvider(configState, {
         const result = {
           provider: connection.name,
           protocol: connection.protocol,
-          models: offlineModels.map((id) => ({ id })),
+          models: withOrigin(offlineModels.map((id) => ({ id })), "manual"),
           source: "config",
           cached: false,
           stale: true,
@@ -612,7 +619,7 @@ export async function discoverModelsForProvider(configState, {
       const result = {
         provider: connection.name,
         protocol: connection.protocol,
-        models: cached.models,
+        models: withOrigin(cached.models, "auto"),
         source: "cache",
         cached: true,
         stale: true,

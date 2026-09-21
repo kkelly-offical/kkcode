@@ -8,6 +8,7 @@ import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
+import { createHash } from "node:crypto"
 import { userRootDir } from "../../storage/paths.mjs"
 import { discoverLocalPluginManifests, pluginMcpServers } from "../plugin/manifest-loader.mjs"
 import { deprecatedSingletonAlias } from "../core/deprecations.mjs"
@@ -28,14 +29,45 @@ export function createMcpRegistry() {
     prompts: new Map(),
     health: new Map(),
     configured: new Map(),
+    diagnostics: [],
     loadedAt: 0,
     lastSignature: "",
     initPromise: null,
     shuttingDown: false
   }
 
+  // Provider tool-name contract: OpenAI and Anthropic both require
+  // ^[a-zA-Z0-9_-]{1,64}$. Raw server/tool names (dots, spaces, CJK, plugin
+  // `server/name` slashes) used to flow straight into `mcp_<server>_<tool>`
+  // ids and get rejected by the provider API; two distinct pairs could also
+  // sanitize to the same id and silently overwrite each other.
+  const TOOL_ID_MAX = 64
+
+  function sanitizeIdPart(value) {
+    const cleaned = String(value ?? "").replace(/[^a-zA-Z0-9_-]+/g, "_").replace(/^_+|_+$/g, "")
+    return cleaned || "x"
+  }
+
+  function boundToolId(baseId, salt) {
+    if (baseId.length <= TOOL_ID_MAX) return baseId
+    const hash = createHash("sha1").update(String(salt)).digest("hex").slice(0, 8)
+    const head = baseId.slice(0, TOOL_ID_MAX - hash.length - 2).replace(/[_-]+$/g, "")
+    return `${head}_${hash}`
+  }
+
   function normalizeTool(serverName, tool) {
-    const id = `mcp_${serverName}_${tool.name}`
+    const rawId = `mcp_${serverName}_${tool.name}`
+    const baseId = boundToolId(`mcp_${sanitizeIdPart(serverName)}_${sanitizeIdPart(tool.name)}`, rawId)
+    let id = baseId
+    for (let n = 2; state.tools.has(id) && (state.tools.get(id).server !== serverName || state.tools.get(id).name !== tool.name); n += 1) {
+      id = boundToolId(`${baseId}_${n}`, `${rawId}#${n}`)
+    }
+    if (baseId !== rawId) {
+      state.diagnostics.push({ kind: "tool_id_sanitized", server: serverName, tool: tool.name, requestedId: rawId, id })
+    }
+    if (id !== baseId) {
+      state.diagnostics.push({ kind: "tool_id_collision", server: serverName, tool: tool.name, requestedId: rawId, id })
+    }
     return {
       id,
       server: serverName,
@@ -46,7 +78,15 @@ export function createMcpRegistry() {
   }
 
   function normalizePrompt(serverName, prompt) {
-    const id = `mcp_${serverName}_${prompt.name}`
+    const rawId = `mcp_${serverName}_${prompt.name}`
+    const baseId = boundToolId(`mcp_${sanitizeIdPart(serverName)}_${sanitizeIdPart(prompt.name)}`, rawId)
+    let id = baseId
+    for (let n = 2; state.prompts.has(id) && (state.prompts.get(id).server !== serverName || state.prompts.get(id).name !== prompt.name); n += 1) {
+      id = boundToolId(`${baseId}_${n}`, `${rawId}#${n}`)
+    }
+    if (id !== rawId) {
+      state.diagnostics.push({ kind: "prompt_id_sanitized", server: serverName, prompt: prompt.name, requestedId: rawId, id })
+    }
     return {
       id,
       server: serverName,
@@ -238,6 +278,7 @@ export function createMcpRegistry() {
     state.prompts.clear()
     state.health.clear()
     state.configured.clear()
+    state.diagnostics = []
 
     const configServers = config?.mcp?.servers || {}
     const discoveredServers = config?.mcp?.auto_discover !== false
@@ -343,6 +384,10 @@ export function createMcpRegistry() {
 
     listTools() {
       return [...state.tools.values()]
+    },
+
+    diagnostics() {
+      return [...state.diagnostics]
     },
 
     listPrompts() {

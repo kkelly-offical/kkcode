@@ -1,1 +1,3 @@
-Retrieve logs/result for a background delegated task by `task_id`.
+Retrieve logs/result for any background task by `task_id` — covers `task` with run_in_background, background `bash` commands, and longagent lanes.
+
+Alias of `task_output`; prefer `task_output` for new work. List running tasks with `task_list`, cancel with `task_stop`.

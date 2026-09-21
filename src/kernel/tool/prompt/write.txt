@@ -9,8 +9,8 @@ Usage:
 
 IMPORTANT:
 - Parent directories are created automatically — no need to `mkdir` first.
-- For small files: include COMPLETE content in a single call.
-- For large files (200+ lines): use mode="append" to build incrementally across multiple calls.
+- Default to ONE call with the COMPLETE content, for files small and large alike.
+- Only when the content is genuinely too large for a single call: write the first chunk with mode="overwrite", then add the rest with mode="append" (~150-line chunks).
 - For reading files, use the `read` tool — never use `bash` with cat/type/Get-Content.
 - Do NOT use `write` when only a small part of an existing file needs to change — use `edit` or `patch` instead.
 - Do NOT delegate file creation to `task` — just call `write` directly.
@@ -24,10 +24,10 @@ Parameters:
   - insert: inserts content at a specific line, shifting existing lines down
 - insert_at_line (optional): 1-based line number for insert mode
 
-Building large files incrementally (avoids output truncation):
+Chunking only when a single call cannot hold the content (avoids output truncation):
 1. First call: write(path, content, mode="overwrite") — create with initial section
 2. Subsequent calls: write(path, content, mode="append") — add remaining sections
-Each call should be ~100-150 lines to stay well within output limits.
+Each chunk should be ~150 lines to stay well within output limits. Never split a file just because it exceeds an arbitrary line count.
 
 When to use `write` vs `edit` vs `patch`:
 - New file that doesn't exist yet → `write`
