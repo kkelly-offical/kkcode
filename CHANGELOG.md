@@ -4,9 +4,9 @@
 
 Second opt-in preview (`npm @preview`, GitHub prerelease); stable `latest`
 stays at 1.0.0. 第二个主动安装的预览版，不替换稳定渠道。安装与迁移见
-[预览版说明](docs/release-1.0.1-preview.1.md)。如实记录：`1.0.1-preview.0`
-只发出了 GitHub prerelease，并未真正推送到 npm，npm `preview` 标签此前仍
-停留在旧的 `0.2.4-preview.1`；本次发布把该标签移动到 1.0.1 预览线。
+[预览版说明](docs/release-1.0.1-preview.1.md)。上一个预览版
+`1.0.1-preview.0` 已同时发布 GitHub prerelease 与 npm `preview` 标签
+（2026-09-21）；本次发布把预览渠道推进到 `1.0.1-preview.1`。
 
 ### Highlights / 主要变化
 

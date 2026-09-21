@@ -167,10 +167,12 @@ this section records their implementation and validation truthfully.
   before production reliance and is not claimed here.
 - The ZCode comparison is documentation-only because its harness is closed
   source; no behavioral claims about ZCode internals are made.
-- `1.0.1-preview.0` was published as a GitHub prerelease only; it never
-  reached npm, where the `preview` tag still pointed at the historical
-  `0.2.4-preview.1`. This round moves the npm `preview` tag onto the 1.0.1
-  preview line for the first time; stable `latest` remains `1.0.0`.
+- `1.0.1-preview.0` was published on 2026-09-21 both as a GitHub prerelease
+  and to npm under the `preview` tag (registry `time` field:
+  2026-09-21T17:10:15Z; verified against registry.npmjs.org — the
+  npmmirror.com replica still lags and is not a source of truth). This round
+  advances the npm `preview` tag to `1.0.1-preview.1`; stable `latest`
+  remains `1.0.0`.
 - Physical Android devices, store review, enterprise tenant provisioning and
   database infrastructure HA remain deployment responsibilities, unchanged
   from the sections above.

@@ -3,9 +3,9 @@
 这是面向主动试用者的第二个预览版，不是 `1.0.1` 稳定版。npm 使用 `preview`
 标签，GitHub Release 标为 prerelease；稳定 `latest` 保持 `1.0.0`。
 
-如实记录：上一个预览版 `1.0.1-preview.0` 只发布了 GitHub prerelease，并未
-真正推送到 npm；npm `preview` 标签此前仍指向历史版本 `0.2.4-preview.1`。
-本次发布把 npm `preview` 标签首次移动到 1.0.1 预览线。
+上一个预览版 `1.0.1-preview.0` 已同时发布 GitHub prerelease 与 npm
+`preview` 标签（2026-09-21）；本次发布把预览渠道推进到
+`1.0.1-preview.1`。
 
 ## 安装与试用
 
