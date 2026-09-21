@@ -674,6 +674,19 @@ update:
 
 **Current stable version / 当前稳定版本**: `v1.0.0`
 
+**Opt-in preview / 自愿试用预览版**: `v1.0.1-preview.0`
+
+```sh
+npm install -g @kkelly-offical/kkcode@preview
+kkcode --version
+```
+
+The preview adds WebUI/Host, enterprise OIDC/Relay, native Android remote control,
+multi-client approvals, attachments and guarded Git branches. The npm `latest`
+channel remains on `1.0.0`. See the [preview guide](docs/release-1.0.1-preview.0.md)
+for migration, Android installation, enterprise deployment and acceptance limits.
+预览版需主动安装，不会替换稳定版渠道；首次启用远控前请阅读账号归属和备份说明。
+
 `v1.0.0` is the current stable npm and GitHub release: the five stages of the
 kernel/SDK layering, the frozen headless JSONL machine contract, and the four
 pre-release backlog items all merged into `main` and ship with this version.

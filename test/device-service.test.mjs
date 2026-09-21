@@ -9,6 +9,7 @@ import { resolveDevicePath } from '../src/device/files.mjs'
 import { saveCheckpoint, loadCheckpoint, cleanupCheckpoints, listCheckpoints } from '../src/kernel/session/checkpoint.mjs'
 import WebSocket from 'ws'
 import { once } from 'node:events'
+import { PACKAGE_VERSION } from '../src/version.mjs'
 
 test('device authentication, request deduplication, leases and origin protection', async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), 'kkcode-device-test-'))
@@ -17,6 +18,7 @@ test('device authentication, request deduplication, leases and origin protection
   const server = await createDeviceServer({ service, port: 0, bootstrapToken: 'fixture-bootstrap', pairingCode: '12345678' })
   try {
     const { address } = await server.listen()
+    assert.deepEqual(await (await fetch(address + '/health')).json(), { ok: true, version: PACKAGE_VERSION })
     const post = (route, data, headers = {}) => fetch(address + route, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(data) })
     assert.equal((await post('/api/v1/rpc', { id: 'a', method: 'status' })).status, 401)
     assert.equal((await post('/api/v1/auth/pair', { code: 'wrong' })).status, 401)

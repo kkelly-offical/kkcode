@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { createGateway } from '../src/remote/gateway.mjs'
 import { MemoryStore, PostgresStore } from '../src/remote/store.mjs'
 import { identityHash, hasOrganizationRole } from '../src/remote/identity.mjs'
+import { PACKAGE_VERSION } from '../src/version.mjs'
 
 async function fixture(run) {
   const store = new MemoryStore()
@@ -142,10 +143,14 @@ test('random bearer tokens share an unauthenticated IP limit and database readin
   for (let index = 0; index < 601; index++) last = await request('/api/v1/profile', `random-invalid-${index}`)
   assert.equal(last.statusCode, 429)
   assert.equal((await request('/api/v1/profile', 'a')).statusCode, 200, 'authenticated session has its own limit')
-  assert.equal((await app.inject({ url: '/health', headers: { host: 'localhost' } })).statusCode, 200)
+  const healthy = await app.inject({ url: '/health', headers: { host: 'localhost' } })
+  assert.equal(healthy.statusCode, 200)
+  assert.deepEqual(healthy.json(), { ok: true, version: PACKAGE_VERSION })
   const get = store.get.bind(store)
   store.get = async key => { if (key === 'health:probe') throw new Error('Database unavailable'); return get(key) }
-  assert.equal((await app.inject({ url: '/health', headers: { host: 'localhost' } })).statusCode, 503)
+  const unavailable = await app.inject({ url: '/health', headers: { host: 'localhost' } })
+  assert.equal(unavailable.statusCode, 503)
+  assert.deepEqual(unavailable.json(), { ok: false, version: PACKAGE_VERSION })
 }))
 
 test('PostgreSQL connection failures remain retryable and never expose database diagnostics', async () => {

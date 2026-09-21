@@ -4,8 +4,10 @@ import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout } from 'node:timers/promises'
+import { assertAndroidInstalledTarget, readAndroidReleaseTarget } from './android-release-target.mjs'
 
 const root = path.resolve(fileURLToPath(new URL('../', import.meta.url)))
+const target = await readAndroidReleaseTarget(root)
 const serial = process.env.KKCODE_ANDROID_SERIAL
 if (!serial || !/^emulator-\d+$/.test(serial)) throw new Error('Select the dedicated release acceptance emulator explicitly with KKCODE_ANDROID_SERIAL')
 const sdk = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT
@@ -22,7 +24,7 @@ if (run(['shell', 'getprop', 'sys.boot_completed']).trim() !== '1') throw new Er
 const apk = path.join(root, 'android/app/build/outputs/apk/release/app-release.apk')
 if (!run(['install', '-r', apk]).includes('Success')) throw new Error('Release APK installation did not succeed')
 const packageInfo = run(['shell', 'dumpsys', 'package', 'cn.kkcode.remote'])
-if (!packageInfo.includes('versionName=1.0.1') || /^\s*flags=.*DEBUGGABLE/m.test(packageInfo)) throw new Error('Installed package is not a non-debuggable 1.0.1 release')
+assertAndroidInstalledTarget(packageInfo, target)
 run(['shell', 'input', 'keyevent', 'KEYCODE_WAKEUP'])
 run(['shell', 'wm', 'dismiss-keyguard'])
 run(['shell', 'am', 'start', '-W', '-n', 'cn.kkcode.remote/.MainActivity'])
@@ -39,4 +41,4 @@ const access = spawnSync(adb, ['-s', serial, 'shell', 'run-as', 'cn.kkcode.remot
 if (access.status === 0 || !`${access.stdout}${access.stderr}`.includes('not debuggable')) throw new Error('Release unexpectedly permits run-as debugging')
 await mkdir(path.join(root, 'test-results'), { recursive: true })
 await writeFile(path.join(root, 'test-results/android-release-home.png'), run(['exec-out', 'screencap', '-p'], { encoding: null }))
-console.log(`Android ${serial}: signed release installed; process alive; compact home; no configuration form; run-as rejected`)
+console.log(`Android ${serial}: signed ${target.version} (${target.versionCode}) installed; process alive; compact home; no configuration form; run-as rejected`)

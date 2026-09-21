@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Icon, type IconName } from "./Icon";
 import { Sheet } from "./Sheet";
 import { groupSessions } from "./sessions.mjs";
+import { APP_VERSION } from "./version";
 
 type Item = Record<string, any>;
 type HomeProps = {
@@ -345,7 +346,7 @@ export function ConnectionLanding({
                   onClick={() => setPanel("connect")}
                 />
               </div>
-              <p className="sheet-note centered">KK Code 1.0.1</p>
+              <p className="sheet-note centered">KK Code {APP_VERSION}</p>
             </>
           ) : (
             <>

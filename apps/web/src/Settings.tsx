@@ -5,6 +5,7 @@ import { Icon } from "./Icon";
 import { AttachmentPanel, type Attachment } from "./Attachments";
 import { BranchPanel } from "./Branches";
 import { CommandOutput, PreferencesPanel, ThemePanel, KeysPanel, DeviceLifecyclePanel } from "./ClientPanels";
+import { APP_VERSION } from "./version";
 
 type Item = Record<string, any>;
 type Props = {
@@ -264,7 +265,7 @@ export function SettingsOverlay(props: Props) {
           <p className="sheet-note centered">
             配置按需打开，启动时不会自动弹出。
             <br />
-            KK Code 1.0.1
+            KK Code {APP_VERSION}
           </p>
         </>
       )}

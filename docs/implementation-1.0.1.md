@@ -1,6 +1,8 @@
 # 1.0.1 implementation ledger
 
-Status: agreed 1.0.1 implementation and scoped acceptance completed; not released. Baseline: v1.0.0 / 21342dd.
+Status: agreed 1.0.1 implementation and scoped acceptance completed. Baseline: v1.0.0 / 21342dd. The records below describe the pre-publication acceptance checkpoint.
+
+On 2026-09-22 the user additionally authorized merging into main and publishing `1.0.1-preview.0`, using npm `preview` and a GitHub prerelease while preserving stable `latest`. Preview changes include synchronized client/API version labels, preview-aware release gates, and packaging the gateway entry/deployment guidance. See [preview instructions](release-1.0.1-preview.0.md) and the [version's release record](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.1-preview.0) for publication status. The historical `not released` / unchanged-main statements below refer to the earlier acceptance authorization, not this later explicit release request.
 
 ## Accepted scope
 
@@ -60,7 +62,7 @@ protocol/SDK documentation, migration notes and verified cross-platform results.
 - Android signing: authorized project RSA4096 identity exists outside Git; formal APK verified and installed on a dedicated release AVD. UI 14/14 and JVM 14/14 passed; expanded three real-network tests passed. See `android-release.md`.
 - The user authorized a dedicated acceptance branch and hosted Windows/macOS CI, **not** a main-branch update or a version publication. All four hosted matrix jobs completed successfully, as recorded below.
 
-No npm publish, GitHub Release, release tag or application-store upload is authorized or performed by this acceptance work. Off-machine backups, production DNS/TLS, PostgreSQL infrastructure HA and third-party tenant provisioning remain deployment-operator responsibilities, not features silently claimed as supplied by the application.
+At that acceptance checkpoint, no npm publish, GitHub Release, release tag or application-store upload was authorized or performed. The later preview-publication authorization is recorded above; it still does not authorize an application-store upload. Off-machine backups, production DNS/TLS, PostgreSQL infrastructure HA and third-party tenant provisioning remain deployment-operator responsibilities, not features silently claimed as supplied by the application.
 
 ### Final hosted acceptance matrix
 

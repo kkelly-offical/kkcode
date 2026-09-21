@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import { commandSuggestions } from "./commands.mjs";
 import type { Attachment } from "./Attachments";
+import { APP_VERSION } from "./version";
 
 type Item = Record<string, any>;
 export function Composer({
@@ -275,7 +276,7 @@ export function Composer({
         </div>
       </form>
       <small className="footnote">
-        运行于你的电脑 · 操作遵循工作区权限 · KK Code 1.0.1
+        运行于你的电脑 · 操作遵循工作区权限 · KK Code {APP_VERSION}
       </small>
     </div>
   );

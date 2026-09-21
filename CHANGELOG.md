@@ -1,5 +1,48 @@
 # Changelog / 更新日志
 
+## 1.0.1-preview.0 — 2026-09-22
+
+Opt-in preview (`npm @preview`, GitHub prerelease); stable `latest` stays at 1.0.0.
+主动安装的预览版，不替换稳定渠道。安装与迁移见
+[预览版说明](docs/release-1.0.1-preview.0.md)。
+
+### Highlights / 主要变化
+
+- Bundled responsive WebUI and authenticated Host mode; compact conversation-first
+  home, hidden settings, Markdown, folded thinking, expandable gray tool rows and
+  red/green diffs. 内置响应式 WebUI，启动不弹出大配置表单。
+- Foreground enterprise Relay with OIDC/PKCE SSO, private devices/sessions,
+  explicit sharing, account status, immediate revocation and reconnect. Real
+  Keycloak/Dex interoperability; optional multi-gateway routing with PostgreSQL
+  leases, connection fencing and authenticated node forwarding.
+- Native Kotlin/Compose Android client with Relay and host-verified SSH, session
+  synchronization, model configuration, approvals, attachments and safe branches.
+  The APK is signed with the project release identity, not the debug key.
+- Device unbind and explicit account/history transfer; 41 canonical slash commands
+  (54 names) with client actions; parent-routed child/worker approvals; bounded
+  text/image attachments and dirty/stale/worktree-safe Git branch operations.
+- Instance-scoped kernel/SDK/device contracts, Base URL model discovery for both
+  OpenAI and Anthropic protocols, hot configuration, bounded replay/deduplication,
+  paginated history and multiprocess-safe canonical session writes.
+- Maintained MCP stdio/Streamable HTTP, Agent Skills, portable plugins and JSON
+  Schema 07/2019-09/2020-12 compatibility; 45 focused protocol acceptance cases.
+- Cross-platform fixes for case-insensitive imports, Windows submodule identity,
+  native process-tree termination and package verification argument handling.
+  Linux, Windows and macOS hosted acceptance passed before preview preparation;
+  the preview commit is checked again by the protected release workflow.
+- npm packaging includes the gateway process entry and enterprise guidance;
+  Docker/SSO/HA deployment uses the matching Git tag's source tree. Gateway and
+  client health/version labels now follow package metadata, including previews.
+
+### Deployment boundaries / 部署边界
+
+The gateway is enterprise-trusted, not zero-knowledge: it can inspect forwarded
+content but does not persist conversation/model payloads. Database infrastructure
+HA, production DNS/TLS, actual enterprise IdP tenants, offsite backups and physical
+device/store review remain deployment responsibilities. Back up local history and
+configuration before first remote account binding; transferring with
+`--include-history` also grants use of the retained model configuration.
+
 ## 1.0.0
 
 > 1.0.0 于 2026-09-16 正式发布：npm 包与 GitHub Release 同步发出。五个阶段

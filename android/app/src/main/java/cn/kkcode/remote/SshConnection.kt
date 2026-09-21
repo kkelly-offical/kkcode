@@ -61,7 +61,7 @@ class SshConnection : Closeable {
         var bootstrap: String? = null
         repeat(30) {
             if (bootstrap == null) {
-                val line = input.readLine() ?: throw IllegalStateException("KK Code exited; install version 1.0.1 on this computer")
+                val line = input.readLine() ?: throw IllegalStateException("KK Code exited; install a compatible version (recommended ${BuildConfig.VERSION_NAME}) on this computer")
                 bootstrap = Regex("bootstrap=([A-Za-z0-9_-]+)").find(line)?.groupValues?.get(1)
             }
         }

@@ -5,8 +5,10 @@ import { createHash, randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { assertAndroidApkTarget, readAndroidReleaseTarget } from './android-release-target.mjs'
 
 const root = path.resolve(fileURLToPath(new URL('../', import.meta.url)))
+const target = await readAndroidReleaseTarget(root)
 const directory = path.resolve(process.env.KKCODE_ANDROID_SIGNING_DIR || path.join(homedir(), '.local/share/kkcode-signing'))
 const initialize = process.argv.includes('--init-key')
 const onlyVerify = process.argv.includes('--verify-only')
@@ -61,8 +63,8 @@ const legacyVerified = run(path.join(buildTools, process.platform === 'win32' ? 
 const legacyDigest = legacyVerified.match(/Signer #1 certificate SHA-256 digest:\s*([a-f0-9]+)/i)?.[1]?.toLowerCase()
 if (!/Verified using v2 scheme[^\n]*true/.test(legacyVerified) || !/Verified using v3 scheme[^\n]*true/.test(verified) || legacyDigest !== digest) throw new Error('Release APK is missing matching v2/v3 signing')
 const manifest = run(path.join(buildTools, process.platform === 'win32' ? 'aapt.exe' : 'aapt'), ['dump', 'badging', apk])
-if (!/package: name='cn\.kkcode\.remote' versionCode='10001' versionName='1\.0\.1'/.test(manifest) || /application-debuggable/.test(manifest)) throw new Error('APK manifest has an unexpected version, ID, or debuggable flag')
-const report = { ...metadata, keyBackupRequired: true, apk, apkSha256: createHash('sha256').update(await readFile(apk)).digest('hex'), verifiedV2: true, verifiedV3: true, debuggable: false, verifiedAt: new Date().toISOString() }
+assertAndroidApkTarget(manifest, target)
+const report = { ...metadata, ...target, keyBackupRequired: true, apk, apkSha256: createHash('sha256').update(await readFile(apk)).digest('hex'), verifiedV2: true, verifiedV3: true, debuggable: false, verifiedAt: new Date().toISOString() }
 await mkdir(path.join(root, 'test-results'), { recursive: true })
 await writeFile(path.join(root, 'test-results/android-release-verification.json'), `${JSON.stringify(report, null, 2)}\n`)
-console.log(JSON.stringify({ applicationId: report.applicationId, version: '1.0.1', certificateSha256: digest, apkSha256: report.apkSha256, verifiedV2: true, verifiedV3: true, debuggable: false, apk }, null, 2))
+console.log(JSON.stringify({ ...target, certificateSha256: digest, apkSha256: report.apkSha256, verifiedV2: true, verifiedV3: true, debuggable: false, apk }, null, 2))

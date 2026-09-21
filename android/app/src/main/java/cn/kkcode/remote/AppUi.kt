@@ -192,7 +192,7 @@ private val connectedGreen = Color(0xFF31C977)
                 if(!state.sharedDevice) Group("设备配置") { SettingsRow(Icons.Outlined.Extension, "扩展") { if(state.connected) state.loadExtensions() else state.sheet = "connections" }; SettingsRow(Icons.Outlined.Tune, "模型与渠道") { if(state.connected) state.sheet = "models" else state.sheet = "connections" } }
                 if(state.connected && !state.sharedDevice) Group { SettingsRow(Icons.Outlined.ManageAccounts, "设备解绑与账号转移", "需要在被控电脑的终端确认") { state.sheet = "device-ownership" }; SettingsRow(Icons.Outlined.PersonOutline, "工作偏好") { state.action { state.profilePreferences = state.rpc("profile.get") as JSONObject; state.sheet = "preferences" } } }
                 TextButton(onClick = { state.logout() }, modifier = Modifier.fillMaxWidth().padding(top = 24.dp)) { Text("退出登录", color = Color(0xFFE48282)) }
-                Text("KK Code 1.0.1", color = muted, fontSize = 11.sp, modifier = Modifier.align(Alignment.CenterHorizontally).padding(12.dp))
+                Text("KK Code ${BuildConfig.VERSION_NAME}", color = muted, fontSize = 11.sp, modifier = Modifier.align(Alignment.CenterHorizontally).padding(12.dp))
             }
             "add" -> {
                 Text("选择连接方式", color = muted, fontSize = 13.sp, modifier = Modifier.padding(12.dp))
@@ -205,7 +205,7 @@ private val connectedGreen = Color(0xFF31C977)
                 if(state.loginCode.isNotBlank()) Text("登录码 ${state.loginCode}", color = muted, fontSize = 13.sp, modifier = Modifier.padding(12.dp))
             }
             "ssh" -> {
-                Text("电脑需已安装 KK Code 1.0.1。连接过程中会核对主机指纹。", color = muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 12.dp))
+                Text("电脑需已安装支持远程协议的 KK Code（建议 ${BuildConfig.VERSION_NAME}）。连接过程中会核对主机指纹。", color = muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 12.dp))
                 OutlinedTextField(sshHost, { sshHost = it }, label = { Text("主机地址") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedTextField(sshUser, { sshUser = it }, label = { Text("用户名") }, modifier = Modifier.weight(2f), singleLine = true); OutlinedTextField(sshPort, { sshPort = it }, label = { Text("端口") }, modifier = Modifier.weight(1f), singleLine = true) }
                 Row(verticalAlignment = Alignment.CenterVertically) { Text("使用私钥", Modifier.weight(1f), fontSize = 14.sp); SettingsSwitch(keyMode, { keyMode = it }) }

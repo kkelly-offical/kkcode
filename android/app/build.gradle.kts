@@ -37,7 +37,7 @@ android {
         minSdk = 29
         targetSdk = 35
         versionCode = 10001
-        versionName = "1.0.1"
+        versionName = "1.0.1-preview.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }

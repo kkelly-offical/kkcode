@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { DeviceService } from './service.mjs'
 import { DEFAULT_PORT } from '../protocol/index.mjs'
 import { ATTACHMENT_RPC_BYTES } from './attachments.mjs'
+import { PACKAGE_VERSION } from '../version.mjs'
 
 const digest = value => createHash('sha256').update(String(value || '')).digest()
 export async function createDeviceServer({ service, port = DEFAULT_PORT, host = '127.0.0.1', https, publicOrigin, pairingCode, bootstrapToken, sessionTtlMs = 86400000, ...options } = {}) {
@@ -77,7 +78,7 @@ export async function createDeviceServer({ service, port = DEFAULT_PORT, host = 
     socket.on('close', () => { clearTimeout(expiry); device.off('event', listener); peers.delete(socket); if (!peers.size) sessionSockets.delete(user.tokenHash) })
     socket.send(JSON.stringify({ type: 'connected', client: user.client, schemaVersion: '1' }))
   })
-  app.get('/health', async () => ({ ok: true, version: '1.0.1' }))
+  app.get('/health', async () => ({ ok: true, version: PACKAGE_VERSION }))
   await app.register(staticFiles, { root: fileURLToPath(new URL('../web/', import.meta.url)), prefix: '/', wildcard: true })
   app.setErrorHandler((error, req, reply) => reply.code(error.status || error.statusCode || 500).send({ error: { code: error.code || 'internal_error', message: error.status || error.statusCode ? error.message : 'The device operation failed; inspect local diagnostics' } }))
   app.addHook('onClose', () => device.close())

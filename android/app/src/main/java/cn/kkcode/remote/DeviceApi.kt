@@ -31,7 +31,7 @@ class DeviceApi(var base: String, var token: String = "", var device: String = "
     }
     suspend fun call(path: String, body: JSONObject? = null): JSONObject = withContext(Dispatchers.IO) {
         val request = Request.Builder().url(base.trimEnd('/') + path)
-        request.header("User-Agent", "KK Code/1.0.1 (Android)")
+        request.header("User-Agent", "KK Code/${BuildConfig.VERSION_NAME} (Android)")
         hostHeader?.let { request.header("Host", it) }
         if (token.isNotBlank()) request.header("Authorization", "Bearer $token")
         if (body != null) request.post(body.toString().toRequestBody("application/json".toMediaType()))

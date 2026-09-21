@@ -1,6 +1,6 @@
 {
   "name": "@kkelly-offical/kkcode",
-  "version": "1.0.1",
+  "version": "1.0.1-preview.0",
   "workspaces": [
     "apps/web",
     "apps/gateway",
@@ -47,6 +47,15 @@
   "files": [
     "src/",
     "configs/",
+    "apps/gateway/main.mjs",
+    "docs/release-1.0.1-preview.0.md",
+    "docs/enterprise-deployment.md",
+    "docs/enterprise-ha-recovery.md",
+    "docs/device-lifecycle-1.0.1.md",
+    "docs/device-retention.md",
+    "docs/remote-command-contract.md",
+    "docs/protocol-compatibility-1.0.1.md",
+    "docs/android-release.md",
     "docs/config.example.yaml",
     "docs/gateway-model-discovery.md",
     "docs/terminal-experience-0.3.3.md",

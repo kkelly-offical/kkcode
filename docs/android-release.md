@@ -1,4 +1,4 @@
-# Android 1.0.1 release signing and acceptance
+# Android 1.0.1-preview.0 release signing and acceptance
 
 The Android application is a native remote client. Release signing is separate
 from publishing: producing this APK does not upload it to a store or GitHub.
@@ -9,7 +9,7 @@ The user authorized creation of a project-specific production release key on
 2026-09-21. It is not the Android debug key or an acceptance-only identity.
 
 - Application ID: `cn.kkcode.remote`.
-- Current version: `1.0.1` / version code `10001`.
+- Current prerelease version: `1.0.1-preview.0` / version code `10001`.
 - Algorithm: RSA-4096, SHA256withRSA; certificate validity: 10,000 days.
 - Public certificate SHA-256:
   `cf75774a4d87ba1ccc4a811f271bd301076cf6beefd7432a3cb30231164be5d1`.
@@ -25,6 +25,13 @@ must make an encrypted off-machine backup of the complete private directory.**
 The passphrase file is required to recover the key. Losing the key can prevent
 future APK updates; creating another key is not a transparent replacement.
 The repository deliberately does not upload keys to any CI provider.
+
+The previous `1.0.1` APKs were local, unpublished acceptance builds. The first
+authorized public preview therefore retains version code `10001`. **Every
+subsequent publicly distributed Android update must increase `versionCode`,
+including the eventual stable `1.0.1` and any later preview.** Changing only
+`versionName` is not a valid public update policy. Keep using the same signing
+identity unless an explicit, separately validated key-rotation plan is adopted.
 
 ## Reproducible build and verification
 
@@ -48,6 +55,12 @@ APK v2/v3 signatures, compares the certificate to the saved project fingerprint,
 checks package/version, and rejects a debuggable release. Its non-secret report
 is `test-results/android-release-verification.json`. It does not echo signing
 tool diagnostics, password contents, or private key material.
+
+The build verifier and installed-package smoke test read the target from
+`android/app/build.gradle.kts` and require `versionName` to match the root
+`package.json` exactly. APK/installed version names and version codes are
+compared exactly, so a stale stable APK cannot pass a preview check by prefix.
+The application footer and Android User-Agent use `BuildConfig.VERSION_NAME`.
 
 The signature verifier normally selects v3 for this app's minimum Android API
 29. The script also verifies the v2 block with an explicit verifier API range;
@@ -81,6 +94,9 @@ certificate verification for deployment.
   isolation, suppression of late journal deltas for canonical completed steps,
   partial continuations, final-response deduplication, preservation of earlier
   tool commentary, and thinking-duration restoration.
+- `test/android-release-target.test.mjs`: root/Android version agreement,
+  exact prerelease APK and installed-package checks, version-code/application
+  identity validation, and rejection of debuggable artifacts.
 - `EnterpriseNetworkTest`: explicit opt-in real Relay/OIDC and SSH tests. The
   native-login test also reads a uniquely owned MediaStore document through the
   actual ContentResolver, uploads/removes it, and uses remote slash commands.
@@ -111,3 +127,22 @@ of `run-as` debugging. The screenshot is
 `test-results/android-release-home.png`. Expanded enterprise network checks
 must be run against the matching updated backend; their final result belongs
 in `enterprise-lab-progress.md`, not inferred from these isolated UI checks.
+
+## Preview artifact acceptance (2026-09-22)
+
+For `1.0.1-preview.0` / `10001`, the six Node target-version tests and 14 release
+JVM tests passed. The release was built with the existing project certificate,
+then independently checked using `--verify-only`. The isolated 5582 AVD installed
+the preview and passed the startup/non-debuggable checks. Debug AVD 5580 and its
+data were not modified during preview packaging; the earlier Compose and real
+network checks are recorded separately above and in the enterprise lab ledger.
+
+- Artifact: `android/app/build/outputs/apk/release/app-release.apk`.
+- APK SHA-256:
+  `b24b0729f3094ec153c871b2b54edaf2d66bf2b446110a2e7de1797a5ee87260`.
+- v2/v3 signatures valid; package/version match the root release target exactly;
+  `debuggable=false`; existing certificate fingerprint unchanged.
+
+This records artifact readiness only. Publishing/tagging/uploading the preview
+is a separate authorized release operation, not an action performed by the
+Android signing or smoke-test scripts.

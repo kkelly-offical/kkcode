@@ -11,6 +11,7 @@ import { PostgresStore, MemoryStore } from './store.mjs'
 import { validateRequest } from '../protocol/index.mjs'
 import { createRelayCluster } from './cluster.mjs'
 import { registerDeviceLifecycle } from './device-lifecycle.mjs'
+import { PACKAGE_VERSION } from '../version.mjs'
 
 export async function createGateway({ origin, issuer, clientId, clientSecret, organization = 'default', databaseUrl, store, dev = false, oidcConfig, rolesClaim, adminRole, scopes, auditRetentionDays, auditMaxRecords, trustProxy = false, cluster: clusterOptions } = {}) {
   if (!origin || (!dev && !origin.startsWith('https://'))) throw new Error('Gateway public origin must use HTTPS')
@@ -168,8 +169,8 @@ export async function createGateway({ origin, issuer, clientId, clientSecret, or
     return result.error ? reply.code(result.status || 400).send({ error: result.error }) : { result: result.result }
   })
   app.get('/health', { config: { rateLimit: false } }, async (_req, reply) => {
-    try { await store.get('health:probe'); return { ok: true, version: '1.0.1' } }
-    catch { return reply.code(503).send({ ok: false, version: '1.0.1' }) }
+    try { await store.get('health:probe'); return { ok: true, version: PACKAGE_VERSION } }
+    catch { return reply.code(503).send({ ok: false, version: PACKAGE_VERSION }) }
   })
   await app.register(staticFiles, { root: fileURLToPath(new URL('../web/', import.meta.url)) })
   app.addHook('onClose', async () => { clearInterval(heartbeat); for (const d of devices.values()) d.socket.close(); for (const p of pending.values()) { clearTimeout(p.timer); p.reject(Object.assign(new Error('Gateway is restarting'), { statusCode: 503 })) }; pending.clear(); await cluster?.close(); await store.close() })

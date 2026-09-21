@@ -36,6 +36,7 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      - run: npm run version:check
       - run: npm run lint
       - run: npm test
 
@@ -59,55 +60,29 @@ jobs:
         id: release
         shell: bash
         run: |
-          package_version="$(node -p "require('./package.json').version")"
-
-          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            echo "release_version=${package_version}" >> "$GITHUB_OUTPUT"
-            echo "dist_tag=" >> "$GITHUB_OUTPUT"
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          node scripts/check-release-version.mjs
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            # Preview and RC tags have the same protected-main ancestry gate as
+            # stable releases. A missing origin/main reference is never a pass.
+            if ! git fetch --no-tags origin main; then
+              echo "::error::Could not fetch origin/main to verify the tag's ancestry"
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "${GITHUB_SHA}" FETCH_HEAD; then
+              echo "::error::Tag ${GITHUB_REF_NAME} points at a commit that is not on origin/main"
+              exit 1
+            fi
           fi
-
-          tag_version="${GITHUB_REF_NAME#v}"
-          if [[ ! "${tag_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
-            echo "::error::Unsupported release tag: ${GITHUB_REF_NAME}"
-            exit 1
-          fi
-
-          if [[ "${package_version}" != "${tag_version}" ]]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} must point to a commit whose package version is ${tag_version}, found ${package_version}"
-            exit 1
-          fi
-
-          lock_version="$(node -p "require('./package-lock.json').version")"
-          if [[ "${lock_version}" != "${tag_version}" ]]; then
-            echo "::error::package-lock.json says ${lock_version}, expected ${tag_version} — run 'npm install --package-lock-only'"
-            exit 1
-          fi
-
-          # 只有 main 上的提交可以发布。打在功能分支或游离提交上的 tag
-          # 会跳过 main 的分支保护与检查，属于绕过门禁的口子。
-          # tag 检出不带 origin/main 引用，必须显式抓取；抓不到就直接失败，
-          # 绝不因为「查不到」而放行。
-          if ! git fetch --no-tags origin main; then
-            echo "::error::Could not fetch origin/main to verify the tag's ancestry"
-            exit 1
-          fi
-          if ! git merge-base --is-ancestor "${GITHUB_SHA}" FETCH_HEAD; then
-            echo "::error::Tag ${GITHUB_REF_NAME} points at a commit that is not on origin/main"
-            exit 1
-          fi
-
-          echo "publish=true" >> "$GITHUB_OUTPUT"
-          echo "release_version=${tag_version}" >> "$GITHUB_OUTPUT"
-          if [[ "${tag_version}" == *-rc.* ]]; then
-            echo "dist_tag=next" >> "$GITHUB_OUTPUT"
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "dist_tag=latest" >> "$GITHUB_OUTPUT"
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
-          fi
+          # Version syntax and preview/next/latest routing share one tested
+          # policy helper. No publish output is written before ancestry passes.
+          node --input-type=module <<'NODE'
+          import { appendFile } from 'node:fs/promises'
+          import { checkReleaseVersions } from './scripts/check-release-version.mjs'
+          import { resolveReleaseMetadata } from './scripts/release-policy.mjs'
+          const { version } = await checkReleaseVersions()
+          const metadata = resolveReleaseMetadata({ version, refType: process.env.GITHUB_REF_TYPE, refName: process.env.GITHUB_REF_NAME })
+          await appendFile(process.env.GITHUB_OUTPUT, Object.entries(metadata).map(([key, value]) => `${key}=${value}\n`).join(''))
+          NODE
       - run: npm run release:verify
       - name: Audit production dependencies
         run: npm audit --registry=https://registry.npmjs.org --omit=dev --audit-level=high
@@ -196,12 +171,12 @@ jobs:
           tag="${GITHUB_REF_NAME}"
           if gh release view "$tag" >/dev/null 2>&1; then
             if [[ "$PRERELEASE" == "true" ]]; then
-              gh release edit "$tag" --title "$tag" --prerelease
+              gh release edit "$tag" --title "$tag" --prerelease --latest=false
             else
               gh release edit "$tag" --title "$tag" --latest
             fi
           elif [[ "$PRERELEASE" == "true" ]]; then
-            gh release create "$tag" --title "$tag" --generate-notes --verify-tag --prerelease
+            gh release create "$tag" --title "$tag" --generate-notes --verify-tag --prerelease --latest=false
           else
             gh release create "$tag" --title "$tag" --generate-notes --verify-tag --latest
           fi

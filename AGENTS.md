@@ -1,7 +1,7 @@
 # Project working memory
 
 - User decision (2026-09-21): releases stay on `1.0.x`. Do not bump to `1.1.0` or another major/minor until the user explicitly authorizes that version change.
-- Current development target: `1.0.1`, covering kernel/SDK, protocol maintenance, WebUI/Host, Relay/SSO and native Android.
+- Current preview target: `1.0.1-preview.0`, covering kernel/SDK, protocol maintenance, WebUI/Host, Relay/SSO and native Android. User authorized merging into main and publishing this preview on 2026-09-22; use npm `preview` and GitHub prerelease, preserving stable `latest`.
 - Android is a native Kotlin/Compose remote client (SSH and Relay), not an embedded local Agent runtime.
 - Remote is foreground-scoped: exiting the terminal stops remote exposure. Devices/sessions are private by default with explicit sharing. A trusted organization gateway may inspect traffic; content persistence is disabled by default.
 - First binding assigns existing local history to that account. Folder browsing starts at the OS user's home, with credential paths protected.
