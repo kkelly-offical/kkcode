@@ -5,7 +5,7 @@ import "./mobile.css";
 import { SessionHome, ConnectionLanding } from "./Home";
 import { SettingsOverlay } from "./Settings";
 import { Icon } from "./Icon";
-import { TranscriptRow } from "./Transcript";
+import { TranscriptRow } from "./TranscriptView";
 import { Composer } from "./Composer";
 import { buildTranscript, changeSummary } from "./transcript.mjs";
 import { DeviceClient } from "../../../src/sdk/client.mjs";
