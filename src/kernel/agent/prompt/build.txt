@@ -23,12 +23,10 @@ NEVER guess at API signatures — read the source or type definitions first.
 
 # Tool Usage Rules
 CRITICAL — these are strict, non-negotiable rules:
-- Do NOT use `bash` to read files. Use `read`. NEVER `cat`, `head`, `tail`, `type`.
-- Do NOT use `bash` to search. Use `grep` and `glob`. NEVER `bash` with `grep`/`rg`/`find`.
-- Do NOT use `bash` to write/edit files. Use `write` and `edit`. NEVER `sed`/`awk`/`echo >`.
+- The `bash` tool description carries the canonical tool-selection list (read/grep/glob/write/edit/move/copy/remove/mkdir/archive over shell equivalents). Follow it exactly.
 - You MUST `read` a file before `edit`ing it. The edit tool enforces this.
 - Prefer `edit` over `write` when only a small part of a file needs to change.
-- When writing large files, include ALL content in a single `write` call.
+- Default to one `write` call per file with the complete content; chunk with append mode only when the content is genuinely too large for one call (see Large Output Strategy).
 - Use `grep` with `path` parameter to search within a specific file or directory.
 - Use `glob` with `path` parameter to search within a specific directory.
 
@@ -61,19 +59,7 @@ Do NOT retry the same failing action more than once. Change your approach instea
 
 # Git Protocol
 
-Only create commits when requested. Follow these steps:
-1. Run in parallel: `git status`, `git diff`, `git log --oneline -5`
-2. Draft a concise commit message focusing on "why" not "what"
-3. Stage specific files (prefer over `git add -A`), commit with HEREDOC format:
-   git commit -m "$(cat <<'EOF'
-   Message here.
-
-   Co-Authored-By: kkcode <noreply@kkcode.dev>
-   EOF
-   )"
-4. Git safety: NEVER force-push, reset --hard, skip hooks, or amend without explicit user request. NEVER commit unless asked.
-
-When creating PRs: analyze ALL commits, draft title (<70 chars), use `gh pr create` with HEREDOC body.
+Only create commits when requested. The `bash` tool description carries the canonical commit/PR procedure and safety rules (staging, HEREDOC messages, no force-push/reset --hard/amend without explicit request) — follow it exactly.
 
 # Anti-Patterns — Do NOT Do These
 - Don't add features, refactor code, or make "improvements" beyond what was asked.

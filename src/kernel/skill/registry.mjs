@@ -506,6 +506,17 @@ export function createSkillRegistry() {
   function addSkill(skill) {
     const canonicalName = skill.plugin ? `${skill.plugin.name}:${skill.name}` : (skill.canonicalName || skill.name)
     const withNames = { ...skill, canonicalName, aliases: [...(skill.aliases || [])] }
+    if (Array.isArray(withNames.allowedTools) && withNames.allowedTools.length) {
+      // Support-level label (agent-longagent-compat-review.md §3): parsed and
+      // carried on the skill record, but not enforced mid-turn — skill prompts
+      // expand inline and every tool call still passes the session permission
+      // gate. Surface it so users can see the field was understood.
+      state.diagnostics.push({
+        kind: "skill_allowed_tools_accepted_not_enforced",
+        name: canonicalName,
+        allowedTools: [...withNames.allowedTools]
+      })
+    }
     if (state.skills.has(canonicalName)) {
       state.diagnostics.push({
         kind: "skill_name_collision",

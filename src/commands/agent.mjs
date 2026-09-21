@@ -20,7 +20,8 @@ export function createAgentCommand() {
       printContextWarnings({ configState: kernel.configState, themeState })
       const extensionPolicy = kernel.extensionPolicy
       await CustomAgentRegistry.initialize(process.cwd(), {
-        allowProjectSources: extensionPolicy.allowProjectSources
+        allowProjectSources: extensionPolicy.allowProjectSources,
+        config: extensionPolicy.config
       })
       const configured = kernel.configState.config.agent?.subagents || {}
       if (options.configured) {

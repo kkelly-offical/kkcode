@@ -1,1 +1,3 @@
-Cancel a running background delegated task by `task_id`.
+Cancel a running background task by `task_id` — covers `task` with run_in_background, background `bash` commands, and longagent lanes.
+
+Alias of `task_stop`; prefer `task_stop` for new work. Cancellation is not instant: a task in the middle of a tool call finishes that call first. Check `task_list` afterwards rather than assuming it stopped.

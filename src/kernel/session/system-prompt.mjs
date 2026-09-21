@@ -113,17 +113,52 @@ export async function modeReminder(mode) {
 }
 
 // Layer 5: Tool descriptions (stable across session — ideal cache target)
+//
+// Grouping: 42+ builtin tools in one flat registration-ordered list made the
+// model hunt for the right tool; both Kimi Code (File/Shell/Web/Plan/State/
+// Collaboration/Background/Cron) and Codex (minimal base + deferred search)
+// show a curated taxonomy follows measurably better. Groups below are
+// presentation-only — they do not change registration, permissions, or the
+// headless contract. Pinned by test/tool-prompt-groups.test.mjs.
+const TOOL_GROUPS = [
+  ["File operations", ["read", "write", "edit", "patch", "multiedit", "move", "copy", "remove", "mkdir", "archive", "glob", "list"]],
+  ["Search", ["grep", "codesearch"]],
+  ["Shell & system", ["bash", "sysinfo"]],
+  ["Web", ["websearch", "webfetch", "http_request"]],
+  ["Planning & state", ["enter_plan", "exit_plan", "todowrite", "question"]],
+  ["Delegation & background", ["task", "task_group", "task_list", "task_parallel", "task_get", "task_output", "task_stop", "background_output", "background_cancel"]],
+  ["Git & snapshots", ["git_status", "git_info", "git_snapshot", "git_restore", "git_list_snapshots", "git_apply_patch", "git_delete_snapshot", "git_cleanup"]],
+  ["Notebook", ["notebookedit"]],
+  ["Skills", ["skill"]]
+]
+
+export function toolGroupFor(name) {
+  if (String(name).startsWith("mcp_")) return "MCP tools"
+  for (const [group, members] of TOOL_GROUPS) {
+    if (members.includes(name)) return group
+  }
+  return "Other tools"
+}
+
 export async function toolDescriptions(tools) {
   if (!tools || !tools.length) return ""
-  const descriptions = []
+  const grouped = new Map()
   for (const tool of tools) {
     const prompt = await loadToolPrompt(tool.name)
-    if (prompt) {
-      descriptions.push(`## ${tool.name}\n${prompt}`)
-    }
+    if (!prompt) continue
+    const group = toolGroupFor(tool.name)
+    if (!grouped.has(group)) grouped.set(group, [])
+    grouped.get(group).push(`## ${tool.name}\n${prompt}`)
   }
-  if (!descriptions.length) return ""
-  return `# Available Tools\n\n${descriptions.join("\n\n")}`
+  if (!grouped.size) return ""
+  const order = [...TOOL_GROUPS.map(([name]) => name), "MCP tools", "Other tools"]
+  const sections = []
+  for (const group of order) {
+    const entries = grouped.get(group)
+    if (!entries || !entries.length) continue
+    sections.push(`### ${group}\n\n${entries.join("\n\n")}`)
+  }
+  return `# Available Tools\n\n${sections.join("\n\n")}`
 }
 
 // Layer 6: User custom instructions (loaded externally via instruction-loader.mjs and rules)
@@ -145,13 +180,21 @@ export async function toolDescriptions(tools) {
  * OpenAI: automatic prefix caching — stable blocks should come first
  */
 export async function buildSystemPromptBlocks({ mode, model, cwd, agent = null, tools = [], skills = [], userInstructions = "", projectContext = "", language = "en" }) {
+  // Memory and project context are per-cwd but NOT per-turn-stable: a concurrent
+  // session (or the user) can edit memory files between turns. They must join the
+  // cache key, otherwise a hit serves the stale block while the block claims to
+  // be cacheable=false.
+  const memoryText = await loadAutoMemory(cwd)
+
   // Cache key: hash of all inputs that affect block content
   const cacheKey = hashInputs({
     mode, model, cwd, language,
     agent: agent?.name || null,
     tools: tools.map(t => t.name).sort(),
     skills: skills.map(s => s.name).sort(),
-    userInstructions: hashInputs({ ui: userInstructions }) // hash full string to avoid collisions
+    userInstructions: hashInputs({ ui: userInstructions }), // hash full string to avoid collisions
+    projectContext: hashInputs({ pc: projectContext }),
+    memory: hashInputs({ mem: memoryText })
   })
 
   if (blockCache.key === cacheKey && blockCache.result) {
@@ -204,14 +247,17 @@ export async function buildSystemPromptBlocks({ mode, model, cwd, agent = null, 
   }
 
   // Block 3.5: Large output strategy (stable — always included)
+  // Canonical write rule (G1 in docs/agent-workflow-instruction-tools-compat-1.0.1.md):
+  // one `write` per file by default; chunk only when genuinely too large. The
+  // provider prompts and build.txt carry the same wording — keep them in sync.
   const outputStrategyLines = [
     "# Large Output Strategy",
     "",
     "When generating large amounts of content:",
-    "- For large file creation, write no more than 200 lines per tool call; use append mode for subsequent chunks",
-    "- For partial file edits, use patch with line ranges instead of rewriting the whole file",
-    "- If a task requires more than 300 lines of code, proactively split into multiple sequential tool calls",
-    "- Never attempt to write an entire large file in a single tool call"
+    "- Default to one `write` call per file with the complete content",
+    "- Only when the content is genuinely too large for a single call: `write` the first chunk, then `write` mode=\"append\" for subsequent chunks",
+    "- For partial edits of existing files, prefer `edit` (or `patch` for line-range replacements) over rewriting the whole file",
+    "- Never split a file into pieces just because it exceeds an arbitrary line count"
   ]
   blocks.push({ label: "output_strategy", text: outputStrategyLines.join("\n"), cacheable: true })
 
@@ -286,8 +332,8 @@ export async function buildSystemPromptBlocks({ mode, model, cwd, agent = null, 
     }
   }
 
-  // Block 5.95: Auto Memory (semi-stable — changes when user updates memory files)
-  const memoryText = await loadAutoMemory(cwd)
+  // Block 5.95: Auto Memory (semi-stable — memoryText now participates in the
+  // cache key, so a hit can never serve a stale memory block)
   if (memoryText) {
     blocks.push({ label: "memory", text: memoryText, cacheable: false })
   }
