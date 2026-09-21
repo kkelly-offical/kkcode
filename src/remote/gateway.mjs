@@ -202,7 +202,10 @@ export async function createGateway({ origin, issuer, clientId, clientSecret, or
     if (hub.countForAccount(account.id) >= hub.maxPerAccount || hub.countForDevice(device.id) >= hub.maxPerDevice) return reply.code(429).send({ error: { code: 'stream_limit', message: 'Too many live event subscriptions' } })
     const principal = { id: device.owner, actorId: account.id, client: identity.sessionId, organization }
     const access = async () => {
-      const current = await store.get(`device:${device.id}`)
+      // Streams die with the login session too: natural expiry (no revoke) is
+      // caught here on every sync tick, matching the device-server expiry timer.
+      const [current, session] = await Promise.all([store.get(`device:${device.id}`), store.get(`identity-session:${identity.sessionId}`)])
+      if (!session || session.expires <= Date.now()) return null
       if (!current || current.organization !== account.organization || await store.get(`device-unbound:${device.id}`)) return null
       if (current.owner === account.id) return { owner: true, sessions: null }
       const shared = current.shares?.[account.id] || {}

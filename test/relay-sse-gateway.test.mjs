@@ -182,6 +182,15 @@ test('gateway session stream: pushed rows, replay, gap, session isolation and sh
   assert.equal(revoke.status, 200)
   assert.equal(await guestClient.next(() => true, 4000), null, 'share revocation closes the stream')
   await guestClient.close()
+
+  // turn.start refreshes the envelope state immediately, not at the next tick.
+  client = new SseClient(await open('?sessionId=s1'))
+  assert.ok(await client.next(frame => frame.event === 'connected'))
+  service.turns.set('s1', { controller: new AbortController(), client: 'local', turnId: 't7' })
+  await service.record({ type: 'turn.start', sessionId: 's1', turnId: 't7', payload: { prompt: 'run' } })
+  assert.ok(await client.next(frame => frame.event === 'session.state' && frame.json.running === true, 2000), 'session.state running:true follows the turn.start row immediately')
+  service.turns.delete('s1')
+  await client.close()
 })
 
 test('gateway device stream: online/offline fast path, active-session diffs, no content leak to shared viewers', { timeout: 30000 }, async t => {
@@ -207,9 +216,9 @@ test('gateway device stream: online/offline fast path, active-session diffs, no 
   assert.equal(started.json.running, true)
   assert.equal('prompt' in started.json, false)
 
-  // Device events (model catalog) reach owner streams.
+  // Device events (model catalog) reach owner streams, flat per the contract.
   service.emitDeviceEvent('models.updated', { provider: 'default', source: 'network', stale: false, models: [{ id: 'm1', origin: 'auto' }] })
-  assert.equal((await client.next(frame => frame.event === 'models.updated')).json.payload.models[0].origin, 'auto')
+  assert.equal((await client.next(frame => frame.event === 'models.updated')).json.models[0].origin, 'auto')
 
   // Relay drop → device.offline; re-register → device.online.
   relay.close()
@@ -248,6 +257,23 @@ test('gateway session stream handshake: offline device → 503, unknown device �
   const hello = await client.next(frame => frame.event === 'connected')
   assert.equal(hello.json.online, false)
   assert.deepEqual(hello.json.active, [])
+})
+
+test('gateway stream closes when the identity session expires naturally (no revoke)', { timeout: 30000 }, async t => {
+  const { origin, store } = await setup(t)
+  const owner = await loginFlow(origin)
+  const ownerHeaders = { Cookie: owner.browserCookie, Origin: origin }
+  await store.put('device:offdev', { id: 'offdev', name: 'Offline device', owner: owner.credentials.profile.id, organization: 'QA', shares: {} })
+  const client = new SseClient(await fetch(`${origin}/api/v1/devices/offdev/events/stream`, { headers: ownerHeaders }))
+  t.after(() => client.close())
+  assert.ok(await client.next(frame => frame.event === 'connected'), 'stream opens')
+  // Expire the browser login session without revoking it; the next sync tick must close the stream.
+  const sessions = await store.list('identity-session:')
+  const browser = sessions.find(session => session.accountId === owner.credentials.profile.id && session.kind === 'client')
+  assert.ok(browser, 'browser identity session found')
+  await store.put(browser.key, { ...browser, expires: Date.now() - 1 })
+  assert.equal(await client.next(() => true, 4000), null, 'stream closes on natural session expiry')
+  assert.ok(await Promise.race([client.pump.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 4000))]), 'stream ends')
 })
 
 test('gateway session stream falls back to journal sync for devices without push support', { timeout: 30000 }, async t => {

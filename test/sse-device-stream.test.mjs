@@ -169,8 +169,9 @@ test('device stream: snapshot hello, session.status from turn rows, device-scope
   assert.ok(stopped)
   service.emitDeviceEvent('models.updated', { provider: 'default', source: 'network', models: [{ id: 'm1', origin: 'auto' }] })
   const models = await client.next(frame => frame.event === 'models.updated')
-  assert.equal(models.json.payload.provider, 'default')
+  assert.equal(models.json.provider, 'default', 'device events are flat on the wire, matching the contract doc')
   assert.equal(models.json.deviceId, service.metadata.id)
+  assert.equal(models.json.models[0].origin, 'auto')
 })
 
 test('stream auth, validation, per-client cap and logout close', async t => {

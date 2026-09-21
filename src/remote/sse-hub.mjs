@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { PROTOCOL_VERSION, SESSION_IDLE_TYPES } from '../protocol/index.mjs'
+import { PROTOCOL_VERSION, SESSION_IDLE_TYPES, SESSION_RUNNING_TYPES } from '../protocol/index.mjs'
 import { sessionStatusFromRow } from '../http/sse.mjs'
 
 const TRANSITORY = new Set([429, 502, 503, 504])
@@ -98,7 +98,9 @@ export class GatewayEventHub {
           if (row.seq > sub.cursor + 1) return this._syncSession(sub)
           if (!sub.writer.send({ id: String(row.seq), event: row.type, data: row })) return this._close(sub)
           sub.cursor = row.seq
-          if (SESSION_IDLE_TYPES.includes(row.type) || row.type.startsWith('approval.')) await this._syncSession(sub)
+          // Turn lifecycle and approval rows change the envelope state: refresh
+          // it authoritatively from the device right away, not at the next tick.
+          if (SESSION_IDLE_TYPES.includes(row.type) || SESSION_RUNNING_TYPES.includes(row.type) || row.type.startsWith('approval.')) await this._syncSession(sub)
         })
       } else {
         const status = sessionStatusFromRow(row)

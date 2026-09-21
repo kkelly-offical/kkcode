@@ -1,4 +1,4 @@
-import { PROTOCOL_VERSION, ProtocolError, SESSION_IDLE_TYPES } from '../protocol/index.mjs'
+import { PROTOCOL_VERSION, ProtocolError } from '../protocol/index.mjs'
 import { sessionStatusFromRow } from '../http/sse.mjs'
 
 const idPattern = /^[A-Za-z0-9_-]{1,128}$/
@@ -32,7 +32,7 @@ export function createSessionEventStream({ service, sessionId, after = 0, princi
     if (closed) return
     const envelope = await service.sessionEvents(sessionId, cursor, principal)
     if (closed) return
-    if (envelope.gap && !writer.send({ id: String(envelope.cursor), event: 'replay.gap', data: { type: 'replay.gap', earliest: envelope.earliest, cursor: envelope.cursor } })) return writer.close()
+    if (envelope.gap && !writer.send({ id: String(cursor), event: 'replay.gap', data: { type: 'replay.gap', earliest: envelope.earliest, cursor: envelope.cursor } })) return writer.close()
     if (!deliverRows(envelope.events)) return writer.close()
     deliverState(service.sessionState(sessionId, principal))
   }
@@ -42,7 +42,7 @@ export function createSessionEventStream({ service, sessionId, after = 0, princi
       if (row.seq > cursor + 1) return sync()
       if (!writer.send({ id: String(row.seq), event: row.type, data: row })) return writer.close()
       cursor = row.seq
-      if (SESSION_IDLE_TYPES.includes(row.type) || row.type.startsWith('approval.')) deliverState(service.sessionState(sessionId, principal))
+      deliverState(service.sessionState(sessionId, principal))
     })
   }
   const timer = setInterval(() => enqueue(sync), syncMs)

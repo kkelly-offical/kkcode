@@ -138,9 +138,11 @@ export class DeviceService extends EventEmitter {
     }
     return { ...await this.replay.read(sessionId, after), ...this.sessionState(sessionId, principal), approvals, pendingApprovalCount: pending.length }
   }
-  /** Device-scope live event (no session, not journaled): settings/model changes. */
+  /** Device-scope live event (no session, not journaled): settings/model changes.
+   * Flat shape everywhere — in-process 'device' channel and SSE/relay wire:
+   * {type, deviceId, timestamp, ...payload}. Envelope keys win collisions. */
   emitDeviceEvent(type, payload = {}) {
-    const event = { type, deviceId: this.metadata?.id || null, timestamp: Date.now(), payload }
+    const event = { ...payload, type, deviceId: this.metadata?.id || null, timestamp: Date.now() }
     this.emit('device', event)
     return event
   }

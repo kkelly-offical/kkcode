@@ -27,7 +27,9 @@ Authorization mirrors `events.list`: the device owner may open any stream; a
 shared account must hold a grant (`view` or `control`) for the requested
 `sessionId` (session stream) or any grant on the device (device stream, with
 `session.status` events filtered to granted sessions). Revoking a share,
-logging out, unbinding the device or expiring the login closes the stream.
+logging out, or unbinding the device closes the stream immediately; a login
+session that expires naturally closes it on the next sync tick (the device
+server closes streams at the moment of expiry).
 
 ## Framing
 
@@ -91,8 +93,12 @@ the session snapshot via `sessions.get` — the same recovery as the existing
 `gap` flag on `events.list`.
 
 Whenever the envelope state (`running`, `control`, `pendingApprovalCount`)
-changes — checked on every delivered row and on a periodic sync tick — the
-stream emits `event: session.state`:
+changes, the stream emits `event: session.state`. The device server re-reads the
+state after every delivered row; the gateway re-syncs authoritatively after
+every turn-lifecycle (`turn.start`, `turn.finish`, `turn.result`, `turn.failed`)
+and `approval.*` row, and on the periodic sync tick. Changes that produce no
+journal row (`control.acquire` / `control.release`) surface on the next tick
+(≤ 30 s in push mode, ~1 s in journal-sync fallback). The frame looks like:
 
 ```json
 {"type":"session.state","sessionId":"...","running":false,
