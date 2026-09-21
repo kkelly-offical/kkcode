@@ -52,6 +52,26 @@ In particular, canonical history reading is not advertised as a sandbox against
 arbitrary same-user preplanted state. Normal private-directory permissions, OS
 account separation and trusted backup handling remain necessary.
 
+### Follow-up scan of the hardening commit
+
+JavaScript analysis `1812551861` of commit `f1d0195` marked findings #17–18,
+#22–29 and #36 fixed. There were no remaining critical findings in that analysis.
+Fourteen high-severity static findings remained open, with these scoped reviews:
+
+- #19–21 and #30–35: the formatter, cache namespace and guarded canonical/private
+  file operations described above.
+- #37–38: the file resolver's physical-root-alias check and canonical resolution.
+  Candidate aliases must first have the same path components modulo case, then
+  the same BigInt device/inode identity; arbitrary outside/UNC targets are not
+  resolved. Canonical containment and credential-root checks still follow.
+- #39–41: replay `lstat/open/lstat` operations through `openReplayFile`. The input
+  filenames still come only from the allowlisted `file()`/`meta()` helpers;
+  regular-file, link-count, no-follow and pinned-identity checks additionally
+  protect local file replacement. Tests exercise both direct and HTTP paths.
+
+These findings are not silently treated as zero alerts. Their severity labels
+alone do not establish an exploitable route past the tested guards.
+
 ## Release interpretation
 
 The follow-up commit must pass functional checks and a fresh CodeQL analysis
@@ -59,6 +79,14 @@ before publication. Some generic path/credential-cache findings may remain open
 when CodeQL cannot model these project-specific guards; their scoped disposition
 is recorded here rather than hidden by blanket suppression. New or materially
 changed findings still require review.
+
+The initial automatic Android-language setup also failed: it tried Java/Kotlin
+`build-mode: none`, which cannot extract Kotlin, and used an incompatible Gradle
+8.6 dependency probe. GitHub kept the previous JS/Actions configuration. On
+2026-09-22 the owner explicitly authorized replacing default setup with a custom
+workflow retaining JavaScript/Actions and adding a real manual Android debug
+build for Kotlin extraction. This workflow uses no production signing key; its
+successful analysis, not a green JS-only job, is the Kotlin acceptance criterion.
 
 The production npm dependency audit at preparation time reported zero advisories.
 That audit does not cover Android dependencies, container OS packages, deployed
