@@ -21,7 +21,7 @@ class ConversationUiTest {
     private fun show(configure: (RemoteState) -> Unit = {}): RemoteState {
         val state = RemoteState(ApplicationProvider.getApplicationContext<Application>(), false)
         configure(state)
-        compose.setContent { MaterialTheme(colorScheme = darkColorScheme()) { KKCodeApp(state) } }
+        compose.setContent { KKCodeTheme(dark = true) { KKCodeApp(state) } }
         return state
     }
 
