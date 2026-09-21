@@ -87,3 +87,90 @@ Earlier matrix failures led to fixes for case-insensitive Web module resolution,
 - Android APK: `android/app/build/outputs/apk/release/app-release.apk`, application `cn.kkcode.remote`, version `1.0.1` / `10001`. SHA-256: `912cf86e84dd44fd983de50215e48f68357965565ffa5fdd33f8c0a9b75f825d`. APK v2/v3, the project release certificate and non-debuggable manifest were verified; installation/compact-home launch passed on the separate release AVD.
 - The public signing-certificate fingerprint and private-key backup procedure are in `android-release.md`. The signing identity is outside Git and has not been uploaded to CI. The project owner still needs encrypted off-machine custody before depending on this key for distributed updates.
 - The persistent local gateway image was rebuilt from the final runtime source and used for the final enterprise rerun. Lab SSO remains at `https://10.0.0.2:18471`; gateway/WebUI remains at `https://10.0.0.2:18472`.
+
+## 1.0.1-preview.1 second round (2026-09-22)
+
+The user authorized publishing the second preview on GitHub (prerelease) and
+npm (`preview` tag). Five feature missions merged into `main` for this round;
+this section records their implementation and validation truthfully.
+
+### Merged scope (M26–M30)
+
+- **M26 Remote SSE streaming and folder browsing tolerance.** Standard SSE
+  session streams (replayable via `after=`/Last-Event-ID) and live-only device
+  streams on the device server and the gateway; `connected` snapshot,
+  `session.state`, `replay.gap` frames; owner/shared authorization mirroring
+  `events.list` with immediate close on revoke/logout/unbind and on natural
+  login expiry; relay `events.push` uplift with a ~1s gateway polling fallback
+  for older devices. `folders.list` gained a home-root default, `parent`
+  navigation, tolerant skipping of unreadable children and the
+  `path_missing`/`folder_unreadable`/`not_directory` codes; credential
+  `path_denied` protection is unchanged. Contract: `docs/remote-sse-contract.md`,
+  `docs/remote-folder-browsing.md`. Review: 2 rounds, clean at round 2.
+- **M27 WebUI composer model selector and theme overhaul.** Composer model
+  chip with lazy `models.discover` catalogs and auto/manual origin markers,
+  independent mode/permission selectors via `sessions.configure`, session page
+  on the SSE contract with transparent 1s polling fallback, and both themes
+  rebuilt on one CSS custom-property token set (light theme no longer inherits
+  dark mobile surfaces). Review: 1 round, clean.
+- **M28 Agent workflow, instruction following and tools compatibility.**
+  Reference comparison against Kimi Code CLI and OpenAI Codex source plus
+  ZCode public documentation (closed-source harness — documentation-level
+  contrast only). Landed fixes: contradictory/duplicated prompt rules, plugin
+  `agents` loading with permission clamps, skill `disable-model-invocation`
+  enforcement, provider-safe MCP tool ids, grouped tool listings, consistent
+  schema parameter naming. Deferred tool discovery, global instruction files
+  and tool-surface consolidation are tracked 1.x follow-ups. Folded-in
+  requirements: model catalog entries carry `origin: "auto"|"manual"`, and the
+  system-prompt block cache keys now include project context and auto-memory.
+  Record: `docs/agent-workflow-instruction-tools-compat-1.0.1.md`. Review: 2
+  rounds, clean at round 2.
+- **M29 Android client streaming, model selector and themes.** Kotlin SSE
+  client (Relay and direct paths), atomic snapshot-prefix plus live-tail
+  rendering with late-delta suppression, composer mode/permission/model
+  selectors with discovery source markers, and pairwise-distinct dark/light
+  schemes. Review: 1 round, clean.
+- **M30 Controlled terminal connection status mode.** After `kkcode remote`
+  binds SSO/gateway, the terminal shows a live controlled-endpoint status
+  panel (connection state, connected clients, session states) instead of
+  entering local interactive chat; unbound terminals keep the interactive
+  entry. Consumes only the M26 stable observability surface. Review: 3
+  rounds, clean at round 3.
+
+### Validation this round
+
+- Post-merge `main` full Node suite: 2,710 tests, 2,709 passed, 0 failed,
+  1 platform skip (macOS-only case on Linux). The release branch repeats the
+  same suite after the version bump; the result is recorded in
+  `docs/release-1.0.1-preview.1.md` together with the gate list.
+- Version consistency gates green: `scripts/check-release-version.mjs`
+  (root + 4 workspaces + lockfile), `test/release-policy.test.mjs`,
+  `test/android-release-target.test.mjs`, `test/web-version.test.mjs`.
+  Android `versionCode` moves 10001 → 10002 with `versionName`
+  `1.0.1-preview.1` exactly matching the root package.
+- Packaged WebUI assets under `src/web/` rebuilt from the current `apps/web`
+  source, embedding the exact root version; `npm run test:web` (build + real
+  device API smoke + UI contract fixtures) and all `test/web-*` suites pass.
+- Standby signed release APK built with the project identity via
+  `scripts/android-release.mjs`: `cn.kkcode.remote` `1.0.1-preview.1` /
+  `10002`, v2/v3 signatures valid, certificate fingerprint unchanged,
+  `debuggable=false`. APK SHA-256
+  `5f07c7313c4bd9b8035470ffb81adff4801cfc96881dfdd8507050f3fcb43d4d`. No
+  upload/publish was performed; a fresh AVD install of this exact artifact is
+  recommended before the GitHub prerelease upload.
+
+### Known boundaries this round
+
+- SSE contract paths were verified with in-process device/gateway harnesses
+  and loopback HTTP; a joint verification run against the deployed lab
+  gateway (real SSO login, relay uplift, cross-client streams) is recommended
+  before production reliance and is not claimed here.
+- The ZCode comparison is documentation-only because its harness is closed
+  source; no behavioral claims about ZCode internals are made.
+- `1.0.1-preview.0` was published as a GitHub prerelease only; it never
+  reached npm, where the `preview` tag still pointed at the historical
+  `0.2.4-preview.1`. This round moves the npm `preview` tag onto the 1.0.1
+  preview line for the first time; stable `latest` remains `1.0.0`.
+- Physical Android devices, store review, enterprise tenant provisioning and
+  database infrastructure HA remain deployment responsibilities, unchanged
+  from the sections above.

@@ -7,7 +7,7 @@ import YAML from 'yaml'
 import { checkReleaseVersions } from '../scripts/check-release-version.mjs'
 import { releaseVersionPolicy, releaseWorkspacePaths, resolveReleaseMetadata, validateReleaseManifests } from '../scripts/release-policy.mjs'
 
-function manifests(version = '1.0.1-preview.0') {
+function manifests(version = '1.0.1-preview.1') {
   const directories = ['apps/web', 'apps/gateway', 'packages/protocol', 'packages/sdk']
   const manifest = { name: '@kkelly-offical/kkcode', version, workspaces: directories }
   const workspaceManifests = Object.fromEntries(directories.map(directory => [directory, { name: `@kkcode/${path.basename(directory)}`, version, private: true }]))
@@ -77,7 +77,7 @@ test('the filesystem version checker actually reads workspace manifests and thei
     for (const [directory, data] of Object.entries(workspaceManifests)) { await mkdir(path.join(root, directory), { recursive: true }); await writeFile(path.join(root, directory, 'package.json'), JSON.stringify(data)) }
     assert.equal((await checkReleaseVersions(root)).distTag, 'preview')
     await writeFile(path.join(root, 'packages/sdk/package.json'), JSON.stringify({ ...workspaceManifests['packages/sdk'], version: '1.0.1' }))
-    await assert.rejects(checkReleaseVersions(root), /packages\/sdk\/package.json version must be 1.0.1-preview.0/)
+    await assert.rejects(checkReleaseVersions(root), /packages\/sdk\/package.json version must be 1.0.1-preview.1/)
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 

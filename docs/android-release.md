@@ -1,4 +1,4 @@
-# Android 1.0.1-preview.0 release signing and acceptance
+# Android 1.0.1-preview.1 release signing and acceptance
 
 The Android application is a native remote client. Release signing is separate
 from publishing: producing this APK does not upload it to a store or GitHub.
@@ -9,7 +9,7 @@ The user authorized creation of a project-specific production release key on
 2026-09-21. It is not the Android debug key or an acceptance-only identity.
 
 - Application ID: `cn.kkcode.remote`.
-- Current prerelease version: `1.0.1-preview.0` / version code `10001`.
+- Current prerelease version: `1.0.1-preview.1` / version code `10002`.
 - Algorithm: RSA-4096, SHA256withRSA; certificate validity: 10,000 days.
 - Public certificate SHA-256:
   `cf75774a4d87ba1ccc4a811f271bd301076cf6beefd7432a3cb30231164be5d1`.
@@ -27,11 +27,13 @@ future APK updates; creating another key is not a transparent replacement.
 The repository deliberately does not upload keys to any CI provider.
 
 The previous `1.0.1` APKs were local, unpublished acceptance builds. The first
-authorized public preview therefore retains version code `10001`. **Every
-subsequent publicly distributed Android update must increase `versionCode`,
-including the eventual stable `1.0.1` and any later preview.** Changing only
-`versionName` is not a valid public update policy. Keep using the same signing
-identity unless an explicit, separately validated key-rotation plan is adopted.
+authorized public preview (`1.0.1-preview.0`) therefore retained version code
+`10001`, and the second preview (`1.0.1-preview.1`) increments it to `10002`.
+**Every subsequent publicly distributed Android update must increase
+`versionCode`, including the eventual stable `1.0.1` and any later preview.**
+Changing only `versionName` is not a valid public update policy. Keep using
+the same signing identity unless an explicit, separately validated
+key-rotation plan is adopted.
 
 ## Reproducible build and verification
 
@@ -138,7 +140,7 @@ of `run-as` debugging. The screenshot is
 must be run against the matching updated backend; their final result belongs
 in `enterprise-lab-progress.md`, not inferred from these isolated UI checks.
 
-## Preview artifact acceptance (2026-09-22)
+## First preview artifact acceptance (2026-09-22)
 
 For `1.0.1-preview.0` / `10001`, the six Node target-version tests and 14 release
 JVM tests passed. The release was built with the existing project certificate,
@@ -152,6 +154,26 @@ network checks are recorded separately above and in the enterprise lab ledger.
   `b24b0729f3094ec153c871b2b54edaf2d66bf2b446110a2e7de1797a5ee87260`.
 - v2/v3 signatures valid; package/version match the root release target exactly;
   `debuggable=false`; existing certificate fingerprint unchanged.
+
+## Second preview artifact acceptance (2026-09-22)
+
+For `1.0.1-preview.1` / `10002`, the six Node target-version tests passed and
+`scripts/android-release.mjs` built the signed release APK with the existing
+project certificate. The script verified v2/v3 signatures, the exact
+package/version/code match against the root release target, and a
+non-debuggable manifest. The Compose/JVM suites and AVD install/launch checks
+above cover the merged client code; a fresh install of this exact artifact on
+the isolated 5582 AVD is recommended before the GitHub prerelease upload and
+is not claimed here. The APK is a standby artifact: no upload or publishing
+was performed.
+
+- Artifact: `android/app/build/outputs/apk/release/app-release.apk`.
+- APK SHA-256:
+  `5f07c7313c4bd9b8035470ffb81adff4801cfc96881dfdd8507050f3fcb43d4d`.
+- v2/v3 signatures valid; package `cn.kkcode.remote`, version
+  `1.0.1-preview.1` / `10002` match the root release target exactly;
+  `debuggable=false`; certificate fingerprint unchanged
+  (`cf75774a4d87ba1ccc4a811f271bd301076cf6beefd7432a3cb30231164be5d1`).
 
 This records artifact readiness only. Publishing/tagging/uploading the preview
 is a separate authorized release operation, not an action performed by the

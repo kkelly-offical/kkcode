@@ -1,5 +1,84 @@
 # Changelog / 更新日志
 
+## 1.0.1-preview.1 — 2026-09-22
+
+Second opt-in preview (`npm @preview`, GitHub prerelease); stable `latest`
+stays at 1.0.0. 第二个主动安装的预览版，不替换稳定渠道。安装与迁移见
+[预览版说明](docs/release-1.0.1-preview.1.md)。如实记录：`1.0.1-preview.0`
+只发出了 GitHub prerelease，并未真正推送到 npm，npm `preview` 标签此前仍
+停留在旧的 `0.2.4-preview.1`；本次发布把该标签移动到 1.0.1 预览线。
+
+### Highlights / 主要变化
+
+- Remote event streams over standard SSE on both the device server and the
+  gateway: replayable session streams (`after=` / Last-Event-ID), live-only
+  device streams, `connected` snapshots, `session.state` frames, `replay.gap`
+  recovery without closing the stream, strict per-session filtering and
+  immediate close on revoke/logout/unbind/login expiry. `events.list`
+  polling, the device WebSocket endpoint, all RPCs, request deduplication
+  and the headless JSONL schema are unchanged (`PROTOCOL_VERSION` stays
+  `1`). 远程 SSE 流式事件契约见
+  [remote-sse-contract](docs/remote-sse-contract.md)。
+- Folder browsing tolerance: `folders.list` without a path opens the home
+  root (browsing is no longer limited to the terminal's startup directory),
+  responses carry `parent` for upward navigation, unreadable children are
+  skipped instead of failing the whole listing, and new `path_missing` /
+  `folder_unreadable` / `not_directory` codes replace boundary string-trim
+  errors. Credential protection is unchanged: `.ssh`/`.aws`/`.gnupg`/
+  `.config`/`.env*`/key and keystore paths still deny with `path_denied`.
+  文件夹浏览覆盖 home 全域，凭证保护不变。
+- WebUI composer selectors: a model chip with lazy catalog discovery
+  (`models.discover`, auto/manual origin markers, manual model-id entry only
+  as a discovery-failure fallback), plus independent mode and permission
+  selectors applied in-session through `sessions.configure`; session pages
+  prefer the SSE stream and fall back transparently to 1s polling on older
+  devices. WebUI 模型/模式/权限选择器。
+- WebUI themes rebuilt on one CSS custom-property token set for dark and
+  light (text/background/border/accent/diff/warn/error); the light theme no
+  longer inherits hardcoded dark surfaces on mobile, and the `theme-color`
+  meta follows the resolved theme. 深浅主题令牌化。
+- Android client: SSE streaming conversations over Relay and direct
+  connections with snapshot-prefix plus live-tail rendering, composer
+  mode/permission/model selectors with discovery source markers, and
+  pairwise-distinct dark/light schemes with readable contrast. Android
+  流式会话、选择器与主题。
+- Controlled terminal status mode: after `kkcode remote` binds OIDC
+  SSO/gateway, the terminal becomes a controlled endpoint showing a live
+  connection/session status panel (connection state, connected clients,
+  running/approval/controlled/idle sessions) instead of entering local
+  interactive chat; the interactive entry remains on the unbound path.
+  受控终端状态模式。
+- Agent workflow, instruction-following and tools compatibility review
+  against public references (Kimi Code CLI, OpenAI Codex, ZCode public
+  docs): fixed self-contradictory large-write rules and duplicated prompt
+  rules, plugin `agents` loading, skill frontmatter enforcement
+  (`disable-model-invocation`), provider-safe collision-free MCP tool ids,
+  grouped tool listings and consistent schema parameter naming; deferred
+  tool discovery, global instruction files and tool-surface consolidation
+  are tracked 1.x follow-ups. 详见
+  [兼容性复核](docs/agent-workflow-instruction-tools-compat-1.0.1.md)。
+- Model catalog auto-discovery provenance: every discovered model entry now
+  carries `origin: "auto"` (network/cache) or `origin: "manual"` (config
+  fallback), surfaced to Web/Android selectors and the SSE
+  `models.updated` frame. 模型目录自动发现来源标注。
+- Per-session routing and multi-concurrency hardening: session-level RPCs
+  route strictly by `sessionId`, cross-session approval resolution is
+  rejected with `approval_session_mismatch`, same-session concurrent turns
+  refuse `turn_busy`, and the system-prompt block cache keys now include
+  project context and auto-memory so concurrent sessions in one cwd never
+  serve each other stale prompt blocks. 按 Session 路由与多并发加固。
+
+### Deployment boundaries / 部署边界
+
+The gateway remains enterprise-trusted, not zero-knowledge: it can inspect
+forwarded content but does not persist conversation/model payloads. The SSE
+paths were verified with in-process and loopback harnesses; a joint run
+against a deployed gateway is recommended before production reliance.
+ZCode comparison is documentation-only because its harness is closed source.
+Database infrastructure HA, production DNS/TLS, actual enterprise IdP
+tenants, offsite backups and physical device/store review remain deployment
+responsibilities.
+
 ## 1.0.1-preview.0 — 2026-09-22
 
 Opt-in preview (`npm @preview`, GitHub prerelease); stable `latest` stays at 1.0.0.
