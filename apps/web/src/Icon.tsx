@@ -24,6 +24,7 @@ const paths = {
   extension:
     "M3 3h6a3 3 0 1 1 6 0h6v6a3 3 0 1 0 0 6v6h-6a3 3 0 1 0-6 0H3v-6a3 3 0 1 0 0-6z",
   shield: "m12 2 9 4v6c0 5-9 10-9 10S3 17 3 12V6zM8 12l3 3 5-6",
+  lock: "M5 11h14v10H5zM8 11V7a4 4 0 1 1 8 0v4",
   mail: "M3 5h18v14H3zM3 5l9 8 9-8",
   building:
     "M5 22V2h14v20M9 6h.01M15 6h.01M9 10h.01M15 10h.01M9 14h.01M15 14h.01M10 22v-4h4v4",
