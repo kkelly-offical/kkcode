@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process"
+import { verificationCommand } from './verification-command.mjs'
 
 const steps = [
   { label: 'lint', cmd: 'npm', args: ['run', 'lint'] },
@@ -17,10 +18,11 @@ const steps = [
 for (const step of steps) {
   console.log(`==> ${step.label}`)
   await new Promise((resolve, reject) => {
-    const child = spawn(step.cmd, step.args, {
+    const invocation = verificationCommand(step.cmd, step.args)
+    const child = spawn(invocation.command, invocation.args, {
       cwd: process.cwd(),
       stdio: 'inherit',
-      shell: process.platform === 'win32'
+      shell: invocation.shell
     })
     child.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`${step.label} failed with exit code ${code}`)))
     child.on('error', reject)

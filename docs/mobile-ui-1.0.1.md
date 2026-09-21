@@ -57,4 +57,4 @@ KKCODE_ANDROID_SERIAL=emulator-5580 node scripts/android-ui-smoke.mjs
 
 ## 尚未作为完成项交付
 
-这些 UI 验证不等于整个 1.0.1 已满足发布条件。当前本机实验环境已通过真实 Keycloak/PostgreSQL/HTTPS 中继、Android 原生登录状态流程和 SSH、多端模型与对话同步、跨端审批、网关重启恢复；详见 `enterprise-lab-progress.md`。手机上的外部浏览器登录页面、更多真机/浏览器、子代理审批聚合、分支安全切换与附件上传仍需补验收。相机、语音录入、应用商店签名和发布没有在本轮完成。
+附件、子代理审批来源、安全分支选择、历史分页与实时快照续接已经实现并通过独立及真实链路验收；正式 Android 签名包也已生成并验证。当前本机实验环境通过真实 Keycloak/PostgreSQL/HTTPS 中继、Android 登录状态流程和 SSH、多端模型与对话同步、跨端审批、网关重启、解绑与账号移交；详见 `enterprise-lab-progress.md`。Windows/macOS 最终结果以专用 CI 为准。更多物理手机、手机外部浏览器的厂商差异仍可继续扩展覆盖；相机、语音录入并非这次已实现的功能，也没有进行应用商店发布。

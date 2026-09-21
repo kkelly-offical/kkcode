@@ -61,18 +61,32 @@ unless intentionally deleting this lab's account/database data.
 - Live Kimi Base URL catalog returned `kimi-for-coding`, `kimi-for-coding-highspeed`,
   `k3`, `k3-256k`; one bounded K3 inference returned the requested canary.
   Actual model credentials were not printed or sent to the gateway.
-- Android debug and UI-test APK builds; seven Compose UI tests and three opt-in
-  real-network tests passed on API 36. These are not release-signed artifacts.
+- Android debug/UI-test builds, 14 Compose UI tests, 14 JVM tests and three opt-in
+  real-network tests passed. A separate project-signed release APK also passed
+  certificate/v2/v3/non-debuggable verification and installation on its own AVD.
+- The expanded Relay run sent real text and PNG bytes through both OpenAI and
+  Anthropic adapters, verified canonical history retention after staging removal,
+  exercised native Android branch create/switch-back, and verified that a
+  persisted read-only permission rejects the next actual write.
+- Actual CLI unbind revoked the retired UUID, sharing and device credentials;
+  explicit `--include-history` transfer completed a second account's SSO login,
+  rotated the device UUID, admitted the new owner and denied the previous owner.
+  The final transferred foreground hub was stopped and became offline.
 - Installed npm package: version 1.0.1 and the public kernel SDK, browser-safe SDK
   client and protocol exports all load outside the repository.
-- Final Node suite: 2,454 tests / 2,453 passed / 1 skipped / 0 failed. Lint,
+- Latest local Node suite: 2,597 tests / 2,596 passed / 1 skipped / 0 failed. Lint,
   kernel/Web typechecks, import-boundary/stdout checks, version policy and source
-  secret scan passed. Immutable packed artifact verification passed (440 files).
+  secret scan passed. Installed package/SDK checks pass (456 packaged files).
 
-The validated development tarball is
-`/tmp/kkcode-101-artifact-79IwpL/kkelly-offical-kkcode-1.0.1.tgz`, SHA-256
-`ce6910917349798cac48f9f8c8731b0c7997cebd2f27c9b7ad7b85ae028df179`.
-It is a local test artifact, not an npm publication or release tag.
+Final artifact hashes and hosted Windows/macOS job results are recorded in the
+implementation ledger after their corresponding checks finish. Local tarballs
+are test artifacts, not npm publications or release tags.
+
+The successful expanded run is
+`/root/.local/share/kkcode-enterprise-runs/integration-lZtBuw`.
+Its configuration, credentials and Android test fixture are in its protected
+`.kkcode/` subdirectory; `workspace/` and screenshots contain only test material.
+New runs use this sibling runs directory, not the lab's protected credential root.
 
 The deterministic HTTPS provider in `scripts/lab-fixture-provider.mjs` is for repeatable
 approval/cancellation tests; it is not shipped as a default model catalog or presented
@@ -104,19 +118,30 @@ failures. Restarting **only this test AVD** without proxy environment variables
 fixed the transport. Certificate checking remains enabled. Do not blindly change
 the user's global proxy or trust settings.
 
-## Remaining production/release work
+## Completed development and deployment responsibilities
 
-- Long-running replay/request retention, cross-process device-state locking,
-  explicit device ownership transfer/unbinding and a broader crash/recovery matrix.
-- Terminal/remote subagent approval roll-up, complete slash-command parity,
-  attachments and safe branch-selection workflows.
-- Windows/macOS full-system and additional physical Android-device/browser coverage.
-- Production domain/certificate provisioning, database backup/restore, other OIDC
-  providers, release signing and deployment/load tests. This lab is not a HA setup.
+Replay/request limits, device and canonical-history cross-process locking,
+unbinding/explicit transfer, child approvals (including worker IPC), command
+parity, attachments and safe Git branches are implemented and tested. Gateway
+multi-replica routing, actual PostgreSQL failover/recovery drills, encrypted
+backup/restore and real Keycloak/Dex login are documented in
+`enterprise-ha-recovery.md`; the persistent two-port demo intentionally remains
+single-gateway, while the HA fault-injection lab uses separate temporary nodes.
+
+Hosted Windows/macOS acceptance is tracked on the dedicated acceptance branch.
+The first runs uncovered a case-insensitive Web import collision, Windows
+submodule path comparison and child-process termination issues; fixes have their
+own regression tests rather than platform skips. Refer to the final CI result,
+not a Linux pass, for platform acceptance.
+
+Production DNS/TLS, database infrastructure HA, external SSO tenant provisioning,
+off-machine backup/key custody and physical-device/store review remain deployment
+responsibilities. No claim is made that these external environments were supplied.
 
 The lab CA was added only to the dedicated `kkcode_101_api36` emulator user trust store.
 Android debug builds allow user-installed CAs; release builds keep normal system trust.
 The Linux QA VM remains `kkcode-101-linux` at `192.168.122.8` (SSH user `qa`).
+The signed-release Android AVD is separate: `kkcode_101_release_api36`, port 5582.
 
 Lab services remain running for inspection. The test foreground controller was
 stopped deliberately and its device is offline; no unattended remote execution hub

@@ -5,12 +5,14 @@ import path from "node:path"
 import { spawn } from "node:child_process"
 import { PACKAGE_NAME, PACKAGE_VERSION } from "../src/version.mjs"
 import { scanDirectoryTree } from "./secret-scan.mjs"
+import { verificationCommand } from './verification-command.mjs'
 
 function run(command, args, cwd) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const invocation = verificationCommand(command, args)
+    const child = spawn(invocation.command, invocation.args, {
       cwd,
-      shell: process.platform === "win32",
+      shell: invocation.shell,
       stdio: "inherit"
     })
     child.on("error", reject)
