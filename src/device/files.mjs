@@ -17,13 +17,15 @@ function requestedPath(input) {
 }
 async function pathPolicy(roots) {
   const configured = roots.map(root => path.resolve(root))
-  const allowed = await Promise.all(configured.map(root => realpath(root)))
+  // A missing/unreachable configured root degrades to "nothing under it
+  // resolves" instead of breaking every other root.
+  const allowed = (await Promise.all(configured.map(root => realpath(root).catch(() => null)))).filter(Boolean)
   const privateRoots = [userRootDir(), process.env.KKCODE_ANDROID_SIGNING_DIR || path.join(os.homedir(), '.local/share/kkcode-signing'), process.env.KKCODE_LAB_STATE || path.join(os.homedir(), '.local/share/kkcode-enterprise-lab')].map(folder => path.resolve(folder))
   const protectedPaths = await Promise.all(privateRoots.map(folder => realpath(folder).catch(() => folder)))
   const privateIdentities = new Set((await Promise.all(protectedPaths.map(async folder => {
     try { return identity(await stat(folder, { bigint: true })) } catch { return null }
   }))).filter(Boolean))
-  const rootIdentities = new Map(await Promise.all([...new Set([...configured, ...allowed])].map(async folder => [folder, identity(await stat(folder, { bigint: true }))])))
+  const rootIdentities = new Map(await Promise.all([...new Set([...configured, ...allowed])].map(async folder => [folder, await stat(folder, { bigint: true }).then(identity, () => null)])))
   return { configured, allowed, privateRoots, protectedPaths, privateIdentities, rootIdentities }
 }
 async function scopeRoot(target, roots, rootIdentities) {
@@ -48,7 +50,9 @@ async function resolveWithPolicy(requested, policy, { directory = false } = {}) 
   assertPublicComponents(requested)
   const denyPrivate = () => { throw new ProtocolError('path_denied', 'KK Code private state and credentials are protected', 403) }
   if ([...privateRoots, ...protectedPaths].some(folder => within(requested, folder))) denyPrivate()
-  const target = await realpath(requested)
+  let target
+  try { target = await realpath(requested) }
+  catch (error) { if (error.code === 'ENOENT') throw new ProtocolError('path_missing', 'Path does not exist on the device', 404); throw error }
   const root = await scopeRoot(target, allowed, rootIdentities)
   if (!root) throw new ProtocolError('path_denied', 'Path is outside the allowed device folders', 403)
   if (protectedPaths.some(folder => within(target, folder))) denyPrivate()
@@ -68,16 +72,26 @@ export async function resolveDevicePath(input, roots, options = {}) {
 }
 export async function listDeviceFolder(input, roots) {
   const policy = await pathPolicy(roots)
-  const folder = await resolveWithPolicy(requestedPath(input || roots[0]), policy, { directory: true })
+  // No path: open the first reachable root (default: the OS user's home).
+  let start = input
+  if (!start) for (const root of roots) { start = await realpath(root).catch(() => null); if (start) break }
+  const folder = await resolveWithPolicy(requestedPath(start || roots[0]), policy, { directory: true })
+  let dirents
+  try { dirents = await readdir(folder, { withFileTypes: true }) }
+  catch (error) { throw new ProtocolError(error.code === 'ENOENT' ? 'path_missing' : 'folder_unreadable', error.code === 'ENOENT' ? 'Folder does not exist on the device' : 'Folder cannot be listed', error.code === 'ENOENT' ? 404 : 403) }
   const entries = []
-  for (const item of (await readdir(folder, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
+  for (const item of dirents.sort((a, b) => a.name.localeCompare(b.name))) {
     if (entries.length >= 1000) break
     try {
       const resolved = await resolveWithPolicy(path.join(folder, item.name), policy)
       entries.push({ name: item.name, path: resolved, directory: (await stat(resolved)).isDirectory() })
     } catch { /* inaccessible/protected paths are not enumerated */ }
   }
-  return { path: folder, roots, entries }
+  // Clients navigate up until parent is null instead of string-guessing into
+  // a path_denied error at the root boundary.
+  const parentDir = path.dirname(folder)
+  const parent = parentDir !== folder && await scopeRoot(parentDir, policy.allowed, policy.rootIdentities) ? parentDir : null
+  return { path: folder, parent, roots, entries }
 }
 export async function readDeviceFile(input, roots) {
   const requested = requestedPath(input), policy = await pathPolicy(roots)

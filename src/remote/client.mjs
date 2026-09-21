@@ -5,6 +5,7 @@ import { userRootDir } from '../storage/paths.mjs'
 import { DeviceService } from '../device/service.mjs'
 import { writePrivateFile } from '../storage/private-file.mjs'
 import { acceptRemoteIdentity, prepareRemoteBinding } from './device-lifecycle.mjs'
+import { RELAY_FEATURE_EVENT_PUSH } from '../protocol/index.mjs'
 
 const credentialsPath = () => path.join(userRootDir(), 'remote-credentials.json')
 export async function loadRemoteCredentials() { try { return JSON.parse(await readFile(credentialsPath(), 'utf8')) } catch { return null } }
@@ -71,7 +72,17 @@ export async function revokeRemoteDevice({ deviceId, credentials, signal } = {})
 }
 export async function connectRelay({ service, credentials, onStatus = () => {} }) {
   await prepareRemoteBinding(service, credentials)
-  let stopped = false, socket, timer, backoff = 1000
+  let stopped = false, socket, timer, backoff = 1000, registered = false
+  // Push journal rows/device events upstream for the gateway's SSE streams.
+  // Rows stay replayable from the journal, so shedding under backpressure is
+  // safe: the gateway heals a sequence jump through a journal re-sync.
+  const push = (type, event) => {
+    if (!registered || socket?.readyState !== WebSocket.OPEN || socket.bufferedAmount > 4 * 1024 * 1024) return
+    socket.send(JSON.stringify({ type, event }))
+  }
+  const onEvent = row => push('event', row), onDevice = event => push('device-event', event)
+  service.on('event', onEvent)
+  service.on('device', onDevice)
   async function connect() {
     if (stopped) return
     try {
@@ -81,12 +92,12 @@ export async function connectRelay({ service, credentials, onStatus = () => {} }
       }
       if (stopped) return
       const connection = socket = new WebSocket(`${credentials.gateway.replace(/^http/, 'ws')}/relay/device`, { headers: { Authorization: `Bearer ${credentials.access_token}` }, maxPayload: 6 * 1024 * 1024, handshakeTimeout: 15000 })
-      connection.on('open', () => { connection.send(JSON.stringify({ type: 'register', device: { id: service.metadata.id, name: service.metadata.name } })) })
+      connection.on('open', () => { connection.send(JSON.stringify({ type: 'register', device: { id: service.metadata.id, name: service.metadata.name }, features: [RELAY_FEATURE_EVENT_PUSH] })) })
       connection.on('message', async raw => {
         let message
         try {
           message = JSON.parse(raw.toString())
-          if (message.type === 'registered') { backoff = 1000; onStatus('connected'); return }
+          if (message.type === 'registered') { backoff = 1000; registered = true; onStatus('connected'); return }
           if (message.type !== 'request') return
           const result = await service.request(message.request, message.principal)
           if (connection.readyState === WebSocket.OPEN) connection.send(JSON.stringify({ type: 'response', id: message.id, result }))
@@ -96,6 +107,7 @@ export async function connectRelay({ service, credentials, onStatus = () => {} }
       })
       connection.on('error', () => {})
       connection.on('close', (code, reason) => {
+        registered = false
         if (stopped) return
         if (code === 1008 && reason.toString() !== 'Authentication expired') { stopped = true; onStatus('login_required'); return }
         onStatus('disconnected'); retry()
@@ -104,6 +116,6 @@ export async function connectRelay({ service, credentials, onStatus = () => {} }
   }
   function retry() { if (!stopped) { timer = setTimeout(connect, backoff); backoff = Math.min(30000, backoff * 2) } }
   await connect()
-  return { close() { stopped = true; clearTimeout(timer); socket?.close(1000, 'Terminal closed'); onStatus('offline') } }
+  return { close() { stopped = true; registered = false; clearTimeout(timer); service.off('event', onEvent); service.off('device', onDevice); socket?.close(1000, 'Terminal closed'); onStatus('offline') } }
 }
 export async function createRemoteDevice(options = {}) { return new DeviceService(options).initialize() }

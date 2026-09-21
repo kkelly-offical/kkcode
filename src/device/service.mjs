@@ -31,6 +31,7 @@ export class DeviceService extends EventEmitter {
     this.kernels = new Map(); this.turns = new Map(); this.leases = new Map(); this.approvals = new Map()
     this.inflight = new Map()
     this.commandStates = new Map()
+    this.modelCatalog = new Map()
     this.sessionTransitions = new Set(); this.commandSessions = new Set(); this.commandContext = new AsyncLocalStorage()
     this.attachedKernels = new WeakSet(); this.detachKernels = []
     this.stateDir = path.join(userRootDir(), 'device')
@@ -114,6 +115,49 @@ export class DeviceService extends EventEmitter {
   async readEvents(sessionId, after) {
     if (!idPattern.test(sessionId)) throw new ProtocolError('invalid_session', 'Invalid session id')
     return (await this.replay.read(sessionId, after, 1000)).events
+  }
+  /** Live control/running snapshot for one session. Pure read: no lease renewal. */
+  sessionState(sessionId, principal = { id: 'local', client: 'local' }) {
+    const lease = this.leases.get(sessionId)
+    let pendingApprovalCount = 0
+    for (const approval of this.approvals.values()) if (approval.sessionId === sessionId) pendingApprovalCount++
+    return { running: this.turns.has(sessionId), control: lease && lease.until > Date.now() ? { yours: lease.client === principal.client, until: lease.until } : null, pendingApprovalCount }
+  }
+  /** The events.list envelope. Watching a session (polling or SSE) renews the
+   * caller's lease; acquiring control still requires control.acquire. */
+  async sessionEvents(sessionId, after = 0, principal = { id: 'local', client: 'local' }) {
+    if (!idPattern.test(sessionId)) throw new ProtocolError('invalid_session', 'Invalid session id')
+    const lease = this.leases.get(sessionId)
+    if (lease?.client === principal.client) lease.until = Date.now() + 60000
+    const pending = [...this.approvals.values()].filter(a => a.sessionId === sessionId), approvals = []
+    let remaining = 512 * 1024
+    for (const { id, kind, request } of pending) {
+      const item = { id, kind, request: redactConfig(request) }, bytes = Buffer.byteLength(JSON.stringify(item))
+      if (bytes > remaining) break
+      approvals.push(item); remaining -= bytes
+    }
+    return { ...await this.replay.read(sessionId, after), ...this.sessionState(sessionId, principal), approvals, pendingApprovalCount: pending.length }
+  }
+  /** Device-scope live event (no session, not journaled): settings/model changes. */
+  emitDeviceEvent(type, payload = {}) {
+    const event = { type, deviceId: this.metadata?.id || null, timestamp: Date.now(), payload }
+    this.emit('device', event)
+    return event
+  }
+  /** Announce a discovered catalog once per actual change; SSE transports forward it. */
+  announceModelCatalog(result) {
+    if (!result || typeof result.provider !== 'string' || !Array.isArray(result.models)) return
+    const digest = createHash('sha256').update(JSON.stringify(result.models.map(model => model?.id))).digest('hex')
+    if (this.modelCatalog.get(result.provider) === digest) return
+    this.modelCatalog.set(result.provider, digest)
+    const models = []
+    let bytes = 2, truncated = false
+    for (const model of result.models) {
+      bytes += Buffer.byteLength(JSON.stringify(model)) + 1
+      if (models.length >= 200 || bytes > 256 * 1024) { truncated = true; break }
+      models.push(model)
+    }
+    this.emitDeviceEvent('models.updated', { provider: result.provider, source: result.source, stale: result.stale === true, models, ...(truncated ? { truncated: true } : {}) })
   }
   async ask(kind, request, localPrompt = null) {
     if (!request.sessionId || this.closed) return kind === 'permission' ? 'deny' : {}
@@ -205,18 +249,7 @@ export class DeviceService extends EventEmitter {
       await kernel.sessions.touchSession({ sessionId: id, cwd: kernel.cwd, mode: 'assistant', providerType: kernel.configState.config.provider.default, model: '', title: p.title || '新对话' })
       return { id, cwd: kernel.cwd }
     }
-    if (method === 'events.list') {
-      const lease = this.leases.get(sessionId)
-      if (lease?.client === principal.client) lease.until = Date.now() + 60000
-      const pending = [...this.approvals.values()].filter(a => a.sessionId === sessionId), approvals = []
-      let remaining = 512 * 1024
-      for (const { id, kind, request } of pending) {
-        const item = { id, kind, request: redactConfig(request) }, bytes = Buffer.byteLength(JSON.stringify(item))
-        if (bytes > remaining) break
-        approvals.push(item); remaining -= bytes
-      }
-      return { ...await this.replay.read(sessionId, Number(p.after) || 0), running: this.turns.has(sessionId), control: lease && lease.until > Date.now() ? { yours: lease.client === principal.client, until: lease.until } : null, approvals, pendingApprovalCount: pending.length }
-    }
+    if (method === 'events.list') return this.sessionEvents(sessionId, Number(p.after) || 0, principal)
     if (method === 'sessions.configure') {
       this.lease(sessionId, principal)
       if (this.sessionTransitions.has(sessionId) || this.commandSessions.has(sessionId) && this.commandContext.getStore()?.sessionId !== sessionId) throw new ProtocolError('session_busy', 'A session configuration or command is already in progress', 409)
@@ -320,9 +353,19 @@ export class DeviceService extends EventEmitter {
     if (method === 'settings.update') {
       if (this.configurationUpdating || this.commandSessions.size || this.sessionTransitions.size) throw new ProtocolError('configuration_busy', 'A configuration update or session operation is in progress', 409)
       this.configurationUpdating = true
-      try { return await updateDeviceSettings(this, p.config) } finally { this.configurationUpdating = false }
+      try {
+        const result = await updateDeviceSettings(this, p.config)
+        this.emitDeviceEvent('settings.updated', {})
+        const provider = result.config?.provider?.default
+        if (provider) void discoverDeviceModels(this, { provider }).then(catalog => this.announceModelCatalog(catalog)).catch(() => {})
+        return result
+      } finally { this.configurationUpdating = false }
     }
-    if (method === 'models.discover') return discoverDeviceModels(this, p)
+    if (method === 'models.discover') {
+      const catalog = await discoverDeviceModels(this, p)
+      this.announceModelCatalog(catalog)
+      return catalog
+    }
     if (method === 'commands.run') {
       this.lease(sessionId, principal)
       if (this.turns.has(sessionId) || this.workspaceMutation || this.configurationUpdating || this.commandSessions.has(sessionId) || this.sessionTransitions.has(sessionId)) throw new ProtocolError('turn_busy', 'Wait for the active turn, command or branch change to finish', 409)
@@ -356,6 +399,7 @@ export class DeviceService extends EventEmitter {
     await this.liveView.close(); await this.replay?.close(); await this.ledger?.close(); await this.attachments?.chain.catch(() => {})
     this.leases.clear()
     this.sessionTree.clear()
+    this.modelCatalog.clear()
     } finally { await this.stateLock?.release() }
     })()
     return this.closePromise
