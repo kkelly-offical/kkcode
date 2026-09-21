@@ -56,7 +56,8 @@ export async function bootstrapKernelExtensions({ cwd, configState, trustState, 
     allowProjectSources: extensionPolicy.allowProjectSources
   })
   await CustomAgentRegistry.initialize(cwd, {
-    allowProjectSources: extensionPolicy.allowProjectSources
+    allowProjectSources: extensionPolicy.allowProjectSources,
+    config: extensionPolicy.config
   })
   if (registries?.hooks) {
     await registries.hooks.initialize(cwd, extensionPolicy.config, {

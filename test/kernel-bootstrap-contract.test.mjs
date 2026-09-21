@@ -88,7 +88,9 @@ test("kernel bootstrap runs the boot sequence in the pre-consolidation order", a
     assert.equal(seen.skill.cwd, cwd)
     assert.deepEqual(seen.skill.options, { allowProjectSources: true })
     assert.equal(seen.agent.cwd, cwd)
-    assert.deepEqual(seen.agent.options, { allowProjectSources: true })
+    // M28 r1 review fix: the agent loader's plugin discovery must see the
+    // compat policy (compat.plugins.enabled/ecosystems), same as skills/hooks.
+    assert.deepEqual(seen.agent.options, { allowProjectSources: true, config: configState.config })
     assert.equal(policy.config, configState.config)
     assert.equal(policy.allowProjectSources, true)
   } finally {
@@ -125,7 +127,7 @@ test("kernel bootstrap maps an untrusted workspace onto the extension policy", a
     assert.equal(seen.tool.allowProjectSources, false)
     assert.equal(seen.skill.config, configState.extensionConfig)
     assert.deepEqual(seen.skill.options, { allowProjectSources: false })
-    assert.deepEqual(seen.agent.options, { allowProjectSources: false })
+    assert.deepEqual(seen.agent.options, { allowProjectSources: false, config: configState.extensionConfig })
     assert.equal(policy.config, configState.extensionConfig)
   } finally {
     restore()

@@ -122,3 +122,47 @@ test("project-scope plugin agents are excluded when project sources are not trus
   await CustomAgentRegistry.initialize(project, { allowProjectSources: false })
   assert.equal(CustomAgentRegistry.get("helper"), null, "untrusted project plugin contributes no agents")
 })
+
+test("compat plugin policy gates external-ecosystem plugin agent discovery (config must reach the loader)", async t => {
+  const { project } = await fixture(t)
+  // .claude-plugin/plugin.json uses rootMode "parent-dir": the plugin root is
+  // the parent directory, so component dirs resolve against the project root.
+  const pluginRoot = path.join(project, ".claude-plugin")
+  await mkdir(path.join(project, "agents"), { recursive: true })
+  await mkdir(pluginRoot, { recursive: true })
+  await writeFile(path.join(pluginRoot, "plugin.json"), JSON.stringify({ name: "pack-five", agents: ["agents"] }))
+  await writeFile(path.join(project, "agents", "helper.md"), "---\nname: helper-five\ndescription: gated agent\n---\nHelp.\n")
+
+  await CustomAgentRegistry.initialize(project, {
+    allowProjectSources: true,
+    config: { compat: { plugins: { enabled: false } } }
+  })
+  assert.equal(CustomAgentRegistry.get("helper-five"), null, "compat.plugins.enabled=false excludes external plugin agents")
+
+  await CustomAgentRegistry.initialize(project, {
+    allowProjectSources: true,
+    config: { compat: { plugins: { ecosystems: ["kkcode"] } } }
+  })
+  assert.equal(CustomAgentRegistry.get("helper-five"), null, "ecosystems without 'claude' excludes its agents")
+
+  await CustomAgentRegistry.initialize(project, { allowProjectSources: true })
+  assert.ok(CustomAgentRegistry.get("helper-five"), "default config discovers the external plugin agent")
+})
+
+// review M28 r1: the discovery policy (compat.plugins.enabled/ecosystems) only
+// takes effect if every CustomAgentRegistry.initialize call site forwards
+// extensionPolicy.config. Pin the wiring at the source level so a future caller
+// cannot silently drop it again.
+test("every CustomAgentRegistry.initialize call site forwards extensionPolicy.config", async () => {
+  const { readFile } = await import("node:fs/promises")
+  const { fileURLToPath } = await import("node:url")
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+  for (const file of ["src/kernel/kernel.mjs", "src/context.mjs", "src/commands/agent.mjs"]) {
+    const source = await readFile(path.join(root, file), "utf8")
+    const callSites = source.match(/CustomAgentRegistry\.initialize\([\s\S]*?\}\)/g) || []
+    assert.ok(callSites.length > 0, `${file} initializes CustomAgentRegistry`)
+    for (const call of callSites) {
+      assert.match(call, /config:\s*extensionPolicy\.config/, `${file} must forward extensionPolicy.config`)
+    }
+  }
+})
