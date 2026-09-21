@@ -183,6 +183,7 @@ export const authoringCommands = [
         allowProjectSources: extensionPolicy.allowProjectSources
       })
       await CustomAgentRegistry.initialize(runtimeCwd(), {
+        config: extensionPolicy.config,
         allowProjectSources: extensionPolicy.allowProjectSources
       })
       const skillCount = skillRegistry.isReady() ? skillRegistry.list().length : 0
@@ -345,6 +346,7 @@ export const authoringCommands = [
         reload: async (context) => {
           const extensionPolicy = resolveExtensionPolicy(context.configState)
           await CustomAgentRegistry.initialize(runtimeCwd(), {
+            config: extensionPolicy.config,
             allowProjectSources: extensionPolicy.allowProjectSources
           })
         },

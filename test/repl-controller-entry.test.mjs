@@ -14,6 +14,7 @@ test("runReplController uses tui path when stdio are tty", async () => {
     mcpStatusLines: ["x"],
     stdout: { isTTY: true },
     stdin: { isTTY: true },
+    term: "xterm-256color",
     clearScreenFn() {
       used = "clear"
     },
