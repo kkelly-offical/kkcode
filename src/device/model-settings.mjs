@@ -31,7 +31,12 @@ export async function discoverDeviceModels(service, params) {
     const validation = validateConfig(state.config)
     if (!validation.valid) throw new ProtocolError('invalid_config', validation.errors.join('; '))
   }
-  return discoverModelsForProvider(state, { providerName: name, refresh: params.refresh !== false })
+  const catalog = await discoverModelsForProvider(state, { providerName: name, refresh: params.refresh !== false })
+  // Every entry declares its provenance: auto-discovered from the provider
+  // (network/disk cache) or the manually maintained config fallback list. Newer
+  // kernels already mark entries; fill the marker on older ones.
+  const origin = catalog.source === 'config' ? 'manual' : 'auto'
+  return { ...catalog, models: catalog.models.map(model => ({ origin, ...model })) }
 }
 export async function updateDeviceSettings(service, patch) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new ProtocolError('invalid_config', 'config object required')
