@@ -74,16 +74,16 @@ unless intentionally deleting this lab's account/database data.
   The final transferred foreground hub was stopped and became offline.
 - Installed npm package: version 1.0.1 and the public kernel SDK, browser-safe SDK
   client and protocol exports all load outside the repository.
-- Latest local Node suite: 2,597 tests / 2,596 passed / 1 skipped / 0 failed. Lint,
+- Latest local Node suite: 2,600 tests / 2,599 passed / 1 macOS-only test skipped / 0 failed. Lint,
   kernel/Web typechecks, import-boundary/stdout checks, version policy and source
   secret scan passed. Installed package/SDK checks pass (456 packaged files).
 
-Final artifact hashes and hosted Windows/macOS job results are recorded in the
-implementation ledger after their corresponding checks finish. Local tarballs
+Final artifact hashes and the successful four-job Linux/Windows/macOS matrix are
+recorded in the [implementation ledger](implementation-1.0.1.md). Local tarballs
 are test artifacts, not npm publications or release tags.
 
 The successful expanded run is
-`/root/.local/share/kkcode-enterprise-runs/integration-lZtBuw`.
+`/root/.local/share/kkcode-enterprise-runs/integration-yD0Dtj`.
 Its configuration, credentials and Android test fixture are in its protected
 `.kkcode/` subdirectory; `workspace/` and screenshots contain only test material.
 New runs use this sibling runs directory, not the lab's protected credential root.
@@ -123,16 +123,18 @@ the user's global proxy or trust settings.
 Replay/request limits, device and canonical-history cross-process locking,
 unbinding/explicit transfer, child approvals (including worker IPC), command
 parity, attachments and safe Git branches are implemented and tested. Gateway
-multi-replica routing, actual PostgreSQL failover/recovery drills, encrypted
+multi-replica routing, actual gateway-process failover and PostgreSQL-connection recovery drills, encrypted
 backup/restore and real Keycloak/Dex login are documented in
 `enterprise-ha-recovery.md`; the persistent two-port demo intentionally remains
 single-gateway, while the HA fault-injection lab uses separate temporary nodes.
 
-Hosted Windows/macOS acceptance is tracked on the dedicated acceptance branch.
+Hosted Windows/macOS acceptance passed on the dedicated acceptance branch:
+[run 35621382694](https://github.com/kkelly-offical/kkcode/actions/runs/35621382694),
+tested code `ba35f70` (all four Linux/Windows/macOS jobs successful).
 The first runs uncovered a case-insensitive Web import collision, Windows
 submodule path comparison and child-process termination issues; fixes have their
-own regression tests rather than platform skips. Refer to the final CI result,
-not a Linux pass, for platform acceptance.
+own regression tests rather than platform skips. The ledger records each
+platform's actual counts and the operating-system-specific skip boundaries.
 
 Production DNS/TLS, database infrastructure HA, external SSO tenant provisioning,
 off-machine backup/key custody and physical-device/store review remain deployment
