@@ -674,7 +674,7 @@ update:
 
 **Current stable version / 当前稳定版本**: `v1.0.0`
 
-**Opt-in preview / 自愿试用预览版**: `v1.0.1-preview.0`
+**Opt-in preview / 自愿试用预览版**: `v1.0.1-preview.1`
 
 ```sh
 npm install -g @kkelly-offical/kkcode@preview
@@ -682,8 +682,12 @@ kkcode --version
 ```
 
 The preview adds WebUI/Host, enterprise OIDC/Relay, native Android remote control,
-multi-client approvals, attachments and guarded Git branches. The npm `latest`
-channel remains on `1.0.0`. See the [preview guide](docs/release-1.0.1-preview.0.md)
+multi-client approvals, attachments and guarded Git branches. The second preview
+adds SSE event streams, tolerant home-root folder browsing (credential protection
+unchanged), Web/Android model/mode/permission selectors with dual themes, the
+controlled terminal status mode, and agent workflow/tools compatibility fixes with
+model-catalog origin markers. The npm `latest` channel remains on `1.0.0`. See the
+[preview guide](docs/release-1.0.1-preview.1.md)
 for migration, Android installation, enterprise deployment and acceptance limits.
 预览版需主动安装，不会替换稳定版渠道；首次启用远控前请阅读账号归属和备份说明。
 
