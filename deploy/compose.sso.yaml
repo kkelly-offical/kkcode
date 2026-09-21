@@ -1,0 +1,28 @@
+services:
+  sso:
+    image: quay.io/keycloak/keycloak:26.6
+    command: ["start", "--http-enabled=true", "--proxy-headers=xforwarded"]
+    environment:
+      KC_HOSTNAME: ${KKCODE_SSO_ORIGIN:?SSO HTTPS origin required}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://sso-database:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${SSO_DB_PASSWORD:?set SSO_DB_PASSWORD}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${SSO_ADMIN_USER:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${SSO_ADMIN_PASSWORD:?set SSO_ADMIN_PASSWORD}
+    ports: ["127.0.0.1:18273:8080"]
+    depends_on:
+      sso-database: { condition: service_healthy }
+  sso-database:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${SSO_DB_PASSWORD}
+    volumes: ["sso-database:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 5s
+      retries: 20
+volumes:
+  sso-database:

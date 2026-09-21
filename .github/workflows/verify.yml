@@ -36,3 +36,16 @@ jobs:
       # 让环回归在 CI 矩阵里一眼定位（只加步骤，不改既有门禁）。
       - run: node scripts/check-import-cycles.mjs
       - run: npm run release:verify
+  web-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run version:check
+      - run: npm run typecheck:web
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:web

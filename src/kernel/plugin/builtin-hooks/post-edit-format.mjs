@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../../core/runtime-context.mjs"
 // Post-edit auto-format hook
 // Runs prettier on JS/TS/CSS/JSON files after edit, if prettier is installed
 
@@ -66,7 +67,7 @@ export default {
       const formattable = files.filter(f => FORMATTABLE.test(f))
       if (formattable.length === 0) return payload
 
-      const root = cwd || process.cwd()
+      const root = cwd || runtimeCwd()
 
       // Check if project-local prettier is available.
       const invocation = await prettierInvocation(root)

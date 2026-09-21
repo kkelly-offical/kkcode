@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import path from "node:path"
 import { access, readFile, readdir } from "node:fs/promises"
 import { userRootDir } from "../../storage/paths.mjs"
@@ -245,7 +246,7 @@ async function candidateManifestFiles(cwd) {
   })
 }
 
-export async function discoverLocalPluginManifests(cwd = process.cwd(), config = {}, {
+export async function discoverLocalPluginManifests(cwd = runtimeCwd(), config = {}, {
   allowProjectSources = true
 } = {}) {
   const compatCandidates = await discoverCompatPluginManifestCandidates(cwd, config)

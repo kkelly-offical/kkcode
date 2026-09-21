@@ -173,7 +173,7 @@ async function runBranchPublish({ handler = null, extraArgs = [] } = {}) {
   defaultPermissionPromptChannel.setPermissionPromptHandler(handler)
 
   try {
-    await createReviewCommand().parseAsync(["node", "kkcode", "branch", "--pr", PR_URL, "--publish", ...extraArgs])
+    await createReviewCommand({ promptHandlers: () => handler ? { onPermissionPrompt: handler } : null }).parseAsync(["node", "kkcode", "branch", "--pr", PR_URL, "--publish", ...extraArgs])
     const exitCode = process.exitCode ?? 0
     let trust = null
     try {

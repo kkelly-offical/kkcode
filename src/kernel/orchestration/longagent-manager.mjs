@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import path from "node:path"
 import { mkdir, writeFile, readFile, unlink, stat } from "node:fs/promises"
 import { readJson, writeJson } from "../../storage/json-store.mjs"
@@ -5,15 +6,15 @@ import { projectRootDir } from "../../storage/paths.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 
-function statePath(cwd = process.cwd()) {
+function statePath(cwd = runtimeCwd()) {
   return path.join(projectRootDir(cwd), "longagent-state.json")
 }
 
-function lockPath(cwd = process.cwd()) {
+function lockPath(cwd = runtimeCwd()) {
   return statePath(cwd) + ".lock"
 }
 
-async function ensure(cwd = process.cwd()) {
+async function ensure(cwd = runtimeCwd()) {
   await mkdir(projectRootDir(cwd), { recursive: true })
 }
 
@@ -90,17 +91,17 @@ async function releaseLock(cwd) {
   await unlink(lockPath(cwd)).catch(() => {})
 }
 
-async function read(cwd = process.cwd()) {
+async function read(cwd = runtimeCwd()) {
   await ensure(cwd)
   return readJson(statePath(cwd), { sessions: {} })
 }
 
-async function write(data, cwd = process.cwd()) {
+async function write(data, cwd = runtimeCwd()) {
   await ensure(cwd)
   await writeJson(statePath(cwd), data)
 }
 
-async function updateSessionState(sessionId, patch, cwd = process.cwd()) {
+async function updateSessionState(sessionId, patch, cwd = runtimeCwd()) {
   const state = await read(cwd)
   const current = state.sessions[sessionId] || {
     sessionId,
@@ -134,7 +135,7 @@ async function updateSessionState(sessionId, patch, cwd = process.cwd()) {
 }
 
 export const LongAgentManager = {
-  async update(sessionId, patch, cwd = process.cwd(), config = null) {
+  async update(sessionId, patch, cwd = runtimeCwd(), config = null) {
     const lockMs = Number(config?.agent?.longagent?.lock_timeout_ms || LOCK_TIMEOUT_MS)
     await acquireLock(cwd, lockMs)
     try {
@@ -143,15 +144,15 @@ export const LongAgentManager = {
       await releaseLock(cwd)
     }
   },
-  async get(sessionId, cwd = process.cwd()) {
+  async get(sessionId, cwd = runtimeCwd()) {
     const state = await read(cwd)
     return state.sessions[sessionId] || null
   },
-  async list(cwd = process.cwd()) {
+  async list(cwd = runtimeCwd()) {
     const state = await read(cwd)
     return Object.values(state.sessions).sort((a, b) => b.updatedAt - a.updatedAt)
   },
-  async stop(sessionId, cwd = process.cwd()) {
+  async stop(sessionId, cwd = runtimeCwd()) {
     await acquireLock(cwd)
     try {
       const existing = await this.get(sessionId, cwd)
@@ -163,7 +164,7 @@ export const LongAgentManager = {
       await releaseLock(cwd)
     }
   },
-  async clearStop(sessionId, cwd = process.cwd()) {
+  async clearStop(sessionId, cwd = runtimeCwd()) {
     await acquireLock(cwd)
     try {
       const existing = await this.get(sessionId, cwd)
@@ -178,7 +179,7 @@ export const LongAgentManager = {
    * Prevents TOCTOU races (e.g. read-status → git-merge).
    * Includes heartbeat to prevent stale detection during long operations.
    */
-  async withLock(fn, cwd = process.cwd(), config = null) {
+  async withLock(fn, cwd = runtimeCwd(), config = null) {
     const lockMs = Number(config?.agent?.longagent?.lock_timeout_ms || LOCK_TIMEOUT_MS)
     await acquireLock(cwd, lockMs)
     // Heartbeat: touch lock file periodically to prevent stale detection

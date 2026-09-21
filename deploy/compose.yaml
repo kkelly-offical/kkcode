@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: kkcode
+      POSTGRES_USER: kkcode
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes: ["database:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kkcode"]
+      interval: 5s
+      retries: 20
+  gateway:
+    build: { context: .., dockerfile: deploy/Dockerfile }
+    environment:
+      DATABASE_URL: postgresql://kkcode:${POSTGRES_PASSWORD}@postgres:5432/kkcode
+      KKCODE_GATEWAY_ORIGIN: ${KKCODE_GATEWAY_ORIGIN:?HTTPS origin required}
+      KKCODE_OIDC_ISSUER: ${KKCODE_OIDC_ISSUER:?OIDC issuer required}
+      KKCODE_OIDC_CLIENT_ID: ${KKCODE_OIDC_CLIENT_ID:-kkcode-gateway}
+      KKCODE_OIDC_CLIENT_SECRET: ${KKCODE_OIDC_CLIENT_SECRET:?OIDC client secret required}
+      KKCODE_OIDC_ROLES_CLAIM: ${KKCODE_OIDC_ROLES_CLAIM:-realm_access.roles}
+      KKCODE_OIDC_ADMIN_ROLE: ${KKCODE_OIDC_ADMIN_ROLE:-kkcode-admin}
+      KKCODE_OIDC_SCOPES: ${KKCODE_OIDC_SCOPES:-openid profile email}
+      KKCODE_AUDIT_RETENTION_DAYS: ${KKCODE_AUDIT_RETENTION_DAYS:-90}
+      KKCODE_AUDIT_MAX_RECORDS: ${KKCODE_AUDIT_MAX_RECORDS:-100000}
+      KKCODE_ORGANIZATION: ${KKCODE_ORGANIZATION:-Personal}
+    ports: ["127.0.0.1:18272:18272"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: unless-stopped
+volumes:
+  database:

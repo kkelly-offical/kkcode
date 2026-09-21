@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../../kernel/index.mjs"
 /**
  * 权限与工作区信任命令。
  *
@@ -13,7 +14,6 @@
  */
 
 import {
-  defaultPermissionEngine,
   persistTrust,
   revokeTrust,
   normalizePermissionLevel,
@@ -39,10 +39,10 @@ export const permissionCommands = [
     desc: "trust this workspace",
     argMode: "none",
     run: async ({ print, ctx, setCustomCommands }) => {
-      await persistTrust(process.cwd())
+      await persistTrust(runtimeCwd())
       ctx.trustState = { trusted: true }
       const extensionPolicy = await ctx.kernel.applyTrustState(ctx.trustState)
-      setCustomCommands(await loadCustomCommands(process.cwd(), {
+      setCustomCommands(await loadCustomCommands(runtimeCwd(), {
         allowProjectSources: extensionPolicy.allowProjectSources
       }))
       print("workspace trusted", { channel: "notice", topic: "command" })
@@ -55,10 +55,10 @@ export const permissionCommands = [
     desc: "revoke workspace trust",
     argMode: "none",
     run: async ({ print, ctx, setCustomCommands }) => {
-      await revokeTrust(process.cwd())
+      await revokeTrust(runtimeCwd())
       ctx.trustState = { trusted: false }
       const extensionPolicy = await ctx.kernel.applyTrustState(ctx.trustState)
-      setCustomCommands(await loadCustomCommands(process.cwd(), {
+      setCustomCommands(await loadCustomCommands(runtimeCwd(), {
         allowProjectSources: extensionPolicy.allowProjectSources
       }))
       print("workspace trust revoked — project tools and extensions are now blocked", { channel: "notice", topic: "command" })
@@ -150,7 +150,7 @@ export const permissionCommands = [
         }
         permission.rules = outcome.rules
         try {
-          const target = pickConfigPathForScope("user", ctx.configState?.source, process.cwd())
+          const target = pickConfigPathForScope("user", ctx.configState?.source, runtimeCwd())
           const existing = await readConfigFile(target)
           const persisted = removeLearnedRules(existing?.permission?.rules, all ? { all: true } : { index: Number(arg) })
           await writeConfigFile(target, {
@@ -216,9 +216,8 @@ export const permissionCommands = [
       }
 
       if (sub === "session-clear" || sub === "reset") {
-        // 进程级默认引擎是 2b 过渡期 executeTurn 路径实际读的那份（facade 头注
-        // 第 3 组）；清实例引擎的清不到回合判定在用的缓存。
-        defaultPermissionEngine.clearSession(state.sessionId)
+        // Clear this kernel only; another device workspace must retain its cache.
+        ctx.kernel.permissions.clearSession(state.sessionId)
         print(`permission session cache cleared: ${state.sessionId}`, { channel: "notice", topic: "command" })
         return { exit: false }
       }

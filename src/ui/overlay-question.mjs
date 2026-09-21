@@ -18,6 +18,7 @@
 
 import { maskSecretText } from "../util/text-layout.mjs"
 import { scrollWindow, filterOverlayItems, markMatchRanges } from "./overlay-select.mjs"
+import { promptSourceLabel } from './prompt-source.mjs'
 
 const SECRET_MASK = "•"
 
@@ -84,6 +85,8 @@ export function renderQuestionOverlay({
     : "↑↓ select  Enter confirm  Tab switch  Esc skip  Ctrl+Enter submit all"
   lines.push(paint(`Question (${questionIndex + 1}/${qCount})  ${hintKeys}`, theme.semantic.info, { bold: true }))
   lines.push(paint(`┌${"─".repeat(rule)}┐`, theme.base.border))
+  const sourceLabel = promptSourceLabel(pendingQuestion)
+  if (sourceLabel) row(`source: ${sourceLabel}`, theme.base.muted)
 
   if (qCount > 1) {
     let tabBar = ""

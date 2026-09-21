@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import { writeFile, mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { requestProvider } from "../provider/router.mjs"
@@ -106,7 +107,7 @@ export async function saveAgentGlobal(filename, content) {
 /**
  * Save an agent definition to the project agents directory.
  */
-export async function saveAgentProject(filename, content, cwd = process.cwd()) {
+export async function saveAgentProject(filename, content, cwd = runtimeCwd()) {
   const dir = join(cwd, ".kkcode", "agents")
   await mkdir(dir, { recursive: true })
   const filePath = join(dir, filename)

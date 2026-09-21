@@ -1,0 +1,36 @@
+# docker compose -f deploy/compose.yaml -f deploy/compose.ha.yaml up -d --build
+# TLS ingress must forward the canonical public Host to 127.0.0.1:18275.
+services:
+  gateway:
+    environment:
+      KKCODE_CLUSTER_ADDRESS: http://gateway:18274
+      KKCODE_CLUSTER_HOST: 0.0.0.0
+      KKCODE_CLUSTER_SECRET: ${KKCODE_CLUSTER_SECRET:?32-byte hexadecimal shared secret required}
+      KKCODE_CLUSTER_NODE_ID: gateway-a
+  gateway-2:
+    build: { context: .., dockerfile: deploy/Dockerfile }
+    environment:
+      DATABASE_URL: postgresql://kkcode:${POSTGRES_PASSWORD}@postgres:5432/kkcode
+      KKCODE_GATEWAY_ORIGIN: ${KKCODE_GATEWAY_ORIGIN:?HTTPS origin required}
+      KKCODE_OIDC_ISSUER: ${KKCODE_OIDC_ISSUER:?OIDC issuer required}
+      KKCODE_OIDC_CLIENT_ID: ${KKCODE_OIDC_CLIENT_ID:-kkcode-gateway}
+      KKCODE_OIDC_CLIENT_SECRET: ${KKCODE_OIDC_CLIENT_SECRET:?OIDC client secret required}
+      KKCODE_OIDC_ROLES_CLAIM: ${KKCODE_OIDC_ROLES_CLAIM:-realm_access.roles}
+      KKCODE_OIDC_ADMIN_ROLE: ${KKCODE_OIDC_ADMIN_ROLE:-kkcode-admin}
+      KKCODE_OIDC_SCOPES: ${KKCODE_OIDC_SCOPES:-openid profile email}
+      KKCODE_ORGANIZATION: ${KKCODE_ORGANIZATION:-Personal}
+      KKCODE_CLUSTER_ADDRESS: http://gateway-2:18274
+      KKCODE_CLUSTER_HOST: 0.0.0.0
+      KKCODE_CLUSTER_SECRET: ${KKCODE_CLUSTER_SECRET}
+      KKCODE_CLUSTER_NODE_ID: gateway-b
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: unless-stopped
+  gateway-balancer:
+    image: caddy:2-alpine
+    ports: ["127.0.0.1:18275:18275"]
+    volumes: ["./Caddyfile.ha:/etc/caddy/Caddyfile:ro"]
+    environment:
+      KKCODE_GATEWAY_HOST: ${KKCODE_GATEWAY_HOST:?Canonical public host including port required for health checks}
+    depends_on: [gateway, gateway-2]
+    restart: unless-stopped

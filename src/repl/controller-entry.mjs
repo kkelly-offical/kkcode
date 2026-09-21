@@ -12,9 +12,10 @@ export async function runReplController({
   clearScreenFn,
   stdout = process.stdout,
   stdin = process.stdin,
+  term = process.env.TERM,
   log = console.log
 }) {
-  if (stdout.isTTY && stdin.isTTY) {
+  if (stdout.isTTY && stdin.isTTY && term !== 'dumb') {
     await startTuiRepl({
       ctx,
       state,

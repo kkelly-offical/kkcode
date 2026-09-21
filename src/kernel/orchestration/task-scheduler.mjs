@@ -1,3 +1,5 @@
+import { currentRuntime, runtimeCwd } from "../core/runtime-context.mjs"
+import { randomUUID } from 'node:crypto'
 import { BackgroundManager } from "./background-manager.mjs"
 import { resolveSubagent } from "./subagent-router.mjs"
 import { flushNow, forkSession, getSession } from "../session/store.mjs"
@@ -109,7 +111,7 @@ function validateDelegationArgs(args = {}, executionMode) {
   if (executionMode === "fork_context" && !isReadOnlyWriteScope(writeScope) && !isContinuation) {
     return "task.execution_mode=fork_context is reserved for read-only sidecar work; use fresh_agent for implementation"
   }
-  if (args.run_in_background && args.allow_question === true) {
+  if (args.run_in_background && args.allow_question === true && !currentRuntime()?.questionPrompt?.hasPromptHandler()) {
     return "task.run_in_background does not support allow_question=true"
   }
   const isolation = String(args.isolation || "default").trim().toLowerCase() || "default"
@@ -226,7 +228,9 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
       return { error: `${subagent.reason}. Available subagent types: ${[...new Set(known)].sort().join(", ")}` }
     }
 
-    const subSessionId = String(args.session_id || `sub_${parentSessionId}_${Date.now()}`)
+    // Millisecond timestamps collide under task_group parallel dispatch. IDs
+    // are opaque; ancestry is persisted separately and never parsed from them.
+    const subSessionId = String(args.session_id || `sub_${String(parentSessionId).slice(0, 70)}_${randomUUID()}`)
     const prompt = buildDelegationPrompt({ ...args, execution_mode: executionMode })
 
     // 优先级：子智能体级覆盖 > models.subagent 角色 > 当前会话模型
@@ -240,8 +244,8 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
       provider: subProvider,
       role: subagent,
       workspace: {
-        root: process.cwd(),
-        cwd: process.cwd(),
+        root: runtimeCwd(),
+        cwd: runtimeCwd(),
         isolation,
         writeScope: args.write_scope || null
       },
@@ -309,7 +313,7 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
           parentSessionId,
           subSessionId,
           prompt,
-          cwd: process.cwd(),
+          cwd: runtimeCwd(),
           model: subModel,
           providerType: subProvider,
           executionMode,

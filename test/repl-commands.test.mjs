@@ -57,6 +57,7 @@ function makeCmd(patch = {}) {
       themeState: { theme: DEFAULT_THEME },
       trustState: { trusted: false },
       kernel: {
+        permissions: { clearSession() {} },
         turns: { newSessionId },
         sessions: {
           listSessions: async () => [],

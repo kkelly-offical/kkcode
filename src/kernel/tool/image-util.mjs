@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import { readFile, unlink, writeFile as fsWriteFile } from "node:fs/promises"
 import { access } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os"
@@ -225,7 +226,7 @@ export function normalizeDroppedPath(raw, { home = homedir() } = {}) {
  *   Bare http(s) URLs ending in image extensions
  * Returns { text, imagePaths, imageUrls } where text has image refs removed.
  */
-export function extractImageRefs(text, cwd = process.cwd()) {
+export function extractImageRefs(text, cwd = runtimeCwd()) {
   const raw = String(text || "")
   const imagePaths = []
   const imageUrls = []

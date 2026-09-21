@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import { BackgroundManager } from "./background-manager.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
@@ -305,7 +306,7 @@ async function launchTask({
         model,
         provider: providerType,
         role: stageSubagent,
-        workspace: { root: process.cwd(), cwd: process.cwd(), isolation: "default", writeScope: null },
+        workspace: { root: runtimeCwd(), cwd: runtimeCwd(), isolation: "default", writeScope: null },
         limits: {},
         toolContext: { stageId: stage.stageId, logicalTaskId: task.taskId }
       })
@@ -315,7 +316,7 @@ async function launchTask({
     parentSessionId: sessionId,
     subSessionId: logicalTask.subSessionId,
     prompt: enrichedPrompt,
-    cwd: process.cwd(),
+    cwd: runtimeCwd(),
     model,
     providerType,
     subagent: task.subagentType || autoAgent || null,

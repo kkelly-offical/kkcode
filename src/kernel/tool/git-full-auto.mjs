@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import path from "node:path"
 import { spawn } from "node:child_process"
 import {
@@ -134,7 +135,7 @@ export const gitAutoCommitTool = {
     required: []
   },
   async execute(args, ctx) {
-    const cwd = ctx.cwd || process.cwd()
+    const cwd = ctx.cwd || runtimeCwd()
 
     // 检查全自动化模式
     if (!isFullAutoMode(ctx.config)) {
@@ -273,7 +274,7 @@ export const gitAutoPushTool = {
     required: []
   },
   async execute(args, ctx) {
-    const cwd = ctx.cwd || process.cwd()
+    const cwd = ctx.cwd || runtimeCwd()
 
     // 检查全自动化模式
     if (!isFullAutoMode(ctx.config)) {
@@ -376,7 +377,7 @@ export const gitAutoStageTool = {
     required: []
   },
   async execute(args, ctx) {
-    const cwd = ctx.cwd || process.cwd()
+    const cwd = ctx.cwd || runtimeCwd()
 
     // 检查全自动化模式
     if (!isFullAutoMode(ctx.config)) {
@@ -446,7 +447,7 @@ export const gitFullAutoStatusTool = {
     required: []
   },
   async execute(args, ctx) {
-    const cwd = ctx.cwd || process.cwd()
+    const cwd = ctx.cwd || runtimeCwd()
     const policyMode = getPolicyMode(ctx.config)
     const isGit = await isGitRepo(cwd)
 

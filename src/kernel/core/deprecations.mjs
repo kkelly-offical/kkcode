@@ -1,3 +1,4 @@
+import { currentRuntime } from './runtime-context.mjs'
 /**
  * 0.4.0 兼容层的一次性弃用提示。
  *
@@ -13,7 +14,7 @@
 
 // 旧别名的移除目标。曾写 0.5.0，但三套别名一路活到了 0.9.x —— 提示语里
 // 承诺一个已经过去的版本比不承诺更糟。现锚定到 1.0.0：大版本才允许破坏兼容。
-const REMOVAL_VERSION = "1.0.0"
+const REMOVAL_VERSION = "a future explicitly announced release"
 
 const seen = new Set()
 const listeners = new Set()
@@ -69,11 +70,13 @@ export function noteRenamed(key, { from, to, kind = "配置项" }) {
 export function deprecatedSingletonAlias(key, message, instance, { removal = "1.x" } = {}) {
   return new Proxy(instance, {
     get(target, prop, receiver) {
-      const value = Reflect.get(target, prop, receiver)
+      const runtimeKey = { 'event-bus': 'events', 'permission-engine': 'permissions', 'tool-registry': 'tools', 'skill-registry': 'skills', 'hook-bus': 'hooks', 'mcp-registry': 'mcp' }[key.replace('kernel.singleton.', '')]
+      const actual = currentRuntime()?.[runtimeKey] || target
+      const value = Reflect.get(actual, prop, actual)
       if (typeof value !== "function") return value
       return function aliasedSingletonMethod(...args) {
-        noteDeprecation(key, message, { removal })
-        return Reflect.apply(value, target, args)
+        if (!currentRuntime()) noteDeprecation(key, message, { removal })
+        return Reflect.apply(value, actual, args)
       }
     }
   })

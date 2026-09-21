@@ -1,4 +1,6 @@
+import { runtimeDependency } from '../core/runtime-context.mjs'
 import { noteDeprecation } from "../core/deprecations.mjs"
+import { awaitPromptAnswer } from '../core/prompt-signal.mjs'
 
 /**
  * 计划做完之后的去向。**顺序即编号** —— 下面解析答案时的数字回落由这个数组
@@ -28,6 +30,8 @@ const PLAN_ACTIONS = Object.freeze([
  */
 export function createQuestionPromptChannel() {
   let customPromptHandler = null
+  let interceptor = null
+  function setQuestionPromptInterceptor(handler) { interceptor = typeof handler === 'function' ? handler : null }
 
   function setQuestionPromptHandler(handler) {
     customPromptHandler = typeof handler === "function" ? handler : null
@@ -47,17 +51,18 @@ export function createQuestionPromptChannel() {
    * 不能把空答案当成用户的选择。
    */
   function hasPromptHandler() {
-    return customPromptHandler !== null
+    return Boolean(customPromptHandler || interceptor)
   }
 
-  async function askQuestionInteractive({ questions }) {
+  async function askQuestionInteractive({ questions, sessionId = runtimeDependency('sessionId', null), signal = runtimeDependency('signal', null) }) {
     if (!Array.isArray(questions) || questions.length === 0) {
       return {}
     }
 
     // 唯一的提问途径：宿主注册的 handler（TUI 浮层等）。
-    if (customPromptHandler) {
-      const answers = await customPromptHandler({ questions })
+    if (customPromptHandler || interceptor) {
+      const request = { questions, sessionId, signal, parentSessionId: runtimeDependency('parentSessionId', null), subagent: runtimeDependency('subagent', null) }
+      const answers = await awaitPromptAnswer(() => interceptor ? interceptor(request, customPromptHandler) : customPromptHandler(request), signal, {})
       if (answers && typeof answers === "object") return answers
     }
 
@@ -70,7 +75,7 @@ export function createQuestionPromptChannel() {
     // 没有人能回答这个问题。0.3.x 会拿到空答案，把它当成「要求修改但没给
     // 理由」，模型于是反复重写计划，直到步数耗尽——一次 `kkcode chat
     // --mode plan` 能落下五六个计划文件。这里直接收口。
-    if (!customPromptHandler) {
+    if (!customPromptHandler && !interceptor) {
       return {
         approved: true,
         requestChanges: false,
@@ -113,6 +118,7 @@ export function createQuestionPromptChannel() {
 
   return {
     setQuestionPromptHandler,
+    setQuestionPromptInterceptor,
     getQuestionPromptHandler,
     hasPromptHandler,
     askQuestionInteractive,
@@ -131,23 +137,23 @@ const noteAlias = () => noteDeprecation(ALIAS_KEY, ALIAS_MESSAGE, { removal: "1.
 /** 兼容别名（deprecated）：旧 import 路径继续工作，调用经 deprecations.mjs 记录。 */
 export function setQuestionPromptHandler(handler) {
   noteAlias()
-  return defaultQuestionPromptChannel.setQuestionPromptHandler(handler)
+  return runtimeDependency('questionPrompt', defaultQuestionPromptChannel).setQuestionPromptHandler(handler)
 }
 
 /** 兼容别名（deprecated）。 */
 export function hasPromptHandler() {
   noteAlias()
-  return defaultQuestionPromptChannel.hasPromptHandler()
+  return runtimeDependency('questionPrompt', defaultQuestionPromptChannel).hasPromptHandler()
 }
 
 /** 兼容别名（deprecated）。 */
 export function askQuestionInteractive(request) {
   noteAlias()
-  return defaultQuestionPromptChannel.askQuestionInteractive(request)
+  return runtimeDependency('questionPrompt', defaultQuestionPromptChannel).askQuestionInteractive(request)
 }
 
 /** 兼容别名（deprecated）。 */
 export function askPlanApproval(request) {
   noteAlias()
-  return defaultQuestionPromptChannel.askPlanApproval(request)
+  return runtimeDependency('questionPrompt', defaultQuestionPromptChannel).askPlanApproval(request)
 }

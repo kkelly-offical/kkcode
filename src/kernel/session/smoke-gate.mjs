@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { readFile, access } from "node:fs/promises"
@@ -114,7 +115,7 @@ export async function resolveSmokeTarget(cwd, config) {
  * @returns {Promise<{enabled: boolean, status: string, reason: string, output?: string, evidence?: object}>}
  *   形状与其余五道门禁一致（见 gate-contract.mjs 的契约说明）。
  */
-export async function checkSmokeGate({ cwd = process.cwd(), config = {} } = {}) {
+export async function checkSmokeGate({ cwd = runtimeCwd(), config = {} } = {}) {
   if (config?.agent?.longagent?.usability_gates?.smoke?.enabled === false) {
     return { enabled: false, status: "disabled", reason: "smoke gate disabled" }
   }

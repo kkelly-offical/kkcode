@@ -60,6 +60,7 @@ export const providerCommands = [
         // 热更新内存配置，让新 provider 立即可用（写盘的是原始 YAML，内存是 merged）
         if (!ctx.configState.config.provider) ctx.configState.config.provider = {}
         Object.assign(ctx.configState.config.provider, result.configPatch.provider)
+        if (!providersConfigured.includes(result.name)) providersConfigured.push(result.name)
         print(`provider "${result.name}" 已保存到 ~/.kkcode/config.yaml`, { channel: "notice", topic: "command", tone: "success" })
         await switchActiveProvider(result.name)
         return { exit: false }

@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import { stat as statFs, readFile } from "node:fs/promises"
 import path from "node:path"
 import { readGate, isDecisiveGate, isPassingGateStatus } from "./gate-contract.mjs"
@@ -71,7 +72,7 @@ export async function verifyCriterion(criterion, ctx = {}) {
     return done(CRITERION_MANUAL, criterion.spec?.question || criterion.text)
   }
 
-  const cwd = ctx.cwd || process.cwd()
+  const cwd = ctx.cwd || runtimeCwd()
   const statFn = ctx.deps?.stat || statFs
   const readFn = ctx.deps?.readFile || readFile
   const runFn = ctx.deps?.runGateCommand || runGateCommand

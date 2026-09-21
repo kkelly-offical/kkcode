@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import { newId } from "../core/types.mjs"
 
 function freezeObject(value) {
@@ -25,8 +26,8 @@ export function createRunSpec(input = {}) {
       maxSteps: Number(role.maxSteps || role.maxTurns || 0) || null
     },
     workspace: {
-      root: workspace.root || process.cwd(),
-      cwd: workspace.cwd || workspace.root || process.cwd(),
+      root: workspace.root || runtimeCwd(),
+      cwd: workspace.cwd || workspace.root || runtimeCwd(),
       isolation: workspace.isolation || "default",
       writeScope: workspace.writeScope || null
     },

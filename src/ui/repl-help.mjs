@@ -55,6 +55,8 @@ export function buildHelpText({ providers = [], userRootPath = "" } = {}) {
   lines.push(row("$<skill> [args]", "invoke a registered skill"))
   lines.push(row("/create-agent <desc>", "generate a new sub-agent via AI"))
   lines.push(row("/reload", "reload commands, skills, agents"))
+  lines.push(row("/mcp [reload]", "inspect MCP connections or reconnect"))
+  lines.push(row("/rewind", "remove the last conversation turn; files stay unchanged"))
 
   lines.push("")
   lines.push(row("/help,/h,/?", "show this help"))

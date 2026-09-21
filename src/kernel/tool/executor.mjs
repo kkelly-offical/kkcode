@@ -15,12 +15,13 @@ function parseImagePayload(raw) {
 }
 
 import { EventBus } from "../core/events.mjs"
+import { validateToolArguments } from './validate-args.mjs'
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { withAudit } from "./audit-wrapper.mjs"
 import { autoSnapshotBeforeEdit } from "../session/checkpoint.mjs"
 import { buildMutationObservability } from "../../observability/edit-diagnostics.mjs"
 
-const FILE_EDIT_TOOLS = new Set(["write", "edit", "multiedit", "patch", "notebookedit"])
+const FILE_EDIT_TOOLS = new Set(["write", "edit", "multiedit", "patch", "notebookedit", "move", "copy", "remove", "mkdir", "archive", "git_apply_patch"])
 // 同一 turn 可能并行触发多个编辑工具。只记一个 boolean 会让第二个工具越过仍在
 // 进行的快照，因此这里缓存 Promise：首个编辑创建，所有并发编辑都等待同一份。
 const snapshotPromises = new Map()
@@ -185,6 +186,7 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
           await snapshotPromise
         }
 
+        validateToolArguments(tool, args || {})
         const raw = await tool.execute(args || {}, context)
         const output = rawOutput(raw)
         const metadata = raw?.metadata && typeof raw.metadata === "object" ? raw.metadata : {}

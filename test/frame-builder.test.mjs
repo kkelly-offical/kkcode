@@ -23,6 +23,13 @@ import { PACKAGE_VERSION } from "../src/version.mjs"
 
 const THEME = DEFAULT_THEME
 
+test('a delegated permission visibly identifies its source without terminal escapes', () => {
+  const frame = render({ pendingPermission: { tool: 'write', risk: 9, sessionId: 'parent', originSessionId: 'child', sourceLabel: 'reviewer\u001b[2J', parentSessionId: 'parent' } })
+  assert.ok(frame.lines.some(line => stripAnsi(line).includes('source: reviewer')))
+  assert.ok(frame.lines.some(line => stripAnsi(line).includes('child')))
+  assert.equal(frame.lines.some(line => line.includes('\u001b[2J')), false)
+})
+
 function makeUi(patch = {}) {
   return {
     input: "",

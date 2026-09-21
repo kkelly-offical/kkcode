@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import path from "node:path"
 import { access, readFile } from "node:fs/promises"
 
@@ -12,7 +13,7 @@ async function exists(file) {
   }
 }
 
-export async function loadInstructions(cwd = process.cwd()) {
+export async function loadInstructions(cwd = runtimeCwd()) {
   const blocks = []
   for (const file of CANDIDATES) {
     const target = path.join(cwd, file)

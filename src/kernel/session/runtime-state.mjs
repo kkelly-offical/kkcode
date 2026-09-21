@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import { getSession, listSessions } from "./store.mjs"
 import { listRecoverableSessions } from "./recovery.mjs"
 import { auditStats } from "../../storage/audit-store.mjs"
@@ -19,7 +20,7 @@ function summarizeBackgroundCounts(tasks = []) {
   return counts
 }
 
-export async function summarizeSessionRuntimeState({ sessionId = null, cwd = process.cwd(), recoveryEnabled = true } = {}) {
+export async function summarizeSessionRuntimeState({ sessionId = null, cwd = runtimeCwd(), recoveryEnabled = true } = {}) {
   let resolvedSessionId = sessionId
   if (!resolvedSessionId) {
     const sessions = await listSessions({ cwd, limit: 1, includeChildren: true })

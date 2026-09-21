@@ -32,6 +32,7 @@
 import { EVENT_TYPES } from "../kernel/index.mjs"
 import { shouldApplyActiveTurnEvent } from "../ui/event-scope.mjs"
 import { formatTokenCount } from "../theme/status-bar.mjs"
+import { applyPermissionLevel } from './permission-flow.mjs'
 import {
   startThinkingWait,
   startThinkingStream,
@@ -225,6 +226,19 @@ export function subscribeSessionEvents({
 
   return eventBus.subscribe((event) => {
     const { type, payload } = event
+    if (type === 'remote.turn.started' && event.sessionId === state.sessionId) {
+      ui.busy = true; ui.remoteTurn = true
+      ui.turnAbortController = ctx.remoteService?.turns.get(state.sessionId)?.controller || null
+      appendLog(String(payload.prompt || ''), { kind: 'user' })
+      requestRender({ force: true })
+      return
+    }
+    if (type === 'session.configured' && event.sessionId === state.sessionId) {
+      Object.assign(state, { model: payload.model, providerType: payload.providerType, modeId: payload.modeId, ...(payload.mode ? { mode: payload.mode } : {}) })
+      if (payload.approval) ctx.configState.config.permission = applyPermissionLevel(payload.approval, ctx.configState.config.permission || {})
+      requestRender({ force: true })
+      return
+    }
     // 后台任务与子智能体共用同一条总线；不判定归属的话它们的增量会画进当前对话
     if (!shouldApplyActiveTurnEvent(event, {
       sessionId: state.sessionId,
@@ -386,6 +400,7 @@ export function subscribeSessionEvents({
 
       case EVENT_TYPES.TURN_FINISH:
       case EVENT_TYPES.TURN_ERROR:
+        if (ui.remoteTurn) { ui.busy = false; ui.remoteTurn = false; ui.turnAbortController = null }
         finalizeThinking()
         finalizeTextStream(type === EVENT_TYPES.TURN_ERROR ? "error" : undefined)
         // 重连提示要主动撤掉：回合已经结束了，留着它会让人以为还在重试

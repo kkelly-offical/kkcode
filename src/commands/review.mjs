@@ -156,7 +156,7 @@ function printBranchReviewReport(report) {
   for (const error of report.coverage.errors) console.log(`coverage: ${escapeTerminalText(error)}`)
 }
 
-export function createReviewCommand() {
+export function createReviewCommand({ promptHandlers = createBranchReviewPromptHandlers } = {}) {
   const cmd = new Command("review").description("review code changes with risk-first previews")
 
   cmd
@@ -249,7 +249,7 @@ export function createReviewCommand() {
         // 用户永远看不到审批弹窗（M19 审计的唯一漏网）。非 TTY 自动保持确定性收口。
         // --trust 与 chat/ultra 一致：未授信工作区走既有信任流程，不再直接抛
         // "workspace not trusted" 而无旗标可解。
-        const ttyHandlers = createBranchReviewPromptHandlers(options)
+        const ttyHandlers = promptHandlers(options)
         const kernel = await createKernel({
           cwd: process.cwd(),
           trust: Boolean(options.trust),
@@ -313,7 +313,7 @@ export function createReviewCommand() {
             repository: `${source.owner}/${source.repo}`,
             pullRequest: source.number
           })
-          await defaultPermissionEngine.check({
+          await ctx.kernel.permissions.check({
             config: ctx.configState.config,
             sessionId: report.id,
             traceId: report.traceId,

@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import { processTurnLoop } from "./loop.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
@@ -268,7 +269,7 @@ export async function runScaffoldPhase({
   const verified = []
   const missing = []
   for (const file of createdFiles) {
-    const abs = path.isAbsolute(file) ? file : path.join(process.cwd(), file)
+    const abs = path.isAbsolute(file) ? file : path.join(runtimeCwd(), file)
     try {
       await stat(abs)
       verified.push(file)

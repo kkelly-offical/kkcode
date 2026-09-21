@@ -26,8 +26,13 @@ import { PACKAGE_VERSION } from "./version.mjs"
 import { createUpdateCommand } from "./commands/update.mjs"
 import { createModelCommand } from "./commands/model.mjs"
 import { createProviderCommand } from "./commands/provider.mjs"
+import { createRemoteCommand } from './commands/remote.mjs'
 
 async function main() {
+  if (['-web', '--web'].includes(process.argv[2])) {
+    const { runWeb } = await import('./commands/web.mjs')
+    return runWeb(process.argv.slice(2))
+  }
   const hasTrust = process.argv.includes("--trust")
   const hasGithub = process.argv.includes("--github")
 
@@ -86,6 +91,7 @@ async function main() {
   program.addCommand(createUpdateCommand())
   program.addCommand(createModelCommand())
   program.addCommand(createProviderCommand())
+  program.addCommand(createRemoteCommand())
   await program.parseAsync(process.argv)
 }
 

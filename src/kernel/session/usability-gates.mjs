@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import path from "node:path"
 import { access, readFile, writeFile, mkdir } from "node:fs/promises"
 import { runGateCommand, outputSnippet, DEFAULT_GATE_TIMEOUT_MS } from "./gate-command.mjs"
@@ -404,7 +405,7 @@ const isPassingStatus = isPassingGateStatus
 export async function runUsabilityGates({
   sessionId,
   config,
-  cwd = process.cwd(),
+  cwd = runtimeCwd(),
   iteration = 0
 }) {
   const [build, test, review, health, budget, smoke] = await Promise.all([

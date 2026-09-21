@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../../core/runtime-context.mjs"
 // Console.log warning hook
 // Warns when console.log is present in edited production files
 
@@ -19,7 +20,7 @@ export default {
       if (!PRODUCTION_FILE.test(file)) return payload
       if (IGNORE_PATH.test(file)) return payload
 
-      const target = path.resolve(cwd || process.cwd(), file)
+      const target = path.resolve(cwd || runtimeCwd(), file)
       try {
         const content = await readFile(target, "utf8")
         const matches = content.match(/console\.(log|debug|info)\(/g)

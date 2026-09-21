@@ -1,16 +1,12 @@
 import { randomUUID } from "node:crypto"
 import path from "node:path"
-import { access, readdir, unlink, rm } from "node:fs/promises"
+import { access, readdir, unlink, rm, readFile, mkdir } from "node:fs/promises"
 import {
-  ensureUserRoot,
-  ensureSessionShardRoot,
-  sessionIndexPath,
-  sessionDataPath,
-  legacySessionStorePath,
-  sessionShardRootPath,
-  sessionCheckpointRootPath
+  sessionShardRootPath
 } from "../../storage/paths.mjs"
-import { readJson, writeJson } from "../../storage/json-store.mjs"
+import { readJson } from "../../storage/json-store.mjs"
+import { writePrivateFile } from '../../storage/private-file.mjs'
+import { acquireProcessLock } from '../../storage/process-lock.mjs'
 
 function now() {
   return Date.now()
@@ -67,43 +63,126 @@ async function exists(file) {
   }
 }
 
-const state = {
+const storeOptions = { sessionShardEnabled: true, flushIntervalMs: 1000 }
+const rootStates = new Map()
+let state
+const newState = root => ({
+  root,
   loaded: false,
   index: defaultIndex(),
   sessionCache: new Map(),
+  indexOperations: [],
+  dataOperations: new Map(),
   dirtyIndex: false,
   dirtySessions: new Set(),
   flushTimer: null,
-  options: {
-    sessionShardEnabled: true,
-    flushIntervalMs: 1000
+  options: storeOptions
+})
+const sessionIndexPath = () => path.join(state.root, 'index.json')
+const sessionDataPath = id => {
+  if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(id) || ['__proto__', 'constructor', 'prototype'].includes(id)) throw Object.assign(new Error('Invalid session id'), { code: 'invalid_session' })
+  return path.join(state.root, `${id}.json`)
+}
+const legacySessionStorePath = () => path.join(path.dirname(state.root), 'session-store.json')
+const sessionCheckpointRootPath = () => path.join(path.dirname(state.root), 'checkpoints')
+const writeJson = (file, value) => writePrivateFile(file, JSON.stringify(value, null, 2) + '\n')
+async function readStrict(file, fallback) {
+  try { return JSON.parse(await readFile(file, 'utf8')) }
+  catch (error) { if (error.code === 'ENOENT') return fallback; throw error }
+}
+async function readSessionData(sessionId) {
+  const data = await readStrict(sessionDataPath(sessionId), defaultSessionData())
+  if (!data || !Array.isArray(data.messages) || !Array.isArray(data.parts)) throw new Error('Invalid session data; inspect or restore the shard before writing')
+  return data
+}
+
+function applyIndexOperation(index, operation) {
+  const { sessionId, kind, value } = operation, existing = index.sessions[sessionId]
+  if (kind === 'touch') {
+    index.sessions[sessionId] = {
+      ...existing, id: sessionId,
+      ...Object.fromEntries(['mode', 'model', 'providerType', 'cwd'].filter(key => value[key] !== undefined).map(key => [key, value[key]])),
+      title: existing?.title || value.title || `${value.mode}:${value.model}`,
+      status: value.status,
+      parentSessionId: value.parentSessionId || existing?.parentSessionId || null,
+      forkFrom: value.forkFrom || existing?.forkFrom || null,
+      retryMeta: existing?.retryMeta || null, patchRefs: existing?.patchRefs || [],
+      reviewDecisions: existing?.reviewDecisions || [], budgetState: existing?.budgetState || null,
+      createdAt: existing?.createdAt || value.updatedAt, updatedAt: Math.max(existing?.updatedAt || 0, value.updatedAt)
+    }
+  } else if (kind === 'patch' && existing) index.sessions[sessionId] = { ...existing, ...value, updatedAt: Math.max(existing.updatedAt || 0, value.updatedAt || 0) }
+  else if (kind === 'review' && existing) {
+    const decisions = existing.reviewDecisions || []
+    if (!decisions.some(item => item.id === value.id)) index.sessions[sessionId] = { ...existing, reviewDecisions: [...decisions, value], updatedAt: Math.max(existing.updatedAt || 0, value.createdAt) }
+  } else if (kind === 'fork') {
+    if (existing) throw Object.assign(new Error('Fork target session already exists'), { code: 'session_conflict' })
+    index.sessions[sessionId] = value
+  } else if (kind === 'delete') delete index.sessions[sessionId]
+}
+
+function queueIndexOperation(sessionId, kind, value) {
+  sessionDataPath(sessionId)
+  const operation = { sessionId, kind, value: structuredClone(value) }
+  applyIndexOperation(state.index, operation)
+  state.indexOperations.push(operation)
+  markDirty()
+}
+function applyDataOperations(data, operations) {
+  for (const { kind, value, baseline } of operations) {
+    if (kind === 'message' && !data.messages.some(message => message.id === value.id)) data.messages.push(value)
+    if (kind === 'part' && !data.parts.some(part => part.id === value.id)) data.parts.push(value)
+    if (kind === 'replace') {
+      const replaced = new Set(baseline), inserted = new Set(value.map(message => message.id))
+      // Rewind/compaction removes only messages it actually observed. A later
+      // append from another process must not disappear with an old snapshot.
+      data.messages = [...value, ...data.messages.filter(message => !replaced.has(message.id) && !inserted.has(message.id))]
+    }
+    if (kind === 'fork') { data.messages = value.messages; data.parts = value.parts }
   }
+  return data
+}
+function queueDataOperation(sessionId, operation) {
+  sessionDataPath(sessionId)
+  const operations = state.dataOperations.get(sessionId) || []
+  operations.push(structuredClone(operation)); state.dataOperations.set(sessionId, operations)
+  state.sessionCache.delete(sessionId); markDirty(sessionId)
 }
 
 const LOCK_TIMEOUT_MS = 30000
 
 let lock = Promise.resolve()
-function withLock(fn) {
-  const run = lock.then(fn, fn)
+function withLock(fn, root = path.resolve(sessionShardRootPath())) {
+  const runTransaction = async () => {
+    if (!rootStates.has(root)) rootStates.set(root, newState(root))
+    state = rootStates.get(root)
+    const deadline = Date.now() + LOCK_TIMEOUT_MS
+    let lease
+    for (;;) {
+      try { lease = await acquireProcessLock(path.join(root, '.store.lock')); break }
+      catch (error) {
+        if (error.code !== 'device_in_use') throw error
+        if (Date.now() >= deadline) throw Object.assign(new Error('Session store is busy in another process'), { code: 'session_store_busy' })
+        await new Promise(resolve => setTimeout(resolve, 10 + Math.floor(Math.random() * 20)))
+      }
+    }
+    state.sessionCache.clear()
+    try { return await fn() } finally { await lease.release() }
+  }
+  const run = lock.then(runTransaction, runTransaction)
   lock = run.then(
     () => undefined,
     () => undefined
   )
-  let timer
-  return Promise.race([
-    run.finally(() => clearTimeout(timer)),
-    new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error("[store] withLock timeout after 30s")), LOCK_TIMEOUT_MS)
-    })
-  ])
+  return run
 }
 
 function scheduleFlush() {
   if (state.options.flushIntervalMs <= 0) return
   if (state.flushTimer) return
+  const scheduledState = state
   state.flushTimer = setTimeout(() => {
-    state.flushTimer = null
-    flushNow().catch((err) => {
+    scheduledState.flushTimer = null
+    withLock(() => flushUnsafe(), scheduledState.root).catch((err) => {
       console.error("[store] flush failed:", err?.message || err)
     })
   }, state.options.flushIntervalMs)
@@ -118,20 +197,27 @@ function markDirty(sessionId = null) {
 
 async function flushUnsafe() {
   if (!state.loaded) return
-  await ensureUserRoot()
-  await ensureSessionShardRoot()
+  await mkdir(state.root, { recursive: true, mode: 0o700 })
+  // Validate metadata conflicts before touching any shard. A duplicate fork
+  // target must never overwrite its data and only then discover the conflict.
+  const current = state.dirtyIndex ? await readStrict(sessionIndexPath(), defaultIndex()) : null
+  if (current) for (const operation of state.indexOperations) applyIndexOperation(current, operation)
 
   for (const sessionId of [...state.dirtySessions]) {
-    const data = state.sessionCache.get(sessionId) || defaultSessionData()
+    const data = applyDataOperations(await readSessionData(sessionId), state.dataOperations.get(sessionId) || [])
     await writeJson(sessionDataPath(sessionId), data)
+    state.sessionCache.set(sessionId, data)
+    state.dataOperations.delete(sessionId)
     state.dirtySessions.delete(sessionId)
   }
 
   if (state.dirtyIndex) {
-    state.index.updatedAt = now()
-    await writeJson(sessionIndexPath(), state.index)
+    current.updatedAt = now()
+    await writeJson(sessionIndexPath(), current)
+    state.index = current; state.indexOperations = []
     state.dirtyIndex = false
   }
+  if (!state.dirtyIndex && !state.dirtySessions.size && state.flushTimer) { clearTimeout(state.flushTimer); state.flushTimer = null }
 }
 
 export async function flushNow() {
@@ -144,7 +230,7 @@ async function loadSessionDataUnsafe(sessionId) {
   if (state.sessionCache.has(sessionId)) {
     return state.sessionCache.get(sessionId)
   }
-  const data = normalizeSessionData(await readJson(sessionDataPath(sessionId), defaultSessionData()))
+  const data = applyDataOperations(await readSessionData(sessionId), state.dataOperations.get(sessionId) || [])
   state.sessionCache.set(sessionId, data)
   return data
 }
@@ -152,11 +238,11 @@ async function loadSessionDataUnsafe(sessionId) {
 async function migrateLegacyStoreIfNeededUnsafe() {
   const indexFile = sessionIndexPath()
   if (await exists(indexFile)) {
-    state.index = await readJson(indexFile, defaultIndex())
+    state.index = await readStrict(indexFile, defaultIndex())
     return
   }
 
-  const legacy = await readJson(legacySessionStorePath(), null)
+  const legacy = await readStrict(legacySessionStorePath(), null)
   if (!legacy || typeof legacy !== "object" || !legacy.sessions || typeof legacy.sessions !== "object") {
     state.index = defaultIndex()
     await writeJson(indexFile, state.index)
@@ -180,25 +266,21 @@ async function migrateLegacyStoreIfNeededUnsafe() {
 }
 
 async function ensureLoadedUnsafe() {
-  if (state.loaded) return
-  await ensureUserRoot()
-  await ensureSessionShardRoot()
-  await migrateLegacyStoreIfNeededUnsafe()
-  state.loaded = true
-}
-
-async function ensureLoaded() {
-  return withLock(async () => {
-    await ensureLoadedUnsafe()
-  })
+  if (!state.loaded) {
+    await mkdir(state.root, { recursive: true, mode: 0o700 })
+    await migrateLegacyStoreIfNeededUnsafe()
+    state.loaded = true
+  } else state.index = await readStrict(sessionIndexPath(), defaultIndex())
+  if (!state.index || !state.index.sessions || typeof state.index.sessions !== 'object' || Array.isArray(state.index.sessions)) throw new Error('Invalid session index; restore a backup before writing')
+  for (const operation of state.indexOperations) applyIndexOperation(state.index, operation)
 }
 
 export function configureSessionStore(options = {}) {
   if (typeof options.sessionShardEnabled === "boolean") {
-    state.options.sessionShardEnabled = options.sessionShardEnabled
+    storeOptions.sessionShardEnabled = options.sessionShardEnabled
   }
   if (Number.isInteger(options.flushIntervalMs) && options.flushIntervalMs >= 0) {
-    state.options.flushIntervalMs = options.flushIntervalMs
+    storeOptions.flushIntervalMs = options.flushIntervalMs
   }
 }
 
@@ -215,27 +297,8 @@ export async function touchSession({
 }) {
   return withLock(async () => {
     await ensureLoadedUnsafe()
-    const existing = state.index.sessions[sessionId]
-    const createdAt = existing?.createdAt || now()
-    state.index.sessions[sessionId] = {
-      id: sessionId,
-      mode,
-      model,
-      providerType,
-      cwd,
-      title: existing?.title || title || `${mode}:${model}`,
-      status,
-      parentSessionId: parentSessionId || existing?.parentSessionId || null,
-      forkFrom: forkFrom || existing?.forkFrom || null,
-      retryMeta: existing?.retryMeta || null,
-      patchRefs: existing?.patchRefs || [],
-      reviewDecisions: existing?.reviewDecisions || [],
-      budgetState: existing?.budgetState || null,
-      createdAt,
-      updatedAt: now()
-    }
-    await loadSessionDataUnsafe(sessionId)
-    markDirty(sessionId)
+    queueIndexOperation(sessionId, 'touch', { mode, model, providerType, cwd, title, status, parentSessionId, forkFrom, updatedAt: now() })
+    queueDataOperation(sessionId, { kind: 'ensure' })
     if (state.options.flushIntervalMs <= 0) await flushUnsafe()
     return state.index.sessions[sessionId]
   })
@@ -246,12 +309,7 @@ export async function updateSession(sessionId, patch) {
     await ensureLoadedUnsafe()
     const current = state.index.sessions[sessionId]
     if (!current) return null
-    state.index.sessions[sessionId] = {
-      ...current,
-      ...patch,
-      updatedAt: now()
-    }
-    markDirty(sessionId)
+    queueIndexOperation(sessionId, 'patch', { ...patch, updatedAt: now() })
     if (state.options.flushIntervalMs <= 0) await flushUnsafe()
     return state.index.sessions[sessionId]
   })
@@ -260,11 +318,9 @@ export async function updateSession(sessionId, patch) {
 export async function appendMessage(sessionId, role, content, extra = {}) {
   return withLock(async () => {
     await ensureLoadedUnsafe()
-    const data = await loadSessionDataUnsafe(sessionId)
     const message = newMessage(role, content, extra)
-    data.messages.push(message)
-    if (state.index.sessions[sessionId]) state.index.sessions[sessionId].updatedAt = now()
-    markDirty(sessionId)
+    queueDataOperation(sessionId, { kind: 'message', value: message })
+    if (state.index.sessions[sessionId]) queueIndexOperation(sessionId, 'patch', { updatedAt: now() })
     if (state.options.flushIntervalMs <= 0) await flushUnsafe()
     return message
   })
@@ -274,13 +330,13 @@ export async function replaceMessages(sessionId, newMessages) {
   return withLock(async () => {
     await ensureLoadedUnsafe()
     const data = await loadSessionDataUnsafe(sessionId)
-    data.messages = newMessages.map((m) => ({
+    const messages = newMessages.map((m) => ({
       ...m,
       id: m.id || `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       timestamp: m.timestamp || now()
     }))
-    if (state.index.sessions[sessionId]) state.index.sessions[sessionId].updatedAt = now()
-    markDirty(sessionId)
+    queueDataOperation(sessionId, { kind: 'replace', value: messages, baseline: data.messages.map(message => message.id) })
+    if (state.index.sessions[sessionId]) queueIndexOperation(sessionId, 'patch', { updatedAt: now() })
     if (state.options.flushIntervalMs <= 0) await flushUnsafe()
   })
 }
@@ -288,11 +344,9 @@ export async function replaceMessages(sessionId, newMessages) {
 export async function appendPart(sessionId, part) {
   return withLock(async () => {
     await ensureLoadedUnsafe()
-    const data = await loadSessionDataUnsafe(sessionId)
     const normalized = newPart(part.type || "event", part)
-    data.parts.push(normalized)
-    if (state.index.sessions[sessionId]) state.index.sessions[sessionId].updatedAt = now()
-    markDirty(sessionId)
+    queueDataOperation(sessionId, { kind: 'part', value: normalized })
+    if (state.index.sessions[sessionId]) queueIndexOperation(sessionId, 'patch', { updatedAt: now() })
     if (state.options.flushIntervalMs <= 0) await flushUnsafe()
     return normalized
   })
@@ -379,13 +433,14 @@ export async function forkSession({ sessionId, newSessionId, title = null }) {
       createdAt: now(),
       updatedAt: now()
     }
-    state.index.sessions[newSessionId] = child
-    state.sessionCache.set(newSessionId, {
+    queueIndexOperation(newSessionId, 'fork', child)
+    queueDataOperation(newSessionId, { kind: 'fork', value: {
       messages: sourceData.messages.map((m) => ({ ...m })),
       parts: sourceData.parts.map((p) => ({ ...p }))
-    })
-    markDirty(newSessionId)
-    if (state.options.flushIntervalMs <= 0) await flushUnsafe()
+    } })
+    // Reserve and persist a fork atomically while holding the store lock.
+    // Deferring its creation would let two processes acknowledge the same ID.
+    await flushUnsafe()
     return child
   })
 }
@@ -395,16 +450,13 @@ export async function applyReviewDecision(sessionId, decision) {
     await ensureLoadedUnsafe()
     const session = state.index.sessions[sessionId]
     if (!session) return null
-    session.reviewDecisions = session.reviewDecisions || []
-    session.reviewDecisions.push({
+    queueIndexOperation(sessionId, 'review', {
       id: `rev_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       createdAt: now(),
       ...decision
     })
-    session.updatedAt = now()
-    markDirty(sessionId)
     if (state.options.flushIntervalMs <= 0) await flushUnsafe()
-    return session
+    return state.index.sessions[sessionId]
   })
 }
 
@@ -436,7 +488,7 @@ export async function fsckSessionStore() {
       suggestions: []
     }
 
-    const entries = await readdir(sessionShardRootPath(), { withFileTypes: true }).catch(() => [])
+    const entries = await readdir(state.root, { withFileTypes: true }).catch(() => [])
     const diskSessionIds = entries
       .filter((entry) => entry.isFile() && entry.name.endsWith(".json") && entry.name !== "index.json")
       .map((entry) => path.basename(entry.name, ".json"))
@@ -485,7 +537,7 @@ export async function gcSessionStore({ orphansOnly = false, maxAgeDays = 30 } = 
       checkpointDirs: []
     }
 
-    const entries = await readdir(sessionShardRootPath(), { withFileTypes: true }).catch(() => [])
+    const entries = await readdir(state.root, { withFileTypes: true }).catch(() => [])
     const diskSessionIds = entries
       .filter((entry) => entry.isFile() && entry.name.endsWith(".json") && entry.name !== "index.json")
       .map((entry) => path.basename(entry.name, ".json"))
@@ -505,7 +557,7 @@ export async function gcSessionStore({ orphansOnly = false, maxAgeDays = 30 } = 
       for (const [sessionId, session] of Object.entries(state.index.sessions)) {
         if (session.updatedAt > cutoff) continue
         if (!removableStatuses.has(session.status)) continue
-        delete state.index.sessions[sessionId]
+        queueIndexOperation(sessionId, 'delete')
         state.sessionCache.delete(sessionId)
         await unlink(sessionDataPath(sessionId)).catch(() => {})
         removed.staleSessions.push(sessionId)

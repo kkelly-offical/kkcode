@@ -24,7 +24,7 @@ test("a deprecation key only fires once per process", (t) => {
   assert.equal(notices[0].message, "use /ultra")
   // 移除目标锚定 1.0.0：曾写 0.5.0，但别名一路活到 0.9.x，
   // 提示语承诺一个已经过去的版本比不承诺更糟
-  assert.equal(notices[0].removal, "1.0.0")
+  assert.equal(notices[0].removal, "a future explicitly announced release")
 })
 
 test("distinct keys each get their own one-shot notice", (t) => {
@@ -87,5 +87,5 @@ test("renamed helper produces a readable bilingual-safe message", (t) => {
   })
   const [notice] = drainDeprecations()
   assert.match(notice.message, /配置项 `agent\.longagent` 已更名为 `agent\.ultra`/)
-  assert.match(formatDeprecation(notice), /1\.0\.0 移除/)
+  assert.match(formatDeprecation(notice), /explicitly announced release 移除/)
 })

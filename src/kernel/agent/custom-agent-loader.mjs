@@ -1,3 +1,5 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
+import { contextualObject } from '../core/runtime-context.mjs'
 import path from "node:path"
 import { access, readdir, readFile } from "node:fs/promises"
 import { pathToFileURL } from "node:url"
@@ -5,11 +7,11 @@ import { parseYaml } from "../../util/yaml.mjs"
 import { defineAgent, resetCustomAgents } from "./agent.mjs"
 import { userRootDir } from "../../storage/paths.mjs"
 
-const state = {
+const state = contextualObject('customAgentState', {
   agents: new Map(),
   loaded: false,
   loadedAt: 0
-}
+})
 
 async function exists(target) {
   try { await access(target); return true } catch { return false }
@@ -109,7 +111,7 @@ async function loadAgentsFromDir(dir, scope) {
 }
 
 export const CustomAgentRegistry = {
-  async initialize(cwd = process.cwd(), {
+  async initialize(cwd = runtimeCwd(), {
     allowProjectSources = true
   } = {}) {
     state.agents.clear()

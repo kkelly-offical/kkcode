@@ -7,6 +7,7 @@ import { validateConfig } from "../config/schema.mjs"
 import { loadConfig } from "../config/load-config.mjs"
 import { DEFAULT_CONFIG } from "../config/defaults.mjs"
 import { projectConfigCandidates } from "../storage/paths.mjs"
+import { redactConfig } from "../config/redact.mjs"
 
 function parseInput(file, raw) {
   if (file.endsWith(".json")) return JSON.parse(raw)
@@ -125,7 +126,7 @@ export function createConfigCommand() {
         process.exitCode = 1
         return
       }
-      printTree(target, DEFAULT_CONFIG)
+      printTree(redactConfig(target), DEFAULT_CONFIG)
     })
 
   cmd
@@ -133,7 +134,7 @@ export function createConfigCommand() {
     .description("get a config value by dot-path (e.g. provider.default)")
     .action(async (key) => {
       const { config } = await loadConfig(process.cwd())
-      const value = getByPath(config, key)
+      const value = redactConfig(getByPath(config, key), key)
       if (value === undefined) {
         console.error(`key not found: ${key}`)
         process.exitCode = 1
@@ -183,7 +184,7 @@ export function createConfigCommand() {
       }
 
       await writeFile(configPath, stringifyOutput(configPath, existing), "utf8")
-      console.log(`${key} = ${formatValue(value)}`)
+      console.log(`${key} = ${formatValue(redactConfig(value, key))}`)
       console.log(`written: ${configPath}`)
     })
 

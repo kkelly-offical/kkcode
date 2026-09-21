@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import { ProviderError } from "../core/errors.mjs"
 import { checkWorkspaceTrust } from "../permission/workspace-trust.mjs"
 
@@ -91,7 +92,7 @@ export function projectProviderControlReasons(configState, {
 }
 
 function workspaceCwd(configState) {
-  return configState?.source?.cwd || process.cwd()
+  return configState?.source?.cwd || runtimeCwd()
 }
 
 export async function assertProviderOutboundAllowed(configState, options) {

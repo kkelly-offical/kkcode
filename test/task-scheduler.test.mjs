@@ -214,7 +214,7 @@ test("task delegate routes foreground work through resolved subagent config", as
   assert.equal(received.providerType, "mock-provider")
   assert.equal(received.subagent.name, "reviewer")
   assert.equal(received.allowQuestion, false)
-  assert.match(received.sessionId, /^sub_parent_3_\d+$/)
+  assert.match(received.sessionId, /^sub_parent_3_[a-f0-9-]{36}$/)
   assert.equal(result.subagent, "reviewer")
   assert.equal(result.reply, "done")
   assert.equal(result.tool_events, 1)
@@ -314,7 +314,7 @@ test("task delegate launches background tasks with deterministic payload metadat
       group_id: null,
       group_label: null
     })
-    assert.match(result.session_id, /^sub_parent_bg_\d+$/)
+    assert.match(result.session_id, /^sub_parent_bg_[a-f0-9-]{36}$/)
     assert.equal(launchArgs.description, "verify branch")
     assert.equal(launchArgs.payload.parentSessionId, "parent_bg")
     assert.equal(launchArgs.payload.subSessionId, result.session_id)
@@ -352,6 +352,14 @@ test("task delegate rejects interactive questions for background sidecar work", 
   assert.deepEqual(result, {
     error: "task.run_in_background does not support allow_question=true"
   })
+})
+
+test('parallel child session IDs remain unique and bounded even with a maximum-length parent ID', async () => {
+  const seen = []
+  const delegate = createTaskDelegate({ config: {}, parentSessionId: 'p'.repeat(128), model: 'fixture', providerType: 'fixture', runSubtask: async ({ sessionId }) => { seen.push(sessionId); return { reply: 'done', toolEvents: [] } } })
+  await Promise.all(Array.from({ length: 100 }, () => delegate({ prompt: 'fixture' })))
+  assert.equal(new Set(seen).size, 100)
+  assert.ok(seen.every(id => /^[A-Za-z0-9_-]{1,128}$/.test(id)))
 })
 
 test("task delegate rejects worktree isolation outside background fresh-agent runs", async () => {

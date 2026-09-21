@@ -1,3 +1,5 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
+import { runtimeDependency } from '../core/runtime-context.mjs'
 import path from "node:path"
 import { access, readdir } from "node:fs/promises"
 import { pathToFileURL, fileURLToPath } from "node:url"
@@ -78,7 +80,7 @@ export function createHookBus() {
     signature: ""
   }
 
-  async function initialize(cwd = process.cwd(), config = {}, {
+  async function initialize(cwd = runtimeCwd(), config = {}, {
     allowProjectSources = true,
     force = false
   } = {}) {
@@ -216,11 +218,11 @@ export const HookBus = deprecatedSingletonAlias(
 )
 
 /** 兼容别名（deprecated）：等价于默认实例的 `initialize`。 */
-export function initHookBus(cwd = process.cwd(), config = {}, options = {}) {
+export function initHookBus(cwd = runtimeCwd(), config = {}, options = {}) {
   noteDeprecation(
     "kernel.singleton.hook-bus",
     "模块级 `initHookBus` 已收编为 kernel 实例方法：新代码改用 createKernel() 句柄的 `extensions.hooks.initialize`",
     { removal: "1.x" }
   )
-  return defaultHookBus.initialize(cwd, config, options)
+  return runtimeDependency('hooks', defaultHookBus).initialize(cwd, config, options)
 }

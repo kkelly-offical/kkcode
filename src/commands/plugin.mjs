@@ -1,8 +1,10 @@
 import { Command } from "commander"
-import { createKernel, discoverLocalPluginManifests } from "../kernel/index.mjs"
+import { createKernel, discoverLocalPluginManifests, installPlugin, managePlugin } from "../kernel/index.mjs"
 
 export function createPluginCommand() {
   const cmd = new Command("plugin").description("inspect local plugin compatibility packages")
+  cmd.command('install <name> <source>').option('--revision <sha>', 'Exact Git commit').action(async (name, source, options) => console.log(JSON.stringify(await installPlugin({ name, source, revision: options.revision }))))
+  for (const action of ['enable', 'disable', 'update', 'remove']) cmd.command(`${action} <name>`).action(async name => console.log(JSON.stringify(await managePlugin(name, action))))
 
   cmd
     .command("list")

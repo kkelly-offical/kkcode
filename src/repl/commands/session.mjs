@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../../kernel/index.mjs"
 /**
  * 会话与工作区状态类命令：开新会话、续跑、历史、压缩、回滚、清屏、看板。
  *
@@ -6,7 +7,7 @@
  * 走 `notice`（瞬时提示），需要回看的内容才留在对话记录里。
  */
 
-import { LongAgentManager, loadLedger } from "../../kernel/index.mjs"
+import { LongAgentManager, loadLedger, rewindLastTurn } from "../../kernel/index.mjs"
 import { buildBoardModel, renderUltraBoard } from "../../ui/ultra-board.mjs"
 import { renderRuntimeDashboardView } from "../../ui/repl-status-view.mjs"
 import { runBtwQuery } from "../btw-query.mjs"
@@ -67,7 +68,7 @@ export const sessionCommands = [
       // 注册表走 kernel 句柄（1.0.0 阶段 2c）：进程级默认注册表在首个回合前
       // 不初始化，直接读会拿到空清单
       const runtimeView = await buildReplRuntimeSnapshot({
-        cwd: process.cwd(),
+        cwd: runtimeCwd(),
         state,
         customCommands,
         providers: providersConfigured,
@@ -86,7 +87,9 @@ export const sessionCommands = [
       // 钳到 60 是因为这个视图有 60 列的最小宽度 —— 请求更窄它照样输出 60 格宽的
       // 行。与其让它在窄终端里悄悄溢出，不如按最小宽度排版然后由浮层裁掉右边
       // （浮层对自带边框的内容裁而不折）。`/board` 一直是这么做的，这里对齐。
-      showInfo("runtime status", (innerWidth) => renderRuntimeDashboardView({
+      const remote = ctx.remoteService
+      const remoteSummary = remote ? `Remote: ${remote.metadata.profile?.name || '未登录'} · ${remote.metadata.profile?.organization || '未绑定组织'} · ${remote.remoteStatus || 'offline'}\n` : ''
+      showInfo("runtime status", (innerWidth) => remoteSummary + renderRuntimeDashboardView({
         theme: ctx.themeState.theme,
         columns: Math.max(60, innerWidth),
         ...runtimeView
@@ -116,7 +119,7 @@ export const sessionCommands = [
     ],
     argMode: "none",
     run: async ({ ctx }) => {
-      const recent = await ctx.kernel.sessions.listSessions({ cwd: process.cwd(), limit: 6, includeChildren: false }).catch(() => [])
+      const recent = await ctx.kernel.sessions.listSessions({ cwd: runtimeCwd(), limit: 6, includeChildren: false }).catch(() => [])
       return { exit: false, dashboardRefresh: true, recentSessions: recent }
     }
   },
@@ -162,7 +165,7 @@ export const sessionCommands = [
     desc: "list sessions",
     argMode: "none",
     run: async ({ print, showInfo, ctx }) => {
-      const sessions = await ctx.kernel.sessions.listSessions({ cwd: process.cwd(), limit: 20, includeChildren: false })
+      const sessions = await ctx.kernel.sessions.listSessions({ cwd: runtimeCwd(), limit: 20, includeChildren: false })
       if (!sessions.length) {
         print("no sessions found", { channel: "notice", topic: "session" })
         return { exit: false }
@@ -189,7 +192,7 @@ export const sessionCommands = [
     desc: "resume session",
     argMode: "optional",
     run: async ({ args, print, state, openPanel, ctx }) => {
-      const sessions = await ctx.kernel.sessions.listSessions({ cwd: process.cwd(), limit: 20, includeChildren: false })
+      const sessions = await ctx.kernel.sessions.listSessions({ cwd: runtimeCwd(), limit: 20, includeChildren: false })
 
       if (!sessions.length) {
         print("no sessions found in current directory", { channel: "notice", topic: "command", tone: "error" })
@@ -214,7 +217,7 @@ export const sessionCommands = [
           return { exit: false, openSessionPicker: true, sessionPickerItems: items }
         }
         // 行模式：没有帧可浮，回落到编号列表
-        print(`\n  Sessions in ${paint(process.cwd(), "cyan")}:\n`)
+        print(`\n  Sessions in ${paint(runtimeCwd(), "cyan")}:\n`)
         items.forEach((item, i) => {
           const num = paint(`  ${String(i + 1).padStart(2)}.`, "yellow")
           print(`${num} ${padRight(item.label, 46)} ${paint(item.desc, null, { dim: true })}`)
@@ -259,7 +262,7 @@ export const sessionCommands = [
     argMode: "none",
     run: async ({ print, state, ctx }) => {
       const language = ctx.configState.config.language || "en"
-      const cwd = process.cwd()
+      const cwd = runtimeCwd()
       const confirmation = await ctx.kernel.sessions.confirmRollback({ cwd, sessionId: state.sessionId, language })
       print(confirmation.message)
       if (!confirmation.confirmed) return { exit: false }
@@ -271,6 +274,17 @@ export const sessionCommands = [
       })
       print(result.message)
       return { exit: false }
+    }
+  },
+
+  {
+    names: ["rewind"],
+    desc: "remove the last conversation turn (does not undo files)",
+    argMode: "none",
+    run: async ({ print, state }) => {
+      const result = await rewindLastTurn(state.sessionId)
+      print(result.ok ? `rewound ${result.removed} messages; files were not changed` : `rewind skipped: ${result.reason}`, { channel: "notice", topic: "session" })
+      return { exit: false, rewound: result }
     }
   },
 

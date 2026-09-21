@@ -8,6 +8,7 @@ import { readJson, writeJson } from "../../storage/json-store.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { INTERRUPTION_REASONS } from "./interruption-reason.mjs"
+import { registerBackgroundPromptOwner, hasBackgroundPromptOwner, bindBackgroundPromptWorker, releaseBackgroundPromptOwner } from './background-prompts.mjs'
 import {
   ensureBackgroundTaskRuntimeDir,
   backgroundTaskCheckpointPath,
@@ -304,7 +305,8 @@ async function readAllTasks() {
   return out.sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
-function spawnWorker(taskId) {
+function spawnWorker(task) {
+  const taskId = task.id
   const logFile = backgroundTaskLogPath(taskId)
   let stderrFd = null
   try {
@@ -317,20 +319,24 @@ function spawnWorker(taskId) {
     child = spawn(process.execPath, [WORKER_ENTRY, "--task-id", taskId], {
       detached: true,
       windowsHide: true,
-      stdio: ["ignore", "ignore", stderrFd !== null ? stderrFd : "ignore"],
+      stdio: ["ignore", "ignore", stderrFd !== null ? stderrFd : "ignore", ...(hasBackgroundPromptOwner(taskId) ? ["ipc"] : [])],
       env: {
         ...process.env,
         KKCODE_BACKGROUND_TASK_ID: taskId
       }
     })
   } catch (err) {
+    releaseBackgroundPromptOwner(taskId)
     // Close fd to prevent leak if spawn fails
     if (stderrFd !== null) {
       try { closeSync(stderrFd) } catch { /* ignore */ }
     }
     throw err
   }
+  const releasePrompts = bindBackgroundPromptWorker(child, task)
+  child.channel?.unref()
   child.on("exit", (code) => {
+    releasePrompts()
     if (stderrFd !== null) {
       try { closeSync(stderrFd) } catch { /* already closed */ }
     }
@@ -410,7 +416,7 @@ async function startPendingTasks(config = {}) {
     if (remainingSlots <= 0) break
     let pid
     try {
-      pid = spawnWorker(task.id)
+      pid = spawnWorker(task)
     } catch (err) {
       await patchTask(task.id, () => ({
         status: "error",
@@ -503,6 +509,7 @@ export const BackgroundManager = {
       resumeToken: payload?.resumeToken || `resume_${Date.now()}`
     }
     await saveTask(task)
+    if (!run && task.payload.workerType === 'delegate_task') registerBackgroundPromptOwner(id)
 
     if (run) {
       queueMicrotask(() => {
@@ -565,6 +572,7 @@ export const BackgroundManager = {
   async cancel(id) {
     const task = await loadTask(id)
     if (!task) return false
+    releaseBackgroundPromptOwner(id)
     await patchTask(id, (current) => ({
       cancelled: true,
       status: current.status === "pending" ? "cancelled" : current.status,
@@ -579,6 +587,7 @@ export const BackgroundManager = {
     if (!["error", "interrupted"].includes(task.status)) return null
 
     const nextAttempt = Number(task.attempt || 1) + 1
+    registerBackgroundPromptOwner(id)
     const nextResumeToken = `resume_${Date.now()}`
     await patchTask(id, () => ({
       status: "pending",

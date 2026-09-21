@@ -1,3 +1,4 @@
+import { PACKAGE_VERSION } from "../src/version.mjs"
 import test from "node:test"
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
@@ -38,7 +39,7 @@ test("final artifact verification never executes the packaged entrypoint or chan
   const marker = path.join(dir, "entrypoint-executed")
   await writeFile(path.join(dir, "package.json"), JSON.stringify({
     name: "@kkelly-offical/kkcode",
-    version: "1.0.0",
+    version: PACKAGE_VERSION,
     type: "module",
     bin: { kkcode: "src/index.mjs" },
     files: ["src"]
@@ -64,7 +65,7 @@ test("final artifact verification rejects a packaged secret without echoing it",
   const npmToken = ["npm", "_", "J".repeat(36)].join("")
   await writeFile(path.join(dir, "package.json"), JSON.stringify({
     name: "@kkelly-offical/kkcode",
-    version: "1.0.0",
+    version: PACKAGE_VERSION,
     files: ["dist"]
   }))
   await writeFile(path.join(dir, "dist", "leak.txt"), npmToken)

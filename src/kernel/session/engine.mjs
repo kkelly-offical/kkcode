@@ -1,3 +1,5 @@
+import { currentRuntime } from "../core/runtime-context.mjs"
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import { randomUUID } from "node:crypto"
 import { loadPricing, calculateCost } from "../../usage/pricing.mjs"
 import { recordTurn } from "../../usage/usage-meter.mjs"
@@ -163,13 +165,16 @@ export function newSessionId() {
   return `ses_${randomUUID().slice(0, 12)}`
 }
 
+const initializedBuses = new WeakSet()
 export function ensureEventSinks() {
-  if (sinkReady) return
+  const runtime = currentRuntime()
+  if (runtime ? initializedBuses.has(runtime.events) : sinkReady) return
   EventBus.registerSink(async (event) => {
     await appendEventLog(event)
   })
   initObservability(EventBus)
-  sinkReady = true
+  if (runtime) initializedBuses.add(runtime.events)
+  else sinkReady = true
 }
 
 function evaluateBudget(config, meter) {
@@ -257,10 +262,10 @@ export async function executeTurn({
   const extensionPolicy = resolveExtensionPolicy(configState)
   await ToolRegistry.initialize({
     config: extensionPolicy.config,
-    cwd: process.cwd(),
+    cwd: runtimeCwd(),
     allowProjectSources: extensionPolicy.allowProjectSources
   })
-  await SkillRegistry.initialize(extensionPolicy.config, process.cwd(), {
+  await SkillRegistry.initialize(extensionPolicy.config, runtimeCwd(), {
     allowProjectSources: extensionPolicy.allowProjectSources
   })
   // Auto-name session from first user prompt (truncated to 50 chars)
@@ -272,7 +277,7 @@ export async function executeTurn({
     mode,
     model,
     providerType: resolvedProviderType,
-    cwd: process.cwd(),
+    cwd: runtimeCwd(),
     title: autoTitle || null,
     status: mode === "longagent" ? "running-longagent" : "active"
   })

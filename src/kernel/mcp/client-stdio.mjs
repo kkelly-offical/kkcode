@@ -65,7 +65,7 @@ export function createStdioMcpClient(serverName, config = {}) {
   let lifecycle = "closed"
   let nextId = 1
   let initialized = false
-  let activeFraming = configuredFraming === "auto" ? "content-length" : configuredFraming
+  let activeFraming = configuredFraming === "auto" ? "newline" : configuredFraming
   let decoder = createStdioFramingDecoder({
     framing: configuredFraming === "auto" ? "auto" : activeFraming
   })
@@ -408,7 +408,7 @@ export function createStdioMcpClient(serverName, config = {}) {
     if (configuredFraming === "auto") {
       let lastError = null
       let needRestart = false
-      for (const candidate of ["content-length", "newline"]) {
+      for (const candidate of ["newline", "content-length"]) {
         activeFraming = candidate
         if (needRestart) {
           await shutdownProcess()
@@ -456,6 +456,26 @@ export function createStdioMcpClient(serverName, config = {}) {
     }
   }
 
+  async function listCatalog(method, key, optional = false) {
+    await initializeOnce()
+    const items = [], seen = new Set()
+    let cursor
+    do {
+      let result
+      try { result = await sendRequest(method, cursor ? { cursor } : {}) }
+      catch (error) { if (optional && error.details?.code === -32601) return []; throw error }
+      // `templates` is retained only for older KK Code-compatible servers.
+      const page = result?.[key] || (key === 'resourceTemplates' ? result?.templates : null) || []
+      if (!Array.isArray(page)) throw new McpError('Invalid MCP catalog response', { reason: 'protocol_error', server: serverName, action: method })
+      items.push(...page)
+      cursor = result?.nextCursor
+      if (cursor && (typeof cursor !== 'string' || seen.has(cursor))) throw new McpError('Invalid or repeated MCP catalog cursor', { reason: 'protocol_error', server: serverName, action: method })
+      if (cursor) seen.add(cursor)
+      if (items.length > 10000 || seen.size > 10000) throw new McpError('MCP catalog limit exceeded', { reason: 'protocol_error', server: serverName, action: method })
+    } while (cursor)
+    return items
+  }
+
   return {
     serverName,
     transport: "stdio",
@@ -480,46 +500,22 @@ export function createStdioMcpClient(serverName, config = {}) {
       }
     },
 
-    async listTools() {
-      await initializeOnce()
-      const out = await sendRequest("tools/list")
-      return Array.isArray(out?.tools) ? out.tools : []
-    },
+    listTools: () => listCatalog('tools/list', 'tools'),
 
-    async listPrompts() {
-      await initializeOnce()
-      try {
-        const out = await sendRequest("prompts/list")
-        return Array.isArray(out?.prompts) ? out.prompts : []
-      } catch {
-        return []
-      }
-    },
+    listPrompts: () => listCatalog('prompts/list', 'prompts', true),
 
     async getPrompt(name, args = {}) {
       await initializeOnce()
       return sendRequest("prompts/get", { name, arguments: args })
     },
 
-    async listResources() {
-      await initializeOnce()
-      try {
-        const out = await sendRequest("resources/list")
-        return Array.isArray(out?.resources) ? out.resources : []
-      } catch {
-        return []
-      }
-    },
+    listResources: () => listCatalog('resources/list', 'resources', true),
 
-    async listTemplates() {
+    async readResource(uri) {
       await initializeOnce()
-      try {
-        const out = await sendRequest("resources/templates/list")
-        return Array.isArray(out?.templates) ? out.templates : []
-      } catch {
-        return []
-      }
+      return sendRequest('resources/read', { uri })
     },
+    listTemplates: () => listCatalog('resources/templates/list', 'resourceTemplates', true),
 
     async callTool(name, args = {}, signal = null) {
       await initializeOnce()

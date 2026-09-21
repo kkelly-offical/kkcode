@@ -601,7 +601,7 @@ export function formatRecoverySuggestions(recovery) {
 
 // ── Renderer ─────────────────────────────────────────────
 
-export function createActivityRenderer({ output, theme = null, eventFilter = null }) {
+export function createActivityRenderer({ output, theme = null, eventFilter = null, eventBus = defaultEventBus }) {
   _theme = theme
   const log = typeof output?.appendLog === "function"
     ? (value, options) => output.appendLog(value, options)
@@ -960,7 +960,7 @@ export function createActivityRenderer({ output, theme = null, eventFilter = nul
   return {
     start() {
       if (unsubscribe) return
-      unsubscribe = defaultEventBus.subscribe(handleEvent)
+      unsubscribe = eventBus.subscribe(handleEvent)
     },
     stop() {
       if (unsubscribe) {

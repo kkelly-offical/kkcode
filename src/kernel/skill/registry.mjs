@@ -1,3 +1,5 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
+import { parse as parseModule } from 'acorn'
 import path from "node:path"
 import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises"
 import { pathToFileURL, fileURLToPath } from "node:url"
@@ -69,7 +71,7 @@ async function writeIfMissing(filePath, content, force = false) {
 }
 
 export async function ensureDefaultSkillPack({
-  cwd = process.cwd(),
+  cwd = runtimeCwd(),
   force = false,
   includeProject = true,
   includeGlobal = true
@@ -161,7 +163,10 @@ function normalizeSkillMeta(meta = {}, defaults = {}) {
   const contextFork = explicitContextFork || contextValue === "fork"
   const rawModel = typeof meta.model === "string" ? meta.model.trim() : meta.model
   const model = rawModel && rawModel.toLowerCase() === "inherit" ? null : rawModel || null
-  const allowedTools = toStringArray(meta["allowed-tools"] ?? meta.allowedTools ?? meta.tools)
+  const rawAllowedTools = meta["allowed-tools"] ?? meta.allowedTools ?? meta.tools
+  // Agent Skills uses a space-separated scalar; retain KK Code's array/comma
+  // forms without changing parsing of unrelated path metadata.
+  const allowedTools = typeof rawAllowedTools === 'string' ? rawAllowedTools.split(/[\s,]+/).filter(Boolean) : toStringArray(rawAllowedTools)
 
   return {
     disableModelInvocation: !!meta["disable-model-invocation"],
@@ -182,7 +187,7 @@ function normalizeSkillMeta(meta = {}, defaults = {}) {
     compatibility: meta.compatibility || null,
     metadata: meta.metadata && typeof meta.metadata === "object" && !Array.isArray(meta.metadata) ? meta.metadata : null,
     sourceEcosystem: defaults.ecosystem || defaults.plugin?.sourceEcosystem || defaults.plugin?.ecosystem || "kkcode",
-    skillRoot: defaults.skillDir || path.dirname(defaults.source || process.cwd()),
+    skillRoot: defaults.skillDir || path.dirname(defaults.source || runtimeCwd()),
     plugin: defaults.plugin || null
   }
 }
@@ -255,7 +260,26 @@ async function loadMjsSkills(dir, scope, plugin = null, ecosystem = "kkcode") {
     // Path boundary check: ensure resolved path is within expected directory
     if (!full.startsWith(resolvedDir + path.sep) && full !== resolvedDir) continue
     try {
-      const mod = await import(pathToFileURL(full).href)
+      // Inventory must not execute user/plugin module top-level code. Only the
+      // explicit approved invocation imports executable skills.
+      let mod
+      if (scope === 'builtin') mod = await import(pathToFileURL(full).href)
+      else {
+        const raw = await readFile(full, 'utf8')
+        const ast = parseModule(raw, { ecmaVersion: 'latest', sourceType: 'module' })
+        const metadata = {}
+        for (const node of ast.body) {
+          if (node.type !== 'ExportNamedDeclaration' || node.declaration?.type !== 'VariableDeclaration') continue
+          for (const declaration of node.declaration.declarations) {
+            if (declaration.id.type === 'Identifier' && declaration.init?.type === 'Literal' && typeof declaration.init.value === 'string') metadata[declaration.id.name] = declaration.init.value
+          }
+        }
+        mod = { ...metadata, run: async ctx => {
+          const module = await import(pathToFileURL(full).href)
+          if (typeof module.run !== 'function') throw new Error('Programmable skill must export run(ctx)')
+          return module.run(ctx)
+        } }
+      }
       const name = mod.name || path.basename(file, ".mjs")
       skills.push({
         name,
@@ -511,7 +535,7 @@ export function createSkillRegistry() {
     /**
      * Load all skills from all sources.
      */
-    async initialize(config, cwd = process.cwd(), {
+    async initialize(config, cwd = runtimeCwd(), {
       allowProjectSources = true
     } = {}) {
       state.skills.clear()
@@ -642,7 +666,7 @@ export function createSkillRegistry() {
         try {
           const result = await skill.run({
             args,
-            cwd: context.cwd || process.cwd(),
+            cwd: context.cwd || runtimeCwd(),
             mode: context.mode || "agent",
             model: context.model || "",
             provider: context.provider || "",
@@ -657,16 +681,16 @@ export function createSkillRegistry() {
       if (skill.type === "template" && skill.template) {
         // Template skill — expand $ARGUMENTS, $1, $2, etc.
         return applyCommandTemplate(skill.template, args, {
-          path: context.cwd || process.cwd(),
+          path: context.cwd || runtimeCwd(),
           mode: context.mode || "agent",
           provider: context.provider || "",
-          cwd: context.cwd || process.cwd(),
-          project: path.basename(context.cwd || process.cwd())
+          cwd: context.cwd || runtimeCwd(),
+          project: path.basename(context.cwd || runtimeCwd())
         })
       }
 
       if (skill.type === "skill_md" && skill.template) {
-        const cwd = context.cwd || process.cwd()
+        const cwd = context.cwd || runtimeCwd()
         let prompt = applyCommandTemplate(skill.template, args, {
           path: cwd, mode: context.mode || "agent",
           provider: context.provider || "", cwd, project: path.basename(cwd),

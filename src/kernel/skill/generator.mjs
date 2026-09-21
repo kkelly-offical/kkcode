@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import { writeFile, mkdir } from "node:fs/promises"
 import { join, basename } from "node:path"
 import { requestProvider } from "../provider/router.mjs"
@@ -120,7 +121,7 @@ export async function saveSkillGlobal(filename, content) {
 /**
  * Save a skill to the project skills directory.
  */
-export async function saveSkillProject(filename, content, cwd = process.cwd()) {
+export async function saveSkillProject(filename, content, cwd = runtimeCwd()) {
   const dir = join(cwd, ".kkcode", "skills")
   await mkdir(dir, { recursive: true })
   const filePath = join(dir, filename)

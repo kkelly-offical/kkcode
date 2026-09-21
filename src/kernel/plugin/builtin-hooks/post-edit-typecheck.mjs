@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../../core/runtime-context.mjs"
 // Post-edit diagnostics + observability hook
 // Captures baseline diagnostics before mutation tools and appends a concise
 // post-edit diagnostics delta plus mutation summary after mutation tools run.
@@ -58,7 +59,7 @@ export default {
       const toolName = normalizeToolName(payload)
       if (!isMutationTool(toolName)) return payload
 
-      const cwd = payload.cwd || process.cwd()
+      const cwd = payload.cwd || runtimeCwd()
       const files = extractTouchedFiles({ args: payload.args }).filter(isDiagnosticsEligibleFile)
       if (files.length === 0) return payload
 
@@ -77,7 +78,7 @@ export default {
       if (!isMutationTool(toolName)) return payload
       if (!isCompletedResult(payload.result)) return payload
 
-      const cwd = payload.cwd || process.cwd()
+      const cwd = payload.cwd || runtimeCwd()
       const metadata = payload.result && typeof payload.result === "object" && payload.result.metadata && typeof payload.result.metadata === "object"
         ? { ...payload.result.metadata }
         : {}

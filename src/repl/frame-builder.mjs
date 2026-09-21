@@ -14,6 +14,7 @@ import { resolveModeId, MODE_PICKER_CHOICES } from "./mode-flow.mjs"
 import { layoutInputText } from "../util/text-layout.mjs"
 import { clipAnsiLine, displayWidth, padRight, wrapLogLines } from "../util/frame-primitives.mjs"
 import { PACKAGE_VERSION } from "../version.mjs"
+import { promptSourceLabel } from '../ui/prompt-source.mjs'
 
 /**
  * 整帧组装：把 UI 状态渲染成一屏文本行。
@@ -218,6 +219,8 @@ export function buildFrame({
     const toolInfo = `tool: ${displayPerm.tool}  risk: ${displayPerm.risk || 0}/10`
     const reasonInfo = displayPerm.reason ? `  ${displayPerm.reason}` : ""
     const permHeader = [{ text: toolInfo, color: ctx.themeState.theme.base.fg }]
+    const sourceLabel = promptSourceLabel(perm)
+    if (sourceLabel) permHeader.push({ text: `source: ${sourceLabel}`, color: ctx.themeState.theme.base.muted })
     if (target) permHeader.push({ text: `target: ${target}`, color: ctx.themeState.theme.semantic.warn })
     if (reasonInfo) permHeader.push({ text: reasonInfo, color: ctx.themeState.theme.base.muted })
     permissionLines.push(...renderSelectOverlay({

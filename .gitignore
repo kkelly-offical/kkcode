@@ -10,3 +10,15 @@ claudenext-private/
 docs/copyright/
 scripts/generate-copyright-doc.mjs
 picture/
+android/.gradle/
+android/.kotlin/
+android/**/build/
+android/local.properties
+test-results/
+playwright-report/
+
+# Android release identities are always provisioned outside the checkout.
+*.jks
+*.keystore
+*.p12
+signing.properties

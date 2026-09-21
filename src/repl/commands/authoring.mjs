@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../../kernel/index.mjs"
 /**
  * 帮助、扩展装配、后台任务、剪贴板与档案类命令。
  *
@@ -150,7 +151,7 @@ export const authoringCommands = [
       const skills = skillRegistry.isReady() ? skillRegistry.list() : []
       const capabilitySnapshot = await buildCapabilitySnapshot({
         mode: state.mode,
-        cwd: process.cwd(),
+        cwd: runtimeCwd(),
         configState: ctx.configState,
         customCommands,
         skillRegistry,
@@ -173,20 +174,36 @@ export const authoringCommands = [
     argMode: "none",
     run: async ({ print, ctx, setCustomCommands }) => {
       const extensionPolicy = resolveExtensionPolicy(ctx.configState)
-      const reloaded = await loadCustomCommands(process.cwd(), {
+      const reloaded = await loadCustomCommands(runtimeCwd(), {
         allowProjectSources: extensionPolicy.allowProjectSources
       })
       setCustomCommands(reloaded)
       const skillRegistry = ctx.kernel.extensions.skills
-      await skillRegistry.initialize(extensionPolicy.config, process.cwd(), {
+      await skillRegistry.initialize(extensionPolicy.config, runtimeCwd(), {
         allowProjectSources: extensionPolicy.allowProjectSources
       })
-      await CustomAgentRegistry.initialize(process.cwd(), {
+      await CustomAgentRegistry.initialize(runtimeCwd(), {
         allowProjectSources: extensionPolicy.allowProjectSources
       })
       const skillCount = skillRegistry.isReady() ? skillRegistry.list().length : 0
       const agentCount = CustomAgentRegistry.list().length
       print(describeReloadSummary({ commandCount: reloaded.length, skillCount, agentCount }), { channel: "notice", topic: "command" })
+      return { exit: false }
+    }
+  },
+
+  {
+    names: ["mcp"],
+    desc: "show MCP connections (add reload to reconnect)",
+    argMode: "optional",
+    accepts: args => args === "" || args === "reload",
+    run: async ({ args, showInfo, ctx }) => {
+      await ctx.kernel.bootExtensions()
+      if (args === "reload") {
+        await ctx.kernel.extensions.mcp.initialize(ctx.kernel.extensionPolicy.config, { cwd: runtimeCwd(), force: true, allowProjectSources: ctx.kernel.extensionPolicy.allowProjectSources })
+        await ctx.kernel.tools.refreshMcpTools()
+      }
+      showInfo("MCP connections", JSON.stringify(ctx.kernel.extensions.mcp.healthSnapshot(), null, 2))
       return { exit: false }
     }
   },
@@ -218,8 +235,8 @@ export const authoringCommands = [
     run: async ({ args, print, showInfo, ctx }) => {
       const [action, taskId] = args.split(/\s+/).filter(Boolean)
       if (action === "stop" && taskId) {
-        await BackgroundManager.cancel(taskId).catch(() => null)
-        print(`task ${taskId} cancellation requested`, { channel: "notice", topic: "task" })
+        const cancelled = await BackgroundManager.cancel(taskId)
+        print(cancelled ? `task ${taskId} cancellation requested` : `task ${taskId} was not found`, { channel: "notice", topic: "task", tone: cancelled ? "success" : "error" })
         return { exit: false }
       }
       if (action === "retry" && taskId) {
@@ -299,7 +316,7 @@ export const authoringCommands = [
         save: saveSkillGlobal,
         reload: async (context) => {
           const extensionPolicy = resolveExtensionPolicy(context.configState)
-          await context.kernel.extensions.skills.initialize(extensionPolicy.config, process.cwd(), {
+          await context.kernel.extensions.skills.initialize(extensionPolicy.config, runtimeCwd(), {
             allowProjectSources: extensionPolicy.allowProjectSources
           })
         },
@@ -327,7 +344,7 @@ export const authoringCommands = [
         save: saveAgentGlobal,
         reload: async (context) => {
           const extensionPolicy = resolveExtensionPolicy(context.configState)
-          await CustomAgentRegistry.initialize(process.cwd(), {
+          await CustomAgentRegistry.initialize(runtimeCwd(), {
             allowProjectSources: extensionPolicy.allowProjectSources
           })
         },

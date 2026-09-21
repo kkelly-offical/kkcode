@@ -1,6 +1,8 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import { createHttpMcpClient } from "./client-http.mjs"
 import { createStdioMcpClient } from "./client-stdio.mjs"
 import { createSseMcpClient } from "./client-sse.mjs"
+import { createSdkMcpClient } from './client-sdk.mjs'
 import { McpError } from "../core/errors.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
@@ -57,12 +59,14 @@ export function createMcpRegistry() {
   function resolveTransport(server = {}) {
     const transport = String(server.transport || server.type || "stdio").toLowerCase()
     if (transport === "http") return "http"
-    if (transport === "sse" || transport === "streamable-http") return "sse"
+    if (transport === "streamable-http" || transport === 'legacy-sse') return transport
+    if (transport === "sse") return "sse"
     return "stdio"
   }
 
   function createClient(name, server) {
     const transport = resolveTransport(server)
+    if (transport === 'streamable-http' || transport === 'legacy-sse') return createSdkMcpClient(name, server)
     if (transport === "sse") return createSseMcpClient(name, server)
     if (transport === "http") return createHttpMcpClient(name, server)
     return createStdioMcpClient(name, server)
@@ -160,7 +164,10 @@ export function createMcpRegistry() {
       payload: { server: name, ...normalizedHealth }
     })
 
-    if (!normalizedHealth.ok) return null
+    if (!normalizedHealth.ok) {
+      await client.shutdown?.().catch(() => {})
+      return null
+    }
 
     state.servers.set(name, client)
 
@@ -178,6 +185,7 @@ export function createMcpRegistry() {
         error: `listTools failed: ${error.message}`
       })
       state.servers.delete(name)
+      await client.shutdown?.().catch(() => {})
       await EventBus.emit({
         type: EVENT_TYPES.MCP_HEALTH,
         payload: { server: name, ...state.health.get(name) }
@@ -208,7 +216,7 @@ export function createMcpRegistry() {
   } = {}) {
     state.shuttingDown = false
     const ttlMs = Math.max(0, Number(config?.runtime?.mcp_refresh_ttl_ms || 60000))
-    const effectiveCwd = cwd || process.cwd()
+    const effectiveCwd = cwd || runtimeCwd()
     const sig = JSON.stringify({
       mcp: config?.mcp || {},
       runtime: config?.runtime || {},
@@ -362,6 +370,12 @@ export function createMcpRegistry() {
       const client = state.servers.get(serverName)
       if (!client) return []
       return client.listResources()
+    },
+
+    async readResource(serverName, uri) {
+      const client = state.servers.get(serverName)
+      if (!client?.readResource) throw new McpError(`mcp resource reader unavailable: ${serverName}`, { reason: 'not_found', server: serverName })
+      return client.readResource(uri)
     },
 
     async listTemplates(serverName) {

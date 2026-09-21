@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../../core/runtime-context.mjs"
 import { readFile } from "node:fs/promises"
 import path from "node:path"
 
@@ -157,7 +158,7 @@ const FRAMEWORK_GUIDES = {
 
 export async function run(ctx) {
   const task = (ctx.args || "").trim()
-  const cwd = ctx.cwd || process.cwd()
+  const cwd = ctx.cwd || runtimeCwd()
   const framework = await detectCurrentFramework(cwd)
 
   const parts = []

@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import { readFile } from "node:fs/promises"
 import { memoryDir, memoryFilePath, ensureMemoryDir } from "../../storage/paths.mjs"
 import { formatInstinctsForPrompt } from "./instinct-manager.mjs"
@@ -8,7 +9,7 @@ const MAX_MEMORY_LINES = 200
  * Load auto memory content for injection into system prompt.
  * Returns formatted memory block or empty string if no MEMORY.md exists.
  */
-export async function loadAutoMemory(cwd = process.cwd()) {
+export async function loadAutoMemory(cwd = runtimeCwd()) {
   await ensureMemoryDir(cwd)
   const memDir = memoryDir(cwd)
   const memFile = memoryFilePath(cwd)

@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import { stat } from "node:fs/promises"
 import path from "node:path"
 import { readGate, isDecisiveGate, isPassingGateStatus } from "./gate-contract.mjs"
@@ -67,7 +68,7 @@ async function fileExists(cwd, relative, statFn) {
  */
 export async function verifyStageObjective({
   stage,
-  cwd = process.cwd(),
+  cwd = runtimeCwd(),
   config = {},
   sessionId = "",
   iteration = 0,

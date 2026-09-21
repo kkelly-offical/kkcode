@@ -20,5 +20,5 @@ export function normalizeToolResult(result, serverName, toolName) {
     contentText ||
     (typeof result?.output === "string" ? result.output : "") ||
     (typeof result === "string" ? result : JSON.stringify(result))
-  return content ? { output, raw: result, content } : { output, raw: result }
+  return content ? { output, raw: result, content, structuredContent: result.structuredContent } : { output, raw: result }
 }

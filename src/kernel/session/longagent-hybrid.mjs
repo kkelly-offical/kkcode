@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 /**
  * LongAgent Hybrid 模式
  * 融合 4-Stage 的只读探索/规划/调试回滚 + Parallel 的脚手架/并行执行/门控
@@ -255,7 +256,7 @@ async function runHybridPipeline({
   // #4 TaskBus
   const taskBus = hybridConfig.task_bus !== false ? new TaskBus() : null
   // #5 Project Memory
-  const cwd = process.cwd()
+  const cwd = runtimeCwd()
   let projectMemory = null
   if (hybridConfig.project_memory !== false) {
     try { projectMemory = await loadProjectMemory(cwd) } catch { projectMemory = null }
@@ -360,7 +361,7 @@ async function runHybridPipeline({
   // #22: 增强为 task 级粒度恢复
   if (hybridConfig.checkpoint_resume !== false) {
     try {
-      const cp = await loadCheckpoint(sessionId)
+      const cp = await loadCheckpoint(sessionId, 'ultra_latest') || await loadCheckpoint(sessionId)
       if (cp?.stageIndex > 0 && cp?.stagePlan) {
         if (!validateCheckpoint(cp)) {
           // Invalid checkpoint structure — discard and start fresh
@@ -1235,7 +1236,7 @@ async function runHybridPipeline({
         // 覆盖判定不满足而重跑整个 stage，是 H4 迟迟不收敛的主因。
         const objective = await io.verifyStageObjective({
           stage,
-          cwd: process.cwd(),
+          cwd: runtimeCwd(),
           config: configState.config,
           sessionId,
           iteration,
@@ -1616,7 +1617,7 @@ async function runHybridPipeline({
     await setPhase("H5.5", "completion_validation")
     await syncState({ lastMessage: "H5.5: validating completion" })
 
-    const cwd = process.cwd()
+    const cwd = runtimeCwd()
     try {
       const validator = await createValidator({ cwd, configState })
       const report = await validator.validate({ todoState: toolContext?._todoState, level: "standard" })
@@ -1757,7 +1758,7 @@ async function runHybridPipeline({
     if (strategy.autoFix) {
       try {
         const { execSync } = await import("node:child_process")
-        execSync(strategy.autoFix, { cwd: process.cwd(), timeout: 30000, stdio: "ignore" })
+        execSync(strategy.autoFix, { cwd: runtimeCwd(), timeout: 30000, stdio: "ignore" })
       } catch { /* autofix failed, fall through to agent */ }
     }
 

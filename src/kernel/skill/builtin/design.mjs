@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../../core/runtime-context.mjs"
 import { readFile } from "node:fs/promises"
 import path from "node:path"
 
@@ -48,7 +49,7 @@ NEVER: cookie-cutter card grids, generic hero sections, border-radius:9999px eve
 
 export async function run(ctx) {
   const task = (ctx.args || "").trim()
-  const cwd = ctx.cwd || process.cwd()
+  const cwd = ctx.cwd || runtimeCwd()
   const design = await detectDesignContext(cwd)
 
   const parts = [AESTHETICS_PROMPT, ""]

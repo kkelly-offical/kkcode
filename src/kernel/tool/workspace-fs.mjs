@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import path from "node:path"
 import { lstat, realpath } from "node:fs/promises"
 
@@ -41,7 +42,7 @@ async function nearestExistingAncestor(target) {
  * reads or newly-created files outside the workspace.
  */
 export async function resolveWorkspacePath(root, requested = ".", { mustExist = false } = {}) {
-  const lexicalRoot = path.resolve(String(root || process.cwd()))
+  const lexicalRoot = path.resolve(String(root || runtimeCwd()))
   const raw = String(requested ?? ".")
   const lexicalTarget = path.resolve(lexicalRoot, raw || ".")
 
@@ -74,7 +75,7 @@ export async function resolveWorkspacePath(root, requested = ".", { mustExist = 
 
 export class WorkspaceFs {
   constructor(root) {
-    this.root = path.resolve(String(root || process.cwd()))
+    this.root = path.resolve(String(root || runtimeCwd()))
   }
 
   resolve(requested = ".", options = {}) {

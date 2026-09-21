@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import path from "node:path"
 import { mkdir } from "node:fs/promises"
 import { readJson, writeJsonAtomic } from "../../storage/json-store.mjs"
@@ -26,11 +27,11 @@ const MAX_FILE_CHANGES_PER_ROUND = 200
 const MAX_FAILED_TASKS_PER_ROUND = 50
 const MAX_SNIPPET_CHARS = 2000
 
-export function ultraSessionDir(sessionId, cwd = process.cwd()) {
+export function ultraSessionDir(sessionId, cwd = runtimeCwd()) {
   return path.join(projectRootDir(cwd), "ultra", sessionId)
 }
 
-export function ledgerPath(sessionId, cwd = process.cwd()) {
+export function ledgerPath(sessionId, cwd = runtimeCwd()) {
   return path.join(ultraSessionDir(sessionId, cwd), "ledger.json")
 }
 
@@ -66,7 +67,7 @@ function normalizeGates(gates) {
 }
 
 export class UltraLedger {
-  constructor({ sessionId, cwd = process.cwd(), data, maxRoundsKept = 10 }) {
+  constructor({ sessionId, cwd = runtimeCwd(), data, maxRoundsKept = 10 }) {
     this.sessionId = sessionId
     this.cwd = cwd
     this.path = ledgerPath(sessionId, cwd)
@@ -252,7 +253,7 @@ export class UltraLedger {
 }
 
 /** 打开（或续写）一个会话的台账。 */
-export async function openLedger({ sessionId, cwd = process.cwd(), objective = "", goal = null, providerType = "", model = "", maxRoundsKept = 10 }) {
+export async function openLedger({ sessionId, cwd = runtimeCwd(), objective = "", goal = null, providerType = "", model = "", maxRoundsKept = 10 }) {
   const file = ledgerPath(sessionId, cwd)
   const existing = await readJson(file, null)
   const data = existing && existing.version === LEDGER_VERSION ? existing : {
@@ -287,7 +288,7 @@ export async function openLedger({ sessionId, cwd = process.cwd(), objective = "
 }
 
 /** 只读加载（`ultra report` 命令用）。不存在时返回 null。 */
-export async function loadLedger(sessionId, cwd = process.cwd()) {
+export async function loadLedger(sessionId, cwd = runtimeCwd()) {
   const data = await readJson(ledgerPath(sessionId, cwd), null)
   if (!data || data.version !== LEDGER_VERSION) return null
   return new UltraLedger({ sessionId, cwd, data })

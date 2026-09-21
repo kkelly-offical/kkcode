@@ -1,3 +1,4 @@
+import { currentRuntime, runWithRuntime, runtimeCwd } from "../core/runtime-context.mjs"
 import { newId } from "../core/types.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
@@ -281,7 +282,16 @@ function isPrefixMessages(prefix, full) {
   return true
 }
 
-export async function processTurnLoop({
+export function processTurnLoop(options) {
+  // Recursive delegation must inherit dependencies, not the parent's prompt
+  // identity. In particular question tools have no explicit session argument.
+  return runWithRuntime({ ...currentRuntime(), sessionId: options.sessionId,
+    signal: options.signal || null,
+    parentSessionId: options.runSpec?.parentSessionId || null,
+    subagent: options.subagent?.name || null }, () => processTurnLoopInRuntime(options))
+}
+
+async function processTurnLoopInRuntime({
   prompt,
   contentBlocks = null,
   mode,
@@ -306,7 +316,7 @@ export async function processTurnLoop({
    */
   steerSource = null
 }) {
-  const cwd = process.cwd()
+  const cwd = runtimeCwd()
   const extensionPolicy = resolveExtensionPolicy(configState)
   await initHookBus(cwd, extensionPolicy.config, {
     allowProjectSources: extensionPolicy.allowProjectSources
@@ -363,8 +373,9 @@ export async function processTurnLoop({
     model,
     providerType,
     cwd,
+    parentSessionId: runSpec?.parentSessionId || null,
     status: "active",
-    title: subagent ? `${subagent.name}: ${prompt.slice(0, 60)}` : null
+    title: subagent ? `${subagent.name}: ${prompt.slice(0, 60)}` : prompt.trim().replace(/\s+/g, ' ').slice(0, 60)
   })
 
   await EventBus.emit({
@@ -1094,7 +1105,9 @@ export async function processTurnLoop({
           tool: call.name,
           args: call.args,
           status: result.status,
-          output: result.output
+          output: result.output,
+          metadata: result.metadata,
+          durationMs: result.durationMs
         })
 
         return { call, result }

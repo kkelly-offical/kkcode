@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 /**
  * OS 级 sandbox —— 模型侧 bash 的第三层防护。
  *
@@ -264,7 +265,7 @@ export function readSandboxConfig(config = null) {
  * 把 `~` 与相对路径落成绝对路径。相对路径按工作区解 —— 配置里写
  * `node_modules/.cache` 时，用户想的显然是工作区里的那个。
  */
-export function resolveWritableDir(entry, { workspaceDir = process.cwd(), homeDir = os.homedir(), pathApi = path } = {}) {
+export function resolveWritableDir(entry, { workspaceDir = runtimeCwd(), homeDir = os.homedir(), pathApi = path } = {}) {
   const text = String(entry || "").trim()
   if (!text) return ""
   if (text === "~") return homeDir

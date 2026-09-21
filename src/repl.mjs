@@ -21,9 +21,6 @@ import {
   emitAgentContinuationResumed,
   emitRouteDecisionEvent,
   defaultPermissionEngine,
-  defaultPermissionPromptChannel,
-  defaultQuestionPromptChannel,
-  defaultEventBus,
   EVENT_TYPES,
   readClipboardImage,
   readClipboardText,
@@ -69,11 +66,7 @@ import { createSuggestionSource } from "./repl/suggestion-source.mjs"
 // 命令层。目录与分发同源，命令本体按领域分文件 —— 此前是一个 1090 行的
 // 顺序 if 链，加一条命令要在两份手写清单里各改一处。
 import { resolveCommand, buildBuiltinSlashCatalog } from "./repl/commands/registry.mjs"
-import { sessionCommands } from "./repl/commands/session.mjs"
-import { providerCommands } from "./repl/commands/provider.mjs"
-import { permissionCommands } from "./repl/commands/permission.mjs"
-import { modeCommands } from "./repl/commands/mode.mjs"
-import { authoringCommands } from "./repl/commands/authoring.mjs"
+import { BUILTIN_COMMANDS } from './command/builtin.mjs'
 import { presentPromptTurn } from "./repl/turn-presenter.mjs"
 import { loadProviderModelItems } from "./repl/provider-catalog.mjs"
 import { persistLearnedGrant } from "./repl/config-persistence.mjs"
@@ -82,6 +75,7 @@ import { createListenerRegistry } from "./repl/listener-registry.mjs"
 import { subscribeSessionEvents } from "./repl/event-bridge.mjs"
 import { createMouseSelection, screenRowFromAbsolute } from "./repl/mouse-selection.mjs"
 import { createPromptQueue } from "./repl/prompt-queue.mjs"
+import { applyRewindToUi } from './repl/rewind-ui.mjs'
 import { createAfkAutoSkip } from "./repl/afk-auto-skip.mjs"
 import { createOverlayController } from "./repl/overlay-controller.mjs"
 import { createTerminalSession } from "./repl/terminal-session.mjs"
@@ -97,7 +91,7 @@ import { createTaskWake } from "./repl/task-wake.mjs"
 import { createNotifier } from "./repl/notify.mjs"
 import { createGhostPredictor } from "./repl/ghost-predictor.mjs"
 import { buildReplRuntimeSnapshot } from "./repl/runtime-facade.mjs"
-import { POLICY_CHOICES, PERMISSION_PROMPT_VALUES } from "./repl/permission-flow.mjs"
+import { POLICY_CHOICES, PERMISSION_PROMPT_VALUES, applyPermissionLevel } from "./repl/permission-flow.mjs"
 import {
   applyModeSelection,
   resolveModeId,
@@ -144,14 +138,6 @@ const KEYPRESS_ESCAPE_TIMEOUT_MS = 10
  * 内建斜杠命令。目录（补全菜单）与分发（谁来处理）从此**同源** ——
  * 此前是两份手写清单，加命令时只改分发是最自然的疏忽。
  */
-const BUILTIN_COMMANDS = [
-  ...sessionCommands,
-  ...providerCommands,
-  ...permissionCommands,
-  ...modeCommands,
-  ...authoringCommands
-]
-
 const BUILTIN_SLASH = buildBuiltinSlashCatalog(BUILTIN_COMMANDS)
 
 // 模型目录的取用点有三处（/model、切 provider 后的提示、启动预热），
@@ -411,6 +397,7 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
 
   const lineActivityRenderer = createActivityRenderer({
     theme: ctx.themeState.theme,
+    eventBus: ctx.kernel.events,
     output: {
       appendLog: (text) => console.log(text),
       appendStreamChunk: (chunk) => process.stdout.write(chunk)
@@ -452,6 +439,7 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
       providerPicker: localProviderPicker,
       setProviderPicker: (next) => { localProviderPicker = next },
       print: (text) => console.log(text),
+      streamSink: (text) => process.stdout.write(text),
       pendingImages: linePendingImages,
       clearPendingImages: () => { linePendingImages = [] },
       // 行模式没有可编辑的输入框，插不了标记 —— 退回「挂着，下一条消息带上」。
@@ -627,17 +615,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         })
         return
       }
-      // 对话记录同步回退到上一条用户输入之前（含它本身）
-      const items = transcript.getItems()
-      const lastUserIndex = items.findLastIndex((item) => item.kind === "user")
-      if (lastUserIndex >= 0) {
-        for (const item of items.slice(lastUserIndex)) transcript.removeLog(item.id)
-      }
-
-      if (result.prompt) {
-        ui.input = result.prompt
-        ui.inputCursor = result.prompt.length
-      }
+      applyRewindToUi(result, { ui, transcript })
       showToast(`已回溯一轮（${result.removed} 条消息）· 文件改动请用 /undo`, {
         topic: "rewind",
         tone: "success"
@@ -726,6 +704,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
   const activityRenderer = createActivityRenderer({
     theme: ctx.themeState.theme,
+    eventBus: ctx.kernel.events,
     output: { appendLog, updateLog, appendStreamChunk },
     eventFilter: (event) =>
       (!event?.sessionId || event.sessionId === state.sessionId) &&
@@ -793,7 +772,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   })
 
   const uiEventUnsub = subscribeSessionEvents({
-    eventBus: defaultEventBus,
+    eventBus: ctx.kernel.events,
     ui,
     ctx,
     state,
@@ -854,7 +833,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     showToast,
     submitCurrentInput: () => submitCurrentInput(),
     selectModeAndNotify: (modeId) => selectModeAndNotify(modeId),
-    clearPermissionSession: (sessionId) => defaultPermissionEngine.clearSession(sessionId),
+    clearPermissionSession: (sessionId) => ctx.kernel.permissions.clearSession(sessionId),
     themeSwitcher
   })
   const {
@@ -1083,7 +1062,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       if (summary && line.trim()) {
         submittedLine = buildAgentContinuationPrompt(summary, line.trim())
         route = routeMode(submittedLine, state.mode, { continuation: summary, continued: true })
-        await defaultEventBus.emit({
+        await ctx.kernel.events.emit({
           type: EVENT_TYPES.ROUTE_DECISION,
           sessionId: state.sessionId,
           payload: {
@@ -1092,7 +1071,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
             continuedTransaction: true
           }
         })
-        await defaultEventBus.emit({
+        await ctx.kernel.events.emit({
           type: EVENT_TYPES.AGENT_CONTINUATION_RESUMED,
           sessionId: state.sessionId,
           payload: {
@@ -1161,6 +1140,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
             suspendTui: withSuspendedTui,
             openPanel: openInfoPanel
           })) || {}
+          applyRewindToUi(action.rewound, { ui, transcript })
           if (action.turnResult) {
             ui.metrics.tokenMeter = action.turnResult.tokenMeter || ui.metrics.tokenMeter
             ui.metrics.cost = Number.isFinite(action.turnResult.cost) ? action.turnResult.cost : ui.metrics.cost
@@ -1324,6 +1304,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         openPanel: openInfoPanel
       })) || {}
 
+      applyRewindToUi(action.rewound, { ui, transcript })
       if (action.cleared) {
         transcript.clear()
       }
@@ -1764,22 +1745,15 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       deactivateTerminal()
     }
     listeners.on(process, "exit", onProcessExit)
-    defaultPermissionPromptChannel.setPermissionPromptHandler(({ tool, sessionId, reason = "", pattern = "*", command = "", args = {}, risk = 0, defaultAction = "deny" }) =>
+    ctx.kernel.prompts.permission.setPermissionPromptHandler((request) =>
       new Promise((resolve) => {
         queuePermissionPrompt({
-          tool,
-          sessionId,
-          reason,
-          pattern,
-          command,
-          args,
-          risk,
-          defaultAction,
+          ...request,
           resolve
         })
       })
     )
-    defaultPermissionEngine.setPersistGrantHandler(async ({ tool, pattern, command, workspace }) => {
+    ctx.kernel.permissions.setPersistGrantHandler(async ({ tool, pattern, command, workspace }) => {
       const result = await persistLearnedGrant({ ctx, tool, pattern, command, workspace })
       if (result.added) {
         showToast(`Always allow · ${describeRule(result.rule)}`, { topic: "permission", tone: "success" })
@@ -1788,9 +1762,9 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       }
       return result.added
     })
-    defaultQuestionPromptChannel.setQuestionPromptHandler(({ questions }) =>
+    ctx.kernel.prompts.question.setQuestionPromptHandler((request) =>
       new Promise((resolve) => {
-        queueQuestionPrompt({ questions, resolve })
+        queueQuestionPrompt({ ...request, resolve })
       })
     )
     activateTerminal()
@@ -1805,8 +1779,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     textStreamBatcher.dispose()
     ghostPredictor.dispose()
     deactivateTerminal({ pauseInput: true })
-    defaultPermissionPromptChannel.setPermissionPromptHandler(null)
-    defaultQuestionPromptChannel.setQuestionPromptHandler(null)
+    ctx.kernel.prompts.permission.setPermissionPromptHandler(null)
+    ctx.kernel.prompts.question.setQuestionPromptHandler(null)
     stopBusySpinner()
     activityRenderer.stop()
     uiEventUnsub()
@@ -1912,8 +1886,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     transcriptUnsub()
     toastUnsub()
     toastStore.dispose()
-    defaultPermissionPromptChannel.setPermissionPromptHandler(null)
-    defaultQuestionPromptChannel.setQuestionPromptHandler(null)
+    ctx.kernel.prompts.permission.setPermissionPromptHandler(null)
+    ctx.kernel.prompts.question.setQuestionPromptHandler(null)
     // 一次性进程级监听器：登记本倒着走一遍，不再是手写清单
     listeners.disposeAll()
     // keypress / data 是反复装卸的那一类，随终端一起停
@@ -1924,7 +1898,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   }
 }
 
-export async function startRepl({ trust = false } = {}) {
+export async function startRepl({ trust = false, remoteService = null } = {}) {
   // First-run onboarding — must run before splash/readline to own the terminal
   const existingProfile = await loadProfile()
   if (!existingProfile || process.env.KKCODE_ONBOARDING === "1") {
@@ -1948,8 +1922,11 @@ export async function startRepl({ trust = false } = {}) {
   // 手工 boot）。theme 属 frontends 层（架构 §2），在 kernel 之外加载。
   splash.update("loading tools & MCP servers...")
   const kernel = await createKernel({ cwd: process.cwd(), trustState })
+  if (remoteService) {
+    remoteService.attachKernel(kernel)
+  }
   const themeState = await loadTheme(kernel.configState)
-  const ctx = { configState: kernel.configState, themeState, trustState: kernel.trustState, kernel }
+  const ctx = { configState: kernel.configState, themeState, trustState: kernel.trustState, kernel, remoteService }
   printContextWarnings(ctx)
   // 不阻塞启动：命中本地缓存时会很快回填，preflight 读到什么就报什么
   let startupUpdateResult = null
@@ -1987,6 +1964,12 @@ export async function startRepl({ trust = false } = {}) {
 
   splash.update("preparing workspace...")
   const state = createInitialReplState(ctx.configState.config, { newSessionIdFn: newSessionId })
+  const remoteSelectionUnsub = remoteService ? kernel.events.subscribe(event => {
+    if (event.type !== 'session.configured' || event.sessionId !== state.sessionId) return
+    const selected = event.payload
+    Object.assign(state, { model: selected.model, providerType: selected.providerType, modeId: selected.modeId, ...(selected.mode ? { mode: selected.mode } : {}) })
+    if (selected.approval) ctx.configState.config.permission = applyPermissionLevel(selected.approval, ctx.configState.config.permission || {})
+  }) : null
 
   // Check if auto memory file exists
   try {
@@ -2043,6 +2026,7 @@ export async function startRepl({ trust = false } = {}) {
     })
   } finally {
     // kernel.shutdown 收口：2b 桥释放 + McpRegistry.shutdown() + session flushNow()
+    remoteSelectionUnsub?.()
     await kernel.shutdown()
   }
 }

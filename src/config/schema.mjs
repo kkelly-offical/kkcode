@@ -412,7 +412,7 @@ export function validateConfig(config) {
           if (server.type !== undefined && typeof server.type !== "string") {
             err(errors, `${prefix}.type`, "must be string")
           }
-          if (server.transport !== undefined && !["stdio", "http", "sse", "streamable-http"].includes(server.transport)) {
+          if (server.transport !== undefined && !["stdio", "http", "sse", "streamable-http", "legacy-sse"].includes(server.transport)) {
             err(errors, `${prefix}.transport`, "must be stdio|http|sse|streamable-http")
           }
           if (server.url !== undefined && typeof server.url !== "string") {

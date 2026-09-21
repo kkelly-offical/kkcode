@@ -1,4 +1,5 @@
-import { readdir } from "node:fs/promises"
+import { readdir, mkdtemp, rm } from "node:fs/promises"
+import os from 'node:os'
 import path from "node:path"
 import { spawn } from "node:child_process"
 
@@ -40,12 +41,15 @@ const childArgs = enableCoverage
     ]
   : ["--test", ...testFiles]
 
+const testHome = await mkdtemp(path.join(os.tmpdir(), 'kkcode-test-home-'))
 const child = spawn(process.execPath, childArgs, {
   cwd: rootDir,
+  env: { ...process.env, HOME: testHome, USERPROFILE: testHome, KKCODE_HOME: path.join(testHome, '.kkcode'), TERM: 'xterm-256color' },
   stdio: "inherit"
 })
 
-child.on("exit", (code, signal) => {
+child.on("exit", async (code, signal) => {
+  await rm(testHome, { recursive: true, force: true })
   if (signal) {
     process.kill(process.pid, signal)
     return

@@ -44,6 +44,13 @@ function render(overrides = {}) {
 const plain = (rendered) => rendered.lines.map((line) => stripAnsi(line))
 const optionRows = (rendered) => plain(rendered).filter((line) => /[▸ ] [●○☑☐]/.test(line) || line.includes("Custom..."))
 
+test('delegated questions show the source while root questions remain compact', () => {
+  const result = render({ pendingQuestion: { questions: [{ id: 'q', text: 'Continue?' }], sessionId: 'root', originSessionId: 'child', subagent: 'reviewer\u001b[2J' } })
+  assert.ok(plain(result).some(line => line.includes('source: reviewer') && line.includes('child')))
+  assert.equal(result.lines.some(line => line.includes('\u001b[2J')), false)
+  assert.equal(plain(render()).some(line => line.includes('source:')), false)
+})
+
 test("30 options render as a window, not a wall — row count has a hard ceiling", () => {
   const rendered = render()
   const rows = optionRows(rendered)

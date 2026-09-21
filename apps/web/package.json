@@ -1,0 +1,7 @@
+{
+  "name": "@kkcode/web",
+  "version": "1.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "vite build", "dev": "vite --host 127.0.0.1" }
+}

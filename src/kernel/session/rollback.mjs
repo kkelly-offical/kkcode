@@ -126,6 +126,7 @@ export async function confirmRollback({ cwd, sessionId, language = "en" }) {
   ].join("\n")
 
   const answers = await askQuestionInteractive({
+    sessionId,
     questions: [{
       id: "rollback_confirm",
       text: language === "zh" ? "确认回滚代码？" : "Confirm code rollback?",

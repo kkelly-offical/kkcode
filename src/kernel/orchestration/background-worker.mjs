@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import { appendFile, access, copyFile, mkdir } from "node:fs/promises"
 import path from "node:path"
 import { readJson, writeJson } from "../../storage/json-store.mjs"
@@ -8,6 +9,7 @@ import { extractEditFeedbackFromToolEvents } from "../../observability/edit-diag
 import { INTERRUPTION_REASONS, normalizeInterruptionReason } from "./interruption-reason.mjs"
 import { checkWorkspaceTrust } from "../permission/workspace-trust.mjs"
 import { removeDetachedWorktree } from "./worktree-handoff.mjs"
+import { createBackgroundPromptClient } from './background-prompts.mjs'
 import * as git from "../../util/git.mjs"
 
 function now() {
@@ -119,13 +121,13 @@ async function ensureDelegatedSession({ kernel, executionMode, parentSessionId, 
 
 async function runDelegateTask(task, signal) {
   const payload = task.payload || {}
-  const repoCwd = payload.cwd || process.cwd()
+  const repoCwd = payload.cwd || runtimeCwd()
   const executionMode = String(payload.executionMode || "fresh_agent").trim().toLowerCase() || "fresh_agent"
   if (!["fresh_agent", "fork_context"].includes(executionMode)) {
     throw new Error(`unsupported task.execution_mode: ${payload.executionMode}`)
   }
-  if (payload.allowQuestion === true) {
-    throw new Error("background delegated tasks cannot set allow_question=true")
+  if (payload.allowQuestion === true && !process.send) {
+    throw new Error("background delegated questions require a live parent prompt channel")
   }
 
   let effectiveCwd = repoCwd
@@ -160,6 +162,7 @@ async function runDelegateTask(task, signal) {
 
   let out
   let kernel = null
+  const promptClient = process.send ? createBackgroundPromptClient(process, { signal }) : null
   try {
     if (worktree) {
       await copyWorkspaceConfigFiles(repoCwd, effectiveCwd)
@@ -179,6 +182,7 @@ async function runDelegateTask(task, signal) {
     kernel = await createKernel({
       cwd: effectiveCwd,
       boot: false,
+      ...(promptClient ? { handlers: { onPermissionPrompt: promptClient.onPermissionPrompt, onQuestionPrompt: promptClient.onQuestionPrompt } } : {}),
       ...(inheritedTrustState ? { trustState: inheritedTrustState } : {})
     })
     _maxLogLines = Number(kernel.configState.config?.background?.max_log_lines || 300)
@@ -203,7 +207,7 @@ async function runDelegateTask(task, signal) {
       sessionId: payload.subSessionId,
       signal,
       runSpec: payload.runSpec || null,
-      allowQuestion: false,
+      allowQuestion: payload.allowQuestion === true,
       toolContext: {
         taskId: task.id,
         stageId: payload.stageId || null,
@@ -229,6 +233,7 @@ async function runDelegateTask(task, signal) {
     }
     throw error
   } finally {
+    promptClient?.close()
     // shutdown 幂等；若 catch 路径的 shutdown 失败，这里重试（与旧的双
     // McpRegistry.shutdown 语义一致），kernel 为 null（boot 失败）时跳过
     await (kernel?.shutdown() ?? Promise.resolve()).catch(() => {})
@@ -518,4 +523,4 @@ async function main() {
 
 main().catch(() => {
   process.exitCode = 1
-})
+}).finally(() => { if (process.connected) process.disconnect() })

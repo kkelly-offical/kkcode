@@ -7,10 +7,16 @@ import { gitSnapshotTool } from "../tool/git-auto.mjs"
 import { listGhostCommits, getLatestGhostCommit } from "../../storage/ghost-commit-store.mjs"
 
 function checkpointDir(sessionId) {
+  assertCheckpointId(sessionId)
   return path.join(userRootDir(), "checkpoints", sessionId)
 }
 
+function assertCheckpointId(value) {
+  if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{1,200}$/.test(value)) throw new Error('invalid checkpoint identifier')
+}
+
 function checkpointFile(sessionId, name) {
+  assertCheckpointId(name)
   return path.join(checkpointDir(sessionId), `${name}.json`)
 }
 
@@ -19,6 +25,7 @@ function latestFile(sessionId) {
 }
 
 export async function saveCheckpoint(sessionId, data) {
+  if (data.name !== undefined) assertCheckpointId(data.name)
   const dir = checkpointDir(sessionId)
   await mkdir(dir, { recursive: true })
   const checkpoint = {
@@ -29,6 +36,10 @@ export async function saveCheckpoint(sessionId, data) {
   await writeJson(latestFile(sessionId), checkpoint)
   const numbered = checkpointFile(sessionId, `cp_${data.iteration || 0}`)
   await writeJson(numbered, checkpoint)
+  if (data.name) {
+    await writeJson(checkpointFile(sessionId, data.name), checkpoint)
+    if (/^(hybrid_stage_|debug_iter_)/.test(data.name)) await writeJson(checkpointFile(sessionId, 'ultra_latest'), checkpoint)
+  }
   return checkpoint
 }
 
@@ -49,6 +60,8 @@ export async function listCheckpoints(sessionId) {
 // ========== Phase 7: Task 级 Checkpoint ==========
 
 export async function saveTaskCheckpoint(sessionId, stageId, taskId, data) {
+  assertCheckpointId(stageId)
+  assertCheckpointId(taskId)
   const dir = checkpointDir(sessionId)
   await mkdir(dir, { recursive: true })
   const name = `task_${stageId}_${taskId}`
@@ -64,6 +77,7 @@ export async function saveTaskCheckpoint(sessionId, stageId, taskId, data) {
 }
 
 export async function loadTaskCheckpoints(sessionId, stageId) {
+  assertCheckpointId(stageId)
   const dir = checkpointDir(sessionId)
   const files = await readdir(dir, { withFileTypes: true }).catch(() => [])
   const prefix = `task_${stageId}_`
@@ -86,7 +100,7 @@ export async function cleanupCheckpoints(sessionId, options = {}) {
   const all = await listCheckpoints(sessionId)
   if (all.length <= maxKeep + 1) return { removed: 0 }
 
-  const toKeep = new Set(["latest"])
+  const toKeep = new Set(["latest", "ultra_latest"])
   // 保留 stage 级和 task 级 checkpoint
   if (keepStageCheckpoints) {
     for (const name of all) {
@@ -96,7 +110,7 @@ export async function cleanupCheckpoints(sessionId, options = {}) {
     }
   }
   // 保留最近 maxKeep 个编号 checkpoint
-  const numbered = all.filter(n => n.startsWith("cp_")).sort()
+  const numbered = all.filter(n => /^cp_\d+$/.test(n)).sort((a, b) => Number(a.slice(3)) - Number(b.slice(3)))
   for (const n of numbered.slice(-maxKeep)) toKeep.add(n)
 
   let removed = 0

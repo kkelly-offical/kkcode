@@ -67,7 +67,7 @@ test("boot:false defers extension boot; bootExtensions() runs it exactly once", 
   }
 })
 
-test("applyTrustState flips trust on instance and default engines and rebuilds policy", async () => {
+test("applyTrustState changes only its instance and rebuilds policy", async () => {
   const baselineTrust = PermissionEngine.isTrusted()
   const kernel = await createKernel({
     cwd: workDir,
@@ -76,7 +76,7 @@ test("applyTrustState flips trust on instance and default engines and rebuilds p
   })
   try {
     assert.equal(kernel.permissions.isTrusted(), false)
-    assert.equal(PermissionEngine.isTrusted(), false, "2b 桥：默认引擎跟着未授信")
+    assert.equal(PermissionEngine.isTrusted(), baselineTrust, "default engine remains unchanged")
     assert.equal(kernel.extensionPolicy.allowProjectSources, false)
     const untrustedTools = (await kernel.tools.list({ mode: "agent" })).length
 
@@ -84,7 +84,7 @@ test("applyTrustState flips trust on instance and default engines and rebuilds p
     await kernel.applyTrustState({ trusted: true })
     assert.equal(kernel.trustState.trusted, true)
     assert.equal(kernel.permissions.isTrusted(), true)
-    assert.equal(PermissionEngine.isTrusted(), true, "2b 桥：默认引擎跟着授信")
+    assert.equal(PermissionEngine.isTrusted(), baselineTrust, "instance trust must not leak")
     assert.equal(kernel.extensionPolicy.allowProjectSources, true)
     assert.ok(kernel.tools.isReady())
     assert.ok((await kernel.tools.list({ mode: "agent" })).length >= untrustedTools)

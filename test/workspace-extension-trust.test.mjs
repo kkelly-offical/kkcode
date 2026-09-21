@@ -126,7 +126,9 @@ test("untrusted extension initialization executes user modules but not project t
   // preceding initialization instead of silently restoring the default.
   await ToolRegistry.list({ mode: "agent", cwd: workspace })
   assert.ok(await exists(markers.userTool))
-  assert.ok(await exists(markers.userSkill))
+  assert.equal(await exists(markers.userSkill), false, 'Listing must not import executable skills')
+  assert.equal(await SkillRegistry.execute('user-skill', '', { cwd: workspace }), 'user')
+  assert.ok(await exists(markers.userSkill), 'Explicit invocation imports the module')
   assert.ok(await exists(markers.userHook))
   assert.equal(await exists(markers.projectTool), false)
   assert.equal(await exists(markers.projectSkill), false)

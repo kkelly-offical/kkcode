@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import path from "node:path"
 import { mkdir } from "node:fs/promises"
 import { userRootDir } from "../../storage/paths.mjs"
@@ -85,7 +86,7 @@ export const gitSnapshotTool = {
     required: []
   },
   async execute(args, ctx) {
-    const cwd = ctx.cwd || process.cwd()
+    const cwd = ctx.cwd || runtimeCwd()
     const sessionId = ctx.sessionId || "default"
 
     // 检查是否是 Git 仓库
@@ -165,7 +166,7 @@ export const gitRestoreTool = {
     required: ["snapshot_id"]
   },
   async execute(args, ctx) {
-    const cwd = ctx.cwd || process.cwd()
+    const cwd = ctx.cwd || runtimeCwd()
     const sessionId = ctx.sessionId || "default"
 
     if (!(await isGitRepo(cwd))) {
@@ -231,7 +232,7 @@ export const gitListSnapshotsTool = {
     required: []
   },
   async execute(args, ctx) {
-    const cwd = ctx.cwd || process.cwd()
+    const cwd = ctx.cwd || runtimeCwd()
 
     if (!(await isGitRepo(cwd))) {
       return {
@@ -307,7 +308,7 @@ export const gitApplyPatchTool = {
     required: ["diff"]
   },
   async execute(args, ctx) {
-    const cwd = ctx.cwd || process.cwd()
+    const cwd = ctx.cwd || runtimeCwd()
 
     if (!(await isGitRepo(cwd))) {
       return {
@@ -399,7 +400,7 @@ export const gitInfoTool = {
     required: []
   },
   async execute(args, ctx) {
-    const cwd = ctx.cwd || process.cwd()
+    const cwd = ctx.cwd || runtimeCwd()
 
     const result = await getGitInfo(cwd)
     if (!result.ok) {
@@ -436,7 +437,7 @@ export const gitStatusTool = {
     required: []
   },
   async execute(args, ctx) {
-    const cwd = ctx.cwd || process.cwd()
+    const cwd = ctx.cwd || runtimeCwd()
 
     if (!(await isGitRepo(cwd))) {
       return {
@@ -495,7 +496,7 @@ export const gitDeleteSnapshotTool = {
     required: ["snapshot_id"]
   },
   async execute(args, ctx) {
-    const cwd = ctx.cwd || process.cwd()
+    const cwd = ctx.cwd || runtimeCwd()
     const snapshotId = args.snapshot_id
 
     const deleted = await deleteGhostCommit(cwd, snapshotId)

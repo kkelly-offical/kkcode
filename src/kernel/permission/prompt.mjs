@@ -1,4 +1,6 @@
+import { runtimeDependency } from '../core/runtime-context.mjs'
 import { noteDeprecation } from "../core/deprecations.mjs"
+import { awaitPromptAnswer } from '../core/prompt-signal.mjs'
 
 /**
  * 审批提示通道工厂（1.0.0 阶段 2a）：customPromptHandler 槽位收编为实例字段
@@ -11,11 +13,13 @@ import { noteDeprecation } from "../core/deprecations.mjs"
  */
 export function createPermissionPromptChannel() {
   let customPromptHandler = null
+  let interceptor = null
 
   return {
     setPermissionPromptHandler(handler) {
       customPromptHandler = typeof handler === "function" ? handler : null
     },
+    setPermissionPromptInterceptor(handler) { interceptor = typeof handler === 'function' ? handler : null },
     /** 当前注册的自定义处理器（没有则为 null）。kernel 组合根做保存/恢复用。 */
     getPermissionPromptHandler() {
       return customPromptHandler
@@ -28,7 +32,7 @@ export function createPermissionPromptChannel() {
      * 管道输入），判定落到 permission.non_tty_default。
      */
     canAskInteractively() {
-      return Boolean(customPromptHandler)
+      return Boolean(interceptor || customPromptHandler)
     },
     async askPermissionInteractive({
       tool,
@@ -38,10 +42,12 @@ export function createPermissionPromptChannel() {
       command = "",
       args = {},
       risk = 0,
+      signal = runtimeDependency('signal', null),
       defaultAction = "deny"
     }) {
-      if (customPromptHandler) {
-        const answer = await customPromptHandler({
+      if (signal?.aborted) return 'deny'
+      if (interceptor || customPromptHandler) {
+        const request = {
           tool,
           sessionId,
           pattern,
@@ -49,8 +55,11 @@ export function createPermissionPromptChannel() {
           args,
           risk,
           reason,
-          defaultAction
-        })
+          defaultAction, signal,
+          parentSessionId: runtimeDependency('parentSessionId', null),
+          subagent: runtimeDependency('subagent', null)
+        }
+        const answer = await awaitPromptAnswer(() => interceptor ? interceptor(request, customPromptHandler) : customPromptHandler(request), signal, 'deny')
         if (["allow_once", "allow_session", "allow_always", "deny"].includes(answer)) return answer
       }
 
@@ -73,17 +82,17 @@ const noteAlias = () => noteDeprecation(ALIAS_KEY, ALIAS_MESSAGE, { removal: "1.
 /** 兼容别名（deprecated）：旧 import 路径继续工作，调用经 deprecations.mjs 记录。 */
 export function setPermissionPromptHandler(handler) {
   noteAlias()
-  return defaultPermissionPromptChannel.setPermissionPromptHandler(handler)
+  return runtimeDependency('permissionPrompt', defaultPermissionPromptChannel).setPermissionPromptHandler(handler)
 }
 
 /** 兼容别名（deprecated）。 */
 export function canAskInteractively() {
   noteAlias()
-  return defaultPermissionPromptChannel.canAskInteractively()
+  return runtimeDependency('permissionPrompt', defaultPermissionPromptChannel).canAskInteractively()
 }
 
 /** 兼容别名（deprecated）。 */
 export function askPermissionInteractive(request) {
   noteAlias()
-  return defaultPermissionPromptChannel.askPermissionInteractive(request)
+  return runtimeDependency('permissionPrompt', defaultPermissionPromptChannel).askPermissionInteractive(request)
 }

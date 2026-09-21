@@ -36,8 +36,25 @@ import {
  */
 export function createPromptQueue({ ui, requestRender, notifier = null, afk = null }) {
   const defaultPermissionIndex = (perm) => defaultPermissionChoiceIndex(perm?.defaultAction)
+  function watchCancellation(request, cancel) {
+    const original = request.resolve
+    let resolved = false
+    request.resolve = value => {
+      if (resolved) return
+      resolved = true
+      request.signal?.removeEventListener('abort', cancel)
+      original(value)
+    }
+    if (request.signal?.aborted) { cancel(); return false }
+    request.signal?.addEventListener('abort', cancel, { once: true })
+    return true
+  }
 
   function queuePermissionPrompt(request) {
+    if (!watchCancellation(request, () => {
+      if (ui.pendingPermission === request) resolvePermissionPrompt('deny')
+      else { ui.permissionQueue = ui.permissionQueue.filter(item => item !== request); request.resolve('deny'); requestRender({ force: true }) }
+    })) return
     // 不看时长：审批是**阻塞**的，等一秒和等一分钟都一样卡着
     notifier?.alert("permission", { tool: request?.tool || "" })
     ui.permissionQueue.push(request)
@@ -64,11 +81,18 @@ export function createPromptQueue({ ui, requestRender, notifier = null, afk = nu
 
   function queueQuestionPrompt(request) {
     notifier?.alert("question", { header: request?.questions?.[0]?.header || "" })
-    ui.questionQueue.push({
+    const queued = {
       // 问题文本来自模型与工具，可能带终端控制序列
       ...request,
       questions: sanitizeTerminalValue(request?.questions || [])
-    })
+    }
+    if (!watchCancellation(queued, () => {
+      if (ui.pendingQuestion === queued) { resetQuestionState(); activateNextQuestion() }
+      else ui.questionQueue = ui.questionQueue.filter(item => item !== queued)
+      queued.resolve(finalizeQuestionAnswers(queued, {}))
+      requestRender({ force: true })
+    })) return
+    ui.questionQueue.push(queued)
     if (!ui.pendingQuestion) activateNextQuestion()
     requestRender({ force: true })
   }

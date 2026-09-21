@@ -48,6 +48,7 @@ try {
     throw new Error(`package smoke version mismatch: expected ${PACKAGE_VERSION}, got ${version}`)
   }
   console.log(`package smoke ok: ${version}`)
+  await run(process.execPath, ["--input-type=module", "-e", "const sdk = await import('@kkelly-offical/kkcode/sdk'); const client = await import('@kkelly-offical/kkcode/sdk/client'); const protocol = await import('@kkelly-offical/kkcode/protocol'); if (typeof sdk.createKernel !== 'function' || sdk.DeviceClient !== client.DeviceClient || protocol.PROTOCOL_VERSION !== '1') throw new Error('Invalid installed SDK exports'); console.log('installed kernel SDK, browser client and protocol exports ok')"], scratch)
 } finally {
   await rm(scratch, { recursive: true, force: true })
 }

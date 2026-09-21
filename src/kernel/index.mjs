@@ -27,6 +27,8 @@
 
 // ── 1. 组合根 ─────────────────────────────────────────────────────────
 export { createKernel } from "./kernel.mjs"
+export { runtimeCwd } from './core/runtime-context.mjs'
+export { installPlugin, managePlugin } from './plugin/manager.mjs'
 
 // ── 2a. core：模式契约与事件类型（纯常量 / 纯函数）─────────────────────
 export {
@@ -77,6 +79,7 @@ export { THINKING_TIERS, normalizeThinkingTier, supportsThinking } from "./provi
 export {
   readClipboardImage,
   readClipboardText,
+  sniffImageMediaType,
   isImagePath,
   normalizeDroppedPath,
   extractImageRefs,

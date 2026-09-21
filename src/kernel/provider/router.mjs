@@ -1,3 +1,4 @@
+import { runtimeDependency } from '../core/runtime-context.mjs'
 import { requestAnthropic, requestAnthropicStream, countTokensAnthropic } from "./anthropic.mjs"
 import { requestOpenAI, requestOpenAIStream, countTokensOpenAI } from "./openai.mjs"
 import { request as requestOAICompat, requestStream as requestStreamOAICompat } from "./openai-compatible.mjs"
@@ -678,35 +679,35 @@ const noteAlias = () => noteDeprecation(ALIAS_KEY, ALIAS_MESSAGE, { removal: "1.
 /** 兼容别名（deprecated）：注册进进程级默认注册表。旧 import 路径继续工作，调用经 deprecations.mjs 记录。 */
 export function registerProvider(name, mod) {
   noteAlias()
-  return defaultProviderRegistry.registerProvider(name, mod)
+  return runtimeDependency('providers', defaultProviderRegistry).registerProvider(name, mod)
 }
 
 /** 兼容别名（deprecated）。 */
 export function listProviders() {
   noteAlias()
-  return defaultProviderRegistry.listProviders()
+  return runtimeDependency('providers', defaultProviderRegistry).listProviders()
 }
 
 /** 兼容别名（deprecated）。 */
 export function getProvider(name) {
   noteAlias()
-  return defaultProviderRegistry.getProvider(name)
+  return runtimeDependency('providers', defaultProviderRegistry).getProvider(name)
 }
 
 /** 兼容别名（deprecated）。 */
 export async function requestProvider(options) {
   noteAlias()
-  return defaultProviderRegistry.requestProvider(options)
+  return runtimeDependency('providers', defaultProviderRegistry).requestProvider(options)
 }
 
 /** 兼容别名（deprecated）。 */
 export async function* requestProviderStream(options) {
   noteAlias()
-  yield* defaultProviderRegistry.requestProviderStream(options)
+  yield* runtimeDependency('providers', defaultProviderRegistry).requestProviderStream(options)
 }
 
 /** 兼容别名（deprecated）。 */
 export async function countTokensProvider(options) {
   noteAlias()
-  return defaultProviderRegistry.countTokensProvider(options)
+  return runtimeDependency('providers', defaultProviderRegistry).countTokensProvider(options)
 }

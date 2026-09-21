@@ -1,11 +1,13 @@
+import { contextualObject } from '../core/runtime-context.mjs'
 import { readFile } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-const registry = new Map()
+const registry = contextualObject('agents', new Map())
 const baseRegistry = new Map()
+export function createAgentMap() { return new Map([...baseRegistry].map(([k, v]) => [k, { ...v }])) }
 
 function promptPath(name) {
   return path.join(__dirname, "prompt", `${name}.txt`)

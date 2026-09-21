@@ -6,6 +6,8 @@ const steps = [
   // 边界检查（check-boundaries）已由 npm run lint 覆盖，这里不重复挂。
   { label: 'import cycles', cmd: 'node', args: ['scripts/check-import-cycles.mjs'] },
   { label: 'typecheck', cmd: 'npm', args: ['run', 'typecheck'] },
+  { label: 'Web typecheck', cmd: 'npm', args: ['run', 'typecheck:web'] },
+  { label: 'bundled Web build', cmd: 'npm', args: ['run', 'build:web'] },
   { label: 'secret scan', cmd: 'npm', args: ['run', 'security:scan'] },
   { label: 'coverage', cmd: 'npm', args: ['run', 'coverage'] },
   { label: 'test:e2e', cmd: 'npm', args: ['run', 'test:e2e'] },

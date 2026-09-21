@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import path from "node:path"
 import { stat, rename, mkdir, cp, readdir, rm, writeFile } from "node:fs/promises"
 import { createWriteStream, createReadStream } from "node:fs"
@@ -69,7 +70,7 @@ export const moveTool = {
     required: ["from", "to"]
   },
   async execute(args, ctx = {}) {
-    const root = ctx.cwd || process.cwd()
+    const root = ctx.cwd || runtimeCwd()
     try {
       const from = await guardPath(root, String(args.from || ""), { mustExist: true })
       const to = await guardPath(root, String(args.to || ""))
@@ -109,7 +110,7 @@ export const copyTool = {
     required: ["from", "to"]
   },
   async execute(args, ctx = {}) {
-    const root = ctx.cwd || process.cwd()
+    const root = ctx.cwd || runtimeCwd()
     try {
       const from = await guardPath(root, String(args.from || ""), { mustExist: true, forWrite: false })
       const to = await guardPath(root, String(args.to || ""))
@@ -148,7 +149,7 @@ export const removeTool = {
     required: ["path"]
   },
   async execute(args, ctx = {}) {
-    const root = ctx.cwd || process.cwd()
+    const root = ctx.cwd || runtimeCwd()
     try {
       const target = await guardPath(root, String(args.path || ""), { mustExist: true })
       if (path.resolve(target) === path.resolve(root)) {
@@ -200,7 +201,7 @@ export const mkdirTool = {
     required: ["path"]
   },
   async execute(args, ctx = {}) {
-    const root = ctx.cwd || process.cwd()
+    const root = ctx.cwd || runtimeCwd()
     try {
       const target = await guardPath(root, String(args.path || ""))
       const existing = await pathKind(target)
@@ -242,7 +243,7 @@ export const archiveTool = {
     required: ["source"]
   },
   async execute(args, ctx = {}) {
-    const root = ctx.cwd || process.cwd()
+    const root = ctx.cwd || runtimeCwd()
     try {
       const source = await guardPath(root, String(args.source || ""), { mustExist: true, forWrite: false })
       const outName = String(args.output || `${args.source}.tar.gz`)

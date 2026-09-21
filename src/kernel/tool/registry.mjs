@@ -1,3 +1,4 @@
+import { runtimeCwd } from "../core/runtime-context.mjs"
 import path from "node:path"
 import os from "node:os"
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
@@ -76,7 +77,7 @@ async function savePlanFile(cwd, plan, files = []) {
   return path.relative(cwd, filePath)
 }
 
-function signatureFor(config = {}, cwd = process.cwd(), allowProjectSources = true) {
+function signatureFor(config = {}, cwd = runtimeCwd(), allowProjectSources = true) {
   const payload = {
     cwd,
     allowProjectSources,
@@ -642,7 +643,7 @@ async function prepareBashSandbox(ctx = {}, command = "") {
     return { spawn: null, notice: takeSandboxUnavailableNotice(status), hint: "" }
   }
 
-  const workspaceDir = await realPathOrSelf(path.resolve(ctx?.cwd || process.cwd()))
+  const workspaceDir = await realPathOrSelf(path.resolve(ctx?.cwd || runtimeCwd()))
   const tmpDir = await realPathOrSelf(os.tmpdir())
   const homeStateDir = userRootDir()
   // bwrap 的 --bind 源目录不存在就整条命令失败，而 ~/.kkcode 在全新安装里
@@ -2414,7 +2415,7 @@ function mcpTools(mcpRegistry) {
     async execute(args, ctx) {
       try {
         const result = await mcpRegistry.callTool(tool.id, args || {}, ctx.signal || null)
-        return result.output
+        return { output: result.output, content: result.content || [], structuredContent: result.structuredContent, metadata: { mcp: { content: result.content || [], structuredContent: result.structuredContent } } }
       } catch (error) {
         const reason = error.reason || "unknown"
         const server = error.server || tool.server
@@ -2454,7 +2455,7 @@ export function createToolRegistry({ mcpRegistry = McpRegistry } = {}) {
     /** @param {{ config?: Record<string, any>, cwd?: string, force?: boolean, allowProjectSources?: boolean }} [options] */
     async initialize({
       config = {},
-      cwd = process.cwd(),
+      cwd = runtimeCwd(),
       force = false,
       allowProjectSources = true
     } = {}) {
@@ -2509,7 +2510,7 @@ export function createToolRegistry({ mcpRegistry = McpRegistry } = {}) {
     /** @param {{ mode?: string, cwd?: string, config?: Record<string, any>, allowProjectSources?: boolean }} [options] */
     async list({
       mode,
-      cwd = process.cwd(),
+      cwd = runtimeCwd(),
       config = undefined,
       allowProjectSources = undefined
     } = {}) {
