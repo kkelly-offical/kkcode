@@ -1,9 +1,9 @@
 # Project working memory
 
 - User decision (2026-09-21): releases stay on `1.0.x`. Do not bump to `1.1.0` or another major/minor until the user explicitly authorizes that version change.
-- Current preview target: `1.0.1-preview.0`, covering kernel/SDK, protocol maintenance, WebUI/Host, Relay/SSO and native Android. User authorized merging into main and publishing this preview on 2026-09-22; use npm `preview` and GitHub prerelease, preserving stable `latest`.
+- Current preview target: `1.0.1-preview.1` (second round, 2026-09-22): remote SSE streaming, home-wide folder browsing, model auto-discovery, Web/Android model+mode+permission selectors and dual themes, controlled-terminal status mode, agent workflow/tools/Skills/MCP compatibility hardening. preview.0 was published 2026-09-21 via npm `preview` + GitHub prerelease; same channels for later previews, preserving stable `latest`.
 - Android is a native Kotlin/Compose remote client (SSH and Relay), not an embedded local Agent runtime.
-- The first public Android preview uses versionCode `10001`; every later public APK must increment that code while retaining the project release certificate. Signing keys remain outside Git and CI.
+- The first public Android preview uses versionCode `10001`; the second public preview (`1.0.1-preview.1`) uses `10002`. Every later public APK must keep incrementing that code while retaining the project release certificate. Signing keys remain outside Git and CI.
 - User authorized switching CodeQL from default setup to a custom workflow on 2026-09-22, preserving JavaScript/Actions analysis and adding a real manual Android/Kotlin debug build; a Java-only `build-mode: none` pass is not Kotlin coverage.
 - Remote is foreground-scoped: exiting the terminal stops remote exposure. Devices/sessions are private by default with explicit sharing. A trusted organization gateway may inspect traffic; content persistence is disabled by default.
 - First binding assigns existing local history to that account. Folder browsing starts at the OS user's home, with credential paths protected.
