@@ -8,7 +8,7 @@ historical first-round evidence.
 
 The complete `lab-enterprise-smoke.mjs` run passed on preview.2, including
 native Android and gateway-restart options. Evidence directory:
-`/root/.local/share/kkcode-enterprise-runs/integration-pB3CPj` (private state
+`/root/.local/share/kkcode-enterprise-runs/integration-cKaqjE` (private state
 outside Git). The foreground controllers were stopped when the test finished.
 
 - CLI login/organization and separate headless CLI history, loopback WebUI,

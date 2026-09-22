@@ -19,6 +19,10 @@ Third opt-in preview; npm `preview`, GitHub prerelease, stable `latest` unchange
 - Fix Windows canonical-path assertions, explicitly install ripgrep in CI,
   correct missing-search-tool diagnostics, fix controlled-panel stop/start races,
   and cancel Android SSE sockets promptly without spurious network errors.
+- Apply the same historical-media guard to token counting and inference; keep
+  Android SSE state/control frames even when they reuse the replay cursor.
+- Pin device-login navigation to the chosen gateway and reject credential/RPC
+  redirects in CLI, SDK and Android; review static findings individually.
 - Android versionCode `10003`, same external release certificate. Headless JSONL
   and remote protocol version `1` remain compatible.
 

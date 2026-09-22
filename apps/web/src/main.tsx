@@ -133,7 +133,7 @@ function App() {
     const poll = async () => {
       try {
         if (Date.now() >= expires) throw new Error("登录请求已过期，请重新登录");
-        const response = await fetch("/auth/token", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ device_code: loginFlow.device_code, browser: true }) });
+        const response = await fetch("/auth/token", { method: "POST", redirect: "error", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ device_code: loginFlow.device_code, browser: true }) });
         const result = await response.json();
         if (stopped) return;
         if (response.ok && result.authenticated) { setProfile(result.profile); setLoginFlow(null); setReady(true); return; }
@@ -174,7 +174,8 @@ function App() {
         if (bootstrap) {
           history.replaceState(null, "", location.pathname);
           await fetch("/api/v1/auth/pair", {
-            method: "POST",
+              method: "POST",
+              redirect: "error",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ bootstrap }),
           });
@@ -437,7 +438,7 @@ function App() {
         if (action === "exit") {
           manuallyDisconnected.current = true; setDeviceId(""); setSessions([]); setSettings({}); setCommands([]);
           if (!gateway) {
-            const response = await fetch("/api/v1/auth/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+            const response = await fetch("/api/v1/auth/logout", { method: "POST", redirect: "error", headers: { "Content-Type": "application/json" }, body: "{}" });
             if (!response.ok) throw new Error("退出配对失败，请重试");
             setReady(false);
           }
@@ -523,6 +524,7 @@ function App() {
             if (loginFlow) { window.open(deviceLoginPath(loginFlow.user_code), "_blank", "noopener"); return; }
             const r = await fetch("/api/v1/auth/pair", {
               method: "POST",
+              redirect: "error",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ code: pairCode }),
             });
@@ -534,6 +536,7 @@ function App() {
           attempt(async () => {
             const r = await fetch("/auth/device", {
               method: "POST",
+              redirect: "error",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ kind: "client", name: "Web browser" }),
             });

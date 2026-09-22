@@ -203,3 +203,25 @@ passed. Additional kernel discovery/policy and pricing regressions passed after
 that suite. Final versioned release/CI/lab/APK results are not implied by these
 intermediate results; they are tracked in [preview.2 worklog](preview.2-worklog.md)
 and [release guide](release-1.0.1-preview.2.md).
+
+Final local evidence (after completion and security hardening): full
+`release:verify` passes 2,857 tests / 2,856 passed / 1 platform skip / 0 failures;
+coverage 83.02% lines, 78.80% branches, 81.34% functions. E2e passes 33/33,
+headless JSONL stays unchanged, both browser acceptance suites pass, and the
+installed 490-file package loads all public SDK/protocol exports. Android passes
+35 JVM, 22 Compose, 3 real enterprise-network and 1 TLS tests; project-signed
+`10003` installs and starts on its separate release AVD without debug access.
+
+The final network runs also caught and fixed Anthropic token counting bypassing
+the historical-media guard and Android discarding same-cursor SSE control frames.
+Security review removed arbitrary device-login navigation and credential-bearing
+HTTP redirects in CLI/Web/SDK/Android. Static findings are reviewed by data flow,
+not silently dismissed; [security review](security-review-1.0.1-preview.2.md)
+records the remaining scanner limitations and their tests.
+
+Real Keycloak/PostgreSQL CLI/dual-Web/SDK/Android, media uploads, approvals, SSH,
+branches, sharing/revocation, gateway restart, unbind and explicit history transfer
+pass. Separate Dex, gateway-process failover/DB reconnect, encrypted backup/restore,
+HTTPS Host and bounded live K3 checks pass. These do not claim that arbitrary
+enterprise tenants, physical phones or production infrastructure were supplied.
+Final CI/publication links are centralized in the [worklog](preview.2-worklog.md).
