@@ -418,7 +418,10 @@ export async function* requestOpenAIStream(input) {
     }
 
     const choice = json.choices?.[0]
-    if (choice?.finish_reason) {
+    // 第一个非空 finish_reason 为准：部分兼容网关在收尾后还会再发一帧带着
+    // 另一个 reason（stop → length 被改写就会误触发 auto-continue，用户看到
+    // 「回合结束后又开始思考」）。真正的截断的第一帧就是 length，不受此影响。
+    if (choice?.finish_reason && finishReason === null) {
       finishReason = choice.finish_reason
     }
     const delta = choice?.delta

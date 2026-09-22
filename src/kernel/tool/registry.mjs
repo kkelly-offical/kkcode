@@ -2446,8 +2446,13 @@ function toolAllowedByMode(toolName, mode) {
  *
  * @param {object} [deps]
  * @param {typeof McpRegistry} [deps.mcpRegistry] MCP 注册表（默认进程级连接池，§7.2 显式契约）
+ * @param {boolean} [deps.deferMcp] MCP 后台加载装配开关：createKernel 置 true
+ *   —— boot/回合不 await MCP 连接，不就绪的工具不进广告面，收口（mcp.loaded）
+ *   后经 onLoad 原子换入；`mcp.background_load: false` 可退回前台。直接自建
+ *   注册表的调用方（测试 / SDK 定制组装）缺省保持「initialize 返回即就绪」
+ *   的同步语义 —— 那是工具注册表对自有调用方的既有契约，不默认改写。
  */
-export function createToolRegistry({ mcpRegistry = McpRegistry } = {}) {
+export function createToolRegistry({ mcpRegistry = McpRegistry, deferMcp = false } = {}) {
   const state = {
     initialized: false,
     tools: [],
@@ -2457,6 +2462,16 @@ export function createToolRegistry({ mcpRegistry = McpRegistry } = {}) {
     lastConfig: null,
     lastAllowProjectSources: true,
     refreshing: false
+  }
+
+  // MCP 后台加载收口时把新工具原子换进广告面（refreshMcpTools 内部是整体替换
+  // mcp_ 切片）。UI 的通知不走这里 —— 那是 mcp.loaded 事件的职责。
+  if (typeof mcpRegistry.onLoad === "function") {
+    mcpRegistry.onLoad(() => {
+      try {
+        ToolRegistry.refreshMcpTools()
+      } catch { /* 刷新失败保持旧广告面，下一轮加载再试 */ }
+    })
   }
 
   const ToolRegistry = {
@@ -2498,7 +2513,13 @@ export function createToolRegistry({ mcpRegistry = McpRegistry } = {}) {
       }
 
       if (config.tool && config.tool?.sources?.mcp !== false) {
-        await mcpRegistry.initialize(config, { cwd, allowProjectSources })
+        // MCP 后台加载只在 deferMcp 装配（createKernel）下生效：连接/工具发现
+        // 挂到后台，initialize 立即返回 —— 不就绪的 MCP 工具**不进广告面**
+        // （mcpTools 只快照已就绪的部分），加载收口后经 onLoad → refreshMcpTools
+        // 原子换入。选「就绪前排除」而不是「首个用到的 turn 短等待」：广告面只
+        // 陈述现在确定可用的东西，回合延迟不被 MCP 连接时间绑架。
+        const defer = deferMcp && config.mcp?.background_load !== false && typeof mcpRegistry.onLoad === "function"
+        await mcpRegistry.initialize(config, { cwd, allowProjectSources, defer })
         tools.push(...mcpTools(mcpRegistry))
       }
 

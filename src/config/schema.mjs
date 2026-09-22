@@ -3,6 +3,7 @@ import { APPROVAL_LEVELS } from "../kernel/core/modes.mjs"
 import { noteDeprecation } from "../kernel/core/deprecations.mjs"
 import { MODEL_ROLES } from "../kernel/provider/model-roles.mjs"
 import { THINKING_TIERS } from "../kernel/provider/thinking-effort.mjs"
+import { MODEL_CAPABILITY_KEYS } from "../kernel/provider/model-capabilities.mjs"
 import { STATUS_SEGMENT_IDS } from "../theme/status-bar.mjs"
 
 /**
@@ -31,7 +32,7 @@ export const ULTRA_MODEL_STAGES = Object.freeze(["preview", "blueprint", "coding
  * core-shell / wizard-form），0.8.0 加 model_thinking 时差点五处漏三处 ——
  * 正是「枚举驱动的清单不能手写」那一课的形状。过滤 provider 条目一律 import 它。
  */
-export const PROVIDER_META_KEYS = Object.freeze(["default", "strict_mode", "model_context", "model_thinking"])
+export const PROVIDER_META_KEYS = Object.freeze(["default", "strict_mode", "model_context", "model_thinking", "model_capabilities"])
 
 function err(list, field, message) {
   list.push(`${field}: ${message}`)
@@ -185,6 +186,27 @@ export function validateConfig(config) {
         else {
           for (const [mk, mv] of Object.entries(config.provider.model_thinking)) {
             if (typeof mv !== "boolean") err(errors, `provider.model_thinking.${mk}`, "must be boolean")
+          }
+        }
+      }
+      // 模型 → 能力标记（图像/视频/音频输入、工具调用、流式、思考）。探测写
+      // 入或用户手改；只有确知的布尔值才允许 —— 「未知」的落点是不写这个键，
+      // 运行时按既有默认行为放行，而不是写一个 null 当第三种状态。
+      if (config.provider.model_capabilities !== undefined) {
+        if (!isObj(config.provider.model_capabilities)) err(errors, "provider.model_capabilities", "must be object")
+        else {
+          for (const [mk, mv] of Object.entries(config.provider.model_capabilities)) {
+            if (!isObj(mv)) {
+              err(errors, `provider.model_capabilities.${mk}`, "must be object")
+              continue
+            }
+            for (const [ck, cv] of Object.entries(mv)) {
+              if (!MODEL_CAPABILITY_KEYS.includes(ck)) {
+                err(errors, `provider.model_capabilities.${mk}.${ck}`, `unknown capability (${MODEL_CAPABILITY_KEYS.join("|")})`)
+              } else if (typeof cv !== "boolean") {
+                err(errors, `provider.model_capabilities.${mk}.${ck}`, "must be boolean")
+              }
+            }
           }
         }
       }
@@ -398,6 +420,11 @@ export function validateConfig(config) {
       if (config.mcp.max_sse_buffer_bytes !== undefined) checkInt(errors, "mcp.max_sse_buffer_bytes", config.mcp.max_sse_buffer_bytes, 1024)
       if (config.mcp.auto_discover !== undefined && typeof config.mcp.auto_discover !== "boolean") {
         err(errors, "mcp.auto_discover", "must be boolean")
+      }
+      // 后台加载（默认开）：boot/回合不 await MCP 连接，不就绪的工具不进广告
+      // 面，收口时发 mcp.loaded。置 false 回到「启动时连完再进对话」的旧行为。
+      if (config.mcp.background_load !== undefined && typeof config.mcp.background_load !== "boolean") {
+        err(errors, "mcp.background_load", "must be boolean")
       }
       if (isObj(config.mcp.servers)) {
         for (const [name, server] of Object.entries(config.mcp.servers)) {
