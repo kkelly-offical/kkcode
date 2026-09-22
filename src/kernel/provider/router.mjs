@@ -15,6 +15,8 @@ import {
 } from "./security.mjs"
 import { validateModelId } from "./model-id.mjs"
 import { resolveThinkingParams } from "./thinking-effort.mjs"
+import { resolveModelCapabilities } from "./model-catalog.mjs"
+import { enforceModelInputCapabilities } from "./model-capabilities.mjs"
 import { noteDeprecation } from "../core/deprecations.mjs"
 import { trimTrailingSlashes } from "./url-path.mjs"
 
@@ -190,6 +192,45 @@ export function createProviderRegistry() {
   registerProvider("ollama", { request: requestOllama, requestStream: requestOllamaStream })
   registerProvider("gateway", { request: requestGateway, requestStream: requestGatewayStream, countTokens: countTokensGateway })
 
+  /**
+   * 能力标记 → 请求形状。每条请求都过：确知不收图的模型在出门之前被拦
+   * （新输入里的图抛错、历史里的图降级占位文本），确知不收 tools 的模型
+   * 摘掉工具。能力解析只读发现缓存与配置，永不触网；「未知」一律放行，
+   * 与没有能力系统时的行为完全一致。
+   *
+   * 丢弃告警每个 provider/model/种类只报一次 —— agent 循环每一步都走
+   * 这里，逐次告警会把 stderr 淹没在同一件事上。
+   */
+  const capabilityWarnings = new Set()
+  function warnCapabilityOnce(key, message) {
+    if (capabilityWarnings.has(key)) return
+    capabilityWarnings.add(key)
+    console.warn(message)
+  }
+
+  async function guardModelInput(configState, settings, messages, tools) {
+    const { capabilities } = await resolveModelCapabilities(configState, settings.configKey, settings.model)
+    const guarded = enforceModelInputCapabilities({
+      messages,
+      tools,
+      capabilities,
+      provider: settings.configKey,
+      model: settings.model
+    })
+    const warnKey = `${settings.configKey}\0${settings.model}`
+    if (guarded.droppedImages > 0) {
+      warnCapabilityOnce(`${warnKey}\0image`, `[kkcode] model "${settings.model}" does not support image input; ${guarded.droppedImages} image(s) in conversation history were replaced with text placeholders`)
+    }
+    if (guarded.droppedMedia > 0) {
+      warnCapabilityOnce(`${warnKey}\0media`, `[kkcode] ${guarded.droppedMedia} video/audio block(s) cannot be sent to model "${settings.model}" and were replaced with text placeholders`)
+    }
+    if (guarded.droppedTools > 0) {
+      warnCapabilityOnce(`${warnKey}\0tools`, `[kkcode] model "${settings.model}" is marked as not supporting tool calling; ${guarded.droppedTools} tool(s) were omitted from the request`)
+    }
+    return { capabilities, messages: guarded.messages, tools: guarded.tools }
+  }
+
+
   function resolveProtocolBaseUrl(provider, protocol) {
     const endpoint = provider.endpoints?.[protocol]
     if (!endpoint) return provider.base_url
@@ -313,6 +354,8 @@ export function createProviderRegistry() {
     audit = true
   }) {
     const { settings, apiKey, providerCfg } = await prepareProviderCall(configState, { providerType, model, baseUrl, apiKeyEnv })
+    const guarded = await guardModelInput(configState, settings, messages, tools)
+    const capabilities = guarded.capabilities
     const requestContext = createRequestContext({ traceId, requestId, parentEventId })
     let responseStatus = null
     let responseRequestId = null
@@ -332,8 +375,8 @@ export function createProviderRegistry() {
       protocol: settings.protocol,
       model: settings.model,
       system,
-      messages,
-      tools,
+      messages: guarded.messages,
+      tools: guarded.tools,
       timeoutMs: Number(providerCfg.timeout_ms || 120000),
       maxTokens: Number(maxTokens || providerCfg.max_tokens || 16384),
       retry: {
@@ -344,8 +387,12 @@ export function createProviderRegistry() {
       // 0.6.2：思考强度按档位解析，并按模型自身的输出预算算绝对值 ——
       // 此前 Anthropic 侧的 budget_tokens 是硬编码 10000，对大模型太少、
       // 对小模型可能超过它的输出上限。显式写的 thinking/reasoning_effort 仍然优先。
+      // 能力确知「不支持思考」时按 off 处理：给它发 reasoning_effort/thinking
+      // 只会换来 400。用户显式写的 thinking 配置仍然优先于探测结论。
       ...resolveThinkingParams({
-        tier: providerCfg.thinking_effort || providerCfg.reasoning_effort || "high",
+        tier: capabilities.reasoning === false && !(providerCfg.thinking_effort || providerCfg.reasoning_effort || providerCfg.thinking)
+          ? "off"
+          : providerCfg.thinking_effort || providerCfg.reasoning_effort || "high",
         protocol: settings.protocol,
         maxOutputTokens: Number(providerCfg.max_output_tokens) || Number(providerCfg.max_tokens) || 0,
         contextLimit: Number(providerCfg.context_limit) || 0
@@ -425,10 +472,14 @@ export function createProviderRegistry() {
     compaction = null
   }) {
     const { settings, apiKey, providerCfg } = await prepareProviderCall(configState, { providerType, model, baseUrl, apiKeyEnv })
+    const guarded = await guardModelInput(configState, settings, messages, tools)
+    const capabilities = guarded.capabilities
 
-    if (providerCfg.stream === false) {
+    // providerCfg.stream === false 是显式配置；capabilities.streaming === false
+    // 是探测结论（目录枚举过能力且没有流式）。两者都走非流式通道。
+    if (providerCfg.stream === false || capabilities.streaming === false) {
       const result = await requestProvider({
-        configState, providerType, model, system, messages, tools, baseUrl, apiKeyEnv,
+        configState, providerType, model, system, messages: guarded.messages, tools: guarded.tools, baseUrl, apiKeyEnv,
         traceId, requestId, parentEventId, sessionId, turnId, reviewId, signal
       })
       if (result.reasoning) {
@@ -458,8 +509,8 @@ export function createProviderRegistry() {
       protocol: settings.protocol,
       model: settings.model,
       system,
-      messages,
-      tools,
+      messages: guarded.messages,
+      tools: guarded.tools,
       timeoutMs: Number(providerCfg.timeout_ms || 120000),
       streamIdleTimeoutMs: Number(providerCfg.stream_idle_timeout_ms || 120000),
       maxTokens: Number(providerCfg.max_tokens || 16384),
@@ -468,11 +519,12 @@ export function createProviderRegistry() {
         baseDelayMs: Number(providerCfg.retry_base_delay_ms || 800),
         onRetry: retryTelemetry.onRetry
       },
-      // 0.6.2：思考强度按档位解析，并按模型自身的输出预算算绝对值 ——
-      // 此前 Anthropic 侧的 budget_tokens 是硬编码 10000，对大模型太少、
-      // 对小模型可能超过它的输出上限。显式写的 thinking/reasoning_effort 仍然优先。
+      // 思考档位的能力门：与 requestProvider 同一条规则（确知不支持 → off，
+      // 用户显式配置优先）。
       ...resolveThinkingParams({
-        tier: providerCfg.thinking_effort || providerCfg.reasoning_effort || "high",
+        tier: capabilities.reasoning === false && !(providerCfg.thinking_effort || providerCfg.reasoning_effort || providerCfg.thinking)
+          ? "off"
+          : providerCfg.thinking_effort || providerCfg.reasoning_effort || "high",
         protocol: settings.protocol,
         maxOutputTokens: Number(providerCfg.max_output_tokens) || Number(providerCfg.max_tokens) || 0,
         contextLimit: Number(providerCfg.context_limit) || 0

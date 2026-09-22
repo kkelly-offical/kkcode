@@ -37,6 +37,7 @@
 import { saveProviderConfig } from "./wizard.mjs"
 import { discoverModelsForProvider } from "./model-catalog.mjs"
 import { supportsThinking } from "./thinking-effort.mjs"
+import { inferCapabilitiesFromName, normalizeCapabilities } from "./model-capabilities.mjs"
 import { askQuestionInteractive } from "../tool/question-prompt.mjs"
 import { QUESTION_SKIPPED } from "../core/constants.mjs"
 import { PROVIDER_META_KEYS } from "../../config/schema.mjs"
@@ -135,7 +136,7 @@ function draftConfigState(name, entry) {
 const MANUAL_MODEL = "(manual input)"
 
 /**
- * 发现结果归一成 `[{ id, contextLength, supportedParameters }]`；
+ * 发现结果归一成 `[{ id, contextLength, supportedParameters, capabilities, pricing }]`；
  * 发现失败当「没有列表」，不是错误。
  *
  * 0.8.0 顺带修掉一个真缺陷：这里此前调的是 `discover(draft, name, {refresh})`，
@@ -154,7 +155,9 @@ async function discoverModelChoices({ name, entry, discover }) {
         // model-catalog 的 readContextLength 已经把各家字段名统一过，并且只在
         // >= 1024 时给值 —— 这里不再二次判断，也不为拿不到的模型编一个数字。
         contextLength: Number.isFinite(Number(m.contextLength)) ? Number(m.contextLength) : 0,
-        supportedParameters: Array.isArray(m.supportedParameters) ? m.supportedParameters : null
+        supportedParameters: Array.isArray(m.supportedParameters) ? m.supportedParameters : null,
+        capabilities: normalizeCapabilities(m.capabilities),
+        pricing: m.pricing && typeof m.pricing === "object" ? m.pricing : null
       }))
   } catch {
     return []
@@ -315,6 +318,37 @@ async function askMissingThinking({ unknown, ask }) {
   return out
 }
 
+/** 确认页能力标记的中文标签。reasoning 不在此列 —— 它归 provider.model_thinking。 */
+const CAPABILITY_LABELS = Object.freeze({
+  image: "图像",
+  video: "视频",
+  audio: "音频",
+  tools: "工具",
+  streaming: "流式"
+})
+
+/**
+ * 多模态/工具/流式能力：目录自报优先，名字族启发式兜底，两者都拿不准就不写。
+ *
+ * 与 thinking 不同，这里**不补问**：图像能力「未知」的缺省行为是放行（与没有
+ * 能力系统时一致），不会错拦；而写错一个 false 会把用户本来能用的图挡掉。
+ * 确认页会把写入的标记逐条列出（所见即所写），用户要改在 YAML 里改
+ * provider.model_capabilities。reasoning 键归 model_thinking，不重复写。
+ */
+function detectCapabilities(chosen, discovered) {
+  const byId = new Map(discovered.map((m) => [m.id, m]))
+  const map = {}
+  for (const id of chosen) {
+    const merged = {
+      ...inferCapabilitiesFromName(id),
+      ...normalizeCapabilities(byId.get(id)?.capabilities)
+    }
+    delete merged.reasoning
+    if (Object.keys(merged).length) map[id] = merged
+  }
+  return map
+}
+
 /**
  * 组装将要写盘的条目。**这里出现的每个字段都来自用户的输入或确认页** ——
  * 旧向导在这一步塞过三样用户没答过的东西（preset 的 base_url、静默继承的
@@ -339,7 +373,7 @@ function buildEntry({ type, baseUrl, apiKey, model, models = [] }) {
  * 这个模型的上下文没发现到、`provider.model_context` 里也就不会有它 ——
  * 用户在按下保存之前就该看见这个区别，而不是事后翻 YAML 才发现少了一半。
  */
-export function previewEntry(name, entry, { setDefault = true, modelContext = {}, modelThinking = {} } = {}) {
+export function previewEntry(name, entry, { setDefault = true, modelContext = {}, modelThinking = {}, modelCapabilities = {} } = {}) {
   const lines = [`provider.${name}:`]
   for (const [key, value] of Object.entries(entry)) {
     if (key === "api_key") lines.push(`  api_key: ${maskKey(String(value))}（明文保存）`)
@@ -357,6 +391,16 @@ export function previewEntry(name, entry, { setDefault = true, modelContext = {}
   if (thinkingEntries.length) {
     lines.push("provider.model_thinking:")
     for (const [id, supported] of thinkingEntries) lines.push(`  ${id}: ${supported ? "支持" : "不支持"}`)
+  }
+  const capabilityEntries = Object.entries(modelCapabilities)
+  if (capabilityEntries.length) {
+    lines.push("provider.model_capabilities:")
+    for (const [id, caps] of capabilityEntries) {
+      const flags = Object.entries(CAPABILITY_LABELS)
+        .filter(([key]) => typeof caps?.[key] === "boolean")
+        .map(([key, label]) => `${label}${caps[key] ? "✓" : "✗"}`)
+      lines.push(`  ${id}: ${flags.join(" ")}`)
+    }
   }
   if (setDefault) lines.push(`provider.default: ${name}`)
   return lines.join("\n")
@@ -445,13 +489,14 @@ export async function runProviderAddForm({
   }
   const { known, unknown } = detectThinkingSupport(models, discovered)
   const thinkingMap = { ...known, ...(await askMissingThinking({ unknown, ask })) }
+  const capabilityMap = detectCapabilities(models, discovered)
 
   const entry = buildEntry({ type: protocol.type, baseUrl, apiKey, model, models })
 
   // 确认循环：保存 / 修改名称 / 取消。名称是唯一推导出来（而非用户输入）的
   // 落盘键名，所以必须给一条不重走全流程的修改路径。
   for (;;) {
-    const preview = previewEntry(name, entry, { modelContext: contexts, modelThinking: thinkingMap })
+    const preview = previewEntry(name, entry, { modelContext: contexts, modelThinking: thinkingMap, modelCapabilities: capabilityMap })
     const confirm = await ask({
       questions: [{
         id: "confirm",
@@ -489,10 +534,12 @@ export async function runProviderAddForm({
   }
 
   const configPatch = /** @type {{ provider: Record<string, any> }} */ ({ provider: { default: name, [name]: entry } })
-  // model_context / model_thinking 是 provider 段下的顶层 map（不是条目内字段）。
-  // saveProviderConfig 对它们走同一套浅合并 —— 新模型的条目并进去，别的原样留着。
+  // model_context / model_thinking / model_capabilities 是 provider 段下的顶层
+  // map（不是条目内字段）。saveProviderConfig 对它们走同一套浅合并 ——
+  // 新模型的条目并进去，别的原样留着。
   if (Object.keys(contexts).length) configPatch.provider.model_context = { ...contexts }
   if (Object.keys(thinkingMap).length) configPatch.provider.model_thinking = { ...thinkingMap }
+  if (Object.keys(capabilityMap).length) configPatch.provider.model_capabilities = capabilityMap
   await saveProviderConfig(configPatch, true)
   return { saved: true, name, configPatch }
 }

@@ -760,13 +760,33 @@ async function processTurnLoopInRuntime({
       })
 
       // --- Auto-continue on output truncation (max_tokens) ---
-      if (response.stopReason === "max_tokens" && continueCount < MAX_CONTINUES && totalContinueCount < MAX_TOTAL_CONTINUES) {
+      // 续写的前提是「真的撞上了输出预算」。有些兼容网关在答案完整结束后仍报
+      // finish_reason=length —— 不拦的话，已经结束的一轮会再发起一次请求，
+      // 用户看到的就是「回合结束后突然又开始思考」。两道证据闸门：
+      //   1. 这一轮确实有半成品内容（文本/有效工具调用/思考至少其一）——
+      //      空响应没有可锚定的断点，「被截断」无从谈起；
+      //   2. 已知模型真实输出上限（provider.max_output_tokens，配置或目录
+      //      发现）时，usage.output 必须接近有效预算（请求预算与实际上限取
+      //      小）。上限未知的 provider 维持旧行为 —— 那里续写仍是唯一能把
+      //      长输出拼完整的手段。
+      const validToolCalls = (response.toolCalls || []).filter(tc => !tc.args?.__parse_error)
+      const hasPartialContent = Boolean(response.text) || validToolCalls.length > 0 || Boolean(response.reasoning)
+      const requestedOutputBudget = Number(configState.config.provider?.[providerType]?.max_tokens) || 16384
+      const knownOutputCap = Number(configState.config.provider?.[providerType]?.max_output_tokens) || 0
+      const effectiveOutputBudget = knownOutputCap > 0 ? Math.min(requestedOutputBudget, knownOutputCap) : 0
+      const reportedOutput = Number(response.usage?.output) || 0
+      const truncationCredible = hasPartialContent && (
+        effectiveOutputBudget > 0 && reportedOutput > 0
+          ? reportedOutput >= effectiveOutputBudget * 0.9
+          : true
+      )
+      if (response.stopReason === "max_tokens" && !truncationCredible) {
+        console.error(`[kkcode] provider reported max_tokens for model "${model}" without truncation evidence (output=${reportedOutput}, budget=${effectiveOutputBudget || "unknown"}); treating the response as complete`)
+      }
+      if (response.stopReason === "max_tokens" && truncationCredible && continueCount < MAX_CONTINUES && totalContinueCount < MAX_TOTAL_CONTINUES) {
         continueCount++
         totalContinueCount++
         await render.autoContinue(step, { continueCount, maxContinues: MAX_CONTINUES })
-
-        // Drop any tool calls with parse errors (truncated JSON from cutoff)
-        const validToolCalls = (response.toolCalls || []).filter(tc => !tc.args?.__parse_error)
 
         // Save partial output as assistant message
         const partialContent = []
@@ -890,6 +910,8 @@ async function processTurnLoopInRuntime({
           turnId,
           payload: { step, reply: finalReply }
         })
+        // 终态闸：TURN_FINISH 之后这个回合不再产出任何流式/thinking 事件
+        render.close()
         return {
           sessionId,
           turnId,
@@ -1276,6 +1298,7 @@ async function processTurnLoopInRuntime({
       turnId,
       payload: { maxSteps: true, reply: finalReply }
     })
+    render.close()
     return {
       sessionId,
       turnId,
@@ -1305,6 +1328,8 @@ async function processTurnLoopInRuntime({
       turnId,
       payload: { error: error.message }
     })
+    // 与 TURN_FINISH 同一条终态闸：失败路径之后同样不得再有流式事件
+    render.close()
     return {
       sessionId,
       turnId,

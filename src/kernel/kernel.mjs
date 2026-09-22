@@ -111,7 +111,10 @@ export async function createKernel(options = {}) {
   const questionPrompt = createQuestionPromptChannel()
   const permissions = createPermissionEngine({ promptChannel: permissionPrompt, eventBus: events })
   const mcp = createMcpRegistry()
-  const tools = createToolRegistry({ mcpRegistry: mcp })
+  // deferMcp：MCP 后台加载只对 createKernel 装配的注册表生效（boot/回合不
+  // await 连接）；直接自建的注册表保持同步契约。mcp.background_load: false
+  // 是用户的退回开关。
+  const tools = createToolRegistry({ mcpRegistry: mcp, deferMcp: true })
   const skills = createSkillRegistry()
   const hooks = createHookBus()
   const providers = createProviderRegistry()

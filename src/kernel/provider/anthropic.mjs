@@ -462,7 +462,9 @@ export async function* requestAnthropicStream(input) {
 
     if (event === "message_delta") {
       outputTokens = parsed.usage?.output_tokens ?? outputTokens
-      if (parsed.delta?.stop_reason) {
+      // 与 openai 侧同一条纪律：第一个非空 stop_reason 为准，迟到的重复帧
+      // 不得把 end_turn 改写成 max_tokens（那会误触发 auto-continue）。
+      if (parsed.delta?.stop_reason && stopReason === null) {
         stopReason = parsed.delta.stop_reason
       }
     }
