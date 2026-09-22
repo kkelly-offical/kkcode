@@ -34,8 +34,8 @@ test('device authentication, request deduplication, leases and origin protection
     await assert.rejects(service.request({ id: 'lease2', method: 'control.acquire', params: { sessionId: 'test' } }, { id: 'local', client: 'another' }), /Another client/)
     await assert.rejects(service.request({ id: 'intruder', method: 'status' }, { id: 'another', client: 'another' }), /owner/)
     await mkdir(path.join(home, '.ssh')); await writeFile(path.join(home, '.ssh', 'id_rsa'), 'fixture')
-    await assert.rejects(resolveDevicePath(path.join(home, '.ssh', 'id_rsa'), [home]), /protected/)
-    await assert.rejects(resolveDevicePath(os.tmpdir(), [home]), /outside/)
+    await assert.rejects(resolveDevicePath(path.join(home, '.ssh', 'id_rsa'), [home]), error => error.code === 'path_denied' && error.status === 403 && /受到保护/.test(error.message))
+    await assert.rejects(resolveDevicePath(os.tmpdir(), [home]), error => error.code === 'path_denied' && error.status === 403 && /--root/.test(error.message))
   } finally {
     await server.close()
     if (previous === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = previous
