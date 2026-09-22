@@ -421,6 +421,11 @@ export function validateConfig(config) {
       if (config.mcp.auto_discover !== undefined && typeof config.mcp.auto_discover !== "boolean") {
         err(errors, "mcp.auto_discover", "must be boolean")
       }
+      // 后台加载（默认开）：boot/回合不 await MCP 连接，不就绪的工具不进广告
+      // 面，收口时发 mcp.loaded。置 false 回到「启动时连完再进对话」的旧行为。
+      if (config.mcp.background_load !== undefined && typeof config.mcp.background_load !== "boolean") {
+        err(errors, "mcp.background_load", "must be boolean")
+      }
       if (isObj(config.mcp.servers)) {
         for (const [name, server] of Object.entries(config.mcp.servers)) {
           const prefix = `mcp.servers.${name}`

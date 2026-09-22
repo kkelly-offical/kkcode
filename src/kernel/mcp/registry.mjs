@@ -24,6 +24,10 @@ import { deprecatedSingletonAlias } from "../core/deprecations.mjs"
 export function createMcpRegistry() {
   const state = {
     loaded: false,
+    // 一次加载（前台或后台）正在进行中。与 loaded 正交：loaded 回答「上次
+    // 加载完成了吗」，loading 回答「现在有没有在跑」—— 后台加载期间两者
+    // 可以同时为 false/true，UI 的状态查询面据此区分「加载中」与「没配 MCP」。
+    loading: false,
     servers: new Map(),
     tools: new Map(),
     prompts: new Map(),
@@ -33,7 +37,10 @@ export function createMcpRegistry() {
     loadedAt: 0,
     lastSignature: "",
     initPromise: null,
-    shuttingDown: false
+    shuttingDown: false,
+    // 加载收口监听器（工具注册表用来原子换入新工具面）。与事件总线分开：
+    // 监听器是内核内部的同步回调面，mcp.loaded 事件是给 UI 的广播面。
+    loadListeners: new Set()
   }
 
   // Provider tool-name contract: OpenAI and Anthropic both require
@@ -249,10 +256,55 @@ export function createMcpRegistry() {
     return client
   }
 
+  async function shutdownClients(clients) {
+    for (const client of clients) {
+      if (typeof client.shutdown === "function") {
+        try { await Promise.resolve(client.shutdown()) } catch { /* best-effort */ }
+      }
+    }
+  }
+
+  /**
+   * 一轮加载的汇总：mcp.loaded 事件的 payload，也是 onLoad 监听器的入参。
+   * 逐台 server 的失败已经各发过 MCP_HEALTH 并写进 health map，这里只汇总
+   * 计数与失败清单 —— UI 一条瞬时通知需要的就是这些。
+   */
+  function buildLoadSummary({ background, startedAt, error = null }) {
+    const failed = []
+    let connected = 0
+    let enabledCount = 0
+    for (const [name, serverConfig] of state.configured) {
+      if (serverConfig?.enabled === false) continue
+      enabledCount += 1
+      const health = state.health.get(name)
+      if (health?.ok) connected += 1
+      else failed.push({ name, reason: health?.reason || "unknown", error: health?.error || null })
+    }
+    return {
+      background,
+      ok: !error,
+      error: error ? (error?.message || String(error)) : null,
+      configured: enabledCount,
+      connected,
+      failed,
+      toolCount: state.tools.size,
+      promptCount: state.prompts.size,
+      durationMs: Date.now() - startedAt
+    }
+  }
+
+  async function announceLoad(summary) {
+    for (const listener of state.loadListeners) {
+      try { listener(summary) } catch { /* 监听器错误不能反过来影响加载 */ }
+    }
+    await EventBus.emit({ type: EVENT_TYPES.MCP_LOADED, payload: summary })
+  }
+
   async function reinitialize(config, {
     force = false,
     cwd = null,
-    allowProjectSources = true
+    allowProjectSources = true,
+    background = false
   } = {}) {
     state.shuttingDown = false
     const ttlMs = Math.max(0, Number(config?.runtime?.mcp_refresh_ttl_ms || 60000))
@@ -265,89 +317,169 @@ export function createMcpRegistry() {
     })
 
     const cacheValid = state.loaded && !force && state.lastSignature === sig && Date.now() - state.loadedAt <= ttlMs
-    if (cacheValid) return
+    if (cacheValid) return null
 
-    for (const [, client] of state.servers) {
-      if (typeof client.shutdown === "function") {
-        try { await Promise.resolve(client.shutdown()) } catch { /* best-effort */ }
+    state.loading = true
+    const startedAt = Date.now()
+    try {
+      await shutdownClients([...state.servers.values()])
+      state.loaded = false
+      state.servers.clear()
+      state.tools.clear()
+      state.prompts.clear()
+      state.health.clear()
+      state.configured.clear()
+      state.diagnostics = []
+
+      const configServers = config?.mcp?.servers || {}
+      const discoveredServers = config?.mcp?.auto_discover !== false
+        ? await discoverProjectServers(effectiveCwd, allowProjectSources)
+        : {}
+      const pluginState = await discoverLocalPluginManifests(effectiveCwd, config, {
+        allowProjectSources
+      })
+      const rawPluginServers = pluginMcpServers(pluginState.plugins)
+      const pluginServers = {}
+      for (const [name, server] of Object.entries(rawPluginServers)) {
+        const key = String(name).startsWith("plugin/") ? name : `plugin/${name}`
+        pluginServers[key] = server
       }
-    }
-    state.loaded = false
-    state.servers.clear()
-    state.tools.clear()
-    state.prompts.clear()
-    state.health.clear()
-    state.configured.clear()
-    state.diagnostics = []
+      const allServers = { ...discoveredServers, ...pluginServers, ...configServers }
 
-    const configServers = config?.mcp?.servers || {}
-    const discoveredServers = config?.mcp?.auto_discover !== false
-      ? await discoverProjectServers(effectiveCwd, allowProjectSources)
-      : {}
-    const pluginState = await discoverLocalPluginManifests(effectiveCwd, config, {
-      allowProjectSources
-    })
-    const rawPluginServers = pluginMcpServers(pluginState.plugins)
-    const pluginServers = {}
-    for (const [name, server] of Object.entries(rawPluginServers)) {
-      const key = String(name).startsWith("plugin/") ? name : `plugin/${name}`
-      pluginServers[key] = server
-    }
-    const allServers = { ...discoveredServers, ...pluginServers, ...configServers }
-
-    // Merge global mcp.* defaults into each server config (server-level overrides global)
-    const mcpGlobalDefaults = {}
-    for (const gk of ["timeout_ms", "shutdown_timeout_ms", "max_sse_buffer_bytes", "max_reconnect_attempts", "circuit_reset_ms", "max_buffer_bytes"]) {
-      if (config?.mcp?.[gk] !== undefined) mcpGlobalDefaults[gk] = config.mcp[gk]
-    }
-
-    for (const [name, serverConfig] of Object.entries(allServers)) {
-      const effective = { ...mcpGlobalDefaults, ...serverConfig }
-      allServers[name] = effective
-      state.configured.set(name, effective)
-      if (serverConfig?.enabled === false) {
-        setHealth(name, serverConfig, {
-          ok: false,
-          reason: "disabled",
-          error: null
-        })
-      } else {
-        setHealth(name, serverConfig, {
-          ok: false,
-          reason: "not_checked",
-          error: null
-        })
+      // Merge global mcp.* defaults into each server config (server-level overrides global)
+      const mcpGlobalDefaults = {}
+      for (const gk of ["timeout_ms", "shutdown_timeout_ms", "max_sse_buffer_bytes", "max_reconnect_attempts", "circuit_reset_ms", "max_buffer_bytes"]) {
+        if (config?.mcp?.[gk] !== undefined) mcpGlobalDefaults[gk] = config.mcp[gk]
       }
+
+      for (const [name, serverConfig] of Object.entries(allServers)) {
+        const effective = { ...mcpGlobalDefaults, ...serverConfig }
+        allServers[name] = effective
+        state.configured.set(name, effective)
+        if (serverConfig?.enabled === false) {
+          setHealth(name, serverConfig, {
+            ok: false,
+            reason: "disabled",
+            error: null
+          })
+        } else {
+          setHealth(name, serverConfig, {
+            ok: false,
+            reason: "not_checked",
+            error: null
+          })
+        }
+      }
+
+      const entries = Object.entries(allServers).filter(([, serverConfig]) => serverConfig?.enabled !== false)
+      await Promise.allSettled(entries.map(([name, serverConfig]) => connectServer(name, serverConfig)))
+
+      // shutdown 抢在加载完成前发生：刚建出来的连接必须当场关掉，不置 loaded、
+      // 不发事件 —— 否则进程退出后还留着一池活连接和一条迟到的「加载完成」。
+      if (state.shuttingDown) {
+        await shutdownClients([...state.servers.values()])
+        state.servers.clear()
+        state.tools.clear()
+        state.prompts.clear()
+        return null
+      }
+
+      state.loaded = true
+      state.loadedAt = Date.now()
+      state.lastSignature = sig
+      const summary = buildLoadSummary({ background, startedAt })
+      await announceLoad(summary)
+      return summary
+    } catch (error) {
+      // 发现阶段的灾难性失败（配置解析、插件清单）与单 server 失败同级处理：
+      // 降级成一条 ok:false 的汇总事件，绝不让 boot/回合被 MCP 拖进异常路径。
+      if (state.shuttingDown) return null
+      const summary = buildLoadSummary({ background, startedAt, error })
+      await announceLoad(summary)
+      return summary
+    } finally {
+      state.loading = false
     }
-
-    const entries = Object.entries(allServers).filter(([, serverConfig]) => serverConfig?.enabled !== false)
-    await Promise.allSettled(entries.map(([name, serverConfig]) => connectServer(name, serverConfig)))
-
-    state.loaded = true
-    state.loadedAt = Date.now()
-    state.lastSignature = sig
   }
 
   const McpRegistry = {
+    /**
+     * @param {object} [config] 配置（含 mcp.servers / runtime 段）
+     * @param {object} [options]
+     * @param {boolean} [options.force] 忽略缓存强制重载
+     * @param {string} [options.cwd] 项目目录（驱动 .mcp.json 等发现）
+     * @param {boolean} [options.allowProjectSources] 是否允许项目级来源
+     * @param {boolean} [options.defer] 后台加载：把连接/工具发现挂到后台单飞
+     *   promise 后立即返回，收口时发 mcp.loaded 汇总事件并回调 onLoad 监听
+     *   器。就绪前该 server 的工具不在广告面上（registry.listTools 不含它）——
+     *   这是刻意选定的语义（另一种是「首个用到的 turn 短等待带超时」）：
+     *   广告面只陈述现在确定可用的东西，不把加载延迟藏进某一轮对话里。
+     */
     async initialize(config, {
       force = false,
       cwd = null,
-      allowProjectSources = true
+      allowProjectSources = true,
+      defer = false
     } = {}) {
       if (state.initPromise) {
+        // 后台加载已在进行中时，defer 调用方直接返回 —— 挂上去等就等于把
+        // 后台加载又变回了阻塞点（回合里的 tools.list 会被拖住）。
+        if (defer && !force) return
         await state.initPromise
         if (!force) return
       }
-      state.initPromise = reinitialize(config, { force, cwd, allowProjectSources })
+      const run = reinitialize(config, { force, cwd, allowProjectSources, background: defer })
+      state.initPromise = run
+      const cleanup = () => { if (state.initPromise === run) state.initPromise = null }
+      if (defer) {
+        // 不 await：reinitialize 自身不抛（灾难性失败也折成 ok:false 汇总），
+        // then/cleanup 只负责释放单飞锁。
+        run.then(cleanup, cleanup)
+        return
+      }
       try {
-        await state.initPromise
+        await run
       } finally {
-        state.initPromise = null
+        cleanup()
       }
     },
 
     isReady() {
       return state.loaded
+    },
+
+    isLoading() {
+      return state.loading
+    },
+
+    /** UI 的状态查询面：「加载中 / 就绪 / 失败降级」三态与各计数。 */
+    loadState() {
+      let connected = 0
+      let enabledCount = 0
+      for (const [name, serverConfig] of state.configured) {
+        if (serverConfig?.enabled === false) continue
+        enabledCount += 1
+        if (state.health.get(name)?.ok) connected += 1
+      }
+      return {
+        loaded: state.loaded,
+        loading: state.loading,
+        loadedAt: state.loadedAt || 0,
+        configured: enabledCount,
+        connected,
+        toolCount: state.tools.size
+      }
+    },
+
+    /**
+     * 注册加载收口监听器（每轮加载完成/降级都会回调一次，含前台加载）。
+     * 返回退订函数。内核内部消费面（工具注册表换广告面）；UI 请订阅
+     * mcp.loaded 事件而不是这里。
+     */
+    onLoad(listener) {
+      if (typeof listener !== "function") return () => {}
+      state.loadListeners.add(listener)
+      return () => state.loadListeners.delete(listener)
     },
 
     listServers() {
@@ -550,6 +682,11 @@ export function createMcpRegistry() {
 
     async shutdown() {
       state.shuttingDown = true
+      // 后台加载可能正在进行：先等它收口（它在收尾处看到 shuttingDown 会自己
+      // 关掉刚建的连接），再清场 —— 不然加载完成时会把一池连接留给出局的进程。
+      if (state.initPromise) {
+        try { await state.initPromise } catch { /* 加载失败已被汇总事件覆盖 */ }
+      }
       const clients = [...state.servers.values()]
       state.servers.clear()
       state.tools.clear()

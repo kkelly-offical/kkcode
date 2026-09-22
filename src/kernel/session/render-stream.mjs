@@ -55,14 +55,25 @@ export function createRenderStream({ output = null, renderMarkdown = true, event
   // （含「thinking 段后再来 text 段要重发 text.start」）全部由它派生。
   let phase = null
   let sawText = false
+  // 回合终态闸：turn.finish / turn.error 发出后 loop 就 return 了，按构造
+  // 不该再有任何渲染调用 —— 但「按构造」挡不住未来的漂移与异步迟到者。
+  // close() 之后所有方法静默归零，让「turn 结束后不再产出流式/thinking
+  // 事件」成为可测试的结构性保证，而不是一个巧合。
+  let closed = false
+
+  function close() {
+    closed = true
+  }
 
   function beginStep() {
+    if (closed) return
     phase = null
     sawText = false
     bytes?.beginStep?.()
   }
 
   async function thinkingDelta(step, text) {
+    if (closed) return
     if (phase !== "thinking") {
       phase = "thinking"
       await eventBus.emit({ type: EVENT_TYPES.STREAM_THINKING_START, sessionId, turnId, payload: { step } })
@@ -73,6 +84,7 @@ export function createRenderStream({ output = null, renderMarkdown = true, event
   }
 
   async function textDelta(step, text) {
+    if (closed) return
     if (phase === "thinking") bytes?.leaveThinking?.()
     if (phase !== "text") {
       phase = "text"
@@ -84,6 +96,7 @@ export function createRenderStream({ output = null, renderMarkdown = true, event
   }
 
   async function toolCallChunk(step, call) {
+    if (closed) return
     if (phase === "thinking") bytes?.leaveThinking?.()
     phase = "tool_call"
     await eventBus.emit({
@@ -95,17 +108,20 @@ export function createRenderStream({ output = null, renderMarkdown = true, event
   }
 
   async function providerCompaction(step) {
+    if (closed) return
     await eventBus.emit({ type: EVENT_TYPES.STREAM_PROVIDER_COMPACTION, sessionId, turnId, payload: { step } })
     bytes?.providerCompaction?.()
   }
 
   /** provider 流正常收尾（错误/中断路径不调用 —— 与迁移前一致，残余缓冲直接丢弃）。 */
   async function streamEnd(step) {
+    if (closed) return
     await eventBus.emit({ type: EVENT_TYPES.STREAM_END, sessionId, turnId, payload: { step } })
     bytes?.streamEnd?.(sawText)
   }
 
   async function autoContinue(step, { continueCount, maxContinues }) {
+    if (closed) return
     await eventBus.emit({
       type: EVENT_TYPES.TURN_AUTO_CONTINUE,
       sessionId,
@@ -116,6 +132,7 @@ export function createRenderStream({ output = null, renderMarkdown = true, event
   }
 
   async function validationSkipped(step, message) {
+    if (closed) return
     await eventBus.emit({
       type: EVENT_TYPES.TURN_VALIDATION_SKIPPED,
       sessionId,
@@ -133,6 +150,7 @@ export function createRenderStream({ output = null, renderMarkdown = true, event
     providerCompaction,
     streamEnd,
     autoContinue,
-    validationSkipped
+    validationSkipped,
+    close
   }
 }

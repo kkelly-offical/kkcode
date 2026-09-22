@@ -27,6 +27,10 @@ export const EVENT_TYPES = {
   PERMISSION_DECIDED: "permission.decided",
   REVIEW_DECISION: "review.decision",
   MCP_HEALTH: "mcp.health",
+  // 一轮 MCP 加载（前台或后台）收口时的汇总事件：每 server 的 MCP_HEALTH 照发，
+  // UI 据此只弹一条「加载完成/失败」的瞬时通知而不是逐台刷屏。payload 形状见
+  // mcp/registry.mjs 的 buildLoadSummary。
+  MCP_LOADED: "mcp.loaded",
   MCP_REQUEST: "mcp.request",
   MCP_RECONNECT: "mcp.reconnect",
   MCP_CIRCUIT_OPEN: "mcp.circuit_open",
