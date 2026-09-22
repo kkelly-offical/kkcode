@@ -39,19 +39,18 @@ export async function checkWorkspaceTrust({ cwd, cliTrust = false, isTTY = proce
     }
     return { trusted: false }
   }
-  const data = await readTrustFile(cwd)
+  // Physical identity is authoritative once present. A stale alias tombstone
+  // (/var vs /private/var, Windows short names) must not override a later
+  // explicit re-grant of that very directory. Legacy exact records remain a
+  // fallback only where no canonical record exists.
+  const canonical = await canonicalDirectory(cwd).catch(() => null)
+  const data = (canonical ? await readTrustFile(canonical) : null) ?? await readTrustFile(cwd)
   if (data?.trusted === true) return { trusted: true }
   if (data?.trusted === false || data?.invalid) return askOrDeny()
   // Recursive grants live only in the OS user's private trust store. Existing
   // --trust records remain exact-directory grants. Resolve symlinks BEFORE
   // inheritance so a link out of an approved tree cannot widen that grant.
-  const canonical = await canonicalDirectory(cwd).catch(() => null)
   if (canonical) {
-    if (canonical !== path.resolve(cwd)) {
-      const exact = await readTrustFile(canonical)
-      if (exact?.trusted === true) return { trusted: true }
-      if (exact?.trusted === false || exact?.invalid) return askOrDeny()
-    }
     for (let parent = path.dirname(canonical); parent !== canonical;) {
       const inherited = await readTrustFile(parent)
       if (inherited?.invalid) return askOrDeny()
@@ -69,7 +68,7 @@ export async function checkWorkspaceTrust({ cwd, cliTrust = false, isTTY = proce
 
 /** @param {string} cwd @param {{ recursive?: boolean }} [options] */
 export async function persistTrust(cwd, { recursive = false } = {}) {
-  const target = recursive ? await canonicalDirectory(cwd) : cwd
+  const target = recursive ? await canonicalDirectory(cwd) : await canonicalDirectory(cwd).catch(() => path.resolve(cwd))
   const prior = recursive ? null : await readTrustFile(target)
   // Reconfirming --trust at an already trusted tree root must not silently
   // narrow its grant. An exact re-grant after /untrust must NOT restore a

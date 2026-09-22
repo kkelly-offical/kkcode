@@ -66,6 +66,20 @@ test('recursive inheritance follows physical directories and rejects symlink esc
   assert.equal(await trusted(alias), false); assert.equal(await trusted(child), false)
 })
 
+test('canonical re-approval overrides a stale alias tombstone without restoring recursive access', async t => {
+  const { root, child, directory } = await fixture(t)
+  const alias = path.join(directory, 'alias-projects')
+  await symlink(root, alias, process.platform === 'win32' ? 'junction' : 'dir')
+  await persistTrust(root, { recursive: true })
+  await revokeTrust(alias)
+  assert.equal(await trusted(alias), false); assert.equal(await trusted(root), false)
+  await persistTrust(await realpath(root))
+  assert.equal(await trusted(alias), true); assert.equal(await trusted(root), true)
+  assert.equal(await trusted(child), false, 're-approval stays exact; the revoked tree must not return')
+  await revokeTrust(alias)
+  assert.equal(await trusted(root), false, 'canonical identity still receives explicit untrust from an alias')
+})
+
 test('project-local self-trust and malformed private grants cannot bypass the trust boundary', async t => {
   const { root, child } = await fixture(t)
   await mkdir(path.join(child, '.kkcode'))

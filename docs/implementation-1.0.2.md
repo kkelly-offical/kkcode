@@ -96,6 +96,12 @@ The published `v1.0.1` tag and release remain immutable.
   (valid PNG declared as SVG) hidden by a warm-cache test order; now actual bytes
   determine SVG detection. Replaced grouped base64 regex with a bounded linear
   validation path and added a 4 MiB case. Media regression: 32 passed.
+- First hosted matrix exposed the same pre-existing trust re-grant failure as
+  baseline `52ae793` on both macOS and Windows: an alias revocation tombstone
+  overrode a subsequent canonical exact grant. Canonical trust records now have
+  explicit precedence, exact grants use physical paths, and a Linux-reproducible
+  symlink regression checks that a re-grant does not restore recursive scope.
+  No platform test is skipped to get past this failure; full hosted rerun pending.
 - Versions are prepared as 1.0.2 / Android 10005. Final docs review, full gates,
   real-model/demo rollout, hosted OS matrix and signed-update validation remain
   in progress.
