@@ -31,6 +31,23 @@ export function modelThinkingSupport({ config, model, supportedParameters = null
   return supportsThinking({ modelId: model, supportedParameters })
 }
 
+/**
+ * 这个模型收不收得下某种媒体输入（image/video/audio）。三级判据，前者优先：
+ *   1. 配置的 `provider.model_media_capabilities[model][kind]`（用户显式写的结论）
+ *   2. 目录探测回填的同一键（M33 的模型探测写这里 —— 与 model_context 同一纪律：
+ *      探测回填不覆盖用户显式值）
+ *   3. 缺省：image 视为支持（既有行为，内核还会按字节嗅探兜底）；
+ *      video/audio 返回 null（未知）——调用方据此提示而不是静默丢弃。
+ *
+ * 返回 true / false / null（未知）。
+ */
+export function modelMediaSupport({ config, model, kind }) {
+  const table = config?.provider?.model_media_capabilities?.[model]
+  const configured = table?.[kind]
+  if (typeof configured === "boolean") return configured
+  return kind === "image" ? true : null
+}
+
 export async function loadProviderModelItems(configState, providerName, {
   refresh = false,
   discover = discoverModelsForProvider

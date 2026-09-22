@@ -122,7 +122,9 @@ export function renderStatusBar({
     if (!tight && aggregation.includes("session")) tokenSegments.push(`S:${formatNumber(s.input + s.output)}`)
     if (!dense && aggregation.includes("global")) tokenSegments.push(`G:${formatNumber(g.input + g.output)}`)
     const tokenText = `TOKENS ${tokenSegments.join(" ")}${tokenMeter.estimated ? " ~" : ""}`
-    add("tokens", badge(tokenText, theme.base.fg, "#2d3748", { bold: false }))
+    // 底色用主题的 panel 色而不是写死的深石板色：浅色主题下 base.fg 是近黑，
+    // 配深底徽标会变成黑上加黑
+    add("tokens", badge(tokenText, theme.base.fg, theme.components.panel || theme.base.border, { bold: false }))
   }
   if (showCost) {
     const savingsStr = savings > 0 ? ` ↓${formatCost(savings)}` : ""

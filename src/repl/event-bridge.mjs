@@ -33,6 +33,7 @@ import { EVENT_TYPES } from "../kernel/index.mjs"
 import { shouldApplyActiveTurnEvent } from "../ui/event-scope.mjs"
 import { formatTokenCount } from "../theme/status-bar.mjs"
 import { applyPermissionLevel } from './permission-flow.mjs'
+import { reduceTurnRuntime, markTurnSubmitted } from "../ui/turn-runtime.mjs"
 import {
   startThinkingWait,
   startThinkingStream,
@@ -227,7 +228,8 @@ export function subscribeSessionEvents({
   return eventBus.subscribe((event) => {
     const { type, payload } = event
     if (type === 'remote.turn.started' && event.sessionId === state.sessionId) {
-      ui.busy = true; ui.remoteTurn = true
+      markTurnSubmitted(ui)
+      ui.remoteTurn = true
       ui.turnAbortController = ctx.remoteService?.turns.get(state.sessionId)?.controller || null
       appendLog(String(payload.prompt || ''), { kind: 'user' })
       requestRender({ force: true })
@@ -249,16 +251,17 @@ export function subscribeSessionEvents({
 
     switch (type) {
       case EVENT_TYPES.TURN_START:
-        ui.activeTurnId = event.turnId || null
+        // 相位与活动态的唯一改写入口是 ui/turn-runtime.mjs 的状态机
+        reduceTurnRuntime(ui, event)
         turnStartedAt = now()
         break
 
       case EVENT_TYPES.TURN_STEP_START: {
         finalizeTextStream()
         applyThinkingTransition(startThinkingWait(ui.thinking, { now: now() }))
-        ui.currentStep = payload.step || 0
-        ui.maxSteps = Number(ctx.configState.config.agent?.max_steps) || 25
-        ui.currentActivity = { type: "thinking" }
+        reduceTurnRuntime(ui, event, {
+          maxSteps: Number(ctx.configState.config.agent?.max_steps) || 25
+        })
         requestRender()
         break
       }
@@ -266,13 +269,13 @@ export function subscribeSessionEvents({
       case EVENT_TYPES.TOOL_START:
         finalizeTextStream()
         finalizeThinking()
-        ui.currentActivity = { type: "tool", tool: payload.tool, args: payload.args }
+        reduceTurnRuntime(ui, event)
         requestRender()
         break
 
       case EVENT_TYPES.TOOL_FINISH:
       case EVENT_TYPES.TOOL_ERROR:
-        ui.currentActivity = { type: "thinking" }
+        reduceTurnRuntime(ui, event)
         requestRender()
         break
 
@@ -281,7 +284,7 @@ export function subscribeSessionEvents({
         finalizeThinking()
         ui.streamRaw = ""
         ui.streamLogId = appendLog("", { kind: "assistant", status: "streaming" })
-        ui.currentActivity = { type: "writing" }
+        reduceTurnRuntime(ui, event)
         requestRender()
         break
 
@@ -344,7 +347,7 @@ export function subscribeSessionEvents({
       }
 
       case EVENT_TYPES.SESSION_COMPACTING:
-        ui.currentActivity = { type: "compacting" }
+        reduceTurnRuntime(ui, event)
         requestRender()
         break
 
@@ -356,12 +359,9 @@ export function subscribeSessionEvents({
           ? `${formatTokenCount(before)} → ${formatTokenCount(after)}`
           : `${event.payload?.summarizedCount ?? "?"} messages summarized`
         showToast(`Context compacted · ${detail}`, { topic: "compaction", tone: "success" })
-        // 压缩结束回到思考态 —— 但只收自己立起来的那一位：
-        // 回合结束后迟到的 compacted 不该把 null 活动改回 thinking。
-        if (ui.currentActivity?.type === "compacting") {
-          ui.currentActivity = { type: "thinking" }
-          requestRender()
-        }
+        // 压缩结束回到思考态 —— 但只收自己立起来的那一位：回合结束后迟到的
+        // compacted 不该把活动态复活（状态机里钉死，见 ui/turn-runtime.mjs）。
+        if (reduceTurnRuntime(ui, event)) requestRender()
         break
       }
 
@@ -389,25 +389,37 @@ export function subscribeSessionEvents({
             durationMs: Math.max(1200, Number(payload.delayMs || 0) + 500)
           }
         )
-        ui.currentActivity = {
-          type: "retry",
-          attempt: payload.retryAttempt,
-          max: payload.maxRetries,
-          classification: payload.classification
-        }
+        reduceTurnRuntime(ui, event)
         requestRender()
         break
 
+      // MCP 后台加载的完成/失败（M32）：瞬时提示，按 server 去重，自动隐去，
+      // 不进对话记录。kernel 侧不阻塞启动的改造由 M33 提供；阻塞式 boot 期间
+      // 这些事件先于订阅发出，启动快照在 repl.mjs 单独汇总提示一次。
+      case EVENT_TYPES.MCP_HEALTH: {
+        const server = String(payload?.server || "")
+        if (!server) break
+        const ok = payload?.ok === true
+        showToast(
+          ok
+            ? `MCP ✓ ${server}${payload?.transport ? ` · ${payload.transport}` : ""}`
+            : `MCP ✗ ${server} · ${payload?.reason || payload?.error || "unknown"}`,
+          { topic: `mcp:${server}`, tone: ok ? "success" : "error" }
+        )
+        requestRender()
+        break
+      }
+
       case EVENT_TYPES.TURN_FINISH:
       case EVENT_TYPES.TURN_ERROR:
+        // 先喂状态机（它读 ui.remoteTurn 决定 finishing 还是直接 idle），
+        // 再清远程标记 —— 顺序反了远程回合会停在 finishing。
+        reduceTurnRuntime(ui, event)
         if (ui.remoteTurn) { ui.busy = false; ui.remoteTurn = false; ui.turnAbortController = null }
         finalizeThinking()
         finalizeTextStream(type === EVENT_TYPES.TURN_ERROR ? "error" : undefined)
         // 重连提示要主动撤掉：回合已经结束了，留着它会让人以为还在重试
         toastStore.dismissTopic("provider-retry")
-        ui.currentActivity = null
-        ui.currentStep = 0
-        ui.activeTurnId = null
         requestRender()
         notifyTurnEnd(type, payload)
         break

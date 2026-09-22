@@ -85,6 +85,32 @@ export function collectMcpStatusLines(theme, entries, tools) {
   return lines
 }
 
+/**
+ * MCP 启动快照 → 一条瞬时汇总提示（M32：连接状态不再落进对话记录）。
+ * 返回 null 表示「没配置 MCP，什么都不说」。有一台不健康就用 warn/error 语气，
+ * 并把第一台失败的原因带上 —— 细节查询归 /mcp 浮层。
+ */
+export function summarizeMcpSnapshot(entries = [], tools = []) {
+  const configured = (Array.isArray(entries) ? entries : [])
+    .filter((entry) => entry?.configured !== false && entry?.enabled !== false)
+  if (!configured.length) return null
+  const healthy = configured.filter((entry) => entry.ok)
+  const failed = configured.filter((entry) => !entry.ok)
+  const toolCount = Array.isArray(tools) ? tools.length : 0
+  if (!failed.length) {
+    return {
+      tone: "success",
+      text: `MCP ✓ ${healthy.length}/${configured.length} servers · ${toolCount} tools`
+    }
+  }
+  const first = failed[0]
+  const reason = String(first.error || first.reason || "unknown").split("\n")[0].slice(0, 60)
+  return {
+    tone: failed.length >= configured.length ? "error" : "warning",
+    text: `MCP ✗ ${failed.length}/${configured.length} failed (${first.name}: ${reason}) — /mcp 查看`
+  }
+}
+
 export function startSplash({
   paintFn = paint,
   stdout = process.stdout,

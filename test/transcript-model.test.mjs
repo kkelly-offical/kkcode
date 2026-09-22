@@ -64,3 +64,27 @@ test("renderTranscriptItems exposes stable clickable line metadata", () => {
   assert.equal(lines[1].section, "detail")
   assert.ok(lines.every((line) => line.itemId === "thinking-1"))
 })
+
+test("system hints render with a muted gutter, distinct from conversation lines", () => {
+  const model = createTranscriptModel()
+  model.appendLog({ kind: "user", summary: "帮我改个文件" })
+  model.appendLog({ kind: "system", summary: "已合并补充需求，从头重新规划" })
+  model.appendLog({ kind: "assistant", summary: "好的" })
+
+  const lines = model.render()
+  assert.equal(lines.length, 3)
+  assert.match(lines[1].text, /^· /, "系统提示有固定 gutter，与对话行区分开")
+  assert.ok(!lines[0].text.startsWith("· "), "用户消息不带提示 gutter")
+  assert.ok(!lines[2].text.startsWith("· "), "助手回复不带提示 gutter")
+  assert.equal(lines[1].kind, "system")
+})
+
+test("a system hint with an explicit tone is not dimmed away", () => {
+  // tone=warn 的提示（比如待确认的路由提问）需要保住可读性
+  const model = createTranscriptModel()
+  model.appendLog({ kind: "system", summary: "⚠ 确认一下", tone: "warn" })
+  model.appendLog({ kind: "system", summary: "普通提示" })
+  const [warned, plain] = model.render()
+  assert.match(warned.text, /⚠ 确认一下/)
+  assert.match(plain.text, /普通提示/)
+})

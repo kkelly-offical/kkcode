@@ -48,7 +48,7 @@ test("恰好在阈值下的粘贴不折叠，到阈值就折叠", () => {
   const at = createFakeInput()
   const eight = linesOf(DEFAULT_FOLD_LINES)
   at.insertPastedText(eight)
-  assert.equal(at.state.input, `[Pasted text #1 +${eight.length} chars]`, `${DEFAULT_FOLD_LINES} 行应折叠成标记`)
+  assert.equal(at.state.input, `[Pasted text #1 · ${eight.length} chars]`, `${DEFAULT_FOLD_LINES} 行应折叠成标记`)
 })
 
 test("单行但很长的粘贴也折叠 —— 一整段没换行的长文本行数恒为 1", () => {
@@ -56,7 +56,7 @@ test("单行但很长的粘贴也折叠 —— 一整段没换行的长文本行
   // 一条日志、一个 JSON）。规模也因此报字符数而不是行数。
   const { state, insertPastedText } = createFakeInput()
   insertPastedText("x".repeat(DEFAULT_FOLD_CHARS))
-  assert.equal(state.input, `[Pasted text #1 +${DEFAULT_FOLD_CHARS} chars]`)
+  assert.equal(state.input, `[Pasted text #1 · ${DEFAULT_FOLD_CHARS} chars]`)
 })
 
 test("折叠后提交时逐字还原成原文", () => {
@@ -72,8 +72,8 @@ test("折叠后提交时逐字还原成原文", () => {
 test("粘图在光标处插标记，标记就是返回值", () => {
   const { state, attachImage } = createFakeInput({ input: "看这个：", cursor: 4 })
   const marker = attachImage({ type: "image", data: "AAAA", mediaType: "image/png" })
-  assert.equal(marker, "[Image #1]")
-  assert.equal(state.input, "看这个：[Image #1]", "标记插在光标处")
+  assert.equal(marker, "[Image #1 · 3 B]", "标记带人读的规模标签（AAAA = 3 字节）")
+  assert.equal(state.input, `看这个：${marker}`, "标记插在光标处")
   assert.equal(state.cursor, 4 + marker.length, "光标落在标记之后")
 })
 
@@ -85,7 +85,7 @@ test("提交时图片按标记在文本里的顺序取出，标记本身留在�
   attachImage({ type: "image", data: "SECOND", mediaType: "image/jpeg" })
 
   const { line, pendingImages } = resolveAttachments(state.input)
-  assert.equal(line, "[Image #1] 和 [Image #2]", "标记留在文本里，模型才知道 #1 指的是哪个位置")
+  assert.equal(line, "[Image #1 · 3 B] 和 [Image #2 · 4 B]", "标记留在文本里，模型才知道 #1 指的是哪个位置")
   assert.deepEqual(pendingImages.map((b) => b.data), ["FIRST", "SECOND"], "顺序跟着文本走")
 })
 
@@ -94,9 +94,9 @@ test("删掉标记就等于取消这张图 —— 不需要任何额外的取消
   const { state, attachImage, resolveAttachments } = createFakeInput()
   attachImage({ type: "image", data: "DROPPED", mediaType: "image/png" })
   attachImage({ type: "image", data: "KEPT", mediaType: "image/png" })
-  assert.equal(state.input, "[Image #1][Image #2]")
+  assert.equal(state.input, "[Image #1 · 5 B][Image #2 · 3 B]")
 
-  state.input = state.input.replace("[Image #1]", "")
+  state.input = state.input.replace("[Image #1 · 5 B]", "")
   const { pendingImages } = resolveAttachments(state.input)
   assert.deepEqual(pendingImages.map((b) => b.data), ["KEPT"], "文本里没有的标记就是没被引用")
 })
@@ -141,7 +141,7 @@ test("折叠判定不随行尾变化 —— Windows 上粘的是 CRLF", () => {
       harness.insertPastedText(text)
       return harness
     })()
-    assert.equal(state.input, `[Pasted text #1 +${lf.length} chars]`,
+    assert.equal(state.input, `[Pasted text #1 · ${lf.length} chars]`,
       `${label} 行尾下数出的规模必须与 LF 完全一致`)
   }
 })
@@ -165,5 +165,72 @@ test("阈值可以调 —— 它是个旋钮，不是写死的数字", () => {
     foldChars: 10_000
   })
   api.insertPastedText("a\nb")
-  assert.equal(state.input, "[Pasted text #1 +3 chars]", "阈值调到 2 行后，两行就该折")
+  assert.equal(state.input, "[Pasted text #1 · 3 chars]", "阈值调到 2 行后，两行就该折")
 })
+
+// --- 1.0.1：媒体附件 + 模型能力门 ---
+
+test("video attaches with a sized marker and warns when support is unknown", () => {
+  const { state, attachMedia } = createFakeInput()
+  const marker = attachMedia({ type: "video", data: "VVJFTw==", mediaType: "video/mp4", bytes: 734003 })
+  assert.equal(marker, "[Video #1 · 717 kB]")
+  assert.equal(state.input, marker)
+  assert.equal(state.toasts.length, 1, "能力未知要给一句明白话，不是静默挂上")
+  assert.equal(state.toasts[0].options.tone, "warning")
+})
+
+test("a model that explicitly rejects a medium refuses the attach with a clear error", () => {
+  // 明确不支持 → 不挂标记、报错。「明确提示而不是静默丢弃」
+  const { state, attachMedia } = createFakeInput()
+  const api = createAttachmentInput({
+    store: state.store || createAttachmentStore(),
+    insertAtCursor: (text) => { state.input += text },
+    showToast: (message, options) => state.toasts.push({ message, options }),
+    supportsMedia: (kind) => kind === "video" ? false : kind === "image"
+  })
+  const marker = api.attachMedia({ type: "video", data: "VVJFTw==", mediaType: "video/mp4" })
+  assert.equal(marker, null)
+  assert.equal(state.input, "", "拒绝时不该往输入框里插任何东西")
+  assert.match(state.toasts.at(-1).message, /does not accept video/)
+  assert.equal(state.toasts.at(-1).options.tone, "error")
+})
+
+test("unsupported media is held back at submit time with an explicit note, not silently dropped", () => {
+  const { state, store, attachMedia } = createFakeInput()
+  attachMedia({ type: "video", data: "VVJFTw==", mediaType: "video/mp4" })
+  // 挂上时能力未知；到提交这一刻按「不支持」处理（provider 序列化不了 video 块）
+  const { line, pendingImages } = resolveWith(state, store, () => false)
+  assert.deepEqual(pendingImages, [], "video 块不能进待发数组 —— provider 会静默丢")
+  assert.match(line, /not sent/, "文本里要留下一句人话，模型与用户都看得见")
+  assert.match(line, /\[Video #1/, "标记本身留在文本里")
+})
+
+test("supported media sails through resolve untouched", () => {
+  const { state, attachMedia, resolveAttachments } = createFakeInputWithSupport(() => true)
+  attachMedia({ type: "audio", data: "QVVB", mediaType: "audio/mpeg" })
+  const { line, pendingImages } = resolveAttachments(state.input)
+  assert.equal(pendingImages.length, 1)
+  assert.equal(pendingImages[0].type, "audio")
+  assert.doesNotMatch(line, /not sent/)
+})
+
+function resolveWith(state, store, supportsMedia) {
+  const api = createAttachmentInput({
+    store,
+    insertAtCursor: () => {},
+    showToast: (message, options) => state.toasts.push({ message, options }),
+    supportsMedia
+  })
+  return api.resolveAttachments(state.input)
+}
+
+function createFakeInputWithSupport(supportsMedia) {
+  const state = { input: "", cursor: 0, toasts: [] }
+  const api = createAttachmentInput({
+    store: createAttachmentStore(),
+    insertAtCursor: (text) => { state.input += text; state.cursor += text.length },
+    showToast: (message, options) => state.toasts.push({ message, options }),
+    supportsMedia
+  })
+  return { state, ...api }
+}

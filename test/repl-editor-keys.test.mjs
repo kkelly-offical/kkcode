@@ -92,6 +92,18 @@ function harness({ busy = false, silentQueue = false } = {}) {
     handleRewind: spy("rewind"),
     readClipboardImage: async () => null,
     readClipboardText: async () => "",
+    // 剪贴板媒体读取与附件挂载是可替换的缝：测试按用例在 ui._ 上挂 mock。
+    readClipboardMedia: (opts) => (ui._readClipboardMedia ? ui._readClipboardMedia(opts) : null),
+    attachMedia: (block) => {
+      calls.push(`attachMedia(${block?.type || "?"})`)
+      if (ui._attachMarker) {
+        const marker = ui._attachMarker
+        ui.input = ui.input.slice(0, ui.inputCursor) + marker + ui.input.slice(ui.inputCursor)
+        ui.inputCursor += marker.length
+        return marker
+      }
+      return null
+    },
     doubleEscapeMs: DOUBLE_ESCAPE_MS,
     finishSelection: spy("finishSelection"),
     copyToClipboard: spy("copyToClipboard"),
@@ -565,4 +577,50 @@ test("the emacs keys work while the model is busy", async () => {
   h.ui.inputCursor = 11
   await h.dispatchKey({ ui: h.ui, ...press("w", { ctrl: true }) })
   assert.equal(h.ui.input, "hello ")
+})
+
+// --- Ctrl+V 媒体粘贴（1.0.1）：图像/视频/语音经可替换的读取缝进输入框 ---
+
+test("Ctrl+V attaches a clipboard video as a sized marker", async () => {
+  const { dispatchKey, ui, calls } = harness()
+  ui._readClipboardMedia = async () => ({ type: "video", data: "VVJFTw==", mediaType: "video/mp4" })
+  ui._attachMarker = "[Video #1 · 717 kB]"
+  await dispatchKey({ ui, ...press("v", { ctrl: true }) })
+  assert.ok(calls.includes("attachMedia(video)"), `视频块要走媒体挂载缝，实际 ${calls.join(",")}`)
+  assert.equal(ui.input, "[Video #1 · 717 kB]")
+  assert.ok(calls.some((c) => c.startsWith("toast(video attached")), `要有成功提示，实际 ${calls.join(",")}`)
+})
+
+test("Ctrl+V with clipboard image keeps working through the same seam", async () => {
+  const { dispatchKey, ui, calls } = harness()
+  ui._readClipboardMedia = async () => ({ type: "image", data: "AAAA", mediaType: "image/png" })
+  ui._attachMarker = "[Image #1 · 3 B]"
+  await dispatchKey({ ui, ...press("v", { ctrl: true }) })
+  assert.ok(calls.includes("attachMedia(image)"))
+  assert.equal(ui.input, "[Image #1 · 3 B]")
+})
+
+test("a refused attachment (model cannot take the medium) shows no false success", async () => {
+  const { dispatchKey, ui, calls } = harness()
+  ui._readClipboardMedia = async () => ({ type: "video", data: "VVJFTw==", mediaType: "video/mp4" })
+  // attachMedia 返回 null = 已报错、未挂载
+  await dispatchKey({ ui, ...press("v", { ctrl: true }) })
+  assert.equal(ui.input, "", "拒绝时输入框不该多出任何东西")
+  assert.equal(calls.filter((c) => c.startsWith("toast(video attached")).length, 0,
+    "拒绝后不能再弹「已附加」")
+})
+
+test("a clipboard error block is reported, not mistaken for text", async () => {
+  const { dispatchKey, ui, calls } = harness()
+  ui._readClipboardMedia = async () => ({ type: "error", message: "clipboard read timed out" })
+  await dispatchKey({ ui, ...press("v", { ctrl: true }) })
+  assert.ok(calls.some((c) => c.startsWith("toast(Paste failed: clipboard read timed out)")),
+    `实际 ${calls.join(",")}`)
+})
+
+test("no media in the clipboard falls through to plain text paste", async () => {
+  const { dispatchKey, ui, calls } = harness()
+  // 读不到媒体（null）→ 文本回落照旧
+  await dispatchKey({ ui, ...press("v", { ctrl: true }) })
+  assert.ok(calls.some((c) => c.includes("Clipboard is empty")), `空剪贴板要回落文本路径，实际 ${calls.join(",")}`)
 })

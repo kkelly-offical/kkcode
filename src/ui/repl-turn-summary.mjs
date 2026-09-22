@@ -70,19 +70,24 @@ export function normalizeFileChanges(toolEvents = []) {
   return [...grouped.values()]
 }
 
-export function renderFileChangeLines(fileChanges = [], limit = 20) {
+export function renderFileChangeLines(fileChanges = [], limit = 20, theme = null) {
+  // 红绿计数走主题的 diff_add/diff_del（深浅色终端都成立）；硬编码 #00ff00/#ff4444
+  // 在浅色底上对比度不对，也不随主题走。
+  const addColor = theme?.components?.diff_add || "#00ff00"
+  const delColor = theme?.components?.diff_del || "#ff4444"
+  const pathColor = theme?.components?.header || "white"
   const lines = []
   const rows = fileChanges.slice(0, limit)
   for (const item of rows) {
     const scope = [item.stageId, item.taskId].filter(Boolean).join("/")
     const suffix = scope ? paint(` (${scope})`, null, { dim: true }) : ""
     const add = item.addedLines > 0
-      ? paint(`+${item.addedLines}`, "#00ff00", { bold: true })
+      ? paint(`+${item.addedLines}`, addColor, { bold: true })
       : paint("+0", null, { dim: true })
     const del = item.removedLines > 0
-      ? paint(`-${item.removedLines}`, "#ff4444", { bold: true })
+      ? paint(`-${item.removedLines}`, delColor, { bold: true })
       : paint("-0", null, { dim: true })
-    lines.push(`  ${paint(item.path, "white")}  ${add} ${del}${suffix}`)
+    lines.push(`  ${paint(item.path, pathColor)}  ${add} ${del}${suffix}`)
   }
   if (fileChanges.length > rows.length) {
     lines.push(paint(`  ... +${fileChanges.length - rows.length} more file(s)`, null, { dim: true }))
@@ -113,7 +118,9 @@ export function normalizeDiagnostics(toolEvents = []) {
   return summaries
 }
 
-export function renderDiagnosticsLines(rows = [], limit = 10) {
+export function renderDiagnosticsLines(rows = [], limit = 10, theme = null) {
+  const labelColor = theme?.components?.header || "white"
+  const summaryColor = theme?.semantic?.warn || "yellow"
   const lines = []
   const visible = rows.slice(0, limit)
   for (const item of visible) {
@@ -123,7 +130,7 @@ export function renderDiagnosticsLines(rows = [], limit = 10) {
       : `+${item.introduced} / ${item.persistent} / -${item.resolved}`
     const totals = `${item.errorCount} error(s), ${item.warningCount} warning(s)`
     const status = item.status ? paint(` ${item.status}`, null, { dim: true }) : ""
-    lines.push(`  ${paint(label, "white")}  ${paint(summary, "yellow", { bold: true })}  ${paint(totals, null, { dim: true })}${status}`)
+    lines.push(`  ${paint(label, labelColor)}  ${paint(summary, summaryColor, { bold: true })}  ${paint(totals, null, { dim: true })}${status}`)
   }
   if (rows.length > visible.length) {
     lines.push(paint(`  ... +${rows.length - visible.length} more diagnostics result(s)`, null, { dim: true }))

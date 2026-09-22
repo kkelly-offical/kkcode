@@ -518,3 +518,13 @@ test("thinking 点数动画不推动计时：· 的列位置跨帧固定", () =>
   assert.match(a, /Thinking\.\s+·/, "spinnerIndex 0 是 1 个点")
   assert.match(b, /Thinking\.{3} ·/, "spinnerIndex 2 是 3 个点")
 })
+
+test("attachment markers in the input line wear the theme accent, width intact", () => {
+  // 占位标记要与正文明显区分（1.0.1）：着 components.inputMarker 色；
+  // 颜色零宽度，帧的每行仍必须恰好是终端宽。
+  const frame = render({ input: "看这个 [Image #1 · 3 B] 对不对", inputCursor: 4 }, { width: 100 })
+  assertExactWidth(frame, 100, "附件标记上色 @ 100")
+  // 测试进程非 TTY，paint 缺省不出彩码 —— 这里只断言内容与宽度不变；
+  // 上色本身的 ANSI 断言在 test/repl-input-marker-style.test.mjs（setColorEnabled）。
+  assert.ok(frame.lines.some((line) => stripAnsi(line).includes("[Image #1 · 3 B]")))
+})

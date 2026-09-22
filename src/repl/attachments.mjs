@@ -31,22 +31,31 @@
 
 export const IMAGE_KIND = "image"
 export const TEXT_KIND = "text"
+export const VIDEO_KIND = "video"
+export const AUDIO_KIND = "audio"
 
 /** 默认容量。超出后淘汰最早的条目 —— 剪贴板历史不值得无限占内存。 */
 export const DEFAULT_MAX_ENTRIES = 32
 
 /** kind ↔ 标记里的人类可读标签。两张表都在这里，免得两处拼写漂移。 */
-const LABEL_BY_KIND = { [IMAGE_KIND]: "Image", [TEXT_KIND]: "Pasted text" }
-const KIND_BY_LABEL = { Image: IMAGE_KIND, "Pasted text": TEXT_KIND }
+const LABEL_BY_KIND = { [IMAGE_KIND]: "Image", [TEXT_KIND]: "Pasted text", [VIDEO_KIND]: "Video", [AUDIO_KIND]: "Audio" }
+const KIND_BY_LABEL = { Image: IMAGE_KIND, "Pasted text": TEXT_KIND, Video: VIDEO_KIND, Audio: AUDIO_KIND }
+
+/** 二进制媒体（image/video/audio）共用一个校验形状：base64 data 必备。 */
+const MEDIA_KINDS = new Set([IMAGE_KIND, VIDEO_KIND, AUDIO_KIND])
 
 /**
  * 标记的正则。**集成方与测试都用这一份，不要在别处重写。**
+ *
+ * 后缀段两种形态都认：
+ *   - 现行：`· 2.8k chars`、`· 230 kB`、`· 12.4 MB`（1.0.1 起的人读格式）
+ *   - 历史：`+1470 chars`（输入历史里可能躺着旧标记，del/解析不能因此失灵）
  *
  * 注意它带 `g` 标志，因而是有状态的（`lastIndex`）—— 直接复用这个实例去 `exec`/`test`
  * 会拿到取决于上次调用的结果。本模块内一律现克隆一个（见 `scanner()`），外部要用也
  * 请照做，或者只用 `String.prototype.replace` 这类会自己重置 lastIndex 的入口。
  */
-export const MARKER_PATTERN = /\[(Image|Pasted text) #(\d+)(?: \+\d+ chars?)?\]/g
+export const MARKER_PATTERN = /\[(Image|Pasted text|Video|Audio) #(\d+)(?: (?:\+\d+ chars?|· [\d.,]+[kMG]? (?:chars?|[kMG]?B)))?\]/g
 
 /** 现克隆一个无状态的扫描器。见 MARKER_PATTERN 的注释。 */
 const scanner = () => new RegExp(MARKER_PATTERN.source, "g")
@@ -64,23 +73,62 @@ export function countTextLines(text) {
 }
 
 /**
+ * 人读的规模格式（1.0.1）。输入框寸土寸金，标记里的数字要短而准：
+ *
+ *   字符：1 char / 600 chars / 2.8k chars / 25k chars
+ *   字节：512 B / 230 kB / 12.4 MB / 1.5 GB
+ *
+ * 两种量纲各一套写法，全库只此一处 —— toast 文案与标记文本同源。
+ */
+export function formatCharCount(value) {
+  const n = Math.max(0, Number(value) || 0)
+  if (n === 1) return "1 char"
+  if (n < 1000) return `${n} chars`
+  const k = n / 1000
+  const label = k < 10 ? (Math.round(k * 10) / 10).toFixed(1) : String(Math.round(k))
+  return `${label}k chars`
+}
+
+export function formatByteSize(value) {
+  const n = Math.max(0, Number(value) || 0)
+  if (n < 1024) return `${Math.round(n)} B`
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} kB`
+  if (n < 1024 * 1024 * 1024) {
+    const mb = n / (1024 * 1024)
+    return `${mb < 10 ? (Math.round(mb * 10) / 10).toFixed(1) : Math.round(mb)} MB`
+  }
+  return `${(Math.round(n / (1024 * 1024 * 1024) * 10) / 10).toFixed(1)} GB`
+}
+
+/** base64 串的字节数（标记上的规模标签用；末尾 padding 至多差 2 字节，人读级别够准）。 */
+export function base64ByteSize(data) {
+  const text = String(data || "")
+  if (!text) return 0
+  const padding = text.endsWith("==") ? 2 : text.endsWith("=") ? 1 : 0
+  return Math.max(0, Math.floor(text.length * 3 / 4) - padding)
+}
+
+/**
  * 条目 → 插进输入框的标记文本。
  *
- *   { kind: "image", id: 1 }              -> "[Image #1]"
- *   { kind: "text", id: 2, chars: 1470 }  -> "[Pasted text #2 +1470 chars]"
- *   { kind: "text", id: 3, chars: 1 }     -> "[Pasted text #3 +1 char]"
+ *   { kind: "image", id: 1, bytes: 235520 }   -> "[Image #1 · 230 kB]"
+ *   { kind: "text", id: 2, chars: 1470 }      -> "[Pasted text #2 · 1.5k chars]"
+ *   { kind: "video", id: 3, bytes: 12976128 } -> "[Video #3 · 12.4 MB]"
+ *   { kind: "audio", id: 4, bytes: 512 }      -> "[Audio #4 · 512 B]"
  *
- * 规模用**字符数**而不是行数：粘过来的东西常常是一整段没有换行的长文本，那时行数
- * 恒为 1、完全不说明问题；字符数对两种形态都成立。
+ * 文本规模用字符数而不是行数：粘过来的东西常常是一整段没有换行的长文本，那时行数
+ * 恒为 1、完全不说明问题；字符数对两种形态都成立。媒体规模用字节数：解码出
+ * 分辨率/时长是内核的事，UI 层手里可靠的只有字节。
  */
 export function formatMarker(entry) {
-  const { kind, id, chars } = entry || {}
-  if (kind === IMAGE_KIND) return `[${LABEL_BY_KIND[IMAGE_KIND]} #${id}]`
-  if (kind === TEXT_KIND) {
-    const count = Number(chars) || 0
-    return `[${LABEL_BY_KIND[TEXT_KIND]} #${id} +${count} ${count === 1 ? "char" : "chars"}]`
+  const { kind, id, chars, bytes } = entry || {}
+  const label = LABEL_BY_KIND[kind]
+  if (!label) {
+    throw new TypeError(`formatMarker: 不认识的 kind ${JSON.stringify(kind)}，支持 ${Object.keys(KIND_BY_LABEL).map((k) => `"${k}"`).join(" / ")}`)
   }
-  throw new TypeError(`formatMarker: 不认识的 kind ${JSON.stringify(kind)}，只支持 "${IMAGE_KIND}" 与 "${TEXT_KIND}"`)
+  if (kind === TEXT_KIND) return `[${label} #${id} · ${formatCharCount(chars)}]`
+  const size = Number.isFinite(bytes) && bytes > 0 ? ` · ${formatByteSize(bytes)}` : ""
+  return `[${label} #${id}${size}]`
 }
 
 /**
@@ -122,9 +170,9 @@ export function markerSpanAt(text, index) {
   return null
 }
 
-/** 交给下游的 image 内容块。字段与 `src/kernel/tool/image-util.mjs` 产出的块保持一致。 */
-function toImageBlock(entry) {
-  const block = { type: "image", data: entry.data, mediaType: entry.mediaType }
+/** 交给下游的媒体内容块。字段与 `src/kernel/tool/image-util.mjs` 产出的块保持一致。 */
+function toMediaBlock(entry) {
+  const block = { type: entry.kind, data: entry.data, mediaType: entry.mediaType }
   if (entry.path !== undefined) block.path = entry.path
   return block
 }
@@ -132,11 +180,11 @@ function toImageBlock(entry) {
 /** 入参校验集中在这里，`add` 才不会被一堆 if 淹掉。抛 TypeError 且说清缺了什么。 */
 function validateEntry(entry) {
   const kind = entry?.kind
-  if (kind !== IMAGE_KIND && kind !== TEXT_KIND) {
-    throw new TypeError(`add: 不认识的 kind ${JSON.stringify(kind)}，只支持 "${IMAGE_KIND}" 与 "${TEXT_KIND}"`)
+  if (!LABEL_BY_KIND[kind]) {
+    throw new TypeError(`add: 不认识的 kind ${JSON.stringify(kind)}，支持 ${Object.keys(KIND_BY_LABEL).map((k) => `"${k}"`).join(" / ")}`)
   }
-  if (kind === IMAGE_KIND && (typeof entry.data !== "string" || !entry.data)) {
-    throw new TypeError('add: kind "image" 缺少 data（base64 字符串）')
+  if (MEDIA_KINDS.has(kind) && (typeof entry.data !== "string" || !entry.data)) {
+    throw new TypeError(`add: kind "${kind}" 缺少 data（base64 字符串）`)
   }
   if (kind === TEXT_KIND && (typeof entry.text !== "string" || !entry.text)) {
     throw new TypeError('add: kind "text" 缺少 text（非空字符串）')
@@ -164,8 +212,16 @@ export function createAttachmentStore({ maxEntries = DEFAULT_MAX_ENTRIES } = {})
   function add(entry) {
     const kind = validateEntry(entry)
     const id = nextId++
-    const record = kind === IMAGE_KIND
-      ? { id, kind, data: entry.data, mediaType: entry.mediaType, path: entry.path }
+    const record = MEDIA_KINDS.has(kind)
+      ? {
+          id,
+          kind,
+          data: entry.data,
+          mediaType: entry.mediaType,
+          path: entry.path,
+          // 标记上的规模标签。调用方没给字节数时从 base64 长度估一个
+          bytes: Number.isFinite(entry.bytes) && entry.bytes > 0 ? entry.bytes : base64ByteSize(entry.data)
+        }
       : {
           id,
           kind,
@@ -210,9 +266,9 @@ export function createAttachmentStore({ maxEntries = DEFAULT_MAX_ENTRIES } = {})
       if (!entry) {
         parts.push(marker.raw)
         unresolved.push(marker.raw)
-      } else if (entry.kind === IMAGE_KIND) {
+      } else if (MEDIA_KINDS.has(entry.kind)) {
         parts.push(marker.raw)
-        images.push(toImageBlock(entry))
+        images.push(toMediaBlock(entry))
       } else {
         parts.push(entry.text)
       }

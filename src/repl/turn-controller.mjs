@@ -73,7 +73,9 @@ export async function executePromptTurn({
       contentBlocks = [{ type: "text", text: contentBlocks }]
     }
     for (const img of pendingImages) {
-      if (img && img.type === "image") contentBlocks.push(img)
+      // 图像/视频/语音块都放行 —— 收不收得下的判定在 UI 的 attachment-input
+      // （模型能力面），不支持的根本到不了这里。
+      if (img && (img.type === "image" || img.type === "video" || img.type === "audio")) contentBlocks.push(img)
     }
   }
 

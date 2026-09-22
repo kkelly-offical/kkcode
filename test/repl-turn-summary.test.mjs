@@ -7,6 +7,7 @@ import {
   renderDiagnosticsLines,
   renderFileChangeLines
 } from "../src/ui/repl-turn-summary.mjs"
+import { setColorEnabled } from "../src/theme/color.mjs"
 
 test("formatRuntimeStateText includes background and skill quickstart lines", () => {
   const text = formatRuntimeStateText(
@@ -77,4 +78,27 @@ test("renderFileChangeLines emits concise file summaries", () => {
   assert.match(lines[0], /src\/a\.mjs/)
   assert.match(lines[0], /\+3/)
   assert.match(lines[0], /-1/)
+})
+
+test("file change counts follow the theme diff colours, not hardcoded hex", () => {
+  // 深浅色终端都成立的前提：红绿计数从 theme.components 取色。
+  // setColorEnabled 打开后 paint 才出彩码 —— 主题回归只有在彩码可见时才能断言。
+  setColorEnabled(true)
+  try {
+    const theme = {
+      components: { diff_add: "#10a020", diff_del: "#b01020", header: "#334455" }
+    }
+    const line = renderFileChangeLines([{ path: "a.mjs", addedLines: 2, removedLines: 1 }], 20, theme)[0]
+    assert.ok(line.includes("38;2;16;160;32"), `+2 应着主题 diff_add 色: ${JSON.stringify(line)}`)
+    assert.ok(line.includes("38;2;176;16;32"), `-1 应着主题 diff_del 色: ${JSON.stringify(line)}`)
+    const fallback = renderFileChangeLines([{ path: "a.mjs", addedLines: 1, removedLines: 0 }], 20, null)[0]
+    assert.ok(fallback.includes("38;2;0;255;0") || fallback.includes("+1"), "无主题时保留原硬编码回落")
+  } finally {
+    setColorEnabled(null)
+  }
+})
+
+test("diagnostics labels fall back gracefully without a theme", () => {
+  const lines = renderDiagnosticsLines([{ path: "x.mjs", introduced: 0, persistent: 1, resolved: 0, errorCount: 0, warningCount: 1, status: "" }], 10, null)
+  assert.match(lines[0], /x\.mjs/)
 })

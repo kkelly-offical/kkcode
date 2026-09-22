@@ -66,6 +66,7 @@ export function createEditorKeyScope({
   transcript,
   insertAtCursor,
   attachImage,
+  attachMedia = null,
   insertPastedText,
   deleteInputSelection,
   moveCursor,
@@ -88,6 +89,9 @@ export function createEditorKeyScope({
   handleRewind,
   readClipboardImage,
   readClipboardText,
+  // 媒体读取（图像/视频/语音）：内核有了 readClipboardMedia 就用它（M33），
+  // 没有就退回只认图像的旧读取 —— 两种形状下文本回落都照常工作。
+  readClipboardMedia = null,
   doubleEscapeMs
 }) {
   /** 补全候选的选中态在几乎每次改动输入后都要归零，抽出来免得漏。 */
@@ -147,17 +151,21 @@ export function createEditorKeyScope({
         run: async ({ ui }) => {
           showToast("Reading clipboard…", { topic: "clipboard", tone: "info", durationMs: 0 })
           requestRender()
-          const clipBlock = await readClipboardImage({
+          const readMedia = readClipboardMedia || readClipboardImage
+          const clipBlock = await readMedia({
             onStatus: (msg) => {
               if (msg) showToast(msg, { topic: "clipboard", tone: "info", durationMs: 0 })
               requestRender()
             }
           })
-          if (clipBlock && clipBlock.type === "image") {
-            // 图片进登记本，光标处插一个 `[Image #N]` 标记。标记就是「这里有张图」的
-            // 提示本身 —— 看得见、删得掉、位置明确，而且提交时它决定这张图发不发。
-            const marker = attachImage(clipBlock)
-            showToast(`Image attached · ${marker}`, { topic: "clipboard", tone: "success" })
+          if (clipBlock && (clipBlock.type === "image" || clipBlock.type === "video" || clipBlock.type === "audio")) {
+            // 附件进登记本，光标处插一个 `[Image #N · 230 kB]` 标记。标记就是「这里有
+            // 附件」的提示本身 —— 看得见、删得掉、位置明确，提交时它决定附件发不发。
+            // 模型明确不支持该类型时 attachMedia 返回 null（报错提示由它发）。
+            const marker = (attachMedia || attachImage)(clipBlock)
+            if (marker) {
+              showToast(`${clipBlock.type} attached · ${marker}`, { topic: "clipboard", tone: "success" })
+            }
             requestRender()
             return
           }
@@ -166,10 +174,10 @@ export function createEditorKeyScope({
             requestRender()
             return
           }
-          // 剪贴板里没有图片 —— 退回文本粘贴
+          // 剪贴板里没有媒体 —— 退回文本粘贴
           const clipText = await readClipboardText()
           if (clipText) {
-            // 走与括号粘贴同一条入口：够长就折叠成 `[Pasted text #N +M lines]`。
+            // 走与括号粘贴同一条入口：够长就折叠成 `[Pasted text #N · 2.8k chars]`。
             // 两条粘贴路径共用一份折叠策略，免得同样的文本从 Ctrl+V 进来会折、
             // 从终端粘贴进来不会折。
             showToast(insertPastedText(clipText), { topic: "clipboard", tone: "success" })

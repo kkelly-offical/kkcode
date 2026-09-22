@@ -24,7 +24,9 @@ export const DEFAULT_THEME = {
     header: "#e2e8f0",
     footer: "#94a3b8",
     diff_add: "#22c55e",
-    diff_del: "#ef4444"
+    diff_del: "#ef4444",
+    // 输入框里附件占位标记的强调色（[Image #1 · 230 kB]）：要一眼从正文里跳出来
+    inputMarker: "#7dd3fc"
   },
   // 0.6.0 新增的三组。**全部可选** —— schema 只在键存在时校验，
   // 否则用户已有的 .theme.yaml 会突然「不合法」并静默回落默认主题。

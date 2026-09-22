@@ -22,6 +22,7 @@ import { buildCapabilitySnapshot } from "../capability-facade.mjs"
 import { loadCustomCommands } from "../../command/custom-commands.mjs"
 import { resolveExtensionPolicy } from "../../context.mjs"
 import { generateSkill, saveSkillGlobal, readClipboardImage, BackgroundManager, listAgents, CustomAgentRegistry, generateAgent, saveAgentGlobal } from "../../kernel/index.mjs"
+import * as kernelIndex from "../../kernel/index.mjs"
 import { userRootDir } from "../../storage/paths.mjs"
 import { createThemeSwitcher } from "../theme-switch.mjs"
 import { persistUiConfig } from "../config-persistence.mjs"
@@ -51,7 +52,7 @@ async function runGenerator({
   kind, description, print, state, ctx,
   generate, save, reload, announce
 }) {
-  print(`generating ${kind}: ${description}`)
+  print(`generating ${kind}: ${description}`, { channel: "notice", topic: "command" })
   try {
     const artifact = await generate({
       description,
@@ -305,8 +306,8 @@ export const authoringCommands = [
     run: async (cmd) => {
       const { args, print, state, ctx } = cmd
       if (!args) {
-        print("usage: /create-skill <description of what the skill should do>", { channel: "notice", topic: "command", tone: "error" })
-        print("example: /create-skill review code for security vulnerabilities")
+        print("usage: /create-skill <description> · example: /create-skill review code for security vulnerabilities",
+          { channel: "notice", topic: "command", tone: "error" })
         return { exit: false }
       }
       return runGenerator({
@@ -333,8 +334,8 @@ export const authoringCommands = [
     run: async (cmd) => {
       const { args, print, state, ctx } = cmd
       if (!args) {
-        print("usage: /create-agent <description of what the agent should do>", { channel: "notice", topic: "command", tone: "error" })
-        print("example: /create-agent code reviewer that focuses on security vulnerabilities")
+        print("usage: /create-agent <description> · example: /create-agent code reviewer that focuses on security vulnerabilities",
+          { channel: "notice", topic: "command", tone: "error" })
         return { exit: false }
       }
       return runGenerator({
@@ -359,23 +360,27 @@ export const authoringCommands = [
     names: ["paste"],
     desc: "paste image from clipboard",
     argMode: "optional",
-    run: async ({ args, print, pendingImages, clearPendingImages, attachImage, runPromptTurn }) => {
-      print("reading clipboard...")
-      const clipBlock = await readClipboardImage({ onStatus: (msg) => { if (msg) print(msg) } })
+    run: async ({ args, print, pendingImages, clearPendingImages, attachImage, attachMedia, runPromptTurn }) => {
+      print("reading clipboard...", { channel: "notice", topic: "paste" })
+      // 内核长出 readClipboardMedia（视频/语音）就用它；没有就只认图像
+      const readMedia = kernelIndex.readClipboardMedia || readClipboardImage
+      const clipBlock = await readMedia({ onStatus: (msg) => { if (msg) print(msg, { channel: "notice", topic: "paste" }) } })
       if (!clipBlock || clipBlock.type === "error") {
-        print(clipBlock?.message ? `paste failed: ${clipBlock.message}` : "no image found in clipboard")
+        print(clipBlock?.message ? `paste failed: ${clipBlock.message}` : "no media found in clipboard",
+          { channel: "notice", topic: "paste", tone: "error" })
         return { exit: false }
       }
       if (!args) {
-        // TUI：把 `[Image #N]` 插进输入框，让「这里有张图」看得见也删得掉。
+        // TUI：把 `[Image #N · 230 kB]` 插进输入框，让「这里有附件」看得见也删得掉。
         // 行模式：没有输入框可插，attachImage 退化成挂进待发数组并返回空串。
+        const attach = attachMedia || attachImage
         let marker = ""
-        if (attachImage) marker = attachImage(clipBlock)
+        if (attach) marker = attach(clipBlock) || ""
         else pendingImages.push(clipBlock)
         print(
           marker
-            ? `image attached — ${marker} inserted, delete the marker to drop it`
-            : "image pasted from clipboard (attached, send a message to include)",
+            ? `${clipBlock.type} attached — ${marker} inserted, delete the marker to drop it`
+            : `${clipBlock.type} pasted from clipboard (attached, send a message to include)`,
           { channel: "notice", topic: "command" }
         )
         return { exit: false, pastedImage: true }
@@ -393,7 +398,7 @@ export const authoringCommands = [
     argMode: "optional",
     // 只认裸命令与 `edit` —— `/profile 别的什么` 落到 prompt 路径，与拆分前一致
     accepts: (args) => args === "" || args === "edit",
-    run: async ({ args, print, suspendTui }) => {
+    run: async ({ args, print, suspendTui, showInfo }) => {
       const { loadProfile, runOnboarding } = await import("../../onboarding.mjs")
       const current = await loadProfile()
       if (!args && current) {
@@ -408,7 +413,8 @@ export const authoringCommands = [
         }
         lines.push("")
         lines.push("Run /profile edit to update your profile.")
-        print(lines.join("\n"))
+        // 查询类输出走只读浮层（行模式回落折叠面板），不占对话记录
+        showInfo("profile", lines.join("\n"))
         return { exit: false }
       }
       if (suspendTui) await suspendTui(runOnboarding)

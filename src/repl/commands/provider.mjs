@@ -66,7 +66,8 @@ export const providerCommands = [
         return { exit: false }
       }
       if (rest === "set") {
-        print("`/provider set` 已更名为 `/provider add`（添加新 provider）；列出并切换用裸 `/provider`。")
+        print("`/provider set` 已更名为 `/provider add`（添加新 provider）；列出并切换用裸 `/provider`。",
+          { channel: "notice", topic: "provider", tone: "warn" })
         return { exit: false }
       }
 
@@ -107,13 +108,29 @@ export const providerCommands = [
     names: ["model"],
     desc: "open model picker",
     argMode: "optional",
-    run: async ({ args, print, state, ctx }) => {
+    run: async ({ args, print, state, ctx, openPanel }) => {
       // `/model` 与 `/model refresh` 都是「列出并选一个」；其它参数是直接指定。
       if (!args || args === "refresh") {
         const refresh = args === "refresh"
-        print(`current: ${state.providerType} / ${state.model}`)
         const catalog = await loadProviderModelItems(ctx.configState, state.providerType, { refresh })
         const items = catalog.items
+        if (openPanel) {
+          // TUI：选择器承载完整清单，对话记录里不重复 dump —— 只留一条瞬时提示
+          // （目录不可用/有告警时用户必须知道，否则选择器里看不出原因）。
+          print(`current: ${state.providerType} / ${state.model}`, { channel: "notice", topic: "model" })
+          if (!items.length) {
+            print(`模型目录不可用${catalog.error ? `: ${catalog.error}` : ""}；用 /model <model-id> 手动设置`,
+              { channel: "notice", topic: "model", tone: "warn" })
+          } else if (catalog.warning) {
+            print(`模型目录提示: ${catalog.warning}`, { channel: "notice", topic: "model", tone: "warn" })
+          }
+          return {
+            exit: false,
+            openModelPicker: items.length > 0,
+            modelPickerItems: items
+          }
+        }
+        print(`current: ${state.providerType} / ${state.model}`)
         if (items.length) {
           print("")
           print(`  可用模型 (${catalog.source}${catalog.stale ? ", stale" : ""})：`)

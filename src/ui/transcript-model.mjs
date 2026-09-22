@@ -70,16 +70,36 @@ function renderItem(item, { paint, theme } = {}) {
   // 按说话人上色（0.6.0）。item.kind 一直是一等字段，渲染时却完全不消费 ——
   // 用户输入与模型回复在屏幕上除了前缀毫无区别。markdown 已着色的正文不再
   // 二次上色（否则 SGR 嵌套会把内层颜色截断）。
+  //
+  // 提示性内容（kind:"system"）与对话气泡的区分（1.0.1）：固定的弱化 gutter
+  // 「· 」+ tone 驱动的语义色；不带语气的纯提示整体 dim —— 扫一眼就知道
+  // 哪行是「系统在说」，哪行是「对话内容」。
   const roles = theme?.roles || {}
+  const toneColors = {
+    error: theme?.semantic?.error,
+    warn: theme?.semantic?.warn,
+    warning: theme?.semantic?.warn,
+    success: theme?.semantic?.success,
+    info: theme?.semantic?.info,
+    muted
+  }
+  const isSystem = item.kind === "system"
+  const toneTint = toneColors[item.tone] || null
   const roleColor = item.kind === "user" ? roles.user
     : item.kind === "assistant" ? roles.assistant
-    : item.kind === "system" ? roles.system
+    : isSystem ? (toneTint || roles.system)
     : null
+  const dimBody = isSystem && !toneTint
 
   for (let index = 0; index < summaryLines.length; index++) {
-    const prefix = index === 0 ? colorize(chevronFor(item), muted, { dim: true }) : "  "
+    const chevron = chevronFor(item)
+    // 无箭头也无 gutter 的行前缀就是空串：给它包一层 paint 只会产出一条
+    // 看不见的 ANSI 空壳，白白喂给每一帧的差分绘制
+    const prefix = index === 0
+      ? (chevron ? colorize(chevron, muted, { dim: true }) : isSystem ? colorize("· ", muted, { dim: true }) : "")
+      : "  "
     const body = roleColor && !summaryLines[index].includes("\u001b[")
-      ? colorize(summaryLines[index], roleColor)
+      ? colorize(summaryLines[index], roleColor, dimBody ? { dim: true } : {})
       : summaryLines[index]
     rendered.push({
       text: `${prefix}${body}`,
