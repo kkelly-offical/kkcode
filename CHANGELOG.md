@@ -1,6 +1,6 @@
 # Changelog / 更新日志
 
-## 1.0.2
+## 1.0.2 — 2026-09-23
 
 - Web/Android: per-session rename/archive/restore, visible confirmed rewind with
   draft recovery and cross-client cache invalidation. Rewind preserves workspace

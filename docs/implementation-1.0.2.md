@@ -1,7 +1,8 @@
 # 1.0.2 implementation and acceptance ledger
 
-Status: implementation complete; final release gates/publication in progress.
-This is not a publication declaration. Baseline: `52ae793`.
+Status: **published stable 1.0.2**, tag `v1.0.2` at `a820086`.
+Baseline: `52ae793`. Development notes below are chronological; final public
+receipts are at the end. Post-release documentation commits do not move the tag.
 The published `v1.0.1` tag and release remain immutable.
 
 ## Authorized scope
@@ -106,7 +107,7 @@ The published `v1.0.1` tag and release remain immutable.
 - Versions are prepared as 1.0.2 / Android 10005. Final docs review, full gates,
   real-model/demo rollout, hosted OS matrix and signed-update validation remain
   in progress.
-  No 1.0.2 package/APK/tag has been published.
+  At that development checkpoint no 1.0.2 package/APK/tag had been published.
 
 ## Release candidate acceptance
 
@@ -143,3 +144,47 @@ The published `v1.0.1` tag and release remain immutable.
   required `turn.result` to follow asynchronous `session.title.updated`.
   The stable headless JSONL last-line contract remains unchanged and tested.
   Final hosted all-platform status and public receipts will be appended below.
+
+## Public release receipts (2026-09-23 local time)
+
+- Final main [verify 35779305779](https://github.com/kkelly-offical/kkcode/actions/runs/35779305779)
+  and [CodeQL 35779305753](https://github.com/kkelly-offical/kkcode/actions/runs/35779305753)
+  both succeeded on `a820086`. Linux Node 22/24, macOS, Windows and Web/Browser
+  gates all passed. macOS: 2,901 core passes / 8 OS/engine skips, 32 E2E passes /
+  1 platform skip. Windows: 2,892 core passes / 17 OS/engine skips, 32 E2E passes /
+  1 platform skip. Conditional skips are not reported as successful executions.
+- Immutable tag `v1.0.2` points to `a82008623b28302b253995831a3f0f2bdc036d3f`.
+  [Release workflow 35780804374](https://github.com/kkelly-offical/kkcode/actions/runs/35780804374)
+  repeated its four-platform matrix and full release/package/audit gates, then
+  published npm and GitHub successfully. `v1.0.1` remains at `c04fcaf`.
+- [GitHub v1.0.2](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.2)
+  is a normal latest release, not draft/prerelease (published 20:40:15 UTC on
+  September 22). Signed APK, `android-update.json`, `SHA256SUMS` and CycloneDX
+  SBOM are attached; public downloads match their locally verified hashes.
+- npm publication became independently readable by 20:47 UTC after a brief
+  post-publish indexing delay. Public `npm view` confirms `latest: 1.0.2` and
+  unchanged `preview: 1.0.1-preview.2`. No duplicate publication was attempted.
+- npm tarball: **3,626,308 bytes / 514 files**, SHA-256
+  `32f603dd3c9783b5a118c899f4e4fd08315ee891aeb891d800a08c2b0075a48f`.
+  Independently downloaded registry tarball is byte-identical to the CI artifact;
+  immutable payload scanning, clean installation and SDK export verification
+  passed again. Public manifest SHA-256 is
+  `98341e4d809bfda4eb9e3c8776cdd4c844900062ab501518dffbfa93974c7285`.
+- Final local enterprise image digest:
+  `sha256:9d9f80dd07f5a567aa66b73983f7a929b4c8fbcc7b5b812f5639e5185ccdaf01`.
+  Repeat acceptance `integration-Kg1czJ` passed the full real Keycloak/Relay/Web/
+  Android/SSH/model/media/approval/lifecycle suite against that image.
+- The idle demo VM was upgraded from the **public npm registry**, and its
+  foreground hub restarted from `/home/kkcode/.local/kkcode`. CLI reports 1.0.2
+  and Relay is connected. Binding, UUID/IP, model config and ordinary-folder/
+  recursive-project trust remain unchanged; the previous install is retained at
+  `/home/kkcode/.local/kkcode-before-1.0.2`.
+- The production gateway domain was not redeployed by this task. Its operator
+  must update the gateway/Web image as well as the device/App for the new Web UI
+  and additive RPC methods. The live demo device update is not a claim that the
+  organization's production gateway image has also changed.
+- The installed non-debuggable, project-signed Android 1.0.2 App completed a
+  manual check against the public GitHub source and displayed “已安装当前渠道的
+  最新兼容版本”. Screenshot: local `test-results/android-update-1.0.2-public.png`.
+  This is an actual update-source check, separate from the earlier signed APK
+  installation and isolated installer fixtures.

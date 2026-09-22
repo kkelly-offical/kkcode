@@ -45,3 +45,8 @@
 当前报告 0 个漏洞。临时实验仅针对自有 localhost/WireGuard 和专用 AVD：浏览器
 显式实验地址直连、模拟器用可恢复的蜂窝测试路径，均不改变宿主代理或生产 TLS。
 正式 Android 保持既有签名，非调试包必须由系统确认安装。
+
+最终 `a820086` 的 [CodeQL 35779305753](https://github.com/kkelly-offical/kkcode/actions/runs/35779305753)
+三组全部完成；五条新增告警由代码修复后自动关闭，现存开放告警为 17 条历史复核项。
+[发布工作流](https://github.com/kkelly-offical/kkcode/actions/runs/35780804374) 通过，公开
+npm/Android 产物的下载摘要已独立复核。详见实施台账的公开回执，不宣称“零静态告警”。
