@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useRef } from "react";
+import React, { useLayoutEffect, useId, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "./Icon";
 
@@ -17,7 +17,10 @@ export function Sheet({
     content = useRef<HTMLElement>(null);
   const close = useRef(onClose);
   close.current = onClose;
-  useEffect(() => {
+  // Modal focus/inert/key handling must be ready before the first paint. A
+  // passive effect leaves a visible-but-not-interactive Escape race on slower
+  // browsers and restores focus too late during fast close/reopen actions.
+  useLayoutEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     const root = document.getElementById("root")!;
     root.inert = true;
@@ -64,7 +67,7 @@ export function Sheet({
       else [...root.querySelectorAll<HTMLElement>('textarea:not(:disabled)'), ...root.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)')].find(node => node.getClientRects().length)?.focus();
     };
   }, []);
-  useEffect(() => {
+  useLayoutEffect(() => {
     content.current?.focus();
   }, [title]);
   return createPortal(

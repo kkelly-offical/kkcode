@@ -32,7 +32,7 @@ Production gateway deployment is not modified without a separate explicit reques
   and after the theme show **148 visible control rectangles unchanged** (0.5px
   tolerance), including desktop/mobile/320px, home/chat/menu/settings, dark/light.
   Android styles change palette/shapes/drawing, not padding/size/control order.
-- Local `release:verify`: **2,866 core tests, 2,865 pass, 1 macOS-only skip, 0 fail**;
+- Final local `release:verify`: **2,870 core tests, 2,869 pass, 1 macOS-only skip, 0 fail**;
   **33 E2E pass**. Lint, kernel types, version/boundary/secret/coverage and installed
   package/SDK/client/protocol smoke passed. Web types and all three browser suites
   also passed. npm production audit: **0 vulnerabilities**.
@@ -105,6 +105,13 @@ Production gateway deployment is not modified without a separate explicit reques
   serialized operation. Three deterministic interleaving tests cover initial
   replay, gap repair and close-with-queued-work. Full gates are rerun for this
   additional runtime fix; the earlier 2,866-test count predates these three tests.
+- The next Windows run passed core/E2E/package gates, then exposed a Web modal
+  first-paint focus/Escape race. A MutationObserver-driven browser test reproduced
+  it locally (`data-sheet-focus-ready=false`, Escape left the dialog open).
+  Sheet focus/inert/listener setup now uses layout effects before first paint;
+  the same regression passed after the fix, without forced test focus or relaxed
+  assertions. All three Web suites, Web types and the 148-control layout check
+  passed again. The final main revision is sent through hosted gates before tagging.
 
 ## Publication
 

@@ -22,6 +22,8 @@
 - Fix an SSE replay/live queue race found during macOS acceptance: queued live
   rows recheck the cursor after replay, preventing duplicated text, cursor
   rollback and writes after close; deterministic interleaving tests added.
+- Make modal focus, inert background and Escape handling ready before the first
+  paint; a deterministic fast-close browser test reproduces the former race.
 
 See [stable release guide](docs/release-1.0.1.md), [Android updates](docs/android-app-updates.md)
 and [executed acceptance/publication ledger](docs/stable-1.0.1-worklog.md).

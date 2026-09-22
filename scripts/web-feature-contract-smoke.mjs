@@ -77,6 +77,22 @@ try {
   assert.deepEqual(calls.find(call => call.method === 'sessions.get' && call.params.before).params, { sessionId: session.id, before: 'hello', limit: 100 })
   await command('/keys'); await expect(dialog.getByText('Shift + Enter', { exact: true })).toBeVisible(); await page.keyboard.press('Escape')
   await expect(input).toBeFocused()
+  // A visible modal must already own focus and Escape handling, even before
+  // React's deferred passive effects get a turn on a loaded/slow browser.
+  await page.evaluate(() => {
+    const observer = new MutationObserver(() => {
+      const sheet = document.querySelector('[role="dialog"]')
+      if (!sheet) return
+      observer.disconnect()
+      document.documentElement.dataset.sheetFocusReady = String(document.activeElement === sheet)
+      sheet.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    observer.observe(document.body, { childList: true, subtree: true })
+  })
+  await command('/keys')
+  await expect(page.locator('html')).toHaveAttribute('data-sheet-focus-ready', 'true')
+  await expect(dialog).toHaveCount(0)
+  await expect(input).toBeFocused()
   await command('/theme light'); await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
   await command('/theme'); await dialog.getByRole('button', { name: '深色', exact: true }).click(); await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark'); await page.keyboard.press('Escape')
   await command('/status'); await expect(dialog.getByText('Output remains readable until dismissed.', { exact: true })).toBeVisible(); await expect(dialog.getByText('No terminal-only picker is required.')).toBeVisible(); await page.keyboard.press('Escape')
