@@ -108,4 +108,13 @@ kept every capability lane above intact while tightening the agent surface:
 - plugin manifests' `agents` component now actually loads (with the manifest's
   `allowedAgentPermissions` ceiling enforced), so packaged assistants extend
   the delegation lane without escaping it
+## 1.0.2 follow-through
+
+The built-in `browser` tool now supports isolated Chromium pages, semantic
+snapshots, interactions and screenshots. It is not personal-browser takeover,
+unrestricted JavaScript evaluation or OS desktop automation. Auto performs a
+bounded tool-free review using the current conversation model; hard policies
+and explicit human-only rules remain enforced. Web/Android share session
+rename/archive/rewind, authenticated raster previews and safe worktree RPCs.
+See [1.0.2 boundaries](release-1.0.2.md) and the [actual acceptance ledger](implementation-1.0.2.md).
 

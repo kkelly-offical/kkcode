@@ -94,7 +94,9 @@ test('another authenticated client approves child write and question from the pa
   const events = await service.readEvents(sessionId, 0)
   assert.equal(events.filter(event => event.type === 'approval.requested').length, 3)
   assert.equal(events.filter(event => event.type === 'approval.resolved').length, 3)
-  assert.equal(events.at(-1).type, 'turn.result')
+  // Session metadata (e.g. the asynchronous first-question title) may arrive
+  // after the turn. It must not change the terminal turn lifecycle itself.
+  assert.equal(events.filter(event => event.type.startsWith('turn.')).at(-1).type, 'turn.result')
 }))
 
 test('parent cancellation denies a pending child write and removes every cross-client approval', { timeout: 90000 }, () => fixture(async ({ service, rpc, start, next, resolve, directory }) => {

@@ -1,6 +1,7 @@
 # 1.0.2 implementation and acceptance ledger
 
-Status: in development; not a release declaration. Baseline: `52ae793`.
+Status: implementation complete; final release gates/publication in progress.
+This is not a publication declaration. Baseline: `52ae793`.
 The published `v1.0.1` tag and release remain immutable.
 
 ## Authorized scope
@@ -106,3 +107,39 @@ The published `v1.0.1` tag and release remain immutable.
   real-model/demo rollout, hosted OS matrix and signed-update validation remain
   in progress.
   No 1.0.2 package/APK/tag has been published.
+
+## Release candidate acceptance
+
+- Runtime candidate `5bb8115`: local release gate **2,909 core cases, 2,907
+  passed, 2 conditional skips, 0 failures**; **33 E2E passed**; npm artifact
+  installation, source/index/payload secret scans and SDK exports passed.
+  Coverage 82.99% lines / 79.07% branches / 81.24% functions.
+- Web real-device and mocked-contract suites passed; pixel-theme comparison
+  checked 154 control rectangles. Built-in Browser real-engine suite: 4 passed.
+  Extension/MCP interoperability suite: 45 passed.
+- Native Android focused UI + HTTP contract: **30 passed**, including the new
+  session menu/restore, file-preserving rewind confirmation and Worktree UI.
+  Actual Keycloak/HTTPS Relay/SSH native suite: **3 passed** in
+  `integration-7Ovi4i`, not a mock SSO result.
+- Exact reported `pelican-bicycle.svg` on the demo VM renders to **800×600 PNG**
+  without modifying its source. Local `Qwen3.8-27B` discovery was verified with
+  `source=network`; real SVG vision, poisoned-history recovery and same-model
+  Auto review all passed. No production model parameters or gateway deployment
+  were changed.
+- The idle demo VM now runs the separately installed 1.0.2 candidate in its
+  foreground tmux hub and is connected to the existing production gateway. Old
+  install prefix remains available for rollback. The production gateway/Web
+  must be upgraded separately to expose the new client UI and RPC methods.
+- Signed APK: `1.0.2` / `10005`, **52,567,399 bytes**, SHA-256
+  `6a78ae02414aa464085908f273f77c72b1cf6669ea35c20c1a7e4e348eb72d76`.
+  Existing project certificate, v2/v3 verified, not debuggable; installed over
+  the dedicated release AVD successfully. Manifest is generated from this APK.
+- CodeQL on `5bb8115` passed JavaScript/TypeScript, Actions and real Kotlin
+  extraction. All five new findings from the first candidate closed after code
+  fixes, leaving the same 17 reviewed pre-existing open alerts. No rules were
+  disabled or findings manually dismissed.
+- Hosted follow-up corrected an old test that opened a lexical rather than
+  canonical trust-record path, and a remote event assertion that incorrectly
+  required `turn.result` to follow asynchronous `session.title.updated`.
+  The stable headless JSONL last-line contract remains unchanged and tested.
+  Final hosted all-platform status and public receipts will be appended below.
