@@ -722,8 +722,9 @@ root-to-cwd instructions, canonical tool advertising and enforced skill flags.
 
 第三个预览版补齐：后台 MCP、CLI 提示/主题/结束状态、音视频实际请求编码、
 目录定价计费、能力徽标、远端 MCP 摘要、`tool_search`、分层指令、兼容别名下的
-统一工具入口和 skill 限制。图片/音视频支持不是“所有模型都支持”；能力未知
-或协议不兼容时明确拒绝，`?` 徽标只表示名称推断。定价是成本估算，不是供应商账单。
+统一工具入口和 skill 限制。图片/音视频支持不是“所有模型都支持”；音视频能力
+未知或协议不兼容时明确拒绝，图片保留既有的未知能力放行行为。`?` 徽标只表示
+名称推断。定价是成本估算，不是供应商账单。
 详见 [媒体输入矩阵](docs/media-input.md)、[工具与技能契约](docs/tool-discovery-and-skills.md)。
 
 `v1.0.0` is the current stable npm and GitHub release: the five stages of the

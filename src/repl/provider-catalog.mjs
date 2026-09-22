@@ -39,7 +39,7 @@ export function modelThinkingSupport({ config, model, supportedParameters = null
  *
  * 三级语义：true 支持 / false 不支持 / null 未知。未知时 image 放行
  * （既有行为，内核还会按字节嗅探兜底），video/audio 按未知处理 ——
- * 调用方据此「挂标记 + 警告」，提交前再拦一次，而不是静默丢弃。
+ * 调用方据此拒绝未知音视频并提示发现/配置能力，不插入虚假的成功标记。
  */
 export function mediaSupportFromCapabilities(capabilities, kind) {
   const value = capabilities?.[kind]

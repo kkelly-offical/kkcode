@@ -292,7 +292,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
     private fun startEvents(initial: Long) {
         polling?.cancel(); val sessionId = selected
         polling = viewModelScope.launch {
-            var cursor = initial
+            val cursor = SessionEventCursor(initial)
             var streamUnsupported = false
             var reconnectMs = 2000L
             while (isActive) {
@@ -300,14 +300,10 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
                     try {
                         refreshToken()
                         val client = api ?: return@launch
-                        client.streamEvents(sessionId, cursor).collect { frame ->
+                        client.streamEvents(sessionId, cursor.value).collect { frame ->
                             if(selected != sessionId) throw CancellationException()
                             val row = try { JSONObject(frame.data) } catch(_: Exception) { return@collect }
-                            val seq = row.optLong("seq", frame.id.toLongOrNull() ?: 0)
-                            if(seq > 0) {
-                                if(seq <= cursor) return@collect
-                                cursor = seq
-                            }
+                            if(!cursor.accept(if(row.has("seq")) row.optLong("seq") else null)) return@collect
                             when (frame.event) {
                                 "connected" -> {
                                     busy = row.optBoolean("running"); connected = true
@@ -321,7 +317,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
                                 "replay.gap" -> {
                                     val snapshot = rpc("sessions.get", JSONObject().put("sessionId", sessionId)) as JSONObject
                                     if(selected != sessionId) throw CancellationException()
-                                    applySnapshot(snapshot); cursor = snapshot.optLong("eventCursor", cursor)
+                                    applySnapshot(snapshot); cursor.reset(snapshot.optLong("eventCursor", cursor.value))
                                     if(!snapshot.optBoolean("liveTruncated")) notice = "历史事件已归档，已重新同步完整会话"
                                 }
                                 "device.online" -> connected = true
@@ -337,16 +333,16 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
                     }
                     delay(reconnectMs); reconnectMs = (reconnectMs * 2).coerceAtMost(15000)
                 } else try {
-                    val batch = rpc("events.list", JSONObject().put("sessionId", sessionId).put("after", cursor)) as JSONObject
+                    val batch = rpc("events.list", JSONObject().put("sessionId", sessionId).put("after", cursor.value)) as JSONObject
                     if(batch.optBoolean("gap")) {
                         val snapshot = rpc("sessions.get", JSONObject().put("sessionId", sessionId)) as JSONObject
                         if(selected != sessionId) return@launch
-                        applySnapshot(snapshot); cursor = snapshot.optLong("eventCursor")
+                        applySnapshot(snapshot); cursor.reset(snapshot.optLong("eventCursor"))
                         if(!snapshot.optBoolean("liveTruncated")) notice = "历史事件已归档，已重新同步完整会话"
                         continue
                     }
                     for (event in batch.optJSONArray("events").objects()) {
-                        cursor = event.getLong("seq")
+                        if(!cursor.accept(event.getLong("seq"))) continue
                         handleJournalEvent(event)
                     }
                     approvals = batch.optJSONArray("approvals").objects(); connected = true

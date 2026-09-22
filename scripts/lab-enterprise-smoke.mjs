@@ -74,11 +74,15 @@ try {
   assert.equal((await sdk.request('status')).device.id, runtime.deviceId)
   console.log('PASS: CLI first login, organization status and registered Relay device')
 
-  remote.process.stdin.write('LAB_HELLO\n')
+  // M30 makes the foreground remote terminal a status endpoint, not an input
+  // chat. A separate headless CLI uses the same local history/owner namespace.
+  const terminalChat = child(['chat', 'LAB_HELLO', '--trust', '--output-format', 'json'])
+  assert.equal(await terminalChat.closed, 0, 'Headless CLI history fixture completes')
+  assert.ok(terminalChat.output().includes('LAB_HELLO_OK'), 'CLI receives the real provider reply')
   const sessions = await until(async () => { const value = await sdk.request('sessions.list'); return value.length && value }, 'terminal session persisted')
   const sessionId = sessions[0].id
   await until(async () => !(await sdk.request('events.list', { sessionId })).running, 'terminal turn finished')
-  await until(() => remote.output().replace(/\x1b\[[0-9;]*m/g, '').includes('LAB_HELLO_OK'), 'terminal reply').catch(error => { throw new Error(`${error.message}; terminal: ${remote.output().replace(/#bootstrap=\S+/g, '#bootstrap=[redacted]').slice(-3000)}`) })
+  await until(() => remote.output().includes('controlled terminal'), 'foreground controlled status panel')
   await browserOwner.page.setViewportSize({ width: 390, height: 844 })
   await browserOwner.page.goto(lab.gateway)
   await browserOwner.page.locator('.remote-session').first().click().catch(async () => {
@@ -234,6 +238,14 @@ try {
     const fixturePath = path.join(state, 'android-test.json')
     await writePrivateFile(fixturePath, JSON.stringify({ gateway: lab.gateway, accessToken: peer.credentials.access_token, deviceId: runtime.deviceId, sessionId, branchSessionId: branchSession.id, sshHost: '192.168.122.8', sshFingerprints: hostKeys, sshPrivateKey: await readFile('/tmp/kkcode-101-qa-z23B4i/id_ed25519', 'utf8') }))
     const callAdb = args => new Promise((resolve, reject) => execFile(adb, ['-s', serial, ...args], { encoding: 'utf8', timeout: 180000 }, (error, stdout) => error ? reject(error) : resolve(stdout)))
+    const avdName = (await callAdb(['emu', 'avd', 'name'])).trim().split(/\r?\n/)[0]
+    if (avdName !== 'kkcode_101_api36') throw new Error('Native lab secrets can only be provisioned to the dedicated debug AVD')
+    // Emulator-level proxies are separate from Android's global proxy setting.
+    // This isolated WireGuard test must not inherit the host's external proxy.
+    await callAdb(['emu', 'proxy', 'clear'])
+    // The fixture is private app data. Use only this explicitly owned debug
+    // emulator's root adbd, never a release device or world-readable staging.
+    await callAdb(['root']); await callAdb(['wait-for-device'])
     await callAdb(['install', '-r', path.join(root, 'android/app/build/outputs/apk/debug/app-debug.apk')])
     await callAdb(['install', '-r', path.join(root, 'android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk')])
     await callAdb(['shell', 'run-as', 'cn.kkcode.remote', 'mkdir', '-p', 'files'])
@@ -243,7 +255,13 @@ try {
     const nativeLogin = '/data/user/0/cn.kkcode.remote/files/enterprise-login.json'
     await callAdb(['shell', 'rm', '-f', nativeLogin])
     await callAdb(['push', fixturePath, target]); await callAdb(['shell', 'chown', `${uid}:${uid}`, target]); await callAdb(['shell', 'chmod', '600', target]); await callAdb(['shell', 'restorecon', target])
+    let restoreWifi = false
     try {
+      if (process.env.KKCODE_ANDROID_USE_CELLULAR === '1') {
+        restoreWifi = (await callAdb(['shell', 'settings', 'get', 'global', 'wifi_on'])).trim() === '1'
+        await callAdb(['shell', 'svc', 'wifi', 'disable'])
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      }
       let finished = false
       const instrument = callAdb(['shell', 'am', 'instrument', '-w', '-r', '-e', 'enterprise', 'true', '-e', 'class', 'cn.kkcode.remote.EnterpriseNetworkTest', 'cn.kkcode.remote.test/androidx.test.runner.AndroidJUnitRunner']).then(output => { finished = true; return output })
       const loginUri = await until(async () => {
@@ -260,7 +278,10 @@ try {
       assert.equal((await sdk.request('sessions.get', { sessionId })).providerType, 'lab-anthropic')
       assert.equal((await sdk.request('branches.list', { sessionId: branchSession.id })).current, 'main')
       console.log('PASS: native Android login/model/mode/conversation sync, document upload/removal, safe Git branch selection, HTTPS Relay and verified SSH')
-    } finally { await callAdb(['shell', 'rm', '-f', target, nativeLogin]) }
+    } finally {
+      await callAdb(['shell', 'rm', '-f', target, nativeLogin])
+      if (restoreWifi) await callAdb(['shell', 'svc', 'wifi', 'enable'])
+    }
   }
   if (process.env.KKCODE_LAB_RESTART_GATEWAY === '1') {
     const before = await sdk.request('sessions.get', { sessionId })

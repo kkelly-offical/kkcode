@@ -6,7 +6,7 @@ import { wavBlock, mp4Block } from '../test/helpers/media-fixtures.mjs'
 
 export const LAB_MEDIA_BLOCKS = [wavBlock, mp4Block]
 const mediaMetadata = block => {
-  const video = block.type === 'video_url' && /^data:(video\/[a-z]+);base64,(.+)$/.exec(block.video_url?.url || '')
+  const video = block.type === 'video_url' && /^data:(video\/[a-z0-9.+-]+);base64,(.+)$/.exec(block.video_url?.url || '')
   const encoded = block.type === 'input_audio' ? block.input_audio?.data : video?.[2]
   if (!encoded) return null
   const bytes = Buffer.from(encoded, 'base64')

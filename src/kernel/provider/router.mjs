@@ -642,6 +642,10 @@ export function createProviderRegistry() {
     const settings = resolveSettings(configState, resolvedProviderType, { model, baseUrl, apiKeyEnv })
     const provider = registry.get(settings.providerType)
     if (!provider?.countTokens) return null
+    // Count exactly the input the inference path can encode. In particular,
+    // switching an audio/video conversation to Anthropic must not fail in
+    // count_tokens before the inference guard can replace historical media.
+    const guarded = await guardModelInput(configState, settings, messages, tools, { sessionId, turnId })
     const apiKey = settings.apiKeyDirect ||
       (settings.apiKeyEnv ? process.env[settings.apiKeyEnv] : "") ||
       ""
@@ -655,8 +659,8 @@ export function createProviderRegistry() {
       baseUrl: settings.baseUrl,
       model: settings.model,
       system,
-      messages,
-      tools,
+      messages: guarded.messages,
+      tools: guarded.tools,
       protocol: settings.protocol,
       provider: settings.configKey,
       timeoutMs: Math.min(Number(providerCfg.timeout_ms || 10000), 30000),

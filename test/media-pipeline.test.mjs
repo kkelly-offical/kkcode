@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
-import { requestProvider, requestProviderStream } from '../src/kernel/provider/router.mjs'
+import { requestProvider, requestProviderStream, countTokensProvider } from '../src/kernel/provider/router.mjs'
 import { requestAnthropic } from '../src/kernel/provider/anthropic.mjs'
 import { enforceModelInputCapabilities } from '../src/kernel/provider/model-capabilities.mjs'
 import { mediaInputSupport, mapOpenAIMedia } from '../src/kernel/provider/media-input.mjs'
@@ -48,6 +48,34 @@ test('media format and size errors cannot silently become text', () => {
 
 test('Anthropic direct adapter refuses audio before making a request', async () => {
   await assert.rejects(requestAnthropic({ apiKey: 'fixture', baseUrl: 'http://127.0.0.1:1', model: 'fixture', messages: [{ role: 'user', content: [wavBlock] }] }), /does not encode audio/)
+})
+
+test('Anthropic token counting and inference both degrade historical media after a channel switch', async t => {
+  const requests = []
+  const server = createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk
+    requests.push({ url: req.url, body: JSON.parse(raw) })
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify(req.url.endsWith('/count_tokens') ? { input_tokens: 9 } : { id: 'reply', type: 'message', role: 'assistant', content: [{ type: 'text', text: 'continued' }], stop_reason: 'end_turn', usage: { input_tokens: 9, output_tokens: 1 } }))
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve) }))
+  const configState = { config: { provider: { default: 'fixture', fixture: { type: 'anthropic', base_url: `http://127.0.0.1:${server.address().port}`, api_key_env: '', stream: false, default_model: 'fixture-media' }, model_capabilities: { 'fixture-media': { audio: true, video: true } } } } }
+  const messages = [{ role: 'user', content: [wavBlock, mp4Block] }, { role: 'assistant', content: 'old reply' }, { role: 'user', content: 'continue' }]
+  const input = { configState, providerType: 'fixture', messages, tools: [], audit: false }
+  assert.equal(await countTokensProvider(input), 9)
+  assert.equal((await requestProvider(input)).text, 'continued')
+  const events = []; for await (const event of requestProviderStream(input)) events.push(event)
+  assert.ok(events.some(event => event.content === 'continued'))
+  assert.equal(requests.length, 3)
+  for (const { body } of requests) {
+    const blocks = body.messages[0].content
+    assert.equal(blocks.length, 2)
+    assert.ok(blocks.every(block => block.type === 'text' && /withheld from history/.test(block.text)))
+  }
+  assert.equal(messages[0].content[0], wavBlock)
+  await assert.rejects(countTokensProvider({ ...input, messages: [{ role: 'user', content: [wavBlock] }] }), /does not encode audio/)
+  assert.equal(requests.length, 3, 'fresh incompatible media never reaches count_tokens')
 })
 
 test('router sends real audio/video blocks in streaming and non-streaming HTTP request bodies', async t => {

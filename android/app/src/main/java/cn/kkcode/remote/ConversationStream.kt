@@ -1,5 +1,19 @@
 package cn.kkcode.remote
 
+/** Only durable journal seq values advance replay. SSE control frames reuse
+ * Last-Event-ID and must still apply at the same cursor (state, hello, gap). */
+internal class SessionEventCursor(initial: Long) {
+    var value: Long = initial
+        private set
+    fun accept(sequence: Long?): Boolean {
+        if(sequence == null || sequence <= 0) return true
+        if(sequence <= value) return false
+        value = sequence
+        return true
+    }
+    fun reset(sequence: Long) { value = sequence }
+}
+
 internal data class StreamDelta(val id: String, val kind: String, val text: String, val turnId: String, val step: Int?, val timestamp: Long)
 internal fun streamStepKey(turnId: String, step: Int?): String? = if(turnId.isBlank() || step == null) null else "$turnId:$step"
 

@@ -38,8 +38,8 @@ export function createAttachmentInput({
   /**
    * 当前模型收不收得下某类媒体：true 支持 / false 不支持 / null 未知，
    * 可返回 Promise（能力面读的是 M33 的 resolveModelCapabilities，内存+磁盘
-   * 缓存，不触网）。缺省：image 已知支持（provider 适配层今天只序列化
-   * image 块），其余按未知处理 —— 挂上标记但附警告，提交时再拦。
+   * 缓存，不触网）。缺省沿用图片放行；音视频需要明确模型/协议能力，
+   * 未知时先配置或发现能力，不插入成功标记。
    */
   supportsMedia = (kind) => (kind === "image" ? true : null)
 }) {
