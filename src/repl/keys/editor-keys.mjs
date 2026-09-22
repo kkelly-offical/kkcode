@@ -162,7 +162,7 @@ export function createEditorKeyScope({
             // 附件进登记本，光标处插一个 `[Image #N · 230 kB]` 标记。标记就是「这里有
             // 附件」的提示本身 —— 看得见、删得掉、位置明确，提交时它决定附件发不发。
             // 模型明确不支持该类型时 attachMedia 返回 null（报错提示由它发）。
-            const marker = (attachMedia || attachImage)(clipBlock)
+            const marker = await (attachMedia || attachImage)(clipBlock)
             if (marker) {
               showToast(`${clipBlock.type} attached · ${marker}`, { topic: "clipboard", tone: "success" })
             }

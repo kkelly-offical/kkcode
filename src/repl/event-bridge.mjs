@@ -154,6 +154,36 @@ function createTitleWriter({ notifier, now }) {
 }
 
 /**
+ * mcp.loaded（每轮加载的唯一收口事件，M33）→ 一条汇总 toast；无配置时静默。
+ * 失败清单点名到 server，细节查询引到 /mcp 浮层。
+ */
+export function formatMcpLoadedToast(payload = {}) {
+  const configured = Number(payload.configured) || 0
+  if (!configured) return null
+  const failed = Array.isArray(payload.failed) ? payload.failed : []
+  const connected = Number(payload.connected) || 0
+  const tools = Number(payload.toolCount) || 0
+  if (failed.length) {
+    return {
+      text: `MCP loaded · ${connected}/${configured} connected · ${failed.length} failed (${failed.map((f) => f?.name || "?").join(", ")}) — /mcp 查看`,
+      tone: "warning"
+    }
+  }
+  return { text: `MCP ready · ${connected}/${configured} servers · ${tools} tools`, tone: "success" }
+}
+
+/** mcp.health 逐台明细只报失败（成功由 loaded 汇总承载，逐台弹是刷屏）。 */
+export function formatMcpHealthToast(payload = {}) {
+  const server = String(payload?.server || "")
+  if (!server || payload?.ok !== false) return null
+  return {
+    topic: `mcp:${server}`,
+    text: `MCP ✗ ${server} · ${payload?.reason || payload?.error || "unknown"}`,
+    tone: "error"
+  }
+}
+
+/**
  * @returns {Function} 取消订阅
  */
 export function subscribeSessionEvents({
@@ -393,19 +423,21 @@ export function subscribeSessionEvents({
         requestRender()
         break
 
-      // MCP 后台加载的完成/失败（M32）：瞬时提示，按 server 去重，自动隐去，
-      // 不进对话记录。kernel 侧不阻塞启动的改造由 M33 提供；阻塞式 boot 期间
-      // 这些事件先于订阅发出，启动快照在 repl.mjs 单独汇总提示一次。
+      // MCP 后台加载（M32 UI 侧 + M33 内核侧）：mcp.loaded 收口弹一条汇总；
+      // mcp.health 逐台只报失败。都不进对话记录。阻塞式 boot 时这些事件先于
+      // 订阅发出，启动快照在 repl.mjs 用 loadState()/healthSnapshot 补一条。
+      case EVENT_TYPES.MCP_LOADED: {
+        const summary = formatMcpLoadedToast(payload)
+        if (!summary) break
+        showToast(summary.text, { topic: "mcp", tone: summary.tone })
+        requestRender()
+        break
+      }
+
       case EVENT_TYPES.MCP_HEALTH: {
-        const server = String(payload?.server || "")
-        if (!server) break
-        const ok = payload?.ok === true
-        showToast(
-          ok
-            ? `MCP ✓ ${server}${payload?.transport ? ` · ${payload.transport}` : ""}`
-            : `MCP ✗ ${server} · ${payload?.reason || payload?.error || "unknown"}`,
-          { topic: `mcp:${server}`, tone: ok ? "success" : "error" }
-        )
+        const failure = formatMcpHealthToast(payload)
+        if (!failure) break
+        showToast(failure.text, { topic: failure.topic, tone: failure.tone })
         requestRender()
         break
       }

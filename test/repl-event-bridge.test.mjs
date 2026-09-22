@@ -591,19 +591,46 @@ test("an approval-denied tool failure still settles the runtime deterministicall
  * MCP 后台加载（M32）：每台 server 的健康事件弹一条瞬时 toast，
  * 按 server 去重（topic 相同会替换而不是堆叠），绝不进对话记录。
  */
-test("MCP health events surface as per-server toasts and never touch the transcript", () => {
+test("the MCP load summary surfaces as one toast and never touches the transcript", () => {
+  // M33 的 mcp.loaded 是每轮加载的唯一收口事件：一条汇总，自动隐去
+  const { emit, calls } = harness({ autoStartTurn: null })
+  emit(EVENT_TYPES.MCP_LOADED, {
+    background: true, ok: true, configured: 2, connected: 2, failed: [], toolCount: 5
+  }, { sessionId: null, turnId: null })
+  const toasts = calls.filter((c) => c.startsWith("toast[mcp]"))
+  assert.equal(toasts.length, 1)
+  assert.ok(toasts[0].includes("2/2") && toasts[0].includes("5 tools"), `实际: ${toasts.join(",")}`)
+  assert.equal(calls.filter((c) => c.startsWith("appendLog")).length, 0, "MCP 状态不得进对话记录")
+})
+
+test("the MCP load summary names failures and points at /mcp", () => {
+  const { emit, calls } = harness({ autoStartTurn: null })
+  emit(EVENT_TYPES.MCP_LOADED, {
+    background: true, ok: true, configured: 3, connected: 1, toolCount: 2,
+    failed: [{ name: "web", reason: "spawn ENOENT" }, { name: "db", reason: "timeout" }]
+  }, { sessionId: null, turnId: null })
+  const toast = calls.find((c) => c.startsWith("toast[mcp]"))
+  assert.ok(toast.includes("1/3") && toast.includes("web") && toast.includes("/mcp"), `实际: ${toast}`)
+})
+
+test("nothing configured means no MCP toast at all", () => {
+  const { emit, calls } = harness({ autoStartTurn: null })
+  emit(EVENT_TYPES.MCP_LOADED, { background: true, ok: true, configured: 0, connected: 0, failed: [] }, { sessionId: null, turnId: null })
+  assert.equal(calls.filter((c) => c.startsWith("toast[mcp")).length, 0)
+})
+
+test("per-server MCP health toasts only failures — successes ride the summary", () => {
   const { emit, calls } = harness({ autoStartTurn: null })
   emit(EVENT_TYPES.MCP_HEALTH, { server: "fs", ok: true, transport: "stdio" }, { sessionId: null, turnId: null })
   emit(EVENT_TYPES.MCP_HEALTH, { server: "web", ok: false, reason: "spawn ENOENT" }, { sessionId: null, turnId: null })
   const toasts = calls.filter((c) => c.startsWith("toast[mcp:"))
-  assert.equal(toasts.length, 2)
-  assert.ok(toasts.some((c) => c.includes("MCP ✓ fs")), `实际: ${toasts.join(",")}`)
-  assert.ok(toasts.some((c) => c.includes("MCP ✗ web") && c.includes("spawn ENOENT")))
+  assert.equal(toasts.length, 1, `逐台只报失败，实际: ${toasts.join(",")}`)
+  assert.ok(toasts[0].includes("MCP ✗ web") && toasts[0].includes("spawn ENOENT"))
   assert.equal(calls.filter((c) => c.startsWith("appendLog")).length, 0, "MCP 状态不得进对话记录")
 })
 
 test("an MCP health event without a server name is ignored", () => {
   const { emit, calls } = harness({ autoStartTurn: null })
-  emit(EVENT_TYPES.MCP_HEALTH, { ok: true }, { sessionId: null, turnId: null })
+  emit(EVENT_TYPES.MCP_HEALTH, { ok: false }, { sessionId: null, turnId: null })
   assert.equal(calls.filter((c) => c.startsWith("toast[mcp:")).length, 0)
 })

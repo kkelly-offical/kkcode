@@ -71,8 +71,7 @@ import { createSuggestionSource } from "./repl/suggestion-source.mjs"
 import { resolveCommand, buildBuiltinSlashCatalog } from "./repl/commands/registry.mjs"
 import { BUILTIN_COMMANDS } from './command/builtin.mjs'
 import { presentPromptTurn } from "./repl/turn-presenter.mjs"
-import { loadProviderModelItems, modelMediaSupport } from "./repl/provider-catalog.mjs"
-import { handleProviderLinePick } from "./repl/provider-line-pick.mjs"
+import { loadProviderModelItems, mediaSupportFromCapabilities } from "./repl/provider-catalog.mjs"
 import { persistLearnedGrant } from "./repl/config-persistence.mjs"
 import { createRenderScheduler } from "./repl/render-scheduler.mjs"
 import { createListenerRegistry } from "./repl/listener-registry.mjs"
@@ -185,7 +184,7 @@ async function processInputLine({
    * TUI 会把标记插进输入框；行模式没有可编辑的输入框，就退化成推进待发数组、返回 ""。
    */
   attachImage = null,
-  /** 粘媒体（图像/视频/语音）。TUI 里由 attachment-input 注入；缺省退回 attachImage。 */
+  /** 粘媒体（图像/视频/语音）。TUI 由 attachment-input 注入；缺省退回 attachImage。 */
   attachMedia = null,
   signal = null,
   /** 插话来源（() => string[]），只有 TUI 传；见 session/loop.mjs 的 steerSource。 */
@@ -245,11 +244,31 @@ async function processInputLine({
     if (catalog.error) print(`  模型目录不可用: ${catalog.error}；仍可使用 /model <model-id> 手动设置`)
   }
 
-  // --- Provider 选择模式（行模式编号输入）：拦截逻辑在 repl/provider-line-pick.mjs ---
-  const linePick = await handleProviderLinePick({
-    providerPicker, input: normalized, state, print, setProviderPicker, switchActiveProvider
-  })
-  if (linePick.handled) return linePick.action
+  // --- Provider 选择模式：拦截输入 ---
+  if (providerPicker) {
+    const list = providerPicker
+    const input = normalized
+    // 用户改主意敲了别的命令 —— 取消选择模式，让命令正常执行，
+    // 而不是把 "/help" 当 provider 名去匹配然后报「找不到」
+    if (input.startsWith("/")) {
+      if (setProviderPicker) setProviderPicker(null)
+      print("  已退出 provider 选择。")
+    } else {
+      if (setProviderPicker) setProviderPicker(null)
+      if (!input) { print("  已取消。"); return { exit: false } }
+      let target = null
+      const num = Number(input)
+      if (!isNaN(num) && num >= 1 && num <= list.length) {
+        target = list[num - 1]
+      } else {
+        target = list.find((p) => p === input)
+      }
+      if (!target) { print(`  找不到 provider: "${input}"（可用: ${list.join(", ")}）`); return { exit: false } }
+      if (target === state.providerType) { print(`  "${target}" 已经是当前 provider。`); return { exit: false } }
+      await switchActiveProvider(target)
+      return { exit: false }
+    }
+  }
 
   // 0.7.3 起 `/provider add` 走提问浮层表单（wizard-form.mjs），输入由模态作用域
   // 直接接住 —— 这里曾有一个 `wizard?.active` 拦截分支，向导输入要先穿过模式
@@ -511,13 +530,12 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     durationMs: Number(ctx.configState.config.ui?.terminal?.toast_duration_ms || 2600),
     maxToasts: 3
   })
-  // MCP 连接状态是提示，不是对话（0.x 曾把它永久 append 进聊天记录顶部）。
-  // 收成一条瞬时汇总提示（自动隐去），细节走 /mcp 浮层；后台加载的逐台完成
-  // 由 event-bridge 的 MCP_HEALTH 分支弹 toast。行模式没有 toast，仍按原样打印。
-  const mcpStartupSummary = summarizeMcpSnapshot(
-    Array.isArray(mcpHealth) ? mcpHealth : [],
-    ctx.kernel?.extensions?.mcp?.listTools?.() || []
-  )
+  // MCP 连接状态是提示不是对话：后台加载（M33 deferMcp）进行中完全静默，收口时
+  // event-bridge 的 mcp.loaded 弹汇总 toast；已就绪才在这里补一条启动汇总。
+  // 行模式没有 toast，仍按原样打印。
+  const mcpLoadState = ctx.kernel?.extensions?.mcp?.loadState?.()
+  const mcpStartupSummary = mcpLoadState?.loading ? null
+    : summarizeMcpSnapshot(Array.isArray(mcpHealth) ? mcpHealth : [], ctx.kernel?.extensions?.mcp?.listTools?.() || [])
 
   // TUI 状态。形状与浮层互斥不变量在 repl/ui-state.mjs（有独立测试）。
   const ui = createReplUiState({ historyLines, terminalFeatures })
@@ -596,9 +614,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   } = transcriptWriter
 
   notifyUpdateToast({ promise: startupUpdatePromise, showToast })
-  if (mcpStartupSummary) {
-    showToast(mcpStartupSummary.text, { topic: "mcp", tone: mcpStartupSummary.tone })
-  }
+  if (mcpStartupSummary) showToast(mcpStartupSummary.text, { topic: "mcp", tone: mcpStartupSummary.tone })
 
   /**
    * 回溯上一轮对话。撤回的那句输入会填回输入框 —— 「退回去改一下再问」
@@ -871,8 +887,11 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     store: ui.attachments,
     insertAtCursor,
     showToast,
-    // 媒体能力面：显式配置/探测回填优先；未知时 image 放行、video/audio 附警告
-    supportsMedia: (kind) => modelMediaSupport({ config: ctx.configState.config, model: state.model, kind })
+    // 媒体能力面走 M33 resolveModelCapabilities（读缓存不触网）；未知时 image 放行
+    supportsMedia: async (kind) => {
+      const { capabilities } = await kernelIndex.resolveModelCapabilities(ctx.configState, state.providerType, state.model)
+      return mediaSupportFromCapabilities(capabilities, kind)
+    }
   })
   // 内核长出 readClipboardMedia（视频/语音，M33）就用它；没有就只认图像
   const readClipboardMedia = kernelIndex.readClipboardMedia || readClipboardImage
@@ -1028,6 +1047,15 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     })
   }
 
+  /**
+   * TUI 里这个回调只用来退出选择态（传 null）；行模式的编号数组不会走到这里 ——
+   * 有 openPanel 时命令走的是浮层分支。两处 processInputLine 调用点共用一份。
+   */
+  const syncProviderPickerOverlay = (next) => {
+    if (next) openUserOverlay(ui, "providerPicker", next)
+    else closeUserOverlay(ui, "providerPicker")
+  }
+
   let pendingPlanBuild = null
 
   async function submitCurrentInput() {
@@ -1126,17 +1154,12 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         requestRender()
         try {
           const action = (await processInputLine({
-            ...resolveAttachments(mergedPrompt),
+            ...(await resolveAttachments(mergedPrompt)),
             state, ctx, providersConfigured,
             customCommands: localCustomCommands,
             setCustomCommands: (next) => { localCustomCommands = next },
             providerPicker: ui.providerPicker,
-            setProviderPicker: (next) => {
-              // TUI 里这个回调只用来退出选择态（传 null）；行模式的编号数组
-              // 不会走到这里 —— 有 openPanel 时命令走的是浮层分支。
-              if (next) openUserOverlay(ui, "providerPicker", next)
-              else closeUserOverlay(ui, "providerPicker")
-            },
+            setProviderPicker: syncProviderPickerOverlay,
             print: printTui,
             streamSink: appendStreamChunk,
             showTurnStatus: false,
@@ -1208,7 +1231,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     ui.inputCursor = 0
     ui.selectedSuggestion = 0
     ui.suggestionOffset = 0
-    // 回合提交的唯一入口动作：相位机进 starting，上一回合的活动态清零
+    // 相位机进 starting，上一回合的活动态清零
     markTurnSubmitted(ui)
     ui.paused = false
     const aborter = new AbortController()
@@ -1286,7 +1309,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
     try {
       const action = (await processInputLine({
-        ...resolveAttachments(submittedLine),
+        ...(await resolveAttachments(submittedLine)),
         state,
         ctx,
         providersConfigured,
@@ -1295,12 +1318,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           localCustomCommands = next
         },
         providerPicker: ui.providerPicker,
-        setProviderPicker: (next) => {
-              // TUI 里这个回调只用来退出选择态（传 null）；行模式的编号数组
-              // 不会走到这里 —— 有 openPanel 时命令走的是浮层分支。
-              if (next) openUserOverlay(ui, "providerPicker", next)
-              else closeUserOverlay(ui, "providerPicker")
-            },
+        setProviderPicker: syncProviderPickerOverlay,
         print: printTui,
         streamSink: appendStreamChunk,
         showTurnStatus: false,

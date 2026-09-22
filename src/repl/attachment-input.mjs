@@ -36,10 +36,10 @@ export function createAttachmentInput({
   foldLines = DEFAULT_FOLD_LINES,
   foldChars = DEFAULT_FOLD_CHARS,
   /**
-   * 当前模型收不收得下某类媒体：true 支持 / false 不支持 / null 未知。
-   * 缺省只认 image 为已知支持（provider 适配层今天只会序列化 image 块）；
-   * 其余按「未知」处理 —— 挂上标记但附警告，提交时再拦。能力面见
-   * provider-catalog.mjs 的 modelMediaSupport。
+   * 当前模型收不收得下某类媒体：true 支持 / false 不支持 / null 未知，
+   * 可返回 Promise（能力面读的是 M33 的 resolveModelCapabilities，内存+磁盘
+   * 缓存，不触网）。缺省：image 已知支持（provider 适配层今天只序列化
+   * image 块），其余按未知处理 —— 挂上标记但附警告，提交时再拦。
    */
   supportsMedia = (kind) => (kind === "image" ? true : null)
 }) {
@@ -52,9 +52,9 @@ export function createAttachmentInput({
    * 明确不支持该媒体的模型：不挂标记、直接报错（「明确提示而不是静默丢弃」）。
    * 能力未知的 video/audio：挂上标记并警告 —— 发送前的 resolve 还会再拦一次。
    */
-  function attachMedia(block) {
+  async function attachMedia(block) {
     const kind = MEDIA_LABEL[block?.type] ? block.type : "image"
-    const support = supportsMedia(kind)
+    const support = await supportsMedia(kind)
     if (support === false) {
       showToast(`${MEDIA_LABEL[kind]} not attached — the current model does not accept ${kind} input`, {
         topic: "clipboard",
@@ -103,7 +103,8 @@ export function createAttachmentInput({
   }
 
   /**
-   * 提交前把输入文本解析成「真正要发出去的文本 + 媒体块」。
+   * 提交前把输入文本解析成「真正要发出去的文本 + 媒体块」（异步：能力面可以
+   * 是 Promise —— M33 的 resolveModelCapabilities 读内存+磁盘缓存，不触网）。
    *
    * 真相在文本里：文本里没提到的标记就是没被引用，登记本里存着也不发。所以这里没有
    * 「清空待发图片」这一步 —— 没有那个状态可清。
@@ -114,14 +115,14 @@ export function createAttachmentInput({
    *
    * 返回的形状就是 `processInputLine` 的两个入参名，调用方可以直接展开。
    */
-  function resolveAttachments(text) {
+  async function resolveAttachments(text) {
     const resolved = store.resolve(text)
     let line = resolved.text
     const pendingImages = []
     const dropped = []
     for (const block of resolved.images) {
       const kind = block?.type
-      if (supportsMedia(kind) === true) {
+      if ((await supportsMedia(kind)) === true) {
         pendingImages.push(block)
       } else {
         dropped.push(kind)
@@ -146,5 +147,5 @@ export function createAttachmentInput({
     return { line, pendingImages }
   }
 
-  return { attachImage, attachMedia, insertPastedText, resolveAttachments, formatByteSize }
+  return { attachImage, attachMedia, insertPastedText, resolveAttachments }
 }

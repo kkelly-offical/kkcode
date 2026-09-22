@@ -375,7 +375,8 @@ export const authoringCommands = [
         // 行模式：没有输入框可插，attachImage 退化成挂进待发数组并返回空串。
         const attach = attachMedia || attachImage
         let marker = ""
-        if (attach) marker = attach(clipBlock) || ""
+        // attach 是异步的（能力面可读 Promise）；行模式的待发数组兜底是同步的，await 通吃
+        if (attach) marker = (await attach(clipBlock)) || ""
         else pendingImages.push(clipBlock)
         print(
           marker
