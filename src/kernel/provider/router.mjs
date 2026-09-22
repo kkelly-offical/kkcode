@@ -202,13 +202,15 @@ export function createProviderRegistry() {
    * 这里，逐次告警会把 stderr 淹没在同一件事上。
    */
   const capabilityWarnings = new Set()
-  function warnCapabilityOnce(key, message) {
+  function warnCapabilityOnce(key, message, context) {
     if (capabilityWarnings.has(key)) return
     capabilityWarnings.add(key)
-    console.warn(message)
+    while (capabilityWarnings.size > 256) capabilityWarnings.delete(capabilityWarnings.values().next().value)
+    EventBus.emit({ type: EVENT_TYPES.PROVIDER_CAPABILITY_NOTICE, ...context, payload: { message } }).catch(() => {})
+    if (!process.stdout.isTTY) console.warn(message)
   }
 
-  async function guardModelInput(configState, settings, messages, tools) {
+  async function guardModelInput(configState, settings, messages, tools, context = {}) {
     const { capabilities } = await resolveModelCapabilities(configState, settings.configKey, settings.model)
     const guarded = enforceModelInputCapabilities({
       messages,
@@ -218,15 +220,15 @@ export function createProviderRegistry() {
       provider: settings.configKey,
       model: settings.model
     })
-    const warnKey = `${settings.configKey}\0${settings.model}`
+    const warnKey = `${settings.configKey}\0${settings.model}\0${context.sessionId || ''}`
     if (guarded.droppedImages > 0) {
-      warnCapabilityOnce(`${warnKey}\0image`, `[kkcode] model "${settings.model}" does not support image input; ${guarded.droppedImages} image(s) in conversation history were replaced with text placeholders`)
+      warnCapabilityOnce(`${warnKey}\0image`, `[kkcode] model "${settings.model}" does not support image input; ${guarded.droppedImages} image(s) in conversation history were replaced with text placeholders`, context)
     }
     if (guarded.droppedMedia > 0) {
-      warnCapabilityOnce(`${warnKey}\0media`, `[kkcode] ${guarded.droppedMedia} video/audio block(s) cannot be sent to model "${settings.model}" and were replaced with text placeholders`)
+      warnCapabilityOnce(`${warnKey}\0media`, `[kkcode] ${guarded.droppedMedia} video/audio block(s) cannot be sent to model "${settings.model}" and were replaced with text placeholders`, context)
     }
     if (guarded.droppedTools > 0) {
-      warnCapabilityOnce(`${warnKey}\0tools`, `[kkcode] model "${settings.model}" is marked as not supporting tool calling; ${guarded.droppedTools} tool(s) were omitted from the request`)
+      warnCapabilityOnce(`${warnKey}\0tools`, `[kkcode] model "${settings.model}" is marked as not supporting tool calling; ${guarded.droppedTools} tool(s) were omitted from the request`, context)
     }
     return { capabilities, messages: guarded.messages, tools: guarded.tools }
   }
@@ -355,7 +357,7 @@ export function createProviderRegistry() {
     audit = true
   }) {
     const { settings, apiKey, providerCfg } = await prepareProviderCall(configState, { providerType, model, baseUrl, apiKeyEnv })
-    const guarded = await guardModelInput(configState, settings, messages, tools)
+    const guarded = await guardModelInput(configState, settings, messages, tools, { sessionId, turnId })
     const capabilities = guarded.capabilities
     const requestContext = createRequestContext({ traceId, requestId, parentEventId })
     let responseStatus = null
@@ -473,7 +475,7 @@ export function createProviderRegistry() {
     compaction = null
   }) {
     const { settings, apiKey, providerCfg } = await prepareProviderCall(configState, { providerType, model, baseUrl, apiKeyEnv })
-    const guarded = await guardModelInput(configState, settings, messages, tools)
+    const guarded = await guardModelInput(configState, settings, messages, tools, { sessionId, turnId })
     const capabilities = guarded.capabilities
 
     // providerCfg.stream === false 是显式配置；capabilities.streaming === false

@@ -84,8 +84,10 @@ internal fun modelCapabilityLabel(entry: JSONObject?): String {
     Row(Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(if(current) Icons.Outlined.Check else Icons.Outlined.CloudQueue, null, Modifier.size(18.dp), tint = if(current) kkcodeColors.success else kkcodeColors.activityMuted)
         Spacer(Modifier.width(12.dp))
-        Text(id, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-        if(tag.isNotBlank()) Text(tag, fontSize = 10.sp, color = kkcodeColors.activityMuted)
+        Column(Modifier.weight(1f)) {
+            Text(id, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if(tag.isNotBlank()) Text(tag, fontSize = 10.sp, color = kkcodeColors.activityMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
 

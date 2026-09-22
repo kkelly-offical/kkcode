@@ -47,13 +47,14 @@ export function mediaSupportFromCapabilities(capabilities, kind) {
   return kind === "image" ? true : null
 }
 
-export function modelCapabilityBadges(entry, config = {}) {
+export function modelCapabilityBadges(entry, config = {}, protocol = 'openai') {
   const id = String(entry?.id || '')
   const discovered = parseCatalogEntryCapabilities(entry) || {}
   const configured = normalizeCapabilities(config.provider?.model_capabilities?.[id])
   const heuristic = inferCapabilitiesFromName(id)
   const capabilities = { ...heuristic, ...discovered, ...configured }
   const sources = Object.fromEntries(Object.keys(capabilities).map(key => [key, key in configured ? 'config' : key in discovered ? 'discovered' : 'heuristic']))
+  if (protocol !== 'openai') for (const key of ['audio', 'video']) { capabilities[key] = false; sources[key] = 'protocol' }
   const labels = { image: '图像', audio: '音频', video: '视频', tools: '工具', streaming: '流式' }
   const badges = Object.entries(labels).filter(([key]) => capabilities[key] === true)
     .map(([key, label]) => `${label}${sources[key] === 'heuristic' ? '?' : ''}`)
@@ -89,7 +90,9 @@ export async function loadProviderModelItems(configState, providerName, {
         model,
         supportedParameters: Array.isArray(entry?.supportedParameters) ? entry.supportedParameters : null
       })
-      const capabilityInfo = modelCapabilityBadges(entry, config)
+      const provider = config.provider?.[providerName] || {}
+      const protocol = catalog.protocol || provider.protocol || (['anthropic', 'ollama'].includes(provider.type) ? provider.type : 'openai')
+      const capabilityInfo = modelCapabilityBadges(entry, config, protocol)
       items.push({
         provider: providerName,
         model,

@@ -330,13 +330,14 @@ test("startRepl controlled mode runs the panel on a real DeviceService", async (
   const chunks = []
   const originalWrite = process.stdout.write
   process.stdout.write = (text, ...rest) => { chunks.push(String(text)); return true }
-  let service
+  let service, running
   try {
     const { DeviceService } = await import("../src/device/service.mjs")
     const { startRepl } = await import("../src/repl.mjs")
     service = await new DeviceService({ cwd: process.cwd(), roots: [process.cwd()] }).initialize()
     service.remoteStatus = "connected"
-    const running = startRepl({ remoteService: service })
+    service.metadata.name = 'acceptance-workstation'
+    running = startRepl({ remoteService: service })
     const output = () => chunks.join("")
     const deadline = Date.now() + 10000
     while (!output().includes("controlled terminal") && Date.now() < deadline) {
@@ -344,7 +345,7 @@ test("startRepl controlled mode runs the panel on a real DeviceService", async (
     }
     const frame = stripAnsi(output())
     assert.match(frame, /controlled terminal/)
-    assert.match(frame, new RegExp(`Device\\s+${os.hostname().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`))
+    assert.match(frame, /Device\s+acceptance-workstation/)
     assert.match(frame, /Relay\s+● connected/)
     assert.match(frame, /no active sessions/)
     await service.record({ type: "turn.start", sessionId: "ses_real1", turnId: "t1", payload: { prompt: "hello from web" } })
@@ -356,6 +357,7 @@ test("startRepl controlled mode runs the panel on a real DeviceService", async (
     service = null
   } finally {
     process.stdout.write = originalWrite
+    if (running) { process.emit('SIGINT'); await running }
     if (service) await service.close().catch(() => {})
     if (previousHome === undefined) delete process.env.KKCODE_HOME
     else process.env.KKCODE_HOME = previousHome

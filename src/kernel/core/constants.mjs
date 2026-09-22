@@ -106,5 +106,6 @@ export const EVENT_TYPES = {
   TASK_SETTLED: "task.settled",
   LONGAGENT_STOP_REQUESTED: "longagent.stop.requested",
   PROVIDER_FALLBACK: "provider.fallback",
-  PROVIDER_RETRY: "provider.retry"
+  PROVIDER_RETRY: "provider.retry",
+  PROVIDER_CAPABILITY_NOTICE: "provider.capability.notice"
 }

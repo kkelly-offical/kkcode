@@ -361,6 +361,10 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         val type = event.getString("type"); val payload = event.optJSONObject("payload") ?: JSONObject()
         if(applyConversationEvent(event)) { if(type == "turn.result") refreshSessions(); return }
         when(type) {
+            "provider.capability.notice" -> {
+                val message = payload.optString("message")
+                if(message.isNotBlank()) { notice = message; deviceNotice?.cancel(); deviceNotice = viewModelScope.launch { delay(6500); if(notice == message) notice = "" } }
+            }
             "tool.start", "tool.finish", "tool.error" -> {
                 finishThinking(event.optLong("timestamp"))
                 val id = payload.optString("invocationId").ifBlank { event.getString("id") }

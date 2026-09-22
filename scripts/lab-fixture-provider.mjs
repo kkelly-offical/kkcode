@@ -2,6 +2,16 @@ import https from 'node:https'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
+import { wavBlock, mp4Block } from '../test/helpers/media-fixtures.mjs'
+
+export const LAB_MEDIA_BLOCKS = [wavBlock, mp4Block]
+const mediaMetadata = block => {
+  const video = block.type === 'video_url' && /^data:(video\/[a-z]+);base64,(.+)$/.exec(block.video_url?.url || '')
+  const encoded = block.type === 'input_audio' ? block.input_audio?.data : video?.[2]
+  if (!encoded) return null
+  const bytes = Buffer.from(encoded, 'base64')
+  return { type: block.type === 'input_audio' ? 'audio' : 'video', size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }
+}
 
 export const LAB_ATTACHMENT_TEXT = 'KKCODE_RELAY_ATTACHMENT: complete UTF-8 content — 文本附件真实送达模型。'
 export const LAB_ATTACHMENT_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2lGkAAAAASUVORK5CYII='
@@ -34,8 +44,8 @@ export async function startLabProvider(lab) {
     const toolReturned = last.role === 'tool' || Array.isArray(last.content) && last.content.some(item => item.type === 'tool_result')
     const anthropic = request.url.endsWith('/messages')
     const blocks = Array.isArray(last.content) ? last.content : []
-    const tag = ['LAB_ATTACHMENT_RELAY', 'LAB_PERMISSION_PRESERVED', 'LAB_ANDROID_NATIVE'].find(value => text.includes(value))
-    requests.push({ method: 'inference', model: body.model, anthropic, toolReturned, tag, attachmentTextReceived: blocks.some(block => block.type === 'text' && block.text === LAB_ATTACHMENT_TEXT), images: blocks.map(imageMetadata).filter(Boolean) })
+    const tag = ['LAB_MEDIA_RELAY', 'LAB_ATTACHMENT_RELAY', 'LAB_PERMISSION_PRESERVED', 'LAB_ANDROID_NATIVE'].find(value => text.includes(value))
+    requests.push({ method: 'inference', model: body.model, anthropic, toolReturned, tag, attachmentTextReceived: blocks.some(block => block.type === 'text' && block.text === LAB_ATTACHMENT_TEXT), images: blocks.map(imageMetadata).filter(Boolean), media: blocks.map(mediaMetadata).filter(Boolean) })
     let tool = null, args = {}, answer = toolReturned ? 'LAB_TOOL_OK' : text.includes('LAB_ATTACHMENT_RELAY') ? 'LAB_ATTACHMENT_OK' : text.includes('LAB_ANDROID_NATIVE') ? 'LAB_ANDROID_OK' : text.includes('LAB_BROWSER') ? 'LAB_BROWSER_OK' : 'LAB_HELLO_OK'
     if (!toolReturned && text.includes('LAB_APPROVAL')) { tool = 'write'; args = { path: 'approved.txt', content: 'remote synchronized\n' } }
     if (!toolReturned && text.includes('LAB_QUESTION')) { tool = 'question'; args = { questions: [{ id: 'choice', text: '请选择测试动作', options: [{ label: '继续测试', value: 'continue' }, { label: '停止', value: 'stop' }], allowCustom: true }] } }

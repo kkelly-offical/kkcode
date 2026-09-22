@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { AttachmentStore, ATTACHMENT_LIMITS } from '../src/device/attachments.mjs'
 import { wavBlock, mp4Block } from './helpers/media-fixtures.mjs'
+import { sessionView } from '../src/device/session-view.mjs'
 
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2lGkAAAAASUVORK5CYII='
 const upload = (text, sessionId = 'session') => ({ sessionId, name: 'notes.txt', mediaType: 'text/plain', data: Buffer.from(text).toString('base64') })
@@ -21,6 +22,9 @@ test('remote audio/video staging preserves bytes and validates format, quota and
     const item = await store.upload({ sessionId: 'session', name: `${block.type}.bin`, mediaType: block.mediaType, data: block.data })
     const resolved = await store.resolve({ sessionId: 'session', ids: [item.id], prompt: 'describe' })
     assert.deepEqual(resolved.contentBlocks.at(-1), block)
+    const view = sessionView({ session: { id: 'session' }, messages: [{ id: 'message', role: 'user', content: resolved.contentBlocks }] })
+    assert.ok(!JSON.stringify(view).includes(block.data), 'remote history never embeds binary media')
+    assert.match(JSON.stringify(view), /Audio attachment|Video attachment/)
     await resolved.release()
     await assert.rejects(store.resolve({ sessionId: 'other', ids: [item.id], prompt: 'x' }), { code: 'attachment_missing' })
   }

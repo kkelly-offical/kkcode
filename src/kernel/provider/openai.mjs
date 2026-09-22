@@ -139,8 +139,8 @@ function parseToolCalls(message) {
       try {
         args = JSON.parse(raw)
       } catch (parseErr) {
-        console.error(`[openai] tool_call JSON parse failed for "${call.function.name}": ${parseErr.message} (${raw.length} chars, first 200: ${raw.slice(0, 200)})`)
-        args = { __parse_error: true, __raw_length: raw.length, __error: parseErr.message }
+        console.error(`[openai] tool_call JSON parse failed (${raw.length} chars; argument contents omitted)`)
+        args = { __parse_error: true, __raw_length: raw.length, __error: 'invalid JSON arguments' }
       }
       return {
         id: call.id || `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -290,7 +290,7 @@ export async function requestOpenAI(input) {
       try {
         json = await response.json()
       } catch (parseErr) {
-        throw new ProviderError(`openai response JSON parse failed: ${parseErr.message}`, { provider: "openai", model, endpoint })
+        throw new ProviderError('openai response JSON parse failed: invalid JSON', { provider: "openai", model, endpoint })
       }
       const message = json?.choices?.[0]?.message ?? {}
       const promptTokens = json?.usage?.prompt_tokens ?? 0
@@ -469,8 +469,8 @@ export async function* requestOpenAIStream(input) {
     try {
       args = JSON.parse(raw)
     } catch (parseErr) {
-      console.error(`[openai] tool_call JSON parse failed for "${buf.name}": ${parseErr.message} (${raw.length} chars, first 200: ${raw.slice(0, 200)})`)
-      args = { __parse_error: true, __raw_length: raw.length, __error: parseErr.message }
+      console.error(`[openai] tool_call JSON parse failed (${raw.length} chars; argument contents omitted)`)
+      args = { __parse_error: true, __raw_length: raw.length, __error: 'invalid JSON arguments' }
     }
     yield {
       type: "tool_call",

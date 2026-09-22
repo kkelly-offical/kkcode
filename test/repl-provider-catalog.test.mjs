@@ -34,4 +34,5 @@ test('model badges distinguish discovered/configured facts from name heuristics'
   assert.deepEqual(result.badges, ['图像', '音频', '无工具', '非流式'])
   assert.equal(result.capabilitySources.image, 'discovered')
   assert.equal(result.capabilitySources.tools, 'config')
+  assert.ok(!modelCapabilityBadges(entry, {}, 'anthropic').badges.includes('音频'))
 })

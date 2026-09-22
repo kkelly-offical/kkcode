@@ -293,6 +293,11 @@ function App() {
       if (batch.running !== undefined) setBusy(Boolean(batch.running));
       if (batch.control !== undefined) setControl(batch.control || null);
       for (const event of fresh) {
+        if (event.type === 'provider.capability.notice' && event.payload?.message) {
+          const message = event.payload.message; setNotice(message);
+          clearTimeout(deviceNoticeTimer.current);
+          deviceNoticeTimer.current = setTimeout(() => setNotice(previous => previous === message ? '' : previous), 6500);
+        }
         if (event.type === 'session.configured') applySelection(event.payload);
         if (event.type === 'session.branch.changed') setBranch(event.payload.branch || '');
       }

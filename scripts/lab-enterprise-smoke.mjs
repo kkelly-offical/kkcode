@@ -6,7 +6,7 @@ import { mkdir, readFile, mkdtemp, access } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { spawn, execFileSync, execFile } from 'node:child_process'
 import { labBrowser, loadLab, approveLabLogin, loginLabAccount, labPost } from './lab-browser.mjs'
-import { startLabProvider, LAB_ATTACHMENT_TEXT, LAB_ATTACHMENT_PNG } from './lab-fixture-provider.mjs'
+import { startLabProvider, LAB_ATTACHMENT_TEXT, LAB_ATTACHMENT_PNG, LAB_MEDIA_BLOCKS } from './lab-fixture-provider.mjs'
 import { DeviceClient } from '../src/sdk/client.mjs'
 import { writePrivateFile } from '../src/storage/private-file.mjs'
 import { expect } from '@playwright/test'
@@ -167,6 +167,25 @@ try {
   for (const attachment of attachments) await sdk.request('attachments.remove', { sessionId, id: attachment.id })
   assert.ok((await readFile(path.join(state, 'sessions', `${sessionId}.json`), 'utf8')).includes(LAB_ATTACHMENT_PNG))
   console.log('PASS: Relay text/PNG uploads reach both provider protocols, transport strips binary, canonical history survives staging deletion')
+
+  await sdk.request('settings.update', { config: { provider: { model_capabilities: { 'lab-model-b': { audio: true, video: true } } } } })
+  const mediaAttachments = []
+  for (const block of LAB_MEDIA_BLOCKS) mediaAttachments.push(await sdk.request('attachments.upload', { sessionId, name: `${block.type}.bin`, mediaType: block.mediaType, data: block.data }))
+  await sdk.request('control.acquire', { sessionId })
+  await sdk.request('sessions.configure', { sessionId, provider: 'lab-anthropic', model: 'lab-model-b' })
+  await assert.rejects(sdk.request('turns.start', { sessionId, prompt: 'LAB_MEDIA_RELAY', attachmentIds: mediaAttachments.map(item => item.id) }), error => error.code === 'unsupported_attachment')
+  assert.equal((await sdk.request('attachments.list', { sessionId })).attachments.length, 2, 'rejected send preserves draft attachments')
+  await sdk.request('control.acquire', { sessionId })
+  await sdk.request('sessions.configure', { sessionId, provider: 'lab-openai', model: 'lab-model-b' })
+  const mediaFrom = fixture.requests.length
+  await sdk.request('turns.start', { sessionId, prompt: 'LAB_MEDIA_RELAY', attachmentIds: mediaAttachments.map(item => item.id) })
+  await until(async () => !(await sdk.request('events.list', { sessionId })).running, 'remote media reaches compatible provider')
+  const mediaRequest = fixture.requests.slice(mediaFrom).find(request => request.tag === 'LAB_MEDIA_RELAY')
+  assert.deepEqual(mediaRequest.media.map(item => item.sha256), LAB_MEDIA_BLOCKS.map(block => createHash('sha256').update(Buffer.from(block.data, 'base64')).digest('hex')))
+  const mediaView = JSON.stringify(await sdk.request('sessions.get', { sessionId }))
+  for (const block of LAB_MEDIA_BLOCKS) assert.equal(mediaView.includes(block.data), false)
+  for (const item of mediaAttachments) await sdk.request('attachments.remove', { sessionId, id: item.id })
+  console.log('PASS: real Relay WAV/MP4 bytes reach provider; unsupported protocol preserves drafts; history transport strips binary')
 
   await sdk.request('control.acquire', { sessionId })
   await sdk.request('commands.run', { sessionId, command: '/permission readonly' })

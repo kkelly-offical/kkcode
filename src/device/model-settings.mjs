@@ -41,6 +41,7 @@ export async function discoverDeviceModels(service, params) {
     const configured = normalizeCapabilities(state.config.provider.model_capabilities?.[model.id])
     const capabilities = { ...inferCapabilitiesFromName(model.id), ...discovered, ...configured }
     const capabilitySources = Object.fromEntries(Object.keys(capabilities).map(key => [key, key in configured ? 'config' : key in discovered ? 'discovered' : 'heuristic']))
+    if (catalog.protocol !== 'openai') for (const key of ['audio', 'video']) { capabilities[key] = false; capabilitySources[key] = 'protocol' }
     return { origin, ...model, capabilities, capabilitySources }
   }) }
 }

@@ -10,20 +10,22 @@ function clip(value, max) {
   while (end > 0 && (data[end] & 0xc0) === 0x80) end--
   return data.subarray(0, end).toString('utf8')
 }
-/** Transport projection only: canonical history retains actual image content. */
+/** Transport projection only: canonical history retains complete media content. */
 function project(value, budget, depth = 0, seen = new Set()) {
   if (budget.left < 64 || depth > 16) return displayNotice
   if (typeof value === 'string') {
-    if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(value)) return '[Image attachment]'
+    const inline = /^data:(image|audio|video)\/[a-z0-9.+-]+;base64,/i.exec(value)
+    if (inline) return `[${inline[1][0].toUpperCase() + inline[1].slice(1).toLowerCase()} attachment]`
     const max = Math.min(524288, budget.left - 64), clipped = clip(value, max)
     budget.left -= Buffer.byteLength(clipped)
     return clipped === value ? value : `${clipped}\n${displayNotice}`
   }
   if (!value || typeof value !== 'object') { budget.left -= 16; return value }
-  if (['image', 'image_url', 'input_image'].includes(value.type)) {
-    const label = clip(String(value.mediaType || value.source?.media_type || 'image'), 80)
+  if (['image', 'image_url', 'input_image', 'audio', 'input_audio', 'video', 'video_url'].includes(value.type)) {
+    const kind = value.type.includes('audio') ? 'Audio' : value.type.includes('video') ? 'Video' : 'Image'
+    const label = clip(String(value.mediaType || value.source?.media_type || kind.toLowerCase()), 80)
     budget.left -= 128
-    return { type: 'text', text: `[Image attachment: ${label}]` }
+    return { type: 'text', text: `[${kind} attachment: ${label}]` }
   }
   if (seen.has(value)) return displayNotice
   seen.add(value)

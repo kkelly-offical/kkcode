@@ -423,6 +423,11 @@ export function subscribeSessionEvents({
         requestRender()
         break
 
+      case EVENT_TYPES.PROVIDER_CAPABILITY_NOTICE:
+        showToast(payload.message, { topic: 'model-capability', tone: 'warning', durationMs: 6500 })
+        requestRender()
+        break
+
       // MCP 后台加载（M32 UI 侧 + M33 内核侧）：mcp.loaded 收口弹一条汇总；
       // mcp.health 逐台只报失败。都不进对话记录。阻塞式 boot 时这些事件先于
       // 订阅发出，启动快照在 repl.mjs 用 loadState()/healthSnapshot 补一条。

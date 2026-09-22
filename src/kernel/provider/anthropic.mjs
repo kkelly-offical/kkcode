@@ -253,7 +253,7 @@ export async function requestAnthropic(input) {
       try {
         json = await response.json()
       } catch (parseErr) {
-        throw new ProviderError(`anthropic response JSON parse failed: ${parseErr.message}`, { provider: "anthropic", model, endpoint })
+        throw new ProviderError('anthropic response JSON parse failed: invalid JSON', { provider: "anthropic", model, endpoint })
       }
       const parsed = parseContentBlocks(json?.content)
       const usage = {
@@ -445,8 +445,8 @@ export async function* requestAnthropicStream(input) {
         try {
           args = JSON.parse(raw)
         } catch (parseErr) {
-          console.error(`[anthropic] tool_call JSON parse failed for "${currentBlock.name}": ${parseErr.message} (${raw.length} chars, first 200: ${raw.slice(0, 200)})`)
-          args = { __parse_error: true, __raw_length: raw.length, __error: parseErr.message }
+          console.error(`[anthropic] tool_call JSON parse failed (${raw.length} chars; argument contents omitted)`)
+          args = { __parse_error: true, __raw_length: raw.length, __error: 'invalid JSON arguments' }
         }
         yield {
           type: "tool_call",
