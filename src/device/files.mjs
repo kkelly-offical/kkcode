@@ -77,6 +77,19 @@ export async function resolveDevicePath(input, roots, options = {}) {
   const requested = requestedPath(input)
   return resolveWithPolicy(requested, await pathPolicy(roots), options)
 }
+/** Validate a not-yet-existing direct child without resolving an untrusted UNC
+ * target or creating directories before consent/private-path checks succeed. */
+export async function resolveNewDevicePath(input, roots) {
+  const requested = requestedPath(input), policy = await pathPolicy(roots)
+  assertPublicComponents(requested)
+  if ([...policy.privateRoots, ...policy.protectedPaths].some(folder => within(requested, folder))) throw new ProtocolError('path_denied', 'Private state cannot be used as a worktree location', 403)
+  const parent = await resolveWithPolicy(path.dirname(requested), policy, { directory: true })
+  const target = path.join(parent, path.basename(requested))
+  assertPublicComponents(target)
+  if ([...policy.privateRoots, ...policy.protectedPaths].some(folder => within(target, folder))) throw new ProtocolError('path_denied', 'Private state cannot be used as a worktree location', 403)
+  if (await lstat(target).catch(error => { if (error.code !== 'ENOENT') throw error; return null })) throw new ProtocolError('path_exists', 'Choose a new folder; existing files and directories are never replaced', 409)
+  return target
+}
 export async function listDeviceFolder(input, roots) {
   const policy = await pathPolicy(roots)
   // No path: open the first reachable root (default: the OS user's home).

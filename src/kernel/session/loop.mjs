@@ -1,4 +1,5 @@
 import { currentRuntime, runWithRuntime, runtimeCwd } from "../core/runtime-context.mjs"
+import { reviewSensitiveAction } from '../permission/auto-review.mjs'
 import { newId } from "../core/types.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
@@ -58,6 +59,7 @@ const PLAN_ALLOWED_CAPABILITIES = new Set(["read", "search", "network", "safe-sh
 
 export function planModeAllows(toolName, args = {}) {
   if (toolName === "enter_plan" || toolName === "exit_plan") return true
+  if (toolName === 'browser') return ['status', 'snapshot', 'screenshot', 'close'].includes(args.action)
   const cap = toolCapability(toolName, String(args?.command || ""))
   return PLAN_ALLOWED_CAPABILITIES.has(cap)
 }
@@ -97,6 +99,7 @@ const PARALLELIZABLE_TOOLS = new Set([
  */
 function canMutateWorkspace(toolName, args = {}) {
   const name = String(toolName || "")
+  if (name === 'browser') return !['status', 'snapshot', 'screenshot', 'close'].includes(args.action)
   if (name === "bash") {
     return toolCapability("bash", String(args?.command || "")) !== "safe-shell"
   }
@@ -948,8 +951,6 @@ async function processTurnLoopInRuntime({
           output: ""
         })
 
-        const pattern = toolPatternFromArgs(call.args)
-        const command = call.name === "bash" ? String(call.args?.command || "") : ""
         const risk = ["bash", "write", "edit", "task"].includes(call.name) ? 9 : 1
         let result
         try {
@@ -963,6 +964,7 @@ async function processTurnLoopInRuntime({
             mode
           })
           if (hookTransformed?.args) call.args = hookTransformed.args
+          if (call.args?.__parse_error === true) throw new Error(`Invalid JSON arguments for ${call.name}; resend one complete JSON object matching the tool schema. No tool action was executed.`)
           if (!skillToolPolicy.allows(call.name, call.args)) throw new Error(`tool "${call.name}" is blocked by the active skill allowed-tools policy`)
 
           if (call.name === "question" && !allowQuestion) {
@@ -983,21 +985,29 @@ async function processTurnLoopInRuntime({
             // 先取工具：有些工具的能力取决于参数（技能是模板展开还是执行代码），
             // 由工具自己回答比在权限层里堆特例更准。
             const pendingTool = await ToolRegistry.get(call.name)
-            await PermissionEngine.check({
+            const permission = await PermissionEngine.check({
               config: permissionConfig,
               capability: pendingTool?.capabilityFor?.(call.args) || null,
               sessionId,
               turnId,
               traceId: stepRequestContext.traceId,
               requestId: stepRequestContext.requestId,
+              reviewId: `auto-${runningPart.id}`,
               tool: call.name,
               mode,
-              pattern,
-              command,
+              pattern: toolPatternFromArgs(call.args),
+              command: call.name === "bash" ? String(call.args?.command || "") : "",
               args: call.args,
               risk,
               workspace: cwd,
-              reason: `tool call from model at step ${step}`
+              reason: `tool call from model at step ${step}`,
+              signal,
+              reviewSensitive: async action => {
+                const verdict = await reviewSensitiveAction({ configState, providerType, model, baseUrl, apiKeyEnv, sessionId, turnId, prompt: effectivePrompt, action, signal })
+                addUsage(usage, verdict.usage || {})
+                await appendPart(sessionId, { id: `auto-${runningPart.id}`, type: 'permission-review', messageId: userMessage.id, step, turnId, tool: call.name, decision: verdict.decision, reason: verdict.reason, model, provider: providerType, usage: verdict.usage || {} })
+                return verdict
+              }
             })
 
             const tool = pendingTool
@@ -1065,6 +1075,7 @@ async function processTurnLoopInRuntime({
                     // 管到 loop 这一层，工具那一层照旧按固定数字砍。
                     toolResultLimit,
                     ...toolContext,
+                    autoReviewed: permission.autoReviewed === true,
                     activateTools,
                     allowedToolNames: skillToolPolicy.names(await ToolRegistry.list({ mode, config: configState.config, cwd })).filter(name => !effectiveAgent?.tools || effectiveAgent.tools.includes(name)),
                     restrictSkillTools: rules => skillToolPolicy.add(rules)
@@ -1251,13 +1262,11 @@ async function processTurnLoopInRuntime({
           is_error: isError
         })
 
-        // 图片紧跟在它的 tool_result 之后。Anthropic 与 OpenAI 都不接受
-        // tool_result 内部嵌图，所以只能作为同一条 user 消息里的后续块 ——
-        // 这也是 read 的「可视觉分析」承诺唯一能落地的方式。
-        const image = entry?.result?.image
-        if (image?.data) {
-          resultContent.push({ type: "image", data: image.data, mediaType: image.mediaType })
-        }
+        // Canonical multimodal content is shared by builtin/plugin/MCP tools;
+        // provider adapters choose the protocol's concrete tool-result shape.
+        const media = entry?.result?.contentBlocks
+        if (media?.length) resultContent.push(...media)
+        else if (entry?.result?.image?.data) resultContent.push({ type: 'image', ...entry.result.image })
       }
       await appendMessage(sessionId, "user", resultContent, {
         mode,

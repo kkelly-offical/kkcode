@@ -5,7 +5,7 @@ This file contains attribution notices and third-party acknowledgments for the k
 ## Project
 
 - **Name**: kkcode
-- **Version**: 1.0.0
+- **Version**: 1.0.2
 - **License**: GPL-3.0
 - **Copyright**: Copyright (C) 2026 kkcode team
 - **Repository**: https://github.com/kkelly-offical/kkcode
@@ -14,7 +14,7 @@ This file contains attribution notices and third-party acknowledgments for the k
 
 ## Inspirations & Acknowledgments
 
-kkcode 的架构设计受到以下开源项目的启发，在此致谢：
+kkcode 的架构设计受到以下项目的启发，在此致谢；启发不表示复制其专有代码：
 
 ### Claude Code
 - **Repository**: https://github.com/anthropics/claude-code
@@ -35,10 +35,17 @@ kkcode 的架构设计受到以下开源项目的启发，在此致谢：
 
 ## Runtime Dependencies
 
+Selected direct dependencies are listed below. The release CycloneDX SBOM and
+each installed dependency's bundled license/notice files cover the complete
+transitive dependency graph, including Sharp's platform-specific native libraries.
+
 | Package | License | Usage |
 |---------|---------|-------|
 | [commander](https://github.com/tj/commander.js) | MIT | CLI 参数解析 |
 | [yaml](https://github.com/eemeli/yaml) | ISC | YAML 配置文件解析 |
+| [sharp](https://github.com/lovell/sharp) | Apache-2.0 | 完整图片解码、边界限制与静态 SVG 栅格预览 |
+| [@xmldom/xmldom](https://github.com/xmldom/xmldom) | MIT | 渲染前严格检查 SVG XML 树 |
+| [playwright-core](https://github.com/microsoft/playwright) | Apache-2.0 | 独立临时浏览器、结构快照和截图；引擎另行安装 |
 
 ---
 

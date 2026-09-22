@@ -3,7 +3,9 @@ import { createRoot } from "react-dom/client";
 import "./style.css";
 import "./mobile.css";
 import "./pixel.css";
-import { SessionHome, ConnectionLanding } from "./Home";
+import { SessionHome, ConnectionLanding, SessionActions } from "./Home";
+import { Sheet } from "./Sheet";
+import { modeLabel } from "./modes.mjs";
 import { SettingsOverlay } from "./Settings";
 import { Icon } from "./Icon";
 import { TranscriptRow } from "./TranscriptView";
@@ -45,8 +47,9 @@ function App() {
   const [prompt, setPrompt] = useState(""),
     [mode, setMode] = useState("agent"),
     [model, setModel] = useState(""),
-    [provider, setProvider] = useState(""),
-    [permission, setPermission] = useState("");
+    [provider, setProvider] = useState("");
+  const [managedSession, setManagedSession] = useState<Item | null>(null), [rewindTarget, setRewindTarget] = useState<Item | null>(null);
+  const [rewinding, setRewinding] = useState(false), [showArchived, setShowArchived] = useState(false);
   const [control, setControl] = useState<Item | null>(null);
   const [draftAttachments, setDraftAttachments] = useState<Record<string, Attachment[]>>({});
   const [uploading, setUploading] = useState(false), [branch, setBranch] = useState("");
@@ -84,8 +87,7 @@ function App() {
   function applySelection(value: Item) {
     if (value.model !== undefined) setModel(value.model);
     if (value.providerType) setProvider(value.providerType);
-    if (value.modeId) setMode(value.modeId);
-    if (value.approval) setPermission(value.approval);
+    if (value.modeId) setMode(value.modeId === "agent-auto" ? "auto" : value.modeId);
   }
   function applyLiveSnapshot(value: Item | null) {
     setEvents(value?.liveEvents || []);
@@ -152,6 +154,27 @@ function App() {
   async function refreshSessions() {
     const result = await rpc("sessions.list");
     setSessions(Array.isArray(result) ? result : result.sessions || []);
+  }
+  async function updateSessionMetadata(target: Item, patch: Item) {
+    await rpc("sessions.update", { sessionId: target.id, ...patch });
+    await refreshSessions();
+    if (selected === target.id) setSession(old => old ? { ...old, ...patch } : old);
+    setNotice(patch.archived === true ? "对话已归档，可从已归档对话中恢复" : patch.archived === false ? "对话已恢复" : "对话已改名");
+  }
+  async function rewindConversation() {
+    if (!rewindTarget || !selected || rewinding) return;
+    setRewinding(true);
+    try {
+      await rpc("control.acquire", { sessionId: selected });
+      try {
+        const result = await rpc("sessions.rewind", { sessionId: selected, messageId: rewindTarget.messageId, expectedLastMessageId: session?.messages?.at(-1)?.id, confirmed: true });
+        if (!result.ok) throw new Error("没有可回退的提问");
+        setPrompt(result.prompt || ""); setEvents([]); setRewindTarget(null);
+        setSessionRevision(value => value + 1); await refreshSessions();
+        setNotice("对话已回退，提问已恢复到输入框；工作区文件保持不变");
+      } finally { await rpc("control.release", { sessionId: selected }).catch(() => {}); }
+    } catch (cause: any) { setNotice(cause.message); }
+    finally { setRewinding(false); }
   }
   useEffect(() => {
     void (async () => {
@@ -225,7 +248,7 @@ function App() {
       const availableCommands = await rpc("commands.list");
       const config = s.shared ? {} : await rpc("settings.get");
       if (cancelled) return;
-      setCommands(availableCommands); setSettings(config);
+      setCommands(availableCommands.filter((item: Item) => !["keys", "permission"].includes(item.name))); setSettings(config);
     });
     return () => { cancelled = true; };
   }, [ready, deviceId]);
@@ -247,7 +270,7 @@ function App() {
       if (cancelled) return;
       cursor.current = snapshot?.eventCursor || cursor.current;
       setSession(current => {
-        if (!current || current.id !== snapshot?.id) return snapshot;
+        if (!current || current.id !== snapshot?.id || current.historyRevision !== snapshot?.historyRevision) return snapshot;
         const unique = (items: Item[]) => [...new Map(items.map(item => [item.id, item])).values()];
         return { ...snapshot, messages: unique([...(current.messages || []), ...(snapshot.messages || [])]), parts: unique([...(current.parts || []), ...(snapshot.parts || [])]), historyHasMore: current.historyHasMore, nextBefore: current.nextBefore };
       });
@@ -275,6 +298,13 @@ function App() {
         return;
       }
       const fresh = (batch.events || []).filter((event: Item) => typeof event.seq !== "number" || event.seq > cursor.current);
+      if (fresh.some((event: Item) => event.type === "session.rewound")) {
+        const snapshot = await rpc("sessions.get", { sessionId: selected });
+        if (cancelled) return;
+        cursor.current = snapshot?.eventCursor || batch.cursor || 0;
+        setSession(snapshot); applyLiveSnapshot(snapshot); setApproval([]); setBusy(Boolean(snapshot?.running));
+        await refreshSessions(); return;
+      }
       if (fresh.length) {
         cursor.current = fresh.at(-1).seq ?? cursor.current;
         setEvents((old) => [...old, ...fresh]);
@@ -303,6 +333,7 @@ function App() {
         }
         if (event.type === 'session.configured') applySelection(event.payload);
         if (event.type === 'session.branch.changed') setBranch(event.payload.branch || '');
+        if (["session.updated", "session.title.updated"].includes(event.type)) { setSession(old => old ? { ...old, ...event.payload } : old); await refreshSessions(); }
       }
       const turnEnded = fresh.some((event: Item) => ["turn.result", "turn.failed"].includes(event.type));
       const stopped = batch.running === false || turnEnded;
@@ -380,7 +411,7 @@ function App() {
     const result = await rpc("sessions.create", { cwd });
     if (settings.provider?.default) {
       await rpc("control.acquire", { sessionId: result.id });
-      try { await rpc("sessions.configure", { sessionId: result.id, mode, model: model || undefined, provider: provider || undefined, approval: permission || undefined }); }
+      try { await rpc("sessions.configure", { sessionId: result.id, mode, model: model || undefined, provider: provider || undefined }); }
       finally { await rpc("control.release", { sessionId: result.id }).catch(() => {}); }
     }
     await refreshSessions();
@@ -459,7 +490,9 @@ function App() {
       else if (action === "like") setPanel("preferences");
       else if (action === "profile") setPanel(result.args?.trim() === "edit" ? "preferences" : "profile");
       else if (action === "provider") setPanel(String(result.args || "").trim() ? "provider" : "models");
-      else if (action && ["models", "mode", "permission", "keys", "sessions", "extensions"].includes(action)) setPanel(action);
+      else if (action === "permission") setPanel("mode");
+      else if (action === "keys") setNotice("此客户端支持原生文本输入和无障碍导航；终端快捷键只在 CLI 中提供");
+      else if (action && ["models", "mode", "sessions", "extensions"].includes(action)) setPanel(action);
       else if (result?.panels?.length || result?.output?.length || (!action && !accepted)) setPanel("command");
       if (accepted) setBusy(true);
       return result;
@@ -577,7 +610,7 @@ function App() {
             onChange={(e) => {
               setDeviceId(e.target.value);
               setSelected("");
-              setProvider(""); setModel(""); setMode("agent"); setPermission("");
+              setProvider(""); setModel(""); setMode("agent");
             }}
           >
             {devices.map((d) => (
@@ -601,13 +634,13 @@ function App() {
           ▱ {cwd.split(/[\\/]/).at(-1) || "选择工作目录"} <span>⌄</span>
         </button>
         <div className="section-label">
-          对话记录 <span>{sessions.length}</span>
+          {showArchived ? "已归档对话" : "对话记录"} <button className="icon" aria-label={showArchived ? "查看活跃对话" : "查看已归档对话"} onClick={() => setShowArchived(value => !value)}><Icon name="archive" size={15} /></button>
         </div>
         <nav>
-          {sessions.map((s) => (
+          {sessions.filter(s => Boolean(s.archived) === showArchived).map((s) => (
+            <div className="session-list-row" key={s.id}>
             <button
               className={selected === s.id ? "session active" : "session"}
-              key={s.id}
               onClick={() => {
                 setSelected(s.id);
                 setSidebar(false);
@@ -615,6 +648,8 @@ function App() {
             >
               {s.title || s.id}
             </button>
+            {canManage && <button className="icon session-more" aria-label={`管理对话 ${s.title || "新对话"}`} onClick={() => setManagedSession(s)}><Icon name="more" size={17} /></button>}
+            </div>
           ))}
         </nav>
         <button
@@ -640,6 +675,8 @@ function App() {
             onNew={() => setPanel(connected && canManage ? "new" : "connections")}
             onSettings={() => attempt(openSettings)}
             onConnect={() => setPanel("connections")}
+            canManage={canManage}
+            onManage={setManagedSession}
           />
         ) : (
           <>
@@ -677,7 +714,7 @@ function App() {
                 <button
                   className="icon"
                   aria-label="对话设置"
-                  onClick={() => setPanel("settings")}
+                  onClick={() => selected && canManage ? setManagedSession(sessions.find(item => item.id === selected) || session) : setPanel("settings")}
                 >
                   <Icon name="more" size={20} />
                 </button>
@@ -712,7 +749,7 @@ function App() {
                 </div>
               )}
               {messages.map((row) => (
-                <TranscriptRow key={row.id} row={row} />
+                <TranscriptRow key={row.id} row={row} loadPreview={ref => rpc("media.preview", { sessionId: selected, ...ref })} onRewind={canManage && !busy && !session?.archived ? target => setRewindTarget(target) : undefined} />
               ))}
               {busy &&
                 !messages.some(
@@ -728,13 +765,12 @@ function App() {
             </div>
             {control && !control.yours && <div className="control-notice">另一客户端正在控制此会话。{canManage && <button onClick={() => attempt(async () => { await rpc('control.acquire', { sessionId: selected, takeover: true }); setControl({ yours: true }); })}>接管控制</button>}</div>}
             <Composer
-              readOnly={readOnly}
+              readOnly={readOnly || Boolean(session?.archived)}
               canManage={canManage}
               prompt={prompt}
               onPrompt={setPrompt}
               busy={busy}
               mode={mode}
-              permission={permission}
               modes={commandResult.clientAction === "mode" && commandResult.items?.length ? commandResult.items : undefined}
               model={model}
               provider={provider}
@@ -753,13 +789,7 @@ function App() {
               onMode={(value) =>
                 void attempt(async () => {
                   await selectModel({ mode: value });
-                  setNotice(`执行模式已切换为 ${value}`);
-                })
-              }
-              onPermission={(value) =>
-                void attempt(async () => {
-                  await selectModel({ approval: value });
-                  setNotice("操作权限已更新");
+                  setNotice(`执行模式已切换为 ${modeLabel(value)}`);
                 })
               }
               onModel={(selection) =>
@@ -819,13 +849,20 @@ function App() {
             setEvents([]);
             setSessions([]);
             setSettings({}); setCommands([]); setDraftAttachments({});
-            setProvider(""); setModel(""); setMode("agent"); setPermission("");
+            setProvider(""); setModel(""); setMode("agent");
           }}
           onCreate={createSession}
           onSettings={setSettings}
           onNotice={setNotice}
         />
       )}
+      {managedSession && <SessionActions session={sessions.find(item => item.id === managedSession.id) || managedSession} busy={Boolean(managedSession.id === selected ? busy : String(managedSession.status).startsWith("running"))} onClose={() => setManagedSession(null)} onUpdate={patch => updateSessionMetadata(managedSession, patch)} onRewind={managedSession.id === selected && !managedSession.archived ? () => { setManagedSession(null); setRewindTarget({}); } : undefined} />}
+      {rewindTarget && <Sheet title="回退对话" onClose={() => { if (!rewinding) setRewindTarget(null); }}>
+        <p className="sheet-note">撤回{rewindTarget.messageId ? "这条提问及其后的全部" : "上一轮"}对话，并恢复提问草稿。设备会保存回退前的备份。此操作会同步到其他客户端，<strong>不会撤销任何文件或 Git 修改</strong>。</p>
+        {rewindTarget.text && <blockquote>{rewindTarget.text.slice(0, 300)}</blockquote>}
+        <button className="sheet-primary" disabled={rewinding || busy} onClick={() => void rewindConversation()}>确认回退对话</button>
+        <button className="sheet-secondary" disabled={rewinding} onClick={() => setRewindTarget(null)}>取消</button>
+      </Sheet>}
       {notice && (
         <div role="status" className="toast">
           {notice}

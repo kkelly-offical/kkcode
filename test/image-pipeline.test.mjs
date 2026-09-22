@@ -17,6 +17,7 @@ import {
   sniffImageMediaType
 } from "../src/kernel/tool/image-util.mjs"
 import { ToolRegistry } from "../src/kernel/tool/registry.mjs"
+import sharp from 'sharp'
 
 const CWD = "/work"
 
@@ -37,7 +38,7 @@ const resolved = (...refs) => refs.map((ref) => path.resolve(CWD, ref))
 
 // 1x1 透明 PNG
 const TINY_PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==",
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==",
   "base64"
 )
 
@@ -228,9 +229,7 @@ test("每个可识别扩展名都有 MIME，模型白名单是其中的真子集
   assert.equal(isModelImageMediaType(""), false)
 })
 
-test("registry 的 read 与 image-util 用同一份扩展名清单", async () => {
-  // 这里曾经是两份手写拷贝：registry 有 .ico、image-util 没有，
-  // image-util 把 .svg 映射成 image/svg+xml —— 靠记忆同步，实际已经漂移。
+test("registry pixel previews identify actual decoded bytes, never label PNG bytes as SVG/BMP", async () => {
   await withDir(async (dir) => {
     await ToolRegistry.initialize({
       config: { tool: { sources: { builtin: true, local: false, plugin: false, mcp: false } } },
@@ -242,12 +241,12 @@ test("registry 的 read 与 image-util 用同一份扩展名清单", async () =>
     for (const ext of IMAGE_EXTENSIONS) {
       const name = `probe${ext}`
       await writeFile(path.join(dir, name), TINY_PNG)
-      const result = await tool.execute({ path: name }, { cwd: dir, config: {} })
+      const result = await tool.execute({ path: name, view: 'image' }, { cwd: dir, config: {} })
       assert.equal(result?.type, "image", `read 不认 ${ext}`)
       assert.equal(
-        result.data.startsWith(`data:${IMAGE_MIME_TYPES[ext]};base64,`),
+        result.data.startsWith('data:image/png;base64,'),
         true,
-        `read 给 ${ext} 的 MIME 与 image-util 不一致: ${result.data.slice(0, 40)}`
+        `read mislabeled PNG pixels by extension ${ext}: ${result.data.slice(0, 40)}`
       )
     }
   })
@@ -324,7 +323,7 @@ test("readImageAsBlock: 扩展名撒谎时以字节为准", async () => {
   await withDir(async (dir) => {
     // 一个叫 .png 的 JPEG：此前会带着 media_type: image/png 发出去
     const liar = path.join(dir, "shot.png")
-    await writeFile(liar, FIXTURES.jpeg)
+    await writeFile(liar, await sharp(TINY_PNG).jpeg().toBuffer())
     const block = await readImageAsBlock(liar)
     assert.equal(block.type, "image")
     assert.equal(block.mediaType, "image/jpeg", "media type 必须来自字节，不是扩展名")

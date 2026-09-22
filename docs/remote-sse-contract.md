@@ -1,4 +1,4 @@
-# Remote SSE event contract (1.0.1)
+# Remote SSE event contract (1.0.2)
 
 Real-time server-sent events (SSE) for remote clients (WebUI, Android, terminal
 status panels). SSE is additive: `events.list` polling, the WebSocket
@@ -163,15 +163,18 @@ SSE contract is identical in all modes; HA requires no new cluster protocol.
 
 ## Per-session configuration over the same contract
 
-Reading and switching the agent mode and permission level per session is part
-of this contract surface:
+Reading and switching a session's unified execution mode is part of this contract:
 
 - Read: `sessions.get` metadata includes `modeId`, `mode`, `approval`,
   `providerType`, `model`.
-- Switch: `sessions.configure` accepts `mode`, `approval`, `provider`, `model`
-  independently (mode `agent|plan|agent-auto|ultra|yolo`; approval
-  `readonly|manual|accept-edits|yolo`) and records `session.configured`, which
-  session streams deliver in real time to every attached client.
+- Switch: `sessions.configure` accepts `mode=agent|plan|auto|ultra|yolo`,
+  `provider`, `model`; legacy `agent-auto` maps to `auto`. Legacy `approval`
+  values remain accepted but are normalized to a compatible single mode, not
+  an independent second selector. `session.configured` broadcasts the result.
+- `session.updated` and `session.title.updated` refresh titles/archive status.
+  `session.rewound` requires an authoritative snapshot/cache reset: an old replay
+  cannot restore removed messages or tool rows. `historyRevision` identifies
+  replacements that must not be merged with a pre-rewind client snapshot.
 
 ## Folder browsing additions (same release)
 

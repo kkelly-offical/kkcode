@@ -22,6 +22,7 @@ const DIRECT_MODES = [
   { name: "agent", desc: "assistant compatibility alias" },
   { name: "code", desc: "coding mode" },
   { name: "coding", desc: "coding mode (alias of /code)" },
+  { name: "auto", desc: "automatic edits with same-model review of sensitive actions" },
   { name: "yolo", desc: "unattended mode — approvals off" }
 ]
 

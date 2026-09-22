@@ -41,7 +41,7 @@ export function applyModeSelection(modeId, { permissionConfig = {} } = {}) {
     modeId: id,
     mode: laneOf(id),
     approval: approvalOf(id),
-    permissionConfig: applyPermissionLevel(approvalOf(id), permissionConfig),
+    permissionConfig: { ...applyPermissionLevel(approvalOf(id), permissionConfig), auto_review: ['auto', 'ultra'].includes(id) },
     label: mode.label,
     icon: mode.icon,
     hint: mode.hint

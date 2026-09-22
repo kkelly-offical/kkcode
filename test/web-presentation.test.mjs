@@ -86,3 +86,23 @@ test('a truncated canonical step does not suppress its auto-continued stream', (
   const rows = buildTranscript(snapshot, [event('next-generation', 'stream.text.delta', { text: 'Continued generation.', step: 2 }, 2000)])
   assert.deepEqual(rows.filter(row => row.type === 'assistant').map(row => row.text), ['First generation.', 'Continued generation.'])
 })
+
+test('only real user questions have rewind targets; mixed tool media is a lazy reference, not a user bubble', () => {
+  const snapshot = { messages: [
+    { id: 'question', role: 'user', content: 'draw an SVG', createdAt: 1 },
+    { id: 'result', role: 'user', createdAt: 2, content: [{ type: 'tool_result', content: 'read' }, { type: 'text', text: 'rendered SVG' }, { type: 'image_preview', messageId: 'result', index: 2, mediaType: 'image/svg+xml' }] },
+    { id: 'follow', role: 'user', continuation: true, content: 'continue', createdAt: 3 }
+  ] }
+  const rows = buildTranscript(snapshot)
+  assert.deepEqual(rows.map(row => row.type), ['user', 'media'])
+  assert.equal(rows[0].messageId, 'question')
+  assert.deepEqual(rows[1].reference, { messageId: 'result', index: 2 })
+})
+
+test('Auto review rows survive canonical reload and do not duplicate replayed decisions', () => {
+  const events = [event('start', 'permission.review.started', { reviewId: 'review-1', tool: 'bash' }), event('end', 'permission.review.finished', { reviewId: 'review-1', tool: 'bash', decision: 'allow', reason: 'requested tests', model: 'conversation-model' })]
+  const live = buildTranscript({}, events)
+  assert.equal(live.length, 1); assert.equal(live[0].done, true); assert.equal(live[0].model, 'conversation-model')
+  const rows = buildTranscript({ parts: [{ id: 'review-1', type: 'permission-review', tool: 'bash', decision: 'allow', reason: 'requested tests', model: 'conversation-model' }] }, events)
+  assert.equal(rows.length, 1); assert.equal(rows[0].decision, 'allow')
+})

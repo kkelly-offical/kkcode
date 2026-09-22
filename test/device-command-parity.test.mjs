@@ -34,6 +34,7 @@ async function fixture(fn) {
     if (method === 'control.acquire' || method === 'control.release') return {}
     if (method === 'models.discover') return { models: ['fixture-model'], items: [{ model: 'fixture-model', provider: 'fixture' }], source: 'fixture' }
     if (method === 'turns.start') return { accepted: true, turnId: 'fixture-turn' }
+    if (method === 'sessions.rewind') return { ok: true, prompt: 'restored draft', removed: 2 }
     throw new Error(`Unexpected method ${method}`)
   } }
   const run = command => runDeviceCommand({ service, kernel, sessionId: 'current', command, principal: { id: 'local', client: 'test' } })
@@ -55,7 +56,7 @@ test('remote dispatch policy exhaustively covers every builtin and alias once', 
 
 test('all remote builtins have an executable action or a shared handler, never a raw picker flag', () => fixture(async ({ run }) => {
   for (const entry of BUILTIN_COMMANDS) {
-    const expensive = ['btw', 'status', 'compact', 'undo', 'rewind', 'board', 'commands', 'reload', 'mcp', 'agents', 'tasks', 'skills', 'trust', 'untrust'].includes(entry.names[0])
+    const expensive = ['btw', 'status', 'compact', 'undo', 'board', 'commands', 'reload', 'mcp', 'agents', 'tasks', 'skills', 'trust', 'untrust'].includes(entry.names[0])
     const original = entry.run
     let sharedCalls = 0
     // Infrastructure/model behavior is covered by dedicated tests; this matrix
@@ -77,7 +78,8 @@ test('provider/model/mode aliases persist selection and preserve read-only plan 
   await run('/p fixture'); assert.deepEqual(calls.at(-1), { method: 'sessions.configure', params: { sessionId: 'current', provider: 'fixture' } })
   await run('/model model-v2'); assert.equal(calls.at(-1).params.model, 'model-v2')
   await run('/m code'); assert.equal(calls.at(-1).params.mode, 'agent')
-  await run('/mode agent-auto'); assert.equal(calls.at(-1).params.mode, 'agent-auto')
+  await run('/mode agent-auto'); assert.equal(calls.at(-1).params.mode, 'auto')
+  await run('/auto'); assert.equal(calls.at(-1).params.mode, 'auto')
   await run('/plan inspect safely'); assert.equal(calls.at(-1).method, 'turns.start'); assert.equal(calls.at(-1).params.mode, 'plan'); assert.match(calls.at(-1).params.prompt, /Do not edit project source files/)
   await run('/ultra /model malicious'); assert.equal(calls.at(-1).params.prompt, '/model malicious')
   for (const command of ['/provider unknown', '/mode unknown', '/help extra', '/theme neon', '/ultra hybrid']) await assert.rejects(run(command), error => Boolean(error.code), command)

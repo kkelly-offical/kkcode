@@ -134,6 +134,7 @@ test("direct openai-compatible providerType works", async () => {
 })
 
 test("an image alongside tool_result survives into the request", async () => {
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
   // 0.6.10 的真模型验收发现的缺陷：tool_result 分支处理完 tool 消息后直接
   // `continue`，把**同一条消息里跟在后面的 image 块连同整条消息一起丢掉**。
   // 而 0.6.8 起 read 读到的图片正是挂在 tool_result 之后 —— 图片在会话历史里
@@ -180,7 +181,7 @@ test("an image alongside tool_result survives into the request", async () => {
           role: "user",
           content: [
             { type: "tool_result", tool_use_id: "call_1", content: "Image file: x.png (137 bytes, image/png)" },
-            { type: "image", data: "QUJD", mediaType: "image/png" }
+            { type: "image", data: png, mediaType: "image/png" }
           ]
         }
       ],
@@ -196,7 +197,7 @@ test("an image alongside tool_result survives into the request", async () => {
       .flatMap((m) => m.content)
       .filter((b) => b?.type === "image_url")
     assert.equal(imageParts.length, 1, "图片必须活着进入请求")
-    assert.match(imageParts[0].image_url.url, /^data:image\/png;base64,QUJD/)
+    assert.equal(imageParts[0].image_url.url, `data:image/png;base64,${png}`)
   } finally {
     await stopServer(mock.server)
   }

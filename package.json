@@ -1,6 +1,6 @@
 {
   "name": "@kkelly-offical/kkcode",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "workspaces": [
     "apps/web",
     "apps/gateway",
@@ -54,6 +54,8 @@
     "docs/assets/brand/",
     "docs/release-1.0.1-preview.2.md",
     "docs/media-input.md",
+    "docs/release-1.0.2.md",
+    "docs/implementation-1.0.2.md",
     "docs/tool-discovery-and-skills.md",
     "docs/security-review-1.0.1-preview.0.md",
     "docs/security-review-1.0.1-preview.2.md",
@@ -82,6 +84,7 @@
     "build:web": "npm run build --workspace @kkcode/web",
     "typecheck:web": "tsc -p apps/web/tsconfig.json",
     "test:web": "npm run build:web && node scripts/web-smoke.mjs && node scripts/web-feature-contract-smoke.mjs && node scripts/web-pixel-theme-smoke.mjs",
+    "test:browser": "node scripts/browser-smoke.mjs",
     "test:compatibility": "node scripts/compatibility-acceptance.mjs",
     "gateway": "node apps/gateway/main.mjs",
     "version:check": "node scripts/check-release-version.mjs",
@@ -103,6 +106,7 @@
     "@fastify/static": "^10.1.4",
     "@fastify/websocket": "^11.3.1",
     "@modelcontextprotocol/client": "^2.0.0",
+    "@xmldom/xmldom": "0.9.12",
     "acorn": "^8.18.0",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
@@ -114,6 +118,8 @@
     "openid-client": "^6.8.8",
     "pacote": "^21.5.1",
     "pg": "^8.23.0",
+    "playwright-core": "1.63.0",
+    "sharp": "0.35.4",
     "tar": "^7.5.22",
     "ws": "^8.21.3",
     "yaml": "^2.9.0"

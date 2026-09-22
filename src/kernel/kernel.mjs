@@ -27,6 +27,7 @@ import {
 import {
   touchSession,
   updateSession,
+  updateSessionIf,
   appendMessage,
   appendPart,
   replaceMessages,
@@ -122,7 +123,7 @@ export async function createKernel(options = {}) {
   // registration changes remain isolated to their owning registry.
   for (const name of listProviders()) providers.registerProvider(name, getProvider(name))
   const hostController = new AbortController()
-  const runtime = { cwd, events, permissions, tools, skills, hooks, providers, mcp, permissionPrompt, questionPrompt, hostSignal: hostController.signal, agents: createAgentMap(), customAgentState: { agents: new Map(), loaded: false, loadedAt: 0 } }
+  const runtime = { cwd, events, permissions, tools, skills, hooks, providers, mcp, permissionPrompt, questionPrompt, hostSignal: hostController.signal, auxiliary: new Set(), agents: createAgentMap(), customAgentState: { agents: new Map(), loaded: false, loadedAt: 0 } }
   const run = fn => runWithRuntime(runtime, fn)
   const activeTurns = new Set()
   permissions.setTrusted(trustState?.trusted === true)
@@ -211,12 +212,13 @@ export async function createKernel(options = {}) {
   async function shutdown() {
     if (shutdownDone) return
     releaseProcessBridge()
+    await Promise.allSettled([...runtime.auxiliary])
     try {
       await handle.extensions.mcp.shutdown()
     } finally {
       // flushNow 必达：mcp.shutdown 抛错也要把会话缓冲写盘收口；
       // shutdownDone 只在全链路成功后置位，失败允许宿主重试。
-      await flushNow()
+      try { await tools.shutdown() } finally { await flushNow() }
     }
     shutdownDone = true
   }
@@ -234,6 +236,7 @@ export async function createKernel(options = {}) {
     sessions: {
       touchSession,
       updateSession,
+      updateSessionIf,
       appendMessage,
       appendPart,
       replaceMessages,

@@ -1,11 +1,11 @@
 /** Mode/permission option catalogs for the composer pickers. Pure; no I/O. */
 
 export const MODE_OPTIONS = [
-  { id: "agent", label: "agent", desc: "默认智能体模式" },
-  { id: "plan", label: "plan", desc: "只读分析与规划" },
-  { id: "agent-auto", label: "agent-auto", desc: "自动执行编辑" },
-  { id: "ultra", label: "ultra", desc: "长任务编排" },
-  { id: "yolo", label: "yolo", desc: "跳过常规确认" },
+  { id: "agent", label: "Agent", desc: "常规执行，敏感操作由你确认" },
+  { id: "plan", label: "Plan", desc: "只读分析与规划" },
+  { id: "auto", label: "Auto", desc: "自动编辑，敏感操作由当前对话模型审查" },
+  { id: "ultra", label: "Ultra", desc: "持续推进长任务，沿用 Auto 审查" },
+  { id: "yolo", label: "Yolo", desc: "授权范围内自主执行，跳过常规确认" },
 ];
 
 export const PERMISSION_OPTIONS = [
@@ -24,5 +24,5 @@ export function permissionLabel(id = "") {
 
 /** Display label for an execution mode; falls back to the raw id. */
 export function modeLabel(id = "") {
-  return find(MODE_OPTIONS, id)?.label || id || "agent";
+  return find(MODE_OPTIONS, id === "agent-auto" ? "auto" : id)?.label || id || "Agent";
 }

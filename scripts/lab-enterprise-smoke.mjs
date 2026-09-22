@@ -89,12 +89,12 @@ try {
     await browserOwner.page.screenshot({ path: path.join(runDirectory, 'enterprise-failure.png') })
     throw new Error(`Remote WebUI session list unavailable: ${(await browserOwner.page.locator('body').innerText()).slice(0, 1500)}`)
   })
-  await expect(browserOwner.page.getByText('LAB_HELLO_OK', { exact: true })).toBeVisible()
+  await expect(browserOwner.page.locator('.transcript .message.assistant').getByText('LAB_HELLO_OK', { exact: true })).toBeVisible()
   const localUrl = await until(() => remote.output().match(/Local WebUI: (https?:\/\/[^\s]+)/)?.[1], 'loopback WebUI address')
   const local = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   await local.goto(localUrl)
   await local.locator('nav .session').first().click()
-  await expect(local.getByText('LAB_HELLO_OK', { exact: true })).toBeVisible()
+  await expect(local.locator('.transcript .message.assistant').getByText('LAB_HELLO_OK', { exact: true })).toBeVisible()
   console.log('PASS: terminal history is visible through both loopback and WireGuard WebUI')
 
   for (const provider of ['lab-openai', 'lab-anthropic']) {
@@ -109,8 +109,8 @@ try {
   assert.equal((await sdk.request('settings.get')).provider['lab-openai'].api_key, '[REDACTED]')
   console.log('PASS: OpenAI/Anthropic Base URL discovery, slash model selection, hot configuration and redaction')
 
-  await browserOwner.page.getByRole('button', { name: '对话设置' }).click()
-  await browserOwner.page.getByRole('dialog').getByRole('button', { name: '模型与渠道', exact: true }).click()
+  await browserOwner.page.getByRole('button', { name: '添加与工具', exact: true }).click()
+  await browserOwner.page.getByRole('menuitem', { name: '模型与渠道', exact: true }).click()
   await browserOwner.page.getByRole('dialog').getByRole('button', { name: /^lab-openai/ }).click()
   await browserOwner.page.getByRole('dialog').getByRole('button', { name: 'lab-model-b', exact: true }).click()
   await expect(browserOwner.page.getByRole('dialog')).toHaveCount(0)
@@ -164,7 +164,7 @@ try {
   }
   const projected = JSON.stringify(await sdk.request('sessions.get', { sessionId }))
   assert.equal(projected.includes(LAB_ATTACHMENT_PNG), false)
-  assert.ok(projected.includes('[Image attachment: image/png]'))
+  assert.ok(projected.includes('"type":"image_preview"'))
   await until(async () => {
     try { return (await readFile(path.join(state, 'sessions', `${sessionId}.json`), 'utf8')).includes(LAB_ATTACHMENT_PNG) } catch { return false }
   }, 'canonical local history retains complete image bytes')
@@ -232,7 +232,7 @@ try {
 
   if (process.env.KKCODE_ANDROID_SERIAL) {
     const serial = process.env.KKCODE_ANDROID_SERIAL
-    if (serial !== 'emulator-5580') throw new Error('This lab script is scoped to the dedicated emulator-5580')
+    if (!/^emulator-\d+$/.test(serial)) throw new Error('Select an explicit dedicated lab emulator; physical devices are not accepted here')
     const adb = path.join(process.env.ANDROID_HOME || '/root/android-sdk', 'platform-tools/adb')
     const hostKeys = execFileSync('ssh', ['-i', '/tmp/kkcode-101-qa-z23B4i/id_ed25519', '-o', 'UserKnownHostsFile=/tmp/kkcode-101-qa-z23B4i/known_hosts', '-o', 'StrictHostKeyChecking=yes', 'qa@192.168.122.8', 'ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256; ssh-keygen -lf /etc/ssh/ssh_host_ecdsa_key.pub -E sha256; ssh-keygen -lf /etc/ssh/ssh_host_rsa_key.pub -E sha256'], { encoding: 'utf8' }).match(/SHA256:[A-Za-z0-9+/]+/g)
     const fixturePath = path.join(state, 'android-test.json')

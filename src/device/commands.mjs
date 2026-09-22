@@ -12,7 +12,7 @@ import { getDeviceProfile } from './profile.mjs'
 export { publicCommandCatalog }
 
 const stripAnsi = value => String(value).replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
-const modeCommands = new Set(['mode', 'assistant', 'agent', 'code', 'coding', 'yolo', 'plan', 'ultra', 'longagent'])
+const modeCommands = new Set(['mode', 'assistant', 'agent', 'code', 'coding', 'auto', 'yolo', 'plan', 'ultra', 'longagent'])
 
 function configuredProviders(config) {
   return Object.entries(config.provider || {}).filter(([key, value]) => key !== 'default' && value && typeof value === 'object' && !Array.isArray(value) && (value.type || value.base_url || value.default_model)).map(([key]) => key)
@@ -61,6 +61,10 @@ export async function runDeviceCommand({ service, kernel, sessionId, command, pr
     return { ...response, state: configured }
   }
   const start = (prompt, extra = {}) => service.dispatch('turns.start', { sessionId, prompt, ...extra }, principal)
+  if (name === 'rewind') {
+    const rewound = await service.dispatch('sessions.rewind', { sessionId, confirmed: true }, principal)
+    return action('session', { sessionId, cwd: kernel.cwd, draft: rewound.prompt || '', rewound })
+  }
   const providerNames = configuredProviders(kernel.configState.config)
 
   if (name === 'new') {

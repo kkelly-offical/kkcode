@@ -66,6 +66,10 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
             Box {
                 CircleButton(Icons.Outlined.MoreHoriz, "更多") { menu = true }
                 DropdownMenu(menu, { menu = false }, containerColor = card, shape = PixelShape()) {
+                    if(inChat && !state.sharedDevice) {
+                        DropdownMenuItem(text = { Text("管理当前对话") }, leadingIcon = { Icon(Icons.Outlined.Edit, null) }, onClick = { state.managedSession = state.sessions.find { it.optString("id") == state.selected } ?: JSONObject().put("id", state.selected); menu = false })
+                        HorizontalDivider()
+                    }
                     listOf("priority" to "优先级", "project" to "按项目", "time" to "按时间倒序排列").forEach { (value, label) ->
                         DropdownMenuItem(text = { Text(label, fontSize = 14.sp) }, leadingIcon = { Icon(if(sort == value) Icons.Outlined.Check else Icons.Outlined.Sort, null) }, onClick = { sort = value; menu = false })
                     }
@@ -105,6 +109,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
             SheetContent(state)
         }
     }
+    SessionManagementDialogs(state)
 }
 
 @Composable private fun SettingsSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit, enabled: Boolean = true) {
@@ -143,7 +148,8 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
         grouped.forEach { (group, list) ->
             item { TextButton(onClick = { collapsed = if(group in collapsed) collapsed - group else collapsed + group }, contentPadding = PaddingValues(0.dp)) { Text(group, color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Medium); Spacer(Modifier.width(7.dp)); Icon(if(group in collapsed) Icons.Outlined.ChevronRight else Icons.Outlined.ExpandMore, if(group in collapsed) "展开分组" else "收起分组", Modifier.size(14.dp), tint = muted) } }
             items(if(group in collapsed) emptyList() else list, key = { it.getString("id") }) { session ->
-                Column(Modifier.fillMaxWidth().clickable { state.openSession(session) }.padding(vertical = 14.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f).clickable { state.openSession(session) }.padding(vertical = 14.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(session.optString("title").ifBlank { "新对话" }, modifier = Modifier.weight(1f), fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         if(session.optString("status").startsWith("running")) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 1.5.dp, color = muted)
@@ -154,6 +160,8 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                         val added = session.optInt("addedLines"); val removed = session.optInt("removedLines")
                         if(added + removed > 0) { Text("+$added ", color = kkcodeColors.diffAdd, fontSize = 11.sp); Text("−$removed", color = kkcodeColors.diffRemove, fontSize = 11.sp) }
                     }
+                }
+                if(!state.sharedDevice) IconButton(onClick = { state.managedSession = session }) { Icon(Icons.Outlined.MoreHoriz, "管理对话 ${session.optString("title", "新对话")}", tint = muted) }
                 }
             }
         }
@@ -195,9 +203,9 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                     SettingsRow(Icons.Outlined.FolderOpen, "工作目录", state.cwd) { state.browse() }
                     SettingsRow(Icons.Outlined.Tune, "模型与渠道") { state.sheet = "models" }
                     SettingsRow(Icons.Outlined.Extension, "MCP、Skills 与插件") { state.loadExtensions() }
-                    SettingsRow(Icons.Outlined.Shield, "权限与执行模式", state.mode) { state.sheet = "mode" }
+                    SettingsRow(Icons.Outlined.Shield, "执行模式", modeLabel(state.mode)) { state.sheet = "mode" }
                 }
-                Group("编写器") { Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { Text("显示模式、权限与模型", Modifier.weight(1f), fontSize = 15.sp); SettingsSwitch(state.showContext, { state.preference("showContext", it) }) } }
+                Group("编写器") { Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { Text("显示模式与模型", Modifier.weight(1f), fontSize = 15.sp); SettingsSwitch(state.showContext, { state.preference("showContext", it) }) } }
                 Group("外观") { SettingsRow(Icons.Outlined.Palette, "主题", state.appearance) { state.sheet = "theme" } }
             }
             "profile" -> {
@@ -234,7 +242,10 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                 Row { TextButton(onClick = { state.browse(state.cwd.substringBeforeLast('/').ifBlank { state.cwd }) }) { Text("上一级") }; TextButton(onClick = { state.sheet = "new" }) { Text("选择此目录") } }
                 Group { state.folders.filter { it.optBoolean("directory") }.forEach { folder -> SettingsRow(Icons.Outlined.FolderOpen, folder.optString("name")) { state.browse(folder.getString("path")) } } }
             }
-            "mode" -> Group { (state.commandItems.takeIf { state.commandItemKind == "mode" && it.all { item -> item.has("id") } }?.map { it.getString("id") }?.ifEmpty { null } ?: listOf("plan", "agent", "agent-auto", "ultra", "yolo")).forEach { value -> SettingsRow(if(state.mode == value) Icons.Outlined.Check else Icons.Outlined.Tune, value) { state.selectMode(value) } } }
+            "mode", "permission", "approval" -> {
+                Text("模式同时决定执行与审批。Auto 审查不确定时交给你确认；所有模式遵守设备和组织的硬性安全边界。", color = muted, fontSize = 12.sp, modifier = Modifier.padding(12.dp))
+                Group { MODE_CHOICES.forEach { choice -> SettingsRow(if(state.mode == choice.id) Icons.Outlined.Check else Icons.Outlined.Tune, choice.label, choice.description) { state.selectMode(choice.id) } } }
+            }
             "models" -> {
                 val providers = state.settings.optJSONObject("provider") ?: JSONObject()
                 Group("已配置渠道") { configuredProviderNames(providers).forEach { name -> val p = providers.getJSONObject(name); SettingsRow(Icons.Outlined.Hub, name, p.optString("default_model")) { state.discoverModels(name) }; TextButton(onClick = { state.editingProvider = name; state.sheet = "provider" }) { Text("编辑 $name", fontSize = 11.sp) } } }
@@ -244,7 +255,6 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                 Text("API Key 不在列表中展示，模型配置保存在电脑上。", color = muted, fontSize = 12.sp, modifier = Modifier.padding(12.dp))
             }
             "model-picker" -> ModelPicker(state)
-            "approval" -> ApprovalPicker(state)
             "provider" -> {
                 Text("选择协议，使用 Base URL 读取可用模型。", color = muted, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp, bottom = 8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("openai" to "OpenAI", "anthropic" to "Anthropic").forEach { (value, label) -> FilterChip(selected = providerType == value, onClick = { providerType = value }, label = { Text(label) }) } }
@@ -260,9 +270,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
             "branches" -> BranchPicker(state)
             "preferences" -> PreferencesForm(state)
             "sessions" -> Group { state.sessions.forEach { session -> SettingsRow(Icons.Outlined.ChatBubbleOutline, session.optString("title", "新对话"), session.optString("cwd")) { state.openSession(session) } } }
-            "permission" -> Group { (state.commandItems.takeIf { state.commandItemKind == "permission" && it.isNotEmpty() } ?: listOf("readonly", "manual", "accept-edits", "yolo", "session-clear").map { JSONObject().put("id", it).put("label", it) }).forEach { item -> SettingsRow(Icons.Outlined.Shield, item.optString("label", item.optString("id"))) { state.send("/permission ${item.getString("id")}"); state.sheet = "" } } }
             "theme" -> Group { listOf("dark" to "深色", "light" to "浅色", "auto" to "跟随系统").forEach { (id, label) -> SettingsRow(if(state.appearance == id) Icons.Outlined.Check else Icons.Outlined.Palette, label) { state.updateAppearance(id) } } }
-            "keys" -> Text("输入 / 搜索所有命令；点 + 选择文件、分支、模型和模式。编写器下方的模式、权限与模型选择框点按即可即时切换，并同步到其他客户端。\n\n消息编辑器保留回车换行，点箭头发送。Android 返回键关闭弹层或回到会话列表。长按模型回复可选择复制文字；点工具记录展开详情。", lineHeight = 25.sp, modifier = Modifier.padding(12.dp))
             "command-result" -> state.commandPanels.forEach { panel -> Group(panel.optString("title")) { androidx.compose.foundation.text.selection.SelectionContainer { Text(panel.optString("text"), modifier = Modifier.padding(14.dp)) } } }
             "device-ownership" -> DeviceOwnership(state.api?.device ?: "")
             "updates" -> UpdateSheet(state.updater)
@@ -287,7 +295,11 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
             items(state.messages, key = { it.id }) { item ->
                 Column(Modifier.fillMaxWidth().padding(vertical = if(item.kind in listOf("tool", "thinking")) 0.dp else 10.dp), horizontalAlignment = if(item.kind == "user") Alignment.End else Alignment.Start) {
                     when(item.kind) {
-                        "user" -> Text(item.text, modifier = Modifier.widthIn(max = 310.dp).background(card, PixelShape()).padding(14.dp), fontSize = 15.sp, lineHeight = 23.sp)
+                        "user" -> {
+                            Text(item.text, modifier = Modifier.widthIn(max = 310.dp).background(card, PixelShape()).padding(14.dp), fontSize = 15.sp, lineHeight = 23.sp)
+                            if(item.messageId.isNotBlank() && !state.sharedDevice && !state.busy && !state.sessionArchived) TextButton(onClick = { state.rewindTarget = item }, contentPadding = PaddingValues(horizontal = 6.dp)) { Icon(Icons.Outlined.Undo, null, Modifier.size(13.dp), tint = muted); Text("回退", color = muted, fontSize = 11.sp) }
+                        }
+                        "media" -> MediaPreview(item, state)
                         "assistant" -> AndroidView(factory = { context -> TextView(context).apply { textSize = 15f; setLineSpacing(5f, 1.12f); setTextIsSelectable(true); tag = Markwon.create(context) } }, update = { view -> view.setTextColor(messageColor); (view.tag as Markwon).setMarkdown(view, item.text) }, modifier = Modifier.fillMaxWidth())
                         "compacted" -> Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) { HorizontalDivider(Modifier.weight(1f), color = card); Text("已精简上下文", fontSize = 10.sp, color = muted); HorizontalDivider(Modifier.weight(1f), color = card) }
                         else -> ActivityRow(item)
@@ -321,7 +333,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
         Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp).navigationBarsPadding().background(card, PixelShape()).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .6f), PixelShape()).padding(12.dp)) {
             if(state.attachments.isNotEmpty()) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { state.attachments.forEach { attachment -> InputChip(selected = true, onClick = { state.removeAttachment(attachment.getString("id")) }, label = { Text(attachment.optString("name"), maxLines = 1) }, trailingIcon = { Icon(Icons.Outlined.Close, "移除附件 ${attachment.optString("name")}", Modifier.size(14.dp)) }) } }
             if(state.uploading) Text("正在上传附件…", color = muted, fontSize = 11.sp)
-            androidx.compose.foundation.text.BasicTextField(text, { state.draft = it }, enabled = state.canControl, modifier = Modifier.fillMaxWidth().heightIn(min = 38.dp, max = 130.dp).padding(4.dp), textStyle = androidx.compose.ui.text.TextStyle(color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp), decorationBox = { inner -> if(text.isBlank()) Text(if(state.canControl) "发消息，或输入 / 命令" else "只读共享会话", color = muted, fontSize = 14.sp); inner() })
+            androidx.compose.foundation.text.BasicTextField(text, { state.draft = it }, enabled = state.canControl && !state.sessionArchived, modifier = Modifier.fillMaxWidth().heightIn(min = 38.dp, max = 130.dp).padding(4.dp), textStyle = androidx.compose.ui.text.TextStyle(color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp), decorationBox = { inner -> if(text.isBlank()) Text(if(state.sessionArchived) "恢复归档后继续对话" else if(state.canControl) "发消息，或输入 / 命令" else "只读共享会话", color = muted, fontSize = 14.sp); inner() })
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if(!state.sharedDevice) Box {
                     IconButton(onClick = { actions = !actions }, Modifier.size(36.dp)) { Icon(Icons.Outlined.Add, "添加与工具", Modifier.size(22.dp)) }
@@ -335,12 +347,11 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                     }
                 }
                 if(state.showContext && !state.sharedDevice) {
-                    ComposerChip(Icons.Outlined.Shield, state.mode, "执行模式") { state.sheet = "mode" }
-                    ComposerChip(Icons.Outlined.Lock, state.approvalLabel, "权限") { state.sheet = "approval" }
+                    ComposerChip(Icons.Outlined.Shield, modeLabel(state.mode), "执行模式") { state.sheet = "mode" }
                     ComposerChip(Icons.Outlined.CloudQueue, state.modelLabel, "模型", maxWidth = 120.dp) { state.openModelPicker() }
                 }
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = { if(state.busy) state.stop() else if(text.isNotBlank() || state.attachments.isNotEmpty()) state.send(text) }, enabled = state.canControl && !state.uploading, modifier = Modifier.size(34.dp).background(MaterialTheme.colorScheme.onSurface, PixelShape(3.dp))) { Icon(if(state.busy) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, if(state.busy) "停止" else "发送", Modifier.size(21.dp), tint = MaterialTheme.colorScheme.background) }
+                IconButton(onClick = { if(state.busy) state.stop() else if(text.isNotBlank() || state.attachments.isNotEmpty()) state.send(text) }, enabled = state.canControl && !state.uploading && !state.sessionArchived, modifier = Modifier.size(34.dp).background(MaterialTheme.colorScheme.onSurface, PixelShape(3.dp))) { Icon(if(state.busy) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, if(state.busy) "停止" else "发送", Modifier.size(21.dp), tint = MaterialTheme.colorScheme.background) }
             }
         }
     }

@@ -27,6 +27,7 @@ import { createUpdateCommand } from "./commands/update.mjs"
 import { createModelCommand } from "./commands/model.mjs"
 import { createProviderCommand } from "./commands/provider.mjs"
 import { createRemoteCommand } from './commands/remote.mjs'
+import { createBrowserCommand } from './commands/browser.mjs'
 
 async function main() {
   if (['-web', '--web'].includes(process.argv[2])) {
@@ -92,6 +93,7 @@ async function main() {
   program.addCommand(createModelCommand())
   program.addCommand(createProviderCommand())
   program.addCommand(createRemoteCommand())
+  program.addCommand(createBrowserCommand())
   await program.parseAsync(process.argv)
 }
 

@@ -13,8 +13,9 @@ class ComposerPickersTest {
         assertEquals("", catalogSourceLabel("unknown", false))
     }
 
-    @Test fun approvalLevelsAreTheCanonicalFour() {
-        assertEquals(listOf("readonly", "manual", "accept-edits", "yolo"), APPROVAL_LEVELS.map { it.first })
-        assertTrue(APPROVAL_LEVELS.all { it.second.isNotBlank() && it.third.isNotBlank() })
+    @Test fun modeChoicesAreUnifiedAndLegacyAutoHasAClearLabel() {
+        assertEquals(listOf("agent", "plan", "auto", "ultra", "yolo"), MODE_CHOICES.map { it.id })
+        assertTrue(MODE_CHOICES.all { it.label.isNotBlank() && it.description.isNotBlank() })
+        assertEquals("Auto", modeLabel("agent-auto"))
     }
 }

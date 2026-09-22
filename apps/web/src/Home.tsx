@@ -14,6 +14,8 @@ type HomeProps = {
   onNew: () => void;
   onSettings: () => void;
   onConnect: () => void;
+  canManage?: boolean;
+  onManage?: (session: Item) => void;
 };
 const sortOptions: [string, string, IconName][] = [
   ["priority", "优先级", "priority"],
@@ -29,6 +31,8 @@ export function SessionHome({
   onNew,
   onSettings,
   onConnect,
+  canManage = false,
+  onManage,
 }: HomeProps) {
   const [query, setQuery] = useState(""),
     [menu, setMenu] = useState(false);
@@ -184,9 +188,9 @@ export function SessionHome({
               </h2>
               {!collapsed.has(group) &&
                 items.map((session) => (
+                  <div className="session-list-row" key={session.id}>
                   <button
                     className="remote-session"
-                    key={session.id}
                     onClick={() => onSelect(session)}
                   >
                     <div>
@@ -213,6 +217,8 @@ export function SessionHome({
                       </span>
                     </small>
                   </button>
+                  {canManage && <button className="icon session-more" aria-label={`管理对话 ${session.title || "新对话"}`} onClick={() => onManage?.(session)}><Icon name="more" size={19} /></button>}
+                  </div>
                 ))}
             </section>
           ))
@@ -258,6 +264,31 @@ export function SessionHome({
       </div>
     </div>
   );
+}
+
+export function SessionActions({ session, busy = false, onClose, onUpdate, onRewind }: {
+  session: Item; busy?: boolean; onClose: () => void;
+  onUpdate: (patch: Item) => Promise<void>; onRewind?: () => void;
+}) {
+  const [title, setTitle] = useState(session.title || ""), [saving, setSaving] = useState(false), [error, setError] = useState("");
+  const save = async (patch: Item) => {
+    setSaving(true); setError("");
+    try { await onUpdate(patch); onClose(); }
+    catch (cause: any) { setError(cause.message); }
+    finally { setSaving(false); }
+  };
+  return <Sheet title="管理对话" onClose={onClose}>
+    <form className="settings-form" onSubmit={event => { event.preventDefault(); void save({ title: title.trim(), expectedTitleRevision: session.titleRevision }); }}>
+      <label>对话名称<input autoFocus value={title} maxLength={120} onChange={event => setTitle(event.target.value)} required /></label>
+      <button className="sheet-primary" disabled={saving || !title.trim()}>保存名称</button>
+    </form>
+    <div className="settings-group">
+      {onRewind && <SettingsRow icon="back" title="回退上一轮对话" detail="恢复提问草稿；不会撤销文件修改" disabled={busy || saving} onClick={onRewind} />}
+      <SettingsRow icon="archive" title={session.archived ? "恢复到对话列表" : "归档对话"} detail="保留完整历史，可随时恢复" disabled={busy || saving} onClick={() => void save({ archived: !session.archived })} />
+    </div>
+    {busy && <p className="sheet-note">任务进行中，停止后可回退或归档。</p>}
+    {error && <p className="sheet-error" role="alert">{error}</p>}
+  </Sheet>;
 }
 
 export function SettingsRow({

@@ -315,6 +315,46 @@ export async function updateSession(sessionId, patch) {
   })
 }
 
+/** Atomic metadata compare-and-set for asynchronous title generation and manual
+ * rename races. Expected fields are never accepted from an unvalidated RPC. */
+export async function updateSessionIf(sessionId, expected, patch) {
+  return withLock(async () => {
+    await ensureLoadedUnsafe(); await flushUnsafe()
+    const current = state.index.sessions[sessionId]
+    if (!current || Object.entries(expected).some(([key, value]) => current[key] !== value)) return null
+    queueIndexOperation(sessionId, 'patch', { ...patch, updatedAt: now() })
+    await flushUnsafe()
+    return state.index.sessions[sessionId]
+  })
+}
+
+/** Rewind is a transaction over messages AND their tool/thinking parts. Keep a
+ * private recoverable checkpoint and refuse stale snapshots from another host. */
+export async function replaceConversationForRewind(sessionId, retained, observed) {
+  return withLock(async () => {
+    await ensureLoadedUnsafe(); await flushUnsafe()
+    const data = await readSessionData(sessionId)
+    if (JSON.stringify(data.messages.map(message => message.id)) !== JSON.stringify(observed.map(message => message.id))) throw Object.assign(new Error('Conversation changed; reload it before rewinding'), { code: 'history_changed' })
+    const kept = new Set(retained.map(message => message.id)), removed = observed.filter(message => !kept.has(message.id))
+    const removedIds = new Set(removed.map(message => message.id)), removedTurns = new Set(removed.map(message => message.turnId).filter(Boolean))
+    const cutoff = removed[0]?.createdAt ?? Infinity
+    const parts = data.parts.filter(part => {
+      if (part.messageId) return !removedIds.has(part.messageId)
+      if (part.turnId) return !removedTurns.has(part.turnId)
+      return !Number.isFinite(part.createdAt) || part.createdAt < cutoff
+    })
+    const directory = path.join(sessionCheckpointRootPath(), sessionId)
+    await mkdir(directory, { recursive: true, mode: 0o700 })
+    await writeJson(path.join(directory, 'before-rewind.json'), { savedAt: now(), session: state.index.sessions[sessionId], ...data })
+    const next = { messages: retained, parts }
+    await writeJson(sessionDataPath(sessionId), next)
+    state.sessionCache.set(sessionId, next)
+    queueIndexOperation(sessionId, 'patch', { status: 'idle', historyRevision: randomUUID(), updatedAt: now() })
+    await flushUnsafe()
+    return { removedParts: data.parts.length - parts.length, backup: 'before-rewind' }
+  })
+}
+
 export async function appendMessage(sessionId, role, content, extra = {}) {
   return withLock(async () => {
     await ensureLoadedUnsafe()

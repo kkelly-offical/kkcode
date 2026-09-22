@@ -43,7 +43,7 @@ async function compare(name) {
     })
     const original = await controls()
     await page.evaluate(({ sheetIndex, start, saved }) => { const sheet = document.styleSheets[sheetIndex]; for(const [offset, text] of saved.entries()) sheet.insertRule(text, start + offset) }, rules)
-    assert.equal(painted.length, original.length, `${name}/${theme}: no control added or removed by styling`)
+    assert.equal(painted.length, original.length, `${name}/${theme}: no control added or removed by styling\npainted=${JSON.stringify(painted.map(item => item.label))}\nbase=${JSON.stringify(original.map(item => item.label))}`)
     for(let i = 0; i < painted.length; i++) {
       assert.equal(painted[i].label, original[i].label)
       for(const field of ['x', 'y', 'width', 'height']) assert.ok(Math.abs(painted[i][field] - original[i][field]) < .5, `${name}/${theme} ${painted[i].label}: ${field} shifted (${original[i][field]} -> ${painted[i][field]})`)
@@ -57,6 +57,8 @@ try {
   await page.goto(info.url)
   await page.getByRole('button', { name: /布局验收/ }).first().click()
   await page.getByRole('textbox', { name: '消息' }).waitFor()
+  await expect(page.getByRole('button', { name: '选择模型，当前 fixture 的 fixture-model', exact: true })).toBeVisible()
+  await expect(page.locator('.chat-title strong')).toHaveText('布局验收')
   await compare('desktop-chat')
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(page.getByRole('button', { name: '返回会话列表' })).toBeVisible()

@@ -76,13 +76,14 @@ export function buildTranscript(snapshot = {}, events = []) {
   for (const message of snapshot?.messages || []) {
     if (!["user", "assistant"].includes(message.role)) continue;
     const text = textContent(message.content);
-    if (message.role === "user" && text) persistedTurns.add(message.turnId);
+    const synthetic = message.synthetic || message.continuation || (Array.isArray(message.content) && message.content.some(block => block.type === "tool_result"));
+    if (message.role === "user" && !synthetic) persistedTurns.add(message.turnId);
     if (message.role === "assistant" && !message.truncated)
       persistedSteps.add(`${message.turnId}:${message.step}`);
     for (const [index, block] of (Array.isArray(message.content)
       ? message.content
       : []
-    ).entries())
+    ).entries()) {
       if (block.type === "reasoning")
         rows.push({
           id: `${message.id}-thinking-${index}`,
@@ -91,16 +92,21 @@ export function buildTranscript(snapshot = {}, events = []) {
           timestamp: message.createdAt,
           done: true,
         });
-    if (text && !message.continuation)
+      if (block.type === "image_preview") rows.push({ id: `${message.id}-image-${index}`, type: "media", reference: { messageId: block.messageId, index: block.index }, mediaType: block.mediaType, timestamp: message.createdAt });
+    }
+    if (text && !synthetic)
       rows.push({
         id: message.id,
         type: text.includes("<compaction-summary") ? "compacted" : message.role,
         text,
         timestamp: message.createdAt,
+        ...(message.role === "user" && !text.includes("<compaction-summary") ? { messageId: message.id } : {}),
       });
   }
   const tools = new Map();
-  for (const part of snapshot?.parts || [])
+  const persistedReviews = new Set();
+  for (const part of snapshot?.parts || []) {
+    if (part.type === 'permission-review') { rows.push({ id: part.id, type: 'review', tool: part.tool, done: true, decision: part.decision, text: part.reason, model: part.model, timestamp: part.createdAt }); persistedReviews.add(part.id); }
     if (part.type === "tool-call") {
       const key = part.runPartId || part.id;
       const old = tools.get(key);
@@ -116,12 +122,14 @@ export function buildTranscript(snapshot = {}, events = []) {
         tools.set(key, row);
       }
     }
+  }
   rows.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
   let stream = null,
     thinking = null;
   const seen = new Set(),
     textTurns = new Set(),
     completedTurns = new Set();
+  const reviews = new Map();
   for (const event of events) {
     if (seen.has(event.id)) continue;
     seen.add(event.id);
@@ -190,6 +198,18 @@ export function buildTranscript(snapshot = {}, events = []) {
         rows.push(row);
         tools.set(key, row);
       }
+    } else if (event.type === "permission.review.started") {
+      endThinking(); stream = null;
+      if (persistedReviews.has(p.reviewId)) continue;
+      const row = { id: event.id, type: "review", tool: p.tool, done: false, text: "正在由当前对话模型审查敏感操作…" };
+      rows.push(row);
+      const key = p.reviewId || `${turnId}:${p.tool}`;
+      reviews.set(key, [...(reviews.get(key) || []), row]);
+    } else if (event.type === "permission.review.finished") {
+      if (persistedReviews.has(p.reviewId)) continue;
+      const row = reviews.get(p.reviewId || `${turnId}:${p.tool}`)?.shift() || { id: event.id, type: "review", tool: p.tool };
+      if (!rows.includes(row)) rows.push(row);
+      Object.assign(row, { done: true, decision: p.decision, text: p.reason, model: p.model });
     } else if (event.type === "stream.end") {
       endThinking();
       stream = null;

@@ -37,7 +37,9 @@ test('binary image forms are stripped recursively without changing frozen canoni
   assert.equal(JSON.stringify(projected).includes(image), false)
   assert.equal(projected.messages[0].content[0].text, 'retain this text')
   assert.equal(JSON.stringify(input), before)
-  assert.ok(JSON.stringify(projected).includes('[Image attachment: image/png]'))
+  assert.equal(projected.messages[0].content[1].type, 'image_preview')
+  assert.equal(projected.messages[0].content[1].messageId, 'msg_1')
+  assert.equal(projected.messages[0].content[1].index, 1)
 })
 
 test('only bounded public session metadata is included', () => {

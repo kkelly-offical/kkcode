@@ -1,5 +1,6 @@
 import { ensureUserRoot, usageStorePath } from "../storage/paths.mjs"
 import { readJson, writeJson } from "../storage/json-store.mjs"
+import { acquireProcessLock } from '../storage/process-lock.mjs'
 
 export function emptyUsage() {
   return {
@@ -12,13 +13,13 @@ export function emptyUsage() {
   }
 }
 
-function addUsage(target, delta, cost) {
+function addUsage(target, delta, cost, turns = 1) {
   target.input += delta.input || 0
   target.output += delta.output || 0
   target.cacheRead += delta.cacheRead || 0
   target.cacheWrite += delta.cacheWrite || 0
   target.cost += cost || 0
-  target.turns += 1
+  target.turns += turns
 }
 
 function todayKey() {
@@ -53,12 +54,23 @@ async function persist(store) {
   await writeJson(usageStorePath(), store)
 }
 
-export async function recordTurn({ sessionId, usage, cost }) {
+async function withUsageLock(fn) {
+  const file = `${usageStorePath()}.lock`, deadline = Date.now() + 30000
+  let lease
+  for (;;) {
+    try { lease = await acquireProcessLock(file); break }
+    catch (error) { if (error.code !== 'device_in_use' || Date.now() >= deadline) throw error; await new Promise(resolve => setTimeout(resolve, 15)) }
+  }
+  try { return await fn() } finally { await lease.release() }
+}
+
+export async function recordTurn({ sessionId, usage, cost, countTurn = true }) {
+  return withUsageLock(async () => {
   const store = await readUsageStore()
   maybeRotateGlobal(store)
   if (!store.sessions[sessionId]) store.sessions[sessionId] = emptyUsage()
-  addUsage(store.sessions[sessionId], usage, cost)
-  addUsage(store.global, usage, cost)
+  addUsage(store.sessions[sessionId], usage, cost, countTurn ? 1 : 0)
+  addUsage(store.global, usage, cost, countTurn ? 1 : 0)
   await persist(store)
   return {
     turn: {
@@ -67,14 +79,16 @@ export async function recordTurn({ sessionId, usage, cost }) {
       cacheRead: usage.cacheRead || 0,
       cacheWrite: usage.cacheWrite || 0,
       cost: cost || 0,
-      turns: 1
+      turns: countTurn ? 1 : 0
     },
     session: store.sessions[sessionId],
     global: store.global
   }
+  })
 }
 
 export async function resetUsage(sessionId = null) {
+  return withUsageLock(async () => {
   if (!sessionId) {
     await persist(defaultStore())
     return
@@ -92,6 +106,7 @@ export async function resetUsage(sessionId = null) {
     store.global.turns += session.turns
   }
   await persist(store)
+  })
 }
 
 export async function exportUsageCsv() {

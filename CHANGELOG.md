@@ -1,5 +1,35 @@
 # Changelog / 更新日志
 
+## 1.0.2
+
+- Web/Android: per-session rename/archive/restore, visible confirmed rewind with
+  draft recovery and cross-client cache invalidation. Rewind preserves workspace
+  files and a private pre-rewind history backup.
+- One mode selector: Plan, Agent, Auto, Ultra, Yolo. Auto uses the current
+  conversation model for bounded tool-free sensitive-action review, with manual
+  fallback and durable audit rows. Hard policies remain authoritative; old
+  `agent-auto` input remains an alias. Hide terminal shortcut panels on mobile/Web.
+- First-question titles use the first conversation model and atomic manual-name
+  precedence. Auxiliary usage is metered without a fake extra conversation turn;
+  usage writes now serialize across processes.
+- Detailed local/cached-remote Git refs and safe Worktree create/open. Preserve
+  dirty source files, reject stale confirmations, disable checkout hooks/filters
+  including initialized submodules, and support older Git porcelain output.
+- Built-in isolated Playwright Browser tools for semantic inspection, page
+  interaction and screenshots; lazy engine setup, per-session disposable state,
+  scoped private-dev access, DNS-pinned network guard and metadata-address denial.
+- Repair SVG-to-vLLM image failures: SVG source remains editable, explicit static
+  previews render to PNG, raster inputs fully decode, old bad media is quarantined
+  in request projections without deleting history. MCP multimodal/structured
+  results reach models; clients use authenticated lazy image previews.
+- Invalid tool JSON is actionable and does not create snapshots or execute tools;
+  permission review evaluates hook-transformed parameters. Tool descriptions,
+  model-visible schemas, documentation and native/client tests are aligned.
+- Android version `1.0.2`, public code `10005`, existing signing identity retained.
+
+See [usage and migration](docs/release-1.0.2.md) and the
+[acceptance/publication ledger](docs/implementation-1.0.2.md) for actual release status.
+
 ## 1.0.1 — 2026-09-22
 
 - Promote the three previews' Web/Host, OIDC/Relay, native Android, SDK and CLI

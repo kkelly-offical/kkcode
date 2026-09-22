@@ -21,13 +21,13 @@ class ComposerSelectorsTest {
         return state
     }
 
-    @Test fun composerShowsModePermissionAndModelChips() {
+    @Test fun composerShowsUnifiedModeAndModelWithoutPermissionChip() {
         show { it.selected = "session-fixture"; it.connected = true; it.mode = "agent"; it.approval = "manual"; it.model = "k2-0905" }
         compose.onNodeWithContentDescription("执行模式").assertIsDisplayed()
-        compose.onNodeWithContentDescription("权限").assertIsDisplayed()
+        compose.onNodeWithContentDescription("权限").assertDoesNotExist()
         compose.onNodeWithContentDescription("模型").assertIsDisplayed()
-        compose.onNodeWithText("agent").assertIsDisplayed()
-        compose.onNodeWithText("手动审批").assertIsDisplayed()
+        compose.onNodeWithText("Agent").assertIsDisplayed()
+        compose.onNodeWithText("手动审批").assertDoesNotExist()
         compose.onNodeWithText("k2-0905").assertIsDisplayed()
     }
 
@@ -38,12 +38,11 @@ class ComposerSelectorsTest {
         compose.onNodeWithContentDescription("模型").assertDoesNotExist()
     }
 
-    @Test fun permissionPickerAppliesSelectionImmediately() {
+    @Test fun legacyPermissionEntryRedirectsToUnifiedMode() {
         val state = show { it.sheet = "approval"; it.approval = "manual" }
-        compose.onNodeWithText("完全放行", substring = true).assertIsDisplayed()
-        compose.onNodeWithText("只读", substring = true).assertIsDisplayed()
-        compose.onNodeWithText("手动审批 · manual").performClick()
-        compose.runOnIdle { assertEquals("manual", state.approval); assertEquals("", state.sheet) }
+        compose.onNodeWithText("手动审批 · manual").assertDoesNotExist()
+        compose.onNodeWithText("Auto", substring = false).performClick()
+        compose.runOnIdle { assertEquals("auto", state.mode); assertEquals("", state.sheet) }
     }
 
     @Test fun modelPickerListsProvidersWithDiscoverySource() {

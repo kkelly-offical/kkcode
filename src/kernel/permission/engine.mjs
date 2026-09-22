@@ -92,13 +92,17 @@ export function createPermissionEngine({ promptChannel = defaultPermissionPrompt
       workspace = "",
       // 工具自报的能力，优先于静态分类表。风险取决于参数的工具需要它 ——
       // 例如技能：模板展开是纯提示词，可编程技能会执行任意 JS。
-      capability = null
+      capability = null,
+      reviewSensitive = null,
+      signal = null
     }) {
       if (!workspaceTrusted) throw new PermissionError("workspace not trusted — run /trust to enable tools")
+      if (signal?.aborted) throw new PermissionError('operation cancelled')
       const auditContext = { sessionId, turnId, traceId, requestId, reviewId, tool }
+      const decision = evaluatePermission({ config, tool, mode, pattern, command, risk, workspace, capability })
       const key = cacheKey(tool, pattern)
       const set = sessionAllow.get(sessionId)
-      if (set?.has(key)) {
+      if (set?.has(key) && decision.action !== 'deny' && decision.source !== 'protected_path') {
         await eventBus.emit({
           type: EVENT_TYPES.PERMISSION_DECIDED,
           sessionId,
@@ -110,7 +114,6 @@ export function createPermissionEngine({ promptChannel = defaultPermissionPrompt
         return { decision: "allow_session", granted: true }
       }
 
-      const decision = evaluatePermission({ config, tool, mode, pattern, command, risk, workspace, capability })
       if (decision.action === "allow") {
         await eventBus.emit({
           type: EVENT_TYPES.PERMISSION_DECIDED,
@@ -137,10 +140,27 @@ export function createPermissionEngine({ promptChannel = defaultPermissionPrompt
         throw new PermissionError(denialMessage(tool, decision))
       }
 
+      // Explicit manual rules and protected paths are not delegable to a model.
+      // Automatic review grants one invocation, never a persistent capability.
+      let reviewReason = ''
+      if (config.permission?.auto_review === true && decision.level === 'accept-edits' && !['protected_path', 'rule'].includes(decision.source) && typeof reviewSensitive === 'function') {
+        await eventBus.emit({ type: 'permission.review.started', sessionId, turnId, payload: { tool, reviewId, source: 'auto', risk } })
+        let verdict
+        try { verdict = await reviewSensitive({ tool, args, command, workspace, risk, reason: decision.reason || reason }) }
+        catch { verdict = { decision: 'ask', reason: '自动审查失败，需要你确认。' } }
+        if (signal?.aborted) throw new PermissionError('operation cancelled during automatic review')
+        const outcome = ['allow', 'deny', 'ask'].includes(verdict?.decision) ? verdict.decision : 'ask'
+        reviewReason = String(verdict?.reason || '自动审查没有明确结论，需要你确认。')
+        await eventBus.emit({ type: 'permission.review.finished', sessionId, turnId, payload: { tool, reviewId, decision: outcome, reason: reviewReason, model: verdict?.model || null, provider: verdict?.provider || null } })
+        await auditPermission('permission.auto_review', auditContext, { decision: outcome, reason: reviewReason, model: verdict?.model, provider: verdict?.provider, mode, pattern, risk })
+        if (outcome === 'allow') return { decision: 'allow_once', granted: true, autoReviewed: true }
+        if (outcome === 'deny') throw new PermissionError(`Auto review declined ${tool}: ${reviewReason}`)
+      }
+
       // 策略层给出的理由（保护路径等）要并进提示：它解释的是「为什么这一次
       // 需要确认」，而调用方传的 reason 说的是「这次调用要做什么」。缺了前者，
       // 无 TTY 场景下拒绝消息就只剩一句空洞的 permission denied。
-      const askReason = [reason, decision.reason].filter(Boolean).join(" — ")
+      const askReason = [reason, decision.reason, reviewReason].filter(Boolean).join(" — ")
       await eventBus.emit({
         type: EVENT_TYPES.PERMISSION_ASKED,
         sessionId,
@@ -157,7 +177,8 @@ export function createPermissionEngine({ promptChannel = defaultPermissionPrompt
         args,
         risk,
         reason: askReason,
-        defaultAction: config.permission?.non_tty_default || "deny"
+        signal,
+        defaultAction: reviewReason ? 'deny' : config.permission?.non_tty_default || "deny"
       })
       if (reply === "allow_session" || reply === "allow_always") {
         const next = sessionAllow.get(sessionId) || new Set()

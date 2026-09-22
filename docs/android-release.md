@@ -1,4 +1,4 @@
-# Android 1.0.1 release signing and acceptance
+# Android 1.0.2 release signing and acceptance
 
 The Android application is a native remote client. Release signing is separate
 from publishing: producing this APK does not upload it to a store or GitHub.
@@ -9,7 +9,7 @@ The user authorized creation of a project-specific production release key on
 2026-09-21. It is not the Android debug key or an acceptance-only identity.
 
 - Application ID: `cn.kkcode.remote`.
-- Current published stable: `1.0.1` / version code `10004`.
+- Release target: `1.0.2` / version code `10005`; previous public stable `1.0.1` used `10004`. See [1.0.2 receipts](implementation-1.0.2.md) for actual publication status.
 - Algorithm: RSA-4096, SHA256withRSA; certificate validity: 10,000 days.
 - Public certificate SHA-256:
   `cf75774a4d87ba1ccc4a811f271bd301076cf6beefd7432a3cb30231164be5d1`.
@@ -30,7 +30,7 @@ The previous `1.0.1` APKs were local, unpublished acceptance builds. The first
 authorized public preview (`1.0.1-preview.0`) therefore retained version code
 `10001`, the second preview (`1.0.1-preview.1`) increments it to `10002`, and
 the third preview (`1.0.1-preview.2`) uses `10003`; stable `1.0.1` uses `10004`.
-The certificate must stay unchanged.
+The next stable `1.0.2` uses `10005`. The certificate must stay unchanged.
 **Every subsequent publicly distributed Android update must increase
 `versionCode`, including any later stable release or preview.**
 Changing only `versionName` is not a valid public update policy. Keep using
@@ -68,7 +68,7 @@ The application footer and Android User-Agent use `BuildConfig.VERSION_NAME`.
 
 After signature verification, run `node scripts/android-update-manifest.mjs`.
 Publish its `test-results/android-update.json` alongside the exact signed APK
-renamed `kkcode-android-1.0.1.apk`. The App updater skips releases without a
+renamed `kkcode-android-1.0.2.apk`. The App updater skips releases without a
 matching manifest. Public identity is pinned in `configs/android-release.json`;
 private signing files never enter the release. See [App updates](android-app-updates.md).
 
@@ -96,8 +96,8 @@ certificate verification for deployment.
   real diff folding, question IDs/options, read-only sharing, attachment and
   branch actions, explicit branch confirmation, dirty-repository guard, child
   approval source, SSO/profile separation, and persisted appearance.
-- `ComposerSelectorsTest`: composer mode/permission/model chips, shared-device
-  hiding, permission picker immediate application, and model picker discovery
+- `ComposerSelectorsTest`: unified mode/model chips (no permission chip), shared-device
+  hiding, legacy picker redirection to modes, and model picker discovery
   source markers with manual entry as failure-only fallback.
 - `ThemeTest`: dark/light schemes are pairwise distinct across background,
   surface, text, accent and semantic colors, and both keep readable contrast.
@@ -105,7 +105,9 @@ certificate verification for deployment.
   CRLF, keepalive comments, id persistence) and the event-stream transport
   (relay/direct paths, auth headers, cursor query, pre-stream JSON errors, and
   non-SSE fallback signaling).
-- `ComposerPickersTest`: catalog source labels and the canonical approval set.
+- `ComposerPickersTest`: catalog source labels and the five canonical modes.
+- `SessionLifecycleTest`: native HTTP contract for rename/archive/restore,
+  message-targeted rewind, authenticated media references and stale replay suppression.
 - `AttachmentInputTest`: exact-size bounded reading, unknown-size rejection,
   zero-byte provider reads, and protection against over-limit streams.
 - `GatewayUrlTest`: HTTPS/WireGuard addresses, debug-only emulator cleartext,

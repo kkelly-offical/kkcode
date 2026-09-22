@@ -229,6 +229,10 @@ export function evaluateCommand(command, options = {}) {
   const rules = [...customRules, ...DEFAULT_RULES]
   
   const normalizedCmd = String(command || "").trim()
+
+  // A harmless/relaxable prefix must not hide a catastrophic second command.
+  const hard = DEFAULT_RULES.find(rule => rule.decision === Decision.FORBID && rule.category !== 'git_safety' && createMatcher(rule.pattern)(normalizedCmd))
+  if (hard) return new PolicyResult(hard.decision, hard.name, hard.reason, hard.category)
   
   for (const rule of rules) {
     const matcher = createMatcher(rule.pattern)
@@ -284,7 +288,7 @@ const YOLO_RELAXABLE_CATEGORIES = new Set(["git_safety"])
 /**
  * @param {string} command
  * @param {Record<string, any>} [config]
- * @param {{approvalLevel?: string}} [options] 当前审批档。0.6.2 之前这个函数
+ * @param {{approvalLevel?: string, autoReviewed?: boolean}} [options] 当前审批档。0.6.2 之前这个函数
  *   完全不看权限档 —— YOLO 模式下 git commit 照样被拒，与模式的承诺矛盾。
  */
 export function checkBashAllowed(command, config = {}, options = {}) {
@@ -292,13 +296,16 @@ export function checkBashAllowed(command, config = {}, options = {}) {
   const fullAuto = config.git_auto?.full_auto === true
   const allowDangerous = config.git_auto?.allow_dangerous_ops === true
   const yolo = String(options.approvalLevel || "").toLowerCase() === "yolo"
+  // A one-invocation Auto receipt only relaxes ordinary commit/push. It does not
+  // enable force/reset/clean or compound shell commands, or persist any grant.
+  const reviewedGit = options.autoReviewed === true && config.git_auto?.forbid_commit !== true && config.git_auto?.forbid_push !== true && /^git\s+(commit|push)\b/.test(command) && !/[;&|<>`\n]/.test(command) && !/(?:^|\s)(?:--force(?:-with-lease|-if-includes)?|-f)(?:\s|$|=)/.test(command)
   
   // 检查是否配置了全局禁止 git commit/push
   // 全自动化模式下，如果 auto_commit/auto_push 启用，则允许
   const autoCommit = fullAuto && config.git_auto?.auto_commit === true
   const autoPush = fullAuto && config.git_auto?.auto_push === true
   
-  if (!yolo && !autoCommit && config.git_auto?.forbid_commit !== false) {
+  if (!yolo && !reviewedGit && !autoCommit && config.git_auto?.forbid_commit !== false) {
     const commitPattern = /^git\s+commit\b/i
     if (commitPattern.test(command)) {
       return {
@@ -308,7 +315,7 @@ export function checkBashAllowed(command, config = {}, options = {}) {
     }
   }
   
-  if (!yolo && !autoPush && config.git_auto?.forbid_push !== false) {
+  if (!yolo && !reviewedGit && !autoPush && config.git_auto?.forbid_push !== false) {
     const pushPattern = /^git\s+push\b/i
     if (pushPattern.test(command)) {
       return {
@@ -322,6 +329,7 @@ export function checkBashAllowed(command, config = {}, options = {}) {
   const result = evaluateCommand(command)
   
   if (result.isForbidden()) {
+    if (reviewedGit && ['forbid_git_commit', 'forbid_git_push'].includes(result.rule)) return { allowed: true, warning: 'This exact Git action passed Auto review; no persistent permission was granted.' }
     // 全自动化模式下，仅 git_safety 类别的危险操作可被允许
     if (fullAuto && allowDangerous && result.category === "git_safety") {
       return {

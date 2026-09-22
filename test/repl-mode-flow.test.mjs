@@ -12,7 +12,7 @@ import {
 
 test("the picker lists all five modes with icon, label and hint", () => {
   assert.deepEqual(MODE_PICKER_CHOICES.map((c) => c.value), [
-    "plan", "agent", "agent-auto", "ultra", "yolo"
+    "plan", "agent", "auto", "ultra", "yolo"
   ])
   for (const choice of MODE_PICKER_CHOICES) {
     assert.ok(choice.label.length > 1, `${choice.value} needs a label`)
@@ -55,12 +55,12 @@ test("Shift+Tab cycling walks every mode and returns to the start", () => {
     seen.push(next.modeId)
     current = next.modeId
   }
-  assert.deepEqual(seen, ["agent", "agent-auto", "ultra", "yolo", "plan"])
+  assert.deepEqual(seen, ["agent", "auto", "ultra", "yolo", "plan"])
 })
 
 test("cycling from a legacy lane name lands on the mapped mode's successor", () => {
   assert.equal(cycleModeSelection("longagent", { permissionConfig: {} }).modeId, "yolo")
-  assert.equal(cycleModeSelection("assistant", { permissionConfig: {} }).modeId, "agent-auto")
+  assert.equal(cycleModeSelection("assistant", { permissionConfig: {} }).modeId, "auto")
 })
 
 test("unknown input falls back to the default mode rather than throwing", () => {
@@ -76,13 +76,13 @@ test("picker state highlights the current mode", () => {
 
 test("badges read as icon plus label", () => {
   assert.match(formatModeBadge("ultra"), /Ultra$/)
-  assert.match(formatModeBadge("agent-auto"), /Agent · Auto$/)
+  assert.match(formatModeBadge("agent-auto"), /Auto$/)
 })
 
 test("resumed sessions rebuild the mode id from lane plus approval", () => {
   assert.equal(restoreModeId({ mode: "longagent", permissionConfig: { level: "accept-edits" } }), "ultra")
   assert.equal(restoreModeId({ mode: "assistant", permissionConfig: { level: "auto" } }), "agent")
-  assert.equal(restoreModeId({ mode: "assistant", permissionConfig: { level: "full-auto" } }), "agent-auto")
+  assert.equal(restoreModeId({ mode: "assistant", permissionConfig: { level: "full-auto" } }), "auto")
   assert.equal(restoreModeId({ mode: "assistant", permissionConfig: { level: "yolo" } }), "yolo")
   assert.equal(restoreModeId({ mode: "plan", permissionConfig: {} }), "plan")
 })

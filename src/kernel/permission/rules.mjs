@@ -18,6 +18,7 @@ const TOOL_CAPABILITIES = {
   websearch: "network",
   webfetch: "network",
   http_request: "network",
+  browser: "risky-shell",
   background_output: "read",
   task_list: "read",
   task_get: "read",
@@ -112,6 +113,12 @@ function trustedBashCommand(command) {
   const cmd = String(command || "").trim()
   if (!cmd) return false
   if (/[;&|<>`]/.test(cmd)) return false
+  if (/[\r\n]/.test(cmd) || /\$\(/.test(cmd)) return false
+  if (/^git\s+branch\b/i.test(cmd) && !/^git\s+branch(?:\s+(?:--show-current|--list|--all|--remotes|-a|-r|-v|-vv))*\s*$/i.test(cmd)) return false
+  if (/^git\s+(?:diff|show|log)\b/i.test(cmd) && /\s--output(?:=|\s)/i.test(cmd)) return false
+  if (/^(?:find|sed)\b/i.test(cmd)) return false
+  if (/^date\s+(?:-s|--set)/i.test(cmd)) return false
+  if (/^(?:node|npm|pnpm|yarn)\b/i.test(cmd) && !/^(?:node|npm|pnpm|yarn)\s+(?:--version|-v|version|root|list|ls)(?:\s+--global|\s+-g)?\s*$/i.test(cmd)) return false
   return TRUSTED_BASH_PATTERNS.some((pattern) => pattern.test(cmd))
 }
 

@@ -2,7 +2,7 @@ import { ProtocolError } from '../protocol/index.mjs'
 export const SESSION_VIEW_BYTES = 4 * 1024 * 1024
 const displayNotice = '[Display truncated; full content remains on the computer]'
 const bytes = value => Buffer.byteLength(JSON.stringify(value))
-const metadataFields = { id: 128, title: 512, cwd: 4096, mode: 32, modeId: 32, approval: 32, model: 200, providerType: 128, status: 32, createdAt: 0, updatedAt: 0, parentSessionId: 128, forkFrom: 128 }
+const metadataFields = { id: 128, title: 512, titleSource: 32, titleRevision: 0, archived: 0, historyRevision: 128, cwd: 4096, mode: 32, modeId: 32, approval: 32, model: 200, providerType: 128, status: 32, createdAt: 0, updatedAt: 0, parentSessionId: 128, forkFrom: 128 }
 function clip(value, max) {
   const data = Buffer.from(value)
   if (data.length <= max) return value
@@ -11,7 +11,7 @@ function clip(value, max) {
   return data.subarray(0, end).toString('utf8')
 }
 /** Transport projection only: canonical history retains complete media content. */
-function project(value, budget, depth = 0, seen = new Set()) {
+function project(value, budget, depth = 0, seen = new Set(), references = null) {
   if (budget.left < 64 || depth > 16) return displayNotice
   if (typeof value === 'string') {
     const inline = /^data:(image|audio|video)\/[a-z0-9.+-]+;base64,/i.exec(value)
@@ -21,6 +21,7 @@ function project(value, budget, depth = 0, seen = new Set()) {
     return clipped === value ? value : `${clipped}\n${displayNotice}`
   }
   if (!value || typeof value !== 'object') { budget.left -= 16; return value }
+  if (references?.has(value)) { budget.left -= 256; return references.get(value) }
   if (['image', 'image_url', 'input_image', 'audio', 'input_audio', 'video', 'video_url'].includes(value.type)) {
     const kind = value.type.includes('audio') ? 'Audio' : value.type.includes('video') ? 'Video' : 'Image'
     const label = clip(String(value.mediaType || value.source?.media_type || kind.toLowerCase()), 80)
@@ -35,8 +36,8 @@ function project(value, budget, depth = 0, seen = new Set()) {
   for (const [key, item] of entries) {
     if (count++ >= 2000 || budget.left < 64) { if (Array.isArray(result)) result.push(displayNotice); else result.displayTruncated = true; break }
     budget.left -= String(key).length + 4
-    if (Array.isArray(result)) result.push(project(item, budget, depth + 1, seen))
-    else if (!['__proto__', 'constructor', 'prototype'].includes(key)) result[key] = project(item, budget, depth + 1, seen)
+    if (Array.isArray(result)) result.push(project(item, budget, depth + 1, seen, references))
+    else if (!['__proto__', 'constructor', 'prototype'].includes(key)) result[key] = project(item, budget, depth + 1, seen, references)
   }
   seen.delete(value)
   return result
@@ -47,6 +48,7 @@ function metadata(source, cap) {
     if (!Object.hasOwn(source || {}, key)) continue
     const value = source[key]
     if (max && typeof value === 'string') result[key] = clip(value, max)
+    else if (key === 'archived' && typeof value === 'boolean') result[key] = value
     else if (!max && Number.isFinite(value)) result[key] = value
     else if (value === null) result[key] = null
   }
@@ -77,7 +79,11 @@ export function sessionView(data, { before, limit = 100, maxBytes = SESSION_VIEW
   const meta = metadata(data.session, maxBytes)
   const view = () => ({ ...meta, messages, parts, partsTruncated, historyHasMore: start > 0, nextBefore: start > 0 ? source[start]?.id : null })
   for (let index = end - 1; index >= Math.max(0, end - count); index--) {
-    let item = { ...project(source[index], { left: Math.floor(maxBytes / 2) }), ...messageIdentity(source[index]) }
+    const message = source[index], references = new Map()
+    if (typeof message.id === 'string' && Array.isArray(message.content)) message.content.forEach((block, blockIndex) => {
+      if (['image', 'image_url', 'input_image'].includes(block?.type)) references.set(block, { type: 'image_preview', messageId: message.id, index: blockIndex, mediaType: clip(String(block.mediaType || block.source?.media_type || 'image'), 80) })
+    })
+    let item = { ...project(message, { left: Math.floor(maxBytes / 2) }, 0, new Set(), references), ...messageIdentity(message) }
     if (bytes(item) > maxBytes / 2) item = truncatedMessage(source[index])
     const candidate = [item, ...messages]
     if (messages.length && bytes(candidate) > maxBytes / 2) break

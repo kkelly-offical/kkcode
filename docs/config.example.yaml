@@ -261,6 +261,8 @@ git_auto:
 # 会话配置
 # =============================================================================
 session:
+  # 首轮对话模型生成短标题；一次有界请求，手动命名优先，可关闭。
+  title_generation: true
   max_history: 30
   recovery: true
   compaction_threshold_ratio: 0.85
@@ -271,6 +273,11 @@ session:
 # 工具配置
 # =============================================================================
 tool:
+  browser:
+    enabled: true
+    # 先在设备端运行 kkcode browser install；引擎按需启动，不接管个人 profile。
+    chromium_sandbox: true
+    # executable_path: /path/to/compatible/chromium
   # MCP 工具达到 threshold 后按需发现；SDK 完整清单不变。
   discovery:
     enabled: true

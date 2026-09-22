@@ -241,7 +241,7 @@ test("TUI restores job-control state and exits without a referenced stdin handle
     const modeProbeStart = output.length
     child.stdin.write("\x1b[Z")
     await waitFor(
-      () => /Agent · Auto|AGENT · AUTO/.test(output.slice(modeProbeStart)),
+      () => /Auto|AUTO/.test(output.slice(modeProbeStart)),
       { message: `Shift+Tab did not cycle the mode:\n${output.slice(-1600)}` }
     )
     child.stdin.write("\x1b[Z")

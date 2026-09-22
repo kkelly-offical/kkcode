@@ -4,7 +4,7 @@ import path from 'node:path'
 import { EventEmitter } from 'node:events'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { mkdir, readFile } from 'node:fs/promises'
-import { createKernel, getSession, listSessions, newSessionId, resolveModelCapabilities, resolveProviderConnection, assertMediaInput } from '../kernel/index.mjs'
+import { createKernel, getSession, listSessions, newSessionId, resolveModelCapabilities, resolveProviderConnection, assertMediaInput, normalizeImageBlock, rewindLastTurn, normalizeTitle, modeIdFromLegacy, resolveSessionMode, laneOf, approvalOf } from '../kernel/index.mjs'
 import { loadConfig } from '../config/load-config.mjs'
 import { redactConfig } from '../config/redact.mjs'
 import { userRootDir } from '../storage/paths.mjs'
@@ -17,7 +17,7 @@ import { discoverDeviceModels, updateDeviceSettings } from './model-settings.mjs
 import { ReplayStore } from './replay-store.mjs'
 import { RequestLedger, REQUEST_WINDOW_MS } from './request-ledger.mjs'
 import { AttachmentStore } from './attachments.mjs'
-import { listDeviceBranches, changeDeviceBranch } from './branches.mjs'
+import { listDeviceBranches, changeDeviceBranch, createDeviceWorktree } from './branches.mjs'
 import { SessionTree } from './session-tree.mjs'
 import { getDeviceProfile, updateDeviceProfile } from './profile.mjs'
 import { sessionView } from './session-view.mjs'
@@ -113,6 +113,7 @@ export class DeviceService extends EventEmitter {
     this.sessionTree.observe(event)
     const row = await this.liveView.record(event, item => this.replay.append(item))
     this.emit('event', row)
+    if (['session.updated', 'session.title.updated', 'session.rewound'].includes(event.type)) this.emitDeviceEvent('session.status', { sessionId: event.sessionId })
     return row
   }
   async readEvents(sessionId, after) {
@@ -206,7 +207,7 @@ export class DeviceService extends EventEmitter {
     validateRequest(request); this.assertOwner(principal)
     if (this.closed) throw new ProtocolError('device_offline', 'Device is closing', 503)
     const { id, method, params = {} } = request
-    const mutating = !/^(status|folders\.list|files\.read|sessions\.(list|get)|events\.list|commands\.list|settings\.get|extensions\.list|models\.discover|attachments\.list|branches\.list|profile\.get)$/.test(method)
+    const mutating = !/^(status|folders\.list|files\.read|media\.preview|sessions\.(list|get)|events\.list|commands\.list|settings\.get|extensions\.list|models\.discover|attachments\.list|branches\.list|worktrees\.list|profile\.get)$/.test(method)
     const key = `${principal.id}:${id}`, hash = createHash('sha256').update(JSON.stringify({ method, params })).digest('hex')
     if (mutating && this.ledger.get(key)) {
       const prior = this.ledger.get(key)
@@ -235,6 +236,18 @@ export class DeviceService extends EventEmitter {
     if (method === 'status') return { schemaVersion: PROTOCOL_VERSION, device: this.metadata, roots: this.roots, active: [...this.turns.keys()], retention: { replay: this.replay.stats(), requests: this.ledger.stats() } }
     if (method === 'folders.list') return listDeviceFolder(p.path, this.roots)
     if (method === 'files.read') return readDeviceFile(p.path, this.roots)
+    if (method === 'media.preview') {
+      if (typeof p.messageId !== 'string' || !idPattern.test(p.messageId) || !Number.isInteger(p.index) || p.index < 0 || p.index > 2000) throw new ProtocolError('invalid_preview', 'Choose an image from this conversation')
+      const session = await getSession(sessionId)
+      if (!session) throw new ProtocolError('session_missing', 'Session not found', 404)
+      const message = session.messages.find(item => item.id === p.messageId)
+      const block = Array.isArray(message?.content) && message.content[p.index]
+      if (!block || !['image', 'image_url', 'input_image'].includes(block.type)) throw new ProtocolError('preview_missing', 'This image is no longer in the conversation', 404)
+      const url = typeof block.image_url === 'string' ? block.image_url : block.image_url?.url
+      const data = block.data || block.source?.data || (typeof url === 'string' && url.startsWith('data:') ? url : null)
+      try { return await normalizeImageBlock({ data, mediaType: block.mediaType || block.source?.media_type }, { allowSvg: true, maxDimension: 768 }) }
+      catch (error) { throw new ProtocolError('preview_unavailable', error.message, 422) }
+    }
     if (method === 'sessions.list') return (await listSessions({ limit: 200, includeChildren: false })).map(session => {
       const metadata = sessionView({ session, messages: [], parts: [] })
       for (const key of ['messages', 'parts', 'historyHasMore', 'nextBefore', 'partsTruncated']) delete metadata[key]
@@ -252,7 +265,46 @@ export class DeviceService extends EventEmitter {
       const kernel = await this.kernel(p.cwd)
       const id = newSessionId()
       await kernel.sessions.touchSession({ sessionId: id, cwd: kernel.cwd, mode: 'assistant', providerType: kernel.configState.config.provider.default, model: '', title: p.title || '新对话' })
+      await kernel.sessions.updateSession(id, { titleSource: p.title && !['新对话', 'New session'].includes(p.title) ? 'manual' : 'auto', titleRevision: 0, archived: false })
+      this.emitDeviceEvent('session.status', { sessionId: id })
       return { id, cwd: kernel.cwd }
+    }
+    if (method === 'sessions.update') {
+      const session = await getSession(sessionId)
+      if (!session) throw new ProtocolError('session_missing', 'Session not found', 404)
+      if (p.title === undefined && p.archived === undefined) throw new ProtocolError('invalid_session_update', 'Provide a title or archive state')
+      const patch = {}, expected = {}
+      if (p.title !== undefined) {
+        if (typeof p.title !== 'string' || !p.title.trim() || Array.from(p.title.trim()).length > 120 || /[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]/u.test(p.title)) throw new ProtocolError('invalid_title', 'Use a non-empty single-line title of at most 120 characters')
+        if (p.expectedTitleRevision !== undefined && p.expectedTitleRevision !== (session.session.titleRevision || 0)) throw new ProtocolError('session_changed', 'The title changed on another client; reload before renaming', 409)
+        expected.titleRevision = session.session.titleRevision
+        patch.title = p.title.trim(); patch.titleSource = 'manual'; patch.titleRevision = (session.session.titleRevision || 0) + 1
+      }
+      if (p.archived !== undefined) {
+        if (typeof p.archived !== 'boolean') throw new ProtocolError('invalid_archive_state', 'archived must be a boolean')
+        if (p.archived && (this.turns.has(sessionId) || this.commandSessions.has(sessionId))) throw new ProtocolError('turn_busy', 'Stop the running turn before archiving its conversation', 409)
+        patch.archived = p.archived
+      }
+      const kernel = await this.kernel(session.session.cwd)
+      const updated = await kernel.sessions.updateSessionIf(sessionId, expected, patch)
+      if (!updated) throw new ProtocolError('session_changed', 'Conversation changed; reload and try again', 409)
+      await this.record({ type: 'session.updated', sessionId, payload: patch })
+      return sessionView({ session: updated, messages: [], parts: [] })
+    }
+    if (method === 'sessions.rewind') {
+      this.lease(sessionId, principal)
+      if (p.confirmed !== true) throw new ProtocolError('confirmation_required', 'Confirm conversation rewind; workspace files will not be reverted', 409)
+      if (this.turns.has(sessionId) || this.sessionTransitions.has(sessionId) || this.commandSessions.has(sessionId) && this.commandContext.getStore()?.sessionId !== sessionId) throw new ProtocolError('turn_busy', 'Stop the running turn before rewinding', 409)
+      this.sessionTransitions.add(sessionId)
+      try {
+        const session = await getSession(sessionId)
+        if (!session) throw new ProtocolError('session_missing', 'Session not found', 404)
+        if (p.expectedLastMessageId !== undefined && p.expectedLastMessageId !== (session.messages.at(-1)?.id || null)) throw new ProtocolError('history_changed', 'New messages arrived; reload before rewinding', 409)
+        const kernel = await this.kernel(session.session.cwd)
+        const result = await kernel.run(() => rewindLastTurn(sessionId, { messageId: p.messageId || null }))
+        if (result.ok) await this.record({ type: 'session.rewound', sessionId, payload: { ...result, filesChanged: false } })
+        return { ...result, filesChanged: false }
+      } finally { this.sessionTransitions.delete(sessionId) }
     }
     if (method === 'events.list') return this.sessionEvents(sessionId, Number(p.after) || 0, principal)
     if (method === 'sessions.configure') {
@@ -268,11 +320,12 @@ export class DeviceService extends EventEmitter {
       const providerType = p.provider || session.session.providerType || config.provider.default
       if (!Object.hasOwn(config.provider, providerType) || !config.provider[providerType] || typeof config.provider[providerType] !== 'object') throw new ProtocolError('unknown_provider', 'Configure this provider before selecting it')
       if (p.model != null && (typeof p.model !== 'string' || !p.model.trim() || p.model.length > 200 || /[\x00-\x1f]/.test(p.model))) throw new ProtocolError('invalid_model', 'Invalid model id')
-      if (p.mode != null && !['agent', 'plan', 'agent-auto', 'ultra', 'yolo'].includes(p.mode)) throw new ProtocolError('invalid_mode', 'Unknown execution mode')
+      if (p.mode != null && !modeIdFromLegacy(p.mode)) throw new ProtocolError('invalid_mode', 'Unknown execution mode')
       if (p.approval != null && !['readonly', 'manual', 'accept-edits', 'yolo'].includes(p.approval)) throw new ProtocolError('invalid_approval', 'Unknown permission level')
-      const modeId = p.mode || session.session.modeId || 'agent'
-      const state = { providerType, model: p.model || (p.provider ? config.provider[providerType].default_model : session.session.model) || config.provider[providerType].default_model || '', modeId, mode: { agent: 'assistant', plan: 'plan', 'agent-auto': 'assistant', ultra: 'longagent', yolo: 'assistant' }[modeId], approval: { agent: 'manual', plan: 'readonly', 'agent-auto': 'accept-edits', ultra: 'accept-edits', yolo: 'yolo' }[modeId], sessionId }
-      state.approval = p.approval || (!p.mode && session.session.approval) || state.approval
+      const modeId = resolveSessionMode({ modeId: p.mode || session.session.modeId, mode: session.session.mode, approval: p.approval || (!p.mode ? session.session.approval : null) })
+      // Legacy callers may still send approval. Normalize it to one mode rather
+      // than persisting contradictory independent selectors.
+      const state = { providerType, model: p.model || (p.provider ? config.provider[providerType].default_model : session.session.model) || config.provider[providerType].default_model || '', modeId, mode: laneOf(modeId), approval: approvalOf(modeId), sessionId }
       this.commandStates.set(sessionId, state)
       await kernel.sessions.updateSession(sessionId, state)
       await this.record({ type: 'session.configured', sessionId, payload: state })
@@ -310,15 +363,16 @@ export class DeviceService extends EventEmitter {
       const session = await getSession(sessionId)
       if (!session) throw new ProtocolError('session_missing', 'Session not found', 404)
       const kernel = await this.kernel(session.session.cwd || this.cwd)
-      if (!session.messages.length && ['New session', '新对话', ''].includes(session.session.title || '')) await kernel.sessions.updateSession(sessionId, { title: p.prompt.trim().replace(/\s+/g, ' ').slice(0, 60) })
+      if (session.session.archived) throw new ProtocolError('session_archived', 'Restore this archived conversation before continuing', 409)
+      if (!session.messages.length && ['New session', '新对话', ''].includes(session.session.title || '')) await kernel.sessions.updateSessionIf(sessionId, { title: session.session.title, titleRevision: session.session.titleRevision, titleSource: session.session.titleSource }, { title: normalizeTitle(p.prompt.trim().replace(/\s+/g, ' ')) })
       const config = kernel.configState.config, selection = this.commandStates.get(sessionId) || session.session
       const providerType = p.provider || selection.providerType || config.provider.default
       if (!Object.hasOwn(config.provider, providerType) || !config.provider[providerType] || typeof config.provider[providerType] !== 'object') { this.turns.delete(sessionId); throw new ProtocolError('unknown_provider', 'Unknown provider') }
-      const mode = p.mode || selection.modeId || 'agent'
-      const allowedModes = { agent: 'assistant', plan: 'plan', 'agent-auto': 'assistant', ultra: 'longagent', yolo: 'assistant' }
-      if (!Object.hasOwn(allowedModes, mode)) { this.turns.delete(sessionId); throw new ProtocolError('invalid_mode', 'Unknown mode') }
+      const mode = p.mode ? modeIdFromLegacy(p.mode) : resolveSessionMode(selection)
+      if (!mode) { this.turns.delete(sessionId); throw new ProtocolError('invalid_mode', 'Unknown mode') }
       const state = structuredClone(kernel.configState)
-      state.config.permission.level = ((!p.mode || p.mode === selection.modeId) && selection.approval) || { agent: 'manual', plan: 'readonly', 'agent-auto': 'accept-edits', ultra: 'accept-edits', yolo: 'yolo' }[mode]
+      state.config.permission.level = approvalOf(mode)
+      state.config.permission.auto_review = ['auto', 'ultra'].includes(mode)
       attachmentInput = await this.attachments.resolve({ sessionId, ids: p.attachmentIds || [], prompt: p.prompt })
       const model = p.model || selection.model || config.provider[providerType]?.default_model
       const media = (attachmentInput.contentBlocks || []).filter(block => ['image', 'audio', 'video'].includes(block.type))
@@ -337,7 +391,7 @@ export class DeviceService extends EventEmitter {
         skillAllowedTools = skill.allowedTools || null
       }
       await kernel.events.emit({ type: 'remote.turn.started', sessionId, payload: { prompt: p.prompt, client: principal.client } })
-      entry.promise = kernel.executeTurn({ prompt: p.prompt, contentBlocks: attachmentInput.contentBlocks, sessionId, mode: allowedModes[mode], model, providerType, configState: state, signal: controller.signal, toolContext: { skillAllowedTools } })
+      entry.promise = kernel.executeTurn({ prompt: p.prompt, contentBlocks: attachmentInput.contentBlocks, sessionId, mode: laneOf(mode), model, providerType, configState: state, signal: controller.signal, toolContext: { skillAllowedTools } })
         .then(result => this.record({ type: 'turn.result', sessionId, turnId: result.turnId || turnId, payload: result }))
         .catch(error => this.record({ type: 'turn.failed', sessionId, turnId, payload: { error: error.message } }))
         .finally(async () => { try { await attachmentInput.release() } finally { this.finishTurn(sessionId, entry) } })
@@ -351,6 +405,41 @@ export class DeviceService extends EventEmitter {
     }
     if (method === 'profile.get') return getDeviceProfile()
     if (method === 'profile.update') return updateDeviceProfile(p.profile)
+    if (method.startsWith('worktrees.')) {
+      const source = sessionId && await getSession(sessionId)
+      if (sessionId && !source) throw new ProtocolError('session_missing', 'Session not found', 404)
+      const cwd = source?.session.cwd || p.cwd || this.cwd
+      if (method === 'worktrees.list') return listDeviceBranches(cwd, this.roots)
+      if (this.workspaceMutation || this.configurationUpdating) throw new ProtocolError('workspace_busy', 'Device maintenance is already in progress', 409)
+      if (method === 'worktrees.open') {
+        if (p.confirmed !== true) throw new ProtocolError('confirmation_required', 'Open this worktree in a new conversation; the original conversation stays unchanged', 409)
+        const snapshot = await listDeviceBranches(cwd, this.roots)
+        if (p.stateToken !== snapshot.stateToken) throw new ProtocolError('branch_state_changed', 'Refresh the worktree list before selecting it', 409)
+        const target = await resolveDevicePath(p.path, this.roots, { directory: true })
+        const selected = snapshot.worktrees.find(item => item.path === target)
+        if (!selected || selected.prunable) throw new ProtocolError('worktree_missing', 'Choose an available worktree from this repository', 404)
+        const created = await this.dispatch('sessions.create', { cwd: target }, principal)
+        const kernel = await this.kernel(target), profile = source?.session || {}
+        const provider = Object.hasOwn(kernel.configState.config.provider || {}, profile.providerType || '') ? profile.providerType : kernel.configState.config.provider.default
+        if (provider) {
+          await this.dispatch('control.acquire', { sessionId: created.id }, principal)
+          try { await this.dispatch('sessions.configure', { sessionId: created.id, provider, ...(provider === profile.providerType && profile.model ? { model: profile.model } : {}), mode: resolveSessionMode(profile) }, principal) }
+          finally { await this.dispatch('control.release', { sessionId: created.id }, principal) }
+        }
+        return { ...created, sessionId: created.id, branch: selected.branch, sourceSessionId: sessionId || null, originalSessionUnchanged: true }
+      }
+      if (sessionId) this.lease(sessionId, principal)
+      this.workspaceMutation = { sessionId, client: principal.client }
+      try {
+        const assertIdle = async () => {
+          if (this.turns.size || this.commandSessions.size || this.sessionTransitions.size) throw new ProtocolError('turn_busy', 'Finish running turns and commands before creating a worktree', 409)
+          for (const promise of this.kernels.values()) if ((await (await promise).background?.list?.() || []).some(job => ['queued', 'running', 'pending'].includes(job.status))) throw new ProtocolError('turn_busy', 'A background task is still using this repository', 409)
+        }
+        const result = await createDeviceWorktree({ ...p, cwd, roots: this.roots, assertIdle })
+        if (sessionId) await this.record({ type: 'session.worktree.created', sessionId, payload: result.created })
+        return result
+      } finally { this.workspaceMutation = false }
+    }
     if (method.startsWith('branches.')) {
       const session = sessionId && await getSession(sessionId)
       if (sessionId && !session) throw new ProtocolError('session_missing', 'Session not found', 404)

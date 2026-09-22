@@ -1,5 +1,4 @@
-Reads a file from the local filesystem. You can access any file directly by using this tool.
-Assume this tool is able to read all files on the machine. If the user provides a path to a file, assume that path is valid.
+Reads files within the authorized workspace and ordinary-folder scope. Files must exist and remain subject to OS permissions and protected-path rules.
 
 ## Usage
 
@@ -12,7 +11,9 @@ Assume this tool is able to read all files on the machine. If the user provides 
 ## File Type Support
 
 - **Text files**: All text files are read with line numbers. This is the default behavior.
-- **Image files** (PNG, JPG, GIF, SVG, WebP, BMP, ICO): Returns a base64-encoded data URI that can be visually analyzed. Use this when the user asks you to look at a screenshot or image.
+- **Raster images** (PNG, JPEG, GIF, WebP): Decodes actual pixels, checks byte/pixel limits and returns a bounded image. Invalid files produce a recoverable tool error, never a malformed model request.
+- **SVG files**: Read as XML source with line numbers by default. Read the source before editing. To verify visual appearance, call read(path, view="image") to render a static PNG preview. Scripts, external resources, embedded images and unsafe SVG constructs are rejected; source files are never rewritten during preview. A pixel preview alone is not a source read.
+- **Other image formats** (including BMP/ICO): Convert to a supported raster format before previewing; never claim the model saw pixels after a failed read.
 - **PDF files** (.pdf): Extracts text content from PDF pages. For large PDFs (10+ pages), use the `pages` parameter to read specific page ranges (e.g. pages="1-5"). Maximum 20 pages per request.
 - **Jupyter notebooks** (.ipynb): Parses the notebook JSON and returns all cells with their type, source, and outputs in a readable format. Combines code, text, and output for easy understanding.
 
@@ -29,6 +30,7 @@ Assume this tool is able to read all files on the machine. If the user provides 
 - offset (optional): start line number (1-based). Only provide if the file is too large to read at once.
 - limit (optional): max lines to return. Only provide if the file is too large to read at once.
 - encoding (optional): file encoding (default: utf8)
+- view (optional): auto (default), text, or image. Use image for SVG visual verification after reading its source.
 - pages (optional): page range for PDF files (e.g. "1-5", "3", "10-20"). Only applicable to PDF files.
 
 ## Tips

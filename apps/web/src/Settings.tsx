@@ -4,7 +4,8 @@ import { SettingsRow } from "./Home";
 import { Icon } from "./Icon";
 import { AttachmentPanel, type Attachment } from "./Attachments";
 import { BranchPanel } from "./Branches";
-import { CommandOutput, PreferencesPanel, ThemePanel, KeysPanel, DeviceLifecyclePanel } from "./ClientPanels";
+import { CommandOutput, PreferencesPanel, ThemePanel, DeviceLifecyclePanel } from "./ClientPanels";
+import { MODE_OPTIONS, modeLabel } from "./modes.mjs";
 import { APP_VERSION } from "./version";
 
 type Item = Record<string, any>;
@@ -56,18 +57,16 @@ const titles: Record<string, string> = {
   mode: "执行模式",
   new: "新对话",
   attachments: "消息附件",
-  branches: "Git 分支",
+  branches: "分支与 Worktree",
   command: "命令结果",
   preferences: "个人偏好",
-  keys: "键盘快捷键",
   theme: "外观",
-  permission: "操作权限",
   sessions: "选择会话",
   lifecycle: "设备绑定与转移",
 };
 
 export function SettingsOverlay(props: Props) {
-  const [stack, setStack] = useState([props.initial]),
+  const [stack, setStack] = useState([props.initial === "permission" ? "mode" : props.initial === "keys" ? "settings" : props.initial]),
     panel = stack.at(-1)!;
   const [error, setError] = useState(""),
     [loading, setLoading] = useState(false);
@@ -252,13 +251,12 @@ export function SettingsOverlay(props: Props) {
                 />
                 <SettingsRow
                   icon="shield"
-                  title="权限与执行模式"
-                  detail={props.mode}
+                  title="执行模式"
+                  detail={modeLabel(props.mode)}
                   disabled={!props.connected || props.canManage === false}
                   onClick={() => go("mode")}
                 />
                 <SettingsRow icon="settings" title="外观" onClick={() => go("theme")} />
-                <SettingsRow icon="terminal" title="键盘快捷键" onClick={() => go("keys")} />
               </div>
             </>
           )}
@@ -470,10 +468,10 @@ export function SettingsOverlay(props: Props) {
       {panel === "mode" && (
         <>
           <p className="sheet-note">
-            影响接下来的消息。Yolo 模式会跳过常规操作确认，请谨慎使用。
+            模式同时决定执行方式和审批。Auto 使用当前对话模型审查敏感操作，审查失败或不确定时请你确认。Yolo 跳过常规确认；所有模式都遵守设备与组织的硬性安全边界。
           </p>
           <div className="settings-group">
-            {(props.commandResult.clientAction === "mode" && props.commandResult.items?.length ? props.commandResult.items : ["agent", "plan", "agent-auto", "ultra", "yolo"].map(id => ({ id, label: id }))).map((item: Item) => (
+            {MODE_OPTIONS.map((item: Item) => (
               <SettingsRow
                 key={item.id}
                 icon={props.mode === item.id ? "check" : "shield"}
@@ -645,14 +643,12 @@ export function SettingsOverlay(props: Props) {
         </>
       )}
       {panel === "attachments" && props.canManage !== false && <AttachmentPanel items={props.attachments} loading={props.uploading} onUpload={props.onUpload} onRemove={props.onRemoveAttachment} />}
-      {panel === "branches" && props.canManage !== false && <BranchPanel rpc={props.rpc} sessionId={props.sessionId} cwd={props.cwd} ensureSession={props.ensureSession} onChanged={props.onBranch} />}
+      {panel === "branches" && props.canManage !== false && <BranchPanel rpc={props.rpc} sessionId={props.sessionId} cwd={props.cwd} ensureSession={props.ensureSession} onChanged={props.onBranch} onOpened={props.onSession} />}
       {panel === "lifecycle" && props.canManage !== false && <DeviceLifecyclePanel deviceId={props.deviceId} gateway={props.gateway} name={props.deviceName} />}
       {panel === "command" && <CommandOutput result={props.commandResult} />}
-      {panel === "keys" && <KeysPanel />}
       {panel === "theme" && <ThemePanel theme={props.theme} onTheme={props.onTheme} />}
       {panel === "preferences" && props.canManage !== false && <PreferencesPanel rpc={props.rpc} onSaved={() => { props.onNotice("个人偏好已保存"); stack.length > 1 ? back() : props.onClose(); }} />}
       {panel === "sessions" && <div className="settings-group">{(props.commandResult.items || props.sessions).map((item: Item) => <SettingsRow key={item.id} icon={props.sessionId === item.id ? "check" : "message"} title={item.label || item.title || item.id} detail={item.desc || item.cwd} onClick={() => props.onSession(item.id)} />)}</div>}
-      {panel === "permission" && props.canManage !== false && <><p className="sheet-note">操作权限影响工具是否需要确认。Yolo 会跳过常规确认，请仅在信任的工作区使用。</p><div className="settings-group">{(props.commandResult.items || [{ id: "readonly", label: "只读" }, { id: "manual", label: "每次确认" }, { id: "accept-edits", label: "允许编辑" }, { id: "yolo", label: "跳过常规确认" }, { id: "session-clear", label: "清除会话授权" }]).map((item: Item) => <SettingsRow key={item.id} icon={props.commandResult.current === item.id ? "check" : "shield"} title={item.label || item.id} disabled={loading} onClick={() => void run(async () => { await props.onCommand(`/permission ${item.id}`); props.onNotice("权限已更新"); })} />)}</div></>}
       {loading && (
         <p className="sheet-note" role="status">
           正在加载…

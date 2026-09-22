@@ -170,7 +170,7 @@ export async function createGateway({ origin, issuer, clientId, clientSecret, or
     const sharedIndex = ['status', 'sessions.list', 'commands.list'].includes(request.method) && Object.keys(grants).length > 0
     if (!device || (!owner && !access && !sharedIndex)) return reply.code(403).send({ error: { code: 'forbidden', message: 'Device access denied' } })
     if (!owner && !sharedIndex) {
-      const allowed = access === 'control' ? ['sessions.get', 'events.list', 'control.acquire', 'control.release', 'turns.start', 'turns.cancel', 'approvals.resolve'] : ['sessions.get', 'events.list']
+      const allowed = access === 'control' ? ['sessions.get', 'media.preview', 'events.list', 'control.acquire', 'control.release', 'turns.start', 'turns.cancel', 'approvals.resolve'] : ['sessions.get', 'media.preview', 'events.list']
       if (!allowed.includes(request.method)) return reply.code(403).send({ error: { code: 'forbidden', message: 'Operation exceeds shared access' } })
       if (request.method === 'approvals.resolve' && typeof request.params?.answer === 'string' && !['allow_once', 'deny'].includes(request.params.answer)) return reply.code(403).send({ error: { code: 'forbidden', message: 'Shared control cannot create persistent permission grants' } })
       if (request.method === 'turns.start') request.params = { sessionId: request.params.sessionId, prompt: request.params.prompt }

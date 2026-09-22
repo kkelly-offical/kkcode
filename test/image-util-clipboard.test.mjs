@@ -11,7 +11,7 @@ import {
 // 剪贴板里拿到的字节必须真的是图片。fixture 也得是真的 —— 用 "mock png" 这种
 // 文本当图片，测出来的就只是「代码没看字节」这个 bug 本身。
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
-const pngBytes = (body) => Buffer.concat([Buffer.from(PNG_MAGIC), Buffer.from(body)])
+const pngBytes = () => Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==', 'base64')
 
 const IMAGE_OPTIONS = {
   timeout: 5000,

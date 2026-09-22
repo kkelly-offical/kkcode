@@ -71,7 +71,7 @@ test("createInitialReplState maps legacy default_mode onto a 0.4.0 mode id", () 
   assert.equal(make({ default_mode: "longagent" }).modeId, "ultra")
   assert.equal(make({ default_mode: "longagent" }).mode, "longagent")
   // new mode ids pass through
-  assert.equal(make({ default_mode: "agent-auto" }).modeId, "agent-auto")
+  assert.equal(make({ default_mode: "agent-auto" }).modeId, "auto")
   assert.equal(make({ default_mode: "yolo" }).mode, "assistant")
 })
 

@@ -118,8 +118,29 @@ export function ThinkingRow({ row }: { row: Item }) {
     </details>
   );
 }
-export function TranscriptRow({ row }: { row: Item }) {
+function MediaPreview({ row, loadPreview }: { row: Item; loadPreview?: (reference: Item) => Promise<Item> }) {
+  const [image, setImage] = useState(""), [loading, setLoading] = useState(false), [error, setError] = useState("");
+  async function open() {
+    if (!loadPreview || loading || image) return;
+    setLoading(true); setError("");
+    try {
+      const value = await loadPreview(row.reference);
+      if (!/^image\/(png|jpeg|webp|gif)$/.test(value.mediaType) || typeof value.data !== "string") throw new Error("设备返回了不支持的预览格式");
+      setImage(`data:${value.mediaType};base64,${value.data}`);
+    } catch (cause: any) { setError(cause.message); }
+    finally { setLoading(false); }
+  }
+  return <details className="media-preview tool-row" onToggle={event => { if (event.currentTarget.open) void open(); }}>
+    <summary><Icon name="attachment" size={17} /><span>图片预览{row.mediaType === "image/svg+xml" ? " · SVG 安全渲染" : ""}</span><Icon name="chevron" size={14} /></summary>
+    {loading && <p className="sheet-note">正在从当前会话读取图片…</p>}
+    {image && <a href={image} download="kkcode-preview"><img src={image} alt="会话图片预览" loading="lazy" /></a>}
+    {error && <p className="sheet-error">{error} <button onClick={() => void open()}>重试</button></p>}
+  </details>;
+}
+export function TranscriptRow({ row, loadPreview, onRewind }: { row: Item; loadPreview?: (reference: Item) => Promise<Item>; onRewind?: (row: Item) => void }) {
   if (row.type === "tool") return <ToolRow payload={row.payload} />;
+  if (row.type === "media") return <MediaPreview row={row} loadPreview={loadPreview} />;
+  if (row.type === "review") return <details className="tool-row review-row"><summary>{!row.done && <i className="working" />}<Icon name="shield" size={17} /><span>Auto 审查 · {row.tool} · {row.done ? ({ allow: "允许", deny: "拒绝", ask: "交给你确认" } as Item)[row.decision] || "已完成" : "进行中"}</span></summary><div className="tool-body"><p>{row.text}</p>{row.model && <small>对话模型：{row.model}</small>}</div></details>;
   if (row.type === "thinking") return <ThinkingRow row={row} />;
   if (row.type === "compacted")
     return (
@@ -130,6 +151,7 @@ export function TranscriptRow({ row }: { row: Item }) {
   return (
     <article className={`message ${row.type}`}>
       <Markdown text={row.text} />
+      {row.type === "user" && row.messageId && onRewind && <button className="message-rewind" aria-label="从这条提问回退" onClick={() => onRewind(row)}><Icon name="back" size={14} />回退</button>}
     </article>
   );
 }

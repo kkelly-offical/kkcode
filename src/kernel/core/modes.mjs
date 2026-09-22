@@ -31,12 +31,12 @@ export const MODE_CYCLE = Object.freeze([
     hint: "编辑前需确认"
   }),
   Object.freeze({
-    id: "agent-auto",
+    id: "auto",
     lane: "assistant",
     approval: "accept-edits",
     icon: "▶",
-    label: "Agent · Auto",
-    hint: "自动接受编辑"
+    label: "Auto",
+    hint: "自动编辑，敏感操作由当前模型审查"
   }),
   Object.freeze({
     id: "ultra",
@@ -44,15 +44,15 @@ export const MODE_CYCLE = Object.freeze([
     approval: "accept-edits",
     icon: "⚡",
     label: "Ultra",
-    hint: "多阶段自主编排"
+    hint: "多阶段持续执行，验证目标后完成"
   }),
   Object.freeze({
     id: "yolo",
     lane: "assistant",
     approval: "yolo",
     icon: "⚠",
-    label: "YOLO",
-    hint: "跳过全部审批"
+    label: "Yolo",
+    hint: "授权范围内完全自主，跳过常规确认"
   })
 ])
 
@@ -75,6 +75,7 @@ const LEGACY_MODE_ALIASES = Object.freeze({
   code: "agent",
   coding: "agent",
   ask: "agent",
+  "agent-auto": "auto",
   plan: "plan",
   longagent: "ultra",
   ultra: "ultra"
@@ -116,7 +117,8 @@ const AGENT_PERMISSION_ALIASES = Object.freeze({
 export const AGENT_PERMISSION_INHERIT = "full"
 
 export function getMode(modeId) {
-  return MODE_BY_ID.get(String(modeId || "").toLowerCase()) || null
+  const key = String(modeId || '').toLowerCase()
+  return MODE_BY_ID.get(key === 'agent-auto' ? 'auto' : key) || null
 }
 
 export function isModeId(modeId) {
@@ -132,12 +134,12 @@ export function approvalOf(modeId) {
 }
 
 export function nextModeId(modeId) {
-  const index = MODE_IDS.indexOf(String(modeId || "").toLowerCase())
+  const index = MODE_IDS.indexOf(getMode(modeId)?.id || String(modeId || '').toLowerCase())
   return MODE_IDS[index >= 0 ? (index + 1) % MODE_IDS.length : 0]
 }
 
 export function prevModeId(modeId) {
-  const index = MODE_IDS.indexOf(String(modeId || "").toLowerCase())
+  const index = MODE_IDS.indexOf(getMode(modeId)?.id || String(modeId || '').toLowerCase())
   if (index < 0) return MODE_IDS[0]
   return MODE_IDS[(index - 1 + MODE_IDS.length) % MODE_IDS.length]
 }
@@ -194,4 +196,17 @@ export function modeIdFromLaneAndApproval(lane, approval) {
   if (exact) return exact.id
   const byLane = MODE_CYCLE.find((mode) => mode.lane === laneKey)
   return byLane?.id || DEFAULT_MODE_ID
+}
+
+/** Collapse old independently saved selectors without silently widening them.
+ * An explicit new mode selection omits approval; old pairs retain the actual
+ * execution restriction even when their old label contradicted it. */
+export function resolveSessionMode({ modeId = null, mode = null, approval = null } = {}) {
+  const id = modeIdFromLegacy(modeId) || modeIdFromLegacy(mode) || DEFAULT_MODE_ID
+  const level = approvalFromLegacy(approval)
+  if (!level || level === approvalOf(id)) return id
+  if (level === 'readonly') return 'plan'
+  if (level === 'manual') return 'agent'
+  if (level === 'yolo') return 'yolo'
+  return id === 'ultra' ? 'ultra' : 'auto'
 }

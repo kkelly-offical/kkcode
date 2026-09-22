@@ -28,6 +28,8 @@ import { buildMutationObservability } from "../../observability/edit-diagnostics
 import { resolveWorkspacePath } from "./workspace-fs.mjs"
 import { buildRequestHeaders } from "../../http/identity.mjs"
 import { IMAGE_EXTENSIONS, IMAGE_MIME_TYPES } from "./image-util.mjs"
+import { normalizeImageBlock, IMAGE_LIMITS } from '../media/images.mjs'
+import { createBrowserTool } from '../browser/controller.mjs'
 import {
   readSandboxConfig,
   inspectSandboxStatus,
@@ -1101,7 +1103,7 @@ function builtinTools(config) {
 
   const readTool = {
     name: "read",
-    description: "Read file content with line numbers. Supports text files, images (PNG/JPG/GIF/SVG/WebP/BMP/ICO as base64), PDF (text extraction), and Jupyter notebooks (.ipynb cell parsing). Use `offset` and `limit` to read specific line ranges. ALWAYS use this instead of `bash` with cat/head/tail. Existing-file write/edit/patch/notebookedit flows require a recent read first.",
+    description: 'Read source text with line numbers, validated raster images, PDF text or notebook cells. SVG is source text by default; use view="image" for a safe rendered PNG preview. Use offset/limit for text ranges. Existing-file mutations require a recent source read; viewing pixels does not authorize overwriting source.',
     inputSchema: {
       type: "object",
       properties: {
@@ -1109,6 +1111,7 @@ function builtinTools(config) {
         offset: schema("number", "start line number (1-based, optional)"),
         limit: schema("number", "max lines to return (optional)"),
         encoding: schema("string", "file encoding (default: utf8)"),
+        view: { type: 'string', enum: ['auto', 'text', 'image'], description: 'auto reads SVG as source; image explicitly renders a static SVG or decodes a raster preview; text reads source with line numbers' },
         pages: schema("string", "page range for PDF files, e.g. '1-5' (optional)")
       },
       required: ["path"]
@@ -1117,16 +1120,15 @@ function builtinTools(config) {
       const target = await resolveWorkspacePath(ctx.cwd, args.path, { mustExist: true })
       const ext = path.extname(target).toLowerCase()
 
-      // Image files: return base64 data URI
-      if (IMAGE_EXTENSIONS.has(ext)) {
-        const buffer = await readFile(target)
-        const base64 = buffer.toString("base64")
-        const mime = IMAGE_MIME_TYPES[ext] || "application/octet-stream"
-        return {
-          type: "image",
-          output: `Image file: ${args.path} (${buffer.length} bytes, ${mime})`,
-          data: `data:${mime};base64,${base64}`
-        }
+      // SVG remains editable source. A pixel preview is an explicit operation.
+      if (args.view === 'image' || (IMAGE_EXTENSIONS.has(ext) && ext !== '.svg' && args.view !== 'text')) {
+        const info = await stat(target)
+        if (!info.isFile() || info.size > IMAGE_LIMITS.bytes) return { ok: false, code: 'invalid_image', output: 'Image preview requires a regular file no larger than 20 MiB' }
+        try {
+          const buffer = await readFile(target)
+          const image = await normalizeImageBlock({ data: buffer.toString('base64'), mediaType: IMAGE_MIME_TYPES[ext] }, { allowSvg: args.view === 'image' })
+          return { type: 'image', output: `Image file: ${args.path} (${buffer.length} bytes, ${image.mediaType}, ${image.width}×${image.height})${image.originalMediaType ? ' — rendered from static SVG; source remains unchanged' : ''}`, data: `data:${image.mediaType};base64,${image.data}` }
+        } catch (error) { return { ok: false, code: 'invalid_image', output: error.message } }
       }
 
       // PDF files: extract text
@@ -1228,7 +1230,7 @@ function builtinTools(config) {
 
   const writeTool = {
     name: "write",
-    description: "Create or overwrite a file atomically. Auto-creates parent directories. Supports three modes: 'overwrite' (default, full replacement), 'append' (add to end of file), 'insert' (insert at a specific line). Existing-file writes require a recent full read first. For large files (200+ lines), use mode='append' to build incrementally across multiple calls to avoid output truncation. Use `edit` instead when only a small part of an existing file needs to change.",
+    description: "Create or overwrite a file atomically, creating parents as needed. Default to one complete write; append chunks only when the content cannot fit one call. Existing-file writes require a recent full source read. Prefer edit for small changes. Modes: overwrite, append, insert.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1492,7 +1494,8 @@ function builtinTools(config) {
       // 两套互不通话的权限词汇，不传的话 YOLO 档在这里等同于最严格档，
       // 而模式说明写的是「每个审批提示都跳过」。
       const policyCheck = checkBashAllowed(command, ctx.config, {
-        approvalLevel: normalizePermissionLevel(ctx.config?.permission || {})
+        approvalLevel: normalizePermissionLevel(ctx.config?.permission || {}),
+        autoReviewed: ctx.autoReviewed === true
       })
       if (!policyCheck.allowed) {
         return {
@@ -2471,6 +2474,7 @@ function toolAllowedByMode(toolName, mode) {
  *   的同步语义 —— 那是工具注册表对自有调用方的既有契约，不默认改写。
  */
 export function createToolRegistry({ mcpRegistry = McpRegistry, deferMcp = false } = {}) {
+  const browser = createBrowserTool()
   const state = {
     initialized: false,
     tools: [],
@@ -2514,6 +2518,7 @@ export function createToolRegistry({ mcpRegistry = McpRegistry, deferMcp = false
 
       if (config.tool?.sources?.builtin !== false) {
         tools.push(...builtinTools(config))
+        if (config.tool?.browser?.enabled !== false) tools.push(browser)
         tools.push({
           name: 'tool_search',
           description: 'Find MCP tools by task, capability or exact name. Returns schemas and enables matching tools for this turn; it never runs them or grants permission.',
@@ -2565,6 +2570,7 @@ export function createToolRegistry({ mcpRegistry = McpRegistry, deferMcp = false
     isReady() {
       return state.initialized
     },
+    async shutdown() { await browser.shutdown() },
 
     /** @param {{ mode?: string, cwd?: string, config?: Record<string, any>, allowProjectSources?: boolean }} [options] */
     async list({

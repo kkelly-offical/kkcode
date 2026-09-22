@@ -8,13 +8,13 @@ import {
   modelLabel,
   capabilityLabel,
 } from "./models.mjs";
-import { MODE_OPTIONS, PERMISSION_OPTIONS, permissionLabel } from "./modes.mjs";
+import { MODE_OPTIONS, modeLabel } from "./modes.mjs";
 import type { Attachment } from "./Attachments";
 import { APP_VERSION } from "./version";
 
 type Item = Record<string, any>;
 type Catalog = { loading?: boolean; error?: string; models: Item[] };
-type Picker = "" | "mode" | "permission" | "model";
+type Picker = "" | "mode" | "model";
 
 function useMenuKeys(
   open: boolean,
@@ -60,7 +60,6 @@ export function Composer({
   onPrompt,
   busy,
   mode,
-  permission = "",
   modes,
   model = "",
   provider = "",
@@ -70,7 +69,6 @@ export function Composer({
   onStop,
   onPanel,
   onMode,
-  onPermission,
   onModel,
   onDiscoverModels,
   summary,
@@ -84,7 +82,6 @@ export function Composer({
   onPrompt: (text: string) => void;
   busy: boolean;
   mode: string;
-  permission?: string;
   modes?: Item[];
   model?: string;
   provider?: string;
@@ -94,7 +91,6 @@ export function Composer({
   onStop: () => void;
   onPanel: (panel: string) => void;
   onMode?: (mode: string) => void;
-  onPermission?: (permission: string) => void;
   onModel?: (selection: { provider: string; model: string }) => void;
   onDiscoverModels?: (provider: string) => Promise<Item>;
   summary: { files: number; added: number; removed: number };
@@ -115,7 +111,6 @@ export function Composer({
     actionButton = useRef<HTMLButtonElement>(null),
     actions = useRef<HTMLDivElement>(null),
     modeButton = useRef<HTMLButtonElement>(null),
-    permissionButton = useRef<HTMLButtonElement>(null),
     modelButton = useRef<HTMLButtonElement>(null),
     pickerBody = useRef<HTMLDivElement>(null);
   const needle = prompt.slice(1).trim().toLowerCase();
@@ -129,9 +124,7 @@ export function Composer({
   const pickerAnchor =
     picker === "mode"
       ? modeButton
-      : picker === "permission"
-        ? permissionButton
-        : modelButton;
+      : modelButton;
   useEffect(() => {
     setHighlight(0);
     setDismissed(false);
@@ -403,13 +396,13 @@ export function Composer({
               type="button"
               className="mode-chip"
               disabled={!canManage || readOnly}
-              aria-label={`执行模式，当前 ${mode}`}
+              aria-label={`执行模式，当前 ${modeLabel(mode)}`}
               aria-expanded={picker === "mode"}
               aria-haspopup="menu"
               onClick={() => togglePicker("mode")}
             >
               <Icon name="shield" size={14} />
-              <span>{mode}</span>
+              <span>{modeLabel(mode)}</span>
               <Icon name="down" size={12} />
             </button>
             {picker === "mode" &&
@@ -433,35 +426,6 @@ export function Composer({
                     <Icon name="settings" size={16} />
                     模式说明…
                   </button>
-                </>
-              ))}
-          </div>
-          <div className="composer-picker">
-            <button
-              ref={permissionButton}
-              type="button"
-              className="mode-chip"
-              disabled={!canManage || readOnly}
-              aria-label={`操作权限，当前 ${permissionLabel(permission)}`}
-              aria-expanded={picker === "permission"}
-              aria-haspopup="menu"
-              onClick={() => togglePicker("permission")}
-            >
-              <Icon name="lock" size={14} />
-              <span>{permissionLabel(permission)}</span>
-              <Icon name="down" size={12} />
-            </button>
-            {picker === "permission" &&
-              pickerShell("permission", "操作权限", (
-                <>
-                  {PERMISSION_OPTIONS.map((item) =>
-                    optionRow(item, (permission || "manual") === item.id, () => {
-                      setPicker("");
-                      permissionButton.current?.focus();
-                      if (onPermission && permission !== item.id)
-                        onPermission(item.id);
-                    }),
-                  )}
                 </>
               ))}
           </div>

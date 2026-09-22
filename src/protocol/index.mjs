@@ -23,11 +23,11 @@ export const DEVICE_EVENT_TYPES = Object.freeze(['device.online', 'device.offlin
 export const SESSION_RUNNING_TYPES = Object.freeze(['turn.start', 'turn.auto_continue'])
 export const SESSION_IDLE_TYPES = Object.freeze(['turn.finish', 'turn.result', 'turn.failed'])
 export const DEVICE_METHODS = Object.freeze([
-  'status', 'folders.list', 'files.read', 'sessions.list', 'sessions.get', 'sessions.create', 'sessions.configure',
+  'status', 'folders.list', 'files.read', 'media.preview', 'sessions.list', 'sessions.get', 'sessions.create', 'sessions.configure', 'sessions.update', 'sessions.rewind',
   'turns.start', 'turns.cancel', 'events.list', 'control.acquire', 'control.release',
   'approvals.resolve', 'commands.list', 'commands.run', 'settings.get', 'settings.update',
   'extensions.list', 'extensions.reload', 'models.discover', 'profile.get', 'profile.update',
-  'attachments.upload', 'attachments.list', 'attachments.remove', 'branches.list', 'branches.switch', 'branches.create'
+  'attachments.upload', 'attachments.list', 'attachments.remove', 'branches.list', 'branches.switch', 'branches.create', 'worktrees.list', 'worktrees.create', 'worktrees.open'
 ])
 export class ProtocolError extends Error {
   constructor(code, message, status = 400) { super(message); this.code = code; this.status = status }

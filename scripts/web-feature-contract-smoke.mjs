@@ -67,7 +67,7 @@ await page.route('**/api/v1/rpc', async route => {
 })
 try {
   await page.goto(address)
-  await page.getByRole('button', { name: 'UI contract fixture', exact: false }).click()
+  await page.locator('.remote-session').filter({ hasText: 'UI contract fixture' }).click()
   await expect(page.locator('.markdown img')).toHaveCount(0)
   await expect(page.getByRole('link', { name: 'Manual image link ↗' })).toBeVisible()
   const input = page.getByRole('textbox', { name: '消息' }), dialog = page.getByRole('dialog')
@@ -75,8 +75,8 @@ try {
   const tools = async name => { await page.getByRole('button', { name: '添加与工具', exact: true }).click(); await page.getByRole('menuitem', { name, exact: true }).click() }
   await page.getByRole('button', { name: '加载更早消息', exact: true }).click(); await expect(page.getByText('Earlier paginated history.', { exact: true })).toBeVisible(); await expect(page.getByText('Contract test conversation.', { exact: true })).toHaveCount(1)
   assert.deepEqual(calls.find(call => call.method === 'sessions.get' && call.params.before).params, { sessionId: session.id, before: 'hello', limit: 100 })
-  await command('/keys'); await expect(dialog.getByText('Shift + Enter', { exact: true })).toBeVisible(); await page.keyboard.press('Escape')
-  await expect(input).toBeFocused()
+  await command('/keys'); await expect(page.getByRole('status')).toContainText('终端快捷键只在 CLI 中提供'); await expect(dialog).toHaveCount(0)
+  await expect(input).toBeEditable()
   // A visible modal must already own focus and Escape handling, even before
   // React's deferred passive effects get a turn on a loaded/slow browser.
   await page.evaluate(() => {
@@ -89,7 +89,7 @@ try {
     })
     observer.observe(document.body, { childList: true, subtree: true })
   })
-  await command('/keys')
+  await command('/theme')
   await expect(page.locator('html')).toHaveAttribute('data-sheet-focus-ready', 'true')
   await expect(dialog).toHaveCount(0)
   await expect(input).toBeFocused()
@@ -103,7 +103,7 @@ try {
   await page.keyboard.press('Escape')
   await command('/history'); await dialog.getByRole('button', { name: /UI contract fixture/ }).click(); await expect(dialog).toHaveCount(0)
   await command('/rewind'); await expect(input).toHaveValue('Restored draft'); await input.fill('')
-  await command('/permission'); await dialog.getByRole('button', { name: '每次确认', exact: true }).click(); await expect(dialog.getByText('Permission: manual', { exact: true })).toBeVisible(); await page.keyboard.press('Escape')
+  await command('/permission'); await dialog.getByRole('button', { name: /^Auto / }).click(); await expect(dialog).toHaveCount(0); assert.equal(calls.filter(call => call.method === 'sessions.configure').at(-1).params.mode, 'auto')
   await command('/paste context for the file'); await expect(input).toHaveValue('context for the file')
   await dialog.getByLabel('选择附件').setInputFiles({ name: 'source.ts', mimeType: 'video/mp2t', buffer: Buffer.from('export const uploaded = true') })
   await expect(dialog.getByText('source.ts', { exact: true })).toBeVisible()
@@ -118,12 +118,12 @@ try {
   await expect(page.locator('.attachment-summary')).toHaveCount(0)
   await tools('Git 分支'); await dialog.getByRole('button', { name: 'feature', exact: true }).click()
   assert.equal(calls.some(call => call.method === 'branches.switch'), false)
-  await dialog.getByRole('button', { name: '确认切换', exact: true }).click(); await expect(dialog.getByText(/当前：feature/)).toBeVisible()
+  await dialog.getByRole('button', { name: '确认操作', exact: true }).click(); await expect(dialog.getByText(/当前：feature/)).toBeVisible()
   assert.deepEqual(calls.find(call => call.method === 'branches.switch').params, { sessionId: session.id, name: 'feature', confirmed: true, stateToken: 'state-token' })
   await expect(dialog.getByRole('button', { name: /occupied/ })).toBeDisabled()
-  stale = true; await dialog.getByLabel('新分支名称').fill('feature/new'); await dialog.getByRole('button', { name: '创建并切换分支' }).click(); await dialog.getByRole('button', { name: '确认创建' }).click(); await expect(dialog.getByRole('alert')).toContainText('Branch state changed')
-  await dialog.getByRole('button', { name: '刷新分支状态' }).click(); await dialog.getByRole('button', { name: '创建并切换分支' }).click(); await dialog.getByRole('button', { name: '确认创建' }).click(); await expect(dialog.getByText(/当前：feature\/new/)).toBeVisible()
-  clean = false; await dialog.getByRole('button', { name: '刷新分支状态' }).click(); await expect(dialog.getByRole('button', { name: 'main', exact: true })).toBeDisabled()
+  stale = true; await dialog.getByLabel('新分支名称').fill('feature/new'); await dialog.getByRole('button', { name: '创建并切换分支' }).click(); await dialog.getByRole('button', { name: '确认操作' }).click(); await expect(dialog.getByRole('alert')).toContainText('Branch state changed')
+  await dialog.getByRole('button', { name: '刷新 Git 状态' }).click(); await dialog.getByRole('button', { name: '创建并切换分支' }).click(); await dialog.getByRole('button', { name: '确认操作' }).click(); await expect(dialog.getByText(/当前：feature\/new/)).toBeVisible()
+  clean = false; await dialog.getByRole('button', { name: '刷新 Git 状态' }).click(); await expect(dialog.getByRole('button', { name: 'main', exact: true })).toBeDisabled()
   await page.setViewportSize({ width: 320, height: 568 }); assert.equal(await page.evaluate(() => document.body.scrollWidth <= window.innerWidth), true)
   await mkdir('test-results', { recursive: true }); await page.screenshot({ path: 'test-results/web-branch-contract.png' }); await page.keyboard.press('Escape')
   approvals = [{ id: 'child-approval', sessionId: session.id, sourceSessionId: 'child-session', sourceLabel: 'Review worker', kind: 'question', request: { questions: [{ id: 'choice', text: 'Continue child work?', options: [{ label: 'Continue', value: 'continue' }] }] } }]
@@ -135,7 +135,7 @@ try {
   liveTruncated = true
   gap = true; await expect.poll(() => snapshots).toBeGreaterThan(liveBefore); await expect(page.getByText('Live prefix', { exact: true })).toBeVisible()
   await expect(page.getByRole('status')).toContainText('受容量限制的部分预览')
-  await page.reload(); await page.getByRole('button', { name: 'UI contract fixture', exact: false }).click(); await expect(page.getByText('Live prefix', { exact: true })).toBeVisible()
+  await page.reload(); await page.locator('.remote-session').filter({ hasText: 'UI contract fixture' }).click(); await expect(page.getByText('Live prefix', { exact: true })).toBeVisible()
   events.push({ id: 'live-tail', seq: ++seq, type: 'stream.text.delta', turnId: 'live-turn', payload: { text: 'plus future tail.', step: 1 } })
   await expect(page.getByText('Live prefix plus future tail.', { exact: true })).toHaveCount(1)
   history.push({ id: 'live-canonical', role: 'assistant', turnId: 'live-turn', step: 1, content: 'Live prefix plus future tail.', createdAt: Date.now() })

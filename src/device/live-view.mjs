@@ -31,6 +31,7 @@ export class DeviceLiveView {
     })
   }
   observe(event) {
+    if (event.type === 'session.rewound') { this.sessions.delete(event.sessionId); this.evicted.delete(event.sessionId); return }
     if (!presentationTypes.has(event.type)) return
     const id = event.sessionId, payload = event.payload || {}
     let state = this.sessions.get(id), turnId = event.type === 'turn.result' ? payload.turnId || event.turnId : event.turnId

@@ -1,115 +1,75 @@
-import test from "node:test"
-import assert from "node:assert/strict"
-import { refineSessionTitle, normalizeTitle } from "../src/kernel/session/session-title.mjs"
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { refineSessionTitle, normalizeTitle } from '../src/kernel/session/session-title.mjs'
 
-function makeConfigState(fast = "gpt-tiny") {
+const configState = { config: { provider: { default: 'local', local: { default_model: 'conversation-model' } }, models: { fast: 'must-not-use-fast' } } }
+function fixture(initial = {}) {
+  let value = { title: 'First question', titleSource: 'auto', titleRevision: 0, ...initial }
+  const calls = [], events = []
   return {
-    config: {
-      provider: { default: "openai", openai: { default_model: "gpt-main" } },
-      models: fast ? { fast } : {}
+    get value() { return value },
+    rename(title) { value = { ...value, title, titleSource: 'manual', titleRevision: value.titleRevision + 1 } },
+    calls, events,
+    deps: {
+      getSession: async () => ({ session: structuredClone(value), messages: [] }),
+      updateSessionIf: async (_id, expected, patch) => {
+        if (Object.entries(expected).some(([key, entry]) => value[key] !== entry)) return null
+        value = { ...value, ...patch }; return structuredClone(value)
+      },
+      requestProvider: async input => { calls.push(input); return { text: '登录页设计' } },
+      emit: async event => events.push(event)
     }
   }
 }
+const run = (f, options = {}) => refineSessionTitle({ configState, sessionId: 'session', prompt: 'First question', ...options, deps: f.deps })
 
-test("titles are single-line, unquoted and length-capped", () => {
-  assert.equal(normalizeTitle("Fix the login redirect"), "Fix the login redirect")
-  assert.equal(normalizeTitle('"Quoted title"'), "Quoted title")
-  assert.equal(normalizeTitle("「中文标题」"), "中文标题")
-  assert.equal(normalizeTitle("first line\nsecond line"), "first line")
-  assert.equal(normalizeTitle("  \n  spaced  out  \n"), "spaced out")
-  assert.equal(normalizeTitle(""), "")
-  assert.equal(normalizeTitle("x".repeat(80)).length, 50)
+test('titles are single-line, unquoted, control-safe and capped', () => {
+  assert.equal(normalizeTitle('「中文标题」'), '中文标题')
+  assert.equal(normalizeTitle('Title: Login page'), 'Login page')
+  assert.equal(normalizeTitle('**Login page**'), 'Login page')
+  assert.equal(normalizeTitle('first line\nsecond'), 'first line')
+  assert.equal(normalizeTitle('x'.repeat(80)).length, 50)
+  assert.ok(!normalizeTitle('safe\u001b[31mred\u001b[0m').includes('\u001b'))
 })
-
-test("terminal control sequences never reach the session title", () => {
-  const title = normalizeTitle("safe[31mred[0m")
-  assert.ok(!title.includes(""), `escaped sequence leaked: ${JSON.stringify(title)}`)
+test('title uses the first conversation provider/model without requiring or using a fast model', async () => {
+  const f = fixture()
+  assert.equal(await run(f, { model: 'selected-at-first-question', baseUrl: 'https://fixture.invalid/v1', apiKeyEnv: 'FIXTURE_PROVIDER_KEY' }), '登录页设计')
+  assert.equal(f.calls[0].providerType, 'local')
+  assert.equal(f.calls[0].model, 'selected-at-first-question')
+  assert.equal(f.calls[0].baseUrl, 'https://fixture.invalid/v1')
+  assert.equal(f.calls[0].apiKeyEnv, 'FIXTURE_PROVIDER_KEY')
+  assert.deepEqual(f.calls[0].tools, [])
+  assert.equal(f.calls[0].maxTokens, 512)
+  assert.equal(f.value.titleSource, 'generated')
+  assert.equal(f.events[0].type, 'session.title.updated')
+  assert.equal(await run(f), null); assert.equal(f.calls.length, 1)
 })
-
-test("nothing happens without a fast model configured", async () => {
-  let called = false
-  const out = await refineSessionTitle({
-    configState: makeConfigState(null),
-    sessionId: "s1",
-    prompt: "add a login page",
-    deps: {
-      requestFast: async () => { called = true; return "Login page" },
-      getSession: async () => ({ title: "add a login page" }),
-      updateSession: async () => {}
-    }
-  })
-  assert.equal(out, null)
-  assert.equal(called, false)
+test('a manual title prevents generation before any request', async () => {
+  const f = fixture({ title: 'My own title', titleSource: 'manual' })
+  assert.equal(await run(f), null); assert.equal(f.calls.length, 0)
 })
-
-test("a generated title replaces the truncated auto title", async () => {
-  const writes = []
-  const out = await refineSessionTitle({
-    configState: makeConfigState(),
-    sessionId: "s1",
-    prompt: "add a login page with oauth",
-    autoTitle: "add a login page with oauth",
-    deps: {
-      systemPrompt: "generate a title",
-      requestFast: async () => "OAuth login page",
-      getSession: async () => ({ title: "add a login page with oauth" }),
-      updateSession: async (id, patch) => writes.push([id, patch])
-    }
-  })
-
-  assert.equal(out, "OAuth login page")
-  assert.deepEqual(writes, [["s1", { title: "OAuth login page" }]])
+test('manual rename wins when it races an already running model request', async () => {
+  const f = fixture()
+  f.deps.requestProvider = async () => { f.rename('用户命名'); return { text: 'Late generated title' } }
+  assert.equal(await run(f), null); assert.equal(f.value.title, '用户命名')
+  assert.equal(f.events.length, 0)
 })
-
-test("a user-edited title is never overwritten", async () => {
-  const writes = []
-  const out = await refineSessionTitle({
-    configState: makeConfigState(),
-    sessionId: "s1",
-    prompt: "add a login page",
-    autoTitle: "add a login page",
-    deps: {
-      systemPrompt: "generate a title",
-      requestFast: async () => "Something else",
-      getSession: async () => ({ title: "My own title" }),
-      updateSession: async (id, patch) => writes.push([id, patch])
-    }
-  })
-
-  assert.equal(out, null)
-  assert.deepEqual(writes, [])
+test('concurrent first-turn completion only issues one title request', async () => {
+  const f = fixture()
+  await Promise.all([run(f), run(f)])
+  assert.equal(f.calls.length, 1)
 })
-
-test("failures stay silent and write nothing", async () => {
-  const writes = []
-  const out = await refineSessionTitle({
-    configState: makeConfigState(),
-    sessionId: "s1",
-    prompt: "hello",
-    deps: {
-      systemPrompt: "generate a title",
-      requestFast: async () => { throw new Error("provider down") },
-      getSession: async () => ({ title: "hello" }),
-      updateSession: async (id, patch) => writes.push([id, patch])
-    }
-  })
-  assert.equal(out, null)
-  assert.deepEqual(writes, [])
+test('empty answers and request failures keep the original title and do not repeat paid requests', async () => {
+  for (const answer of ['', null]) {
+    const f = fixture()
+    f.deps.requestProvider = async () => { if (answer === null) throw new Error('offline'); return { text: answer } }
+    assert.equal(await run(f), null); assert.equal(f.value.title, 'First question')
+    assert.equal(await run(f), null)
+  }
 })
-
-test("an empty model reply leaves the existing title alone", async () => {
-  const writes = []
-  const out = await refineSessionTitle({
-    configState: makeConfigState(),
-    sessionId: "s1",
-    prompt: "hello",
-    deps: {
-      systemPrompt: "generate a title",
-      requestFast: async () => "   ",
-      getSession: async () => ({ title: "hello" }),
-      updateSession: async (id, patch) => writes.push([id, patch])
-    }
-  })
-  assert.equal(out, null)
-  assert.deepEqual(writes, [])
+test('title usage is reported even when a concurrent manual rename wins', async () => {
+  const f = fixture(), counted = []
+  f.deps.requestProvider = async () => { f.rename('Manual'); return { text: 'Generated', usage: { input: 5, output: 2 } } }
+  assert.equal(await run(f, { onUsage: async usage => counted.push(usage) }), null)
+  assert.deepEqual(counted, [{ input: 5, output: 2 }])
 })

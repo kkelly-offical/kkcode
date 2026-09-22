@@ -1,18 +1,5 @@
 import { makeToolResult, isToolSuccess } from "../core/types.mjs"
-/**
- * 从工具返回值里取出图片附件。
- *
- * read 返回的是 data URI（`data:image/png;base64,...`），而 provider 层要的是
- * 拆开的 { data, mediaType }。两种写法都接受：已拆开的直接用。
- */
-function parseImagePayload(raw) {
-  if (!raw || typeof raw !== "object") return null
-  if (raw.image?.data) return { data: raw.image.data, mediaType: raw.image.mediaType || "image/png" }
-  if (raw.type !== "image" || typeof raw.data !== "string") return null
-  const match = /^data:([^;,]+);base64,(.+)$/s.exec(raw.data)
-  if (match) return { data: match[2], mediaType: match[1] }
-  return { data: raw.data, mediaType: raw.mediaType || "image/png" }
-}
+import { toolResultContent } from './result-content.mjs'
 
 import { EventBus } from "../core/events.mjs"
 import { validateToolArguments } from './validate-args.mjs'
@@ -154,6 +141,10 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
           return cancelled
         }
 
+        // Bad arguments must not trigger snapshots or any tool-side work.
+        if (args?.__parse_error === true) throw Object.assign(new Error(`Invalid JSON arguments for ${tool.name}; resend one complete JSON object matching the tool schema. No tool action was executed.`), { code: 'invalid_tool_call_json' })
+        validateToolArguments(tool, args || {})
+
         // Auto snapshot before first file edit per turn
         if (FILE_EDIT_TOOLS.has(tool.name)) {
           const snapshotKey = [sessionId || "", context?.cwd || "", turnId || toolInvocationId].join("\0")
@@ -186,9 +177,9 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
           await snapshotPromise
         }
 
-        validateToolArguments(tool, args || {})
         const raw = await tool.execute(args || {}, context)
-        const output = rawOutput(raw)
+        const normalizedContent = await toolResultContent(raw, rawOutput(raw))
+        const output = normalizedContent.output
         const metadata = raw?.metadata && typeof raw.metadata === "object" ? raw.metadata : {}
         const status = rawStatus(raw, signal, output)
         const evidence = {
@@ -211,7 +202,8 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
           // read 的图片分支返回 { type:"image", data:"data:image/png;base64,..." }。
           // 这里拆成 provider 层要的 { data, mediaType } —— 0.7.0 之前这个值
           // 到 makeToolResult 就被白名单丢掉了。
-          image: parseImagePayload(raw)
+          image: normalizedContent.contentBlocks.find(block => block.type === 'image') || null,
+          contentBlocks: normalizedContent.contentBlocks
         })
         await EventBus.emit({
           type: isToolSuccess(result) ? EVENT_TYPES.TOOL_FINISH : EVENT_TYPES.TOOL_ERROR,

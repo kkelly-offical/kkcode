@@ -129,6 +129,7 @@ const TOOL_GROUPS = [
   ["Delegation & background", ["task", "task_group", "task_list", "task_parallel", "task_get", "task_output", "task_stop", "background_output", "background_cancel"]],
   ["Git & snapshots", ["git_status", "git_info", "git_snapshot", "git_restore", "git_list_snapshots", "git_apply_patch", "git_delete_snapshot", "git_cleanup"]],
   ["Notebook", ["notebookedit"]],
+  ["Browser", ["browser"]],
   ["Skills", ["skill"]],
   ["Tool discovery", ["tool_search"]]
 ]

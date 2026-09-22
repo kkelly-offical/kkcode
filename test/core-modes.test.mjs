@@ -21,7 +21,7 @@ import {
 } from "../src/kernel/core/modes.mjs"
 
 test("mode cycle exposes the five public modes in order", () => {
-  assert.deepEqual(MODE_IDS, ["plan", "agent", "agent-auto", "ultra", "yolo"])
+  assert.deepEqual(MODE_IDS, ["plan", "agent", "auto", "ultra", "yolo"])
   assert.equal(MODE_CYCLE.length, 5)
   for (const mode of MODE_CYCLE) {
     assert.ok(mode.label, `${mode.id} needs a label`)
@@ -52,7 +52,7 @@ test("approval levels map to the flattened cycle", () => {
 
 test("Shift+Tab cycles forward through all five modes and wraps", () => {
   assert.equal(nextModeId("plan"), "agent")
-  assert.equal(nextModeId("agent"), "agent-auto")
+  assert.equal(nextModeId("agent"), "auto")
   assert.equal(nextModeId("agent-auto"), "ultra")
   assert.equal(nextModeId("ultra"), "yolo")
   assert.equal(nextModeId("yolo"), "plan")
@@ -74,7 +74,8 @@ test("legacy mode names keep working and collapse onto the unified agent lane", 
   assert.equal(modeIdFromLegacy("plan"), "plan")
   assert.equal(modeIdFromLegacy("longagent"), "ultra")
   assert.equal(modeIdFromLegacy("ULTRA"), "ultra")
-  assert.equal(modeIdFromLegacy("agent-auto"), "agent-auto")
+  assert.equal(modeIdFromLegacy("agent-auto"), "auto")
+  assert.equal(modeIdFromLegacy("auto"), "auto")
   assert.equal(modeIdFromLegacy(""), null)
   assert.equal(modeIdFromLegacy("nonsense"), null)
 })
@@ -130,7 +131,7 @@ test("mode lookup helpers behave for known and unknown ids", () => {
 test("lane plus approval reconstructs a mode id for resumed sessions", () => {
   assert.equal(modeIdFromLaneAndApproval("longagent", "edit"), "ultra")
   assert.equal(modeIdFromLaneAndApproval("assistant", "auto"), "agent")
-  assert.equal(modeIdFromLaneAndApproval("assistant", "full-auto"), "agent-auto")
+  assert.equal(modeIdFromLaneAndApproval("assistant", "full-auto"), "auto")
   assert.equal(modeIdFromLaneAndApproval("assistant", "yolo"), "yolo")
   assert.equal(modeIdFromLaneAndApproval("plan", "anything"), "plan")
   // lane wins when the approval has no exact pairing

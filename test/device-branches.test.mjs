@@ -5,7 +5,8 @@ import { promisify } from 'node:util'
 import { mkdtemp, mkdir, readFile, rm, writeFile, access, realpath, symlink } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { changeDeviceBranch, listDeviceBranches, sameGitDirectory } from '../src/device/branches.mjs'
+import { changeDeviceBranch, listDeviceBranches, sameGitDirectory, createDeviceWorktree } from '../src/device/branches.mjs'
+import { DeviceService } from '../src/device/service.mjs'
 
 const execute = promisify(execFile)
 const git = async (cwd, ...args) => (await execute('git', args, { cwd, windowsHide: true })).stdout.trimEnd()
@@ -23,6 +24,55 @@ async function change(options, extra) {
   const snapshot = await listDeviceBranches(options.cwd, options.roots)
   return changeDeviceBranch({ ...options, confirmed: true, stateToken: snapshot.stateToken, ...extra })
 }
+
+test('detailed branch catalog includes cached remote refs and safe worktree creation preserves dirty source files', async t => {
+  const options = await repository(t)
+  await git(options.cwd, 'remote', 'add', 'origin', 'https://example.invalid/repo.git')
+  const head = await git(options.cwd, 'rev-parse', 'HEAD')
+  await git(options.cwd, 'update-ref', 'refs/remotes/origin/main', head)
+  await git(options.cwd, 'branch', '--set-upstream-to=origin/main', 'main')
+  await writeFile(path.join(options.cwd, 'data.txt'), 'uncommitted stays here\n')
+  const before = await listDeviceBranches(options.cwd, options.roots)
+  assert.equal(before.branches[0].upstream, 'origin/main')
+  assert.equal(before.branches[0].subject, 'initial'); assert.ok(before.branches[0].lastCommitAt)
+  assert.equal(before.remoteBranches[0].name, 'origin/main')
+  const result = await createDeviceWorktree({ ...options, name: 'feature/worktree', parent: options.root, folderName: '工作树 two', startPoint: 'origin/main', confirmed: true, stateToken: before.stateToken })
+  assert.equal(result.sourceFilesChanged, false); assert.equal(result.current, 'main')
+  assert.equal(await readFile(path.join(options.cwd, 'data.txt'), 'utf8'), 'uncommitted stays here\n')
+  assert.equal(await readFile(path.join(result.created.path, 'data.txt'), 'utf8'), 'preserved\n')
+  assert.equal(await git(result.created.path, 'branch', '--show-current'), 'feature/worktree')
+  assert.ok(result.worktrees.some(item => item.path === result.created.path && item.branch === 'feature/worktree'))
+})
+
+test('worktree creation refuses existing/private paths, stale confirmations and invalid start points without overwriting anything', async t => {
+  const options = await repository(t), before = await listDeviceBranches(options.cwd, options.roots)
+  const input = { ...options, name: 'feature/worktree', parent: options.root, folderName: 'new-tree', confirmed: true, stateToken: before.stateToken }
+  for (const folderName of ['..', '../escape', '.ssh', '.kkcode', 'NUL']) await assert.rejects(createDeviceWorktree({ ...input, folderName }))
+  await assert.rejects(createDeviceWorktree({ ...input, folderName: 'repo' }), { code: 'path_exists' })
+  await assert.rejects(createDeviceWorktree({ ...input, stateToken: 'stale' }), { code: 'branch_state_changed' })
+  await assert.rejects(createDeviceWorktree({ ...input, startPoint: 'HEAD~1' }), { code: 'invalid_start_point' })
+  await assert.rejects(createDeviceWorktree({ ...input, confirmed: false }), { code: 'confirmation_required' })
+  assert.equal((await listDeviceBranches(options.cwd, options.roots)).worktrees.length, 1)
+  assert.equal(await readFile(path.join(options.cwd, 'data.txt'), 'utf8'), 'preserved\n')
+})
+
+test('worktree checkout disables hooks and filters and opening one creates a separate session', async t => {
+  const options = await repository(t), marker = path.join(options.root, 'hook-ran')
+  await writeFile(path.join(options.cwd, '.git', 'hooks', 'post-checkout'), `#!/bin/sh\nprintf x > '${marker.replaceAll("'", "'\\''")}'\n`, { mode: 0o755 })
+  const before = await listDeviceBranches(options.cwd, options.roots)
+  const added = await createDeviceWorktree({ ...options, name: 'feature/separate', parent: options.root, folderName: 'separate', confirmed: true, stateToken: before.stateToken })
+  await assert.rejects(access(marker))
+  const previous = process.env.KKCODE_HOME; process.env.KKCODE_HOME = path.join(options.root, 'private')
+  const service = await new DeviceService(options).initialize(), principal = { id: 'local', client: 'test' }
+  try {
+    const original = await service.dispatch('sessions.create', { cwd: options.cwd, title: 'Keep this session' }, principal)
+    const snapshot = await service.dispatch('worktrees.list', { sessionId: original.id }, principal)
+    const opened = await service.dispatch('worktrees.open', { sessionId: original.id, path: added.created.path, stateToken: snapshot.stateToken, confirmed: true }, principal)
+    assert.notEqual(opened.sessionId, original.id); assert.equal(opened.cwd, added.created.path)
+    assert.equal((await service.dispatch('sessions.get', { sessionId: original.id }, principal)).cwd, await realpath(options.cwd))
+    await assert.rejects(service.dispatch('worktrees.open', { sessionId: original.id, path: options.root, stateToken: snapshot.stateToken, confirmed: true }, principal), { code: 'worktree_missing' })
+  } finally { await service.close(); if (previous === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = previous }
+})
 
 test('local branches list/create/switch safely, preserving commit content and explicit snapshots', async t => {
   const options = await repository(t), initial = await listDeviceBranches(options.cwd, options.roots)

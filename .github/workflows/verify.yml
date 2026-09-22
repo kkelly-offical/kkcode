@@ -51,3 +51,4 @@ jobs:
       - run: npm run typecheck:web
       - run: npx playwright install --with-deps chromium
       - run: npm run test:web
+      - run: npm run test:browser

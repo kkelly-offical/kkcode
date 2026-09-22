@@ -14,7 +14,7 @@ const mediaMetadata = block => {
 }
 
 export const LAB_ATTACHMENT_TEXT = 'KKCODE_RELAY_ATTACHMENT: complete UTF-8 content — 文本附件真实送达模型。'
-export const LAB_ATTACHMENT_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2lGkAAAAASUVORK5CYII='
+export const LAB_ATTACHMENT_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
 const imageMetadata = block => {
   const source = block.type === 'image' ? block.source : null
   const inline = block.type === 'image_url' && /^data:(image\/[a-z]+);base64,(.+)$/.exec(block.image_url?.url || '')

@@ -37,7 +37,7 @@ export const PUBLIC_MODE_CONTRACT = Object.freeze([
 export function resolveMode(inputMode = "assistant") {
   const mode = String(inputMode || "assistant").toLowerCase()
   if (mode === "ultra") return "longagent"
-  if (mode === "agent-auto" || mode === "yolo") return "assistant"
+  if (mode === "auto" || mode === "agent-auto" || mode === "yolo") return "assistant"
   if (mode === "agent" || mode === "code" || mode === "coding" || mode === "ask") return "assistant"
   if (["assistant", "plan", "longagent"].includes(mode)) return mode
   return "assistant"

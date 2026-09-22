@@ -1,4 +1,5 @@
 export default [
+  { ignores: ["src/web/assets/**", "coverage/**", "dist/**", "node_modules/**"] },
   {
     files: ["src/**/*.mjs", "scripts/**/*.mjs", "test/**/*.mjs"],
     ignores: ["coverage/**", "dist/**", "node_modules/**"],

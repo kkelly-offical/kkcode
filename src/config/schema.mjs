@@ -593,6 +593,7 @@ export function validateConfig(config) {
       if (config.permission.non_tty_default !== undefined && !["allow_once", "deny"].includes(config.permission.non_tty_default)) {
         err(errors, "permission.non_tty_default", "must be allow_once|deny")
       }
+      if (config.permission.auto_review !== undefined && typeof config.permission.auto_review !== 'boolean') err(errors, 'permission.auto_review', 'must be boolean')
       if (config.permission.rules !== undefined) {
         if (!Array.isArray(config.permission.rules)) err(errors, "permission.rules", "must be array")
         else {
@@ -731,6 +732,13 @@ export function validateConfig(config) {
         }
       }
       if (config.tool.bash_timeout_ms !== undefined) checkInt(errors, "tool.bash_timeout_ms", config.tool.bash_timeout_ms, 1000)
+      if (config.tool.browser !== undefined) {
+        if (!isObj(config.tool.browser)) err(errors, 'tool.browser', 'must be object')
+        else {
+          for (const key of ['enabled', 'chromium_sandbox']) if (config.tool.browser[key] !== undefined && typeof config.tool.browser[key] !== 'boolean') err(errors, `tool.browser.${key}`, 'must be boolean')
+          if (config.tool.browser.executable_path !== undefined && (typeof config.tool.browser.executable_path !== 'string' || !config.tool.browser.executable_path.trim())) err(errors, 'tool.browser.executable_path', 'must be a non-empty executable path')
+        }
+      }
     }
   }
 
@@ -738,6 +746,7 @@ export function validateConfig(config) {
     if (!isObj(config.session)) err(errors, "session", "must be object")
     else {
       if (config.session.max_history !== undefined) checkInt(errors, "session.max_history", config.session.max_history, 1)
+      if (config.session.title_generation !== undefined && typeof config.session.title_generation !== 'boolean') err(errors, 'session.title_generation', 'must be boolean')
       if (config.session.recovery !== undefined && typeof config.session.recovery !== "boolean") {
         err(errors, "session.recovery", "must be boolean")
       }

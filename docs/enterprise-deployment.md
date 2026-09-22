@@ -1,8 +1,8 @@
-# KK Code 企业自托管组件与实验部署（1.0.1）
+# KK Code 企业自托管组件与实验部署（1.0.2）
 
-当前稳定版为 `1.0.1`，版本发布本身不等于生产安全认证。
+本文面向 `1.0.2` 部署，版本发布本身不等于生产安全认证。
 根包、网关/Web/SDK 工作区与 Android 版本名一致；APK 版本码为 `10004`。
-实际发布/验收状态见 [本版说明](release-1.0.1.md) 与 [验收账本](stable-1.0.1-worklog.md)。
+实际发布/验收状态见 [本版说明](release-1.0.2.md) 与 [验收账本](implementation-1.0.2.md)。
 
 升级前备份 PostgreSQL 与设备本地状态，不重建组织/OIDC client、网关密钥或
 Android 证书。先更新实验网关与一台设备，验证登录、会话流、模型目录、审批和
@@ -113,7 +113,7 @@ docker compose --env-file /root/.local/share/kkcode-enterprise-lab/lab.env \
 ## Web 镜像和 Android 升级
 
 网关镜像内含 WebUI。使用本版源码执行
-`docker build -f deploy/Dockerfile -t kkcode-gateway:1.0.1 .`，然后由部署方按自己的
+`docker build -f deploy/Dockerfile -t kkcode-gateway:1.0.2 .`，然后由部署方按自己的
 Compose／编排配置滚动更新。不要删除数据库卷或重新生成 OIDC/网关密钥；CLI
 与 Android 更新不会自动更新服务器镜像。仓库提供 Dockerfile，不宣称已经发布
 公共 registry 镜像。
@@ -154,6 +154,6 @@ SSO 注册回调 `${KKCODE_GATEWAY_ORIGIN}/auth/callback`，启用 Authorization
 
 这些实现不代替部署方的公网域名／证书、数据库自身 HA、异地备份及密钥托管。
 签名私钥必须另行做加密异地备份，不能遗失，也不会自动上传到 CI。
-Windows/macOS 的最终 CI 状态以 [实施账本](implementation-1.0.1.md) 为准。
+Windows/macOS 的最终 CI 状态以 [实施账本](implementation-1.0.2.md) 为准。
 验收使用专用分支和隔离资源；npm/GitHub 的实际发布状态以版本账本为准。
 没有发布到应用商店，也不会把本机签名密钥上传到 CI。

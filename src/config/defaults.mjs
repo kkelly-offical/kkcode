@@ -247,6 +247,7 @@ export const DEFAULT_CONFIG = {
     plugin_dirs: [".kkcode/plugins", ".kkcode/plugin"]
   },
   session: {
+    title_generation: true,
     max_history: 30,
     recovery: true,
     // 0.6.0：主判据是占用比例（85%），消息数从并列触发器降级为高位安全网

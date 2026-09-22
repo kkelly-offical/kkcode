@@ -12,7 +12,7 @@ import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class ChatItem(val id: String, val kind: String, val text: String, val detail: String = "", val tool: JSONObject? = null, val startedAt: Long = 0, val durationMs: Long? = null, val done: Boolean = true, val turnId: String = "", val step: Int? = null, val streamed: Boolean = false)
+data class ChatItem(val id: String, val kind: String, val text: String, val detail: String = "", val tool: JSONObject? = null, val startedAt: Long = 0, val durationMs: Long? = null, val done: Boolean = true, val turnId: String = "", val step: Int? = null, val streamed: Boolean = false, val messageId: String = "", val media: JSONObject? = null)
 class RemoteState @JvmOverloads constructor(application: Application, restoreConnections: Boolean = true) : AndroidViewModel(application) {
     internal val updater = AppUpdater(application, viewModelScope)
     val vault = CredentialVault(application)
@@ -57,6 +57,12 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
     var historyBefore by mutableStateOf("")
     var loadingHistory by mutableStateOf(false)
     var commandItemKind by mutableStateOf("")
+    var managedSession by mutableStateOf<JSONObject?>(null)
+    var rewindTarget by mutableStateOf<ChatItem?>(null)
+    var savingSession by mutableStateOf(false)
+    var sessionArchived by mutableStateOf(false)
+    private var snapshotLastMessage = ""
+    private var snapshotCursor = 0L
     var controlElsewhere by mutableStateOf(false)
     var sharedDevice by mutableStateOf(false)
     private var sharedPermissions by mutableStateOf(JSONObject())
@@ -70,10 +76,11 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
     var sheet: String
         get() = currentSheet
         set(value) {
-            if (value == currentSheet) return
-            if (value.isBlank()) sheetHistory.clear()
+            val target = when(value) { "permission", "approval" -> "mode"; "keys" -> "settings"; else -> value }
+            if (target == currentSheet) return
+            if (target.isBlank()) sheetHistory.clear()
             else if (currentSheet.isNotBlank()) sheetHistory.add(currentSheet)
-            currentSheet = value
+            currentSheet = target
         }
     val canGoBack: Boolean get() = sheetHistory.isNotEmpty()
     fun backSheet() { currentSheet = sheetHistory.removeLastOrNull() ?: "" }
@@ -157,7 +164,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         cwd = status.getJSONArray("roots").optString(0, ""); connected = true; sharedDevice = status.optBoolean("shared")
         sharedPermissions = device.optJSONObject("permissions") ?: JSONObject()
         selected = ""; messages = emptyList(); attachments = emptyList(); draft = ""; polling?.cancel()
-        refreshSessions(); commands = (rpc("commands.list") as? JSONArray).objects(); sheet = ""
+        refreshSessions(); commands = visibleCommands((rpc("commands.list") as? JSONArray).objects()); sheet = ""
         startDeviceEvents()
     }
     private fun startDeviceEvents() {
@@ -190,6 +197,42 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         }
     }
     suspend fun refreshSessions() { sessions = (rpc("sessions.list") as? JSONArray).objects() }
+    private fun visibleCommands(items: List<JSONObject>) = items.filterNot { it.optString("name") in listOf("keys", "permission") }
+    fun updateSession(target: JSONObject, patch: JSONObject) = action {
+        require(!sharedDevice && !savingSession) { "只有设备所有者可以管理对话" }
+        savingSession = true
+        try {
+            val id = target.getString("id")
+            val result = rpc("sessions.update", JSONObject(patch.toString()).put("sessionId", id)) as JSONObject
+            if(selected == id) sessionArchived = result.optBoolean("archived")
+            refreshSessions(); managedSession = null
+            notice = if(patch.has("archived")) if(patch.optBoolean("archived")) "已归档，可从已归档对话中恢复" else "对话已恢复" else "对话已改名"
+        } finally { savingSession = false }
+    }
+    fun rewindConversation() = action {
+        val target = rewindTarget ?: return@action
+        require(!sharedDevice && selected.isNotBlank() && !busy && !savingSession) { "停止当前任务后再回退" }
+        val id = selected
+        savingSession = true
+        try {
+            rpc("control.acquire", JSONObject().put("sessionId", id))
+            try {
+                val params = JSONObject().put("sessionId", id).put("confirmed", true).put("expectedLastMessageId", snapshotLastMessage.ifBlank { null })
+                if(target.messageId.isNotBlank()) params.put("messageId", target.messageId)
+                val result = rpc("sessions.rewind", params) as JSONObject
+                require(result.optBoolean("ok")) { "没有可回退的提问" }
+                if(selected == id) {
+                    applySnapshot(rpc("sessions.get", JSONObject().put("sessionId", id)) as JSONObject)
+                    draft = result.optString("prompt"); rewindTarget = null
+                }
+                refreshSessions(); notice = "对话已回退，提问已恢复；工作区文件保持不变"
+            } finally { rpc("control.release", JSONObject().put("sessionId", id)) }
+        } finally { savingSession = false }
+    }
+    suspend fun imagePreview(item: ChatItem, sessionId: String): JSONObject {
+        require(item.media != null) { "无可用预览" }
+        return rpc("media.preview", JSONObject().put("messageId", item.media.getString("messageId")).put("index", item.media.getInt("index")).put("sessionId", sessionId)) as JSONObject
+    }
     fun login(openBrowser: (String) -> Unit = { url -> getApplication<Application>().startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }) = action {
         require(validGatewayUrl(gateway, BuildConfig.DEBUG)) { "请使用 HTTPS 网关地址，不支持 URL 用户名或密码" }
         loading = true
@@ -224,7 +267,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
             connected = true; deviceName = host; profile = JSONObject().put("name", user).put("organization", "SSH")
             val status = rpc("status") as JSONObject; cwd = status.getJSONArray("roots").getString(0)
             sharedDevice = false; sharedPermissions = JSONObject()
-            commands = (rpc("commands.list") as? JSONArray).objects()
+            commands = visibleCommands((rpc("commands.list") as? JSONArray).objects())
             refreshSessions(); sheet = ""; fingerprint = ""
             startDeviceEvents()
         } catch (e: HostKeyRequired) { fingerprint = e.fingerprint; notice = "请核对电脑的 SSH 主机指纹" }
@@ -237,9 +280,12 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         attachments = emptyList(); draft = ""
         startEvents(snapshot.optLong("eventCursor")); sheet = ""
     }
-    private fun applySnapshot(snapshot: JSONObject) {
+    internal fun applySnapshot(snapshot: JSONObject) {
         messages = snapshotMessages(snapshot)
         val canonical = snapshot.optJSONArray("messages").objects()
+        snapshotLastMessage = canonical.lastOrNull()?.optString("id") ?: ""
+        snapshotCursor = snapshot.optLong("eventCursor")
+        sessionArchived = snapshot.optBoolean("archived")
         persistedSteps = canonical.filter { it.optString("role") == "assistant" && !it.optBoolean("truncated") }.mapNotNull { streamStepKey(it.optString("turnId"), it.stepOrNull()) }.toSet()
         persistedUserTurns = canonical.filter { it.optString("role") == "user" }.map { it.optString("turnId") }.filter { it.isNotBlank() }.toSet()
         // Prefix events belong to this exact eventCursor; consume them once before
@@ -257,14 +303,20 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
             val content = it.opt("content")
             val text = if (content is JSONArray) content.objects().filter { b -> b.optString("type") == "text" }.joinToString("\n") { b -> b.optString("text") } else content?.toString() ?: ""
             val reasoning = (content as? JSONArray).objects().filter { b -> b.optString("type") == "reasoning" }.mapIndexed { index, b -> ChatItem("${it.optString("id")}-thinking-$index", "thinking", b.optString("text"), startedAt = it.optLong("createdAt"), turnId = it.optString("turnId"), step = it.stepOrNull()) }
-            reasoning + ChatItem(it.optString("id"), if(text.contains("<compaction-summary")) "compacted" else it.optString("role"), text, startedAt = it.optLong("createdAt"), turnId = it.optString("turnId"), step = it.stepOrNull())
-        }.filter { it.text.isNotBlank() }
+            val synthetic = it.optBoolean("synthetic") || it.optBoolean("continuation") || (content as? JSONArray).objects().any { b -> b.optString("type") == "tool_result" }
+            val images = (content as? JSONArray).objects().filter { b -> b.optString("type") == "image_preview" }.map { b -> ChatItem("${it.optString("id")}-image-${b.optInt("index")}", "media", "图片预览", startedAt = it.optLong("createdAt"), media = b) }
+            reasoning + images + if(synthetic || text.isBlank()) emptyList() else listOf(ChatItem(it.optString("id"), if(text.contains("<compaction-summary")) "compacted" else it.optString("role"), text, startedAt = it.optLong("createdAt"), turnId = it.optString("turnId"), step = it.stepOrNull(), messageId = if(it.optString("role") == "user" && !text.contains("<compaction-summary")) it.optString("id") else ""))
+        }
         val tools = linkedMapOf<String, ChatItem>()
         for(part in snapshot.optJSONArray("parts").objects().filter { it.optString("type") == "tool-call" }) {
             val id = part.optString("runPartId").ifBlank { part.getString("id") }
             tools[id] = ChatItem(id, "tool", part.optString("tool"), part.optString("output"), tool = part, startedAt = tools[id]?.startedAt ?: part.optLong("createdAt"), turnId = part.optString("turnId"), step = part.stepOrNull())
         }
-        return (history + tools.values).sortedBy { it.startedAt }
+        val reviews = snapshot.optJSONArray("parts").objects().filter { it.optString("type") == "permission-review" }.map { part ->
+            val verdict = when(part.optString("decision")) { "allow" -> "允许"; "deny" -> "拒绝"; else -> "交给你确认" }
+            ChatItem(part.getString("id"), "review", "Auto 审查 · ${part.optString("tool")} · $verdict", part.optString("reason") + "\n对话模型：" + part.optString("model"), tool = part, turnId = part.optString("turnId"), startedAt = part.optLong("createdAt"))
+        }
+        return (history + tools.values + reviews).sortedBy { it.startedAt }
     }
     fun loadEarlier() = action {
         if(!historyHasMore || historyBefore.isBlank() || loadingHistory) return@action
@@ -286,9 +338,9 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         val created = rpc("sessions.create", JSONObject().put("cwd", cwd)) as JSONObject
         val id = created.getString("id")
         rpc("control.acquire", JSONObject().put("sessionId", id))
-        try { applySelection(rpc("sessions.configure", JSONObject().put("sessionId", id).put("mode", mode).also { if(model.isNotBlank()) it.put("model", model); if(provider.isNotBlank()) it.put("provider", provider); if(approval.isNotBlank()) it.put("approval", approval) }) as JSONObject) }
+        try { applySelection(rpc("sessions.configure", JSONObject().put("sessionId", id).put("mode", mode).also { if(model.isNotBlank()) it.put("model", model); if(provider.isNotBlank()) it.put("provider", provider) }) as JSONObject) }
         finally { rpc("control.release", JSONObject().put("sessionId", id)) }
-        selected = created.getString("id"); messages = emptyList(); persistedSteps = emptySet(); persistedUserTurns = emptySet(); attachments = emptyList(); draft = ""; historyHasMore = false; historyBefore = ""; startEvents(0); refreshSessions(); sheet = ""
+        selected = created.getString("id"); messages = emptyList(); snapshotLastMessage = ""; snapshotCursor = 0; sessionArchived = false; persistedSteps = emptySet(); persistedUserTurns = emptySet(); attachments = emptyList(); draft = ""; historyHasMore = false; historyBefore = ""; startEvents(0); refreshSessions(); sheet = ""
     }
     private fun startEvents(initial: Long) {
         polling?.cancel(); val sessionId = selected
@@ -354,10 +406,33 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
             }
         }
     }
-    private suspend fun handleJournalEvent(event: JSONObject) {
+    internal suspend fun handleJournalEvent(event: JSONObject) {
+        if(event.optLong("seq") in 1..snapshotCursor) return
         val type = event.getString("type"); val payload = event.optJSONObject("payload") ?: JSONObject()
-        if(applyConversationEvent(event)) { if(type == "turn.result") refreshSessions(); return }
+        if(applyConversationEvent(event)) {
+            if(type in listOf("turn.result", "turn.failed")) {
+                val id = selected
+                val snapshot = rpc("sessions.get", JSONObject().put("sessionId", id)) as JSONObject
+                if(selected == id) applySnapshot(snapshot)
+                refreshSessions()
+            }
+            return
+        }
         when(type) {
+            "session.rewound" -> {
+                val id = selected
+                val snapshot = rpc("sessions.get", JSONObject().put("sessionId", id)) as JSONObject
+                if(selected == id) applySnapshot(snapshot)
+                refreshSessions()
+            }
+            "session.updated", "session.title.updated" -> { refreshSessions(); sessionArchived = sessions.find { it.optString("id") == selected }?.optBoolean("archived") ?: sessionArchived }
+            "permission.review.started" -> messages = messages + ChatItem(event.getString("id"), "review", "Auto 审查 · ${payload.optString("tool")} · 进行中", "正在由当前对话模型审查敏感操作…", tool = payload, done = false, turnId = event.optString("turnId"))
+            "permission.review.finished" -> {
+                val verdict = when(payload.optString("decision")) { "allow" -> "允许"; "deny" -> "拒绝"; else -> "交给你确认" }
+                val item = ChatItem(event.getString("id"), "review", "Auto 审查 · ${payload.optString("tool")} · $verdict", payload.optString("reason") + "\n对话模型：" + payload.optString("model"), tool = payload, turnId = event.optString("turnId"))
+                val old = messages.indexOfFirst { it.kind == "review" && !it.done && it.turnId == item.turnId && it.tool?.optString("tool") == payload.optString("tool") }
+                messages = if(old < 0) messages + item else messages.mapIndexed { at, value -> if(at == old) item.copy(id = value.id) else value }
+            }
             "provider.capability.notice" -> {
                 val message = payload.optString("message")
                 if(message.isNotBlank()) { notice = message; deviceNotice?.cancel(); deviceNotice = viewModelScope.launch { delay(6500); if(notice == message) notice = "" } }
@@ -408,6 +483,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
     }
     fun send(text: String) = action {
         if (selected.isBlank()) return@action
+        require(!sessionArchived) { "恢复归档后再继续对话" }
         require(canControl) { "这个会话是只读分享" }
         require(!uploading) { "请等待附件上传完成" }
         require(!text.startsWith('/') || attachments.isEmpty()) { "附件只能随消息发送，不能附在命令上" }
@@ -436,7 +512,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
     fun stop() = action { rpc("control.acquire", JSONObject().put("sessionId", selected)); rpc("turns.cancel", JSONObject().put("sessionId", selected)) }
     fun answer(id: String, value: Any) = action { rpc("approvals.resolve", JSONObject().put("sessionId", selected).put("id", id).put("answer", value)) }
     fun takeControl() = action { rpc("control.acquire", JSONObject().put("sessionId", selected).put("takeover", true)); controlElsewhere = false }
-    private fun applySelection(value: JSONObject) { if(value.has("model")) model = value.optString("model"); if(value.has("providerType")) provider = value.optString("providerType"); if(value.has("modeId")) mode = value.optString("modeId"); if(value.has("approval")) approval = value.optString("approval") }
+    private fun applySelection(value: JSONObject) { if(value.has("model")) model = value.optString("model"); if(value.has("providerType")) provider = value.optString("providerType"); if(value.has("modeId")) mode = value.optString("modeId").let { if(it == "agent-auto") "auto" else it }; if(value.has("approval")) approval = value.optString("approval") }
     fun selectModel(name: String, id: String) = action {
         require(!sharedDevice) { "只有电脑所有者可以切换模型" }
         if(selected.isBlank()) { provider = name; model = id }
@@ -456,16 +532,6 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
             finally { rpc("control.release", JSONObject().put("sessionId", selected)) }
         }
         sheet = ""; notice = "执行模式已同步"
-    }
-    fun selectApproval(value: String) = action {
-        require(!sharedDevice) { "只有电脑所有者可以切换权限" }
-        if(selected.isBlank()) approval = value
-        else {
-            rpc("control.acquire", JSONObject().put("sessionId", selected))
-            try { applySelection(rpc("sessions.configure", JSONObject().put("sessionId", selected).put("approval", value)) as JSONObject) }
-            finally { rpc("control.release", JSONObject().put("sessionId", selected)) }
-        }
-        sheet = ""; notice = "权限已同步"
     }
     fun discoverModels(name: String) = action {
         catalogError = ""
@@ -489,7 +555,6 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
             val fallback = settings.optJSONObject("provider")?.optJSONObject(provider)?.optString("default_model") ?: ""
             return fallback.ifBlank { provider }.ifBlank { "模型" }
         }
-    val approvalLabel: String get() = APPROVAL_LEVELS.firstOrNull { it.first == approval }?.second ?: approval.ifBlank { "权限" }
     fun openModelPicker() = action {
         require(!sharedDevice) { "共享会话不能切换模型" }
         if(connected) settings = rpc("settings.get") as JSONObject
@@ -513,7 +578,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
             "exit" -> disconnect()
             "home" -> leaveChat()
             "clear" -> messages = emptyList()
-            "keys" -> sheet = "keys"
+            "keys" -> notice = "终端快捷键只在 CLI 中提供"
             "theme" -> if(args in listOf("dark", "light", "auto")) updateAppearance(args) else sheet = "theme"
             "paste" -> { draft = args; attachmentPickerRequest++ }
             "profile", "like" -> { profilePreferences = result.optJSONObject("preferences") ?: rpc("profile.get") as JSONObject; sheet = "preferences" }
@@ -526,7 +591,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
                 sheet = if(args == "add" || editingProvider.isNotBlank()) "provider" else "models"
             }
             "mode" -> sheet = "mode"
-            "permission" -> sheet = "permission"
+            "permission" -> sheet = "mode"
             "" -> if(commandPanels.isNotEmpty()) sheet = "command-result"
             else -> { notice = "此命令返回了暂不支持的操作：${result.optString("clientAction")}"; if(commandPanels.isNotEmpty()) sheet = "command-result" }
         }
@@ -555,6 +620,20 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         rpc("control.acquire", JSONObject().put("sessionId", selected))
         try { branchSnapshot = rpc(if(create) "branches.create" else "branches.switch", JSONObject().put("sessionId", selected).put("name", name).put("confirmed", true).put("stateToken", token)) as JSONObject; notice = "已${if(create) "创建并切换" else "切换"}到分支 $name" }
         finally { rpc("control.release", JSONObject().put("sessionId", selected)) }
+    }
+    fun gitOperation(method: String, params: JSONObject, token: String) = action {
+        require(!sharedDevice && selected.isNotBlank()) { "请先打开自己的会话" }
+        require(method in listOf("branches.switch", "branches.create", "worktrees.create", "worktrees.open"))
+        val origin = selected
+        loading = true
+        try {
+            rpc("control.acquire", JSONObject().put("sessionId", origin))
+            try {
+                val result = rpc(method, JSONObject(params.toString()).put("sessionId", origin).put("confirmed", true).put("stateToken", token)) as JSONObject
+                if(method == "worktrees.open") { refreshSessions(); openSession(JSONObject().put("id", result.getString("sessionId")).put("cwd", result.getString("cwd"))).join() }
+                else { branchSnapshot = result; notice = if(method == "worktrees.create") "Worktree 已创建，可点列表在其中新建对话" else "分支已更新" }
+            } finally { rpc("control.release", JSONObject().put("sessionId", origin)) }
+        } finally { loading = false }
     }
     fun browse(target: String = cwd) = action { val listing = rpc("folders.list", JSONObject().put("path", target)) as JSONObject; cwd = listing.getString("path"); folders = listing.optJSONArray("entries").objects(); sheet = "folders" }
     fun openSettings() = action { if(connected && !sharedDevice) settings = rpc("settings.get") as JSONObject; sheet = "settings" }

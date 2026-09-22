@@ -119,12 +119,12 @@ class ConversationUiTest {
             it.branchSnapshot = JSONObject().put("clean", true).put("current", "main").put("stateToken", "test-state")
                 .put("branches", JSONArray().put(JSONObject().put("name", "feature-test").put("current", false).put("checkedOut", false)))
         }
-        compose.onNodeWithText("确认切换").assertDoesNotExist()
+        compose.onNodeWithText("确认操作").assertDoesNotExist()
         compose.onNodeWithText("feature-test").performClick()
-        compose.onNodeWithText("切换分支？").assertIsDisplayed()
-        compose.onNodeWithText("确认切换").assertIsDisplayed()
+        compose.onNodeWithText("确认 Git 操作？").assertIsDisplayed()
+        compose.onNodeWithText("确认操作").assertIsDisplayed()
         compose.onNodeWithText("取消").performClick()
-        compose.onNodeWithText("确认切换").assertDoesNotExist()
+        compose.onNodeWithText("确认操作").assertDoesNotExist()
     }
 
     @Test fun dirtyBranchStateDisablesMutation() {

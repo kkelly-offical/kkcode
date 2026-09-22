@@ -90,29 +90,3 @@ internal fun modelCapabilityLabel(entry: JSONObject?): String {
         }
     }
 }
-
-internal val APPROVAL_LEVELS = listOf(
-    Triple("readonly", "只读", "只能查看与讨论，不修改任何文件"),
-    Triple("manual", "手动审批", "每个敏感操作都需要你确认"),
-    Triple("accept-edits", "自动接受编辑", "文件编辑直接执行，其余仍需确认"),
-    Triple("yolo", "完全放行", "所有操作自动执行，不再询问"),
-)
-
-@Composable internal fun ApprovalPicker(state: RemoteState) {
-    Text("权限决定智能体在电脑上执行操作的边界，与执行模式相互独立。", fontSize = 12.sp, color = kkcodeColors.activityMuted, lineHeight = 18.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
-    if(state.busy) Text("任务执行期间不能切换权限，完成后即可切换。", fontSize = 12.sp, color = kkcodeColors.warning, modifier = Modifier.padding(horizontal = 12.dp))
-    Group {
-        APPROVAL_LEVELS.forEach { (id, label, detail) ->
-            val current = state.approval == id
-            Row(Modifier.fillMaxWidth().clickable(enabled = !state.busy) { state.selectApproval(id) }.padding(horizontal = 16.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(if(current) Icons.Outlined.Check else Icons.Outlined.Shield, null, Modifier.size(18.dp), tint = if(current) kkcodeColors.success else kkcodeColors.activityMuted)
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("$label · $id", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
-                    Text(detail, fontSize = 11.sp, color = kkcodeColors.activityMuted)
-                }
-            }
-        }
-    }
-    Text("切换后立即写入当前会话，并同步到其他客户端。", fontSize = 11.sp, color = kkcodeColors.activityMuted, modifier = Modifier.padding(12.dp))
-}

@@ -1,4 +1,4 @@
-import { getConversationHistory, replaceMessages } from "./store.mjs"
+import { getConversationHistory, getSession, replaceConversationForRewind } from "./store.mjs"
 
 /**
  * 上下文回溯 —— 把会话退回上一轮之前。
@@ -31,46 +31,48 @@ function lastTurnStart(messages) {
  *   起点的话，回溯只会退掉「工具结果 + 之后的回复」，用户真正问的那句和
  *   中间的工具调用留在原地 —— 退了半轮，比不退更糟。
  */
-function isSyntheticUserMessage(message) {
+export function isSyntheticUserMessage(message) {
+  if (message?.synthetic || message?.continuation) return true
   const content = message?.content
   if (typeof content === "string") return content.startsWith("<compaction-summary")
   if (!Array.isArray(content)) return false
-  // 只含工具结果的消息是协议噪音；混有真实文本的才算用户输入
-  return content.length > 0 && content.every((block) => block?.type === "tool_result")
+  // Tool results may include images, text notices and other media. They remain
+  // one synthetic tool response, not a new question asked by the human.
+  return content.some((block) => block?.type === "tool_result") || content.some(block => block?.type === 'text' && String(block.text).startsWith('<compaction-summary'))
 }
 
 /**
  * 回溯最近一轮。
  *
  * @param {string} sessionId
- * @param {{deps?: {getConversationHistory?: Function, replaceMessages?: Function}}} [options]
+ * @param {{messageId?: string|null, deps?: {getConversationHistory?: Function, replaceMessages?: Function}}} [options]
  * @returns {Promise<{ok: boolean, reason?: string, removed: number, prompt: string, keptCount?: number}>}
  *   `prompt` 是被撤回的那句用户输入 —— 调用方可以把它填回输入框，
  *   让「退回去改一下再问」变成一步而不是两步。
  */
-export async function rewindLastTurn(sessionId, { deps = {} } = {}) {
-  const history = deps.getConversationHistory || getConversationHistory
-  const replace = deps.replaceMessages || replaceMessages
+export async function rewindLastTurn(sessionId, { messageId = null, deps = {} } = {}) {
+  const history = deps.getConversationHistory || (async id => (await getSession(id))?.messages || [])
 
   const messages = await history(sessionId, 9999)
   if (!Array.isArray(messages) || messages.length === 0) {
     return { ok: false, reason: "empty_session", removed: 0, prompt: "" }
   }
 
-  const start = lastTurnStart(messages)
+  const start = messageId ? messages.findIndex(message => message.id === messageId && message.role === 'user' && !isSyntheticUserMessage(message)) : lastTurnStart(messages)
   if (start < 0) {
     return { ok: false, reason: "nothing_to_rewind", removed: 0, prompt: "" }
   }
 
   const removed = messages.slice(start)
   const kept = messages.slice(0, start)
-  await replace(sessionId, kept)
+  const receipt = deps.replaceMessages ? await deps.replaceMessages(sessionId, kept) : await replaceConversationForRewind(sessionId, kept, messages)
 
   return {
     ok: true,
     removed: removed.length,
     prompt: extractText(removed[0]),
-    keptCount: kept.length
+    keptCount: kept.length,
+    ...(receipt || {})
   }
 }
 

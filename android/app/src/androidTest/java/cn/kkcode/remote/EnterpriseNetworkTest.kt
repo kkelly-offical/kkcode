@@ -76,7 +76,8 @@ class EnterpriseNetworkTest {
                 assertTrue(state.attachments.isEmpty())
             } finally { resolver.delete(document, null, null) }
             state.send("/keys").join()
-            assertEquals("keys", state.sheet)
+            assertEquals("", state.sheet)
+            assertTrue(state.notice.contains("只在 CLI"))
             state.sheet = ""
             state.send("LAB_ANDROID_NATIVE").join()
             assertEquals("", state.notice)

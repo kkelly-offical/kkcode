@@ -44,10 +44,13 @@ export {
   prevModeId,
   modeIdFromLegacy,
   modeIdFromLaneAndApproval,
+  resolveSessionMode,
   approvalFromLegacy
 } from "./core/modes.mjs"
 export { EVENT_TYPES, QUESTION_SKIPPED } from "./core/constants.mjs"
 export { mediaBlockError } from './core/media.mjs'
+// Shared bounded decoder used by the device preview API and all model inputs.
+export { normalizeImageBlock, prepareImageMessages, IMAGE_LIMITS } from './media/images.mjs'
 export { noteDeprecation } from "./core/deprecations.mjs"
 
 // ── 2b. permission 规则与信任存储（纯函数 / platform 落盘）─────────────
@@ -99,6 +102,7 @@ export {
 } from "./tool/image-util.mjs"
 export { inspectSandboxStatus, formatSandboxLine } from "./tool/sandbox.mjs"
 export { readClipboardMedia, readMediaFileAsBlock } from './tool/media-util.mjs'
+export { browserStatus } from './browser/controller.mjs'
 export { ensureDefaultSkillPack } from "./skill/registry.mjs"
 export { generateSkill, saveSkillGlobal } from "./skill/generator.mjs"
 export { discoverLocalPluginManifests } from "./plugin/manifest-loader.mjs"
@@ -129,6 +133,7 @@ export {
 export { summarizeSessionRuntimeState } from "./session/runtime-state.mjs"
 export { buildAgentContinuationPrompt, summarizeAgentTransaction } from "./session/agent-transaction.mjs"
 export { rewindLastTurn } from "./session/rewind.mjs"
+export { normalizeTitle } from './session/session-title.mjs'
 export { buildBlockedReport, renderBlockedReportText } from "./session/blocked-report.mjs"
 export { loadLedger } from "./session/ultra-ledger.mjs"
 export { runLongAgent } from "./session/longagent.mjs"

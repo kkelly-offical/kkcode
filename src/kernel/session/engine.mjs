@@ -5,8 +5,8 @@ import { loadPricing, calculateCost } from "../../usage/pricing.mjs"
 import { recordTurn } from "../../usage/usage-meter.mjs"
 import { processTurnLoop } from "./loop.mjs"
 import { runLongAgent } from "./longagent.mjs"
-import { touchSession, setBudgetState } from "./store.mjs"
-import { refineSessionTitle } from "./session-title.mjs"
+import { touchSession, setBudgetState, getSession } from "./store.mjs"
+import { refineSessionTitle, normalizeTitle } from "./session-title.mjs"
 import { appendEventLog } from "../../storage/event-log.mjs"
 import { EventBus } from "../core/events.mjs"
 import { initialize as initObservability } from "../../observability/index.mjs"
@@ -270,8 +270,9 @@ export async function executeTurn({
   })
   // Auto-name session from first user prompt (truncated to 50 chars)
   const autoTitle = typeof prompt === "string"
-    ? prompt.replace(/\s+/g, " ").trim().slice(0, 50)
+    ? normalizeTitle(prompt.replace(/\s+/g, ' '))
     : null
+  const firstQuestion = configState.config.session?.title_generation === true && !runSpec?.parentSessionId && !(await getSession(sessionId))?.messages?.length
   await touchSession({
     sessionId,
     mode,
@@ -280,14 +281,6 @@ export async function executeTurn({
     cwd: runtimeCwd(),
     title: autoTitle || null,
     status: mode === "longagent" ? "running-longagent" : "active"
-  })
-  // fire-and-forget：配了 models.fast 才会跑，失败静默，绝不阻塞本轮
-  void refineSessionTitle({
-    configState,
-    sessionId,
-    prompt: typeof prompt === "string" ? prompt : "",
-    providerType: resolvedProviderType,
-    autoTitle: autoTitle || ""
   })
 
   const turn =
@@ -372,6 +365,16 @@ export async function executeTurn({
       toolEvents: turn.toolEvents,
       longagent: mode === "longagent" ? packLongAgent(turn) : null
     }
+  }
+
+  if (firstQuestion && !turn.error && !signal?.aborted) {
+    const runtime = currentRuntime()
+    const job = refineSessionTitle({ configState, sessionId, prompt: typeof prompt === 'string' ? prompt : '', providerType: resolvedProviderType, model, baseUrl, apiKeyEnv, signal: runtime?.hostSignal || signal, onUsage: async titleUsage => {
+      const price = calculateCost(pricingInfo.pricing, model, titleUsage)
+      await recordTurn({ sessionId, usage: titleUsage, cost: price.amount, countTurn: false })
+    } })
+    runtime?.auxiliary?.add(job)
+    void job.finally(() => runtime?.auxiliary?.delete(job))
   }
 
   return {

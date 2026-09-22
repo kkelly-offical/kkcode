@@ -38,8 +38,8 @@ android {
         applicationId = "cn.kkcode.remote"
         minSdk = 29
         targetSdk = 35
-        versionCode = 10004
-        versionName = "1.0.1"
+        versionCode = 10005
+        versionName = "1.0.2"
         buildConfigField("String", "UPDATE_REPOSITORY", "\"${releaseIdentity["repository"]}\"")
         buildConfigField("String", "UPDATE_CERT_SHA256", "\"${releaseIdentity["certificateSha256"]}\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -89,5 +89,6 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

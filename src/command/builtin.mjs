@@ -7,7 +7,7 @@ export const BUILTIN_COMMANDS = [...sessionCommands, ...providerCommands, ...per
 export const DEVICE_COMMAND_HANDLERS = Object.freeze({
   exit: 'client', clear: 'client', keys: 'client', theme: 'client', paste: 'client', like: 'client', profile: 'client',
   dash: 'client', history: 'sessions', resume: 'sessions', new: 'sessions',
-  provider: 'selection', model: 'selection', mode: 'selection', assistant: 'selection', agent: 'selection', code: 'selection', coding: 'selection', yolo: 'selection', plan: 'selection', ultra: 'selection', longagent: 'selection',
+  provider: 'selection', model: 'selection', mode: 'selection', assistant: 'selection', agent: 'selection', code: 'selection', coding: 'selection', auto: 'selection', yolo: 'selection', plan: 'selection', ultra: 'selection', longagent: 'selection',
   session: 'shared', btw: 'shared', status: 'shared', compact: 'shared', undo: 'shared', rewind: 'shared', board: 'shared',
   trust: 'shared', untrust: 'shared', permission: 'shared', help: 'shared', commands: 'shared', reload: 'shared', mcp: 'shared', agents: 'shared', tasks: 'shared', skills: 'shared', 'create-skill': 'shared', 'create-agent': 'shared'
 })

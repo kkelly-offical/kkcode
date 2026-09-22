@@ -30,7 +30,7 @@ export function resolveChatExecutionMode(prompt, requestedMode) {
 export function createChatCommand() {
   const providers = listProviders()
   return new Command("chat")
-    .description("run one prompt in plan/agent/agent-auto/ultra/yolo mode (agent = default lane)")
+    .description("run one prompt in plan/agent/auto/ultra/yolo mode (agent-auto remains an alias)")
     .argument("<prompt...>", "prompt text")
     .option("--mode <mode>", `${MODE_IDS.join("|")} (legacy assistant|code|coding|longagent still accepted)`, "agent")
     .option("--yolo", "shorthand for --mode yolo: skip every approval prompt")

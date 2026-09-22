@@ -19,6 +19,7 @@ import { resolveModelCapabilities } from "./model-catalog.mjs"
 import { enforceModelInputCapabilities } from "./model-capabilities.mjs"
 import { noteDeprecation } from "../core/deprecations.mjs"
 import { trimTrailingSlashes } from "./url-path.mjs"
+import { prepareImageMessages } from '../media/images.mjs'
 
 function classifyProviderFailure(error) {
   const cls = String(error?.errorClass || "").toLowerCase()
@@ -230,7 +231,7 @@ export function createProviderRegistry() {
     if (guarded.droppedTools > 0) {
       warnCapabilityOnce(`${warnKey}\0tools`, `[kkcode] model "${settings.model}" is marked as not supporting tool calling; ${guarded.droppedTools} tool(s) were omitted from the request`, context)
     }
-    return { capabilities, messages: guarded.messages, tools: guarded.tools }
+    return { capabilities, messages: await prepareImageMessages(guarded.messages), tools: guarded.tools }
   }
 
 

@@ -13,11 +13,11 @@
 **终端优先、可治理、可扩展的编码智能体：五档模式循环、可治理审批、Ultra 分阶段交付。**
 kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同一个 CLI 工作台里，并且把权限、预算、审计、后台任务、MCP、技能与插件一起纳入统一执行面。
 
-稳定版 **`1.0.1`** 已发布，包含本地 WebUI、企业 OIDC/中继、原生 Android 远程客户端，
-以及三轮预览中的 CLI、媒体输入和工具兼容性改进。新增 Android GitHub 更新源、
-保持控件布局的像素主题和远控启动目录授权。
-请先读 [1.0.1 使用与升级说明](docs/release-1.0.1.md)，实际发布与测试记录见
-[验收账本](docs/stable-1.0.1-worklog.md)。
+**`1.0.2`** 在本地 WebUI、企业 OIDC/中继、原生 Android 的基础上，加入
+跨端回退／改名／归档、统一 Auto 模式与同模型敏感操作审查、详细分支和 Worktree，
+以及隔离的内建 Browser。修复 SVG/损坏图片导致会话反复报错的问题。
+请先读 [1.0.2 使用与升级说明](docs/release-1.0.2.md)，实际测试与发布状态见
+[1.0.2 验收台账](docs/implementation-1.0.2.md)，不以源码版本号冒充已完成发布。
 
 <img src="docs/assets/brand/kkcode-android-original.jpg" alt="KK Code Android 应用品牌图" width="120" />
 
@@ -60,12 +60,12 @@ kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同�
 
 **English**
 - kkcode is a terminal-native unified Assistant designed for local work, governed execution, coding, planning, and multi-stage delivery.
-- Everyday work stays in `agent`; `Shift+Tab` cycles Plan, Agent, Agent · Auto, Ultra and YOLO, while `/plan` and `/ultra` remain explicit entry points.
+- Everyday work stays in `agent`; the CLI's `Shift+Tab` cycles Plan, Agent, Auto, Ultra and Yolo. Web/Android use one mode picker, with no separate permission chip.
 - It is optimized for **CLI-first** and **Ultra-first** workflows rather than GUI-first or marketplace-first product patterns.
 
 **中文**
 - kkcode 是一个面向终端原生工作流的统一 Assistant，强调本地事务、可治理执行、编码、规划和多阶段交付。
-- 日常工作统一进入 `agent`；`Shift+Tab` 循环 Plan、Agent、Agent · Auto、Ultra、YOLO，`/plan` 与 `/ultra` 仍是显式入口。
+- 日常工作进入 `agent`；CLI 用 `Shift+Tab` 循环 Plan、Agent、Auto、Ultra、Yolo；Web/Android 用单个模式选择器，不再并列独立权限档。
 - 它优先服务 **CLI-first**、**Ultra-first** 的工程工作流，而不是 GUI 优先或 marketplace 优先的平台形态。
 
 ---
@@ -104,7 +104,7 @@ kkcode
 ```
 
 预览渠道：`npm install -g @kkelly-offical/kkcode@preview`；固定本版可使用
-`@1.0.1`。安装搜索依赖：Linux `apt install ripgrep`、macOS
+`@1.0.2`（发布前以验收台账为准）。安装搜索依赖：Linux `apt install ripgrep`、macOS
 `brew install ripgrep`、Windows `choco install ripgrep`。
 
 **Web / enterprise remote / 企业远控**
@@ -115,6 +115,8 @@ kkcode -web -host-18271       # Host 开放，需按部署文档配置访问保�
 kkcode remote                # 先询问目录范围；前台运行，首次必须登录绑定
 kkcode remote --all-folders  # 明确允许所有普通目录，凭据/系统私密路径仍受保护
 kkcode remote --home-only    # 仅 home；--root <path> 可限定一个工作目录
+kkcode browser install      # 在工作电脑安装 Browser 引擎，非网关/手机
+kkcode browser status       # 查询浏览器是否可用，不会自动启动
 ```
 
 公网服务器部署的是 `apps/gateway/main.mjs` 的**中继网关**，不是运行在工作电脑
@@ -173,9 +175,12 @@ kkcode doctor
 | --- | --- | --- |
 | Agent / 统一助手 | Supported | Default CLI lane for Q&A, code edits, reviews, tests, and local automation |
 | Plan / 方案规划 | Supported | Read-only planning workflow that saves a plan file, then switches mode to build it |
-| Mode cycle / 模式循环 | Supported | `Shift+Tab` cycles Plan · Agent · Agent·Auto · Ultra · YOLO |
+| Mode cycle / 模式循环 | Supported | CLI `Shift+Tab`: Plan · Agent · Auto · Ultra · Yolo; one picker on Web/Android |
 | Ultra / 长程编排 | Supported | Multi-stage execution, retries, gates, resumable flow |
-| Permissions / 权限治理 | Supported | `readonly` / `manual` / `accept-edits` / `yolo` levels plus persistent Always Allow |
+| Permissions / 权限治理 | Supported | Mode-derived policy, same-model Auto review, explicit organization/path rules and manual fallback |
+| Conversation management | Supported | Web/Android rename, archive/restore, confirmed rewind and same-first-model titles |
+| Git workspaces | Supported | Detailed local/cached-remote refs, safe worktree creation and separate-session opening |
+| Browser development tools | Supported, engine installed separately | Isolated Playwright profile, semantic snapshot, click/fill/press, model-visible screenshot; no personal browser takeover |
 | OS sandbox / OS 级沙箱 | Supported (opt-in) | `permission.sandbox.mode: auto` wraps model-initiated bash in bubblewrap (Linux) or sandbox-exec (macOS) |
 | Shell passthrough / Shell 直通 | Supported | `!<command>` runs in your own shell — never sandboxed, never sent to the model |
 | Ghost text / 输入预测 | Supported | Inline next-phrase prediction when `models.fast` is configured |
@@ -203,24 +208,27 @@ Press `Shift+Tab` to walk the five public modes. `/mode` opens a picker,
 | --- | --- | --- | --- |
 | ⏸ `plan` | plan | readonly | read-only planning; never mutates files |
 | ● `agent` | assistant | manual | **default** — edits are confirmed before they land |
-| ▶ `agent-auto` | assistant | accept-edits | edits and subagents run unattended; risky shell still asks |
-| ⚡ `ultra` | longagent | accept-edits | staged multi-file delivery with gates, checkpoints and resume |
-| ☠ `yolo` | assistant | yolo | every approval prompt is skipped |
+| ▶ `auto` | assistant | accept-edits + same-model review | ordinary edits run; sensitive actions get one bounded review, uncertainty asks you |
+| ⚡ `ultra` | longagent | Auto review | staged persistent delivery with gates, checkpoints, budget and resume |
+| ☠ `yolo` | assistant | yolo | autonomous within authorized scope; hard safety rules remain |
 
 **English**
-- Every mode is a **(lane, approval) pair**: the lane decides how work is orchestrated, the approval level decides what runs without asking. The three `assistant`-lane modes differ only in approval.
+- A single mode determines orchestration and approval behavior. Auto uses the conversation's actual provider/model for tool-free sensitive-action review, never a separate review model. Hard denials and explicitly manual governance rules are not delegated.
 - `agent` is the default unified lane for questions, coding, review, tests, and automation.
 - Use `/ultra` explicitly when the task is clearly multi-stage or system-wide.
 - Interrupted work can be resumed with the same session context.
 
 **中文**
-- 每个模式都是 **(航道, 审批档) 二元组**：航道决定如何编排，审批档决定什么可以免询问执行。三个 `assistant` 航道的模式只有审批档不同。
+- 一个模式同时确定编排与审批行为。Auto 使用当前对话模型审查敏感操作，审查失败或不确定时交给用户；硬拒绝、受保护路径和显式人工规则不可被模型绕过。
 - `agent` 是默认统一入口，承接问答、编码、审查、测试和自动化。
 - 任务明显跨文件、跨阶段、影响面较大时，显式使用 `/ultra`。
 - 中断后的工作可以在同一会话中继续，不需要从零开始。
 - **路由理由可见**：当 kkcode 建议使用 `ultra` 时，会解释为什么当前任务更适合重型工作流。
 
 ### Compatibility / 兼容旧写法
+
+1.0.2 的 `/auto`、`/mode auto` 替代 `agent-auto`；旧模式名仍作为输入别名接受。
+以下旧 **permission 配置键** 的移除规则不受影响：模式 `auto` 不是一个旧权限等级。
 
 0.3.x spellings were removed in 0.6.0. `permission.mode`,
 `permission.default_policy` and the old level names now raise a config error
@@ -488,12 +496,12 @@ ANSI 后进会话，模型下一轮看得见。`!=` 开头按表达式处理，�
 A model question left unanswered with no keypress for
 `ui.afk_question_timeout_s` seconds (default `600`, `0` disables) resolves as
 "skipped" so a long run does not hang on one question while you are away; any
-key resets the clock. **Permission prompts are never auto-answered** — in
-either direction.
+key resets the clock. Pending **human permission prompts are never answered by
+the AFK timer**. Auto review runs separately before a human prompt is created.
 
 提问挂起且无任何按键超过 `ui.afk_question_timeout_s` 秒（默认 600，0 关闭）即按
 「跳过」结掉，挂机的长任务不再被一个问题卡死；任何按键都会把表拨回起点。
-**权限审批永不自动处理** —— 批与拒两个方向都不。
+**已发给用户的权限审批不会被 AFK 定时器自动处理**。Auto 模型审查在人工审批前单独进行，不是挂机超时放行。
 
 ### v0.3.3 terminal interaction / 终端交互
 
@@ -705,24 +713,26 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current stable / 当前稳定版本**: `v1.0.1`
+**This release / 本版目标**: `v1.0.2`，发布门禁与回执见 [实施台账](docs/implementation-1.0.2.md)。
 
 **Opt-in preview / 自愿试用预览版**: `v1.0.1-preview.2`
 
 ```sh
-npm install -g @kkelly-offical/kkcode@1.0.1
+npm install -g @kkelly-offical/kkcode@1.0.2
 kkcode --version
 ```
 
-The 1.0.1 release includes WebUI/Host, enterprise OIDC/Relay, native Android remote control,
+Version 1.0.2 adds session lifecycle controls, unified modes with same-model Auto review,
+safe worktrees, Browser tools, first-question titles and authenticated image previews.
+It retains the 1.0.1 WebUI/Host, enterprise OIDC/Relay, native Android remote control,
 multi-client approvals, attachments and guarded Git branches. The second preview
 adds SSE event streams, tolerant home-root folder browsing (credential protection
-unchanged), Web/Android model/mode/permission selectors with dual themes, the
+unchanged), Web/Android model/mode selectors with dual themes, the
 controlled terminal status mode, and agent workflow/tools compatibility fixes with
 model-catalog origin markers. Stable 1.0.1 additionally brings GitHub-backed Android
 updates, pixel visual themes without control relocation, explicit remote folder
 consent and stricter vLLM-compatible request shaping. See the
-[release guide](docs/release-1.0.1.md)
+[release guide](docs/release-1.0.2.md)
 for migration, Android installation, enterprise deployment and acceptance limits.
 预览渠道仍需主动安装；首次启用远控前请阅读账号归属、目录授权和备份说明。
 

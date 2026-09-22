@@ -1,11 +1,12 @@
 import { runtimeCwd } from "../core/runtime-context.mjs"
-import { readFile, unlink, writeFile as fsWriteFile } from "node:fs/promises"
+import { readFile, stat, unlink, writeFile as fsWriteFile } from "node:fs/promises"
 import { access } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import path from "node:path"
 import { buildRequestHeaders } from "../../http/identity.mjs"
+import { normalizeImageBlock } from '../media/images.mjs'
 
 const execFileAsync = promisify(execFile)
 
@@ -313,6 +314,9 @@ export function extractImageRefs(text, cwd = runtimeCwd()) {
 export async function readImageAsBlock(filePath) {
   try {
     await access(filePath)
+    const info = await stat(filePath)
+    if (!info.isFile()) return unrecognizedImageBlock(filePath)
+    if (info.size > MAX_IMAGE_SIZE) return { type: 'text', reason: 'too-large', bytes: info.size, text: `[image too large: ${filePath} (${Math.round(info.size / 1024 / 1024)}MB, max ${MAX_IMAGE_SIZE_MB}MB)]` }
     const buffer = await readFile(filePath)
     if (buffer.length > MAX_IMAGE_SIZE) {
       // reason/bytes 让调用方不用去解析这句人话 —— 剪贴板那条路要据此判断
@@ -336,12 +340,8 @@ export async function readImageAsBlock(filePath) {
       }
       return unrecognizedImageBlock(filePath)
     }
-    return {
-      type: "image",
-      path: filePath,
-      mediaType: sniffed,
-      data: buffer.toString("base64")
-    }
+    try { return { ...await normalizeImageBlock({ type: 'image', mediaType: sniffed, data: buffer.toString('base64') }), path: filePath } }
+    catch { return unrecognizedImageBlock(filePath) }
   } catch (err) {
     return { type: "text", text: `[image not found: ${filePath}]` }
   }

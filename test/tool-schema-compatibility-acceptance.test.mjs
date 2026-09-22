@@ -54,7 +54,7 @@ test('official MCP server flows through KK Code registry and governed executor w
   const execute = args => executeTool({ tool, args, sessionId: 'mcp-fixture', turnId: 'turn', context: { cwd: root, config: {} } })
   const result = await execute({ text: 'governed tool call', label: null })
   assert.equal(result.status, 'completed')
-  assert.equal(result.output, 'governed tool call')
+  assert.equal(result.output, 'governed tool call\nStructured result:\n{"text":"governed tool call","repeat":1}')
   assert.deepEqual(result.metadata.mcp.structuredContent, { text: 'governed tool call', repeat: 1 })
   const requests = server.requests.filter(request => request.rpc === 'tools/call').length
   assert.equal((await execute({ text: 'must not reach server', repeat: '2' })).status, 'error')
