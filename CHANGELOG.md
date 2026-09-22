@@ -17,6 +17,9 @@
 - Base URL + API key discovery defaults to OpenAI-compatible when no type is
   supplied. Omit unspecified OpenAI reasoning effort and send a single leading
   system message with cacheable text blocks for strict vLLM chat templates.
+- Fix an SSE replay/live queue race found during macOS acceptance: queued live
+  rows recheck the cursor after replay, preventing duplicated text, cursor
+  rollback and writes after close; deterministic interleaving tests added.
 
 See [stable release guide](docs/release-1.0.1.md), [Android updates](docs/android-app-updates.md)
 and [executed acceptance/publication ledger](docs/stable-1.0.1-worklog.md).

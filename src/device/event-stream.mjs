@@ -39,6 +39,10 @@ export function createSessionEventStream({ service, sessionId, after = 0, princi
   const onRow = row => {
     if (closed || row.sessionId !== sessionId || row.seq <= cursor) return
     enqueue(async () => {
+      // A queued replay/hello may have delivered this row while its live
+      // callback was waiting. Recheck inside the serialized operation so a
+      // stale live row cannot duplicate output or move the cursor backwards.
+      if (closed || row.seq <= cursor) return
       if (row.seq > cursor + 1) return sync()
       if (!writer.send({ id: String(row.seq), event: row.type, data: row })) return writer.close()
       cursor = row.seq

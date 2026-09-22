@@ -93,6 +93,13 @@ Production gateway deployment is not modified without a separate explicit reques
 - [CodeQL 35741782371](https://github.com/kkelly-offical/kkcode/actions/runs/35741782371)
   completed all three languages, including a real Kotlin build. Open static
   findings: 17 reviewed, not zero; see [security review](security-review-1.0.1.md).
+- The second macOS run exposed a real SSE race (not a platform skip): an initial
+  or gap replay can overtake an already queued live row. The live operation used
+  to check its cursor only before enqueue, allowing duplicate output/cursor
+  rollback afterwards. It now checks `closed` and `row.seq <= cursor` inside the
+  serialized operation. Three deterministic interleaving tests cover initial
+  replay, gap repair and close-with-queued-work. Full gates are rerun for this
+  additional runtime fix; the earlier 2,866-test count predates these three tests.
 
 ## Publication
 
