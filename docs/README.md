@@ -1,9 +1,10 @@
-# 文档导航（1.0.1-preview.2）
+# 文档导航（1.0.1）
 
 ## 当前使用与部署
 
 - [项目首页](../README.md)：安装、模式、命令及稳定/预览渠道。
-- [第三预览版](release-1.0.1-preview.2.md)：本轮变化、升级步骤、验收边界。
+- [正式版说明](release-1.0.1.md)：本轮变化、升级步骤、验收边界。
+- [Android 应用更新](android-app-updates.md)：GitHub 更新源、下载校验和系统安装确认。
 - [配置参考](config.example.yaml)：这是示例，不是自动注入的模型清单；模型以用户 Base URL 返回的目录和用户手动配置为准。
 - [媒体输入](media-input.md)：CLI/Web/Android、协议、格式、大小和剪贴板差异。
 - [工具发现与技能](tool-discovery-and-skills.md)：tool_search、兼容别名、task brief、分层指令与 skill 标志。
@@ -17,7 +18,9 @@
 ## 实施与验收记录
 
 - [1.0.1 实施记录](implementation-1.0.1.md)：按轮次记录代码与证据。
-- [preview.2 工作台账](preview.2-worklog.md)：本轮门禁、失败和修复过程。
+- [正式版工作台账](stable-1.0.1-worklog.md)：本轮门禁、真实模型/安装与发布证据。
+- [正式版安全复核](security-review-1.0.1.md)：更新器、目录授权和静态告警口径。
+- [preview.2 工作台账](preview.2-worklog.md)：上一轮门禁、失败和修复过程。
 - [preview.2 安全复核](security-review-1.0.1-preview.2.md)：真实修复与静态误报依据分开记录。
 - [M28 复核与收尾](agent-workflow-instruction-tools-compat-1.0.1.md)。
 - [路线图](ROADMAP.md)：未承诺的后续方向与明确的支持边界。

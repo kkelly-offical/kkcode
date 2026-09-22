@@ -45,7 +45,7 @@ services:
     restart: unless-stopped
   gateway:
     build: {context: ../.., dockerfile: deploy/Dockerfile}
-    image: kkcode-enterprise-lab-gateway:1.0.1-preview.2
+    image: kkcode-enterprise-lab-gateway:1.0.1
     environment:
       DATABASE_URL: postgresql://kkcode:${GATEWAY_DB_PASSWORD}@gateway-database:5432/kkcode
       KKCODE_GATEWAY_ORIGIN: https://${KKCODE_LAB_IP}:${GATEWAY_PORT}

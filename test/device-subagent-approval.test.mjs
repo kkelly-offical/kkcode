@@ -9,7 +9,10 @@ import { currentRuntime } from '../src/kernel/core/runtime-context.mjs'
 import { DeviceService } from '../src/device/service.mjs'
 
 async function until(read, description) {
-  const deadline = Date.now() + 6000
+  // Real kernel boot + journal fsync is noticeably slower under Windows
+  // coverage/parallel CI. Keep a bounded deadline, not a fixed sleep or retry
+  // of the test; assertions must still observe the original pending approval.
+  const deadline = Date.now() + 30000
   do { const result = await read(); if (result) return result; await new Promise(resolve => setTimeout(resolve, 10)) } while (Date.now() < deadline)
   throw new Error(`Timed out waiting for ${description}`)
 }
@@ -49,7 +52,15 @@ async function fixture(run) {
     await rpc('turns.start', { sessionId: session.id, prompt: 'Delegate the test.', provider: 'fixture', model: 'fixture' })
     return session.id
   }
-  const next = predicate => until(() => [...service.approvals.values()].find(predicate), 'approval')
+  const next = predicate => until(async () => {
+    const approval = [...service.approvals.values()].find(predicate)
+    if (approval) return approval
+    if (!service.turns.size) {
+      const sessionId = [...parents].at(-1)
+      const final = sessionId ? (await service.readEvents(sessionId, 0)).at(-1) : null
+      throw new Error(`Parent ended before the expected approval: ${final?.type || 'no terminal event'} / ${final?.payload?.status || 'unknown status'}`)
+    }
+  }, 'approval')
   const resolve = (sessionId, approval, answer) => rpc('approvals.resolve', { sessionId, id: approval.id, answer }, principalB)
   try { await run({ service, rpc, start, next, resolve, directory, principalB }) } finally {
     await service.close()
@@ -58,7 +69,7 @@ async function fixture(run) {
   }
 }
 
-test('another authenticated client approves child write and question from the parent session only', { timeout: 15000 }, () => fixture(async ({ service, rpc, start, next, resolve, directory, principalB }) => {
+test('another authenticated client approves child write and question from the parent session only', { timeout: 90000 }, () => fixture(async ({ service, rpc, start, next, resolve, directory, principalB }) => {
   const sessionId = await start()
   const delegation = await next(a => a.request.tool === 'task')
   await resolve(sessionId, delegation, 'allow_once')
@@ -86,7 +97,7 @@ test('another authenticated client approves child write and question from the pa
   assert.equal(events.at(-1).type, 'turn.result')
 }))
 
-test('parent cancellation denies a pending child write and removes every cross-client approval', { timeout: 15000 }, () => fixture(async ({ service, rpc, start, next, resolve, directory }) => {
+test('parent cancellation denies a pending child write and removes every cross-client approval', { timeout: 90000 }, () => fixture(async ({ service, rpc, start, next, resolve, directory }) => {
   const sessionId = await start()
   await resolve(sessionId, await next(a => a.request.tool === 'task'), 'allow_once')
   const childWrite = await next(a => a.request.tool === 'write')

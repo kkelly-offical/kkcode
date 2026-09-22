@@ -1,5 +1,26 @@
 # Changelog / 更新日志
 
+## 1.0.1
+
+- Promote the three previews' Web/Host, OIDC/Relay, native Android, SDK and CLI
+  improvements into the stable release line; keep the headless JSONL contract.
+- Android GitHub-only updater: explicit stable/preview channel, background/manual
+  checks, bounded cancellable downloads, package/hash/project-certificate checks,
+  and real system-confirmed in-place installation. No enterprise update server
+  or silent installation. Android version code `10004`, unchanged release key.
+- Pixel visual theme for Web/Android: monochrome surfaces, fine grid/borders and
+  cut corners; preserve controls, layout and semantic diff/status colors.
+- Remote startup asks for all ordinary-folder consent. Noninteractive launches
+  require `--all-folders`, `--home-only` or `--root`; status shows the scope.
+  Credentials and Unix process/runtime/system-private paths stay protected,
+  with actionable folder errors instead of raw scope failures.
+- Base URL + API key discovery defaults to OpenAI-compatible when no type is
+  supplied. Omit unspecified OpenAI reasoning effort and send a single leading
+  system message with cacheable text blocks for strict vLLM chat templates.
+
+See [stable release guide](docs/release-1.0.1.md), [Android updates](docs/android-app-updates.md)
+and [executed acceptance/publication ledger](docs/stable-1.0.1-worklog.md).
+
 ## 1.0.1-preview.2
 
 Third opt-in preview; npm `preview`, GitHub prerelease, stable `latest` unchanged.

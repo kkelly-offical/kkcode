@@ -1,6 +1,6 @@
 # Gateway and model discovery
 
-KK Code 0.3.3 can read a model catalog from the Base URL configured by the
+KK Code can read a model catalog from the Base URL configured by the
 user. It does not silently replace a failed catalog request with a built-in
 model list.
 
@@ -43,6 +43,25 @@ If the service has one conventional API root, omit `endpoints`; KK Code reads
 `<base_url>/models`.
 
 ## Commands
+
+Web/Android connection discovery in 1.0.1 accepts just `base_url` and `api_key`:
+the temporary connection defaults to OpenAI-compatible unless the caller
+explicitly selects another type/protocol. Read the catalog, select a returned
+model and save it; a model name is not required before discovery. This does not
+infer arbitrary nonstandard endpoint paths. Conventional vLLM servers usually
+use a Base URL ending in `/v1` and expose `/v1/models`.
+
+For OpenAI-compatible chat, an unspecified thinking preference omits
+`reasoning_effort`, preserving the server's own default. Explicit supported
+preferences still take effect; Anthropic defaults are unchanged. System prompt
+blocks are sent as one leading system message, with cache metadata on the
+stable block, for templates that reject multiple system-role messages.
+
+Credential-bearing loopback URLs still require HTTPS. For a local HTTP-only
+engine use an authenticated/trusted HTTPS gateway or a narrowly scoped TLS
+adapter and a trusted CA; never disable certificate checks. The release
+acceptance used an SSH loopback tunnel plus process-scoped CA trust without
+changing the running model service or opening its key to the LAN.
 
 ```bash
 kkcode model list --provider company-gateway --refresh

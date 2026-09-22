@@ -1,4 +1,4 @@
-# Android 1.0.1-preview.2 release signing and acceptance
+# Android 1.0.1 release signing and acceptance
 
 The Android application is a native remote client. Release signing is separate
 from publishing: producing this APK does not upload it to a store or GitHub.
@@ -9,7 +9,7 @@ The user authorized creation of a project-specific production release key on
 2026-09-21. It is not the Android debug key or an acceptance-only identity.
 
 - Application ID: `cn.kkcode.remote`.
-- Current prerelease target: `1.0.1-preview.2` / version code `10003`.
+- Current stable target: `1.0.1` / version code `10004`.
 - Algorithm: RSA-4096, SHA256withRSA; certificate validity: 10,000 days.
 - Public certificate SHA-256:
   `cf75774a4d87ba1ccc4a811f271bd301076cf6beefd7432a3cb30231164be5d1`.
@@ -29,9 +29,10 @@ The repository deliberately does not upload keys to any CI provider.
 The previous `1.0.1` APKs were local, unpublished acceptance builds. The first
 authorized public preview (`1.0.1-preview.0`) therefore retained version code
 `10001`, the second preview (`1.0.1-preview.1`) increments it to `10002`, and
-the third preview (`1.0.1-preview.2`) uses `10003`. The certificate must stay unchanged.
+the third preview (`1.0.1-preview.2`) uses `10003`; stable `1.0.1` uses `10004`.
+The certificate must stay unchanged.
 **Every subsequent publicly distributed Android update must increase
-`versionCode`, including the eventual stable `1.0.1` and any later preview.**
+`versionCode`, including any later stable release or preview.**
 Changing only `versionName` is not a valid public update policy. Keep using
 the same signing identity unless an explicit, separately validated
 key-rotation plan is adopted.
@@ -64,6 +65,12 @@ The build verifier and installed-package smoke test read the target from
 `package.json` exactly. APK/installed version names and version codes are
 compared exactly, so a stale stable APK cannot pass a preview check by prefix.
 The application footer and Android User-Agent use `BuildConfig.VERSION_NAME`.
+
+After signature verification, run `node scripts/android-update-manifest.mjs`.
+Publish its `test-results/android-update.json` alongside the exact signed APK
+renamed `kkcode-android-1.0.1.apk`. The App updater skips releases without a
+matching manifest. Public identity is pinned in `configs/android-release.json`;
+private signing files never enter the release. See [App updates](android-app-updates.md).
 
 The signature verifier normally selects v3 for this app's minimum Android API
 29. The script also verifies the v2 block with an explicit verifier API range;
@@ -132,7 +139,7 @@ ANDROID_HOME=/path/to/android-sdk KKCODE_ANDROID_SERIAL=emulator-5582 \
   node scripts/android-release-smoke.mjs
 ```
 
-Validated locally: 21 Compose UI tests, 29 JVM tests, release
+Historical pre-preview acceptance: 21 Compose UI tests, 29 JVM tests, release
 APK certificate/v2/v3/manifest checks, unsigned-release rejection, and a signed
 release install/launch on the isolated API 36 AVD. Launch verification checks
 the compact home, absence of configuration forms, a live process, and rejection
@@ -140,6 +147,14 @@ of `run-as` debugging. The screenshot is
 `test-results/android-release-home.png`. Expanded enterprise network checks
 must be run against the matching updated backend; their final result belongs
 in `enterprise-lab-progress.md`, not inferred from these isolated UI checks.
+
+Stable 1.0.1 adds update policy/transport tests, four Compose updater tests and
+an opt-in real PackageInstaller acceptance class. The latter is built against
+the release variant with the same project certificate in an isolated worktree
+and AVD; its private higher-version APK must never be uploaded. Both signature
+checks and the user's actual system installation consent are exercised before
+checking retained private preferences and Android Keystore data. Exact current
+counts/results belong in [the stable ledger](stable-1.0.1-worklog.md).
 
 ## First preview artifact acceptance (2026-09-22)
 

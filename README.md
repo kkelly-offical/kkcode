@@ -11,10 +11,11 @@
 **终端优先、可治理、可扩展的编码智能体：五档模式循环、可治理审批、Ultra 分阶段交付。**
 kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同一个 CLI 工作台里，并且把权限、预算、审计、后台任务、MCP、技能与插件一起纳入统一执行面。
 
-稳定渠道为 `1.0.0`；第三个预览版为 **`1.0.1-preview.2`**，需主动安装
-`@preview`，不会替换稳定版。预览版包含本地 WebUI、企业 OIDC/中继和原生
-Android 远程客户端，以及本轮 CLI、媒体输入和工具兼容性补齐。
-请先读 [preview.2 使用与升级说明](docs/release-1.0.1-preview.2.md)。
+本版 **`1.0.1`** 包含本地 WebUI、企业 OIDC/中继、原生 Android 远程客户端，
+以及三轮预览中的 CLI、媒体输入和工具兼容性改进。新增 Android GitHub 更新源、
+保持控件布局的像素主题和远控启动目录授权。
+请先读 [1.0.1 使用与升级说明](docs/release-1.0.1.md)，实际发布与测试记录见
+[验收账本](docs/stable-1.0.1-worklog.md)。
 
 **日本語**: ターミナル中心の個人アシスタント。安全な権限管理、Coding Agent、LongAgent、ローカル拡張を同じ CLI にまとめます。  
 **한국어**: 터미널 우선 개인 비서로, 권한 관리와 Coding Agent, LongAgent, 로컬 확장을 하나의 CLI에서 다룹니다。  
@@ -96,15 +97,17 @@ kkcode
 ```
 
 预览渠道：`npm install -g @kkelly-offical/kkcode@preview`；固定本版可使用
-`@1.0.1-preview.2`。安装搜索依赖：Linux `apt install ripgrep`、macOS
+`@1.0.1`。安装搜索依赖：Linux `apt install ripgrep`、macOS
 `brew install ripgrep`、Windows `choco install ripgrep`。
 
-**Web / enterprise remote / 企业远控（preview）**
+**Web / enterprise remote / 企业远控**
 
 ```sh
 kkcode -web                  # 本机 WebUI，默认 18271
 kkcode -web -host-18271       # Host 开放，需按部署文档配置访问保护和 TLS
-kkcode remote                # 前台受控终端，首次必须登录绑定
+kkcode remote                # 先询问目录范围；前台运行，首次必须登录绑定
+kkcode remote --all-folders  # 明确允许所有普通目录，凭据/系统私密路径仍受保护
+kkcode remote --home-only    # 仅 home；--root <path> 可限定一个工作目录
 ```
 
 公网服务器部署的是 `apps/gateway/main.mjs` 的**中继网关**，不是运行在工作电脑
@@ -695,24 +698,26 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current stable version / 当前稳定版本**: `v1.0.0`
+**Stable target / 本版稳定版本**: `v1.0.1`
 
 **Opt-in preview / 自愿试用预览版**: `v1.0.1-preview.2`
 
 ```sh
-npm install -g @kkelly-offical/kkcode@preview
+npm install -g @kkelly-offical/kkcode@1.0.1
 kkcode --version
 ```
 
-The preview adds WebUI/Host, enterprise OIDC/Relay, native Android remote control,
+The 1.0.1 release includes WebUI/Host, enterprise OIDC/Relay, native Android remote control,
 multi-client approvals, attachments and guarded Git branches. The second preview
 adds SSE event streams, tolerant home-root folder browsing (credential protection
 unchanged), Web/Android model/mode/permission selectors with dual themes, the
 controlled terminal status mode, and agent workflow/tools compatibility fixes with
-model-catalog origin markers. The npm `latest` channel remains on `1.0.0`. See the
-[preview guide](docs/release-1.0.1-preview.2.md)
+model-catalog origin markers. Stable 1.0.1 additionally brings GitHub-backed Android
+updates, pixel visual themes without control relocation, explicit remote folder
+consent and stricter vLLM-compatible request shaping. See the
+[release guide](docs/release-1.0.1.md)
 for migration, Android installation, enterprise deployment and acceptance limits.
-预览版需主动安装，不会替换稳定版渠道；首次启用远控前请阅读账号归属和备份说明。
+预览渠道仍需主动安装；首次启用远控前请阅读账号归属、目录授权和备份说明。
 
 The third preview completes M32/M33 and the named M28 follow-ups: background
 MCP loading, compact CLI notices/theme/turn lifecycle fixes, real audio/video
@@ -727,12 +732,12 @@ root-to-cwd instructions, canonical tool advertising and enforced skill flags.
 名称推断。定价是成本估算，不是供应商账单。
 详见 [媒体输入矩阵](docs/media-input.md)、[工具与技能契约](docs/tool-discovery-and-skills.md)。
 
-`v1.0.0` is the current stable npm and GitHub release: the five stages of the
+The earlier `v1.0.0` established the five stages of the
 kernel/SDK layering, the frozen headless JSONL machine contract, and the four
-pre-release backlog items all merged into `main` and ship with this version.
+pre-release backlog items, all retained in 1.0.1.
 
-`v1.0.0` 是当前 npm 与 GitHub 正式稳定版本：内核/SDK 分层五个阶段、固化的
-headless JSONL 机器契约与四条 backlog 已全部合入 `main` 并随本版发布。
+`v1.0.0` 建立的内核/SDK 分层、固化的 headless JSONL 机器契约与四条 backlog
+继续保留在 `1.0.1` 中。
 
 Use the Kimi Code preset without placing credentials in YAML:
 

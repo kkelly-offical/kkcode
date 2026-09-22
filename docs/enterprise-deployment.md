@@ -1,8 +1,8 @@
 # KK Code 企业自托管组件与实验部署（1.0.1）
 
-当前预览目标为 `1.0.1-preview.2`，不是生产安全认证或 `1.0.1` 稳定版。
-根包、网关/Web/SDK 工作区与 Android 版本名一致；APK 版本码为 `10003`。
-实际发布/验收状态见 [本版说明](release-1.0.1-preview.2.md)。
+本版稳定目标为 `1.0.1`，版本发布本身不等于生产安全认证。
+根包、网关/Web/SDK 工作区与 Android 版本名一致；APK 版本码为 `10004`。
+实际发布/验收状态见 [本版说明](release-1.0.1.md) 与 [验收账本](stable-1.0.1-worklog.md)。
 
 升级前备份 PostgreSQL 与设备本地状态，不重建组织/OIDC client、网关密钥或
 Android 证书。先更新实验网关与一台设备，验证登录、会话流、模型目录、审批和
@@ -105,8 +105,23 @@ docker compose --env-file /root/.local/share/kkcode-enterprise-lab/lab.env \
 移交会让新账号获得保留历史、允许目录和模型配置的使用权限；旧分享和设备凭据失效。
 具体恢复语义见 [设备生命周期说明](device-lifecycle-1.0.1.md)。
 首次试用应使用专用 OS 用户或 `KKCODE_HOME`，并可添加 `--root` 限定工作目录。
-默认浏览范围是 OS 用户 home，敏感凭据路径仍受保护；`--trust` 会扩大当前工作区的扩展信任，
-不要对陌生目录无意使用。
+交互启动先询问是否允许所有普通目录，拒绝或回车仅开放 home；非交互必须显式
+传 `--home-only`、`--root <path>` 或 `--all-folders`。敏感凭据／系统私密路径
+仍受保护，`remote status` 显示实际范围。`--trust` 只扩大当前工作区的扩展信任，
+不代表目录授权，不要对陌生目录无意使用。见 [目录授权](remote-folder-browsing.md)。
+
+## Web 镜像和 Android 升级
+
+网关镜像内含 WebUI。使用本版源码执行
+`docker build -f deploy/Dockerfile -t kkcode-gateway:1.0.1 .`，然后由部署方按自己的
+Compose／编排配置滚动更新。不要删除数据库卷或重新生成 OIDC/网关密钥；CLI
+与 Android 更新不会自动更新服务器镜像。仓库提供 Dockerfile，不宣称已经发布
+公共 registry 镜像。
+
+Android 从 1.0.1 开始可以直接检查 GitHub 更新，不需要企业网关新增升级服务。
+旧预览 APK 先手动覆盖安装一次正式版，随后在个人资料版本号入口检查和安装；
+每次安装仍需 Android 系统确认，详见 [应用更新](android-app-updates.md)。企业
+更新源和强制升级策略暂缓，不会把网关登录凭据带到 GitHub。
 
 ## 接入企业已有 SSO
 
@@ -140,4 +155,5 @@ SSO 注册回调 `${KKCODE_GATEWAY_ORIGIN}/auth/callback`，启用 Authorization
 这些实现不代替部署方的公网域名／证书、数据库自身 HA、异地备份及密钥托管。
 签名私钥必须另行做加密异地备份，不能遗失，也不会自动上传到 CI。
 Windows/macOS 的最终 CI 状态以 [实施账本](implementation-1.0.1.md) 为准。
-仅使用专用验收分支测试；没有发布 npm 包、GitHub Release 或应用商店版本。
+验收使用专用分支和隔离资源；npm/GitHub 的实际发布状态以版本账本为准。
+没有发布到应用商店，也不会把本机签名密钥上传到 CI。

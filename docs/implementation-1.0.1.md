@@ -1,5 +1,13 @@
 # 1.0.1 implementation ledger
 
+Latest authorized stable work: Android GitHub updater, layout-preserving pixel
+themes, explicit remote folder consent and real vLLM auto-discovery/CLI inference.
+The dedicated remote VM is bound to the user's enterprise gateway; its owner
+approved all ordinary directories, not host files. See the
+[stable completion ledger](stable-1.0.1-worklog.md) and [stable user guide](release-1.0.1.md)
+for current evidence and publication state. Older counts and “not released”
+statements below are historical checkpoints, not the current release declaration.
+
 Status: agreed 1.0.1 implementation and scoped acceptance completed. Baseline: v1.0.0 / 21342dd. The records below describe the pre-publication acceptance checkpoint.
 
 On 2026-09-22 the user additionally authorized merging into main and publishing `1.0.1-preview.0`, using npm `preview` and a GitHub prerelease while preserving stable `latest`. Preview changes include synchronized client/API version labels, preview-aware release gates, and packaging the gateway entry/deployment guidance. See [preview instructions](release-1.0.1-preview.0.md) and the [version's release record](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.1-preview.0) for publication status. The historical `not released` / unchanged-main statements below refer to the earlier acceptance authorization, not this later explicit release request.
