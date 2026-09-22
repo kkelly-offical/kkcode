@@ -1,8 +1,8 @@
 # KK Code 1.0.1-preview.2
 
-第三个预览版，非 `1.0.1` 稳定版。发布渠道为 npm `preview` 和 GitHub
-prerelease；稳定 `latest` 保持 `1.0.0`。版本是否已公开，以 npm/GitHub
-实际记录为准；本页的验收区在门禁通过后补入最终证据。
+第三个预览版，非 `1.0.1` 稳定版。2026-09-22 已发布到 npm `preview` 和
+[GitHub prerelease](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.1-preview.2)；
+稳定 `latest` 保持 `1.0.0`。公开注册表安装、CLI 版本和 SDK 导入已复验。
 
 ## 安装
 
@@ -13,6 +13,9 @@ npm install -g @kkelly-offical/kkcode@1.0.1-preview.2
 kkcode --version
 kkcode -web
 ```
+
+刚发布时镜像可能有同步延迟，可加 `--registry=https://registry.npmjs.org`。
+GitHub 同时附有经过相同校验的 npm tarball、正式 APK、SBOM 和 SHA-256 清单。
 
 需要 Node.js >=22.12.0。`grep/glob` 需要 `ripgrep` 在 PATH：Ubuntu/Debian
 安装 `ripgrep`，macOS 使用 `brew install ripgrep`，Windows 使用
@@ -60,10 +63,12 @@ Android 证书；先用一台设备验证，再滚动升级。协议版本仍为
 
 ## 验收与边界
 
-最终检查项目：Node 全量/覆盖率、JSONL e2e、Web 实际浏览器、协议兼容、
+已通过：Node 全量/覆盖率、JSONL e2e、Web 实际浏览器、协议兼容、
 企业实验环境、Android 单元/模拟器/正式 APK、Linux/Windows/macOS CI、
 JS/Actions/Kotlin CodeQL、不可变 npm tarball 与生产依赖审计。
-具体结果记录在 [preview.2 工作台账](preview.2-worklog.md)，不把待跑项算成通过。
+本地 Node 2,856 通过 / 1 平台跳过 / 0 失败，E2e 33/33；Android 单元 35、
+界面 22、真实网络 3、TLS 1 项通过。CI 各平台的具体通过／跳过数量和发布
+链接记录在 [preview.2 工作台账](preview.2-worklog.md)。
 告警修复与误报依据见 [本轮安全复核](security-review-1.0.1-preview.2.md)。
 
 真实模型对视频的协议支持、桌面剪贴板策略、企业租户 claim 映射、公网 DNS/TLS、

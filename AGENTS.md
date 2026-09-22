@@ -1,7 +1,7 @@
 # Project working memory
 
 - User decision (2026-09-21): releases stay on `1.0.x`. Do not bump to `1.1.0` or another major/minor until the user explicitly authorizes that version change.
-- Current preview target: `1.0.1-preview.2` (third round): M32/M33 completion, cross-platform gates, truthful media inputs, discovered pricing, model capability badges, remote MCP summaries, deferred tool discovery, hierarchical instructions and backward-compatible canonical tools. Release authorization includes merging to main and publishing npm `preview` + GitHub prerelease only; preserve stable `latest`. Publication/acceptance evidence belongs in the implementation and release ledgers.
+- Current published preview: `1.0.1-preview.2` (third round, 2026-09-22): M32/M33 completion, cross-platform gates, truthful media inputs, discovered pricing, model capability badges, remote MCP summaries, deferred tool discovery, hierarchical instructions and backward-compatible canonical tools. Published from `cc381cd` through npm `preview` + GitHub prerelease; stable `latest` remains `1.0.0`. Publication/acceptance evidence belongs in the implementation and release ledgers.
 - Android is a native Kotlin/Compose remote client (SSH and Relay), not an embedded local Agent runtime.
 - Android version codes: preview.0 = `10001`, preview.1 = `10002`, preview.2 = `10003`. Every later public APK must keep incrementing that code while retaining the project release certificate. Signing keys remain outside Git and CI.
 - User authorized switching CodeQL from default setup to a custom workflow on 2026-09-22, preserving JavaScript/Actions analysis and adding a real manual Android/Kotlin debug build; a Java-only `build-mode: none` pass is not Kotlin coverage.

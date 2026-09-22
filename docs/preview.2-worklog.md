@@ -22,7 +22,7 @@ preview through npm `preview` and a GitHub prerelease. Stable `latest` remains
 - [x] Documentation: README, configuration/help, SDK/protocol, media, enterprise
   deployment, implementation ledger and release notes agree with the code;
   historical release records remain historical.
-- [ ] Release: version consistency (`1.0.1-preview.2`, Android `10003`), full
+- [x] Release: version consistency (`1.0.1-preview.2`, Android `10003`), full
   local verification, Web/Android acceptance, Linux/Windows/macOS CI and CodeQL,
   immutable package checks, signed APK, preview-only publication and registry
   verification.
@@ -39,8 +39,8 @@ preview through npm `preview` and a GitHub prerelease. Stable `latest` remains
   must be completed before claiming end-to-end support.
 - `/paste` currently reports success after an attachment hook returns `null`.
 
-Completed work and the final validation evidence will be recorded below as the
-gates actually pass. An unchecked gate is not a shipped capability.
+The completed work, failures and final validation evidence are recorded below.
+Historical failed runs remain documented; they are not counted as passing gates.
 
 ## Failures investigated, not waived
 
@@ -105,8 +105,61 @@ gates actually pass. An unchecked gate is not a shipped capability.
   and [35727419569](https://github.com/kkelly-offical/kkcode/actions/runs/35727419569);
   do not infer their result from the preceding commit.
 
+Final-source acceptance run `35727391416` completed successfully on every target:
+
+| Platform | Node tests pass / skip / fail | E2e pass / skip / fail |
+| --- | --- | --- |
+| Ubuntu / Node 22 | 2851 / 6 / 0 | 33 / 0 / 0 |
+| Ubuntu / Node 24 | 2851 / 6 / 0 | 33 / 0 / 0 |
+| macOS / Node 22 | 2851 / 6 / 0 | 32 / 1 / 0 |
+| Windows / Node 22 | 2842 / 15 / 0 | 32 / 1 / 0 |
+
+All four also passed the Web browser suites, version/type/build checks, package
+smoke and secret scan. The platform/privilege skips are existing explicit test
+preconditions, not skips added to conceal the failures listed above. This local
+Linux host can run five real bubblewrap cases that the hosted Linux runners skip
+because bubblewrap/user-namespace execution is unavailable. macOS instead runs
+the real sandbox-exec case; POSIX-only/Windows symlink cases retain explicit skips. CodeQL run
+`35727419569` completed JavaScript, Actions and manual Kotlin analysis successfully;
+scanner findings are disclosed separately in the security review.
+
 Release APK: `cn.kkcode.remote`, `1.0.1-preview.2`, code `10003`.
 SHA-256 `1c51cf69ccb9474218d7a370f6ee400d83f0f834e0e429186403be84b6f96738`.
 Existing certificate SHA-256
 `cf75774a4d87ba1ccc4a811f271bd301076cf6beefd7432a3cb30231164be5d1`.
 Keys/passwords stay outside Git/CI. Publication is tracked separately from builds.
+
+## Published third preview (2026-09-22)
+
+- Release source: `cc381cd1c55853f13a282a84858197470750a68e`, merged into `main`,
+  tagged `v1.0.1-preview.2`. Subsequent acceptance-ledger edits are documentation
+  only and do not move the immutable release tag.
+- Main [verify 35728030857](https://github.com/kkelly-offical/kkcode/actions/runs/35728030857)
+  passed four OS/Node jobs plus Web; main
+  [CodeQL 35728030834](https://github.com/kkelly-offical/kkcode/actions/runs/35728030834)
+  passed all three languages, including the traced Kotlin build.
+- [Release run 35728900390](https://github.com/kkelly-offical/kkcode/actions/runs/35728900390)
+  independently passed its four-platform matrix, full verification, production
+  dependency audit and immutable-tarball scan/install before publication.
+- [GitHub prerelease](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.1-preview.2)
+  is public, not a draft, not the stable latest release. Assets include the
+  project-signed APK, npm tarball, CycloneDX SBOM and checksum/Android verification files.
+- npm accepted the package at 12:52 UTC, then reported an asynchronous processing
+  delay. Public registry checks subsequently confirmed `preview = 1.0.1-preview.2`
+  and `latest = 1.0.0`; the initial 404 was not treated as successful availability.
+- The actual public registry tarball was downloaded and matched the CI artifact
+  byte-for-byte by SHA-256:
+  `966abc9d8ae5e0a3593d89ed290369c9429fbc436627d692e5153570cbfe2b74`.
+  SHA-512 SRI:
+  `sha512-2/uEYpxaVV93q+eENDKr0I/UqjiBMb1Wfh9Oy0T44wZQy98AaCZo6KjmQVK+o7eadStTDN28cCKgKHHUOsFiSw==`.
+  An independent downloaded-artifact verification passed all 490 files and
+  installed SDK/protocol/CLI checks.
+- A fresh install of the exact public npm version into an isolated temporary
+  prefix succeeded (212 packages); `kkcode --version` returned
+  `1.0.1-preview.2`, and public kernel SDK/browser-client/protocol-v1 imports passed.
+- GitHub's APK asset digest matches the signed local APK hash above. Release
+  keys remain outside the repository. Git author email is
+  `24042203053@ecupl.edu.cn`.
+- Only owned temporary HA/Dex/restore resources and the release AVD were stopped;
+  encrypted backups/artifacts are retained, the debug AVD's Wi-Fi was restored,
+  and the two-port inspection lab remains running without a foreground remote hub.

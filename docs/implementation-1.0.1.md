@@ -225,3 +225,11 @@ pass. Separate Dex, gateway-process failover/DB reconnect, encrypted backup/rest
 HTTPS Host and bounded live K3 checks pass. These do not claim that arbitrary
 enterprise tenants, physical phones or production infrastructure were supplied.
 Final CI/publication links are centralized in the [worklog](preview.2-worklog.md).
+
+Third-preview publication completed on 2026-09-22 from `cc381cd`, tag
+`v1.0.1-preview.2`. The release workflow passed all gates; the public npm registry
+now routes `preview` to this version while `latest` remains `1.0.0`. Its downloaded
+tarball SHA-256 is `966abc9d8ae5e0a3593d89ed290369c9429fbc436627d692e5153570cbfe2b74`.
+The [GitHub prerelease](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.1-preview.2)
+contains the same verified tarball, SBOM, signed Android `10003` APK and checksums.
+No production signing secret was uploaded.
