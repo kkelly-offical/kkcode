@@ -47,16 +47,21 @@ Production gateway deployment is not modified without a separate explicit reques
   and proved settings plus a Keystore-encrypted sentinel survived. No uninstall
   or ADB install of the target version was used. The private fixture is NOT a
   public version/artifact and must never be uploaded.
-- Final public APK was separately rebuilt from the normal checkout as **10004**,
+- Public-target APK was separately rebuilt from the normal checkout as **10004**,
   checked v2/v3/non-debuggable/package/version and installed on separate release
   AVD 5582. Compact home, no configuration form, live process and rejected run-as
   all passed. SHA-256:
-  `7dfe14716c4edf6dd140755bf20b23ef2cba2c42023319987c57da38b6240bf3`.
-  Size 50,778,439 bytes; unchanged project certificate; generated matching
+  `dc5ce364453a66e2a54a0571054e5fe86ed633d03fbfaece8752815342ecac7a`.
+  Size 52,485,479 bytes after the user-requested brand icon; unchanged project certificate; generated matching
   `android-update.json`. Private key remains outside Git/CI.
+- User-provided product concept art is retained under `docs/assets/brand` and
+  included in README. The first square image was adapted using built-in imagegen
+  into the Android launcher master; the original is preserved. Adaptive XML
+  margins handle circle/squircle cropping; it is not a replacement conversation
+  layout. Prompt/tool/provenance notes and a resource consistency test are included.
 - Rebuilt local gateway/Web image `kkcode-enterprise-lab-gateway:1.0.1` from the
   current source. The full deployed Keycloak/PostgreSQL/HTTPS integration passed
-  in `integration-ghpjfY`: CLI/SDK/Web/Android model/session/mode sync, real binary
+  in `integration-ghpjfY` and again after the SSE fix in `integration-YuTOzx`: CLI/SDK/Web/Android model/session/mode sync, real binary
   attachments, slash policy, cross-client approvals, private sharing/revocation,
   verified SSH, branch actions, gateway restart/replay, foreground stop, unbind
   and account/history transfer. Production gateway was not redeployed.

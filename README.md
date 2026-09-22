@@ -1,5 +1,7 @@
 # kkcode
 
+![KK Code 产品印象图：对讲机与编码伙伴连接工作区](docs/assets/brand/kkcode-product-banner.jpg)
+
 [![npm version](https://img.shields.io/npm/v/@kkelly-offical/kkcode?label=npm)](https://www.npmjs.com/package/@kkelly-offical/kkcode)
 [![GitHub Release](https://img.shields.io/github/v/release/kkelly-offical/kkcode)](https://github.com/kkelly-offical/kkcode/releases)
 ![Node](https://img.shields.io/badge/Node.js-%3E%3D22.12-green)
@@ -16,6 +18,11 @@ kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同�
 保持控件布局的像素主题和远控启动目录授权。
 请先读 [1.0.1 使用与升级说明](docs/release-1.0.1.md)，实际发布与测试记录见
 [验收账本](docs/stable-1.0.1-worklog.md)。
+
+<img src="docs/assets/brand/kkcode-android-original.jpg" alt="KK Code Android 应用品牌图" width="120" />
+
+以上为品牌概念图，不是实际界面截图；应用仍使用紧凑的像素主题会话布局。
+原始素材与 Android 图标适配记录见 [品牌素材](docs/assets/brand/README.md)。
 
 **日本語**: ターミナル中心の個人アシスタント。安全な権限管理、Coding Agent、LongAgent、ローカル拡張を同じ CLI にまとめます。  
 **한국어**: 터미널 우선 개인 비서로, 권한 관리와 Coding Agent, LongAgent, 로컬 확장을 하나의 CLI에서 다룹니다。  

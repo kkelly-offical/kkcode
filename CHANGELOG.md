@@ -10,6 +10,8 @@
   or silent installation. Android version code `10004`, unchanged release key.
 - Pixel visual theme for Web/Android: monochrome surfaces, fine grid/borders and
   cut corners; preserve controls, layout and semantic diff/status colors.
+- Add user-provided product artwork to GitHub/README and a matching Android
+  adaptive launcher icon, with originals and the image-generation brief retained.
 - Remote startup asks for all ordinary-folder consent. Noninteractive launches
   require `--all-folders`, `--home-only` or `--root`; status shows the scope.
   Credentials and Unix process/runtime/system-private paths stay protected,

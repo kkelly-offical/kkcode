@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The master fills a square; inset its important artwork into the adaptive
+     icon safe region. The launcher chooses its circle/squircle mask. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:insetLeft="20%" android:insetTop="20%"
+    android:insetRight="20%" android:insetBottom="20%">
+    <bitmap android:src="@drawable/kkcode_launcher_art" android:gravity="fill" />
+</inset>
