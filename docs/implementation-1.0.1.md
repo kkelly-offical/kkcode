@@ -1,9 +1,93 @@
 # 1.0.1 implementation ledger
 
+## Demo workspace-trust hotfix — 2026-09-23 (not published)
+
+The user reported an outbound-provider trust refusal on **KK主机 1 号位** and
+explicitly authorized project/configuration trust across this VM's ordinary
+directories, including newly created folders. The earlier browsing-only grant
+did not satisfy that request. Two independently verified causes were fixed:
+
+- `--all-folders` grants browsing access; the existing `--trust` trusted only
+  the terminal's startup workspace. Kernels created for other remote folders
+  remained untrusted. The new, explicit `--trust-all-workspaces` persists
+  recursive project/configuration/extension trust under the authorized roots.
+  Neither folder access alone nor an ordinary exact-directory trust record is
+  silently promoted to recursive trust.
+- At `/home/kkcode`, the same `.kkcode/config.json` was loaded as both the user
+  configuration and a project override. It is now treated as user configuration
+  only, including physical-file aliases. A separate, byte-identical project
+  file still counts as project-controlled, preserving outbound-provider checks.
+  User-scoped `.env` aliases are read through the trusted user path itself,
+  avoiding attribution of bytes from a concurrently changed project link.
+
+Recursive grants are stored privately, resolve physical paths before inheritance,
+and cover future descendants. Explicit child revocation overrides inherited trust;
+malformed records fail closed. Symlinks cannot extend a narrower approved tree.
+The VM has a recursive `/` grant under its existing OS user, not on the host.
+Credential browsing protections, tool approvals and OS permissions remain active.
+Trust is not a promise of write access: a diagnostic turn in root-owned `/opt`
+correctly failed to create `/opt/.kkcode` with `EACCES`; its kernel trust check
+passed, and no OS permissions were broadened.
+
+Deployment: a local tarball based on `9af8438` plus these source changes was
+installed only in the demo VM. Its package version remains `1.0.1`, with an
+explicit `LOCAL-HOTFIX.json` receipt outside `node_modules`; this does **not**
+represent new public 1.0.1 bytes. SHA-256:
+`f441cf2632605598ea0fafc1bb989427e7dcc4ef8aa51c8d39e14697c6a7b2d0`.
+The previous installation is recoverable at
+`/home/kkcode/.local/kkcode-before-trust-fix-20260923`. The remote foreground
+process was restarted with `--trust --all-folders --trust-all-workspaces --web`
+and reconnected to the existing enterprise gateway with unchanged device UUID,
+display name, account binding, history and model configuration.
+
+Validation:
+
+- `npm run release:verify`: 2,879 core tests passed, one macOS-only test skipped
+  on Linux, zero failed; all 33 E2E tests and installed-package/SDK checks passed.
+  Lint, types, architecture, coverage and packaged-secret checks passed.
+- Ten focused configuration-identity/recursive-trust tests passed, including a
+  real `DeviceService` creating kernels for existing and future directories.
+  Exact re-confirmation at an already trusted root preserves its recursive
+  grant, but exact re-approval after revocation does not restore recursive
+  trust. The final source was rechecked after these edge cases were added.
+  The combined provider/extension/folder-security regression run passed 31 tests.
+- `npm run test:web`: all three browser suites passed; all 148 measured control
+  rectangles were unchanged. No new Windows/macOS CI or APK build was run for
+  this local fix.
+- Real VM Device SDK → HTTP API → kernel → configured `local-vllm` model turns
+  returned the exact expected canaries at `/home/kkcode` and a newly created
+  writable `/tmp` workspace, without per-folder `--trust`. A further new folder
+  inherited trust, while SDK browsing of `.ssh`, `.kkcode` and `/proc/self`
+  returned HTTP 403. The isolated acceptance server used a separate temporary
+  device journal and did not replace the running enterprise relay hub.
+  Only the clearly labelled acceptance conversations were archived afterward;
+  their contents and the user's original conversations were retained.
+
+The public npm package, GitHub Release and immutable `v1.0.1` tag are unchanged.
+See [folder browsing and explicit workspace trust](remote-folder-browsing.md)
+for the distinction between the two grants and their lifetimes.
+
+## Demo operations — 2026-09-23
+
+At the user's request, the dedicated VM was gracefully shut down, renamed from
+`kkcode-remote-demo` to **KK主机 1 号位**, and restarted. The libvirt name, guest
+pretty hostname and persisted KK Code device display name now match. The ASCII
+network hostname and existing disk/provisioning paths remain unchanged for
+compatibility. VM/device UUIDs, IP `192.168.122.111`, login ownership, history,
+model configuration and the approved all-ordinary-folder scope were preserved.
+The model SSH tunnel, loopback TLS adapter and foreground remote tmux process
+were restored. Verified: gateway health 1.0.1, remote connected/logged in, scope
+`all`, and a fresh network model catalog containing `Qwen3.8-27B` (no inference
+requested for this operational check). No new application release or source
+runtime change was made.
+
+## Stable publication
+
 Stable `1.0.1` is published from `c04fcaf` through npm `latest` and a normal
 GitHub Release (2026-09-22). The public npm tarball matches the verified CI bytes;
-the signed APK/update manifest are available, and the demo VM is running the
-public stable package with its existing identity and ordinary-folder grant.
+the signed APK/update manifest are available. The demo VM initially ran that
+public stable package with its existing identity and ordinary-folder grant;
+its later local trust hotfix is recorded above.
 Post-tag commit `11c5351` only makes a background-wait test deterministic; the
 published tag and runtime code are unchanged.
 

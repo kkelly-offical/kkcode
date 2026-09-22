@@ -1,5 +1,5 @@
 import path from "node:path"
-import { access, readFile } from "node:fs/promises"
+import { access, readFile, realpath, stat } from "node:fs/promises"
 import YAML from "yaml"
 import { DEFAULT_CONFIG } from "./defaults.mjs"
 import { validateConfig } from "./schema.mjs"
@@ -43,9 +43,20 @@ function mergeForValidation(base, override) {
   return out
 }
 
-async function firstExisting(candidates) {
+async function sameConfigFile(left, right) {
+  if (!left || !right) return false
+  if (path.resolve(left) === path.resolve(right)) return true
+  try {
+    const [a, b] = await Promise.all([realpath(left), realpath(right)])
+    if (a === b) return true
+    const [aInfo, bInfo] = await Promise.all([stat(a, { bigint: true }), stat(b, { bigint: true })])
+    return aInfo.ino > 0n && aInfo.ino === bInfo.ino && aInfo.dev === bInfo.dev
+  } catch { return false }
+}
+
+async function firstExisting(candidates, exclude = null) {
   for (const candidate of candidates) {
-    if (await exists(candidate)) return candidate
+    if (await exists(candidate) && !(exclude && await sameConfigFile(candidate, exclude))) return candidate
   }
   return null
 }
@@ -324,7 +335,10 @@ function hoistUltraSectionKeys(longagent) {
 export async function loadConfig(cwd = process.cwd()) {
   const resolvedCwd = path.resolve(cwd)
   const userPath = await firstExisting(userConfigCandidates())
-  const projectPath = await firstExisting(projectConfigCandidates(cwd))
+  // At the OS user's home, .kkcode/config.* is the user config itself, not a
+  // second project-controlled layer. Skip physical aliases too, but continue
+  // looking for a genuinely distinct project file instead of discarding it.
+  const projectPath = await firstExisting(projectConfigCandidates(cwd), userPath)
 
   const userLoaded = await loadOne(userPath, DEFAULT_CONFIG)
   let userConfig = mergeObject(DEFAULT_CONFIG, userLoaded.config)
@@ -342,13 +356,16 @@ export async function loadConfig(cwd = process.cwd()) {
   const envCandidate = await firstExisting(envFileCandidates(cwd))
   if (envCandidate) {
     try {
-      const raw = await readFile(envCandidate, "utf8")
+      const userEnvPath = path.join(userRootDir(), ".env")
+      const isUserEnv = await sameConfigFile(envCandidate, userEnvPath)
+      // Read a user-scoped overlay through the trusted user path itself. A
+      // workspace-controlled symlink could otherwise change between reading
+      // its bytes and attributing them to the user configuration.
+      const raw = await readFile(isUserEnv ? userEnvPath : envCandidate, "utf8")
       const parsedOverlay = parseEnvOverlay(raw)
       if (Object.keys(parsedOverlay).length > 0) {
         envPath = envCandidate
-        envScope = path.resolve(envCandidate) === path.resolve(userRootDir(), ".env")
-          ? "user"
-          : "project"
+        envScope = isUserEnv ? "user" : "project"
         // 用户级 .env 也会进入不受信任工作区使用的 userConfig，不能借项目层里
         // 才存在的 provider 等键通过校验，否则 userConfig 会变成一份非法配置。
         const envLoaded = validateLayer(parsedOverlay, envScope === "user" ? userConfig : merged, envCandidate)

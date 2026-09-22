@@ -10,6 +10,7 @@ import { writePrivateFile } from '../storage/private-file.mjs'
 import { createDeviceServer } from '../device/server.mjs'
 import { createInterface } from 'node:readline/promises'
 import { chooseRemoteFolderAccess } from '../remote/folder-access.mjs'
+import { grantRemoteWorkspaceTrust } from '../remote/workspace-access.mjs'
 
 const statusFile = () => path.join(userRootDir(), 'remote-status.json')
 async function liveStatus() {
@@ -47,14 +48,14 @@ async function unbindStoppedDevice(confirmation) {
 }
 
 export function createRemoteCommand() {
-  const command = new Command('remote').description('Foreground remote control with organization login').option('--gateway <url>', 'Relay gateway URL').option('--trust', 'Trust the current workspace (not a folder-access grant)').option('--root <path>', 'Explicitly grant remote folder access to this root').option('--all-folders', 'Explicitly trust remote access to all OS-accessible ordinary folders').option('--home-only', 'Explicitly grant only the OS user home').option('--web', 'Also serve a paired loopback WebUI using the same kernel').option('--port <port>', 'Loopback WebUI port', '18271')
+  const command = new Command('remote').description('Foreground remote control with organization login').option('--gateway <url>', 'Relay gateway URL').option('--trust', 'Trust the current workspace (not a folder-access grant)').option('--trust-all-workspaces', 'Persistently trust project configs/extensions under all authorized roots (tool approvals remain)').option('--root <path>', 'Explicitly grant remote folder access to this root').option('--all-folders', 'Explicitly trust remote access to all OS-accessible ordinary folders').option('--home-only', 'Explicitly grant only the OS user home').option('--web', 'Also serve a paired loopback WebUI using the same kernel').option('--port <port>', 'Loopback WebUI port', '18271')
   command.command('login').option('--gateway <url>').action(async options => withStoppedDevice(async () => { const identity = await loginRemote({ gateway: options.gateway || command.opts().gateway }); console.log(`Signed in: ${identity.profile.name} · ${identity.profile.organization}`) }))
   command.command('status').action(async () => {
     const identity = await loadRemoteCredentials()
     const runtime = await liveStatus()
     const local = await readDeviceLifecycle()
     const binding = { deviceId: local.pending?.deviceId || local.identity?.id || null, bound: Boolean(local.identity?.owner), unbindPending: Boolean(local.pending), retainedHistoryOwner: local.identity?.historyOwner || local.identity?.owner || null }
-    console.log(JSON.stringify(identity ? { loggedIn: true, gateway: identity.gateway, profile: identity.profile, credentialExpired: identity.expiresAt < Date.now(), running: Boolean(runtime), connection: runtime?.connection || 'offline', folderAccess: runtime?.folderAccess || null, roots: runtime?.roots || [], ...binding } : { loggedIn: false, running: Boolean(runtime), ...binding }, null, 2))
+    console.log(JSON.stringify(identity ? { loggedIn: true, gateway: identity.gateway, profile: identity.profile, credentialExpired: identity.expiresAt < Date.now(), running: Boolean(runtime), connection: runtime?.connection || 'offline', folderAccess: runtime?.folderAccess || null, roots: runtime?.roots || [], startupWorkspaceTrustRoots: runtime?.startupWorkspaceTrustRoots || [], ...binding } : { loggedIn: false, running: Boolean(runtime), ...binding }, null, 2))
   })
   command.command('stop').description('Stop this user’s foreground remote hub without signing out').action(async () => {
     const runtime = await liveStatus()
@@ -95,8 +96,9 @@ export function createRemoteCommand() {
     let credentials = await loadRemoteCredentials()
     if (!credentials || (options.gateway && credentials.gateway !== options.gateway)) credentials = await loginRemote({ gateway: options.gateway })
     const service = await createRemoteDevice({ roots: folderAccess.roots })
+    let startupWorkspaceTrustRoots = []
     let relay, web, control, closing = false
-    const updateStatus = async () => writePrivateFile(statusFile(), JSON.stringify({ pid: process.pid, deviceId: service.metadata.id, gateway: credentials.gateway, profile: credentials.profile, connection: service.remoteStatus || 'connecting', folderAccess: folderAccess.mode, roots: service.roots, control: control ? { endpoint: control.endpoint, token: control.token } : null, updatedAt: Date.now() }))
+    const updateStatus = async () => writePrivateFile(statusFile(), JSON.stringify({ pid: process.pid, deviceId: service.metadata.id, gateway: credentials.gateway, profile: credentials.profile, connection: service.remoteStatus || 'connecting', folderAccess: folderAccess.mode, roots: service.roots, startupWorkspaceTrustRoots, control: control ? { endpoint: control.endpoint, token: control.token } : null, updatedAt: Date.now() }))
     const close = async () => {
       if (closing) return; closing = true
       clearInterval(heartbeat)
@@ -113,6 +115,8 @@ export function createRemoteCommand() {
     const stop = () => { void close().finally(() => process.exit(0)) }
     process.once('SIGTERM', stop); process.once('SIGHUP', stop)
     try {
+      startupWorkspaceTrustRoots = await grantRemoteWorkspaceTrust(service.roots, { enabled: options.trustAllWorkspaces })
+      if (startupWorkspaceTrustRoots.length) console.error('已按本机操作者的明确授权，递归信任允许目录中的项目配置与扩展；工具审批和凭据路径保护保持不变。')
       control = await createRemoteControl({ onStop: stop })
       relay = await connectRelay({ service, credentials, onStatus: status => { service.remoteStatus = status; if (!closing) void updateStatus().catch(() => {}) } })
       await updateStatus()
