@@ -61,7 +61,7 @@ class SseClient {
       this.waiters.push(check)
     })
   }
-  close() { return this.response.body.cancel().catch(() => {}) }
+  close() { return this.reader.cancel().catch(() => {}) }
 }
 
 async function fixture(t, { retention, sseSyncMs = 50 } = {}) {
@@ -172,6 +172,12 @@ test('device stream: snapshot hello, session.status from turn rows, device-scope
   assert.equal(models.json.provider, 'default', 'device events are flat on the wire, matching the contract doc')
   assert.equal(models.json.deviceId, service.metadata.id)
   assert.equal(models.json.models[0].origin, 'auto')
+  await service.record({ type: 'mcp.loaded', payload: { ok: true, configured: 2, connected: 1, toolCount: 7, failed: [{ name: 'docs', error: 'private stderr', command: 'private command' }] } })
+  const mcp = await client.next(frame => frame.event === 'mcp.loaded')
+  assert.equal(mcp.json.toolCount, 7)
+  assert.equal(mcp.json.ok, false)
+  assert.deepEqual(mcp.json.failed, [{ name: 'docs' }])
+  assert.doesNotMatch(JSON.stringify(mcp.json), /private/)
 })
 
 test('stream auth, validation, per-client cap and logout close', async t => {

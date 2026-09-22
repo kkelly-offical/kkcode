@@ -1,4 +1,5 @@
 import { runtimeCwd } from "../core/runtime-context.mjs"
+import { modelToolSurface, searchToolMetadata } from './discovery.mjs'
 import path from "node:path"
 import os from "node:os"
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
@@ -9,7 +10,7 @@ import { pathToFileURL } from "node:url"
 import { atomicWriteFile, replaceInFileTransactional, replaceAllInFileTransactional, diffLineCount, buildStructuredPatch } from "./edit-transaction.mjs"
 import { withFileLock } from "./file-lock-manager.mjs"
 import { BackgroundManager } from "../orchestration/background-manager.mjs"
-import { createTaskTool, createTaskGroupTool } from "./task-tool.mjs"
+import { createTaskTool, createTaskGroupTool, taskModelSchema } from "./task-tool.mjs"
 import { McpRegistry } from "../mcp/registry.mjs"
 import { SkillRegistry } from "../skill/registry.mjs"
 import { askQuestionInteractive } from "./question-prompt.mjs"
@@ -169,7 +170,7 @@ function runRg(args, cwd, timeoutMs = 30000) {
     child.stderr.on("data", (b) => { stderr += b })
     child.on("error", (e) => {
       if (done) return; done = true; clearTimeout(timer)
-      resolve({ ok: false, stdout, stderr: e.message })
+      resolve({ ok: false, stdout, stderr: /** @type {NodeJS.ErrnoException} */ (e).code === "ENOENT" ? "ripgrep (rg) is not installed or is not on PATH; install ripgrep to use grep/glob" : e.message })
     })
     child.on("close", (code) => {
       if (done) return; done = true; clearTimeout(timer)
@@ -183,7 +184,8 @@ async function runGlob(pattern, cwd, searchPath) {
   const target = searchPath
     ? await resolveWorkspacePath(cwd, searchPath)
     : "."
-  const { stdout } = await runRg(["--files", "--glob", pattern, target], cwd, 15000)
+  const { ok, stdout, stderr } = await runRg(["--files", "--glob", pattern, target], cwd, 15000)
+  if (!ok) return `[search error] ${stderr || "ripgrep could not complete the search"}`
   const text = stdout.trim()
   if (!text) return "no files matched"
   const lines = text.split("\n").filter(Boolean)
@@ -1330,9 +1332,10 @@ function builtinTools(config) {
     }
   }
 
+  /** @type {{name: string, description: string, inputSchema: Record<string, any>, execute: Function}} */
   const editTool = {
     name: "edit",
-    description: "Replace a specific text snippet in an existing file. Transactional with automatic rollback on failure. You MUST `read` the file first — edits on unread or stale files are rejected. Provide enough surrounding context in `before` to ensure a unique match. Set `replace_all: true` to replace ALL occurrences.",
+    description: "Edit files after reading them: exact before/after replacement, start_line/end_line/content range replacement, or atomic changes across files. Choose exactly one form. Existing patch/multiedit names remain compatible aliases.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1344,6 +1347,8 @@ function builtinTools(config) {
       required: ["path", "before", "after"]
     },
     async execute(args, ctx) {
+      if (Array.isArray(args.changes)) return multieditTool.execute(args, ctx)
+      if (args.start_line !== undefined) return patchTool.execute(args, ctx)
       const target = await resolveWorkspacePath(ctx.cwd, args.path, { mustExist: true })
       let staleNotice = ""
       if (await exists(target)) {
@@ -1921,6 +1926,7 @@ function builtinTools(config) {
         return `error: skill "${name}" is not model-invocable (disable-model-invocation). It can only be run by the user as $${name}.`
       }
       const result = await SkillRegistry.execute(name, String(args.args || ""), {
+        invocation: 'model',
         cwd: ctx.cwd,
         mode: ctx.mode || "agent",
         model: ctx.model || "",
@@ -1928,6 +1934,7 @@ function builtinTools(config) {
         config: ctx.config || null
       })
       if (!result) return `skill /${name} returned no output`
+      ctx.restrictSkillTools?.(skill.allowedTools)
       // contextFork skills return { prompt, contextFork, model }
       if (typeof result === "object" && result.contextFork) {
         return result.prompt || ""
@@ -2410,6 +2417,17 @@ function builtinTools(config) {
   }
 
   const gitTools = config?.git_auto?.enabled !== false ? gitAutoTools : []
+  // One advertised edit lane, backed by the same mature transactional paths.
+  // Direct legacy tool names and their exact schemas remain in the registry.
+  editTool.inputSchema = {
+    type: 'object',
+    properties: { ...editTool.inputSchema.properties, ...patchTool.inputSchema.properties, changes: multieditTool.inputSchema.properties.changes },
+    oneOf: [
+      { required: ['path', 'before', 'after'], not: { anyOf: [{ required: ['start_line'] }, { required: ['changes'] }] } },
+      { required: ['path', 'start_line', 'end_line', 'content'], not: { anyOf: [{ required: ['before'] }, { required: ['changes'] }] } },
+      { required: ['changes'], not: { anyOf: [{ required: ['path'] }, { required: ['before'] }, { required: ['start_line'] }] } }
+    ]
+  }
   const gitFullAutoToolsList = config?.git_auto?.full_auto === true ? gitFullAutoTools : []
   
   return [listTool, sysinfoTool, readTool, writeTool, editTool, patchTool, multieditTool, globTool, grepTool, bashTool, createTaskTool(), createTaskGroupTool(), outputTool, cancelTool, taskListTool, taskParallelTool, taskGetTool, taskStopTool, taskOutputTool, todowriteTool, questionTool, skillTool, webfetchTool, httpRequestTool, websearchTool, codesearchTool, notebookeditTool, enterPlanTool, exitPlanTool, ...fileOpsTools, ...gitTools, ...gitFullAutoToolsList]
@@ -2496,6 +2514,18 @@ export function createToolRegistry({ mcpRegistry = McpRegistry, deferMcp = false
 
       if (config.tool?.sources?.builtin !== false) {
         tools.push(...builtinTools(config))
+        tools.push({
+          name: 'tool_search',
+          description: 'Find MCP tools by task, capability or exact name. Returns schemas and enables matching tools for this turn; it never runs them or grants permission.',
+          inputSchema: { type: 'object', properties: { query: { type: 'string', minLength: 1, maxLength: 1024 }, limit: { type: 'integer', minimum: 1, maximum: 10 } }, required: ['query'], additionalProperties: false },
+          async execute(args, ctx) {
+            const available = await ToolRegistry.list({ mode: ctx.mode, config: ctx.config, cwd: ctx.cwd })
+            const eligible = available.filter(tool => tool.name.startsWith('mcp_') && (!ctx.allowedToolNames || ctx.allowedToolNames.includes(tool.name)))
+            const matches = searchToolMetadata(eligible, String(args.query || ''), args.limit)
+            ctx.activateTools?.(matches.map(tool => tool.name))
+            return { tools: matches.map(({ score: _score, ...tool }) => tool), activated: typeof ctx.activateTools === 'function', note: 'Discovery does not authorize tool execution; all existing permission gates still apply.' }
+          }
+        })
       }
 
       if (config.tool?.sources?.local !== false) {
@@ -2568,6 +2598,12 @@ export function createToolRegistry({ mcpRegistry = McpRegistry, deferMcp = false
 
     async get(toolName) {
       return state.tools.find((tool) => tool.name === toolName) || null
+    },
+
+    async listForModel(options = {}) {
+      const tools = await this.list(options)
+      return modelToolSurface(tools, options).map(tool => tool.name === 'task'
+        ? { ...tool, inputSchema: taskModelSchema(tool.inputSchema) } : tool)
     },
 
     async call(toolName, args, ctx) {

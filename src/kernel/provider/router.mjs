@@ -214,6 +214,7 @@ export function createProviderRegistry() {
       messages,
       tools,
       capabilities,
+      protocol: settings.protocol,
       provider: settings.configKey,
       model: settings.model
     })

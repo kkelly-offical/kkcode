@@ -91,8 +91,8 @@ Use three buckets when documenting frontmatter fields:
 | `name` | Enforced | Canonical command/skill name |
 | `description` | Enforced | User-facing description |
 | `model` | Enforced | Optional model override |
-| `allowed-tools` | Enforced | Existing safe mapping |
-| `user-invocable` | Enforced | Existing safe mapping |
+| `allowed-tools` | Enforced in preview.2 | Intersecting per-turn tool restrictions, inherited by delegates; never pre-approval or an OS sandbox |
+| `user-invocable` | Enforced in preview.2 | User/headless/remote invocation checks and completion filtering |
 | `disable-model-invocation` | Enforced | Existing safe mapping |
 | `context-fork` | Enforced | Existing safe mapping |
 | `when_to_use` | Enforced or accepted-but-ignored | Safe to surface in prompt/help text |

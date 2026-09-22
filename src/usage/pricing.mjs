@@ -1,6 +1,8 @@
 import path from "node:path"
 import { access, readFile } from "node:fs/promises"
 import YAML from "yaml"
+import { readCachedModelCatalog, resolveProviderConnection } from '../kernel/provider/model-catalog.mjs'
+import { parseCatalogEntryPricing } from '../kernel/provider/model-capabilities.mjs'
 
 const DEFAULT_PRICING = {
   currency: "USD",
@@ -92,39 +94,72 @@ function parse(file, raw) {
 }
 
 function resolvePricingPath(configState) {
-  const projectPath = configState.source.projectRaw?.usage?.pricing_file
+  const projectPath = configState?.source?.projectRaw?.usage?.pricing_file
   if (typeof projectPath === "string" && projectPath.trim()) {
     return path.resolve(configState.source.projectDir ?? process.cwd(), projectPath)
   }
-  const userPath = configState.source.userRaw?.usage?.pricing_file
+  const userPath = configState?.source?.userRaw?.usage?.pricing_file
   if (typeof userPath === "string" && userPath.trim()) {
     return path.resolve(configState.source.userDir ?? process.cwd(), userPath)
   }
   return null
 }
 
-export async function loadPricing(configState) {
+export async function loadPricing(configState, { providerName = configState?.config?.provider?.default, model = '', now = Date.now() } = {}) {
   const file = resolvePricingPath(configState)
-  if (!file || !(await exists(file))) {
-    return { pricing: DEFAULT_PRICING, source: "default", errors: [] }
-  }
-  try {
-    const raw = await readFile(file, "utf8")
-    const parsed = parse(file, raw)
-    const pricing = {
-      ...DEFAULT_PRICING,
-      ...parsed,
-      models: { ...DEFAULT_PRICING.models, ...(parsed.models ?? {}) },
-      default: { ...DEFAULT_PRICING.default, ...(parsed.default ?? {}) }
+  let pricing = DEFAULT_PRICING, source = 'default', manual = null
+  const errors = []
+  if (file) try {
+    if (!(await exists(file))) throw new Error('pricing file does not exist')
+    manual = parse(file, await readFile(file, 'utf8'))
+    if (!manual || typeof manual !== 'object' || Array.isArray(manual)) throw new Error('expected a pricing object')
+    if (manual.currency && manual.currency !== 'USD') throw new Error('cost/budget accounting requires USD; no currency conversion is implied')
+    if (manual.per_tokens != null && (!Number.isFinite(manual.per_tokens) || manual.per_tokens <= 0)) throw new Error('per_tokens must be positive')
+    for (const entry of [...Object.values(manual.models || {}), ...(manual.default ? [manual.default] : [])]) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error('model prices must be objects')
+      for (const key of ['input', 'output', 'cache_read', 'cache_write']) {
+        if (entry[key] !== undefined && (!Number.isFinite(entry[key]) || entry[key] < 0)) throw new Error('rates must be finite non-negative numbers')
+      }
     }
-    return { pricing, source: file, errors: [] }
+    const factor = (manual.per_tokens || 1000000) / 1000000
+    const scale = entry => Object.fromEntries(Object.entries(entry).map(([key, rate]) => [key, rate * factor]))
+    const fallback = { ...scale(DEFAULT_PRICING.default), ...(manual.default || {}) }
+    const defaults = Object.fromEntries(Object.entries(DEFAULT_PRICING.models).map(([key, entry]) => [key, scale(entry)]))
+    const overrides = Object.fromEntries(Object.entries(manual.models || {}).map(([key, entry]) => [key, { ...(defaults[key] || fallback), ...entry }]))
+    pricing = {
+      ...DEFAULT_PRICING,
+      ...manual,
+      models: { ...defaults, ...overrides },
+      default: fallback
+    }
+    source = file
   } catch (error) {
-    return { pricing: DEFAULT_PRICING, source: "default", errors: [`${file}: ${error.message}`] }
+    manual = null; errors.push(`${file}: ${error.message}`)
   }
+  // Explicit file overrides win. Catalog lookups are provider/URL/credential
+  // scoped and never cause inference to fetch a model directory over HTTP.
+  if (model && !manual?.default && !findPricingEntry(manual?.models || {}, model)) {
+    const cached = await readCachedModelCatalog(configState, providerName)
+    const rates = parseCatalogEntryPricing(cached?.models?.find(entry => entry.id === model))
+    if (rates && rates.currency !== 'USD') errors.push(`Discovered ${rates.currency} prices are not used for USD budgets`)
+    else if (rates) {
+      const ttl = resolveProviderConnection(configState, providerName).discovery.cacheTtlMs
+      const stale = now - cached.fetchedAt > ttl
+      const factor = (pricing.per_tokens || 1000000) / 1000000
+      const entry = { input: rates.input * factor, output: rates.output * factor,
+        cache_read: (rates.cache_read ?? rates.input) * factor,
+        cache_write: (rates.cache_write ?? rates.input) * factor,
+        estimated: stale, cache_read_estimated: rates.cache_read == null, cache_write_estimated: rates.cache_write == null }
+      pricing = { ...pricing, models: { ...pricing.models, [model]: entry } }
+      source = stale ? 'catalog-stale' : 'catalog'
+      if (stale) errors.push('Model catalog pricing is stale; refresh /model before relying on this estimate')
+    }
+  }
+  return { pricing: errors.length ? { ...pricing, estimated: true } : pricing, source, errors }
 }
 
 function findPricingEntry(models, model) {
-  if (models[model]) return models[model]
+  if (Object.hasOwn(models, model)) return models[model]
   // 前缀回落（"claude-opus-5-20260101" → "claude-opus-5"）。
   //
   // 必须取**最长**匹配，不能拿遍历到的第一个：价目表里有互为前缀的键
@@ -152,6 +187,7 @@ export function calculateCost(pricing, model, usage) {
       (usage.cacheWrite || 0) * (entry.cache_write || 0)) /
     per
   const savings = ((usage.cacheRead || 0) * ((entry.input || 0) - (entry.cache_read || 0))) / per
-  const unknown = !findPricingEntry(pricing.models, model)
+  const unknown = !findPricingEntry(pricing.models, model) || entry.estimated === true || pricing.estimated === true
+    || Boolean(usage.cacheRead && entry.cache_read_estimated) || Boolean(usage.cacheWrite && entry.cache_write_estimated)
   return { amount, savings, unknown, currency: pricing.currency }
 }

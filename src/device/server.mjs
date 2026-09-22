@@ -96,7 +96,8 @@ export async function createDeviceServer({ service, port = DEFAULT_PORT, host = 
       socket.send(JSON.stringify(event))
     }
     device.on('event', listener)
-    socket.on('close', () => { clearTimeout(expiry); device.off('event', listener); peers.delete(socket); if (!peers.size) sessionSockets.delete(user.tokenHash) })
+    device.on('device', listener)
+    socket.on('close', () => { clearTimeout(expiry); device.off('event', listener); device.off('device', listener); peers.delete(socket); if (!peers.size) sessionSockets.delete(user.tokenHash) })
     socket.send(JSON.stringify({ type: 'connected', client: user.client, schemaVersion: '1' }))
   })
   app.get('/health', async () => ({ ok: true, version: PACKAGE_VERSION }))

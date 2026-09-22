@@ -1,0 +1,9 @@
+Search the metadata of available MCP tools before using an unfamiliar integration.
+Large MCP catalogs are deferred: call tool_search with a task description or an
+exact tool name to retrieve a small number of relevant schemas. The returned
+tools become available on the next model request in this turn. Search again if
+you need another integration; results are not shared across concurrent turns.
+
+This only discovers tools. It does not execute them, connect a new server,
+approve permissions, or widen the current agent's tool allowlist. If no results
+are found, change the query or explain that the required server is not ready.

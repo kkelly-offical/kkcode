@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 
 import os from 'node:os'
 import path from 'node:path'
 import { AttachmentStore, ATTACHMENT_LIMITS } from '../src/device/attachments.mjs'
+import { wavBlock, mp4Block } from './helpers/media-fixtures.mjs'
 
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2lGkAAAAASUVORK5CYII='
 const upload = (text, sessionId = 'session') => ({ sessionId, name: 'notes.txt', mediaType: 'text/plain', data: Buffer.from(text).toString('base64') })
@@ -13,6 +14,19 @@ async function fixture(t, options = {}) {
   const store = await new AttachmentStore({ directory, ...options }).initialize()
   return { store, directory }
 }
+
+test('remote audio/video staging preserves bytes and validates format, quota and session ownership', async t => {
+  const { store } = await fixture(t)
+  for (const block of [wavBlock, mp4Block]) {
+    const item = await store.upload({ sessionId: 'session', name: `${block.type}.bin`, mediaType: block.mediaType, data: block.data })
+    const resolved = await store.resolve({ sessionId: 'session', ids: [item.id], prompt: 'describe' })
+    assert.deepEqual(resolved.contentBlocks.at(-1), block)
+    await resolved.release()
+    await assert.rejects(store.resolve({ sessionId: 'other', ids: [item.id], prompt: 'x' }), { code: 'attachment_missing' })
+  }
+  await assert.rejects(store.upload({ sessionId: 'session', name: 'bad.wav', mediaType: 'audio/wav', data: mp4Block.data }), { code: 'attachment_type' })
+  await assert.rejects(store.upload({ sessionId: 'session', name: 'huge.wav', mediaType: 'audio/wav', data: Buffer.alloc(ATTACHMENT_LIMITS.mediaBytes + 1).toString('base64') }), { code: 'attachment_size' })
+})
 
 test('uploads are opaque private files; text and real image blocks reach the kernel contract', async t => {
   const { store, directory } = await fixture(t)

@@ -209,6 +209,7 @@ async function runDelegateTask(task, signal) {
       runSpec: payload.runSpec || null,
       allowQuestion: payload.allowQuestion === true,
       toolContext: {
+        ...(payload.runSpec?.toolContext?.skillToolGroups ? { skillToolGroups: payload.runSpec.toolContext.skillToolGroups } : {}),
         taskId: task.id,
         stageId: payload.stageId || null,
         logicalTaskId: payload.logicalTaskId || null

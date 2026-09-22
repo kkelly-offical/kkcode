@@ -47,6 +47,7 @@ export {
   approvalFromLegacy
 } from "./core/modes.mjs"
 export { EVENT_TYPES, QUESTION_SKIPPED } from "./core/constants.mjs"
+export { mediaBlockError } from './core/media.mjs'
 export { noteDeprecation } from "./core/deprecations.mjs"
 
 // ── 2b. permission 规则与信任存储（纯函数 / platform 落盘）─────────────
@@ -79,6 +80,7 @@ export {
   enforceModelInputCapabilities
 } from "./provider/model-capabilities.mjs"
 export { escapeTerminalText, validateModelId } from "./provider/model-id.mjs"
+export { assertMediaInput, mediaInputSupport } from './provider/media-input.mjs'
 export { resolveRoleModel } from "./provider/model-roles.mjs"
 export { requestFast, isFastModelConfigured, fastModelIssues } from "./provider/fast-model.mjs"
 export { VENDOR_PRESETS, saveProviderConfig } from "./provider/wizard.mjs"
@@ -96,6 +98,7 @@ export {
   buildContentBlocks
 } from "./tool/image-util.mjs"
 export { inspectSandboxStatus, formatSandboxLine } from "./tool/sandbox.mjs"
+export { readClipboardMedia, readMediaFileAsBlock } from './tool/media-util.mjs'
 export { ensureDefaultSkillPack } from "./skill/registry.mjs"
 export { generateSkill, saveSkillGlobal } from "./skill/generator.mjs"
 export { discoverLocalPluginManifests } from "./plugin/manifest-loader.mjs"

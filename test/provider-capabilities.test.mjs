@@ -260,20 +260,18 @@ test("enforce degrades history and tool-result images to placeholders instead of
   assert.equal(history[0].content[1].type, "image")
 })
 
-test("enforce passes images through when supported or unknown, and placeholders video/audio", () => {
+test("enforce passes images through when supported or unknown, and rejects malformed fresh video", () => {
   const messages = [{ role: "user", content: [{ type: "text", text: "hi" }, imageBlock] }]
   const supported = enforceModelInputCapabilities({ messages, capabilities: { image: true }, model: "m" })
   assert.equal(supported.messages, messages, "supported = untouched")
   const unknown = enforceModelInputCapabilities({ messages, capabilities: {}, model: "m" })
   assert.equal(unknown.messages, messages, "unknown = permissive (pre-capability behavior)")
 
-  const video = enforceModelInputCapabilities({
+  assert.throws(() => enforceModelInputCapabilities({
     messages: [{ role: "user", content: [{ type: "video", data: "e30=", mediaType: "video/mp4" }] }],
     capabilities: { video: true },
     model: "m"
-  })
-  assert.equal(video.droppedMedia, 1)
-  assert.match(video.messages[0].content[0].text, /cannot encode video input yet/)
+  }), /Media bytes do not match/)
 })
 
 test("enforce drops tools only when tool calling is known-unsupported", () => {

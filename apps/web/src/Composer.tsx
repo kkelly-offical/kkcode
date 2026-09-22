@@ -6,6 +6,7 @@ import {
   effectiveSelection,
   mergeModelIds,
   modelLabel,
+  capabilityLabel,
 } from "./models.mjs";
 import { MODE_OPTIONS, PERMISSION_OPTIONS, permissionLabel } from "./modes.mjs";
 import type { Attachment } from "./Attachments";
@@ -535,6 +536,7 @@ export function Composer({
                               >
                                 <Icon name="check" size={16} />
                                 <span className="tool-label">{id}</span>
+                                {capabilityLabel(catalog?.models.find(item => item.id === id)) && <small>{capabilityLabel(catalog?.models.find(item => item.id === id))}</small>}
                                 {origin.get(id) === "manual" && <em>手动</em>}
                                 {id === entry.defaultModel && <em>默认</em>}
                               </button>

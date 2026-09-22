@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { mediaSupportFromCapabilities } from "../src/repl/provider-catalog.mjs"
+import { mediaSupportFromCapabilities, modelCapabilityBadges } from "../src/repl/provider-catalog.mjs"
 
 /**
  * 能力标记 → 附件门的三级决断（1.0.1）。
@@ -25,4 +25,13 @@ test("unknown kinds degrade honestly: image allowed, video/audio unknown", () =>
 
 test("an explicit false for image overrides the default allow", () => {
   assert.equal(mediaSupportFromCapabilities({ image: false }, "image"), false)
+})
+
+test('model badges distinguish discovered/configured facts from name heuristics', () => {
+  assert.ok(modelCapabilityBadges({ id: 'gpt-4o' }).badges.includes('图像?'))
+  const entry = { id: 'model', capabilities: { image: true, audio: true, tools: true, streaming: false } }
+  const result = modelCapabilityBadges(entry, { provider: { model_capabilities: { model: { tools: false } } } })
+  assert.deepEqual(result.badges, ['图像', '音频', '无工具', '非流式'])
+  assert.equal(result.capabilitySources.image, 'discovered')
+  assert.equal(result.capabilitySources.tools, 'config')
 })

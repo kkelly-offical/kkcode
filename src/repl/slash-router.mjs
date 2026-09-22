@@ -21,7 +21,7 @@ export function buildSlashCatalog({ builtinSlash = [], customCommands = [] } = {
 export function buildSkillCatalog({ customCommands = [], skills = [] } = {}) {
   const customNames = new Set(customCommands.map((item) => item.name))
   return skills
-    .filter((skill) => !customNames.has(skill.name))
+    .filter((skill) => skill.userInvocable !== false && !customNames.has(skill.name))
     .map((skill) => ({ name: skill.name, desc: `skill (${skill.type})` }))
 }
 

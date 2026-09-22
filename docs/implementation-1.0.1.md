@@ -176,3 +176,30 @@ this section records their implementation and validation truthfully.
 - Physical Android devices, store review, enterprise tenant provisioning and
   database infrastructure HA remain deployment responsibilities, unchanged
   from the sections above.
+
+## 1.0.1-preview.2 third round
+
+Baseline `5d7dd60` includes M32/M33. This round completes their explicitly named
+remaining work and M28 G10–G12, without removing the stable JSONL/tool alias
+contracts. User authorized main merge and preview-channel publication.
+
+Implemented: cross-platform search dependency setup and honest search failures;
+Windows path canonicalization; bounded clipboard media/file reading; actual
+audio/video wire encoding and input gates in CLI/Web/Android; provider-scoped
+discovered pricing; capability badges; sanitized owner-only MCP live summaries;
+BM25 tool discovery; root-to-cwd instructions; canonical tool advertising and
+task brief; user-invocation and intersecting skill tool restrictions with
+delegation inheritance. The controlled-panel start/stop race and Android SSE
+cancellation error reporting also have targeted regressions.
+
+Documentation now distinguishes historical release evidence, current runtime
+contracts and deployment responsibilities. Old claims that the SDK layering or
+official Streamable HTTP implementation do not exist were removed from the
+roadmap. Media/skill compatibility claims are explicitly scoped.
+
+Initial local evidence: Node suite 2847 total / 2846 passed / 1 platform skip;
+both Web browser suites passed; Android debug APK/test APK build and 31 JVM tests
+passed. Additional kernel discovery/policy and pricing regressions passed after
+that suite. Final versioned release/CI/lab/APK results are not implied by these
+intermediate results; they are tracked in [preview.2 worklog](preview.2-worklog.md)
+and [release guide](release-1.0.1-preview.2.md).

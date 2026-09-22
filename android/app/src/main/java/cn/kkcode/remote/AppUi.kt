@@ -230,7 +230,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
             "mode" -> Group { (state.commandItems.takeIf { state.commandItemKind == "mode" && it.all { item -> item.has("id") } }?.map { it.getString("id") }?.ifEmpty { null } ?: listOf("plan", "agent", "agent-auto", "ultra", "yolo")).forEach { value -> SettingsRow(if(state.mode == value) Icons.Outlined.Check else Icons.Outlined.Tune, value) { state.selectMode(value) } } }
             "models" -> {
                 val providers = state.settings.optJSONObject("provider") ?: JSONObject()
-                Group("已配置渠道") { providers.keys().asSequence().filter { providers.opt(it) is JSONObject && it != "model_context" && it != "model_thinking" }.forEach { name -> val p = providers.getJSONObject(name); SettingsRow(Icons.Outlined.Hub, name, p.optString("default_model")) { state.discoverModels(name) }; TextButton(onClick = { state.editingProvider = name; state.sheet = "provider" }) { Text("编辑 $name", fontSize = 11.sp) } } }
+                Group("已配置渠道") { configuredProviderNames(providers).forEach { name -> val p = providers.getJSONObject(name); SettingsRow(Icons.Outlined.Hub, name, p.optString("default_model")) { state.discoverModels(name) }; TextButton(onClick = { state.editingProvider = name; state.sheet = "provider" }) { Text("编辑 $name", fontSize = 11.sp) } } }
                 if(state.modelOptions.isNotEmpty()) Group("${state.catalogProvider} · 模型目录") { state.modelOptions.forEach { model -> SettingsRow(Icons.Outlined.CloudQueue, model.getString("id")) { state.selectModel(state.catalogProvider, model.getString("id")) } } }
                 if(state.catalogError.isNotBlank() && state.catalogProvider.isNotBlank()) Text("无法读取 ${state.catalogProvider} 的模型目录：${state.catalogError}", color = kkcodeColors.warning, fontSize = 12.sp, modifier = Modifier.padding(12.dp))
                 Group { SettingsRow(Icons.Outlined.Add, "添加渠道") { state.editingProvider = ""; state.sheet = "provider" } }
@@ -268,7 +268,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
     val messageColor = MaterialTheme.colorScheme.onSurface.toArgb()
     var actions by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if(uri != null) state.attach(uri) }
-    LaunchedEffect(state.attachmentPickerRequest) { if(state.attachmentPickerRequest > 0) picker.launch(arrayOf("image/png", "image/jpeg", "image/gif", "image/webp", "text/*", "application/json", "application/xml", "application/yaml")) }
+    LaunchedEffect(state.attachmentPickerRequest) { if(state.attachmentPickerRequest > 0) picker.launch(arrayOf("image/png", "image/jpeg", "image/gif", "image/webp", "audio/wav", "audio/mpeg", "video/mp4", "video/quicktime", "video/webm", "video/mpeg", "text/*", "application/json", "application/xml", "application/yaml")) }
     val listState = rememberLazyListState()
     LaunchedEffect(state.messages.size, state.messages.lastOrNull()?.text?.length) {
         if(state.messages.isNotEmpty() && (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= state.messages.size - 3) listState.animateScrollToItem(state.messages.lastIndex)

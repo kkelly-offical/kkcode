@@ -507,12 +507,9 @@ export function createSkillRegistry() {
     const canonicalName = skill.plugin ? `${skill.plugin.name}:${skill.name}` : (skill.canonicalName || skill.name)
     const withNames = { ...skill, canonicalName, aliases: [...(skill.aliases || [])] }
     if (Array.isArray(withNames.allowedTools) && withNames.allowedTools.length) {
-      // Support-level label (agent-longagent-compat-review.md §3): parsed and
-      // carried on the skill record, but not enforced mid-turn — skill prompts
-      // expand inline and every tool call still passes the session permission
-      // gate. Surface it so users can see the field was understood.
+      // Applied by the turn tool policy, in addition to ordinary permissions.
       state.diagnostics.push({
-        kind: "skill_allowed_tools_accepted_not_enforced",
+        kind: "skill_allowed_tools_enforced",
         name: canonicalName,
         allowedTools: [...withNames.allowedTools]
       })
@@ -671,6 +668,8 @@ export function createSkillRegistry() {
     async execute(name, args = "", context = {}) {
       const skill = state.skills.get(name)
       if (!skill) return null
+      if (context.invocation === 'model' && skill.disableModelInvocation) throw new Error(`skill "${name}" is not model-invocable`)
+      if (context.invocation !== 'model' && skill.userInvocable === false) throw new Error(`skill "${name}" is not user-invocable`)
 
       if (skill.type === "mjs" && skill.run) {
         // Programmable skill — call run() to get prompt

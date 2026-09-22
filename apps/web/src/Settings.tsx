@@ -496,7 +496,7 @@ export function SettingsOverlay(props: Props) {
             {Object.entries(props.settings.provider || {})
               .filter(
                 ([name, value]) =>
-                  !["default", "model_context", "model_thinking"].includes(name) && value !== null && typeof value === "object",
+                  !["default", "model_context", "model_thinking", "model_capabilities"].includes(name) && value !== null && typeof value === "object" && !Array.isArray(value),
               )
               .map(([name, value]: any) => (
                 <SettingsRow

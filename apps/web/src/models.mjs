@@ -1,7 +1,7 @@
 /** Provider/model catalog projection for the composer model selector. Pure; no I/O. */
 
 // settings.provider carries a few scalar siblings that are not concrete connections.
-const RESERVED = new Set(["default", "model_context", "model_thinking"]);
+const RESERVED = new Set(["default", "model_context", "model_thinking", "model_capabilities"]);
 
 export function configuredProviders(settings = {}) {
   const table =
@@ -11,7 +11,7 @@ export function configuredProviders(settings = {}) {
   return Object.entries(table)
     .filter(
       ([name, value]) =>
-        !RESERVED.has(name) && value !== null && typeof value === "object",
+        !RESERVED.has(name) && value !== null && typeof value === "object" && !Array.isArray(value),
     )
     .map(([name, value]) => ({
       name,
@@ -63,4 +63,11 @@ export function modelLabel(id = "") {
   if (!text) return "";
   const tail = text.split("/").at(-1);
   return tail || text;
+}
+
+/** Badges describe metadata, never a claim that an inference probe was run. */
+export function capabilityLabel(entry = {}) {
+  const labels = { image: '图像', audio: '音频', video: '视频', tools: '工具', reasoning: '思考' };
+  return Object.entries(labels).filter(([key]) => entry.capabilities?.[key] === true)
+    .map(([key, label]) => label + (entry.capabilitySources?.[key] === 'heuristic' ? '?' : '')).join(' · ');
 }

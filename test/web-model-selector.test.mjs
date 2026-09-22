@@ -1,12 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { configuredProviders, defaultProviderName, effectiveSelection, mergeModelIds, modelLabel } from '../apps/web/src/models.mjs'
+import { configuredProviders, defaultProviderName, effectiveSelection, mergeModelIds, modelLabel, capabilityLabel } from '../apps/web/src/models.mjs'
 
 const settings = {
   provider: {
     default: 'kimi',
     model_context: 128000,
     model_thinking: null,
+    model_capabilities: { 'kimi-for-coding': { image: true } },
     kimi: { type: 'openai', base_url: 'https://api.example.com/v1', default_model: 'kimi-for-coding' },
     local: { type: 'openai', default_model: '' },
     broken: 'not-an-object',
@@ -44,4 +45,9 @@ test('modelLabel strips vendor prefixes so the composer chip stays compact', () 
   assert.equal(modelLabel('anthropic/claude-sonnet-4'), 'claude-sonnet-4')
   assert.equal(modelLabel('kimi-for-coding'), 'kimi-for-coding')
   assert.equal(modelLabel(''), '')
+})
+
+test('capability badges explicitly mark heuristics and omit unknown values', () => {
+  assert.equal(capabilityLabel(), '')
+  assert.equal(capabilityLabel({ capabilities: { image: true, audio: false, tools: true }, capabilitySources: { image: 'heuristic', tools: 'discovered' } }), '图像? · 工具')
 })

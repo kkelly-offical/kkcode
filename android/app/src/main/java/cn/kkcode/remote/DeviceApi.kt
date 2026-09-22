@@ -6,9 +6,12 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
 import okhttp3.Callback
@@ -73,8 +76,9 @@ class DeviceApi(var base: String, var token: String = "", var device: String = "
             .apply { hostHeader?.let { header("Host", it) }; if (token.isNotBlank()) header("Authorization", "Bearer $token") }
             .build()
         val call = streamClient.newCall(request)
-        currentCoroutineContext().job.invokeOnCompletion { call.cancel() }
-        call.execute().use { response ->
+        coroutineScope {
+        val cancellation = launch(start = CoroutineStart.UNDISPATCHED) { try { awaitCancellation() } finally { call.cancel() } }
+        try { call.execute().use { response ->
             val source = response.body?.source()
             if (!response.isSuccessful || source == null) {
                 val text = source?.readUtf8() ?: ""
@@ -93,6 +97,8 @@ class DeviceApi(var base: String, var token: String = "", var device: String = "
                 parser.line(line)
                 for (frame in pending) emit(frame)
             }
+        } } catch(error: IOException) { currentCoroutineContext().ensureActive(); throw error }
+        finally { cancellation.cancel(); call.cancel() }
         }
     }.flowOn(Dispatchers.IO)
 }

@@ -11,6 +11,11 @@
 **终端优先、可治理、可扩展的编码智能体：五档模式循环、可治理审批、Ultra 分阶段交付。**
 kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同一个 CLI 工作台里，并且把权限、预算、审计、后台任务、MCP、技能与插件一起纳入统一执行面。
 
+稳定渠道为 `1.0.0`；第三个预览版为 **`1.0.1-preview.2`**，需主动安装
+`@preview`，不会替换稳定版。预览版包含本地 WebUI、企业 OIDC/中继和原生
+Android 远程客户端，以及本轮 CLI、媒体输入和工具兼容性补齐。
+请先读 [preview.2 使用与升级说明](docs/release-1.0.1-preview.2.md)。
+
 **日本語**: ターミナル中心の個人アシスタント。安全な権限管理、Coding Agent、LongAgent、ローカル拡張を同じ CLI にまとめます。  
 **한국어**: 터미널 우선 개인 비서로, 권한 관리와 Coding Agent, LongAgent, 로컬 확장을 하나의 CLI에서 다룹니다。  
 **Español**: asistente personal centrado en terminal para ejecución gobernada, agentes de código, LongAgent y extensiones locales.
@@ -81,12 +86,30 @@ kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同�
 - Node.js `>=22.12`
 - npm or pnpm
 - A modern terminal on Windows, macOS, or Linux
+- `ripgrep` (`rg` on PATH) for the built-in grep/glob tools; CI installs it explicitly.
+- Clipboard support depends on the desktop: PowerShell on Windows, pngpaste/osascript on macOS, wl-paste/xclip on Linux. SSH does not expose the local phone/laptop clipboard to the remote computer.
 
 **Install from npm / 通过 npm 安装**
 ```bash
 npm install -g @kkelly-offical/kkcode
 kkcode
 ```
+
+预览渠道：`npm install -g @kkelly-offical/kkcode@preview`；固定本版可使用
+`@1.0.1-preview.2`。安装搜索依赖：Linux `apt install ripgrep`、macOS
+`brew install ripgrep`、Windows `choco install ripgrep`。
+
+**Web / enterprise remote / 企业远控（preview）**
+
+```sh
+kkcode -web                  # 本机 WebUI，默认 18271
+kkcode -web -host-18271       # Host 开放，需按部署文档配置访问保护和 TLS
+kkcode remote                # 前台受控终端，首次必须登录绑定
+```
+
+公网服务器部署的是 `apps/gateway/main.mjs` 的**中继网关**，不是运行在工作电脑
+上的设备端。SSO 是独立的 OIDC 身份服务；客户端通过网关引导登录。网关停止或
+设备终端退出后的行为、账号归属及备份要求见 [企业部署](docs/enterprise-deployment.md)。
 
 **Run from source / 从源码运行**
 ```bash
@@ -674,7 +697,7 @@ update:
 
 **Current stable version / 当前稳定版本**: `v1.0.0`
 
-**Opt-in preview / 自愿试用预览版**: `v1.0.1-preview.1`
+**Opt-in preview / 自愿试用预览版**: `v1.0.1-preview.2`
 
 ```sh
 npm install -g @kkelly-offical/kkcode@preview
@@ -687,9 +710,21 @@ adds SSE event streams, tolerant home-root folder browsing (credential protectio
 unchanged), Web/Android model/mode/permission selectors with dual themes, the
 controlled terminal status mode, and agent workflow/tools compatibility fixes with
 model-catalog origin markers. The npm `latest` channel remains on `1.0.0`. See the
-[preview guide](docs/release-1.0.1-preview.1.md)
+[preview guide](docs/release-1.0.1-preview.2.md)
 for migration, Android installation, enterprise deployment and acceptance limits.
 预览版需主动安装，不会替换稳定版渠道；首次启用远控前请阅读账号归属和备份说明。
+
+The third preview completes M32/M33 and the named M28 follow-ups: background
+MCP loading, compact CLI notices/theme/turn lifecycle fixes, real audio/video
+input encoding with capability gates, discovered pricing in cost accounting,
+capability badges, owner-only remote MCP summaries, deferred tool discovery,
+root-to-cwd instructions, canonical tool advertising and enforced skill flags.
+
+第三个预览版补齐：后台 MCP、CLI 提示/主题/结束状态、音视频实际请求编码、
+目录定价计费、能力徽标、远端 MCP 摘要、`tool_search`、分层指令、兼容别名下的
+统一工具入口和 skill 限制。图片/音视频支持不是“所有模型都支持”；能力未知
+或协议不兼容时明确拒绝，`?` 徽标只表示名称推断。定价是成本估算，不是供应商账单。
+详见 [媒体输入矩阵](docs/media-input.md)、[工具与技能契约](docs/tool-discovery-and-skills.md)。
 
 `v1.0.0` is the current stable npm and GitHub release: the five stages of the
 kernel/SDK layering, the frozen headless JSONL machine contract, and the four
@@ -927,6 +962,10 @@ See [LICENSE](LICENSE) for the full text.
 <a id="further-reading"></a>
 ## Further Reading / 延伸阅读
 
+- [Documentation index / 文档导航](docs/README.md) — current guides versus historical records
+- [Preview.2 release guide / 第三预览版](docs/release-1.0.1-preview.2.md)
+- [Media input / 媒体输入](docs/media-input.md)
+- [Tool discovery and skills / 工具发现与技能](docs/tool-discovery-and-skills.md)
 - [Roadmap / 路线图](docs/ROADMAP.md) — known gaps, each with a checkable fact
 - [Reference config / 参考配置](docs/config.example.yaml) — annotated, tracks the schema
 - [CLI General Assistant Capability Matrix](docs/cli-general-assistant-capability-matrix.md)

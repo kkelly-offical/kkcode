@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { EventEmitter } from "node:events"
+import { spawnSync } from 'node:child_process'
 import {
   resolveTerminalMode,
   createControlledStatusSource,
@@ -38,6 +39,25 @@ function collector() {
   const chunks = []
   return { chunks, write: (text) => chunks.push(String(text)), text: () => chunks.join("") }
 }
+
+test('stopping during initial rendering cannot resurrect a referenced timer or repaint after stop', () => {
+  const script = `
+    import { createControlledStatusPanel } from './src/repl/controlled-status.mjs';
+    let release; const pending = new Promise(resolve => release = resolve);
+    const chunks = [];
+    const source = { device: () => ({}), connection: () => 'connected', clients: () => [], sessions: () => pending, subscribe: () => () => {} };
+    const panel = createControlledStatusPanel({ source, write: value => chunks.push(value), tty: true, intervalMs: 600000 });
+    const started = panel.start();
+    await new Promise(resolve => setImmediate(resolve));
+    await panel.stop();
+    release([]);
+    await started; await panel.wait(); await panel.start();
+    if(chunks.length) throw new Error('rendered after stop');
+  `
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: process.cwd(), encoding: 'utf8', timeout: 10000 })
+  assert.equal(child.error, undefined, 'a stopped panel must not keep its process alive')
+  assert.equal(child.status, 0, child.stderr)
+})
 
 test("resolveTerminalMode: controlled only when a remote service is attached", () => {
   assert.equal(resolveTerminalMode(), "interactive")

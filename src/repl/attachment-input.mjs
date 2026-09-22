@@ -50,13 +50,15 @@ export function createAttachmentInput({
    * 决定这个附件发不发的东西 —— 见 attachments.mjs 文件头的不变量。
    *
    * 明确不支持该媒体的模型：不挂标记、直接报错（「明确提示而不是静默丢弃」）。
-   * 能力未知的 video/audio：挂上标记并警告 —— 发送前的 resolve 还会再拦一次。
+   * 能力未知的 video/audio：拒绝附加，先发现/配置能力，避免虚假的成功标记。
    */
   async function attachMedia(block) {
     const kind = MEDIA_LABEL[block?.type] ? block.type : "image"
     const support = await supportsMedia(kind)
-    if (support === false) {
-      showToast(`${MEDIA_LABEL[kind]} not attached — the current model does not accept ${kind} input`, {
+    if (support !== true) {
+      showToast(support === null
+        ? `${MEDIA_LABEL[kind]} not attached — ${kind} support is unknown; discover or configure model capabilities first`
+        : `${MEDIA_LABEL[kind]} not attached — the current model/channel does not accept ${kind} input`, {
         topic: "clipboard",
         tone: "error",
         durationMs: 4200
@@ -71,13 +73,6 @@ export function createAttachmentInput({
       bytes: block.bytes
     })
     insertAtCursor(marker)
-    if (support === null) {
-      showToast(`${MEDIA_LABEL[kind]} attached · ${marker} — 当前模型的 ${kind} 支持未知，不支持时发送前会拦下`, {
-        topic: "clipboard",
-        tone: "warning",
-        durationMs: 4200
-      })
-    }
     return marker
   }
 
@@ -110,8 +105,8 @@ export function createAttachmentInput({
    * 「清空待发图片」这一步 —— 没有那个状态可清。
    *
    * 当前模型收不下的媒体（video/audio 在能力未知或不支持时）在这里被拦下：
-   * 不进待发数组，而是换成一句人话留在文本里 + 一条 toast —— provider 适配层
-   * 序列化不了它们，静默丢掉用户无从知晓。
+   * 不进待发数组，而是换成一句人话留在文本里 + 一条 toast。切换模型后的
+   * 老标记也要重新检查，不能把不再可用的附件误报为已发送。
    *
    * 返回的形状就是 `processInputLine` 的两个入参名，调用方可以直接展开。
    */

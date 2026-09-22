@@ -67,7 +67,7 @@ class SseClient {
       this.waiters.push(check)
     })
   }
-  close() { return this.response.body.cancel().catch(() => {}) }
+  close() { return this.reader.cancel().catch(() => {}) }
 }
 
 /** Stub OIDC provider; each token exchange gets the next subject in line. */
@@ -219,6 +219,8 @@ test('gateway device stream: online/offline fast path, active-session diffs, no 
   // Device events (model catalog) reach owner streams, flat per the contract.
   service.emitDeviceEvent('models.updated', { provider: 'default', source: 'network', stale: false, models: [{ id: 'm1', origin: 'auto' }] })
   assert.equal((await client.next(frame => frame.event === 'models.updated')).json.models[0].origin, 'auto')
+  await service.record({ type: 'mcp.loaded', payload: { ok: true, configured: 1, connected: 1, toolCount: 3, failed: [] } })
+  assert.equal((await client.next(frame => frame.event === 'mcp.loaded')).json.toolCount, 3)
 
   // Relay drop → device.offline; re-register → device.online.
   relay.close()
@@ -237,8 +239,9 @@ test('gateway device stream: online/offline fast path, active-session diffs, no 
   assert.ok(guestHello, 'shared device stream opens')
   assert.deepEqual(guestHello.json.active, ['s1'], 'shared hello is filtered to granted sessions')
   service.emitDeviceEvent('settings.updated', {})
+  await service.record({ type: 'mcp.loaded', payload: { ok: true, configured: 1, connected: 1, toolCount: 3, failed: [] } })
   service.turns.set('s2', { controller: new AbortController(), client: 'local', turnId: 't2' })
-  const leaked = await guestClient.next(frame => ['settings.updated', 'models.updated'].includes(frame.event) || (frame.event === 'session.status' && frame.json.sessionId === 's2'), 500)
+  const leaked = await guestClient.next(frame => ['settings.updated', 'models.updated', 'mcp.loaded'].includes(frame.event) || (frame.event === 'session.status' && frame.json.sessionId === 's2'), 500)
   assert.equal(leaked, null, 'no device-scope or ungranted session frames leak to shared viewers')
 })
 

@@ -6,7 +6,7 @@ import { validateConfig } from '../config/schema.mjs'
 import { redactConfig } from '../config/redact.mjs'
 import { userRootDir } from '../storage/paths.mjs'
 import { writePrivateFile } from '../storage/private-file.mjs'
-import { discoverModelsForProvider } from '../kernel/index.mjs'
+import { discoverModelsForProvider, inferCapabilitiesFromName, normalizeCapabilities, parseCatalogEntryCapabilities } from '../kernel/index.mjs'
 import { ProtocolError } from '../protocol/index.mjs'
 
 function merge(base, patch) {
@@ -36,7 +36,13 @@ export async function discoverDeviceModels(service, params) {
   // (network/disk cache) or the manually maintained config fallback list. Newer
   // kernels already mark entries; fill the marker on older ones.
   const origin = catalog.source === 'config' ? 'manual' : 'auto'
-  return { ...catalog, models: catalog.models.map(model => ({ origin, ...model })) }
+  return { ...catalog, models: catalog.models.map(model => {
+    const discovered = parseCatalogEntryCapabilities(model) || {}
+    const configured = normalizeCapabilities(state.config.provider.model_capabilities?.[model.id])
+    const capabilities = { ...inferCapabilitiesFromName(model.id), ...discovered, ...configured }
+    const capabilitySources = Object.fromEntries(Object.keys(capabilities).map(key => [key, key in configured ? 'config' : key in discovered ? 'discovered' : 'heuristic']))
+    return { origin, ...model, capabilities, capabilitySources }
+  }) }
 }
 export async function updateDeviceSettings(service, patch) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new ProtocolError('invalid_config', 'config object required')

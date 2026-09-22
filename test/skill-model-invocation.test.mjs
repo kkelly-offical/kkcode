@@ -50,7 +50,7 @@ test("disable-model-invocation skills are hidden from the listing AND refused at
   assert.match(String(allowed), /open body hello/)
 })
 
-test("allowed-tools is parsed, carried, and labeled accepted-not-enforced in diagnostics", async t => {
+test("allowed-tools is parsed, carried, and labeled as a turn restriction in diagnostics", async t => {
   const { project } = await fixture(t)
   await mkdir(path.join(project, ".kkcode", "skills", "bounded-skill"), { recursive: true })
   await writeFile(path.join(project, ".kkcode", "skills", "bounded-skill", "SKILL.md"), "---\nname: bounded-skill\ndescription: bounded\nallowed-tools: read grep\n---\nbounded body\n")
@@ -61,7 +61,17 @@ test("allowed-tools is parsed, carried, and labeled accepted-not-enforced in dia
 
   const diagnostics = SkillRegistry.diagnostics()
   assert.ok(
-    diagnostics.some((d) => d.kind === "skill_allowed_tools_accepted_not_enforced" && d.name === "bounded-skill"),
+    diagnostics.some((d) => d.kind === "skill_allowed_tools_enforced" && d.name === "bounded-skill"),
     "the support level is labeled instead of silently pretending enforcement"
   )
+})
+
+test('user-invocable false is enforced by the registry while model invocation remains available', async t => {
+  const { project } = await fixture(t)
+  const directory = path.join(project, '.kkcode', 'skills', 'automatic')
+  await mkdir(directory, { recursive: true })
+  await writeFile(path.join(directory, 'SKILL.md'), '---\nname: automatic\ndescription: model only\nuser-invocable: false\n---\nautomatic body')
+  const tool = await skillTool(project)
+  await assert.rejects(SkillRegistry.execute('automatic'), /not user-invocable/)
+  assert.match(String(await tool.execute({ skill: 'automatic' }, { cwd: project })), /automatic body/)
 })

@@ -34,6 +34,12 @@ OpenCode plugin files under `.opencode/plugins/` and `~/.config/opencode/plugins
 
 ## Field support
 
+Historical correction: the table below described the intended safe mapping,
+not complete enforcement in 0.2.4. `allowed-tools` turn restrictions and all
+`user-invocable` entry-point checks were completed in **1.0.1-preview.2**.
+Use the [current contract](tool-discovery-and-skills.md) for runtime behavior;
+do not treat this dated comparison as proof that earlier versions enforced it.
+
 Skill frontmatter:
 
 | Field | Support |

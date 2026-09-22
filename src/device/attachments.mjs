@@ -3,10 +3,10 @@ import { constants } from 'node:fs'
 import { lstat, mkdir, open, readdir, realpath, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import { ProtocolError } from '../protocol/index.mjs'
-import { sniffImageMediaType } from '../kernel/index.mjs'
+import { sniffImageMediaType, mediaBlockError } from '../kernel/index.mjs'
 
 export const ATTACHMENT_LIMITS = Object.freeze({
-  imageBytes: 4 * 1024 * 1024, textBytes: 256 * 1024,
+  imageBytes: 4 * 1024 * 1024, mediaBytes: 4 * 1024 * 1024, textBytes: 256 * 1024,
   perTurn: 8, perSessionBytes: 16 * 1024 * 1024,
   deviceBytes: 64 * 1024 * 1024, entries: 256, retentionMs: 24 * 60 * 60 * 1000
 })
@@ -30,14 +30,19 @@ function decodeUpload({ name, mediaType, data }, limits) {
   if (typeof mediaType !== 'string') throw new ProtocolError('attachment_type', 'Specify the file media type')
   mediaType = mediaType.toLowerCase().split(';')[0].trim()
   const image = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(mediaType)
-  if (!image && !(/^text\/[a-z0-9.+-]+$/.test(mediaType) || textTypes.has(mediaType))) throw new ProtocolError('attachment_type', 'Upload PNG, JPEG, GIF, WebP or UTF-8 text files')
-  const max = image ? limits.imageBytes : limits.textBytes
+  const media = ['audio/wav', 'audio/x-wav', 'audio/mpeg', 'audio/mp3', 'video/mp4', 'video/quicktime', 'video/webm', 'video/mpeg'].includes(mediaType)
+  if (!image && !media && !(/^text\/[a-z0-9.+-]+$/.test(mediaType) || textTypes.has(mediaType))) throw new ProtocolError('attachment_type', 'Upload supported images, WAV/MP3 audio, MP4/MOV/WebM/MPEG video or UTF-8 text')
+  const max = image ? limits.imageBytes : media ? limits.mediaBytes : limits.textBytes
   if (typeof data !== 'string' || !data || data.length > Math.ceil(max / 3) * 4) throw new ProtocolError('attachment_size', `File must contain 1–${max} bytes`, 413)
   if (data.length % 4 || /[^A-Za-z0-9+/=]/.test(data)) throw new ProtocolError('attachment_encoding', 'Attachment data must be canonical base64')
   const bytes = Buffer.from(data, 'base64')
-  if (bytes.length > max || bytes.toString('base64') !== data) throw new ProtocolError('attachment_encoding', 'Invalid or oversized attachment data')
+  if (bytes.length > max) throw new ProtocolError('attachment_size', `File must contain 1–${max} bytes`, 413)
+  if (bytes.toString('base64') !== data) throw new ProtocolError('attachment_encoding', 'Invalid attachment data')
   if (image) {
     if (sniffImageMediaType(bytes) !== mediaType) throw new ProtocolError('attachment_type', 'Image content does not match its declared format')
+  } else if (media) {
+    const error = mediaBlockError({ type: mediaType.startsWith('audio/') ? 'audio' : 'video', mediaType, data })
+    if (error) throw new ProtocolError('attachment_type', error)
   } else {
     let text
     try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) } catch { throw new ProtocolError('attachment_encoding', 'Text attachments must use UTF-8') }
@@ -150,6 +155,8 @@ export class AttachmentStore {
         contentBlocks.push({ type: 'text', text: `Attached file: ${record.name}` })
         contentBlocks.push(record.mediaType.startsWith('image/')
           ? { type: 'image', data: record.data, mediaType: record.mediaType }
+          : /^(audio|video)\//.test(record.mediaType)
+          ? { type: record.mediaType.startsWith('audio/') ? 'audio' : 'video', data: record.data, mediaType: record.mediaType }
           : { type: 'text', text: Buffer.from(record.data, 'base64').toString('utf8') })
       }
       for (const id of ids) this.pins.set(id, (this.pins.get(id) || 0) + 1)

@@ -18,7 +18,7 @@ export const RELAY_FEATURE_EVENT_PUSH = 'events.push'
 /** Control frames every SSE stream may emit (not journal rows). */
 export const SSE_CONTROL_TYPES = Object.freeze(['connected', 'replay.gap', 'session.state'])
 /** Device-scope status events on the device stream (and relay `device-event`). */
-export const DEVICE_EVENT_TYPES = Object.freeze(['device.online', 'device.offline', 'session.status', 'settings.updated', 'models.updated'])
+export const DEVICE_EVENT_TYPES = Object.freeze(['device.online', 'device.offline', 'session.status', 'settings.updated', 'models.updated', 'mcp.loaded'])
 /** Turn lifecycle row types that determine whether a session is running. */
 export const SESSION_RUNNING_TYPES = Object.freeze(['turn.start', 'turn.auto_continue'])
 export const SESSION_IDLE_TYPES = Object.freeze(['turn.finish', 'turn.result', 'turn.failed'])

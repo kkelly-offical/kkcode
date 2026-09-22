@@ -31,6 +31,7 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-search
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}

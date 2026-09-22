@@ -177,7 +177,7 @@ export function formatControlledStatusFrame({ snapshot, events = [], activityAt 
 export function createControlledStatusPanel({ source, write, tty = false, columns = 100, intervalMs = 1000, now = () => Date.now(), maxEvents = 8 } = {}) {
   const events = []
   const activityAt = new Map()
-  let unsubscribe = null, timer = null, stopped = false, lastConnection = null, paintedOnce = false, rendering = Promise.resolve()
+  let unsubscribe = null, timer = null, stopped = false, started = false, lastConnection = null, paintedOnce = false, rendering = Promise.resolve()
   let resolveWait
   const waiting = new Promise((resolve) => { resolveWait = resolve })
 
@@ -188,6 +188,7 @@ export function createControlledStatusPanel({ source, write, tty = false, column
     rendering = rendering.then(async () => {
       if (stopped) return
       const frame = formatControlledStatusFrame({ snapshot: await snapshot(), events, activityAt, now: now(), columns })
+      if (stopped) return
       if (tty) write(`\x1b[2J\x1b[H${frame}\n`)
       else if (!paintedOnce) { write(`${frame}\n`); paintedOnce = true }
     }).catch(() => {})
@@ -210,8 +211,11 @@ export function createControlledStatusPanel({ source, write, tty = false, column
   }
   return {
     async start() {
+      if (stopped || started) return
+      started = true
       unsubscribe = source.subscribe((row) => noteEvent(row))
       await render()
+      if (stopped) return
       lastConnection = source.connection()
       // 定时器必须 ref 住事件循环：受控进程可能没有别的 ref 句柄，unref 后
       // libuv 会带着未派发的 SIGINT 直接退出（信号丢失，进程以 code 13 收尾）
@@ -225,7 +229,6 @@ export function createControlledStatusPanel({ source, write, tty = false, column
       stopped = true
       if (timer) clearInterval(timer)
       unsubscribe?.()
-      await rendering.catch(() => {})
       resolveWait()
     },
     wait: () => waiting,
@@ -261,7 +264,9 @@ export async function runControlledTerminal({
   const onSigint = () => { void panel.stop() }
   process.once("SIGINT", onSigint)
   try {
-    await panel.start()
+    // Ctrl+C during the initial asynchronous snapshot must not wait for a slow
+    // catalog read or let start() recreate a referenced timer after stop().
+    await Promise.race([panel.start(), panel.wait()])
     if (quit) {
       await quit
       await panel.stop()

@@ -16,6 +16,7 @@ jobs:
   # release 工作流只有 ubuntu 单 job，tag 推送又不触发 verify.yml，
   # 跨平台失败对发布流程完全不可见。发布必须被该矩阵挡住。
   matrix_verify:
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -31,6 +32,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-search
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
@@ -41,6 +43,7 @@ jobs:
       - run: npm test
 
   release_verify:
+    timeout-minutes: 45
     needs: matrix_verify
     environment: npm-release
     runs-on: ubuntu-latest
@@ -48,6 +51,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - uses: ./.github/actions/setup-search
       - uses: actions/setup-node@v7
         with:
           node-version: 22

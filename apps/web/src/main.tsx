@@ -10,6 +10,8 @@ import { Composer } from "./Composer";
 import { buildTranscript, changeSummary } from "./transcript.mjs";
 import { eventsStreamPath, streamSessionEvents } from "./live.mjs";
 import { DeviceClient } from "../../../src/sdk/client.mjs";
+import { useDeviceEvents } from './DeviceEvents';
+import { mcpLoadNotice } from './device-notices.mjs';
 import { Approval } from "./Approval";
 import { attachmentMediaType, readAttachment, type Attachment } from "./Attachments";
 
@@ -66,6 +68,17 @@ function App() {
   async function rpc(method: string, params: Item = {}) {
     return sdk.request<any>(method, params);
   }
+  const deviceNoticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(deviceNoticeTimer.current), []);
+  useDeviceEvents({ enabled: ready, gateway, deviceId, onEvent: async (event, signal) => {
+    const message = mcpLoadNotice(event);
+    if (message) {
+      setNotice(message); clearTimeout(deviceNoticeTimer.current);
+      deviceNoticeTimer.current = setTimeout(() => setNotice(previous => previous === message ? '' : previous), 6500);
+    }
+    if (['settings.updated', 'models.updated'].includes(event.type)) { const value = await rpc('settings.get'); if (!signal.aborted) setSettings(value); }
+    if (event.type === 'session.status') { const result = await rpc('sessions.list'); if (!signal.aborted) setSessions(Array.isArray(result) ? result : result.sessions || []); }
+  } });
   function applySelection(value: Item) {
     if (value.model !== undefined) setModel(value.model);
     if (value.providerType) setProvider(value.providerType);
@@ -386,7 +399,7 @@ function App() {
     if (!canManage || uploading) return;
     if (files.length + attachments.length > 8) throw new Error("每条消息最多添加 8 个附件");
     for (const file of files) {
-      const mediaType = attachmentMediaType(file), limit = mediaType.startsWith('image/') ? 4 * 1024 * 1024 : 256 * 1024;
+      const mediaType = attachmentMediaType(file), limit = /^(image|audio|video)\//.test(mediaType) ? 4 * 1024 * 1024 : 256 * 1024;
       if (file.size > limit) throw new Error(`${file.name} 超过单个附件大小限制`);
     }
     setUploading(true);

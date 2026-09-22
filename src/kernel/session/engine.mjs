@@ -341,7 +341,7 @@ export async function executeTurn({
     estimated = true
   }
 
-  const pricingInfo = await loadPricing(configState)
+  const pricingInfo = await loadPricing(configState, { providerName: providerType, model })
   const costInfo = calculateCost(pricingInfo.pricing, model, usage)
   const meter = await recordTurn({ sessionId, usage, cost: costInfo.amount })
   const budgetResult = evaluateBudget(configState.config, meter)

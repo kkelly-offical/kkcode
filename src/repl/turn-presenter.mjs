@@ -89,6 +89,7 @@ function toTurnResult(result) {
  * @param {Function} [p.switchModeInPlace] Plan 审批选了执行航道时用它真正切模式
  * @param {string} [p.cwd] `@` 引用的解析根
  * @param {Function} [p.runTurn] 回合执行器。可替换是为了让「展开后的文本真的进了回合」
+ * @param {Record<string, any>} [p.toolContext] Additional restrictive turn context.
  *                               成为可断言的事 —— 断言展开函数被调用过是空洞的。
  * @returns {Promise<object>} action
  */
@@ -103,6 +104,7 @@ export async function presentPromptTurn({
   signal = null,
   switchModeInPlace = null,
   steerSource = null,
+  toolContext = {},
   cwd = process.cwd(),
   runTurn = executePromptTurn
 }) {
@@ -117,7 +119,8 @@ export async function presentPromptTurn({
     streamSink: state.mode === "longagent" ? null : streamSink,
     pendingImages: images,
     signal,
-    steerSource
+    steerSource,
+    toolContext
   })
   const result = turn.result
 

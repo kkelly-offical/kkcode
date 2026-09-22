@@ -2,12 +2,40 @@ package cn.kkcode.remote
 
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
+import java.util.concurrent.TimeUnit
 import org.junit.Assert.*
 import org.junit.Test
 
 class DeviceApiStreamTest {
+    @Test fun deviceScopeMcpSummaryUsesEmptySessionAndPreservesPayload() = runBlocking {
+        server("event: mcp.loaded\ndata: {\"type\":\"mcp.loaded\",\"configured\":1,\"connected\":1,\"toolCount\":4}\n\n") { web ->
+            val api = DeviceApi(web.url("/").toString().trimEnd('/'), relay = false)
+            val frame = api.streamEvents("", 0).toList().single()
+            assertEquals("mcp.loaded", frame.event)
+            assertTrue(frame.data.contains("toolCount"))
+            assertEquals("/api/v1/events/stream?sessionId=&after=0", web.takeRequest().path)
+        }
+    }
+
+    @Test fun cancellationClosesAnUnresponsiveStreamImmediately() = runBlocking {
+        val web = MockWebServer()
+        web.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        web.start()
+        try {
+            val api = DeviceApi(web.url("/").toString().trimEnd('/'), relay = false)
+            val job = launch { api.streamEvents("", 0).collect {} }
+            assertNotNull(withContext(Dispatchers.IO) { web.takeRequest(3, TimeUnit.SECONDS) })
+            withTimeout(3000) { job.cancelAndJoin() }
+        } finally { web.shutdown() }
+    }
     private suspend fun server(body: String, code: Int = 200, contentType: String? = null, block: suspend (MockWebServer) -> Unit) {
         val server = MockWebServer()
         server.enqueue(MockResponse().setResponseCode(code).setHeader("Content-Type", contentType ?: if(code == 200) "text/event-stream" else "application/json").setBody(body))

@@ -32,14 +32,36 @@ function newGroupId() {
   return "grp_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8)
 }
 
+const TASK_CORE_KEYS = ['prompt', 'description', 'subagent_type', 'category', 'run_in_background', 'execution_mode', 'session_id']
+
+function taskSchema() {
+  const properties = taskProperties()
+  const brief = { type: 'object', additionalProperties: false, properties: Object.fromEntries(Object.entries(properties).filter(([key]) => !TASK_CORE_KEYS.includes(key))) }
+  return { type: 'object', properties: { ...properties, brief }, required: [] }
+}
+
+/** Model sees a compact core + brief; old flat SDK/recorded calls remain valid. */
+export function taskModelSchema(fullSchema = taskSchema()) {
+  return { ...fullSchema, properties: Object.fromEntries([...TASK_CORE_KEYS, 'brief'].filter(key => fullSchema.properties[key]).map(key => [key, fullSchema.properties[key]])) }
+}
+
+export function normalizeTaskBrief(args = {}) {
+  if (args.brief == null) return args
+  if (typeof args.brief !== 'object' || Array.isArray(args.brief)) throw new Error('task.brief must be an object')
+  const allowed = taskSchema().properties.brief.properties
+  if (Object.keys(args.brief).some(key => !Object.hasOwn(allowed, key))) throw new Error('task.brief contains unknown fields; routing fields belong at the top level')
+  const { brief, ...flat } = args
+  return { ...brief, ...flat }
+}
+
 export function createTaskTool() {
   return {
     name: "task",
     description: "Delegate complex multi-step work to a subagent that makes its own LLM calls. Use inherit_context=true or execution_mode=fork_context for read-only sidecars that need the parent transcript. Background tasks spawn a separate worker process and must be observed via task_list/task_output.",
-    inputSchema: { type: "object", properties: taskProperties(), required: [] },
+    inputSchema: taskSchema(),
     async execute(args, ctx) {
       if (typeof ctx.delegateTask !== "function") return { error: "task delegate unavailable" }
-      const result = await ctx.delegateTask(args || {})
+      const result = await ctx.delegateTask(normalizeTaskBrief(args || {}))
       return formatTaskResult(result)
     }
   }
@@ -84,7 +106,7 @@ export function createTaskGroupTool() {
         inherit_context: { type: "boolean", description: "default context inheritance for tasks that do not specify execution_mode" },
         execution_mode: { type: "string", enum: ["fresh_agent", "fork_context"], description: "default execution mode for tasks" },
         isolation: { type: "string", enum: ["default", "worktree"], description: "default isolation mode for tasks" },
-        tasks: { type: "array", description: "subagent tasks to launch in parallel", items: { type: "object", properties: taskProperties(), required: [] } }
+        tasks: { type: "array", description: "subagent tasks to launch in parallel", items: taskSchema() }
       },
       required: ["tasks"]
     },
@@ -96,7 +118,7 @@ export function createTaskGroupTool() {
       const groupLabel = String(args.group_label || "parallel subagents")
       const results = []
       for (let i = 0; i < tasks.length; i++) {
-        const task = tasks[i] || {}
+        const task = normalizeTaskBrief(tasks[i] || {})
         const merged = {
           ...task,
           group_id: task.group_id || groupId,

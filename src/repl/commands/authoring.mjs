@@ -358,17 +358,26 @@ export const authoringCommands = [
 
   {
     names: ["paste"],
-    desc: "paste image from clipboard",
+    desc: "attach clipboard image, audio or video",
     argMode: "optional",
-    run: async ({ args, print, pendingImages, clearPendingImages, attachImage, attachMedia, runPromptTurn }) => {
+    run: async ({ args, print, pendingImages, clearPendingImages, attachImage, attachMedia, runPromptTurn, ctx, state, readClipboardMedia = kernelIndex.readClipboardMedia }) => {
       print("reading clipboard...", { channel: "notice", topic: "paste" })
-      // 内核长出 readClipboardMedia（视频/语音）就用它；没有就只认图像
-      const readMedia = kernelIndex.readClipboardMedia || readClipboardImage
+      const readMedia = readClipboardMedia || readClipboardImage
       const clipBlock = await readMedia({ onStatus: (msg) => { if (msg) print(msg, { channel: "notice", topic: "paste" }) } })
       if (!clipBlock || clipBlock.type === "error") {
         print(clipBlock?.message ? `paste failed: ${clipBlock.message}` : "no media found in clipboard",
           { channel: "notice", topic: "paste", tone: "error" })
         return { exit: false }
+      }
+      if (ctx?.configState && state) {
+        try {
+          const { capabilities } = await kernelIndex.resolveModelCapabilities(ctx.configState, state.providerType, state.model)
+          const connection = kernelIndex.resolveProviderConnection(ctx.configState, state.providerType)
+          kernelIndex.assertMediaInput(clipBlock, { capabilities, protocol: connection.protocol, provider: state.providerType, model: state.model })
+        } catch (error) {
+          print(`paste failed: ${error.message}`, { channel: 'notice', topic: 'paste', tone: 'error' })
+          return { exit: false }
+        }
       }
       if (!args) {
         // TUI：把 `[Image #N · 230 kB]` 插进输入框，让「这里有附件」看得见也删得掉。
@@ -376,7 +385,12 @@ export const authoringCommands = [
         const attach = attachMedia || attachImage
         let marker = ""
         // attach 是异步的（能力面可读 Promise）；行模式的待发数组兜底是同步的，await 通吃
-        if (attach) marker = (await attach(clipBlock)) || ""
+        if (attach) {
+          const attached = await attach(clipBlock)
+          // null/false means rejected; an empty string is a successful line-mode attachment.
+          if (attached === null || attached === false) return { exit: false }
+          marker = attached || ""
+        }
         else pendingImages.push(clipBlock)
         print(
           marker

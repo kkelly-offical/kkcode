@@ -406,7 +406,7 @@ export async function compactSession({
   // Record compaction LLM usage so it's not "invisible"
   if (compactionUsage) {
     try {
-      const { pricing } = await loadPricing(configState)
+      const { pricing } = await loadPricing(configState, { providerName: providerType, model })
       const { amount } = calculateCost(pricing, model, compactionUsage)
       await recordTurn({ sessionId, usage: compactionUsage, cost: amount })
     } catch { /* best-effort */ }

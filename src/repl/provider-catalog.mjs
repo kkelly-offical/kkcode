@@ -15,7 +15,10 @@ import {
   applyDiscoveredCapabilities,
   escapeTerminalText,
   formatContext,
-  supportsThinking
+  supportsThinking,
+  normalizeCapabilities,
+  parseCatalogEntryCapabilities,
+  inferCapabilitiesFromName
 } from "../kernel/index.mjs"
 
 /**
@@ -42,6 +45,21 @@ export function mediaSupportFromCapabilities(capabilities, kind) {
   const value = capabilities?.[kind]
   if (typeof value === "boolean") return value
   return kind === "image" ? true : null
+}
+
+export function modelCapabilityBadges(entry, config = {}) {
+  const id = String(entry?.id || '')
+  const discovered = parseCatalogEntryCapabilities(entry) || {}
+  const configured = normalizeCapabilities(config.provider?.model_capabilities?.[id])
+  const heuristic = inferCapabilitiesFromName(id)
+  const capabilities = { ...heuristic, ...discovered, ...configured }
+  const sources = Object.fromEntries(Object.keys(capabilities).map(key => [key, key in configured ? 'config' : key in discovered ? 'discovered' : 'heuristic']))
+  const labels = { image: '图像', audio: '音频', video: '视频', tools: '工具', streaming: '流式' }
+  const badges = Object.entries(labels).filter(([key]) => capabilities[key] === true)
+    .map(([key, label]) => `${label}${sources[key] === 'heuristic' ? '?' : ''}`)
+  if (capabilities.tools === false) badges.push('无工具')
+  if (capabilities.streaming === false) badges.push('非流式')
+  return { capabilities, capabilitySources: sources, badges }
 }
 
 export async function loadProviderModelItems(configState, providerName, {
@@ -71,14 +89,21 @@ export async function loadProviderModelItems(configState, providerName, {
         model,
         supportedParameters: Array.isArray(entry?.supportedParameters) ? entry.supportedParameters : null
       })
+      const capabilityInfo = modelCapabilityBadges(entry, config)
       items.push({
         provider: providerName,
         model,
         contextLength,
         thinking,
+        ...capabilityInfo,
+        pricing: entry.pricing || null,
+        origin: entry.origin || (catalog.source === 'config' ? 'manual' : 'auto'),
+        stale: Boolean(catalog.stale),
         label: `${escapeTerminalText(providerName)} / ${escapeTerminalText(model)}`
           + (contextLength ? ` (${formatContext(contextLength)})` : "")
           + (thinking === true ? " · 思考" : "")
+          + (capabilityInfo.badges.length ? ` · ${capabilityInfo.badges.join(' / ')}` : '')
+          + (catalog.stale ? ' · 缓存过期' : '')
       })
     }
     return {

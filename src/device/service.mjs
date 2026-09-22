@@ -4,7 +4,7 @@ import path from 'node:path'
 import { EventEmitter } from 'node:events'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { mkdir, readFile } from 'node:fs/promises'
-import { createKernel, getSession, listSessions, newSessionId } from '../kernel/index.mjs'
+import { createKernel, getSession, listSessions, newSessionId, resolveModelCapabilities, resolveProviderConnection, assertMediaInput } from '../kernel/index.mjs'
 import { loadConfig } from '../config/load-config.mjs'
 import { redactConfig } from '../config/redact.mjs'
 import { userRootDir } from '../storage/paths.mjs'
@@ -22,6 +22,7 @@ import { SessionTree } from './session-tree.mjs'
 import { getDeviceProfile, updateDeviceProfile } from './profile.mjs'
 import { sessionView } from './session-view.mjs'
 import { DeviceLiveView } from './live-view.mjs'
+import { publicMcpSummary } from './mcp-status.mjs'
 
 const idPattern = /^[A-Za-z0-9_-]{1,128}$/
 export class DeviceService extends EventEmitter {
@@ -106,6 +107,8 @@ export class DeviceService extends EventEmitter {
     for (const approval of [...this.approvals.values()]) if (approval.sessionId === sessionId) this.resolveApproval(approval.id, approval.kind === 'permission' ? 'deny' : {})
   }
   async record(event) {
+    if (this.closed) return
+    if (event.type === 'mcp.loaded') return this.emitDeviceEvent('mcp.loaded', publicMcpSummary(event.payload))
     if (!event.sessionId || !idPattern.test(event.sessionId)) return
     this.sessionTree.observe(event)
     const row = await this.liveView.record(event, item => this.replay.append(item))
@@ -149,7 +152,7 @@ export class DeviceService extends EventEmitter {
   /** Announce a discovered catalog once per actual change; SSE transports forward it. */
   announceModelCatalog(result) {
     if (!result || typeof result.provider !== 'string' || !Array.isArray(result.models)) return
-    const digest = createHash('sha256').update(JSON.stringify(result.models.map(model => model?.id))).digest('hex')
+    const digest = createHash('sha256').update(JSON.stringify(result.models)).digest('hex')
     if (this.modelCatalog.get(result.provider) === digest) return
     this.modelCatalog.set(result.provider, digest)
     const models = []
@@ -317,8 +320,24 @@ export class DeviceService extends EventEmitter {
       const state = structuredClone(kernel.configState)
       state.config.permission.level = ((!p.mode || p.mode === selection.modeId) && selection.approval) || { agent: 'manual', plan: 'readonly', 'agent-auto': 'accept-edits', ultra: 'accept-edits', yolo: 'yolo' }[mode]
       attachmentInput = await this.attachments.resolve({ sessionId, ids: p.attachmentIds || [], prompt: p.prompt })
+      const model = p.model || selection.model || config.provider[providerType]?.default_model
+      const media = (attachmentInput.contentBlocks || []).filter(block => ['image', 'audio', 'video'].includes(block.type))
+      if (media.length) {
+        const { capabilities } = await resolveModelCapabilities(state, providerType, model)
+        const { protocol } = resolveProviderConnection(state, providerType)
+        try { for (const block of media) assertMediaInput(block, { capabilities, protocol, provider: providerType, model }) }
+        catch (error) { throw new ProtocolError('unsupported_attachment', error.message) }
+      }
+      let skillAllowedTools = null
+      if (p.skill !== undefined) {
+        if (typeof p.skill !== 'string' || p.skill.length > 256) throw new ProtocolError('invalid_skill', 'Invalid skill name')
+        await kernel.bootExtensions()
+        const skill = kernel.extensions.skills.get(p.skill)
+        if (!skill || skill.userInvocable === false) throw new ProtocolError('invalid_skill', 'Skill is not user-invocable')
+        skillAllowedTools = skill.allowedTools || null
+      }
       await kernel.events.emit({ type: 'remote.turn.started', sessionId, payload: { prompt: p.prompt, client: principal.client } })
-      entry.promise = kernel.executeTurn({ prompt: p.prompt, contentBlocks: attachmentInput.contentBlocks, sessionId, mode: allowedModes[mode], model: p.model || selection.model || config.provider[providerType]?.default_model, providerType, configState: state, signal: controller.signal })
+      entry.promise = kernel.executeTurn({ prompt: p.prompt, contentBlocks: attachmentInput.contentBlocks, sessionId, mode: allowedModes[mode], model, providerType, configState: state, signal: controller.signal, toolContext: { skillAllowedTools } })
         .then(result => this.record({ type: 'turn.result', sessionId, turnId: result.turnId || turnId, payload: result }))
         .catch(error => this.record({ type: 'turn.failed', sessionId, turnId, payload: { error: error.message } }))
         .finally(async () => { try { await attachmentInput.release() } finally { this.finishTurn(sessionId, entry) } })

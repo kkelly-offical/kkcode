@@ -70,6 +70,7 @@ export function createChatCommand() {
       printContextWarnings(ctx)
       const extensionPolicy = kernel.extensionPolicy
       let prompt = promptParts.join(" ").trim()
+      let skillAllowedTools = null
       if (prompt.startsWith("$") || prompt.startsWith("/")) {
         const sigil = prompt.startsWith("$") ? "$" : "/"
         const [name, ...argTokens] = prompt.slice(1).split(/\s+/)
@@ -78,6 +79,7 @@ export function createChatCommand() {
         const skill = skillRegistry.get(name)
         if (sigil === "$" || skill) {
           if (!skill) throw new Error(`unknown skill: $${name}`)
+          skillAllowedTools = skill.allowedTools || null
           const expanded = await skillRegistry.execute(name, args, {
             cwd: process.cwd(),
             mode: options.mode || "assistant",
@@ -164,6 +166,7 @@ export function createChatCommand() {
       reporter.progress(`route summary: ${summarizeRouteDecision(routedMode.route)}`)
 
       const result = await kernel.executeTurn({
+        toolContext: { skillAllowedTools },
         prompt: chatParams.prompt ?? prompt,
         mode: effectiveMode,
         model: chatParams.model ?? model,

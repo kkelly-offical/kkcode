@@ -7,6 +7,7 @@ import {
   resolveRetryOptions
 } from "./retry-policy.mjs"
 import { parseSSE } from "./sse.mjs"
+import { mapOpenAIMedia } from './media-input.mjs'
 
 function mapTools(tools) {
   if (!tools || !tools.length) return undefined
@@ -26,6 +27,7 @@ function mapTools(tools) {
 }
 
 function mapContentBlock(block) {
+  if (block.type === 'audio' || block.type === 'video') return mapOpenAIMedia(block)
   if (block.type === "image" && block.data) {
     return {
       type: "image_url",
@@ -90,7 +92,7 @@ function mapMessages(messages, { preserveReasoning = false } = {}) {
       // tool_result 之后的同一条消息里。此前这里直接 continue，把它们连同
       // 整条消息一起丢掉：图片在会话历史里完好，却从未进入请求，于是模型
       // 只看到那行 `Image file: x.png (137 bytes)`，「可视觉分析」是句空话。
-      const imageBlocks = content.filter((b) => b.type === "image" && b.data)
+      const imageBlocks = content.filter((b) => ['image', 'audio', 'video'].includes(b.type) && b.data)
       if (imageBlocks.length > 0) {
         mapped.push({
           role: "user",

@@ -1,5 +1,8 @@
 # =============================================================================
 # kkcode 完整配置参考
+# 当前行为：1.0.1-preview.2。下面的模型名是示例，不是自动注入清单。
+# 首选 /provider add + /model refresh 从用户的 Base URL 发现可用模型。
+# 音视频协议/格式与大小限制见 docs/media-input.md。
 # =============================================================================
 # 配置文件加载优先级：项目配置 > 用户配置 > 默认配置
 #
@@ -19,6 +22,9 @@
 provider:
   default: "dashscope"
   strict_mode: false
+  # 仅在目录不提供能力且你已确认供应商支持时设置；不能绕过协议限制。
+  # model_capabilities:
+  #   your-model-id: { image: true, audio: true, video: true, tools: true }
 
   # --- OpenAI ---
   openai:
@@ -265,6 +271,12 @@ session:
 # 工具配置
 # =============================================================================
 tool:
+  # MCP 工具达到 threshold 后按需发现；SDK 完整清单不变。
+  discovery:
+    enabled: true
+    threshold: 24
+  # true 可恢复向模型广告 patch/multiedit/background_* 等兼容别名。
+  legacy_aliases: false
   sources:
     builtin: true
     local: true
@@ -320,6 +332,8 @@ skills:
 # 使用量与预算
 # =============================================================================
 usage:
+  # 定价优先级：显式 pricing_file > 当前渠道目录价格 > 内置估算。
+  # 目录价格必须为 USD；过期或缺少缓存费率时明确标为估算，不等于供应商账单。
   budget:
     session_usd: null
     global_usd: null

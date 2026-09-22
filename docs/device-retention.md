@@ -3,6 +3,12 @@
 These are transport/recovery limits in 1.0.1, not conversation deletion policies.
 The canonical kernel conversation history is never deleted by these stores.
 
+In preview.2 the staging quotas also apply to WAV/MP3 audio and
+MP4/MOV/WebM/MPEG video: 4 MiB per remote media file, at most eight attachments
+per turn, 16 MiB per session and 64 MiB per device. CLI clipboard input has a
+separate 20 MiB/file limit. See [media input](media-input.md). Device-scope
+`mcp.loaded` summaries are live-only; they do not consume session replay storage.
+
 ## Event replay
 
 - At most 2,000 retained events and 8 MiB per session.

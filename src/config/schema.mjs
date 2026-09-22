@@ -703,6 +703,14 @@ export function validateConfig(config) {
     if (!isObj(config.tool)) err(errors, "tool", "must be object")
     else {
       if (config.tool.sources !== undefined && !isObj(config.tool.sources)) err(errors, "tool.sources", "must be object")
+      if (config.tool.legacy_aliases !== undefined && typeof config.tool.legacy_aliases !== 'boolean') err(errors, 'tool.legacy_aliases', 'must be boolean')
+      if (config.tool.discovery !== undefined) {
+        if (!isObj(config.tool.discovery)) err(errors, 'tool.discovery', 'must be object')
+        else {
+          if (config.tool.discovery.enabled !== undefined && typeof config.tool.discovery.enabled !== 'boolean') err(errors, 'tool.discovery.enabled', 'must be boolean')
+          if (config.tool.discovery.threshold !== undefined) checkInt(errors, 'tool.discovery.threshold', config.tool.discovery.threshold, 1)
+        }
+      }
       if (config.tool.write_lock !== undefined) {
         if (!isObj(config.tool.write_lock)) err(errors, "tool.write_lock", "must be object")
         else {

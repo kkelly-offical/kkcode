@@ -36,8 +36,8 @@ android {
         applicationId = "cn.kkcode.remote"
         minSdk = 29
         targetSdk = 35
-        versionCode = 10002
-        versionName = "1.0.1-preview.1"
+        versionCode = 10003
+        versionName = "1.0.1-preview.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }

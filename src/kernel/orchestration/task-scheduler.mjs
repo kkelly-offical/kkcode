@@ -199,7 +199,7 @@ async function ensureDelegatedSession({ executionMode, parentSessionId, subSessi
   await flushNow()
 }
 
-export function createTaskDelegate({ config, parentSessionId, model, providerType, runSubtask }) {
+export function createTaskDelegate({ config, parentSessionId, model, providerType, runSubtask, getSkillToolGroups = () => [] }) {
   return async function delegateTask(args = {}) {
     const requestedExecutionMode = args.inherit_context === true && !args.execution_mode ? "fork_context" : args.execution_mode
     const executionModeResult = normalizeExecutionMode(requestedExecutionMode)
@@ -254,6 +254,7 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
         deadlineAt: args.deadline_at || null
       },
       toolContext: {
+        ...(getSkillToolGroups().length ? { skillToolGroups: getSkillToolGroups() } : {}),
         groupId: args.group_id || null,
         stageId: args.stage_id || null,
         logicalTaskId: args.task_id || null

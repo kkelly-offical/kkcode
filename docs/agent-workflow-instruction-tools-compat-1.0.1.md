@@ -5,6 +5,11 @@ orchestration / tool / skill / MCP / plugin) against three public reference
 implementations and turns every gap into either a fix landed in this branch or
 a tracked follow-up.
 
+Preview.2 completion: the previously deferred G10–G12 and remaining G4/G9
+execution work are now implemented below. Original comparisons/inventory are
+historical baselines, not a claim that preview.1 already shipped these fixes.
+The current public contract is [tool discovery and skills](tool-discovery-and-skills.md).
+
 ## References and how they were compared
 
 | Reference | What was examined | Evidence |
@@ -93,14 +98,12 @@ clamps each plugin agent's permission to the plugin manifest's declared
   but the `skill` tool would still execute it if the model guessed the name
   (Kimi Code rejects these at the tool boundary). Fixed: the `skill` tool now
   refuses `disable-model-invocation` skills with a clear message.
-- `user-invocable: false` is parsed but the REPL `$name` path does not check
-  it (`src/repl.mjs`, outside this mission's scope). Filed as a tower finding;
-  the registry now exposes the flag reliably so the frontend can enforce it.
-- `allowed-tools` is parsed (including the Agent Skills space-separated
-  scalar form) but intentionally not enforced mid-turn — kkcode skills expand
-  to prompts and every tool call still passes the session permission gate.
-  Documented as **accepted, not enforced** in `docs/agent-*` (this file) and
-  surfaced through skill diagnostics.
+- `user-invocable: false`: completed in preview.2 at the registry, REPL,
+  headless and remote command paths; omitted from user completion.
+- `allowed-tools`: completed in preview.2 as intersecting per-turn tool
+  restrictions, checked both in advertising and before execution and inherited
+  by foreground/background delegates. Ordinary permissions still apply. This
+  is not an OS sandbox for trusted arbitrary JavaScript plugin code.
 
 ### G5 (P1, fixed here) — MCP tool ids are not provider-safe and can collide
 
@@ -132,8 +135,8 @@ which was never true (`bash` `run_in_background` lands in the same manager).
 Removing tools from the registered surface would break the shipped tool
 contract for 1.0.1, so instead: descriptions now state the alias relationship
 and the canonical name (`task_output` / `task_stop`), and the prompt grouping
-keeps the families together. A real consolidation is a 1.x follow-up (see
-G12).
+keeps the families together. Preview.2 additionally consolidates the default
+model-visible surface while retaining registered legacy aliases (G12).
 
 ### G8 (P2, fixed here) — inconsistent parameter naming inside one schema
 
@@ -143,36 +146,38 @@ models guess wrong on adjacent tools. Fixed: the schema advertises snake_case
 (`max_count`, `ignore_case`); the legacy camelCase keys are still accepted as
 silent aliases so existing prompts and saved sessions do not regress.
 
-### G9 (P2, partially fixed here) — `task` tool schema carries 23 parameters
+### G9 (P2, completed in preview.2) — compact task schema
 
 The `task` schema mixes brief fields, routing fields, budgeting fields and
 lifecycle fields. Kimi Code's `Agent` tool ships 7. Fully slimming it breaks
-existing structured-brief consumers, so this branch only clarifies the
-description grouping; a schema split (`task` core + optional `brief` object)
-is a 1.x follow-up (G12).
+existing structured-brief consumers, so preview.2 keeps the legacy flat schema
+callable but advertises seven common fields plus a typed `brief` object. Brief
+values are normalized before delegation; explicit flat fields take precedence.
 
-### G10 (P3, follow-up) — no deferred tool discovery
+### G10 (completed in preview.2) — deferred tool discovery
 
 Codex exposes `tool_search` (BM25 over deferred MCP tool metadata) so large
-MCP inventories do not inflate every request. kkcode injects every MCP tool
-schema up front. With many servers this bloats the prompt; with per-server
-grouping (G6) the prompt stays readable, but a search-gated deferred tier is
-the structural fix. Not started here — it changes the model-visible surface
-and needs its own acceptance pass.
+MCP inventories do not inflate every request. KK Code now provides its own
+metadata-only BM25 search, defers catalogs of 24+ eligible MCP tools by default,
+and activates up to 64 schemas within one turn. Search never executes or
+authorizes tools, and respects agent/skill restrictions. Full SDK inventory and
+an explicit eager-mode switch remain available.
 
-### G11 (P3, follow-up) — instruction files load from cwd only
+### G11 (completed in preview.2) — root-to-cwd instructions
 
-`instruction-loader.mjs` reads `AGENTS.md` / `CLAUDE.md` / … from the current
-directory only; Codex and Kimi Code both walk from the git root down.
-Changing this affects every session's prompt and is deferred rather than
-bundled into this branch.
+`instruction-loader.mjs` walks from the nearest Git root to cwd, including
+worktree markers. Nested repositories are boundaries; non-Git folders remain
+cwd-only. Deeper rules have scoped precedence, aliases are deduplicated,
+escaping symlinks and oversize instruction files fail explicitly.
 
-### G12 (P3, follow-up) — tool surface consolidation
+### G12 (completed in preview.2) — compatible tool surface consolidation
 
 Exact duplicates (`background_output` ≡ `task_output`, `background_cancel` ≡
-`task_stop`, `task_get` ≡ `task_output`) and the triple edit lane
-(`edit` / `patch` / `multiedit`) should converge on canonical names behind a
-deprecation window in a 1.x release, not in a preview patch.
+`task_stop`, `task_get` ≡ `task_output`) are hidden from default model advertising
+when the canonical tool is available. `edit` now accepts exact replacements,
+line ranges or atomic changes through the original implementations. Registered
+names and old schemas remain callable; `tool.legacy_aliases: true` restores the
+old advertising. No alias removal or major/minor bump is implied.
 
 ## What did NOT change (compatibility promises kept)
 
@@ -198,7 +203,11 @@ deprecation window in a 1.x release, not in a preview patch.
   suffixing.
 - `test/skill-model-invocation.test.mjs` (new) —
   `disable-model-invocation` enforcement at the `skill` tool;
-  `allowed-tools` labeled accepted-not-enforced in diagnostics.
+  `allowed-tools` now labeled as an enforced turn restriction in diagnostics.
+- `test/tool-discovery-deferred.test.mjs`, `test/kernel-discovery-policy.test.mjs`:
+  discovery, actual next-request schemas, alias compatibility and skill execution gates.
+- `test/instruction-hierarchy.test.mjs`, `test/skill-tool-policy.test.mjs`:
+  hierarchy, boundary checks, portable patterns and restriction intersections.
 - `test/plugin-agents.test.mjs` (new) — plugin agent loading +
   `allowedAgentPermissions` clamp + inventory-time execution ban.
 - `test/system-prompt.test.mjs` (existing) — block assembly, single

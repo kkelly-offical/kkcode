@@ -39,9 +39,10 @@ test("legacy camelCase grep arguments keep working as silent aliases", async t =
 
   const snake = await grep.execute({ pattern: "alpha", path: "fixture.txt", output_mode: "content", ignore_case: true, max_count: 5 }, { cwd: root })
   const camel = await grep.execute({ pattern: "alpha", path: "fixture.txt", output_mode: "content", ignoreCase: true, maxCount: 5 }, { cwd: root })
-  assert.equal(String(snake).match(/alpha/gi).length, 2, "snake_case ignore_case matches both cases")
+  assert.doesNotMatch(String(snake), /\[search error\]/, "ripgrep must be installed for this integration test")
+  assert.equal((String(snake).match(/alpha/gi) || []).length, 2, "snake_case ignore_case matches both cases")
   assert.deepEqual(camel, snake, "camelCase alias produces the same result")
 
   const limited = await grep.execute({ pattern: "alpha", path: "fixture.txt", output_mode: "content", ignore_case: true, max_count: 1 }, { cwd: root })
-  assert.equal(String(limited).match(/alpha/gi).length, 1, "max_count limits matches per file")
+  assert.equal((String(limited).match(/alpha/gi) || []).length, 1, "max_count limits matches per file")
 })

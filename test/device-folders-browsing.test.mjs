@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { DeviceService } from '../src/device/service.mjs'
@@ -9,7 +9,8 @@ import { listDeviceFolder, resolveDevicePath } from '../src/device/files.mjs'
 async function fixture(t) {
   const base = await mkdtemp(path.join(os.tmpdir(), 'kkcode-folders-'))
   t.after(() => rm(base, { recursive: true, force: true }))
-  return base
+  // Windows tmpdir may use an 8.3 spelling; the public API returns real paths.
+  return realpath(base)
 }
 
 test('default device roots cover the OS user home, and --root remains an explicit restriction', async () => {

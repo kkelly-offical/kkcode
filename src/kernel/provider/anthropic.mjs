@@ -72,6 +72,9 @@ function systemWithCacheControl(system) {
 }
 
 function mapContentBlock(block) {
+  if (block.type === 'audio' || block.type === 'video') {
+    throw new ProviderError(`anthropic does not encode ${block.type} input; choose an OpenAI-compatible media channel`, { reason: 'unsupported_capability', capability: block.type })
+  }
   if (block.type === "image" && block.data) {
     return {
       type: "image",

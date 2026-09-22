@@ -28,9 +28,20 @@ internal fun catalogSourceLabel(source: String, stale: Boolean): String = when(s
     else -> ""
 }
 
+internal fun configuredProviderNames(providers: JSONObject): List<String> = providers.keys().asSequence()
+    .filter { providers.opt(it) is JSONObject && it !in setOf("default", "model_context", "model_thinking", "model_capabilities") }.toList()
+
+internal fun modelCapabilityLabel(entry: JSONObject?): String {
+    val capabilities = entry?.optJSONObject("capabilities") ?: return ""
+    val sources = entry.optJSONObject("capabilitySources")
+    return listOf("image" to "图像", "audio" to "音频", "video" to "视频", "tools" to "工具", "reasoning" to "思考")
+        .filter { capabilities.opt(it.first) == true }
+        .joinToString(" · ") { it.second + if(sources?.optString(it.first) == "heuristic") "?" else "" }
+}
+
 @Composable internal fun ModelPicker(state: RemoteState) {
     val providers = state.settings.optJSONObject("provider") ?: JSONObject()
-    val names = providers.keys().asSequence().filter { providers.opt(it) is JSONObject && it != "model_context" && it != "model_thinking" }.toList()
+    val names = configuredProviderNames(providers)
     Text("当前：${state.modelLabel}${if(state.provider.isNotBlank()) " · ${state.provider}" else ""}", fontSize = 13.sp, color = kkcodeColors.activityMuted, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
     if(state.busy) Text("任务执行期间不能切换模型，完成后即可切换。", fontSize = 12.sp, color = kkcodeColors.warning, modifier = Modifier.padding(horizontal = 12.dp))
     if(names.isEmpty()) {
@@ -48,8 +59,10 @@ internal fun catalogSourceLabel(source: String, stale: Boolean): String = when(s
                 val discovered = state.modelOptions.map { it.getString("id") }
                 val merged = (listOf(defaultModel) + discovered + listOf(if(state.provider == name) state.model else "")).filter { it.isNotBlank() }.distinct()
                 merged.forEach { id ->
-                    val origin = state.modelOptions.find { it.optString("id") == id }?.optString("origin") ?: ""
-                    ModelOption(enabled = !state.busy, current = state.provider == name && state.model == id, id = id, tag = if(id == defaultModel) "默认" else if(origin == "manual") "手动" else "") { state.selectModel(name, id) }
+                    val entry = state.modelOptions.find { it.optString("id") == id }
+                    val origin = entry?.optString("origin") ?: ""
+                    val tag = listOf(if(id == defaultModel) "默认" else if(origin == "manual") "手动" else "", modelCapabilityLabel(entry)).filter { it.isNotBlank() }.joinToString(" · ")
+                    ModelOption(enabled = !state.busy, current = state.provider == name && state.model == id, id = id, tag = tag) { state.selectModel(name, id) }
                 }
             }
         }

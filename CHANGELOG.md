@@ -1,5 +1,30 @@
 # Changelog / 更新日志
 
+## 1.0.1-preview.2
+
+Third opt-in preview; npm `preview`, GitHub prerelease, stable `latest` unchanged.
+
+- Complete M32/M33 CLI notice separation, themes, background MCP and turn-end
+  lifecycle improvements with the remaining media/capability/pricing work.
+- Add bounded clipboard audio/video/file reading and real OpenAI-compatible
+  request encoding; reject unsupported fresh inputs without false attachment
+  success. Web and native Android support the same formats within remote quotas.
+- Use provider-scoped catalog prices for costs/compaction/delegation budgets,
+  with explicit-file priority, currency/unit validation and stale estimates.
+- Show model capability badges with heuristic provenance, and forward sanitized
+  `mcp.loaded` summaries to owner clients through device/relay streams.
+- Complete M28 deferred `tool_search`, hierarchical project instructions,
+  canonical edit/task surfaces with legacy aliases, user invocation flags and
+  intersecting skill tool restrictions inherited by delegated workers.
+- Fix Windows canonical-path assertions, explicitly install ripgrep in CI,
+  correct missing-search-tool diagnostics, fix controlled-panel stop/start races,
+  and cancel Android SSE sockets promptly without spurious network errors.
+- Android versionCode `10003`, same external release certificate. Headless JSONL
+  and remote protocol version `1` remain compatible.
+
+See [release guide](docs/release-1.0.1-preview.2.md),
+[media support](docs/media-input.md), and [acceptance ledger](docs/preview.2-worklog.md).
+
 ## 1.0.1-preview.1 — 2026-09-22
 
 Second opt-in preview (`npm @preview`, GitHub prerelease); stable `latest`

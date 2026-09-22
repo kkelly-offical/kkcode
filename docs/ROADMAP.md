@@ -1,145 +1,42 @@
 # Roadmap / 路线图
 
-已知欠账与下一步方向。每条都标注了**当前事实**（可以直接核对的数字或文件），
-而不是意向描述 —— 路线图最容易烂掉的方式就是写下一堆无法验证的愿望。
+更新范围：1.0.1-preview.2。当前验收证据见 [实施记录](implementation-1.0.1.md)
+和 [preview.2 台账](preview.2-worklog.md)。本页不把计划写成已发布能力。
 
-更新于 1.0.0。
+## 已完成的旧待办
 
----
+- 内核/SDK 分层、唯一 createKernel 组合根、运行时隔离和导入边界门禁已经实现。
+  旧版“没有分层”“76 个 UI 文件直接引用内部模块”的描述是迁移前数据，不再适用。
+- 类型门禁由 scripts/check-types.mjs 执行固定配置与额外检查；
+  不再使用旧的“130/290、510 个错误”数字描述当前项目。
+- 官方 MCP SDK 的 stdio/Streamable HTTP 互操作已接入，保留旧 framing/REST
+  兼容面；“streamable-http 只是 SSE 别名”的旧结论已过时。
+- M32/M33 的剪贴板媒体、能力门、计费与能力徽标、远端 MCP 摘要已经接入，
+  不再只保留视频/音频 UI 标记。
+- M28 G10–G12 的按需工具搜索、指令继承与兼容工具整合已完成；
+  allowed-tools 和 user-invocable 的执行路径也已补齐。
 
-## 1. 类型守护扩容 / Widen the typecheck
+## 明确的支持边界
 
-**现状**：`tsconfig.json` 的 `include` 覆盖 130 / 290 个源文件。
+1. **扩展信任与沙箱**：工具审批、allowed-tools 和 OS 沙箱是三层不同约束。
+   任意 .mjs 插件/MCP 服务进程并不自动进入 bash 的 OS 沙箱；需要信任来源，
+   或在企业容器/低权限账号中运行。不能将“已审批”写成“沙箱隔离”。
+2. **媒体协议**：WAV/MP3 与兼容 video_url 已编码；不提供自动转码/抽帧、
+   录音/摄像头或所有模型通吃的承诺。具体边界见 [媒体矩阵](media-input.md)。
+3. **MCP 扩展协议**：交互 OAuth/动态注册、服务端采样、完整 elicitation、
+   MCP Apps 和第三方专属运行时不在现有兼容声明中。见 [协议矩阵](protocol-compatibility-1.0.1.md)。
+4. **价格与模型**：优先用户 Base URL 的目录及明确配置，内置模板/单价只是
+   有日期的回退示例；目录缺失、别名和阶梯/音频计费仍需要用户核对。估算不等于账单。
+5. **平台验收**：CI 验证当前操作系统软件路径；GUI 终端、输入法、剪贴板
+   安全策略和实体手机仍有设备差异。请提供可复现环境，不用“全平台通用”替代证据。
+6. **生产部署**：企业租户 claim、域名/TLS、HA 拓扑、监控、异地备份和恢复
+   演练由部署者按手册验收；已有脚本不代表任意生产环境已通过。
+7. **发行方式**：公开 npm 包仍为 @kkelly-offical/kkcode，SDK 通过子路径导出；
+   packages/* 是私有工作区，不是独立发布的 npm 包。仅发布 1.0.x，未授权 1.1.0。
 
-0.9.1 之前只有 5 个，typecheck 基本在空转。现在纳入的是「自身干净且传递依赖
-也全干净」的闭包 —— 用 `exclude` 排除脏文件是无效的，被白名单文件 import 的
-脏文件照样会被检查。
+## 后续方向（不阻塞本轮已明确的 backlog）
 
-**下一步**：剩下 160 个里有 96 个自身带类型错误（全量开 `checkJs` 报 510 个，
-多数是无类型标注 JS 上的 `TS2339` 噪音）。修完一个文件的错误后，把它和它的
-下游一并加进 `include`，跑 `npm run typecheck` 确认仍是 0 错误。清单只增不减；
-变短就是守护面倒退。
-
----
-
-## 2. 沙箱执行面覆盖 / Sandbox coverage
-
-**现状**：OS 级沙箱（0.8.1）只接在 `src/kernel/tool/registry.mjs` 的 bash 工具上。
-
-`grep` 可核对：`src/kernel/mcp/`、`src/kernel/skill/`、`src/kernel/tool/git-full-auto.mjs` 都没有
-引用 `sandbox.mjs`。也就是说 MCP 服务器进程、skill 执行、git 自动化这三个
-执行面目前不受沙箱约束。
-
-**下一步**：这三面各有各的形态（MCP 是长驻子进程、skill 可能是任意解释器、
-git-auto 需要写 `.git`），不能套用 bash 那套包法。需要先定清楚各自的可写集，
-再决定是包住还是显式声明「不包，因为 X」——**沉默地不包是最糟的一种**，用户
-会以为 `mode: auto` 覆盖了一切。
-
-另一处已知边界：`network: false` 用独立 netns，会把 localhost 一起断掉。
-
----
-
-## 3. 大模块拆分 / Splitting the large modules
-
-**现状**（`wc -l`）：
-
-| 模块 | 行数 |
-| --- | --- |
-| `src/kernel/session/longagent-hybrid.mjs` | 2302 |
-| `src/kernel/tool/registry.mjs` | 2571 |
-| `src/repl.mjs` | 2049 |
-| `src/kernel/session/loop.mjs` | 1355 |
-
-`repl.mjs` 已从 4803 行拆到 2049（0.6.12 起）。
-
-**判断标准**（0.6.12/0.6.14 两轮验证有效，值得沿用）：不看行数，看**大小
-具体挡住了什么**。拆帧层的收益是「宽度相关行为第一次可测」，不是行数下降；
-而机械拆分状态密集的大函数只会更难维护。`registry.mjs` 是工具清单式结构，
-不建议拆。
-
-拆之前先用脚本算目标函数的**自由变量集**，据此决定 deps 形状，避免硬拆成
-二十参数的函数。
-
----
-
-## 4. 跨平台真机验收 / Real-terminal acceptance
-
-**现状**：`scripts/tty-acceptance.sh` + `docs/terminal-acceptance.md` 已固化
-Linux 侧链路（这台开发机就是 Ubuntu，不需要虚拟机）。
-
-**缺口**：Windows 与 macOS 两行的鼠标上报、剪贴板权限、IME 候选窗位置无法靠
-自动化测试覆盖，也开虚拟机解决不了 —— 需要真机。`docs/terminal-experience-0.3.3.md`
-里的手工验收矩阵是待跑清单。
-
----
-
-## 5. 模型模板复核 / Model template review
-
-**现状**：README 的九家 provider 默认模型表标注了复核日期（0.9.1 复核于
-2026-08-06）。
-
-模型目录是外部事实，会在项目没有任何改动的情况下过期。**复核时必须逐家查官方
-文档**，不能凭印象改 —— 写错一个模型名是直接坑到用户的那种错误。
-
-**这一轮留下的两笔欠账**：
-
-1. **Zhipu GLM 没核实成**。文档站的模型清单是客户端渲染的，抓不到。GLM 那一行
-   仍是 2026-05-27 的状态，README 里已注明。下次复核需要能跑 JS 的抓取方式，
-   或者人工过一遍。
-2. **`qwen3.7` 模板还没有**。阿里当前是 `qwen3.7-max` / `qwen3.7-plus` /
-   `qwen3.6-flash`，而 `configs/config-qwen3.5.yaml` 是 3.5 系列专用模板 ——
-   名副其实，所以这轮没有原地改。要跟上得**新增** `config-qwen3.7.yaml`，
-   同时把单价补进 `src/usage/pricing.mjs`（这次没拿到阿里的定价页，缺价的模型
-   会被标成 unknown 并按 default 估算）。
-
-**价格表和模型名是两件事，都要跟**。`src/usage/pricing.mjs` 直接决定用量与成本
-统计：0.9.1 这轮在里面抓到 `gpt-5.3-codex` 被记成 15/60（实际 1.75/14，高 8.6
-倍），以及前缀回落取首个匹配导致 `gpt-5.4-mini-*` 串到 `gpt-5.4` 的价上。
-两处都修了并有测试（`test/pricing-model-table.test.mjs`）—— 加新模型时连价格
-一起加，别只改模型名。
-
----
-
-## 6. MCP 协议版本升级 / MCP protocol version
-
-**现状**：`src/kernel/mcp/constants.mjs` 的 `MCP_PROTOCOL_VERSION` 钉在
-`2024-11-05`，`initialize` 请求的 `capabilities` 恒为空对象。
-`client-http.mjs` 是项目自定义的 REST adapter，而 registry 目前把配置中的
-`streamable-http` 映射到 SSE client；因此它还不是 MCP 规范的正式
-Streamable HTTP 实现。可核对：`grep -n "2024-11-05" src/kernel/mcp/constants.mjs`
-以及 `src/kernel/mcp/registry.mjs`的 transport 映射。
-
-协议在这之后已有多轮修订（含 Streamable HTTP 的正式化、能力协商的扩展）。
-现状能与主流服务器互通是因为服务器普遍向后兼容 —— 但这层兼容不受我们控制，
-新服务器随时可以只接受新版本。
-
-**下一步**：这不是改一个常量的事。升级意味着逐条核对新旧规范的差异
-（initialize 握手、能力声明、通知语义、三种传输的帧格式），实现真正的
-Streamable HTTP，并对 `client-stdio.mjs` / `client-sse.mjs` / 新 HTTP client
-的解析路径做回归。0.9.2 时被评估为独立的兼容性工程，刻意不塞进补丁版本。
-
----
-
-## 7. 弃用通知真正接入用户界面 / User-visible deprecations
-
-**现状**：`src/kernel/core/deprecations.mjs` 已统一把现存兼容别名的移除目标记为
-1.0.0，但生产路径没有消费 `onDeprecation()` / `drainDeprecations()`；这些目标
-目前仍是内部元数据，不能宣称用户已看到弃用 notice。
-
-**下一步**：CLI 无头模式将 notice 写到 stderr，TUI 以一次性 toast 展示，
-两条路径都要有从真实旧配置到用户可见文案的集成测试。
-
----
-
-## 8. 内核 / SDK 分层架构（1.0.0）/ Kernel & SDK layering
-
-**现状**：仓库没有内核/SDK 分层 —— UI 层 76 个文件直接 import 47 个内核
-文件，内核启动序列在 6+ 个入口复制，session/ 内有 8 文件静态循环，9 组
-模块级单例。目标分层、`createKernel()` 公开 API 面、Codex / Kimi Code
-对照分析、分阶段迁移路线图与回退策略见
-[docs/architecture-kernel-sdk-1.0.0.md](architecture-kernel-sdk-1.0.0.md)。
-
-**范围**：1.0.0 只做进程内分层（`src/kernel/`、`src/sdk/` 包内目录边界）；
-独立 npm 包拆分（`packages/` workspace）是 1.x 评估项。迁移第一阶段是
-不改任何行为的纯边界整理，全程 `npm run lint && npm run typecheck &&
-npm test` 保持绿。
+- 将可编程扩展进一步进程隔离，补齐外部协议的新能力时保持权限与审计边界。
+- 在实际新需求推动时拆分大型模块，而非仅为减少行数机械搬运。
+- 保持真实桌面、Android 实体设备和企业 IdP 的兼容记录；每次发行记录真实门禁结果。
+- 新增任何能力时同步更新 README、协议/SDK 文档与测试，移除不成立的完成声明。

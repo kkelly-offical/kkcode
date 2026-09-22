@@ -1,6 +1,6 @@
 {
   "name": "@kkelly-offical/kkcode",
-  "version": "1.0.1-preview.1",
+  "version": "1.0.1-preview.2",
   "workspaces": [
     "apps/web",
     "apps/gateway",
@@ -48,7 +48,9 @@
     "src/",
     "configs/",
     "apps/gateway/main.mjs",
-    "docs/release-1.0.1-preview.1.md",
+    "docs/release-1.0.1-preview.2.md",
+    "docs/media-input.md",
+    "docs/tool-discovery-and-skills.md",
     "docs/security-review-1.0.1-preview.0.md",
     "docs/remote-sse-contract.md",
     "docs/remote-folder-browsing.md",

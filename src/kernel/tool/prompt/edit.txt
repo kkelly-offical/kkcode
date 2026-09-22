@@ -1,5 +1,11 @@
 Performs exact string replacements in files. Transactional with automatic rollback on failure.
 
+Canonical edit forms (choose exactly one):
+- Exact replacement: path, before, after, optional replace_all.
+- Line range: path, start_line, end_line, content (1-based inclusive; empty content deletes).
+- Atomic batch: changes: [{path, before, after, replace_all?}]. All files commit together or roll back. Omit before only when creating a new file explicitly requested by the user.
+The legacy patch and multiedit names use these same implementations and remain callable.
+
 Usage:
 - You must use `read` before editing. This tool will reject edits on unread or stale files.
 - When editing text from `read` output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: spaces + line number + arrow (→). Everything after that arrow is the actual file content to match. Never include any part of the line number prefix in the `before` or `after` strings.

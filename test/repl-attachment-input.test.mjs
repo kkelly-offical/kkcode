@@ -170,13 +170,14 @@ test("阈值可以调 —— 它是个旋钮，不是写死的数字", () => {
 
 // --- 1.0.1：媒体附件 + 模型能力门 ---
 
-test("video attaches with a sized marker and warns when support is unknown", async () => {
+test("unknown video support refuses attachment without a misleading success marker", async () => {
   const { state, attachMedia } = createFakeInput()
   const marker = await attachMedia({ type: "video", data: "VVJFTw==", mediaType: "video/mp4", bytes: 734003 })
-  assert.equal(marker, "[Video #1 · 717 kB]")
-  assert.equal(state.input, marker)
+  assert.equal(marker, null)
+  assert.equal(state.input, '')
   assert.equal(state.toasts.length, 1, "能力未知要给一句明白话，不是静默挂上")
-  assert.equal(state.toasts[0].options.tone, "warning")
+  assert.equal(state.toasts[0].options.tone, "error")
+  assert.match(state.toasts[0].message, /support is unknown/)
 })
 
 test("a model that explicitly rejects a medium refuses the attach with a clear error", async () => {
@@ -196,9 +197,9 @@ test("a model that explicitly rejects a medium refuses the attach with a clear e
 })
 
 test("unsupported media is held back at submit time with an explicit note, not silently dropped", async () => {
-  const { state, store, attachMedia } = createFakeInput()
+  const { state, store, attachMedia } = createFakeInputWithSupport(() => true)
   await attachMedia({ type: "video", data: "VVJFTw==", mediaType: "video/mp4" })
-  // 挂上时能力未知；到提交这一刻按「不支持」处理（provider 序列化不了 video 块）
+  // 挂上时支持；用户切换到不支持的模型后再次检查旧标记。
   const { line, pendingImages } = await resolveWith(state, store, () => false)
   assert.deepEqual(pendingImages, [], "video 块不能进待发数组 —— provider 会静默丢")
   assert.match(line, /not sent/, "文本里要留下一句人话，模型与用户都看得见")
@@ -226,11 +227,12 @@ function resolveWith(state, store, supportsMedia) {
 
 function createFakeInputWithSupport(supportsMedia) {
   const state = { input: "", cursor: 0, toasts: [] }
+  const store = createAttachmentStore()
   const api = createAttachmentInput({
-    store: createAttachmentStore(),
+    store,
     insertAtCursor: (text) => { state.input += text; state.cursor += text.length },
     showToast: (message, options) => state.toasts.push({ message, options }),
     supportsMedia
   })
-  return { state, ...api }
+  return { state, store, ...api }
 }

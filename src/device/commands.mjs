@@ -24,6 +24,7 @@ export async function listDeviceCommands({ kernel }) {
   const custom = await loadCustomCommands(kernel.cwd, { allowProjectSources: kernel.extensionPolicy.allowProjectSources })
   const skills = kernel.extensions.skills.isReady() ? kernel.extensions.skills.list() : []
   for (const item of [...custom, ...skills]) {
+    if (item.userInvocable === false) continue
     if (names.has(item.name)) continue
     names.add(item.name)
     commands.push({ name: item.name, aliases: [], description: item.description || `custom (${item.scope || item.type || 'skill'})`, arguments: 'optional', kind: 'device', source: item.scope || 'skill' })
@@ -116,6 +117,7 @@ export async function runDeviceCommand({ service, kernel, sessionId, command, pr
     const skill = registry.isReady() ? registry.get(invoked) : null
     let prompt
     if (skill) {
+      if (skill.userInvocable === false) throw new ProtocolError('skill_not_user_invocable', 'This skill cannot be invoked by users')
       const expanded = await kernel.run(() => registry.execute(invoked, argument, { cwd: kernel.cwd, mode: state.mode, model: state.model, provider: state.providerType, config: kernel.configState.config }))
       prompt = typeof expanded === 'object' ? expanded?.prompt : expanded
       if (expanded?.model) await configure({ model: expanded.model })
@@ -125,7 +127,7 @@ export async function runDeviceCommand({ service, kernel, sessionId, command, pr
       prompt = applyCommandTemplate(custom.template, argument, { path: kernel.cwd, cwd: kernel.cwd, project: path.basename(kernel.cwd), mode: state.mode, provider: state.providerType })
     }
     if (typeof prompt !== 'string' || !prompt.trim()) throw new ProtocolError('empty_command', 'Command returned no prompt')
-    return start(prompt)
+    return start(prompt, { ...(skill ? { skill: invoked } : {}) })
   }
 
   const print = (text, options = {}) => response.output.push({ text: stripAnsi(text), ...options })

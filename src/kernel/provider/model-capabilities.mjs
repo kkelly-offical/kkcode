@@ -15,6 +15,7 @@
  */
 
 import { ProviderError } from "../core/errors.mjs"
+import { assertMediaInput } from './media-input.mjs'
 
 /** 能力标记的全集 —— schema 校验与 wizard 预览都从这份清单派生，不手抄。 */
 export const MODEL_CAPABILITY_KEYS = Object.freeze(["image", "video", "audio", "tools", "streaming", "reasoning"])
@@ -123,23 +124,35 @@ export function parseCatalogEntryCapabilities(item) {
  * 以及我们自己缓存里的归一化形态（pricing.input/output，已是每 1M）。
  * 拿不到或畸形返回 null —— 定价是「如可获取」，编一个数比没有更糟。
  */
+/** @returns {{input: number, output: number, currency: string, perTokens: number, cache_read?: number, cache_write?: number} | null} */
 export function parseCatalogEntryPricing(item) {
   const pricing = item?.pricing
   if (!pricing || typeof pricing !== "object" || Array.isArray(pricing)) return null
-  const input = Number(pricing.input)
-  const output = Number(pricing.output)
-  if (Number.isFinite(input) && input >= 0 && Number.isFinite(output) && output >= 0) {
+  const number = value => typeof value === 'number' || typeof value === 'string' && value.trim() ? Number(value) : NaN
+  const input = number(pricing.input)
+  const output = number(pricing.output)
+  const unit = number(pricing.perTokens ?? pricing.per_tokens ?? 1000000)
+  const cacheRates = factor => {
+    const result = {}
+    for (const key of ['cache_read', 'cache_write']) {
+      const value = number(pricing[key] ?? pricing[`input_${key}`])
+      if (Number.isFinite(value) && value >= 0) result[key] = value * factor
+    }
+    return result
+  }
+  if (Number.isFinite(input) && input >= 0 && Number.isFinite(output) && output >= 0 && Number.isFinite(unit) && unit > 0) {
     return {
-      input,
-      output,
-      currency: typeof pricing.currency === "string" && pricing.currency ? pricing.currency : "USD",
-      perTokens: 1000000
+      input: input * 1000000 / unit,
+      output: output * 1000000 / unit,
+      currency: typeof pricing.currency === "string" && pricing.currency ? pricing.currency.toUpperCase() : "USD",
+      perTokens: 1000000,
+      ...cacheRates(1000000 / unit)
     }
   }
-  const prompt = Number(pricing.prompt)
-  const completion = Number(pricing.completion)
+  const prompt = number(pricing.prompt)
+  const completion = number(pricing.completion)
   if (Number.isFinite(prompt) && prompt >= 0 && Number.isFinite(completion) && completion >= 0) {
-    return { input: prompt * 1e6, output: completion * 1e6, currency: "USD", perTokens: 1000000 }
+    return { input: prompt * 1e6, output: completion * 1e6, currency: "USD", perTokens: 1000000, ...cacheRates(1e6) }
   }
   return null
 }
@@ -178,8 +191,7 @@ const imagePlaceholder = (model) =>
  *     里的图片 → 降级成占位文本。换到文本模型不该让带着图的旧会话再也发不出
  *     消息；占位文本让模型知道「这里本来有一张图」。
  *
- * video/audio 块今天没有生产者、adapter 也没有对应的请求体构造 —— 落到
- * adapter 会被 map 成空文本静默消失，所以在这里一律换成说人话的占位。
+ * 新音视频仅在模型明确支持且协议可编码时放行；历史附件不兼容时明确占位。
  *
  * tools 确知 false 时把工具从请求里摘掉（发给不收 tools 的接口只会换来
  * 400），由调用方告警 —— 纯函数不写日志，丢弃数量通过返回值交出去。
@@ -190,9 +202,10 @@ const imagePlaceholder = (model) =>
  * @param {Record<string, boolean>} [p.capabilities]
  * @param {string} [p.provider]
  * @param {string} [p.model]
+ * @param {string} [p.protocol]
  * @returns {{ messages: any[], tools: any[], droppedImages: number, droppedMedia: number, droppedTools: number }}
  */
-export function enforceModelInputCapabilities({ messages, tools = [], capabilities = {}, provider = "", model = "" } = {}) {
+export function enforceModelInputCapabilities({ messages, tools = [], capabilities = {}, provider = "", model = "", protocol = "openai" } = {}) {
   const caps = capabilities && typeof capabilities === "object" ? capabilities : {}
   let outMessages = Array.isArray(messages) ? messages : []
   let droppedImages = 0
@@ -228,18 +241,21 @@ export function enforceModelInputCapabilities({ messages, tools = [], capabiliti
   const hasForeignMedia = outMessages.some((message) => Array.isArray(message?.content)
     && message.content.some((block) => block?.type === "video" || block?.type === "audio"))
   if (hasForeignMedia) {
-    outMessages = outMessages.map((message) => {
+    outMessages = outMessages.map((message, index) => {
       if (!Array.isArray(message?.content)) return message
       return {
         ...message,
         content: message.content.map((block) => {
           const kind = block?.type
           if (kind !== "video" && kind !== "audio") return block
-          droppedMedia += 1
-          const text = caps[kind] === false
-            ? `[${kind} withheld: model "${model}" does not support ${kind} input]`
-            : `[${kind} withheld: this client cannot encode ${kind} input yet]`
-          return { type: "text", text }
+          try {
+            assertMediaInput(block, { capabilities: caps, protocol, provider, model })
+            return block
+          } catch (error) {
+            if (index === outMessages.length - 1 && isFreshUserMessage(message)) throw error
+            droppedMedia += 1
+            return { type: "text", text: `[${kind} withheld from history: ${error.message}]` }
+          }
         })
       }
     })

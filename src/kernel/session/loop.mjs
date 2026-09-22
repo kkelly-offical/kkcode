@@ -17,6 +17,7 @@ import { detectProjectContext } from "./project-context.mjs"
 import { renderRulesPrompt } from "../../rules/load-rules.mjs"
 import { loadProfile } from "../../onboarding.mjs"
 import { SkillRegistry } from "../skill/registry.mjs"
+import { createSkillToolPolicy } from '../skill/tool-policy.mjs'
 import {
   touchSession,
   appendMessage,
@@ -69,7 +70,7 @@ export function planModeAllows(toolName, args = {}) {
  * bash 不在表里，它单独按命令判定（见 canMutateWorkspace）。
  */
 const NON_MUTATING_TOOLS = new Set([
-  "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch",
+  "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch", "tool_search",
   "background_output", "todowrite", "enter_plan", "exit_plan",
   "sysinfo", "question", "task_list", "task_get", "task_output", "task_parallel",
   "git_status", "git_info", "git_list_snapshots"
@@ -335,6 +336,15 @@ async function processTurnLoopInRuntime({
   }
 
   const turnId = newId("turn")
+  const skillToolPolicy = createSkillToolPolicy(toolContext.skillAllowedTools, toolContext.skillToolGroups)
+  const activatedTools = new Set()
+  const activateTools = names => {
+    for (const name of names) { activatedTools.delete(name); activatedTools.add(name) }
+    while (activatedTools.size > 64) activatedTools.delete(activatedTools.values().next().value)
+  }
+  const listModelTools = async options => (typeof ToolRegistry.listForModel === 'function'
+    ? ToolRegistry.listForModel({ ...options, activated: activatedTools, allowedTools: effectiveAgent?.tools || null })
+    : ToolRegistry.list(options)).then(tools => tools.filter(tool => skillToolPolicy.allows(tool.name, {}, true)))
   // 工具输出预算按当前模型的上下文算一次，本轮复用
   const toolResultLimit = toolOutputBudget({ model, providerType, config: configState.config }).chars
     || TOOL_RESULT_FALLBACK_LIMIT
@@ -431,7 +441,7 @@ async function processTurnLoopInRuntime({
     providerType
   })
 
-  let systemTools = await ToolRegistry.list({ mode, config: configState.config, cwd })
+  let systemTools = await listModelTools({ mode, config: configState.config, cwd })
   if (effectiveAgent?.tools) {
     systemTools = systemTools.filter((t) => effectiveAgent.tools.includes(t.name))
   }
@@ -440,6 +450,7 @@ async function processTurnLoopInRuntime({
   const systemPrompt = await buildSystemPrompt({ mode, model, cwd, agent: effectiveAgent, tools: systemTools, skills, language })
   // systemPrompt = { text, blocks } — providers use blocks for cache optimization
   const delegateTask = createTaskDelegate({
+    getSkillToolGroups: () => skillToolPolicy.snapshot(),
     config: configState.config,
     parentSessionId: sessionId,
     model,
@@ -467,7 +478,7 @@ async function processTurnLoopInRuntime({
         subagent: resolvedSubagent,
         runSpec: subRunSpec,
         allowQuestion: subAllowQuestion,
-        toolContext
+        toolContext: { ...toolContext, skillAllowedTools: null, skillToolGroups: skillToolPolicy.snapshot() }
       })
     }
   })
@@ -512,7 +523,7 @@ async function processTurnLoopInRuntime({
         payload: { step }
       })
 
-      let tools = await ToolRegistry.list({ mode, config: configState.config, cwd })
+      let tools = await listModelTools({ mode, config: configState.config, cwd })
       if (effectiveAgent?.tools) {
         tools = tools.filter((t) => effectiveAgent.tools.includes(t.name))
       }
@@ -621,7 +632,7 @@ async function processTurnLoopInRuntime({
       }
       if (limits?.budgetUsd > 0 && usage.input + usage.output > 0) {
         try {
-          const { pricing } = await loadPricing(configState)
+          const { pricing } = await loadPricing(configState, { providerName: providerType, model })
           const { amount } = calculateCost(pricing, model, usage)
           if (amount >= limits.budgetUsd) {
             finalReply = `${finalReply}\n[budget ${limits.budgetUsd} USD exhausted — stopping]`.trim()
@@ -952,6 +963,7 @@ async function processTurnLoopInRuntime({
             mode
           })
           if (hookTransformed?.args) call.args = hookTransformed.args
+          if (!skillToolPolicy.allows(call.name, call.args)) throw new Error(`tool "${call.name}" is blocked by the active skill allowed-tools policy`)
 
           if (call.name === "question" && !allowQuestion) {
             call.args = {
@@ -1052,7 +1064,10 @@ async function processTurnLoopInRuntime({
                     // （bash 曾是 30000），应改读这个值，否则「动态预算」只
                     // 管到 loop 这一层，工具那一层照旧按固定数字砍。
                     toolResultLimit,
-                    ...toolContext
+                    ...toolContext,
+                    activateTools,
+                    allowedToolNames: skillToolPolicy.names(await ToolRegistry.list({ mode, config: configState.config, cwd })).filter(name => !effectiveAgent?.tools || effectiveAgent.tools.includes(name)),
+                    restrictSkillTools: rules => skillToolPolicy.add(rules)
                   },
                   signal
                 })

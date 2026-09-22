@@ -36,10 +36,10 @@ const childArgs = enableCoverage
       "--test-coverage-lines=60",
       "--test-coverage-functions=60",
       "--test-coverage-branches=60",
-      "--test",
+      "--test", "--test-timeout=120000",
       ...testFiles
     ]
-  : ["--test", ...testFiles]
+  : ["--test", "--test-timeout=120000", ...testFiles]
 
 const testHome = await mkdtemp(path.join(os.tmpdir(), 'kkcode-test-home-'))
 const child = spawn(process.execPath, childArgs, {

@@ -71,7 +71,8 @@ import { createSuggestionSource } from "./repl/suggestion-source.mjs"
 import { resolveCommand, buildBuiltinSlashCatalog } from "./repl/commands/registry.mjs"
 import { BUILTIN_COMMANDS } from './command/builtin.mjs'
 import { presentPromptTurn } from "./repl/turn-presenter.mjs"
-import { loadProviderModelItems, mediaSupportFromCapabilities } from "./repl/provider-catalog.mjs"
+import { loadProviderModelItems } from "./repl/provider-catalog.mjs"
+import { expandUserSkill } from './repl/skill-invocation.mjs'
 import { persistLearnedGrant } from "./repl/config-persistence.mjs"
 import { createRenderScheduler } from "./repl/render-scheduler.mjs"
 import { createListenerRegistry } from "./repl/listener-registry.mjs"
@@ -276,7 +277,7 @@ async function processInputLine({
   if (!normalized) return { exit: false }
   if (normalized === "/") return { exit: false }
 
-  const runPromptTurn = ({ prompt, images = [] }) => presentPromptTurn({
+  const runPromptTurn = ({ prompt, images = [], skillAllowedTools = null }) => presentPromptTurn({
     prompt,
     images,
     state,
@@ -286,7 +287,8 @@ async function processInputLine({
     showTurnStatus,
     signal,
     switchModeInPlace,
-    steerSource
+    steerSource,
+    toolContext: { skillAllowedTools }
   })
 
   // --- 命令分发 ---
@@ -330,6 +332,7 @@ async function processInputLine({
 
   // --- 提示词路径：技能与自定义命令展开，然后跑一个回合 ---
   let prompt = normalized
+  let skillAllowedTools = null
   if (normalized.startsWith("$") || normalized.startsWith("/")) {
     const sigil = normalized.startsWith("$") ? "$" : "/"
     const body = normalized.slice(1)
@@ -339,27 +342,14 @@ async function processInputLine({
     const skillRegistry = ctx.kernel.extensions.skills
     const skill = skillRegistry.isReady() ? skillRegistry.get(name) : null
     if (sigil === "$" || skill) {
-      if (!skill) {
-        print(`unknown skill: $${name}`, { channel: "notice", topic: "command", tone: "error" })
-        return { exit: false }
-      }
-      const expanded = await skillRegistry.execute(name, args, {
-        cwd: process.cwd(),
-        mode: state.mode,
-        model: state.model,
-        provider: state.providerType,
-        config: ctx.configState?.config || null
-      })
-      if (!expanded) {
-        print(`skill $${name} returned no output`, { channel: "notice", topic: "command", tone: "error" })
-        return { exit: false }
-      }
-      // contextFork skills return { prompt, contextFork, model }
-      if (typeof expanded === "object" && expanded.contextFork) {
-        prompt = expanded.prompt || ""
+      try {
+        const expanded = await expandUserSkill(skillRegistry, name, args, { cwd: process.cwd(), state, config: ctx.configState?.config || null })
+        prompt = expanded.prompt
+        skillAllowedTools = expanded.allowedTools
         if (expanded.model) state.model = expanded.model
-      } else {
-        prompt = expanded
+      } catch (error) {
+        print(error.message, { channel: 'notice', topic: 'command', tone: 'error' })
+        return { exit: false }
       }
     } else {
       // Fallback: check raw custom commands (in case SkillRegistry not ready)
@@ -382,7 +372,7 @@ async function processInputLine({
   const images = pendingImages.length ? [...pendingImages] : []
   if (clearPendingImages && images.length) clearPendingImages()
 
-  return runPromptTurn({ prompt, images })
+  return runPromptTurn({ prompt, images, skillAllowedTools })
 }
 
 async function startLineRepl({ ctx, state, providersConfigured, customCommands, recentSessions, historyLines }) {
@@ -890,11 +880,11 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     // 媒体能力面走 M33 resolveModelCapabilities（读缓存不触网）；未知时 image 放行
     supportsMedia: async (kind) => {
       const { capabilities } = await kernelIndex.resolveModelCapabilities(ctx.configState, state.providerType, state.model)
-      return mediaSupportFromCapabilities(capabilities, kind)
+      const connection = kernelIndex.resolveProviderConnection(ctx.configState, state.providerType)
+      return kernelIndex.mediaInputSupport(capabilities, kind, connection.protocol)
     }
   })
-  // 内核长出 readClipboardMedia（视频/语音，M33）就用它；没有就只认图像
-  const readClipboardMedia = kernelIndex.readClipboardMedia || readClipboardImage
+  const readClipboardMedia = kernelIndex.readClipboardMedia
 
   /**
    * 提交，然后把排队的消息依次发完。

@@ -6,6 +6,15 @@ status panels). SSE is additive: `events.list` polling, the WebSocket
 (`RequestLedger`, `id` + `issuedAt`) and the headless JSONL schema are
 unchanged. `PROTOCOL_VERSION` stays `1`.
 
+Preview.2 adds the device-scope `mcp.loaded` event (also forwarded on the device
+WebSocket and relay `device-event` channel). It is live-only and owner-only at
+the gateway, never a session journal row or headless JSONL event. Its flat data
+contains `type`, `deviceId`, `timestamp`, `ok`, `configured`, `connected`,
+`toolCount`, `promptCount`, `durationMs`, `background`, `failed: [{name}]`,
+`failedCount` and `truncated`. At most 50 bounded names are included; commands,
+URLs and raw errors are excluded. Clients without this event simply ignore it.
+Web/Android use a transient notice and close streams on device switch/disconnect.
+
 ## Endpoints
 
 | Surface | Endpoint | Kind |

@@ -80,6 +80,8 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
     var showContext by mutableStateOf(prefs.getBoolean("showContext", true))
     private var polling: Job? = null
     private var devicePolling: Job? = null
+    private var deviceEvents: Job? = null
+    private var deviceNotice: Job? = null
     private var manualDisconnect = false
     private var persistedSteps = emptySet<String>()
     private var persistedUserTurns = emptySet<String>()
@@ -155,6 +157,36 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         sharedPermissions = device.optJSONObject("permissions") ?: JSONObject()
         selected = ""; messages = emptyList(); attachments = emptyList(); draft = ""; polling?.cancel()
         refreshSessions(); commands = (rpc("commands.list") as? JSONArray).objects(); sheet = ""
+        startDeviceEvents()
+    }
+    private fun startDeviceEvents() {
+        deviceEvents?.cancel()
+        val client = api ?: return
+        val device = client.device
+        deviceEvents = viewModelScope.launch {
+            var attempts = 0
+            while(isActive && api === client && client.device == device && attempts <= 5) {
+                try {
+                    refreshToken()
+                    client.streamEvents("", 0).collect { frame ->
+                        if(api !== client || client.device != device) return@collect
+                        if(frame.event == "connected") attempts = 0
+                        val event = JSONObject(frame.data)
+                        val message = mcpLoadNotice(event)
+                        if(message.isNotBlank()) {
+                            notice = message; deviceNotice?.cancel()
+                            deviceNotice = viewModelScope.launch { delay(6500); if(notice == message) notice = "" }
+                        }
+                        if(frame.event == "session.status") refreshSessions()
+                        if(frame.event in listOf("settings.updated", "models.updated") && !sharedDevice) settings = rpc("settings.get") as JSONObject
+                    }
+                } catch(error: CancellationException) { throw error }
+                catch(error: Exception) {
+                    if(error is DeviceApiError && (error.status in listOf(401, 403, 404, 405, 501) || error.code == "not_sse")) break
+                }
+                attempts++; delay((500L shl attempts.coerceAtMost(5)).coerceAtMost(10000))
+            }
+        }
     }
     suspend fun refreshSessions() { sessions = (rpc("sessions.list") as? JSONArray).objects() }
     fun login(openBrowser: (String) -> Unit = { url -> getApplication<Application>().startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }) = action {
@@ -193,6 +225,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
             sharedDevice = false; sharedPermissions = JSONObject()
             commands = (rpc("commands.list") as? JSONArray).objects()
             refreshSessions(); sheet = ""; fingerprint = ""
+            startDeviceEvents()
         } catch (e: HostKeyRequired) { fingerprint = e.fingerprint; notice = "请核对电脑的 SSH 主机指纹" }
         finally { loading = false }
     }
@@ -537,13 +570,13 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
     }
     fun loadExtensions() = action { extensions = rpc("extensions.list") as JSONObject; sheet = "extensions" }
     fun leaveChat() { polling?.cancel(); selected = ""; messages = emptyList(); persistedSteps = emptySet(); persistedUserTurns = emptySet(); approvals = emptyList(); attachments = emptyList(); draft = ""; historyHasMore = false; historyBefore = ""; busy = false }
-    fun disconnect() { manualDisconnect = true; leaveChat(); ssh.close(); if(api?.relay == false) api = null; else api?.device = ""; connected = false; deviceName = "未连接设备"; sessions = emptyList() }
+    fun disconnect() { deviceEvents?.cancel(); deviceNotice?.cancel(); manualDisconnect = true; leaveChat(); ssh.close(); if(api?.relay == false) api = null; else api?.device = ""; connected = false; deviceName = "未连接设备"; sessions = emptyList() }
     fun logout() = action {
         devicePolling?.cancel()
         try { if(api?.relay == true) api!!.call("/auth/logout", JSONObject()) }
         finally { vault.clear("credentials"); credentials = null; profile = JSONObject(); disconnect(); api = null; devices = emptyList(); sheet = "" }
     }
-    override fun onCleared() { polling?.cancel(); devicePolling?.cancel(); ssh.close(); super.onCleared() }
+    override fun onCleared() { polling?.cancel(); devicePolling?.cancel(); deviceEvents?.cancel(); deviceNotice?.cancel(); ssh.close(); super.onCleared() }
 }
 internal fun JSONArray?.objects(): List<JSONObject> = if (this == null) emptyList() else (0 until length()).mapNotNull { optJSONObject(it) }
 internal fun JSONObject.stepOrNull(): Int? = if(has("step") && !isNull("step")) (opt("step") as? Number)?.toInt() else null
