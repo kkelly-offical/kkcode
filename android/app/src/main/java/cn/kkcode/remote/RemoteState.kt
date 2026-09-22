@@ -14,6 +14,7 @@ import org.json.JSONObject
 
 data class ChatItem(val id: String, val kind: String, val text: String, val detail: String = "", val tool: JSONObject? = null, val startedAt: Long = 0, val durationMs: Long? = null, val done: Boolean = true, val turnId: String = "", val step: Int? = null, val streamed: Boolean = false)
 class RemoteState @JvmOverloads constructor(application: Application, restoreConnections: Boolean = true) : AndroidViewModel(application) {
+    internal val updater = AppUpdater(application, viewModelScope)
     val vault = CredentialVault(application)
     private val prefs = application.getSharedPreferences("kkcode.ui", 0)
     private val ssh = SshConnection()

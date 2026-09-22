@@ -10,6 +10,7 @@ import androidx.core.view.WindowCompat
 
 class MainActivity : ComponentActivity() {
     private val state: RemoteState by viewModels()
+    override fun onResume() { super.onResume(); state.updater.onForeground() }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {

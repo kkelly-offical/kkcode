@@ -10,7 +10,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -43,9 +42,17 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
     var search by remember { mutableStateOf("") }
     var sort by remember { mutableStateOf("priority") }
     var archived by remember { mutableStateOf(false) }
+    val updateNotices = remember { SnackbarHostState() }
+    LaunchedEffect(state.updater.candidate?.versionCode, state.busy) {
+        val update = state.updater.candidate
+        if(update != null && state.updater.hasUpdate && !state.busy && update.versionCode != state.updater.dismissedCode) {
+            state.updater.dismissNotice()
+            if(updateNotices.showSnackbar("KK Code ${update.versionName} 可更新", "查看", withDismissAction = true, duration = SnackbarDuration.Short) == SnackbarResult.ActionPerformed) state.sheet = "updates"
+        }
+    }
     val inChat = state.selected.isNotBlank()
     BackHandler(enabled = inChat && state.sheet.isBlank()) { state.leaveChat() }
-    Scaffold(containerColor = MaterialTheme.colorScheme.background, topBar = {
+    Scaffold(containerColor = MaterialTheme.colorScheme.background, snackbarHost = { SnackbarHost(updateNotices) }, topBar = {
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             CircleButton(if(inChat) Icons.Outlined.ArrowBack else Icons.Outlined.Menu, if(inChat) "返回会话列表" else "设备与连接") { if(inChat) state.leaveChat() else state.sheet = "connections" }
             Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -58,7 +65,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
             }
             Box {
                 CircleButton(Icons.Outlined.MoreHoriz, "更多") { menu = true }
-                DropdownMenu(menu, { menu = false }, containerColor = card, shape = RoundedCornerShape(24.dp)) {
+                DropdownMenu(menu, { menu = false }, containerColor = card, shape = PixelShape()) {
                     listOf("priority" to "优先级", "project" to "按项目", "time" to "按时间倒序排列").forEach { (value, label) ->
                         DropdownMenuItem(text = { Text(label, fontSize = 14.sp) }, leadingIcon = { Icon(if(sort == value) Icons.Outlined.Check else Icons.Outlined.Sort, null) }, onClick = { sort = value; menu = false })
                     }
@@ -71,16 +78,16 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
         }
     }, bottomBar = {
         if(!inChat) Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Row(Modifier.weight(1f).height(46.dp).background(card, CircleShape).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f).height(46.dp).background(card, PixelShape()).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .5f), PixelShape()).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.Search, null, Modifier.size(19.dp), tint = muted)
                 androidx.compose.foundation.text.BasicTextField(search, { search = it }, modifier = Modifier.weight(1f).padding(start = 8.dp), singleLine = true, textStyle = androidx.compose.ui.text.TextStyle(color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp), decorationBox = { field -> if(search.isBlank()) Text("搜索聊天", color = muted, fontSize = 14.sp); field() })
             }
-            Button(onClick = { if(state.connected) state.sheet = "new" else state.sheet = "connections" }, enabled = !state.sharedDevice, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.onSurface, contentColor = MaterialTheme.colorScheme.background), shape = CircleShape, contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)) {
+            Button(onClick = { if(state.connected) state.sheet = "new" else state.sheet = "connections" }, enabled = !state.sharedDevice, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.onSurface, contentColor = MaterialTheme.colorScheme.background), shape = PixelShape(), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)) {
                 Icon(Icons.Outlined.EditNote, null, Modifier.size(22.dp)); Spacer(Modifier.width(6.dp)); Text("聊天", fontSize = 14.sp, fontWeight = FontWeight.Medium)
             }
         }
     }) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding)) {
+        Column(Modifier.fillMaxSize().padding(padding).pixelBackground()) {
             if(state.notice.isNotBlank()) Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(state.notice, modifier = Modifier.weight(1f), color = kkcodeColors.warning, fontSize = 12.sp, maxLines = 3)
                 IconButton(onClick = { state.notice = "" }, modifier = Modifier.size(28.dp)) { Icon(Icons.Outlined.Close, null, Modifier.size(16.dp)) }
@@ -88,11 +95,11 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
             if(inChat) ChatScreen(state) else SessionHome(state, search, sort, archived)
         }
     }
-    if(state.sheet.isNotBlank()) ModalBottomSheet(onDismissRequest = { state.sheet = "" }, containerColor = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp), dragHandle = null, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    if(state.sheet.isNotBlank()) ModalBottomSheet(onDismissRequest = { state.sheet = "" }, containerColor = MaterialTheme.colorScheme.surface, shape = PixelShape(8.dp, bottomCorners = false), dragHandle = null, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().heightIn(max = (LocalConfiguration.current.screenHeightDp * .9f).dp).padding(horizontal = 16.dp).navigationBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 if(state.canGoBack) TextButton(onClick = { state.backSheet() }) { Text("返回", color = MaterialTheme.colorScheme.onSurface) } else Spacer(Modifier.width(56.dp))
-                Text(when(state.sheet) { "connections" -> "远程控制"; "settings" -> "设置"; "profile" -> "个人资料"; "preferences" -> "工作偏好"; "add" -> "添加连接"; "relay" -> "中继网关"; "ssh" -> "SSH 连接"; "folders" -> "工作目录"; "extensions" -> "扩展"; "models" -> "模型渠道"; "model-picker" -> "选择模型"; "approval" -> "权限"; "provider" -> if(state.editingProvider.isBlank()) "添加渠道" else "编辑渠道"; "new" -> "新对话"; "mode" -> "执行模式"; "branches" -> "Git 分支"; "sessions" -> "选择会话"; "permission" -> "权限"; "keys" -> "操作指南"; "theme" -> "外观"; "command-result" -> "命令结果"; "device-ownership" -> "设备归属"; else -> "高级配置" }, modifier = Modifier.weight(1f), fontSize = 16.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontWeight = FontWeight.Medium)
+                Text(when(state.sheet) { "connections" -> "远程控制"; "settings" -> "设置"; "profile" -> "个人资料"; "preferences" -> "工作偏好"; "add" -> "添加连接"; "relay" -> "中继网关"; "ssh" -> "SSH 连接"; "folders" -> "工作目录"; "extensions" -> "扩展"; "models" -> "模型渠道"; "model-picker" -> "选择模型"; "approval" -> "权限"; "provider" -> if(state.editingProvider.isBlank()) "添加渠道" else "编辑渠道"; "new" -> "新对话"; "mode" -> "执行模式"; "branches" -> "Git 分支"; "sessions" -> "选择会话"; "permission" -> "权限"; "keys" -> "操作指南"; "theme" -> "外观"; "command-result" -> "命令结果"; "device-ownership" -> "设备归属"; "updates" -> "应用更新"; else -> "高级配置" }, modifier = Modifier.weight(1f), fontSize = 16.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontWeight = FontWeight.Medium)
                 CircleButton(Icons.Outlined.Close, "关闭") { state.sheet = "" }
             }
             SheetContent(state)
@@ -104,10 +111,10 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
     Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled, colors = SwitchDefaults.colors(checkedThumbColor = MaterialTheme.colorScheme.onSurface, checkedTrackColor = kkcodeColors.success, uncheckedThumbColor = MaterialTheme.colorScheme.onSurface, uncheckedTrackColor = kkcodeColors.switchTrackOff, uncheckedBorderColor = Color.Transparent))
 }
 @Composable private fun CircleButton(icon: ImageVector, label: String, onClick: () -> Unit) {
-    IconButton(onClick, modifier = Modifier.size(42.dp).background(MaterialTheme.colorScheme.surfaceVariant, CircleShape).border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = .06f), CircleShape)) { Icon(icon, label, Modifier.size(22.dp)) }
+    IconButton(onClick, modifier = Modifier.size(42.dp).background(MaterialTheme.colorScheme.surfaceVariant, PixelShape(4.dp)).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .6f), PixelShape(4.dp))) { Icon(icon, label, Modifier.size(22.dp)) }
 }
 @Composable private fun ComposerChip(icon: ImageVector, label: String, description: String, maxWidth: androidx.compose.ui.unit.Dp = 96.dp, onClick: () -> Unit) {
-    Row(Modifier.padding(start = 6.dp).height(30.dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = .05f), CircleShape).border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = .07f), CircleShape).clickable(onClick = onClick).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.padding(start = 6.dp).height(30.dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = .05f), PixelShape(3.dp)).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .5f), PixelShape(3.dp)).clickable(onClick = onClick).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, description, Modifier.size(13.dp), tint = muted)
         Spacer(Modifier.width(5.dp))
         Text(label, color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = maxWidth))
@@ -155,7 +162,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
 
 @Composable internal fun Group(title: String = "", content: @Composable ColumnScope.() -> Unit) {
     if(title.isNotBlank()) Text(title, color = muted, fontSize = 13.sp, modifier = Modifier.padding(start = 12.dp, top = 26.dp, bottom = 9.dp))
-    Column(Modifier.fillMaxWidth().background(card, RoundedCornerShape(20.dp)), content = content)
+    Column(Modifier.fillMaxWidth().background(card, PixelShape()).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .45f), PixelShape()), content = content)
 }
 @Composable internal fun SettingsRow(icon: ImageVector, title: String, subtitle: String = "", onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -199,7 +206,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                 if(!state.sharedDevice) Group("设备配置") { SettingsRow(Icons.Outlined.Extension, "扩展") { if(state.connected) state.loadExtensions() else state.sheet = "connections" }; SettingsRow(Icons.Outlined.Tune, "模型与渠道") { if(state.connected) state.sheet = "models" else state.sheet = "connections" } }
                 if(state.connected && !state.sharedDevice) Group { SettingsRow(Icons.Outlined.ManageAccounts, "设备解绑与账号转移", "需要在被控电脑的终端确认") { state.sheet = "device-ownership" }; SettingsRow(Icons.Outlined.PersonOutline, "工作偏好") { state.action { state.profilePreferences = state.rpc("profile.get") as JSONObject; state.sheet = "preferences" } } }
                 TextButton(onClick = { state.logout() }, modifier = Modifier.fillMaxWidth().padding(top = 24.dp)) { Text("退出登录", color = kkcodeColors.danger) }
-                Text("KK Code ${BuildConfig.VERSION_NAME}", color = muted, fontSize = 11.sp, modifier = Modifier.align(Alignment.CenterHorizontally).padding(12.dp))
+                Text("KK Code ${BuildConfig.VERSION_NAME} · 检查更新", color = muted, fontSize = 11.sp, modifier = Modifier.align(Alignment.CenterHorizontally).clickable { state.sheet = "updates" }.padding(12.dp))
             }
             "add" -> {
                 Text("选择连接方式", color = muted, fontSize = 13.sp, modifier = Modifier.padding(12.dp))
@@ -207,7 +214,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
             }
             "relay" -> {
                 Text("填写网关地址即可。统一身份登录由网关引导。", color = muted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 12.dp))
-                OutlinedTextField(state.gateway, { state.gateway = it }, label = { Text("网关地址") }, placeholder = { Text("https://remote.example.com") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp))
+                OutlinedTextField(state.gateway, { state.gateway = it }, label = { Text("网关地址") }, placeholder = { Text("https://remote.example.com") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = PixelShape(4.dp))
                 Button(onClick = { state.login() }, enabled = !state.loading && state.gateway.isNotBlank(), modifier = Modifier.fillMaxWidth().padding(top = 14.dp)) { Text(if(state.loading) "等待浏览器确认…" else "继续登录") }
                 if(state.loginCode.isNotBlank()) Text("登录码 ${state.loginCode}", color = muted, fontSize = 13.sp, modifier = Modifier.padding(12.dp))
             }
@@ -258,6 +265,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
             "keys" -> Text("输入 / 搜索所有命令；点 + 选择文件、分支、模型和模式。编写器下方的模式、权限与模型选择框点按即可即时切换，并同步到其他客户端。\n\n消息编辑器保留回车换行，点箭头发送。Android 返回键关闭弹层或回到会话列表。长按模型回复可选择复制文字；点工具记录展开详情。", lineHeight = 25.sp, modifier = Modifier.padding(12.dp))
             "command-result" -> state.commandPanels.forEach { panel -> Group(panel.optString("title")) { androidx.compose.foundation.text.selection.SelectionContainer { Text(panel.optString("text"), modifier = Modifier.padding(14.dp)) } } }
             "device-ownership" -> DeviceOwnership(state.api?.device ?: "")
+            "updates" -> UpdateSheet(state.updater)
         }
         if(state.notice.isNotBlank()) Text(state.notice, color = kkcodeColors.warning, fontSize = 12.sp, modifier = Modifier.padding(12.dp))
     }
@@ -279,7 +287,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
             items(state.messages, key = { it.id }) { item ->
                 Column(Modifier.fillMaxWidth().padding(vertical = if(item.kind in listOf("tool", "thinking")) 0.dp else 10.dp), horizontalAlignment = if(item.kind == "user") Alignment.End else Alignment.Start) {
                     when(item.kind) {
-                        "user" -> Text(item.text, modifier = Modifier.widthIn(max = 310.dp).background(card, RoundedCornerShape(20.dp)).padding(14.dp), fontSize = 15.sp, lineHeight = 23.sp)
+                        "user" -> Text(item.text, modifier = Modifier.widthIn(max = 310.dp).background(card, PixelShape()).padding(14.dp), fontSize = 15.sp, lineHeight = 23.sp)
                         "assistant" -> AndroidView(factory = { context -> TextView(context).apply { textSize = 15f; setLineSpacing(5f, 1.12f); setTextIsSelectable(true); tag = Markwon.create(context) } }, update = { view -> view.setTextColor(messageColor); (view.tag as Markwon).setMarkdown(view, item.text) }, modifier = Modifier.fillMaxWidth())
                         "compacted" -> Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) { HorizontalDivider(Modifier.weight(1f), color = card); Text("已精简上下文", fontSize = 10.sp, color = muted); HorizontalDivider(Modifier.weight(1f), color = card) }
                         else -> ActivityRow(item)
@@ -304,20 +312,20 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
         if(text.startsWith('/') && !text.contains(' ')) {
             val query = text.removePrefix("/")
             val suggestions = state.commands.filter { (it.optString("name") + " " + it.optString("description")).contains(query, ignoreCase = true) }.sortedBy { if(it.optString("name").startsWith(query, ignoreCase = true)) 0 else 1 }.take(12)
-            if(suggestions.isNotEmpty()) Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp).heightIn(max = 190.dp).background(card, RoundedCornerShape(20.dp)).verticalScroll(rememberScrollState()).padding(6.dp)) {
+            if(suggestions.isNotEmpty()) Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp).heightIn(max = 190.dp).background(card, PixelShape()).verticalScroll(rememberScrollState()).padding(6.dp)) {
                 suggestions.forEach { command -> Row(Modifier.fillMaxWidth().clickable { state.draft = "/${command.getString("name")} " }.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.Terminal, null, Modifier.size(18.dp), tint = muted); Spacer(Modifier.width(10.dp)); Column(Modifier.weight(1f)) { Text("/${command.getString("name")}", fontSize = 14.sp); Text(command.optString("description"), color = muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }; Text("命令", color = muted, fontSize = 10.sp)
                 } }
             }
         }
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp).navigationBarsPadding().background(card, RoundedCornerShape(24.dp)).padding(12.dp)) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp).navigationBarsPadding().background(card, PixelShape()).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .6f), PixelShape()).padding(12.dp)) {
             if(state.attachments.isNotEmpty()) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { state.attachments.forEach { attachment -> InputChip(selected = true, onClick = { state.removeAttachment(attachment.getString("id")) }, label = { Text(attachment.optString("name"), maxLines = 1) }, trailingIcon = { Icon(Icons.Outlined.Close, "移除附件 ${attachment.optString("name")}", Modifier.size(14.dp)) }) } }
             if(state.uploading) Text("正在上传附件…", color = muted, fontSize = 11.sp)
             androidx.compose.foundation.text.BasicTextField(text, { state.draft = it }, enabled = state.canControl, modifier = Modifier.fillMaxWidth().heightIn(min = 38.dp, max = 130.dp).padding(4.dp), textStyle = androidx.compose.ui.text.TextStyle(color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp), decorationBox = { inner -> if(text.isBlank()) Text(if(state.canControl) "发消息，或输入 / 命令" else "只读共享会话", color = muted, fontSize = 14.sp); inner() })
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if(!state.sharedDevice) Box {
                     IconButton(onClick = { actions = !actions }, Modifier.size(36.dp)) { Icon(Icons.Outlined.Add, "添加与工具", Modifier.size(22.dp)) }
-                    DropdownMenu(actions, { actions = false }, containerColor = card, shape = RoundedCornerShape(22.dp)) {
+                    DropdownMenu(actions, { actions = false }, containerColor = card, shape = PixelShape()) {
                         DropdownMenuItem(text = { Text("文件或图片", fontSize = 14.sp) }, leadingIcon = { Icon(Icons.Outlined.AttachFile, null) }, enabled = !state.uploading && state.attachments.size < 8, onClick = { actions = false; state.attachmentPickerRequest++ })
                         DropdownMenuItem(text = { Text("Git 分支", fontSize = 14.sp) }, leadingIcon = { Icon(Icons.Outlined.AccountTree, null) }, onClick = { actions = false; state.loadBranches() })
                         DropdownMenuItem(text = { Text("执行模式", fontSize = 14.sp) }, leadingIcon = { Icon(Icons.Outlined.Shield, null) }, onClick = { actions = false; state.sheet = "mode" })
@@ -332,7 +340,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                     ComposerChip(Icons.Outlined.CloudQueue, state.modelLabel, "模型", maxWidth = 120.dp) { state.openModelPicker() }
                 }
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = { if(state.busy) state.stop() else if(text.isNotBlank() || state.attachments.isNotEmpty()) state.send(text) }, enabled = state.canControl && !state.uploading, modifier = Modifier.size(34.dp).background(MaterialTheme.colorScheme.onSurface, CircleShape)) { Icon(if(state.busy) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, if(state.busy) "停止" else "发送", Modifier.size(21.dp), tint = MaterialTheme.colorScheme.background) }
+                IconButton(onClick = { if(state.busy) state.stop() else if(text.isNotBlank() || state.attachments.isNotEmpty()) state.send(text) }, enabled = state.canControl && !state.uploading, modifier = Modifier.size(34.dp).background(MaterialTheme.colorScheme.onSurface, PixelShape(3.dp))) { Icon(if(state.busy) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, if(state.busy) "停止" else "发送", Modifier.size(21.dp), tint = MaterialTheme.colorScheme.background) }
             }
         }
     }

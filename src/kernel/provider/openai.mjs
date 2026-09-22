@@ -161,19 +161,18 @@ function buildSystemMessages(system) {
       if (block.cacheable) stable.push(block.text)
       else dynamic.push(block.text)
     }
-    const msgs = []
+    const content = []
     if (stable.length) {
-      msgs.push({
-        role: "system",
-        content: [{
+      content.push({
           type: "text",
           text: stable.join("\n\n"),
           cache_control: { type: "ephemeral" }
-        }]
       })
     }
-    if (dynamic.length) msgs.push({ role: "system", content: dynamic.join("\n\n") })
-    return msgs
+    if (dynamic.length) content.push({ type: 'text', text: dynamic.join('\n\n') })
+    // Many compatible chat templates allow exactly one leading system message.
+    // Keep the cache breakpoint on its stable block, not a second system role.
+    return content.length ? [{ role: 'system', content }] : []
   }
   const text = typeof system === "string" ? system : system.text || String(system)
   if (!text) return []

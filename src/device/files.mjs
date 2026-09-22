@@ -9,7 +9,7 @@ const blocked = new Set(['.ssh', '.aws', '.azure', '.gnupg', '.kube', '.kkcode',
 const within = (target, root) => target === root || target.startsWith(root.endsWith(path.sep) ? root : root + path.sep)
 const identity = info => info.ino > 0n ? `${info.dev}:${info.ino}` : null
 function assertPublicComponents(target) {
-  if (target.split(path.sep).some(part => blocked.has(part.toLowerCase()) || /^\.env\./i.test(part) || /\.(pem|key|p12|pfx|jks|keystore)$/i.test(part))) throw new ProtocolError('path_denied', 'Credential paths are protected', 403)
+  if (target.split(path.sep).some(part => blocked.has(part.toLowerCase()) || /^\.env\./i.test(part) || /\.(pem|key|p12|pfx|jks|keystore)$/i.test(part))) throw new ProtocolError('path_denied', '凭据和私密配置受到保护，不能通过远控文件浏览读取。', 403)
 }
 function requestedPath(input) {
   if (typeof input !== 'string' || !input || input.length > 32768 || input.includes('\0')) throw new ProtocolError('invalid_path', 'Choose a valid device path')
@@ -20,7 +20,10 @@ async function pathPolicy(roots) {
   // A missing/unreachable configured root degrades to "nothing under it
   // resolves" instead of breaking every other root.
   const allowed = (await Promise.all(configured.map(root => realpath(root).catch(() => null)))).filter(Boolean)
-  const privateRoots = [userRootDir(), process.env.KKCODE_ANDROID_SIGNING_DIR || path.join(os.homedir(), '.local/share/kkcode-signing'), process.env.KKCODE_LAB_STATE || path.join(os.homedir(), '.local/share/kkcode-enterprise-lab')].map(folder => path.resolve(folder))
+  // All-folder consent covers ordinary files, not process environments,
+  // device nodes, runtime sockets or OS credential stores.
+  const systemPrivate = process.platform === 'win32' ? [] : ['/proc', '/sys', '/dev', '/run', '/var/run', '/etc/ssh', '/etc/ssl/private', '/etc/shadow', '/etc/gshadow', '/etc/master.passwd', '/etc/krb5.keytab']
+  const privateRoots = [userRootDir(), process.env.KKCODE_ANDROID_SIGNING_DIR || path.join(os.homedir(), '.local/share/kkcode-signing'), process.env.KKCODE_LAB_STATE || path.join(os.homedir(), '.local/share/kkcode-enterprise-lab'), ...systemPrivate].map(folder => path.resolve(folder))
   const protectedPaths = await Promise.all(privateRoots.map(folder => realpath(folder).catch(() => folder)))
   const privateIdentities = new Set((await Promise.all(protectedPaths.map(async folder => {
     try { return identity(await stat(folder, { bigint: true })) } catch { return null }
@@ -46,15 +49,19 @@ async function resolveWithPolicy(requested, policy, { directory = false } = {}) 
   const { configured, allowed, privateRoots, protectedPaths, privateIdentities, rootIdentities } = policy
   // Check lexical scope before resolving an attacker-chosen path. In particular,
   // an unapproved Windows UNC path must not initiate an SMB/credential lookup.
-  if (!await scopeRoot(requested, [...configured, ...allowed], rootIdentities)) throw new ProtocolError('path_denied', 'Path is outside the allowed device folders', 403)
+  if (!await scopeRoot(requested, [...configured, ...allowed], rootIdentities)) throw new ProtocolError('path_denied', '此目录尚未获得远程访问授权。请在被控电脑终端重新启动 kkcode remote，确认允许所有普通目录，或使用 --root 明确授权。', 403)
   assertPublicComponents(requested)
-  const denyPrivate = () => { throw new ProtocolError('path_denied', 'KK Code private state and credentials are protected', 403) }
+  const denyPrivate = () => { throw new ProtocolError('path_denied', 'KK Code 私密状态、登录凭据和签名文件受到保护。', 403) }
   if ([...privateRoots, ...protectedPaths].some(folder => within(requested, folder))) denyPrivate()
   let target
   try { target = await realpath(requested) }
-  catch (error) { if (error.code === 'ENOENT') throw new ProtocolError('path_missing', 'Path does not exist on the device', 404); throw error }
+  catch (error) {
+    if (error.code === 'ENOENT') throw new ProtocolError('path_missing', '此路径在被控设备上不存在，请选择该设备实际存在的目录。', 404)
+    if (['EACCES', 'EPERM'].includes(error.code)) throw new ProtocolError('folder_unreadable', '被控设备当前系统用户没有权限访问此目录；远控授权不会提升系统权限。', 403)
+    throw error
+  }
   const root = await scopeRoot(target, allowed, rootIdentities)
-  if (!root) throw new ProtocolError('path_denied', 'Path is outside the allowed device folders', 403)
+  if (!root) throw new ProtocolError('path_denied', '此目录或其链接目标尚未获得远程访问授权，请在被控电脑终端调整访问范围。', 403)
   if (protectedPaths.some(folder => within(target, folder))) denyPrivate()
   assertPublicComponents(target)
   // Case-insensitive filesystems and short-name aliases can spell the same
@@ -63,7 +70,7 @@ async function resolveWithPolicy(requested, policy, { directory = false } = {}) 
     if (privateIdentities.has(identity(await stat(ancestor, { bigint: true })))) denyPrivate()
     if (ancestor === root || ancestor === path.dirname(ancestor)) break
   }
-  if (directory && !(await stat(target)).isDirectory()) throw new ProtocolError('not_directory', 'Choose a folder')
+  if (directory && !(await stat(target)).isDirectory()) throw new ProtocolError('not_directory', '请选择文件夹，而不是文件。')
   return target
 }
 export async function resolveDevicePath(input, roots, options = {}) {
@@ -78,7 +85,7 @@ export async function listDeviceFolder(input, roots) {
   const folder = await resolveWithPolicy(requestedPath(start || roots[0]), policy, { directory: true })
   let dirents
   try { dirents = await readdir(folder, { withFileTypes: true }) }
-  catch (error) { throw new ProtocolError(error.code === 'ENOENT' ? 'path_missing' : 'folder_unreadable', error.code === 'ENOENT' ? 'Folder does not exist on the device' : 'Folder cannot be listed', error.code === 'ENOENT' ? 404 : 403) }
+  catch (error) { throw new ProtocolError(error.code === 'ENOENT' ? 'path_missing' : 'folder_unreadable', error.code === 'ENOENT' ? '此目录已不存在，请刷新列表。' : '当前系统用户无法列出此目录，请选择有权限的目录。', error.code === 'ENOENT' ? 404 : 403) }
   const entries = []
   for (const item of dirents.sort((a, b) => a.name.localeCompare(b.name))) {
     if (entries.length >= 1000) break

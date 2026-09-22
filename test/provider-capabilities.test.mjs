@@ -361,7 +361,7 @@ test("router replaces history images with placeholders and still completes the r
   }
 })
 
-test("router omits reasoning params when reasoning:false, keeps them otherwise", async () => {
+test("router leaves OpenAI effort defaults to the server unless explicitly configured", async () => {
   const bodies = []
   const originalFetch = global.fetch
   global.fetch = async (_url, init) => {
@@ -383,7 +383,7 @@ test("router omits reasoning params when reasoning:false, keeps them otherwise",
     assert.ok(!("reasoning_effort" in bodies[0]), "known-unsupported reasoning stays off the wire")
 
     await requestProvider({ configState: routerState({}), ...base })
-    assert.equal(bodies[1].reasoning_effort, "high", "unknown capability keeps the established default")
+    assert.ok(!("reasoning_effort" in bodies[1]), "an unknown effort vocabulary must not receive an invented high value")
 
     // 用户显式写的 thinking 配置优先于探测结论
     await requestProvider({
@@ -391,6 +391,8 @@ test("router omits reasoning params when reasoning:false, keeps them otherwise",
       ...base
     })
     assert.equal(bodies[2].reasoning_effort, "low", "explicit config beats the probed verdict")
+    await requestProvider({ configState: routerState({}, { thinking_effort: 'high' }), ...base })
+    assert.equal(bodies[3].reasoning_effort, 'high', 'explicit user effort remains on the wire')
   } finally {
     global.fetch = originalFetch
   }

@@ -393,9 +393,11 @@ export function createProviderRegistry() {
       // 能力确知「不支持思考」时按 off 处理：给它发 reasoning_effort/thinking
       // 只会换来 400。用户显式写的 thinking 配置仍然优先于探测结论。
       ...resolveThinkingParams({
-        tier: capabilities.reasoning === false && !(providerCfg.thinking_effort || providerCfg.reasoning_effort || providerCfg.thinking)
-          ? "off"
-          : providerCfg.thinking_effort || providerCfg.reasoning_effort || "high",
+        // OpenAI-compatible servers do not share one effort vocabulary (for
+        // example the local Qwen template rejects "high"). With no explicit
+        // preference, let the server choose its default instead of injecting it.
+        tier: providerCfg.thinking_effort || providerCfg.reasoning_effort ||
+          (settings.protocol === 'anthropic' && capabilities.reasoning !== false ? 'high' : 'off'),
         protocol: settings.protocol,
         maxOutputTokens: Number(providerCfg.max_output_tokens) || Number(providerCfg.max_tokens) || 0,
         contextLimit: Number(providerCfg.context_limit) || 0
@@ -525,9 +527,8 @@ export function createProviderRegistry() {
       // 思考档位的能力门：与 requestProvider 同一条规则（确知不支持 → off，
       // 用户显式配置优先）。
       ...resolveThinkingParams({
-        tier: capabilities.reasoning === false && !(providerCfg.thinking_effort || providerCfg.reasoning_effort || providerCfg.thinking)
-          ? "off"
-          : providerCfg.thinking_effort || providerCfg.reasoning_effort || "high",
+        tier: providerCfg.thinking_effort || providerCfg.reasoning_effort ||
+          (settings.protocol === 'anthropic' && capabilities.reasoning !== false ? 'high' : 'off'),
         protocol: settings.protocol,
         maxOutputTokens: Number(providerCfg.max_output_tokens) || Number(providerCfg.max_tokens) || 0,
         contextLimit: Number(providerCfg.context_limit) || 0

@@ -27,7 +27,10 @@ export async function discoverDeviceModels(service, params) {
     if (!connection || typeof connection !== 'object' || Array.isArray(connection)) throw new ProtocolError('invalid_config', 'connection object required')
     const allowed = ['type', 'protocol', 'base_url', 'api_key', 'api_key_env', 'endpoints', 'default_model']
     if (Object.keys(connection).some(key => !allowed.includes(key))) throw new ProtocolError('invalid_config', 'Unsupported connection field')
-    state.config.provider = { ...state.config.provider, [name]: connection }
+    // The basic connection form only requires Base URL + key. Default the
+    // omitted protocol to OpenAI-compatible (vLLM etc.); explicit Anthropic or
+    // other supported protocol selections still take precedence.
+    state.config.provider = { ...state.config.provider, [name]: { type: 'openai-compatible', ...connection } }
     const validation = validateConfig(state.config)
     if (!validation.valid) throw new ProtocolError('invalid_config', validation.errors.join('; '))
   }

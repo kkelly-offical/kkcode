@@ -1,6 +1,6 @@
 {
   "name": "@kkelly-offical/kkcode",
-  "version": "1.0.1-preview.2",
+  "version": "1.0.1",
   "workspaces": [
     "apps/web",
     "apps/gateway",
@@ -77,7 +77,7 @@
   "scripts": {
     "build:web": "npm run build --workspace @kkcode/web",
     "typecheck:web": "tsc -p apps/web/tsconfig.json",
-    "test:web": "npm run build:web && node scripts/web-smoke.mjs && node scripts/web-feature-contract-smoke.mjs",
+    "test:web": "npm run build:web && node scripts/web-smoke.mjs && node scripts/web-feature-contract-smoke.mjs && node scripts/web-pixel-theme-smoke.mjs",
     "test:compatibility": "node scripts/compatibility-acceptance.mjs",
     "gateway": "node apps/gateway/main.mjs",
     "version:check": "node scripts/check-release-version.mjs",

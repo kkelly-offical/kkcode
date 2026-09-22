@@ -9,6 +9,7 @@ import { userRootDir } from '../storage/paths.mjs'
 import { writePrivateFile } from '../storage/private-file.mjs'
 import { createDeviceServer } from '../device/server.mjs'
 import { createInterface } from 'node:readline/promises'
+import { chooseRemoteFolderAccess } from '../remote/folder-access.mjs'
 
 const statusFile = () => path.join(userRootDir(), 'remote-status.json')
 async function liveStatus() {
@@ -46,14 +47,14 @@ async function unbindStoppedDevice(confirmation) {
 }
 
 export function createRemoteCommand() {
-  const command = new Command('remote').description('Foreground remote control with organization login').option('--gateway <url>', 'Relay gateway URL').option('--trust', 'Trust the current workspace').option('--root <path>', 'Limit remote folder access to this root').option('--web', 'Also serve a paired loopback WebUI using the same kernel').option('--port <port>', 'Loopback WebUI port', '18271')
+  const command = new Command('remote').description('Foreground remote control with organization login').option('--gateway <url>', 'Relay gateway URL').option('--trust', 'Trust the current workspace (not a folder-access grant)').option('--root <path>', 'Explicitly grant remote folder access to this root').option('--all-folders', 'Explicitly trust remote access to all OS-accessible ordinary folders').option('--home-only', 'Explicitly grant only the OS user home').option('--web', 'Also serve a paired loopback WebUI using the same kernel').option('--port <port>', 'Loopback WebUI port', '18271')
   command.command('login').option('--gateway <url>').action(async options => withStoppedDevice(async () => { const identity = await loginRemote({ gateway: options.gateway || command.opts().gateway }); console.log(`Signed in: ${identity.profile.name} · ${identity.profile.organization}`) }))
   command.command('status').action(async () => {
     const identity = await loadRemoteCredentials()
     const runtime = await liveStatus()
     const local = await readDeviceLifecycle()
     const binding = { deviceId: local.pending?.deviceId || local.identity?.id || null, bound: Boolean(local.identity?.owner), unbindPending: Boolean(local.pending), retainedHistoryOwner: local.identity?.historyOwner || local.identity?.owner || null }
-    console.log(JSON.stringify(identity ? { loggedIn: true, gateway: identity.gateway, profile: identity.profile, credentialExpired: identity.expiresAt < Date.now(), running: Boolean(runtime), connection: runtime?.connection || 'offline', ...binding } : { loggedIn: false, running: Boolean(runtime), ...binding }, null, 2))
+    console.log(JSON.stringify(identity ? { loggedIn: true, gateway: identity.gateway, profile: identity.profile, credentialExpired: identity.expiresAt < Date.now(), running: Boolean(runtime), connection: runtime?.connection || 'offline', folderAccess: runtime?.folderAccess || null, roots: runtime?.roots || [], ...binding } : { loggedIn: false, running: Boolean(runtime), ...binding }, null, 2))
   })
   command.command('stop').description('Stop this user’s foreground remote hub without signing out').action(async () => {
     const runtime = await liveStatus()
@@ -90,11 +91,12 @@ export function createRemoteCommand() {
     if (await liveStatus()) throw new Error('A remote hub is already running for this user. Use kkcode remote status or stop it first.')
     const release = await acquireDeviceLifecycleLock()
     try {
+    const folderAccess = await chooseRemoteFolderAccess(options)
     let credentials = await loadRemoteCredentials()
     if (!credentials || (options.gateway && credentials.gateway !== options.gateway)) credentials = await loginRemote({ gateway: options.gateway })
-    const service = await createRemoteDevice({ ...(options.root ? { roots: [path.resolve(options.root)] } : {}) })
+    const service = await createRemoteDevice({ roots: folderAccess.roots })
     let relay, web, control, closing = false
-    const updateStatus = async () => writePrivateFile(statusFile(), JSON.stringify({ pid: process.pid, deviceId: service.metadata.id, gateway: credentials.gateway, profile: credentials.profile, connection: service.remoteStatus || 'connecting', control: control ? { endpoint: control.endpoint, token: control.token } : null, updatedAt: Date.now() }))
+    const updateStatus = async () => writePrivateFile(statusFile(), JSON.stringify({ pid: process.pid, deviceId: service.metadata.id, gateway: credentials.gateway, profile: credentials.profile, connection: service.remoteStatus || 'connecting', folderAccess: folderAccess.mode, roots: service.roots, control: control ? { endpoint: control.endpoint, token: control.token } : null, updatedAt: Date.now() }))
     const close = async () => {
       if (closing) return; closing = true
       clearInterval(heartbeat)

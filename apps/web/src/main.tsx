@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
 import "./mobile.css";
+import "./pixel.css";
 import { SessionHome, ConnectionLanding } from "./Home";
 import { SettingsOverlay } from "./Settings";
 import { Icon } from "./Icon";

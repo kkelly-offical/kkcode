@@ -75,6 +75,25 @@ test("OpenAI-compatible response preserves Kimi reasoning and KK Code identity",
   }
 })
 
+test('compatible chat templates receive one leading system message while retaining the stable cache breakpoint', async t => {
+  const captured = []
+  const server = await startServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk
+    const body = JSON.parse(raw); captured.push(body)
+    if(body.stream) { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n') }
+    else { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] })) }
+  })
+  t.after(() => { server.server.closeAllConnections(); return stopServer(server.server) })
+  const options = input(server.baseUrl, { system: { blocks: [{ text: 'stable rules', cacheable: true }, { text: 'current task context', cacheable: false }] } })
+  assert.equal((await requestOpenAI(options)).text, 'ok')
+  for await (const event of requestOpenAIStream(options)) assert.ok(event)
+  assert.equal(captured.length, 2)
+  for(const body of captured) {
+    assert.deepEqual(body.messages.map(message => message.role), ['system', 'user'])
+    assert.deepEqual(body.messages[0].content, [{ type: 'text', text: 'stable rules', cache_control: { type: 'ephemeral' } }, { type: 'text', text: 'current task context' }])
+  }
+})
+
 test("Anthropic response preserves readable thinking without exposing protected fields", async () => {
   let receivedBody
   const mock = await startServer((req, res) => {

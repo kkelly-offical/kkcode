@@ -1,6 +1,7 @@
 import java.util.Properties
 import java.nio.file.FileSystems
 import java.nio.file.Files
+import groovy.json.JsonSlurper
 
 plugins {
     id("com.android.application")
@@ -29,6 +30,7 @@ val releaseAlias = signingValue("keyAlias", "KKCODE_ANDROID_KEY_ALIAS")
 val releaseStorePassword = signingPassword("storePasswordFile", "KKCODE_ANDROID_STORE_PASSWORD_FILE")
 val releaseKeyPassword = signingPassword("keyPasswordFile", "KKCODE_ANDROID_KEY_PASSWORD_FILE")
 val releaseSigningReady = listOf(releaseStore, releaseAlias, releaseStorePassword, releaseKeyPassword).all { !it.isNullOrBlank() }
+val releaseIdentity = JsonSlurper().parse(file("../../configs/android-release.json")) as Map<*, *>
 android {
     namespace = "cn.kkcode.remote"
     compileSdk = 35
@@ -36,8 +38,10 @@ android {
         applicationId = "cn.kkcode.remote"
         minSdk = 29
         targetSdk = 35
-        versionCode = 10003
-        versionName = "1.0.1-preview.2"
+        versionCode = 10004
+        versionName = "1.0.1"
+        buildConfigField("String", "UPDATE_REPOSITORY", "\"${releaseIdentity["repository"]}\"")
+        buildConfigField("String", "UPDATE_CERT_SHA256", "\"${releaseIdentity["certificateSha256"]}\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }
@@ -79,6 +83,7 @@ dependencies {
     implementation("io.noties.markwon:core:4.6.2")
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("org.json:json:20260814")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     androidTestImplementation(platform("androidx.compose:compose-bom:2025.06.01"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")

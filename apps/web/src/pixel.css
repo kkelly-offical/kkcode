@@ -1,0 +1,127 @@
+/* Jianwei-inspired monochrome pixel finish. Visual-only: no layout, sizing,
+   spacing, ordering or positioning overrides. Semantic status/diff colors stay. */
+:root {
+  --bg: #f0f0ee;
+  --bg-panel: #fafaf8;
+  --bg-elevated: #fafaf8;
+  --bg-sunken: #e6e7e2;
+  --bg-menu: #fafaf8fa;
+  --bg-hover: #e7e8e3;
+  --bg-active: #dcddd7;
+  --bg-toolbar: #12121208;
+  --bg-user: #e4e5df;
+  --text: #121212;
+  --text-secondary: #5c5c58;
+  --text-faint: #6e7068;
+  --border: #dcded8;
+  --border-strong: #b5b8ae;
+  --primary-bg: #161616;
+  --primary-hover: #30302d;
+  --primary-text: #fafaf8;
+  --accent-soft: #565952;
+  --link: #303b32;
+  --focus: #222822;
+  --avatar-bg: #dedfd8;
+  --avatar-text: #383c34;
+  --toast-bg: #171a16;
+  --toast-text: #fafaf8;
+  --shadow-composer: 2px 2px 0 #12121210;
+  --shadow-pop: 4px 4px 0 #12121222;
+}
+:root[data-theme="dark"] {
+  --bg: #050505;
+  --bg-panel: #0b0b0b;
+  --bg-elevated: #121212;
+  --bg-sunken: #171717;
+  --bg-menu: #101010fa;
+  --bg-hover: #ffffff0b;
+  --bg-active: #242424;
+  --bg-toolbar: #ffffff07;
+  --bg-user: #171717;
+  --text: #f5f5f5;
+  --text-secondary: #a0a09a;
+  --text-faint: #90918a;
+  --border: #262626;
+  --border-strong: #3d3d3a;
+  --primary-bg: #eeeeea;
+  --primary-hover: #ffffff;
+  --primary-text: #080808;
+  --accent-soft: #b2b6aa;
+  --link: #d6dfd2;
+  --focus: #cdd5c8;
+  --avatar-bg: #252723;
+  --avatar-text: #dfdfd7;
+  --toast-bg: #191b18;
+  --toast-text: #f5f5f0;
+  --shadow-composer: 2px 2px 0 #ffffff09;
+  --shadow-pop: 4px 4px 0 #00000088;
+}
+.app,
+.remote-home {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28'%3E%3Cpath d='M0 0h1.5v1.5H0z' fill='%238a8a80' fill-opacity='.13'/%3E%3C/svg%3E");
+}
+button,
+input,
+select,
+textarea,
+.round,
+.remote-bottom label,
+.remote-bottom > button,
+.remote-menu,
+.remote-sheet,
+.sheet,
+.composer-menu,
+.command-popover,
+.settings-group,
+.sheet-primary,
+.sheet-secondary,
+.sheet-menu,
+.composer,
+.composer-wrap,
+.composer-body,
+.composer-chip,
+.composer-popover,
+.command-suggestions,
+.message.user,
+.user-bubble,
+.tool-row,
+.tool-detail,
+.thinking,
+.diff,
+.attachment-chip,
+.toast {
+  border-radius: 2px !important;
+}
+.remote-menu,
+.remote-sheet,
+.sheet,
+.composer-menu,
+.command-popover,
+.settings-group,
+.composer,
+.user-bubble {
+  box-shadow: inset 0 0 0 1px var(--border), var(--shadow-composer);
+}
+.remote-menu,
+.remote-sheet,
+.sheet,
+.composer-menu {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.round { box-shadow: 2px 2px 0 var(--border); }
+.remote-title i,
+.connection-row i { border-radius: 0; }
+.wordmark { text-shadow: 1px 1px 0 var(--border-strong); }
+.diff-count,
+.tool-meta,
+.statusbar,
+.version { font-family: ui-monospace, "SF Mono", Consolas, monospace; }
+::selection { background: var(--text); color: var(--bg); }
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible { outline-style: dashed; }
+@media (prefers-reduced-motion: reduce) {
+  .working, .spinner { animation: none; }
+}
