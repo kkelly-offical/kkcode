@@ -174,3 +174,19 @@ test("showToast sanitizes and defaults its topic and tone", () => {
   assert.equal(toasts[0].topic, "status")
   assert.equal(toasts[0].tone, "info", "直接调 showToast 的缺省语气是 info，不是 success")
 })
+
+test("a multi-line notice collapses into a single toast line", () => {
+  // 提示条在帧里占且只占一行 —— 多行消息放行会把整帧的行记账弄崩
+  // （/theme 裸命令曾经就送过 5 行的清单进 notice）。
+  const { writer, toasts } = makeWriter()
+  writer.print("第一行\n\n第二行\n第三行", { channel: "notice", topic: "theme" })
+  assert.equal(toasts.length, 1)
+  assert.equal(toasts[0].message, "第一行 · 第二行 · 第三行")
+  assert.doesNotMatch(toasts[0].message, /\n/, "toast 消息里不允许残留换行")
+})
+
+test("showToast itself also enforces the single-line rule", () => {
+  const { writer, toasts } = makeWriter()
+  writer.showToast("甲\n乙")
+  assert.equal(toasts[0].message, "甲 · 乙")
+})

@@ -52,8 +52,21 @@ export function createTranscriptWriter({ transcript, toastStore }) {
     return transcript.updateLog(id, sanitizeRecord(patch))
   }
 
+  /**
+   * 提示条是**单行**的：帧按行记账，一条带换行的 toast 会把行数算崩
+   * （renderToastLine 拼的是一行）。多行内容收成一行，细节该走浮层/面板。
+   */
+  function toToastLine(message) {
+    return stripAnsi(String(message ?? ""))
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .join(" · ")
+  }
+
   function showToast(message, { topic = "status", tone = "info", durationMs } = {}) {
-    return toastStore.show(sanitizeTerminalText(message), { topic, tone, durationMs })
+    // 先剥 ANSI 再消毒：消毒会把 ESC 换成可见替身，换完就再也认不出颜色码了
+    return toastStore.show(sanitizeTerminalText(toToastLine(message)), { topic, tone, durationMs })
   }
 
   /**
@@ -66,7 +79,8 @@ export function createTranscriptWriter({ transcript, toastStore }) {
   function print(text = "", options = {}) {
     const channel = options.channel || "transcript"
     if (channel === "notice") {
-      showToast(stripAnsi(text).trim(), {
+      // showToast 内部剥色并收成单行（提示条的帧行记账是一行）
+      showToast(text, {
         topic: options.topic || "status",
         tone: options.tone || "success"
       })
@@ -84,7 +98,9 @@ export function createTranscriptWriter({ transcript, toastStore }) {
         collapsible: lines.length > 1
       })
     }
-    return appendLog(text)
+    // 默认通道：对话记录。kind/tone 透传给渲染层 —— 提示性记录（kind:"system"）
+    // 在记录区里以弱化样式呈现，与对话气泡区分开（transcript-model.mjs）。
+    return appendLog(text, { kind: options.kind, tone: options.tone })
   }
 
   return { appendLog, updateLog, showToast, print, sanitizeRecord }

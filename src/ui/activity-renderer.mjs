@@ -21,6 +21,8 @@ const MAX_TOOL_DETAIL_WIDTH = 180
 let _theme = null
 function diffAdd(theme) { return (theme ?? _theme)?.components?.diff_add || "green" }
 function diffDel(theme) { return (theme ?? _theme)?.components?.diff_del || "red" }
+// 强调正文色跟随主题 base.fg：硬编码 "white" 在浅色终端上是白底白字。
+function fgStrong(theme) { return (theme ?? _theme)?.base?.fg || "white" }
 function toolMuted(text, options = {}) {
   return paint(String(text ?? ""), TOOL_MUTED_COLOR, { dim: true, ...options })
 }
@@ -363,14 +365,14 @@ export function formatPhaseChange(prevPhase, nextPhase, reason) {
 }
 
 export function formatStageStarted(stageId, taskCount) {
-  return `${paint(SYM.stage, "#fb923c", { bold: true })} ${paint("stage", "#fb923c", { bold: true })} ${paint(stageId, "white", { bold: true })} ${paint(`(${taskCount} tasks)`, null, { dim: true })}`
+  return `${paint(SYM.stage, "#fb923c", { bold: true })} ${paint("stage", "#fb923c", { bold: true })} ${paint(stageId, fgStrong(), { bold: true })} ${paint(`(${taskCount} tasks)`, null, { dim: true })}`
 }
 
 export function formatStageFinished(stageId, successCount, failCount) {
   const status = failCount === 0
     ? paint("PASS", "green", { bold: true })
     : paint(`FAIL (${failCount})`, "red", { bold: true })
-  return `${paint(SYM.stage, "#fb923c")} ${paint("stage", "#fb923c")} ${paint(stageId, "white")} ${status} ${paint(`(${successCount} ok)`, null, { dim: true })}`
+  return `${paint(SYM.stage, "#fb923c")} ${paint("stage", "#fb923c")} ${paint(stageId, fgStrong())} ${status} ${paint(`(${successCount} ok)`, null, { dim: true })}`
 }
 
 export function formatTaskDispatched(_stageId, taskId, attempt) {
@@ -390,7 +392,7 @@ export function formatHeartbeat(iteration, maxIterations, phase, gate, progress,
     ? paint(`${progress.percentage}%`, "green")
     : paint("...", null, { dim: true })
   const elapsedLabel = elapsed !== undefined ? paint(`${elapsed}s`, null, { dim: true }) : ""
-  return `${paint(SYM.iteration, "#fb923c")} ${paint("iter", "#fb923c")} ${paint(iterLabel, "white", { bold: true })} phase=${paint(phase || "-", "magenta")} gate=${paint(gate || "-", "cyan")} progress=${progressLabel} ${elapsedLabel}`
+  return `${paint(SYM.iteration, "#fb923c")} ${paint("iter", "#fb923c")} ${paint(iterLabel, fgStrong(), { bold: true })} phase=${paint(phase || "-", "magenta")} gate=${paint(gate || "-", "cyan")} progress=${progressLabel} ${elapsedLabel}`
 }
 
 export function formatPlanFrozen(planId, stageCount) {
@@ -525,7 +527,7 @@ export function formatHybridMemorySaved(techStackCount) {
 // ── Git Formatters ───────────────────────────────────────
 
 export function formatGitBranchCreated(branch, baseBranch) {
-  return `  ${paint(SYM.dot, "green")} ${paint("git branch", "green")} ${paint(branch, "white", { bold: true })} ${paint(`← ${baseBranch}`, null, { dim: true })}`
+  return `  ${paint(SYM.dot, "green")} ${paint("git branch", "green")} ${paint(branch, fgStrong(), { bold: true })} ${paint(`← ${baseBranch}`, null, { dim: true })}`
 }
 
 export function formatTaskSkipped(taskId, reason) {
@@ -537,7 +539,7 @@ export function formatGitStageCommitted(stageId, message) {
 }
 
 export function formatGitMerged(branch, baseBranch) {
-  return `  ${paint(SYM.toolOk, "green")} ${paint("git merged", "green", { bold: true })} ${paint(branch, null, { dim: true })} ${paint("→", null, { dim: true })} ${paint(baseBranch, "white")}`
+  return `  ${paint(SYM.toolOk, "green")} ${paint("git merged", "green", { bold: true })} ${paint(branch, null, { dim: true })} ${paint("→", null, { dim: true })} ${paint(baseBranch, fgStrong())}`
 }
 
 // ── Plan Progress Formatter ──────────────────────────────
@@ -555,7 +557,7 @@ export function formatPlanProgress(taskProgress) {
       : status === "error"
         ? paint(SYM.dot, "red")
         : paint(SYM.dotHollow, "#666666")
-    const color = status === "completed" ? "green" : status === "error" ? "red" : "white"
+    const color = status === "completed" ? "green" : status === "error" ? "red" : fgStrong()
     lines.push(`  ${dot} ${taskId} ${paint(status, color)}`)
   }
   return lines

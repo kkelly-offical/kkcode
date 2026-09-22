@@ -147,11 +147,18 @@ test("a factory that takes a bag of collaborators must name them", () => {
 
 // --- 组装根的规模棘轮 ---
 
-const REPL_LINE_BUDGET = 2050
+const REPL_LINE_BUDGET = 2060
 
 test("repl.mjs does not grow back", () => {
   // 起点 4563 行。没有这条的话，下一次「就先加在 repl.mjs 里吧」会开始把它涨回去 ——
   // 那正是它当初变成 4563 行的过程。拆下去时把预算一起调小。
+  //
+  // 2050 → 2060（1.0.1-preview，M32）：组装根新增的 10 行全是依赖装配 ——
+  // 附件能力面/媒体读取缝的注入（createAttachmentInput 的 supportsMedia、
+  // readClipboardMedia feature-detect、attachMedia 向 processInputLine/editor 的
+  // 三个传递点）与回合相位机的收口调用。逻辑本体都在 src/repl/ 与 src/ui/ 的
+  // 模块里（turn-runtime / busy-line / attachment-input / input-marker-style），
+  // 组装根只做接线。
   const lines = linesOf(path.join(ROOT, "src", "repl.mjs"))
   assert.ok(lines <= REPL_LINE_BUDGET,
     `repl.mjs 有 ${lines} 行，超过预算 ${REPL_LINE_BUDGET}。` +

@@ -5,8 +5,9 @@ import { buildTranscriptViewport } from "../ui/repl-transcript-panel.mjs"
 import { renderSelectOverlay } from "../ui/overlay-select.mjs"
 import { renderPanelOverlay } from "../ui/overlay-panel.mjs"
 import { renderQuestionOverlay } from "../ui/overlay-question.mjs"
-import { formatThinkingDuration } from "../ui/thinking-state.mjs"
+import { buildBusyLine } from "../ui/busy-line.mjs"
 import { thinkingPreviewLines } from "../ui/thinking-preview.mjs"
+import { styleInputMarkers } from "./input-marker-style.mjs"
 import { NO_SUGGESTIONS } from "./suggestion-source.mjs"
 import { renderSuggestions, MAX_TUI_SUGGESTIONS } from "./suggestion-view.mjs"
 import { POLICY_CHOICES, PERMISSION_PROMPT_CHOICES } from "./permission-flow.mjs"
@@ -44,30 +45,6 @@ import { promptSourceLabel } from '../ui/prompt-source.mjs'
  */
 
 const MAX_MODEL_PICKER_VISIBLE = 8
-const BUSY_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-
-function clipBusy(text, max) {
-  const s = String(text || "").trim().split("\n")[0]
-  return s.length > max ? s.slice(0, max - 3) + "..." : s
-}
-
-export function formatBusyToolDetail(toolName, args) {
-  if (!args) return ""
-  switch (toolName) {
-    case "bash": return args.command ? paint(` ${clipBusy(args.command, 60)}`, null, { dim: true }) : ""
-    case "read": return args.path ? paint(` ${clipBusy(args.path, 60)}`, null, { dim: true }) : ""
-    case "write": return args.path ? paint(` ${clipBusy(args.path, 60)}`, null, { dim: true }) : ""
-    case "edit": return args.path ? paint(` ${clipBusy(args.path, 60)}`, null, { dim: true }) : ""
-    case "notebookedit": return args.path ? paint(` ${clipBusy(args.path, 50)} cell ${args.cell_number ?? 0}`, null, { dim: true }) : ""
-    case "grep": return args.pattern ? paint(` ${clipBusy(args.pattern, 40)}`, null, { dim: true }) : ""
-    case "glob": return args.pattern ? paint(` ${clipBusy(args.pattern, 40)}`, null, { dim: true }) : ""
-    case "patch": return args.path ? paint(` ${clipBusy(args.path, 40)} L${args.start_line || "?"}-${args.end_line || "?"}`, null, { dim: true }) : ""
-    case "task": return args.description ? paint(` ${clipBusy(args.description, 50)}`, null, { dim: true }) : ""
-    case "enter_plan": return args.reason ? paint(` ${clipBusy(args.reason, 50)}`, null, { dim: true }) : paint(" planning...", null, { dim: true })
-    case "exit_plan": return paint(" submitting plan...", null, { dim: true })
-    default: return ""
-  }
-}
 
 export function buildFrame({
   ui,
@@ -154,54 +131,8 @@ export function buildFrame({
   ui.inputCursor = inputLayout.normalizedCursor
   ui.inputLayout = inputLayout
   const visibleInput = inputLayout.lines
-  let busyLine
-  // 点数动画统一补到固定 3 格：不补的话后面的 · 03s 会跟着点左右横跳。
-  const dots = ".".repeat((ui.spinnerIndex % 3) + 1).padEnd(3)
-  if (ui.busy && ui.currentActivity) {
-    const spinner = BUSY_SPINNER_FRAMES[ui.spinnerIndex]
-    const stepTag = ui.currentStep > 0
-      ? paint(` [${ui.currentStep}/${ui.maxSteps || "?"}]`, "cyan", { dim: true })
-      : ""
-    if (ui.currentActivity.type === "tool") {
-      const toolName = ui.currentActivity.tool || "tool"
-      const toolColor = toolName === "edit" || toolName === "write" || toolName === "notebookedit" ? "yellow"
-        : toolName === "bash" ? "magenta"
-        : "cyan"
-      busyLine = `${paint(spinner, toolColor)} ${paint(toolName, toolColor, { bold: true })}${formatBusyToolDetail(toolName, ui.currentActivity.args)}${stepTag}`
-    } else if (ui.currentActivity.type === "writing") {
-      busyLine = `${paint(spinner, "green")} ${paint("writing", "green", { bold: true })}${stepTag}`
-    } else if (ui.currentActivity.type === "retry") {
-      const attempt = ui.currentActivity.attempt || "?"
-      const max = ui.currentActivity.max || "?"
-      const why = ui.currentActivity.classification
-        ? paint(` · ${ui.currentActivity.classification}`, null, { dim: true })
-        : ""
-      busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint(`Retrying ${attempt}/${max}${dots}`, ctx.themeState.theme.semantic.warn, { bold: true })}${why}${stepTag}`
-    } else if (ui.currentActivity.type === "compacting") {
-      busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint(`Compacting${dots}`, ctx.themeState.theme.semantic.warn, { bold: true })}${stepTag}`
-    } else if (ui.thinking.phase === "streaming") {
-      // 推理流：有真实的 thinking 内容在到达，计时从等待起点累计
-      const elapsed = ui.thinking.startedAt
-        ? formatThinkingDuration(now - ui.thinking.startedAt)
-        : "0.0s"
-      busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint(`Thinking${dots} · ${elapsed}`, ctx.themeState.theme.semantic.warn, { bold: true })}${stepTag}`
-    } else {
-      // 等首个 token（含工具结束到下一 step 的间隙）：thinking 与 waiting 是两个状态。
-      // phase 不是 waiting 时没有计时锚点（startedAt=0），宁缺毋滥 —— 不显示 0.0s。
-      const timer = ui.thinking.startedAt
-        ? ` · ${formatThinkingDuration(now - ui.thinking.startedAt)}`
-        : ""
-      busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint(`Waiting${dots}${timer}`, ctx.themeState.theme.semantic.warn, { bold: true })}${stepTag}`
-    }
-  } else if (ui.busy) {
-    // 回合已提交但第一个 step 事件还没到（路由/读历史/压缩检查），以及
-    // longagent 阶段之间的间隙：此前这里显示 Thinking · 0.0s，计时是冻结的。
-    const spinner = BUSY_SPINNER_FRAMES[ui.spinnerIndex]
-    const label = ui.metrics?.longagent ? "Working" : "Starting"
-    busyLine = `${paint(spinner, ctx.themeState.theme.semantic.warn)} ${paint(`${label}${dots}`, ctx.themeState.theme.semantic.warn, { bold: true })}`
-  } else {
-    busyLine = ""
-  }
+  // 忙碌行的文案分派在 ui/busy-line.mjs（含回合相位：收尾不再显示成「又开始思考」）
+  const busyLine = buildBusyLine({ ui, theme: ctx.themeState.theme, now })
 
   const PERM_CHOICES = PERMISSION_PROMPT_CHOICES
   const permissionLines = []
@@ -554,12 +485,15 @@ export function buildFrame({
 
   const inputTop = paint(`┌${"─".repeat(Math.max(1, width - 2))}┐`, ctx.themeState.theme.base.border)
   const inputBottom = paint(`└${"─".repeat(Math.max(1, width - 2))}┘`, ctx.themeState.theme.base.border)
+  // 附件占位标记的强调色：排版后上色（颜色零宽度，光标与宽度的账不变）；
+  // 用户主题没带这个键时回落到 accent。
+  const markerColor = ctx.themeState.theme.components?.inputMarker || ctx.themeState.theme.base.accent
   lines.push(inputTop)
   const inputStartRow = lines.length  // 输入区内容起始行
   for (const inputLine of visibleInput) {
     const left = paint("│ ", ctx.themeState.theme.base.border)
     const right = paint(" │", ctx.themeState.theme.base.border)
-    lines.push(`${left}${clipAnsiLine(inputLine, inputInnerWidth)}${right}`)
+    lines.push(`${left}${clipAnsiLine(styleInputMarkers(inputLine, { color: markerColor }), inputInnerWidth)}${right}`)
   }
   const inputEndRow = lines.length  // 输入区内容结束行（不含）
   lines.push(inputBottom)
@@ -568,7 +502,7 @@ export function buildFrame({
   const queued = ui.queuedPrompts?.length
     ? `  ⏳ ${ui.queuedPrompts.length} queued`
     : ""
-  const footerHint = `↵ send  ⌃J newline  ⌃V paste image/text  ⌃Y auto-copy  ? help${queued}`
+  const footerHint = `↵ send  ⌃J newline  ⌃V paste media/text  ⌃Y auto-copy  ? help${queued}`
   // 版本号右对齐挂在同一行：宽度不够就让位给提示，而不是把行撑溢出。
   const footerVersion = `v${PACKAGE_VERSION}`
   const footerGap = width - displayWidth(footerHint) - displayWidth(footerVersion)

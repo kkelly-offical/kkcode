@@ -159,7 +159,8 @@ export const permissionCommands = [
           })
           print(`forgot ${outcome.removed.length} always-allow rule(s) -> ${target}`, { channel: "notice", topic: "permission" })
         } catch (error) {
-          print(`forgot ${outcome.removed.length} rule(s) in this session, but saving failed: ${escapeTerminalText(error.message)}`)
+          print(`forgot ${outcome.removed.length} rule(s) in this session, but saving failed: ${escapeTerminalText(error.message)}`,
+            { channel: "notice", topic: "permission", tone: "error" })
         }
         return { exit: false }
       }
@@ -178,7 +179,8 @@ export const permissionCommands = [
         // 0.3.x 这里只写 mode/default_policy，而判定链只看 level，实际是静默 no-op。
         const mapped = sub === "allow" ? "accept-edits" : sub === "deny" ? "readonly" : "manual"
         ctx.configState.config.permission = applyPermissionLevel(mapped, permission)
-        print(`/permission ${sub} 已弃用，已映射为 permission.level -> ${mapped} (runtime)`)
+        print(`/permission ${sub} 已弃用，已映射为 permission.level -> ${mapped} (runtime)`,
+          { channel: "notice", topic: "permission", tone: "warn" })
         return { exit: false }
       }
 

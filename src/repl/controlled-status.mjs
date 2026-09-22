@@ -9,19 +9,24 @@
 
 import { paint } from "../theme/color.mjs"
 import { sanitizeTerminalText } from "../theme/terminal-sanitize.mjs"
+import { DEFAULT_THEME } from "../theme/default-theme.mjs"
 import { checkWorkspaceTrust } from "../kernel/index.mjs"
 import { defaultProfile, loadProfile, saveProfile } from "../onboarding.mjs"
 
 const LOCAL_PRINCIPAL = { id: "local", client: "local" }
 const SESSION_STATUS_RANK = { running: 0, approval: 1, controlled: 2, idle: 3 }
+// 调色板与交互式 TUI 共用主题语义色（M32）：状态面板、toast、状态栏三处
+// 的「绿=就绪/黄=过渡/红=要处理/灰=闲置」必须是一套语言，不能各调各的。
+// 受控端不加载用户主题（独立进程入口），统一用缺省调色板作共同基准。
+const SEM = DEFAULT_THEME.semantic
 const CONNECTION_TONE = {
-  connected: "#2ac26f",
-  connecting: "#e5c07b",
-  disconnected: "#e5c07b",
-  login_required: "#ff6b6b",
-  offline: "#888888"
+  connected: SEM.success,
+  connecting: SEM.warn,
+  disconnected: SEM.warn,
+  login_required: SEM.error,
+  offline: DEFAULT_THEME.base.muted
 }
-const SESSION_TONE = { running: "#2ac26f", approval: "#e5c07b", controlled: "#38c8ff", idle: "#888888" }
+const SESSION_TONE = { running: SEM.success, approval: SEM.warn, controlled: SEM.info, idle: DEFAULT_THEME.base.muted }
 
 export function resolveTerminalMode({ remoteService = null } = {}) {
   return remoteService ? "controlled" : "interactive"
@@ -141,22 +146,22 @@ export function formatControlledStatusFrame({ snapshot, events = [], activityAt 
   const width = Math.max(60, Math.min(columns || 100, 120))
   const { device, connection, clients, sessions } = snapshot
   const lines = []
-  lines.push(paint(" KK Code remote — controlled terminal", "#4af5f0", { bold: true }))
-  lines.push(paint(" " + "─".repeat(width - 1), "#333333"))
+  lines.push(paint(" KK Code remote — controlled terminal", DEFAULT_THEME.base.accent, { bold: true }))
+  lines.push(paint(" " + "─".repeat(width - 1), DEFAULT_THEME.base.border))
   lines.push(` Device   ${oneLine(device.name || "-", 40)} (${oneLine(shortId(device.id), 12)})`)
   const owner = device.profile ? `${oneLine(device.profile.name || "-", 30)} · ${oneLine(device.profile.organization || "-", 30)}` : "-"
   lines.push(` Owner    ${owner}`)
   lines.push(` Gateway  ${oneLine(device.gateway || "-", 80)}`)
   lines.push(` Relay    ${paint("●", CONNECTION_TONE[connection] || "#888888")} ${oneLine(connectionLabel(connection), 30)}`)
   lines.push("")
-  lines.push(paint(` Clients (${clients.length})`, "#ffffff", { bold: true }))
+  lines.push(paint(` Clients (${clients.length})`, DEFAULT_THEME.components.header, { bold: true }))
   lines.push(clients.length ? `  ${clients.map((client) => oneLine(shortClient(client), 12)).join("  ")}` : "  none connected yet")
   lines.push("")
-  lines.push(paint(` Sessions (${sessions.length})`, "#ffffff", { bold: true }))
+  lines.push(paint(` Sessions (${sessions.length})`, DEFAULT_THEME.components.header, { bold: true }))
   if (sessions.length) for (const row of sessions) lines.push(sessionLine(row, activityAt, now))
   else lines.push("  no active sessions")
   lines.push("")
-  lines.push(paint(" Recent events", "#ffffff", { bold: true }))
+  lines.push(paint(" Recent events", DEFAULT_THEME.components.header, { bold: true }))
   if (events.length) {
     for (const event of events) {
       const time = new Date(event.timestamp || now).toTimeString().slice(0, 8)
@@ -164,7 +169,7 @@ export function formatControlledStatusFrame({ snapshot, events = [], activityAt 
     }
   } else lines.push("  no events yet")
   lines.push("")
-  lines.push(paint(" Local chat is disabled while this device is controlled. Press Ctrl+C to stop remote access.", "#888888"))
+  lines.push(paint(" Local chat is disabled while this device is controlled. Press Ctrl+C to stop remote access.", DEFAULT_THEME.base.muted))
   return lines.join("\n")
 }
 

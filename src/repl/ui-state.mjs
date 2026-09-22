@@ -93,6 +93,9 @@ export function createReplUiState({ historyLines = [], terminalFeatures = {} } =
       maxOffset: 0
     },
     spinnerIndex: 0,
+    // 回合相位（idle/starting/active/finishing）：状态机在 ui/turn-runtime.mjs，
+    // 只允许经 markTurnSubmitted / reduceTurnRuntime / resetTurnRuntime 改写。
+    turnPhase: "idle",
     currentActivity: null,
     currentStep: 0,
     maxSteps: 0,

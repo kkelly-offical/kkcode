@@ -29,6 +29,7 @@ import {
   rewindLastTurn,
   checkWorkspaceTrust
 } from "./kernel/index.mjs"
+import * as kernelIndex from "./kernel/index.mjs"
 import { loadTheme } from "./theme/load-theme.mjs"
 import { loadCustomCommands, applyCommandTemplate } from "./command/custom-commands.mjs"
 import { renderMarkdown } from "./theme/markdown.mjs"
@@ -50,6 +51,7 @@ import {
   resolveProviderDefaultModel,
   createInitialReplState,
   collectMcpStatusLines,
+  summarizeMcpSnapshot,
   startSplash
 } from "./repl/core-shell.mjs"
 import { runReplController } from "./repl/controller-entry.mjs"
@@ -69,7 +71,7 @@ import { createSuggestionSource } from "./repl/suggestion-source.mjs"
 import { resolveCommand, buildBuiltinSlashCatalog } from "./repl/commands/registry.mjs"
 import { BUILTIN_COMMANDS } from './command/builtin.mjs'
 import { presentPromptTurn } from "./repl/turn-presenter.mjs"
-import { loadProviderModelItems } from "./repl/provider-catalog.mjs"
+import { loadProviderModelItems, mediaSupportFromCapabilities } from "./repl/provider-catalog.mjs"
 import { persistLearnedGrant } from "./repl/config-persistence.mjs"
 import { createRenderScheduler } from "./repl/render-scheduler.mjs"
 import { createListenerRegistry } from "./repl/listener-registry.mjs"
@@ -116,10 +118,12 @@ import { copyTerminalText } from "./repl/clipboard.mjs"
 import { createTranscriptModel } from "./ui/transcript-model.mjs"
 import { createToastStore } from "./ui/toast-store.mjs"
 import { shouldApplyActiveTurnEvent } from "./ui/event-scope.mjs"
+import { markTurnSubmitted, resetTurnRuntime } from "./ui/turn-runtime.mjs"
+import { BUSY_SPINNER_FRAMES } from "./ui/busy-line.mjs"
 import { createFrameBatcher } from "./ui/frame-batcher.mjs"
 import { buildThinkingTranscriptItem, finishThinking as finishThinkingState } from "./ui/thinking-state.mjs"
 import { setMarkdownColors } from "./theme/markdown.mjs"
-import { sanitizeTerminalStyledText, sanitizeTerminalText } from "./theme/terminal-sanitize.mjs"
+import { sanitizeTerminalText } from "./theme/terminal-sanitize.mjs"
 
 const HIST_DIR = userRootDir()
 const HIST_FILE = join(HIST_DIR, "repl_history")
@@ -129,7 +133,6 @@ const MAX_TUI_LOG_LINES = 1200
 const DOUBLE_ESCAPE_MS = 1200
 const MAX_MODEL_PICKER_VISIBLE = 8
 const TUI_FRAME_MS = 16
-const BUSY_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 const ESCAPE_SEQUENCE_TIMEOUT_MS = 35
 const KEYPRESS_ESCAPE_TIMEOUT_MS = 10
 
@@ -181,6 +184,8 @@ async function processInputLine({
    * TUI 会把标记插进输入框；行模式没有可编辑的输入框，就退化成推进待发数组、返回 ""。
    */
   attachImage = null,
+  /** 粘媒体（图像/视频/语音）。TUI 由 attachment-input 注入；缺省退回 attachImage。 */
+  attachMedia = null,
   signal = null,
   /** 插话来源（() => string[]），只有 TUI 传；见 session/loop.mjs 的 steerSource。 */
   steerSource = null,
@@ -226,6 +231,12 @@ async function processInputLine({
     state.model = resolveProviderDefaultModel(ctx.configState.config, name, state.model)
     print(`provider switched: ${name} (model: ${state.model})`, { channel: "notice", topic: "switch" })
     const catalog = await loadProviderModelItems(ctx.configState, name)
+    if (openPanel) {
+      // TUI：可用模型清单由 /model 选择器承载；这里只把「目录有问题」说出来
+      if (catalog.warning) print(`模型目录提示: ${catalog.warning}`, { channel: "notice", topic: "model", tone: "warn" })
+      if (catalog.error) print(`模型目录不可用: ${catalog.error}；仍可使用 /model <model-id> 手动设置`, { channel: "notice", topic: "model", tone: "warn" })
+      return
+    }
     if (catalog.items.length > 1) {
       print(`  可用模型 (${catalog.source}${catalog.stale ? ", stale" : ""}): ` + catalog.items.map(m => m.model).join(", "))
     }
@@ -298,6 +309,7 @@ async function processInputLine({
       pendingImages,
       clearPendingImages,
       attachImage,
+      attachMedia,
       themeSwitcher,
       streamSink,
       showTurnStatus,
@@ -509,7 +521,7 @@ export function isCommandLikeInput(line) {
 }
 
 
-async function startTuiRepl({ ctx, state, providersConfigured, customCommands, recentSessions, historyLines, mcpStatusLines = [], startupUpdatePromise = null }) {
+async function startTuiRepl({ ctx, state, providersConfigured, customCommands, recentSessions, historyLines, mcpStatusLines = [], mcpHealth = null, startupUpdatePromise = null }) {
   let localCustomCommands = customCommands
   let localRecentSessions = recentSessions
   const terminalFeatures = resolveTerminalFeatures(ctx.configState.config.ui?.terminal || {})
@@ -518,7 +530,12 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     durationMs: Number(ctx.configState.config.ui?.terminal?.toast_duration_ms || 2600),
     maxToasts: 3
   })
-  for (const line of mcpStatusLines) transcript.appendLog(sanitizeTerminalStyledText(line))
+  // MCP 连接状态是提示不是对话：后台加载（M33 deferMcp）进行中完全静默，收口时
+  // event-bridge 的 mcp.loaded 弹汇总 toast；已就绪才在这里补一条启动汇总。
+  // 行模式没有 toast，仍按原样打印。
+  const mcpLoadState = ctx.kernel?.extensions?.mcp?.loadState?.()
+  const mcpStartupSummary = mcpLoadState?.loading ? null
+    : summarizeMcpSnapshot(Array.isArray(mcpHealth) ? mcpHealth : [], ctx.kernel?.extensions?.mcp?.listTools?.() || [])
 
   // TUI 状态。形状与浮层互斥不变量在 repl/ui-state.mjs（有独立测试）。
   const ui = createReplUiState({ historyLines, terminalFeatures })
@@ -597,6 +614,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   } = transcriptWriter
 
   notifyUpdateToast({ promise: startupUpdatePromise, showToast })
+  if (mcpStartupSummary) showToast(mcpStartupSummary.text, { topic: "mcp", tone: mcpStartupSummary.tone })
 
   /**
    * 回溯上一轮对话。撤回的那句输入会填回输入框 —— 「退回去改一下再问」
@@ -865,11 +883,18 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   // 附件动作（粘图 / 粘长文本 / 提交前解析）在 repl/attachment-input.mjs。
   // 构造点必须在 showToast 之后 —— 它是上面解构出来的 const，早一步就是 TDZ，
   // 而 TDZ 在这个闭包里的表现是「单测全绿、TUI 起不来」（0.6.23 栽过一次）。
-  const { attachImage, insertPastedText, resolveAttachments } = createAttachmentInput({
+  const { attachImage, attachMedia, insertPastedText, resolveAttachments } = createAttachmentInput({
     store: ui.attachments,
     insertAtCursor,
-    showToast
+    showToast,
+    // 媒体能力面走 M33 resolveModelCapabilities（读缓存不触网）；未知时 image 放行
+    supportsMedia: async (kind) => {
+      const { capabilities } = await kernelIndex.resolveModelCapabilities(ctx.configState, state.providerType, state.model)
+      return mediaSupportFromCapabilities(capabilities, kind)
+    }
   })
+  // 内核长出 readClipboardMedia（视频/语音，M33）就用它；没有就只认图像
+  const readClipboardMedia = kernelIndex.readClipboardMedia || readClipboardImage
 
   /**
    * 提交，然后把排队的消息依次发完。
@@ -1022,6 +1047,15 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     })
   }
 
+  /**
+   * TUI 里这个回调只用来退出选择态（传 null）；行模式的编号数组不会走到这里 ——
+   * 有 openPanel 时命令走的是浮层分支。两处 processInputLine 调用点共用一份。
+   */
+  const syncProviderPickerOverlay = (next) => {
+    if (next) openUserOverlay(ui, "providerPicker", next)
+    else closeUserOverlay(ui, "providerPicker")
+  }
+
   let pendingPlanBuild = null
 
   async function submitCurrentInput() {
@@ -1089,7 +1123,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
             continuationCount: Number(summary.continuationCount || 0) + 1
           }
         })
-        appendLog(paint(`↻ 继续当前 agent 事务（${route.explanation || route.reason}）`, ctx.themeState.theme.semantic.info))
+        appendLog(paint(`↻ 继续当前 agent 事务（${route.explanation || route.reason}）`, ctx.themeState.theme.semantic.info), { kind: "system", tone: "muted" })
       }
     }
 
@@ -1101,7 +1135,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       if (originalPrompt && line.trim()) {
         // 合并原始需求 + 补充需求，从 H0 重新规划
         const mergedPrompt = `${originalPrompt}\n\n[补充需求]\n${line.trim()}`
-        appendLog(paint("已合并补充需求，从头重新规划...", ctx.themeState.theme.semantic.info))
+        appendLog(paint("已合并补充需求，从头重新规划...", ctx.themeState.theme.semantic.info), { kind: "system", tone: "muted" })
         ui.history.push(line)
         if (ui.history.length > HIST_SIZE) ui.history.splice(0, ui.history.length - HIST_SIZE)
         ui.historyIndex = ui.history.length
@@ -1111,7 +1145,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         ui.inputCursor = 0
         ui.selectedSuggestion = 0
         ui.suggestionOffset = 0
-        ui.busy = true
+        markTurnSubmitted(ui)
         ui.paused = false
         const aborter = new AbortController()
         ui.turnAbortController = aborter
@@ -1120,21 +1154,17 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         requestRender()
         try {
           const action = (await processInputLine({
-            ...resolveAttachments(mergedPrompt),
+            ...(await resolveAttachments(mergedPrompt)),
             state, ctx, providersConfigured,
             customCommands: localCustomCommands,
             setCustomCommands: (next) => { localCustomCommands = next },
             providerPicker: ui.providerPicker,
-            setProviderPicker: (next) => {
-              // TUI 里这个回调只用来退出选择态（传 null）；行模式的编号数组
-              // 不会走到这里 —— 有 openPanel 时命令走的是浮层分支。
-              if (next) openUserOverlay(ui, "providerPicker", next)
-              else closeUserOverlay(ui, "providerPicker")
-            },
+            setProviderPicker: syncProviderPickerOverlay,
             print: printTui,
             streamSink: appendStreamChunk,
             showTurnStatus: false,
             attachImage,
+            attachMedia,
             signal: aborter.signal,
             steerSource: outbox.takeSteer,
             themeSwitcher,
@@ -1152,18 +1182,17 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           }
           if (action.exit) ui.quitting = true
         } catch (error) {
-          if (error.name !== "AbortError") appendLog(`error: ${sanitizeTerminalText(error.message)}`)
+          if (error.name !== "AbortError") appendLog(`error: ${sanitizeTerminalText(error.message)}`, { kind: "system", tone: "error" })
         } finally {
           finalizeThinking()
           finalizeTextStream()
           if (aborter.signal.aborted && state.mode === "longagent") {
             ui.longagentAborted = true
             ui.lastLongAgentPrompt = mergedPrompt
-            appendLog(paint("⏸ LongAgent 已中止。输入补充需求后按 Enter 可从头重新规划，或切换模式继续。", ctx.themeState.theme.semantic.warn))
+            appendLog(paint("⏸ LongAgent 已中止。输入补充需求后按 Enter 可从头重新规划，或切换模式继续。", ctx.themeState.theme.semantic.warn), { kind: "system", tone: "warn" })
           }
-          ui.busy = false
-          ui.turnAbortController = null
-          ui.currentActivity = null
+          // 回合状态的唯一收口：busy/相位/活动态/中断控制器一起落定
+          resetTurnRuntime(ui)
           stopBusySpinner()
           requestRender()
         }
@@ -1180,9 +1209,10 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       submittedLine = buildAgentContinuationPrompt(activeAgentContinuation, line)
       ui.agentContinuation = null
       ui.paused = false
-      appendLog(paint("↻ 继续当前 agent 事务…", ctx.themeState.theme.semantic.info))
+      // 续跑提示留在滚动区作断点标记，但以弱化的 system 样式呈现
+      appendLog(paint("↻ 继续当前 agent 事务…", ctx.themeState.theme.semantic.info), { kind: "system", tone: "muted" })
       if (activeAgentContinuation.pendingNextStep) {
-        appendLog(paint(`   ${activeAgentContinuation.pendingNextStep}`, ctx.themeState.theme.base.muted, { dim: true }))
+        appendLog(paint(`   ${activeAgentContinuation.pendingNextStep}`, ctx.themeState.theme.base.muted, { dim: true }), { kind: "system", tone: "muted" })
       }
       await emitAgentContinuationResumed({
         sessionId: state.sessionId,
@@ -1201,7 +1231,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     ui.inputCursor = 0
     ui.selectedSuggestion = 0
     ui.suggestionOffset = 0
-    ui.busy = true
+    // 相位机进 starting，上一回合的活动态清零
+    markTurnSubmitted(ui)
     ui.paused = false
     const aborter = new AbortController()
     ui.turnAbortController = aborter
@@ -1228,11 +1259,10 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         showToast(stripAnsi(routeFeedback.changedMessage), { topic: "route", tone: "info" })
         state.mode = route.mode
       } else if (routeFeedback.forcedMessage) {
-        // 用户强制 longagent 但任务看起来是简单任务 → 需要确认
+        // 待回答的路由确认：留在滚动区（用户对着它答 y/n），但用弱化的 system 样式
         ui.pendingModeConfirm = { suggestedMode: route.suggestion, originalMode: state.mode, reason: route.reason }
-        appendLog(paint(routeFeedback.forcedMessage, ctx.themeState.theme.semantic.warn))
-        ui.busy = false
-        ui.turnAbortController = null
+        appendLog(paint(routeFeedback.forcedMessage, ctx.themeState.theme.semantic.warn), { kind: "system", tone: "warn" })
+        resetTurnRuntime(ui)
         stopBusySpinner()
         requestRender()
         return
@@ -1279,7 +1309,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
     try {
       const action = (await processInputLine({
-        ...resolveAttachments(submittedLine),
+        ...(await resolveAttachments(submittedLine)),
         state,
         ctx,
         providersConfigured,
@@ -1288,16 +1318,12 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           localCustomCommands = next
         },
         providerPicker: ui.providerPicker,
-        setProviderPicker: (next) => {
-              // TUI 里这个回调只用来退出选择态（传 null）；行模式的编号数组
-              // 不会走到这里 —— 有 openPanel 时命令走的是浮层分支。
-              if (next) openUserOverlay(ui, "providerPicker", next)
-              else closeUserOverlay(ui, "providerPicker")
-            },
+        setProviderPicker: syncProviderPickerOverlay,
         print: printTui,
         streamSink: appendStreamChunk,
         showTurnStatus: false,
         attachImage,
+        attachMedia,
         signal: aborter.signal,
         steerSource: outbox.takeSteer,
         themeSwitcher,
@@ -1350,24 +1376,23 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         ui.quitting = true
       }
     } catch (error) {
-      if (error.name !== "AbortError") appendLog(`error: ${sanitizeTerminalText(error.message)}`)
+      if (error.name !== "AbortError") appendLog(`error: ${sanitizeTerminalText(error.message)}`, { kind: "system", tone: "error" })
     } finally {
       finalizeThinking()
       finalizeTextStream()
       // Task 3: 检测 longagent 被中止，提示用户可补充需求
       if (aborter.signal.aborted && state.mode === "longagent" && ui.lastLongAgentPrompt) {
         ui.longagentAborted = true
-        appendLog(paint("⏸ LongAgent 已中止。输入补充需求后按 Enter 可从头重新规划，或切换模式继续。", ctx.themeState.theme.semantic.warn))
+        appendLog(paint("⏸ LongAgent 已中止。输入补充需求后按 Enter 可从头重新规划，或切换模式继续。", ctx.themeState.theme.semantic.warn), { kind: "system", tone: "warn" })
       } else if (aborter.signal.aborted && state.mode === "agent" && ui.agentContinuation) {
         await emitAgentContinuationInterrupted({
           sessionId: state.sessionId,
           summary: ui.agentContinuation
         })
-        appendLog(paint("⏸ Agent 已中止。直接输入补充内容即可继续当前本地事务，或输入命令切换模式。", ctx.themeState.theme.semantic.warn))
+        appendLog(paint("⏸ Agent 已中止。直接输入补充内容即可继续当前本地事务，或输入命令切换模式。", ctx.themeState.theme.semantic.warn), { kind: "system", tone: "warn" })
       }
-      ui.busy = false
-      ui.turnAbortController = null
-      ui.currentActivity = null
+      // 回合状态的唯一收口：busy/相位/活动态/中断控制器一起落定（ui/turn-runtime.mjs）
+      resetTurnRuntime(ui)
       stopBusySpinner()
       requestRender()
     }
@@ -1536,6 +1561,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         transcript,
         insertAtCursor,
         attachImage,
+        attachMedia,
         insertPastedText,
         // 忙碌时 Enter 走排队而不是提交；提交则换成「发完再把队列排干」的包装。
         // 空输入框上再按一次 Enter = 把刚排的那条升级为插话（steer）。
@@ -1561,6 +1587,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         handleRewind,
         readClipboardImage,
         readClipboardText,
+        readClipboardMedia,
         doubleEscapeMs: DOUBLE_ESCAPE_MS
       })
     ]
@@ -1849,7 +1876,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
           ui.paused = true
           appendLog(state.mode === "agent"
             ? "[paused] agent turn interrupted — enter a follow-up message to continue the same task"
-            : "[paused] turn interrupted — enter a new message or command to continue")
+            : "[paused] turn interrupted — enter a new message or command to continue",
+            { kind: "system", tone: "warn" })
           requestRender()
           return
         }
@@ -2017,6 +2045,7 @@ export async function startRepl({ trust = false, remoteService = null } = {}) {
       recentSessions,
       historyLines,
       mcpStatusLines,
+      mcpHealth,
       startupUpdatePromise,
       startTuiRepl,
       startLineRepl,

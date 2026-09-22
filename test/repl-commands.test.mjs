@@ -289,7 +289,8 @@ test("/ultra <goal> switches to ultra and hands the goal to the model", async ()
 test("/ultra 4stage reports the removal instead of running it", async () => {
   const { action, writes } = await run("ultra", "4stage")
   assert.ok(!action.rewrite, "不该把 4stage 当目标发给模型")
-  assert.match(writes.transcript.map((w) => w.text).join("\n"), /已移除/)
+  assert.match(writes.notice.map((w) => w.text).join("\n"), /已移除/)
+  assert.equal(writes.transcript.length, 0, "移除提示是瞬时通知，不进对话记录")
 })
 
 test("bare /provider asks for a picker when a frame exists, prints a list otherwise", async () => {
@@ -314,7 +315,8 @@ test("/provider add cancels cleanly when the form cannot interact; set only poin
   assert.match(added.writes.notice.map((w) => w.text).join("\n"), /取消|未写入/)
 
   const set = await run("provider", "set")
-  assert.match(set.writes.transcript.map((w) => w.text).join("\n"), /已更名/)
+  assert.match(set.writes.notice.map((w) => w.text).join("\n"), /已更名/)
+  assert.equal(set.writes.transcript.length, 0, "改名提示是瞬时通知，不进对话记录")
 })
 
 test("/provider edit <name> refuses an unknown provider", async () => {

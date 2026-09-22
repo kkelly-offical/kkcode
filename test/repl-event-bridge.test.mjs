@@ -536,3 +536,101 @@ test("the bridge no longer maintains a state nobody reads", async () => {
     assert.deepEqual(calls, [], `${name} 里又出现了没人读的并行状态:\n${calls.join("\n")}`)
   }
 })
+
+/**
+ * 回合相位机（M32）：「一轮对话结束之后又进入思考中」的回归钉。
+ * TURN_FINISH 之后相位必须是 finishing（本地）或 idle（远程），
+ * 呈现层据此不再显示 Starting/Thinking。
+ */
+test("a finished local turn lands in the finishing phase, never back in starting", () => {
+  const { emit, ui } = harness()
+  emit(EVENT_TYPES.TOOL_START, { tool: "read" })
+  emit(EVENT_TYPES.TURN_FINISH, {})
+  assert.equal(ui.turnPhase, "finishing")
+  assert.equal(ui.currentActivity, null)
+  assert.equal(ui.activeTurnId, null)
+})
+
+test("an errored turn settles to finishing with no retry residue", () => {
+  const { emit, ui } = harness()
+  emit(EVENT_TYPES.PROVIDER_RETRY, { retryAttempt: 1, maxRetries: 3, classification: "timeout" })
+  emit(EVENT_TYPES.TURN_ERROR, { error: "upstream broke" })
+  assert.equal(ui.turnPhase, "finishing")
+  assert.equal(ui.currentActivity, null, "重试指示不得残留")
+})
+
+test("a remote turn settles straight to idle", () => {
+  // 远程回合的真实事件序：设备服务先发 remote.turn.started（建立 busy/remoteTurn），
+  // 内核随后照常发 TURN_START … TURN_FINISH（携带真实 turnId 过归属判定）。
+  const { emit, ui } = harness({ autoStartTurn: null })
+  emit("remote.turn.started", { prompt: "远程的一轮" }, { sessionId: "ses_1", turnId: null })
+  assert.equal(ui.remoteTurn, true)
+  assert.equal(ui.turnPhase, "starting")
+  emit(EVENT_TYPES.TURN_START, {}, { turnId: "remote_turn_1" })
+  assert.equal(ui.turnPhase, "active")
+  emit(EVENT_TYPES.TOOL_START, { tool: "bash" }, { turnId: "remote_turn_1" })
+  emit(EVENT_TYPES.TURN_FINISH, {}, { turnId: "remote_turn_1" })
+  assert.equal(ui.turnPhase, "idle", "远程回合没有本地呈现收尾，直接落定 idle")
+  assert.equal(ui.busy, false)
+  assert.equal(ui.remoteTurn, false)
+  assert.equal(ui.currentActivity, null)
+})
+
+test("an approval-denied tool failure still settles the runtime deterministically", () => {
+  // 审批拒绝 → tool.error(blocked) → turn.finish。任何结束路径都不能留活动态。
+  const { emit, ui } = harness()
+  emit(EVENT_TYPES.TOOL_START, { tool: "write", args: { path: "a.mjs" } })
+  emit(EVENT_TYPES.TOOL_ERROR, { tool: "write", status: "blocked" })
+  emit(EVENT_TYPES.TURN_FINISH, {})
+  assert.equal(ui.currentActivity, null)
+  assert.equal(ui.turnPhase, "finishing")
+  assert.equal(ui.currentStep, 0)
+})
+
+/**
+ * MCP 后台加载（M32）：每台 server 的健康事件弹一条瞬时 toast，
+ * 按 server 去重（topic 相同会替换而不是堆叠），绝不进对话记录。
+ */
+test("the MCP load summary surfaces as one toast and never touches the transcript", () => {
+  // M33 的 mcp.loaded 是每轮加载的唯一收口事件：一条汇总，自动隐去
+  const { emit, calls } = harness({ autoStartTurn: null })
+  emit(EVENT_TYPES.MCP_LOADED, {
+    background: true, ok: true, configured: 2, connected: 2, failed: [], toolCount: 5
+  }, { sessionId: null, turnId: null })
+  const toasts = calls.filter((c) => c.startsWith("toast[mcp]"))
+  assert.equal(toasts.length, 1)
+  assert.ok(toasts[0].includes("2/2") && toasts[0].includes("5 tools"), `实际: ${toasts.join(",")}`)
+  assert.equal(calls.filter((c) => c.startsWith("appendLog")).length, 0, "MCP 状态不得进对话记录")
+})
+
+test("the MCP load summary names failures and points at /mcp", () => {
+  const { emit, calls } = harness({ autoStartTurn: null })
+  emit(EVENT_TYPES.MCP_LOADED, {
+    background: true, ok: true, configured: 3, connected: 1, toolCount: 2,
+    failed: [{ name: "web", reason: "spawn ENOENT" }, { name: "db", reason: "timeout" }]
+  }, { sessionId: null, turnId: null })
+  const toast = calls.find((c) => c.startsWith("toast[mcp]"))
+  assert.ok(toast.includes("1/3") && toast.includes("web") && toast.includes("/mcp"), `实际: ${toast}`)
+})
+
+test("nothing configured means no MCP toast at all", () => {
+  const { emit, calls } = harness({ autoStartTurn: null })
+  emit(EVENT_TYPES.MCP_LOADED, { background: true, ok: true, configured: 0, connected: 0, failed: [] }, { sessionId: null, turnId: null })
+  assert.equal(calls.filter((c) => c.startsWith("toast[mcp")).length, 0)
+})
+
+test("per-server MCP health toasts only failures — successes ride the summary", () => {
+  const { emit, calls } = harness({ autoStartTurn: null })
+  emit(EVENT_TYPES.MCP_HEALTH, { server: "fs", ok: true, transport: "stdio" }, { sessionId: null, turnId: null })
+  emit(EVENT_TYPES.MCP_HEALTH, { server: "web", ok: false, reason: "spawn ENOENT" }, { sessionId: null, turnId: null })
+  const toasts = calls.filter((c) => c.startsWith("toast[mcp:"))
+  assert.equal(toasts.length, 1, `逐台只报失败，实际: ${toasts.join(",")}`)
+  assert.ok(toasts[0].includes("MCP ✗ web") && toasts[0].includes("spawn ENOENT"))
+  assert.equal(calls.filter((c) => c.startsWith("appendLog")).length, 0, "MCP 状态不得进对话记录")
+})
+
+test("an MCP health event without a server name is ignored", () => {
+  const { emit, calls } = harness({ autoStartTurn: null })
+  emit(EVENT_TYPES.MCP_HEALTH, { ok: false }, { sessionId: null, turnId: null })
+  assert.equal(calls.filter((c) => c.startsWith("toast[mcp:")).length, 0)
+})

@@ -26,17 +26,21 @@ const withCR = (text) => text.replace(/\n/g, "\r")
 
 // --- formatMarker ---
 
-test("formatMarker renders both kinds", () => {
+test("formatMarker renders every kind with human-readable scale", () => {
   assert.equal(formatMarker({ kind: IMAGE_KIND, id: 1 }), "[Image #1]")
-  assert.equal(formatMarker({ kind: TEXT_KIND, id: 2, chars: 147 }), "[Pasted text #2 +147 chars]")
+  assert.equal(formatMarker({ kind: TEXT_KIND, id: 2, chars: 147 }), "[Pasted text #2 · 147 chars]")
+  assert.equal(formatMarker({ kind: IMAGE_KIND, id: 3, bytes: 235520 }), "[Image #3 · 230 kB]")
+  assert.equal(formatMarker({ kind: "video", id: 4, bytes: 12976128 }), "[Video #4 · 12 MB]")
+  assert.equal(formatMarker({ kind: "audio", id: 5, bytes: 512 }), "[Audio #5 · 512 B]")
+  assert.equal(formatMarker({ kind: TEXT_KIND, id: 6, chars: 2800 }), "[Pasted text #6 · 2.8k chars]")
 })
 
 test("a one-line paste says line, not lines", () => {
   // 单复数是用户唯一会盯着看的细节；写错了整个标记看起来就像是拼出来的
   const marker = formatMarker({ kind: TEXT_KIND, id: 3, chars: 1 })
-  assert.equal(marker, "[Pasted text #3 +1 char]", `单数形态错了，实际是 ${marker}`)
+  assert.equal(marker, "[Pasted text #3 · 1 char]", `单数形态错了，实际是 ${marker}`)
   const plural = formatMarker({ kind: TEXT_KIND, id: 4, chars: 2 })
-  assert.equal(plural, "[Pasted text #4 +2 chars]", `复数形态错了，实际是 ${plural}`)
+  assert.equal(plural, "[Pasted text #4 · 2 chars]", `复数形态错了，实际是 ${plural}`)
 })
 
 test("every marker formatMarker produces is one MARKER_PATTERN can find", () => {
@@ -45,7 +49,10 @@ test("every marker formatMarker produces is one MARKER_PATTERN can find", () => 
     { kind: IMAGE_KIND, id: 1 },
     { kind: IMAGE_KIND, id: 1234 },
     { kind: TEXT_KIND, id: 2, chars: 1 },
-    { kind: TEXT_KIND, id: 3, chars: 900 }
+    { kind: TEXT_KIND, id: 3, chars: 900 },
+    { kind: TEXT_KIND, id: 5, chars: 25000 },
+    { kind: "video", id: 6, bytes: 734003 },
+    { kind: "audio", id: 7, bytes: 999 }
   ]) {
     const raw = formatMarker(entry)
     const found = parseMarkers(raw)
@@ -56,14 +63,14 @@ test("every marker formatMarker produces is one MARKER_PATTERN can find", () => 
 })
 
 test("formatMarker refuses a kind it does not know", () => {
-  assert.throws(() => formatMarker({ kind: "video", id: 1 }), TypeError)
+  assert.throws(() => formatMarker({ kind: "hologram", id: 1 }), TypeError)
 })
 
 // --- parseMarkers ---
 
 test("marker spans point at exactly the marker text", () => {
   // start/end 会被退格与光标移动直接用来切字符串，差一个字符就是把 `]` 留在原地
-  const text = "看这张 [Image #1] 和这段 [Pasted text #2 +147 chars] 谢谢"
+  const text = "看这张 [Image #1] 和这段 [Pasted text #2 · 147 chars] 谢谢"
   const markers = parseMarkers(text)
   assert.equal(markers.length, 2, `应当解析出 2 个标记，实际 ${markers.length} 个`)
   for (const marker of markers) {
@@ -155,8 +162,8 @@ test("ids are monotonic and never reused", () => {
   const b = store.add({ kind: TEXT_KIND, text: "x\ny" })
   assert.equal(a.id, 1)
   assert.equal(b.id, 2)
-  assert.equal(a.marker, "[Image #1]")
-  assert.equal(b.marker, "[Pasted text #2 +3 chars]")
+  assert.equal(a.marker, "[Image #1 · 3 B]")
+  assert.equal(b.marker, "[Pasted text #2 · 3 chars]")
 
   // 用户把第一个标记删掉了 —— 也就是提交的文本里根本没提它
   const resolved = store.resolve(`只留 ${b.marker}`)
@@ -194,7 +201,7 @@ test("resolve keeps an image marker in place and attaches the image", () => {
   const store = createAttachmentStore()
   const { marker } = store.add(IMG)
   const { text, images, unresolved } = store.resolve(`这是 ${marker} 请看`)
-  assert.equal(text, "这是 [Image #1] 请看", `文本被改了：${JSON.stringify(text)}`)
+  assert.equal(text, `这是 ${marker} 请看`, `文本被改了：${JSON.stringify(text)}`)
   assert.deepEqual(images, [{ type: "image", data: "AAAA", mediaType: "image/png" }])
   assert.deepEqual(unresolved, [])
 })
@@ -225,7 +232,7 @@ test("the same image referenced twice is attached twice", () => {
   const { images, text } = store.resolve(`${marker} 对比 ${marker}`)
   assert.equal(images.length, 2, `应当附两次，实际 ${images.length} 次`)
   assert.equal(images[0].data, images[1].data)
-  assert.equal(text, "[Image #1] 对比 [Image #1]")
+  assert.equal(text, `${marker} 对比 ${marker}`)
 })
 
 test("a text attachment expands back into the original paste, verbatim", () => {
@@ -244,7 +251,7 @@ test("interleaved text and markers keep their relative order", () => {
   const img = store.add(IMG)
   const snippet = store.add({ kind: TEXT_KIND, text: "const a = 1" })
   const { text, images } = store.resolve(`A${img.marker}B${snippet.marker}C`)
-  assert.equal(text, "A[Image #1]Bconst a = 1C", `实际 ${JSON.stringify(text)}`)
+  assert.equal(text, `A${img.marker}Bconst a = 1C`, `实际 ${JSON.stringify(text)}`)
   assert.equal(images.length, 1)
 })
 
@@ -361,9 +368,9 @@ test("line counts are identical across LF, CRLF and CR", () => {
 test("the marker's char count follows the same normalization", () => {
   const store = createAttachmentStore()
   const crlf = store.add({ kind: TEXT_KIND, text: withCRLF("a\nb\nc\nd") })
-  assert.equal(crlf.marker, "[Pasted text #1 +7 chars]", `实际 ${crlf.marker}`)
+  assert.equal(crlf.marker, "[Pasted text #1 · 7 chars]", `实际 ${crlf.marker}`)
   const single = store.add({ kind: TEXT_KIND, text: "只有一行" })
-  assert.equal(single.marker, "[Pasted text #2 +4 chars]", `实际 ${single.marker}`)
+  assert.equal(single.marker, "[Pasted text #2 · 4 chars]", `实际 ${single.marker}`)
 })
 
 test("stored text is normalized to LF, because the input box is LF", () => {
@@ -391,7 +398,9 @@ test("add rejects malformed entries with a message that says what is missing", (
   const cases = [
     [undefined, /kind/],
     [{}, /kind/],
-    [{ kind: "video", data: "x" }, /kind/],
+    [{ kind: "hologram", data: "x" }, /kind/],
+    [{ kind: "video" }, /data/],
+    [{ kind: "audio", data: "" }, /data/],
     [{ kind: IMAGE_KIND }, /data/],
     [{ kind: IMAGE_KIND, data: "" }, /data/],
     [{ kind: IMAGE_KIND, data: 123 }, /data/],
@@ -414,4 +423,48 @@ test("a rejected add does not burn an id", () => {
   const store = createAttachmentStore()
   assert.throws(() => store.add({ kind: IMAGE_KIND }))
   assert.equal(store.add(IMG).id, 1, "第一个成功的条目仍应当是 #1")
+})
+
+// --- 1.0.1：媒体附件与人读格式 ---
+
+test("video and audio attachments resolve to media blocks in place", () => {
+  const store = createAttachmentStore()
+  const video = store.add({ kind: "video", data: "VVJFTw==", mediaType: "video/mp4" })
+  const audio = store.add({ kind: "audio", data: "QVVB", mediaType: "audio/mpeg" })
+  const { text, images, unresolved } = store.resolve(`对比 ${video.marker} 和 ${audio.marker}`)
+  assert.deepEqual(unresolved, [])
+  assert.deepEqual(images.map((b) => b.type), ["video", "audio"])
+  assert.equal(images[0].mediaType, "video/mp4")
+  assert.equal(images[1].mediaType, "audio/mpeg")
+  assert.ok(text.includes(video.marker) && text.includes(audio.marker),
+    "媒体标记原样留在文本里，模型知道引用位置")
+})
+
+test("media byte size is estimated from base64 when the caller omits it", () => {
+  const store = createAttachmentStore()
+  // "AAAA" = 3 字节（4 个 base64 字符，无 padding）
+  const { marker } = store.add(IMG)
+  assert.match(marker, /· 3 B\]$/, `实际 ${marker}`)
+})
+
+test("markers from the 0.x era still parse, delete atomically, and resolve", () => {
+  // 输入历史里可能躺着旧格式的标记（`[Image #1]`、`[Pasted text #2 +1470 chars]`），
+  // 从历史里捞回来编辑时它们必须还是活的标记
+  const legacy = ["[Image #1]", "[Pasted text #2 +1470 chars]", "[Pasted text #3 +1 char]"]
+  for (const raw of legacy) {
+    const markers = parseMarkers(raw)
+    assert.equal(markers.length, 1, `旧标记 ${raw} 必须还能解析`)
+    assert.equal(markers[0].raw, raw)
+  }
+  const store = createAttachmentStore()
+  store.add(IMG)
+  const { images } = store.resolve("旧格式 [Image #1] 引用")
+  assert.equal(images.length, 1, "旧格式标记必须还能引用到附件")
+})
+
+test("atomic delete spans the new sized markers too", () => {
+  const text = "a[Pasted text #2 · 2.8k chars]b"
+  const hit = markerSpanAt(text, text.indexOf("]") + 1)
+  assert.ok(hit, "新格式标记的右端必须命中整体删除")
+  assert.equal(hit.raw, "[Pasted text #2 · 2.8k chars]")
 })

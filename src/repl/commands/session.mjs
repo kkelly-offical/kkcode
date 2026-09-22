@@ -130,7 +130,8 @@ export const sessionCommands = [
     argMode: "none",
     run: async ({ print, state, ctx }) => {
       try {
-        print("compacting conversation...")
+        // 进度是瞬时提示：压缩完成后这条就该消失，不该留在对话记录里
+        print("compacting conversation...", { channel: "notice", topic: "compact" })
         const result = await ctx.kernel.sessions.compactSession({
           sessionId: state.sessionId,
           model: state.model,
@@ -250,7 +251,9 @@ export const sessionCommands = [
       for (const m of msgs) {
         const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content)
         const preview = text.length > 84 ? `${text.slice(0, 84)}...` : text
-        print(`  [${m.role}] ${preview}`)
+        // 续跑会话的尾部预览：是「那份会话里有什么」的上下文，留在滚动区，
+        // 但以弱化的 system 样式呈现 —— 它不是本次会话的对话内容
+        print(`  [${m.role}] ${preview}`, { kind: "system", tone: "muted" })
       }
       return { exit: false }
     }
@@ -264,7 +267,8 @@ export const sessionCommands = [
       const language = ctx.configState.config.language || "en"
       const cwd = runtimeCwd()
       const confirmation = await ctx.kernel.sessions.confirmRollback({ cwd, sessionId: state.sessionId, language })
-      print(confirmation.message)
+      // /undo 的回执折成一条可展开的记录：内容可回看，但不以多行提示刷屏
+      print(confirmation.message, { channel: "panel", title: "undo" })
       if (!confirmation.confirmed) return { exit: false }
       const result = await ctx.kernel.sessions.executeRollback({
         cwd,
@@ -272,7 +276,7 @@ export const sessionCommands = [
         sessionId: state.sessionId,
         language
       })
-      print(result.message)
+      print(result.message, { channel: "panel", title: "undo" })
       return { exit: false }
     }
   },

@@ -42,7 +42,9 @@ export const LIGHT_THEME = {
     header: "#111827",
     footer: "#4b5563",
     diff_add: "#15803d",
-    diff_del: "#b91c1c"
+    diff_del: "#b91c1c",
+    // 输入框附件标记：白底上要深一档才读得出（sky-700，对比度 ≈ 5.6:1）
+    inputMarker: "#0369a1"
   },
   roles: {
     user: "#111827",       // 用户输入回显

@@ -31,6 +31,19 @@ export function modelThinkingSupport({ config, model, supportedParameters = null
   return supportsThinking({ modelId: model, supportedParameters })
 }
 
+/**
+ * 能力标记（M33 探测面 `resolveModelCapabilities` 的返回值）→ 附件门的决断。
+ *
+ * 三级语义：true 支持 / false 不支持 / null 未知。未知时 image 放行
+ * （既有行为，内核还会按字节嗅探兜底），video/audio 按未知处理 ——
+ * 调用方据此「挂标记 + 警告」，提交前再拦一次，而不是静默丢弃。
+ */
+export function mediaSupportFromCapabilities(capabilities, kind) {
+  const value = capabilities?.[kind]
+  if (typeof value === "boolean") return value
+  return kind === "image" ? true : null
+}
+
 export async function loadProviderModelItems(configState, providerName, {
   refresh = false,
   discover = discoverModelsForProvider

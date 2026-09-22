@@ -83,7 +83,7 @@ export const modeCommands = [
       const sub = args.toLowerCase()
       if (sub === "4stage" || sub === "hybrid") {
         // 0.4.0 只剩一套 Ultra 编排，impl 子命令不再有意义
-        print(`Ultra 现在只有一套编排，/${sub} 子命令已移除`)
+        print(`Ultra 现在只有一套编排，/${sub} 子命令已移除`, { channel: "notice", topic: "mode", tone: "warn" })
         return { exit: false }
       }
       return { rewrite: args }
@@ -103,7 +103,7 @@ export const modeCommands = [
       switchModeInPlace(state, ctx, "ultra")
       const sub = args.toLowerCase()
       if (sub === "4stage" || sub === "hybrid") {
-        print(`Ultra 现在只有一套编排，/${sub} 子命令已移除`)
+        print(`Ultra 现在只有一套编排，/${sub} 子命令已移除`, { channel: "notice", topic: "mode", tone: "warn" })
         return { exit: false }
       }
       return { rewrite: args }

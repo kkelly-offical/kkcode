@@ -178,12 +178,12 @@ export async function presentPromptTurn({
       }
     }
     if (fileChanges.length) {
-      print(paint("changed files:", "cyan", { bold: true }))
-      for (const line of renderFileChangeLines(fileChanges)) print(line)
+      print(paint("changed files:", ctx.themeState.theme.semantic.info, { bold: true }))
+      for (const line of renderFileChangeLines(fileChanges, 20, ctx.themeState.theme)) print(line)
     }
     if (diagnostics.length) {
-      print(paint("diagnostics:", "yellow", { bold: true }))
-      for (const line of renderDiagnosticsLines(diagnostics, 6)) print(line)
+      print(paint("diagnostics:", ctx.themeState.theme.semantic.warn, { bold: true }))
+      for (const line of renderDiagnosticsLines(diagnostics, 6, ctx.themeState.theme)) print(line)
     } else if (!result.emittedText && result.reply) {
       const mdEnabled = ctx.configState.config.ui?.markdown_render !== false
       print(mdEnabled ? renderMarkdown(result.reply) : result.reply)
@@ -194,12 +194,12 @@ export async function presentPromptTurn({
       print(mdEnabled ? renderMarkdown(result.reply) : result.reply)
     }
     if (fileChanges.length) {
-      print(paint("changed files:", "cyan", { bold: true }))
-      for (const line of renderFileChangeLines(fileChanges, 10)) print(line)
+      print(paint("changed files:", ctx.themeState.theme.semantic.info, { bold: true }))
+      for (const line of renderFileChangeLines(fileChanges, 10, ctx.themeState.theme)) print(line)
     }
     if (diagnostics.length) {
-      print(paint("diagnostics:", "yellow", { bold: true }))
-      for (const line of renderDiagnosticsLines(diagnostics, 6)) print(line)
+      print(paint("diagnostics:", ctx.themeState.theme.semantic.warn, { bold: true }))
+      for (const line of renderDiagnosticsLines(diagnostics, 6, ctx.themeState.theme)) print(line)
     }
   }
 
