@@ -66,8 +66,18 @@ export {
   discoverModelsForProvider,
   resolveProviderConnection,
   applyDiscoveredContextLimits,
-  applyDiscoveredCapabilities
+  applyDiscoveredCapabilities,
+  readCachedModelCatalog,
+  resolveModelCapabilities
 } from "./provider/model-catalog.mjs"
+export {
+  MODEL_CAPABILITY_KEYS,
+  normalizeCapabilities,
+  parseCatalogEntryCapabilities,
+  parseCatalogEntryPricing,
+  inferCapabilitiesFromName,
+  enforceModelInputCapabilities
+} from "./provider/model-capabilities.mjs"
 export { escapeTerminalText, validateModelId } from "./provider/model-id.mjs"
 export { resolveRoleModel } from "./provider/model-roles.mjs"
 export { requestFast, isFastModelConfigured, fastModelIssues } from "./provider/fast-model.mjs"

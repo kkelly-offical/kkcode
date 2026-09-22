@@ -11,6 +11,14 @@ import {
 } from "./security.mjs"
 import { validateModelId } from "./model-id.mjs"
 import { trimTrailingSlashes } from "./url-path.mjs"
+import { supportsThinking } from "./thinking-effort.mjs"
+import {
+  MODEL_CAPABILITY_KEYS,
+  inferCapabilitiesFromName,
+  normalizeCapabilities,
+  parseCatalogEntryCapabilities,
+  parseCatalogEntryPricing
+} from "./model-capabilities.mjs"
 
 export const DEFAULT_MODEL_CACHE_TTL_MS = 15 * 60 * 1000
 const MAX_PAGES = 100
@@ -283,6 +291,10 @@ function normalizeModels(json) {
     const contextLength = readContextLength(item)
     const maxOutput = readMaxOutput(item)
     const supported = Array.isArray(item.supported_parameters) ? item.supported_parameters : null
+    // 能力与定价随条目一起进磁盘缓存与 models.updated —— 解析只认有证据的
+    // 字段，拿不到就是 undefined（不编），归一化形态在缓存回放时原样穿透。
+    const capabilities = parseCatalogEntryCapabilities(item)
+    const pricing = parseCatalogEntryPricing(item)
     return {
       id,
       ...(maxOutput ? { maxOutputTokens: maxOutput } : {}),
@@ -290,7 +302,9 @@ function normalizeModels(json) {
       ...(item.display_name || item.displayName ? { displayName: item.display_name || item.displayName } : {}),
       ...(item.owned_by || item.ownedBy ? { ownedBy: item.owned_by || item.ownedBy } : {}),
       ...(item.created_at || item.created ? { created: item.created_at || item.created } : {}),
-      ...(contextLength ? { contextLength } : {})
+      ...(contextLength ? { contextLength } : {}),
+      ...(capabilities ? { capabilities } : {}),
+      ...(pricing ? { pricing } : {})
     }
   }).filter(Boolean)
 }
@@ -643,4 +657,90 @@ export async function discoverModelsForProvider(configState, {
 
 export function clearModelCatalogMemoryCache() {
   cacheMemory.clear()
+}
+
+/**
+ * 只读发现缓存（内存 → 磁盘），绝不触网。
+ *
+ * 请求路径上的能力解析用它：每条消息都要过这一关，绝不能为「顺便看看有
+ * 没有新能力」去发请求。缓存没有就是 null —— 调用方按「未知」放行。
+ * 配置残缺（provider 不存在、URL 非法）也折成 null：请求路径会在后面的
+ * 环节用更具体的错误失败，能力解析不该抢先。
+ */
+export async function readCachedModelCatalog(configState, providerName = null) {
+  try {
+    const connection = resolveProviderConnection(configState, providerName)
+    const cached = await readDiskCache(modelCacheKey(connection))
+    if (!cached) return null
+    return { provider: connection.name, models: cached.models, fetchedAt: cached.fetchedAt }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 解析一个模型的有效能力标记：配置 → 发现缓存 → 名字族启发式，逐键取第一个
+ * 确知值。reasoning 额外认 `provider.model_thinking`（/provider add 的既有
+ * 落点，语义与 capabilities.reasoning 相同）。
+ *
+ * 返回 `{ capabilities, sources }`：capabilities 只含确知（布尔）键，
+ * sources 逐键标记来源（"config" | "discovered" | "heuristic"）—— 「探测不
+ * 到回退手动/默认值并明确标记」的「标记」就落在 sources 上，UI 可以据此
+ * 区分「API 说的」与「我们猜的」。
+ *
+ * 永不抛错、永不触网：这是每条模型请求都要走的热路径，解析失败必须等价于
+ * 「未知」而不是把请求弄挂。
+ */
+export async function resolveModelCapabilities(configState, providerName, modelId) {
+  const capabilities = {}
+  const sources = {}
+  try {
+    const id = String(modelId || "").trim()
+    if (!id) return { capabilities, sources }
+    const config = configRoot(configState)
+
+    const configured = normalizeCapabilities(config?.provider?.model_capabilities?.[id])
+    for (const key of MODEL_CAPABILITY_KEYS) {
+      if (configured[key] !== undefined) {
+        capabilities[key] = configured[key]
+        sources[key] = "config"
+      }
+    }
+    const configuredThinking = config?.provider?.model_thinking?.[id]
+    if (capabilities.reasoning === undefined && typeof configuredThinking === "boolean") {
+      capabilities.reasoning = configuredThinking
+      sources.reasoning = "config"
+    }
+
+    const missing = MODEL_CAPABILITY_KEYS.filter((key) => capabilities[key] === undefined)
+    if (missing.length) {
+      const cached = await readCachedModelCatalog(configState, providerName)
+      const entry = cached?.models?.find((model) => model?.id === id)
+      const discovered = normalizeCapabilities(entry?.capabilities)
+      for (const key of missing) {
+        if (discovered[key] !== undefined) {
+          capabilities[key] = discovered[key]
+          sources[key] = "discovered"
+        }
+      }
+    }
+
+    if (capabilities.image === undefined) {
+      const heuristic = inferCapabilitiesFromName(id)
+      if (typeof heuristic.image === "boolean") {
+        capabilities.image = heuristic.image
+        sources.image = "heuristic"
+      }
+    }
+    if (capabilities.reasoning === undefined) {
+      const thinking = supportsThinking({ modelId: id })
+      if (typeof thinking === "boolean") {
+        capabilities.reasoning = thinking
+        sources.reasoning = "heuristic"
+      }
+    }
+  } catch {
+    // 见上：解析失败 = 未知。
+  }
+  return { capabilities, sources }
 }
