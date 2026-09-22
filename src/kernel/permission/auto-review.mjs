@@ -19,9 +19,11 @@ export async function reviewSensitiveAction({ configState, providerType, model, 
   try {
     const state = structuredClone(configState)
     const provider = providerType || state.config.provider.default
-    state.config.provider[provider] = { ...state.config.provider[provider], retry_attempts: 0, thinking_effort: 'off' }
-    delete state.config.provider[provider].thinking
-    delete state.config.provider[provider].reasoning_effort
+    if (!Object.hasOwn(state.config.provider, provider) || ['__proto__', 'constructor', 'prototype'].includes(provider)) throw new Error('Unknown review provider')
+    const options = { ...state.config.provider[provider], retry_attempts: 0, thinking_effort: 'off' }
+    delete options.thinking
+    delete options.reasoning_effort
+    state.config.provider = { ...state.config.provider, [provider]: options }
     const response = await request({ configState: state, providerType: provider, model, baseUrl, apiKeyEnv, system: SYSTEM, messages: [{ role: 'user', content: payload }], tools: [], maxTokens: 2048, sessionId, turnId, reviewId: `auto-${turnId}`, signal: abort })
     usage = response?.usage
     if (abort.aborted) return { decision: 'ask', reason: '自动审查已取消，需要重新确认。', usage: response?.usage }

@@ -18,6 +18,7 @@
 ## 实施与验收记录
 
 - [1.0.2 实施记录](implementation-1.0.2.md)：本轮开发、测试及最终发布回执；未完成项不会冒充已发布。
+- [1.0.2 安全复核](security-review-1.0.2.md)：媒体、Auto、Browser、Worktree 边界与静态告警处置。
 - [1.0.1 实施记录](implementation-1.0.1.md)：按轮次记录代码与证据。
 - [正式版工作台账](stable-1.0.1-worklog.md)：本轮门禁、真实模型/安装与发布证据。
 - [正式版安全复核](security-review-1.0.1.md)：更新器、目录授权和静态告警口径。

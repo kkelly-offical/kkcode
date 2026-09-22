@@ -343,7 +343,8 @@ export async function replaceConversationForRewind(sessionId, retained, observed
       if (part.turnId) return !removedTurns.has(part.turnId)
       return !Number.isFinite(part.createdAt) || part.createdAt < cutoff
     })
-    const directory = path.join(sessionCheckpointRootPath(), sessionId)
+    // Reuse the validated shard identity, never a caller-supplied path segment.
+    const directory = path.join(sessionCheckpointRootPath(), path.basename(sessionDataPath(sessionId), '.json'))
     await mkdir(directory, { recursive: true, mode: 0o700 })
     await writeJson(path.join(directory, 'before-rewind.json'), { savedAt: now(), session: state.index.sessions[sessionId], ...data })
     const next = { messages: retained, parts }

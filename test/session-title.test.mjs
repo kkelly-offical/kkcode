@@ -48,6 +48,13 @@ test('a manual title prevents generation before any request', async () => {
   const f = fixture({ title: 'My own title', titleSource: 'manual' })
   assert.equal(await run(f), null); assert.equal(f.calls.length, 0)
 })
+test('inherited and prototype-shaped provider names never reach title inference', async () => {
+  for (const providerType of ['__proto__', 'constructor', 'prototype', 'toString']) {
+    const f = fixture()
+    assert.equal(await run(f, { providerType, model: 'selected' }), null)
+    assert.equal(f.calls.length, 0)
+  }
+})
 test('manual rename wins when it races an already running model request', async () => {
   const f = fixture()
   f.deps.requestProvider = async () => { f.rename('用户命名'); return { text: 'Late generated title' } }

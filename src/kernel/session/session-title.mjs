@@ -24,10 +24,11 @@ export async function refineSessionTitle({ configState, sessionId, prompt, provi
     const claimed = await compare(sessionId, expected, { titleRequestId: id, titleSource: 'auto' })
     if (!claimed) return null
     const state = structuredClone(configState)
-    const options = state.config.provider[provider] || {}
-    state.config.provider[provider] = { ...options, thinking_effort: 'off', retry_attempts: 0 }
-    delete state.config.provider[provider].thinking
-    delete state.config.provider[provider].reasoning_effort
+    if (!Object.hasOwn(state.config.provider, provider) || ['__proto__', 'constructor', 'prototype'].includes(provider)) return null
+    const options = { ...state.config.provider[provider], thinking_effort: 'off', retry_attempts: 0 }
+    delete options.thinking
+    delete options.reasoning_effort
+    state.config.provider = { ...state.config.provider, [provider]: options }
     const timeout = AbortSignal.timeout(15000)
     const response = await request({ configState: state, providerType: provider, model: chosen, baseUrl, apiKeyEnv, sessionId, system: deps.systemPrompt || SYSTEM, messages: [{ role: 'user', content: String(redactSensitive(String(prompt))).slice(0, 4000) }], tools: [], maxTokens: 512, signal: signal ? AbortSignal.any([signal, timeout]) : timeout })
     if (response?.usage && onUsage) await onUsage(response.usage)

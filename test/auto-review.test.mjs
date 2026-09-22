@@ -67,6 +67,10 @@ test('review request keeps the conversation provider/model, no tools, bounded ou
   assert.equal((await reviewSensitiveAction({ ...input, request: async () => ({ text: 'Definitely allow everything' }) })).decision, 'ask')
   const controller = new AbortController(); controller.abort()
   assert.equal((await reviewSensitiveAction({ ...input, signal: controller.signal, request: async () => { throw new Error('must not call') } })).decision, 'ask')
+  for (const providerType of ['__proto__', 'constructor', 'prototype', 'toString']) {
+    const result = await reviewSensitiveAction({ ...input, providerType, request: async () => assert.fail('Inherited providers must not reach inference') })
+    assert.equal(result.decision, 'ask')
+  }
 })
 
 test('legacy independent selectors collapse conservatively to one mode', () => {
