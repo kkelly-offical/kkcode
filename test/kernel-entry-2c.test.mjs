@@ -4,7 +4,7 @@
 // trustState 缺省时按原 buildContext 语义探测持久化信任存储。
 import test, { before, after } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtemp, rm, access, readFile } from "node:fs/promises"
+import { mkdtemp, rm, access, readFile, realpath } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { createKernel } from "../src/kernel/index.mjs"
@@ -112,8 +112,10 @@ test("createKernel without trustState probes the persisted trust store (buildCon
   assert.equal(kernel.trustState.trusted, true)
   await kernel.shutdown()
 
-  const stored = JSON.parse(await readFile(trustFilePath(workDir), "utf8"))
+  const canonical = await realpath(workDir)
+  const stored = JSON.parse(await readFile(trustFilePath(canonical), "utf8"))
   assert.equal(stored.trusted, true)
+  assert.equal(stored.cwd, canonical)
 
   // 第二个 kernel 不传 trust/trustState：从持久化存储探到已授信
   const probed = await createKernel({ cwd: workDir, config: entryConfig(), boot: false })
@@ -123,5 +125,5 @@ test("createKernel without trustState probes the persisted trust store (buildCon
   } finally {
     await probed.shutdown()
   }
-  await access(trustFilePath(workDir))
+  await access(trustFilePath(canonical))
 })

@@ -136,6 +136,50 @@ class ConversationUiTest {
         compose.onNodeWithText("创建新分支").assertIsNotEnabled()
     }
 
+    @Test fun eachSessionHasRenameArchiveAndRestoreActions() {
+        val session = JSONObject().put("id", "managed-session").put("title", "跨端会话").put("cwd", "/workspace").put("updatedAt", System.currentTimeMillis())
+        val state = show { it.connected = true; it.sessions = listOf(session) }
+        compose.onNodeWithContentDescription("管理对话 跨端会话").performClick()
+        compose.onNodeWithText("管理对话").assertIsDisplayed()
+        compose.onNodeWithText("对话名称").assertIsDisplayed()
+        compose.onNodeWithText("归档对话", substring = false).assertIsDisplayed()
+        compose.onNodeWithText("保存名称").assertIsEnabled()
+        compose.onNodeWithText("取消").performClick()
+        compose.runOnIdle { assertEquals(null, state.managedSession); state.sessions = listOf(JSONObject(session.toString()).put("archived", true)) }
+        compose.onNodeWithContentDescription("管理对话 跨端会话").assertDoesNotExist()
+        compose.onNodeWithContentDescription("更多").performClick()
+        compose.onNodeWithText("已归档对话", substring = false).performClick()
+        compose.onNodeWithContentDescription("管理对话 跨端会话").performClick()
+        compose.onNodeWithText("恢复到对话列表").assertIsDisplayed()
+    }
+
+    @Test fun messageRewindExplainsThatFilesRemainAndCancelKeepsHistory() {
+        val state = show {
+            it.selected = "rewind-session"
+            it.messages = listOf(ChatItem("question", "user", "修一下登录页", messageId = "question"), ChatItem("answer", "assistant", "已完成"))
+        }
+        compose.onNodeWithText("回退", substring = false).performClick()
+        compose.onNodeWithText("不会撤销任何文件或 Git 修改。", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("确认回退对话").assertIsDisplayed()
+        compose.onNodeWithText("取消").performClick()
+        compose.runOnIdle { assertEquals(2, state.messages.size); assertEquals(null, state.rewindTarget) }
+    }
+
+    @Test fun dirtyWorkspaceStillOffersIsolatedWorktreeCreation() {
+        show {
+            it.selected = "worktree-session"; it.sheet = "branches"
+            it.branchSnapshot = JSONObject().put("clean", false).put("current", "main").put("stateToken", "snapshot").put("suggestedParent", "/workspace")
+                .put("branches", JSONArray().put(JSONObject().put("name", "main").put("current", true)))
+                .put("remoteBranches", JSONArray().put(JSONObject().put("name", "origin/main")))
+        }
+        compose.onNodeWithText("Worktree", substring = false).performClick()
+        compose.onNodeWithText("Worktree 父目录").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("新文件夹名称").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("创建 Worktree", substring = false).performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithText("起点：当前 HEAD").performScrollTo().performClick()
+        compose.onNodeWithText("origin/main", substring = false).assertIsDisplayed()
+    }
+
     @Test fun childApprovalShowsTheAgentContext() {
         show {
             it.selected = "parent-session"
