@@ -3,6 +3,7 @@ import { Icon, type IconName } from "./Icon";
 import { Sheet } from "./Sheet";
 import { groupSessions } from "./sessions.mjs";
 import { APP_VERSION } from "./version";
+import { deviceLoginPath } from "../../../src/protocol/login-path.mjs";
 
 type Item = Record<string, any>;
 type HomeProps = {
@@ -302,7 +303,6 @@ export function ConnectionLanding({
   pair,
   login,
   waiting,
-  verificationUrl,
   userCode,
 }: {
   gateway: boolean;
@@ -312,7 +312,6 @@ export function ConnectionLanding({
   pair: () => void;
   login: () => void;
   waiting: boolean;
-  verificationUrl?: string;
   userCode?: string;
 }) {
   const [panel, setPanel] = useState("");
@@ -394,7 +393,7 @@ export function ConnectionLanding({
               {waiting && (
                 <div className="sheet-note" role="status">
                   登录码：{userCode}。完成组织登录并批准连接后会自动继续。
-                  {verificationUrl && <p><a href={verificationUrl} target="_blank" rel="noopener noreferrer">若登录页未打开，点击此处继续</a></p>}
+                  {userCode && <p><a href={deviceLoginPath(userCode)} target="_blank" rel="noopener noreferrer">若登录页未打开，点击此处继续</a></p>}
                 </div>
               )}
             </>

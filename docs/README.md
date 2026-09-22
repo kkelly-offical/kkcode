@@ -18,6 +18,7 @@
 
 - [1.0.1 实施记录](implementation-1.0.1.md)：按轮次记录代码与证据。
 - [preview.2 工作台账](preview.2-worklog.md)：本轮门禁、失败和修复过程。
+- [preview.2 安全复核](security-review-1.0.1-preview.2.md)：真实修复与静态误报依据分开记录。
 - [M28 复核与收尾](agent-workflow-instruction-tools-compat-1.0.1.md)。
 - [路线图](ROADMAP.md)：未承诺的后续方向与明确的支持边界。
 

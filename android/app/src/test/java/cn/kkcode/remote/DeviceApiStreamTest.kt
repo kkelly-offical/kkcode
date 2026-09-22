@@ -15,6 +15,20 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DeviceApiStreamTest {
+    @Test fun gatewayRedirectsNeverMoveTheAuthenticatedStreamToAnotherServer() = runBlocking {
+        val trap = MockWebServer()
+        val gateway = MockWebServer()
+        trap.start(); gateway.start()
+        try {
+            for(status in listOf(307, 308)) {
+                gateway.enqueue(MockResponse().setResponseCode(status).setHeader("Location", trap.url("/capture")).setBody("{}"))
+                val api = DeviceApi(gateway.url("/").toString().trimEnd('/'), token = "fixture-secret", relay = false)
+                val error = assertThrows(DeviceApiError::class.java) { runBlocking { api.streamEvents("s", 0).toList() } }
+                assertEquals(status, error.status)
+            }
+            assertEquals(0, trap.requestCount)
+        } finally { gateway.shutdown(); trap.shutdown() }
+    }
     @Test fun deviceScopeMcpSummaryUsesEmptySessionAndPreservesPayload() = runBlocking {
         server("event: mcp.loaded\ndata: {\"type\":\"mcp.loaded\",\"configured\":1,\"connected\":1,\"toolCount\":4}\n\n") { web ->
             val api = DeviceApi(web.url("/").toString().trimEnd('/'), relay = false)

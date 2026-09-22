@@ -32,7 +32,7 @@ class DeviceApiError(message: String, val status: Int, val code: String) : Excep
 internal fun sseErrorField(json: String, name: String): String? = Regex("\"$name\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"").find(json)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
 
 class DeviceApi(var base: String, var token: String = "", var device: String = "", var relay: Boolean = true, var hostHeader: String? = null) {
-    private val client = OkHttpClient.Builder().callTimeout(35, TimeUnit.SECONDS).build()
+    private val client = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false).callTimeout(35, TimeUnit.SECONDS).build()
     private val streamClient = client.newBuilder().callTimeout(0, TimeUnit.SECONDS).connectTimeout(15, TimeUnit.SECONDS).readTimeout(75, TimeUnit.SECONDS).build()
     private suspend fun execute(request: Request): Response = suspendCancellableCoroutine { continuation ->
         val call = client.newCall(request)

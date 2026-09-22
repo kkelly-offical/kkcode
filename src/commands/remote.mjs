@@ -1,5 +1,5 @@
 import { Command } from 'commander'
-import { loginRemote, loadRemoteCredentials, saveRemoteCredentials, connectRelay, createRemoteDevice, refreshRemoteCredentials, revokeRemoteDevice } from '../remote/client.mjs'
+import { loginRemote, loadRemoteCredentials, saveRemoteCredentials, connectRelay, createRemoteDevice, refreshRemoteCredentials, revokeRemoteDevice, requestGateway } from '../remote/client.mjs'
 import { acquireDeviceLifecycleLock, prepareRemoteBinding, readDeviceLifecycle, unbindLocalDevice } from '../remote/device-lifecycle.mjs'
 import { createRemoteControl, requestRemoteControl } from '../remote/local-control.mjs'
 import { startRepl } from '../repl.mjs'
@@ -65,7 +65,7 @@ export function createRemoteCommand() {
     let identity = await loadRemoteCredentials()
     if (identity) {
       if (identity.expiresAt < Date.now() + 60000) identity = await refreshRemoteCredentials(identity, { signal: AbortSignal.timeout(15000) })
-      const response = await fetch(`${identity.gateway}/auth/logout`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${identity.access_token}` }, body: JSON.stringify({ kind: 'device' }), signal: AbortSignal.timeout(15000) })
+      const response = await requestGateway(identity.gateway, '/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${identity.access_token}` }, body: JSON.stringify({ kind: 'device' }), signal: AbortSignal.timeout(15000) })
       if (!response.ok) throw new Error(`Gateway could not confirm logout (HTTP ${response.status}). Credentials retained for a safe retry.`)
       await saveRemoteCredentials(null)
     }

@@ -10,6 +10,7 @@ import { Composer } from "./Composer";
 import { buildTranscript, changeSummary } from "./transcript.mjs";
 import { eventsStreamPath, streamSessionEvents } from "./live.mjs";
 import { DeviceClient } from "../../../src/sdk/client.mjs";
+import { deviceLoginPath } from "../../../src/protocol/login-path.mjs";
 import { useDeviceEvents } from './DeviceEvents';
 import { mcpLoadNotice } from './device-notices.mjs';
 import { Approval } from "./Approval";
@@ -516,11 +517,10 @@ function App() {
         pairCode={pairCode}
         setPairCode={setPairCode}
         waiting={Boolean(loginFlow)}
-        verificationUrl={loginFlow?.verification_uri_complete}
         userCode={loginFlow?.user_code}
         pair={() =>
           attempt(async () => {
-            if (loginFlow) { window.open(loginFlow.verification_uri_complete, "_blank", "noopener"); return; }
+            if (loginFlow) { window.open(deviceLoginPath(loginFlow.user_code), "_blank", "noopener"); return; }
             const r = await fetch("/api/v1/auth/pair", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -539,8 +539,9 @@ function App() {
             });
             if (!r.ok) throw new Error("暂时无法开始登录，请稍后重试");
             const flow = await r.json();
+            const loginPath = deviceLoginPath(flow.user_code);
             setLoginFlow(flow);
-            window.open(flow.verification_uri_complete, "_blank", "noopener");
+            window.open(loginPath, "_blank", "noopener");
           })
         }
       />

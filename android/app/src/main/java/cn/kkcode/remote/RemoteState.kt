@@ -199,7 +199,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
             gateway = canonical; client.base = gateway
             val flow = client.call("/auth/device", JSONObject().put("name", "KK Code Android").put("kind", "client"))
             loginCode = flow.getString("user_code")
-            openBrowser(flow.getString("verification_uri_complete"))
+            openBrowser(deviceLoginUrl(gateway, loginCode, BuildConfig.DEBUG))
             var token: JSONObject? = null
             val deadline = System.currentTimeMillis() + flow.getLong("expires_in") * 1000
             while (token == null && System.currentTimeMillis() < deadline) {

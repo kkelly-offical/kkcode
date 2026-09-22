@@ -6,6 +6,7 @@ import { DeviceService } from '../device/service.mjs'
 import { writePrivateFile } from '../storage/private-file.mjs'
 import { acceptRemoteIdentity, prepareRemoteBinding } from './device-lifecycle.mjs'
 import { RELAY_FEATURE_EVENT_PUSH } from '../protocol/index.mjs'
+import { deviceLoginPath } from '../protocol/login-path.mjs'
 
 const credentialsPath = () => path.join(userRootDir(), 'remote-credentials.json')
 export async function loadRemoteCredentials() { try { return JSON.parse(await readFile(credentialsPath(), 'utf8')) } catch { return null } }
@@ -15,16 +16,38 @@ export function gatewayUrl(value) {
   if (url.username || url.password || (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))) throw new Error('Gateway must use HTTPS (HTTP is allowed only on loopback)')
   return url.origin
 }
+/** The owner selects the gateway; credential-bearing API calls may not be
+ * redirected to another host (307/308 would otherwise preserve JSON secrets). */
+export function requestGateway(gateway, route, options = {}) {
+  if (typeof route !== 'string' || !route.startsWith('/') || route.startsWith('//') || /[\\\r\n]/.test(route)) throw new Error('Invalid gateway API path')
+  return fetch(`${gatewayUrl(gateway)}${route}`, { ...options, redirect: 'error' })
+}
+export async function discoverRemoteGateway(gateway, { signal } = {}) {
+  gateway = gatewayUrl(gateway)
+  for (let redirects = 0; redirects <= 5; redirects++) {
+    // Discovery is public and carries no cookie, bearer or grant. Permit an
+    // explicit canonical-origin redirect, validating transport at every hop.
+    const response = await fetch(`${gateway}/api/v1/discovery`, { signal, redirect: 'manual', credentials: 'omit' })
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      const location = response.headers.get('location')
+      await response.body?.cancel()
+      if (!location) throw new Error('Gateway discovery redirect has no location')
+      gateway = gatewayUrl(new URL(location, gateway).href)
+      continue
+    }
+    if (!response.ok) throw new Error(`Gateway discovery failed: HTTP ${response.status}`)
+    return gatewayUrl((await response.json()).gateway || gateway)
+  }
+  throw new Error('Gateway discovery exceeded the redirect limit')
+}
 export async function loginRemote({ gateway, name = 'KK Code computer', print = console.error, signal, transferHistory = false } = {}) {
   const previousCredentials = await loadRemoteCredentials()
   gateway = gatewayUrl(gateway || previousCredentials?.gateway || '')
-  const discovery = await fetch(`${gateway}/api/v1/discovery`, { signal })
-  if (!discovery.ok) throw new Error(`Gateway discovery failed: HTTP ${discovery.status}`)
-  gateway = gatewayUrl((await discovery.json()).gateway || gateway)
-  const response = await fetch(`${gateway}/auth/device`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, kind: 'device' }), signal })
+  gateway = await discoverRemoteGateway(gateway, { signal })
+  const response = await requestGateway(gateway, '/auth/device', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, kind: 'device' }), signal })
   if (!response.ok) throw new Error(`Gateway login failed: HTTP ${response.status}`)
   const flow = await response.json()
-  print(`Login to KK Code:\n${flow.verification_uri_complete}\nCode: ${flow.user_code}\nConfirm the computer and organization in your browser.`)
+  print(`Login to KK Code:\n${gateway}${deviceLoginPath(flow.user_code)}\nCode: ${flow.user_code}\nConfirm the computer and organization in your browser.`)
   const deadline = Date.now() + flow.expires_in * 1000
   let interval = Math.max(5, flow.interval || 5)
   while (Date.now() < deadline) {
@@ -35,7 +58,7 @@ export async function loginRemote({ gateway, name = 'KK Code computer', print = 
       if (signal?.aborted) return aborted()
       signal?.addEventListener('abort', aborted, { once: true })
     })
-    const reply = await fetch(`${gateway}/auth/token`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device_code: flow.device_code }), signal })
+    const reply = await requestGateway(gateway, '/auth/token', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device_code: flow.device_code }), signal })
     const result = await reply.json()
     if (reply.ok) {
       const credentials = { gateway, ...result, expiresAt: Date.now() + result.expires_in * 1000 }
@@ -43,7 +66,7 @@ export async function loginRemote({ gateway, name = 'KK Code computer', print = 
       catch (error) {
         // A browser may have selected the wrong organization account. Revoke the
         // newly issued login without replacing the existing local credential.
-        await fetch(`${gateway}/auth/logout`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${credentials.access_token}` }, body: JSON.stringify({ kind: 'device' }), signal }).catch(() => {})
+        await requestGateway(gateway, '/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${credentials.access_token}` }, body: JSON.stringify({ kind: 'device' }), signal }).catch(() => {})
         throw error
       }
       await saveRemoteCredentials(credentials)
@@ -55,7 +78,7 @@ export async function loginRemote({ gateway, name = 'KK Code computer', print = 
   throw new Error('Login code expired')
 }
 export async function refreshRemoteCredentials(credentials, { signal } = {}) {
-  const response = await fetch(`${credentials.gateway}/auth/refresh`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh_token: credentials.refresh_token }), signal })
+  const response = await requestGateway(credentials.gateway, '/auth/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh_token: credentials.refresh_token }), signal })
   if (!response.ok) throw Object.assign(new Error('Remote login expired. Sign in again with the device owner account'), { code: 'login_required', status: response.status })
   const tokens = await response.json()
   const updated = { ...credentials, ...tokens, expiresAt: Date.now() + tokens.expires_in * 1000 }
@@ -63,7 +86,7 @@ export async function refreshRemoteCredentials(credentials, { signal } = {}) {
   return updated
 }
 export async function revokeRemoteDevice({ deviceId, credentials, signal } = {}) {
-  const response = await fetch(`${credentials.gateway}/api/v1/devices/${encodeURIComponent(deviceId)}/unbind`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${credentials.access_token}` }, body: JSON.stringify({ confirmation: deviceId }), signal: signal || AbortSignal.timeout(30000) })
+  const response = await requestGateway(credentials.gateway, `/api/v1/devices/${encodeURIComponent(deviceId)}/unbind`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${credentials.access_token}` }, body: JSON.stringify({ confirmation: deviceId }), signal: signal || AbortSignal.timeout(30000) })
   if (!response.ok) {
     const error = await response.json().catch(() => ({}))
     throw Object.assign(new Error(error.error?.message || `Device unbind failed: HTTP ${response.status}. The local binding remains locked; retry unbind after restoring connectivity`), { code: error.error?.code || 'unbind_failed', status: response.status })
@@ -91,7 +114,7 @@ export async function connectRelay({ service, credentials, onStatus = () => {} }
         catch (error) { if ([400, 401, 403].includes(error.status)) { stopped = true; onStatus('login_required'); return }; throw error }
       }
       if (stopped) return
-      const connection = socket = new WebSocket(`${credentials.gateway.replace(/^http/, 'ws')}/relay/device`, { headers: { Authorization: `Bearer ${credentials.access_token}` }, maxPayload: 6 * 1024 * 1024, handshakeTimeout: 15000 })
+      const connection = socket = new WebSocket(`${gatewayUrl(credentials.gateway).replace(/^http/, 'ws')}/relay/device`, { headers: { Authorization: `Bearer ${credentials.access_token}` }, followRedirects: false, maxPayload: 6 * 1024 * 1024, handshakeTimeout: 15000 })
       connection.on('open', () => { connection.send(JSON.stringify({ type: 'register', device: { id: service.metadata.id, name: service.metadata.name }, features: [RELAY_FEATURE_EVENT_PUSH] })) })
       connection.on('message', async raw => {
         let message

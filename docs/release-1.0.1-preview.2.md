@@ -33,7 +33,10 @@ kkcode -web
   广告面与 task brief；补齐技能用户调用和 allowed-tools 限制。
 - CI 显式安装 ripgrep，Windows 路径测试规范化；受控面板启动时退出的竞态
   修复，避免停止后重新创建保活定时器。测试与 CI 现在有明确超时边界。
-- Android 事件流取消会立即终止连接，不把主动断开显示成网络错误。
+- Android 事件流取消会立即终止连接，不把主动断开显示成网络错误；同游标
+  状态帧不再被误丢弃。历史媒体切换渠道时，token 计数与推理共用能力检查。
+- CLI/Web/Android 登录导航固定在所选网关；凭据和 RPC 请求不跟随 HTTP
+  重定向。静态告警逐类复核，不关闭规则来制造“零告警”。
 
 详细行为：[媒体输入](media-input.md)、[工具与技能](tool-discovery-and-skills.md)、
 [远程事件协议](remote-sse-contract.md)、[实施记录](implementation-1.0.1.md)。
@@ -61,6 +64,7 @@ Android 证书；先用一台设备验证，再滚动升级。协议版本仍为
 企业实验环境、Android 单元/模拟器/正式 APK、Linux/Windows/macOS CI、
 JS/Actions/Kotlin CodeQL、不可变 npm tarball 与生产依赖审计。
 具体结果记录在 [preview.2 工作台账](preview.2-worklog.md)，不把待跑项算成通过。
+告警修复与误报依据见 [本轮安全复核](security-review-1.0.1-preview.2.md)。
 
 真实模型对视频的协议支持、桌面剪贴板策略、企业租户 claim 映射、公网 DNS/TLS、
 多网关部署拓扑、异地备份和实体 Android 设备仍有各自的环境验收责任。

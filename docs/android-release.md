@@ -179,3 +179,27 @@ was performed.
 This records artifact readiness only. Publishing/tagging/uploading the preview
 is a separate authorized release operation, not an action performed by the
 Android signing or smoke-test scripts.
+
+## Third preview artifact acceptance (2026-09-22)
+
+`1.0.1-preview.2` / `10003` was rebuilt after the session-stream cursor and login
+navigation/redirect fixes. 35 JVM tests passed, including cancellation of an
+unresponsive connection, control frames that reuse the journal cursor, and
+credential-bearing redirect rejection. The full
+enterprise run passed all three opt-in network tests against real Keycloak,
+PostgreSQL, Relay and the Linux SSH VM: native device login, model/mode selection,
+attachment upload/removal, cross-client conversation synchronization and safe
+branch create/switch-back. See the [current acceptance ledger](preview.2-worklog.md)
+for Compose/TLS checks and the release CI status.
+
+The exact signed APK was installed on the separate `kkcode_101_release_api36`
+AVD (5582): process alive, compact unconfigured home, no startup configuration
+form, and `run-as` rejected. This is a real release-artifact startup check,
+not a debug APK standing in for the release.
+
+- APK SHA-256: `1c51cf69ccb9474218d7a370f6ee400d83f0f834e0e429186403be84b6f96738`.
+- Certificate SHA-256: `cf75774a4d87ba1ccc4a811f271bd301076cf6beefd7432a3cb30231164be5d1` (unchanged).
+- Package `cn.kkcode.remote`, valid v2/v3 signatures, `debuggable=false`.
+- Private signing material remains outside Git and CI. The public download is
+  attached to the [third prerelease](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.1-preview.2)
+  only as part of the separately authorized publication flow.

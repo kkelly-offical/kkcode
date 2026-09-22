@@ -1,6 +1,36 @@
 # Enterprise lab — local end-to-end acceptance
 
-This is the current 1.0.1 development lab, not a production-release declaration.
+This is the 1.0.1 development lab, not a production-release declaration. The
+preview.2 revalidation below supersedes old test counts without rewriting the
+historical first-round evidence.
+
+## Third preview revalidation (2026-09-22)
+
+The complete `lab-enterprise-smoke.mjs` run passed on preview.2, including
+native Android and gateway-restart options. Evidence directory:
+`/root/.local/share/kkcode-enterprise-runs/integration-pB3CPj` (private state
+outside Git). The foreground controllers were stopped when the test finished.
+
+- CLI login/organization and separate headless CLI history, loopback WebUI,
+  WireGuard WebUI, SDK and native Android share the same device/session state.
+- OpenAI/Anthropic discovery and switching, cross-client permission/question
+  approval, one-write deduplication, cancellation and read-only policy passed.
+- Text/PNG and WAV/MP4 uploads reached the intended HTTPS fixture request bodies;
+  transport history strips binary while canonical history retains it. Rejected
+  media stays in the draft. Switching that history to Anthropic also passed
+  token counting and the next native Android message.
+- Native Android document upload/removal, safe Git branch create/switch-back,
+  real HTTPS Relay and independently verified SSH fingerprint passed.
+- Gateway restart and event replay, private sharing/revocation, exact-ID CLI
+  unbind, retired credential rejection and explicit account/history transfer passed.
+- Separate repeat runs passed real Dex login, two-process gateway/DB fault
+  injection, encrypted backups restored into isolated databases, direct HTTPS
+  Host mode, and a bounded live K3 text inference. No production service was changed.
+- The signed `10003` release APK passed installation/startup/non-debuggable
+  verification. Unit/UI/CI totals are in the [preview.2 ledger](preview.2-worklog.md).
+
+The lab provider is deterministic for repeatable protocol/approval tests; it
+does not establish semantic audio/video support for every commercial model.
 
 ## Deployed resources
 
@@ -32,7 +62,7 @@ NODE_EXTRA_CA_CERTS=/root/.local/share/kkcode-enterprise-lab/ca.crt \
 Only the dedicated lab is addressed by these Compose commands. Do not use `down -v`
 unless intentionally deleting this lab's account/database data.
 
-## Verified so far
+## Historical first-round evidence (before preview.2)
 
 - Real Keycloak PKCE login and signed ID-token validation against its JWKS.
 - Real PostgreSQL persistence, organization roles, atomic refresh consumption,
@@ -74,7 +104,7 @@ unless intentionally deleting this lab's account/database data.
   The final transferred foreground hub was stopped and became offline.
 - Installed npm package: version 1.0.1 and the public kernel SDK, browser-safe SDK
   client and protocol exports all load outside the repository.
-- Latest local Node suite: 2,600 tests / 2,599 passed / 1 macOS-only test skipped / 0 failed. Lint,
+- First-round local Node suite: 2,600 tests / 2,599 passed / 1 macOS-only test skipped / 0 failed. Lint,
   kernel/Web typechecks, import-boundary/stdout checks, version policy and source
   secret scan passed. Installed package/SDK checks pass (456 packaged files).
 
@@ -82,7 +112,7 @@ Final artifact hashes and the successful four-job Linux/Windows/macOS matrix are
 recorded in the [implementation ledger](implementation-1.0.1.md). Local tarballs
 are test artifacts, not npm publications or release tags.
 
-The successful expanded run is
+The first-round successful expanded run was
 `/root/.local/share/kkcode-enterprise-runs/integration-yD0Dtj`.
 Its configuration, credentials and Android test fixture are in its protected
 `.kkcode/` subdirectory; `workspace/` and screenshots contain only test material.
@@ -113,10 +143,13 @@ Run these tests serially: each uses its own private state but the companion loca
 WebUI test port is 18476. Fixtures with private credentials stay outside Git;
 temporary copies pushed into the Android app are removed after each run.
 
-The emulator originally inherited the host's `http_proxy`, which caused TLS EOF
-failures. Restarting **only this test AVD** without proxy environment variables
-fixed the transport. Certificate checking remains enabled. Do not blindly change
-the user's global proxy or trust settings.
+The emulator can inherit host proxy settings in both QEMU and the shared Wi-Fi
+`netsimd` process. A proxy-free QEMU restart alone is insufficient if another AVD
+keeps an old proxied `netsimd` alive. In the preview.2 lab, the dedicated debug AVD
+used emulated cellular networking (`KKCODE_ANDROID_USE_CELLULAR=1`) to bypass that
+Wi-Fi proxy. The script restores Wi-Fi if it was enabled before the test. A separate
+`GatewayTlsTest` checks `/health` with normal certificate validation; no trust-all
+client was added. Do not change the user's global proxy, routes or trust settings.
 
 ## Completed development and deployment responsibilities
 

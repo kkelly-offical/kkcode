@@ -24,7 +24,7 @@ export class DeviceClient {
   }
   async refresh({ signal } = {}) {
     if (!this.refreshing) this.refreshing = (async () => {
-      const response = await this.fetch(`${this.url}/auth/refresh`, { method: 'POST', credentials: 'include', signal: AbortSignal.timeout(30000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(this.refreshToken ? { refresh_token: this.refreshToken } : {}) })
+      const response = await this.fetch(`${this.url}/auth/refresh`, { method: 'POST', redirect: 'error', credentials: 'include', signal: AbortSignal.timeout(30000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(this.refreshToken ? { refresh_token: this.refreshToken } : {}) })
       const body = await response.json()
       if (!response.ok) throw errorFrom(body, response.status)
       if (body.access_token) { this.token = body.access_token; this.refreshToken = body.refresh_token; await this.onCredentials?.(body) }
@@ -33,7 +33,7 @@ export class DeviceClient {
     return withSignal(this.refreshing, signal)
   }
   async http(path, { method = 'GET', body, signal } = {}) {
-    const make = () => this.fetch(`${this.url}${path}`, { method, credentials: 'include', signal, headers: { 'Content-Type': 'application/json', 'X-KK-Code-Client': 'sdk', ...(typeof window === 'undefined' ? { 'User-Agent': 'KK Code SDK' } : {}), ...this.headers, ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) })
+    const make = () => this.fetch(`${this.url}${path}`, { method, redirect: 'error', credentials: 'include', signal, headers: { 'Content-Type': 'application/json', 'X-KK-Code-Client': 'sdk', ...(typeof window === 'undefined' ? { 'User-Agent': 'KK Code SDK' } : {}), ...this.headers, ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) })
     let response = await make()
     if (response.status === 401 && (this.refreshToken || this.gateway)) { await this.refresh({ signal }); response = await make() }
     const envelope = await response.json().catch(() => null)

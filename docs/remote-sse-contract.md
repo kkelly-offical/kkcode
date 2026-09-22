@@ -64,6 +64,9 @@ data: {"id":"...","sessionId":"...","seq":42,"timestamp":...,"schemaVersion":"1"
   `replay.gap`, `session.state`) carry the last fully delivered cursor as
   their `id`, so a reconnect's `Last-Event-ID` never skips rows that were not
   yet delivered.
+- Deduplicate journal rows by their data `seq`, not every frame's `id`.
+  Control frames at the current cursor must still update state or trigger
+  resynchronization. Preview.2 fixes Android dropping these equal-id frames.
 - `: keepalive` comments are sent at least every 15 seconds.
 - `retry: 2000` is suggested once at connect; clients should honor it or use
   equivalent backoff.
