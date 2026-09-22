@@ -25,6 +25,7 @@ let kernel
 try {
   kernel = await createKernel({ cwd: workspace, trustState: { trusted: true } })
   const catalog = await kernel.run(() => discoverModelsForProvider(kernel.configState, { providerName, refresh: true, timeoutMs: 15000 }))
+  assert.equal(catalog.source, 'network', 'Discovery must come from the configured endpoint, not a local/cache fallback')
   const model = connection.default_model || catalog.models[0]?.id
   assert.ok(model && catalog.models.some(item => item.id === model), 'Configured model must be discoverable from the Base URL')
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="64"><rect width="96" height="64" fill="#ff0000"/></svg>'
@@ -42,7 +43,7 @@ try {
   assert.ok(recovered.text.includes('KKCODE_HISTORY_OK'))
   const review = await kernel.run(() => reviewSensitiveAction({ configState: kernel.configState, providerType: providerName, model, sessionId: 'canary', turnId: 'review', prompt: 'Run npm test in this isolated test workspace to validate the requested implementation.', action: { tool: 'bash', command: 'npm test', workspace }, signal: AbortSignal.timeout(35000) }))
   assert.equal(review.decision, 'allow', 'The model must return a valid scoped review verdict for this canary')
-  console.log(JSON.stringify({ model, discovered: catalog.models.map(item => item.id), svgSource: 'passed', svgRasterPreview: 'passed', historicalSvgVision: 'passed', corruptHistoryRecovery: 'passed', sameModelAutoReview: 'passed', requests: 3 }))
+  console.log(JSON.stringify({ model, discoverySource: catalog.source, discovered: catalog.models.map(item => item.id), svgSource: 'passed', svgRasterPreview: 'passed', historicalSvgVision: 'passed', corruptHistoryRecovery: 'passed', sameModelAutoReview: 'passed', requests: 3 }))
 } catch (error) {
   console.error(JSON.stringify({ realModelCanary: 'failed', category: error.code || error.reason || error.name || 'unknown' }))
   process.exitCode = 1

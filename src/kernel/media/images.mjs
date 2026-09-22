@@ -14,7 +14,9 @@ export function imageBytes(block) {
   const uri = typeof data === 'string' && /^data:([^;,]+);base64,(.*)$/s.exec(data)
   if (uri) data = uri[2]
   if (typeof data !== 'string' || !data || data.length > Math.ceil(IMAGE_LIMITS.bytes / 3) * 4) throw invalid('Image must contain base64 data and be at most 20 MiB')
-  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data)) throw invalid('Invalid base64 image data')
+  // A repeated four-character group can exhaust V8's regexp stack on a valid
+  // multi-MiB image. Canonical round-trip below checks padding bits as well.
+  if (data.length % 4 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) throw invalid('Invalid base64 image data')
   const bytes = Buffer.from(data, 'base64')
   if (!bytes.length || bytes.length > IMAGE_LIMITS.bytes || bytes.toString('base64') !== data) throw invalid('Invalid or oversized image data')
   return bytes
@@ -57,7 +59,9 @@ export async function normalizeImageBlock(block, { allowSvg = false, maxDimensio
   const key = createHash('sha256').update(bytes).update(`:${allowSvg}:${dimension}`).digest('hex')
   if (cache.has(key)) return { ...cache.get(key) }
   try {
-    const sourceIsSvg = /image\/svg\+xml/i.test(String(block.mediaType || block.mimeType || '')) || bytes.toString('utf8').trimStart().startsWith('<')
+    // Inspect bytes, not the caller's extension/MIME. Otherwise a mislabeled
+    // PNG fails as XML on a cold cache but succeeds after a valid PNG cache hit.
+    const sourceIsSvg = bytes.toString('utf8').trimStart().startsWith('<')
     if (sourceIsSvg && !allowSvg) throw invalid('SVG is source text, not a native model image; use read with view="image" to render a safe PNG preview')
     const input = sourceIsSvg ? safeSvgBytes(bytes) : bytes
     const options = { failOn: /** @type {const} */ ('warning'), limitInputPixels: IMAGE_LIMITS.pixels, unlimited: false, animated: false }

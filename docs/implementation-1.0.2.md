@@ -87,6 +87,15 @@ The published `v1.0.1` tag and release remain immutable.
   installation on the dedicated release AVD; compact home launches and run-as
   access is rejected. A final rebuild will be verified again after the last
   client-contract cleanup; no private update fixture will be published.
+- VM candidate package installed separately without replacing the running hub.
+  Three bounded real requests to local `Qwen3.8-27B` passed historical SVG visual
+  recognition, corrupt-image-history continuation and same-model Auto review.
+  SVG source/read-state and safe PNG rendering also passed on that device.
+- Development commit `16bcb9a` pushed to main; hosted verify and CodeQL started.
+  Web/Browser job passed. Follow-up review found a cold-cache-only MIME mismatch
+  (valid PNG declared as SVG) hidden by a warm-cache test order; now actual bytes
+  determine SVG detection. Replaced grouped base64 regex with a bounded linear
+  validation path and added a 4 MiB case. Media regression: 32 passed.
 - Versions are prepared as 1.0.2 / Android 10005. Final docs review, full gates,
   real-model/demo rollout, hosted OS matrix and signed-update validation remain
   in progress.

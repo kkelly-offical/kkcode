@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import sharp from 'sharp'
-import { normalizeImageBlock, prepareImageMessages, safeSvgBytes, IMAGE_LIMITS } from '../src/kernel/media/images.mjs'
+import { imageBytes, normalizeImageBlock, prepareImageMessages, safeSvgBytes, IMAGE_LIMITS } from '../src/kernel/media/images.mjs'
 import { createToolRegistry } from '../src/kernel/tool/registry.mjs'
 import { executeTool } from '../src/kernel/tool/executor.mjs'
 import { normalizeToolResult } from '../src/kernel/mcp/tool-result.mjs'
@@ -69,6 +69,15 @@ test('byte/pixel/base64 limits reject invalid images before any provider network
   await assert.rejects(normalizeImageBlock(block('<svg width="100000" height="100000"/>'), { allowSvg: true }))
   const bad = Buffer.from([137,80,78,71,13,10,26,10]).toString('base64')
   await assert.rejects(normalizeImageBlock({ data: bad, mediaType: 'image/png' }), /decoded/)
+})
+
+test('image decoding follows actual bytes on cold and warm caches, not a false SVG declaration', async () => {
+  const data = (await sharp({ create: { width: 3, height: 2, channels: 3, background: '#12ab67' } }).png().toBuffer()).toString('base64')
+  const mislabeled = await normalizeImageBlock({ data, mediaType: 'image/svg+xml' }, { allowSvg: true })
+  assert.equal(mislabeled.mediaType, 'image/png')
+  assert.deepEqual(await normalizeImageBlock({ data, mediaType: 'image/png' }, { allowSvg: true }), mislabeled)
+  assert.equal(imageBytes({ data: Buffer.alloc(4 * 1024 * 1024, 127).toString('base64') }).length, 4 * 1024 * 1024)
+  for (const invalid of ['AA=A', '====', 'A', 'AB==', 'AA==\n', 'AA===']) assert.throws(() => imageBytes({ data: invalid }))
 })
 
 test('MCP text + multiple images + structured results survive executor into the model content contract', async t => {
