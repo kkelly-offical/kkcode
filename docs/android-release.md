@@ -9,7 +9,7 @@ The user authorized creation of a project-specific production release key on
 2026-09-21. It is not the Android debug key or an acceptance-only identity.
 
 - Application ID: `cn.kkcode.remote`.
-- Current stable target: `1.0.1` / version code `10004`.
+- Current published stable: `1.0.1` / version code `10004`.
 - Algorithm: RSA-4096, SHA256withRSA; certificate validity: 10,000 days.
 - Public certificate SHA-256:
   `cf75774a4d87ba1ccc4a811f271bd301076cf6beefd7432a3cb30231164be5d1`.

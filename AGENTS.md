@@ -1,7 +1,7 @@
 # Project working memory
 
 - User decision (2026-09-21): releases stay on `1.0.x`. Do not bump to `1.1.0` or another major/minor until the user explicitly authorizes that version change.
-- Current stable target authorized by user: `1.0.1`, after GitHub Android updates, layout-preserving pixel themes, a bound dedicated remote VM and explicit all-ordinary-folder consent. Previous published preview: `1.0.1-preview.2` from `cc381cd`. Do not confuse built candidates with published artifacts; track actual publication in `docs/stable-1.0.1-worklog.md` and the implementation ledger.
+- Current published stable: `1.0.1` from `c04fcaf`, npm `latest` and GitHub stable Release (2026-09-22). Includes GitHub Android updates, layout-preserving pixel themes, user-provided product art/Android icon, a bound dedicated remote VM, explicit ordinary-folder consent, vLLM compatibility and SSE/modal race fixes. npm `preview` remains `1.0.1-preview.2` from `cc381cd`. Follow-up `11c5351` changes tests only; never move the published `v1.0.1` tag. Receipts: `docs/stable-1.0.1-worklog.md`.
 - Android is a native Kotlin/Compose remote client (SSH and Relay), not an embedded local Agent runtime.
 - Android version codes: preview.0 = `10001`, preview.1 = `10002`, preview.2 = `10003`, stable 1.0.1 = `10004`. Every later public APK must keep incrementing that code while retaining the project release certificate. Signing keys remain outside Git and CI. Private system-update test fixtures must never be published.
 - User authorized switching CodeQL from default setup to a custom workflow on 2026-09-22, preserving JavaScript/Actions analysis and adding a real manual Android/Kotlin debug build; a Java-only `build-mode: none` pass is not Kotlin coverage.

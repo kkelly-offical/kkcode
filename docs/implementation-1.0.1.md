@@ -1,11 +1,18 @@
 # 1.0.1 implementation ledger
 
-Latest authorized stable work: Android GitHub updater, layout-preserving pixel
+Stable `1.0.1` is published from `c04fcaf` through npm `latest` and a normal
+GitHub Release (2026-09-22). The public npm tarball matches the verified CI bytes;
+the signed APK/update manifest are available, and the demo VM is running the
+public stable package with its existing identity and ordinary-folder grant.
+Post-tag commit `11c5351` only makes a background-wait test deterministic; the
+published tag and runtime code are unchanged.
+
+Latest stable work: Android GitHub updater, layout-preserving pixel
 themes, explicit remote folder consent and real vLLM auto-discovery/CLI inference.
 The dedicated remote VM is bound to the user's enterprise gateway; its owner
 approved all ordinary directories, not host files. See the
 [stable completion ledger](stable-1.0.1-worklog.md) and [stable user guide](release-1.0.1.md)
-for current evidence and publication state. Older counts and “not released”
+for current evidence and publication receipts. Older counts and “not released”
 statements below are historical checkpoints, not the current release declaration.
 
 Status: agreed 1.0.1 implementation and scoped acceptance completed. Baseline: v1.0.0 / 21342dd. The records below describe the pre-publication acceptance checkpoint.

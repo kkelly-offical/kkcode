@@ -15,7 +15,7 @@ The user authorized a stable `1.0.1` release after these additions and acceptanc
   keep semantic diff/status colors and accessibility.
 - [x] Stable version `1.0.1` across workspaces; Android code `10004`, existing
   release certificate; signed APK/update manifest, current Web container build.
-- [ ] Full local/browser/Android/network/package/security and platform CI gates,
+- [x] Full local/browser/Android/network/package/security and platform CI gates,
   then stable npm/GitHub publication. Do not describe pending work as released.
 
 Only the KK Code checkout and explicitly owned VM/lab resources are modified.
@@ -115,5 +115,91 @@ Production gateway deployment is not modified without a separate explicit reques
 
 ## Publication
 
-Pending final hosted gates, merge and release workflow. No stable release is
-claimed at this checkpoint. Final npm/GitHub/source/asset receipts follow here.
+Source `c04fcaf` is merged into main. The following final hosted gates all passed:
+
+- [main verify 35745789404](https://github.com/kkelly-offical/kkcode/actions/runs/35745789404):
+  four platform/Node jobs and the Web job.
+- [full enterprise acceptance 35745791088](https://github.com/kkelly-offical/kkcode/actions/runs/35745791088):
+  all four platform/Node jobs, including the three browser suites on Windows.
+- [main CodeQL 35745789821](https://github.com/kkelly-offical/kkcode/actions/runs/35745789821):
+  all three languages, with actual Android/Kotlin compilation. The 17 reviewed
+  static findings remain visible; no blanket rule suppression.
+
+| Platform | Core tests (2,870) | Separate E2E | Web / package / SDK |
+| --- | --- | --- | --- |
+| Local Linux / Node 24 | 2,869 pass / 1 skip | 33 pass | Passed |
+| Hosted Ubuntu / Node 22 | 2,864 pass / 6 skip | 33 pass | Passed |
+| Hosted Ubuntu / Node 24 | 2,864 pass / 6 skip | 33 pass | Passed |
+| Hosted macOS / Node 22 | 2,863 pass / 7 skip | 32 pass / 1 skip | Passed |
+| Hosted Windows / Node 22 | 2,854 pass / 16 skip | 32 pass / 1 skip | Passed |
+
+Skipped cases reflect OS-specific sandbox/PTY/POSIX/Unix-process paths, not passes.
+Windows's new ordinary-volume consent parser test runs; Linux-only private
+`/proc`/`/dev` checks are deliberately skipped off Linux. Android results and
+real signing/installation/network evidence are recorded separately above.
+
+The final lab rerun `integration-AROmJq` also passed after the modal focus fix.
+The dedicated VM was confirmed connected with zero active sessions before
+preparing its package update. Public GitHub update checking on the release AVD
+correctly reports no compatible manifested Android release before publication.
+
+Tag `v1.0.1` points to `c04fcaf`. The protected
+[release workflow 35747008242](https://github.com/kkelly-offical/kkcode/actions/runs/35747008242)
+succeeded on its second attempt. Final public artifact and installed-VM receipts
+follow below; the first failed attempt is retained for audit.
+
+The first release-matrix attempt hit a pre-existing Windows timing test:
+`background-manager-wait` expected real disk-backed settlement inside 500 ms.
+Its timeout legitimately returned null on that runner; the same runtime had
+already passed two full Windows gates. The unchanged tag is rerun, not moved,
+and no tests are skipped. Separately, test-only main commit `11c5351` replaces
+10/40/200 ms sleeps with explicit task gates, checks that an unrelated settlement
+cannot resolve the watched wait, and drains every worker before restoring its
+fixture directory/environment. The three-case suite passed 20 consecutive local
+runs. There is no runtime/workspace/package configuration difference between
+the release tag and that follow-up commit; this is post-tag test maintenance,
+not a claim that the immutable tag contains the new test file.
+
+### Public release receipts (2026-09-22)
+
+- GitHub [v1.0.1](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.1):
+  normal release, not draft/prerelease, and returned by GitHub's latest-release
+  endpoint. Includes signed APK, `android-update.json`, `SHA256SUMS` and CycloneDX
+  SBOM. Release notes include the user-provided product banner and upgrade guide.
+- npm publication was accepted at 15:38 UTC and became visible in the public
+  registry at **15:43:06 UTC**. Registry and plain `npm view` both confirm
+  `latest: 1.0.1`, while `preview: 1.0.1-preview.2` remains unchanged. The transient
+  pre-index 404 was observed and waited out, not described as a completed install.
+- Public npm tarball: **3,573,240 bytes, 499 files**, SHA-256
+  `632301dc4fa27bf237bf5573db92088b2d9f4e7a226bc8f7724ab61542a4191b`.
+  The independently downloaded registry tarball is byte-identical to the CI
+  artifact and passed immutable package/secret/installed-SDK verification again.
+- Public APK: **52,485,479 bytes**, SHA-256
+  `dc5ce364453a66e2a54a0571054e5fe86ed633d03fbfaece8752815342ecac7a`.
+  Public manifest SHA-256:
+  `fcfa6d41d16c1f51fcd9373d48ccbf54a85f14d709b3e8499c0a81d10a9f4d7f`.
+  GitHub asset digests and separate anonymous HTTPS downloads both match the
+  checked local files. No debug/test-10005 artifact or private key was uploaded.
+- The actual installed signed Android 1.0.1 App checked the public GitHub source
+  after upload and reports “已安装当前渠道的最新兼容版本”. Screenshot:
+  `test-results/android-update-published.png`. This is an actual App network
+  request, not only a host-side manifest fetch or mocked release list.
+- VM `kkcode-remote-demo` now runs the public npm **1.0.1**. The new installation
+  was staged while the old hub stayed online, swapped only after an idle check,
+  and restarted in the same foreground tmux session. Device identity, login,
+  ordinary-folder scope, model configuration and history were retained. The
+  prior installation remains at `/home/kkcode/.local/kkcode-before-stable-1.0.1`.
+- Public CLI `model test --provider local-vllm --probe --json` rediscovered
+  `Qwen3.8-27B` from the network and completed inference. Full `chat` using the
+  configured provider succeeded with `turn.result` / schema 1 / status succeeded
+  and exact `KKCODE_STABLE_OK` content, no tools and no error. The chat provider
+  selector is `--provider-type`; an initial manual check used `--provider` by
+  mistake and was corrected, not treated as a product failure.
+- After upgrade the VM is connected, `/opt` remains browsable and `.ssh`, KK Code
+  credentials, `/proc/self` and system SSH paths remain denied. The production
+  cloud gateway was not replaced; its administrator can rebuild from the stable
+  source to deploy the new Web theme. The lab image was rebuilt and verified.
+- Follow-up test-only [verify 35748102459](https://github.com/kkelly-offical/kkcode/actions/runs/35748102459)
+  and [CodeQL 35748102421](https://github.com/kkelly-offical/kkcode/actions/runs/35748102421)
+  both passed all jobs on `11c5351`. Closeout documentation does not change the
+  released runtime, tag, APK or npm tarball.

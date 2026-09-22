@@ -1,6 +1,6 @@
 # Changelog / 更新日志
 
-## 1.0.1
+## 1.0.1 — 2026-09-22
 
 - Promote the three previews' Web/Host, OIDC/Relay, native Android, SDK and CLI
   improvements into the stable release line; keep the headless JSONL contract.
