@@ -1,5 +1,10 @@
 # 1.0.2 implementation and acceptance ledger
 
+Follow-up: Android browser-to-App login return was not covered by the original
+native enterprise test (its browser launcher was substituted). This gap is
+tracked and repaired in [1.0.3 / KK Code 1.0.2 Fix](implementation-1.0.3.md).
+The historical 1.0.2 receipts below do not claim real native browser return.
+
 Status: **published stable 1.0.2**, tag `v1.0.2` at `a820086`.
 Baseline: `52ae793`. Development notes below are chronological; final public
 receipts are at the end. Post-release documentation commits do not move the tag.

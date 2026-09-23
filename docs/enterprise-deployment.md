@@ -1,8 +1,10 @@
-# KK Code 企业自托管组件与实验部署（1.0.2）
+# KK Code 企业自托管组件与实验部署（1.0.3 / 1.0.2 Fix）
 
-本文面向 `1.0.2` 部署，版本发布本身不等于生产安全认证。
-根包、网关/Web/SDK 工作区与 Android 版本名一致；APK 版本码为 `10004`。
-实际发布/验收状态见 [本版说明](release-1.0.2.md) 与 [验收账本](implementation-1.0.2.md)。
+本文面向 `1.0.3` 部署，版本发布本身不等于生产安全认证。
+根包、网关/Web/SDK 工作区与 Android 版本名一致；APK 版本码为 `10006`。
+实际发布/验收状态见 [本版说明](release-1.0.3.md) 与 [验收账本](implementation-1.0.3.md)。
+本次专项修复需要网关与 App 同步升级；SSO 的 `/auth/callback` 注册地址不变。
+详见 [Android 回跳、后台恢复与兼容边界](android-gateway-login.md)。
 
 升级前备份 PostgreSQL 与设备本地状态，不重建组织/OIDC client、网关密钥或
 Android 证书。先更新实验网关与一台设备，验证登录、会话流、模型目录、审批和
@@ -113,7 +115,7 @@ docker compose --env-file /root/.local/share/kkcode-enterprise-lab/lab.env \
 ## Web 镜像和 Android 升级
 
 网关镜像内含 WebUI。使用本版源码执行
-`docker build -f deploy/Dockerfile -t kkcode-gateway:1.0.2 .`，然后由部署方按自己的
+`docker build -f deploy/Dockerfile -t kkcode-gateway:1.0.3 .`，然后由部署方按自己的
 Compose／编排配置滚动更新。不要删除数据库卷或重新生成 OIDC/网关密钥；CLI
 与 Android 更新不会自动更新服务器镜像。仓库提供 Dockerfile，不宣称已经发布
 公共 registry 镜像。

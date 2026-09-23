@@ -1,5 +1,21 @@
 # Changelog / 更新日志
 
+## 1.0.3 — KK Code 1.0.2 Fix (release preparation)
+
+- Android/gateway: native browser return with an explicit fallback button;
+  fixed return URI, per-attempt state and S256 proof binding. Enterprise OIDC
+  callback stays on the gateway; no tokens are delivered in a deep link.
+- Durable encrypted pending login and atomic credential commit, process/foreground
+  recovery, single-flight polling, cancel/reopen controls, five transient retries,
+  and correct interval/slow_down handling. Legacy gateways retain manual return.
+- Keep strict Origin checks while using form-compatible referrer policy; add
+  real Android Chrome/SSO/return acceptance instead of substituting the launcher.
+- Android version `1.0.3`, public code `10006`, existing signing identity retained.
+  Published 1.0.2 tags/artifacts are not overwritten; stable App updates remain compatible.
+
+See [upgrade instructions](docs/release-1.0.3.md) and the
+[acceptance/publication ledger](docs/implementation-1.0.3.md).
+
 ## 1.0.2 — 2026-09-23
 
 - Web/Android: per-session rename/archive/restore, visible confirmed rewind with

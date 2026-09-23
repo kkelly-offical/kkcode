@@ -20,10 +20,19 @@ class CredentialVault(context: Context) {
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())
         }.generateKey()
     }
-    fun put(name: String, value: String) {
+    private fun encrypt(value: String): String {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
         val bytes = cipher.iv + cipher.doFinal(value.toByteArray(Charsets.UTF_8))
-        prefs.edit().putString(name, Base64.encodeToString(bytes, Base64.NO_WRAP)).apply()
+        return Base64.encodeToString(bytes, Base64.NO_WRAP)
+    }
+    fun put(name: String, value: String, durable: Boolean = false) {
+        val edit = prefs.edit().putString(name, encrypt(value))
+        if(durable) check(edit.commit()) { "无法安全保存登录进度" } else edit.apply()
+    }
+    fun completeLogin(gateway: String, credentials: String) {
+        // Commit credentials and removal of the one-shot pending grant together.
+        check(prefs.edit().putString("gateway", encrypt(gateway)).putString("credentials", encrypt(credentials))
+            .remove(PENDING_LOGIN_KEY).commit()) { "无法安全保存登录凭据" }
     }
     fun get(name: String): String? = runCatching {
         val raw = prefs.getString(name, null) ?: return null
@@ -31,5 +40,8 @@ class CredentialVault(context: Context) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes.copyOfRange(0, 12))) }
         String(cipher.doFinal(bytes.copyOfRange(12, bytes.size)), Charsets.UTF_8)
     }.getOrNull()
-    fun clear(name: String) { prefs.edit().remove(name).apply() }
+    fun clear(name: String, durable: Boolean = false) {
+        val edit = prefs.edit().remove(name)
+        if(durable) check(edit.commit()) { "无法清除登录进度" } else edit.apply()
+    }
 }

@@ -19,6 +19,11 @@ kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同�
 请先读 [1.0.2 使用与升级说明](docs/release-1.0.2.md)，实际测试与发布状态见
 [1.0.2 验收台账](docs/implementation-1.0.2.md)。
 
+正在准备专项补丁 **1.0.3「KK Code 1.0.2 Fix」**：修复 Android 网关授权后的
+App 回跳、后台恢复、取消与网络重试。需要 App 和网关同时升级，SSO 回调配置不变。
+见 [补丁升级说明](docs/release-1.0.3.md)、[登录流程](docs/android-gateway-login.md)
+与 [本轮验收／发布状态](docs/implementation-1.0.3.md)。
+
 <img src="docs/assets/brand/kkcode-android-original.jpg" alt="KK Code Android 应用品牌图" width="120" />
 
 以上为品牌概念图，不是实际界面截图；应用仍使用紧凑的像素主题会话布局。

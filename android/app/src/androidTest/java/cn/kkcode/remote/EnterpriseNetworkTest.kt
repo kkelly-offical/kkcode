@@ -44,7 +44,7 @@ class EnterpriseNetworkTest {
         try {
             state.gateway = f.getString("gateway")
             withTimeout(90000) { state.login { url -> loginFile.writeText(JSONObject().put("url", url).toString()) }.join() }
-            assertEquals("", state.notice)
+            assertEquals("登录成功", state.notice)
             assertTrue("Native device login must select the registered computer", state.connected)
             assertEquals("KK Code Enterprise Lab", state.profile.getString("organization"))
             state.chooseDevice(state.devices.first { it.getString("id") == f.getString("deviceId") })

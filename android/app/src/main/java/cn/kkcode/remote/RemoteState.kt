@@ -1,7 +1,6 @@
 package cn.kkcode.remote
 
 import android.app.Application
-import android.content.Intent
 import android.net.Uri
 import androidx.compose.runtime.*
 import androidx.lifecycle.AndroidViewModel
@@ -96,7 +95,20 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
     private var credentials: JSONObject? = null
     private var refreshAt = 0L
     private val refreshMutex = Mutex()
-    init { if (restoreConnections && autoConnect) restore() }
+    private var loginJob: Job? = null
+    private var loginNotice: Job? = null
+    private var loginGeneration = 0
+    private var pendingLogin: PendingGatewayLogin? = if(restoreConnections) vault.get(PENDING_LOGIN_KEY)?.let {
+        runCatching { PendingGatewayLogin.read(it, BuildConfig.DEBUG) }.getOrNull()
+    } else null
+    init {
+        if(restoreConnections) {
+            if(pendingLogin != null) {
+                gateway = pendingLogin!!.gateway; loginCode = pendingLogin!!.userCode
+                resumeLogin()
+            } else if(autoConnect) restore()
+        }
+    }
     fun action(block: suspend () -> Unit) = viewModelScope.launch { try { notice = ""; block() } catch (e: CancellationException) { throw e } catch (e: Exception) { notice = e.message ?: "连接暂不可用" } }
     fun preference(name: String, value: Boolean) { prefs.edit().putBoolean(name, value).apply(); if (name == "autoConnect") autoConnect = value else showContext = value }
     fun restore() = action {
@@ -233,30 +245,83 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         require(item.media != null) { "无可用预览" }
         return rpc("media.preview", JSONObject().put("messageId", item.media.getString("messageId")).put("index", item.media.getInt("index")).put("sessionId", sessionId)) as JSONObject
     }
-    fun login(openBrowser: (String) -> Unit = { url -> getApplication<Application>().startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }) = action {
-        require(validGatewayUrl(gateway, BuildConfig.DEBUG)) { "请使用 HTTPS 网关地址，不支持 URL 用户名或密码" }
+    fun login(openBrowser: (String) -> Unit = { openLoginBrowser(getApplication(), it) }): Job = startLogin(openBrowser)
+    private fun savePendingLogin(value: PendingGatewayLogin) {
+        vault.put(PENDING_LOGIN_KEY, value.json(), durable = true)
+        pendingLogin = value; loginCode = value.userCode
+    }
+    private fun clearPendingLogin() {
+        vault.clear(PENDING_LOGIN_KEY, durable = true)
+        pendingLogin = null; loginCode = ""
+    }
+    private fun startLogin(openBrowser: ((String) -> Unit)?): Job {
+        loginJob?.takeIf { it.isActive }?.let { return it }
+        val generation = ++loginGeneration
         loading = true
-        try {
-            val client = DeviceApi(gateway)
-            val canonical = client.call("/api/v1/discovery").getString("gateway")
-            require(validGatewayUrl(canonical, BuildConfig.DEBUG)) { "网关返回了不安全的登录地址" }
-            gateway = canonical; client.base = gateway
-            val flow = client.call("/auth/device", JSONObject().put("name", "KK Code Android").put("kind", "client"))
-            loginCode = flow.getString("user_code")
-            openBrowser(deviceLoginUrl(gateway, loginCode, BuildConfig.DEBUG))
-            var token: JSONObject? = null
-            val deadline = System.currentTimeMillis() + flow.getLong("expires_in") * 1000
-            while (token == null && System.currentTimeMillis() < deadline) {
-                delay(5000)
-                try { token = client.call("/auth/token", JSONObject().put("device_code", flow.getString("device_code"))) }
-                catch (e: Exception) { if (e.message != "authorization_pending" && e.message != "slow_down") throw e }
-            }
-            requireNotNull(token) { "登录已超时，请重试" }
-            refreshAt = System.currentTimeMillis() + token.getLong("expires_in") * 1000
-            token.put("expiresAt", refreshAt); credentials = token; client.token = token.getString("access_token"); api = client
-            vault.put("gateway", gateway); vault.put("credentials", token.toString()); profile = token.getJSONObject("profile")
-            loginCode = ""; awaitDevices()
-        } finally { loading = false }
+        return action {
+            try {
+                var pending = pendingLogin
+                if(pending != null && pending.expiresAt <= System.currentTimeMillis()) {
+                    clearPendingLogin(); pending = null
+                    if(openBrowser == null) throw GatewayLoginEnded("登录已超时，请重新登录")
+                }
+                if(pending == null) {
+                    if(openBrowser == null) return@action
+                    pending = beginGatewayLogin(gateway, BuildConfig.DEBUG)
+                    savePendingLogin(pending)
+                }
+                gateway = pending.gateway
+                if(!pending.native) notice = "此网关尚不支持 App 自动回跳，授权后请手动返回 KK Code；建议更新网关"
+                // Persisted secrets exist before control leaves this process.
+                openBrowser?.invoke(deviceLoginUrl(pending.gateway, pending.userCode, BuildConfig.DEBUG))
+                val token = pollGatewayLogin(pending, ::savePendingLogin)
+                currentCoroutineContext().ensureActive()
+                if(generation != loginGeneration) return@action
+                val expires = token.getLong("expires_in"); require(expires in 1..86400) { "无效的登录凭据有效期" }
+                val nextProfile = token.getJSONObject("profile")
+                val access = token.getString("access_token"); require(access.isNotBlank())
+                require(token.getString("refresh_token").isNotBlank())
+                refreshAt = System.currentTimeMillis() + expires * 1000
+                token.put("expiresAt", refreshAt)
+                vault.completeLogin(gateway, token.toString())
+                pendingLogin = null; loginCode = ""
+                devicePolling?.cancel(); disconnect()
+                credentials = token; api = DeviceApi(gateway, access); profile = nextProfile
+                startDevicePolling()
+                try {
+                    awaitDevices(); notice = "登录成功"; loginNotice?.cancel()
+                    loginNotice = viewModelScope.launch { delay(5000); if(notice == "登录成功") notice = "" }
+                }
+                catch(error: CancellationException) { throw error }
+                catch(_: Exception) { sheet = "connections"; notice = "已登录，设备列表暂时不可用，将自动重试" }
+            } catch(error: GatewayLoginEnded) {
+                clearPendingLogin(); throw error
+            } finally { if(generation == loginGeneration) loading = false }
+        }.also { loginJob = it }
+    }
+    fun resumeLogin() {
+        if(pendingLogin != null && loginJob?.isActive != true) startLogin(null)
+    }
+    fun handleLoginReturn(value: String?): Boolean {
+        val pending = pendingLogin ?: return false
+        if(pending.expiresAt <= System.currentTimeMillis() || !pending.acceptsReturn(value)) return false
+        resumeLogin(); return true
+    }
+    fun reopenLoginBrowser() = action {
+        val pending = pendingLogin ?: return@action
+        require(pending.expiresAt > System.currentTimeMillis()) { "登录已超时，请重新登录" }
+        openLoginBrowser(getApplication(), deviceLoginUrl(pending.gateway, pending.userCode, BuildConfig.DEBUG))
+        resumeLogin()
+    }
+    fun cancelLogin() {
+        val previous = pendingLogin
+        loginGeneration++; loginJob?.cancel(); loginJob = null
+        clearPendingLogin(); loading = false; notice = "已取消登录"
+        if(previous != null) viewModelScope.launch {
+            try { DeviceApi(previous.gateway).call("/auth/cancel", previous.proof()) }
+            catch(error: CancellationException) { throw error }
+            catch(_: Exception) { /* Local cancellation is final; remote grants expire. */ }
+        }
     }
     private suspend fun awaitDevices() { loadDevices(); sheet = if (devices.isEmpty()) "connections" else "" }
     fun connectSsh(host: String, port: String, user: String, password: String, key: String = "") = action {
@@ -652,11 +717,12 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
     fun leaveChat() { polling?.cancel(); selected = ""; messages = emptyList(); persistedSteps = emptySet(); persistedUserTurns = emptySet(); approvals = emptyList(); attachments = emptyList(); draft = ""; historyHasMore = false; historyBefore = ""; busy = false }
     fun disconnect() { deviceEvents?.cancel(); deviceNotice?.cancel(); manualDisconnect = true; leaveChat(); ssh.close(); if(api?.relay == false) api = null; else api?.device = ""; connected = false; deviceName = "未连接设备"; sessions = emptyList() }
     fun logout() = action {
+        cancelLogin()
         devicePolling?.cancel()
         try { if(api?.relay == true) api!!.call("/auth/logout", JSONObject()) }
         finally { vault.clear("credentials"); credentials = null; profile = JSONObject(); disconnect(); api = null; devices = emptyList(); sheet = "" }
     }
-    override fun onCleared() { polling?.cancel(); devicePolling?.cancel(); deviceEvents?.cancel(); deviceNotice?.cancel(); ssh.close(); super.onCleared() }
+    override fun onCleared() { loginJob?.cancel(); loginNotice?.cancel(); polling?.cancel(); devicePolling?.cancel(); deviceEvents?.cancel(); deviceNotice?.cancel(); ssh.close(); super.onCleared() }
 }
 internal fun JSONArray?.objects(): List<JSONObject> = if (this == null) emptyList() else (0 until length()).mapNotNull { optJSONObject(it) }
 internal fun JSONObject.stepOrNull(): Int? = if(has("step") && !isNull("step")) (opt("step") as? Number)?.toInt() else null

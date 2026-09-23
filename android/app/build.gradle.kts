@@ -38,8 +38,8 @@ android {
         applicationId = "cn.kkcode.remote"
         minSdk = 29
         targetSdk = 35
-        versionCode = 10005
-        versionName = "1.0.2"
+        versionCode = 10006
+        versionName = "1.0.3"
         buildConfigField("String", "UPDATE_REPOSITORY", "\"${releaseIdentity["repository"]}\"")
         buildConfigField("String", "UPDATE_CERT_SHA256", "\"${releaseIdentity["certificateSha256"]}\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -72,6 +72,7 @@ tasks.matching { it.name == "preReleaseBuild" }.configureEach {
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2025.06.01"))
     implementation("androidx.activity:activity-compose:1.10.1")
+    implementation("androidx.browser:browser:1.8.0")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.1")

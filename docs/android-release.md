@@ -1,4 +1,9 @@
-# Android 1.0.2 release signing and acceptance
+# Android release signing and acceptance
+
+Current candidate: **1.0.3 / 10006 (KK Code 1.0.2 Fix)**, with the same release
+certificate. Actual acceptance/publication is recorded in
+[the 1.0.3 ledger](implementation-1.0.3.md); historical receipts below remain
+unchanged. Native browser-return scope is documented in [gateway login](android-gateway-login.md).
 
 The Android application is a native remote client. Release signing is separate
 from publishing: producing this APK does not upload it to a store or GitHub.

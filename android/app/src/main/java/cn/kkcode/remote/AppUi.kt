@@ -222,9 +222,15 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
             }
             "relay" -> {
                 Text("填写网关地址即可。统一身份登录由网关引导。", color = muted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 12.dp))
-                OutlinedTextField(state.gateway, { state.gateway = it }, label = { Text("网关地址") }, placeholder = { Text("https://remote.example.com") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = PixelShape(4.dp))
+                OutlinedTextField(state.gateway, { state.gateway = it }, enabled = !state.loading && state.loginCode.isBlank(), label = { Text("网关地址") }, placeholder = { Text("https://remote.example.com") }, singleLine = true, modifier = Modifier.fillMaxWidth(), shape = PixelShape(4.dp))
                 Button(onClick = { state.login() }, enabled = !state.loading && state.gateway.isNotBlank(), modifier = Modifier.fillMaxWidth().padding(top = 14.dp)) { Text(if(state.loading) "等待浏览器确认…" else "继续登录") }
-                if(state.loginCode.isNotBlank()) Text("登录码 ${state.loginCode}", color = muted, fontSize = 13.sp, modifier = Modifier.padding(12.dp))
+                if(state.loginCode.isNotBlank()) {
+                    Text("登录码 ${state.loginCode} · 授权后返回本 App 即可", color = muted, fontSize = 13.sp, modifier = Modifier.padding(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        TextButton(onClick = { state.reopenLoginBrowser() }) { Text("重新打开浏览器") }
+                        TextButton(onClick = { state.cancelLogin() }) { Text("取消登录") }
+                    }
+                }
             }
             "ssh" -> {
                 Text("电脑需已安装支持远程协议的 KK Code（建议 ${BuildConfig.VERSION_NAME}）。连接过程中会核对主机指纹。", color = muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 12.dp))
