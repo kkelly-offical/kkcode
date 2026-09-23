@@ -424,6 +424,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         editingSsh = connection
         val saved = vault.get(sshSecretKey(connection.getString("id")))?.let { runCatching { JSONObject(it) }.getOrNull() }
         if(saved == null) { editSsh(connection); notice = "输入此手机的 SSH 凭据；网关不会保存私钥或密码"; return null }
+        if(!sshCredentialMatches(saved, connection)) { editSsh(connection); notice = "SSH 目标或指纹已变化，请重新核对并输入本机凭据；不会把旧密码发送到变更后的目标"; return null }
         return connectSsh(connection.getString("host"), connection.optInt("port", 22).toString(), connection.getString("username"), saved.optString("password"), saved.optString("privateKey"), connection.optString("name"), true, connection.optInt("remotePort", 18271), connection.optString("folders") == "all", recovering = automatic)
     }
     fun resumeSshConnection(force: Boolean = false) {
@@ -485,7 +486,8 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
             selectedSsh = id
             val saved = JSONObject().put("id", id).put("type", "ssh").put("name", deviceName).put("host", host).put("port", port.toInt()).put("username", user).put("remotePort", remotePort).put("hostKey", accepted ?: "").put("folders", if(allFolders) "all" else "home").put("pendingSync", true)
             sshProfiles = sshProfiles.filterNot { it.optString("id") == id } + saved; persistSshProfiles()
-            if(rememberCredentials) vault.put(sshSecretKey(id), JSONObject().put("password", password).put("privateKey", key).toString()) else vault.clear(sshSecretKey(id))
+            if(!accepted.isNullOrBlank()) vault.put("ssh-key:${accountScope()}:$host:$port:$user", accepted)
+            if(rememberCredentials) vault.put(sshSecretKey(id), JSONObject().put("password", password).put("privateKey", key).put("host", host).put("port", port.toInt()).put("username", user).put("hostKey", accepted ?: "").toString()) else vault.clear(sshSecretKey(id))
             vault.put("active-ssh:${accountScope()}", id)
             val status = next.rpc("status", JSONObject()) as JSONObject
             if(generation != connectionGeneration) return@action
