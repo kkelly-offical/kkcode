@@ -3,6 +3,8 @@
 正式版本：`1.0.4`，Android 版本码 `10008`。
 发布状态与实际测试以 [实施账本](stable-1.0.4-worklog.md) 为准。
 本说明覆盖代码与升级流程，不代表生产服务已经自动部署。
+tag/npm 内文档是发行前冻结的验收记录；公开下载与发布完成回执请看
+[main 最新账本](https://github.com/kkelly-offical/kkcode/blob/main/docs/stable-1.0.4-worklog.md)。
 
 ## Responses API 与运行时
 
