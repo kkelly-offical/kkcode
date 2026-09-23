@@ -62,6 +62,18 @@ test('a tool that may have performed its side effect cannot be blindly replayed 
   await live.finish('settled')
 })
 
+test('reported transport uncertainty stays unresolved but a known preflight refusal can be retried', async t => {
+  const { root } = await fixture(t)
+  let uncertain = 0, preflight = 0
+  const input = { args: {}, sessionId: 'transport', turnId: 'one', context: { cwd: root, config: {} } }
+  const remote = { name: 'mcp_fixture_mutation', async execute() { uncertain++; return { output: '[MCP Error] disconnected', status: 'error', metadata: { outcomeUnknown: true } } } }
+  await executeTool({ ...input, tool: remote }); await executeTool({ ...input, tool: remote, turnId: 'two' })
+  assert.equal(uncertain, 1)
+  const setup = { name: 'fixture_preflight', async execute() { preflight++; throw Object.assign(new Error('engine missing before any page was opened'), { operationNotStarted: true }) } }
+  await executeTool({ ...input, tool: setup }); await executeTool({ ...input, tool: setup, turnId: 'two' })
+  assert.equal(preflight, 2)
+})
+
 test('hook-injected request content participates in the preflight budget and prevents an oversized provider request', async t => {
   const { kernel, root, config } = await fixture(t)
   config.provider.fixture.context_limit = 16000; config.provider.fixture.max_tokens = 1024

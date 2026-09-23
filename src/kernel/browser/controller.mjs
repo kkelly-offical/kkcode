@@ -64,7 +64,7 @@ export function createBrowserController({ launch = (profile, options) => chromiu
           entry.page.on('pageerror', error => { entry.errors.push(String(error.message).slice(0, 240)); if (entry.errors.length > 10) entry.errors.shift() })
           entry.page.on('console', message => { entry.console.push({ type: message.type(), text: message.text().slice(0, 500) }); if (entry.console.length > 30) entry.console.shift() })
           return entry
-        } catch (error) { await closeEntry(entry); throw new Error(`Browser could not start: ${error.message}. Use a non-root account with Chromium sandbox support; disabling tool.browser.chromium_sandbox requires an explicitly isolated environment.`) }
+        } catch (error) { await closeEntry(entry); throw Object.assign(new Error(`Browser could not start: ${error.message}. Use a non-root account with Chromium sandbox support; disabling tool.browser.chromium_sandbox requires an explicitly isolated environment.`), { operationNotStarted: true }) }
       })()
       sessions.set(sessionId, pending)
       pending.catch(() => sessions.delete(sessionId))

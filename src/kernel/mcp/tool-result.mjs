@@ -9,7 +9,8 @@ export function normalizeToolResult(result, serverName, toolName) {
       reason: "bad_response",
       server: serverName,
       action: `tools/call:${toolName}`,
-      phase: "request"
+      phase: "request",
+      knownOutcome: true
     })
   }
   const content = Array.isArray(result?.content) ? result.content : null

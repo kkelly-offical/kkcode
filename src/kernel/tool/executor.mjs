@@ -187,7 +187,7 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
         const output = normalizedContent.output
         const metadata = raw?.metadata && typeof raw.metadata === "object" ? raw.metadata : {}
         const status = rawStatus(raw, signal, output)
-        await operation?.finish(status === 'cancelled' ? 'uncertain' : 'settled')
+        await operation?.finish(status === 'cancelled' || metadata.outcomeUnknown === true ? 'uncertain' : 'settled')
         operation = null
         const evidence = {
           ...(raw?.evidence && typeof raw.evidence === "object" ? raw.evidence : {}),
@@ -229,7 +229,7 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
         })
         return result
       } catch (error) {
-        await operation?.finish('uncertain').catch(() => {})
+        await operation?.finish(error.operationNotStarted === true || error.code === 'workspace_path_violation' ? 'settled' : 'uncertain').catch(() => {})
         const errorMessage = error?.message || String(error)
         const cancelled = signal?.aborted || error?.name === "AbortError" || error?.code === "ABORT_ERR"
         const result = makeToolResult({

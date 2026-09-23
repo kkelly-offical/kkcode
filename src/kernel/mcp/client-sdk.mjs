@@ -48,7 +48,9 @@ export function createSdkMcpClient(serverName, config) {
     async getPrompt(name, args = {}) { return (await connect()).getPrompt({ name, arguments: args }, { timeout }) },
     async readResource(uri) { return (await connect()).readResource({ uri }, { timeout }) },
     async callTool(name, args = {}, signal) {
-      const result = await (await connect()).callTool({ name, arguments: args }, { timeout, signal })
+      let peer
+      try { peer = await connect() } catch (error) { throw Object.assign(error, { operationNotStarted: true }) }
+      const result = await peer.callTool({ name, arguments: args }, { timeout, signal })
       return normalizeToolResult(result, serverName, name)
     },
     async shutdown() { await client?.close(); client = null; connecting = null }

@@ -2450,7 +2450,7 @@ function mcpTools(mcpRegistry) {
       } catch (error) {
         const reason = error.reason || "unknown"
         const server = error.server || tool.server
-        return `[MCP Error: ${server} ${reason}] ${error.message}`
+        return { output: `[MCP Error: ${server} ${reason}] ${error.message}`, status: 'error', metadata: { outcomeUnknown: error.operationNotStarted !== true && error.details?.knownOutcome !== true && error.code !== 'mcp_auth_required' && !['spawn_failed', 'connection_refused', 'mcp_auth_required', 'not_found', 'not_supported', 'shutting_down'].includes(reason) } }
       }
     }
   }))
