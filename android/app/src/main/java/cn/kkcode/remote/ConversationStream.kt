@@ -17,6 +17,11 @@ internal class SessionEventCursor(initial: Long) {
 internal data class StreamDelta(val id: String, val kind: String, val text: String, val turnId: String, val step: Int?, val timestamp: Long)
 internal fun streamStepKey(turnId: String, step: Int?): String? = if(turnId.isBlank() || step == null) null else "$turnId:$step"
 
+internal fun beginStreamThinking(items: List<ChatItem>, event: StreamDelta, persisted: Set<String>): List<ChatItem> {
+    if(streamStepKey(event.turnId, event.step) in persisted || items.any { it.streamed && !it.done && it.kind == "thinking" && it.turnId == event.turnId && it.step == event.step }) return items
+    return items + ChatItem(event.id, "thinking", "", startedAt = event.timestamp, done = false, turnId = event.turnId, step = event.step, streamed = true)
+}
+
 internal fun appendStreamDelta(items: List<ChatItem>, event: StreamDelta, persisted: Set<String>): List<ChatItem> {
     if(streamStepKey(event.turnId, event.step) in persisted || event.text.isEmpty()) return items
     val index = items.indexOfLast { it.streamed && !it.done && it.kind == event.kind && it.turnId == event.turnId && it.step == event.step }
@@ -25,7 +30,7 @@ internal fun appendStreamDelta(items: List<ChatItem>, event: StreamDelta, persis
 }
 
 internal fun finishStreamStep(items: List<ChatItem>, turnId: String, step: Int?, timestamp: Long): List<ChatItem> = items.map { item ->
-    if(item.streamed && !item.done && (turnId.isBlank() || item.turnId == turnId) && (step == null || item.step == step)) item.copy(done = true, durationMs = if(item.kind == "thinking") (timestamp - item.startedAt).coerceAtLeast(0) else item.durationMs) else item
+    if(item.streamed && !item.done && (turnId.isBlank() || item.turnId == turnId) && (step == null || item.step == step)) item.copy(done = true, durationMs = (timestamp - item.startedAt).coerceAtLeast(0)) else item
 }
 
 internal fun finishStreamReply(items: List<ChatItem>, id: String, turnId: String, step: Int?, reply: String, timestamp: Long): List<ChatItem> {

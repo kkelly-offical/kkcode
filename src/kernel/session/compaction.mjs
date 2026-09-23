@@ -188,6 +188,10 @@ export function estimateTokenCount(messages) {
           tokens += estimateStringTokens(JSON.stringify(block.input || {}))
         } else if (block.type === "tool_result") {
           tokens += estimateStringTokens(String(block.content || ""))
+        } else if (block.type === 'provider_state') {
+          // Opaque encrypted bytes are not text tokens. Use the provider's
+          // reported reasoning-token count when available, never base64 length.
+          tokens += Math.max(0, Number(block.reasoningTokens) || 0)
         } else {
           tokens += estimateStringTokens(block.text || block.content || "")
         }

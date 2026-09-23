@@ -90,6 +90,7 @@ export function buildTranscript(snapshot = {}, events = []) {
           type: "thinking",
           text: block.text,
           timestamp: message.createdAt,
+          turnId: message.turnId,
           done: true,
         });
       if (block.type === "image_preview") rows.push({ id: `${message.id}-image-${index}`, type: "media", reference: { messageId: block.messageId, index: block.index }, mediaType: block.mediaType, timestamp: message.createdAt });
@@ -100,6 +101,7 @@ export function buildTranscript(snapshot = {}, events = []) {
         type: text.includes("<compaction-summary") ? "compacted" : message.role,
         text,
         timestamp: message.createdAt,
+        turnId: message.turnId,
         ...(message.role === "user" && !text.includes("<compaction-summary") ? { messageId: message.id } : {}),
       });
   }
@@ -148,7 +150,7 @@ export function buildTranscript(snapshot = {}, events = []) {
       stream = null;
       endThinking();
       if (p.prompt && !persistedTurns.has(turnId))
-        rows.push({ id: `${event.id}-user`, type: "user", text: p.prompt });
+        rows.push({ id: `${event.id}-user`, type: "user", text: p.prompt, turnId, timestamp: event.timestamp });
     } else if (
       event.type === "stream.thinking.start" ||
       event.type === "stream.thinking.delta"
@@ -160,6 +162,7 @@ export function buildTranscript(snapshot = {}, events = []) {
           type: "thinking",
           text: "",
           timestamp: event.timestamp,
+          turnId,
           done: false,
         };
         rows.push(thinking);
@@ -170,10 +173,11 @@ export function buildTranscript(snapshot = {}, events = []) {
       endThinking();
       if (persistedSteps.has(step)) continue;
       if (!stream) {
-        stream = { id: event.id, type: "assistant", text: "" };
+        stream = { id: event.id, type: "assistant", text: "", turnId, timestamp: event.timestamp, done: false };
         rows.push(stream);
       }
       stream.text += p.text || "";
+      stream.updatedAt = event.timestamp;
       textTurns.add(turnId);
     } else if (
       ["tool.start", "tool.finish", "tool.error"].includes(event.type)
@@ -194,7 +198,7 @@ export function buildTranscript(snapshot = {}, events = []) {
       };
       if (old) Object.assign(old.payload, payload);
       else {
-        const row = { id: key, type: "tool", payload };
+        const row = { id: key, type: "tool", payload, turnId, timestamp: event.timestamp };
         rows.push(row);
         tools.set(key, row);
       }
@@ -229,7 +233,9 @@ export function buildTranscript(snapshot = {}, events = []) {
             message.role === "assistant" && message.turnId === turnId,
         )
       )
-        rows.push({ id: event.id, type: "assistant", text: p.reply });
+        rows.push({ id: event.id, type: "assistant", text: p.reply, turnId, timestamp: event.timestamp });
+      const final = rows.findLast(row => row.type === 'assistant' && row.turnId === turnId);
+      if (final) { final.finishedAt = event.timestamp; final.done = true; }
       completedTurns.add(turnId);
       stream = null;
     } else if (event.type === "turn.failed") {

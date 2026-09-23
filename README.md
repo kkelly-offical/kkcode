@@ -29,6 +29,10 @@ kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同�
 同时补齐提示词预算/指纹、强类型 SDK、MCP OAuth、ACP 和受控 Browser/Harness。
 见 [Preview 说明](docs/release-1.0.4-preview.0.md)、[本轮验收](docs/implementation-1.0.4.md)。
 
+下一正式版 **`1.0.4` 正在开发验收，尚未发布**：加入 Responses API，集中修复 SSH 设备切换、
+空会话显示和中文错误，并改善来源链接、实时 Thinking 与完成后过程折叠。
+见 [1.0.4 说明](docs/release-1.0.4.md) 与 [实际进度](docs/stable-1.0.4-worklog.md)。
+
 <img src="docs/assets/brand/kkcode-android-original.jpg" alt="KK Code Android 应用品牌图" width="120" />
 
 以上为品牌概念图，不是实际界面截图；应用仍使用紧凑的像素主题会话布局。

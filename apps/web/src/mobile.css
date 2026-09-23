@@ -857,6 +857,11 @@
   padding: 2px 0 8px;
   overflow: hidden;
 }
+.run-summary-body {
+  margin: 0 0 12px 12px;
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+}
 .tool-body pre {
   margin: 8px 0;
   font-size: 12px;

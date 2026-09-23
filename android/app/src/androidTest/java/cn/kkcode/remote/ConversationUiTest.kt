@@ -41,14 +41,15 @@ class ConversationUiTest {
 
     @Test fun connectionFormsAreExplicitAndBackRestoresTheirParent() {
         val state = show()
-        compose.onNodeWithText("添加连接", useUnmergedTree = true).performClick()
-        compose.onNodeWithText("SSH").assertIsDisplayed()
+        compose.onNodeWithText("管理连接", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("SSH 直连").assertIsDisplayed()
         compose.onNodeWithText("主机地址").assertDoesNotExist()
-        compose.onNodeWithText("Remote 中继").performClick()
+        compose.onNodeWithText("添加网关连接").performClick()
         compose.onNodeWithText("网关地址").assertIsDisplayed()
+        compose.onNodeWithText("添加 SSH 连接").assertDoesNotExist()
         compose.onNodeWithText("返回").performClick()
-        compose.onNodeWithText("SSH").assertIsDisplayed()
-        compose.runOnIdle { assertEquals("add", state.sheet) }
+        compose.onNodeWithText("SSH 直连").assertIsDisplayed()
+        compose.runOnIdle { assertEquals("connections", state.sheet) }
     }
 
     @Test fun providerFormRequiresAnExplicitAddAction() {

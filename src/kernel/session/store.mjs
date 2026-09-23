@@ -206,6 +206,7 @@ async function flushUnsafe() {
   for (const sessionId of [...state.dirtySessions]) {
     const data = applyDataOperations(await readSessionData(sessionId), state.dataOperations.get(sessionId) || [])
     await writeJson(sessionDataPath(sessionId), data)
+    if (current?.sessions[sessionId]) current.sessions[sessionId].hasContent = data.messages.length > 0 || data.parts.length > 0
     state.sessionCache.set(sessionId, data)
     state.dataOperations.delete(sessionId)
     state.dirtySessions.delete(sessionId)
@@ -352,7 +353,7 @@ export async function replaceConversationForRewind(sessionId, retained, observed
     const next = { messages: retained, parts }
     await writeJson(sessionDataPath(sessionId), next)
     state.sessionCache.set(sessionId, next)
-    queueIndexOperation(sessionId, 'patch', { status: 'idle', historyRevision: randomUUID(), updatedAt: now() })
+    queueIndexOperation(sessionId, 'patch', { status: 'idle', historyRevision: randomUUID(), hasContent: retained.length > 0 || parts.length > 0, updatedAt: now() })
     await flushUnsafe()
     return { removedParts: data.parts.length - parts.length, backup: 'before-rewind' }
   })
@@ -410,13 +411,24 @@ export async function getSession(sessionId) {
   })
 }
 
-export async function listSessions({ cwd = null, limit = 100, includeChildren = true } = {}) {
+export async function listSessions({ cwd = null, limit = 100, includeChildren = true, includeContent = false } = {}) {
   return withLock(async () => {
     await ensureLoadedUnsafe()
     let sessions = Object.values(state.index.sessions)
     if (cwd) sessions = sessions.filter((s) => s.cwd === cwd)
     if (!includeChildren) sessions = sessions.filter((s) => !s.parentSessionId)
-    return sessions.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit)
+    sessions = sessions.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit)
+    if (includeContent) {
+      // Old indexes have no content marker. Hydrate only this bounded page, and
+      // persist the marker without changing timestamps or deleting any history.
+      for (const session of sessions) if (typeof session.hasContent !== 'boolean' || state.dirtySessions.has(session.id)) {
+        const data = await loadSessionDataUnsafe(session.id)
+        queueIndexOperation(session.id, 'patch', { hasContent: data.messages.length > 0 || data.parts.length > 0 })
+      }
+      await flushUnsafe()
+      return sessions.map(session => state.index.sessions[session.id])
+    }
+    return sessions
   })
 }
 

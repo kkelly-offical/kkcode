@@ -1,5 +1,12 @@
 # 文档导航（1.0.4 Preview / 1.0.3 Stable）
 
+## 1.0.4 正式版候选（尚未发布）
+
+- [正式版说明](release-1.0.4.md)、[实际验收与发布账本](stable-1.0.4-worklog.md)。
+- [Responses API](responses-api.md)：渠道配置、流式/工具/思考续接、隐私与支持边界。
+- [SSH 与账号设备](ssh-account-devices.md)：中文故障检查、并列导航与后台重连。
+- 不另发第二个预览版；用户已调整目标为完成验收后发布稳定 1.0.4。
+
 ## 当前已发布预览版：1.0.4 Preview
 
 - [Preview 说明](release-1.0.4-preview.0.md)、[实施与验收/发布回执](implementation-1.0.4.md)：自愿选择预览渠道，稳定标签不变。

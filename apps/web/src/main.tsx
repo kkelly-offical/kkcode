@@ -9,7 +9,9 @@ import { ContextUsage } from './ContextUsage';
 import { modeLabel } from "./modes.mjs";
 import { SettingsOverlay } from "./Settings";
 import { Icon } from "./Icon";
-import { TranscriptRow } from "./TranscriptView";
+import { TranscriptRow, ThinkingRow } from "./TranscriptView";
+import { collapseCompletedRuns } from './conversation-presentation.mjs';
+import { remoteErrorMessage } from './errors.mjs';
 import { Composer } from "./Composer";
 import { buildTranscript, changeSummary } from "./transcript.mjs";
 import { DeviceClient } from "../../../src/sdk/client.mjs";
@@ -71,7 +73,8 @@ function App() {
   const attachments = draftAttachments[attachmentKey] || [];
   const sdk = useMemo(() => new DeviceClient({ url: location.origin, gateway, deviceId: gateway ? deviceId || null : null }), [gateway, deviceId]);
   async function rpc(method: string, params: Item = {}) {
-    return sdk.request<any>(method, params);
+    try { return await sdk.request<any>(method, params); }
+    catch (error: any) { throw Object.assign(new Error(remoteErrorMessage(error)), { code: error.code, status: error.status }); }
   }
   const deviceNoticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(deviceNoticeTimer.current), []);
@@ -111,7 +114,7 @@ function App() {
     try {
       return await fn();
     } catch (e: any) {
-      setNotice(e.message);
+      setNotice(remoteErrorMessage(e));
     }
   };
   useEffect(() => {
@@ -285,7 +288,7 @@ function App() {
     };
     const watchError = (error: any) => {
       if (cancelled) return false;
-      setNotice(error.message);
+      setNotice(remoteErrorMessage(error));
       if ([401, 403, 404].includes(error.status)) { setSelected(""); setSession(null); setEvents([]); setApproval([]); cancelled = true; }
       return true;
     };
@@ -417,12 +420,13 @@ function App() {
     }
   }, [notice]);
   async function createSession(): Promise<string> {
-    const result = await rpc("sessions.create", { cwd });
-    if (settings.provider?.default) {
+    const result = await rpc("sessions.create", { cwd, mode, model: model || undefined, provider: provider || undefined });
+    if (!result.modeId && settings.provider?.default) {
       await rpc("control.acquire", { sessionId: result.id });
       try { await rpc("sessions.configure", { sessionId: result.id, mode, model: model || undefined, provider: provider || undefined }); }
       finally { await rpc("control.release", { sessionId: result.id }).catch(() => {}); }
     }
+    if (result.modeId) applySelection(result);
     await refreshSessions();
     setSelected(result.id);
     setSidebar(false);
@@ -758,17 +762,14 @@ function App() {
                   )}
                 </div>
               )}
-              {messages.map((row) => (
+              {collapseCompletedRuns(messages, busy).map((row) => (
                 <TranscriptRow key={row.id} row={row} loadPreview={ref => rpc("media.preview", { sessionId: selected, ...ref })} onRewind={canManage && !busy && !session?.archived ? target => setRewindTarget(target) : undefined} />
               ))}
               {busy &&
                 !messages.some(
                   (row) => row.type === "thinking" && !row.done,
                 ) && (
-                  <div className="thinking">
-                    <i />
-                    Thinking…
-                  </div>
+                  <ThinkingRow row={{ id: 'waiting-thinking', text: '', done: false }} />
                 )}
               {approval.map(request => <Approval key={request.id} request={request} readOnly={readOnly} onResolve={answer => rpc('approvals.resolve', { id: request.id, sessionId: request.sessionId || selected, answer })} />)}
               <div ref={tail} />

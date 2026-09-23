@@ -1,5 +1,26 @@
 # Changelog / 更新日志
 
+## 1.0.4 — candidate, not yet published
+
+- Add a native OpenAI Responses adapter: stateless text/image input, SSE,
+  reasoning summaries, governed function calls/results, usage and citations,
+  scoped encrypted continuity and assistant phase. Keep Chat/Anthropic defaults.
+- Count complete tool-result content in context budgets, keep opaque state out
+  of client projections, and honor the SDK's optional session/provider/model inputs.
+- Fix direct-device/SSH and gateway HTTP error-handler registration; preserve
+  legacy error details/codes and present actionable Chinese errors on clients.
+- Isolate model/settings state when switching devices; validate initial session
+  selection before storage; hide explicitly empty drafts without deleting history.
+- Keep SSH devices alongside gateway devices; separate add flows and avoid
+  reconnecting or opening credentials when selecting the already connected host.
+- Open HTTP(S) Markdown/plain source links in the device browser with no silent
+  navigation or credential forwarding; block unsafe URI schemes.
+- Expand live thinking from its start and keep streaming content visible; fold
+  completed process traces behind a timed summary, leaving the final report outside.
+- Android code `10008`, same signing identity. See the
+  [release guide](docs/release-1.0.4.md) and
+  [actual validation/publication ledger](docs/stable-1.0.4-worklog.md).
+
 ## 1.0.4-preview.0 — 2026-09-23
 
 Opt-in preview; npm `preview`, GitHub prerelease, stable `latest` stays at `1.0.3`.

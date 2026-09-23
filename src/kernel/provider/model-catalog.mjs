@@ -78,8 +78,8 @@ function appendModelsPath(baseUrl) {
 function providerProtocol(name, provider) {
   const type = provider.type || name
   if (type === "gateway") {
-    if (!["openai", "anthropic"].includes(provider.protocol)) {
-      throw new ProviderError(`provider "${name}" gateway protocol must be openai or anthropic`, {
+    if (!["openai", "responses", "anthropic"].includes(provider.protocol)) {
+      throw new ProviderError(`provider "${name}" gateway protocol must be openai, responses or anthropic`, {
         provider: name,
         reason: "invalid_config"
       })
@@ -87,6 +87,7 @@ function providerProtocol(name, provider) {
     return provider.protocol
   }
   if (type === "anthropic") return "anthropic"
+  if (type === 'openai-responses' || ['openai', 'openai-compatible'].includes(type) && provider.protocol === 'responses') return 'responses'
   if (type === "openai" || type === "openai-compatible") return "openai"
   throw new ProviderError(`provider "${name}" does not expose an OpenAI or Anthropic model catalog`, {
     provider: name,
@@ -132,7 +133,7 @@ export function resolveProviderConnection(configState, providerName = null) {
   )
   const modelsUrl = provider.endpoints?.models
     ? resolveHttpUrl(provider.endpoints.models, `provider.${name}.endpoints.models`, `${trimTrailingSlashes(baseUrl.toString())}/`)
-    : appendModelsPath(baseUrl.toString())
+    : appendModelsPath(protocol === 'responses' ? (() => { const url = new URL(baseUrl); url.pathname = url.pathname.replace(/\/responses\/?$/, ''); return url.href })() : baseUrl.toString())
   const apiKeyEnv = provider.api_key_env || ""
   return {
     name,
@@ -223,7 +224,7 @@ function discoveryHeaders(connection, requestId) {
     provider: connection.name,
     protocol: connection.protocol,
     requestId,
-    openAIClientRequestId: connection.protocol === "openai",
+    openAIClientRequestId: ['openai', 'responses'].includes(connection.protocol),
     accept: "application/json",
     ...authentication
   })
@@ -476,6 +477,7 @@ async function fetchCatalog(connection, { signal = null, timeoutMs = 10000, requ
     if (!response.ok) {
       throw new ProviderError(`model discovery failed for provider "${connection.name}": HTTP ${response.status}`, {
         provider: connection.name,
+        status: response.status,
         reason: response.status === 401 || response.status === 403 ? "auth" : "bad_response"
       })
     }

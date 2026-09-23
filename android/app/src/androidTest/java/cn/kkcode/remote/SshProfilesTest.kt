@@ -50,9 +50,10 @@ class SshProfilesTest {
             a.api = DeviceApi(a.gateway, relay = false)
             a.preference("autoConnect", true)
             a.resumeSshConnection()
-            withTimeout(3000) { while(a.sheet != "ssh") delay(20) }
-            assertEquals("ssh", a.sheet)
+            withTimeout(3000) { while(!a.notice.contains("网关不会保存")) delay(20) }
+            assertEquals("", a.sheet)
             assertTrue(a.notice.contains("网关不会保存"))
+            a.chooseSsh(a.sshProfiles.single()); assertEquals("ssh", a.sheet)
             a.disconnect(); a.sheet = ""
             a.resumeSshConnection(force = true); delay(50)
             assertEquals("", a.sheet)

@@ -25,6 +25,16 @@ import { DeviceLiveView } from './live-view.mjs'
 import { publicMcpSummary } from './mcp-status.mjs'
 
 const idPattern = /^[A-Za-z0-9_-]{1,128}$/
+function sessionSelection(config, session, p, sessionId, allowUnconfigured = false) {
+  const providerType = p.provider || session.providerType || config.provider.default
+  const provider = Object.hasOwn(config.provider, providerType) && typeof config.provider[providerType] === 'object' ? config.provider[providerType] : null
+  if (!provider && (!allowUnconfigured || p.provider || p.model)) throw new ProtocolError('unknown_provider', '当前电脑未配置所选模型渠道，请先在这台电脑的“模型与渠道”中配置后再选择。')
+  if (p.model != null && (typeof p.model !== 'string' || !p.model.trim() || p.model.length > 200 || /[\x00-\x1f]/.test(p.model))) throw new ProtocolError('invalid_model', '模型 ID 无效。请从当前渠道的目录选择，或填写服务实际提供的模型 ID。')
+  if (p.mode != null && !modeIdFromLegacy(p.mode)) throw new ProtocolError('invalid_mode', '执行模式无效，请重新选择 Plan、Agent、Auto、Ultra 或 Yolo。')
+  if (p.approval != null && !['readonly', 'manual', 'accept-edits', 'yolo'].includes(p.approval)) throw new ProtocolError('invalid_approval', '权限参数无效，请通过执行模式选择器重新选择。')
+  const modeId = resolveSessionMode({ modeId: p.mode || session.modeId, mode: session.mode, approval: p.approval || (!p.mode ? session.approval : null) })
+  return { providerType, model: p.model || (p.provider ? provider?.default_model : session.model) || provider?.default_model || '', modeId, mode: laneOf(modeId), approval: approvalOf(modeId), sessionId }
+}
 export class DeviceService extends EventEmitter {
   constructor({ cwd = process.cwd(), roots = [os.homedir()], createKernelImpl = createKernel, retention = {} } = {}) {
     super()
@@ -105,6 +115,7 @@ export class DeviceService extends EventEmitter {
     if (this.turns.get(sessionId) === entry) this.turns.delete(sessionId)
     if (this.leases.get(sessionId)?.client === entry.client) this.leases.delete(sessionId)
     for (const approval of [...this.approvals.values()]) if (approval.sessionId === sessionId) this.resolveApproval(approval.id, approval.kind === 'permission' ? 'deny' : {})
+    if (!this.closed) this.emitDeviceEvent('session.status', { sessionId })
   }
   async record(event) {
     if (this.closed) return
@@ -113,7 +124,7 @@ export class DeviceService extends EventEmitter {
     this.sessionTree.observe(event)
     const row = await this.liveView.record(event, item => this.replay.append(item))
     this.emit('event', row)
-    if (['session.updated', 'session.title.updated', 'session.rewound', 'session.deleted'].includes(event.type)) this.emitDeviceEvent('session.status', { sessionId: event.sessionId, deleted: event.type === 'session.deleted' })
+    if (['session.updated', 'session.title.updated', 'session.rewound', 'session.deleted', 'turn.start'].includes(event.type)) this.emitDeviceEvent('session.status', { sessionId: event.sessionId, deleted: event.type === 'session.deleted' })
     return row
   }
   async readEvents(sessionId, after) {
@@ -248,7 +259,7 @@ export class DeviceService extends EventEmitter {
       try { return await normalizeImageBlock({ data, mediaType: block.mediaType || block.source?.media_type }, { allowSvg: true, maxDimension: 768 }) }
       catch (error) { throw new ProtocolError('preview_unavailable', error.message, 422) }
     }
-    if (method === 'sessions.list') return (await listSessions({ limit: 200, includeChildren: false })).map(session => {
+    if (method === 'sessions.list') return (await listSessions({ limit: 200, includeChildren: false, includeContent: true })).map(session => {
       const metadata = sessionView({ session, messages: [], parts: [] })
       for (const key of ['messages', 'parts', 'historyHasMore', 'nextBefore', 'partsTruncated']) delete metadata[key]
       return { ...metadata, ...(this.turns.has(session.id) ? { status: 'running' } : {}) }
@@ -266,10 +277,14 @@ export class DeviceService extends EventEmitter {
     if (method === 'sessions.create') {
       const kernel = await this.kernel(p.cwd)
       const id = newSessionId()
-      await kernel.sessions.touchSession({ sessionId: id, cwd: kernel.cwd, mode: 'assistant', providerType: kernel.configState.config.provider.default, model: '', title: p.title || '新对话' })
-      await kernel.sessions.updateSession(id, { titleSource: p.title && !['新对话', 'New session'].includes(p.title) ? 'manual' : 'auto', titleRevision: 0, archived: false })
+      // Validate selection before persisting: invalid channels/models must not
+      // leave an orphan "new conversation" after a failed second RPC.
+      const state = sessionSelection(kernel.configState.config, { modeId: 'agent' }, p, id, true)
+      await kernel.sessions.touchSession({ sessionId: id, cwd: kernel.cwd, ...state, title: p.title || '新对话' })
+      await kernel.sessions.updateSession(id, { ...state, titleSource: p.title && !['新对话', 'New session'].includes(p.title) ? 'manual' : 'auto', titleRevision: 0, archived: false })
+      this.commandStates.set(id, state)
       this.emitDeviceEvent('session.status', { sessionId: id })
-      return { id, cwd: kernel.cwd }
+      return { id, cwd: kernel.cwd, ...state }
     }
     if (method === 'sessions.update') {
       const session = await getSession(sessionId)
@@ -353,15 +368,9 @@ export class DeviceService extends EventEmitter {
       if (!session) throw new ProtocolError('session_missing', 'Session not found', 404)
       const kernel = await this.kernel(session.session.cwd), config = kernel.configState.config
       this.lease(sessionId, principal)
-      const providerType = p.provider || session.session.providerType || config.provider.default
-      if (!Object.hasOwn(config.provider, providerType) || !config.provider[providerType] || typeof config.provider[providerType] !== 'object') throw new ProtocolError('unknown_provider', 'Configure this provider before selecting it')
-      if (p.model != null && (typeof p.model !== 'string' || !p.model.trim() || p.model.length > 200 || /[\x00-\x1f]/.test(p.model))) throw new ProtocolError('invalid_model', 'Invalid model id')
-      if (p.mode != null && !modeIdFromLegacy(p.mode)) throw new ProtocolError('invalid_mode', 'Unknown execution mode')
-      if (p.approval != null && !['readonly', 'manual', 'accept-edits', 'yolo'].includes(p.approval)) throw new ProtocolError('invalid_approval', 'Unknown permission level')
-      const modeId = resolveSessionMode({ modeId: p.mode || session.session.modeId, mode: session.session.mode, approval: p.approval || (!p.mode ? session.session.approval : null) })
       // Legacy callers may still send approval. Normalize it to one mode rather
       // than persisting contradictory independent selectors.
-      const state = { providerType, model: p.model || (p.provider ? config.provider[providerType].default_model : session.session.model) || config.provider[providerType].default_model || '', modeId, mode: laneOf(modeId), approval: approvalOf(modeId), sessionId }
+      const state = sessionSelection(config, session.session, p, sessionId)
       this.commandStates.set(sessionId, state)
       await kernel.sessions.updateSession(sessionId, state)
       await this.record({ type: 'session.configured', sessionId, payload: state })

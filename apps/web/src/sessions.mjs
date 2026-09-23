@@ -19,6 +19,7 @@ export function groupSessions(
   const needle = query.trim().toLocaleLowerCase();
   const filtered = sessions.filter(
     (session) =>
+      (session.hasContent !== false || priority(session)) &&
       Boolean(session.archived) === archived &&
       `${session.title || ""} ${session.cwd || ""}`
         .toLocaleLowerCase()

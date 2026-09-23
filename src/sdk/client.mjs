@@ -8,7 +8,7 @@ const pause = (milliseconds, signal) => new Promise((resolve, reject) => {
   if (signal?.aborted) abort()
   else signal?.addEventListener('abort', abort, { once: true })
 })
-const errorFrom = (body, status) => Object.assign(new Error(body?.error?.message || (typeof body?.error === 'string' ? body.error : `HTTP ${status}`)), { code: body?.error?.code || `http_${status}`, status })
+const errorFrom = (body, status) => Object.assign(new Error(body?.error?.message || body?.message || body?.error_description || (typeof body?.error === 'string' ? body.error : `HTTP ${status}`)), { code: body?.error?.code || body?.code || `http_${status}`, status })
 const withSignal = (promise, signal) => !signal ? promise : new Promise((resolve, reject) => {
   const abort = () => reject(signal.reason || new Error('Aborted'))
   if (signal.aborted) abort()

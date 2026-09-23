@@ -6,7 +6,7 @@ const tokens = (value: number) => new Intl.NumberFormat('zh-CN', { maximumFracti
 export function ContextUsage({ value }: { value: unknown }) {
   const [open, setOpen] = useState(false);
   const context = publicContext(value);
-  if (!context) return null;
+  if (!context || context.tokens <= 0) return null;
   return <>
     <button className="context-meter" aria-label="上下文使用情况" onClick={() => setOpen(true)}>
       <span>上下文 {tokens(context.tokens)} / {tokens(context.limit)} · {context.percent}%{context.estimated ? ' · 估算' : ''}</span>

@@ -121,6 +121,12 @@ const PROTOCOL_CHOICES = [
     value: "anthropic",
     type: "anthropic",
     description: "messages + x-api-key 鉴权（Claude 及其兼容网关）"
+  },
+  {
+    label: 'OpenAI Responses API',
+    value: 'responses',
+    type: 'openai-responses',
+    description: 'responses + Bearer 鉴权；文本、图片、工具调用与思考摘要'
   }
 ]
 

@@ -45,7 +45,9 @@ class SshConnection internal constructor(private val commandPrefix: String = "kk
     private var client: SSHClient? = null
     private var listener: ServerSocket? = null
     suspend fun connect(host: String, port: Int, username: String, password: String, acceptedKey: String?, remotePort: Int = 18271, privateKey: String = "", allFolders: Boolean = false): DeviceApi = withContext(Dispatchers.IO) {
-        require(port in 1..65535 && remotePort in 1..65535)
+        require(port in 1..65535) { "SSH 端口必须在 1–65535 之间" }
+        require(remotePort in 1..65535) { "电脑本地服务端口必须在 1–65535 之间" }
+        require(host.isNotBlank() && username.isNotBlank()) { "请填写 SSH 主机地址和用户名" }
         prepareCrypto()
         close()
         val ssh = SSHClient(); client = ssh

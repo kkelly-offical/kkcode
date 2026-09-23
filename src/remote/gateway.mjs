@@ -22,6 +22,7 @@ export async function createGateway({ origin, issuer, clientId, clientSecret, or
   if (!store) throw new Error('Production gateway requires PostgreSQL')
   const config = oidcConfig || await oidc.discovery(new URL(issuer), clientId, clientSecret, undefined, dev ? { execute: [oidc.allowInsecureRequests] } : undefined)
   const app = Fastify({ logger: false, bodyLimit: 6 * 1024 * 1024, trustProxy })
+  app.setErrorHandler((error, req, reply) => reply.code(error.status || error.statusCode || 500).send({ error: { code: error.code || 'gateway_error', message: error.status || error.statusCode ? error.message : '网关暂时无法完成请求。请稍后重试；若持续失败，请联系网关管理员检查服务日志。' } }))
   await app.register(cookie); await app.register(websocket, { options: { maxPayload: 6 * 1024 * 1024 } }); await app.register(rateLimit, { max: 600, timeWindow: '1 minute', keyGenerator: async req => {
     const token = req.headers.authorization?.replace(/^Bearer /, '') || req.cookies?.kkcode_gateway
     const grant = token && await store.get(`token:${hash(token)}`)
@@ -241,6 +242,5 @@ export async function createGateway({ origin, issuer, clientId, clientSecret, or
   // connections before it runs onClose hooks, so end the streams first.
   const baseClose = app.close.bind(app)
   app.close = async () => { hub.close(); await baseClose() }
-  app.setErrorHandler((error, req, reply) => reply.code(error.status || error.statusCode || 500).send({ error: { code: error.code || 'gateway_error', message: error.status || error.statusCode ? error.message : 'Gateway request failed' } }))
   return app
 }

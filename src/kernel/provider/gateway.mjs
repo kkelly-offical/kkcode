@@ -1,8 +1,10 @@
 import { requestAnthropic, requestAnthropicStream, countTokensAnthropic } from "./anthropic.mjs"
 import { requestOpenAI, requestOpenAIStream, countTokensOpenAI } from "./openai.mjs"
 import { ProviderError } from "../core/errors.mjs"
+import { requestResponses, requestResponsesStream, countTokensResponses } from './responses.mjs'
 
 function implementationFor(protocol) {
+  if (protocol === 'responses') return { request: requestResponses, requestStream: requestResponsesStream, countTokens: countTokensResponses }
   if (protocol === "openai") {
     return {
       request: requestOpenAI,
@@ -17,7 +19,7 @@ function implementationFor(protocol) {
       countTokens: countTokensAnthropic
     }
   }
-  throw new ProviderError(`gateway protocol must be "openai" or "anthropic", received: ${protocol || "(missing)"}`, {
+  throw new ProviderError(`gateway protocol must be "openai", "responses" or "anthropic", received: ${protocol || "(missing)"}`, {
     provider: "gateway",
     reason: "protocol_error"
   })

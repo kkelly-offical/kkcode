@@ -31,12 +31,30 @@ private val activityMuted: Color @Composable get() = kkcodeColors.activityMuted
 private val addition: Color @Composable get() = kkcodeColors.diffAdd
 private val removal: Color @Composable get() = kkcodeColors.diffRemove
 
+@Composable internal fun RunSummaryRow(item: ChatItem, onExpanded: (Boolean) -> Unit = {}) {
+    var expanded by remember(item.id) { mutableStateOf(false) }
+    val tools = item.children.count { it.kind == "tool" }
+    val title = (item.durationMs?.let { "已运行 ${it / 1000} 秒" } ?: "运行过程已完成") + if(tools > 0) " · $tools 次工具调用" else ""
+    Column(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().clickable { expanded = !expanded; onExpanded(expanded) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            Icon(Icons.Outlined.CheckCircleOutline, null, Modifier.size(16.dp), tint = activityMuted)
+            Text(title, Modifier.weight(1f), fontSize = 12.sp, color = activityMuted)
+            Icon(if(expanded) Icons.Outlined.ExpandMore else Icons.Outlined.ChevronRight, if(expanded) "收起运行过程" else "展开运行过程", Modifier.size(14.dp), tint = activityMuted)
+        }
+        if(expanded) Column(Modifier.fillMaxWidth().padding(start = 12.dp)) {
+            item.children.forEach { child -> key(child.id) {
+                if(child.kind == "assistant") MarkdownText(child.text, Modifier.fillMaxWidth().padding(vertical = 8.dp)) else ActivityRow(child)
+            } }
+        }
+    }
+}
+
 internal fun toolMutations(payload: JSONObject?): List<JSONObject> {
     val metadata = payload?.optJSONObject("metadata") ?: return emptyList()
     return metadata.optJSONArray("mutations").objects().ifEmpty { metadata.optJSONObject("mutation")?.let { listOf(it) } ?: emptyList() }
 }
 
-@Composable fun ActivityRow(item: ChatItem) {
+@Composable fun ActivityRow(item: ChatItem, onExpanded: (Boolean) -> Unit = {}) {
     var expanded by remember(item.id) { mutableStateOf(false) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(item.done) { while(!item.done) { now = System.currentTimeMillis(); delay(1000) } }
@@ -61,7 +79,7 @@ internal fun toolMutations(payload: JSONObject?): List<JSONObject> {
         else -> tool
     }
     Column(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+        Row(Modifier.fillMaxWidth().clickable { expanded = !expanded; onExpanded(expanded) }.padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
             if((item.kind in listOf("thinking", "review") && !item.done) || status == "running") CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.5.dp, color = activityMuted)
             else Icon(if(item.kind == "thinking") Icons.Outlined.Psychology else if(editing) Icons.Outlined.Edit else if(browsing) Icons.Outlined.FolderOpen else Icons.Outlined.Terminal, null, Modifier.size(16.dp), tint = if(failed) removal else activityMuted)
             Text(title, Modifier.weight(1f, fill = false), fontSize = 12.sp, color = if(failed) removal else activityMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -89,8 +107,8 @@ internal fun toolMutations(payload: JSONObject?): List<JSONObject> {
                         }
                     }
                 }
-                val detail = if(item.kind == "thinking") item.text else item.detail.ifBlank { payload.optString("output", "") }
-                if(detail.isNotBlank()) SelectionContainer { Text(detail.take(20000), fontSize = 12.sp, color = activityMuted, lineHeight = 19.sp, fontFamily = if(item.kind == "thinking") null else FontFamily.Monospace, modifier = Modifier.padding(top = if(changes.isEmpty()) 0.dp else 6.dp)) }
+                val detail = if(item.kind == "thinking") item.text.ifBlank { "模型尚未返回可展示的思考内容；收到后会在这里实时更新。部分模型不提供思考文本。" } else item.detail.ifBlank { payload.optString("output", "") }
+                if(detail.isNotBlank()) SelectionContainer { Text(if(item.kind == "thinking") detail else detail.take(20000), fontSize = 12.sp, color = activityMuted, lineHeight = 19.sp, fontFamily = if(item.kind == "thinking") null else FontFamily.Monospace, modifier = Modifier.padding(top = if(changes.isEmpty()) 0.dp else 6.dp)) }
                 if(args.length() > 0) { var showArgs by remember { mutableStateOf(false) }; TextButton(onClick = { showArgs = !showArgs }, contentPadding = PaddingValues(0.dp)) { Text("调用参数", fontSize = 11.sp, color = kkcodeColors.link) }; if(showArgs) SelectionContainer { Text(args.toString(2), fontSize = 11.sp, color = activityMuted, fontFamily = FontFamily.Monospace, lineHeight = 17.sp) } }
             }
         }

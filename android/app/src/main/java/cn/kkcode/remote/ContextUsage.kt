@@ -13,7 +13,7 @@ import java.text.NumberFormat
 internal fun contextSummary(value: JSONObject): String? {
     val used = value.optDouble("tokens", Double.NaN)
     val limit = value.optDouble("limit", Double.NaN)
-    if(!used.isFinite() || !limit.isFinite() || used < 0 || limit <= 0) return null
+    if(!used.isFinite() || !limit.isFinite() || used <= 0 || limit <= 0) return null
     val number = NumberFormat.getIntegerInstance()
     val percent = (used * 100 / limit).toInt().coerceIn(0, 100)
     return "上下文 ${number.format(used.toLong())} / ${number.format(limit.toLong())} · $percent%" + if(value.optString("source", "estimated") == "estimated") " · 估算" else ""

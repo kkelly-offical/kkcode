@@ -20,6 +20,8 @@ import { enforceModelInputCapabilities } from "./model-capabilities.mjs"
 import { noteDeprecation } from "../core/deprecations.mjs"
 import { trimTrailingSlashes } from "./url-path.mjs"
 import { prepareImageMessages } from '../media/images.mjs'
+import { requestResponses, requestResponsesStream, countTokensResponses, responsesEndpoint } from './responses.mjs'
+import { stripProviderState } from './responses-state.mjs'
 
 function classifyProviderFailure(error) {
   const cls = String(error?.errorClass || "").toLowerCase()
@@ -76,6 +78,9 @@ function normalizeProviderError(error, providerType, model) {
 }
 
 function safeProviderEndpoint(baseUrl, providerType, protocol, operation = "inference") {
+  if (protocol === 'responses' && operation === 'inference') {
+    try { const url = new URL(responsesEndpoint(baseUrl)); url.search = ''; return url.href } catch { return '(invalid-base-url)/responses' }
+  }
   const suffix = operation === "token_count"
     ? (protocol === "anthropic" ? "messages/count_tokens" : "token-count")
     : providerType === "ollama"
@@ -188,6 +193,7 @@ export function createProviderRegistry() {
 
   // Built-in providers
   registerProvider("openai", { request: requestOpenAI, requestStream: requestOpenAIStream, countTokens: countTokensOpenAI })
+  registerProvider('openai-responses', { request: requestResponses, requestStream: requestResponsesStream, countTokens: countTokensResponses })
   registerProvider("anthropic", { request: requestAnthropic, requestStream: requestAnthropicStream, countTokens: countTokensAnthropic })
   registerProvider("openai-compatible", { request: requestOAICompat, requestStream: requestStreamOAICompat, countTokens: countTokensOpenAI })
   registerProvider("ollama", { request: requestOllama, requestStream: requestOllamaStream })
@@ -212,6 +218,7 @@ export function createProviderRegistry() {
   }
 
   async function guardModelInput(configState, settings, messages, tools, context = {}) {
+    if (settings.protocol !== 'responses') messages = stripProviderState(messages)
     const { capabilities } = await resolveModelCapabilities(configState, settings.configKey, settings.model)
     const guarded = enforceModelInputCapabilities({
       messages,
@@ -276,8 +283,10 @@ export function createProviderRegistry() {
 
     // Read config from original provider name (e.g. "deepseek"), not resolved type
     const defaults = llm[providerType] || llm[resolvedType] || {}
-    const protocol = defaults.protocol ||
+    if (defaults.type === 'openai-responses' && ['openai', 'openai-compatible', 'anthropic', 'ollama', 'gateway'].includes(resolvedType)) resolvedType = 'openai-responses'
+    const protocol = resolvedType === 'openai-responses' ? 'responses' : defaults.protocol ||
       (resolvedType === "anthropic" ? "anthropic" : resolvedType === "ollama" ? "ollama" : "openai")
+    if (protocol === 'responses' && ['openai', 'openai-compatible'].includes(resolvedType)) resolvedType = 'openai-responses'
     const protocolBaseUrl = resolveProtocolBaseUrl(defaults, protocol)
     const requestedModel = validateModelId(overrides.model || defaults.default_model || "", {
       label: `provider "${providerType}" model`,
@@ -405,6 +414,7 @@ export function createProviderRegistry() {
       }),
       ...(providerCfg.thinking ? { thinking: providerCfg.thinking } : {}),
       ...(providerCfg.reasoning_effort ? { reasoningEffort: providerCfg.reasoning_effort } : {}),
+      ...(settings.protocol === 'responses' ? { reasoningSummary: providerCfg.reasoning_summary || (capabilities.reasoning === true ? 'auto' : null) } : {}),
       ...(Number.isFinite(temperature) ? { temperature } : {}),
       ...requestContext,
       onResponse(response) {
@@ -475,6 +485,7 @@ export function createProviderRegistry() {
     reviewId = "",
     signal = null,
     temperature = null,
+    maxTokens = null,
     compaction = null
   }) {
     const { settings, apiKey, providerCfg } = await prepareProviderCall(configState, { providerType, model, baseUrl, apiKeyEnv })
@@ -486,14 +497,16 @@ export function createProviderRegistry() {
     if (providerCfg.stream === false || capabilities.streaming === false) {
       const result = await requestProvider({
         configState, providerType, model, system, messages: guarded.messages, tools: guarded.tools, baseUrl, apiKeyEnv,
-        traceId, requestId, parentEventId, sessionId, turnId, reviewId, signal
+        traceId, requestId, parentEventId, sessionId, turnId, reviewId, signal, maxTokens
       })
       if (result.reasoning) {
         yield { type: "thinking", content: result.reasoning, source: "reasoning_content" }
       }
       if (result.text) yield { type: "text", content: result.text }
       for (const call of result.toolCalls) yield { type: "tool_call", call }
+      if (result.providerState) yield { type: 'provider_state', state: result.providerState }
       yield { type: "usage", usage: result.usage }
+      if (result.stopReason) yield { type: 'stop', reason: result.stopReason }
       return
     }
 
@@ -519,7 +532,7 @@ export function createProviderRegistry() {
       tools: guarded.tools,
       timeoutMs: Number(providerCfg.timeout_ms || 120000),
       streamIdleTimeoutMs: Number(providerCfg.stream_idle_timeout_ms || 120000),
-      maxTokens: Number(providerCfg.max_tokens || 16384),
+      maxTokens: Number(maxTokens || providerCfg.max_tokens || 16384),
       retry: {
         retries: Number(providerCfg.retry_attempts ?? 5),
         baseDelayMs: Number(providerCfg.retry_base_delay_ms || 800),
@@ -536,6 +549,7 @@ export function createProviderRegistry() {
       }),
       ...(providerCfg.thinking ? { thinking: providerCfg.thinking } : {}),
       ...(providerCfg.reasoning_effort ? { reasoningEffort: providerCfg.reasoning_effort } : {}),
+      ...(settings.protocol === 'responses' ? { reasoningSummary: providerCfg.reasoning_summary || (capabilities.reasoning === true ? 'auto' : null) } : {}),
       ...requestContext,
       onResponse(response) {
         responseStatus = Number(response?.status || 0) || null

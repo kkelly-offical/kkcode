@@ -1,6 +1,6 @@
 {
   "name": "@kkelly-offical/kkcode",
-  "version": "1.0.4-preview.0",
+  "version": "1.0.4",
   "workspaces": [
     "apps/web",
     "apps/gateway",
@@ -63,6 +63,9 @@
     "docs/implementation-1.0.3.md",
     "docs/release-1.0.4-preview.0.md",
     "docs/implementation-1.0.4.md",
+    "docs/release-1.0.4.md",
+    "docs/stable-1.0.4-worklog.md",
+    "docs/responses-api.md",
     "docs/ssh-account-devices.md",
     "docs/context-and-harness.md",
     "docs/protocol-adapters.md",

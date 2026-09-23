@@ -85,10 +85,10 @@ export function validateConfig(config) {
           continue
         }
         if (p.type !== undefined && typeof p.type !== "string") err(errors, `provider.${key}.type`, "must be string")
-        if (p.protocol !== undefined && !["openai", "anthropic"].includes(p.protocol)) {
-          err(errors, `provider.${key}.protocol`, "must be openai|anthropic")
+        if (p.protocol !== undefined && !["openai", "responses", "anthropic"].includes(p.protocol)) {
+          err(errors, `provider.${key}.protocol`, "must be openai|responses|anthropic")
         }
-        if (p.type === "gateway" && !["openai", "anthropic"].includes(p.protocol)) {
+        if (p.type === "gateway" && !["openai", "responses", "anthropic"].includes(p.protocol)) {
           err(errors, `provider.${key}.protocol`, "is required for gateway providers")
         }
         if (p.base_url !== undefined && typeof p.base_url !== "string") err(errors, `provider.${key}.base_url`, "must be string")
@@ -101,14 +101,14 @@ export function validateConfig(config) {
         if (p.endpoints !== undefined) {
           if (!isObj(p.endpoints)) err(errors, `provider.${key}.endpoints`, "must be object")
           else {
-            for (const endpoint of ["openai", "anthropic", "models"]) {
+            for (const endpoint of ["openai", "responses", "anthropic", "models"]) {
               if (p.endpoints[endpoint] !== undefined && p.endpoints[endpoint] !== null && typeof p.endpoints[endpoint] !== "string") {
                 err(errors, `provider.${key}.endpoints.${endpoint}`, "must be string or null")
               }
             }
           }
         }
-        if (p.type === "gateway" && ["openai", "anthropic"].includes(p.protocol)) {
+        if (p.type === "gateway" && ["openai", "responses", "anthropic"].includes(p.protocol)) {
           const selectedEndpoint = isObj(p.endpoints) ? p.endpoints[p.protocol] : null
           const hasBaseUrl = typeof p.base_url === "string" && p.base_url.trim()
           const hasSelectedEndpoint = typeof selectedEndpoint === "string" && selectedEndpoint.trim()
@@ -138,6 +138,7 @@ export function validateConfig(config) {
             }
           }
         }
+        if (p.reasoning_summary !== undefined && !['off', 'auto', 'concise', 'detailed'].includes(p.reasoning_summary)) err(errors, `provider.${key}.reasoning_summary`, 'must be off|auto|concise|detailed')
         if (p.timeout_ms !== undefined) checkInt(errors, `provider.${key}.timeout_ms`, p.timeout_ms, 1000)
         if (p.stream_idle_timeout_ms !== undefined) checkInt(errors, `provider.${key}.stream_idle_timeout_ms`, p.stream_idle_timeout_ms, 1000)
         if (p.max_tokens !== undefined) checkInt(errors, `provider.${key}.max_tokens`, p.max_tokens, 1)

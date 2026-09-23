@@ -1,9 +1,11 @@
 import { currentRuntime, runWithRuntime, runtimeCwd } from "../core/runtime-context.mjs"
+import { createHash } from 'node:crypto'
 import { reviewSensitiveAction } from '../permission/auto-review.mjs'
 import { newId } from "../core/types.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { requestProviderStream, countTokensProvider } from "../provider/router.mjs"
+import { attachResponsesState } from '../provider/responses-state.mjs'
 import { ToolRegistry } from "../tool/registry.mjs"
 import { executeTool } from "../tool/executor.mjs"
 import { isToolSuccess } from "../core/types.mjs"
@@ -250,34 +252,11 @@ function toolPatternFromArgs(args) {
 }
 
 function normalizeMessageForCache(msg) {
-  const content = msg?.content
-  // For array content (image blocks, tool_use, tool_result), serialize to a stable string
-  if (Array.isArray(content)) {
-    const textParts = content
-      .filter((b) => b.type === "text")
-      .map((b) => b.text || "")
-      .join("\n")
-    const imageParts = content
-      .filter((b) => b.type === "image")
-      .map((b) => `[image:${b.path || "inline"}]`)
-      .join(" ")
-    const toolUseParts = content
-      .filter((b) => b.type === "tool_use")
-      .map((b) => `[tool_use:${b.name}:${b.id}]`)
-      .join(" ")
-    const toolResultParts = content
-      .filter((b) => b.type === "tool_result")
-      .map((b) => `[tool_result:${b.tool_use_id}:${String(b.content || "").slice(0, 100)}]`)
-      .join(" ")
-    const extras = [imageParts, toolUseParts, toolResultParts].filter(Boolean).join("\n")
-    return {
-      role: String(msg?.role || ""),
-      content: `${textParts}${extras ? "\n" + extras : ""}`
-    }
-  }
+  // Cache identity only. Budgeting must use actual content, not a clipped
+  // preview or this digest (large tool results and images were undercounted).
   return {
     role: String(msg?.role || ""),
-    content: String(content || "")
+    content: createHash('sha256').update(JSON.stringify(msg?.content ?? '')).digest('hex')
   }
 }
 
@@ -543,7 +522,7 @@ async function processTurnLoopInRuntime({
       // can add context; counting the canonical history alone underestimates it.
       let messages = await HookBus.messagesTransform([...history])
       const normalizedHistory = messages.map(normalizeMessageForCache)
-      let contextTokens = requestContextBudget({ system: systemPrompt, messages: normalizedHistory, tools, model, configState, providerType }).tokens
+      let contextTokens = requestContextBudget({ system: systemPrompt, messages, tools, model, configState, providerType }).tokens
       let contextFromCache = false
 
       // Use real token counting API when available (includes system + tools + messages)
@@ -559,7 +538,7 @@ async function processTurnLoopInRuntime({
       if (realCount != null) {
         contextTokens = realCount
       } else if (contextCachePoint && contextCachePoint.toolSignature === JSON.stringify(tools.map(tool => [tool.name, tool.description, tool.inputSchema])) && isPrefixMessages(contextCachePoint.messages, normalizedHistory)) {
-        const delta = normalizedHistory.slice(contextCachePoint.messages.length)
+        const delta = messages.slice(contextCachePoint.messages.length)
         contextTokens = contextCachePoint.tokens + estimateTokenCount(delta)
         contextFromCache = true
       } else if (contextCachePoint) {
@@ -567,7 +546,7 @@ async function processTurnLoopInRuntime({
       }
       const contextLimit = modelContextLimit(model, configState, providerType)
       const contextRatio = contextLimit > 0 ? Math.min(1, contextTokens / contextLimit) : 0
-      lastContextMeter = { ...requestContextBudget({ system: systemPrompt, messages: normalizedHistory, tools, model, configState, providerType, measuredTokens: realCount ?? (contextFromCache ? contextTokens : null), source: realCount != null ? 'count-api' : 'estimated' }), fromCache: contextFromCache }
+      lastContextMeter = { ...requestContextBudget({ system: systemPrompt, messages, tools, model, configState, providerType, measuredTokens: realCount ?? (contextFromCache ? contextTokens : null), source: realCount != null ? 'count-api' : 'estimated' }), fromCache: contextFromCache }
 
       if (cachePointsEnabled && (step === 1 || contextRatio >= thresholdRatio)) {
         contextCachePoint = {
@@ -615,7 +594,7 @@ async function processTurnLoopInRuntime({
             const beforeTokens = Number(lastContextMeter?.tokens) || 0
             history = await getConversationHistory(sessionId, 9999)
             messages = await HookBus.messagesTransform([...history])
-            const compactedMeter = requestContextBudget({ system: systemPrompt, messages: messages.map(normalizeMessageForCache), tools, model, configState, providerType })
+            const compactedMeter = requestContextBudget({ system: systemPrompt, messages, tools, model, configState, providerType })
             // 事件带上前后 token 数 —— UI 层的「已压缩，193.4K → 42.1K」提示全靠它
             await EventBus.emit({
               type: EVENT_TYPES.SESSION_COMPACTED, sessionId, turnId,
@@ -679,6 +658,7 @@ async function processTurnLoopInRuntime({
         const textParts = []
         const thinkingParts = []
         const streamToolCalls = []
+        let streamProviderState = null
         let streamUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
         let streamStopReason = "end_turn"
         ;(/** @type {(step: number) => void} */ (render.beginStep))(step)
@@ -707,6 +687,8 @@ async function processTurnLoopInRuntime({
             await render.providerCompaction(step)
           } else if (chunk.type === "stop") {
             streamStopReason = chunk.reason || "end_turn"
+          } else if (chunk.type === 'provider_state') {
+            streamProviderState = chunk.state
           }
         }
         if (signal?.aborted) {
@@ -725,7 +707,8 @@ async function processTurnLoopInRuntime({
           reasoning: thinkingParts.join(""),
           toolCalls: streamToolCalls,
           usage: streamUsage,
-          stopReason: streamStopReason
+          stopReason: streamStopReason,
+          providerState: streamProviderState
         }
       } catch (error) {
         if (error.needsCompaction) {
@@ -817,16 +800,17 @@ async function processTurnLoopInRuntime({
 
         // Save partial output as assistant message
         const partialContent = []
+        if (response.reasoning) partialContent.push({ type: 'reasoning', text: response.reasoning })
         if (response.text) {
           partialContent.push({ type: "text", text: response.text })
         }
         for (const call of validToolCalls) {
           partialContent.push({ type: "tool_use", id: call.id, name: call.name, input: call.args || {} })
         }
-        if (partialContent.length) {
-          await appendMessage(sessionId, "assistant", partialContent.length === 1 && partialContent[0].type === "text"
+        if (partialContent.length || response.providerState?.items?.length) {
+          await appendMessage(sessionId, "assistant", attachResponsesState(partialContent.length === 1 && partialContent[0].type === "text"
             ? partialContent[0].text
-            : partialContent, {
+            : partialContent, response.providerState), {
             mode, model, providerType, step, turnId, truncated: true
           })
         }
@@ -906,12 +890,12 @@ async function processTurnLoopInRuntime({
         }
         
         finalReply = (response.text || "").trim() || "No content returned from provider."
-        const finalContent = response.reasoning
+        const finalContent = attachResponsesState(response.reasoning
           ? [
               { type: "reasoning", text: response.reasoning },
               { type: "text", text: finalReply }
             ]
-          : finalReply
+          : finalReply, response.providerState)
         const assistant = await appendMessage(sessionId, "assistant", finalContent, {
           mode,
           model,
@@ -1261,7 +1245,7 @@ async function processTurnLoopInRuntime({
           input: call.args || {}
         })
       }
-      await appendMessage(sessionId, "assistant", assistantContent, {
+      await appendMessage(sessionId, "assistant", attachResponsesState(assistantContent, response.providerState), {
         mode,
         model,
         providerType,

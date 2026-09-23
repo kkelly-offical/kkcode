@@ -3,6 +3,7 @@ import { Marked } from "marked";
 import DOMPurify from "dompurify";
 import { Icon, type IconName } from "./Icon";
 import { toolPresentation } from "./transcript.mjs";
+import { browserLink } from './source-links.mjs';
 
 type Item = Record<string, any>;
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, value => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[value]!);
@@ -11,15 +12,20 @@ const markdown = new Marked({ renderer: {
   checkbox: ({ checked }) => `<span aria-label="${checked ? "已完成" : "未完成"}">${checked ? "☑" : "☐"}</span> `,
 } });
 export function Markdown({ text }: { text: string }) {
+  const clean = DOMPurify.sanitize(markdown.parse(text || '', { async: false }) as string,
+    { USE_PROFILES: { html: true }, FORBID_TAGS: ['img', 'iframe', 'video', 'audio', 'source', 'style', 'link', 'object', 'embed', 'input'], FORBID_ATTR: ['style', 'ping'] });
+  const document = new DOMParser().parseFromString(clean, 'text/html');
+  for (const anchor of document.querySelectorAll('a')) {
+    const url = browserLink(anchor.getAttribute('href'));
+    if (!url) { anchor.removeAttribute('href'); anchor.removeAttribute('target'); continue; }
+    anchor.setAttribute('href', url); anchor.setAttribute('target', '_blank');
+    anchor.setAttribute('rel', 'noopener noreferrer'); anchor.setAttribute('referrerpolicy', 'no-referrer');
+  }
   return (
     <div
       className="markdown"
       dangerouslySetInnerHTML={{
-        __html: DOMPurify.sanitize(
-          markdown.parse(text || "", { async: false }) as string,
-          // Remote transcript content must not silently contact third-party media hosts.
-          { USE_PROFILES: { html: true }, FORBID_TAGS: ["img", "iframe", "video", "audio", "source", "style", "link", "object", "embed", "input"], FORBID_ATTR: ["style", "ping"] },
-        ),
+        __html: document.body.innerHTML,
       }}
     />
   );
@@ -114,7 +120,7 @@ export function ThinkingRow({ row }: { row: Item }) {
         </span>
         <Icon name="chevron" size={14} />
       </summary>
-      <div>{row.text || "正在思考…"}</div>
+      <div className="thinking-content" aria-live="polite">{row.text || "模型尚未返回可展示的思考内容；收到后会在这里实时更新。部分模型不提供思考文本。"}</div>
     </details>
   );
 }
@@ -138,6 +144,10 @@ function MediaPreview({ row, loadPreview }: { row: Item; loadPreview?: (referenc
   </details>;
 }
 export function TranscriptRow({ row, loadPreview, onRewind }: { row: Item; loadPreview?: (reference: Item) => Promise<Item>; onRewind?: (row: Item) => void }) {
+  if (row.type === 'run-summary') return <details className="tool-row run-summary">
+    <summary><Icon name="chevron" size={14} /><span>{row.durationMs != null ? `已运行 ${Math.floor(row.durationMs / 1000)} 秒` : '运行过程已完成'}{row.tools ? ` · ${row.tools} 次工具调用` : ''}</span></summary>
+    <div className="run-summary-body">{row.rows.map((child: Item) => <TranscriptRow key={child.id} row={child} loadPreview={loadPreview} />)}</div>
+  </details>;
   if (row.type === "tool") return <ToolRow payload={row.payload} />;
   if (row.type === "media") return <MediaPreview row={row} loadPreview={loadPreview} />;
   if (row.type === "review") return <details className="tool-row review-row"><summary>{!row.done && <i className="working" />}<Icon name="shield" size={17} /><span>Auto 审查 · {row.tool} · {row.done ? ({ allow: "允许", deny: "拒绝", ask: "交给你确认" } as Item)[row.decision] || "已完成" : "进行中"}</span></summary><div className="tool-body"><p>{row.text}</p>{row.model && <small>对话模型：{row.model}</small>}</div></details>;

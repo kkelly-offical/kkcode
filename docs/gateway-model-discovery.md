@@ -6,18 +6,19 @@ model list.
 
 ## Configuration
 
-Use `type: gateway` when one service exposes an OpenAI-compatible or
-Anthropic-compatible API:
+Use `type: gateway` when one model service exposes OpenAI Chat Completions,
+OpenAI Responses or an Anthropic-compatible API (this is not the remote-control relay):
 
 ```yaml
 provider:
   default: company-gateway
   company-gateway:
     type: gateway
-    protocol: openai # or anthropic
+    protocol: openai # or responses / anthropic
     base_url: https://gateway.example.com
     endpoints:
       openai: /v1
+      responses: /v1
       anthropic: /anthropic/v1
       models: /v1/models
     api_key_env: KK_GATEWAY_API_KEY
@@ -27,7 +28,7 @@ provider:
       cache_ttl_ms: 900000
 ```
 
-`endpoints.openai` and `endpoints.anthropic` may be absolute URLs or paths
+`endpoints.openai`, `endpoints.responses` and `endpoints.anthropic` may be absolute URLs or paths
 relative to `base_url`. `endpoints.models` may be absolute or relative to the
 selected protocol endpoint (a leading `/` still resolves from the origin
 root). KK Code sends credentials only to the configured origin and rejects
@@ -41,6 +42,8 @@ allowed for local development services.
 
 If the service has one conventional API root, omit `endpoints`; KK Code reads
 `<base_url>/models`.
+For Responses, a complete Base URL ending in `/responses` is also supported;
+its catalog defaults to the sibling `/models`. See [Responses configuration and limits](responses-api.md).
 
 ## Commands
 

@@ -531,6 +531,7 @@ export function SettingsOverlay(props: Props) {
                     type: draft.type,
                     base_url: draft.base_url,
                     ...(!editingProvider || draft.api_key ? { api_key: draft.api_key } : {}),
+                    ...(!editingProvider ? { api_key_env: '' } : {}),
                     default_model: draft.default_model,
                   },
                 },
@@ -563,7 +564,8 @@ export function SettingsOverlay(props: Props) {
                 setDraft({ ...draft, type: event.target.value })
               }
             >
-              <option value="openai">OpenAI 兼容</option>
+              <option value="openai">OpenAI Chat Completions</option>
+              <option value="openai-responses">OpenAI Responses API</option>
               <option value="anthropic">Anthropic 兼容</option>
             </select>
           </label>
@@ -603,7 +605,7 @@ export function SettingsOverlay(props: Props) {
             />
             <datalist id="discovered-models">{models.map(model => <option key={model.id} value={model.id} />)}</datalist>
           </label>
-          <button className="sheet-secondary" type="button" disabled={loading || !draft.base_url} onClick={() => run(async () => { const { name, ...connection } = draft; const result = await props.rpc('models.discover', { connection }); setModels(result.models || []); if (!draft.default_model && result.models?.length) setDraft({ ...draft, default_model: result.models[0].id }); props.onNotice(`已从 Base URL 读取 ${result.models?.length || 0} 个模型`); })}>读取模型列表</button>
+          <button className="sheet-secondary" type="button" disabled={loading || !draft.base_url} onClick={() => run(async () => { const { name, ...connection } = draft; const saved = props.settings.provider?.[editingProvider]; const params = editingProvider && !draft.api_key && saved?.type === draft.type && saved?.base_url === draft.base_url ? { provider: editingProvider } : { connection }; const result = await props.rpc('models.discover', params); setModels(result.models || []); if (!draft.default_model && result.models?.length) setDraft({ ...draft, default_model: result.models[0].id }); props.onNotice(`已从 Base URL 读取 ${result.models?.length || 0} 个模型`); })}>读取模型列表</button>
           <button className="sheet-primary" disabled={loading}>
             {loading ? "保存中…" : "保存渠道"}
           </button>

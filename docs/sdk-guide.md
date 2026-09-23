@@ -1,4 +1,4 @@
-# 内核与远程 SDK（1.0.4 Preview）
+# 内核与远程 SDK（1.0.4）
 
 Node `>=22.12`，安装包的公开入口保持不变：
 
@@ -21,6 +21,13 @@ await client.call('sessions.delete', { sessionId: sessions[0].id, confirmed: tru
 
 上例删除是显式示例，实际 UI 必须先让用户确认。SDK 不隐式获取 control lease；
 start/configure/rewind 等需要 `control.acquire`，完成后显式 `control.release`。
+
+`executeTurn` 可省略 `sessionId`，返回新生成的会话 ID；续接时传回该 ID。
+省略 provider/model 则从已有会话选择或当前配置的默认渠道/模型读取，不凭空猜模型。
+mode 是内核执行航道；省略时沿用会话或配置，并归一化为 assistant/plan/longagent。
+权限仍由宿主的 configState 与原审批链决定，不因省略参数而自动取得 Auto/Yolo 权限。
+Responses 配置与 CLI 共用，见 [协议指南](responses-api.md)。原生加密续接只在设备
+私密历史内部保存，不进入远程 `sessions.get` 的可见消息投影或 headless 事件。
 
 `createKernel`、主要内核接口及全部 DeviceMethods 都有 `.d.mts`。严格外部 TS
 消费者不需要 `allowJs` 或跳过库检查才能导入；旧 `request<T>(method, params)`

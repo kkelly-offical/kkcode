@@ -1,6 +1,6 @@
 # =============================================================================
 # kkcode 完整配置参考
-# 当前行为：1.0.1-preview.2。下面的模型名是示例，不是自动注入清单。
+# 当前行为：1.0.4。下面的模型名是示例，不是自动注入清单，也不保证供应商当前可用。
 # 首选 /provider add + /model refresh 从用户的 Base URL 发现可用模型。
 # 音视频协议/格式与大小限制见 docs/media-input.md。
 # =============================================================================
@@ -39,6 +39,20 @@ provider:
     retry_base_delay_ms: 800
     stream: true
 
+  # --- OpenAI Responses（不影响上面 Chat Completions 的默认行为）---
+  responses-service:
+    type: "openai-responses"
+    base_url: "https://api.example.com/v1"
+    api_key_env: "RESPONSES_API_KEY"
+    default_model: "model-id-from-your-catalog"
+    max_tokens: 16384
+    retry_attempts: 5
+    stream: true
+    # 按模型能力选择，不支持 reasoning 的模型不要添加：
+    # reasoning_effort: high
+    # reasoning_summary: auto   # off | auto | concise | detailed
+    # 详见 docs/responses-api.md；不使用服务端 previous_response_id。
+
   # --- Anthropic ---
   anthropic:
     type: "anthropic"
@@ -54,10 +68,11 @@ provider:
   # 将 default 切换为 gateway 后启用。protocol 决定本次推理使用哪套协议。
   gateway:
     type: "gateway"
-    protocol: "openai"       # openai | anthropic
+    protocol: "openai"       # openai | responses | anthropic
     base_url: "https://gateway.example.com"
     endpoints:
       openai: "/v1"
+      responses: "/v1"
       anthropic: "/anthropic/v1"
       models: "/v1/models"
     api_key_env: "KK_GATEWAY_API_KEY"
@@ -166,7 +181,7 @@ provider:
 # Agent 配置
 # =============================================================================
 agent:
-  # 0.4.0 模式 id：plan | agent | agent-auto | ultra | yolo
+  # 模式 id：plan | agent | auto | ultra | yolo（agent-auto 仅兼容别名）
   # 旧写法 assistant / code / coding / longagent 仍可用并自动映射
   default_mode: "agent"
   max_steps: 50

@@ -19,6 +19,9 @@ export async function createDeviceServer({ service, closeService = true, port = 
   if (!local && !https && !publicOrigin?.startsWith('https://')) throw new Error('Host mode requires --tls-cert/--tls-key or an HTTPS reverse proxy with --origin')
   const device = service || await new DeviceService(options).initialize()
   const app = Fastify({ logger: false, bodyLimit: ATTACHMENT_RPC_BYTES, https })
+  // Register before any awaited plugin: Fastify captures a route's error
+  // handler when the route is registered, not when the server starts listening.
+  app.setErrorHandler((error, req, reply) => reply.code(error.status || error.statusCode || 500).send({ error: { code: error.code || 'internal_error', message: error.status || error.statusCode ? error.message : '设备操作未完成。请在被控电脑运行 kkcode doctor 检查配置；重试前请确认上一项操作的实际状态。' } }))
   const sessions = new Map()
   const sessionSockets = new Map()
   await app.register(cookie)
@@ -109,7 +112,6 @@ export async function createDeviceServer({ service, closeService = true, port = 
   })
   app.get('/health', async () => ({ ok: true, version: PACKAGE_VERSION }))
   await app.register(staticFiles, { root: fileURLToPath(new URL('../web/', import.meta.url)), prefix: '/', wildcard: true })
-  app.setErrorHandler((error, req, reply) => reply.code(error.status || error.statusCode || 500).send({ error: { code: error.code || 'internal_error', message: error.status || error.statusCode ? error.message : 'The device operation failed; inspect local diagnostics' } }))
   app.addHook('onClose', () => {
     // Hijacked SSE responses are not tracked by the HTTP server or the
     // WebSocket plugin; close them or app.close() would wait on them forever.

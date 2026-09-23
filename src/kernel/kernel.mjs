@@ -172,16 +172,28 @@ export async function createKernel(options = {}) {
    *   （单对象 16 字段，§4.1）；configState/output 缺省时由句柄注入。
    * @param {object} [turnOptions.configState]
    * @param {string} [turnOptions.sessionId]
+   * @param {string} [turnOptions.providerType]
+   * @param {string} [turnOptions.model]
+   * @param {string} [turnOptions.mode]
    * @param {object|null} [turnOptions.output]
    */
   async function executeTurn(turnOptions = {}) {
-    if (activeTurns.has(turnOptions.sessionId)) throw new Error('A turn is already running in this session')
-    activeTurns.add(turnOptions.sessionId)
-    try { return await runWithRuntime({ ...runtime, sessionId: turnOptions.sessionId }, () => executeEngineTurn(/** @type {any} */ ({
-      ...turnOptions,
-      configState: turnOptions.configState ?? configState,
-      output: turnOptions.output ?? (typeof handlers.onOutput === "function" ? handlers.onOutput : null)
-    }))) } finally { activeTurns.delete(turnOptions.sessionId) }
+    const sessionId = turnOptions.sessionId || newSessionId()
+    if (activeTurns.has(sessionId)) throw new Error('A turn is already running in this session')
+    activeTurns.add(sessionId)
+    try {
+      const selectedConfig = /** @type {any} */ (turnOptions.configState ?? configState)
+      const prior = turnOptions.sessionId ? (await run(() => getSession(sessionId)))?.session : null
+      const providerType = turnOptions.providerType || prior?.providerType || selectedConfig.config.provider?.default
+      const model = turnOptions.model || (prior?.providerType === providerType ? prior?.model : '') || selectedConfig.config.provider?.[providerType]?.default_model || ''
+      const mode = resolveMode(turnOptions.mode || prior?.mode || selectedConfig.config.agent?.default_mode || 'agent')
+      return await runWithRuntime({ ...runtime, sessionId }, () => executeEngineTurn(/** @type {any} */ ({
+        ...turnOptions,
+        sessionId, providerType, model, mode,
+        configState: selectedConfig,
+        output: turnOptions.output ?? (typeof handlers.onOutput === "function" ? handlers.onOutput : null)
+      })))
+    } finally { activeTurns.delete(sessionId) }
   }
 
   /**

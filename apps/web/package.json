@@ -1,6 +1,6 @@
 {
   "name": "@kkcode/web",
-  "version": "1.0.4-preview.0",
+  "version": "1.0.4",
   "private": true,
   "type": "module",
   "scripts": {

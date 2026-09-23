@@ -33,6 +33,17 @@ const scriptedAsk = (answerBook) => async ({ questions }) => {
   return out
 }
 
+test('Responses CLI form discovers a model before saving the explicit new protocol', async () => {
+  let discoveredType = ''
+  const result = await runProviderAddForm({ configState: { config: { provider: {} } }, ask: scriptedAsk({ protocol: 'responses', base_url: 'https://responses.example.org/v1', model: 'responses-model', confirm: 'save' }), discover: async (state, options) => {
+    discoveredType = state.config.provider[options.providerName].type
+    return { models: [{ id: 'responses-model', contextLength: 32000, capabilities: { reasoning: false, image: true, tools: true } }] }
+  } })
+  assert.equal(result.saved, true); assert.equal(discoveredType, 'openai-responses')
+  assert.equal(result.configPatch.provider[result.name].type, 'openai-responses')
+  assert.equal(result.configPatch.provider[result.name].default_model, 'responses-model')
+})
+
 test.after(async () => {
   delete process.env.KKCODE_HOME
   await rm(tmpHome, { recursive: true, force: true }).catch(() => {})

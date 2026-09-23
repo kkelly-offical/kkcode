@@ -22,6 +22,7 @@ function project(value, budget, depth = 0, seen = new Set(), references = null) 
     return clipped === value ? value : `${clipped}\n${displayNotice}`
   }
   if (!value || typeof value !== 'object') { budget.left -= 16; return value }
+  if (value.type === 'provider_state') return { type: 'provider_state', omitted: true }
   if (references?.has(value)) { budget.left -= 256; return references.get(value) }
   if (['image', 'image_url', 'input_image', 'audio', 'input_audio', 'video', 'video_url'].includes(value.type)) {
     const kind = value.type.includes('audio') ? 'Audio' : value.type.includes('video') ? 'Video' : 'Image'
@@ -80,6 +81,7 @@ export function sessionView(data, { before, limit = 100, maxBytes = SESSION_VIEW
   const end = beforeIndex < 0 ? source.length : beforeIndex, count = Math.max(1, Math.min(200, Number(limit) || 100))
   let start = end, messages = [], parts = [], partsTruncated = false
   const meta = metadata(data.session, maxBytes)
+  if (typeof data.session?.hasContent === 'boolean') meta.hasContent = data.session.hasContent
   const view = () => ({ ...meta, messages, parts, partsTruncated, historyHasMore: start > 0, nextBefore: start > 0 ? source[start]?.id : null })
   for (let index = end - 1; index >= Math.max(0, end - count); index--) {
     const message = source[index], references = new Map()

@@ -51,7 +51,7 @@ class DeviceApi(var base: String, var token: String = "", var device: String = "
         execute(request.build()).use { response ->
             val raw = response.body?.string() ?: "{}"
             val result = try { if (raw.trimStart().startsWith("[")) JSONObject().put("items", org.json.JSONArray(raw)) else JSONObject(raw) } catch (_: Exception) { throw DeviceApiError("HTTP ${response.code}", response.code, "invalid_response") }
-            if (!response.isSuccessful || result.has("error")) throw DeviceApiError(result.optJSONObject("error")?.optString("message") ?: result.optString("error", "HTTP ${response.code}"), response.code, result.optJSONObject("error")?.optString("code") ?: "http_${response.code}")
+            if (!response.isSuccessful || result.has("error")) throw deviceResponseError(result, response.code)
             result
         }
     }
@@ -82,7 +82,7 @@ class DeviceApi(var base: String, var token: String = "", var device: String = "
             val source = response.body?.source()
             if (!response.isSuccessful || source == null) {
                 val text = source?.readUtf8() ?: ""
-                throw DeviceApiError(sseErrorField(text, "message") ?: "HTTP ${response.code}", response.code, sseErrorField(text, "code") ?: "http_${response.code}")
+                throw deviceResponseError(runCatching { JSONObject(text) }.getOrDefault(JSONObject()), response.code)
             }
             if (response.header("Content-Type")?.contains("text/event-stream") != true) {
                 response.close()
