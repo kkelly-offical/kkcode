@@ -1,6 +1,6 @@
 # 1.0.4 正式版修复与发布账本
 
-状态：开发与验收中，尚未公开发布。用户将第二预览版请求调整为：补齐 OpenAI
+状态：代码验收完成，正在准备正式发布，尚未取得公开发布回执。用户将第二预览版请求调整为：补齐 OpenAI
 Responses API 协议与全部交互修复后，发布完整正式版 `1.0.4`，Android `10008`，
 保留原项目证书。未发布过 `1.0.4-preview.1`。
 基线为 main `57379a1`；分支 `acceptance/1.0.4-stable`。
@@ -39,7 +39,7 @@ Responses API 协议与全部交互修复后，发布完整正式版 `1.0.4`，A
 - [x] HTTP(S) 来源链接与明文网址支持浏览器打开，不自动访问远程来源。
 - [x] Thinking 开始即有可展开条目，持续流式更新；已完成过程可折叠查看。
 - [x] 新增 Node/JVM/原生 UI/Web 交互回归全部通过。
-- [ ] 完整本机发布门禁、真实 SSH 生命周期、跨平台 CI 和 CodeQL。
+- [x] 完整本机发布门禁、真实 SSH 生命周期、跨平台 CI 和 CodeQL。
 - [x] 同证书 APK 10008 构建、覆盖安装、更新清单验证。
 - [x] Responses API 协议、配置/模型发现、流式文本/思考摘要/工具、图片与请求恢复验收。
 - [ ] 合入 main、发布 npm latest / GitHub stable、公开下载与安装复核。
@@ -93,3 +93,24 @@ Base URL、凭据和可见内容指纹隔离；投影到远端时移除。流中
   网关镜像可用非 root 用户构建/启动，隔离容器 OIDC/Relay/SSE 6 项通过。
 - 额外异常流测试确认容量检查须在 SSE 分帧前执行：无换行的畸形连续流也受 16 MiB
   原始字节上限约束，不等到完整事件才检查。没有修改其他协议的 SSE 输出契约。
+
+## 最终候选门禁
+
+- 代码 `a019518186979099e3397cf3dda83e0b9c04dd8d`；
+  [四平台完整验收](https://github.com/kkelly-offical/kkcode/actions/runs/35890249375)
+  全通过（Linux Node 22/24、Windows Node 22、macOS Node 22，各自包含 Web 验收）。
+- [CodeQL](https://github.com/kkelly-offical/kkcode/actions/runs/35890250353)
+  Actions、JavaScript/TypeScript、真实 Android/Kotlin 构建全通过。无新增开放告警，
+  17 条历史告警保留；新增 #63 经代码明确化后不再出现，未关闭任何安全规则。
+- 本机最终门禁：Node 2966（2964 通过、0 失败、2 条件跳过），E2E 33；
+  覆盖率 83.06% 行、79.46% 分支、81.21% 函数。545 文件包扫描和安装后 SDK 导入通过。
+  Android JVM 67 / UI 43；Web 三组和 130 控件布局一致性；协议兼容 45 / Browser 4。
+- 最终 Node 22 非 root 镜像内 Responses + OIDC + Relay + SSE **17/17**；
+  镜像 ID `sha256:098d316f1a365e3f3ab047111596984b947471fbe3c2f86c636c7a029b9f42fb`。
+  这是本机构建与隔离测试，不是公开镜像仓库上传或生产部署。
+- 真实 SSH 最终复跑全部通过，签名 APK `d00cd98…d89ae0` 与清单已锁定。
+  日志、APK、清单、生产 UpdatePolicy 验证在 `test-results/stable-1.0.4/`。
+- 发布前只读检查 `https://coding.internal.zzheng.cn/health` 返回
+  `1.0.4-preview.0`，没有升级该生产服务或「KK主机 1 号位」。
+
+后续 main 更新只整理发行说明与回执，不修改上述已验收程序、测试或 Android 源码。

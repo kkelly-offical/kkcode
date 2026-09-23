@@ -1,6 +1,6 @@
 # Changelog / 更新日志
 
-## 1.0.4 — candidate, not yet published
+## 1.0.4 — 2026-09-24
 
 - Add a native OpenAI Responses adapter: stateless text/image input, SSE,
   reasoning summaries, governed function calls/results, usage and citations,
