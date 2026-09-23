@@ -1,6 +1,6 @@
 # Changelog / 更新日志
 
-## 1.0.3 — KK Code 1.0.2 Fix (release preparation)
+## 1.0.3 — KK Code 1.0.2 Fix — 2026-09-23
 
 - Android/gateway: native browser return with an explicit fallback button;
   fixed return URI, per-attempt state and S256 proof binding. Enterprise OIDC

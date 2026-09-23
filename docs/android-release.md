@@ -1,6 +1,6 @@
 # Android release signing and acceptance
 
-Current candidate: **1.0.3 / 10006 (KK Code 1.0.2 Fix)**, with the same release
+Published stable: **1.0.3 / 10006 (KK Code 1.0.2 Fix)**, with the same release
 certificate. Actual acceptance/publication is recorded in
 [the 1.0.3 ledger](implementation-1.0.3.md); historical receipts below remain
 unchanged. Native browser-return scope is documented in [gateway login](android-gateway-login.md).
@@ -14,7 +14,7 @@ The user authorized creation of a project-specific production release key on
 2026-09-21. It is not the Android debug key or an acceptance-only identity.
 
 - Application ID: `cn.kkcode.remote`.
-- Published stable: `1.0.2` / version code `10005`; previous public stable `1.0.1` used `10004`. See [1.0.2 receipts](implementation-1.0.2.md).
+- Published stable: `1.0.3` / version code `10006`; previous public stable `1.0.2` used `10005` and `1.0.1` used `10004`. See [1.0.3 receipts](implementation-1.0.3.md).
 - Algorithm: RSA-4096, SHA256withRSA; certificate validity: 10,000 days.
 - Public certificate SHA-256:
   `cf75774a4d87ba1ccc4a811f271bd301076cf6beefd7432a3cb30231164be5d1`.
@@ -35,7 +35,7 @@ The previous `1.0.1` APKs were local, unpublished acceptance builds. The first
 authorized public preview (`1.0.1-preview.0`) therefore retained version code
 `10001`, the second preview (`1.0.1-preview.1`) increments it to `10002`, and
 the third preview (`1.0.1-preview.2`) uses `10003`; stable `1.0.1` uses `10004`.
-The next stable `1.0.2` uses `10005`. The certificate must stay unchanged.
+Stable `1.0.2` uses `10005`; `1.0.3` (1.0.2 Fix) uses `10006`. The certificate must stay unchanged.
 **Every subsequent publicly distributed Android update must increase
 `versionCode`, including any later stable release or preview.**
 Changing only `versionName` is not a valid public update policy. Keep using
@@ -73,7 +73,7 @@ The application footer and Android User-Agent use `BuildConfig.VERSION_NAME`.
 
 After signature verification, run `node scripts/android-update-manifest.mjs`.
 Publish its `test-results/android-update.json` alongside the exact signed APK
-renamed `kkcode-android-1.0.2.apk`. The App updater skips releases without a
+renamed `kkcode-android-1.0.3.apk`. The App updater skips releases without a
 matching manifest. Public identity is pinned in `configs/android-release.json`;
 private signing files never enter the release. See [App updates](android-app-updates.md).
 

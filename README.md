@@ -13,16 +13,15 @@
 **终端优先、可治理、可扩展的编码智能体：五档模式循环、可治理审批、Ultra 分阶段交付。**
 kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同一个 CLI 工作台里，并且把权限、预算、审计、后台任务、MCP、技能与插件一起纳入统一执行面。
 
-稳定版 **`1.0.2` 已发布**。在本地 WebUI、企业 OIDC/中继、原生 Android 的基础上，加入
+稳定版 **`1.0.3`「KK Code 1.0.2 Fix」已发布**：修复 Android 网关授权后的 App 回跳、
+后台恢复、取消与网络重试。App 和网关需同时升级，SSO 回调配置不变。
+
+保留 1.0.2 的全部能力：在本地 WebUI、企业 OIDC/中继、原生 Android 的基础上，加入
 跨端回退／改名／归档、统一 Auto 模式与同模型敏感操作审查、详细分支和 Worktree，
 以及隔离的内建 Browser。修复 SVG/损坏图片导致会话反复报错的问题。
-请先读 [1.0.2 使用与升级说明](docs/release-1.0.2.md)，实际测试与发布状态见
-[1.0.2 验收台账](docs/implementation-1.0.2.md)。
-
-正在准备专项补丁 **1.0.3「KK Code 1.0.2 Fix」**：修复 Android 网关授权后的
-App 回跳、后台恢复、取消与网络重试。需要 App 和网关同时升级，SSO 回调配置不变。
-见 [补丁升级说明](docs/release-1.0.3.md)、[登录流程](docs/android-gateway-login.md)
-与 [本轮验收／发布状态](docs/implementation-1.0.3.md)。
+请先读 [补丁升级说明](docs/release-1.0.3.md)、[登录流程](docs/android-gateway-login.md)
+与 [1.0.3 验收／发布回执](docs/implementation-1.0.3.md)。
+功能使用方式见 [1.0.2 使用说明](docs/release-1.0.2.md)。
 
 <img src="docs/assets/brand/kkcode-android-original.jpg" alt="KK Code Android 应用品牌图" width="120" />
 
@@ -109,7 +108,7 @@ kkcode
 ```
 
 预览渠道：`npm install -g @kkelly-offical/kkcode@preview`；固定本版可使用
-`@1.0.2`。安装搜索依赖：Linux `apt install ripgrep`、macOS
+`@1.0.3`。安装搜索依赖：Linux `apt install ripgrep`、macOS
 `brew install ripgrep`、Windows `choco install ripgrep`。
 
 **Web / enterprise remote / 企业远控**
@@ -718,15 +717,17 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current stable / 当前稳定版本**: `v1.0.2`，发布门禁与回执见 [实施台账](docs/implementation-1.0.2.md)。
+**Current stable / 当前稳定版本**: `v1.0.3`（KK Code 1.0.2 Fix），发布门禁与回执见 [实施台账](docs/implementation-1.0.3.md)。
 
 **Opt-in preview / 自愿试用预览版**: `v1.0.1-preview.2`
 
 ```sh
-npm install -g @kkelly-offical/kkcode@1.0.2
+npm install -g @kkelly-offical/kkcode@1.0.3
 kkcode --version
 ```
 
+Version 1.0.3 fixes native Android SSO return, encrypted login recovery, cancellation,
+retry handling and identity restoration without automatic device connection.
 Version 1.0.2 adds session lifecycle controls, unified modes with same-model Auto review,
 safe worktrees, Browser tools, first-question titles and authenticated image previews.
 It retains the 1.0.1 WebUI/Host, enterprise OIDC/Relay, native Android remote control,
@@ -737,7 +738,7 @@ controlled terminal status mode, and agent workflow/tools compatibility fixes wi
 model-catalog origin markers. Stable 1.0.1 additionally brings GitHub-backed Android
 updates, pixel visual themes without control relocation, explicit remote folder
 consent and stricter vLLM-compatible request shaping. See the
-[release guide](docs/release-1.0.2.md)
+[release guide](docs/release-1.0.3.md)
 for migration, Android installation, enterprise deployment and acceptance limits.
 预览渠道仍需主动安装；首次启用远控前请阅读账号归属、目录授权和备份说明。
 

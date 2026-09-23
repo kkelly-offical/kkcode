@@ -140,7 +140,8 @@ Android 从 1.0.1 开始可以直接检查 GitHub 更新，不需要企业网关
 
 SSO 注册回调 `${KKCODE_GATEWAY_ORIGIN}/auth/callback`，启用 Authorization Code + PKCE。
 网关校验 issuer、audience、签名、state 和 nonce；角色必须来自已验证的 ID token。
-本轮真实验证了 Keycloak 和 Dex，包含可配置 scope／claim、PKCE、JWKS 和浏览器会话。
+既有验收覆盖 Keycloak 和 Dex，包含可配置 scope／claim、PKCE、JWKS 和浏览器会话。
+本次 1.0.3 在 Keycloak 上复跑完整链路，并额外验证真实 Android Chrome 回跳与进程恢复。
 其他企业 IdP 仍需使用其租户的真实客户端配置验收，不会假称已经登录 Entra／Okta 租户。
 
 ## 生产部署与验收边界
@@ -156,6 +157,6 @@ SSO 注册回调 `${KKCODE_GATEWAY_ORIGIN}/auth/callback`，启用 Authorization
 
 这些实现不代替部署方的公网域名／证书、数据库自身 HA、异地备份及密钥托管。
 签名私钥必须另行做加密异地备份，不能遗失，也不会自动上传到 CI。
-Windows/macOS 的最终 CI 状态以 [实施账本](implementation-1.0.2.md) 为准。
+Windows/macOS 的最终 CI 状态以 [实施账本](implementation-1.0.3.md) 为准。
 验收使用专用分支和隔离资源；npm/GitHub 的实际发布状态以版本账本为准。
 没有发布到应用商店，也不会把本机签名密钥上传到 CI。
