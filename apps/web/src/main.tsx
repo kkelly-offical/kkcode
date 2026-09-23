@@ -60,6 +60,8 @@ function App() {
   const [busy, setBusy] = useState(false),
     [notice, setNotice] = useState(""),
     [sidebar, setSidebar] = useState(false);
+  const [thinkingExpanded, setThinkingExpanded] = useState(false);
+  useEffect(() => { setThinkingExpanded(false); }, [selected, busy]);
   const [panel, setPanel] = useState(""),
     [cwd, setCwd] = useState("");
   const [settings, setSettings] = useState<Item>({});
@@ -763,13 +765,13 @@ function App() {
                 </div>
               )}
               {collapseCompletedRuns(messages, busy).map((row) => (
-                <TranscriptRow key={row.id} row={row} loadPreview={ref => rpc("media.preview", { sessionId: selected, ...ref })} onRewind={canManage && !busy && !session?.archived ? target => setRewindTarget(target) : undefined} />
+                <TranscriptRow key={row.id} row={row} thinkingExpanded={row.done === false && thinkingExpanded} onThinkingExpanded={setThinkingExpanded} loadPreview={ref => rpc("media.preview", { sessionId: selected, ...ref })} onRewind={canManage && !busy && !session?.archived ? target => setRewindTarget(target) : undefined} />
               ))}
-              {busy &&
+              {busy && !approval.length &&
                 !messages.some(
-                  (row) => row.type === "thinking" && !row.done,
+                  (row) => ['thinking', 'assistant', 'review'].includes(row.type) && row.done === false || row.type === 'tool' && row.payload?.status === 'running',
                 ) && (
-                  <ThinkingRow row={{ id: 'waiting-thinking', text: '', done: false }} />
+                  <ThinkingRow key={`waiting-${selected}`} row={{ id: 'waiting-thinking', text: '', done: false }} initiallyExpanded={thinkingExpanded} onExpanded={setThinkingExpanded} />
                 )}
               {approval.map(request => <Approval key={request.id} request={request} readOnly={readOnly} onResolve={answer => rpc('approvals.resolve', { id: request.id, sessionId: request.sessionId || selected, answer })} />)}
               <div ref={tail} />

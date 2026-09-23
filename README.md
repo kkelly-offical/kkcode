@@ -13,25 +13,21 @@
 **终端优先、可治理、可扩展的编码智能体：五档模式循环、可治理审批、Ultra 分阶段交付。**
 kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同一个 CLI 工作台里，并且把权限、预算、审计、后台任务、MCP、技能与插件一起纳入统一执行面。
 
-稳定版 **`1.0.3`「KK Code 1.0.2 Fix」已发布**：修复 Android 网关授权后的 App 回跳、
-后台恢复、取消与网络重试。App 和网关需同时升级，SSO 回调配置不变。
+本版 **`1.0.4`（正式渠道）**：新增 [OpenAI Responses API](docs/responses-api.md)，
+支持文本/图片、流式思考摘要与受控工具循环；修复 SSH 跨设备模型状态、中文错误、
+空会话显示和渠道密钥保留。来源链接可由浏览器打开，Thinking 可在生成中展开，
+最终回答完成后运行过程收起为可展开的耗时摘要。
 
-保留 1.0.2 的全部能力：在本地 WebUI、企业 OIDC/中继、原生 Android 的基础上，加入
-跨端回退／改名／归档、统一 Auto 模式与同模型敏感操作审查、详细分支和 Worktree，
-以及隔离的内建 Browser。修复 SVG/损坏图片导致会话反复报错的问题。
-请先读 [补丁升级说明](docs/release-1.0.3.md)、[登录流程](docs/android-gateway-login.md)
-与 [1.0.3 验收／发布回执](docs/implementation-1.0.3.md)。
-功能使用方式见 [1.0.2 使用说明](docs/release-1.0.2.md)。
+包含预览版的 Web/Android 上下文用量、精简改名/归档/删除菜单、并列设备切换、
+账号 SSH 地址簿和断线不中断在途任务的 SSH 宿主。**SSH 仅 Android 直连，
+Web 不增加 SSH，网关不代连或保管 SSH 私钥。** 提示预算、强类型 SDK、MCP OAuth、
+ACP、受控 Browser/Harness 一并保留。
 
-**`1.0.4-preview.0` 预览版已发布**：Web/Android 上下文用量、
-精简的改名/归档/删除菜单、并列设备切换、账号 SSH 地址簿，以及 Android 断线不
-中断在途任务的 SSH 宿主。**SSH 仅 Android 直连，Web 不增加 SSH 代连。**
-同时补齐提示词预算/指纹、强类型 SDK、MCP OAuth、ACP 和受控 Browser/Harness。
-见 [Preview 说明](docs/release-1.0.4-preview.0.md)、[本轮验收](docs/implementation-1.0.4.md)。
-
-下一正式版 **`1.0.4` 正在开发验收，尚未发布**：加入 Responses API，集中修复 SSH 设备切换、
-空会话显示和中文错误，并改善来源链接、实时 Thinking 与完成后过程折叠。
-见 [1.0.4 说明](docs/release-1.0.4.md) 与 [实际进度](docs/stable-1.0.4-worklog.md)。
+沿用 1.0.3 的 Android SSO 回跳/恢复，以及 1.0.2 的回退、统一 Auto 审查、
+分支/Worktree 与安全图片预览。App、设备 CLI 和网关/Web 需要配套升级。
+先读 [1.0.4 升级说明](docs/release-1.0.4.md)、[SSH 使用](docs/ssh-account-devices.md)
+与 [实际验收/发布回执](docs/stable-1.0.4-worklog.md)。源码版本不等于生产部署完成；
+是否公开上线以回执为准。历史预览记录保留在 [preview.0 台账](docs/implementation-1.0.4.md)。
 
 <img src="docs/assets/brand/kkcode-android-original.jpg" alt="KK Code Android 应用品牌图" width="120" />
 
@@ -118,7 +114,7 @@ kkcode
 ```
 
 预览渠道：`npm install -g @kkelly-offical/kkcode@preview`；固定稳定版可使用
-`@1.0.3`，固定本轮预览版使用 `@1.0.4-preview.0`。安装搜索依赖：Linux `apt install ripgrep`、macOS
+`@1.0.4`。`@preview` 仍可能指向较早的 `1.0.4-preview.0`；获取本次正式版用默认渠道或明确版本号，不要把预览标签当作总是最新。安装搜索依赖：Linux `apt install ripgrep`、macOS
 `brew install ripgrep`、Windows `choco install ripgrep`。
 
 **Web / enterprise remote / 企业远控**
@@ -727,18 +723,21 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Current stable / 当前稳定版本**: `v1.0.3`（KK Code 1.0.2 Fix），发布门禁与回执见 [实施台账](docs/implementation-1.0.3.md)。
+**Release / 本版正式版本**: `v1.0.4`，发布门禁与公开状态见 [实施台账](docs/stable-1.0.4-worklog.md)。
 
 **Opt-in preview / 自愿试用预览版**: [`v1.0.4-preview.0`](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.4-preview.0)，发布回执见 [实施台账](docs/implementation-1.0.4.md)。
 
-预览渠道需要主动选择，稳定版 `latest` 保持 `1.0.3`。
-新客户端、设备 CLI、企业网关/Web 镜像需按 [升级顺序](docs/release-1.0.4-preview.0.md) 配套更新。
+本次正式发布推进 npm `latest`，不移动任何旧版本标签，不另发 `1.0.4-preview.1`。
+新客户端、设备 CLI、企业网关/Web 镜像需按 [升级说明](docs/release-1.0.4.md) 配套更新。
 
 ```sh
-npm install -g @kkelly-offical/kkcode@1.0.3
+npm install -g @kkelly-offical/kkcode@1.0.4
 kkcode --version
 ```
 
+Version 1.0.4 adds OpenAI Responses, clearer remote errors, isolated SSH device settings,
+clickable sources, live thinking expansion and completed-run summaries. It promotes the
+context, SSH lifecycle, SDK, protocol and Harness work from preview.0 to the stable line.
 Version 1.0.3 fixes native Android SSO return, encrypted login recovery, cancellation,
 retry handling and identity restoration without automatic device connection.
 Version 1.0.2 adds session lifecycle controls, unified modes with same-model Auto review,
@@ -751,7 +750,7 @@ controlled terminal status mode, and agent workflow/tools compatibility fixes wi
 model-catalog origin markers. Stable 1.0.1 additionally brings GitHub-backed Android
 updates, pixel visual themes without control relocation, explicit remote folder
 consent and stricter vLLM-compatible request shaping. See the
-[release guide](docs/release-1.0.3.md)
+[release guide](docs/release-1.0.4.md)
 for migration, Android installation, enterprise deployment and acceptance limits.
 预览渠道仍需主动安装；首次启用远控前请阅读账号归属、目录授权和备份说明。
 

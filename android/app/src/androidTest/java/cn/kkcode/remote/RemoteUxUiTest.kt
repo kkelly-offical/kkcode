@@ -125,6 +125,22 @@ class RemoteUxUiTest {
         compose.onNodeWithText("第二段流式内容", substring = true).assertDoesNotExist()
     }
 
+    @Test fun openingWaitingThinkingCarriesIntoTheFirstRealStreamRow() {
+        val state = RemoteState(ApplicationProvider.getApplicationContext<Application>(), false)
+        val models = ViewModelStore(); models.put("state", state)
+        state.selected = "waiting-stream"; state.connected = true; state.busy = true
+        state.messages = listOf(ChatItem("user", "user", "先检查项目"))
+        try {
+            compose.setContent { KKCodeTheme(dark = true) { KKCodeApp(state) } }
+            compose.onNodeWithContentDescription("展开详情").performClick()
+            compose.onNodeWithText("模型尚未返回", substring = true).assertIsDisplayed()
+            compose.runOnIdle { state.messages = state.messages + ChatItem("real-stream", "thinking", "首段内容不需要再次点击", done = false, streamed = true) }
+            compose.onNodeWithText("首段内容不需要再次点击").assertIsDisplayed()
+            compose.runOnIdle { state.messages = state.messages.map { if(it.kind == "thinking") it.copy(done = true) else it } + ChatItem("answer", "assistant", "正在输出正文", done = false, streamed = true) }
+            compose.onNodeWithText("模型尚未返回", substring = true).assertDoesNotExist()
+        } finally { models.clear() }
+    }
+
     @Test fun completedProcessHasOneSummaryAndCanBeReopened() {
         val item = ChatItem("run", "run-summary", "", durationMs = 5000, children = listOf(ChatItem("tool", "tool", "read", tool = JSONObject().put("tool", "read").put("args", JSONObject().put("path", "/workspace/file.txt")))))
         compose.setContent { KKCodeTheme(dark = true) { RunSummaryRow(item) } }

@@ -1,9 +1,10 @@
 # Android release signing and acceptance
 
-Published stable: **1.0.3 / 10006 (KK Code 1.0.2 Fix)**, with the same release
-certificate. Actual acceptance/publication is recorded in
-[the 1.0.3 ledger](implementation-1.0.3.md); historical receipts below remain
-unchanged. Native browser-return scope is documented in [gateway login](android-gateway-login.md).
+Release target: **1.0.4 / 10008**, with the same release certificate. Actual
+acceptance/publication is recorded in [the stable ledger](stable-1.0.4-worklog.md).
+Previous stable **1.0.3 / 10006 (KK Code 1.0.2 Fix)** receipts remain in
+[its ledger](implementation-1.0.3.md). Native browser-return scope is documented
+in [gateway login](android-gateway-login.md).
 
 Published preview: **1.0.4-preview.0 / 10007**, same release certificate.
 Select the Preview channel in App update settings to receive prereleases.
@@ -22,7 +23,7 @@ The user authorized creation of a project-specific production release key on
 2026-09-21. It is not the Android debug key or an acceptance-only identity.
 
 - Application ID: `cn.kkcode.remote`.
-- Published stable: `1.0.3` / version code `10006`; previous public stable `1.0.2` used `10005` and `1.0.1` used `10004`. See [1.0.3 receipts](implementation-1.0.3.md).
+- Stable target: `1.0.4` / code `10008`; preview.0 used `10007`, stable `1.0.3` used `10006`, `1.0.2` used `10005` and `1.0.1` used `10004`. See [current receipts](stable-1.0.4-worklog.md).
 - Algorithm: RSA-4096, SHA256withRSA; certificate validity: 10,000 days.
 - Public certificate SHA-256:
   `cf75774a4d87ba1ccc4a811f271bd301076cf6beefd7432a3cb30231164be5d1`.
@@ -44,6 +45,8 @@ authorized public preview (`1.0.1-preview.0`) therefore retained version code
 `10001`, the second preview (`1.0.1-preview.1`) increments it to `10002`, and
 the third preview (`1.0.1-preview.2`) uses `10003`; stable `1.0.1` uses `10004`.
 Stable `1.0.2` uses `10005`; `1.0.3` (1.0.2 Fix) uses `10006`. The certificate must stay unchanged.
+`1.0.4-preview.0` uses `10007`; stable `1.0.4` uses `10008` and is eligible for both
+stable and preview update channels. No public `1.0.4-preview.1` is planned.
 **Every subsequent publicly distributed Android update must increase
 `versionCode`, including any later stable release or preview.**
 Changing only `versionName` is not a valid public update policy. Keep using
@@ -81,7 +84,7 @@ The application footer and Android User-Agent use `BuildConfig.VERSION_NAME`.
 
 After signature verification, run `node scripts/android-update-manifest.mjs`.
 Publish its `test-results/android-update.json` alongside the exact signed APK
-renamed `kkcode-android-1.0.3.apk`. The App updater skips releases without a
+renamed `kkcode-android-1.0.4.apk`. The App updater skips releases without a
 matching manifest. Public identity is pinned in `configs/android-release.json`;
 private signing files never enter the release. See [App updates](android-app-updates.md).
 

@@ -98,7 +98,8 @@ export function ToolRow({ payload }: { payload: Item }) {
     </details>
   );
 }
-export function ThinkingRow({ row }: { row: Item }) {
+export function ThinkingRow({ row, initiallyExpanded = false, onExpanded }: { row: Item; initiallyExpanded?: boolean; onExpanded?: (expanded: boolean) => void }) {
+  const [expanded, setExpanded] = useState(initiallyExpanded);
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     if (!row.done) {
@@ -109,7 +110,7 @@ export function ThinkingRow({ row }: { row: Item }) {
   const duration =
     row.durationMs ?? (!row.done && row.timestamp ? now - row.timestamp : null);
   return (
-    <details className="thinking-row">
+    <details className="thinking-row" open={expanded} onToggle={event => { const open = event.currentTarget.open; setExpanded(open); onExpanded?.(open); }}>
       <summary>
         {!row.done && <i className="working" />}
         <span>
@@ -143,7 +144,7 @@ function MediaPreview({ row, loadPreview }: { row: Item; loadPreview?: (referenc
     {error && <p className="sheet-error">{error} <button onClick={() => void open()}>重试</button></p>}
   </details>;
 }
-export function TranscriptRow({ row, loadPreview, onRewind }: { row: Item; loadPreview?: (reference: Item) => Promise<Item>; onRewind?: (row: Item) => void }) {
+export function TranscriptRow({ row, loadPreview, onRewind, thinkingExpanded, onThinkingExpanded }: { row: Item; loadPreview?: (reference: Item) => Promise<Item>; onRewind?: (row: Item) => void; thinkingExpanded?: boolean; onThinkingExpanded?: (expanded: boolean) => void }) {
   if (row.type === 'run-summary') return <details className="tool-row run-summary">
     <summary><Icon name="chevron" size={14} /><span>{row.durationMs != null ? `已运行 ${Math.floor(row.durationMs / 1000)} 秒` : '运行过程已完成'}{row.tools ? ` · ${row.tools} 次工具调用` : ''}</span></summary>
     <div className="run-summary-body">{row.rows.map((child: Item) => <TranscriptRow key={child.id} row={child} loadPreview={loadPreview} />)}</div>
@@ -151,7 +152,7 @@ export function TranscriptRow({ row, loadPreview, onRewind }: { row: Item; loadP
   if (row.type === "tool") return <ToolRow payload={row.payload} />;
   if (row.type === "media") return <MediaPreview row={row} loadPreview={loadPreview} />;
   if (row.type === "review") return <details className="tool-row review-row"><summary>{!row.done && <i className="working" />}<Icon name="shield" size={17} /><span>Auto 审查 · {row.tool} · {row.done ? ({ allow: "允许", deny: "拒绝", ask: "交给你确认" } as Item)[row.decision] || "已完成" : "进行中"}</span></summary><div className="tool-body"><p>{row.text}</p>{row.model && <small>对话模型：{row.model}</small>}</div></details>;
-  if (row.type === "thinking") return <ThinkingRow row={row} />;
+  if (row.type === "thinking") return <ThinkingRow row={row} initiallyExpanded={thinkingExpanded} onExpanded={onThinkingExpanded} />;
   if (row.type === "compacted")
     return (
       <div className="context-divider">

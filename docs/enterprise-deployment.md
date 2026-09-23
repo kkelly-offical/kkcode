@@ -1,12 +1,12 @@
-# KK Code 企业自托管组件与实验部署（1.0.3 / 1.0.2 Fix）
+# KK Code 企业自托管组件与实验部署（1.0.4）
 
-本文面向 `1.0.3` 部署，版本发布本身不等于生产安全认证。
-根包、网关/Web/SDK 工作区与 Android 版本名一致；APK 版本码为 `10006`。
-实际发布/验收状态见 [本版说明](release-1.0.3.md) 与 [验收账本](implementation-1.0.3.md)。
+本文面向 `1.0.4` 部署，版本发布本身不等于生产安全认证。
+根包、网关/Web/SDK 工作区与 Android 版本名一致；APK 版本码为 `10008`。
+实际发布/验收状态见 [本版说明](release-1.0.4.md) 与 [验收账本](stable-1.0.4-worklog.md)。
 
-## 1.0.4 Preview 候选部署差异
+## 1.0.4 部署差异
 
-稳定版部署步骤仍适用；候选代码见 [Preview 说明](release-1.0.4-preview.0.md)。
+沿用既有数据库、域名和 OIDC；无需新建另一套身份系统。
 新增账号 SSH 地址簿 API `/api/v1/connections/ssh`，数据存于现有账号隔离 store，
 不需要单独 SSH 服务、新监听端口或给网关配 SSH 私钥。**网关不代连 SSH，Web
 本轮不提供 SSH；Android 直接连接工作电脑。** 多节点沿用 store 的原子修订检查。
@@ -16,6 +16,8 @@ SSH 生命周期详见 [账号设备指南](ssh-account-devices.md)。本机验�
 企业生产域名、OIDC 平台或已有示范虚拟机。
 本次专项修复需要网关与 App 同步升级；SSO 的 `/auth/callback` 注册地址不变。
 详见 [Android 回跳、后台恢复与兼容边界](android-gateway-login.md)。
+Responses 是工作电脑上的模型适配，不是新增网关微服务；在设备模型渠道选择
+协议和 Base URL 即可。网关/Web 本轮还修复 HTTP 错误封装与会话呈现，不能只更新 APK。
 
 升级前备份 PostgreSQL 与设备本地状态，不重建组织/OIDC client、网关密钥或
 Android 证书。先更新实验网关与一台设备，验证登录、会话流、模型目录、审批和
@@ -126,7 +128,7 @@ docker compose --env-file /root/.local/share/kkcode-enterprise-lab/lab.env \
 ## Web 镜像和 Android 升级
 
 网关镜像内含 WebUI。使用本版源码执行
-`docker build -f deploy/Dockerfile -t kkcode-gateway:1.0.3 .`，然后由部署方按自己的
+`docker build -f deploy/Dockerfile -t kkcode-gateway:1.0.4 .`，然后由部署方按自己的
 Compose／编排配置滚动更新。不要删除数据库卷或重新生成 OIDC/网关密钥；CLI
 与 Android 更新不会自动更新服务器镜像。仓库提供 Dockerfile，不宣称已经发布
 公共 registry 镜像。
@@ -152,7 +154,7 @@ Android 从 1.0.1 开始可以直接检查 GitHub 更新，不需要企业网关
 SSO 注册回调 `${KKCODE_GATEWAY_ORIGIN}/auth/callback`，启用 Authorization Code + PKCE。
 网关校验 issuer、audience、签名、state 和 nonce；角色必须来自已验证的 ID token。
 既有验收覆盖 Keycloak 和 Dex，包含可配置 scope／claim、PKCE、JWKS 和浏览器会话。
-本次 1.0.3 在 Keycloak 上复跑完整链路，并额外验证真实 Android Chrome 回跳与进程恢复。
+历史 1.0.3 验收在 Keycloak 上复跑完整链路，并额外验证真实 Android Chrome 回跳与进程恢复。
 其他企业 IdP 仍需使用其租户的真实客户端配置验收，不会假称已经登录 Entra／Okta 租户。
 
 ## 生产部署与验收边界
@@ -168,6 +170,6 @@ SSO 注册回调 `${KKCODE_GATEWAY_ORIGIN}/auth/callback`，启用 Authorization
 
 这些实现不代替部署方的公网域名／证书、数据库自身 HA、异地备份及密钥托管。
 签名私钥必须另行做加密异地备份，不能遗失，也不会自动上传到 CI。
-Windows/macOS 的最终 CI 状态以 [实施账本](implementation-1.0.3.md) 为准。
+Windows/macOS 的本版 CI 状态以 [实施账本](stable-1.0.4-worklog.md) 为准。
 验收使用专用分支和隔离资源；npm/GitHub 的实际发布状态以版本账本为准。
 没有发布到应用商店，也不会把本机签名密钥上传到 CI。

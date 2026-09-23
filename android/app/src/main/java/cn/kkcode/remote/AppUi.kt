@@ -311,12 +311,13 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
     val text = state.draft
     val displayItems = collapseCompletedRuns(state.messages, state.busy)
     var expandedRows by remember(state.selected) { mutableStateOf(emptySet<String>()) }
+    var thinkingExpanded by remember(state.selected, state.busy) { mutableStateOf(false) }
     var actions by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if(uri != null) state.attach(uri) }
     LaunchedEffect(state.attachmentPickerRequest) { if(state.attachmentPickerRequest > 0) picker.launch(arrayOf("image/png", "image/jpeg", "image/gif", "image/webp", "audio/wav", "audio/mpeg", "video/mp4", "video/quicktime", "video/webm", "video/mpeg", "text/*", "application/json", "application/xml", "application/yaml")) }
     val listState = rememberLazyListState()
     LaunchedEffect(displayItems.size, displayItems.lastOrNull()?.text?.length) {
-        if(displayItems.isNotEmpty() && displayItems.none { it.id in expandedRows } && (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= displayItems.size - 3) listState.animateScrollToItem(displayItems.lastIndex)
+        if(displayItems.isNotEmpty() && !thinkingExpanded && displayItems.none { it.id in expandedRows } && (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= displayItems.size - 3) listState.animateScrollToItem(displayItems.lastIndex)
     }
     Column(Modifier.fillMaxSize().imePadding()) {
         LazyColumn(Modifier.weight(1f), state = listState, contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)) {
@@ -333,11 +334,11 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                         "error" -> Text(item.text, color = kkcodeColors.danger, fontSize = 13.sp)
                         "run-summary" -> RunSummaryRow(item) { open -> expandedRows = if(open) expandedRows + item.id else expandedRows - item.id }
                         "compacted" -> Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) { HorizontalDivider(Modifier.weight(1f), color = card); Text("已精简上下文", fontSize = 10.sp, color = muted); HorizontalDivider(Modifier.weight(1f), color = card) }
-                        else -> ActivityRow(item) { open -> expandedRows = if(open) expandedRows + item.id else expandedRows - item.id }
+                        else -> ActivityRow(item, initiallyExpanded = item.kind == "thinking" && !item.done && thinkingExpanded) { open -> if(item.kind == "thinking") thinkingExpanded = open; expandedRows = if(open) expandedRows + item.id else expandedRows - item.id }
                     }
                 }
             }
-            if(state.busy && state.messages.none { it.kind == "thinking" && !it.done }) item(key = "waiting-thinking") { ActivityRow(ChatItem("waiting-${state.selected}", "thinking", "", done = false)) }
+            if(state.busy && state.approvals.isEmpty() && state.messages.none { it.kind in listOf("thinking", "assistant", "review") && !it.done || it.kind == "tool" && it.tool?.optString("status") == "running" }) item(key = "waiting-thinking") { ActivityRow(ChatItem("waiting-${state.selected}", "thinking", "", done = false), initiallyExpanded = thinkingExpanded) { thinkingExpanded = it } }
             items(state.approvals, key = { it.getString("id") }) { a ->
                 Group("需要你的确认") {
                     val request = a.optJSONObject("request") ?: JSONObject()

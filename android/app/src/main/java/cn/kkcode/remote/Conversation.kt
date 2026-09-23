@@ -54,8 +54,8 @@ internal fun toolMutations(payload: JSONObject?): List<JSONObject> {
     return metadata.optJSONArray("mutations").objects().ifEmpty { metadata.optJSONObject("mutation")?.let { listOf(it) } ?: emptyList() }
 }
 
-@Composable fun ActivityRow(item: ChatItem, onExpanded: (Boolean) -> Unit = {}) {
-    var expanded by remember(item.id) { mutableStateOf(false) }
+@Composable fun ActivityRow(item: ChatItem, initiallyExpanded: Boolean = false, onExpanded: (Boolean) -> Unit = {}) {
+    var expanded by remember(item.id) { mutableStateOf(initiallyExpanded) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(item.done) { while(!item.done) { now = System.currentTimeMillis(); delay(1000) } }
     val payload = item.tool ?: JSONObject()

@@ -1,7 +1,10 @@
-import { createHash } from 'node:crypto'
+import { createHash, createHmac } from 'node:crypto'
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
-export const responsesScope = input => hash([input.baseUrl, input.model, input.apiKey || ''])
+// A domain-separated continuity MAC, not a password verifier. The credential
+// is the MAC key, never serialized into persisted state or reused as a digest.
+export const responsesScope = input => createHmac('sha256', input.apiKey || Buffer.alloc(0))
+  .update(JSON.stringify(['kkcode.responses.scope.v1', input.baseUrl, input.model])).digest('hex')
 const visible = content => (Array.isArray(content) ? content : [{ type: 'text', text: String(content || '') }])
   .filter(block => ['text', 'tool_use'].includes(block?.type))
   .map(block => block.type === 'text' ? { type: 'text', text: String(block.text || '').trim() } : block)
