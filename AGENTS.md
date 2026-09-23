@@ -1,5 +1,7 @@
 # Project working memory
 
+- Current development target (2026-09-23): `1.0.4-preview.0`, Android code `10007`; not published yet. Track `docs/implementation-1.0.4.md`. User chose **Android direct SSH only**, no Web SSH and no gateway SSH proxy. Account storage accepts metadata/fingerprints only; passwords/keys stay on Android. SSH task hosts drain after in-flight work plus 75 seconds of client inactivity; foreground `kkcode remote` semantics do not change. Do not confuse this candidate with the published stable/preview tags below.
+
 - User decision (2026-09-21): releases stay on `1.0.x`. Do not bump to `1.1.0` or another major/minor until the user explicitly authorizes that version change.
 - Current published stable: `1.0.3` from `5f65bae`, release title **KK Code 1.0.2 Fix**, npm `latest` and GitHub stable Release (2026-09-23). Adds Android/gateway native login return, durable recovery and proof-bound handoff; preserves all 1.0.2 features. npm `preview` remains `1.0.1-preview.2` from `cc381cd`. Never move published tags `v1.0.1` (`c04fcaf`), `v1.0.2` (`a820086`) or `v1.0.3` (`5f65bae`). Current receipts: `docs/implementation-1.0.3.md`; 1.0.2/1.0.1 ledgers remain historical. Production gateway deployment is separate; its public health/discovery still reported 1.0.2 without native-return capability at the final publication check.
 - Android is a native Kotlin/Compose remote client (SSH and Relay), not an embedded local Agent runtime.

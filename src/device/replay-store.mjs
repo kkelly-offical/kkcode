@@ -170,6 +170,16 @@ export class ReplayStore {
     this.chain = operation.catch(() => {})
     return operation
   }
+  clearSession(id) {
+    const operation = this.chain.then(async () => {
+      const state = await this.load(id)
+      const next = { ...state, rows: [], bytes: 0, updatedAt: this.now() }
+      await this.rewrite(id, next)
+      this.states.set(id, next)
+    })
+    this.chain = operation.catch(() => {})
+    return operation
+  }
   stats() { return { ...this.limits, bytes: [...this.states.values()].reduce((sum, state) => sum + state.bytes, 0), journals: this.states.size } }
   async close() { await this.chain }
 }

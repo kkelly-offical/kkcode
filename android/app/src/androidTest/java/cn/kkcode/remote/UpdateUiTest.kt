@@ -52,6 +52,10 @@ class UpdateUiTest {
     @Test fun channelsAreSelectableAndNoAndroidArtifactIsReportedHonestly() {
         val updater = fresh(GitHubUpdateSource(transport = UpdateTransport { body("[]") }))
         compose.setContent { KKCodeTheme(false) { UpdateSheet(updater) } }
+        if(updater.channel == UpdateChannel.PREVIEW) {
+            compose.onNodeWithText("稳定版", substring = false).performClick()
+            compose.waitUntil(3000) { updater.phase == UpdatePhase.CURRENT }
+        }
         compose.onNodeWithText("预览版", substring = false).performClick()
         compose.waitUntil(3000) { updater.phase == UpdatePhase.CURRENT }
         compose.onNodeWithText("该渠道暂无", substring = true).assertExists()

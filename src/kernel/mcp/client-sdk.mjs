@@ -2,6 +2,7 @@ import { Client, StreamableHTTPClientTransport, SSEClientTransport } from '@mode
 import { MCP_CLIENT_INFO } from './constants.mjs'
 import { normalizeToolResult } from './tool-result.mjs'
 import { buildRequestHeaders } from '../../http/identity.mjs'
+import { createMcpOAuthProvider } from './oauth.mjs'
 
 export function createSdkMcpClient(serverName, config) {
   let client, connecting
@@ -13,7 +14,14 @@ export function createSdkMcpClient(serverName, config) {
       if (url.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) && Object.keys(config.headers || {}).length) throw new Error('MCP credentials require HTTPS outside loopback')
       client = new Client(MCP_CLIENT_INFO, { capabilities: {}, versionNegotiation: { mode: 'auto' } })
       const Transport = String(config.transport || config.type).toLowerCase() === 'legacy-sse' ? SSEClientTransport : StreamableHTTPClientTransport
-      await client.connect(new Transport(url, { requestInit: { headers: buildRequestHeaders({ target: 'mcp', accept: 'application/json, text/event-stream', customHeaders: config.headers || {} }) } }), { timeout })
+      let authProvider
+      // A public HTTP MCP may be intentionally unauthenticated. Only a prior
+      // explicit OAuth login enables bearer/refresh behavior for this endpoint.
+      if (url.protocol === 'https:' || ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) {
+        const auth = createMcpOAuthProvider(serverName, config)
+        if (await auth.initialize()) authProvider = auth.provider
+      }
+      await client.connect(new Transport(url, { ...(authProvider ? { authProvider } : {}), requestInit: { headers: buildRequestHeaders({ target: 'mcp', accept: 'application/json, text/event-stream', customHeaders: config.headers || {} }) } }), { timeout })
       return client
     })().catch(async error => { await client?.close().catch(() => {}); connecting = null; throw error })
     return connecting

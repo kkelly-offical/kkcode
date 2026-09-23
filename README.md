@@ -23,6 +23,12 @@ kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同�
 与 [1.0.3 验收／发布回执](docs/implementation-1.0.3.md)。
 功能使用方式见 [1.0.2 使用说明](docs/release-1.0.2.md)。
 
+当前分支正在验收 **`1.0.4-preview.0`**（尚未公开发布）：Web/Android 上下文用量、
+精简的改名/归档/删除菜单、并列设备切换、账号 SSH 地址簿，以及 Android 断线不
+中断在途任务的 SSH 宿主。**SSH 仅 Android 直连，Web 不增加 SSH 代连。**
+同时补齐提示词预算/指纹、强类型 SDK、MCP OAuth、ACP 和受控 Browser/Harness。
+见 [Preview 说明](docs/release-1.0.4-preview.0.md)、[本轮验收](docs/implementation-1.0.4.md)。
+
 <img src="docs/assets/brand/kkcode-android-original.jpg" alt="KK Code Android 应用品牌图" width="120" />
 
 以上为品牌概念图，不是实际界面截图；应用仍使用紧凑的像素主题会话布局。
@@ -720,6 +726,9 @@ update:
 **Current stable / 当前稳定版本**: `v1.0.3`（KK Code 1.0.2 Fix），发布门禁与回执见 [实施台账](docs/implementation-1.0.3.md)。
 
 **Opt-in preview / 自愿试用预览版**: `v1.0.1-preview.2`
+
+`1.0.4-preview.0` 候选尚未公开；不要把本地代码版本当成 npm preview 标签已更新。
+新客户端、设备 CLI、企业网关/Web 镜像需按 [升级顺序](docs/release-1.0.4-preview.0.md) 配套更新。
 
 ```sh
 npm install -g @kkelly-offical/kkcode@1.0.3

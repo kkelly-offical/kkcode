@@ -1,4 +1,5 @@
 import { ProtocolError } from '../protocol/index.mjs'
+import { publicContext } from '../protocol/context.mjs'
 export const SESSION_VIEW_BYTES = 4 * 1024 * 1024
 const displayNotice = '[Display truncated; full content remains on the computer]'
 const bytes = value => Buffer.byteLength(JSON.stringify(value))
@@ -44,6 +45,8 @@ function project(value, budget, depth = 0, seen = new Set(), references = null) 
 }
 function metadata(source, cap) {
   const result = {}
+  const context = publicContext(source?.context)
+  if (context) result.context = context
   for (const [key, max] of Object.entries(metadataFields)) {
     if (!Object.hasOwn(source || {}, key)) continue
     const value = source[key]

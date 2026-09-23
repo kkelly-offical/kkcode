@@ -1,5 +1,17 @@
 # Remote SSE event contract (1.0.2)
 
+1.0.4 Preview additive fields/events: `sessions.get.context` and
+`session.context.updated.payload.context` expose a sanitized current request budget
+(tokens/limit/outputReserved/source/estimated/components). They contain no prompt text
+or credentials. The old headless/CLI usage event contract is unchanged.
+
+`session.deleted` invalidates an open conversation. Device-scope `session.status`
+also carries flat `deleted: true` and `sessionId`. Discard the selected snapshot and
+return to the list; do not merge pre-deletion replay back into history. The content
+journal is cleared, so a client that missed the live event must handle a replay gap
+followed by `sessions.get` returning `404 session_missing`. SDK `stream()` and Web
+use the same parser; abort closes and releases the reader on device switch.
+
 Real-time server-sent events (SSE) for remote clients (WebUI, Android, terminal
 status panels). SSE is additive: `events.list` polling, the WebSocket
 `/api/v1/events` endpoint (device server), all RPC methods, request dedup

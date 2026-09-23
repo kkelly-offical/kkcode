@@ -221,6 +221,13 @@ export class TaskValidator {
     const todoResult = await this.checkTodoCompletion(todoState)
     results.push({ name: "Todo", ...todoResult, severity: todoResult.passed ? "pass" : "critical" })
 
+    if (level === 'evidence') {
+      return {
+        passed: todoResult.passed, verdict: todoResult.passed ? 'NO_BLOCKING_TODO' : 'BLOCK', results,
+        message: `${todoResult.message}\nBuild/test/lint commands are not executed implicitly. Use the normal approved tool path and report the actual verification evidence; an empty todo list is not proof that tests passed.`
+      }
+    }
+
     const jsResult = await this.checkJavaScriptSyntax()
     results.push({ name: "JS Syntax", ...jsResult, severity: jsResult.passed ? "pass" : "critical" })
 

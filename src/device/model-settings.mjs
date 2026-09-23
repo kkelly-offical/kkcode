@@ -34,7 +34,13 @@ export async function discoverDeviceModels(service, params) {
     const validation = validateConfig(state.config)
     if (!validation.valid) throw new ProtocolError('invalid_config', validation.errors.join('; '))
   }
-  const catalog = await discoverModelsForProvider(state, { providerName: name, refresh: params.refresh !== false })
+  let catalog
+  try { catalog = await discoverModelsForProvider(state, { providerName: name, refresh: params.refresh !== false }) }
+  catch (error) {
+    if (error.details?.reason === 'insecure_transport') throw new ProtocolError('insecure_provider_transport', '不能向明文 HTTP 发送模型凭据。请使用 HTTPS；无认证的本地服务请移除 API Key 并显式设置 api_key_env 为 ""。', 422)
+    if (error.details?.reason === 'workspace_untrusted') throw new ProtocolError('workspace_untrusted', '项目配置控制了模型连接。请先在被控电脑检查该配置，并对工作区执行 kkcode --trust 或 /trust。', 403)
+    throw error
+  }
   // Every entry declares its provenance: auto-discovered from the provider
   // (network/disk cache) or the manually maintained config fallback list. Newer
   // kernels already mark entries; fill the marker on older ones.

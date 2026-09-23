@@ -64,7 +64,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                 }
             }
             Box {
-                CircleButton(Icons.Outlined.MoreHoriz, "更多") { menu = true }
+                CircleButton(Icons.Outlined.MoreHoriz, "更多") { if(inChat && !state.sharedDevice) state.managedSession = state.sessions.find { it.optString("id") == state.selected } ?: JSONObject().put("id", state.selected) else menu = true }
                 DropdownMenu(menu, { menu = false }, containerColor = card, shape = PixelShape()) {
                     if(inChat && !state.sharedDevice) {
                         DropdownMenuItem(text = { Text("管理当前对话") }, leadingIcon = { Icon(Icons.Outlined.Edit, null) }, onClick = { state.managedSession = state.sessions.find { it.optString("id") == state.selected } ?: JSONObject().put("id", state.selected); menu = false })
@@ -92,6 +92,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
         }
     }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).pixelBackground()) {
+            DeviceStrip(state)
             if(state.notice.isNotBlank()) Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(state.notice, modifier = Modifier.weight(1f), color = kkcodeColors.warning, fontSize = 12.sp, maxLines = 3)
                 IconButton(onClick = { state.notice = "" }, modifier = Modifier.size(28.dp)) { Icon(Icons.Outlined.Close, null, Modifier.size(16.dp)) }
@@ -179,9 +180,20 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
 }
 @Composable private fun SheetContent(state: RemoteState) {
     var sshHost by remember { mutableStateOf("") }; var sshPort by remember { mutableStateOf("22") }; var sshUser by remember { mutableStateOf("") }
+    var sshName by remember { mutableStateOf("") }; var remotePort by remember { mutableStateOf("18271") }; var rememberSsh by remember { mutableStateOf(true) }; var allSshFolders by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }; var privateKey by remember { mutableStateOf("") }; var keyMode by remember { mutableStateOf(true) }
     var providerName by remember { mutableStateOf("") }; var baseUrl by remember { mutableStateOf("") }; var apiKey by remember { mutableStateOf("") }; var providerModel by remember { mutableStateOf("") }
     var providerType by remember { mutableStateOf("openai") }
+    LaunchedEffect(state.sheet, state.editingSsh?.optString("id")) {
+        if(state.sheet == "ssh") {
+            val saved = state.editingSsh
+            sshHost = saved?.optString("host") ?: ""; sshPort = (saved?.optInt("port", 22) ?: 22).toString(); sshUser = saved?.optString("username") ?: ""
+            sshName = saved?.optString("name") ?: ""; remotePort = (saved?.optInt("remotePort", 18271) ?: 18271).toString()
+            allSshFolders = saved?.optString("folders") == "all"
+            password = ""; privateKey = ""
+        }
+        if(state.sheet in listOf("connections", "settings")) state.loadSshProfiles()
+    }
     LaunchedEffect(state.sheet, state.editingProvider) {
         if(state.sheet == "provider") {
             val source = state.settings.optJSONObject("provider")?.optJSONObject(state.editingProvider)
@@ -193,9 +205,16 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
             "settings", "connections" -> {
                 Group { SettingsRow(Icons.Outlined.AccountCircle, state.profile.optString("name", "个人资料"), state.profile.optString("organization")) { state.sheet = "profile" } }
                 Group("连接") {
-                    if(state.devices.isEmpty() && state.connected) SettingsRow(Icons.Outlined.Terminal, state.deviceName, "已连接 · SSH") { state.disconnect() }
                     state.devices.forEach { d -> Row(Modifier.padding(horizontal = 16.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Outlined.Terminal, null, tint = muted); Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(d.optString("name"), fontSize = 15.sp); Text(if(d.optBoolean("online")) "● 在线" else "● 离线", fontSize = 11.sp, color = if(d.optBoolean("online")) connectedGreen else muted) }; SettingsSwitch(checked = state.api?.device == d.optString("id") && state.connected, onCheckedChange = { checked -> if(checked) state.action { state.chooseDevice(d) } else state.disconnect() }, enabled = d.optBoolean("online")) } }
                     SettingsRow(Icons.Outlined.Add, "添加连接") { state.sheet = "add" }
+                }
+                Group("SSH 直连") {
+                    state.sshProfiles.forEach { connection -> Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f).clickable { state.chooseSsh(connection) }) { Text(connection.optString("name"), fontSize = 15.sp); Text("${connection.optString("username")}@${connection.optString("host")} · " + if(state.selectedSsh == connection.optString("id") && state.connected) "已连接" else "点击连接", fontSize = 11.sp, color = muted) }
+                        IconButton(onClick = { state.editSsh(connection) }) { Icon(Icons.Outlined.MoreHoriz, "管理 SSH ${connection.optString("name")}") }
+                        SettingsSwitch(state.selectedSsh == connection.optString("id") && state.connected, { enabled -> if(enabled) state.chooseSsh(connection) else state.disconnect() }, !state.loading)
+                    } }
+                    SettingsRow(Icons.Outlined.Add, "添加 SSH 连接") { state.editSsh() }
                 }
                 Group("启动") { Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { Text("自动恢复远程连接", Modifier.weight(1f), fontSize = 15.sp); SettingsSwitch(state.autoConnect, { state.preference("autoConnect", it) }) } }
                 Text("启动后恢复上次连接，配置保持收起。", color = muted, fontSize = 11.sp, modifier = Modifier.padding(12.dp))
@@ -205,7 +224,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                     SettingsRow(Icons.Outlined.Extension, "MCP、Skills 与插件") { state.loadExtensions() }
                     SettingsRow(Icons.Outlined.Shield, "执行模式", modeLabel(state.mode)) { state.sheet = "mode" }
                 }
-                Group("编写器") { Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { Text("显示模式与模型", Modifier.weight(1f), fontSize = 15.sp); SettingsSwitch(state.showContext, { state.preference("showContext", it) }) } }
+                Group("编写器") { Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { Text("显示上下文与模型", Modifier.weight(1f), fontSize = 15.sp); SettingsSwitch(state.showContext, { state.preference("showContext", it) }) } }
                 Group("外观") { SettingsRow(Icons.Outlined.Palette, "主题", state.appearance) { state.sheet = "theme" } }
             }
             "profile" -> {
@@ -218,7 +237,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
             }
             "add" -> {
                 Text("选择连接方式", color = muted, fontSize = 13.sp, modifier = Modifier.padding(12.dp))
-                Group { SettingsRow(Icons.Outlined.CloudQueue, "Remote 中继", "通过组织网关登录，无需开放电脑端口") { state.sheet = "relay" }; SettingsRow(Icons.Outlined.Terminal, "SSH", "使用电脑的 SSH 服务建立加密连接") { state.sheet = "ssh" } }
+                Group { SettingsRow(Icons.Outlined.CloudQueue, "Remote 中继", "通过组织网关登录，无需开放电脑端口") { state.sheet = "relay" }; SettingsRow(Icons.Outlined.Terminal, "SSH", "使用电脑的 SSH 服务建立加密连接") { state.editSsh() } }
             }
             "relay" -> {
                 Text("填写网关地址即可。统一身份登录由网关引导。", color = muted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 12.dp))
@@ -233,14 +252,19 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                 }
             }
             "ssh" -> {
-                Text("电脑需已安装支持远程协议的 KK Code（建议 ${BuildConfig.VERSION_NAME}）。连接过程中会核对主机指纹。", color = muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 12.dp))
-                OutlinedTextField(sshHost, { sshHost = it }, label = { Text("主机地址") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                Text("电脑需安装 KK Code ${BuildConfig.VERSION_NAME} 或更新版本。SSH 直连不经过网关；账号只同步连接资料。关闭 App 不会取消在途任务，重连可继续查看。默认访问当前用户主目录。", color = muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 12.dp))
+                OutlinedTextField(sshName, { sshName = it }, label = { Text("连接名称") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(sshHost, { sshHost = it; allSshFolders = false }, label = { Text("主机地址") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedTextField(sshUser, { sshUser = it }, label = { Text("用户名") }, modifier = Modifier.weight(2f), singleLine = true); OutlinedTextField(sshPort, { sshPort = it }, label = { Text("端口") }, modifier = Modifier.weight(1f), singleLine = true) }
                 Row(verticalAlignment = Alignment.CenterVertically) { Text("使用私钥", Modifier.weight(1f), fontSize = 14.sp); SettingsSwitch(keyMode, { keyMode = it }) }
                 if(keyMode) OutlinedTextField(privateKey, { privateKey = it }, label = { Text("私钥") }, maxLines = 4, modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation())
                 OutlinedTextField(password, { password = it }, label = { Text(if(keyMode) "私钥口令（可选）" else "密码") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(), singleLine = true)
-                if(state.fingerprint.isNotBlank()) Group("核对主机指纹") { Text(state.fingerprint, fontSize = 11.sp, modifier = Modifier.padding(14.dp)); TextButton(onClick = { state.vault.put("ssh:$sshHost:$sshPort", state.fingerprint); state.fingerprint = "" }) { Text("确认并信任此指纹") } }
-                Button(onClick = { state.connectSsh(sshHost, sshPort, sshUser, password, if(keyMode) privateKey else "") }, enabled = !state.loading, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) { Text(if(state.loading) "连接中…" else "连接电脑") }
+                OutlinedTextField(remotePort, { remotePort = it }, label = { Text("电脑本地服务端口") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(rememberSsh, { rememberSsh = it }); Text("仅在此手机加密保存凭据，用于重连", fontSize = 12.sp) }
+                Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(allSshFolders, { allSshFolders = it }); Text("信任访问该 SSH 电脑的所有普通目录（仍保护私密路径）", fontSize = 12.sp) }
+                if(state.fingerprint.isNotBlank()) Group("核对主机指纹") { Text(state.fingerprint, fontSize = 11.sp, modifier = Modifier.padding(14.dp)); TextButton(onClick = { state.trustSshKey(sshHost, sshPort, sshUser) }) { Text("确认并信任此指纹") } }
+                Button(onClick = { state.connectSsh(sshHost, sshPort, sshUser, password, if(keyMode) privateKey else "", sshName.ifBlank { sshHost }, rememberSsh, remotePort.toIntOrNull() ?: 0, allSshFolders) }, enabled = !state.loading, modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) { Text(if(state.loading) "连接中…" else "连接电脑") }
+                state.editingSsh?.let { existing -> var confirmForget by remember { mutableStateOf(false) }; TextButton(onClick = { confirmForget = true }) { Text("移除此连接", color = MaterialTheme.colorScheme.error) }; if(confirmForget) AlertDialog(onDismissRequest = { confirmForget = false }, title = { Text("移除 SSH 连接？") }, text = { Text("删除账号连接资料和这台手机保存的凭据，不删除远端文件，也不取消正在执行的任务。") }, confirmButton = { TextButton(onClick = { state.forgetSsh(existing); confirmForget = false }) { Text("移除") } }, dismissButton = { TextButton(onClick = { confirmForget = false }) { Text("取消") } }) }
             }
             "new" -> { Group { SettingsRow(Icons.Outlined.Terminal, state.deviceName) { state.sheet = "connections" }; SettingsRow(Icons.Outlined.FolderOpen, "工作目录", state.cwd) { state.browse() }; SettingsRow(Icons.Outlined.Tune, "模式", state.mode) { state.sheet = "mode" } }; Button(onClick = { state.newChat() }, modifier = Modifier.fillMaxWidth().padding(top = 20.dp)) { Text("开始对话") } }
             "folders" -> {
@@ -327,6 +351,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
         }
         if(state.controlElsewhere) Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) { Text("另一客户端正在控制", fontSize = 11.sp, color = muted, modifier = Modifier.weight(1f)); if(!state.sharedDevice) TextButton(onClick = { state.takeControl() }) { Text("接管控制", fontSize = 11.sp) } }
         ChangeSummary(state.messages)
+        if(state.showContext) ContextUsageView(state.contextUsage)
         if(text.startsWith('/') && !text.contains(' ')) {
             val query = text.removePrefix("/")
             val suggestions = state.commands.filter { (it.optString("name") + " " + it.optString("description")).contains(query, ignoreCase = true) }.sortedBy { if(it.optString("name").startsWith(query, ignoreCase = true)) 0 else 1 }.take(12)

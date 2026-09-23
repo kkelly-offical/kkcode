@@ -113,7 +113,7 @@ export class DeviceService extends EventEmitter {
     this.sessionTree.observe(event)
     const row = await this.liveView.record(event, item => this.replay.append(item))
     this.emit('event', row)
-    if (['session.updated', 'session.title.updated', 'session.rewound'].includes(event.type)) this.emitDeviceEvent('session.status', { sessionId: event.sessionId })
+    if (['session.updated', 'session.title.updated', 'session.rewound', 'session.deleted'].includes(event.type)) this.emitDeviceEvent('session.status', { sessionId: event.sessionId, deleted: event.type === 'session.deleted' })
     return row
   }
   async readEvents(sessionId, after) {
@@ -254,12 +254,14 @@ export class DeviceService extends EventEmitter {
       return { ...metadata, ...(this.turns.has(session.id) ? { status: 'running' } : {}) }
     })
     if (method === 'sessions.get') {
-      return this.liveView.snapshot(sessionId, {
+      const snapshot = await this.liveView.snapshot(sessionId, {
         readCursor: () => this.replay.read(sessionId, 0, 1),
         readCanonical: () => getSession(sessionId),
         project: data => ({ ...sessionView(data, { before: p.before, limit: p.limit }), running: this.turns.has(sessionId) }),
         includeLive: !p.before
       })
+      if (!snapshot) throw new ProtocolError('session_missing', 'This conversation no longer exists; return to the session list', 404)
+      return snapshot
     }
     if (method === 'sessions.create') {
       const kernel = await this.kernel(p.cwd)
@@ -291,6 +293,40 @@ export class DeviceService extends EventEmitter {
       await this.record({ type: 'session.updated', sessionId, payload: patch })
       return sessionView({ session: updated, messages: [], parts: [] })
     }
+    if (method === 'sessions.delete') {
+      if (p.confirmed !== true) throw new ProtocolError('confirmation_required', 'Confirm deleting this conversation; workspace files will not be removed', 409)
+      if (this.turns.has(sessionId) || this.sessionTransitions.has(sessionId) || this.commandSessions.has(sessionId)) throw new ProtocolError('turn_busy', 'Stop the running turn before deleting its conversation', 409)
+      this.sessionTransitions.add(sessionId)
+      const locked = new Set([sessionId])
+      try {
+        const data = await getSession(sessionId)
+        if (!data) throw new ProtocolError('session_missing', 'Session not found', 404)
+        const allSessions = await listSessions({ limit: 100000, includeChildren: true })
+        const descendants = new Set([sessionId])
+        for (let changed = true; changed;) {
+          changed = false
+          for (const item of allSessions) if (!descendants.has(item.id) && descendants.has(item.parentSessionId)) { descendants.add(item.id); changed = true }
+        }
+        for (const id of descendants) {
+          if (id === sessionId) continue
+          if (this.turns.has(id) || this.commandSessions.has(id) || this.sessionTransitions.has(id)) throw new ProtocolError('turn_busy', 'A delegated task is still running', 409)
+          this.sessionTransitions.add(id); locked.add(id)
+        }
+        for (const promise of this.kernels.values()) {
+          if ((await (await promise).background?.list?.() || []).some(job => ['queued', 'running', 'pending'].includes(job.status) && (descendants.has(job.session_id) || descendants.has(job.parent_session_id)))) throw new ProtocolError('turn_busy', 'A background task is still using this conversation', 409)
+        }
+        const kernel = await this.kernel(data.session.cwd)
+        const result = await kernel.sessions.deleteSession(sessionId)
+        for (const deletedId of result.deletedIds || [sessionId]) {
+          await this.record({ type: 'session.deleted', sessionId: deletedId, payload: { filesChanged: false } })
+          for (const attachment of (await this.attachments.list({ sessionId: deletedId })).attachments) await this.attachments.remove({ sessionId: deletedId, id: attachment.id })
+          await this.replay.clearSession(deletedId)
+          this.liveView.forget(deletedId)
+          this.leases.delete(deletedId)
+        }
+        return result
+      } finally { for (const id of locked) this.sessionTransitions.delete(id) }
+    }
     if (method === 'sessions.rewind') {
       this.lease(sessionId, principal)
       if (p.confirmed !== true) throw new ProtocolError('confirmation_required', 'Confirm conversation rewind; workspace files will not be reverted', 409)
@@ -302,7 +338,7 @@ export class DeviceService extends EventEmitter {
         if (p.expectedLastMessageId !== undefined && p.expectedLastMessageId !== (session.messages.at(-1)?.id || null)) throw new ProtocolError('history_changed', 'New messages arrived; reload before rewinding', 409)
         const kernel = await this.kernel(session.session.cwd)
         const result = await kernel.run(() => rewindLastTurn(sessionId, { messageId: p.messageId || null }))
-        if (result.ok) await this.record({ type: 'session.rewound', sessionId, payload: { ...result, filesChanged: false } })
+        if (result.ok) { await kernel.sessions.updateSession(sessionId, { context: null }); await this.record({ type: 'session.rewound', sessionId, payload: { ...result, filesChanged: false } }) }
         return { ...result, filesChanged: false }
       } finally { this.sessionTransitions.delete(sessionId) }
     }

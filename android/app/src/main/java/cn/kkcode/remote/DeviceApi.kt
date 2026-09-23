@@ -55,8 +55,8 @@ class DeviceApi(var base: String, var token: String = "", var device: String = "
             result
         }
     }
-    suspend fun rpc(method: String, params: JSONObject = JSONObject()): Any? {
-        val path = if (relay) "/api/v1/devices/$device/rpc" else "/api/v1/rpc"
+    suspend fun rpc(method: String, params: JSONObject = JSONObject(), targetDevice: String = device): Any? {
+        val path = if (relay) "/api/v1/devices/$targetDevice/rpc" else "/api/v1/rpc"
         val request = JSONObject().put("id", UUID.randomUUID().toString()).put("issuedAt", System.currentTimeMillis()).put("method", method).put("params", params)
         var attempts = 0
         while(true) {

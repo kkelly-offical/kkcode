@@ -1,0 +1,3 @@
+Use tool_batch only for a short, known sequence of 1–8 explicit tool calls. Discover needed tools first. Each child operation passes the normal argument schema, mode, skill allowlist, agent write scope, permission review, audit and recovery gates. Composition grants no additional authority.
+
+Execution is sequential and stops on the first failed, denied or cancelled operation. It is NOT a transaction: earlier successful changes remain. Inspect partial results before retrying; never repeat a batch blindly after a disconnect. No arbitrary JavaScript, loops, nested batches, delegation, skill activation or mode changes. Prefer normal parallel tool calls for independent read-only work. Use separate calls whenever later arguments depend on earlier results.

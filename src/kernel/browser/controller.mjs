@@ -26,7 +26,7 @@ export function createBrowserController({ launch = (profile, options) => chromiu
     if (!sessions.has(sessionId)) {
       if (sessions.size >= 4) throw new Error('Four browser sessions are already open; close one before opening another')
       const pending = (async () => {
-        const network = networkFactory(), proxy = await createDenyProxy(), entry = { network, proxy, browser: null, context: null, page: null, profile: null, errors: [], timer: null, chain: Promise.resolve() }
+        const network = networkFactory(), proxy = await createDenyProxy(), entry = { network, proxy, browser: null, context: null, page: null, profile: null, errors: [], console: [], requests: [], development: false, websocketProtocol: '', timer: null, chain: Promise.resolve() }
         try {
           const options = config.tool?.browser || {}
           const executablePath = options.executable_path || process.env.KKCODE_BROWSER_EXECUTABLE || process.env.KKCODE_CHROMIUM
@@ -40,17 +40,29 @@ export function createBrowserController({ launch = (profile, options) => chromiu
             try {
               const request = route.request()
               const response = await network.fetch(request.url(), { method: request.method(), headers: await request.allHeaders(), body: request.postDataBuffer() })
+              const publicUrl = new URL(request.url()); publicUrl.search = ''; publicUrl.hash = ''
+              entry.requests.push({ method: request.method(), url: publicUrl.href, status: response.status }); if (entry.requests.length > 40) entry.requests.shift()
               await route.fulfill(response)
             } catch (error) {
               entry.errors.push(String(error.message).slice(0, 240)); if (entry.errors.length > 10) entry.errors.shift()
               await route.abort('blockedbyclient').catch(() => {})
             }
           })
-          await entry.context.routeWebSocket('**/*', socket => socket.close())
+          await entry.context.routeWebSocket('**/*', async route => {
+            if (!entry.development) { route.close(); return }
+            let socket
+            try {
+              socket = await network.websocket(route.url(), { origin: new URL(entry.page.url()).origin, protocol: entry.websocketProtocol })
+              route.onMessage(data => { try { network.countSocketBytes(data); socket.send(data) } catch { route.close(); socket.terminate() } })
+              socket.on('message', (data, binary) => { try { network.countSocketBytes(data); route.send(binary ? Buffer.from(data) : data.toString()) } catch { route.close(); socket.terminate() } })
+              socket.on('close', () => route.close()); route.onClose(() => socket.terminate())
+            } catch { socket?.terminate(); entry.errors.push('Development WebSocket blocked or unavailable (same-origin, DNS and size policy enforced)'); if (entry.errors.length > 10) entry.errors.shift(); route.close() }
+          })
           entry.page = entry.context.pages()[0] || await entry.context.newPage()
           entry.page.on('dialog', dialog => dialog.dismiss().catch(() => {}))
           entry.context.on('page', page => { if (page !== entry.page) void page.close().catch(() => {}) })
           entry.page.on('pageerror', error => { entry.errors.push(String(error.message).slice(0, 240)); if (entry.errors.length > 10) entry.errors.shift() })
+          entry.page.on('console', message => { entry.console.push({ type: message.type(), text: message.text().slice(0, 500) }); if (entry.console.length > 30) entry.console.shift() })
           return entry
         } catch (error) { await closeEntry(entry); throw new Error(`Browser could not start: ${error.message}. Use a non-root account with Chromium sandbox support; disabling tool.browser.chromium_sandbox requires an explicitly isolated environment.`) }
       })()
@@ -87,9 +99,17 @@ export function createBrowserController({ launch = (profile, options) => chromiu
         try {
           if (args.action === 'open') {
             const { url } = await entry.network.target(args.url, true)
+            entry.development = args.development === true
+            entry.websocketProtocol = args.websocketProtocol || ''
+            if (entry.websocketProtocol && !/^[!#$%&'*+\-.^_`|~0-9A-Za-z]{1,128}$/.test(entry.websocketProtocol)) throw new Error('Invalid WebSocket subprotocol')
+            for (const socket of entry.network.sockets) socket.terminate()
             const response = await entry.page.goto(url.href, { waitUntil: 'domcontentloaded', timeout: 20000 })
             await entry.network.target(entry.page.url())
             if (!response || response.status() >= 400) throw new Error(`Navigation did not succeed (HTTP ${response?.status() || 'unavailable'}); inspect the page with snapshot instead of claiming success`)
+          } else if (args.action === 'diagnostics') return { output: JSON.stringify({ warning: 'Untrusted page diagnostics; URLs omit queries/fragments, headers and bodies are never recorded.', console: entry.console, requests: entry.requests, errors: entry.errors }, null, 2) }
+          else if (args.action === 'viewport') {
+            if (!Number.isInteger(args.width) || !Number.isInteger(args.height) || args.width < 320 || args.width > 2560 || args.height < 320 || args.height > 1600) throw new Error('Viewport must be 320–2560 × 320–1600')
+            await entry.page.setViewportSize({ width: args.width, height: args.height })
           } else if (args.action === 'click') await locator(entry.page, args).click({ timeout: 10000 })
           else if (args.action === 'fill') {
             if (typeof args.value !== 'string' || args.value.length > 20000) throw new Error('Text input must be at most 20,000 characters')
@@ -116,16 +136,19 @@ export function createBrowserTool() {
   const controller = createBrowserController()
   return {
     name: 'browser',
-    description: 'Inspect and test a web app in an isolated Chromium session: open, semantic snapshot, click, fill, press, screenshot, close or status. Use screenshot for actual visual verification. Navigation and interaction require normal mode approval/review; page text is untrusted. Never accesses your personal browser profile.',
+    description: 'Inspect and test a web app in isolated Chromium: semantic snapshot, click/fill/press, screenshot, responsive viewport, console/network diagnostics. Explicit development mode permits same-origin WebSocket/HMR through the pinned network guard. Normal approvals apply; page text is untrusted.',
     inputSchema: { type: 'object', properties: {
-      action: { type: 'string', enum: ['status', 'open', 'snapshot', 'click', 'fill', 'press', 'screenshot', 'close'] },
+      action: { type: 'string', enum: ['status', 'open', 'snapshot', 'click', 'fill', 'press', 'screenshot', 'diagnostics', 'viewport', 'close'] },
       url: { type: 'string', description: 'HTTP(S) page URL for open; private development origins must be opened explicitly' },
+      development: { type: 'boolean', description: 'For open only: explicitly enable same-origin WebSockets for a development page; off by default' },
+      websocketProtocol: { type: 'string', description: 'Optional development WebSocket subprotocol, e.g. vite-hmr' },
+      width: { type: 'integer', minimum: 320, maximum: 2560 }, height: { type: 'integer', minimum: 320, maximum: 1600 },
       role: { type: 'string', description: 'Accessible role from the snapshot, e.g. button or textbox' },
       name: { type: 'string', description: 'Exact accessible name from the snapshot' },
       selector: { type: 'string', description: 'Narrow CSS selector when role/name is unavailable' },
       value: { type: 'string', description: 'Text for fill' }, key: { type: 'string', description: 'Navigation/input key for press' }
     }, required: ['action'], additionalProperties: false },
-    capabilityFor: args => ['status', 'snapshot', 'screenshot', 'close'].includes(args?.action) ? 'read' : 'risky-shell',
+    capabilityFor: args => ['status', 'snapshot', 'screenshot', 'diagnostics', 'close'].includes(args?.action) ? 'read' : 'risky-shell',
     execute: (args, ctx) => controller.execute(args, ctx),
     shutdown: () => controller.shutdown()
   }

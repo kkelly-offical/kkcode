@@ -26,6 +26,7 @@ class SessionLifecycleTest {
             .put(JSONObject().put("id", "tool-media").put("role", "user").put("synthetic", true).put("content", JSONArray().put(JSONObject().put("type", "tool_result")).put(JSONObject().put("type", "image_preview").put("messageId", "tool-media").put("index", 1).put("mediaType", "image/svg+xml"))))
             .put(JSONObject().put("id", "msg3").put("role", "user").put("content", "second?")).put(JSONObject().put("id", "msg4").put("role", "assistant").put("content", "second reply"))
         var cursor = 5L
+        var deleted = false
         fun snapshot() = JSONObject(metadata.toString()).put("messages", history).put("parts", JSONArray()).put("eventCursor", cursor)
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
@@ -34,7 +35,8 @@ class SessionLifecycleTest {
                 val result: Any = when(body.getString("method")) {
                     "control.acquire", "control.release" -> JSONObject().put("yours", true)
                     "sessions.update" -> { if(params.has("title")) metadata.put("title", params.getString("title")).put("titleRevision", metadata.getInt("titleRevision") + 1); if(params.has("archived")) metadata.put("archived", params.getBoolean("archived")); JSONObject(metadata.toString()) }
-                    "sessions.list" -> JSONArray().put(metadata)
+                    "sessions.list" -> if(deleted) JSONArray() else JSONArray().put(metadata)
+                    "sessions.delete" -> { assertTrue(params.getBoolean("confirmed")); deleted = true; JSONObject().put("deleted", true).put("recoverable", true).put("filesChanged", false) }
                     "sessions.get" -> snapshot()
                     "sessions.rewind" -> { history = JSONArray().put(history.get(0)).put(history.get(1)).put(history.get(2)); cursor = 50; JSONObject().put("ok", true).put("prompt", "second?") }
                     "media.preview" -> JSONObject().put("mediaType", "image/png").put("data", "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==")
@@ -64,6 +66,10 @@ class SessionLifecycleTest {
             assertFalse(state.messages.any { it.id == "stale-tool" })
             val preview = calls.first { it.optString("method") == "media.preview" }.getJSONObject("params")
             assertEquals("ses-test", preview.getString("sessionId")); assertEquals("tool-media", preview.getString("messageId")); assertEquals(1, preview.getInt("index"))
+            state.handleJournalEvent(JSONObject().put("seq", 60).put("type", "session.context.updated").put("payload", JSONObject().put("context", JSONObject().put("tokens", 8192).put("limit", 32768).put("source", "estimated"))))
+            assertEquals(8192, state.contextUsage.getInt("tokens"))
+            state.deleteConversation(metadata).join()
+            assertTrue(deleted); assertEquals("", state.selected); assertTrue(state.sessions.isEmpty()); assertEquals(0, state.contextUsage.length())
         } finally { state.disconnect(); server.shutdown() }
     }
 }

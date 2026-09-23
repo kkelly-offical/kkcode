@@ -1,5 +1,25 @@
 # Changelog / 更新日志
 
+## 1.0.4-preview.0 — candidate, not yet published
+
+- Web/Android: current context meter and details; three-item rename/archive/delete
+  menus, confirmed conversation-tree deletion, multi-device strip and stream cleanup.
+- Android SSH only: account-scoped metadata address book, local-only encrypted
+  credentials, fresh pairing, detached in-flight task retention and reattachment.
+  Web does not gain SSH and the enterprise gateway never proxies SSH.
+- Complete request budgets, per-kernel content-fingerprinted prompts, compact
+  optional-tool discovery, strictly typed RPC and shared SDK SSE transport.
+- Official MCP OAuth/PKCE/issuer validation and encrypted local grants; ACP v1
+  stdio sessions, approval, cancellation and history loading.
+- Governed declarative tool composition, unknown-outcome replay protection,
+  evidence-aware no-progress stops, and no implicit project-script execution on
+  ordinary answer completion. Browser adds responsive viewport, diagnostics and
+  explicitly enabled same-origin WebSocket/HMR under the pinned network policy.
+- Android candidate code `10007`, project release certificate retained.
+
+See [candidate guide](docs/release-1.0.4-preview.0.md) and
+[actual acceptance/publication status](docs/implementation-1.0.4.md).
+
 ## 1.0.3 — KK Code 1.0.2 Fix — 2026-09-23
 
 - Android/gateway: native browser return with an explicit fallback button;

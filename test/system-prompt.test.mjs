@@ -34,8 +34,8 @@ test("system prompt assembles stable tool and skill blocks", async () => {
   assert.ok(labels.includes("skills"))
   assert.ok(labels.includes("env"))
   assert.match(prompt.text, /## task/)
-  assert.match(prompt.text, /structured brief fields/)
-  assert.match(prompt.text, /Execution contract/)
+  assert.match(prompt.text, /tool_search for detailed guidance/)
+  assert.doesNotMatch(prompt.text, /# Brief Writing Rules/)
   assert.match(prompt.text, /CLI Assistant Contract/)
   assert.match(prompt.text, /# Mode Contract/)
   assert.match(prompt.text, /`plan`: produce a spec\/plan only; do not execute file mutations/i)
@@ -49,7 +49,7 @@ test("system prompt assembles stable tool and skill blocks", async () => {
   // backticks and separators rather than as a bare agent/code/coding run
   assert.match(prompt.text, /`agent` \/ `code` \/ `coding`: compatibility aliases/i)
   assert.match(prompt.text, /continue an interrupted local transaction/i)
-  assert.match(prompt.text, /Do not imply unsupported product surfaces/)
+  assert.match(prompt.text, /Do not imply capabilities or access to other devices/)
   assert.match(prompt.text, /\$compat-skill: compat description/)
 })
 

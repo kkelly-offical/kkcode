@@ -595,6 +595,24 @@ export function createMcpRegistry() {
       }
     },
 
+    async authorize(name, options = {}) {
+      const config = state.configured.get(name)
+      if (!config || !['streamable-http', 'legacy-sse'].includes(String(config.transport || config.type))) throw new Error('OAuth requires a configured, trusted Streamable HTTP or SSE MCP server')
+      const { loginMcpOAuth } = await import('./oauth.mjs')
+      const result = await loginMcpOAuth(name, config, options)
+      await this.refreshServer(name)
+      return result
+    },
+    async clearAuthorization(name) {
+      const config = state.configured.get(name)
+      if (!config) throw new Error('MCP server is not configured in this trusted scope')
+      const { createMcpOAuthProvider } = await import('./oauth.mjs')
+      await createMcpOAuthProvider(name, config).store.clear()
+      await state.servers.get(name)?.shutdown?.()
+      state.servers.delete(name)
+      for (const [id, tool] of state.tools) if (tool.server === name) state.tools.delete(id)
+      return { signedOut: true, remoteRevoked: false }
+    },
     async refreshServer(name) {
       const serverConfig = state.configured.get(name)
       if (!serverConfig) throw new Error(`mcp server not configured: ${name}`)

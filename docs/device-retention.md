@@ -3,6 +3,19 @@
 These are transport/recovery limits in 1.0.1, not conversation deletion policies.
 The canonical kernel conversation history is never deleted by these stores.
 
+1.0.4 Preview adds an explicit, confirmed `sessions.delete` operation, separate
+from transport retention. It rejects active work, removes the finished conversation
+tree from the canonical index and replay, and retains a private JSON recovery copy
+in `trash/sessions/`. Source files are not removed. These recovery copies are not
+automatically purged and must be included in the owner's local capacity/backup policy;
+there is no UI restore button or claim of secure erasure.
+
+The new private `operations/` journal retains at most 256 settled records per
+session and 32 unresolved outcomes. Unresolved entries are never silently rotated;
+mutation is refused if the unresolved budget is exhausted. Records contain tool
+identity and an argument fingerprint, not raw arguments. Inspect/acknowledge through
+`kkcode session operations`; see [Harness recovery](context-and-harness.md).
+
 In preview.2 the staging quotas also apply to WAV/MP3 audio and
 MP4/MOV/WebM/MPEG video: 4 MiB per remote media file, at most eight attachments
 per turn, 16 MiB per session and 64 MiB per device. CLI clipboard input has a

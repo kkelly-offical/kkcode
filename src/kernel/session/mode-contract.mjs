@@ -65,9 +65,9 @@ export function renderPublicModeContract() {
     "- Suggest `longagent` only when heavy multi-file or system-level evidence appears; do not auto-switch.",
     "- Keep `plan` explicit and mutation-free even when later execution is likely.",
     "",
-    "The user-facing names for these lanes (since 0.4.0) are Plan, Agent, Agent · Auto,",
-    "Ultra and YOLO; Ultra is the `longagent` lane and the rest run on `assistant`.",
-    "The difference between Agent, Agent · Auto and YOLO is the approval level, not",
-    "the lane: never assume an edit is pre-approved, always let the permission layer decide."
+    "The user-facing names are Plan, Agent, Auto, Ultra and Yolo. Ultra uses the",
+    "`longagent` lane; Agent, Auto and Yolo use `assistant`. Auto permits routine edits",
+    "and reviews sensitive actions with the conversation model. Yolo skips routine confirmations",
+    "within the user's authorized scope. Always let the permission layer decide."
   ].join("\n")
 }

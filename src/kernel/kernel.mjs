@@ -35,6 +35,7 @@ import {
   listSessions,
   getConversationHistory,
   forkSession,
+  deleteSession,
   markSessionStatus,
   appendUserMessage,
   appendAssistantMessage,
@@ -48,6 +49,7 @@ import { confirmRollback, executeRollback, handleRollbackIfNeeded } from "./sess
 import { executeTool } from "./tool/executor.mjs"
 import { BackgroundManager } from "./orchestration/background-manager.mjs"
 import { createTaskDelegate } from "./orchestration/task-scheduler.mjs"
+import { inspectPrompt } from './session/prompt-report.mjs'
 
 /**
  * @param {object} [options]
@@ -125,6 +127,7 @@ export async function createKernel(options = {}) {
   const hostController = new AbortController()
   const runtime = { cwd, events, permissions, tools, skills, hooks, providers, mcp, permissionPrompt, questionPrompt, hostSignal: hostController.signal, auxiliary: new Set(), agents: createAgentMap(), customAgentState: { agents: new Map(), loaded: false, loadedAt: 0 } }
   const run = fn => runWithRuntime(runtime, fn)
+  runtime.promptCache = { key: null, result: null }
   const activeTurns = new Set()
   permissions.setTrusted(trustState?.trusted === true)
 
@@ -244,6 +247,7 @@ export async function createKernel(options = {}) {
       listSessions,
       getConversationHistory,
       forkSession,
+      deleteSession,
       markSessionStatus,
       appendUserMessage,
       appendAssistantMessage,
@@ -280,6 +284,7 @@ export async function createKernel(options = {}) {
       EVENT_TYPES
     },
     prompts: { permission: permissionPrompt, question: questionPrompt },
+    diagnostics: { inspectPrompt },
     get extensionPolicy() { return extensionPolicy },
     configState,
     cwd,

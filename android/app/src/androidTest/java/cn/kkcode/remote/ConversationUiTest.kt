@@ -140,17 +140,36 @@ class ConversationUiTest {
         val session = JSONObject().put("id", "managed-session").put("title", "跨端会话").put("cwd", "/workspace").put("updatedAt", System.currentTimeMillis())
         val state = show { it.connected = true; it.sessions = listOf(session) }
         compose.onNodeWithContentDescription("管理对话 跨端会话").performClick()
-        compose.onNodeWithText("管理对话").assertIsDisplayed()
+        compose.onNodeWithText("改名").assertIsDisplayed()
+        compose.onNodeWithText("归档", substring = false).assertIsDisplayed()
+        compose.onNodeWithText("删除", substring = false).assertIsDisplayed()
+        compose.onNodeWithText("对话名称").assertDoesNotExist()
+        compose.onNodeWithText("删除", substring = false).performClick()
+        compose.onNodeWithText("确认删除").assertIsDisplayed()
+        compose.onNodeWithText("不删除工作区文件", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("返回").performClick()
+        compose.onNodeWithText("改名").performClick()
         compose.onNodeWithText("对话名称").assertIsDisplayed()
-        compose.onNodeWithText("归档对话", substring = false).assertIsDisplayed()
         compose.onNodeWithText("保存名称").assertIsEnabled()
-        compose.onNodeWithText("取消").performClick()
+        compose.onNodeWithText("返回").performClick()
+        compose.onNodeWithText("关闭").performClick()
         compose.runOnIdle { assertEquals(null, state.managedSession); state.sessions = listOf(JSONObject(session.toString()).put("archived", true)) }
         compose.onNodeWithContentDescription("管理对话 跨端会话").assertDoesNotExist()
         compose.onNodeWithContentDescription("更多").performClick()
         compose.onNodeWithText("已归档对话", substring = false).performClick()
         compose.onNodeWithContentDescription("管理对话 跨端会话").performClick()
-        compose.onNodeWithText("恢复到对话列表").assertIsDisplayed()
+        compose.onNodeWithText("恢复", substring = false).assertIsDisplayed()
+    }
+
+    @Test fun contextUsageIsCompactAndDetailsOpenOnlyOnTap() {
+        show {
+            it.selected = "context-session"; it.contextUsage = JSONObject().put("tokens", 8192).put("limit", 32768).put("source", "estimated").put("outputReserved", 4096)
+        }
+        compose.onNodeWithText("上下文", substring = true).assertIsDisplayed().performClick()
+        compose.onNodeWithText("上下文使用情况").assertIsDisplayed()
+        compose.onNodeWithText("当前上下文占用，不是累计用量", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("知道了").performClick()
+        compose.onNodeWithText("上下文使用情况").assertDoesNotExist()
     }
 
     @Test fun messageRewindExplainsThatFilesRemainAndCancelKeepsHistory() {

@@ -131,6 +131,8 @@ export {
   summarizeResumeContext
 } from "./session/recovery.mjs"
 export { summarizeSessionRuntimeState } from "./session/runtime-state.mjs"
+export { inspectPrompt } from './session/prompt-report.mjs'
+export { listToolOperations, resolveToolOperation } from './tool/operation-journal.mjs'
 export { buildAgentContinuationPrompt, summarizeAgentTransaction } from "./session/agent-transaction.mjs"
 export { rewindLastTurn } from "./session/rewind.mjs"
 export { normalizeTitle } from './session/session-title.mjs'

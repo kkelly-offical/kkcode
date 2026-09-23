@@ -19,7 +19,7 @@ import org.bouncycastle.jce.provider.BouncyCastleProvider
 import net.schmizz.sshj.common.SecurityUtils
 
 class HostKeyRequired(val fingerprint: String) : Exception("Confirm SSH host key: $fingerprint")
-class SshConnection : Closeable {
+class SshConnection internal constructor(private val commandPrefix: String = "kkcode") : Closeable {
     companion object {
         @Synchronized private fun prepareCrypto() {
             val installed = Security.getProvider("BC")
@@ -34,7 +34,7 @@ class SshConnection : Closeable {
     }
     private var client: SSHClient? = null
     private var listener: ServerSocket? = null
-    suspend fun connect(host: String, port: Int, username: String, password: String, acceptedKey: String?, remotePort: Int = 18271, privateKey: String = ""): DeviceApi = withContext(Dispatchers.IO) {
+    suspend fun connect(host: String, port: Int, username: String, password: String, acceptedKey: String?, remotePort: Int = 18271, privateKey: String = "", allFolders: Boolean = false): DeviceApi = withContext(Dispatchers.IO) {
         require(port in 1..65535 && remotePort in 1..65535)
         prepareCrypto()
         close()
@@ -55,17 +55,32 @@ class SshConnection : Closeable {
         try { ssh.connect(host, port) } catch (error: Exception) { ssh.close(); if (observed != null && acceptedKey != observed) throw HostKeyRequired(observed!!); throw error }
         if (privateKey.isBlank()) ssh.authPassword(username, password)
         else ssh.authPublickey(username, ssh.loadKeys(privateKey, null, net.schmizz.sshj.userauth.password.PasswordUtils.createOneOff(password.toCharArray())))
-        val session = ssh.startSession(); session.allocateDefaultPTY()
-        val command = session.exec("kkcode --web --no-open --port $remotePort")
+        ssh.connection.keepAlive.keepAliveInterval = 10
+        val session = ssh.startSession()
+        val command = session.exec("$commandPrefix ssh-host --json ${if(allFolders) "--all-folders" else "--home-only"} --port $remotePort")
         val input = command.inputStream.bufferedReader()
+        fun readHandshakeLine(): String? {
+            val line = StringBuilder()
+            while(true) {
+                val next = input.read()
+                if(next < 0) return if(line.isEmpty()) null else line.toString()
+                if(next == 10) return line.toString().trimEnd('\r')
+                require(line.length < 4096) { "SSH handshake exceeds the supported size" }
+                line.append(next.toChar())
+            }
+        }
         var bootstrap: String? = null
         repeat(30) {
             if (bootstrap == null) {
-                val line = input.readLine() ?: throw IllegalStateException("KK Code exited; install a compatible version (recommended ${BuildConfig.VERSION_NAME}) on this computer")
-                bootstrap = Regex("bootstrap=([A-Za-z0-9_-]+)").find(line)?.groupValues?.get(1)
+                val line = readHandshakeLine() ?: throw IllegalStateException("SSH 后台宿主未能启动，请在电脑安装 KK Code ${BuildConfig.VERSION_NAME} 或更新版本，并检查端口是否被其他 WebUI 占用")
+                if(line.length <= 4096 && line.startsWith("{")) {
+                    val ready = runCatching { org.json.JSONObject(line) }.getOrNull()
+                    if(ready != null && ready.optString("lifetime") in listOf("drain-on-disconnect", "foreground-remote") && ready.optInt("port") == remotePort) bootstrap = ready.optString("bootstrap").takeIf { it.matches(Regex("[A-Za-z0-9_-]{32,128}")) }
+                }
             }
         }
         requireNotNull(bootstrap) { "Device service did not provide a pairing token" }
+        command.close(); session.close()
         val server = ServerSocket(0, 50, java.net.InetAddress.getByName("127.0.0.1")); listener = server
         val forwarder = ssh.newLocalPortForwarder(Parameters("127.0.0.1", server.localPort, "127.0.0.1", remotePort), server)
         thread(isDaemon = true, name = "kkcode-ssh") { runCatching { forwarder.listen() } }

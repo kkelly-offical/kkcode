@@ -28,8 +28,13 @@ import { createModelCommand } from "./commands/model.mjs"
 import { createProviderCommand } from "./commands/provider.mjs"
 import { createRemoteCommand } from './commands/remote.mjs'
 import { createBrowserCommand } from './commands/browser.mjs'
+import { createAcpCommand } from './commands/acp.mjs'
 
 async function main() {
+  if (process.argv[2] === 'ssh-host') {
+    const { runSshHost } = await import('./remote/ssh-host.mjs')
+    return runSshHost(process.argv.slice(3))
+  }
   if (['-web', '--web'].includes(process.argv[2])) {
     const { runWeb } = await import('./commands/web.mjs')
     return runWeb(process.argv.slice(2))
@@ -69,6 +74,7 @@ async function main() {
   const program = new Command()
   program.name("kkcode").description("kkcode CLI").version(PACKAGE_VERSION)
   program.addCommand(createChatCommand())
+  program.addCommand(createAcpCommand())
   program.addCommand(createThemeCommand())
   program.addCommand(createUsageCommand())
   program.addCommand(createReviewCommand())

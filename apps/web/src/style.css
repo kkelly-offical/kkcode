@@ -711,3 +711,11 @@ summary {
 .git-tabs button[aria-pressed="true"] { color: var(--text); border-color: var(--text); }
 .branch-list .settings-row { align-items: start; }
 .branch-list .settings-row small { white-space: normal; overflow-wrap: anywhere; }
+.context-meter { display: flex; align-items: center; justify-content: center; gap: 10px; border: 0; background: transparent; color: var(--muted); padding: 5px 16px; font-size: 11px; }
+.context-meter progress { width: 64px; height: 3px; accent-color: var(--text); }
+.session-actions-list { display: grid; gap: 2px; min-width: 180px; }
+.session-actions-list button { text-align: left; padding: 12px 16px; background: transparent; border: 0; color: var(--text); }
+.session-actions-list button.danger { color: var(--diff-remove, #d35d6e); }
+.device-strip { display: flex; flex: 0 0 auto; overflow-x: auto; gap: 8px; padding: 7px 16px; scrollbar-width: thin; }
+.device-strip button { flex: 0 0 auto; padding: 7px 12px; color: var(--muted); background: transparent; border: 1px solid var(--border); }
+.device-strip button[aria-pressed="true"] { color: var(--text); border-color: var(--text); }

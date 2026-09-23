@@ -118,6 +118,7 @@ export class DeviceLiveView {
       return { ...project(canonical), eventCursor: typeof cursor === 'number' ? cursor : cursor.cursor, ...(includeLive ? this.project(sessionId, canonical) : {}) }
     })
   }
+  forget(sessionId) { this.sessions.delete(sessionId); this.evicted.delete(sessionId) }
   stats() { return { ...this.limits, sessions: this.sessions.size, bytes: [...this.sessions.values()].reduce((sum, state) => sum + state.bytes, 0) } }
   async close() { if (this.closed) return; this.closed = true; await this.chain; this.sessions.clear(); this.evicted.clear() }
 }

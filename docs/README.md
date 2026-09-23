@@ -1,5 +1,14 @@
 # 文档导航（1.0.3 / 1.0.2 Fix）
 
+## 当前开发候选：1.0.4 Preview
+
+- [Preview 说明](release-1.0.4-preview.0.md)、[实施与验收](implementation-1.0.4.md)：尚未公开发布，稳定标签不变。
+- [SSH 与账号设备](ssh-account-devices.md)：Android 直连、仅元数据同步、断线排空任务。
+- [上下文与 Harness](context-and-harness.md)：完整预算、提示诊断、受控组合、未知结果恢复与无进展保护。
+- [MCP OAuth / ACP](protocol-adapters.md)、[SDK 使用](sdk-guide.md)。
+
+## 当前已发布稳定版
+
 - [1.0.2 Fix 升级说明](release-1.0.3.md)：技术版本 1.0.3，App 与网关登录专项修复。
 - [Android 网关登录](android-gateway-login.md)：双层回调、后台恢复、取消、兼容和部署。
 - [1.0.3 验收账本](implementation-1.0.3.md)：真实浏览器、生命周期与发布回执。

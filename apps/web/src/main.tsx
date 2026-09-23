@@ -5,13 +5,13 @@ import "./mobile.css";
 import "./pixel.css";
 import { SessionHome, ConnectionLanding, SessionActions } from "./Home";
 import { Sheet } from "./Sheet";
+import { ContextUsage } from './ContextUsage';
 import { modeLabel } from "./modes.mjs";
 import { SettingsOverlay } from "./Settings";
 import { Icon } from "./Icon";
 import { TranscriptRow } from "./TranscriptView";
 import { Composer } from "./Composer";
 import { buildTranscript, changeSummary } from "./transcript.mjs";
-import { eventsStreamPath, streamSessionEvents } from "./live.mjs";
 import { DeviceClient } from "../../../src/sdk/client.mjs";
 import { deviceLoginPath } from "../../../src/protocol/login-path.mjs";
 import { useDeviceEvents } from './DeviceEvents';
@@ -82,9 +82,10 @@ function App() {
       deviceNoticeTimer.current = setTimeout(() => setNotice(previous => previous === message ? '' : previous), 6500);
     }
     if (['settings.updated', 'models.updated'].includes(event.type)) { const value = await rpc('settings.get'); if (!signal.aborted) setSettings(value); }
-    if (event.type === 'session.status') { const result = await rpc('sessions.list'); if (!signal.aborted) setSessions(Array.isArray(result) ? result : result.sessions || []); }
+    if (event.type === 'session.status') { const result = await rpc('sessions.list'); if (!signal.aborted) { setSessions(Array.isArray(result) ? result : result.sessions || []); if (event.deleted && event.sessionId === selected) { setSelected(''); setSession(null); setEvents([]); setBusy(false); setApproval([]); } } }
   } });
   function applySelection(value: Item) {
+    if (!Object.hasOwn(value, 'context') && (value.model !== undefined && value.model !== model || value.providerType && value.providerType !== provider)) setSession(previous => previous ? { ...previous, context: null } : previous);
     if (value.model !== undefined) setModel(value.model);
     if (value.providerType) setProvider(value.providerType);
     if (value.modeId) setMode(value.modeId === "agent-auto" ? "auto" : value.modeId);
@@ -160,6 +161,12 @@ function App() {
     await refreshSessions();
     if (selected === target.id) setSession(old => old ? { ...old, ...patch } : old);
     setNotice(patch.archived === true ? "对话已归档，可从已归档对话中恢复" : patch.archived === false ? "对话已恢复" : "对话已改名");
+  }
+  async function deleteConversation(target: Item) {
+    await rpc('sessions.delete', { sessionId: target.id, confirmed: true });
+    if (selected === target.id) { setSelected(''); setSession(null); setEvents([]); setApproval([]); setBusy(false); }
+    await refreshSessions();
+    setNotice('对话已删除，工作区文件未改变；恢复副本保存在被控电脑的私密目录。');
   }
   async function rewindConversation() {
     if (!rewindTarget || !selected || rewinding) return;
@@ -298,6 +305,7 @@ function App() {
         return;
       }
       const fresh = (batch.events || []).filter((event: Item) => typeof event.seq !== "number" || event.seq > cursor.current);
+      if (fresh.some((event: Item) => event.type === 'session.deleted')) { setSelected(''); setSession(null); setEvents([]); setBusy(false); setApproval([]); await refreshSessions(); return; }
       if (fresh.some((event: Item) => event.type === "session.rewound")) {
         const snapshot = await rpc("sessions.get", { sessionId: selected });
         if (cancelled) return;
@@ -309,6 +317,7 @@ function App() {
         cursor.current = fresh.at(-1).seq ?? cursor.current;
         setEvents((old) => [...old, ...fresh]);
         for (const event of fresh) {
+          if (['session.context.updated', 'turn.usage.update'].includes(event.type) && event.payload?.context) setSession(previous => previous ? { ...previous, context: event.payload.context } : previous);
           if (event.type === "turn.start") setBusy(true);
           if (
             ["turn.result", "turn.failed", "turn.finish"].includes(event.type)
@@ -361,12 +370,12 @@ function App() {
       while (!cancelled) {
         const started = Date.now();
         try {
-          await streamSessionEvents({
-            url: eventsStreamPath({ gateway, deviceId, sessionId: selected, after: cursor.current }),
+          await sdk.stream(selected, {
+            after: cursor.current,
             signal: controller.signal,
-            onEvent: (event: Item) => applyBatch({ events: [event] }).catch(watchError),
-            onMeta: (meta: Item) => applyBatch(meta).catch(watchError),
-            onGap: (gap: Item) => applyBatch({ gap: true, cursor: gap?.cursor }).catch(watchError),
+            onEvent: async (event: Item) => { await applyBatch({ events: [event] }).catch(watchError); },
+            onMeta: async (meta: Item) => { await applyBatch(meta).catch(watchError); },
+            onGap: async (gap: Item) => { await applyBatch({ gap: true, cursor: gap?.cursor }).catch(watchError); },
           });
         } catch (error: any) {
           if (cancelled || controller.signal.aborted) return;
@@ -666,6 +675,7 @@ function App() {
         </button>
       </aside>
       <main>
+        {gateway && devices.length > 1 && <nav className="device-strip" aria-label="切换设备">{devices.map(device => <button key={device.id} aria-pressed={device.id === deviceId} disabled={!device.online || uploading} onClick={() => { if(device.id === deviceId) return; manuallyDisconnected.current = false; setSelected(''); setSession(null); setEvents([]); setBusy(false); setApproval([]); setControl(null); setDeviceId(device.id); setSessions([]); setCwd(''); setModel(''); setProvider(''); }}>{device.name}{device.online ? '' : ' · 离线'}</button>)}</nav>}
         {mobileHome ? (
           <SessionHome
             sessions={sessions}
@@ -764,6 +774,7 @@ function App() {
               <div ref={tail} />
             </div>
             {control && !control.yours && <div className="control-notice">另一客户端正在控制此会话。{canManage && <button onClick={() => attempt(async () => { await rpc('control.acquire', { sessionId: selected, takeover: true }); setControl({ yours: true }); })}>接管控制</button>}</div>}
+            <ContextUsage value={session?.context} />
             <Composer
               readOnly={readOnly || Boolean(session?.archived)}
               canManage={canManage}
@@ -856,7 +867,7 @@ function App() {
           onNotice={setNotice}
         />
       )}
-      {managedSession && <SessionActions session={sessions.find(item => item.id === managedSession.id) || managedSession} busy={Boolean(managedSession.id === selected ? busy : String(managedSession.status).startsWith("running"))} onClose={() => setManagedSession(null)} onUpdate={patch => updateSessionMetadata(managedSession, patch)} onRewind={managedSession.id === selected && !managedSession.archived ? () => { setManagedSession(null); setRewindTarget({}); } : undefined} />}
+      {managedSession && <SessionActions session={sessions.find(item => item.id === managedSession.id) || managedSession} busy={Boolean(managedSession.id === selected ? busy : String(managedSession.status).startsWith("running"))} onClose={() => setManagedSession(null)} onUpdate={patch => updateSessionMetadata(managedSession, patch)} onDelete={() => deleteConversation(managedSession)} />}
       {rewindTarget && <Sheet title="回退对话" onClose={() => { if (!rewinding) setRewindTarget(null); }}>
         <p className="sheet-note">撤回{rewindTarget.messageId ? "这条提问及其后的全部" : "上一轮"}对话，并恢复提问草稿。设备会保存回退前的备份。此操作会同步到其他客户端，<strong>不会撤销任何文件或 Git 修改</strong>。</p>
         {rewindTarget.text && <blockquote>{rewindTarget.text.slice(0, 300)}</blockquote>}

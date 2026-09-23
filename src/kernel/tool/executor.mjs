@@ -7,6 +7,8 @@ import { EVENT_TYPES } from "../core/constants.mjs"
 import { withAudit } from "./audit-wrapper.mjs"
 import { autoSnapshotBeforeEdit } from "../session/checkpoint.mjs"
 import { buildMutationObservability } from "../../observability/edit-diagnostics.mjs"
+import { toolCapability } from '../permission/rules.mjs'
+import { beginToolOperation } from './operation-journal.mjs'
 
 const FILE_EDIT_TOOLS = new Set(["write", "edit", "multiedit", "patch", "notebookedit", "move", "copy", "remove", "mkdir", "archive", "git_apply_patch"])
 // 同一 turn 可能并行触发多个编辑工具。只记一个 boolean 会让第二个工具越过仍在
@@ -106,6 +108,7 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
     args,
     run: async () => {
       const startedAt = Date.now()
+      let operation
       await EventBus.emit({
         type: EVENT_TYPES.TOOL_START,
         sessionId,
@@ -177,11 +180,15 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
           await snapshotPromise
         }
 
+        const capability = tool.capabilityFor?.(args) || toolCapability(tool.name, String(args?.command || ''))
+        if (!['read', 'search', 'safe-shell'].includes(capability) && !['tool_batch', 'websearch', 'webfetch', 'codesearch'].includes(tool.name)) operation = await beginToolOperation({ sessionId, turnId, tool: tool.name, args: args || {} })
         const raw = await tool.execute(args || {}, context)
         const normalizedContent = await toolResultContent(raw, rawOutput(raw))
         const output = normalizedContent.output
         const metadata = raw?.metadata && typeof raw.metadata === "object" ? raw.metadata : {}
         const status = rawStatus(raw, signal, output)
+        await operation?.finish(status === 'cancelled' ? 'uncertain' : 'settled')
+        operation = null
         const evidence = {
           ...(raw?.evidence && typeof raw.evidence === "object" ? raw.evidence : {}),
           ...(Array.isArray(metadata.fileChanges) ? { fileChanges: metadata.fileChanges } : {}),
@@ -222,6 +229,7 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
         })
         return result
       } catch (error) {
+        await operation?.finish('uncertain').catch(() => {})
         const errorMessage = error?.message || String(error)
         const cancelled = signal?.aborted || error?.name === "AbortError" || error?.code === "ABORT_ERR"
         const result = makeToolResult({

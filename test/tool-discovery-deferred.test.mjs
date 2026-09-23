@@ -22,6 +22,9 @@ test('large MCP inventories defer schemas while full SDK inventory and legacy al
   assert.equal(full.filter(tool => tool.name.startsWith('mcp_')).length, 30)
   assert.ok(model.some(tool => tool.name === 'tool_search'))
   assert.equal(model.filter(tool => tool.name.startsWith('mcp_')).length, 0)
+  assert.ok(!model.some(tool => tool.name === 'browser'))
+  assert.ok((await registry.listForModel({ config, activated: new Set(['browser']) })).some(tool => tool.name === 'browser'))
+  assert.ok(model.some(tool => tool.name === 'read'))
   for (const name of ['patch', 'multiedit', 'task_get', 'background_output', 'background_cancel']) {
     assert.ok(await registry.get(name))
     assert.ok(!model.some(tool => tool.name === name))
@@ -49,6 +52,15 @@ test('BM25 supports CJK metadata and exact identifiers, with deterministic empty
   assert.equal(searchToolMetadata(tools, 'mcp_mail')[0].name, 'mcp_mail')
   assert.deepEqual(searchToolMetadata(tools, 'unknown'), [])
   assert.deepEqual(searchToolMetadata(tools, ''), [])
+})
+
+test('builtin detailed instructions are available on demand without invoking the tool', async () => {
+  const { registry, config } = fixtureRegistry(0)
+  await registry.initialize({ config })
+  const result = await (await registry.get('tool_search')).execute({ query: 'task', limit: 1 }, { config, allowedToolNames: ['task', 'tool_search'] })
+  assert.equal(result.tools[0].name, 'task')
+  assert.match(result.tools[0].instructions, /structured brief fields/)
+  assert.match(result.tools[0].instructions, /Execution contract/)
 })
 
 test('task advertises a compact brief and still accepts all legacy flat arguments', async () => {

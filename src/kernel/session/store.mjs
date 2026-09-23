@@ -309,6 +309,7 @@ export async function updateSession(sessionId, patch) {
     await ensureLoadedUnsafe()
     const current = state.index.sessions[sessionId]
     if (!current) return null
+    if (patch.context === undefined && (patch.model !== undefined && patch.model !== current.model || patch.providerType !== undefined && patch.providerType !== current.providerType)) patch = { ...patch, context: null, promptReport: null }
     queueIndexOperation(sessionId, 'patch', { ...patch, updatedAt: now() })
     if (state.options.flushIntervalMs <= 0) await flushUnsafe()
     return state.index.sessions[sessionId]
@@ -322,6 +323,7 @@ export async function updateSessionIf(sessionId, expected, patch) {
     await ensureLoadedUnsafe(); await flushUnsafe()
     const current = state.index.sessions[sessionId]
     if (!current || Object.entries(expected).some(([key, value]) => current[key] !== value)) return null
+    if (patch.context === undefined && (patch.model !== undefined && patch.model !== current.model || patch.providerType !== undefined && patch.providerType !== current.providerType)) patch = { ...patch, context: null, promptReport: null }
     queueIndexOperation(sessionId, 'patch', { ...patch, updatedAt: now() })
     await flushUnsafe()
     return state.index.sessions[sessionId]
@@ -564,6 +566,36 @@ export async function fsckSessionStore() {
     }
 
     return report
+  })
+}
+
+export async function deleteSession(sessionId) {
+  return withLock(async () => {
+    await ensureLoadedUnsafe()
+    await flushUnsafe()
+    sessionDataPath(sessionId)
+    const session = state.index.sessions[sessionId]
+    if (!session) return { deleted: false }
+    const deletedIds = new Set([sessionId])
+    for (let changed = true; changed;) {
+      changed = false
+      for (const item of Object.values(state.index.sessions)) {
+        if (!deletedIds.has(item.id) && deletedIds.has(item.parentSessionId)) { deletedIds.add(item.id); changed = true }
+      }
+    }
+    const records = []
+    for (const id of deletedIds) records.push({ session: state.index.sessions[id], ...await readSessionData(id) })
+    const backupDir = path.join(path.dirname(state.root), 'trash', 'sessions')
+    await mkdir(backupDir, { recursive: true, mode: 0o700 })
+    const backup = path.join(backupDir, `${sessionId}-${Date.now()}-${randomUUID()}.json`)
+    await writeJson(backup, { version: 1, deletedAt: Date.now(), ...records[0], children: records.slice(1) })
+    for (const id of deletedIds) queueIndexOperation(id, 'delete')
+    await flushUnsafe()
+    for (const id of deletedIds) {
+      await unlink(sessionDataPath(id)).catch(error => { if (error.code !== 'ENOENT') throw error })
+      state.sessionCache.delete(id)
+    }
+    return { deleted: true, deletedIds: [...deletedIds], recoverable: true, filesChanged: false }
   })
 }
 

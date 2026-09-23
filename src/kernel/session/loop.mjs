@@ -30,7 +30,7 @@ import {
 import { pendingRejections, markRejectionsConsumed } from "../../review/rejection-queue.mjs"
 import { isRecoveryEnabled, markTurnFinished, markTurnInProgress } from "./recovery.mjs"
 import { HookBus, initHookBus } from "../plugin/hook-bus.mjs"
-import { shouldCompact, compactSession, estimateTokenCount, modelContextLimit, contextUtilization, supportsNativeCompaction } from "./compaction.mjs"
+import { shouldCompact, compactSession, estimateTokenCount, modelContextLimit, supportsNativeCompaction } from "./compaction.mjs"
 import { saveCheckpoint } from "./checkpoint.mjs"
 import { createRenderStream } from "./render-stream.mjs"
 import { askPlanApproval } from "../tool/question-prompt.mjs"
@@ -39,6 +39,9 @@ import { runSpecRole } from "../orchestration/run-spec.mjs"
 import { createRequestContext } from "../../http/identity.mjs"
 import { resolveExtensionPolicy } from "../../context.mjs"
 import { toolOutputBudget, truncationNotice } from "../tool/output-budget.mjs"
+import { requestContextBudget } from './context-budget.mjs'
+import { promptReport } from './prompt-report.mjs'
+import { createProgressGuard } from './progress-guard.mjs'
 
 // 每条 tool_result 进入活动上下文的字符上限。0.6.3 之前是硬编码 3000 ——
 // 一个 268 行的普通源文件有 12494 字符，模型只能看到四分之一，而且不知道
@@ -59,7 +62,7 @@ const PLAN_ALLOWED_CAPABILITIES = new Set(["read", "search", "network", "safe-sh
 
 export function planModeAllows(toolName, args = {}) {
   if (toolName === "enter_plan" || toolName === "exit_plan") return true
-  if (toolName === 'browser') return ['status', 'snapshot', 'screenshot', 'close'].includes(args.action)
+  if (toolName === 'browser') return ['status', 'snapshot', 'screenshot', 'diagnostics', 'close'].includes(args.action)
   const cap = toolCapability(toolName, String(args?.command || ""))
   return PLAN_ALLOWED_CAPABILITIES.has(cap)
 }
@@ -72,7 +75,7 @@ export function planModeAllows(toolName, args = {}) {
  * bash 不在表里，它单独按命令判定（见 canMutateWorkspace）。
  */
 const NON_MUTATING_TOOLS = new Set([
-  "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch", "tool_search",
+  "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch", "tool_search", "tool_batch",
   "background_output", "todowrite", "enter_plan", "exit_plan",
   "sysinfo", "question", "task_list", "task_get", "task_output", "task_parallel",
   "git_status", "git_info", "git_list_snapshots"
@@ -99,7 +102,7 @@ const PARALLELIZABLE_TOOLS = new Set([
  */
 function canMutateWorkspace(toolName, args = {}) {
   const name = String(toolName || "")
-  if (name === 'browser') return !['status', 'snapshot', 'screenshot', 'close'].includes(args.action)
+  if (name === 'browser') return !['status', 'snapshot', 'screenshot', 'diagnostics', 'close'].includes(args.action)
   if (name === "bash") {
     return toolCapability("bash", String(args?.command || "")) !== "safe-shell"
   }
@@ -187,7 +190,7 @@ function addUsage(target, delta) {
 }
 
 
-async function buildSystemPrompt({ mode, model, cwd, agent = null, tools = [], skills = [], language = "en" }) {
+export async function buildSystemPrompt({ mode, model, cwd, agent = null, tools = [], skills = [], language = "en", permission = 'manual' }) {
   // Assemble user instructions + rules (Layer 6)
   const instructions = await loadInstructions(cwd)
   const rules = await renderRulesPrompt(cwd)
@@ -228,7 +231,7 @@ async function buildSystemPrompt({ mode, model, cwd, agent = null, tools = [], s
   const projectContext = await detectProjectContext(cwd)
 
   // Build structured blocks for provider-level cache optimization
-  const result = await buildSystemPromptBlocks({ mode, model, cwd, agent, tools, skills, userInstructions, projectContext, language })
+  const result = await buildSystemPromptBlocks({ mode, model, cwd, agent, tools, skills, userInstructions, projectContext, language, permission })
   return result
 }
 
@@ -366,7 +369,7 @@ async function processTurnLoopInRuntime({
   const recoveryEnabled = isRecoveryEnabled(configState.config)
   const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   const toolEvents = []
-  const doomTracker = [] // recent tool call signatures for doom loop detection
+  const progressGuard = createProgressGuard()
   let emittedAnyText = false
   let lastContextMeter = null
   // Plan 审批后的执行航道交接，由调用方（REPL）真正切换模式并续跑
@@ -450,7 +453,7 @@ async function processTurnLoopInRuntime({
   }
   const skills = SkillRegistry.isReady() ? SkillRegistry.listForSystemPrompt() : []
   const language = configState.config.language || "en"
-  const systemPrompt = await buildSystemPrompt({ mode, model, cwd, agent: effectiveAgent, tools: systemTools, skills, language })
+  const systemPrompt = await buildSystemPrompt({ mode, model, cwd, agent: effectiveAgent, tools: systemTools, skills, language, permission: normalizePermissionLevel(permissionConfig.permission || {}) })
   // systemPrompt = { text, blocks } — providers use blocks for cache optimization
   const delegateTask = createTaskDelegate({
     getSkillToolGroups: () => skillToolPolicy.snapshot(),
@@ -534,15 +537,17 @@ async function processTurnLoopInRuntime({
       // max_history before this point silently drops context and can prevent the
       // message threshold from ever being reached.
       let history = await getConversationHistory(sessionId, 9999)
-
-      const normalizedHistory = history.map(normalizeMessageForCache)
-      let contextTokens = estimateTokenCount(normalizedHistory)
+      // Count exactly the hook-transformed request that will be sent. Plugins
+      // can add context; counting the canonical history alone underestimates it.
+      let messages = await HookBus.messagesTransform([...history])
+      const normalizedHistory = messages.map(normalizeMessageForCache)
+      let contextTokens = requestContextBudget({ system: systemPrompt, messages: normalizedHistory, tools, model, configState, providerType }).tokens
       let contextFromCache = false
 
       // Use real token counting API when available (includes system + tools + messages)
       const realCount = await countTokensProvider({
         configState, providerType, model,
-        system: systemPrompt, messages: history, tools,
+        system: systemPrompt, messages, tools,
         baseUrl, apiKeyEnv,
         traceId: turnTraceContext.traceId,
         sessionId,
@@ -551,7 +556,7 @@ async function processTurnLoopInRuntime({
       })
       if (realCount != null) {
         contextTokens = realCount
-      } else if (contextCachePoint && isPrefixMessages(contextCachePoint.messages, normalizedHistory)) {
+      } else if (contextCachePoint && contextCachePoint.toolSignature === JSON.stringify(tools.map(tool => [tool.name, tool.description, tool.inputSchema])) && isPrefixMessages(contextCachePoint.messages, normalizedHistory)) {
         const delta = normalizedHistory.slice(contextCachePoint.messages.length)
         contextTokens = contextCachePoint.tokens + estimateTokenCount(delta)
         contextFromCache = true
@@ -560,18 +565,13 @@ async function processTurnLoopInRuntime({
       }
       const contextLimit = modelContextLimit(model, configState, providerType)
       const contextRatio = contextLimit > 0 ? Math.min(1, contextTokens / contextLimit) : 0
-      lastContextMeter = {
-        tokens: contextTokens,
-        limit: contextLimit,
-        ratio: contextRatio,
-        percent: Math.round(contextRatio * 100),
-        fromCache: contextFromCache
-      }
+      lastContextMeter = { ...requestContextBudget({ system: systemPrompt, messages: normalizedHistory, tools, model, configState, providerType, measuredTokens: realCount ?? (contextFromCache ? contextTokens : null), source: realCount != null ? 'count-api' : 'estimated' }), fromCache: contextFromCache }
 
       if (cachePointsEnabled && (step === 1 || contextRatio >= thresholdRatio)) {
         contextCachePoint = {
           messages: normalizedHistory,
-          tokens: contextTokens
+          tokens: contextTokens,
+          toolSignature: JSON.stringify(tools.map(tool => [tool.name, tool.description, tool.inputSchema]))
         }
         await appendPart(sessionId, {
           type: "context-cache-point",
@@ -601,7 +601,7 @@ async function processTurnLoopInRuntime({
         thresholdRatio,
         configState,
         providerType,
-        realTokenCount: realCount != null ? contextTokens : null
+        realTokenCount: lastContextMeter.requiredTokens
       })) {
           await EventBus.emit({ type: EVENT_TYPES.SESSION_COMPACTING, sessionId, turnId, payload: {} })
           const compactResult = await compactSession({
@@ -612,7 +612,8 @@ async function processTurnLoopInRuntime({
           if (compactResult.compacted) {
             const beforeTokens = Number(lastContextMeter?.tokens) || 0
             history = await getConversationHistory(sessionId, 9999)
-            const compactedMeter = contextUtilization(history.map(normalizeMessageForCache), model, configState, providerType)
+            messages = await HookBus.messagesTransform([...history])
+            const compactedMeter = requestContextBudget({ system: systemPrompt, messages: messages.map(normalizeMessageForCache), tools, model, configState, providerType })
             // 事件带上前后 token 数 —— UI 层的「已压缩，193.4K → 42.1K」提示全靠它
             await EventBus.emit({
               type: EVENT_TYPES.SESSION_COMPACTED, sessionId, turnId,
@@ -620,14 +621,20 @@ async function processTurnLoopInRuntime({
             })
             lastContextMeter = { ...compactedMeter, fromCache: false }
             contextCachePoint = {
-              messages: history.map(normalizeMessageForCache),
-              tokens: compactedMeter.tokens
+              messages: messages.map(normalizeMessageForCache),
+              tokens: compactedMeter.tokens,
+              toolSignature: JSON.stringify(tools.map(tool => [tool.name, tool.description, tool.inputSchema]))
             }
           }
         }
 
       // runSpec.limits 是委派方给子智能体立的硬约束。0.6.0 之前两个字段
       // 写进 runSpec 后全仓无读取点 —— 立了规矩没人执行。
+      await updateSession(sessionId, { context: lastContextMeter, promptReport: promptReport(systemPrompt, tools, lastContextMeter, { turnId, step }) })
+      await EventBus.emit({ type: 'session.context.updated', sessionId, turnId, payload: { context: lastContextMeter } })
+      if (!useNativeCompaction && lastContextMeter.requiredTokens > lastContextMeter.limit) {
+        throw new Error(`Context budget exceeded after compaction: ${lastContextMeter.tokens} input + ${lastContextMeter.outputReserved} reserved output > ${lastContextMeter.limit}. Reduce injected instructions/tools, lower max_tokens, or choose a larger-context model.`)
+      }
       const limits = runSpec?.limits || null
       if (limits?.deadlineAt && Date.now() > Number(limits.deadlineAt)) {
         finalReply = `${finalReply}\n[deadline exceeded — stopping]`.trim()
@@ -644,7 +651,6 @@ async function processTurnLoopInRuntime({
         } catch { /* 计价表缺失时预算检查静默跳过 */ }
       }
 
-      const messages = await HookBus.messagesTransform([...history])
       const stepRequestContext = createRequestContext({ traceId: turnTraceContext.traceId })
 
       let response
@@ -658,6 +664,7 @@ async function processTurnLoopInRuntime({
           system: systemPrompt,
           messages,
           tools,
+          maxTokens: lastContextMeter.outputReserved,
           baseUrl,
           apiKeyEnv,
           traceId: stepRequestContext.traceId,
@@ -751,13 +758,8 @@ async function processTurnLoopInRuntime({
       const u = response.usage || {}
       const totalInput = (u.input || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0)
       if (totalInput > 0) {
-        const contextLimit = modelContextLimit(model, configState, providerType)
-        const contextRatio = contextLimit > 0 ? Math.min(1, totalInput / contextLimit) : 0
         lastContextMeter = {
-          tokens: totalInput,
-          limit: contextLimit,
-          ratio: contextRatio,
-          percent: Math.round(contextRatio * 100),
+          ...requestContextBudget({ system: systemPrompt, messages, tools, model, configState, providerType, measuredTokens: totalInput + (u.output || 0), source: 'provider-usage' }),
           fromCache: false,
           cacheRead: u.cacheRead || 0,
           cacheWrite: u.cacheWrite || 0,
@@ -765,13 +767,22 @@ async function processTurnLoopInRuntime({
         }
       }
 
+      await updateSession(sessionId, { context: lastContextMeter })
       // Emit cumulative usage so status bar can update in real-time
       await EventBus.emit({
         type: EVENT_TYPES.TURN_USAGE_UPDATE,
         sessionId,
         turnId,
-        payload: { usage: { ...usage }, step, model, context: lastContextMeter }
+        payload: { usage: { ...usage }, step, model, context: lastContextMeter ? {
+          tokens: totalInput > 0 ? totalInput : lastContextMeter.tokens,
+          limit: lastContextMeter.limit,
+          ratio: Math.min(1, (totalInput > 0 ? totalInput : lastContextMeter.tokens) / lastContextMeter.limit),
+          percent: Math.round(Math.min(1, (totalInput > 0 ? totalInput : lastContextMeter.tokens) / lastContextMeter.limit) * 100),
+          fromCache: lastContextMeter.fromCache,
+          ...(totalInput > 0 ? { cacheRead: u.cacheRead || 0, cacheWrite: u.cacheWrite || 0, inputUncached: u.input || 0 } : {})
+        } : null }
       })
+      await EventBus.emit({ type: 'session.context.updated', sessionId, turnId, payload: { context: lastContextMeter } })
 
       // --- Auto-continue on output truncation (max_tokens) ---
       // 续写的前提是「真的撞上了输出预算」。有些兼容网关在答案完整结束后仍报
@@ -785,7 +796,7 @@ async function processTurnLoopInRuntime({
       //      长输出拼完整的手段。
       const validToolCalls = (response.toolCalls || []).filter(tc => !tc.args?.__parse_error)
       const hasPartialContent = Boolean(response.text) || validToolCalls.length > 0 || Boolean(response.reasoning)
-      const requestedOutputBudget = Number(configState.config.provider?.[providerType]?.max_tokens) || 16384
+      const requestedOutputBudget = lastContextMeter.outputReserved
       const knownOutputCap = Number(configState.config.provider?.[providerType]?.max_output_tokens) || 0
       const effectiveOutputBudget = knownOutputCap > 0 ? Math.min(requestedOutputBudget, knownOutputCap) : 0
       const reportedOutput = Number(response.usage?.output) || 0
@@ -869,7 +880,11 @@ async function processTurnLoopInRuntime({
           try {
             const validator = await createValidator({ cwd, configState })
             const validationResult = await validator.validate({
-              todoState: toolContext._todoState
+              todoState: toolContext._todoState,
+              // Never launch project scripts/npx behind the tool permission
+              // boundary (or on a simple question). The agent must request
+              // verification commands through normal approved tools.
+              level: 'evidence'
             })
             
             if (!validationResult.passed) {
@@ -1075,6 +1090,18 @@ async function processTurnLoopInRuntime({
                     // 管到 loop 这一层，工具那一层照旧按固定数字砍。
                     toolResultLimit,
                     ...toolContext,
+                    runToolBatch: call.name === 'tool_batch' ? async calls => {
+                      const results = [], content = []
+                      for (let index = 0; index < calls.length; index++) {
+                        signal?.throwIfAborted()
+                        const child = calls[index]
+                        const outcome = await executeOneCall({ id: `${String(call.id).slice(0, 96)}-batch-${index}`, name: child.name, args: child.args })
+                        results.push({ name: child.name, status: outcome.result.status, output: String(outcome.result.output || '').slice(0, Math.floor(toolResultLimit / calls.length)) })
+                        if (outcome.result.contentBlocks?.length) content.push(...outcome.result.contentBlocks)
+                        if (!isToolSuccess(outcome.result)) break
+                      }
+                      return { output: JSON.stringify({ completed: results.length, requested: calls.length, results, atomic: false }), content, status: results.every(item => item.status === 'completed') ? 'completed' : 'error' }
+                    } : null,
                     autoReviewed: permission.autoReviewed === true,
                     activateTools,
                     allowedToolNames: skillToolPolicy.names(await ToolRegistry.list({ mode, config: configState.config, cwd })).filter(name => !effectiveAgent?.tools || effectiveAgent.tools.includes(name)),
@@ -1277,19 +1304,17 @@ async function processTurnLoopInRuntime({
         synthetic: true
       })
 
-      // --- Doom loop detection: 3x identical tool call → inject warning ---
-      for (const call of response.toolCalls) {
-        doomTracker.push(`${call.name}::${JSON.stringify(call.args || {})}`)
-      }
-      if (doomTracker.length > 6) doomTracker.splice(0, doomTracker.length - 6)
-      if (doomTracker.length >= 3) {
-        const last3 = doomTracker.slice(-3)
-        if (last3[0] === last3[1] && last3[1] === last3[2]) {
-          await appendMessage(sessionId, "user", "[DOOM LOOP DETECTED] You called the same tool with identical arguments 3 times consecutively. STOP repeating this approach — it will not work. Try a completely different strategy, re-read the relevant files, or ask the user for guidance.", {
-            mode, model, providerType, step, turnId, synthetic: true
-          })
-          doomTracker.length = 0
-        }
+      const progress = progressGuard.observe(response.toolCalls.map(call => callResults.get(call.id)).filter(Boolean))
+      if (progress.state === 'warn') {
+        await appendMessage(sessionId, 'user', '[NO PROGRESS] The same tool sequence produced identical results three times. Inspect the evidence and change strategy. Do not repeat side effects or claim completion; ask for missing information if needed.', { mode, model, providerType, step, turnId, synthetic: true })
+      } else if (progress.state === 'stop') {
+        finalReply = language === 'zh' ? '已暂停：相同工具序列连续 6 次没有产生新结果。已有文件和操作结果保留，请检查阻塞原因后继续；这不代表任务已完成。' : 'Paused: the same tool sequence produced no new evidence six times. Existing files and results are preserved. Inspect the blocker before continuing; the task is not claimed complete.'
+        await appendMessage(sessionId, 'assistant', finalReply, { mode, model, providerType, step, turnId })
+        await markSessionStatus(sessionId, 'no-progress'); await markTurnFinished(sessionId, recoveryEnabled)
+        await render.textDelta(step, `\n${finalReply}`); await render.streamEnd(step)
+        await EventBus.emit({ type: EVENT_TYPES.TURN_FINISH, sessionId, turnId, payload: { step, reply: finalReply, stopReason: 'no-progress' } })
+        render.close()
+        return { sessionId, turnId, reply: finalReply, emittedText: true, context: lastContextMeter, usage, toolEvents, planHandoff, stopReason: 'no-progress' }
       }
 
       // --- Soft step warning: alert model when nearing the limit ---

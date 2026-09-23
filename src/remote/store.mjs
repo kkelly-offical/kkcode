@@ -4,6 +4,7 @@ export class MemoryStore {
   constructor() { this.data = new Map() }
   async get(key) { return structuredClone(this.data.get(key) || null) }
   async put(key, value) { this.data.set(key, structuredClone(value)) }
+  async putIfAbsent(key, value) { if (this.data.has(key)) return false; this.data.set(key, structuredClone(value)); return true }
   async delete(key) { this.data.delete(key) }
   async compareDelete(key, expected) { if (JSON.stringify(this.data.get(key)) !== JSON.stringify(expected)) return false; return this.data.delete(key) }
   async take(key) { const value = this.data.get(key); this.data.delete(key); return structuredClone(value || null) }
@@ -34,6 +35,7 @@ export class PostgresStore {
   async initialize() { await this.query('CREATE TABLE IF NOT EXISTS kkcode_gateway (key text PRIMARY KEY, value jsonb NOT NULL)'); return this }
   async get(key) { return (await this.query('SELECT value FROM kkcode_gateway WHERE key = $1', [key])).rows[0]?.value || null }
   async put(key, value) { await this.query('INSERT INTO kkcode_gateway(key,value) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value', [key, JSON.stringify(value)]) }
+  async putIfAbsent(key, value) { return (await this.query('INSERT INTO kkcode_gateway(key,value) VALUES($1,$2) ON CONFLICT(key) DO NOTHING', [key, JSON.stringify(value)])).rowCount === 1 }
   async delete(key) { await this.query('DELETE FROM kkcode_gateway WHERE key=$1', [key]) }
   async compareDelete(key, expected) { return (await this.query('DELETE FROM kkcode_gateway WHERE key=$1 AND value=$2', [key, JSON.stringify(expected)])).rowCount === 1 }
   async take(key) { return (await this.query('DELETE FROM kkcode_gateway WHERE key=$1 RETURNING value', [key])).rows[0]?.value || null }

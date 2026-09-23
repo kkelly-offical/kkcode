@@ -65,3 +65,24 @@ test("projectContext participates in the cache key", async t => {
   const reverted = await buildSystemPromptBlocks({ ...base, projectContext: "" })
   assert.ok(!reverted.blocks.some((b) => b.label === "project"), "reverting projectContext rebuilds again")
 })
+
+test('same-name agent and skill edits invalidate the actual assembled prompt', async t => {
+  const { cwd } = await fixture(t)
+  const base = { mode: 'assistant', model: 'local', cwd, agent: { name: 'custom', prompt: 'agent before' }, skills: [{ name: 'custom', description: 'skill before' }] }
+  await buildSystemPromptBlocks(base)
+  const next = await buildSystemPromptBlocks({ ...base, agent: { name: 'custom', prompt: 'agent after' }, skills: [{ name: 'custom', description: 'skill after' }] })
+  assert.match(next.blocks.find(b => b.label === 'agent').text, /agent after/)
+  assert.match(next.blocks.find(b => b.label === 'skills').text, /skill after/)
+})
+
+test('same-name tool metadata changes and permission changes reach the model', async t => {
+  const { cwd } = await fixture(t)
+  const base = { mode: 'assistant', model: 'local', cwd, tools: [{ name: 'read', description: 'old description', inputSchema: {} }] }
+  const first = await buildSystemPromptBlocks(base)
+  const second = await buildSystemPromptBlocks({ ...base, permission: 'accept-edits', tools: [{ name: 'read', description: 'new description', inputSchema: {} }] })
+  assert.notEqual(first, second)
+  assert.match(second.text, /new description/)
+  assert.match(second.text, /Current permission policy: accept-edits/)
+  assert.doesNotMatch(second.text, /Knowledge cutoff: early 2025|Agent · Auto/)
+  assert.ok(second.blocks.every(b => b.source && b.fingerprint?.length === 64))
+})

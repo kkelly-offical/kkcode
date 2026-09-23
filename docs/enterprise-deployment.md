@@ -3,6 +3,17 @@
 本文面向 `1.0.3` 部署，版本发布本身不等于生产安全认证。
 根包、网关/Web/SDK 工作区与 Android 版本名一致；APK 版本码为 `10006`。
 实际发布/验收状态见 [本版说明](release-1.0.3.md) 与 [验收账本](implementation-1.0.3.md)。
+
+## 1.0.4 Preview 候选部署差异
+
+稳定版部署步骤仍适用；候选代码见 [Preview 说明](release-1.0.4-preview.0.md)。
+新增账号 SSH 地址簿 API `/api/v1/connections/ssh`，数据存于现有账号隔离 store，
+不需要单独 SSH 服务、新监听端口或给网关配 SSH 私钥。**网关不代连 SSH，Web
+本轮不提供 SSH；Android 直接连接工作电脑。** 多节点沿用 store 的原子修订检查。
+网关/Web、设备 CLI 与 Android 都需更新才能启用所有新功能；只升级 APK 不会让
+旧网关拥有新地址簿接口。OIDC/Android 回跳配置不因地址簿而改变。
+SSH 生命周期详见 [账号设备指南](ssh-account-devices.md)。本机验收不自动更新
+企业生产域名、OIDC 平台或已有示范虚拟机。
 本次专项修复需要网关与 App 同步升级；SSO 的 `/auth/callback` 注册地址不变。
 详见 [Android 回跳、后台恢复与兼容边界](android-gateway-login.md)。
 

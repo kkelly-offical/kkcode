@@ -17,6 +17,7 @@ import {
   summarizeResumeContext,
   summarizeSessionRuntimeState
 } from "../kernel/index.mjs"
+import { listToolOperations, resolveToolOperation } from '../kernel/index.mjs'
 import { createTtyPromptHandlers } from "../cli/tty-prompts.mjs"
 
 function assertRecoveryEnabled(config, commandName) {
@@ -28,6 +29,10 @@ function assertRecoveryEnabled(config, commandName) {
 
 export function createSessionCommand() {
   const cmd = new Command("session").description("manage persisted kkcode sessions")
+  cmd.command('operations').description('inspect interrupted tool outcomes; never automatically replay side effects')
+    .requiredOption('--id <id>', 'session id').option('--resolve <operation>', 'acknowledge one inspected unknown outcome')
+    .option('--confirm-inspected', 'confirm that actual state was inspected before permitting a new attempt', false)
+    .action(async options => { console.log(JSON.stringify(options.resolve ? await resolveToolOperation(options.id, options.resolve, options.confirmInspected) : await listToolOperations(options.id), null, 2)) })
 
   cmd
     .command("fsck")

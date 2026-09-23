@@ -266,10 +266,11 @@ export function SessionHome({
   );
 }
 
-export function SessionActions({ session, busy = false, onClose, onUpdate, onRewind }: {
+export function SessionActions({ session, busy = false, onClose, onUpdate, onDelete }: {
   session: Item; busy?: boolean; onClose: () => void;
-  onUpdate: (patch: Item) => Promise<void>; onRewind?: () => void;
+  onUpdate: (patch: Item) => Promise<void>; onDelete: () => Promise<void>;
 }) {
+  const [action, setAction] = useState('menu');
   const [title, setTitle] = useState(session.title || ""), [saving, setSaving] = useState(false), [error, setError] = useState("");
   const save = async (patch: Item) => {
     setSaving(true); setError("");
@@ -277,16 +278,18 @@ export function SessionActions({ session, busy = false, onClose, onUpdate, onRew
     catch (cause: any) { setError(cause.message); }
     finally { setSaving(false); }
   };
-  return <Sheet title="管理对话" onClose={onClose}>
-    <form className="settings-form" onSubmit={event => { event.preventDefault(); void save({ title: title.trim(), expectedTitleRevision: session.titleRevision }); }}>
+  return <Sheet title={action === 'rename' ? '改名' : action === 'delete' ? '删除对话？' : '对话'} onClose={() => { if (!saving) onClose(); }} onBack={action === 'menu' ? undefined : () => setAction('menu')}>
+    {action === 'menu' && <div className="session-actions-list" role="menu" aria-label="管理对话">
+      <button role="menuitem" onClick={() => setAction('rename')}>改名</button>
+      <button role="menuitem" disabled={busy || saving} onClick={() => void save({ archived: !session.archived })}>{session.archived ? '恢复' : '归档'}</button>
+      <button role="menuitem" className="danger" disabled={busy || saving} onClick={() => setAction('delete')}>删除</button>
+    </div>}
+    {action === 'rename' && <form className="settings-form" onSubmit={event => { event.preventDefault(); void save({ title: title.trim(), expectedTitleRevision: session.titleRevision }); }}>
       <label>对话名称<input autoFocus value={title} maxLength={120} onChange={event => setTitle(event.target.value)} required /></label>
       <button className="sheet-primary" disabled={saving || !title.trim()}>保存名称</button>
-    </form>
-    <div className="settings-group">
-      {onRewind && <SettingsRow icon="back" title="回退上一轮对话" detail="恢复提问草稿；不会撤销文件修改" disabled={busy || saving} onClick={onRewind} />}
-      <SettingsRow icon="archive" title={session.archived ? "恢复到对话列表" : "归档对话"} detail="保留完整历史，可随时恢复" disabled={busy || saving} onClick={() => void save({ archived: !session.archived })} />
-    </div>
-    {busy && <p className="sheet-note">任务进行中，停止后可回退或归档。</p>}
+    </form>}
+    {action === 'delete' && <><p>从所有客户端的列表中删除“{session.title || '新对话'}”。不会删除工作区文件；被控电脑保留私密恢复副本。</p><button className="sheet-primary" disabled={busy || saving} onClick={async () => { setSaving(true); setError(''); try { await onDelete(); onClose(); } catch (cause: any) { setError(cause.message); } finally { setSaving(false); } }}>确认删除</button></>}
+    {busy && <p className="sheet-note">任务进行中，停止后可归档或删除。</p>}
     {error && <p className="sheet-error" role="alert">{error}</p>}
   </Sheet>;
 }

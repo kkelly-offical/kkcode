@@ -5,6 +5,7 @@ import { mkdtemp, rm, readdir } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import sharp from 'sharp'
+import { WebSocketServer } from 'ws'
 import { BrowserNetwork } from '../src/kernel/browser/network.mjs'
 import { createBrowserController, browserStatus } from '../src/kernel/browser/controller.mjs'
 import { toolResultContent } from '../src/kernel/tool/result-content.mjs'
@@ -16,6 +17,8 @@ test('browser URL policy blocks credentials, metadata/mapped-IP aliases and priv
   await network.target('http://127.0.0.1:12345', true)
   await assert.doesNotReject(network.target('http://127.0.0.1:12345/app'))
   await assert.rejects(network.target('http://127.0.0.1:12346/secret'), /Private/)
+  await assert.rejects(network.websocket('ws://127.0.0.1:12346/', { origin: 'http://127.0.0.1:12345' }), /origin/)
+  await assert.rejects(network.websocket('ws://169.254.169.254/', { origin: 'http://169.254.169.254' }), /metadata/)
   network.close()
 })
 
@@ -48,11 +51,13 @@ test('real Browser opens a dev page, fills/clicks, produces model-visible pixels
   await new Promise(resolve => blocked.listen(0, '127.0.0.1', resolve))
   const blockedPort = blocked.address().port
   const app = http.createServer((req, res) => {
+    if (req.url.startsWith('/socket')) { res.setHeader('Content-Type', 'text/html'); res.end('<title>HMR fixture</title><output>connecting</output><script>console.info("development connected");const s=new WebSocket(location.origin.replace("http", "ws")+"/hmr");s.onmessage=e=>document.querySelector("output").textContent=e.data;s.onopen=()=>s.send("hot reload ready");s.onclose=()=>document.querySelector("output").textContent="socket closed";</script>'); return }
     if (req.url === '/redirect') { res.writeHead(302, { Location: `http://127.0.0.1:${blockedPort}/secret` }); res.end(); return }
     if (req.url === '/cookies') { res.end(req.headers.cookie || 'empty'); return }
     res.setHeader('Content-Type', 'text/html'); res.setHeader('Set-Cookie', 'fixture=one; Path=/; HttpOnly')
     res.end(`<title>Browser fixture</title><label>Name<input aria-label="Name"></label><button onclick="document.querySelector('output').textContent='Hello '+document.querySelector('input').value">Greet</button><output></output><img src="http://127.0.0.1:${blockedPort}/secret">`)
   })
+  const sockets = new WebSocketServer({ server: app }); sockets.on('connection', socket => socket.on('message', data => socket.send(data.toString())))
   await new Promise(resolve => app.listen(0, '127.0.0.1', resolve))
   const url = `http://127.0.0.1:${app.address().port}`
   const browser = createBrowserController()
@@ -73,10 +78,24 @@ test('real Browser opens a dev page, fills/clicks, produces model-visible pixels
     assert.match(await browser.execute({ action: 'open', url: url + '/cookies' }, { ...ctx, sessionId: 'two' }), /empty/)
     await assert.rejects(browser.execute({ action: 'open', url: url + '/redirect' }, ctx))
     assert.equal(blockedHits, 0)
+    await browser.execute({ action: 'open', url: url + '/socket?private_fixture=hidden' }, ctx)
+    let snapshot = ''
+    for (let attempt = 0; attempt < 30; attempt++) { snapshot = await browser.execute({ action: 'snapshot' }, ctx); if (snapshot.includes('socket closed')) break; await new Promise(resolve => setTimeout(resolve, 50)) }
+    assert.match(snapshot, /socket closed/, 'ordinary browsing keeps sockets disabled')
+    await browser.execute({ action: 'open', url: url + '/socket?private_fixture=hidden', development: true }, ctx)
+    for (let attempt = 0; attempt < 50; attempt++) { snapshot = await browser.execute({ action: 'snapshot' }, ctx); if (snapshot.includes('hot reload ready')) break; await new Promise(resolve => setTimeout(resolve, 50)) }
+    assert.match(snapshot, /hot reload ready/, 'same-origin development socket uses the guarded bridge')
+    const diagnostics = (await browser.execute({ action: 'diagnostics' }, ctx)).output
+    assert.match(diagnostics, /development connected/)
+    assert.equal(diagnostics.includes('private_fixture'), false)
+    await browser.execute({ action: 'viewport', width: 390, height: 844 }, ctx)
+    const mobile = await browser.execute({ action: 'screenshot' }, ctx)
+    assert.equal((await sharp(Buffer.from(mobile.content[0].data, 'base64')).metadata()).width, 390)
     await assert.rejects(browser.execute({ action: 'open', url: 'file:///etc/passwd' }, ctx), /HTTP/)
     await browser.execute({ action: 'close' }, ctx)
   } finally {
     await browser.shutdown()
+    for (const socket of sockets.clients) socket.terminate(); await new Promise(resolve => sockets.close(resolve))
     assert.deepEqual(await readdir(path.join(root, 'browser')), [])
     await new Promise(resolve => app.close(resolve)); await new Promise(resolve => blocked.close(resolve))
     if (previous === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = previous

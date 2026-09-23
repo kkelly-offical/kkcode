@@ -10,6 +10,7 @@ import { processTurnLoop } from "../src/kernel/session/loop.mjs"
 import { flushNow } from "../src/kernel/session/store.mjs"
 import { EventBus } from "../src/kernel/core/events.mjs"
 import { EVENT_TYPES } from "../src/kernel/core/constants.mjs"
+import { runWithRuntime } from '../src/kernel/core/runtime-context.mjs'
 
 let tmpDir
 let previousKkcodeHome
@@ -34,7 +35,7 @@ after(async () => {
 })
 
 async function runLoop(opts) {
-  return processTurnLoop(opts)
+  return runWithRuntime({ cwd: tmpDir }, () => processTurnLoop(opts))
 }
 
 function createMockProvider(responses) {

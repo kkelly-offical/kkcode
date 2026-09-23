@@ -1,10 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, writeFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { DeviceService } from '../src/device/service.mjs'
-import { appendMessage, appendPart, flushNow, getSession } from '../src/kernel/session/store.mjs'
+import { appendMessage, appendPart, flushNow, getSession, touchSession } from '../src/kernel/session/store.mjs'
 
 async function fixture(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kkcode-session-actions-')), cwd = path.join(root, 'work'), privateRoot = path.join(root, 'private')
@@ -63,4 +63,41 @@ test('running sessions cannot be archived or rewound and another client must acq
   await assert.rejects(service.dispatch('sessions.rewind', { sessionId: id, confirmed: true }, principal), { code: 'turn_busy' })
   service.turns.delete(id)
   await assert.rejects(service.dispatch('sessions.rewind', { sessionId: id, confirmed: true }, { id: 'local', client: 'other' }), { code: 'control_required' })
+})
+
+test('deletion requires confirmation, protects active turns, preserves files and creates a private recovery copy', async t => {
+  const { service, principal, id, privateRoot, cwd } = await fixture(t)
+  await writeFile(path.join(cwd, 'keep.txt'), 'keep workspace data')
+  await appendMessage(id, 'user', 'private conversation')
+  await flushNow()
+  await assert.rejects(service.dispatch('sessions.delete', { sessionId: id }, principal), { code: 'confirmation_required' })
+  service.turns.set(id, {})
+  await assert.rejects(service.dispatch('sessions.delete', { sessionId: id, confirmed: true }, principal), { code: 'turn_busy' })
+  service.turns.delete(id)
+  assert.equal((await service.dispatch('sessions.delete', { sessionId: id, confirmed: true }, principal)).deleted, true)
+  assert.equal(await getSession(id), null)
+  assert.ok(!(await service.dispatch('sessions.list', {}, principal)).some(row => row.id === id))
+  assert.equal(await readFile(path.join(cwd, 'keep.txt'), 'utf8'), 'keep workspace data')
+  const backups = await readdir(path.join(privateRoot, 'trash', 'sessions'))
+  assert.equal(backups.length, 1)
+  assert.match(await readFile(path.join(privateRoot, 'trash', 'sessions', backups[0]), 'utf8'), /private conversation/)
+  assert.equal((await service.readEvents(id, 0)).length, 0, 'deleted conversations cannot be recovered through replay')
+})
+
+test('deletion guards running grandchildren and removes the finished conversation tree together', async t => {
+  const { service, principal, id, cwd, privateRoot } = await fixture(t)
+  const child = id + '_c', grandchild = id + '_g'
+  await touchSession({ sessionId: child, cwd, parentSessionId: id })
+  await touchSession({ sessionId: grandchild, cwd, parentSessionId: child })
+  await appendMessage(grandchild, 'user', 'delegated history'); await flushNow()
+  service.turns.set(grandchild, {})
+  await assert.rejects(service.dispatch('sessions.delete', { sessionId: id, confirmed: true }, principal), { code: 'turn_busy' })
+  assert.equal(service.sessionTransitions.size, 0)
+  service.turns.delete(grandchild)
+  const result = await service.dispatch('sessions.delete', { sessionId: id, confirmed: true }, principal)
+  assert.deepEqual(new Set(result.deletedIds), new Set([id, child, grandchild]))
+  assert.equal(await getSession(grandchild), null)
+  const backups = await readdir(path.join(privateRoot, 'trash', 'sessions'))
+  const backup = JSON.parse(await readFile(path.join(privateRoot, 'trash', 'sessions', backups[0]), 'utf8'))
+  assert.equal(backup.children.length, 2)
 })

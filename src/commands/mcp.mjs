@@ -120,6 +120,18 @@ function parseMcpConfig(text) {
 
 export function createMcpCommand() {
   const cmd = new Command("mcp").description("manage MCP servers and tools")
+  cmd.command('auth').description('Authorize a trusted remote MCP using OAuth and PKCE')
+    .requiredOption('--server <name>', 'Configured MCP server name')
+    .action(async options => withInitializedMcp(async kernel => {
+      await kernel.extensions.mcp.authorize(options.server, { onAuthorization: url => { console.error(`在此电脑的浏览器完成 MCP 授权（回调仅监听本机）：\n${url.href}`) } })
+      console.log('MCP authorization saved securely. Tools are ready.')
+    }))
+  cmd.command('logout').description('Remove locally stored MCP OAuth authorization')
+    .requiredOption('--server <name>', 'Configured MCP server name')
+    .action(async options => withInitializedMcp(async kernel => {
+      await kernel.extensions.mcp.clearAuthorization(options.server)
+      console.log('Local MCP authorization removed. Revoke the application at the authorization provider to invalidate other copies of the grant.')
+    }))
 
   cmd
     .command("list")

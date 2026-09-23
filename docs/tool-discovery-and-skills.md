@@ -1,5 +1,9 @@
 # 工具发现、分层指令和技能限制（1.0.2）
 
+1.0.4 Preview 候选补充：可选内置工具也采用按需发现，`tool_search` 返回详细手册；
+提示缓存按完整内容指纹、每内核隔离。新增 `tool_batch` 的 1–8 项受控串行组合。
+见 [Harness](context-and-harness.md)。以下原有 MCP 阈值和技能限制仍然有效。
+
 1.0.2 新增内建 `browser`（默认注册、引擎按需安装/启动）、SVG 的源代码/栅格
 预览双路径，以及内建/插件/MCP 共同的多模态结果处理。详见
 [Browser 与 Harness 边界](release-1.0.2.md)。非法 JSON 参数在工具执行前返回
@@ -90,5 +94,6 @@ Read/Grep/Bash 等常见可移植名称映射到本项目工具名。受限 shel
 串联、重定向或命令替换。限制还传入前台子任务和后台 worker；不会跨并发回合污染。
 
 这不是任意 JavaScript 插件的 OS 沙箱。可编程 `.mjs` 插件本身仍必须受信任并
-通过原来的执行权限；MCP OAuth、服务端采样、所有第三方插件专属运行时不在此
-兼容声明中。详见 [协议边界](protocol-compatibility-1.0.1.md)。
+通过原来的执行权限；服务端采样、所有第三方插件专属运行时不在此兼容声明中。
+MCP OAuth 在 1.0.4 Preview 候选中新增，范围见 [协议适配](protocol-adapters.md)。
+其余边界见 [协议矩阵](protocol-compatibility-1.0.1.md)。

@@ -2,6 +2,7 @@ import dns from 'node:dns/promises'
 import net from 'node:net'
 import http from 'node:http'
 import https from 'node:https'
+import WebSocket from 'ws'
 import { blockedIpReason } from '../../net/url-guard.mjs'
 
 const metadataHosts = new Set(['metadata', 'metadata.google.internal', 'metadata.goog'])
@@ -25,6 +26,7 @@ export class BrowserNetwork {
   constructor({ lookup = (host => dns.lookup(host, { all: true })), maxBytes = 64 * 1024 * 1024, maxRequests = 500 } = {}) {
     this.lookup = lookup; this.maxBytes = maxBytes; this.maxRequests = maxRequests
     this.privateOrigins = new Map(); this.bytes = 0; this.requests = 0; this.errors = []; this.controller = new AbortController()
+    this.sockets = new Set()
   }
   async target(raw, explicit = false) {
     const url = new URL(String(raw))
@@ -72,7 +74,35 @@ export class BrowserNetwork {
       request.end()
     })
   }
-  close() { this.controller.abort(); this.privateOrigins.clear() }
+  /** Development-only WebSockets use the same DNS pinning and byte budget as
+   * HTTP. No redirect, proxy fallback, metadata access or cross-origin socket. */
+  async websocket(raw, { origin, protocol = '' }) {
+    const url = new URL(raw)
+    if (!['ws:', 'wss:'].includes(url.protocol)) throw new Error('Expected a WebSocket URL')
+    const httpUrl = new URL(url); httpUrl.protocol = url.protocol === 'wss:' ? 'https:' : 'http:'
+    if (httpUrl.origin !== origin) throw new Error('Development WebSocket must use the explicitly opened page origin')
+    if (protocol && !/^[!#$%&'*+\-.^_`|~0-9A-Za-z]{1,128}$/.test(protocol)) throw new Error('Invalid WebSocket subprotocol')
+    if (this.sockets.size >= 8 || ++this.requests > this.maxRequests) throw new Error('Browser WebSocket budget exhausted')
+    const { address } = await this.target(httpUrl.href)
+    this.controller.signal.throwIfAborted()
+    const socket = new WebSocket(url, protocol ? [protocol] : [], {
+      followRedirects: false, handshakeTimeout: 10000, maxPayload: 1024 * 1024,
+      origin, perMessageDeflate: false,
+      lookup: (_host, options, callback) => options.all ? callback(null, [address]) : callback(null, address.address, address.family)
+    })
+    this.sockets.add(socket)
+    const abort = () => socket.terminate()
+    this.controller.signal.addEventListener('abort', abort, { once: true })
+    socket.once('close', () => { this.sockets.delete(socket); this.controller.signal.removeEventListener('abort', abort) })
+    socket.on('error', () => {})
+    await new Promise((resolve, reject) => { socket.once('open', () => resolve(undefined)); socket.once('error', reject); socket.once('close', () => reject(new Error('WebSocket closed before connecting'))) })
+    return socket
+  }
+  countSocketBytes(data) {
+    const bytes = Buffer.byteLength(data); this.bytes += bytes
+    if (bytes > 1024 * 1024 || this.bytes > this.maxBytes) throw new Error('Browser WebSocket byte budget exhausted')
+  }
+  close() { this.controller.abort(); for (const socket of this.sockets) socket.terminate(); this.sockets.clear(); this.privateOrigins.clear() }
 }
 
 export async function createDenyProxy() {

@@ -3,6 +3,10 @@
 更新范围：1.0.2。当前实施、验收和实际发布回执见
 [实施记录](implementation-1.0.2.md)。本页不把计划写成已发布能力。
 
+1.0.4 Preview 候选正在验收：上下文 UI、Android SSH 后台任务与账号地址簿、
+精简会话删除/归档、提示与 SDK、MCP OAuth、ACP v1、受控 HMR/工具组合/操作恢复。
+以 [1.0.4 实施账本](implementation-1.0.4.md) 为准，不沿用旧测试数量当新回执。
+
 ## 已完成的旧待办
 
 - 内核/SDK 分层、唯一 createKernel 组合根、运行时隔离和导入边界门禁已经实现。
@@ -31,8 +35,9 @@
    或在企业容器/低权限账号中运行。不能将“已审批”写成“沙箱隔离”。
 2. **媒体协议**：WAV/MP3 与兼容 video_url 已编码；不提供自动转码/抽帧、
    录音/摄像头或所有模型通吃的承诺。具体边界见 [媒体矩阵](media-input.md)。
-3. **MCP 扩展协议**：交互 OAuth/动态注册、服务端采样、完整 elicitation、
-   MCP Apps 和第三方专属运行时不在现有兼容声明中。见 [协议矩阵](protocol-compatibility-1.0.1.md)。
+3. **MCP 扩展协议**：1.0.4 Preview 候选新增工作电脑上的 OAuth/动态注册，
+   不含 Web/App OAuth 代理、服务端采样、完整 elicitation、MCP Apps 或第三方
+   专属运行时。见 [协议适配](protocol-adapters.md) 与 [协议矩阵](protocol-compatibility-1.0.1.md)。
 4. **价格与模型**：优先用户 Base URL 的目录及明确配置，内置模板/单价只是
    有日期的回退示例；目录缺失、别名和阶梯/音频计费仍需要用户核对。估算不等于账单。
 5. **平台验收**：CI 验证当前操作系统软件路径；GUI 终端、输入法、剪贴板

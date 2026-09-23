@@ -12,6 +12,7 @@ import { validateRequest, RELAY_FEATURE_EVENT_PUSH } from '../protocol/index.mjs
 import { createRelayCluster } from './cluster.mjs'
 import { registerDeviceLifecycle } from './device-lifecycle.mjs'
 import { PACKAGE_VERSION } from '../version.mjs'
+import { registerSshProfiles } from './ssh-profiles.mjs'
 import { GatewayEventHub } from './sse-hub.mjs'
 import { SseWriter, isDeviceEvent, isJournalRow, streamCursor } from '../http/sse.mjs'
 
@@ -80,6 +81,7 @@ export async function createGateway({ origin, issuer, clientId, clientSecret, or
     hub.closeDevice(deviceId)
     for (const [id, job] of pending) if (job.deviceId === deviceId) { pending.delete(id); clearTimeout(job.timer); job.reject(Object.assign(new Error('Device unbound'), { statusCode: 410 })) }
   } })
+  registerSshProfiles({ app, store, authenticate, audit })
   app.get('/api/v1/devices', async req => {
     const { account } = await authenticate(req)
     return Promise.all((await store.list('device:')).filter(d => d.organization === account.organization && (d.owner === account.id || Object.keys(d.shares?.[account.id] || {}).length)).map(async ({ key, shares, ...device }) => ({ ...device, shared: device.owner !== account.id, ...(device.owner !== account.id ? { permissions: shares[account.id] } : {}), online: cluster ? await cluster.online(device.id) : devices.has(device.id) })))

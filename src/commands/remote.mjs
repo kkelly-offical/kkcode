@@ -11,6 +11,7 @@ import { createDeviceServer } from '../device/server.mjs'
 import { createInterface } from 'node:readline/promises'
 import { chooseRemoteFolderAccess } from '../remote/folder-access.mjs'
 import { grantRemoteWorkspaceTrust } from '../remote/workspace-access.mjs'
+import { PACKAGE_VERSION } from '../version.mjs'
 
 const statusFile = () => path.join(userRootDir(), 'remote-status.json')
 async function liveStatus() {
@@ -97,13 +98,28 @@ export function createRemoteCommand() {
     if (!credentials || (options.gateway && credentials.gateway !== options.gateway)) credentials = await loginRemote({ gateway: options.gateway })
     const service = await createRemoteDevice({ roots: folderAccess.roots })
     let startupWorkspaceTrustRoots = []
-    let relay, web, control, closing = false
+    let relay, web, control, closing = false, webReady
+    const ensureWeb = async port => {
+      if (closing) throw new Error('Remote hub is closing')
+      if (!webReady) webReady = (async () => {
+        let candidate
+        try {
+          candidate = await createDeviceServer({ service, port, closeService: false })
+          const info = await candidate.listen()
+          if (closing) throw new Error('Remote hub is closing')
+          web = candidate
+          return info
+        } catch (error) { await candidate?.close().catch(() => {}); throw error }
+      })().catch(error => { webReady = null; throw error })
+      return webReady
+    }
     const updateStatus = async () => writePrivateFile(statusFile(), JSON.stringify({ pid: process.pid, deviceId: service.metadata.id, gateway: credentials.gateway, profile: credentials.profile, connection: service.remoteStatus || 'connecting', folderAccess: folderAccess.mode, roots: service.roots, startupWorkspaceTrustRoots, control: control ? { endpoint: control.endpoint, token: control.token } : null, updatedAt: Date.now() }))
     const close = async () => {
       if (closing) return; closing = true
       clearInterval(heartbeat)
       try {
         relay?.close()
+        await webReady?.catch(() => {})
         try { await web?.close() } finally { await service.close() }
       } finally {
         await control?.close()
@@ -117,13 +133,19 @@ export function createRemoteCommand() {
     try {
       startupWorkspaceTrustRoots = await grantRemoteWorkspaceTrust(service.roots, { enabled: options.trustAllWorkspaces })
       if (startupWorkspaceTrustRoots.length) console.error('已按本机操作者的明确授权，递归信任允许目录中的项目配置与扩展；工具审批和凭据路径保护保持不变。')
-      control = await createRemoteControl({ onStop: stop })
+      control = await createRemoteControl({ onStop: stop, onPair: async request => {
+        const port = Number(request.port || options.port)
+        if (closing || !Number.isInteger(port) || port < 1 || port > 65535 || (folderAccess.mode === 'all') !== (request.allFolders === true) || !['all', 'home'].includes(folderAccess.mode)) throw new Error('SSH scope must match the foreground remote hub')
+        const local = await ensureWeb(port)
+        if (closing || Number(new URL(local.address).port) !== port) throw new Error('SSH port must match the running hub local WebUI')
+        return { port: Number(new URL(local.address).port), bootstrap: web.issueNativePairing(), allFolders: folderAccess.mode === 'all', version: PACKAGE_VERSION, lifetime: 'foreground-remote' }
+      } })
       relay = await connectRelay({ service, credentials, onStatus: status => { service.remoteStatus = status; if (!closing) void updateStatus().catch(() => {}) } })
       await updateStatus()
       if (options.web) {
         const port = Number(options.port)
         if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid WebUI port')
-        web = await createDeviceServer({ service, port }); const local = await web.listen()
+        const local = await ensureWeb(port)
         console.error(`Local WebUI: ${local.url}`)
       }
       console.error(`Remote: ${credentials.profile.name} · ${credentials.profile.organization} · ${credentials.gateway}\nRemote access ends when this terminal exits.`)

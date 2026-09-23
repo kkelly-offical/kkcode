@@ -30,6 +30,7 @@ import { buildRequestHeaders } from "../../http/identity.mjs"
 import { IMAGE_EXTENSIONS, IMAGE_MIME_TYPES } from "./image-util.mjs"
 import { normalizeImageBlock, IMAGE_LIMITS } from '../media/images.mjs'
 import { createBrowserTool } from '../browser/controller.mjs'
+import { createToolBatch } from './batch.mjs'
 import {
   readSandboxConfig,
   inspectSandboxStatus,
@@ -40,6 +41,7 @@ import {
 } from "./sandbox.mjs"
 import { userRootDir } from "../../storage/paths.mjs"
 import { deprecatedSingletonAlias } from "../core/deprecations.mjs"
+import { loadToolPrompt } from './prompt-loader.mjs'
 
 const exec = promisify(execCb)
 const execFile = promisify(execFileCb)
@@ -2475,6 +2477,7 @@ function toolAllowedByMode(toolName, mode) {
  */
 export function createToolRegistry({ mcpRegistry = McpRegistry, deferMcp = false } = {}) {
   const browser = createBrowserTool()
+  const batch = createToolBatch()
   const state = {
     initialized: false,
     tools: [],
@@ -2519,16 +2522,18 @@ export function createToolRegistry({ mcpRegistry = McpRegistry, deferMcp = false
       if (config.tool?.sources?.builtin !== false) {
         tools.push(...builtinTools(config))
         if (config.tool?.browser?.enabled !== false) tools.push(browser)
+        tools.push(batch)
         tools.push({
           name: 'tool_search',
-          description: 'Find MCP tools by task, capability or exact name. Returns schemas and enables matching tools for this turn; it never runs them or grants permission.',
+          description: 'Find tools by task, capability or exact name, including MCP integrations and detailed builtin usage. Returns schemas and instructions and enables matching tools for this turn; never runs them or grants permission.',
           inputSchema: { type: 'object', properties: { query: { type: 'string', minLength: 1, maxLength: 1024 }, limit: { type: 'integer', minimum: 1, maximum: 10 } }, required: ['query'], additionalProperties: false },
           async execute(args, ctx) {
             const available = await ToolRegistry.list({ mode: ctx.mode, config: ctx.config, cwd: ctx.cwd })
-            const eligible = available.filter(tool => tool.name.startsWith('mcp_') && (!ctx.allowedToolNames || ctx.allowedToolNames.includes(tool.name)))
+            const eligible = available.filter(tool => tool.name !== 'tool_search' && (!ctx.allowedToolNames || ctx.allowedToolNames.includes(tool.name)))
             const matches = searchToolMetadata(eligible, String(args.query || ''), args.limit)
             ctx.activateTools?.(matches.map(tool => tool.name))
-            return { tools: matches.map(({ score: _score, ...tool }) => tool), activated: typeof ctx.activateTools === 'function', note: 'Discovery does not authorize tool execution; all existing permission gates still apply.' }
+            const found = await Promise.all(matches.map(async ({ score: _score, ...tool }) => ({ ...tool, instructions: /^[a-z0-9_-]+$/i.test(tool.name) ? await loadToolPrompt(`${tool.name}.txt`).catch(() => '') : '' })))
+            return { tools: found, activated: typeof ctx.activateTools === 'function', note: 'Discovery does not authorize tool execution; all existing permission gates still apply.' }
           }
         })
       }

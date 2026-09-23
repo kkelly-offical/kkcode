@@ -1,5 +1,6 @@
 /** Canonical advertising only: aliases stay registered and executable. */
 export const TOOL_ALIASES = Object.freeze({ background_output: 'task_output', task_get: 'task_output', background_cancel: 'task_stop', patch: 'edit', multiedit: 'edit' })
+const DEFERRED_BUILTINS = new Set(['tool_batch', 'sysinfo', 'codesearch', 'http_request', 'websearch', 'webfetch', 'browser', 'notebookedit', 'move', 'copy', 'remove', 'mkdir', 'archive', 'git_status', 'git_info', 'git_snapshot', 'git_restore', 'git_list_snapshots', 'git_apply_patch', 'git_delete_snapshot', 'git_cleanup', 'task_list', 'task_parallel', 'task_output', 'task_stop'])
 
 function terms(value) {
   const text = String(value || '').slice(0, 8192).replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase()
@@ -39,9 +40,12 @@ export function modelToolSurface(tools, { activated = new Set(), config = {}, al
   const eligible = allowedTools ? tools.filter(tool => allowedTools.includes(tool.name)) : tools
   const threshold = Math.max(1, Number(config.tool?.discovery?.threshold ?? 24))
   const deferred = eligible.some(tool => tool.name === 'tool_search') && config.tool?.discovery?.enabled !== false && eligible.filter(tool => tool.name.startsWith('mcp_')).length >= threshold
+  const deferBuiltins = eligible.some(tool => tool.name === 'tool_search') && config.tool?.discovery?.enabled !== false
   return eligible.filter(tool => {
     if (config.tool?.legacy_aliases !== true && TOOL_ALIASES[tool.name]
       && eligible.some(other => other.name === TOOL_ALIASES[tool.name])) return false
-    return !deferred || !tool.name.startsWith('mcp_') || activated.has(tool.name)
+    if (activated.has(tool.name)) return true
+    if (deferBuiltins && DEFERRED_BUILTINS.has(tool.name)) return false
+    return !deferred || !tool.name.startsWith('mcp_')
   })
 }

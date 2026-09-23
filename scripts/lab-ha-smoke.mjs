@@ -62,6 +62,16 @@ try {
     await store.put(`token:${identityHash(token)}`, { sessionId: id, kind, account, expires: Date.now() + 600000 })
   }
   const a = await startNode('node-a'), b = await startNode('node-b')
+  const sshBook = (node, body) => gatewayFetch(node.origin + '/api/v1/connections/ssh', { method: body ? 'POST' : 'GET', headers: { Host: 'localhost', 'Content-Type': 'application/json', Authorization: `Bearer ${clientToken}` }, ...(body ? { body: JSON.stringify(body) } : {}) })
+  assert.deepEqual(await (await sshBook(a)).json(), { revision: 0, items: [] })
+  const profile = { id: 'qa-ssh', name: 'QA SSH metadata only', host: '127.0.0.1', username: 'qa' }
+  const saved = await sshBook(a, { revision: 0, connection: profile }); assert.equal(saved.status, 200)
+  assert.equal((await (await sshBook(b)).json()).items[0].name, profile.name)
+  const concurrent = await Promise.all([a, b].map((node, index) => sshBook(node, { revision: 1, connection: { ...profile, name: `concurrent-${index}` } })))
+  assert.deepEqual(concurrent.map(response => response.status).sort(), [200, 409])
+  assert.equal((await sshBook(b, { revision: 2, connection: { ...profile, privateKey: 'never-accepted' } })).status, 400)
+  assert.equal(JSON.stringify(await store.list('ssh-profiles:')).includes('privateKey'), false)
+  console.log('PASS: account SSH metadata crosses two real PostgreSQL-backed gateways; concurrent revisions conflict and credential fields are rejected.')
   const first = await device(a)
   const routed = await rpc(b, 'before-crash'); assert.equal(routed.status, 200); assert.equal((await routed.json()).result.through, 'node-a')
   // Terminate only connections to this explicitly created acceptance database.

@@ -21,15 +21,22 @@ internal fun modeLabel(value: String) = MODE_CHOICES.firstOrNull { it.id == if(v
     state.managedSession?.let { original ->
         val session = state.sessions.find { it.optString("id") == original.optString("id") } ?: original
         var title by remember(session.optString("id")) { mutableStateOf(session.optString("title")) }
+        var action by remember(session.optString("id")) { mutableStateOf("menu") }
         val running = if(session.optString("id") == state.selected) state.busy else session.optString("status").startsWith("running")
-        AlertDialog(onDismissRequest = { if(!state.savingSession) state.managedSession = null }, title = { Text("管理对话") }, text = {
+        AlertDialog(onDismissRequest = { if(!state.savingSession) state.managedSession = null }, title = { Text(if(action == "rename") "改名" else if(action == "delete") "删除对话？" else "对话") }, text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(title, { if(it.codePointCount(0, it.length) <= 120) title = it }, label = { Text("对话名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                TextButton(enabled = !state.savingSession && !running, onClick = { state.updateSession(session, JSONObject().put("archived", !session.optBoolean("archived"))) }) { Text(if(session.optBoolean("archived")) "恢复到对话列表" else "归档对话") }
-                if(session.optString("id") == state.selected && !session.optBoolean("archived")) TextButton(enabled = !state.savingSession && !running, onClick = { state.managedSession = null; state.rewindTarget = ChatItem("", "user", "") }) { Text("回退上一轮对话") }
-                Text(if(running) "任务进行中，停止后可回退或归档。" else "归档保留完整历史，可随时恢复。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if(action == "menu") {
+                    TextButton(enabled = !state.savingSession, onClick = { action = "rename" }, modifier = Modifier.fillMaxWidth()) { Text("改名") }
+                    TextButton(enabled = !state.savingSession && !running, onClick = { state.updateSession(session, JSONObject().put("archived", !session.optBoolean("archived"))) }, modifier = Modifier.fillMaxWidth()) { Text(if(session.optBoolean("archived")) "恢复" else "归档") }
+                    TextButton(enabled = !state.savingSession && !running, onClick = { action = "delete" }, modifier = Modifier.fillMaxWidth()) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                    if(running) Text("任务进行中，停止后可归档或删除。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else if(action == "rename") OutlinedTextField(title, { if(it.codePointCount(0, it.length) <= 120) title = it }, label = { Text("对话名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                else Text("从所有客户端列表中删除这段对话，不删除工作区文件。被控电脑保留私密恢复副本。")
             }
-        }, confirmButton = { TextButton(enabled = !state.savingSession && title.isNotBlank(), onClick = { state.updateSession(session, JSONObject().put("title", title.trim()).put("expectedTitleRevision", session.optInt("titleRevision"))) }) { Text("保存名称") } }, dismissButton = { TextButton(enabled = !state.savingSession, onClick = { state.managedSession = null }) { Text("取消") } })
+        }, confirmButton = {
+            if(action == "rename") TextButton(enabled = !state.savingSession && title.isNotBlank(), onClick = { state.updateSession(session, JSONObject().put("title", title.trim()).put("expectedTitleRevision", session.optInt("titleRevision"))) }) { Text("保存名称") }
+            else if(action == "delete") TextButton(enabled = !state.savingSession && !running, onClick = { state.deleteConversation(session) }) { Text("确认删除", color = MaterialTheme.colorScheme.error) }
+        }, dismissButton = { TextButton(enabled = !state.savingSession, onClick = { if(action == "menu") state.managedSession = null else action = "menu" }) { Text(if(action == "menu") "关闭" else "返回") } })
     }
     state.rewindTarget?.let { target ->
         AlertDialog(onDismissRequest = { if(!state.savingSession) state.rewindTarget = null }, title = { Text("回退对话？") }, text = { Column {

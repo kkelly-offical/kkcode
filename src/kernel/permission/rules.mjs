@@ -13,6 +13,7 @@ const TOOL_CAPABILITIES = {
   glob: "search",
   grep: "search",
   tool_search: "search",
+  tool_batch: "read",
   codesearch: "search",
   sysinfo: "read",
   websearch: "network",

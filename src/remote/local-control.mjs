@@ -23,7 +23,7 @@ async function listening(endpoint) {
 }
 
 /** Caller holds the remote lifecycle lock. Never signal a PID from a stale file. */
-export async function createRemoteControl({ root = userRootDir(), onStop = () => {} } = {}) {
+export async function createRemoteControl({ root = userRootDir(), onStop = () => {}, onPair } = {}) {
   const endpoint = endpointFor(root), token = randomBytes(32).toString('base64url'), connections = new Set()
   if (process.platform !== 'win32') {
     const directory = path.dirname(endpoint)
@@ -43,7 +43,7 @@ export async function createRemoteControl({ root = userRootDir(), onStop = () =>
     socket.on('error', () => {})
     socket.setTimeout(3000, () => socket.destroy())
     let buffer = '', handled = false
-    socket.on('data', chunk => {
+    socket.on('data', async chunk => {
       if (handled) return
       buffer += chunk.toString('utf8')
       if (Buffer.byteLength(buffer) > 1024) { handled = true; socket.destroy(); return }
@@ -52,8 +52,11 @@ export async function createRemoteControl({ root = userRootDir(), onStop = () =>
       let request
       try { request = JSON.parse(buffer.slice(0, buffer.indexOf('\n'))) } catch { socket.destroy(); return }
       const candidate = Buffer.from(typeof request.token === 'string' ? request.token : ''), expected = Buffer.from(token)
-      if (candidate.length !== expected.length || !timingSafeEqual(candidate, expected) || !['status', 'stop'].includes(request.command)) { socket.end('{"ok":false}\n'); return }
-      socket.end(JSON.stringify({ ok: true, pid: process.pid }) + '\n', () => {
+      if (candidate.length !== expected.length || !timingSafeEqual(candidate, expected) || !['status', 'stop', ...(typeof onPair === 'function' ? ['pair'] : [])].includes(request.command)) { socket.end('{"ok":false}\n'); return }
+      if (request.command === 'pair') socket.setTimeout(15000, () => socket.destroy())
+      let extra = {}
+      try { if (request.command === 'pair') extra = await onPair(request.params || {}) } catch { socket.end('{"ok":false}\n'); return }
+      socket.end(JSON.stringify({ ok: true, pid: process.pid, ...extra }) + '\n', () => {
         if (request.command === 'stop' && !stopping) { stopping = true; void Promise.resolve().then(onStop).catch(() => {}) }
       })
     })
@@ -71,19 +74,19 @@ export async function createRemoteControl({ root = userRootDir(), onStop = () =>
   }
 }
 
-export async function requestRemoteControl({ endpoint, token }, command, { timeout = 3000 } = {}) {
-  if (typeof endpoint !== 'string' || typeof token !== 'string' || !['status', 'stop'].includes(command)) throw failure('No authenticated local remote hub is recorded')
+export async function requestRemoteControl({ endpoint, token }, command, { timeout = 3000, params } = {}) {
+  if (typeof endpoint !== 'string' || typeof token !== 'string' || !['status', 'stop', 'pair'].includes(command)) throw failure('No authenticated local remote hub is recorded')
   return new Promise((resolve, reject) => {
     const socket = createConnection(endpoint)
     let buffer = '', settled = false
     const finish = (error, result) => { if (settled) return; settled = true; socket.destroy(); error ? reject(error) : resolve(result) }
-    socket.once('connect', () => socket.write(JSON.stringify({ token, command }) + '\n'))
+    socket.once('connect', () => socket.write(JSON.stringify({ token, command, ...(params ? { params } : {}) }) + '\n'))
     socket.once('error', () => finish(failure('The recorded local remote hub is no longer reachable')))
     socket.once('end', () => { if (!settled) finish(failure('The local remote hub closed without acknowledging the request')) })
     socket.setTimeout(timeout, () => finish(failure('The local remote hub did not respond in time')))
     socket.on('data', chunk => {
       buffer += chunk.toString('utf8')
-      if (Buffer.byteLength(buffer) > 1024) return finish(failure('Invalid local remote control response'))
+      if (Buffer.byteLength(buffer) > 4096) return finish(failure('Invalid local remote control response'))
       if (!buffer.includes('\n')) return
       try {
         const result = JSON.parse(buffer.slice(0, buffer.indexOf('\n')))

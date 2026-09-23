@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { buildSystemPromptBlocks } from "../src/kernel/session/system-prompt.mjs"
+import { buildSystemPromptBlocks, toolDescriptions } from "../src/kernel/session/system-prompt.mjs"
 
 test("task tool prompt encodes fork-context and no-peek delegation contract", async () => {
   const prompt = await buildSystemPromptBlocks({
@@ -14,9 +14,11 @@ test("task tool prompt encodes fork-context and no-peek delegation contract", as
     language: "en"
   })
 
-  assert.match(prompt.text, /Fresh Session vs Forked Context vs Continued Session/)
-  assert.match(prompt.text, /execution_mode="fork_context"/)
-  assert.match(prompt.text, /Stay local when:/)
-  assert.match(prompt.text, /Do NOT "peek" at unfinished delegated work/)
-  assert.match(prompt.text, /Do NOT fabricate completion/)
+  assert.match(prompt.text, /tool_search for detailed guidance/)
+  const instructions = await toolDescriptions([{ name: 'task' }])
+  assert.match(instructions, /Fresh Session vs Forked Context vs Continued Session/)
+  assert.match(instructions, /execution_mode="fork_context"/)
+  assert.match(instructions, /Stay local when:/)
+  assert.match(instructions, /Do NOT "peek" at unfinished delegated work/)
+  assert.match(instructions, /Do NOT fabricate completion/)
 })

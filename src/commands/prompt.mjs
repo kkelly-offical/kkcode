@@ -1,9 +1,11 @@
 import path from "node:path"
 import { readdir, readFile } from "node:fs/promises"
 import { Command } from "commander"
+import { fileURLToPath } from 'node:url'
+import { inspectPrompt } from '../kernel/index.mjs'
 
-const SESSION_PROMPT_DIR = path.resolve("src/kernel/session/prompt")
-const TOOL_PROMPT_DIR = path.resolve("src/kernel/tool/prompt")
+const SESSION_PROMPT_DIR = fileURLToPath(new URL('../kernel/session/prompt/', import.meta.url))
+const TOOL_PROMPT_DIR = fileURLToPath(new URL('../kernel/tool/prompt/', import.meta.url))
 
 async function listFiles(dir) {
   const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
@@ -12,6 +14,9 @@ async function listFiles(dir) {
 
 export function createPromptCommand() {
   const cmd = new Command("prompt").description("inspect prompt placement and files")
+  cmd.command('inspect').description('inspect the last actual request budget and prompt provenance, without prompt text')
+    .requiredOption('--session <id>', 'local session identifier')
+    .action(async options => { console.log(JSON.stringify(await inspectPrompt(options.session), null, 2)) })
 
   cmd
     .command("list")
@@ -32,7 +37,9 @@ export function createPromptCommand() {
     .requiredOption("--type <type>", "session|tool")
     .requiredOption("--name <name>", "prompt filename")
     .action(async (options) => {
+      if (!['session', 'tool'].includes(options.type)) throw new Error('Prompt type must be session or tool')
       const dir = options.type === "session" ? SESSION_PROMPT_DIR : TOOL_PROMPT_DIR
+      if (!/^[a-z0-9_-]+\.txt$/i.test(options.name)) throw new Error('Use a prompt filename from prompt list')
       const file = path.join(dir, options.name)
       const content = await readFile(file, "utf8")
       console.log(content.trim())

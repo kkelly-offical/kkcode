@@ -1,5 +1,5 @@
-Search the metadata of available MCP tools before using an unfamiliar integration.
-Large MCP catalogs are deferred: call tool_search with a task description or an
+Search available tools and detailed builtin guidance before using an unfamiliar capability.
+Optional builtin tools and large MCP catalogs are deferred: call tool_search with a task description or an
 exact tool name to retrieve a small number of relevant schemas. The returned
 tools become available on the next model request in this turn. Search again if
 you need another integration; results are not shared across concurrent turns.

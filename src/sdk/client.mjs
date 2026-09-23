@@ -1,4 +1,5 @@
 import { PROTOCOL_VERSION } from '../protocol/index.mjs'
+import { eventsStreamPath, streamSessionEvents } from './event-stream.mjs'
 export { PROTOCOL_VERSION }
 
 const pause = (milliseconds, signal) => new Promise((resolve, reject) => {
@@ -51,7 +52,20 @@ export class DeviceClient {
     }
   }
   listDevices(options) { return this.http('/api/v1/devices', options) }
+  call(method, params, options) { return this.request(method, params, options) }
   profile(options) { return this.http('/api/v1/profile', options) }
+  stream(sessionId, { after = 0, signal, onEvent, onMeta, onGap } = {}) {
+    return streamSessionEvents({
+      url: this.url + eventsStreamPath({ gateway: this.gateway, deviceId: this.deviceId || '', sessionId, after }),
+      signal, onEvent, onMeta, onGap,
+      fetchImpl: async (url, options) => {
+        const make = () => this.fetch(url, { ...options, redirect: 'error', headers: { ...options.headers, ...this.headers, ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) } })
+        let response = await make()
+        if (response.status === 401 && (this.refreshToken || this.gateway)) { await response.body?.cancel(); await this.refresh({ signal }); response = await make() }
+        return response
+      }
+    })
+  }
   async *events(sessionId, { after = 0, signal, interval = 1000 } = {}) {
     let cursor = after
     while (!signal?.aborted) {

@@ -70,3 +70,25 @@ test('SDK cancellation stops retry backoff and replay gaps request a snapshot re
   const replay = new DeviceClient({ url: 'https://device.example', fetch: async () => json({ result: { gap: true, earliest: 42, events: [] } }) })
   await assert.rejects(replay.events('session').next(), error => error.code === 'replay_gap' && error.after === 42)
 })
+
+test('SDK stream refreshes authentication, dispatches gaps and releases its reader on callback failure', async () => {
+  let refreshed = 0, cancelled = 0
+  const rows = [], gaps = []
+  const client = new DeviceClient({ url: 'https://device.example', token: 'expired', refreshToken: 'refresh', fetch: async (url, options) => {
+    if (url.endsWith('/auth/refresh')) { refreshed++; return json({ access_token: 'fresh', refresh_token: 'next' }) }
+    if (options.headers.Authorization !== 'Bearer fresh') return json({}, 401)
+    return new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('event: replay.gap\ndata: {"earliest":4}\n\nevent: tool.finish\ndata: {"seq":4}\n\n')) }, cancel() { cancelled++ } }), { headers: { 'content-type': 'text/event-stream' } })
+  } })
+  await assert.rejects(client.stream('test', { onGap: gap => { gaps.push(gap) }, onEvent: event => { rows.push(event); throw new Error('consumer stopped') } }), /consumer stopped/)
+  assert.equal(refreshed, 1); assert.equal(cancelled, 1); assert.equal(rows[0].seq, 4); assert.equal(gaps[0].earliest, 4)
+})
+
+test('SDK stream cancellation closes an idle reader without waiting for another event', async () => {
+  let cancelled = false
+  const controller = new AbortController()
+  const client = new DeviceClient({ url: 'https://device.example', fetch: async () => new Response(new ReadableStream({ cancel() { cancelled = true } }), { headers: { 'content-type': 'text/event-stream' } }) })
+  const operation = client.stream('test', { signal: controller.signal })
+  await new Promise(resolve => setTimeout(resolve, 10)); controller.abort(new Error('switched device'))
+  await assert.rejects(operation, /switched device/)
+  assert.equal(cancelled, true)
+})
