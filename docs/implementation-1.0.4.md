@@ -1,6 +1,6 @@
 # KK Code 1.0.4 Preview 实施与验收记录
 
-状态：开发中，尚未发布。目标技术版本：`1.0.4-preview.0`；稳定版 `1.0.3`
+状态：实现与候选验收完成，产物已准备，尚未公开发布。技术版本：`1.0.4-preview.0`；稳定版 `1.0.3`
 及其标签不变。下列未打勾事项不能被描述为已交付。
 
 ## 本轮范围
@@ -16,7 +16,7 @@
 - [x] MCP OAuth 与 ACP 适配，保持现有 MCP/CLI/headless 契约。
 - [x] 受控浏览器开发能力、工具组合及操作恢复/无进展治理的验证。
 - [x] README、子文档、版本与实际验收记录更新。
-- [ ] 全量 Node / Web / Android / 打包与跨平台验收，生成 Preview 产物。
+- [x] 全量 Node / Web / Android / 打包与跨平台验收，生成 Preview 产物。
 
 ## 安全与兼容边界
 
@@ -108,14 +108,15 @@
 
 ### 交付边界
 
-- 待最终 Linux 发布门禁、Windows/macOS 专用分支 CI、最终签名 APK/容器验收。
+- 本轮 Linux 发布门禁、Windows/macOS 专用分支 CI、最终签名 APK/容器验收已完成。
 - 公共 npm preview / GitHub prerelease、main 合并以及生产网关升级均尚未执行。
 - 生产 SSO 租户策略、实体手机 OEM 行为、停电/OS 杀进程恢复仍不是本次夹具测试
   能证明的事项。MCP OAuth 不含 Web/App 回调代理；ACP 不含全部 IDE 可选能力。
 
-### 最终候选门禁（持续补充，不代表公开发布）
+### 最终候选门禁（已完成，不代表公开发布）
 
-代码验收分支：`acceptance/1.0.4-preview.0`。生产实现提交 `9350b97`；main
+代码验收分支：`acceptance/1.0.4-preview.0`。最终验收提交 `a9cdb77`（生产实现
+`9350b97`，另含 SDK nullable 类型及跨平台夹具修正）；main
 仍为 `8af9d29`，没有合并或更新公开 npm/GitHub 标签。
 
 | 验收 | 当前结果 |
@@ -124,6 +125,7 @@
 | Node coverage | 2947 tests，2945 pass，0 fail，2 平台条件 skip；行 82.99%，分支 79.36%，函数 80.98% |
 | 单独 e2e 复跑 | 33 / 33，包括 headless JSONL 契约 |
 | Web 三组验收 | 真实双客户端 + 功能契约 + 154 控件主题几何检查通过 |
+| 跨平台 CI | macOS Node 22、Windows Node 22、Linux Node 22/24：全部通过 |
 | Android JVM | 61 项，0 失败 |
 | Android 原生 UI / HTTP | 36 项通过；另有真实 SSH + ViewModel 自动配对恢复集成通过 |
 | 正式签名 APK | `10007`，v2/v3、原项目证书、不可调试、覆盖安装/启动通过 |
@@ -146,4 +148,15 @@ APK SHA-256：`6036dcd054b0856fde11042f142afddea6231f285fa6e551c71754a6af7c44ea`
 [上一轮跨平台](https://github.com/kkelly-offical/kkcode/actions/runs/35861249529)
 的 macOS、Linux 22/24 已通过；Windows 发布门禁通过，最后 Web 的检出文件
 字节断言被全局 autocrlf 转成 CRLF。现仅在专用临时仓库固定 autocrlf/eol，
-不修改用户设置、不跳过字节检查，最终全平台矩阵正在重跑。
+不修改用户设置、不跳过字节检查。
+
+最终 `a9cdb77` 的 [四平台矩阵 35862885455](https://github.com/kkelly-offical/kkcode/actions/runs/35862885455)
+全部成功；同提交的 [三语言 CodeQL 35862887053](https://github.com/kkelly-offical/kkcode/actions/runs/35862887053)
+全部成功。SDK 严格消费、完整安装包扫描与 Web 三组验收均在矩阵执行。
+后续本次提交仅补文档回执，不改变已验收的运行时代码/构建配置。
+
+本机交付目录：`test-results/preview-1.0.4/`，包含
+`kkelly-offical-kkcode-1.0.4-preview.0.tgz`、`kkcode-android-1.0.4-preview.0.apk`
+和 `android-update.json`；APK 散列/证书如上。容器标签是本机
+`kkcode-gateway:1.0.4-preview.0`。安装包内的验收记录对应打包时刻，完整收尾回执
+以本仓库为准。**没有创建版本标签、发布 npm/GitHub Release、合并 main 或部署生产。**

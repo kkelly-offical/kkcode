@@ -1,6 +1,6 @@
 # 文档导航（1.0.3 / 1.0.2 Fix）
 
-## 当前开发候选：1.0.4 Preview
+## 当前已验收候选：1.0.4 Preview
 
 - [Preview 说明](release-1.0.4-preview.0.md)、[实施与验收](implementation-1.0.4.md)：尚未公开发布，稳定标签不变。
 - [SSH 与账号设备](ssh-account-devices.md)：Android 直连、仅元数据同步、断线排空任务。

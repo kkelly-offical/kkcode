@@ -23,7 +23,7 @@ kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同�
 与 [1.0.3 验收／发布回执](docs/implementation-1.0.3.md)。
 功能使用方式见 [1.0.2 使用说明](docs/release-1.0.2.md)。
 
-当前分支正在验收 **`1.0.4-preview.0`**（尚未公开发布）：Web/Android 上下文用量、
+当前分支已完成 **`1.0.4-preview.0` 候选验收**（尚未公开发布）：Web/Android 上下文用量、
 精简的改名/归档/删除菜单、并列设备切换、账号 SSH 地址簿，以及 Android 断线不
 中断在途任务的 SSH 宿主。**SSH 仅 Android 直连，Web 不增加 SSH 代连。**
 同时补齐提示词预算/指纹、强类型 SDK、MCP OAuth、ACP 和受控 Browser/Harness。
