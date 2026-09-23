@@ -112,3 +112,38 @@
 - 公共 npm preview / GitHub prerelease、main 合并以及生产网关升级均尚未执行。
 - 生产 SSO 租户策略、实体手机 OEM 行为、停电/OS 杀进程恢复仍不是本次夹具测试
   能证明的事项。MCP OAuth 不含 Web/App 回调代理；ACP 不含全部 IDE 可选能力。
+
+### 最终候选门禁（持续补充，不代表公开发布）
+
+代码验收分支：`acceptance/1.0.4-preview.0`。生产实现提交 `9350b97`；main
+仍为 `8af9d29`，没有合并或更新公开 npm/GitHub 标签。
+
+| 验收 | 当前结果 |
+| --- | --- |
+| `npm run release:verify` | 本机通过：lint、导入环、内核/Web 类型、Web 构建、秘密扫描、coverage、e2e、全新目录 npm 安装 |
+| Node coverage | 2947 tests，2945 pass，0 fail，2 平台条件 skip；行 82.99%，分支 79.36%，函数 80.98% |
+| 单独 e2e 复跑 | 33 / 33，包括 headless JSONL 契约 |
+| Web 三组验收 | 真实双客户端 + 功能契约 + 154 控件主题几何检查通过 |
+| Android JVM | 61 项，0 失败 |
+| Android 原生 UI / HTTP | 36 项通过；另有真实 SSH + ViewModel 自动配对恢复集成通过 |
+| 正式签名 APK | `10007`，v2/v3、原项目证书、不可调试、覆盖安装/启动通过 |
+| 真实 SSH | 关闭所有连接时继续执行；原生自动重新配对恢复同会话；最终 75 秒排空退出；测试模型服务已停止 |
+| 双网关 + PostgreSQL | 地址簿 CAS、故障恢复、跨节点刷新/撤销通过；专用数据库已清理 |
+| 生产依赖审计 | 官方 npm registry，0 漏洞；本机镜像 registry 无 audit 接口，未把它的 404 算作通过 |
+| npm 不可变产物校验 | 539 个文件，独立安装后秘密扫描通过 |
+| 容器 | `kkcode-gateway:1.0.4-preview.0` 构建与版本入口检查通过；未推镜像仓库或部署生产 |
+
+APK SHA-256：`6036dcd054b0856fde11042f142afddea6231f285fa6e551c71754a6af7c44ea`。
+证书 SHA-256：`cf75774a4d87ba1ccc4a811f271bd301076cf6beefd7432a3cb30231164be5d1`。
+更新清单 `android-update.json` 已生成，GitHub 更新源尚未有这份候选公开资产。
+
+[9350b97 的三语言 CodeQL](https://github.com/kkelly-offical/kkcode/actions/runs/35861249850)
+已全部成功（Kotlin 为真实构建）。候选与 main 的开放告警编号完全相同，共 17 项：
+19、20、21、30–35、37、39–41、43、54–56。它们沿用
+[历史逐类复核](security-review-1.0.2.md)，没有关闭查询、排除生产目录或批量 dismiss。
+“扫描执行成功”不是“零告警”，也不是生产安全认证。
+
+[上一轮跨平台](https://github.com/kkelly-offical/kkcode/actions/runs/35861249529)
+的 macOS、Linux 22/24 已通过；Windows 发布门禁通过，最后 Web 的检出文件
+字节断言被全局 autocrlf 转成 CRLF。现仅在专用临时仓库固定 autocrlf/eol，
+不修改用户设置、不跳过字节检查，最终全平台矩阵正在重跑。

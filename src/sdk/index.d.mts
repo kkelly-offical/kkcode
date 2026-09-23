@@ -18,7 +18,7 @@ export interface TurnOptions {
   allowQuestion?: boolean; steerSource?: (() => unknown);
 }
 export interface TurnResult { sessionId: string; reply?: string; status?: string; context?: import('./client.mjs').ContextUsage | null; usage?: Record<string, number>; [key: string]: unknown }
-export interface KernelSession { id: string; cwd?: string; title?: string; status?: string; model?: string; context?: import('./client.mjs').ContextUsage; [key: string]: unknown }
+export interface KernelSession { id: string; cwd?: string; title?: string; status?: string; model?: string; context?: import('./client.mjs').ContextUsage | null; [key: string]: unknown }
 export interface Kernel {
   readonly cwd: string; readonly configState: Record<string, unknown>; readonly trustState: { trusted?: boolean };
   executeTurn(options: TurnOptions): Promise<TurnResult>;

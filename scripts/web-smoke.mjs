@@ -14,6 +14,10 @@ const executeFile = promisify(execFile), workspace = path.join(temp, 'workspace'
 await mkdir(workspace)
 const git = args => executeFile('git', ['-c', `core.hooksPath=${path.join(temp, 'disabled-hooks')}`, '-c', 'commit.gpgsign=false', ...args], { cwd: workspace })
 await git(['init', '-b', 'main'])
+// Only this disposable fixture: make byte-for-byte worktree assertions
+// independent of the runner's global Windows autocrlf preference.
+await git(['config', '--local', 'core.autocrlf', 'false'])
+await git(['config', '--local', 'core.eol', 'lf'])
 await writeFile(path.join(workspace, 'README.md'), 'Browser acceptance fixture\n')
 await git(['add', 'README.md'])
 await git(['-c', 'user.name=KK Code UI Test', '-c', 'user.email=24042203053@ecupl.edu.cn', 'commit', '-m', 'Browser acceptance fixture'])
