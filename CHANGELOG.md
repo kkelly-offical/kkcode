@@ -2,6 +2,9 @@
 
 ## 1.0.4 — 2026-09-24
 
+- Fix an audit-lock stale-owner race exposed by the Windows release gate:
+  atomically publish lock metadata, serialize/revalidate recovery, and refuse
+  appends after unreadable, malformed or short tail reads instead of forking history.
 - Add a native OpenAI Responses adapter: stateless text/image input, SSE,
   reasoning summaries, governed function calls/results, usage and citations,
   scoped encrypted continuity and assistant phase. Keep Chat/Anthropic defaults.

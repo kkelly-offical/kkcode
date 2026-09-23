@@ -14,6 +14,8 @@
   私有续接数据不发到 Web/App，也不跨模型/渠道/凭据重用；工具仍受原权限与审计约束。
 - 修复上下文缓存把长工具结果截短再估算的问题；修复 SDK 省略 session/model/provider
   时不能按已声明的可选参数正常启动/续接的问题，保持 headless JSONL 契约不变。
+- 修复发布门禁发现的多进程审计锁竞争：过期锁回收不能删除新持有者的锁；
+  损坏、不可读或短读的审计尾部会拒绝续写，不再悄悄从空链开始。
 - 音视频、OpenAI 托管工具、Background/WebSocket 不在本次 Responses 支持范围。
   配置、边界与故障排查见 [Responses API 指南](responses-api.md)。
 

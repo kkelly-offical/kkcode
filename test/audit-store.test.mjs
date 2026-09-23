@@ -5,6 +5,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
 import { promisify } from "node:util"
+import fs from 'node:fs'
+import { syncBuiltinESMExports } from 'node:module'
 import {
   configureAuditStore, readAuditStore, appendAuditEntry,
   listAuditEntries, auditStats, exportAuditEntries, verifyAuditChain
@@ -168,8 +170,82 @@ describe("audit-store", () => {
     })
     await Promise.all(children)
     const result = await verifyAuditChain()
-    assert.equal(result.ok, true)
+    assert.equal(result.ok, true, JSON.stringify(result.errors))
     assert.equal(result.entries, 24)
+  })
+
+  it('never removes a newly acquired live lock using a stale owner snapshot', async t => {
+    const file = path.join(tmpDir, 'audit-log.jsonl.lock')
+    const io = { read: fs.promises.readFile, write: fs.promises.writeFile, unlink: fs.promises.unlink }
+    await io.write(file, JSON.stringify({ token: 'dead-snapshot', pid: 2147483646, createdAt: Date.now() }))
+    let replaced = false, released = false, stolen = false
+    t.mock.method(fs.promises, 'readFile', async (target, ...args) => {
+      const content = await io.read(target, ...args)
+      if(target === file) {
+        const owner = JSON.parse(String(content))
+        if(owner.token === 'dead-snapshot' && !replaced) {
+          // Another recovery actor replaces the dead owner's inode before this
+          // actor checks liveness. No sleeps or random process timing needed.
+          await io.unlink(file)
+          await io.write(file, JSON.stringify({ token: 'live-replacement', pid: process.pid, createdAt: Date.now() }))
+          replaced = true
+        } else if(owner.token === 'live-replacement') {
+          released = true
+          await io.unlink(file) // the simulated live owner voluntarily releases
+        }
+      }
+      return content
+    })
+    t.mock.method(fs.promises, 'unlink', async (target, ...args) => {
+      if(target === file && replaced && !released) {
+        const owner = await io.read(file, 'utf8').then(JSON.parse).catch(() => null)
+        if(owner?.token === 'live-replacement') stolen = true
+      }
+      return io.unlink(target, ...args)
+    })
+    syncBuiltinESMExports()
+    try { await appendAuditEntry({ type: 'recovery-race' }) }
+    finally { t.mock.restoreAll(); syncBuiltinESMExports() }
+    assert.equal(replaced, true)
+    assert.equal(stolen, false, 'a stale recovery actor unlinked another live owner')
+    assert.equal(released, true, 'the writer must wait for the real owner to release')
+    assert.equal((await verifyAuditChain()).ok, true)
+  })
+
+  it('refuses to fork a chain when its existing tail is malformed or unreadable', async t => {
+    await appendAuditEntry({ type: 'valid-head' })
+    const file = path.join(tmpDir, 'audit-log.jsonl'), original = await readFile(file, 'utf8')
+    const ioOpen = fs.promises.open
+    t.mock.method(fs.promises, 'open', async (target, flags, ...args) => {
+      if(target === file && flags === 'r') throw Object.assign(new Error('fixture read denied'), { code: 'EPERM' })
+      return ioOpen(target, flags, ...args)
+    })
+    syncBuiltinESMExports()
+    try { await assert.rejects(appendAuditEntry({ type: 'must-not-append' }), { code: 'EPERM' }) }
+    finally { t.mock.restoreAll(); syncBuiltinESMExports() }
+    assert.equal(await readFile(file, 'utf8'), original)
+    await writeFile(file, original + '{incomplete tail')
+    await assert.rejects(appendAuditEntry({ type: 'must-not-append' }), SyntaxError)
+    assert.equal(await readFile(file, 'utf8'), original + '{incomplete tail')
+  })
+
+  it('refuses a short tail read instead of treating zero padding as an empty chain', async t => {
+    await appendAuditEntry({ type: 'valid-head' })
+    const file = path.join(tmpDir, 'audit-log.jsonl'), original = await readFile(file, 'utf8')
+    const ioOpen = fs.promises.open
+    t.mock.method(fs.promises, 'open', async (target, flags, ...args) => {
+      const handle = await ioOpen(target, flags, ...args)
+      if(target === file && flags === 'r') {
+        const read = handle.read.bind(handle)
+        t.mock.method(handle, 'read', (buffer, offset, length, position) => read(buffer, offset, Math.max(0, length - 1), position))
+      }
+      return handle
+    })
+    syncBuiltinESMExports()
+    try { await assert.rejects(appendAuditEntry({ type: 'must-not-append' }), /Audit tail changed/) }
+    finally { t.mock.restoreAll(); syncBuiltinESMExports() }
+    assert.equal(await readFile(file, 'utf8'), original)
+    assert.equal((await verifyAuditChain()).ok, true)
   })
 
   it("treats every platform's lock-contention error code as contention, not as fatal", async () => {

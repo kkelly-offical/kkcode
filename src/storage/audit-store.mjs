@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto"
-import { appendFile, open, readFile, rename, stat, unlink } from "node:fs/promises"
+import { appendFile, open, readFile, rename, stat, unlink, mkdir, rmdir, link, writeFile } from "node:fs/promises"
+import os from 'node:os'
 import { redactSensitive } from "../http/identity.mjs"
 import { ensureUserRoot, auditLogPath, auditStorePath } from "./paths.mjs"
 import { readJson } from "./json-store.mjs"
@@ -12,8 +13,6 @@ const DEFAULTS = Object.freeze({
   maxFiles: 5
 })
 const AUDIT_LOCK_TIMEOUT_MS = 10_000
-const AUDIT_LOCK_STALE_MS = 30_000
-const AUDIT_LOCK_INITIALIZE_MS = 1_000
 const AUDIT_CONTENT_KEYS = /^(?:args|body|command|content|messages?|new_string|old_string|output|prompt|response|system|tool_args)$/i
 
 const state = { ...DEFAULTS }
@@ -118,57 +117,54 @@ function processIsAlive(pid) {
     process.kill(pid, 0)
     return true
   } catch (error) {
-    return error?.code === "EPERM"
+    // Only ESRCH proves death; permission/OS errors must fail closed.
+    return error?.code !== "ESRCH"
   }
 }
 
+function validAuditOwner(owner) {
+  return owner && Number.isSafeInteger(owner.pid) && owner.pid > 0 && owner.pid <= 2147483647 && typeof owner.token === 'string' && owner.token.length > 0 && owner.token.length <= 128
+}
+
 async function removeStaleAuditLock(file) {
+  const recovery = `${file}.recovery`
+  try { await mkdir(recovery, { mode: 0o700 }) }
+  catch (error) { if (LOCK_CONTENTION_CODES.has(error?.code)) return false; throw error }
   try {
-    const [metadata, info] = await Promise.all([
-      readFile(file, "utf8").then(JSON.parse).catch(() => null),
-      stat(file)
-    ])
-    const age = Date.now() - info.mtimeMs
-    if (!metadata && age <= AUDIT_LOCK_INITIALIZE_MS) return false
-    // Age alone cannot prove a lock is stale: a slow filesystem operation or
-    // paused process can legitimately hold it for longer than the threshold.
-    // Never unlink a lock whose owning process is still alive.
-    if (metadata && processIsAlive(Number(metadata.pid))) return false
+    const metadata = await readFile(file, "utf8").then(JSON.parse)
+    // Legacy audit locks have no host field. Malformed/foreign metadata is not
+    // proof of death; never evict an initializing or paused live writer by age.
+    if (!validAuditOwner(metadata) || metadata.host && metadata.host !== os.hostname() || processIsAlive(metadata.pid)) return false
+    // Serialize recovery actors and re-read identity under the recovery guard.
+    // A stale snapshot must not authorize unlinking a newly acquired live lock.
+    const current = await readFile(file, 'utf8').then(JSON.parse)
+    if (!validAuditOwner(current) || current.token !== metadata.token || current.pid !== metadata.pid || current.host && current.host !== os.hostname() || processIsAlive(current.pid)) return false
     await unlink(file)
     return true
   } catch (error) {
-    // Windows 上 unlink 一个仍有打开句柄的文件会失败（EPERM/EBUSY）。那说明
-    // 锁确实还被人持有 —— 报告「没清掉」让调用方退避重试，而不是报告「清掉了」
-    // 让它立刻重试 open 而变成忙循环。
-    if (error?.code === "EPERM" || error?.code === "EBUSY" || error?.code === "EACCES") return false
-    return true
-  }
+    return error?.code === 'ENOENT'
+  } finally { await rmdir(recovery).catch(error => { if (error.code !== 'ENOENT') throw error }) }
 }
 
 async function acquireAuditLock() {
   const file = auditLockPath()
   const token = randomUUID()
   const deadline = Date.now() + AUDIT_LOCK_TIMEOUT_MS
-  while (Date.now() <= deadline) {
-    let handle
-    try {
-      handle = await open(file, "wx", 0o600)
-      await handle.writeFile(JSON.stringify({ token, pid: process.pid, createdAt: Date.now() }), "utf8")
-      await handle.close()
-      return { file, token }
-    } catch (error) {
-      await handle?.close().catch(() => {})
-      // 「锁已被别人持有」在不同平台有不同错误码：POSIX 给 EEXIST，而
-      // **Windows 在文件存在且被其他进程持有打开句柄时给 EPERM**（并发 unlink
-      // 进行中时也可能给 EBUSY/EACCES）。只认 EEXIST 的版本会把这些直接抛出去，
-      // 于是多个 kkcode 进程同时写审计日志时，Windows 上会崩而不是重试 ——
-      // 审计链的可靠性恰恰是这个锁存在的理由。
-      if (!LOCK_CONTENTION_CODES.has(error?.code)) throw error
-      if (await removeStaleAuditLock(file)) continue
-      await new Promise((resolve) => setTimeout(resolve, 25))
+  const candidate = `${file}.${process.pid}.${token}.candidate`
+  // Publish fully written metadata atomically. An empty lock can otherwise be
+  // mistaken for an abandoned file while its owner is paused before writing.
+  await writeFile(candidate, JSON.stringify({ token, pid: process.pid, host: os.hostname(), createdAt: Date.now() }), { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+  try {
+    while (Date.now() <= deadline) {
+      try { await link(candidate, file); return { file, token } }
+      catch (error) {
+        if (!LOCK_CONTENTION_CODES.has(error?.code)) throw error
+        if (await removeStaleAuditLock(file)) continue
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      }
     }
-  }
-  throw new Error("audit log lock timed out")
+    throw new Error("audit log lock timed out; inspect the owner/recovery marker before retrying")
+  } finally { await unlink(candidate).catch(() => {}) }
 }
 
 async function releaseAuditLock(lock) {
@@ -252,7 +248,8 @@ async function lastChainedEntry() {
       while (end > 0) {
         const start = Math.max(0, end - 64 * 1024)
         const buffer = Buffer.alloc(end - start)
-        await handle.read(buffer, 0, buffer.length, start)
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, start)
+        if (bytesRead !== buffer.length) throw new Error('Audit tail changed while reading; refusing an unverified append')
         chunks.unshift(buffer)
         const combined = Buffer.concat(chunks)
         let contentEnd = combined.length
@@ -265,8 +262,10 @@ async function lastChainedEntry() {
         }
         end = start
       }
-    } catch {
-      // Try the newest rotated file when the active file is absent or malformed.
+    } catch (error) {
+      // Only absence permits falling back to a rotated file. Treating a short,
+      // malformed or unreadable tail as "no head" silently forks the hash chain.
+      if (error?.code !== 'ENOENT') throw error
     } finally {
       await handle?.close().catch(() => {})
     }

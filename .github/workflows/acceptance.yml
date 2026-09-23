@@ -41,6 +41,9 @@ jobs:
       - run: npm run build:web
       - run: npm run typecheck:web
       - run: npm run release:verify
+      - name: Stress concurrent audit writers on Windows
+        if: matrix.os == 'windows-latest'
+        run: node scripts/audit-concurrency-smoke.mjs
       - run: npx playwright install chromium
       - run: npm run test:web
       - uses: actions/upload-artifact@v7

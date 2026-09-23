@@ -38,6 +38,9 @@ jobs:
       # 让环回归在 CI 矩阵里一眼定位（只加步骤，不改既有门禁）。
       - run: node scripts/check-import-cycles.mjs
       - run: npm run release:verify
+      - name: Stress concurrent audit writers on Windows
+        if: matrix.os == 'windows-latest'
+        run: node scripts/audit-concurrency-smoke.mjs
   web-ui:
     runs-on: ubuntu-latest
     steps:
