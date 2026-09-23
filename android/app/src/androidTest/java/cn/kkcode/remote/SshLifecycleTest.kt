@@ -2,8 +2,12 @@ package cn.kkcode.remote
 
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.core.app.ApplicationProvider
+import androidx.lifecycle.ViewModelStore
+import android.app.Application
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
@@ -39,6 +43,30 @@ class SshLifecycleTest {
             assertFalse(finished.getBoolean("running"))
             assertTrue(finished.toString().contains("SSH_BACKGROUND_COMPLETED"))
             assertEquals(136, finished.getJSONObject("context").getInt("tokens"))
+            connection.close()
+            val app = ApplicationProvider.getApplicationContext<Application>()
+            val state = RemoteState(app, false) { SshConnection(f.getString("commandPrefix")) }
+            val models = ViewModelStore(); models.put("ssh-recovery", state)
+            val oldAutoConnect = state.autoConnect
+            try {
+                state.preference("autoConnect", true)
+                state.fingerprint = f.getString("fingerprint"); state.trustSshKey(f.getString("host"), "22", f.getString("username"))
+                state.connectSsh(f.getString("host"), "22", f.getString("username"), "", f.getString("privateKey"), "Native SSH recovery fixture", true, f.getInt("remotePort")).join()
+                assertTrue("Native ViewModel connected", state.connected)
+                state.cwd = f.getString("workspace"); state.newChat().join()
+                val activeId = state.selected
+                state.send("SSH_DETACH_SLOW automatic recovery").join()
+                withTimeout(10000) { while(!state.busy) delay(50) }
+                val expiredClient = state.api!!
+                expiredClient.call("/api/v1/auth/logout", JSONObject())
+                state.resumeSshConnection(force = true)
+                withTimeout(15000) { while(state.api === expiredClient || state.selected != activeId || !state.busy) delay(50) }
+                withTimeout(30000) { while(state.busy || state.messages.none { it.text.contains("SSH_BACKGROUND_COMPLETED") }) delay(100) }
+                assertEquals(activeId, state.selected)
+            } finally {
+                state.sshProfiles.find { it.optString("id") == state.selectedSsh }?.let { state.forgetSsh(it).join() }
+                state.preference("autoConnect", oldAutoConnect); models.clear()
+            }
         } finally { connection.close(); file.delete() }
     }
 }

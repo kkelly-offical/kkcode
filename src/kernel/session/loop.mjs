@@ -42,6 +42,7 @@ import { toolOutputBudget, truncationNotice } from "../tool/output-budget.mjs"
 import { requestContextBudget } from './context-budget.mjs'
 import { promptReport } from './prompt-report.mjs'
 import { createProgressGuard } from './progress-guard.mjs'
+import { resolveModelCapabilities } from '../provider/model-catalog.mjs'
 
 // 每条 tool_result 进入活动上下文的字符上限。0.6.3 之前是硬编码 3000 ——
 // 一个 268 行的普通源文件有 12494 字符，模型只能看到四分之一，而且不知道
@@ -344,11 +345,12 @@ async function processTurnLoopInRuntime({
   const turnId = newId("turn")
   const skillToolPolicy = createSkillToolPolicy(toolContext.skillAllowedTools, toolContext.skillToolGroups)
   const activatedTools = new Set()
+  const toolCallingAvailable = (await resolveModelCapabilities(configState, providerType, model)).capabilities.tools !== false
   const activateTools = names => {
     for (const name of names) { activatedTools.delete(name); activatedTools.add(name) }
     while (activatedTools.size > 64) activatedTools.delete(activatedTools.values().next().value)
   }
-  const listModelTools = async options => (typeof ToolRegistry.listForModel === 'function'
+  const listModelTools = async options => !toolCallingAvailable ? [] : (typeof ToolRegistry.listForModel === 'function'
     ? ToolRegistry.listForModel({ ...options, activated: activatedTools, allowedTools: effectiveAgent?.tools || null })
     : ToolRegistry.list(options)).then(tools => tools.filter(tool => skillToolPolicy.allows(tool.name, {}, true)))
   // 工具输出预算按当前模型的上下文算一次，本轮复用
@@ -969,6 +971,7 @@ async function processTurnLoopInRuntime({
         const risk = ["bash", "write", "edit", "task"].includes(call.name) ? 9 : 1
         let result
         try {
+          if (!toolCallingAvailable) throw new Error('The selected model is configured without tool calling. No tool action was executed; select a tool-capable model or correct its capability configuration.')
           const hookTransformed = await HookBus.toolBefore({
             tool: call.name,
             toolName: call.name,

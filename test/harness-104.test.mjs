@@ -75,6 +75,22 @@ test('hook-injected request content participates in the preflight budget and pre
   assert.ok((await kernel.sessions.getSession('hook-budget')).session.context.components.messages > 16000)
 })
 
+test('text-only model capability removes tool/delegation advertising and rejects guessed tool calls', async t => {
+  const { root, kernel, config } = await fixture(t)
+  config.provider.model_capabilities = { test: { tools: false } }
+  let calls = 0
+  kernel.providers.registerProvider('fixture', { async request(input) {
+    calls++
+    assert.deepEqual(input.tools, [])
+    assert.match(String(input.system?.text || input.system), /No executable tools are advertised/)
+    assert.doesNotMatch(String(input.system?.text || input.system), /# Available Sub-agents/)
+    return { text: calls > 1 ? 'Need a tool-capable model.' : '', toolCalls: calls === 1 ? [{ id: 'guessed', name: 'write', args: { path: 'should-not-exist.txt', content: 'no' } }] : [], usage: {}, stopReason: calls === 1 ? 'tool_use' : 'end_turn' }
+  }, async *requestStream() { throw new Error('stream disabled') } })
+  const result = await kernel.executeTurn({ sessionId: 'text-only', prompt: 'Make a file', model: 'test', providerType: 'fixture' })
+  assert.match(result.reply, /tool-capable model/)
+  await assert.rejects(readFile(path.join(root, 'should-not-exist.txt')), { code: 'ENOENT' })
+})
+
 test('encrypted credentials resist tampering and preserve concurrent independent updates', async t => {
   const { root } = await fixture(t)
   const store = encryptedStore('fixture-namespace', path.join(root, 'vault'))

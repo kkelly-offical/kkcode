@@ -191,7 +191,7 @@ export async function buildSystemPromptBlocks({ mode, model, cwd, agent = null, 
   const runtime = currentRuntime()
   const blockCache = runtime?.promptCache || fallbackCache
   const agentText = agent ? await agentPrompt(agent) : ''
-  const customSubagents = listAgents({ includeHidden: false }).filter(a => a.mode === 'subagent' && a.hidden !== true)
+  const customSubagents = tools.some(tool => tool.name === 'task') ? listAgents({ includeHidden: false }).filter(a => a.mode === 'subagent' && a.hidden !== true) : []
 
   // Cache key: hash of all inputs that affect block content
   const cacheKey = hashInputs({
@@ -291,7 +291,9 @@ export async function buildSystemPromptBlocks({ mode, model, cwd, agent = null, 
     "- bounded delegated sidecar work",
     "",
     `Current permission policy: ${permission}. Auto uses the current conversation model for sensitive-action review; Yolo does not broaden the user's authorized task scope.`,
-    "Use tool_search to discover optional browser, web, Git, file-management and background-task capabilities. Discovery returns their exact schemas and operational guidance. Do not imply capabilities or access to other devices unless tools actually provide them.",
+    ...(tools.some(tool => tool.name === 'tool_search') ? ["Use tool_search to discover optional browser, web, Git, file-management and background-task capabilities. Discovery returns their exact schemas and operational guidance."] : []),
+    "Do not imply capabilities or access to other devices unless tools actually provide them.",
+    ...(!tools.length ? ["No executable tools are advertised for this request. Answer from the supplied context; do not claim to have edited files, run commands, browsed or delegated. Ask to select a tool-capable model when the task requires execution."] : []),
     "Prefer dedicated file/search tools when they fit; use shell for build/test/system commands. Never route around a denied action using another tool.",
     "Read existing content before editing; inspect actual tool status, truncation notices and test results before claiming success. Keep long-running commands in background tasks.",
     "Commit, publish, delete shared resources or transmit private data only within explicit user authorization.",

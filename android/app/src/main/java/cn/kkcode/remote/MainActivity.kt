@@ -11,7 +11,7 @@ import androidx.core.view.WindowCompat
 
 class MainActivity : ComponentActivity() {
     private val state: RemoteState by viewModels()
-    override fun onResume() { super.onResume(); state.updater.onForeground(); state.resumeLogin() }
+    override fun onResume() { super.onResume(); state.updater.onForeground(); state.resumeLogin(); state.resumeSshConnection() }
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         state.handleLoginReturn(intent.dataString)

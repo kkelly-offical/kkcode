@@ -4,6 +4,7 @@ import net from 'node:net'
 import http from 'node:http'
 import path from 'node:path'
 import os from 'node:os'
+import { createHash } from 'node:crypto'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { DeviceClient } from '../src/sdk/client.mjs'
@@ -101,6 +102,7 @@ try {
   }
   assert.equal(drained, true, 'Idle task host must drain after all work and clients finish')
   console.log('PASS: detached SSH task host exits after its idle grace; no permanent Remote exposure was introduced.')
+  await ssh(`node ${quote(guest + '/fixture.mjs')} stop ${quote(guest)}`)
   await mkdir(path.join(root, 'test-results'), { recursive: true })
-  await writeFile(path.join(root, 'test-results/ssh-lifecycle.json'), JSON.stringify({ passed: true, version: packed.version, host, guest, nativeAndroid: Boolean(process.env.KKCODE_ANDROID_SERIAL), lifetime: 'drain-on-disconnect', testedAt: new Date().toISOString() }, null, 2))
+  await writeFile(path.join(root, 'test-results/ssh-lifecycle.json'), JSON.stringify({ passed: true, version: packed.version, packageSha256: createHash('sha256').update(await readFile(path.join(scratch, packed.filename))).digest('hex'), host, guest, nativeAndroid: Boolean(process.env.KKCODE_ANDROID_SERIAL), lifetime: 'drain-on-disconnect', fixtureStopped: true, testedAt: new Date().toISOString() }, null, 2))
 } finally { disconnect() }

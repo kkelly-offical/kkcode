@@ -19,6 +19,11 @@ import org.bouncycastle.jce.provider.BouncyCastleProvider
 import net.schmizz.sshj.common.SecurityUtils
 
 class HostKeyRequired(val fingerprint: String) : Exception("Confirm SSH host key: $fingerprint")
+internal fun sshStartupError(detail: String): String = when {
+    detail.contains("scope", ignoreCase = true) -> "SSH 目录范围与电脑上现有远控不一致。请在 SSH 设置中匹配“所有普通目录”或“仅 home”，不必重新登录网关。"
+    detail.contains("port", ignoreCase = true) -> "SSH 服务端口与电脑上的 WebUI/远控不一致或已被占用，请核对 SSH 设置中的远端端口。"
+    else -> "SSH 后台宿主未能启动，请在电脑安装 KK Code ${BuildConfig.VERSION_NAME} 或更新版本，并在电脑终端检查 kkcode remote status。"
+}
 class SshConnection internal constructor(private val commandPrefix: String = "kkcode") : Closeable {
     companion object {
         @Synchronized private fun prepareCrypto() {
@@ -72,7 +77,11 @@ class SshConnection internal constructor(private val commandPrefix: String = "kk
         var bootstrap: String? = null
         repeat(30) {
             if (bootstrap == null) {
-                val line = readHandshakeLine() ?: throw IllegalStateException("SSH 后台宿主未能启动，请在电脑安装 KK Code ${BuildConfig.VERSION_NAME} 或更新版本，并检查端口是否被其他 WebUI 占用")
+                val line = readHandshakeLine() ?: run {
+                    command.join(2, java.util.concurrent.TimeUnit.SECONDS)
+                    val bytes = ByteArray(2048); val count = command.errorStream.read(bytes)
+                    throw IllegalStateException(sshStartupError(if(count > 0) String(bytes, 0, count, Charsets.UTF_8) else ""))
+                }
                 if(line.length <= 4096 && line.startsWith("{")) {
                     val ready = runCatching { org.json.JSONObject(line) }.getOrNull()
                     if(ready != null && ready.optString("lifetime") in listOf("drain-on-disconnect", "foreground-remote") && ready.optInt("port") == remotePort) bootstrap = ready.optString("bootstrap").takeIf { it.matches(Regex("[A-Za-z0-9_-]{32,128}")) }

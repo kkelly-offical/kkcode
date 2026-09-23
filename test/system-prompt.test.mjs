@@ -70,7 +70,7 @@ test("system prompt includes custom subagent catalog block", async () => {
     mode: "agent",
     model: "gpt-4o-mini",
     cwd: process.cwd(),
-    tools: [],
+    tools: [{ name: 'task', description: 'Delegate an approved subtask', inputSchema: {} }],
     skills: [],
     userInstructions: "",
     projectContext: "",
@@ -81,6 +81,8 @@ test("system prompt includes custom subagent catalog block", async () => {
   assert.ok(subagentBlock)
   assert.match(subagentBlock.text, /# Available Sub-agents/)
   assert.match(subagentBlock.text, new RegExp(name))
+  const noDelegation = await buildSystemPromptBlocks({ mode: 'assistant', model: 'local', cwd: process.cwd(), tools: [{ name: 'read', description: 'Read files' }] })
+  assert.equal(noDelegation.blocks.some(block => block.label === 'subagents'), false)
 })
 
 test("assistant mode prompt requires explicit subagent delegation tools", async () => {

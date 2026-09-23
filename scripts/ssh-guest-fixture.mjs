@@ -24,6 +24,9 @@ if (mode === 'start') {
   console.log(JSON.stringify({ ready: true }))
 } else if (mode === 'provider') {
   const server = http.createServer(async (request, response) => {
+    if (request.method === 'POST' && request.url === '/__fixture/stop' && request.headers['x-kkcode-fixture'] === path.basename(root)) {
+      response.writeHead(204); response.end(); server.close(); clearTimeout(expiry); return
+    }
     response.setHeader('content-type', 'application/json')
     if (request.url.endsWith('/models')) { response.end(JSON.stringify({ data: [{ id: 'ssh-fixture', context_length: 32768 }] })); return }
     let raw = ''; for await (const chunk of request) { raw += chunk; if (raw.length > 2 * 1024 * 1024) { response.writeHead(413); response.end(); return } }
@@ -34,5 +37,9 @@ if (mode === 'start') {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   await writeFile(marker, JSON.stringify({ pid: process.pid, port: server.address().port }), { mode: 0o600 })
   // Finite lifetime, even if the acceptance driver is interrupted.
-  setTimeout(() => { server.closeAllConnections(); server.close() }, 20 * 60000)
+  const expiry = setTimeout(() => { server.closeAllConnections(); server.close() }, 5 * 60000)
+} else if (mode === 'stop') {
+  const ready = JSON.parse(await readFile(marker, 'utf8'))
+  const response = await fetch(`http://127.0.0.1:${ready.port}/__fixture/stop`, { method: 'POST', headers: { 'x-kkcode-fixture': path.basename(root) }, signal: AbortSignal.timeout(3000) })
+  if (response.status !== 204) throw new Error('Fixture identity did not match; no process was signalled')
 } else throw new Error('Use start or provider')

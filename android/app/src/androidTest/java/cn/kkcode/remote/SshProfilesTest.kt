@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
 import okhttp3.mockwebserver.*
 import org.json.JSONArray
 import org.json.JSONObject
@@ -44,9 +46,16 @@ class SshProfilesTest {
             a.loadSshProfiles(); b.loadSshProfiles()
             assertEquals("ssh-account-a", a.sshProfiles.single().getString("id"))
             assertEquals("ssh-account-b", b.sshProfiles.single().getString("id"))
-            a.chooseSsh(a.sshProfiles.single())
+            a.selectedSsh = a.sshProfiles.single().getString("id")
+            a.api = DeviceApi(a.gateway, relay = false)
+            a.preference("autoConnect", true)
+            a.resumeSshConnection()
+            withTimeout(3000) { while(a.sheet != "ssh") delay(20) }
             assertEquals("ssh", a.sheet)
             assertTrue(a.notice.contains("网关不会保存"))
+            a.disconnect(); a.sheet = ""
+            a.resumeSshConnection(force = true); delay(50)
+            assertEquals("", a.sheet)
         } finally { models.clear(); runCatching { server.shutdown() } }
     }
 }

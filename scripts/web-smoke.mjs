@@ -1,5 +1,5 @@
 import { chromium, expect } from '@playwright/test'
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, readFile, realpath, rm } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import path from 'node:path'
@@ -9,7 +9,7 @@ import { createDeviceServer } from '../src/device/server.mjs'
 import { DeviceService } from '../src/device/service.mjs'
 import { createKernel } from '../src/kernel/index.mjs'
 
-const temp = await mkdtemp(path.join(os.tmpdir(), 'kkcode-web-smoke-')), previous = process.env.KKCODE_HOME
+const temp = await realpath(await mkdtemp(path.join(os.tmpdir(), 'kkcode-web-smoke-'))), previous = process.env.KKCODE_HOME
 const executeFile = promisify(execFile), workspace = path.join(temp, 'workspace'), requests = []
 await mkdir(workspace)
 const git = args => executeFile('git', ['-c', `core.hooksPath=${path.join(temp, 'disabled-hooks')}`, '-c', 'commit.gpgsign=false', ...args], { cwd: workspace })
