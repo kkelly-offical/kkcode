@@ -1,6 +1,6 @@
 # Android release signing and acceptance
 
-Release target: **1.0.4 / 10008**, with the same release certificate. Actual
+Published stable: **1.0.4 / 10008**, with the same release certificate. Actual
 acceptance/publication is recorded in [the stable ledger](stable-1.0.4-worklog.md).
 Previous stable **1.0.3 / 10006 (KK Code 1.0.2 Fix)** receipts remain in
 [its ledger](implementation-1.0.3.md). Native browser-return scope is documented
@@ -23,7 +23,7 @@ The user authorized creation of a project-specific production release key on
 2026-09-21. It is not the Android debug key or an acceptance-only identity.
 
 - Application ID: `cn.kkcode.remote`.
-- Stable target: `1.0.4` / code `10008`; preview.0 used `10007`, stable `1.0.3` used `10006`, `1.0.2` used `10005` and `1.0.1` used `10004`. See [current receipts](stable-1.0.4-worklog.md).
+- Published stable: `1.0.4` / code `10008`; preview.0 used `10007`, stable `1.0.3` used `10006`, `1.0.2` used `10005` and `1.0.1` used `10004`. See [current receipts](stable-1.0.4-worklog.md).
 - Algorithm: RSA-4096, SHA256withRSA; certificate validity: 10,000 days.
 - Public certificate SHA-256:
   `cf75774a4d87ba1ccc4a811f271bd301076cf6beefd7432a3cb30231164be5d1`.

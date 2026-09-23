@@ -1,10 +1,11 @@
 # 1.0.4 正式版修复与发布账本
 
-状态：首次发行的审计锁问题已修复，重新验收全部通过，等待最终公开发布回执。用户将第二预览版请求调整为：补齐 OpenAI
+状态：**1.0.4 已正式发布并完成公开下载验证**（2026-09-24，Asia/Singapore）。首次发行的审计锁问题已修复并重新验收。用户将第二预览版请求调整为：补齐 OpenAI
 Responses API 协议与全部交互修复后，发布完整正式版 `1.0.4`，Android `10008`，
 保留原项目证书。未发布过 `1.0.4-preview.1`。
-基线为 main `57379a1`；分支 `acceptance/1.0.4-stable`。
-当前稳定 `latest` 仍为 `1.0.3`；验收后推进到 `1.0.4`，不移动任何旧标签。
+基线 main `57379a1`；先后使用 `acceptance/1.0.4-stable` 与 `acceptance/1.0.4-audit`。
+最终 tag `v1.0.4` / 提交 `8ed6919`，npm `latest` 已从 `1.0.3` 推进到 `1.0.4`。
+仅按用户授权重建了尚未发行的本版 tag；所有先前已发布标签未改动。
 
 ## 用户反馈与已定位原因
 
@@ -42,7 +43,7 @@ Responses API 协议与全部交互修复后，发布完整正式版 `1.0.4`，A
 - [x] 完整本机发布门禁、真实 SSH 生命周期、跨平台 CI 和 CodeQL。
 - [x] 同证书 APK 10008 构建、覆盖安装、更新清单验证。
 - [x] Responses API 协议、配置/模型发现、流式文本/思考摘要/工具、图片与请求恢复验收。
-- [ ] 合入 main、发布 npm latest / GitHub stable、公开下载与安装复核。
+- [x] 合入 main、发布 npm latest / GitHub stable、公开下载与安装复核。
 
 未勾选项目不得描述为已完成。本轮不自动升级生产网关或「KK主机 1 号位」。
 候选测试中遇到的问题与实际公开发布回执在验收后追加，不沿用上一版测试数。
@@ -116,7 +117,7 @@ Base URL、凭据和可见内容指纹隔离；投影到远端时移除。流中
 首次 main `753df4c` 仅整理说明，verify `35891918346` 与 CodeQL `35891918301`
 均通过；随后发行中的新失败要求追加下述审计修复，不能沿用旧结果作为最终放行。
 
-## 发行门禁发现审计竞争（尚未发布）
+## 首次发行门禁发现审计竞争（当时尚未发布）
 
 - 首次 tag `v1.0.4` → `753df4c` 的 release `35893158757` 被 Windows 单项失败
   拦截：`serializes audit chains across multiple KK Code processes` 的链校验为 false。
@@ -151,3 +152,37 @@ Base URL、凭据和可见内容指纹隔离；投影到远端时移除。流中
 最终发布前的以上账本随 tag/npm 包冻结；公开下载摘要、发行状态等后续回执以
 [GitHub main 最新账本](https://github.com/kkelly-offical/kkcode/blob/main/docs/stable-1.0.4-worklog.md)
 为准，避免把冻结文档中的“待发布”当作在线渠道状态。
+
+## 正式发布回执
+
+- 发布提交：`8ed691932a2909c9d4c52ce37b525a419725fa6e`；最终 annotated tag
+  `v1.0.4` 对象 `16bc5e57aea885217bb2216f8f011eec1dde1f18`，现已发行，不得再移动。
+- [main verify 35897053100](https://github.com/kkelly-offical/kkcode/actions/runs/35897053100)、
+  [CodeQL 35897052938](https://github.com/kkelly-offical/kkcode/actions/runs/35897052938)、
+  [release 35897054409](https://github.com/kkelly-offical/kkcode/actions/runs/35897054409)
+  全部成功；Windows 在验收、main 与发行中均执行完整测试及额外并发检查。
+- npm `@kkelly-offical/kkcode@1.0.4` 已公开，`latest=1.0.4`；
+  `preview=1.0.4-preview.0` 不变。CI 发布器在 UTC 2026-09-23 17:48:59 返回接收成功，
+  随后经过仓库处理传播，已实际重下公共 tarball 并从全新目录无认证安装 `@latest`。
+  `kkcode --version` 输出 `1.0.4`，Kernel SDK、DeviceClient、protocol 导入均成功。
+- [GitHub 正式 Release](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.4)
+  于 UTC 2026-09-23 17:49:03 创建，标题 **KK Code 1.0.4**，非预发布且为 latest。
+  资产齐全：APK、`android-update.json`、不可变 npm tarball、CycloneDX SBOM、`SHA256SUMS`。
+- 无认证公共下载的 APK/清单/包/SBOM 均通过校验；公共 APK 与已验收签名包逐字节一致。
+  使用编译后的生产 `UpdatePolicy` 读取真实公开 Release 目录与清单，STABLE 和
+  PREVIEW 均接受 1.0.4 / 10008。不是仅检查测试夹具，也不需要卸载旧正式 App。
+
+| 公开资产 | SHA-256 |
+| --- | --- |
+| npm tarball（与 CI 产物一致） | `dca6bdd192f935eab4c756b00032d3b3f982f13b1ce0ba1884f7898ebb3c4c22` |
+| APK 10008（同项目证书） | `d00cd98d7c55451645a57a804c314e794211e0ef424e0d03b644b48053d89ae0` |
+| android-update.json | `39b9c5c921815f9b1c4e628f7db0ae5fa5bbf954828be30fa452cf7dc58e83c2` |
+| CycloneDX SBOM | `fd40502b51274ba055f34b00d0327e3a6dad3d5a17e0143d9760f1910a8697ec` |
+
+证书 SHA-256 保持 `cf75774a4d87ba1ccc4a811f271bd301076cf6beefd7432a3cb30231164be5d1`。
+发布日志、首次失败证据、修复前后反例、Windows 压力报告、公开下载与安装日志
+存于 `test-results/stable-1.0.4/`。后续回执提交仅修改文档，不改变发行标签或已发布包。
+
+本次仍**没有部署生产网关或升级示范 VM**，没有上传公共 Docker 镜像；网关部署方
+应按 v1.0.4 构建并升级，设备 CLI/App 配套更新。Responses 未使用真实 OpenAI
+账号实测，协议/工具循环使用受控真实 HTTP 服务验收，不能把它说成供应商生产认证。

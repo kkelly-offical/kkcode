@@ -13,7 +13,7 @@
 **终端优先、可治理、可扩展的编码智能体：五档模式循环、可治理审批、Ultra 分阶段交付。**
 kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同一个 CLI 工作台里，并且把权限、预算、审计、后台任务、MCP、技能与插件一起纳入统一执行面。
 
-本版 **`1.0.4`（正式渠道）**：新增 [OpenAI Responses API](docs/responses-api.md)，
+稳定版 **`1.0.4` 已发布**：新增 [OpenAI Responses API](docs/responses-api.md)，
 支持文本/图片、流式思考摘要与受控工具循环；修复 SSH 跨设备模型状态、中文错误、
 空会话显示和渠道密钥保留。来源链接可由浏览器打开，Thinking 可在生成中展开，
 最终回答完成后运行过程收起为可展开的耗时摘要。
@@ -723,7 +723,7 @@ update:
 <a id="release-status"></a>
 ## Release Status / 发布状态
 
-**Release / 本版正式版本**: `v1.0.4`，发布门禁与公开状态见 [实施台账](docs/stable-1.0.4-worklog.md)。
+**Current stable / 当前稳定版本**: [`v1.0.4`](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.4)，npm `latest` 与 Android `10008` 已上线，发布门禁与公开下载回执见 [实施台账](docs/stable-1.0.4-worklog.md)。
 
 **Opt-in preview / 自愿试用预览版**: [`v1.0.4-preview.0`](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.4-preview.0)，发布回执见 [实施台账](docs/implementation-1.0.4.md)。
 

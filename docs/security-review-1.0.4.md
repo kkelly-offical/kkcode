@@ -55,3 +55,7 @@ APK 保持原项目证书，递增版本码 10008，不使用 debug key；签名
 并让生产 UpdatePolicy 同时验证 stable/preview 渠道能接受正式版。
 npm 发布使用 CI 验证过的不可变 tarball，保留祖先/版本/依赖审计门禁。生产网关、
 测试示范机和账号绑定不随 npm/GitHub 发布自动升级或重置。
+
+最终 `8ed6919` 的 main verify `35897053100`、CodeQL `35897052938` 和正式发行
+`35897054409` 均成功；公共 npm tarball 与 CI 逐字节一致，公共 APK 与同证书候选
+一致，生产 App 更新策略在 stable/preview 两个渠道均接受该正式版。完整摘要在台账。
