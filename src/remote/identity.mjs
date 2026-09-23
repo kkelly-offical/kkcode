@@ -93,7 +93,7 @@ export function registerIdentity({ app, store, config, origin, issuer, organizat
     if (!target) return reply.type('text/html').send(page(denied ? '已取消' : '已连接', `<h1>${heading}</h1><p>返回 KK Code，${denied ? '可重新发起登录' : '连接将自动完成'}。</p><a href="/">Open WebUI</a>`))
     const nonce = secret()
     reply.header('Content-Security-Policy', `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; frame-ancestors 'none'`)
-    return reply.type('text/html').send(page(denied ? '登录未完成' : '返回 KK Code', `<h1>${heading}</h1><p>${failed ? '组织认证未能完成，请返回 App 重新登录。' : denied ? '你已取消授权。' : '授权已完成。'}正在返回 KK Code App。</p><p>若浏览器没有自动返回，请点击下方按钮；也可以手动切回 App。</p><a id="return-app" href="${html(target)}" style="display:inline-block;padding:14px 20px;background:#eee;color:#111;border-radius:12px;text-decoration:none">返回 KK Code App</a><p>这不是 WebUI 登录，无需继续打开网页工作台。</p><script nonce="${nonce}">setTimeout(function(){window.location.assign(${JSON.stringify(target)})},150)</script>`))
+    return reply.type('text/html').send(page(denied ? '登录未完成' : '返回 KK Code', `<h1>${heading}</h1><p>${failed ? '组织认证未能完成，请返回 App 重新登录。' : denied ? '你已取消授权。' : '授权已完成。'}正在返回 KK Code App。</p><p>若浏览器没有自动返回，请点击下方按钮；也可以手动切回 App。</p><a id="return-app" href="${html(target)}" style="display:inline-block;padding:14px 20px;background:#eee;color:#111;border-radius:12px;text-decoration:none">返回 KK Code App</a><p>这不是 WebUI 登录，无需继续打开网页工作台。</p><script nonce="${nonce}">setTimeout(function(){window.location.assign(document.getElementById('return-app').href)},150)</script>`))
   }
   async function endBrowserLogin(reply, flow, failed = false) {
     reply.clearCookie('kkcode_oauth_state', { path: '/auth' })

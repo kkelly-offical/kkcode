@@ -53,6 +53,9 @@ test('Android confirmation returns to the App without tokens or a WebUI primary 
   assert.match(response.body, /Device approved/)
   assert.match(response.body, /返回 KK Code App/)
   assert.match(response.body, /window\.location\.assign/)
+  const script = response.body.match(/<script nonce="[^"]+">([^<]+)<\/script>/)?.[1]
+  assert.equal(script, "setTimeout(function(){window.location.assign(document.getElementById('return-app').href)},150)")
+  assert.ok(!script.includes(state), 'transaction data never becomes JavaScript source')
   assert.match(response.body, new RegExp(`cn\\.kkcode\\.remote://auth/complete\\?state=${state}`))
   assert.doesNotMatch(response.body, /Open WebUI|access_token|refresh_token|device_code|code_verifier/)
   assert.ok(!response.body.includes(flow.device_code))
