@@ -1,6 +1,6 @@
 # KK Code 1.0.4 Preview 实施与验收记录
 
-状态：实现与候选验收完成，产物已准备，尚未公开发布。技术版本：`1.0.4-preview.0`；稳定版 `1.0.3`
+状态：实现与候选验收完成；用户已批准合入 main 并公开发布，正在执行发布门禁。技术版本：`1.0.4-preview.0`；稳定版 `1.0.3`
 及其标签不变。下列未打勾事项不能被描述为已交付。
 
 ## 本轮范围
@@ -159,4 +159,13 @@ APK SHA-256：`6036dcd054b0856fde11042f142afddea6231f285fa6e551c71754a6af7c44ea`
 `kkelly-offical-kkcode-1.0.4-preview.0.tgz`、`kkcode-android-1.0.4-preview.0.apk`
 和 `android-update.json`；APK 散列/证书如上。容器标签是本机
 `kkcode-gateway:1.0.4-preview.0`。安装包内的验收记录对应打包时刻，完整收尾回执
-以本仓库为准。**没有创建版本标签、发布 npm/GitHub Release、合并 main 或部署生产。**
+以本仓库为准。以上记录为候选验收时的状态；当时没有创建版本标签、发布
+npm/GitHub Release、合并 main 或部署生产。
+
+### 公开发布授权（2026-09-23）
+
+用户已明确批准「推送发布 preview」。本轮将已验收代码合入 main，再运行 main
+验证/CodeQL 和 tag 发布门禁。npm 仅推进 `preview`；GitHub 标记为 prerelease，
+不移动稳定 `latest` / `v1.0.3`。APK 使用已验收的 `10007` 与原项目证书。
+不部署生产网关，不升级示范主机。发布成功后在本节补记实际提交、Actions、
+公开产物与下载复核结果；本授权记录不是已发布回执。

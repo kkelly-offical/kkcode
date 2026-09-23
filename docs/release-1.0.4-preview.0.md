@@ -1,8 +1,20 @@
 # KK Code 1.0.4 Preview 0
 
 技术版本 `1.0.4-preview.0`，Android versionCode `10007`。
-当前为候选代码/产物，尚未公开发布；稳定版仍是 `1.0.3`。
-实际测试、产物和后续发布回执以 [实施账本](implementation-1.0.4.md) 为准。
+本版使用 npm `preview` 渠道和 GitHub 预发布；稳定版仍是 `1.0.3`。
+实际测试、产物和发布回执以 [实施账本](implementation-1.0.4.md) 为准。
+
+## 安装与更新
+
+```sh
+npm install -g @kkelly-offical/kkcode@1.0.4-preview.0
+kkcode --version
+```
+
+也可用 `@preview` 跟随预览渠道。Android 在更新设置中选择 Preview，或从
+[本版 Release](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.4-preview.0)
+下载 `kkcode-android-1.0.4-preview.0.apk`；同证书覆盖安装，无需卸载，
+但仍需 Android 系统确认。Release 同时提供 `android-update.json`、校验值与 SBOM。
 
 ## 对话和设备
 
@@ -73,4 +85,12 @@ Android 的网关设备与 SSH 连接并列。SSH 名称、主机、端口、用
 
 旧网关不支持地址簿时 Android 保留本机缓存直连，不虚构已同步。
 生产域名的部署与发布包是两件事；本仓库测试不会自动升级你的生产网关或示范主机。
-公开发布后预期使用 npm `preview` 标签和 GitHub prerelease，稳定 `latest` 不移动。
+网关/Web 镜像从本版标签源码构建；本次不向公共镜像仓库推送镜像：
+
+```sh
+git checkout v1.0.4-preview.0
+docker build -f deploy/Dockerfile -t kkcode-gateway:1.0.4-preview.0 .
+```
+
+保留现有环境配置、数据库卷、加密密钥和 OIDC 注册，只替换网关/Web 容器。
+HA 部署应完成所有网关副本升级；npm `latest` 和 GitHub 稳定版不随预览发布移动。

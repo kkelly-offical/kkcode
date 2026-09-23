@@ -23,7 +23,7 @@ kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同�
 与 [1.0.3 验收／发布回执](docs/implementation-1.0.3.md)。
 功能使用方式见 [1.0.2 使用说明](docs/release-1.0.2.md)。
 
-当前分支已完成 **`1.0.4-preview.0` 候选验收**（尚未公开发布）：Web/Android 上下文用量、
+**`1.0.4-preview.0` 预览版**：Web/Android 上下文用量、
 精简的改名/归档/删除菜单、并列设备切换、账号 SSH 地址簿，以及 Android 断线不
 中断在途任务的 SSH 宿主。**SSH 仅 Android 直连，Web 不增加 SSH 代连。**
 同时补齐提示词预算/指纹、强类型 SDK、MCP OAuth、ACP 和受控 Browser/Harness。
@@ -113,8 +113,8 @@ npm install -g @kkelly-offical/kkcode
 kkcode
 ```
 
-预览渠道：`npm install -g @kkelly-offical/kkcode@preview`；固定本版可使用
-`@1.0.3`。安装搜索依赖：Linux `apt install ripgrep`、macOS
+预览渠道：`npm install -g @kkelly-offical/kkcode@preview`；固定稳定版可使用
+`@1.0.3`，固定本轮预览版使用 `@1.0.4-preview.0`。安装搜索依赖：Linux `apt install ripgrep`、macOS
 `brew install ripgrep`、Windows `choco install ripgrep`。
 
 **Web / enterprise remote / 企业远控**
@@ -725,9 +725,9 @@ update:
 
 **Current stable / 当前稳定版本**: `v1.0.3`（KK Code 1.0.2 Fix），发布门禁与回执见 [实施台账](docs/implementation-1.0.3.md)。
 
-**Opt-in preview / 自愿试用预览版**: `v1.0.1-preview.2`
+**Preview target / 本轮预览版本**: `v1.0.4-preview.0`，发布回执见 [实施台账](docs/implementation-1.0.4.md)。
 
-`1.0.4-preview.0` 候选尚未公开；不要把本地代码版本当成 npm preview 标签已更新。
+预览渠道需要主动选择，稳定版 `latest` 保持 `1.0.3`。
 新客户端、设备 CLI、企业网关/Web 镜像需按 [升级顺序](docs/release-1.0.4-preview.0.md) 配套更新。
 
 ```sh
@@ -751,13 +751,13 @@ consent and stricter vLLM-compatible request shaping. See the
 for migration, Android installation, enterprise deployment and acceptance limits.
 预览渠道仍需主动安装；首次启用远控前请阅读账号归属、目录授权和备份说明。
 
-The third preview completes M32/M33 and the named M28 follow-ups: background
+The earlier `1.0.1-preview.2` completed M32/M33 and the named M28 follow-ups: background
 MCP loading, compact CLI notices/theme/turn lifecycle fixes, real audio/video
 input encoding with capability gates, discovered pricing in cost accounting,
 capability badges, owner-only remote MCP summaries, deferred tool discovery,
 root-to-cwd instructions, canonical tool advertising and enforced skill flags.
 
-第三个预览版补齐：后台 MCP、CLI 提示/主题/结束状态、音视频实际请求编码、
+此前 `1.0.1-preview.2` 补齐：后台 MCP、CLI 提示/主题/结束状态、音视频实际请求编码、
 目录定价计费、能力徽标、远端 MCP 摘要、`tool_search`、分层指令、兼容别名下的
 统一工具入口和 skill 限制。图片/音视频支持不是“所有模型都支持”；音视频能力
 未知或协议不兼容时明确拒绝，图片保留既有的未知能力放行行为。`?` 徽标只表示

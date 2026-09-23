@@ -1,8 +1,8 @@
-# 文档导航（1.0.3 / 1.0.2 Fix）
+# 文档导航（1.0.4 Preview / 1.0.3 Stable）
 
-## 当前已验收候选：1.0.4 Preview
+## 本轮预览版：1.0.4 Preview
 
-- [Preview 说明](release-1.0.4-preview.0.md)、[实施与验收](implementation-1.0.4.md)：尚未公开发布，稳定标签不变。
+- [Preview 说明](release-1.0.4-preview.0.md)、[实施与验收/发布回执](implementation-1.0.4.md)：自愿选择预览渠道，稳定标签不变。
 - [SSH 与账号设备](ssh-account-devices.md)：Android 直连、仅元数据同步、断线排空任务。
 - [上下文与 Harness](context-and-harness.md)：完整预算、提示诊断、受控组合、未知结果恢复与无进展保护。
 - [MCP OAuth / ACP](protocol-adapters.md)、[SDK 使用](sdk-guide.md)。

@@ -5,9 +5,10 @@ certificate. Actual acceptance/publication is recorded in
 [the 1.0.3 ledger](implementation-1.0.3.md); historical receipts below remain
 unchanged. Native browser-return scope is documented in [gateway login](android-gateway-login.md).
 
-Development candidate: **1.0.4-preview.0 / 10007**, same release certificate,
-not publicly published yet. See the [1.0.4 ledger](implementation-1.0.4.md) for
-signed installation, SSH lifecycle, context UI and cross-platform results.
+Preview release target: **1.0.4-preview.0 / 10007**, same release certificate.
+Select the Preview channel in App update settings to receive prereleases.
+See the [1.0.4 ledger](implementation-1.0.4.md) for signed installation, SSH
+lifecycle, context UI, cross-platform results and actual publication receipts.
 
 The Android application is a native remote client. Release signing is separate
 from publishing: producing this APK does not upload it to a store or GitHub.

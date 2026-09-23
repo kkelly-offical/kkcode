@@ -1,6 +1,8 @@
 # Changelog / 更新日志
 
-## 1.0.4-preview.0 — candidate, not yet published
+## 1.0.4-preview.0
+
+Opt-in preview; npm `preview`, GitHub prerelease, stable `latest` stays at `1.0.3`.
 
 - Web/Android: current context meter and details; three-item rename/archive/delete
   menus, confirmed conversation-tree deletion, multi-device strip and stream cleanup.
@@ -15,9 +17,9 @@
   evidence-aware no-progress stops, and no implicit project-script execution on
   ordinary answer completion. Browser adds responsive viewport, diagnostics and
   explicitly enabled same-origin WebSocket/HMR under the pinned network policy.
-- Android candidate code `10007`, project release certificate retained.
+- Android version code `10007`, project release certificate retained.
 
-See [candidate guide](docs/release-1.0.4-preview.0.md) and
+See [release guide](docs/release-1.0.4-preview.0.md) and
 [actual acceptance/publication status](docs/implementation-1.0.4.md).
 
 ## 1.0.3 — KK Code 1.0.2 Fix — 2026-09-23
