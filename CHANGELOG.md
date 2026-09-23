@@ -1,6 +1,6 @@
 # Changelog / 更新日志
 
-## 1.0.4-preview.0
+## 1.0.4-preview.0 — 2026-09-23
 
 Opt-in preview; npm `preview`, GitHub prerelease, stable `latest` stays at `1.0.3`.
 

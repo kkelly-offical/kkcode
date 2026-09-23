@@ -1,7 +1,7 @@
 # KK Code 1.0.4 Preview 0
 
 技术版本 `1.0.4-preview.0`，Android versionCode `10007`。
-本版使用 npm `preview` 渠道和 GitHub 预发布；稳定版仍是 `1.0.3`。
+本版已于 2026-09-23 发布到 npm `preview` 渠道和 GitHub 预发布；稳定版仍是 `1.0.3`。
 实际测试、产物和发布回执以 [实施账本](implementation-1.0.4.md) 为准。
 
 ## 安装与更新

@@ -1,6 +1,6 @@
 # KK Code 1.0.4 Preview 实施与验收记录
 
-状态：实现与候选验收完成；用户已批准合入 main 并公开发布，正在执行发布门禁。技术版本：`1.0.4-preview.0`；稳定版 `1.0.3`
+状态：已合入 main、通过发布门禁并公开发布，公开下载和安装复核完成。技术版本：`1.0.4-preview.0`；稳定版 `1.0.3`
 及其标签不变。下列未打勾事项不能被描述为已交付。
 
 ## 本轮范围
@@ -17,6 +17,7 @@
 - [x] 受控浏览器开发能力、工具组合及操作恢复/无进展治理的验证。
 - [x] README、子文档、版本与实际验收记录更新。
 - [x] 全量 Node / Web / Android / 打包与跨平台验收，生成 Preview 产物。
+- [x] 用户授权后合入 main，发布 npm preview / GitHub prerelease 与同证书 APK，复核公开安装/更新渠道。
 
 ## 安全与兼容边界
 
@@ -32,8 +33,8 @@
 
 ## 验收记录
 
-开发开始基线：`8af9d29`，工作树干净。具体命令、通过/失败、平台和产物
-将在运行后记录；不沿用 1.0.3 历史测试数冒充本轮结果。
+开发开始基线：`8af9d29`，工作树干净。以下按执行顺序记录命令、通过/失败、
+平台和产物；不沿用 1.0.3 历史测试数冒充本轮结果。
 
 ### 开发中间记录（不代表发布验收完成）
 
@@ -49,7 +50,7 @@
   旧 usage 事件快照。已保留旧 usage 事件形状、另增 context 事件，并更新
   工具发现端到端测试；相关 13 个回归已通过，待全量重跑。
 - 上述是早期中间状态；后续已补齐 MCP OAuth/ACP、浏览器开发能力与 Harness
-  轨迹治理，具体证据如下。始终未公开发布。
+  轨迹治理，具体证据如下。此阶段尚未公开发布。
 
 ### 本轮已执行证据
 
@@ -106,7 +107,7 @@
 - 无认证本地模型夹具需要显式 `api_key_env: ""`；错误配置曾导致验收失败，
   修正夹具并重跑通过，未放行明文凭据。模型配置错误在 UI 改为可读的 422 提示。
 
-### 交付边界
+### 候选验收时的交付边界
 
 - 本轮 Linux 发布门禁、Windows/macOS 专用分支 CI、最终签名 APK/容器验收已完成。
 - 公共 npm preview / GitHub prerelease、main 合并以及生产网关升级均尚未执行。
@@ -116,8 +117,8 @@
 ### 最终候选门禁（已完成，不代表公开发布）
 
 代码验收分支：`acceptance/1.0.4-preview.0`。最终验收提交 `a9cdb77`（生产实现
-`9350b97`，另含 SDK nullable 类型及跨平台夹具修正）；main
-仍为 `8af9d29`，没有合并或更新公开 npm/GitHub 标签。
+`9350b97`，另含 SDK nullable 类型及跨平台夹具修正）；当时 main
+仍为 `8af9d29`，没有合并或更新公开 npm/GitHub 标签，后续发布回执见下文。
 
 | 验收 | 当前结果 |
 | --- | --- |
@@ -137,7 +138,8 @@
 
 APK SHA-256：`6036dcd054b0856fde11042f142afddea6231f285fa6e551c71754a6af7c44ea`。
 证书 SHA-256：`cf75774a4d87ba1ccc4a811f271bd301076cf6beefd7432a3cb30231164be5d1`。
-更新清单 `android-update.json` 已生成，GitHub 更新源尚未有这份候选公开资产。
+候选验收时更新清单 `android-update.json` 已生成，GitHub 更新源尚未有这份资产；
+公开上传与下载复核见下文。
 
 [9350b97 的三语言 CodeQL](https://github.com/kkelly-offical/kkcode/actions/runs/35861249850)
 已全部成功（Kotlin 为真实构建）。候选与 main 的开放告警编号完全相同，共 17 项：
@@ -153,7 +155,7 @@ APK SHA-256：`6036dcd054b0856fde11042f142afddea6231f285fa6e551c71754a6af7c44ea`
 最终 `a9cdb77` 的 [四平台矩阵 35862885455](https://github.com/kkelly-offical/kkcode/actions/runs/35862885455)
 全部成功；同提交的 [三语言 CodeQL 35862887053](https://github.com/kkelly-offical/kkcode/actions/runs/35862887053)
 全部成功。SDK 严格消费、完整安装包扫描与 Web 三组验收均在矩阵执行。
-后续本次提交仅补文档回执，不改变已验收的运行时代码/构建配置。
+后续 `63a7e23` 与发布准备提交 `a9b88a7` 仅补文档，不改变已验收的运行时代码/构建配置。
 
 本机交付目录：`test-results/preview-1.0.4/`，包含
 `kkelly-offical-kkcode-1.0.4-preview.0.tgz`、`kkcode-android-1.0.4-preview.0.apk`
@@ -164,8 +166,44 @@ npm/GitHub Release、合并 main 或部署生产。
 
 ### 公开发布授权（2026-09-23）
 
-用户已明确批准「推送发布 preview」。本轮将已验收代码合入 main，再运行 main
+用户明确批准「推送发布 preview」。本轮按授权将已验收代码合入 main，再运行 main
 验证/CodeQL 和 tag 发布门禁。npm 仅推进 `preview`；GitHub 标记为 prerelease，
 不移动稳定 `latest` / `v1.0.3`。APK 使用已验收的 `10007` 与原项目证书。
-不部署生产网关，不升级示范主机。发布成功后在本节补记实际提交、Actions、
-公开产物与下载复核结果；本授权记录不是已发布回执。
+不部署生产网关，不升级示范主机。实际公开产物与下载复核结果如下。
+
+### 公开发布与安装回执（2026-09-23）
+
+- main 从 `8af9d29` 快进到 `a9b88a742c9e9e31ce9f8de528bdc33f007a6137`；
+  不可变标签 `v1.0.4-preview.0` 指向该提交。收尾提交只补本回执与文档状态，
+  不移动标签、不重发 npm、不更改运行时或 APK。
+- [main verify 35867472120](https://github.com/kkelly-offical/kkcode/actions/runs/35867472120)：
+  Linux Node 22/24、Windows Node 22、macOS Node 22 的完整 `release:verify` 及 Web job 全部通过。
+  各平台 2947 项测试零失败、e2e 33 项通过，独立包安装冒烟通过。
+- [main CodeQL 35867472126](https://github.com/kkelly-offical/kkcode/actions/runs/35867472126)：
+  Actions、JavaScript/TypeScript、真实构建的 Java/Kotlin 全部通过；开放告警仍为上述 17 项。
+- [release 35868698432](https://github.com/kkelly-offical/kkcode/actions/runs/35868698432)：
+  四平台发布矩阵、完整验证、生产依赖审计、SBOM、539 文件不可变 tarball 扫描、
+  npm 发布和 GitHub Release 全部成功。版本/工作区检查指向 `1.0.4-preview.0`。
+- npm `@kkelly-offical/kkcode@1.0.4-preview.0` 已公开；`preview` 指向本版，
+  `latest` 仍为 `1.0.3`。Registry 记录的版本时间为 `2026-09-23T13:54:27.012Z`。
+  发布后曾出现索引/文件分发延迟与 404，未据此重发包；最终标准 URL 下载成功，
+  并以 `npm install --prefix <全新临时目录> --ignore-scripts @kkelly-offical/kkcode@preview`
+  实际安装，`kkcode --version` 返回 `1.0.4-preview.0`，`--help` 正常。
+- 从官方 npm 下载的 tarball 与 Actions 的已验证 tarball 逐字节相同；
+  重新运行 `package:verify-artifact`，539 个文件、秘密扫描和不可变性校验通过。
+  **公开 npm tarball SHA-256：`43bc85a813f0289720b86068b2254e40107969d928fe5f5f7358b9d30bc328fb`**。
+  它包含发布准备文档，因此不是此前本机候选包的散列。
+- [GitHub Release](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.4-preview.0)
+  标题 **KK Code 1.0.4 Preview 0**，`prerelease=true`、`draft=false`，创建时间
+  `2026-09-23T13:50:18Z`。GitHub `/releases/latest` 仍返回 `v1.0.3`。
+- 公开附件：`kkcode-android-1.0.4-preview.0.apk`、`android-update.json`、
+  `SHA256SUMS`、`kkcode-1.0.4-preview.0.cdx.json`。无登录下载后校验全部成功；
+  APK 52,836,706 字节，散列与上述已验收候选相同；分别校验 v2/v3 签名及原项目证书。
+  更新清单 SHA-256：`fc25821d60bca04e6e519943ab58225d989966b1e6fab86a3731dcbf70d6b355`。
+  SBOM SHA-256：`508ded6a5c80cac8c6eadfebae1eaa468b2fd7dbe1dd8b61e318a637b3858ba7`。
+- 使用实际编译的 Android `UpdatePolicy` 解析公开 Release 列表与清单：Preview 接受
+  `10007`，Stable 排除本预览版，公开 APK 大小/哈希与清单一致。这是更新策略与下载
+  验证，不冒充新增一次实体手机的系统安装测试；签名覆盖安装验收见候选门禁。
+
+本轮没有部署生产网关/Web、推送公共容器镜像或升级「KK主机 1 号位」。
+用户部署时仍需按 [升级顺序](release-1.0.4-preview.0.md#升级顺序) 配套升级。
