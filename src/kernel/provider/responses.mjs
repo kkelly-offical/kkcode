@@ -188,9 +188,14 @@ export async function* requestResponsesStream(input) {
   if (!response.body) throw failure(input, 0, {}, 'Responses 流没有响应体')
   const items = new Map()
   let terminal = null, text = '', reasoning = '', streamBytes = 0
-  for await (const { data } of parseSSE(response.body, input.signal, { idleTimeoutMs: input.streamIdleTimeoutMs || 120000 })) {
-    streamBytes += Buffer.byteLength(data)
+  // Bound raw transport before SSE framing: a malformed endpoint can stream
+  // data forever without a frame separator (and therefore without an event).
+  const boundedBody = response.body.pipeThrough(new TransformStream({ transform(chunk, controller) {
+    streamBytes += chunk.byteLength
     if (streamBytes > 16 * 1024 * 1024) throw failure(input, 0, {}, 'Responses 流超过 16 MiB 限制')
+    controller.enqueue(chunk)
+  } }))
+  for await (const { data } of parseSSE(boundedBody, input.signal, { idleTimeoutMs: input.streamIdleTimeoutMs || 120000 })) {
     let event
     try { event = JSON.parse(data) } catch { throw failure(input, 0, {}, 'Responses 流包含无效 JSON') }
     const index = event.output_index ?? event.item_id

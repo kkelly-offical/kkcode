@@ -149,6 +149,8 @@ test('Responses body/idle timeouts fail instead of hanging after headers', async
   await assert.rejects(requestResponses(input({ timeoutMs: 30 })), /timed out/)
   globalThis.fetch = async () => new Response(new ReadableStream({ start() {}, cancel() {} }), { headers: { 'content-type': 'text/event-stream' } })
   await assert.rejects(collect(requestResponsesStream(input({ streamIdleTimeoutMs: 30 }))), /timeout/)
+  globalThis.fetch = async () => new Response('data: ' + 'x'.repeat(16 * 1024 * 1024), { headers: { 'content-type': 'text/event-stream' } })
+  await assert.rejects(collect(requestResponsesStream(input())), /16 MiB/)
 })
 
 test('Responses routing/config/catalog work with named providers, builtin channel names and gateway protocol', async t => {
