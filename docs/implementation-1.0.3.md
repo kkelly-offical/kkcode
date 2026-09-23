@@ -28,6 +28,8 @@ substituted the browser launcher, so they did not cover browser-to-App return.
   Activity, encrypted durable pending state, bounded transient retries and
   interval/slow_down-aware polling. Credentials and pending-grant removal
   commit atomically. Foreground recovery, cancel and reopen actions are added.
+  Completed identity restores even with automatic device connection disabled;
+  it does not select a computer. The login-success notice disappears after 5 s.
 - An old gateway remains usable through manual App return and an explicit
   upgrade notice. No IdP callback registration or organization database reset
   is required. Production gateway deployment is separate from GitHub/npm.
@@ -40,7 +42,7 @@ substituted the browser launcher, so they did not cover browser-to-App return.
   separate process E2E **33 passed**; lint/import boundaries/cycles/typechecks,
   secret scans, 518-file package scan and installed SDK/protocol smoke passed.
   CI must verify the final commit, including the additional SSO error test.
-- Android JVM: **58 passed**; Compose/native lifecycle smoke: **33 passed**.
+- Android JVM: **58 passed**; Compose/native lifecycle smoke: **34 passed**.
   Lifecycle checks cover proof-bound restoration, single-flight callbacks,
   cancellation, durable cleanup and native Intent resolution.
 - The new real Android Chrome smoke completed all three scenarios: warm return,
@@ -51,11 +53,19 @@ substituted the browser launcher, so they did not cover browser-to-App return.
 - Real Keycloak/PostgreSQL over WireGuard HTTPS: login, role mapping, atomic
   refresh and isolated logout passed. Web smoke, contract smoke and pixel layout
   check passed (154 existing control rectangles preserved).
+- Full real enterprise smoke passed: CLI login/status, local and Relay WebUI,
+  model discovery/switching, cross-client approvals, text/PNG/WAV/MP4 transport,
+  sharing/revocation and all three native network tests (including SSH).
 - The signed candidate passed v2/v3/existing-certificate/non-debuggable checks
   and in-place installation on the release AVD. Final APK rebuild and receipts
   follow the last error-handling change; earlier candidate hashes are not final.
 - A browser integration test caught no-referrer turning Chrome form POSTs into
   Origin:null. Only completed pages now use no-referrer; form pages retain
   same-origin policy. The strict Origin boundary was not weakened.
+- CodeQL alert **62** on dynamically constructing script source was addressed
+  with a completely static script reading the fixed, escaped link. A regression
+  asserts transaction state never becomes script source. GitHub reports it
+  **fixed**, not dismissed; no security rule was disabled. Pre-existing 1.0.2
+  findings retain their historical review and are not claimed to be zero alerts.
 - CI, final artifact verification and publication remain pending. Production
   cloud deployment is not implied by these local lab results.

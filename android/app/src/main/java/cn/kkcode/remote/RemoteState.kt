@@ -106,7 +106,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
             if(pendingLogin != null) {
                 gateway = pendingLogin!!.gateway; loginCode = pendingLogin!!.userCode
                 resumeLogin()
-            } else if(autoConnect) restore()
+            } else restore()
         }
     }
     fun action(block: suspend () -> Unit) = viewModelScope.launch { try { notice = ""; block() } catch (e: CancellationException) { throw e } catch (e: Exception) { notice = e.message ?: "连接暂不可用" } }
@@ -118,7 +118,13 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         api = client; refreshAt = credentials!!.optLong("expiresAt", 0)
         refreshToken()
         profile = credentials!!.optJSONObject("profile") ?: JSONObject()
-        loadDevices()
+        if(autoConnect) loadDevices()
+        else {
+            // The startup preference governs device connection, not whether a
+            // completed organization login survives process recreation.
+            manualDisconnect = true; startDevicePolling()
+            devices = client.call("/api/v1/devices").optJSONArray("items").objects()
+        }
     }
     suspend fun refreshToken() = refreshMutex.withLock {
         val client = api ?: return

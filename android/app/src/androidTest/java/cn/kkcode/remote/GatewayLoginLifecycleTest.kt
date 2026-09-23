@@ -24,7 +24,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class GatewayLoginLifecycleTest {
     private val application get() = ApplicationProvider.getApplicationContext<Application>()
     private suspend fun until(check: () -> Boolean) = withTimeout(20000) { while(!check()) delay(50) }
-    private suspend fun fixture(block: suspend (MockWebServer, AtomicBoolean, AtomicInteger, () -> JSONObject?) -> Unit) {
+    private suspend fun fixture(onlineDevice: Boolean = false, block: suspend (MockWebServer, AtomicBoolean, AtomicInteger, () -> JSONObject?) -> Unit) {
         val vault = CredentialVault(application)
         val saved = listOf("gateway", "credentials", PENDING_LOGIN_KEY).associateWith { vault.get(it) }
         val approved = AtomicBoolean(false); val polls = AtomicInteger(); var request: JSONObject? = null
@@ -47,7 +47,7 @@ class GatewayLoginLifecycleTest {
                         else json(JSONObject().put("access_token", "fixture-access").put("refresh_token", "fixture-refresh").put("expires_in", 3600)
                             .put("profile", JSONObject().put("name", "Native Login Fixture").put("organization", "Fixture")))
                     }
-                    "/api/v1/devices" -> json(JSONArray())
+                    "/api/v1/devices" -> json(JSONArray().also { if(onlineDevice) it.put(JSONObject().put("id", "fixture-computer").put("name", "Computer").put("online", true)) })
                     "/auth/cancel" -> json(JSONObject().put("cancelled", true))
                     else -> json(JSONObject().put("error", "not_found"), 404)
                 }
@@ -109,5 +109,26 @@ class GatewayLoginLifecycleTest {
         val resolved = application.packageManager.resolveActivity(valid, 0)
         assertEquals("cn.kkcode.remote.MainActivity", resolved?.activityInfo?.name)
         assertNull(application.packageManager.resolveActivity(Intent(valid).setData(Uri.parse("cn.kkcode.remote://auth/unexpected")), 0))
+    }
+    @Test fun completedIdentityRestoresWithoutConnectingWhenAutoConnectIsDisabled() = runBlocking {
+        val prefs = application.getSharedPreferences("kkcode.ui", 0)
+        val previous = prefs.getBoolean("autoConnect", true)
+        prefs.edit().putBoolean("autoConnect", false).commit()
+        try {
+            fixture(onlineDevice = true) { server, _, _, _ ->
+                val credentials = JSONObject().put("access_token", "fixture-access").put("refresh_token", "fixture-refresh")
+                    .put("expiresAt", System.currentTimeMillis() + 3600000).put("profile", JSONObject().put("name", "Native Login Fixture").put("organization", "Fixture"))
+                CredentialVault(application).completeLogin(server.url("/").toString().trimEnd('/'), credentials.toString())
+                val store = ViewModelStore(); val state = RemoteState(application); store.put("state", state)
+                try {
+                    until { state.devices.isNotEmpty() }
+                    assertEquals("Native Login Fixture", state.profile.getString("name"))
+                    assertEquals("", state.api?.device); assertFalse(state.connected); assertFalse(state.autoConnect)
+                    assertEquals("", state.notice)
+                    assertEquals("/api/v1/devices", server.takeRequest().path)
+                    assertEquals(1, server.requestCount)
+                } finally { withContext(Dispatchers.Main) { store.clear() } }
+            }
+        } finally { prefs.edit().putBoolean("autoConnect", previous).commit() }
     }
 }
