@@ -45,10 +45,35 @@ export function brandedBridgePreflight({ env = process.env, platform = process.p
 }
 
 export function brandedLaunchOptions({ channel, profile, env }) {
-  return { channel, headless: false, chromiumSandbox: true, ignoreDefaultArgs: true, timeout: 30000,
+  return { channel, headless: false, chromiumSandbox: true, ignoreDefaultArgs: true, timeout: 90000,
     // No hidden Playwright defaults that disable phishing checks, sandbox,
     // storage partitioning or first-run/licensing/permission screens.
     args: [`--user-data-dir=${profile}`, '--remote-debugging-pipe', '--enable-automation', '--enable-unsafe-extension-debugging', '--no-default-browser-check', '--force-color-profile=srgb', 'about:blank'], env }
+}
+
+/** Page creation can precede its extension navigation on branded browsers. */
+export function waitForBrandedApproval(context, extensionId, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    const observed = new Map()
+    let settled = false
+    const matches = page => {
+      try { const url = new URL(page.url()); return url.protocol === 'chrome-extension:' && url.hostname === extensionId && url.pathname === '/connect.html' }
+      catch { return false }
+    }
+    const cleanup = () => {
+      clearTimeout(timer); context.off('page', observe)
+      for (const [page, callback] of observed) page.off('framenavigated', callback)
+    }
+    const check = page => { if (!settled && matches(page)) { settled = true; cleanup(); resolve(page) } }
+    const observe = page => {
+      if (settled || observed.has(page)) return
+      const callback = () => check(page)
+      observed.set(page, callback); page.on('framenavigated', callback); check(page)
+    }
+    const timer = setTimeout(() => { settled = true; cleanup(); reject(blocked('extension_approval_unavailable', 'The exact official extension approval page did not become available; no unrelated first-run, sign-in or permission page was accepted.')) }, timeoutMs)
+    context.on('page', observe)
+    for (const page of context.pages()) observe(page)
+  })
 }
 
 export function verifyBrandedIdentity({ channel, platform, commandLine, version, userAgent, profile }) {
@@ -85,8 +110,9 @@ async function treeHash(directory) {
 /** Copy only raw blobs from the exact official Git commit. A modified checkout,
  * untracked file or repository build script cannot become an extension input. */
 export async function buildPinnedBrandedExtension({ source, destination }) {
-  const env = { ...bridgeProcessEnvironment(), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: os.devNull, GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0' }
-  const git = async (args, maxBuffer = 8 * 1024 * 1024) => (await exec('git', ['-c', 'core.fsmonitor=false', '-c', `core.hooksPath=${os.devNull}`, ...args], { cwd: source, env, timeout: 15000, maxBuffer, encoding: 'buffer' })).stdout
+  const emptyConfig = process.platform === 'win32' ? 'NUL' : os.devNull
+  const env = { ...bridgeProcessEnvironment(), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: emptyConfig, GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0' }
+  const git = async (args, maxBuffer = 8 * 1024 * 1024) => (await exec('git', ['-c', 'core.fsmonitor=false', '-c', `core.hooksPath=${path.join(destination, 'disabled-hooks')}`, ...args], { cwd: source, env, timeout: 15000, maxBuffer, encoding: 'buffer' })).stdout
   assert.equal((await git(['rev-parse', '--verify', `${BRANDED_EXTENSION_REVISION}^{commit}`])).toString().trim(), BRANDED_EXTENSION_REVISION)
   const entries = (await git(['ls-tree', '-rz', BRANDED_EXTENSION_REVISION, '--', 'packages/extension'])).toString().split('\0').filter(Boolean)
   const raw = path.join(destination, 'source'), dist = path.join(destination, 'dist'), hashes = []
@@ -133,11 +159,21 @@ export async function runBrandedBridgeSmoke({ env = process.env } = {}) {
   const fixture = await mkdtemp(path.join(temp, 'kkcode-branded-bridge-')), profile = path.join(fixture, 'profile')
   const priorRoot = process.env.KKCODE_HOME
   process.env.KKCODE_HOME = path.join(fixture, 'kkcode-state')
-  let context, controller, server, receipt, failure
+  let context, controller, server, receipt, failure, diagnosticCapture, diagnosticTimer
   try {
     const extension = await buildPinnedBrandedExtension({ source: setup.source, destination: path.join(fixture, 'extension') })
     const childEnv = bridgeProcessEnvironment()
-    context = await chromium.launchPersistentContext(profile, brandedLaunchOptions({ channel: setup.channel, profile, env: childEnv }))
+    if (process.platform === 'linux' && setup.report) {
+      diagnosticTimer = setTimeout(() => {
+        diagnosticCapture = (async () => {
+          const raw = path.join(fixture, 'launch.xwd'), png = path.join(temp, `${setup.channel}-launch.png`)
+          await exec('xwd', ['-root', '-silent', '-out', raw], { env: childEnv, timeout: 5000, maxBuffer: 65536 })
+          await exec('convert', [raw, png], { env: childEnv, timeout: 5000, maxBuffer: 65536 })
+        })().catch(() => {})
+      }, 20000)
+    }
+    try { context = await chromium.launchPersistentContext(profile, brandedLaunchOptions({ channel: setup.channel, profile, env: childEnv })) }
+    finally { clearTimeout(diagnosticTimer); await diagnosticCapture }
     const browser = context.browser()
     assert.ok(browser, 'persistent context must expose the real browser')
     const cdp = await browser.newBrowserCDPSession()
@@ -195,7 +231,7 @@ export async function runBrandedBridgeSmoke({ env = process.env } = {}) {
     await authorizeBrowserBridge({ sessionId, origins: [origin], browser: setup.channel, allowInteraction: true, confirmed: true })
     await assert.rejects(controller.execute({ action: 'screenshot' }, ctx), /allow-screenshots/)
     await authorizeBrowserBridge({ sessionId, origins: [origin], browser: setup.channel, allowInteraction: true, allowScreenshots: true, confirmed: true })
-    const approvalPage = context.waitForEvent('page', { predicate: candidate => candidate.url().startsWith(`chrome-extension://${installed.id}/`), timeout: 20000 })
+    const approvalPage = waitForBrandedApproval(context, installed.id)
     const connecting = controller.execute({ action: 'snapshot' }, ctx)
     connecting.catch(() => {}); approvalPage.catch(() => {})
     const approval = await approvalPage
@@ -230,7 +266,15 @@ export async function runBrandedBridgeSmoke({ env = process.env } = {}) {
       setup: { officialCdpInstall: true, extraExtensionInstallationDebugging: true, scope: 'test preparation only; ephemeral GitHub-hosted runner and disposable profile', nativeStoreInstallationUiTested: false, additionalEulaAccepted: false, osPolicyModified: false },
       assertions: { approvalDialog: true, selectedTabOnly: true, syntheticCookie: true, nestedFrameContentOmitted: true, screenshotDefaultDenied: true, screenshotOptIn: true, unapprovedTabPixelsAbsent: true, revoked: true, existingTabsSurviveDisconnect: true, extensionUninstalled: true }, screenshotResultFormat,
       runner: { os: env.RUNNER_OS, imageOS: env.ImageOS || null, imageVersion: env.ImageVersion || null, runId: env.GITHUB_RUN_ID || null, runAttempt: env.GITHUB_RUN_ATTEMPT || null }, existingUserProfilesTouched: false }
-  } catch (error) { failure = error }
+  } catch (error) {
+    failure = error
+    if (context && setup.report) {
+      const pages = context.pages().slice(0, 4)
+      for (let index = 0; index < pages.length; index++) {
+        await pages[index].screenshot({ path: path.join(temp, `${setup.channel}-failure-${index}.png`), timeout: 3000 }).catch(() => {})
+      }
+    }
+  }
   finally {
     try { await controller?.shutdown() } catch (error) { failure ||= error }
     try { await context?.close() } catch (error) { failure ||= error }
@@ -245,7 +289,7 @@ export async function runBrandedBridgeSmoke({ env = process.env } = {}) {
 async function main() {
   let receipt
   try { receipt = await runBrandedBridgeSmoke() }
-  catch (error) { receipt = { status: error.blocked ? 'blocked' : 'failed', channel: process.env.KKCODE_BRIDGE_TEST_CHANNEL || null, code: error.code || 'branded_bridge_acceptance_failed', message: String(error.message).slice(0, 1200), additionalEulaAccepted: false }; process.exitCode = error.blocked ? 2 : 1 }
+  catch (error) { receipt = { status: error.blocked ? 'blocked' : 'failed', channel: process.env.KKCODE_BRIDGE_TEST_CHANNEL || null, code: error.code || 'branded_bridge_acceptance_failed', message: String(error.message).slice(0, 8000), additionalEulaAccepted: false }; process.exitCode = error.blocked ? 2 : 1 }
   if (process.env.KKCODE_BRIDGE_REPORT) {
     try {
       const setup = brandedBridgePreflight()

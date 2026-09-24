@@ -4,9 +4,10 @@ import path from 'node:path'
 import os from 'node:os'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { EventEmitter } from 'node:events'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
-import { brandedBridgePreflight, brandedLaunchOptions, verifyBrandedIdentity, runBrandedBridgeSmoke } from '../scripts/browser-bridge-branded-smoke.mjs'
+import { brandedBridgePreflight, brandedLaunchOptions, verifyBrandedIdentity, runBrandedBridgeSmoke, waitForBrandedApproval, BRANDED_EXTENSION_ID } from '../scripts/browser-bridge-branded-smoke.mjs'
 
 const runnerOs = { linux: 'Linux', darwin: 'macOS', win32: 'Windows' }
 function environment(platform = process.platform) {
@@ -18,6 +19,28 @@ function environment(platform = process.platform) {
 }
 const denied = code => error => error.blocked === true && error.code === code
 const preflight = env => brandedBridgePreflight({ env, platform: process.platform, uid: 1000 })
+
+test('approval waiting observes a later extension navigation and cleans every listener', async () => {
+  const context = new EventEmitter(), unrelated = new EventEmitter(), page = new EventEmitter()
+  context.pages = () => [unrelated]
+  unrelated.url = () => 'chrome://welcome/'
+  let url = 'about:blank'; page.url = () => url
+  const pending = waitForBrandedApproval(context, BRANDED_EXTENSION_ID, 1000)
+  context.emit('page', page)
+  assert.equal(context.listenerCount('page'), 1)
+  url = `chrome-extension://${BRANDED_EXTENSION_ID}/connect.html?fixture=1`; page.emit('framenavigated')
+  assert.equal(await pending, page)
+  assert.equal(context.listenerCount('page'), 0)
+  assert.equal(page.listenerCount('framenavigated'), 0)
+  assert.equal(unrelated.listenerCount('framenavigated'), 0)
+})
+
+test('approval waiting never accepts a different extension or a welcome page', async () => {
+  const context = new EventEmitter(), page = new EventEmitter()
+  context.pages = () => [page]; page.url = () => 'chrome-extension://other/connect.html'
+  await assert.rejects(waitForBrandedApproval(context, BRANDED_EXTENSION_ID, 10), denied('extension_approval_unavailable'))
+  assert.equal(context.listenerCount('page'), 0); assert.equal(page.listenerCount('framenavigated'), 0)
+})
 
 test('branded harness refuses non-CI and self-hosted runs, missing opt-in and Linux root', () => {
   for (const change of [{ GITHUB_ACTIONS: undefined }, { GITHUB_ACTIONS: 'false' }, { RUNNER_ENVIRONMENT: 'self-hosted' }]) assert.throws(() => preflight({ ...environment(), ...change }), denied('github_hosted_required'))

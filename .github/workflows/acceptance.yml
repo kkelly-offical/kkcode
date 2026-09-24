@@ -2,6 +2,12 @@ name: enterprise-acceptance
 
 on:
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Diagnostic subset; only all is full candidate acceptance
+        type: choice
+        default: all
+        options: [all, bridge, system]
   push:
     branches: ["acceptance/**"]
 
@@ -14,6 +20,7 @@ concurrency:
 
 jobs:
   system:
+    if: github.event_name != 'workflow_dispatch' || inputs.scope != 'bridge'
     name: ${{ matrix.os }} / Node ${{ matrix.node }}
     strategy:
       fail-fast: false
@@ -57,6 +64,7 @@ jobs:
           retention-days: 7
 
   strict-runtime:
+    if: github.event_name != 'workflow_dispatch' || inputs.scope == 'all'
     # Ubuntu 22.04's unprivileged namespace policy permits Chromium's real
     # sandbox. Do not disable AppArmor/sysctl/sandbox flags to make this green.
     runs-on: ubuntu-22.04
@@ -117,6 +125,7 @@ jobs:
           retention-days: 7
 
   isolated-toolchains:
+    if: github.event_name != 'workflow_dispatch' || inputs.scope == 'all'
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     env:
@@ -158,6 +167,7 @@ jobs:
           retention-days: 7
 
   branded-browser-bridge:
+    if: github.event_name != 'workflow_dispatch' || inputs.scope != 'system'
     name: Bridge / ${{ matrix.os }} / ${{ matrix.channel }}
     strategy:
       fail-fast: false
@@ -197,7 +207,10 @@ jobs:
         run: node --input-type=module -e 'import{installBrowserBridge}from"./src/kernel/browser/bridge-runtime.mjs";await installBrowserBridge({rootDir:process.env.KKCODE_BRIDGE_TEST_RUNTIME,onProgress:message=>process.stderr.write(message+"\n")})'
       - name: Real branded browser and official extension on Linux
         if: runner.os == 'Linux'
-        run: xvfb-run -a node scripts/browser-bridge-branded-smoke.mjs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends x11-apps imagemagick
+          xvfb-run -a node scripts/browser-bridge-branded-smoke.mjs
       - name: Real branded browser and official extension on Windows/macOS
         if: runner.os != 'Linux'
         run: node scripts/browser-bridge-branded-smoke.mjs
@@ -205,6 +218,9 @@ jobs:
         if: always()
         with:
           name: bridge-${{ matrix.os }}-${{ matrix.channel }}
-          path: ${{ runner.temp }}/kkcode-bridge-report.json
+          path: |
+            ${{ runner.temp }}/kkcode-bridge-report.json
+            ${{ runner.temp }}/${{ matrix.channel }}-launch.png
+            ${{ runner.temp }}/${{ matrix.channel }}-failure-*.png
           if-no-files-found: error
           retention-days: 7

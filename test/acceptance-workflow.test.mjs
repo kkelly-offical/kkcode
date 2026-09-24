@@ -5,6 +5,8 @@ import YAML from 'yaml'
 
 test('acceptance workflow keeps runner-only expressions in steps and uses actual checked-in gate scripts', async () => {
   const workflow = YAML.parse(await readFile(new URL('../.github/workflows/acceptance.yml', import.meta.url), 'utf8'))
+  assert.equal(workflow.on.workflow_dispatch.inputs.scope.default, 'all')
+  for (const job of Object.values(workflow.jobs)) assert.match(job.if, /^github\.event_name != 'workflow_dispatch' \|\| /, 'push always runs the complete acceptance matrix')
   for (const [name, job] of Object.entries(workflow.jobs)) {
     assert.doesNotMatch(JSON.stringify(job.env || {}), /\$\{\{[^}]*\brunner\./, `${name}: runner context is unavailable in job-level env`)
     for (const step of job.steps) for (const match of (step.run || '').matchAll(/(?:node|xvfb-run -a node) (scripts\/[A-Za-z0-9._/-]+\.mjs)/g)) {
