@@ -8,7 +8,21 @@
 
 ## 后续真实验收与收口（2026-09-24）
 
-- 已推主验收候选为 `762267a88d858e650dd7a63baad6b5392f2b5ed6`，分支仍是
+- 最新代码候选 `8e1cbc850a91bf633c7496bf1a2a183c956b1a9c` 已推专用验收分支。
+  本机一次统一真实镜像回归 `coverage-context-round8.log`：**3714项／3708通过／
+  0失败／6环境条件跳过**，行85.14%／分支80.22%／函数83.43%。E2E33、兼容45、
+  lint1042文件／零架构逆向依赖／零内核直接stdout、全局与Web类型检查通过。
+  最低Node22.12干净安装722文件，全部SDK域、预算工厂及真实SQLite worker通过。
+  CodeQL `35983776514` 三类扫描全部成功（含真实Kotlin构建），开放17条历史告警、
+  无新增64及以后告警；没有关闭规则或dismiss。CI `35983710166`四平台核心、strict-runtime、
+  isolated-toolchains全部通过；六格品牌浏览器仍失败/受阻，workflow总体失败。
+  最新非root Chromium回执：UID1001、Docker网络none、真实沙箱/seccomp/无capabilities，
+  打开/快照/已授权点击/截图及取消清理均通过；未触碰用户浏览器profile。
+  证据在 `test-results/preview-1.0.5/strict-8e1cbc/`，不冒充品牌Bridge已验收。
+  真实模型新快照 `2f3e7a1e...ea648` 从头执行v3 60×2：与8e1cbc逐文件核对仅
+  AGENTS.md不同，产品源码/测试/题集/依赖一致；仍保留其762+dirty原始来源与独立hash。
+  运行中的部分结果不构成质量门禁通过；不会混入旧C07单项或自检成绩。
+- 前一已推主验收候选为 `762267a88d858e650dd7a63baad6b5392f2b5ed6`，分支仍是
   `acceptance/1.0.5-trusted-runtime-20260924`，没有合并main或发行。
   本机 `coverage-real-candidate-round7.log`：3639项／3633通过／0失败／6条件跳过，
   行85.01%、分支79.89%、函数83.24%，属于更早的8008阶段工作树，不冒充762的新覆盖率。

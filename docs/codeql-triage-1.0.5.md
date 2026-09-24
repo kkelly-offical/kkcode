@@ -4,12 +4,17 @@
 扫描执行成功，但开放告警由稳定版基线的 **17 条**增至 **25 条**，新增编号
 **64–71**。扫描成功不是“零风险”证明。
 
-以下记录逐条根因、代码处理与实际回归。最新已推候选 `762267a` 的
+最新上下文修复候选 `8e1cbc8` 的
+[CodeQL复扫35983776514](https://github.com/kkelly-offical/kkcode/actions/runs/35983776514)
+已完成三类扫描，Kotlin仍为真实构建；开放17条历史告警，无64及以后新增开放告警。
+回执：`test-results/preview-1.0.5/codeql-8e1cbc-open.json`。这不代表历史告警无害。
+
+以下记录逐条根因、代码处理与实际回归。前一候选 `762267a` 的
 [CodeQL 复扫 35979843871](https://github.com/kkelly-offical/kkcode/actions/runs/35979843871)
 三种语言任务全部完成（Kotlin 为真实手工构建）；该分支开放告警回到历史 **17 条**，
 新增64–72均不在开放列表。没有关闭规则或dismiss告警，历史17条不因此视为无害。
 本地回执为 `test-results/preview-1.0.5/codeql-762267a-open.json`。
-随后未提交的上下文修复仍需新候选复扫，不能继承这个SHA的验收结果。
+随后上下文修复由上方8e1cbc独立复扫，不直接继承这个SHA的验收结果。
 
 历史候选 `8008e58` 的
 [CodeQL 复扫 35973390165](https://github.com/kkelly-offical/kkcode/actions/runs/35973390165)
