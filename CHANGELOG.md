@@ -1,6 +1,6 @@
 # Changelog / 更新日志
 
-## 1.0.5-preview.0 — Unreleased / 开发中
+## 1.0.5-preview.0 — Preview / 预览
 
 - Start the approved [1.0.5 program](docs/plan-1.0.5.md); published stable remains 1.0.4.
 - Repair opt-in Anthropic native compaction, scoped private replay, complete request
@@ -58,12 +58,16 @@
 
 This is not a release receipt or a claim that every W01–W13 feature is complete.
 See the [implementation ledger](docs/implementation-1.0.5.md) for actual verification.
-No npm/GitHub publication or production deployment has occurred for this version.
-The authorized local-vLLM 60-task × 2-run evaluation is running; its fixed-candidate
-results are separate from controlled HTTP fixtures. A real GitHub SDK draft round trip
-has passed engineering checks but still awaits human review. GitLab, the complete
-Chrome/Edge three-OS matrix, updated-candidate CI and seven-day real-use gates need
-their own receipts; oracle selfchecks and historical release CI do not substitute.
+Publication status and immutable artifact hashes are recorded in the ledger; no
+production deployment happens automatically. The original frozen local-vLLM v3
+60-task × 2-run evaluation completed with 108 passes, 11 failures and one error;
+critical recovery did not fully pass, so 90% is not a passed quality gate.
+Repaired-scenario evidence is separate, never blended with old scores. The user
+approved this Preview before full v4 quality acceptance and real GitLab MR testing;
+those remain deferred, along with the later seven-day maturity trial. The current
+four-platform CI, six branded Chrome/Edge slots and three-language CodeQL passed.
+A real GitHub SDK draft round trip passed engineering checks but correctly remains
+blocked without human review. Oracle selfchecks are not model-quality evidence.
 
 ## 1.0.4 — 2026-09-24
 

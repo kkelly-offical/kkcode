@@ -17,6 +17,11 @@ only. Stable update checks do not offer this prerelease.
 The Android application is a native remote client. Release signing is separate
 from publishing: producing this APK does not upload it to a store or GitHub.
 
+The 1.0.5 Preview candidate is **1.0.5-preview.0 / 10009**, signed by the same
+certificate. Its exact APK, update manifest and actual upload/download receipts
+are tracked in the [1.0.5 ledger](implementation-1.0.5.md); older published-version
+receipts above are historical, not proof of this candidate's publication.
+
 ## Project signing identity
 
 The user authorized creation of a project-specific production release key on
@@ -84,7 +89,8 @@ The application footer and Android User-Agent use `BuildConfig.VERSION_NAME`.
 
 After signature verification, run `node scripts/android-update-manifest.mjs`.
 Publish its `test-results/android-update.json` alongside the exact signed APK
-renamed `kkcode-android-1.0.4.apk`. The App updater skips releases without a
+renamed `kkcode-android-<versionName>.apk` (for this Preview,
+`kkcode-android-1.0.5-preview.0.apk`). The App updater skips releases without a
 matching manifest. Public identity is pinned in `configs/android-release.json`;
 private signing files never enter the release. See [App updates](android-app-updates.md).
 

@@ -13,23 +13,25 @@
 **终端优先、可治理、可扩展的编码智能体：五档模式循环、可治理审批、Ultra 分阶段交付。**
 kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同一个 CLI 工作台里，并且把权限、预算、审计、后台任务、MCP、技能与插件一起纳入统一执行面。
 
-当前源码正在开发 **`1.0.5-preview.0`，尚未发布**。本轮以可信大任务交付为目标，
+本轮预览版本为 **`1.0.5-preview.0`**，以可信大任务交付为目标，
 完整范围见 [开发计划](docs/plan-1.0.5.md)，已完成与未完成内容见
 [实施账本](docs/implementation-1.0.5.md)。持久任务、严格隔离、证据/记忆、多代理、
-离线依赖环境、本机浏览器桥接和文档工具已进入源码与本地集成验收；跨平台、真实模型与试用门禁尚未完成，
-不能视为已经发行或生产认证。公开稳定版仍以下面的 1.0.4 为准。
+离线依赖环境、本机浏览器桥接和文档工具已完成工程集成与跨平台验收。
+**Preview不等于完整模型质量验收或生产认证**；公开稳定版仍为下面的1.0.4。
 
-验收代码已推送专用分支，尚未合入 main、公开发布或升级生产网关／设备。
+发行状态与公开产物以[GitHub Releases](https://github.com/kkelly-offical/kkcode/releases)
+及实施账本回执为准；发版不自动升级生产网关／设备。
 真实 GitHub SDK 工程往返已建立 [草稿 PR #5](https://github.com/kkelly-offical/kkcode/pull/5)，
 但缺少人工批准，仍是 blocked，不是可合并交付。候选`634e308`的完整CI已通过：
 Linux Node22/24、Windows22、macOS22、严格运行时、工具链及六组Chrome/Edge，
 包含评测目录别名修复；三类CodeQL扫描通过，没有新增开放告警，历史17条仍跟踪。
-获准的本机 vLLM 真实模型评测仍在进行；原始第一轮55/60通过，但含恢复测量缺陷，
-不能称质量门禁已过。新版定义的补验／完整复验另行记录，不拼接不同版本成绩。
-用户允许本次 Preview 明确延期 GitLab 实机 MR 验收；七天实际试用仍是后续成熟度门禁。
+本机vLLM原始v3完整120项为108通过、11失败、1错误（90%），关键恢复未全过，
+不能称质量门禁已过。修复场景补验另行记录，不拼接不同版本成绩。
+用户选择先发Preview，完整v4模型质量和GitLab实机MR验收明确延期；
+七天实际试用等仍是后续1.1.0成熟度门禁。
 详见[实施账本](docs/implementation-1.0.5.md)
 与[新增 CodeQL 核查](docs/codeql-triage-1.0.5.md)。不使用付费模型或历史 CI 代替当前验收。
-`1.1.0` 是后续成熟度目标，不是本次版本号；本次仅获准准备修复后的 Preview，未完成门禁不视为自动豁免。
+`1.1.0`是后续成熟度目标，不是本次版本号；本次仅更新Preview渠道，不替换稳定版。
 
 稳定版 **`1.0.4` 已发布**：新增 [OpenAI Responses API](docs/responses-api.md)，
 支持文本/图片、流式思考摘要与受控工具循环；修复 SSH 跨设备模型状态、中文错误、
@@ -133,7 +135,7 @@ kkcode
 ```
 
 预览渠道：`npm install -g @kkelly-offical/kkcode@preview`；固定稳定版可使用
-`@1.0.4`。本次开发尚未更新 `@preview`，不能用它安装未发布的 `1.0.5-preview.0`；
+`@1.0.4`。Preview发行后可用`@1.0.5-preview.0`固定版本；渠道实际指向以npm为准。
 获取当前正式版用默认渠道或明确版本号，不要把预览标签当作总是最新。安装搜索依赖：Linux `apt install ripgrep`、macOS
 `brew install ripgrep`、Windows `choco install ripgrep`。
 
@@ -230,9 +232,9 @@ For a deeper boundary matrix, see [CLI General Assistant Capability Matrix](docs
 ---
 
 <a id="development-105"></a>
-## 1.0.5 Development / 开发版入口与边界
+## 1.0.5 Preview / 试用入口与边界
 
-以下是**未发布源码**的使用入口，不是上表稳定版能力已经全部升级的声明。
+以下是**1.0.5 Preview**的使用入口，不是上表稳定版能力已经全部升级的声明。
 普通聊天／原有 Ultra 不会自动取得严格任务的隔离、预算或验收合同。
 
 | 方向 | 已接入的入口 | 必须保留的边界 |
@@ -797,10 +799,10 @@ update:
 
 **Current stable / 当前稳定版本**: [`v1.0.4`](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.4)，npm `latest` 与 Android `10008` 已上线，发布门禁与公开下载回执见 [实施台账](docs/stable-1.0.4-worklog.md)。
 
-**Opt-in preview / 自愿试用预览版**: [`v1.0.4-preview.0`](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.4-preview.0)，发布回执见 [实施台账](docs/implementation-1.0.4.md)。
+**Opt-in preview / 本轮自愿试用预览版**: `1.0.5-preview.0`，发行渠道为npm `preview`／GitHub prerelease。是否已可下载及产物哈希见[发布列表](https://github.com/kkelly-offical/kkcode/releases)和[实施台账](docs/implementation-1.0.5.md)。
 
-**Development only / 仅开发中**: `1.0.5-preview.0`；没有 npm/GitHub 发版回执，
-没有自动更新生产网关或设备。该工作树不能替换上面的稳定版发布状态。
+本轮完整v4真实模型质量验收与GitLab实机MR明确后补，不冒充成熟版或生产认证；
+没有自动更新生产网关或设备。历史[`v1.0.4-preview.0`](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.4-preview.0)回执保留在[旧台账](docs/implementation-1.0.4.md)。
 
 1.0.4 正式发布已推进 npm `latest`，不移动任何旧版本标签，未发行 `1.0.4-preview.1`。
 新客户端、设备 CLI、企业网关/Web 镜像需按 [升级说明](docs/release-1.0.4.md) 配套更新。
