@@ -682,18 +682,19 @@ export function createProviderRegistry() {
     }
   }
 
-  // --- Token Counting (Anthropic only, returns null for other providers) ---
+  // Exact/provider counting where supported. Strict callers can additionally
+  // observe the same conservative complete-input bound used by dispatch.
   async function countTokensProvider({
     configState, providerType, model, system, messages, tools,
     baseUrl = null, apiKeyEnv = null,
     traceId = "", requestId = "", parentEventId = "",
-    sessionId = null, turnId = null, reviewId = "", signal = null, allowRemote = false
+    sessionId = null, turnId = null, reviewId = "", signal = null, allowRemote = false, onInputBound = null
   }) {
     const resolvedProviderType = providerType || configState.config.provider.default
     const settings = resolveSettings(configState, resolvedProviderType, { model, baseUrl, apiKeyEnv })
     assertProviderDataPolicy(configState, { providerName: settings.configKey, baseUrl: settings.baseUrl })
     const provider = registry.get(settings.providerType)
-    if (!provider?.countTokens) return null
+    if (!provider || !provider.countTokens && !hasRequestBudget()) return null
     // Existing normal conversations retain their inexpensive local estimate;
     // strict preflight and explicit SDK counting can use the current API.
     if (settings.protocol === 'responses' && !allowRemote && !hasRequestBudget()) return null
@@ -727,12 +728,23 @@ export function createProviderRegistry() {
         responseRequestId = upstreamRequestId(response)
       }
     }
+    const strict = hasRequestBudget()
+    if (strict) snapshotStrictInput(input)
+    const reportBound = count => {
+      if (strict && typeof onInputBound === 'function') {
+        const usesCount = settings.protocol === 'responses' || settings.protocol === 'anthropic' && needsTrustedInputCount(input)
+        const trustedCount = usesCount && Number.isSafeInteger(count) && count > 0 ? settings.protocol === 'anthropic' ? count * 2 + 4096 : count : null
+        const bound = strictInputTokenBound(input, { trustedCount })
+        onInputBound(Object.freeze({ ...bound, source: trustedCount !== null && settings.protocol === 'responses' ? 'count-api' : 'strict-upper-bound' }))
+      }
+      return count
+    }
     // OpenAI-compatible APIs have no portable count-only endpoint, so their
     // implementation is local and should not create a misleading HTTP span.
     const isRemoteCount = settings.protocol === "anthropic" || settings.protocol === 'responses'
     if (hasRequestBudget()) assertRequestBudgetActive()
     await verifyLocalFreeRequest({ provider: input.provider, model: input.model, protocol: input.protocol, baseUrl: input.baseUrl, credential: input.apiKey })
-    if (!isRemoteCount) return provider.countTokens(input)
+    if (!isRemoteCount) return reportBound(provider.countTokens ? await provider.countTokens(input) : null)
     await assertProviderOutboundAllowed(configState, {
       providerName: settings.configKey,
       protocol: settings.protocol,
@@ -769,7 +781,7 @@ export function createProviderRegistry() {
         upstreamRequestId: responseRequestId,
         tokenCount: Number.isFinite(count) ? count : null
       })
-      return count
+      return reportBound(count)
     } catch (error) {
       await auditSpan?.fail(new Error("provider token count failed"), {
         ...auditFailureMetadata(error, signal),

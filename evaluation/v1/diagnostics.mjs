@@ -17,6 +17,10 @@ export function sanitizeDiagnostic(value, secrets = [], limit = 4000) {
 
 export const evaluationDiagnosticRoot = () => path.join(userRootDir(), 'evaluation-diagnostics')
 
+export function evaluationTurnDiagnostics(turns, secrets = []) {
+  return turns.filter(turn => turn?.error).map(turn => sanitizeDiagnostic(turn.error, secrets, 4000))
+}
+
 export async function writeEvaluationDiagnostic({ root = evaluationDiagnosticRoot(), error, taskId, secrets = [] }) {
   await mkdir(root, { recursive: true, mode: 0o700 })
   const directory = await lstat(root)

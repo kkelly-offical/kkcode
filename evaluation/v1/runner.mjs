@@ -84,8 +84,8 @@ async function executeEvaluation({ mode = 'selfcheck', ids = [], split = 'develo
   if (!['selfcheck', 'live'].includes(mode)) throw new Error('Unknown evaluation mode')
   if (!Number.isSafeInteger(repetitions) || repetitions < 1 || repetitions > 20) throw new Error('Invalid repetition count')
   if (!immutableImage(image)) throw new Error('An already-installed immutable node execution image is required')
-  if (!['v1', 'v2'].includes(suiteVersion)) throw new Error('Unknown evaluation suite version')
-  const suite = suiteVersion === 'v2' ? await import('../v2/manifest.mjs') : { createManifest, selectCases }
+  if (!['v1', 'v2', 'v3'].includes(suiteVersion)) throw new Error('Unknown evaluation suite version')
+  const suite = suiteVersion === 'v3' ? await import('../v3/manifest.mjs') : suiteVersion === 'v2' ? await import('../v2/manifest.mjs') : { createManifest, selectCases }
   const manifest = suite.createManifest(), selected = suite.selectCases({ ids, split })
   const diagnosticRoot = evaluationDiagnosticRoot()
   if (!selected.length) throw new Error('No evaluation cases selected')
@@ -162,7 +162,7 @@ async function executeEvaluation({ mode = 'selfcheck', ids = [], split = 'develo
               lifecycleReceipt: execution.lifecycleReceipt || null, actionsHash: sha256(execution.actions || []), stateFingerprint: execution.stateFingerprint || null }
             result.checks = oracle.checks; result.budget = execution.budget || { authorizedUsd: 0, inferenceRequests: 0 }
             if (execution.modelError || !oracle.passed) {
-              const error = new Error(execution.modelError ? (execution.diagnostics || ['Model execution did not complete']).join('\n')
+              const error = new Error(execution.modelError ? (execution.diagnostics?.length ? execution.diagnostics.join('\n') : 'Model execution did not complete; inspect the private durable turn receipt')
                 : `Independent oracle rejected: ${oracle.checks.filter(check => !check.passed).map(check => check.name).join(', ')}`)
               result.diagnosticId = await writeEvaluationDiagnostic({ root: diagnosticRoot, error, taskId: task.id, secrets: diagnosticSecrets })
             }

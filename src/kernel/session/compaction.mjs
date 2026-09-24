@@ -1,4 +1,4 @@
-import { requestProvider } from "../provider/router.mjs"
+import { requestProvider, countTokensProvider } from "../provider/router.mjs"
 import { getSession, replaceMessages } from "./store.mjs"
 import { HookBus } from "../plugin/hook-bus.mjs"
 import { saveCheckpoint } from "./checkpoint.mjs"
@@ -6,6 +6,8 @@ import { recordTurn } from "../../usage/usage-meter.mjs"
 import { loadPricing, calculateCost } from "../../usage/pricing.mjs"
 import { resolveTaskModel } from '../provider/task-model.mjs'
 import { hasModelUsageScope } from '../../usage/model-ledger.mjs'
+import { hasRequestBudget } from '../../usage/request-budget.mjs'
+import { snapshotStrictInput } from '../../usage/input-token-bound.mjs'
 
 const COMPACTION_SYSTEM = `You are a conversation summarizer. Create a structured, merge-safe summary preserving all critical information for continued work.
 
@@ -373,8 +375,14 @@ export async function compactSession({
   apiKeyEnv = null,
   traceId = "",
   parentEventId = "",
-  onUsage = null
+  onUsage = null,
+  signal = null,
+  requestContext = null
 }) {
+  signal?.throwIfAborted()
+  const strict = hasRequestBudget()
+  const continuation = { system: requestContext?.system || '', tools: requestContext?.tools || [], messages: [] }
+  if (strict) snapshotStrictInput(continuation)
   const snapshot = await getSession(sessionId)
   const history = snapshot?.messages || []
   if (history.length <= keepRecent + 2) return { compacted: false, reason: "too few messages" }
@@ -420,6 +428,7 @@ export async function compactSession({
     summarizeCount: toSummarize.length,
     keepCount: kept.length
   })
+  signal?.throwIfAborted()
   if (hookPayload?.skip) return { compacted: false, reason: "skipped by hook" }
 
   let summaryText
@@ -439,12 +448,14 @@ export async function compactSession({
       traceId,
       parentEventId,
       sessionId,
-      turnId
+      turnId,
+      signal
     })
     summaryText = (response.text || "").trim()
     compactionUsage = response.usage || null
     if (compactionUsage && typeof onUsage === 'function') onUsage({ provider: summaryRoute.providerType, model: summaryRoute.model, usage: compactionUsage })
   } catch (error) {
+    signal?.throwIfAborted()
     return { compacted: false, reason: `compaction LLM call failed: ${error.message}` }
   }
 
@@ -457,6 +468,10 @@ export async function compactSession({
       await recordTurn({ sessionId, usage: compactionUsage, cost: amount, modelCharges: [{ provider: summaryRoute.providerType, model: summaryRoute.model, usage: compactionUsage, amount, estimated: unknown }] })
     } catch { /* best-effort */ }
   }
+
+  // Count any completed response before observing cancellation, but never let
+  // that late response replace history after the caller has stopped the turn.
+  signal?.throwIfAborted()
 
   if (!summaryText) return { compacted: false, reason: "empty summary from LLM" }
 
@@ -478,7 +493,31 @@ export async function compactSession({
     compacted: false, reasonCode: 'no_effective_reduction', estimatedBeforeTokens, estimatedAfterTokens,
     reason: 'summary did not reduce estimated context tokens; original history was retained'
   }
+  let strictBeforeTokens, strictAfterTokens
+  if (strict) {
+    // Count the continuation route, not the possibly different summary model.
+    // Explicit SDK compaction has no future prompt/schema yet; its unchanged
+    // empty system/tools context proves history shrinkage only. The next full
+    // request must still pass normal strict preflight.
+    const measure = async source => {
+      let bound
+      const messages = await HookBus.messagesTransform(structuredClone(source.map(message => ({ role: message.role, content: message.content }))))
+      await countTokensProvider({ configState, providerType, model, system: continuation.system, tools: continuation.tools, messages,
+        baseUrl, apiKeyEnv, traceId, parentEventId, sessionId, turnId, signal, onInputBound: value => { bound = value } })
+      if (!Number.isSafeInteger(bound?.tokens) || bound.tokens <= 0) throw new Error('strict continuation input could not be measured safely')
+      return bound.tokens
+    }
+    try { strictBeforeTokens = await measure(history); strictAfterTokens = await measure(candidate) }
+    catch (error) {
+      signal?.throwIfAborted()
+      return { compacted: false, reasonCode: 'strict_measurement_unavailable', reason: `cannot verify strict context reduction; original history was retained: ${error.message}` }
+    }
+    if (strictAfterTokens >= strictBeforeTokens) return { compacted: false, reasonCode: 'no_effective_strict_reduction', estimatedBeforeTokens, estimatedAfterTokens,
+      strictBeforeTokens, strictAfterTokens, reason: 'summary did not reduce the complete strict continuation input; original history was retained' }
+  }
+  signal?.throwIfAborted()
   const replacement = await replaceMessages(sessionId, candidate, {
+    signal,
     observedMessages: history,
     expectedSession: Object.fromEntries(['model', 'providerType', 'historyRevision'].map(key => [key, snapshot.session[key]]))
   })
@@ -501,6 +540,7 @@ export async function compactSession({
 
   return {
     compacted: true,
+    ...(strict ? { strictBeforeTokens, strictAfterTokens } : {}),
     summarizedCount: toSummarize.length,
     keptCount: kept.length,
     summaryLength: summaryText.length,

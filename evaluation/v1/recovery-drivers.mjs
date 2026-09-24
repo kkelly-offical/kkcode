@@ -12,6 +12,7 @@ import { createLocalFreeInferenceAuthorization, localFreePolicy, validateLocalFr
 import { flushNow } from '../../src/kernel/session/store.mjs'
 import { loadConfig } from '../../src/config/load-config.mjs'
 import { sha256 } from './manifest.mjs'
+import { evaluationTurnDiagnostics } from './diagnostics.mjs'
 
 const proofs = new WeakMap()
 const proofBody = value => ({ ...value, diagnostics: undefined })
@@ -404,6 +405,7 @@ export async function runRecoveryScenario({ task, cwd, privateRoot, profile = nu
         }
       }
     }
+    diagnostics.push(...evaluationTurnDiagnostics(turns, profile.apiKeyEnv ? [process.env[profile.apiKeyEnv]] : []))
     const run = await runtime.store.getRun(runtime.run.id), budget = await runtime.store.getRunBudget({ runId: run.id }), events = await runtime.store.events({ runId: run.id })
     checks.push({ name: 'durable-identity-and-request-ledger-present', passed: run.id === runtime.run.id && budget.requests.some(request => request.kind === 'model') })
     const candidate = await captureAcceptanceCandidate(cwd), evidence = { durableRunId: run.id, ownerEpoch: String(run.ownerEpoch), beforeEventsHash,

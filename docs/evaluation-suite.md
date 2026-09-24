@@ -4,7 +4,7 @@
 
 ## 任务与隔离
 
-清单在 `evaluation/v1/`，固定为仓库修改 20、上下文/恢复 15、安全副作用 15、文档 10；其中 40 个开发任务、20 个封存任务。每个任务有不同的具体机制、真实输入 fixture、验收目标和指纹，不用同一个测试改名凑数量。
+基础清单在 `evaluation/v1/`，独立勘误位于 `evaluation/v2/`、`evaluation/v3/`；固定为仓库修改 20、上下文/恢复 15、安全副作用 15、文档 10，其中 40 个开发任务、20 个封存任务。每个任务有不同的具体机制、真实输入 fixture、验收目标和指纹，不用同一个测试改名凑数量。默认v1仅为历史复验兼容；新的评测请显式选择v3。
 
 | 类别 | 任务范围 | 独立判断来源 |
 | --- | --- | --- |
@@ -50,14 +50,39 @@ node scripts/evaluate.mjs selfcheck --suite-version v2 \
 node scripts/evaluate.mjs summarize 某次v2结果目录 --suite-version v2
 ```
 
+### v3 开发集契约审计
+
+v2真实预热进一步暴露了C02的路径歧义，因此另建 `--suite-version v3`，不覆盖v1/v2清单或成绩。已逐项核查全部40个development任务的可见契约与既有oracle；只补可见说明，不改任何算法期望、probe、恢复条件或通过阈值。20个sealed任务仅检查了用户可见格式说明，不用其答案调题，任务对象与hash仍完全继承历史集。
+
+| 开发任务 | 核查结论与v3操作 |
+| --- | --- |
+| R01、R09 | 已声明输入不可变；保留，R09继续沿用v2逐级迁移说明 |
+| R02–R08、R10–R13 | oracle已有输入不可变判据，但题面缺失；补充禁止修改input及其嵌套值。R06同时明示0基UTF-16半开区间，原算法期望不变 |
+| C01 | 原“包含”措辞未排除额外字段；明示仅timezone/publish两字段 |
+| C02 | 明示根result.json只是验收摘要，不属于项目交付物；项目仍使用原指定目录并禁止覆盖。声明directory/overwrite字段 |
+| C04–C06 | 保留v2 schema和协议判据；纠正最终阶段也出现“不必提前输出”的时序措辞，明示根验收摘要的最终写入要求 |
+| C07 | 声明根验收摘要的label字段，值仍需从最新有效用户要求恢复 |
+| C03、C08–C10 | 无额外JSON答案形状要求；实际取消、压缩不缩减、崩溃、回执故障等宿主机制判据不变，不冒充模型摘要质量 |
+| S01–S10 | 所需JSON字段与输入保护/禁止动作已明确；不修改 |
+| D01–D07 | 产物路径、页次、公式或修改对象已明确；不修改 |
+
+v3相对v2共17个development任务的可见契约hash变化。默认仍是v1，必须显式选择v3；不同manifest的分数不可拼接或直接宣称同条件A/B优劣。历史v2预热的C02失败仍保留，不回填成功。该次预热的实际重建、同run/owner、原件保护和安全检查已经通过，但这不代表完整任务成功。
+
+```sh
+node scripts/evaluate.mjs list --suite-version v3
+node scripts/evaluate.mjs selfcheck --suite-version v3 --split development \
+  --image sha256:已安装的Node镜像摘要 \
+  --office-image sha256:已安装的Office镜像摘要
+```
+
 ## 零费用自检
 
 在完整源码仓库根目录，先准备本机已有的不可变镜像。Office 镜像按 [文档工具说明](office-tools.md) 构建。
 
 ```sh
-node scripts/evaluate.mjs list
+node scripts/evaluate.mjs list --suite-version v3
 
-node scripts/evaluate.mjs selfcheck \
+node scripts/evaluate.mjs selfcheck --suite-version v3 \
   --split development \
   --image sha256:已安装的Node镜像摘要 \
   --office-image sha256:已验收的Office镜像摘要
@@ -91,7 +116,7 @@ node scripts/evaluate.mjs selfcheck \
 ```sh
 node --input-type=module -e "import {captureAcceptanceCandidate} from './src/kernel/session/acceptance-manifest.mjs'; console.log((await captureAcceptanceCandidate(process.cwd())).treeFingerprint)"
 
-node scripts/evaluate.mjs run --live --split all --repetitions 2 \
+node scripts/evaluate.mjs run --live --suite-version v3 --split all --repetitions 2 \
   --candidate-hash 上一步得到的完整SHA256 \
   --profile /受信任路径/evaluation-profile.json \
   --budget-usd 操作者明确批准的总额度 \
@@ -117,7 +142,7 @@ node scripts/evaluate.mjs run --live --split all --repetitions 2 \
 先只跑一个开发任务，核对模型身份、SQL预算、工具动作及独立oracle，再运行完整两轮：
 
 ```sh
-node scripts/evaluate.mjs run --live --local-free \
+node scripts/evaluate.mjs run --live --local-free --suite-version v3 \
   --case R01 --split development --repetitions 1 \
   --candidate-hash 当前冻结源码SHA256 \
   --profile /受信任路径/local-vllm-profile.json \
@@ -143,7 +168,7 @@ node scripts/evaluate-snapshot.mjs --base HEAD
 `evaluation/result.schema.json` 定义结果结构。每项绑定 manifest/task/runtime/config hash、模型、重复编号、独立oracle回执、候选树、持久runId、具体检查和安全结果。状态分为 `passed`、`failed`、`unsupported`、`error`、`not_run`；后三者不能算成功。结果文件和summary只写新路径。
 
 ```sh
-node scripts/evaluate.mjs summarize test-results/evaluation/某次运行目录
+node scripts/evaluate.mjs summarize test-results/evaluation/某次v3运行目录 --suite-version v3
 node scripts/evaluate.mjs diagnostic diag_失败记录中的编号
 ```
 

@@ -26,7 +26,7 @@ export function requestContextBudget({ system = '', messages = [], tools = [], m
     requiredTokens: tokens + outputReserved,
     ratio: limit > 0 ? Math.min(1, tokens / limit) : 0,
     percent: limit > 0 ? Math.min(100, Math.round(tokens * 100 / limit)) : 0,
-    source: measured ? source : 'estimated', estimated: !measured || source === 'estimated',
+    source: measured ? source : 'estimated', estimated: !measured || source === 'estimated' || source === 'strict-upper-bound',
     components, model, provider: providerType || provider?.default || '', updatedAt: Date.now()
   }
 }

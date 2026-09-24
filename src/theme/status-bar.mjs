@@ -146,7 +146,10 @@ export function renderStatusBar({
     // 绝对量比百分比更能回答「还剩多少」——193.4K (18%) 这种形式一眼可读。
     // tokens 缺失（早期帧）时退回纯百分比。
     const abs = Number(contextMeter.tokens) > 0 ? `${formatTokenCount(contextMeter.tokens)} ` : ""
-    const text = tight ? `CTX ${pct}%` : `CONTEXT ${abs}(${pct}%)${suffix}`
+    // Strict UTF-8 bounds are conservative admission evidence, not measured
+    // model usage. Keep that distinction even on narrow terminals.
+    const bound = contextMeter.source === "strict-upper-bound" ? "BOUND " : ""
+    const text = tight ? `CTX ${bound}${pct}%` : `CONTEXT ${bound}${abs}(${pct}%)${suffix}`
     add("context", badge(text, contrastText(ctxBg), ctxBg, { bold: false }), 1)
   }
   if (memoryLoaded && !tight) {

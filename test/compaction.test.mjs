@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { compactSession, buildCompactionPrompt, collectEvidenceLedger, extractCompactionSummary } from "../src/kernel/session/compaction.mjs"
 import { registerProvider } from "../src/kernel/provider/router.mjs"
-import { appendAssistantMessage, appendMessage, appendUserMessage, getSession, touchSession, flushNow, replaceConversationForRewind, updateSession } from "../src/kernel/session/store.mjs"
+import { appendAssistantMessage, appendMessage, appendUserMessage, getSession, touchSession, flushNow, replaceMessages, replaceConversationForRewind, updateSession } from "../src/kernel/session/store.mjs"
 
 let tmpDir
 let previousKkcodeHome
@@ -204,6 +204,17 @@ test('a nonempty expanding summary cannot replace valid history', async () => {
     assert.ok(result.estimatedAfterTokens >= result.estimatedBeforeTokens)
     assert.deepEqual((await getSession(sessionId)).messages, before.messages)
   } finally { summaryOverride = null }
+})
+
+test('a summary arriving after cancellation and an aborted atomic replacement both preserve history', async () => {
+  const sessionId = await seedConcurrentSession('cancelled_summary'), before = await getSession(sessionId), controller = new AbortController()
+  beforeProviderResponse = async () => { controller.abort(new Error('host cancelled summary')) }
+  try {
+    await assert.rejects(compactSession({ sessionId, model: 'test-model', providerType: 'compaction-test', configState: configState(), keepRecentTurns: 2, signal: controller.signal }), /host cancelled summary/)
+    assert.deepEqual((await getSession(sessionId)).messages, before.messages)
+    await assert.rejects(replaceMessages(sessionId, [{ role: 'user', content: 'must not replace' }], { observedMessages: before.messages, signal: controller.signal }), /host cancelled summary/)
+    assert.deepEqual((await getSession(sessionId)).messages, before.messages)
+  } finally { beforeProviderResponse = null }
 })
 
 async function seedToolHistory(suffix, content) {

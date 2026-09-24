@@ -112,6 +112,17 @@ test("formatTokenCount 的三个量级", () => {
   assert.equal(formatTokenCount(1250000), "1.3M")
 })
 
+test("strict context bounds stay distinguishable from measured usage at all widths", () => {
+  for (const cols of [70, 86, 110, 160]) {
+    const meter = { tokens: 429168, limit: 262144, percent: 100, source: "strict-upper-bound", estimated: true }
+    const line = atWidth(cols, { contextMeter: meter })
+    assert.match(line, /(?:CONTEXT|CTX) BOUND /)
+    assert.ok(line.length <= cols, `${cols} columns overflowed: ${line}`)
+    assert.match(line, /PERMISSION/)
+    assert.doesNotMatch(atWidth(cols, { contextMeter: { ...meter, source: "provider-usage", estimated: false } }), /BOUND/)
+  }
+})
+
 test("width is a parameter, so the caller's width is the one that matters", () => {
   // 0.6.1 修的是「装不下时丢哪个段」，但宽度仍直读 process.stdout.columns。
   // 后果在 0.7.0 抽出 frame-builder 时才暴露：帧按 86 列排，状态栏按

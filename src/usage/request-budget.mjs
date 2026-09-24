@@ -6,7 +6,7 @@ import { normalizeBudgetProfile, selectBudgetProfile, budgetRoute } from './budg
 import { validateLocalFreeBudget, withLocalFreeInferenceAuthorization } from './local-free.mjs'
 
 const budgets = new AsyncLocalStorage()
-const fail = (code, message) => { throw Object.assign(new Error(message), { code, operationNotStarted: true }) }
+const fail = (code, message) => { throw Object.assign(new Error(message), { code, operationNotStarted: true, ...(code === 'BUDGET_INPUT_WINDOW' ? { needsCompaction: true } : {}) }) }
 const counters = ['input', 'output', 'cacheRead', 'cacheWrite']
 
 /** Strict graph scope only. A zero ceiling does not grant a paid request. */
@@ -53,7 +53,7 @@ export async function reserveRequestBudget(configState, { provider, model, conte
   if (state.profiles.length) {
     profile = selectBudgetProfile(state.profiles, { provider, model, protocol, baseUrl, credential })
     if (contextLimit > profile.contextLimit || maxTokens > profile.maxTokens || compaction && !profile.compaction) fail('BUDGET_PROFILE_REQUIRED', '请求扩大了已批准的窗口、输出或原生压缩能力；请重新审批任务。')
-    if (inputTokenBound > profile.contextLimit) fail('BUDGET_INPUT_WINDOW', '本次完整输入超出已冻结的核价／上下文窗口，未发送推理。请精简输入，或新建经宿主确认更大窗口及该范围适用最高单价的任务；不会沿用旧单价静默跨越长上下文计费边界。Chat 字节上界可能保守，可使用支持精确计数的 Responses 渠道。')
+    if (inputTokenBound + maxTokens > Math.min(contextLimit, profile.contextLimit)) fail('BUDGET_INPUT_WINDOW', '本次完整输入加最大输出预留超出当前或已冻结的核价／上下文窗口，未发送推理。请精简输入、降低输出上限，或新建经宿主确认更大窗口及该范围适用最高单价的任务；不会沿用旧单价静默跨越长上下文计费边界。Chat 字节上界可能保守，可使用支持精确计数的 Responses 渠道。')
     quote = usage => ({ amount: counters.reduce((sum, key) => sum + Number(usage[key] || 0) * profile.rates[key], 0), unknown: false })
     const inputRate = Math.max(profile.rates.input, profile.rates.cacheRead, profile.rates.cacheWrite)
     reservation = (profile.contextLimit * inputRate + maxTokens * profile.rates.output) * (compaction ? 2 : 1)
@@ -66,7 +66,7 @@ export async function reserveRequestBudget(configState, { provider, model, conte
     const rates = counters.map(counter => calculateCost(pricing, model, { [counter]: 1 }))
     if (errors.length || !strictPriceComplete || !strictModelExact || changedScope && source === 'default' || rates.some(rate => rate.unknown || rate.currency !== 'USD' || !Number.isFinite(rate.amount) || rate.amount < 0)) fail('TASK_BUDGET_PRICE_UNKNOWN', '职责模型缺少精确匹配 ID 的完整有效 USD 单价；前缀猜价及临时端点／凭据复用旧渠道目录价格均不能作为严格预留依据。')
     const inputRate = Math.max(rates[0].amount, rates[2].amount, rates[3].amount)
-    if (inputTokenBound > contextLimit) fail('BUDGET_INPUT_WINDOW', '本次完整输入超过明确的核价／上下文窗口，未发送推理。请精简输入或明确批准更大窗口和该范围费率；不能通过低窗口参数隐藏真实输入。')
+    if (inputTokenBound + maxTokens > contextLimit) fail('BUDGET_INPUT_WINDOW', '本次完整输入加最大输出预留超过明确的核价／上下文窗口，未发送推理。请精简输入、降低输出上限，或明确批准更大窗口和该范围费率；不能通过低窗口参数隐藏真实输入。')
     reservation = (contextLimit * inputRate + maxTokens * rates[1].amount) * (compaction ? 2 : 1)
     quote = usage => calculateCost(pricing, model, usage)
   }

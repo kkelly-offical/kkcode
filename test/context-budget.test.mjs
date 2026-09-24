@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { requestContextBudget } from '../src/kernel/session/context-budget.mjs'
 import { shouldCompact } from '../src/kernel/session/compaction.mjs'
+import { publicContext } from '../src/protocol/context.mjs'
 
 const configState = { config: { provider: { default: 'local', local: { context_limit: 64000, max_tokens: 4096 } } } }
 test('fallback includes system, schemas, history and output reservation', () => {
@@ -25,4 +26,16 @@ test('small model windows reserve a bounded default output and invalid counts fa
   assert.equal(meter.outputReserved, 1024)
   assert.equal(meter.inputBudget, 3072)
   assert.equal(meter.estimated, true)
+})
+
+test('strict complete-input upper bounds remain explicitly estimated in every client projection', () => {
+  const meter = requestContextBudget({ model: 'm', configState, measuredTokens: 60000, source: 'strict-upper-bound' })
+  assert.equal(meter.source, 'strict-upper-bound')
+  assert.equal(meter.estimated, true)
+  assert.equal(meter.tokens, 60000)
+  const projected = publicContext({ ...meter, privatePrompt: 'must not be projected' })
+  assert.equal(projected.source, 'strict-upper-bound')
+  assert.equal(projected.estimated, true)
+  assert.equal(projected.tokens, 60000)
+  assert.equal('privatePrompt' in projected, false)
 })

@@ -1,5 +1,5 @@
 export interface DeviceEvent { schemaVersion: '1'; id: string; seq: number; sessionId: string; type: string; payload: unknown; timestamp: number }
-export interface ContextUsage { tokens: number; limit: number; percent: number; outputReserved?: number; inputBudget?: number; requiredTokens?: number; source: 'estimated' | 'count-api' | 'provider-usage'; estimated: boolean; components: { system?: number; tools?: number; messages?: number }; updatedAt?: number }
+export interface ContextUsage { tokens: number; limit: number; percent: number; outputReserved?: number; inputBudget?: number; requiredTokens?: number; source: 'estimated' | 'count-api' | 'provider-usage' | 'strict-upper-bound'; estimated: boolean; components: { system?: number; tools?: number; messages?: number }; updatedAt?: number }
 export interface ToolDefinition { name: string; description: string; inputSchema: Record<string, unknown> }
 export interface SessionInfo { id: string; title?: string; cwd?: string; model?: string; providerType?: string; status?: string; archived?: boolean; hasContent?: boolean; context?: ContextUsage; [key: string]: unknown }
 export interface AttachmentInfo { id: string; sessionId: string; name: string; mediaType: string; size: number; createdAt: number; expiresAt: number }

@@ -34,7 +34,9 @@ export async function readEvaluationLocalFreeBinding(filename) {
     }
     const after = await handle.stat()
     if (before.size !== total || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) throw new Error('Local-free binding changed while being read')
-    const value = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    let value
+    try { value = JSON.parse(Buffer.concat(chunks).toString('utf8')) }
+    catch { throw new Error('Local-free binding is not valid authorization JSON') }
     if (value.schema !== 'kk.evaluation.authorization.v1') throw new Error('Not an evaluation authorization receipt')
     return normalizeLocalFreePolicy(value.localFreePolicy)
   } finally { await handle.close() }

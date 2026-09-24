@@ -68,8 +68,46 @@ test('crossing a frozen long-context pricing window is denied before reservation
   let reservations = 0
   await assert.rejects(withRequestBudget({ budgetUsd: 1000000, deadlineAt: Date.now() + 60000, profiles,
     durable: { reserve: async () => { reservations++; return { fresh: true } }, settle: async () => {} } }, () => f.request({ system: 'Outside the approved rate window. '.repeat(1000) })),
-  error => error.code === 'BUDGET_INPUT_WINDOW' && error.operationNotStarted === true && /核价/.test(error.message))
+  error => error.code === 'BUDGET_INPUT_WINDOW' && error.operationNotStarted === true && error.needsCompaction === true && /核价/.test(error.message))
   assert.equal(reservations, 0); assert.equal(f.requests.length, 0)
+})
+
+test('count preflight reports the dispatch upper bound only for strict scope, including adapters without countTokens', async t => {
+  const f = await fixture(t, { protocol: 'openai' }), reports = []
+  const input = { configState: f.configState, providerType: 'fixture', model: 'fixedmodel', system: 'Full schema and prompt boundary.', messages: [{ role: 'user', content: 'large context '.repeat(1000) }], tools: [tool], onInputBound: report => reports.push(report) }
+  assert.equal(await countTokensProvider(input), null)
+  assert.equal(reports.length, 0, 'ordinary conversation keeps its existing inexpensive estimate')
+  for (const protocol of ['openai', 'ollama']) {
+    f.configState.config.provider.fixture.type = protocol
+    await withRequestBudget({ budgetUsd: 1000000, deadlineAt: Date.now() + 60000 }, async () => {
+      assert.equal(await countTokensProvider(input), null, 'public number/null count API is unchanged')
+    })
+    const report = reports.at(-1)
+    assert.equal(report.source, 'strict-upper-bound')
+    assert.equal(report.tokens, strictInputTokenBound(input).tokens)
+    assert.ok(report.tokens > f.configState.config.provider.fixture.context_limit)
+  }
+  assert.equal(reports.length, 2)
+  assert.equal(f.requests.length, 0)
+  assert.equal(f.counts.length, 0)
+})
+
+for (const frozen of [false, true]) test(`direct provider requests include maximum output in the current and approved context window (frozen=${frozen})`, async t => {
+  const f = await fixture(t, { protocol: 'openai' }), system = 'X'.repeat(700), messages = [{ role: 'user', content: 'hello' }]
+  f.configState.config.provider.fixture.max_tokens = 4096
+  const bound = strictInputTokenBound({ system, messages, tools: [tool] }).tokens
+  assert.ok(bound < 8192 && bound + 4096 > 8192)
+  const profiles = frozen ? await prepareBudgetProfiles(f.configState) : []
+  const withinBudget = operation => withRequestBudget({ budgetUsd: 1000000, deadlineAt: Date.now() + 60000, profiles }, operation)
+  await assert.rejects(withinBudget(() => f.request({ system, messages })), error => error.code === 'BUDGET_INPUT_WINDOW' && error.needsCompaction === true && error.operationNotStarted === true)
+  assert.equal(f.requests.length, 0)
+  const fittingOutput = 8192 - bound
+  await withinBudget(() => f.request({ system, messages, maxTokens: fittingOutput }))
+  assert.equal(f.requests.length, 1, 'the exact input/output boundary remains usable')
+  assert.equal(f.requests[0].max_tokens, fittingOutput)
+  f.configState.config.provider.fixture.context_limit = 8191
+  await assert.rejects(withinBudget(() => f.request({ system, messages, maxTokens: fittingOutput })), { code: 'BUDGET_INPUT_WINDOW' })
+  assert.equal(f.requests.length, 1, 'a larger frozen profile cannot override the current narrower window')
 })
 
 test('official Responses processed count takes precedence over conservative text bytes at the approved window', async t => {

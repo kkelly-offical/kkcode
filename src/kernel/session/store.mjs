@@ -372,6 +372,7 @@ export async function appendMessage(sessionId, role, content, extra = {}) {
 
 export async function replaceMessages(sessionId, newMessages, options = {}) {
   return withLock(async () => {
+    options.signal?.throwIfAborted()
     await ensureLoadedUnsafe()
     // Compaction must compare the snapshot seen BEFORE its asynchronous model
     // call, not capture a fresh baseline after new turns/rewinds have arrived.
@@ -386,6 +387,9 @@ export async function replaceMessages(sessionId, newMessages, options = {}) {
       id: m.id || `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       timestamp: m.timestamp || now()
     }))
+    // This is the synchronous logical commit boundary after every awaited
+    // load/CAS check; a cancelled summarizer cannot queue a replacement.
+    options.signal?.throwIfAborted()
     queueDataOperation(sessionId, { kind: 'replace', value: messages, baseline: data.messages.map(message => message.id) })
     if (state.index.sessions[sessionId]) queueIndexOperation(sessionId, 'patch', { updatedAt: now() })
     if (options.observedMessages || state.options.flushIntervalMs <= 0) await flushUnsafe()

@@ -173,6 +173,16 @@ class ConversationUiTest {
         compose.onNodeWithText("上下文使用情况").assertDoesNotExist()
     }
 
+    @Test fun conservativeContextBoundIsLabeledAndExplained() {
+        show {
+            it.selected = "context-bound-session"; it.contextUsage = JSONObject().put("tokens", 360000).put("limit", 262144).put("source", "strict-upper-bound").put("estimated", true)
+        }
+        compose.onNodeWithText("保守上界", substring = true).assertIsDisplayed().performClick()
+        compose.onNodeWithText("不是模型实际 token 计数或计费值", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("知道了").performClick()
+        compose.onNodeWithText("上下文使用情况").assertDoesNotExist()
+    }
+
     @Test fun messageRewindExplainsThatFilesRemainAndCancelKeepsHistory() {
         val state = show {
             it.selected = "rewind-session"

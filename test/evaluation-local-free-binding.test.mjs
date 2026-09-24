@@ -41,6 +41,12 @@ test('prior binding reads only a bounded private ordinary receipt, without follo
     await assert.rejects(readEvaluationLocalFreeBinding(filename), /bounded private/)
     await writeFile(filename, JSON.stringify({ schema: 'wrong', localFreePolicy: policy }))
     await assert.rejects(readEvaluationLocalFreeBinding(filename), /Not an evaluation/)
+    await writeFile(filename, 'SYNTHETIC-PRIVATE-CONTENT')
+    await assert.rejects(readEvaluationLocalFreeBinding(filename), error => {
+      assert.equal(error.message, 'Local-free binding is not valid authorization JSON')
+      assert.doesNotMatch(error.message, /SYNTHETIC-PRIVATE/)
+      return true
+    })
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 

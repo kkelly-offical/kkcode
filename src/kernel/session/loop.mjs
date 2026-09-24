@@ -541,6 +541,7 @@ async function processTurnLoopInRuntime({
       const normalizedHistory = messages.map(normalizeMessageForCache)
       let contextTokens = requestContextBudget({ system: systemPrompt, messages, tools, model, configState, providerType }).tokens
       let contextFromCache = false
+      let strictInputBound = null
 
       // Use real token counting API when available (includes system + tools + messages)
       const realCount = await countTokensProvider({
@@ -550,9 +551,12 @@ async function processTurnLoopInRuntime({
         traceId: turnTraceContext.traceId,
         sessionId,
         turnId,
-        signal
+        signal,
+        onInputBound: value => { strictInputBound = value }
       })
-      if (realCount != null) {
+      if (strictInputBound) {
+        contextTokens = strictInputBound.tokens
+      } else if (realCount != null) {
         contextTokens = realCount
       } else if (contextCachePoint && contextCachePoint.toolSignature === JSON.stringify(tools.map(tool => [tool.name, tool.description, tool.inputSchema])) && isPrefixMessages(contextCachePoint.messages, normalizedHistory)) {
         const delta = messages.slice(contextCachePoint.messages.length)
@@ -563,7 +567,9 @@ async function processTurnLoopInRuntime({
       }
       const contextLimit = modelContextLimit(model, configState, providerType)
       const contextRatio = contextLimit > 0 ? Math.min(1, contextTokens / contextLimit) : 0
-      lastContextMeter = { ...requestContextBudget({ system: systemPrompt, messages, tools, model, configState, providerType, measuredTokens: realCount ?? (contextFromCache ? contextTokens : null), source: realCount != null ? 'count-api' : 'estimated' }), fromCache: contextFromCache }
+      lastContextMeter = { ...requestContextBudget({ system: systemPrompt, messages, tools, model, configState, providerType,
+        measuredTokens: strictInputBound?.tokens ?? realCount ?? (contextFromCache ? contextTokens : null),
+        source: strictInputBound?.source || (realCount != null ? 'count-api' : 'estimated') }), fromCache: contextFromCache }
 
       if (cachePointsEnabled && (step === 1 || contextRatio >= thresholdRatio)) {
         contextCachePoint = {
@@ -606,6 +612,8 @@ async function processTurnLoopInRuntime({
             sessionId, model, providerType, configState, baseUrl, apiKeyEnv,
             traceId: turnTraceContext.traceId,
             turnId,
+            signal,
+            requestContext: { system: systemPrompt, tools },
             onUsage: entry => addModelUsage(modelUsage, entry.provider, entry.model, entry.usage)
           })
           if (compactResult.reasonCode === 'history_changed') {
@@ -616,7 +624,11 @@ async function processTurnLoopInRuntime({
             const beforeTokens = Number(lastContextMeter?.tokens) || 0
             history = await getConversationHistory(sessionId, 9999)
             messages = await HookBus.messagesTransform([...history])
-            const compactedMeter = requestContextBudget({ system: systemPrompt, messages, tools, model, configState, providerType })
+            let compactedBound = null
+            const compactedCount = strictInputBound ? await countTokensProvider({ configState, providerType, model, system: systemPrompt, messages, tools, baseUrl, apiKeyEnv,
+              traceId: turnTraceContext.traceId, sessionId, turnId, signal, onInputBound: value => { compactedBound = value } }) : null
+            const compactedMeter = requestContextBudget({ system: systemPrompt, messages, tools, model, configState, providerType,
+              measuredTokens: compactedBound?.tokens ?? compactedCount, source: compactedBound?.source || (compactedCount != null ? 'count-api' : 'estimated') })
             // 事件带上前后 token 数 —— UI 层的「已压缩，193.4K → 42.1K」提示全靠它
             await EventBus.emit({
               type: EVENT_TYPES.SESSION_COMPACTED, sessionId, turnId,
@@ -741,6 +753,8 @@ async function processTurnLoopInRuntime({
             sessionId, model, providerType, configState, baseUrl, apiKeyEnv,
             traceId: turnTraceContext.traceId,
             turnId,
+            signal,
+            requestContext: { system: systemPrompt, tools },
             onUsage: entry => addModelUsage(modelUsage, entry.provider, entry.model, entry.usage)
           })
           if (compactResult.compacted) {
