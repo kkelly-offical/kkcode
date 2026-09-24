@@ -63,7 +63,11 @@ Windows/macOS runner 直接运行同一 Node 脚本。不要复制这段命令�
 
 ## 实际检查什么
 
-1. 从真实 browser-level CDP 读取启动参数、版本，再读取当前页面的 User-Agent。
+1. 从真实 browser-level CDP 读取版本，再读取当前页面的 User-Agent。启动参数、
+   可执行文件和实际 profile 从精确的 `chrome://version/` / `edge://version/`
+   内建页读取，拒绝网页仿造或重定向。Windows 按原生引号／反斜杠规则解析；
+   POSIX 版本页只是拼接 argv，因此先完整匹配含空格的可执行路径，再匹配唯一
+   受控 profile 参数并独立核验实际 `Default` 路径，无法无歧义还原时拒绝取证。
    核对正式渠道可执行路径、唯一的新建 `--user-data-dir`、pipe-only 调试和禁止
    沙箱／安全禁用参数；记录实际二进制 SHA-256 与 runner 镜像版本。
    初次启动与 MCP 均使用明确的 `Default` profile；合成 localhost 标签页探针实际
@@ -85,6 +89,19 @@ Windows/macOS runner 直接运行同一 Node 脚本。不要复制这段命令�
 完成 Linux kernel seccomp／namespace 或 Windows/macOS OS 沙箱认证。后者应与
 [非 root Linux 严格 Browser 验收](browser-strict-acceptance.md) 的具体证据区分。
 常规 Bridge 也不是网络防火墙；项目要求严格网页出域围栏时使用隔离 Browser。
+
+### 原生启动复用与自动化参数
+
+此验收器不添加 `--enable-automation`：Chrome 152 对应的官方源码在
+`ProcessSingletonNotificationCallback` 中会拒绝向启用了该参数的浏览器转发
+第二次启动的 URL。这会同时阻断本地复用探针和官方 MCP 扩展连接页，不是用户
+拒绝了扩展授权。初次 macOS Chrome／Edge 回执已实际复现这个前置阻断，修正后的
+通过状态仍须以新 CI 为准。[对应版本源码](https://github.com/chromium/chromium/blob/79460ebecaa5625e57a5fb679a735659e73dc687/chrome/browser/chrome_browser_main.cc#L532)
+
+`Browser.getBrowserCommandLine` 本身要求该自动化参数，所以不能为了取得 argv
+而破坏待测试的原生复用。改读内建版本页不改变 sandbox、pipe 调试、扩展授权或
+首次启动界面。版本页取证不保存 raw command line，只记录核验结果及摘要。
+[CDP 定义](https://github.com/ChromeDevTools/devtools-protocol/blob/master/pdl/domains/Browser.pdl)、[版本页字段与平台序列化](https://github.com/chromium/chromium/blob/79460ebecaa5625e57a5fb679a735659e73dc687/chrome/browser/ui/webui/version/version_ui.cc#L276)
 
 ## 回执与回归测试
 
