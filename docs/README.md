@@ -1,12 +1,12 @@
-# 文档导航：稳定版 1.0.4 / 开发中 1.0.5-preview.0
+# 文档导航：稳定版 1.0.4 / 预发布 1.0.5-preview.0
 
-公开稳定版仍是 **1.0.4**；下面的 **1.0.5-preview.0 尚未发布**，也没有自动部署
+公开稳定版仍是 **1.0.4**；**1.0.5-preview.0 已公开预发布**，但没有自动部署
 生产网关或更新设备。源码接口、本地验收和已公开发版是三种不同状态。
 
 ## 开发中：1.0.5 Preview → 1.1.0
 
 - [批准的完整开发计划](plan-1.0.5.md)：W01–W13 范围、产品决策、Preview与成熟版门禁。
-- [实际实施账本](implementation-1.0.5.md)：开发和验证状态；尚未发布，不代表生产已经升级。
+- [实际实施账本](implementation-1.0.5.md)：公开发行和验证回执；完整模型质量验收明确后补，不代表生产已经升级。
 - [新增 CodeQL 告警核查](codeql-triage-1.0.5.md)：64–71 的逐项证据与修复；扫描成功不等于没有告警，不关闭规则掩盖问题。
 - [持久账本与产物 SDK](sdk-storage.md)、[SDK总览](sdk-guide.md)：可信宿主写接口与增量远程读/控制接口的边界。
 - [离线 npm 依赖环境](dependency-environments.md)：`kkcode environments inspect/prepare/verify`、`sdk/environments`、独立安装脚本批准和严格任务只读挂载；不支持所有包管理器／workspaces。

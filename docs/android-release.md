@@ -6,10 +6,10 @@ Previous stable **1.0.3 / 10006 (KK Code 1.0.2 Fix)** receipts remain in
 [its ledger](implementation-1.0.3.md). Native browser-return scope is documented
 in [gateway login](android-gateway-login.md).
 
-Published preview: **1.0.4-preview.0 / 10007**, same release certificate.
+Published preview: **1.0.5-preview.0 / 10009**, same release certificate.
 Select the Preview channel in App update settings to receive prereleases.
-See the [1.0.4 ledger](implementation-1.0.4.md) for signed installation, SSH
-lifecycle, context UI, cross-platform results and actual publication receipts.
+See the [1.0.5 ledger](implementation-1.0.5.md) for signed installation,
+cross-platform results, quality limitations and actual publication receipts.
 The public APK and update manifest were downloaded again, checked against the
 signed candidate, and accepted by the production Android update policy in Preview
 only. Stable update checks do not offer this prerelease.
@@ -17,10 +17,11 @@ only. Stable update checks do not offer this prerelease.
 The Android application is a native remote client. Release signing is separate
 from publishing: producing this APK does not upload it to a store or GitHub.
 
-The 1.0.5 Preview candidate is **1.0.5-preview.0 / 10009**, signed by the same
+The 1.0.5 Preview release is **1.0.5-preview.0 / 10009**, signed by the same
 certificate. Its exact APK, update manifest and actual upload/download receipts
 are tracked in the [1.0.5 ledger](implementation-1.0.5.md); older published-version
-receipts above are historical, not proof of this candidate's publication.
+receipts remain historical. Previous preview1.0.4/10007 receipts are retained in
+the [1.0.4 ledger](implementation-1.0.4.md).
 
 ## Project signing identity
 

@@ -799,7 +799,7 @@ update:
 
 **Current stable / 当前稳定版本**: [`v1.0.4`](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.4)，npm `latest` 与 Android `10008` 已上线，发布门禁与公开下载回执见 [实施台账](docs/stable-1.0.4-worklog.md)。
 
-**Opt-in preview / 本轮自愿试用预览版**: `1.0.5-preview.0`，发行渠道为npm `preview`／GitHub prerelease。是否已可下载及产物哈希见[发布列表](https://github.com/kkelly-offical/kkcode/releases)和[实施台账](docs/implementation-1.0.5.md)。
+**Opt-in preview / 本轮自愿试用预览版**: [`1.0.5-preview.0`](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.5-preview.0) 已公开，npm `preview`／GitHub prerelease／Android `10009`。产物哈希与质量限制见[实施台账](docs/implementation-1.0.5.md)。
 
 本轮完整v4真实模型质量验收与GitLab实机MR明确后补，不冒充成熟版或生产认证；
 没有自动更新生产网关或设备。历史[`v1.0.4-preview.0`](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.4-preview.0)回执保留在[旧台账](docs/implementation-1.0.4.md)。
@@ -1081,7 +1081,7 @@ See [LICENSE](LICENSE) for the full text.
 ## Further Reading / 延伸阅读
 
 - [Documentation index / 文档导航](docs/README.md) — current guides versus historical records
-- [1.0.5 plan and implementation / 开发计划与实施账本](docs/implementation-1.0.5.md) — 未发布，验收层级分开记录
+- [1.0.5 plan and implementation / 开发计划与实施账本](docs/implementation-1.0.5.md) — Preview已发布，工程验收与未完成模型质量门禁分开记录
 - [SDK domains / SDK 分域入口](docs/sdk-guide.md) — 本地内核、远程传输和可信宿主边界
 - [CodeQL triage / 新增安全告警核查](docs/codeql-triage-1.0.5.md) — 真实缺陷、误报证据、回归与待复扫状态
 - [Strict task workflow / 严格任务工作流](docs/trusted-runs.md) — 合同、预算、恢复与交付

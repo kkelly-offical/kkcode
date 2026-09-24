@@ -1,4 +1,4 @@
-# 上下文、提示词与 Harness（含未发行的1.0.5 Preview）
+# 上下文、提示词与 Harness（含1.0.5 Preview）
 
 ## 上下文数字的含义
 
