@@ -44,13 +44,26 @@
   consumers and nested aliases. Pending upgrades cannot self-clear approval.
 - Bind external delivery receipts to immutable inspected data and reject candidate
   changes while querying or persisting evidence; old proofs cannot certify a new candidate.
+- Add explicit host-only local-free inference authority with fixed loopback listener,
+  route/credential scope, finite request/token quotas and durable unknown outcomes.
+  Ordinary zero-dollar budgets still forbid inference; paid fallback is not enabled.
+  Publish host budget-profile preparation through `sdk/models` and show quotas on clients.
+- Fix Windows Git null-device configuration and writable backup flush handles;
+  preserve canonical-first legacy memory discovery across macOS path aliases.
+- Recheck local listener identity after asynchronous budget preparation, freeze task
+  account and per-turn limit inputs, and send explicitly configured Ollama credentials.
+  Prevent login/refresh response extensions from changing the chosen gateway destination.
+- Reject ambiguous hard links in remote file previews, and use descriptor-checked,
+  nonblocking bounded reads for local file mentions so FIFO/special files cannot hang input.
 
 This is not a release receipt or a claim that every W01–W13 feature is complete.
 See the [implementation ledger](docs/implementation-1.0.5.md) for actual verification.
 No npm/GitHub publication or production deployment has occurred for this version.
-The external paid-model 60-task × 2-run evaluation, public Forge round trips,
-Chrome/Edge three-OS matrix, new-version CI and seven-day real-use gates need their
-own receipts; local fixtures, oracle selfchecks and historical release CI do not substitute.
+The authorized local-vLLM 60-task × 2-run evaluation is running; its fixed-candidate
+results are separate from controlled HTTP fixtures. A real GitHub SDK draft round trip
+has passed engineering checks but still awaits human review. GitLab, the complete
+Chrome/Edge three-OS matrix, updated-candidate CI and seven-day real-use gates need
+their own receipts; oracle selfchecks and historical release CI do not substitute.
 
 ## 1.0.4 — 2026-09-24
 

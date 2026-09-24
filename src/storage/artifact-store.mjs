@@ -418,11 +418,17 @@ export class ArtifactStore {
       const offset = offsetOf(cursor, record, 'read')
       const handle = await this._verifiedHandle(record)
       try {
-        const size = Math.min(limit, record.size - offset), buffer = Buffer.alloc(size)
+        const size = Math.min(limit, record.size - offset)
+        // Allocation capacities are fixed constants, not request-derived sizes.
+        // Keep the existing 1 MiB page ceiling explicit at the allocation site;
+        // small pages use smaller buckets, and only actual bytes are returned.
+        if (!Number.isSafeInteger(size) || size < 0 || size > MAX_PAGE_BYTES) invalid('产物读取页大小无效。')
+        const buffer = size === 0 ? Buffer.alloc(0) : size <= 4096 ? Buffer.alloc(4096)
+          : size <= 65536 ? Buffer.alloc(65536) : size <= 262144 ? Buffer.alloc(262144) : Buffer.alloc(1048576)
         const { bytesRead } = await handle.read(buffer, 0, size, offset)
         if (bytesRead !== size) corrupt()
         const next = offset + bytesRead
-        return { id, sha256: record.sha256, size: record.size, offset, encoding: 'base64', data: buffer.toString('base64'),
+        return { id, sha256: record.sha256, size: record.size, offset, encoding: 'base64', data: buffer.subarray(0, bytesRead).toString('base64'),
           nextCursor: next < record.size ? cursorEncode({ kind: 'read', id, sha256: record.sha256, offset: next }) : null }
       } finally { await handle.close() }
     })

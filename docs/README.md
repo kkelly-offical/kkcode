@@ -7,6 +7,7 @@
 
 - [批准的完整开发计划](plan-1.0.5.md)：W01–W13 范围、产品决策、Preview与成熟版门禁。
 - [实际实施账本](implementation-1.0.5.md)：开发和验证状态；尚未发布，不代表生产已经升级。
+- [新增 CodeQL 告警核查](codeql-triage-1.0.5.md)：64–71 的逐项证据与修复；扫描成功不等于没有告警，不关闭规则掩盖问题。
 - [持久账本与产物 SDK](sdk-storage.md)、[SDK总览](sdk-guide.md)：可信宿主写接口与增量远程读/控制接口的边界。
 - [离线 npm 依赖环境](dependency-environments.md)：`kkcode environments inspect/prepare/verify`、`sdk/environments`、独立安装脚本批准和严格任务只读挂载；不支持所有包管理器／workspaces。
 - [项目数据出域基础](data-policy.md)：受管理模型/网页工具的目标交集策略，不能替代执行沙箱。
@@ -24,9 +25,11 @@
 - [MCP/ACP/Skills](protocol-extensions.md)、[插件完整性与升级](plugin-integrity.md)、[实验受控工具组合](tool-program.md)。
 - 下面的1.0.4章节是已发布稳定版记录，不用新版本号覆盖历史验收。
 
-外部真实付费模型 120 轮、公共 Forge 往返、Chrome/Edge 三系统矩阵、新版 CI 和
-七天试用均须有各自回执；本地 fixture、自检、条件跳过或历史稳定版结果不代表
-这些门禁已经通过。`1.1.0` 是后续成熟度目标，不是本次开发版本。
+专用验收分支已推送，仍未合入 main。真实 GitHub SDK 工程往返已形成
+[草稿 PR #5](https://github.com/kkelly-offical/kkcode/pull/5)，无人工批准，不能称 merge-ready；
+GitLab 尚缺验收资源。本机 vLLM 真实模型 120 轮、Chrome/Edge 三系统矩阵、
+新版 CI 全绿与七天试用仍未完成；本地 fixture、自检、条件跳过或历史结果不能替代。
+新版 CI 的真实失败／受阻已记入实施账本，不是“尚未运行”。`1.1.0` 是后续成熟度目标。
 
 ## 安装包与源码文档
 

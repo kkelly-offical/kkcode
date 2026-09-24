@@ -28,11 +28,23 @@ private fun taskInteger(json: JSONObject, key: String): Long {
 private fun taskCursor(json: JSONObject): String? = if(json.isNull("nextCursor")) null else json.optString("nextCursor").takeIf { it.isNotBlank() }?.also {
     require(it.length <= 2048 && Regex("^[A-Za-z0-9_-]+$").matches(it)) { "任务分页游标无效。" }
 }
-internal data class TaskBudget(val limit: Double, val spent: Double, val reserved: Double, val unknown: Double, val deadline: Long, val hasUnknown: Boolean) {
+internal data class TaskLocalFree(val maxRequests: Long, val maxTokens: Long, val usedRequests: Long, val reservedTokens: Long) {
+    companion object {
+        fun parse(json: JSONObject): TaskLocalFree {
+            val maxRequests = taskInteger(json, "maxRequests"); val maxTokens = taskInteger(json, "maxTokens")
+            val usedRequests = taskInteger(json, "usedRequests"); val reservedTokens = taskInteger(json, "reservedTokens")
+            require(maxRequests in 1..10000 && maxTokens in 1..10000000000L && usedRequests <= maxRequests && reservedTokens <= maxTokens) { "本地调用额度字段无效。" }
+            return TaskLocalFree(maxRequests, maxTokens, usedRequests, reservedTokens)
+        }
+    }
+}
+internal data class TaskBudget(val limit: Double, val spent: Double, val reserved: Double, val unknown: Double, val deadline: Long, val hasUnknown: Boolean, val localFree: TaskLocalFree? = null) {
     companion object {
         fun parse(json: JSONObject): TaskBudget {
             fun amount(key: String): Double { val value = json.opt(key); require(value is Number && value.toDouble().isFinite() && value.toDouble() >= 0) { "任务预算字段无效。" }; return value.toDouble() }
-            return TaskBudget(amount("budgetUsd"), amount("spentUsd"), amount("reservedUsd"), amount("unknownUsd"), taskInteger(json, "deadlineAt"), json.optBoolean("hasUnknown"))
+            val localFree = if(json.isNull("localFree")) null else TaskLocalFree.parse(requireNotNull(json.optJSONObject("localFree")) { "本地调用额度字段无效。" })
+            val limit = amount("budgetUsd"); require(localFree == null || limit == 0.0) { "本地调用额度与费用预算不一致。" }
+            return TaskBudget(limit, amount("spentUsd"), amount("reservedUsd"), amount("unknownUsd"), taskInteger(json, "deadlineAt"), json.optBoolean("hasUnknown"), localFree)
         }
     }
 }
@@ -117,7 +129,11 @@ internal data class TaskItem(val id: String, val sessionId: String, val objectiv
                 "run.created" -> "创建任务"; "run.transitioned" -> "状态变化"; "run.claimed" -> "执行宿主已接管"; "turn.started" -> "开始回合"; "turn.ended" -> "回合收束"
                 "turn.interrupted" -> "回合中断，等待核查"; "action.prepared" -> "操作已记录，准备执行"; "action.settled" -> "记录操作结果"
                 "verification.recorded" -> "记录验收证据"; "candidate.changed", "candidate.updated" -> "候选更新"; "control.requested" -> if(item.optString("control") == "cancel") "已请求取消" else "已请求暂停"
-                "budget.configured" -> "已确认额度和期限"; "budget.reserved" -> "已预留执行费用"; "budget.settled" -> "费用已结算"; "budget.unknown" -> "费用待核查"; "budget.reconciled" -> "已核查费用证据"
+                "budget.configured" -> "已确认额度和期限"
+                "budget.reserved" -> if(task.budget?.localFree != null) "已预留本地调用额度" else "已预留执行费用"
+                "budget.settled" -> if(task.budget?.localFree != null) "调用结果已确认" else "费用已结算"
+                "budget.unknown" -> if(task.budget?.localFree != null) "调用结果待核查" else "费用待核查"
+                "budget.reconciled" -> if(task.budget?.localFree != null) "已核查调用证据" else "已核查费用证据"
                 "graph.updated" -> "子任务图更新"; else -> "任务记录更新"
             }
             "#${taskInteger(item, "sequence")} · $label" + (taskStates[item.optString("state")]?.let { " · $it" } ?: "")
@@ -159,10 +175,15 @@ internal data class TaskItem(val id: String, val sessionId: String, val objectiv
                     Text("验收：${task.passed} / ${task.required} 项通过；工具结果待核查 ${task.unknown} 项", fontSize = 12.sp)
                     task.budget?.let { budget ->
                         fun usd(value: Double) = String.format(Locale.ROOT, "$%.6f", value)
-                        Text("总额度 ${usd(budget.limit)} · 已结算 ${usd(budget.spent)} · 执行预留 ${usd(budget.reserved)}", fontSize = 12.sp)
+                        val free = budget.localFree
+                        if(free != null) {
+                            Text("本地免费 · 请求名额 ${free.usedRequests}/${free.maxRequests} · 累计预留 token ${free.reservedTokens}/${free.maxTokens}", fontSize = 12.sp)
+                            Text("token 为累计授权上界，不是实际用量；已结束调用也不会退还名额。", fontSize = 12.sp)
+                        } else Text("总额度 ${usd(budget.limit)} · 已结算 ${usd(budget.spent)} · 执行预留 ${usd(budget.reserved)}", fontSize = 12.sp)
                         Text("期限：${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(budget.deadline))}", fontSize = 12.sp)
-                        if(budget.limit == 0.0) Text("额度为零：不会开始模型推理，不代表免费或无限使用。", fontSize = 12.sp)
-                        if(budget.hasUnknown) Text("待核查预留 ${usd(budget.unknown)}：这是保守费用上界，不是实际账单；核查前不会继续花费。", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                        if(free == null && budget.limit == 0.0) Text("额度为零：不会开始模型推理，不代表免费或无限使用。", fontSize = 12.sp)
+                        if(budget.hasUnknown) Text(if(free != null) "调用结果待核查：本地免费不代表结果已确认；核查前不会继续调用。"
+                            else "待核查预留 ${usd(budget.unknown)}：这是保守费用上界，不是实际账单；核查前不会继续花费。", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
                     } ?: Text("尚未设置已确认的任务预算，不能据此推断可继续推理。", fontSize = 12.sp)
                     if(task.runningTurn && task.state in listOf("paused", "cancelled") || task.pending > 0) Text("停止请求已记录，仍有操作正在收尾；已有文件不会回滚。", fontSize = 12.sp)
                     if(task.unknown > 0 || task.state == "outcome_unknown") Text("存在未知副作用，请在被控电脑核查实际结果；不要直接重试。", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)

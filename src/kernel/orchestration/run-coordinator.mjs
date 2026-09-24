@@ -1,9 +1,6 @@
 import path from 'node:path'
 import { randomUUID, createHash } from 'node:crypto'
 import { access, realpath } from 'node:fs/promises'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-import os from 'node:os'
 import { userRootDir } from '../../storage/paths.mjs'
 import { acquireProcessLock } from '../../storage/process-lock.mjs'
 import { openRunStore } from '../../storage/run-store.mjs'
@@ -23,6 +20,8 @@ import { isTaskGraphHost } from './task-graph-runtime.mjs'
 import { withRequestBudget } from '../../usage/request-budget.mjs'
 import { prepareBudgetProfiles, prepareBudgetProfile, budgetRoute, normalizeBudgetProfile } from '../../usage/budget-profiles.mjs'
 import { normalizeRunHostBinding, verifyRunHostBinding } from './run-host-binding.mjs'
+import { localFreePolicy, validateLocalFreeBudget } from '../../usage/local-free.mjs'
+import { runControlledGit } from '../../util/controlled-git.mjs'
 
 const digest = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex')
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value
@@ -31,14 +30,9 @@ const fail = (code, message) => { throw runStoreError(code, message) }
 const guard = row => ({ runId: row.id, expectedRevision: row.revision, ownerId: row.ownerId, ownerEpoch: row.ownerEpoch })
 const terminal = state => ['completed', 'cancelled'].includes(state)
 const hasUnknown = run => run.actions.some(action => ['prepared', 'unknown'].includes(action.state))
-const executeFile = promisify(execFile)
-
 async function assertTaskWorkspace(cwd) {
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => ['PATH', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP'].includes(key)))
-  Object.assign(env, { GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1', GIT_ATTR_NOSYSTEM: '1', GIT_OPTIONAL_LOCKS: '0', GIT_NO_REPLACE_OBJECTS: '1', GIT_TERMINAL_PROMPT: '0' })
-  let result
-  try { result = await executeFile('git', ['-c', 'core.fsmonitor=false', '-c', `core.hooksPath=${path.join(cwd, '.kkcode-disabled-hooks')}`, 'rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir', '--show-toplevel'], { cwd, env, timeout: 10_000, maxBuffer: 64 * 1024, windowsHide: true }) }
-  catch { fail('TASK_WORKSPACE_REQUIRED', '委托任务必须使用从固定基线创建的独立 Git 工作树。') }
+  const result = await runControlledGit(['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir', '--show-toplevel'], { cwd, timeoutMs: 10_000, maxBuffer: 64 * 1024 })
+  if (!result.ok) fail('TASK_WORKSPACE_REQUIRED', '委托任务必须使用从固定基线创建的独立 Git 工作树。')
   const paths = result.stdout.trim().split(/\r?\n/)
   if (paths.length !== 3) fail('TASK_WORKSPACE_REQUIRED', '无法确认独立工作树身份。')
   const [gitDir, commonDir, root] = await Promise.all(paths.map(value => realpath(value)))
@@ -52,8 +46,11 @@ async function assertTaskWorkspace(cwd) {
  * The caller owns store/kernel lifetime and must create a dedicated safe kernel.
  */
 export function createRunCoordinator(options) {
-  const { kernel, store, artifacts, actor, authorize, executionBackend, acceptance = null } = options || {}
+  const { kernel, store, artifacts, actor: suppliedActor, authorize, executionBackend, acceptance = null } = options || {}
+  const actor = Object.freeze({ accountId: suppliedActor?.accountId, projectId: suppliedActor?.projectId })
   const hostBindingHash = normalizeRunHostBinding(options?.hostBindingHash ?? null)
+  const freePolicy = options?.localFreeAuthorization ? localFreePolicy(options.localFreeAuthorization) : null
+  if (freePolicy && options.taskGraph) fail('LOCAL_FREE_AUTHORIZATION', '本机免费评测暂不授权任务图转授。')
   if (!isDelegatedKernel(kernel)) fail('DELEGATION_KERNEL_REQUIRED', '委托任务必须使用独立、禁用宿主扩展的受控内核。')
   if (!store?.beginTurn || !artifacts?.put || typeof authorize !== 'function' || typeof executionBackend?.ensureReady !== 'function' || typeof executionBackend?.executeTool !== 'function') fail('INVALID_COORDINATOR', '缺少持久账本、产物、宿主授权或严格执行后端。')
   if (!actor || !['accountId', 'projectId'].every(key => typeof actor[key] === 'string' && /^[A-Za-z0-9_.:@-]{1,160}$/.test(actor[key]))) fail('INVALID_ACTOR', '账号和项目范围必须由宿主身份系统提供。')
@@ -136,7 +133,7 @@ export function createRunCoordinator(options) {
 
   async function confirm(request) {
     // The callback invocation, not a boolean inside model-produced JSON, is the boundary.
-    const result = await authorize(freeze(structuredClone(request)))
+    const result = await authorize(freeze(structuredClone({ ...request, actor })))
     if (result === true) return { approved: true, actorId: ownerId, reason: `Host confirmed ${request.kind}` }
     if (result && typeof result.actorId === 'string' && typeof result.reason === 'string' && result.reason.trim()) return { approved: true, actorId: result.actorId, reason: result.reason }
     fail('APPROVAL_REQUIRED', '宿主未确认本次委托或高影响操作，未执行。')
@@ -150,17 +147,18 @@ export function createRunCoordinator(options) {
     const workspaceIdentity = await assertTaskWorkspace(cwd)
     const id = input.id || `run_${randomUUID()}`
     const sessionId = input.sessionId || `ses_${randomUUID().replaceAll('-', '')}`
-    const limits = input.limits || { budgetUsd: 0, deadlineAt: Date.now() + 3600000 }
+    const limits = freeze(structuredClone(input.limits || { budgetUsd: 0, deadlineAt: Date.now() + 3600000 }))
     if (!limits || typeof limits !== 'object' || Object.keys(limits).some(key => !['budgetUsd', 'deadlineAt'].includes(key)) || !Number.isFinite(limits.budgetUsd) || limits.budgetUsd < 0 || limits.budgetUsd > 1_000_000 || !Number.isSafeInteger(limits.deadlineAt) || limits.deadlineAt <= Date.now() || limits.deadlineAt - Date.now() > 7 * 86400000) fail('INVALID_RUN_LIMITS', '新委托必须明确有限 USD 预算与未来七天内的绝对期限；缺省预算为零。')
-    const profiles = limits.budgetUsd > 0 ? options.budgetProfiles?.length
+    const profiles = limits.budgetUsd > 0 || freePolicy ? options.budgetProfiles?.length
       ? options.budgetProfiles.map(normalizeBudgetProfile) : await prepareBudgetProfiles(kernel.configState) : []
-    const approval = await confirm({ kind: 'run.contract', runId: id, cwd, contract, limits, profiles, hostBindingHash })
+    if (freePolicy) validateLocalFreeBudget(options.localFreeAuthorization, { budgetUsd: limits.budgetUsd, profiles })
+    const approval = await confirm({ kind: 'run.contract', runId: id, cwd, contract, limits, profiles, hostBindingHash, ...(freePolicy ? { localFreePolicy: freePolicy } : {}) })
     const provisional = { id, binding: { sessionId, cwd, ...actor } }
     if (JSON.stringify(await assertTaskWorkspace(cwd)) !== JSON.stringify(workspaceIdentity)) fail('WORKSPACE_CHANGED', '确认期间工作树身份已变化，未创建委托。')
     const approvalArtifact = await persist(provisional, { schema: 'kk.run-contract-approval.v1', contractHash: digest(canonical(contract)), workspaceIdentity, limits, approval, hostBindingHash })
     const run = await store.createRun({ id, ownerId, contract, initialState: 'waiting_input', binding: { ...provisional.binding, contractApprovalRef: approvalArtifact.id } })
     ownership.set(run.id, run.ownerEpoch)
-    await store.configureRunBudget({ ...guard(run), ...limits, profiles, approval })
+    await store.configureRunBudget({ ...guard(run), ...limits, profiles, approval, ...(freePolicy ? { localFreePolicy: freePolicy } : {}) })
     return owned(run.id)
   }
 
@@ -320,6 +318,9 @@ export function createRunCoordinator(options) {
   }
 
   async function execute(input) {
+    // Keep the exact submitted scope across lock/config/acceptance/artifact waits.
+    // Signals and output callbacks remain host capabilities; JSON limits do not.
+    input = { ...input, ...(input.limits !== undefined ? { limits: freeze(structuredClone(input.limits)) } : {}) }
     if (typeof input.prompt !== 'string' || !input.prompt.trim()) fail('INVALID_INPUT', '任务输入不能为空。')
     if (active.has(input.runId)) fail('TURN_ACTIVE', '该任务已有正在执行的回合。')
     const lease = await acquireProcessLock(path.join(leaseDirectory, `${digest(input.runId)}.lock`))
@@ -363,14 +364,16 @@ export function createRunCoordinator(options) {
       const hostContextRefs = [...(run.lastTurn?.hostContextRefs || [])]
       const priorInput = run.lastTurn?.inputArtifactRef ? await readJson(run, run.lastTurn.inputArtifactRef) : null
       let savedBudget = await store.getRunBudget({ runId: run.id })
-      if (!savedBudget || savedBudget.budgetUsd <= 0) fail('TASK_BUDGET_EXHAUSTED', '任务缺少持久预算或模型预算为零，未发起模型请求。')
+      if (!savedBudget || savedBudget.budgetUsd <= 0 && !savedBudget.localFreePolicy) fail('TASK_BUDGET_EXHAUSTED', '任务缺少持久预算或模型预算为零且无明确本机免费授权，未发起模型请求。')
+      if (savedBudget.localFreePolicy) validateLocalFreeBudget(options.localFreeAuthorization, { budgetUsd: savedBudget.budgetUsd, profiles: savedBudget.profiles, expectedPolicy: savedBudget.localFreePolicy })
+      else if (freePolicy) fail('LOCAL_FREE_AUTHORIZATION', '不能把普通费用任务临时改为免费任务。')
       if (savedBudget.requests.some(request => ['reserved', 'unknown'].includes(request.status))) fail('TASK_BUDGET_OUTCOME_UNKNOWN', '先核查原请求或子任务的未结算费用，不能重发并重新花费预算。')
       const limits = input.limits || priorInput?.limits || { budgetUsd: savedBudget.budgetUsd, deadlineAt: savedBudget.deadlineAt }
       if (!limits || typeof limits !== 'object' || Array.isArray(limits) || Object.keys(limits).some(key => !['deadlineAt', 'budgetUsd'].includes(key)) || limits.budgetUsd !== undefined && (!Number.isFinite(limits.budgetUsd) || limits.budgetUsd < 0 || limits.budgetUsd > 1_000_000) || limits.deadlineAt !== undefined && (!Number.isSafeInteger(limits.deadlineAt) || limits.deadlineAt < 1)) fail('INVALID_RUN_LIMITS', '任务期限与预算必须由宿主提供有效的有限值。')
       if (priorInput?.limits?.deadlineAt && (!limits.deadlineAt || limits.deadlineAt > priorInput.limits.deadlineAt) || priorInput?.limits?.budgetUsd !== undefined && (limits.budgetUsd === undefined || limits.budgetUsd > priorInput.limits.budgetUsd)) fail('RUN_LIMITS_EXPANSION', '恢复不能静默延长期限或增加原有预算。')
       if (!Number.isFinite(limits.budgetUsd) || !limits.deadlineAt || limits.budgetUsd > savedBudget.budgetUsd || limits.deadlineAt > savedBudget.deadlineAt) fail('RUN_LIMITS_EXPANSION', '回合不能扩大已确认的持久总预算或期限。')
       if (limits.deadlineAt && Date.now() >= limits.deadlineAt) fail('TASK_DEADLINE', '任务期限已到，不会通过恢复重置。')
-      if (limits.budgetUsd === 0) fail('TASK_BUDGET_EXHAUSTED', '任务模型预算为零，未发起模型请求。')
+      if (limits.budgetUsd === 0 && !savedBudget.localFreePolicy) fail('TASK_BUDGET_EXHAUSTED', '任务模型预算为零，未发起模型请求。')
       if (limits.deadlineAt) signal = AbortSignal.any([signal, AbortSignal.timeout(Math.max(1, limits.deadlineAt - Date.now()))])
       let restoredAcceptance = null
       if (acceptance || hostContextRefs.length) {
@@ -393,6 +396,7 @@ export function createRunCoordinator(options) {
         : await resolveTaskModel(kernel.configState, { role: options.modelRole || 'implementation', model: input.model, providerType: input.providerType, baseUrl: input.baseUrl, apiKeyEnv: input.apiKeyEnv })
       const approvedScope = budgetRoute(kernel.configState, route)
       if (!savedBudget.profiles?.some(profile => profile.scopeHash === approvedScope.scopeHash)) {
+        if (savedBudget.localFreePolicy) fail('LOCAL_FREE_AUTHORIZATION', '本机免费任务不能切换到另一个端点、模型或凭据范围。')
         const profile = await prepareBudgetProfile(kernel.configState, route)
         const profileApproval = await confirm({ kind: 'run.budget_profile', runId: run.id, ownerEpoch: run.ownerEpoch, revision: run.revision, profile })
         const current = await owned(run.id)
@@ -402,7 +406,7 @@ export function createRunCoordinator(options) {
       }
       const selectedProvider = route.providerType || kernel.configState.config.provider?.default
       const providerConfig = kernel.configState.config.provider?.[selectedProvider] || {}
-      const routeIdentity = { provider: selectedProvider, model: route.model || providerConfig.default_model || '', endpointHash: digest(route.baseUrl || providerConfig.base_url || providerConfig.type || selectedProvider), credentialSourceHash: digest(route.apiKeyEnv ?? providerConfig.api_key_env ?? '') }
+      const routeIdentity = { provider: selectedProvider, model: route.model || providerConfig.default_model || '', scopeHash: approvedScope.scopeHash }
       if (run.lastTurn?.inputArtifactRef) {
         const previous = await readJson(run, run.lastTurn.inputArtifactRef)
         if (previous.routeIdentity && digest(canonical(previous.routeIdentity)) !== digest(canonical(routeIdentity))) await confirm({ kind: 'run.model_change', runId: run.id, revision: run.revision, previous: previous.routeIdentity, next: routeIdentity })
@@ -467,6 +471,7 @@ export function createRunCoordinator(options) {
         }
       })
       const charged = await withRequestBudget({ budgetUsd: limits.budgetUsd, deadlineAt: limits.deadlineAt, alreadySpent: savedBudget.spentUsd, profiles: savedBudget.profiles,
+        ...(savedBudget.localFreePolicy ? { localFreeAuthorization: options.localFreeAuthorization, localFreeUsage: { usedRequests: savedBudget.usedRequests, reservedTokens: savedBudget.reservedTokens } } : {}),
         durable: {
           async reserve(request) {
             const receipt = await budgetMutation('reserveModelBudget', { ...request, kind: 'model' })

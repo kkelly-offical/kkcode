@@ -7,7 +7,7 @@ import { promisify } from 'node:util'
 import { EventEmitter } from 'node:events'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
-import { brandedBridgePreflight, brandedLaunchOptions, verifyBrandedIdentity, runBrandedBridgeSmoke, waitForBrandedApproval, BRANDED_EXTENSION_ID } from '../scripts/browser-bridge-branded-smoke.mjs'
+import { brandedBridgePreflight, brandedLaunchOptions, verifyBrandedIdentity, runBrandedBridgeSmoke, waitForBrandedApproval, createBrandedConnectionDiagnostics, probeBrandedProfileReuse, BRANDED_EXTENSION_ID } from '../scripts/browser-bridge-branded-smoke.mjs'
 
 const runnerOs = { linux: 'Linux', darwin: 'macOS', win32: 'Windows' }
 function environment(platform = process.platform) {
@@ -40,6 +40,62 @@ test('approval waiting never accepts a different extension or a welcome page', a
   context.pages = () => [page]; page.url = () => 'chrome-extension://other/connect.html'
   await assert.rejects(waitForBrandedApproval(context, BRANDED_EXTENSION_ID, 10), denied('extension_approval_unavailable'))
   assert.equal(context.listenerCount('page'), 0); assert.equal(page.listenerCount('framenavigated'), 0)
+})
+
+test('MCP failure aborts approval waiting immediately and releases listeners rather than becoming a page timeout', async () => {
+  const context = new EventEmitter(), page = new EventEmitter(), controller = new AbortController()
+  context.pages = () => [page]; page.url = () => 'about:blank'
+  const waiting = waitForBrandedApproval(context, BRANDED_EXTENSION_ID, 30000, controller.signal)
+  const failure = Object.assign(new Error('controlled fixture failure'), { code: 'mcp_initialization_failed' })
+  controller.abort(failure)
+  await assert.rejects(waiting, error => error === failure)
+  assert.equal(context.listenerCount('page'), 0); assert.equal(page.listenerCount('framenavigated'), 0)
+})
+
+test('MCP diagnostics record bounded phases and error categories without raw credentials, URL queries or profile paths', () => {
+  const diagnostics = createBrandedConnectionDiagnostics()
+  diagnostics.phase('mcp_start')
+  diagnostics.stderr(Buffer.from('CDP relay ser'))
+  diagnostics.stderr(Buffer.from('ver started, extension endpoint: ws://127.0.0.1:4567/extension/FIXTURE_RELAY_SECRET?token=FIXTURE_TOKEN\nEstablishing extension connection\nWaiting for incoming extension connection'))
+  assert.equal(diagnostics.failure('mcp_initialize', new Error('unknown option --private-option=FIXTURE_PASSWORD /private/profile')).reason, 'unsupported_cli_option')
+  const receipt = diagnostics.snapshot()
+  assert.equal(receipt.phase, 'mcp_start'); assert.equal(receipt.relayStarted, true)
+  assert.equal(receipt.connectPageRequested, true); assert.equal(receipt.waitingForExtension, true)
+  assert.match(receipt.failures[0].fingerprint, /^[a-f0-9]{64}$/)
+  assert.doesNotMatch(JSON.stringify(receipt), /FIXTURE|private-option|\/private|ws:\/\//)
+  diagnostics.stderr(Buffer.alloc(128 * 1024 + 1, 65))
+  assert.equal(diagnostics.snapshot().stderrTruncated, true)
+})
+
+test('profile reuse probe uses the same exact Default profile and closes only its synthetic tab', async () => {
+  const context = new EventEmitter(), existing = new EventEmitter()
+  context.pages = () => [existing]; existing.url = () => 'http://127.0.0.1:1234/unshared'
+  let closed = false, called = 0
+  const result = await probeBrandedProfileReuse({ context, executable: '/fixture/branded-browser', profile: '/fixture/profile', origin: 'http://127.0.0.1:1234', env: {},
+    launch: async (binary, args, options) => {
+      called++; assert.equal(binary, '/fixture/branded-browser')
+      assert.deepEqual(args.slice(0, 2), ['--user-data-dir=/fixture/profile', '--profile-directory=Default'])
+      assert.match(args[2], /^http:\/\/127\.0\.0\.1:1234\/launch-probe-/)
+      assert.equal(options.windowsHide, true)
+      const page = new EventEmitter(); let url = 'about:blank'
+      page.url = () => url; page.close = async () => { closed = true }; page.isClosed = () => closed
+      context.emit('page', page); url = args[2]; page.emit('framenavigated')
+      return { stdout: '', stderr: '' }
+    } })
+  assert.equal(called, 1); assert.equal(closed, true); assert.equal(result.verified, true)
+  assert.equal(context.listenerCount('page'), 0); assert.equal(existing.listenerCount('framenavigated'), 0)
+})
+
+test('profile reuse failure is surfaced without stderr data and cancels its pending page observer', async () => {
+  const context = new EventEmitter(); context.pages = () => []
+  await assert.rejects(probeBrandedProfileReuse({ context, executable: '/fixture/browser', profile: '/fixture/profile', origin: 'http://127.0.0.1:1234', env: {},
+    launch: async () => { throw new Error('EACCES token=FIXTURE_PRIVATE_TOKEN /private/secret-profile') } }), error => {
+    assert.equal(error.code, 'browser_profile_reuse_failed')
+    assert.equal(error.diagnosticFailure.reason, 'permission_denied')
+    assert.doesNotMatch(JSON.stringify(error), /FIXTURE_PRIVATE|secret-profile/)
+    return true
+  })
+  assert.equal(context.listenerCount('page'), 0)
 })
 
 test('branded harness refuses non-CI and self-hosted runs, missing opt-in and Linux root', () => {
@@ -103,6 +159,8 @@ test('branded identity rejects disabled sandbox/security, debugging TCP, extensi
   for (const flag of ['--remote-debugging-pipe', '--enable-unsafe-extension-debugging']) assert.throws(() => verifyBrandedIdentity({ ...input, commandLine: input.commandLine.filter(arg => arg !== flag) }), denied('installation_debugging_unavailable'))
   assert.throws(() => verifyBrandedIdentity({ ...input, profile: '/tmp/unrelated/profile' }), denied('profile_scope_mismatch'))
   assert.throws(() => verifyBrandedIdentity({ ...input, commandLine: [...input.commandLine, '--user-data-dir=/tmp/another'] }), denied('profile_scope_mismatch'))
+  assert.throws(() => verifyBrandedIdentity({ ...input, commandLine: input.commandLine.filter(arg => arg !== '--profile-directory=Default') }), denied('profile_scope_mismatch'))
+  assert.throws(() => verifyBrandedIdentity({ ...input, commandLine: [...input.commandLine, '--profile-directory=Profile 1'] }), denied('profile_scope_mismatch'))
 })
 
 test('branded identity rejects Chromium/CfT paths, headless UA and a mismatched browser brand', () => {

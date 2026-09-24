@@ -2,3 +2,4 @@
 export { createRunCoordinator, createDelegatedKernel, createTaskWorkspace, taskWorkspaceBaseline, createDockerExecutionBackend, inspectStrictIsolation } from '../kernel/index.mjs'
 export { openRunStore, createArtifactStore } from './storage.mjs'
 export { verifyRunHostBinding } from '../kernel/orchestration/run-host-binding.mjs'
+export { createLocalFreeInferenceAuthorization, isLocalFreeInferenceAuthorization, localFreePolicy } from '../usage/local-free.mjs'

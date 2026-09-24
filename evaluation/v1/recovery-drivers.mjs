@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url'
 import { createRunCoordinator, createDelegatedKernel, createDockerExecutionBackend, openRunStore, createArtifactStore } from '../../src/sdk/runs.mjs'
 import { captureAcceptanceCandidate } from '../../src/kernel/session/acceptance-manifest.mjs'
 import { withRequestBudget } from '../../src/usage/request-budget.mjs'
+import { prepareBudgetProfile } from '../../src/usage/budget-profiles.mjs'
+import { createLocalFreeInferenceAuthorization, localFreePolicy, validateLocalFreeBudget } from '../../src/usage/local-free.mjs'
 import { flushNow } from '../../src/kernel/session/store.mjs'
 import { loadConfig } from '../../src/config/load-config.mjs'
 import { sha256 } from './manifest.mjs'
@@ -77,7 +79,7 @@ async function privateControl(cwd, privateRoot) {
 }
 
 /** Shared only with the trusted crash worker; never a model/tool API. */
-export async function createRecoveryRuntime({ task, cwd, privateRoot, profile, image, limits, ownerId = 'evaluation-recovery', fault = null }) {
+export async function createRecoveryRuntime({ task, cwd, privateRoot, profile, image, limits, ownerId = 'evaluation-recovery', fault = null, localFreeLimits = null, existingRunId = null, localFreeAuthorization: providedAuthorization = null, expectedLocalFreePolicy = null }) {
   const home = path.join(privateRoot, 'state'); process.env.KKCODE_HOME = home
   await mkdir(home, { recursive: true, mode: 0o700 })
   const prices = path.join(home, 'prices.json'), configFile = path.join(home, 'config.json')
@@ -94,9 +96,21 @@ export async function createRecoveryRuntime({ task, cwd, privateRoot, profile, i
   const state = await loadConfig(cwd)
   if (state.errors?.length || state.config.provider.default !== 'evaluation' || state.config.provider.evaluation.api_key) throw new Error('Recovery fixture configuration failed validation or explicit route isolation')
   const store = await openRunStore({ directory: path.join(privateRoot, 'runs') }), artifacts = createArtifactStore({ root: path.join(privateRoot, 'artifacts') })
+  let localFreeAuthorization = providedAuthorization
+  try { if (localFreeLimits) {
+    const prior = existingRunId ? await store.getRunBudget({ runId: existingRunId }) : null
+    const budgetProfile = prior?.profiles?.[0] || await prepareBudgetProfile(state, { providerType: 'evaluation', model: profile.model })
+    localFreeAuthorization ||= await createLocalFreeInferenceAuthorization({ profile: budgetProfile, baseUrl: profile.baseUrl, apiKeyEnv: profile.apiKeyEnv || '',
+      maxRequests: localFreeLimits.requestLimit, maxTokens: localFreeLimits.tokenLimit, expectedPolicy: expectedLocalFreePolicy || prior?.localFreePolicy,
+      authorize: async () => true }) // Only the evaluator's explicit host local-free option reaches this closure.
+    const policy = validateLocalFreeBudget(localFreeAuthorization, { budgetUsd: limits.budgetUsd, profiles: [budgetProfile], expectedPolicy: prior?.localFreePolicy || expectedLocalFreePolicy })
+    if (policy.maxRequests !== localFreeLimits.requestLimit || policy.maxTokens !== localFreeLimits.tokenLimit || expectedLocalFreePolicy && policy.id !== expectedLocalFreePolicy.id) throw new Error('Recovery cannot expand or replace the suite local-free authorization')
+  } else if (providedAuthorization || expectedLocalFreePolicy) {
+    throw new Error('A recovery authorization requires its explicit frozen local quotas')
+  } } catch (error) { await store.close(); throw error }
   const kernel = await createDelegatedKernel({ cwd, configState: state, trustState: { trusted: true } })
   const strict = createDockerExecutionBackend({ image }), actor = { accountId: 'evaluation', projectId: task.id }
-  const runtime = { store, kernel, artifacts, actor, configState: state, coordinator: null, run: null, limits, backend: strict }
+  const runtime = { store, kernel, artifacts, actor, configState: state, coordinator: null, run: null, limits, backend: strict, localFreeAuthorization }
   const backend = { ...strict, async executeTool(input) {
     await fault?.beforeTool?.(runtime, input)
     const result = await strict.executeTool({ ...input, invoke: () => {
@@ -108,7 +122,7 @@ export async function createRecoveryRuntime({ task, cwd, privateRoot, profile, i
   } }
   const originalPut = artifacts.put.bind(artifacts)
   artifacts.put = async input => { await fault?.beforeArtifact?.(runtime, input); return originalPut(input) }
-  runtime.coordinator = createRunCoordinator({ kernel, store, artifacts, actor, ownerId, executionBackend: backend,
+  runtime.coordinator = createRunCoordinator({ kernel, store, artifacts, actor, ownerId, executionBackend: backend, ...(localFreeAuthorization ? { localFreeAuthorization } : {}),
     leaseDirectory: path.join(privateRoot, 'leases'), grantDirectory: path.join(privateRoot, 'grants'),
     authorize: request => ['run.contract', 'run.takeover', 'run.tool', 'run.reconcile'].includes(request.kind) })
   return runtime
@@ -126,6 +140,7 @@ const execute = (runtime, prompt, signal) => runtime.coordinator.execute({ runId
 async function modelOperation(runtime, operation) {
   const budget = await runtime.store.getRunBudget({ runId: runtime.run.id })
   const result = await withRequestBudget({ budgetUsd: budget.budgetUsd, deadlineAt: budget.deadlineAt, alreadySpent: budget.spentUsd + budget.reservedUsd + budget.unknownUsd, profiles: budget.profiles,
+    ...(budget.localFreePolicy ? { localFreeAuthorization: runtime.localFreeAuthorization, localFreeUsage: { usedRequests: budget.usedRequests, reservedTokens: budget.reservedTokens } } : {}),
     durable: { reserve: async input => { const run = await runtime.store.getRun(runtime.run.id); const result = await runtime.store.reserveModelBudget({ ...guard(run), ...input, kind: 'model' }); if (!result.fresh) throw new Error('Duplicate recovery request reservation'); return result },
       settle: async ({ requestId, amountUsd, status }) => runtime.store.settleModelBudget({ ...guard(await runtime.store.getRun(runtime.run.id)), requestId, amountUsd, status }) } }, operation)
   return result.result
@@ -175,11 +190,12 @@ async function compact(runtime, task, checks, operations, negativeControl = fals
 
 /** Actual host lifecycle runner. All approval closures are evaluator authority,
  * all file effects use the real strict Docker backend, never model assertions. */
-export async function runRecoveryScenario({ task, cwd, privateRoot, profile = null, image, budgetUsd = 0, deadlineAt = Date.now() + 120000, signal, mode = 'live', negativeControl = false }) {
+export async function runRecoveryScenario({ task, cwd, privateRoot, profile = null, image, budgetUsd = 0, deadlineAt = Date.now() + 120000, signal, mode = 'live', negativeControl = false, localFreeLimits = null, localFreeAuthorization = null }) {
   if (!supportedRecovery.has(task.lifecycle)) throw new Error('Unknown recovery lifecycle')
   if (!['live', 'system-selfcheck'].includes(mode)) throw new Error('Invalid recovery mode')
-  if (mode === 'system-selfcheck' && (budgetUsd !== 0 || profile)) throw new Error('System selfcheck cannot authorize external model spending')
-  if (mode === 'live' && (!profile || budgetUsd <= 0)) throw new Error('Live recovery requires an explicitly selected model and positive total allowance')
+  if (mode === 'system-selfcheck' && (budgetUsd !== 0 || profile || localFreeLimits || localFreeAuthorization)) throw new Error('System selfcheck cannot authorize external model spending')
+  if (localFreeAuthorization && !localFreeLimits) throw new Error('Suite authorization requires explicit local resource limits')
+  if (mode === 'live' && (!profile || (localFreeLimits ? budgetUsd !== 0 : budgetUsd <= 0))) throw new Error('Live recovery requires an explicit paid budget or host-approved local-free allowance')
   if (negativeControl && mode !== 'system-selfcheck') throw new Error('Lifecycle negative controls are offline fixture-only, never live model quality evidence')
   privateRoot = await privateControl(cwd, privateRoot)
   const previousHome = process.env.KKCODE_HOME, reference = mode === 'system-selfcheck' ? await referenceProvider(task) : null
@@ -214,12 +230,13 @@ export async function runRecoveryScenario({ task, cwd, privateRoot, profile = nu
       const timer = setTimeout(() => worker.kill('SIGKILL'), Math.min(60000, deadlineAt - Date.now()))
       const abort = () => worker.kill('SIGKILL'); signal?.addEventListener('abort', abort, { once: true })
       try {
-        worker.send({ task, cwd, privateRoot, profile, image, limits, negativeControl })
+        worker.send({ task, cwd, privateRoot, profile, image, limits, negativeControl, localFreeLimits,
+          expectedLocalFreePolicy: localFreeAuthorization ? localFreePolicy(localFreeAuthorization) : null })
         const [notice] = await Promise.race([once(worker, 'message'), once(worker, 'exit').then(() => { throw new Error(`Recovery fault worker exited before the controlled boundary: ${stderr}`) })])
         if (!notice?.runId || notice.boundary !== task.lifecycle) throw new Error('Wrong recovery worker boundary')
         if (!negativeControl) worker.kill('SIGKILL')
         await once(worker, 'exit')
-        runtime = await createRecoveryRuntime({ task, cwd, privateRoot, profile, image, limits })
+        runtime = await createRecoveryRuntime({ task, cwd, privateRoot, profile, image, limits, localFreeLimits, existingRunId: notice.runId, localFreeAuthorization })
         runtime.run = await runtime.store.getRun(notice.runId)
         beforeEventsHash = sha256(await runtime.store.events({ runId: notice.runId })); beforeEpoch = runtime.run.ownerEpoch
         const prior = runtime.run
@@ -230,7 +247,7 @@ export async function runRecoveryScenario({ task, cwd, privateRoot, profile = nu
         operations.push({ kind: 'real-process-SIGKILL', boundary: task.lifecycle, beforeState: prior.lastTurn?.status, afterState: runtime.run.lastTurn?.status })
       } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); if (worker.exitCode === null && worker.signalCode === null) worker.kill('SIGKILL') }
     } else {
-      runtime = await createRecoveryRuntime({ task, cwd, privateRoot, profile, image, limits, fault })
+      runtime = await createRecoveryRuntime({ task, cwd, privateRoot, profile, image, limits, fault, localFreeLimits, localFreeAuthorization })
       await start(runtime, task)
       beforeEpoch = runtime.run.ownerEpoch; beforeEventsHash = sha256(await runtime.store.events({ runId: runtime.run.id }))
       let unsubscribe, firstEvents = 0, secondEvents = 0
@@ -287,7 +304,7 @@ export async function runRecoveryScenario({ task, cwd, privateRoot, profile = nu
           const id = run.id, previousSession = run.binding.sessionId
           if (!negativeControl) {
             await closeRuntime(runtime); runtime = null
-            runtime = await createRecoveryRuntime({ task, cwd, privateRoot, profile, image, limits, ownerId: 'evaluation-reconstructed' })
+            runtime = await createRecoveryRuntime({ task, cwd, privateRoot, profile, image, limits, ownerId: 'evaluation-reconstructed', localFreeLimits, existingRunId: id, localFreeAuthorization })
             runtime.run = await runtime.coordinator.attach({ runId: id })
           }
           checks.push({ name: 'store-and-kernel-reopened-same-run', passed: runtime.run.ownerEpoch > beforeEpoch && runtime.run.binding.sessionId === previousSession })

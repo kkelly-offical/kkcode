@@ -17,6 +17,7 @@ import { openRunStore } from '../src/storage/run-store.mjs'
 import { createArtifactStore } from '../src/storage/artifact-store.mjs'
 import { createDockerExecutionBackend } from '../src/kernel/isolation/docker-executor.mjs'
 import { getSession, replaceMessages, flushNow } from '../src/kernel/session/store.mjs'
+import { budgetRoute } from '../src/usage/budget-profiles.mjs'
 
 const exec = promisify(execFile)
 const hash = value => createHash('sha256').update(value).digest('hex')
@@ -75,7 +76,7 @@ async function setup(t, options = {}) {
   const artifacts = createArtifactStore({ root: path.join(root, 'artifacts') })
   const backend = options.backend || { allowedToolNames: ['write', 'read'], ensureReady: async () => ({ strict: true, backend: 'fixture-host-controlled' }), executeTool: async ({ invoke }) => invoke() }
   const authorize = options.authorize || (() => true)
-  const rawCoordinator = createRunCoordinator({ kernel, store, artifacts, actor, ownerId: 'fixture-host', authorize, executionBackend: backend, verifyDeliveryBinding: options.verifyDeliveryBinding, leaseDirectory: path.join(root, 'leases'), grantDirectory: path.join(root, 'grants') })
+  const rawCoordinator = createRunCoordinator({ kernel, store, artifacts, actor: options.actor || actor, ownerId: 'fixture-host', authorize, executionBackend: backend, verifyDeliveryBinding: options.verifyDeliveryBinding, leaseDirectory: path.join(root, 'leases'), grantDirectory: path.join(root, 'grants') })
   const coordinator = { ...rawCoordinator, start: input => rawCoordinator.start({ limits: { budgetUsd: 10, deadlineAt: Date.now() + 60000 }, ...input }) }
   t.after(async () => {
     await coordinator.close(); await kernel.shutdown(); await store.close()
@@ -91,6 +92,79 @@ test('durable binding is a host capability, not a JSON flag', () => {
   assert.throws(() => withDurableRun({ runId: 'forged' }, () => {}), /trusted host/)
   const binding = createDurableRunBinding({ runId: 'real' })
   assert.equal(withDurableRun(binding, currentDurableRun), binding)
+})
+
+test('caller mutation during approval cannot raise the original zero budget or extend its deadline', async t => {
+  const originalDeadline = Date.now() + 60000, limits = { budgetUsd: 0, deadlineAt: originalDeadline }
+  const f = await setup(t, { authorize: request => {
+    if (request.kind === 'run.contract') {
+      assert.equal(request.limits.budgetUsd, 0)
+      limits.budgetUsd = 100; limits.deadlineAt += 3600000
+    }
+    return true
+  } })
+  const run = await f.coordinator.start({ contract, limits })
+  const budget = await f.store.getRunBudget({ runId: run.id })
+  assert.equal(budget.budgetUsd, 0)
+  assert.equal(budget.deadlineAt, originalDeadline)
+  assert.equal(f.requests(), 0)
+})
+
+test('caller mutation during input persistence cannot expand a validated per-turn budget', async t => {
+  const f = await setup(t, { responses: [finalReply] })
+  const run = await f.coordinator.start({ contract })
+  const limits = { budgetUsd: 0.000001, deadlineAt: run.budget.deadlineAt }
+  let changed = false
+  const put = f.artifacts.put.bind(f.artifacts)
+  f.artifacts.put = async input => {
+    if (input.source.kind === 'user') {
+      changed = true
+      limits.budgetUsd = 10
+      limits.deadlineAt += 3600000
+    }
+    return put(input)
+  }
+  const result = await f.coordinator.execute({ runId: run.id, prompt: 'Do not exceed this narrower turn budget.', limits })
+  assert.equal(changed, true)
+  assert.equal(f.requests(), 0, 'the full run budget must not replace the caller’s original narrower turn budget')
+  assert.equal(result.budget.requests.length, 0)
+  const page = await f.artifacts.read({ actor: { ...actor, runId: run.id, sessionId: run.binding.sessionId }, id: result.run.lastTurn.inputArtifactRef })
+  const saved = JSON.parse(Buffer.from(page.data, 'base64').toString('utf8'))
+  assert.equal(saved.limits.budgetUsd, 0.000001)
+  assert.equal(saved.limits.deadlineAt, run.budget.deadlineAt)
+})
+
+test('account scope is detached for the coordinator lifetime and explicit in host approval', async t => {
+  const original = { ...actor }, suppliedActor = { ...actor }
+  let approvedActor
+  const f = await setup(t, { actor: suppliedActor, authorize: request => {
+    if (request.kind === 'run.contract') {
+      approvedActor = request.actor
+      suppliedActor.accountId = 'different-account'
+      suppliedActor.projectId = 'different-project'
+    }
+    return true
+  } })
+  const run = await f.coordinator.start({ contract })
+  assert.equal(run.binding.accountId, original.accountId)
+  assert.equal(run.binding.projectId, original.projectId)
+  assert.deepEqual(approvedActor, original)
+  assert.equal(Object.isFrozen(approvedActor), true)
+  assert.equal((await f.coordinator.inspect(run.id)).id, run.id)
+  const page = await f.artifacts.read({ actor: { ...original, runId: run.id, sessionId: run.binding.sessionId }, id: run.binding.contractApprovalRef })
+  assert.ok(JSON.parse(Buffer.from(page.data, 'base64').toString('utf8')).approval.approved)
+})
+
+test('persistent route scope follows the actual credential value, not only its environment variable name', t => {
+  const name = 'KKCODE_ROUTE_ROTATION_TEST_KEY', previous = process.env[name]
+  t.after(() => { if (previous === undefined) delete process.env[name]; else process.env[name] = previous })
+  const state = { config: { provider: { default: 'rotation', rotation: { type: 'openai', base_url: 'https://model.example.invalid/v1', api_key_env: name, default_model: 'fixed-model', context_limit: 131072, max_tokens: 1000 } } } }
+  process.env[name] = 'synthetic-original-value'
+  const first = budgetRoute(state, { providerType: 'rotation', model: 'fixed-model' }).scopeHash
+  process.env[name] = 'synthetic-rotated-value'
+  const second = budgetRoute(state, { providerType: 'rotation', model: 'fixed-model' }).scopeHash
+  assert.notEqual(first, second)
+  assert.match(second, /^[a-f0-9]{64}$/)
 })
 
 test('external verification persists exactly the detached receipt it checked, not later caller mutations', async t => {
@@ -153,6 +227,10 @@ test('real HTTP provider and kernel tool execution persist intent and full resul
   const events = await f.store.events({ runId: run.id })
   assert.ok(events.findIndex(event => event.type === 'action.prepared') < events.findIndex(event => event.type === 'action.settled'))
   assert.equal(output.run.lastTurn.status, 'waiting_input')
+  const inputPage = await f.artifacts.read({ actor: { ...actor, runId: run.id, sessionId: run.binding.sessionId }, id: output.run.lastTurn.inputArtifactRef, limit: 65536 })
+  const input = JSON.parse(Buffer.from(inputPage.data, 'base64').toString())
+  assert.deepEqual(Object.keys(input.routeIdentity).sort(), ['model', 'provider', 'scopeHash'])
+  assert.equal(input.routeIdentity.scopeHash, budgetRoute(f.kernel.configState, { providerType: 'fixture', model: 'fixture-model' }).scopeHash)
   await assert.rejects(f.coordinator.complete({ runId: run.id }), { code: 'VERIFICATION_REQUIRED' })
   await assert.rejects(f.coordinator.verifiedCandidate({ runId: run.id }), { code: 'VERIFICATION_REQUIRED' })
   assert.equal(await hasUnresolvedSessionRun(run.binding.sessionId, { store: f.store }), true)

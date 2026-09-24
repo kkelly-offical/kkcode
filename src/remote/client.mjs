@@ -9,6 +9,12 @@ import { RELAY_FEATURE_EVENT_PUSH } from '../protocol/index.mjs'
 import { deviceLoginPath } from '../protocol/login-path.mjs'
 
 const credentialsPath = () => path.join(userRootDir(), 'remote-credentials.json')
+// Endpoint selection and local ownership metadata are never token extensions.
+// Keep the existing SSO profile contract; its fields are not network addresses.
+const tokenFields = value => Object.fromEntries(
+  ['access_token', 'refresh_token', 'token_type', 'expires_in', 'profile']
+    .filter(key => Object.hasOwn(value, key)).map(key => [key, value[key]])
+)
 export async function loadRemoteCredentials() { try { return JSON.parse(await readFile(credentialsPath(), 'utf8')) } catch { return null } }
 export async function saveRemoteCredentials(value) { await writePrivateFile(credentialsPath(), JSON.stringify(value)) }
 export function gatewayUrl(value) {
@@ -61,7 +67,10 @@ export async function loginRemote({ gateway, name = 'KK Code computer', print = 
     const reply = await requestGateway(gateway, '/auth/token', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device_code: flow.device_code }), signal })
     const result = await reply.json()
     if (reply.ok) {
-      const credentials = { gateway, ...result, expiresAt: Date.now() + result.expires_in * 1000 }
+      // Only explicit public discovery may select a canonical gateway. Token
+      // metadata must not redirect the next bearer/refresh request to a new
+      // origin, even when a federated issuer includes an extra `gateway` field.
+      const credentials = { ...tokenFields(result), gateway, expiresAt: Date.now() + result.expires_in * 1000 }
       try { await acceptRemoteIdentity(credentials, { transferHistory, previousCredentials }) }
       catch (error) {
         // A browser may have selected the wrong organization account. Revoke the
@@ -78,10 +87,11 @@ export async function loginRemote({ gateway, name = 'KK Code computer', print = 
   throw new Error('Login code expired')
 }
 export async function refreshRemoteCredentials(credentials, { signal } = {}) {
-  const response = await requestGateway(credentials.gateway, '/auth/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh_token: credentials.refresh_token }), signal })
+  const gateway = gatewayUrl(credentials.gateway)
+  const response = await requestGateway(gateway, '/auth/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh_token: credentials.refresh_token }), signal })
   if (!response.ok) throw Object.assign(new Error('Remote login expired. Sign in again with the device owner account'), { code: 'login_required', status: response.status })
   const tokens = await response.json()
-  const updated = { ...credentials, ...tokens, expiresAt: Date.now() + tokens.expires_in * 1000 }
+  const updated = { ...credentials, ...tokenFields(tokens), gateway, expiresAt: Date.now() + tokens.expires_in * 1000 }
   await saveRemoteCredentials(updated)
   return updated
 }

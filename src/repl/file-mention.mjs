@@ -212,6 +212,7 @@ function describeTarget(ref, ctx) {
   if (!ctx.fs.existsSync(abs)) return { kind: "missing", abs, display, ref }
   try {
     const info = ctx.fs.statSync(abs)
+    if (!info.isDirectory() && !info.isFile()) return { kind: "unreadable", abs, display, ref }
     return { kind: info.isDirectory() ? "dir" : "file", abs, display, ref, size: Number(info.size) || 0 }
   } catch {
     return { kind: "unreadable", abs, display, ref }
@@ -253,6 +254,37 @@ function cutAt(buffer, limit) {
   return newline > limit / 2 ? newline + 1 : limit
 }
 
+/** Keep real filesystem reads bounded and nonblocking even if the path changed
+ * after describeTarget. Explicit local mentions may still follow symlinks to
+ * ordinary files; the opened descriptor, not the earlier path stat, is checked.
+ * Minimal virtual-fs adapters keep their existing readFileSync contract.
+ */
+function readMentionFile(target, ctx) {
+  const fs = ctx.fs
+  if (!Number.isSafeInteger(ctx.maxReadBytes) || ctx.maxReadBytes < 0) return { skipped: "unreadable" }
+  if (!["openSync", "fstatSync", "readSync", "closeSync"].every(key => typeof fs[key] === "function")) {
+    const value = fs.readFileSync(target.abs)
+    const buffer = Buffer.isBuffer(value) ? value : Buffer.from(String(value), "utf8")
+    return buffer.length > ctx.maxReadBytes ? { skipped: "too-large" } : { buffer }
+  }
+  const fd = fs.openSync(target.abs, nodeFs.constants.O_RDONLY | (nodeFs.constants.O_NONBLOCK || 0))
+  try {
+    const pinned = fs.fstatSync(fd)
+    if (!pinned.isFile()) return { skipped: "unreadable" }
+    if (pinned.size > ctx.maxReadBytes) return { skipped: "too-large" }
+    const chunks = []
+    let total = 0
+    for (;;) {
+      const chunk = Buffer.alloc(Math.min(65536, ctx.maxReadBytes + 1 - total))
+      const count = fs.readSync(fd, chunk, 0, chunk.length, null)
+      if (!count) return { buffer: Buffer.concat(chunks, total) }
+      total += count
+      if (total > ctx.maxReadBytes) return { skipped: "too-large" }
+      chunks.push(chunk.subarray(0, count))
+    }
+  } finally { fs.closeSync(fd) }
+}
+
 function renderFileBlock(target, ctx) {
   if (BINARY_EXTENSIONS.has(ctx.pathApi.extname(target.abs).toLowerCase())) {
     return { skipped: "binary" }
@@ -260,7 +292,9 @@ function renderFileBlock(target, ctx) {
   if (target.size > ctx.maxReadBytes) return { skipped: "too-large" }
   let buffer
   try {
-    buffer = ctx.fs.readFileSync(target.abs)
+    const result = readMentionFile(target, ctx)
+    if (result.skipped) return result
+    buffer = result.buffer
   } catch {
     return { skipped: "unreadable" }
   }

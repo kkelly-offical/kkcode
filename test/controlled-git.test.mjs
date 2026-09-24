@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process"
 import { mkdtemp, mkdir, writeFile, readFile, access, rm } from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
-import { runControlledGit } from "../src/util/controlled-git.mjs"
+import { runControlledGit, gitNullDevice } from "../src/util/controlled-git.mjs"
 import { createDetachedWorktree, exportWorktreePatch, captureWorkingTreeState, removeWorktree } from "../src/util/git.mjs"
 import { applyWorktreeResult } from "../src/kernel/orchestration/worktree-handoff.mjs"
 import { writePromotionJson } from "../src/storage/promotion-journal.mjs"
@@ -20,6 +20,13 @@ test.after(async () => {
   process.chdir(originalCwd)
   if (oldHome === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = oldHome
   await rm(root, { recursive: true, force: true })
+})
+
+test("Git null config paths use the Git-compatible Windows spelling, never Node's device namespace", () => {
+  assert.equal(gitNullDevice("win32"), "NUL")
+  assert.notEqual(gitNullDevice("win32"), "\\\\.\\nul")
+  assert.equal(gitNullDevice("linux"), "/dev/null")
+  assert.equal(gitNullDevice("darwin"), "/dev/null")
 })
 
 async function fixture(t) {
@@ -79,8 +86,9 @@ test("promotion disables repository filters, external diff/textconv, fsmonitor a
 
 test("controlled Git does not inherit ambient config injection or arbitrary extra environment", async t => {
   const f = await fixture(t)
-  const saved = Object.fromEntries(["GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"].map(key => [key, process.env[key]]))
+  const saved = Object.fromEntries(["GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"].map(key => [key, process.env[key]]))
   process.env.GIT_CONFIG_COUNT = "1"; process.env.GIT_CONFIG_KEY_0 = "user.email"; process.env.GIT_CONFIG_VALUE_0 = "synthetic-private-identity"
+  process.env.GIT_CONFIG_GLOBAL = "\\\\.\\nul"; process.env.GIT_CONFIG_SYSTEM = path.join(root, "missing-parent", "unapproved-config")
   try {
     const result = await runControlledGit(["config", "--get", "user.email"], { cwd: f.repo })
     assert.equal(result.ok, true, result.stderr)

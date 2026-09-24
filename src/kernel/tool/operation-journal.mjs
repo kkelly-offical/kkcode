@@ -10,8 +10,11 @@ import { acquireProcessLock } from '../../storage/process-lock.mjs'
 const active = new Set()
 const hash = value => createHash('sha256').update(value).digest('hex')
 function journalPath(sessionId) {
-  if (typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)) throw new Error('Invalid session identifier')
-  return path.join(userRootDir(), 'operations', `${sessionId}.json`)
+  // Construct the basename from the whitelist match itself, never from the
+  // remote value. Exact equality also rejects JS '$' accepting a final newline.
+  const match = typeof sessionId === 'string' ? /^[A-Za-z0-9_-]{1,128}/.exec(sessionId) : null
+  if (!match || match[0] !== sessionId) throw new Error('Invalid session identifier')
+  return path.join(userRootDir(), 'operations', `${match[0]}.json`)
 }
 async function read(file) {
   let handle

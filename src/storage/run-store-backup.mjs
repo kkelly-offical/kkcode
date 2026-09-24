@@ -29,7 +29,10 @@ function fileHash(file) {
 
 function sync(file, directory = false) {
   if (directory && process.platform === 'win32') return
-  const fd = openSync(file, constants.O_RDONLY)
+  // Windows FlushFileBuffers requires GENERIC_WRITE. These are files just
+  // created by this backup operation, not read-only inspection targets. Open
+  // without O_CREAT/O_TRUNC so durability never truncates or recreates them.
+  const fd = openSync(file, (directory ? constants.O_RDONLY : constants.O_RDWR) | (constants.O_NOFOLLOW || 0))
   try { fsyncSync(fd) } finally { closeSync(fd) }
 }
 

@@ -2,8 +2,9 @@ import path from 'node:path'
 import os from 'node:os'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { mkdir, mkdtemp, writeFile, readFile, lstat, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile, readFile, lstat, rm, realpath } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import { cases, createManifest, sha256, selectCases, summarizeResults } from './manifest.mjs'
 import { evaluateCase, verifyReferenceDefinitions } from './oracles.mjs'
 import { validateLiveProfile, runLiveTask, supportedRecovery } from './live-sdk.mjs'
@@ -14,10 +15,15 @@ import { captureAcceptanceCandidate } from '../../src/kernel/session/acceptance-
 import { userRootDir } from '../../src/storage/paths.mjs'
 import { evaluationDiagnosticRoot, writeEvaluationDiagnostic, sanitizeDiagnostic } from './diagnostics.mjs'
 import { runRecoveryScenario } from './recovery-drivers.mjs'
+import { allocateLocalFreeLimits } from './local-free.mjs'
+import { prepareEvaluationLocalFreeAuthorization } from './local-free-authorization.mjs'
+import { localFreePolicy } from '../../src/usage/local-free.mjs'
 
 const exec = promisify(execFile)
 let evaluationActive = false
 const immutableImage = value => typeof value === 'string' && /^(sha256:[a-f0-9]{64}|[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[a-f0-9]{64})$/.test(value)
+export const evaluationErrorCode = (error, aborted = false) => aborted ? 'EVALUATION_ABORTED'
+  : typeof error?.code === 'string' && /^[A-Z_a-z0-9.-]{1,80}$/.test(error.code) ? error.code : 'EVALUATION_EXECUTION_ERROR'
 async function writeFixture(root, files) {
   for (const [name, value] of Object.entries(files)) {
     const target = path.join(root, name)
@@ -74,7 +80,7 @@ export async function runEvaluation(options = {}) {
 
 async function executeEvaluation({ mode = 'selfcheck', ids = [], split = 'development', repetitions = 1,
   image, officeImage, outputDirectory, profile = null, candidateHash = null, budgetUsd = 0, deadlineAt = null,
-  candidateDirectory = process.cwd(), keepWorkspaces = false, signal, onResult } = {}) {
+  localFreeLimits = null, candidateDirectory = process.cwd(), keepWorkspaces = false, signal, onResult } = {}) {
   if (!['selfcheck', 'live'].includes(mode)) throw new Error('Unknown evaluation mode')
   if (!Number.isSafeInteger(repetitions) || repetitions < 1 || repetitions > 20) throw new Error('Invalid repetition count')
   if (!immutableImage(image)) throw new Error('An already-installed immutable node execution image is required')
@@ -82,14 +88,19 @@ async function executeEvaluation({ mode = 'selfcheck', ids = [], split = 'develo
   const diagnosticRoot = evaluationDiagnosticRoot()
   if (!selected.length) throw new Error('No evaluation cases selected')
   if (selected.some(task => task.driver === 'office-document') && !immutableImage(officeImage)) throw new Error('Document tasks require an approved immutable Office image')
+  if (await realpath(candidateDirectory) !== await realpath(fileURLToPath(new URL('../../', import.meta.url)))) {
+    throw new Error('Evaluation candidate directory must be the executing runtime source, not a different repository or snapshot')
+  }
   const runtimeCandidate = (await captureAcceptanceCandidate(candidateDirectory)).treeFingerprint
+  const localAllocation = localFreeLimits === null ? null : allocateLocalFreeLimits(localFreeLimits, selected.length * repetitions)
   if (mode === 'live') {
     if (candidateHash !== runtimeCandidate) throw new Error('Live candidate hash does not match the frozen runtime source')
-    if (!Number.isFinite(budgetUsd) || budgetUsd <= 0 || !Number.isSafeInteger(deadlineAt) || deadlineAt <= Date.now()) throw new Error('Live mode requires explicit positive total USD budget and absolute deadline')
-    profile = validateLiveProfile(profile)
-  } else if (budgetUsd !== 0 || profile !== null) throw new Error('Selfcheck never accepts a paid budget or provider profile')
+    if (!Number.isSafeInteger(deadlineAt) || deadlineAt <= Date.now()) throw new Error('Live mode requires an explicit future absolute deadline')
+    if (localAllocation ? budgetUsd !== 0 : !Number.isFinite(budgetUsd) || budgetUsd <= 0) throw new Error('Live mode requires positive USD budget, or explicit bounded local-free mode with exactly zero USD')
+    profile = validateLiveProfile(profile, { localFree: Boolean(localAllocation) })
+  } else if (budgetUsd !== 0 || profile !== null || localAllocation) throw new Error('Selfcheck never accepts a paid budget, provider profile or local-free model authorization')
   const context = { mode, manifest, candidateHash: runtimeCandidate, profile, runId: `evaluation_${randomUUID()}`,
-    configHash: sha256({ profile, image, officeImage: officeImage || null, mode, budgetUsd, deadlineAt, repetitions, selectedCases: selected.map(task => task.id) }) }
+    configHash: sha256({ profile, image, officeImage: officeImage || null, mode, budgetUsd, deadlineAt, localFreeLimits: localAllocation?.total || null, repetitions, selectedCases: selected.map(task => task.id) }) }
   const output = path.resolve(outputDirectory || path.join('test-results', 'evaluation', context.runId))
   await mkdir(path.dirname(output), { recursive: true, mode: 0o700 })
   await mkdir(output, { mode: 0o700 }) // Never overwrite prior evidence.
@@ -105,6 +116,14 @@ async function executeEvaluation({ mode = 'selfcheck', ids = [], split = 'develo
   // the operator's suite budget, even when some tasks terminate early.
   const perTaskBudget = mode === 'live' ? budgetUsd / (selected.length * repetitions) : 0
   try {
+    const suiteAuthorization = localAllocation ? await prepareEvaluationLocalFreeAuthorization({ profile, limits: localAllocation.perTask,
+      privateRoot: path.join(workspaceParent, 'suite-authorization') }) : null
+    const suitePolicy = suiteAuthorization ? localFreePolicy(suiteAuthorization) : null
+    if (suitePolicy) {
+      context.configHash = sha256({ configuration: context.configHash, localFreePolicyId: suitePolicy.id })
+      await writeFile(path.join(output, 'authorization.json'), JSON.stringify({ schema: 'kk.evaluation.authorization.v1', configHash: context.configHash,
+        localFreePolicy: suitePolicy, totalLimits: localAllocation.total, perTaskLimits: localAllocation.perTask, deadlineAt, budgetUsd: 0 }, null, 2), { flag: 'wx', mode: 0o600 })
+    }
     for (let repetition = 1; repetition <= repetitions; repetition++) for (const task of selected) {
       signal?.throwIfAborted()
       const result = baseResult(task, context, repetition)
@@ -123,7 +142,7 @@ async function executeEvaluation({ mode = 'selfcheck', ids = [], split = 'develo
             else if (task.referenceOperations) execution = await officeOperations(fixture.cwd, task.referenceOperations, officeImage, signal)
             else { for (const [name, value] of Object.entries(task.referenceFiles)) await writeFile(path.join(fixture.cwd, name), value); execution = { operations: ['trusted-reference-patch'] } }
           } else execution = await runLiveTask({ task, cwd: fixture.cwd, privateRoot: path.join(fixture.root, 'control'), profile, image, officeImage,
-            budgetUsd: perTaskBudget, deadlineAt, signal })
+            budgetUsd: perTaskBudget, deadlineAt, localFreeLimits: localAllocation?.perTask || null, localFreeAuthorization: suiteAuthorization, signal })
           if (execution.unsupported) { result.status = 'unsupported'; result.reason = execution.reason }
           else {
             const candidate = await captureAcceptanceCandidate(fixture.cwd)
@@ -165,7 +184,7 @@ async function executeEvaluation({ mode = 'selfcheck', ids = [], split = 'develo
           if (keepWorkspaces) result.retainedWorkspace = fixture.cwd
         }
       } catch (error) {
-        result.status = 'error'; result.errorCode = /^[A-Z_a-z0-9.-]{1,80}$/.test(error.code || '') ? error.code : 'EVALUATION_EXECUTION_ERROR'
+        result.status = 'error'; result.errorCode = evaluationErrorCode(error, signal?.aborted)
         result.reason = 'Task or independent oracle did not finish; inspect the private diagnostic ID, not a successful model result'
         try { result.diagnosticId = await writeEvaluationDiagnostic({ root: diagnosticRoot, error, taskId: task.id, secrets: diagnosticSecrets }) }
         catch { result.reason = 'Task failed and the private diagnostic could not be saved; check private state directory permissions and free space' }

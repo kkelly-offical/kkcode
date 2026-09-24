@@ -10,7 +10,7 @@ import { repositoryCases } from '../evaluation/v1/repository-cases.mjs'
 import { runLiveTask, validateLiveProfile } from '../evaluation/v1/live-sdk.mjs'
 import { evaluateCase } from '../evaluation/v1/oracles.mjs'
 
-test('evaluation SDK adapter executes actual persistent tools against a zero-cost controlled HTTP fixture', { skip: !process.env.KKCODE_STRICT_TEST_IMAGE, timeout: 90000 }, async () => {
+async function exerciseSdk(localFree = false, authenticated = false) {
   const parent = await mkdtemp(path.join(os.tmpdir(), 'kk-evaluation-sdk-'))
   const originalHome = process.env.KKCODE_HOME, originalKey = process.env.KKCODE_EVALUATION_TEST_KEY
   process.env.KKCODE_HOME = path.join(parent, 'initial-private')
@@ -21,7 +21,7 @@ test('evaluation SDK adapter executes actual persistent tools against a zero-cos
     const chunks = []; for await (const chunk of request) chunks.push(chunk)
     const payload = JSON.parse(Buffer.concat(chunks).toString())
     assert.equal(payload.model, 'evaluation-local-fixture')
-    assert.equal(request.headers.authorization, undefined)
+    assert.equal(request.headers.authorization, authenticated ? 'Bearer synthetic-fixture-not-a-real-key' : undefined)
     const index = requests++
     const message = index === 0 ? { role: 'assistant', content: null, tool_calls: [{ id: 'evaluation-read', type: 'function',
       function: { name: 'read', arguments: JSON.stringify({ path: 'subject.mjs' }) } }] }
@@ -36,10 +36,11 @@ test('evaluation SDK adapter executes actual persistent tools against a zero-cos
   try {
     const fixture = await prepareTask(task, { parent })
     const profile = validateLiveProfile({ providerType: 'openai', model: 'evaluation-local-fixture', baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
-      apiKeyEnv: null, contextLimit: 131072, maxTokens: 4096, maxSteps: 3,
-      pricing: { input: 1, output: 2, cache_read: 1, cache_write: 1 } })
+      apiKeyEnv: authenticated ? 'KKCODE_EVALUATION_TEST_KEY' : null, contextLimit: 131072, maxTokens: 4096, maxSteps: 3,
+      pricing: localFree ? { input: 0, output: 0, cache_read: 0, cache_write: 0 } : { input: 1, output: 2, cache_read: 1, cache_write: 1 } }, { localFree })
     const execution = await runLiveTask({ task, cwd: fixture.cwd, privateRoot: path.join(fixture.root, 'control'), profile,
-      image: process.env.KKCODE_STRICT_TEST_IMAGE, budgetUsd: 1, deadlineAt: Date.now() + 60000 })
+      image: process.env.KKCODE_STRICT_TEST_IMAGE, budgetUsd: localFree ? 0 : 1, deadlineAt: Date.now() + 60000,
+      ...(localFree ? { localFreeLimits: { requestLimit: 8, tokenLimit: 1000000 } } : {}) })
     assert.ok(requests >= 2, JSON.stringify({ requests, execution }))
     assert.ok(execution.durableRunId)
     assert.ok(execution.actions.some(action => action.kind === 'tool.write' && action.state === 'succeeded'), JSON.stringify(execution))
@@ -47,11 +48,26 @@ test('evaluation SDK adapter executes actual persistent tools against a zero-cos
     const oracle = await evaluateCase({ task, cwd: fixture.cwd, image: process.env.KKCODE_STRICT_TEST_IMAGE, baselineHashes: fixture.baselineHashes, execution })
     assert.equal(oracle.passed, true, JSON.stringify(oracle))
     assert.equal(execution.runState, 'waiting_input') // The oracle test is not automatic product delivery.
-    assert.ok(execution.budget.spentUsd > 0) // Synthetic accounting only, no paid provider.
+    if (localFree) {
+      assert.equal(execution.budget.budgetUsd, 0)
+      assert.equal(execution.budget.spentUsd, 0)
+      assert.ok(execution.budget.localFreePolicy, 'zero-USD requests need durable host authorization evidence')
+    } else assert.ok(execution.budget.spentUsd > 0) // Synthetic accounting only, no paid provider.
   } finally {
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve))
     if (originalHome === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = originalHome
     if (originalKey === undefined) delete process.env.KKCODE_EVALUATION_TEST_KEY; else process.env.KKCODE_EVALUATION_TEST_KEY = originalKey
     await rm(parent, { recursive: true, force: true })
   }
+}
+
+test('evaluation SDK adapter executes actual persistent tools against a zero-cost controlled HTTP fixture',
+  { skip: !process.env.KKCODE_STRICT_TEST_IMAGE, timeout: 90000 }, () => exerciseSdk(false))
+test('explicit local-free evaluation uses a zero-dollar durable budget, not a fabricated positive allowance',
+  { skip: !process.env.KKCODE_STRICT_TEST_IMAGE || process.platform !== 'linux', timeout: 90000 }, () => exerciseSdk(true))
+test('host-authorized local-free evaluation can authenticate only to its bound loopback listener',
+  { skip: !process.env.KKCODE_STRICT_TEST_IMAGE || process.platform !== 'linux', timeout: 90000 }, () => exerciseSdk(true, true))
+
+test('ordinary zero-dollar evaluation never implicitly enables local-free inference', async () => {
+  await assert.rejects(runLiveTask({ budgetUsd: 0, deadlineAt: Date.now() + 60000 }), /explicit paid or bounded local-free/)
 })

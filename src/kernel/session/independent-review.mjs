@@ -5,8 +5,9 @@ import path from 'node:path'
 import { runControlledGit } from '../../util/controlled-git.mjs'
 import { resolveWorkspacePath } from '../tool/workspace-fs.mjs'
 import { requestProvider } from '../provider/router.mjs'
-import { resolveTaskModel } from '../provider/task-model.mjs'
+import { resolveTaskModel, roleProviderEndpoint } from '../provider/task-model.mjs'
 import { validateAcceptanceManifest } from './acceptance-manifest.mjs'
+import { routeBudgetScope } from '../../usage/provider-scope.mjs'
 
 const receipts = new WeakSet()
 const MAX_FILES = 100
@@ -112,19 +113,27 @@ function validateReport(value, projection) {
  */
 export async function runIndependentReview({ manifest, goal, cwd, configState, verificationConfig = configState?.config,
   providerType, model, baseUrl = null, apiKeyEnv = null, signal, sessionId, request = requestProvider }) {
-  let projection = null, selected = null, report = null, status = 'unknown', reason = '独立审查尚未完成。', usage = null
+  let projection = null, selected = null, report = null, scope = null, status = 'unknown', reason = '独立审查尚未完成。', usage = null
   const startedAt = new Date().toISOString()
   try {
     const before = await validateAcceptanceManifest(manifest, { goal, cwd, config: verificationConfig })
     if (!before.ok || !manifest.hostBoundaryId || !manifest.independentSourceBaseline) throw new Error('unbound_candidate')
     projection = await candidateProjection(cwd, manifest.baseRevision, signal)
     selected = await resolveTaskModel(configState, { role: 'review', providerType, model, baseUrl, apiKeyEnv })
+    // Review needs an inference identity, not a model-discovery adapter. Ollama
+    // can perform review without exposing an OpenAI/Anthropic model catalog.
+    // Mirror inference precedence: inline key, explicit nonempty env name,
+    // configured env name. Missing/invalid endpoints still fail closed here.
+    const provider = configState.config.provider[selected.providerType]
+    const { protocol, endpoint } = roleProviderEndpoint(configState.config, selected.providerType, selected.baseUrl)
+    const envName = selected.apiKeyEnv || provider.api_key_env || ''
+    const credential = provider.api_key || (envName ? process.env[envName] : '') || ''
+    const route = { provider: selected.providerType, model: selected.model || provider.default_model || '', protocol, baseUrl: endpoint, credential }
+    scope = { provider: route.provider, model: route.model, endpointCredentialScope: routeBudgetScope(route) }
     const timeout = AbortSignal.timeout(60000)
     const abort = signal ? AbortSignal.any([signal, timeout]) : timeout
     const state = structuredClone(configState)
-    const provider = state.config.provider[selected.providerType]
-    if (!provider) throw new Error('missing_review_provider')
-    state.config.provider[selected.providerType] = { ...provider, retry_attempts: 0 }
+    state.config.provider[selected.providerType] = { ...state.config.provider[selected.providerType], retry_attempts: 0 }
     const response = await request({ ...selected, configState: state, sessionId, reviewId: `candidate-${manifest.id}`, signal: abort,
       system: SYSTEM, tools: [], maxTokens: 8192, messages: [{ role: 'user', content: JSON.stringify({
         hostAcceptance: { objective: goal.objective, criteria: goal.criteria, subGoals: goal.subGoals, nonGoals: goal.nonGoals },
@@ -150,8 +159,6 @@ export async function runIndependentReview({ manifest, goal, cwd, configState, v
     const code = known.includes(error?.message) ? error.message : signal?.aborted ? 'cancelled' : 'review_unavailable'
     reason = `独立审查无法完整完成（${code}）；没有将缺失、截断或错误当成通过。`
   }
-  const scope = selected ? { provider: selected.providerType, model: selected.model,
-    endpointCredentialScope: digest({ baseUrl: selected.baseUrl, apiKeyEnv: selected.apiKeyEnv, provider: configState?.config?.provider?.[selected.providerType] }) } : null
   const body = { schema: 'kk.independent-review.v1', automated: true, manifestId: manifest?.id || null,
     hostBoundaryId: manifest?.hostBoundaryId || null, candidateHash: manifest?.candidate?.treeFingerprint || null,
     criteriaFingerprint: manifest?.criteriaFingerprint || null, modelScope: scope, status, reason,

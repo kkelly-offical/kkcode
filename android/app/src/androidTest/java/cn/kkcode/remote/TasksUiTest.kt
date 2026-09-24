@@ -74,6 +74,23 @@ class TasksUiTest {
         compose.onNodeWithText("待核查预留 $2.000000", substring = true).assertExists()
     }
 
+    @Test fun explicitLocalFreeQuotaIsFiniteAndUnknownIsNotAnActualTokenBill() {
+        val row = task("outcome_unknown").put("budget", JSONObject().put("budgetUsd", 0).put("spentUsd", 0).put("reservedUsd", 0)
+            .put("unknownUsd", 0).put("deadlineAt", 1900000000000L).put("hasUnknown", true)
+            .put("localFree", JSONObject().put("maxRequests", 5).put("maxTokens", 10000).put("usedRequests", 2).put("reservedTokens", 4000)))
+        compose.setContent { KKCodeTheme(true) { TaskPanel("session", false) { method, _ -> when(method) {
+            "status" -> status(); "runs.list" -> list(row); "runs.get" -> row
+            else -> JSONObject().put("runId", "run-1").put("events", JSONArray().put(JSONObject().put("sequence", 1).put("type", "budget.unknown"))).put("nextAfter", 1)
+        } } } }
+        compose.onNodeWithText("查看任务").performClick()
+        compose.onNodeWithText("本地免费 · 请求名额 2/5 · 累计预留 token 4000/10000").assertExists()
+        compose.onNodeWithText("不是实际用量", substring = true).assertExists()
+        compose.onNodeWithText("调用结果待核查：本地免费不代表结果已确认", substring = true).assertExists()
+        compose.onNodeWithText("#1 · 调用结果待核查").assertExists()
+        compose.onNodeWithText("额度为零", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("待核查预留 $0.000000", substring = true).assertDoesNotExist()
+    }
+
     @Test fun staleControlShowsChineseErrorWithoutReportingSuccess() {
         compose.setContent { KKCodeTheme(true) { TaskPanel("session", false) { method, _ -> when(method) {
             "status" -> status(); "runs.list" -> list(); "runs.get" -> task(); "runs.events" -> events()

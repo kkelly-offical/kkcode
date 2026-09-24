@@ -5,7 +5,10 @@ import { constants } from "node:fs"
 import path from "node:path"
 
 const exec = promisify(execFile)
-const disabled = process.platform === "win32" ? "NUL" : "/dev/null"
+/** Git for Windows does not accept Node's Win32 device namespace `\\\\.\\nul`
+ * as a config path. Keep Git's portable DOS null device spelling instead. */
+export function gitNullDevice(platform = process.platform) { return platform === "win32" ? "NUL" : "/dev/null" }
+const disabled = gitNullDevice()
 const extraKeys = new Set(["GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"])
 const commands = new Set(["rev-parse", "config", "ls-files", "ls-tree", "cat-file", "status", "diff", "diff-tree", "read-tree", "write-tree", "update-index", "hash-object", "add", "commit-tree", "update-ref", "apply", "worktree", "merge-base", "show", "log"])
 let gitBinary

@@ -1,28 +1,27 @@
-import { createHash, createHmac } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { loadPricing, calculateCost } from './pricing.mjs'
-import { resolveProviderConnection } from '../kernel/provider/model-catalog.mjs'
-import { roleProviderEndpoint, resolveTaskModel, TASK_MODEL_ROLES } from '../kernel/provider/task-model.mjs'
+import { resolveTaskModel, TASK_MODEL_ROLES } from '../kernel/provider/task-model.mjs'
+import { resolveProviderRouteSettings } from '../kernel/provider/route-settings.mjs'
 import { normalizeBudgetProfile } from '../storage/run-budget-profile.mjs'
+import { routeBudgetScope } from './provider-scope.mjs'
 
 const fail = message => { throw Object.assign(new Error(message), { code: 'BUDGET_PROFILE_REQUIRED', operationNotStarted: true }) }
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value
 export { normalizeBudgetProfile }
 
-export function routeBudgetScope({ provider, model, protocol, baseUrl, credential = '' }) {
-  const url = new URL(baseUrl)
-  url.hash = ''
-  const endpoint = url.href.replace(/\/$/, '')
-  return createHmac('sha256', credential || url.search).update(JSON.stringify(['kkcode.approved-pricing.v1', provider, model, protocol, endpoint])).digest('hex')
-}
+export { routeBudgetScope }
 
 export function budgetRoute(configState, { providerType, model, baseUrl = null, apiKeyEnv = null }) {
-  const connection = resolveProviderConnection(configState, providerType)
-  const config = configState.config.provider[connection.name], resolved = roleProviderEndpoint(configState.config, connection.name, baseUrl)
-  const envName = apiKeyEnv ?? config.api_key_env ?? ''
-  const credential = config.api_key || (envName ? process.env[envName] : '') || ''
-  const route = { provider: connection.name, model: model || connection.defaultModel, protocol: resolved.protocol, baseUrl: resolved.endpoint, credential }
+  const name = providerType || configState.config.provider.default
+  const options = { onFallback: () => fail('严格预算不使用未配置渠道的协议回退。') }
+  const settings = resolveProviderRouteSettings(configState, name, { model, baseUrl, apiKeyEnv }, options)
+  const baseline = resolveProviderRouteSettings(configState, name, {}, options)
+  const config = configState.config.provider[name] || configState.config.provider[settings.providerType] || {}
+  const credential = settings.apiKeyDirect || (settings.apiKeyEnv ? process.env[settings.apiKeyEnv] : '') || ''
+  const baselineCredential = baseline.apiKeyDirect || (baseline.apiKeyEnv ? process.env[baseline.apiKeyEnv] : '') || ''
+  const route = { provider: name, model: settings.model, protocol: settings.protocol, baseUrl: settings.baseUrl, credential }
   return { ...route, scopeHash: routeBudgetScope(route), contextLimit: Number(config.context_limit), maxTokens: Number(config.max_tokens || 16384), compaction: config.native_compaction === true,
-    changedScope: resolved.endpoint.replace(/\/$/, '') !== connection.baseUrl.replace(/\/$/, '') || credential !== connection.apiKey }
+    changedScope: String(settings.baseUrl).replace(/\/$/, '') !== String(baseline.baseUrl).replace(/\/$/, '') || credential !== baselineCredential }
 }
 
 /** Only call before the task begins or inside a fresh real host confirmation.

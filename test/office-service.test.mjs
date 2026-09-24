@@ -137,8 +137,9 @@ test("Markdown export preserves headings and clickable source links", real, asyn
   const links = await runStrictCommand({ image, workspaceDir: cwd, readOnly: true, argv: ["/opt/office-venv/bin/python", "-c",
     "from pypdf import PdfReader;import json;d=PdfReader('markdown-export/document.pdf');print(json.dumps([str(a.get_object().get('/A',{}).get('/URI','')) for p in d.pages for a in p.get('/Annots',[])]))"] })
   assert.equal(links.exitCode, 0, links.stderr)
-  assert.ok(JSON.parse(links.stdout).includes("https://docs.python.org/3/"))
-  assert.ok(JSON.parse(links.stdout).includes("https://example.invalid/zh"))
+  const uris = JSON.parse(links.stdout)
+  assert.ok(Array.isArray(uris), 'the PDF inspector must return a URI array, never a string with substring matches')
+  assert.deepEqual(uris.sort(), ["https://docs.python.org/3/", "https://example.invalid/zh"], 'both clickable PDF links must match exactly, including their origins and paths')
   await assert.rejects(service.run({ operation: "create", format: "docx", outputDir: "ambiguous-links", spec: {
     blocks: [{ type: "paragraph", text: "[Same](https://one.invalid/) and [Same](https://two.invalid/)" }]
   } }), /不同地址|歧义/)

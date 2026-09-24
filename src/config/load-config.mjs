@@ -453,7 +453,10 @@ export async function loadConfig(cwd = process.cwd(), { adminDataPolicy = undefi
     try {
       const raw = await readFile(scope === 'user' ? userEnvPath : candidate, 'utf8')
       const lines = raw.split('\n').filter(line => /^\s*KKCODE_DATA_POLICY(?:_|\s|=|$)/.test(line))
-      if (lines.some(line => line.indexOf('=') <= 0 || !/^KKCODE_DATA_POLICY(?:__[A-Za-z0-9_]+)*$/.test(line.slice(0, line.indexOf('=')).trim()))) throw new Error('invalid policy declaration')
+      // One suffix already includes every underscore-separated component. A
+      // repeated suffix group overlaps its own '_' character class and causes
+      // exponential backtracking on malformed, workspace-controlled env keys.
+      if (lines.some(line => line.indexOf('=') <= 0 || !/^KKCODE_DATA_POLICY(?:__[A-Za-z0-9_]+)?$/.test(line.slice(0, line.indexOf('=')).trim()))) throw new Error('invalid policy declaration')
       policy = normalizeDataPolicy(parseEnvOverlay(lines.join('\n')).data_policy)
     } catch {
       policy = structuredClone(DENY_DATA_POLICY)

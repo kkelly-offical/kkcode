@@ -5,12 +5,13 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { parseForgeRemote } from '../../src/kernel/forge/repository.mjs'
+import { gitNullDevice } from '../../src/util/controlled-git.mjs'
 const exec = promisify(execFile)
 export const TOKEN = 'synthetic-local-git-token'
 export async function createGitHttpFixture(t, { kind = 'github', initialFiles = {} } = {}) {
   const base = await mkdtemp(path.join(os.tmpdir(), 'kk-forge-http-')), cwd = path.join(base, 'source'), repositories = path.join(base, 'repos'), remote = path.join(repositories, 'org', 'repo.git')
   await mkdir(cwd); await mkdir(path.dirname(remote), { recursive: true })
-  const git = (args, where = cwd) => exec('git', args, { cwd: where, env: { ...process.env, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1' }, maxBuffer: 1024 * 1024 })
+  const git = (args, where = cwd) => exec('git', args, { cwd: where, env: { ...process.env, GIT_CONFIG_GLOBAL: gitNullDevice(), GIT_CONFIG_NOSYSTEM: '1' }, maxBuffer: 1024 * 1024 })
   await git(['init', '-b', 'main'])
   await git(['config', 'user.name', 'Fixture']); await git(['config', 'user.email', 'fixture@example.invalid'])
   await writeFile(path.join(cwd, 'app.txt'), 'baseline\n')

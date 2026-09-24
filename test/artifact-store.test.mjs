@@ -138,6 +138,26 @@ describe('artifact store: immutable payload and scoped retrieval', () => {
     }
   })
 
+  it('fixed allocation buckets return only requested bytes at every capacity boundary', async () => {
+    const content = Buffer.alloc(1048581, 0x61)
+    content.set(Buffer.from('tail!'), 1048576)
+    const metadata = await store.put({ actor, content })
+    let last
+    for (const limit of [1, 4096, 4097, 65536, 65537, 262144, 262145, 1048576]) {
+      const page = await store.read({ actor, id: metadata.id, limit })
+      const decoded = Buffer.from(page.data, 'base64')
+      assert.equal(decoded.length, limit, 'fixed-capacity padding must not enter a page')
+      assert.deepEqual(decoded, content.subarray(0, limit))
+      last = page
+    }
+    const tail = await store.read({ actor, id: metadata.id, cursor: last.nextCursor, limit: 1048576 })
+    assert.equal(Buffer.from(tail.data, 'base64').toString('utf8'), 'tail!')
+    assert.equal(tail.nextCursor, null)
+    for (const limit of [1048577, Number.MAX_SAFE_INTEGER, Infinity, NaN, '1048576']) {
+      await assert.rejects(store.read({ actor, id: metadata.id, limit }), code('artifact_invalid'))
+    }
+  })
+
   it('rejects source metadata carrying URLs, headers or arbitrary data', async () => {
     for (const source of [{ kind: 'web', url: 'https://example.test/?token=secret' }, { kind: 'tool', authorization: 'secret' }, { kind: 'unknown' }]) {
       await assert.rejects(store.put({ actor, content: 'x', source }), code('artifact_invalid'))

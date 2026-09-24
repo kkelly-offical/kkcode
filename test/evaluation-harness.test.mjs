@@ -1,8 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import os from 'node:os'
 import { cases, createManifest, validateCatalog, summarizeResults, selectCases } from '../evaluation/v1/manifest.mjs'
 import { verifyReferenceDefinitions } from '../evaluation/v1/oracles.mjs'
 import { validateLiveProfile } from '../evaluation/v1/live-sdk.mjs'
+import { allocateLocalFreeLimits } from '../evaluation/v1/local-free.mjs'
+import { evaluationErrorCode, runEvaluation } from '../evaluation/v1/runner.mjs'
 
 test('60 distinct evaluation tasks are reproducible and split 40 development / 20 sealed', () => {
   assert.equal(validateCatalog(), true)
@@ -58,4 +61,36 @@ test('live profiles reject inline secrets and incomplete prices before any model
     assert.deepEqual(validateLiveProfile(profile), profile)
     assert.throws(() => validateLiveProfile({ ...profile, pricing: { input: 1 } }), /Complete USD/)
   } finally { if (previous === undefined) delete process.env.KKCODE_EVALUATION_TEST_KEY; else process.env.KKCODE_EVALUATION_TEST_KEY = previous }
+})
+
+test('local-free admission is explicit, loopback-only, zero-cost and finitely allocated', () => {
+  const previous = process.env.KKCODE_EVALUATION_TEST_KEY
+  process.env.KKCODE_EVALUATION_TEST_KEY = 'synthetic-only'
+  try {
+    const profile = { providerType: 'openai', model: 'fixture', baseUrl: 'http://127.0.0.1:18539/v1', apiKeyEnv: 'KKCODE_EVALUATION_TEST_KEY',
+      contextLimit: 262144, maxTokens: 4096, pricing: { input: 0, output: 0, cache_read: 0, cache_write: 0 } }
+    assert.throws(() => validateLiveProfile(profile), /explicit host local-free/)
+    assert.deepEqual(validateLiveProfile(profile, { localFree: true }), profile)
+    for (const baseUrl of ['http://localhost:18539/v1', 'https://example.invalid/v1', 'http://10.0.0.2/v1']) {
+      assert.throws(() => validateLiveProfile({ ...profile, baseUrl }, { localFree: true }), /literal loopback/)
+    }
+    assert.throws(() => validateLiveProfile({ ...profile, pricing: { ...profile.pricing, input: 1 } }, { localFree: true }), /zero USD/)
+    const allocation = allocateLocalFreeLimits({ requestLimit: 241, tokenLimit: 120001 }, 120)
+    assert.deepEqual(allocation.perTask, { requestLimit: 2, tokenLimit: 1000 })
+    assert.ok(allocation.perTask.requestLimit * 120 <= allocation.total.requestLimit)
+    assert.throws(() => allocateLocalFreeLimits({ requestLimit: 10, tokenLimit: 1000 }, 120), /every selected task/)
+    for (const value of [0, Infinity, NaN, -1, 1.5]) assert.throws(() => allocateLocalFreeLimits({ requestLimit: value, tokenLimit: 1000 }, 1), /finite request/)
+  } finally { if (previous === undefined) delete process.env.KKCODE_EVALUATION_TEST_KEY; else process.env.KKCODE_EVALUATION_TEST_KEY = previous }
+})
+
+test('operator aborts and numeric DOMException codes remain schema-valid explicit error codes', () => {
+  assert.equal(evaluationErrorCode({ code: 20 }, true), 'EVALUATION_ABORTED')
+  assert.equal(evaluationErrorCode({ code: 20 }), 'EVALUATION_EXECUTION_ERROR')
+  assert.equal(evaluationErrorCode({ code: 'LOCAL_FREE_AUTHORIZATION' }), 'LOCAL_FREE_AUTHORIZATION')
+  assert.equal(evaluationErrorCode({ code: '\nnot-a-code' }), 'EVALUATION_EXECUTION_ERROR')
+})
+
+test('candidate attestation cannot point at a different repository than the executing runtime', async () => {
+  await assert.rejects(runEvaluation({ mode: 'live', ids: ['R01'], image: `sha256:${'a'.repeat(64)}`,
+    candidateDirectory: os.tmpdir(), candidateHash: 'b'.repeat(64), deadlineAt: 0 }), /executing runtime source/)
 })

@@ -71,6 +71,25 @@ export function createMemoryController({ cwd, confirmMemory } = /** @type {any} 
     initial ||= next
     return next
   }
+  async function legacyFile(source, owner) {
+    // Legacy auto-memory used the original cwd spelling as its directory hash.
+    // New account/project identity is canonical, but /var -> /private on macOS
+    // (or a caller's ordinary symlink alias) must not hide the old files. Only
+    // this handle's input alias is considered; never enumerate other projects.
+    const files = {
+      'auto-memory': [memoryFilePath(owner.canonical), memoryFilePath(cwd)],
+      instincts: [path.join(memoryDir(owner.canonical), 'instincts.json'), path.join(memoryDir(cwd), 'instincts.json')],
+      'project-memory': [path.join(owner.canonical, '.kkcode', 'project-memory.json')]
+    }
+    if (!Object.hasOwn(files, source)) fail('memory_invalid_source', '不支持此旧记忆来源。')
+    for (const file of new Set(files[source])) {
+      try { return { file, info: await lstat(file) } }
+      catch (error) { if (error.code !== 'ENOENT') throw error }
+    }
+    // An existing corrupt, inaccessible or nonregular canonical file is never
+    // masked by a valid alias copy. Only ENOENT permits the historical fallback.
+    return { file: files[source][0], info: null }
+  }
   async function fileFor(scope, owner) {
     scopeName(scope)
     const directory = path.join(stateRoot, 'memories-v1', owner.account)
@@ -236,19 +255,20 @@ export function createMemoryController({ cwd, confirmMemory } = /** @type {any} 
     },
     async legacySources() {
       const owner = await actor()
-      const files = { 'auto-memory': memoryFilePath(owner.canonical), instincts: path.join(memoryDir(owner.canonical), 'instincts.json'), 'project-memory': path.join(owner.canonical, '.kkcode', 'project-memory.json') }
       const sources = []
-      for (const [source, file] of Object.entries(files)) { try { const stat = await lstat(file); if (stat.isFile() && !stat.isSymbolicLink()) sources.push({ source, bytes: stat.size, requiresConfirmation: true }) } catch (error) { if (error.code !== 'ENOENT') throw error } }
+      for (const source of ['auto-memory', 'instincts', 'project-memory']) {
+        const { info } = await legacyFile(source, owner)
+        if (info?.isFile() && !info.isSymbolicLink()) sources.push({ source, bytes: info.size, requiresConfirmation: true })
+      }
       return { sources, note: '旧文件未自动迁移、未删除；显式导入只建立候选，不立即作为有效记忆。' }
     },
     /** @param {{source?: string}} [input] */
     async importLegacy({ source } = {}) {
-      const owner = await actor()
-      const files = { 'auto-memory': memoryFilePath(owner.canonical), instincts: path.join(memoryDir(owner.canonical), 'instincts.json'), 'project-memory': path.join(owner.canonical, '.kkcode', 'project-memory.json') }
-      if (!Object.hasOwn(files, source)) fail('memory_invalid_source', '不支持此旧记忆来源。')
-      await confirmHost({ action: 'memory.import-legacy', scope: 'project', source, message: '旧文件未按账号分区。请确认你有权将本机该文件导入当前账号；导入后仍只是待核验候选。' })
       await actor()
-      const bytes = await boundedFile(files[source], 256 * 1024)
+      if (!['auto-memory', 'instincts', 'project-memory'].includes(source)) fail('memory_invalid_source', '不支持此旧记忆来源。')
+      await confirmHost({ action: 'memory.import-legacy', scope: 'project', source, message: '旧文件未按账号分区。请确认你有权将本机该文件导入当前账号；导入后仍只是待核验候选。' })
+      const owner = await actor(), { file } = await legacyFile(source, owner)
+      const bytes = await boundedFile(file, 256 * 1024)
       let texts
       if (source === 'auto-memory') texts = bytes.toString('utf8').split(/\n\s*\n/)
       else {

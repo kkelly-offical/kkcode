@@ -11,6 +11,8 @@ import { normalizeTaskGraph, assertTaskGraphTransition, taskGraphComplete } from
 import { createRunStoreBackup, listRunStoreBackups, verifyRunStoreBackup, restoreRunStoreBackup } from './run-store-backup.mjs'
 import { acquireProcessLock } from './process-lock.mjs'
 import { normalizeBudgetProfile } from './run-budget-profile.mjs'
+import { normalizeLocalFreePolicy } from './local-free-policy.mjs'
+import { redactedStorageFailure } from './run-store-errors.mjs'
 
 const APPLICATION_ID = 0x4b4b5255
 const GUARD_KEYS = ['runId', 'expectedRevision', 'ownerId', 'ownerEpoch']
@@ -218,11 +220,21 @@ function budgetAmount(value, label = 'amountUsd') {
   return value
 }
 
+function localFreeBudget(policy, budgetUsd, profiles) {
+  if (policy === undefined) return undefined
+  const normalized = normalizeLocalFreePolicy(policy)
+  if (budgetUsd !== 0 || profiles.length !== 1 || ['provider', 'model', 'protocol', 'scopeHash'].some(key => profiles[0][key] !== normalized[key]) || Object.values(profiles[0].rates).some(rate => rate !== 0)) {
+    throw runStoreError('INVALID_LOCAL_FREE_POLICY', 'Local free inference requires zero USD and exactly one matching zero-rate pricing scope')
+  }
+  return normalized
+}
+
 function runBudget(runId) {
   const config = database.prepare("SELECT data_json FROM events WHERE run_id = ? AND type = 'budget.configured' ORDER BY sequence DESC LIMIT 1").get(runId)
   if (!config) return null
-  const { budgetUsd, deadlineAt, profiles: initialProfiles = [] } = JSON.parse(config.data_json)
+  const { budgetUsd, deadlineAt, profiles: initialProfiles = [], localFreePolicy: configuredFreePolicy } = JSON.parse(config.data_json)
   const profiles = [...initialProfiles, ...database.prepare("SELECT data_json FROM events WHERE run_id = ? AND type = 'budget.profile_approved' ORDER BY sequence").all(runId).map(row => JSON.parse(row.data_json).profile)].map(normalizeBudgetProfile)
+  const localFreePolicy = localFreeBudget(configuredFreePolicy, budgetUsd, profiles)
   const requests = database.prepare("SELECT data_json FROM (SELECT data_json, sequence, ROW_NUMBER() OVER (PARTITION BY json_extract(data_json, '$.request.requestId') ORDER BY sequence DESC) AS ordinal FROM events WHERE run_id = ? AND type IN ('budget.reserved', 'budget.settled', 'budget.unknown', 'budget.reconciled')) WHERE ordinal = 1 ORDER BY sequence").all(runId).map(row => JSON.parse(row.data_json).request)
   let spentUsd = 0, reservedUsd = 0, unknownUsd = 0
   for (const request of requests) {
@@ -230,7 +242,8 @@ function runBudget(runId) {
     else if (request.status === 'reserved') reservedUsd += request.reservedUsd
     else unknownUsd += request.reservedUsd
   }
-  return { budgetUsd, deadlineAt, spentUsd, reservedUsd, unknownUsd, requests, profiles }
+  return { budgetUsd, deadlineAt, spentUsd, reservedUsd, unknownUsd, requests, profiles,
+    ...(localFreePolicy ? { localFreePolicy, usedRequests: requests.length, reservedTokens: requests.reduce((sum, request) => sum + integer(request.tokenAllowance, 'request.tokenAllowance', 1, localFreePolicy.maxTokens), 0) } : {}) }
 }
 
 function ensureComplete(value) {
@@ -252,20 +265,21 @@ const methods = {
     return transaction(() => runBudget(input.runId), true)
   },
   configureRunBudget(input) {
-    object(input, [...GUARD_KEYS, 'budgetUsd', 'deadlineAt', 'approval', 'profiles'], 'configureRunBudget')
+    object(input, [...GUARD_KEYS, 'budgetUsd', 'deadlineAt', 'approval', 'profiles', 'localFreePolicy'], 'configureRunBudget')
     budgetAmount(input.budgetUsd, 'budgetUsd'); integer(input.deadlineAt, 'deadlineAt', 1)
     const authorized = approval(input.approval)
     if (!Array.isArray(input.profiles ?? []) || (input.profiles ?? []).length > 32) throw runStoreError('INVALID_BUDGET_PROFILE', 'A task budget accepts at most 32 immutable pricing profiles')
     const profiles = (input.profiles ?? []).map(normalizeBudgetProfile)
     if (new Set(profiles.map(profile => profile.id)).size !== profiles.length || new Set(profiles.map(profile => profile.scopeHash)).size !== profiles.length) throw runStoreError('INVALID_BUDGET_PROFILE', 'A pricing scope must have exactly one immutable profile')
+    const localFreePolicy = localFreeBudget(input.localFreePolicy, input.budgetUsd, profiles)
     return transaction(() => {
       const run = guard(input), previous = runBudget(run.id)
       if (previous) {
-        if (previous.budgetUsd !== input.budgetUsd || previous.deadlineAt !== input.deadlineAt || JSON.stringify(previous.profiles.map(profile => profile.id).sort()) !== JSON.stringify(profiles.map(profile => profile.id).sort())) throw runStoreError('BUDGET_IMMUTABLE', 'Approved budget, deadline and price profiles are frozen; resume cannot replace the basis')
+        if (previous.budgetUsd !== input.budgetUsd || previous.deadlineAt !== input.deadlineAt || previous.localFreePolicy?.id !== localFreePolicy?.id || JSON.stringify(previous.profiles.map(profile => profile.id).sort()) !== JSON.stringify(profiles.map(profile => profile.id).sort())) throw runStoreError('BUDGET_IMMUTABLE', 'Approved budget, deadline, local free policy and price profiles are frozen; resume cannot replace the basis')
         return previous
       }
       if (input.deadlineAt <= Date.now() || input.deadlineAt > Date.now() + 7 * 24 * 60 * 60 * 1000) throw runStoreError('INVALID_INPUT', 'The initial task deadline must be within the next seven days')
-      event(run.id, 'budget.configured', { budgetUsd: input.budgetUsd, deadlineAt: input.deadlineAt, profiles, approval: authorized })
+      event(run.id, 'budget.configured', { budgetUsd: input.budgetUsd, deadlineAt: input.deadlineAt, profiles, ...(localFreePolicy ? { localFreePolicy } : {}), approval: authorized })
       return runBudget(run.id)
     })
   },
@@ -276,6 +290,7 @@ const methods = {
       const run = guard(input), budget = runBudget(run.id)
       if (!budget) throw runStoreError('BUDGET_REQUIRED', 'Configure the host-approved budget before adding a price scope')
       if (budget.profiles.some(existing => existing.id === profile.id)) return budget
+      if (budget.localFreePolicy) throw runStoreError('BUDGET_IMMUTABLE', 'A local free inference policy cannot add another route or pricing scope')
       if (budget.profiles.some(existing => existing.scopeHash === profile.scopeHash)) throw runStoreError('BUDGET_IMMUTABLE', 'A pricing scope cannot replace its previously approved rates or request ceilings')
       if (budget.profiles.length >= 32) throw runStoreError('INVALID_BUDGET_PROFILE', 'Task pricing profile capacity has been reached')
       event(run.id, 'budget.profile_approved', { profile, approval: authorized })
@@ -283,27 +298,34 @@ const methods = {
     })
   },
   reserveModelBudget(input) {
-    object(input, [...GUARD_KEYS, 'requestId', 'amountUsd', 'provider', 'model', 'kind', 'profileId'], 'reserveModelBudget')
+    object(input, [...GUARD_KEYS, 'requestId', 'amountUsd', 'provider', 'model', 'kind', 'profileId', 'tokenAllowance'], 'reserveModelBudget')
     id(input.requestId, 'requestId'); budgetAmount(input.amountUsd)
     text(input.provider, 'provider', 200); text(input.model, 'model', 256)
     const kind = oneOf(input.kind ?? 'model', ['model', 'delegation'], 'kind')
     return transaction(() => {
       const run = guard(input), budget = runBudget(run.id)
       if (!budget) throw runStoreError('BUDGET_REQUIRED', 'A host-approved persistent budget is required before requesting inference')
+      if (budget.localFreePolicy) {
+        if (kind !== 'model' || input.amountUsd !== 0) throw runStoreError('INVALID_LOCAL_FREE_POLICY', 'A local free inference policy authorizes only zero-USD model requests, not delegation')
+        integer(input.tokenAllowance, 'tokenAllowance', 1, budget.localFreePolicy.maxTokens)
+      } else if (input.tokenAllowance !== undefined) throw runStoreError('INVALID_INPUT', 'Token allowances cannot convert a paid or unapproved zero-USD budget into free inference')
       if (kind === 'model') {
         const profile = budget.profiles.find(profile => profile.id === input.profileId)
         if (!profile || profile.provider !== input.provider || profile.model !== input.model) throw runStoreError('BUDGET_PROFILE_REQUIRED', 'Model requests require an exact host-approved immutable pricing profile')
       } else if (input.profileId !== undefined) throw runStoreError('INVALID_BUDGET_PROFILE', 'Delegation reservations do not masquerade as individual model requests')
       const existing = budget.requests.find(request => request.requestId === input.requestId)
       if (existing) {
-        if (existing.provider !== input.provider || existing.model !== input.model || existing.reservedUsd !== input.amountUsd || existing.kind !== kind || existing.profileId !== input.profileId) throw runStoreError('BUDGET_REQUEST_CONFLICT', 'A logical budget request cannot change identity or reserved amount')
+        if (existing.provider !== input.provider || existing.model !== input.model || existing.reservedUsd !== input.amountUsd || existing.kind !== kind || existing.profileId !== input.profileId || existing.tokenAllowance !== input.tokenAllowance) throw runStoreError('BUDGET_REQUEST_CONFLICT', 'A logical budget request cannot change identity, reserved amount or token allowance')
         return { fresh: false, budget, request: existing }
       }
       if (budget.requests.some(request => request.status === 'unknown')) throw runStoreError('BUDGET_OUTCOME_UNKNOWN', 'Previous billing is unknown; no additional request is authorized')
       if (Date.now() >= budget.deadlineAt) throw runStoreError('TASK_DEADLINE', 'The persistent task deadline has passed')
-      if (budget.budgetUsd === 0 || budget.spentUsd + budget.reservedUsd + budget.unknownUsd + input.amountUsd > budget.budgetUsd + Number.EPSILON * 32) throw runStoreError('TASK_BUDGET_INSUFFICIENT', 'The persistent task budget cannot cover this reservation')
+      if (budget.localFreePolicy) {
+        if (budget.requests.some(request => request.status === 'reserved')) throw runStoreError('BUDGET_REQUEST_PENDING', 'Settle the prior local inference reservation before requesting another')
+        if (budget.usedRequests >= budget.localFreePolicy.maxRequests || budget.reservedTokens + input.tokenAllowance > budget.localFreePolicy.maxTokens) throw runStoreError('TASK_BUDGET_INSUFFICIENT', 'The persistent local inference request or token allowance is exhausted')
+      } else if (budget.budgetUsd === 0 || budget.spentUsd + budget.reservedUsd + budget.unknownUsd + input.amountUsd > budget.budgetUsd + Number.EPSILON * 32) throw runStoreError('TASK_BUDGET_INSUFFICIENT', 'The persistent task budget cannot cover this reservation')
       if (budget.requests.length >= 10000) throw runStoreError('BUDGET_CAPACITY', 'Task budget history reached its 10000-request safety limit')
-      const request = { requestId: input.requestId, kind, provider: input.provider, model: input.model, ...(kind === 'model' ? { profileId: input.profileId } : {}), reservedUsd: input.amountUsd, amountUsd: null, status: 'reserved', ownerEpoch: run.owner_epoch, createdAt: Date.now(), settledAt: null }
+      const request = { requestId: input.requestId, kind, provider: input.provider, model: input.model, ...(kind === 'model' ? { profileId: input.profileId } : {}), ...(budget.localFreePolicy ? { tokenAllowance: input.tokenAllowance } : {}), reservedUsd: input.amountUsd, amountUsd: null, status: 'reserved', ownerEpoch: run.owner_epoch, createdAt: Date.now(), settledAt: null }
       event(run.id, 'budget.reserved', { request })
       return { fresh: true, budget: runBudget(run.id), request }
     })
@@ -322,7 +344,7 @@ const methods = {
         throw runStoreError('BUDGET_RECONCILIATION_REQUIRED', 'An unknown or settled bill cannot be silently replaced; explicit evidence reconciliation is required')
       }
       if (existing.ownerEpoch !== run.owner_epoch) throw runStoreError('STALE_OWNER', 'Only the reserving host may settle an in-flight request')
-      const overflow = input.status === 'settled' && input.amountUsd > existing.reservedUsd + Number.EPSILON * 32
+      const overflow = input.status === 'settled' && (budget.localFreePolicy ? input.amountUsd !== 0 : input.amountUsd > existing.reservedUsd + Number.EPSILON * 32)
       const request = { ...existing, status: overflow ? 'unknown' : input.status, amountUsd: overflow ? null : input.amountUsd,
         reservedUsd: overflow ? input.amountUsd : existing.reservedUsd, settledAt: Date.now() }
       event(run.id, request.status === 'unknown' ? 'budget.unknown' : 'budget.settled', { request })
@@ -338,6 +360,7 @@ const methods = {
       const run = guard(input, { terminal: true }), budget = runBudget(run.id)
       const existing = budget?.requests.find(request => request.requestId === input.requestId)
       if (!existing || existing.status !== 'unknown') throw runStoreError('BUDGET_RECONCILIATION_REQUIRED', 'Only an unknown bill can be reconciled')
+      if (budget.localFreePolicy && input.amountUsd !== 0) throw runStoreError('INVALID_LOCAL_FREE_POLICY', 'A local free policy cannot reconcile a nonzero charge as authorized inference')
       const request = { ...existing, status: 'settled', amountUsd: input.amountUsd, settledAt: Date.now(), evidenceRefs }
       event(run.id, 'budget.reconciled', { request, approval: authorized })
       return runBudget(run.id)
@@ -594,10 +617,10 @@ const methods = {
   }
 }
 
-function errorData(error) {
+function errorData(error, operation = 'request') {
   const safeCodes = ['INVALID_INPUT', 'READ_ONLY_STORE', 'RUN_NOT_FOUND', 'RUN_EXISTS', 'STALE_OWNER', 'REVISION_CONFLICT', 'TERMINAL_RUN', 'APPROVAL_REQUIRED', 'UNRESOLVED_ACTIONS', 'VERIFICATION_REQUIRED', 'ACTION_CONFLICT', 'ACTION_UNRESOLVED', 'RUN_NOT_RUNNING', 'ACTION_NOT_FOUND', 'ACTION_FINAL', 'RECONCILIATION_REQUIRED', 'STALE_CANDIDATE', 'UNKNOWN_CRITERION', 'RECEIPT_EXISTS', 'FUTURE_SCHEMA', 'MIGRATION_REQUIRED', 'INVALID_STORE', 'CORRUPT_STORE', 'UNSAFE_STORE_PATH', 'TURN_ACTIVE', 'TURN_EXISTS', 'STALE_TURN', 'INVALID_TASK_GRAPH', 'GRAPH_REVISION_CONFLICT', 'UNRESOLVED_TASK_GRAPH', 'BACKUP_INVALID']
-  if (safeCodes.includes(error.code) || ['BUDGET_IMMUTABLE', 'BUDGET_REQUIRED', 'BUDGET_REQUEST_CONFLICT', 'BUDGET_OUTCOME_UNKNOWN', 'TASK_DEADLINE', 'TASK_BUDGET_INSUFFICIENT', 'BUDGET_CAPACITY', 'BUDGET_RECONCILIATION_REQUIRED', 'BUDGET_REQUEST_MISSING', 'INVALID_BUDGET_PROFILE', 'BUDGET_PROFILE_REQUIRED'].includes(error.code)) return { code: error.code, message: error.message }
-  return { code: 'STORE_UNAVAILABLE', message: 'Durable run storage failed; do not retry effects until persisted state has been inspected' }
+  if (safeCodes.includes(error.code) || ['BUDGET_IMMUTABLE', 'BUDGET_REQUIRED', 'BUDGET_REQUEST_CONFLICT', 'BUDGET_OUTCOME_UNKNOWN', 'TASK_DEADLINE', 'TASK_BUDGET_INSUFFICIENT', 'BUDGET_CAPACITY', 'BUDGET_RECONCILIATION_REQUIRED', 'BUDGET_REQUEST_MISSING', 'INVALID_BUDGET_PROFILE', 'BUDGET_PROFILE_REQUIRED', 'INVALID_LOCAL_FREE_POLICY', 'BUDGET_REQUEST_PENDING'].includes(error.code)) return { code: error.code, message: error.message }
+  return redactedStorageFailure(error, operation)
 }
 
 try {
@@ -605,7 +628,7 @@ try {
   process.send({ type: 'ready' })
 } catch (error) {
   try { database?.close() } catch {}
-  process.send({ type: 'startup_error', ...errorData(error) }, () => process.exit(1))
+  process.send({ type: 'startup_error', ...errorData(error, 'initialize') }, () => process.exit(1))
 }
 
 process.on('message', raw => {
@@ -613,7 +636,7 @@ process.on('message', raw => {
   const message = /** @type {{id?:number, method?:string, input?:unknown}} */ (raw)
   if (!Number.isSafeInteger(message.id) || typeof message.method !== 'string') return
   if (message.method === 'close') {
-    try { database.close(); process.send({ id: message.id, result: null }, () => process.exit(0)) } catch (error) { process.send({ id: message.id, error: errorData(error) }, () => process.exit(1)) }
+    try { database.close(); process.send({ id: message.id, result: null }, () => process.exit(0)) } catch (error) { process.send({ id: message.id, error: errorData(error, 'close') }, () => process.exit(1)) }
     return
   }
   try {
@@ -622,7 +645,7 @@ process.on('message', raw => {
     if (readOnly && !['getRun', 'listRuns', 'events', 'getTaskGraph', 'listTaskGraphs', 'getRunBudget', 'listBackups', 'verifyBackup'].includes(message.method)) throw runStoreError('READ_ONLY_STORE', 'Read-only storage cannot mutate tasks, actions or verification')
     const result = methods[message.method](message.input)
     process.send({ id: message.id, result })
-  } catch (error) { process.send({ id: message.id, error: errorData(error) }) }
+  } catch (error) { process.send({ id: message.id, error: errorData(error, message.method) }) }
 })
 
 process.on('disconnect', () => { try { database?.close() } catch {} process.exit(0) })

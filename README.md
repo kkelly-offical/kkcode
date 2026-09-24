@@ -19,10 +19,13 @@ kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同�
 离线依赖环境、本机浏览器桥接和文档工具已进入源码与本地集成验收；跨平台、真实模型与试用门禁尚未完成，
 不能视为已经发行或生产认证。公开稳定版仍以下面的 1.0.4 为准。
 
-本轮没有公开发布或升级生产网关／设备。外部真实付费模型的 60 任务 × 2 轮、
-公共 GitHub/GitLab 往返、Chrome/Edge 三系统矩阵、新版 CI 和七天实际试用，
-均不能用本地 fixture、自检或历史版本 CI 代替。`1.1.0` 是后续成熟度目标，
-不是本次版本号；发布仍需单独确认。
+验收代码已推送专用分支，尚未合入 main、公开发布或升级生产网关／设备。
+真实 GitHub SDK 工程往返已建立 [草稿 PR #5](https://github.com/kkelly-offical/kkcode/pull/5)，
+但缺少人工批准，仍是 blocked，不是可合并交付。新版 CI 已运行但尚未全绿，
+Chrome/Edge 品牌矩阵失败／受阻；获准的本机 vLLM 真实模型评测正在进行，
+60 任务 × 2 轮、GitLab 往返和七天实际试用尚未完成。详见[实施账本](docs/implementation-1.0.5.md)
+与[新增 CodeQL 核查](docs/codeql-triage-1.0.5.md)。不使用付费模型或历史 CI 代替当前验收。
+`1.1.0` 是后续成熟度目标，不是本次版本号；发布仍需单独确认。
 
 稳定版 **`1.0.4` 已发布**：新增 [OpenAI Responses API](docs/responses-api.md)，
 支持文本/图片、流式思考摘要与受控工具循环；修复 SSH 跨设备模型状态、中文错误、
@@ -1074,6 +1077,7 @@ See [LICENSE](LICENSE) for the full text.
 - [Documentation index / 文档导航](docs/README.md) — current guides versus historical records
 - [1.0.5 plan and implementation / 开发计划与实施账本](docs/implementation-1.0.5.md) — 未发布，验收层级分开记录
 - [SDK domains / SDK 分域入口](docs/sdk-guide.md) — 本地内核、远程传输和可信宿主边界
+- [CodeQL triage / 新增安全告警核查](docs/codeql-triage-1.0.5.md) — 真实缺陷、误报证据、回归与待复扫状态
 - [Strict task workflow / 严格任务工作流](docs/trusted-runs.md) — 合同、预算、恢复与交付
 - [Offline dependencies / 离线依赖环境](docs/dependency-environments.md) — 来源、脚本批准与只读复用
 - [Preview.2 release guide / 第三预览版](docs/release-1.0.1-preview.2.md)

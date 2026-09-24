@@ -17,12 +17,12 @@
 | W05 模型与提示词 | 职责/档案/用量接通 | 原生协议状态、混合职责计费、原始usage完整性；同模型A/B及真实任务成功率未完成 |
 | W06 隔离与出域 | Linux真实Docker专项通过 | 最小环境、只读/独立工作区、网络默认关闭及宿主受控工具；不等于全平台隔离认证 |
 | W07 仓库验收 | 严格Ultra已接 | 强制host manifest、独立验证副本、候选绑定及真实独立review；保留普通交互兼容路径 |
-| W08 GitHub/GitLab | SDK/CLI本地全链路通过 | 固定候选真实Git HTTP推送、草稿、检查、评论、修订、未知结果核查；公共专用仓库往返仍未做 |
+| W08 GitHub/GitLab | 本地全链路及真实GitHub SDK往返通过 | 当前仓库草稿PR #5已真实推送/创建/读取/评论/更新；缺人工批准仍blocked；GitLab资源与验收未完成 |
 | W09 多代理/组合/LSP | 真实任务图与五语言专项通过 | TS/JS、Python、Go、Kotlin真实诊断/符号；父子预算、逐结果核准、只读依赖继承；最终整体复验中 |
-| W10 Browser/WebBridge | 本地功能与扩展授权通过 | recipe逐叶治理；Bridge主frame、截图独立授权、无全局键盘透传；Chrome/Edge三系统未完成 |
+| W10 Browser/WebBridge | 本地功能通过，品牌CI失败/受阻 | recipe逐叶治理；Bridge主frame、截图独立授权、无全局键盘透传；六格品牌CI已有真实失败回执，不能称三系统已通过 |
 | W11 Office/PDF | Linux真实格式验收通过 | 离线三阶段搬运/解析/发布、DOCX/XLSX/PPTX/PDF/MD/OCR、完整产物；真实Win/Mac Docker尚待验收 |
 | W12 生态与SDK | 实现与专项验收中 | MCP/ACP表单/取消/schema worker、Skills诊断、插件锁/再授权；新增安装包消费测试在补齐 |
-| W13 多端/网关 | 本机与专用QA真实回归通过 | 会话范围任务/产物/记忆、Web136布局、Android JVM72/UI61、真实SDK及SSHJ后台恢复/退出；新候选CI待跑 |
+| W13 多端/网关 | 本机与专用QA真实回归通过，候选CI未全绿 | 会话范围任务/产物/记忆、Web136布局、Android JVM72/UI61、真实SDK及SSHJ后台恢复/退出；Windows/macOS基础失败仍待新候选复验 |
 
 ## 第二轮开发与集成（进行中）
 
@@ -91,6 +91,10 @@
 
 ### 第二轮专项收据及待外部验收
 
+- 新一轮真实镜像整仓 `node-real-environments-round6.log`：**3616项，3610通过、0失败、6条件跳过**；
+  与下方无镜像的覆盖率运行分开记账，不相加、不把条件跳过算通过。该轮包含真实
+  Docker恢复、免费本机推理身份与配额、Office/LSP和离线依赖测试；后续独立安全审查
+  的新修复仍须专项及新候选复验。
 - 真实环境整仓 `node-real-environments-round5.log`：3533项，3527通过、0失败、6条件跳过。
   跳过为专用Bridge运行包（另有真实扩展专项）、非root严格Browser、opt-in公网esbuild
   （另行真实通过）、两个非Linux原语拒绝测试和macOS sandbox-exec。CI将另跑对应环境，
@@ -108,13 +112,102 @@
 - 独立审查实际修复了Forge只读inspect在目标元数据变化后仍可能发送令牌的问题。
   现在准确展示目标API来源并要求一次精确确认；旧确认无效，未批准目标收到HTTP及
   合成令牌均为0。没有把“只读请求”当作任意发送凭据的许可。
-- 验收分支正在准备为`acceptance/1.0.5-trusted-runtime-20260924`，不直接合入main。
+- 验收分支已推送为`acceptance/1.0.5-trusted-runtime-20260924`，尚未合入main。
   新CI包含四平台基础、非root Browser、真实工具链/60自检和Chrome/Edge六格。
   品牌浏览器仅在临时runner/profile使用官方扩展安装调试接口，保留OS sandbox；
   不等于已完成商店原生安装UI验收，详见[品牌浏览器门禁](browser-bridge-branded-acceptance.md)。
 - 用户已授权使用本机vLLM进行真实模型测试，并允许使用现有`gh`在当前GitHub仓库试验。
-  正在发现当前安全配置并准备专用分支/草稿PR；不调用付费渠道，不合并/发布或改保护规则。
-  GitLab资源与七天真实试用仍未完成，不能由GitHub或本地fixture替代。
+  当前安全配置已用于获准本机模型，真实GitHub SDK草稿往返已完成；不调用付费渠道，
+  不合并/发布或改保护规则。GitLab资源与七天真实试用仍未完成，不能由GitHub或本地fixture替代。
+
+### 已推验收候选与实际外部回执（2026-09-24 07:44 UTC 核查）
+
+这一节取代早期“未推送／新CI尚未运行”的当前状态判断，不覆盖历史回执。
+
+- 专用验收分支远端HEAD为
+  [`90db9f0`](https://github.com/kkelly-offical/kkcode/commit/90db9f0699034894b45289c09f101613d611f529)。
+  主实现 [`49b2cce`](https://github.com/kkelly-offical/kkcode/commit/49b2ccedf790bcae2c7f4f76554fa61f8a8f79b0)
+  已推，后续 `794d3f4` / `90db9f0` 调整CI路径与品牌诊断。**本机还有未提交修复**，
+  包括 localFree、Ollama预算/审查、CodeQL增强及备份兼容；不能把已推SHA当成这些改动的验收候选。
+- [`35966586535`](https://github.com/kkelly-offical/kkcode/actions/runs/35966586535)
+  在 `794d3f4` 上：Linux Node22/24、`strict-runtime`、`isolated-toolchains` 通过；
+  Windows/macOS基础任务和品牌六格失败，因此**整轮CI失败**。本地修补不代表远端新候选已复绿。
+- [`35969964144`](https://github.com/kkelly-offical/kkcode/actions/runs/35969964144)
+  在 `90db9f0` 上只复跑品牌矩阵，其他任务明确 skipped，不算重复通过。六格都未通过：
+
+| 品牌环境 | 实际结果 | 回执中的阻断点 |
+| --- | --- | --- |
+| Linux Chrome | failed | 真实浏览器启动超时 |
+| Linux Edge | blocked | 首次启动／许可／登录类页面需要用户处理，脚本未自动接受 |
+| Windows Chrome / Edge | blocked | 同上，不通过接受额外许可或权限页面换取绿灯 |
+| macOS Chrome / Edge | blocked | 指定官方扩展授权页未就绪；没有点击无关页面 |
+
+品牌诊断JSON与合成页面截图位于本机
+`test-results/preview-1.0.5/bridge-diagnostic-35969964144/`。这些不是个人浏览器资料，
+也不是商店安装UI或OS沙箱认证成功证据。
+
+- CodeQL [`35965988962`](https://github.com/kkelly-offical/kkcode/actions/runs/35965988962)
+  扫描 `49b2cce` 的工作流成功，但开放告警25条（稳定基线17条，新增64–71）。新增项
+  已逐条实证和修复/结构澄清；修后复扫尚待新候选，不能宣称“安全扫描零问题”。详见
+  [CodeQL核查](codeql-triage-1.0.5.md)，未关闭规则或dismiss消除告警。
+- 真实 GitHub [草稿 PR #5](https://github.com/kkelly-offical/kkcode/pull/5) 由受控SDK完成
+  push、draft、comment、update四个持久外部动作，并实际读取checks/reviews/comments。
+  固定宿主runtime为`49b2cce`，目标main为`9a6ed44`，提交候选为
+  `5a17545d282b40679b5aa4a19cb12309c9a6211b`，只增加三个专用fixture文件。
+  最终13项检查成功，但人工approved为0，SDK仍`blocked / REVIEW_REQUIRED`；
+  **PR保持draft，未mark-ready、未合并、未发版、未改保护规则。**
+  PR检查的是旧main基线加fixture，不是本轮完整新runtime的CI；模型也是受控HTTP fixture，
+  不能当成vLLM质量分。证据位于`test-results/forge-github-20260924-0639/`，包含
+  `github-delivery.json`、`github-inspect-final.json`、`durable-evidence.json`与11份真实产物证明。
+
+### 当前本机增量修复与验收边界
+
+- 第二次独立安全复核修复四个真实边界问题：预算预留等待期间本机服务换绑后仍可能
+  接到旧授权请求；Ollama 显式 key 未随实际请求发送；执行限额对象在异步持久化时被
+  调用者改大；账号对象在批准回调期间被改写。现在派发前复核监听、Ollama按配置发送
+  Bearer、执行入口固定限额快照、协调器生命周期固定账号／项目并在批准请求中展示。
+  对应115项不重复实际测试通过，含真实Docker恢复、价格篡改canary和容器工具执行。
+  严格路径503后的双服务回归确认不内部重试；最终OS监听复核不是原子TCP身份认证。
+- 旧网关数据流复核发现并修复 token 响应覆盖后续 gateway 的问题：响应字段白名单，
+  选定规范网关不被响应改写。真实双服务修前能收到合成 refresh token，修后零外泄；
+  相关网关／模型／SSO／SSE组合32/32通过。详见[安全核查](codeql-triage-1.0.5.md)。
+- 历史路径复查修复远控硬链接越过私密目录保护、CLI文件引用读取FIFO可能卡死及
+  无硬读取上限的问题。前者多次核验nlink，后者fd级regular检查／非阻塞打开／有界读取，
+  保留正常本地symlink语义。相关路径、文件引用、重放和账号身份回归100/100通过。
+- 新增SDK host `localFreeAuthorization`：普通零美元预算仍不发请求；只有真实宿主明确
+  确认、四项零费率、Linux唯一loopback监听进程／PID／启动时间／socket核验后，才能
+  在有限请求次数、累计token授权量和绝对期限内使用本机免费服务。一次一个在途请求；
+  未知结果即使金额为零仍阻断，重启不重置配额，不转授任务图。Web/Android展示相同有限配额，
+  不是伪造正美元预算或对任意本机代理开放HTTP凭据。见[SDK接线](sdk-guide.md)和[持久预算](durable-budgets.md)。
+- `coverage-local-free.log` 保留实际失败：**3599项，3495通过、1失败、103条件跳过**，
+  行83.14%、分支78.99%、函数81.24%。失败来自严格Ultra审查fixture缺少明确路由身份，
+  并暴露独立审查误借“模型目录”解析器而拒绝Ollama。现fixture补保留`.invalid`地址、
+  审查使用推理端点/HMAC范围；缺URL仍unknown，原completed断言保留。
+  `independent-review`与完整`ultra-host-acceptance` **22/22**通过，含真实loopback
+  Ollama HTTP无工具审查。这些专项先修复该失败；其后完整覆盖率结果另列如下，不改写失败日志。
+- 随后的`coverage-round6.log`：**3616项，3505通过、0失败、111条件跳过**，
+  行82.74%、分支79.16%、函数80.96%。这轮未设置真实Docker镜像环境，跳过项不计入
+  隔离实测；真实镜像整仓另跑，尚不能用该日志声明所有环境已验收。结果属于当时本机
+  工作树，不是已发布或固定SHA发行候选。E2E33、兼容45、Web整套真实流程与136布局
+  再次通过，分别见本机round6日志；后续提交仍需新候选CI/CodeQL。
+- CodeQL相关本地回归：配置/操作日志3项、产物/网络43项、远程产物/工具21项、
+  固定Office镜像真实PDF精确链接1项均通过。其余真实模型预算/恢复/Ollama专项继续按
+  实际独立回执记录，不混加不同候选测试数量为一个发行总数。
+- 免费能力与预算相关受控组合31/31，整轮同品牌授权/恢复子进程4/4；Ollama新增7项
+  纳入provider组合79/79。`sdk/models`现公开`prepareBudgetProfile(s)`，真实包路径、
+  无网络／凭据泄漏及外部严格TypeScript测试组合11/11通过。这些是合成服务／SDK
+  回归，不是vLLM的120次质量成绩。Ollama预算与推理现共用真实路由解析，不再依赖模型目录。
+- 最低Node22.12干净安装回归 `min-node22-package-round6.log` 通过：720个包文件秘密
+  扫描、公开SDK导入、真实预算工厂调用及SQLite/产物往返。工厂测试禁用网络，使用合成
+  零价档案，没有调用实际模型。此前安装数目是历史候选，不混称为同一个包。
+- 获准的本机vLLM真实验收已开始。新私密冻结候选
+  `75b98d9a185b446e4e2b6e8d58d5999a92cb14214f4ff7c402bc1143383cf732`
+  的R01已实际passed，运行ID `evaluation_fbbf1f3f-caad-46c7-bfd7-675ba701afa3`；
+  整套60任务×2轮尚未完成。旧批次的通过与人为中断保留但不混分；采用固定快照避免其他
+  工作树修改污染候选，原授权截止时间和有限总额不能通过重新运行扩大。真实模型结果
+  与先前60项参考自检分开，既不写“模型100%”，也不调用付费fallback。
+- GitLab验收仓库/账号仍未提供，七天真实试用未完成。品牌CI未通过、修后完整候选CI、
+  CodeQL复扫与120次真实模型结果仍是明确未满足的门禁。
 
 ## 首批实现记录（历史）
 
@@ -220,11 +313,13 @@ index/HEAD未修改。之后测试使用正常环境，候选index只用于单�
 5. W12/W13协议/SDK/多端与升级联调，按计划完成封存任务、跨平台和两轮候选验收。
 
 以上是首批时列出的后续交付，当前实现进展见本文最前表格，不再据此判断尚未开发。
-1.1.0发布门禁仍未满足：真实模型双轮、公共Forge往返、三系统浏览器及七天试用不能由
-本地受控fixture替代；跨平台新候选CI尚待执行。
+1.1.0发布门禁仍未满足：真实模型双轮、GitLab往返、三系统浏览器及七天试用不能由
+本地受控fixture替代；GitHub工程往返不等于通过人工批准，跨平台新候选CI必须全绿。
 
 ## 外部行为
 
-- 未推送、未创建标签、未发布npm/GitHub/APK/镜像。
+- 已推送专用验收分支及真实GitHub草稿PR #5；本机仍有后续未提交修复。未合入main、
+  未创建发布标签、未发布npm/GitHub Release/APK/镜像；草稿PR不是发行。
 - 未部署生产服务，未修改SSO、生产/演示VM、SSH凭据或签名证书；仅专用QA VM的新独立目录用于真实SSH验收，原安装不变。
-- 未调用付费模型；所有协议用例必须使用受控fixture或独立获准的验收配置。
+- 未调用付费模型；普通协议用例使用受控fixture，真实模型仅使用用户独立授权的本机vLLM
+  和有限localFree能力。没有复用旧聊天凭据、改生产模型配置或扩大已批准期限/配额。

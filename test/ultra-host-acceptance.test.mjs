@@ -61,6 +61,10 @@ async function fixture(t) {
   ] }
   const input = { required: true, goal, testSources: ["test/check.mjs", "package.json"] }
   const configState = ultraConfig({ providerName: "mock_bound_ultra", gates: { test: { enabled: true }, smoke: { enabled: false } } }, { ultra: { max_rounds: 1 } })
+  // A host-bound review records an exact route identity even when the provider
+  // is an in-memory fixture. The registered mock still handles every request;
+  // this reserved .invalid endpoint is identity metadata, not a live API.
+  Object.assign(configState.config.provider.mock_bound_ultra, { type: "openai", base_url: "https://ultra-fixture.invalid/v1", api_key_env: "" })
   process.chdir(cwd)
   t.after(() => { restoreBackgroundMock(); process.chdir(originalCwd) })
   return { cwd, input, configState, git }

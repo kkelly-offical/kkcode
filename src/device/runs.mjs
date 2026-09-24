@@ -78,7 +78,9 @@ export class DeviceRuns {
       lastTurn: run.lastTurn ? { id: run.lastTurn.id, status: run.lastTurn.status, startedAt: run.lastTurn.startedAt, endedAt: run.lastTurn.endedAt || null } : null,
       actionCounts: counts,
       budget: run.budget ? { budgetUsd: run.budget.budgetUsd, spentUsd: run.budget.spentUsd, reservedUsd: run.budget.reservedUsd,
-        unknownUsd: run.budget.unknownUsd, deadlineAt: run.budget.deadlineAt, hasUnknown: run.budget.requests.some(request => request.status === 'unknown') } : null,
+        unknownUsd: run.budget.unknownUsd, deadlineAt: run.budget.deadlineAt, hasUnknown: run.budget.requests.some(request => request.status === 'unknown'),
+        ...(run.budget.localFreePolicy ? { localFree: { maxRequests: run.budget.localFreePolicy.maxRequests, maxTokens: run.budget.localFreePolicy.maxTokens,
+          usedRequests: run.budget.usedRequests, reservedTokens: run.budget.reservedTokens } } : {}) } : null,
       verification: { required: statuses.length, passed: statuses.filter(status => status === 'passed').length, failed: statuses.filter(status => status === 'failed').length, unknown: statuses.filter(status => !['passed', 'failed'].includes(status)).length },
       controls: { canPause: owner && !terminal && !['paused', 'outcome_unknown'].includes(run.state), canCancel: owner && !terminal }
     }

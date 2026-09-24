@@ -42,9 +42,32 @@ export interface ModelBudgetRequest {
   requestId: string; kind: 'model' | 'delegation'; provider: string; model: string;
   reservedUsd: number; amountUsd: number | null; status: 'reserved' | 'settled' | 'unknown';
   ownerEpoch: number; createdAt: number; settledAt: number | null; evidenceRefs?: string[]; profileId?: string;
+  /** Local-free cumulative authorization, not observed token usage; never refunded. */
+  tokenAllowance?: number;
 }
 export interface BudgetProfile { version: 1; id: string; provider: string; model: string; protocol: 'openai' | 'anthropic' | 'responses' | 'ollama'; scopeHash: string; contextLimit: number; maxTokens: number; compaction: boolean; rates: { input: number; output: number; cacheRead: number; cacheWrite: number }; source: 'manual' | 'catalog' | 'built-in' }
-export interface RunBudget { budgetUsd: number; deadlineAt: number; spentUsd: number; reservedUsd: number; unknownUsd: number; requests: ModelBudgetRequest[]; profiles: BudgetProfile[] }
+/** Private host metadata, not a remotely accepted grant. Only a verified,
+ * branded host authority may establish the actual local inference capability. */
+export interface LocalFreePolicy {
+  version: 1; id: string; provider: string; model: string;
+  protocol: 'openai' | 'anthropic' | 'responses' | 'ollama';
+  /** Canonical literal 127.0.0.1 / [::1] HTTP(S), no credentials/query/fragment. */
+  baseUrl: string;
+  scopeHash: string;
+  maxRequests: number;
+  /** Total conservatively authorized tokens across the entire task, not actual usage. */
+  maxTokens: number;
+  listener: { pid: number; uid: number; fd: number; inode: string; startTimeTicks: string; executable: string };
+}
+export interface RunBudget {
+  budgetUsd: number; deadlineAt: number; spentUsd: number; reservedUsd: number; unknownUsd: number;
+  requests: ModelBudgetRequest[]; profiles: BudgetProfile[];
+  /** Private storage projection: never forward listener, endpoint or scope identity remotely. */
+  localFreePolicy?: LocalFreePolicy;
+  usedRequests?: number;
+  /** Cumulative token allowance, including settled calls; not actual token usage. */
+  reservedTokens?: number;
+}
 export interface RunStore {
   createRun(input: { id?: string; contract: TaskContract; ownerId: string; binding?: RunBinding; initialState?: 'running' | 'waiting_input' | 'paused' }): Promise<RunRecord>;
   getRun(runId: string): Promise<RunRecord>;
@@ -64,9 +87,9 @@ export interface RunStore {
   listTaskGraphs(input: { runId: string }): Promise<import('./tasks.mjs').TaskGraph[]>;
   updateTaskGraph(input: RunGuard & { graphId: string; expectedGraphRevision: number; graph: import('./tasks.mjs').TaskGraph }): Promise<import('./tasks.mjs').TaskGraph>;
   getRunBudget(input: { runId: string }): Promise<RunBudget | null>;
-  configureRunBudget(input: RunGuard & { budgetUsd: number; deadlineAt: number; profiles?: BudgetProfile[]; approval: HostApproval }): Promise<RunBudget>;
+  configureRunBudget(input: RunGuard & { budgetUsd: number; deadlineAt: number; profiles?: BudgetProfile[]; localFreePolicy?: LocalFreePolicy; approval: HostApproval }): Promise<RunBudget>;
   approveRunBudgetProfile(input: RunGuard & { profile: BudgetProfile; approval: HostApproval }): Promise<RunBudget>;
-  reserveModelBudget(input: RunGuard & { requestId: string; amountUsd: number; provider: string; model: string } & ({ kind?: 'model'; profileId: string } | { kind: 'delegation'; profileId?: never })): Promise<{ fresh: boolean; budget: RunBudget; request: ModelBudgetRequest }>;
+  reserveModelBudget(input: RunGuard & { requestId: string; amountUsd: number; provider: string; model: string } & ({ kind?: 'model'; profileId: string; tokenAllowance?: number } | { kind: 'delegation'; profileId?: never; tokenAllowance?: never })): Promise<{ fresh: boolean; budget: RunBudget; request: ModelBudgetRequest }>;
   settleModelBudget(input: RunGuard & ({ requestId: string; status: 'settled'; amountUsd: number } | { requestId: string; status: 'unknown'; amountUsd: null })): Promise<RunBudget>;
   reconcileModelBudget(input: RunGuard & { requestId: string; amountUsd: number; evidenceRefs: string[]; approval: HostApproval }): Promise<RunBudget>;
   createBackup(): Promise<RunStoreBackup>;

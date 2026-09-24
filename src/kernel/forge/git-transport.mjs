@@ -6,13 +6,13 @@ import dns from 'node:dns/promises'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
-import { runControlledGit } from '../../util/controlled-git.mjs'
+import { runControlledGit, gitNullDevice } from '../../util/controlled-git.mjs'
 import { assertFetchableUrl } from '../../net/url-guard.mjs'
 import { KKCODE_USER_AGENT } from '../../http/identity.mjs'
 import { parseForgeRemote, branch, sha, fail, ForgeError, snapshotForgeData } from './repository.mjs'
 
 const MAX_PACK = 128 * 1024 * 1024, MAX_BLOB = 64 * 1024 * 1024
-const disabled = os.devNull
+const disabled = gitNullDevice()
 const digest = value => createHash('sha256').update(value).digest('hex')
 const within = (root, file) => { const relative = path.relative(root, file); return !relative || relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative) }
 

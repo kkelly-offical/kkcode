@@ -2,7 +2,7 @@
 // debugging is explicitly enabled only for a fresh GitHub-hosted runner profile.
 // OS sandbox remains enabled; no remote-debugging TCP listener is opened.
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { mkdtemp, mkdir, readFile, writeFile, readdir, realpath, lstat, rm, access } from 'node:fs/promises'
 import path from 'node:path'
@@ -48,32 +48,93 @@ export function brandedLaunchOptions({ channel, profile, env }) {
   return { channel, headless: false, chromiumSandbox: true, ignoreDefaultArgs: true, timeout: 90000,
     // No hidden Playwright defaults that disable phishing checks, sandbox,
     // storage partitioning or first-run/licensing/permission screens.
-    args: [`--user-data-dir=${profile}`, '--remote-debugging-pipe', '--enable-automation', '--enable-unsafe-extension-debugging', '--no-default-browser-check', '--force-color-profile=srgb', 'about:blank'], env }
+    args: [`--user-data-dir=${profile}`, '--profile-directory=Default', '--remote-debugging-pipe', '--enable-automation', '--enable-unsafe-extension-debugging', '--no-default-browser-check', '--force-color-profile=srgb', 'about:blank'], env }
 }
 
-/** Page creation can precede its extension navigation on branded browsers. */
-export function waitForBrandedApproval(context, extensionId, timeoutMs = 30000) {
+function waitForContextPage(context, matches, timeoutMs, signal, timeoutError) {
   return new Promise((resolve, reject) => {
     const observed = new Map()
     let settled = false
-    const matches = page => {
-      try { const url = new URL(page.url()); return url.protocol === 'chrome-extension:' && url.hostname === extensionId && url.pathname === '/connect.html' }
-      catch { return false }
-    }
     const cleanup = () => {
       clearTimeout(timer); context.off('page', observe)
+      signal?.removeEventListener('abort', abort)
       for (const [page, callback] of observed) page.off('framenavigated', callback)
     }
+    const stop = error => { if (!settled) { settled = true; cleanup(); reject(error) } }
+    const abort = () => stop(signal.reason || blocked('browser_wait_cancelled', 'The scoped browser wait was cancelled.'))
     const check = page => { if (!settled && matches(page)) { settled = true; cleanup(); resolve(page) } }
     const observe = page => {
       if (settled || observed.has(page)) return
       const callback = () => check(page)
       observed.set(page, callback); page.on('framenavigated', callback); check(page)
     }
-    const timer = setTimeout(() => { settled = true; cleanup(); reject(blocked('extension_approval_unavailable', 'The exact official extension approval page did not become available; no unrelated first-run, sign-in or permission page was accepted.')) }, timeoutMs)
+    const timer = setTimeout(() => stop(timeoutError()), timeoutMs)
+    signal?.addEventListener('abort', abort, { once: true })
+    if (signal?.aborted) { abort(); return }
     context.on('page', observe)
     for (const page of context.pages()) observe(page)
   })
+}
+
+/** Page creation can precede its extension navigation on branded browsers.
+ * Abort on an actual MCP failure, rather than hiding it behind a page timeout. */
+export function waitForBrandedApproval(context, extensionId, timeoutMs = 30000, signal = undefined) {
+  return waitForContextPage(context, page => {
+    try { const url = new URL(page.url()); return url.protocol === 'chrome-extension:' && url.hostname === extensionId && url.pathname === '/connect.html' }
+    catch { return false }
+  }, timeoutMs, signal, () => blocked('extension_approval_unavailable', 'The exact official extension approval page did not become available; no unrelated first-run, sign-in or permission page was accepted.'))
+}
+
+export function createBrandedConnectionDiagnostics() {
+  const state = { phase: 'not_started', stderrBytes: 0, stderrTruncated: false, relayStarted: false, connectPageRequested: false, waitingForExtension: false, extensionConnected: false, failures: [] }
+  let tail = ''
+  const describe = error => {
+    const message = String(error?.message || error || '')
+    const reason = /unknown option|unrecognized option/i.test(message) ? 'unsupported_cli_option'
+      : /ENOENT|not found|does not exist/i.test(message) ? 'missing_executable_or_extension'
+        : /EACCES|EPERM|permission denied/i.test(message) ? 'permission_denied'
+          : /timeout|timed out/i.test(message) ? 'timeout'
+            : /ECONNREFUSED|connection refused/i.test(message) ? 'connection_refused'
+              : /closed|disconnect/i.test(message) ? 'disconnected'
+                : /unknown tool|method not found/i.test(message) ? 'unsupported_method'
+                  : /profile|user.data.dir|singleton/i.test(message) ? 'profile_reuse_failed' : 'backend_error'
+    return { reason, fingerprint: digest(message) }
+  }
+  return {
+    phase(value) { if (['mcp_start', 'mcp_initialized', 'snapshot_requested', 'snapshot_returned', 'approval_visible', 'approved'].includes(value)) state.phase = value },
+    stderr(bytes) {
+      state.stderrBytes += bytes.length
+      if (state.stderrBytes > 128 * 1024) { state.stderrTruncated = true; return }
+      tail = (tail + Buffer.from(bytes).toString('utf8')).slice(-8192)
+      state.relayStarted ||= tail.includes('CDP relay server started')
+      state.connectPageRequested ||= tail.includes('Establishing extension connection')
+      state.waitingForExtension ||= tail.includes('Waiting for incoming extension connection')
+      state.extensionConnected ||= tail.includes('Extension connection established')
+      // Never expose stderr, relay UUIDs, URLs/query strings, tokens or paths.
+    },
+    failure(stage, error) { const value = describe(error); if (state.failures.length < 8) state.failures.push({ stage, ...value }); return value },
+    snapshot() { return structuredClone(state) }
+  }
+}
+
+/** Prove that the exact command shape used by upstream MCP reuses this already
+ * running synthetic profile. No extension URL, native permission or real site. */
+export async function probeBrandedProfileReuse({ context, executable, profile, origin, env, timeoutMs = 15000, launch = exec }) {
+  const url = new URL(`/launch-probe-${randomUUID()}`, origin)
+  if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1') throw blocked('fixture_scope_required', 'Profile reuse probe requires the local synthetic fixture.')
+  const controller = new AbortController()
+  const observed = waitForContextPage(context, page => page.url() === url.href, timeoutMs, controller.signal,
+    () => blocked('browser_profile_reuse_failed', 'The installed browser did not reopen a local fixture tab in the already running Default profile.'))
+  observed.catch(() => {})
+  let page
+  try {
+    const processResult = launch(executable, [`--user-data-dir=${profile}`, '--profile-directory=Default', url.href], { env, timeout: timeoutMs, maxBuffer: 16384, windowsHide: true })
+      .catch(error => { const diagnostics = createBrandedConnectionDiagnostics(); const details = diagnostics.failure('profile_reuse', error); throw Object.assign(blocked('browser_profile_reuse_failed', `The exact browser/profile reuse command failed (${details.reason}); no fallback was attempted.`), { diagnosticFailure: details }) })
+    processResult.catch(error => controller.abort(error))
+    ;[page] = await Promise.all([observed, processResult])
+    await page.close()
+    return { verified: true, profileDirectory: 'Default', localFixtureOnly: true }
+  } finally { controller.abort(); if (page && !page.isClosed()) await page.close().catch(() => {}) }
 }
 
 export function verifyBrandedIdentity({ channel, platform, commandLine, version, userAgent, profile }) {
@@ -82,6 +143,7 @@ export function verifyBrandedIdentity({ channel, platform, commandLine, version,
   const normalize = value => platform === 'win32' ? path.win32.normalize(value).toLowerCase() : path.posix.normalize(value)
   const dataArgs = commandLine.filter(arg => arg.startsWith('--user-data-dir='))
   if (dataArgs.length !== 1 || normalize(dataArgs[0].slice('--user-data-dir='.length)) !== normalize(profile)) throw blocked('profile_scope_mismatch', 'Browser is not using the fresh fixture profile.')
+  if (commandLine.filter(arg => arg.startsWith('--profile-directory=')).join('') !== '--profile-directory=Default') throw blocked('profile_scope_mismatch', 'Browser and MCP must use the same explicit Default profile directory.')
   const binary = commandLine[0].replaceAll('\\', '/')
   const expected = channel === 'chrome'
     ? platform === 'darwin' ? /\/Google Chrome\.app\/Contents\/MacOS\/Google Chrome$/ : platform === 'win32' ? /\/Google\/Chrome\/Application\/chrome\.exe$/i : /\/google\/chrome\/chrome$/
@@ -159,7 +221,8 @@ export async function runBrandedBridgeSmoke({ env = process.env } = {}) {
   const fixture = await mkdtemp(path.join(temp, 'kkcode-branded-bridge-')), profile = path.join(fixture, 'profile')
   const priorRoot = process.env.KKCODE_HOME
   process.env.KKCODE_HOME = path.join(fixture, 'kkcode-state')
-  let context, controller, server, receipt, failure, diagnosticCapture, diagnosticTimer
+  let context, controller, server, receipt, failure, diagnosticCapture, diagnosticTimer, browserEvidence, extensionEvidence, profileReuseEvidence
+  const connectionDiagnostics = createBrandedConnectionDiagnostics(), connectionAbort = new AbortController()
   try {
     const extension = await buildPinnedBrandedExtension({ source: setup.source, destination: path.join(fixture, 'extension') })
     const childEnv = bridgeProcessEnvironment()
@@ -183,12 +246,14 @@ export async function runBrandedBridgeSmoke({ env = process.env } = {}) {
     const identity = verifyBrandedIdentity({ channel: setup.channel, platform: process.platform, commandLine, version, userAgent: await page.evaluate(() => navigator.userAgent), profile })
     identity.executable = await realpath(identity.executable)
     identity.executableSha256 = await fileHash(identity.executable)
+    browserEvidence = identity
     let installed
     try { installed = await cdp.send('Extensions.loadUnpacked', { path: extension.directory }) }
     catch { throw blocked('official_install_api_unavailable', 'Installed browser did not permit the official extension installation API; no fallback or security override was attempted.') }
     assert.equal(installed.id, BRANDED_EXTENSION_ID, 'the fixed official extension identity must match')
     const loaded = await cdp.send('Extensions.getExtensions')
     assert.ok(loaded.extensions.some(item => item.id === installed.id && item.version === BRANDED_EXTENSION_VERSION && item.enabled && path.resolve(item.path) === path.resolve(extension.directory)))
+    extensionEvidence = { id: installed.id, version: extension.version, sourceRevision: extension.sourceRevision, sourceHash: extension.sourceHash, buildHash: extension.buildHash }
     let clicked = false
     server = http.createServer((request, response) => {
       if (request.url === '/submit') { clicked = true; response.end('ok'); return }
@@ -205,21 +270,34 @@ export async function runBrandedBridgeSmoke({ env = process.env } = {}) {
     await page.goto(origin)
     assert.equal(await page.frameLocator('iframe').locator('p').textContent(), 'PRIVATE_EMBEDDED_FRAME_CANARY')
     const excluded = await context.newPage(); await excluded.goto(`${origin}/unshared`); await page.bringToFront()
+    const profileReuse = await probeBrandedProfileReuse({ context, executable: identity.executable, profile, origin, env: childEnv })
+    profileReuseEvidence = profileReuse
+    await page.bringToFront()
     let screenshotResultFormat
     controller = createBrowserBridgeController({ connect: async ({ outputDir }) => {
+      connectionDiagnostics.phase('mcp_start')
       const transport = new StdioClientTransport({ command: process.execPath,
         args: [runtime.cli, '--extension', '--browser', setup.channel, '--executable-path', identity.executable, '--user-data-dir', profile, '--profile-dir-name', 'Default', '--codegen', 'none', '--output-dir', outputDir],
-        env: childEnv, cwd: outputDir, stderr: 'pipe' })
-      transport.stderr.on('data', () => {})
+        env: { ...childEnv, DEBUG: 'pw:mcp:relay', DEBUG_COLORS: '0' }, cwd: outputDir, stderr: 'pipe' })
+      transport.stderr.on('data', bytes => connectionDiagnostics.stderr(bytes))
       const client = new Client({ name: 'KK Code branded bridge acceptance', version: '1.0.5' }, { capabilities: {}, versionNegotiation: { mode: 'auto' } })
-      try { await client.connect(transport, { timeout: 15000 }) }
+      try { await client.connect(transport, { timeout: 15000 }); connectionDiagnostics.phase('mcp_initialized') }
       catch (error) {
+        const details = connectionDiagnostics.failure('mcp_initialize', error)
         await client.close().catch(() => {})
         await transport.close().catch(() => {})
-        throw error
+        throw Object.assign(new Error(`Pinned MCP initialization failed (${details.reason}).`), { code: 'mcp_initialization_failed' })
       }
       return { call: async (name, args, signal) => {
-        const result = await client.callTool({ name, arguments: args }, { timeout: 60000, signal })
+        if (name === 'browser_snapshot') connectionDiagnostics.phase('snapshot_requested')
+        let result
+        try { result = await client.callTool({ name, arguments: args }, { timeout: 60000, signal }) }
+        catch (error) { const details = connectionDiagnostics.failure('mcp_tool_call', error); throw Object.assign(new Error(`Pinned MCP tool call failed (${details.reason}).`), { code: 'mcp_tool_call_failed' }) }
+        if (result.isError) {
+          const details = connectionDiagnostics.failure('mcp_tool_result', (result.content || []).filter(item => item.type === 'text').map(item => item.text).join('\n'))
+          throw Object.assign(new Error(`Pinned MCP returned a tool error (${details.reason}).`), { code: 'mcp_tool_result_failed' })
+        }
+        if (name === 'browser_snapshot') connectionDiagnostics.phase('snapshot_returned')
         if (name === 'browser_take_screenshot') {
           const text = (result.content || []).filter(item => item.type === 'text').map(item => item.text).join('\n')
           screenshotResultFormat = { sections: [...text.matchAll(/^### ([^\n]+)/gm)].map(match => match[1]), pageUrlDeclared: /^- Page URL:/m.test(text), snapshotIncluded: /^### Snapshot$/m.test(text) }
@@ -227,17 +305,24 @@ export async function runBrandedBridgeSmoke({ env = process.env } = {}) {
         return result
       }, close: () => client.close() }
     } })
-    const sessionId = 'branded-bridge-fixture', ctx = { sessionId, config: {}, signal: AbortSignal.timeout(150000) }
+    const sessionId = 'branded-bridge-fixture', ctx = { sessionId, config: {}, signal: AbortSignal.any([AbortSignal.timeout(150000), connectionAbort.signal]) }
     await authorizeBrowserBridge({ sessionId, origins: [origin], browser: setup.channel, allowInteraction: true, confirmed: true })
     await assert.rejects(controller.execute({ action: 'screenshot' }, ctx), /allow-screenshots/)
     await authorizeBrowserBridge({ sessionId, origins: [origin], browser: setup.channel, allowInteraction: true, allowScreenshots: true, confirmed: true })
-    const approvalPage = waitForBrandedApproval(context, installed.id)
-    const connecting = controller.execute({ action: 'snapshot' }, ctx)
+    const approvalAbort = new AbortController()
+    const approvalPage = waitForBrandedApproval(context, installed.id, 30000, approvalAbort.signal)
+    const connecting = controller.execute({ action: 'snapshot' }, ctx).catch(error => {
+      connectionDiagnostics.failure('bridge_snapshot', error)
+      approvalAbort.abort(Object.assign(new Error('Bridge connection failed before approval; see the bounded connection diagnostics.'), { code: 'bridge_connection_failed' }))
+      throw error
+    })
     connecting.catch(() => {}); approvalPage.catch(() => {})
     const approval = await approvalPage
+    connectionDiagnostics.phase('approval_visible')
     // This is the extension's own permission UI in a synthetic profile. Never
     // click browser EULAs, sign-in dialogs or general OS permission prompts.
     await approval.locator('.tab-item').filter({ has: approval.locator('.tab-url', { hasText: `${origin}/` }) }).filter({ hasNotText: '/unshared' }).getByRole('button', { name: 'Allow & select' }).click({ timeout: 10000 })
+    connectionDiagnostics.phase('approved')
     const snapshot = await connecting
     assert.match(snapshot.output, /Signed in fixture/)
     assert.doesNotMatch(snapshot.output, /\/unshared|PRIVATE EMBEDDED|PRIVATE_EMBEDDED_FRAME_CANARY/)
@@ -265,17 +350,21 @@ export async function runBrandedBridgeSmoke({ env = process.env } = {}) {
       extension: { version: extension.version, id: installed.id, sourceRevision: extension.sourceRevision, sourceHash: extension.sourceHash, buildHash: extension.buildHash },
       setup: { officialCdpInstall: true, extraExtensionInstallationDebugging: true, scope: 'test preparation only; ephemeral GitHub-hosted runner and disposable profile', nativeStoreInstallationUiTested: false, additionalEulaAccepted: false, osPolicyModified: false },
       assertions: { approvalDialog: true, selectedTabOnly: true, syntheticCookie: true, nestedFrameContentOmitted: true, screenshotDefaultDenied: true, screenshotOptIn: true, unapprovedTabPixelsAbsent: true, revoked: true, existingTabsSurviveDisconnect: true, extensionUninstalled: true }, screenshotResultFormat,
-      runner: { os: env.RUNNER_OS, imageOS: env.ImageOS || null, imageVersion: env.ImageVersion || null, runId: env.GITHUB_RUN_ID || null, runAttempt: env.GITHUB_RUN_ATTEMPT || null }, existingUserProfilesTouched: false }
+      runner: { os: env.RUNNER_OS, imageOS: env.ImageOS || null, imageVersion: env.ImageVersion || null, runId: env.GITHUB_RUN_ID || null, runAttempt: env.GITHUB_RUN_ATTEMPT || null }, profileReuse, connectionDiagnostics: connectionDiagnostics.snapshot(), existingUserProfilesTouched: false }
   } catch (error) {
     failure = error
+    failure.connectionDiagnostics = connectionDiagnostics.snapshot()
+    failure.browserEvidence = browserEvidence; failure.extensionEvidence = extensionEvidence; failure.profileReuseEvidence = profileReuseEvidence
     if (context && setup.report) {
       const pages = context.pages().slice(0, 4)
       for (let index = 0; index < pages.length; index++) {
+        if (pages[index].url().startsWith('chrome-extension:')) continue // never capture extension token/help UI
         await pages[index].screenshot({ path: path.join(temp, `${setup.channel}-failure-${index}.png`), timeout: 3000 }).catch(() => {})
       }
     }
   }
   finally {
+    connectionAbort.abort()
     try { await controller?.shutdown() } catch (error) { failure ||= error }
     try { await context?.close() } catch (error) { failure ||= error }
     server?.closeAllConnections(); if (server?.listening) await new Promise(resolve => server.close(resolve))
@@ -289,7 +378,9 @@ export async function runBrandedBridgeSmoke({ env = process.env } = {}) {
 async function main() {
   let receipt
   try { receipt = await runBrandedBridgeSmoke() }
-  catch (error) { receipt = { status: error.blocked ? 'blocked' : 'failed', channel: process.env.KKCODE_BRIDGE_TEST_CHANNEL || null, code: error.code || 'branded_bridge_acceptance_failed', message: String(error.message).slice(0, 8000), additionalEulaAccepted: false }; process.exitCode = error.blocked ? 2 : 1 }
+  catch (error) { receipt = { status: error.blocked ? 'blocked' : 'failed', channel: process.env.KKCODE_BRIDGE_TEST_CHANNEL || null, code: error.code || 'branded_bridge_acceptance_failed', message: String(error.message).slice(0, 8000),
+    ...(error.connectionDiagnostics ? { connectionDiagnostics: error.connectionDiagnostics } : {}), ...(error.diagnosticFailure ? { diagnosticFailure: error.diagnosticFailure } : {}),
+    ...(error.browserEvidence ? { browser: error.browserEvidence } : {}), ...(error.extensionEvidence ? { extension: error.extensionEvidence } : {}), ...(error.profileReuseEvidence ? { profileReuse: error.profileReuseEvidence } : {}), additionalEulaAccepted: false }; process.exitCode = error.blocked ? 2 : 1 }
   if (process.env.KKCODE_BRIDGE_REPORT) {
     try {
       const setup = brandedBridgePreflight()

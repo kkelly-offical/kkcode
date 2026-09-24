@@ -125,14 +125,26 @@ test("wire and decoded limits apply before complete body allocation", async t =>
 })
 
 test("supported compressed bodies decode and advertise decoded metadata", async t => {
-  const encoders = { gzip: gzipSync, deflate: deflateSync, br: brotliCompressSync }
+  const content = Buffer.from("中文 fixture")
+  const fixtures = new Map([
+    ["/gzip", { encoding: "gzip", encoded: gzipSync(content) }],
+    ["/deflate", { encoding: "deflate", encoded: deflateSync(content) }],
+    ["/br", { encoding: "br", encoded: brotliCompressSync(content) }],
+  ])
   const origin = await fixture(t, (req, res) => {
-    const encoding = req.url.slice(1), encoded = encoders[encoding](Buffer.from("中文 fixture"))
+    const selected = fixtures.get(req.url)
+    if (!selected) { res.writeHead(404); res.end("Unknown compression fixture"); return }
+    const { encoding, encoded } = selected
     res.writeHead(200, { "content-encoding": encoding, "content-length": encoded.length, "content-type": "text/plain" })
     res.end(encoded)
   })
-  for (const encoding of Object.keys(encoders)) {
-    const { response } = await guardedFetch(`${origin}/${encoding}`, {}, local)
+  for (const name of ["constructor", "__proto__", "toString", "unknown"]) {
+    const { response } = await guardedFetch(`${origin}/${name}`, {}, local)
+    assert.equal(response.status, 404)
+    assert.equal(await response.text(), "Unknown compression fixture")
+  }
+  for (const requestPath of fixtures.keys()) {
+    const { response } = await guardedFetch(`${origin}${requestPath}`, {}, local)
     assert.equal(await response.text(), "中文 fixture")
     assert.equal(response.headers.get("content-encoding"), null)
     assert.equal(response.headers.get("content-length"), null)

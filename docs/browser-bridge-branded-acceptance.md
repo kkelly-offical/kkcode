@@ -66,6 +66,8 @@ Windows/macOS runner 直接运行同一 Node 脚本。不要复制这段命令�
 1. 从真实 browser-level CDP 读取启动参数、版本，再读取当前页面的 User-Agent。
    核对正式渠道可执行路径、唯一的新建 `--user-data-dir`、pipe-only 调试和禁止
    沙箱／安全禁用参数；记录实际二进制 SHA-256 与 runner 镜像版本。
+   初次启动与 MCP 均使用明确的 `Default` profile；合成 localhost 标签页探针实际
+   核对同一可执行程序能否复用这个临时 profile，不退回另一个浏览器或个人配置。
 2. 调用官方扩展安装接口，核对实际安装 ID、版本、路径和 enabled 状态。
 3. 只在本地合成站点放置测试登录 Cookie。通过扩展自己的 **Allow & select**
    页面批准绿色测试标签，不批准另一个红色标签；不处理真实账号或企业认证。
@@ -90,6 +92,11 @@ Windows/macOS runner 直接运行同一 Node 脚本。不要复制这段命令�
 回执包括真实 browser/extension/runtime 身份、仅测试准备的额外权限、各行为断言
 和清理状态。不会保存个人 profile、真实登录凭据或复制浏览器 Cookie。成功回执
 明确 `nativeStoreInstallationUiTested:false`，不能改写为“商店安装流程已通过”。
+
+连接诊断区分浏览器 profile 复用、MCP 初始化／工具调用与扩展授权页超时。
+MCP 失败会结束对应的页面等待，不再一律报告为“未出现授权页”。受限 stderr 仅
+投影阶段标记、字节数、固定错误类别及摘要，不保存原始 stderr、relay UUID、
+令牌或 URL 查询。扩展页面不截取失败诊断图，以免把授权数据留在 CI 产物中。
 
 - 退出码 `0` / `status:passed`：本格真实验收与清理完成。
 - 退出码 `2` / `status:blocked`：环境、品牌、初始化页面或安装接口等前置条件不符；未验收。

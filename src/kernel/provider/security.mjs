@@ -2,6 +2,7 @@ import { runtimeCwd } from "../core/runtime-context.mjs"
 import { ProviderError } from "../core/errors.mjs"
 import { checkWorkspaceTrust } from "../permission/workspace-trust.mjs"
 import { trimTrailingSlashes } from "./url-path.mjs"
+import { localFreeCredentialTransportAllowed } from '../../usage/local-free.mjs'
 
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value || {}, key)
 
@@ -131,6 +132,7 @@ export function assertCredentialTransport({ baseUrl, apiKey = "", providerName, 
     return
   }
   if (url.protocol !== "http:" || (!apiKey && !urlCarriesCredential(url))) return
+  if (localFreeCredentialTransportAllowed({ baseUrl, apiKey, providerName })) return
   throw new ProviderError(
     `refusing ${operation} for provider "${providerName}" because credentials would be sent over plain HTTP. ` +
     "Use an HTTPS Base URL or remove the credential for an authless local endpoint.",

@@ -3,10 +3,12 @@ import { mkdir, writeFile, realpath, lstat } from 'node:fs/promises'
 import { createRunCoordinator, createDelegatedKernel, createDockerExecutionBackend, openRunStore, createArtifactStore } from '../../src/sdk/runs.mjs'
 import { createOfficeService } from '../../src/sdk/office.mjs'
 import { loadConfig } from '../../src/config/load-config.mjs'
+import { prepareBudgetProfile } from '../../src/usage/budget-profiles.mjs'
 import { sha256 } from './manifest.mjs'
 import { runRecoveryScenario, supportedRecovery } from './recovery-drivers.mjs'
+import { allocateLocalFreeLimits, assertLocalFreeProfile } from './local-free.mjs'
 
-export function validateLiveProfile(profile) {
+export function validateLiveProfile(profile, { localFree = false } = {}) {
   const keys = ['providerType', 'model', 'baseUrl', 'apiKeyEnv', 'contextLimit', 'maxTokens', 'pricing', 'maxSteps']
   if (!profile || typeof profile !== 'object' || Array.isArray(profile) || Object.keys(profile).some(key => !keys.includes(key))) throw new Error('Live profile contains unknown fields; inline credentials are forbidden')
   if (!['openai', 'anthropic', 'responses', 'ollama'].includes(profile.providerType) || typeof profile.model !== 'string' || !profile.model) throw new Error('Explicit provider and model required')
@@ -14,7 +16,8 @@ export function validateLiveProfile(profile) {
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('Provider URL must not contain credentials, query or fragment')
   const authlessLocal = profile.apiKeyEnv === null && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
   if (!authlessLocal && (!/^[A-Z][A-Z0-9_]{1,100}$/.test(profile.apiKeyEnv || '') || !process.env[profile.apiKeyEnv])) throw new Error('Set the explicitly selected API key environment variable, or explicitly choose null for an authless loopback endpoint')
-  if (url.protocol !== 'https:' && !authlessLocal) throw new Error('Credentials require HTTPS; plaintext HTTP is supported only for an explicitly authless loopback fixture')
+  if (localFree) assertLocalFreeProfile(profile)
+  if (url.protocol !== 'https:' && !authlessLocal && !localFree) throw new Error('Credentials require HTTPS; authenticated loopback requires explicit host local-free authorization')
   if (![profile.contextLimit, profile.maxTokens].every(value => Number.isSafeInteger(value) && value > 0) || profile.maxTokens >= profile.contextLimit) throw new Error('Explicit bounded model context/output limits required')
   if (!profile.pricing || Object.keys(profile.pricing).sort().join(',') !== 'cache_read,cache_write,input,output'
     || Object.values(profile.pricing).some(value => !Number.isFinite(value) || value < 0)) throw new Error('Complete USD per-million input/output/cache_read/cache_write prices required')
@@ -26,9 +29,13 @@ export { supportedRecovery }
 
 /** Real SDK entrypoint, never a generated-answer/mock fallback. Budget is stored
  * by the coordinator before any provider request and is shared across resumes. */
-export async function runLiveTask({ task, cwd, privateRoot, profile, image, officeImage, budgetUsd, deadlineAt, signal }) {
-  if (!Number.isFinite(budgetUsd) || budgetUsd <= 0 || !Number.isSafeInteger(deadlineAt) || deadlineAt <= Date.now()) throw new Error('Live evaluation requires an explicit positive budget and future absolute deadline')
-  if (task.driver === 'durable-recovery') return runRecoveryScenario({ task, cwd, privateRoot, profile, image, budgetUsd, deadlineAt, signal, mode: 'live' })
+export async function runLiveTask({ task, cwd, privateRoot, profile, image, officeImage, budgetUsd, deadlineAt, localFreeLimits = null, localFreeAuthorization: suiteAuthorization = null, signal }) {
+  const localAllocation = localFreeLimits === null ? null : allocateLocalFreeLimits(localFreeLimits, 1).perTask
+  if ((localAllocation ? budgetUsd !== 0 : !Number.isFinite(budgetUsd) || budgetUsd <= 0)
+    || !Number.isSafeInteger(deadlineAt) || deadlineAt <= Date.now()) throw new Error('Live evaluation requires an explicit paid or bounded local-free budget and future absolute deadline')
+  profile = validateLiveProfile(profile, { localFree: Boolean(localAllocation) })
+  if (suiteAuthorization && !localAllocation) throw new Error('A suite local-free capability cannot authorize a paid or unbounded task')
+  if (task.driver === 'durable-recovery') return runRecoveryScenario({ task, cwd, privateRoot, profile, image, budgetUsd, deadlineAt, localFreeLimits: localAllocation, localFreeAuthorization: suiteAuthorization, signal, mode: 'live' })
   const relativeControl = path.relative(path.resolve(cwd), path.resolve(privateRoot))
   if (!relativeControl || !path.isAbsolute(relativeControl) && relativeControl !== '..' && !relativeControl.startsWith(`..${path.sep}`)) throw new Error('Evaluation control state and prices must stay outside the model workspace')
   await mkdir(privateRoot, { recursive: true, mode: 0o700 })
@@ -62,6 +69,22 @@ export async function runLiveTask({ task, cwd, privateRoot, profile, image, offi
     const effective = structuredClone(state.config)
     effective.usage.pricing_file = '<private-evaluation-prices>'
     const stateFingerprint = sha256(effective)
+    let localFreeAuthorization
+    if (localAllocation) {
+      // Only the explicit host entrypoint can mint this capability. The runtime
+      // verifies the local listener identity and persists zero-USD quotas; no
+      // JSON boolean/profile supplied by a model can stand in for this brand.
+      const { createLocalFreeInferenceAuthorization, localFreePolicy, validateLocalFreeBudget } = await import('../../src/usage/local-free.mjs')
+      const frozenProfile = await prepareBudgetProfile(state, { providerType: 'evaluation', model: profile.model })
+      localFreeAuthorization = suiteAuthorization || await createLocalFreeInferenceAuthorization({
+        profile: frozenProfile,
+        baseUrl: profile.baseUrl, apiKeyEnv: profile.apiKeyEnv || '', maxRequests: localAllocation.requestLimit, maxTokens: localAllocation.tokenLimit,
+        authorize: async () => localAllocation !== null
+      })
+      const policy = localFreePolicy(localFreeAuthorization)
+      if (policy.maxRequests !== localAllocation.requestLimit || policy.maxTokens !== localAllocation.tokenLimit) throw new Error('Suite local-free allocation cannot be silently changed by a task')
+      validateLocalFreeBudget(localFreeAuthorization, { budgetUsd, profiles: [frozenProfile] })
+    }
     store = await openRunStore({ directory: path.join(privateRoot, 'runs') })
     const artifacts = createArtifactStore({ root: path.join(privateRoot, 'artifacts') })
     if (task.driver === 'office-document') office = await createOfficeService({ cwd, image: officeImage })
@@ -69,6 +92,7 @@ export async function runLiveTask({ task, cwd, privateRoot, profile, image, offi
       kernel = await createDelegatedKernel({ cwd, configState: state, trustState: { trusted: true }, services: office ? { office } : {} })
       coordinator = createRunCoordinator({ kernel, store, artifacts, actor: { accountId: 'evaluation', projectId: task.id },
         ownerId: `evaluation-${task.id}-${turnEvidence.length}`, executionBackend: createDockerExecutionBackend({ image: task.driver === 'office-document' ? officeImage : image }),
+        ...(localFreeAuthorization ? { localFreeAuthorization } : {}),
         leaseDirectory: path.join(privateRoot, 'leases'), grantDirectory: path.join(privateRoot, 'grants'),
         authorize: request => ['run.contract', 'run.takeover', 'run.tool'].includes(request.kind) && request.kind !== 'run.action' })
     }

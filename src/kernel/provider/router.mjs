@@ -13,7 +13,7 @@ import {
   assertCredentialTransport,
   assertProviderOutboundAllowed
 } from "./security.mjs"
-import { validateModelId } from "./model-id.mjs"
+import { resolveProviderRouteSettings } from './route-settings.mjs'
 import { resolveThinkingParams } from "./thinking-effort.mjs"
 import { resolveModelCapabilities } from "./model-catalog.mjs"
 import { enforceModelInputCapabilities } from "./model-capabilities.mjs"
@@ -26,6 +26,7 @@ import { assertProviderDataPolicy } from '../permission/data-policy.mjs'
 import { recordModelUsage } from '../../usage/model-ledger.mjs'
 import { reserveRequestBudget, hasRequestBudget, assertRequestBudgetActive } from '../../usage/request-budget.mjs'
 import { strictInputTokenBound, needsTrustedInputCount, snapshotStrictInput } from '../../usage/input-token-bound.mjs'
+import { verifyLocalFreeRequest } from '../../usage/local-free.mjs'
 
 function classifyProviderFailure(error) {
   const cls = String(error?.errorClass || "").toLowerCase()
@@ -78,7 +79,7 @@ function normalizeProviderError(error, providerType, model) {
   wrapped.errorClass = error?.errorClass || reason
   wrapped.httpStatus = Number(error?.httpStatus || error?.status || 0) || null
   if (error?.needsCompaction) wrapped.needsCompaction = true
-  if (/^(?:TASK_(?:BUDGET|DEADLINE)|BUDGET_)/.test(error?.code || '')) {
+  if (/^(?:TASK_(?:BUDGET|DEADLINE)|BUDGET_|LOCAL_FREE_)/.test(error?.code || '')) {
     wrapped.code = error.code
     wrapped.operationNotStarted = error.operationNotStarted === true
   }
@@ -254,70 +255,15 @@ export function createProviderRegistry() {
   }
 
 
-  function resolveProtocolBaseUrl(provider, protocol) {
-    const endpoint = provider.endpoints?.[protocol]
-    if (!endpoint) return provider.base_url
-    try {
-      const relativeTo = provider.base_url
-        ? `${trimTrailingSlashes(String(provider.base_url))}/`
-        : undefined
-      return trimTrailingSlashes(new URL(endpoint, relativeTo).toString())
-    } catch {
-      return endpoint
-    }
-  }
-
   // --- Settings Resolution ---
   function resolveSettings(configState, providerType, overrides = {}) {
-    const llm = configState.config.provider
-
-    // Resolve registry key: direct match → config type field → fallback to openai
-    let resolvedType = providerType
-    if (!registry.has(providerType)) {
-      const providerConfig = llm[providerType]
-      if (providerConfig?.type && registry.has(providerConfig.type)) {
-        resolvedType = providerConfig.type
-      } else {
-        if (llm.strict_mode) {
-          throw new ProviderError(
-            `unknown provider "${providerType}". registered: ${listProviders().join(", ")}`,
-            { provider: providerType, reason: "unknown_provider" }
-          )
-        }
+    return resolveProviderRouteSettings(configState, providerType, overrides, { registered: listProviders(), onFallback() {
         console.warn(`[kkcode] unknown provider "${providerType}", falling back to openai`)
         EventBus.emit({
           type: EVENT_TYPES.PROVIDER_FALLBACK,
           payload: { requested: providerType, resolved: "openai" }
         }).catch(() => {})
-        resolvedType = "openai"
-      }
-    }
-
-    // Read config from original provider name (e.g. "deepseek"), not resolved type
-    const defaults = llm[providerType] || llm[resolvedType] || {}
-    if (defaults.type === 'openai-responses' && ['openai', 'openai-compatible', 'anthropic', 'ollama', 'gateway'].includes(resolvedType)) resolvedType = 'openai-responses'
-    const protocol = resolvedType === 'openai-responses' ? 'responses' : defaults.protocol ||
-      (resolvedType === "anthropic" ? "anthropic" : resolvedType === "ollama" ? "ollama" : "openai")
-    if (protocol === 'responses' && ['openai', 'openai-compatible'].includes(resolvedType)) resolvedType = 'openai-responses'
-    const protocolBaseUrl = resolveProtocolBaseUrl(defaults, protocol)
-    const requestedModel = validateModelId(overrides.model || defaults.default_model || "", {
-      label: `provider "${providerType}" model`,
-      allowEmpty: true
-    })
-    const separator = requestedModel.indexOf("/")
-    const modelPrefix = separator > 0 ? requestedModel.slice(0, separator) : ""
-    const normalizedModel = separator > 0 && [providerType, resolvedType].includes(modelPrefix)
-      ? requestedModel.slice(separator + 1)
-      : requestedModel
-    return {
-      providerType: resolvedType,
-      configKey: providerType,
-      model: normalizedModel,
-      baseUrl: overrides.baseUrl || protocolBaseUrl,
-      apiKeyEnv: overrides.apiKeyEnv || defaults.api_key_env,
-      apiKeyDirect: defaults.api_key || null,
-      protocol
-    }
+    } })
   }
 
   // --- Non-streaming Request ---
@@ -360,6 +306,7 @@ export function createProviderRegistry() {
   async function requestInputBound(input, request) {
     if (!hasRequestBudget()) return 0
     assertRequestBudgetActive()
+    await verifyLocalFreeRequest({ provider: input.provider, model: input.model, protocol: input.protocol, baseUrl: input.baseUrl, credential: input.apiKey })
     snapshotStrictInput(input)
     let trustedCount = null
     if (input.protocol === 'responses' || input.protocol === 'anthropic' && needsTrustedInputCount(input)) {
@@ -370,6 +317,19 @@ export function createProviderRegistry() {
       trustedCount = Number.isSafeInteger(count) && count > 0 ? input.protocol === 'anthropic' ? count * 2 + 4096 : count : null
     }
     return strictInputTokenBound(input, { trustedCount }).tokens
+  }
+
+  async function verifyLocalDispatch(input, budget = null) {
+    try {
+      // Counting and durable reservation can await external work. Recheck the
+      // approved process after those waits, immediately before adapter dispatch.
+      // This is not an atomic TCP-peer identity guarantee against a replacement
+      // after the final OS observation; no such guarantee is claimed here.
+      await verifyLocalFreeRequest({ provider: input.provider, model: input.model, protocol: input.protocol, baseUrl: input.baseUrl, credential: input.apiKey })
+    } catch (error) {
+      await budget?.cancelBeforeDispatch()
+      throw error
+    }
   }
 
   async function countPreparedInput(input, { configState, providerType, baseUrl, apiKeyEnv, sessionId, turnId }) {
@@ -384,6 +344,7 @@ export function createProviderRegistry() {
       sessionId, turnId, provider: input.provider, model: input.model, protocol: input.protocol, endpoint: safeProviderEndpoint(input.baseUrl, settings.providerType, input.protocol, 'token_count') }).catch(() => null)
     let httpStatus = null
     try {
+      await verifyLocalDispatch(input)
       const count = await provider.countTokens({ ...input, ...identity, timeoutMs: Math.min(input.timeoutMs || 10000, 30000),
         onResponse: response => { httpStatus = response.status } })
       await span?.finish({ status: Number.isSafeInteger(count) ? 'ok' : 'unavailable', httpStatus, tokenCount: Number.isSafeInteger(count) ? count : null })
@@ -501,6 +462,7 @@ export function createProviderRegistry() {
       budget = await reserveRequestBudget(configState, { provider: settings.configKey, model: settings.model,
         contextLimit: Number(providerCfg.context_limit), maxTokens: input.maxTokens, inputTokenBound, compaction: Boolean(input.compaction), requestId: requestContext.requestId, baseUrl: settings.baseUrl, credential: apiKey, protocol: settings.protocol })
       if (input.signal?.aborted) { await budget?.cancelBeforeDispatch(); throwIfProviderAborted(input.signal) }
+      await verifyLocalDispatch(input, budget)
       const result = await provider.request(input)
       await budget?.settle(result?.usage, { complete: true })
       recordModelUsage({ requestId: requestContext.requestId, provider: settings.configKey, model: settings.model, usage: result?.usage })
@@ -648,6 +610,7 @@ export function createProviderRegistry() {
       budget = await reserveRequestBudget(configState, { provider: settings.configKey, model: settings.model,
         contextLimit: Number(providerCfg.context_limit), maxTokens: input.maxTokens, inputTokenBound, compaction: Boolean(input.compaction), requestId: requestContext.requestId, baseUrl: settings.baseUrl, credential: apiKey, protocol: settings.protocol })
       if (input.signal?.aborted) { await budget?.cancelBeforeDispatch(); throwIfProviderAborted(input.signal) }
+      await verifyLocalDispatch(input, budget)
       for await (const chunk of provider.requestStream(input)) {
         if (signal?.aborted) {
           const error = /** @type {Error & { code?: string, errorClass?: string }} */ (new Error("provider stream cancelled"))
@@ -767,6 +730,8 @@ export function createProviderRegistry() {
     // OpenAI-compatible APIs have no portable count-only endpoint, so their
     // implementation is local and should not create a misleading HTTP span.
     const isRemoteCount = settings.protocol === "anthropic" || settings.protocol === 'responses'
+    if (hasRequestBudget()) assertRequestBudgetActive()
+    await verifyLocalFreeRequest({ provider: input.provider, model: input.model, protocol: input.protocol, baseUrl: input.baseUrl, credential: input.apiKey })
     if (!isRemoteCount) return provider.countTokens(input)
     await assertProviderOutboundAllowed(configState, {
       providerName: settings.configKey,
@@ -795,6 +760,7 @@ export function createProviderRegistry() {
       endpoint: safeProviderEndpoint(settings.baseUrl, settings.providerType, settings.protocol, "token_count")
     }).catch(() => null)
     try {
+      await verifyLocalDispatch(input)
       const count = await provider.countTokens(input)
       await auditSpan?.finish({
         ok: Number.isFinite(count),

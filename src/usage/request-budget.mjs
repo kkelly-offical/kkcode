@@ -2,38 +2,42 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { loadPricing, calculateCost } from './pricing.mjs'
 import { hasCompleteUsageEvidence, usageIdentity } from './usage-evidence.mjs'
 import { randomUUID } from 'node:crypto'
-import { resolveProviderConnection } from '../kernel/provider/model-catalog.mjs'
-import { normalizeBudgetProfile, selectBudgetProfile } from './budget-profiles.mjs'
+import { normalizeBudgetProfile, selectBudgetProfile, budgetRoute } from './budget-profiles.mjs'
+import { validateLocalFreeBudget, withLocalFreeInferenceAuthorization } from './local-free.mjs'
 
 const budgets = new AsyncLocalStorage()
 const fail = (code, message) => { throw Object.assign(new Error(message), { code, operationNotStarted: true }) }
 const counters = ['input', 'output', 'cacheRead', 'cacheWrite']
 
 /** Strict graph scope only. A zero ceiling does not grant a paid request. */
-/** @param {{budgetUsd:number,deadlineAt:number,alreadySpent?:number,profiles?:any[],durable?:{reserve:Function,settle:Function}}} input @param {Function} run */
-export async function withRequestBudget({ budgetUsd, deadlineAt, alreadySpent = 0, profiles = [], durable = undefined }, run) {
+/** @param {{budgetUsd:number,deadlineAt:number,alreadySpent?:number,profiles?:any[],durable?:{reserve:Function,settle:Function},localFreeAuthorization?:any,localFreeUsage?:{usedRequests:number,reservedTokens:number}}} input @param {Function} run */
+export async function withRequestBudget({ budgetUsd, deadlineAt, alreadySpent = 0, profiles = [], durable = undefined, localFreeAuthorization = null, localFreeUsage = { usedRequests: 0, reservedTokens: 0 } }, run) {
   if (!Number.isFinite(budgetUsd) || budgetUsd < 0 || !Number.isSafeInteger(deadlineAt) || !Number.isFinite(alreadySpent) || alreadySpent < 0) fail('TASK_BUDGET_INVALID', '子任务预算或期限无效。')
   if (durable && (typeof durable.reserve !== 'function' || typeof durable.settle !== 'function')) fail('TASK_BUDGET_INVALID', '持久预算回调不完整。')
   if (durable && (!Array.isArray(profiles) || !profiles.length)) fail('BUDGET_PROFILE_REQUIRED', '持久请求预算缺少宿主批准的固定价格／窗口档案。')
   const frozenProfiles = profiles.map(profile => { const value = normalizeBudgetProfile(profile); Object.freeze(value.rates); return Object.freeze(value) })
-  const state = { limit: budgetUsd, deadlineAt, spent: alreadySpent, reserved: 0, uncertain: false, durable, profiles: Object.freeze(frozenProfiles), closed: false }
-  return budgets.run(state, async () => {
+  const free = localFreeAuthorization ? validateLocalFreeBudget(localFreeAuthorization, { budgetUsd, profiles: frozenProfiles }) : null
+  if (free && (!durable || alreadySpent !== 0 || !Number.isSafeInteger(localFreeUsage.usedRequests) || localFreeUsage.usedRequests < 0 || !Number.isSafeInteger(localFreeUsage.reservedTokens) || localFreeUsage.reservedTokens < 0)) fail('LOCAL_FREE_AUTHORIZATION', '本机免费推理需要持久请求／token 配额，不能用临时内存绕过。')
+  const state = { limit: budgetUsd, deadlineAt, spent: alreadySpent, reserved: 0, uncertain: false, durable, profiles: Object.freeze(frozenProfiles), closed: false,
+    free, requests: localFreeUsage.usedRequests, tokens: localFreeUsage.reservedTokens, inflight: false }
+  const execute = async () => {
     try { return { result: await run(), costUsd: state.spent, uncertain: state.uncertain } }
     catch (error) { error.taskBudget = { costUsd: state.spent + state.reserved, uncertain: state.uncertain || state.reserved > 0 }; throw error }
     finally { state.closed = true }
-  })
+  }
+  return budgets.run(state, () => free ? withLocalFreeInferenceAuthorization(localFreeAuthorization, deadlineAt, execute) : execute())
 }
 export const hasRequestBudget = () => Boolean(budgets.getStore())
 export function assertRequestBudgetActive() {
   const state = budgets.getStore()
   if (!state) return
   if (state.closed || Date.now() >= state.deadlineAt) fail('TASK_DEADLINE', '任务作用域已关闭或期限已到，未发送计数或推理请求。')
-  if (state.uncertain || state.spent + state.reserved >= state.limit) fail('TASK_BUDGET_EXHAUSTED', '任务预算已耗尽或费用未知，未发送计数或推理请求。')
+  if (state.uncertain || (state.free ? state.inflight || state.requests >= state.free.maxRequests || state.tokens >= state.free.maxTokens : state.spent + state.reserved >= state.limit)) fail('TASK_BUDGET_EXHAUSTED', '任务费用／本机资源配额已耗尽、仍在请求中或结果未知，未发送计数或推理请求。')
 }
 export function assertRequestBudgetWithin({ budgetUsd, deadlineAt, durableRequired = false }) {
   const state = budgets.getStore()
   if (!state || state.closed || durableRequired && !state.durable || state.limit > budgetUsd || deadlineAt !== undefined && state.deadlineAt > deadlineAt) fail('TASK_BUDGET_SCOPE_REQUIRED', '严格预算需要宿主建立不超过已确认额度和期限的真实请求预算作用域。')
-  if (state.uncertain || state.spent + state.reserved >= state.limit || Date.now() >= state.deadlineAt) fail('TASK_BUDGET_EXHAUSTED', '请求预算作用域已耗尽、过期或结果未知。')
+  assertRequestBudgetActive()
 }
 
 /** Reserve at least both the approved context allowance and the complete
@@ -43,8 +47,7 @@ export function assertRequestBudgetWithin({ budgetUsd, deadlineAt, durableRequir
 export async function reserveRequestBudget(configState, { provider, model, contextLimit, maxTokens, inputTokenBound = 0, compaction = false, requestId = randomUUID(), baseUrl, credential, protocol }) {
   const state = budgets.getStore()
   if (!state) return null
-  if (state.closed || Date.now() >= state.deadlineAt) fail('TASK_DEADLINE', '子任务作用域已结束或持久期限已到，未发送新的模型请求。')
-  if (state.uncertain || state.spent + state.reserved >= state.limit) fail('TASK_BUDGET_EXHAUSTED', '子任务预算已耗尽或上次计费结果未知，未发送新的模型请求。')
+  assertRequestBudgetActive()
   if (!Number.isSafeInteger(contextLimit) || contextLimit <= 0 || !Number.isSafeInteger(maxTokens) || maxTokens <= 0) fail('TASK_BUDGET_CONTEXT_UNKNOWN', '严格预算需要明确 context_limit 与最大输出 token 数。')
   let profile, quote, reservation
   if (state.profiles.length) {
@@ -57,8 +60,8 @@ export async function reserveRequestBudget(configState, { provider, model, conte
   } else {
     // Non-durable controlled diagnostics retain their existing helper behavior.
     // Every production strict coordinator supplies a private persisted profile.
-    const configured = resolveProviderConnection(configState, provider)
-    const changedScope = baseUrl !== undefined && baseUrl.replace(/\/$/, '') !== configured.baseUrl.replace(/\/$/, '') || credential !== undefined && credential !== configured.apiKey
+    const configured = budgetRoute(configState, { providerType: provider, model })
+    const changedScope = baseUrl !== undefined && baseUrl.replace(/\/$/, '') !== configured.baseUrl.replace(/\/$/, '') || credential !== undefined && credential !== configured.credential
     const { pricing, errors, source, strictPriceComplete, strictModelExact } = await loadPricing(configState, { providerName: provider, model, skipCatalog: changedScope })
     const rates = counters.map(counter => calculateCost(pricing, model, { [counter]: 1 }))
     if (errors.length || !strictPriceComplete || !strictModelExact || changedScope && source === 'default' || rates.some(rate => rate.unknown || rate.currency !== 'USD' || !Number.isFinite(rate.amount) || rate.amount < 0)) fail('TASK_BUDGET_PRICE_UNKNOWN', '职责模型缺少精确匹配 ID 的完整有效 USD 单价；前缀猜价及临时端点／凭据复用旧渠道目录价格均不能作为严格预留依据。')
@@ -68,20 +71,23 @@ export async function reserveRequestBudget(configState, { provider, model, conte
     quote = usage => calculateCost(pricing, model, usage)
   }
   if (state.spent + state.reserved + reservation > state.limit + Number.EPSILON * 32) fail('TASK_BUDGET_INSUFFICIENT', '剩余预算不足以覆盖本次完整输入和输出预留；请精简输入／工具定义、降低输出上限，或重新授权任务预算。仅缩小 context_limit 不会缩小实际输入。')
+  const tokenAllowance = inputTokenBound + maxTokens
+  if (state.free && (!Number.isSafeInteger(tokenAllowance) || tokenAllowance <= 0 || state.tokens + tokenAllowance > state.free.maxTokens || state.requests >= state.free.maxRequests || state.inflight)) fail('TASK_BUDGET_INSUFFICIENT', '本机免费请求超过已批准的累计 token／请求配额，未发送。')
   // Async pricing loading may overlap another request; this check and increment
   // are adjacent synchronous operations within the host event loop.
   if (Date.now() >= state.deadlineAt || state.uncertain) fail('TASK_BUDGET_EXHAUSTED', '准备请求期间期限或计费状态变化。')
   state.reserved += reservation
+  if (state.free) { state.tokens += tokenAllowance; state.requests++; state.inflight = true }
   let receipt
   if (state.durable) {
-    try { receipt = await state.durable.reserve({ requestId, amountUsd: reservation, provider, model, profileId: profile.id }) }
+    try { receipt = await state.durable.reserve({ requestId, amountUsd: reservation, provider, model, profileId: profile.id, ...(state.free ? { tokenAllowance } : {}) }) }
     catch (error) { state.uncertain = true; throw error }
   }
   let settled = false
   return {
     async cancelBeforeDispatch() {
       if (settled) return
-      settled = true; state.reserved = Math.max(0, state.reserved - reservation)
+      settled = true; state.reserved = Math.max(0, state.reserved - reservation); state.inflight = false
       if (state.durable) {
         try { await state.durable.settle({ requestId, receipt, amountUsd: 0, status: 'settled' }) }
         catch (error) { state.uncertain = true; throw error }
@@ -89,7 +95,7 @@ export async function reserveRequestBudget(configState, { provider, model, conte
     },
     async settle(usage, { complete = false } = {}) {
       if (settled) return
-      settled = true; state.reserved = Math.max(0, state.reserved - reservation)
+      settled = true; state.reserved = Math.max(0, state.reserved - reservation); state.inflight = false
       const identity = usageIdentity(usage)
       if (complete && hasCompleteUsageEvidence(usage) && (!identity || identity.model !== model || identity.tier != null && !['default', 'standard'].includes(identity.tier))) {
         state.spent += reservation; state.uncertain = true
@@ -101,6 +107,11 @@ export async function reserveRequestBudget(configState, { provider, model, conte
         state.spent += reservation; state.uncertain = true
         if (state.durable) await state.durable.settle({ requestId, receipt, amountUsd: null, status: 'unknown' })
         return
+      }
+      if (state.free && (Number(usage.input || 0) + Number(usage.cacheRead || 0) + Number(usage.cacheWrite || 0) > inputTokenBound || Number(usage.output || 0) > maxTokens)) {
+        state.uncertain = true
+        await state.durable.settle({ requestId, receipt, amountUsd: null, status: 'unknown' })
+        throw Object.assign(new Error('本机服务报告的实际输入或输出超出已授权 token 边界；请求已经发生，已保留未知资源结果并停止续跑，不能作为零成本无限重试。'), { code: 'LOCAL_FREE_TOKEN_OUTCOME', operationNotStarted: false })
       }
       const actual = quote(usage)
       state.spent += actual.amount

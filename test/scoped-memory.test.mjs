@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink, stat } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink, stat, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { spawn } from 'node:child_process'
@@ -157,6 +157,51 @@ test('legacy files stay intact and require host-approved candidate import; confi
   await memory.importLegacy({ source: 'instincts' })
   assert.equal(await memory.formatForPrompt(), '')
   assert.equal(await readFile(memoryFilePath(cwd), 'utf8'), content)
+})
+
+test('legacy discovery and candidate import preserve the current cwd alias without loading another project', async t => {
+  const { root, cwd } = await fixture(t)
+  const aliasRoot = path.join(root, 'parent-alias')
+  await symlink(root, aliasRoot, process.platform === 'win32' ? 'junction' : 'dir')
+  const aliasCwd = path.join(aliasRoot, 'project'), canonical = await realpath(cwd)
+  assert.notEqual(memoryDir(aliasCwd), memoryDir(canonical), 'legacy storage hashes the original spelling, unlike the scoped project identity')
+  await mkdir(memoryDir(aliasCwd), { recursive: true })
+  const text = 'ALIAS_LEGACY_NOTE\n'
+  await writeFile(memoryFilePath(aliasCwd), text)
+  await writeFile(path.join(memoryDir(aliasCwd), 'instincts.json'), JSON.stringify({ instincts: [{ pattern: 'ALIAS_LEGACY_INSTINCT', confidence: 1 }] }))
+  const memory = createMemoryController({ cwd: aliasCwd, confirmMemory: accepted })
+  assert.deepEqual((await memory.legacySources()).sources.map(value => value.source).sort(), ['auto-memory', 'instincts'])
+  const prompt = await loadAutoMemory(aliasCwd)
+  assert.match(prompt, /not automatically migrated/)
+  assert.doesNotMatch(prompt, /ALIAS_LEGACY/)
+  await assert.rejects(createMemoryController({ cwd: aliasCwd }).importLegacy({ source: 'auto-memory' }), { code: 'memory_confirmation_required' })
+  const imported = await memory.importLegacy({ source: 'auto-memory' })
+  assert.equal(imported.entries[0].text, 'ALIAS_LEGACY_NOTE')
+  assert.equal(imported.entries[0].status, 'candidate'); assert.equal(imported.activated, 0)
+  assert.equal((await memory.importLegacy({ source: 'instincts' })).entries[0].text, 'ALIAS_LEGACY_INSTINCT')
+  assert.equal(await memory.formatForPrompt(), '')
+  assert.equal(await readFile(memoryFilePath(aliasCwd), 'utf8'), text)
+  const another = path.join(root, 'another-project'); await mkdir(another)
+  assert.deepEqual((await createMemoryController({ cwd: another }).legacySources()).sources, [])
+  assert.deepEqual((await createMemoryController({ cwd: another }).list()).entries, [])
+})
+
+test('canonical legacy source wins over the current alias and invalid canonical files never fall back', async t => {
+  const { root, cwd } = await fixture(t), canonical = await realpath(cwd)
+  const aliasCwd = path.join(root, 'project-alias')
+  await symlink(cwd, aliasCwd, process.platform === 'win32' ? 'junction' : 'dir')
+  await mkdir(memoryDir(canonical), { recursive: true }); await mkdir(memoryDir(aliasCwd), { recursive: true })
+  await writeFile(memoryFilePath(canonical), 'CANONICAL_LEGACY_NOTE')
+  await writeFile(memoryFilePath(aliasCwd), 'ALIAS_SHOULD_NOT_REPLACE_CANONICAL')
+  const memory = createMemoryController({ cwd: aliasCwd, confirmMemory: accepted })
+  assert.equal((await memory.legacySources()).sources.find(value => value.source === 'auto-memory').bytes, Buffer.byteLength('CANONICAL_LEGACY_NOTE'))
+  const imported = await memory.importLegacy({ source: 'auto-memory' })
+  assert.deepEqual(imported.entries.map(value => value.text), ['CANONICAL_LEGACY_NOTE'])
+  await writeFile(path.join(memoryDir(canonical), 'instincts.json'), '{broken canonical JSON')
+  await writeFile(path.join(memoryDir(aliasCwd), 'instincts.json'), JSON.stringify({ instincts: [{ pattern: 'ALIAS_MUST_NOT_HIDE_BROKEN_CANONICAL' }] }))
+  await assert.rejects(memory.importLegacy({ source: 'instincts' }), { code: 'memory_legacy_invalid' })
+  assert.equal((await memory.list()).entries.length, 1)
+  assert.equal(await readFile(memoryFilePath(aliasCwd), 'utf8'), 'ALIAS_SHOULD_NOT_REPLACE_CANONICAL')
 })
 
 test('corrupt storage and malformed identity fail closed rather than resetting or falling back to legacy', async t => {

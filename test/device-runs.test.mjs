@@ -15,6 +15,8 @@ import { currentArtifactAccountId } from '../src/kernel/tool/artifacts.mjs'
 import { createGateway } from '../src/remote/gateway.mjs'
 import { identityHash } from '../src/remote/identity.mjs'
 import { MemoryStore } from '../src/remote/store.mjs'
+import { budgetProfileId } from '../src/storage/run-budget-profile.mjs'
+import { localFreePolicyId } from '../src/storage/local-free-policy.mjs'
 
 const local = { id: 'local', client: 'local' }
 const contract = { objective: 'Public task objective', requiredCriteria: [{ id: 'check', description: 'Required acceptance check' }] }
@@ -100,6 +102,31 @@ test('remote task budget is a bounded accounting projection, not a request or cr
   assert.deepEqual(Object.keys(view.budget).sort(), ['budgetUsd', 'deadlineAt', 'hasUnknown', 'reservedUsd', 'spentUsd', 'unknownUsd'])
   assert.equal(view.budget.spentUsd, 0); assert.equal(view.budget.unknownUsd, 2); assert.equal(view.budget.hasUnknown, true)
   for (const secret of ['private-request', 'private-provider', 'private-model', 'private-budget-actor']) assert.equal(JSON.stringify(view).includes(secret), false)
+})
+
+test('remote local-free projection exposes quota counters but no listener, route or private approval metadata', async t => {
+  const f = await fixture(t)
+  let run = f.task.run
+  const guard = () => ({ runId: run.id, expectedRevision: run.revision, ownerId: run.ownerId, ownerEpoch: run.ownerEpoch })
+  const profile = { version: 1, provider: 'private-free-provider', model: 'private-free-model', protocol: 'openai', scopeHash: 'd'.repeat(64), contextLimit: 1000,
+    maxTokens: 100, compaction: false, rates: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, source: 'manual' }
+  const policy = { version: 1, provider: profile.provider, model: profile.model, protocol: profile.protocol, scopeHash: profile.scopeHash,
+    baseUrl: 'http://127.0.0.1:19877/v1', maxRequests: 5, maxTokens: 10000,
+    listener: { pid: 197973, uid: 1000, fd: 71, inode: '888999', startTimeTicks: '999888', executable: '/private/fixture/python' } }
+  await f.store.configureRunBudget({ ...guard(), budgetUsd: 0, deadlineAt: Date.now() + 60000,
+    profiles: [{ ...profile, id: budgetProfileId(profile) }], localFreePolicy: { ...policy, id: localFreePolicyId(policy) },
+    approval: { approved: true, actorId: 'private-free-author', reason: 'Approved host-only fixture quota' } })
+  run = await f.store.getRun(run.id)
+  await f.store.reserveModelBudget({ ...guard(), requestId: 'private-free-request', amountUsd: 0, provider: profile.provider, model: profile.model, profileId: budgetProfileId(profile), tokenAllowance: 150 })
+  run = await f.store.getRun(run.id)
+  await f.store.settleModelBudget({ ...guard(), requestId: 'private-free-request', amountUsd: null, status: 'unknown' })
+  const scope = { sessionId: f.sessionId, runId: run.id }, viewer = { id: 'owner', actorId: 'viewer', client: 'viewer' }
+  const view = await f.direct('runs.get', scope, viewer), events = await f.direct('runs.events', scope, viewer)
+  assert.deepEqual(view.budget.localFree, { maxRequests: 5, maxTokens: 10000, usedRequests: 1, reservedTokens: 150 })
+  assert.equal(view.budget.unknownUsd, 0); assert.equal(view.budget.hasUnknown, true)
+  assert.deepEqual(Object.keys(view.budget).sort(), ['budgetUsd', 'deadlineAt', 'hasUnknown', 'localFree', 'reservedUsd', 'spentUsd', 'unknownUsd'])
+  const serialized = JSON.stringify({ view, events })
+  for (const secret of ['listener', 'scopeHash', 'baseUrl', 'localFreePolicy', 'private-free', '/private/fixture', policy.baseUrl, policy.scopeHash]) assert.equal(serialized.includes(secret), false, secret)
 })
 
 test('shared task evidence exposes only tool/document products, not authorizations or private acceptance', async t => {

@@ -6,6 +6,8 @@ import assert from 'node:assert/strict'
 import { createDeviceServer } from '../src/device/server.mjs'
 import { DeviceService } from '../src/device/service.mjs'
 import { appendMessage, flushNow, createConversationArtifactAccess, createMemoryController, openRunStore, ArtifactStore, currentArtifactAccountId } from '../src/kernel/index.mjs'
+import { budgetProfileId } from '../src/storage/run-budget-profile.mjs'
+import { localFreePolicyId } from '../src/storage/local-free-policy.mjs'
 
 const temporary = await realpath(await mkdtemp(path.join(os.tmpdir(), 'kk-web-knowledge-')))
 const previousRoot = process.env.KKCODE_HOME, workspace = path.join(temporary, 'workspace')
@@ -130,6 +132,29 @@ try {
   await expect(page.getByText('已取消', { exact: true })).toBeVisible()
   assert.equal((await store.getRun(runId)).state, 'cancelled')
   await expect(page.getByRole('button', { name: '取消任务', exact: true })).toHaveCount(0)
+  const freeId = 'web-local-free-fixture'
+  let free = await store.createRun({ id: freeId, ownerId: 'fixture', initialState: 'waiting_input', contract: { objective: '本机免费额度展示', requiredCriteria: [{ id: 'tests', description: '独立检查' }] }, binding: { sessionId: created.id, cwd: workspace, accountId, projectId: 'web-fixture' } })
+  const profile = { version: 1, provider: 'fixture', model: 'fixture', protocol: 'openai', scopeHash: 'e'.repeat(64), contextLimit: 1000, maxTokens: 100,
+    compaction: false, rates: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, source: 'manual' }
+  const policy = { version: 1, provider: profile.provider, model: profile.model, protocol: profile.protocol, scopeHash: profile.scopeHash,
+    baseUrl: 'http://127.0.0.1:19877/v1', maxRequests: 5, maxTokens: 10000, listener: { pid: 1, uid: 1000, fd: 70, inode: '123', startTimeTicks: '456', executable: '/PRIVATE-LOCAL-LISTENER' } }
+  const guardFree = () => ({ runId: freeId, expectedRevision: free.revision, ownerId: free.ownerId, ownerEpoch: free.ownerEpoch })
+  await store.configureRunBudget({ ...guardFree(), budgetUsd: 0, deadlineAt: Date.now() + 600000,
+    profiles: [{ ...profile, id: budgetProfileId(profile) }], localFreePolicy: { ...policy, id: localFreePolicyId(policy) },
+    approval: { approved: true, actorId: 'fixture', reason: 'Display-only synthetic host ledger, no inference' } })
+  free = await store.getRun(freeId)
+  await store.reserveModelBudget({ ...guardFree(), requestId: 'free-display', amountUsd: 0, provider: profile.provider, model: profile.model, profileId: budgetProfileId(profile), tokenAllowance: 150 })
+  free = await store.getRun(freeId)
+  await store.settleModelBudget({ ...guardFree(), requestId: 'free-display', status: 'unknown', amountUsd: null })
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: '个人与设备设置' }).click()
+  await page.getByRole('button', { name: '任务与验收', exact: true }).click()
+  await page.getByRole('button', { name: /本机免费额度展示/ }).click()
+  await expect(page.getByText(/本地免费 · 请求名额 1\/5 · 累计预留 token 150\/10,000/)).toBeVisible()
+  await expect(page.getByText(/累计预留是核准的保守上界，不是实际 token 用量/)).toBeVisible()
+  await expect(page.getByText(/部分调用结果待核查；即使美元费用为零/)).toBeVisible()
+  await expect(page.getByText(/额度为零，不会发送新的模型请求/)).toHaveCount(0)
+  assert.ok(!(await page.locator('body').textContent()).includes('/PRIVATE-LOCAL-LISTENER'))
   assert.deepEqual(failures, [])
   console.log('Web real device knowledge/task flow passed: verified artifact downloads, memory lifecycle, real SQLite run projection/events, stale owner confirmation denial, pause/cancel without implied rollback')
 } finally {

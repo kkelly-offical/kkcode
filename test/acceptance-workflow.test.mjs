@@ -14,6 +14,10 @@ test('acceptance workflow keeps runner-only expressions in steps and uses actual
     }
   }
   assert.equal(workflow.jobs['strict-runtime'].env.KKCODE_REQUIRE_STRICT_BROWSER, '1')
+  const strictCommands = workflow.jobs['strict-runtime'].steps.map(step => step.run || '').join('\n')
+  for (const filename of ['local-free-recovery', 'evaluation-local-free-suite', 'run-store-backup-portability']) {
+    assert.ok(strictCommands.includes(`test/${filename}.test.mjs`), `${filename} must run with real strict-runtime fixtures`)
+  }
   assert.equal(workflow.jobs['isolated-toolchains'].env.KKCODE_REQUIRE_REAL_LSP, '1')
   const branded = workflow.jobs['branded-browser-bridge']
   assert.deepEqual(branded.strategy.matrix.os, ['ubuntu-22.04', 'windows-latest', 'macos-latest'])

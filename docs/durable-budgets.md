@@ -22,6 +22,14 @@ const result = await coordinator.execute({ runId: run.id, prompt: contract.objec
 
 SDK 未给额度时保存零预算，不发送推理；CLI 可以用零预算和 `--prepare-only` 准备任务。后续恢复不能增加额度、延长期限或重新计算一份“全新剩余预算”。旧的无预算任务也不会悄悄获得付费授权。
 
+### 显式本机免费评测
+
+本机已部署模型可以使用单独的宿主 `local-free` 能力，不必填一个虚构的正美元预算。它要求真实宿主回调确认、四项完整零单价和真实监听进程核验，绑定字面 `127.0.0.1`／`[::1]` 的精确端点、协议、模型、凭据 HMAC、PID、启动时间和监听 socket。当前进程核验要求 Linux；没有该原语的系统不退回“只看 URL 就信任”。DNS 名称、远端地址、查询凭据、端口／模型／凭据切换、JSON 伪造授权或更换监听进程均不能复用授权。
+
+持久账本仍保存 `budgetUsd: 0`、实际 `spentUsd: 0`，另存有限的 `maxRequests`、累计 `maxTokens` 和原有绝对期限。每次请求先持久化 `inputBound + maxOutputTokens` 的 `tokenAllowance`，已使用授权不退款；`reservedTokens` 表示累计保守授权量，不是供应商实测用量。一次只能有一个在途请求，重启不重置额度；未知结果即使金额为零也会停止继续请求。免费模式不授权任务图转授，不准追加新价格／路由档案。
+
+只有这个当前仍有效的真实宿主能力允许向该精确 loopback 服务发送 HTTP 认证头，且每次请求重核监听进程、禁止重定向。普通 HTTP 凭据保护、普通零预算不推理、出域策略和工作区信任不变。“免费”指操作者明确确认没有外部 API 账单，不意味着 GPU、电力或服务器资源没有成本，也不是对任意本机代理的自动信任。真实模型评测仍须独立授权有限请求／Token 和期限，与无模型参考自检分开记分。
+
 `taskGraph` 是父任务内的委派上限，不能大于父 `limits`。开始一个子任务前，先在父账本预留该子任务的全部额度；子任务各请求在自己的账本扣款，结束后父账本按子任务实际金额结算。这样父自己的模型请求加上所有子任务不会各自绕开总额限制。
 
 ## 请求前预留、完整回执后结算
@@ -54,6 +62,7 @@ SDK 未给额度时保存零预算，不发送推理；CLI 可以用零预算和
 - Responses 优先调用官方 `POST /responses/input_tokens`；同一地址、凭据、协议、模型和输入投影，去掉生成侧字段，返回必须是 `response.input_tokens`。完整精确计数优先于文本字节边界，避免其过度保守误拒；官方接口覆盖图像、文件、工具结构和消息格式的处理后输入计数。见 [OpenAI token counting](https://developers.openai.com/api/docs/guides/token-counting)。
 - Anthropic 的 `count_tokens` 官方定位是估计而非精确值；当前为其多模态输入预留两倍计数加 4096 余量，不能宣称数学上的绝对上界。见 [Anthropic token counting](https://platform.claude.com/docs/en/build-with-claude/token-counting)。
 - Chat／Ollama 没有这里可依赖的通用远程多模态计数；严格任务遇媒体时明确停止。Responses 兼容端点若不支持 count-only 接口，文本可以回到完整字节预留，图片／不透明续接不会盲猜。普通交互会话行为不变。
+- 原生 Ollama 的预算档案与推理共用渠道、专用端点和模型前缀解析，不依赖 OpenAI／Anthropic 模型目录。最大输出通过 `options.num_predict` 发送；缺少原始 `prompt_eval_count`／`eval_count` 仍是未知结果，不补零伪造计费证据。参见 [Ollama 参数说明](https://docs.ollama.com/modelfile#valid-parameters-and-values)。
 - 可变的远程 URL 附件不能借一次计数授权另一次抓取；严格任务要求固定的内联附件。Browser 截图产生的固定 PNG 可走 Responses 计数，不需要把截图上传到外部 URL。
 
 计数连接同样执行出域策略、工作区信任、凭据传输保护、禁止跳转、超时和取消，审计仅记录元数据。这里没有用真实付费账号宣称兼容网关已验收，也不把供应商返回计数的可信性变成对任意自定义 tokenizer／隐藏提示词的保证。

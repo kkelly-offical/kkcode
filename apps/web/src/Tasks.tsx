@@ -59,9 +59,12 @@ export function TaskPanel({ rpc, sessionId }: { rpc: (method: string, params?: I
       <p>验收 {selected.verification.passed}/{selected.verification.required} · 失败 {selected.verification.failed} · 未知 {selected.verification.unknown}</p>
       <p className="sheet-note">操作：成功 {selected.actionCounts.succeeded} · 失败 {selected.actionCounts.failed} · 待回执 {selected.actionCounts.prepared} · 待核查 {selected.actionCounts.unknown}</p>
       {selected.budget ? <>
-        <p className="sheet-note">预算 ${selected.budget.budgetUsd.toLocaleString()} USD · 已结算 ${selected.budget.spentUsd.toLocaleString()} · 请求预留 ${selected.budget.reservedUsd.toLocaleString()}</p>
-        <p className="sheet-note">固定期限：{new Date(selected.budget.deadlineAt).toLocaleString()}{selected.budget.budgetUsd === 0 ? ' · 额度为零，不会发送新的模型请求' : ''}</p>
-        {selected.budget.hasUnknown && <p className="sheet-error">部分调用计费待核查，保留上界 ${selected.budget.unknownUsd.toLocaleString()} USD（不是实际账单）。核查前不会继续发起模型请求。</p>}
+        {selected.budget.localFree ? <>
+          <p className="sheet-note">本地免费 · 请求名额 {selected.budget.localFree.usedRequests}/{selected.budget.localFree.maxRequests} · 累计预留 token {selected.budget.localFree.reservedTokens.toLocaleString()}/{selected.budget.localFree.maxTokens.toLocaleString()}</p>
+          <p className="sheet-note">累计预留是核准的保守上界，不是实际 token 用量。仅限宿主明确批准的本机服务，不授权付费渠道。</p>
+        </> : <p className="sheet-note">预算 ${selected.budget.budgetUsd.toLocaleString()} USD · 已结算 ${selected.budget.spentUsd.toLocaleString()} · 请求预留 ${selected.budget.reservedUsd.toLocaleString()}</p>}
+        <p className="sheet-note">固定期限：{new Date(selected.budget.deadlineAt).toLocaleString()}{selected.budget.budgetUsd === 0 && !selected.budget.localFree ? ' · 额度为零，不会发送新的模型请求' : ''}</p>
+        {selected.budget.hasUnknown && <p className="sheet-error">{selected.budget.localFree ? '部分调用结果待核查；即使美元费用为零，也不会自动重放。' : `部分调用计费待核查，保留上界 $${selected.budget.unknownUsd.toLocaleString()} USD（不是实际账单）。`}核查前不会继续发起模型请求。</p>}
       </> : <p className="sheet-note">尚无已确认的持久预算，不能据此授权新模型调用。</p>}
       {selected.state === 'outcome_unknown' && <p className="sheet-error">有操作的结果尚不能确认。请在执行电脑核查证据；重复运行可能造成重复写入或其他副作用。</p>}
       <button disabled={busy} onClick={() => void run(() => refresh(selected.id))}>刷新任务</button>

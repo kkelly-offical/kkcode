@@ -118,9 +118,14 @@ export async function readDeviceFile(input, roots) {
   const file = await resolveWithPolicy(requested, policy)
   const before = await lstat(file, { bigint: true }), limit = 2 * 1024 * 1024
   if (!before.isFile() || before.isSymbolicLink() || before.size > BigInt(limit)) throw new ProtocolError('file_limit', 'Preview supports regular text files up to 2 MiB')
-  const handle = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW || 0))
+  // A harmless-looking workspace filename may be a hard link to a credential
+  // or a file outside the approved roots. realpath cannot identify that alias.
+  const singleLink = info => { if (info.nlink !== 1n) throw new ProtocolError('path_denied', '此文件存在多个硬链接，无法确认其他链接是否位于授权范围或私密目录内，不能通过远控预览。', 403) }
+  singleLink(before)
+  const handle = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0))
   try {
     const pinned = await handle.stat({ bigint: true }), verified = await resolveWithPolicy(file, policy), current = await lstat(verified, { bigint: true })
+    singleLink(pinned); singleLink(current)
     if (verified !== file || !pinned.isFile() || pinned.ino !== before.ino || pinned.dev !== before.dev || pinned.ino !== current.ino || pinned.dev !== current.dev || current.isSymbolicLink()) throw new ProtocolError('file_changed', 'The file changed while it was being opened; retry the preview', 409)
     const chunks = []; let total = 0
     while (true) {
@@ -131,6 +136,7 @@ export async function readDeviceFile(input, roots) {
       if (total > limit) throw new ProtocolError('file_limit', 'Preview supports text files up to 2 MiB')
       chunks.push(chunk.subarray(0, bytesRead))
     }
+    singleLink(await handle.stat({ bigint: true }))
     const content = Buffer.concat(chunks).toString('utf8')
     if (content.includes('\0')) throw new ProtocolError('binary_file', 'Binary file preview is unavailable')
     return { path: file, content }

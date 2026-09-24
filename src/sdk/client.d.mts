@@ -12,7 +12,7 @@ export interface RemoteRun {
   actionCounts: Record<import('./storage.mjs').ActionState, number>;
   verification: { required: number; passed: number; failed: number; unknown: number };
   controls: { canPause: boolean; canCancel: boolean };
-  budget: { budgetUsd: number; spentUsd: number; reservedUsd: number; unknownUsd: number; deadlineAt: number; hasUnknown: boolean } | null;
+  budget: { budgetUsd: number; spentUsd: number; reservedUsd: number; unknownUsd: number; deadlineAt: number; hasUnknown: boolean; localFree?: { maxRequests: number; maxTokens: number; usedRequests: number; reservedTokens: number } } | null;
 }
 export interface RemoteRunEvent { sequence: number; revision: number; type: string; createdAt: number; actionId?: string; state?: string; control?: 'pause' | 'cancel' }
 export type RunParams = { sessionId: string; runId: string };

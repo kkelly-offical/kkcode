@@ -15,11 +15,11 @@
 | `sdk/artifacts` | 浏览器安全的显式分块下载，完整 SHA-256 校验后返回 Blob；不自动预览／执行 |
 | `sdk/diagnostics` | 规范账本／内核的只读诊断，不执行或恢复未知动作；宿主仍负责授权，不能把私密账本交给访客 |
 | `sdk/storage` | 私密 SQLite/WAL 与产物原件，低层可信宿主接口，不自行授权或执行 |
-| `sdk/runs` | 宿主确认、独立工作树、严格执行、持久操作与恢复；不能原样暴露为模型工具 |
+| `sdk/runs` | 宿主确认、独立工作树、严格执行、持久操作与恢复；显式 Linux localFree 能力；不能原样暴露为模型工具 |
 | `sdk/tasks` | 有界持久 DAG、逐项子任务/结果核准；不是旧后台线程的别名 |
 | `sdk/environments` | 宿主批准的 npm 锁文件/SRI 环境、单独批准离线安装脚本、恢复验签及只读挂载；不是模型安装工具 |
 | `sdk/memory` | 有来源的项目事实、待确认个人偏好、更正/禁用/忘记 |
-| `sdk/models` | 角色模型解析与能力来源档案，不虚构远端模型能力 |
+| `sdk/models` | 角色模型解析、能力来源档案与 `prepareBudgetProfile(s)` 拟审批价目；读取档案不等于授权推理 |
 | `sdk/browser` | 隔离浏览器、本机授权桥接；宿主授权方法不能转成无认证 RPC |
 | `sdk/browser-recipes` | 限定账号与工作区的实验录制/审核/离线验证；模型运行逐叶重新治理 |
 | `sdk/office`、`sdk/lsp` | 明确配置的离线隔离文档与语言服务；不自动安装依赖 |
@@ -169,6 +169,68 @@ CLI 对应 `environments inspect/prepare/verify`、`runs start --environment …
 [严格任务指南](trusted-runs.md) 给出可运行合同格式；[独立验收](independent-review.md)
 和 [预算](durable-budgets.md) 说明哪些证据可用于完成判断。
 
+## 显式本机免费模型能力
+
+普通 `budgetUsd: 0` 仍不允许推理。对操作者明确确认不产生外部 API 账单的本机
+服务，`sdk/runs` 提供 `createLocalFreeInferenceAuthorization`：这是可信宿主能力，
+不是模型或远程 RPC 可提交的 `localFree: true`。当前要求 Linux `/proc` 和 `ss`
+核验唯一监听进程，只接受字面 `127.0.0.1`／`[::1]`，不接受 DNS、通配监听、
+远端地址、查询凭据或自动重定向。
+
+以下是宿主接线片段，不是完整初始化程序。`hostConfigState` 必须来自可信宿主的
+实际配置（不能使用UI裁剪版本）；所选渠道已有明确窗口、输出上限及四项完整零单价，
+与受控kernel使用同一端点／协议／模型／凭据，并禁用额外原生压缩。准备函数读取价目
+形成拟审批 `BudgetProfile`，**不发推理、不自动确认、不自动持久化**；后续仍需真实
+宿主回调批准，再由协调器/SQLite冻结。不能只改一个价格字段或用能力档案的
+`resolveProviderProfile().scope` 冒充预算档案的 `scopeHash`。
+
+```ts
+import {
+  createLocalFreeInferenceAuthorization, createRunCoordinator
+} from '@kkelly-offical/kkcode/sdk/runs';
+import { prepareBudgetProfile } from '@kkelly-offical/kkcode/sdk/models';
+
+const proposedProfile = await prepareBudgetProfile(hostConfigState, {
+  providerType: selectedProvider, model: selectedModel
+});
+const authorization = await createLocalFreeInferenceAuthorization({
+  profile: proposedProfile,
+  baseUrl: verifiedLoopbackBaseUrl,
+  apiKeyEnv: 'LOCAL_MODEL_API_KEY', // 仅变量名；值由宿主当前安全配置提供
+  maxRequests: 20,
+  maxTokens: 1_000_000,
+  authorize: showExactLocalScopeAndAskUser
+});
+const coordinator = createRunCoordinator({
+  ...trustedHostOptions, // 已认证actor、受控kernel、store/artifacts与严格后端
+  budgetProfiles: [proposedProfile],
+  localFreeAuthorization: authorization
+});
+const run = await coordinator.start({
+  contract,
+  limits: { budgetUsd: 0, deadlineAt: Date.now() + 30 * 60 * 1000 }
+});
+```
+
+上述数值是有限额度示例，不代表推荐值或已批准额度。该能力同时绑定监听进程
+PID／启动时间／socket、端点、模型与凭据 HMAC；每次请求重查。它不能序列化成
+JSON 后当作权限恢复。恢复时由宿主用 `expectedPolicy` 对照原持久策略重新确认，
+服务重启、换凭据、换模型或调整限额不能沿用旧批准。
+监听身份检查会在等待计数／持久预留之后、实际派发前再次执行；这是对已观察到
+的进程身份进行核验，不是原子地认证 TCP 对端，也不能承诺阻止最后一次检查后
+瞬间发生的端口替换。不要把该机制用于不可信的多租户宿主，或当作 TLS 身份认证替代品。
+
+免费模式保持 USD 上限／已花费为零，仍逐请求持久扣减请求次数和保守 token
+授权量，只有一个在途请求，并受绝对期限限制；取消、崩溃或重启不退款／重置额度。
+`reservedTokens` 是累计授权量，不等于模型实际用量。未知结果即使金额为零也会
+阻止继续发请求，不向任务图转授。HTTP 认证例外只在当前有效能力绑定的准确
+loopback 服务内生效，不改变普通凭据传输／出域／工作区信任规则。
+
+“免费”不代表 GPU、电力或服务器资源无限。产品界面同时展示请求/token额度、
+截止时间与未知结果；真实模型评测与无模型 oracle 自检仍分开记分。详见
+[持久预算](durable-budgets.md) 与 [评测授权](evaluation-suite.md)。本说明不开放
+内部 provider 配置或旧聊天凭据，也不自动调用任何模型。
+
 ## Browser、文档和扩展边界
 
 - `sdk/browser` 隔离 Browser 使用可抛弃上下文、受控网络和明确来源。Bridge 连接
@@ -189,6 +251,7 @@ SDK `.mjs` 与 `.d.mts` 随 `src/` 打包，使用文档依 `files` 白名单提
 自动安装 Docker 镜像、浏览器引擎或模型。完整测试、浏览器 smoke、60 任务评测、
 Android/Web 源工程需要 Git checkout，不在全局安装目录假定存在 `scripts/`。
 
-外部真实付费模型双轮评测、公共 Forge 往返、Chrome/Edge 三系统、新版 CI 和七天
-试用仍须单独验收。当前 API／本地测试不代表这些门禁已经通过，也不代表
+获准本机真实模型双轮评测、GitLab 往返、Chrome/Edge 三系统、新版 CI 全绿和七天
+试用仍须单独验收；真实 GitHub 草稿往返已做但不等于通过人工 review 或可合并。
+当前 API／本地测试不代表这些门禁已经通过，也不代表
 `1.0.5-preview.0` 已发布或生产部署完成。

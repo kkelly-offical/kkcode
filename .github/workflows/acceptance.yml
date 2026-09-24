@@ -100,6 +100,9 @@ jobs:
             test/run-coordinator.test.mjs test/run-store-migration.test.mjs test/run-candidate-binding.test.mjs \
             test/task-graph.test.mjs test/request-budget.test.mjs \
             test/request-budget-crash.test.mjs test/strict-pricing-snapshot.test.mjs \
+            test/local-free-run-budget.test.mjs test/local-free-runtime.test.mjs \
+            test/local-free-recovery.test.mjs test/evaluation-local-free-suite.test.mjs \
+            test/ollama-budget.test.mjs test/run-store-backup-portability.test.mjs \
             test/strict-input-budget.test.mjs test/lsp-service.test.mjs \
             test/npm-environment.test.mjs test/environment-cli.test.mjs \
             test/npm-environment-security-review.test.mjs \

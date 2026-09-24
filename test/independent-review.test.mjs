@@ -4,9 +4,12 @@ import { execFileSync } from 'node:child_process'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
+import { createServer } from 'node:http'
+import { once } from 'node:events'
 import { prepareHostAcceptance, captureAcceptanceManifest } from '../src/kernel/session/acceptance-manifest.mjs'
 import { runIndependentReview, evaluateIndependentReview } from '../src/kernel/session/independent-review.mjs'
 import { runUsabilityGates } from '../src/kernel/session/usability-gates.mjs'
+import { budgetRoute } from '../src/usage/budget-profiles.mjs'
 
 async function fixture(t) {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'kk-independent-review-'))
@@ -51,6 +54,95 @@ test('independent review uses full source boundary, same conversation model and 
   assert.equal(evaluateIndependentReview(receipt, { manifest: f.options.manifest }).status, 'pass')
   assert.equal(JSON.stringify(receipt).includes('synthetic-private-key'), false)
   assert.equal(evaluateIndependentReview(JSON.parse(JSON.stringify(receipt)), { manifest: f.options.manifest }).status, 'unknown', 'serialized model data cannot mint a private receipt')
+})
+
+test('review scope follows actual credential rotation, not an environment label or unrelated provider settings', async t => {
+  const f = await fixture(t), envName = 'KKCODE_INDEPENDENT_REVIEW_FIXTURE_KEY'
+  const prior = process.env[envName]
+  t.after(() => { if (prior === undefined) delete process.env[envName]; else process.env[envName] = prior })
+  f.configState.config.provider.local.api_key = ''
+  f.configState.config.provider.local.api_key_env = envName
+  const run = () => runIndependentReview({ ...f.options, request: async input => validReport(input) })
+  process.env[envName] = 'synthetic-review-credential-one'
+  const first = await run()
+  assert.equal(first.status, 'approved', first.reason)
+  assert.equal(first.modelScope.endpointCredentialScope, budgetRoute(f.configState, { providerType: 'local', model: 'conversation-model' }).scopeHash)
+  process.env[envName] = 'synthetic-review-credential-two'
+  const rotated = await run()
+  assert.equal(rotated.status, 'approved', rotated.reason)
+  assert.notEqual(rotated.modelScope.endpointCredentialScope, first.modelScope.endpointCredentialScope)
+  f.configState.config.provider.local.timeout_ms = 23456
+  const unrelated = await run()
+  assert.equal(unrelated.modelScope.endpointCredentialScope, rotated.modelScope.endpointCredentialScope)
+  f.configState.config.provider.local.api_key = 'synthetic-inline-review-credential'
+  const inline = await run()
+  assert.notEqual(inline.modelScope.endpointCredentialScope, rotated.modelScope.endpointCredentialScope)
+  const serialized = JSON.stringify([first, rotated, unrelated, inline])
+  for (const privateValue of [envName, 'synthetic-review-credential-one', 'synthetic-review-credential-two', 'synthetic-inline-review-credential']) assert.equal(serialized.includes(privateValue), false)
+})
+
+test('invalid review route returns unknown without a credential scope or a provider request', async t => {
+  const f = await fixture(t)
+  let calls = 0
+  const request = async input => { calls++; return validReport(input) }
+  const unsupported = await runIndependentReview({ ...f.options, baseUrl: 'file:///private/not-a-provider', request })
+  assert.equal(unsupported.status, 'unknown'); assert.equal(unsupported.modelScope, null)
+  assert.equal(unsupported.coverage.complete, false); assert.equal(calls, 0)
+  assert.equal(JSON.stringify(unsupported).includes('/private/not-a-provider'), false)
+  const failed = await runIndependentReview({ ...f.options, request: async () => { throw new Error('synthetic transport failure with synthetic-private-key') } })
+  assert.equal(failed.status, 'unknown')
+  assert.match(failed.modelScope.endpointCredentialScope, /^[a-f0-9]{64}$/)
+  assert.equal(JSON.stringify(failed).includes('synthetic-private-key'), false)
+  delete f.configState.config.provider.local.base_url
+  const missing = await runIndependentReview({ ...f.options, request })
+  assert.equal(missing.status, 'unknown'); assert.equal(missing.modelScope, null)
+  assert.equal(calls, 0, 'a missing provider URL must not get a fabricated route identity')
+})
+
+test('independent review reaches real Ollama HTTP inference without tools or a model-catalog protocol', async t => {
+  const f = await fixture(t)
+  let calls = 0
+  const server = createServer(async (request, response) => {
+    calls++
+    try {
+      assert.equal(request.url, '/api/chat'); assert.equal(request.method, 'POST')
+      const chunks = []; for await (const chunk of request) chunks.push(chunk)
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      assert.equal(body.model, 'conversation-model'); assert.equal(body.stream, false)
+      assert.equal(body.tools, undefined); assert.equal(request.headers.authorization, undefined)
+      assert.ok(body.messages.some(message => message.role === 'system' && message.content.includes('independent code-review assistant')))
+      const user = body.messages.find(message => message.role === 'user')
+      const report = validReport({ messages: [user] })
+      response.setHeader('content-type', 'application/json')
+      response.end(JSON.stringify({ model: body.model, message: { role: 'assistant', content: report.text }, done: true, prompt_eval_count: 40, eval_count: 12 }))
+    } catch (error) { response.statusCode = 400; response.end(JSON.stringify({ error: error.message })) }
+  })
+  server.listen(0, '127.0.0.1'); await once(server, 'listening')
+  t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)) })
+  Object.assign(f.configState.config.provider.local, { type: 'ollama', base_url: `http://127.0.0.1:${server.address().port}`, api_key: '', api_key_env: '', timeout_ms: 3000 })
+  const receipt = await runIndependentReview(f.options)
+  assert.equal(calls, 1)
+  assert.equal(receipt.status, 'approved', receipt.reason)
+  assert.match(receipt.modelScope.endpointCredentialScope, /^[a-f0-9]{64}$/)
+  assert.equal(evaluateIndependentReview(receipt, { manifest: f.options.manifest }).status, 'pass')
+})
+
+test('review credential identity uses the same inline and explicit env precedence as inference', async t => {
+  const f = await fixture(t), configured = 'KK_REVIEW_CONFIGURED_TEST_KEY', explicit = 'KK_REVIEW_EXPLICIT_TEST_KEY'
+  const prior = Object.fromEntries([configured, explicit].map(name => [name, process.env[name]]))
+  t.after(() => { for (const name of [configured, explicit]) { if (prior[name] === undefined) delete process.env[name]; else process.env[name] = prior[name] } })
+  Object.assign(f.configState.config.provider.local, { api_key: '', api_key_env: configured })
+  process.env[configured] = 'synthetic-configured'; process.env[explicit] = 'synthetic-explicit'
+  const run = apiKeyEnv => runIndependentReview({ ...f.options, apiKeyEnv, request: async input => validReport(input) })
+  const base = await run(null), overridden = await run(explicit)
+  assert.notEqual(base.modelScope.endpointCredentialScope, overridden.modelScope.endpointCredentialScope)
+  assert.equal((await run('')).modelScope.endpointCredentialScope, base.modelScope.endpointCredentialScope, 'empty override has the same configured-env fallback as inference')
+  process.env[configured] = 'synthetic-configured-rotated'
+  assert.equal((await run(explicit)).modelScope.endpointCredentialScope, overridden.modelScope.endpointCredentialScope)
+  f.configState.config.provider.local.api_key = 'synthetic-inline-wins'
+  const inline = await run(explicit)
+  process.env[explicit] = 'synthetic-explicit-rotated'
+  assert.equal((await run(explicit)).modelScope.endpointCredentialScope, inline.modelScope.endpointCredentialScope)
 })
 
 test('workspace review-state cannot satisfy a strict gate; only bound host receipt can', async t => {

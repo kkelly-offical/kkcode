@@ -143,10 +143,10 @@ export async function requestOllama(input) {
   const payload = {
     model,
     messages: mapMessages(system, messages),
-    stream: false
+    stream: false,
+    ...(Number.isSafeInteger(input.maxTokens) && input.maxTokens > 0 ? { options: { num_predict: input.maxTokens } } : {}),
+    ...(tools?.length ? { tools: mapTools(tools) } : {})
   }
-  const mappedTools = mapTools(tools)
-  if (mappedTools) payload.tools = mappedTools
 
   const response = await fetch(endpoint, {
     redirect: 'error',
@@ -157,7 +157,8 @@ export async function requestOllama(input) {
       protocol: input.protocol || "ollama",
       requestId: input.requestId || "",
       accept: "application/json",
-      contentType: "application/json"
+      contentType: "application/json",
+      authorization: input.apiKey ? `Bearer ${input.apiKey}` : ""
     }),
     body: JSON.stringify(payload),
     signal: timeoutSignal(timeoutMs, signal)
@@ -228,10 +229,10 @@ export async function* requestOllamaStream(input) {
   const payload = {
     model,
     messages: mapMessages(system, messages),
-    stream: true
+    stream: true,
+    ...(Number.isSafeInteger(input.maxTokens) && input.maxTokens > 0 ? { options: { num_predict: input.maxTokens } } : {}),
+    ...(tools?.length ? { tools: mapTools(tools) } : {})
   }
-  const mappedTools = mapTools(tools)
-  if (mappedTools) payload.tools = mappedTools
 
   const response = await fetch(endpoint, {
     redirect: 'error',
@@ -242,7 +243,8 @@ export async function* requestOllamaStream(input) {
       protocol: input.protocol || "ollama",
       requestId: input.requestId || "",
       accept: "application/x-ndjson, application/json",
-      contentType: "application/json"
+      contentType: "application/json",
+      authorization: input.apiKey ? `Bearer ${input.apiKey}` : ""
     }),
     body: JSON.stringify(payload),
     signal: timeoutSignal(timeoutMs, signal)

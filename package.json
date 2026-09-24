@@ -125,6 +125,7 @@
     "docs/context-and-harness.md",
     "docs/plan-1.0.5.md",
     "docs/implementation-1.0.5.md",
+    "docs/codeql-triage-1.0.5.md",
     "docs/protocol-adapters.md",
     "docs/sdk-guide.md",
     "docs/sdk-storage.md",
