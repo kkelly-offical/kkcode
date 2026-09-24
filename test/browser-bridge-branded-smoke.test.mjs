@@ -84,6 +84,7 @@ test('profile reuse probe uses the same exact Default profile and closes only it
       return { stdout: '', stderr: '' }
     } })
   assert.equal(called, 1); assert.equal(closed, true); assert.equal(result.verified, true)
+  assert.equal(result.process.settled, true); assert.equal(result.process.exitCode, 0)
   assert.equal(context.listenerCount('page'), 0); assert.equal(existing.listenerCount('framenavigated'), 0)
 })
 
@@ -93,9 +94,27 @@ test('profile reuse failure is surfaced without stderr data and cancels its pend
     launch: async () => { throw new Error('EACCES token=FIXTURE_PRIVATE_TOKEN /private/secret-profile') } }), error => {
     assert.equal(error.code, 'browser_profile_reuse_failed')
     assert.equal(error.diagnosticFailure.reason, 'permission_denied')
+    assert.equal(error.profileReuseDiagnostics.settled, true)
     assert.doesNotMatch(JSON.stringify(error), /FIXTURE_PRIVATE|secret-profile/)
     return true
   })
+  assert.equal(context.listenerCount('page'), 0)
+})
+
+test('profile reuse distinguishes acknowledged-but-undelivered URL handoff without exposing subprocess output', async () => {
+  const context = new EventEmitter(); context.pages = () => []
+  let diagnosticCaptures = 0
+  await assert.rejects(probeBrandedProfileReuse({ context, executable: '/fixture/browser', profile: '/fixture/profile', origin: 'http://127.0.0.1:1234', env: {}, timeoutMs: 30,
+    onPending: async () => { diagnosticCaptures++ },
+    launch: async () => ({ stdout: 'Opening in existing browser session. fixture-secret-url?token=CANARY', stderr: 'PRIVATE_PROFILE_PATH' }) }), error => {
+    assert.equal(error.code, 'browser_profile_reuse_failed')
+    assert.equal(error.profileReuseDiagnostics.exitCode, 0)
+    assert.equal(error.profileReuseDiagnostics.existingSessionReported, true)
+    assert.ok(error.profileReuseDiagnostics.stdoutBytes > 0)
+    assert.doesNotMatch(JSON.stringify(error), /CANARY|PRIVATE_PROFILE_PATH|fixture-secret-url/)
+    return true
+  })
+  assert.equal(diagnosticCaptures, 1)
   assert.equal(context.listenerCount('page'), 0)
 })
 
@@ -217,6 +236,18 @@ test('branded identity rejects disabled sandbox/security, debugging TCP, extensi
   assert.throws(() => verifyBrandedIdentity({ ...input, commandLine: [...input.commandLine, '--enable-automation'] }), denied('browser_automation_reuse_incompatible'))
 })
 
+test('first-run launch integration only admits bounded initialization flags and retains every security requirement', () => {
+  const fixture = identities[2], input = identity(fixture)
+  const options = brandedLaunchOptions({ channel: fixture.channel, profile: fixture.profile, env: {}, initializationArgs: ['--no-first-run', '--no-default-browser-check', '--disable-sync'] })
+  assert.equal(options.args.filter(value => value === '--no-default-browser-check').length, 1)
+  assert.ok(options.args.includes('--disable-sync')); assert.ok(options.args.includes('--no-first-run'))
+  assert.equal(options.chromiumSandbox, true)
+  assert.doesNotThrow(() => verifyBrandedIdentity({ ...input, commandLine: [fixture.binary, ...options.args] }))
+  for (const extra of ['--no-sandbox', '--enable-automation', '--remote-debugging-port=9222', '--disable-web-security', '--enable-sync', '--make-default-browser', '--metrics-recording-only']) {
+    assert.throws(() => brandedLaunchOptions({ channel: fixture.channel, profile: fixture.profile, env: {}, initializationArgs: [extra] }), denied('first_run_arguments_invalid'))
+  }
+})
+
 test('branded identity rejects Chromium/CfT paths, headless UA and a mismatched browser brand', () => {
   const input = identity(identities[0])
   for (const binary of ['/opt/chromium/chrome', '/tmp/chrome-for-testing/chrome', '/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing', '/tmp/chromium-123/chrome-linux/chrome', '/opt/microsoft/msedge/msedge']) {
@@ -245,6 +276,6 @@ test('non-CI script entry reports blocked with exit 2 and never reports a passed
     assert.equal(error.code, 2)
     const receipt = JSON.parse(error.stdout)
     assert.equal(receipt.status, 'blocked'); assert.equal(receipt.code, 'github_hosted_required')
-    assert.equal(receipt.additionalEulaAccepted, false); assert.equal(receipt.assertions, undefined)
+    assert.equal(receipt.additionalEulaUiClicked, false); assert.equal(receipt.assertions, undefined)
   }
 })

@@ -19,6 +19,7 @@ import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { browserBridgeStatus, bridgeProcessEnvironment } from '../src/kernel/browser/bridge-runtime.mjs'
 import { authorizeBrowserBridge, createBrowserBridgeController, revokeBrowserBridge } from '../src/kernel/browser/bridge.mjs'
+import { prepareBrandedFirstRun, initializeBrandedFirstRun } from './browser-bridge-first-run.mjs'
 
 export const BRANDED_EXTENSION_REVISION = '1b025d7e20a026371cd5f98ba0cdce48892737c8'
 export const BRANDED_EXTENSION_VERSION = '0.4.0'
@@ -44,13 +45,15 @@ export function brandedBridgePreflight({ env = process.env, platform = process.p
   return { channel, temp, source: path.resolve(env.KKCODE_BRIDGE_EXTENSION_SOURCE), runtimeRoot: path.resolve(env.KKCODE_BRIDGE_TEST_RUNTIME), report: env.KKCODE_BRIDGE_REPORT ? path.resolve(env.KKCODE_BRIDGE_REPORT) : null }
 }
 
-export function brandedLaunchOptions({ channel, profile, env }) {
+export function brandedLaunchOptions({ channel, profile, env, initializationArgs = [] }) {
+  if (!Array.isArray(initializationArgs) || initializationArgs.some(value => !['--no-first-run', '--no-default-browser-check', '--disable-sync'].includes(value))) throw blocked('first_run_arguments_invalid', 'First-run setup cannot supply browser security overrides or arbitrary launch arguments.')
   return { channel, headless: false, chromiumSandbox: true, ignoreDefaultArgs: true, timeout: 90000,
-    // No hidden Playwright defaults that disable phishing checks, sandbox,
-    // storage partitioning or first-run/licensing/permission screens.
+    // No hidden Playwright defaults that disable phishing checks, sandbox or
+    // storage partitioning. Only the explicitly authorized first-run helper
+    // may supply the separately recorded, finite initialization arguments.
     // Chromium rejects native second-launch URL forwarding when this process
     // has --enable-automation. The extension relay needs that normal forwarding.
-    args: [`--user-data-dir=${profile}`, '--profile-directory=Default', '--remote-debugging-pipe', '--enable-unsafe-extension-debugging', '--no-default-browser-check', '--force-color-profile=srgb', 'about:blank'], env }
+    args: [...new Set([`--user-data-dir=${profile}`, '--profile-directory=Default', '--remote-debugging-pipe', '--enable-unsafe-extension-debugging', '--no-default-browser-check', '--force-color-profile=srgb', ...initializationArgs]), 'about:blank'], env }
 }
 
 function windowsCommandLine(text) {
@@ -194,22 +197,37 @@ export function createBrandedConnectionDiagnostics() {
 
 /** Prove that the exact command shape used by upstream MCP reuses this already
  * running synthetic profile. No extension URL, native permission or real site. */
-export async function probeBrandedProfileReuse({ context, executable, profile, origin, env, timeoutMs = 15000, launch = exec }) {
+export async function probeBrandedProfileReuse({ context, executable, profile, origin, env, timeoutMs = 15000, launch = exec, onPending = undefined }) {
   const url = new URL(`/launch-probe-${randomUUID()}`, origin)
   if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1') throw blocked('fixture_scope_required', 'Profile reuse probe requires the local synthetic fixture.')
   const controller = new AbortController()
   const observed = waitForContextPage(context, page => page.url() === url.href, timeoutMs, controller.signal,
     () => blocked('browser_profile_reuse_failed', 'The installed browser did not reopen a local fixture tab in the already running Default profile.'))
   observed.catch(() => {})
-  let page
+  const processEvidence = { started: false, settled: false, exitCode: null, killed: false, stdoutBytes: 0, stderrBytes: 0, existingSessionReported: false, singletonFailureReported: false }
+  const recordOutput = value => {
+    const stdout = String(value?.stdout || ''), stderr = String(value?.stderr || '')
+    processEvidence.stdoutBytes = Buffer.byteLength(stdout); processEvidence.stderrBytes = Buffer.byteLength(stderr)
+    processEvidence.existingSessionReported = /Opening in existing browser session/i.test(stdout + stderr)
+    processEvidence.singletonFailureReported = /SingletonLock|SingletonSocket|ProcessSingleton|profile.*(?:in use|locked)/i.test(stderr)
+  }
+  let page, diagnosticCapture
+  const timer = typeof onPending === 'function' ? setTimeout(() => { diagnosticCapture = Promise.resolve().then(onPending).catch(() => {}) }, Math.min(5000, Math.max(1, Math.floor(timeoutMs / 2)))) : null
   try {
+    processEvidence.started = true
     const processResult = launch(executable, [`--user-data-dir=${profile}`, '--profile-directory=Default', url.href], { env, timeout: timeoutMs, maxBuffer: 16384, windowsHide: true, detached: true })
-      .catch(error => { const diagnostics = createBrandedConnectionDiagnostics(); const details = diagnostics.failure('profile_reuse', error); throw Object.assign(blocked('browser_profile_reuse_failed', `The exact browser/profile reuse command failed (${details.reason}); no fallback was attempted.`), { diagnosticFailure: details }) })
+      .then(result => { processEvidence.settled = true; processEvidence.exitCode = 0; recordOutput(result); return result })
+      .catch(error => {
+        processEvidence.settled = true; processEvidence.exitCode = Number.isInteger(error.code) ? error.code : null; processEvidence.killed = error.killed === true; recordOutput(error)
+        const diagnostics = createBrandedConnectionDiagnostics(), details = diagnostics.failure('profile_reuse', error)
+        throw Object.assign(blocked('browser_profile_reuse_failed', `The exact browser/profile reuse command failed (${details.reason}); no fallback was attempted.`), { diagnosticFailure: details })
+      })
     processResult.catch(error => controller.abort(error))
     ;[page] = await Promise.all([observed, processResult])
     await page.close()
-    return { verified: true, profileDirectory: 'Default', localFixtureOnly: true }
-  } finally { controller.abort(); if (page && !page.isClosed()) await page.close().catch(() => {}) }
+    return { verified: true, profileDirectory: 'Default', localFixtureOnly: true, process: { ...processEvidence } }
+  } catch (error) { error.profileReuseDiagnostics = { ...processEvidence }; throw error }
+  finally { clearTimeout(timer); controller.abort(); await diagnosticCapture; if (page && !page.isClosed()) await page.close().catch(() => {}) }
 }
 
 export function verifyBrandedIdentity({ channel, platform, commandLine, version, userAgent, profile }) {
@@ -294,13 +312,19 @@ export async function runBrandedBridgeSmoke({ env = process.env } = {}) {
   if (!sourceAllowed(temp, await realpath(setup.source), workspace)) throw blocked('fixture_scope_required', 'Extension source resolves outside the explicitly selected CI checkout.')
   const runtime = await browserBridgeStatus({ rootDir: setup.runtimeRoot })
   if (!runtime.installed) throw blocked('runtime_required', 'Install and verify the pinned MCP runtime in the dedicated fixture directory before running acceptance.')
-  const fixture = await mkdtemp(path.join(temp, 'kkcode-branded-bridge-')), profile = path.join(fixture, 'profile')
+  const fixture = await mkdtemp(path.join(temp, 'kkcode-branded-bridge-'))
+  let profile = path.join(fixture, 'profile'), firstRunSetup
   const priorRoot = process.env.KKCODE_HOME
   process.env.KKCODE_HOME = path.join(fixture, 'kkcode-state')
   let context, controller, server, receipt, failure, diagnosticCapture, diagnosticTimer, browserEvidence, extensionEvidence, profileReuseEvidence
   let nativeProbeHttpRequests = 0
   const connectionDiagnostics = createBrandedConnectionDiagnostics(), connectionAbort = new AbortController()
   try {
+    if (env.KKCODE_BRIDGE_ALLOW_FIRST_RUN_SETUP === '1') {
+      firstRunSetup = await prepareBrandedFirstRun({ env, channel: setup.channel, parent: fixture })
+      profile = firstRunSetup.profile
+      await initializeBrandedFirstRun({ env, channel: setup.channel, profile, phase: 'prelaunch' })
+    }
     const extension = await buildPinnedBrandedExtension({ source: setup.source, destination: path.join(fixture, 'extension') })
     const childEnv = bridgeProcessEnvironment()
     if (process.platform === 'linux' && setup.report) {
@@ -312,8 +336,9 @@ export async function runBrandedBridgeSmoke({ env = process.env } = {}) {
         })().catch(() => {})
       }, 20000)
     }
-    try { context = await chromium.launchPersistentContext(profile, brandedLaunchOptions({ channel: setup.channel, profile, env: childEnv })) }
+    try { context = await chromium.launchPersistentContext(profile, brandedLaunchOptions({ channel: setup.channel, profile, env: childEnv, initializationArgs: firstRunSetup?.args || [] })) }
     finally { clearTimeout(diagnosticTimer); await diagnosticCapture }
+    if (firstRunSetup) firstRunSetup.receipt = await initializeBrandedFirstRun({ env, channel: setup.channel, profile, phase: 'postlaunch' })
     const browser = context.browser()
     assert.ok(browser, 'persistent context must expose the real browser')
     const cdp = await browser.newBrowserCDPSession()
@@ -351,7 +376,10 @@ export async function runBrandedBridgeSmoke({ env = process.env } = {}) {
     await page.goto(origin)
     assert.equal(await page.frameLocator('iframe').locator('p').textContent(), 'PRIVATE_EMBEDDED_FRAME_CANARY')
     const excluded = await context.newPage(); await excluded.goto(`${origin}/unshared`); await page.bringToFront()
-    const profileReuse = await probeBrandedProfileReuse({ context, executable: identity.executable, profile, origin, env: childEnv })
+    const profileReuse = await probeBrandedProfileReuse({ context, executable: identity.executable, profile, origin, env: childEnv,
+      // Before the second process times out, a native modal can explain why
+      // singleton URL forwarding has not unlocked. No MCP token UI exists yet.
+      onPending: process.platform === 'darwin' && setup.report ? () => exec('/usr/sbin/screencapture', ['-x', '-t', 'png', path.join(temp, `${setup.channel}-desktop.png`)], { timeout: 5000, maxBuffer: 65536 }) : undefined })
     profileReuseEvidence = profileReuse
     await page.bringToFront()
     let screenshotResultFormat
@@ -429,18 +457,19 @@ export async function runBrandedBridgeSmoke({ env = process.env } = {}) {
     assert.ok(!(await cdp.send('Extensions.getExtensions')).extensions.some(item => item.id === installed.id))
     receipt = { status: 'passed', platform: process.platform, architecture: process.arch, browser: identity, runtime: runtime.version,
       extension: { version: extension.version, id: installed.id, sourceRevision: extension.sourceRevision, sourceHash: extension.sourceHash, buildHash: extension.buildHash },
-      setup: { officialCdpInstall: true, extraExtensionInstallationDebugging: true, scope: 'test preparation only; ephemeral GitHub-hosted runner and disposable profile', nativeStoreInstallationUiTested: false, additionalEulaAccepted: false, osPolicyModified: false },
+      setup: { officialCdpInstall: true, extraExtensionInstallationDebugging: true, scope: 'test preparation only; ephemeral GitHub-hosted runner and disposable profile', nativeStoreInstallationUiTested: false, additionalEulaUiClicked: false, osPolicyModified: false, firstRunInitialization: firstRunSetup?.receipt || null },
       assertions: { approvalDialog: true, selectedTabOnly: true, syntheticCookie: true, nestedFrameContentOmitted: true, screenshotDefaultDenied: true, screenshotOptIn: true, unapprovedTabPixelsAbsent: true, revoked: true, existingTabsSurviveDisconnect: true, extensionUninstalled: true }, screenshotResultFormat,
       runner: { os: env.RUNNER_OS, imageOS: env.ImageOS || null, imageVersion: env.ImageVersion || null, runId: env.GITHUB_RUN_ID || null, runAttempt: env.GITHUB_RUN_ATTEMPT || null }, profileReuse, connectionDiagnostics: connectionDiagnostics.snapshot(), existingUserProfilesTouched: false }
   } catch (error) {
     failure = error
     failure.connectionDiagnostics = connectionDiagnostics.snapshot()
     failure.nativeProbeHttpRequests = nativeProbeHttpRequests
+    failure.firstRunInitialization = firstRunSetup?.receipt || null
     failure.browserEvidence = browserEvidence; failure.extensionEvidence = extensionEvidence; failure.profileReuseEvidence = profileReuseEvidence
     // A native first-run modal may not appear as a CDP page. Capture only the
     // disposable hosted-runner desktop before MCP/extension approval has begun;
     // never grant Screen Recording permission or capture extension token UI.
-    if (process.platform === 'darwin' && setup.report && connectionDiagnostics.snapshot().phase === 'not_started') {
+    if (process.platform === 'darwin' && setup.report && connectionDiagnostics.snapshot().phase === 'not_started' && !await access(path.join(temp, `${setup.channel}-desktop.png`)).then(() => true, () => false)) {
       await exec('/usr/sbin/screencapture', ['-x', '-t', 'png', path.join(temp, `${setup.channel}-desktop.png`)], { timeout: 5000, maxBuffer: 65536 }).catch(() => {})
     }
     if (context && setup.report) {
@@ -468,7 +497,8 @@ async function main() {
   try { receipt = await runBrandedBridgeSmoke() }
   catch (error) { receipt = { status: error.blocked ? 'blocked' : 'failed', channel: process.env.KKCODE_BRIDGE_TEST_CHANNEL || null, code: error.code || 'branded_bridge_acceptance_failed', message: String(error.message).slice(0, 8000),
     ...(error.connectionDiagnostics ? { connectionDiagnostics: error.connectionDiagnostics } : {}), ...(error.diagnosticFailure ? { diagnosticFailure: error.diagnosticFailure } : {}),
-    ...(error.browserEvidence ? { browser: error.browserEvidence } : {}), ...(error.extensionEvidence ? { extension: error.extensionEvidence } : {}), ...(error.profileReuseEvidence ? { profileReuse: error.profileReuseEvidence } : {}), nativeProbeHttpRequests: error.nativeProbeHttpRequests ?? null, additionalEulaAccepted: false }; process.exitCode = error.blocked ? 2 : 1 }
+    ...(error.browserEvidence ? { browser: error.browserEvidence } : {}), ...(error.extensionEvidence ? { extension: error.extensionEvidence } : {}), ...(error.profileReuseEvidence ? { profileReuse: error.profileReuseEvidence } : {}),
+    ...(error.profileReuseDiagnostics ? { profileReuseDiagnostics: error.profileReuseDiagnostics } : {}), firstRunInitialization: error.firstRunInitialization || null, nativeProbeHttpRequests: error.nativeProbeHttpRequests ?? null, additionalEulaUiClicked: false }; process.exitCode = error.blocked ? 2 : 1 }
   if (process.env.KKCODE_BRIDGE_REPORT) {
     try {
       const setup = brandedBridgePreflight()

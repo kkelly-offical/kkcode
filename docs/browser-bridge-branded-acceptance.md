@@ -25,8 +25,10 @@ Edge 与官方 Playwright 扩展的真实连接。六格矩阵必须各有自己
 - 不打开 TCP 远程调试端口；不使用 CDP 连接用户正在使用的浏览器。
 - 不通过 `--load-extension`、`--disable-extensions-except` 等启动参数绕开安装接口。
 - 不关闭 Chromium sandbox，不更改 AppArmor／sysctl，不添加 SUID helper。
-- 不自动接受浏览器 EULA、登录／首次启动或操作系统权限界面；若出现需要处理的
-  初始页面，验收明确受阻，不能自动点击它们换取绿灯。
+- 首次初始化须另有明确授权；用户已于2026-09-24批准**仅临时GitHub-hosted CI**的
+  官方首次条款与基础初始化。通过专用新profile配置初始化，不登录、导入、同步、
+  授予可选诊断或更改默认浏览器；不修改OS策略、安装目录或个人profile。
+  若仍出现不在此范围内的原生权限/登录页面，保持受阻，不任意点击换取通过。
 
 产品用户仍按 [Bridge 使用指南](browser-bridge.md) 在本机安装官方扩展、核对并
 批准页面组。**不要为了在个人电脑运行此脚本而伪造 CI 环境变量或降低安全设置。**
@@ -41,6 +43,7 @@ Edge 与官方 Playwright 扩展的真实连接。六格矩阵必须各有自己
 | `GITHUB_ACTIONS` / `RUNNER_ENVIRONMENT` | `true` / `github-hosted`；不接受普通本机或 self-hosted runner |
 | `RUNNER_OS` | 与实际 Windows / macOS / Linux 一致；Linux 必须非 root |
 | `KKCODE_BRIDGE_ALLOW_EXTENSION_DEBUGGING` | 精确为 `1`，仅授权本轮 CI 临时扩展安装调试 |
+| `KKCODE_BRIDGE_ALLOW_FIRST_RUN_SETUP` | 可选，精确为 `1`才允许另行授权的全新私有测试profile初始化；不能沿用已有profile |
 | `KKCODE_BRIDGE_TEST_CHANNEL` | `chrome` 或 `msedge`；Chromium、Chrome for Testing、beta 等不是替代验收 |
 | `RUNNER_TEMP` | 已存在的绝对临时目录 |
 | `KKCODE_BRIDGE_TEST_RUNTIME` | `RUNNER_TEMP` 下专用、已安装并校验锁定 MCP 运行包的目录 |
@@ -62,6 +65,16 @@ Windows/macOS runner 直接运行同一 Node 脚本。不要复制这段命令�
 安装；前置条件不足时的正确结果是 `blocked`。
 
 ## 实际检查什么
+
+已授权的首次初始化由`scripts/browser-bridge-first-run.mjs`单独实施：只创建新的
+私有profile，写Chromium官方空`First Run`标记、明确的指标同意false、登录/导入false，
+启动仅增加`--no-first-run`、`--no-default-browser-check`和`--disable-sync`。
+不使用会启用本地指标记录的`--metrics-recording-only`，不写OS或厂商全局策略。
+启动前后核验同一目录身份及配置，变化或不支持时拒绝通过。
+
+回执明确这是**测试配置初始化**，不是原生首次使用界面点击验收；也不是所有厂商
+必需遥测的网络审计。仅有初始化不能算Bridge通过，后面仍必须实际完成同profile
+的原生URL转交、官方扩展选择授权、读写范围及撤销检查。
 
 1. 从真实 browser-level CDP 读取版本，再读取当前页面的 User-Agent。启动参数、
    可执行文件和实际 profile 从精确的 `chrome://version/` / `edge://version/`

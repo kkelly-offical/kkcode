@@ -185,6 +185,9 @@ jobs:
       # Explicit TEST-ONLY official extension-install debugging. No personal
       # profile, no debug TCP listener, and the OS sandbox must stay enabled.
       KKCODE_BRIDGE_ALLOW_EXTENSION_DEBUGGING: "1"
+      # User-approved 2026-09-24, ephemeral hosted CI only. No accounts,
+      # imports, sync, optional diagnostics, default-browser or OS-policy changes.
+      KKCODE_BRIDGE_ALLOW_FIRST_RUN_SETUP: "1"
       KKCODE_BRIDGE_EXTENSION_SOURCE: ${{ github.workspace }}/test-results/bridge-extension-source
     steps:
       - uses: actions/checkout@v7

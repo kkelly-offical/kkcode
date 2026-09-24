@@ -23,6 +23,10 @@ test('acceptance workflow keeps runner-only expressions in steps and uses actual
   assert.deepEqual(branded.strategy.matrix.os, ['ubuntu-22.04', 'windows-latest', 'macos-latest'])
   assert.deepEqual(branded.strategy.matrix.channel, ['chrome', 'msedge'])
   assert.equal(branded.env.KKCODE_BRIDGE_ALLOW_EXTENSION_DEBUGGING, '1')
+  assert.equal(branded.env.KKCODE_BRIDGE_ALLOW_FIRST_RUN_SETUP, '1')
+  for (const [name, job] of Object.entries(workflow.jobs)) {
+    if (name !== 'branded-browser-bridge') assert.equal(job.env?.KKCODE_BRIDGE_ALLOW_FIRST_RUN_SETUP, undefined)
+  }
   assert.ok(branded.steps.some(step => step.name === 'Select private runner fixture paths'))
   for (const job of Object.values(workflow.jobs)) for (const step of job.steps) assert.notEqual(step['continue-on-error'], true)
 })
