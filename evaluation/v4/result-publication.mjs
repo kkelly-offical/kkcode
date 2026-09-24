@@ -73,9 +73,31 @@ async function privateRoot(directory, output, workspaceRoots) {
   const requested = path.resolve(directory), publicRoot = await realpath(output)
   const forbidden = [publicRoot, ...await Promise.all(workspaceRoots.map(root => realpath(root)))]
   if (forbidden.some(root => overlap(root, requested))) fail()
-  await mkdir(requested, { recursive: true, mode: 0o700 })
-  const stat = await lstat(requested), canonical = await realpath(requested)
-  if (!stat.isDirectory() || stat.isSymbolicLink() || forbidden.some(root => overlap(root, canonical))
+  // Resolve an existing ancestor before making anything. System aliases (for
+  // example macOS /var -> /private/var) otherwise evade the lexical comparison
+  // and create a private directory inside public/model space before rejection.
+  let ancestor = requested
+  const missing = []
+  for (;;) {
+    let info
+    try { info = await lstat(ancestor) } catch (error) {
+      if (error.code !== 'ENOENT' || path.dirname(ancestor) === ancestor) throw error
+      missing.unshift(path.basename(ancestor)); ancestor = path.dirname(ancestor)
+      continue
+    }
+    if (ancestor === requested && info.isSymbolicLink()) fail()
+    break
+  }
+  const parent = await realpath(ancestor)
+  if (!(await lstat(parent)).isDirectory()) fail()
+  const planned = path.join(parent, ...missing)
+  if (forbidden.some(root => overlap(root, planned))) fail()
+  // Use the resolved path rather than following the supplied ancestor alias a
+  // second time. Keep the post-create check: no evidence may be written through
+  // a substituted directory or into a newly overlapping location.
+  await mkdir(planned, { recursive: true, mode: 0o700 })
+  const stat = await lstat(planned), canonical = await realpath(planned)
+  if (!stat.isDirectory() || stat.isSymbolicLink() || canonical !== planned || forbidden.some(root => overlap(root, canonical))
     || process.platform !== 'win32' && (stat.mode & 0o077 || process.getuid && stat.uid !== process.getuid())) fail()
   return canonical
 }

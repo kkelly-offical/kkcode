@@ -1,5 +1,9 @@
 # 1.0.5 新增 CodeQL 告警核查
 
+统一候选`9637f55`的[CodeQL35994312383](https://github.com/kkelly-offical/kkcode/actions/runs/35994312383)
+三类全部通过（含真实Kotlin构建）；开放告警的最近实例均属于该SHA，仍为17条历史
+告警、无新增64及以后编号。回执`codeql-9637f55-open.json`。未关闭规则或dismiss。
+
 最近浏览器初始化候选`17688c9`的CodeQL `35987273151`也已三类全部通过，
 开放告警仍为历史17条，无新增64及以后编号；回执`codeql-17688c9-open.json`。
 未关闭规则或用dismiss消警。

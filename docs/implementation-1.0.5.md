@@ -8,6 +8,24 @@
 
 ## 后续真实验收与收口（2026-09-24）
 
+- 统一候选`9637f553a31445cfb6843788f438255f7cc4e964`：本机真实镜像整仓
+  `coverage-final-round9.log` **3762项／3756通过／0失败／6条件跳过**，
+  行85.20%／分支80.29%／函数83.56%。CI `35994182229` 的Linux22/24、
+  strict-runtime、isolated-toolchains及六格品牌Browser通过；工具链的v4完整60项
+  是参考实现自检，不是模型得分。Windows/macOS仅两项私密评测路径测试失败，
+  因此整个workflow仍失败。CodeQL `35994312383` 三类全部通过，精确SHA仍为
+  17条历史开放告警、无新增；回执`codeql-9637f55-open.json`。
+- 上述跨平台失败已用Linux真实祖先symlink复现：public/workspace已realpath，
+  待创建私密目录仍是系统别名，造成拒绝前先建空目录。**未写入私密记录**，但行为
+  不正确。现先解析最深已存在祖先，检查计划canonical路径再mkdir，创建后重检
+  路径/权限/所有者；终端symlink仍拒绝。新增Windows junction/系统祖先别名回归，
+  Node24和最低22.12各12/12通过，保留原断言，不加skip或超时；跨平台复验待新提交。
+- 最新网关镜像按`9637f55`重建，实际Web bundle为`index-CjSZ0zYf.js`，
+  内容hash与冻结源码一致。镜像本地ID
+  `sha256:8eff1e77ec6462c6aa322310eea174c3719a8d5448cd89ac87eae8f664364089`，
+  UID1000、只读根写入被拒、network-none、无capabilities条件下OIDC/Relay/SSE
+  **19/19通过、无跳过**。这是本地image ID，不冒充注册表digest；未推镜像/部署。
+  回执`test-results/preview-1.0.5/gateway-final-9637f55-receipt.json`。
 - Web记忆竞态已确定性复现并修复：旧组件首帧可点击，切范围时共享操作锁使新读取
   被跳过、旧请求又无法清busy；现在每个scope/session独立生命周期、首帧忙状态、
   原controller响应核验。旧组件红测、新组件5/5真实React/Chromium回归通过；重新构建后

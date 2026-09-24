@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import path from 'node:path'
 import os from 'node:os'
-import { mkdtemp, mkdir, readFile, readdir, rm, stat } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, symlink } from 'node:fs/promises'
 import { publishEvaluationResult } from '../evaluation/v4/result-publication.mjs'
 
 // Invented canary and result metadata only; no catalog/oracle/model is loaded.
@@ -60,6 +60,36 @@ for (const location of ['public', 'workspace']) test(`private sealed checks cann
   await assert.rejects(publishEvaluationResult({ suiteVersion: 'v4', base, result, outputDirectory: f.output,
     privateDirectory: path.join(location === 'public' ? f.output : f.workspace, 'private'), workspaceRoots: [f.workspace], results }), /publication refused/)
   assert.equal(results.length, 0); assert.deepEqual(await readdir(f.output), []); assert.deepEqual(await readdir(f.workspace), [])
+})
+
+for (const location of ['public', 'workspace']) test(`an ancestor alias into ${location} is rejected before any private directory is created`, async t => {
+  const f = await fixture(t), { base, result } = row(), results = [], callbacks = []
+  const alias = path.join(f.root, 'temporary-path-alias')
+  await symlink(await realpath(f.root), alias, process.platform === 'win32' ? 'junction' : 'dir')
+  const target = location === 'public' ? 'public' : 'model-workspace'
+  await assert.rejects(publishEvaluationResult({ suiteVersion: 'v4', base, result, outputDirectory: f.output,
+    privateDirectory: path.join(alias, target, 'private', 'nested'), workspaceRoots: [f.workspace], results,
+    onResult: value => callbacks.push(value) }), /publication refused/)
+  assert.deepEqual(results, []); assert.deepEqual(callbacks, [])
+  assert.deepEqual(await readdir(f.output), []); assert.deepEqual(await readdir(f.workspace), [])
+})
+
+test('a safe ancestor alias resolves to an isolated private directory while a terminal symlink is still rejected', async t => {
+  const f = await fixture(t), { base, result } = row(), alias = path.join(f.root, 'temporary-path-alias')
+  await symlink(await realpath(f.root), alias, process.platform === 'win32' ? 'junction' : 'dir')
+  const published = await publishEvaluationResult({ suiteVersion: 'v4', base, result, outputDirectory: f.output,
+    privateDirectory: path.join(alias, 'private', 'nested'), workspaceRoots: [f.workspace], results: [] })
+  const privateText = await readFile(path.join(f.privateDirectory, 'nested', `${published.privateResultId}.json`), 'utf8')
+  assert.ok(privateText.includes(CANARY))
+  assert.equal((await readFile(path.join(f.output, 'R99-1.json'), 'utf8')).includes(CANARY), false)
+  assert.deepEqual(await readdir(f.workspace), [])
+  const finalAlias = path.join(f.root, 'private-terminal-link')
+  await symlink(await realpath(path.join(f.privateDirectory, 'nested')), finalAlias, process.platform === 'win32' ? 'junction' : 'dir')
+  const filesBefore = await readdir(path.join(f.privateDirectory, 'nested'))
+  await assert.rejects(publishEvaluationResult({ suiteVersion: 'v4', base: { ...base, repetition: 2 }, result: { ...result, repetition: 2 },
+    outputDirectory: f.output, privateDirectory: finalAlias, workspaceRoots: [f.workspace], results: [] }), /publication refused/)
+  assert.deepEqual(await readdir(path.join(f.privateDirectory, 'nested')), filesBefore)
+  assert.deepEqual(await readdir(f.output), ['R99-1.json'])
 })
 
 test('private persistence failure cannot publish a grade or deliver raw data to onResult', async t => {
