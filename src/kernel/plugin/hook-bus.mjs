@@ -5,6 +5,7 @@ import { access, readdir } from "node:fs/promises"
 import { pathToFileURL, fileURLToPath } from "node:url"
 import { userRootDir } from "../../storage/paths.mjs"
 import { discoverLocalPluginManifests } from "./manifest-loader.mjs"
+import { resolveManagedPluginPath } from './integrity.mjs'
 import { noteDeprecation, deprecatedSingletonAlias } from "../core/deprecations.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -41,7 +42,9 @@ async function exists(target) {
   }
 }
 
-async function discover(dir) {
+async function discover(dir, options = {}) {
+  dir = await resolveManagedPluginPath(dir, options)
+  if (!dir) return []
   if (!(await exists(dir))) return []
   const entries = await readdir(dir, { withFileTypes: true })
   return entries
@@ -109,9 +112,9 @@ export function createHookBus() {
     const manifestHookDirs = manifestState.plugins
       .filter((plugin) => plugin.enabled !== false && plugin.hooksEnabled !== false)
       .filter((plugin) => (plugin.sourceEcosystem || plugin.ecosystem || "kkcode") === "kkcode" || config?.compat?.plugins?.execute_external_hooks === true)
-      .flatMap((plugin) => plugin.hooks || [])
+      .flatMap((plugin) => (plugin.hooks || []).map(dir => ({ dir, verifiedManifestRoot: plugin.integrity?.verified ? plugin.integrity.loadRoot : null })))
     const manifestHookFiles = []
-    for (const dir of manifestHookDirs) manifestHookFiles.push(...await discover(dir))
+    for (const { dir, verifiedManifestRoot } of manifestHookDirs) manifestHookFiles.push(...await discover(dir, { verifiedManifestRoot }))
     if (pluginAliasFiles.length && !state.warnedPluginAlias) {
       state.errors.push("deprecated hook path: .kkcode/plugins is a compatibility alias for loose hook scripts; prefer .kkcode/hooks or a plugin.json package boundary")
       state.warnedPluginAlias = true

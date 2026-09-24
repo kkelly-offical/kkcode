@@ -1,4 +1,4 @@
-import { McpServer, ResourceTemplate, Server, createMcpHandler, WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/server'
+import { McpServer, ResourceTemplate, Server, createMcpHandler, WebStandardStreamableHTTPServerTransport, inputRequired } from '@modelcontextprotocol/server'
 import { serveStdio } from '@modelcontextprotocol/server/stdio'
 import { z } from 'zod'
 import { createServer } from 'node:http'
@@ -6,15 +6,40 @@ import { Readable } from 'node:stream'
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 
+async function slowRequest(ctx) {
+  const signal = ctx.mcpReq.signal
+  if (ctx.mcpReq._meta?.progressToken !== undefined) await ctx.mcpReq.notify({ method: 'notifications/progress', params: { progressToken: ctx.mcpReq._meta.progressToken, progress: 1, total: 3 } })
+  await new Promise((resolve, reject) => {
+    const done = () => { signal.removeEventListener('abort', abort); resolve() }
+    const timer = setTimeout(done, 3000)
+    const abort = () => { clearTimeout(timer); reject(new Error('fixture cancelled')) }
+    if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true })
+  })
+}
+
 export function fixtureServer() {
   const server = new McpServer({ name: 'KK Code official SDK acceptance', version: '1.0.1' })
   server.registerTool('echo', { description: 'Typed Unicode echo', inputSchema: z.object({ text: z.string().min(1), repeat: z.number().int().min(1).max(3).optional(), label: z.string().nullable().optional() }).strict(), outputSchema: z.object({ text: z.string(), repeat: z.number() }) }, async ({ text, repeat = 1 }) => ({ content: [{ type: 'text', text: text.repeat(repeat) }], structuredContent: { text, repeat } }))
   server.registerTool('failure', { description: 'Fixture tool error', inputSchema: z.object({}) }, async () => ({ isError: true, content: [{ type: 'text', text: 'fixture controlled error' }] }))
+  server.registerTool('collect', { description: 'Two real user input rounds', inputSchema: z.object({ label: z.string().default('fixture'), sensitive: z.boolean().optional() }) }, async ({ label, sensitive }, ctx) => {
+    if (ctx.mcpReq._meta?.progressToken !== undefined) await ctx.mcpReq.notify({ method: 'notifications/progress', params: { progressToken: ctx.mcpReq._meta.progressToken, progress: 1, total: 2 } })
+    const state = ctx.mcpReq.requestState(), answer = ctx.mcpReq.inputResponses?.form
+    if (answer && answer.action !== 'accept') return { content: [{ type: 'text', text: answer.action }] }
+    if (state === 'round-two') return { content: [{ type: 'text', text: `${label}:${answer?.content?.text}` }], structuredContent: answer?.content }
+    return inputRequired({ inputRequests: { form: inputRequired.elicit({ message: `Provide ${label}`, requestedSchema: { type: 'object', properties: { [sensitive ? 'api_key' : 'text']: { type: 'string', minLength: 1 } }, required: [sensitive ? 'api_key' : 'text'] } }) }, requestState: state ? 'round-two' : 'round-one' })
+  })
   server.registerTool('wait', { inputSchema: z.object({}) }, async (_args, ctx) => {
-    await new Promise((resolve, reject) => { const timer = setTimeout(resolve, 3000); ctx.signal.addEventListener('abort', () => { clearTimeout(timer); reject(new Error('fixture cancelled')) }, { once: true }) })
+    await slowRequest(ctx)
     return { content: [{ type: 'text', text: 'waited' }] }
   })
+  server.registerTool('cancel_form', { inputSchema: z.object({}) }, async (_args, ctx) => {
+    await ctx.mcpReq.elicitInput({ message: 'cancel fixture', requestedSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } }, { signal: AbortSignal.timeout(100) }).catch(() => {})
+    await new Promise(resolve => setTimeout(resolve, 30))
+    return { content: [{ type: 'text', text: 'form cancelled by server' }] }
+  })
   server.registerPrompt('review', { description: 'Review a named file', argsSchema: z.object({ file: z.string() }) }, ({ file }) => ({ messages: [{ role: 'user', content: { type: 'text', text: `Review ${file}` } }] }))
+  server.registerPrompt('slow', { argsSchema: z.object({}) }, async (_args, ctx) => { await slowRequest(ctx); return { messages: [] } })
+  server.registerResource('slow', 'fixture://slow', { mimeType: 'text/plain' }, async (uri, ctx) => { await slowRequest(ctx); return { contents: [{ uri: uri.href, text: 'done' }] } })
   server.registerResource('guide', 'fixture://guide', { description: 'Fixture guide', mimeType: 'text/plain' }, uri => ({ contents: [{ uri: uri.href, mimeType: 'text/plain', text: 'Guide: 参数可选，不执行用户代码。' }] }))
   server.registerResource('file', new ResourceTemplate('fixture://files/{name}', { list: undefined }), { description: 'Fixture file template', mimeType: 'text/plain' }, (uri, { name }) => ({ contents: [{ uri: uri.href, text: `File ${name}` }] }))
   return server
@@ -29,8 +54,8 @@ export function pagedFixtureServer({ repeatCursor = false } = {}) {
 }
 
 /** Only HTTP adaptation is local code; all MCP parsing/negotiation is official SDK. */
-export async function startOfficialHttpFixture({ modern = true, json = false, paged = false } = {}) {
-  const requests = [], active = new Set(), factory = paged ? pagedFixtureServer : fixtureServer
+export async function startOfficialHttpFixture({ modern = true, json = false, paged = false, serverFactory = null } = {}) {
+  const requests = [], active = new Set(), factory = serverFactory || (paged ? pagedFixtureServer : fixtureServer)
   const handler = modern ? createMcpHandler(factory) : null
   const sessions = new Map()
   const server = createServer(async (req, res) => {

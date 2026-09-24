@@ -270,6 +270,8 @@ async function launchTask({
   sessionId,
   model,
   providerType,
+  baseUrl,
+  apiKeyEnv,
   objective,
   stageIndex,
   stageCount,
@@ -319,6 +321,8 @@ async function launchTask({
     cwd: runtimeCwd(),
     model,
     providerType,
+    baseUrl,
+    apiKeyEnv,
     subagent: task.subagentType || autoAgent || null,
     category: task.category || null,
     subagentType: task.subagentType || autoAgent || null,
@@ -367,6 +371,8 @@ export async function runStageBarrier({
   config,
   model,
   providerType,
+  baseUrl = null,
+  apiKeyEnv = null,
   seedTaskProgress = {},
   objective = "",
   stageIndex = 0,
@@ -518,7 +524,7 @@ export async function runStageBarrier({
         // #17: Inject real-time TaskBus context into each launched task
         const busCtx = taskBus ? taskBus.toContextString() : ""
         const results = await Promise.allSettled(toLaunch.map(({ task, item }) =>
-          launchTask({ stage, task, logicalTask: item, config, sessionId, model, providerType, objective, stageIndex, stageCount, allTasks: stage.tasks || [], priorContext, taskBusContext: busCtx || undefined })
+          launchTask({ stage, task, logicalTask: item, config, sessionId, model, providerType, baseUrl, apiKeyEnv, objective, stageIndex, stageCount, allTasks: stage.tasks || [], priorContext, taskBusContext: busCtx || undefined })
         ))
         for (let i = 0; i < toLaunch.length; i++) {
           const r = results[i]

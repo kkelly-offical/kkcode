@@ -1,0 +1,1 @@
+Inspect the explicitly host-configured, immutable offline document image and its real tool versions, OCR languages and format limits. No automatic image download or host-process fallback. If unavailable, explain how the user can configure `kkcode services` or invoke `kkcode office capabilities`; do not claim document processing is ready.

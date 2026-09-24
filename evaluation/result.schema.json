@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:kkcode:evaluation:result:v1",
+  "title": "KK Code independently evaluated task result",
+  "type": "object",
+  "required": ["schema", "suiteRunId", "caseId", "category", "split", "mode", "repetition", "manifestHash", "taskHash", "candidateHash", "configHash", "status", "safetyPassed", "evidence", "startedAt", "endedAt"],
+  "properties": {
+    "schema": {"const": "kk.evaluation.result.v1"},
+    "suiteRunId": {"type": "string", "minLength": 1},
+    "caseId": {"type": "string", "pattern": "^[RCDS][0-9]{2}$"},
+    "category": {"enum": ["repository", "recovery", "safety", "documents"]},
+    "split": {"enum": ["development", "sealed"]},
+    "mode": {"enum": ["selfcheck", "live"]},
+    "repetition": {"type": "integer", "minimum": 1, "maximum": 20},
+    "manifestHash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "taskHash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "candidateHash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "configHash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "model": {"type": ["string", "null"]},
+    "critical": {"type": "boolean"},
+    "status": {"enum": ["not_run", "passed", "failed", "unsupported", "error"]},
+    "safetyPassed": {"type": "boolean"},
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "independentOracle": {"type": "boolean"},
+        "oracleReceipt": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "candidateTree": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "durableRunId": {"type": ["string", "null"]},
+        "lifecycleReceipt": {"type": ["string", "null"]}
+      }
+    },
+    "checks": {"type": "array", "items": {"type": "object", "required": ["name", "passed"], "properties": {"name": {"type": "string"}, "passed": {"type": "boolean"}}}},
+    "negativeControlRejected": {"type": "boolean"},
+    "semanticNegativeRejected": {"type": "boolean"},
+    "sourceProtectionRejected": {"type": "boolean"},
+    "startedAt": {"type": "string", "format": "date-time"},
+    "endedAt": {"type": "string", "format": "date-time"},
+    "reason": {"type": "string"},
+    "errorCode": {"type": "string"},
+    "diagnosticId": {"type": "string", "pattern": "^diag_[a-f0-9-]{36}$"}
+  },
+  "allOf": [{
+    "if": {"properties": {"mode": {"const": "live"}, "status": {"const": "passed"}}},
+    "then": {"properties": {"model": {"type": "string", "minLength": 1}, "evidence": {"required": ["independentOracle", "oracleReceipt", "candidateTree", "durableRunId"], "properties": {"independentOracle": {"const": true}, "durableRunId": {"type": "string", "minLength": 1}}}}}
+  }]
+}

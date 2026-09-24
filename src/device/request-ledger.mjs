@@ -53,11 +53,11 @@ export class RequestLedger {
     this.entries[key] = entry
     return this.persist()
   }
-  complete(key, result) {
+  complete(key, result, { omitResult = false } = {}) {
     const entry = this.get(key)
     if (!entry || entry.state !== 'running') throw new Error('Missing active request reservation')
     const serialized = JSON.stringify(result)
-    const next = { ...entry, state: 'done', at: this.now(), ...(Buffer.byteLength(serialized || '') <= this.limits.maxResultBytes ? { result } : { omitted: true }) }
+    const next = { ...entry, state: 'done', at: this.now(), ...(!omitResult && Buffer.byteLength(serialized || '') <= this.limits.maxResultBytes ? { result } : { omitted: true }) }
     this.entries[key] = next
     // Room reserved by other running requests belongs to their final errors.
     if (this.reservedBytes() > this.limits.maxBytes) { delete next.result; next.omitted = true }

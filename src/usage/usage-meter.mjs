@@ -1,6 +1,7 @@
 import { ensureUserRoot, usageStorePath } from "../storage/paths.mjs"
 import { readJson, writeJson } from "../storage/json-store.mjs"
 import { acquireProcessLock } from '../storage/process-lock.mjs'
+import { createHash } from 'node:crypto'
 
 export function emptyUsage() {
   return {
@@ -31,7 +32,8 @@ function defaultStore() {
     updatedAt: Date.now(),
     globalDay: todayKey(),
     global: emptyUsage(),
-    sessions: {}
+    sessions: {},
+    modelTotals: {}
   }
 }
 
@@ -64,13 +66,23 @@ async function withUsageLock(fn) {
   try { return await fn() } finally { await lease.release() }
 }
 
-export async function recordTurn({ sessionId, usage, cost, countTurn = true }) {
+export async function recordTurn({ sessionId, usage, cost, countTurn = true, modelCharges = [] }) {
   return withUsageLock(async () => {
   const store = await readUsageStore()
   maybeRotateGlobal(store)
   if (!store.sessions[sessionId]) store.sessions[sessionId] = emptyUsage()
   addUsage(store.sessions[sessionId], usage, cost, countTurn ? 1 : 0)
   addUsage(store.global, usage, cost, countTurn ? 1 : 0)
+  // Private attribution metadata is deliberately outside global/session/turn
+  // meter objects, preserving their existing headless JSONL shape.
+  store.modelTotals ||= {}
+  for (const charge of modelCharges) {
+    const key = createHash('sha256').update(JSON.stringify([sessionId, charge.provider, charge.model])).digest('hex')
+    const entry = store.modelTotals[key] ||= { sessionId, provider: charge.provider, model: charge.model, usage: emptyUsage(), estimated: false, updatedAt: Date.now() }
+    addUsage(entry.usage, charge.usage, charge.amount, 0)
+    entry.estimated ||= charge.estimated === true
+    entry.updatedAt = Date.now()
+  }
   await persist(store)
   return {
     turn: {
@@ -96,6 +108,7 @@ export async function resetUsage(sessionId = null) {
   const store = await readUsageStore()
   maybeRotateGlobal(store)
   delete store.sessions[sessionId]
+  for (const [key, value] of Object.entries(store.modelTotals || {})) if (value.sessionId === sessionId) delete store.modelTotals[key]
   store.global = emptyUsage()
   for (const session of Object.values(store.sessions)) {
     store.global.input += session.input

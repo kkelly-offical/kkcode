@@ -74,8 +74,8 @@ function App() {
   const attachmentKey = `${deviceId}:${selected}`;
   const attachments = draftAttachments[attachmentKey] || [];
   const sdk = useMemo(() => new DeviceClient({ url: location.origin, gateway, deviceId: gateway ? deviceId || null : null }), [gateway, deviceId]);
-  async function rpc(method: string, params: Item = {}) {
-    try { return await sdk.request<any>(method, params); }
+  async function rpc(method: string, params: Item = {}, options: Item = {}) {
+    try { return await sdk.request<any>(method, params, options); }
     catch (error: any) { throw Object.assign(new Error(remoteErrorMessage(error)), { code: error.code, status: error.status }); }
   }
   const deviceNoticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);

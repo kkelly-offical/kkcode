@@ -1,3 +1,13 @@
+import { currentDurableRun } from '../orchestration/run-runtime.mjs'
+import { isTaskGraphHost } from '../orchestration/task-graph-runtime.mjs'
+
+function strictGraph(context) {
+  const binding = currentDurableRun()
+  if (!binding) return null
+  if (!isTaskGraphHost(binding.taskGraph)) throw new Error('严格委派缺少宿主任务图能力；不会回退到普通子代理。')
+  return { host: binding.taskGraph, context: { parentRunId: binding.runId, ownerEpoch: binding.ownerEpoch, invocationId: context.toolCallId, signal: context.signal } }
+}
+
 function taskProperties() {
   // Property order is the reading order for the model: core delegation fields
   // first, structured brief fields next, orchestration-internal fields last.
@@ -24,7 +34,8 @@ function taskProperties() {
     group_id: { type: "string", description: "optional parallel group id for related delegated tasks (orchestration)" },
     group_label: { type: "string", description: "optional human-readable parallel group label (orchestration)" },
     stage_id: { type: "string", description: "optional stage id (orchestration-internal)" },
-    task_id: { type: "string", description: "optional logical task id (orchestration-internal)" }
+    task_id: { type: "string", description: "optional logical task id (orchestration-internal)" },
+    depends_on: { type: "array", items: { type: "string" }, description: "strict host task graph: logical sibling IDs whose candidate evidence must be host-approved first" }
   }
 }
 
@@ -60,6 +71,8 @@ export function createTaskTool() {
     description: "Delegate complex multi-step work to a subagent that makes its own LLM calls. Use inherit_context=true or execution_mode=fork_context for read-only sidecars that need the parent transcript. Background tasks spawn a separate worker process and must be observed via task_list/task_output.",
     inputSchema: taskSchema(),
     async execute(args, ctx) {
+      const graph = strictGraph(ctx)
+      if (graph) return graph.host.delegateTask(normalizeTaskBrief(args || {}), graph.context)
       if (typeof ctx.delegateTask !== "function") return { error: "task delegate unavailable" }
       const result = await ctx.delegateTask(normalizeTaskBrief(args || {}))
       return formatTaskResult(result)
@@ -106,11 +119,16 @@ export function createTaskGroupTool() {
         inherit_context: { type: "boolean", description: "default context inheritance for tasks that do not specify execution_mode" },
         execution_mode: { type: "string", enum: ["fresh_agent", "fork_context"], description: "default execution mode for tasks" },
         isolation: { type: "string", enum: ["default", "worktree"], description: "default isolation mode for tasks" },
+        budget_usd: { type: "number", description: "strict graph total USD ceiling; node reservations must fit this ceiling" },
+        deadline_at: { type: "number", description: "strict graph persisted epoch-ms deadline; restarting does not extend it" },
+        max_concurrency: { type: "integer", minimum: 1, maximum: 8, description: "strict graph concurrent child limit" },
         tasks: { type: "array", description: "subagent tasks to launch in parallel", items: taskSchema() }
       },
       required: ["tasks"]
     },
     async execute(args, ctx) {
+      const graph = strictGraph(ctx)
+      if (graph) return graph.host.delegateTaskGroup({ ...args, tasks: (args?.tasks || []).map(normalizeTaskBrief) }, graph.context)
       if (typeof ctx.delegateTask !== "function") return { error: "task delegate unavailable" }
       const tasks = Array.isArray(args?.tasks) ? args.tasks : []
       if (tasks.length === 0) return { error: "task_group.tasks must contain at least one task" }

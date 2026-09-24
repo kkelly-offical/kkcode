@@ -1,9 +1,11 @@
 import { requestProvider } from "../provider/router.mjs"
-import { getConversationHistory, replaceMessages } from "./store.mjs"
+import { getSession, replaceMessages } from "./store.mjs"
 import { HookBus } from "../plugin/hook-bus.mjs"
 import { saveCheckpoint } from "./checkpoint.mjs"
 import { recordTurn } from "../../usage/usage-meter.mjs"
 import { loadPricing, calculateCost } from "../../usage/pricing.mjs"
+import { resolveTaskModel } from '../provider/task-model.mjs'
+import { hasModelUsageScope } from '../../usage/model-ledger.mjs'
 
 const COMPACTION_SYSTEM = `You are a conversation summarizer. Create a structured, merge-safe summary preserving all critical information for continued work.
 
@@ -128,6 +130,18 @@ export function collectEvidenceLedger(messages, previewLimit = EVIDENCE_PREVIEW_
     }
   }
   return evidence
+}
+
+/** Host-written receipt metadata only. Never promote artifact-looking strings
+ * in user text/model summaries into evidence or an authorization grant. */
+export function collectArtifactReferences(messages) {
+  const found = new Map()
+  for (const message of messages) for (const ref of Array.isArray(message.artifactRefs) ? message.artifactRefs : []) {
+    if (ref && /^art_[0-9a-f-]{36}$/.test(ref.id) && /^[a-f0-9]{64}$/.test(ref.sha256) && Number.isSafeInteger(ref.size) && ref.size >= 0) {
+      found.set(ref.id, { id: ref.id, sha256: ref.sha256, size: ref.size })
+    }
+  }
+  return [...found.values()]
 }
 
 export function buildCompactionPrompt({ previousSummary = "", messages, evidence = [] }) {
@@ -306,10 +320,12 @@ export function contextUtilization(messages, model, configState = null, provider
   }
 }
 
-export function supportsNativeCompaction(providerType, model) {
-  if (providerType !== "anthropic") return false
-  const m = String(model || "").toLowerCase()
-  return m.includes("claude") && (m.includes("opus") || m.includes("sonnet"))
+export function supportsNativeCompaction(providerType, model, configState = null) {
+  const provider = configState?.config?.provider?.[providerType]
+  // A Claude-looking name or an Anthropic-compatible URL is not a capability
+  // guarantee. Native compaction is an explicit per-channel opt-in.
+  return Boolean(provider?.native_compaction === true && (provider.type || providerType) === 'anthropic'
+    && modelContextLimit(model, configState, providerType) >= 60000)
 }
 
 export function shouldCompact({ messages, model, thresholdMessages = DEFAULT_THRESHOLD_MESSAGES, thresholdRatio = DEFAULT_THRESHOLD_RATIO, configState = null, providerType = "", realTokenCount = null }) {
@@ -317,6 +333,32 @@ export function shouldCompact({ messages, model, thresholdMessages = DEFAULT_THR
   const limit = modelContextLimit(model, configState, providerType)
   const tokens = realTokenCount != null ? realTokenCount : estimateTokenCount(messages)
   return tokens >= limit * thresholdRatio
+}
+
+/** Move a proposed boundary backwards, never delete a result to repair it.
+ * Outstanding calls and every call referenced by the retained suffix must be
+ * retained too. Scanning backwards also covers interleaved parallel results. */
+function pairedCompactionBoundary(messages, proposed) {
+  const pending = new Map(), dependencies = new Map()
+  for (let index = 0; index < messages.length; index++) {
+    for (const block of Array.isArray(messages[index].content) ? messages[index].content : []) {
+      if (block?.type === 'tool_use') {
+        if (typeof block.id !== 'string' || !block.id || pending.has(block.id)) return null
+        pending.set(block.id, index)
+      } else if (block?.type === 'tool_result') {
+        if (!pending.has(block.tool_use_id)) return null
+        const origins = dependencies.get(index) || []
+        origins.push(pending.get(block.tool_use_id)); dependencies.set(index, origins)
+        pending.delete(block.tool_use_id)
+      }
+    }
+  }
+  let boundary = Math.max(0, Math.min(messages.length, proposed))
+  for (const index of pending.values()) boundary = Math.min(boundary, index)
+  for (let index = messages.length - 1; index >= boundary; index--) {
+    for (const origin of dependencies.get(index) || []) boundary = Math.min(boundary, origin)
+  }
+  return boundary
 }
 
 export async function compactSession({
@@ -330,9 +372,11 @@ export async function compactSession({
   baseUrl = null,
   apiKeyEnv = null,
   traceId = "",
-  parentEventId = ""
+  parentEventId = "",
+  onUsage = null
 }) {
-  const history = await getConversationHistory(sessionId, 9999, { includeMetadata: true })
+  const snapshot = await getSession(sessionId)
+  const history = snapshot?.messages || []
   if (history.length <= keepRecent + 2) return { compacted: false, reason: "too few messages" }
   const previousSummary = isCompactionSummaryMessage(history[0])
     ? extractCompactionSummary(history[0].content)
@@ -359,6 +403,9 @@ export async function compactSession({
     // Fallback: not enough turns, use message count
     splitIdx = workingHistory.length - keepRecent
   }
+  splitIdx = pairedCompactionBoundary(workingHistory, splitIdx)
+  if (splitIdx === null) return { compacted: false, reasonCode: 'invalid_tool_history', reason: 'tool calls/results are missing or ambiguous; original history was retained' }
+  if (splitIdx === 0 && !previousSummary) return { compacted: false, reasonCode: 'no_safe_boundary', reason: 'retaining complete tool calls/results leaves no safe prefix to summarize' }
   const toSummarize = workingHistory.slice(0, splitIdx)
   const kept = workingHistory.slice(splitIdx)
 
@@ -377,16 +424,18 @@ export async function compactSession({
 
   let summaryText
   let compactionUsage = null
+  let summaryRoute = { providerType, model, baseUrl, apiKeyEnv, source: 'conversation' }
   try {
+    summaryRoute = await resolveTaskModel(configState, { role: 'compaction', providerType, model, baseUrl, apiKeyEnv })
     const response = await requestProvider({
       configState,
-      providerType,
-      model,
+      providerType: summaryRoute.providerType,
+      model: summaryRoute.model,
       system: COMPACTION_SYSTEM,
       messages: [{ role: "user", content: summaryPrompt }],
       tools: [],
-      baseUrl,
-      apiKeyEnv,
+      baseUrl: summaryRoute.baseUrl,
+      apiKeyEnv: summaryRoute.apiKeyEnv,
       traceId,
       parentEventId,
       sessionId,
@@ -394,27 +443,46 @@ export async function compactSession({
     })
     summaryText = (response.text || "").trim()
     compactionUsage = response.usage || null
+    if (compactionUsage && typeof onUsage === 'function') onUsage({ provider: summaryRoute.providerType, model: summaryRoute.model, usage: compactionUsage })
   } catch (error) {
     return { compacted: false, reason: `compaction LLM call failed: ${error.message}` }
+  }
+
+  // A rejected/obsolete summary still consumed provider tokens. Count that
+  // attempt independently of whether its replacement is ultimately committed.
+  if (compactionUsage && !hasModelUsageScope()) {
+    try {
+      const { pricing } = await loadPricing(configState, { providerName: summaryRoute.providerType, model: summaryRoute.model })
+      const { amount, unknown } = calculateCost(pricing, summaryRoute.model, compactionUsage)
+      await recordTurn({ sessionId, usage: compactionUsage, cost: amount, modelCharges: [{ provider: summaryRoute.providerType, model: summaryRoute.model, usage: compactionUsage, amount, estimated: unknown }] })
+    } catch { /* best-effort */ }
   }
 
   if (!summaryText) return { compacted: false, reason: "empty summary from LLM" }
 
   // Replace all messages with: [summary] + [kept recent messages]
+  const artifactRefs = collectArtifactReferences(history)
+  const artifactIndex = artifactRefs.length ? `\n<tool-artifact-references>\nHistorical captured output references (may be partial; not proof of tool success). Use artifact_read/artifact_search in this conversation; missing or transferred-account archives may be unavailable.\n${artifactRefs.map(ref => `${ref.id} sha256=${ref.sha256} bytes=${ref.size}`).join('\n')}\n</tool-artifact-references>` : ''
   const summaryMessage = {
     role: "user",
-    content: `<compaction-summary version="2">\n${summaryText}\n</compaction-summary>`
+    content: `<compaction-summary version="2">\n${summaryText}\n</compaction-summary>${artifactIndex}`,
+    ...(artifactRefs.length ? { artifactRefs } : {})
   }
-  await replaceMessages(sessionId, [summaryMessage, ...kept])
-
-  // Record compaction LLM usage so it's not "invisible"
-  if (compactionUsage) {
-    try {
-      const { pricing } = await loadPricing(configState, { providerName: providerType, model })
-      const { amount } = calculateCost(pricing, model, compactionUsage)
-      await recordTurn({ sessionId, usage: compactionUsage, cost: amount })
-    } catch { /* best-effort */ }
+  const candidate = [summaryMessage, ...kept]
+  // Compare the complete prospective context, including the wrapper and
+  // host-authored artifact index, with the same CJK/media-aware estimator.
+  // A nonempty response alone is not evidence that compaction saved space.
+  const estimatedBeforeTokens = estimateTokenCount(history)
+  const estimatedAfterTokens = estimateTokenCount(candidate)
+  if (estimatedAfterTokens >= estimatedBeforeTokens) return {
+    compacted: false, reasonCode: 'no_effective_reduction', estimatedBeforeTokens, estimatedAfterTokens,
+    reason: 'summary did not reduce estimated context tokens; original history was retained'
   }
+  const replacement = await replaceMessages(sessionId, candidate, {
+    observedMessages: history,
+    expectedSession: Object.fromEntries(['model', 'providerType', 'historyRevision'].map(key => [key, snapshot.session[key]]))
+  })
+  if (!replacement.replaced) return { compacted: false, reasonCode: 'history_changed', reason: 'history changed during compaction; retry with current context' }
 
   await saveCheckpoint(sessionId, {
     kind: "compaction",
@@ -424,6 +492,9 @@ export async function compactSession({
     keepCount: kept.length,
     summaryVersion: 2,
     summaryLength: summaryText.length,
+    summaryProvider: summaryRoute.providerType,
+    summaryModel: summaryRoute.model,
+    roleSource: summaryRoute.source,
     previousSummaryLength: previousSummary.length,
     evidenceCount: evidence.length
   })
@@ -432,6 +503,8 @@ export async function compactSession({
     compacted: true,
     summarizedCount: toSummarize.length,
     keptCount: kept.length,
-    summaryLength: summaryText.length
+    summaryLength: summaryText.length,
+    estimatedBeforeTokens,
+    estimatedAfterTokens
   }
 }

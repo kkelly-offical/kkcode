@@ -1,0 +1,16 @@
+Experimental bounded composition. This is an interpreted data DSL, NOT arbitrary JavaScript and NOT an OS sandbox. It exposes no process, env, filesystem, network, imports, eval, vm, functions, classes, promises or prototype access.
+
+Supported: const/let with simple identifiers; plain JSON objects/arrays/literals; property reads; finite arithmetic/comparisons; if; for(const item of array) with at most128 items; break/continue; return; emit(value); await tools.call("tool_name", args). Tools return only name/status/output. Parse an explicitly JSON output with JSON.parse. Use JSON.stringify, Object.keys/values/entries, string trim/lower/upper/slice/includes/startsWith/endsWith/split, array slice/includes/join. No callbacks, map/filter, regex, mutation of object properties or infinite loops.
+
+Every leaf re-enters the same governed tool executor: original model capability, mode, agent allowlist, Skill policy, write scope, approvals, audit and durable intent still apply. Composition grants no authority. Never compose nested tool_program/tool_batch, delegation, skill loading, mode changes or background launches.
+
+Defaults: 8 calls, 2000 interpreter steps,256 KiB per value,1 MiB cumulative data,60 seconds. Source is at most16 KiB. The host may set lower/higher bounded limits; code cannot change them. Large outputs must be read separately through their artifact reference. Host metadata/authorization objects and media bytes are never available inside this interpreter.
+
+Execution stops at the first denial, error, cancellation, unknown outcome or budget limit. Earlier successful changes remain; there is no transaction, rollback, retry or event replay. Inspect partial call statuses and unresolved actions before continuing. Do not rerun the whole program to recover a lost reply.
+
+Example:
+const response = await tools.call("read", {path:"data.json"});
+const data = JSON.parse(response.output);
+for (const item of data.items.slice(0, 3)) {
+  if (item.enabled) emit({name:item.name});
+}

@@ -5,6 +5,7 @@ import path from 'node:path'
 import { createKernel, MODE_CYCLE, laneOf, approvalOf } from '../kernel/index.mjs'
 import { PACKAGE_VERSION } from '../version.mjs'
 import { redactSensitive } from '../http/identity.mjs'
+import { requestAcpQuestion } from './elicitation.mjs'
 
 const invalid = message => acp.RequestError.invalidParams({ message })
 const modes = currentModeId => ({ currentModeId, availableModes: MODE_CYCLE.map(mode => ({ id: mode.id, name: mode.label, description: mode.hint })) })
@@ -12,6 +13,7 @@ const modes = currentModeId => ({ currentModeId, availableModes: MODE_CYCLE.map(
 /** One ACP connection owns its kernels and cancellation scope. No terminal UI. */
 export function createAcpApp({ trust = false, createKernelImpl = createKernel } = {}) {
   const sessions = new Map(), active = new Map()
+  let clientCapabilities = {}
   const app = acp.agent({ name: 'kkcode' })
   function session(id) { const found = sessions.get(id); if (!found) throw invalid('Load or create this session first'); return found }
   const notify = (client, id, update) => client.notify('session/update', { sessionId: id, update })
@@ -50,7 +52,11 @@ export function createAcpApp({ trust = false, createKernelImpl = createKernel } 
         } catch { return 'deny' }
       },
       onQuestionPrompt: async request => {
-        await notify(entry.client, id, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `需要补充信息，请在聊天中回复：\n${JSON.stringify(redactSensitive(request.questions || request.question || '请补充任务信息'))}` } })
+        const run = active.get(id)
+        if (!entry || !run || run.signal.aborted) return { cancelled: true }
+        const answer = await requestAcpQuestion({ client: entry.client, capabilities: clientCapabilities, sessionId: id, request, signal: run.signal })
+        if (answer !== null) return answer
+        await notify(entry.client, id, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `当前编辑器未声明支持 ACP 表单交互；本次输入请求已取消，未自动确认。请在聊天中补充信息：\n${JSON.stringify(redactSensitive(request.questions || request.question || '请补充任务信息'))}` } })
         return { cancelled: true }
       }
     } })
@@ -78,7 +84,10 @@ export function createAcpApp({ trust = false, createKernelImpl = createKernel } 
       return { ...(loaded ? {} : { sessionId: id }), modes: modes(entry.mode) }
     } catch (error) { if (sessions.get(id)?.kernel === kernel) sessions.delete(id); await kernel.shutdown(); throw error }
   }
-  app.onRequest('initialize', () => ({ protocolVersion: acp.PROTOCOL_VERSION, agentInfo: { name: 'kkcode', title: 'KK Code', version: PACKAGE_VERSION }, authMethods: [], agentCapabilities: { loadSession: true, promptCapabilities: { image: true, audio: false, embeddedContext: false }, mcpCapabilities: { http: true, sse: true } } }))
+  app.onRequest('initialize', ctx => {
+    clientCapabilities = ctx.params.clientCapabilities || {}
+    return { protocolVersion: acp.PROTOCOL_VERSION, agentInfo: { name: 'kkcode', title: 'KK Code', version: PACKAGE_VERSION }, authMethods: [], agentCapabilities: { loadSession: true, promptCapabilities: { image: true, audio: false, embeddedContext: false }, mcpCapabilities: { http: true, sse: true } } }
+  })
     .onRequest('session/new', ctx => open(ctx))
     .onRequest('session/load', ctx => open(ctx, true))
     .onRequest('session/set_mode', async ctx => {

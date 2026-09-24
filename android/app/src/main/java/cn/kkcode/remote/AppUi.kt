@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Assignment
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -100,7 +101,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
         Column(Modifier.fillMaxWidth().heightIn(max = (LocalConfiguration.current.screenHeightDp * .9f).dp).padding(horizontal = 16.dp).navigationBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 if(state.canGoBack) TextButton(onClick = { state.backSheet() }) { Text("返回", color = MaterialTheme.colorScheme.onSurface) } else Spacer(Modifier.width(56.dp))
-                Text(when(state.sheet) { "connections" -> "远程控制"; "settings" -> "设置"; "profile" -> "个人资料"; "preferences" -> "工作偏好"; "add" -> "添加连接"; "relay" -> "中继网关"; "ssh" -> "SSH 连接"; "folders" -> "工作目录"; "extensions" -> "扩展"; "models" -> "模型渠道"; "model-picker" -> "选择模型"; "approval" -> "权限"; "provider" -> if(state.editingProvider.isBlank()) "添加渠道" else "编辑渠道"; "new" -> "新对话"; "mode" -> "执行模式"; "branches" -> "Git 分支"; "sessions" -> "选择会话"; "permission" -> "权限"; "keys" -> "操作指南"; "theme" -> "外观"; "command-result" -> "命令结果"; "device-ownership" -> "设备归属"; "updates" -> "应用更新"; else -> "高级配置" }, modifier = Modifier.weight(1f), fontSize = 16.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontWeight = FontWeight.Medium)
+                Text(when(state.sheet) { "connections" -> "远程控制"; "settings" -> "设置"; "profile" -> "个人资料"; "preferences" -> "工作偏好"; "add" -> "添加连接"; "relay" -> "中继网关"; "ssh" -> "SSH 连接"; "folders" -> "工作目录"; "extensions" -> "扩展"; "models" -> "模型渠道"; "model-picker" -> "选择模型"; "approval" -> "权限"; "provider" -> if(state.editingProvider.isBlank()) "添加渠道" else "编辑渠道"; "new" -> "新对话"; "mode" -> "执行模式"; "branches" -> "Git 分支"; "sessions" -> "选择会话"; "permission" -> "权限"; "keys" -> "操作指南"; "theme" -> "外观"; "command-result" -> "命令结果"; "device-ownership" -> "设备归属"; "updates" -> "应用更新"; "artifacts" -> "会话产物"; "memory" -> "记忆管理"; "tasks" -> "委托任务"; else -> "高级配置" }, modifier = Modifier.weight(1f), fontSize = 16.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontWeight = FontWeight.Medium)
                 CircleButton(Icons.Outlined.Close, "关闭") { state.sheet = "" }
             }
             SheetContent(state)
@@ -219,6 +220,13 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                     SettingsRow(Icons.Outlined.Tune, "模型与渠道") { state.openModels() }
                     SettingsRow(Icons.Outlined.Extension, "MCP、Skills 与插件") { state.loadExtensions() }
                     SettingsRow(Icons.Outlined.Shield, "执行模式", modeLabel(state.mode)) { state.sheet = "mode" }
+                    SettingsRow(Icons.Outlined.Description, "会话产物", "查看、搜索与保存完整工具输出") { state.sheet = "artifacts" }
+                    SettingsRow(Icons.Outlined.Psychology, "记忆管理", "项目经验与确认后的个人偏好") { state.sheet = "memory" }
+                    SettingsRow(Icons.AutoMirrored.Outlined.Assignment, "委托任务", "执行状态、停止与任务证据") { state.sheet = "tasks" }
+                }
+                if(state.connected && state.sharedDevice) Group("工作区") {
+                    SettingsRow(Icons.Outlined.Description, "会话产物", "只读共享产物") { state.sheet = "artifacts" }
+                    SettingsRow(Icons.AutoMirrored.Outlined.Assignment, "委托任务", "只读任务状态与证据") { state.sheet = "tasks" }
                 }
                 Group("编写器") { Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { Text("显示上下文与模型", Modifier.weight(1f), fontSize = 15.sp); SettingsSwitch(state.showContext, { state.preference("showContext", it) }) } }
                 Group("外观") { SettingsRow(Icons.Outlined.Palette, "主题", state.appearance) { state.sheet = "theme" } }
@@ -302,6 +310,9 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
             "command-result" -> state.commandPanels.forEach { panel -> Group(panel.optString("title")) { androidx.compose.foundation.text.selection.SelectionContainer { Text(panel.optString("text"), modifier = Modifier.padding(14.dp)) } } }
             "device-ownership" -> DeviceOwnership(state.api?.device ?: "")
             "updates" -> UpdateSheet(state.updater)
+            "artifacts" -> ArtifactsSheet(state)
+            "memory" -> MemorySheet(state)
+            "tasks" -> TasksSheet(state)
         }
         if(state.notice.isNotBlank()) Text(state.notice, color = kkcodeColors.warning, fontSize = 12.sp, modifier = Modifier.padding(12.dp))
     }

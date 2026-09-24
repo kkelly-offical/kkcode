@@ -61,7 +61,7 @@ async function readPackage(cwd) {
  * 优先级反映的是确定性从高到低：显式配置 > package.json 声明的入口 >
  * 惯例文件名。走到最后都没有就返回 null —— 宁可不判，不可乱判。
  */
-export async function resolveSmokeTarget(cwd, config) {
+export async function resolveSmokeTarget(cwd, config, { portable = false } = {}) {
   const configured = config?.agent?.longagent?.usability_gates?.smoke
   if (configured?.command) {
     return {
@@ -82,8 +82,8 @@ export async function resolveSmokeTarget(cwd, config) {
   if (binPath && await exists(path.join(cwd, binPath))) {
     return {
       kind: "bin",
-      command: process.execPath,
-      args: [path.join(cwd, binPath), "--version"],
+      command: portable ? "node" : process.execPath,
+      args: [portable ? binPath.replaceAll("\\", "/") : path.join(cwd, binPath), "--version"],
       shell: false,
       describe: `${binPath} --version`
     }
@@ -95,11 +95,11 @@ export async function resolveSmokeTarget(cwd, config) {
   if (typeof entryPath === "string" && await exists(path.join(cwd, entryPath))) {
     return {
       kind: "entry",
-      command: process.execPath,
+      command: portable ? "node" : process.execPath,
       // 必须转成 file:// URL：Windows 上 `await import("C:\\x\\index.mjs")` 里的
       // `C:` 会被当成 URL scheme，抛 ERR_UNSUPPORTED_ESM_URL_SCHEME —— 那会让
       // 这道门禁在每一个 Windows 库项目上都报假失败。
-      args: ["--input-type=module", "-e", `await import(${JSON.stringify(pathToFileURL(path.resolve(cwd, entryPath)).href)})`],
+      args: ["--input-type=module", "-e", `await import(${JSON.stringify(portable ? `./${entryPath.replaceAll("\\", "/").replace(/^\.\//, "")}` : pathToFileURL(path.resolve(cwd, entryPath)).href)})`],
       shell: false,
       describe: `import ${entryPath}`
     }
@@ -112,15 +112,17 @@ export async function resolveSmokeTarget(cwd, config) {
  * @param {object} [p]
  * @param {string} [p.cwd]
  * @param {Record<string, any>} [p.config]
+ * @param {Function} [p.commandRunner]
+ * @param {boolean} [p.portable]
  * @returns {Promise<{enabled: boolean, status: string, reason: string, output?: string, evidence?: object}>}
  *   形状与其余五道门禁一致（见 gate-contract.mjs 的契约说明）。
  */
-export async function checkSmokeGate({ cwd = runtimeCwd(), config = {} } = {}) {
+export async function checkSmokeGate({ cwd = runtimeCwd(), config = {}, commandRunner = runGateCommand, portable = false } = {}) {
   if (config?.agent?.longagent?.usability_gates?.smoke?.enabled === false) {
     return { enabled: false, status: "disabled", reason: "smoke gate disabled" }
   }
 
-  const target = await resolveSmokeTarget(cwd, config)
+  const target = await resolveSmokeTarget(cwd, config, { portable })
   if (!target) {
     // 乱猜启动命令会在别人的项目里制造假失败 —— 不判比错判好
     return {
@@ -135,7 +137,7 @@ export async function checkSmokeGate({ cwd = runtimeCwd(), config = {} } = {}) {
     120_000
   )
 
-  const result = await runGateCommand({
+  const result = await commandRunner({
     command: target.command,
     args: target.args,
     cwd,

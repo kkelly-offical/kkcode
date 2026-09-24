@@ -207,7 +207,7 @@ async function fetchStreamConnection(endpoint, init, timeoutMs, signal) {
     : controller.signal
 
   try {
-    return await fetch(endpoint, { ...init, signal: fetchSignal })
+    return await fetch(endpoint, { ...init, redirect: 'error', signal: fetchSignal })
   } catch (error) {
     if (timedOut && !signal?.aborted) {
       const timeoutError = /** @type {Error & { code: string }} */ (new Error(`openai connection timeout after ${timeout}ms`, { cause: error }))
@@ -257,6 +257,7 @@ export async function requestOpenAI(input) {
     onRetry: retry.onRetry,
     execute: async () => {
       const response = await fetch(endpoint, {
+        redirect: 'error',
         method: "POST",
         headers: buildRequestHeaders({
           target: "llm",
@@ -296,12 +297,13 @@ export async function requestOpenAI(input) {
       const details = json?.usage?.prompt_tokens_details || {}
       const cachedTokens = details.cached_tokens ?? 0
       const cacheWriteTokens = details.cache_creation_input_tokens ?? 0
-      const usage = {
+      const usage = markUsageEvidence({
         input: promptTokens - cachedTokens,
         output: json?.usage?.completion_tokens ?? 0,
         cacheRead: cachedTokens,
         cacheWrite: cacheWriteTokens
-      }
+      }, [json?.usage?.prompt_tokens, json?.usage?.completion_tokens], [details.cached_tokens, details.cache_creation_input_tokens], cachedTokens <= promptTokens)
+      markUsageIdentity(usage, { model: json.model, tier: json.service_tier })
       const toolCalls = parseToolCalls(message)
       const text = typeof message.content === "string" ? message.content : ""
       const reasoning = typeof message.reasoning_content === "string"
@@ -402,20 +404,23 @@ export async function* requestOpenAIStream(input) {
   let finishReason = null
   let sawValidSseEvent = false
 
+  let billingModel, billingTier, billingIdentityChanged = false, billingUsage = null
   for await (const { data } of parseSSE(response.body, signal, { idleTimeoutMs: streamIdleTimeoutMs })) {
     let json
     try { json = JSON.parse(data) } catch { continue }
     sawValidSseEvent = true
+    if (json.model !== undefined) { if (billingModel !== undefined && billingModel !== json.model) billingIdentityChanged = true; billingModel = json.model }
+    if (json.service_tier !== undefined) { if (billingTier !== undefined && billingTier !== json.service_tier) billingIdentityChanged = true; billingTier = json.service_tier }
+    if (billingUsage) markUsageIdentity(billingUsage, { model: billingIdentityChanged ? null : billingModel, tier: billingTier })
 
     if (json.usage) {
       const pt = json.usage.prompt_tokens ?? 0
       const details = json.usage.prompt_tokens_details || {}
       const ct = details.cached_tokens ?? 0
       const cw = details.cache_creation_input_tokens ?? 0
-      yield {
-        type: "usage",
-        usage: { input: pt - ct, output: json.usage.completion_tokens ?? 0, cacheRead: ct, cacheWrite: cw }
-      }
+      billingUsage = markUsageIdentity(markUsageEvidence({ input: pt - ct, output: json.usage.completion_tokens ?? 0, cacheRead: ct, cacheWrite: cw },
+        [json.usage.prompt_tokens, json.usage.completion_tokens], [details.cached_tokens, details.cache_creation_input_tokens], ct <= pt), { model: billingIdentityChanged ? null : billingModel, tier: billingTier })
+      yield { type: 'usage', usage: billingUsage }
     }
 
     const choice = json.choices?.[0]
@@ -488,3 +493,4 @@ export async function* requestOpenAIStream(input) {
     : finishReason || "end_turn"
   yield { type: "stop", reason: normalizedReason }
 }
+import { markUsageEvidence, markUsageIdentity } from '../../usage/usage-evidence.mjs'

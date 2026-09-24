@@ -1,4 +1,4 @@
-import { runtimeCwd } from "../core/runtime-context.mjs"
+import { runtimeCwd, currentRuntime } from "../core/runtime-context.mjs"
 import { createHttpMcpClient } from "./client-http.mjs"
 import { createStdioMcpClient } from "./client-stdio.mjs"
 import { createSseMcpClient } from "./client-sse.mjs"
@@ -12,6 +12,8 @@ import { createHash } from "node:crypto"
 import { userRootDir } from "../../storage/paths.mjs"
 import { discoverLocalPluginManifests, pluginMcpServers } from "../plugin/manifest-loader.mjs"
 import { deprecatedSingletonAlias } from "../core/deprecations.mjs"
+import { validateMcpInput, validateMcpOutput } from './schema-validation.mjs'
+import { snapshotToolArguments } from '../tool/schema-validation.mjs'
 
 /**
  * McpRegistry 工厂（1.0.0 阶段 2a）：servers/tools/prompts/health/configured
@@ -22,6 +24,15 @@ import { deprecatedSingletonAlias } from "../core/deprecations.mjs"
  * 本工厂为多实例隔离（测试）与未来契约变更预留能力。
  */
 export function createMcpRegistry() {
+  function requestOptions(server, action, options = {}) {
+    const runtime = currentRuntime()
+    return { ...options, signal: options.signal || runtime?.signal, onprogress: progress => {
+      try { options.onprogress?.(progress) } catch { /* host observer */ }
+      // Only counters, never arbitrary server text/credentials, enter telemetry.
+      if (!Number.isFinite(progress?.progress)) return
+      runtime?.events?.emit({ type: 'mcp.progress', sessionId: runtime.sessionId, payload: { server, action, progress: progress.progress, ...(Number.isFinite(progress.total) ? { total: progress.total } : {}) } }).catch(() => {})
+    } }
+  }
   const state = {
     loaded: false,
     // 一次加载（前台或后台）正在进行中。与 loaded 正交：loaded 回答「上次
@@ -80,7 +91,9 @@ export function createMcpRegistry() {
       server: serverName,
       name: tool.name,
       description: tool.description || `${serverName}:${tool.name}`,
-      inputSchema: tool.inputSchema || tool.input_schema || { type: "object", properties: {}, required: [] }
+      inputSchema: tool.inputSchema !== undefined ? tool.inputSchema : tool.input_schema !== undefined ? tool.input_schema : { type: "object", properties: {}, required: [] },
+      ...(tool.outputSchema !== undefined ? { outputSchema: tool.outputSchema } : {}),
+      ...(tool.annotations ? { annotations: tool.annotations } : {})
     }
   }
 
@@ -526,7 +539,7 @@ export function createMcpRegistry() {
       return [...state.prompts.values()]
     },
 
-    async getPrompt(promptId, args = {}) {
+    async getPrompt(promptId, args = {}, options = {}) {
       const prompt = state.prompts.get(promptId)
       if (!prompt) throw new McpError(`mcp prompt not found: ${promptId}`, { reason: "not_found", prompt: promptId })
       const client = state.servers.get(prompt.server)
@@ -534,7 +547,7 @@ export function createMcpRegistry() {
         throw new McpError(`mcp server "${prompt.server}" does not support prompts/get`, { reason: "not_supported", server: prompt.server })
       }
       try {
-        return await client.getPrompt(prompt.name, args)
+        return await client.getPrompt(prompt.name, args, requestOptions(prompt.server, 'prompts/get', options))
       } catch (error) {
         if (error instanceof McpError) throw error
         throw new McpError(`mcp prompt "${promptId}" failed: ${error?.message || error}`, {
@@ -543,25 +556,28 @@ export function createMcpRegistry() {
       }
     },
 
-    async listResources(serverName) {
+    async listResources(serverName, options = {}) {
       const client = state.servers.get(serverName)
       if (!client) return []
-      return client.listResources()
+      if (!client.listResources) throw new McpError('此旧版 MCP 连接不支持资源列表', { reason: 'not_supported', server: serverName })
+      return client.listResources(requestOptions(serverName, 'resources/list', options))
     },
 
-    async readResource(serverName, uri) {
+    async readResource(serverName, uri, options = {}) {
       const client = state.servers.get(serverName)
       if (!client?.readResource) throw new McpError(`mcp resource reader unavailable: ${serverName}`, { reason: 'not_found', server: serverName })
-      return client.readResource(uri)
+      return client.readResource(uri, requestOptions(serverName, 'resources/read', options))
     },
 
-    async listTemplates(serverName) {
+    async listTemplates(serverName, options = {}) {
       const client = state.servers.get(serverName)
       if (!client) return []
-      return client.listTemplates()
+      if (!client.listTemplates) throw new McpError('此旧版 MCP 连接不支持资源模板', { reason: 'not_supported', server: serverName })
+      return client.listTemplates(requestOptions(serverName, 'resources/templates/list', options))
     },
 
-    async callTool(toolId, args = {}, signal = null) {
+    async callTool(toolId, args = {}, signal = null, options = {}) {
+      try { args = snapshotToolArguments(args) } catch (error) { throw Object.assign(error, { operationNotStarted: true }) }
       if (state.shuttingDown) {
         throw new McpError("MCP registry is shutting down", { reason: "shutting_down" })
       }
@@ -575,10 +591,16 @@ export function createMcpRegistry() {
       if (serverTimeout && !signal) {
         effectiveSignal = AbortSignal.timeout(serverTimeout)
       }
+      await validateMcpInput(tool, args, effectiveSignal)
+      const perform = async activeClient => {
+        const result = await activeClient.callTool(tool.name, args, effectiveSignal, requestOptions(tool.server, 'tools/call', options))
+        await validateMcpOutput(tool, result, effectiveSignal)
+        return result
+      }
       try {
-        return await client.callTool(tool.name, args, effectiveSignal)
+        return await perform(client)
       } catch (error) {
-        if (error?.reason === "spawn_failed" || error?.reason === "server_crash") {
+        if (error?.operationNotStarted === true && (error?.reason === "spawn_failed" || error?.reason === "server_crash")) {
           setHealth(tool.server, serverConfig, {
             ok: false, reason: error.reason, error: error.message
           })
@@ -586,8 +608,8 @@ export function createMcpRegistry() {
             await this.refreshServer(tool.server)
             client = state.servers.get(tool.server)
             if (client) {
-              const retrySignal = serverTimeout ? AbortSignal.timeout(serverTimeout) : null
-              return client.callTool(tool.name, args, retrySignal)
+              signal?.throwIfAborted()
+              return perform(client)
             }
           } catch {}
         }

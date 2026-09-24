@@ -108,6 +108,10 @@ describe("gate_pass 判据", () => {
 
     const absent = await verifyCriterion(criterion, { gateResult: null })
     assert.equal(absent.status, CRITERION_UNKNOWN)
+    for (const status of ["not_applicable", "unknown", "not_run", "skipped"]) {
+      const unexecuted = await verifyCriterion(criterion, { gateResult: makeGateResult({ build: status }) })
+      assert.equal(unexecuted.status, CRITERION_UNKNOWN, `${status} is not evidence for an explicit criterion`)
+    }
   })
 
   it("形状漂移 → unknown 且说明原因", async () => {
@@ -148,6 +152,33 @@ describe("verifyGoal 聚合", () => {
     const { goal } = normalizeGoal({ objective: "x", criteria, subGoals }, { objective: "x" })
     return goal
   }
+
+  it("overflowed root or subgoal acceptance is unknown before any checks run", async () => {
+    const criteria = Array.from({ length: 13 }, (_, index) => ({
+      id: `required-${index + 1}`, kind: "file_exists", spec: { path: `file-${index + 1}.txt` }
+    }))
+    for (const input of [{ criteria }, { subGoals: [{ criteria }] }]) {
+      let checks = 0
+      const { goal } = normalizeGoal(input)
+      const result = await verifyGoal({ goal, cwd: tmp, deps: { stat: async () => {
+        checks++
+        return { isFile: () => true, size: 1 }
+      } } })
+      assert.equal(result.status, GOAL_UNKNOWN)
+      assert.equal(checks, 0)
+      assert.match(result.results[0].reason, /criteria exceed 12/)
+    }
+  })
+
+  it("optional-only goals cannot produce met with no required acceptance", async () => {
+    for (const criterion of ["present.md", "nope.md"]) {
+      const result = await verifyGoal({
+        goal: goalOf([], [{ title: "extra", optional: true, criteria: [criterion] }]), cwd: tmp
+      })
+      assert.equal(result.status, GOAL_UNKNOWN)
+      assert.equal(result.subGoals.length, 1, "optional outcome remains visible")
+    }
+  })
 
   it("全 pass → met；有 fail → unmet；有 unknown 绝不 met", async () => {
     const met = await verifyGoal({ goal: goalOf(["present.md"]), cwd: tmp })

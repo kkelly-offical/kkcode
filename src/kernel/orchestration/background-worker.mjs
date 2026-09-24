@@ -4,6 +4,7 @@ import path from "node:path"
 import { readJson, writeJson } from "../../storage/json-store.mjs"
 import { ensureBackgroundTaskRuntimeDir, backgroundTaskCheckpointPath, backgroundTaskLogPath } from "../../storage/paths.mjs"
 import { createKernel } from "../index.mjs"
+import { loadConfig } from '../../config/load-config.mjs'
 import { flushNow } from "../session/store.mjs"
 import { extractEditFeedbackFromToolEvents } from "../../observability/edit-diagnostics.mjs"
 import { INTERRUPTION_REASONS, normalizeInterruptionReason } from "./interruption-reason.mjs"
@@ -181,6 +182,7 @@ async function runDelegateTask(task, signal) {
     // worktree，让错误路径的 isClean 清理误判（background-worker-e2e 钉住这条）。
     kernel = await createKernel({
       cwd: effectiveCwd,
+      configState: await loadConfig(effectiveCwd, { adminDataPolicy: payload.dataPolicy }),
       boot: false,
       ...(promptClient ? { handlers: { onPermissionPrompt: promptClient.onPermissionPrompt, onQuestionPrompt: promptClient.onQuestionPrompt } } : {}),
       ...(inheritedTrustState ? { trustState: inheritedTrustState } : {})
@@ -204,6 +206,8 @@ async function runDelegateTask(task, signal) {
       mode: "agent",
       model,
       providerType,
+      baseUrl: payload.baseUrl || null,
+      apiKeyEnv: payload.apiKeyEnv || null,
       sessionId: payload.subSessionId,
       signal,
       runSpec: payload.runSpec || null,

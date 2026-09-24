@@ -1,0 +1,3 @@
+Render supported documents with the configured offline renderer into PDF and page PNGs, in a NEW directory. Preserve the input. Return actual rendering receipts and evidence artifacts; never say layout is flawless solely because rendering succeeded. Missing fonts, unsupported format objects and renderer failures must remain visible.
+
+textVerified:true means supplied expected text matched the render extraction; null means there was no expected text to verify. Review the page previews for missing text, overflow and chart/layout defects. A complete rendering receipt is not automatic human visual approval.

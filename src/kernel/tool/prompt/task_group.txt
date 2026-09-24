@@ -1,6 +1,13 @@
 Use `task_group` when the user explicitly asks for multiple subagents, parallel agents, separate specialist lanes, or a comparison between independent agent findings.
 
-Behavior:
+Strict host task graphs (when the host advertises this capability):
+- The host persists a bounded DAG; `brief.task_id` and `brief.depends_on` identify logical lanes. All dependencies need host-approved candidate evidence, not a child's completion text.
+- Default lanes are read-only. Explicit `brief.write_scope="write"` requires an already-authorized parent write scope and creates a separate strict worktree per writer.
+- Supply bounded `brief.budget_usd` and `brief.deadline_at`; group `budget_usd`, `deadline_at`, and `max_concurrency` cannot enlarge the parent contract. Zero budget means no paid request is authorized.
+- The first strict implementation waits for the currently eligible wave and returns a persisted graph receipt. It does not return legacy background task handles. `needs_review` is not success; ask the host to inspect and approve evidence before dependent work.
+- Do not call again with a new ID to evade a failed or unknown child. Do not claim patches were merged, or use a group approval as approval for every sensitive tool action.
+
+Legacy behavior outside a strict host graph:
 - Launches every lane as a background delegated task.
 - Returns a shared `group_id`, `group_label`, per-lane task ids, and a compact visualization payload.
 - Use `inherit_context=true` or `execution_mode="fork_context"` only for read-only sidecar work that needs the parent transcript.

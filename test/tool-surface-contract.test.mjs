@@ -41,9 +41,12 @@ test("tool surface covers the shipped CLI general assistant lanes", async () => 
   }
 })
 
-test("tool surface does not pretend GUI-first assistant capabilities exist", async () => {
+test("tool surface exposes only the approved local browser bridge, not desktop/mobile/voice control", async () => {
   const tools = await ToolRegistry.list({ config: CONTRACT_CONFIG, cwd: process.cwd() })
   const names = tools.map((tool) => tool.name)
 
-  assert.equal(names.some((name) => /desktop|chrome|mobile|voice|bridge/i.test(name)), false)
+  assert.deepEqual(names.filter((name) => /desktop|chrome|mobile|voice|bridge/i.test(name)), ['browser_bridge'])
+  const bridge = tools.find(tool => tool.name === 'browser_bridge')
+  assert.ok(bridge.inputSchema)
+  assert.equal(JSON.stringify(bridge.inputSchema).includes('evaluate'), false, 'the bridge is not an unrestricted JavaScript/CDP execution surface')
 })

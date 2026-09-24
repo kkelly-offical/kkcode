@@ -1,4 +1,4 @@
-import { runtimeCwd } from "../core/runtime-context.mjs"
+import { runtimeCwd, currentRuntime, runWithRuntime } from "../core/runtime-context.mjs"
 /**
  * LongAgent Hybrid 模式
  * 融合 4-Stage 的只读探索/规划/调试回滚 + Parallel 的脚手架/并行执行/门控
@@ -8,15 +8,18 @@ import { runtimeCwd } from "../core/runtime-context.mjs"
 import path from "node:path"
 import { LongAgentManager } from "../orchestration/longagent-manager.mjs"
 import { processTurnLoop } from "./loop.mjs"
+import { resolveTaskModel } from '../provider/task-model.mjs'
 import { markSessionStatus } from "./store.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { saveCheckpoint, loadCheckpoint, saveTaskCheckpoint, loadTaskCheckpoints, cleanupCheckpoints } from "./checkpoint.mjs"
 import { getAgent } from "../agent/agent.mjs"
 import { runStageBarrier } from "../orchestration/stage-scheduler.mjs"
+import { runStrictUltraStage } from "./strict-ultra-stage.mjs"
 import { runScaffoldPhase } from "./longagent-scaffold.mjs"
 import {
   runUsabilityGates,
+  describeUsabilityGateCommands,
   hasGatePreferences,
   getGatePreferences,
   saveGatePreferences,
@@ -27,8 +30,10 @@ import { runIntakeDialogue, validateAndNormalizeStagePlan, defaultStagePlan } fr
 import { askIntakeQuestions, renderIntakeAnswers } from "./intake-questions.mjs"
 import { createValidator } from "./task-validator.mjs"
 import { detectStageComplete, detectReturnToCoding, buildStageWrapper, ULTRA_STAGES, ACCEPTANCE_RULES, buildGoalPlanContract } from "./ultra-stages.mjs"
-import { classifyGoalIntent, normalizeGoal, freezeGoal, intentProfile, planSignature } from "./goal-model.mjs"
+import { classifyGoalIntent, normalizeGoal, freezeGoal, intentProfile, planSignature, requiredGoalGates } from "./goal-model.mjs"
 import { verifyGoal, GOAL_MET, GOAL_BLOCKED_MANUAL } from "./goal-verifier.mjs"
+import { prepareHostAcceptance, restoreHostAcceptance, captureAcceptanceManifest, validateAcceptanceManifest, createVerificationReceipt } from "./acceptance-manifest.mjs"
+import { runIndependentReview } from "./independent-review.mjs"
 import { openLedger, ultraSessionDir } from "./ultra-ledger.mjs"
 import { decideStageDisposition, hasDependents, DISPOSITION } from "./stage-disposition.mjs"
 import { snapshotRound, diffSnapshots, errorSignature } from "./progress-signal.mjs"
@@ -61,6 +66,7 @@ import { TaskBus } from "./longagent-task-bus.mjs"
 import { loadProjectMemory, saveProjectMemory, memoryToContext, parseMemoryFromPreview } from "./longagent-project-memory.mjs"
 import YAML from "yaml"
 import * as git from "../../util/git.mjs"
+import { userRootDir } from "../../storage/paths.mjs"
 
 import {
   validateCheckpoint,
@@ -131,7 +137,12 @@ export function describeGoalClaimDivergence(claim, verification) {
 export async function runHybridLongAgent(args) {
   const lifecycle = { unsubscribeStop: null }
   try {
-    return await runHybridPipeline(args, lifecycle)
+    const providerType = args.providerType || args.configState?.config?.provider?.default
+    const model = args.model || args.configState?.config?.provider?.[providerType]?.default_model
+    // A role's temporary request route is not the user's persistent session
+    // model selection. Match the parent session ID so child sessions retain
+    // their own actual implementation model.
+    return await runWithRuntime({ ...currentRuntime(), cwd: runtimeCwd(), sessionSelection: { sessionId: args.sessionId, mode: 'longagent', model, providerType } }, () => runHybridPipeline(args, lifecycle))
   } catch (err) {
     const sessionId = args?.sessionId
     if (sessionId) {
@@ -139,7 +150,7 @@ export async function runHybridLongAgent(args) {
       const aborted = Boolean(args?.signal?.aborted) ||
         err?.code === "ABORT_ERR" || err?.errorClass === "aborted"
       const detail = String(err?.message || err).slice(0, 300)
-      await LongAgentManager.update(sessionId, {
+      if (args?.acceptance?.required !== true) await LongAgentManager.update(sessionId, {
         status: aborted ? "aborted" : "fatal",
         lastMessage: `${aborted ? "已中断" : "内部错误"}: ${detail}`
       }).catch(() => {})
@@ -162,6 +173,7 @@ async function runHybridPipeline({
   baseUrl = null, apiKeyEnv = null, agent = null,
   maxIterations = 0, signal = null, output = null,
   allowQuestion = true, toolContext = /** @type {Record<string, any>} */ ({}), runSpec: _runSpec = null,
+  acceptance = null,
   guidance = "",
   /**
    * 插话来源（() => string[]）。只接到 H5 调试循环上 —— 它是 Ultra 里唯一会
@@ -198,13 +210,13 @@ async function runHybridPipeline({
   // 每阶段模型选择
   const separateModels = hybridConfig.separate_models || {}
   const useSeparateModels = separateModels.enabled === true
-  function getModelForStage(stage) {
+  async function getModelForStage(stage) {
     // 0.5.0 正式路径：models.ultra.<stage>；旧的 hybrid.separate_models 仍然生效
     const ultraModels = configState.config.models?.ultra || {}
-    if (ultraModels[stage]) return { model: ultraModels[stage], providerType }
-    if (!useSeparateModels) return { model, providerType }
     const m = { preview: separateModels.preview_model, blueprint: separateModels.blueprint_model, debugging: separateModels.debugging_model }
-    return m[stage] ? { model: m[stage], providerType } : { model, providerType }
+    const legacyModel = ultraModels[stage] || (useSeparateModels ? m[stage] : null)
+    return resolveTaskModel(configState, { role: ['preview', 'blueprint'].includes(stage) ? 'planning' : 'implementation',
+      model, providerType, baseUrl, apiKeyEnv, legacyModel })
   }
   // 曾有一个 getModelForTask（按 task.complexity 从 hybrid.adaptive_models 选模型），
   // 定义后从未被调用，因此删除。老配置的 low/high 仍由
@@ -223,10 +235,13 @@ async function runHybridPipeline({
   const planDefaults = { timeoutMs: Number(parallelConfig.task_timeout_ms || 600000), maxRetries: Number(parallelConfig.task_max_retries ?? 2) }
   // 轮次循环状态（0.5.0 goal 模式）
   const ultraCfg = longagentConfig.ultra || {}
-  const goalMode = ultraCfg.goal_mode !== false
+  const acceptanceRequired = acceptance?.required === true
+  if (_runSpec?.workspace?.isolation === "strict" && !acceptanceRequired) throw new Error("strict Ultra run requires host acceptance context")
+  const goalMode = acceptanceRequired || ultraCfg.goal_mode !== false
   let usabilityGatesPassed = false, lastGateResult = null, gateAttempt = 0
   let exhaustedFlag = "", userGuidance = String(guidance || ""), userDecision = ""
   let manualConfirmed = new Set()
+  let manualConfirmationBinding = null
   let maxStageIndexReached = 0
   let replansUsed = 0
   const maxReplans = Number(ultraCfg.stage_failure?.max_replans ?? 2)
@@ -257,6 +272,115 @@ async function runHybridPipeline({
   const taskBus = hybridConfig.task_bus !== false ? new TaskBus() : null
   // #5 Project Memory
   const cwd = runtimeCwd()
+  // This is a host-only boundary, prepared before H0 or any model request. A
+  // restored run uses its original private baseline; it never blesses edited tests.
+  const acceptanceContext = acceptanceRequired
+    ? await restoreHostAcceptance(acceptance.boundary || await prepareHostAcceptance({ cwd, acceptance, signal }), {
+      cwd, signal, runCommand: acceptance.runCommand, onReceipt: acceptance.onReceipt
+    }) : null
+  const verificationConfig = acceptanceRequired ? structuredClone(configState.config) : configState.config
+  const stateCwd = acceptanceRequired ? path.join(userRootDir(), "acceptance-runs", acceptanceContext.boundary.id) : cwd
+  const hostAcceptanceInstructions = acceptanceRequired ? [
+    "## Host-approved acceptance (immutable)",
+    JSON.stringify(acceptanceContext.boundary.goal),
+    `Original test sources: ${acceptanceContext.boundary.testSources.join(", ")}`,
+    "Do not modify or disable these sources. A blueprint cannot replace this contract. If the contract itself needs revision, stop and request a new host approval."
+  ].join("\n") : ""
+  if (acceptanceRequired) {
+    verificationConfig.agent.longagent.ultra ||= {}
+    verificationConfig.agent.longagent.ultra.criteria = { ...verificationConfig.agent.longagent.ultra.criteria, allow_shell: false }
+  }
+  let acceptanceManifest = null, verificationReceipt = null, independentReviewReceipt = null
+  let verificationCommands = []
+  gateStatus.acceptance = acceptanceRequired
+    ? { status: "bound", boundaryId: acceptanceContext.boundary.id, sourceFingerprint: acceptanceContext.boundary.sourceBaseline.fingerprint }
+    : { status: "legacy_unbound", reason: "legacy interactive Ultra does not provide independent host acceptance" }
+  const runAcceptanceCommand = acceptanceRequired ? async request => {
+    if (request.shell === true) throw new Error("strict acceptance cannot execute a shell-interpreted command")
+    const commandCriteria = [...(goal?.criteria || []), ...(goal?.subGoals || []).flatMap(sub => sub.criteria || [])]
+      .filter(criterion => ["command_exit", "test_pass"].includes(criterion.kind)).map(criterion => criterion.spec)
+    const permitted = [...(acceptanceManifest?.approvedCommands || []), ...commandCriteria]
+    if (!acceptanceManifest || !permitted.some(command => command.command === request.command && JSON.stringify(command.args || []) === JSON.stringify(request.args || []))) {
+      throw new Error("acceptance command is not in the sealed host candidate manifest")
+    }
+    const command = { command: request.command, args: [...(request.args || [])], timeoutMs: request.timeoutMs || null, shell: false }
+    const result = await acceptanceContext.runCommand({ ...request, shell: false,
+      acceptance: { manifestId: acceptanceManifest.id, candidateHash: acceptanceManifest.candidate.treeFingerprint,
+        sourceFingerprint: acceptanceManifest.sources.fingerprint, boundaryId: acceptanceContext.boundary.id,
+        testSources: acceptanceContext.boundary.sourceBaseline.files }
+    })
+    // This metadata is supplied by the host execution callback, not by model
+    // tool arguments. Persist only the immutable dependency identity, never
+    // workspace, mount or private-environment paths from the backend report.
+    const dependency = result.isolation?.dependencyEnvironment
+    let isolation
+    if (dependency !== undefined) {
+      if (!dependency || typeof dependency.id !== "string" || !/^npm-[A-Za-z0-9_-]{1,128}$/.test(dependency.id)
+        || !/^[a-f0-9]{64}$/.test(dependency.planId || "") || !/^[a-f0-9]{64}$/.test(dependency.treeHash || "")
+        || !/^sha256:[a-f0-9]{64}$/.test(dependency.imageId || "")
+        || (result.isolation.imageId && result.isolation.imageId !== dependency.imageId)) {
+        throw new Error("host acceptance returned invalid dependency environment evidence")
+      }
+      isolation = { dependencyEnvironment: { id: dependency.id, planId: dependency.planId, treeHash: dependency.treeHash, imageId: dependency.imageId } }
+    }
+    verificationCommands.push({ ...command, exitCode: result.code ?? null, timedOut: result.timedOut === true, ...(isolation ? { isolation } : {}) })
+    return result
+  } : null
+
+  async function sealAcceptanceCandidate() {
+    if (!acceptanceRequired) return
+    acceptanceManifest = null
+    verificationReceipt = null
+    independentReviewReceipt = null
+    verificationCommands = []
+    const boundary = acceptanceContext.boundary
+    const approvedCommands = await describeUsabilityGateCommands({ cwd, config: verificationConfig, portable: true })
+    acceptanceManifest = await captureAcceptanceManifest({
+      goal, cwd, baseRevision: boundary.baseRevision, sourceBaseline: boundary.sourceBaseline,
+      config: verificationConfig, hostBoundaryId: boundary.id, approvedCommands
+    })
+    const nextConfirmationBinding = JSON.stringify([
+      acceptanceManifest.candidate.treeFingerprint, acceptanceManifest.criteriaFingerprint, acceptanceManifest.policyFingerprint || null
+    ])
+    if (manualConfirmationBinding !== nextConfirmationBinding) manualConfirmed.clear()
+    manualConfirmationBinding = nextConfirmationBinding
+    gateStatus.acceptance = { ...gateStatus.acceptance, status: "candidate_sealed", manifestId: acceptanceManifest.id, candidateHash: acceptanceManifest.candidate.treeFingerprint }
+  }
+
+  async function verifyCurrentGoal() {
+    if (acceptanceRequired) verificationReceipt = null
+    if (acceptanceRequired && !acceptanceManifest) {
+      try { await sealAcceptanceCandidate() }
+      catch (error) { gateStatus.acceptance = { ...gateStatus.acceptance, status: "unknown", reason: String(error.message) } }
+    }
+    const verification = await verifyGoal({
+      goal, cwd, config: verificationConfig, gateResult: lastGateResult, manualConfirmed,
+      acceptanceManifest, acceptanceRequired,
+      deps: { ...(io.stat ? { stat: io.stat } : {}), ...(runAcceptanceCommand ? { runGateCommand: runAcceptanceCommand } : {}) }
+    })
+    if (acceptanceRequired && acceptanceManifest && verification.acceptance?.ok) {
+      const receipt = createVerificationReceipt({ boundary: acceptanceContext.boundary, manifest: acceptanceManifest, verification, gates: lastGateResult, commands: verificationCommands })
+      await acceptanceContext.onReceipt(receipt)
+      verificationReceipt = receipt
+      gateStatus.acceptance = { ...gateStatus.acceptance, status: "receipted", receiptId: receipt.id }
+    }
+    return verification
+  }
+  async function runAcceptanceGates(args) {
+    if (!acceptanceRequired) return io.runUsabilityGates(args)
+    try { await sealAcceptanceCandidate() }
+    catch (error) {
+      const reason = String(error.message)
+      return { allPass: false, gates: {}, failures: [{ gate: "acceptance", status: "unknown", reason }],
+        acceptance: { ok: false, status: "unknown", manifestId: null, errors: [reason] } }
+    }
+    if (verificationConfig.agent.longagent.usability_gates?.review?.enabled !== false) {
+      independentReviewReceipt = await runIndependentReview({ manifest: acceptanceManifest, goal, cwd, configState,
+        verificationConfig, providerType, model, baseUrl, apiKeyEnv, signal, sessionId })
+    }
+    return io.runUsabilityGates({ ...args, config: verificationConfig, goal, acceptanceRequired,
+      acceptanceManifest, reviewReceipt: independentReviewReceipt, commandRunner: runAcceptanceCommand, requiredGates: requiredGoalGates(goal) })
+  }
   let projectMemory = null
   if (hybridConfig.project_memory !== false) {
     try { projectMemory = await loadProjectMemory(cwd) } catch { projectMemory = null }
@@ -290,7 +414,7 @@ async function runHybridPipeline({
       taskProgress, stageProgress: { done: stats.done, total: stats.total },
       remainingFilesCount: stats.remainingFilesCount,
       ...patch
-    })
+    }, stateCwd)
     // 跨进程 stop：`kkcode ultra stop` 只能写状态文件（EventBus 是纯内存的，
     // 别的进程发的事件这里收不到）。0.4.x 里 stopRequested 写盘后**没有任何
     // 代码读它**，停止命令从另一个终端发出时完全无效。syncState 每次本来
@@ -352,7 +476,7 @@ async function runHybridPipeline({
   // 前置检查
   if (!isLikelyActionableObjective(prompt)) {
     const blocked = "Ultra 需要一个可执行的目标。可以是实现、修复、调研、文档或运维任务，请描述你想达成什么。"
-    await LongAgentManager.update(sessionId, { status: "needs_objective", phase: "H0", lastMessage: blocked })
+    await LongAgentManager.update(sessionId, { status: "needs_objective", phase: "H0", lastMessage: blocked }, stateCwd)
     await markSessionStatus(sessionId, "active")
     return { sessionId, turnId: `turn_long_${Date.now()}`, reply: blocked, usage: aggregateUsage, toolEvents, iterations: 0, status: "needs_objective", phase: "H0", gateStatus: {}, currentGate: "init", lastGateFailures: [], recoveryCount: 0, progress: lastProgress, elapsed: 0, stageIndex: 0, stageCount: 0, planFrozen: false, taskProgress: {}, fileChanges: [], stageProgress: { done: 0, total: 0 }, remainingFilesCount: 0 }
   }
@@ -368,7 +492,8 @@ async function runHybridPipeline({
           await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_CHECKPOINT_INVALID, sessionId, payload: { reason: "structure_validation_failed" } })
         } else {
           stagePlan = cp.stagePlan; stageIndex = cp.stageIndex; planFrozen = true
-          goal = stagePlan.goal || null   // goal 随 stagePlan 一起冻结与恢复
+          goal = acceptanceRequired ? acceptanceContext.boundary.goal : stagePlan.goal || null
+          stagePlan.goal = goal
           restoredPreviewFindings = String(cp.previewFindings || "")
           restoredArchitectureText = String(cp.architectureText || "")
           resumedStageIndex = Number(cp.stageIndex) || 0
@@ -457,14 +582,14 @@ async function runHybridPipeline({
     await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_PREVIEW_START, sessionId, payload: { objective: prompt } })
     await syncState({ lastMessage: "H1: preview agent exploring codebase" })
 
-    const previewModel = getModelForStage("preview")
+    const previewModel = await getModelForStage("preview")
     // #5 注入 project memory 到 preview prompt
     const memCtx = projectMemory ? memoryToContext(projectMemory) : ""
     const previewPrompt = buildStageWrapper(ULTRA_STAGES.PREVIEW, { preview: null, blueprint: null, coding: null }, memCtx ? `${memCtx}\n\n${intakeSummary}` : intakeSummary)
     const previewOut = await processTurnLoop({
       prompt: previewPrompt, mode: "agent", agent: getAgent("preview-agent"),
       model: previewModel.model, providerType: previewModel.providerType,
-      sessionId, configState, baseUrl, apiKeyEnv, signal, output, allowQuestion, toolContext
+      sessionId, configState, baseUrl: previewModel.baseUrl, apiKeyEnv: previewModel.apiKeyEnv, signal, output, allowQuestion, toolContext
     })
     accumulateUsage(previewOut)
     previewFindings = previewOut.reply || ""
@@ -482,7 +607,7 @@ async function runHybridPipeline({
   await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_BLUEPRINT_START, sessionId, payload: {} })
   await syncState({ lastMessage: "H2: blueprint agent designing architecture" })
 
-  const blueprintModel = getModelForStage("blueprint")
+  const blueprintModel = await getModelForStage("blueprint")
   // Task 4: 检测前端任务，注入设计风格提示词
   const isFrontend = detectFrontendTask(prompt)
   const frontendBlock = isFrontend
@@ -491,6 +616,7 @@ async function runHybridPipeline({
   const goalIntent = classifyGoalIntent(prompt)
   const blueprintPrompt = buildStageWrapper(ULTRA_STAGES.BLUEPRINT, { preview: previewFindings, blueprint: null, coding: null }, prompt)
     + frontendBlock
+    + (hostAcceptanceInstructions ? `\n\n${hostAcceptanceInstructions}` : "")
     + [
       "\n\n## HYBRID MODE: STRUCTURED EXECUTION PLAN (REQUIRED)",
       "In addition to your architecture design, you MUST output a machine-parseable stage plan.",
@@ -512,7 +638,7 @@ async function runHybridPipeline({
   const blueprintOut = await processTurnLoop({
     prompt: blueprintPrompt, mode: "agent", agent: getAgent("blueprint-agent"),
     model: blueprintModel.model, providerType: blueprintModel.providerType,
-    sessionId, configState, baseUrl, apiKeyEnv, signal, output, allowQuestion, toolContext
+    sessionId, configState, baseUrl: blueprintModel.baseUrl, apiKeyEnv: blueprintModel.apiKeyEnv, signal, output, allowQuestion, toolContext
   })
   accumulateUsage(blueprintOut)
 
@@ -543,7 +669,7 @@ async function runHybridPipeline({
       const repairOut = await processTurnLoop({
         prompt: repairPrompt, mode: "assistant",
         model: blueprintModel.model, providerType: blueprintModel.providerType,
-        sessionId, configState, baseUrl, apiKeyEnv, signal,
+        sessionId, configState, baseUrl: blueprintModel.baseUrl, apiKeyEnv: blueprintModel.apiKeyEnv, signal,
         output: { write: () => {} }, allowQuestion: false
       })
       accumulateUsage(repairOut)
@@ -566,13 +692,12 @@ async function runHybridPipeline({
   // plan.goal）。没有输出时按目标类型合成兜底：task 级 acceptanceChecks 提升为
   // goal 判据；一条都没有就落一条 manual —— 目标至少要有一个「谁说了算」，
   // 而「没人说了算」的诚实答案是问用户。
-  goal = stagePlan.goal || null
-  let goalSource = "blueprint"
+  goal = acceptanceRequired ? acceptanceContext.boundary.goal : stagePlan.goal || null
+  let goalSource = acceptanceRequired ? "host_approved" : "blueprint"
   if (!goal) {
     goalSource = "synthesized"
     const promoted = stagePlan.stages
       .flatMap((s) => (s.tasks || []).flatMap((t) => t.acceptanceChecks || []))
-      .slice(0, 8)
     const { goal: synthesized } = normalizeGoal({
       objective: prompt,
       intent: goalIntent,
@@ -582,7 +707,7 @@ async function runHybridPipeline({
   } else if (stagePlan.goalErrors?.length) {
     goalSource = "blueprint_with_errors"
   }
-  goal = freezeGoal(goal, { round: 1 })
+  goal = acceptanceRequired ? acceptanceContext.boundary.goal : freezeGoal(goal, { round: 1 })
   stagePlan.goal = goal
   gateStatus.goal = {
     status: "frozen",
@@ -636,7 +761,7 @@ async function runHybridPipeline({
   // 尝试台账：重规划的输入、受阻报告的唯一数据源、ultra report 的落盘依据。
   // ledger.enabled: false 时不落盘 —— 受阻报告与 ultra report/board 将不可用，
   // 这是用户显式选择的裸奔模式。
-  if (ultraCfg.ledger?.enabled !== false) {
+  if (!acceptanceRequired && ultraCfg.ledger?.enabled !== false) {
     ledger = await openLedger({
       sessionId, cwd, objective: prompt, goal,
       // resume 需要知道原 run 用的渠道 —— 0.5.2 之前 resume 一律回落到默认
@@ -680,7 +805,7 @@ async function runHybridPipeline({
     accumulateUsage(reviewOut)
     const answer = String(reviewOut.reply || "").toLowerCase().trim()
     if (["no", "否", "n", "取消", "abort", "cancel", "中止", "停止"].some(k => answer.includes(k))) {
-      await LongAgentManager.update(sessionId, { status: "aborted", lastMessage: "user rejected blueprint" })
+      await LongAgentManager.update(sessionId, { status: "aborted", lastMessage: "user rejected blueprint" }, stateCwd)
       await markSessionStatus(sessionId, "active")
       return { sessionId, turnId: `turn_long_${Date.now()}`, reply: "用户中止了 Blueprint 审查。", usage: aggregateUsage, toolEvents, iterations: iteration, status: "aborted", phase: "H2", gateStatus, currentGate, lastGateFailures: [], recoveryCount: 0, progress: lastProgress, elapsed: Math.round((Date.now() - startTime) / 1000), stageIndex: 0, stageCount: stagePlan.stages.length, planFrozen, taskProgress: {}, fileChanges: [], stageProgress: { done: 0, total: 0 }, remainingFilesCount: 0 }
     }
@@ -688,7 +813,7 @@ async function runHybridPipeline({
   }
 
   // ========== H2.5: GIT BRANCH (可选) ==========
-  const gitEnabled = gitConfig.enabled === true || gitConfig.enabled === "ask"
+  const gitEnabled = !acceptanceRequired && (gitConfig.enabled === true || gitConfig.enabled === "ask")
   const gitAsk = gitConfig.enabled === "ask"
   const inGitRepo = gitEnabled && await git.isGitRepo(cwd)
 
@@ -743,8 +868,9 @@ async function runHybridPipeline({
   }
   } else {
     // 恢复路径：goal 与计划来自 checkpoint，台账续写同一份文件
-    goal = stagePlan.goal || goal
-    if (ultraCfg.ledger?.enabled !== false) {
+    goal = acceptanceRequired ? acceptanceContext.boundary.goal : stagePlan.goal || goal
+    stagePlan.goal = goal
+    if (!acceptanceRequired && ultraCfg.ledger?.enabled !== false) {
       ledger = await openLedger({
         sessionId, cwd, objective: prompt, goal, providerType, model,
         maxRoundsKept: Number(ultraCfg.ledger?.max_rounds_kept ?? 10)
@@ -779,7 +905,7 @@ async function runHybridPipeline({
     const subGoalLines = (goalVerification?.subGoals || []).map(sg =>
       `- [${sg.status === "met" ? "✓已达成，不要重做" : sg.status}] ${sg.title}（stage: ${(sg.stageIds || []).join(",") || "?"}）`)
     const doneFiles = [...new Set(fileChanges.map(f => f.path))]
-    const replanModel = getModelForStage("blueprint")
+    const replanModel = await getModelForStage("blueprint")
     const revisePrompt = [
       "## 目标（不可更改）", goal?.objective || prompt,
       "",
@@ -810,7 +936,7 @@ async function runHybridPipeline({
     const out = await processTurnLoop({
       prompt: revisePrompt, mode: "agent", agent: getAgent("blueprint-agent"),
       model: replanModel.model, providerType: replanModel.providerType,
-      sessionId, configState, baseUrl, apiKeyEnv, signal, allowQuestion: false,
+      sessionId, configState, baseUrl: replanModel.baseUrl, apiKeyEnv: replanModel.apiKeyEnv, signal, allowQuestion: false,
       output: { write: () => {} }, toolContext
     })
     accumulateUsage(out)
@@ -856,11 +982,7 @@ async function runHybridPipeline({
   async function verifyGoalOnClaim(round, claim) {
     if (!goal) return { met: false }
     try {
-      goalVerification = await verifyGoal({
-        goal, cwd, config: configState.config,
-        gateResult: lastGateResult, manualConfirmed,
-        deps: io.stat ? { stat: io.stat } : {}
-      })
+      goalVerification = await verifyCurrentGoal()
     } catch (verifyErr) {
       gateStatus.goalVerification = { status: "error", reason: String(verifyErr?.message || verifyErr).slice(0, 200) }
       return { met: false }
@@ -944,10 +1066,11 @@ async function runHybridPipeline({
     currentGate = "scaffold"
     await syncState({ lastMessage: "H3: creating stub files" })
 
+    const scaffoldModel = await getModelForStage('coding')
     const scaffoldResult = await runScaffoldPhase({
       objective: `${prompt}\n\n=== BLUEPRINT ARCHITECTURE ===\n${architectureText.slice(0, 4000)}`,
-      stagePlan: scaffoldPlan, model, providerType, sessionId, configState,
-      baseUrl, apiKeyEnv, agent, signal, toolContext,
+      stagePlan: scaffoldPlan, model: scaffoldModel.model, providerType: scaffoldModel.providerType, sessionId, configState,
+      baseUrl: scaffoldModel.baseUrl, apiKeyEnv: scaffoldModel.apiKeyEnv, agent, signal, toolContext,
       tddMode: hybridConfig.tdd_mode === true
     })
 
@@ -1067,12 +1190,14 @@ async function runHybridPipeline({
         const marker = i < stageIndex ? "✓" : i === stageIndex ? "→" : " "
         return `[${marker}] 阶段${i + 1}: ${s.name || s.stageId}`
       }).join("\n")
-      const planAnchor = `## 计划锚点\n目标: ${stagePlan.objective || prompt}\n进度: ${stageIndex + 1}/${stagePlan.stages.length}\n${stageStatuses}\n\n`
+      const planAnchor = `## 计划锚点\n目标: ${stagePlan.objective || prompt}\n进度: ${stageIndex + 1}/${stagePlan.stages.length}\n${stageStatuses}\n\n${hostAcceptanceInstructions}\n\n`
 
       let stageResult
       try {
-        stageResult = await runStageBarrier({
-          stage, sessionId, config: configState.config, model, providerType,
+        const codingModel = await getModelForStage('coding')
+        stageResult = await (acceptanceRequired ? runStrictUltraStage : runStageBarrier)({
+          stage, sessionId, config: configState.config, model: codingModel.model, providerType: codingModel.providerType,
+          configState, baseUrl: codingModel.baseUrl, apiKeyEnv: codingModel.apiKeyEnv, signal, output, toolContext,
           seedTaskProgress: seeded, objective: prompt,
           stageIndex, stageCount: stagePlan.stages.length, priorContext: planAnchor + priorContext,
           stuckTracker,
@@ -1108,6 +1233,7 @@ async function runHybridPipeline({
       }
 
       // 合并结果
+      if (acceptanceRequired) accumulateUsage(stageResult)
       for (const [taskId, progress] of Object.entries(stageResult.taskProgress || {})) {
         taskProgress[taskId] = { ...taskProgress[taskId], ...progress }
         if (String(progress.lastReply || "").toLowerCase().includes("[task_complete]")) completionMarkerSeen = true
@@ -1181,7 +1307,7 @@ async function runHybridPipeline({
       if (hybridConfig.incremental_gates !== false && stageResult.allSuccess && stageIndex < stagePlan.stages.length - 1) {
         const stageFiles = (stageResult.fileChanges || []).map(f => f.path).filter(Boolean)
         if (stageFiles.length > 0) {
-          const miniGate = await io.runUsabilityGates({
+          const miniGate = await runAcceptanceGates({
             sessionId,
             config: configState.config,
             cwd,
@@ -1240,7 +1366,7 @@ async function runHybridPipeline({
           config: configState.config,
           sessionId,
           iteration,
-          deps: { runUsabilityGates: io.runUsabilityGates, ...(io.stat ? { stat: io.stat } : {}) }
+          deps: { runUsabilityGates: runAcceptanceGates, ...(io.stat ? { stat: io.stat } : {}) }
         })
         if (objective.status === OBJECTIVE_MET) {
           await EventBus.emit({
@@ -1424,7 +1550,7 @@ async function runHybridPipeline({
     await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_DEBUGGING_START, sessionId, payload: { codingRollbackCount, debugSavepoint } })
     await syncState({ lastMessage: "H5: debugging agent verifying implementation" })
 
-    const debugModel = getModelForStage("debugging")
+    const debugModel = await getModelForStage("debugging")
     const debugPromptBase = buildStageWrapper(ULTRA_STAGES.DEBUGGING, {
       preview: previewFindings.slice(0, 2000),
       blueprint: architectureText.slice(0, 3000),
@@ -1433,7 +1559,7 @@ async function runHybridPipeline({
     // goal 模式才谈得上「判据核验」。关掉 goal_mode 时没有判据可核，
     // 教模型输出一个不会被验证的信号只会让它更愿意提前收工。
     const debugPrompt = goalMode && goal
-      ? `${debugPromptBase}\n\n${GOAL_SIGNAL_INSTRUCTIONS}`
+      ? `${debugPromptBase}\n\n${GOAL_SIGNAL_INSTRUCTIONS}\n\n${hostAcceptanceInstructions}`
       : debugPromptBase
 
     let debugIter = 0
@@ -1458,7 +1584,7 @@ async function runHybridPipeline({
       const debugOut = await processTurnLoop({
         prompt: effectiveDebugPrompt, mode: "agent", agent: getAgent("debugging-agent"),
         model: debugModel.model, providerType: debugModel.providerType,
-        sessionId, configState, baseUrl, apiKeyEnv, signal, output, allowQuestion, toolContext,
+        sessionId, configState, baseUrl: debugModel.baseUrl, apiKeyEnv: debugModel.apiKeyEnv, signal, output, allowQuestion, toolContext,
         steerSource
       })
       accumulateUsage(debugOut)
@@ -1620,9 +1746,11 @@ async function runHybridPipeline({
     const cwd = runtimeCwd()
     try {
       const validator = await createValidator({ cwd, configState })
-      const report = await validator.validate({ todoState: toolContext?._todoState, level: "standard" })
+      // Legacy validator's standard mode spawns host compilers/tests. Strict
+      // work uses its read-only todo projection; real checks run in sealed H6.
+      const report = await validator.validate({ todoState: toolContext?._todoState, level: acceptanceRequired ? "evidence" : "standard" })
       gateStatus.completionValidation = {
-        status: report.verdict === "BLOCK" ? "fail" : "pass",
+        status: report.verdict === "BLOCK" ? "fail" : acceptanceRequired ? "informational" : "pass",
         verdict: report.verdict,
         failedChecks: report.results?.filter(r => !r.passed).length || 0
       }
@@ -1666,7 +1794,7 @@ async function runHybridPipeline({
 
   // Gate 偏好提示（首次运行时询问用户）
   const shouldPromptGates = gatesConfig.prompt_user === "first_run" || gatesConfig.prompt_user === "always"
-  if (shouldPromptGates && allowQuestion) {
+  if (!acceptanceRequired && shouldPromptGates && allowQuestion) {
     const hasPrefs = await hasGatePreferences()
     const needsAsking = !hasPrefs || gatesConfig.prompt_user === "always"
     // 问得出结果吗？没有 TUI handler 又没有 TTY，askQuestionInteractive 只会
@@ -1732,11 +1860,13 @@ async function runHybridPipeline({
     gateAttempt++
     if (stopFlag || signal?.aborted) break
 
-    const gateResult = await io.runUsabilityGates({
+    const gateResult = await runAcceptanceGates({
       sessionId,
-      config: configState.config,
+      config: verificationConfig,
       cwd,
-      iteration
+      iteration,
+      requiredGates: requiredGoalGates(goal), goal, acceptanceRequired, acceptanceManifest,
+      ...(runAcceptanceCommand ? { commandRunner: runAcceptanceCommand } : {})
     })
     lastGateResult = gateResult
 
@@ -1755,7 +1885,7 @@ async function runHybridPipeline({
     const strategy = getGateFixStrategy(lastGateFailures)
 
     // lint 失败时先尝试自动修复
-    if (strategy.autoFix) {
+    if (!acceptanceRequired && strategy.autoFix) {
       try {
         const { execSync } = await import("node:child_process")
         execSync(strategy.autoFix, { cwd: runtimeCwd(), timeout: 30000, stdio: "ignore" })
@@ -1798,14 +1928,7 @@ async function runHybridPipeline({
   // 同一轮里不重复跑 build/test。
   if (goal && (goalMode || !goalVerification)) {
     try {
-      goalVerification = await verifyGoal({
-        goal,
-        cwd,
-        config: configState.config,
-        gateResult: lastGateResult,
-        manualConfirmed,
-        deps: io.stat ? { stat: io.stat } : {}
-      })
+      goalVerification = await verifyCurrentGoal()
       gateStatus.goalVerification = {
         status: goalVerification.status,
         passed: goalVerification.passed,
@@ -1922,17 +2045,25 @@ async function runHybridPipeline({
         const pending = [...goalVerification.results, ...goalVerification.subGoals.flatMap((sg) => sg.results)]
           .filter((r) => r.status === "pending_manual")
           .map((r) => ({ id: r.id, text: r.text, question: r.reason }))
+        const confirmingManifest = acceptanceRequired ? acceptanceManifest : null
+        const confirmingBinding = manualConfirmationBinding
         const confirmed = await confirmManualCriteria({
           pending, allowQuestion,
           deps: { askQuestionInteractive: io.askQuestionInteractive, hasPromptHandler: io.hasPromptHandler }
         })
+        if (acceptanceRequired && confirmed.size) {
+          const current = await validateAcceptanceManifest(confirmingManifest, { goal, cwd, config: verificationConfig })
+          if (!current.ok || confirmingBinding !== manualConfirmationBinding) {
+            confirmed.clear(); manualConfirmed.clear(); acceptanceManifest = null; verificationReceipt = null
+            usabilityGatesPassed = false
+            goalVerification = { ...goalVerification, status: "unknown", acceptance: current }
+            gateStatus.acceptance = { ...gateStatus.acceptance, status: "unknown", reason: "人工确认期间候选或验收定义已变化；确认未应用，请重新验收。" }
+          }
+        }
         if (confirmed.size) {
           for (const id of confirmed) manualConfirmed.add(id)
           for (const id of confirmed) await ledger?.appendInteraction({ question: `manual:${id}`, answer: "confirmed", action: "confirm_manual", source: "user" })
-          goalVerification = await verifyGoal({
-            goal, cwd, config: configState.config, gateResult: lastGateResult, manualConfirmed,
-            deps: io.stat ? { stat: io.stat } : {}
-          }).catch(() => goalVerification)
+          goalVerification = await verifyCurrentGoal().catch(() => null)
           if (goalVerification?.status === GOAL_MET && usabilityGatesPassed) break
         } else {
           // 没人能确认 manual 判据（无头）。但如果还有没做完的可执行工作，
@@ -2035,6 +2166,15 @@ async function runHybridPipeline({
   // completionMarker 是模型的自我声明，不是证据 —— 它单独永远不产生 completed。
   const hadOutput = fileChanges.length > 0 ||
     Object.values(taskProgress).some((t) => t.status === "completed")
+  if (acceptanceRequired) {
+    const finalCheck = await validateAcceptanceManifest(acceptanceManifest, { goal, cwd, config: verificationConfig })
+    if (!finalCheck.ok || !verificationReceipt || verificationReceipt.manifestId !== acceptanceManifest?.id) {
+      usabilityGatesPassed = false
+      goalVerification = { results: [], subGoals: [], passed: 0, failed: 0, unknown: 1, manual: 0,
+        ...goalVerification, status: "unknown", acceptance: finalCheck }
+      gateStatus.acceptance = { ...gateStatus.acceptance, status: "unknown", reason: finalCheck.errors.join("; ") || "durable owner-approved receipt is missing" }
+    }
+  }
   const finalUltraStatus = resolveUltraStatus({
     fatalError: null,
     stopped: stopFlag || Boolean(signal?.aborted),
@@ -2149,7 +2289,7 @@ async function runHybridPipeline({
   }
 
   // #5 保存 project memory
-  if (hybridConfig.project_memory !== false && previewFindings) {
+  if (!acceptanceRequired && hybridConfig.project_memory !== false && previewFindings) {
     try {
       const newMemory = parseMemoryFromPreview(previewFindings)
       if (newMemory.techStack.length) {
@@ -2187,7 +2327,7 @@ async function runHybridPipeline({
     [ULTRA_STATUS.FATAL]: "internal error"
   }
   const finalMessage = STATUS_MESSAGES[finalStatus] || "hybrid longagent finished"
-  await LongAgentManager.update(sessionId, { status: finalStatus, lastMessage: finalMessage, elapsed })
+  await LongAgentManager.update(sessionId, { status: finalStatus, lastMessage: finalMessage, elapsed }, stateCwd)
   await markSessionStatus(sessionId, sessionStatusForUltraStatus(finalStatus))
 
   const stats = stageProgressStats(taskProgress)
@@ -2293,6 +2433,8 @@ async function runHybridPipeline({
     // 于是状态栏永远退化成 "i/n" 而不是阶段名。
     currentStageId,
     goal, goalVerification, stagePlan, blockedReport, reportPath,
+    acceptance: acceptanceRequired ? { mode: "host_bound", boundaryId: acceptanceContext.boundary.id, manifest: acceptanceManifest, receipt: verificationReceipt }
+      : { mode: "legacy_unbound" },
     ledgerPath: ledger?.path || null,
     planFrozen, taskProgress, fileChanges,
     stageProgress: { done: stats.done, total: stats.total },

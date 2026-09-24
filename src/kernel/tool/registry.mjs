@@ -18,6 +18,8 @@ import { checkBashAllowed } from "../permission/exec-policy.mjs"
 import { inflateSync } from "node:zlib"
 import { truncationNotice, completeNotice } from "./output-budget.mjs"
 import { guardedFetch, allowPrivateHosts } from "../../net/url-guard.mjs"
+import { readablePage } from "../../net/readable-page.mjs"
+import { assertWebDataPolicy } from '../permission/data-policy.mjs'
 import { fileOpsTools } from "./file-ops.mjs"
 import { normalizePermissionLevel } from "../permission/rules.mjs"
 import { gitAutoTools } from "./git-auto.mjs"
@@ -31,6 +33,15 @@ import { IMAGE_EXTENSIONS, IMAGE_MIME_TYPES } from "./image-util.mjs"
 import { normalizeImageBlock, IMAGE_LIMITS } from '../media/images.mjs'
 import { createBrowserTool } from '../browser/controller.mjs'
 import { createToolBatch } from './batch.mjs'
+import { createToolProgram } from './program.mjs'
+import { archiveToolText, createArtifactTools } from './artifacts.mjs'
+import { markStrictBuiltinTools } from '../isolation/docker-executor.mjs'
+import { createBrowserBridgeTool } from '../browser/bridge.mjs'
+import { createLspTools } from '../lsp/service.mjs'
+import { createOfficeTools } from '../office/service.mjs'
+import { createBrowserRecipeTools } from './browser-recipe.mjs'
+import { createMcpCatalogTools } from './mcp-catalog.mjs'
+import { resolveManagedPluginPath } from '../plugin/integrity.mjs'
 import {
   readSandboxConfig,
   inspectSandboxStatus,
@@ -697,8 +708,10 @@ async function runBash(command, cwd, timeoutMs = BASH_TIMEOUT_MS, options = {}) 
   // 失败」和「命令成功但往 stderr 写了进度」—— 后者在 npm/pip/git 里极常见。
   let exitCode = 0
   let timedOut = false
+  let captureIncomplete = false
   const out = await spawnShell({ command, cwd, timeoutMs, env, sandbox }).catch((error) => {
     exitCode = Number.isInteger(error.code) ? error.code : 1
+    captureIncomplete = error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
     if (error.killed || error.signal === "SIGTERM") {
       timedOut = true
       return {
@@ -711,7 +724,8 @@ async function runBash(command, cwd, timeoutMs = BASH_TIMEOUT_MS, options = {}) 
       stderr: error.stderr ?? error.message
     }
   })
-  const raw = `${out.stdout || ""}${out.stderr || ""}`.trim() || "(empty output)"
+  const captured = `${out.stdout || ""}${out.stderr || ""}`
+  const raw = captured.trim() || "(empty output)"
   const status = timedOut
     ? "[timed out]"
     : exitCode === 0 ? "" : `[exit ${exitCode}]`
@@ -719,6 +733,16 @@ async function runBash(command, cwd, timeoutMs = BASH_TIMEOUT_MS, options = {}) 
   // 上限跟着模型上下文走（见 tool/output-budget.mjs），并且截断要说清怎么拿更多
   // —— 此前是硬编码 30000 且只说「超了」，模型无从判断该缩范围还是该分页。
   const limit = Math.max(4000, Number(maxChars) || 30000)
+  const tail = sandboxHint && exitCode !== 0 ? `\n${sandboxHint}` : ""
+  // Preserve the actual captured bytes before display trim/truncation. Keep the
+  // existing bounded exec capture: hitting its cap is explicitly PARTIAL, not
+  // an excuse to retry the command or claim an unlimited complete archive.
+  if (captured.length > limit && options.artifactAccess) {
+    const archived = await archiveToolText({ output: captured, access: options.artifactAccess,
+      callId: options.toolCallId, limit, signal: options.signal, complete: !captureIncomplete && !timedOut })
+    return { output: `${status ? `${status}\n` : ''}${archived.output}${tail}`,
+      metadata: { ...archived.metadata, exitCode, timedOut, captureIncomplete }, ...(exitCode ? { ok: false } : {}) }
+  }
   const body = raw.length > limit
     ? `${raw.slice(0, limit)}\n\n${truncationNotice({
         shown: limit,
@@ -729,7 +753,6 @@ async function runBash(command, cwd, timeoutMs = BASH_TIMEOUT_MS, options = {}) 
     : raw
   // 沙箱里失败时补一句「哪些目录可写」：EROFS / Permission denied 在沙箱内是
   // 预期结果，不加这行的话模型会把它当成环境损坏，然后开始瞎修
-  const tail = sandboxHint && exitCode !== 0 ? `\n${sandboxHint}` : ""
   return status ? `${status}\n${body}${tail}` : `${body}${tail}`
 }
 
@@ -794,7 +817,8 @@ function mutationMetadata({
 async function loadDynamicTools(dirs) {
   const loaded = []
   for (const dir of dirs) {
-    const absolute = path.resolve(dir)
+    const absolute = await resolveManagedPluginPath(dir)
+    if (!absolute) continue
     if (!(await exists(absolute))) continue
     const entries = await readdir(absolute, { withFileTypes: true })
     for (const entry of entries) {
@@ -1551,8 +1575,12 @@ function builtinTools(config) {
         env: extraEnv,
         maxChars,
         sandbox: sandbox.spawn,
-        sandboxHint: sandbox.hint
+        sandboxHint: sandbox.hint,
+        artifactAccess: ctx.artifactAccess,
+        toolCallId: ctx.toolCallId,
+        signal: ctx.signal
       })
+      if (typeof output === 'object') return { ...output, output: sandbox.notice ? `${sandbox.notice}\n${output.output}` : output.output }
       return sandbox.notice ? `${sandbox.notice}\n${output}` : output
     }
   }
@@ -1777,30 +1805,31 @@ function builtinTools(config) {
 
   const webfetchTool = {
     name: "webfetch",
-    description: "Fetch content from a public URL and return it as text. HTML is converted to markdown. Content over 50KB is truncated. Only use for public, unauthenticated URLs. Do NOT use for local file reading — use `read` instead.",
+    description: "Read a public, unauthenticated HTTP(S) URL. Static HTML is converted to readable Markdown with source links; text/JSON/XML remain text. No JavaScript rendering or model summarization. Bounded network and decoded content; displayed text may be truncated. Use Browser for dynamic pages, read for local files, and http_request for APIs requiring headers.",
     inputSchema: {
       type: "object",
       properties: {
         url: schema("string", "URL to fetch"),
-        prompt: schema("string", "optional processing instruction")
+        prompt: schema("string", "deprecated; leave empty. Read the returned content, then perform extraction in the conversation. Nonempty values are rejected.")
       },
       required: ["url"]
     },
     async execute(args, ctx = {}) {
       const url = String(args.url || "")
+      if (String(args.prompt || "").trim()) return "error: webfetch does not run a processing prompt. Omit prompt, read the returned page, then extract or summarize in the conversation."
       try {
         // 出网校验（SSRF）。此前只检查 URL 前缀，于是
         // `http://127.0.0.1:38412/admin` 的响应体会被原样读回来 —— 实测确认。
         // 逐跳校验重定向，否则只校验第一个 URL 等于没校验。
-        const { response } = await guardedFetch(url, {
+        const { response, url: finalUrl } = await guardedFetch(url, {
           headers: buildRequestHeaders({
             target: "webfetch",
             accept: "text/html, text/plain, application/json"
           }),
-          signal: AbortSignal.timeout(30000)
-        }, { allowPrivate: allowPrivateHosts(ctx.config) })
+          signal: ctx.signal ? AbortSignal.any([ctx.signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000)
+        }, { allowPrivate: allowPrivateHosts(ctx.config), assertTarget: target => assertWebDataPolicy(ctx.config || {}, target.href) })
         if (!response.ok) return `error: HTTP ${response.status}`
-        const text = await response.text()
+        const text = await readablePage(response, finalUrl.href)
         const limit = Math.max(4000, Number(ctx.toolResultLimit) || 50000)
         return text.length > limit
           ? `${text.slice(0, limit)}\n${truncationNotice({
@@ -1859,8 +1888,8 @@ function builtinTools(config) {
           method,
           headers,
           body: args.body === undefined ? undefined : String(args.body),
-          signal: AbortSignal.timeout(timeoutMs)
-        }, { allowPrivate: allowPrivateHosts(ctx.config) })
+          signal: ctx.signal ? AbortSignal.any([ctx.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs)
+        }, { allowPrivate: allowPrivateHosts(ctx.config), assertTarget: target => assertWebDataPolicy(ctx.config || {}, target.href) })
 
         const text = method === "HEAD" ? "" : await response.text()
         const limit = Math.max(4000, Number(ctx.toolResultLimit) || 50000)
@@ -1951,7 +1980,8 @@ function builtinTools(config) {
   const EXA_MCP_URL = "https://mcp.exa.ai/mcp"
   const EXA_TIMEOUT_MS = 25000
 
-  async function callExaMcp(toolName, args, signal) {
+  async function callExaMcp(toolName, args, signal, config = {}) {
+    assertWebDataPolicy(config, EXA_MCP_URL)
     const body = JSON.stringify({
       jsonrpc: "2.0",
       id: 1,
@@ -1959,6 +1989,7 @@ function builtinTools(config) {
       params: { name: toolName, arguments: args }
     })
     const response = await fetch(EXA_MCP_URL, {
+      redirect: 'error',
       method: "POST",
       headers: buildRequestHeaders({
         target: "exa",
@@ -2003,7 +2034,7 @@ function builtinTools(config) {
           numResults: Number(args.numResults) || 5,
           type: args.type || "auto",
           livecrawl: "fallback"
-        }, ctx.signal)
+        }, ctx.signal, ctx.config)
         return result || "No results found. Try a different query."
       } catch (error) {
         if (error.name === "AbortError" || error.name === "TimeoutError") return "error: search request timed out"
@@ -2030,7 +2061,7 @@ function builtinTools(config) {
         const result = await callExaMcp("get_code_context_exa", {
           query,
           tokensNum: Math.min(Math.max(Number(args.tokensNum) || 5000, 1000), 50000)
-        }, ctx.signal)
+        }, ctx.signal, ctx.config)
         return result || "No code context found. Try a more specific query."
       } catch (error) {
         if (error.name === "AbortError" || error.name === "TimeoutError") return "error: code search request timed out"
@@ -2435,7 +2466,7 @@ function builtinTools(config) {
   }
   const gitFullAutoToolsList = config?.git_auto?.full_auto === true ? gitFullAutoTools : []
   
-  return [listTool, sysinfoTool, readTool, writeTool, editTool, patchTool, multieditTool, globTool, grepTool, bashTool, createTaskTool(), createTaskGroupTool(), outputTool, cancelTool, taskListTool, taskParallelTool, taskGetTool, taskStopTool, taskOutputTool, todowriteTool, questionTool, skillTool, webfetchTool, httpRequestTool, websearchTool, codesearchTool, notebookeditTool, enterPlanTool, exitPlanTool, ...fileOpsTools, ...gitTools, ...gitFullAutoToolsList]
+  return [listTool, sysinfoTool, readTool, writeTool, editTool, patchTool, multieditTool, globTool, grepTool, bashTool, createTaskTool(), createTaskGroupTool(), outputTool, cancelTool, taskListTool, taskParallelTool, taskGetTool, taskStopTool, taskOutputTool, todowriteTool, questionTool, skillTool, webfetchTool, httpRequestTool, websearchTool, codesearchTool, notebookeditTool, enterPlanTool, exitPlanTool, ...createArtifactTools(), ...fileOpsTools, ...gitTools, ...gitFullAutoToolsList]
 }
 
 function mcpTools(mcpRegistry) {
@@ -2477,6 +2508,7 @@ function toolAllowedByMode(toolName, mode) {
  */
 export function createToolRegistry({ mcpRegistry = McpRegistry, deferMcp = false } = {}) {
   const browser = createBrowserTool()
+  const bridge = createBrowserBridgeTool()
   const batch = createToolBatch()
   const state = {
     initialized: false,
@@ -2520,9 +2552,15 @@ export function createToolRegistry({ mcpRegistry = McpRegistry, deferMcp = false
       const tools = []
 
       if (config.tool?.sources?.builtin !== false) {
-        tools.push(...builtinTools(config))
-        if (config.tool?.browser?.enabled !== false) tools.push(browser)
+        tools.push(...markStrictBuiltinTools(builtinTools(config)))
+        if (config.tool?.browser?.enabled !== false) tools.push(...markStrictBuiltinTools([browser]))
+        if (config.tool?.browser?.enabled !== false) tools.push(bridge)
+        if (config.tool?.browser?.enabled !== false) tools.push(...markStrictBuiltinTools(createBrowserRecipeTools(browser)))
+        tools.push(...markStrictBuiltinTools(createLspTools()))
+        tools.push(...markStrictBuiltinTools(createOfficeTools()))
+        tools.push(...createMcpCatalogTools(mcpRegistry))
         tools.push(batch)
+        if (config.tool?.program?.enabled === true) tools.push(...markStrictBuiltinTools([createToolProgram()]))
         tools.push({
           name: 'tool_search',
           description: 'Find tools by task, capability or exact name, including MCP integrations and detailed builtin usage. Returns schemas and instructions and enables matching tools for this turn; never runs them or grants permission.',
@@ -2575,7 +2613,11 @@ export function createToolRegistry({ mcpRegistry = McpRegistry, deferMcp = false
     isReady() {
       return state.initialized
     },
-    async shutdown() { await browser.shutdown() },
+    async shutdown() {
+      const results = await Promise.allSettled([browser.shutdown(), bridge.shutdown()])
+      const failure = results.find(result => result.status === 'rejected')
+      if (failure?.status === 'rejected') throw failure.reason
+    },
 
     /** @param {{ mode?: string, cwd?: string, config?: Record<string, any>, allowProjectSources?: boolean }} [options] */
     async list({
@@ -2649,7 +2691,7 @@ export function createToolRegistry({ mcpRegistry = McpRegistry, deferMcp = false
       state.refreshing = true
       try {
         // Atomic replacement: build new list, then assign once
-        const nonMcp = state.tools.filter((t) => !t.name.startsWith("mcp_"))
+        const nonMcp = state.tools.filter((t) => !t.name.startsWith("mcp_") || ['mcp_resource', 'mcp_prompt'].includes(t.name))
         const newMcpTools = mcpTools(mcpRegistry)
         state.tools = [...nonMcp, ...newMcpTools]
       } finally {

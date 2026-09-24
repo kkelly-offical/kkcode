@@ -1,4 +1,41 @@
-# 文档导航（1.0.4）
+# 文档导航：稳定版 1.0.4 / 开发中 1.0.5-preview.0
+
+公开稳定版仍是 **1.0.4**；下面的 **1.0.5-preview.0 尚未发布**，也没有自动部署
+生产网关或更新设备。源码接口、本地验收和已公开发版是三种不同状态。
+
+## 开发中：1.0.5 Preview → 1.1.0
+
+- [批准的完整开发计划](plan-1.0.5.md)：W01–W13 范围、产品决策、Preview与成熟版门禁。
+- [实际实施账本](implementation-1.0.5.md)：开发和验证状态；尚未发布，不代表生产已经升级。
+- [持久账本与产物 SDK](sdk-storage.md)、[SDK总览](sdk-guide.md)：可信宿主写接口与增量远程读/控制接口的边界。
+- [离线 npm 依赖环境](dependency-environments.md)：`kkcode environments inspect/prepare/verify`、`sdk/environments`、独立安装脚本批准和严格任务只读挂载；不支持所有包管理器／workspaces。
+- [项目数据出域基础](data-policy.md)：受管理模型/网页工具的目标交集策略，不能替代执行沙箱。
+- [严格委托隔离](strict-isolation.md)、[独立验收](independent-review.md)、[任务图](task-graphs.md)：独立工作区、候选证据、审批与恢复。
+- [持久预算](durable-budgets.md)、[跨端任务监控](task-monitoring.md)：父子总额度、未知计费、状态与停止回执。
+- [严格任务使用流程](trusted-runs.md)：合同示例、预览确认、独立工作树、恢复、验收与交付。
+- [Forge交付](forge-delivery.md)：GitHub PR/GitLab MR，外部授权与未知操作核查。
+- [记忆管理](scoped-memory.md)、[职责模型与能力档案](model-roles-and-profiles.md)。
+- [Browser工作流](browser-workflows.md)、[本机浏览器桥接](browser-bridge.md)：受控上传下载；Bridge 主 frame、无全局按键、截图另行授权，非像素级 origin 数据隔离。
+- [Chrome/Edge 三系统验收](browser-bridge-branded-acceptance.md)：临时 CI profile 的官方扩展安装调试，不访问个人浏览器，不等同商店安装 UI 验收。
+- [真实Chromium沙箱验收](browser-strict-acceptance.md)：非root实机证据；受阻不是通过，禁止降级安全设置。
+- [实验网站操作配方](browser-recipes.md)：主动录制、审核、隔离验证、固定版本及逐叶治理。
+- [60任务独立验收](evaluation-suite.md)：40开发/20封存、真实模型与零推理自检分离、双轮结果门禁。
+- [Office/PDF/Markdown](office-tools.md)、[语言服务](language-services.md)、[宿主服务配置](host-services.md)。
+- [MCP/ACP/Skills](protocol-extensions.md)、[插件完整性与升级](plugin-integrity.md)、[实验受控工具组合](tool-program.md)。
+- 下面的1.0.4章节是已发布稳定版记录，不用新版本号覆盖历史验收。
+
+外部真实付费模型 120 轮、公共 Forge 往返、Chrome/Edge 三系统矩阵、新版 CI 和
+七天试用均须有各自回执；本地 fixture、自检、条件跳过或历史稳定版结果不代表
+这些门禁已经通过。`1.1.0` 是后续成熟度目标，不是本次开发版本。
+
+## 安装包与源码文档
+
+npm 的运行时与 SDK 入口由 `package.json` 的 `exports` 定义，使用文档按 `files`
+清单打包。新分域接口只能在包含它们的源码／后续发行包中使用，不能假定已发布的
+1.0.4 已有所有入口。完整测试、`scripts/`、`evaluation/`、Android/Web 开发工程和
+部分历史资料只在 [源码仓库](https://github.com/kkelly-offical/kkcode) 中；文档里提及的
+源码验收命令应在仓库运行，而不是在全局 npm 安装目录执行。镜像构建目录
+`containers/office/`、`containers/lsp/` 随当前包清单提供，镜像本身不自动安装。
 
 ## 1.0.4 正式版本
 

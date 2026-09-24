@@ -30,6 +30,21 @@ export { createKernel } from "./kernel.mjs"
 export { runtimeCwd } from './core/runtime-context.mjs'
 export { installPlugin, managePlugin } from './plugin/manager.mjs'
 
+// Experimental host-owned persistence factories for sdk/storage and local
+// diagnostics. These do not launch agents or grant remote/model authority.
+export { openRunStore, runStoreNodeArgs } from '../storage/run-store.mjs'
+export { RUN_STATES, ACTION_STATES, RUN_STORE_SCHEMA_VERSION } from '../storage/run-store-contracts.mjs'
+export { createArtifactStore, ArtifactStore, ArtifactStoreError, ARTIFACT_LIMITS } from '../storage/artifact-store.mjs'
+export { createConversationArtifactAccess, currentArtifactAccountId, createTaskArtifactAccess } from './tool/artifacts.mjs'
+export { createDelegatedKernel } from './isolation/delegation-kernel.mjs'
+export { createRunCoordinator, hasUnresolvedSessionRun } from './orchestration/run-coordinator.mjs'
+export { verifyRunHostBinding } from './orchestration/run-host-binding.mjs'
+export { createTaskWorkspace, taskWorkspaceBaseline } from './isolation/task-workspace.mjs'
+export { createDockerExecutionBackend, inspectStrictIsolation } from './isolation/docker-executor.mjs'
+export { installBrowserBridge, browserBridgeStatus } from './browser/bridge-runtime.mjs'
+export { authorizeBrowserBridge, revokeBrowserBridge, createBrowserBridgeController, createBrowserBridgeTool } from './browser/bridge.mjs'
+export { createLanguageService, createLspTools, LanguageServiceError } from './lsp/service.mjs'
+
 // ── 2a. core：模式契约与事件类型（纯常量 / 纯函数）─────────────────────
 export {
   MODE_IDS,
@@ -102,7 +117,7 @@ export {
 } from "./tool/image-util.mjs"
 export { inspectSandboxStatus, formatSandboxLine } from "./tool/sandbox.mjs"
 export { readClipboardMedia, readMediaFileAsBlock } from './tool/media-util.mjs'
-export { browserStatus } from './browser/controller.mjs'
+export { browserStatus, createBrowserController } from './browser/controller.mjs'
 export { ensureDefaultSkillPack } from "./skill/registry.mjs"
 export { generateSkill, saveSkillGlobal } from "./skill/generator.mjs"
 export { discoverLocalPluginManifests } from "./plugin/manifest-loader.mjs"
@@ -166,9 +181,17 @@ export {
   applyReviewDecision
 } from "./session/store.mjs"
 export { compactSession } from "./session/compaction.mjs"
+export { createMemoryController } from './session/memory-controller.mjs'
+export { MemoryError } from './session/memory-policy.mjs'
+export { resolveTaskModel, TASK_MODEL_ROLES } from './provider/task-model.mjs'
+export { resolveProviderProfile } from './provider/provider-profile.mjs'
 export { confirmRollback, executeRollback, handleRollbackIfNeeded } from "./session/rollback.mjs"
 // agent 注册表单例（第十子域 src/kernel/agent/，M23 迁入）：内建 agent 目录
 // 与自定义 agent 注册表是模块级全局一份，authoring 命令经 facade 消费。
 export { listAgents } from "./agent/agent.mjs"
 export { CustomAgentRegistry } from "./agent/custom-agent-loader.mjs"
 export { generateAgent, saveAgentGlobal } from "./agent/generator.mjs"
+export { createTaskGraphHost, isTaskGraphHost } from './orchestration/task-graph.mjs'
+export { captureAcceptanceCandidate } from './session/acceptance-manifest.mjs'
+export { readHostServices, readHostServicesFile, normalizeHostServices, hostServicesHash, configureHostServices } from './core/host-services.mjs'
+export { createOfficeService, createOfficeTools, OfficeError } from './office/service.mjs'

@@ -3,12 +3,14 @@ import { toolResultContent } from './result-content.mjs'
 
 import { EventBus } from "../core/events.mjs"
 import { validateToolArguments } from './validate-args.mjs'
+import { snapshotToolArguments } from './schema-validation.mjs'
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { withAudit } from "./audit-wrapper.mjs"
 import { autoSnapshotBeforeEdit } from "../session/checkpoint.mjs"
 import { buildMutationObservability } from "../../observability/edit-diagnostics.mjs"
 import { toolCapability } from '../permission/rules.mjs'
 import { beginToolOperation } from './operation-journal.mjs'
+import { currentDurableRun } from '../orchestration/run-runtime.mjs'
 
 const FILE_EDIT_TOOLS = new Set(["write", "edit", "multiedit", "patch", "notebookedit", "move", "copy", "remove", "mkdir", "archive", "git_apply_patch"])
 // 同一 turn 可能并行触发多个编辑工具。只记一个 boolean 会让第二个工具越过仍在
@@ -98,6 +100,11 @@ function eventMetadataSummary(metadata = {}) {
 }
 
 export async function executeTool({ tool, args, sessionId, turnId, invocationId = null, context, signal = null }) {
+  // Freeze wire-equivalent values before the first await/audit callback. Never
+  // validate one mutable object and execute a later changed version of it.
+  try { args = snapshotToolArguments(args) }
+  catch (error) { return makeToolResult({ name: tool.name, status: 'error', ok: false, code: error.code, output: error.message, error: error.message }) }
+  const durableRun = currentDurableRun()
   const toolInvocationId = String(invocationId || `${turnId || "turn"}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`)
   return withAudit({
     sessionId,
@@ -109,6 +116,8 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
     run: async () => {
       const startedAt = Date.now()
       let operation
+      let durableOperation
+      let effectStarted = false
       await EventBus.emit({
         type: EVENT_TYPES.TOOL_START,
         sessionId,
@@ -146,10 +155,10 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
 
         // Bad arguments must not trigger snapshots or any tool-side work.
         if (args?.__parse_error === true) throw Object.assign(new Error(`Invalid JSON arguments for ${tool.name}; resend one complete JSON object matching the tool schema. No tool action was executed.`), { code: 'invalid_tool_call_json' })
-        validateToolArguments(tool, args || {})
+        await validateToolArguments(tool, args || {}, { signal })
 
         // Auto snapshot before first file edit per turn
-        if (FILE_EDIT_TOOLS.has(tool.name)) {
+        if (FILE_EDIT_TOOLS.has(tool.name) && !durableRun) {
           const snapshotKey = [sessionId || "", context?.cwd || "", turnId || toolInvocationId].join("\0")
           let snapshotPromise = snapshotPromises.get(snapshotKey)
           if (!snapshotPromise) {
@@ -181,12 +190,17 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
         }
 
         const capability = tool.capabilityFor?.(args) || toolCapability(tool.name, String(args?.command || ''))
-        if (!['read', 'search', 'safe-shell'].includes(capability) && !['tool_batch', 'websearch', 'webfetch', 'codesearch'].includes(tool.name)) operation = await beginToolOperation({ sessionId, turnId, tool: tool.name, args: args || {} })
-        const raw = await tool.execute(args || {}, context)
+        if (durableRun) durableOperation = await durableRun.prepareTool({ tool, args: args || {}, invocationId: toolInvocationId, sessionId, turnId, capability })
+        else if (!['read', 'search', 'safe-shell'].includes(capability) && !['tool_batch', 'websearch', 'webfetch', 'codesearch'].includes(tool.name)) operation = await beginToolOperation({ sessionId, turnId, tool: tool.name, args: args || {} })
+        effectStarted = true
+        const raw = durableRun
+          ? await durableRun.executeTool({ tool, args: args || {}, context, signal, invoke: () => tool.execute(args || {}, context) })
+          : await tool.execute(args || {}, context)
         const normalizedContent = await toolResultContent(raw, rawOutput(raw))
         const output = normalizedContent.output
-        const metadata = raw?.metadata && typeof raw.metadata === "object" ? raw.metadata : {}
+        const metadata = raw?.metadata && typeof raw.metadata === "object" ? { ...raw.metadata } : {}
         const status = rawStatus(raw, signal, output)
+        if (status === 'cancelled' && (operation || durableOperation?.effect !== 'read' && durableOperation)) metadata.outcomeUnknown = true
         await operation?.finish(status === 'cancelled' || metadata.outcomeUnknown === true ? 'uncertain' : 'settled')
         operation = null
         const evidence = {
@@ -212,6 +226,10 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
           image: normalizedContent.contentBlocks.find(block => block.type === 'image') || null,
           contentBlocks: normalizedContent.contentBlocks
         })
+        if (durableOperation) {
+          await durableRun.settleTool({ operation: durableOperation, result })
+          durableOperation = null
+        }
         await EventBus.emit({
           type: isToolSuccess(result) ? EVENT_TYPES.TOOL_FINISH : EVENT_TYPES.TOOL_ERROR,
           sessionId,
@@ -229,6 +247,11 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
         })
         return result
       } catch (error) {
+        const outcomeUnknown = effectStarted && error.operationNotStarted !== true && error.code !== 'workspace_path_violation' && Boolean(operation || durableOperation && durableOperation.effect !== 'read')
+        if (durableOperation) {
+          try { await durableRun.failTool({ operation: durableOperation, error, effectStarted }) }
+          catch (storageError) { durableRun.abort(storageError) }
+        } else if (durableRun && ['STALE_OWNER', 'REVISION_CONFLICT', 'ACTION_UNRESOLVED', 'STORE_OUTCOME_UNKNOWN', 'STORE_CLOSED'].includes(error.code)) durableRun.abort(error)
         await operation?.finish(error.operationNotStarted === true || error.code === 'workspace_path_violation' ? 'settled' : 'uncertain').catch(() => {})
         const errorMessage = error?.message || String(error)
         const cancelled = signal?.aborted || error?.name === "AbortError" || error?.code === "ABORT_ERR"
@@ -239,7 +262,8 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
           code: error?.code || (cancelled ? "cancelled" : null),
           output: errorMessage,
           error: errorMessage,
-          durationMs: Date.now() - startedAt
+          durationMs: Date.now() - startedAt,
+          ...(outcomeUnknown ? { metadata: { outcomeUnknown: true } } : {})
         })
         await EventBus.emit({
           type: EVENT_TYPES.TOOL_ERROR,

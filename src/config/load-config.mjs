@@ -6,13 +6,15 @@ import { validateConfig } from "./schema.mjs"
 import { projectConfigCandidates, userConfigCandidates, envFileCandidates, userRootDir } from "../storage/paths.mjs"
 import { noteDeprecation } from "../kernel/core/deprecations.mjs"
 import { FORBIDDEN_MERGE_KEYS, mergeConfigObject } from "./merge.mjs"
+import { DENY_DATA_POLICY, intersectDataPolicies, normalizeDataPolicy } from "../kernel/permission/data-policy.mjs"
 
 async function exists(file) {
   try {
     await access(file)
     return true
-  } catch {
-    return false
+  } catch (error) {
+    if (['ENOENT', 'ENOTDIR'].includes(error.code)) return false
+    throw new Error('无法读取配置来源，已停止加载以避免遗漏数据出域限制')
   }
 }
 
@@ -21,7 +23,13 @@ function parseConfigFile(filePath, content) {
   return YAML.parse(content)
 }
 
-const mergeObject = mergeConfigObject
+function mergeObject(base, override) {
+  const merged = mergeConfigObject(base, override)
+  if (base?.data_policy !== undefined || Object.hasOwn(override || {}, 'data_policy')) {
+    merged.data_policy = intersectDataPolicies(base?.data_policy, override?.data_policy)
+  }
+  return merged
+}
 const forbiddenMergeKeys = new Set(FORBIDDEN_MERGE_KEYS)
 
 /**
@@ -90,6 +98,9 @@ export function parseEnvOverlay(content) {
     if (val === "true") typed = true
     else if (val === "false") typed = false
     else if (val !== "" && !isNaN(val)) typed = Number(val)
+    if (parts[0] === 'data_policy') {
+      try { typed = JSON.parse(val) } catch { /* Invalid values remain visible to fail-closed validation. */ }
+    }
 
     let cursor = config
     for (let i = 0; i < parts.length - 1; i++) {
@@ -263,6 +274,18 @@ function normalizeUltraAliasOverlay(raw) {
 }
 
 function validateLayer(rawConfig, baseConfig, label) {
+  let policy
+  try { policy = normalizeDataPolicy(rawConfig?.data_policy) }
+  catch {
+    return { config: { data_policy: structuredClone(DENY_DATA_POLICY) }, errors: [`${label}: data_policy 无效，所有受管理的出站请求已拒绝，请修正配置`], warnings: [] }
+  }
+  const result = validateLayerWithoutPolicy(rawConfig, baseConfig, label)
+  // A bad unrelated field must not drop a valid same-layer restriction.
+  if (policy !== undefined) result.config.data_policy = policy
+  return result
+}
+
+function validateLayerWithoutPolicy(rawConfig, baseConfig, label) {
   const split = splitUltraAlias(rawConfig)
   if (!split) return validateLayerCore(rawConfig, baseConfig, label)
 
@@ -281,12 +304,15 @@ function validateLayer(rawConfig, baseConfig, label) {
 
 async function loadOne(filePath, baseConfig) {
   if (!filePath) return { config: {}, errors: [], warnings: [] }
+  let raw = ''
   try {
-    const raw = await readFile(filePath, "utf8")
+    raw = await readFile(filePath, "utf8")
     const parsed = parseConfigFile(filePath, raw) ?? {}
     return validateLayer(parsed, baseConfig, filePath)
   } catch (error) {
-    return { config: {}, errors: [`${filePath}: ${error.message}`], warnings: [] }
+    // A parse error can hide an escaped/partially written policy key; do not
+    // infer that the unavailable policy was unrestricted or echo secret text.
+    return { config: { data_policy: structuredClone(DENY_DATA_POLICY) }, errors: [`${filePath}: 无法读取或解析配置，受管理的出站请求已拒绝；请修正配置`], warnings: [] }
   }
 }
 
@@ -332,7 +358,7 @@ function hoistUltraSectionKeys(longagent) {
   return next
 }
 
-export async function loadConfig(cwd = process.cwd()) {
+export async function loadConfig(cwd = process.cwd(), { adminDataPolicy = undefined } = {}) {
   const resolvedCwd = path.resolve(cwd)
   const userPath = await firstExisting(userConfigCandidates())
   // At the OS user's home, .kkcode/config.* is the user config itself, not a
@@ -340,8 +366,10 @@ export async function loadConfig(cwd = process.cwd()) {
   // looking for a genuinely distinct project file instead of discarding it.
   const projectPath = await firstExisting(projectConfigCandidates(cwd), userPath)
 
-  const userLoaded = await loadOne(userPath, DEFAULT_CONFIG)
-  let userConfig = mergeObject(DEFAULT_CONFIG, userLoaded.config)
+  const adminPolicy = normalizeDataPolicy(adminDataPolicy)
+  const baseConfig = adminPolicy === undefined ? DEFAULT_CONFIG : { ...DEFAULT_CONFIG, data_policy: adminPolicy }
+  const userLoaded = await loadOne(userPath, baseConfig)
+  let userConfig = mergeObject(baseConfig, userLoaded.config)
   const projectLoaded = await loadOne(projectPath, userConfig)
   let merged = mergeObject(userConfig, projectLoaded.config)
   const preEnvMerged = merged
@@ -404,12 +432,41 @@ export async function loadConfig(cwd = process.cwd()) {
     envErrors.push(...finalCheck.errors.map((error) => `merged config: ${error}`))
     // 这是最后一道 invariant，不应可达。即使未来重构重新开出旁路，也只回退
     // 尚未应用 env 的 last-known-good，不能把合法 user/project 配置全清成 defaults。
-    merged = validateConfig(preEnvMerged).valid ? preEnvMerged : structuredClone(DEFAULT_CONFIG)
-    userConfig = validateConfig(preEnvUserConfig).valid ? preEnvUserConfig : structuredClone(DEFAULT_CONFIG)
+    merged = validateConfig(preEnvMerged).valid ? preEnvMerged : structuredClone(baseConfig)
+    userConfig = validateConfig(preEnvUserConfig).valid ? preEnvUserConfig : structuredClone(baseConfig)
     envOverlay = {}
   }
 
+  // Ordinary env values retain the historical first-file precedence, but a
+  // project .env must not mask policy in ~/.kkcode/.env (or another candidate).
+  const envPolicyLayers = []
+  const seenEnvPaths = []
+  for (const candidate of envFileCandidates(cwd)) {
+    if (!await exists(candidate)) continue
+    let duplicate = false
+    for (const previous of seenEnvPaths) if (await sameConfigFile(candidate, previous)) duplicate = true
+    if (duplicate) continue
+    seenEnvPaths.push(candidate)
+    const userEnvPath = path.join(userRootDir(), '.env')
+    const scope = await sameConfigFile(candidate, userEnvPath) ? 'user' : 'project'
+    let policy
+    try {
+      const raw = await readFile(scope === 'user' ? userEnvPath : candidate, 'utf8')
+      const lines = raw.split('\n').filter(line => /^\s*KKCODE_DATA_POLICY(?:_|\s|=|$)/.test(line))
+      if (lines.some(line => line.indexOf('=') <= 0 || !/^KKCODE_DATA_POLICY(?:__[A-Za-z0-9_]+)*$/.test(line.slice(0, line.indexOf('=')).trim()))) throw new Error('invalid policy declaration')
+      policy = normalizeDataPolicy(parseEnvOverlay(lines.join('\n')).data_policy)
+    } catch {
+      policy = structuredClone(DENY_DATA_POLICY)
+      envErrors.push(`${candidate}: data_policy 无法读取或无效，受管理的出站请求已拒绝`)
+    }
+    if (policy === undefined) continue
+    envPolicyLayers.push({ scope, policy })
+    merged = mergeObject(merged, { data_policy: policy })
+    if (scope === 'user') userConfig = mergeObject(userConfig, { data_policy: policy })
+  }
+
   const source = {
+    ...(adminPolicy === undefined ? {} : { adminDataPolicy: adminPolicy }),
     cwd: resolvedCwd,
     userPath,
     userDir: userPath ? path.dirname(userPath) : null,
@@ -419,7 +476,8 @@ export async function loadConfig(cwd = process.cwd()) {
     projectRaw: projectLoaded.config,
     envPath,
     envScope,
-    envOverlay
+    envOverlay,
+    envPolicyLayers
   }
 
   return {

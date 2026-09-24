@@ -23,6 +23,9 @@ import { getDeviceProfile, updateDeviceProfile } from './profile.mjs'
 import { sessionView } from './session-view.mjs'
 import { DeviceLiveView } from './live-view.mjs'
 import { publicMcpSummary } from './mcp-status.mjs'
+import { DeviceArtifacts, ARTIFACT_FEATURE, ARTIFACT_READ_METHODS } from './artifacts.mjs'
+import { DeviceMemory, MEMORY_FEATURE, MEMORY_READ_METHODS } from './memory.mjs'
+import { DeviceRuns, RUN_FEATURE, RUN_READ_METHODS } from './runs.mjs'
 
 const idPattern = /^[A-Za-z0-9_-]{1,128}$/
 function sessionSelection(config, session, p, sessionId, allowUnconfigured = false) {
@@ -48,6 +51,9 @@ export class DeviceService extends EventEmitter {
     this.stateDir = path.join(userRootDir(), 'device')
     this.sessionTree = new SessionTree({ getSession }); this.retention = retention
     this.liveView = new DeviceLiveView()
+    this.artifacts = new DeviceArtifacts(this)
+    this.memory = new DeviceMemory(this)
+    this.runs = new DeviceRuns(this)
     this.closed = false
   }
   async initialize() {
@@ -218,7 +224,7 @@ export class DeviceService extends EventEmitter {
     validateRequest(request); this.assertOwner(principal)
     if (this.closed) throw new ProtocolError('device_offline', 'Device is closing', 503)
     const { id, method, params = {} } = request
-    const mutating = !/^(status|folders\.list|files\.read|media\.preview|sessions\.(list|get)|events\.list|commands\.list|settings\.get|extensions\.list|models\.discover|attachments\.list|branches\.list|worktrees\.list|profile\.get)$/.test(method)
+    const mutating = !ARTIFACT_READ_METHODS.includes(method) && !MEMORY_READ_METHODS.includes(method) && !RUN_READ_METHODS.includes(method) && !/^(status|folders\.list|files\.read|media\.preview|sessions\.(list|get)|events\.list|commands\.list|settings\.get|extensions\.list|models\.discover|attachments\.list|branches\.list|worktrees\.list|profile\.get)$/.test(method)
     const key = `${principal.id}:${id}`, hash = createHash('sha256').update(JSON.stringify({ method, params })).digest('hex')
     if (mutating && this.ledger.get(key)) {
       const prior = this.ledger.get(key)
@@ -234,7 +240,7 @@ export class DeviceService extends EventEmitter {
       if (mutating) await this.ledger.reserve(key, hash)
       try {
         const result = await this.dispatch(method, params, principal)
-        if (mutating) await this.ledger.complete(key, result)
+        if (mutating) await this.ledger.complete(key, result, { omitResult: method.startsWith('memory.') })
         return result
       } catch (error) { if (mutating) await this.ledger.fail(key, error); throw error }
     })()
@@ -244,7 +250,10 @@ export class DeviceService extends EventEmitter {
   async dispatch(method, p, principal) {
     const sessionId = p.sessionId
     if ((this.workspaceMutation || this.configurationUpdating) && ['sessions.create', 'sessions.configure', 'settings.update', 'extensions.reload', 'models.discover'].includes(method)) throw new ProtocolError('workspace_busy', 'Wait for device maintenance to finish', 409)
-    if (method === 'status') return { schemaVersion: PROTOCOL_VERSION, device: this.metadata, roots: this.roots, active: [...this.turns.keys()], retention: { replay: this.replay.stats(), requests: this.ledger.stats() } }
+    if (method === 'status') return { schemaVersion: PROTOCOL_VERSION, features: [ARTIFACT_FEATURE, MEMORY_FEATURE, RUN_FEATURE], device: this.metadata, roots: this.roots, active: [...this.turns.keys()], retention: { replay: this.replay.stats(), requests: this.ledger.stats() } }
+    if (method.startsWith('artifacts.')) return this.artifacts.dispatch(method, p, principal)
+    if (method.startsWith('memory.')) return this.memory.dispatch(method, p, principal)
+    if (method.startsWith('runs.')) return this.runs.dispatch(method, p, principal)
     if (method === 'folders.list') return listDeviceFolder(p.path, this.roots)
     if (method === 'files.read') return readDeviceFile(p.path, this.roots)
     if (method === 'media.preview') {
@@ -330,8 +339,10 @@ export class DeviceService extends EventEmitter {
         for (const promise of this.kernels.values()) {
           if ((await (await promise).background?.list?.() || []).some(job => ['queued', 'running', 'pending'].includes(job.status) && (descendants.has(job.session_id) || descendants.has(job.parent_session_id)))) throw new ProtocolError('turn_busy', 'A background task is still using this conversation', 409)
         }
+        const retirement = await this.artifacts.prepareSessionRemoval([...descendants])
         const kernel = await this.kernel(data.session.cwd)
         const result = await kernel.sessions.deleteSession(sessionId)
+        const retention = await retirement.commit(result.deletedIds || [sessionId])
         for (const deletedId of result.deletedIds || [sessionId]) {
           await this.record({ type: 'session.deleted', sessionId: deletedId, payload: { filesChanged: false } })
           for (const attachment of (await this.attachments.list({ sessionId: deletedId })).attachments) await this.attachments.remove({ sessionId: deletedId, id: attachment.id })
@@ -339,7 +350,7 @@ export class DeviceService extends EventEmitter {
           this.liveView.forget(deletedId)
           this.leases.delete(deletedId)
         }
-        return result
+        return { ...result, ...(retention.artifactRetirementPending ? retention : {}) }
       } finally { for (const id of locked) this.sessionTransitions.delete(id) }
     }
     if (method === 'sessions.rewind') {
@@ -551,7 +562,7 @@ export class DeviceService extends EventEmitter {
     await Promise.allSettled([...this.turns.values()].map(entry => entry.promise))
     for (const detach of this.detachKernels) detach()
     await Promise.allSettled([...this.kernels.values()].map(async p => (await p).shutdown()))
-    await this.liveView.close(); await this.replay?.close(); await this.ledger?.close(); await this.attachments?.chain.catch(() => {})
+    await this.liveView.close(); await this.replay?.close(); await this.ledger?.close(); await this.runs.close(); await this.attachments?.chain.catch(() => {})
     this.leases.clear()
     this.sessionTree.clear()
     this.modelCatalog.clear()

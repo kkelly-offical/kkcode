@@ -7,6 +7,56 @@ import {
   resolveRetryOptions
 } from "./retry-policy.mjs"
 import { parseSSE } from "./sse.mjs"
+import { createAnthropicState, replayAnthropicState } from './anthropic-state.mjs'
+
+function compactionEdit(input) {
+  if (!input.compaction) return null
+  const trigger = Number(input.compaction.trigger ?? 150000)
+  if (!input.apiKey || !Number.isSafeInteger(trigger) || trigger < 50000) {
+    throw new ProviderError('Anthropic native compaction requires an authenticated channel and an input token trigger of at least 50000', { reason: 'unsupported_capability' })
+  }
+  return { edits: [{ type: 'compact_20260112', trigger: { type: 'input_tokens', value: trigger } }] }
+}
+
+function nativeUsage(usage = {}) {
+  // Top-level usage excludes compaction iterations. Sum the provider's full
+  // iteration list when present, not the total plus its parts.
+  const rows = Array.isArray(usage.iterations) && usage.iterations.length ? usage.iterations : [usage]
+  return markUsageEvidence(rows.reduce((total, row) => ({
+    input: total.input + (Number(row.input_tokens) || 0), output: total.output + (Number(row.output_tokens) || 0),
+    cacheRead: total.cacheRead + (Number(row.cache_read_input_tokens) || 0), cacheWrite: total.cacheWrite + (Number(row.cache_creation_input_tokens) || 0)
+  }), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }), rows.flatMap(row => [row.input_tokens, row.output_tokens]),
+    rows.flatMap(row => [row.cache_read_input_tokens, row.cache_creation_input_tokens]))
+}
+
+function contextUsage(usage = {}) {
+  const last = Array.isArray(usage.iterations) && usage.iterations.findLast(row => row.type === 'message')
+  return nativeUsage(last || { ...usage, iterations: undefined })
+}
+
+function nativeError(message) {
+  return new ProviderError(`anthropic invalid compaction response: ${message}`, { reason: 'invalid_provider_response' })
+}
+
+function validateCompactions(items, enabled) {
+  for (const item of items) if (item?.type === 'compaction') {
+    if (!enabled || typeof item.content !== 'string' || !item.content.trim()) throw nativeError('missing, empty or unsolicited summary')
+  }
+}
+
+function isUnsupportedCompaction(status, text) {
+  return [400, 422].includes(status) && /compact(?:ion|_20260112)|context_management|compact-2026-01-12/i.test(text)
+    && /not supported|unsupported|unrecognized|unknown|not permitted|extra inputs|not allowed/i.test(text)
+}
+
+function assertNativeFallbackSafe(input) {
+  if (input.messages.some((_message, index) => replayAnthropicState(input, index))) {
+    // Counting used the reduced native context. Expanding retained originals
+    // behind that budget would be an unbudgeted request: return to the kernel's
+    // client-compaction + complete-budget path instead.
+    throw Object.assign(nativeError('channel no longer accepts persisted native context; client compaction is required before retrying'), { needsCompaction: true })
+  }
+}
 
 function mapTools(tools) {
   if (!tools || !tools.length) return []
@@ -101,10 +151,18 @@ function mapContentBlock(block) {
   return { type: "text", text: String(block.text || block.content || "") }
 }
 
-function mapMessages(messages) {
-  const mapped = messages.map((message) => {
+function mapMessages(input) {
+  const messages = input.messages
+  let compactedAt = -1
+  const mapped = messages.map((message, index) => {
     const role = message.role === "assistant" ? "assistant" : "user"
     const content = message.content
+    const native = input.compaction && replayAnthropicState(input, index)
+    if (native) {
+      compactedAt = index
+      const offset = native.findLastIndex(block => block.type === 'compaction')
+      return { role, content: native.slice(offset) }
+    }
     if (Array.isArray(content)) {
       // Provider-native reasoning cannot safely cross provider boundaries.
       // Anthropic thinking blocks require signatures, so unsigned persisted
@@ -112,7 +170,7 @@ function mapMessages(messages) {
       return {
         role,
         content: content
-          .filter((block) => block?.type !== "reasoning" && block?.type !== "thinking")
+          .filter((block) => !['reasoning', 'thinking', 'provider_state', 'compaction'].includes(block?.type))
           .map(mapContentBlock)
       }
     }
@@ -130,7 +188,7 @@ function mapMessages(messages) {
       break
     }
   }
-  return mapped
+  return (compactedAt >= 0 ? mapped.slice(compactedAt) : mapped).filter(message => !Array.isArray(message.content) || message.content.length)
 }
 
 function parseContentBlocks(content) {
@@ -176,7 +234,7 @@ async function fetchStreamConnection(endpoint, init, timeoutMs, signal) {
     : controller.signal
 
   try {
-    return await fetch(endpoint, { ...init, signal: fetchSignal })
+    return await fetch(endpoint, { ...init, redirect: 'error', signal: fetchSignal })
   } catch (error) {
     if (timedOut && !signal?.aborted) {
       const timeoutError = /** @type {Error & { code: string }} */ (new Error(`anthropic connection timeout after ${timeout}ms`, { cause: error }))
@@ -206,8 +264,9 @@ export async function requestAnthropic(input) {
     ...(Number.isFinite(input.temperature) ? { temperature: input.temperature } : {}),
     metadata: { user_id: "kkcode" },
     system: systemWithCacheControl(system),
-    messages: mapMessages(messages),
-    tools: mappedTools.length ? mappedTools : undefined
+    messages: mapMessages(input),
+    tools: mappedTools.length ? mappedTools : undefined,
+    ...(input.compaction ? { context_management: compactionEdit(input) } : {})
   })
   if (input.thinking?.type) {
     payload.thinking = { type: input.thinking.type, budget_tokens: input.thinking.budget_tokens || 10000 }
@@ -221,6 +280,7 @@ export async function requestAnthropic(input) {
     execute: async () => {
       const response = await fetch(endpoint, {
         method: "POST",
+        redirect: 'error',
         headers: buildRequestHeaders({
           target: "llm",
           provider: input.provider || "anthropic",
@@ -231,7 +291,7 @@ export async function requestAnthropic(input) {
           customHeaders: {
             ...(apiKey ? { "x-api-key": apiKey } : {}),
             "anthropic-version": "2023-06-01",
-            "anthropic-beta": "prompt-caching-2024-07-31"
+            "anthropic-beta": input.compaction ? "prompt-caching-2024-07-31,compact-2026-01-12" : "prompt-caching-2024-07-31"
           }
         }),
         body: JSON.stringify(payload),
@@ -240,12 +300,13 @@ export async function requestAnthropic(input) {
       notifyResponse(input, response)
       if (!response.ok) {
         const text = await response.text().catch(() => "")
-        const error = /** @type {ProviderError & { httpStatus?: number }} */ (new ProviderError(`anthropic request failed: ${response.status} ${text}`, {
+        const error = /** @type {ProviderError & { httpStatus?: number, nativeCompactionUnsupported?: boolean }} */ (new ProviderError(`anthropic request failed: ${response.status} ${text}`, {
           provider: "anthropic",
           model,
           endpoint
         }))
         error.httpStatus = response.status
+        error.nativeCompactionUnsupported = isUnsupportedCompaction(response.status, text)
         annotateRetryAfter(error, response)
         throw error
       }
@@ -256,14 +317,19 @@ export async function requestAnthropic(input) {
         throw new ProviderError('anthropic response JSON parse failed: invalid JSON', { provider: "anthropic", model, endpoint })
       }
       const parsed = parseContentBlocks(json?.content)
-      const usage = {
-        input: json?.usage?.input_tokens ?? 0,
-        output: json?.usage?.output_tokens ?? 0,
-        cacheRead: json?.usage?.cache_read_input_tokens ?? 0,
-        cacheWrite: json?.usage?.cache_creation_input_tokens ?? 0
-      }
-      return { text: parsed.text, reasoning: parsed.reasoning, usage, toolCalls: parsed.toolCalls }
+      validateCompactions(json?.content || [], input.compaction)
+      const visible = [{ type: 'text', text: parsed.text }, ...parsed.toolCalls.map(call => ({ type: 'tool_use', id: call.id, name: call.name, input: call.args }))]
+      return { text: parsed.text, reasoning: parsed.reasoning, usage: markUsageIdentity(nativeUsage(json?.usage), { model: json.model, tier: json.service_tier ?? json.usage?.service_tier }), toolCalls: parsed.toolCalls,
+        contextUsage: contextUsage(json?.usage), stopReason: json?.stop_reason || 'end_turn', providerState: createAnthropicState(input, json?.content || [], visible) }
     }
+  }).catch(error => {
+    // Only an explicit pre-response capability rejection may fall back. Never
+    // reinterpret a partial stream, timeout or arbitrary 400 as safe replay.
+    if (input.compaction && error.nativeCompactionUnsupported) {
+      assertNativeFallbackSafe(input)
+      return requestAnthropic({ ...input, compaction: null })
+    }
+    throw error
   })
 }
 
@@ -275,12 +341,14 @@ export async function countTokensAnthropic(input) {
   const payload = {
     model,
     system: systemWithCacheControl(system),
-    messages: mapMessages(messages),
-    tools: mappedTools.length ? mappedTools : undefined
+    messages: mapMessages(input),
+    tools: mappedTools.length ? mappedTools : undefined,
+    ...(input.compaction ? { context_management: compactionEdit(input) } : {})
   }
   try {
     const res = await fetch(endpoint, {
       method: "POST",
+      redirect: 'error',
       headers: buildRequestHeaders({
         target: "llm-token-count",
         provider: input.provider || "anthropic",
@@ -290,7 +358,8 @@ export async function countTokensAnthropic(input) {
         contentType: "application/json",
         customHeaders: {
           ...(apiKey ? { "x-api-key": apiKey } : {}),
-          "anthropic-version": "2023-06-01"
+          "anthropic-version": "2023-06-01",
+          ...(input.compaction ? { 'anthropic-beta': 'compact-2026-01-12' } : {})
         }
       }),
       body: JSON.stringify(payload),
@@ -349,15 +418,16 @@ export async function* requestAnthropicStream(input) {
     ...(Number.isFinite(input.temperature) ? { temperature: input.temperature } : {}),
     metadata: { user_id: "kkcode" },
     system: systemWithCacheControl(system),
-    messages: mapMessages(messages),
+    messages: mapMessages(input),
     tools: mappedTools.length ? mappedTools : undefined,
     stream: true,
-    ...(compaction ? { context_management: { edits: [{ type: "compact_20260112", trigger: { tokens: compaction.trigger || 150000 } }] } } : {})
+    ...(compaction ? { context_management: compactionEdit(input) } : {})
   })
   if (input.thinking?.type) {
     payload.thinking = { type: input.thinking.type, budget_tokens: input.thinking.budget_tokens || 10000 }
   }
-  const response = await requestWithRetry({
+  let response
+  try { response = await requestWithRetry({
     attempts: Number(retry.attempts ?? 5),
     baseDelayMs: Number(retry.baseDelayMs ?? 800),
     signal,
@@ -384,58 +454,86 @@ export async function* requestAnthropicStream(input) {
 
       if (!candidate.ok) {
         const text = await candidate.text().catch(() => "")
-        const error = /** @type {ProviderError & { httpStatus?: number }} */ (new ProviderError(`anthropic stream failed: ${candidate.status} ${text}`, {
+        const error = /** @type {ProviderError & { httpStatus?: number, nativeCompactionUnsupported?: boolean }} */ (new ProviderError(`anthropic stream failed: ${candidate.status} ${text}`, {
           provider: "anthropic", model, endpoint
         }))
         error.httpStatus = candidate.status
+        error.nativeCompactionUnsupported = isUnsupportedCompaction(candidate.status, text)
         annotateRetryAfter(error, candidate)
         throw error
       }
       return candidate
     }
-  })
+  }) } catch (error) {
+    if (compaction && error.nativeCompactionUnsupported) {
+      assertNativeFallbackSafe(input)
+      yield* requestAnthropicStream({ ...input, compaction: null })
+      return
+    }
+    throw error
+  }
 
   let currentBlock = null
   let inputUsage = { input: 0, cacheRead: 0, cacheWrite: 0 }
+  let rawInputUsage = null, rawOutputTokens
+  let billingModel, billingTier, billingIdentityChanged = false
   let outputTokens = 0
   let stopReason = null
+  let stopped = false
+  const nativeBlocks = []
+  let responseText = ''
+  const responseCalls = []
+  let iterations = null
 
   for await (const { event, data } of parseSSE(response.body, signal, { idleTimeoutMs: streamIdleTimeoutMs })) {
     let parsed
     try { parsed = JSON.parse(data) } catch { continue }
+    if (event === 'error') throw new ProviderError('anthropic stream returned an error event; incomplete response was not committed', { reason: 'invalid_provider_response' })
 
     if (event === "message_start") {
       const u = parsed.message?.usage
+      rawInputUsage = u
+      const nextModel = parsed.message?.model, nextTier = parsed.message?.service_tier ?? u?.service_tier
+      if (billingModel !== undefined && billingModel !== nextModel || billingTier !== undefined && nextTier !== undefined && billingTier !== nextTier) billingIdentityChanged = true
+      billingModel = nextModel; billingTier = nextTier
       inputUsage.input = u?.input_tokens ?? 0
       inputUsage.cacheRead = u?.cache_read_input_tokens ?? 0
       inputUsage.cacheWrite = u?.cache_creation_input_tokens ?? 0
     }
 
     if (event === "content_block_start") {
+      if (currentBlock) throw nativeError('overlapping content blocks')
       const block = parsed.content_block
       currentBlock = {
         type: block?.type,
         id: block?.id || null,
         name: block?.name || null,
-        jsonParts: []
+        jsonParts: [], native: structuredClone(block)
       }
     }
 
     if (event === "content_block_delta") {
       if (parsed.delta?.type === "text_delta") {
         const text = parsed.delta.text || ""
+        responseText += text
+        if (currentBlock?.native?.type === 'text') currentBlock.native.text = (currentBlock.native.text || '') + text
         if (text) yield { type: "text", content: text }
       }
       if (parsed.delta?.type === "thinking_delta" && currentBlock?.type !== "redacted_thinking") {
         const thinking = parsed.delta.thinking || ""
+        if (currentBlock?.native?.type === 'thinking') currentBlock.native.thinking = (currentBlock.native.thinking || '') + thinking
         if (thinking) yield { type: "thinking", content: thinking }
       }
       if (parsed.delta?.type === "input_json_delta") {
         if (currentBlock) currentBlock.jsonParts.push(parsed.delta.partial_json || "")
       }
       if (parsed.delta?.type === "compaction_delta") {
-        if (currentBlock) currentBlock.compactionContent = parsed.delta.content || ""
+        // Threshold compaction sends exactly ONE complete-summary delta.
+        if (currentBlock?.type !== 'compaction' || currentBlock.compactionReceived) throw nativeError('unexpected or duplicate summary delta')
+        currentBlock.compactionReceived = true
+        currentBlock.native.content = parsed.delta.content
       }
+      if (parsed.delta?.type === 'signature_delta' && currentBlock?.type === 'thinking') currentBlock.native.signature = (currentBlock.native.signature || '') + (parsed.delta.signature || '')
     }
 
     if (event === "content_block_stop" && currentBlock) {
@@ -448,6 +546,8 @@ export async function* requestAnthropicStream(input) {
           console.error(`[anthropic] tool_call JSON parse failed (${raw.length} chars; argument contents omitted)`)
           args = { __parse_error: true, __raw_length: raw.length, __error: 'invalid JSON arguments' }
         }
+        currentBlock.native.input = args
+        responseCalls.push({ type: 'tool_use', id: currentBlock.id, name: currentBlock.name, input: args })
         yield {
           type: "tool_call",
           call: {
@@ -458,13 +558,18 @@ export async function* requestAnthropicStream(input) {
         }
       }
       if (currentBlock.type === "compaction") {
-        yield { type: "compaction", content: currentBlock.compactionContent || "" }
+        validateCompactions([currentBlock.native], compaction)
+        yield { type: "compaction", content: currentBlock.native.content }
       }
+      nativeBlocks.push(currentBlock.native)
       currentBlock = null
     }
 
     if (event === "message_delta") {
       outputTokens = parsed.usage?.output_tokens ?? outputTokens
+      if (parsed.usage?.output_tokens !== undefined) rawOutputTokens = parsed.usage.output_tokens
+      if (parsed.usage?.service_tier !== undefined) { if (billingTier !== undefined && billingTier !== parsed.usage.service_tier) billingIdentityChanged = true; billingTier = parsed.usage.service_tier }
+      if (Array.isArray(parsed.usage?.iterations)) iterations = parsed.usage.iterations
       // 与 openai 侧同一条纪律：第一个非空 stop_reason 为准，迟到的重复帧
       // 不得把 end_turn 改写成 max_tokens（那会误触发 auto-continue）。
       if (parsed.delta?.stop_reason && stopReason === null) {
@@ -473,17 +578,33 @@ export async function* requestAnthropicStream(input) {
     }
 
     if (event === "message_stop") {
+      if (stopped) continue
+      if (currentBlock) {
+        // Some established Anthropic-compatible gateways use message_stop as
+        // the final text block terminator. Preserve that text-only behavior,
+        // but never infer completion of tools, signatures or native state.
+        if (currentBlock.type !== 'text' || nativeBlocks.some(block => block?.type === 'compaction')) {
+          throw nativeError('message ended with an incomplete block')
+        }
+        currentBlock = null
+      }
+      stopped = true
+      const state = createAnthropicState(input, nativeBlocks, [{ type: 'text', text: responseText }, ...responseCalls])
+      if (state) yield { type: 'provider_state', state }
       yield {
         type: "usage",
-        usage: {
+        ...(iterations ? { contextUsage: contextUsage({ iterations }) } : {}),
+        usage: markUsageIdentity(iterations ? nativeUsage({ iterations }) : markUsageEvidence({
           input: inputUsage.input,
           output: outputTokens,
           cacheRead: inputUsage.cacheRead,
           cacheWrite: inputUsage.cacheWrite
-        }
+        }, [rawInputUsage?.input_tokens, rawOutputTokens], [rawInputUsage?.cache_read_input_tokens, rawInputUsage?.cache_creation_input_tokens]), { model: billingIdentityChanged ? null : billingModel, tier: billingTier })
       }
       // Normalize: "end_turn" → "end_turn", "max_tokens" → "max_tokens", "tool_use" → "tool_use"
       yield { type: "stop", reason: stopReason || "end_turn" }
     }
   }
+  if (!stopped) throw new ProviderError('anthropic stream ended before message_stop; response is incomplete', { reason: 'incomplete_response' })
 }
+import { markUsageEvidence, markUsageIdentity } from '../../usage/usage-evidence.mjs'

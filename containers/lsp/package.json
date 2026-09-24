@@ -1,0 +1,10 @@
+{
+  "name": "kkcode-isolated-language-servers",
+  "private": true,
+  "version": "1.0.5-preview.0",
+  "dependencies": {
+    "typescript-language-server": "6.0.0",
+    "typescript": "6.0.3",
+    "pyright": "1.1.414"
+  }
+}

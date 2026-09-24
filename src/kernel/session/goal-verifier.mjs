@@ -1,9 +1,10 @@
 import { runtimeCwd } from "../core/runtime-context.mjs"
-import { stat as statFs, readFile } from "node:fs/promises"
+import { stat as statFs, readFile, realpath } from "node:fs/promises"
 import path from "node:path"
 import { readGate, isDecisiveGate, isPassingGateStatus } from "./gate-contract.mjs"
 import { runGateCommand, outputSnippet } from "./usability-gates.mjs"
 import { checkBashAllowed } from "../permission/exec-policy.mjs"
+import { validateAcceptanceManifest } from "./acceptance-manifest.mjs"
 import {
   CRITERION_PASS, CRITERION_FAIL, CRITERION_UNKNOWN, CRITERION_MANUAL
 } from "./goal-model.mjs"
@@ -78,6 +79,16 @@ export async function verifyCriterion(criterion, ctx = {}) {
   const runFn = ctx.deps?.runGateCommand || runGateCommand
 
   try {
+    if (ctx.acceptanceRequired && ["file_exists", "content_match"].includes(criterion.kind)) {
+      const root = await realpath(cwd)
+      const target = await realpath(path.resolve(root, criterion.spec.path)).catch(error => { if (error.code === "ENOENT") return null; throw error })
+      if (target) {
+        const relative = path.relative(root, target)
+        if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+          return done(CRITERION_UNKNOWN, "验收文件路径越出委托工作区，拒绝读取宿主文件")
+        }
+      }
+    }
     switch (criterion.kind) {
       case "file_exists": {
         const target = path.resolve(cwd, criterion.spec.path)
@@ -143,7 +154,7 @@ export async function verifyCriterion(criterion, ctx = {}) {
           || DEFAULT_COMMAND_TIMEOUT_MS
         // allow_shell（默认 false）：判据命令来自 LLM 生成的计划，默认绝不过
         // shell；显式打开才允许 shell 解释（需要管道/通配的判据）
-        const allowShell = criteriaConfig(ctx.config).allow_shell === true
+        const allowShell = !ctx.acceptanceRequired && criteriaConfig(ctx.config).allow_shell === true
         const result = await runFn({ command: criterion.spec.command, args: criterion.spec.args || [], cwd, shell: allowShell, timeoutMs })
         const evidence = {
           command: commandLine,
@@ -161,6 +172,10 @@ export async function verifyCriterion(criterion, ctx = {}) {
       }
 
       case "gate_pass": {
+        if (ctx.acceptanceManifest && (ctx.gateResult?.acceptance?.ok !== true ||
+            ctx.gateResult.acceptance.manifestId !== ctx.acceptanceManifest.id)) {
+          return done(CRITERION_UNKNOWN, "门禁结果没有绑定到本次验收候选", { gate: criterion.spec.gate })
+        }
         let gate
         try {
           gate = readGate(ctx.gateResult, criterion.spec.gate)
@@ -169,7 +184,12 @@ export async function verifyCriterion(criterion, ctx = {}) {
         }
         if (!gate) return done(CRITERION_UNKNOWN, `本轮没有 ${criterion.spec.gate} 门禁的结果`, { gate: criterion.spec.gate })
         if (!isDecisiveGate(gate)) return done(CRITERION_UNKNOWN, `${criterion.spec.gate} 门禁被禁用，无发言权`, { gate: criterion.spec.gate })
-        return isPassingGateStatus(gate.status)
+        if (["unknown", "not_applicable", "not_run", "skipped"].includes(gate.status)) {
+          return done(CRITERION_UNKNOWN, `${criterion.spec.gate} 门禁没有完成所需验收：${gate.reason || gate.status}`, {
+            gate: criterion.spec.gate, status: gate.status
+          })
+        }
+        return isPassingGateStatus(gate.status, { required: true })
           ? done(CRITERION_PASS, `${criterion.spec.gate} 门禁 ${gate.status}`, { gate: criterion.spec.gate, status: gate.status })
           : done(CRITERION_FAIL, `${criterion.spec.gate} 门禁失败：${gate.reason || gate.status}`, {
               gate: criterion.spec.gate, status: gate.status, outputSnippet: gate.output || ""
@@ -212,18 +232,47 @@ function aggregate(results) {
  * @param {object} [params.gateResult]  本轮 runUsabilityGates 的结果，外部注入以免重复跑 build/test
  * @param {Set<string>} [params.manualConfirmed] 用户已确认的 manual 判据 id
  * @param {{stat?: Function, readFile?: Function, runGateCommand?: Function}} [params.deps] 测试注入点
- * @returns {Promise<{status, results, subGoals, passed, failed, unknown, manual, evaluatedAt}>}
+ * @param {Record<string, any>|null} [params.acceptanceManifest] 宿主持有的候选与验收绑定
+ * @param {boolean} [params.acceptanceRequired] 严格任务必须存在独立验收绑定
+ * @returns {Promise<{status, results, subGoals, passed, failed, unknown, manual, evaluatedAt, acceptance?: Record<string, any>}>}
  *
  * 子目标聚合：root met = 全部非 optional 子目标 met **且** root 自身判据全过；
  * 任一子目标 blocked_manual → root blocked_manual。optional 子目标不影响 root，
  * 但结果保留 —— 报告必须展示它们。
  */
-export async function verifyGoal({ goal, cwd, config, gateResult = null, manualConfirmed = null, deps = {} } = {}) {
+export async function verifyGoal({ goal, cwd, config, gateResult = null, manualConfirmed = null, deps = {}, acceptanceManifest = null, acceptanceRequired = false } = {}) {
   const evaluatedAt = new Date().toISOString()
   if (!goal) {
     return { status: GOAL_UNKNOWN, results: [], subGoals: [], passed: 0, failed: 0, unknown: 0, manual: 0, evaluatedAt }
   }
-  const ctx = { cwd, config, gateResult, manualConfirmed, deps }
+  if (goal.validationErrors?.length) {
+    return {
+      status: GOAL_UNKNOWN, results: [{
+        id: "acceptance-definition", kind: "validation", severity: "blocking", status: CRITERION_UNKNOWN,
+        text: "验收定义校验", reason: goal.validationErrors.join("; "), evidence: {}
+      }], subGoals: [], passed: 0, failed: 0, unknown: 1, manual: 0, evaluatedAt
+    }
+  }
+  const integrityFailure = (acceptance, results = [], subGoals = []) => {
+    const existing = [...results, ...subGoals.flatMap((sub) => sub.results || [])].filter((result) => result.severity !== "advisory")
+    return {
+    status: GOAL_UNKNOWN, results: [...results, {
+      id: "acceptance-integrity", kind: "integrity", severity: "blocking", status: CRITERION_UNKNOWN,
+      text: "候选与验收标准完整性", reason: acceptance.errors.join("; "), evidence: { manifestId: acceptance.manifestId }
+    }], subGoals, passed: existing.filter((result) => result.status === CRITERION_PASS).length,
+    failed: existing.filter((result) => result.status === CRITERION_FAIL).length,
+    unknown: 1 + existing.filter((result) => result.status === CRITERION_UNKNOWN).length,
+    manual: existing.filter((result) => result.status === CRITERION_MANUAL).length, evaluatedAt, acceptance
+    }
+  }
+  if (acceptanceRequired && (!acceptanceManifest?.independentSourceBaseline || !acceptanceManifest?.hostBoundaryId || typeof deps.runGateCommand !== "function")) {
+    return integrityFailure({ ok: false, manifestId: null, errors: ["required host acceptance manifest is missing"], status: "unknown" })
+  }
+  if (acceptanceManifest) {
+    const before = await validateAcceptanceManifest(acceptanceManifest, { goal, cwd: cwd || runtimeCwd(), config })
+    if (!before.ok) return integrityFailure(before)
+  }
+  const ctx = { cwd, config, gateResult, manualConfirmed, deps, acceptanceManifest, acceptanceRequired }
 
   const results = []
   for (const criterion of goal.criteria || []) {
@@ -258,12 +307,17 @@ export async function verifyGoal({ goal, cwd, config, gateResult = null, manualC
       status = GOAL_UNMET
     } else if (required.some((s) => s.status === GOAL_UNKNOWN) || rootBlocks(GOAL_UNKNOWN)) {
       status = GOAL_UNKNOWN
-    } else if (!required.length || required.every((s) => s.status === GOAL_MET)) {
+    } else if (!hasRootCriteria && !required.length) {
+      status = GOAL_UNKNOWN // Optional outcomes alone cannot establish required acceptance.
+    } else if (required.every((s) => s.status === GOAL_MET)) {
       status = hasRootCriteria ? rootAgg.status : GOAL_MET
     }
   }
 
   const totals = [...results, ...subGoals.flatMap((s) => s.results)].filter((r) => r.severity !== "advisory")
+  const acceptance = acceptanceManifest
+    ? await validateAcceptanceManifest(acceptanceManifest, { goal, cwd: cwd || runtimeCwd(), config }) : null
+  if (acceptance && !acceptance.ok) return integrityFailure(acceptance, results, subGoals)
   return {
     status,
     results,
@@ -272,6 +326,7 @@ export async function verifyGoal({ goal, cwd, config, gateResult = null, manualC
     failed: totals.filter((r) => r.status === CRITERION_FAIL).length,
     unknown: totals.filter((r) => r.status === CRITERION_UNKNOWN).length,
     manual: totals.filter((r) => r.status === CRITERION_MANUAL).length,
-    evaluatedAt
+    evaluatedAt,
+    ...(acceptance ? { acceptance } : {})
   }
 }

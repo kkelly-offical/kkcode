@@ -46,6 +46,44 @@ async function withMocks({ providerRules, fallback = "acknowledged", behavior = 
   }
 }
 
+test("real Ultra path cannot truncate promoted acceptance or complete an invalid/optional-only goal", async () => {
+  const present = "src/acceptance-present.mjs"
+  const missing = "src/acceptance-never-written.mjs"
+  const scenarios = [
+    { name: "promoted-nine", acceptance: [...Array(8).fill(present), missing], expected: "unmet", count: 9 },
+    { name: "overflow-thirteen", goal: { criteria: [...Array(12).fill(present), missing] }, expected: "unknown" },
+    { name: "optional-only", goal: { subGoals: [{ optional: true, criteria: [missing] }] }, expected: "unknown" }
+  ]
+  for (const scenario of scenarios) {
+    const plan = {
+      planId: `acceptance-${scenario.name}`, objective: "implement and verify all required outcomes",
+      ...(scenario.goal ? { goal: scenario.goal } : {}),
+      stages: [{ stageId: "acceptance-stage", name: "Implementation", tasks: [{
+        taskId: "acceptance-task", prompt: "write only the planned existing file",
+        plannedFiles: [present], acceptance: scenario.acceptance || [present]
+      }] }]
+    }
+    const result = await withMocks({
+      providerRules: [
+        { stage: 1, reply: "Findings: simple ESM project." },
+        { stage: 2, reply: stagePlanFence(plan) },
+        { stage: 4, reply: "[STAGE 4/4: DEBUGGING - COMPLETE]\n[TASK_COMPLETE]" }
+      ],
+      behavior: async () => {
+        await mkdir(path.dirname(path.join(tmpProject, present)), { recursive: true })
+        await writeFile(path.join(tmpProject, present), "export const present = true\n")
+        return null
+      }
+    }, () => runHybridLongAgent({
+      prompt: "implement and verify every required file", model: "mock-model", providerType: "mock_goalloop",
+      sessionId: `gl_${scenario.name}`, configState: ultraConfig({ providerName: "mock_goalloop" }, { ultra: { max_rounds: 1 } })
+    }))
+    assert.notEqual(result.status, "completed", scenario.name)
+    assert.equal(result.goalVerification.status, scenario.expected, scenario.name)
+    if (scenario.count) assert.equal(result.goalVerification.results.length, scenario.count)
+  }
+})
+
 test("次轮达成：重规划被调用且 prompt 含上一轮的失败证据", async () => {
   // 判据要求 version = 2；第一轮的计划只会写出 version = 1 → 判据失败 →
   // 重规划产出 v2 计划 → 第二轮达成。

@@ -1,5 +1,6 @@
 import YAML from "yaml"
 import { processTurnLoop } from "./loop.mjs"
+import { resolveTaskModel } from "../provider/task-model.mjs"
 import { parseJsonLoose } from "./longagent-utils.mjs"
 import { validateAndNormalizeStagePlan, defaultStagePlan } from "./longagent-plan.mjs"
 
@@ -36,6 +37,7 @@ export function getGateFixStrategy(failures) {
 // #13 上下文压缩
 export async function compressContext(text, limit, { model, providerType, sessionId, configState, baseUrl, apiKeyEnv, signal, toolContext }) {
   if (text.length <= limit) return text
+  const route = await resolveTaskModel(configState, { role: "compaction", model, providerType, baseUrl, apiKeyEnv })
   const out = await processTurnLoop({
     prompt: [
       `Compress the following engineering context to max ${Math.round(limit * 0.6)} characters.`,
@@ -50,7 +52,8 @@ export async function compressContext(text, limit, { model, providerType, sessio
       "",
       text.slice(0, limit * 2)
     ].join("\n"),
-    mode: "assistant", model, providerType, sessionId, configState, baseUrl, apiKeyEnv, signal, allowQuestion: false, toolContext
+    mode: "assistant", model: route.model, providerType: route.providerType, sessionId, configState,
+    baseUrl: route.baseUrl, apiKeyEnv: route.apiKeyEnv, signal, allowQuestion: false, toolContext
   })
   return (out.reply || text.slice(0, limit)).slice(0, limit)
 }

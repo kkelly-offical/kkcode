@@ -12,6 +12,7 @@ import {
 import { validateModelId } from "./model-id.mjs"
 import { trimTrailingSlashes } from "./url-path.mjs"
 import { supportsThinking } from "./thinking-effort.mjs"
+import { assertProviderDataPolicy } from '../permission/data-policy.mjs'
 import {
   MODEL_CAPABILITY_KEYS,
   inferCapabilitiesFromName,
@@ -550,6 +551,7 @@ export async function discoverModelsForProvider(configState, {
     // These checks deliberately run before cache reads. A catalog populated
     // under a trusted configuration must not make the same project-controlled
     // endpoint appear safe after the workspace is untrusted.
+    assertProviderDataPolicy(configState, { providerName: connection.name, baseUrl: connection.modelsUrl })
     await assertProviderOutboundAllowed(configState, {
       providerName: connection.name,
       protocol: connection.protocol,

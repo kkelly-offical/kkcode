@@ -8,6 +8,7 @@ import { readJson, writeJson } from "../../storage/json-store.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { INTERRUPTION_REASONS } from "./interruption-reason.mjs"
+import { intersectDataPolicies } from '../permission/data-policy.mjs'
 import { registerBackgroundPromptOwner, hasBackgroundPromptOwner, bindBackgroundPromptWorker, releaseBackgroundPromptOwner } from './background-prompts.mjs'
 import {
   ensureBackgroundTaskRuntimeDir,
@@ -482,6 +483,7 @@ async function runInline(task, run) {
 
 export const BackgroundManager = {
   async launch({ description, payload, run = null, config = {} }) {
+    const dataPolicy = intersectDataPolicies(/** @type {any} */ (config).data_policy, payload?.dataPolicy)
     await ensureBackgroundTaskRuntimeDir()
     const id = `bg_${Math.random().toString(36).slice(2, 14)}`
     const timeoutMs = resolveWorkerTimeoutMs(config, payload || {})
@@ -490,6 +492,7 @@ export const BackgroundManager = {
       description,
       payload: {
         ...(payload || {}),
+        ...(dataPolicy === undefined ? {} : { dataPolicy }),
         workerTimeoutMs: timeoutMs
       },
       status: "pending",

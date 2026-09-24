@@ -2,6 +2,8 @@ import { runtimeCwd } from "../core/runtime-context.mjs"
 import path from "node:path"
 import { access, readFile, readdir } from "node:fs/promises"
 import { userRootDir } from "../../storage/paths.mjs"
+import { verifyManagedPlugin } from './integrity.mjs'
+import { normalizePluginCapabilities } from './capabilities.mjs'
 import {
   discoverCompatPluginManifestCandidates,
   discoverOpenCodePluginFiles
@@ -74,8 +76,8 @@ async function readJsonFile(filePath, label, errors) {
   try {
     const raw = await readFile(filePath, "utf8")
     return JSON.parse(raw)
-  } catch (error) {
-    errors.push(`${label} parse failed: ${error.message}`)
+  } catch {
+    errors.push(`${label} parse failed: invalid or unreadable JSON`)
     return null
   }
 }
@@ -139,20 +141,6 @@ async function normalizeMcpServers(manifest, rootDir, errors) {
   return out
 }
 
-function normalizeCapabilities(manifest) {
-  const caps = isPlainObject(manifest.capabilities) ? manifest.capabilities : {}
-  const allowedAgentPermissions = toStringArray(
-    caps.allowedAgentPermissions
-    || caps.allowed_agent_permissions
-    || manifest.allowedAgentPermissions
-    || manifest.allowed_agent_permissions
-    || ["default"]
-  )
-  return {
-    allowedAgentPermissions: allowedAgentPermissions.length ? allowedAgentPermissions : ["default"]
-  }
-}
-
 function manifestRootDir(filePath, rootMode) {
   const manifestDir = path.dirname(filePath)
   if (rootMode === "parent-dir") return path.dirname(manifestDir)
@@ -179,10 +167,14 @@ function collectUnsupported(manifest, ecosystem) {
 
 async function loadManifest(filePath, scope, { ecosystem = "kkcode", rootMode = "manifest-dir" } = {}) {
   const errors = []
-  const manifest = await readJsonFile(filePath, "plugin manifest", errors)
+  const installedRoot = manifestRootDir(filePath, rootMode)
+  let integrity = null, integrityFailed = false
+  try { integrity = await verifyManagedPlugin(installedRoot) }
+  catch { integrityFailed = true; errors.push('托管插件完整性校验失败，未加载可执行内容。') }
+  const rootDir = integrity?.verified && integrity.loadRoot ? integrity.loadRoot : installedRoot
+  const manifest = await readJsonFile(rootDir === installedRoot ? filePath : path.join(rootDir, path.relative(installedRoot, filePath)), "plugin manifest", errors)
   if (!manifest) return { plugin: null, errors }
 
-  const rootDir = manifestRootDir(filePath, rootMode)
   const components = isPlainObject(manifest.components) ? manifest.components : {}
   const name = typeof manifest.name === "string" && manifest.name.trim()
     ? manifest.name.trim()
@@ -220,10 +212,18 @@ async function loadManifest(filePath, scope, { ecosystem = "kkcode", rootMode = 
     agents: agentSpec.dirs,
     hooks: hookSpec.dirs,
     mcpServers: await normalizeMcpServers(manifest, rootDir, errors),
-    capabilities: normalizeCapabilities(manifest),
+    capabilities: normalizePluginCapabilities(manifest),
     unsupported: collectUnsupported(manifest, ecosystem)
   }
 
+  if (integrityFailed) {
+    plugin.enabled = false; plugin.disabledReason = '托管插件完整性校验失败，未加载可执行内容。'; errors.push(plugin.disabledReason)
+  } else if (integrity) {
+    Object.assign(plugin, { integrity })
+    plugin.enabled = integrity.enabled
+    if (!integrity.enabled) plugin.disabledReason = integrity.reason || '托管插件已禁用。'
+    if (integrity.reason) errors.push(integrity.reason)
+  }
   return { plugin, errors }
 }
 

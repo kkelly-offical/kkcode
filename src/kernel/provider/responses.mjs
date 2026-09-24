@@ -119,7 +119,8 @@ export function parseResponsesResult(json, input) {
   const total = tokenCount(json.usage?.input_tokens), cached = Math.min(total, tokenCount(json.usage?.input_tokens_details?.cached_tokens))
   return {
     text: text + sourceText, reasoning, toolCalls,
-    usage: { input: total - cached, output: tokenCount(json.usage?.output_tokens), cacheRead: cached, cacheWrite: 0 },
+    usage: markUsageIdentity(markUsageEvidence({ input: total - cached, output: tokenCount(json.usage?.output_tokens), cacheRead: cached, cacheWrite: 0 },
+      [json.usage?.input_tokens, json.usage?.output_tokens], [json.usage?.input_tokens_details?.cached_tokens], (json.usage?.input_tokens_details?.cached_tokens ?? 0) <= json.usage?.input_tokens), { model: json.model, tier: json.service_tier }),
     stopReason: json.status === 'incomplete' ? json.incomplete_details?.reason === 'max_output_tokens' ? 'max_tokens' : 'content_filter' : toolCalls.length ? 'tool_use' : 'end_turn',
     providerState: { scope: responsesScope(input), items, contentHash: visibleResponseHash(visibleContent), reasoningTokens: tokenCount(json.usage?.output_tokens_details?.reasoning_tokens) }, sourceText
   }
@@ -187,7 +188,7 @@ export async function* requestResponsesStream(input) {
   }
   if (!response.body) throw failure(input, 0, {}, 'Responses 流没有响应体')
   const items = new Map()
-  let terminal = null, text = '', reasoning = '', streamBytes = 0
+  let terminal = null, text = '', reasoning = '', streamBytes = 0, billingModel, billingTier, billingIdentityChanged = false
   // Bound raw transport before SSE framing: a malformed endpoint can stream
   // data forever without a frame separator (and therefore without an event).
   const boundedBody = response.body.pipeThrough(new TransformStream({ transform(chunk, controller) {
@@ -198,6 +199,8 @@ export async function* requestResponsesStream(input) {
   for await (const { data } of parseSSE(boundedBody, input.signal, { idleTimeoutMs: input.streamIdleTimeoutMs || 120000 })) {
     let event
     try { event = JSON.parse(data) } catch { throw failure(input, 0, {}, 'Responses 流包含无效 JSON') }
+    if (event.response?.model !== undefined) { if (billingModel !== undefined && billingModel !== event.response.model) billingIdentityChanged = true; billingModel = event.response.model }
+    if (event.response?.service_tier !== undefined) { if (billingTier !== undefined && billingTier !== event.response.service_tier) billingIdentityChanged = true; billingTier = event.response.service_tier }
     const index = event.output_index ?? event.item_id
     if (event.type === 'error' || event.type === 'response.failed') throw failure(input, 0, event.response || event)
     if (['response.completed', 'response.incomplete'].includes(event.type)) { terminal = { ...event.response, status: event.response?.status || (event.type === 'response.completed' ? 'completed' : 'incomplete') }; break }
@@ -222,6 +225,7 @@ export async function* requestResponsesStream(input) {
   }
   const output = terminal.output?.length ? terminal.output : [...items.values()]
   const result = parseResponsesResult({ ...terminal, output }, input)
+  if (billingIdentityChanged) markUsageIdentity(result.usage, { model: null, tier: billingTier })
   if (text && !result.text.startsWith(text)) throw failure(input, 0, {}, 'Responses 流式正文与最终结果不一致，已停止自动续接，请检查模型服务')
   if (!text && result.text) yield { type: 'text', content: result.text }
   else if (result.text.startsWith(text) && result.text.length > text.length) yield { type: 'text', content: result.text.slice(text.length) }
@@ -232,5 +236,30 @@ export async function* requestResponsesStream(input) {
   yield { type: 'stop', reason: result.stopReason }
 }
 
-// Keep estimates explicit; never emulate counting with a billable completion.
-export async function countTokensResponses() { return null }
+/** Official Responses count-only endpoint. Reuse the identical stateless input
+ * projection (including images and encrypted reasoning) but send only schema
+ * fields accepted by input_tokens, never generation-only options. */
+export async function countTokensResponses(input) {
+  if (!input.apiKey && input.apiKeyEnv !== '') return null
+  const endpoint = new URL(responsesEndpoint(input.baseUrl))
+  endpoint.pathname += '/input_tokens'
+  const generated = responsesPayload(input, false)
+  const allowed = ['conversation', 'input', 'instructions', 'model', 'parallel_tool_calls', 'personality', 'previous_response_id', 'reasoning', 'text', 'tool_choice', 'tools', 'truncation']
+  const payload = Object.fromEntries(Object.entries(generated).filter(([key, value]) => allowed.includes(key) && value !== undefined))
+  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), Math.min(input.timeoutMs || 10000, 30000))
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST', redirect: 'error', signal: input.signal ? AbortSignal.any([input.signal, controller.signal]) : controller.signal,
+      headers: buildRequestHeaders({ target: 'llm-token-count', provider: input.provider || 'openai-responses', protocol: 'responses', requestId: input.requestId || '', openAIClientRequestId: true,
+        accept: 'application/json', contentType: 'application/json', authorization: input.apiKey ? `Bearer ${input.apiKey}` : '' }),
+      body: JSON.stringify(payload)
+    })
+    try { input.onResponse?.(response) } catch { /* Diagnostic observers cannot alter counting. */ }
+    if ([400, 404, 405, 501].includes(response.status)) { await response.body?.cancel().catch(() => {}); return null }
+    if (!response.ok) { await response.body?.cancel().catch(() => {}); throw failure(input, response.status, {}, 'Responses 输入计数失败') }
+    const json = await readJsonResponse(response, { ...input, timeoutMs: Math.min(input.timeoutMs || 10000, 30000) })
+    if (json?.object !== 'response.input_tokens' || !Number.isSafeInteger(json.input_tokens) || json.input_tokens < 0) throw failure(input, 0, {}, '计数端点没有返回有效的 response.input_tokens，未把推理结果当计数')
+    return json.input_tokens
+  } finally { clearTimeout(timer) }
+}
+import { markUsageEvidence, markUsageIdentity } from '../../usage/usage-evidence.mjs'

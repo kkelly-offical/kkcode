@@ -50,6 +50,8 @@ import { executeTool } from "./tool/executor.mjs"
 import { BackgroundManager } from "./orchestration/background-manager.mjs"
 import { createTaskDelegate } from "./orchestration/task-scheduler.mjs"
 import { inspectPrompt } from './session/prompt-report.mjs'
+import { currentDurableRun } from './orchestration/run-runtime.mjs'
+import { createHostServices } from './core/host-services.mjs'
 
 /**
  * @param {object} [options]
@@ -63,6 +65,10 @@ import { inspectPrompt } from './session/prompt-report.mjs'
  *   buildContext 原语义探测（持久化信任存储 + TTY 交互提示）。
  * @param {boolean} [options.boot] 置 false 跳过扩展 boot 序列（只读巡检命令用：
  *   不 spawn MCP、不写技能种子包）；注册表仍可经句柄按需 initialize。
+ * @param {boolean} [options.inheritProviders] false creates only built-in providers;
+ *   dedicated delegated kernels must not copy ambient host extension implementations.
+ * @param {object} [options.services] Host-created branded LSP/Office instances. Omit to use private host configuration; {} disables it.
+ * @param {object|null} [options.dependencyEnvironment] Host-verified immutable dependency environment for isolated language services.
  * @param {object} [options.handlers] 宿主回调注入：
  *   onPermissionPrompt / onQuestionPrompt（取代模块级 set*PromptHandler 槽位）、
  *   onOutput（executeTurn 的默认 output 通道）、onEvent（订阅 kernel 事件流）。
@@ -123,9 +129,10 @@ export async function createKernel(options = {}) {
   const providers = createProviderRegistry()
   // Snapshot explicitly registered legacy providers at creation; subsequent
   // registration changes remain isolated to their owning registry.
-  for (const name of listProviders()) providers.registerProvider(name, getProvider(name))
+  if (options.inheritProviders !== false) for (const name of listProviders()) providers.registerProvider(name, getProvider(name))
   const hostController = new AbortController()
-  const runtime = { cwd, events, permissions, tools, skills, hooks, providers, mcp, permissionPrompt, questionPrompt, hostSignal: hostController.signal, auxiliary: new Set(), agents: createAgentMap(), customAgentState: { agents: new Map(), loaded: false, loadedAt: 0 } }
+  const hostServices = await createHostServices(cwd, options.services, { dependencyEnvironment: options.dependencyEnvironment })
+  const runtime = { cwd, events, permissions, tools, skills, hooks, providers, mcp, permissionPrompt, questionPrompt, services: hostServices.services, serviceDiagnostics: hostServices.diagnostics, hostSignal: hostController.signal, auxiliary: new Set(), agents: createAgentMap(), customAgentState: { agents: new Map(), loaded: false, loadedAt: 0 } }
   const run = fn => runWithRuntime(runtime, fn)
   runtime.promptCache = { key: null, result: null }
   const activeTurns = new Set()
@@ -163,6 +170,7 @@ export async function createKernel(options = {}) {
     } catch (error) {
       // 失败对称回滚：createKernel reject 不得泄漏已安装的桥/槽位/信任态
       releaseProcessBridge()
+      await hostServices.close()
       throw error
     }
   }
@@ -187,7 +195,7 @@ export async function createKernel(options = {}) {
       const providerType = turnOptions.providerType || prior?.providerType || selectedConfig.config.provider?.default
       const model = turnOptions.model || (prior?.providerType === providerType ? prior?.model : '') || selectedConfig.config.provider?.[providerType]?.default_model || ''
       const mode = resolveMode(turnOptions.mode || prior?.mode || selectedConfig.config.agent?.default_mode || 'agent')
-      return await runWithRuntime({ ...runtime, sessionId }, () => executeEngineTurn(/** @type {any} */ ({
+      return await runWithRuntime({ ...runtime, sessionId, durableRun: currentDurableRun() }, () => executeEngineTurn(/** @type {any} */ ({
         ...turnOptions,
         sessionId, providerType, model, mode,
         configState: selectedConfig,
@@ -233,7 +241,7 @@ export async function createKernel(options = {}) {
     } finally {
       // flushNow 必达：mcp.shutdown 抛错也要把会话缓冲写盘收口；
       // shutdownDone 只在全链路成功后置位，失败允许宿主重试。
-      try { await tools.shutdown() } finally { await flushNow() }
+      try { await tools.shutdown() } finally { try { await hostServices.close() } finally { await flushNow() } }
     }
     shutdownDone = true
   }
@@ -274,9 +282,9 @@ export async function createKernel(options = {}) {
       isReady: () => tools.isReady(),
       list: (listOptions) => tools.list(listOptions),
       get: (toolName) => tools.get(toolName),
-      call: (toolName, args, ctx) => tools.call(toolName, args, ctx),
+      call: (toolName, args, ctx) => tools.call(toolName, args, { cwd, ...ctx, lspService: hostServices.services.lsp, officeService: hostServices.services.office }),
       refreshMcpTools: () => tools.refreshMcpTools(),
-      executeTool: (execOptions) => executeTool(execOptions)
+      executeTool: (execOptions) => executeTool({ ...execOptions, context: { cwd, ...execOptions.context, lspService: hostServices.services.lsp, officeService: hostServices.services.office } })
     },
     extensions: { skills, mcp, hooks },
     background: {
@@ -296,7 +304,7 @@ export async function createKernel(options = {}) {
       EVENT_TYPES
     },
     prompts: { permission: permissionPrompt, question: questionPrompt },
-    diagnostics: { inspectPrompt },
+    diagnostics: { inspectPrompt, services: () => structuredClone(hostServices.diagnostics) },
     get extensionPolicy() { return extensionPolicy },
     configState,
     cwd,

@@ -12,7 +12,7 @@ import { createHash } from "node:crypto"
  *  1. 无法机器化的散文一律落到 `manual`，而 manual **永远不能被自动判为达成**
  *     —— 于是「Task objective is fully usable」这类主观句子自动变得无害：
  *     它会把目标推进 blocked_manual 逼出一次用户确认，而不是静默算过。
- *  2. blocking 判据不能被静默删除：删除必须给理由，且强制出现在最终报告里。
+ *  2. 已确认的 blocking 判据只能凭宿主签发的用户确认凭证删除，并保留理由。
  *  3. 判据在 H0 冻结后，运行期只读。
  */
 
@@ -189,7 +189,6 @@ export function normalizeAcceptance(list, { owner = "", source = "blueprint" } =
       ? parseCriterionString(item, { owner, source: "legacy_string" })
       : normalizeCriterionObject(item, { owner, source })
     if (criterion) out.push(criterion)
-    if (out.length >= MAX_CRITERIA) break
   }
   return out
 }
@@ -283,6 +282,9 @@ export function normalizeGoal(input, { objective, stageIds = [] } = {}) {
     frozenAt: null,
     revisions: []
   }
+  if (goal.criteria.length > MAX_CRITERIA) {
+    errors.push(`root criteria exceed ${MAX_CRITERIA} (got ${goal.criteria.length}) — refine the acceptance definition before execution`)
+  }
 
   const rawSubs = Array.isArray(input.subGoals) ? input.subGoals : []
   if (rawSubs.length > MAX_SUBGOALS) {
@@ -302,6 +304,9 @@ export function normalizeGoal(input, { objective, stageIds = [] } = {}) {
       optional: raw.optional === true,
       status: "pending"
     }
+    if (sub.criteria.length > MAX_CRITERIA) {
+      errors.push(`subGoal ${sub.goalId} criteria exceed ${MAX_CRITERIA} (got ${sub.criteria.length}) — refine the acceptance definition before execution`)
+    }
     for (const stageId of sub.stageIds) {
       if (seenStageIds.has(stageId)) {
         errors.push(`stage ${stageId} belongs to both ${seenStageIds.get(stageId)} and ${sub.goalId} — every stage must have exactly one owner`)
@@ -318,26 +323,81 @@ export function normalizeGoal(input, { objective, stageIds = [] } = {}) {
   if (!goal.criteria.length && !goal.subGoals.length) {
     errors.push("goal has no criteria and no subGoals — nothing to verify against")
   }
+  // Keep errors with the definition: legacy planners may display goalErrors
+  // without rejecting the plan. Such a definition must still never verify met.
+  if (errors.length) goal.validationErrors = [...errors]
 
   return { goal, errors }
 }
 
 /** 冻结目标：H0 用户确认后调用。此后运行期只读，修订必须走 reviseGoal。 */
 export function freezeGoal(goal, { round = 1 } = {}) {
-  return { ...goal, frozenAt: { at: new Date().toISOString(), round } }
+  return freezeDefinition({ ...structuredClone(goal), frozenAt: { at: new Date().toISOString(), round } })
+}
+
+function freezeDefinition(value) {
+  if (value && typeof value === "object") {
+    for (const child of Object.values(value)) freezeDefinition(child)
+    Object.freeze(value)
+  }
+  return value
+}
+
+export function requiredGoalGates(goal) {
+  return [...new Set([
+    ...(goal?.criteria || []),
+    ...(goal?.subGoals || []).filter((sub) => !sub.optional).flatMap((sub) => sub.criteria || [])
+  ].filter((criterion) => criterion.kind === "gate_pass" && criterion.severity !== "advisory")
+    .map((criterion) => criterion.spec.gate))]
+}
+
+const revisionApprovals = new WeakMap()
+
+function revisionFingerprint(goal, changes) {
+  return createHash("sha256").update(JSON.stringify({
+    goal, round: changes.round ?? null, reason: changes.reason || "",
+    add: changes.add || [], drop: changes.drop || []
+  })).digest("hex")
 }
 
 /**
- * 修订目标判据。新增自由；**删除 blocking 判据必须给非空理由**，且删除记录
- * 会被强制放进最终报告的「验收标准变更」小节 —— 不能靠禁止（模型总能重写
- * 计划），只能靠留痕并向用户展示。manual 判据永不可删。
+ * Trusted host only: call after a real user-confirmation event. This capability is
+ * deliberately non-serializable: a model-authored `{ approved: true }` cannot act
+ * as consent. Rehydrating approval after restart requires checking the host ledger.
+ * @param {Record<string, any>} goal
+ * @param {Record<string, any>} changes
+ * @param {{approvalId?: string, confirmedBy?: string}} [options]
+ */
+export function issueGoalRevisionApproval(goal, changes, { approvalId, confirmedBy } = {}) {
+  if (!String(approvalId || "").trim() || !String(confirmedBy || "").trim()) {
+    throw new TypeError("goal revision approval requires a host approval ID and confirming user")
+  }
+  const approval = Object.freeze({ approvalId: String(approvalId), confirmedBy: String(confirmedBy) })
+  revisionApprovals.set(approval, revisionFingerprint(goal, changes))
+  return approval
+}
+
+/**
+ * 修订目标判据。已确认 blocking 的删除需要原因及独立的宿主确认凭证。
+ * 模型只能提出变更，不能通过自己编写的理由削弱验收。manual 永不可删。
  *
  * @param {Record<string, any>} goal
  * @param {{round?: number, reason?: string, add?: any[], drop?: any[]}} [options]
  */
-export function reviseGoal(goal, { round, reason = "", add = [], drop = [] } = {}) {
+export function reviseGoal(goal, { round, reason = "", add = [], drop = [] } = {}, { approval = null } = {}) {
   const errors = []
-  const added = normalizeAcceptance(add, { owner: "root", source: "replan" })
+  const changes = { round, reason, add, drop }
+  const authorized = revisionApprovals.get(approval) === revisionFingerprint(goal, changes)
+  const added = []
+  const knownIds = new Set([...(goal.criteria || []), ...(goal.subGoals || []).flatMap((sub) => sub.criteria || [])].map((c) => c.id))
+  for (const criterion of normalizeAcceptance(add, { owner: "root", source: "replan" })) {
+    if (knownIds.has(criterion.id)) {
+      errors.push(`duplicate criterion ID ${criterion.id} cannot replace existing acceptance`)
+      continue
+    }
+    knownIds.add(criterion.id)
+    added.push(criterion)
+  }
   const dropped = []
 
   for (const dropRequest of drop) {
@@ -350,6 +410,10 @@ export function reviseGoal(goal, { round, reason = "", add = [], drop = [] } = {
       errors.push(`dropping blocking criterion ${dropId} requires a reason`)
       continue
     }
+    if (target.severity === "blocking" && (goal.frozenAt || target.source === "user_confirmed") && !authorized) {
+      errors.push(`dropping confirmed blocking criterion ${dropId} requires host-confirmed user approval`)
+      continue
+    }
     dropped.push({ ...target, dropReason })
   }
 
@@ -358,17 +422,19 @@ export function reviseGoal(goal, { round, reason = "", add = [], drop = [] } = {
     ...goal,
     criteria: [...goal.criteria.filter((c) => !droppedIds.has(c.id)), ...added],
     revisions: [
-      ...goal.revisions,
+      ...(goal.revisions || []),
       {
         round,
         reason: String(reason || ""),
         added: added.map((c) => ({ id: c.id, text: c.text })),
         removed: dropped.map((c) => ({ id: c.id, text: c.text, reason: c.dropReason })),
+        ...(authorized && dropped.length ? { approval: { approvalId: approval.approvalId, confirmedBy: approval.confirmedBy } } : {}),
         at: new Date().toISOString()
       }
     ]
   }
-  return { goal: revised, errors }
+  if (authorized) revisionApprovals.delete(approval)
+  return { goal: goal.frozenAt ? freezeDefinition(revised) : revised, errors }
 }
 
 // ---------------------------------------------------------------------------

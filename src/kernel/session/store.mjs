@@ -370,10 +370,17 @@ export async function appendMessage(sessionId, role, content, extra = {}) {
   })
 }
 
-export async function replaceMessages(sessionId, newMessages) {
+export async function replaceMessages(sessionId, newMessages, options = {}) {
   return withLock(async () => {
     await ensureLoadedUnsafe()
+    // Compaction must compare the snapshot seen BEFORE its asynchronous model
+    // call, not capture a fresh baseline after new turns/rewinds have arrived.
+    if (options.observedMessages) await flushUnsafe()
     const data = await loadSessionDataUnsafe(sessionId)
+    if (options.observedMessages && (
+      JSON.stringify(data.messages) !== JSON.stringify(options.observedMessages)
+      || Object.entries(options.expectedSession || {}).some(([key, value]) => state.index.sessions[sessionId]?.[key] !== value)
+    )) return { replaced: false, reason: 'history_changed' }
     const messages = newMessages.map((m) => ({
       ...m,
       id: m.id || `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -381,7 +388,8 @@ export async function replaceMessages(sessionId, newMessages) {
     }))
     queueDataOperation(sessionId, { kind: 'replace', value: messages, baseline: data.messages.map(message => message.id) })
     if (state.index.sessions[sessionId]) queueIndexOperation(sessionId, 'patch', { updatedAt: now() })
-    if (state.options.flushIntervalMs <= 0) await flushUnsafe()
+    if (options.observedMessages || state.options.flushIntervalMs <= 0) await flushUnsafe()
+    return { replaced: true }
   })
 }
 

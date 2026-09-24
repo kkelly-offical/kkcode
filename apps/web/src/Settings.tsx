@@ -7,6 +7,9 @@ import { BranchPanel } from "./Branches";
 import { CommandOutput, PreferencesPanel, ThemePanel, DeviceLifecyclePanel } from "./ClientPanels";
 import { MODE_OPTIONS, modeLabel } from "./modes.mjs";
 import { APP_VERSION } from "./version";
+import { ArtifactPanel } from './Artifacts';
+import { MemoryPanel } from './Memory';
+import { TaskPanel } from './Tasks';
 
 type Item = Record<string, any>;
 type Props = {
@@ -63,6 +66,9 @@ const titles: Record<string, string> = {
   theme: "外观",
   sessions: "选择会话",
   lifecycle: "设备绑定与转移",
+  artifacts: "会话产物与完整日志",
+  memory: "记忆管理",
+  tasks: "任务与验收",
 };
 
 export function SettingsOverlay(props: Props) {
@@ -216,6 +222,9 @@ export function SettingsOverlay(props: Props) {
       onClose={props.onClose}
       onBack={stack.length > 1 ? back : undefined}
     >
+      {panel === 'artifacts' && <ArtifactPanel key={`${props.deviceId}:${props.sessionId}`} rpc={props.rpc} sessionId={props.sessionId} canManage={props.canManage !== false} />}
+      {panel === 'memory' && props.canManage !== false && <MemoryPanel key={`${props.deviceId}:${props.sessionId}`} rpc={props.rpc} sessionId={props.sessionId} />}
+      {panel === 'tasks' && <TaskPanel key={`${props.deviceId}:${props.sessionId}`} rpc={props.rpc} sessionId={props.sessionId} />}
       {["settings", "connections"].includes(panel) && (
         <>
           {account}
@@ -224,6 +233,9 @@ export function SettingsOverlay(props: Props) {
             <>
               <p className="group-label">工作区</p>
               <div className="settings-group">
+                <SettingsRow icon="shield" title="任务与验收" disabled={!props.connected || !props.sessionId} onClick={() => go('tasks')} />
+                <SettingsRow icon="attachment" title="会话产物与完整日志" disabled={!props.connected || !props.sessionId} onClick={() => go('artifacts')} />
+                {props.canManage !== false && <SettingsRow icon="settings" title="记忆管理" disabled={!props.connected} onClick={() => go('memory')} />}
                 <SettingsRow
                   icon="branch"
                   title="Git 分支"

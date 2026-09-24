@@ -102,9 +102,8 @@ export async function buildContext(options = {}) {
 export function printContextWarnings(ctx) {
   const configErrors = ctx.configState?.errors || []
   if (configErrors.length) {
-    // error 表示对应配置层未应用；别说「当前使用默认配置」，因为用户层、项目层、
-    // .env 是独立的，其余已验证层仍可能生效。
-    console.error("config error: 以下配置层未通过校验，已忽略；其余已验证配置继续生效")
+    // Invalid security policy is deliberately retained as deny-all, not ignored.
+    console.error("config error: 以下配置未通过校验；无效普通项已忽略，安全限制可能按拒绝策略保留，其余已验证配置继续生效")
     for (const error of configErrors) console.error(`  - ${error}`)
     console.error("  修正后重新运行；`kkcode preflight` 可复查")
   }

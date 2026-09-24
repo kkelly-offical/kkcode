@@ -19,7 +19,7 @@ test('large MCP inventories defer schemas while full SDK inventory and legacy al
   const { registry, config } = fixtureRegistry()
   await registry.initialize({ config })
   const full = await registry.list({ config }), model = await registry.listForModel({ config })
-  assert.equal(full.filter(tool => tool.name.startsWith('mcp_')).length, 30)
+  assert.equal(full.filter(tool => tool.name.startsWith('mcp_fixture_')).length, 30)
   assert.ok(model.some(tool => tool.name === 'tool_search'))
   assert.equal(model.filter(tool => tool.name.startsWith('mcp_')).length, 0)
   assert.ok(!model.some(tool => tool.name === 'browser'))
@@ -52,6 +52,19 @@ test('BM25 supports CJK metadata and exact identifiers, with deterministic empty
   assert.equal(searchToolMetadata(tools, 'mcp_mail')[0].name, 'mcp_mail')
   assert.deepEqual(searchToolMetadata(tools, 'unknown'), [])
   assert.deepEqual(searchToolMetadata(tools, ''), [])
+  const related = [{ name: 'browser', description: 'Open an isolated page with controlled navigation and many supported operations.', inputSchema: {} }, { name: 'browser_bridge', description: 'Browser browser browser', inputSchema: {} }]
+  assert.equal(searchToolMetadata(related, 'browser', 1)[0].name, 'browser', 'an exact tool name must not lose to a shorter or repeated-word description')
+  assert.equal(searchToolMetadata(related, ' BROWSER ', 1)[0].name, 'browser')
+})
+
+test('background MCP refresh preserves the host resource and prompt catalog tools', async () => {
+  const { registry, config } = fixtureRegistry(2)
+  await registry.initialize({ config })
+  const resource = await registry.get('mcp_resource'), prompt = await registry.get('mcp_prompt')
+  registry.refreshMcpTools(); registry.refreshMcpTools()
+  assert.equal(await registry.get('mcp_resource'), resource)
+  assert.equal(await registry.get('mcp_prompt'), prompt)
+  assert.equal((await registry.list({ config })).filter(tool => ['mcp_resource', 'mcp_prompt'].includes(tool.name)).length, 2)
 })
 
 test('builtin detailed instructions are available on demand without invoking the tool', async () => {
@@ -82,7 +95,7 @@ test('canonical edit accepts line ranges and atomic batches without bypassing re
   const { registry, config } = fixtureRegistry(0); await registry.initialize({ config, cwd: root })
   const edit = await registry.get('edit'), read = await registry.get('read')
   const range = { path: 'a.txt', start_line: 2, end_line: 2, content: 'changed' }
-  assert.doesNotThrow(() => validateToolArguments(edit, range))
+  await assert.doesNotReject(validateToolArguments(edit, range))
   assert.equal((await edit.execute(range, { cwd: root })).metadata.blocked, true)
   await read.execute({ path: 'a.txt' }, { cwd: root })
   await edit.execute(range, { cwd: root })
@@ -90,5 +103,5 @@ test('canonical edit accepts line ranges and atomic batches without bypassing re
   const batch = { changes: [{ path: 'a.txt', before: 'changed', after: 'final' }] }
   await edit.execute(batch, { cwd: root })
   assert.match(await readFile(path.join(root, 'a.txt'), 'utf8'), /final/)
-  assert.throws(() => validateToolArguments(edit, { ...range, changes: [] }), /Invalid arguments/, 'ambiguous edit forms are rejected')
+  await assert.rejects(validateToolArguments(edit, { ...range, changes: [] }), /Invalid arguments/, 'ambiguous edit forms are rejected')
 })

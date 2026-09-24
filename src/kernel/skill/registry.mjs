@@ -11,6 +11,7 @@ import { loadCustomCommands, applyCommandTemplate } from "../../command/custom-c
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { discoverLocalPluginManifests, pluginComponentDirs } from "../plugin/manifest-loader.mjs"
+import { resolveManagedPluginPath } from '../plugin/integrity.mjs'
 import { userRootDir } from "../../storage/paths.mjs"
 import { discoverCompatSkillRoots } from "../../compat/ecosystem-discovery.mjs"
 import { deprecatedSingletonAlias } from "../core/deprecations.mjs"
@@ -148,27 +149,49 @@ function isCommandAllowed(cmdString, config) {
  * Returns { meta: {}, body: string }
  */
 function parseFrontmatter(raw) {
+  // UTF-8 BOM is common in Windows-authored SKILL.md. It must not turn a
+  // security-bearing frontmatter block into unrestricted ordinary Markdown.
+  raw = raw.replace(/^\uFEFF/, '')
   const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/)
-  if (!match) return { meta: {}, body: raw.trim() }
+  if (!match) return /^---\r?\n/.test(raw) ? { meta: {}, body: '', error: 'frontmatter 缺少结束分隔符，未加载该技能' } : { meta: {}, body: raw.trim() }
   try {
-    return { meta: parseYaml(match[1]) || {}, body: match[2].trim() }
+    const meta = parseYaml(match[1]) || {}
+    if (typeof meta !== 'object' || Array.isArray(meta)) throw new Error('not object')
+    return { meta, body: match[2].trim() }
   } catch {
-    return { meta: {}, body: raw.trim() }
+    return { meta: {}, body: '', error: 'frontmatter YAML 无效，未忽略权限字段继续加载；请修复该技能' }
   }
 }
 
+const SKILL_FIELDS = new Set(['name', 'description', 'disable-model-invocation', 'user-invocable', 'allowed-tools', 'allowedTools', 'tools', 'model', 'context', 'context-fork', 'contextFork', 'when_to_use', 'when-to-use', 'argument_hint', 'argument-hint', 'arguments', 'agent', 'effort', 'shell', 'hooks', 'paths', 'license', 'compatibility', 'metadata'])
+const PARTIAL_SKILL_FIELDS = {
+  agent: '仅记录元数据，暂不自动切换子代理角色',
+  effort: '仅支持模板变量 CLAUDE_EFFORT，不会改变模型推理预算',
+  shell: '暂不支持技能专属 shell，动态命令仍受宿主命令白名单限制',
+  hooks: '暂不执行 Skill 内联 hooks，请使用已受信任的插件 hooks',
+  paths: '仅记录路径元数据，不自动匹配路径，也不授予文件访问权限'
+}
+
 function normalizeSkillMeta(meta = {}, defaults = {}) {
+  const diagnostics = Object.keys(meta).filter(key => !SKILL_FIELDS.has(key)).map(field => ({ kind: 'skill_unsupported_field', field, message: '未知 frontmatter 字段未生效；请勿依赖该字段进行权限控制' }))
+  for (const [field, message] of Object.entries(PARTIAL_SKILL_FIELDS)) if (meta[field] != null) diagnostics.push({ kind: 'skill_unsupported_field', field, message })
+  let invalidReason = null
+  for (const key of ['disable-model-invocation', 'user-invocable', 'context-fork', 'contextFork']) if (meta[key] !== undefined && typeof meta[key] !== 'boolean') invalidReason = `${key} 必须是布尔值，已停止加载以免权限限制被忽略`
+  if (meta.model != null && typeof meta.model !== 'string') invalidReason = 'model 必须是字符串，未加载该技能'
   const contextValue = typeof meta.context === "string" ? meta.context.trim().toLowerCase() : ""
   const explicitContextFork = meta["context-fork"] === true || meta.contextFork === true
   const contextFork = explicitContextFork || contextValue === "fork"
-  const rawModel = typeof meta.model === "string" ? meta.model.trim() : meta.model
+  const rawModel = typeof meta.model === "string" ? meta.model.trim() : null
   const model = rawModel && rawModel.toLowerCase() === "inherit" ? null : rawModel || null
   const rawAllowedTools = meta["allowed-tools"] ?? meta.allowedTools ?? meta.tools
+  if (rawAllowedTools != null && typeof rawAllowedTools !== 'string' && (!Array.isArray(rawAllowedTools) || rawAllowedTools.some(item => typeof item !== 'string'))) invalidReason = 'allowed-tools 必须为工具名字符串或字符串数组，未忽略限制继续加载'
   // Agent Skills uses a space-separated scalar; retain KK Code's array/comma
   // forms without changing parsing of unrelated path metadata.
   const allowedTools = typeof rawAllowedTools === 'string' ? rawAllowedTools.split(/[\s,]+/).filter(Boolean) : toStringArray(rawAllowedTools)
 
   return {
+    frontmatterDiagnostics: diagnostics,
+    invalidReason,
     disableModelInvocation: !!meta["disable-model-invocation"],
     userInvocable: meta["user-invocable"] !== false,
     allowedTools: allowedTools.length ? allowedTools : null,
@@ -213,7 +236,7 @@ async function loadMarkdownSkills(dir, scope, plugin = null, ecosystem = "kkcode
       const raw = await readFile(filePath, "utf8")
       const trimmed = raw.trim()
       if (!trimmed) continue
-      const { meta, body } = parseFrontmatter(trimmed)
+      const { meta, body, error } = parseFrontmatter(trimmed)
       const normalized = normalizeSkillMeta(meta, {
         skillDir: path.dirname(filePath),
         source: filePath,
@@ -231,7 +254,8 @@ async function loadMarkdownSkills(dir, scope, plugin = null, ecosystem = "kkcode
         auxFiles: {},
         canonicalName: meta.name || path.basename(name, ".md"),
         aliases: [],
-        ...normalized
+        ...normalized,
+        invalidReason: error || normalized.invalidReason
       })
     } catch {
       // skip invalid markdown skill files
@@ -394,7 +418,7 @@ async function loadSkillDirs(dir, scope, plugin = null, ecosystem = "kkcode") {
   if (await exists(rootSkillPath)) {
     try {
       const raw = await readFile(rootSkillPath, "utf8")
-      const { meta, body } = parseFrontmatter(raw)
+      const { meta, body, error } = parseFrontmatter(raw)
       const auxFiles = await loadAuxFiles(dir)
       const normalized = normalizeSkillMeta(meta, {
         skillDir: dir,
@@ -414,7 +438,8 @@ async function loadSkillDirs(dir, scope, plugin = null, ecosystem = "kkcode") {
         auxFiles,
         canonicalName: plugin ? `${plugin.name}:${skillName}` : skillName,
         aliases: [],
-        ...normalized
+        ...normalized,
+        invalidReason: error || normalized.invalidReason
       })
     } catch { /* skip broken root skill */ }
   }
@@ -427,7 +452,7 @@ async function loadSkillDirs(dir, scope, plugin = null, ecosystem = "kkcode") {
     if (!(await exists(mdPath))) continue
     try {
       const raw = await readFile(mdPath, "utf8")
-      const { meta, body } = parseFrontmatter(raw)
+      const { meta, body, error } = parseFrontmatter(raw)
       const auxFiles = await loadAuxFiles(skillDir)
       const normalized = normalizeSkillMeta(meta, {
         skillDir,
@@ -447,7 +472,8 @@ async function loadSkillDirs(dir, scope, plugin = null, ecosystem = "kkcode") {
         auxFiles,
         canonicalName: plugin ? `${plugin.name}:${skillName}` : skillName,
         aliases: [],
-        ...normalized
+        ...normalized,
+        invalidReason: error || normalized.invalidReason
       })
     } catch { /* skip broken */ }
   }
@@ -505,6 +531,11 @@ export function createSkillRegistry() {
 
   function addSkill(skill) {
     const canonicalName = skill.plugin ? `${skill.plugin.name}:${skill.name}` : (skill.canonicalName || skill.name)
+    if (skill.invalidReason) {
+      state.diagnostics.push({ kind: 'skill_invalid_frontmatter', name: canonicalName, source: skill.source, message: skill.invalidReason })
+      return
+    }
+    for (const diagnostic of skill.frontmatterDiagnostics || []) state.diagnostics.push({ ...diagnostic, name: canonicalName, source: skill.source })
     const withNames = { ...skill, canonicalName, aliases: [...(skill.aliases || [])] }
     if (Array.isArray(withNames.allowedTools) && withNames.allowedTools.length) {
       // Applied by the turn tool policy, in addition to ordinary permissions.
@@ -613,11 +644,11 @@ export function createSkillRegistry() {
         return true
       })
 
-      const loadPromises = allSkillDirs.flatMap(({ dir, scope, plugin = null, ecosystem = plugin?.sourceEcosystem || "kkcode" }) => [
-        loadMarkdownSkills(dir, scope, plugin, ecosystem),
-        loadMjsSkills(dir, scope, plugin, ecosystem),
-        loadSkillDirs(dir, scope, plugin, ecosystem)
-      ])
+      const loadPromises = allSkillDirs.map(async ({ dir, scope, plugin = null, ecosystem = plugin?.sourceEcosystem || "kkcode" }) => {
+        const mapped = await resolveManagedPluginPath(dir, { verifiedManifestRoot: plugin?.integrity?.verified ? plugin.integrity.loadRoot : null })
+        if (!mapped) return []
+        return (await Promise.all([loadMarkdownSkills(mapped, scope, plugin, ecosystem), loadMjsSkills(mapped, scope, plugin, ecosystem), loadSkillDirs(mapped, scope, plugin, ecosystem)])).flat()
+      })
       const results = await Promise.all(loadPromises)
       for (const skills of results) {
         for (const skill of skills) {

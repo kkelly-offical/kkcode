@@ -2,7 +2,7 @@ import { runtimeCwd } from "../core/runtime-context.mjs"
 import path from "node:path"
 import { access, readFile, writeFile, mkdir } from "node:fs/promises"
 import { runGateCommand, outputSnippet, DEFAULT_GATE_TIMEOUT_MS } from "./gate-command.mjs"
-import { checkSmokeGate } from "./smoke-gate.mjs"
+import { checkSmokeGate, resolveSmokeTarget } from "./smoke-gate.mjs"
 // 既有调用方（goal-verifier 等）沿用从这里 import，不必跟着改
 export { runGateCommand, outputSnippet }
 import { readReviewState, writeReviewState } from "../../review/review-store.mjs"
@@ -18,7 +18,10 @@ import { fsckSessionStore, getSession } from "./store.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { userRootDir } from "../../storage/paths.mjs"
-import { isPassingGateStatus, GATE_NAMES } from "./gate-contract.mjs"
+import { isPassingGateStatus, requireGateEvidence, GATE_NAMES } from "./gate-contract.mjs"
+import { validateAcceptanceManifest } from "./acceptance-manifest.mjs"
+import { requiredGoalGates } from "./goal-model.mjs"
+import { evaluateIndependentReview } from "./independent-review.mjs"
 
 const GATE_PREFS_FILE = path.join(userRootDir(), "gate-preferences.json")
 
@@ -144,18 +147,25 @@ async function fileExists(file) {
 
 async function readPackageScripts(cwd) {
   const pkgPath = path.join(cwd, "package.json")
-  const raw = await readFile(pkgPath, "utf8").catch(() => null)
-  if (!raw) return null
+  let raw
+  try { raw = await readFile(pkgPath, "utf8") } catch (error) {
+    return error.code === "ENOENT"
+      ? { scripts: null }
+      : { error: `package.json could not be read (${error.code || "unknown error"})` }
+  }
   try {
     const parsed = JSON.parse(raw)
-    return parsed?.scripts && typeof parsed.scripts === "object" ? parsed.scripts : {}
+    if (parsed?.scripts != null && (typeof parsed.scripts !== "object" || Array.isArray(parsed.scripts))) {
+      return { error: "package.json scripts is not an object" }
+    }
+    return { scripts: parsed?.scripts || {} }
   } catch {
-    return null
+    return { error: "package.json is invalid JSON" }
   }
 }
 
-function npmInvocation(args) {
-  if (process.platform !== "win32") {
+function npmInvocation(args, portable = false) {
+  if (portable || process.platform !== "win32") {
     return { command: "npm", args, shell: false }
   }
 
@@ -179,19 +189,20 @@ function npmInvocation(args) {
 // 内部沿用旧名，导出名是 runGateCommand
 const runCommand = runGateCommand
 
-async function checkBuildGate({ cwd, config }) {
+async function checkBuildGate({ cwd, config, commandRunner = runCommand, portable = false }) {
   if (!isEnabled(config, "build")) {
     return { enabled: false, status: "disabled", reason: "build gate disabled" }
   }
-  const scripts = await readPackageScripts(cwd)
+  const { scripts, error } = await readPackageScripts(cwd)
+  if (error) return { enabled: true, status: "unknown", reason: error }
   if (!scripts) {
     return { enabled: true, status: "not_applicable", reason: "package.json not found" }
   }
   if (!scripts.build) {
     return { enabled: true, status: "not_applicable", reason: "build script not found" }
   }
-  const result = await runCommand({
-    ...npmInvocation(["run", "build", "--silent"]),
+  const result = await commandRunner({
+    ...npmInvocation(["run", "build", "--silent"], portable),
     cwd
   })
   if (result.ok) {
@@ -205,11 +216,12 @@ async function checkBuildGate({ cwd, config }) {
   }
 }
 
-async function checkTestGate({ cwd, config }) {
+async function checkTestGate({ cwd, config, commandRunner = runCommand, portable = false }) {
   if (!isEnabled(config, "test")) {
     return { enabled: false, status: "disabled", reason: "test gate disabled" }
   }
-  const scripts = await readPackageScripts(cwd)
+  const { scripts, error } = await readPackageScripts(cwd)
+  if (error) return { enabled: true, status: "unknown", reason: error }
   const hasTestDir = await fileExists(path.join(cwd, "test"))
   const hasNodeTestDir = await fileExists(path.join(cwd, "tests"))
 
@@ -219,13 +231,13 @@ async function checkTestGate({ cwd, config }) {
 
   let result
   if (scripts?.test) {
-    result = await runCommand({
-      ...npmInvocation(["run", "test", "--silent"]),
+    result = await commandRunner({
+      ...npmInvocation(["run", "test", "--silent"], portable),
       cwd
     })
   } else if (hasTestDir || hasNodeTestDir) {
-    result = await runCommand({
-      command: process.execPath,
+    result = await commandRunner({
+      command: portable ? "node" : process.execPath,
       args: ["--test"],
       cwd
     })
@@ -292,7 +304,26 @@ export function evaluateStoredBranchReviewGate(report) {
   }
 }
 
-async function checkReviewGate({ cwd, config, sessionId }) {
+/** Resolve command vectors before sealing a strict candidate. No command runs. */
+export async function describeUsabilityGateCommands({ cwd, config, portable = false }) {
+  const { scripts, error } = await readPackageScripts(cwd)
+  if (error) throw new Error(error)
+  const commands = []
+  if (isEnabled(config, "build") && scripts?.build) commands.push({ gate: "build", ...npmInvocation(["run", "build", "--silent"], portable) })
+  if (isEnabled(config, "test")) {
+    if (scripts?.test) commands.push({ gate: "test", ...npmInvocation(["run", "test", "--silent"], portable) })
+    else if (await fileExists(path.join(cwd, "test")) || await fileExists(path.join(cwd, "tests"))) {
+      commands.push({ gate: "test", command: portable ? "node" : process.execPath, args: ["--test"], shell: false })
+    }
+  }
+  if (isEnabled(config, "smoke")) {
+    const target = await resolveSmokeTarget(cwd, config, { portable })
+    if (target) commands.push({ gate: "smoke", command: target.command, args: target.args, shell: target.shell })
+  }
+  return commands
+}
+
+async function checkReviewGate({ cwd, config, sessionId, readOnly = false }) {
   if (!isEnabled(config, "review")) {
     return { enabled: false, status: "disabled", reason: "review gate disabled" }
   }
@@ -320,7 +351,7 @@ async function checkReviewGate({ cwd, config, sessionId }) {
           })
         }
         state.branchReport = markReportStaleness(report, current)
-        await writeReviewState(state, cwd)
+        if (!readOnly) await writeReviewState(state, cwd)
       } catch (error) {
         return {
           enabled: true,
@@ -333,12 +364,12 @@ async function checkReviewGate({ cwd, config, sessionId }) {
     return evaluateStoredBranchReviewGate(state.branchReport)
   }
   if (!state.files.length) {
-    return { enabled: true, status: "not_applicable", reason: "branch review has not been run" }
+    return { enabled: true, status: "unknown", reason: "branch review has not been run" }
   }
   if (state.sessionId && sessionId && state.sessionId !== sessionId) {
     return {
       enabled: true,
-      status: "not_applicable",
+      status: "unknown",
       reason: `review state belongs to other session (${state.sessionId})`
     }
   }
@@ -406,17 +437,49 @@ export async function runUsabilityGates({
   sessionId,
   config,
   cwd = runtimeCwd(),
-  iteration = 0
+  iteration = 0,
+  requiredGates = [],
+  acceptanceManifest = null,
+  goal = null,
+  acceptanceRequired = false,
+  commandRunner = null,
+  reviewReceipt = null
 }) {
+  let acceptance = acceptanceRequired && (!acceptanceManifest?.independentSourceBaseline || !acceptanceManifest?.hostBoundaryId || typeof commandRunner !== "function")
+    ? { ok: false, status: "unknown", manifestId: null, errors: ["required host acceptance manifest is missing"] }
+    : acceptanceManifest ? await validateAcceptanceManifest(acceptanceManifest, { goal, cwd, config }) : null
+  if (acceptance && !acceptance.ok) {
+    const reason = acceptance.errors.join("; ")
+    return {
+      allPass: false,
+      gates: Object.fromEntries(GATE_NAMES.map((name) => [name, { enabled: isEnabled(config, name), status: "unknown", reason }])),
+      failures: [{ gate: "acceptance", status: "unknown", reason, output: "" }], acceptance
+    }
+  }
+  const runner = commandRunner || runCommand
   const [build, test, review, health, budget, smoke] = await Promise.all([
-    checkBuildGate({ cwd, config }),
-    checkTestGate({ cwd, config }),
-    checkReviewGate({ cwd, config, sessionId }),
+    checkBuildGate({ cwd, config, commandRunner: runner, portable: acceptanceRequired }),
+    checkTestGate({ cwd, config, commandRunner: runner, portable: acceptanceRequired }),
+    acceptanceRequired && isEnabled(config, "review")
+      ? evaluateIndependentReview(reviewReceipt, { manifest: acceptanceManifest })
+      : checkReviewGate({ cwd, config, sessionId, readOnly: acceptanceRequired }),
     checkHealthGate({ config }),
     checkBudgetGate({ config, sessionId }),
-    checkSmokeGate({ cwd, config })
+    checkSmokeGate({ cwd, config, commandRunner: runner, portable: acceptanceRequired })
   ])
   const checks = { build, test, review, health, budget, smoke }
+  if (acceptanceManifest) acceptance = await validateAcceptanceManifest(acceptanceManifest, { goal, cwd, config })
+  const required = new Set([...requiredGates, ...requiredGoalGates(goal)])
+  for (const name of GATE_NAMES) {
+    checks[name] = requireGateEvidence(checks[name],
+      required.has(name) || config?.agent?.longagent?.usability_gates?.[name]?.required === true)
+    if (acceptance && !acceptance.ok && checks[name].enabled !== false && checks[name].status === "pass") {
+      checks[name] = {
+        ...checks[name], status: "unknown", executionStatus: "pass",
+        reason: `candidate changed during acceptance: ${acceptance.errors.join("; ")}`
+      }
+    }
+  }
 
   for (const [gate, result] of Object.entries(checks)) {
     await EventBus.emit({
@@ -432,17 +495,23 @@ export async function runUsabilityGates({
   }
 
   const failures = Object.entries(checks)
-    .filter(([, result]) => result.enabled !== false && !isPassingStatus(result.status))
+    .filter(([, result]) => result.enabled !== false && !isPassingStatus(result.status, {
+      required: "required" in result && result.required === true
+    }))
     .map(([gate, result]) => ({
       gate,
       status: result.status,
       reason: result.reason,
       output: result.output || ""
     }))
+  if (acceptance && !acceptance.ok) {
+    failures.push({ gate: "acceptance", status: "unknown", reason: acceptance.errors.join("; "), output: "" })
+  }
 
   return {
     allPass: failures.length === 0,
     gates: checks,
-    failures
+    failures,
+    ...(acceptance ? { acceptance } : {})
   }
 }

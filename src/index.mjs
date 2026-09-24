@@ -29,6 +29,13 @@ import { createProviderCommand } from "./commands/provider.mjs"
 import { createRemoteCommand } from './commands/remote.mjs'
 import { createBrowserCommand } from './commands/browser.mjs'
 import { createAcpCommand } from './commands/acp.mjs'
+import { createRunsCommand } from './commands/runs.mjs'
+import { createArtifactsCommand } from './commands/artifacts.mjs'
+import { createMemoryCommand } from './commands/memory.mjs'
+import { createLspCommand } from './commands/lsp.mjs'
+import { createOfficeCommand } from './commands/office.mjs'
+import { createServicesCommand } from './commands/services.mjs'
+import { createEnvironmentsCommand } from './commands/environments.mjs'
 
 async function main() {
   if (process.argv[2] === 'ssh-host') {
@@ -100,6 +107,13 @@ async function main() {
   program.addCommand(createProviderCommand())
   program.addCommand(createRemoteCommand())
   program.addCommand(createBrowserCommand())
+  program.addCommand(createRunsCommand())
+  program.addCommand(createArtifactsCommand())
+  program.addCommand(createMemoryCommand())
+  program.addCommand(createLspCommand())
+  program.addCommand(createOfficeCommand())
+  program.addCommand(createServicesCommand())
+  program.addCommand(createEnvironmentsCommand())
   await program.parseAsync(process.argv)
 }
 

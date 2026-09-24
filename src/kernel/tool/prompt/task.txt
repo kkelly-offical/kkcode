@@ -1,5 +1,7 @@
 Launch a subagent to handle complex, multi-step tasks autonomously.
 
+In a strict host-owned task, this tool uses a persisted task graph, not the legacy delegate described below. Default scope is read-only; explicit writes require a parent-authorized isolated workspace. Provide a finite `brief.budget_usd` (zero authorizes no paid call) and optionally a persisted `brief.deadline_at`. The host returns a graph/child receipt. `needs_review` requires host review of the exact candidate and evidence; child prose cannot mark it complete. Arbitrary session continuation, mode/Yolo overrides, recursive delegation, automatic patch application and blind retry of unknown children are not supported in this strict path.
+
 Each task spawns a delegated LLM session that makes its own tool calls and returns a single result message when done.
 
 # Delegation Decision Rules

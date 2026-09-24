@@ -3,6 +3,8 @@ export interface KernelEvent { type: string; sessionId?: string; turnId?: string
 export interface KernelOptions {
   cwd?: string; config?: Record<string, unknown>; configState?: Record<string, unknown>;
   trust?: boolean; trustState?: { trusted?: boolean }; boot?: boolean;
+  services?: { lsp?: import('./lsp.mjs').LanguageService; office?: import('./office.mjs').OfficeService };
+  dependencyEnvironment?: import('./environments.mjs').NpmEnvironment | null;
   handlers?: {
     onEvent?: (event: KernelEvent) => void | Promise<void>;
     onOutput?: (event: unknown) => void;
@@ -37,7 +39,7 @@ export interface Kernel {
   events: { subscribe(listener: (event: KernelEvent) => void | Promise<void>): () => void; emit(event: KernelEvent): Promise<void>; listenerCount(): number; EVENT_TYPES: Readonly<Record<string, string>>; registerSink(listener: (event: KernelEvent) => void | Promise<void>): () => void };
   tools: { list(options?: Record<string, unknown>): Promise<import('./client.mjs').ToolDefinition[]>; get(name: string): Promise<unknown>; [key: string]: unknown };
   extensions: Record<string, unknown>; permissions: Record<string, unknown>; providers: Record<string, unknown>; background: Record<string, unknown>;
-  diagnostics: { inspectPrompt(sessionId: string): Promise<Record<string, unknown>> };
+  diagnostics: { inspectPrompt(sessionId: string): Promise<Record<string, unknown>>; services(): Record<string, unknown>[] };
   bootExtensions(): Promise<unknown>;
   applyTrustState(state: { trusted?: boolean }): Promise<unknown>;
   run<T>(operation: () => T): T;

@@ -33,6 +33,15 @@
     "types": ["node"]
   },
   "include": [
+    // Workers are launched by paths, not static imports; keep them in the gate explicitly.
+    "src/storage/run-store-worker.mjs",
+    "src/storage/run-store-backup.mjs",
+    "src/validation/schema-worker.mjs",
+    "src/isolation/file-bridge.mjs",
+    "src/lsp/worker.mjs",
+    "src/commands/run-maintenance.mjs",
+    "src/commands/services.mjs",
+    "src/commands/environments.mjs",
     "src/kernel/agent/agent.mjs",
     "src/kernel/agent/custom-agent-loader.mjs",
     "src/cli/output-format.mjs",

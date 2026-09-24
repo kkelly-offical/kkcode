@@ -6,12 +6,18 @@ import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { requestProviderStream, countTokensProvider } from "../provider/router.mjs"
 import { attachResponsesState } from '../provider/responses-state.mjs'
+import { attachAnthropicState } from '../provider/anthropic-state.mjs'
 import { ToolRegistry } from "../tool/registry.mjs"
 import { executeTool } from "../tool/executor.mjs"
+import { markToolProgramCall } from '../tool/program.mjs'
+import { currentDurableRun } from '../orchestration/run-runtime.mjs'
+import { archiveToolText, artifactArchiveAttempted, createConversationArtifactAccess, trustedArtifactRef, trustedArtifactRefs } from '../tool/artifacts.mjs'
+import { markBrowserRecipeCall } from '../tool/browser-recipe.mjs'
+import { effectiveDataPolicy, intersectDataPolicies } from '../permission/data-policy.mjs'
 import { isToolSuccess } from "../core/types.mjs"
 import { PermissionEngine } from "../permission/engine.mjs"
 import { normalizePermissionLevel, toolCapability } from "../permission/rules.mjs"
-import { loadPricing, calculateCost } from "../../usage/pricing.mjs"
+import { addModelUsage, priceModelUsage } from '../../usage/model-ledger.mjs'
 import { APPROVAL_LEVELS, approvalFromAgentPermission } from "../core/modes.mjs"
 import { createTaskDelegate } from "../orchestration/task-scheduler.mjs"
 import { loadInstructions } from "./instruction-loader.mjs"
@@ -52,6 +58,8 @@ import { resolveModelCapabilities } from '../provider/model-catalog.mjs'
 // 现在按当前模型的上下文动态推算，见 tool/output-budget.mjs。
 // 保留常量名作为兜底（拿不到模型信息时用）。
 const TOOL_RESULT_FALLBACK_LIMIT = 16000
+const attachProviderState = (content, state) => state?.protocol === 'anthropic'
+  ? attachAnthropicState(content, state) : attachResponsesState(content, state)
 
 /**
  * plan 档下允许执行的工具。
@@ -65,7 +73,10 @@ const PLAN_ALLOWED_CAPABILITIES = new Set(["read", "search", "network", "safe-sh
 
 export function planModeAllows(toolName, args = {}) {
   if (toolName === "enter_plan" || toolName === "exit_plan") return true
-  if (toolName === 'browser') return ['status', 'snapshot', 'screenshot', 'diagnostics', 'close'].includes(args.action)
+  if (toolName === 'browser') return ['status', 'snapshot', 'screenshot', 'diagnostics', 'close', 'tabs', 'frames', 'dialogs'].includes(args.action)
+  if (toolName === 'browser_bridge') return ['status', 'snapshot', 'screenshot', 'disconnect', 'tabs'].includes(args.action)
+  if (toolName === 'browser_recipe') return args.action === 'list'
+  if (['office_capabilities', 'office_inspect'].includes(toolName)) return true
   const cap = toolCapability(toolName, String(args?.command || ""))
   return PLAN_ALLOWED_CAPABILITIES.has(cap)
 }
@@ -78,10 +89,10 @@ export function planModeAllows(toolName, args = {}) {
  * bash 不在表里，它单独按命令判定（见 canMutateWorkspace）。
  */
 const NON_MUTATING_TOOLS = new Set([
-  "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch", "tool_search", "tool_batch",
+  "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch", "tool_search", "tool_batch", "tool_program",
   "background_output", "todowrite", "enter_plan", "exit_plan",
   "sysinfo", "question", "task_list", "task_get", "task_output", "task_parallel",
-  "git_status", "git_info", "git_list_snapshots"
+  "git_status", "git_info", "git_list_snapshots", "artifact_read", "artifact_search", "lsp", "mcp_resource", "mcp_prompt", "office_capabilities", "office_inspect"
 ])
 
 /**
@@ -93,7 +104,7 @@ const NON_MUTATING_TOOLS = new Set([
 const PARALLELIZABLE_TOOLS = new Set([
   "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch",
   "background_output", "sysinfo", "task_list", "task_get", "task_output",
-  "git_status", "git_info", "git_list_snapshots"
+  "git_status", "git_info", "git_list_snapshots", "artifact_read", "artifact_search"
 ])
 
 /**
@@ -105,7 +116,9 @@ const PARALLELIZABLE_TOOLS = new Set([
  */
 function canMutateWorkspace(toolName, args = {}) {
   const name = String(toolName || "")
-  if (name === 'browser') return !['status', 'snapshot', 'screenshot', 'diagnostics', 'close'].includes(args.action)
+  if (name === 'browser') return !['status', 'snapshot', 'screenshot', 'diagnostics', 'close', 'tabs', 'frames', 'dialogs'].includes(args.action)
+  if (name === 'browser_bridge') return !['status', 'snapshot', 'screenshot', 'disconnect', 'tabs'].includes(args.action)
+  if (name === 'browser_recipe') return args.action !== 'list'
   if (name === "bash") {
     return toolCapability("bash", String(args?.command || "")) !== "safe-shell"
   }
@@ -322,6 +335,7 @@ async function processTurnLoopInRuntime({
   }
 
   const turnId = newId("turn")
+  const artifactAccess = currentDurableRun()?.artifactAccess || createConversationArtifactAccess({ sessionId, cwd, turnId })
   const skillToolPolicy = createSkillToolPolicy(toolContext.skillAllowedTools, toolContext.skillToolGroups)
   const activatedTools = new Set()
   const toolCallingAvailable = (await resolveModelCapabilities(configState, providerType, model)).capabilities.tools !== false
@@ -349,6 +363,7 @@ async function processTurnLoopInRuntime({
   const verifyCompletion = configState.config.agent?.verify_completion !== false
   const recoveryEnabled = isRecoveryEnabled(configState.config)
   const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  const modelUsage = new Map()
   const toolEvents = []
   const progressGuard = createProgressGuard()
   let emittedAnyText = false
@@ -359,16 +374,18 @@ async function processTurnLoopInRuntime({
   const thresholdRatio = Number(configState.config.session?.compaction_threshold_ratio ?? 0.85)
   const thresholdMessages = Number(configState.config.session?.compaction_threshold_messages ?? 200)
   const cachePointsEnabled = configState.config.session?.context_cache_points !== false
-  const useNativeCompaction = supportsNativeCompaction(providerType, model)
-  const nativeCompactionTrigger = useNativeCompaction ? Math.floor(modelContextLimit(model, configState, providerType) * thresholdRatio) : 0
+  const useNativeCompaction = supportsNativeCompaction(providerType, model, configState)
+  const nativeCompactionTrigger = useNativeCompaction ? Number(configState.config.provider?.[providerType]?.compaction_trigger
+    ?? Math.max(50000, Math.floor(modelContextLimit(model, configState, providerType) * Math.min(thresholdRatio, 0.75)))) : 0
   const effectiveAgent = runSpecRole(runSpec) || subagent || agent
   const permissionConfig = tightenPermissionConfig(configState.config, effectiveAgent?.permission)
+  const selection = currentRuntime()?.sessionSelection?.sessionId === sessionId ? currentRuntime().sessionSelection : null
 
   await touchSession({
     sessionId,
-    mode,
-    model,
-    providerType,
+    mode: selection?.mode || mode,
+    model: selection?.model || model,
+    providerType: selection?.providerType || providerType,
     cwd,
     parentSessionId: runSpec?.parentSessionId || null,
     status: "active",
@@ -438,7 +455,7 @@ async function processTurnLoopInRuntime({
   // systemPrompt = { text, blocks } — providers use blocks for cache optimization
   const delegateTask = createTaskDelegate({
     getSkillToolGroups: () => skillToolPolicy.snapshot(),
-    config: configState.config,
+    config: { ...configState.config, data_policy: effectiveDataPolicy(configState) },
     parentSessionId: sessionId,
     model,
     providerType,
@@ -575,7 +592,7 @@ async function processTurnLoopInRuntime({
         })
       }
 
-      if (!useNativeCompaction && shouldCompact({
+      if ((!useNativeCompaction || lastContextMeter.requiredTokens > lastContextMeter.limit) && shouldCompact({
         messages: normalizedHistory,
         model,
         thresholdMessages,
@@ -588,8 +605,13 @@ async function processTurnLoopInRuntime({
           const compactResult = await compactSession({
             sessionId, model, providerType, configState, baseUrl, apiKeyEnv,
             traceId: turnTraceContext.traceId,
-            turnId
+            turnId,
+            onUsage: entry => addModelUsage(modelUsage, entry.provider, entry.model, entry.usage)
           })
+          if (compactResult.reasonCode === 'history_changed') {
+            contextCachePoint = null
+            throw new Error('压缩期间对话或模型已被修改；旧摘要未保存，当前回合已停止。请在最新会话状态下重试。')
+          }
           if (compactResult.compacted) {
             const beforeTokens = Number(lastContextMeter?.tokens) || 0
             history = await getConversationHistory(sessionId, 9999)
@@ -613,7 +635,7 @@ async function processTurnLoopInRuntime({
       // 写进 runSpec 后全仓无读取点 —— 立了规矩没人执行。
       await updateSession(sessionId, { context: lastContextMeter, promptReport: promptReport(systemPrompt, tools, lastContextMeter, { turnId, step }) })
       await EventBus.emit({ type: 'session.context.updated', sessionId, turnId, payload: { context: lastContextMeter } })
-      if (!useNativeCompaction && lastContextMeter.requiredTokens > lastContextMeter.limit) {
+      if (lastContextMeter.requiredTokens > lastContextMeter.limit) {
         throw new Error(`Context budget exceeded after compaction: ${lastContextMeter.tokens} input + ${lastContextMeter.outputReserved} reserved output > ${lastContextMeter.limit}. Reduce injected instructions/tools, lower max_tokens, or choose a larger-context model.`)
       }
       const limits = runSpec?.limits || null
@@ -623,8 +645,7 @@ async function processTurnLoopInRuntime({
       }
       if (limits?.budgetUsd > 0 && usage.input + usage.output > 0) {
         try {
-          const { pricing } = await loadPricing(configState, { providerName: providerType, model })
-          const { amount } = calculateCost(pricing, model, usage)
+          const { amount } = await priceModelUsage(configState, [...modelUsage.values()])
           if (amount >= limits.budgetUsd) {
             finalReply = `${finalReply}\n[budget ${limits.budgetUsd} USD exhausted — stopping]`.trim()
             break
@@ -660,6 +681,7 @@ async function processTurnLoopInRuntime({
         const streamToolCalls = []
         let streamProviderState = null
         let streamUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+        let streamContextUsage = null
         let streamStopReason = "end_turn"
         ;(/** @type {(step: number) => void} */ (render.beginStep))(step)
 
@@ -683,6 +705,7 @@ async function processTurnLoopInRuntime({
             streamToolCalls.push(chunk.call)
           } else if (chunk.type === "usage") {
             streamUsage = chunk.usage
+            streamContextUsage = chunk.contextUsage || null
           } else if (chunk.type === "compaction") {
             await render.providerCompaction(step)
           } else if (chunk.type === "stop") {
@@ -707,6 +730,7 @@ async function processTurnLoopInRuntime({
           reasoning: thinkingParts.join(""),
           toolCalls: streamToolCalls,
           usage: streamUsage,
+          contextUsage: streamContextUsage,
           stopReason: streamStopReason,
           providerState: streamProviderState
         }
@@ -716,7 +740,8 @@ async function processTurnLoopInRuntime({
           const compactResult = await compactSession({
             sessionId, model, providerType, configState, baseUrl, apiKeyEnv,
             traceId: turnTraceContext.traceId,
-            turnId
+            turnId,
+            onUsage: entry => addModelUsage(modelUsage, entry.provider, entry.model, entry.usage)
           })
           if (compactResult.compacted) {
             await EventBus.emit({ type: EVENT_TYPES.SESSION_COMPACTED, sessionId, turnId, payload: compactResult })
@@ -736,11 +761,12 @@ async function processTurnLoopInRuntime({
       }
 
       addUsage(usage, response.usage || {})
+      addModelUsage(modelUsage, providerType, model, response.usage || {})
 
       // Update context meter with real API total input tokens
       // Anthropic: input_tokens is only non-cached portion; total = input + cacheRead + cacheWrite
       // OpenAI: prompt_tokens is already the total
-      const u = response.usage || {}
+      const u = response.contextUsage || response.usage || {}
       const totalInput = (u.input || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0)
       if (totalInput > 0) {
         lastContextMeter = {
@@ -784,7 +810,7 @@ async function processTurnLoopInRuntime({
       const requestedOutputBudget = lastContextMeter.outputReserved
       const knownOutputCap = Number(configState.config.provider?.[providerType]?.max_output_tokens) || 0
       const effectiveOutputBudget = knownOutputCap > 0 ? Math.min(requestedOutputBudget, knownOutputCap) : 0
-      const reportedOutput = Number(response.usage?.output) || 0
+      const reportedOutput = Number((response.contextUsage || response.usage)?.output) || 0
       const truncationCredible = hasPartialContent && (
         effectiveOutputBudget > 0 && reportedOutput > 0
           ? reportedOutput >= effectiveOutputBudget * 0.9
@@ -808,7 +834,7 @@ async function processTurnLoopInRuntime({
           partialContent.push({ type: "tool_use", id: call.id, name: call.name, input: call.args || {} })
         }
         if (partialContent.length || response.providerState?.items?.length) {
-          await appendMessage(sessionId, "assistant", attachResponsesState(partialContent.length === 1 && partialContent[0].type === "text"
+          await appendMessage(sessionId, "assistant", attachProviderState(partialContent.length === 1 && partialContent[0].type === "text"
             ? partialContent[0].text
             : partialContent, response.providerState), {
             mode, model, providerType, step, turnId, truncated: true
@@ -890,7 +916,7 @@ async function processTurnLoopInRuntime({
         }
         
         finalReply = (response.text || "").trim() || "No content returned from provider."
-        const finalContent = attachResponsesState(response.reasoning
+        const finalContent = attachProviderState(response.reasoning
           ? [
               { type: "reasoning", text: response.reasoning },
               { type: "text", text: finalReply }
@@ -940,7 +966,10 @@ async function processTurnLoopInRuntime({
       }
 
       // --- Execute tool calls (read-only in parallel, write tools serially) ---
-      async function executeOneCall(call) {
+      async function executeOneCall(call, childSignal = null, browserRecipeGuard = null) {
+        const callSignal = childSignal instanceof AbortSignal ? (signal ? AbortSignal.any([signal, childSignal]) : childSignal) : signal
+        let programSequence = 0
+        let recipeSequence = 0
         const runningPart = await appendPart(sessionId, {
           type: "tool-call",
           messageId: userMessage.id,
@@ -1003,11 +1032,12 @@ async function processTurnLoopInRuntime({
               risk,
               workspace: cwd,
               reason: `tool call from model at step ${step}`,
-              signal,
+              signal: callSignal,
               reviewSensitive: async action => {
-                const verdict = await reviewSensitiveAction({ configState, providerType, model, baseUrl, apiKeyEnv, sessionId, turnId, prompt: effectivePrompt, action, signal })
+                const verdict = await reviewSensitiveAction({ configState, providerType, model, baseUrl, apiKeyEnv, sessionId, turnId, prompt: effectivePrompt, action, signal: callSignal })
                 addUsage(usage, verdict.usage || {})
-                await appendPart(sessionId, { id: `auto-${runningPart.id}`, type: 'permission-review', messageId: userMessage.id, step, turnId, tool: call.name, decision: verdict.decision, reason: verdict.reason, model, provider: providerType, usage: verdict.usage || {} })
+                addModelUsage(modelUsage, verdict.provider || providerType, verdict.model || model, verdict.usage || {})
+                await appendPart(sessionId, { id: `auto-${runningPart.id}`, type: 'permission-review', messageId: userMessage.id, step, turnId, tool: call.name, decision: verdict.decision, reason: verdict.reason, model: verdict.model || model, provider: verdict.provider || providerType, usage: verdict.usage || {} })
                 return verdict
               }
             })
@@ -1063,10 +1093,8 @@ async function processTurnLoopInRuntime({
                     traceId: stepRequestContext.traceId,
                     requestId: stepRequestContext.requestId,
                     delegateTask,
-                    signal,
                     sessionId,
                     turnId,
-                    config: configState.config,
                     // 工具需要知道当前模型与渠道才能算输出预算（动态上限）。
                     // 0.6.3 之前 ctx 只有 config，于是任何按模型能力调整的
                     // 工具行为都无从下手。
@@ -1077,6 +1105,18 @@ async function processTurnLoopInRuntime({
                     // 管到 loop 这一层，工具那一层照旧按固定数字砍。
                     toolResultLimit,
                     ...toolContext,
+                    // Preserve trusted config provenance; model/per-turn JSON
+                    // cannot grant a project permission to choose a binary.
+                    configState,
+                    // Never accept service capabilities from per-turn JSON.
+                    lspService: currentRuntime()?.services?.lsp,
+                    officeService: currentRuntime()?.services?.office,
+                    recipeGuard: browserRecipeGuard,
+                    signal: callSignal,
+                    config: { ...configState.config, ...(toolContext.config || {}),
+                      data_policy: intersectDataPolicies(effectiveDataPolicy(configState), toolContext.config?.data_policy) },
+                    artifactAccess,
+                    toolCallId: call.id,
                     runToolBatch: call.name === 'tool_batch' ? async calls => {
                       const results = [], content = []
                       for (let index = 0; index < calls.length; index++) {
@@ -1089,12 +1129,35 @@ async function processTurnLoopInRuntime({
                       }
                       return { output: JSON.stringify({ completed: results.length, requested: calls.length, results, atomic: false }), content, status: results.every(item => item.status === 'completed') ? 'completed' : 'error' }
                     } : null,
+                    runToolProgramCall: call.name === 'tool_program' ? markToolProgramCall(async child => {
+                      if (!Number.isSafeInteger(child.index) || child.index !== programSequence || programSequence >= 16) throw new Error('Invalid governed program call sequence')
+                      programSequence++
+                      callSignal?.throwIfAborted()
+                      child.signal?.throwIfAborted()
+                      const prefix = createHash('sha256').update(String(call.id)).digest('hex').slice(0, 32)
+                      const outcome = await executeOneCall({ id: `${prefix}-program-${child.index}`, name: child.name, args: child.args }, child.signal)
+                      const unknown = outcome.result.metadata?.outcomeUnknown === true || outcome.result.code === 'tool_outcome_unknown'
+                      const output = typeof outcome.result.output === 'string' ? outcome.result.output : ''
+                      if (Buffer.byteLength(output) > 512 * 1024) return { status: 'error', output: 'Leaf output exceeds program byte budget; inspect its archived artifact separately.', outcomeUnknown: unknown }
+                      return { status: unknown ? 'unknown' : outcome.result.status, output, outcomeUnknown: unknown }
+                    }) : null,
+                    runBrowserRecipeCall: call.name === 'browser_recipe' ? markBrowserRecipeCall(async child => {
+                      if (!Number.isSafeInteger(child.index) || child.index !== recipeSequence || recipeSequence >= 64 || !['open', 'snapshot', 'click', 'fill', 'press'].includes(child.args?.action) || typeof child.guard?.authorize !== 'function') throw new Error('Invalid governed Browser recipe call')
+                      recipeSequence++
+                      callSignal?.throwIfAborted(); child.signal?.throwIfAborted()
+                      if (await child.guard.authorize() !== true) throw new Error('Browser recipe authorization is no longer active')
+                      const prefix = createHash('sha256').update(String(call.id)).digest('hex').slice(0, 32)
+                      const outcome = await executeOneCall({ id: `${prefix}-recipe-${child.index}`, name: 'browser', args: child.args }, child.signal, child.guard)
+                      return { status: outcome.result.status, output: String(outcome.result.output || ''),
+                        outcomeUnknown: outcome.result.metadata?.outcomeUnknown === true || outcome.result.code === 'tool_outcome_unknown',
+                        operationNotStarted: ['denied', 'permission_denied', 'tool_not_allowed', 'tool_not_found'].includes(outcome.result.status) || ['permission_denied', 'tool_not_allowed', 'tool_not_found'].includes(outcome.result.code) }
+                    }) : null,
                     autoReviewed: permission.autoReviewed === true,
                     activateTools,
                     allowedToolNames: skillToolPolicy.names(await ToolRegistry.list({ mode, config: configState.config, cwd })).filter(name => !effectiveAgent?.tools || effectiveAgent.tools.includes(name)),
                     restrictSkillTools: rules => skillToolPolicy.add(rules)
                   },
-                  signal
+                  signal: callSignal
                 })
           }
         } catch (error) {
@@ -1157,6 +1220,26 @@ async function processTurnLoopInRuntime({
             metadata: { ...result.metadata, planApprovalResult: approval }
           }
         }
+
+        // Only host-produced references survive as trusted receipt metadata.
+        // A plugin or a model cannot turn arbitrary text into proof of archival.
+        let archivedRef = trustedArtifactRef(result)
+        if (!archivedRef && !artifactArchiveAttempted(result) && String(result.output || '').length > toolResultLimit) {
+          const archived = await archiveToolText({ output: result.output, access: artifactAccess,
+            callId: call.id, limit: toolResultLimit, signal })
+          result = { ...result, output: archived.output, metadata: { ...result.metadata, ...archived.metadata } }
+          archivedRef = trustedArtifactRef(result)
+        }
+        if (result.metadata?.artifactRef && !archivedRef) {
+          const { artifactRef: _untrusted, ...metadata } = result.metadata
+          result = { ...result, metadata }
+        }
+        const archivedRefs = trustedArtifactRefs(result)
+        if (result.metadata?.artifactRefs) {
+          const { artifactRefs: _untrustedRefs, ...metadata } = result.metadata
+          result = { ...result, metadata: { ...metadata, ...(archivedRefs.length ? { artifactRefs: archivedRefs } : {}) } }
+        }
+        if (archivedRefs.length) activateTools(['artifact_read', 'artifact_search'])
 
         await appendPart(sessionId, {
           type: "tool-call",
@@ -1245,7 +1328,7 @@ async function processTurnLoopInRuntime({
           input: call.args || {}
         })
       }
-      await appendMessage(sessionId, "assistant", attachResponsesState(assistantContent, response.providerState), {
+      await appendMessage(sessionId, "assistant", attachProviderState(assistantContent, response.providerState), {
         mode,
         model,
         providerType,
@@ -1288,10 +1371,20 @@ async function processTurnLoopInRuntime({
         providerType,
         step,
         turnId,
-        synthetic: true
+        synthetic: true,
+        artifactRefs: [...callResults.values()].flatMap(entry => trustedArtifactRefs(entry.result))
       })
 
-      const progress = progressGuard.observe(response.toolCalls.map(call => callResults.get(call.id)).filter(Boolean))
+      const progress = progressGuard.observe(response.toolCalls.map(call => callResults.get(call.id)).filter(Boolean).map(entry => {
+        const refs = trustedArtifactRefs(entry.result)
+        if (!refs.length) return entry
+        // Archive IDs are fresh receipts, not evidence of new work. Compare
+        // verified captured bytes so repeated large output keeps the same
+        // warn/stop behavior as small output. Never trust model-supplied hashes.
+        return { ...entry, result: { ...entry.result, output: JSON.stringify({ artifacts: refs.map(ref => ({ sha256: ref.sha256, size: ref.size })).sort((a, b) => a.sha256.localeCompare(b.sha256) || a.size - b.size),
+          complete: entry.result.metadata.artifactComplete !== false, exitCode: entry.result.metadata.exitCode ?? null,
+          outcomeUnknown: entry.result.metadata.outcomeUnknown === true }) } }
+      }))
       if (progress.state === 'warn') {
         await appendMessage(sessionId, 'user', '[NO PROGRESS] The same tool sequence produced identical results three times. Inspect the evidence and change strategy. Do not repeat side effects or claim completion; ask for missing information if needed.', { mode, model, providerType, step, turnId, synthetic: true })
       } else if (progress.state === 'stop') {

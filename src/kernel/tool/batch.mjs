@@ -10,7 +10,7 @@ export function createToolBatch() {
     async execute(args, ctx) {
       if (typeof ctx.runToolBatch !== 'function') throw new Error('Tool composition requires a governed turn runtime')
       if (!Array.isArray(args.calls) || !args.calls.length || args.calls.length > 8) throw new Error('Use 1–8 explicit operations')
-      if (args.calls.some(call => ['tool_batch', 'task', 'task_group', 'task_parallel', 'enter_plan', 'exit_plan', 'skill'].includes(call.name))) throw new Error('Nested composition, mode changes, skill activation and delegation must be separate calls')
+      if (args.calls.some(call => ['tool_batch', 'tool_program', 'task', 'task_group', 'task_parallel', 'enter_plan', 'exit_plan', 'skill'].includes(call.name))) throw new Error('Nested composition, mode changes, skill activation and delegation must be separate calls')
       return ctx.runToolBatch(args.calls)
     }
   }

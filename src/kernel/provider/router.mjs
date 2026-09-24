@@ -22,6 +22,10 @@ import { trimTrailingSlashes } from "./url-path.mjs"
 import { prepareImageMessages } from '../media/images.mjs'
 import { requestResponses, requestResponsesStream, countTokensResponses, responsesEndpoint } from './responses.mjs'
 import { stripProviderState } from './responses-state.mjs'
+import { assertProviderDataPolicy } from '../permission/data-policy.mjs'
+import { recordModelUsage } from '../../usage/model-ledger.mjs'
+import { reserveRequestBudget, hasRequestBudget, assertRequestBudgetActive } from '../../usage/request-budget.mjs'
+import { strictInputTokenBound, needsTrustedInputCount, snapshotStrictInput } from '../../usage/input-token-bound.mjs'
 
 function classifyProviderFailure(error) {
   const cls = String(error?.errorClass || "").toLowerCase()
@@ -74,12 +78,20 @@ function normalizeProviderError(error, providerType, model) {
   wrapped.errorClass = error?.errorClass || reason
   wrapped.httpStatus = Number(error?.httpStatus || error?.status || 0) || null
   if (error?.needsCompaction) wrapped.needsCompaction = true
+  if (/^(?:TASK_(?:BUDGET|DEADLINE)|BUDGET_)/.test(error?.code || '')) {
+    wrapped.code = error.code
+    wrapped.operationNotStarted = error.operationNotStarted === true
+  }
   return wrapped
 }
 
+function throwIfProviderAborted(signal) {
+  if (signal?.aborted) throw Object.assign(new Error('provider request cancelled'), { code: 'ABORT_ERR', errorClass: 'aborted' })
+}
+
 function safeProviderEndpoint(baseUrl, providerType, protocol, operation = "inference") {
-  if (protocol === 'responses' && operation === 'inference') {
-    try { const url = new URL(responsesEndpoint(baseUrl)); url.search = ''; return url.href } catch { return '(invalid-base-url)/responses' }
+  if (protocol === 'responses') {
+    try { const url = new URL(responsesEndpoint(baseUrl)); if (operation === 'token_count') url.pathname += '/input_tokens'; url.search = ''; return url.href } catch { return '(invalid-base-url)/responses' }
   }
   const suffix = operation === "token_count"
     ? (protocol === "anthropic" ? "messages/count_tokens" : "token-count")
@@ -218,7 +230,7 @@ export function createProviderRegistry() {
   }
 
   async function guardModelInput(configState, settings, messages, tools, context = {}) {
-    if (settings.protocol !== 'responses') messages = stripProviderState(messages)
+    if (!['responses', 'anthropic'].includes(settings.protocol)) messages = stripProviderState(messages)
     const { capabilities } = await resolveModelCapabilities(configState, settings.configKey, settings.model)
     const guarded = enforceModelInputCapabilities({
       messages,
@@ -322,6 +334,7 @@ export function createProviderRegistry() {
       throw new Error("没有配置任何 provider。运行 kkcode 后输入 /provider add 添加一个（或手动编辑 ~/.kkcode/config.yaml）。")
     }
     const settings = resolveSettings(configState, resolvedProviderType, { model, baseUrl, apiKeyEnv })
+    assertProviderDataPolicy(configState, { providerName: settings.configKey, baseUrl: settings.baseUrl })
     await assertProviderOutboundAllowed(configState, {
       providerName: settings.configKey,
       protocol: settings.protocol,
@@ -342,6 +355,43 @@ export function createProviderRegistry() {
       || configState.config.provider[settings.providerType]
       || {}
     return { settings, apiKey, providerCfg }
+  }
+
+  async function requestInputBound(input, request) {
+    if (!hasRequestBudget()) return 0
+    assertRequestBudgetActive()
+    snapshotStrictInput(input)
+    let trustedCount = null
+    if (input.protocol === 'responses' || input.protocol === 'anthropic' && needsTrustedInputCount(input)) {
+      const count = await countPreparedInput(input, request)
+      // Anthropic documents its count as an estimate; do not label it exact.
+      // A doubled estimate plus framing headroom is an explicit conservative
+      // reserve, while Responses documents exact processed input counting.
+      trustedCount = Number.isSafeInteger(count) && count > 0 ? input.protocol === 'anthropic' ? count * 2 + 4096 : count : null
+    }
+    return strictInputTokenBound(input, { trustedCount }).tokens
+  }
+
+  async function countPreparedInput(input, { configState, providerType, baseUrl, apiKeyEnv, sessionId, turnId }) {
+    const settings = { configKey: input.provider, protocol: input.protocol, baseUrl: input.baseUrl, model: input.model,
+      providerType: resolveSettings(configState, providerType || configState.config.provider.default, { model: input.model, baseUrl, apiKeyEnv }).providerType }
+    const provider = registry.get(settings.providerType)
+    if (!provider?.countTokens) return null
+    assertProviderDataPolicy(configState, { providerName: input.provider, baseUrl: input.baseUrl })
+    await assertProviderOutboundAllowed(configState, { providerName: input.provider, protocol: input.protocol, operation: 'provider token count', baseUrlOverride: baseUrl, apiKeyEnvOverride: apiKeyEnv })
+    assertCredentialTransport({ baseUrl: input.baseUrl, apiKey: input.apiKey, providerName: input.provider, operation: 'provider token count' })
+    const identity = createRequestContext({ traceId: input.traceId, parentEventId: input.parentEventId }), span = await startAuditSpan({ type: 'provider.token_count', ...identity,
+      sessionId, turnId, provider: input.provider, model: input.model, protocol: input.protocol, endpoint: safeProviderEndpoint(input.baseUrl, settings.providerType, input.protocol, 'token_count') }).catch(() => null)
+    let httpStatus = null
+    try {
+      const count = await provider.countTokens({ ...input, ...identity, timeoutMs: Math.min(input.timeoutMs || 10000, 30000),
+        onResponse: response => { httpStatus = response.status } })
+      await span?.finish({ status: Number.isSafeInteger(count) ? 'ok' : 'unavailable', httpStatus, tokenCount: Number.isSafeInteger(count) ? count : null })
+      return count
+    } catch (error) {
+      await span?.fail(new Error('provider token count failed'), { ...auditFailureMetadata(error, input.signal), httpStatus })
+      throw error
+    }
   }
 
   async function requestProvider({
@@ -389,11 +439,12 @@ export function createProviderRegistry() {
       model: settings.model,
       system,
       messages: guarded.messages,
+      ...(settings.protocol === 'anthropic' && providerCfg.native_compaction === true ? { compaction: { trigger: providerCfg.compaction_trigger ?? 150000 } } : {}),
       tools: guarded.tools,
       timeoutMs: Number(providerCfg.timeout_ms || 120000),
       maxTokens: Number(maxTokens || providerCfg.max_tokens || 16384),
       retry: {
-        retries: Number(providerCfg.retry_attempts ?? 5),
+        retries: hasRequestBudget() ? 0 : Number(providerCfg.retry_attempts ?? 5),
         baseDelayMs: Number(providerCfg.retry_base_delay_ms || 800),
         onRetry: retryTelemetry.onRetry
       },
@@ -428,6 +479,7 @@ export function createProviderRegistry() {
     if (!provider) {
       throw new Error(`unknown provider: ${settings.providerType}. registered: ${listProviders().join(", ")}`)
     }
+    let budget = null
     const auditSpan = audit
       ? await startAuditSpan({
           type: "provider.request",
@@ -444,7 +496,14 @@ export function createProviderRegistry() {
         }).catch(() => null)
       : null
     try {
+      throwIfProviderAborted(input.signal)
+      const inputTokenBound = await requestInputBound(input, { configState, providerType, model, baseUrl, apiKeyEnv, sessionId, turnId })
+      budget = await reserveRequestBudget(configState, { provider: settings.configKey, model: settings.model,
+        contextLimit: Number(providerCfg.context_limit), maxTokens: input.maxTokens, inputTokenBound, compaction: Boolean(input.compaction), requestId: requestContext.requestId, baseUrl: settings.baseUrl, credential: apiKey, protocol: settings.protocol })
+      if (input.signal?.aborted) { await budget?.cancelBeforeDispatch(); throwIfProviderAborted(input.signal) }
       const result = await provider.request(input)
+      await budget?.settle(result?.usage, { complete: true })
+      recordModelUsage({ requestId: requestContext.requestId, provider: settings.configKey, model: settings.model, usage: result?.usage })
       await auditSpan?.finish({
         status: "ok",
         httpStatus: responseStatus,
@@ -454,6 +513,7 @@ export function createProviderRegistry() {
       })
       return result
     } catch (error) {
+      await budget?.settle(null)
       const normalized = normalizeProviderError(error, settings.providerType, settings.model)
       await auditSpan?.fail(
         new Error(signal?.aborted ? "provider request cancelled" : "provider request failed"),
@@ -505,7 +565,7 @@ export function createProviderRegistry() {
       if (result.text) yield { type: "text", content: result.text }
       for (const call of result.toolCalls) yield { type: "tool_call", call }
       if (result.providerState) yield { type: 'provider_state', state: result.providerState }
-      yield { type: "usage", usage: result.usage }
+      yield { type: "usage", usage: result.usage, ...(result.contextUsage ? { contextUsage: result.contextUsage } : {}) }
       if (result.stopReason) yield { type: 'stop', reason: result.stopReason }
       return
     }
@@ -534,7 +594,7 @@ export function createProviderRegistry() {
       streamIdleTimeoutMs: Number(providerCfg.stream_idle_timeout_ms || 120000),
       maxTokens: Number(maxTokens || providerCfg.max_tokens || 16384),
       retry: {
-        retries: Number(providerCfg.retry_attempts ?? 5),
+        retries: hasRequestBudget() ? 0 : Number(providerCfg.retry_attempts ?? 5),
         baseDelayMs: Number(providerCfg.retry_base_delay_ms || 800),
         onRetry: retryTelemetry.onRetry
       },
@@ -556,13 +616,15 @@ export function createProviderRegistry() {
         responseRequestId = upstreamRequestId(response)
       },
       signal,
-      compaction
+      compaction: settings.protocol === 'anthropic' && providerCfg.native_compaction === true
+        ? (compaction || { trigger: providerCfg.compaction_trigger ?? 150000 }) : null
     }
 
     const provider = registry.get(settings.providerType)
     if (!provider) {
       throw new Error(`unknown provider: ${settings.providerType}. registered: ${listProviders().join(", ")}`)
     }
+    let budget = null
     const auditSpan = await startAuditSpan({
       type: "provider.request",
       ...requestContext,
@@ -581,6 +643,11 @@ export function createProviderRegistry() {
     let usage = null
     let stopReason = null
     try {
+      throwIfProviderAborted(input.signal)
+      const inputTokenBound = await requestInputBound(input, { configState, providerType, model, baseUrl, apiKeyEnv, sessionId, turnId })
+      budget = await reserveRequestBudget(configState, { provider: settings.configKey, model: settings.model,
+        contextLimit: Number(providerCfg.context_limit), maxTokens: input.maxTokens, inputTokenBound, compaction: Boolean(input.compaction), requestId: requestContext.requestId, baseUrl: settings.baseUrl, credential: apiKey, protocol: settings.protocol })
+      if (input.signal?.aborted) { await budget?.cancelBeforeDispatch(); throwIfProviderAborted(input.signal) }
       for await (const chunk of provider.requestStream(input)) {
         if (signal?.aborted) {
           const error = /** @type {Error & { code?: string, errorClass?: string }} */ (new Error("provider stream cancelled"))
@@ -588,11 +655,15 @@ export function createProviderRegistry() {
           error.errorClass = "aborted"
           throw error
         }
-        if (chunk?.type === "usage") usage = chunk.usage || null
+        if (chunk?.type === "usage") {
+          usage = chunk.usage || null
+          recordModelUsage({ requestId: requestContext.requestId, provider: settings.configKey, model: settings.model, usage })
+        }
         if (chunk?.type === "stop") stopReason = chunk.reason || null
         yield chunk
       }
       streamCompleted = true
+      await budget?.settle(usage, { complete: true })
       if (signal?.aborted) {
         const error = /** @type {Error & { code?: string, errorClass?: string }} */ (new Error("provider stream cancelled"))
         error.code = "ABORT_ERR"
@@ -622,6 +693,7 @@ export function createProviderRegistry() {
       )
       throw normalizeProviderError(error, settings.providerType, settings.model)
     } finally {
+      await budget?.settle(usage, { complete: streamCompleted })
       if (!auditClosed && !streamCompleted) {
         if (stopReason && !signal?.aborted) {
           await auditSpan?.finish({
@@ -652,12 +724,16 @@ export function createProviderRegistry() {
     configState, providerType, model, system, messages, tools,
     baseUrl = null, apiKeyEnv = null,
     traceId = "", requestId = "", parentEventId = "",
-    sessionId = null, turnId = null, reviewId = "", signal = null
+    sessionId = null, turnId = null, reviewId = "", signal = null, allowRemote = false
   }) {
     const resolvedProviderType = providerType || configState.config.provider.default
     const settings = resolveSettings(configState, resolvedProviderType, { model, baseUrl, apiKeyEnv })
+    assertProviderDataPolicy(configState, { providerName: settings.configKey, baseUrl: settings.baseUrl })
     const provider = registry.get(settings.providerType)
     if (!provider?.countTokens) return null
+    // Existing normal conversations retain their inexpensive local estimate;
+    // strict preflight and explicit SDK counting can use the current API.
+    if (settings.protocol === 'responses' && !allowRemote && !hasRequestBudget()) return null
     // Count exactly the input the inference path can encode. In particular,
     // switching an audio/video conversation to Anthropic must not fail in
     // count_tokens before the inference guard can replace historical media.
@@ -678,6 +754,7 @@ export function createProviderRegistry() {
       messages: guarded.messages,
       tools: guarded.tools,
       protocol: settings.protocol,
+      ...(settings.protocol === 'anthropic' && providerCfg.native_compaction === true ? { compaction: { trigger: providerCfg.compaction_trigger ?? 150000 } } : {}),
       provider: settings.configKey,
       timeoutMs: Math.min(Number(providerCfg.timeout_ms || 10000), 30000),
       signal,
@@ -689,7 +766,7 @@ export function createProviderRegistry() {
     }
     // OpenAI-compatible APIs have no portable count-only endpoint, so their
     // implementation is local and should not create a misleading HTTP span.
-    const isRemoteCount = settings.protocol === "anthropic"
+    const isRemoteCount = settings.protocol === "anthropic" || settings.protocol === 'responses'
     if (!isRemoteCount) return provider.countTokens(input)
     await assertProviderOutboundAllowed(configState, {
       providerName: settings.configKey,

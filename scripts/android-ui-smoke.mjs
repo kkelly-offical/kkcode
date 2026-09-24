@@ -19,7 +19,7 @@ for (const apk of apks) {
   const output = run(['install', '-r', apk])
   if (!output.includes('Success')) throw new Error(output)
 }
-const classes = ['cn.kkcode.remote.ConversationUiTest', 'cn.kkcode.remote.RemoteUxUiTest', 'cn.kkcode.remote.ComposerSelectorsTest', 'cn.kkcode.remote.SessionLifecycleTest', 'cn.kkcode.remote.SshProfilesTest', 'cn.kkcode.remote.ThemeTest', 'cn.kkcode.remote.UpdateUiTest', 'cn.kkcode.remote.GatewayLoginLifecycleTest'].join(',')
+const classes = ['cn.kkcode.remote.ConversationUiTest', 'cn.kkcode.remote.RemoteUxUiTest', 'cn.kkcode.remote.ComposerSelectorsTest', 'cn.kkcode.remote.SessionLifecycleTest', 'cn.kkcode.remote.SshProfilesTest', 'cn.kkcode.remote.ThemeTest', 'cn.kkcode.remote.UpdateUiTest', 'cn.kkcode.remote.GatewayLoginLifecycleTest', 'cn.kkcode.remote.ArtifactsUiTest', 'cn.kkcode.remote.MemoryUiTest', 'cn.kkcode.remote.TasksUiTest'].join(',')
 const output = run(['shell', 'am', 'instrument', '-w', '-r', '-e', 'class', classes, 'cn.kkcode.remote.test/androidx.test.runner.AndroidJUnitRunner'], 300000)
 if (!/OK \(\d+ tests\)/.test(output) || /FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed/.test(output)) throw new Error(output)
 console.log(`Android ${serial}: ${output.match(/OK \(\d+ tests\)/)[0]}`)

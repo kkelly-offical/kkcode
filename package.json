@@ -1,6 +1,6 @@
 {
   "name": "@kkelly-offical/kkcode",
-  "version": "1.0.4",
+  "version": "1.0.5-preview.0",
   "workspaces": [
     "apps/web",
     "apps/gateway",
@@ -16,6 +16,58 @@
     "./sdk/client": {
       "types": "./src/sdk/client.d.mts",
       "import": "./src/sdk/client.mjs"
+    },
+    "./sdk/storage": {
+      "types": "./src/sdk/storage.d.mts",
+      "import": "./src/sdk/storage.mjs"
+    },
+    "./sdk/runs": {
+      "types": "./src/sdk/runs.d.mts",
+      "import": "./src/sdk/runs.mjs"
+    },
+    "./sdk/memory": {
+      "types": "./src/sdk/memory.d.mts",
+      "import": "./src/sdk/memory.mjs"
+    },
+    "./sdk/forge": {
+      "types": "./src/sdk/forge.d.mts",
+      "import": "./src/sdk/forge.mjs"
+    },
+    "./sdk/lsp": {
+      "types": "./src/sdk/lsp.d.mts",
+      "import": "./src/sdk/lsp.mjs"
+    },
+    "./sdk/models": {
+      "types": "./src/sdk/models.d.mts",
+      "import": "./src/sdk/models.mjs"
+    },
+    "./sdk/office": {
+      "types": "./src/sdk/office.d.mts",
+      "import": "./src/sdk/office.mjs"
+    },
+    "./sdk/tasks": {
+      "types": "./src/sdk/tasks.d.mts",
+      "import": "./src/sdk/tasks.mjs"
+    },
+    "./sdk/browser": {
+      "types": "./src/sdk/browser.d.mts",
+      "import": "./src/sdk/browser.mjs"
+    },
+    "./sdk/artifacts": {
+      "types": "./src/sdk/artifacts.d.mts",
+      "import": "./src/sdk/artifacts.mjs"
+    },
+    "./sdk/diagnostics": {
+      "types": "./src/sdk/diagnostics.d.mts",
+      "import": "./src/sdk/diagnostics.mjs"
+    },
+    "./sdk/browser-recipes": {
+      "types": "./src/sdk/browser-recipes.d.mts",
+      "import": "./src/sdk/browser-recipes.mjs"
+    },
+    "./sdk/environments": {
+      "types": "./src/sdk/environments.d.mts",
+      "import": "./src/sdk/environments.mjs"
     }
   },
   "description": "CLI-first unified Assistant with explicit Plan and LongAgent workflows, governed permissions, MCP integrations, and extensible automation.",
@@ -47,6 +99,8 @@
   "files": [
     "src/",
     "configs/",
+    "containers/office/",
+    "containers/lsp/",
     "apps/gateway/main.mjs",
     "docs/README.md",
     "docs/ROADMAP.md",
@@ -69,8 +123,34 @@
     "docs/security-review-1.0.4.md",
     "docs/ssh-account-devices.md",
     "docs/context-and-harness.md",
+    "docs/plan-1.0.5.md",
+    "docs/implementation-1.0.5.md",
     "docs/protocol-adapters.md",
     "docs/sdk-guide.md",
+    "docs/sdk-storage.md",
+    "docs/data-policy.md",
+    "docs/forge-delivery.md",
+    "docs/language-services.md",
+    "docs/strict-isolation.md",
+    "docs/scoped-memory.md",
+    "docs/model-roles-and-profiles.md",
+    "docs/protocol-extensions.md",
+    "docs/tool-program.md",
+    "docs/browser-bridge.md",
+    "docs/browser-bridge-branded-acceptance.md",
+    "docs/browser-workflows.md",
+    "docs/task-graphs.md",
+    "docs/durable-budgets.md",
+    "docs/task-monitoring.md",
+    "docs/trusted-runs.md",
+    "docs/browser-recipes.md",
+    "docs/browser-strict-acceptance.md",
+    "docs/evaluation-suite.md",
+    "docs/office-tools.md",
+    "docs/host-services.md",
+    "docs/dependency-environments.md",
+    "docs/plugin-integrity.md",
+    "docs/independent-review.md",
     "docs/android-gateway-login.md",
     "docs/implementation-1.0.2.md",
     "docs/security-review-1.0.2.md",
@@ -101,13 +181,13 @@
   "scripts": {
     "build:web": "npm run build --workspace @kkcode/web",
     "typecheck:web": "tsc -p apps/web/tsconfig.json",
-    "test:web": "npm run build:web && node scripts/web-smoke.mjs && node scripts/web-feature-contract-smoke.mjs && node scripts/web-pixel-theme-smoke.mjs",
+    "test:web": "npm run build:web && node scripts/web-smoke.mjs && node scripts/web-feature-contract-smoke.mjs && node scripts/web-pixel-theme-smoke.mjs && node scripts/web-knowledge-smoke.mjs",
     "test:browser": "node scripts/browser-smoke.mjs",
     "test:compatibility": "node scripts/compatibility-acceptance.mjs",
     "gateway": "node apps/gateway/main.mjs",
     "version:check": "node scripts/check-release-version.mjs",
     "start": "node ./src/index.mjs",
-    "lint": "eslint src scripts test && node ./scripts/check-node-syntax.mjs && node ./scripts/check-boundaries.mjs",
+    "lint": "eslint src scripts test evaluation && node ./scripts/check-node-syntax.mjs && node ./scripts/check-boundaries.mjs",
     "test": "node ./scripts/run-node-tests.mjs",
     "test:e2e": "node --test test/e2e/*.mjs",
     "typecheck": "node ./scripts/check-types.mjs",

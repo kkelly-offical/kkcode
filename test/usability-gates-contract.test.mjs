@@ -96,6 +96,19 @@ test("空项目里 build/test 判 not_applicable 而非失败", async () => {
   assert.equal(real.allPass, true, "not_applicable 算通过")
 })
 
+test("required checks cannot pass as disabled or not_applicable", async () => {
+  const real = await runUsabilityGates({
+    sessionId: "contract", config: BUILD_TEST_ONLY, cwd: tmpCwd, requiredGates: ["build", "test", "review"]
+  })
+  assert.equal(real.allPass, false)
+  for (const name of ["build", "test", "review"]) {
+    assert.equal(readGate(real, name).status, "unknown")
+    assert.equal(readGate(real, name).required, true)
+    assert.ok(real.failures.some((failure) => failure.gate === name))
+  }
+  assert.equal(isPassingGateStatus("not_applicable", { required: true }), false)
+})
+
 test("测试替身必须与真实形状同构", async () => {
   const real = await runUsabilityGates({ sessionId: "contract", config: ALL_DISABLED, cwd: tmpCwd })
   const fake = makeGateResult({ build: "pass", test: "pass" })

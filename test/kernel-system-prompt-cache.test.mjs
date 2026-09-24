@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { tmpdir } from "node:os"
 import { buildSystemPromptBlocks } from "../src/kernel/session/system-prompt.mjs"
-import { memoryFilePath } from "../src/storage/paths.mjs"
+import { createMemoryController } from '../src/kernel/session/memory-controller.mjs'
 
 async function fixture(t) {
   const root = await mkdtemp(path.join(tmpdir(), "kkcode-sysprompt-cache-"))
@@ -27,17 +27,18 @@ test("a memory edit between turns reaches the next prompt even when every other 
 
   const first = await buildSystemPromptBlocks(args)
   const firstMemory = first.blocks.find((block) => block.label === "memory")
-  assert.ok(firstMemory, "memory block exists")
-  assert.match(firstMemory.text, /currently empty/)
+  assert.equal(firstMemory, undefined, 'empty memory does not add synthetic instructions')
 
-  // A concurrent session (or the user) records a memory between turns.
-  await mkdir(path.dirname(memoryFilePath(cwd)), { recursive: true })
-  await writeFile(memoryFilePath(cwd), "- always run vitest with --run\n")
+  // A real host confirmation, not a model-written MEMORY.md or confidence
+  // JSON, activates the reference between turns.
+  const memory = createMemoryController({ cwd, confirmMemory: async () => ({ approved: true, confirmedBy: 'fixture-user', approvalId: 'fixture-click' }) })
+  const proposed = await memory.propose({ text: 'always run vitest with --run' })
+  await memory.confirm({ id: proposed.id, expectedVersion: proposed.version })
 
   const second = await buildSystemPromptBlocks(args)
   const secondMemory = second.blocks.find((block) => block.label === "memory")
   assert.match(secondMemory.text, /always run vitest/, "memory change invalidates the block cache")
-  assert.notEqual(secondMemory.text, firstMemory.text)
+  assert.notEqual(secondMemory.text, firstMemory?.text)
 })
 
 test("identical inputs still hit the block cache (env-only refresh)", async t => {

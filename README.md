@@ -13,6 +13,17 @@
 **终端优先、可治理、可扩展的编码智能体：五档模式循环、可治理审批、Ultra 分阶段交付。**
 kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同一个 CLI 工作台里，并且把权限、预算、审计、后台任务、MCP、技能与插件一起纳入统一执行面。
 
+当前源码正在开发 **`1.0.5-preview.0`，尚未发布**。本轮以可信大任务交付为目标，
+完整范围见 [开发计划](docs/plan-1.0.5.md)，已完成与未完成内容见
+[实施账本](docs/implementation-1.0.5.md)。持久任务、严格隔离、证据/记忆、多代理、
+离线依赖环境、本机浏览器桥接和文档工具已进入源码与本地集成验收；跨平台、真实模型与试用门禁尚未完成，
+不能视为已经发行或生产认证。公开稳定版仍以下面的 1.0.4 为准。
+
+本轮没有公开发布或升级生产网关／设备。外部真实付费模型的 60 任务 × 2 轮、
+公共 GitHub/GitLab 往返、Chrome/Edge 三系统矩阵、新版 CI 和七天实际试用，
+均不能用本地 fixture、自检或历史版本 CI 代替。`1.1.0` 是后续成熟度目标，
+不是本次版本号；发布仍需单独确认。
+
 稳定版 **`1.0.4` 已发布**：新增 [OpenAI Responses API](docs/responses-api.md)，
 支持文本/图片、流式思考摘要与受控工具循环；修复 SSH 跨设备模型状态、中文错误、
 空会话显示和渠道密钥保留。来源链接可由浏览器打开，Thinking 可在生成中展开，
@@ -48,6 +59,7 @@ ACP、受控 Browser/Harness 一并保留。
 - [Installation / 安装](#installation)
 - [Quick Start / 快速开始](#quick-start)
 - [Capability Snapshot / 能力总览](#capability-snapshot)
+- [1.0.5 Development / 开发版入口与边界](#development-105)
 - [Modes & Ultra / 模式与 Ultra](#modes-and-longagent)
 - [Safety & Permissions / 权限与安全](#safety-and-permissions)
 - [Delegation & Subagents / 委派与子智能体](#delegation-and-subagents)
@@ -114,7 +126,8 @@ kkcode
 ```
 
 预览渠道：`npm install -g @kkelly-offical/kkcode@preview`；固定稳定版可使用
-`@1.0.4`。`@preview` 仍可能指向较早的 `1.0.4-preview.0`；获取本次正式版用默认渠道或明确版本号，不要把预览标签当作总是最新。安装搜索依赖：Linux `apt install ripgrep`、macOS
+`@1.0.4`。本次开发尚未更新 `@preview`，不能用它安装未发布的 `1.0.5-preview.0`；
+获取当前正式版用默认渠道或明确版本号，不要把预览标签当作总是最新。安装搜索依赖：Linux `apt install ripgrep`、macOS
 `brew install ripgrep`、Windows `choco install ripgrep`。
 
 **Web / enterprise remote / 企业远控**
@@ -137,9 +150,14 @@ kkcode browser status       # 查询浏览器是否可用，不会自动启动
 ```bash
 git clone https://github.com/kkelly-offical/kkcode.git
 cd kkcode
-npm install
+npm ci
 npm run start
 ```
+
+从源码运行反映当前 checkout，不代表已发布稳定包。npm 包提供运行时代码、公开
+SDK 类型、选定使用文档和 Office/LSP 镜像构建目录；完整 Android/Web 开发工程、
+测试、`scripts/` 和 `evaluation/` 验收资源请使用源码仓库。包内容由 `package.json`
+的 `exports`／`files` 定义，可用 `npm pack --dry-run` 核对。
 
 **Useful links / 常用链接**
 - [npm package](https://www.npmjs.com/package/@kkelly-offical/kkcode)
@@ -201,6 +219,30 @@ kkcode doctor
 | GUI / IDE / desktop automation | Not promised | README does not claim GUI-first product support |
 
 For a deeper boundary matrix, see [CLI General Assistant Capability Matrix](docs/cli-general-assistant-capability-matrix.md).
+
+---
+
+<a id="development-105"></a>
+## 1.0.5 Development / 开发版入口与边界
+
+以下是**未发布源码**的使用入口，不是上表稳定版能力已经全部升级的声明。
+普通聊天／原有 Ultra 不会自动取得严格任务的隔离、预算或验收合同。
+
+| 方向 | 已接入的入口 | 必须保留的边界 |
+| --- | --- | --- |
+| 可恢复任务 | [`kkcode runs`](docs/trusted-runs.md)、`sdk/runs`、`sdk/tasks` | 宿主确认合同、独立工作树、固定镜像、持久总预算；未知副作用先核查，不重放；完成由独立验收决定 |
+| 上下文与证据 | [原生／本地压缩](docs/context-and-harness.md)、[`artifact_read` / `artifact_search`](docs/sdk-storage.md) | 大输出先归档再显示截断；命中项 `readCursor` 可直达正文，每次仍核验账号／项目／会话／任务；不恢复历史上已丢弃内容 |
+| 多端监督 | [Web/Android 委托任务](docs/task-monitoring.md)、[记忆管理](docs/scoped-memory.md) | 设置内查看状态、额度、验收与产物；所有者确认暂停／取消，共享访客只读；新建／接管／最终交付仍在可信宿主 |
+| 离线依赖 | [`kkcode environments`](docs/dependency-environments.md)、`sdk/environments` | npm v2/v3 lock、SRI、单独安装脚本批准、只读挂载；不自动联网安装，不支持 workspaces 或所有包管理器 |
+| Browser / Bridge | [隔离 Browser](docs/browser-workflows.md)、[本机 Bridge](docs/browser-bridge.md)、[实验 Recipe](docs/browser-recipes.md) | Bridge 仅主 frame 文本／引用交互，无全局按键；截图需另行本机同意，可含嵌入内容，非像素级 origin 隔离；Recipe 审核、验证、锁版后仍逐叶治理 |
+| Office / LSP | [`kkcode services`](docs/host-services.md)、[`office`](docs/office-tools.md)、[`lsp`](docs/language-services.md) | 固定镜像、受控离线工作目录、原件保留；格式／语言有明确支持范围，不承诺任意文档无损或完整 IDE 替代 |
+| 协议与插件 | [MCP/ACP/Skills](docs/protocol-extensions.md)、[插件完整性](docs/plugin-integrity.md) | 用户表单真实确认，schema 有界隔离验证；托管插件来源／内容锁定，新代码或能力升级需确切哈希批准 |
+| 交付与诊断 | [Forge](docs/forge-delivery.md)、`runs diagnose`、`sdk/diagnostics` | 固定仓库／分支／候选和真实回执；携带令牌的 `forge inspect` 也须先核对来源再精确确认；不自动合并、部署、发版 |
+
+[SDK 总览](docs/sdk-guide.md) 列出公开分域导入路径与远程能力协商。
+[严格 Browser 实机验收](docs/browser-strict-acceptance.md) 明确区分 root 下功能 fixture
+与非 root Chromium 沙箱证据；`blocked`／`skip` 都不是验收通过。
+[60 任务评测](docs/evaluation-suite.md) 区分零费用 oracle 自检与真实模型成绩。
 
 ---
 
@@ -447,6 +489,10 @@ and you would think you were sandboxed.
 - kkcode 的扩展机制是本地优先、显式可控的。
 - 当前插件能力是 MVP，不代表已经承诺 marketplace 平台形态。
 
+1.0.5 开发版为 `plugin install/update/approve` 加入私密来源与内容锁、不可变加载
+副本和新增能力重新批准。显式作者维护的未托管目录保持原有工作区信任语义，
+不是自动变成已沙箱化插件；详见 [插件完整性与升级](docs/plugin-integrity.md)。
+
 **Further reading / 延伸阅读**
 - [ClaudeNext Agent / LongAgent Skills Compatibility](docs/claudenext-agent-longagent-skills-compat.md)
 - [Agent / LongAgent Extension Guide](docs/agent-longagent-compat-extension-guide.md)
@@ -563,6 +609,25 @@ details.
 - `audit`
 
 Run `kkcode --help` or `kkcode <command> --help` for the full surface.
+
+1.0.5 源码新增／扩展的宿主入口：
+
+```sh
+kkcode runs --help                 # 任务准备、执行、状态、恢复、验收和交付
+kkcode runs backup --help          # 备份/验证；恢复到新目录，不覆盖活动账本
+kkcode artifacts --help            # 本机巡检与显式可恢复隔离，不是任意文件下载
+kkcode environments --help         # inspect / prepare / verify 离线 npm 环境
+kkcode services --help             # Office/LSP 用户私密配置，先预览再确认哈希
+kkcode office --help
+kkcode lsp --help
+kkcode browser bridge --help       # 本机扩展授权；截图额外 --allow-screenshots
+kkcode browser recipe --help       # record / review / validate / enable / run
+kkcode plugin --help               # 托管安装、内容批准及升级
+```
+
+这些是本机可信宿主操作，不等于把同名管理接口开放给模型或网关访客。依赖环境
+准备后，`runs start --environment <目录>` 才明确选用它；环境、镜像或清单改变
+都要重新核验，不会自动采用任意已有 `node_modules`。
 
 ---
 
@@ -727,7 +792,10 @@ update:
 
 **Opt-in preview / 自愿试用预览版**: [`v1.0.4-preview.0`](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.4-preview.0)，发布回执见 [实施台账](docs/implementation-1.0.4.md)。
 
-本次正式发布推进 npm `latest`，不移动任何旧版本标签，不另发 `1.0.4-preview.1`。
+**Development only / 仅开发中**: `1.0.5-preview.0`；没有 npm/GitHub 发版回执，
+没有自动更新生产网关或设备。该工作树不能替换上面的稳定版发布状态。
+
+1.0.4 正式发布已推进 npm `latest`，不移动任何旧版本标签，未发行 `1.0.4-preview.1`。
 新客户端、设备 CLI、企业网关/Web 镜像需按 [升级说明](docs/release-1.0.4.md) 配套更新。
 
 ```sh
@@ -1004,6 +1072,10 @@ See [LICENSE](LICENSE) for the full text.
 ## Further Reading / 延伸阅读
 
 - [Documentation index / 文档导航](docs/README.md) — current guides versus historical records
+- [1.0.5 plan and implementation / 开发计划与实施账本](docs/implementation-1.0.5.md) — 未发布，验收层级分开记录
+- [SDK domains / SDK 分域入口](docs/sdk-guide.md) — 本地内核、远程传输和可信宿主边界
+- [Strict task workflow / 严格任务工作流](docs/trusted-runs.md) — 合同、预算、恢复与交付
+- [Offline dependencies / 离线依赖环境](docs/dependency-environments.md) — 来源、脚本批准与只读复用
 - [Preview.2 release guide / 第三预览版](docs/release-1.0.1-preview.2.md)
 - [Media input / 媒体输入](docs/media-input.md)
 - [Tool discovery and skills / 工具发现与技能](docs/tool-discovery-and-skills.md)

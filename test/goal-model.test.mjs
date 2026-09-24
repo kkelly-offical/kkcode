@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import {
   parseCriterionString, normalizeCriterionObject, normalizeAcceptance,
   classifyGoalIntent, intentProfile, normalizeGoal, freezeGoal, reviseGoal,
-  planSignature, splitArgv, resetCriterionCounter
+  planSignature, splitArgv, resetCriterionCounter, issueGoalRevisionApproval, requiredGoalGates
 } from "../src/kernel/session/goal-model.mjs"
 
 beforeEach(() => resetCriterionCounter())
@@ -101,6 +101,18 @@ describe("normalizeAcceptance", () => {
     assert.deepEqual(normalizeAcceptance(null), [])
     assert.deepEqual(normalizeAcceptance("npm test"), [])
   })
+
+  it("does not silently truncate acceptance beyond the planner limit", () => {
+    const criteria = Array.from({ length: 13 }, (_, index) => `src/file-${index}.mjs`)
+    assert.equal(normalizeAcceptance(criteria).length, 13)
+    const { goal, errors } = normalizeGoal({ criteria })
+    assert.equal(goal.criteria.length, 13)
+    assert.match(errors.join("; "), /root criteria exceed 12/)
+    assert.deepEqual(goal.validationErrors, errors)
+    const child = normalizeGoal({ subGoals: [{ criteria }] })
+    assert.equal(child.goal.subGoals[0].criteria.length, 13)
+    assert.match(child.errors.join("; "), /subGoal .* criteria exceed 12/)
+  })
 })
 
 describe("classifyGoalIntent 与 profile", () => {
@@ -174,22 +186,29 @@ describe("reviseGoal 修订留痕", () => {
     return freezeGoal(goal)
   }
 
-  it("新增自由，删除 blocking 必须给理由", () => {
+  it("新增自由，删除已确认 blocking 必须给理由及宿主确认", () => {
     const goal = makeGoal()
     const noReason = reviseGoal(goal, { round: 2, drop: [goal.criteria[0].id] })
     assert.ok(noReason.errors.some((e) => /requires a reason/.test(e)))
     assert.equal(noReason.goal.criteria.length, 3, "没理由就不删")
 
-    const withReason = reviseGoal(goal, {
+    const changes = {
       round: 2, reason: "范围调整",
       drop: [{ id: goal.criteria[2].id, reason: "该文件并入 b.mjs" }],
       add: ["src/b.mjs"]
-    })
+    }
+    const unapproved = reviseGoal(goal, changes)
+    assert.match(unapproved.errors.join(";"), /host-confirmed user approval/)
+    assert.ok(unapproved.goal.criteria.some((criterion) => criterion.id === goal.criteria[2].id))
+    const approval = issueGoalRevisionApproval(goal, changes, { approvalId: "approval-1", confirmedBy: "user-1" })
+    const withReason = reviseGoal(goal, changes, { approval })
     assert.deepEqual(withReason.errors, [])
     assert.equal(withReason.goal.criteria.length, 3)
     const revision = withReason.goal.revisions[0]
     assert.equal(revision.removed[0].reason, "该文件并入 b.mjs", "删除记录必须带理由进报告")
     assert.equal(revision.added.length, 1)
+    assert.equal(revision.approval.approvalId, "approval-1")
+    assert.match(reviseGoal(goal, changes, { approval }).errors.join(";"), /host-confirmed/, "approval is single use")
   })
 
   it("manual 判据永不可删", () => {
@@ -198,6 +217,36 @@ describe("reviseGoal 修订留痕", () => {
     const attempt = reviseGoal(goal, { round: 2, reason: "r", drop: [{ id: manualId, reason: "嫌麻烦" }] })
     assert.ok(attempt.errors.some((e) => /can never be dropped/.test(e)))
     assert.ok(attempt.goal.criteria.some((c) => c.id === manualId))
+  })
+
+  it("model JSON, changed criteria, and changed drop scope cannot forge consent", () => {
+    const goal = makeGoal()
+    const changes = { reason: "范围调整", drop: [goal.criteria[0].id] }
+    const approval = issueGoalRevisionApproval(goal, changes, { approvalId: "approval-2", confirmedBy: "user-1" })
+    assert.match(reviseGoal(goal, changes, { approval: { ...approval } }).errors.join(";"), /host-confirmed/)
+    assert.match(reviseGoal(goal, { ...changes, drop: [goal.criteria[2].id] }, { approval }).errors.join(";"), /host-confirmed/)
+    const changed = structuredClone(goal)
+    changed.criteria[0].spec.args.push("--new-argument")
+    assert.match(reviseGoal(changed, changes, { approval }).errors.join(";"), /host-confirmed/)
+    assert.deepEqual(reviseGoal(goal, changes, { approval }).errors, [])
+  })
+
+  it("duplicate IDs cannot replace acceptance and freeze detaches the blueprint", () => {
+    const raw = normalizeGoal({ criteria: ["npm test"] }).goal
+    const frozen = freezeGoal(raw)
+    raw.criteria[0].spec.args.push("--silent")
+    assert.notDeepEqual(raw.criteria, frozen.criteria)
+    assert.throws(() => frozen.criteria[0].spec.args.push("--skip-tests"), TypeError)
+    const result = reviseGoal(frozen, { add: [{ ...frozen.criteria[0], severity: "advisory" }] })
+    assert.match(result.errors.join(";"), /duplicate criterion ID/)
+    assert.equal(result.goal.criteria[0].severity, "blocking")
+  })
+
+  it("required gates include only blocking root and nonoptional subgoal criteria", () => {
+    const goal = normalizeGoal({ criteria: ["test passes"], subGoals: [
+      { criteria: ["review passes"] }, { optional: true, criteria: ["build passes"] }
+    ] }).goal
+    assert.deepEqual(requiredGoalGates(goal), ["test", "review"])
   })
 })
 

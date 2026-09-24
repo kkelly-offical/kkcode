@@ -5,6 +5,7 @@ import { EVENT_TYPES } from "../core/constants.mjs"
 import { createStdioFramingDecoder, encodeRpcMessage } from "./stdio-framing.mjs"
 import { normalizeToolResult } from "./tool-result.mjs"
 import { MCP_PROTOCOL_VERSION, MCP_CLIENT_INFO } from "./constants.mjs"
+import { createMcpInteraction } from './interaction.mjs'
 
 const VALID_FRAMING = new Set(["auto", "content-length", "newline"])
 const VALID_HEALTH_METHOD = new Set(["auto", "ping", "tools_list"])
@@ -27,7 +28,8 @@ function classifySpawnError(error) {
   return "unknown"
 }
 
-export function createStdioMcpClient(serverName, config = {}) {
+export function createStdioMcpClient(serverName, config = {}, host = {}) {
+  const interaction = createMcpInteraction(serverName, host)
   const command = config.command
   const cmdArgs = Array.isArray(config.args) ? config.args : []
   const envOverrides = config.env || {}
@@ -80,6 +82,7 @@ export function createStdioMcpClient(serverName, config = {}) {
   let wasEverInitialized = false
 
   const pending = new Map()
+  const inbound = new Map()
 
   function resetRuntime() {
     decoder = createStdioFramingDecoder({
@@ -100,6 +103,8 @@ export function createStdioMcpClient(serverName, config = {}) {
   }
 
   function rejectPending(reason, message, details = {}) {
+    for (const controller of inbound.values()) controller.abort(new Error('MCP 连接已结束'))
+    inbound.clear()
     for (const [, entry] of pending) {
       clearTimeout(entry.timer)
       entry.reject(
@@ -197,6 +202,31 @@ export function createStdioMcpClient(serverName, config = {}) {
             continue
           }
 
+          if (msg?.method) {
+            if (msg.method === 'notifications/progress') {
+              const entry = pending.get(msg.params?.progressToken)
+              try { entry?.onprogress?.(msg.params) } catch { /* observer only */ }
+            } else if (msg.method === 'notifications/cancelled') {
+              inbound.get(msg.params?.requestId)?.abort(new Error('MCP 服务已取消本次表单'))
+            } else if (msg.id != null) {
+              if (inbound.has(msg.id)) continue
+              if (inbound.size >= 128) {
+                if (child?.stdin?.writable) child.stdin.write(encodeRpcMessage({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: 'MCP 客户端输入请求过多' } }, configuredFraming === 'auto' ? activeFraming : configuredFraming))
+                continue
+              }
+              const controller = new AbortController()
+              inbound.set(msg.id, controller)
+              const response = msg.method === 'elicitation/create'
+                ? interaction.elicit(msg.params || {}, controller.signal).then(result => ({ jsonrpc: '2.0', id: msg.id, result }))
+                : Promise.resolve({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'KK Code 不支持此客户端请求' } })
+              const requestChild = child
+              response.then(result => {
+                if (child !== requestChild || !child?.stdin?.writable) return
+                child.stdin.write(encodeRpcMessage(result, configuredFraming === 'auto' ? activeFraming : configuredFraming))
+              }).catch(() => {}).finally(() => { if (inbound.get(msg.id) === controller) inbound.delete(msg.id) })
+            }
+            continue
+          }
           if (msg?.id != null && pending.has(msg.id)) {
             const entry = pending.get(msg.id)
             pending.delete(msg.id)
@@ -315,7 +345,7 @@ export function createStdioMcpClient(serverName, config = {}) {
     await startProcess()
   }
 
-  async function sendRequest(method, params = {}, { phase = "request", timeoutMs = requestTimeoutMs, signal = null } = {}) {
+  async function sendRequest(method, params = {}, { phase = "request", timeoutMs = requestTimeoutMs, signal = null, onprogress = null } = {}) {
     if (signal?.aborted) {
       throw new McpError(`mcp server "${serverName}" request cancelled`, {
         reason: "timeout", server: serverName, action: method, phase
@@ -324,7 +354,7 @@ export function createStdioMcpClient(serverName, config = {}) {
     await ensureAlive()
     if (nextId > Number.MAX_SAFE_INTEGER - 1) nextId = 1
     const id = nextId++
-    const payload = { jsonrpc: "2.0", id, method, params }
+    const payload = { jsonrpc: "2.0", id, method, params: onprogress ? { ...params, _meta: { ...params._meta, progressToken: id } } : params }
 
     return new Promise((resolve, reject) => {
       const startedAt = Date.now()
@@ -350,6 +380,7 @@ export function createStdioMcpClient(serverName, config = {}) {
       const timer = setTimeout(() => {
         if (!settle()) return
         pending.delete(id)
+        sendNotification('notifications/cancelled', { requestId: id, reason: 'client_timeout' })
         reject(
           new McpError(`mcp server "${serverName}" timed out after ${timeoutMs}ms on "${method}"`, {
             reason: "timeout",
@@ -365,7 +396,7 @@ export function createStdioMcpClient(serverName, config = {}) {
       pending.set(id, {
         resolve: (v) => { if (settle()) { clearTimeout(timer); resolve(v) } },
         reject: (e) => { if (settle()) { clearTimeout(timer); reject(e) } },
-        timer, method, phase, startedAt
+        timer, method, phase, startedAt, onprogress
       })
       try {
         const wireFraming = configuredFraming === "auto" ? activeFraming : configuredFraming
@@ -401,7 +432,7 @@ export function createStdioMcpClient(serverName, config = {}) {
     if (initialized) return
     const initParams = {
       protocolVersion: MCP_PROTOCOL_VERSION,
-      capabilities: {},
+      capabilities: { elicitation: { form: {} } },
       clientInfo: MCP_CLIENT_INFO
     }
 
@@ -456,13 +487,13 @@ export function createStdioMcpClient(serverName, config = {}) {
     }
   }
 
-  async function listCatalog(method, key, optional = false) {
+  async function listCatalog(method, key, optional = false, options = {}) {
     await initializeOnce()
     const items = [], seen = new Set()
     let cursor
     do {
       let result
-      try { result = await sendRequest(method, cursor ? { cursor } : {}) }
+      try { result = await sendRequest(method, cursor ? { cursor } : {}, options) }
       catch (error) { if (optional && error.details?.code === -32601) return []; throw error }
       // `templates` is retained only for older KK Code-compatible servers.
       const page = result?.[key] || (key === 'resourceTemplates' ? result?.templates : null) || []
@@ -474,6 +505,14 @@ export function createStdioMcpClient(serverName, config = {}) {
       if (items.length > 10000 || seen.size > 10000) throw new McpError('MCP catalog limit exceeded', { reason: 'protocol_error', server: serverName, action: method })
     } while (cursor)
     return items
+  }
+
+  async function invoke(method, params, options = {}) {
+    const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(requestTimeoutMs)]) : AbortSignal.timeout(requestTimeoutMs)
+    return interaction.run(method, signal, async () => {
+      await initializeOnce()
+      return sendRequest(method, params, { ...options, signal })
+    })
   }
 
   return {
@@ -500,26 +539,23 @@ export function createStdioMcpClient(serverName, config = {}) {
       }
     },
 
-    listTools: () => listCatalog('tools/list', 'tools'),
+    listTools: options => listCatalog('tools/list', 'tools', false, options),
 
-    listPrompts: () => listCatalog('prompts/list', 'prompts', true),
+    listPrompts: options => listCatalog('prompts/list', 'prompts', true, options),
 
-    async getPrompt(name, args = {}) {
-      await initializeOnce()
-      return sendRequest("prompts/get", { name, arguments: args })
+    async getPrompt(name, args = {}, options = {}) {
+      return invoke('prompts/get', { name, arguments: args }, options)
     },
 
-    listResources: () => listCatalog('resources/list', 'resources', true),
+    listResources: options => listCatalog('resources/list', 'resources', true, options),
 
-    async readResource(uri) {
-      await initializeOnce()
-      return sendRequest('resources/read', { uri })
+    async readResource(uri, options = {}) {
+      return invoke('resources/read', { uri }, options)
     },
-    listTemplates: () => listCatalog('resources/templates/list', 'resourceTemplates', true),
+    listTemplates: options => listCatalog('resources/templates/list', 'resourceTemplates', true, options),
 
-    async callTool(name, args = {}, signal = null) {
-      await initializeOnce()
-      const result = await sendRequest("tools/call", { name, arguments: args }, { signal })
+    async callTool(name, args = {}, signal = null, options = {}) {
+      const result = await invoke('tools/call', { name, arguments: args }, { ...options, signal })
       return normalizeToolResult(result, serverName, name)
     },
 

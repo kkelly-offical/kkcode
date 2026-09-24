@@ -231,6 +231,7 @@ export const DEFAULT_CONFIG = {
     mcp_refresh_ttl_ms: 60000
   },
   tool: {
+    program: { enabled: false },
     sources: {
       builtin: true,
       local: true,

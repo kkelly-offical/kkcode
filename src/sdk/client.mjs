@@ -1,6 +1,7 @@
 import { PROTOCOL_VERSION } from '../protocol/index.mjs'
 import { eventsStreamPath, streamSessionEvents } from './event-stream.mjs'
 export { PROTOCOL_VERSION }
+export { downloadArtifact } from './artifacts.mjs'
 
 const pause = (milliseconds, signal) => new Promise((resolve, reject) => {
   const abort = () => { clearTimeout(timer); reject(signal.reason || new Error('Aborted')) }

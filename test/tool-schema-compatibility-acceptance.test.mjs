@@ -28,20 +28,20 @@ test('tool validation preserves optional/null inputs without coercion, default i
   assert.equal(calls.length, 1, 'invalid arguments never reach tool implementation')
 })
 
-test('JSON Schema draft-2020-12, draft-2019-09 and draft-07 retain their own validation semantics', () => {
+test('JSON Schema draft-2020-12, draft-2019-09 and draft-07 retain their own validation semantics', async () => {
   const modern = { name: 'modern', inputSchema: { $schema: 'https://json-schema.org/draft/2020-12/schema', type: 'object', properties: { enabled: { type: 'boolean' }, token: { type: 'string' }, tuple: { type: 'array', prefixItems: [{ type: 'string' }, { type: 'integer' }], items: false } }, dependentRequired: { enabled: ['token'] }, unevaluatedProperties: false } }
-  assert.doesNotThrow(() => validateToolArguments(modern, { tuple: ['a', 1] }))
-  assert.throws(() => validateToolArguments(modern, { enabled: true }), /Invalid arguments/)
-  assert.throws(() => validateToolArguments(modern, { extra: true }), /Invalid arguments/)
-  assert.throws(() => validateToolArguments(modern, { tuple: ['a', '1'] }), /Invalid arguments/)
+  await assert.doesNotReject(validateToolArguments(modern, { tuple: ['a', 1] }))
+  await assert.rejects(validateToolArguments(modern, { enabled: true }), /Invalid arguments/)
+  await assert.rejects(validateToolArguments(modern, { extra: true }), /Invalid arguments/)
+  await assert.rejects(validateToolArguments(modern, { tuple: ['a', '1'] }), /Invalid arguments/)
   const intermediate = { name: '2019', inputSchema: { $schema: 'https://json-schema.org/draft/2019-09/schema', type: 'object', properties: { enabled: { type: 'boolean' }, token: { type: 'string' } }, dependentRequired: { enabled: ['token'] }, unevaluatedProperties: false } }
-  assert.doesNotThrow(() => validateToolArguments(intermediate, { enabled: true, token: 'fixture-value' }))
-  assert.throws(() => validateToolArguments(intermediate, { enabled: true }), /Invalid arguments/)
+  await assert.doesNotReject(validateToolArguments(intermediate, { enabled: true, token: 'fixture-value' }))
+  await assert.rejects(validateToolArguments(intermediate, { enabled: true }), /Invalid arguments/)
   const { $schema: _dialect, ...withoutDialect } = modern.inputSchema
-  assert.throws(() => validateToolArguments({ name: 'mcp_fixture_modern', inputSchema: withoutDialect }, { enabled: true }), /Invalid arguments/, 'MCP defaults to 2020-12 even without an explicit schema URI')
+  await assert.rejects(validateToolArguments({ name: 'mcp_fixture_modern', inputSchema: withoutDialect }, { enabled: true }), /Invalid arguments/, 'MCP defaults to 2020-12 even without an explicit schema URI')
   const legacy = { name: 'legacy', inputSchema: { $schema: 'http://json-schema.org/draft-07/schema#', type: 'object', properties: { enabled: { type: 'boolean' }, token: { type: 'string' } }, dependencies: { enabled: ['token'] } } }
-  assert.doesNotThrow(() => validateToolArguments(legacy, { enabled: true, token: 'fixture-value' }))
-  assert.throws(() => validateToolArguments(legacy, { enabled: true }), /Invalid arguments/)
+  await assert.doesNotReject(validateToolArguments(legacy, { enabled: true, token: 'fixture-value' }))
+  await assert.rejects(validateToolArguments(legacy, { enabled: true }), /Invalid arguments/)
 })
 
 test('official MCP server flows through KK Code registry and governed executor without widening tool arguments', { timeout: 15000 }, async t => {

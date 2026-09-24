@@ -1,12 +1,19 @@
 import { spawn } from "node:child_process"
-import { mkdtemp, writeFile, unlink, rm, readFile, realpath, stat } from "node:fs/promises"
+import { createHash } from "node:crypto"
+import { mkdtemp, mkdir, copyFile, writeFile, unlink, rm, readFile, realpath, stat, lstat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
+import { runControlledGit } from "./controlled-git.mjs"
 
 const GIT_TIMEOUT_MS = 30000
 const WORKTREE_CLEANUP_TIMEOUT_MS = 5000
 
-function run(args, cwd = process.cwd(), timeoutMs = GIT_TIMEOUT_MS, env = {}) {
+async function controlledRun(args, cwd = process.cwd(), timeoutMs = GIT_TIMEOUT_MS, env = {}, raw = false) {
+  const result = await runControlledGit(args, { cwd, timeoutMs, env })
+  return { ...result, stdout: raw ? result.stdout : result.stdout.trim(), stderr: result.stderr.trim() }
+}
+
+function run(args, cwd = process.cwd(), timeoutMs = GIT_TIMEOUT_MS, env = {}, raw = false) {
   return new Promise((resolve) => {
     let stdout = ""
     let stderr = ""
@@ -39,7 +46,7 @@ function run(args, cwd = process.cwd(), timeoutMs = GIT_TIMEOUT_MS, env = {}) {
       if (done) return
       done = true
       clearTimeout(timer)
-      resolve({ ok: code === 0, stdout: stdout.trim(), stderr: stderr.trim(), code })
+      resolve({ ok: code === 0, stdout: raw ? stdout : stdout.trim(), stderr: stderr.trim(), code })
     })
   })
 }
@@ -521,38 +528,209 @@ export async function removeWorktree(worktreePath, cwd = process.cwd(), {
   }
 }
 
+/** Inspect a cleanup whose completion receipt was lost, without deleting again. */
+export async function inspectWorktreeRemoval(worktreePath, cwd) {
+  if (invalidRemovalPath(worktreePath) || invalidRemovalPath(cwd)) return { ok: false, removed: false }
+  try {
+    await lstat(worktreePath)
+    return { ok: true, removed: false }
+  } catch (error) {
+    if (error.code !== "ENOENT") return { ok: false, removed: false }
+  }
+  const listed = await listWorktreeRecords(cwd)
+  if (!listed.ok) return { ok: false, removed: false }
+  const normalize = value => process.platform === "win32" ? lexicalPath(value) : path.resolve(value)
+  return { ok: true, removed: !listed.records.some(record => normalize(record.path) === normalize(worktreePath)) }
+}
+
 /**
  * 导出 detached worktree 相对 HEAD 的全部变更（含新文件与二进制）。
  *
- * worktree 是用完即弃的隔离副本，这里直接暂存它的 index（add -A）再取
- * --cached diff。excludePaths 排除 worker 复制进去的工作区配置文件，免得
+ * 使用临时 index 生成 --cached diff，不改变候选的暂存状态（包括 dry-run）。
+ * excludePaths 排除 worker 复制进去的工作区配置文件，免得
  * 回收时把它们误当成子智能体的产出带回主 checkout。
  */
 export async function exportWorktreePatch(worktreePath, { excludePaths = [] } = {}) {
-  if (!(await isGitRepo(worktreePath))) {
+  if (!(await controlledRun(["rev-parse", "--is-inside-work-tree"], worktreePath)).ok) {
     return { ok: false, error: "not a git repository" }
   }
   const excludes = (Array.isArray(excludePaths) ? excludePaths : [])
     .map((item) => String(item || "").trim())
     .filter(Boolean)
     .map((item) => `:(exclude)${item}`)
-  const addResult = await run(["add", "-A", "--", ".", ...excludes], worktreePath)
-  if (!addResult.ok) {
-    return { ok: false, error: `git add failed: ${addResult.stderr}` }
+  const { temp, env: objectEnv } = await temporaryGitObjects(worktreePath, "kkcode-export-")
+  const env = { ...objectEnv, GIT_INDEX_FILE: path.join(temp, "index") }
+  try {
+    const readTree = await controlledRun(["read-tree", "HEAD"], worktreePath, GIT_TIMEOUT_MS, env)
+    if (!readTree.ok) return { ok: false, error: `read-tree failed: ${readTree.stderr}` }
+    const addResult = await controlledRun(["add", "-A", "--", ".", ...excludes], worktreePath, GIT_TIMEOUT_MS, env)
+    if (!addResult.ok) {
+      return { ok: false, error: `git add failed: ${addResult.stderr}` }
+    }
+    const filesResult = await controlledRun(["diff", "--cached", "--name-only", "-z", "HEAD"], worktreePath, GIT_TIMEOUT_MS, env, true)
+    if (!filesResult.ok) {
+      return { ok: false, error: `git diff failed: ${filesResult.stderr}` }
+    }
+    const files = filesResult.stdout.split("\0").filter(Boolean)
+    if (files.length === 0) {
+      return { ok: true, patch: "", files: [], empty: true }
+    }
+    const patchResult = await controlledRun(["diff", "--cached", "--binary", "HEAD"], worktreePath, GIT_TIMEOUT_MS, env, true)
+    if (!patchResult.ok) {
+      return { ok: false, error: `git diff failed: ${patchResult.stderr}` }
+    }
+    return { ok: true, patch: patchResult.stdout, files, empty: false }
+  } finally {
+    await rm(temp, { recursive: true, force: true })
   }
-  const filesResult = await run(["diff", "--cached", "--name-only", "HEAD"], worktreePath)
-  if (!filesResult.ok) {
-    return { ok: false, error: `git diff failed: ${filesResult.stderr}` }
+}
+
+/** Resolve actual checkout/common identities before taking a promotion lock. */
+export async function repositoryIdentity(cwd) {
+  const root = await controlledRun(["rev-parse", "--show-toplevel"], cwd)
+  const common = await controlledRun(["rev-parse", "--git-common-dir"], cwd)
+  if (!root.ok || !common.ok) throw new Error("cannot resolve repository identity")
+  return {
+    root: await realpath(root.stdout),
+    commonDir: await realpath(path.resolve(cwd, common.stdout))
   }
-  const files = filesResult.stdout.trim().split("\n").filter(Boolean)
-  if (files.length === 0) {
-    return { ok: true, patch: "", files: [], empty: true }
+}
+
+async function temporaryGitObjects(cwd, prefix) {
+  const objects = await controlledRun(["rev-parse", "--git-path", "objects"], cwd)
+  if (!objects.ok) throw new Error("cannot resolve Git object directory")
+  const originalObjects = await realpath(path.resolve(cwd, objects.stdout))
+  const temp = await mkdtemp(path.join(tmpdir(), prefix))
+  const objectDir = path.join(temp, "objects")
+  await mkdir(objectDir, { mode: 0o700 })
+  return { temp, env: {
+    GIT_OBJECT_DIRECTORY: objectDir,
+    // Git accepts C-style quoting, needed for separators/backslashes in paths.
+    GIT_ALTERNATE_OBJECT_DIRECTORIES: JSON.stringify(originalObjects),
+    GIT_OPTIONAL_LOCKS: "0"
+  } }
+}
+
+async function copyGitIndex(cwd, destination) {
+  const result = await controlledRun(["rev-parse", "--git-path", "index"], cwd)
+  if (!result.ok) throw new Error("cannot resolve Git index")
+  try { await copyFile(path.resolve(cwd, result.stdout), destination) }
+  catch (error) { if (error.code !== "ENOENT") throw error }
+}
+
+/**
+ * Content fingerprints, not only porcelain names: concurrent edits to an already
+ * dirty file must invalidate a promotion preflight. Never change the real index.
+ * Ignored files are outside this Git snapshot, and unmerged indexes fail closed.
+ */
+export async function captureWorkingTreeState(cwd) {
+  let temp
+  try {
+    const isolated = await temporaryGitObjects(cwd, "kkcode-tree-state-")
+    temp = isolated.temp
+    const readIndexTree = async name => {
+      const indexPath = path.join(temp, name)
+      await copyGitIndex(cwd, indexPath)
+      return controlledRun(["write-tree"], cwd, GIT_TIMEOUT_MS, { ...isolated.env, GIT_INDEX_FILE: indexPath })
+    }
+    const head = await controlledRun(["rev-parse", "HEAD"], cwd)
+    const index = await readIndexTree("before-index")
+    const status = await controlledRun(["status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd, GIT_TIMEOUT_MS, { GIT_OPTIONAL_LOCKS: "0" }, true)
+    if (!head.ok || !index.ok || !status.ok) throw new Error("cannot fingerprint HEAD, index or working tree status")
+    const env = { ...isolated.env, GIT_INDEX_FILE: path.join(temp, "index") }
+    for (const args of [["read-tree", "HEAD"], ["add", "-A"]]) {
+      const result = await controlledRun(args, cwd, GIT_TIMEOUT_MS, env)
+      if (!result.ok) throw new Error(`cannot fingerprint working tree: ${result.stderr}`)
+    }
+    const tree = await controlledRun(["write-tree"], cwd, GIT_TIMEOUT_MS, env)
+    const finalHead = await controlledRun(["rev-parse", "HEAD"], cwd)
+    const finalIndex = await readIndexTree("after-index")
+    const finalStatus = await controlledRun(["status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd, GIT_TIMEOUT_MS, { GIT_OPTIONAL_LOCKS: "0" }, true)
+    if (!tree.ok || !finalHead.ok || !finalIndex.ok || !finalStatus.ok
+      || head.stdout !== finalHead.stdout || index.stdout !== finalIndex.stdout || status.stdout !== finalStatus.stdout) {
+      throw new Error("repository changed while collecting its fingerprint")
+    }
+    const dirty = []
+    const records = status.stdout.split("\0")
+    for (let i = 0; i < records.length; i++) {
+      const item = records[i]
+      if (!item) continue
+      dirty.push(item.slice(3))
+      if (/[RC]/.test(item.slice(0, 2)) && records[i + 1]) dirty.push(records[++i])
+    }
+    return {
+      ok: true,
+      state: {
+        head: head.stdout,
+        indexTree: index.stdout,
+        worktreeTree: tree.stdout,
+        dirtyFingerprint: createHash("sha256").update(`${status.stdout}\0${index.stdout}\0${tree.stdout}`).digest("hex")
+      },
+      dirtyPaths: dirty
+    }
+  } catch (error) {
+    return { ok: false, error: error.message }
+  } finally {
+    if (temp) await rm(temp, { recursive: true, force: true })
   }
-  const patchResult = await run(["diff", "--cached", "--binary", "HEAD"], worktreePath)
-  if (!patchResult.ok) {
-    return { ok: false, error: `git diff failed: ${patchResult.stderr}` }
+}
+
+/** Predict the exact Git trees without touching either checkout or real index. */
+export async function predictPromotionTrees(cwd, before, patch, { threeway = false } = {}) {
+  const { temp, env: objectEnv } = await temporaryGitObjects(cwd, "kkcode-promotion-predict-")
+  try {
+    const patchFile = path.join(temp, "candidate.patch")
+    await writeFile(patchFile, patch, { encoding: "utf8", mode: 0o600 })
+    const applyTo = async (tree, name) => {
+      const indexFile = path.join(temp, name)
+      const env = { ...objectEnv, GIT_INDEX_FILE: indexFile }
+      if (name === "worktree-index") {
+        for (const args of [["read-tree", before.head], ["add", "-A"]]) {
+          const result = await controlledRun(args, cwd, GIT_TIMEOUT_MS, env)
+          if (!result.ok) throw new Error(result.stderr)
+        }
+      } else await copyGitIndex(cwd, indexFile)
+      const source = await controlledRun(["write-tree"], cwd, GIT_TIMEOUT_MS, env)
+      if (!source.ok) throw new Error(source.stderr || "could not inspect source for patch prediction")
+      if (source.stdout !== tree) throw Object.assign(new Error("source changed while predicting patch result"), { code: "promotion_baseline_changed" })
+      const applied = await controlledRun(["apply", "--cached", "--whitespace=nowarn", ...(threeway ? ["--3way"] : []), patchFile], cwd, GIT_TIMEOUT_MS, env)
+      if (!applied.ok) throw new Error(applied.stderr)
+      const result = await controlledRun(["write-tree"], cwd, GIT_TIMEOUT_MS, env)
+      if (!result.ok) throw new Error(result.stderr)
+      return result.stdout
+    }
+    return {
+      ok: true,
+      head: before.head,
+      worktreeTree: await applyTo(before.worktreeTree, "worktree-index"),
+      indexTree: threeway ? await applyTo(before.indexTree, "staging-index") : before.indexTree
+    }
+  } catch (error) {
+    return { ok: false, error: error.message, code: error.code }
+  } finally { await rm(temp, { recursive: true, force: true }) }
+}
+
+/** Keep recovery objects reachable by Git GC until explicit retention cleanup. */
+export async function retainPromotionSnapshot(cwd, operationId, commit, indexTree) {
+  if (!/^[a-f0-9]{64}$/.test(operationId)
+    || !/^[a-f0-9]{40,64}$/.test(commit) || !/^[a-f0-9]{40,64}$/.test(indexTree)) {
+    return { ok: false, error: "invalid promotion recovery reference" }
   }
-  return { ok: true, patch: `${patchResult.stdout}\n`, files, empty: false }
+  // Fingerprinting stores trees only in ephemeral object directories. Now that
+  // an actual promotion is authorized, materialize the recovery index tree in
+  // the real object store without updating the user's index or staging area.
+  const temp = await mkdtemp(path.join(tmpdir(), "kkcode-promote-index-"))
+  try {
+    const indexPath = path.join(temp, "index")
+    await copyGitIndex(cwd, indexPath)
+    const materialized = await controlledRun(["write-tree"], cwd, GIT_TIMEOUT_MS, { GIT_INDEX_FILE: indexPath })
+    if (!materialized.ok || materialized.stdout !== indexTree) return { ok: false, error: "staging index changed before retaining recovery objects" }
+  } finally { await rm(temp, { recursive: true, force: true }) }
+  for (const [suffix, object] of [["before", commit], ["index", indexTree]]) {
+    const result = await controlledRun(["update-ref", `refs/kkcode/promotions/${operationId}/${suffix}`, object], cwd)
+    if (!result.ok) return { ok: false, error: result.stderr }
+  }
+  return { ok: true }
 }
 
 /** Stash current changes */
@@ -590,6 +768,7 @@ export function generateBranchName(sessionId, objective = "") {
  * @property {string} commitHash - Git 提交对象哈希
  * @property {string} repoPath - 仓库绝对路径
  * @property {string} parentHash - 父提交哈希
+ * @property {string} treeHash - 快照工作树内容指纹
  * @property {string} message - 提交信息
  * @property {number} createdAt - 创建时间戳
  * @property {string[]} files - 包含的文件列表
@@ -605,14 +784,15 @@ export function generateBranchName(sessionId, objective = "") {
  * @param {string[]} [paths=[]] - 要包含的文件路径（相对于repoPath），空数组表示所有更改
  * @returns {Promise<{ok: boolean, ghostCommit?: GhostCommitInfo, error?: string}>}
  */
-export async function createGhostCommit(repoPath, message = "kkcode snapshot", paths = []) {
+export async function createGhostCommit(repoPath, message = "kkcode snapshot", paths = [], { controlled = false } = {}) {
+  const runner = controlled ? controlledRun : run
   // 检查是否是 Git 仓库
-  if (!(await isGitRepo(repoPath))) {
+  if (!(await runner(["rev-parse", "--is-inside-work-tree"], repoPath)).ok) {
     return { ok: false, error: "not a git repository" }
   }
 
   // 获取当前 HEAD
-  const headResult = await run(["rev-parse", "HEAD"], repoPath)
+  const headResult = await runner(["rev-parse", "HEAD"], repoPath)
   if (!headResult.ok) {
     return { ok: false, error: `failed to get HEAD: ${headResult.stderr}` }
   }
@@ -627,7 +807,7 @@ export async function createGhostCommit(repoPath, message = "kkcode snapshot", p
     indexPath = path.join(tmpDir, "index")
 
     // 1. 读取当前 HEAD 到临时索引
-    const readTreeResult = await run(
+    const readTreeResult = await runner(
       ["read-tree", "HEAD"],
       repoPath,
       GIT_TIMEOUT_MS,
@@ -641,7 +821,7 @@ export async function createGhostCommit(repoPath, message = "kkcode snapshot", p
     const addArgs = paths.length > 0 
       ? ["add", "--", ...paths]
       : ["add", "-A"]
-    const addResult = await run(
+    const addResult = await runner(
       addArgs,
       repoPath,
       GIT_TIMEOUT_MS,
@@ -652,7 +832,7 @@ export async function createGhostCommit(repoPath, message = "kkcode snapshot", p
     }
 
     // 3. 写入树对象
-    const writeTreeResult = await run(
+    const writeTreeResult = await runner(
       ["write-tree"],
       repoPath,
       GIT_TIMEOUT_MS,
@@ -664,9 +844,12 @@ export async function createGhostCommit(repoPath, message = "kkcode snapshot", p
     const treeHash = writeTreeResult.stdout.trim()
 
     // 4. 创建提交对象 (幽灵提交)
-    const commitTreeResult = await run(
+    const commitTreeResult = await runner(
       ["commit-tree", treeHash, "-p", parentHash, "-m", message],
-      repoPath
+      repoPath, GIT_TIMEOUT_MS, controlled ? {
+        GIT_AUTHOR_NAME: "KK Code Recovery", GIT_AUTHOR_EMAIL: "recovery@kkcode.local",
+        GIT_COMMITTER_NAME: "KK Code Recovery", GIT_COMMITTER_EMAIL: "recovery@kkcode.local"
+      } : {}
     )
     if (!commitTreeResult.ok) {
       return { ok: false, error: `commit-tree failed: ${commitTreeResult.stderr}` }
@@ -674,7 +857,7 @@ export async function createGhostCommit(repoPath, message = "kkcode snapshot", p
     const commitHash = commitTreeResult.stdout.trim()
 
     // 5. 获取包含的文件列表
-    const diffResult = await run(
+    const diffResult = await runner(
       ["diff-tree", "--no-commit-id", "--name-only", "-r", commitHash],
       repoPath
     )
@@ -689,6 +872,7 @@ export async function createGhostCommit(repoPath, message = "kkcode snapshot", p
         commitHash,
         repoPath: path.resolve(repoPath),
         parentHash,
+        treeHash,
         message,
         createdAt: Date.now(),
         files
@@ -749,6 +933,7 @@ export async function restoreGhostCommit(repoPath, commitHash, restoreIndex = fa
  * @param {Object} options - 选项
  * @param {boolean} [options.threeway=true] - 使用三方合并
  * @param {boolean} [options.check=false] - 仅检查，不实际应用
+ * @param {boolean} [options.controlled=false] - 禁止宿主执行仓库配置代码
  * @param {boolean} [options.whitespace="nowarn"] - 空白字符处理
  * @returns {Promise<{ok: boolean, applied?: string[], skipped?: string[], conflicts?: string[], error?: string}>}
  */
@@ -756,6 +941,7 @@ export async function applyPatch(repoPath, diff, options = {}) {
   const { 
     threeway = true, 
     check = false,
+    controlled = false,
     whitespace = "nowarn"
   } = options
 
@@ -774,7 +960,7 @@ export async function applyPatch(repoPath, diff, options = {}) {
     if (!check) applyArgs.push("-v") // verbose for parsing results
     applyArgs.push(patchPath)
 
-    const result = await run(applyArgs, repoPath)
+    const result = await (controlled ? controlledRun : run)(applyArgs, repoPath)
 
     // 解析结果
     if (!result.ok) {

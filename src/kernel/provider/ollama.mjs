@@ -149,6 +149,7 @@ export async function requestOllama(input) {
   if (mappedTools) payload.tools = mappedTools
 
   const response = await fetch(endpoint, {
+    redirect: 'error',
     method: "POST",
     headers: buildRequestHeaders({
       target: "llm",
@@ -185,12 +186,12 @@ export async function requestOllama(input) {
 
   return {
     text,
-    usage: {
+    usage: markUsageIdentity(markUsageEvidence({
       input: json.prompt_eval_count ?? 0,
       output: json.eval_count ?? 0,
       cacheRead: 0,
       cacheWrite: 0
-    },
+    }, [json.prompt_eval_count, json.eval_count]), { model: json.model }),
     toolCalls
   }
 }
@@ -233,6 +234,7 @@ export async function* requestOllamaStream(input) {
   if (mappedTools) payload.tools = mappedTools
 
   const response = await fetch(endpoint, {
+    redirect: 'error',
     method: "POST",
     headers: buildRequestHeaders({
       target: "llm",
@@ -288,12 +290,12 @@ export async function* requestOllamaStream(input) {
           }
           yield {
             type: "usage",
-            usage: {
+            usage: markUsageIdentity(markUsageEvidence({
               input: json.prompt_eval_count ?? 0,
               output: json.eval_count ?? 0,
               cacheRead: 0,
               cacheWrite: 0
-            }
+            }, [json.prompt_eval_count, json.eval_count]), { model: json.model })
           }
         }
       }
@@ -310,12 +312,12 @@ export async function* requestOllamaStream(input) {
           }
           yield {
             type: "usage",
-            usage: {
+            usage: markUsageIdentity(markUsageEvidence({
               input: json.prompt_eval_count ?? 0,
               output: json.eval_count ?? 0,
               cacheRead: 0,
               cacheWrite: 0
-            }
+            }, [json.prompt_eval_count, json.eval_count]), { model: json.model })
           }
         }
       } catch { /* ignore incomplete JSON */ }
@@ -325,3 +327,4 @@ export async function* requestOllamaStream(input) {
     try { reader.releaseLock() } catch { /* reader may have pending read if generator was force-closed */ }
   }
 }
+import { markUsageEvidence, markUsageIdentity } from '../../usage/usage-evidence.mjs'

@@ -18,7 +18,7 @@ export const RELAY_FEATURE_EVENT_PUSH = 'events.push'
 /** Control frames every SSE stream may emit (not journal rows). */
 export const SSE_CONTROL_TYPES = Object.freeze(['connected', 'replay.gap', 'session.state'])
 /** Device-scope status events on the device stream (and relay `device-event`). */
-export const DEVICE_EVENT_TYPES = Object.freeze(['device.online', 'device.offline', 'session.status', 'settings.updated', 'models.updated', 'mcp.loaded'])
+export const DEVICE_EVENT_TYPES = Object.freeze(['device.online', 'device.offline', 'session.status', 'settings.updated', 'models.updated', 'mcp.loaded', 'memory.updated', 'runs.updated'])
 /** Turn lifecycle row types that determine whether a session is running. */
 export const SESSION_RUNNING_TYPES = Object.freeze(['turn.start', 'turn.auto_continue'])
 export const SESSION_IDLE_TYPES = Object.freeze(['turn.finish', 'turn.result', 'turn.failed'])
@@ -27,7 +27,10 @@ export const DEVICE_METHODS = Object.freeze([
   'turns.start', 'turns.cancel', 'events.list', 'control.acquire', 'control.release',
   'approvals.resolve', 'commands.list', 'commands.run', 'settings.get', 'settings.update',
   'extensions.list', 'extensions.reload', 'models.discover', 'profile.get', 'profile.update',
-  'attachments.upload', 'attachments.list', 'attachments.remove', 'branches.list', 'branches.switch', 'branches.create', 'worktrees.list', 'worktrees.create', 'worktrees.open'
+  'attachments.upload', 'attachments.list', 'attachments.remove', 'branches.list', 'branches.switch', 'branches.create', 'worktrees.list', 'worktrees.create', 'worktrees.open',
+  'artifacts.list', 'artifacts.read', 'artifacts.search', 'artifacts.download', 'artifacts.pin', 'artifacts.prune',
+  'memory.list', 'memory.get', 'memory.propose', 'memory.correct', 'memory.confirm', 'memory.enable', 'memory.forget', 'memory.observe', 'memory.legacy', 'memory.import',
+  'runs.list', 'runs.get', 'runs.events', 'runs.pause', 'runs.cancel', 'runs.artifacts.list', 'runs.artifacts.read', 'runs.artifacts.download'
 ])
 export class ProtocolError extends Error {
   constructor(code, message, status = 400) { super(message); this.code = code; this.status = status }

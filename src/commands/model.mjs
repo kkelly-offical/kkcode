@@ -5,7 +5,10 @@ import {
   resolveProviderConnection,
   escapeTerminalText,
   validateModelId,
-  requestProvider
+  requestProvider,
+  resolveProviderProfile,
+  resolveTaskModel,
+  TASK_MODEL_ROLES
 } from "../kernel/index.mjs"
 
 function selectedProvider(configState, requested) {
@@ -26,6 +29,34 @@ function printModelList(result) {
 
 export function createModelCommand() {
   const command = new Command("model").description("discover and test provider models")
+
+  command.command('profile').description('只读检查模型能力来源、预算与渠道范围；不请求模型或刷新目录')
+    .option('-p, --provider <name>', '已配置渠道名称')
+    .option('-m, --model <id>', '模型 ID')
+    .option('--json', '输出不含密钥或 URL 查询参数的结构化档案')
+    .action(async options => {
+      const state = await loadConfig(process.cwd()), provider = selectedProvider(state, options.provider)
+      const profile = await resolveProviderProfile(state, provider, selectedModel(state, provider, options.model))
+      if (options.json) console.log(JSON.stringify(profile, null, 2))
+      else {
+        console.log(`${escapeTerminalText(profile.provider)} / ${escapeTerminalText(profile.model)} — ${escapeTerminalText(profile.protocol)}`)
+        console.log(`端点：${escapeTerminalText(profile.endpointOrigin)}；上下文：${profile.context.limit} (${profile.context.source})；输出预留：${profile.output.reserved}`)
+        for (const [capability, evidence] of Object.entries(profile.capabilities)) console.log(`${capability}: ${evidence.value === null ? '未知' : evidence.value ? '支持/已启用' : '未支持/未启用'} (${evidence.source})`)
+        console.log(profile.compatibility.note)
+      }
+    })
+  command.command('route <role>').description(`只读解释职责模型路由：${TASK_MODEL_ROLES.join(', ')}`)
+    .option('-p, --provider <name>', '当前会话渠道名称')
+    .option('-m, --model <id>', '当前会话模型 ID')
+    .option('--json', '输出结构化路由说明')
+    .action(async (role, options) => {
+      const state = await loadConfig(process.cwd()), provider = selectedProvider(state, options.provider)
+      const route = await resolveTaskModel(state, { role, providerType: provider, model: selectedModel(state, provider, options.model) })
+      const profile = await resolveProviderProfile(state, route.providerType, route.model)
+      const report = { role, provider: route.providerType, model: route.model, source: route.source, overridden: route.overridden, protocol: profile.protocol, endpointOrigin: profile.endpointOrigin }
+      if (options.json) console.log(JSON.stringify(report, null, 2))
+      else console.log(`${escapeTerminalText(role)} → ${escapeTerminalText(report.provider)} / ${escapeTerminalText(report.model)} (${escapeTerminalText(report.source)})\n端点：${escapeTerminalText(report.endpointOrigin)}；此命令不会产生推理费用。`)
+    })
 
   command
     .command("list")

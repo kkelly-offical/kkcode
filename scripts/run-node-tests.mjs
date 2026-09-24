@@ -6,6 +6,9 @@ import { spawn } from "node:child_process"
 const rootDir = process.cwd()
 const testDir = path.join(rootDir, "test")
 const enableCoverage = process.argv.includes("--coverage")
+const concurrencyOption = process.argv.find(value => value.startsWith('--concurrency='))
+const concurrency = concurrencyOption ? Number(concurrencyOption.split('=')[1]) : null
+if (concurrency !== null && (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 32)) throw new Error('Test concurrency must be an integer from 1 to 32')
 
 async function collectTests(dir) {
   const entries = await readdir(dir, { withFileTypes: true })
@@ -40,6 +43,7 @@ const childArgs = enableCoverage
       ...testFiles
     ]
   : ["--test", "--test-timeout=120000", ...testFiles]
+if (concurrency !== null) childArgs.unshift(`--test-concurrency=${concurrency}`)
 
 const testHome = await mkdtemp(path.join(os.tmpdir(), 'kkcode-test-home-'))
 const child = spawn(process.execPath, childArgs, {

@@ -54,6 +54,38 @@ try {
   await run(process.execPath, ['--check', path.join(packageRoot, 'apps', 'gateway', 'main.mjs')], scratch)
   await readFile(path.join(packageRoot, 'docs', 'enterprise-deployment.md'), 'utf8')
   await run(process.execPath, ["--input-type=module", "-e", "const sdk = await import('@kkelly-offical/kkcode/sdk'); const client = await import('@kkelly-offical/kkcode/sdk/client'); const protocol = await import('@kkelly-offical/kkcode/protocol'); if (typeof sdk.createKernel !== 'function' || sdk.DeviceClient !== client.DeviceClient || protocol.PROTOCOL_VERSION !== '1') throw new Error('Invalid installed SDK exports'); console.log('installed kernel SDK, browser client and protocol exports ok')"], scratch)
+  await readFile(path.join(packageRoot, 'docs', 'sdk-storage.md'), 'utf8')
+  await readFile(path.join(packageRoot, 'docs', 'data-policy.md'), 'utf8')
+  await readFile(path.join(packageRoot, 'containers', 'office', 'Dockerfile'), 'utf8')
+  await readFile(path.join(packageRoot, 'containers', 'office', 'requirements.lock'), 'utf8')
+  await run(process.execPath, ['--input-type=module', '-e', `
+    const expected = {runs:'createRunCoordinator', memory:'createMemoryController', models:'resolveTaskModel', tasks:'createTaskGraphHost',
+      browser:'createBrowserController', office:'createOfficeService', lsp:'createLanguageService', forge:'createForgeClient', artifacts:'downloadArtifact', diagnostics:'diagnoseRun', environments:'inspectNpmEnvironment', 'browser-recipes':'createBrowserRecipeStore'};
+    for (const [domain, symbol] of Object.entries(expected)) {
+      const module = await import('@kkelly-offical/kkcode/sdk/'+domain);
+      if(typeof module[symbol] !== 'function') throw new Error('Installed SDK domain missing: '+domain+'/'+symbol);
+    }
+    console.log('installed domain SDK exports ok');
+  `], scratch)
+  await run(process.execPath, ['--input-type=module', '-e', `
+    import { openRunStore, createArtifactStore } from '@kkelly-offical/kkcode/sdk/storage';
+    import { mkdtemp, rm } from 'node:fs/promises';
+    import { tmpdir } from 'node:os';
+    import path from 'node:path';
+    const root = await mkdtemp(path.join(tmpdir(), 'kkcode-installed-storage-'));
+    let store;
+    try {
+      store = await openRunStore({directory:path.join(root,'runs')});
+      const record = await store.createRun({id:'package-smoke',ownerId:'smoke',contract:{objective:'package persistence fixture',requiredCriteria:[]}});
+      if ((await store.getRun(record.id)).id !== record.id) throw new Error('Installed RunStore failed');
+      const artifacts = createArtifactStore({root:path.join(root,'artifacts')});
+      const actor = {accountId:'smoke',projectId:'smoke',sessionId:'smoke',runId:record.id};
+      const artifact = await artifacts.put({actor,content:'installed storage fixture'});
+      const page = await artifacts.read({actor,id:artifact.id});
+      if (Buffer.from(page.data,'base64').toString('utf8') !== 'installed storage fixture') throw new Error('Installed artifact read failed');
+      console.log('installed persistence SDK and SQLite worker roundtrip ok');
+    } finally { await store?.close(); await rm(root,{recursive:true,force:true}); }
+  `], scratch)
 } finally {
   await rm(scratch, { recursive: true, force: true })
 }

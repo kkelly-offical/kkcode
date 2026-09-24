@@ -111,7 +111,7 @@ test("review gate fails on pending review and passes after approval", async () =
   assert.equal(passed.gates.review.status, "pass")
 })
 
-test("enabled review gate reports not_applicable explicitly when no review has run", async () => {
+test("enabled review gate reports unknown and blocks completion when no review has run", async () => {
   const result = await runUsabilityGates({
     sessionId: "ses_no_review",
     config: {
@@ -130,8 +130,37 @@ test("enabled review gate reports not_applicable explicitly when no review has r
     },
     cwd: project
   })
-  assert.equal(result.gates.review.status, "not_applicable")
+  assert.equal(result.gates.review.status, "unknown")
   assert.match(result.gates.review.reason, /has not been run/)
+  assert.equal(result.allPass, false)
+})
+
+test("malformed package metadata is unknown, never an inapplicable successful check", async () => {
+  await writeFile(join(project, "package.json"), "{ invalid")
+  const result = await runUsabilityGates({ cwd: project, config: {
+    agent: { longagent: { usability_gates: {
+      build: { enabled: true }, test: { enabled: true }, review: { enabled: false },
+      health: { enabled: false }, budget: { enabled: false }, smoke: { enabled: false }
+    } } }
+  } })
+  assert.equal(result.allPass, false)
+  assert.equal(result.gates.build.status, "unknown")
+  assert.equal(result.gates.test.status, "unknown")
+})
+
+test("review from another session does not satisfy the current session", async () => {
+  await mkdir(join(project, ".kkcode"), { recursive: true })
+  await writeFile(join(project, ".kkcode", "review-state.json"), JSON.stringify({
+    sessionId: "different-session", files: [{ path: "app.mjs", status: "approved" }]
+  }))
+  const result = await runUsabilityGates({ cwd: project, sessionId: "current-session", config: {
+    agent: { longagent: { usability_gates: {
+      build: { enabled: false }, test: { enabled: false }, review: { enabled: true },
+      health: { enabled: false }, budget: { enabled: false }, smoke: { enabled: false }
+    } } }
+  } })
+  assert.equal(result.allPass, false)
+  assert.equal(result.gates.review.status, "unknown")
 })
 
 test("review gate prefers branchReport and fails closed for stale, incomplete, and unwaived blockers", async () => {

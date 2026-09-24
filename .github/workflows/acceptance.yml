@@ -31,6 +31,8 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-search
       - uses: actions/setup-node@v7
         with:
@@ -52,4 +54,156 @@ jobs:
           name: acceptance-${{ matrix.os }}-node-${{ matrix.node }}
           path: test-results/
           if-no-files-found: ignore
+          retention-days: 7
+
+  strict-runtime:
+    # Ubuntu 22.04's unprivileged namespace policy permits Chromium's real
+    # sandbox. Do not disable AppArmor/sysctl/sandbox flags to make this green.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      KKCODE_REQUIRE_STRICT_BROWSER: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-search
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Install isolated test Chromium
+        shell: bash
+        run: |
+          echo "PLAYWRIGHT_BROWSERS_PATH=${RUNNER_TEMP}/kkcode-playwright" >> "$GITHUB_ENV"
+          PLAYWRIGHT_BROWSERS_PATH="${RUNNER_TEMP}/kkcode-playwright" npx playwright install --with-deps chromium
+      - name: Build fixed public test images
+        shell: bash
+        run: |
+          node scripts/build-strict-test-images.mjs > "${RUNNER_TEMP}/kkcode-test-images.json"
+          node --input-type=module -e 'import{readFile,appendFile}from"node:fs/promises";const r=JSON.parse(await readFile(process.argv[1],"utf8"));for(const key of ["KKCODE_STRICT_TEST_IMAGE","KK_LSP_TEST_IMAGE"]){const value=r.environment[key];if(!/^sha256:[a-f0-9]{64}$/.test(value))throw Error("Invalid test image receipt");await appendFile(process.env.GITHUB_ENV,`${key}=${value}\n`)}' "${RUNNER_TEMP}/kkcode-test-images.json"
+          node --input-type=module -e 'import{readFile,appendFile}from"node:fs/promises";const r=JSON.parse(await readFile(process.argv[1],"utf8"));await appendFile(process.env.GITHUB_ENV,`KKCODE_TEST_DOCKER_IMAGE=${r.environment.KKCODE_STRICT_TEST_IMAGE}\n`)' "${RUNNER_TEMP}/kkcode-test-images.json"
+      - name: Real isolation, persistence, budgets and delivery
+        shell: bash
+        run: |
+          node --test --test-concurrency=2 \
+            test/strict-test-images.test.mjs test/strict-isolation.test.mjs \
+            test/run-coordinator.test.mjs test/run-store-migration.test.mjs test/run-candidate-binding.test.mjs \
+            test/task-graph.test.mjs test/request-budget.test.mjs \
+            test/request-budget-crash.test.mjs test/strict-pricing-snapshot.test.mjs \
+            test/strict-input-budget.test.mjs test/lsp-service.test.mjs \
+            test/npm-environment.test.mjs test/environment-cli.test.mjs \
+            test/npm-environment-security-review.test.mjs \
+            test/evaluation-live-sdk.test.mjs test/evaluation-recovery.test.mjs \
+            test/tool-program-loop.test.mjs test/browser-recipe-strict.test.mjs \
+            test/verification-workspace.test.mjs \
+            test/forge-run-delivery.test.mjs test/forge-cli.test.mjs
+      - name: Real non-root Chromium sandbox gate
+        run: node --test test/browser-strict-smoke.test.mjs
+      - name: Preserve real sandbox evidence
+        shell: bash
+        run: |
+          mkdir -p test-results
+          node scripts/browser-strict-smoke.mjs > test-results/strict-browser.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: strict-runtime-linux
+          path: |
+            test-results/
+            ${{ runner.temp }}/kkcode-test-images.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  isolated-toolchains:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      KKCODE_REQUIRE_REAL_LSP: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Build locked offline toolchains
+        shell: bash
+        run: |
+          docker build --platform linux/amd64 --iidfile "${RUNNER_TEMP}/kkcode-office.id" -f containers/office/Dockerfile .
+          docker build --platform linux/amd64 --iidfile "${RUNNER_TEMP}/kkcode-lsp.id" containers/lsp
+          node --input-type=module -e 'import{readFile,appendFile}from"node:fs/promises";for(const [key,file] of [["KKCODE_OFFICE_TEST_IMAGE","kkcode-office.id"],["KK_LSP_REAL_IMAGE","kkcode-lsp.id"]]){const value=(await readFile(process.env.RUNNER_TEMP+"/"+file,"utf8")).trim();if(!/^sha256:[a-f0-9]{64}$/.test(value))throw Error("Invalid image ID");await appendFile(process.env.GITHUB_ENV,`${key}=${value}\n`)}'
+      - name: Actual Office, PDF, OCR and five language servers
+        run: node --test --test-concurrency=1 test/office-service.test.mjs test/office-transfer.test.mjs test/lsp-real-servers.test.mjs
+      - name: Approved public esbuild, offline build and identical LSP dependencies
+        shell: bash
+        run: KKCODE_DEPENDENCY_LIVE=1 KKCODE_STRICT_TEST_IMAGE="$KK_LSP_REAL_IMAGE" node --test --test-name-pattern='real locked esbuild' test/npm-environment.test.mjs
+      - name: All 60 reference-oracle selfchecks, never model-quality evidence
+        shell: bash
+        run: |
+          node scripts/evaluate.mjs selfcheck --split all --image "$KK_LSP_REAL_IMAGE" --office-image "$KKCODE_OFFICE_TEST_IMAGE" --output test-results/evaluation-ci
+          node --input-type=module -e 'import{readResultFiles}from"./evaluation/v1/runner.mjs";import{createManifest}from"./evaluation/v1/manifest.mjs";const rows=await readResultFiles("test-results/evaluation-ci"),manifest=createManifest();if(rows.length!==60||!manifest.tasks.every(t=>rows.filter(r=>r.caseId===t.id&&r.manifestHash===manifest.manifestHash&&r.mode==="selfcheck"&&r.status==="passed"&&r.safetyPassed&&r.semanticNegativeRejected&&r.sourceProtectionRejected).length===1))throw Error("All 60 selfchecks and both independent negative controls must pass; skipped/unsupported is not acceptance");console.log("60 reference-oracle selfchecks passed; live model results remain zero")'
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: isolated-toolchains-linux
+          path: |
+            test-results/
+            ${{ runner.temp }}/kkcode-office.id
+            ${{ runner.temp }}/kkcode-lsp.id
+          if-no-files-found: ignore
+          retention-days: 7
+
+  branded-browser-bridge:
+    name: Bridge / ${{ matrix.os }} / ${{ matrix.channel }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+        channel: [chrome, msedge]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      KKCODE_BRIDGE_TEST_CHANNEL: ${{ matrix.channel }}
+      # Explicit TEST-ONLY official extension-install debugging. No personal
+      # profile, no debug TCP listener, and the OS sandbox must stay enabled.
+      KKCODE_BRIDGE_ALLOW_EXTENSION_DEBUGGING: "1"
+      KKCODE_BRIDGE_TEST_RUNTIME: ${{ runner.temp }}/kkcode-bridge-runtime
+      KKCODE_BRIDGE_REPORT: ${{ runner.temp }}/kkcode-bridge-report.json
+      KKCODE_BRIDGE_EXTENSION_SOURCE: ${{ github.workspace }}/test-results/bridge-extension-source
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Get the exact official extension source, not its moving store version
+        uses: actions/checkout@v7
+        with:
+          repository: microsoft/playwright
+          ref: 1b025d7e20a026371cd5f98ba0cdce48892737c8
+          path: test-results/bridge-extension-source
+          sparse-checkout: packages/extension
+          persist-credentials: false
+      - name: Prepare locked bridge runtime in private temporary storage
+        shell: bash
+        run: node --input-type=module -e 'import{installBrowserBridge}from"./src/kernel/browser/bridge-runtime.mjs";await installBrowserBridge({rootDir:process.env.KKCODE_BRIDGE_TEST_RUNTIME,onProgress:message=>process.stderr.write(message+"\n")})'
+      - name: Real branded browser and official extension on Linux
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/browser-bridge-branded-smoke.mjs
+      - name: Real branded browser and official extension on Windows/macOS
+        if: runner.os != 'Linux'
+        run: node scripts/browser-bridge-branded-smoke.mjs
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: bridge-${{ matrix.os }}-${{ matrix.channel }}
+          path: ${{ runner.temp }}/kkcode-bridge-report.json
+          if-no-files-found: error
           retention-days: 7

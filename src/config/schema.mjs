@@ -2,9 +2,11 @@ import { VALID_MODES, VALID_PROVIDER_TYPES, VALID_REVIEW_SORT, getValidProviderT
 import { APPROVAL_LEVELS } from "../kernel/core/modes.mjs"
 import { noteDeprecation } from "../kernel/core/deprecations.mjs"
 import { MODEL_ROLES } from "../kernel/provider/model-roles.mjs"
+import { validateTaskModelRoles } from '../kernel/provider/task-model.mjs'
 import { THINKING_TIERS } from "../kernel/provider/thinking-effort.mjs"
 import { MODEL_CAPABILITY_KEYS } from "../kernel/provider/model-capabilities.mjs"
 import { STATUS_SEGMENT_IDS } from "../theme/status-bar.mjs"
+import { normalizeDataPolicy } from "../kernel/permission/data-policy.mjs"
 
 /**
  * 0.3.x 旧权限等级 → 0.4.0 四档。0.6.0 起不再接受旧名，只用这张表
@@ -66,6 +68,10 @@ export function validateConfig(config) {
     return { valid: false, errors: ["config must be object"] }
   }
   if (config.config_version !== undefined) checkInt(errors, "config_version", config.config_version, 1)
+  if (Object.hasOwn(config, 'data_policy')) {
+    try { normalizeDataPolicy(config.data_policy) }
+    catch { err(errors, 'data_policy', 'must contain only providers/model_origins/web_origins arrays of exact allowed names or HTTP(S) origins') }
+  }
 
   if (config.provider !== undefined) {
     if (!isObj(config.provider)) {
@@ -143,6 +149,8 @@ export function validateConfig(config) {
         if (p.stream_idle_timeout_ms !== undefined) checkInt(errors, `provider.${key}.stream_idle_timeout_ms`, p.stream_idle_timeout_ms, 1000)
         if (p.max_tokens !== undefined) checkInt(errors, `provider.${key}.max_tokens`, p.max_tokens, 1)
         if (p.retry_attempts !== undefined) checkInt(errors, `provider.${key}.retry_attempts`, p.retry_attempts, 0)
+        if (p.native_compaction !== undefined && typeof p.native_compaction !== 'boolean') err(errors, `provider.${key}.native_compaction`, 'must be boolean')
+        if (p.compaction_trigger !== undefined) checkInt(errors, `provider.${key}.compaction_trigger`, p.compaction_trigger, 50000)
         if (p.retry_base_delay_ms !== undefined) checkInt(errors, `provider.${key}.retry_base_delay_ms`, p.retry_base_delay_ms, 100)
         if (p.stream !== undefined && typeof p.stream !== "boolean") err(errors, `provider.${key}.stream`, "must be boolean")
         if (p.reasoning_effort !== undefined && !["low", "medium", "high", "max", "none"].includes(p.reasoning_effort)) {
@@ -544,6 +552,9 @@ export function validateConfig(config) {
           err(errors, `models.${role}`, "must be string or null")
         }
       }
+      if (config.models.roles !== undefined) {
+        try { validateTaskModelRoles(config.models.roles) } catch { err(errors, 'models.roles', 'must map planning|implementation|review|compaction|title to null or explicit {provider, model}') }
+      }
       // models.ultra 是分阶段覆盖，不是角色。0.5.0 起默认配置就带着它，
       // 而校验器只认三个角色 —— 于是任何显式写出 models.ultra 的配置文件
       // 都会以 "unknown role" 被整份丢弃（0.5.5 修复）。
@@ -560,8 +571,8 @@ export function validateConfig(config) {
         }
       }
       for (const key of Object.keys(config.models)) {
-        if (!MODEL_ROLES.includes(key) && key !== "ultra") {
-          err(errors, `models.${key}`, `unknown role (${MODEL_ROLES.join("|")}|ultra)`)
+        if (!MODEL_ROLES.includes(key) && !['ultra', 'roles'].includes(key)) {
+          err(errors, `models.${key}`, `unknown role (${MODEL_ROLES.join("|")}|ultra|roles)`)
         }
       }
     }
@@ -706,6 +717,20 @@ export function validateConfig(config) {
     else {
       if (config.tool.sources !== undefined && !isObj(config.tool.sources)) err(errors, "tool.sources", "must be object")
       if (config.tool.legacy_aliases !== undefined && typeof config.tool.legacy_aliases !== 'boolean') err(errors, 'tool.legacy_aliases', 'must be boolean')
+      if (config.tool.program !== undefined) {
+        if (!isObj(config.tool.program)) err(errors, 'tool.program', 'must be object')
+        else {
+          if (Object.keys(config.tool.program).some(key => !['enabled', 'limits'].includes(key))) err(errors, 'tool.program', 'unsupported field')
+          if (config.tool.program.enabled !== undefined && typeof config.tool.program.enabled !== 'boolean') err(errors, 'tool.program.enabled', 'must be boolean')
+          if (config.tool.program.limits !== undefined) {
+            const bounds = { max_steps: 10000, max_calls: 16, max_value_bytes: 524288, max_total_bytes: 4194304, timeout_ms: 120000 }
+            if (!isObj(config.tool.program.limits)) err(errors, 'tool.program.limits', 'must be object')
+            else for (const [key, value] of Object.entries(config.tool.program.limits)) {
+              if (!Object.hasOwn(bounds, key) || !Number.isSafeInteger(value) || Number(value) < 1 || Number(value) > bounds[key]) err(errors, `tool.program.limits.${key}`, 'must be a positive integer within the bounded interpreter limit')
+            }
+          }
+        }
+      }
       if (config.tool.discovery !== undefined) {
         if (!isObj(config.tool.discovery)) err(errors, 'tool.discovery', 'must be object')
         else {

@@ -3,7 +3,7 @@ import path from "node:path"
 import { spawn } from "node:child_process"
 
 const rootDir = process.cwd()
-const targets = ["src", "test", "scripts"]
+const targets = ["src", "test", "scripts", "evaluation"]
 const syntaxTargets = []
 
 async function collect(dir) {

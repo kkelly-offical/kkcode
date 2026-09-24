@@ -1,0 +1,3 @@
+Edit supported text runs or spreadsheet cells into a NEW document directory; inputs remain unchanged. Read/inspect first. Text replacements must identify a unique supported run. Unsupported complex objects fail explicitly instead of being silently dropped. Check output text, formulas and rendered pages against the requested changes; distinguish extraction checks from human visual approval.
+
+DOCX/PPTX/Markdown changes.replace is [{find,replace}]; ambiguous matches or text spanning separately formatted runs are rejected. XLSX changes.cells is [{sheet,cell,value}], and an explicit formula object is required for calculations. Do not work around a rejected complex object by recreating the document from extracted text and silently losing original content.

@@ -1,5 +1,57 @@
 # Changelog / 更新日志
 
+## 1.0.5-preview.0 — Unreleased / 开发中
+
+- Start the approved [1.0.5 program](docs/plan-1.0.5.md); published stable remains 1.0.4.
+- Repair opt-in Anthropic native compaction, scoped private replay, complete request
+  budgeting, and compare-and-swap client compaction under concurrent history changes.
+- Harden tool HTTP transport with pinned DNS, bounded decoding and redirect credential
+  isolation; implement the webfetch content contract and remove unsupported promises.
+- Require real acceptance for required gates and host-approved changes to frozen
+  blocking criteria; require host-bound acceptance manifests for strict delegated Ultra.
+- Add experimental trusted-host SQLite run persistence and private artifact storage,
+  typed domain SDK exports, confirmed `kkcode runs` execution/recovery, schema upgrades,
+  verified private backups, owner epochs and unknown-effect reconciliation.
+- Archive oversized conversation tool text before display truncation; provide governed
+  `artifact_read` / `artifact_search` and preserve host-written references through compaction.
+  Search matches include snapshot-bound `readCursor` values for direct retrieval,
+  with authorization rechecked on every page and bounded result metadata.
+- Intersect project/user/environment/host data-egress restrictions on managed model,
+  web and browser paths, including inherited background-task policy. This is not a Shell firewall.
+- Harden worktree promotion recovery and delay cleanup until durable receipts exist.
+- Add session/account-scoped artifact access and memory lifecycle APIs; Web/Android
+  settings expose evidence and confirmed preferences without changing the home layout.
+- Integrate strict Docker tools, independent verification workspaces, durable task
+  graphs, scoped language services, and opt-in governed tool composition.
+- Add `sdk/environments` and `kkcode environments inspect/prepare/verify` for approved
+  npm v2/v3 lockfiles, SRI-verified downloads, separately approved offline install
+  scripts and signed read-only dependency environments. Task startup explicitly opts
+  in with `--environment`; workspaces and other package managers remain unsupported.
+- Expose task state, budgets, evidence and owner-confirmed pause/cancel in Web/Android;
+  leave creation, takeover, unknown-effect resolution and final delivery on the trusted host.
+- Implement isolated browser tab/frame/upload/download workflows and explicitly
+  authorized same-computer browser bridging. Bridge is main-frame-only, does not send
+  global keypresses, and requires separate signed screenshot consent (embedded pixels
+  are not origin DLP). Keep browser credentials on the computer.
+- Add opt-in site recipes: bounded semantic recording without input values, human
+  review, independent offline fixtures, fixed-hash enablement and governed leaf execution.
+  Add a non-root Linux strict Browser acceptance entry; blocked/root fixtures do not pass it.
+- Add offline Office/PDF/Markdown jobs with real rendering/recalculation/OCR,
+  preserved originals, bounded transfer and authenticated artifact references.
+- Extend MCP/ACP form interactions, cancellation and structured results; run untrusted
+  schema validation off the main event loop. Pin managed plugin sources/content and
+  require fresh approval for executable or permission changes, including loose-path
+  consumers and nested aliases. Pending upgrades cannot self-clear approval.
+- Bind external delivery receipts to immutable inspected data and reject candidate
+  changes while querying or persisting evidence; old proofs cannot certify a new candidate.
+
+This is not a release receipt or a claim that every W01–W13 feature is complete.
+See the [implementation ledger](docs/implementation-1.0.5.md) for actual verification.
+No npm/GitHub publication or production deployment has occurred for this version.
+The external paid-model 60-task × 2-run evaluation, public Forge round trips,
+Chrome/Edge three-OS matrix, new-version CI and seven-day real-use gates need their
+own receipts; local fixtures, oracle selfchecks and historical release CI do not substitute.
+
 ## 1.0.4 — 2026-09-24
 
 - Fix an audit-lock stale-owner race exposed by the Windows release gate:

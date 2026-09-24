@@ -1,7 +1,7 @@
 export default [
   { ignores: ["src/web/assets/**", "coverage/**", "dist/**", "node_modules/**"] },
   {
-    files: ["src/**/*.mjs", "scripts/**/*.mjs", "test/**/*.mjs"],
+    files: ["src/**/*.mjs", "scripts/**/*.mjs", "test/**/*.mjs", "evaluation/**/*.mjs"],
     ignores: ["coverage/**", "dist/**", "node_modules/**"],
     languageOptions: {
       ecmaVersion: "latest",

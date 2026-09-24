@@ -123,16 +123,18 @@ export async function modeReminder(mode) {
 // headless contract. Pinned by test/tool-prompt-groups.test.mjs.
 const TOOL_GROUPS = [
   ["File operations", ["read", "write", "edit", "patch", "multiedit", "move", "copy", "remove", "mkdir", "archive", "glob", "list"]],
-  ["Search", ["grep", "codesearch"]],
+  ["Search", ["grep", "codesearch", "lsp"]],
+  ["Documents", ["office_capabilities", "office_inspect", "office_create", "office_edit", "office_render", "office_pdf", "office_ocr"]],
+  ["Evidence & artifacts", ["artifact_read", "artifact_search"]],
   ["Shell & system", ["bash", "sysinfo"]],
   ["Web", ["websearch", "webfetch", "http_request"]],
   ["Planning & state", ["enter_plan", "exit_plan", "todowrite", "question"]],
   ["Delegation & background", ["task", "task_group", "task_list", "task_parallel", "task_get", "task_output", "task_stop", "background_output", "background_cancel"]],
   ["Git & snapshots", ["git_status", "git_info", "git_snapshot", "git_restore", "git_list_snapshots", "git_apply_patch", "git_delete_snapshot", "git_cleanup"]],
   ["Notebook", ["notebookedit"]],
-  ["Browser", ["browser"]],
+  ["Browser", ["browser", "browser_bridge", "browser_recipe"]],
   ["Skills", ["skill"]],
-  ["Tool discovery", ["tool_search", "tool_batch"]]
+  ["Tool discovery", ["tool_search", "tool_batch", "tool_program", "mcp_resource", "mcp_prompt"]]
 ]
 
 export function toolGroupFor(name) {

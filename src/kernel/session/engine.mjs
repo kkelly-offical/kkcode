@@ -1,8 +1,8 @@
 import { currentRuntime } from "../core/runtime-context.mjs"
 import { runtimeCwd } from "../core/runtime-context.mjs"
 import { randomUUID } from "node:crypto"
-import { loadPricing, calculateCost } from "../../usage/pricing.mjs"
 import { recordTurn } from "../../usage/usage-meter.mjs"
+import { collectModelUsage, priceModelUsage } from '../../usage/model-ledger.mjs'
 import { processTurnLoop } from "./loop.mjs"
 import { runLongAgent } from "./longagent.mjs"
 import { touchSession, setBudgetState, getSession } from "./store.mjs"
@@ -253,7 +253,8 @@ export async function executeTurn({
   allowQuestion = true,
   toolContext = {},
   runSpec = null,
-  steerSource = null
+  steerSource = null,
+  acceptance = null
 }) {
   ensureEventSinks()
 
@@ -283,9 +284,10 @@ export async function executeTurn({
     status: mode === "longagent" ? "running-longagent" : "active"
   })
 
-  const turn =
+  const collected = await collectModelUsage(async () =>
     mode === "longagent"
       ? await runLongAgent({
+          acceptance,
           prompt,
           model,
           providerType: resolvedProviderType,
@@ -324,9 +326,10 @@ export async function executeTurn({
           toolContext,
           runSpec,
           steerSource
-        })
+        }))
 
-  const usage = { ...turn.usage }
+  const turn = collected.result
+  const usage = { ...(collected.groups.length ? collected.usage : turn.usage) }
   let estimated = false
   if ((usage.input || 0) === 0 && (usage.output || 0) === 0) {
     usage.input = estimateTokens(prompt)
@@ -334,9 +337,10 @@ export async function executeTurn({
     estimated = true
   }
 
-  const pricingInfo = await loadPricing(configState, { providerName: providerType, model })
-  const costInfo = calculateCost(pricingInfo.pricing, model, usage)
-  const meter = await recordTurn({ sessionId, usage, cost: costInfo.amount })
+  const costInfo = await priceModelUsage(configState, collected.groups.length && !estimated
+    ? collected.groups : [{ provider: resolvedProviderType, model, usage, estimated }])
+  const pricingInfo = { errors: costInfo.errors }
+  const meter = await recordTurn({ sessionId, usage, cost: costInfo.amount, modelCharges: costInfo.items })
   const budgetResult = evaluateBudget(configState.config, meter)
 
   await setBudgetState(sessionId, {
@@ -369,9 +373,9 @@ export async function executeTurn({
 
   if (firstQuestion && !turn.error && !signal?.aborted) {
     const runtime = currentRuntime()
-    const job = refineSessionTitle({ configState, sessionId, prompt: typeof prompt === 'string' ? prompt : '', providerType: resolvedProviderType, model, baseUrl, apiKeyEnv, signal: runtime?.hostSignal || signal, onUsage: async titleUsage => {
-      const price = calculateCost(pricingInfo.pricing, model, titleUsage)
-      await recordTurn({ sessionId, usage: titleUsage, cost: price.amount, countTurn: false })
+    const job = refineSessionTitle({ configState, sessionId, prompt: typeof prompt === 'string' ? prompt : '', providerType: resolvedProviderType, model, baseUrl, apiKeyEnv, signal: runtime?.hostSignal || signal, onUsage: async (titleUsage, route) => {
+      const price = await priceModelUsage(configState, [{ provider: route?.provider || resolvedProviderType, model: route?.model || model, usage: titleUsage }])
+      await recordTurn({ sessionId, usage: titleUsage, cost: price.amount, countTurn: false, modelCharges: price.items })
     } })
     runtime?.auxiliary?.add(job)
     void job.finally(() => runtime?.auxiliary?.delete(job))

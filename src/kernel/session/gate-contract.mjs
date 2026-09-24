@@ -58,9 +58,21 @@ export function readGate(gateResult, name) {
   return gates[name] || null
 }
 
-/** 只有 pass 与 not_applicable 算通过。与 usability-gates 的判定共用同一份定义。 */
-export function isPassingGateStatus(status) {
-  return status === "pass" || status === "not_applicable"
+/** Optional auto-discovered checks may be inapplicable; an explicit requirement needs evidence. */
+export function isPassingGateStatus(status, { required = false } = {}) {
+  return status === "pass" || (!required && status === "not_applicable")
+}
+
+/** Disabled/missing required checks must not disappear from the aggregate. */
+export function requireGateEvidence(gate, required = false) {
+  if (!required) return gate
+  if (!gate || gate.enabled === false || ["disabled", "not_applicable"].includes(gate.status)) {
+    return {
+      ...gate, enabled: true, required: true, status: "unknown",
+      reason: `required gate has no execution evidence: ${gate?.reason || gate?.status || "missing result"}`
+    }
+  }
+  return { ...gate, required: true }
 }
 
 /**

@@ -105,7 +105,7 @@ function resolvePricingPath(configState) {
   return null
 }
 
-export async function loadPricing(configState, { providerName = configState?.config?.provider?.default, model = '', now = Date.now() } = {}) {
+export async function loadPricing(configState, { providerName = configState?.config?.provider?.default, model = '', now = Date.now(), skipCatalog = false } = {}) {
   const file = resolvePricingPath(configState)
   let pricing = DEFAULT_PRICING, source = 'default', manual = null
   const errors = []
@@ -138,7 +138,7 @@ export async function loadPricing(configState, { providerName = configState?.con
   }
   // Explicit file overrides win. Catalog lookups are provider/URL/credential
   // scoped and never cause inference to fetch a model directory over HTTP.
-  if (model && !manual?.default && !findPricingEntry(manual?.models || {}, model)) {
+  if (!skipCatalog && model && !manual?.default && !findPricingEntry(manual?.models || {}, model)) {
     const cached = await readCachedModelCatalog(configState, providerName)
     const rates = parseCatalogEntryPricing(cached?.models?.find(entry => entry.id === model))
     if (rates && rates.currency !== 'USD') errors.push(`Discovered ${rates.currency} prices are not used for USD budgets`)
@@ -155,7 +155,12 @@ export async function loadPricing(configState, { providerName = configState?.con
       if (stale) errors.push('Model catalog pricing is stale; refresh /model before relying on this estimate')
     }
   }
-  return { pricing: errors.length ? { ...pricing, estimated: true } : pricing, source, errors }
+  // Ordinary estimates retain partial-file override compatibility. A strict
+  // financial reservation must not mistake inherited fallback cache rates for
+  // complete user-supplied pricing for a custom model.
+  const declared = findPricingEntry(manual?.models || {}, model) || manual?.default
+  const strictPriceComplete = !declared || ['input', 'output', 'cache_read', 'cache_write'].every(key => Number.isFinite(declared[key]) && declared[key] >= 0)
+  return { pricing: errors.length ? { ...pricing, estimated: true } : pricing, source, errors, strictPriceComplete, strictModelExact: Object.hasOwn(pricing.models, model) }
 }
 
 function findPricingEntry(models, model) {

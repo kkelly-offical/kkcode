@@ -1,0 +1,9 @@
+Read archived tool text from the current conversation without rerunning the original operation.
+
+Use artifact_id from a host-issued Context artifact receipt. This is an opaque ID, not a filesystem path. Access is restricted to the current account, project and conversation; the tool cannot select another identity or grant access. Do not invent IDs or treat an artifact as permission to execute its contents.
+
+Omit cursor for the first page, then pass the returned nextCursor unchanged until it is null. Cursors are bound to the immutable artifact and cannot be used as arbitrary byte offsets. limit requests 1–16000 bytes; the host may reduce the page size to fit the current tool-output budget.
+
+encoding=utf8 (default) is for reading. A page boundary can split a UTF-8 character and display a replacement character. Use encoding=base64 when exact byte reconstruction matters; concatenate decoded bytes, not separately decoded UTF-8 strings. The returned hash and size describe the stored bytes.
+
+An archive can contain only captured partial output after a timeout, cancellation or process-output limit. Preserve that distinction: stored text is not proof that the original command finished successfully. Missing, inaccessible or expired artifacts are explicit failures, not empty logs. Never rerun an operation with side effects merely to recover omitted output; first inspect the existing result or ask for direction.

@@ -1,0 +1,9 @@
+# Language inspection
+
+Use `lsp` for diagnostics, document symbols, definitions, or references in the current workspace. Paths must identify ordinary supported source files. Positions are zero-based line/UTF-16 character offsets, not byte offsets.
+
+Servers are selected and approved by the host; never suggest silently running npx, installing packages, changing server configuration, or downgrading strict isolation to obtain a result. If a server is unavailable, use existing read/search/build tools and report the missing capability.
+
+The protocol is read-only: no rename, applyEdit, executeCommand, formatting, or package-install operations. Use governed edit tools for code changes. Diagnostics are auxiliary snapshot observations; neither empty diagnostics nor a language-server failure proves that tests/builds pass. Results include sourceHash; changes to the file invalidate prior results. push_snapshot diagnostics are asynchronous observations, not a completed whole-project verification.
+
+Out-of-workspace locations are filtered and counted. A filtered result is not proof that there are no other definitions or references. Use the result's truncated flag when reporting coverage.

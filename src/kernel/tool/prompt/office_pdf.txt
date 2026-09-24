@@ -1,0 +1,3 @@
+Perform only the requested merge_pdf, select_pdf_pages, fill_pdf or annotate_pdf operation, producing a NEW PDF without replacing inputs. Page numbers are one-based. Form filling supports existing AcroForm text fields, not XFA/signatures/scripts. Signed, encrypted or active materials are restricted rather than bypassed. Inspect resulting pages/text and include immutable evidence references.
+
+fill_pdf fields maps existing field names to text. annotate_pdf annotations is [{page,rect:[lowerLeftX,lowerLeftY,upperRightX,upperRightY],text}] in PDF points; these are clickable sticky notes, not edits to the original body. Duplicate form names across merged inputs are rejected rather than silently lost. Arbitrary PDF body rewriting is not supported.
