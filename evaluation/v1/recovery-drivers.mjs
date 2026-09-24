@@ -13,6 +13,9 @@ import { flushNow } from '../../src/kernel/session/store.mjs'
 import { loadConfig } from '../../src/config/load-config.mjs'
 import { sha256 } from './manifest.mjs'
 import { evaluationTurnDiagnostics } from './diagnostics.mjs'
+import { createCounterExecutionObserver } from '../v4/counter-evidence.mjs'
+import { createReceiptExecutionObserver } from '../v4/receipt-evidence.mjs'
+import { createArtifactRecoveryObserver } from '../v4/artifact-evidence.mjs'
 
 const proofs = new WeakMap()
 const proofBody = value => ({ ...value, diagnostics: undefined })
@@ -33,7 +36,7 @@ const call = (id, name, args) => ({ id, type: 'function', function: { name, argu
  * model quality: the reference knows expected answers and is explicitly tagged.
  * All tools, SQLite recovery, compaction CAS and process faults remain real. */
 async function referenceProvider(task) {
-  let phase = 'first', sent = false, reads = 0, count = 0
+  let phase = 'first', sent = false, reads = 0, count = 0, counterStep = 0, receiptStep = 0
   const server = createServer(async (req, res) => {
     const chunks = []; for await (const chunk of req) chunks.push(chunk)
     const body = JSON.parse(Buffer.concat(chunks).toString())
@@ -41,6 +44,14 @@ async function referenceProvider(task) {
     const system = body.messages?.filter(item => item.role === 'system').map(item => item.content).join('\n') || ''
     let message = { role: 'assistant', content: 'Reference turn complete; host verification still required.' }
     if (system.includes('conversation summarizer')) message = { role: 'assistant', content: summary }
+    else if (phase === 'first' && task.receiptReplayCheck === 'bound-effect-receipt-v4') {
+      const calls = [call('inspect-before-effect', 'list', { path: '.' }), call('read-before-effect', 'read', { path: 'original.txt' }), call('target-effect', 'write', { path: 'effect-once.txt', content: 'once' })]
+      if (receiptStep < calls.length) message = { role: 'assistant', content: null, tool_calls: [calls[receiptStep++]] }
+    }
+    else if (phase === 'first' && task.counterReplayCheck === 'bound-counter-v4') {
+      const commands = ['pwd', `node -e "const fs=require('node:fs');const n=fs.existsSync('counter.txt')?Number(fs.readFileSync('counter.txt')):0;fs.writeFileSync('counter.txt',String(n+1)+'\\n')"`, 'cat counter.txt']
+      if (counterStep < commands.length) message = { role: 'assistant', content: null, tool_calls: [call(`counter-step-${counterStep}`, 'bash', { command: commands[counterStep++] })] }
+    }
     else if (phase === 'first' && !sent) {
       sent = true
       let calls
@@ -83,7 +94,7 @@ async function privateControl(cwd, privateRoot) {
 }
 
 /** Shared only with the trusted crash worker; never a model/tool API. */
-export async function createRecoveryRuntime({ task, cwd, privateRoot, profile, image, limits, ownerId = 'evaluation-recovery', fault = null, localFreeLimits = null, existingRunId = null, localFreeAuthorization: providedAuthorization = null, expectedLocalFreePolicy = null, executionObserver = null }) {
+export async function createRecoveryRuntime({ task, cwd, privateRoot, profile, image, limits, ownerId = 'evaluation-recovery', fault = null, localFreeLimits = null, existingRunId = null, localFreeAuthorization: providedAuthorization = null, expectedLocalFreePolicy = null, executionObserver = null, counterObserver = null, receiptObserver = null, artifactObserver = null }) {
   const home = path.join(privateRoot, 'state'); process.env.KKCODE_HOME = home
   await mkdir(home, { recursive: true, mode: 0o700 })
   const prices = path.join(home, 'prices.json'), configFile = path.join(home, 'config.json')
@@ -115,17 +126,32 @@ export async function createRecoveryRuntime({ task, cwd, privateRoot, profile, i
   const kernel = await createDelegatedKernel({ cwd, configState: state, trustState: { trusted: true } })
   const strict = createDockerExecutionBackend({ image }), actor = { accountId: 'evaluation', projectId: task.id }
   const runtime = { store, kernel, artifacts, actor, configState: state, coordinator: null, run: null, limits, backend: strict, localFreeAuthorization }
-  const backend = { ...strict, async executeTool(input) {
+  const fileObserver = counterObserver || receiptObserver || artifactObserver
+  let counterQueue = Promise.resolve()
+  const executeObserved = async input => {
     await fault?.beforeTool?.(runtime, input)
-    const result = await strict.executeTool({ ...input, invoke: () => {
-      if (['artifact_read', 'artifact_search'].includes(input.tool.name)) return input.invoke()
-      throw new Error('Recovery filesystem tools must never execute the host fallback')
-    } })
+    const trace = await fileObserver?.before(input)
+    let result
+    try {
+      result = await strict.executeTool({ ...input, invoke: () => {
+        if (['artifact_read', 'artifact_search'].includes(input.tool.name)) return input.invoke()
+        throw new Error('Recovery filesystem tools must never execute the host fallback')
+      } })
+    } catch (error) { await fileObserver?.after(input, null, trace, error); throw error }
+    await fileObserver?.after(input, result, trace)
     executionObserver?.record(input, result)
     await fault?.afterTool?.(runtime, input, result)
     return result
+  }
+  const backend = { ...strict, executeTool(input) {
+    if (!fileObserver) return executeObserved(input)
+    // Host observations bracket the serial broker operation, not time spent
+    // queued behind another tool whose effect could otherwise contaminate them.
+    const pending = counterQueue.catch(() => {}).then(() => executeObserved(input))
+    counterQueue = pending.then(() => {}, () => {})
+    return pending
   } }
-  if (executionObserver) runtime.executeObservedFixtureTool = input => backend.executeTool(input)
+  if (executionObserver || fileObserver) runtime.executeObservedFixtureTool = input => backend.executeTool(input)
   const originalPut = artifacts.put.bind(artifacts)
   artifacts.put = async input => { await fault?.beforeArtifact?.(runtime, input); return originalPut(input) }
   runtime.coordinator = createRunCoordinator({ kernel, store, artifacts, actor, ownerId, executionBackend: backend, ...(localFreeAuthorization ? { localFreeAuthorization } : {}),
@@ -224,33 +250,47 @@ async function compact(runtime, task, checks, operations, negativeControl = fals
     checks.push({ name: 'expanding-summary-keeps-history', passed: result.reasonCode === 'no_effective_reduction' && sha256(after.messages) === sha256(before.messages) })
   } else checks.push({ name: 'actual-client-compaction-committed', passed: result.compacted === true && after.messages.length < before.messages.length })
   operations.push({ kind: 'compactSession', result, faultInjected: ['compaction_history_race', 'compaction_no_reduction'].includes(task.lifecycle) })
-  return { before, after }
+  return { before, after, result }
 }
 
 /** Actual host lifecycle runner. All approval closures are evaluator authority,
  * all file effects use the real strict Docker backend, never model assertions. */
-export async function runRecoveryScenario({ task, cwd, privateRoot, profile = null, image, budgetUsd = 0, deadlineAt = Date.now() + 120000, signal, mode = 'live', negativeControl = false, localFreeLimits = null, localFreeAuthorization = null, protocolFault = null }) {
+export async function runRecoveryScenario({ task, cwd, privateRoot, profile = null, image, budgetUsd = 0, deadlineAt = Date.now() + 120000, signal, mode = 'live', negativeControl = false, localFreeLimits = null, localFreeAuthorization = null, protocolFault = null, counterFault = null, receiptFault = null, graderRevision = 1 }) {
   if (!supportedRecovery.has(task.lifecycle)) throw new Error('Unknown recovery lifecycle')
+  if (![1, 4].includes(graderRevision)) throw new Error('Unsupported public recovery grader revision')
   if (!['live', 'system-selfcheck'].includes(mode)) throw new Error('Invalid recovery mode')
   if (mode === 'system-selfcheck' && (budgetUsd !== 0 || profile || localFreeLimits || localFreeAuthorization)) throw new Error('System selfcheck cannot authorize external model spending')
   if (localFreeAuthorization && !localFreeLimits) throw new Error('Suite authorization requires explicit local resource limits')
   if (mode === 'live' && (!profile || (localFreeLimits ? budgetUsd !== 0 : budgetUsd <= 0))) throw new Error('Live recovery requires an explicit paid budget or host-approved local-free allowance')
   if (negativeControl && mode !== 'system-selfcheck') throw new Error('Lifecycle negative controls are offline fixture-only, never live model quality evidence')
   const boundProtocol = task.lifecycle === 'protocol_pair_restart' && task.protocolReplayCheck === 'bound-invocations-v2'
+  const boundCounter = task.id === 'C04' && task.split === 'development' && task.lifecycle === 'detach_reattach' && task.counterReplayCheck === 'bound-counter-v4'
+  const boundReceipt = task.id === 'C10' && task.split === 'development' && task.lifecycle === 'receipt_write_failure' && task.receiptReplayCheck === 'bound-effect-receipt-v4'
+  const boundArchive = graderRevision === 4 && task.lifecycle === 'artifact_context_restore'
+  if ((boundCounter || boundReceipt) && graderRevision !== 4) throw new Error('Version 4 recovery tasks require their explicit public grader revision')
   if (protocolFault && (mode !== 'system-selfcheck' || !boundProtocol || negativeControl || !['repeat-original', 'corrupt-artifact'].includes(protocolFault))) throw new Error('Protocol fault injection requires an explicit v2 offline fixture')
+  if (counterFault && (mode !== 'system-selfcheck' || !boundCounter || negativeControl || !['repeat-original', 'repeat-and-restore'].includes(counterFault))) throw new Error('Counter fault injection requires an explicit v4 offline C04 fixture')
+  if (receiptFault && (mode !== 'system-selfcheck' || !boundReceipt || negativeControl || !['repeat-original', 'wrong-read-receipt'].includes(receiptFault))) throw new Error('Receipt fault injection requires an explicit v4 offline C10 fixture')
   privateRoot = await privateControl(cwd, privateRoot)
   const previousHome = process.env.KKCODE_HOME, reference = mode === 'system-selfcheck' ? await referenceProvider(task) : null
   profile = reference?.profile || profile
   const limits = { budgetUsd: reference ? 1 : budgetUsd, deadlineAt }, checks = [], operations = [], diagnostics = [], turns = []
   let runtime, beforeEventsHash, beforeEpoch, faultUsed = false, release, arrived
   const executionObserver = boundProtocol ? protocolExecutionObserver() : null
+  const counterObserver = boundCounter ? createCounterExecutionObserver(cwd) : null
+  const receiptObserver = boundReceipt ? createReceiptExecutionObserver(cwd) : null
+  const artifactObserver = boundArchive ? createArtifactRecoveryObserver() : null
+  let counterReconnect = null
   let interruptedBindings = []
   const reached = new Promise(resolve => { arrived = resolve }), gate = new Promise(resolve => { release = resolve })
   try {
     const fault = {
       async afterTool(current, input) {
         if (faultUsed) return
+        if (boundReceipt) { await receiptObserver.bindEffect(current, input); return }
+        if (boundCounter && !counterObserver.isIncrement(input)) return
         if (['cancel_inflight', 'detach_reattach', 'abort_tool_batch'].includes(task.lifecycle)) {
+          if (boundCounter) await counterObserver.bindBoundary(current, input)
           faultUsed = true; arrived()
           if (task.lifecycle === 'detach_reattach' || negativeControl) await gate
           else await new Promise((_, reject) => { const abort = () => reject(Object.assign(new Error('Evaluation cancellation after a real tool'), { code: 'ABORT_ERR' })); if (input.signal.aborted) abort(); else input.signal.addEventListener('abort', abort, { once: true }) })
@@ -260,9 +300,13 @@ export async function runRecoveryScenario({ task, cwd, privateRoot, profile = nu
           await current.store.claimRun({ runId: row.id, expectedRevision: row.revision, expectedOwnerId: row.ownerId, expectedOwnerEpoch: row.ownerEpoch, ownerId: 'evaluation-replacement', approval: { approved: true, actorId: 'evaluation-host', reason: 'Explicit ownership race injection' } })
         }
       },
-      async beforeArtifact(_current, input) {
+      async beforeArtifact(current, input) {
         if (negativeControl || task.lifecycle !== 'receipt_write_failure' || faultUsed || typeof input.content !== 'string') return
         let data; try { data = JSON.parse(input.content) } catch { return }
+        if (boundReceipt) {
+          const wrong = receiptFault === 'wrong-read-receipt' && data.result && ['read', 'list'].includes(data.result.name)
+          if (!wrong && !await receiptObserver.matchReceipt(current, input, data)) return
+        }
         if (data.actionId && data.result) { faultUsed = true; throw Object.assign(new Error('Evaluation receipt ENOSPC after actual effect'), { code: 'ENOSPC' }) }
       }
     }
@@ -290,15 +334,15 @@ export async function runRecoveryScenario({ task, cwd, privateRoot, profile = nu
         operations.push({ kind: 'real-process-SIGKILL', boundary: task.lifecycle, beforeState: prior.lastTurn?.status, afterState: runtime.run.lastTurn?.status })
       } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); if (worker.exitCode === null && worker.signalCode === null) worker.kill('SIGKILL') }
     } else {
-      runtime = await createRecoveryRuntime({ task, cwd, privateRoot, profile, image, limits, fault, localFreeLimits, localFreeAuthorization, executionObserver })
+      runtime = await createRecoveryRuntime({ task, cwd, privateRoot, profile, image, limits, fault, localFreeLimits, localFreeAuthorization, executionObserver, counterObserver, receiptObserver, artifactObserver })
       await start(runtime, task)
       beforeEpoch = runtime.run.ownerEpoch; beforeEventsHash = sha256(await runtime.store.events({ runId: runtime.run.id }))
       let unsubscribe, firstEvents = 0, secondEvents = 0
-      if (task.lifecycle === 'detach_reattach') unsubscribe = runtime.kernel.events.subscribe(() => { firstEvents++ })
+      if (task.lifecycle === 'detach_reattach') unsubscribe = runtime.kernel.events.subscribe(event => { firstEvents++; counterObserver?.event('first', event) })
       const pending = execute(runtime, task.prompt, signal)
       if (['cancel_inflight', 'detach_reattach', 'abort_tool_batch'].includes(task.lifecycle)) {
         await Promise.race([reached, pending.then(() => { throw new Error('Model never reached required recovery tool boundary') })])
-        if (task.lifecycle === 'detach_reattach') { if (!negativeControl) { unsubscribe(); unsubscribe = runtime.kernel.events.subscribe(() => { secondEvents++ }) } release() }
+        if (task.lifecycle === 'detach_reattach') { if (!negativeControl) { unsubscribe(); unsubscribe = runtime.kernel.events.subscribe(event => { secondEvents++; counterObserver?.event('second', event) }) } release() }
         else if (negativeControl) release()
         else await runtime.coordinator.cancel({ runId: runtime.run.id, reason: 'Evaluation controlled cancellation' })
       }
@@ -316,8 +360,16 @@ export async function runRecoveryScenario({ task, cwd, privateRoot, profile = nu
         checks.push({ name: 'cancelled-tool-history-remains-paired', passed: await pairs(runtime) })
         checks.push({ name: 'no-unproven-completion', passed: run.actions.every(action => action.effect === 'read') && run.state !== 'completed' })
       } else if (task.lifecycle === 'receipt_write_failure') {
-        checks.push({ name: 'real-effect-survives-failed-receipt', passed: faultUsed && await readFile(path.join(cwd, 'effect-once.txt'), 'utf8') === 'once' && terminalUnknown(run) })
-        checks.push({ name: 'receipt-failure-blocks-replay', passed: await rejected(() => runtime.coordinator.resume({ runId: run.id })) === 'UNRESOLVED_ACTIONS' && run.actions.length === 1 })
+        if (boundReceipt) {
+          const beforeResume = receiptObserver.count(), resumeError = await rejected(() => runtime.coordinator.resume({ runId: run.id })), afterResume = receiptObserver.count()
+          if (receiptFault === 'repeat-original') operations.push({ kind: 'fault-receipt-original-replay', actionId: await receiptObserver.replayEffect(runtime) })
+          run = await runtime.store.getRun(run.id)
+          const verified = await receiptObserver.verify(run, { resumeError, beforeResume, afterResume })
+          checks.push(...verified.checks); operations.push(verified.evidence)
+        } else {
+          checks.push({ name: 'real-effect-survives-failed-receipt', passed: faultUsed && await readFile(path.join(cwd, 'effect-once.txt'), 'utf8') === 'once' && terminalUnknown(run) })
+          checks.push({ name: 'receipt-failure-blocks-replay', passed: await rejected(() => runtime.coordinator.resume({ runId: run.id })) === 'UNRESOLVED_ACTIONS' && run.actions.length === 1 })
+        }
       } else if (task.lifecycle === 'owner_epoch_takeover') {
         checks.push({ name: 'actual-epoch-fence-rejects-old-host', passed: faultUsed && run.ownerEpoch > beforeEpoch && run.ownerId === 'evaluation-replacement' && await rejected(() => runtime.coordinator.execute({ runId: run.id, prompt: 'Must not run' })) === 'STALE_OWNER' })
         checks.push({ name: 'late-result-does-not-forge-success', passed: terminalUnknown(run) && run.actions.length === 1 && await readFile(path.join(cwd, 'effect-once.txt'), 'utf8') === 'once' })
@@ -333,7 +385,12 @@ export async function runRecoveryScenario({ task, cwd, privateRoot, profile = nu
         checks.push({ name: 'candidate-change-invalidates-old-verification', passed: current.treeFingerprint !== candidate.treeFingerprint && !run.verifications.some(item => item.status === 'passed' && item.candidateHash === current.treeFingerprint) })
         checks.push({ name: 'old-receipt-cannot-complete-new-candidate', passed: !!await rejected(() => runtime.coordinator.complete({ runId: run.id })) })
       } else {
-        if (task.lifecycle === 'detach_reattach') checks.push({ name: 'real-subscriber-reconnect-preserves-running-turn', passed: firstEvents > 0 && secondEvents > 0 && await readFile(path.join(cwd, 'counter.txt'), 'utf8') === '1' && run.actions.filter(action => action.kind === 'tool.bash').length === 1 })
+        if (task.lifecycle === 'detach_reattach') {
+          if (boundCounter) {
+            counterReconnect = { firstEvents, secondEvents, reattached: !negativeControl }
+            if (counterFault) operations.push({ kind: `fault-counter-${counterFault}`, actionId: await counterObserver.replayIncrement(runtime, counterFault === 'repeat-and-restore') })
+          } else checks.push({ name: 'real-subscriber-reconnect-preserves-running-turn', passed: firstEvents > 0 && secondEvents > 0 && await readFile(path.join(cwd, 'counter.txt'), 'utf8') === '1' && run.actions.filter(action => action.kind === 'tool.bash').length === 1 })
+        }
         if (task.lifecycle === 'pause_resume') {
           const paused = negativeControl ? await runtime.coordinator.inspect(run.id) : await runtime.coordinator.pause({ runId: run.id }); checks.push({ name: 'real-pause-state-persisted', passed: paused.state === 'paused' })
         }
@@ -368,6 +425,7 @@ export async function runRecoveryScenario({ task, cwd, privateRoot, profile = nu
         }
         if (['force_compaction', 'compaction_history_race', 'compaction_no_reduction', 'artifact_context_restore'].includes(task.lifecycle)) {
           const state = await compact(runtime, task, checks, operations, negativeControl)
+          if (artifactObserver) await artifactObserver.bindCompression(runtime, { before: state.before, after: state.after, committed: state.result.compacted === true })
           if (task.lifecycle === 'artifact_context_restore') {
             const beforeRefs = state.before.messages.flatMap(message => message.artifactRefs || []), afterRefs = state.after.messages.flatMap(message => message.artifactRefs || [])
             checks.push({ name: 'host-artifact-references-survive-compaction', passed: beforeRefs.length > 0 && beforeRefs.every(ref => afterRefs.some(next => next.id === ref.id && next.sha256 === ref.sha256)) })
@@ -399,7 +457,7 @@ export async function runRecoveryScenario({ task, cwd, privateRoot, profile = nu
             const saved = await runtime.kernel.sessions.getSession(runtime.run.binding.sessionId)
             const readIds = new Set(saved.messages.flatMap(message => Array.isArray(message.content) ? message.content.filter(block => block.type === 'tool_use' && block.name === 'artifact_read').map(block => block.id) : []))
             const foundTail = saved.messages.some(message => Array.isArray(message.content) && message.content.some(block => block.type === 'tool_result' && readIds.has(block.tool_use_id) && String(block.content).includes('LAST=ARTIFACT-9001') && !block.is_error))
-            checks.push({ name: 'actual-artifact-read-after-context-compression', passed: result.run.actions.some(action => action.kind === 'tool.artifact_read' && action.state === 'succeeded') && result.run.actions.filter(action => action.kind === 'tool.bash').length === 1 })
+            if (!boundArchive) checks.push({ name: 'actual-artifact-read-after-context-compression', passed: result.run.actions.some(action => action.kind === 'tool.artifact_read' && action.state === 'succeeded') && result.run.actions.filter(action => action.kind === 'tool.bash').length === 1 })
             checks.push({ name: 'archived-tail-independently-observed', passed: foundTail })
           }
         }
@@ -407,8 +465,17 @@ export async function runRecoveryScenario({ task, cwd, privateRoot, profile = nu
     }
     diagnostics.push(...evaluationTurnDiagnostics(turns, profile.apiKeyEnv ? [process.env[profile.apiKeyEnv]] : []))
     const run = await runtime.store.getRun(runtime.run.id), budget = await runtime.store.getRunBudget({ runId: run.id }), events = await runtime.store.events({ runId: run.id })
+    if (boundCounter) {
+      const verified = await counterObserver.verify(run, counterReconnect || { firstEvents: 0, secondEvents: 0, reattached: false })
+      checks.push(...verified.checks); operations.push(verified.evidence)
+    }
+    if (artifactObserver) {
+      const verified = await artifactObserver.verify(runtime)
+      checks.push(...verified.checks); operations.push(verified.evidence)
+    }
     checks.push({ name: 'durable-identity-and-request-ledger-present', passed: run.id === runtime.run.id && budget.requests.some(request => request.kind === 'model') })
     const candidate = await captureAcceptanceCandidate(cwd), evidence = { durableRunId: run.id, ownerEpoch: String(run.ownerEpoch), beforeEventsHash,
+      ...(graderRevision === 4 ? { graderRevision } : {}),
       afterEventsHash: sha256(events), lifecycle: task.lifecycle, actions: run.actions, operations, budget,
       candidateHash: candidate.treeFingerprint, stateFingerprint: sha256({ profile: { ...profile, baseUrl: '<explicit-route>' }, image, mode }),
       lifecycleReceipt: sha256({ checks, runId: run.id, beforeEpoch, afterEpoch: run.ownerEpoch, events: sha256(events), candidate: candidate.treeFingerprint }),

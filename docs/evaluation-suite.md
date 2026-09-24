@@ -4,7 +4,7 @@
 
 ## 任务与隔离
 
-基础清单在 `evaluation/v1/`，独立勘误位于 `evaluation/v2/`、`evaluation/v3/`；固定为仓库修改 20、上下文/恢复 15、安全副作用 15、文档 10，其中 40 个开发任务、20 个封存任务。每个任务有不同的具体机制、真实输入 fixture、验收目标和指纹，不用同一个测试改名凑数量。默认v1仅为历史复验兼容；新的评测请显式选择v3。
+基础清单在 `evaluation/v1/`，独立勘误位于 `evaluation/v2/`、`evaluation/v3/`、`evaluation/v4/`；固定为仓库修改 20、上下文/恢复 15、安全副作用 15、文档 10，其中 40 个开发任务、20 个封存任务。每个任务有不同的具体机制、真实输入 fixture、验收目标和指纹，不用同一个测试改名凑数量。默认v1仅为历史复验兼容；新的评测请显式选择v4。
 
 | 类别 | 任务范围 | 独立判断来源 |
 | --- | --- | --- |
@@ -77,12 +77,40 @@ node scripts/evaluate.mjs selfcheck --suite-version v3 --split development \
 
 ## 零费用自检
 
+### v4：恢复观察器与公开诊断勘误
+
+v4不是产品版本号，而是评测定义修订。顶层`graderRevision:4`进入manifest指纹，
+每项结果记录该版本；不把新的宿主证明伪装成旧版本产生的证据。
+
+- 开发任务C04仅在真实计数从0变1、对应回执仍prepared时切换订阅，核对同一
+  operation/invocation/session/turn的终态。合法换行/前导零及其他只读命令不是重放；
+  真实重放后又将数字改回1仍须失败。
+- 开发任务C10只对指定文件确实写入后的那个回执注入故障，不误打首个list/read。
+  前置检查可以存在；未知的具体写入必须阻止恢复重放，重复写入相同内容也被检测。
+- 公共产物恢复规则绑定实际压缩提交、保留引用、同身份元数据及压缩后的真实读取字节。
+  不再把全部Bash次数当成原命令重放；实际恢复源的重新生产和任何相同逻辑ID重放
+  仍拒绝。该规则以自造公开fixture开发，未读取或改写封存题面、答案和任务对象。
+
+20个封存任务对象/hash保持不变，但公共grader规则已版本化，不能因此称v3/v4
+成绩可直接互换。旧C04/C10在错误工具处触发的故障不能事后追认；旧结果不覆盖，
+必须以新候选实际重测。单独补验不等于全60项两轮的完整新版本质量门禁。
+
+v4的封存任务公开检查仅用固定序号、布尔值和类别；动态检查名称也可能泄露期望
+答案，不能作为公开诊断字段。完整检查证据仅由宿主私密审计保存，不进入模型工作区。
+开发任务与历史v1–v3回执不被原地改写。
+
+```sh
+node scripts/evaluate.mjs list --suite-version v4
+node scripts/evaluate.mjs selfcheck --suite-version v4 --case C04 --case C10 \
+  --image sha256:已安装的Node镜像摘要
+```
+
 在完整源码仓库根目录，先准备本机已有的不可变镜像。Office 镜像按 [文档工具说明](office-tools.md) 构建。
 
 ```sh
-node scripts/evaluate.mjs list --suite-version v3
+node scripts/evaluate.mjs list --suite-version v4
 
-node scripts/evaluate.mjs selfcheck --suite-version v3 \
+node scripts/evaluate.mjs selfcheck --suite-version v4 \
   --split development \
   --image sha256:已安装的Node镜像摘要 \
   --office-image sha256:已验收的Office镜像摘要
@@ -116,7 +144,7 @@ node scripts/evaluate.mjs selfcheck --suite-version v3 \
 ```sh
 node --input-type=module -e "import {captureAcceptanceCandidate} from './src/kernel/session/acceptance-manifest.mjs'; console.log((await captureAcceptanceCandidate(process.cwd())).treeFingerprint)"
 
-node scripts/evaluate.mjs run --live --suite-version v3 --split all --repetitions 2 \
+node scripts/evaluate.mjs run --live --suite-version v4 --split all --repetitions 2 \
   --candidate-hash 上一步得到的完整SHA256 \
   --profile /受信任路径/evaluation-profile.json \
   --budget-usd 操作者明确批准的总额度 \
@@ -142,7 +170,7 @@ node scripts/evaluate.mjs run --live --suite-version v3 --split all --repetition
 先只跑一个开发任务，核对模型身份、SQL预算、工具动作及独立oracle，再运行完整两轮：
 
 ```sh
-node scripts/evaluate.mjs run --live --local-free --suite-version v3 \
+node scripts/evaluate.mjs run --live --local-free --suite-version v4 \
   --case R01 --split development --repetitions 1 \
   --candidate-hash 当前冻结源码SHA256 \
   --profile /受信任路径/local-vllm-profile.json \
@@ -168,7 +196,7 @@ node scripts/evaluate-snapshot.mjs --base HEAD
 `evaluation/result.schema.json` 定义结果结构。每项绑定 manifest/task/runtime/config hash、模型、重复编号、独立oracle回执、候选树、持久runId、具体检查和安全结果。状态分为 `passed`、`failed`、`unsupported`、`error`、`not_run`；后三者不能算成功。结果文件和summary只写新路径。
 
 ```sh
-node scripts/evaluate.mjs summarize test-results/evaluation/某次v3运行目录 --suite-version v3
+node scripts/evaluate.mjs summarize test-results/evaluation/某次v4运行目录 --suite-version v4
 node scripts/evaluate.mjs diagnostic diag_失败记录中的编号
 ```
 

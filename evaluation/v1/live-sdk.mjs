@@ -29,13 +29,13 @@ export { supportedRecovery }
 
 /** Real SDK entrypoint, never a generated-answer/mock fallback. Budget is stored
  * by the coordinator before any provider request and is shared across resumes. */
-export async function runLiveTask({ task, cwd, privateRoot, profile, image, officeImage, budgetUsd, deadlineAt, localFreeLimits = null, localFreeAuthorization: suiteAuthorization = null, signal }) {
+export async function runLiveTask({ task, cwd, privateRoot, profile, image, officeImage, budgetUsd, deadlineAt, localFreeLimits = null, localFreeAuthorization: suiteAuthorization = null, signal, graderRevision = 1 }) {
   const localAllocation = localFreeLimits === null ? null : allocateLocalFreeLimits(localFreeLimits, 1).perTask
   if ((localAllocation ? budgetUsd !== 0 : !Number.isFinite(budgetUsd) || budgetUsd <= 0)
     || !Number.isSafeInteger(deadlineAt) || deadlineAt <= Date.now()) throw new Error('Live evaluation requires an explicit paid or bounded local-free budget and future absolute deadline')
   profile = validateLiveProfile(profile, { localFree: Boolean(localAllocation) })
   if (suiteAuthorization && !localAllocation) throw new Error('A suite local-free capability cannot authorize a paid or unbounded task')
-  if (task.driver === 'durable-recovery') return runRecoveryScenario({ task, cwd, privateRoot, profile, image, budgetUsd, deadlineAt, localFreeLimits: localAllocation, localFreeAuthorization: suiteAuthorization, signal, mode: 'live' })
+  if (task.driver === 'durable-recovery') return runRecoveryScenario({ task, cwd, privateRoot, profile, image, budgetUsd, deadlineAt, localFreeLimits: localAllocation, localFreeAuthorization: suiteAuthorization, signal, mode: 'live', graderRevision })
   const relativeControl = path.relative(path.resolve(cwd), path.resolve(privateRoot))
   if (!relativeControl || !path.isAbsolute(relativeControl) && relativeControl !== '..' && !relativeControl.startsWith(`..${path.sep}`)) throw new Error('Evaluation control state and prices must stay outside the model workspace')
   await mkdir(privateRoot, { recursive: true, mode: 0o700 })

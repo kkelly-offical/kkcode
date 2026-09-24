@@ -107,6 +107,8 @@ jobs:
             test/npm-environment.test.mjs test/environment-cli.test.mjs \
             test/npm-environment-security-review.test.mjs \
             test/evaluation-live-sdk.test.mjs test/evaluation-recovery.test.mjs \
+            test/evaluation-v4.test.mjs test/evaluation-v4-counter-parser.test.mjs test/evaluation-v4-recovery.test.mjs \
+            test/evaluation-v4-receipt.test.mjs test/evaluation-v4-artifact-evidence.test.mjs \
             test/tool-program-loop.test.mjs test/browser-recipe-strict.test.mjs \
             test/run-browser-effects.test.mjs test/browser-strict-effects.test.mjs \
             test/verification-workspace.test.mjs \
@@ -157,8 +159,8 @@ jobs:
       - name: All 60 reference-oracle selfchecks, never model-quality evidence
         shell: bash
         run: |
-          node scripts/evaluate.mjs selfcheck --split all --image "$KK_LSP_REAL_IMAGE" --office-image "$KKCODE_OFFICE_TEST_IMAGE" --output test-results/evaluation-ci
-          node --input-type=module -e 'import{readResultFiles}from"./evaluation/v1/runner.mjs";import{createManifest}from"./evaluation/v1/manifest.mjs";const rows=await readResultFiles("test-results/evaluation-ci"),manifest=createManifest();if(rows.length!==60||!manifest.tasks.every(t=>rows.filter(r=>r.caseId===t.id&&r.manifestHash===manifest.manifestHash&&r.mode==="selfcheck"&&r.status==="passed"&&r.safetyPassed&&r.semanticNegativeRejected&&r.sourceProtectionRejected).length===1))throw Error("All 60 selfchecks and both independent negative controls must pass; skipped/unsupported is not acceptance");console.log("60 reference-oracle selfchecks passed; live model results remain zero")'
+          node scripts/evaluate.mjs selfcheck --suite-version v4 --split all --image "$KK_LSP_REAL_IMAGE" --office-image "$KKCODE_OFFICE_TEST_IMAGE" --output test-results/evaluation-ci
+          node --input-type=module -e 'import{readResultFiles}from"./evaluation/v1/runner.mjs";import{createManifest}from"./evaluation/v4/manifest.mjs";const rows=await readResultFiles("test-results/evaluation-ci"),manifest=createManifest();if(rows.length!==60||!manifest.tasks.every(t=>rows.filter(r=>r.caseId===t.id&&r.manifestHash===manifest.manifestHash&&r.graderRevision===4&&r.mode==="selfcheck"&&r.status==="passed"&&r.safetyPassed&&r.semanticNegativeRejected&&r.sourceProtectionRejected).length===1))throw Error("All 60 selfchecks and both independent negative controls must pass; skipped/unsupported is not acceptance");console.log("60 v4 reference-oracle selfchecks passed; live model results remain zero")'
       - uses: actions/upload-artifact@v7
         if: always()
         with:

@@ -36,7 +36,7 @@ async function holdResponse(method, condition = () => true) {
   const arrived = new Promise(resolve => { arrive = resolve }), gate = new Promise(resolve => { release = resolve }), finished = new Promise(resolve => { complete = resolve })
   const handler = async route => {
     const request = route.request().postDataJSON()
-    if (request?.method !== method || !condition(request.params || {})) { await route.continue(); return }
+    if (request?.method !== method || !condition(request.params || {})) { await route.fallback(); return }
     const response = await route.fetch(); arrive(); await gate
     try { await route.fulfill({ response }) } finally { complete() }
   }
@@ -69,7 +69,12 @@ try {
   await page.keyboard.press('Escape')
   await page.getByRole('button', { name: '个人与设备设置' }).click()
   await page.getByRole('button', { name: '记忆管理', exact: true }).click()
+  const slowScope = await holdResponse('memory.list', params => params.scope === 'personal')
   await page.getByRole('button', { name: '个人偏好', exact: true }).click()
+  await slowScope.arrived
+  await expect(page.getByLabel('新增待确认的记忆')).toBeDisabled()
+  await expect(page.getByRole('button', { name: '项目记忆', exact: true })).toBeDisabled()
+  await slowScope.unblock()
   const preference = '我偏好先看测试结果，再看实现说明。'
   await page.getByLabel('新增待确认的记忆').fill(preference)
   const slowSave = await holdResponse('memory.propose')
@@ -77,7 +82,12 @@ try {
   await slowSave.arrived
   await expect(page.getByLabel('新增待确认的记忆')).toBeDisabled()
   await expect(page.getByRole('button', { name: '项目记忆', exact: true })).toBeDisabled()
+  const slowSavedList = await holdResponse('memory.list', params => params.scope === 'personal')
   await slowSave.unblock()
+  await slowSavedList.arrived
+  await expect(page.getByLabel('新增待确认的记忆')).toBeDisabled()
+  await expect(page.getByText(/待确认 · v1/)).toHaveCount(0)
+  await slowSavedList.unblock()
   await expect(page.getByText(/待确认 · v1/)).toBeVisible()
   assert.equal((await service.dispatch('memory.list', { scope: 'personal', includeCandidates: false }, { id: 'local', client: 'fixture' })).entries.length, 0)
   assert.equal((await createMemoryController({ cwd: workspace }).formatForPrompt()).includes(preference), false, 'unconfirmed personal preference must not enter a model prompt')

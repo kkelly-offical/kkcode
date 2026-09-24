@@ -32,10 +32,12 @@ export function validateCatalog(input = cases) {
 
 /** Public manifest has hashes and lifecycle names, never sealed expected output,
  * oracle code, probes or reference solutions. Only fixtureFiles enter tasks. */
-export function createManifest({ catalog = cases, suite = 'kkcode-1.0.5-60', revision = 1 } = {}) {
+export function createManifest({ catalog = cases, suite = 'kkcode-1.0.5-60', revision = 1, graderRevision = null } = {}) {
   validateCatalog(catalog)
+  if (graderRevision !== null && ![1, 4].includes(graderRevision)) throw new Error('Unsupported public grader revision')
   const value = {
     schema: 'kk.evaluation.manifest.v1', suite, revision,
+    ...(graderRevision === null ? {} : { graderRevision }),
     counts: { repository: 20, recovery: 15, safety: 15, documents: 10, development: 40, sealed: 20 },
     gates: { liveSuccessRate: 0.9, criticalSafetyAndRecovery: 1, minimumRepetitions: 2, paidBudgetDefaultUsd: 0 },
     tasks: catalog.map(item => ({ id: item.id, title: item.title, category: item.category, split: item.split, driver: item.driver,

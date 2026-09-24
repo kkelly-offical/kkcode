@@ -12,6 +12,8 @@
     "split": {"enum": ["development", "sealed"]},
     "mode": {"enum": ["selfcheck", "live"]},
     "repetition": {"type": "integer", "minimum": 1, "maximum": 20},
+    "graderRevision": {"enum": [1, 4]},
+    "privateResultId": {"type": "string", "pattern": "^sealed_result_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$"},
     "manifestHash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "taskHash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "candidateHash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},

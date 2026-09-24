@@ -17,8 +17,9 @@ const { values, positionals } = parseArgs({ allowPositionals: true, options: {
 } })
 const command = positionals[0] || 'list'
 try {
-  if (!['v1', 'v2', 'v3'].includes(values['suite-version'])) throw new Error('Unknown evaluation suite version')
-  const suite = values['suite-version'] === 'v3' ? await import('../evaluation/v3/manifest.mjs')
+  if (!['v1', 'v2', 'v3', 'v4'].includes(values['suite-version'])) throw new Error('Unknown evaluation suite version')
+  const suite = values['suite-version'] === 'v4' ? await import('../evaluation/v4/manifest.mjs')
+    : values['suite-version'] === 'v3' ? await import('../evaluation/v3/manifest.mjs')
     : values['suite-version'] === 'v2' ? await import('../evaluation/v2/manifest.mjs') : { createManifest, summarizeResults }
   if (command === 'list') console.log(JSON.stringify(suite.createManifest(), null, 2))
   else if (command === 'diagnostic') console.log(JSON.stringify(await readEvaluationDiagnostic(positionals[1]), null, 2))

@@ -18,6 +18,7 @@ import { runRecoveryScenario } from './recovery-drivers.mjs'
 import { allocateLocalFreeLimits } from './local-free.mjs'
 import { prepareEvaluationLocalFreeAuthorization, localFreeServiceBindingHash } from './local-free-authorization.mjs'
 import { localFreePolicy } from '../../src/usage/local-free.mjs'
+import { publishEvaluationResult } from '../v4/result-publication.mjs'
 
 const exec = promisify(execFile)
 let evaluationActive = false
@@ -68,6 +69,7 @@ function baseResult(task, context, repetition) {
   const manifestTask = context.manifest.tasks.find(item => item.id === task.id)
   return { schema: 'kk.evaluation.result.v1', suiteRunId: context.runId, caseId: task.id, category: task.category, split: task.split,
     critical: task.critical, mode: context.mode, repetition, manifestHash: context.manifest.manifestHash, taskHash: manifestTask.taskHash,
+    ...(context.manifest.graderRevision ? { graderRevision: context.manifest.graderRevision } : {}),
     candidateHash: context.candidateHash, configHash: context.configHash, model: context.profile?.model || null,
     startedAt: new Date().toISOString(), status: 'not_run', safetyPassed: false, evidence: {} }
 }
@@ -84,9 +86,9 @@ async function executeEvaluation({ mode = 'selfcheck', ids = [], split = 'develo
   if (!['selfcheck', 'live'].includes(mode)) throw new Error('Unknown evaluation mode')
   if (!Number.isSafeInteger(repetitions) || repetitions < 1 || repetitions > 20) throw new Error('Invalid repetition count')
   if (!immutableImage(image)) throw new Error('An already-installed immutable node execution image is required')
-  if (!['v1', 'v2', 'v3'].includes(suiteVersion)) throw new Error('Unknown evaluation suite version')
-  const suite = suiteVersion === 'v3' ? await import('../v3/manifest.mjs') : suiteVersion === 'v2' ? await import('../v2/manifest.mjs') : { createManifest, selectCases }
-  const manifest = suite.createManifest(), selected = suite.selectCases({ ids, split })
+  if (!['v1', 'v2', 'v3', 'v4'].includes(suiteVersion)) throw new Error('Unknown evaluation suite version')
+  const suite = suiteVersion === 'v4' ? await import('../v4/manifest.mjs') : suiteVersion === 'v3' ? await import('../v3/manifest.mjs') : suiteVersion === 'v2' ? await import('../v2/manifest.mjs') : { createManifest, selectCases }
+  const manifest = suite.createManifest(), selected = suite.selectCases({ ids, split }), graderRevision = manifest.graderRevision || 1
   const diagnosticRoot = evaluationDiagnosticRoot()
   if (!selected.length) throw new Error('No evaluation cases selected')
   if (selected.some(task => task.driver === 'office-document') && !immutableImage(officeImage)) throw new Error('Document tasks require an approved immutable Office image')
@@ -130,7 +132,7 @@ async function executeEvaluation({ mode = 'selfcheck', ids = [], split = 'develo
     }
     for (let repetition = 1; repetition <= repetitions; repetition++) for (const task of selected) {
       signal?.throwIfAborted()
-      const result = baseResult(task, context, repetition)
+      const base = baseResult(task, context, repetition), result = { ...base }
       try {
         if (task.driver === 'durable-recovery' && !supportedRecovery.has(task.lifecycle)) {
           result.status = 'unsupported'; result.reason = 'Actual lifecycle fault driver is not implemented for this execution mode; no fabricated reference completion'
@@ -142,15 +144,16 @@ async function executeEvaluation({ mode = 'selfcheck', ids = [], split = 'develo
           let execution
           if (mode === 'selfcheck') {
             if (task.driver === 'durable-recovery') execution = await runRecoveryScenario({ task, cwd: fixture.cwd, privateRoot: path.join(fixture.root, 'control'),
-              image, mode: 'system-selfcheck', budgetUsd: 0, deadlineAt: Date.now() + 180000, signal })
+              image, mode: 'system-selfcheck', budgetUsd: 0, deadlineAt: Date.now() + 180000, signal, graderRevision })
             else if (task.referenceOperations) execution = await officeOperations(fixture.cwd, task.referenceOperations, officeImage, signal)
             else { for (const [name, value] of Object.entries(task.referenceFiles)) await writeFile(path.join(fixture.cwd, name), value); execution = { operations: ['trusted-reference-patch'] } }
           } else execution = await runLiveTask({ task, cwd: fixture.cwd, privateRoot: path.join(fixture.root, 'control'), profile, image, officeImage,
-            budgetUsd: perTaskBudget, deadlineAt, localFreeLimits: localAllocation?.perTask || null, localFreeAuthorization: suiteAuthorization, signal })
+            budgetUsd: perTaskBudget, deadlineAt, localFreeLimits: localAllocation?.perTask || null, localFreeAuthorization: suiteAuthorization, signal, graderRevision })
           if (execution.unsupported) { result.status = 'unsupported'; result.reason = execution.reason }
           else {
             const candidate = await captureAcceptanceCandidate(fixture.cwd)
             if (task.driver === 'durable-recovery') {
+              if (graderRevision === 4 && execution.graderRevision !== 4) throw new Error('Recovery evidence does not match the frozen public grader revision')
               if (execution.candidateHash !== candidate.treeFingerprint) throw new Error('Recovery candidate changed after host receipt')
               if (mode === 'live' && execution.fixtureOnly) throw new Error('Reference provider evidence cannot be counted as a live model result')
             } else execution.candidateHash = candidate.treeFingerprint
@@ -171,7 +174,7 @@ async function executeEvaluation({ mode = 'selfcheck', ids = [], split = 'develo
               if (task.driver === 'durable-recovery') {
                 const wrong = await prepareTask(task, { parent: workspaceParent, officeImage, signal })
                 const badExecution = await runRecoveryScenario({ task, cwd: wrong.cwd, privateRoot: path.join(wrong.root, 'control'), image,
-                  mode: 'system-selfcheck', budgetUsd: 0, deadlineAt: Date.now() + 180000, signal, negativeControl: true })
+                  mode: 'system-selfcheck', budgetUsd: 0, deadlineAt: Date.now() + 180000, signal, negativeControl: true, graderRevision })
                 const rejected = await evaluateCase({ task, cwd: wrong.cwd, image, baselineHashes: wrong.baselineHashes, execution: badExecution, signal })
                 if (rejected.checks.find(check => check.name === 'protected-inputs-preserved')?.passed !== true) throw new Error('Recovery semantic negative changed original input instead of testing its lifecycle')
                 negatives = { semanticNegativeRejected: rejected.passed === false, semanticNegativeChecks: rejected.checks.filter(check => !check.passed).map(check => check.name),
@@ -195,8 +198,8 @@ async function executeEvaluation({ mode = 'selfcheck', ids = [], split = 'develo
         if (mode === 'selfcheck') result.diagnostic = sanitizeDiagnostic(error.message, diagnosticSecrets, 500)
       }
       result.endedAt = new Date().toISOString()
-      await writeFile(path.join(output, `${task.id}-${repetition}.json`), JSON.stringify(result, null, 2), { flag: 'wx', mode: 0o600 })
-      results.push(result); await onResult?.(result)
+      await publishEvaluationResult({ suiteVersion, base, result, outputDirectory: output,
+        privateDirectory: path.join(diagnosticRoot, 'sealed-results'), workspaceRoots: [workspaceParent], results, onResult })
     }
     const summary = summarizeResults(results, manifest)
     await writeFile(path.join(output, 'summary.json'), JSON.stringify(summary, null, 2), { flag: 'wx', mode: 0o600 })

@@ -1,27 +1,45 @@
 import React, { useEffect, useRef, useState } from 'react';
 type Item = Record<string, any>;
+type Props = { rpc: (method: string, params?: Item, options?: Item) => Promise<any>; sessionId: string };
 const states: Record<string, string> = { active: '已启用', candidate: '待确认', disabled: '已禁用', stale: '来源已变化' };
-export function MemoryPanel({ rpc, sessionId }: { rpc: (method: string, params?: Item, options?: Item) => Promise<any>; sessionId: string }) {
-  const [scope, setScope] = useState('project'), [entries, setEntries] = useState<Item[]>([]), [legacy, setLegacy] = useState<Item[]>([]);
+export function MemoryPanel(props: Props) {
+  const [scope, setScope] = useState('project');
+  return <MemoryScopePanel key={JSON.stringify([props.sessionId, scope])} {...props} scope={scope} setScope={setScope} />;
+}
+function MemoryScopePanel({ rpc, sessionId, scope, setScope }: Props & { scope: string; setScope: (scope: string) => void }) {
+  const [entries, setEntries] = useState<Item[]>([]), [legacy, setLegacy] = useState<Item[]>([]);
   const [draft, setDraft] = useState(''), [editing, setEditing] = useState<Item | null>(null), [pending, setPending] = useState<Item | null>(null);
-  const [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  // A newly visible scope must not accept input before passive effects start
+  // loading it. Each scope owns its lock, draft and request lifetime.
+  const [error, setError] = useState(''), [busy, setBusy] = useState(scope !== 'project' || Boolean(sessionId));
   const lifetime = useRef(new AbortController());
-  const operation = useRef(false);
-  useEffect(() => { lifetime.current = new AbortController(); return () => lifetime.current.abort(); }, [sessionId, scope]);
-  const request = (method: string, params: Item = {}) => rpc(method, { scope, ...(sessionId ? { sessionId } : {}), ...params }, { signal: lifetime.current.signal });
+  const operation = useRef<AbortController | null>(null);
+  const request = async (method: string, params: Item = {}) => {
+    const controller = lifetime.current;
+    controller.signal.throwIfAborted();
+    const result = await rpc(method, { scope, ...(sessionId ? { sessionId } : {}), ...params }, { signal: controller.signal });
+    // A server/transport may finish despite cancellation. Its old response
+    // must not start a refresh using a replacement scope's controller.
+    controller.signal.throwIfAborted();
+    return result;
+  };
   async function refresh() {
     const result = await request('memory.list', { includeCandidates: true, includeDisabled: true });
     if (!lifetime.current.signal.aborted) setEntries(result.entries);
   }
   async function run(fn: () => Promise<void>) {
-    if (operation.current) return;
-    operation.current = true;
     const controller = lifetime.current;
+    if (operation.current || controller.signal.aborted) return;
+    operation.current = controller;
     setBusy(true); setError('');
     try { await fn(); } catch (cause: any) { if (!controller.signal.aborted) setError(cause.code === 'unknown_method' ? '当前电脑尚不支持新的记忆管理，请升级被控设备。旧记忆文件仍保留。' : cause.message); }
-    finally { operation.current = false; if (!controller.signal.aborted) setBusy(false); }
+    finally { if (operation.current === controller) operation.current = null; if (lifetime.current === controller && !controller.signal.aborted) setBusy(false); }
   }
-  useEffect(() => { setEntries([]); setLegacy([]); setEditing(null); setPending(null); setDraft(''); if (scope !== 'project' || sessionId) void run(refresh); }, [sessionId, scope]);
+  useEffect(() => {
+    const controller = new AbortController(); lifetime.current = controller; operation.current = null;
+    if (scope !== 'project' || sessionId) void run(refresh);
+    return () => controller.abort();
+  }, [sessionId, scope]);
   const key = (entry: Item) => ({ id: entry.id, expectedVersion: entry.version });
   function confirm(method: string, params: Item, title: string, text: string) { setPending({ method, params, title, text }); }
   return <>

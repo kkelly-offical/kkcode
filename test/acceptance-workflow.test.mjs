@@ -15,10 +15,13 @@ test('acceptance workflow keeps runner-only expressions in steps and uses actual
   }
   assert.equal(workflow.jobs['strict-runtime'].env.KKCODE_REQUIRE_STRICT_BROWSER, '1')
   const strictCommands = workflow.jobs['strict-runtime'].steps.map(step => step.run || '').join('\n')
-  for (const filename of ['local-free-recovery', 'evaluation-local-free-suite', 'run-store-backup-portability', 'run-browser-effects', 'browser-strict-effects']) {
+  for (const filename of ['local-free-recovery', 'evaluation-local-free-suite', 'run-store-backup-portability', 'run-browser-effects', 'browser-strict-effects', 'evaluation-v4', 'evaluation-v4-counter-parser', 'evaluation-v4-recovery', 'evaluation-v4-receipt', 'evaluation-v4-artifact-evidence']) {
     assert.ok(strictCommands.includes(`test/${filename}.test.mjs`), `${filename} must run with real strict-runtime fixtures`)
   }
   assert.equal(workflow.jobs['isolated-toolchains'].env.KKCODE_REQUIRE_REAL_LSP, '1')
+  const toolchainCommands = workflow.jobs['isolated-toolchains'].steps.map(step => step.run || '').join('\n')
+  assert.ok(toolchainCommands.includes('selfcheck --suite-version v4 --split all'))
+  assert.ok(toolchainCommands.includes('r.graderRevision===4'))
   const branded = workflow.jobs['branded-browser-bridge']
   assert.deepEqual(branded.strategy.matrix.os, ['ubuntu-22.04', 'windows-latest', 'macos-latest'])
   assert.deepEqual(branded.strategy.matrix.channel, ['chrome', 'msedge'])
