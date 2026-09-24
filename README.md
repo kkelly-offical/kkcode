@@ -21,11 +21,15 @@ kkcode 把问答、规划、事务型修改、多阶段长任务编排放在同�
 
 验收代码已推送专用分支，尚未合入 main、公开发布或升级生产网关／设备。
 真实 GitHub SDK 工程往返已建立 [草稿 PR #5](https://github.com/kkelly-offical/kkcode/pull/5)，
-但缺少人工批准，仍是 blocked，不是可合并交付。新版 CI 已运行但尚未全绿，
-Chrome/Edge 品牌矩阵失败／受阻；获准的本机 vLLM 真实模型评测正在进行，
-60 任务 × 2 轮、GitLab 往返和七天实际试用尚未完成。详见[实施账本](docs/implementation-1.0.5.md)
+但缺少人工批准，仍是 blocked，不是可合并交付。候选`634e308`的完整CI已通过：
+Linux Node22/24、Windows22、macOS22、严格运行时、工具链及六组Chrome/Edge，
+包含评测目录别名修复；三类CodeQL扫描通过，没有新增开放告警，历史17条仍跟踪。
+获准的本机 vLLM 真实模型评测仍在进行；原始第一轮55/60通过，但含恢复测量缺陷，
+不能称质量门禁已过。新版定义的补验／完整复验另行记录，不拼接不同版本成绩。
+用户允许本次 Preview 明确延期 GitLab 实机 MR 验收；七天实际试用仍是后续成熟度门禁。
+详见[实施账本](docs/implementation-1.0.5.md)
 与[新增 CodeQL 核查](docs/codeql-triage-1.0.5.md)。不使用付费模型或历史 CI 代替当前验收。
-`1.1.0` 是后续成熟度目标，不是本次版本号；发布仍需单独确认。
+`1.1.0` 是后续成熟度目标，不是本次版本号；本次仅获准准备修复后的 Preview，未完成门禁不视为自动豁免。
 
 稳定版 **`1.0.4` 已发布**：新增 [OpenAI Responses API](docs/responses-api.md)，
 支持文本/图片、流式思考摘要与受控工具循环；修复 SSH 跨设备模型状态、中文错误、

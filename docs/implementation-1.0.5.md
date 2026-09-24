@@ -8,6 +8,24 @@
 
 ## 后续真实验收与收口（2026-09-24）
 
+- 路径修复已提交并推到验收分支`634e308`；CI `35995852376`和CodeQL
+  `35995969121`现已全部完成并成功。完整CI含Linux Node22/24、Windows22、
+  macOS22、严格运行时、隔离工具链及六组品牌浏览器；不再有路径别名失败。
+  CodeQL含真实Kotlin构建，开放17条历史告警、无新增；全部实例指向该SHA，
+  未关规则/dismiss。回执`ci-634e308-result.json`、`codeql-634e308-result.json`、
+  `codeql-634e308-open.json`及`ci-634e308-artifacts/`。仍未合入main／创建发行
+  标签／发布npm或APK，真实模型门禁另计。
+  为后续v4实测准备了干净冻结快照，来源精确为该SHA，候选hash
+  `8ce71a49397588712610fea5dbc1d6e72538c5e58ae92c59a3a67a82fe304212`；
+  仅准备不调用模型，不扩展原授权时间/请求/token额度。
+- 从独立`git archive 9637f55`得到的干净npm包，在最低Node22.12完成现有
+  package-smoke、全部15个SDK入口及protocol导入、真实SQLite子进程创建/写读/关闭后
+  readonly重开、ArtifactStore读写及预算工厂检查。包与安装扫描均722文件、无发现；
+  不触发provider网络。tgz验证前后hash一致：
+  `0a3560119d8b38119353f8c2ff842c8e45cffd82b39c64a5e983a666efd70008`。
+  回执`test-results/preview-1.0.5/package-final-9637f55-GroEnX-retry1/receipt.json`；
+  这不是后续tag的发行产物。首次隔离npm配置路径冲突在安装前被拒，失败记录保留；
+  修正为两个独立空配置文件后重试通过，没有修改产品代码来绕过。
 - 统一候选`9637f553a31445cfb6843788f438255f7cc4e964`：本机真实镜像整仓
   `coverage-final-round9.log` **3762项／3756通过／0失败／6条件跳过**，
   行85.20%／分支80.29%／函数83.56%。CI `35994182229` 的Linux22/24、

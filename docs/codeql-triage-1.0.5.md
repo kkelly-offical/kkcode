@@ -1,5 +1,9 @@
 # 1.0.5 新增 CodeQL 告警核查
 
+最新路径修复候选`634e308`的[CodeQL35995969121](https://github.com/kkelly-offical/kkcode/actions/runs/35995969121)
+三类全部通过（真实Kotlin构建保留），开放17条历史告警、无新增；最近实例均指向
+该SHA。回执`codeql-634e308-open.json`。规则和历史告警未被关闭或dismiss。
+
 统一候选`9637f55`的[CodeQL35994312383](https://github.com/kkelly-offical/kkcode/actions/runs/35994312383)
 三类全部通过（含真实Kotlin构建）；开放告警的最近实例均属于该SHA，仍为17条历史
 告警、无新增64及以后编号。回执`codeql-9637f55-open.json`。未关闭规则或dismiss。
