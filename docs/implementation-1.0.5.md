@@ -1,6 +1,6 @@
 # 1.0.5 Preview 实施账本
 
-开发版本：`1.0.5-preview.0`。**尚未发布。**
+预发布版本：`1.0.5-preview.0`。**已于2026-09-24公开发布。**
 公开稳定版仍为1.0.4，生产网关和测试VM没有随本次开发升级。
 
 批准计划：[1.0.5 全面升级与1.1.0门禁](plan-1.0.5.md)。
@@ -8,6 +8,58 @@
 
 ## 后续真实验收与收口（2026-09-24）
 
+- **公开发行已完成**：提交`8efcb34d09db5b96693f3322661229a8b5fd84b4`，
+  标签`v1.0.5-preview.0`的annotated tag对象为
+  `225d602cba278de978614e89dfb53582a42dc4a1`，不再允许移动。
+  [GitHub预发布](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.5-preview.0)
+  于`2026-09-24T13:12:32Z`公开，draft=false/prerelease=true；稳定latest仍为1.0.4。
+  [发行门禁36002075645](https://github.com/kkelly-offical/kkcode/actions/runs/36002075645)、
+  main验证36001404815、CodeQL36001404854及完整工程验收36001401771全部成功；
+  同SHA开放17条历史安全告警，无新增。源码工程通过不代表完整模型质量门禁通过。
+- npm于`13:12:02Z`接受发布，但明确提示平台异步处理；匿名元数据直到约13:19
+  出现，包实际下载约13:20:55可用。没有重复发布或移动tag来绕过处理。
+  npm `preview=1.0.5-preview.0`，`latest=1.0.4`。CI、匿名npm及GitHub备用CLI包
+  SHA-256一致：`a3eceafb7c7b66e471fae8512eaa0246ea7866cde422628a3d2b1b599a97a99b`，
+  723文件；GitHub也提供同一tgz，平台处理期间可直接安装该URL。
+- `13:24:01Z`最终公开npm核验完成：规范registry URL（不加query）匿名实际下载，
+  GitHub备用包、CI包与npm包逐字节hash一致。**另对公开来源public.tgz**进行最低
+  Node22.12独立空npm配置、ignore-scripts干净安装；CLI版本、全部16个SDK/协议
+  入口、SQLite子worker写读/只读重开、ArtifactStore及723文件扫描全通过，
+  扫描0发现、provider请求0，不用CI来源安装冒充公网验证。证据在
+  `test-results/public-npm-1.0.5-preview.0-NbVtLH/final-verification.json`及
+  `public-install-proof.json`。发行页附`release-verification.json`提供公开摘要。
+- Android公开APK/更新manifest均匿名重新下载，与候选字节一致；APK SHA-256
+  `8ba22e0290cf113dcacb4c843ec18a660ad116cc4d07478169fc685e98eb0fec`，manifest
+  `e9944fedffa47bc80f01aa00e99adf08782df412f50e1c258f8ceb246f7da163`。
+  公开APK再次通过同证书v2/v3及非debuggable校验，`10009 / 1.0.5-preview.0`。
+  已用实际release UpdatePolicy字节码解析匿名release列表与manifest：Preview接受，
+  Stable排除；这不是手机UI实测。回执`test-results/public-android-1.0.5-preview.0/`。
+- 发行提交`8efcb34d09db5b96693f3322661229a8b5fd84b4`已快进到main，标签
+  `v1.0.5-preview.0`已创建，发行流水线`36002075645`正在执行。Android三件资产
+  已上传到私有可见的GitHub draft，尚不能据此称公开发行成功。
+  推送main时GitHub提示当前账号使用已有bypass权限通过PR规则；没有修改规则。
+  后续核查确认规则来自repository ruleset（普通branch-protection接口返回404），
+  要求PR和1条批准；后续回执文档使用独立PR，不再次直接旁路推main。
+- v4修复场景六次补验已在`12:51:36.674Z`自然结束：**4通过／2错误**，不是全绿。
+  C10和C13各两次通过；C10真实写入仅一次，回执故障后维持unknown并阻止再写，
+  C13验证真实压缩后读取和独立恢复证据。C04第一次脚本写入后因模型生成的变量名
+  错误失败，第二次只有模型请求没有工具调用，均未触发所要求的重连边界；
+  **C04真实重连机制仍未覆盖**，没有自动重试或更改判据让它通过。
+  这与用户明确延期完整模型质量验收一同披露，不能冒充完整v4质量门禁。
+  专项40请求全部settled／5,471,100保守tokens／USD0，无新增model unknown。
+  总账含历史与原生预留为1496请求／190,848,866tokens，历史2个unknown保留，
+  未延长原授权时间或追加模型调用。
+- C11旧ENOENT经公开自造两组真实Docker/SQLite/loopback HTTP对照确认：
+  首工具为list时所有权已正确换代，唯一旧动作unknown、后续write未派发；通用评测
+  驱动却无条件读取尚未产生的写入标记。write-first对照在相同隔离条件下通过。
+  根因是故障切点与断言前置条件不一致，**未复现产品所有权隔离或恢复安全失效**。
+  旧C11不补分，完整驱动修订留待后续Preview；自造对照不是模型成绩。
+  回执`test-results/preview-1.0.5/owner-epoch-public-check-20260924/report.json`。
+- 最终发行来源的本地网关镜像从精确`git archive 8efcb34`构建，归档SHA-256
+  `34f3ddc7fe4b3275fca26065dbabdafa5ce5288e707e8d4c31eb1d9ff34b2b40`。
+  镜像ID `sha256:b9a6e3c0f5c6c3b8f9a4cf1e9e050f3e93bac7076863ca7e865e6f94c7411f65`，
+  非root／只读根／network-none／无capabilities真实回归19/19、0skip；bundle仍为
+  `index-CjSZ0zYf.js`，与归档内容一致。未推公共镜像注册表或部署。
 - 用户已明确选择方案1：修复场景真实补验和GitHub发行门禁通过后，先发布
   `1.0.5-preview.0`，**完整新版v4 60×2质量验收明确后补**；不再因此等待整轮重跑。
   GitLab实机延期仍保留，不降低1.1.0成熟度门槛，也不延长原免费模型期限/额度。
@@ -479,10 +531,11 @@ index/HEAD未修改。之后测试使用正常环境，候选index只用于单�
 1.1.0发布门禁仍未满足：真实模型双轮、GitLab往返、三系统浏览器及七天试用不能由
 本地受控fixture替代；GitHub工程往返不等于通过人工批准，跨平台新候选CI必须全绿。
 
-## 外部行为
+## 外部行为（当前）
 
-- 已推送专用验收分支及真实GitHub草稿PR #5；本机仍有后续未提交修复。未合入main、
-  未创建发布标签、未发布npm/GitHub Release/APK/镜像；草稿PR不是发行。
+- 发行代码已在main，npm Preview、GitHub预发布及Android10009已公开；完整实际
+  回执见本文顶部。独立的Forge验收草稿PR #5仍是草稿，不等于人工批准或已合并。
+  发行回执文档通过单独PR维护；网关镜像仅本地构建验证，未推公共镜像注册表。
 - 未部署生产服务，未修改SSO、生产/演示VM、SSH凭据或签名证书；仅专用QA VM的新独立目录用于真实SSH验收，原安装不变。
 - 未调用付费模型；普通协议用例使用受控fixture，真实模型仅使用用户独立授权的本机vLLM
   和有限localFree能力。没有复用旧聊天凭据、改生产模型配置或扩大已批准期限/配额。

@@ -1,6 +1,6 @@
 # Chrome / Edge 品牌浏览器 Bridge 验收
 
-本指南对应未发布的 **1.0.5-preview.0** 开发工作树。
+本指南对应 **1.0.5-preview.0** 的品牌浏览器验收工程。
 `scripts/browser-bridge-branded-smoke.mjs` 是 **GitHub-hosted 临时 CI runner 专用**
 验收入口，不是产品启动器，也不是给用户安装扩展的脚本。
 
