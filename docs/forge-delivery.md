@@ -1,6 +1,6 @@
 # 受控 GitHub／GitLab 交付
 
-状态：1.0.5 Preview 开发能力，尚未进行公网专用验收仓库验证。支持 GitHub、GitLab.com 及宿主明确配置的自托管 GitLab。当前不支持跨 fork 的交付，不自动合并、部署、修改分支保护或授予权限。
+[文档导航](README.md) · 适用源码：1.0.5；[发行状态](versions.md)。支持GitHub、GitLab.com及宿主明确配置的自托管GitLab。真实GitHub专用草稿PR工程往返已有记录，GitLab实测仍待资源；不能混称所有平台已验收。当前不支持跨fork交付，不自动合并、部署、修改分支保护或授予权限。
 
 ## 宿主接入
 

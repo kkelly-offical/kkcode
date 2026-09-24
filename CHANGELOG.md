@@ -1,5 +1,16 @@
 # Changelog / 更新日志
 
+## 1.0.5 — Unreleased / 正式版准备中
+
+- Prepare the source version as `1.0.5` across the CLI, Web/gateway, private SDK
+  workspaces and Android (`10010`). No release tag, npm publication, signed APK
+  publication or production deployment is part of this preparation.
+- Shorten README to product features, quick start and a task-oriented documentation
+  directory; separate current guides, release status and historical evidence.
+- Keep the already published `1.0.5-preview.0` artifacts immutable. Previously
+  deferred model-quality, recovery and platform acceptance is not marked complete
+  by removing the prerelease suffix. See [release preparation](docs/release-1.0.5.md).
+
 ## 1.0.5-preview.0 — Preview / 预览
 
 - Start the approved [1.0.5 program](docs/plan-1.0.5.md); published stable remains 1.0.4.

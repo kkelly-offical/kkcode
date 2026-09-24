@@ -1,59 +1,35 @@
-# Roadmap / 路线图
+# 路线图与维护入口
 
-更新范围：1.0.2。当前实施、验收和实际发布回执见
-[实施记录](implementation-1.0.2.md)。本页不把计划写成已发布能力。
+[文档导航](README.md) · 源码目标1.0.5（正式版准备中，尚未发布）· [版本状态](versions.md)
 
-1.0.4 Preview 候选正在验收：上下文 UI、Android SSH 后台任务与账号地址簿、
-精简会话删除/归档、提示与 SDK、MCP OAuth、ACP v1、受控 HMR/工具组合/操作恢复。
-以 [1.0.4 实施账本](implementation-1.0.4.md) 为准，不沿用旧测试数量当新回执。
+剩余问题以[GitHub Issues](https://github.com/kkelly-offical/kkcode/issues)为准。
+本页负责按主题导航，不再复制一份会过期的“已完成／未完成”长表；关闭Issue需修复和验收证据。
 
-## 已完成的旧待办
+## 当前推进方向
 
-- 内核/SDK 分层、唯一 createKernel 组合根、运行时隔离和导入边界门禁已经实现。
-  旧版“没有分层”“76 个 UI 文件直接引用内部模块”的描述是迁移前数据，不再适用。
-- 类型门禁由 scripts/check-types.mjs 执行固定配置与额外检查；
-  不再使用旧的“130/290、510 个错误”数字描述当前项目。
-- 官方 MCP SDK 的 stdio/Streamable HTTP 互操作已接入，保留旧 framing/REST
-  兼容面；“streamable-http 只是 SSE 别名”的旧结论已过时。
-- M32/M33 的剪贴板媒体、能力门、计费与能力徽标、远端 MCP 摘要已经接入，
-  不再只保留视频/音频 UI 标记。
-- M28 G10–G12 的按需工具搜索、指令继承与兼容工具整合已完成；
-  allowed-tools 和 user-invocable 的执行路径也已补齐。
-- Android GitHub 更新、保持布局的 Web/Android 像素主题、远控启动目录授权
-  和严格 vLLM 模板兼容已接入；系统确认覆盖安装与真实模型请求单独验收。
-- Web/Android 的改名、归档/恢复、显式回退、首次同模型标题，以及统一模式
-  已接入；Auto 的同模型审查有人工回退、审计和用量记录。
-- 详细分支/远端缓存选择、受控 Worktree 创建/独立会话已实现；不会自动 stash、
-  强制覆盖或推送。SVG 源码和安全栅格预览分开，坏媒体历史可继续对话。
-- 内建 Browser 已提供隔离页面、结构快照、点击/输入和截图；见下方限制，
-  不再把基础浏览器支持列为“尚无实现”。
+| 方向 | 跟踪入口 | 处理原则 |
+| --- | --- | --- |
+| 恢复与模型行为 | [C04补验 #7](https://github.com/kkelly-offical/kkcode/issues/7)、[C11驱动 #8](https://github.com/kkelly-offical/kkcode/issues/8)、[空输出／失败恢复 #9](https://github.com/kkelly-offical/kkcode/issues/9) | 已确认缺陷与未覆盖验证分开，不能改旧分数制造通过 |
+| 严格依赖环境 | [workspaces #10](https://github.com/kkelly-offical/kkcode/issues/10)、[其他生态 #11](https://github.com/kkelly-offical/kkcode/issues/11)、[环境维护 #12](https://github.com/kkelly-offical/kkcode/issues/12) | 保持来源、脚本、凭据和离线边界 |
+| 资源与安全 | [磁盘／inode #13](https://github.com/kkelly-offical/kkcode/issues/13)、[历史告警 #14](https://github.com/kkelly-offical/kkcode/issues/14) | 不把已有内存限制当磁盘配额，不把告警全称为漏洞或全称为误报 |
+| 真实任务与设备验收 | [质量／Ultra #15](https://github.com/kkelly-offical/kkcode/issues/15)、[跨平台／真机 #16](https://github.com/kkelly-offical/kkcode/issues/16)、[GitLab #17](https://github.com/kkelly-offical/kkcode/issues/17)、[长期观察 #18](https://github.com/kkelly-offical/kkcode/issues/18) | 工程测试不代替模型、平台或生产实测；长期观察不是收费试用期 |
+| 文档与发布治理 | [当前／历史分离 #19](https://github.com/kkelly-offical/kkcode/issues/19)、[npm分发验证 #20](https://github.com/kkelly-offical/kkcode/issues/20)、[rulesets #21](https://github.com/kkelly-offical/kkcode/issues/21) | 当前指南统一，发行与分发状态核实，不旁路分支审核 |
 
-## 明确的支持边界
+本次1.0.5准备只维护文档与版本一致性，不自动关闭以上Issue，不重启过期的模型测试授权。
+具体复现、验收清单与讨论留在各Issue，避免文档和Issue互相矛盾。
 
-1. **扩展信任与沙箱**：工具审批、allowed-tools 和 OS 沙箱是三层不同约束。
-   任意 .mjs 插件/MCP 服务进程并不自动进入 bash 的 OS 沙箱；需要信任来源，
-   或在企业容器/低权限账号中运行。不能将“已审批”写成“沙箱隔离”。
-2. **媒体协议**：WAV/MP3 与兼容 video_url 已编码；不提供自动转码/抽帧、
-   录音/摄像头或所有模型通吃的承诺。具体边界见 [媒体矩阵](media-input.md)。
-3. **MCP 扩展协议**：1.0.4 Preview 候选新增工作电脑上的 OAuth/动态注册，
-   不含 Web/App OAuth 代理、服务端采样、完整 elicitation、MCP Apps 或第三方
-   专属运行时。见 [协议适配](protocol-adapters.md) 与 [协议矩阵](protocol-compatibility-1.0.1.md)。
-4. **价格与模型**：优先用户 Base URL 的目录及明确配置，内置模板/单价只是
-   有日期的回退示例；目录缺失、别名和阶梯/音频计费仍需要用户核对。估算不等于账单。
-5. **平台验收**：CI 验证当前操作系统软件路径；GUI 终端、输入法、剪贴板
-   安全策略和实体手机仍有设备差异。请提供可复现环境，不用“全平台通用”替代证据。
-6. **生产部署**：企业租户 claim、域名/TLS、HA 拓扑、监控、异地备份和恢复
-   演练由部署者按手册验收；已有脚本不代表任意生产环境已通过。
-7. **发行方式**：公开 npm 包仍为 @kkelly-offical/kkcode，SDK 通过子路径导出；
-   packages/* 是私有工作区，不是独立发布的 npm 包。仅发布 1.0.x，未授权 1.1.0。
-8. **Browser**：引擎在被控电脑按需安装；不接管个人浏览器、不提供任意 JS
-   执行、WebSocket、下载或 OS 桌面自动化；浏览器本身不代替宿主隔离。
+## 保持的产品方向
 
-## 后续方向（不阻塞本轮已明确的 backlog）
+- 终端优先，多端连接同一工作电脑；Android原生客户端，不在手机内嵌Agent运行时。
+- 默认沿用会话模型，允许明确的职责路由；敏感动作保留用户、策略和预算边界。
+- 大任务以独立工作区、可核查产物和独立验收推进；目标是可审查的PR/MR，不自动合并发布。
+- MCP、Skills、插件和分域SDK按真实支持子集发展，不把“有入口”当完整协议认证。
 
-- 将可编程扩展进一步进程隔离，补齐外部协议的新能力时保持权限与审计边界。
-- 在实际新需求推动时拆分大型模块，而非仅为减少行数机械搬运。
-- 保持真实桌面、Android 实体设备和企业 IdP 的兼容记录；每次发行记录真实门禁结果。
-- 企业托管更新源、强制升级策略和签名轮换按独立需求设计；当前 GitHub 更新
-  不依赖企业网关新增服务，也不提供静默安装。
-- 新增任何能力时同步更新 README、协议/SDK 文档与测试，移除不成立的完成声明。
+## 暂缓与不自动扩展的范围
+
+公共网关镜像继续暂缓，部署采用源码构建。不新增Web SSH代理、跨设备浏览器调度、
+桌面远控或浏览器直播控制面板。企业更新源、静默安装、签名轮换等需要独立需求与设计。
+任何生产部署、付费模型测试或新账号／仓库操作均需独立授权。
+
+原[1.0.5→1.1.0计划](plan-1.0.5.md)仍作为成熟度目标保留；观察周期可重新商定，
+但不能把尚未完成的验收写成完成。1.1.0及1.0.5正式发布都需要分别确认，不因改版本号自动发行。

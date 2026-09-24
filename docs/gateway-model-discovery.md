@@ -47,7 +47,7 @@ its catalog defaults to the sibling `/models`. See [Responses configuration and 
 
 ## Commands
 
-Web/Android connection discovery in 1.0.1 accepts just `base_url` and `api_key`:
+Web/Android connection discovery accepts just `base_url` and `api_key`:
 the temporary connection defaults to OpenAI-compatible unless the caller
 explicitly selects another type/protocol. Read the catalog, select a returned
 model and save it; a model name is not required before discovery. This does not
