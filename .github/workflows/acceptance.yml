@@ -171,8 +171,6 @@ jobs:
       # Explicit TEST-ONLY official extension-install debugging. No personal
       # profile, no debug TCP listener, and the OS sandbox must stay enabled.
       KKCODE_BRIDGE_ALLOW_EXTENSION_DEBUGGING: "1"
-      KKCODE_BRIDGE_TEST_RUNTIME: ${{ runner.temp }}/kkcode-bridge-runtime
-      KKCODE_BRIDGE_REPORT: ${{ runner.temp }}/kkcode-bridge-report.json
       KKCODE_BRIDGE_EXTENSION_SOURCE: ${{ github.workspace }}/test-results/bridge-extension-source
     steps:
       - uses: actions/checkout@v7
@@ -182,6 +180,9 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Select private runner fixture paths
+        shell: bash
+        run: node --input-type=module -e 'import{appendFile}from"node:fs/promises";import path from"node:path";for(const [key,name] of [["KKCODE_BRIDGE_TEST_RUNTIME","kkcode-bridge-runtime"],["KKCODE_BRIDGE_REPORT","kkcode-bridge-report.json"]])await appendFile(process.env.GITHUB_ENV,`${key}=${path.join(process.env.RUNNER_TEMP,name)}\n`)'
       - run: npm ci --ignore-scripts
       - name: Get the exact official extension source, not its moving store version
         uses: actions/checkout@v7
