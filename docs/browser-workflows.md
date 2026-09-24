@@ -14,7 +14,7 @@
 
 `download` 接受 HTTP(S) `url` 或真实链接的 href。它不点击按钮、不执行 onclick、不启动 Chromium 原生下载器，而是通过受控网络层执行一次有界 GET（每个重定向各一次，最多五跳），逐跳做 DNS 固定与出域校验，流式限制压缩前/后字节。只对当前页同 origin 发送该隔离上下文 Cookie，跳往其他 origin 不转发凭据。成功后返回 ArtifactStore 完整产物引用，由现有 Web/Android 产物入口下载；不返回宿主文件路径、不执行文件。blob/data 下载及依赖脚本/POST 的下载暂不支持，明确报错，不偷偷重试或回退到不受限下载器。
 
-页面请求走统一受控网络，service workers 禁用，默认 WebSocket 禁用；显式 development 模式仅允许已批准的同源开发 WebSocket。严格受托任务仍要求工作合同中的网络 origin 授权与有效 data_policy 同时允许；不能关闭 Chromium 沙箱或用自定义二进制。缺少系统沙箱支持时失败关闭，不把 `--no-sandbox` 模拟测试称为严格执行验收。
+页面请求走统一受控网络，service workers 禁用，默认 WebSocket 禁用；普通交互的显式 development 模式仅允许已批准的同源开发 WebSocket。严格受托任务不支持development/WS，默认网络仅GET/HEAD；写动作还须精确外部合同与逐动作宿主授权，详见[严格委托](strict-isolation.md)。网络 origin 授权与有效 data_policy 必须同时允许；不能关闭 Chromium 沙箱或用自定义二进制。缺少系统沙箱支持时失败关闭，不把 `--no-sandbox` 模拟测试称为严格执行验收。
 
 普通对话也会保留配置来源：未信任的项目不能选择浏览器可执行文件或关闭 Chromium 沙箱，这两项只取用户级配置；信任/启动设置改变时关闭旧进程，重新打开才会应用新设置。直接 SDK `createBrowserController` 是可信宿主接口，宿主必须传入真实 `configState` 或自行审核配置，不得把原始 RPC/模型 JSON 当作可信配置。
 

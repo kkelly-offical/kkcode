@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, readFile, appendFile, access } from 'node:fs/promises'
+import { mkdtemp, readFile, appendFile, access } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { execFile, fork } from 'node:child_process'
@@ -9,16 +9,18 @@ import { fileURLToPath } from 'node:url'
 import { once } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import { openRunStore, runStoreNodeArgs } from '../src/storage/run-store.mjs'
+import { createFixtureCleanup } from './helpers/fixture-cleanup.mjs'
 
 const exec = promisify(execFile)
 const fixtureModule = new URL('./fixtures/run-store-v1.mjs', import.meta.url).href
 async function fixture(t) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kk-run-migrate-'))
-  t.after(() => rm(directory, { recursive: true, force: true }))
+  const cleanup = createFixtureCleanup(t)
+  cleanup.remove(directory)
   const file = path.join(directory, 'runs.sqlite')
   const script = `import{DatabaseSync}from'node:sqlite';import{schemaV1}from${JSON.stringify(fixtureModule)};process.umask(0o077);const db=new DatabaseSync(process.argv[1]);db.exec(schemaV1);const contract=JSON.stringify({objective:'Preserve legacy state',requiredCriteria:[{id:'check',description:'verify'}],nonGoals:[],allowedPaths:[],allowedExternalActions:[]});db.prepare('INSERT INTO runs(id,state,revision,owner_id,owner_epoch,contract_version,contract_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run('legacy','paused',1,'legacy-owner',1,1,contract,1,1);db.prepare('INSERT INTO contracts VALUES(?,1,?,NULL,1)').run('legacy',contract);db.prepare('INSERT INTO events(run_id,revision,type,data_json,created_at) VALUES(?,1,?,?,1)').run('legacy','run.created',JSON.stringify({contractVersion:1,binding:null}));db.close();`
   await exec(process.execPath, [...runStoreNodeArgs(), '--input-type=module', '-e', script, file])
-  return { directory, file }
+  return { directory, file, cleanup }
 }
 
 test('schema 1 upgrades only after a verified consistent backup; restore never overwrites an active DB', async t => {
@@ -26,7 +28,7 @@ test('schema 1 upgrades only after a verified consistent backup; restore never o
   const before = await readFile(f.file)
   await assert.rejects(openRunStore({ directory: f.directory, readOnly: true }), { code: 'MIGRATION_REQUIRED' })
   assert.deepEqual(await readFile(f.file), before)
-  const store = await openRunStore({ directory: f.directory }); t.after(() => store.close())
+  const store = f.cleanup.own(await openRunStore({ directory: f.directory }))
   const run = await store.getRun('legacy')
   assert.equal(run.state, 'paused'); assert.equal(run.revision, 1)
   const backups = await store.listBackups()
@@ -34,10 +36,10 @@ test('schema 1 upgrades only after a verified consistent backup; restore never o
   assert.equal((await store.verifyBackup({ id: backups[0].id })).runCount, 1)
   await assert.rejects(store.restoreBackup({ id: backups[0].id, directory: f.directory }), { code: 'BACKUP_INVALID' })
   const restoredDirectory = path.join(path.dirname(f.directory), `kk-run-restored-${randomUUID()}`)
-  t.after(() => rm(restoredDirectory, { recursive: true, force: true }))
+  f.cleanup.remove(restoredDirectory)
   const restored = await store.restoreBackup({ id: backups[0].id, directory: restoredDirectory })
   assert.equal(restored.version, 1)
-  const reopened = await openRunStore({ directory: restoredDirectory }); t.after(() => reopened.close())
+  const reopened = f.cleanup.own(await openRunStore({ directory: restoredDirectory }))
   assert.deepEqual(await reopened.getRun('legacy'), run)
   await store.close(); await reopened.close()
 })
@@ -45,21 +47,26 @@ test('schema 1 upgrades only after a verified consistent backup; restore never o
 test('an already-open old writer is fenced by schema 2 triggers and its whole transaction rolls back', async t => {
   const f = await fixture(t)
   const old = fork(fileURLToPath(new URL('./fixtures/run-store-old-writer.mjs', import.meta.url)), [f.file], { execArgv: runStoreNodeArgs(), stdio: ['ignore', 'ignore', 'ignore', 'ipc'] })
-  t.after(() => { if (old.connected) old.disconnect() })
+  f.cleanup.defer(async () => {
+    if (old.exitCode !== null || old.signalCode !== null) return
+    const exited = once(old, 'exit')
+    if (old.connected) old.disconnect()
+    await exited
+  })
   await once(old, 'message')
-  const store = await openRunStore({ directory: f.directory }); t.after(() => store.close())
+  const store = f.cleanup.own(await openRunStore({ directory: f.directory }))
   const response = once(old, 'message'); old.send({ write: true })
   const [result] = await response
   assert.equal(result.wrote, false)
   assert.match(result.message, /runtime_upgrade_required/)
   assert.equal((await store.getRun('legacy')).state, 'paused')
   assert.equal((await store.events({ runId: 'legacy' })).length, 1)
-  old.disconnect(); await once(old, 'exit')
+  const exited = once(old, 'exit'); old.disconnect(); await exited
 })
 
 test('backup corruption fails checksum verification and cannot create a restored database', async t => {
   const f = await fixture(t)
-  const store = await openRunStore({ directory: f.directory }); t.after(() => store.close())
+  const store = f.cleanup.own(await openRunStore({ directory: f.directory }))
   const [backup] = await store.listBackups()
   await appendFile(path.join(f.directory, 'backups', `${backup.id}.sqlite`), 'corruption')
   await assert.rejects(store.verifyBackup({ id: backup.id }), { code: 'BACKUP_INVALID' })
@@ -71,22 +78,23 @@ test('backup corruption fails checksum verification and cannot create a restored
 
 test('manual current-schema backup restores a complete new store', async t => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'kk-run-current-backup-'))
-  t.after(() => rm(directory, { recursive: true, force: true }))
-  const store = await openRunStore({ directory }); t.after(() => store.close())
+  const cleanup = createFixtureCleanup(t)
+  cleanup.remove(directory)
+  const store = cleanup.own(await openRunStore({ directory }))
   const run = await store.createRun({ id: 'current', ownerId: 'host', contract: { objective: 'Keep current records', requiredCriteria: [] } })
   const backup = await store.createBackup()
   assert.equal(backup.version, 2)
   const restoredDirectory = path.join(path.dirname(directory), `kk-current-restored-${randomUUID()}`)
-  t.after(() => rm(restoredDirectory, { recursive: true, force: true }))
+  cleanup.remove(restoredDirectory)
   await store.restoreBackup({ id: backup.id, directory: restoredDirectory })
-  const restored = await openRunStore({ directory: restoredDirectory }); t.after(() => restored.close())
+  const restored = cleanup.own(await openRunStore({ directory: restoredDirectory }))
   assert.deepEqual(await restored.getRun(run.id), run)
   await store.close(); await restored.close()
 })
 
 test('a cancelled parent can persist child cleanup but cannot restart or approve graph work', async t => {
   const f = await fixture(t)
-  const store = await openRunStore({ directory: f.directory }); t.after(() => store.close())
+  const store = f.cleanup.own(await openRunStore({ directory: f.directory }))
   let run = await store.getRun('legacy')
   const guard = () => ({ runId: run.id, expectedRevision: run.revision, ownerId: run.ownerId, ownerEpoch: run.ownerEpoch })
   const now = Date.now()

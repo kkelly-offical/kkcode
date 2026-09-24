@@ -28,6 +28,34 @@ export class BrowserNetwork {
     this.privateOrigins = new Map(); this.bytes = 0; this.requests = 0; this.errors = []; this.controller = new AbortController()
     this.sockets = new Set()
     this.dataPolicy = undefined
+    this.strictEffects = false; this.effectWindow = null; this.effectFailure = null
+  }
+  setStrictEffects() { this.strictEffects = true; for (const socket of this.sockets) socket.terminate(); this.sockets.clear() }
+  captureRequestScope() { return this.effectWindow }
+  beginAction(authorization = null) {
+    if (!this.strictEffects) return
+    if (this.effectFailure) throw this.effectFailure
+    if (this.effectWindow) throw new Error('严格 Browser 动作不能并行共享写授权')
+    this.effectWindow = { authorization, open: true, pending: new Set(), controller: new AbortController(), failure: null }
+  }
+  async finishAction() {
+    const window = this.effectWindow
+    if (!this.strictEffects || !window) return
+    // Close admission first. A delayed request may not borrow the next action's
+    // grant, and background scripts have no write permission between actions.
+    window.open = false
+    let timer
+    const timeout = new Promise(resolve => { timer = setTimeout(() => {
+      window.failure ||= Object.assign(new Error('浏览器写请求收束超时，结果未知；任务必须暂停核查，不能自动重试'), { code: 'browser_effect_unknown', operationNotStarted: false })
+      window.controller.abort(window.failure)
+      resolve(undefined)
+    }, 10000) })
+    // Resolver implementations do not necessarily support AbortSignal. Stop
+    // waiting on the tool deadline even then; the closed original window still
+    // prevents a late DNS result from dispatching under another action.
+    try { await Promise.race([Promise.allSettled([...window.pending]), timeout]) }
+    finally { clearTimeout(timer); if (this.effectWindow === window) this.effectWindow = null }
+    if (window.failure) { this.effectFailure = window.failure; throw window.failure }
   }
   setDataPolicy(policy) {
     let normalized
@@ -60,8 +88,36 @@ export class BrowserNetwork {
     if (privateAddresses.some(item => !allowed?.has(canonicalIp(item.address)))) throw new Error('Private subresource or redirect blocked; explicitly open that development origin first')
     return { url, address: addresses[0] }
   }
-  /** @param {string} raw @param {{method?: string, headers?: Record<string, string>, body?: Buffer|null, signal?: AbortSignal|null}} [options] */
-  async fetch(raw, { method = 'GET', headers = {}, body = null, signal = null } = {}) {
+  /** @param {string} raw @param {{method?: string, headers?: Record<string, string>, body?: Buffer|null, signal?: AbortSignal|null, source?: object|null, actionScope?: any}} [options] */
+  async fetch(raw, { method = 'GET', headers = {}, body = null, signal = null, source = null, actionScope = undefined } = {}) {
+    method = String(method).toUpperCase()
+    const write = !['GET', 'HEAD'].includes(method), window = actionScope === undefined ? this.effectWindow : actionScope
+    if (this.strictEffects && write && (!window?.open || !window.authorization)) throw Object.assign(new Error('严格 Browser 默认只允许 GET/HEAD；页面写请求需要本次动作的明确授权'), { code: 'browser_write_blocked' })
+    if (!this.strictEffects || !write) return this.fetchResource(raw, { method, headers, body, signal })
+    const operation = (async () => {
+      let dispatched = false
+      try {
+        if (new URL(raw).origin !== window.authorization.origin) throw new Error('浏览器写请求不属于已批准页面来源')
+        if (window.authorization.source && source !== window.authorization.source) throw new Error('其他标签页或框架不能借用当前动作的写授权')
+        const response = await this.fetchResource(raw, { method, headers, body, signal: signal ? AbortSignal.any([signal, window.controller.signal]) : window.controller.signal,
+          beforeRequest: async () => {
+            if (!window.open) throw new Error('浏览器动作授权窗口已关闭；延迟写请求未派发')
+            await window.authorization.assertCurrent()
+            if (!window.open) throw new Error('浏览器动作授权窗口已关闭；延迟写请求未派发')
+            dispatched = true
+          }
+        })
+        if (response.status >= 400) throw new Error(`浏览器写请求返回 HTTP ${response.status}`)
+        return response
+      } catch (error) {
+        window.failure ||= Object.assign(new Error(dispatched ? '浏览器写请求已经派发但未能确认结果；任务必须暂停核查，不能自动重试' : '浏览器动作中的写请求被拒绝；请检查授权和页面状态，不能宣称动作成功', { cause: error }), { code: dispatched ? 'browser_effect_unknown' : 'browser_effect_rejected', operationNotStarted: false })
+        throw window.failure
+      }
+    })()
+    window.pending.add(operation)
+    try { return await operation } finally { window.pending.delete(operation) }
+  }
+  async fetchResource(raw, { method = 'GET', headers = {}, body = null, signal = null, beforeRequest = null } = {}) {
     const scope = this.controller.signal
     if (++this.requests > this.maxRequests) throw new Error('Browser request budget exhausted; close and reopen the browser session')
     const { url, address } = await this.target(raw)
@@ -76,7 +132,7 @@ export class BrowserNetwork {
     const { response } = await guardedFetch(url.href, { method, headers: cleanHeaders, body, signal: abort }, {
       allowPrivate: true, lookup: async () => [address], followRedirects: false,
       maxWireBytes: remaining, maxDecodedBytes: remaining, maxRequestBytes: 20 * 1024 * 1024,
-      assertTarget: () => scope.throwIfAborted(),
+      assertTarget: async () => { scope.throwIfAborted(); await beforeRequest?.(); scope.throwIfAborted() },
       onDecodedBytes: size => { this.bytes += size; if (this.bytes > this.maxBytes) throw new Error('Browser response exceeds its byte budget') }
     })
     const bytes = Buffer.from(await response.arrayBuffer())
@@ -88,6 +144,7 @@ export class BrowserNetwork {
   /** Development-only WebSockets use the same DNS pinning and byte budget as
    * HTTP. No redirect, proxy fallback, metadata access or cross-origin socket. */
   async websocket(raw, { origin, protocol = '' }) {
+    if (this.strictEffects) throw Object.assign(new Error('严格 Browser 不支持持续写入的 WebSocket；仅普通交互开发模式可用'), { code: 'browser_websocket_blocked' })
     const scope = this.controller.signal
     const url = new URL(raw)
     if (!['ws:', 'wss:'].includes(url.protocol)) throw new Error('Expected a WebSocket URL')
@@ -114,7 +171,7 @@ export class BrowserNetwork {
     const bytes = Buffer.byteLength(data); this.bytes += bytes
     if (bytes > 1024 * 1024 || this.bytes > this.maxBytes) throw new Error('Browser WebSocket byte budget exhausted')
   }
-  close() { this.controller.abort(); for (const socket of this.sockets) socket.terminate(); this.sockets.clear(); this.privateOrigins.clear() }
+  close() { this.controller.abort(); this.effectWindow?.controller.abort(); for (const socket of this.sockets) socket.terminate(); this.sockets.clear(); this.privateOrigins.clear() }
 }
 
 export async function createDenyProxy() {

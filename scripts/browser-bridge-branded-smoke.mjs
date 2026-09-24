@@ -48,7 +48,82 @@ export function brandedLaunchOptions({ channel, profile, env }) {
   return { channel, headless: false, chromiumSandbox: true, ignoreDefaultArgs: true, timeout: 90000,
     // No hidden Playwright defaults that disable phishing checks, sandbox,
     // storage partitioning or first-run/licensing/permission screens.
-    args: [`--user-data-dir=${profile}`, '--profile-directory=Default', '--remote-debugging-pipe', '--enable-automation', '--enable-unsafe-extension-debugging', '--no-default-browser-check', '--force-color-profile=srgb', 'about:blank'], env }
+    // Chromium rejects native second-launch URL forwarding when this process
+    // has --enable-automation. The extension relay needs that normal forwarding.
+    args: [`--user-data-dir=${profile}`, '--profile-directory=Default', '--remote-debugging-pipe', '--enable-unsafe-extension-debugging', '--no-default-browser-check', '--force-color-profile=srgb', 'about:blank'], env }
+}
+
+function windowsCommandLine(text) {
+  const args = []; let offset = 0
+  while (offset < text.length) {
+    while (text[offset] === ' ' || text[offset] === '\t') offset++
+    if (offset === text.length) break
+    let value = '', quoted = false
+    while (offset < text.length && (quoted || ![' ', '\t'].includes(text[offset]))) {
+      if (text[offset] === '\\') {
+        let count = 0
+        while (text[offset] === '\\') { count++; offset++ }
+        if (text[offset] === '"') {
+          value += '\\'.repeat(Math.floor(count / 2))
+          if (count % 2) { value += '"'; offset++ }
+          else if (quoted && text[offset + 1] === '"') { value += '"'; offset += 2 }
+          else { quoted = !quoted; offset++ }
+        } else value += '\\'.repeat(count)
+      } else if (text[offset] === '"') {
+        if (quoted && text[offset + 1] === '"') { value += '"'; offset += 2 }
+        else { quoted = !quoted; offset++ }
+      }
+      else value += text[offset++]
+    }
+    if (quoted) throw blocked('browser_argv_ambiguous', 'Native Windows command line has unmatched quotes.')
+    args.push(value)
+    if (args.length > 256) throw blocked('browser_argv_ambiguous', 'Native browser command line exceeds the argument bound.')
+  }
+  return args
+}
+
+/** VersionUI uses CommandLineToArgvW-compatible quoting on Windows, but simply
+ * joins argv on POSIX. Never shell-split the latter's executable path (Chrome.app
+ * contains spaces). The sole variable POSIX argument, the owned profile path,
+ * is matched whole and independently checked against the native profile field. */
+export function parseBrandedVersionEvidence({ channel, platform, url, executable, commandLine, profilePath, profile }) {
+  const expectedUrl = channel === 'msedge' ? 'edge://version/' : channel === 'chrome' ? 'chrome://version/' : null
+  if (!expectedUrl || url !== expectedUrl) throw blocked('browser_version_source_invalid', 'Browser identity must come from its exact built-in version page, not a web page or redirect.')
+  for (const value of [executable, commandLine, profilePath, profile]) if (typeof value !== 'string' || !value.trim() || value.length > 65536 || /[\0\r\n]/.test(value)) throw blocked('browser_argv_ambiguous', 'Native version fields are absent, malformed or too large.')
+  const normalize = value => platform === 'win32' ? path.win32.normalize(value).toLowerCase() : path.posix.normalize(value)
+  if (normalize(profilePath.trim()) !== normalize((platform === 'win32' ? path.win32 : path.posix).join(profile, 'Default'))) throw blocked('profile_scope_mismatch', 'Native version page reports a different profile directory.')
+  const binary = executable.trim(), text = commandLine.trim()
+  let args
+  if (platform === 'win32') args = windowsCommandLine(text)
+  else if (['linux', 'darwin'].includes(platform)) {
+    if (!text.startsWith(binary + ' ') || /[\t"']/.test(profile) || /\s--/.test(profile)) throw blocked('browser_argv_ambiguous', 'POSIX native argv cannot be reconstructed without ambiguity.')
+    args = [binary]
+    let remainder = text.slice(binary.length).trimStart()
+    const profileArg = `--user-data-dir=${profile}`
+    while (remainder) {
+      let value
+      if (remainder.startsWith(profileArg) && (!remainder[profileArg.length] || remainder[profileArg.length] === ' ')) value = profileArg
+      else value = remainder.split(/\s/, 1)[0]
+      if (!value || value !== profileArg && value !== 'about:blank' && !/^--[A-Za-z0-9_-]+(?:=[^\s"'\\]*)?$/.test(value)) throw blocked('browser_argv_ambiguous', 'POSIX native argv includes an unsupported ambiguous argument.')
+      args.push(value); remainder = remainder.slice(value.length).trimStart()
+      if (args.length > 256) throw blocked('browser_argv_ambiguous', 'Native browser command line exceeds the argument bound.')
+    }
+  } else throw blocked('runner_os_mismatch', 'Unsupported platform for native argv evidence.')
+  if (!args.length || normalize(args[0]) !== normalize(binary)) throw blocked('browser_brand_mismatch', 'Native executable and command-line program disagree.')
+  return args
+}
+
+export async function readBrandedVersionEvidence(page, { channel, profile, platform = process.platform }) {
+  const url = channel === 'msedge' ? 'edge://version/' : 'chrome://version/'
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 10000 })
+  if (page.url() !== url) throw blocked('browser_version_source_invalid', 'Version page redirected; browser identity was not accepted.')
+  await page.waitForFunction(() => ['executable_path', 'command_line', 'profile_path'].every(id => document.getElementById(id)?.textContent?.trim()), null, { timeout: 10000 })
+  const evidence = await page.evaluate(() => ({ url: location.href, executable: document.getElementById('executable_path')?.textContent,
+    commandLine: document.getElementById('command_line')?.textContent, profilePath: document.getElementById('profile_path')?.textContent }))
+  const commandLine = parseBrandedVersionEvidence({ ...evidence, channel, platform, profile })
+  if (page.url() !== url) throw blocked('browser_version_source_invalid', 'Version page changed during identity inspection.')
+  await page.goto('about:blank')
+  return commandLine
 }
 
 function waitForContextPage(context, matches, timeoutMs, signal, timeoutError) {
@@ -128,7 +203,7 @@ export async function probeBrandedProfileReuse({ context, executable, profile, o
   observed.catch(() => {})
   let page
   try {
-    const processResult = launch(executable, [`--user-data-dir=${profile}`, '--profile-directory=Default', url.href], { env, timeout: timeoutMs, maxBuffer: 16384, windowsHide: true })
+    const processResult = launch(executable, [`--user-data-dir=${profile}`, '--profile-directory=Default', url.href], { env, timeout: timeoutMs, maxBuffer: 16384, windowsHide: true, detached: true })
       .catch(error => { const diagnostics = createBrandedConnectionDiagnostics(); const details = diagnostics.failure('profile_reuse', error); throw Object.assign(blocked('browser_profile_reuse_failed', `The exact browser/profile reuse command failed (${details.reason}); no fallback was attempted.`), { diagnosticFailure: details }) })
     processResult.catch(error => controller.abort(error))
     ;[page] = await Promise.all([observed, processResult])
@@ -139,6 +214,7 @@ export async function probeBrandedProfileReuse({ context, executable, profile, o
 
 export function verifyBrandedIdentity({ channel, platform, commandLine, version, userAgent, profile }) {
   if (!Array.isArray(commandLine) || !commandLine.length || commandLine.some(arg => unsafeFlag.test(arg))) throw blocked('unsafe_browser_launch', 'Browser launch contains a forbidden sandbox/security/network-debugging override.')
+  if (commandLine.some(arg => /^--enable-automation(?:=|$)/.test(arg))) throw blocked('browser_automation_reuse_incompatible', 'Automation mode prevents the native URL forwarding required by the extension relay.')
   if (!commandLine.includes('--remote-debugging-pipe') || !commandLine.includes('--enable-unsafe-extension-debugging')) throw blocked('installation_debugging_unavailable', 'The requested official pipe-only extension installation setup is absent.')
   const normalize = value => platform === 'win32' ? path.win32.normalize(value).toLowerCase() : path.posix.normalize(value)
   const dataArgs = commandLine.filter(arg => arg.startsWith('--user-data-dir='))
@@ -222,6 +298,7 @@ export async function runBrandedBridgeSmoke({ env = process.env } = {}) {
   const priorRoot = process.env.KKCODE_HOME
   process.env.KKCODE_HOME = path.join(fixture, 'kkcode-state')
   let context, controller, server, receipt, failure, diagnosticCapture, diagnosticTimer, browserEvidence, extensionEvidence, profileReuseEvidence
+  let nativeProbeHttpRequests = 0
   const connectionDiagnostics = createBrandedConnectionDiagnostics(), connectionAbort = new AbortController()
   try {
     const extension = await buildPinnedBrandedExtension({ source: setup.source, destination: path.join(fixture, 'extension') })
@@ -240,10 +317,13 @@ export async function runBrandedBridgeSmoke({ env = process.env } = {}) {
     const browser = context.browser()
     assert.ok(browser, 'persistent context must expose the real browser')
     const cdp = await browser.newBrowserCDPSession()
-    const version = await cdp.send('Browser.getVersion'), { arguments: commandLine } = await cdp.send('Browser.getBrowserCommandLine')
+    const version = await cdp.send('Browser.getVersion')
     for (const candidate of context.pages()) if (!['about:blank', 'chrome://newtab/', 'edge://newtab/'].includes(candidate.url())) throw blocked('interactive_setup_required', 'Browser opened a first-run, licensing, sign-in or permission page; no setup prompt was accepted.')
     const page = context.pages()[0] || await context.newPage()
+    const commandLine = await readBrandedVersionEvidence(page, { channel: setup.channel, profile })
     const identity = verifyBrandedIdentity({ channel: setup.channel, platform: process.platform, commandLine, version, userAgent: await page.evaluate(() => navigator.userAgent), profile })
+    identity.argvEvidence = 'exact built-in version page; independently matched executable and Default profile'
+    identity.commandLineHash = digest(JSON.stringify(commandLine))
     identity.executable = await realpath(identity.executable)
     identity.executableSha256 = await fileHash(identity.executable)
     browserEvidence = identity
@@ -256,6 +336,7 @@ export async function runBrandedBridgeSmoke({ env = process.env } = {}) {
     extensionEvidence = { id: installed.id, version: extension.version, sourceRevision: extension.sourceRevision, sourceHash: extension.sourceHash, buildHash: extension.buildHash }
     let clicked = false
     server = http.createServer((request, response) => {
+      if (request.url?.startsWith('/launch-probe-')) nativeProbeHttpRequests++
       if (request.url === '/submit') { clicked = true; response.end('ok'); return }
       response.setHeader('content-type', 'text/html')
       response.end(`<title>KK synthetic branded bridge fixture</title><style>html,body{background:${request.url === '/unshared' ? '#f1111d' : '#113311'}}</style><h1>${request.headers.cookie?.includes('fixture_login=local-only') ? 'Signed in fixture' : 'Not signed in'}</h1><button onclick="fetch('/submit').then(()=>this.textContent='Saved')">Save fixture</button><iframe title="PRIVATE EMBEDDED TITLE" src="data:text/html,${encodeURIComponent('<p>PRIVATE_EMBEDDED_FRAME_CANARY</p>')}"></iframe>`)
@@ -354,7 +435,14 @@ export async function runBrandedBridgeSmoke({ env = process.env } = {}) {
   } catch (error) {
     failure = error
     failure.connectionDiagnostics = connectionDiagnostics.snapshot()
+    failure.nativeProbeHttpRequests = nativeProbeHttpRequests
     failure.browserEvidence = browserEvidence; failure.extensionEvidence = extensionEvidence; failure.profileReuseEvidence = profileReuseEvidence
+    // A native first-run modal may not appear as a CDP page. Capture only the
+    // disposable hosted-runner desktop before MCP/extension approval has begun;
+    // never grant Screen Recording permission or capture extension token UI.
+    if (process.platform === 'darwin' && setup.report && connectionDiagnostics.snapshot().phase === 'not_started') {
+      await exec('/usr/sbin/screencapture', ['-x', '-t', 'png', path.join(temp, `${setup.channel}-desktop.png`)], { timeout: 5000, maxBuffer: 65536 }).catch(() => {})
+    }
     if (context && setup.report) {
       const pages = context.pages().slice(0, 4)
       for (let index = 0; index < pages.length; index++) {
@@ -380,7 +468,7 @@ async function main() {
   try { receipt = await runBrandedBridgeSmoke() }
   catch (error) { receipt = { status: error.blocked ? 'blocked' : 'failed', channel: process.env.KKCODE_BRIDGE_TEST_CHANNEL || null, code: error.code || 'branded_bridge_acceptance_failed', message: String(error.message).slice(0, 8000),
     ...(error.connectionDiagnostics ? { connectionDiagnostics: error.connectionDiagnostics } : {}), ...(error.diagnosticFailure ? { diagnosticFailure: error.diagnosticFailure } : {}),
-    ...(error.browserEvidence ? { browser: error.browserEvidence } : {}), ...(error.extensionEvidence ? { extension: error.extensionEvidence } : {}), ...(error.profileReuseEvidence ? { profileReuse: error.profileReuseEvidence } : {}), additionalEulaAccepted: false }; process.exitCode = error.blocked ? 2 : 1 }
+    ...(error.browserEvidence ? { browser: error.browserEvidence } : {}), ...(error.extensionEvidence ? { extension: error.extensionEvidence } : {}), ...(error.profileReuseEvidence ? { profileReuse: error.profileReuseEvidence } : {}), nativeProbeHttpRequests: error.nativeProbeHttpRequests ?? null, additionalEulaAccepted: false }; process.exitCode = error.blocked ? 2 : 1 }
   if (process.env.KKCODE_BRIDGE_REPORT) {
     try {
       const setup = brandedBridgePreflight()

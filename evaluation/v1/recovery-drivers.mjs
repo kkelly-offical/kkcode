@@ -56,6 +56,9 @@ async function referenceProvider(task) {
       let cursor
       if (reads === 3) { try { cursor = JSON.parse(body.messages.filter(item => item.role === 'tool').at(-1)?.content).matches[0].readCursor } catch { /* Missing real cursor must fail the independent tail oracle. */ } }
       message = { role: 'assistant', content: null, tool_calls: [reads === 1 ? call('read-archive', 'artifact_read', { artifact_id: id, limit: 1000 }) : reads === 2 ? call('search-archive', 'artifact_search', { artifact_id: id, query: 'LAST=' }) : call('read-archive-tail', 'artifact_read', { artifact_id: id, cursor, limit: 1000 })] }
+    } else if (phase === 'last' && task.protocolReplayCheck === 'bound-invocations-v2' && reads === 0) {
+      reads++
+      message = { role: 'assistant', content: null, tool_calls: [call('explicit-new-model-read', 'read', { path: 'original.txt' })] }
     } else if (phase === 'last' && !sent && task.expectedResult) {
       sent = true
       message = { role: 'assistant', content: null, tool_calls: [call('final-result', 'write', { path: 'result.json', content: JSON.stringify(task.expectedResult) })] }
@@ -79,7 +82,7 @@ async function privateControl(cwd, privateRoot) {
 }
 
 /** Shared only with the trusted crash worker; never a model/tool API. */
-export async function createRecoveryRuntime({ task, cwd, privateRoot, profile, image, limits, ownerId = 'evaluation-recovery', fault = null, localFreeLimits = null, existingRunId = null, localFreeAuthorization: providedAuthorization = null, expectedLocalFreePolicy = null }) {
+export async function createRecoveryRuntime({ task, cwd, privateRoot, profile, image, limits, ownerId = 'evaluation-recovery', fault = null, localFreeLimits = null, existingRunId = null, localFreeAuthorization: providedAuthorization = null, expectedLocalFreePolicy = null, executionObserver = null }) {
   const home = path.join(privateRoot, 'state'); process.env.KKCODE_HOME = home
   await mkdir(home, { recursive: true, mode: 0o700 })
   const prices = path.join(home, 'prices.json'), configFile = path.join(home, 'config.json')
@@ -117,9 +120,11 @@ export async function createRecoveryRuntime({ task, cwd, privateRoot, profile, i
       if (['artifact_read', 'artifact_search'].includes(input.tool.name)) return input.invoke()
       throw new Error('Recovery filesystem tools must never execute the host fallback')
     } })
+    executionObserver?.record(input, result)
     await fault?.afterTool?.(runtime, input, result)
     return result
   } }
+  if (executionObserver) runtime.executeObservedFixtureTool = input => backend.executeTool(input)
   const originalPut = artifacts.put.bind(artifacts)
   artifacts.put = async input => { await fault?.beforeArtifact?.(runtime, input); return originalPut(input) }
   runtime.coordinator = createRunCoordinator({ kernel, store, artifacts, actor, ownerId, executionBackend: backend, ...(localFreeAuthorization ? { localFreeAuthorization } : {}),
@@ -131,6 +136,39 @@ export async function createRecoveryRuntime({ task, cwd, privateRoot, profile, i
 async function closeRuntime(runtime) {
   if (!runtime) return
   try { await runtime.coordinator?.close() } finally { try { await runtime.kernel?.shutdown() } finally { await runtime.store?.close() } }
+}
+
+function protocolExecutionObserver() {
+  const executions = [], requests = new Map()
+  return {
+    executions,
+    record(input, result) {
+      if (![input.operationId, input.invocationId, input.sessionId, input.turnId].every(value => typeof value === 'string' && value)) throw new Error('C05 host execution trace is incomplete')
+      executions.push({ operationId: input.operationId, invocationId: input.invocationId, sessionId: input.sessionId, turnId: input.turnId,
+        kind: `tool.${input.tool.name}`, completed: result?.status !== 'error' && result?.status !== 'cancelled' && result?.ok !== false })
+      if (!requests.has(input.operationId)) requests.set(input.operationId, input)
+    },
+    async replayReadonly(runtime, bindings) {
+      const selected = bindings.find(binding => ['tool.read', 'tool.list'].includes(binding.kind))
+      if (!selected || !requests.has(selected.id)) throw new Error('Protocol replay negative requires a real captured readonly invocation')
+      // This host-only fault actually runs the old strict Docker operation a
+      // second time. It is never exposed through live/model arguments.
+      const result = await runtime.executeObservedFixtureTool(requests.get(selected.id))
+      if (result?.status === 'error' || result?.status === 'cancelled' || result?.ok === false) throw new Error('Protocol replay fault did not execute the original operation')
+      return selected.id
+    }
+  }
+}
+
+function bindInterruptedInvocations(message, run) {
+  const calls = message.content.filter(block => block.type === 'tool_use')
+  return calls.map(call => {
+    const matches = run.actions.filter(action => action.context?.sessionId === run.binding.sessionId && action.context?.turnId === message.turnId
+      && action.context?.invocationId === call.id && action.kind === `tool.${call.name}` && action.parameterHash === sha256(call.input || {}))
+    if (matches.length !== 1 || matches[0].state !== 'succeeded' || !matches[0].receipt?.evidenceRefs?.length) throw new Error('C05 interrupted batch lacks an actual completed artifact-backed action')
+    const action = matches[0]
+    return { id: action.id, kind: action.kind, parameterHash: action.parameterHash, context: structuredClone(action.context), evidenceRefs: [...action.receipt.evidenceRefs] }
+  })
 }
 const contractFor = task => ({ objective: task.prompt, allowedPaths: ['.'], allowedTools: ['read', 'write', 'edit', 'patch', 'list', 'bash', 'artifact_read', 'artifact_search'], allowedExternalActions: [],
   requiredCriteria: [{ id: 'recovery-oracle', description: 'Independent host must inspect real recovery transitions and preserved inputs' }] })
@@ -190,18 +228,22 @@ async function compact(runtime, task, checks, operations, negativeControl = fals
 
 /** Actual host lifecycle runner. All approval closures are evaluator authority,
  * all file effects use the real strict Docker backend, never model assertions. */
-export async function runRecoveryScenario({ task, cwd, privateRoot, profile = null, image, budgetUsd = 0, deadlineAt = Date.now() + 120000, signal, mode = 'live', negativeControl = false, localFreeLimits = null, localFreeAuthorization = null }) {
+export async function runRecoveryScenario({ task, cwd, privateRoot, profile = null, image, budgetUsd = 0, deadlineAt = Date.now() + 120000, signal, mode = 'live', negativeControl = false, localFreeLimits = null, localFreeAuthorization = null, protocolFault = null }) {
   if (!supportedRecovery.has(task.lifecycle)) throw new Error('Unknown recovery lifecycle')
   if (!['live', 'system-selfcheck'].includes(mode)) throw new Error('Invalid recovery mode')
   if (mode === 'system-selfcheck' && (budgetUsd !== 0 || profile || localFreeLimits || localFreeAuthorization)) throw new Error('System selfcheck cannot authorize external model spending')
   if (localFreeAuthorization && !localFreeLimits) throw new Error('Suite authorization requires explicit local resource limits')
   if (mode === 'live' && (!profile || (localFreeLimits ? budgetUsd !== 0 : budgetUsd <= 0))) throw new Error('Live recovery requires an explicit paid budget or host-approved local-free allowance')
   if (negativeControl && mode !== 'system-selfcheck') throw new Error('Lifecycle negative controls are offline fixture-only, never live model quality evidence')
+  const boundProtocol = task.lifecycle === 'protocol_pair_restart' && task.protocolReplayCheck === 'bound-invocations-v2'
+  if (protocolFault && (mode !== 'system-selfcheck' || !boundProtocol || negativeControl || !['repeat-original', 'corrupt-artifact'].includes(protocolFault))) throw new Error('Protocol fault injection requires an explicit v2 offline fixture')
   privateRoot = await privateControl(cwd, privateRoot)
   const previousHome = process.env.KKCODE_HOME, reference = mode === 'system-selfcheck' ? await referenceProvider(task) : null
   profile = reference?.profile || profile
   const limits = { budgetUsd: reference ? 1 : budgetUsd, deadlineAt }, checks = [], operations = [], diagnostics = [], turns = []
   let runtime, beforeEventsHash, beforeEpoch, faultUsed = false, release, arrived
+  const executionObserver = boundProtocol ? protocolExecutionObserver() : null
+  let interruptedBindings = []
   const reached = new Promise(resolve => { arrived = resolve }), gate = new Promise(resolve => { release = resolve })
   try {
     const fault = {
@@ -247,7 +289,7 @@ export async function runRecoveryScenario({ task, cwd, privateRoot, profile = nu
         operations.push({ kind: 'real-process-SIGKILL', boundary: task.lifecycle, beforeState: prior.lastTurn?.status, afterState: runtime.run.lastTurn?.status })
       } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); if (worker.exitCode === null && worker.signalCode === null) worker.kill('SIGKILL') }
     } else {
-      runtime = await createRecoveryRuntime({ task, cwd, privateRoot, profile, image, limits, fault, localFreeLimits, localFreeAuthorization })
+      runtime = await createRecoveryRuntime({ task, cwd, privateRoot, profile, image, limits, fault, localFreeLimits, localFreeAuthorization, executionObserver })
       await start(runtime, task)
       beforeEpoch = runtime.run.ownerEpoch; beforeEventsHash = sha256(await runtime.store.events({ runId: runtime.run.id }))
       let unsubscribe, firstEvents = 0, secondEvents = 0
@@ -296,15 +338,29 @@ export async function runRecoveryScenario({ task, cwd, privateRoot, profile = nu
         }
         if (['coordinator_restart', 'protocol_pair_restart'].includes(task.lifecycle)) {
           if (task.lifecycle === 'protocol_pair_restart' && !negativeControl) {
-            const saved = await runtime.kernel.sessions.getSession(run.binding.sessionId), index = saved.messages.findIndex(message => message.role === 'assistant' && Array.isArray(message.content) && message.content.some(block => block.type === 'tool_use'))
+            const saved = await runtime.kernel.sessions.getSession(run.binding.sessionId), index = saved.messages.findIndex(message => {
+              if (message.role !== 'assistant' || !Array.isArray(message.content) || !message.content.some(block => block.type === 'tool_use')) return false
+              if (!boundProtocol) return true
+              // The protocol experiment drops a real, completed response backed
+              // by an artifact, not an unrelated failed preflight with no blob.
+              try { return bindInterruptedInvocations(message, run).length > 0 } catch { return false }
+            })
             if (index < 0) throw new Error('No actual tool call available for protocol-pair recovery')
+            if (boundProtocol) interruptedBindings = bindInterruptedInvocations(saved.messages[index], run)
             await runtime.kernel.sessions.replaceMessages(run.binding.sessionId, saved.messages.slice(0, index + 1)); await runtime.kernel.run(flushNow)
-            operations.push({ kind: 'truncate-after-persisted-tool-use', actionId: run.actions[0]?.id })
+            operations.push({ kind: 'truncate-after-persisted-tool-use', actionId: boundProtocol ? interruptedBindings[0]?.id : run.actions[0]?.id,
+              ...(boundProtocol ? { actionIds: interruptedBindings.map(binding => binding.id) } : {}) })
+            if (protocolFault === 'corrupt-artifact') {
+              const id = interruptedBindings[0]?.evidenceRefs[0]
+              if (!/^art_[a-f0-9-]{36}$/.test(id || '')) throw new Error('Protocol corruption fault lacks its newly created private artifact')
+              await writeFile(path.join(privateRoot, 'artifacts', 'objects', `${id}.bin`), 'controlled-test-corruption\n')
+              operations.push({ kind: 'fault-corrupt-original-receipt', artifactId: id })
+            }
           }
           const id = run.id, previousSession = run.binding.sessionId
           if (!negativeControl) {
             await closeRuntime(runtime); runtime = null
-            runtime = await createRecoveryRuntime({ task, cwd, privateRoot, profile, image, limits, ownerId: 'evaluation-reconstructed', localFreeLimits, existingRunId: id, localFreeAuthorization })
+            runtime = await createRecoveryRuntime({ task, cwd, privateRoot, profile, image, limits, ownerId: 'evaluation-reconstructed', localFreeLimits, existingRunId: id, localFreeAuthorization, executionObserver })
             runtime.run = await runtime.coordinator.attach({ runId: id })
           }
           checks.push({ name: 'store-and-kernel-reopened-same-run', passed: runtime.run.ownerEpoch > beforeEpoch && runtime.run.binding.sessionId === previousSession })
@@ -322,7 +378,21 @@ export async function runRecoveryScenario({ task, cwd, privateRoot, profile = nu
           if (task.lifecycle === 'protocol_pair_restart') {
             const saved = await runtime.kernel.sessions.getSession(runtime.run.binding.sessionId)
             checks.push({ name: 'actual-missing-response-recovered-from-artifact', passed: saved.messages.some(message => message.recoveredFromRun === runtime.run.id) && await pairs(runtime) })
-            checks.push({ name: 'original-read-not-repeated', passed: result.run.actions.filter(action => action.kind === 'tool.read').length === 1 })
+            if (!boundProtocol) checks.push({ name: 'original-read-not-repeated', passed: result.run.actions.filter(action => action.kind === 'tool.read').length === 1 })
+            else {
+              if (protocolFault === 'repeat-original') operations.push({ kind: 'fault-real-original-invocation-replay', actionId: await executionObserver.replayReadonly(runtime, interruptedBindings) })
+              const recovered = saved.messages.filter(message => message.recoveredFromRun === runtime.run.id).flatMap(message => Array.isArray(message.content) ? message.content : [])
+              checks.push({ name: 'bound-original-artifact-responses-recovered', passed: interruptedBindings.length > 0 && interruptedBindings.every(binding => recovered.some(block =>
+                block.type === 'tool_result' && block.tool_use_id === binding.context.invocationId && block.is_error !== true
+                && String(block.content).startsWith('[Recovered durable tool receipt;') && binding.evidenceRefs.every(ref => String(block.content).includes(ref)))) })
+              const unchanged = binding => result.run.actions.filter(action => action.id === binding.id && action.kind === binding.kind && action.parameterHash === binding.parameterHash
+                && action.state === 'succeeded' && sha256(action.context) === sha256(binding.context)).length === 1
+              const executions = binding => executionObserver.executions.filter(item => item.operationId === binding.id
+                && item.invocationId === binding.context.invocationId && item.sessionId === binding.context.sessionId && item.turnId === binding.context.turnId && item.kind === binding.kind)
+              checks.push({ name: 'bound-original-invocations-not-reexecuted', passed: interruptedBindings.length > 0
+                && interruptedBindings.every(binding => unchanged(binding) && executions(binding).length === 1 && executions(binding)[0].completed) })
+              operations.push({ kind: 'bound-protocol-invocations', bindings: interruptedBindings, actualExecutions: executionObserver.executions.map(item => ({ ...item })) })
+            }
           }
           if (task.lifecycle === 'artifact_context_restore') {
             const saved = await runtime.kernel.sessions.getSession(runtime.run.binding.sessionId)

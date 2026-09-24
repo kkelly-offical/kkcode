@@ -7,7 +7,7 @@ import { promisify } from 'node:util'
 import { EventEmitter } from 'node:events'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
-import { brandedBridgePreflight, brandedLaunchOptions, verifyBrandedIdentity, runBrandedBridgeSmoke, waitForBrandedApproval, createBrandedConnectionDiagnostics, probeBrandedProfileReuse, BRANDED_EXTENSION_ID } from '../scripts/browser-bridge-branded-smoke.mjs'
+import { brandedBridgePreflight, brandedLaunchOptions, verifyBrandedIdentity, parseBrandedVersionEvidence, readBrandedVersionEvidence, runBrandedBridgeSmoke, waitForBrandedApproval, createBrandedConnectionDiagnostics, probeBrandedProfileReuse, BRANDED_EXTENSION_ID } from '../scripts/browser-bridge-branded-smoke.mjs'
 
 const runnerOs = { linux: 'Linux', darwin: 'macOS', win32: 'Windows' }
 function environment(platform = process.platform) {
@@ -77,6 +77,7 @@ test('profile reuse probe uses the same exact Default profile and closes only it
       assert.deepEqual(args.slice(0, 2), ['--user-data-dir=/fixture/profile', '--profile-directory=Default'])
       assert.match(args[2], /^http:\/\/127\.0\.0\.1:1234\/launch-probe-/)
       assert.equal(options.windowsHide, true)
+      assert.equal(options.detached, true, 'match the pinned upstream MCP browser launch process semantics')
       const page = new EventEmitter(); let url = 'about:blank'
       page.url = () => url; page.close = async () => { closed = true }; page.isClosed = () => closed
       context.emit('page', page); url = args[2]; page.emit('framenavigated')
@@ -146,9 +147,61 @@ function identity(fixture) {
 for (const fixture of identities) test(`branded identity accepts compliant ${fixture.channel}/${fixture.platform} argv and UA without claiming real platform execution`, () => {
   const options = brandedLaunchOptions({ channel: fixture.channel, profile: fixture.profile, env: {} })
   assert.equal(options.headless, false); assert.equal(options.chromiumSandbox, true); assert.equal(options.ignoreDefaultArgs, true)
+  assert.equal(options.args.includes('--enable-automation'), false, 'this flag makes Chromium drop second-launch URLs, including the MCP connect page')
   const result = verifyBrandedIdentity(identity(fixture))
   assert.equal(result.channel, fixture.channel); assert.equal(result.freshProfile, true); assert.equal(result.pipeOnly, true)
   assert.match(result.sandboxEvidence, /not a separate kernel-level sandbox certification/)
+})
+
+for (const fixture of identities) test(`native version-page argv parsing preserves ${fixture.channel}/${fixture.platform} binary and profile identity`, () => {
+  const input = identity(fixture)
+  const commandLine = fixture.platform === 'win32'
+    ? `"${fixture.binary}" ${input.commandLine.slice(1).join(' ')}` : ` ${input.commandLine.join(' ')}`
+  const parsed = parseBrandedVersionEvidence({ ...fixture, executable: fixture.binary, commandLine, url: fixture.channel === 'msedge' ? 'edge://version/' : 'chrome://version/',
+    profilePath: (fixture.platform === 'win32' ? path.win32 : path.posix).join(fixture.profile, 'Default') })
+  assert.deepEqual(parsed, input.commandLine)
+  assert.equal(verifyBrandedIdentity({ ...input, commandLine: parsed }).pipeOnly, true)
+})
+
+test('native version parsing handles Windows quoted values/backslashes and POSIX executable/profile spaces without shell guessing', () => {
+  const windows = { channel: 'chrome', platform: 'win32', url: 'chrome://version/', executable: String.raw`C:\Program Files\Google\Chrome\Application\chrome.exe`,
+    profile: String.raw`C:\runner temp\profile`, profilePath: String.raw`C:\runner temp\profile\Default` }
+  const parsed = parseBrandedVersionEvidence({ ...windows,
+    commandLine: String.raw`"C:\Program Files\Google\Chrome\Application\chrome.exe" --user-data-dir="C:\runner temp\profile" --profile-directory=Default --remote-debugging-pipe --enable-unsafe-extension-debugging --fixture="a\\\"b" about:blank` })
+  assert.equal(parsed[0], windows.executable)
+  assert.equal(parsed[1], `--user-data-dir=${windows.profile}`)
+  assert.ok(parsed.includes(String.raw`--fixture=a\"b`))
+  const doubled = parseBrandedVersionEvidence({ ...windows,
+    commandLine: String.raw`"C:\Program Files\Google\Chrome\Application\chrome.exe" --user-data-dir="C:\runner temp\profile" --fixture="a""b"` })
+  assert.ok(doubled.includes('--fixture=a"b'), 'a doubled quote inside a quoted Windows argument is literal')
+  const mac = { ...identities[2], profile: '/private/tmp/runner temp/profile' }, input = identity(mac)
+  assert.deepEqual(parseBrandedVersionEvidence({ ...mac, executable: mac.binary, profilePath: mac.profile + '/Default', commandLine: ' ' + input.commandLine.join(' '), url: 'chrome://version/' }), input.commandLine)
+})
+
+test('native version evidence refuses web-page lookalikes, changed profiles, unbalanced quotes and ambiguous POSIX input', () => {
+  const fixture = identities[2], input = identity(fixture)
+  const fields = { ...fixture, executable: fixture.binary, profilePath: fixture.profile + '/Default', commandLine: input.commandLine.join(' '), url: 'chrome://version/' }
+  for (const url of ['https://example.invalid/chrome://version/', 'chrome://version/?fake=1', 'chrome://version/#fake', 'edge://version/', 'chrome://settings/']) {
+    assert.throws(() => parseBrandedVersionEvidence({ ...fields, url }), denied('browser_version_source_invalid'))
+  }
+  assert.throws(() => parseBrandedVersionEvidence({ ...fields, profilePath: '/private/tmp/other/Default' }), denied('profile_scope_mismatch'))
+  assert.throws(() => parseBrandedVersionEvidence({ ...fields, commandLine: fields.commandLine + ' --unknown="two words"' }), denied('browser_argv_ambiguous'))
+  assert.throws(() => parseBrandedVersionEvidence({ ...fields, commandLine: fields.commandLine.replace(fixture.binary, '/Applications/Unverified.app/Browser') }), denied('browser_argv_ambiguous'))
+  const win = identities[4]
+  assert.throws(() => parseBrandedVersionEvidence({ ...win, executable: win.binary, url: 'chrome://version/', profilePath: path.win32.join(win.profile, 'Default'), commandLine: `"${win.binary} --user-data-dir=${win.profile}` }), denied('browser_argv_ambiguous'))
+})
+
+test('the version reader rejects a redirect before evaluating page content and only navigates the owned native page', async () => {
+  let evaluated = false
+  const redirected = { goto: async () => {}, url: () => 'https://fixture.invalid/version', evaluate: async () => { evaluated = true } }
+  await assert.rejects(readBrandedVersionEvidence(redirected, { channel: 'chrome', profile: '/fixture' }), denied('browser_version_source_invalid'))
+  assert.equal(evaluated, false)
+  const fixture = identities[2], input = identity(fixture), navigations = []
+  let url = 'about:blank'
+  const page = { goto: async next => { navigations.push(next); url = next }, url: () => url, waitForFunction: async () => {},
+    evaluate: async () => ({ url, executable: fixture.binary, commandLine: input.commandLine.join(' '), profilePath: fixture.profile + '/Default' }) }
+  assert.deepEqual(await readBrandedVersionEvidence(page, { channel: 'chrome', platform: 'darwin', profile: fixture.profile }), input.commandLine)
+  assert.deepEqual(navigations, ['chrome://version/', 'about:blank'])
 })
 
 test('branded identity rejects disabled sandbox/security, debugging TCP, extension flags and a replaced profile', () => {
@@ -161,6 +214,7 @@ test('branded identity rejects disabled sandbox/security, debugging TCP, extensi
   assert.throws(() => verifyBrandedIdentity({ ...input, commandLine: [...input.commandLine, '--user-data-dir=/tmp/another'] }), denied('profile_scope_mismatch'))
   assert.throws(() => verifyBrandedIdentity({ ...input, commandLine: input.commandLine.filter(arg => arg !== '--profile-directory=Default') }), denied('profile_scope_mismatch'))
   assert.throws(() => verifyBrandedIdentity({ ...input, commandLine: [...input.commandLine, '--profile-directory=Profile 1'] }), denied('profile_scope_mismatch'))
+  assert.throws(() => verifyBrandedIdentity({ ...input, commandLine: [...input.commandLine, '--enable-automation'] }), denied('browser_automation_reuse_incompatible'))
 })
 
 test('branded identity rejects Chromium/CfT paths, headless UA and a mismatched browser brand', () => {

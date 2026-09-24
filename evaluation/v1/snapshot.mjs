@@ -118,7 +118,25 @@ async function copyDependencies(source, destination, sourceRoot, targetRoot) {
  * this trusted host copy; prepareTask still copies only each case's fixtures. */
 export async function freezeEvaluationRuntime({ source = process.cwd(), parent = path.join(userRootDir(), 'evaluation-candidates'), baseRevision = 'HEAD', includeDependencies = true } = {}) {
   source = await realpath(source)
-  if (within(source, path.resolve(parent))) fail('private snapshot must be outside the mutable source repository')
+  parent = path.resolve(parent)
+  if (within(source, parent)) fail('private snapshot must be outside the mutable source repository')
+  // Resolve the deepest existing ancestor before mkdir: an ancestor alias such
+  // as macOS /var must not hide a destination inside the mutable source tree.
+  let ancestor = parent
+  const missing = []
+  while (true) {
+    let info
+    try { info = await lstat(ancestor) } catch (error) {
+      if (error.code !== 'ENOENT' || path.dirname(ancestor) === ancestor) throw error
+      missing.unshift(path.basename(ancestor))
+      ancestor = path.dirname(ancestor)
+      continue
+    }
+    if (ancestor === parent && info.isSymbolicLink()) fail('private snapshot parent cannot be a symlink')
+    parent = path.join(await realpath(ancestor), ...missing)
+    break
+  }
+  if (within(source, parent)) fail('private snapshot must be outside the mutable source repository')
   await mkdir(parent, { recursive: true, mode: 0o700 })
   if ((await lstat(parent)).isSymbolicLink()) fail('private snapshot parent cannot be a symlink')
   parent = await realpath(parent)

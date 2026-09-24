@@ -108,6 +108,7 @@ jobs:
             test/npm-environment-security-review.test.mjs \
             test/evaluation-live-sdk.test.mjs test/evaluation-recovery.test.mjs \
             test/tool-program-loop.test.mjs test/browser-recipe-strict.test.mjs \
+            test/run-browser-effects.test.mjs test/browser-strict-effects.test.mjs \
             test/verification-workspace.test.mjs \
             test/forge-run-delivery.test.mjs test/forge-cli.test.mjs
       - name: Real non-root Chromium sandbox gate
@@ -224,6 +225,7 @@ jobs:
           path: |
             ${{ runner.temp }}/kkcode-bridge-report.json
             ${{ runner.temp }}/${{ matrix.channel }}-launch.png
+            ${{ runner.temp }}/${{ matrix.channel }}-desktop.png
             ${{ runner.temp }}/${{ matrix.channel }}-failure-*.png
           if-no-files-found: error
           retention-days: 7

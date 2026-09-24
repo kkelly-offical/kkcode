@@ -18,6 +18,7 @@ import { createArtifactStore } from '../src/storage/artifact-store.mjs'
 import { createDockerExecutionBackend } from '../src/kernel/isolation/docker-executor.mjs'
 import { getSession, replaceMessages, flushNow } from '../src/kernel/session/store.mjs'
 import { budgetRoute } from '../src/usage/budget-profiles.mjs'
+import { toolPreDispatchError } from '../src/kernel/core/execution-outcome.mjs'
 
 const exec = promisify(execFile)
 const hash = value => createHash('sha256').update(value).digest('hex')
@@ -249,6 +250,50 @@ test('actual Docker backend and actual kernel persist a container-only tool resu
   assert.equal(result.run.state, 'waiting_input')
 })
 
+test('strict pre-dispatch path rejection is not_applied and the model can correct the next tool call', { skip: !process.env.KKCODE_STRICT_TEST_IMAGE, timeout: 60_000 }, async t => {
+  const outsideRoot = await mkdtemp(path.join(os.tmpdir(), 'kk-rejected-write-'))
+  t.after(() => rm(outsideRoot, { recursive: true, force: true }))
+  const outside = path.join(outsideRoot, 'subject-test.mjs')
+  const rejected = { role: 'assistant', content: null, tool_calls: [{ id: 'outside-write', type: 'function', function: {
+    name: 'write', arguments: JSON.stringify({ path: outside, content: 'must never leave the task workspace' })
+  } }] }
+  let errorReturned = false
+  const f = await setup(t, { backend: createDockerExecutionBackend({ image: process.env.KKCODE_STRICT_TEST_IMAGE }),
+    responses: [rejected, toolReply, finalReply], validateRequest(body) {
+      if (body.messages.some(message => message.role === 'tool' && String(message.content).includes('outside'))) errorReturned = true
+    } })
+  const run = await f.coordinator.start({ contract })
+  const result = await f.coordinator.execute({ runId: run.id, prompt: 'Use workspace-relative paths after any path validation error.' })
+  assert.equal(result.run.state, 'waiting_input', JSON.stringify(result.turn))
+  assert.equal(result.turn.error, null)
+  assert.equal(f.requests(), 3)
+  assert.equal(errorReturned, true, 'the next model request must receive the actual correctable path error')
+  assert.equal(result.turn.toolEvents[0].status, 'error')
+  assert.match(result.turn.toolEvents[0].output, /执行前被拒绝，未写入目标文件/)
+  assert.match(result.turn.toolEvents[0].output, /\/workspace\/\.\.\./)
+  assert.deepEqual(result.run.actions.map(action => action.state), ['not_applied', 'succeeded'])
+  assert.match(result.run.actions[0].receipt.summary, /workspace_path_violation/)
+  await assert.rejects(readFile(outside), { code: 'ENOENT' })
+  assert.match(await readFile(path.join(f.cwd, 'created.txt'), 'utf8'), /actual tool/)
+  assert.ok(result.budget.requests.every(request => request.status === 'settled'))
+})
+
+test('a backend error cannot forge a no-effect receipt with a JSON flag or workspace error code', async t => {
+  const f = await setup(t, { backend: {
+    allowedToolNames: ['write'], ensureReady: async () => ({ strict: true }),
+    executeTool: async ({ args, context }) => {
+      await writeFile(path.join(context.cwd, 'actual-effect.txt'), args.content)
+      throw Object.assign(new Error('Untrusted claim after a real side effect'), { operationNotStarted: true, code: 'workspace_path_violation' })
+    }
+  } })
+  const run = await f.coordinator.start({ contract })
+  const result = await f.coordinator.execute({ runId: run.id, prompt: 'Attempt once; a thrown claim is not trusted proof.' })
+  assert.match(await readFile(path.join(f.cwd, 'actual-effect.txt'), 'utf8'), /actual tool/)
+  assert.equal(result.run.actions[0].state, 'unknown')
+  assert.equal(result.run.state, 'outcome_unknown')
+  assert.equal(f.requests(), 1, 'an unknown actual side effect must still stop automatic continuation')
+})
+
 test('host refusal and main workspace are rejected before model execution', async t => {
   const f = await setup(t, { authorize: () => false })
   await assert.rejects(f.coordinator.start({ contract }), { code: 'APPROVAL_REQUIRED' })
@@ -370,7 +415,7 @@ test('lost failed response uses explicit host reconciliation rather than fabrica
   let observed = false
   const f = await setup(t, { protocol: 'anthropic', backend: {
     allowedToolNames: ['write'], ensureReady: async () => ({ strict: true }),
-    executeTool: async () => { throw Object.assign(new Error('Host refused before any write'), { code: 'FIXTURE_NOT_STARTED', operationNotStarted: true }) }
+    executeTool: async () => { throw toolPreDispatchError(Object.assign(new Error('Host refused before any write'), { code: 'FIXTURE_NOT_STARTED' })) }
   }, validateRequest(body) {
     for (const message of body.messages || []) for (const block of Array.isArray(message.content) ? message.content : []) {
       if (block.type === 'tool_result' && String(block.content).includes('Host recovery receipt:')) {

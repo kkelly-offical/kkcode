@@ -101,9 +101,11 @@ test('invalid review route returns unknown without a credential scope or a provi
 
 test('independent review reaches real Ollama HTTP inference without tools or a model-catalog protocol', async t => {
   const f = await fixture(t)
-  let calls = 0
+  let calls = 0, fixtureError
   const server = createServer(async (request, response) => {
     calls++
+    response.setHeader('content-type', 'application/json')
+    response.setHeader('x-content-type-options', 'nosniff')
     try {
       assert.equal(request.url, '/api/chat'); assert.equal(request.method, 'POST')
       const chunks = []; for await (const chunk of request) chunks.push(chunk)
@@ -115,12 +117,17 @@ test('independent review reaches real Ollama HTTP inference without tools or a m
       const report = validReport({ messages: [user] })
       response.setHeader('content-type', 'application/json')
       response.end(JSON.stringify({ model: body.model, message: { role: 'assistant', content: report.text }, done: true, prompt_eval_count: 40, eval_count: 12 }))
-    } catch (error) { response.statusCode = 400; response.end(JSON.stringify({ error: error.message })) }
+    } catch (error) {
+      fixtureError = error
+      response.statusCode = 400
+      response.end(JSON.stringify({ error: 'Synthetic review fixture rejected the request' }))
+    }
   })
   server.listen(0, '127.0.0.1'); await once(server, 'listening')
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)) })
   Object.assign(f.configState.config.provider.local, { type: 'ollama', base_url: `http://127.0.0.1:${server.address().port}`, api_key: '', api_key_env: '', timeout_ms: 3000 })
   const receipt = await runIndependentReview(f.options)
+  assert.ifError(fixtureError)
   assert.equal(calls, 1)
   assert.equal(receipt.status, 'approved', receipt.reason)
   assert.match(receipt.modelScope.endpointCredentialScope, /^[a-f0-9]{64}$/)

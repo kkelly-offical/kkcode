@@ -9,6 +9,7 @@ import http from 'node:http'
 import { once } from 'node:events'
 import { buildStrictDockerArgs, runStrictCommand, createDockerExecutionBackend, markStrictBuiltinTools, inspectStrictIsolation } from '../src/kernel/isolation/docker-executor.mjs'
 import { createScopedGrantAuthority } from '../src/kernel/permission/scoped-grants.mjs'
+import { isToolPreDispatchError, toolPreDispatchError } from '../src/kernel/core/execution-outcome.mjs'
 
 const exec = promisify(execFile)
 const image = process.env.KKCODE_STRICT_TEST_IMAGE
@@ -37,6 +38,15 @@ test('strict backend refuses floating image tags and fine-grained contracts befo
   const backend = createDockerExecutionBackend({ image: 'node:latest' })
   await assert.rejects(backend.ensureReady({ cwd, contract: { allowedPaths: ['src/a.js'] } }), /不会把细粒度/)
   await assert.rejects(backend.runCommand({ command: 'node', args: [], cwd }), /未绑定/)
+})
+
+test('pre-dispatch proof is private host provenance, not a code, flag or serialized error', () => {
+  const plain = Object.assign(new Error('claimed'), { code: 'workspace_path_violation', operationNotStarted: true })
+  assert.equal(isToolPreDispatchError(plain), false)
+  const proof = toolPreDispatchError(plain)
+  assert.equal(isToolPreDispatchError(proof), true)
+  assert.equal(isToolPreDispatchError(JSON.parse(JSON.stringify(proof))), false)
+  assert.equal(isToolPreDispatchError({ ...proof }), false)
 })
 
 test('scoped grants bind actor/task/target/version/parameters and are consumed once', async t => {
@@ -114,6 +124,45 @@ test('real strict file tools use container bridge, preserve read-before-edit and
   assert.equal((await backend.executeTool({ tool: edit, args: { path: 'a.txt', before: 'after', after: 'bad' }, context: { cwd }, invoke })).status, 'error')
   assert.ok((await backend.executeTool({ tool: list, args: {}, context: { cwd }, invoke })).output.includes('a.txt'))
   await assert.rejects(backend.executeTool({ tool: read, args: { path: '../outside' }, context: { cwd }, invoke }), /outside working/)
+})
+
+test('strict file paths share the exact /workspace namespace with Bash without widening filesystem scope', real, async t => {
+  const { base, cwd } = await workspace(t)
+  const backend = createDockerExecutionBackend({ image })
+  await backend.ensureReady({ cwd, contract: { allowedPaths: ['.'] } })
+  const names = ['bash', 'read', 'write', 'edit', 'patch', 'multiedit', 'list']
+  const tools = Object.fromEntries(markStrictBuiltinTools(names.map(name => ({ name }))).map(tool => [tool.name, tool]))
+  const call = (name, args) => backend.executeTool({ tool: tools[name], args, context: { cwd }, invoke: () => { throw new Error('host file implementation must not run') } })
+  assert.equal((await call('bash', { command: 'pwd' })).output.trim(), '/workspace')
+  assert.match((await call('write', { path: '/workspace/nested/subject.txt', content: 'one\ntwo\n' })).output, /已编辑/)
+  assert.match((await call('read', { path: 'nested/subject.txt' })).output, /one/)
+  assert.match((await call('edit', { path: '/workspace/nested/subject.txt', before: 'one', after: 'ONE' })).output, /已编辑/)
+  assert.match((await call('patch', { path: '/workspace/nested/subject.txt', start_line: 2, end_line: 2, content: 'TWO' })).output, /已编辑/)
+  assert.match((await call('multiedit', { changes: [{ path: '/workspace/nested/subject.txt', before: 'ONE', after: 'first' }, { path: '/workspace/second.txt', after: 'second' }] })).output, /已编辑/)
+  assert.equal(await readFile(path.join(cwd, 'nested/subject.txt'), 'utf8'), 'first\nTWO\n')
+  assert.match((await call('read', { path: '/workspace/nested/subject.txt' })).output, /first/)
+  assert.match((await call('list', { path: '/workspace' })).output, /second.txt/)
+  for (const target of ['/workspace/../escaped.txt', '/workspace/nested/../../escaped.txt', '/workspace-other/escaped.txt',
+    '/workspace\\escaped.txt', '/workspace/..\\escaped.txt', '/workspace/.env', path.join(base, 'escaped.txt')]) {
+    await assert.rejects(call('write', { path: target, content: 'forbidden' }), error => isToolPreDispatchError(error))
+  }
+  await assert.rejects(readFile(path.join(base, 'escaped.txt')), { code: 'ENOENT' })
+  await writeFile(path.join(base, 'outside.txt'), 'unchanged')
+  await symlink(base, path.join(cwd, 'escape'))
+  await assert.rejects(call('read', { path: '/workspace/escape/outside.txt' }), error => isToolPreDispatchError(error))
+  await assert.rejects(call('write', { path: '/workspace/escape/outside.txt', content: 'forbidden' }), error => isToolPreDispatchError(error))
+  assert.equal(await readFile(path.join(base, 'outside.txt'), 'utf8'), 'unchanged')
+})
+
+test('an invoked host adapter cannot reuse an inner preflight proof to erase an outer effect', real, async t => {
+  const { cwd } = await workspace(t), backend = createDockerExecutionBackend({ image })
+  await backend.ensureReady({ cwd, contract: { allowedPaths: ['.'] } })
+  const [tool] = markStrictBuiltinTools([{ name: 'todowrite' }])
+  await assert.rejects(backend.executeTool({ tool, context: { cwd }, invoke: async () => {
+    await writeFile(path.join(cwd, 'outer-effect.txt'), 'outer adapter ran')
+    throw toolPreDispatchError(new Error('a later nested call never started'))
+  } }), error => !isToolPreDispatchError(error) && error.operationNotStarted === false)
+  assert.equal(await readFile(path.join(cwd, 'outer-effect.txt'), 'utf8'), 'outer adapter ran')
 })
 
 test('real strict read-only contract cannot mutate through Bash or file tools', real, async t => {

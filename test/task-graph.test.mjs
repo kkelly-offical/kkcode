@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import path from 'node:path'
 import os from 'node:os'
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { createServer } from 'node:http'
@@ -22,6 +22,7 @@ import { createTaskWorkspace, taskWorkspaceBaseline } from '../src/kernel/isolat
 import { createDelegatedKernel } from '../src/kernel/isolation/delegation-kernel.mjs'
 import { createDockerExecutionBackend } from '../src/kernel/isolation/docker-executor.mjs'
 import { createRunCoordinator } from '../src/kernel/orchestration/run-coordinator.mjs'
+import { createFixtureCleanup } from './helpers/fixture-cleanup.mjs'
 
 const exec = promisify(execFile), image = process.env.KKCODE_STRICT_TEST_IMAGE
 const actor = { accountId: 'graph-fixture-account', projectId: 'graph-fixture-project' }
@@ -35,12 +36,14 @@ function sample() {
 }
 async function repository(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kk-graph-')), cwd = path.join(root, 'repo'), previous = process.env.KKCODE_HOME
+  const cleanup = createFixtureCleanup(t)
+  cleanup.remove(root)
+  cleanup.defer(() => { if (previous === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = previous })
   process.env.KKCODE_HOME = path.join(root, 'private')
   await mkdir(cwd); await writeFile(path.join(cwd, 'README.md'), 'committed baseline\n')
   await exec('git', ['init', '-q'], { cwd }); await exec('git', ['add', '.'], { cwd })
   await exec('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'baseline'], { cwd })
-  t.after(async () => { if (previous === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = previous; await rm(root, { recursive: true, force: true }) })
-  return { root, cwd }
+  return { root, cwd, cleanup }
 }
 async function setup(t, options = {}) {
   const f = await repository(t), requests = [], approvals = []
@@ -57,6 +60,7 @@ async function setup(t, options = {}) {
     response.setHeader('Content-Type', 'application/json')
     response.end(JSON.stringify({ id: `response-${requests.length}`, model: 'fixture-model', choices: [{ index: 0, message, finish_reason: finished ? 'stop' : 'tool_calls' }], usage: { prompt_tokens: 20, completion_tokens: 10 } }))
   })
+  f.cleanup.defer(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)) })
   server.listen(0, '127.0.0.1'); await once(server, 'listening')
   const pricing = path.join(f.root, 'pricing.json')
   await writeFile(pricing, JSON.stringify({ models: { 'fixture-model': { input: 1, output: 2, cache_read: 1, cache_write: 1 } } }))
@@ -64,7 +68,7 @@ async function setup(t, options = {}) {
     provider: { default: 'fixture', fixture: { type: 'openai', base_url: `http://127.0.0.1:${server.address().port}/v1`, api_key: '', api_key_env: '', default_model: 'fixture-model', stream: false, context_limit: 131072, max_tokens: 1000, retry_attempts: 0 } },
     permission: { default_policy: 'allow', rules: [] }, agent: { default_mode: 'agent', max_steps: 3 }, session: { recovery: false, title_generation: false },
     tool: { sources: { builtin: true, local: false, plugin: false, mcp: false } }, usage: { aggregation: ['turn'], budget: {} }, skills: { enabled: false, auto_seed: false } } }
-  const storeDirectory = path.join(f.root, 'runs'), store = await openRunStore({ directory: storeDirectory }), artifacts = createArtifactStore({ root: path.join(f.root, 'artifacts') })
+  const storeDirectory = path.join(f.root, 'runs'), store = f.cleanup.own(await openRunStore({ directory: storeDirectory })), artifacts = createArtifactStore({ root: path.join(f.root, 'artifacts') })
   const parent = await store.createRun({ id: 'parent', ownerId: 'original-host', initialState: 'running',
     binding: { ...actor, sessionId: 'parent-session', cwd: f.cwd, contractApprovalRef: 'fixture-host-approved' },
     contract: { objective: 'Delegate approved work', allowedPaths: ['.'], allowedTools: ['read', 'list', 'write', 'task', 'task_group', ...(options.dependency ? ['bash'] : [])], requiredCriteria: [{ id: 'check', description: 'Verify all evidence' }] } })
@@ -72,8 +76,7 @@ async function setup(t, options = {}) {
     budgetUsd: 5, deadlineAt: Date.now() + 600000, approval: { approved: true, actorId: 'fixture', reason: 'Explicit synthetic HTTP fixture budget, no external account' } })
   const authorize = request => { approvals.push(request); return true }
   const hostOptions = { store, artifacts, actor, configState, image, authorize, trustState: { trusted: true }, workspaceDirectory: path.join(f.root, 'children'), lockDirectory: path.join(f.root, 'locks') }
-  const host = createTaskGraphHost(hostOptions)
-  t.after(async () => { await host.close(); await store.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)) })
+  const host = f.cleanup.own(createTaskGraphHost(hostOptions))
   return { ...f, configState, store, storeDirectory, artifacts, hostOptions, host, parent, context: { parentRunId: parent.id, ownerEpoch: parent.ownerEpoch }, requests, approvals }
 }
 
@@ -102,7 +105,7 @@ test('real graph child inherits only a branded approved offline dependency envir
   let downloads = 0
   const registry = createServer((_request, response) => { downloads++; response.end(bytes) })
   registry.listen(0, '127.0.0.1'); await once(registry, 'listening')
-  t.after(async () => { registry.closeAllConnections(); await new Promise(resolve => registry.close(resolve)) })
+  f.cleanup.defer(async () => { registry.closeAllConnections(); await new Promise(resolve => registry.close(resolve)) })
   const origin = `http://127.0.0.1:${registry.address().port}`, manifest = { name: 'graph-project', version: '1.0.0', dependencies: { 'fixture-dep': '1.0.0' } }
   await writeFile(path.join(f.cwd, 'package.json'), JSON.stringify(manifest))
   await writeFile(path.join(f.cwd, 'package-lock.json'), JSON.stringify({ name: manifest.name, version: manifest.version, lockfileVersion: 3, requires: true,
@@ -178,9 +181,13 @@ test('same logical graph cannot replace its brief, and account identity cannot r
 })
 
 test('expired persistent graph deadline cannot start a child or reset itself', async t => {
-  const f = await setup(t), deadlineAt = Date.now() + 250
+  const f = await setup(t), createdAt = Date.now(), deadlineAt = createdAt + 250
+  let now = createdAt
+  t.mock.method(Date, 'now', () => now)
   const graph = await f.host.propose({ graphId: 'expires-once', deadlineAt, budgetUsd: 0.2, tasks: [{ prompt: 'read review', budget_usd: 0.2 }] }, f.context)
-  await new Promise(resolve => setTimeout(resolve, 300))
+  assert.equal(graph.createdAt, createdAt)
+  assert.equal(graph.nodes[0].state, 'pending')
+  now = deadlineAt + 1
   const result = await f.host.execute(graph.id, f.context)
   assert.equal(result.deadlineAt, deadlineAt); assert.equal(result.nodes[0].state, 'cancelled'); assert.equal(result.nodes[0].errorCode, 'TASK_DEADLINE')
   assert.equal(f.requests.length, 0); assert.equal((await f.store.listRuns()).length, 1)

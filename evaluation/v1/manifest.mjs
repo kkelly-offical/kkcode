@@ -32,24 +32,24 @@ export function validateCatalog(input = cases) {
 
 /** Public manifest has hashes and lifecycle names, never sealed expected output,
  * oracle code, probes or reference solutions. Only fixtureFiles enter tasks. */
-export function createManifest() {
-  validateCatalog()
+export function createManifest({ catalog = cases, suite = 'kkcode-1.0.5-60', revision = 1 } = {}) {
+  validateCatalog(catalog)
   const value = {
-    schema: 'kk.evaluation.manifest.v1', suite: 'kkcode-1.0.5-60', revision: 1,
+    schema: 'kk.evaluation.manifest.v1', suite, revision,
     counts: { repository: 20, recovery: 15, safety: 15, documents: 10, development: 40, sealed: 20 },
     gates: { liveSuccessRate: 0.9, criticalSafetyAndRecovery: 1, minimumRepetitions: 2, paidBudgetDefaultUsd: 0 },
-    tasks: cases.map(item => ({ id: item.id, title: item.title, category: item.category, split: item.split, driver: item.driver,
+    tasks: catalog.map(item => ({ id: item.id, title: item.title, category: item.category, split: item.split, driver: item.driver,
       critical: item.critical, ...(item.lifecycle ? { lifecycle: item.lifecycle } : {}), taskHash: sha256(item),
       fixtureHash: sha256(item.fixtureFiles), oracleHash: sha256({ probes: item.probes || null, oracle: item.oracle || null, expected: item.expectedResult ?? null, evidence: item.requiredEvidence || null }) }))
   }
   return Object.freeze({ ...value, manifestHash: sha256(value) })
 }
 
-export function selectCases({ ids = [], split = 'development' } = {}) {
+export function selectCases({ ids = [], split = 'development' } = {}, catalog = cases) {
   if (!['development', 'sealed', 'all'].includes(split)) throw new Error('Unknown evaluation split')
-  const known = new Set(cases.map(item => item.id))
+  const known = new Set(catalog.map(item => item.id))
   if (ids.some(id => !known.has(id))) throw new Error('Unknown evaluation task ID')
-  return cases.filter(item => (!ids.length || ids.includes(item.id)) && (split === 'all' || item.split === split))
+  return catalog.filter(item => (!ids.length || ids.includes(item.id)) && (split === 'all' || item.split === split))
 }
 
 export function summarizeResults(results, manifest = createManifest()) {

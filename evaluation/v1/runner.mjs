@@ -16,7 +16,7 @@ import { userRootDir } from '../../src/storage/paths.mjs'
 import { evaluationDiagnosticRoot, writeEvaluationDiagnostic, sanitizeDiagnostic } from './diagnostics.mjs'
 import { runRecoveryScenario } from './recovery-drivers.mjs'
 import { allocateLocalFreeLimits } from './local-free.mjs'
-import { prepareEvaluationLocalFreeAuthorization } from './local-free-authorization.mjs'
+import { prepareEvaluationLocalFreeAuthorization, localFreeServiceBindingHash } from './local-free-authorization.mjs'
 import { localFreePolicy } from '../../src/usage/local-free.mjs'
 
 const exec = promisify(execFile)
@@ -80,11 +80,13 @@ export async function runEvaluation(options = {}) {
 
 async function executeEvaluation({ mode = 'selfcheck', ids = [], split = 'development', repetitions = 1,
   image, officeImage, outputDirectory, profile = null, candidateHash = null, budgetUsd = 0, deadlineAt = null,
-  localFreeLimits = null, candidateDirectory = process.cwd(), keepWorkspaces = false, signal, onResult } = {}) {
+  localFreeLimits = null, expectedLocalFreePolicy = null, suiteVersion = 'v1', candidateDirectory = process.cwd(), keepWorkspaces = false, signal, onResult } = {}) {
   if (!['selfcheck', 'live'].includes(mode)) throw new Error('Unknown evaluation mode')
   if (!Number.isSafeInteger(repetitions) || repetitions < 1 || repetitions > 20) throw new Error('Invalid repetition count')
   if (!immutableImage(image)) throw new Error('An already-installed immutable node execution image is required')
-  const manifest = createManifest(), selected = selectCases({ ids, split })
+  if (!['v1', 'v2'].includes(suiteVersion)) throw new Error('Unknown evaluation suite version')
+  const suite = suiteVersion === 'v2' ? await import('../v2/manifest.mjs') : { createManifest, selectCases }
+  const manifest = suite.createManifest(), selected = suite.selectCases({ ids, split })
   const diagnosticRoot = evaluationDiagnosticRoot()
   if (!selected.length) throw new Error('No evaluation cases selected')
   if (selected.some(task => task.driver === 'office-document') && !immutableImage(officeImage)) throw new Error('Document tasks require an approved immutable Office image')
@@ -93,6 +95,8 @@ async function executeEvaluation({ mode = 'selfcheck', ids = [], split = 'develo
   }
   const runtimeCandidate = (await captureAcceptanceCandidate(candidateDirectory)).treeFingerprint
   const localAllocation = localFreeLimits === null ? null : allocateLocalFreeLimits(localFreeLimits, selected.length * repetitions)
+  if (expectedLocalFreePolicy !== null && !localAllocation) throw new Error('A previous service binding requires explicit bounded local-free mode')
+  const expectedServiceBindingHash = expectedLocalFreePolicy === null ? null : localFreeServiceBindingHash(expectedLocalFreePolicy)
   if (mode === 'live') {
     if (candidateHash !== runtimeCandidate) throw new Error('Live candidate hash does not match the frozen runtime source')
     if (!Number.isSafeInteger(deadlineAt) || deadlineAt <= Date.now()) throw new Error('Live mode requires an explicit future absolute deadline')
@@ -100,7 +104,7 @@ async function executeEvaluation({ mode = 'selfcheck', ids = [], split = 'develo
     profile = validateLiveProfile(profile, { localFree: Boolean(localAllocation) })
   } else if (budgetUsd !== 0 || profile !== null || localAllocation) throw new Error('Selfcheck never accepts a paid budget, provider profile or local-free model authorization')
   const context = { mode, manifest, candidateHash: runtimeCandidate, profile, runId: `evaluation_${randomUUID()}`,
-    configHash: sha256({ profile, image, officeImage: officeImage || null, mode, budgetUsd, deadlineAt, localFreeLimits: localAllocation?.total || null, repetitions, selectedCases: selected.map(task => task.id) }) }
+    configHash: sha256({ profile, image, officeImage: officeImage || null, mode, budgetUsd, deadlineAt, localFreeLimits: localAllocation?.total || null, expectedServiceBindingHash, suiteVersion, repetitions, selectedCases: selected.map(task => task.id) }) }
   const output = path.resolve(outputDirectory || path.join('test-results', 'evaluation', context.runId))
   await mkdir(path.dirname(output), { recursive: true, mode: 0o700 })
   await mkdir(output, { mode: 0o700 }) // Never overwrite prior evidence.
@@ -117,12 +121,12 @@ async function executeEvaluation({ mode = 'selfcheck', ids = [], split = 'develo
   const perTaskBudget = mode === 'live' ? budgetUsd / (selected.length * repetitions) : 0
   try {
     const suiteAuthorization = localAllocation ? await prepareEvaluationLocalFreeAuthorization({ profile, limits: localAllocation.perTask,
-      privateRoot: path.join(workspaceParent, 'suite-authorization') }) : null
+      privateRoot: path.join(workspaceParent, 'suite-authorization'), expectedPolicy: expectedLocalFreePolicy }) : null
     const suitePolicy = suiteAuthorization ? localFreePolicy(suiteAuthorization) : null
     if (suitePolicy) {
       context.configHash = sha256({ configuration: context.configHash, localFreePolicyId: suitePolicy.id })
       await writeFile(path.join(output, 'authorization.json'), JSON.stringify({ schema: 'kk.evaluation.authorization.v1', configHash: context.configHash,
-        localFreePolicy: suitePolicy, totalLimits: localAllocation.total, perTaskLimits: localAllocation.perTask, deadlineAt, budgetUsd: 0 }, null, 2), { flag: 'wx', mode: 0o600 })
+        localFreePolicy: suitePolicy, expectedServiceBindingHash, totalLimits: localAllocation.total, perTaskLimits: localAllocation.perTask, deadlineAt, budgetUsd: 0 }, null, 2), { flag: 'wx', mode: 0o600 })
     }
     for (let repetition = 1; repetition <= repetitions; repetition++) for (const task of selected) {
       signal?.throwIfAborted()

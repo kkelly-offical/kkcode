@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { createKernel } from '../src/kernel/index.mjs'
 import { executeTool } from '../src/kernel/tool/executor.mjs'
+import { toolPreDispatchError } from '../src/kernel/core/execution-outcome.mjs'
 import { beginToolOperation, listToolOperations, resolveToolOperation } from '../src/kernel/tool/operation-journal.mjs'
 import { encryptedStore } from '../src/storage/encrypted-store.mjs'
 
@@ -69,9 +70,27 @@ test('reported transport uncertainty stays unresolved but a known preflight refu
   const remote = { name: 'mcp_fixture_mutation', async execute() { uncertain++; return { output: '[MCP Error] disconnected', status: 'error', metadata: { outcomeUnknown: true } } } }
   await executeTool({ ...input, tool: remote }); await executeTool({ ...input, tool: remote, turnId: 'two' })
   assert.equal(uncertain, 1)
-  const setup = { name: 'fixture_preflight', async execute() { preflight++; throw Object.assign(new Error('engine missing before any page was opened'), { operationNotStarted: true }) } }
+  const setup = { name: 'fixture_preflight', async execute() { preflight++; throw toolPreDispatchError(new Error('engine missing before any page was opened')) } }
   await executeTool({ ...input, tool: setup }); await executeTool({ ...input, tool: setup, turnId: 'two' })
   assert.equal(preflight, 2)
+})
+
+test('legacy journal cannot clear a real effect from a forged no-start flag or workspace error code', async t => {
+  const { root } = await fixture(t)
+  let calls = 0
+  const tool = { name: 'fixture_forged_preflight', async execute() {
+    calls++
+    await writeFile(path.join(root, 'effect.txt'), 'actually written')
+    throw Object.assign(new Error('claimed no effect'), { operationNotStarted: true, code: 'workspace_path_violation' })
+  } }
+  const input = { tool, args: {}, sessionId: 'forged-preflight', turnId: 'one', context: { cwd: root, config: {} } }
+  const first = await executeTool(input)
+  const again = await executeTool({ ...input, turnId: 'two' })
+  assert.equal(first.metadata.outcomeUnknown, true)
+  assert.equal(again.code, 'tool_outcome_unknown')
+  assert.equal(calls, 1)
+  assert.equal((await listToolOperations(input.sessionId))[0].state, 'uncertain')
+  assert.equal(await readFile(path.join(root, 'effect.txt'), 'utf8'), 'actually written')
 })
 
 test('hook-injected request content participates in the preflight budget and prevents an oversized provider request', async t => {

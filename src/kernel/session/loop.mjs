@@ -1059,7 +1059,11 @@ async function processTurnLoopInRuntime({
             // 改动工作区」判定，而不是猜能力名。
             const scope = String(runSpec?.workspace?.writeScope || "").trim().toLowerCase()
             const readOnlyScope = /^(read[-_ ]?only|none|no[-_ ]?mutations?)$/.test(scope)
-            const deniedByWriteScope = readOnlyScope && canMutateWorkspace(call.name, call.args)
+            // A strict task's filesystem scope is not its network authority.
+            // These finite managed adapters still pass the durable coordinator's
+            // exact external-action grants and the strict backend's site policy.
+            const strictManagedNetwork = Boolean(currentDurableRun()) && runSpec?.workspace?.isolation === 'strict' && ['browser', 'http_request'].includes(call.name)
+            const deniedByWriteScope = readOnlyScope && !strictManagedNetwork && canMutateWorkspace(call.name, call.args)
             result = !tool
               ? {
                   name: call.name,

@@ -29,6 +29,9 @@ for (const id of ['C02', 'C07', 'C09', 'C15']) test(`local-free ${id} preserves 
       seen.add(last)
       const final = last.includes(task.stages[1].prompt), effect = ['C09', 'C15'].includes(id)
       const args = final ? { path: 'result.json', content: JSON.stringify(task.expectedResult) } : effect ? { path: 'effect-once.txt', content: 'once' } : { path: 'NOTES.md', content: task.prompt }
+      // A real Shell exposes /workspace. Keep that same tool namespace across
+      // the actual C02 kernel/store restart, without changing the host oracle.
+      if (id === 'C02') args.path = `/workspace/${args.path}`
       message = { role: 'assistant', content: null, tool_calls: [{ id: `fixture-${requests}`, type: 'function', function: { name: 'write', arguments: JSON.stringify(args) } }] }
     }
     requests++

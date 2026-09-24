@@ -11,6 +11,7 @@ import { buildMutationObservability } from "../../observability/edit-diagnostics
 import { toolCapability } from '../permission/rules.mjs'
 import { beginToolOperation } from './operation-journal.mjs'
 import { currentDurableRun } from '../orchestration/run-runtime.mjs'
+import { isToolPreDispatchError } from '../core/execution-outcome.mjs'
 
 const FILE_EDIT_TOOLS = new Set(["write", "edit", "multiedit", "patch", "notebookedit", "move", "copy", "remove", "mkdir", "archive", "git_apply_patch"])
 // 同一 turn 可能并行触发多个编辑工具。只记一个 boolean 会让第二个工具越过仍在
@@ -194,7 +195,8 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
         else if (!['read', 'search', 'safe-shell'].includes(capability) && !['tool_batch', 'websearch', 'webfetch', 'codesearch'].includes(tool.name)) operation = await beginToolOperation({ sessionId, turnId, tool: tool.name, args: args || {} })
         effectStarted = true
         const raw = durableRun
-          ? await durableRun.executeTool({ tool, args: args || {}, context, signal, invoke: () => tool.execute(args || {}, context) })
+          ? await durableRun.executeTool({ tool, args: args || {}, context, signal, invocationId: toolInvocationId, sessionId, turnId,
+            operationId: durableOperation.id, invoke: () => tool.execute(args || {}, context) })
           : await tool.execute(args || {}, context)
         const normalizedContent = await toolResultContent(raw, rawOutput(raw))
         const output = normalizedContent.output
@@ -247,12 +249,13 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
         })
         return result
       } catch (error) {
-        const outcomeUnknown = effectStarted && error.operationNotStarted !== true && error.code !== 'workspace_path_violation' && Boolean(operation || durableOperation && durableOperation.effect !== 'read')
+        const knownNotStarted = !effectStarted || isToolPreDispatchError(error)
+        const outcomeUnknown = !knownNotStarted && Boolean(operation || durableOperation && durableOperation.effect !== 'read')
         if (durableOperation) {
           try { await durableRun.failTool({ operation: durableOperation, error, effectStarted }) }
           catch (storageError) { durableRun.abort(storageError) }
         } else if (durableRun && ['STALE_OWNER', 'REVISION_CONFLICT', 'ACTION_UNRESOLVED', 'STORE_OUTCOME_UNKNOWN', 'STORE_CLOSED'].includes(error.code)) durableRun.abort(error)
-        await operation?.finish(error.operationNotStarted === true || error.code === 'workspace_path_violation' ? 'settled' : 'uncertain').catch(() => {})
+        await operation?.finish(knownNotStarted ? 'settled' : 'uncertain').catch(() => {})
         const errorMessage = error?.message || String(error)
         const cancelled = signal?.aborted || error?.name === "AbortError" || error?.code === "ABORT_ERR"
         const result = makeToolResult({

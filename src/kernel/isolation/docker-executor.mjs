@@ -10,6 +10,8 @@ import { isToolProgramCall } from '../tool/program.mjs'
 import { isBrowserRecipeCall } from '../tool/browser-recipe.mjs'
 import { currentDurableRun } from '../orchestration/run-runtime.mjs'
 import { prepareNpmWorkspace, resolveNpmEnvironmentMount } from '../dependencies/environment-registry.mjs'
+import { isToolPreDispatchError, toolPreDispatchError } from '../core/execution-outcome.mjs'
+import { browserActionNeedsAuthorization, isBrowserActionAuthorization } from '../browser/action-authorization.mjs'
 
 const KNOWN_BUILTINS = new WeakSet()
 const ALLOWED = Object.freeze(['bash', 'read', 'write', 'edit', 'patch', 'multiedit', 'list', 'todowrite', 'artifact_read', 'artifact_search', 'tool_program', 'lsp', 'office_capabilities', 'office_inspect', 'office_create', 'office_edit', 'office_render', 'office_pdf', 'office_ocr'])
@@ -23,6 +25,32 @@ const failure = (message, code = 'strict_isolation_unavailable') => Object.assig
 const sensitive = name => PRIVATE_NAMES.has(name.toLowerCase()) || /^\.env(?:\.|$)/i.test(name) || /^(?:id_rsa|id_ed25519|credentials)$/i.test(name)
 function abortBeforeStart(signal) {
   try { signal?.throwIfAborted() } catch (error) { error.operationNotStarted = true; throw error }
+}
+
+// Only this host-owned phase can attest that no tool implementation / container
+// start was dispatched. Never derive that fact from a tool-returned JSON flag.
+async function beforeDispatch(run) {
+  let dispatched = false, delegatesPreflight = false
+  try { return await run((trustedContainerPreflight = false) => { dispatched = true; delegatesPreflight = trustedContainerPreflight }) }
+  catch (error) {
+    if (!dispatched && error?.code !== 'strict_cleanup_unknown') throw toolPreDispatchError(error)
+    // A nested call's no-effect proof cannot erase an outer tool's already
+    // dispatched effects. Only our single runStrictCommand call may delegate
+    // the remaining container-start preflight before this tool does anything.
+    if (dispatched && !delegatesPreflight && isToolPreDispatchError(error)) {
+      throw Object.assign(new Error(`当前工具已经进入执行阶段，后续子操作的执行前拒绝不能证明整体未执行；请先核查已发生的效果。内部原因：${error.message}`, { cause: error }), { name: error.name, code: error.code, operationNotStarted: false })
+    }
+    throw error
+  }
+}
+
+function workspaceAlias(requested) {
+  if (requested !== '/workspace' && !requested.startsWith('/workspace/')) return requested
+  const suffix = requested.slice('/workspace'.length)
+  // Container paths are POSIX regardless of the host. Do not normalize away an
+  // attempted escape or reinterpret a backslash as a Windows path separator.
+  if (suffix.includes('\\') || suffix.includes('\0') || suffix.split('/').includes('..')) throw failure('容器工作区路径不能包含上级目录或反斜杠', 'workspace_path_violation')
+  return `.${suffix}`
 }
 
 function limitsFor(overrides = {}) {
@@ -163,7 +191,12 @@ async function removeOwnedContainer(name, token) {
 /** @param {{command?: string, argv?: string[]|null, workspaceDir?: string, image?: string, signal?: AbortSignal,
  * timeoutMs?: number, limits?: Record<string,number>, onStdout?: (text:string)=>void, onStderr?: (text:string)=>void,
  * stdin?: string|Buffer|null, readOnly?: boolean, readOnlyPaths?: string[], transferDir?: string|null, transferReadOnly?: boolean, dependencyEnvironment?: object|null}} [options] */
-export async function runStrictCommand({ command, argv = null, workspaceDir, image, signal, timeoutMs, limits = {}, onStdout, onStderr, stdin = null, readOnly = false, readOnlyPaths = [], transferDir = null, transferReadOnly = true, dependencyEnvironment = null } = {}) {
+export async function runStrictCommand(options = {}) {
+  return beforeDispatch(dispatch => runStrictCommandInternal(options, dispatch))
+}
+
+/** @param {any} options @param {() => void} dispatch */
+async function runStrictCommandInternal({ command, argv = null, workspaceDir, image, signal, timeoutMs, limits = {}, onStdout, onStderr, stdin = null, readOnly = false, readOnlyPaths = [], transferDir = null, transferReadOnly = true, dependencyEnvironment = null }, dispatch) {
   if (stdin !== null && Buffer.byteLength(stdin) > 8 * 1024 * 1024) throw failure('严格执行输入超过 8 MiB')
   if (command !== undefined && (typeof command !== 'string' || !command.trim() || Buffer.byteLength(command) > 1024 * 1024)) throw failure('严格命令为空或超过 1 MiB')
   abortBeforeStart(signal)
@@ -218,6 +251,7 @@ export async function runStrictCommand({ command, argv = null, workspaceDir, ima
     if (creation.exitCode !== 0 || creation.timedOut) throw failure('隔离容器创建失败；没有回退到宿主 Shell')
     signal?.throwIfAborted()
     started = true
+    dispatch()
     const result = await commandProcess('docker', ['start', '--attach', ...(stdin === null ? [] : ['--interactive']), name], {
       signal, timeoutMs: Math.min(timeoutMs || cap.timeout_ms, cap.timeout_ms) + 3000,
       maxBytes: cap.max_output_bytes, onStdout, onStderr, stdin
@@ -277,7 +311,7 @@ export function createDockerExecutionBackend({ image, limits = {}, readOnlyPaths
       // Composite tools cannot hold the leaf queue while awaiting their own
       // governed leaves. Their callbacks are opaque host capabilities; every
       // actual leaf re-enters this broker and the durable operation boundary.
-      if (['tool_program', 'task', 'task_group', 'browser_recipe'].includes(input.tool?.name)) return (async () => {
+      if (['tool_program', 'task', 'task_group', 'browser_recipe'].includes(input.tool?.name)) return beforeDispatch(async dispatch => {
         const { tool, context = {}, signal, invoke } = input
         if (!binding || await realpath(context.cwd) !== binding.cwd || !KNOWN_BUILTINS.has(tool) || !allowedTools.includes(tool.name)) throw failure('严格组合工具不属于当前任务的可信能力', 'strict_tool_denied')
         abortBeforeStart(binding.signal); abortBeforeStart(signal)
@@ -289,9 +323,10 @@ export function createDockerExecutionBackend({ image, limits = {}, readOnlyPaths
           const { isTaskGraphHost } = await import('../orchestration/task-graph.mjs')
           if (!binding.delegationTools.includes(tool.name) || !isTaskGraphHost(currentDurableRun()?.taskGraph)) throw failure('合同或宿主未授权任务图委派；不会调用旧后台执行路径', 'strict_tool_denied')
         }
+        dispatch()
         return invoke()
-      })()
-      const work = chain.catch(() => {}).then(async () => {
+      })
+      const work = chain.catch(() => {}).then(() => beforeDispatch(async dispatch => {
         const { tool, args = {}, context = {}, signal, invoke } = input
         if (!binding || await realpath(context.cwd) !== binding.cwd) throw failure('工具不属于当前严格任务工作目录', 'strict_workspace_violation')
         const abort = binding.signal && signal ? AbortSignal.any([binding.signal, signal]) : binding.signal || signal
@@ -300,12 +335,14 @@ export function createDockerExecutionBackend({ image, limits = {}, readOnlyPaths
         if (tool.name === 'lsp') {
           const { isLspService } = await import('../lsp/service.mjs')
           if (!isLspService(context.lspService) || context.lspService.strict !== true || context.lspService.workspace !== binding.cwd) throw failure('严格任务缺少同工作区的隔离语言服务', 'strict_tool_denied')
+          dispatch()
           return invoke()
         }
         if (tool.name.startsWith('office_')) {
           const { isOfficeService } = await import('../office/service.mjs')
           if (!isOfficeService(context.officeService) || context.officeService.strict !== true || context.officeService.cwd !== binding.cwd) throw failure('严格任务缺少同工作区的隔离文档服务', 'strict_tool_denied')
           if (binding.readOnly && !['office_capabilities', 'office_inspect'].includes(tool.name)) throw failure('只读合同不允许文档输出写入工作区', 'strict_tool_denied')
+          dispatch()
           return invoke()
         }
         if (NETWORK_TOOLS.includes(tool.name)) {
@@ -316,33 +353,38 @@ export function createDockerExecutionBackend({ image, limits = {}, readOnlyPaths
             if (args.headers && (typeof args.headers !== 'object' || Array.isArray(args.headers) || Object.keys(args.headers).some(name => !['accept', 'accept-language', 'content-type'].includes(name.toLowerCase())))) throw failure('严格通用 HTTP 不转发认证或任意自定义请求头', 'strict_tool_denied')
           }
           if (tool.name === 'browser' && context.config?.tool?.browser?.chromium_sandbox === false) throw failure('严格 Browser 不允许关闭 Chromium 沙箱；请使用支持沙箱的非 root 运行环境', 'strict_tool_denied')
+          if (tool.name === 'browser' && args.development === true) throw failure('严格 Browser 不支持持续 WebSocket 开发模式', 'strict_tool_denied')
+          if (tool.name === 'browser' && browserActionNeedsAuthorization(args) && !isBrowserActionAuthorization(context.browserActionAuthorization)) throw failure('严格 Browser 敏感动作缺少单次宿主授权', 'strict_tool_denied')
           const config = { ...(context.config || {}), data_policy: policy }
           if (tool.name === 'browser') config.tool = { ...(config.tool || {}), browser: { ...(config.tool?.browser || {}), chromium_sandbox: true, executable_path: chromium.executablePath() } }
           // Deliberately call only this finite set of host-owned, guarded
           // adapters with a tighter context; never a generic plugin invoker.
+          dispatch()
           const result = await tool.execute(args, { ...context, config, configState: undefined, strictManagedBrowser: tool.name === 'browser', signal: abort })
           return typeof result === 'string' ? { output: result, metadata: { managedNetwork: true } } : { ...result, metadata: { ...(result.metadata || {}), managedNetwork: true } }
         }
         if (tool.name === 'bash') {
           if (args.run_in_background || args.env) throw failure('严格 Shell 不接受后台宿主进程或环境变量注入', 'strict_tool_denied')
+          dispatch(true)
           const result = await runStrictCommand({ command: args.command, workspaceDir: binding.cwd, image, limits: cap, timeoutMs: args.timeout_ms, signal: abort, readOnly: binding.readOnly, readOnlyPaths: immutablePaths, dependencyEnvironment })
           return { output: `${result.stdout}${result.stderr}${result.overflow ? '\n[输出达到隔离执行上限，内容不完整]' : ''}` || '(empty output)', status: result.cancelled ? 'cancelled' : result.exitCode === 0 ? 'completed' : 'error', metadata: { isolation: result.isolation, outputComplete: !result.overflow && !result.cancelled && !result.timedOut },
             exitCode: result.exitCode, cancelled: result.cancelled, timedOut: result.timedOut }
         }
-        if (['todowrite', 'artifact_read', 'artifact_search'].includes(tool.name)) return invoke()
+        if (['todowrite', 'artifact_read', 'artifact_search'].includes(tool.name)) { dispatch(); return invoke() }
         if (binding.readOnly && !['read', 'list'].includes(tool.name)) throw failure('合同只允许读取，不允许编辑工作区', 'strict_tool_denied')
         await workspaceInfo(binding.cwd)
-        const paths = Array.isArray(args.changes) ? args.changes.map(change => change.path) : ['list', 'todowrite'].includes(tool.name) ? [args.path || '.'] : [args.path]
         const normalized = structuredClone(args)
-        for (const requested of paths) {
+        const changes = Array.isArray(normalized.changes) ? normalized.changes : [normalized]
+        for (const change of changes) {
+          const requested = tool.name === 'list' ? change.path || '.' : change.path
           if (typeof requested !== 'string') throw failure('严格文件工具缺少路径', 'strict_workspace_violation')
-          const resolved = await resolveWorkspacePath(binding.cwd, requested)
+          const resolved = await resolveWorkspacePath(binding.cwd, workspaceAlias(requested))
           if (path.relative(binding.cwd, resolved).split(path.sep).some(sensitive)) throw failure('严格任务不能访问 Git 治理面、凭据或私密配置路径', 'strict_workspace_violation')
+          change.path = path.relative(binding.cwd, resolved).split(path.sep).join('/') || '.'
         }
         abort?.throwIfAborted()
-        if (Array.isArray(normalized.changes)) for (const change of normalized.changes) change.path = path.relative(binding.cwd, path.resolve(binding.cwd, change.path)).split(path.sep).join('/')
-        else normalized.path = path.relative(binding.cwd, path.resolve(binding.cwd, normalized.path || '.')).split(path.sep).join('/') || '.'
         const bridge = await readFile(new URL('../../isolation/file-bridge.mjs', import.meta.url), 'utf8')
+        dispatch(true)
         const result = await runStrictCommand({ argv: ['node', '--input-type=module', '-e', bridge],
           stdin: JSON.stringify({ tool: tool.name, args: normalized, baseline: readHashes }), workspaceDir: binding.cwd, image, limits: cap, signal: abort, readOnly: binding.readOnly, readOnlyPaths: immutablePaths, dependencyEnvironment })
         if (result.cancelled || result.timedOut || result.overflow) throw failure('严格文件操作被中断，结果需要核查', 'strict_cleanup_unknown')
@@ -351,7 +393,7 @@ export function createDockerExecutionBackend({ image, limits = {}, readOnlyPaths
         if (reply.readHashes) Object.assign(readHashes, reply.readHashes)
         delete reply.readHashes
         return { ...reply, metadata: { ...(reply.metadata || {}), isolation: result.isolation } }
-      })
+      }))
       chain = work.then(() => {}, () => {})
       return work
     }

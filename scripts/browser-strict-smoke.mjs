@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 import { chromium } from 'playwright-core'
 import { createBrowserController } from '../src/kernel/browser/controller.mjs'
+import { createBrowserActionAuthorization } from '../src/kernel/browser/action-authorization.mjs'
 import { createDockerExecutionBackend, markStrictBuiltinTools } from '../src/kernel/isolation/docker-executor.mjs'
 
 const SECRET_NAME = 'KKCODE_STRICT_BROWSER_PRIVATE_CANARY'
@@ -101,7 +102,7 @@ export async function runStrictBrowserSmoke({ image = process.env.KKCODE_STRICT_
     } })
     const [tool] = markStrictBuiltinTools([{ name: 'browser', execute: (args, context) => controller.execute(args, context) }])
     const context = { cwd, sessionId: `strict-fixture-${randomUUID()}`, config: { data_policy: { web_origins: [origin] } } }
-    const call = (args, signal) => backend.executeTool({ tool, args, context, signal, invoke: () => { throw new Error('strict Browser must not use a generic host fallback') } })
+    const call = (args, signal = undefined, browserActionAuthorization = undefined) => backend.executeTool({ tool, args, context: { ...context, browserActionAuthorization }, signal, invoke: () => { throw new Error('strict Browser must not use a generic host fallback') } })
     let opened
     try { opened = await call({ action: 'open', url: origin }) }
     catch (error) {
@@ -111,7 +112,13 @@ export async function runStrictBrowserSmoke({ image = process.env.KKCODE_STRICT_
     assert.match(opened.output, /Strict fixture ready/)
     assert.equal(opened.metadata.managedNetwork, true)
     assert.match((await call({ action: 'snapshot' })).output, /Complete fixture/)
-    assert.match((await call({ action: 'click', role: 'button', name: 'Complete fixture' })).output, /Strict click complete/)
+    const click = { action: 'click', role: 'button', name: 'Complete fixture' }
+    await assert.rejects(call(click), error => error.code === 'strict_tool_denied')
+    // This test host explicitly approves exactly this synthetic button. The
+    // production coordinator additionally binds durable actor/owner/grant CAS;
+    // its separate HTTP effects suite exercises that full approval chain.
+    const clickAuthorization = createBrowserActionAuthorization({ sessionId: context.sessionId, args: click, taskId: 'strict-smoke-fixture', actor: { accountId: 'synthetic-fixture' }, observation: await controller.observe({ sessionId: context.sessionId, args: click }), verify: async () => !abortClosed })
+    assert.match((await call(click, undefined, clickAuthorization)).output, /Strict click complete/)
     const screenshot = await call({ action: 'screenshot' })
     const png = Buffer.from(screenshot.content.find(item => item.type === 'image').data, 'base64')
     assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a')

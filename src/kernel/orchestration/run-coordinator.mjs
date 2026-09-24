@@ -22,6 +22,8 @@ import { prepareBudgetProfiles, prepareBudgetProfile, budgetRoute, normalizeBudg
 import { normalizeRunHostBinding, verifyRunHostBinding } from './run-host-binding.mjs'
 import { localFreePolicy, validateLocalFreeBudget } from '../../usage/local-free.mjs'
 import { runControlledGit } from '../../util/controlled-git.mjs'
+import { isToolPreDispatchError } from '../core/execution-outcome.mjs'
+import { browserActionNeedsAuthorization, createBrowserActionAuthorization } from '../browser/action-authorization.mjs'
 
 const digest = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex')
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value
@@ -30,6 +32,13 @@ const fail = (code, message) => { throw runStoreError(code, message) }
 const guard = row => ({ runId: row.id, expectedRevision: row.revision, ownerId: row.ownerId, ownerEpoch: row.ownerEpoch })
 const terminal = state => ['completed', 'cancelled'].includes(state)
 const hasUnknown = run => run.actions.some(action => ['prepared', 'unknown'].includes(action.state))
+function governedToolEffect(name, args = {}, capability = '') {
+  if (name === 'browser') return browserActionNeedsAuthorization(args) ? 'external_write' : 'read'
+  if (name === 'http_request') return ['GET', 'HEAD'].includes(String(args.method || 'GET').toUpperCase()) ? 'read' : 'external_write'
+  if (['webfetch', 'websearch', 'codesearch', 'read', 'list', 'todowrite'].includes(name) || ['read', 'search'].includes(capability)) return 'read'
+  return 'local_write'
+}
+const externalToolKind = (name, args) => name === 'browser' ? `browser.${args.action}` : `http_request.${String(args.method || 'GET').toUpperCase()}`
 async function assertTaskWorkspace(cwd) {
   const result = await runControlledGit(['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir', '--show-toplevel'], { cwd, timeoutMs: 10_000, maxBuffer: 64 * 1024 })
   if (!result.ok) fail('TASK_WORKSPACE_REQUIRED', '委托任务必须使用从固定基线创建的独立 Git 工作树。')
@@ -74,8 +83,13 @@ export function createRunCoordinator(options) {
     if (normalizePermissionLevel(config.permission) === 'readonly') return 'deny'
     const decision = evaluatePermission({ config, tool: request.tool, mode: 'assistant', pattern: request.pattern, command: request.command, risk: request.risk, workspace: run.binding.cwd })
     if (decision.action === 'deny' || !allowedTools().includes(request.tool)) return 'deny'
+    const effect = governedToolEffect(request.tool, request.args)
+    // External writes are confirmed exactly once in prepareTool, where the
+    // observed page and durable action identity are available. Advertising a
+    // tool or approving workspace edits is never an external-action grant.
+    if (effect === 'external_write') return run.contract.allowedExternalActions.includes(externalToolKind(request.tool, request.args || {})) ? 'allow_once' : 'deny'
     const delegatedTool = (run.contract.allowedTools || []).includes(request.tool)
-    if (delegatedTool && !['rule', 'protected_path', 'sensitive_path'].includes(decision.source) && (['read', 'list', 'todowrite'].includes(request.tool) || run.contract.allowedPaths.length)) return 'allow_once'
+    if (delegatedTool && !['rule', 'protected_path', 'sensitive_path'].includes(decision.source) && (effect === 'read' || run.contract.allowedPaths.length)) return 'allow_once'
     try {
       const approval = await confirm({ kind: 'run.tool', runId: run.id, ownerEpoch: run.ownerEpoch, revision: run.revision, tool: request.tool, target: request.pattern, parameterHash: digest(canonical(request.args)), args: request.args, reason: request.reason })
       const current = await owned(run.id)
@@ -421,6 +435,7 @@ export function createRunCoordinator(options) {
       })
       begun = true
       const actions = actionAdapter(run.id)
+      const browserAuthorizations = new Map()
       const binding = createDurableRunBinding({
         runId: run.id, turnId, ownerId, ownerEpoch: run.ownerEpoch,
         ...(isTaskGraphHost(options.taskGraph) ? { taskGraph: options.taskGraph } : {}),
@@ -428,27 +443,60 @@ export function createRunCoordinator(options) {
         abort: error => controller.abort(error),
         async prepareTool(call) {
           if (!allowedTools().includes(call.tool.name)) fail('TOOL_SCOPE_DENIED', '该工具不属于当前子任务的宿主白名单。')
-          const effect = ['read', 'search'].includes(call.capability) || ['read', 'list', 'todowrite'].includes(call.tool.name) ? 'read' : 'local_write'
-          const action = { id: `tool_${digest([run.id, turnId, call.sessionId, call.invocationId]).slice(0, 48)}`, kind: `tool.${call.tool.name}`, target: typeof call.args.path === 'string' ? path.resolve(run.binding.cwd, call.args.path) : run.binding.cwd, parameterHash: digest(canonical(call.args)), effect, retryPolicy: effect === 'read' ? 'safe' : 'reconcile', context: { sessionId: call.sessionId, turnId: call.turnId, invocationId: call.invocationId, durableTurnId: turnId } }
+          const effect = governedToolEffect(call.tool.name, call.args, call.capability)
+          const action = { id: `tool_${digest([run.id, turnId, call.sessionId, call.invocationId]).slice(0, 48)}`, kind: effect === 'external_write' ? externalToolKind(call.tool.name, call.args) : `tool.${call.tool.name}`, target: typeof call.args.path === 'string' ? path.resolve(run.binding.cwd, call.args.path) : run.binding.cwd, parameterHash: digest(canonical(call.args)), effect, retryPolicy: effect === 'read' ? 'safe' : 'reconcile', context: { sessionId: call.sessionId, turnId: call.turnId, invocationId: call.invocationId, durableTurnId: turnId } }
           let grant
-          if (effect !== 'read') {
+          let browserObservation, externalCurrent
+          if (effect === 'external_write') {
+            const current = await owned(run.id)
+            if (!current.contract.allowedExternalActions.includes(action.kind)) fail('APPROVAL_REQUIRED', '当前任务契约未声明该外部动作；目录写权限或站点访问权限不代表允许提交、点击或上传。')
+            if (call.tool.name === 'browser') {
+              if (typeof call.tool.observe !== 'function') fail('APPROVAL_REQUIRED', 'Browser 缺少真实目标观察能力，未授予外部写权限。')
+              browserObservation = await call.tool.observe({ sessionId: call.sessionId, args: call.args })
+              action.target = browserObservation.url || browserObservation.origin
+              action.parameterHash = digest(canonical({ args: call.args, browser: browserObservation }))
+            } else action.target = new URL(call.args.url).href
+            const confirmed = await confirm({ kind: 'run.tool', runId: run.id, ownerEpoch: current.ownerEpoch, revision: current.revision,
+              tool: call.tool.name, action, args: call.args, ...(browserObservation ? { browser: browserObservation } : {}), reason: '本次操作可能在站点产生不可逆副作用；仅批准这一组目标和参数。' })
+            externalCurrent = await owned(run.id)
+            if (externalCurrent.revision !== current.revision || externalCurrent.contractVersion !== current.contractVersion || terminal(externalCurrent.state)) fail('REVISION_CONFLICT', '确认期间任务范围发生变化，未执行外部动作。')
+            if (browserObservation && digest(canonical(await call.tool.observe({ sessionId: call.sessionId, args: call.args }))) !== digest(canonical(browserObservation))) fail('APPROVAL_REQUIRED', '确认期间 Browser 页面或目标发生变化，请重新检查，未执行外部动作。')
+            const confirmationRef = (await persist(externalCurrent, { approval: confirmed, action, browser: browserObservation })).id
+            grant = await (await authority()).issue({ ...grantBinding(externalCurrent, action), expiresAt: Date.now() + 60_000 }, { confirmedBy: confirmed.actorId, confirmationId: confirmationRef })
+          } else if (effect !== 'read') {
             const current = await owned(run.id)
             if (!current.contract.allowedPaths.length) fail('APPROVAL_REQUIRED', '当前任务契约不允许修改工作区。')
             const confirmed = toolConfirmations.get(`${run.id}:${turnId}:${call.tool.name}:${digest(canonical(call.args))}`)
             const confirmationRef = confirmed ? (await persist(current, { approval: confirmed, parameterHash: action.parameterHash, tool: call.tool.name })).id : current.binding.contractApprovalRef
             grant = await (await authority()).issue({ ...grantBinding(current, action), expiresAt: Date.now() + 60_000 }, { confirmedBy: confirmed?.actorId || approval.approval.actorId, confirmationId: confirmationRef })
           }
-          const prepared = await actions.prepare(action)
+          // The public external adapter owns a separate delivery lease and is
+          // intentionally unavailable during a turn. Browser leaves instead
+          // use this already-held turn lease plus their exact consumed grant.
+          const prepared = effect === 'external_write' ? await serialized(run.id, async () => {
+            const current = await owned(run.id)
+            if (current.contractVersion !== externalCurrent.contractVersion || current.lastTurn?.id !== turnId || current.lastTurn?.status !== 'running' || terminal(current.state)) fail('STALE_TURN', '本次外部操作不再属于当前运行回合。')
+            if (current.actions.some(value => value.id === action.id)) return { fresh: false }
+            await store.prepareAction({ ...guard(current), action })
+            return { fresh: true }
+          }) : await actions.prepare(action)
           if (!prepared.fresh) fail('ACTION_UNRESOLVED', '本次工具调用已有记录，未重复执行。')
           if (grant) {
             try { await (await authority()).verifyAndConsume(grant.token, grantBinding(await owned(run.id), action)) }
             catch (error) { await actions.settle({ id: action.id, state: 'not_applied', receipt: { summary: 'Host grant rejected before tool effect' } }); throw error }
           }
+          if (browserObservation) browserAuthorizations.set(call.invocationId, createBrowserActionAuthorization({ sessionId: call.sessionId, args: call.args,
+            taskId: run.id, actor, observation: browserObservation, verify: async () => {
+              const current = await owned(run.id)
+              if (current.contractVersion !== externalCurrent.contractVersion || current.lastTurn?.id !== turnId || current.lastTurn?.status !== 'running' || current.actions.find(value => value.id === action.id)?.state !== 'prepared' || terminal(current.state) || !current.contract.allowedExternalActions.includes(action.kind) || controller.signal.aborted) return false
+              await (await authority()).verifyContinuation(grant.token, grantBinding(current, action))
+              return true
+            } }))
           return action
         },
-        executeTool: call => executionBackend.executeTool({ ...call, runId: run.id }),
+        executeTool: call => executionBackend.executeTool({ ...call, runId: run.id, context: { ...call.context, browserActionAuthorization: browserAuthorizations.get(call.invocationId) } }),
         async settleTool({ operation, result }) {
-          const state = result.status === 'cancelled' || result.metadata?.outcomeUnknown === true ? 'unknown' : result.status === 'completed' ? 'succeeded' : 'failed'
+          const state = result.status === 'cancelled' || result.metadata?.outcomeUnknown === true || operation.effect === 'external_write' && result.status !== 'completed' ? 'unknown' : result.status === 'completed' ? 'succeeded' : 'failed'
           const current = await owned(run.id)
           // Preserve the actual result before publishing a settled receipt.
           const resultArtifact = await persist(current, { actionId: operation.id, result }, 'tool', operation.id)
@@ -456,7 +504,7 @@ export function createRunCoordinator(options) {
           if (state === 'unknown') controller.abort(runStoreError('UNRESOLVED_ACTIONS', '操作结果不明，已停止后续执行并保留核查证据。'))
         },
         async failTool({ operation, error, effectStarted }) {
-          const state = !effectStarted || error.operationNotStarted === true ? 'not_applied' : operation.effect === 'read' ? 'failed' : 'unknown'
+          const state = !effectStarted || isToolPreDispatchError(error) ? 'not_applied' : operation.effect === 'read' ? 'failed' : 'unknown'
           await actions.settle({ id: operation.id, state, receipt: { summary: `${operation.kind}: ${error.code || error.name || 'execution_error'}` } })
           if (state === 'unknown') controller.abort(runStoreError('UNRESOLVED_ACTIONS', '副作用可能已经发生，必须核查后才能继续。'))
         }

@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite'
-import { constants, mkdirSync, lstatSync, openSync, closeSync, readSync, writeSync, fsyncSync, readFileSync, readdirSync, writeFileSync, realpathSync, linkSync, unlinkSync } from 'node:fs'
+import { constants, mkdirSync, lstatSync, fstatSync, openSync, closeSync, readSync, writeSync, fsyncSync, readFileSync, readdirSync, writeFileSync, realpathSync, linkSync, unlinkSync } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
 import path from 'node:path'
 import os from 'node:os'
@@ -49,7 +49,16 @@ export function createRunStoreBackup(databaseFile) {
     if (![1, 2].includes(version) || source.prepare('PRAGMA application_id').get().application_id !== APP_ID) fail('Cannot back up an unknown run-store schema')
     id = `v${version}-${Date.now()}-${randomUUID()}`
     target = path.join(root, `${id}.sqlite`)
-    source.prepare('VACUUM INTO ?').run(target)
+    // SQLite permits an existing empty VACUUM INTO target. Create it privately
+    // and exclusively instead of relying on the caller's process-wide umask.
+    // Never chmod a subsequently resolved pathname or replace an existing file.
+    const targetFd = openSync(target, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW || 0), 0o600)
+    try {
+      const created = fstatSync(targetFd)
+      source.prepare('VACUUM INTO ?').run(target)
+      const written = privatePath(target)
+      if (written.dev !== created.dev || written.ino !== created.ino) fail('Backup target changed while the snapshot was created')
+    } finally { closeSync(targetFd) }
   } finally { source.close() }
   sync(target)
   const manifest = { schema: 'kk.run-store-backup.v1', id, version, applicationId: APP_ID, createdAt: Date.now(), ...fileHash(target) }

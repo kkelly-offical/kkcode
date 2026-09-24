@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, readFile, writeFile, access } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile, access } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
 import { openRunStore, createArtifactStore } from '../src/sdk/storage.mjs'
+import { createFixtureCleanup } from './helpers/fixture-cleanup.mjs'
 
 const exec = promisify(execFile)
 const cli = fileURLToPath(new URL('../src/index.mjs', import.meta.url))
@@ -15,15 +16,15 @@ const hash = value => createHash('sha256').update(value).digest('hex')
 const guard = row => ({ runId: row.id, expectedRevision: row.revision, ownerId: row.ownerId, ownerEpoch: row.ownerEpoch })
 async function temporary(t) {
   const root = await mkdtemp(path.join(tmpdir(), 'kkcode-storage-sdk-'))
-  t.after(() => rm(root, { recursive: true, force: true }))
-  return root
+  const cleanup = createFixtureCleanup(t)
+  cleanup.remove(root)
+  return { root, cleanup }
 }
 
 test('trusted SDK host persists real evidence and completes only its verified candidate', async t => {
-  const root = await temporary(t)
+  const { root, cleanup } = await temporary(t)
   const directory = path.join(root, 'runs')
-  const store = await openRunStore({ directory })
-  t.after(() => store.close())
+  const store = cleanup.own(await openRunStore({ directory }))
   const artifacts = createArtifactStore({ root: path.join(root, 'artifacts') })
   let run = await store.createRun({ id: 'sdk-task', ownerId: 'fixture-host', contract: { objective: '验证候选产物', requiredCriteria: [{ id: 'tests', description: 'fixture exit code is zero' }] } })
   const actor = { accountId: 'fixture-account', projectId: 'fixture-project', sessionId: 'fixture-session', runId: run.id }
@@ -38,8 +39,7 @@ test('trusted SDK host persists real evidence and completes only its verified ca
   run = await store.transitionRun({ ...guard(run), state: 'completed' })
   assert.equal(run.state, 'completed')
   await store.close()
-  const reader = await openRunStore({ directory, readOnly: true })
-  t.after(() => reader.close())
+  const reader = cleanup.own(await openRunStore({ directory, readOnly: true }))
   assert.equal((await reader.getRun(run.id)).state, 'completed')
   await assert.rejects(reader.createRun({ ownerId: 'bad', contract: { objective: 'bad', requiredCriteria: [] } }), /read.only/i)
   const page = await artifacts.read({ actor, id: evidence.id })
@@ -47,12 +47,12 @@ test('trusted SDK host persists real evidence and completes only its verified ca
 })
 
 test('runs CLI reads a ledger and does not create an absent one', async t => {
-  const root = await temporary(t)
+  const { root, cleanup } = await temporary(t)
   const directory = path.join(root, 'absent')
   const empty = await exec(process.execPath, [cli, 'runs', '--directory', directory, 'list', '--json'], { timeout: 30000 })
   assert.deepEqual(JSON.parse(empty.stdout), [])
   await assert.rejects(access(directory), { code: 'ENOENT' })
-  const store = await openRunStore({ directory })
+  const store = cleanup.own(await openRunStore({ directory }))
   await store.createRun({ id: 'visible-run', ownerId: 'host', contract: { objective: '检查状态', requiredCriteria: [{ id: 'one', description: 'must verify' }] } })
   await store.close()
   const list = await exec(process.execPath, [cli, 'runs', '--directory', directory, 'list', '--json'], { timeout: 30000 })
@@ -65,7 +65,7 @@ test('runs CLI reads a ledger and does not create an absent one', async t => {
 })
 
 test('storage package export and external strict types expose only deliberate capabilities', async t => {
-  const root = await temporary(t)
+  const { root } = await temporary(t)
   const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
   assert.deepEqual(manifest.exports['./sdk/storage'], { types: './src/sdk/storage.d.mts', import: './src/sdk/storage.mjs' })
   const source = path.join(root, 'consumer.mts')
