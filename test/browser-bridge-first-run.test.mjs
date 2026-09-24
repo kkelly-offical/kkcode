@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readdir, readFile, writeFile, lstat, unlink, link, symlink, access } from 'node:fs/promises'
+import { mkdtemp, mkdir, readdir, readFile, writeFile, lstat, unlink, link, symlink, access, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { prepareBrandedFirstRun, initializeBrandedFirstRun } from '../scripts/browser-bridge-first-run.mjs'
@@ -30,7 +30,7 @@ test('first-run setup requires every explicit GitHub-hosted gate before creating
 for (const channel of ['chrome', 'msedge']) test(`new ${channel} CI profile records explicit opt-outs without claiming native UI consent`, async t => {
   const f = await fixture(t), prepared = await prepareBrandedFirstRun({ ...f, channel })
   assert.match(path.basename(prepared.profile), /^kkcode-first-run-/)
-  assert.equal(path.dirname(prepared.profile), f.parent)
+  assert.equal(path.dirname(prepared.profile), await realpath(f.parent))
   assert.equal(await readFile(path.join(prepared.profile, 'First Run'), 'utf8'), '')
   const local = JSON.parse(await readFile(path.join(prepared.profile, 'Local State'), 'utf8'))
   const preferences = JSON.parse(await readFile(path.join(prepared.profile, 'Default', 'Preferences'), 'utf8'))
@@ -72,7 +72,7 @@ test('canonical parent aliases remain inside the runner scope and cannot escape 
   await unlink(alias)
   await symlink(f.parent, alias, process.platform === 'win32' ? 'junction' : 'dir')
   const prepared = await prepareBrandedFirstRun({ env: f.env, channel: 'msedge', parent: alias })
-  assert.equal(path.dirname(prepared.profile), f.parent)
+  assert.equal(path.dirname(prepared.profile), await realpath(f.parent))
 })
 
 test('postlaunch evidence fails closed if an opt-out changes or a file becomes invalid', async t => {
