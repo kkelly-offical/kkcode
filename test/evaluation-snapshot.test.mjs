@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import path from 'node:path'
 import os from 'node:os'
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, mkdir, writeFile, readFile, rm, lstat, unlink, link } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, readFile, rm, lstat, unlink, link, symlink } from 'node:fs/promises'
 import { freezeEvaluationRuntime } from '../evaluation/v1/snapshot.mjs'
 import { captureAcceptanceCandidate } from '../src/kernel/session/acceptance-manifest.mjs'
 
@@ -50,5 +50,26 @@ test('evaluation host snapshot freezes dirty source and separate installed depen
     await writeFile(path.join(root, 'outside-private'), 'synthetic-outside-credential')
     await link(path.join(root, 'outside-private'), path.join(source, 'node_modules', 'outside-link.mjs'))
     await assert.rejects(freezeEvaluationRuntime({ source, parent: path.join(root, 'private'), baseRevision }), /unaccounted hardlink/)
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('snapshot rejects a nested parent through a directory alias before creating any source directories', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kk-evaluation-parent-alias-'))
+  const canonical = path.join(root, 'canonical'), alias = path.join(root, 'alias'), source = path.join(canonical, 'mutable')
+  try {
+    await mkdir(source, { recursive: true })
+    await symlink(canonical, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    await writeFile(path.join(source, 'index.mjs'), 'export const value = 1\n')
+    await assert.rejects(freezeEvaluationRuntime({ source, parent: path.join(alias, 'mutable', 'nested', 'deeper'), includeDependencies: false }), /outside the mutable source/)
+    await assert.rejects(lstat(path.join(source, 'nested')), { code: 'ENOENT' })
+    assert.equal(await readFile(path.join(source, 'index.mjs'), 'utf8'), 'export const value = 1\n')
+    assert.equal((await lstat(alias)).isSymbolicLink(), true)
+    await assert.rejects(freezeEvaluationRuntime({ source, parent: alias, includeDependencies: false }), /parent cannot be a symlink/)
+
+    const git = args => execFileSync('git', args, { cwd: source, encoding: 'utf8', stdio: 'pipe' }).trim()
+    git(['init', '-q']); git(['add', '.']); git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'baseline'])
+    const snapshot = await freezeEvaluationRuntime({ source, parent: path.join(alias, 'private', 'nested'), includeDependencies: false })
+    assert.equal(await readFile(path.join(snapshot.cwd, 'index.mjs'), 'utf8'), 'export const value = 1\n')
+    await assert.rejects(lstat(path.join(source, 'nested')), { code: 'ENOENT' })
   } finally { await rm(root, { recursive: true, force: true }) }
 })

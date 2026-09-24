@@ -1,2 +1,2 @@
 import { registerWorktreePromotionSuite } from './helpers/worktree-promotion-suite.mjs'
-registerWorktreePromotionSuite(0)
+registerWorktreePromotionSuite(1)

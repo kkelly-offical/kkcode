@@ -13,18 +13,28 @@ import { discoverModelsForProvider } from '../src/kernel/provider/model-catalog.
 import { BrowserNetwork } from '../src/kernel/browser/network.mjs'
 import { guardedFetch } from '../src/net/url-guard.mjs'
 import { BackgroundManager } from '../src/kernel/orchestration/background-manager.mjs'
+import { EventBus } from '../src/kernel/core/events.mjs'
+import { EVENT_TYPES } from '../src/kernel/core/constants.mjs'
 
 async function directory(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kkcode-policy-'))
+  const disposals = []
   const old = process.env.KKCODE_HOME
   process.env.KKCODE_HOME = path.join(root, 'home')
   await mkdir(process.env.KKCODE_HOME)
   await mkdir(path.join(root, 'project', '.kkcode'), { recursive: true })
   t.after(async () => {
+    // Node after-hooks are FIFO. Drain resources before removing their cwd;
+    // Windows correctly refuses deletion while a worker still owns it.
+    const failures = []
+    for (const dispose of disposals.reverse()) {
+      try { await dispose() } catch (error) { failures.push(error) }
+    }
     if (old === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = old
+    if (failures.length) throw new AggregateError(failures, 'Policy fixture resources did not close; preserving its directory')
     await rm(root, { recursive: true, force: true })
   })
-  return { root, cwd: path.join(root, 'project'), user: path.join(root, 'home', 'config.json'), project: path.join(root, 'project', '.kkcode', 'config.json') }
+  return { root, cwd: path.join(root, 'project'), user: path.join(root, 'home', 'config.json'), project: path.join(root, 'project', '.kkcode', 'config.json'), disposeBeforeRemove: dispose => disposals.push(dispose) }
 }
 
 function state(policy, type = 'openai-compatible', endpoint = 'https://model.example.test/v1') {
@@ -209,16 +219,37 @@ test('background workers inherit parent policy even when disk config allows the 
   let calls = 0
   const server = http.createServer((_req, res) => { calls++; res.end('unexpected') })
   server.listen(0, '127.0.0.1'); await once(server, 'listening')
-  t.after(() => { server.closeAllConnections(); server.close() })
+  dir.disposeBeforeRemove(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)) })
+  // The terminal checkpoint is written before worker shutdown. The parent's
+  // TASK_SETTLED notification follows exit, and therefore also releases cwd.
+  let task, resolveExit, timer
+  const observed = new Set()
+  const exited = new Promise(resolve => { resolveExit = resolve })
+  const unsubscribe = EventBus.subscribe(event => {
+    if (event.type !== EVENT_TYPES.TASK_SETTLED) return
+    observed.add(event.payload.id)
+    if (event.payload.id === task?.id) resolveExit()
+  })
+  dir.disposeBeforeRemove(async () => {
+    try {
+      if (task) {
+        await BackgroundManager.cancel(task.id)
+        await Promise.race([exited, new Promise((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error('Fixture worker did not exit before directory cleanup')), 15000)
+        })])
+      }
+    } finally { clearTimeout(timer); unsubscribe() }
+  })
   const endpoint = `http://127.0.0.1:${server.address().port}`
   const disk = state(undefined, 'openai-compatible', endpoint).config
   disk.tool = { sources: { builtin: true, local: false, plugin: false, mcp: false } }
   await writeFile(dir.user, JSON.stringify(disk))
-  const task = await BackgroundManager.launchDelegateTask({
+  task = await BackgroundManager.launchDelegateTask({
     description: 'policy inheritance fixture',
     payload: { cwd: dir.cwd, prompt: 'must not send', subSessionId: 'policy-child', providerType: 'local', dataPolicy: { model_origins: [endpoint] } },
     config: { data_policy: { model_origins: [] }, background: { mode: 'worker_process', max_parallel: 1, worker_timeout_ms: 10000 } }
   })
+  if (observed.has(task.id)) resolveExit()
   assert.deepEqual(task.payload.dataPolicy.model_origins, [])
   const settled = await BackgroundManager.waitForTask(task.id, { timeoutMs: 15000, tickMs: 30 })
   assert.equal(settled.status, 'error')

@@ -9,7 +9,7 @@ import os from 'node:os'
 import { openRunStore, runStoreNodeArgs } from '../src/storage/run-store.mjs'
 import { redactedStorageFailure } from '../src/storage/run-store-errors.mjs'
 
-test('backup flush handles are writable without truncation, including the Windows FlushFileBuffers requirement', async t => {
+for (const mask of ['077', '022']) test(`backup flush handles are writable without truncation under umask ${mask}, including the Windows FlushFileBuffers requirement`, async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kk-backup-portable-')), directory = path.join(root, 'ledger')
   t.after(() => rm(root, { recursive: true, force: true }))
   const store = await openRunStore({ directory }); t.after(() => store.close())
@@ -18,9 +18,14 @@ test('backup flush handles are writable without truncation, including the Window
   const file = path.join(directory, 'runs.sqlite'), originalBytes = await readFile(file)
   // SQLite remains in a child even for this direct fsync probe, so the minimum
   // Node 22.12 runner does not need global --experimental-sqlite flags.
-  const { stdout } = await promisify(execFile)(process.execPath, [...runStoreNodeArgs(), fileURLToPath(new URL('./fixtures/run-store-backup-flush.mjs', import.meta.url)), file, path.join(root, 'restored')])
+  const { stdout } = await promisify(execFile)(process.execPath, [...runStoreNodeArgs(), fileURLToPath(new URL('./fixtures/run-store-backup-flush.mjs', import.meta.url)), file, path.join(root, 'restored'), mask])
   const result = JSON.parse(stdout)
   assert.equal(result.version, 2)
+  assert.equal(result.umask, Number.parseInt(mask, 8))
+  if (process.platform !== 'win32') {
+    assert.equal(result.snapshotMode, 0o600)
+    assert.equal(result.restoredMode, 0o600)
+  }
   assert.ok(result.writableFileFlushes >= 3, 'snapshot, manifest and restored file must really flush')
   assert.deepEqual(await readFile(file), originalBytes, 'flushing a backup must not change the original database')
   const reopened = await openRunStore({ directory: path.join(root, 'restored') }); t.after(() => reopened.close())

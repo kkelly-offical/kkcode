@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { createHash } from 'node:crypto'
@@ -9,11 +9,16 @@ import { createRunSpec } from '../src/kernel/orchestration/run-spec.mjs'
 import { createDurableRunBinding, withDurableRun } from '../src/kernel/orchestration/run-runtime.mjs'
 import { openRunStore } from '../src/storage/run-store.mjs'
 import { createDockerExecutionBackend } from '../src/kernel/isolation/docker-executor.mjs'
+import { createFixtureCleanup } from './helpers/fixture-cleanup.mjs'
 
 async function fixture(t, code, handlers = {}, observeRequest = null) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kk-tool-program-loop-')), old = process.env.KKCODE_HOME
+  const cleanup = createFixtureCleanup(t)
+  cleanup.remove(root)
+  cleanup.defer(() => { if (old === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = old })
   process.env.KKCODE_HOME = path.join(root, 'state')
   const kernel = await createKernel({ cwd: root, boot: false, trustState: { trusted: true }, handlers })
+  cleanup.defer(() => kernel.shutdown())
   const config = kernel.configState.config
   Object.assign(config, { skills: { enabled: false, auto_seed: false }, mcp: { auto_discover: false }, git_auto: { enabled: false, auto_snapshot: false } })
   config.provider = { default: 'program_fixture', program_fixture: { default_model: 'test', stream: false, retry_attempts: 0 } }
@@ -29,9 +34,8 @@ async function fixture(t, code, handlers = {}, observeRequest = null) {
       toolCalls: turn === 1 ? [{ id: 'program-parent', name: 'tool_program', args: { code } }] : [],
       usage: {}, stopReason: turn === 1 ? 'tool_use' : 'end_turn' }
   }, async *requestStream() { throw new Error('not streaming') } })
-  t.after(async () => { await kernel.shutdown(); if (old === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = old; await rm(root, { recursive: true, force: true }) })
   const execute = options => kernel.executeTurn({ sessionId: 'program', prompt: 'Execute the scoped operations', providerType: 'program_fixture', model: 'test', ...options })
-  return { root, kernel, execute }
+  return { root, kernel, execute, cleanup }
 }
 
 test('real model loop program keeps earlier writes and stops on an independently denied leaf', async t => {
@@ -63,8 +67,7 @@ test('program does not widen agent allowlist or delegated read-only write scope'
 
 test('each real program leaf gets its own stable durable intent and settled record', async t => {
   const f = await fixture(t, 'await tools.call("write",{path:"a.txt",content:"a"}); await tools.call("write",{path:"b.txt",content:"b"}); return "both";')
-  const store = await openRunStore({ directory: path.join(f.root, 'run-store') })
-  t.after(() => store.close())
+  const store = f.cleanup.own(await openRunStore({ directory: path.join(f.root, 'run-store') }))
   let run = await store.createRun({ id: 'run-program', ownerId: 'host', contract: { objective: 'Create two files', requiredCriteria: [] } })
   const guard = () => ({ runId: run.id, ownerId: run.ownerId, ownerEpoch: run.ownerEpoch, expectedRevision: run.revision })
   const binding = createDurableRunBinding({
