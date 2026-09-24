@@ -77,6 +77,7 @@ test('profile reuse probe uses the same exact Default profile and closes only it
       assert.deepEqual(args.slice(0, 2), ['--user-data-dir=/fixture/profile', '--profile-directory=Default'])
       assert.match(args[2], /^http:\/\/127\.0\.0\.1:1234\/launch-probe-/)
       assert.equal(options.windowsHide, true)
+      assert.equal(options.detached, true, 'match the pinned upstream MCP browser launch process semantics')
       const page = new EventEmitter(); let url = 'about:blank'
       page.url = () => url; page.close = async () => { closed = true }; page.isClosed = () => closed
       context.emit('page', page); url = args[2]; page.emit('framenavigated')

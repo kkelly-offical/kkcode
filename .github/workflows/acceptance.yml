@@ -224,6 +224,7 @@ jobs:
           path: |
             ${{ runner.temp }}/kkcode-bridge-report.json
             ${{ runner.temp }}/${{ matrix.channel }}-launch.png
+            ${{ runner.temp }}/${{ matrix.channel }}-desktop.png
             ${{ runner.temp }}/${{ matrix.channel }}-failure-*.png
           if-no-files-found: error
           retention-days: 7
