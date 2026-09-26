@@ -147,8 +147,11 @@ function clampCursor(source, cursor) {
  */
 export function formatMentionPath(candidate) {
   const value = String(candidate ?? "")
-  const refuse = () => { throw Object.assign(new Error('此文件名包含控制字符或无法安全表示的引号，不能自动插入引用。请先重命名文件，原输入已保留。'), { code: 'unsafe_file_mention' }) }
+  const refuse = () => { throw Object.assign(new Error('此文件名与引用语法冲突，不能安全自动插入。请改用明确的相对路径或先重命名文件，原输入已保留。'), { code: 'unsafe_file_mention' }) }
   if (!value || /[\u0000-\u001f\u007f-\u009f\u2028-\u202e\u2066-\u2069]/u.test(value)) refuse()
+  // These prefixes mean home expansion / remote URL in manually typed input.
+  // A workspace candidate must not silently acquire either kind of authority.
+  if (/^~(?:[\\/]|$)/.test(value) || /^[a-z][a-z0-9+.-]*:\/\//i.test(value)) refuse()
   const formatted = !value.includes('"') && (/\s/.test(value) || value.endsWith('\\')) ? `"${value}"`
     : /\s/.test(value) ? value.replace(/ /g, "\\ ") : value
   // Candidate names come from the workspace, not the user's typed message.

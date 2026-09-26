@@ -5,7 +5,7 @@ import { applyMention, expandFileMentions, formatMentionPath, scanMentions } fro
 import { executePromptTurn } from '../src/repl/turn-controller.mjs'
 
 test('completion refuses ambiguous/control filenames without inserting another file reference', () => {
-  for (const candidate of ['safe "note"\t@secret.txt', 'safe "note"\n@secret.txt', 'line\n@secret.txt', '"start name".txt', 'escape\u001b[31m.txt', 'bidi\u202etxt.exe', 'null\0.txt']) {
+  for (const candidate of ['safe "note"\t@secret.txt', 'safe "note"\n@secret.txt', 'line\n@secret.txt', '"start name".txt', 'escape\u001b[31m.txt', 'bidi\u202etxt.exe', 'null\0.txt', '~/private.png', '~\\private.txt', '~', 'https://untrusted.invalid/image.png']) {
     const original = 'inspect @file please'
     const out = applyMention(original, 13, candidate)
     assert.equal(out.text, original)
@@ -17,7 +17,7 @@ test('completion refuses ambiguous/control filenames without inserting another f
 })
 
 test('completion keeps supported filenames as one exact token', () => {
-  for (const candidate of ['中文 说明.txt', 'a "quoted" file.txt', String.raw`a\ "q" b.ts`, String.raw`C:\work files\"q".ts`, 'notes @secret.png suffix.txt']) {
+  for (const candidate of ['中文 说明.txt', 'a "quoted" file.txt', String.raw`a\ "q" b.ts`, String.raw`C:\work files\"q".ts`, 'notes @secret.png suffix.txt', './~/literal.txt', './https://literal/image.png']) {
     const out = applyMention('@file', 5, candidate)
     assert.equal(out.notice, undefined)
     assert.deepEqual(scanMentions(out.text).map(token => token.query), [candidate])
