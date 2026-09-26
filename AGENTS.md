@@ -1,5 +1,11 @@
 # Project working memory
 
+## Security alert review — 2026-09-27
+
+- PR#26 is merged: main `c711f83458a5291841388f31906c201acdc7c7ea`, identical tree to tested `e9ca8d7`. The user explicitly authorized that one administrator merge; no approving review was claimed and ruleset13068465 was unchanged. That exception is fulfilled, not standing authorization for future review bypass. Main verify36254464818 and CodeQL36254464822 passed.
+- User now explicitly requests individually closing verified false-positive security alerts and fixing real problems. Preserve rules, protections, source1.1.6, public channels and all no-publication/no-model-call/no-deployment constraints. Main currently has six open CodeQL alerts (#19/#37/#43/#54/#55/#56); Dependabot/secret scanning zero open at review start. Do not dismiss confirmed issues before their fixes are integrated.
+- Work branch `fix/1.1.6-security-alert-audit-20260927`: deeper #19 review reproduced filename reference injection, double decoding, and attachment discovery from referenced file content. Regression first run5/1pass/4fail; fixes and Windows private-path/ADS hardening are being verified. Evidence and per-alert boundaries: `docs/security-review-1.1.6.md`. Linux pure Windows-path tests are not real NTFS acceptance; the dedicated Windows test must run in CI. No alert has been dismissed by this round yet.
+
 ## Current integration — 2026-09-26
 
 - User explicitly requests source version **1.1.6**, testing and integration into main, **without publishing**. This supersedes the earlier 1.0.x-only source-version restriction for this exact target, not an authorization for other minor/major bumps or publication. No tag/npm/APK/image publication, production/demo upgrade, new model inference, ruleset change or review bypass.

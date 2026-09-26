@@ -73,9 +73,8 @@ function toTurnResult(result) {
  * （含 `/plan <目标>` 改写后的文本与 `/paste` 直接送来的文本 —— 那两者也是提示词）。
  * 放在按键层就得在 TUI 与行模式各写一遍，放在 engine 里则连命令都会被展开。
  *
- * 展开与图片链路的顺序是：先 `expandFileMentions`（只在末尾追加引用块，原句一个字不改），
- * 再由 `executePromptTurn` 里的 `extractImageRefs` 抽图片。`expandFileMentions` 见到图片
- * 扩展名一律跳过，所以 `@shot.png` 原封不动地留给图片链路 —— 这条有回归测试钉着。
+ * 展开只追加文本，同时保留原句长度。executePromptTurn 只从原句抽取图片，
+ * 文件内容里的路径和 URL 不得触发额外文件读取或附件请求。
  *
  * @param {object} p
  * @param {string} p.prompt
@@ -114,6 +113,7 @@ export async function presentPromptTurn({
 
   const turn = await runTurn({
     prompt: mentions.text,
+    imageReferenceLength: String(prompt ?? '').length,
     state,
     ctx,
     streamSink: state.mode === "longagent" ? null : streamSink,

@@ -1,6 +1,7 @@
 # GitHub 风险复核与修复（面向 1.0.6，未发行）
 
 > 此处保留原维护版本计划与证据；2026-09-26用户指定纳入[1.1.6源码整合](implementation-1.1.6.md)，不等于发布或自动关闭剩余告警。
+> 后续逐条复核及新发现的文件引用问题见[1.1.6 安全告警复核](security-review-1.1.6.md)。
 
 2026-09-26；修复在 [PR #25](https://github.com/kkelly-offical/kkcode/pull/25)，
 NOTICE 修正在独立的 [文档 PR #23](https://github.com/kkelly-offical/kkcode/pull/23)。

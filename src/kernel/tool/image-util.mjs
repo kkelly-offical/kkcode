@@ -193,10 +193,12 @@ const WINDOWS_ABSOLUTE = /^(?:[A-Za-z]:[\\/]|\\\\)/
  * `path.resolve` 的事。于是这个函数在任何平台上对同一输入给同一输出，可以直接
  * 断言精确字符串。
  */
-export function normalizeDroppedPath(raw, { home = homedir() } = {}) {
-  let value = String(raw || "").trim()
+export function normalizeDroppedPath(raw, { home = homedir(), literal = false } = {}) {
+  // Already-parsed @file tokens are literal filenames; only expand their home
+  // prefix. Terminal-drop decoding must happen exactly once, never on a token.
+  let value = literal ? String(raw || "") : String(raw || "").trim()
   if (!value) return ""
-  if (value.length >= 2 && ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'")))) {
+  if (!literal && value.length >= 2 && ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'")))) {
     value = value.slice(1, -1)
   }
   // `\ ` 还原成真空格 —— 但这是 **POSIX shell 的转义约定**，不是通用规则。
@@ -209,7 +211,7 @@ export function normalizeDroppedPath(raw, { home = homedir() } = {}) {
   // 无歧义的 Windows 绝对路径，跳过还原。其余一律还原 —— 注意「含反斜杠」本身
   // 不能当判据，POSIX 的转义空格串（`/home/me/my\ shot.png`）里就带着反斜杠。
   // 按形状判还有一个好处：行为不随运行平台变，Linux 上就能把两边都测出来。
-  if (!WINDOWS_ABSOLUTE.test(value)) value = value.replace(/\\ /g, " ")
+  if (!literal && !WINDOWS_ABSOLUTE.test(value)) value = value.replace(/\\ /g, " ")
   if (value === "~") return home
   // 用户写的是 `~/` 还是 `~\`，展开后就还用哪个 —— slice(1) 把分隔符一起留下。
   if (value.startsWith("~/") || value.startsWith("~\\")) {
@@ -227,7 +229,7 @@ export function normalizeDroppedPath(raw, { home = homedir() } = {}) {
  *   Bare http(s) URLs ending in image extensions
  * Returns { text, imagePaths, imageUrls } where text has image refs removed.
  */
-export function extractImageRefs(text, cwd = runtimeCwd()) {
+export function extractImageRefs(text, cwd = runtimeCwd(), { preserveWhitespace = false } = {}) {
   const raw = String(text || "")
   const imagePaths = []
   const imageUrls = []
@@ -301,7 +303,7 @@ export function extractImageRefs(text, cwd = runtimeCwd()) {
   })
 
   return {
-    text: cleaned.replace(/\s{2,}/g, " ").trim(),
+    text: preserveWhitespace ? cleaned : cleaned.replace(/\s{2,}/g, " ").trim(),
     imagePaths,
     imageUrls
   }

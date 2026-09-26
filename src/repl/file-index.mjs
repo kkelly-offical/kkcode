@@ -256,6 +256,9 @@ export function createFileIndex({
       for (const item of raw) {
         const entry = describeEntry(fs, pathApi, absDir, item)
         if (!entry) continue
+        // Workspace filenames must not inject terminal controls or new rows
+        // into the completion menu; these names cannot be safely completed.
+        if (/[\u0000-\u001f\u007f-\u009f\u2028-\u202e\u2066-\u2069]/u.test(entry.name)) continue
         // 相对路径**不用 pathApi.join** —— 见文件头第 1 条
         const rel = prefix ? `${prefix}/${entry.name}` : entry.name
         if (isIgnored(rel, entry.dir)) continue

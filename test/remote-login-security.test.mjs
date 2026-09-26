@@ -22,7 +22,7 @@ test('gateway requests reject unsafe schemes, embedded credentials and alternate
   }
 })
 
-test('CLI and SDK credential requests never follow 307/308 redirects or deliver secrets to a trap', async t => {
+test('CLI and SDK credential requests never follow redirects or deliver secrets to a trap', async t => {
   let trapHits = 0, status = 307
   const trap = createServer((req, res) => { trapHits++; req.resume(); res.end('{}') })
   await new Promise(resolve => trap.listen(0, '127.0.0.1', resolve))
@@ -31,7 +31,7 @@ test('CLI and SDK credential requests never follow 307/308 redirects or deliver 
   t.after(async () => { for (const item of [server, trap]) await new Promise(resolve => { item.closeAllConnections(); item.close(resolve) }) })
   const gateway = `http://127.0.0.1:${server.address().port}`
   const credentials = { gateway, refresh_token: 'fixture-refresh', access_token: 'fixture-access' }
-  for (status of [307, 308]) {
+  for (status of [301, 302, 303, 307, 308]) {
     await assert.rejects(requestGateway(gateway, '/auth/token', { method: 'POST', body: '{"device_code":"fixture"}', redirect: 'follow' }), /fetch failed/)
     await assert.rejects(refreshRemoteCredentials(credentials), /fetch failed/)
     await assert.rejects(revokeRemoteDevice({ deviceId: 'fixture-device', credentials }), /fetch failed/)

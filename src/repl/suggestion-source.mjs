@@ -138,7 +138,7 @@ export function createSuggestionSource({
      * - 文件：只替换光标处那一个 token（`applyMention`），光标落在它之后 —— 引用是句子的
      *   一部分，整行替换会把用户写了一半的那句话吃掉。
      *
-     * @returns {{text: string, cursor: number}|null} 没有候选时返回 null
+     * @returns {{text: string, cursor: number, notice?: string}|null} 没有候选时返回 null
      */
     apply(input, cursor, suggestions, selected) {
       const chosen = pick(suggestions, selected)

@@ -1418,6 +1418,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     // 分派表在 suggestion-source 里 —— 这里只负责把结果装回 ui。
     const applied = suggestionSource.apply(ui.input, ui.inputCursor, currentSuggestions(), ui.selectedSuggestion)
     if (!applied) return
+    if (applied.notice) showToast(applied.notice, { topic: 'mention', tone: 'warning' })
     ui.input = applied.text
     ui.inputCursor = applied.cursor
     onInputChanged()
