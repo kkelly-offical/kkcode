@@ -4,13 +4,10 @@ import { realpath, readdir, lstat, open, stat } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { ProtocolError } from '../protocol/index.mjs'
 import { userRootDir } from '../storage/paths.mjs'
+import { assertPublicDeviceComponents as assertPublicComponents } from './private-path.mjs'
 
-const blocked = new Set(['.ssh', '.aws', '.azure', '.gnupg', '.kube', '.kkcode', '.codex', '.claude', '.config', '.npmrc', '.netrc', '.git-credentials', '.env'])
 const within = (target, root) => target === root || target.startsWith(root.endsWith(path.sep) ? root : root + path.sep)
 const identity = info => info.ino > 0n ? `${info.dev}:${info.ino}` : null
-function assertPublicComponents(target) {
-  if (target.split(path.sep).some(part => blocked.has(part.toLowerCase()) || /^\.env\./i.test(part) || /\.(pem|key|p12|pfx|jks|keystore)$/i.test(part))) throw new ProtocolError('path_denied', '凭据和私密配置受到保护，不能通过远控文件浏览读取。', 403)
-}
 function requestedPath(input) {
   if (typeof input !== 'string' || !input || input.length > 32768 || input.includes('\0')) throw new ProtocolError('invalid_path', 'Choose a valid device path')
   return path.resolve(input)

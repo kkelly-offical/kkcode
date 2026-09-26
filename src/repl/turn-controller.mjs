@@ -1,7 +1,35 @@
-import { executeTurn, defaultHookBus, extractImageRefs, buildContentBlocks, handleRollbackIfNeeded } from "../kernel/index.mjs"
+import { executeTurn, defaultHookBus, extractImageRefs, buildContentBlocks, handleRollbackIfNeeded, isImagePath, normalizeDroppedPath } from "../kernel/index.mjs"
+import path from 'node:path'
+import { scanMentions } from './file-mention.mjs'
+
+function extractUserImages(source, cwd, extract) {
+  // A text filename may itself contain @photo.png or a URL. Treat each complete
+  // non-image mention as literal text, not another source of image references.
+  const tokens = scanMentions(source)
+  if (!tokens.length) return extract(source, cwd)
+  let cursor = 0, text = ''
+  const imagePaths = new Set(), imageUrls = new Set()
+  const append = chunk => {
+    if (!chunk) return
+    const result = extract(chunk, cwd, { preserveWhitespace: true })
+    text += result.text ?? chunk
+    for (const value of result.imagePaths || []) imagePaths.add(value)
+    for (const value of result.imageUrls || []) imageUrls.add(value)
+  }
+  for (const token of tokens) {
+    append(source.slice(cursor, token.start))
+    if (/^https?:\/\//i.test(token.query)) append(source.slice(token.start, token.end))
+    else if (isImagePath(token.query)) imagePaths.add(path.resolve(cwd, normalizeDroppedPath(token.query, { literal: true })))
+    else text += source.slice(token.start, token.end)
+    cursor = token.end
+  }
+  append(source.slice(cursor))
+  return { text, imagePaths: [...imagePaths], imageUrls: [...imageUrls] }
+}
 
 export async function executePromptTurn({
   prompt,
+  imageReferenceLength = null,
   state,
   ctx,
   streamSink = null,
@@ -29,8 +57,11 @@ export async function executePromptTurn({
     || handleRollbackIfNeeded
   const cwd = deps.cwd || process.cwd()
 
-  const { text: cleanedPrompt, imagePaths, imageUrls = [] } = extractImageRefsFn(prompt, cwd)
-  const effectivePrompt = cleanedPrompt ?? prompt
+  const source = String(prompt ?? '')
+  const referenceEnd = imageReferenceLength ?? source.length
+  if (!Number.isInteger(referenceEnd) || referenceEnd < 0 || referenceEnd > source.length) throw new TypeError('Invalid user image-reference boundary')
+  const { text: cleanedPrompt, imagePaths, imageUrls = [] } = extractUserImages(source.slice(0, referenceEnd), cwd, extractImageRefsFn)
+  const effectivePrompt = (cleanedPrompt ?? source.slice(0, referenceEnd)) + source.slice(referenceEnd)
 
   // 自然语言撤销只在前台 REPL 的真实用户回合入口处拦截。放在
   // processTurnLoop 里会误伤子代理/Ultra 内部提示词中的 rollback 字样；

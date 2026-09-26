@@ -11,8 +11,8 @@
  * 重写一份扩展名清单** —— 本项目为此吃过亏：那份清单曾经有两份手写拷贝，一份有 `.ico`
  * 另一份没有，于是同一个文件在两个入口是两种东西。
  *
- * 两者的顺序在集成方那里是：先 `expandFileMentions`（只追加引用块、不改原句），再
- * `extractImageRefs`（抽图片并删引用）。反过来也行，因为两者处理的 token 集合不相交。
+ * 集成方必须保留原始用户输入的边界：图片识别只处理原句，追加的文件内容是惰性文本，
+ * 不能再把文件内容中的图片路径或 URL 自动当成用户授权的附件。
  *
  * ## 三个入口的分工
  *
@@ -147,9 +147,21 @@ function clampCursor(source, cursor) {
  */
 export function formatMentionPath(candidate) {
   const value = String(candidate ?? "")
-  if (!/\s/.test(value)) return value
-  if (value.includes("\"")) return value.replace(/ /g, "\\ ")
-  return `"${value}"`
+  const refuse = () => { throw Object.assign(new Error('此文件名与引用语法冲突，不能安全自动插入。请改用明确的相对路径或先重命名文件，原输入已保留。'), { code: 'unsafe_file_mention' }) }
+  if (!value || /[\u0000-\u001f\u007f-\u009f\u2028-\u202e\u2066-\u2069]/u.test(value)) refuse()
+  // These prefixes mean home expansion / remote URL in manually typed input.
+  // A workspace candidate must not silently acquire either kind of authority.
+  if (/^~(?:[\\/]|$)/.test(value) || /^[a-z][a-z0-9+.-]*:\/\//i.test(value)) refuse()
+  const formatted = !value.includes('"') && (/\s/.test(value) || value.endsWith('\\')) ? `"${value}"`
+    : /\s/.test(value) ? value.replace(/ /g, "\\ ") : value
+  // Candidate names come from the workspace, not the user's typed message.
+  // Refuse any representation which would split, truncate or change the path.
+  // Doubling every backslash is NOT correct for this non-shell grammar.
+  // Include the real completion delimiter: an unquoted trailing backslash
+  // would otherwise consume that space and the user's following words.
+  const tokens = scanMentions(`@${formatted} `)
+  if (tokens.length !== 1 || tokens[0].query !== value || tokens[0].end !== formatted.length + 1) refuse()
+  return formatted
 }
 
 /**
@@ -159,13 +171,18 @@ export function formatMentionPath(candidate) {
  * 而不是 `@repsrc/repl.mjs`。写回风格与 `slash-router.mjs` 的 `applySuggestionToInput`
  * 一致 —— 后面已经有空白就不再补一个，免得每次补全都长出一串空格。
  *
- * @returns {{text: string, cursor: number}} 光标不在 mention 上时原样返回。
+ * @returns {{text: string, cursor: number, notice?: string}} 光标不在 mention 上时原样返回。
  */
 export function applyMention(text, cursor, candidatePath) {
   const source = String(text ?? "")
   const hit = mentionQueryAt(source, cursor)
   if (!hit) return { text: source, cursor: clampCursor(source, cursor) }
-  const marker = `@${formatMentionPath(candidatePath)}`
+  let marker
+  try { marker = `@${formatMentionPath(candidatePath)}` }
+  catch (error) {
+    if (error.code !== 'unsafe_file_mention') throw error
+    return { text: source, cursor: clampCursor(source, cursor), notice: error.message }
+  }
   const rest = source.slice(hit.end)
   const hasSpace = rest.startsWith(" ") || rest.startsWith("\t")
   // 行尾（`\n`）不补空格，否则每次补全都在行末留一个看不见的尾巴
@@ -206,7 +223,9 @@ function displayPath(abs, ref, cwd, pathApi) {
  * 不存在返回 `{ kind: "missing" }`，读不了返回 `{ kind: "unreadable" }` —— 两者都不抛。
  */
 function describeTarget(ref, ctx) {
-  const normalized = normalizeDroppedPath(ref)
+  // readToken already decoded the mention grammar. Re-decoding would remove
+  // literal backslashes/quotes/spaces and could open a different file.
+  const normalized = normalizeDroppedPath(ref, { literal: true })
   const abs = ctx.pathApi.resolve(ctx.cwd, normalized)
   const display = displayPath(abs, ref, ctx.cwd, ctx.pathApi)
   if (!ctx.fs.existsSync(abs)) return { kind: "missing", abs, display, ref }

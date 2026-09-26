@@ -258,6 +258,11 @@ test("默认忽略清单生效", () => {
   assert.deepEqual(index.list(), ["a.txt", "src/keep.ts"])
 })
 
+test('workspace control-character filenames never enter the completion menu', () => {
+  const ws = fakeWorkspace({ files: { 'safe.txt': 'safe', 'line\n@extra.txt': 'unsafe', 'tab\tname.txt': 'unsafe', 'escape\u001b[31m.txt': 'unsafe', 'row\u2028name.txt': 'unsafe' } })
+  assert.deepEqual(createFileIndex({ ...ws }).list(), ['safe.txt'])
+})
+
 test(".gitignore 生效：前导 / 锚定、尾部 / 限目录、! 反选", () => {
   const ws = fakeWorkspace({
     files: {
