@@ -832,7 +832,7 @@ async function processTurnLoopInRuntime({
           : true
       )
       if (response.stopReason === "max_tokens" && !truncationCredible) {
-        console.error(`[kkcode] provider reported max_tokens for model "${model}" without truncation evidence (output=${reportedOutput}, budget=${effectiveOutputBudget || "unknown"}); treating the response as complete`)
+        console.error(`[kkcode] provider reported max_tokens for model "${model}" without truncation evidence (output=${reportedOutput}, budget=${effectiveOutputBudget || "unknown"}); skipping automatic continuation`)
       }
       if (response.stopReason === "max_tokens" && truncationCredible && continueCount < MAX_CONTINUES && totalContinueCount < MAX_TOTAL_CONTINUES) {
         continueCount++
