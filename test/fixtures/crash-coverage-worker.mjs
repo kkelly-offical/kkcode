@@ -1,0 +1,6 @@
+const { checkpointCrashCoverage } = await import(process.argv[2])
+const { normalizeDataPolicy } = await import(process.argv[3])
+const result = normalizeDataPolicy({ model_origins: ['https://FIXTURE.invalid/'] })
+const checkpointed = checkpointCrashCoverage()
+process.send?.({ checkpointed, result })
+setInterval(() => {}, 1000)
