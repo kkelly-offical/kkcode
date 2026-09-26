@@ -39,7 +39,7 @@ android {
         minSdk = 29
         targetSdk = 35
         versionCode = 10010
-        versionName = "1.0.5"
+        versionName = "1.1.6"
         buildConfigField("String", "UPDATE_REPOSITORY", "\"${releaseIdentity["repository"]}\"")
         buildConfigField("String", "UPDATE_CERT_SHA256", "\"${releaseIdentity["certificateSha256"]}\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

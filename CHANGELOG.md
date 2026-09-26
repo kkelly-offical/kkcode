@@ -1,6 +1,20 @@
 # Changelog / 更新日志
 
-## 1.0.5 — Unreleased / 正式版准备中
+## 1.1.6 — Unreleased / 仅源码维护
+
+- Integrate the maintenance fixes and concise documentation candidates; align CLI,
+  Web/gateway, private SDK workspaces and Android source versions to `1.1.6`.
+  Android `10010` remains reserved; no tags, npm/APK publication or deployments.
+- Preserve valid settings on permission errors while blocking unsafe execution;
+  keep data-egress failure separate from local tool permissions and show safe diagnostics.
+- Fence stale session flushes, reject empty/whitespace terminal responses without
+  replaying tools, and release rejected model-catalog responses promptly.
+- Make storage basename validation and credential-scoped catalog caching explicit;
+  retain all safety rules and outstanding alert/quality tracking.
+- The exact `1.1.6` target is source-only in release policy; tag publication is
+  blocked until separately authorized. See [integration record](docs/implementation-1.1.6.md).
+
+## 1.0.5 — Unreleased preparation, superseded by 1.1.6 / 历史准备记录
 
 - Prepare the source version as `1.0.5` across the CLI, Web/gateway, private SDK
   workspaces and Android (`10010`). No release tag, npm publication, signed APK

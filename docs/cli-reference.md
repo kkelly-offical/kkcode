@@ -1,6 +1,6 @@
 # CLI、终端交互与扩展入口
 
-[文档导航](README.md) · 适用源码：1.0.5；[模式与权限](modes-and-permissions.md)
+[文档导航](README.md) · 适用源码：1.1.6；[模式与权限](modes-and-permissions.md)
 
 ## 常用对话命令
 

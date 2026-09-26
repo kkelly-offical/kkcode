@@ -1,6 +1,6 @@
 # Remote SSE event contract
 
-[Documentation](README.md) · Source target1.0.5; [release status](versions.md).
+[Documentation](README.md) · Source target1.1.6; [release status](versions.md).
 
 Additive context fields/events: `sessions.get.context` and
 `session.context.updated.payload.context` expose a sanitized current request budget

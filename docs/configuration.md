@@ -1,6 +1,6 @@
 # 配置与模型渠道
 
-[文档导航](README.md) · 适用源码：1.0.5；完整字段见[配置参考](config.example.yaml)
+[文档导航](README.md) · 适用源码：1.1.6；完整字段见[配置参考](config.example.yaml)
 
 ## 配置放在哪里
 

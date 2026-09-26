@@ -1,6 +1,6 @@
 # Android release signing and acceptance
 
-[Documentation](README.md) · Source target: **1.0.5 / 10010**, not published.
+[Documentation](README.md) · Source target: **1.1.6 / 10010**, not published.
 Changing the source version does not build, sign or upload an APK. See [version status](versions.md).
 
 Published stable: **1.0.4 / 10008**, with the same release certificate. Actual
@@ -23,7 +23,7 @@ from publishing: producing this APK does not upload it to a store or GitHub.
 The published Preview is **1.0.5-preview.0 / 10009**, signed by the same
 certificate. Its exact APK, update manifest and actual upload/download receipts
 are tracked in the [1.0.5 ledger](implementation-1.0.5.md); older published-version
-receipts are historical, not proof that the source target1.0.5 has been published.
+receipts are historical, not proof that the source target1.1.6 has been published.
 
 ## Project signing identity
 
@@ -55,7 +55,7 @@ the third preview (`1.0.1-preview.2`) uses `10003`; stable `1.0.1` uses `10004`.
 Stable `1.0.2` uses `10005`; `1.0.3` (1.0.2 Fix) uses `10006`. The certificate must stay unchanged.
 `1.0.4-preview.0` uses `10007`; stable `1.0.4` uses `10008` and is eligible for both
 stable and preview update channels. No public `1.0.4-preview.1` is planned.
-Published `1.0.5-preview.0` uses `10009`; the not-yet-published source target1.0.5 reserves `10010`.
+Published `1.0.5-preview.0` uses `10009`; the not-yet-published source target1.1.6 reserves `10010`.
 **Every subsequent publicly distributed Android update must increase
 `versionCode`, including any later stable release or preview.**
 Changing only `versionName` is not a valid public update policy. Keep using

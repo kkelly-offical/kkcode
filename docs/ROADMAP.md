@@ -1,6 +1,6 @@
 # 路线图与维护入口
 
-[文档导航](README.md) · 源码目标1.0.5（正式版准备中，尚未发布）· [版本状态](versions.md)
+[文档导航](README.md) · 源码目标1.1.6（正式版准备中，尚未发布）· [版本状态](versions.md)
 
 剩余问题以[GitHub Issues](https://github.com/kkelly-offical/kkcode/issues)为准。
 本页负责按主题导航，不再复制一份会过期的“已完成／未完成”长表；关闭Issue需修复和验收证据。
@@ -15,7 +15,8 @@
 | 真实任务与设备验收 | [质量／Ultra #15](https://github.com/kkelly-offical/kkcode/issues/15)、[跨平台／真机 #16](https://github.com/kkelly-offical/kkcode/issues/16)、[GitLab #17](https://github.com/kkelly-offical/kkcode/issues/17)、[长期观察 #18](https://github.com/kkelly-offical/kkcode/issues/18) | 工程测试不代替模型、平台或生产实测；长期观察不是收费试用期 |
 | 文档与发布治理 | [当前／历史分离 #19](https://github.com/kkelly-offical/kkcode/issues/19)、[npm分发验证 #20](https://github.com/kkelly-offical/kkcode/issues/20)、[rulesets #21](https://github.com/kkelly-offical/kkcode/issues/21) | 当前指南统一，发行与分发状态核实，不旁路分支审核 |
 
-本次1.0.5准备只维护文档与版本一致性，不自动关闭以上Issue，不重启过期的模型测试授权。
+本次1.1.6整合文档与已验收的运行时／安全修复，统一源码版本，不自动关闭以上Issue，
+不重启过期的模型测试授权。实际范围见[本轮记录](implementation-1.1.6.md)。
 具体复现、验收清单与讨论留在各Issue，避免文档和Issue互相矛盾。
 
 ## 保持的产品方向
@@ -32,4 +33,4 @@
 任何生产部署、付费模型测试或新账号／仓库操作均需独立授权。
 
 原[1.0.5→1.1.0计划](plan-1.0.5.md)仍作为成熟度目标保留；观察周期可重新商定，
-但不能把尚未完成的验收写成完成。1.1.0及1.0.5正式发布都需要分别确认，不因改版本号自动发行。
+但不能把尚未完成的验收写成完成。用户指定1.1.6源码不代表这些门槛已达到；正式发布仍需独立授权。

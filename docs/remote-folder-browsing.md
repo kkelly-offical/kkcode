@@ -1,6 +1,6 @@
 # Remote folder browsing and workspace trust
 
-[Documentation](README.md) · Source target: 1.0.5; see [release status](versions.md).
+[Documentation](README.md) · Source target: 1.1.6; see [release status](versions.md).
 
 Remote clients browse the controlled computer through `folders.list` and
 `files.read`. The browsing scope is explicitly authorized on the controlled

@@ -8,7 +8,7 @@
 ![Node](https://img.shields.io/badge/Node.js-%3E%3D22.12-green)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
 
-源码版本 **1.0.5 · 正式版准备中，尚未发布**。已发布稳定版为 1.0.4，预览版为
+源码版本 **1.1.6 · 仅源码维护，尚未发布**。已发布稳定版为 1.0.4，预览版为
 1.0.5-preview.0；[版本与升级](docs/versions.md)区分源码、发行渠道与部署状态。
 上图为品牌概念图，不是实际界面截图。
 
@@ -28,7 +28,7 @@
 <a id="quick-start"></a>
 ## 快速开始
 
-需要 Node.js **22.12+** 和 `ripgrep`。下面安装的是**已经发布的稳定渠道**，不是尚未发布的 1.0.5：
+需要 Node.js **22.12+** 和 `ripgrep`。下面安装的是**已经发布的稳定渠道**，不是尚未发布的 1.1.6：
 
 ```sh
 npm install -g @kkelly-offical/kkcode@latest

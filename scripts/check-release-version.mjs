@@ -13,5 +13,5 @@ export async function checkReleaseVersions(root = new URL('../', import.meta.url
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
   const checked = await checkReleaseVersions()
-  console.log(`release version policy ok: ${checked.version} (${checked.workspaces.length} workspaces, npm ${checked.distTag})`)
+  console.log(`release version policy ok: ${checked.version} (${checked.workspaces.length} workspaces, ${checked.channel === 'source-only' ? 'source only; publication disabled' : `npm ${checked.distTag}`})`)
 }

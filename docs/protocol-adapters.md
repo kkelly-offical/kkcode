@@ -1,6 +1,6 @@
 # MCP OAuth 与 ACP 编辑器入口
 
-[文档导航](README.md) · 适用源码：1.0.5；表单及协议子集见[实际支持范围](protocol-extensions.md)。
+[文档导航](README.md) · 适用源码：1.1.6；表单及协议子集见[实际支持范围](protocol-extensions.md)。
 
 ## MCP OAuth
 

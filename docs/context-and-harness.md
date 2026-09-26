@@ -1,6 +1,6 @@
 # 上下文、提示词与 Harness
 
-[文档导航](README.md) · 适用源码：1.0.5；[发行状态](versions.md)
+[文档导航](README.md) · 适用源码：1.1.6；[发行状态](versions.md)
 
 ## 上下文数字的含义
 

@@ -1,6 +1,6 @@
 {
   "name": "@kkelly-offical/kkcode",
-  "version": "1.0.5",
+  "version": "1.1.6",
   "workspaces": [
     "apps/web",
     "apps/gateway",
@@ -137,6 +137,7 @@
     "docs/context-and-harness.md",
     "docs/plan-1.0.5.md",
     "docs/implementation-1.0.5.md",
+    "docs/implementation-1.1.6.md",
     "docs/codeql-triage-1.0.5.md",
     "docs/security-review-1.0.6.md",
     "docs/maintenance-1.0.6.md",

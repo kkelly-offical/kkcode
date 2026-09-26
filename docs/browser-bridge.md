@@ -1,6 +1,6 @@
 # 本机浏览器桥接
 
-[文档导航](README.md) · 适用源码：1.0.5；[发行状态](versions.md)
+[文档导航](README.md) · 适用源码：1.1.6；[发行状态](versions.md)
 
 `browser` 继续提供隔离 Chromium，用于开发验收。新增 `browser_bridge` 连接 Agent 所在电脑上用户明确批准的 Chrome／Edge 标签页组，利用网站已有登录态；它不是跨设备桌面控制，也不会在 Web／Android 增加浏览器直播或鼠标键盘监管面板。
 

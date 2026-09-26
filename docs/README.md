@@ -1,6 +1,6 @@
 # KK Code 文档
 
-当前指南统一按 **1.0.5源码**维护；正式版准备中，**尚未发布**。
+当前指南统一按 **1.1.6源码**维护；仅更新源码，**尚未发布**。
 已发布渠道、Android版本码与升级入口只在[版本与升级](versions.md)集中维护。
 历史材料保留原始版本和证据，不作为当前使用说明。
 
@@ -43,12 +43,12 @@ App、设备CLI和网关分别升级。公共网关镜像发布暂缓，继续�
 
 - [分域SDK总览](sdk-guide.md) · [headless JSONL契约](headless-jsonl-contract.md)
 - [配置字段参考](config.example.yaml) · [贡献与验证](contributing.md)
-- [路线图与Issues](ROADMAP.md) · [1.0.5正式版准备](release-1.0.5.md)
+- [路线图与Issues](ROADMAP.md) · [1.1.6源码整合与验证](implementation-1.1.6.md)
 
 ## 历史与发行证据
 
 [历史导航](history.md)集中保存旧版本发布、设计契约和试验记录；
-[实施账本](implementation-1.0.5.md)保留1.0.5系列各候选的真实结果。
+[本轮实施记录](implementation-1.1.6.md)与[1.0.5历史账本](implementation-1.0.5.md)分开，保留各候选的真实结果。
 新用户无需从旧版契约逐层寻找当前模式或配置。
 
 源码中的测试、`scripts/`、`evaluation/` 和Android/Web开发工程不随全局npm包完整安装；

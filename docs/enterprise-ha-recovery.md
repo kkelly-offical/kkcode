@@ -1,6 +1,6 @@
 # 企业网关高可用、SSO 适配与恢复
 
-[文档导航](README.md) · 适用源码：1.0.5；部署入口见[企业自托管](enterprise-deployment.md)。
+[文档导航](README.md) · 适用源码：1.1.6；部署入口见[企业自托管](enterprise-deployment.md)。
 以下带日期的实测结果是历史证据，不是本次正式版准备重新执行的生产演练。
 
 ## 已实现的网关 HA 边界

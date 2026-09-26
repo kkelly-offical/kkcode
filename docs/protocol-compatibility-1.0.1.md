@@ -1,6 +1,6 @@
 # 1.0.1 协议与扩展兼容验收
 
-本页矩阵及数字为历史验收。当前1.0.5源码的MCP OAuth、ACP及表单等子集见
+本页矩阵及数字为历史验收。当前1.1.6源码的MCP OAuth、ACP及表单等子集见
 [协议适配](protocol-adapters.md)和[实际支持范围](protocol-extensions.md)；
 不要将下方旧版“不支持OAuth”等结论套用到当前版本，发行状态见[版本与升级](versions.md)。
 

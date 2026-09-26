@@ -1,6 +1,6 @@
 # Remote command and approval contract
 
-[Documentation](README.md) · Source target: 1.0.5; the device protocol remains version 1.
+[Documentation](README.md) · Source target: 1.1.6; the device protocol remains version 1.
 
 `commands.list` and the terminal completion menu derive their builtins from the
 same registry. The catalog includes canonical builtins and aliases, plus the trusted workspace's custom commands and skills. Web/Android hide terminal-only `keys` and the legacy independent `permission` picker from suggestions; direct legacy invocation remains compatible.

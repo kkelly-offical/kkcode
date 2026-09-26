@@ -1,6 +1,6 @@
 # OpenAI Responses API
 
-[文档导航](README.md) · 适用源码：1.0.5；该适配器首次随1.0.4发行。
+[文档导航](README.md) · 适用源码：1.1.6；该适配器首次随1.0.4发行。
 
 KK Code 有独立的 `openai-responses` 适配器，发送 `POST /responses`，不是把
 Chat Completions 的 `messages` 换一个路径。CLI、内核 SDK、Web 和 Android 共用

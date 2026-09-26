@@ -12,7 +12,7 @@ const read = file => readFile(path.join(root, file), 'utf8')
 const entryDocs = [
   'README.md', 'docs/README.md', 'docs/getting-started.md', 'docs/configuration.md',
   'docs/modes-and-permissions.md', 'docs/cli-reference.md', 'docs/capabilities.md',
-  'docs/versions.md', 'docs/history.md', 'docs/contributing.md', 'docs/release-1.0.5.md',
+  'docs/versions.md', 'docs/history.md', 'docs/contributing.md', 'docs/implementation-1.1.6.md',
   'docs/implementation-1.0.5.md', 'docs/ROADMAP.md', 'docs/enterprise-deployment.md'
 ]
 
@@ -53,27 +53,28 @@ test('current entrypoint links exist in the checkout and in the npm documentatio
 test('active topic guides do not send users back to unreleased hotfix or old deployment instructions', async () => {
   for (const file of ['remote-folder-browsing', 'remote-command-contract', 'media-input', 'responses-api', 'android-gateway-login', 'enterprise-ha-recovery']) {
     const text = await read(`docs/${file}.md`)
-    assert.match(text, /1\.0\.5/)
+    assert.match(text, /1\.1\.6/)
     assert.doesNotMatch(text, /^# .*\(1\.0\.[1-4]\)|^# .*（1\.0\.[1-4]）/m)
     assert.doesNotMatch(text, /unreleased local hotfix|kkcode-gateway:1\.0\.[1-4]/)
   }
-  assert.match(await read('docs/config.example.yaml'), /适用源码：1\.0\.5/)
+  assert.match(await read('docs/config.example.yaml'), /适用源码：1\.1\.6/)
   assert.match(await read('docs/media-input.md'), /OpenAI Responses.*input_image/)
 })
 
-test('source target, workspaces and Android agree without claiming a stable 1.0.5 publication', async () => {
+test('source target, workspaces and Android agree without claiming a 1.1.6 publication', async () => {
   const manifest = await checkReleaseVersions(root)
   const android = await readAndroidReleaseTarget(root)
-  assert.equal(manifest.version, '1.0.5')
+  assert.equal(manifest.version, '1.1.6')
+  assert.equal(manifest.channel, 'source-only')
   assert.equal(android.version, manifest.version)
   assert.equal(android.versionCode, 10010)
   assert.equal(android.channel, 'stable')
   const readme = await read('README.md'), versions = await read('docs/versions.md')
-  assert.match(readme, /1\.0\.5.*正式版准备中，尚未发布/)
+  assert.match(readme, /1\.1\.6.*仅源码维护，尚未发布/)
   assert.match(versions, /已发布稳定渠道.*1\.0\.4/)
   assert.match(versions, /已发布预览渠道.*1\.0\.5-preview\.0/)
   assert.match(versions, /仅源码配置.*不是已签名或已上线证明/)
-  assert.match(await read('CHANGELOG.md'), /## 1\.0\.5 — Unreleased/)
+  assert.match(await read('CHANGELOG.md'), /## 1\.1\.6 — Unreleased/)
   const notice = await read('NOTICE.md')
   assert.match(notice, /\*\*Version\*\*: See \[package\.json\]\(package\.json\)/)
   assert.doesNotMatch(notice, /\*\*Version\*\*: \d/)

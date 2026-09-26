@@ -1,6 +1,6 @@
 # 按需语言服务
 
-[文档导航](README.md) · 适用源码：1.0.5；[发行状态](versions.md)。支持LSP 3.17的初始化、文档打开、拉取／推送诊断、文档符号、定义及引用。支持路由TypeScript／JavaScript、Python、Go、Kotlin；不安装或自动下载语言服务器。
+[文档导航](README.md) · 适用源码：1.1.6；[发行状态](versions.md)。支持LSP 3.17的初始化、文档打开、拉取／推送诊断、文档符号、定义及引用。支持路由TypeScript／JavaScript、Python、Go、Kotlin；不安装或自动下载语言服务器。
 
 ## 安全和执行方式
 
