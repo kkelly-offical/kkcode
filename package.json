@@ -127,6 +127,8 @@
     "docs/plan-1.0.5.md",
     "docs/implementation-1.0.5.md",
     "docs/codeql-triage-1.0.5.md",
+    "docs/security-review-1.0.6.md",
+    "docs/maintenance-1.0.6.md",
     "docs/protocol-adapters.md",
     "docs/sdk-guide.md",
     "docs/sdk-storage.md",
