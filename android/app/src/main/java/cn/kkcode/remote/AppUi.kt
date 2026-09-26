@@ -198,6 +198,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
         }
     }
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 30.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        if(!state.sharedDevice && state.sheet in listOf("settings", "models", "provider", "mode", "permission", "approval")) ConfigurationDiagnostics(state.settings)
         when(state.sheet) {
             "settings", "connections" -> {
                 Group { SettingsRow(Icons.Outlined.AccountCircle, state.profile.optString("name", "个人资料"), state.profile.optString("organization")) { state.sheet = "profile" } }

@@ -100,7 +100,7 @@ function configCheck(configState) {
     return {
       status: PREFLIGHT_FAIL,
       paths,
-      detail: `${errors[0]}（${errors.some(error => /data_policy|出站请求/.test(error)) ? '数据出域限制按拒绝策略保留，请修正配置后重试' : '对应配置层已忽略；其余已验证配置继续生效'}）`,
+      detail: `${errors[0]}（${configState.permissionBlocked ? '权限配置无效，工具执行已暂停；其余已验证配置继续生效' : errors.some(error => /data_policy|出站请求/.test(error)) ? '数据出域限制按拒绝策略保留，请修正配置后重试' : '对应配置层已忽略；其余已验证配置继续生效'}）`,
       errors,
       warnings
     }

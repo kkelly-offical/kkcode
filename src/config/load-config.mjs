@@ -195,8 +195,8 @@ function pruneErrorPaths(config, errors) {
 /**
  * 这些字段描述权限边界。把拼错值裁掉后继续运行会让用户误以为限制仍在：
  * 例如 sandbox.mode 打错后运行时实际是 off。schema 对它们本来就明确要求
- * 可见失败，因此 permission 下任一错误都保留「整层拒绝」语义。尤其不能裁掉
- * 一条写错的 deny rule、却保留同层的 yolo 档位。
+ * 可见失败，因此 permission 下任一错误都拒绝整个权限子树，并将工具执行
+ * 锁定到修正配置为止。不能裁掉 deny rule 却保留 yolo，也不应连带丢掉模型配置。
  */
 function isHardLayerError(error) {
   const field = String(error || "").split(": ", 1)[0]
@@ -214,6 +214,7 @@ function isHardLayerError(error) {
 function validateLayerCore(rawConfig, baseConfig, label, normalize = (config) => config) {
   let current = structuredClone(rawConfig)
   const seenErrors = new Set()
+  const permissionErrors = new Set()
 
   for (let round = 0; round < 12; round++) {
     // alias 的嵌套 ultra 若本身是坏值，第一轮先让 schema 裁掉；
@@ -224,24 +225,31 @@ function validateLayerCore(rawConfig, baseConfig, label, normalize = (config) =>
     if (check.valid) {
       return {
         config: current,
-        errors: [],
+        errors: [...permissionErrors].map((error) => `${label}: ${error}`),
+        permissionBlocked: permissionErrors.size > 0,
         warnings: [...seenErrors].map((error) => `${label}: ${error}（该项已忽略，同层其余配置仍生效）`)
       }
     }
-    for (const error of check.errors) seenErrors.add(error)
     if (check.errors.some(isHardLayerError)) {
-      return {
-        config: {},
-        errors: [...seenErrors].map((error) => `${label}: ${error}`),
-        warnings: []
-      }
+      for (const error of check.errors.filter(isHardLayerError)) permissionErrors.add(error)
+      // Never retain only the allow/yolo half of a malformed permission policy.
+      // The aggregate flag is enforced after all layers, so a later project or
+      // env overlay cannot hide this error or unlock tool execution.
+      if (current && typeof current === 'object') delete current.permission
+      for (const error of check.errors.filter(error => !isHardLayerError(error))) seenErrors.add(error)
+      if (permissionErrors.size > 0) continue
     }
+    for (const error of check.errors) seenErrors.add(error)
     if (!pruneErrorPaths(current, check.errors)) break
   }
 
   return {
     config: {},
-    errors: [...seenErrors].map((error) => `${label}: ${error}`),
+    errors: [...permissionErrors, ...seenErrors].map((error) => `${label}: ${error}`),
+    // An unparseable validation path can also hide a valid deny/sandbox policy
+    // in the discarded layer. Do not silently fall back to broader defaults.
+    permissionBlocked: true,
+    layerRejected: true,
     warnings: []
   }
 }
@@ -277,7 +285,7 @@ function validateLayer(rawConfig, baseConfig, label) {
   let policy
   try { policy = normalizeDataPolicy(rawConfig?.data_policy) }
   catch {
-    return { config: { data_policy: structuredClone(DENY_DATA_POLICY) }, errors: [`${label}: data_policy 无效，所有受管理的出站请求已拒绝，请修正配置`], warnings: [] }
+    return { config: { data_policy: structuredClone(DENY_DATA_POLICY) }, permissionBlocked: true, errors: [`${label}: data_policy 无效，所有受管理的出站请求已拒绝，请修正配置`], warnings: [] }
   }
   const result = validateLayerWithoutPolicy(rawConfig, baseConfig, label)
   // A bad unrelated field must not drop a valid same-layer restriction.
@@ -290,13 +298,15 @@ function validateLayerWithoutPolicy(rawConfig, baseConfig, label) {
   if (!split) return validateLayerCore(rawConfig, baseConfig, label)
 
   const canonical = validateLayerCore(split.canonical, baseConfig, label)
-  // canonical 子层若无法安全裁剪，仍保持原来的「整层拒绝」语义。
-  if (canonical.errors.length > 0) return canonical
+  // Invalid ordinary structure still fails the layer. A rejected permission
+  // subtree must not hide otherwise valid Ultra/provider settings.
+  if (canonical.layerRejected || canonical.errors.length > 0 && !canonical.permissionBlocked) return canonical
 
   const aliasBase = mergeObject(baseConfig, canonical.config)
   const alias = validateLayerCore(split.alias, aliasBase, label, normalizeUltraAliasOverlay)
   return {
     config: mergeObject(canonical.config, alias.config),
+    permissionBlocked: Boolean(canonical.permissionBlocked || alias.permissionBlocked),
     errors: [...canonical.errors, ...alias.errors],
     warnings: [...canonical.warnings, ...alias.warnings]
   }
@@ -312,7 +322,7 @@ async function loadOne(filePath, baseConfig) {
   } catch (error) {
     // A parse error can hide an escaped/partially written policy key; do not
     // infer that the unavailable policy was unrestricted or echo secret text.
-    return { config: { data_policy: structuredClone(DENY_DATA_POLICY) }, errors: [`${filePath}: 无法读取或解析配置，受管理的出站请求已拒绝；请修正配置`], warnings: [] }
+    return { config: { data_policy: structuredClone(DENY_DATA_POLICY) }, permissionBlocked: true, errors: [`${filePath}: 无法读取或解析配置，受管理的出站请求已拒绝；请修正配置`], warnings: [] }
   }
 }
 
@@ -371,6 +381,8 @@ export async function loadConfig(cwd = process.cwd(), { adminDataPolicy = undefi
   const userLoaded = await loadOne(userPath, baseConfig)
   let userConfig = mergeObject(baseConfig, userLoaded.config)
   const projectLoaded = await loadOne(projectPath, userConfig)
+  let userPermissionBlocked = Boolean(userLoaded.permissionBlocked)
+  let permissionBlocked = userPermissionBlocked || Boolean(projectLoaded.permissionBlocked)
   let merged = mergeObject(userConfig, projectLoaded.config)
   const preEnvMerged = merged
   const preEnvUserConfig = userConfig
@@ -399,6 +411,8 @@ export async function loadConfig(cwd = process.cwd(), { adminDataPolicy = undefi
         const envLoaded = validateLayer(parsedOverlay, envScope === "user" ? userConfig : merged, envCandidate)
         envErrors = [...envLoaded.errors]
         envWarnings = [...envLoaded.warnings]
+        permissionBlocked ||= Boolean(envLoaded.permissionBlocked)
+        if (envScope === 'user') userPermissionBlocked ||= Boolean(envLoaded.permissionBlocked)
 
         // user .env 是 userConfig 的一部分；它对用户层独立合法时，不能因为
         // 与某个项目层组合后冲突就从未信任工作区的 userConfig 里消失。
@@ -415,6 +429,7 @@ export async function loadConfig(cwd = process.cwd(), { adminDataPolicy = undefi
           effectiveEnvOverlay = effectiveEnv.config
           envErrors.push(...effectiveEnv.errors)
           envWarnings.push(...effectiveEnv.warnings)
+          permissionBlocked ||= Boolean(effectiveEnv.permissionBlocked)
         }
         if (envScope === "user") userConfig = mergeObject(userConfig, userEnvOverlay)
         envOverlay = effectiveEnvOverlay
@@ -422,7 +437,10 @@ export async function loadConfig(cwd = process.cwd(), { adminDataPolicy = undefi
       }
     } catch (error) {
       envPath = envCandidate
-      envErrors = [`${envCandidate}: ${error.message}`]
+      envScope = await sameConfigFile(envCandidate, path.join(userRootDir(), '.env')) ? 'user' : 'project'
+      permissionBlocked = true
+      if (envScope === 'user') userPermissionBlocked = true
+      envErrors = [`${envCandidate}: 无法读取或解析环境配置，工具与扩展启动已暂停；请修正配置`]
     }
   }
 
@@ -483,10 +501,20 @@ export async function loadConfig(cwd = process.cwd(), { adminDataPolicy = undefi
     envPolicyLayers
   }
 
+  // Internal, recomputed protection: never accept a persisted flag as a way to
+  // clear a load error. Mode switches preserve this independent hard denial.
+  merged.permission = { ...merged.permission }
+  userConfig.permission = { ...userConfig.permission }
+  delete merged.permission._load_error
+  delete userConfig.permission._load_error
+  if (permissionBlocked) merged.permission._load_error = true
+  if (userPermissionBlocked) userConfig.permission._load_error = true
+
   return {
     config: merged,
     userConfig,
     source,
+    permissionBlocked,
     errors: [...userLoaded.errors, ...projectLoaded.errors, ...envErrors],
     warnings: [...userLoaded.warnings, ...projectLoaded.warnings, ...envWarnings]
   }

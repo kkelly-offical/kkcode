@@ -5,6 +5,7 @@ import { configureEventLog } from "./storage/event-log.mjs"
 import { configureAuditStore } from "./storage/audit-store.mjs"
 import { checkWorkspaceTrust } from "./kernel/permission/workspace-trust.mjs"
 import { PermissionEngine } from "./kernel/permission/engine.mjs"
+import { PermissionError } from './kernel/core/errors.mjs'
 import { ToolRegistry } from "./kernel/tool/registry.mjs"
 import { SkillRegistry } from "./kernel/skill/registry.mjs"
 import { CustomAgentRegistry } from "./kernel/agent/custom-agent-loader.mjs"
@@ -42,6 +43,9 @@ export function resolveExtensionPolicy(configState) {
 // boot 序列作用于 kernel 实例字段而非进程级默认单例；缺省（registries 为空）时
 // 行为与之前完全一致（旧入口的兼容路径）。
 export async function bootstrapKernelExtensions({ cwd, configState, trustState, registries = null }) {
+  if (configState.permissionBlocked || configState.config?.permission?._load_error) {
+    throw new PermissionError('权限配置未通过校验，工具与扩展启动已暂停。请先在被控电脑修正配置并重新加载；模型渠道等有效设置仍然保留。')
+  }
   const permissionEngine = registries?.permissions ?? PermissionEngine
   const toolRegistry = registries?.tools ?? ToolRegistry
   const skillRegistry = registries?.skills ?? SkillRegistry

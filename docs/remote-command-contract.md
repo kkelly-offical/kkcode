@@ -6,6 +6,20 @@ Do not add a builtin without a `DEVICE_COMMAND_HANDLERS` entry and a matrix test
 
 ## Dispatch
 
+### 配置诊断（面向1.0.6的修复，尚未发行）
+
+`settings.get`继续返回脱敏的有效配置，并增加只读 `_diagnostics`：
+`toolsBlocked`、`errorCount`、`warningCount`及最多16条安全的`errors`（`source/field/message`）。
+诊断不包含原始错误值、凭据或本地私密路径。旧客户端可忽略此附加字段；配置编辑器提交
+`settings.update`时只发送待修改的配置字段，不回传`_diagnostics`或内部`permission._load_error`。
+
+无效权限子树不再让有效模型等设置消失，但修正并重新加载前，工具和扩展启动保持暂停；
+Yolo、缓存审批和高优先级覆盖不能解除错误拦截。旧权限字段只给出迁移指引，不自动扩大权限。
+保存前同时校验有效配置与实际要落盘的用户配置；失败时返回中文错误，原文件不修改，不能报“保存成功”。
+Web/Android在用户打开设置／模型面板后显示诊断，不自动弹出配置表单。
+
+以下仍是通用命令派发契约：
+
 `commands.run` accepts `{sessionId, command}` while holding session control. It
 does not open terminal readline prompts. Responses may contain `output`
 (`{text,channel?,topic?,tone?}[]`), `panels` (`{title,text}[]`), updated `state`,

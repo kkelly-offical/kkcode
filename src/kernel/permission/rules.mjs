@@ -244,6 +244,10 @@ export function matchRule(rule, input) {
  * normalizePermissionLevel 总能给出四档之一，分支随之删除。
  */
 export function evaluatePermission({ config, tool, mode, pattern = "*", command = "", risk = 0, workspace = "", capability = null }) {
+  if (config.permission?._load_error === true) return {
+    action: 'deny', source: 'invalid_permission_config',
+    reason: '权限配置未通过校验，工具执行已暂停。请先在被控电脑修正权限配置并重新加载；切换模式或重复确认不能绕过此限制。'
+  }
   const permission = config.permission || { rules: [] }
   const permissionLevel = normalizePermissionLevel(permission)
   const rules = Array.isArray(permission.rules) ? permission.rules : []
