@@ -105,5 +105,9 @@ export async function updateDeviceSettings(service, patch) {
 
 export async function deviceSettingsSnapshot(cwd) {
   const state = await loadConfig(cwd)
-  return { ...redactConfig(state.config), _diagnostics: configurationDiagnostics(state) }
+  const config = redactConfig(state.config)
+  // This is an execution guard, not a user-editable configuration field. The
+  // public read-only diagnostics carry its meaning without exposing internals.
+  if (config.permission) delete config.permission._load_error
+  return { ...config, _diagnostics: configurationDiagnostics(state) }
 }

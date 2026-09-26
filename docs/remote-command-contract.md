@@ -10,11 +10,14 @@ Do not add a builtin without a `DEVICE_COMMAND_HANDLERS` entry and a matrix test
 
 `settings.get`继续返回脱敏的有效配置，并增加只读 `_diagnostics`：
 `toolsBlocked`、`errorCount`、`warningCount`及最多16条安全的`errors`（`source/field/message`）。
-诊断不包含原始错误值、凭据或本地私密路径。旧客户端可忽略此附加字段；配置编辑器提交
+诊断不包含原始错误值、凭据或本地私密路径；内部`permission._load_error`不出现在配置响应中。
+旧客户端可忽略此附加字段；配置编辑器提交
 `settings.update`时只发送待修改的配置字段，不回传`_diagnostics`或内部`permission._load_error`。
 
 无效权限子树不再让有效模型等设置消失，但修正并重新加载前，工具和扩展启动保持暂停；
 Yolo、缓存审批和高优先级覆盖不能解除错误拦截。旧权限字段只给出迁移指引，不自动扩大权限。
+仅`data_policy`无效时拒绝受管理的出站请求，本地工具仍独立遵循有效权限；不会丢弃同层
+模型和权限字段，也不会因此把只读策略降级成默认策略。两类错误同时存在时仍暂停工具。
 保存前同时校验有效配置与实际要落盘的用户配置；失败时返回中文错误，原文件不修改，不能报“保存成功”。
 Web/Android在用户打开设置／模型面板后显示诊断，不自动弹出配置表单。
 

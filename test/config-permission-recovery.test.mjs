@@ -13,6 +13,7 @@ import { createPermissionEngine } from '../src/kernel/permission/engine.mjs'
 import { createKernel } from '../src/kernel/index.mjs'
 import { currentRuntime } from '../src/kernel/core/runtime-context.mjs'
 import { processTurnLoop } from '../src/kernel/session/loop.mjs'
+import { assertProviderDataPolicy, assertWebDataPolicy } from '../src/kernel/permission/data-policy.mjs'
 
 async function fixture(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kkcode-config-recovery-'))
@@ -81,6 +82,7 @@ test('settings exposes safe diagnostics and does not claim an ineffective save s
   assert.equal(snapshot.provider.default, 'local-fixture')
   assert.equal(snapshot.provider['local-fixture'].api_key, '[REDACTED]')
   assert.equal(snapshot._diagnostics.toolsBlocked, true)
+  assert.equal(Object.hasOwn(snapshot.permission, '_load_error'), false)
   assert.equal(snapshot._diagnostics.errors[0].field, 'permission.default_policy')
   assert.match(snapshot._diagnostics.errors[0].message, /手动迁移/)
   assert.ok(!JSON.stringify(snapshot).includes('fixture-private-credential'))
@@ -129,6 +131,26 @@ test('malformed or unsafe-policy files cannot hide a permission error or overwri
     assert.equal(evaluatePermission({ config: state.config, tool: 'bash', mode: 'yolo', command: 'pwd' }).action, 'deny')
     await assert.rejects(updateDeviceSettings(f.service, { provider }), error => error.code === 'invalid_config' && !error.message.includes('fixture-private-credential'))
     assert.equal(await readFile(f.file, 'utf8'), text)
+  }
+})
+
+test('an invalid data policy denies managed egress without blocking or weakening valid local permissions', async t => {
+  const f = await fixture(t)
+  for (const [level, editDecision] of [['readonly', 'deny'], ['manual', 'ask'], ['accept-edits', 'allow']]) {
+    await writeFile(f.file, JSON.stringify({ provider, agent: { max_steps: 23 }, data_policy: 'invalid', permission: { level } }))
+    const state = await loadConfig(f.cwd)
+    assert.equal(state.permissionBlocked, false)
+    assert.equal(state.config.permission._load_error, undefined)
+    assert.equal(state.config.permission.level, level)
+    assert.equal(state.config.provider.default, 'local-fixture')
+    assert.equal(state.config.agent.max_steps, 23)
+    assert.equal(evaluatePermission({ config: state.config, tool: 'read', mode: 'agent' }).action, 'allow')
+    assert.equal(evaluatePermission({ config: state.config, tool: 'write', mode: 'agent' }).action, editDecision)
+    assert.throws(() => assertProviderDataPolicy(state, { providerName: 'local-fixture', baseUrl: 'https://models.example.invalid/v1' }), error => error.code === 'data_policy_denied')
+    assert.throws(() => assertWebDataPolicy(state, 'https://web.example.invalid'), error => error.code === 'data_policy_denied')
+    const diagnostics = configurationDiagnostics(state)
+    assert.equal(diagnostics.toolsBlocked, false)
+    assert.ok(diagnostics.errors.some(error => error.field === 'data_policy'))
   }
 })
 

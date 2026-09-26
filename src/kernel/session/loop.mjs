@@ -822,7 +822,7 @@ async function processTurnLoopInRuntime({
       //      小）。上限未知的 provider 维持旧行为 —— 那里续写仍是唯一能把
       //      长输出拼完整的手段。
       const validToolCalls = (response.toolCalls || []).filter(tc => !tc.args?.__parse_error)
-      const hasPartialContent = Boolean(response.text) || validToolCalls.length > 0 || Boolean(response.reasoning)
+      const hasPartialContent = Boolean(String(response.text || '').trim()) || validToolCalls.length > 0 || Boolean(String(response.reasoning || '').trim())
       const requestedOutputBudget = lastContextMeter.outputReserved
       const knownOutputCap = Number(configState.config.provider?.[providerType]?.max_output_tokens) || 0
       const effectiveOutputBudget = knownOutputCap > 0 ? Math.min(requestedOutputBudget, knownOutputCap) : 0

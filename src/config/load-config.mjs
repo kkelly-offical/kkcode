@@ -282,14 +282,20 @@ function normalizeUltraAliasOverlay(raw) {
 }
 
 function validateLayer(rawConfig, baseConfig, label) {
-  let policy
+  let policy, policyError
   try { policy = normalizeDataPolicy(rawConfig?.data_policy) }
   catch {
-    return { config: { data_policy: structuredClone(DENY_DATA_POLICY) }, permissionBlocked: true, errors: [`${label}: data_policy 无效，所有受管理的出站请求已拒绝，请修正配置`], warnings: [] }
+    policy = structuredClone(DENY_DATA_POLICY)
+    policyError = `${label}: data_policy: 无效，所有受管理的出站请求已拒绝，请修正配置`
+    // Deny managed egress, but independently validate local permissions and
+    // retain valid sibling settings. An early return either blocks too much or
+    // (if merely unblocked) silently discards a restrictive permission policy.
+    rawConfig = { ...rawConfig, data_policy: policy }
   }
   const result = validateLayerWithoutPolicy(rawConfig, baseConfig, label)
   // A bad unrelated field must not drop a valid same-layer restriction.
   if (policy !== undefined) result.config.data_policy = policy
+  if (policyError) result.errors.unshift(policyError)
   return result
 }
 

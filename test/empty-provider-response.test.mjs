@@ -29,8 +29,8 @@ async function fixture(t, responses, stream) {
       if (response.reasoning) yield { type: 'thinking', content: response.reasoning }
       if (response.text) yield { type: 'text', content: response.text }
       for (const call of response.toolCalls || []) yield { type: 'tool_call', call }
-      yield { type: 'usage', usage: { input: 10, output: 2 } }
-      yield { type: 'stop', reason: 'end_turn' }
+      yield { type: 'usage', usage: response.usage || { input: 10, output: 2 } }
+      yield { type: 'stop', reason: response.stopReason || 'end_turn' }
     }
   })
   const events = []
@@ -38,6 +38,15 @@ async function fixture(t, responses, stream) {
   return { root, kernel, events, calls: () => calls,
     execute: () => kernel.executeTurn({ sessionId: 'empty-case', prompt: '执行此处的受控测试', mode: 'agent', providerType: 'empty_fixture', model: 'fixture' }) }
 }
+
+for (const stream of [false, true]) test(`${stream ? 'stream' : 'nonstream'} whitespace cannot justify automatic continuation after max_tokens`, async t => {
+  const f = await fixture(t, [{ text: ' \n\t ', reasoning: ' \t ', stopReason: 'max_tokens' }], stream)
+  const result = await f.execute()
+  assert.equal(f.calls(), 1, 'blank output is not a recoverable partial answer')
+  assert.equal(toPublicResult(result).status, 'failed')
+  assert.match(result.error, /本轮未完成/)
+  assert.equal(f.events.filter(event => event.type === 'turn.finish').length, 0)
+})
 
 for (const stream of [false, true]) for (const response of [{ text: '' }, { text: ' \n\t ' }, { text: '', reasoning: '公开测试思考片段' }]) {
   test(`${stream ? 'stream' : 'nonstream'} empty ${response.reasoning ? 'reasoning-only' : JSON.stringify(response.text)} is a failed turn, not synthetic success`, async t => {
