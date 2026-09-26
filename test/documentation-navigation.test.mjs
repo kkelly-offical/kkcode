@@ -74,6 +74,9 @@ test('source target, workspaces and Android agree without claiming a stable 1.0.
   assert.match(versions, /已发布预览渠道.*1\.0\.5-preview\.0/)
   assert.match(versions, /仅源码配置.*不是已签名或已上线证明/)
   assert.match(await read('CHANGELOG.md'), /## 1\.0\.5 — Unreleased/)
+  const notice = await read('NOTICE.md')
+  assert.match(notice, /\*\*Version\*\*: See \[package\.json\]\(package\.json\)/)
+  assert.doesNotMatch(notice, /\*\*Version\*\*: \d/)
 })
 
 test('current mode documentation follows runtime IDs while retaining legacy aliases and governance', async () => {
