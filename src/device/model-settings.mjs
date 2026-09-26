@@ -79,7 +79,10 @@ export async function updateDeviceSettings(service, patch) {
   if (!validation.valid) throw new ProtocolError('invalid_config', configurationErrorMessage(validation.errors))
   const file = loaded.source.userPath || path.join(userRootDir(), 'config.json')
   let original = {}
-  try { const raw = await readFile(file, 'utf8'); original = file.endsWith('.json') ? JSON.parse(raw) : YAML.parse(raw) || {} }
+  try {
+    const raw = await readFile(file, 'utf8')
+    original = (file.endsWith('.json') ? JSON.parse(raw) : YAML.parse(raw)) ?? {}
+  }
   catch (error) { if (error.code !== 'ENOENT') throw new ProtocolError('invalid_config', '配置未保存：无法读取或解析原有用户配置。请在被控电脑修正文件后重试；原文件未修改。') }
   if (!original || typeof original !== 'object' || Array.isArray(original)) throw new ProtocolError('invalid_config', configurationErrorMessage([]))
   const next = merge(original, patch)

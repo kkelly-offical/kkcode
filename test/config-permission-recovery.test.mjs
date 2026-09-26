@@ -139,3 +139,22 @@ test('an ambiguous non-permission error cannot discard restrictive rules and unl
   const config = { ...state.config, permission: applyPermissionLevel('yolo', state.config.permission) }
   assert.equal(evaluatePermission({ config, tool: 'write', mode: 'agent' }).action, 'deny')
 })
+
+test('an explicitly empty null document remains a valid editable configuration', async t => {
+  const f = await fixture(t)
+  await writeFile(f.file, 'null\n')
+  assert.deepEqual((await loadConfig(f.cwd)).errors, [])
+  const result = await updateDeviceSettings(f.service, { provider })
+  assert.equal(result.saved, true)
+  assert.equal(result.config.provider.default, 'local-fixture')
+})
+
+test('false and numeric YAML documents are not silently replaced by an empty object during save', async t => {
+  const f = await fixture(t), file = path.join(f.home, 'config.yaml')
+  for (const raw of ['false\n', '0\n']) {
+    await writeFile(file, raw)
+    assert.ok((await loadConfig(f.cwd)).errors.length)
+    await assert.rejects(updateDeviceSettings(f.service, { provider }), error => error.code === 'invalid_config')
+    assert.equal(await readFile(file, 'utf8'), raw)
+  }
+})
