@@ -557,8 +557,9 @@ export function SettingsOverlay(props: Props) {
               };
               await props.rpc("settings.update", { config });
               setDraft({ ...draft, api_key: "" });
-              props.onSettings(await props.rpc("settings.get"));
-              props.onNotice("渠道已保存并立即生效");
+              const settings = await props.rpc("settings.get");
+              props.onSettings(settings);
+              props.onNotice(settings._diagnostics?.toolsBlocked ? "渠道已保存，但设备配置仍有错误；修正后才能恢复执行。" : "渠道已保存并立即生效");
               back();
             });
           }}

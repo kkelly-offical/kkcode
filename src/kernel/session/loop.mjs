@@ -46,7 +46,7 @@ import { askPlanApproval } from "../tool/question-prompt.mjs"
 import { createValidator } from "./task-validator.mjs"
 import { runSpecRole } from "../orchestration/run-spec.mjs"
 import { createRequestContext } from "../../http/identity.mjs"
-import { resolveExtensionPolicy } from "../../context.mjs"
+import { resolveExtensionPolicy, assertExecutableConfiguration } from "../../context.mjs"
 import { toolOutputBudget, truncationNotice } from "../tool/output-budget.mjs"
 import { requestContextBudget } from './context-budget.mjs'
 import { promptReport } from './prompt-report.mjs'
@@ -317,6 +317,7 @@ async function processTurnLoopInRuntime({
    */
   steerSource = null
 }) {
+  assertExecutableConfiguration(configState)
   const cwd = runtimeCwd()
   const extensionPolicy = resolveExtensionPolicy(configState)
   await initHookBus(cwd, extensionPolicy.config, {

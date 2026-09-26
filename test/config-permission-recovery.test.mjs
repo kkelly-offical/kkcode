@@ -10,6 +10,9 @@ import { configurationDiagnostics } from '../src/config/diagnostics.mjs'
 import { deviceSettingsSnapshot, updateDeviceSettings } from '../src/device/model-settings.mjs'
 import { bootstrapKernelExtensions } from '../src/context.mjs'
 import { createPermissionEngine } from '../src/kernel/permission/engine.mjs'
+import { createKernel } from '../src/kernel/index.mjs'
+import { currentRuntime } from '../src/kernel/core/runtime-context.mjs'
+import { processTurnLoop } from '../src/kernel/session/loop.mjs'
 
 async function fixture(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kkcode-config-recovery-'))
@@ -157,4 +160,65 @@ test('false and numeric YAML documents are not silently replaced by an empty obj
     await assert.rejects(updateDeviceSettings(f.service, { provider }), error => error.code === 'invalid_config')
     assert.equal(await readFile(file, 'utf8'), raw)
   }
+})
+
+test('lazy device kernels block every execution entry before extension startup and recover on the same handle', async t => {
+  const f = await fixture(t)
+  const raw = { provider: { default: 'repair-fixture', 'repair-fixture': { default_model: 'fixture', stream: false } },
+    permission: { level: 'typo' }, tool: { sources: { builtin: false, local: false, plugin: false, mcp: false } },
+    skills: { enabled: false, auto_seed: false }, mcp: { auto_discover: false },
+    agent: { default_mode: 'agent', max_steps: 1, verify_completion: false }, session: { title_generation: false } }
+  await writeFile(f.file, JSON.stringify(raw))
+  const kernel = await createKernel({ cwd: f.cwd, boot: false, trustState: { trusted: true } })
+  let initialized = 0, requests = 0
+  await kernel.run(() => {
+    for (const registry of [currentRuntime().tools, currentRuntime().skills, currentRuntime().hooks]) {
+      const initialize = registry.initialize.bind(registry)
+      registry.initialize = (...args) => { initialized++; return initialize(...args) }
+    }
+  })
+  kernel.providers.registerProvider('repair-fixture', {
+    async request() { requests++; return { text: 'repaired', toolCalls: [], usage: { input: 1, output: 1 } } },
+    async *requestStream() { throw new Error('unexpected streaming fixture') }
+  })
+  try {
+    await assert.rejects(kernel.executeTurn({ prompt: 'blocked', sessionId: 'before-repair', mode: 'agent' }), /权限配置/)
+    await assert.rejects(kernel.run(() => processTurnLoop({ prompt: 'blocked', sessionId: 'direct-loop', mode: 'agent',
+      model: 'fixture', providerType: 'repair-fixture', configState: kernel.configState })), /权限配置/)
+    await assert.rejects(kernel.applyTrustState({ trusted: true }), /权限配置/)
+    assert.equal(initialized, 0, 'no plugin/MCP/hook initialization before checking the rejected configuration')
+    assert.equal(requests, 0)
+    await writeFile(f.file, JSON.stringify({ ...raw, permission: { level: 'manual' } }))
+    f.service.kernels.set(kernel.cwd, Promise.resolve(kernel))
+    await updateDeviceSettings(f.service, { provider: { 'repair-fixture': { default_model: 'fixture' } } })
+    const result = await kernel.executeTurn({ prompt: 'now continue', sessionId: 'after-repair', mode: 'agent' })
+    assert.equal(result.error, null)
+    assert.equal(result.reply, 'repaired')
+    assert.equal(requests, 1)
+    assert.ok(initialized > 0)
+  } finally { await kernel.shutdown() }
+})
+
+test('saving a valid user setting under a broken project keeps warm kernels blocked without a false save failure', async t => {
+  const f = await fixture(t)
+  await writeFile(f.file, JSON.stringify({ provider, skills: { enabled: false, auto_seed: false }, mcp: { auto_discover: false } }))
+  const kernel = await createKernel({ cwd: f.cwd, trustState: { trusted: true } })
+  f.service.kernels.set(kernel.cwd, Promise.resolve(kernel))
+  const project = path.join(f.cwd, 'kkcode.config.json')
+  try {
+    await writeFile(project, JSON.stringify({ permission: { level: 'typo' } }))
+    const result = await updateDeviceSettings(f.service, { provider: { 'local-fixture': { default_model: 'new-fixture' } } })
+    assert.equal(result.saved, true)
+    assert.equal(result.config._diagnostics.toolsBlocked, true)
+    assert.equal(JSON.parse(await readFile(f.file, 'utf8')).provider['local-fixture'].default_model, 'new-fixture')
+    assert.equal(kernel.configState.permissionBlocked, true)
+    await assert.rejects(kernel.bootExtensions(), /权限配置/, 'an already-booted kernel cannot skip the guard')
+    await assert.rejects(kernel.applyTrustState({ trusted: true }), /权限配置/)
+    await assert.rejects(kernel.executeTurn({ sessionId: 'blocked-warm', prompt: 'must not infer', mode: 'agent' }), /权限配置/)
+    await writeFile(project, JSON.stringify({ permission: { level: 'readonly' } }))
+    const repaired = await updateDeviceSettings(f.service, { provider: { 'local-fixture': { default_model: 'new-fixture' } } })
+    assert.equal(repaired.config._diagnostics.toolsBlocked, false)
+    assert.equal(kernel.configState.config.permission.level, 'readonly')
+    await kernel.bootExtensions()
+  } finally { await kernel.shutdown() }
 })

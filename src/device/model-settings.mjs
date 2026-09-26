@@ -94,7 +94,10 @@ export async function updateDeviceSettings(service, patch) {
   for (const [cwd, promise] of service.kernels) {
     const kernel = await promise, fresh = await loadConfig(cwd)
     Object.assign(kernel.configState, fresh)
-    await kernel.applyTrustState(kernel.trustState)
+    // A valid user update may coexist with a still-invalid project layer.
+    // Keep its execution guard without restarting extensions or turning an
+    // already-persisted user update into a misleading transport failure.
+    if (!fresh.permissionBlocked) await kernel.applyTrustState(kernel.trustState)
   }
   service.emit('configuration', { updated: true })
   return { saved: true, restartRequired: false, config: await deviceSettingsSnapshot(service.cwd) }

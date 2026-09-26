@@ -944,7 +944,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
             try { applySelection(rpc("sessions.configure", JSONObject().put("sessionId", selected).put("provider", name).put("model", modelId)) as JSONObject) }
             finally { rpc("control.release", JSONObject().put("sessionId", selected)) }
         } else { provider = name; model = modelId }
-        notice = "渠道已保存并立即生效"; backSheet()
+        notice = if(settings.optJSONObject("_diagnostics")?.optBoolean("toolsBlocked") == true) "渠道已保存，但设备配置仍有错误；修正后才能恢复执行。" else "渠道已保存并立即生效"; backSheet()
     }
     fun loadExtensions() = action { extensions = rpc("extensions.list") as JSONObject; sheet = "extensions" }
     fun leaveChat() { polling?.cancel(); selected = ""; messages = emptyList(); contextUsage = JSONObject(); persistedSteps = emptySet(); persistedUserTurns = emptySet(); approvals = emptyList(); attachments = emptyList(); draft = ""; historyHasMore = false; historyBefore = ""; busy = false }
