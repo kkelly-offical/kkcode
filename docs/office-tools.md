@@ -32,8 +32,8 @@ HTTP(S) 文档来源链接不仅检查文字和 DOCX 关系，还回读 PDF 的�
 在仓库根目录执行：
 
 ```sh
-docker build -f containers/office/Dockerfile -t kkcode-office:1.0.5 .
-docker image inspect kkcode-office:1.0.5 --format '{{.Id}}'
+docker build -f containers/office/Dockerfile -t kkcode-office:1.1.6 .
+docker image inspect kkcode-office:1.1.6 --format '{{.Id}}'
 ```
 
 将第二条命令返回的完整 `sha256:…` 配置给 CLI／宿主服务。运行时拒绝 `latest` 等浮动标签，也不会隐式拉取镜像。当前开发验收只构建本机镜像，不表示已发布公共镜像。

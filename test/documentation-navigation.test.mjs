@@ -78,6 +78,14 @@ test('source target, workspaces and Android agree without claiming a 1.1.6 publi
   const notice = await read('NOTICE.md')
   assert.match(notice, /\*\*Version\*\*: See \[package\.json\]\(package\.json\)/)
   assert.doesNotMatch(notice, /\*\*Version\*\*: \d/)
+  for (const [guide, image] of [['language-services', 'kkcode-lsp'], ['office-tools', 'kkcode-office'], ['enterprise-deployment', 'kkcode-gateway']]) {
+    const text = await read(`docs/${guide}.md`)
+    assert.ok(text.includes(`${image}:${manifest.version}`), `${guide}: local build tag must follow the source target`)
+    assert.ok(!text.includes(`${image}:1.0.5`), `${guide}: stale local build tag`)
+  }
+  const androidGuide = await read('docs/android-release.md')
+  assert.ok(androidGuide.includes(`kkcode-android-${manifest.version}.apk`))
+  assert.ok(!androidGuide.includes('kkcode-android-1.0.5.apk'))
 })
 
 test('current mode documentation follows runtime IDs while retaining legacy aliases and governance', async () => {
