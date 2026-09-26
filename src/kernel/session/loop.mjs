@@ -4,6 +4,7 @@ import { reviewSensitiveAction } from '../permission/auto-review.mjs'
 import { newId } from "../core/types.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
+import { ProviderError } from '../core/errors.mjs'
 import { requestProviderStream, countTokensProvider } from "../provider/router.mjs"
 import { attachResponsesState } from '../provider/responses-state.mjs'
 import { attachAnthropicState } from '../provider/anthropic-state.mjs'
@@ -45,7 +46,7 @@ import { askPlanApproval } from "../tool/question-prompt.mjs"
 import { createValidator } from "./task-validator.mjs"
 import { runSpecRole } from "../orchestration/run-spec.mjs"
 import { createRequestContext } from "../../http/identity.mjs"
-import { resolveExtensionPolicy } from "../../context.mjs"
+import { resolveExtensionPolicy, assertExecutableConfiguration } from "../../context.mjs"
 import { toolOutputBudget, truncationNotice } from "../tool/output-budget.mjs"
 import { requestContextBudget } from './context-budget.mjs'
 import { promptReport } from './prompt-report.mjs'
@@ -316,6 +317,7 @@ async function processTurnLoopInRuntime({
    */
   steerSource = null
 }) {
+  assertExecutableConfiguration(configState)
   const cwd = runtimeCwd()
   const extensionPolicy = resolveExtensionPolicy(configState)
   await initHookBus(cwd, extensionPolicy.config, {
@@ -820,7 +822,7 @@ async function processTurnLoopInRuntime({
       //      小）。上限未知的 provider 维持旧行为 —— 那里续写仍是唯一能把
       //      长输出拼完整的手段。
       const validToolCalls = (response.toolCalls || []).filter(tc => !tc.args?.__parse_error)
-      const hasPartialContent = Boolean(response.text) || validToolCalls.length > 0 || Boolean(response.reasoning)
+      const hasPartialContent = Boolean(String(response.text || '').trim()) || validToolCalls.length > 0 || Boolean(String(response.reasoning || '').trim())
       const requestedOutputBudget = lastContextMeter.outputReserved
       const knownOutputCap = Number(configState.config.provider?.[providerType]?.max_output_tokens) || 0
       const effectiveOutputBudget = knownOutputCap > 0 ? Math.min(requestedOutputBudget, knownOutputCap) : 0
@@ -831,7 +833,7 @@ async function processTurnLoopInRuntime({
           : true
       )
       if (response.stopReason === "max_tokens" && !truncationCredible) {
-        console.error(`[kkcode] provider reported max_tokens for model "${model}" without truncation evidence (output=${reportedOutput}, budget=${effectiveOutputBudget || "unknown"}); treating the response as complete`)
+        console.error(`[kkcode] provider reported max_tokens for model "${model}" without truncation evidence (output=${reportedOutput}, budget=${effectiveOutputBudget || "unknown"}); skipping automatic continuation`)
       }
       if (response.stopReason === "max_tokens" && truncationCredible && continueCount < MAX_CONTINUES && totalContinueCount < MAX_TOTAL_CONTINUES) {
         continueCount++
@@ -901,6 +903,24 @@ async function processTurnLoopInRuntime({
       continueCount = 0
 
       if (!response.toolCalls?.length) {
+        if (!String(response.text || '').trim()) {
+          // Reasoning is useful history, not a completed user-facing answer.
+          // Never synthesize a successful assistant message or retry tool side
+          // effects merely because the provider ended without visible content.
+          if (response.reasoning) await appendMessage(sessionId, 'assistant', attachProviderState([
+            { type: 'reasoning', text: response.reasoning }
+          ], response.providerState), { mode, model, providerType, step, turnId, incomplete: true })
+          const reason = response.reasoning
+            ? '模型只返回了思考内容，没有正文或可执行工具，本轮未完成。'
+            : '模型返回了空内容，没有正文或可执行工具，本轮未完成。'
+          const next = response.stopReason === 'max_tokens'
+            ? '服务报告输出达到上限，请检查输出预算或缩小任务后再继续。'
+            : '请检查当前模型的输出配置与服务日志，确认后再继续。'
+          const effects = toolEvents.length
+            ? '本轮已调用过工具，请先核对工具结果及文件改动；已完成或未知的操作不会自动重放。'
+            : '本轮没有执行工具，未自动追加重试请求。'
+          throw new ProviderError(`${reason}${next}${effects}`, { reason: 'empty_response' })
+        }
         // Enhanced task completion verification
         if (verifyCompletion && nudgeCount < 2) {
           try {
@@ -929,7 +949,7 @@ async function processTurnLoopInRuntime({
           }
         }
         
-        finalReply = (response.text || "").trim() || "No content returned from provider."
+        finalReply = response.text.trim()
         const finalContent = attachProviderState(response.reasoning
           ? [
               { type: "reasoning", text: response.reasoning },

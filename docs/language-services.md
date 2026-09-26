@@ -1,6 +1,6 @@
 # 按需语言服务
 
-1.0.5 Preview 开发能力：支持 LSP 3.17 的初始化、文档打开、拉取／推送诊断、文档符号、定义及引用。支持路由 TypeScript／JavaScript、Python、Go、Kotlin；不安装或自动下载语言服务器。
+[文档导航](README.md) · 适用源码：1.1.6；[发行状态](versions.md)。支持LSP 3.17的初始化、文档打开、拉取／推送诊断、文档符号、定义及引用。支持路由TypeScript／JavaScript、Python、Go、Kotlin；不安装或自动下载语言服务器。
 
 ## 安全和执行方式
 
@@ -45,8 +45,8 @@ SDK 入口：`@kkelly-offical/kkcode/sdk/lsp`。工具注册函数 `createLspToo
 仓库提供独立 [containers/lsp](../containers/lsp/NOTICE.md) 构建配方和 npm/下载锁，不在 CLI 首次运行时安装。当前固定 Linux/amd64：TypeScript Language Server 6.0.0 + TypeScript 6.0.3、Pyright 1.1.414、gopls 0.23.0 + Go 1.27.1、MIT 的 fwcd Kotlin Language Server 1.3.13（捆绑 Kotlin 编译器 2.1.0）。Kotlin 上游已标记 deprecated，不表示已支持较新的 Kotlin 语法、Android/Gradle 全项目导入或所有编辑器功能。需要新版本官方服务的用户可在审核许可后提供自己的显式 host/server 配置，本次没有代签其 EULA 或认证该商业发行包。
 
 ```sh
-docker build -t kkcode-lsp:1.0.5-preview.0 containers/lsp
-docker image inspect kkcode-lsp:1.0.5-preview.0 --format '{{.Id}}'
+docker build -t kkcode-lsp:1.1.6 containers/lsp
+docker image inspect kkcode-lsp:1.1.6 --format '{{.Id}}'
 # 把实际输出的 sha256:... 用作下方的镜像 ID，不以浮动 tag 执行
 KK_LSP_REAL_IMAGE=sha256:... KKCODE_REQUIRE_REAL_LSP=1 node --test test/lsp-real-servers.test.mjs
 ```

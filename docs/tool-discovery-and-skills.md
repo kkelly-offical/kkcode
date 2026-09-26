@@ -1,12 +1,14 @@
-# 工具发现、分层指令和技能限制（1.0.2）
+# 工具发现、分层指令和技能限制
 
-1.0.4 Preview 候选补充：可选内置工具也采用按需发现，`tool_search` 返回详细手册；
+[文档导航](README.md) · 适用源码：1.1.6；[发行状态](versions.md)。
+
+可选内置工具采用按需发现，`tool_search` 返回详细手册；
 提示缓存按完整内容指纹、每内核隔离。新增 `tool_batch` 的 1–8 项受控串行组合。
 见 [Harness](context-and-harness.md)。以下原有 MCP 阈值和技能限制仍然有效。
 
-1.0.2 新增内建 `browser`（默认注册、引擎按需安装/启动）、SVG 的源代码/栅格
+内建 `browser`（默认注册、引擎按需安装/启动）、SVG的源代码／栅格
 预览双路径，以及内建/插件/MCP 共同的多模态结果处理。详见
-[Browser 与 Harness 边界](release-1.0.2.md)。非法 JSON 参数在工具执行前返回
+[Browser工作流](browser-workflows.md)和[媒体输入](media-input.md)。非法JSON参数在工具执行前返回
 明确的修复提示；审查使用 hook 转换后的实际参数，而不是转换前的旧命令。
 
 ## 按需 MCP 工具发现
@@ -95,5 +97,5 @@ Read/Grep/Bash 等常见可移植名称映射到本项目工具名。受限 shel
 
 这不是任意 JavaScript 插件的 OS 沙箱。可编程 `.mjs` 插件本身仍必须受信任并
 通过原来的执行权限；服务端采样、所有第三方插件专属运行时不在此兼容声明中。
-MCP OAuth 在 1.0.4 Preview 候选中新增，范围见 [协议适配](protocol-adapters.md)。
-其余边界见 [协议矩阵](protocol-compatibility-1.0.1.md)。
+MCP OAuth范围见[协议适配](protocol-adapters.md)；表单、取消及其他当前子集见
+[实际支持范围](protocol-extensions.md)。旧[协议矩阵](protocol-compatibility-1.0.1.md)仅作历史验收参考。

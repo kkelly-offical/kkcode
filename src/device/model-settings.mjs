@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises'
 import YAML from 'yaml'
 import { loadConfig } from '../config/load-config.mjs'
 import { validateConfig } from '../config/schema.mjs'
+import { DEFAULT_CONFIG } from '../config/defaults.mjs'
+import { configurationDiagnostics, configurationErrorMessage } from '../config/diagnostics.mjs'
 import { redactConfig } from '../config/redact.mjs'
 import { userRootDir } from '../storage/paths.mjs'
 import { writePrivateFile } from '../storage/private-file.mjs'
@@ -70,20 +72,42 @@ export async function discoverDeviceModels(service, params) {
 }
 export async function updateDeviceSettings(service, patch) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new ProtocolError('invalid_config', 'config object required')
+  if (Object.hasOwn(patch, '_diagnostics') || Object.hasOwn(patch.permission || {}, '_load_error')) throw new ProtocolError('invalid_config', '配置诊断是只读信息，不能通过保存配置清除安全限制')
   if (service.turns.size) throw new ProtocolError('configuration_busy', 'Wait for running turns to finish before changing device configuration', 409)
   const loaded = await loadConfig(service.cwd)
   const validation = validateConfig(merge(loaded.config, patch))
-  if (!validation.valid) throw new ProtocolError('invalid_config', validation.errors.join('; '))
+  if (!validation.valid) throw new ProtocolError('invalid_config', configurationErrorMessage(validation.errors))
   const file = loaded.source.userPath || path.join(userRootDir(), 'config.json')
   let original = {}
-  try { const raw = await readFile(file, 'utf8'); original = file.endsWith('.json') ? JSON.parse(raw) : YAML.parse(raw) || {} } catch (error) { if (error.code !== 'ENOENT') throw error }
+  try {
+    const raw = await readFile(file, 'utf8')
+    original = (file.endsWith('.json') ? JSON.parse(raw) : YAML.parse(raw)) ?? {}
+  }
+  catch (error) { if (error.code !== 'ENOENT') throw new ProtocolError('invalid_config', '配置未保存：无法读取或解析原有用户配置。请在被控电脑修正文件后重试；原文件未修改。') }
+  if (!original || typeof original !== 'object' || Array.isArray(original)) throw new ProtocolError('invalid_config', configurationErrorMessage([]))
   const next = merge(original, patch)
+  // Validate the bytes that will actually be saved, not only a sanitized
+  // effective view which may have discarded an existing malformed subtree.
+  const persisted = validateConfig(merge(DEFAULT_CONFIG, next))
+  if (!persisted.valid) throw new ProtocolError('invalid_config', configurationErrorMessage(persisted.errors))
   await writePrivateFile(file, file.endsWith('.json') ? JSON.stringify(next, null, 2) + '\n' : YAML.stringify(next))
   for (const [cwd, promise] of service.kernels) {
     const kernel = await promise, fresh = await loadConfig(cwd)
     Object.assign(kernel.configState, fresh)
-    await kernel.applyTrustState(kernel.trustState)
+    // A valid user update may coexist with a still-invalid project layer.
+    // Keep its execution guard without restarting extensions or turning an
+    // already-persisted user update into a misleading transport failure.
+    if (!fresh.permissionBlocked) await kernel.applyTrustState(kernel.trustState)
   }
   service.emit('configuration', { updated: true })
-  return { saved: true, restartRequired: false, config: redactConfig((await loadConfig(service.cwd)).config) }
+  return { saved: true, restartRequired: false, config: await deviceSettingsSnapshot(service.cwd) }
+}
+
+export async function deviceSettingsSnapshot(cwd) {
+  const state = await loadConfig(cwd)
+  const config = redactConfig(state.config)
+  // This is an execution guard, not a user-editable configuration field. The
+  // public read-only diagnostics carry its meaning without exposing internals.
+  if (config.permission) delete config.permission._load_error
+  return { ...config, _diagnostics: configurationDiagnostics(state) }
 }

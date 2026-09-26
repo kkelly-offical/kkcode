@@ -16,7 +16,7 @@ import { resolveAgentForMode } from "../agent/agent.mjs"
 import { estimateStringTokens } from "./compaction.mjs"
 import { classifyTaskMode, explainTaskModeReason } from "./longagent-utils.mjs"
 import { getPublicModeContract, resolveMode } from "./mode-contract.mjs"
-import { resolveExtensionPolicy } from "../../context.mjs"
+import { resolveExtensionPolicy, assertExecutableConfiguration } from "../../context.mjs"
 
 let sinkReady = false
 
@@ -256,6 +256,7 @@ export async function executeTurn({
   steerSource = null,
   acceptance = null
 }) {
+  assertExecutableConfiguration(configState)
   ensureEventSinks()
 
   const resolvedProviderType = providerType || configState.config.provider.default

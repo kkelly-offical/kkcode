@@ -3,7 +3,7 @@
 import { runWithRuntime, currentRuntime } from './core/runtime-context.mjs'
 import { createAgentMap } from './agent/agent.mjs'
 import { loadConfig } from "../config/load-config.mjs"
-import { applyWorkspaceTrustPolicy, bootstrapKernelExtensions, resolveExtensionPolicy } from "../context.mjs"
+import { applyWorkspaceTrustPolicy, bootstrapKernelExtensions, resolveExtensionPolicy, assertExecutableConfiguration } from "../context.mjs"
 import { checkWorkspaceTrust } from "./permission/workspace-trust.mjs"
 import { createEventBus } from "./core/events.mjs"
 import { EVENT_TYPES } from "./core/constants.mjs"
@@ -154,6 +154,7 @@ export async function createKernel(options = {}) {
   let extensionPolicy = resolveExtensionPolicy(configState)
   let booted = false
   async function bootExtensions() {
+    assertExecutableConfiguration(configState)
     if (booted) return extensionPolicy
     extensionPolicy = await run(() => bootstrapKernelExtensions({
       cwd,
@@ -217,6 +218,7 @@ export async function createKernel(options = {}) {
    * 默认侧随之消失。
    */
   async function applyTrustState(nextTrustState = {}) {
+    assertExecutableConfiguration(configState)
     trustState = { trusted: nextTrustState.trusted === true }
     applyWorkspaceTrustPolicy(configState, trustState, cwd)
     extensionPolicy = resolveExtensionPolicy(configState)

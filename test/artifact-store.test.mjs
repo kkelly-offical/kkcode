@@ -373,11 +373,13 @@ describe('artifact store: concurrency', () => {
 
   it('recovers a dead upload lock but retains and charges uncommitted bytes', { timeout: 10000 }, async () => {
     const moduleUrl = new URL('../src/storage/artifact-store.mjs', import.meta.url).href
+    const coverageUrl = new URL('./helpers/crash-coverage.mjs', import.meta.url).href
     const program = `
       import { ArtifactStore } from ${JSON.stringify(moduleUrl)};
+      import { checkpointCrashCoverage } from ${JSON.stringify(coverageUrl)};
       const keepAlive = setInterval(() => {}, 1000);
       const store = new ArtifactStore({ root: process.argv[1] });
-      async function* content() { yield '123456'; process.stdout.write('ready'); await new Promise(() => {}); }
+      async function* content() { yield '123456'; checkpointCrashCoverage(); process.stdout.write('ready'); await new Promise(() => {}); }
       await store.put({ actor: ${JSON.stringify(actor)}, content: content() });
       clearInterval(keepAlive);
     `

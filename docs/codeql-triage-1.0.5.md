@@ -1,5 +1,11 @@
 # 1.0.5 新增 CodeQL 告警核查
 
+> 本页记录1.0.5 Preview开发期历史。2026-09-26的Copilot／17条历史告警复核及未发行修复见[1.0.6风险记录](security-review-1.0.6.md)，不以历史扫描通过替代当前安全状态。
+
+以下是预览阶段的历史扫描／修复证据，不是新正式版回执。
+已公开预览提交8efcb34的[CodeQL](https://github.com/kkelly-offical/kkcode/actions/runs/36001404854)完成三类扫描，
+17条历史告警继续跟踪、无新增；实际发行状态见[版本与升级](versions.md)。
+
 最新路径修复候选`634e308`的[CodeQL35995969121](https://github.com/kkelly-offical/kkcode/actions/runs/35995969121)
 三类全部通过（真实Kotlin构建保留），开放17条历史告警、无新增；最近实例均指向
 该SHA。回执`codeql-634e308-open.json`。规则和历史告警未被关闭或dismiss。
@@ -12,7 +18,7 @@
 开放告警仍为历史17条，无新增64及以后编号；回执`codeql-17688c9-open.json`。
 未关闭规则或用dismiss消警。
 
-本记录属于未发布的 **1.0.5-preview.0**。分析对象为 `49b2cce` 的 CodeQL 扫描：
+以下原始分析对象为预览阶段 `49b2cce` 的 CodeQL 扫描：
 扫描执行成功，但开放告警由稳定版基线的 **17 条**增至 **25 条**，新增编号
 **64–71**。扫描成功不是“零风险”证明。
 
@@ -41,7 +47,7 @@
 | 告警 | 规则 / 位置 | 实证与处理 |
 | --- | --- | --- |
 | [64](https://github.com/kkelly-offical/kkcode/security/code-scanning/64) | `js/redos`；`src/config/load-config.mjs` | **真实 ReDoS**。策略环境变量键的重复组与包含 `_` 的字符类重叠。固定前缀后 `0__` 重复 1,024 次再接非法末尾字符，原正则子进程超过 500 ms 被终止；约 3 KiB 输入就可阻塞。将本就可涵盖完整后缀的重复组改为单个可选组，消除歧义回溯，保持合法键语义。真实 loader 在有截止时间的子进程中拒绝恶意键、保持 deny-all、不泄露 canary。 |
-| [65](https://github.com/kkelly-offical/kkcode/security/code-scanning/65) | `js/path-injection`；`src/kernel/tool/operation-journal.mjs` | 数据流为 RPC 输入 → 产物回收状态检查 → 操作日志文件读取。原先 ASCII 字母／数字／`_`／`-` 白名单已禁止点和斜杠，**未复现路径穿越**；告警未识别完整 guard。现从白名单匹配结果构造 basename，并要求匹配与原串完全相等，也拒绝旧 `$` 锚点允许的末尾换行。合法历史文件名不变。真实已登录 RPC 的穿越、反斜杠、编码、换行、对象／数组输入均拒绝，外部 canary 不变且不返回；真实未决操作仍阻止回收。 |
+| [65](https://github.com/kkelly-offical/kkcode/security/code-scanning/65) | `js/path-injection`；`src/kernel/tool/operation-journal.mjs` | 数据流为 RPC 输入 → 产物回收状态检查 → 操作日志文件读取。原先 ASCII 字母／数字／`_`／`-` 白名单已禁止点和斜杠，**未复现路径穿越**；告警未识别完整 guard。现从白名单匹配结果构造 basename，并要求匹配与原串完全相等。2026-09-26更正：JavaScript非多行 `$` 本已拒绝尾部换行，不是另一个已复现的漏洞。合法历史文件名不变。真实已登录 RPC 的穿越、反斜杠、编码、换行、对象／数组输入均拒绝，外部 canary 不变且不返回；真实未决操作仍阻止回收。 |
 | [66](https://github.com/kkelly-offical/kkcode/security/code-scanning/66) | `js/resource-exhaustion`；`src/storage/artifact-store.mjs` | HTTP / Relay 请求中的 `limit` 到 Buffer 分配。原代码已在闭包外要求安全整数且最大 **1 MiB**，因此不是无限请求大小分配；完整范围／游标／元数据校验也已存在。现把容量选择显式写为固定 **0、4 KiB、64 KiB、256 KiB、1 MiB** 桶，并在分配点重检实际读取大小。只编码已读取部分，绝不返回桶的 padding。边界、超限、Infinity、NaN、字符串输入与尾页精确字节均有回归。 |
 | [67](https://github.com/kkelly-offical/kkcode/security/code-scanning/67) | `js/unvalidated-dynamic-method-call`；`test/network-hardening.test.mjs` | **测试 HTTP fixture 的真实不安全派发写法**：URL 决定普通对象上的函数名，未知／原型属性可异常。不是产品压缩接口。改为预先生成三种压缩数据的 Map；请求只选择固定数据，不动态调用方法。`constructor`、`__proto__`、`toString`、未知路径明确 404，正常三种解压仍通过。 |
 | [68](https://github.com/kkelly-offical/kkcode/security/code-scanning/68) | `js/insufficient-password-hash`；`src/kernel/orchestration/run-coordinator.mjs` | 告警 source 为 `apiKeyEnv`／`api_key_env`，实际是**环境变量名称**，不是用于登录验证的密码。SHA-256 不承担密码存储功能，不应改成无意义的密码 KDF。另发现该名称摘要不能体现实际 key 值轮换：现 route identity 复用已批准路由的 HMAC `scopeHash`，只保存 provider/model/opaque scope；实际 key 轮换会改变范围，不持久化原 key。 |

@@ -212,7 +212,10 @@ test("auto-continue: empty max_tokens response (no text/tools/thinking) does not
       configState: baseConfig()
     })
     assert.equal(provider.calls.length, 1, "an empty 'truncated' response has no anchor to continue from")
-    assert.equal(result.reply, "No content returned from provider.")
+    assert.match(result.error, /空内容.*本轮未完成/)
+    assert.match(result.error, /输出达到上限/)
+    assert.ok(!events.some(event => event.type === EVENT_TYPES.TURN_FINISH))
+    assertNoStreamEventsAfterTerminal(events, [EVENT_TYPES.TURN_ERROR])
     assert.ok(!events.some((event) => event.type === EVENT_TYPES.TURN_AUTO_CONTINUE))
   } finally {
     unsubscribe()

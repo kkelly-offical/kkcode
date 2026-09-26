@@ -1,4 +1,6 @@
-# 图片、音频与视频输入（1.0.2）
+# 图片、音频与视频输入
+
+[文档导航](README.md) · 适用源码：1.1.6；[版本与升级](versions.md)。
 
 附件必须同时满足：文件格式有效、客户端能编码该协议、目标模型支持该输入。
 “已暂存/已附加”只表示附件在当前草稿中，不表示模型已经收到或理解它。
@@ -10,6 +12,7 @@
 | CLI `Ctrl+V`、`/paste [问题]` | PNG/JPEG/GIF/WebP 截图或复制的文件 | WAV、MP3 | MP4、MOV、WebM、MPEG |
 | Web／Android 上传 | 同上，单个最多 4 MiB | WAV、MP3，单个最多 4 MiB | 同左大小限制，格式同 CLI |
 | OpenAI Chat 兼容请求 | `image_url` | `input_audio`，base64 + wav/mp3 | `video_url` 扩展，base64 Data URL |
+| OpenAI Responses | `input_image`，经格式和能力验证 | 明确拒绝 | 明确拒绝 |
 | Anthropic Messages | 原生 `image` | 明确拒绝 | 明确拒绝 |
 | Ollama 当前适配器 | 沿用既有图片路径 | 明确拒绝 | 明确拒绝 |
 
@@ -77,13 +80,13 @@ Web/Android 图片行按需调用经鉴权的 `media.preview`，只接受本会�
 
 MCP/插件图片和结构化结果走共同的工具结果通道；每次工具结果最多 8 个媒体块。
 资源链接只显示引用，不隐式下载。新无效附件在请求前明确报错，旧无效附件不会
-让之后的纯文本消息永久失败。详细边界见 [1.0.2](release-1.0.2.md#图片与-harness-修复)。
+让之后的纯文本消息永久失败。Responses的额外协议边界见[适配器说明](responses-api.md)。
 
 `media-clipboard` 测试用可控的系统命令替身覆盖三个 OS；`media-pipeline` 用
 本地 HTTP 服务逐字检查流式/非流式请求体；`device-attachments` 验证远程暂存、
 格式、配额及会话隔离。它们不等同于所有真实模型或所有桌面剪贴板策略验收。
 
-本轮还通过真实 HTTPS Relay 将 WAV/MP4 字节送达可控兼容模型端点，核对
+历史1.0.2验收还通过真实HTTPS Relay将WAV/MP4字节送达可控兼容模型端点，核对
 字节哈希、历史二进制脱敏、拒绝后的草稿保留，并继续切换到 Anthropic 对话。
 这证明传输与编码链路，不冒充真实音视频模型的理解效果测试；真实 K3 另做了
 有上限的文本推理验收。

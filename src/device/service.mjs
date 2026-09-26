@@ -13,7 +13,7 @@ import { acquireProcessLock } from '../storage/process-lock.mjs'
 import { PROTOCOL_VERSION, ProtocolError, validateRequest } from '../protocol/index.mjs'
 import { listDeviceFolder, readDeviceFile, resolveDevicePath } from './files.mjs'
 import { listDeviceCommands, runDeviceCommand } from './commands.mjs'
-import { discoverDeviceModels, updateDeviceSettings } from './model-settings.mjs'
+import { discoverDeviceModels, updateDeviceSettings, deviceSettingsSnapshot } from './model-settings.mjs'
 import { ReplayStore } from './replay-store.mjs'
 import { RequestLedger, REQUEST_WINDOW_MS } from './request-ledger.mjs'
 import { AttachmentStore } from './attachments.mjs'
@@ -515,7 +515,7 @@ export class DeviceService extends EventEmitter {
         return result
       } finally { this.workspaceMutation = false }
     }
-    if (method === 'settings.get') return redactConfig((await loadConfig(this.cwd)).config)
+    if (method === 'settings.get') return deviceSettingsSnapshot(this.cwd)
     if (method === 'settings.update') {
       if (this.configurationUpdating || this.commandSessions.size || this.sessionTransitions.size) throw new ProtocolError('configuration_busy', 'A configuration update or session operation is in progress', 409)
       this.configurationUpdating = true

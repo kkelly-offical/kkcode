@@ -499,7 +499,10 @@ test('killed real coordinator host leaves durable effect intent and fenced recov
   t.after(() => { if (worker.exitCode === null) worker.kill('SIGKILL') })
   const message = await Promise.race([once(worker, 'message').then(([message]) => message), once(worker, 'exit').then(() => { throw new Error(`worker exited before effect: ${stderr}`) })])
   assert.equal(message.effectApplied, true)
-  worker.kill('SIGKILL'); await once(worker, 'exit')
+  const killed = once(worker, 'exit')
+  assert.equal(worker.kill('SIGKILL'), true)
+  const [, signal] = await killed
+  assert.equal(signal, 'SIGKILL', 'the recovery test must observe a real forced crash, not natural exit')
   let run = await f.store.getRun(message.runId)
   assert.equal(run.actions[0].state, 'prepared')
   assert.equal(run.lastTurn.status, 'running')

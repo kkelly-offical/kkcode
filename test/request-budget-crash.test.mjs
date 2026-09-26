@@ -31,6 +31,12 @@ test('SIGKILL after real HTTP dispatch retains a durable reservation and fresh k
   t.after(async () => { for (const child of workers) if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(root, { recursive: true, force: true }) })
   const first = launch()
   await Promise.race([dispatched, once(first, 'exit').then(() => { throw new Error('worker exited before HTTP dispatch') })])
+  if (process.env.NODE_V8_COVERAGE) {
+    const checkpoint = once(first, 'message')
+    first.send({ type: 'checkpoint-before-crash' })
+    const [message] = await checkpoint
+    assert.equal(message.type, 'crash-checkpoint-ready')
+  }
   const firstExit = once(first, 'exit'); first.kill('SIGKILL'); await firstExit
   let store = await openRunStore({ directory })
   const before = await store.getRunBudget({ runId: 'durable-model-request' })

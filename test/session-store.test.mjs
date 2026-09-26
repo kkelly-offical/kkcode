@@ -38,3 +38,13 @@ test("session store persists session/messages/parts", async () => {
   assert.equal(data.parts.length >= 1, true)
   assert.equal(data.messages.some((m) => m.id === assistant.id), true)
 })
+
+test('session shard names reject traversal, coercion and prototype keys before queuing data', async () => {
+  for (const sessionId of ['../outside', '..\\outside', '/outside', '%2e%2e', 'safe\n', 'safe\r', 'safe\u2028', 'safe\0', 'a'.repeat(129), '__proto__', 'constructor', 'prototype', '', {}, [], null]) {
+    await assert.rejects(appendUserMessage(sessionId, 'must not persist'), { code: 'invalid_session' })
+  }
+  const sessionId = 's'.repeat(128)
+  await touchSession({ sessionId, mode: 'agent', model: 'fixture' })
+  await appendUserMessage(sessionId, 'valid boundary')
+  assert.equal((await getSession(sessionId)).messages[0].content, 'valid boundary')
+})

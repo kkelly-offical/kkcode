@@ -1,6 +1,8 @@
-# Remote SSE event contract (1.0.2)
+# Remote SSE event contract
 
-1.0.4 Preview additive fields/events: `sessions.get.context` and
+[Documentation](README.md) · Source target1.1.6; [release status](versions.md).
+
+Additive context fields/events: `sessions.get.context` and
 `session.context.updated.payload.context` expose a sanitized current request budget
 (tokens/limit/outputReserved/source/estimated/components). They contain no prompt text
 or credentials. The old headless/CLI usage event contract is unchanged.

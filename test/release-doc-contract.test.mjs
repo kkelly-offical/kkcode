@@ -6,38 +6,40 @@ async function read(relPath) {
   return readFile(new URL(`../${relPath}`, import.meta.url), "utf8")
 }
 
-test("README advertises the shipped delegation, routing, and interruption contract", async () => {
-  const readme = await read("README.md")
-
-  assert.match(readme, /路由理由可见/)
-  assert.match(readme, /background_output/)
-  assert.match(readme, /background_cancel/)
-  assert.match(readme, /completed` \/ `cancelled` \/ `error` \/ `interrupted`/)
-  assert.match(readme, /Esc.*中断当前 turn/)
-  assert.match(readme, /\.kkcode\/hooks\//)
-  assert.match(readme, /\.kkcode-plugin\/plugin\.json/)
-  assert.match(readme, /CLI 统一 Assistant 能力边界（0\.3\.0）/)
-  assert.match(readme, /\/plan.*只读编写开发计划/)
-  assert.match(readme, /agent.*默认统一助手/)
-  assert.match(readme, /agent.*code.*coding.*兼容别名/)
-  assert.match(readme, /明确重型任务.*\/ultra/)
-  assert.match(readme, /docs\/cli-general-assistant-capability-matrix\.md/)
-  assert.match(readme, /docs\/kkcode-0\.1\.13-mode-lane-contract\.md/)
+test("current guides preserve delegation, routing, interruption and extension contracts off the landing page", async () => {
+  const modes = await read("docs/modes-and-permissions.md")
+  const cli = await read("docs/cli-reference.md")
+  assert.match(modes, /路由理由可见/)
+  assert.match(modes, /background_output/)
+  assert.match(modes, /background_cancel/)
+  assert.match(modes, /completed` \/ `cancelled` \/ `error` \/ `interrupted`/)
+  assert.match(modes, /Esc.*中断当前 turn/)
+  assert.match(cli, /\.kkcode\/hooks\//)
+  assert.match(cli, /\.kkcode-plugin\/plugin\.json/)
+  assert.match(modes, /\/plan.*只读编写开发计划/)
+  assert.match(modes, /agent.*默认统一助手/)
+  assert.match(modes, /agent.*code.*coding.*兼容别名/)
+  assert.match(modes, /明确重型任务.*\/ultra/)
+  assert.match(modes, /history\.md/)
+  const history = await read("docs/history.md")
+  assert.match(history, /cli-general-assistant-capability-matrix\.md/)
+  assert.match(history, /kkcode-0\.1\.13-mode-lane-contract\.md/)
 })
 
-test("README documents the 0.4.0 five-mode cycle and its compatibility mapping", async () => {
-  const readme = await read("README.md")
+test("current mode guide documents the five-mode cycle and retains legacy compatibility", async () => {
+  const readme = await read("docs/modes-and-permissions.md")
 
   assert.match(readme, /Shift\+Tab/)
-  for (const mode of ["plan", "agent", "agent-auto", "ultra", "yolo"]) {
-    assert.match(readme, new RegExp(`\`${mode}\``), `README must document the ${mode} mode`)
+  for (const mode of ["plan", "agent", "auto", "ultra", "yolo"]) {
+    assert.match(readme, new RegExp(`\`${mode}\``), `Guide must document the ${mode} mode`)
   }
   for (const level of ["readonly", "manual", "accept-edits", "yolo"]) {
-    assert.match(readme, new RegExp(level), `README must document the ${level} approval level`)
+    assert.match(readme, new RegExp(level), `Guide must document the ${level} underlying policy`)
   }
   // the compatibility table has to stay visible while the aliases still work
   assert.match(readme, /\/longagent.*\/ultra/s)
-  assert.match(readme, /docs\/kkcode-0\.4\.0-mode-contract\.md/)
+  assert.match(readme, /`agent-auto`.*兼容别名/)
+  assert.match(await read("docs/history.md"), /kkcode-0\.4\.0-mode-contract\.md/)
 })
 
 test("0.4.0 contract doc pins the mode, approval and compatibility rules", async () => {

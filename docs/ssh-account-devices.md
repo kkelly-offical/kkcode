@@ -1,6 +1,6 @@
 # Android SSH、账号设备与任务生命周期
 
-适用版本：`1.0.4`；[正式版验收/发布状态](stable-1.0.4-worklog.md)。
+[文档导航](README.md) · 适用源码：1.1.6；[版本与验收状态](versions.md)。Android仍为SSH直连，Web不提供SSH代理。
 
 ## 哪一端做什么
 

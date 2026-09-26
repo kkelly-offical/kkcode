@@ -222,6 +222,13 @@ export function SettingsOverlay(props: Props) {
       onClose={props.onClose}
       onBack={stack.length > 1 ? back : undefined}
     >
+      {props.canManage !== false && ['settings', 'models', 'provider', 'mode'].includes(panel) && props.settings._diagnostics?.errorCount > 0 && (
+        <div className="error" role="alert" data-testid="configuration-diagnostics">
+          <strong>{props.settings._diagnostics.toolsBlocked ? '权限配置需要修正，工具执行已暂停' : '电脑上的配置需要修正'}</strong>
+          {(props.settings._diagnostics.errors || []).map((item: Item, index: number) => <p key={index}>{item.source}{item.field ? ` · ${item.field}` : ''}：{item.message}</p>)}
+        </div>
+      )}
+      {props.canManage !== false && ['settings', 'models', 'provider'].includes(panel) && props.settings._diagnostics?.warningCount > 0 && <p role="status" className="hint">{props.settings._diagnostics.warning}</p>}
       {panel === 'artifacts' && <ArtifactPanel key={`${props.deviceId}:${props.sessionId}`} rpc={props.rpc} sessionId={props.sessionId} canManage={props.canManage !== false} />}
       {panel === 'memory' && props.canManage !== false && <MemoryPanel key={`${props.deviceId}:${props.sessionId}`} rpc={props.rpc} sessionId={props.sessionId} />}
       {panel === 'tasks' && <TaskPanel key={`${props.deviceId}:${props.sessionId}`} rpc={props.rpc} sessionId={props.sessionId} />}
@@ -550,8 +557,9 @@ export function SettingsOverlay(props: Props) {
               };
               await props.rpc("settings.update", { config });
               setDraft({ ...draft, api_key: "" });
-              props.onSettings(await props.rpc("settings.get"));
-              props.onNotice("渠道已保存并立即生效");
+              const settings = await props.rpc("settings.get");
+              props.onSettings(settings);
+              props.onNotice(settings._diagnostics?.toolsBlocked ? "渠道已保存，但设备配置仍有错误；修正后才能恢复执行。" : "渠道已保存并立即生效");
               back();
             });
           }}

@@ -182,7 +182,8 @@ permission:
     assert.ok(badLevel.errors.some((error) => error.includes("permission.level")))
     assert.equal(badLevel.warnings.length, 0,
       "权限档写错不能静默裁剪后继续启动")
-    assert.deepEqual(badLevel.source.projectRaw, {}, "安全契约错误应丢弃整个配置层")
+    assert.deepEqual(badLevel.source.projectRaw, { provider: { default: 'openai' } }, "只丢弃无效权限子树，保留模型配置")
+    assert.equal(badLevel.config.permission._load_error, true, "保留其他配置不应让工具恢复执行")
 
     await writeFile(path.join(kkDir, "config.yaml"), `
 permission:
@@ -268,7 +269,7 @@ provider:
     assert.equal(validateConfig(result.config).valid, true)
   })
 
-  it("rejects the entire physical layer when permission errors coexist with an ultra alias", async () => {
+  it("retains valid ultra aliases while a permission error blocks all tools", async () => {
     const kkDir = path.join(tmpDir, ".kkcode")
     await mkdir(kkDir, { recursive: true })
     await writeFile(path.join(kkDir, "config.json"), JSON.stringify({
@@ -277,8 +278,9 @@ provider:
     }))
 
     const result = await loadConfig(tmpDir)
-    assert.deepEqual(result.source.projectRaw, {})
-    assert.equal(result.config.agent.longagent.max_iterations, 0)
+    assert.deepEqual(result.source.projectRaw, { agent: { longagent: { max_iterations: 9 } } })
+    assert.equal(result.config.agent.longagent.max_iterations, 9)
+    assert.equal(result.config.permission._load_error, true)
     assert.ok(result.errors.some((error) => error.includes("permission.level")))
   })
 
@@ -374,7 +376,7 @@ language: zh
     }
   })
 
-  it("keeps permission null as a hard layer error", async () => {
+  it("keeps permission null as a hard execution error without losing unrelated settings", async () => {
     const kkDir = path.join(tmpDir, ".kkcode")
     await mkdir(kkDir, { recursive: true })
     await writeFile(path.join(kkDir, "config.json"), JSON.stringify({
@@ -385,7 +387,8 @@ language: zh
     const result = await loadConfig(tmpDir)
     assert.ok(result.errors.some((error) => error.includes("permission.level")))
     assert.equal(result.warnings.length, 0)
-    assert.deepEqual(result.source.projectRaw, {})
+    assert.deepEqual(result.source.projectRaw, { language: 'zh' })
+    assert.equal(result.config.permission._load_error, true)
   })
 
   it("validates a user-scoped .env against user config without borrowing project keys", async () => {

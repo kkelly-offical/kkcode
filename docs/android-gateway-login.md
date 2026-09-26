@@ -1,7 +1,8 @@
 # Android 与企业网关登录回跳
 
-适用补丁：**1.0.3（发布名称：KK Code 1.0.2 Fix）**。
-Android 包名和签名不变，公开 `versionCode` 从 10005 增加到 10006。
+[文档导航](README.md) · 适用源码：1.1.6；发行状态见[版本与升级](versions.md)。
+原生回跳修复首次随1.0.3（发布名称：KK Code 1.0.2 Fix）发行，下面保留其协议边界。
+Android包名和签名身份不变；当前版本码和可下载产物以版本页为准。
 
 ## 用户看到的流程
 
@@ -79,15 +80,16 @@ App 不会让旧网关出现回跳按钮**。旧 App 连接新版网关仍按旧
 
 ## 部署与验收
 
-从 `v1.0.3` 源码构建网关镜像：
+从经核对的源码构建本地网关镜像（1.1.6尚未公开发行，不能假定已有同名tag）：
 
 ```sh
-docker build -f deploy/Dockerfile -t kkcode-gateway:1.0.3 .
+docker build -f deploy/Dockerfile -t kkcode-gateway:1.1.6 .
 ```
 
 沿用现有数据库卷、网关 origin、OIDC 配置和密钥，只更新网关/Web 容器。HA 部署
 应先升级全部网关副本再开放新版原生回跳，避免登录过程切到旧副本。App 通过
-GitHub 稳定渠道检查 1.0.3 并由用户确认覆盖安装；不要卸载已有 App。
+GitHub所选渠道检查实际已发布版本，并由用户确认覆盖安装；不要卸载已有App。
+此处仅说明源码构建，不发布公共镜像、不自动升级生产服务。
 
 验收必须包含真实 Android 浏览器，不只调用后台 token API：
 
@@ -101,7 +103,7 @@ ANDROID_HOME=/path/to/android-sdk KKCODE_ANDROID_SERIAL=emulator-5554 \
 该脚本严格限制在专用 `kkcode_101_api36` 实验模拟器、固定实验 SSO/网关上，
 检查正常回跳、浏览器授权期间 App 进程被杀后的恢复，以及禁用自动脚本时的按钮
 回跳。实验浏览器忽略自签证书仅为测试设置，不改变生产 App TLS 策略。
-实际运行结果见 [1.0.3 验收账本](implementation-1.0.3.md)。
+历史实际运行结果见[1.0.3验收账本](implementation-1.0.3.md)，不是当前1.1.6正式候选的验收回执。
 
 参考：[Android Deep Links](https://developer.android.com/training/app-links/create-deeplinks)、
 [OAuth 原生应用规范](https://www.rfc-editor.org/rfc/rfc8252.html)、

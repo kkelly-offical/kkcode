@@ -38,6 +38,15 @@ test('tag metadata uses the shared channel policy and manual runs never publish'
   for (const refName of ['1.0.1-preview.0', 'v1.0.1', 'v1.0.1-preview.1', 'v1.0.1-preview.0\n']) assert.throws(() => resolveReleaseMetadata({ version: '1.0.1-preview.0', refType: 'tag', refName }), /exactly match/)
 })
 
+test('the explicitly authorized 1.1.6 source target cannot trigger publication or authorize adjacent versions', () => {
+  assert.deepEqual(releaseVersionPolicy('1.1.6'), { version: '1.1.6', channel: 'source-only', distTag: '', prerelease: false })
+  const fixture = manifests('1.1.6')
+  assert.equal(validateReleaseManifests(fixture.manifest, fixture.lockfile, fixture.workspaceManifests).version, '1.1.6')
+  assert.deepEqual(resolveReleaseMetadata({ version: '1.1.6', refType: 'branch', refName: 'main' }), { publish: false, release_version: '1.1.6', dist_tag: '', prerelease: false })
+  assert.throws(() => resolveReleaseMetadata({ version: '1.1.6', refType: 'tag', refName: 'v1.1.6' }), /source-only/)
+  for (const version of ['1.1.0', '1.1.5', '1.1.7', '1.2.0', '2.0.0', '1.1.6-preview.0', '1.1.6-rc.0', '1.1.6\n', '1.1.6+build']) assert.throws(() => releaseVersionPolicy(version), /release policy/)
+})
+
 test('version checks cover root, every workspace and every lockfile entry', () => {
   const fixture = manifests()
   assert.equal(validateReleaseManifests(fixture.manifest, fixture.lockfile, fixture.workspaceManifests).workspaces.length, 4)

@@ -2,10 +2,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { EventEmitter } from 'node:events'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { loadConfig } from '../src/config/load-config.mjs'
 import {
   connectRelay, loadRemoteCredentials, loginRemote, refreshRemoteCredentials
 } from '../src/remote/client.mjs'
@@ -129,6 +130,29 @@ test('untrusted catalog pagination cannot turn an owner-selected local catalog i
   assert.equal(trapHits, 0)
 })
 
+test('catalog rejection cancels an unfinished redirect body without waiting for the request timeout', { timeout: 10000 }, async t => {
+  await privateHome(t)
+  let trapHits = 0, closed
+  const cancelled = new Promise(resolve => { closed = resolve })
+  const trap = await serve(t, (_req, res) => { trapHits++; res.end('{}') })
+  const owner = await serve(t, (_req, res) => {
+    res.on('close', closed)
+    res.writeHead(302, { location: `${trap.origin}/must-not-receive-credentials` })
+    res.write('unfinished redirect body')
+    // Deliberately do not end: the client must release this response itself.
+  })
+  const provider = { type: 'openai-compatible', base_url: `${owner.origin}/v1`, api_key_env: '' }
+  await assert.rejects(discoverModelsForProvider({
+    config: { provider: { default: 'fixture', fixture: provider } },
+    source: { userRaw: { provider: { fixture: provider } }, projectRaw: {}, envOverlay: {} }
+  }, { refresh: true, timeoutMs: 15000 }), error => error.details?.reason === 'unsafe_redirect')
+  let deadline
+  try {
+    await Promise.race([cancelled, new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error('redirect response remained open')), 3000) })])
+  } finally { clearTimeout(deadline) }
+  assert.equal(trapHits, 0)
+})
+
 test('catalog credential scopes survive disk reload without storing credentials or authenticating from cache', async t => {
   const root = await privateHome(t)
   const keyA = `fixture-a-${randomUUID()}`, keyB = `fixture-b-${randomUUID()}`
@@ -162,4 +186,43 @@ test('catalog credential scopes survive disk reload without storing credentials 
   state.config.data_policy = { model_origins: [] }
   await assert.rejects(discoverModelsForProvider(state), error => error.code === 'data_policy_denied')
   assert.equal(requests, 2)
+})
+
+test('catalog cache binds actual credentials, not the environment variable name', async t => {
+  await privateHome(t)
+  const names = ['KKCODE_TEST_CATALOG_KEY_A', 'KKCODE_TEST_CATALOG_KEY_B']
+  const previous = names.map(name => process.env[name])
+  const originalFetch = global.fetch
+  t.after(() => {
+    names.forEach((name, index) => { if (previous[index] === undefined) delete process.env[name]; else process.env[name] = previous[index] })
+    global.fetch = originalFetch
+  })
+  process.env[names[0]] = process.env[names[1]] = 'fixture-shared-catalog-key'
+  let requests = 0
+  global.fetch = async () => { requests++; return new Response(JSON.stringify({ data: [{ id: 'fixture-model' }] })) }
+  const provider = { type: 'openai-compatible', base_url: 'https://fixture.invalid/v1', api_key_env: names[0] }
+  const state = { config: { provider: { default: 'fixture', fixture: provider } }, source: { userRaw: { provider: { fixture: provider } }, projectRaw: {}, envOverlay: {} } }
+  assert.equal((await discoverModelsForProvider(state)).source, 'network')
+  clearModelCatalogMemoryCache()
+  provider.api_key_env = names[1]
+  assert.equal((await discoverModelsForProvider(state)).source, 'cache')
+  assert.equal(requests, 1)
+  process.env[names[1]] = 'fixture-rotated-catalog-key'
+  clearModelCatalogMemoryCache()
+  assert.equal((await discoverModelsForProvider(state)).source, 'network')
+  assert.equal(requests, 2)
+})
+
+test('a malformed loaded data policy makes zero catalog requests while local tool permissions stay available', async t => {
+  const home = await privateHome(t), cwd = path.join(home, 'project')
+  await mkdir(cwd)
+  let hits = 0
+  const server = await serve(t, (_req, res) => { hits++; res.end('{"data":[{"id":"fixture"}]}') })
+  await writeFile(path.join(home, 'config.json'), JSON.stringify({ provider: { default: 'fixture', fixture: {
+    type: 'openai-compatible', base_url: `${server.origin}/v1`, api_key_env: ''
+  } }, data_policy: 'invalid', permission: { level: 'readonly' } }))
+  const state = await loadConfig(cwd)
+  assert.equal(state.permissionBlocked, false)
+  await assert.rejects(discoverModelsForProvider(state), error => error.code === 'data_policy_denied')
+  assert.equal(hits, 0)
 })

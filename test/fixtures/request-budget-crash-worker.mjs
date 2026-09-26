@@ -3,6 +3,15 @@ import { openRunStore } from '../../src/storage/run-store.mjs'
 import { createArtifactStore } from '../../src/storage/artifact-store.mjs'
 import { createDelegatedKernel } from '../../src/kernel/isolation/delegation-kernel.mjs'
 import { createRunCoordinator } from '../../src/kernel/orchestration/run-coordinator.mjs'
+import { checkpointCrashCoverage } from '../helpers/crash-coverage.mjs'
+
+// The parent requests this only after its real HTTP fixture received the
+// request. The request remains unanswered and the reservation stays unsettled.
+process.on('message', message => {
+  if (message?.type !== 'checkpoint-before-crash') return
+  checkpointCrashCoverage()
+  process.send?.({ type: 'crash-checkpoint-ready' })
+})
 
 const input = JSON.parse(await readFile(process.argv[2], 'utf8'))
 const store = await openRunStore({ directory: input.directory })
