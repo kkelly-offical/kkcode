@@ -25,19 +25,25 @@ test('a queued timer cannot create a store lock after an explicit flush resolves
   // The old callback acquires a fresh process lock behind the completed flush.
   t.mock.timers.tick(100)
   await pending
-  let lateWrites = 0
+  let lockWrites = 0, dataWrites = 0
   const originalWrite = fs.default?.writeFile || fs.writeFile
   const fsDefault = (await import('node:fs/promises')).default
   t.mock.method(fsDefault, 'writeFile', async (...args) => {
-    if (String(args[0]).startsWith(path.join(root, 'sessions'))) lateWrites++
+    const file = String(args[0])
+    if (file.startsWith(path.join(root, 'sessions') + path.sep)) {
+      if (path.basename(file).startsWith('.store.lock.') && file.endsWith('.candidate')) lockWrites++
+      else dataWrites++
+    }
     return originalWrite(...args)
   })
   syncBuiltinESMExports()
   await new Promise(resolve => setImmediate(resolve))
   // Joining through a read drains previously queued transactions without itself
-  // requesting a flush. Its own lock write is the single legitimate write.
+  // requesting a flush. withLock -> acquireProcessLock still writes a private
+  // .store.lock.<pid>.<uuid>.candidate, even when flushUnsafe is a clean no-op.
   await getSession('flush-fence')
-  assert.equal(lateWrites, 1, 'only the explicit reader may acquire a new lock; stale timer must not write')
+  assert.equal(lockWrites, 1, 'only the explicit reader may acquire a new lock; stale timer must not write')
+  assert.equal(dataWrites, 0, 'clean reader and fenced timer must not rewrite persisted session data')
   const saved = JSON.parse(await fs.readFile(path.join(root, 'sessions', 'flush-fence.json'), 'utf8'))
   assert.equal(saved.messages.filter(m => m.content === 'persist this exactly once').length, 1)
 })

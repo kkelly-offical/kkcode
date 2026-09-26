@@ -7,7 +7,12 @@ import { writePrivateFile } from '../storage/private-file.mjs'
 import { ProtocolError, PROTOCOL_VERSION } from '../protocol/index.mjs'
 
 export const REPLAY_DEFAULTS = Object.freeze({ maxEvents: 2000, sessionBytes: 8 * 1024 * 1024, totalBytes: 64 * 1024 * 1024, maxAgeMs: 7 * 86400000, maxEventBytes: 512 * 1024, maxResponseBytes: 4 * 1024 * 1024 })
-const validId = id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(id)
+function replayId(id) {
+  const match = typeof id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.exec(id)
+  if (!match) throw new ProtocolError('invalid_session', 'Invalid session id')
+  // Construct disk names from the allowlisted match, not the original RPC value.
+  return match[0]
+}
 const storageError = () => new ProtocolError('replay_storage', 'Replay storage must contain private regular files, not links', 409)
 
 /** Valid IDs prevent path traversal. Pin the actual inode as well so a replaced
@@ -34,8 +39,8 @@ export class ReplayStore {
     for (const name of Object.keys(REPLAY_DEFAULTS)) if (!Number.isSafeInteger(this.limits[name]) || this.limits[name] < 0) throw new TypeError(`Invalid event replay limit: ${name}`)
     this.states = new Map(); this.chain = Promise.resolve()
   }
-  file(id) { if (!validId(id)) throw new ProtocolError('invalid_session', 'Invalid session id'); return path.join(this.directory, `events-${id}.jsonl`) }
-  meta(id) { this.file(id); return path.join(this.directory, `cursor-${id}.json`) }
+  file(id) { return path.join(this.directory, `events-${replayId(id)}.jsonl`) }
+  meta(id) { return path.join(this.directory, `cursor-${replayId(id)}.json`) }
   async initialize() {
     for (const file of await readdir(this.directory)) {
       const match = /^(?:events-([A-Za-z0-9_-]{1,128})\.jsonl|cursor-([A-Za-z0-9_-]{1,128})\.json)$/.exec(file)

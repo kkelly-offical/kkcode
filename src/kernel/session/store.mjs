@@ -81,8 +81,9 @@ const newState = root => ({
 })
 const sessionIndexPath = () => path.join(state.root, 'index.json')
 const sessionDataPath = id => {
-  if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(id) || ['__proto__', 'constructor', 'prototype'].includes(id)) throw Object.assign(new Error('Invalid session id'), { code: 'invalid_session' })
-  return path.join(state.root, `${id}.json`)
+  const match = typeof id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.exec(id)
+  if (!match || ['__proto__', 'constructor', 'prototype'].includes(match[0])) throw Object.assign(new Error('Invalid session id'), { code: 'invalid_session' })
+  return path.join(state.root, `${match[0]}.json`)
 }
 const legacySessionStorePath = () => path.join(path.dirname(state.root), 'session-store.json')
 const sessionCheckpointRootPath = () => path.join(path.dirname(state.root), 'checkpoints')

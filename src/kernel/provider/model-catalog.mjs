@@ -1,5 +1,5 @@
 import path from "node:path"
-import { createHash, randomUUID } from "node:crypto"
+import { createHmac, randomUUID } from "node:crypto"
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { buildRequestHeaders, createRequestContext } from "../../http/identity.mjs"
 import { userRootDir } from "../../storage/paths.mjs"
@@ -156,17 +156,16 @@ function modelCacheKey(connection) {
   // Partition catalog metadata by credential so key rotation cannot reuse another
   // account's model list. This is a cache namespace, not a password verifier;
   // cache entries contain only fetchedAt/models and never authenticate a caller.
-  const credentialFingerprint = connection.apiKey
-    ? createHash("sha256").update(connection.apiKey).digest("hex")
-    : "anonymous"
-  return createHash("sha256")
-    .update([
+  // Domain-separated HMAC scopes the *actual* credential to this catalog. Env
+  // variable names are not secrets or identities: renaming the variable with
+  // the same value should keep the same cache, while rotating its value must not.
+  return createHmac("sha256", connection.apiKey || "")
+    .update(JSON.stringify([
+      "kkcode.model-catalog.v2",
       connection.name,
       connection.protocol,
-      connection.modelsUrl,
-      connection.apiKeyEnv,
-      credentialFingerprint
-    ].join("\0"))
+      connection.modelsUrl
+    ]))
     .digest("hex")
 }
 
@@ -248,6 +247,9 @@ async function fetchSameOrigin(url, connection, { requestId, timeoutMs, signal }
     })
     if (![301, 302, 303, 307, 308].includes(response.status)) return response
     const location = response.headers.get("location")
+    // Neither following nor rejecting a redirect consumes its body. Release
+    // the socket now, including endless/error bodies, rather than wait for TTL.
+    await response.body?.cancel().catch(() => {})
     if (!location) {
       throw new ProviderError(`model discovery redirect from ${originalOrigin} has no location`, {
         provider: connection.name,
@@ -476,6 +478,7 @@ async function fetchCatalog(connection, { signal = null, timeoutMs = 10000, requ
     seenPages.add(pageKey)
     const response = await fetchSameOrigin(current, connection, { requestId: effectiveRequestId, timeoutMs, signal })
     if (!response.ok) {
+      await response.body?.cancel().catch(() => {})
       throw new ProviderError(`model discovery failed for provider "${connection.name}": HTTP ${response.status}`, {
         provider: connection.name,
         status: response.status,
