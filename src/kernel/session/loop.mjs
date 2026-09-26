@@ -4,6 +4,7 @@ import { reviewSensitiveAction } from '../permission/auto-review.mjs'
 import { newId } from "../core/types.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
+import { ProviderError } from '../core/errors.mjs'
 import { requestProviderStream, countTokensProvider } from "../provider/router.mjs"
 import { attachResponsesState } from '../provider/responses-state.mjs'
 import { attachAnthropicState } from '../provider/anthropic-state.mjs'
@@ -901,6 +902,24 @@ async function processTurnLoopInRuntime({
       continueCount = 0
 
       if (!response.toolCalls?.length) {
+        if (!String(response.text || '').trim()) {
+          // Reasoning is useful history, not a completed user-facing answer.
+          // Never synthesize a successful assistant message or retry tool side
+          // effects merely because the provider ended without visible content.
+          if (response.reasoning) await appendMessage(sessionId, 'assistant', attachProviderState([
+            { type: 'reasoning', text: response.reasoning }
+          ], response.providerState), { mode, model, providerType, step, turnId, incomplete: true })
+          const reason = response.reasoning
+            ? '模型只返回了思考内容，没有正文或可执行工具，本轮未完成。'
+            : '模型返回了空内容，没有正文或可执行工具，本轮未完成。'
+          const next = response.stopReason === 'max_tokens'
+            ? '服务报告输出达到上限，请检查输出预算或缩小任务后再继续。'
+            : '请检查当前模型的输出配置与服务日志，确认后再继续。'
+          const effects = toolEvents.length
+            ? '本轮已调用过工具，请先核对工具结果及文件改动；已完成或未知的操作不会自动重放。'
+            : '本轮没有执行工具，未自动追加重试请求。'
+          throw new ProviderError(`${reason}${next}${effects}`, { reason: 'empty_response' })
+        }
         // Enhanced task completion verification
         if (verifyCompletion && nudgeCount < 2) {
           try {
@@ -929,7 +948,7 @@ async function processTurnLoopInRuntime({
           }
         }
         
-        finalReply = (response.text || "").trim() || "No content returned from provider."
+        finalReply = response.text.trim()
         const finalContent = attachProviderState(response.reasoning
           ? [
               { type: "reasoning", text: response.reasoning },
