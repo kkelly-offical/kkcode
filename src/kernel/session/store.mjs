@@ -76,6 +76,7 @@ const newState = root => ({
   dirtyIndex: false,
   dirtySessions: new Set(),
   flushTimer: null,
+  flushGeneration: 0,
   options: storeOptions
 })
 const sessionIndexPath = () => path.join(state.root, 'index.json')
@@ -151,8 +152,11 @@ function queueDataOperation(sessionId, operation) {
 const LOCK_TIMEOUT_MS = 30000
 
 let lock = Promise.resolve()
-function withLock(fn, root = path.resolve(sessionShardRootPath())) {
+function withLock(fn, root = path.resolve(sessionShardRootPath()), shouldRun = () => true) {
   const runTransaction = async () => {
+    // A timer may have queued behind an explicit flush. Check its generation
+    // before acquiring the process lock, which itself creates files/directories.
+    if (!shouldRun()) return
     if (!rootStates.has(root)) rootStates.set(root, newState(root))
     state = rootStates.get(root)
     const deadline = Date.now() + LOCK_TIMEOUT_MS
@@ -180,9 +184,12 @@ function scheduleFlush() {
   if (state.options.flushIntervalMs <= 0) return
   if (state.flushTimer) return
   const scheduledState = state
+  const generation = ++scheduledState.flushGeneration
   state.flushTimer = setTimeout(() => {
+    if (scheduledState.flushGeneration !== generation) return
     scheduledState.flushTimer = null
-    withLock(() => flushUnsafe(), scheduledState.root).catch((err) => {
+    withLock(() => flushUnsafe(), scheduledState.root, () => scheduledState.flushGeneration === generation
+      && (scheduledState.dirtyIndex || scheduledState.dirtySessions.size > 0)).catch((err) => {
       console.error("[store] flush failed:", err?.message || err)
     })
   }, state.options.flushIntervalMs)
@@ -196,7 +203,10 @@ function markDirty(sessionId = null) {
 }
 
 async function flushUnsafe() {
+  state.flushGeneration++
+  if (state.flushTimer) { clearTimeout(state.flushTimer); state.flushTimer = null }
   if (!state.loaded) return
+  if (!state.dirtyIndex && !state.dirtySessions.size) return
   await mkdir(state.root, { recursive: true, mode: 0o700 })
   // Validate metadata conflicts before touching any shard. A duplicate fork
   // target must never overwrite its data and only then discover the conflict.
