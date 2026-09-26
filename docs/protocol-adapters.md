@@ -1,4 +1,6 @@
-# MCP OAuth 与 ACP v1（1.0.4 Preview）
+# MCP OAuth 与 ACP 编辑器入口
+
+[文档导航](README.md) · 适用源码：1.0.5；表单及协议子集见[实际支持范围](protocol-extensions.md)。
 
 ## MCP OAuth
 
@@ -55,7 +57,8 @@ kkcode acp --trust
 要求启动的 MCP 服务。每连接最多 32 个会话，同一会话不接受并发回合。
 
 边界：不宣称支持音频、所有 resource 类型、实验 v2、后台 ACP 会话管理、
-IDE 未保存缓冲区代理或完整 model/config picker。需要补充信息时以聊天形式请求，
-不是伪造通用 IDE 表单。加载向编辑器重播最近 200 条文字消息（每条最多 20k 字符），
+IDE 未保存缓冲区代理或完整 model/config picker。表单仅在编辑器明确协商
+`clientCapabilities.elicitation.form`后通过正式接口请求；旧端不被当成已确认。
+具体限制见[表单与取消](protocol-extensions.md)。加载向编辑器重播最近200条文字消息（每条最多20k字符），
 设备上的规范历史仍然完整保留。断开 ACP 连接会关闭此连接的内核；它不是 SSH
 后台任务宿主，不能混用生命周期承诺。

@@ -1,15 +1,18 @@
 # Android release signing and acceptance
 
+[Documentation](README.md) · Source target: **1.0.5 / 10010**, not published.
+Changing the source version does not build, sign or upload an APK. See [version status](versions.md).
+
 Published stable: **1.0.4 / 10008**, with the same release certificate. Actual
 acceptance/publication is recorded in [the stable ledger](stable-1.0.4-worklog.md).
 Previous stable **1.0.3 / 10006 (KK Code 1.0.2 Fix)** receipts remain in
 [its ledger](implementation-1.0.3.md). Native browser-return scope is documented
 in [gateway login](android-gateway-login.md).
 
-Published preview: **1.0.4-preview.0 / 10007**, same release certificate.
+Published preview: **1.0.5-preview.0 / 10009**, same release certificate.
 Select the Preview channel in App update settings to receive prereleases.
-See the [1.0.4 ledger](implementation-1.0.4.md) for signed installation, SSH
-lifecycle, context UI, cross-platform results and actual publication receipts.
+See the [1.0.5 ledger](implementation-1.0.5.md) for signed installation,
+cross-platform results, quality limitations and actual publication receipts.
 The public APK and update manifest were downloaded again, checked against the
 signed candidate, and accepted by the production Android update policy in Preview
 only. Stable update checks do not offer this prerelease.
@@ -17,10 +20,10 @@ only. Stable update checks do not offer this prerelease.
 The Android application is a native remote client. Release signing is separate
 from publishing: producing this APK does not upload it to a store or GitHub.
 
-The 1.0.5 Preview candidate is **1.0.5-preview.0 / 10009**, signed by the same
+The published Preview is **1.0.5-preview.0 / 10009**, signed by the same
 certificate. Its exact APK, update manifest and actual upload/download receipts
 are tracked in the [1.0.5 ledger](implementation-1.0.5.md); older published-version
-receipts above are historical, not proof of this candidate's publication.
+receipts are historical, not proof that the source target1.0.5 has been published.
 
 ## Project signing identity
 
@@ -52,6 +55,7 @@ the third preview (`1.0.1-preview.2`) uses `10003`; stable `1.0.1` uses `10004`.
 Stable `1.0.2` uses `10005`; `1.0.3` (1.0.2 Fix) uses `10006`. The certificate must stay unchanged.
 `1.0.4-preview.0` uses `10007`; stable `1.0.4` uses `10008` and is eligible for both
 stable and preview update channels. No public `1.0.4-preview.1` is planned.
+Published `1.0.5-preview.0` uses `10009`; the not-yet-published source target1.0.5 reserves `10010`.
 **Every subsequent publicly distributed Android update must increase
 `versionCode`, including any later stable release or preview.**
 Changing only `versionName` is not a valid public update policy. Keep using
@@ -89,8 +93,8 @@ The application footer and Android User-Agent use `BuildConfig.VERSION_NAME`.
 
 After signature verification, run `node scripts/android-update-manifest.mjs`.
 Publish its `test-results/android-update.json` alongside the exact signed APK
-renamed `kkcode-android-<versionName>.apk` (for this Preview,
-`kkcode-android-1.0.5-preview.0.apk`). The App updater skips releases without a
+renamed `kkcode-android-<versionName>.apk` (the future1.0.5 asset would be
+`kkcode-android-1.0.5.apk`; this is not an existing download). The App updater skips releases without a
 matching manifest. Public identity is pinned in `configs/android-release.json`;
 private signing files never enter the release. See [App updates](android-app-updates.md).
 
@@ -178,7 +182,7 @@ the release variant with the same project certificate in an isolated worktree
 and AVD; its private higher-version APK must never be uploaded. Both signature
 checks and the user's actual system installation consent are exercised before
 checking retained private preferences and Android Keystore data. Exact current
-counts/results belong in [the stable ledger](stable-1.0.1-worklog.md).
+counts/results belong in [the historical 1.0.1 ledger](https://github.com/kkelly-offical/kkcode/blob/v1.0.5-preview.0/docs/stable-1.0.1-worklog.md).
 
 ## First preview artifact acceptance (2026-09-22)
 
@@ -228,7 +232,7 @@ credential-bearing redirect rejection. The full
 enterprise run passed all three opt-in network tests against real Keycloak,
 PostgreSQL, Relay and the Linux SSH VM: native device login, model/mode selection,
 attachment upload/removal, cross-client conversation synchronization and safe
-branch create/switch-back. See the [current acceptance ledger](preview.2-worklog.md)
+branch create/switch-back. See the [historical preview.2 acceptance ledger](https://github.com/kkelly-offical/kkcode/blob/v1.0.5-preview.0/docs/preview.2-worklog.md)
 for Compose/TLS checks and the release CI status.
 
 The exact signed APK was installed on the separate `kkcode_101_release_api36`

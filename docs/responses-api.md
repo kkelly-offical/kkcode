@@ -1,8 +1,11 @@
-# OpenAI Responses API（1.0.4）
+# OpenAI Responses API
+
+[文档导航](README.md) · 适用源码：1.0.5；该适配器首次随1.0.4发行。
 
 KK Code 有独立的 `openai-responses` 适配器，发送 `POST /responses`，不是把
 Chat Completions 的 `messages` 换一个路径。CLI、内核 SDK、Web 和 Android 共用
-被控电脑上的适配器；企业中继只转发设备协议，不持有模型 API Key。模型服务
+被控电脑上的适配器；企业中继只转发设备协议，模型配置保存在设备上。
+可信网关转发期间可见内容，不是零知识中继，见[部署边界](enterprise-deployment.md)。模型服务
 是否实现 Responses 由供应商决定，不能因为提供 `/models` 就推断支持。
 
 ## 最短配置路径
@@ -61,7 +64,7 @@ provider:
 
 ## 已支持的链路与边界
 
-| 能力 | 1.0.4 行为 |
+| 能力 | 当前适配行为 |
 | --- | --- |
 | 文本与图片输入 | `input_text` / `input_image`；图片继续走格式验证和模型能力检查 |
 | 非流式 / SSE | JSON 结果、语义事件流，以及请求流式但服务返回 JSON 的兼容情况 |
@@ -106,7 +109,8 @@ SSH 下的模型请求在 SSH 目标电脑执行，`localhost` 不是手机或�
 回归包含真实本地 HTTP 服务、流式/非流式、完整内核工具循环与历史续接、交错工具、
 错误参数、截断、重试/取消/超时、内容改写后隔离、跨协议和客户端投影。
 这些是受控服务契约测试，不冒充已在你的 OpenAI/第三方生产账号上验证。
-完整测试和公开下载回执见 [实施账本](stable-1.0.4-worklog.md)。
+首次发行的测试和公开下载回执见[1.0.4历史账本](stable-1.0.4-worklog.md)；
+新正式候选的状态另见[版本与升级](versions.md)。
 
 实现依据：OpenAI 官方 [Responses 创建接口](https://developers.openai.com/api/reference/typescript/resources/responses/methods/create)、
 [流式事件](https://developers.openai.com/api/docs/guides/streaming-responses)、

@@ -1,4 +1,6 @@
-# Browser 工作流边界（1.0.5 Preview 开发中）
+# Browser 工作流与边界
+
+[文档导航](README.md) · 适用源码：1.0.5；[发行状态](versions.md)
 
 隔离 Browser 与已登录 Browser Bridge 是两个独立入口，不能混用安全承诺。
 

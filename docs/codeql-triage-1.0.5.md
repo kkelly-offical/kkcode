@@ -2,6 +2,10 @@
 
 > 本页记录1.0.5 Preview开发期历史。2026-09-26的Copilot／17条历史告警复核及未发行修复见[1.0.6风险记录](security-review-1.0.6.md)，不以历史扫描通过替代当前安全状态。
 
+以下是预览阶段的历史扫描／修复证据，不是新正式版回执。
+已公开预览提交8efcb34的[CodeQL](https://github.com/kkelly-offical/kkcode/actions/runs/36001404854)完成三类扫描，
+17条历史告警继续跟踪、无新增；实际发行状态见[版本与升级](versions.md)。
+
 最新路径修复候选`634e308`的[CodeQL35995969121](https://github.com/kkelly-offical/kkcode/actions/runs/35995969121)
 三类全部通过（真实Kotlin构建保留），开放17条历史告警、无新增；最近实例均指向
 该SHA。回执`codeql-634e308-open.json`。规则和历史告警未被关闭或dismiss。
@@ -14,7 +18,7 @@
 开放告警仍为历史17条，无新增64及以后编号；回执`codeql-17688c9-open.json`。
 未关闭规则或用dismiss消警。
 
-本记录属于未发布的 **1.0.5-preview.0**。分析对象为 `49b2cce` 的 CodeQL 扫描：
+以下原始分析对象为预览阶段 `49b2cce` 的 CodeQL 扫描：
 扫描执行成功，但开放告警由稳定版基线的 **17 条**增至 **25 条**，新增编号
 **64–71**。扫描成功不是“零风险”证明。
 

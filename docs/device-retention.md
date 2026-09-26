@@ -3,7 +3,7 @@
 These are transport/recovery limits in 1.0.1, not conversation deletion policies.
 The canonical kernel conversation history is never deleted by these stores.
 
-1.0.4 Preview adds an explicit, confirmed `sessions.delete` operation, separate
+Current clients expose an explicit, confirmed `sessions.delete` operation, separate
 from transport retention. It rejects active work, removes the finished conversation
 tree from the canonical index and replay, and retains a private JSON recovery copy
 in `trash/sessions/`. Source files are not removed. These recovery copies are not

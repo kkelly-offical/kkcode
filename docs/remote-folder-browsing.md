@@ -1,4 +1,6 @@
-# Remote folder browsing (1.0.1)
+# Remote folder browsing and workspace trust
+
+[Documentation](README.md) · Source target: 1.0.5; see [release status](versions.md).
 
 Remote clients browse the controlled computer through `folders.list` and
 `files.read`. The browsing scope is explicitly authorized on the controlled
@@ -15,10 +17,10 @@ unattended command without a scope fails immediately with actionable guidance.
 This consent is per remote startup, not an implicit permanent machine-wide
 grant. `remote status` displays `folderAccess` and the actual roots.
 
-## Explicit recursive workspace trust (unreleased local hotfix)
+## Explicit recursive workspace trust
 
-The following flag is available in the working tree and the dedicated demo VM's
-2026-09-23 local hotfix, **not in the published npm 1.0.1 package**.
+Recursive workspace trust first shipped in 1.0.2 and remains available in the
+current source. It is not an unreleased demo-only patch and is never enabled implicitly.
 
 Browsing permission and project trust are separate. `--all-folders` permits
 remote navigation, but does not authorize project-defined provider endpoints,
@@ -50,7 +52,7 @@ saved trust decision. Neither trust flag changes OS permissions, tool approvals
 or private-path browsing protections. Read-only OS directories may still be
 unsuitable as a working directory when the agent needs to write project state.
 
-The same local hotfix also avoids treating the user's own configuration file as
+The same trust-source handling also avoids treating the user's own configuration file as
 a project override when the working directory is the user's home. Separate
 project files still go through the normal provider-source trust checks.
 

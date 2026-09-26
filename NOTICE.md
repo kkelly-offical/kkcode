@@ -5,7 +5,7 @@ This file contains attribution notices and third-party acknowledgments for the k
 ## Project
 
 - **Name**: kkcode
-- **Version**: 1.0.2
+- **Version**: See [package.json](package.json) for this source/package version.
 - **License**: GPL-3.0
 - **Copyright**: Copyright (C) 2026 kkcode team
 - **Repository**: https://github.com/kkelly-offical/kkcode

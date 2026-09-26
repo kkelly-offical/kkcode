@@ -1,5 +1,7 @@
 # kkcode CLI Personal Assistant Capability Matrix
 
+> Historical contract: this page preserves the original capability matrix. Current usage and platform boundaries are in [Capabilities](capabilities.md) and [Modes](modes-and-permissions.md); do not apply the old non-goals below to newer implementations.
+
 This document defines the **0.3.0 shipped capability boundary** for kkcode as a CLI-first unified Assistant.
 
 The goal is not to turn kkcode into an IDE shell or GUI automation platform. The goal is to make one Assistant reliably useful for high-value terminal-native personal work across local machine tasks, repo operations, bounded research, notes/task organization, release assistance, coding workflows, and explicit LongAgent delivery.
@@ -117,4 +119,3 @@ bounded tool-free review using the current conversation model; hard policies
 and explicit human-only rules remain enforced. Web/Android share session
 rename/archive/rewind, authenticated raster previews and safe worktree RPCs.
 See [1.0.2 boundaries](release-1.0.2.md) and the [actual acceptance ledger](implementation-1.0.2.md).
-
