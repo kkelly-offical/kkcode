@@ -149,12 +149,14 @@ export function formatMentionPath(candidate) {
   const value = String(candidate ?? "")
   const refuse = () => { throw Object.assign(new Error('此文件名包含控制字符或无法安全表示的引号，不能自动插入引用。请先重命名文件，原输入已保留。'), { code: 'unsafe_file_mention' }) }
   if (!value || /[\u0000-\u001f\u007f-\u009f\u2028-\u202e\u2066-\u2069]/u.test(value)) refuse()
-  const formatted = !/\s/.test(value) ? value
-    : value.includes('"') ? value.replace(/ /g, "\\ ") : `"${value}"`
+  const formatted = !value.includes('"') && (/\s/.test(value) || value.endsWith('\\')) ? `"${value}"`
+    : /\s/.test(value) ? value.replace(/ /g, "\\ ") : value
   // Candidate names come from the workspace, not the user's typed message.
   // Refuse any representation which would split, truncate or change the path.
   // Doubling every backslash is NOT correct for this non-shell grammar.
-  const tokens = scanMentions(`@${formatted}`)
+  // Include the real completion delimiter: an unquoted trailing backslash
+  // would otherwise consume that space and the user's following words.
+  const tokens = scanMentions(`@${formatted} `)
   if (tokens.length !== 1 || tokens[0].query !== value || tokens[0].end !== formatted.length + 1) refuse()
   return formatted
 }

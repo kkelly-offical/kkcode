@@ -24,6 +24,26 @@ test('completion keeps supported filenames as one exact token', () => {
   }
 })
 
+test('completion round-trips bounded adversarial filenames without consuming adjacent text', () => {
+  const alphabet = ['a', ' ', '"', '\\', '\t', '\n', '@', '.']
+  const input = 'inspect @x and @kept.txt'
+  let checked = 0
+  function check(name, remaining) {
+    if (name) {
+      checked++
+      const out = applyMention(input, 10, name)
+      if (out.notice) assert.equal(out.text, input)
+      else {
+        assert.deepEqual(scanMentions(out.text).map(token => token.query), [name, 'kept.txt'])
+        assert.ok(out.text.endsWith(' and @kept.txt'))
+      }
+    }
+    if (remaining) for (const char of alphabet) check(name + char, remaining - 1)
+  }
+  check('', 4)
+  assert.equal(checked, 4680)
+})
+
 test('parsed file references are not decoded or trimmed a second time before opening', async () => {
   for (const name of [String.raw`a\ "q" b.txt`, "'quoted name'.txt", ' leading and trailing .txt ']) {
     const expected = path.posix.join('/fixture', name), reads = []
