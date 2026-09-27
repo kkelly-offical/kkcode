@@ -5,7 +5,7 @@ export function collapseCompletedRuns(rows, busy = false) {
   function flush(last) {
     const answer = pending.findLastIndex(row => row.type === 'assistant' && row.text);
     const activity = pending.filter((row, index) => index !== answer && ['assistant', 'tool', 'thinking', 'review'].includes(row.type));
-    if (answer >= 0 && pending[answer].done !== false && activity.length && !(busy && last) && !pending.some(row => row.type === 'error') && !pending.slice(answer + 1).some(row => ['tool', 'thinking', 'review'].includes(row.type))) {
+    if (answer >= 0 && pending[answer].done !== false && activity.length && !(busy && last) && !pending.some(row => ['error', 'cancelled'].includes(row.type)) && !pending.slice(answer + 1).some(row => ['tool', 'thinking', 'review'].includes(row.type))) {
       const end = Math.max(...pending.map(row => row.finishedAt || row.updatedAt || row.timestamp || 0));
       const times = pending.map(row => row.timestamp).filter(value => value > 0);
       const begin = started || (times.length ? Math.min(...times) : 0);

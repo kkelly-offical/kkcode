@@ -719,3 +719,11 @@ summary {
 .device-strip { display: flex; flex: 0 0 auto; overflow-x: auto; gap: 8px; padding: 7px 16px; scrollbar-width: thin; }
 .device-strip button { flex: 0 0 auto; padding: 7px 12px; color: var(--muted); background: transparent; border: 1px solid var(--border); }
 .device-strip button[aria-pressed="true"] { color: var(--text); border-color: var(--text); }
+/* A compact pixel matrix; never rotates, shifts layout, or hides live thought. */
+.thinking-dots { display: inline-grid; grid-template-columns: repeat(3, 3px); grid-template-rows: repeat(3, 3px); gap: 2px; width: 16px; height: 16px; place-content: center; flex: 0 0 16px; }
+.thinking-dots > span { background: currentColor; opacity: .22; animation: kk-thinking-dot 1.1s steps(5, end) infinite; }
+@keyframes kk-thinking-dot { 0%, 100% { opacity: .22; } 25%, 40% { opacity: .95; } 65% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .thinking-dots > span { animation: none; opacity: .55; } }
+.turn-cancelled { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 0; color: var(--text-secondary); font-size: 12px; }
+.turn-cancelled button { color: inherit; background: none; border: 1px solid currentColor; padding: 3px 9px; cursor: pointer; }
+.stop-progress { color: var(--text-secondary); font-size: 12px; padding: 5px 12px; }

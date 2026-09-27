@@ -57,8 +57,8 @@ export function createSessionEventStream({ service, sessionId, after = 0, princi
     if (closed) return
     // Hello/gap frames must not advance Last-Event-ID past backlog rows that
     // have not been delivered yet, so they carry the requested cursor.
-    writer.send({ id: String(cursor), event: 'connected', data: { type: 'connected', schemaVersion: PROTOCOL_VERSION, sessionId, earliest: envelope.earliest, cursor: envelope.cursor, running: envelope.running, control: envelope.control, approvals: envelope.approvals, pendingApprovalCount: envelope.pendingApprovalCount } })
-    lastState = { running: envelope.running, control: envelope.control, pendingApprovalCount: envelope.pendingApprovalCount }
+    writer.send({ id: String(cursor), event: 'connected', data: { type: 'connected', schemaVersion: PROTOCOL_VERSION, sessionId, earliest: envelope.earliest, cursor: envelope.cursor, running: envelope.running, turnState: envelope.turnState, control: envelope.control, approvals: envelope.approvals, pendingApprovalCount: envelope.pendingApprovalCount } })
+    lastState = { running: envelope.running, turnState: envelope.turnState, control: envelope.control, pendingApprovalCount: envelope.pendingApprovalCount }
     if (envelope.gap && !writer.send({ id: String(cursor), event: 'replay.gap', data: { type: 'replay.gap', earliest: envelope.earliest, cursor: envelope.cursor } })) return writer.close()
     if (!deliverRows(envelope.events)) writer.close()
   })

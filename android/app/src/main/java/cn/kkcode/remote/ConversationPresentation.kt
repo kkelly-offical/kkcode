@@ -8,7 +8,7 @@ internal fun collapseCompletedRuns(items: List<ChatItem>, busy: Boolean): List<C
     fun flush(last: Boolean) {
         val answer = pending.indexOfLast { it.kind == "assistant" && it.text.isNotBlank() }
         val activity = pending.filterIndexed { index, item -> index != answer && item.kind in listOf("assistant", "tool", "thinking", "review") }
-        if(answer >= 0 && pending[answer].done && activity.isNotEmpty() && !(busy && last) && pending.none { it.kind == "error" } && pending.drop(answer + 1).none { it.kind in listOf("tool", "thinking", "review") }) {
+        if(answer >= 0 && pending[answer].done && activity.isNotEmpty() && !(busy && last) && pending.none { it.kind in listOf("error", "cancelled") } && pending.drop(answer + 1).none { it.kind in listOf("tool", "thinking", "review") }) {
             val end = pending.maxOfOrNull { it.startedAt + (it.durationMs ?: 0) } ?: 0L
             val begin = started.takeIf { it > 0 } ?: pending.map { it.startedAt }.filter { it > 0 }.minOrNull() ?: 0L
             result += ChatItem("run-${pending.first().turnId.ifBlank { pending.first().id }}", "run-summary", "", startedAt = begin,

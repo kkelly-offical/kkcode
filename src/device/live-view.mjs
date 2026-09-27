@@ -1,5 +1,5 @@
-const presentationTypes = new Set(['turn.start', 'turn.auto_continue', 'stream.text.start', 'stream.text.delta', 'stream.thinking.start', 'stream.thinking.delta', 'stream.end', 'tool.start', 'turn.finish', 'turn.result', 'turn.failed'])
-const terminalTypes = new Set(['turn.finish', 'turn.result', 'turn.failed'])
+const presentationTypes = new Set(['turn.start', 'turn.auto_continue', 'stream.text.start', 'stream.text.delta', 'stream.thinking.start', 'stream.thinking.delta', 'stream.end', 'tool.start', 'turn.finish', 'turn.result', 'turn.failed', 'turn.cancelled'])
+const terminalTypes = new Set(['turn.finish', 'turn.result', 'turn.failed', 'turn.cancelled'])
 const stepKey = (turnId, step) => `${turnId}:${step}`
 const bytes = value => Buffer.byteLength(JSON.stringify(value))
 const tail = (value, budget) => {
@@ -51,7 +51,7 @@ export class DeviceLiveView {
       const key = stepKey(turnId, payload.step)
       state.generations.set(key, (state.generations.get(key) || 0) + 1)
     } else if (terminalTypes.has(event.type)) {
-      item.payload = { ...(payload.step != null ? { step: payload.step } : {}), ...(payload.reply ? { reply: tail(String(payload.reply), Math.floor(this.limits.maxSessionBytes / 4)) } : {}), ...(payload.error ? { error: tail(String(payload.error), 4096) } : {}) }
+      item.payload = { ...(payload.step != null ? { step: payload.step } : {}), ...(payload.reply ? { reply: tail(String(payload.reply), Math.floor(this.limits.maxSessionBytes / 4)) } : {}), ...(payload.error ? { error: tail(String(payload.error), 4096) } : {}), ...(payload.executionId ? { executionId: payload.executionId } : {}), ...(payload.settling ? { settling: true } : {}) }
       state.terminal = item
       if (payload.reply && item.payload.reply !== String(payload.reply)) state.truncated = true
     } else if (event.type === 'stream.end' || event.type === 'tool.start') {
@@ -107,7 +107,7 @@ export class DeviceLiveView {
       if (completed.has(key) || segment.generation < (partials.get(key) || 0)) continue
       events.push(segment.event)
     }
-    if (state.terminal && (state.terminal.type === 'turn.failed' || !messages.some(message => message.role === 'assistant' && message.turnId === state.turnId && !message.truncated))) events.push(state.terminal)
+    if (state.terminal && (['turn.failed', 'turn.cancelled'].includes(state.terminal.type) || !messages.some(message => message.role === 'assistant' && message.turnId === state.turnId && !message.truncated))) events.push(state.terminal)
     return { liveEvents: structuredClone(events), liveTruncated: state.truncated }
   }
   snapshot(sessionId, { readCursor, readCanonical, project = value => value, includeLive = true } = {}) {

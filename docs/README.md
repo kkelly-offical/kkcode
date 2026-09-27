@@ -20,6 +20,7 @@
 - [Android更新](android-app-updates.md) · [Android签名与发行](android-release.md) · [登录回跳](android-gateway-login.md)
 - [Android SSH与账号设备](ssh-account-devices.md) · [目录范围与信任](remote-folder-browsing.md)
 - [跨端任务监督](task-monitoring.md) · [命令契约](remote-command-contract.md) · [SSE与同步](remote-sse-contract.md)
+- [思考动效、停止与恢复](implementation-1.1.6.md#思考动效与停止恢复2026-09-27)
 - [设备事件与容量维护](device-retention.md)
 
 App、设备CLI和网关分别升级。公共网关镜像发布暂缓，继续从源码构建；没有自动生产部署。

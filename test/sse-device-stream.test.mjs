@@ -114,10 +114,15 @@ test('session stream: session.state follows turn lifecycle and approvals', async
   const running = await client.next(frame => frame.event === 'session.state')
   assert.ok(running, 'session.state emitted on the sync tick')
   assert.equal(running.json.running, true)
+  assert.deepEqual(running.json.turnState, { executionId: 't1', phase: 'running' })
+  await service.record({ type: 'turn.finish', sessionId: 's1', turnId: 't1', payload: { reply: 'done' } })
+  const finishing = await client.next(frame => frame.event === 'session.state' && frame.json.turnState?.phase === 'finishing')
+  assert.equal(finishing.json.running, true, 'native completion does not release remote cleanup')
   service.turns.delete('s1')
   await service.record({ type: 'turn.result', sessionId: 's1', turnId: 't1', payload: { reply: 'done' } })
   const idle = await client.next(frame => frame.event === 'session.state' && frame.json.running === false)
   assert.ok(idle, 'turn.result triggers an immediate idle session.state')
+  assert.equal(idle.json.turnState, null)
 })
 
 test('session stream: Last-Event-ID and ?after= replay without duplicates; journal rotation signals replay.gap', async t => {

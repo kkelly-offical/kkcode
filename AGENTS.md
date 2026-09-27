@@ -1,5 +1,11 @@
 # Project working memory
 
+## Thinking / stop recovery — 2026-09-27
+
+- Active user task: compact dot-matrix thinking animation in Web/Android, responsive stop and safe continuation; source remains1.1.6, no publication/deployment/live model calls. Branch `feat/1.1.6-thinking-stop-ux-20260927` starts from main `cbd0b4b` (PR#27 merged). Previous security fixes are integrated; CodeQL/Dependabot/secret scanning were all zero open at the prior handoff.
+- User explicitly grants **one-time administrator merge for this new task's PR only after all checks pass**, without changing protection rules or claiming an approving review. Previous PR#27 exception is fulfilled; this new grant is separate and not standing authority.
+- Preserve existing button layout, partial response/tool-result history and drafts. Stop is not rollback; resume is user-triggered and must inspect prior effects, not replay them. See `docs/implementation-1.1.6.md` and the additive remote stop contract. Final candidate checks and merge SHA must be verified before claiming main updated.
+
 ## Security alert review — 2026-09-27
 
 - PR#26 is merged: main `c711f83458a5291841388f31906c201acdc7c7ea`, identical tree to tested `e9ca8d7`. The user explicitly authorized that one administrator merge; no approving review was claimed and ruleset13068465 was unchanged. That exception is fulfilled, not standing authorization for future review bypass. Main verify36254464818 and CodeQL36254464822 passed.

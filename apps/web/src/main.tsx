@@ -16,6 +16,7 @@ import { Composer } from "./Composer";
 import { buildTranscript, changeSummary } from "./transcript.mjs";
 import { DeviceClient } from "../../../src/sdk/client.mjs";
 import { deviceLoginPath } from "../../../src/protocol/login-path.mjs";
+import { awaitAbortable } from "../../../src/abort.mjs";
 import { useDeviceEvents } from './DeviceEvents';
 import { mcpLoadNotice } from './device-notices.mjs';
 import { Approval } from "./Approval";
@@ -60,6 +61,41 @@ function App() {
   const [busy, setBusy] = useState(false),
     [notice, setNotice] = useState(""),
     [sidebar, setSidebar] = useState(false);
+  const [stopping, setStopping] = useState(false), [turnPhase, setTurnPhase] = useState('idle');
+  const activeExecution = useRef(''), stopRequested = useRef('');
+  const pendingSend = useRef<Item | null>(null), stopInFlight = useRef<Promise<void> | null>(null);
+  const settledExecutions = useRef(new Set<string>());
+  const viewIdentity = useRef({ deviceId, selected });
+  viewIdentity.current = { deviceId, selected };
+  function currentView(id: string, device = deviceId) { return viewIdentity.current.deviceId === device && viewIdentity.current.selected === id; }
+  function acknowledgeSend(token: Item) {
+    if (token.acknowledged || !currentView(token.sessionId, token.deviceId)) return;
+    token.acknowledged = true;
+    setPrompt(old => old === token.text ? '' : old);
+    const key = `${token.deviceId}:${token.sessionId}`, consumed = new Set(token.attachmentIds || []);
+    setDraftAttachments(old => ({ ...old, [key]: (old[key] || []).filter(item => !consumed.has(item.id)) }));
+  }
+  function observeTurn(meta: Item) {
+    if (meta.running === undefined) return;
+    const pending = pendingSend.current;
+    if (!meta.running && pending && pending.deviceId === deviceId && pending.sessionId === selected && !settledExecutions.current.has(pending.id)) return;
+    const execution = meta.turnState?.executionId || '';
+    if (meta.running && execution && settledExecutions.current.has(execution)) return;
+    if (execution) activeExecution.current = execution;
+    setBusy(Boolean(meta.running));
+    if (!meta.running) { activeExecution.current = ''; stopRequested.current = ''; setStopping(false); setTurnPhase('idle'); }
+    else {
+      const isStopping = meta.turnState?.phase === 'stopping' || Boolean(stopRequested.current && (!execution || stopRequested.current === execution));
+      setStopping(isStopping); setTurnPhase(isStopping ? 'stopping' : meta.turnState?.phase || 'running');
+    }
+  }
+  function settleExecution(id: string) {
+    const pending = pendingSend.current;
+    if (id && pending?.id === id) { pending.terminal = true; pending.finish?.({ accepted: Boolean(pending.acknowledged), settled: true }); pendingSend.current = null; }
+    if (id) { settledExecutions.current.add(id); if (settledExecutions.current.size > 64) settledExecutions.current.delete(settledExecutions.current.values().next().value!); }
+    if (id && activeExecution.current && activeExecution.current !== id) return;
+    activeExecution.current = ''; stopRequested.current = ''; stopInFlight.current = null; setBusy(false); setStopping(false); setTurnPhase('idle');
+  }
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
   useEffect(() => { setThinkingExpanded(false); }, [selected, busy]);
   const [panel, setPanel] = useState(""),
@@ -268,7 +304,10 @@ function App() {
     setEvents([]);
     setApproval([]);
     setSession(null);
-    setBusy(false);
+    const pending = pendingSend.current?.deviceId === deviceId && pendingSend.current?.sessionId === selected ? pendingSend.current : null;
+    if (!pending) { pendingSend.current = null; stopInFlight.current = null; }
+    setBusy(Boolean(pending));
+    setStopping(false); setTurnPhase(pending ? 'starting' : 'idle'); activeExecution.current = pending?.id || ''; stopRequested.current = '';
     setControl(null);
     setBranch("");
     if (!selected || !ready) return;
@@ -279,7 +318,7 @@ function App() {
       new Promise((resolve) => setTimeout(resolve, ms));
     const syncSnapshot = async () => {
       const snapshot = await rpc("sessions.get", { sessionId: selected });
-      if (cancelled) return;
+      if (cancelled || snapshot?.eventCursor < cursor.current) return;
       cursor.current = snapshot?.eventCursor || cursor.current;
       setSession(current => {
         if (!current || current.id !== snapshot?.id || current.historyRevision !== snapshot?.historyRevision) return snapshot;
@@ -304,7 +343,7 @@ function App() {
         cursor.current = snapshot?.eventCursor || batch.cursor || 0;
         setSession(snapshot); const limited = applyLiveSnapshot(snapshot); applySelection(snapshot || {});
         if (batch.approvals !== undefined) setApproval(batch.approvals || []);
-        if (batch.running !== undefined) setBusy(Boolean(batch.running));
+        observeTurn(batch);
         if (batch.control !== undefined) setControl(batch.control || null);
         if (!limited) setNotice("实时记录已归档，已重新同步会话快照；较早消息可按需加载");
         return;
@@ -315,7 +354,7 @@ function App() {
         const snapshot = await rpc("sessions.get", { sessionId: selected });
         if (cancelled) return;
         cursor.current = snapshot?.eventCursor || batch.cursor || 0;
-        setSession(snapshot); applyLiveSnapshot(snapshot); setApproval([]); setBusy(Boolean(snapshot?.running));
+        setSession(snapshot); applyLiveSnapshot(snapshot); setApproval([]); observeTurn(snapshot || {});
         await refreshSessions(); return;
       }
       if (fresh.length) {
@@ -323,21 +362,27 @@ function App() {
         setEvents((old) => [...old, ...fresh]);
         for (const event of fresh) {
           if (['session.context.updated', 'turn.usage.update'].includes(event.type) && event.payload?.context) setSession(previous => previous ? { ...previous, context: event.payload.context } : previous);
-          if (event.type === "turn.start") setBusy(true);
-          if (
-            ["turn.result", "turn.failed", "turn.finish"].includes(event.type)
-          )
-            setBusy(false);
+          const execution = event.payload?.executionId || '';
+          if (['turn.preparing', 'turn.start', 'turn.stopping'].includes(event.type)) {
+            if (execution) activeExecution.current = execution;
+            const pending = pendingSend.current;
+            if (event.type === 'turn.start' && pending && pending.id === execution) acknowledgeSend(pending);
+            setBusy(true);
+            const halted = event.type === 'turn.stopping' || Boolean(stopRequested.current && stopRequested.current === execution);
+            setStopping(halted); setTurnPhase(halted ? 'stopping' : event.type === 'turn.preparing' ? 'starting' : 'running');
+          }
+          if (event.type === 'turn.finish' && event.payload?.settling && (!execution || execution === activeExecution.current)) setTurnPhase(stopRequested.current ? 'stopping' : 'finishing');
+          if (['turn.result', 'turn.failed', 'turn.cancelled'].includes(event.type) || event.type === 'turn.finish' && !event.payload?.settling) settleExecution(execution);
         }
         if (
           fresh.some((event: Item) =>
-            ["turn.result", "turn.failed"].includes(event.type),
+            ["turn.result", "turn.failed", "turn.cancelled"].includes(event.type),
           )
         )
           await refreshSessions();
       }
       if (batch.approvals !== undefined) setApproval(batch.approvals || []);
-      if (batch.running !== undefined) setBusy(Boolean(batch.running));
+      observeTurn(batch);
       if (batch.control !== undefined) setControl(batch.control || null);
       for (const event of fresh) {
         if (event.type === 'provider.capability.notice' && event.payload?.message) {
@@ -349,7 +394,7 @@ function App() {
         if (event.type === 'session.branch.changed') setBranch(event.payload.branch || '');
         if (["session.updated", "session.title.updated"].includes(event.type)) { setSession(old => old ? { ...old, ...event.payload } : old); await refreshSessions(); }
       }
-      const turnEnded = fresh.some((event: Item) => ["turn.result", "turn.failed"].includes(event.type));
+      const turnEnded = fresh.some((event: Item) => ["turn.result", "turn.failed", "turn.cancelled"].includes(event.type));
       const stopped = batch.running === false || turnEnded;
       if (stopped && (livePreviewLimited.current || turnEnded || (fresh.length && cursor.current % 1000 < fresh.length)))
         await syncSnapshot();
@@ -406,7 +451,7 @@ function App() {
       setSession(snapshot);
       applyLiveSnapshot(snapshot);
       if (snapshot) { applySelection(snapshot); setCwd(snapshot.cwd || cwd); }
-      setBusy(Boolean(snapshot?.running));
+      observeTurn(snapshot || {});
       await stream();
     });
     return () => {
@@ -422,14 +467,18 @@ function App() {
     }
   }, [notice]);
   async function createSession(): Promise<string> {
+    const previousView = viewIdentity.current;
     const result = await rpc("sessions.create", { cwd, mode, model: model || undefined, provider: provider || undefined });
     if (!result.modeId && settings.provider?.default) {
       await rpc("control.acquire", { sessionId: result.id });
       try { await rpc("sessions.configure", { sessionId: result.id, mode, model: model || undefined, provider: provider || undefined }); }
       finally { await rpc("control.release", { sessionId: result.id }).catch(() => {}); }
     }
+    if (viewIdentity.current.deviceId !== previousView.deviceId || viewIdentity.current.selected !== previousView.selected) return result.id;
     if (result.modeId) applySelection(result);
     await refreshSessions();
+    if (viewIdentity.current.deviceId !== previousView.deviceId || viewIdentity.current.selected !== previousView.selected) return result.id;
+    if (pendingSend.current?.deviceId === deviceId && !pendingSend.current.sessionId) pendingSend.current.sessionId = result.id;
     setSelected(result.id);
     setSidebar(false);
     return result.id;
@@ -509,38 +558,90 @@ function App() {
       else if (action === "keys") setNotice("此客户端支持原生文本输入和无障碍导航；终端快捷键只在 CLI 中提供");
       else if (action && ["models", "mode", "sessions", "extensions"].includes(action)) setPanel(action);
       else if (result?.panels?.length || result?.output?.length || (!action && !accepted)) setPanel("command");
-      if (accepted) setBusy(true);
+      if (accepted && !settledExecutions.current.has(result.executionId || result.turnId)) setBusy(true);
       return result;
     } finally { if (!accepted) await rpc("control.release", { sessionId }).catch(() => {}); }
   }
   async function send(e?: React.FormEvent) {
     e?.preventDefault();
-    if (!prompt.trim() || busy || uploading || readOnly) return;
-    await attempt(async () => {
+    if (!prompt.trim() || busy || pendingSend.current || uploading || readOnly) return;
+    const text = prompt;
+    const token: Item = { id: crypto.randomUUID(), sessionId: selected, deviceId, text, attachmentIds: attachments.map(item => item.id), cancelled: false, start: null, terminal: false };
+    token.finished = new Promise(resolve => { token.finish = resolve; });
+    pendingSend.current = token;
+    if (!text.startsWith('/')) { activeExecution.current = token.id; setBusy(true); setTurnPhase('starting'); }
+    let accepted = false;
+    try {
       let id = selected;
       if (!id) {
         id = await createSession();
       }
-      const text = prompt;
+      token.sessionId = id;
+      if (token.cancelled || viewIdentity.current.deviceId !== deviceId || (viewIdentity.current.selected !== id && viewIdentity.current.selected !== selected)) return;
       if (text.startsWith("/")) {
         if (attachments.length) throw new Error("附件不能附加到 / 命令，请先发送普通消息或移除附件");
-        setPrompt("");
-        try { await runCommand(text, id); } catch (error) { setPrompt(text); throw error; }
+        setPrompt(old => old === text ? '' : old);
+        const result = await runCommand(text, id);
+        accepted = Boolean(result?.accepted);
         return;
       }
       await rpc("control.acquire", { sessionId: id });
-      try { await rpc("turns.start", {
+      if (token.cancelled) { await rpc('control.release', { sessionId: id }).catch(() => {}); return; }
+      try { token.start = rpc("turns.start", {
         sessionId: id,
         prompt: text,
         attachmentIds: attachments.map(item => item.id),
-      }); } catch (error) { await rpc("control.release", { sessionId: id }).catch(() => {}); throw error; }
-      setPrompt(""); setDraftAttachments(old => ({ ...old, [attachmentKey]: [] }));
-      setBusy(true);
+        executionId: token.id,
+      }, { id: token.id });
+      const result = await token.start;
+      accepted = result.accepted !== false;
+      if (!accepted) return;
+      } catch (error) { await rpc("control.release", { sessionId: id }).catch(() => {}); throw error; }
+      if (!currentView(id) || token.terminal) return;
+      acknowledgeSend(token);
+      if (!settledExecutions.current.has(token.id)) { setBusy(true); setTurnPhase(token.cancelled ? 'stopping' : 'running'); }
       setTimeout(
         () => tail.current?.scrollIntoView({ behavior: "smooth" }),
         50,
       );
-    });
+    } catch (cause: any) {
+      if (!token.terminal && currentView(token.sessionId)) {
+        if (text.startsWith('/')) setPrompt(old => old || text);
+        setNotice(cause.message);
+      }
+    }
+    finally {
+      if (pendingSend.current === token) pendingSend.current = null;
+      if (!accepted && currentView(token.sessionId)) settleExecution(token.id);
+    }
+  }
+  async function stopTurn() {
+    if (stopInFlight.current || !busy || readOnly) return;
+    const id = selected, device = deviceId, pending = pendingSend.current;
+    const executionId = activeExecution.current || pending?.id || '';
+    if (pending) pending.cancelled = true;
+    stopRequested.current = executionId; setStopping(true); setTurnPhase('stopping');
+    const operation = (async () => {
+      try {
+        if (!id) return;
+        const options = { signal: AbortSignal.timeout(15000) };
+        await rpc('control.acquire', { sessionId: id }, options);
+        const cancel = () => rpc('turns.cancel', { sessionId: id, ...(executionId ? { executionId } : {}) }, options);
+        let result = await cancel();
+        // A stop can overtake the start RPC on the wire. Keep the same opaque
+        // execution ID and recheck after that exact start is acknowledged.
+        if (!result.cancelled && pending?.start) {
+          const started = await awaitAbortable(Promise.race([pending.start, pending.finished]), options.signal);
+          if (started.settled) result = { running: false, cancelled: true };
+          else if (started.accepted !== false) result = await cancel();
+        }
+        if (currentView(id, device) && (!activeExecution.current || activeExecution.current === executionId)) { observeTurn(result); if (!result.running && !pendingSend.current) settleExecution(executionId); }
+      } catch (cause: any) {
+        if (currentView(id, device) && !settledExecutions.current.has(executionId)) { stopRequested.current = ''; setStopping(false); setTurnPhase('running'); setNotice(`停止尚未确认，任务可能仍在运行。${cause.message} 可再次点击停止。`); }
+      }
+    })();
+    stopInFlight.current = operation;
+    try { await operation; } finally { if (stopInFlight.current === operation) stopInFlight.current = null; }
   }
   async function openFolders() {
     setPanel("folders");
@@ -765,25 +866,27 @@ function App() {
                 </div>
               )}
               {collapseCompletedRuns(messages, busy).map((row) => (
-                <TranscriptRow key={row.id} row={row} thinkingExpanded={row.done === false && thinkingExpanded} onThinkingExpanded={setThinkingExpanded} loadPreview={ref => rpc("media.preview", { sessionId: selected, ...ref })} onRewind={canManage && !busy && !session?.archived ? target => setRewindTarget(target) : undefined} />
+                <TranscriptRow key={row.id} row={row} active={busy && !['stopping', 'finishing'].includes(turnPhase)} stopping={stopping} thinkingExpanded={row.done === false && thinkingExpanded} onThinkingExpanded={setThinkingExpanded} loadPreview={ref => rpc("media.preview", { sessionId: selected, ...ref })} onRewind={canManage && !busy && !session?.archived ? target => setRewindTarget(target) : undefined} onResume={row.type === 'cancelled' && !busy && canManage && !session?.archived ? () => { setPrompt(old => old || '请从中断处继续。先核查已有结果和已执行的操作，不要重复已完成的改动。'); document.querySelector<HTMLTextAreaElement>('textarea[aria-label="消息"]')?.focus(); } : undefined} />
               ))}
-              {busy && !approval.length &&
+              {busy && turnPhase !== 'finishing' && !approval.length &&
                 !messages.some(
                   (row) => ['thinking', 'assistant', 'review'].includes(row.type) && row.done === false || row.type === 'tool' && row.payload?.status === 'running',
                 ) && (
-                  <ThinkingRow key={`waiting-${selected}`} row={{ id: 'waiting-thinking', text: '', done: false }} initiallyExpanded={thinkingExpanded} onExpanded={setThinkingExpanded} />
+                  <ThinkingRow key={`waiting-${selected}`} row={{ id: 'waiting-thinking', text: '', done: false }} active={!['stopping', 'finishing'].includes(turnPhase)} stopping={stopping} initiallyExpanded={thinkingExpanded} onExpanded={setThinkingExpanded} />
                 )}
               {approval.map(request => <Approval key={request.id} request={request} readOnly={readOnly} onResolve={answer => rpc('approvals.resolve', { id: request.id, sessionId: request.sessionId || selected, answer })} />)}
               <div ref={tail} />
             </div>
             {control && !control.yours && <div className="control-notice">另一客户端正在控制此会话。{canManage && <button onClick={() => attempt(async () => { await rpc('control.acquire', { sessionId: selected, takeover: true }); setControl({ yours: true }); })}>接管控制</button>}</div>}
             <ContextUsage value={session?.context} />
+            {busy && ['stopping', 'finishing'].includes(turnPhase) && <div className="stop-progress" role="status">{stopping ? '正在停止并保存已有结果；已执行的文件改动不会撤销。' : '正在保存本轮结果…'}</div>}
             <Composer
               readOnly={readOnly || Boolean(session?.archived)}
               canManage={canManage}
               prompt={prompt}
               onPrompt={setPrompt}
               busy={busy}
+              stopping={stopping}
               mode={mode}
               modes={commandResult.clientAction === "mode" && commandResult.items?.length ? commandResult.items : undefined}
               model={model}
@@ -794,12 +897,7 @@ function App() {
               branch={branch}
               commands={commands}
               onSend={() => void send()}
-              onStop={() =>
-                void attempt(async () => {
-                  await rpc("control.acquire", { sessionId: selected });
-                  await rpc("turns.cancel", { sessionId: selected });
-                })
-              }
+              onStop={() => void stopTurn()}
               onMode={(value) =>
                 void attempt(async () => {
                   await selectModel({ mode: value });

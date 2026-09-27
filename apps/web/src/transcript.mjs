@@ -107,7 +107,9 @@ export function buildTranscript(snapshot = {}, events = []) {
   }
   const tools = new Map();
   const persistedReviews = new Set();
+  const cancelledTurns = new Set();
   for (const part of snapshot?.parts || []) {
+    if (part.type === 'turn-cancelled') { cancelledTurns.add(part.turnId); rows.push({ id: part.id, type: 'cancelled', turnId: part.turnId, timestamp: part.createdAt }); }
     if (part.type === 'permission-review') { rows.push({ id: part.id, type: 'review', tool: part.tool, done: true, decision: part.decision, text: part.reason, model: part.model, timestamp: part.createdAt }); persistedReviews.add(part.id); }
     if (part.type === "tool-call") {
       const key = part.runPartId || part.id;
@@ -238,6 +240,11 @@ export function buildTranscript(snapshot = {}, events = []) {
       if (final) { final.finishedAt = event.timestamp; final.done = true; }
       completedTurns.add(turnId);
       stream = null;
+    } else if (event.type === 'turn.cancelled') {
+      endThinking();
+      for (const row of rows) if (row.turnId === turnId) { if (row.type === 'assistant') row.done = true; if (row.type === 'tool' && row.payload?.status === 'running') row.payload.status = 'cancelled'; }
+      stream = null;
+      if (!cancelledTurns.has(turnId)) { rows.push({ id: event.id, type: 'cancelled', turnId, timestamp: event.timestamp }); cancelledTurns.add(turnId); }
     } else if (event.type === "turn.failed") {
       endThinking();
       rows.push({ id: event.id, type: "error", text: p.error });

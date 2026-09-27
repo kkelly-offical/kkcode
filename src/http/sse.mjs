@@ -51,6 +51,7 @@ export class SseWriter {
 /** Derive a device-stream session.status transition from a journal row. */
 export function sessionStatusFromRow(row) {
   if (!row || typeof row.sessionId !== 'string') return null
+  if (row.type === 'turn.finish' && row.payload?.settling) return { sessionId: row.sessionId, running: true }
   if (SESSION_RUNNING_TYPES.includes(row.type)) return { sessionId: row.sessionId, running: true }
   if (SESSION_IDLE_TYPES.includes(row.type)) return { sessionId: row.sessionId, running: false }
   return null

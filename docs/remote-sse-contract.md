@@ -101,7 +101,7 @@ Every later journal row is delivered as `event: <row.type>` with
 schemaVersion, type, turnId?, payload}`). This covers assistant deltas
 (`stream.text.delta`, `stream.thinking.delta`), tool call status (`tool.start`,
 `tool.finish`, `tool.error`), turn state (`turn.start`, `turn.finish`,
-`turn.result`, `turn.failed`), approvals (`approval.requested`,
+`turn.result`, `turn.failed`, `turn.preparing`, `turn.stopping`, `turn.cancelled`), approvals (`approval.requested`,
 `approval.resolved`) and configuration (`session.configured`,
 `session.branch.changed`, `session.compacted`, …).
 
@@ -118,10 +118,10 @@ stream open**, continuing with available and live rows. The client must reload
 the session snapshot via `sessions.get` — the same recovery as the existing
 `gap` flag on `events.list`.
 
-Whenever the envelope state (`running`, `control`, `pendingApprovalCount`)
+Whenever the envelope state (`running`, `turnState`, `control`, `pendingApprovalCount`)
 changes, the stream emits `event: session.state`. The device server re-reads the
 state after every delivered row; the gateway re-syncs authoritatively after
-every turn-lifecycle (`turn.start`, `turn.finish`, `turn.result`, `turn.failed`)
+every turn-lifecycle (including preparation, stopping and cancellation)
 and `approval.*` row, and on the periodic sync tick. Changes that produce no
 journal row (`control.acquire` / `control.release`) surface on the next tick
 (≤ 30 s in push mode, ~1 s in journal-sync fallback). The frame looks like:
@@ -133,6 +133,42 @@ journal row (`control.acquire` / `control.release`) surface on the next tick
 
 Approval request bodies are not repeated here; they arrive as
 `approval.requested` rows. `session.state` never grants control.
+
+### Stop and resume (1.1.6 source)
+
+`sessions.get`, `events.list`, `connected` and `session.state` additionally expose
+`turnState: {executionId, phase}` while running, or `null` when idle. Phases are
+`starting`, `running`, `stopping` and `finishing`. This is a remote presentation
+extension, not a change to the CLI/headless JSONL schema.
+
+- A client may supply a fresh opaque `executionId` to `turns.start`. It must reuse
+  it only for retries of that exact request, not a new prompt. The accepted reply
+  echoes it; remote journal payloads carry the same ID even when the kernel's
+  `turnId` differs. Session authorization/control rules are unchanged.
+- Send that ID with `turns.cancel`. A mismatch is `409 turn_changed` and never
+  aborts the newer turn. Omitting the ID retains the legacy current-turn behavior.
+  Idle cancellation returns `cancelled:false, running:false`; repeated cancellation
+  of the same active turn is safe and does not create duplicate stopping rows.
+- `cancelled:true` in the cancellation RPC means the request was accepted, **not**
+  that cleanup has finished. Keep the stop button disabled while stopping, and
+  wait for authoritative idle state or the terminal `turn.cancelled` row. Kernel
+  `turn.finish` with `payload.settling:true` is also not yet a released remote slot.
+- The broker releases attachments, approvals and control before publishing its
+  final row. `turn.cancelled` contains `executionId`, `cancelled:true`,
+  `reason:"user_cancel"`, `filesReverted:false`, `settled:true` and any current
+  partial reply. Cleanup failures remain `turn.failed`, not successful stops.
+- Preserve partial text/reasoning and completed tool-use/result pairs. Interrupted
+  provider continuation IDs and unfinished tool calls are not committed. A stop
+  does not undo file changes or certify that a non-cooperative external operation
+  had no effect. Resume must inspect existing results; it must not replay effects.
+- Late start/stop replies must not clear a newer draft or change the current
+  execution. Reconnect from the canonical snapshot and replay cursor as usual;
+  persisted `turn-cancelled` parts keep the interruption visible after restart.
+
+Older devices may omit these additive fields and use `turn.finish` without
+`settling`; clients retain that idle fallback. The execution-scoped stop and
+partial-result guarantees require the updated device runtime; use the matching
+gateway build for phase forwarding. This source change does not deploy a gateway.
 
 Watching a session renews the caller's control lease exactly as polling
 `events.list` does (on connect and on each sync tick, ≤ 30 s apart in push
