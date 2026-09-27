@@ -240,10 +240,10 @@ export class DeviceService extends EventEmitter {
     void this.record({ type: 'approval.resolved', sessionId: pending.sessionId, payload: { id } })
     return { resolved: true }
   }
-  lease(sessionId, principal) {
+  lease(sessionId, principal, { renew = true } = {}) {
     const lease = this.leases.get(sessionId)
     if (!lease || lease.until < Date.now() || lease.client !== principal.client) throw new ProtocolError('control_required', 'Acquire session control first', 409)
-    lease.until = Date.now() + 60000
+    if (renew) lease.until = Date.now() + 60000
   }
   async request(request, principal = { id: 'local', client: 'local' }) {
     validateRequest(request); this.assertOwner(principal)
@@ -418,10 +418,13 @@ export class DeviceService extends EventEmitter {
       if ((this.sessionTransitions.has(sessionId) || this.commandSessions.has(sessionId) || this.workspaceMutation) && prior?.client !== principal.client) throw new ProtocolError('control_busy', 'Wait for the accepted session operation to finish before taking over', 409)
       const owner = principal.id === 'local' || (principal.actorId || principal.id) === this.metadata.owner
       if (prior?.until > Date.now() && prior.client !== principal.client && principal.client !== 'local' && !(p.takeover === true && owner)) throw new ProtocolError('control_busy', 'Another client controls this session; the owner may explicitly take over', 409)
-      const lease = { client: principal.client, until: Date.now() + 60000 }; this.leases.set(sessionId, lease); return lease
+      const lease = { client: principal.client, until: Date.now() + 60000, leaseId: randomUUID() }; this.leases.set(sessionId, lease); return lease
     }
     if (method === 'control.release') {
-      this.lease(sessionId, principal)
+      if (p.leaseId !== undefined && (typeof p.leaseId !== 'string' || !idPattern.test(p.leaseId))) throw new ProtocolError('invalid_lease', '控制权标识无效，请重新获取控制权。')
+      if (p.leaseId !== undefined && !this.leases.has(sessionId)) return { released: false }
+      this.lease(sessionId, principal, { renew: false })
+      if (p.leaseId !== undefined && this.leases.get(sessionId).leaseId !== p.leaseId) return { released: false }
       if (this.sessionTransitions.has(sessionId) || this.commandSessions.has(sessionId) || this.workspaceMutation?.sessionId === sessionId) throw new ProtocolError('control_busy', 'The accepted session operation has not finished', 409)
       this.leases.delete(sessionId); return { released: true }
     }

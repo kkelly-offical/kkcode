@@ -114,6 +114,9 @@ function App() {
     try { return await sdk.request<any>(method, params, options); }
     catch (error: any) { throw Object.assign(new Error(remoteErrorMessage(error)), { code: error.code, status: error.status }); }
   }
+  function releaseControl(sessionId: string, lease: Item, options: Item = {}) {
+    return rpc('control.release', { sessionId, ...(lease?.leaseId ? { leaseId: lease.leaseId } : {}) }, options);
+  }
   const deviceNoticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(deviceNoticeTimer.current), []);
   useDeviceEvents({ enabled: ready, gateway, deviceId, onEvent: async (event, signal) => {
@@ -144,9 +147,9 @@ function App() {
   }
   async function selectModel(selection: Item) {
     if (!selected) { applySelection({ ...selection, providerType: selection.provider, modeId: selection.mode }); return; }
-    await rpc('control.acquire', { sessionId: selected });
+    const lease = await rpc('control.acquire', { sessionId: selected });
     try { applySelection(await rpc('sessions.configure', { sessionId: selected, ...selection })); }
-    finally { await rpc('control.release', { sessionId: selected }).catch(() => {}); }
+    finally { await releaseControl(selected, lease).catch(() => {}); }
   }
   const attempt = async (fn: () => Promise<any>) => {
     try {
@@ -213,14 +216,14 @@ function App() {
     if (!rewindTarget || !selected || rewinding) return;
     setRewinding(true);
     try {
-      await rpc("control.acquire", { sessionId: selected });
+      const lease = await rpc("control.acquire", { sessionId: selected });
       try {
         const result = await rpc("sessions.rewind", { sessionId: selected, messageId: rewindTarget.messageId, expectedLastMessageId: session?.messages?.at(-1)?.id, confirmed: true });
         if (!result.ok) throw new Error("没有可回退的提问");
         setPrompt(result.prompt || ""); setEvents([]); setRewindTarget(null);
         setSessionRevision(value => value + 1); await refreshSessions();
         setNotice("对话已回退，提问已恢复到输入框；工作区文件保持不变");
-      } finally { await rpc("control.release", { sessionId: selected }).catch(() => {}); }
+      } finally { await releaseControl(selected, lease).catch(() => {}); }
     } catch (cause: any) { setNotice(cause.message); }
     finally { setRewinding(false); }
   }
@@ -470,9 +473,9 @@ function App() {
     const previousView = viewIdentity.current;
     const result = await rpc("sessions.create", { cwd, mode, model: model || undefined, provider: provider || undefined });
     if (!result.modeId && settings.provider?.default) {
-      await rpc("control.acquire", { sessionId: result.id });
+      const lease = await rpc("control.acquire", { sessionId: result.id });
       try { await rpc("sessions.configure", { sessionId: result.id, mode, model: model || undefined, provider: provider || undefined }); }
-      finally { await rpc("control.release", { sessionId: result.id }).catch(() => {}); }
+      finally { await releaseControl(result.id, lease).catch(() => {}); }
     }
     if (viewIdentity.current.deviceId !== previousView.deviceId || viewIdentity.current.selected !== previousView.selected) return result.id;
     if (result.modeId) applySelection(result);
@@ -520,7 +523,7 @@ function App() {
   }
   async function runCommand(text: string, id = selected) {
     const sessionId = id || await ensureSession();
-    await rpc("control.acquire", { sessionId });
+    const lease = await rpc("control.acquire", { sessionId });
     let accepted = false;
     try {
       const result = await rpc("commands.run", { sessionId, command: text });
@@ -560,7 +563,7 @@ function App() {
       else if (result?.panels?.length || result?.output?.length || (!action && !accepted)) setPanel("command");
       if (accepted && !settledExecutions.current.has(result.executionId || result.turnId)) setBusy(true);
       return result;
-    } finally { if (!accepted) await rpc("control.release", { sessionId }).catch(() => {}); }
+    } finally { if (!accepted) await releaseControl(sessionId, lease).catch(() => {}); }
   }
   async function send(e?: React.FormEvent) {
     e?.preventDefault();
@@ -585,8 +588,8 @@ function App() {
         accepted = Boolean(result?.accepted);
         return;
       }
-      await rpc("control.acquire", { sessionId: id });
-      if (token.cancelled) { await rpc('control.release', { sessionId: id }).catch(() => {}); return; }
+      const lease = await rpc("control.acquire", { sessionId: id });
+      if (token.cancelled) { await releaseControl(id, lease).catch(() => {}); return; }
       try { token.start = rpc("turns.start", {
         sessionId: id,
         prompt: text,
@@ -596,7 +599,7 @@ function App() {
       const result = await token.start;
       accepted = result.accepted !== false;
       if (!accepted) return;
-      } catch (error) { await rpc("control.release", { sessionId: id }).catch(() => {}); throw error; }
+      } catch (error) { if (!token.terminal) await releaseControl(id, lease).catch(() => {}); throw error; }
       if (!currentView(id) || token.terminal) return;
       acknowledgeSend(token);
       if (!settledExecutions.current.has(token.id)) { setBusy(true); setTurnPhase(token.cancelled ? 'stopping' : 'running'); }
@@ -625,7 +628,7 @@ function App() {
       try {
         if (!id) return;
         const options = { signal: AbortSignal.timeout(15000) };
-        await rpc('control.acquire', { sessionId: id }, options);
+        const lease = await rpc('control.acquire', { sessionId: id }, options);
         const cancel = () => rpc('turns.cancel', { sessionId: id, ...(executionId ? { executionId } : {}) }, options);
         let result = await cancel();
         // A stop can overtake the start RPC on the wire. Keep the same opaque
@@ -635,6 +638,7 @@ function App() {
           if (started.settled) result = { running: false, cancelled: true };
           else if (started.accepted !== false) result = await cancel();
         }
+        if (result.running === false) await releaseControl(id, lease, options).catch(() => {});
         if (currentView(id, device) && (!activeExecution.current || activeExecution.current === executionId)) { observeTurn(result); if (!result.running && !pendingSend.current) settleExecution(executionId); }
       } catch (cause: any) {
         if (currentView(id, device) && !settledExecutions.current.has(executionId)) { stopRequested.current = ''; setStopping(false); setTurnPhase('running'); setNotice(`停止尚未确认，任务可能仍在运行。${cause.message} 可再次点击停止。`); }

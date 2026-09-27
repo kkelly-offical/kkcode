@@ -211,6 +211,16 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         if(api !== client || client.device != target || generation != connectionGeneration) throw CancellationException("设备已切换")
         return result
     }
+    private data class ControlLease(val sessionId: String, val leaseId: String, val generation: Int, val client: DeviceApi?, val device: String)
+    private suspend fun acquireControl(sessionId: String): ControlLease {
+        val client = api; val target = client?.device.orEmpty(); val generation = connectionGeneration
+        val result = rpc("control.acquire", JSONObject().put("sessionId", sessionId)) as? JSONObject
+        return ControlLease(sessionId, result?.optString("leaseId").orEmpty(), generation, client, target)
+    }
+    private suspend fun releaseControl(lease: ControlLease) {
+        if(lease.generation != connectionGeneration || api !== lease.client || api?.device.orEmpty() != lease.device) return
+        rpc("control.release", JSONObject().put("sessionId", lease.sessionId).apply { if(lease.leaseId.isNotBlank()) put("leaseId", lease.leaseId) })
+    }
     private fun clearDeviceSelection() {
         model = ""; provider = ""; mode = "agent"; approval = ""; settings = JSONObject(); extensions = JSONObject()
         modelOptions = emptyList(); catalogProvider = ""; catalogSource = ""; catalogStale = false; catalogError = ""
@@ -337,7 +347,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         val id = selected
         savingSession = true
         try {
-            rpc("control.acquire", JSONObject().put("sessionId", id))
+            val lease = acquireControl(id)
             try {
                 val params = JSONObject().put("sessionId", id).put("confirmed", true).put("expectedLastMessageId", snapshotLastMessage.ifBlank { null })
                 if(target.messageId.isNotBlank()) params.put("messageId", target.messageId)
@@ -348,7 +358,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
                     draft = result.optString("prompt"); rewindTarget = null
                 }
                 refreshSessions(); notice = "对话已回退，提问已恢复；工作区文件保持不变"
-            } finally { rpc("control.release", JSONObject().put("sessionId", id)) }
+            } finally { releaseControl(lease) }
         } finally { savingSession = false }
     }
     fun deleteConversation(target: JSONObject) = action {
@@ -655,9 +665,9 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         val id = created.getString("id")
         if(created.has("modeId")) applySelection(created)
         else {
-        rpc("control.acquire", JSONObject().put("sessionId", id))
+        val lease = acquireControl(id)
         try { applySelection(rpc("sessions.configure", JSONObject().put("sessionId", id).put("mode", mode).also { if(model.isNotBlank()) it.put("model", model); if(provider.isNotBlank()) it.put("provider", provider) }) as JSONObject) }
-        finally { runCatching { rpc("control.release", JSONObject().put("sessionId", id)) } }
+        finally { runCatching { releaseControl(lease) } }
         }
         selected = created.getString("id"); messages = emptyList(); contextUsage = JSONObject(); snapshotLastMessage = ""; snapshotCursor = 0; sessionArchived = false; persistedSteps = emptySet(); persistedUserTurns = emptySet(); attachments = emptyList(); draft = ""; historyHasMore = false; historyBefore = ""; startEvents(0); refreshSessions(); sheet = ""
         if(selectedSsh.isNotBlank()) vault.put("ssh-session:${accountScope()}:$selectedSsh", selected)
@@ -840,8 +850,8 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         if(!text.startsWith('/')) { activeExecution = token.executionId; busy = true; turnPhase = "starting" }
         var acceptedTurn = false
         try {
-        rpc("control.acquire", JSONObject().put("sessionId", origin))
-        if(token.cancelled || selected != origin) { rpc("control.release", JSONObject().put("sessionId", origin)); return@action }
+        val lease = acquireControl(origin)
+        if(token.cancelled || selected != origin) { releaseControl(lease); return@action }
         if (text.startsWith('/')) {
             var accepted = false
             var released = false
@@ -850,12 +860,12 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
                 if(result is JSONObject) {
                     accepted = result.optBoolean("accepted")
                     acceptedTurn = accepted
-                    if(!accepted) { rpc("control.release", JSONObject().put("sessionId", origin)); released = true }
+                    if(!accepted) { releaseControl(lease); released = true }
                     handleCommandResult(text, result)
                 }
                 else messages = messages + ChatItem(java.util.UUID.randomUUID().toString(), "tool", text, result.toString())
                 if(selected == origin && draft == text) draft = ""
-            } finally { if(!accepted && !released) rpc("control.release", JSONObject().put("sessionId", origin)) }
+            } finally { if(!accepted && !released) releaseControl(lease) }
         } else {
             try {
                 token.dispatched = true
@@ -866,7 +876,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
                     if(token.executionId !in settledExecutions) { busy = true; turnPhase = if(token.cancelled) "stopping" else "running" }
                     acknowledgeSend(token)
                 }
-            } catch(error: Exception) { if(!token.terminal) { if(token.generation == connectionGeneration) runCatching { rpc("control.release", JSONObject().put("sessionId", origin)) }; throw error } }
+            } catch(error: Exception) { if(!token.terminal) { runCatching { releaseControl(lease) }; throw error } }
         }
         } finally {
             token.started.complete(null)
@@ -882,7 +892,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         stopJob = viewModelScope.launch {
             try {
                 withTimeout(15000) {
-                    rpc("control.acquire", JSONObject().put("sessionId", origin))
+                    val lease = acquireControl(origin)
                     val params = JSONObject().put("sessionId", origin).apply { if(execution.isNotBlank()) put("executionId", execution) }
                     var result = rpc("turns.cancel", params) as? JSONObject
                     if(result?.optBoolean("cancelled") != true && pending?.dispatched == true) {
@@ -893,6 +903,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
                         if(started?.optBoolean("settled") == true) result = JSONObject().put("running", false).put("cancelled", true)
                         else if(started != null && started.optBoolean("accepted", true) && generation == connectionGeneration) result = rpc("turns.cancel", params) as? JSONObject
                     }
+                    if(result?.optBoolean("running", true) == false) runCatching { releaseControl(lease) }
                     if(selected == origin && generation == connectionGeneration && result != null && (activeExecution.isBlank() || activeExecution == execution)) observeTurnState(result)
                 }
             } catch(error: TimeoutCancellationException) {
@@ -916,9 +927,9 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         require(!sharedDevice) { "只有电脑所有者可以切换模型" }
         if(selected.isBlank()) { provider = name; model = id }
         else {
-            rpc("control.acquire", JSONObject().put("sessionId", selected))
-            try { applySelection(rpc("sessions.configure", JSONObject().put("sessionId", selected).put("provider", name).put("model", id)) as JSONObject) }
-            finally { rpc("control.release", JSONObject().put("sessionId", selected)) }
+            val lease = acquireControl(selected)
+            try { val result = rpc("sessions.configure", JSONObject().put("sessionId", lease.sessionId).put("provider", name).put("model", id)) as JSONObject; if(selected == lease.sessionId) applySelection(result) }
+            finally { releaseControl(lease) }
         }
         sheet = ""; notice = "模型已切换"
     }
@@ -926,9 +937,9 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         require(!sharedDevice) { "只有电脑所有者可以切换执行模式" }
         if(selected.isBlank()) mode = value
         else {
-            rpc("control.acquire", JSONObject().put("sessionId", selected))
-            try { applySelection(rpc("sessions.configure", JSONObject().put("sessionId", selected).put("mode", value)) as JSONObject) }
-            finally { rpc("control.release", JSONObject().put("sessionId", selected)) }
+            val lease = acquireControl(selected)
+            try { val result = rpc("sessions.configure", JSONObject().put("sessionId", lease.sessionId).put("mode", value)) as JSONObject; if(selected == lease.sessionId) applySelection(result) }
+            finally { releaseControl(lease) }
         }
         sheet = ""; notice = "执行模式已同步"
     }
@@ -1017,9 +1028,9 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
     }
     fun changeBranch(name: String, create: Boolean, token: String) = action {
         require(!sharedDevice && selected.isNotBlank()) { "请先打开自己的会话" }
-        rpc("control.acquire", JSONObject().put("sessionId", selected))
-        try { branchSnapshot = rpc(if(create) "branches.create" else "branches.switch", JSONObject().put("sessionId", selected).put("name", name).put("confirmed", true).put("stateToken", token)) as JSONObject; notice = "已${if(create) "创建并切换" else "切换"}到分支 $name" }
-        finally { rpc("control.release", JSONObject().put("sessionId", selected)) }
+        val lease = acquireControl(selected)
+        try { val result = rpc(if(create) "branches.create" else "branches.switch", JSONObject().put("sessionId", lease.sessionId).put("name", name).put("confirmed", true).put("stateToken", token)) as JSONObject; if(selected == lease.sessionId) branchSnapshot = result; notice = "已${if(create) "创建并切换" else "切换"}到分支 $name" }
+        finally { releaseControl(lease) }
     }
     fun gitOperation(method: String, params: JSONObject, token: String) = action {
         require(!sharedDevice && selected.isNotBlank()) { "请先打开自己的会话" }
@@ -1027,12 +1038,12 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         val origin = selected
         loading = true
         try {
-            rpc("control.acquire", JSONObject().put("sessionId", origin))
+            val lease = acquireControl(origin)
             try {
                 val result = rpc(method, JSONObject(params.toString()).put("sessionId", origin).put("confirmed", true).put("stateToken", token)) as JSONObject
                 if(method == "worktrees.open") { refreshSessions(); openSession(JSONObject().put("id", result.getString("sessionId")).put("cwd", result.getString("cwd"))).join() }
                 else { branchSnapshot = result; notice = if(method == "worktrees.create") "Worktree 已创建，可点列表在其中新建对话" else "分支已更新" }
-            } finally { rpc("control.release", JSONObject().put("sessionId", origin)) }
+            } finally { releaseControl(lease) }
         } finally { loading = false }
     }
     fun browse(target: String = cwd) = action { val listing = rpc("folders.list", JSONObject().put("path", target)) as JSONObject; cwd = listing.getString("path"); folders = listing.optJSONArray("entries").objects(); sheet = "folders" }
@@ -1051,9 +1062,9 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         val result = rpc("settings.update", JSONObject().put("config", JSONObject().put("provider", JSONObject().put("default", name).put(name, entry)))) as JSONObject
         settings = result.optJSONObject("config") ?: rpc("settings.get") as JSONObject
         if(selected.isNotBlank()) {
-            rpc("control.acquire", JSONObject().put("sessionId", selected))
-            try { applySelection(rpc("sessions.configure", JSONObject().put("sessionId", selected).put("provider", name).put("model", modelId)) as JSONObject) }
-            finally { rpc("control.release", JSONObject().put("sessionId", selected)) }
+            val lease = acquireControl(selected)
+            try { val configured = rpc("sessions.configure", JSONObject().put("sessionId", lease.sessionId).put("provider", name).put("model", modelId)) as JSONObject; if(selected == lease.sessionId) applySelection(configured) }
+            finally { releaseControl(lease) }
         } else { provider = name; model = modelId }
         notice = if(settings.optJSONObject("_diagnostics")?.optBoolean("toolsBlocked") == true) "渠道已保存，但设备配置仍有错误；修正后才能恢复执行。" else "渠道已保存并立即生效"; backSheet()
     }

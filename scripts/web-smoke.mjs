@@ -240,12 +240,28 @@ try {
   await expect.poll(() => page.locator('.media-preview img').evaluate(img => img.naturalWidth)).toBe(48)
   assert.match(await page.locator('.media-preview img').getAttribute('src'), /^data:image\/png;base64,/)
   await expect(page.getByRole('button', { name: /^操作权限/ })).toHaveCount(0)
+  // Force the old mode-change release to arrive AFTER the next command has
+  // acquired control. This used to erase the new lease on a fast UI/slow wire.
+  let unblockModeRelease, modeReleased, heldModeRelease = false
+  const modeReleaseGate = new Promise(resolve => { unblockModeRelease = resolve })
+  const modeReleaseDone = new Promise(resolve => { modeReleased = resolve })
+  await page.route('**/api/v1/rpc', async route => {
+    const { method } = route.request().postDataJSON()
+    if(method === 'control.release' && !heldModeRelease) {
+      heldModeRelease = true
+      await modeReleaseGate
+      try { const response = await route.fetch(); await route.fulfill({ response }) } finally { modeReleased() }
+    } else if(method === 'commands.run' && heldModeRelease) {
+      unblockModeRelease(); await modeReleaseDone; await route.continue()
+    } else await route.continue()
+  })
   await page.getByRole('button', { name: /^执行模式，当前/ }).click()
   await page.getByRole('menuitemradio', { name: /^Auto / }).click()
   await expect(page.getByRole('button', { name: '执行模式，当前 Auto' })).toBeVisible()
   assert.equal((await service.dispatch('sessions.get', { sessionId: current.id }, { id: 'local', client: 'local' })).modeId, 'auto')
   await input.fill('/profile edit'); await page.getByRole('button', { name: '发送', exact: true }).click()
   await dialog.getByLabel('常用语言（逗号分隔）').fill('中文, English')
+  await page.unroute('**/api/v1/rpc')
   await dialog.getByRole('button', { name: '保存偏好', exact: true }).click()
   await expect(dialog).toHaveCount(0)
   assert.deepEqual((await service.dispatch('profile.get', {}, { id: 'local', client: 'local' })).languages, ['中文', 'English'])
