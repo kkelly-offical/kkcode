@@ -141,8 +141,8 @@ export class GatewayEventHub {
     // Hello/gap frames must not advance Last-Event-ID past backlog rows that
     // have not been delivered yet, so they carry the subscriber's cursor.
     if (hello) {
-      sub.writer.send({ id: String(sub.cursor), event: 'connected', data: { type: 'connected', schemaVersion: PROTOCOL_VERSION, sessionId: sub.sessionId, earliest: envelope.earliest, cursor: envelope.cursor, running: envelope.running, control: envelope.control, approvals: envelope.approvals, pendingApprovalCount: envelope.pendingApprovalCount } })
-      sub.lastState = { running: envelope.running, control: envelope.control, pendingApprovalCount: envelope.pendingApprovalCount }
+      sub.writer.send({ id: String(sub.cursor), event: 'connected', data: { type: 'connected', schemaVersion: PROTOCOL_VERSION, sessionId: sub.sessionId, earliest: envelope.earliest, cursor: envelope.cursor, running: envelope.running, turnState: envelope.turnState, control: envelope.control, approvals: envelope.approvals, pendingApprovalCount: envelope.pendingApprovalCount } })
+      sub.lastState = { running: envelope.running, turnState: envelope.turnState, control: envelope.control, pendingApprovalCount: envelope.pendingApprovalCount }
     }
     if (envelope.gap && !sub.writer.send({ id: String(sub.cursor), event: 'replay.gap', data: { type: 'replay.gap', earliest: envelope.earliest, cursor: envelope.cursor } })) return this._close(sub)
     for (const row of envelope.events || []) {
@@ -150,7 +150,7 @@ export class GatewayEventHub {
       if (!sub.writer.send({ id: String(row.seq), event: row.type, data: row })) return this._close(sub)
       sub.cursor = row.seq
     }
-    const state = { running: envelope.running, control: envelope.control, pendingApprovalCount: envelope.pendingApprovalCount }
+    const state = { running: envelope.running, turnState: envelope.turnState, control: envelope.control, pendingApprovalCount: envelope.pendingApprovalCount }
     if (!hello && JSON.stringify(state) !== JSON.stringify(sub.lastState)) {
       sub.lastState = state
       sub.writer.send({ id: String(sub.cursor), event: 'session.state', data: { type: 'session.state', sessionId: sub.sessionId, ...state } })

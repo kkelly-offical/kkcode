@@ -344,13 +344,15 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                         "media" -> MediaPreview(item, state)
                         "assistant" -> MarkdownText(item.text, Modifier.fillMaxWidth())
                         "error" -> Text(item.text, color = kkcodeColors.danger, fontSize = 13.sp)
+                        "cancelled" -> Row(verticalAlignment = Alignment.CenterVertically) { Text(item.text, Modifier.weight(1f), color = muted, fontSize = 12.sp); if(!state.busy && state.canControl && !state.sessionArchived) TextButton(onClick = { state.prepareResume() }) { Text("继续", fontSize = 12.sp) } }
                         "run-summary" -> RunSummaryRow(item) { open -> expandedRows = if(open) expandedRows + item.id else expandedRows - item.id }
                         "compacted" -> Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) { HorizontalDivider(Modifier.weight(1f), color = card); Text("已精简上下文", fontSize = 10.sp, color = muted); HorizontalDivider(Modifier.weight(1f), color = card) }
-                        else -> ActivityRow(item, initiallyExpanded = item.kind == "thinking" && !item.done && thinkingExpanded) { open -> if(item.kind == "thinking") thinkingExpanded = open; expandedRows = if(open) expandedRows + item.id else expandedRows - item.id }
+                        else -> ActivityRow(item, initiallyExpanded = item.kind == "thinking" && !item.done && thinkingExpanded, active = state.busy && state.turnPhase !in listOf("stopping", "finishing"), stopping = state.stopping) { open -> if(item.kind == "thinking") thinkingExpanded = open; expandedRows = if(open) expandedRows + item.id else expandedRows - item.id }
                     }
                 }
             }
-            if(state.busy && state.approvals.isEmpty() && state.messages.none { it.kind in listOf("thinking", "assistant", "review") && !it.done || it.kind == "tool" && it.tool?.optString("status") == "running" }) item(key = "waiting-thinking") { ActivityRow(ChatItem("waiting-${state.selected}", "thinking", "", done = false), initiallyExpanded = thinkingExpanded) { thinkingExpanded = it } }
+            if(state.busy && state.turnPhase != "finishing" && state.approvals.isEmpty() && state.messages.none { it.kind in listOf("thinking", "assistant", "review") && !it.done || it.kind == "tool" && it.tool?.optString("status") == "running" }) item(key = "waiting-thinking") { ActivityRow(ChatItem("waiting-${state.selected}", "thinking", "", done = false), initiallyExpanded = thinkingExpanded, active = state.turnPhase !in listOf("stopping", "finishing"), stopping = state.stopping) { thinkingExpanded = it } }
+            if(state.busy && state.turnPhase in listOf("stopping", "finishing")) item(key = "stop-progress") { Text(if(state.stopping) "正在停止并保存已有结果；已执行的文件改动不会撤销。" else "正在保存本轮结果…", color = muted, fontSize = 12.sp) }
             items(state.approvals, key = { it.getString("id") }) { a ->
                 Group("需要你的确认") {
                     val request = a.optJSONObject("request") ?: JSONObject()
@@ -396,7 +398,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                     ComposerChip(Icons.Outlined.CloudQueue, state.modelLabel, "模型", maxWidth = 120.dp) { state.openModelPicker() }
                 }
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = { if(state.busy) state.stop() else if(text.isNotBlank() || state.attachments.isNotEmpty()) state.send(text) }, enabled = state.canControl && !state.uploading && !state.sessionArchived, modifier = Modifier.size(34.dp).background(MaterialTheme.colorScheme.onSurface, PixelShape(3.dp))) { Icon(if(state.busy) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, if(state.busy) "停止" else "发送", Modifier.size(21.dp), tint = MaterialTheme.colorScheme.background) }
+                IconButton(onClick = { if(state.busy) state.stop() else if(text.isNotBlank() || state.attachments.isNotEmpty()) state.send(text) }, enabled = state.canControl && !state.uploading && !state.sessionArchived && !state.stopping, modifier = Modifier.size(34.dp).background(MaterialTheme.colorScheme.onSurface, PixelShape(3.dp))) { Icon(if(state.busy) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, if(state.stopping) "正在停止" else if(state.busy) "停止" else "发送", Modifier.size(21.dp), tint = MaterialTheme.colorScheme.background) }
             }
         }
     }

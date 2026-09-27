@@ -4,6 +4,8 @@ import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -18,6 +20,103 @@ import org.junit.runner.RunWith
  * separate integration suites. No production identity or model is used here. */
 @RunWith(AndroidJUnit4::class)
 class SessionLifecycleTest {
+    @Test fun cancelledTurnCanResumeBeforeItsDelayedStartAcknowledgement() = runBlocking {
+        val server = MockWebServer()
+        val firstAck = java.util.concurrent.CountDownLatch(1)
+        val executions = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val stops = java.util.concurrent.atomic.AtomicInteger()
+        val snapshot = java.util.concurrent.atomic.AtomicReference(JSONObject().put("id", "ses-stop"))
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val body = JSONObject(request.body.readUtf8())
+                val params = body.optJSONObject("params") ?: JSONObject()
+                val result: Any = when(body.optString("method")) {
+                    "sessions.get" -> snapshot.get()
+                    "sessions.list" -> JSONArray().put(JSONObject().put("id", "ses-stop").put("title", "停止验收"))
+                    "turns.start" -> {
+                        val execution = params.getString("executionId"); executions.add(execution)
+                        if(executions.size == 1) assertTrue(firstAck.await(20, java.util.concurrent.TimeUnit.SECONDS))
+                        JSONObject().put("accepted", true).put("executionId", execution)
+                    }
+                    "turns.cancel" -> {
+                        assertEquals(executions.first(), params.getString("executionId")); stops.incrementAndGet()
+                        JSONObject().put("cancelled", true).put("running", true).put("turnState", JSONObject().put("phase", "stopping").put("executionId", executions.first()))
+                    }
+                    else -> JSONObject().put("yours", true)
+                }
+                return MockResponse().setHeader("Content-Type", "application/json").setBody(JSONObject().put("result", result).toString())
+            }
+        }
+        server.start()
+        val state = RemoteState(ApplicationProvider.getApplicationContext<Application>(), false)
+        suspend fun until(read: () -> Boolean) { withTimeout(10000) { while(!read()) delay(10) } }
+        var seq = 0
+        suspend fun event(type: String, execution: String, payload: JSONObject = JSONObject()) {
+            if(type in listOf("turn.cancelled", "turn.result")) {
+                val original = executions.first()
+                val running = execution != executions.last()
+                val history = JSONArray().put(JSONObject().put("id", "partial").put("role", "assistant").put("turnId", "turn-$original").put("step", 1).put("interrupted", true).put("content", JSONArray().put(JSONObject().put("type", "reasoning").put("text", "保留思考")).put(JSONObject().put("type", "text").put("text", "保留正文"))))
+                if(type == "turn.result") history.put(JSONObject().put("id", "continued").put("role", "assistant").put("turnId", "turn-$execution").put("content", "继续后的结果"))
+                snapshot.set(JSONObject().put("id", "ses-stop").put("messages", history).put("parts", JSONArray().put(JSONObject().put("id", "cancel-part").put("type", "turn-cancelled").put("turnId", "turn-$original"))).put("running", running).apply { if(running) put("turnState", JSONObject().put("executionId", executions.last()).put("phase", "running")) })
+            }
+            state.handleJournalEvent(JSONObject().put("id", "cancel-event-${++seq}").put("seq", seq).put("type", type).put("turnId", "turn-$execution").put("payload", payload.put("executionId", execution)))
+        }
+        try {
+            state.api = DeviceApi(server.url("/").toString(), "fixture-only", relay = false); state.selected = "ses-stop"; state.draft = "原始提问"
+            val first = state.send(state.draft)
+            until { executions.size == 1 }
+            val original = executions.first()
+            event("turn.start", original, JSONObject().put("prompt", "原始提问"))
+            assertEquals("", state.draft)
+            event("stream.thinking.delta", original, JSONObject().put("text", "保留思考").put("step", 1))
+            event("stream.text.delta", original, JSONObject().put("text", "保留正文").put("step", 1))
+            state.draft = "未发送的草稿"; state.stop(); state.stop()
+            until { stops.get() == 1 && state.stopping }
+            assertTrue(state.busy); assertEquals("stopping", state.turnPhase)
+            event("turn.cancelled", original)
+            assertFalse(state.busy); assertFalse(state.stopping)
+            assertTrue(state.messages.any { it.kind == "assistant" && it.text == "保留正文" })
+            assertTrue(state.messages.any { it.kind == "cancelled" })
+            state.prepareResume(); assertEquals("未发送的草稿", state.draft)
+            state.draft = ""; state.prepareResume(); assertTrue(state.draft.contains("先核查已有结果"))
+            assertEquals(1, executions.size)
+            state.send(state.draft).join()
+            assertEquals(2, executions.size)
+            val next = executions.last()
+            event("turn.start", next)
+            event("turn.cancelled", original) // stale finalization cannot clear the new turn
+            assertTrue(state.busy)
+            event("turn.result", next, JSONObject().put("reply", "继续后的结果"))
+            state.draft = "新草稿"
+            firstAck.countDown(); first.join()
+            assertFalse(state.busy); assertFalse(state.stopping); assertEquals("新草稿", state.draft)
+            assertEquals(1, stops.get())
+        } finally { firstAck.countDown(); state.disconnect(); server.shutdown() }
+    }
+
+    @Test fun rejectedStopRemainsRunningAndCanBeRetried() = runBlocking {
+        val server = MockWebServer(); val stops = java.util.concurrent.atomic.AtomicInteger()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val body = JSONObject(request.body.readUtf8())
+                if(body.optString("method") == "turns.cancel" && stops.incrementAndGet() == 1) return MockResponse().setResponseCode(409).setBody("{\"error\":{\"code\":\"control_busy\",\"message\":\"Fixture stop rejected\"}}")
+                return MockResponse().setHeader("Content-Type", "application/json").setBody("{\"result\":{\"running\":true,\"cancelled\":true,\"turnState\":{\"executionId\":\"test-stop\",\"phase\":\"stopping\"}}}")
+            }
+        }
+        server.start()
+        val state = RemoteState(ApplicationProvider.getApplicationContext<Application>(), false)
+        try {
+            state.api = DeviceApi(server.url("/").toString(), "fixture-only", relay = false); state.selected = "ses-stop"
+            state.observeTurnState(JSONObject().put("running", true).put("turnState", JSONObject().put("executionId", "test-stop").put("phase", "running")))
+            state.stop()
+            withTimeout(10000) { while(!state.notice.contains("停止尚未确认")) delay(10) }
+            assertTrue(state.busy); assertFalse(state.stopping)
+            state.stop()
+            withTimeout(10000) { while(stops.get() < 2) delay(10) }
+            assertTrue(state.busy); assertTrue(state.stopping)
+        } finally { state.disconnect(); server.shutdown() }
+    }
+
     @Test fun metadataRewindMediaAndOldReplayUseTheSameSessionContract() = runBlocking {
         val server = MockWebServer()
         val calls = java.util.Collections.synchronizedList(mutableListOf<JSONObject>())

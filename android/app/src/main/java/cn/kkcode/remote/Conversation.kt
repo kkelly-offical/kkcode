@@ -54,10 +54,10 @@ internal fun toolMutations(payload: JSONObject?): List<JSONObject> {
     return metadata.optJSONArray("mutations").objects().ifEmpty { metadata.optJSONObject("mutation")?.let { listOf(it) } ?: emptyList() }
 }
 
-@Composable fun ActivityRow(item: ChatItem, initiallyExpanded: Boolean = false, onExpanded: (Boolean) -> Unit = {}) {
+@Composable fun ActivityRow(item: ChatItem, initiallyExpanded: Boolean = false, active: Boolean = true, stopping: Boolean = false, onExpanded: (Boolean) -> Unit = {}) {
     var expanded by remember(item.id) { mutableStateOf(initiallyExpanded) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(item.done) { while(!item.done) { now = System.currentTimeMillis(); delay(1000) } }
+    LaunchedEffect(item.done, active, stopping) { while(!item.done && active && !stopping) { now = System.currentTimeMillis(); delay(1000) } }
     val payload = item.tool ?: JSONObject()
     val args = payload.optJSONObject("args") ?: JSONObject()
     val tool = payload.optString("tool", item.text)
@@ -72,7 +72,7 @@ internal fun toolMutations(payload: JSONObject?): List<JSONObject> {
     val elapsed = item.durationMs ?: if(!item.done && item.startedAt > 0) (now - item.startedAt).coerceAtLeast(0) else null
     val title = when {
         item.kind == "review" -> item.text
-        item.kind == "thinking" -> "Thinking" + (elapsed?.let { " · ${it / 1000} 秒" } ?: "")
+        item.kind == "thinking" -> (if(stopping && !item.done) "正在停止" else "Thinking") + (elapsed?.let { " · ${it / 1000} 秒" } ?: "")
         editing -> "$action${if(tool == "write") "写入" else "编辑"} ${basename.ifBlank { "文件" }}"
         tool == "bash" -> "${action}运行 ${args.optString("command", "命令") }"
         browsing -> "${action}浏览 ${basename.ifBlank { args.optString("pattern", tool) }}"
@@ -80,7 +80,8 @@ internal fun toolMutations(payload: JSONObject?): List<JSONObject> {
     }
     Column(Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().clickable { expanded = !expanded; onExpanded(expanded) }.padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-            if((item.kind in listOf("thinking", "review") && !item.done) || status == "running") CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.5.dp, color = activityMuted)
+            if(item.kind == "thinking" && !item.done && active && !stopping) ThinkingDots()
+            else if((item.kind == "review" && !item.done && active && !stopping) || status == "running") CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.5.dp, color = activityMuted)
             else Icon(if(item.kind == "thinking") Icons.Outlined.Psychology else if(editing) Icons.Outlined.Edit else if(browsing) Icons.Outlined.FolderOpen else Icons.Outlined.Terminal, null, Modifier.size(16.dp), tint = if(failed) removal else activityMuted)
             Text(title, Modifier.weight(1f, fill = false), fontSize = 12.sp, color = if(failed) removal else activityMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val added = changes.sumOf { it.optInt("addedLines") }; val removed = changes.sumOf { it.optInt("removedLines") }

@@ -114,12 +114,18 @@ class RemoteUxUiTest {
 
     @Test fun thinkingCanExpandBeforeTheFirstTokenAndRemainOpenDuringStreaming() {
         val item = mutableStateOf(ChatItem("thinking", "thinking", "", done = false, startedAt = System.currentTimeMillis()))
-        compose.setContent { KKCodeTheme(dark = true) { ActivityRow(item.value) } }
+        val stopping = mutableStateOf(false)
+        compose.setContent { KKCodeTheme(dark = true) { ActivityRow(item.value, stopping = stopping.value) } }
+        compose.onNodeWithTag("thinking-dot-matrix", useUnmergedTree = true).assertIsDisplayed()
         compose.onNodeWithContentDescription("展开详情").performClick()
         compose.onNodeWithText("模型尚未返回", substring = true).assertIsDisplayed()
         compose.runOnIdle { item.value = item.value.copy(text = "第一段思考") }
         compose.onNodeWithText("第一段思考").assertIsDisplayed()
         compose.runOnIdle { item.value = item.value.copy(text = "第一段思考，第二段流式内容") }
+        compose.onNodeWithText("第二段流式内容", substring = true).assertIsDisplayed()
+        compose.runOnIdle { stopping.value = true }
+        compose.onNodeWithTag("thinking-dot-matrix", useUnmergedTree = true).assertDoesNotExist()
+        compose.onNodeWithText("正在停止", substring = true).assertIsDisplayed()
         compose.onNodeWithText("第二段流式内容", substring = true).assertIsDisplayed()
         compose.onNodeWithContentDescription("收起详情").performClick()
         compose.onNodeWithText("第二段流式内容", substring = true).assertDoesNotExist()
@@ -137,6 +143,10 @@ class RemoteUxUiTest {
             compose.runOnIdle { state.messages = state.messages + ChatItem("real-stream", "thinking", "首段内容不需要再次点击", done = false, streamed = true) }
             compose.onNodeWithText("首段内容不需要再次点击").assertIsDisplayed()
             compose.runOnIdle { state.messages = state.messages.map { if(it.kind == "thinking") it.copy(done = true) else it } + ChatItem("answer", "assistant", "正在输出正文", done = false, streamed = true) }
+            compose.onNodeWithText("模型尚未返回", substring = true).assertDoesNotExist()
+            compose.runOnIdle { state.messages = state.messages.map { it.copy(done = true) }; state.turnPhase = "finishing" }
+            compose.onNodeWithTag("thinking-dot-matrix", useUnmergedTree = true).assertDoesNotExist()
+            compose.onNodeWithText("正在保存本轮结果…").assertIsDisplayed()
             compose.onNodeWithText("模型尚未返回", substring = true).assertDoesNotExist()
         } finally { models.clear() }
     }

@@ -40,6 +40,21 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
     var profile by mutableStateOf(JSONObject())
     var connected by mutableStateOf(false)
     var busy by mutableStateOf(false)
+    var stopping by mutableStateOf(false)
+    var turnPhase by mutableStateOf("idle")
+    private var activeExecution = ""
+    private var stopRequested = ""
+    private var stopJob: Job? = null
+    private val settledExecutions = linkedSetOf<String>()
+    private class PendingSend(val sessionId: String, val executionId: String, val generation: Int, val text: String, val attachmentIds: Set<String>) {
+        var cancelled = false
+        var dispatched = false
+        var acknowledged = false
+        var terminal = false
+        val started = CompletableDeferred<JSONObject?>()
+        val finished = CompletableDeferred<Unit>()
+    }
+    private var pendingSend: PendingSend? = null
     var contextUsage by mutableStateOf(JSONObject())
     var loading by mutableStateOf(false)
     var mode by mutableStateOf("agent")
@@ -120,6 +135,33 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         }
     }
     fun action(block: suspend () -> Unit) = viewModelScope.launch { try { notice = ""; block() } catch (e: CancellationException) { throw e } catch (e: Exception) { notice = remoteErrorMessage(e, api?.relay == false) } }
+    internal fun observeTurnState(value: JSONObject) {
+        if(!value.has("running")) return
+        if(!value.optBoolean("running") && pendingSend?.let { it.sessionId == selected && it.generation == connectionGeneration && it.executionId !in settledExecutions } == true) return
+        val state = value.optJSONObject("turnState")
+        val execution = state?.optString("executionId").orEmpty()
+        if(value.optBoolean("running") && execution.isNotBlank() && execution in settledExecutions) return
+        if(execution.isNotBlank()) activeExecution = execution
+        busy = value.optBoolean("running")
+        if(!busy) { activeExecution = ""; stopRequested = ""; stopping = false; turnPhase = "idle" }
+        else {
+            stopping = state?.optString("phase") == "stopping" || (stopRequested.isNotBlank() && (execution.isBlank() || stopRequested == execution))
+            turnPhase = if(stopping) "stopping" else state?.optString("phase")?.takeIf { it.isNotBlank() } ?: "running"
+        }
+    }
+    private fun settleExecution(execution: String) {
+        pendingSend?.takeIf { it.executionId == execution }?.let { it.terminal = true; it.finished.complete(Unit); pendingSend = null }
+        if(execution.isNotBlank()) { settledExecutions += execution; if(settledExecutions.size > 64) settledExecutions.remove(settledExecutions.first()) }
+        if(execution.isNotBlank() && activeExecution.isNotBlank() && activeExecution != execution) return
+        busy = false; stopping = false; turnPhase = "idle"; activeExecution = ""; stopRequested = ""; stopJob = null
+    }
+    private fun acknowledgeSend(token: PendingSend) {
+        if(token.acknowledged || selected != token.sessionId || connectionGeneration != token.generation) return
+        token.acknowledged = true
+        if(draft == token.text) draft = ""
+        attachments = attachments.filter { it.optString("id") !in token.attachmentIds }
+    }
+    fun prepareResume() { if(!busy && canControl && !sessionArchived && draft.isBlank()) draft = "请从中断处继续。先核查已有结果和已执行的操作，不要重复已完成的改动。" }
     fun preference(name: String, value: Boolean) { prefs.edit().putBoolean(name, value).apply(); if (name == "autoConnect") autoConnect = value else showContext = value }
     fun restore() = action {
         val saved = vault.get("credentials")
@@ -532,6 +574,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
     }
     fun openSession(item: JSONObject) = action {
         polling?.cancel(); selected = item.getString("id"); cwd = item.optString("cwd", cwd)
+        pendingSend = null; activeExecution = ""; stopRequested = ""; stopping = false; busy = false; turnPhase = "idle"; stopJob = null
         if(selectedSsh.isNotBlank()) vault.put("ssh-session:${accountScope()}:$selectedSsh", selected)
         val sessionId = selected; val source = api
         val snapshot = try { rpc("sessions.get", JSONObject().put("sessionId", selected)) as JSONObject }
@@ -560,7 +603,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         // polling newer deltas, not through an independent historical replay.
         snapshot.optJSONArray("liveEvents").objects().forEach { applyConversationEvent(it) }
         applySelection(snapshot)
-        busy = snapshot.optBoolean("running")
+        observeTurnState(snapshot)
         approvals = snapshot.optJSONArray("approvals").objects()
         historyHasMore = snapshot.optBoolean("historyHasMore")
         historyBefore = snapshot.optString("nextBefore")
@@ -584,7 +627,8 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
             val verdict = when(part.optString("decision")) { "allow" -> "允许"; "deny" -> "拒绝"; else -> "交给你确认" }
             ChatItem(part.getString("id"), "review", "Auto 审查 · ${part.optString("tool")} · $verdict", part.optString("reason") + "\n对话模型：" + part.optString("model"), tool = part, turnId = part.optString("turnId"), startedAt = part.optLong("createdAt"))
         }
-        return (history + tools.values + reviews).sortedBy { it.startedAt }
+        val cancellations = snapshot.optJSONArray("parts").objects().filter { it.optString("type") == "turn-cancelled" }.map { ChatItem(it.getString("id"), "cancelled", "已停止。已收到的内容和文件改动已保留。", turnId = it.optString("turnId"), startedAt = it.optLong("createdAt")) }
+        return (history + tools.values + reviews + cancellations).sortedBy { it.startedAt }
     }
     fun loadEarlier() = action {
         if(!historyHasMore || historyBefore.isBlank() || loadingHistory) return@action
@@ -636,12 +680,12 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
                             if(!cursor.accept(if(row.has("seq")) row.optLong("seq") else null)) return@collect
                             when (frame.event) {
                                 "connected" -> {
-                                    busy = row.optBoolean("running"); connected = true
+                                    observeTurnState(row); connected = true
                                     controlElsewhere = row.optJSONObject("control")?.optBoolean("yours") == false
                                     approvals = row.optJSONArray("approvals").objects()
                                 }
                                 "session.state" -> {
-                                    busy = row.optBoolean("running")
+                                    observeTurnState(row)
                                     controlElsewhere = row.optJSONObject("control")?.optBoolean("yours") == false
                                 }
                                 "replay.gap" -> {
@@ -678,7 +722,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
                         handleJournalEvent(event)
                     }
                     approvals = batch.optJSONArray("approvals").objects(); connected = true
-                    busy = batch.optBoolean("running")
+                    observeTurnState(batch)
                     controlElsewhere = batch.optJSONObject("control")?.optBoolean("yours") == false
                     delay(1000)
                 } catch (e: CancellationException) { throw e } catch (e: Exception) { if(sessionGone(e, sessionId)) return@launch; connected = false; notice = remoteErrorMessage(e, api?.relay == false); delay(1000) }
@@ -689,7 +733,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         if(event.optLong("seq") in 1..snapshotCursor) return
         val type = event.getString("type"); val payload = event.optJSONObject("payload") ?: JSONObject()
         if(applyConversationEvent(event)) {
-            if(type in listOf("turn.result", "turn.failed")) {
+            if(type in listOf("turn.result", "turn.failed", "turn.cancelled")) {
                 val id = selected
                 val snapshot = rpc("sessions.get", JSONObject().put("sessionId", id)) as JSONObject
                 if(selected == id) applySnapshot(snapshot)
@@ -743,7 +787,13 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         val turn = event.optString("turnId").ifBlank { payload.optString("turnId") }
         val step = payload.stepOrNull()
         val timestamp = event.optLong("timestamp")
+        val execution = payload.optString("executionId")
         when(type) {
+            "turn.preparing", "turn.stopping" -> {
+                if(execution.isNotBlank()) activeExecution = execution
+                busy = true; stopping = type == "turn.stopping" || stopRequested == execution && execution.isNotBlank()
+                turnPhase = if(stopping) "stopping" else "starting"
+            }
             "stream.thinking.start" -> messages = beginStreamThinking(messages, StreamDelta(event.optString("id"), "thinking", "", turn, step, timestamp), persistedSteps)
             "stream.text.delta", "stream.thinking.delta" -> {
                 if(type == "stream.text.delta") finishThinking(timestamp)
@@ -752,10 +802,23 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
             "stream.end" -> messages = finishStreamStep(messages, turn, step, timestamp)
             "turn.start" -> {
                 busy = true
+                if(execution.isNotBlank()) activeExecution = execution
+                pendingSend?.takeIf { it.executionId == execution }?.let { acknowledgeSend(it) }
+                stopping = stopRequested == execution && execution.isNotBlank(); turnPhase = if(stopping) "stopping" else "running"
                 if(turn !in persistedUserTurns && payload.optString("prompt").isNotBlank() && messages.none { it.kind == "user" && turn.isNotBlank() && it.turnId == turn }) messages = messages + ChatItem("${event.optString("id")}-user", "user", payload.getString("prompt"), startedAt = timestamp, turnId = turn)
             }
-            "turn.finish", "turn.result" -> { busy = false; messages = finishStreamReply(messages, event.optString("id"), turn, step, payload.optString("reply"), timestamp) }
-            "turn.failed" -> { messages = finishStreamStep(messages, turn, null, timestamp); busy = false; notice = remoteErrorMessage(Exception(payload.optString("error")), api?.relay == false); messages = messages + ChatItem(event.optString("id"), "error", notice, turnId = turn, startedAt = timestamp) }
+            "turn.finish", "turn.result" -> {
+                if(type == "turn.finish" && payload.optBoolean("settling")) { if(execution.isBlank() || activeExecution == execution) turnPhase = if(stopping) "stopping" else "finishing" }
+                else settleExecution(execution)
+                messages = finishStreamReply(messages, event.optString("id"), turn, step, payload.optString("reply"), timestamp)
+            }
+            "turn.cancelled" -> {
+                settleExecution(execution); messages = finishStreamStep(messages, turn, null, timestamp).map { item ->
+                    if(item.kind == "tool" && item.turnId == turn && item.tool?.optString("status") == "running") item.copy(tool = JSONObject(item.tool.toString()).put("status", "cancelled")) else item
+                }
+                if(messages.none { it.kind == "cancelled" && it.turnId == turn }) messages = messages + ChatItem(event.optString("id"), "cancelled", "已停止。已收到的内容和文件改动已保留。", turnId = turn, startedAt = timestamp)
+            }
+            "turn.failed" -> { messages = finishStreamStep(messages, turn, null, timestamp); settleExecution(execution); notice = remoteErrorMessage(Exception(payload.optString("error")), api?.relay == false); messages = messages + ChatItem(event.optString("id"), "error", notice, turnId = turn, startedAt = timestamp) }
             else -> return false
         }
         return true
@@ -765,33 +828,81 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
     }
     fun send(text: String) = action {
         if (selected.isBlank()) return@action
+        if(busy || pendingSend != null) return@action
         require(!sessionArchived) { "恢复归档后再继续对话" }
         require(canControl) { "这个会话是只读分享" }
         require(!uploading) { "请等待附件上传完成" }
         require(!text.startsWith('/') || attachments.isEmpty()) { "附件只能随消息发送，不能附在命令上" }
-        rpc("control.acquire", JSONObject().put("sessionId", selected))
+        val origin = selected
+        val token = PendingSend(origin, java.util.UUID.randomUUID().toString(), connectionGeneration, text, attachments.map { it.getString("id") }.toSet())
+        val inputAttachments = attachments
+        pendingSend = token
+        if(!text.startsWith('/')) { activeExecution = token.executionId; busy = true; turnPhase = "starting" }
+        var acceptedTurn = false
+        try {
+        rpc("control.acquire", JSONObject().put("sessionId", origin))
+        if(token.cancelled || selected != origin) { rpc("control.release", JSONObject().put("sessionId", origin)); return@action }
         if (text.startsWith('/')) {
-            val origin = selected
             var accepted = false
             var released = false
             try {
                 val result = rpc("commands.run", JSONObject().put("sessionId", origin).put("command", text))
                 if(result is JSONObject) {
                     accepted = result.optBoolean("accepted")
+                    acceptedTurn = accepted
                     if(!accepted) { rpc("control.release", JSONObject().put("sessionId", origin)); released = true }
                     handleCommandResult(text, result)
                 }
                 else messages = messages + ChatItem(java.util.UUID.randomUUID().toString(), "tool", text, result.toString())
-                if(draft == text) draft = ""
+                if(selected == origin && draft == text) draft = ""
             } finally { if(!accepted && !released) rpc("control.release", JSONObject().put("sessionId", origin)) }
         } else {
             try {
-                rpc("turns.start", JSONObject().put("sessionId", selected).put("prompt", text.ifBlank { "请分析附件。" }).put("attachmentIds", JSONArray(attachments.map { it.getString("id") })))
-                busy = true; attachments = emptyList(); if(draft == text) draft = ""
-            } catch(error: Exception) { rpc("control.release", JSONObject().put("sessionId", selected)); throw error }
+                token.dispatched = true
+                val result = rpc("turns.start", JSONObject().put("sessionId", origin).put("prompt", text.ifBlank { "请分析附件。" }).put("executionId", token.executionId).put("attachmentIds", JSONArray(inputAttachments.map { it.getString("id") }))) as? JSONObject
+                token.started.complete(result)
+                acceptedTurn = result?.optBoolean("accepted", true) != false
+                if(selected == origin && token.generation == connectionGeneration && acceptedTurn && !token.terminal) {
+                    if(token.executionId !in settledExecutions) { busy = true; turnPhase = if(token.cancelled) "stopping" else "running" }
+                    acknowledgeSend(token)
+                }
+            } catch(error: Exception) { if(!token.terminal) { if(token.generation == connectionGeneration) runCatching { rpc("control.release", JSONObject().put("sessionId", origin)) }; throw error } }
+        }
+        } finally {
+            token.started.complete(null)
+            if(pendingSend === token) pendingSend = null
+            if(!acceptedTurn && selected == origin && token.generation == connectionGeneration) settleExecution(token.executionId)
         }
     }
-    fun stop() = action { rpc("control.acquire", JSONObject().put("sessionId", selected)); rpc("turns.cancel", JSONObject().put("sessionId", selected)) }
+    fun stop() {
+        if(!busy || !canControl || stopJob?.isActive == true) return
+        val origin = selected; val generation = connectionGeneration; val pending = pendingSend
+        val execution = activeExecution.ifBlank { pending?.executionId.orEmpty() }
+        pending?.cancelled = true; stopRequested = execution; stopping = true; turnPhase = "stopping"
+        stopJob = viewModelScope.launch {
+            try {
+                withTimeout(15000) {
+                    rpc("control.acquire", JSONObject().put("sessionId", origin))
+                    val params = JSONObject().put("sessionId", origin).apply { if(execution.isNotBlank()) put("executionId", execution) }
+                    var result = rpc("turns.cancel", params) as? JSONObject
+                    if(result?.optBoolean("cancelled") != true && pending?.dispatched == true) {
+                        val started = kotlinx.coroutines.selects.select<JSONObject?> {
+                            pending.started.onAwait { it }
+                            pending.finished.onAwait { JSONObject().put("settled", true) }
+                        }
+                        if(started?.optBoolean("settled") == true) result = JSONObject().put("running", false).put("cancelled", true)
+                        else if(started != null && started.optBoolean("accepted", true) && generation == connectionGeneration) result = rpc("turns.cancel", params) as? JSONObject
+                    }
+                    if(selected == origin && generation == connectionGeneration && result != null && (activeExecution.isBlank() || activeExecution == execution)) observeTurnState(result)
+                }
+            } catch(error: TimeoutCancellationException) {
+                if(selected == origin && generation == connectionGeneration && execution !in settledExecutions) { stopRequested = ""; stopping = false; turnPhase = "running"; notice = "停止请求尚未确认，任务可能仍在运行。请检查连接后再次点击停止。" }
+            } catch(error: CancellationException) { throw error }
+            catch(error: Exception) {
+                if(selected == origin && generation == connectionGeneration && execution !in settledExecutions) { stopRequested = ""; stopping = false; turnPhase = "running"; notice = "停止尚未确认，任务可能仍在运行。${remoteErrorMessage(error, api?.relay == false)} 可再次点击停止。" }
+            }
+        }
+    }
     fun answer(id: String, value: Any) = action { rpc("approvals.resolve", JSONObject().put("sessionId", selected).put("id", id).put("answer", value)) }
     fun takeControl() = action { rpc("control.acquire", JSONObject().put("sessionId", selected).put("takeover", true)); controlElsewhere = false }
     private fun applySelection(value: JSONObject) {
@@ -947,7 +1058,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         notice = if(settings.optJSONObject("_diagnostics")?.optBoolean("toolsBlocked") == true) "渠道已保存，但设备配置仍有错误；修正后才能恢复执行。" else "渠道已保存并立即生效"; backSheet()
     }
     fun loadExtensions() = action { extensions = rpc("extensions.list") as JSONObject; sheet = "extensions" }
-    fun leaveChat() { polling?.cancel(); selected = ""; messages = emptyList(); contextUsage = JSONObject(); persistedSteps = emptySet(); persistedUserTurns = emptySet(); approvals = emptyList(); attachments = emptyList(); draft = ""; historyHasMore = false; historyBefore = ""; busy = false }
+    fun leaveChat() { polling?.cancel(); selected = ""; messages = emptyList(); contextUsage = JSONObject(); persistedSteps = emptySet(); persistedUserTurns = emptySet(); approvals = emptyList(); attachments = emptyList(); draft = ""; historyHasMore = false; historyBefore = ""; busy = false; stopping = false; turnPhase = "idle"; activeExecution = ""; stopRequested = ""; pendingSend = null; stopJob = null }
     fun disconnect() { connectionGeneration++; sshRecovery?.cancel(); sshHeartbeat?.cancel(); deviceEvents?.cancel(); deviceNotice?.cancel(); manualDisconnect = true; leaveChat(); clearDeviceSelection(); ssh?.close(); ssh = null; selectedSsh = ""; vault.clear("active-ssh:${accountScope()}"); api = gatewayApi ?: api?.takeIf { it.relay }; api?.device = ""; connected = false; deviceName = "未连接设备"; sessions = emptyList(); commands = emptyList() }
     fun logout() = action {
         cancelLogin()

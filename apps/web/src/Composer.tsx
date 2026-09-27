@@ -67,6 +67,7 @@ export function Composer({
   commands,
   onSend,
   onStop,
+  stopping = false,
   onPanel,
   onMode,
   onModel,
@@ -89,6 +90,7 @@ export function Composer({
   commands: Item[];
   onSend: () => void;
   onStop: () => void;
+  stopping?: boolean;
   onPanel: (panel: string) => void;
   onMode?: (mode: string) => void;
   onModel?: (selection: { provider: string; model: string }) => void;
@@ -573,8 +575,8 @@ export function Composer({
             <button
               type="button"
               className="send"
-              aria-label="停止"
-              disabled={readOnly}
+              aria-label={stopping ? '正在停止' : '停止'}
+              disabled={readOnly || stopping}
               onClick={onStop}
             >
               <Icon name="stop" size={16} />

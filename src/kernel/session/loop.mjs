@@ -52,6 +52,7 @@ import { requestContextBudget } from './context-budget.mjs'
 import { promptReport } from './prompt-report.mjs'
 import { createProgressGuard } from './progress-guard.mjs'
 import { resolveModelCapabilities } from '../provider/model-catalog.mjs'
+import { isCancellation } from '../../abort.mjs'
 
 // 每条 tool_result 进入活动上下文的字符上限。0.6.3 之前是硬编码 3000 ——
 // 一个 268 行的普通源文件有 12494 字符，模型只能看到四分之一，而且不知道
@@ -318,6 +319,7 @@ async function processTurnLoopInRuntime({
   steerSource = null
 }) {
   assertExecutableConfiguration(configState)
+  signal?.throwIfAborted()
   const cwd = runtimeCwd()
   const extensionPolicy = resolveExtensionPolicy(configState)
   await initHookBus(cwd, extensionPolicy.config, {
@@ -495,6 +497,7 @@ async function processTurnLoopInRuntime({
   let totalContinueCount = 0
   let nudgeCount = 0
   let finalReply = ""
+  let interruptedReply = ''
   // 渲染流（阶段 3a）：用户可见输出纯化为数据事件；旧 output 字节轨经
   // 前端登记的渲染器驱动（双轨期，见 session/render-stream.mjs 头注释）。
   const render = createRenderStream({
@@ -506,6 +509,7 @@ async function processTurnLoopInRuntime({
   })
   try {
     for (let step = 1; step <= maxSteps; step++) {
+      signal?.throwIfAborted()
       await markTurnInProgress(sessionId, turnId, step, recoveryEnabled)
       // 插话在 step 边界送达：写进会话后，下面 getConversationHistory 自然带上，
       // 本 step 的模型请求就能看到。放在这里而不是工具执行中间，是因为消息序
@@ -670,7 +674,10 @@ async function processTurnLoopInRuntime({
       const stepRequestContext = createRequestContext({ traceId: turnTraceContext.traceId })
 
       let response
+      const textParts = [], thinkingParts = []
+      let streamUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
       try {
+        signal?.throwIfAborted()
         const chunks = requestProviderStream({
           configState,
           providerType,
@@ -690,11 +697,8 @@ async function processTurnLoopInRuntime({
           signal,
           compaction: useNativeCompaction ? { trigger: nativeCompactionTrigger } : null
         })
-        const textParts = []
-        const thinkingParts = []
         const streamToolCalls = []
         let streamProviderState = null
-        let streamUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
         let streamContextUsage = null
         let streamStopReason = "end_turn"
         ;(/** @type {(step: number) => void} */ (render.beginStep))(step)
@@ -749,6 +753,17 @@ async function processTurnLoopInRuntime({
           providerState: streamProviderState
         }
       } catch (error) {
+        if (isCancellation(error, signal)) {
+          interruptedReply = textParts.join('')
+          const reasoning = thinkingParts.join('')
+          // Preserve only completed text/reasoning chunks, never unfinished
+          // tool calls or provider continuation IDs from an aborted response.
+          const partial = [...(reasoning ? [{ type: 'reasoning', text: reasoning }] : []), ...(interruptedReply ? [{ type: 'text', text: interruptedReply }] : [])]
+          if (partial.length) await appendMessage(sessionId, 'assistant', partial, { mode, model, providerType, step, turnId, interrupted: true })
+          addUsage(usage, streamUsage)
+          addModelUsage(modelUsage, providerType, model, streamUsage)
+          throw error
+        }
         if (error.needsCompaction) {
           await EventBus.emit({ type: EVENT_TYPES.SESSION_COMPACTING, sessionId, turnId, payload: {} })
           const compactResult = await compactSession({
@@ -1412,6 +1427,9 @@ async function processTurnLoopInRuntime({
         synthetic: true,
         artifactRefs: [...callResults.values()].flatMap(entry => trustedArtifactRefs(entry.result))
       })
+      // Keep tool_use/tool_result pairs and uncertain-effect receipts durable,
+      // then stop before any continuation or new provider request.
+      signal?.throwIfAborted()
 
       const progress = progressGuard.observe(response.toolCalls.map(call => callResults.get(call.id)).filter(Boolean).map(entry => {
         const refs = trustedArtifactRefs(entry.result)
@@ -1477,23 +1495,26 @@ async function processTurnLoopInRuntime({
       planHandoff
     }
   } catch (error) {
-    await markSessionStatus(sessionId, "error")
+    const cancelled = isCancellation(error, signal)
+    const errorMessage = error?.message || (cancelled ? 'Operation cancelled' : String(error))
+    await markSessionStatus(sessionId, cancelled ? 'active' : 'error')
     await markTurnFinished(sessionId, recoveryEnabled)
     if (recoveryEnabled) {
       await updateSession(sessionId, {
         retryMeta: {
           inProgress: false,
           turnId,
-          failedAt: Date.now(),
-          error: error.message
+          ...(cancelled ? { interruptedAt: Date.now(), error: null } : { failedAt: Date.now(), error: errorMessage })
         }
       })
     }
+    if (cancelled) await appendPart(sessionId, { type: 'turn-cancelled', messageId: userMessage.id, turnId, reason: 'user_cancel', filesReverted: false })
+    render.close()
     await EventBus.emit({
       type: EVENT_TYPES.TURN_ERROR,
       sessionId,
       turnId,
-      payload: { error: error.message }
+      payload: { error: errorMessage, ...(cancelled ? { cancelled: true } : {}) }
     })
     // 与 TURN_FINISH 同一条终态闸：失败路径之后同样不得再有流式事件
     render.close()
@@ -1503,8 +1524,9 @@ async function processTurnLoopInRuntime({
       // reply 的 "provider error: " 前缀不能动：background-worker 等文本消费方
       // 在匹配它（background-worker.mjs 的 silent provider error 探测）。
       // 结构化失败走 error 字段 —— turn.result 据此给 status: "failed"。
-      reply: `provider error: ${error.message}`,
-      error: error.message,
+      reply: `provider error: ${errorMessage}`,
+      error: errorMessage,
+      ...(cancelled ? { cancelled: true, partialReply: interruptedReply, stopReason: 'cancelled' } : {}),
       emittedText: emittedAnyText,
       context: lastContextMeter,
       usage,

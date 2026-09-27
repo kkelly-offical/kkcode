@@ -4,6 +4,7 @@ import DOMPurify from "dompurify";
 import { Icon, type IconName } from "./Icon";
 import { toolPresentation } from "./transcript.mjs";
 import { browserLink } from './source-links.mjs';
+import { ThinkingDots } from './ThinkingDots';
 
 type Item = Record<string, any>;
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, value => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[value]!);
@@ -98,23 +99,24 @@ export function ToolRow({ payload }: { payload: Item }) {
     </details>
   );
 }
-export function ThinkingRow({ row, initiallyExpanded = false, onExpanded }: { row: Item; initiallyExpanded?: boolean; onExpanded?: (expanded: boolean) => void }) {
+export function ThinkingRow({ row, initiallyExpanded = false, onExpanded, active = true, stopping = false }: { row: Item; initiallyExpanded?: boolean; onExpanded?: (expanded: boolean) => void; active?: boolean; stopping?: boolean }) {
   const [expanded, setExpanded] = useState(initiallyExpanded);
   const [now, setNow] = useState(Date.now());
+  const running = !row.done && active && !stopping;
   useEffect(() => {
-    if (!row.done) {
+    if (running) {
       const interval = setInterval(() => setNow(Date.now()), 1000);
       return () => clearInterval(interval);
     }
-  }, [row.done]);
+  }, [running]);
   const duration =
     row.durationMs ?? (!row.done && row.timestamp ? now - row.timestamp : null);
   return (
     <details className="thinking-row" open={expanded} onToggle={event => { const open = event.currentTarget.open; setExpanded(open); onExpanded?.(open); }}>
       <summary>
-        {!row.done && <i className="working" />}
+        {running && <ThinkingDots />}
         <span>
-          Thinking
+          {stopping && !row.done ? '正在停止' : 'Thinking'}
           {duration != null
             ? ` · ${Math.max(0, Math.floor(duration / 1000))} 秒`
             : ""}
@@ -144,7 +146,8 @@ function MediaPreview({ row, loadPreview }: { row: Item; loadPreview?: (referenc
     {error && <p className="sheet-error">{error} <button onClick={() => void open()}>重试</button></p>}
   </details>;
 }
-export function TranscriptRow({ row, loadPreview, onRewind, thinkingExpanded, onThinkingExpanded }: { row: Item; loadPreview?: (reference: Item) => Promise<Item>; onRewind?: (row: Item) => void; thinkingExpanded?: boolean; onThinkingExpanded?: (expanded: boolean) => void }) {
+export function TranscriptRow({ row, loadPreview, onRewind, thinkingExpanded, onThinkingExpanded, active = true, stopping = false, onResume }: { row: Item; loadPreview?: (reference: Item) => Promise<Item>; onRewind?: (row: Item) => void; thinkingExpanded?: boolean; onThinkingExpanded?: (expanded: boolean) => void; active?: boolean; stopping?: boolean; onResume?: () => void }) {
+  if (row.type === 'cancelled') return <div className="turn-cancelled" role="status"><span>已停止。已收到的内容和文件改动已保留。</span>{onResume && <button type="button" onClick={onResume}>继续</button>}</div>;
   if (row.type === 'run-summary') return <details className="tool-row run-summary">
     <summary><Icon name="chevron" size={14} /><span>{row.durationMs != null ? `已运行 ${Math.floor(row.durationMs / 1000)} 秒` : '运行过程已完成'}{row.tools ? ` · ${row.tools} 次工具调用` : ''}</span></summary>
     <div className="run-summary-body">{row.rows.map((child: Item) => <TranscriptRow key={child.id} row={child} loadPreview={loadPreview} />)}</div>
@@ -152,7 +155,7 @@ export function TranscriptRow({ row, loadPreview, onRewind, thinkingExpanded, on
   if (row.type === "tool") return <ToolRow payload={row.payload} />;
   if (row.type === "media") return <MediaPreview row={row} loadPreview={loadPreview} />;
   if (row.type === "review") return <details className="tool-row review-row"><summary>{!row.done && <i className="working" />}<Icon name="shield" size={17} /><span>Auto 审查 · {row.tool} · {row.done ? ({ allow: "允许", deny: "拒绝", ask: "交给你确认" } as Item)[row.decision] || "已完成" : "进行中"}</span></summary><div className="tool-body"><p>{row.text}</p>{row.model && <small>对话模型：{row.model}</small>}</div></details>;
-  if (row.type === "thinking") return <ThinkingRow row={row} initiallyExpanded={thinkingExpanded} onExpanded={onThinkingExpanded} />;
+  if (row.type === "thinking") return <ThinkingRow row={row} initiallyExpanded={thinkingExpanded} onExpanded={onThinkingExpanded} active={active} stopping={stopping} />;
   if (row.type === "compacted")
     return (
       <div className="context-divider">

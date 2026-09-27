@@ -259,6 +259,8 @@ export async function executeTurn({
   assertExecutableConfiguration(configState)
   ensureEventSinks()
 
+  signal?.throwIfAborted()
+
   const resolvedProviderType = providerType || configState.config.provider.default
   const agent = resolveAgentForMode(mode)
   const extensionPolicy = resolveExtensionPolicy(configState)
@@ -270,6 +272,7 @@ export async function executeTurn({
   await SkillRegistry.initialize(extensionPolicy.config, runtimeCwd(), {
     allowProjectSources: extensionPolicy.allowProjectSources
   })
+  signal?.throwIfAborted()
   // Auto-name session from first user prompt (truncated to 50 chars)
   const autoTitle = typeof prompt === "string"
     ? normalizeTitle(prompt.replace(/\s+/g, ' '))
@@ -392,6 +395,7 @@ export async function executeTurn({
     // turn.result 的 status: "failed"；budget 阻断分支不转发 —— blocked
     // 是独立终态，error 只在 failed 时非 null（契约 §3.1）。
     error: turn.error || null,
+    ...(turn.cancelled ? { cancelled: true, partialReply: turn.partialReply || '', stopReason: 'cancelled' } : {}),
     emittedText: turn.emittedText,
     context: turn.context,
     tokenMeter: { ...meter, estimated: estimated || costInfo.unknown },

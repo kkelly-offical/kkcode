@@ -26,6 +26,7 @@ import { publicMcpSummary } from './mcp-status.mjs'
 import { DeviceArtifacts, ARTIFACT_FEATURE, ARTIFACT_READ_METHODS } from './artifacts.mjs'
 import { DeviceMemory, MEMORY_FEATURE, MEMORY_READ_METHODS } from './memory.mjs'
 import { DeviceRuns, RUN_FEATURE, RUN_READ_METHODS } from './runs.mjs'
+import { awaitAbortable, isCancellation } from '../abort.mjs'
 
 const idPattern = /^[A-Za-z0-9_-]{1,128}$/
 function sessionSelection(config, session, p, sessionId, allowUnconfigured = false) {
@@ -103,14 +104,17 @@ export class DeviceService extends EventEmitter {
       const sessionId = options.sessionId || newSessionId(), existing = this.turns.get(sessionId)
       if (existing && existing.controller.signal === options.signal) return execute(options)
       if (existing) return Promise.reject(new ProtocolError('turn_busy', 'Another client is already running this session', 409))
-      const controller = new AbortController(), entry = { controller, origin: 'terminal', client: 'local', turnId: randomUUID() }
+      const controller = new AbortController(), entry = { controller, origin: 'terminal', client: 'local', turnId: randomUUID(), phase: 'starting' }
       const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal
       entry.signal = signal
       this.turns.set(sessionId, entry); this.leases.set(sessionId, { client: 'local', until: Date.now() + 60000 })
-      entry.promise = Promise.resolve().then(() => execute({ ...options, sessionId, signal }))
-        .then(async result => { await this.record({ type: 'turn.result', sessionId, turnId: result.turnId || entry.turnId, payload: result }); return result })
-        .catch(async error => { await this.record({ type: 'turn.failed', sessionId, turnId: entry.turnId, payload: { error: error.message } }); throw error })
-        .finally(() => this.finishTurn(sessionId, entry))
+      entry.promise = Promise.resolve().then(async () => {
+        let result, error
+        try { signal.throwIfAborted(); result = await execute({ ...options, sessionId, signal }) } catch (cause) { error = cause }
+        await this.settleTurn(sessionId, entry, { result, error })
+        if (error) throw error
+        return result
+      })
       return entry.promise
     }
     // Both public kernel entry points must participate in the same turn broker.
@@ -118,15 +122,34 @@ export class DeviceService extends EventEmitter {
     this.detachKernels.push(() => { unsubscribe(); kernel.executeTurn = originalExecute; if (kernel.turns) kernel.turns.executeTurn = originalTurnsExecute; kernel.prompts.permission.setPermissionPromptInterceptor(null); kernel.prompts.question.setQuestionPromptInterceptor(null) })
   }
   finishTurn(sessionId, entry) {
-    if (this.turns.get(sessionId) === entry) this.turns.delete(sessionId)
+    if (this.turns.get(sessionId) !== entry) return
+    this.turns.delete(sessionId)
     if (this.leases.get(sessionId)?.client === entry.client) this.leases.delete(sessionId)
     for (const approval of [...this.approvals.values()]) if (approval.sessionId === sessionId) this.resolveApproval(approval.id, approval.kind === 'permission' ? 'deny' : {})
     if (!this.closed) this.emitDeviceEvent('session.status', { sessionId })
+  }
+  async settleTurn(sessionId, entry, { result, error, release } = {}) {
+    let cleanupFailed = false
+    try { await release?.() } catch (cause) { error = cause; cleanupFailed = true }
+    const cancelled = !cleanupFailed && (isCancellation(error, entry.signal || entry.controller.signal) || result?.cancelled)
+    // Only advertise a terminal outcome after resources/control are released.
+    // A listener can immediately start the next turn without racing old cleanup.
+    this.finishTurn(sessionId, entry)
+    const payload = cancelled
+      ? { cancelled: true, reply: result?.partialReply || '', reason: 'user_cancel', filesReverted: false }
+      : error ? { error: error.message } : result || {}
+    return this.record({ type: cancelled ? 'turn.cancelled' : error ? 'turn.failed' : 'turn.result', sessionId,
+      turnId: result?.turnId || entry.kernelTurnId || entry.turnId, payload: { ...payload, executionId: entry.turnId, settled: true } })
   }
   async record(event) {
     if (this.closed) return
     if (event.type === 'mcp.loaded') return this.emitDeviceEvent('mcp.loaded', publicMcpSummary(event.payload))
     if (!event.sessionId || !idPattern.test(event.sessionId)) return
+    const current = this.turns.get(event.sessionId)
+    const entry = !event.payload?.executionId || event.payload.executionId === current?.turnId ? current : null
+    if (entry && event.type === 'turn.start') { entry.kernelTurnId = event.turnId; if (entry.phase !== 'stopping') entry.phase = 'running' }
+    if (entry && ['turn.finish', 'turn.error'].includes(event.type) && entry.phase !== 'stopping') entry.phase = 'finishing'
+    if (entry) event = { ...event, payload: { ...event.payload, executionId: entry.turnId, ...(['turn.finish', 'turn.error'].includes(event.type) ? { settling: true } : {}) } }
     this.sessionTree.observe(event)
     const row = await this.liveView.record(event, item => this.replay.append(item))
     this.emit('event', row)
@@ -140,9 +163,11 @@ export class DeviceService extends EventEmitter {
   /** Live control/running snapshot for one session. Pure read: no lease renewal. */
   sessionState(sessionId, principal = { id: 'local', client: 'local' }) {
     const lease = this.leases.get(sessionId)
+    const entry = this.turns.get(sessionId)
     let pendingApprovalCount = 0
     for (const approval of this.approvals.values()) if (approval.sessionId === sessionId) pendingApprovalCount++
-    return { running: this.turns.has(sessionId), control: lease && lease.until > Date.now() ? { yours: lease.client === principal.client, until: lease.until } : null, pendingApprovalCount }
+    return { running: Boolean(entry), turnState: entry ? { executionId: entry.turnId, phase: entry.controller.signal.aborted || entry.signal?.aborted ? 'stopping' : entry.phase || 'running' } : null,
+      control: lease && lease.until > Date.now() ? { yours: lease.client === principal.client, until: lease.until } : null, pendingApprovalCount }
   }
   /** The events.list envelope. Watching a session (polling or SSE) renews the
    * caller's lease; acquiring control still requires control.acquire. */
@@ -277,7 +302,7 @@ export class DeviceService extends EventEmitter {
       const snapshot = await this.liveView.snapshot(sessionId, {
         readCursor: () => this.replay.read(sessionId, 0, 1),
         readCanonical: () => getSession(sessionId),
-        project: data => ({ ...sessionView(data, { before: p.before, limit: p.limit }), running: this.turns.has(sessionId) }),
+        project: data => ({ ...sessionView(data, { before: p.before, limit: p.limit }), ...this.sessionState(sessionId, principal) }),
         includeLive: !p.before
       })
       if (!snapshot) throw new ProtocolError('session_missing', 'This conversation no longer exists; return to the session list', 404)
@@ -405,31 +430,47 @@ export class DeviceService extends EventEmitter {
       if (!a || a.sessionId !== p.sessionId) throw new ProtocolError('approval_session_mismatch', 'Approval does not belong to this session', 403)
       return this.resolveApproval(p.id, p.answer)
     }
-    if (method === 'turns.cancel') { this.lease(sessionId, principal); this.turns.get(sessionId)?.controller.abort(); return { cancelled: true } }
+    if (method === 'turns.cancel') {
+      const entry = this.turns.get(sessionId)
+      if (!entry) return { cancelled: false, running: false, turnState: null }
+      this.lease(sessionId, principal)
+      if (p.executionId !== undefined && p.executionId !== entry.turnId) throw new ProtocolError('turn_changed', '原回合已结束，未中止新回合。请刷新当前会话状态。', 409)
+      if (entry.phase !== 'stopping') {
+        entry.phase = 'stopping'
+        const recorded = this.record({ type: 'turn.stopping', sessionId, turnId: entry.kernelTurnId || entry.turnId, payload: { executionId: entry.turnId } })
+        entry.controller.abort()
+        await recorded
+      }
+      return { cancelled: true, ...this.sessionState(sessionId, principal) }
+    }
     if (method === 'turns.start') {
       if (this.configurationUpdating || this.workspaceMutation) throw new ProtocolError('configuration_busy', 'Device configuration or Git branch is changing; retry after it completes', 409)
       this.lease(sessionId, principal)
       if (this.sessionTransitions.has(sessionId) || this.commandSessions.has(sessionId) && this.commandContext.getStore()?.sessionId !== sessionId) throw new ProtocolError('session_busy', 'A session command or configuration transition is in progress', 409)
       if (this.turns.has(sessionId)) throw new ProtocolError('turn_busy', 'A turn is already running', 409)
       if (typeof p.prompt !== 'string' || !p.prompt.trim() || p.prompt.length > 200000) throw new ProtocolError('invalid_prompt', 'Prompt must contain 1–200000 characters')
-      const controller = new AbortController(), turnId = randomUUID()
-      const entry = { controller, turnId, origin: 'remote', client: principal.client }; this.turns.set(sessionId, entry)
+      if (p.executionId !== undefined && (typeof p.executionId !== 'string' || !idPattern.test(p.executionId))) throw new ProtocolError('invalid_turn', '回合标识无效，请重试。')
+      const controller = new AbortController(), turnId = p.executionId || randomUUID()
+      const entry = { controller, turnId, origin: 'remote', client: principal.client, phase: 'starting' }; this.turns.set(sessionId, entry)
       let attachmentInput
       try {
       const session = await getSession(sessionId)
       if (!session) throw new ProtocolError('session_missing', 'Session not found', 404)
-      const kernel = await this.kernel(session.session.cwd || this.cwd)
+      controller.signal.throwIfAborted()
+      await this.record({ type: 'turn.preparing', sessionId, turnId, payload: { executionId: turnId } })
+      const kernel = await awaitAbortable(this.kernel(session.session.cwd || this.cwd), controller.signal)
       if (session.session.archived) throw new ProtocolError('session_archived', 'Restore this archived conversation before continuing', 409)
       if (!session.messages.length && ['New session', '新对话', ''].includes(session.session.title || '')) await kernel.sessions.updateSessionIf(sessionId, { title: session.session.title, titleRevision: session.session.titleRevision, titleSource: session.session.titleSource }, { title: normalizeTitle(p.prompt.trim().replace(/\s+/g, ' ')) })
       const config = kernel.configState.config, selection = this.commandStates.get(sessionId) || session.session
       const providerType = p.provider || selection.providerType || config.provider.default
-      if (!Object.hasOwn(config.provider, providerType) || !config.provider[providerType] || typeof config.provider[providerType] !== 'object') { this.turns.delete(sessionId); throw new ProtocolError('unknown_provider', 'Unknown provider') }
+      if (!Object.hasOwn(config.provider, providerType) || !config.provider[providerType] || typeof config.provider[providerType] !== 'object') throw new ProtocolError('unknown_provider', 'Unknown provider')
       const mode = p.mode ? modeIdFromLegacy(p.mode) : resolveSessionMode(selection)
-      if (!mode) { this.turns.delete(sessionId); throw new ProtocolError('invalid_mode', 'Unknown mode') }
+      if (!mode) throw new ProtocolError('invalid_mode', 'Unknown mode')
       const state = structuredClone(kernel.configState)
       state.config.permission.level = approvalOf(mode)
       state.config.permission.auto_review = ['auto', 'ultra'].includes(mode)
       attachmentInput = await this.attachments.resolve({ sessionId, ids: p.attachmentIds || [], prompt: p.prompt })
+      controller.signal.throwIfAborted()
       const model = p.model || selection.model || config.provider[providerType]?.default_model
       const media = (attachmentInput.contentBlocks || []).filter(block => ['image', 'audio', 'video'].includes(block.type))
       if (media.length) {
@@ -441,18 +482,27 @@ export class DeviceService extends EventEmitter {
       let skillAllowedTools = null
       if (p.skill !== undefined) {
         if (typeof p.skill !== 'string' || p.skill.length > 256) throw new ProtocolError('invalid_skill', 'Invalid skill name')
-        await kernel.bootExtensions()
+        await awaitAbortable(kernel.bootExtensions(), controller.signal)
         const skill = kernel.extensions.skills.get(p.skill)
         if (!skill || skill.userInvocable === false) throw new ProtocolError('invalid_skill', 'Skill is not user-invocable')
         skillAllowedTools = skill.allowedTools || null
       }
+      controller.signal.throwIfAborted()
       await kernel.events.emit({ type: 'remote.turn.started', sessionId, payload: { prompt: p.prompt, client: principal.client } })
-      entry.promise = kernel.executeTurn({ prompt: p.prompt, contentBlocks: attachmentInput.contentBlocks, sessionId, mode: laneOf(mode), model, providerType, configState: state, signal: controller.signal, toolContext: { skillAllowedTools } })
-        .then(result => this.record({ type: 'turn.result', sessionId, turnId: result.turnId || turnId, payload: result }))
-        .catch(error => this.record({ type: 'turn.failed', sessionId, turnId, payload: { error: error.message } }))
-        .finally(async () => { try { await attachmentInput.release() } finally { this.finishTurn(sessionId, entry) } })
-      return { accepted: true, turnId }
-      } catch (error) { try { await attachmentInput?.release() } finally { this.finishTurn(sessionId, entry) }; throw error }
+      entry.promise = Promise.resolve().then(() => {
+        controller.signal.throwIfAborted()
+        return kernel.executeTurn({ prompt: p.prompt, contentBlocks: attachmentInput.contentBlocks, sessionId, mode: laneOf(mode), model, providerType, configState: state, signal: controller.signal, toolContext: { skillAllowedTools } })
+      }).then(result => this.settleTurn(sessionId, entry, { result, release: () => attachmentInput.release() }), error => this.settleTurn(sessionId, entry, { error, release: () => attachmentInput.release() }))
+      entry.promise.catch(() => {}) // Observed by close()/journal; never an unhandled background rejection.
+      return { accepted: true, turnId, executionId: turnId }
+      } catch (error) {
+        if (isCancellation(error, controller.signal)) {
+          await this.settleTurn(sessionId, entry, { error, release: () => attachmentInput?.release() })
+          return { accepted: false, cancelled: true, turnId, executionId: turnId }
+        }
+        try { await attachmentInput?.release() } finally { this.finishTurn(sessionId, entry) }
+        throw error
+      }
     }
     if (method.startsWith('attachments.')) {
       if (!await getSession(sessionId)) throw new ProtocolError('session_missing', 'Session not found', 404)
