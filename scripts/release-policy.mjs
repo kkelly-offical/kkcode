@@ -1,11 +1,10 @@
 /** Single release-policy source shared by local checks and the publishing job. */
 export function releaseVersionPolicy(version) {
-  // Explicit 2026-09-26 user decision: this exact source target is authorized,
-  // but publication is not. Other minor/major bumps still require a decision.
-  if (version === '1.1.6') return { version, channel: 'source-only', distTag: '', prerelease: false }
+  // 2026-09-28: the user corrected the unreleased source target back to 1.0.5.
+  // Reject the former 1.1.6 exception instead of accidentally publishing it.
   const match = typeof version === 'string' && /^1\.0\.(0|[1-9]\d*)(?:-(preview|rc)\.(0|[1-9]\d*))?$/.exec(version)
   if (!match || match[0] !== version || !Number.isSafeInteger(Number(match[1])) || (match[3] !== undefined && !Number.isSafeInteger(Number(match[3])))) {
-    throw new Error('User release policy allows legacy 1.0.x/preview.N/rc.N and the exact source-only target 1.1.6; other versions require an explicit policy change.')
+    throw new Error('User release policy allows only 1.0.x/preview.N/rc.N; other versions require an explicit policy change.')
   }
   const channel = match[2] || 'stable'
   return { version, channel, distTag: { stable: 'latest', preview: 'preview', rc: 'next' }[channel], prerelease: channel !== 'stable' }
@@ -49,7 +48,6 @@ export function validateReleaseManifests(manifest, lockfile, workspaceManifests)
 export function resolveReleaseMetadata({ version, refType, refName }) {
   const policy = releaseVersionPolicy(version)
   if (refType !== 'tag') return { publish: false, release_version: version, dist_tag: '', prerelease: false }
-  if (policy.channel === 'source-only') throw new Error('Version 1.1.6 is source-only; publication requires separate explicit authorization.')
   if (refName !== `v${version}`) throw new Error('Release tag must exactly match the validated package version with a v prefix')
   return { publish: true, release_version: version, dist_tag: policy.distTag, prerelease: policy.prerelease }
 }

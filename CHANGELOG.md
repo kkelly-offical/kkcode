@@ -1,6 +1,26 @@
 # Changelog / 更新日志
 
-## 1.1.6 — Unreleased / 仅源码维护
+## 1.0.5 — Stable / 正式版
+
+- Correct the unpublished source marker `1.1.6` back to the user-authorized
+  stable version `1.0.5`; align all four workspaces and Android `10010` while
+  retaining the existing production certificate. Reject the obsolete `1.1.6`
+  release target in the version gate; never overwrite previously published tags.
+- Ship the trusted-runtime, context/artifact/memory, SDK and extension work from
+  `1.0.5-preview.0`, with the maintenance and security corrections merged afterward.
+- Add compact 3×3 thinking animations in Web/Android, live expansion and reduced
+  motion support without changing the button layout.
+- Make stop/cleanup/continuation explicit: keep partial text and tool results,
+  bind cancellation to the intended execution, preserve drafts, and never imply rollback.
+- Fence delayed same-client control releases with per-acquisition lease IDs so
+  mode/model changes and old HTTP responses cannot discard a newer operation's control.
+- Repair configuration recovery, empty-output failure, storage/private-path and
+  attachment-reference boundaries; retain evidence-backed alert review records.
+- Keep unresolved real-model quality/recovery, GitLab and platform-isolation
+  limitations explicit. This is not the later `1.1.0` maturity milestone or an
+  automatic production deployment. See [scope and limits](docs/release-1.0.5.md).
+
+## 1.1.6 — Unpublished historical source marker / 未发行历史标记
 
 - Integrate the maintenance fixes and concise documentation candidates; align CLI,
   Web/gateway, private SDK workspaces and Android source versions to `1.1.6`.
@@ -14,7 +34,7 @@
 - The exact `1.1.6` target is source-only in release policy; tag publication is
   blocked until separately authorized. See [integration record](docs/implementation-1.1.6.md).
 
-## 1.0.5 — Unreleased preparation, superseded by 1.1.6 / 历史准备记录
+## 1.0.5 preparation — Historical (2026-09-25) / 历史准备记录
 
 - Prepare the source version as `1.0.5` across the CLI, Web/gateway, private SDK
   workspaces and Android (`10010`). No release tag, npm publication, signed APK
