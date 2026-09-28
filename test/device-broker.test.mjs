@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { DeviceService } from '../src/device/service.mjs'
 import { createPromptQueue } from '../src/repl/prompt-queue.mjs'
+import { randomUUID } from 'node:crypto'
 
 async function fixture(run) {
   const home = await mkdtemp(path.join(os.tmpdir(), 'kkcode-broker-')), previous = process.env.KKCODE_HOME
@@ -12,6 +13,23 @@ async function fixture(run) {
   const service = await new DeviceService({ cwd: home, roots: [home] }).initialize()
   try { await run(service, home) } finally { await service.close(); if (previous === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = previous; await rm(home, { recursive: true, force: true }) }
 }
+
+test('a stale release from the same client cannot erase a newer control acquisition', () => fixture(async service => {
+  const principal = { id: 'local', client: 'same-browser' }
+  const rpc = (method, params = {}, actor = principal) => service.request({ id: randomUUID(), method, params: { sessionId: 'lease-test', ...params } }, actor)
+  const first = await rpc('control.acquire')
+  const second = await rpc('control.acquire')
+  const stale = await rpc('control.release', { leaseId: first.leaseId })
+  assert.equal(stale.released, false)
+  assert.equal(typeof first.leaseId, 'string')
+  assert.notEqual(first.leaseId, second.leaseId)
+  assert.equal(service.leases.get('lease-test').leaseId, second.leaseId)
+  await assert.rejects(rpc('control.release', { leaseId: second.leaseId }, { id: 'local', client: 'other-browser' }), { code: 'control_required' })
+  assert.equal((await rpc('control.release', { leaseId: second.leaseId })).released, true)
+  assert.equal((await rpc('control.release', { leaseId: second.leaseId })).released, false)
+  await rpc('control.acquire')
+  assert.equal((await rpc('control.release')).released, true, 'legacy clients retain their existing release behavior')
+}))
 
 test('remote approval cancels the local prompt and rejects a second decision', () => fixture(async service => {
   let localSignal

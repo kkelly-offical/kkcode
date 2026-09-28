@@ -175,6 +175,15 @@ Watching a session renews the caller's control lease exactly as polling
 mode). Acquiring/releasing control still requires `control.acquire` /
 `control.release`.
 
+`control.acquire` also returns an opaque `leaseId`, fresh for each acquisition
+even by the same client. Updated clients pass that ID back to `control.release`;
+a stale ID returns `released:false` without deleting or renewing a newer lease.
+This prevents delayed mode/model/command cleanup from dropping control acquired
+by the next operation. It is a generation fence, not a credential: owner/session
+authorization and the owning client check still apply. The ID is not broadcast
+in the session-state envelope. Legacy callers may omit it, retaining the old
+unscoped behavior; they do not gain this additional race protection.
+
 Gateway session streams additionally pass through `device.online` /
 `device.offline` notifications for the owning device so a conversation page can
 show connectivity without opening a second stream.

@@ -23,14 +23,14 @@ export function BranchPanel({ rpc, sessionId, cwd, ensureSession, onChanged, onO
     setLoading(true); setError("");
     try {
       const id = sessionId || await ensureSession();
-      await rpc("control.acquire", { sessionId: id });
+      const lease = await rpc("control.acquire", { sessionId: id });
       try {
         const result = await rpc(pending.method, { sessionId: id, ...pending.params, confirmed: true, stateToken: snapshot.stateToken });
         setPending(null);
         if (pending.method === "worktrees.open") { onOpened(result.sessionId); return; }
         setSnapshot(result); setName(""); setFolder("");
         if (!pending.method.startsWith("worktrees.")) onChanged(result);
-      } finally { await rpc("control.release", { sessionId: id }).catch(() => {}); }
+      } finally { await rpc("control.release", { sessionId: id, ...(lease?.leaseId ? { leaseId: lease.leaseId } : {}) }).catch(() => {}); }
     } catch (cause: any) {
       setError(`${cause.message}。请刷新后重试；不会丢弃或暂存你的修改。`);
       setPending(null);

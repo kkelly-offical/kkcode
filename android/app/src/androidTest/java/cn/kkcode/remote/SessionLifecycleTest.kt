@@ -20,6 +20,47 @@ import org.junit.runner.RunWith
  * separate integration suites. No production identity or model is used here. */
 @RunWith(AndroidJUnit4::class)
 class SessionLifecycleTest {
+    @Test fun modeChangeCleanupCannotReleaseTheNextSendControl() = runBlocking {
+        val server = MockWebServer()
+        val acquired = java.util.concurrent.atomic.AtomicInteger()
+        val current = java.util.concurrent.atomic.AtomicReference("")
+        val releasedToken = java.util.concurrent.atomic.AtomicReference("")
+        val releaseEntered = java.util.concurrent.CountDownLatch(1)
+        val allowRelease = java.util.concurrent.CountDownLatch(1)
+        val releaseFinished = java.util.concurrent.CountDownLatch(1)
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val body = JSONObject(request.body.readUtf8()); val params = body.optJSONObject("params") ?: JSONObject()
+                val result = when(body.optString("method")) {
+                    "control.acquire" -> { val id = "lease-${acquired.incrementAndGet()}"; current.set(id); JSONObject().put("leaseId", id) }
+                    "sessions.configure" -> JSONObject().put("modeId", "auto")
+                    "control.release" -> {
+                        releasedToken.set(params.optString("leaseId")); releaseEntered.countDown()
+                        assertTrue(allowRelease.await(15, java.util.concurrent.TimeUnit.SECONDS))
+                        val released = current.compareAndSet(params.optString("leaseId"), "")
+                        releaseFinished.countDown(); JSONObject().put("released", released)
+                    }
+                    "turns.start" -> {
+                        allowRelease.countDown(); assertTrue(releaseFinished.await(15, java.util.concurrent.TimeUnit.SECONDS))
+                        assertEquals("lease-2", current.get())
+                        JSONObject().put("accepted", true).put("executionId", params.getString("executionId"))
+                    }
+                    else -> JSONObject()
+                }
+                return MockResponse().setHeader("Content-Type", "application/json").setBody(JSONObject().put("result", result).toString())
+            }
+        }
+        server.start()
+        val state = RemoteState(ApplicationProvider.getApplicationContext<Application>(), false)
+        try {
+            state.api = DeviceApi(server.url("/").toString(), "fixture-only", relay = false); state.selected = "lease-session"
+            val changing = state.selectMode("auto")
+            withTimeout(10000) { while(state.mode != "auto" || releaseEntered.count > 0) delay(10) }
+            state.send("新的请求").join(); changing.join()
+            assertEquals("lease-1", releasedToken.get()); assertEquals("lease-2", current.get()); assertTrue(state.busy)
+        } finally { allowRelease.countDown(); state.disconnect(); server.shutdown() }
+    }
+
     @Test fun cancelledTurnCanResumeBeforeItsDelayedStartAcknowledgement() = runBlocking {
         val server = MockWebServer()
         val firstAck = java.util.concurrent.CountDownLatch(1)

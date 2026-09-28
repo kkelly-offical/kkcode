@@ -2,6 +2,9 @@
 
 ## Thinking / stop recovery — 2026-09-27
 
+- PR#28 is now merged as main `98f35afd9f6fd024f281b812bc54d3a28f7d622e`, identical tree to tested `435d240`. Its one-time administrator exception is **fulfilled**, not standing authorization. All five PR verify jobs, PR CodeQL and full-branch CodeQL passed; main post-merge checks are separate. No release/deployment occurred.
+- Follow-up branch `fix/1.1.6-control-lease-fencing-20260927`: old main Web logs exposed overlapping same-client control release/acquire. Add scoped lease IDs and regressions. **New administrator permission has been asked, not assumed**; do not use PR#28's consumed exception for this follow-up.
+
 - Active user task: compact dot-matrix thinking animation in Web/Android, responsive stop and safe continuation; source remains1.1.6, no publication/deployment/live model calls. Branch `feat/1.1.6-thinking-stop-ux-20260927` starts from main `cbd0b4b` (PR#27 merged). Previous security fixes are integrated; CodeQL/Dependabot/secret scanning were all zero open at the prior handoff.
 - User explicitly grants **one-time administrator merge for this new task's PR only after all checks pass**, without changing protection rules or claiming an approving review. Previous PR#27 exception is fulfilled; this new grant is separate and not standing authority.
 - Preserve existing button layout, partial response/tool-result history and drafts. Stop is not rollback; resume is user-triggered and must inspect prior effects, not replay them. See `docs/implementation-1.1.6.md` and the additive remote stop contract. Final candidate checks and merge SHA must be verified before claiming main updated.
