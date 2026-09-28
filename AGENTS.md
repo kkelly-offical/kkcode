@@ -1,5 +1,11 @@
 # Project working memory
 
+## Stable 1.0.5 release correction — 2026-09-28
+
+- The user explicitly corrected the unreleased source target from1.1.6 to **1.0.5 stable** and requested immediate publication after preparation/verification. This supersedes the source1.1.6 and no-publication restrictions only for this exact release. Keep all workspace/lockfile/Web/CLI/Android markers at1.0.5; Android10010 retains the existing production certificate. Never publish1.1.6 or move old public tags.
+- User explicitly authorizes administrator integration of **this round's related fixes** after all checks pass, without changing protection rules or claiming approving reviews. PR#29 was merged as `f99c6ceade69c7ae84fb5e03531954f129fc3a83`, identical tree to tested `d716537`; its CI and both CodeQL runs passed. The release-preparation branch is `release/1.0.5-stable-20260928`. Do not merge unrelated PR#5/#6/#22 under this authority.
+- Scope includes stable npm `latest`, GitHub stable Release and the same-certificate Android APK/update manifest. Public gateway image publishing remains deferred; no production/demo upgrades, no new model inference or safety-rule changes. Preserve historical model failures and unresolved Issues; 1.0.5 stable is not an assertion that the1.1.0 maturity gates passed. Verify actual public downloads before claiming publication succeeded.
+
 ## Thinking / stop recovery — 2026-09-27
 
 - PR#28 is now merged as main `98f35afd9f6fd024f281b812bc54d3a28f7d622e`, identical tree to tested `435d240`. Its one-time administrator exception is **fulfilled**, not standing authorization. All five PR verify jobs, PR CodeQL and full-branch CodeQL passed; main post-merge checks are separate. No release/deployment occurred.
