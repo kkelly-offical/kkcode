@@ -2,6 +2,9 @@ import { spawn } from "node:child_process"
 import { verificationCommand } from './verification-command.mjs'
 
 const steps = [
+  // Run before expensive checks and before main integration, not only after
+  // tagging. Mirrors may not implement npm's audit API; failures must block.
+  { label: 'production dependency audit', cmd: 'npm', args: ['audit', '--registry=https://registry.npmjs.org', '--omit=dev', '--audit-level=high'] },
   { label: 'lint', cmd: 'npm', args: ['run', 'lint'] },
   // 1.0.0 阶段 4（M8 建议的 CI 常驻）：静态 import 环检测进发布门槛。
   // 边界检查（check-boundaries）已由 npm run lint 覆盖，这里不重复挂。

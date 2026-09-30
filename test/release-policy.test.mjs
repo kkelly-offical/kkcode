@@ -126,3 +126,15 @@ test('preview releases retain matrix, protected main ancestry and immutable arti
   assert.equal(github.if, "steps.release.outputs.publish == 'true'")
   assert.equal((github.run.match(/--prerelease --latest=false/g) || []).length, 2, 'both preview creation and update must avoid the Latest badge')
 })
+
+test('shared verification audits production dependencies against the official registry before expensive gates', async () => {
+  const verifier = await readFile(new URL('../scripts/release-verify.mjs', import.meta.url), 'utf8')
+  assert.match(verifier, /label: 'production dependency audit', cmd: 'npm', args: \['audit', '--registry=https:\/\/registry\.npmjs\.org', '--omit=dev', '--audit-level=high'\]/)
+  assert.ok(verifier.indexOf("label: 'production dependency audit'") < verifier.indexOf("label: 'lint'"))
+  assert.match(verifier, /code === 0 \? resolve\(\) : reject\(/, 'audit unavailability or vulnerabilities must fail closed')
+  for (const file of ['verify.yml', 'acceptance.yml']) {
+    const workflow = YAML.parse(await readFile(new URL(`../.github/workflows/${file}`, import.meta.url), 'utf8'))
+    const job = workflow.jobs[file === 'verify.yml' ? 'verify' : 'system']
+    assert.ok(job.steps.some(step => step.run === 'npm run release:verify'), `${file} must exercise the shared pre-integration gate`)
+  }
+})

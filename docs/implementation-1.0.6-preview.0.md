@@ -226,3 +226,24 @@ Web ToDo专项6/6通过；Android API36全套Compose **70/70**通过（原68项�
 测试现以任务ID和attempt等待真实事件，仍验证恰好一次；增加显式阻塞事件sink的用例，
 证明持久终态和慢订阅者可以独立观察。没有增加生产等待、延长固定睡眠或放松断言。
 后台／worker／检查点组合21/21通过，后续以新提交Windows CI结果为准。
+
+## 跨平台验收与发行依赖复查（2026-10-01）
+
+候选`346e1fb`的PR验证36752495532全部5项通过，完整enterprise验收36752531604全部12项
+通过，覆盖Linux Node22/24、Windows、macOS、严格运行时、独立工具链和六个实际Chrome／
+Edge环境。PR CodeQL36752495470与分支CodeQL36752533946各3项通过；该分支零开放告警，
+历史已裁定并关闭的结果仍然保留，没有改规则或新增dismiss。Copilot因额度不足没有完成
+本次审查，不把它算作批准。用户已明确允许最终检查通过后仅对PR#31管理员合入。
+
+创建标签之前的额外依赖复查发现：本机npm镜像没有audit接口（404，不能视作安全），
+官方源报告生产传递依赖`brace-expansion@5.0.9`存在拒绝服务漏洞。只升级该锁定条目到
+`5.0.12`，不扩大依赖范围或使用强制升级；官方生产审计归零。公告包括
+[嵌套分组栈耗尽](https://github.com/advisories/GHSA-qhr7-859c-m2p7)、
+[逗号分组栈耗尽](https://github.com/advisories/GHSA-6j4f-fj2g-mc7p)与
+[CPU消耗](https://github.com/advisories/GHSA-q2hr-2g5m-vwhr)。
+
+同时把官方生产依赖审计前移至共享`release:verify`开头，PR、完整验收、main与发行均会
+执行，审计不可用或超过既有high阈值都会失败，不再等发行标签后才发现。旧失败审计和
+修复后JSON仍保存在本机验收目录。该补丁候选需要重新执行CI，不能沿用`346e1fb`的成功
+状态；此时仍未合入main、创建标签或发布。Android源树未变，已验证的正式签名APK仍与
+同一Android源树绑定。
