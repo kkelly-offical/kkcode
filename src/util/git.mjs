@@ -1040,12 +1040,13 @@ export async function getGitInfo(repoPath) {
       statusResult,
       statusPorcelain
     ] = await Promise.all([
-      run(["rev-parse", "--abbrev-ref", "HEAD"], repoPath),
-      run(["rev-parse", "HEAD"], repoPath),
-      run(["remote", "-v"], repoPath),
-      run(["status", "--short"], repoPath),
-      run(["status", "--porcelain"], repoPath)
+      controlledRun(["rev-parse", "--abbrev-ref", "HEAD"], repoPath),
+      controlledRun(["rev-parse", "HEAD"], repoPath),
+      controlledRun(["remote", "-v"], repoPath),
+      controlledRun(["status", "--short"], repoPath),
+      controlledRun(["status", "--porcelain"], repoPath)
     ])
+    if (!statusResult.ok || !statusPorcelain.ok) return { ok: false, error: statusResult.stderr || statusPorcelain.stderr || 'controlled Git status could not be read' }
 
     // 解析远程仓库信息
     const remotes = remoteResult.ok 
@@ -1091,7 +1092,8 @@ export async function getGitInfo(repoPath) {
  * @returns {Promise<{ok: boolean, diff?: string, error?: string}>}
  */
 export async function getDiff(repoPath, target = "HEAD") {
-  const result = await run(["diff", target], repoPath)
+  if (typeof target !== 'string' || !target || target.startsWith('-')) return { ok: false, error: 'diff target must be a revision, not an option' }
+  const result = await controlledRun(["diff", target], repoPath)
   return {
     ok: result.ok,
     diff: result.ok ? result.stdout : undefined,
@@ -1106,7 +1108,7 @@ export async function getDiff(repoPath, target = "HEAD") {
  * @returns {Promise<{ok: boolean, diff?: string, error?: string}>}
  */
 export async function getStagedDiff(repoPath) {
-  const result = await run(["diff", "--staged"], repoPath)
+  const result = await controlledRun(["diff", "--staged"], repoPath)
   return {
     ok: result.ok,
     diff: result.ok ? result.stdout : undefined,

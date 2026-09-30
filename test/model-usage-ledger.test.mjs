@@ -54,7 +54,9 @@ test('real kernel turn prices conversation and explicit review separately, and a
   const provider = (route, model) => ({ type: 'openai-compatible', base_url: `${origin}/${route}/v1`, api_key_env: '', default_model: model, retry_attempts: 0 })
   await writeFile(path.join(state, 'config.json'), JSON.stringify({ provider: { default: 'main', main: provider('main', 'main-fixture'), reviewer: provider('review', 'review-fixture'), titles: provider('title', 'title-fixture') },
     models: { roles: { review: { provider: 'reviewer', model: 'review-fixture' }, title: { provider: 'titles', model: 'title-fixture' } } },
-    usage: { pricing_file: pricingFile }, permission: { level: 'accept-edits', auto_review: true }, session: { title_generation: true, recovery: false }, mcp: { auto_discover: false }, skills: { auto_seed: false } }))
+    // This fixture isolates exactly two conversation requests plus one review
+    // and title request. Completion behavior has its own runtime regressions.
+    agent: { verify_completion: false }, usage: { pricing_file: pricingFile }, permission: { level: 'accept-edits', auto_review: true }, session: { title_generation: true, recovery: false }, mcp: { auto_discover: false }, skills: { auto_seed: false } }))
   let titleFinished
   const titled = new Promise(resolve => { titleFinished = resolve })
   kernel = await createKernel({ cwd, boot: false, trustState: { trusted: true }, handlers: { onEvent: event => { if (event.type === 'session.title.updated') titleFinished() } } })

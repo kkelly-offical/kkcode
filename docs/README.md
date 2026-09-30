@@ -1,6 +1,7 @@
 # KK Code 文档
 
-当前指南统一按 **1.0.5 正式版**维护；发行说明见[本次版本](release-1.0.5.md)。
+公开稳定版为 **1.0.5**；本轮预览版本 **1.0.6-preview.0**。
+本轮范围见[Preview说明](release-1.0.6-preview.0.md)与[实施记录](implementation-1.0.6-preview.0.md)，稳定版范围见[发行说明](release-1.0.5.md)。
 已发布渠道、Android版本码与升级入口只在[版本与升级](versions.md)集中维护。
 历史材料保留原始版本和证据，不作为当前使用说明。
 
@@ -20,6 +21,7 @@
 - [Android更新](android-app-updates.md) · [Android签名与发行](android-release.md) · [登录回跳](android-gateway-login.md)
 - [Android SSH与账号设备](ssh-account-devices.md) · [目录范围与信任](remote-folder-browsing.md)
 - [跨端任务监督](task-monitoring.md) · [命令契约](remote-command-contract.md) · [SSE与同步](remote-sse-contract.md)
+- [持久待办与子代理状态](task-monitoring.md#普通会话的紧凑待办)
 - [思考动效、停止与恢复](implementation-1.1.6.md#思考动效与停止恢复2026-09-27)
 - [设备事件与容量维护](device-retention.md)
 

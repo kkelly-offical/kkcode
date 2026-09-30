@@ -30,6 +30,7 @@ export const DEVICE_METHODS = Object.freeze([
   'attachments.upload', 'attachments.list', 'attachments.remove', 'branches.list', 'branches.switch', 'branches.create', 'worktrees.list', 'worktrees.create', 'worktrees.open',
   'artifacts.list', 'artifacts.read', 'artifacts.search', 'artifacts.download', 'artifacts.pin', 'artifacts.prune',
   'memory.list', 'memory.get', 'memory.propose', 'memory.correct', 'memory.confirm', 'memory.enable', 'memory.forget', 'memory.observe', 'memory.legacy', 'memory.import',
+  'todos.list',
   'runs.list', 'runs.get', 'runs.events', 'runs.pause', 'runs.cancel', 'runs.artifacts.list', 'runs.artifacts.read', 'runs.artifacts.download'
 ])
 export class ProtocolError extends Error {

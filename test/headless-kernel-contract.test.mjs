@@ -133,8 +133,11 @@ test("headless 契约：未注入 handler 的 kernel 遇到需审批工具 → �
       "无 handler 的 headless 宿主必须收到确定性 deny 事件，而不是阻塞在 stdin 上"
     )
 
-    // 回合正常走完：工具被拒 → 模型收到拒绝结果 → 第二轮给出最终答复
+    // 拒绝结果仍保留给模型解释，但未执行的请求不会伪装为完成；
+    // 不自动追加“修复”回合诱导模型绕过用户的拒绝。
     assert.equal(result.reply, "明白了，不动文件。")
+    assert.equal(result.status, 'incomplete')
+    assert.equal(result.stopReason, 'permission-denied')
     assert.equal(result.toolEvents.length, 1)
     assert.equal(result.toolEvents[0].status, "error")
     assert.match(result.toolEvents[0].output, /permission denied/)

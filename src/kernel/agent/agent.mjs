@@ -68,6 +68,8 @@ export function listAgents({ includeHidden = false } = {}) {
 }
 
 export function resolveAgentForMode(mode) {
+  if (['agent', 'auto', 'agent-auto', 'yolo', 'code', 'coding', 'ask'].includes(mode)) return registry.get('assistant') || null
+  if (mode === 'ultra') return registry.get('longagent') || null
   if (registry.has(mode)) return registry.get(mode)
   const modeMap = { assistant: "assistant", plan: "plan", agent: "build", longagent: "longagent" }
   const mapped = modeMap[mode]
@@ -76,7 +78,7 @@ export function resolveAgentForMode(mode) {
 
 defineAgent({
   name: "assistant",
-  description: "Default CLI personal assistant for terminal-native personal work, local tasks, research, and lightweight automation",
+  description: "Complete coding, task execution, verification and delegation agent under the active approval policy",
   mode: "primary",
   permission: "full",
   tools: null
@@ -92,10 +94,10 @@ defineAgent({
 
 defineAgent({
   name: "plan",
-  description: "Read-only analysis agent, no file editing allowed",
+  description: "Read-only project exploration and scoped delegated analysis with durable session ToDo planning",
   mode: "primary",
   permission: "readonly",
-  tools: ["read", "glob", "grep", "list", "webfetch", "websearch", "question", "enter_plan", "exit_plan"]
+  tools: ["read", "glob", "grep", "list", "bash", "webfetch", "websearch", "codesearch", "sysinfo", "git_status", "git_info", "artifact_read", "artifact_search", "lsp", "question", "todo_read", "todowrite", "enter_plan", "exit_plan", "task", "task_group", "task_list", "task_output", "task_get", "agent_list", "agent_wait", "agent_followup", "agent_interrupt"]
 })
 
 defineAgent({
@@ -207,7 +209,7 @@ defineAgent({
   description: "Ultra stage 1 - Previewing Agent. Explores codebase, extracts requirements, no editing allowed.",
   mode: "subagent",
   permission: "readonly",
-  tools: ["read", "glob", "grep", "list", "bash", "question", "todowrite"]
+  tools: ["read", "glob", "grep", "list", "bash", "question", "todo_read", "todowrite"]
 })
 
 defineAgent({
@@ -216,7 +218,7 @@ defineAgent({
   description: "Ultra stage 2 - Blueprint Agent. Creates detailed implementation plan, function designs, architecture.",
   mode: "subagent",
   permission: "readonly",
-  tools: ["read", "glob", "grep", "list", "bash", "question", "todowrite"]
+  tools: ["read", "glob", "grep", "list", "bash", "question", "todo_read", "todowrite"]
 })
 
 defineAgent({

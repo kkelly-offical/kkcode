@@ -90,19 +90,19 @@ export function createPermissionEngine({ promptChannel = defaultPermissionPrompt
       risk = 0,
       reason = "",
       workspace = "",
-      // 工具自报的能力，优先于静态分类表。风险取决于参数的工具需要它 ——
-      // 例如技能：模板展开是纯提示词，可编程技能会执行任意 JS。
+      // Only allowlisted host implementations may refine their classification.
       capability = null,
+      permissionCeilings = [],
       reviewSensitive = null,
       signal = null
     }) {
       if (!workspaceTrusted) throw new PermissionError("workspace not trusted — run /trust to enable tools")
       if (signal?.aborted) throw new PermissionError('operation cancelled')
       const auditContext = { sessionId, turnId, traceId, requestId, reviewId, tool }
-      const decision = evaluatePermission({ config, tool, mode, pattern, command, risk, workspace, capability })
+      const decision = evaluatePermission({ config, tool, mode, pattern, command, risk, workspace, capability, args, permissionCeilings })
       const key = cacheKey(tool, pattern)
       const set = sessionAllow.get(sessionId)
-      if (set?.has(key) && decision.action !== 'deny' && decision.source !== 'protected_path') {
+      if (set?.has(key) && decision.action !== 'deny' && !['protected_path', 'inherited_rule'].includes(decision.source)) {
         await eventBus.emit({
           type: EVENT_TYPES.PERMISSION_DECIDED,
           sessionId,
@@ -143,7 +143,7 @@ export function createPermissionEngine({ promptChannel = defaultPermissionPrompt
       // Explicit manual rules and protected paths are not delegable to a model.
       // Automatic review grants one invocation, never a persistent capability.
       let reviewReason = ''
-      if (config.permission?.auto_review === true && decision.level === 'accept-edits' && !['protected_path', 'rule'].includes(decision.source) && typeof reviewSensitive === 'function') {
+      if (config.permission?.auto_review === true && decision.level === 'accept-edits' && !['protected_path', 'rule', 'inherited_rule'].includes(decision.source) && typeof reviewSensitive === 'function') {
         await eventBus.emit({ type: 'permission.review.started', sessionId, turnId, payload: { tool, reviewId, source: 'auto', risk } })
         let verdict
         try { verdict = await reviewSensitive({ tool, args, command, workspace, risk, reason: decision.reason || reason }) }
@@ -178,7 +178,7 @@ export function createPermissionEngine({ promptChannel = defaultPermissionPrompt
         risk,
         reason: askReason,
         signal,
-        defaultAction: reviewReason ? 'deny' : config.permission?.non_tty_default || "deny"
+        defaultAction: reviewReason || decision.source === 'inherited_rule' ? 'deny' : config.permission?.non_tty_default || "deny"
       })
       if (reply === "allow_session" || reply === "allow_always") {
         const next = sessionAllow.get(sessionId) || new Set()
@@ -186,7 +186,7 @@ export function createPermissionEngine({ promptChannel = defaultPermissionPrompt
         sessionAllow.set(sessionId, next)
 
         let persisted = false
-        if (reply === "allow_always" && persistGrantHandler) {
+        if (reply === "allow_always" && persistGrantHandler && decision.source !== 'inherited_rule') {
           try {
             persisted = Boolean(await persistGrantHandler({ tool, pattern, command, workspace }))
           } catch (err) {

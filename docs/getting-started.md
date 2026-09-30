@@ -1,6 +1,6 @@
 # 安装与首次使用
 
-[文档导航](README.md) · [版本与升级](versions.md) · 适用版本：1.0.5
+[文档导航](README.md) · [版本与升级](versions.md) · 稳定版1.0.5；Preview源码1.0.6-preview.0
 
 ## 安装已发布版本
 
@@ -42,7 +42,7 @@ kkcode remote               # 工作电脑前台远控；首次登录并确认�
 不同服务；手机不运行 Agent 内核。Android 也可直接 SSH，Web 不代理 SSH。
 详见[企业部署](enterprise-deployment.md)、[Android 更新](android-app-updates.md)。
 
-## 从源码运行1.0.5
+## 从源码运行（当前1.0.6-preview.0）
 
 ```sh
 git clone https://github.com/kkelly-offical/kkcode.git
@@ -53,7 +53,7 @@ node src/index.mjs --version
 npm start
 ```
 
-运行结果由 checkout 决定；`--version` 显示1.0.5并不独立证明npm发布已经完成。
+运行结果由 checkout 决定；`--version` 显示1.0.6-preview.0只说明源码标记，不表示npm已有该版本。
 源码中的 `npm ci` 是你在宿主执行的开发安装，不等于严格任务已支持离线 workspaces。
 不要用安装教程绕过[严格依赖环境](dependency-environments.md)的限制。
 

@@ -1,6 +1,7 @@
 # Headless JSONL 机器契约（1.0.0）
 
 状态：**1.0.0 契约面**（`turn.result` stable / `assistant.delta` experimental，见下文稳定性承诺）。
+当前源码1.0.6-preview.0未发布；本轮仅兼容追加完成检查信息，`schemaVersion`仍为`"1"`。
 适用命令：`kkcode chat --output-format json` 与 `kkcode chat --output-format stream-json`。
 单一事实源：事件类型表由代码导出（`src/cli/output-format.mjs` 的
 `HEADLESS_JSONL_EVENTS`），本页是它的说明；两者漂移时以代码为准并有测试钉住
@@ -65,7 +66,7 @@ kkcode chat "summarize this repo" --output-format json | jq -r '.content'
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `sessionId` / `turnId` | string | 会话与回合 id（可用于 `kkcode session` 系列命令回访） |
-| `status` | string | `"succeeded"` / `"failed"`（provider 级失败）/ `"blocked"`（预算阻断）/ longagent 终态 |
+| `status` | string | `"succeeded"` / `"failed"`（provider 级失败）/ `"blocked"`（预算或尚未完成的工作阻断）/ longagent 终态 |
 | `mode` / `model` | string | 实际执行航道与模型 |
 | `content` | string | 助手最终正文 |
 | `usage` | object | `{ input, output, estimated }` token 计数；`estimated` 为 true 表示估算值 |
@@ -73,6 +74,7 @@ kkcode chat "summarize this repo" --output-format json | jq -r '.content'
 | `toolResults` | array | 工具调用结果摘要 |
 | `warnings` | array | 计价/预算警告（同文本也会出现在 stderr） |
 | `error` | string \| null | 失败详情：`status` 为 `"failed"` 时是错误消息字符串，否则为 `null` |
+| `completion` | object（可选） | 开发源码兼容追加：`{state, stopReason, verification}`；真实完成原因与已有检查证据，不替代顶层状态 |
 
 **退出码、`status`、`content` 前缀三者的关系（stable）**：
 
@@ -81,6 +83,7 @@ kkcode chat "summarize this repo" --output-format json | jq -r '.content'
 | 成功 | 0 | `"succeeded"` | 助手正文 |
 | provider 级失败（超时、5xx、重试耗尽） | 非 0 | `"failed"`，`error` 带错误消息 | 以 `"provider error: "` 前缀开头的失败文本 |
 | 预算阻断 | 0 | `"blocked"` | 阻断说明 |
+| 尚未完成、待核查或步数／无进展上限 | 0 | `"blocked"` | 保留已有正文，`completion`说明停止原因与验证状态 |
 | 进程级失败（§1） | 非 0 | 无事件（stdout 零事件） | —— |
 
 - provider 级失败时 `content` 仍保留 `"provider error: "` 前缀：1.0.0 只收紧
@@ -88,6 +91,13 @@ kkcode chat "summarize this repo" --output-format json | jq -r '.content'
   不受影响。机器消费方应读 `status` 与 `error`，不要解析 `content`。
 - 失败摘要同时写 stderr（诊断通道）；stderr 文本不属于契约，机器消费方
   不得解析。
+
+开发源码的`completion.state`保留内核真实状态，`stopReason`无值时为`null`，
+`verification`没有可靠回执时为`null`。普通回合的`incomplete`／`blocked`／`unknown`
+及步数／无进展／深度限制映射到已有顶层`blocked`，不新造顶层状态枚举或更换事件版本。
+有正文、退出码0、空ToDo或“观察到检查进程”都不是完整语义验收；消费方应先读顶层
+`status`，再按需展示`completion`，并容忍新字段。JSONL仍只输出上表中的事件，
+不把三端待办进度条、`todo.updated`或子代理UI日志写进stdout。
 
 ### 3.2 `assistant.delta`（experimental）
 

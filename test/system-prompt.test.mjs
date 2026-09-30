@@ -38,9 +38,9 @@ test("system prompt assembles stable tool and skill blocks", async () => {
   assert.doesNotMatch(prompt.text, /# Brief Writing Rules/)
   assert.match(prompt.text, /CLI Assistant Contract/)
   assert.match(prompt.text, /# Mode Contract/)
-  assert.match(prompt.text, /`plan`: produce a spec\/plan only; do not execute file mutations/i)
-  assert.match(prompt.text, /longagent.*staged multi-file delivery lane/i)
-  assert.match(prompt.text, /CLI-first personal assistant/)
+  assert.match(prompt.text, /`plan`: read-only project exploration.*durable session ToDo state; never mutate project files/i)
+  assert.match(prompt.text, /longagent.*durable staged orchestration/i)
+  assert.match(prompt.text, /complete coding and task execution agent/)
   assert.match(prompt.text, /Agent modes as the default lane/i)
   // the approval level is what separates Agent / Agent · Auto / YOLO, and the
   // model must not treat a wider mode as pre-approval for edits

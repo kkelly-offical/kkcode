@@ -29,7 +29,7 @@ function taskProperties() {
     isolation: { type: "string", enum: ["default", "worktree"], description: "execution isolation for delegated work" },
     allow_question: { type: "boolean", description: "allow question tool during delegated run; foreground only" },
     planned_files: { type: "array", items: { type: "string" }, description: "planned files for this task" },
-    budget_usd: { type: "number", description: "hard USD ceiling for this delegation; the subagent aborts when its own spend crosses it" },
+    budget_usd: { type: "number", description: "legacy delegates: per-turn operational cost estimate, not a cumulative hard reservation (finite-budget continuation is blocked); strict host task graphs: hard reserved node ceiling. Zero never grants inference authority." },
     deadline_at: { type: "number", description: "epoch-ms deadline; the subagent aborts past this timestamp" },
     group_id: { type: "string", description: "optional parallel group id for related delegated tasks (orchestration)" },
     group_label: { type: "string", description: "optional human-readable parallel group label (orchestration)" },
@@ -88,7 +88,7 @@ export function createTaskTool() {
  */
 export function formatTaskResult(result) {
   if (!result || typeof result !== "object") return result
-  if (result.error || result.background_task_id || result.cancelled) return result
+  if (result.error || result.background_task_id || result.cancelled || (result.status && !['completed', 'success', 'succeeded'].includes(result.status))) return result
   if (typeof result.reply !== "string") return result
 
   const files = Array.isArray(result.file_changes) ? result.file_changes : []
@@ -97,14 +97,40 @@ export function formatTaskResult(result) {
     ...(files.length ? [`files changed: ${files.map((f) => f.path || f).slice(0, 20).join(", ")}`] : [])
   ]
   return {
+    ...(result.status ? { status: result.status } : {}),
     output: `${result.reply.trim()}\n\n--- delegation ---\n${meta.join("\n")}`,
     metadata: {
       session_id: result.session_id,
+      parent_session_id: result.parent_session_id,
       subagent: result.subagent,
       execution_mode: result.execution_mode,
-      group_id: result.group_id
+      group_id: result.group_id,
+      ...(result.verification ? { verification: result.verification } : {}),
+      ...(result.stop_reason ? { stop_reason: result.stop_reason } : {})
     }
   }
+}
+
+/** Additive interactive controls. Strict durable graphs never fall through to
+ * this legacy controller: their host remains the sole delegation authority. */
+export function createChildControlTools() {
+  const session = { type: 'string', description: 'owned delegated session id' }
+  const message = { type: 'string', maxLength: 16000, description: 'bounded message delivered at the next model boundary; does not replay tools' }
+  const definitions = /** @type {Array<[string, string, Record<string, any>, string[], (args: any, controller: any) => any]>} */ ([
+    ['agent_list', 'List child agents owned by this parent session.', {}, [], (_args, controller) => controller.list()],
+    ['agent_wait', 'Wait at most 60 seconds for an owned child; timeout is not completion.', { session_id: session, timeout_ms: { type: 'integer', minimum: 0, maximum: 60000 } }, ['session_id'], (args, controller) => controller.wait(args.session_id, { timeoutMs: args.timeout_ms ?? 30000 })],
+    ['agent_send', 'Queue a message for an active owned child without starting another turn.', { session_id: session, message }, ['session_id', 'message'], (args, controller) => controller.send(args.session_id, args.message)],
+    ['agent_followup', 'Continue an idle owned child with its original role and policy; inspect prior effects before asking it to act.', { session_id: session, prompt: message, run_in_background: { type: 'boolean' } }, ['session_id', 'prompt'], (args, controller) => controller.followup(args.session_id, args.prompt, { run_in_background: args.run_in_background === true })],
+    ['agent_interrupt', 'Request cancellation of an owned active child. This does not roll back effects.', { session_id: session }, ['session_id'], (args, controller) => controller.interrupt(args.session_id)]
+  ])
+  return definitions.map(([name, description, properties, required, invoke]) => ({
+    name, description, inputSchema: { type: 'object', properties, required, additionalProperties: false },
+    async execute(args, ctx) {
+      if (currentDurableRun()) return { error: 'child controls require the strict task graph host API for this run; ordinary child control is disabled' }
+      if (!ctx.childController) return { error: 'child controller unavailable' }
+      try { return await invoke(args || {}, ctx.childController) } catch (error) { return { error: error?.message || String(error) } }
+    }
+  }))
 }
 
 export function createTaskGroupTool() {

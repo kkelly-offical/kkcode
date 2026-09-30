@@ -75,6 +75,14 @@ test('version checks cover root, every workspace and every lockfile entry', () =
   }
 })
 
+test('1.0.6 preview source preparation stays in the 1.0.x channel policy and branch checks cannot publish', () => {
+  const version = '1.0.6-preview.0', fixture = manifests(version)
+  assert.deepEqual(releaseVersionPolicy(version), { version, channel: 'preview', distTag: 'preview', prerelease: true })
+  assert.equal(validateReleaseManifests(fixture.manifest, fixture.lockfile, fixture.workspaceManifests).version, version)
+  assert.deepEqual(resolveReleaseMetadata({ version, refType: 'branch', refName: 'main' }), { publish: false, release_version: version, dist_tag: '', prerelease: false })
+  assert.throws(() => resolveReleaseMetadata({ version, refType: 'tag', refName: 'v1.0.5' }), /exactly match/)
+})
+
 test('release workspace enumeration cannot read outside the repository or silently omit globbed packages', () => {
   for (const workspaces of [['../outside'], ['/absolute'], ['file:/outside'], ['apps/*'], ['apps/web', 'apps/web'], ['apps/./web'], ['apps/web#fragment'], ['apps/%2e%2e/outside'], undefined]) {
     assert.throws(() => releaseWorkspacePaths({ workspaces }), /workspace/)

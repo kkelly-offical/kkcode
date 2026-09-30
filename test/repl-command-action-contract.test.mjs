@@ -59,6 +59,14 @@ test("no command branch returns a bare null as its action", async () => {
     bareNulls.map((b) => `  第 ${b.no} 行（函数内）: ${b.line}`).join("\n"))
 })
 
+test("line-mode restores durable progress before opening an EOF-sensitive input interface", async () => {
+  const source = await readFile(join(ROOT, "src", "repl.mjs"), "utf8")
+  const body = source.slice(source.indexOf("async function startLineRepl("), source.indexOf("async function startTuiRepl("))
+  const preload = body.indexOf("await loadTodoProgress("), readline = body.indexOf("createInterface("), question = body.indexOf("await collectInput(")
+  assert.ok(preload >= 0 && preload < readline && readline < question)
+  assert.doesNotMatch(body.slice(readline, question), /\bawait\b/, "async initialization after readline can consume piped EOF before its first question")
+})
+
 test("line-mode REPL survives the read-only commands", { timeout: 60_000 }, async () => {
   const home = await mkdtemp(join(tmpdir(), "kkcode-action-contract-"))
   await mkdir(home, { recursive: true })
@@ -75,7 +83,9 @@ test("line-mode REPL survives the read-only commands", { timeout: 60_000 }, asyn
     "mcp:",
     "  auto_discover: false",
     "skills:",
-    "  auto_seed: false"
+    "  auto_seed: false",
+    "update:",
+    "  enabled: false"
   ].join("\n"), "utf8")
 
   // 只读、不需要模型的命令。它们全都只查询状态然后返回 action ——
@@ -106,6 +116,7 @@ test("line-mode REPL survives the read-only commands", { timeout: 60_000 }, asyn
   assert.doesNotMatch(combined, /Cannot read properties of (null|undefined)/,
     `命令让 REPL 崩了：\n${combined.slice(-800)}`)
   assert.doesNotMatch(combined, /TypeError/, `出现 TypeError：\n${combined.slice(-800)}`)
+  assert.doesNotMatch(combined, /readline was closed/, "durable todo loading must not lose already-piped input/EOF")
   // 崩掉的话 /exit 根本执行不到，退出码非 0
   assert.equal(exitCode, 0, `预期正常退出，实际 ${exitCode}：\n${combined.slice(-800)}`)
 })

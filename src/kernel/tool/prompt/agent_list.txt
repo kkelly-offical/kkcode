@@ -1,0 +1,1 @@
+List child agents owned by the current parent session and inspect structured lifecycle outcomes. Listing does not grant execution, change scope or expose another parent's children. Strict host task graphs retain their separate authority.

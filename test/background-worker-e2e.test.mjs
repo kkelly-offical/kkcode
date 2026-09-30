@@ -6,9 +6,10 @@ import { join } from "node:path"
 import http from "node:http"
 import { execFileSync } from "node:child_process"
 import { BackgroundManager } from "../src/kernel/orchestration/background-manager.mjs"
+import { createTaskDelegate, createChildController } from '../src/kernel/orchestration/task-scheduler.mjs'
 import { EventBus } from "../src/kernel/core/events.mjs"
 import { EVENT_TYPES } from "../src/kernel/core/constants.mjs"
-import { appendAssistantMessage, appendUserMessage, flushNow, touchSession } from "../src/kernel/session/store.mjs"
+import { appendAssistantMessage, appendUserMessage, flushNow, touchSession, getSession } from "../src/kernel/session/store.mjs"
 import { readJson } from "../src/storage/json-store.mjs"
 import { sessionDataPath, sessionIndexPath } from "../src/storage/paths.mjs"
 import { persistTrust } from "../src/kernel/permission/workspace-trust.mjs"
@@ -421,7 +422,7 @@ test("background delegate cleans a detached worktree after a post-setup error", 
 //
 // 因此这里必须发一次真实的工具调用，并断言产物真的落到磁盘上 —— 只断言
 // 任务状态是不够的，那正是当年漏掉它的原因。
-test("background worker can actually use tools: a delegated write lands on disk", async () => {
+test("background worker retains an actual delegated write without claiming unverified completion", async () => {
   const config = {
     background: { mode: "worker_process", max_parallel: 1, worker_timeout_ms: 30000 }
   }
@@ -476,7 +477,9 @@ test("background worker can actually use tools: a delegated write lands on disk"
   })
 
   const done = await waitFor(task.id, (it) => ["completed", "error"].includes(it.status), { config, timeoutMs: 30000 })
-  assert.equal(done.status, "completed", `task failed: ${done.error || ""}`)
+  assert.equal(done.status, "error")
+  assert.equal(done.result.status, 'incomplete')
+  assert.equal(done.result.stop_reason, 'max-steps')
 
   // 核心断言：产物真的存在。信任标志没设时这里会 ENOENT。
   const written = await readFile(join(project, target), "utf8")
@@ -484,4 +487,74 @@ test("background worker can actually use tools: a delegated write lands on disk"
 
   assert.ok(Number(done.result?.tool_events || 0) > 0, "工具事件计数必须非零")
   assert.doesNotMatch(String(done.result?.reply || ""), /not trusted/i)
+})
+
+test('owned child worker validates durable policy and consumes bounded parent messages at the next turn boundary', async () => {
+  const raw = JSON.parse(await readFile(join(project, 'kkcode.config.json'), 'utf8'))
+  raw.tool.sources.builtin = true
+  raw.agent.max_steps = 3
+  await writeFile(join(project, 'kkcode.config.json'), JSON.stringify(raw), 'utf8')
+  let announce, release
+  const requestStarted = new Promise(resolve => { announce = resolve })
+  const continueRequest = new Promise(resolve => { release = resolve })
+  mockResponder = async count => {
+    if (count === 1) {
+      announce()
+      await continueRequest
+      return { id: 'owned-child-read', choices: [{ index: 0, finish_reason: 'tool_calls', message: { role: 'assistant', content: '', tool_calls: [{ id: 'read-1', type: 'function', function: { name: 'read', arguments: JSON.stringify({ path: 'README.md' }) } }] } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }
+    }
+    return { id: 'owned-child-done', choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'Read complete; parent message received.' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }
+  }
+  const delegateTask = createTaskDelegate({ config: raw, parentSessionId: 'owned-parent', model: 'test-model', providerType: 'local', runSubtask: async () => { throw new Error('must use worker') } })
+  const controller = createChildController({ parentSessionId: 'owned-parent', delegateTask, config: raw })
+  const handle = await controller.create({ prompt: 'Read README.md', write_scope: 'no writes', run_in_background: true })
+  try {
+    assert.ok(handle.background_task_id, handle.error)
+    await requestStarted
+    assert.equal((await controller.send(handle.session_id, 'Report only; do not mutate files.')).status, 'queued')
+  } finally { release() }
+  const done = await waitFor(handle.background_task_id, task => ['completed', 'error', 'cancelled'].includes(task.status), { config: raw })
+  assert.equal(done.status, 'completed', done.error)
+  assert.ok(done.result.tool_events > 0)
+  const saved = await getSession(handle.session_id)
+  assert.equal(saved.session.childContract.runSpec.workspace.writeScope, 'read-only')
+  assert.equal(saved.session.childContract.runSpec.role.permission, 'readonly')
+  assert.ok(saved.messages.some(message => message.role === 'user' && message.content === 'Report only; do not mutate files.'))
+  assert.equal((await controller.get(handle.session_id)).status, 'completed')
+})
+
+test('legacy worker payload cannot adopt an owned child without its operation binding', async () => {
+  const config = { background: { mode: 'worker_process', max_parallel: 1, worker_timeout_ms: 30000 } }
+  const delegateTask = createTaskDelegate({ config, parentSessionId: 'owned-parent', model: 'test-model', providerType: 'local', runSubtask: async () => ({ reply: 'fixture', toolEvents: [] }) })
+  const child = await delegateTask({ prompt: 'record owned child', write_scope: 'read-only' })
+  const attempted = await BackgroundManager.launchDelegateTask({ description: 'invalid binding', config, payload: {
+    parentSessionId: 'foreign-parent', subSessionId: child.session_id, cwd: project, prompt: 'take over', model: 'test-model', providerType: 'local'
+  } })
+  const done = await waitFor(attempted.id, task => task.status === 'error', { config })
+  assert.match(done.error, /live child operation binding/)
+  assert.equal(requestCount, 0)
+  assert.equal((await getSession(child.session_id)).session.childContract.parentSessionId, 'owned-parent')
+})
+
+test('parent abort propagates to a true child worker without replaying the request', async () => {
+  const config = JSON.parse(await readFile(join(project, 'kkcode.config.json'), 'utf8'))
+  let announce, release
+  const requested = new Promise(resolve => { announce = resolve })
+  const delayedResponse = new Promise(resolve => { release = resolve })
+  mockResponder = async () => {
+    announce(); await delayedResponse
+    return { id: 'cancelled-fixture', choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'late reply' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }
+  }
+  const parent = new AbortController()
+  const delegate = createTaskDelegate({ config, parentSessionId: 'cancel-parent', model: 'test-model', providerType: 'local', signal: parent.signal, runSubtask: async () => { throw new Error('must use worker') } })
+  const handle = await delegate({ prompt: 'wait for cancellation fixture', run_in_background: true })
+  try {
+    assert.ok(handle.background_task_id, handle.error)
+    await requested
+    parent.abort()
+    const done = await waitFor(handle.background_task_id, task => ['cancelled', 'error', 'interrupted'].includes(task.status), { config })
+    assert.equal(done.status, 'cancelled', done.error)
+    assert.equal((await getSession(handle.session_id)).session.childStatus, 'cancelled')
+    assert.equal(requestCount, 1)
+  } finally { release() }
 })

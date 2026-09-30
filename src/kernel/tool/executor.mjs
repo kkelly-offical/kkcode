@@ -1,5 +1,6 @@
 import { makeToolResult, isToolSuccess } from "../core/types.mjs"
 import { toolResultContent } from './result-content.mjs'
+import { normalizeToolOutcome } from './result-outcome.mjs'
 
 import { EventBus } from "../core/events.mjs"
 import { validateToolArguments } from './validate-args.mjs'
@@ -17,36 +18,6 @@ const FILE_EDIT_TOOLS = new Set(["write", "edit", "multiedit", "patch", "noteboo
 // 同一 turn 可能并行触发多个编辑工具。只记一个 boolean 会让第二个工具越过仍在
 // 进行的快照，因此这里缓存 Promise：首个编辑创建，所有并发编辑都等待同一份。
 const snapshotPromises = new Map()
-
-function outputFailureStatus(output) {
-  const text = String(output || "").trim()
-  if (/^\[blocked\]/i.test(text)) return "blocked"
-  if (/^(?:error:|\[search error\]|\[mcp error\b)/i.test(text)) return "error"
-  return null
-}
-
-function rawStatus(raw, signal, output) {
-  if (signal?.aborted || raw?.cancelled === true || raw?.status === "cancelled") return "cancelled"
-  if (raw?.blocked === true || raw?.metadata?.blocked === true || raw?.status === "blocked") return "blocked"
-  if (raw?.ok === false || raw?.status === "error" || raw?.status === "failed" || raw?.is_error === true || raw?.error) return "error"
-  return outputFailureStatus(output) || "completed"
-}
-
-function rawOutput(raw) {
-  if (typeof raw === "string") return raw
-  if (!raw || typeof raw !== "object") return String(raw ?? "")
-  if (typeof raw.output === "string") return raw.output
-  if (typeof raw.message === "string") return raw.message
-  if (typeof raw.error === "string") return raw.error
-  return JSON.stringify(raw, null, 2)
-}
-
-function rawError(raw, status, output) {
-  if (status === "completed") return null
-  if (typeof raw?.error === "string") return raw.error
-  if (raw?.error?.message) return raw.error.message
-  return output || status
-}
 
 function eventMetadataSummary(metadata = {}) {
   const fileChanges = Array.isArray(metadata.fileChanges) ? metadata.fileChanges : []
@@ -101,12 +72,17 @@ function eventMetadataSummary(metadata = {}) {
 }
 
 export async function executeTool({ tool, args, sessionId, turnId, invocationId = null, context, signal = null }) {
+  // The executor signal is the actual cancellation authority, not merely a
+  // label applied after an uninterruptible execute() eventually resolves.
+  signal ||= context?.signal || null
+  context = { ...context, signal }
   // Freeze wire-equivalent values before the first await/audit callback. Never
   // validate one mutable object and execute a later changed version of it.
   try { args = snapshotToolArguments(args) }
   catch (error) { return makeToolResult({ name: tool.name, status: 'error', ok: false, code: error.code, output: error.message, error: error.message }) }
   const durableRun = currentDurableRun()
   const toolInvocationId = String(invocationId || `${turnId || "turn"}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`)
+  context = { ...context, sessionId, turnId, toolCallId: toolInvocationId, ...(signal ? { signal } : {}) }
   return withAudit({
     sessionId,
     turnId,
@@ -190,7 +166,7 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
           await snapshotPromise
         }
 
-        const capability = tool.capabilityFor?.(args) || toolCapability(tool.name, String(args?.command || ''))
+        const capability = toolCapability(tool.name, String(args?.command || ''), { capability: tool.capabilityFor?.(args), args })
         if (durableRun) durableOperation = await durableRun.prepareTool({ tool, args: args || {}, invocationId: toolInvocationId, sessionId, turnId, capability })
         else if (!['read', 'search', 'safe-shell'].includes(capability) && !['tool_batch', 'websearch', 'webfetch', 'codesearch'].includes(tool.name)) operation = await beginToolOperation({ sessionId, turnId, tool: tool.name, args: args || {} })
         effectStarted = true
@@ -198,28 +174,24 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
           ? await durableRun.executeTool({ tool, args: args || {}, context, signal, invocationId: toolInvocationId, sessionId, turnId,
             operationId: durableOperation.id, invoke: () => tool.execute(args || {}, context) })
           : await tool.execute(args || {}, context)
-        const normalizedContent = await toolResultContent(raw, rawOutput(raw))
+        const completedAt = Date.now()
+        const normalizedContent = await toolResultContent(raw, normalizeToolOutcome(raw).output)
         const output = normalizedContent.output
-        const metadata = raw?.metadata && typeof raw.metadata === "object" ? { ...raw.metadata } : {}
-        const status = rawStatus(raw, signal, output)
+        const outcome = normalizeToolOutcome(raw, signal, output)
+        const { metadata, status, evidence } = outcome
+        if (operation?.id) metadata.operationId = operation.id
         if (status === 'cancelled' && (operation || durableOperation?.effect !== 'read' && durableOperation)) metadata.outcomeUnknown = true
         await operation?.finish(status === 'cancelled' || metadata.outcomeUnknown === true ? 'uncertain' : 'settled')
         operation = null
-        const evidence = {
-          ...(raw?.evidence && typeof raw.evidence === "object" ? raw.evidence : {}),
-          ...(Array.isArray(metadata.fileChanges) ? { fileChanges: metadata.fileChanges } : {}),
-          ...(metadata.exitCode !== undefined ? { exitCode: metadata.exitCode } : {}),
-          ...(metadata.checks !== undefined ? { checks: metadata.checks } : {}),
-          ...(metadata.hashes !== undefined ? { hashes: metadata.hashes } : {})
-        }
         const result = makeToolResult({
           name: tool.name,
           status,
           ok: status === "completed",
-          code: raw?.code || (typeof raw?.error === "string" ? raw.error : metadata.reason || null),
+          code: outcome.code,
           output,
-          error: rawError(raw, status, output),
+          error: outcome.error,
           durationMs: Date.now() - startedAt,
+          startedAt, completedAt,
           metadata,
           evidence,
           // read 的图片分支返回 { type:"image", data:"data:image/png;base64,..." }。
@@ -251,6 +223,7 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
       } catch (error) {
         const knownNotStarted = !effectStarted || isToolPreDispatchError(error)
         const outcomeUnknown = !knownNotStarted && Boolean(operation || durableOperation && durableOperation.effect !== 'read')
+        const operationId = operation?.id || null
         if (durableOperation) {
           try { await durableRun.failTool({ operation: durableOperation, error, effectStarted }) }
           catch (storageError) { durableRun.abort(storageError) }
@@ -266,7 +239,8 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
           output: errorMessage,
           error: errorMessage,
           durationMs: Date.now() - startedAt,
-          ...(outcomeUnknown ? { metadata: { outcomeUnknown: true } } : {})
+          startedAt, completedAt: Date.now(),
+          ...(outcomeUnknown ? { metadata: { outcomeUnknown: true, ...(operationId ? { operationId } : {}) } } : {})
         })
         await EventBus.emit({
           type: EVENT_TYPES.TOOL_ERROR,

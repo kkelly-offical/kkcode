@@ -10,13 +10,13 @@
 export const PUBLIC_MODE_CONTRACT = Object.freeze([
   {
     mode: "assistant",
-    summary: "default CLI personal assistant lane",
-    guarantee: "assistant handles bounded terminal-native personal assistant work under normal tool permissions"
+    summary: "complete coding, task, verification and delegation lane",
+    guarantee: "Agent, Auto and Yolo share complete execution capabilities and differ only in approval policy"
   },
   {
     mode: "plan",
-    summary: "produce a spec/plan only",
-    guarantee: "plan does not execute file mutations"
+    summary: "read-only exploration, delegated analysis and durable planning",
+    guarantee: "plan does not mutate project files; session-owned ToDo updates and explicitly scoped read-only delegation remain available"
   },
   {
     mode: "agent",
@@ -25,8 +25,8 @@ export const PUBLIC_MODE_CONTRACT = Object.freeze([
   },
   {
     mode: "longagent",
-    summary: "heavyweight staged multi-file delivery lane",
-    guarantee: "longagent stays reserved for structured multi-file or system-level work"
+    summary: "durable staged orchestration over complete execution capabilities",
+    guarantee: "Ultra adds durable stages, ownership and verification gates; it does not reserve coding capabilities from other execution modes"
   }
 ])
 
@@ -57,17 +57,17 @@ export function renderPublicModeContract() {
   return [
     "# Mode Contract",
     "",
-    "- `assistant`: default CLI personal assistant lane for bounded terminal-native personal work, explanation, and analysis.",
-    "- `plan`: produce a spec/plan only; do not execute file mutations.",
+    "- `assistant`: complete coding, task execution, verification and delegation capabilities for Agent, Auto and Yolo.",
+    "- `plan`: read-only project exploration, scoped read-only delegated analysis and durable session ToDo state; never mutate project files.",
     "- `agent` / `code` / `coding`: compatibility aliases for `assistant` (since 0.3.0).",
-    "- `longagent`: heavyweight staged multi-file delivery lane with explicit gates.",
+    "- `longagent`: the same execution capabilities with durable staged orchestration and explicit gates.",
     "- Keep everyday Q&A, coding mutation, debugging, refactoring, and test repair in `assistant`.",
-    "- Suggest `longagent` only when heavy multi-file or system-level evidence appears; do not auto-switch.",
-    "- Keep `plan` explicit and mutation-free even when later execution is likely.",
+    "- Ultra is an optional orchestration overlay, not a prerequisite for complex implementation; do not auto-switch.",
+    "- Keep `plan` explicit and project-mutation-free even when later execution is likely; ToDo updates do not authorize execution.",
     "",
     "The user-facing names are Plan, Agent, Auto, Ultra and Yolo. Ultra uses the",
     "`longagent` lane; Agent, Auto and Yolo use `assistant`. Auto permits routine edits",
     "and reviews sensitive actions with the conversation model. Yolo skips routine confirmations",
-    "within the user's authorized scope. Always let the permission layer decide."
+    "within the user's authorized scope; it never weakens organization rules, side-effect accounting or verification. Always let the permission layer decide."
   ].join("\n")
 }

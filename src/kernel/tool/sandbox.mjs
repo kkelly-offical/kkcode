@@ -82,6 +82,7 @@ function normalizeDirs(dirs = [], pathApi = path) {
 export function buildSandboxedCommand({
   backend = "none",
   command = "",
+  argv = null,
   workspaceDir = "",
   tmpDir = os.tmpdir(),
   homeStateDir = userRootDir(),
@@ -96,7 +97,11 @@ export function buildSandboxedCommand({
   pathApi = path
 } = {}) {
   const text = String(command || "")
-  if (!text.trim()) return null
+  // Host-created argv adapters (for example sanitized Git reads) must remain
+  // native argv even inside the sandbox, not be reinterpreted by a shell.
+  if (argv !== null && (!Array.isArray(argv) || !argv.length || argv.some(value => typeof value !== 'string' || value.includes('\0')) || !argv[0].trim())) throw new Error('Invalid sandbox invocation argv')
+  if (!argv && !text.trim()) return null
+  const execution = argv ? [...argv] : [shell, '-c', text]
   const writable = normalizeDirs([workspaceDir, tmpDir, homeStateDir, ...extraWritableDirs], pathApi)
 
   if (backend === "bwrap") {
@@ -111,14 +116,14 @@ export function buildSandboxedCommand({
     // --die-with-parent：kkcode 被杀时沙箱不留孤儿进程
     args.push("--unshare-pid", "--die-with-parent")
     if (!network) args.push("--unshare-net")
-    args.push(shell, "-c", text)
+    args.push(...execution)
     return { command: "bwrap", args }
   }
 
   if (backend === "sandbox-exec") {
     // writable 已经 normalize 过；再传 pathApi 只为 profile 单测的独立入口一致
     const profile = buildSandboxExecProfile({ writableDirs: writable, network, pathApi })
-    return { command: "sandbox-exec", args: ["-p", profile, shell, "-c", text] }
+    return { command: "sandbox-exec", args: ["-p", profile, ...execution] }
   }
 
   return null

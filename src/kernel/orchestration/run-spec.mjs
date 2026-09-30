@@ -7,6 +7,13 @@ function freezeObject(value) {
   return Object.freeze(value)
 }
 
+function finiteLimit(value, name) {
+  if (value == null) return null
+  const number = Number(value)
+  if (!Number.isFinite(number) || number < 0) throw new Error(`${name} must be a finite nonnegative number`)
+  return number
+}
+
 export function createRunSpec(input = {}) {
   const role = input.role || {}
   const workspace = input.workspace || {}
@@ -23,6 +30,7 @@ export function createRunSpec(input = {}) {
       prompt: role.prompt || "",
       tools: Array.isArray(role.tools) ? [...role.tools] : null,
       permission: role.permission || null,
+      temperature: role.temperature ?? null,
       maxSteps: Number(role.maxSteps || role.maxTurns || 0) || null
     },
     workspace: {
@@ -32,8 +40,8 @@ export function createRunSpec(input = {}) {
       writeScope: workspace.writeScope || null
     },
     limits: {
-      deadlineAt: Number(limits.deadlineAt || 0) || null,
-      budgetUsd: Number(limits.budgetUsd || 0) || null
+      deadlineAt: finiteLimit(limits.deadlineAt, 'deadlineAt'),
+      budgetUsd: finiteLimit(limits.budgetUsd, 'budgetUsd')
     },
     toolContext: { ...(input.toolContext || {}) }
   })
@@ -46,6 +54,7 @@ export function runSpecRole(spec) {
     prompt: spec.role.prompt,
     tools: spec.role.tools,
     permission: spec.role.permission,
+    temperature: spec.role.temperature,
     maxTurns: spec.role.maxSteps
   }
 }

@@ -2,6 +2,7 @@ import { exec as execCb, execFile as execFileCb } from "node:child_process"
 import { promisify } from "node:util"
 import { access, readFile } from "node:fs/promises"
 import path from "node:path"
+import { evaluateCompletionEvidence } from './completion-evidence.mjs'
 
 const exec = promisify(execCb)
 const execFile = promisify(execFileCb)
@@ -17,6 +18,7 @@ export class TaskValidator {
   }
 
   async checkTodoCompletion(todoState) {
+    if (Array.isArray(todoState?.items)) todoState = todoState.items
     if (!todoState || !Array.isArray(todoState)) {
       return {
         passed: true,
@@ -24,7 +26,7 @@ export class TaskValidator {
       }
     }
 
-    const incomplete = todoState.filter(t => t.status !== "completed")
+    const incomplete = todoState.filter(t => !["completed", "cancelled"].includes(t.status))
     if (incomplete.length === 0) {
       return {
         passed: true,
@@ -215,7 +217,7 @@ export class TaskValidator {
     }
   }
 
-  async validate({ todoState, level = "standard" }) {
+  async validate({ todoState, toolEvents = [], requireChecks = false, level = "standard" }) {
     const results = []
 
     const todoResult = await this.checkTodoCompletion(todoState)
@@ -223,8 +225,7 @@ export class TaskValidator {
 
     if (level === 'evidence') {
       return {
-        passed: todoResult.passed, verdict: todoResult.passed ? 'NO_BLOCKING_TODO' : 'BLOCK', results,
-        message: `${todoResult.message}\nBuild/test/lint commands are not executed implicitly. Use the normal approved tool path and report the actual verification evidence; an empty todo list is not proof that tests passed.`
+        ...evaluateCompletionEvidence({ todoState, toolEvents, requireChecks, cwd: this.cwd }), results
       }
     }
 

@@ -4,6 +4,9 @@ const DEFERRED_BUILTINS = new Set(['artifact_read', 'artifact_search', 'tool_bat
 for (const name of ['office_capabilities', 'office_inspect', 'office_create', 'office_edit', 'office_render', 'office_pdf', 'office_ocr']) DEFERRED_BUILTINS.add(name)
 DEFERRED_BUILTINS.add('browser_recipe')
 
+export const TASK_LIFECYCLE_TOOLS = Object.freeze(['task_list', 'task_output', 'task_stop'])
+export const CHILD_LIFECYCLE_TOOLS = Object.freeze(['agent_list', 'agent_wait', 'agent_send', 'agent_followup', 'agent_interrupt'])
+
 function terms(value) {
   const text = String(value || '').slice(0, 8192).replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase()
   const words = Array.from(text.match(/[\p{L}\p{N}]+/gu) || [])
@@ -44,10 +47,14 @@ export function modelToolSurface(tools, { activated = new Set(), config = {}, al
   const threshold = Math.max(1, Number(config.tool?.discovery?.threshold ?? 24))
   const deferred = eligible.some(tool => tool.name === 'tool_search') && config.tool?.discovery?.enabled !== false && eligible.filter(tool => tool.name.startsWith('mcp_')).length >= threshold
   const deferBuiltins = eligible.some(tool => tool.name === 'tool_search') && config.tool?.discovery?.enabled !== false
+  const hasTasks = eligible.some(tool => ['bash', 'task', 'task_group'].includes(tool.name))
   return eligible.filter(tool => {
     if (config.tool?.legacy_aliases !== true && TOOL_ALIASES[tool.name]
       && eligible.some(other => other.name === TOOL_ALIASES[tool.name])) return false
     if (activated.has(tool.name)) return true
+    // Lifecycle controls accompany launch capabilities, including background
+    // shell commands. Eligibility is checked first; discovery grants no access.
+    if (hasTasks && [...TASK_LIFECYCLE_TOOLS, ...CHILD_LIFECYCLE_TOOLS].includes(tool.name)) return true
     if (deferBuiltins && DEFERRED_BUILTINS.has(tool.name)) return false
     return !deferred || !tool.name.startsWith('mcp_')
   })

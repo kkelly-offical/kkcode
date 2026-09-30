@@ -84,3 +84,7 @@ When creating a PR:
    EOF
    )"
 4. Return the PR URL
+
+# Read-only execution boundary
+
+Plan/read-only work permits only argument-checked inspections. Per-command environment overrides and options that launch preprocessors, external diffs, text conversion or other helpers are not read-only, even if the executable name is normally a reader. Use dedicated read/grep/glob tools when possible. Safe Git inspections use a host-controlled executable/argv/environment with repository helpers, pagers, fsmonitor and optional index writes disabled; an unavailable safe invocation must not fall back to an ordinary shell command. This classification assumes trusted host executables and is not an OS sandbox.

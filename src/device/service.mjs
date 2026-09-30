@@ -26,6 +26,9 @@ import { publicMcpSummary } from './mcp-status.mjs'
 import { DeviceArtifacts, ARTIFACT_FEATURE, ARTIFACT_READ_METHODS } from './artifacts.mjs'
 import { DeviceMemory, MEMORY_FEATURE, MEMORY_READ_METHODS } from './memory.mjs'
 import { DeviceRuns, RUN_FEATURE, RUN_READ_METHODS } from './runs.mjs'
+import { DeviceTodos, TODO_FEATURE, TODO_READ_METHODS } from './todos.mjs'
+import { readTodoSnapshot } from '../kernel/session/todo-state.mjs'
+import { listChildSnapshots } from '../kernel/orchestration/child-controller.mjs'
 import { awaitAbortable, isCancellation } from '../abort.mjs'
 
 const idPattern = /^[A-Za-z0-9_-]{1,128}$/
@@ -55,6 +58,7 @@ export class DeviceService extends EventEmitter {
     this.artifacts = new DeviceArtifacts(this)
     this.memory = new DeviceMemory(this)
     this.runs = new DeviceRuns(this)
+    this.todos = new DeviceTodos(this)
     this.closed = false
   }
   async initialize() {
@@ -249,7 +253,7 @@ export class DeviceService extends EventEmitter {
     validateRequest(request); this.assertOwner(principal)
     if (this.closed) throw new ProtocolError('device_offline', 'Device is closing', 503)
     const { id, method, params = {} } = request
-    const mutating = !ARTIFACT_READ_METHODS.includes(method) && !MEMORY_READ_METHODS.includes(method) && !RUN_READ_METHODS.includes(method) && !/^(status|folders\.list|files\.read|media\.preview|sessions\.(list|get)|events\.list|commands\.list|settings\.get|extensions\.list|models\.discover|attachments\.list|branches\.list|worktrees\.list|profile\.get)$/.test(method)
+    const mutating = !ARTIFACT_READ_METHODS.includes(method) && !MEMORY_READ_METHODS.includes(method) && !RUN_READ_METHODS.includes(method) && !TODO_READ_METHODS.includes(method) && !/^(status|folders\.list|files\.read|media\.preview|sessions\.(list|get)|events\.list|commands\.list|settings\.get|extensions\.list|models\.discover|attachments\.list|branches\.list|worktrees\.list|profile\.get)$/.test(method)
     const key = `${principal.id}:${id}`, hash = createHash('sha256').update(JSON.stringify({ method, params })).digest('hex')
     if (mutating && this.ledger.get(key)) {
       const prior = this.ledger.get(key)
@@ -275,10 +279,11 @@ export class DeviceService extends EventEmitter {
   async dispatch(method, p, principal) {
     const sessionId = p.sessionId
     if ((this.workspaceMutation || this.configurationUpdating) && ['sessions.create', 'sessions.configure', 'settings.update', 'extensions.reload', 'models.discover'].includes(method)) throw new ProtocolError('workspace_busy', 'Wait for device maintenance to finish', 409)
-    if (method === 'status') return { schemaVersion: PROTOCOL_VERSION, features: [ARTIFACT_FEATURE, MEMORY_FEATURE, RUN_FEATURE], device: this.metadata, roots: this.roots, active: [...this.turns.keys()], retention: { replay: this.replay.stats(), requests: this.ledger.stats() } }
+    if (method === 'status') return { schemaVersion: PROTOCOL_VERSION, features: [ARTIFACT_FEATURE, MEMORY_FEATURE, RUN_FEATURE, TODO_FEATURE], device: this.metadata, roots: this.roots, active: [...this.turns.keys()], retention: { replay: this.replay.stats(), requests: this.ledger.stats() } }
     if (method.startsWith('artifacts.')) return this.artifacts.dispatch(method, p, principal)
     if (method.startsWith('memory.')) return this.memory.dispatch(method, p, principal)
     if (method.startsWith('runs.')) return this.runs.dispatch(method, p, principal)
+    if (method.startsWith('todos.')) return this.todos.dispatch(method, p, principal)
     if (method === 'folders.list') return listDeviceFolder(p.path, this.roots)
     if (method === 'files.read') return readDeviceFile(p.path, this.roots)
     if (method === 'media.preview') {
@@ -299,13 +304,20 @@ export class DeviceService extends EventEmitter {
       return { ...metadata, ...(this.turns.has(session.id) ? { status: 'running' } : {}) }
     })
     if (method === 'sessions.get') {
+      const owner = this.metadata.owner
       const snapshot = await this.liveView.snapshot(sessionId, {
         readCursor: () => this.replay.read(sessionId, 0, 1),
-        readCanonical: () => getSession(sessionId),
-        project: data => ({ ...sessionView(data, { before: p.before, limit: p.limit }), ...this.sessionState(sessionId, principal) }),
+        readCanonical: async () => {
+          const saved = await getSession(sessionId)
+          return saved ? { ...saved, subagents: await listChildSnapshots(sessionId) } : null
+        },
+        project: data => ({ ...sessionView({ ...data, parts: data.parts.filter(part => part.type !== 'todo.updated') }, { before: p.before, limit: p.limit }),
+          todos: readTodoSnapshot(data.parts, sessionId), subagents: data.subagents, ...this.sessionState(sessionId, principal) }),
         includeLive: !p.before
       })
       if (!snapshot) throw new ProtocolError('session_missing', 'This conversation no longer exists; return to the session list', 404)
+      this.assertOwner(principal)
+      if (this.metadata.owner !== owner) throw new ProtocolError('session_scope_changed', 'Device ownership changed while the session was being read', 409)
       return snapshot
     }
     if (method === 'sessions.create') {
@@ -389,7 +401,12 @@ export class DeviceService extends EventEmitter {
         if (p.expectedLastMessageId !== undefined && p.expectedLastMessageId !== (session.messages.at(-1)?.id || null)) throw new ProtocolError('history_changed', 'New messages arrived; reload before rewinding', 409)
         const kernel = await this.kernel(session.session.cwd)
         const result = await kernel.run(() => rewindLastTurn(sessionId, { messageId: p.messageId || null }))
-        if (result.ok) { await kernel.sessions.updateSession(sessionId, { context: null }); await this.record({ type: 'session.rewound', sessionId, payload: { ...result, filesChanged: false } }) }
+        if (result.ok) {
+          await kernel.sessions.updateSession(sessionId, { context: null })
+          const saved = await getSession(sessionId), snapshot = readTodoSnapshot(saved.parts, sessionId)
+          await this.record({ type: 'session.rewound', sessionId, payload: { ...result, filesChanged: false } })
+          await this.record({ type: 'todo.updated', sessionId, payload: { snapshot } })
+        }
         return { ...result, filesChanged: false }
       } finally { this.sessionTransitions.delete(sessionId) }
     }

@@ -74,7 +74,7 @@ Reasoning: Single command execution with immediate results.
 
 ## Task States and Management
 
-Task states: pending, in_progress, completed
+Task states: pending, in_progress, completed, blocked, cancelled. These are authored planning states, not observed verification results. The list is durable and belongs to the current session and agent, including in Plan mode; updating it does not authorize project-file writes.
 
 IMPORTANT — Task descriptions must have two forms:
 - content: imperative form describing what needs to be done (e.g. "Run tests", "Fix authentication bug")
@@ -83,20 +83,24 @@ IMPORTANT — Task descriptions must have two forms:
 Rules:
 - Update task status in real-time as you work
 - Mark tasks complete IMMEDIATELY after finishing (don't batch completions)
-- Exactly ONE task must be in_progress at any time (not less, not more)
-- Complete current tasks before starting new ones
-- Remove tasks that are no longer relevant from the list entirely
+- Multiple independent tasks may be in_progress when they are actually being worked on concurrently
+- Preserve the returned stable id when updating an existing task, and send the returned expectedRevision for subsequent updates
+- A stale revision is rejected: inspect the returned conflict or use todo_read for current session state before replanning; never blindly replay an old list
+- Cancel tasks that are no longer relevant; omitted unfinished own tasks become cancelled, and completed history remains
+- Only edit this agent's own items; dependencies may name existing same-session item IDs
+- Evidence references may identify actual same-session messages or parts; they do not grant execution authority or prove acceptance passed
 
 ## Task Completion Requirements
 
 - ONLY mark a task as completed when you have FULLY accomplished it
-- If you encounter errors, blockers, or cannot finish, keep the task as in_progress
+- If you encounter an unresolved blocker, use blocked; use cancelled only when the task is deliberately discontinued
 - When blocked, create a new task describing what needs to be resolved
 - Never mark a task as completed if:
   - Tests are failing
   - Implementation is partial
   - You encountered unresolved errors
   - You couldn't find necessary files or dependencies
+- A completed task or count of completed tasks is NOT proof of passing tests. Report observed commands, outputs and acceptance results separately, including failed, missing and unknown results.
 
 ## Task Breakdown Guidelines
 
@@ -112,6 +116,10 @@ When in doubt, use this tool. Being proactive with task management demonstrates 
 ## Parameters
 
 - todos (required): array of task objects
+  - id: stable returned ID for an existing task; omit for a new task
   - content (required): task description in imperative form
-  - status (required): "pending" | "in_progress" | "completed"
-  - activeForm (required): present continuous form shown during execution
+  - status (required): "pending" | "in_progress" | "completed" | "blocked" | "cancelled"
+  - activeForm: present continuous form shown during execution
+  - dependencies: existing todo IDs in this session
+  - evidenceRefs: existing conversation references as {kind: "message" | "part", id: "..."}; no paths, foreign session IDs, or verified flags
+- expectedRevision: revision from the previous returned snapshot (the host captures the initial revision before model execution)

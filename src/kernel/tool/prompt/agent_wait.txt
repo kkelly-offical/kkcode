@@ -1,0 +1,1 @@
+Wait for an owned child by session_id, bounded to at most 60000 ms. A wait timeout is not a child failure or success. Read the returned status and outcome before reporting completion; waiting grants no new permissions.

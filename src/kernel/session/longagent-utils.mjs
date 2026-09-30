@@ -475,6 +475,7 @@ const MODE_REASON_EXPLANATIONS = {
   single_path_or_command_task: "检测到单路径或单命令任务，适合保持在轻量路径",
   multi_file_or_system_task: "检测到跨文件 / 系统级任务",
   broad_scope_multi_step: "检测到宽范围多步骤任务",
+  cross_stack_delivery: "检测到跨前端、后端与数据层的交付任务；可使用 Ultra 编排，也可在当前完整执行模式中完成",
   simple_action_task: "检测到单轮执行任务",
   default_agent: "信号偏执行型，保持 agent",
   default_assistant: "信号不足，按 assistant 处理",
@@ -544,7 +545,7 @@ export function classifyTaskMode(prompt, options = {}) {
   ]
 
   const isQuestion = questionPatterns.some((re) => re.test(text))
-  const isPureAssistantRequest = pureAssistantKeywords.some((kw) => lower.includes(kw))
+  const isPureAssistantRequest = pureAssistantKeywords.some((kw) => lower.startsWith(kw))
   const isPlan = planPatterns.some((re) => re.test(lower))
   const explicitHeavyScope = explicitHeavyScopePatterns.some((re) => re.test(lower))
   const heavyDelivery = heavyDeliveryPatterns.some((re) => re.test(lower))
@@ -555,10 +556,22 @@ export function classifyTaskMode(prompt, options = {}) {
   const isAgentAction = isPatchTask || isVerifyTask
   const isSingleCommandTask = singleCommandPatterns.some((re) => re.test(text))
   const isVerificationTask = isVerifyTask
-  const hasContinuationSignal = Boolean(options?.continued || continuation?.objective || detectAgentContinuationInput(text, continuation))
+  const hasContinuationSignal = Boolean(options?.continued || continuation?.objective && detectAgentContinuationInput(text, continuation))
   const isLongAgent = explicitHeavyScope || heavyDelivery
   const localSignalCount = [isLocalTask, isPatchTask, isVerifyTask, hasPathHint, isSingleCommandTask, hasContinuationSignal].filter(Boolean).length
   const heavySignalCount = [explicitHeavyScope, heavyDelivery, hasAcrossScope].filter(Boolean).length
+  // A full implementation naturally mentions read/edit/test/package commands.
+  // Those words do not make a multi-layer deliverable a single local operation.
+  const layers = [/\b(react|vue|frontend|front-end|browser|ui)\b|前端|界面/i,
+    /\b(backend|back-end|go|golang|api|server|service)\b|后端|接口|服务/i,
+    /\b(sql|database|postgres(?:ql)?|mysql|sqlite|redis|migration)\b|数据库|迁移|持久化/i]
+    .filter(pattern => pattern.test(text)).length
+  const deliveryIntent = /\b(build|create|implement|develop|deliver)\b|构建|开发|实现|交付/i.test(text.slice(0, 300))
+  if (!isQuestion && deliveryIntent && (layers >= 3 && len >= 240 || /\bfull[- ]stack\b|全栈/i.test(text))) return {
+    mode: 'longagent', confidence: 'high', reason: 'cross_stack_delivery', topology: 'heavy_multi_file_delivery',
+    evidence: ['cross_stack_delivery', 'heavy_scope_signal', ...(isVerificationTask ? ['verification_signal'] : [])],
+    pathHints, continuity: hasContinuationSignal ? 'continue_current_transaction' : 'new_transaction'
+  }
   const smallBoundedPathSet = hasPathHint && pathHints.length <= 3
   const isBoundedLocalTask = !isLongAgent && (isLocalTask || isAgentAction) && (hasPathHint || isSingleCommandTask || len < 320)
   const isInspectPatchVerifyLoop = isLocalTask && isAgentAction && isVerificationTask
@@ -662,7 +675,7 @@ export function classifyTaskMode(prompt, options = {}) {
     scores.assistant += 2
     if (isAgentAction) scores.agent += 2
   }
-  if (isInspectPatchVerifyLoop) {
+  if (isInspectPatchVerifyLoop && !isLongAgent) {
     evidence.push("inspect_patch_verify_loop")
     scores.agent += 2
     scores.longagent = Math.max(0, scores.longagent - 4)

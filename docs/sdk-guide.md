@@ -1,6 +1,6 @@
 # 内核、远程客户端与分域 SDK
 
-[文档导航](README.md) · 适用版本：**1.0.5**；[版本状态](versions.md)。
+[文档导航](README.md) · 当前源码：**1.0.6-preview.0（Preview）**；[版本状态](versions.md)。
 本地内核、远程客户端与分域接口保持各自职责；部分能力已随此前预览版发行，
 不能把接口存在解释为所有平台或模型质量验收完成。已知边界见[能力总览](capabilities.md)。
 
@@ -15,7 +15,7 @@
 | `sdk/diagnostics` | 规范账本／内核的只读诊断，不执行或恢复未知动作；宿主仍负责授权，不能把私密账本交给访客 |
 | `sdk/storage` | 私密 SQLite/WAL 与产物原件，低层可信宿主接口，不自行授权或执行 |
 | `sdk/runs` | 宿主确认、独立工作树、严格执行、持久操作与恢复；显式 Linux localFree 能力；不能原样暴露为模型工具 |
-| `sdk/tasks` | 有界持久 DAG、逐项子任务/结果核准；不是旧后台线程的别名 |
+| `sdk/tasks` | 有界持久 DAG、逐项子任务/结果核准；源码新增会话ToDo接口，与严格任务图分开 |
 | `sdk/environments` | 宿主批准的 npm 锁文件/SRI 环境、单独批准离线安装脚本、恢复验签及只读挂载；不是模型安装工具 |
 | `sdk/memory` | 有来源的项目事实、待确认个人偏好、更正/禁用/忘记 |
 | `sdk/models` | 角色模型解析、能力来源档案与 `prepareBudgetProfile(s)` 拟审批价目；读取档案不等于授权推理 |
@@ -90,6 +90,36 @@ Node 通过 SSH 本地转发连接时，目标机仍严格校验 Host。浏览�
 
 `kernel.diagnostics.inspectPrompt(sessionId)` 只返回最近请求的提示来源、指纹和预算
 元数据。SDK 宿主负责生命周期、并发会话控制、用户交互和输出；内核不渲染终端界面。
+
+## 源码新增：持久待办与完成状态
+
+`sdk/tasks`导出`getSessionTodos(sessionId)`以及可信宿主使用的`createSessionTodoService`。
+ToDo快照为`{version, sessionId, revision, items, updatedAt, source}`；每项有稳定ID、
+内容、状态、负责人、依赖和同会话证据引用。`completed`仅表示作者更新的任务进度，
+`evidenceRefs`也不是测试通过标志；不要据此生成“验收百分比”。
+
+```ts
+import { getSessionTodos } from '@kkelly-offical/kkcode/sdk/tasks';
+
+const localProgress = await getSessionTodos('existing-session-id');
+// 远程读取沿用当前账号/设备/会话权限，不需要接管聊天控制。
+const remoteProgress = await client.call('todos.list', { sessionId: 'session-id' });
+```
+
+远程`status.features`广告`todos.v1`；`sessions.get.todos`携带同一份完整快照，
+`todo.updated`事件的`payload.snapshot`只在持久化之后发出。初始化、事件缺口和重连
+读取快照，再按revision应用更新；切换连接必须取消并丢弃旧结果。
+`sessions.get.subagents`只提供当前父会话的状态摘要，不包含子代理提示词、策略或结果正文。
+后台`task.settled`表示后台任务结束；客户端重读快照，不把进程完成自动升级为子任务验收成功。
+
+ToDo写入是会话绑定、带版本比较的宿主能力；发生`todo_conflict`时重新读取并规划，
+不能通过临时刷新版本偷偷覆盖并发更新。缺省ID只在描述唯一时保留身份，依赖必须属于
+同一会话且不能成环。省略旧任务不会抹去已完成历史，未完成的己方旧任务变为取消；
+另一个代理的任务不可越权改写。远程RPC不开放ToDo写入或自填`verified`。
+
+本轮执行结果新增完成检查信息，使用真实工具状态、退出码及既有证据判断是否仍有工作。
+机器消费者须区分有回复、进度完成和验证通过；headless保持原事件版本，详见
+[JSONL契约](headless-jsonl-contract.md)。这些接口仍是开发源码能力，不表示公开npm已更新。
 
 ## 增量远程能力
 

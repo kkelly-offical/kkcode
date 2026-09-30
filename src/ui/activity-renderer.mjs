@@ -8,6 +8,7 @@ import {
 import { installStreamByteRenderer } from "../theme/stream-byte-renderer.mjs"
 
 import { stripAnsi } from "../util/frame-primitives.mjs"
+import { acceptTodoSnapshot, todoProgressSummary, todoStatusLabels, todoOwnerLabel } from './todo-progress.mjs'
 
 // 模块加载即登记 ANSI 流字节渲染器（§7.5 双轨适配器）：本进程既然加载了
 // 前端的活动渲染器，旧 output 字节轨就应可用。`kkcode ultra/longagent`
@@ -563,6 +564,18 @@ export function formatPlanProgress(taskProgress) {
   return lines
 }
 
+export function formatTodoProgress(snapshot) {
+  const summary = todoProgressSummary(snapshot)
+  if (!summary) return null
+  const details = ['任务状态由代理更新；已完成不等于已验证。']
+  for (const item of snapshot.items) {
+    const label = item.status === 'in_progress' && item.activeForm || item.content
+    details.push(`${todoStatusLabels[item.status]} · ${sanitizeTerminalText(label)}`)
+    details.push(`  负责人：${sanitizeTerminalText(todoOwnerLabel(item, snapshot.sessionId))}${item.dependencies?.length ? ` · 依赖：${sanitizeTerminalText(item.dependencies.join('、'))}` : ''}`)
+  }
+  return { kind: 'system', summary: summary.text, details, collapsible: true, expanded: false, tone: 'muted', metadata: { topic: 'todos', sessionId: snapshot.sessionId, revision: snapshot.revision } }
+}
+
 // ── Recovery Suggestions Formatter ───────────────────────
 
 export function formatRecoverySuggestions(recovery) {
@@ -627,6 +640,8 @@ export function createActivityRenderer({ output, theme = null, eventFilter = nul
   const activeToolArgs = new Map()
   // Structured transcript block for each active tool invocation
   const activeToolLogIds = new Map()
+  const todoSnapshots = new Map()
+  const todoLogIds = new Map()
 
   function handleEvent(event) {
     if (typeof eventFilter === "function" && !eventFilter(event)) return
@@ -634,6 +649,26 @@ export function createActivityRenderer({ output, theme = null, eventFilter = nul
     const payload = sanitizeTerminalValue(event.payload || {})
 
     switch (type) {
+      case 'todo.updated': {
+        const previous = todoSnapshots.get(sessionId)
+        const snapshot = acceptTodoSnapshot(previous, payload.snapshot, sessionId)
+        if (!snapshot || snapshot === previous) break
+        todoSnapshots.set(sessionId, snapshot)
+        const block = formatTodoProgress(snapshot)
+        const existing = todoLogIds.get(sessionId)
+        if (!block) {
+          if (existing != null) {
+            if (typeof output?.removeLog === 'function') output.removeLog(existing)
+            else updateLog?.(existing, { summary: '', details: [], collapsible: false })
+            todoLogIds.delete(sessionId)
+          }
+          break
+        }
+        if (supportsStructuredLogs) {
+          if (existing == null || !updateLog(existing, block)) todoLogIds.set(sessionId, log(block))
+        } else log(block.summary)
+        break
+      }
       case EVENT_TYPES.TOOL_START: {
         const key = timerKey(sessionId, turnId, payload.tool)
         const lookupKey = payload.invocationId || `${sessionId}:${turnId}:${payload.tool}`
@@ -678,6 +713,9 @@ export function createActivityRenderer({ output, theme = null, eventFilter = nul
           activeToolKeys.delete(lookupKey)
           activeToolArgs.delete(lookupKey)
         }
+        // The durable todo.updated snapshot is authoritative, not tool arguments
+        // (which may belong to a rejected/stale write).
+        if (payload.tool === 'todowrite') break
         const details = formatToolDetailLines(
           payload.tool,
           payload.output,
@@ -948,7 +986,9 @@ export function createActivityRenderer({ output, theme = null, eventFilter = nul
       }
       case EVENT_TYPES.SUBAGENT_SETTLED: {
         const detail = `${payload.toolEvents || 0} tool calls${payload.files ? `, ${payload.files} files` : ""}`
-        log(`${paint(SYM.toolOk, "cyan")} ${paint(`subagent ${payload.subagent} finished · ${detail}`, "cyan", { dim: true })}`)
+        const status = payload.status || 'unknown'
+        const completed = status === 'completed'
+        log(`${paint(completed ? SYM.toolOk : SYM.alert, completed ? 'cyan' : 'yellow')} ${paint(`subagent ${payload.subagent} ${status} · ${detail}`, completed ? 'cyan' : 'yellow', { dim: true })}`)
         break
       }
 
@@ -960,6 +1000,9 @@ export function createActivityRenderer({ output, theme = null, eventFilter = nul
   }
 
   return {
+    restoreTodos(snapshot) {
+      if (snapshot) handleEvent({ type: 'todo.updated', sessionId: snapshot.sessionId, payload: { snapshot } })
+    },
     start() {
       if (unsubscribe) return
       unsubscribe = eventBus.subscribe(handleEvent)
@@ -973,6 +1016,8 @@ export function createActivityRenderer({ output, theme = null, eventFilter = nul
       activeToolKeys.clear()
       activeToolArgs.clear()
       activeToolLogIds.clear()
+      todoSnapshots.clear()
+      todoLogIds.clear()
     }
   }
 }

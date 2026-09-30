@@ -13,7 +13,7 @@ const entryDocs = [
   'README.md', 'docs/README.md', 'docs/getting-started.md', 'docs/configuration.md',
   'docs/modes-and-permissions.md', 'docs/cli-reference.md', 'docs/capabilities.md',
   'docs/versions.md', 'docs/history.md', 'docs/contributing.md', 'docs/implementation-1.1.6.md',
-  'docs/implementation-1.0.5.md', 'docs/ROADMAP.md', 'docs/enterprise-deployment.md'
+  'docs/implementation-1.0.5.md', 'docs/implementation-1.0.6-preview.0.md', 'docs/ROADMAP.md', 'docs/enterprise-deployment.md'
 ]
 
 test('README stays a compact product entry rather than an accumulated release manual', async () => {
@@ -57,26 +57,30 @@ test('active topic guides do not send users back to unreleased hotfix or old dep
     assert.doesNotMatch(text, /^# .*\(1\.0\.[1-4]\)|^# .*（1\.0\.[1-4]）/m)
     assert.doesNotMatch(text, /unreleased local hotfix|kkcode-gateway:1\.0\.[1-4]/)
   }
-  assert.match(await read('docs/config.example.yaml'), /适用源码：1\.0\.5/)
+  assert.match(await read('docs/config.example.yaml'), /适用源码：1\.0\.6-preview\.0.*Preview/)
   assert.match(await read('docs/media-input.md'), /OpenAI Responses.*input_image/)
 })
 
-test('the corrected stable target is exactly 1.0.5 across workspaces, Android and current guides', async () => {
+test('1.0.6 preview source is consistent while published stable, preview, signing and historical facts remain separate', async () => {
   const manifest = await checkReleaseVersions(root)
   const android = await readAndroidReleaseTarget(root)
-  assert.equal(manifest.version, '1.0.5')
-  assert.equal(manifest.channel, 'stable')
-  assert.equal(manifest.distTag, 'latest')
+  assert.equal(manifest.version, '1.0.6-preview.0')
+  assert.equal(manifest.channel, 'preview')
+  assert.equal(manifest.distTag, 'preview')
   assert.equal(android.version, manifest.version)
-  assert.equal(android.versionCode, 10010)
-  assert.equal(android.channel, 'stable')
+  assert.equal(android.versionCode, 10011)
+  assert.equal(android.channel, 'prerelease')
   const readme = await read('README.md'), versions = await read('docs/versions.md')
-  assert.match(readme, /1\.0\.5.*正式版/)
-  assert.doesNotMatch(readme, /1\.1\.6|尚未发布/)
+  assert.match(readme, /公开稳定版.*1\.0\.5/)
+  assert.match(readme, /本轮预览版本.*1\.0\.6-preview\.0.*发行回执/)
+  assert.doesNotMatch(readme, /1\.1\.6/)
+  assert.match(versions, /已发布稳定渠道.*1\.0\.5 \/ Android10010/)
   assert.match(versions, /上一已核实稳定版.*1\.0\.4/)
-  assert.match(versions, /已发布预览渠道.*1\.0\.5-preview\.0/)
+  assert.match(versions, /发行准备时已核验的旧预览.*1\.0\.5-preview\.0/)
   assert.match(versions, /从未公开发行过1\.1\.6/)
   assert.match(versions, /源码版本、流水线启动都不等于已公开下载/)
+  assert.match(versions, /本轮授权通过门禁后发布1\.0\.6-preview\.0，不授权替换稳定版或升级生产服务/)
+  assert.match(versions, /release-verification\.json/)
   assert.match(await read('CHANGELOG.md'), /## 1\.0\.5 — Stable/)
   const notice = await read('NOTICE.md')
   assert.match(notice, /\*\*Version\*\*: See \[package\.json\]\(package\.json\)/)
@@ -89,6 +93,20 @@ test('the corrected stable target is exactly 1.0.5 across workspaces, Android an
   const androidGuide = await read('docs/android-release.md')
   assert.ok(androidGuide.includes(`kkcode-android-${manifest.version}.apk`))
   assert.ok(!androidGuide.includes('kkcode-android-1.1.6.apk'))
+})
+
+test('source progress and completion docs distinguish authored todos, check observations and stable JSONL', async () => {
+  const modes = await read('docs/modes-and-permissions.md'), sdk = await read('docs/sdk-guide.md'), context = await read('docs/context-and-harness.md'), headless = await read('docs/headless-jsonl-contract.md')
+  for (const tool of ['agent_list', 'agent_wait', 'agent_send', 'agent_followup', 'agent_interrupt']) assert.ok(modes.includes(tool))
+  for (const contract of ['todos.v1', 'todos.list', 'todo.updated', 'todo_conflict', 'getSessionTodos', 'completed', 'verified']) assert.ok(sdk.includes(contract))
+  assert.match(context, /checks_observed.*不是完整语义验收/)
+  assert.match(context, /公共完成检查只观察已有记录，不自动执行命令/)
+  assert.match(headless, /schemaVersion.*仍为.*"1"/)
+  assert.match(headless, /completion/)
+  assert.match(headless, /incomplete.*blocked.*unknown/)
+  const lock = JSON.parse(await read('package-lock.json'))
+  assert.equal(lock.packages['node_modules/koa/node_modules/content-type'].version, '1.0.5', 'source version edits must not rewrite third-party dependencies')
+  assert.equal(lock.packages['node_modules/pgpass'].version, '1.0.5')
 })
 
 test('current mode documentation follows runtime IDs while retaining legacy aliases and governance', async () => {

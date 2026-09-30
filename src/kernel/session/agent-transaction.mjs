@@ -1,4 +1,4 @@
-const PATH_HINT_RE = /([./~][^\s"'`]+|\b[\w-]+\.(?:mjs|cjs|js|jsx|ts|tsx|json|md|yaml|yml|toml|txt|log|sh)\b)/gi
+const PATH_HINT_RE = /(?<![\w./:])((?:\.{1,2}\/|~\/|\/|[A-Za-z]:[\\/])[^\s"'`]+|(?:[\w-]+\/)*[\w-]+\.(?:mjs|cjs|js|jsx|ts|tsx|json|md|yaml|yml|toml|txt|log|sh|go|rs|py|sql)\b)/gi
 const INLINE_COMMAND_RE = /`([^`\n]+)`/g
 const CONTINUATION_HINT_RE = /\b(continue|follow-?up|same task|same transaction|继续|补充|接着|顺便)\b/i
 

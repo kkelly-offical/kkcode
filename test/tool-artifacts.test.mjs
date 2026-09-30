@@ -166,6 +166,30 @@ test('existing exec capture cap is honestly marked partial rather than a complet
   assert.doesNotMatch(result.output, /完整工具文本已保存在/)
 })
 
+test('cancelled Bash retains its captured archive as partial evidence without replay', async () => {
+  const original = 'captured-before-stop\n'.repeat(500)
+  const ready = path.join(cwd, 'stop-ready'), script = path.join(cwd, 'cancel-fixture.mjs')
+  await writeFile(script, `import fs from 'node:fs'; fs.writeSync(1, ${JSON.stringify(original)}); fs.writeFileSync(${JSON.stringify(ready)}, 'ready'); setTimeout(() => {}, 2500);`)
+  const controller = new AbortController()
+  const pending = bash(`${quote(process.execPath)} ${quote(script)}`, { signal: controller.signal })
+  try {
+    for (let i = 0; i < 200; i++) {
+      if (await fsAccess(ready).then(() => true, () => false)) break
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    await fsAccess(ready)
+    controller.abort()
+    const result = await pending
+    assert.equal(result.status, 'cancelled')
+    assert.equal(result.metadata.cancelled, true)
+    assert.equal(result.metadata.artifactComplete, false)
+    const ref = trustedArtifactRef(result)
+    assert.ok(ref, 'captured bytes remain available after cancellation')
+    const read = await artifactAccess.read({ id: ref.id, limit: 20000 })
+    assert.equal(Buffer.from(read.data, 'base64').toString(), original)
+  } finally { controller.abort(); await pending }
+})
+
 test('compaction deterministically preserves host receipt IDs, never extracts them from user strings', async () => {
   const archived = await archiveToolText({ output: 'x'.repeat(6000), access: artifactAccess, callId: 'c', limit: 4000 })
   const ref = trustedArtifactRef(archived)

@@ -1,7 +1,8 @@
 /** Instance-owned runtime. AsyncLocalStorage carries the explicit dependency
  * container through legacy internal call sites without swapping global state. */
 import { runWithRuntime, currentRuntime } from './core/runtime-context.mjs'
-import { createAgentMap } from './agent/agent.mjs'
+import path from 'node:path'
+import { createAgentMap, resolveAgentForMode } from './agent/agent.mjs'
 import { loadConfig } from "../config/load-config.mjs"
 import { applyWorkspaceTrustPolicy, bootstrapKernelExtensions, resolveExtensionPolicy, assertExecutableConfiguration } from "../context.mjs"
 import { checkWorkspaceTrust } from "./permission/workspace-trust.mjs"
@@ -40,6 +41,7 @@ import {
   appendUserMessage,
   appendAssistantMessage,
   configureSessionStore,
+  getTodoSnapshot,
   flushNow
 } from "./session/store.mjs"
 import { configureEventLog } from "../storage/event-log.mjs"
@@ -48,7 +50,9 @@ import { compactSession } from "./session/compaction.mjs"
 import { confirmRollback, executeRollback, handleRollbackIfNeeded } from "./session/rollback.mjs"
 import { executeTool } from "./tool/executor.mjs"
 import { BackgroundManager } from "./orchestration/background-manager.mjs"
-import { createTaskDelegate } from "./orchestration/task-scheduler.mjs"
+import { createTaskDelegate, createChildController } from "./orchestration/task-scheduler.mjs"
+import { createSessionTodoService } from './session/todo-service.mjs'
+import { effectiveDataPolicy, intersectDataPolicies } from './permission/data-policy.mjs'
 import { inspectPrompt } from './session/prompt-report.mjs'
 import { currentDurableRun } from './orchestration/run-runtime.mjs'
 import { createHostServices } from './core/host-services.mjs'
@@ -81,7 +85,7 @@ import { createHostServices } from './core/host-services.mjs'
 export async function createKernel(options = {}) {
   const cwd = options.cwd ?? process.cwd()
   const handlers = options.handlers || {}
-  const configState = options.config ?? options.configState ?? await loadConfig(cwd)
+  const configState = /** @type {any} */ (options.config ?? options.configState ?? await loadConfig(cwd))
 
   // storage 层配置注入（原 buildContext 平台侧，阶段 2c 收口进组合根）。
   // 只下发配置里显式出现的键：缺省键与平台模块默认值本就一致，跳过可避免
@@ -123,7 +127,8 @@ export async function createKernel(options = {}) {
   // deferMcp：MCP 后台加载只对 createKernel 装配的注册表生效（boot/回合不
   // await 连接）；直接自建的注册表保持同步契约。mcp.background_load: false
   // 是用户的退回开关。
-  const tools = createToolRegistry({ mcpRegistry: mcp, deferMcp: true })
+  const tools = createToolRegistry({ mcpRegistry: mcp, deferMcp: true,
+    onDiagnostic: diagnostic => events.emit({ type: 'tool.registration.rejected', payload: diagnostic }) })
   const skills = createSkillRegistry()
   const hooks = createHookBus()
   const providers = createProviderRegistry()
@@ -185,6 +190,9 @@ export async function createKernel(options = {}) {
    * @param {string} [turnOptions.model]
    * @param {string} [turnOptions.mode]
    * @param {object|null} [turnOptions.output]
+   * @param {AbortSignal} [turnOptions.signal]
+   * @param {any} [turnOptions.runSpec]
+   * @param {any} [turnOptions.toolContext]
    */
   async function executeTurn(turnOptions = {}) {
     const sessionId = turnOptions.sessionId || newSessionId()
@@ -193,16 +201,35 @@ export async function createKernel(options = {}) {
     try {
       const selectedConfig = /** @type {any} */ (turnOptions.configState ?? configState)
       const prior = turnOptions.sessionId ? (await run(() => getSession(sessionId)))?.session : null
+      if (prior?.childContract && (!turnOptions.toolContext?.childOperationId || prior.childOperationId !== turnOptions.toolContext.childOperationId
+          || prior.childContract.runSpec.runId !== turnOptions.runSpec?.runId || prior.childContract.parentSessionId !== turnOptions.runSpec?.parentSessionId)) {
+        throw new Error('Delegated session requires its active parent-owned operation; use kernel.agents.forSession(parent).followup()')
+      }
       const providerType = turnOptions.providerType || prior?.providerType || selectedConfig.config.provider?.default
       const model = turnOptions.model || (prior?.providerType === providerType ? prior?.model : '') || selectedConfig.config.provider?.[providerType]?.default_model || ''
       const mode = resolveMode(turnOptions.mode || prior?.mode || selectedConfig.config.agent?.default_mode || 'agent')
       return await runWithRuntime({ ...runtime, sessionId, durableRun: currentDurableRun() }, () => executeEngineTurn(/** @type {any} */ ({
         ...turnOptions,
+        signal: turnOptions.signal ? AbortSignal.any([turnOptions.signal, hostController.signal]) : hostController.signal,
         sessionId, providerType, model, mode,
         configState: selectedConfig,
         output: turnOptions.output ?? (typeof handlers.onOutput === "function" ? handlers.onOutput : null)
       })))
     } finally { activeTurns.delete(sessionId) }
+  }
+
+  async function childControllerFor(parentSessionId) {
+    if (currentDurableRun()) throw new Error('Strict delegated runs must use their host-owned task graph')
+    const parent = (await getSession(parentSessionId))?.session
+    if (!parent || path.resolve(parent.cwd || cwd) !== path.resolve(cwd)) throw new Error('Parent session does not belong to this kernel workspace')
+    const delegateTask = createTaskDelegate({ config: configState.config, parentSessionId,
+      model: parent.model, providerType: parent.providerType, parentMode: parent.mode,
+      parentAgent: resolveAgentForMode(parent.mode), parentRunSpec: parent.childContract?.runSpec || null,
+      parentPermissionConfig: configState.config, signal: hostController.signal,
+      runSubtask: async request => executeTurn({ ...request, mode: 'agent',
+        configState: { ...configState, config: { ...configState.config, data_policy: intersectDataPolicies(effectiveDataPolicy(configState), request.dataPolicy) } },
+        toolContext: { childOperationId: request.childOperationId, skillToolGroups: request.runSpec?.toolContext?.skillToolGroups || [] } }) })
+    return bind(createChildController({ parentSessionId, delegateTask, config: configState.config, signal: hostController.signal }))
   }
 
   /**
@@ -284,10 +311,18 @@ export async function createKernel(options = {}) {
       isReady: () => tools.isReady(),
       list: (listOptions) => tools.list(listOptions),
       get: (toolName) => tools.get(toolName),
-      call: (toolName, args, ctx) => tools.call(toolName, args, { cwd, ...ctx, lspService: hostServices.services.lsp, officeService: hostServices.services.office }),
+      getDiagnostics: () => tools.getDiagnostics(),
+      call: (toolName, args, ctx = {}) => runWithRuntime({ ...currentRuntime(), sessionId: ctx.sessionId || null, cwd: ctx.cwd || cwd },
+        () => tools.call(toolName, args, { cwd, ...ctx, lspService: hostServices.services.lsp, officeService: hostServices.services.office })),
       refreshMcpTools: () => tools.refreshMcpTools(),
-      executeTool: (execOptions) => executeTool({ ...execOptions, context: { cwd, ...execOptions.context, lspService: hostServices.services.lsp, officeService: hostServices.services.office } })
+      executeTool: (execOptions) => runWithRuntime({ ...currentRuntime(), sessionId: execOptions.sessionId || null, cwd: execOptions.context?.cwd || cwd },
+        () => executeTool({ ...execOptions, context: { cwd, ...execOptions.context, lspService: hostServices.services.lsp, officeService: hostServices.services.office } }))
     },
+    todos: {
+      list: sessionId => getTodoSnapshot(sessionId),
+      forSession: (sessionId, options = {}) => createSessionTodoService({ ...options, sessionId })
+    },
+    agents: { forSession: childControllerFor },
     extensions: { skills, mcp, hooks },
     background: {
       launch: (args) => BackgroundManager.launch(args),
@@ -319,6 +354,8 @@ export async function createKernel(options = {}) {
   const bind = object => /** @type {T} */ (Object.fromEntries(Object.entries(object).map(([key, value]) => [key, typeof value === 'function' ? (...args) => run(() => value.apply(object, args)) : value])))
   handle.sessions = bind(handle.sessions)
   handle.tools = bind(handle.tools)
+  handle.todos = bind(handle.todos)
+  handle.agents = bind(handle.agents)
   handle.background = bind(handle.background)
   handle.extensions = { skills: bind(skills), hooks: bind(hooks), mcp: bind(mcp) }
   handle.applyTrustState = (...args) => run(() => applyTrustState(...args))

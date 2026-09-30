@@ -40,6 +40,7 @@ import { renderReplStatusLine, renderStartupScreen } from "./ui/repl-status-view
 import { paint } from "./theme/color.mjs"
 import { promptWorkspaceTrust } from "./repl/trust-prompt.mjs"
 import { createActivityRenderer } from "./ui/activity-renderer.mjs"
+import { loadTodoProgress } from './ui/repl-task-panel.mjs'
 import { reduceAppState } from "./ui/app-state.mjs"
 import { userRootDir, memoryFilePath } from "./storage/paths.mjs"
 import { loadProfile, runOnboarding } from "./onboarding.mjs"
@@ -376,6 +377,9 @@ async function processInputLine({
 }
 
 async function startLineRepl({ ctx, state, providersConfigured, customCommands, recentSessions, historyLines }) {
+  // A piped stdin can close as soon as readline is created. Finish asynchronous
+  // snapshot I/O first, then reach the first question without yielding.
+  const initialTodos = await loadTodoProgress(ctx.kernel, state.sessionId)
   const rl = createInterface({ input, output, history: historyLines, historySize: HIST_SIZE })
   let localCustomCommands = customCommands
   let localProviderPicker = null
@@ -401,12 +405,14 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
   const lineActivityRenderer = createActivityRenderer({
     theme: ctx.themeState.theme,
     eventBus: ctx.kernel.events,
+    eventFilter: event => !event?.sessionId || event.sessionId === state.sessionId,
     output: {
       appendLog: (text) => console.log(text),
       appendStreamChunk: (chunk) => process.stdout.write(chunk)
     }
   })
   lineActivityRenderer.start()
+  lineActivityRenderer.restoreTodos(initialTodos)
 
   let linePendingImages = []
 
@@ -714,7 +720,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   const activityRenderer = createActivityRenderer({
     theme: ctx.themeState.theme,
     eventBus: ctx.kernel.events,
-    output: { appendLog, updateLog, appendStreamChunk },
+    output: { appendLog, updateLog, removeLog: id => transcript.removeLog(id), appendStreamChunk },
     eventFilter: (event) =>
       (!event?.sessionId || event.sessionId === state.sessionId) &&
       shouldApplyActiveTurnEvent(event, {
@@ -799,6 +805,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
   // Subscribe activity logs after typed stream state so a completed Thinking
   // block is inserted before the tool block that follows it.
   activityRenderer.start()
+  activityRenderer.restoreTodos(await loadTodoProgress(ctx.kernel, state.sessionId))
 
   /**
    * 工具层的两种模态提示（权限审批、提问）。实现在 repl/prompt-queue.mjs。

@@ -1,0 +1,7 @@
+Read the durable task snapshot owned by this conversation. The result contains the latest revision and each item's stable id, owner, authored status, dependencies and same-session evidence references.
+
+Use this after recovery, context compaction, a todo conflict, or before updating a list whose current contents are unknown. It accepts no parameters and cannot select another session or another account.
+
+Only modify your own items using todowrite. Reconcile the current snapshot, preserve existing IDs and pass its revision as expectedRevision. The read does not automatically bless a stale write or execute any project command.
+
+Completed counts describe authored task progress only. They are not observed test results or acceptance evidence; retain failed, missing and unknown verification separately.

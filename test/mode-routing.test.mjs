@@ -89,9 +89,9 @@ test("routeMode keeps plan explicit and mutation-free as a public contract", () 
 
 test("renderPublicModeContract keeps public lanes aligned", () => {
   const text = renderPublicModeContract()
-  assert.match(text, /`assistant`: default CLI personal assistant lane/i)
+  assert.match(text, /`assistant`: complete coding, task execution, verification and delegation capabilities/i)
   assert.doesNotMatch(text, /`ask`:/i)
-  assert.match(text, /`plan`: produce a spec\/plan only/i)
+  assert.match(text, /`plan`: read-only project exploration/i)
   assert.match(text, /`agent` \/ `code` \/ `coding`: compatibility aliases/i)
-  assert.match(text, /`longagent`: heavyweight staged multi-file delivery lane/i)
+  assert.match(text, /`longagent`: the same execution capabilities with durable staged orchestration/i)
 })

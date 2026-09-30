@@ -727,3 +727,16 @@ summary {
 .turn-cancelled { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 0; color: var(--text-secondary); font-size: 12px; }
 .turn-cancelled button { color: inherit; background: none; border: 1px solid currentColor; padding: 3px 9px; cursor: pointer; }
 .stop-progress { color: var(--text-secondary); font-size: 12px; padding: 5px 12px; }
+/* Read-only durable task progress: one line until explicitly expanded. */
+.todo-progress { margin: 0 auto; width: min(100%, 860px); color: var(--muted, #999); font-size: 12px; padding: 0 20px; box-sizing: border-box; }
+.todo-progress > summary { cursor: pointer; padding: 8px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.todo-progress > summary:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.todo-progress-body { max-height: min(230px, 30vh); overflow-y: auto; padding: 0 0 8px 14px; overscroll-behavior: contain; }
+.todo-progress-note { font-size: 11px; margin: 0 0 7px; }
+.todo-progress ul { list-style: none; margin: 0; padding: 0; }
+.todo-progress li { padding: 5px 0; overflow-wrap: anywhere; }
+.todo-progress li > div { display: flex; gap: 8px; align-items: baseline; }
+.todo-progress-status { flex: 0 0 auto; font-size: 11px; }
+.todo-progress-content { min-width: 0; }
+.todo-progress small { display: block; opacity: .8; font-size: 10px; }
+.todo-progress li[data-status="completed"] .todo-progress-content { opacity: .7; }

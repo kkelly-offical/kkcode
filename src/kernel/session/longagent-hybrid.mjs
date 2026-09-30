@@ -6,10 +6,12 @@ import { runtimeCwd, currentRuntime, runWithRuntime } from "../core/runtime-cont
  * 流程: H0:Intake → H1:Preview → H2:Blueprint → H2.5:Git → H3:Scaffold → H4:Coding(并行) → H5:Debugging(回滚) → H5.5:Validation → H6:Gates → H7:GitMerge
  */
 import path from "node:path"
+import { createHash } from 'node:crypto'
 import { LongAgentManager } from "../orchestration/longagent-manager.mjs"
 import { processTurnLoop } from "./loop.mjs"
 import { resolveTaskModel } from '../provider/task-model.mjs'
-import { markSessionStatus } from "./store.mjs"
+import { markSessionStatus, getTodoSnapshot } from "./store.mjs"
+import { createSessionTodoService } from './todo-service.mjs'
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { saveCheckpoint, loadCheckpoint, saveTaskCheckpoint, loadTaskCheckpoints, cleanupCheckpoints } from "./checkpoint.mjs"
@@ -83,6 +85,104 @@ export function resolveHybridCompletionStatus({ completionMarkerSeen, usabilityG
   return completionMarkerSeen ? "completed" : "done"
 }
 
+/** Host-authored execution projection. No model reply/marker can complete an
+ * item here, and this list is never used as an acceptance-manifest receipt. */
+const ULTRA_COORDINATOR_TODO = 'Ultra 执行计划（验收结果单独记录）'
+function ultraTaskDefinitionHash(stage, task) {
+  return createHash('sha256').update(JSON.stringify({ stageId: stage.stageId, taskId: task.taskId,
+    prompt: task.prompt, plannedFiles: task.plannedFiles || [], dependsOn: task.dependsOn || [],
+    acceptance: task.acceptance || [], subagentType: task.subagentType || null, category: task.category || null })).digest('hex')
+}
+function createUltraTodoProjection(sessionId) {
+  const coordinatorContent = ULTRA_COORDINATOR_TODO
+  let service = null, plan = null, progress = {}, terminal = null, queue = Promise.resolve(), failure = null
+  const observed = new Map(), knownIds = new Map(), receipts = new Map()
+  const key = (stageId, taskId) => JSON.stringify([String(stageId), String(taskId)])
+  const clean = value => String(value || '').replace(/[\x00-\x1f\x7f\u202a-\u202e\u2066-\u2069]/gu, ' ').slice(0, 400)
+  const taskTag = (stage, task) => `[${createHash('sha256').update(key(stage.stageId, task.taskId)).digest('hex').slice(0, 32)}]`
+  const taskContent = (stage, task) => `Ultra ${clean(key(stage.stageId, task.taskId))} — ${clean(stage.name || stage.stageId)} ${taskTag(stage, task)}`
+  const statusOf = status => status === 'completed' ? 'completed' : status === 'cancelled' ? 'cancelled'
+    : ['running', 'in_progress'].includes(status) ? 'in_progress' : ['pending', 'retrying', undefined].includes(status) ? 'pending' : 'blocked'
+  const enqueue = work => {
+    const operation = queue.then(work)
+    queue = operation.catch(error => { failure ||= error })
+    return operation
+  }
+  async function persist() {
+    if (failure) throw failure
+    if (!plan?.stages?.length) return
+    service ||= await createSessionTodoService({ sessionId, agentId: 'ultra' })
+    // Host projection recomputes from authoritative receipts on every conflict;
+    // never replay a model-authored replacement or overwrite another owner.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const snapshot = await service.list()
+      const owned = snapshot.items.filter(item => item.owner.agentId === 'ultra')
+      const graph = new Map(plan.stages.flatMap(stage => (stage.tasks || []).map(task => [key(stage.stageId, task.taskId),
+        (task.dependsOn || []).map(id => key(stage.stageId, id))])))
+      const invalid = new Set(), checked = new Set(), visiting = new Set()
+      const check = taskKey => {
+        if (!graph.has(taskKey) || visiting.has(taskKey)) return false
+        if (checked.has(taskKey)) return !invalid.has(taskKey)
+        visiting.add(taskKey)
+        const valid = graph.get(taskKey).every(check)
+        visiting.delete(taskKey); checked.add(taskKey)
+        if (!valid) invalid.add(taskKey)
+        return valid
+      }
+      for (const taskKey of graph.keys()) check(taskKey)
+      const tasks = plan.stages.flatMap(stage => (stage.tasks || []).map(task => {
+        const taskKey = key(stage.stageId, task.taskId), content = taskContent(stage, task)
+        const previous = owned.find(item => item.id === knownIds.get(taskKey)) || owned.find(item => item.content.endsWith(taskTag(stage, task)))
+        if (previous) knownIds.set(taskKey, previous.id)
+        const savedProgress = progress[task.taskId]
+        const definitionHash = ultraTaskDefinitionHash(stage, task)
+        const bound = savedProgress?.stageId === stage.stageId && savedProgress.definitionHash === definitionHash
+        if (bound) receipts.set(taskKey, { definitionHash, status: savedProgress.status })
+        const recorded = receipts.get(taskKey)
+        const receipt = observed.has(taskKey) ? observed.get(taskKey) : recorded?.definitionHash === definitionHash ? recorded.status
+          : savedProgress?.stageId === stage.stageId || recorded ? 'unknown' : undefined
+        let status = invalid.has(taskKey) ? 'blocked' : statusOf(receipt)
+        if (terminal && status !== 'completed' && status !== 'cancelled') status = terminal === 'cancelled' && ['pending', 'in_progress'].includes(status) ? 'cancelled' : 'blocked'
+        return { taskKey, task, stage, item: { ...(previous ? { id: previous.id } : {}), content, status,
+          dependencies: invalid.has(taskKey) ? [] : (task.dependsOn || []).map(id => knownIds.get(key(stage.stageId, id))).filter(Boolean) } }
+      }))
+      const coordinator = owned.find(item => item.content === coordinatorContent)
+      const status = !terminal ? 'in_progress' : terminal === 'completed' && tasks.every(task => task.item.status === 'completed') ? 'completed' : terminal === 'cancelled' ? 'cancelled' : 'blocked'
+      const todos = [{ ...(coordinator ? { id: coordinator.id } : {}), content: coordinatorContent, status, dependencies: [] }, ...tasks.map(task => task.item)]
+      const visible = owned.filter(item => todos.some(todo => todo.id === item.id))
+      const removedUnfinished = owned.some(item => !todos.some(todo => todo.id === item.id) && !['completed', 'cancelled'].includes(item.status))
+      if (!removedUnfinished && visible.length === todos.length && todos.every(todo => visible.some(item => item.id === todo.id && item.content === todo.content && item.status === todo.status && JSON.stringify(item.dependencies) === JSON.stringify(todo.dependencies)))) return
+      try {
+        const next = await service.update({ expectedRevision: snapshot.revision, todos })
+        for (const task of tasks) {
+          const item = next.items.find(item => item.owner.agentId === 'ultra' && item.content === task.item.content)
+          if (item) knownIds.set(task.taskKey, item.id)
+        }
+        // New dependencies can be projected only after the store allocates IDs.
+        if (tasks.some(task => !invalid.has(task.taskKey) && (task.task.dependsOn || []).length > task.item.dependencies.length)) continue
+        return
+      } catch (error) { if (error.code !== 'todo_conflict' || attempt === 2) throw error }
+    }
+    throw Object.assign(new Error('Ultra todo projection changed repeatedly; inspect current progress before continuing'), { code: 'todo_conflict' })
+  }
+  return {
+    sync(nextPlan, nextProgress) {
+      return enqueue(async () => { plan = nextPlan; progress = nextProgress; observed.clear(); await persist() })
+    },
+    observe(event) {
+      if (event.sessionId !== sessionId || ![EVENT_TYPES.LONGAGENT_STAGE_TASK_DISPATCHED, EVENT_TYPES.LONGAGENT_STAGE_TASK_FINISHED, EVENT_TYPES.LONGAGENT_STAGE_TASK_SKIPPED].includes(event.type)) return
+      return enqueue(async () => {
+        const { stageId, taskId } = event.payload || {}
+        if (!plan?.stages?.some(stage => stage.stageId === stageId && stage.tasks?.some(task => task.taskId === taskId))) return
+        observed.set(key(stageId, taskId), event.type === EVENT_TYPES.LONGAGENT_STAGE_TASK_DISPATCHED ? 'running' : event.type === EVENT_TYPES.LONGAGENT_STAGE_TASK_SKIPPED ? 'skipped' : event.payload.status)
+        await persist()
+      })
+    },
+    settle(status) { return enqueue(async () => { terminal = status; await persist() }) },
+    async close() { await queue; if (failure) throw failure }
+  }
+}
+
 /**
  * `[GOAL_ACHIEVED: 简述]` —— [GOAL_BLOCKED] 的对称信号。
  *
@@ -135,7 +235,7 @@ export function describeGoalClaimDivergence(claim, verification) {
  * 现在退订只有一处：下面的 finally。
  */
 export async function runHybridLongAgent(args) {
-  const lifecycle = { unsubscribeStop: null }
+  const lifecycle = { unsubscribeStop: null, unsubscribeTodos: null, todos: null }
   try {
     const providerType = args.providerType || args.configState?.config?.provider?.default
     const model = args.model || args.configState?.config?.provider?.[providerType]?.default_model
@@ -150,6 +250,7 @@ export async function runHybridLongAgent(args) {
       const aborted = Boolean(args?.signal?.aborted) ||
         err?.code === "ABORT_ERR" || err?.errorClass === "aborted"
       const detail = String(err?.message || err).slice(0, 300)
+      await lifecycle.todos?.settle(aborted ? 'cancelled' : 'blocked').catch(() => {})
       if (args?.acceptance?.required !== true) await LongAgentManager.update(sessionId, {
         status: aborted ? "aborted" : "fatal",
         lastMessage: `${aborted ? "已中断" : "内部错误"}: ${detail}`
@@ -159,6 +260,8 @@ export async function runHybridLongAgent(args) {
     throw err
   } finally {
     lifecycle.unsubscribeStop?.()
+    lifecycle.unsubscribeTodos?.()
+    await lifecycle.todos?.close()
   }
 }
 
@@ -402,6 +505,7 @@ async function runHybridPipeline({
   }
 
   async function syncState(patch = {}) {
+    await lifecycle.todos.sync(stagePlan, taskProgress)
     const stats = stageProgressStats(taskProgress)
     const updated = await LongAgentManager.update(sessionId, {
       status: patch.status || "running", phase: currentPhase, gateStatus, currentGate,
@@ -469,6 +573,8 @@ async function runHybridPipeline({
       stopFlag = true
     }
   })
+  lifecycle.todos = createUltraTodoProjection(sessionId)
+  lifecycle.unsubscribeTodos = EventBus.subscribe(event => lifecycle.todos.observe(event))
 
   await markSessionStatus(sessionId, "running-longagent")
   await syncState({ status: "running", lastMessage: "hybrid mode started" })
@@ -807,6 +913,7 @@ async function runHybridPipeline({
     if (["no", "否", "n", "取消", "abort", "cancel", "中止", "停止"].some(k => answer.includes(k))) {
       await LongAgentManager.update(sessionId, { status: "aborted", lastMessage: "user rejected blueprint" }, stateCwd)
       await markSessionStatus(sessionId, "active")
+      await lifecycle.todos.settle('cancelled')
       return { sessionId, turnId: `turn_long_${Date.now()}`, reply: "用户中止了 Blueprint 审查。", usage: aggregateUsage, toolEvents, iterations: iteration, status: "aborted", phase: "H2", gateStatus, currentGate, lastGateFailures: [], recoveryCount: 0, progress: lastProgress, elapsed: Math.round((Date.now() - startTime) / 1000), stageIndex: 0, stageCount: stagePlan.stages.length, planFrozen, taskProgress: {}, fileChanges: [], stageProgress: { done: 0, total: 0 }, remainingFilesCount: 0 }
     }
     gateStatus.blueprintReview = { status: "pass", userConfirmed: true }
@@ -1181,9 +1288,15 @@ async function runHybridPipeline({
       currentStageId = stage.stageId
       await syncState({ stageStatus: "running", lastMessage: `H4: running ${stage.stageId} (${stageIndex + 1}/${stagePlan.stages.length})` })
 
-      const seeded = Object.fromEntries(
-        stage.tasks.map(t => [t.taskId, taskProgress[t.taskId]]).filter(([, v]) => Boolean(v))
-      )
+      const seeded = Object.fromEntries(stage.tasks.map(task => {
+        const previous = taskProgress[task.taskId]
+        if (!previous || previous.stageId && previous.stageId !== stage.stageId) return [task.taskId, null]
+        if (previous.definitionHash === ultraTaskDefinitionHash(stage, task)) return [task.taskId, previous]
+        // Same identity without the same execution definition is not a reusable
+        // receipt. Preserve unknown effects; never silently skip OR replay them.
+        return [task.taskId, { ...previous, stageId: stage.stageId, status: 'unknown',
+          lastError: 'task definition changed or its prior execution binding is unavailable; inspect effects before retrying' }]
+      }).filter(([, value]) => Boolean(value)))
 
       // #4 计划锚点 — 每阶段动态构建，不存入 priorContext 避免被压缩掉
       const stageStatuses = stagePlan.stages.map((s, i) => {
@@ -1202,7 +1315,9 @@ async function runHybridPipeline({
           stageIndex, stageCount: stagePlan.stages.length, priorContext: planAnchor + priorContext,
           stuckTracker,
           onTaskComplete: async (taskData) => {
-            await saveTaskCheckpoint(sessionId, taskData.stageId, taskData.taskId, taskData)
+            const task = stage.tasks.find(task => task.taskId === taskData.taskId)
+            if (!task) throw new Error('Stage checkpoint does not belong to the active task plan')
+            await saveTaskCheckpoint(sessionId, stage.stageId, taskData.taskId, { ...taskData, stageId: stage.stageId, definitionHash: ultraTaskDefinitionHash(stage, task) })
           },
           taskBus
         })
@@ -1235,7 +1350,9 @@ async function runHybridPipeline({
       // 合并结果
       if (acceptanceRequired) accumulateUsage(stageResult)
       for (const [taskId, progress] of Object.entries(stageResult.taskProgress || {})) {
-        taskProgress[taskId] = { ...taskProgress[taskId], ...progress }
+        const task = stage.tasks.find(task => task.taskId === taskId)
+        if (!task) throw new Error('Stage result does not belong to the active task plan')
+        taskProgress[taskId] = { ...taskProgress[taskId], ...progress, stageId: stage.stageId, definitionHash: ultraTaskDefinitionHash(stage, task) }
         if (String(progress.lastReply || "").toLowerCase().includes("[task_complete]")) completionMarkerSeen = true
         // #4 TaskBus: 解析 task 输出中的广播消息
         if (taskBus && progress.lastReply) taskBus.parseTaskOutput(taskId, progress.lastReply)
@@ -1249,6 +1366,7 @@ async function runHybridPipeline({
           }
         }
       }
+      await lifecycle.todos.sync(stagePlan, taskProgress)
       if (stageResult.completionMarkerSeen) completionMarkerSeen = true
       if (stageResult.fileChanges?.length) {
         fileChanges = mergeCappedFileChanges(fileChanges, stageResult.fileChanges, fileChangesLimit)
@@ -1748,7 +1866,12 @@ async function runHybridPipeline({
       const validator = await createValidator({ cwd, configState })
       // Legacy validator's standard mode spawns host compilers/tests. Strict
       // work uses its read-only todo projection; real checks run in sealed H6.
-      const report = await validator.validate({ todoState: toolContext?._todoState, level: acceptanceRequired ? "evidence" : "standard" })
+      const todos = await getTodoSnapshot(sessionId)
+      const report = await validator.validate({
+        // The coordinator itself awaits H6 and cannot be its own prerequisite.
+        todoState: todos.items.filter(item => item.owner.agentId !== 'ultra' || item.content !== ULTRA_COORDINATOR_TODO),
+        level: acceptanceRequired ? "evidence" : "standard"
+      })
       gateStatus.completionValidation = {
         status: report.verdict === "BLOCK" ? "fail" : acceptanceRequired ? "informational" : "pass",
         verdict: report.verdict,
@@ -2185,6 +2308,7 @@ async function runHybridPipeline({
     completionMarkerSeen,
     hadOutput
   })
+  await lifecycle.todos.sync(stagePlan, taskProgress)
 
   // ========== H7: GIT MERGE (原子性保护) ==========
   // 只有 completed 才合进主干。0.4.x 的条件是「门禁过了就合」——加上轮次循环
@@ -2329,6 +2453,7 @@ async function runHybridPipeline({
   const finalMessage = STATUS_MESSAGES[finalStatus] || "hybrid longagent finished"
   await LongAgentManager.update(sessionId, { status: finalStatus, lastMessage: finalMessage, elapsed }, stateCwd)
   await markSessionStatus(sessionId, sessionStatusForUltraStatus(finalStatus))
+  await lifecycle.todos.settle(stopFlag || signal?.aborted || finalStatus === ULTRA_STATUS.USER_STOPPED ? 'cancelled' : finalStatus === ULTRA_STATUS.COMPLETED ? 'completed' : 'blocked')
 
   const stats = stageProgressStats(taskProgress)
 

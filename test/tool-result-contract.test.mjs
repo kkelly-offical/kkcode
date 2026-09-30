@@ -82,3 +82,32 @@ test("an already-aborted signal cancels before tool execution", async () => {
   assert.equal(result.status, "cancelled")
   assert.equal(result.ok, false)
 })
+
+test('structured process failure flags cannot be overridden by a claimed successful status', async () => {
+  for (const fields of [{ exitCode: 8 }, { timedOut: true }, { captureIncomplete: true }, { terminationIncomplete: true }]) {
+    for (const raw of [{ ...fields }, { metadata: fields }]) {
+      const result = await run({ ...raw, ok: true, status: 'completed', output: 'partial' })
+      assert.equal(result.ok, false)
+      assert.equal(result.status, 'error')
+    }
+  }
+  const cancelled = await run({ ok: true, status: 'completed', output: 'partial', metadata: { cancelled: true } })
+  assert.equal(cancelled.status, 'cancelled')
+})
+
+test('incomplete and unknown child results remain non-success while launch acknowledgments keep child receipts', async () => {
+  const incomplete = await run({ status: 'incomplete', session_id: 'child', stop_reason: 'budget', reply: 'partial' })
+  assert.equal(incomplete.ok, false)
+  assert.equal(incomplete.status, 'blocked')
+  assert.deepEqual(incomplete.metadata.childOutcome, { status: 'incomplete', sessionId: 'child', stopReason: 'budget' })
+  const unknown = await run({ status: 'unknown', session_id: 'child', reply: 'inspect prior effects' })
+  assert.equal(unknown.ok, false)
+  assert.equal(unknown.metadata.outcomeUnknown, true)
+  assert.equal(unknown.code, 'tool_outcome_unknown')
+  assert.equal((await run({ status: 'partial_error', tasks: [{ error: 'not launched' }] })).ok, false)
+  for (const status of ['pending', 'running']) {
+    const launched = await run({ status, session_id: 'child', background_task_id: 'bg-child' })
+    assert.equal(launched.ok, true, 'acknowledging submission does not complete the child')
+    assert.deepEqual(launched.metadata.childOutcome, { status, sessionId: 'child', backgroundTaskId: 'bg-child' })
+  }
+})

@@ -1,5 +1,23 @@
 # Changelog / 更新日志
 
+## 1.0.6-preview.0 — Preview / 预览发行候选
+
+- Share coding, verification and delegation capabilities across Agent / Auto / YOLO;
+  retain distinct approval policies, read-only Plan and staged Ultra orchestration.
+- Persist session-owned ToDo revisions and show compact, expandable progress in
+  CLI, Web and Android without rearranging controls. Authored completion is not acceptance.
+- Add parent-scoped child listing, messaging, waiting, continuation and interruption;
+  preserve role, scope, deadlines and failed/incomplete outcomes across resumption.
+- Normalize command outcomes, propagate cancellation to managed processes, and
+  fence background checkpoint races so stale heartbeats cannot undo cancellation.
+- Keep tool results, pending work and verification evidence through compaction and
+  recovery; require checks after actual writes, including background/composed tools.
+- Harden read-only command classification, controlled Git reads, literal search
+  arguments and reserved host-tool registration. Ordinary approval is not OS isolation.
+- Keep public stable 1.0.5 and existing Preview artifacts unchanged. See the
+  [implementation and verification record](docs/implementation-1.0.6-preview.0.md)
+  for scope, limits and platform/model acceptance still pending.
+
 ## 1.0.5 — Stable / 正式版
 
 - Correct the unpublished source marker `1.1.6` back to the user-authorized

@@ -7,6 +7,7 @@ import {
 import { readJson } from "../../storage/json-store.mjs"
 import { writePrivateFile } from '../../storage/private-file.mjs'
 import { acquireProcessLock } from '../../storage/process-lock.mjs'
+import { readTodoSnapshot, reduceTodoSnapshot, rewindTodoSnapshot } from './todo-state.mjs'
 
 function now() {
   return Date.now()
@@ -342,6 +343,34 @@ export async function updateSessionIf(sessionId, expected, patch) {
   })
 }
 
+/** Host-owned task state shares the session transaction and its private shard.
+ * A tool receives a bound service, never authority to select another session. */
+export async function getTodoSnapshot(sessionId) {
+  return withLock(async () => {
+    await ensureLoadedUnsafe(); await flushUnsafe()
+    if (!state.index.sessions[sessionId]) throw Object.assign(new Error('Session not found'), { code: 'session_not_found' })
+    const data = await loadSessionDataUnsafe(sessionId)
+    return structuredClone(readTodoSnapshot(data.parts, sessionId))
+  })
+}
+
+export async function updateTodos(sessionId, input, { agentId = 'main', turnId = null, signal = null } = {}) {
+  return withLock(async () => {
+    signal?.throwIfAborted()
+    await ensureLoadedUnsafe(); await flushUnsafe()
+    if (!state.index.sessions[sessionId]) throw Object.assign(new Error('Session not found'), { code: 'session_not_found' })
+    const data = await loadSessionDataUnsafe(sessionId)
+    const snapshot = reduceTodoSnapshot(readTodoSnapshot(data.parts, sessionId), input, {
+      sessionId, agentId, turnId, now: now(), messages: data.messages, parts: data.parts
+    })
+    signal?.throwIfAborted()
+    queueDataOperation(sessionId, { kind: 'part', value: newPart('todo.updated', { snapshot, turnId }) })
+    queueIndexOperation(sessionId, 'patch', { updatedAt: now() })
+    await flushUnsafe()
+    return structuredClone(snapshot)
+  })
+}
+
 /** Rewind is a transaction over messages AND their tool/thinking parts. Keep a
  * private recoverable checkpoint and refuse stale snapshots from another host. */
 export async function replaceConversationForRewind(sessionId, retained, observed) {
@@ -353,10 +382,15 @@ export async function replaceConversationForRewind(sessionId, retained, observed
     const removedIds = new Set(removed.map(message => message.id)), removedTurns = new Set(removed.map(message => message.turnId).filter(Boolean))
     const cutoff = removed[0]?.createdAt ?? Infinity
     const parts = data.parts.filter(part => {
+      // Keep the append-only task ledger; restore authored progress with a new
+      // revision instead of erasing history or reusing a stale CAS revision.
+      if (part.type === 'todo.updated') return true
       if (part.messageId) return !removedIds.has(part.messageId)
       if (part.turnId) return !removedTurns.has(part.turnId)
       return !Number.isFinite(part.createdAt) || part.createdAt < cutoff
     })
+    const restoredTodos = rewindTodoSnapshot(data.parts, sessionId, { removedTurnIds: [...removedTurns], cutoff, now: now() })
+    if (restoredTodos) parts.push(newPart('todo.updated', { snapshot: restoredTodos, turnId: null }))
     // Reuse the validated shard identity, never a caller-supplied path segment.
     const directory = path.join(sessionCheckpointRootPath(), path.basename(sessionDataPath(sessionId), '.json'))
     await mkdir(directory, { recursive: true, mode: 0o700 })
@@ -364,9 +398,9 @@ export async function replaceConversationForRewind(sessionId, retained, observed
     const next = { messages: retained, parts }
     await writeJson(sessionDataPath(sessionId), next)
     state.sessionCache.set(sessionId, next)
-    queueIndexOperation(sessionId, 'patch', { status: 'idle', historyRevision: randomUUID(), hasContent: retained.length > 0 || parts.length > 0, updatedAt: now() })
+    queueIndexOperation(sessionId, 'patch', { status: 'idle', historyRevision: randomUUID(), hasContent: retained.length > 0 || parts.some(part => part.type !== 'todo.updated'), updatedAt: now() })
     await flushUnsafe()
-    return { removedParts: data.parts.length - parts.length, backup: 'before-rewind' }
+    return { removedParts: Math.max(0, data.parts.length - parts.length), backup: 'before-rewind' }
   })
 }
 
@@ -434,11 +468,14 @@ export async function getSession(sessionId) {
   })
 }
 
-export async function listSessions({ cwd = null, limit = 100, includeChildren = true, includeContent = false } = {}) {
+export async function listSessions({ cwd = null, parentSessionId = null, limit = 100, includeChildren = true, includeContent = false } = {}) {
   return withLock(async () => {
     await ensureLoadedUnsafe()
     let sessions = Object.values(state.index.sessions)
     if (cwd) sessions = sessions.filter((s) => s.cwd === cwd)
+    // Ownership filters must precede pagination: unrelated recent sessions must
+    // never hide an older parent's still-running delegated work.
+    if (parentSessionId != null) sessions = sessions.filter((s) => s.parentSessionId === parentSessionId)
     if (!includeChildren) sessions = sessions.filter((s) => !s.parentSessionId)
     sessions = sessions.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit)
     if (includeContent) {
@@ -481,7 +518,8 @@ export async function getConversationHistory(sessionId, limit = 30, options = {}
         ...base,
         turnId: msg.turnId,
         step: msg.step,
-        synthetic: msg.synthetic
+        synthetic: msg.synthetic,
+        contextKind: msg.contextKind
       }
     })
   })
@@ -511,10 +549,13 @@ export async function forkSession({ sessionId, newSessionId, title = null }) {
       createdAt: now(),
       updatedAt: now()
     }
+    // A transcript fork is not a transfer of the source child's identity,
+    // operation lease, or mailbox. Its scheduler binds a new contract.
+    for (const key of Object.keys(child)) if (/^child/.test(key)) delete child[key]
     queueIndexOperation(newSessionId, 'fork', child)
     queueDataOperation(newSessionId, { kind: 'fork', value: {
       messages: sourceData.messages.map((m) => ({ ...m })),
-      parts: sourceData.parts.map((p) => ({ ...p }))
+      parts: sourceData.parts.filter(p => p.type !== 'todo.updated').map((p) => ({ ...p }))
     } })
     // Reserve and persist a fork atomically while holding the store lock.
     // Deferring its creation would let two processes acknowledge the same ID.

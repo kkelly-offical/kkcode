@@ -438,6 +438,9 @@ export function createRunCoordinator(options) {
       const browserAuthorizations = new Map()
       const binding = createDurableRunBinding({
         runId: run.id, turnId, ownerId, ownerEpoch: run.ownerEpoch,
+        // This is the absolute host/backend ceiling, not the contract's subset
+        // of pre-approved actions. Nested Ultra roles must retain this surface.
+        allowedToolNames: Object.freeze([...allowedTools()]),
         ...(isTaskGraphHost(options.taskGraph) ? { taskGraph: options.taskGraph } : {}),
         artifactAccess: createTaskArtifactAccess({ store: artifacts, resolveActor: async () => scopedActor(await owned(run.id)) }),
         abort: error => controller.abort(error),

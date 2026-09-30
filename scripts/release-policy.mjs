@@ -2,6 +2,8 @@
 export function releaseVersionPolicy(version) {
   // 2026-09-28: the user corrected the unreleased source target back to 1.0.5.
   // Reject the former 1.1.6 exception instead of accidentally publishing it.
+  // 1.0.6-preview.0 publication is user-authorized after verification;
+  // branch/manual checks still never publish (only the matching tag does).
   const match = typeof version === 'string' && /^1\.0\.(0|[1-9]\d*)(?:-(preview|rc)\.(0|[1-9]\d*))?$/.exec(version)
   if (!match || match[0] !== version || !Number.isSafeInteger(Number(match[1])) || (match[3] !== undefined && !Number.isSafeInteger(Number(match[3])))) {
     throw new Error('User release policy allows only 1.0.x/preview.N/rc.N; other versions require an explicit policy change.')

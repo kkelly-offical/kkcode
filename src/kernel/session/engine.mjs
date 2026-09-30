@@ -375,7 +375,7 @@ export async function executeTurn({
     }
   }
 
-  if (firstQuestion && !turn.error && !signal?.aborted) {
+  if (firstQuestion && !turn.error && !['incomplete', 'blocked', 'cancelled'].includes(turn.status) && !signal?.aborted) {
     const runtime = currentRuntime()
     const job = refineSessionTitle({ configState, sessionId, prompt: typeof prompt === 'string' ? prompt : '', providerType: resolvedProviderType, model, baseUrl, apiKeyEnv, signal: runtime?.hostSignal || signal, onUsage: async (titleUsage, route) => {
       const price = await priceModelUsage(configState, [{ provider: route?.provider || resolvedProviderType, model: route?.model || model, usage: titleUsage }])
@@ -395,6 +395,9 @@ export async function executeTurn({
     // turn.result 的 status: "failed"；budget 阻断分支不转发 —— blocked
     // 是独立终态，error 只在 failed 时非 null（契约 §3.1）。
     error: turn.error || null,
+    status: turn.status || (turn.error ? 'error' : 'completed'),
+    ...(turn.stopReason ? { stopReason: turn.stopReason } : {}),
+    ...(turn.verification ? { verification: turn.verification } : {}),
     ...(turn.cancelled ? { cancelled: true, partialReply: turn.partialReply || '', stopReason: 'cancelled' } : {}),
     emittedText: turn.emittedText,
     context: turn.context,

@@ -13,6 +13,11 @@ export const APPROVAL_LEVELS = Object.freeze(["readonly", "manual", "accept-edit
 
 export const DEFAULT_APPROVAL = "manual"
 
+// Approval and orchestration are separate from execution capabilities. These
+// labels describe host bundles; tool/plugin metadata cannot grant a bundle.
+export const EXECUTION_CAPABILITIES = Object.freeze(['read', 'search', 'edit', 'shell', 'task', 'verify', 'delegate', 'todo'])
+export const PLAN_CAPABILITIES = Object.freeze(['read', 'search', 'plan', 'readonly-delegate', 'todo'])
+
 export const MODE_CYCLE = Object.freeze([
   Object.freeze({
     id: "plan",
@@ -20,7 +25,7 @@ export const MODE_CYCLE = Object.freeze([
     approval: "readonly",
     icon: "⏸",
     label: "Plan",
-    hint: "只读规划，不修改文件"
+    hint: "只读探索、委派分析与持久计划，不修改项目"
   }),
   Object.freeze({
     id: "agent",
@@ -55,6 +60,10 @@ export const MODE_CYCLE = Object.freeze([
     hint: "授权范围内完全自主，跳过常规确认"
   })
 ])
+
+export function capabilitiesOf(modeId) {
+  return modeIdFromLegacy(modeId) === 'plan' ? PLAN_CAPABILITIES : EXECUTION_CAPABILITIES
+}
 
 /** @type {readonly string[]} 查找面接受任意字符串，未知 id 由调用方回落，故键类型放宽为 string。 */
 export const MODE_IDS = Object.freeze(MODE_CYCLE.map((mode) => mode.id))

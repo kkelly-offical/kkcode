@@ -1,17 +1,19 @@
 import { runtimeCwd } from "../core/runtime-context.mjs"
 import { appendFile, access, copyFile, mkdir } from "node:fs/promises"
 import path from "node:path"
-import { readJson, writeJson } from "../../storage/json-store.mjs"
-import { ensureBackgroundTaskRuntimeDir, backgroundTaskCheckpointPath, backgroundTaskLogPath } from "../../storage/paths.mjs"
+import { ensureBackgroundTaskRuntimeDir, backgroundTaskLogPath } from "../../storage/paths.mjs"
 import { createKernel } from "../index.mjs"
 import { loadConfig } from '../../config/load-config.mjs'
-import { flushNow } from "../session/store.mjs"
+import { flushNow, getSession } from "../session/store.mjs"
 import { extractEditFeedbackFromToolEvents } from "../../observability/edit-diagnostics.mjs"
 import { INTERRUPTION_REASONS, normalizeInterruptionReason } from "./interruption-reason.mjs"
 import { checkWorkspaceTrust } from "../permission/workspace-trust.mjs"
 import { removeDetachedWorktree } from "./worktree-handoff.mjs"
 import { createBackgroundPromptClient } from './background-prompts.mjs'
 import * as git from "../../util/git.mjs"
+import { ownedChild, drainChildMessages, settleChildOperation } from './child-controller.mjs'
+import { childOutcome } from './child-policy.mjs'
+import { readBackgroundTask, updateBackgroundTask, backgroundTaskOwner, backgroundTaskOwnerMatches } from './background-task-store.mjs'
 
 function now() {
   return Date.now()
@@ -54,19 +56,12 @@ async function copyWorkspaceConfigFiles(sourceRoot, targetRoot) {
 }
 
 async function readTask(taskId) {
-  return readJson(backgroundTaskCheckpointPath(taskId), null)
+  return readBackgroundTask(taskId)
 }
 
+let workerOwner = null
 async function patchTask(taskId, updater) {
-  const current = await readTask(taskId)
-  if (!current) return null
-  const next = {
-    ...current,
-    ...updater(current),
-    updatedAt: now()
-  }
-  await writeJson(backgroundTaskCheckpointPath(taskId), next)
-  return next
+  return (await updateBackgroundTask(taskId, updater, { owner: workerOwner, preserveTerminal: true })).next
 }
 
 let _maxLogLines = 300
@@ -121,7 +116,17 @@ async function ensureDelegatedSession({ kernel, executionMode, parentSessionId, 
 }
 
 async function runDelegateTask(task, signal) {
-  const payload = task.payload || {}
+  let payload = task.payload || {}
+  if (!payload.childOperationId && (await getSession(payload.subSessionId))?.session?.childContract) throw new Error('owned delegated session requires its live child operation binding')
+  if (payload.childOperationId) {
+    const session = await ownedChild(payload.parentSessionId, payload.subSessionId)
+    if (session.childContract.schema !== 1 || session.childOperationId !== payload.childOperationId) throw new Error('delegated worker operation ownership was lost')
+    const contract = session.childContract
+    if (JSON.stringify(contract.runSpec) !== JSON.stringify(payload.runSpec)) throw new Error('delegated worker policy differs from its durable contract')
+    payload = { ...payload, runSpec: contract.runSpec, executionMode: contract.executionMode,
+      model: contract.runSpec.model, providerType: contract.runSpec.provider, baseUrl: contract.baseUrl, apiKeyEnv: contract.apiKeyEnv,
+      dataPolicy: contract.dataPolicy ?? undefined }
+  }
   const repoCwd = payload.cwd || runtimeCwd()
   const executionMode = String(payload.executionMode || "fresh_agent").trim().toLowerCase() || "fresh_agent"
   if (!["fresh_agent", "fork_context"].includes(executionMode)) {
@@ -210,10 +215,12 @@ async function runDelegateTask(task, signal) {
       apiKeyEnv: payload.apiKeyEnv || null,
       sessionId: payload.subSessionId,
       signal,
+      steerSource: payload.childOperationId ? () => drainChildMessages(payload.subSessionId, payload.childOperationId) : null,
       runSpec: payload.runSpec || null,
       allowQuestion: payload.allowQuestion === true,
       toolContext: {
         ...(payload.runSpec?.toolContext?.skillToolGroups ? { skillToolGroups: payload.runSpec.toolContext.skillToolGroups } : {}),
+        ...(payload.childOperationId ? { childOperationId: payload.childOperationId } : {}),
         taskId: task.id,
         stageId: payload.stageId || null,
         logicalTaskId: payload.logicalTaskId || null
@@ -288,6 +295,7 @@ async function runDelegateTask(task, signal) {
   }
 
   return {
+    ...childOutcome(out, signal.aborted),
     session_id: payload.subSessionId,
     parent_session_id: payload.parentSessionId || null,
     subagent: payload.subagent || null,
@@ -324,6 +332,7 @@ const SILENT_ERROR_PATTERNS = [
 ]
 
 function detectSilentError(result, payload) {
+  if (result?.status && result.status !== 'completed') return { hasError: true, errorMessage: result.error || `delegated run ${result.status}` }
   const reply = String(result?.reply || "")
   const toolEvents = Number(result?.tool_events || 0)
   const plannedFiles = Array.isArray(payload?.plannedFiles) ? payload.plannedFiles : []
@@ -374,6 +383,12 @@ async function main() {
     process.exitCode = 1
     return
   }
+  workerOwner = backgroundTaskOwner(task)
+  const assignedAttempt = argValue('--attempt'), assignedResumeToken = argValue('--resume-token')
+  if (assignedAttempt !== null && (Number(assignedAttempt) !== workerOwner.attempt || (assignedResumeToken || null) !== workerOwner.resumeToken)) {
+    process.exitCode = 1
+    return
+  }
 
   if (task.cancelled) {
     await patchTask(taskId, () => ({
@@ -385,12 +400,15 @@ async function main() {
     return
   }
 
-  await patchTask(taskId, () => ({
+  const active = await patchTask(taskId, current => current.cancelled ? ({
+    status: 'cancelled', interruptionReason: INTERRUPTION_REASONS.USER_CANCEL, endedAt: now()
+  }) : ({
     status: "running",
     workerPid: process.pid,
     startedAt: now(),
     lastHeartbeatAt: now()
   }))
+  if (!active || active.cancelled || active.status !== 'running') { process.exitCode = 0; return }
 
   const abortController = new AbortController()
   const parentPid = process.ppid
@@ -416,7 +434,9 @@ async function main() {
       return
     }
     trackRuntimeWrite(readTask(taskId).then((latest) => {
-      if (latest?.cancelled && !abortController.signal.aborted) {
+      if (!backgroundTaskOwnerMatches(latest, workerOwner) && !abortController.signal.aborted) {
+        abortController.abort(makeAbortError('background task attempt ownership changed'))
+      } else if (latest?.cancelled && !abortController.signal.aborted) {
         abortController.abort(makeAbortError("cancelled by user"))
       }
     }))
@@ -458,6 +478,14 @@ async function main() {
 
     const result = await runDelegateTask(latest, abortController.signal)
     const silentCheck = detectSilentError(result, latest.payload)
+    if (latest.payload.childOperationId) await settleChildOperation(latest.payload.subSessionId, latest.payload.childOperationId,
+      silentCheck.hasError && result.status === 'completed' ? { ...result, status: 'error', error: silentCheck.errorMessage } : result)
+    if (result.cancelled || result.status === 'cancelled') {
+      await settleRuntime()
+      await patchTask(taskId, () => ({ status: 'cancelled', cancelled: true, result, interruptionReason: INTERRUPTION_REASONS.USER_CANCEL, endedAt: now() }))
+      process.exitCode = 0
+      return
+    }
     if (silentCheck.hasError) {
       await appendTaskLog(taskId, `silent error detected: ${silentCheck.errorMessage}`)
       await settleRuntime()
@@ -487,6 +515,8 @@ async function main() {
     const latest = await readTask(taskId)
     const cancelled = latest?.cancelled
     const aborted = isAbortError(error)
+    if (latest?.payload?.childOperationId) await settleChildOperation(latest.payload.subSessionId, latest.payload.childOperationId,
+      { status: cancelled ? 'cancelled' : aborted ? 'interrupted' : 'error', error: error.message, ...(cancelled ? { cancelled: true } : {}) })
     if (cancelled) {
       await appendTaskLog(taskId, "task cancelled")
       await settleRuntime()

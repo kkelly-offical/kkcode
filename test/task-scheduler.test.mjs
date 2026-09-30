@@ -1,7 +1,14 @@
-import test from "node:test"
+import test, { before, after } from "node:test"
 import assert from "node:assert/strict"
+import { mkdtemp, rm } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { flushNow, touchSession } from '../src/kernel/session/store.mjs'
 import { createTaskDelegate } from "../src/kernel/orchestration/task-scheduler.mjs"
 import { BackgroundManager } from "../src/kernel/orchestration/background-manager.mjs"
+let temporaryHome, previousHome
+before(async () => { previousHome = process.env.KKCODE_HOME; temporaryHome = await mkdtemp(path.join(os.tmpdir(), 'kkcode-child-scheduler-')); process.env.KKCODE_HOME = temporaryHome })
+after(async () => { await flushNow(); if (previousHome === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = previousHome; await rm(temporaryHome, { recursive: true, force: true }) })
 
 test("task delegate requires a prompt for new delegated sessions", async () => {
   const delegateTask = createTaskDelegate({
@@ -90,20 +97,22 @@ test("task delegate reuses an existing sub-session with continuation prompt", as
     }
   })
 
+  const initial = await delegateTask({ prompt: 'Begin the same delegated slice.' })
   const result = await delegateTask({
-    session_id: "sub_existing",
+    session_id: initial.session_id,
     prompt: "Continue the same delegated slice and return a concise update.",
     allow_question: true
   })
 
-  assert.equal(received.sessionId, "sub_existing")
+  assert.equal(received.sessionId, initial.session_id)
   assert.equal(received.prompt, "Continue the same delegated slice and return a concise update.")
   assert.equal(received.model, "gpt-parent")
   assert.equal(received.providerType, "local")
   assert.equal(received.subagent.name, "default-subagent")
   assert.equal(received.allowQuestion, true)
   assert.deepEqual(result, {
-    session_id: "sub_existing",
+    status: 'completed',
+    session_id: initial.session_id,
     parent_session_id: "parent_2",
     subagent: "default-subagent",
     execution_mode: "fresh_agent",
@@ -428,6 +437,7 @@ test("task delegate forwards worktree isolation metadata to background workers",
 })
 
 test("task delegate forwards inherited context and parallel group metadata", async () => {
+  await touchSession({ sessionId: 'parent_group', mode: 'agent', model: 'gpt-parent', providerType: 'local', cwd: process.cwd() })
   const originalLaunchDelegateTask = BackgroundManager.launchDelegateTask
   let launchArgs = null
 

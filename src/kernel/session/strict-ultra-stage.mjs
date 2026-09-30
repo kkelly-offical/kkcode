@@ -9,6 +9,16 @@ import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { resolveTaskModel } from '../provider/task-model.mjs'
 
+/** Execution progress is distinct from file presence and independent acceptance.
+ * Missing/unknown child outcomes must not become success for an empty file list. */
+export function strictStageTaskStatus(outcome, remainingFiles = []) {
+  if (outcome?.cancelled || outcome?.status === 'cancelled') return 'cancelled'
+  if (outcome?.toolEvents?.some(event => event?.metadata?.outcomeUnknown === true)) return 'unknown'
+  if (outcome?.status !== 'completed') return ['incomplete', 'blocked', 'unknown', 'error', 'interrupted'].includes(outcome?.status) ? outcome.status : 'unknown'
+  if (outcome?.verification?.passed === false) return 'blocked'
+  return remainingFiles.length ? 'error' : 'completed'
+}
+
 /** Strict first release: one writer, no BackgroundManager/host worker forks.
  * Calls remain on the host control-plane ALS chain; every tool still traverses
  * the delegated kernel's owner-fenced strict backend. Completion is only stage
@@ -45,6 +55,11 @@ export async function runStrictUltraStage({ stage, sessionId, model, providerTyp
       plannedFiles: [...(task.plannedFiles || [])], completedFiles: [], remainingFiles: [], lastReply: "", lastError: "", fileChanges: []
     }
     taskProgress[task.taskId] = progress
+    if (seeded.status === 'unknown') {
+      progress.status = 'unknown'; progress.executionStatus = 'unknown'
+      progress.lastError = seeded.lastError || 'prior task effects are unresolved; inspect before continuing'
+      continue
+    }
     if ((task.dependsOn || []).some(id => taskProgress[id]?.status !== "completed")) {
       progress.status = "error"; progress.lastError = "strict stage dependency did not finish"
       continue
@@ -67,6 +82,8 @@ export async function runStrictUltraStage({ stage, sessionId, model, providerTyp
           role: agent, workspace: { root: cwd, cwd, isolation: "strict", writeScope: progress.plannedFiles }, limits: { deadlineAt: Date.now() + timeout } })
       })
       progress.lastReply = String(outcome.reply || "")
+      progress.executionStatus = outcome.status || 'unknown'
+      progress.stopReason = outcome.stopReason || null
       for (const key of Object.keys(usage)) usage[key] += Number(outcome.usage?.[key] || 0)
       toolEvents.push(...(outcome.toolEvents || []))
       progress.fileChanges = (outcome.toolEvents || []).flatMap(event => event?.metadata?.fileChanges || [])
@@ -76,8 +93,10 @@ export async function runStrictUltraStage({ stage, sessionId, model, providerTyp
         if (present) progress.completedFiles.push(name)
         else progress.remainingFiles.push(name)
       }
-      progress.status = progress.remainingFiles.length ? "error" : "completed"
-      progress.lastError = progress.remainingFiles.length ? "planned outputs are missing; final acceptance has not passed" : ""
+      progress.status = strictStageTaskStatus(outcome, progress.remainingFiles)
+      progress.lastError = progress.status === 'completed' ? '' : progress.remainingFiles.length
+        ? 'planned outputs are missing; final acceptance has not passed'
+        : `child execution is ${progress.executionStatus}${progress.stopReason ? ` (${progress.stopReason})` : ''}; final acceptance has not passed`
       if (onTaskComplete && progress.status === "completed") await onTaskComplete(progress)
     } catch (error) {
       progress.status = "error"
@@ -85,7 +104,8 @@ export async function runStrictUltraStage({ stage, sessionId, model, providerTyp
       signal?.throwIfAborted()
     }
     await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_STAGE_TASK_FINISHED, sessionId,
-      payload: { stageId: stage.stageId, taskId: task.taskId, status: progress.status, attempt: progress.attempt, remainingFiles: progress.remainingFiles } })
+      payload: { stageId: stage.stageId, taskId: task.taskId, status: progress.status, executionStatus: progress.executionStatus || 'unknown',
+        stopReason: progress.stopReason || null, attempt: progress.attempt, remainingFiles: progress.remainingFiles } })
   }
   const successCount = Object.values(taskProgress).filter(task => task.status === "completed").length
   return { allSuccess: successCount === tasks.length && tasks.length > 0, successCount, failCount: tasks.length - successCount,

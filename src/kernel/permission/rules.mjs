@@ -3,6 +3,7 @@ import { findProtectedAccess } from "./protected-paths.mjs"
 import { matchGlob, matchPatterns, normalizePath } from "../../util/glob.mjs"
 import { APPROVAL_LEVELS, DEFAULT_APPROVAL } from "../core/modes.mjs"
 import { noteDeprecation } from "../core/deprecations.mjs"
+import { parseShellCommands } from './shell-analysis.mjs'
 
 export const PERMISSION_LEVELS = APPROVAL_LEVELS
 export const LEGACY_PERMISSION_POLICIES = ["ask", "allow", "deny"]
@@ -39,7 +40,14 @@ const TOOL_CAPABILITIES = {
   task_list: "read",
   task_get: "read",
   task_output: "read",
+  agent_list: "read",
+  agent_wait: "read",
+  // Host-owned requests cannot replace a child's immutable permission/scope.
+  agent_send: "task",
+  agent_followup: "task",
+  agent_interrupt: "child-control",
   todowrite: "read",
+  todo_read: "read",
   question: "read",
   enter_plan: "read",
   exit_plan: "read",
@@ -82,13 +90,18 @@ const TOOL_CAPABILITIES = {
   git_full_auto_status: "read"
 }
 
-const TRUSTED_BASH_PATTERNS = [
-  /^(pwd|ls|cat|head|tail|wc|which|date|whoami|uname)\b/i,
-  /^(rg|grep|find)\b/i,
-  /^sed\s+-n\b/i,
-  /^git\s+(status|log|diff|show|branch|rev-parse)\b/i,
-  /^(node|npm|pnpm|yarn)\s+(--version|-v|version|root|list|ls)\b/i
-]
+const READONLY_SHELL_PROGRAMS = new Set(['pwd', 'ls', 'cat', 'head', 'tail', 'wc', 'which', 'whoami', 'uname', 'grep'])
+const RG_EXECUTION_FLAGS = ['--pre', '--pre-glob', '--hostname-bin', '--search-zip']
+const GIT_EXECUTION_FLAGS = ['--output', '--ext-diff', '--textconv', '--exec-path', '--config-env', '--paginate']
+
+function hasLongOption(args, options) {
+  return args.some(arg => {
+    const flag = arg.split('=')[0]
+    // GNU/Git option parsers may accept unambiguous abbreviations. Do not
+    // mistake --out or a quote-assembled --ext-diff for a safe unknown flag.
+    return flag.length > 2 && flag.startsWith('--') && options.some(option => option === flag || option.startsWith(flag))
+  })
+}
 
 /**
  * 归一为 0.4.0 的四档审批级别。
@@ -109,8 +122,9 @@ export function normalizePermissionLevel(permission = {}) {
 /**
  * 工具的能力分类。
  *
- * `capability` 是**工具自报的能力**，优先于静态表 —— 有些工具的风险取决于参数，
- * 一个名字对应不了一个固定档位：
+ * Only explicitly host-owned parameter-dependent tools may refine this table.
+ * Dynamic plugin/MCP metadata is not a permission grant. Some host tools have
+ * argument-dependent risk, so one static classification is insufficient:
  *
  *   - `bash` 早就是这样：命令在白名单里算 safe-shell，否则 risky-shell
  *   - `skill` 同理：`template`/`skill_md` 技能只是把一段模板展开成提示词，
@@ -118,29 +132,51 @@ export function normalizePermissionLevel(permission = {}) {
  *     而 `mjs` 技能会执行任意 JS。一刀切归成 `task` 的后果是技能在非交互
  *     环境里彻底不可用 —— `ask` 会落到 non_tty_default（默认 deny）。
  */
-export function toolCapability(tool, command = "", { capability = null } = {}) {
-  if (capability) return capability
+export function toolCapability(tool, command = "", { capability = null, args = {}, env = undefined } = {}) {
   const name = String(tool || "")
-  if (name === "bash") return trustedBashCommand(command) ? "safe-shell" : "risky-shell"
+  // Only these host implementations have parameter-dependent classifications.
+  // In particular, plugin/MCP self-reported `read` must never grant execution.
+  if (name === 'skill' && ['prompt', 'task'].includes(capability)) return capability
+  if (['task', 'task_group', 'agent_followup'].includes(name) && capability === 'readonly-task') return capability
+  if (name === "bash") return trustedBashCommand(command, { ...args, ...(env === undefined ? {} : { env }) }) ? "safe-shell" : "risky-shell"
   return TOOL_CAPABILITIES[name] || "unknown"
 }
 
-function trustedBashCommand(command) {
+function trustedBashCommand(command, args = {}) {
   const cmd = String(command || "").trim()
   if (!cmd) return false
-  if (/[;&|<>`]/.test(cmd)) return false
-  if (/[\r\n]/.test(cmd) || /\$\(/.test(cmd)) return false
-  if (/^git\s+branch\b/i.test(cmd) && !/^git\s+branch(?:\s+(?:--show-current|--list|--all|--remotes|-a|-r|-v|-vv))*\s*$/i.test(cmd)) return false
-  if (/^git\s+(?:diff|show|log)\b/i.test(cmd) && /\s--output(?:=|\s)/i.test(cmd)) return false
-  if (/^(?:find|sed)\b/i.test(cmd)) return false
-  if (/^date\s+(?:-s|--set)/i.test(cmd)) return false
-  if (/^(?:node|npm|pnpm|yarn)\b/i.test(cmd) && !/^(?:node|npm|pnpm|yarn)\s+(?:--version|-v|version|root|list|ls)(?:\s+--global|\s+-g)?\s*$/i.test(cmd)) return false
-  return TRUSTED_BASH_PATTERNS.some((pattern) => pattern.test(cmd))
+  // Per-call environment may replace a nominally read-only program (PATH),
+  // inject startup code (NODE_OPTIONS/BASH_ENV/LD_PRELOAD), or load executable
+  // project configuration. Only the host's inherited environment is trusted.
+  // This is command classification, not an OS sandbox or executable attestation.
+  const env = args?.env
+  if (env != null && (typeof env !== 'object' || Array.isArray(env) || Reflect.ownKeys(env).length)) return false
+  const parsed = parseShellCommands(cmd)
+  if (parsed.uncertain || parsed.commands.length !== 1) return false
+  const entry = parsed.commands[0]
+  if (entry.dynamic || entry.glob || entry.redirects.length || entry.separator) return false
+  const [program, ...argv] = entry.words
+  if (READONLY_SHELL_PROGRAMS.has(program)) return true
+  if (program === 'rg') return !hasLongOption(argv, RG_EXECUTION_FLAGS) && !argv.some(arg => /^-[^-]*z/.test(arg))
+  if (program === 'git') {
+    const [subcommand, ...options] = argv
+    if (!['status', 'log', 'diff', 'show', 'branch', 'rev-parse'].includes(subcommand) || hasLongOption(options, GIT_EXECUTION_FLAGS)) return false
+    if (subcommand === 'branch') return options.every(arg => ['--show-current', '--list', '--all', '--remotes', '-a', '-r', '-v', '-vv'].includes(arg))
+    return true
+  }
+  if (program === 'date') return argv.every(arg => /^(?:-u|--utc|--universal|-R|--rfc-email|-I(?:date|hours|minutes|seconds|ns)?|--iso-8601(?:=(?:date|hours|minutes|seconds|ns))?|--rfc-3339=(?:date|seconds|ns)|--help|--version|\+.*)$/.test(arg))
+  if (['node', 'npm', 'pnpm', 'yarn'].includes(program)) {
+    if (!['--version', '-v', 'version', 'root', 'list', 'ls'].includes(argv[0]) || argv.length > 2 || (argv.length === 2 && !['--global', '-g'].includes(argv[1]))) return false
+    if (program === 'node') return argv.length === 1 && ['--version', '-v'].includes(argv[0])
+    if (program === 'yarn' && argv[0] === 'version') return false
+    return true
+  }
+  return false
 }
 
 /** @deprecated 旧 `auto` 档的判定，保留供既有测试与迁移期比对，1.0.0 移除。 */
-function autoAllowsTool({ tool, command = "" }) {
-  const cap = toolCapability(tool, command)
+function autoAllowsTool({ tool, command = "", args = {} }) {
+  const cap = toolCapability(tool, command, { args })
   return SELF_CONTAINED_CAPABILITIES.includes(cap)
 }
 
@@ -150,7 +186,7 @@ function autoAllowsTool({ tool, command = "" }) {
  * `prompt` 指把模板展开成一段提示词 —— 它等价于用户自己把那段话打出来，
  * 因此和只读同档：展开之后模型要做什么，每一步仍然各自过权限。
  */
-const SELF_CONTAINED_CAPABILITIES = ["read", "search", "network", "safe-shell", "prompt"]
+const SELF_CONTAINED_CAPABILITIES = ["read", "search", "network", "safe-shell", "prompt", "readonly-task", "child-control"]
 
 /**
  * 四档审批矩阵。能力分类见 TOOL_CAPABILITIES；bash 另按命令白名单拆成
@@ -162,12 +198,12 @@ const SELF_CONTAINED_CAPABILITIES = ["read", "search", "network", "safe-shell", 
  *   accept-edits      allow           allow         ask     allow  allow
  *   yolo              allow           allow       allow     allow  allow
  */
-function levelAllowsTool({ level, tool, command = "", capability = null }) {
-  const cap = toolCapability(tool, command, { capability })
+function levelAllowsTool({ level, tool, command = "", capability = null, args = {} }) {
+  const cap = toolCapability(tool, command, { capability, args })
   if (level === "yolo") return "allow"
   if (level === "readonly") {
     // safe-shell 归入放行：它的定义就是「已判定为只读的命令」——
-    // `git status`、`ls`、`cat`、`rg` 之类（见 TRUSTED_BASH_PATTERNS）。
+    // `git status`、`ls`、`cat`、`rg` 之类（含参数与环境校验）。
     // 此前把它排除在外，导致 git status 在只读档被拒，而 exec-policy 的
     // allow_git_status 与 TRUSTED_BASH_PATTERNS 都判它安全 —— 三处判定
     // 互相矛盾，用户在最该畅通的档位上反而被挡。
@@ -243,7 +279,7 @@ export function matchRule(rule, input) {
  * 但 DEFAULT_CONFIG 恒定注入 permission.level，那三条路径永远不可达。0.4.0 起
  * normalizePermissionLevel 总能给出四档之一，分支随之删除。
  */
-export function evaluatePermission({ config, tool, mode, pattern = "*", command = "", risk = 0, workspace = "", capability = null }) {
+function evaluatePolicy({ config, tool, mode, pattern = "*", command = "", risk = 0, workspace = "", capability = null, args = {} }) {
   if (config.permission?._load_error === true) return {
     action: 'deny', source: 'invalid_permission_config',
     reason: '权限配置未通过校验，工具执行已暂停。请先在被控电脑修正权限配置并重新加载；切换模式或重复确认不能绕过此限制。'
@@ -251,6 +287,10 @@ export function evaluatePermission({ config, tool, mode, pattern = "*", command 
   const permission = config.permission || { rules: [] }
   const permissionLevel = normalizePermissionLevel(permission)
   const rules = Array.isArray(permission.rules) ? permission.rules : []
+  if (permissionLevel === 'readonly' && tool === 'bash' && toolCapability(tool, command, { capability, args }) !== 'safe-shell') return {
+    action: 'deny', source: 'readonly_shell_boundary', level: permissionLevel,
+    reason: 'Read-only execution does not allow this shell command, its execution-affecting arguments or per-call environment overrides.'
+  }
 
   // 保护路径检查排在**用户规则之前**，这个顺序本身就是安全属性：
   // 否则仓库里 checked-in 的一条 `{tool:"write", pattern:".git/**",
@@ -258,10 +298,14 @@ export function evaluatePermission({ config, tool, mode, pattern = "*", command 
   // 的别人的仓库。yolo 也不例外：这些位置的写入无法靠 git 回滚补救。
   const protectedHit = findProtectedAccess({ tool, pattern, command })
   if (protectedHit) {
+    // Protection may escalate an allow to ask, but must never downgrade a
+    // read-only ceiling or explicit deny into an interactively overridable ask.
+    const matchedRule = rules.find(rule => matchRule(rule, { tool, mode, pattern, command, risk, workspace }))
+    const denied = matchedRule?.action === 'deny' || (permissionLevel === 'readonly' && levelAllowsTool({ level: permissionLevel, tool, command, capability, args }) === 'deny')
     return {
-      action: "ask",
-      source: "protected_path",
-      rule: null,
+      action: denied ? 'deny' : 'ask',
+      source: matchedRule?.action === 'deny' ? 'rule' : 'protected_path',
+      rule: matchedRule?.action === 'deny' ? matchedRule : null,
       level: permissionLevel,
       protectedPath: protectedHit.path,
       reason: protectedHit.reason
@@ -280,7 +324,7 @@ export function evaluatePermission({ config, tool, mode, pattern = "*", command 
     }
   }
 
-  const action = levelAllowsTool({ level: permissionLevel, tool, command, capability })
+  const action = levelAllowsTool({ level: permissionLevel, tool, command, capability, args })
   const decision = {
     action,
     source: `level:${permissionLevel}`,
@@ -288,6 +332,31 @@ export function evaluatePermission({ config, tool, mode, pattern = "*", command 
     level: permissionLevel
   }
   return applySensitiveEscalation(decision, { tool, pattern, config, level: permissionLevel })
+}
+
+/** Host-owned inherited policies only tighten current approval decisions. */
+export function evaluatePermission(input) {
+  const { permissionCeilings = [] } = input
+  let decision = evaluatePolicy(input)
+  if (!Array.isArray(permissionCeilings) || permissionCeilings.length > 32) return {
+    action: 'deny', source: 'invalid_inherited_permission', reason: 'Inherited permission ceilings are invalid; refusing to widen child authority.'
+  }
+  const rank = { allow: 0, ask: 1, deny: 2 }
+  for (const permission of permissionCeilings) {
+    if (!permission || typeof permission !== 'object' || Array.isArray(permission)
+      || (permission.level !== undefined && !APPROVAL_LEVELS.includes(permission.level))
+      || (permission.rules !== undefined && (!Array.isArray(permission.rules) || permission.rules.some(rule => !rule || typeof rule.tool !== 'string' || !['allow', 'ask', 'deny'].includes(rule.action))))) return {
+      action: 'deny', source: 'invalid_inherited_permission', reason: 'Inherited permission policy is malformed; refusing to widen child authority.'
+    }
+    let inherited
+    try { inherited = evaluatePolicy({ ...input, config: { ...input.config, permission } }) }
+    catch { return { action: 'deny', source: 'invalid_inherited_permission', reason: 'Inherited permission policy could not be evaluated.' } }
+    if (rank[inherited.action] > 0 && rank[inherited.action] >= rank[decision.action]) decision = {
+      ...inherited, source: 'inherited_rule', inheritedSource: inherited.source,
+      reason: inherited.reason || 'The parent task approval ceiling requires this decision; child mode changes and cached approvals cannot widen it.'
+    }
+  }
+  return decision
 }
 
 // Exported for testing
