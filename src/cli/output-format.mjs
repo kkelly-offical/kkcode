@@ -18,7 +18,7 @@ export const HEADLESS_JSONL_EVENTS = Object.freeze({
     stability: "stable",
     summary: "回合终态结果。json 格式的唯一一行；stream-json 格式的最后一行。" +
       "status 取值：succeeded / failed（provider 级失败：error 带错误消息、进程退出码非零）/ " +
-      "blocked（预算阻断）/ longagent 终态；失败语义自 1.0.0 起为 stable 契约。"
+      "blocked（预算或尚未完成的工作阻断）/ longagent 终态；失败语义自 1.0.0 起为 stable 契约。"
   }),
   "assistant.delta": Object.freeze({
     stability: "experimental",
@@ -84,7 +84,8 @@ export function toPublicResult(result = {}) {
   const turnUsage = result.tokenMeter?.turn || result.usage || {}
   const status = result.budgetExceeded
     ? "blocked"
-    : result.longagent?.status || (result.error ? "failed" : "succeeded")
+    : result.longagent?.status || (result.error || result.cancelled ? "failed"
+      : ['incomplete', 'blocked', 'unknown'].includes(result.status) || ['max-steps', 'no-progress', 'depth-limit'].includes(result.stopReason) ? 'blocked' : "succeeded")
   return {
     schemaVersion: OUTPUT_SCHEMA_VERSION,
     sessionId: result.sessionId || null,
@@ -104,6 +105,11 @@ export function toPublicResult(result = {}) {
       ...(result.pricingWarnings || []),
       ...(result.budgetWarnings || [])
     ],
-    error: result.error || null
+    error: result.error || null,
+    ...(result.status || result.stopReason || result.verification ? { completion: {
+      state: result.status || (result.error ? 'error' : 'completed'),
+      stopReason: result.stopReason || null,
+      verification: result.verification || null
+    } } : {})
   }
 }

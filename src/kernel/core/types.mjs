@@ -33,7 +33,7 @@ export function makeEventEnvelope({
 const TOOL_RESULT_STATUSES = new Set(["completed", "error", "blocked", "cancelled"])
 
 /**
- * @param {{ name: any, status?: any, ok?: any, code?: any, output?: any, error?: any, durationMs?: any, metadata?: any, evidence?: any, image?: any, contentBlocks?: any[] }} options
+ * @param {{ name: any, status?: any, ok?: any, code?: any, output?: any, error?: any, durationMs?: any, startedAt?: number, completedAt?: number, metadata?: any, evidence?: any, image?: any, contentBlocks?: any[] }} options
  *   `status`/`ok` 均可省略：状态归一化逻辑（下方）对缺省值有明确定义 —— 未给
  *   status 时按 ok 推断，ok 缺省视为成功（见 isToolSuccess 的同义判定）。
  */
@@ -45,6 +45,8 @@ export function makeToolResult({
   output = "",
   error = null,
   durationMs = 0,
+  startedAt = undefined,
+  completedAt = undefined,
   metadata = {},
   evidence = {},
   image = null,
@@ -65,6 +67,8 @@ export function makeToolResult({
     output,
     error,
     durationMs,
+    ...(Number.isFinite(startedAt) ? { startedAt } : {}),
+    ...(Number.isFinite(completedAt) ? { completedAt } : {}),
     metadata,
     evidence,
     // 图片附件（{data, mediaType}）。此前 read 返回的 base64 在这里被白名单

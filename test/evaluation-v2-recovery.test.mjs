@@ -6,6 +6,7 @@ import { mkdtemp, rm, readFile } from 'node:fs/promises'
 import { prepareTask } from '../evaluation/v1/runner.mjs'
 import { cases } from '../evaluation/v2/manifest.mjs'
 import { runRecoveryScenario, verifyRecoveryEvidence } from '../evaluation/v1/recovery-drivers.mjs'
+import { isToolPreDispatchError } from '../src/kernel/core/execution-outcome.mjs'
 
 const task = cases.find(item => item.id === 'C05')
 const enabled = { skip: !process.env.KKCODE_STRICT_TEST_IMAGE, timeout: 90000 }
@@ -35,15 +36,17 @@ test('v2 protocol recovery binds the interrupted original operation to actual ba
   for (const binding of record.bindings) assert.equal(record.actualExecutions.filter(item => item.operationId === binding.id).length, 1)
 })
 
-test('v2 protocol negative actually executes an old readonly invocation again and rejects it', enabled, async t => {
-  const execution = await run(t, 'repeat-original')
-  const result = verifyRecoveryEvidence(task, execution)
-  assert.equal(result.passed, false)
-  assert.ok(result.checks.some(check => check.name === 'bound-original-invocations-not-reexecuted' && !check.passed))
-  assert.ok(result.checks.some(check => check.name === 'bound-original-artifact-responses-recovered' && check.passed))
-  const repeated = execution.operations.find(item => item.kind === 'fault-real-original-invocation-replay')
-  const record = execution.operations.find(item => item.kind === 'bound-protocol-invocations')
-  assert.equal(record.actualExecutions.filter(item => item.operationId === repeated.actionId && item.completed).length, 2)
+test('v2 stale replay fault is rejected before dispatch by the closed original host, not counted as two executions', enabled, async t => {
+  // The frozen driver's saved invocation contains the original host signal.
+  // Runtime shutdown now aborts that capability, so this old fault injection
+  // cannot reach its duplicate-execution oracle. Keep the cancellation guard;
+  // this engineering receipt is pre-dispatch rejection, not replay coverage.
+  await assert.rejects(run(t, 'repeat-original'), error => {
+    assert.equal(error.name, 'AbortError')
+    assert.equal(isToolPreDispatchError(error), true)
+    assert.equal(error.operationNotStarted, true)
+    return true
+  })
 })
 
 test('v2 protocol recovery rejects a genuinely corrupted original artifact instead of trusting claimed counters', enabled, async t => {

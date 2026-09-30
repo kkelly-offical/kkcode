@@ -1,3 +1,5 @@
+import { parseShellCommands } from './shell-analysis.mjs'
+
 /**
  * 永不自动放行的路径。
  *
@@ -114,29 +116,78 @@ export function findProtectedTarget(paths = []) {
  * 一条 shell 命令是否可能写入受保护位置。
  *
  * bash 是绕过所有路径校验的那条路 —— `echo x >> ~/.bashrc` 不经过 write 工具，
- * 也不经过 resolveWorkspacePath。这里做的是词法级的粗筛：命令里出现受保护
- * 名字、且看起来在写（重定向 / 已知的写命令），就要人确认。
- *
- * 故意宽松：误判的代价是多一次弹窗，漏判的代价是宿主环境被改且无法回滚。
- * 纯读命令（`cat .bashrc`、`git status`）不该被拦，所以要求「像在写」。
+ * 也不经过 resolveWorkspacePath。词法分析把重定向和写入目标绑定到各自的
+ * 简单命令；不能因为另一条命令写 /dev/null，就把只读 .git 排除式当写入。
+ * 动态替换、未知程序与不完整语法仍保守要求确认；这不是 shell 允许规则。
  */
-const WRITE_ISH = /(^|\s)(rm|mv|cp|install|tee|truncate|dd|chmod|chown|ln|sed\s+-i|perl\s+-i|python3?\s+-c|node\s+-e)\b|>>?\s*\S/
-
-export function bashTouchesProtected(command) {
-  const cmd = String(command || "")
-  if (!cmd.trim()) return null
-  if (!WRITE_ISH.test(cmd)) return null
-
+function protectedMention(text) {
   const names = [...PROTECTED_FILES, ...PROTECTED_DIRS]
   for (const name of names) {
     // 词边界：`.git` 不该被 `.gitignore` 命中，`.npmrc` 不该被 `my.npmrcx` 命中
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-    if (new RegExp(`(^|[\\s"'=/\\\\])${escaped}([\\s"'/\\\\:]|$)`).test(cmd)) {
+    if (new RegExp(`(^|[\\s"'\x60=<>/\\\\(])${escaped}([\\s"'\x60/\\\\:),;]|$)`).test(text)) {
       return {
         path: name,
         protected: true,
         reason: `this command appears to write to ${name}, which is never auto-approved — writes there cannot be undone with git`
       }
+    }
+  }
+  return null
+}
+
+const READ_COMMANDS = new Set(['pwd', 'ls', 'cat', 'head', 'tail', 'wc', 'which', 'whoami', 'uname', 'rg', 'grep', 'echo', 'printf', 'test', '[', 'true', 'false'])
+const ALL_TARGET_MUTATORS = new Set(['rm', 'rmdir', 'mv', 'tee', 'truncate', 'chmod', 'chown', 'chgrp', 'touch', 'mkdir', 'unlink'])
+
+export function bashTouchesProtected(command) {
+  const cmd = String(command || '')
+  if (!cmd.trim()) return null
+  const parsed = parseShellCommands(cmd)
+  // Substitution, heredoc and malformed syntax cannot be proven safe by this
+  // lexer. Retain conservative handling instead of silently losing targets.
+  if (parsed.uncertain) {
+    const hit = protectedMention(cmd) || protectedMention(parsed.commands.flatMap(item => item.words).join(' '))
+    if (hit) return hit
+  }
+  for (const item of parsed.commands) {
+    for (const redirect of item.redirects) {
+      if (!redirect.operator.includes('>')) continue
+      const hit = protectedMention(redirect.target)
+      if (hit) return hit
+    }
+    const words = [...item.words]
+    const assignments = []
+    while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0] || '')) assignments.push(words.shift())
+    const name = (words.shift() || '').split('/').at(-1)
+    if (!name) continue
+    const args = words.filter(arg => !arg.startsWith('-'))
+    let targets = []
+    if (ALL_TARGET_MUTATORS.has(name)) targets = args
+    else if (name === 'install' && words.some(arg => arg === '-d' || arg === '--directory')) targets = args
+    else if (['cp', 'install', 'ln'].includes(name)) {
+      const targetIndex = words.findIndex(arg => arg === '-t' || arg === '--target-directory')
+      const targetOption = words.find(arg => arg.startsWith('--target-directory=') || /^-t.+/.test(arg))
+      targets = targetIndex >= 0 ? [words[targetIndex + 1] || ''] : targetOption ? [targetOption.startsWith('-t') ? targetOption.slice(2) : targetOption.slice('--target-directory='.length)] : [args.at(-1) || '']
+    } else if (name === 'dd') targets = words.filter(arg => arg.startsWith('of=')).map(arg => arg.slice(3))
+    else if (['bash', 'sh', 'zsh', 'dash'].includes(name) && words.includes('-c')) {
+      const script = words[words.indexOf('-c') + 1] || ''
+      const hit = bashTouchesProtected(script)
+      if (hit) return hit
+      if (parseShellCommands(script).uncertain) targets = assignments
+    } else if (name === 'find') {
+      if (words.some(arg => /^-(?:delete|exec|execdir|ok|okdir|fprint|fprintf)/.test(arg))) targets = words
+    } else if (name === 'git') {
+      if (!['status', 'log', 'diff', 'show', 'rev-parse', 'ls-files'].includes(words[0]) || words.some(arg => /^--output(?:=|$)/.test(arg))) targets = words
+    } else if (name === 'sed') {
+      if (words.some(arg => /^-(?:[A-Za-z]*i|\-in-place)/.test(arg) || /(?:^|[\s;/])[we](?:\s|$)/.test(arg))) targets = words
+    } else if (!READ_COMMANDS.has(name)) {
+      // Unknown programs and interpreters may mutate any supplied path. This
+      // is a protected-path escalation, not permission to run the command.
+      targets = [...assignments, ...words]
+    }
+    for (const target of targets) {
+      const hit = protectedMention(target)
+      if (hit) return hit
     }
   }
   return null

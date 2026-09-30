@@ -31,13 +31,26 @@ export interface Kernel {
     [key: string]: unknown;
   };
   sessions: {
-    listSessions(options?: { cwd?: string; limit?: number; includeChildren?: boolean }): Promise<KernelSession[]>;
+    listSessions(options?: { cwd?: string; parentSessionId?: string; limit?: number; includeChildren?: boolean }): Promise<KernelSession[]>;
     getSession(id: string): Promise<{ session: KernelSession; messages: Record<string, unknown>[]; parts: Record<string, unknown>[] } | null>;
     deleteSession(id: string): Promise<{ deleted: boolean; recoverable?: boolean; filesChanged?: boolean }>;
     [key: string]: unknown;
   };
   events: { subscribe(listener: (event: KernelEvent) => void | Promise<void>): () => void; emit(event: KernelEvent): Promise<void>; listenerCount(): number; EVENT_TYPES: Readonly<Record<string, string>>; registerSink(listener: (event: KernelEvent) => void | Promise<void>): () => void };
   tools: { list(options?: Record<string, unknown>): Promise<import('./client.mjs').ToolDefinition[]>; get(name: string): Promise<unknown>; [key: string]: unknown };
+  todos: {
+    list(sessionId: string): Promise<import('./tasks.mjs').TodoSnapshot>;
+    forSession(sessionId: string, options?: { agentId?: string; turnId?: string }): Promise<{ sessionId: string; agentId: string; list(options?: { refresh?: boolean }): Promise<import('./tasks.mjs').TodoSnapshot>; update(input: Record<string, unknown>, options?: { signal?: AbortSignal }): Promise<import('./tasks.mjs').TodoSnapshot> }>;
+  };
+  agents: { forSession(parentSessionId: string): Promise<{
+    create(args: Record<string, unknown>): Promise<Record<string, unknown>>;
+    list(): Promise<Record<string, unknown>[]>;
+    get(sessionId: string): Promise<Record<string, unknown>>;
+    wait(sessionId: string, options?: { timeoutMs?: number }): Promise<Record<string, unknown>>;
+    send(sessionId: string, message: string): Promise<Record<string, unknown>>;
+    followup(sessionId: string, prompt: string, options?: Record<string, unknown>): Promise<Record<string, unknown>>;
+    interrupt(sessionId: string): Promise<Record<string, unknown>>;
+  }> };
   extensions: Record<string, unknown>; permissions: Record<string, unknown>; providers: Record<string, unknown>; background: Record<string, unknown>;
   diagnostics: { inspectPrompt(sessionId: string): Promise<Record<string, unknown>>; services(): Record<string, unknown>[] };
   bootExtensions(): Promise<unknown>;

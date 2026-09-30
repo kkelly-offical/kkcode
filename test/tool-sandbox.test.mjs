@@ -99,6 +99,17 @@ test("the command text is one argv, so quotes and newlines need no escaping", ()
   assert.equal(args.filter((item) => item === nasty).length, 1)
 })
 
+test('host-controlled argv stays native inside both sandbox backends', () => {
+  const argv = ['/usr/bin/git', '--no-pager', 'diff', '--', "literal $(not-a-command) ' name\nline"]
+  const wrapped = bwrapArgs({ command: 'must not become shell text', argv })
+  assert.deepEqual(wrapped.slice(-argv.length), argv)
+  assert.equal(wrapped.includes('/bin/sh'), false)
+  const mac = buildSandboxedCommand({ backend: 'sandbox-exec', command: 'unused', argv, workspaceDir: WS, pathApi: path.posix })
+  assert.deepEqual(mac.args.slice(2), argv)
+  assert.equal(buildSandboxedCommand({ backend: 'none', argv }), null)
+  for (const invalid of [[], [''], ['git', 'bad\0argument'], 'git status']) assert.throws(() => buildSandboxedCommand({ backend: 'bwrap', argv: invalid }), /Invalid sandbox/)
+})
+
 test("backend none returns null so the caller keeps the current path", () => {
   assert.equal(buildSandboxedCommand({ backend: "none", command: "echo hi", workspaceDir: WS }), null)
   assert.equal(buildSandboxedCommand({ backend: "bwrap", command: "   ", workspaceDir: WS }), null)

@@ -11,10 +11,14 @@ import { budgetProfileId } from '../src/storage/run-budget-profile.mjs'
 import { createLocalFreeInferenceAuthorization, localFreePolicy, isLocalFreeInferenceAuthorization } from '../src/usage/local-free.mjs'
 import { withRequestBudget } from '../src/usage/request-budget.mjs'
 import { requestProvider, requestProviderStream } from '../src/kernel/provider/router.mjs'
+import { createKernel } from '../src/kernel/kernel.mjs'
+import { createRunSpec } from '../src/kernel/orchestration/run-spec.mjs'
+import { createDurableRunBinding, withDurableRun } from '../src/kernel/orchestration/run-runtime.mjs'
+import { runWithRuntime } from '../src/kernel/core/runtime-context.mjs'
 
 const opts = { skip: process.platform !== 'linux', timeout: 20000 }, key = 'synthetic-local-free-fixture-key'
 const guard = run => ({ runId: run.id, expectedRevision: run.revision, ownerId: run.ownerId, ownerEpoch: run.ownerEpoch })
-async function setup(t, { requestLimit = 2, tokenLimit = 50000, missingUsage = false, redirect = false, excessiveUsage = false, afterReserve = null } = {}) {
+async function setup(t, { requestLimit = 2, tokenLimit = 50000, contextLimit = 8192, missingUsage = false, redirect = false, excessiveUsage = false, afterReserve = null } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kk-free-runtime-')), oldHome = process.env.KKCODE_HOME, oldKey = process.env.KKCODE_FREE_FIXTURE_KEY
   process.env.KKCODE_HOME = path.join(root, 'state'); process.env.KKCODE_FREE_FIXTURE_KEY = key
   const prices = path.join(root, 'prices.json'); await writeFile(prices, JSON.stringify({ models: { fixed: { input: 0, output: 0, cache_read: 0, cache_write: 0 } } }))
@@ -29,7 +33,7 @@ async function setup(t, { requestLimit = 2, tokenLimit = 50000, missingUsage = f
   })
   server.listen(0, '127.0.0.1'); await once(server, 'listening')
   const baseUrl = `http://127.0.0.1:${server.address().port}/v1`
-  const configState = { source: { userDir: root, userRaw: { usage: { pricing_file: prices } } }, config: { provider: { default: 'local', local: { type: 'openai', base_url: baseUrl, api_key_env: 'KKCODE_FREE_FIXTURE_KEY', default_model: 'fixed', context_limit: 8192, max_tokens: 32, stream: false } } } }
+  const configState = { source: { userDir: root, userRaw: { usage: { pricing_file: prices } } }, config: { provider: { default: 'local', local: { type: 'openai', base_url: baseUrl, api_key_env: 'KKCODE_FREE_FIXTURE_KEY', default_model: 'fixed', context_limit: contextLimit, max_tokens: 32, stream: false } } } }
   const profile = await prepareBudgetProfile(configState, { providerType: 'local', model: 'fixed' })
   const create = overrides => createLocalFreeInferenceAuthorization({ profile, baseUrl, apiKeyEnv: 'KKCODE_FREE_FIXTURE_KEY', maxRequests: requestLimit, maxTokens: tokenLimit, authorize: async () => true, ...overrides })
   const authority = await create(), policy = localFreePolicy(authority), store = await openRunStore({ directory: path.join(root, 'runs') })
@@ -62,6 +66,38 @@ test('real branded loopback inference spends exactly USD0 with persisted finite 
   assert.equal(budget.budgetUsd, 0); assert.equal(budget.spentUsd, 0); assert.equal(budget.usedRequests, 2); assert.ok(budget.reservedTokens > 0)
   assert.ok(budget.requests.every(request => request.amountUsd === 0 && request.status === 'settled' && request.tokenAllowance > 0))
   assert.equal(f.calls(), 2)
+})
+
+test('actual zero-budget loop admits only its matching durable local-free scope, never ambient or forged grants', opts, async t => {
+  const f = await setup(t, { contextLimit: 262144, tokenLimit: 1000000 })
+  Object.assign(f.configState.config, { agent: { max_steps: 1, verify_completion: false },
+    session: { title_generation: false, recovery: false }, skills: { enabled: false }, mcp: { auto_discover: false },
+    tool: { sources: { builtin: true, local: false, plugin: false, mcp: false } }, permission: { level: 'readonly', rules: [] } })
+  const kernel = await createKernel({ cwd: f.root, configState: f.configState, trustState: { trusted: true }, boot: false, services: {} })
+  t.after(() => kernel.shutdown())
+  const deadlineAt = (await f.store.getRunBudget({ runId: f.run.id })).deadlineAt
+  const spec = runId => createRunSpec({ runId, workspace: { cwd: f.root, root: f.root, writeScope: 'read-only' }, limits: { budgetUsd: 0, deadlineAt } })
+  const invoke = (sessionId, runId = f.run.id) => kernel.executeTurn({ sessionId, prompt: 'Controlled read-only answer.', providerType: 'local', model: 'fixed', runSpec: spec(runId) })
+  const binding = createDurableRunBinding({ runId: f.run.id })
+  assert.equal((await invoke('zero-no-host')).stopReason, 'budget')
+  const paid = await withRequestBudget({ budgetUsd: 1, deadlineAt }, () => withDurableRun(binding, () => invoke('zero-paid-ambient')))
+  assert.equal(paid.result.stopReason, 'budget')
+  const ordinary = await withRequestBudget({ budgetUsd: 0, deadlineAt, profiles: [f.profile], durable: { reserve: async () => { throw new Error('must not reserve') }, settle: async () => {} } },
+    () => withDurableRun(binding, () => invoke('zero-unapproved')))
+  assert.equal(ordinary.result.stopReason, 'budget')
+  const other = await f.scope(() => withDurableRun(binding, () => invoke('zero-other-run', 'different-run')))
+  assert.equal(other.result.stopReason, 'budget')
+  const forged = await f.scope(() => runWithRuntime({ durableRun: { runId: f.run.id } }, () => invoke('zero-forged-binding')))
+  assert.equal(forged.result.stopReason, 'budget')
+  const missingIdentity = await f.scope(() => kernel.executeTurn({ sessionId: 'zero-missing-run-identity', prompt: 'Do not inherit the ambient host grant.', providerType: 'local', model: 'fixed',
+    runSpec: { limits: { budgetUsd: 0, deadlineAt } } }))
+  assert.equal(missingIdentity.result.stopReason, 'budget', 'two absent run IDs cannot constitute a branded identity match')
+  assert.equal(f.calls(), 0)
+  const permitted = await f.scope(() => withDurableRun(binding, () => invoke('zero-authorized')))
+  assert.equal(permitted.result.reply, 'local answer')
+  assert.equal(permitted.costUsd, 0)
+  assert.equal(f.calls(), 1)
+  assert.equal((await f.store.getRunBudget({ runId: f.run.id })).usedRequests, 1)
 })
 
 test('unbranded, remote, DNS, nonzero prices, changed credentials/model and exhausted tokens never grant inference', opts, async t => {

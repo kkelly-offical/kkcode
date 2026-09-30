@@ -15,3 +15,9 @@ test("RunSpec is immutable and normalizes role execution fields", () => {
   assert.equal(Object.isFrozen(spec.role), true)
   assert.throws(() => { spec.role.name = "changed" }, TypeError)
 })
+
+test('RunSpec preserves zero ceilings and rejects invalid/unbounded numeric limits', () => {
+  assert.equal(createRunSpec({ limits: { budgetUsd: 0, deadlineAt: 0 } }).limits.budgetUsd, 0)
+  assert.equal(createRunSpec({ limits: { budgetUsd: 0, deadlineAt: 0 } }).limits.deadlineAt, 0)
+  for (const value of [NaN, Infinity, -1]) assert.throws(() => createRunSpec({ limits: { budgetUsd: value } }), /finite nonnegative/)
+})

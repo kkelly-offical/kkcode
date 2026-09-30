@@ -4,11 +4,12 @@ import { openSync, closeSync } from "node:fs"
 import { readdir, unlink } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { EventEmitter } from "node:events"
-import { readJson, writeJson } from "../../storage/json-store.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { INTERRUPTION_REASONS } from "./interruption-reason.mjs"
 import { intersectDataPolicies } from '../permission/data-policy.mjs'
+import { normalizeToolOutcome } from '../tool/result-outcome.mjs'
+import { readBackgroundTask, createBackgroundTask, updateBackgroundTask, withBackgroundTaskLock, backgroundTaskOwner, backgroundTaskOwnerMatches } from './background-task-store.mjs'
 import { registerBackgroundPromptOwner, hasBackgroundPromptOwner, bindBackgroundPromptWorker, releaseBackgroundPromptOwner } from './background-prompts.mjs'
 import {
   ensureBackgroundTaskRuntimeDir,
@@ -23,6 +24,8 @@ settledEmitter.setMaxListeners(50)
 
 const WORKER_ENTRY = fileURLToPath(new URL("./background-worker.mjs", import.meta.url))
 const TERMINAL_STATES = new Set(["completed", "cancelled", "error", "interrupted"])
+const inlineControllers = new Map()
+const inlineOwnerReleases = new Map()
 
 function now() {
   return Date.now()
@@ -36,7 +39,7 @@ function clipText(text, max = 160) {
 
 function extractTaskResultPreview(task) {
   if (task?.status === "completed") {
-    const reply = String(task?.result?.reply || task?.result?.summary || "").trim()
+    const reply = String(task?.result?.reply || task?.result?.summary || task?.result?.output || (typeof task?.result === 'string' ? task.result : '')).trim()
     if (reply) return clipText(reply, 180)
     return "completed successfully"
   }
@@ -121,7 +124,7 @@ function nextActionForTask(task) {
     case "interrupted":
       return "inspect the interruption reason and use background retry when appropriate"
     case "cancelled":
-      return "rerun the task if you still need the sidecar result"
+      return "inspect retained output and prior effects before deciding whether any new work is safe; cancellation is not rollback"
     default:
       return "inspect the task record for more detail"
   }
@@ -237,49 +240,29 @@ function isProcessAlive(pid) {
 }
 
 async function loadTask(id) {
-  return readJson(backgroundTaskCheckpointPath(id), null)
+  return readBackgroundTask(id)
 }
 
 async function saveTask(task) {
-  await ensureBackgroundTaskRuntimeDir()
-  await writeJson(backgroundTaskCheckpointPath(task.id), task)
-  return task
+  return createBackgroundTask(task)
 }
 
 // Process-level mutex to serialize patchTask calls (prevents same-process TOCTOU)
 let patchLock = Promise.resolve()
 
-async function patchTask(id, updater, { maxRetries = 3 } = {}) {
+async function patchTask(id, updater, options = {}) {
   // 跨入终态的那一份记在这里，广播放到锁外做 —— 订阅者（TUI 唤醒会提交一个新回合）
   // 可能跑很久，在锁里发会把后面所有 patchTask 都排在它后面。
   let crossedIntoTerminal = null
   const run = async () => {
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      const current = await loadTask(id)
-      if (!current) return null
-      const next = {
-        ...current,
-        ...updater(current),
-        _version: (current._version || 0) + 1,
-        updatedAt: now()
-      }
-      // Optimistic lock: re-read and verify version before write
-      const check = await loadTask(id)
-      if (check && (check._version || 0) !== (current._version || 0)) {
-        if (attempt < maxRetries) continue // version changed, retry
-        const err = /** @type {Error & { code: string }} */ (new Error(`patchTask(${id}): version conflict after ${maxRetries} retries (expected ${current._version}, got ${check._version})`))
-        err.code = "VERSION_CONFLICT"
-        throw err
-      }
-      await saveTask(next)
-      // Emit settlement notification when task reaches a terminal state
-      if (TERMINAL_STATES.has(next.status) && !TERMINAL_STATES.has(current.status)) {
-        settledEmitter.emit("task-settled", { id: next.id, status: next.status })
-        crossedIntoTerminal = next
-      }
-      return next
+    const { current, next } = await updateBackgroundTask(id, updater, options)
+    if (!next) return null
+    // Emit only after the checkpoint commit and outside the process lock.
+    if (TERMINAL_STATES.has(next.status) && !TERMINAL_STATES.has(current.status)) {
+      settledEmitter.emit("task-settled", { id: next.id, status: next.status })
+      crossedIntoTerminal = next
     }
-    return null
+    return next
   }
   const result = patchLock.then(run, run)
   patchLock = result.then(() => undefined, () => undefined)
@@ -308,6 +291,7 @@ async function readAllTasks() {
 
 function spawnWorker(task) {
   const taskId = task.id
+  const owner = backgroundTaskOwner(task)
   const logFile = backgroundTaskLogPath(taskId)
   let stderrFd = null
   try {
@@ -317,7 +301,7 @@ function spawnWorker(task) {
   }
   let child
   try {
-    child = spawn(process.execPath, [WORKER_ENTRY, "--task-id", taskId], {
+    child = spawn(process.execPath, [WORKER_ENTRY, "--task-id", taskId, '--attempt', String(owner.attempt), '--resume-token', owner.resumeToken || ''], {
       detached: true,
       windowsHide: true,
       stdio: ["ignore", "ignore", stderrFd !== null ? stderrFd : "ignore", ...(hasBackgroundPromptOwner(taskId) ? ["ipc"] : [])],
@@ -352,7 +336,7 @@ function spawnWorker(task) {
             }
           }
           return
-        })
+        }, { owner, preserveTerminal: true })
       } else {
         // Worker exited cleanly (code 0) — notify waiters so they re-check status
         settledEmitter.emit("task-settled", { id: taskId, status: "exited", code: 0 })
@@ -427,7 +411,7 @@ async function startPendingTasks(config = {}) {
       continue
     }
     const timeoutMs = resolveWorkerTimeoutMs(config, task.payload || {})
-    await patchTask(task.id, (current) => ({
+    await patchTask(task.id, (current) => current.cancelled || TERMINAL_STATES.has(current.status) ? {} : ({
       status: "running",
       workerPid: pid,
       lastHeartbeatAt: now(),
@@ -436,7 +420,7 @@ async function startPendingTasks(config = {}) {
         ...(current.payload || {}),
         workerTimeoutMs: timeoutMs
       }
-    }))
+    }), { owner: backgroundTaskOwner(task), preserveTerminal: true })
     remainingSlots -= 1
     started += 1
   }
@@ -445,44 +429,73 @@ async function startPendingTasks(config = {}) {
 }
 
 async function runInline(task, run) {
-  await patchTask(task.id, () => ({ status: "running", startedAt: now() }))
+  const controller = new AbortController()
+  const owner = backgroundTaskOwner(task)
+  const writeOptions = { owner, preserveTerminal: true }
+  inlineControllers.set(task.id, controller)
+  let poll
   try {
+    const active = await patchTask(task.id, current => current.cancelled || TERMINAL_STATES.has(current.status)
+      ? {} : { status: "running", startedAt: now(), lastHeartbeatAt: now() }, writeOptions)
+    if (!active || active.cancelled || TERMINAL_STATES.has(active.status)) return
+    // Another CLI process can persist a cancellation, so the same-process
+    // controller is the fast path rather than the only path.
+    let checking = false
+    poll = setInterval(async () => {
+      if (checking || controller.signal.aborted) return
+      checking = true
+      try {
+        const latest = await loadTask(task.id)
+        if (!backgroundTaskOwnerMatches(latest, owner) || latest?.cancelled) controller.abort()
+        else if (latest?.status === 'running' && now() - Number(latest.lastHeartbeatAt || 0) >= 1000) {
+          await patchTask(task.id, current => current.status === 'running' ? { lastHeartbeatAt: now() } : {}, writeOptions)
+        }
+      }
+      catch (error) { controller.abort(error) }
+      finally { checking = false }
+    }, 50)
     const result = await run({
       taskId: task.id,
+      signal: controller.signal,
       isCancelled: async () => {
         const latest = await loadTask(task.id)
-        return Boolean(latest?.cancelled)
+        return !backgroundTaskOwnerMatches(latest, owner) || Boolean(latest?.cancelled)
       },
       log: async (line) => {
         await patchTask(task.id, (current) => ({
           logs: [...(current.logs || []), String(line)].slice(-300),
           lastHeartbeatAt: now()
-        }))
+        }), writeOptions)
       }
     })
-    const latest = await loadTask(task.id)
-    if (latest?.cancelled) {
-      await patchTask(task.id, () => ({
-        status: "cancelled",
-        endedAt: now(),
-        interruptionReason: INTERRUPTION_REASONS.USER_CANCEL
-      }))
-      return
-    }
-    await patchTask(task.id, () => ({ status: "completed", result, endedAt: now() }))
+    const outcome = normalizeToolOutcome(result, controller.signal)
+    await patchTask(task.id, current => ({
+      status: current.cancelled || outcome.status === 'cancelled' ? 'cancelled' : outcome.ok ? 'completed' : 'error',
+      result,
+      error: outcome.error,
+      endedAt: now(),
+      interruptionReason: current.cancelled || outcome.status === 'cancelled' ? INTERRUPTION_REASONS.USER_CANCEL : null
+    }), writeOptions)
   } catch (error) {
     const latest = await loadTask(task.id)
-    await patchTask(task.id, () => ({
-      status: latest?.cancelled ? "cancelled" : "error",
+    if (!backgroundTaskOwnerMatches(latest, owner)) return
+    await patchTask(task.id, current => ({
+      status: current.cancelled ? "cancelled" : "error",
       error: error.message,
-      interruptionReason: latest?.cancelled ? INTERRUPTION_REASONS.USER_CANCEL : null,
+      interruptionReason: current.cancelled ? INTERRUPTION_REASONS.USER_CANCEL : null,
       endedAt: now()
-    }))
+    }), writeOptions)
+  } finally {
+    clearInterval(poll)
+    if (inlineControllers.get(task.id) === controller) inlineControllers.delete(task.id)
+    inlineOwnerReleases.get(task.id)?.()
+    inlineOwnerReleases.delete(task.id)
   }
 }
 
 export const BackgroundManager = {
-  async launch({ description, payload, run = null, config = {} }) {
+  async launch({ description, payload, run = null, config = {}, signal = null }) {
+    signal?.throwIfAborted()
     const dataPolicy = intersectDataPolicies(/** @type {any} */ (config).data_policy, payload?.dataPolicy)
     await ensureBackgroundTaskRuntimeDir()
     const id = `bg_${Math.random().toString(36).slice(2, 14)}`
@@ -515,13 +528,24 @@ export const BackgroundManager = {
     if (!run && task.payload.workerType === 'delegate_task') registerBackgroundPromptOwner(id)
 
     if (run) {
+      if (signal) {
+        const onAbort = () => {
+          inlineControllers.get(id)?.abort(signal.reason)
+          // Cancellation is durably recorded as well as signalled in-process.
+          // A storage failure must not keep the owned process running.
+          void this.cancel(id).catch(() => {})
+        }
+        signal.addEventListener('abort', onAbort, { once: true })
+        inlineOwnerReleases.set(id, () => signal.removeEventListener('abort', onAbort))
+        if (signal.aborted) onAbort()
+      }
       queueMicrotask(() => {
         runInline(task, run).catch((err) => {
           patchTask(task.id, () => ({
             status: "error",
             error: `inline task failed: ${err?.message || String(err)}`,
             endedAt: now()
-          })).catch(() => {})
+          }), { owner: backgroundTaskOwner(task), preserveTerminal: true }).catch(() => {})
         })
       })
       return task
@@ -572,15 +596,31 @@ export const BackgroundManager = {
     return summarizeTaskList(await readAllTasks())
   },
 
-  async cancel(id) {
+  async cancel(id, { parentSessionId = null } = {}) {
     const task = await loadTask(id)
-    if (!task) return false
+    if (!task || parentSessionId != null && task.payload?.parentSessionId !== parentSessionId) return false
+    if (TERMINAL_STATES.has(task.status)) return true
+    let cancelled
+    try {
+      cancelled = await patchTask(id, (current) => {
+        // Recheck inside the checkpoint lock, not only before awaiting it.
+        if (parentSessionId != null && current.payload?.parentSessionId !== parentSessionId) {
+          throw Object.assign(new Error('Background task is not owned by this session'), { code: 'background_task_scope' })
+        }
+        return TERMINAL_STATES.has(current.status) ? {} : {
+          cancelled: true,
+          status: current.status === "pending" ? "cancelled" : current.status,
+          interruptionReason: INTERRUPTION_REASONS.USER_CANCEL,
+          ...(current.status === 'pending' ? { endedAt: now() } : {})
+        }
+      }, parentSessionId == null ? {} : { owner: backgroundTaskOwner(task) })
+    } catch (error) {
+      if (['background_task_scope', 'background_task_stale_owner'].includes(error.code)) return false
+      throw error
+    }
+    if (!cancelled) return false
     releaseBackgroundPromptOwner(id)
-    await patchTask(id, (current) => ({
-      cancelled: true,
-      status: current.status === "pending" ? "cancelled" : current.status,
-      interruptionReason: INTERRUPTION_REASONS.USER_CANCEL
-    }))
+    inlineControllers.get(id)?.abort()
     return true
   },
 
@@ -628,9 +668,13 @@ export const BackgroundManager = {
         skippedPreserved.push(task.id)
         continue
       }
-      await unlink(backgroundTaskCheckpointPath(task.id)).catch(() => {})
-      await unlink(backgroundTaskLogPath(task.id)).catch(() => {})
-      removed.push(task.id)
+      await withBackgroundTaskLock(task.id, async () => {
+        const current = await loadTask(task.id)
+        if (!current || !TERMINAL_STATES.has(current.status) || current.updatedAt > cutoff || current.result?.worktree_preserved === true && current.result?.worktree_path) return
+        await unlink(backgroundTaskCheckpointPath(task.id)).catch(() => {})
+        await unlink(backgroundTaskLogPath(task.id)).catch(() => {})
+        removed.push(task.id)
+      })
     }
     return { removed, skipped_preserved: skippedPreserved }
   },

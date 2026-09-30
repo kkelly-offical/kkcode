@@ -165,6 +165,14 @@ const baseConfig = {
   background: { mode: "worker_process", max_parallel: 3 }
 }
 
+test('unknown stage subagent cannot launch an unrestricted fallback worker', { timeout: 10000 }, async () => {
+  const result = await runStageBarrier({ stage: { stageId: 'unknown-agent', tasks: [{ taskId: 'bounded', prompt: 'inspect', subagentType: 'not-a-real-agent', plannedFiles: [] }] },
+    sessionId: 'unknown-agent-parent', config: baseConfig, model: 'fixture', providerType: 'local' })
+  assert.equal(taskCounter, 0)
+  assert.equal(result.allSuccess, false)
+  assert.match(JSON.stringify(result), /unknown subagent_type/)
+})
+
 beforeEach(async () => {
   home = await mkdtemp(join(tmpdir(), "kkcode-integ-"))
   project = await mkdtemp(join(tmpdir(), "kkcode-integ-proj-"))

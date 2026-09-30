@@ -15,6 +15,7 @@ import { paint } from "../../theme/color.mjs"
 import { ageLabel, padRight } from "../../util/frame-primitives.mjs"
 import { buildReplRuntimeSnapshot } from "../runtime-facade.mjs"
 import { buildOperatorSnapshot } from "../operator-surface.mjs"
+import { formatTodoProgress } from '../../ui/activity-renderer.mjs'
 
 export const sessionCommands = [
   {
@@ -254,6 +255,10 @@ export const sessionCommands = [
         // 续跑会话的尾部预览：是「那份会话里有什么」的上下文，留在滚动区，
         // 但以弱化的 system 样式呈现 —— 它不是本次会话的对话内容
         print(`  [${m.role}] ${preview}`, { kind: "system", tone: "muted" })
+      }
+      if (ctx.kernel.todos?.list) {
+        const block = formatTodoProgress(await ctx.kernel.todos.list(target.id))
+        if (block && state.sessionId === target.id) print(block.summary, block)
       }
       return { exit: false }
     }

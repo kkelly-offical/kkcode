@@ -34,14 +34,40 @@ afterEach(async () => {
 /** 收集 TASK_SETTLED，返回收集器与退订函数。用完必须退订，否则监听器跨用例泄漏。 */
 function collectSettled() {
   const events = []
-  const unsubscribe = EventBus.subscribe((event) => {
-    if (event.type === EVENT_TYPES.TASK_SETTLED) events.push(event)
+  const waiters = new Set()
+  const removeListener = EventBus.subscribe((event) => {
+    if (event.type !== EVENT_TYPES.TASK_SETTLED) return
+    events.push(event)
+    for (const waiter of waiters) {
+      if (event.payload.id === waiter.id && event.payload.attempt === waiter.attempt) {
+        clearTimeout(waiter.timer)
+        waiters.delete(waiter)
+        waiter.resolve(event)
+      }
+    }
   })
-  return { events, unsubscribe }
+  function waitFor(id, attempt = 1) {
+    const observed = events.find(event => event.payload.id === id && event.payload.attempt === attempt)
+    if (observed) return Promise.resolve(observed)
+    return new Promise((resolve, reject) => {
+      const waiter = { id, attempt, resolve, timer: null }
+      waiter.timer = setTimeout(() => {
+        waiters.delete(waiter)
+        reject(new Error(`Missing TASK_SETTLED notification for ${id} attempt ${attempt}`))
+      }, 2000)
+      waiters.add(waiter)
+    })
+  }
+  function unsubscribe() {
+    removeListener()
+    for (const waiter of waiters) clearTimeout(waiter.timer)
+    waiters.clear()
+  }
+  return { events, waitFor, unsubscribe }
 }
 
 test("任务完成时向全局总线广播一次，载荷够主代理直接读", async () => {
-  const { events, unsubscribe } = collectSettled()
+  const { events, waitFor, unsubscribe } = collectSettled()
   try {
     const task = await BackgroundManager.launch({
       description: "整理依赖清单",
@@ -51,6 +77,7 @@ test("任务完成时向全局总线广播一次，载荷够主代理直接读",
     })
     const settled = await BackgroundManager.waitForTask(task.id, { timeoutMs: 2000, tickMs: 20 })
     assert.equal(settled.status, "completed")
+    await waitFor(task.id)
 
     assert.equal(events.length, 1, `应当恰好广播一次，实际 ${events.length} 次`)
     const payload = events[0].payload
@@ -69,7 +96,7 @@ test("任务完成时向全局总线广播一次，载荷够主代理直接读",
 })
 
 test("失败也要广播 —— 主代理最需要知道的恰恰是这种", async () => {
-  const { events, unsubscribe } = collectSettled()
+  const { events, waitFor, unsubscribe } = collectSettled()
   try {
     const task = await BackgroundManager.launch({
       description: "跑集成测试",
@@ -78,6 +105,7 @@ test("失败也要广播 —— 主代理最需要知道的恰恰是这种", asy
       run: async () => { throw new Error("EACCES: 打不开 /etc/shadow") }
     })
     await BackgroundManager.waitForTask(task.id, { timeoutMs: 2000, tickMs: 20 })
+    await waitFor(task.id)
 
     assert.equal(events.length, 1)
     assert.equal(events[0].payload.status, "error")
@@ -88,7 +116,7 @@ test("失败也要广播 —— 主代理最需要知道的恰恰是这种", asy
 })
 
 test("只有跨入终态才广播：pending 与 running 一声不吭", async () => {
-  const { events, unsubscribe } = collectSettled()
+  const { events, waitFor, unsubscribe } = collectSettled()
   try {
     let release = null
     const gate = new Promise((resolve) => { release = resolve })
@@ -111,6 +139,7 @@ test("只有跨入终态才广播：pending 与 running 一声不吭", async () 
 
     release()
     await BackgroundManager.waitForTask(task.id, { timeoutMs: 2000, tickMs: 20 })
+    await waitFor(task.id)
     assert.equal(events.length, 1)
     assert.equal(events[0].payload.status, "completed")
   } finally {
@@ -121,7 +150,7 @@ test("只有跨入终态才广播：pending 与 running 一声不吭", async () 
 test("重试是同一个 id 的第二次生命，它的结果也必须叫醒主代理", async () => {
   // 去重键只用 id 的话，这里第二次落地会被静默吞掉 —— 用户重试了一个后台任务，
   // 然后再也等不到任何消息。
-  const { events, unsubscribe } = collectSettled()
+  const { events, waitFor, unsubscribe } = collectSettled()
   try {
     const task = await BackgroundManager.launch({
       description: "会失败一次的任务",
@@ -130,6 +159,7 @@ test("重试是同一个 id 的第二次生命，它的结果也必须叫醒主�
       run: async () => { throw new Error("first attempt failed") }
     })
     await BackgroundManager.waitForTask(task.id, { timeoutMs: 2000, tickMs: 20 })
+    await waitFor(task.id)
     assert.equal(events.length, 1)
     assert.equal(events[0].payload.attempt, 1)
 
@@ -141,10 +171,35 @@ test("重试是同一个 id 的第二次生命，它的结果也必须叫醒主�
     assert.equal(events.length, 1, "回到 pending 不是终态，不该广播")
 
     await BackgroundManager.cancel(task.id)
+    await waitFor(task.id, 2)
     assert.equal(events.length, 2, "第二次落地必须重新广播")
     assert.equal(events[1].payload.status, "cancelled")
     assert.equal(events[1].payload.attempt, 2)
   } finally {
+    unsubscribe()
+  }
+})
+
+test("checkpoint completion and asynchronous UI notification are separate, both remain observable", async () => {
+  const { events, waitFor, unsubscribe } = collectSettled()
+  let release
+  const deliveryGate = new Promise(resolve => { release = resolve })
+  const removeSink = EventBus.registerSink(async event => {
+    if (event.type === EVENT_TYPES.TASK_SETTLED) await deliveryGate
+  })
+  try {
+    const task = await BackgroundManager.launch({ description: "delayed notification fixture", config: {}, payload: {}, run: async () => ({ reply: "done" }) })
+    const settled = await BackgroundManager.waitForTask(task.id, { timeoutMs: 2000, tickMs: 20 })
+    assert.equal(settled.status, "completed", "durable state is observable before a slow event consumer finishes")
+    assert.equal(events.length, 0, "the deterministic gate holds the listener, not the checkpoint")
+    release()
+    await waitFor(task.id)
+    assert.equal(events.length, 1)
+    await BackgroundManager.waitForTask(task.id, { timeoutMs: 2000, tickMs: 20 })
+    assert.equal(events.length, 1, "rereading a terminal checkpoint must not duplicate the notification")
+  } finally {
+    release()
+    removeSink()
     unsubscribe()
   }
 })

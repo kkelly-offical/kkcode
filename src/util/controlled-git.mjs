@@ -10,7 +10,7 @@ const exec = promisify(execFile)
 export function gitNullDevice(platform = process.platform) { return platform === "win32" ? "NUL" : "/dev/null" }
 const disabled = gitNullDevice()
 const extraKeys = new Set(["GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"])
-const commands = new Set(["rev-parse", "config", "ls-files", "ls-tree", "cat-file", "status", "diff", "diff-tree", "read-tree", "write-tree", "update-index", "hash-object", "add", "commit-tree", "update-ref", "apply", "worktree", "merge-base", "show", "log"])
+const commands = new Set(["rev-parse", "config", "ls-files", "ls-tree", "cat-file", "status", "diff", "diff-tree", "read-tree", "write-tree", "update-index", "hash-object", "add", "commit-tree", "update-ref", "apply", "worktree", "merge-base", "show", "log", "branch", "remote"])
 let gitBinary
 
 async function executable(cwd) {
@@ -46,7 +46,7 @@ function environment(extra) {
   return result
 }
 
-const baseArgs = ["--no-pager", "-c", `core.hooksPath=${disabled}`, "-c", "core.fsmonitor=false",
+const baseArgs = ["--no-pager", "--no-optional-locks", "-c", `core.hooksPath=${disabled}`, "-c", "core.fsmonitor=false",
   "-c", "core.untrackedCache=false", "-c", "submodule.recurse=false", "-c", "diff.external=",
   "-c", `core.attributesFile=${disabled}`, "-c", "color.ui=false"]
 
@@ -54,20 +54,25 @@ const baseArgs = ["--no-pager", "-c", `core.hooksPath=${disabled}`, "-c", "core.
  * fsmonitor, filters, textconv/external diff, pager, or ambient provider secrets.
  * Explicit interactive Git commands can retain their normal separate behavior.
  * @param {string[]} args
- * @param {{cwd: string, env?: Record<string,string>, timeoutMs?: number, maxBuffer?: number}} options
+ * @param {{cwd: string, env?: Record<string,string>, timeoutMs?: number, maxBuffer?: number, signal?: AbortSignal}} options
  */
-export async function runControlledGit(args, { cwd, env = {}, timeoutMs = 30000, maxBuffer = 64 * 1024 * 1024 }) {
-  try {
+export async function prepareControlledGitInvocation(args, { cwd, env = {}, timeoutMs = 30000, maxBuffer = 64 * 1024 * 1024, signal = undefined }) {
+    signal?.throwIfAborted()
     if (!Array.isArray(args) || !commands.has(args[0])) throw new Error("controlled Git supports only explicit local snapshot/inspection operations")
+    if (args[0] === 'remote' && !(args.length === 2 && args[1] === '-v')) throw new Error('controlled Git remote supports inspection only')
+    if (args[0] === 'branch' && args.slice(1).some(arg => !['--show-current', '--list', '--all', '--remotes', '-a', '-r', '-v', '-vv'].includes(arg))) throw new Error('controlled Git branch supports inspection only')
     const separator = args.indexOf("--")
-    if (args.slice(1, separator < 0 ? undefined : separator).some(arg => arg === "--ext-diff" || arg === "--textconv")) throw new Error("controlled Git cannot enable repository diff executables")
+    if (args.slice(1, separator < 0 ? undefined : separator).some(arg => {
+      const flag = arg.split('=')[0]
+      return flag.length > 2 && ['--ext-diff', '--textconv', '--output'].some(option => option === flag || option.startsWith(flag))
+    })) throw new Error("controlled Git cannot enable repository diff executables or redirected output")
     const command = await executable(cwd), commandEnv = environment(env)
     // Reading keys does not invoke filters. Disable every configured driver, so
     // project .gitattributes cannot activate its clean/smudge/process program.
     let keys = ""
     try {
       keys = (await exec(command, [...baseArgs, "config", "--name-only", "--get-regexp", "^(filter|diff)\\..*\\.(clean|smudge|process|required|textconv|command)$"], {
-        cwd, env: commandEnv, encoding: "utf8", timeout: timeoutMs, maxBuffer, windowsHide: true
+        cwd, env: commandEnv, encoding: "utf8", timeout: timeoutMs, maxBuffer, windowsHide: true, signal
       })).stdout
     } catch (error) { if (error.code !== 1) throw error }
     const overrides = []
@@ -79,9 +84,17 @@ export async function runControlledGit(args, { cwd, env = {}, timeoutMs = 30000,
     }
     for (const name of filters) for (const key of ["clean", "smudge", "process", "required"]) overrides.push("-c", `filter.${name}.${key}=${key === "required" ? "false" : ""}`)
     for (const name of diffs) for (const key of ["textconv", "command"]) overrides.push("-c", `diff.${name}.${key}=`)
-    const safeArgs = args[0] === "diff" ? [args[0], "--no-ext-diff", "--no-textconv", ...args.slice(1)] : args
-    const result = await exec(command, [...baseArgs, ...overrides, ...safeArgs], {
-      cwd, env: commandEnv, encoding: "utf8", timeout: timeoutMs, maxBuffer, windowsHide: true
+    const safeArgs = ['diff', 'show', 'log'].includes(args[0]) ? [args[0], "--no-ext-diff", "--no-textconv", ...args.slice(1)] : args
+    signal?.throwIfAborted()
+    return { command, args: [...baseArgs, ...overrides, ...safeArgs], env: commandEnv }
+}
+
+/** @param {string[]} args @param {{cwd: string, env?: Record<string,string>, timeoutMs?: number, maxBuffer?: number, signal?: AbortSignal}} options */
+export async function runControlledGit(args, { cwd, env = {}, timeoutMs = 30000, maxBuffer = 64 * 1024 * 1024, signal = undefined }) {
+  try {
+    const invocation = await prepareControlledGitInvocation(args, { cwd, env, timeoutMs, maxBuffer, signal })
+    const result = await exec(invocation.command, invocation.args, {
+      cwd, env: invocation.env, encoding: "utf8", timeout: timeoutMs, maxBuffer, windowsHide: true, signal
     })
     return { ok: true, stdout: result.stdout, stderr: result.stderr, code: 0 }
   } catch (error) {

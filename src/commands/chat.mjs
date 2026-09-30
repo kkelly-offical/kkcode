@@ -33,7 +33,7 @@ export function createChatCommand() {
     .description("run one prompt in plan/agent/auto/ultra/yolo mode (agent-auto remains an alias)")
     .argument("<prompt...>", "prompt text")
     .option("--mode <mode>", `${MODE_IDS.join("|")} (legacy assistant|code|coding|longagent still accepted)`, "agent")
-    .option("--yolo", "shorthand for --mode yolo: skip every approval prompt")
+    .option("--yolo", "shorthand for --mode yolo: skip routine approvals within the authorized scope")
     .option("--model <model>", "model id")
     .option("--provider-type <type>", `provider type (${providers.join("|")})`)
     .option("--base-url <url>", "provider base url override")
@@ -61,6 +61,7 @@ export function createChatCommand() {
         trust: Boolean(options.trust),
         ...(ttyHandlers ? { handlers: ttyHandlers } : {})
       })
+      try {
       const ctx = {
         configState: kernel.configState,
         themeState: await loadTheme(kernel.configState),
@@ -188,6 +189,9 @@ export function createChatCommand() {
       if (result.error) {
         process.exitCode = 1
         reporter.warning(`provider error: ${result.error}`)
+      } else if (['incomplete', 'blocked', 'unknown'].includes(result.status)) {
+        process.exitCode = 2
+        reporter.warning(`任务尚未完成：${result.stopReason || result.status}。已有结果已保留，请核查后继续。`)
       }
 
       if (outputFormat !== "legacy") {
@@ -234,5 +238,6 @@ export function createChatCommand() {
         }
       }
       console.log(`session: ${sessionId}`)
+      } finally { await kernel.shutdown() }
     })
 }

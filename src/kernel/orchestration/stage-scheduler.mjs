@@ -300,6 +300,7 @@ async function launchTask({
   const stageSubagent = stageAgentType
     ? resolveSubagent({ config: config || {}, subagentType: stageAgentType })
     : null
+  if (stageSubagent?.fallback) throw new Error(stageSubagent.reason || 'unknown stage subagent; refusing unrestricted fallback')
   const stageRunSpec = stageSubagent && !stageSubagent.fallback
     ? createRunSpec({
         sessionId: logicalTask.subSessionId,

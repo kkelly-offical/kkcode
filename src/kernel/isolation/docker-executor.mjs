@@ -14,7 +14,7 @@ import { isToolPreDispatchError, toolPreDispatchError } from '../core/execution-
 import { browserActionNeedsAuthorization, isBrowserActionAuthorization } from '../browser/action-authorization.mjs'
 
 const KNOWN_BUILTINS = new WeakSet()
-const ALLOWED = Object.freeze(['bash', 'read', 'write', 'edit', 'patch', 'multiedit', 'list', 'todowrite', 'artifact_read', 'artifact_search', 'tool_program', 'lsp', 'office_capabilities', 'office_inspect', 'office_create', 'office_edit', 'office_render', 'office_pdf', 'office_ocr'])
+const ALLOWED = Object.freeze(['bash', 'read', 'write', 'edit', 'patch', 'multiedit', 'list', 'todowrite', 'todo_read', 'artifact_read', 'artifact_search', 'tool_program', 'lsp', 'office_capabilities', 'office_inspect', 'office_create', 'office_edit', 'office_render', 'office_pdf', 'office_ocr'])
 const NETWORK_TOOLS = Object.freeze(['webfetch', 'websearch', 'codesearch', 'http_request', 'browser', 'browser_recipe'])
 const PRIVATE_NAMES = new Set(['.git', '.kkcode', '.ssh', '.aws', '.azure', '.kube', '.gnupg', '.docker', '.npmrc', '.pypirc', '.netrc', '.envrc', '.mcp.json'])
 const DEFAULT_LIMITS = Object.freeze({ cpus: 2, memory_mb: 2048, pids: 256, tmp_mb: 512, max_output_bytes: 8 * 1024 * 1024, timeout_ms: 120000 })
@@ -370,7 +370,7 @@ export function createDockerExecutionBackend({ image, limits = {}, readOnlyPaths
           return { output: `${result.stdout}${result.stderr}${result.overflow ? '\n[输出达到隔离执行上限，内容不完整]' : ''}` || '(empty output)', status: result.cancelled ? 'cancelled' : result.exitCode === 0 ? 'completed' : 'error', metadata: { isolation: result.isolation, outputComplete: !result.overflow && !result.cancelled && !result.timedOut },
             exitCode: result.exitCode, cancelled: result.cancelled, timedOut: result.timedOut }
         }
-        if (['todowrite', 'artifact_read', 'artifact_search'].includes(tool.name)) { dispatch(); return invoke() }
+        if (['todowrite', 'todo_read', 'artifact_read', 'artifact_search'].includes(tool.name)) { dispatch(); return invoke() }
         if (binding.readOnly && !['read', 'list'].includes(tool.name)) throw failure('合同只允许读取，不允许编辑工作区', 'strict_tool_denied')
         await workspaceInfo(binding.cwd)
         const normalized = structuredClone(args)

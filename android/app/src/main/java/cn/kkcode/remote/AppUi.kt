@@ -367,6 +367,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
         }
         if(state.controlElsewhere) Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) { Text("另一客户端正在控制", fontSize = 11.sp, color = muted, modifier = Modifier.weight(1f)); if(!state.sharedDevice) TextButton(onClick = { state.takeControl() }) { Text("接管控制", fontSize = 11.sp) } }
         ChangeSummary(state.messages)
+        TodoProgressView(state.todos, "${System.identityHashCode(state.api)}:${state.api?.device}:${state.selected}", state.subagents)
         if(state.showContext) ContextUsageView(state.contextUsage)
         if(text.startsWith('/') && !text.contains(' ')) {
             val query = text.removePrefix("/")

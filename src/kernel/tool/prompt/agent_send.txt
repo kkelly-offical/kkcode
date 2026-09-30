@@ -1,0 +1,1 @@
+Send a scoped message to an active owned child. Messages cannot change the child's immutable identity, tools, original scope or approval ceiling. Plan cannot message an already running writable child. Use agent_followup for follow-up work after a child stops.

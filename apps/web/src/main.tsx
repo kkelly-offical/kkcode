@@ -6,6 +6,8 @@ import "./pixel.css";
 import { SessionHome, ConnectionLanding, SessionActions } from "./Home";
 import { Sheet } from "./Sheet";
 import { ContextUsage } from './ContextUsage';
+import { TodoProgress } from './TodoProgress';
+import { acceptTodoSnapshot, scopedSubagents, mergeSubagentEvent } from '../../../src/ui/todo-progress.mjs';
 import { modeLabel } from "./modes.mjs";
 import { SettingsOverlay } from "./Settings";
 import { Icon } from "./Icon";
@@ -46,6 +48,8 @@ function App() {
   const [session, setSession] = useState<Item | null>(null),
     [events, setEvents] = useState<Item[]>([]);
   const [sessionRevision, setSessionRevision] = useState(0);
+  const [todos, setTodos] = useState<{ identity: string, snapshot: Item | null } | null>(null);
+  const [subagents, setSubagents] = useState<{ identity: string, items: Item[] } | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [prompt, setPrompt] = useState(""),
     [mode, setMode] = useState("agent"),
@@ -65,9 +69,15 @@ function App() {
   const activeExecution = useRef(''), stopRequested = useRef('');
   const pendingSend = useRef<Item | null>(null), stopInFlight = useRef<Promise<void> | null>(null);
   const settledExecutions = useRef(new Set<string>());
-  const viewIdentity = useRef({ deviceId, selected });
-  viewIdentity.current = { deviceId, selected };
-  function currentView(id: string, device = deviceId) { return viewIdentity.current.deviceId === device && viewIdentity.current.selected === id; }
+  const viewIdentity = useRef({ gateway, deviceId, selected });
+  viewIdentity.current = { gateway, deviceId, selected };
+  const todoIdentity = `${gateway ? 'gateway' : 'local'}:${deviceId}:${selected}`;
+  function currentView(id: string, device = deviceId) { return viewIdentity.current.gateway === gateway && viewIdentity.current.deviceId === device && viewIdentity.current.selected === id; }
+  function observeTodos(value: Item | null | undefined) {
+    if (!currentView(selected)) return;
+    const identity = todoIdentity;
+    setTodos(previous => ({ identity, snapshot: acceptTodoSnapshot(previous?.identity === identity ? previous.snapshot : null, value, selected) }));
+  }
   function acknowledgeSend(token: Item) {
     if (token.acknowledged || !currentView(token.sessionId, token.deviceId)) return;
     token.acknowledged = true;
@@ -135,6 +145,8 @@ function App() {
     if (value.modeId) setMode(value.modeId === "agent-auto" ? "auto" : value.modeId);
   }
   function applyLiveSnapshot(value: Item | null) {
+    observeTodos(value?.todos);
+    if (currentView(selected)) setSubagents({ identity: todoIdentity, items: scopedSubagents(value?.subagents, selected) });
     setEvents(value?.liveEvents || []);
     livePreviewLimited.current = Boolean(value?.liveTruncated && value?.running);
     if (!value?.liveTruncated) { livePreviewNotice.current = ""; return false; }
@@ -305,6 +317,8 @@ function App() {
   }, [ready, deviceId]);
   useEffect(() => {
     setEvents([]);
+    setTodos(null);
+    setSubagents(null);
     setApproval([]);
     setSession(null);
     const pending = pendingSend.current?.deviceId === deviceId && pendingSend.current?.sessionId === selected ? pendingSend.current : null;
@@ -364,6 +378,8 @@ function App() {
         cursor.current = fresh.at(-1).seq ?? cursor.current;
         setEvents((old) => [...old, ...fresh]);
         for (const event of fresh) {
+          if (event.type === 'todo.updated' && event.sessionId === selected) observeTodos(event.payload?.snapshot);
+          if (['subagent.delegated', 'subagent.settled'].includes(event.type)) setSubagents(previous => ({ identity: todoIdentity, items: mergeSubagentEvent(previous?.identity === todoIdentity ? previous.items : [], event, selected) }));
           if (['session.context.updated', 'turn.usage.update'].includes(event.type) && event.payload?.context) setSession(previous => previous ? { ...previous, context: event.payload.context } : previous);
           const execution = event.payload?.executionId || '';
           if (['turn.preparing', 'turn.start', 'turn.stopping'].includes(event.type)) {
@@ -398,8 +414,9 @@ function App() {
         if (["session.updated", "session.title.updated"].includes(event.type)) { setSession(old => old ? { ...old, ...event.payload } : old); await refreshSessions(); }
       }
       const turnEnded = fresh.some((event: Item) => ["turn.result", "turn.failed", "turn.cancelled"].includes(event.type));
+      const childSettled = fresh.some((event: Item) => event.type === 'task.settled' && event.sessionId === selected && event.payload?.subSessionId);
       const stopped = batch.running === false || turnEnded;
-      if (stopped && (livePreviewLimited.current || turnEnded || (fresh.length && cursor.current % 1000 < fresh.length)))
+      if (childSettled || stopped && (livePreviewLimited.current || turnEnded || (fresh.length && cursor.current % 1000 < fresh.length)))
         await syncSnapshot();
       // SSE delivers approval bodies as approval.* rows without the envelope's
       // approvals array; one events.list refresh keeps that array authoritative.
@@ -462,7 +479,7 @@ function App() {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [selected, deviceId, ready, sessionRevision]);
+  }, [selected, deviceId, gateway, ready, sessionRevision]);
   useEffect(() => {
     if (notice) {
       const t = setTimeout(() => setNotice(""), 5000);
@@ -883,6 +900,7 @@ function App() {
             </div>
             {control && !control.yours && <div className="control-notice">另一客户端正在控制此会话。{canManage && <button onClick={() => attempt(async () => { await rpc('control.acquire', { sessionId: selected, takeover: true }); setControl({ yours: true }); })}>接管控制</button>}</div>}
             <ContextUsage value={session?.context} />
+            <TodoProgress key={todoIdentity} snapshot={todos?.identity === todoIdentity ? todos.snapshot : null} subagents={subagents?.identity === todoIdentity ? subagents.items : []} />
             {busy && ['stopping', 'finishing'].includes(turnPhase) && <div className="stop-progress" role="status">{stopping ? '正在停止并保存已有结果；已执行的文件改动不会撤销。' : '正在保存本轮结果…'}</div>}
             <Composer
               readOnly={readOnly || Boolean(session?.archived)}

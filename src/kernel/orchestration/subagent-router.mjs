@@ -27,6 +27,7 @@ function normalizeModel(model) {
   return !value || value.toLowerCase() === "inherit" ? null : value
 }
 
+/** @returns {Record<string, any>} */
 export function resolveSubagent({ config, subagentType = null, category = null }) {
   if (subagentType && category) {
     throw new Error("category and subagent_type are mutually exclusive")
@@ -53,9 +54,9 @@ export function resolveSubagent({ config, subagentType = null, category = null }
     if (registeredAgent) {
       return fromRegistry(subagentType, registeredAgent)
     }
-    // If the requested type isn't configured, fall through to default resolution
-    // instead of throwing — this handles "default-subagent" and other synthetic names
-    if (Object.keys(config.agent?.subagents || {}).length === 0) {
+    // The one explicit generic name is supported; arbitrary names fail closed
+    // even when there are no configured specialist agents.
+    if (subagentType === 'default-subagent') {
       return {
         name: subagentType,
         mode: "agent"
@@ -73,13 +74,7 @@ export function resolveSubagent({ config, subagentType = null, category = null }
   if (category) {
     const route = config.agent?.routing?.categories?.[category]
     if (!route) throw new Error(`no subagent routing for category: ${category}`)
-    const agent = config.agent?.subagents?.[route]
-    if (!agent) throw new Error(`routed subagent not found: ${route}`)
-    return {
-      name: route,
-      ...agent,
-      model: normalizeModel(agent.model)
-    }
+    return resolveSubagent({ config, subagentType: route })
   }
 
   const first = Object.entries(config.agent?.subagents || {})[0]
@@ -90,9 +85,5 @@ export function resolveSubagent({ config, subagentType = null, category = null }
     }
   }
 
-  return {
-    name: first[0],
-    ...first[1],
-    model: normalizeModel(first[1]?.model)
-  }
+  return resolveSubagent({ config, subagentType: first[0] })
 }

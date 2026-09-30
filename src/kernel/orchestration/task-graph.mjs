@@ -79,6 +79,13 @@ export function createTaskGraphHost(options = {}) {
     // This is observed untrusted model/tool data, not approval metadata or a
     // system instruction. Do not copy provider state, credentials or config.
     const projection = { schema: 'kk.task-result-projection.v1', graphId: graph.id, logicalChildId: node.id, childRunId: node.childRunId, candidateHash,
+      status: ['completed', 'incomplete', 'blocked', 'cancelled', 'error', 'unknown'].includes(result.status) ? result.status : 'unknown',
+      stopReason: typeof result.stopReason === 'string' ? result.stopReason.slice(0, 160) : null,
+      verification: result.verification && typeof result.verification === 'object' ? {
+        state: typeof result.verification.state === 'string' ? result.verification.state.slice(0, 80) : 'unknown',
+        passed: result.verification.passed === true,
+        verdict: typeof result.verification.verdict === 'string' ? result.verification.verdict.slice(0, 80) : 'UNKNOWN'
+      } : null,
       reply: String(result.reply || '').slice(0, 16000), tools: (result.toolEvents || []).slice(-20).map(event => ({ name: String(event.name || ''), status: String(event.status || ''), output: String(event.output || '').slice(0, 4000) })) }
     return artifacts.put({ actor: sourceActor(run), content: JSON.stringify(projection), mime: 'application/json', source: { kind: 'tool' } })
   }

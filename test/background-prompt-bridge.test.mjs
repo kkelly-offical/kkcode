@@ -2,6 +2,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { EventEmitter, once } from 'node:events'
+import { mkdtemp, rm } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { flushNow } from '../src/kernel/session/store.mjs'
 import { createPermissionPromptChannel } from '../src/kernel/permission/prompt.mjs'
 import { createQuestionPromptChannel } from '../src/kernel/tool/question-prompt.mjs'
 import { runWithRuntime } from '../src/kernel/core/runtime-context.mjs'
@@ -93,7 +97,10 @@ test('headless or closed kernels cannot register a background prompt capability'
   assert.equal(registerBackgroundPromptOwner('none', headless.runtime), false)
 })
 
-test('a live interactive parent may explicitly permit background questions', async () => {
+test('a live interactive parent may explicitly permit background questions', async t => {
+  const previous = process.env.KKCODE_HOME, temporary = await mkdtemp(path.join(os.tmpdir(), 'kkcode-background-question-'))
+  process.env.KKCODE_HOME = temporary
+  t.after(async () => { await flushNow(); if (previous === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = previous; await rm(temporary, { recursive: true, force: true }) })
   const origin = owner(() => 'deny', () => ({})), original = BackgroundManager.launchDelegateTask
   let launched
   BackgroundManager.launchDelegateTask = async input => { launched = input; return { id: 'task_fixture', status: 'pending' } }

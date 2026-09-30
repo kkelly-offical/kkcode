@@ -56,6 +56,23 @@ test('hard policy and protected/manual targets are never delegated to Auto or sk
   assert.equal(calls, 0)
 })
 
+test('inherited asks cannot be bypassed by cached session grants, Auto review or headless defaults', async t => {
+  const { engine, channel } = await fixture(t)
+  let prompts = 0, reviews = 0
+  channel.setPermissionPromptHandler(() => { prompts++; return 'allow_session' })
+  const request = { config, sessionId: 'ceiling', tool: 'bash', pattern: 'npm test', command: 'npm test' }
+  await engine.check(request)
+  assert.equal(prompts, 1)
+  channel.setPermissionPromptHandler(() => { prompts++; return 'deny' })
+  const constrained = { ...request, permissionCeilings: [{ level: 'accept-edits', rules: [{ tool: 'bash', action: 'ask' }] }], reviewSensitive: async () => { reviews++; return { decision: 'allow' } } }
+  await assert.rejects(engine.check(constrained), /parent task approval ceiling/)
+  assert.equal(prompts, 2)
+  assert.equal(reviews, 0)
+  channel.setPermissionPromptHandler(null)
+  await assert.rejects(engine.check({ ...constrained, config: { permission: { ...config.permission, non_tty_default: 'allow_once' } } }), /parent task approval ceiling/)
+  await assert.rejects(engine.check({ ...request, permissionCeilings: [{ level: 'readonly' }] }), /permission denied/)
+})
+
 test('review request keeps the conversation provider/model, no tools, bounded output and strict verdict parsing', async () => {
   const input = { configState: { config: { provider: { default: 'local', local: { default_model: 'wrong' } }, models: { review: 'wrong-model' } } }, providerType: 'local', model: 'actual-conversation-model', sessionId: 's', turnId: 't', prompt: 'Run tests', action: { tool: 'bash', command: 'npm test' } }
   const verdict = await reviewSensitiveAction({ ...input, request: async request => {

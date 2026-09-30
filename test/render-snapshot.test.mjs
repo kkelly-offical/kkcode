@@ -170,7 +170,10 @@ function stableEvents(events) {
     .filter((event) => PRE_EXISTING_TYPES.has(event.type))
     .map((event) => ({
       type: event.type,
-      payload: JSON.parse(JSON.stringify(event.payload ?? {}, (key, value) =>
+      // 1.0.6 adds typed completion evidence to this existing event. Preserve
+      // the old byte/event contract while testing the additive fields below.
+      payload: JSON.parse(JSON.stringify(event.type === 'turn.finish'
+        ? Object.fromEntries(Object.entries(event.payload || {}).filter(([key]) => !['status', 'verification'].includes(key))) : event.payload ?? {}, (key, value) =>
         key === "durationMs" ? 0 : value))
     }))
 }
@@ -202,6 +205,9 @@ test("渲染快照：output 字节流与迁移前逐字节一致（3a 零行为�
         const { result, bytes, events } = await runScenario(scenario.name, scenario.stream, scenario.opts)
         const expected = golden[scenario.golden]
         assert.equal(bytes, expected.bytes, "output.write 字节流与迁移前不一致")
+        const finished = events.findLast(event => event.type === 'turn.finish')
+        assert.equal(finished?.payload.status, 'completed')
+        assert.equal(finished?.payload.verification?.state, 'not_verified', 'ordinary prose completion never claims a test receipt')
         assert.equal(result.reply, expected.reply, "回合 reply 与迁移前不一致")
         assert.deepEqual(stableEvents(events), stableGoldenEvents(expected.events),
           "迁移前已存在事件的类型序列与 payload 不一致")

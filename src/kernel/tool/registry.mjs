@@ -4,17 +4,22 @@ import path from "node:path"
 import os from "node:os"
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
 import { access, realpath, stat, statfs, unlink } from "node:fs/promises"
-import { exec as execCb, execFile as execFileCb, spawn } from "node:child_process"
+import { exec as execCb, spawn } from "node:child_process"
 import { promisify } from "node:util"
 import { pathToFileURL } from "node:url"
 import { atomicWriteFile, replaceInFileTransactional, replaceAllInFileTransactional, diffLineCount, buildStructuredPatch } from "./edit-transaction.mjs"
 import { withFileLock } from "./file-lock-manager.mjs"
 import { BackgroundManager } from "../orchestration/background-manager.mjs"
-import { createTaskTool, createTaskGroupTool, taskModelSchema } from "./task-tool.mjs"
+import { scopedBackgroundTask, scopedBackgroundTasks, cancelScopedBackgroundTask } from './background-task-scope.mjs'
+import { runManagedProcess } from './managed-process.mjs'
+import { createTaskTool, createTaskGroupTool, createChildControlTools, taskModelSchema } from "./task-tool.mjs"
+import { normalizeToolOutcome } from './result-outcome.mjs'
+import { makeToolResult } from '../core/types.mjs'
 import { McpRegistry } from "../mcp/registry.mjs"
 import { SkillRegistry } from "../skill/registry.mjs"
 import { askQuestionInteractive } from "./question-prompt.mjs"
 import { checkBashAllowed } from "../permission/exec-policy.mjs"
+import { safeGitReadInvocation } from '../permission/safe-git-read.mjs'
 import { inflateSync } from "node:zlib"
 import { truncationNotice, completeNotice } from "./output-budget.mjs"
 import { guardedFetch, allowPrivateHosts } from "../../net/url-guard.mjs"
@@ -55,7 +60,6 @@ import { deprecatedSingletonAlias } from "../core/deprecations.mjs"
 import { loadToolPrompt } from './prompt-loader.mjs'
 
 const exec = promisify(execCb)
-const execFile = promisify(execFileCb)
 
 function schema(type, description) {
   return { type, description }
@@ -224,7 +228,8 @@ async function runGrep(pattern, cwd, options = {}) {
   if (options.glob) args.push("--glob", options.glob)
   if (options.maxCount) args.push("-m", String(options.maxCount))
   if (options.ignoreCase) args.push("-i")
-  args.push(pattern)
+  // Patterns are data even when they start with an option-like prefix.
+  args.push('--', pattern)
   args.push(options.path ? await resolveWorkspacePath(cwd, options.path) : ".")
   const { stdout, stderr } = await runRg(args, cwd)
   let text = stdout.trim()
@@ -631,15 +636,16 @@ export function isLongRunningCommand(command) {
 
 /**
  * 一条命令的实际执行。沙箱与非沙箱只在这里分叉：
- * - 无沙箱：走 exec，即 `/bin/sh -c <命令>`，与 0.8.0 逐字节相同的路径。
- * - 有沙箱：走 execFile，命令文本作为 `sh -c` 的一个 argv 传给 bwrap，
+ * - 无沙箱：保留宿主 shell 语义和 Windows UTF-8 包装。
+ * - 有沙箱：命令文本作为 `sh -c` 的一个 argv 传给 bwrap，
  *   全程不拼字符串 —— 拼接方案下命令里的引号会被沙箱参数表二次解释。
  */
-function spawnShell({ command, cwd, timeoutMs, env, sandbox = null }) {
+function spawnShell({ command, cwd, timeoutMs, env, signal, sandbox = null, invocation = null }) {
   if (sandbox) {
-    return execFile(sandbox.command, sandbox.args, { cwd, timeout: timeoutMs, encoding: "utf8", env })
+    return runManagedProcess({ command: sandbox.command, args: sandbox.args, cwd, timeoutMs, env, signal })
   }
-  return exec(wrapCmd(command), { cwd, timeout: timeoutMs, encoding: "utf8", env })
+  if (invocation) return runManagedProcess({ command: invocation.command, args: invocation.args, cwd, timeoutMs, env: invocation.env, signal })
+  return runManagedProcess({ command: wrapCmd(command), cwd, timeoutMs, env, signal, shell: true })
 }
 
 /**
@@ -650,7 +656,7 @@ function spawnShell({ command, cwd, timeoutMs, env, sandbox = null }) {
  * 没被隔离。包装成功后若 bwrap 自己起不来，错误在 runBash 里原样透出，
  * 这里**不**做二次回落。
  */
-async function prepareBashSandbox(ctx = {}, command = "") {
+async function prepareBashSandbox(ctx = {}, command = "", argv = null) {
   const config = ctx?.config || ctx?.configState?.config || null
   const raw = readSandboxConfig(config)
   if (raw.mode !== "auto") return { spawn: null, notice: "", hint: "" }
@@ -676,6 +682,7 @@ async function prepareBashSandbox(ctx = {}, command = "") {
   const spawnSpec = buildSandboxedCommand({
     backend: status.backend,
     command,
+    argv,
     workspaceDir,
     tmpDir,
     homeStateDir: await realPathOrSelf(homeStateDir),
@@ -699,61 +706,55 @@ async function realPathOrSelf(target) {
 }
 
 async function runBash(command, cwd, timeoutMs = BASH_TIMEOUT_MS, options = {}) {
-  if (isLongRunningCommand(command)) {
-    return `[blocked] "${command}" looks like a long-running/dev-server command that would block execution. Please tell the user to run it manually in their terminal, or use run_in_background: true.`
+  if (!options.background && isLongRunningCommand(command)) {
+    return { ok: false, blocked: true, status: 'blocked',
+      output: `[blocked] "${command}" looks like a long-running/dev-server command that would block execution. Please tell the user to run it manually in their terminal, or use run_in_background: true.`,
+      metadata: { exitCode: null, timedOut: false, cancelled: false, captureIncomplete: false, started: false } }
   }
-  const { env: extraEnv = null, maxChars = 30000, sandbox = null, sandboxHint = "" } = options
-  const env = extraEnv ? { ...process.env, ...extraEnv } : process.env
-  // exitCode 此前被 catch 整个吞掉：模型只看到 stderr 文本，无法区分「命令
-  // 失败」和「命令成功但往 stderr 写了进度」—— 后者在 npm/pip/git 里极常见。
-  let exitCode = 0
-  let timedOut = false
-  let captureIncomplete = false
-  const out = await spawnShell({ command, cwd, timeoutMs, env, sandbox }).catch((error) => {
-    exitCode = Number.isInteger(error.code) ? error.code : 1
-    captureIncomplete = error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
-    if (error.killed || error.signal === "SIGTERM") {
-      timedOut = true
-      return {
-        stdout: error.stdout ?? "",
-        stderr: `${error.stderr || ""}\n[timeout] command killed after ${timeoutMs / 1000}s`
-      }
-    }
-    return {
-      stdout: error.stdout ?? "",
-      stderr: error.stderr ?? error.message
-    }
-  })
+  const { env: extraEnv = null, maxChars = 30000, sandbox = null, sandboxHint = "", invocation = null } = options
+  // A host-controlled read invocation's scrubbed environment is authoritative;
+  // merging caller/ambient variables back would re-enable Git executables.
+  const env = invocation?.env || (extraEnv ? { ...process.env, ...extraEnv } : process.env)
+  const out = await spawnShell({ command, cwd, timeoutMs, env, sandbox, invocation, signal: options.signal })
+  const { exitCode, exitSignal, timedOut, cancelled, captureIncomplete, terminationIncomplete, started } = out
+  const ok = exitCode === 0 && !timedOut && !cancelled && !captureIncomplete && !terminationIncomplete && !out.errorCode
+  const metadata = { exitCode, exitSignal, timedOut, cancelled, captureIncomplete, terminationIncomplete, started,
+    ...(invocation ? { executionAdapter: 'controlled-git-read' } : {}),
+    ...(started && (timedOut || cancelled || captureIncomplete || terminationIncomplete || exitSignal) ? { outcomeUnknown: true } : {}) }
+  const result = { ok, status: cancelled ? 'cancelled' : ok ? 'completed' : 'error', cancelled,
+    code: cancelled ? 'cancelled' : timedOut ? 'process_timeout' : out.errorCode || (ok ? null : 'process_failed'), metadata }
   const captured = `${out.stdout || ""}${out.stderr || ""}`
-  const raw = captured.trim() || "(empty output)"
-  const status = timedOut
-    ? "[timed out]"
-    : exitCode === 0 ? "" : `[exit ${exitCode}]`
+  const raw = captured.trim() || out.errorMessage || "(empty output)"
+  const status = cancelled ? '[cancelled]' : timedOut ? '[timed out]'
+    : captureIncomplete ? `${Number.isInteger(exitCode) && exitCode !== 0 ? `[exit ${exitCode}]\n` : ''}[capture incomplete]` : exitCode === 0 ? ''
+      : exitCode !== null ? `[exit ${exitCode}]` : `[process error${exitSignal ? `: ${exitSignal}` : ''}]`
 
   // 上限跟着模型上下文走（见 tool/output-budget.mjs），并且截断要说清怎么拿更多
   // —— 此前是硬编码 30000 且只说「超了」，模型无从判断该缩范围还是该分页。
   const limit = Math.max(4000, Number(maxChars) || 30000)
-  const tail = sandboxHint && exitCode !== 0 ? `\n${sandboxHint}` : ""
+  const tail = `${out.errorCode === 'PROCESS_CHILDREN_RUNNING' ? `\n[process] ${out.errorMessage}` : ''}${sandboxHint && !ok ? `\n${sandboxHint}` : ''}`
   // Preserve the actual captured bytes before display trim/truncation. Keep the
   // existing bounded exec capture: hitting its cap is explicitly PARTIAL, not
   // an excuse to retry the command or claim an unlimited complete archive.
   if (captured.length > limit && options.artifactAccess) {
+    // Stopping work must not erase its evidence. This archives only bytes that
+    // have already drained, with the same scope checks and a PARTIAL marker.
     const archived = await archiveToolText({ output: captured, access: options.artifactAccess,
-      callId: options.toolCallId, limit, signal: options.signal, complete: !captureIncomplete && !timedOut })
-    return { output: `${status ? `${status}\n` : ''}${archived.output}${tail}`,
-      metadata: { ...archived.metadata, exitCode, timedOut, captureIncomplete }, ...(exitCode ? { ok: false } : {}) }
+      callId: options.toolCallId, limit, complete: !captureIncomplete && !timedOut && !cancelled && !terminationIncomplete })
+    return { ...result, output: `${status ? `${status}\n` : ''}${archived.output}${tail}`,
+      metadata: { ...archived.metadata, ...metadata } }
   }
   const body = raw.length > limit
     ? `${raw.slice(0, limit)}\n\n${truncationNotice({
         shown: limit,
         total: raw.length,
         unit: "chars",
-        hint: "Re-run with a narrower command (add a filter, head/tail, or --quiet) to see the rest."
+        hint: "Inspect existing files/logs for more output; do not replay a command with side effects merely to recover truncated output."
       })}`
     : raw
   // 沙箱里失败时补一句「哪些目录可写」：EROFS / Permission denied 在沙箱内是
   // 预期结果，不加这行的话模型会把它当成环境损坏，然后开始瞎修
-  return status ? `${status}\n${body}${tail}` : `${body}${tail}`
+  return { ...result, output: status ? `${status}\n${body}${tail}` : `${body}${tail}` }
 }
 
 function lockOptions(ctx = {}) {
@@ -1549,7 +1550,15 @@ function builtinTools(config) {
 
       // 第三层防护：OS 级隔离。默认 off，此时下面两条执行路径与 0.8.0 完全相同。
       // 后台任务也包 —— 否则 run_in_background: true 就是一个绕过沙箱的开关。
-      const sandbox = await prepareBashSandbox(ctx, command)
+      let invocation
+      try { invocation = await safeGitReadInvocation(command, args, { cwd: runCwd, signal: ctx.signal, timeoutMs }) }
+      catch (error) {
+        const cancelled = ctx.signal?.aborted || error?.name === 'AbortError' || error?.code === 'ABORT_ERR'
+        return { ok: false, status: cancelled ? 'cancelled' : 'error', cancelled,
+          code: cancelled ? 'cancelled' : 'controlled_git_preparation_failed', output: error.message,
+          metadata: { started: false, exitCode: null, timedOut: false, cancelled, captureIncomplete: false } }
+      }
+      const sandbox = await prepareBashSandbox(ctx, command, invocation ? [invocation.command, ...invocation.args] : null)
 
       if (args.run_in_background) {
         // 这里**不**再拦长命令。前台那道拦截的提示语原文是「或者用
@@ -1558,17 +1567,21 @@ function builtinTools(config) {
         // 后台本来就是长命令该去的地方：它有独立超时，不阻塞对话。
         const task = await BackgroundManager.launch({
           description: args.description || command,
-          payload: { command, cwd: runCwd },
-          run: async () => {
-            const env = extraEnv ? { ...process.env, ...extraEnv } : process.env
-            const out = await spawnShell({ command, cwd: runCwd, timeoutMs: 600_000, env, sandbox: sandbox.spawn })
-              .catch(e => ({ stdout: e.stdout ?? "", stderr: e.stderr ?? e.message }))
-            return `${out.stdout || ""}${out.stderr || ""}`.trim() || "(empty output)"
-          },
-          config: ctx.config
+          payload: { workerType: 'bash', command, cwd: runCwd, parentSessionId: ctx.sessionId || null,
+            turnId: ctx.turnId || null, toolCallId: ctx.toolCallId || null,
+            envProvided: Object.keys(extraEnv || {}).length > 0 },
+          run: ({ signal }) => runBash(command, runCwd, timeoutMs, {
+            background: true, env: extraEnv, maxChars, sandbox: sandbox.spawn, sandboxHint: sandbox.hint, invocation,
+            artifactAccess: ctx.artifactAccess, toolCallId: ctx.toolCallId, signal
+          }),
+          config: ctx.config,
+          signal: ctx.signal
         })
         const launched = `background task launched: ${task.id}\nUse background_output to check results.`
-        return sandbox.notice ? `${sandbox.notice}\n${launched}` : launched
+        return { ok: true, status: task.status, background_task_id: task.id,
+          output: sandbox.notice ? `${sandbox.notice}\n${launched}` : launched,
+          metadata: { backgroundTask: { id: task.id, kind: 'bash', phase: 'submitted', status: task.status,
+            parentSessionId: ctx.sessionId || null, turnId: ctx.turnId || null } } }
       }
 
       const output = await runBash(command, runCwd, timeoutMs, {
@@ -1576,6 +1589,7 @@ function builtinTools(config) {
         maxChars,
         sandbox: sandbox.spawn,
         sandboxHint: sandbox.hint,
+        invocation,
         artifactAccess: ctx.artifactAccess,
         toolCallId: ctx.toolCallId,
         signal: ctx.signal
@@ -1587,7 +1601,7 @@ function builtinTools(config) {
 
   const outputTool = {
     name: "background_output",
-    description: "Retrieve status, logs, and result of a background task by task_id. Covers every background source (`task` with run_in_background, background `bash`, longagent lanes). Alias of `task_output` — prefer `task_output` for new work.",
+    description: "Retrieve status, logs, and result of a background task owned by this session by task_id. Covers owned background `task`, `bash`, and longagent lanes. Alias of `task_output` — prefer `task_output` for new work.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1595,8 +1609,8 @@ function builtinTools(config) {
       },
       required: ["task_id"]
     },
-    async execute(args) {
-      const task = await BackgroundManager.get(String(args.task_id || ""))
+    async execute(args, ctx) {
+      const task = await scopedBackgroundTask(String(args.task_id || ""), ctx)
       if (!task) return "background task not found"
       return {
         ...BackgroundManager.summarize(task),
@@ -1608,10 +1622,10 @@ function builtinTools(config) {
 
   const taskListTool = {
     name: "task_list",
-    description: "List delegated background tasks with concise lifecycle summaries.",
+    description: "List background tasks owned by this session with concise lifecycle summaries.",
     inputSchema: { type: "object", properties: {}, required: [] },
-    async execute() {
-      const tasks = await BackgroundManager.list()
+    async execute(args, ctx) {
+      const tasks = await scopedBackgroundTasks(ctx)
       return tasks.map((task) => BackgroundManager.summarize(task))
     }
   }
@@ -1619,17 +1633,17 @@ function builtinTools(config) {
 
   const taskParallelTool = {
     name: "task_parallel",
-    description: "Show delegated background tasks grouped as parallel subagent lanes.",
+    description: "Show background tasks owned by this session grouped as parallel subagent lanes.",
     inputSchema: { type: "object", properties: {}, required: [] },
-    async execute() {
-      const tasks = await BackgroundManager.list()
+    async execute(args, ctx) {
+      const tasks = await scopedBackgroundTasks(ctx)
       return BackgroundManager.summarizeParallel(tasks)
     }
   }
 
   const taskGetTool = {
     name: "task_get",
-    description: "Retrieve one delegated background task summary and result payload by task_id. Alias of `task_output` — prefer `task_output` for new work.",
+    description: "Retrieve one background task owned by this session with its summary and result payload by task_id. Alias of `task_output` — prefer `task_output` for new work.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1637,8 +1651,8 @@ function builtinTools(config) {
       },
       required: ["task_id"]
     },
-    async execute(args) {
-      const task = await BackgroundManager.get(String(args.task_id || ""))
+    async execute(args, ctx) {
+      const task = await scopedBackgroundTask(String(args.task_id || ""), ctx)
       if (!task) return "background task not found"
       return {
         ...BackgroundManager.summarize(task),
@@ -1650,7 +1664,7 @@ function builtinTools(config) {
 
   const taskStopTool = {
     name: "task_stop",
-    description: "Cancel a delegated background task by task_id. Safe to call on tasks that already finished.",
+    description: "Cancel a background task owned by this session by task_id. Safe to call on owned tasks that already finished.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1658,15 +1672,15 @@ function builtinTools(config) {
       },
       required: ["task_id"]
     },
-    async execute(args) {
-      const ok = await BackgroundManager.cancel(String(args.task_id || ""))
+    async execute(args, ctx) {
+      const ok = await cancelScopedBackgroundTask(String(args.task_id || ""), ctx)
       return ok ? "cancel requested" : "background task not found"
     }
   }
 
   const taskOutputTool = {
     name: "task_output",
-    description: "Retrieve delegated background task output with summary, result payload, and next-action guidance.",
+    description: "Retrieve background task output owned by this session with summary, result payload, and next-action guidance.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1674,8 +1688,8 @@ function builtinTools(config) {
       },
       required: ["task_id"]
     },
-    async execute(args) {
-      const task = await BackgroundManager.get(String(args.task_id || ""))
+    async execute(args, ctx) {
+      const task = await scopedBackgroundTask(String(args.task_id || ""), ctx)
       if (!task) return "background task not found"
       return {
         ...BackgroundManager.summarize(task),
@@ -1687,7 +1701,7 @@ function builtinTools(config) {
 
   const cancelTool = {
     name: "background_cancel",
-    description: "Cancel a running background task by its task_id. Covers every background source (`task` with run_in_background, background `bash`, longagent lanes). Alias of `task_stop` — prefer `task_stop` for new work.",
+    description: "Cancel a background task owned by this session by its task_id. Covers owned background `task`, `bash`, and longagent lanes. Alias of `task_stop` — prefer `task_stop` for new work.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1695,42 +1709,67 @@ function builtinTools(config) {
       },
       required: ["task_id"]
     },
-    async execute(args) {
-      const ok = await BackgroundManager.cancel(String(args.task_id || ""))
+    async execute(args, ctx) {
+      const ok = await cancelScopedBackgroundTask(String(args.task_id || ""), ctx)
       return ok ? "cancel requested" : "background task not found"
+    }
+  }
+
+  const todoReadTool = {
+    name: 'todo_read',
+    description: 'Read the authoritative durable task list for the current session, including stable item IDs, owners, dependencies and revision. This is authored progress, never a verification result. Reading does not alter the list or authorize project writes.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    async execute(args, ctx) {
+      const { isSessionTodoService } = await import('../session/todo-service.mjs')
+      if (!isSessionTodoService(ctx.todoService) || ctx.todoService.sessionId !== ctx.sessionId) throw Object.assign(new Error('A host-bound session todo service is required'), { code: 'todo_scope' })
+      if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).length) throw Object.assign(new Error('todo_read accepts no session selector or other parameters'), { code: 'todo_invalid' })
+      return JSON.stringify(await ctx.todoService.list())
     }
   }
 
   const todowriteTool = {
     name: "todowrite",
-    description: "Create or update a structured task list for tracking multi-step work. ALWAYS create a todo list before starting any task with 2+ steps. Mark items in_progress/completed as you work. Only ONE item should be in_progress at a time.",
+    description: "Create or update your durable session task list for multi-step work in every mode, including Plan. Preserve returned item IDs, and use the returned revision as expectedRevision. Status is authored progress, not evidence that tests passed; attach only existing conversation references. Omitted unfinished own items become cancelled. Other agents' items are read-only.",
     inputSchema: {
       type: "object",
       properties: {
+        expectedRevision: { type: "integer", minimum: 0, description: "Revision returned by the last todo update; stale writes are rejected" },
         todos: {
           type: "array",
-          description: "The updated todo list",
+          maxItems: 100,
+          description: "The updated list of this agent's items; do not remove completed history",
           items: {
             type: "object",
+            additionalProperties: false,
             properties: {
+              id: schema("string", "Stable returned ID for existing items; omit only for a new item"),
               content: schema("string", "task description in imperative form (e.g. 'Run tests')"),
               activeForm: schema("string", "present continuous form shown during execution (e.g. 'Running tests')"),
-              status: { type: "string", enum: ["pending", "in_progress", "completed"], description: "task status" }
+              status: { type: "string", enum: ["pending", "in_progress", "completed", "blocked", "cancelled"], description: "authored progress only, not observed verification" },
+              dependencies: { type: "array", items: { type: "string" }, description: "Existing todo IDs in this session" },
+              evidenceRefs: { type: "array", items: { type: "object", additionalProperties: false, properties: { kind: { type: "string", enum: ["message", "part"] }, id: { type: "string" } }, required: ["kind", "id"] }, description: "Existing same-session message/part references, not file paths or verification claims" }
             },
             required: ["content", "status"]
           }
         }
       },
-      required: ["todos"]
+      required: ["todos"],
+      additionalProperties: false
     },
     async execute(args, ctx) {
-      const todos = args.todos || []
-      ctx._todoState = todos
-      const summary = todos.map((t) => {
-        const active = t.status === "in_progress" && t.activeForm ? ` (${t.activeForm})` : ""
-        return `[${t.status}] ${t.content}${active}`
-      }).join("\n")
-      return `Todo list updated (${todos.length} items):\n${summary}`
+      const { isSessionTodoService } = await import('../session/todo-service.mjs')
+      if (!isSessionTodoService(ctx.todoService)) throw Object.assign(new Error('A host-bound session todo service is required'), { code: 'todo_scope' })
+      try {
+        const snapshot = await ctx.todoService.update(args, { sessionId: ctx.sessionId, signal: ctx.signal })
+        return JSON.stringify({ ...snapshot, note: 'Authored task progress only. Completed items are not proof that tests or acceptance passed.' })
+      } catch (error) {
+        if (error.code !== 'todo_conflict') throw error
+        // Return current IDs/state for deliberate replanning, without advancing
+        // the service baseline or pretending the stale write was accepted.
+        const snapshot = await ctx.todoService.list()
+        return { status: 'blocked', code: 'todo_conflict', error: error.message,
+          output: JSON.stringify({ updated: false, snapshot, message: 'Todo changed concurrently. Reconcile current items and retry with its explicit expectedRevision; do not blindly replay the previous list.' }) }
+      }
     }
   }
 
@@ -2466,7 +2505,7 @@ function builtinTools(config) {
   }
   const gitFullAutoToolsList = config?.git_auto?.full_auto === true ? gitFullAutoTools : []
   
-  return [listTool, sysinfoTool, readTool, writeTool, editTool, patchTool, multieditTool, globTool, grepTool, bashTool, createTaskTool(), createTaskGroupTool(), outputTool, cancelTool, taskListTool, taskParallelTool, taskGetTool, taskStopTool, taskOutputTool, todowriteTool, questionTool, skillTool, webfetchTool, httpRequestTool, websearchTool, codesearchTool, notebookeditTool, enterPlanTool, exitPlanTool, ...createArtifactTools(), ...fileOpsTools, ...gitTools, ...gitFullAutoToolsList]
+  return [listTool, sysinfoTool, readTool, writeTool, editTool, patchTool, multieditTool, globTool, grepTool, bashTool, createTaskTool(), createTaskGroupTool(), ...createChildControlTools(), outputTool, cancelTool, taskListTool, taskParallelTool, taskGetTool, taskStopTool, taskOutputTool, todoReadTool, todowriteTool, questionTool, skillTool, webfetchTool, httpRequestTool, websearchTool, codesearchTool, notebookeditTool, enterPlanTool, exitPlanTool, ...createArtifactTools(), ...fileOpsTools, ...gitTools, ...gitFullAutoToolsList]
 }
 
 function mcpTools(mcpRegistry) {
@@ -2489,7 +2528,7 @@ function mcpTools(mcpRegistry) {
 
 function toolAllowedByMode(toolName, mode) {
   if (mode === "plan") {
-    return !["write", "edit", "patch", "multiedit", "notebookedit", "bash", "task", "task_group", "git_snapshot", "git_restore", "git_apply_patch", "git_delete_snapshot"].includes(toolName)
+    return !["write", "edit", "patch", "multiedit", "notebookedit", "git_snapshot", "git_restore", "git_apply_patch", "git_delete_snapshot"].includes(toolName)
   }
   return true
 }
@@ -2505,11 +2544,22 @@ function toolAllowedByMode(toolName, mode) {
  *   后经 onLoad 原子换入；`mcp.background_load: false` 可退回前台。直接自建
  *   注册表的调用方（测试 / SDK 定制组装）缺省保持「initialize 返回即就绪」
  *   的同步语义 —— 那是工具注册表对自有调用方的既有契约，不默认改写。
+ * @param {(diagnostic: object) => any} [deps.onDiagnostic] Host-only rejection diagnostics; metadata never supplies this callback.
  */
-export function createToolRegistry({ mcpRegistry = McpRegistry, deferMcp = false } = {}) {
+export function createToolRegistry({ mcpRegistry = McpRegistry, deferMcp = false, onDiagnostic = null } = {}) {
   const browser = createBrowserTool()
   const bridge = createBrowserBridgeTool()
   const batch = createToolBatch()
+  // Pure tool-definition factories: reserve the complete host namespace even
+  // when an optional builtin/source is disabled. No tool is executed here.
+  const reservedNames = new Set([
+    ...builtinTools({ git_auto: { enabled: true, full_auto: true } }), browser, bridge, batch,
+    ...createBrowserRecipeTools(browser), ...createLspTools(), ...createOfficeTools(),
+    ...createMcpCatalogTools(mcpRegistry), createToolProgram(), { name: 'tool_search' }
+  ].map(tool => tool.name))
+  // Identity is host-owned, never a field a local/plugin/MCP definition can
+  // forge. In particular an mcp_ prefix is not evidence of MCP provenance.
+  const toolSources = new WeakMap()
   const state = {
     initialized: false,
     tools: [],
@@ -2518,7 +2568,37 @@ export function createToolRegistry({ mcpRegistry = McpRegistry, deferMcp = false
     lastCwd: "",
     lastConfig: null,
     lastAllowProjectSources: true,
-    refreshing: false
+    refreshing: false,
+    diagnostics: []
+  }
+
+  function admitExtensions(existing, candidates) {
+    const existingNames = new Set(existing.map(tool => tool.name))
+    const counts = new Map()
+    for (const { tool } of candidates) counts.set(tool.name, (counts.get(tool.name) || 0) + 1)
+    const tools = [], diagnostics = []
+    for (const { tool, source } of candidates) {
+      const code = reservedNames.has(tool.name) ? 'reserved_builtin_name'
+        : typeof tool.name !== 'string' || !tool.name.trim() ? 'invalid_tool_name'
+          : existingNames.has(tool.name) || counts.get(tool.name) > 1 ? 'duplicate_tool_name' : null
+      if (code) {
+        const toolName = String(tool.name || '').replace(/[\u0000-\u001f\u007f]/g, '?').slice(0, 160)
+        diagnostics.push({ code, source, tool: toolName, message: `Rejected ${source} tool ${JSON.stringify(toolName)}: ${code === 'reserved_builtin_name' ? 'the identifier is reserved for a host builtin, even when disabled' : code === 'duplicate_tool_name' ? 'the identifier is ambiguous with another registered tool' : 'a nonempty tool identifier is required'}. This tool was not registered or executed.` })
+        continue
+      }
+      toolSources.set(tool, source)
+      tools.push(tool)
+    }
+    return { tools, diagnostics }
+  }
+
+  function reportDiagnostics(diagnostics, { replaceMcp = false } = {}) {
+    state.diagnostics = [...(replaceMcp ? state.diagnostics.filter(item => item.source !== 'mcp') : []), ...diagnostics].slice(0, 512)
+    for (const diagnostic of diagnostics) {
+      try { Promise.resolve(onDiagnostic?.({ ...diagnostic })).catch(() => {}) }
+      catch { /* A diagnostic listener cannot grant registration or break valid peers. */ }
+    }
+    return state.diagnostics.map(item => ({ ...item }))
   }
 
   // MCP 后台加载收口时把新工具原子换进广告面（refreshMcpTools 内部是整体替换
@@ -2547,9 +2627,10 @@ export function createToolRegistry({ mcpRegistry = McpRegistry, deferMcp = false
         state.lastSignature === sig &&
         state.lastCwd === cwd &&
         Date.now() - state.loadedAt <= ttlMs
-      if (cacheValid) return
+      if (cacheValid) return { diagnostics: state.diagnostics.map(item => ({ ...item })) }
 
       const tools = []
+      const extensions = []
 
       if (config.tool?.sources?.builtin !== false) {
         tools.push(...markStrictBuiltinTools(builtinTools(config)))
@@ -2575,19 +2656,20 @@ export function createToolRegistry({ mcpRegistry = McpRegistry, deferMcp = false
           }
         })
       }
+      for (const tool of tools) toolSources.set(tool, 'builtin')
 
       if (config.tool?.sources?.local !== false) {
         const localDirs = (config.tool?.local_dirs || [])
           .map((dir) => path.resolve(cwd, dir))
           .filter((dir) => allowProjectSources || !isWithinWorkspace(cwd, dir))
-        tools.push(...(await loadDynamicTools(localDirs)))
+        extensions.push(...(await loadDynamicTools(localDirs)).map(tool => ({ tool, source: 'local' })))
       }
 
       if (config.tool?.sources?.plugin !== false) {
         const pluginDirs = (config.tool?.plugin_dirs || [])
           .map((dir) => path.resolve(cwd, dir))
           .filter((dir) => allowProjectSources || !isWithinWorkspace(cwd, dir))
-        tools.push(...(await loadDynamicTools(pluginDirs)))
+        extensions.push(...(await loadDynamicTools(pluginDirs)).map(tool => ({ tool, source: 'plugin' })))
       }
 
       if (config.tool && config.tool?.sources?.mcp !== false) {
@@ -2598,17 +2680,23 @@ export function createToolRegistry({ mcpRegistry = McpRegistry, deferMcp = false
         // 陈述现在确定可用的东西，回合延迟不被 MCP 连接时间绑架。
         const defer = deferMcp && config.mcp?.background_load !== false && typeof mcpRegistry.onLoad === "function"
         await mcpRegistry.initialize(config, { cwd, allowProjectSources, defer })
-        tools.push(...mcpTools(mcpRegistry))
+        extensions.push(...mcpTools(mcpRegistry).map(tool => ({ tool, source: 'mcp' })))
       }
 
-      state.tools = tools
+      const admitted = admitExtensions(tools, extensions)
+      state.tools = [...tools, ...admitted.tools]
       state.initialized = true
       state.loadedAt = Date.now()
       state.lastSignature = sig
       state.lastCwd = cwd
       state.lastConfig = config
       state.lastAllowProjectSources = allowProjectSources
+      return { diagnostics: reportDiagnostics(admitted.diagnostics) }
     },
+
+    getDiagnostics() { return state.diagnostics.map(item => ({ ...item })) },
+
+    sourceOf(tool) { return toolSources.get(tool) || null },
 
     isReady() {
       return state.initialized
@@ -2671,11 +2759,7 @@ export function createToolRegistry({ mcpRegistry = McpRegistry, deferMcp = false
       }
       try {
         const output = await tool.execute(args || {}, ctx)
-        return {
-          name: toolName,
-          status: "completed",
-          output: safeStringify(output)
-        }
+        return makeToolResult({ name: toolName, ...normalizeToolOutcome(output, ctx?.signal) })
       } catch (error) {
         return {
           name: toolName,
@@ -2688,12 +2772,15 @@ export function createToolRegistry({ mcpRegistry = McpRegistry, deferMcp = false
 
     refreshMcpTools() {
       if (!state.initialized || state.refreshing) return
+      if (!state.lastConfig?.tool || state.lastConfig.tool.sources?.mcp === false) return { diagnostics: state.diagnostics.map(item => ({ ...item })) }
       state.refreshing = true
       try {
-        // Atomic replacement: build new list, then assign once
-        const nonMcp = state.tools.filter((t) => !t.name.startsWith("mcp_") || ['mcp_resource', 'mcp_prompt'].includes(t.name))
-        const newMcpTools = mcpTools(mcpRegistry)
-        state.tools = [...nonMcp, ...newMcpTools]
+        // Atomic replacement by source identity, with per-tool quarantine. A
+        // single malicious/colliding server name must not erase valid peers.
+        const nonMcp = state.tools.filter(tool => toolSources.get(tool) !== 'mcp')
+        const admitted = admitExtensions(nonMcp, mcpTools(mcpRegistry).map(tool => ({ tool, source: 'mcp' })))
+        state.tools = [...nonMcp, ...admitted.tools]
+        return { diagnostics: reportDiagnostics(admitted.diagnostics, { replaceMcp: true }), admitted: admitted.tools.length, rejected: admitted.diagnostics.length }
       } finally {
         state.refreshing = false
       }

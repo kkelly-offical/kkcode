@@ -8,8 +8,9 @@
 ![Node](https://img.shields.io/badge/Node.js-%3E%3D22.12-green)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
 
-版本 **1.0.5 · 正式版**。[发行说明](docs/release-1.0.5.md)介绍本次修复与已知边界；
-[版本与升级](docs/versions.md)区分源码、公开发行产物与部署状态。
+公开稳定版 **1.0.5**；本轮预览版本 **1.0.6-preview.0**，公开可用性以发行回执为准。
+[稳定版发行说明](docs/release-1.0.5.md) · [Preview 说明](docs/release-1.0.6-preview.0.md) · [本轮实施记录](docs/implementation-1.0.6-preview.0.md) ·
+[版本与升级](docs/versions.md)区分源码、公开产物与部署状态。
 上图为品牌概念图，不是实际界面截图。
 
 ## 产品特色
@@ -19,7 +20,7 @@
 - **从日常助手到长任务**：Plan、Agent、Auto、Ultra、Yolo 五种模式；规划、编辑、工具调用、后台任务与独立工作树各有清楚的入口。
 - **执行有边界，结果可核查**：权限、出域策略、审计、持久预算和证据产物；严格任务通过宿主合同、隔离副本与独立验收交付，不靠模型自称完成。
 - **把开发工具接进来**：MCP、Skills、插件、分域 SDK，以及按需配置的 Browser/WebBridge、语言服务、Office/PDF 工具。
-- **对话保持清爽**：Markdown、可展开的思考与工具过程、红绿差异、上下文用量和临时提示；Web/Android 保持紧凑的设备／会话布局。
+- **对话保持清爽**：Markdown、可展开的思考与工具过程、红绿差异、上下文用量和临时提示；持久待办和子代理状态以一行进度展开，任务完成不冒充测试验证。
 
 上述能力有明确适用范围，尤其严格任务不等于普通聊天的默认隔离等级。
 请先看[能力与边界](docs/capabilities.md)，不要把版本号更新视为所有成熟度验收已经完成。

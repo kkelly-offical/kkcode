@@ -3,6 +3,7 @@ import { readFile, realpath } from "node:fs/promises"
 import { acquirePromotionLock, openPromotionJournal, writePromotionJson } from "../../storage/promotion-journal.mjs"
 import { backgroundTaskCheckpointPath } from "../../storage/paths.mjs"
 import * as git from "../../util/git.mjs"
+import { updateBackgroundTask } from './background-task-store.mjs'
 
 // 与 background-worker 的 copyWorkspaceConfigFiles 保持一致：这些文件是 worker
 // 复制进 worktree 的运行配置，不是子智能体的产出，回收时必须排除。
@@ -27,14 +28,12 @@ async function readTask(taskId) {
 }
 
 async function patchTaskResult(taskId, resultPatch, extra = {}) {
-  const current = await readTask(taskId)
-  const next = {
-    ...current,
+  const { next } = await updateBackgroundTask(taskId, current => ({
     ...extra,
     result: { ...(current.result || {}), ...resultPatch },
     updatedAt: now()
-  }
-  await writePromotionJson(backgroundTaskCheckpointPath(taskId), next)
+  }), { persist: writePromotionJson })
+  if (!next) throw new Error('task checkpoint is missing')
   return next
 }
 

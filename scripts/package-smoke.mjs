@@ -69,6 +69,32 @@ try {
   `], scratch)
   await run(process.execPath, ['--input-type=module', '-e', `
     import assert from 'node:assert/strict';
+    import { mkdtemp, rm } from 'node:fs/promises';
+    import { tmpdir } from 'node:os';
+    import path from 'node:path';
+    const scratch = await mkdtemp(path.join(tmpdir(), 'kkcode-installed-todos-'));
+    process.env.KKCODE_HOME = path.join(scratch, 'state');
+    let kernel;
+    try {
+      const { createKernel } = await import('@kkelly-offical/kkcode/sdk');
+      const tasks = await import('@kkelly-offical/kkcode/sdk/tasks');
+      kernel = await createKernel({ cwd: scratch, boot: false, trustState: { trusted: false } });
+      await kernel.sessions.touchSession({ sessionId: 'installed-todo', cwd: scratch, mode: 'plan' });
+      const service = await kernel.todos.forSession('installed-todo');
+      assert.equal(tasks.isSessionTodoService(service), true);
+      const snapshot = await service.update({ todos: [{ content: 'Check installed SDK', status: 'pending' }] });
+      assert.equal(snapshot.revision, 1);
+      assert.equal((await tasks.getSessionTodos('installed-todo')).items[0].content, 'Check installed SDK');
+      assert.equal((await kernel.todos.list('installed-todo')).items[0].status, 'pending');
+      const children = await kernel.agents.forSession('installed-todo');
+      assert.deepEqual(await children.list(), []);
+      assert.equal(typeof children.followup, 'function');
+      assert.equal(typeof children.interrupt, 'function');
+      console.log('installed durable ToDo and parent-scoped child SDK roundtrip ok; no model calls');
+    } finally { await kernel?.shutdown(); await rm(scratch, {recursive:true,force:true}); }
+  `], scratch)
+  await run(process.execPath, ['--input-type=module', '-e', `
+    import assert from 'node:assert/strict';
     import * as models from '@kkelly-offical/kkcode/sdk/models';
     import { createLocalFreeInferenceAuthorization, isLocalFreeInferenceAuthorization, localFreePolicy } from '@kkelly-offical/kkcode/sdk/runs';
     import { mkdtemp, writeFile, rm } from 'node:fs/promises';

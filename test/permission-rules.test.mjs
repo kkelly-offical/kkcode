@@ -1,6 +1,27 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { evaluatePermission } from "../src/kernel/permission/rules.mjs"
+import { evaluatePermission, toolCapability, trustedBashCommand } from "../src/kernel/permission/rules.mjs"
+
+test('read-only shell checks execution-affecting argv and environment instead of command prefixes', () => {
+  const unsafe = [
+    'rg --pre ./processor needle input', 'rg "--pre=./processor" needle input', 'rg --p\\re ./processor needle input',
+    'rg --pre-glob "*.pdf" needle input', 'rg --hostname-bin ./processor needle input', 'rg -nz needle input', 'rg --search-zip needle input',
+    'git diff --ext-diff', 'git show --textconv HEAD:file', 'git log --output=result', 'git diff --out=result', 'git diff "--ext-"diff',
+    'date --utc --set 2027-01-01', 'date 010100002027', 'node --version --eval code', 'yarn version',
+    'rg needle *', 'git diff *', 'CAT input'
+  ]
+  const config = { permission: { level: 'readonly', rules: [{ tool: 'bash', action: 'allow' }] } }
+  for (const command of unsafe) {
+    assert.equal(trustedBashCommand(command), false, command)
+    assert.equal(evaluatePermission({ config, tool: 'bash', command }).action, 'deny', command)
+  }
+  for (const env of [{ PATH: '/tmp/bin' }, { NODE_OPTIONS: '--require loader' }, { BASH_ENV: 'startup' }, { RIPGREP_CONFIG_PATH: 'config' }, { SAFE_ONLY: '1' }]) {
+    assert.equal(toolCapability('bash', 'cat input', { args: { env } }), 'risky-shell')
+    assert.equal(toolCapability('bash', 'cat input', { env }), 'risky-shell')
+    assert.equal(evaluatePermission({ config, tool: 'bash', command: 'cat input', args: { env } }).action, 'deny')
+  }
+  for (const command of ['cat input', 'rg -n needle input', "rg -g '*.mjs' needle src", 'git status', 'git diff --no-ext-diff --no-textconv', 'date --utc', "date '+%F'", 'npm ls']) assert.equal(trustedBashCommand(command, { env: {} }), true, command)
+})
 
 test("sensitive edit paths are escalated from allow to ask", () => {
   const decision = evaluatePermission({

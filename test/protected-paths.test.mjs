@@ -3,6 +3,52 @@ import assert from "node:assert/strict"
 import { checkProtectedPath, findProtectedAccess, bashTouchesProtected } from "../src/kernel/permission/protected-paths.mjs"
 import { evaluatePermission, toolCapability } from "../src/kernel/permission/rules.mjs"
 import { getSensitiveFilePatterns } from "../src/kernel/permission/file-edit-policy.mjs"
+import { parseShellCommands } from '../src/kernel/permission/shell-analysis.mjs'
+
+test('protected-write analysis binds redirections and mutation targets to their simple command', () => {
+  for (const command of [
+    "find . -not -path '*/.git/*' | head; cat web/package.json 2>/dev/null",
+    "cat .git/config > report.txt",
+    "grep foo .git/config; echo done >/dev/null",
+    "cat ~/.bashrc | tee report.txt",
+    "cp .git/config report.txt",
+    "printf '%s' '.git' > report.txt",
+    "bash -c 'cat .git/config; echo done >/dev/null'"
+  ]) assert.equal(bashTouchesProtected(command), null, command)
+  for (const command of [
+    "find . -not -path '*/.git/*'; echo bad > .git/config",
+    "cat README.md | tee .git/config",
+    "cp source -t.git",
+    "cp source --target-directory=.git",
+    "install -d .git/hooks normal",
+    "CONFIG=.git node -e 'require(\"fs\").writeFileSync(process.env.CONFIG+\"/config\", \"x\")'",
+    "CONFIG=.git sh -c 'echo bad > \"$CONFIG/config\"'",
+    "dd if=input of=.git/config",
+    "git diff --output=.git/config",
+    "git log --output .git/config",
+    "sed -n 'w .git/config' input",
+    "sed 's/a/b/w .git/config' input",
+    "perl -e 'open(F, \">.git/config\")'",
+    "rm .g\\it/config",
+    "find .git -type f -delete",
+    "bash -c 'echo bad > .git/config'",
+    "echo $(rm -rf .git)",
+    'echo `rm -rf .git`',
+    'node -e "require(\'fs\').writeFileSync(\'.git/config\', \'bad\')"'
+  ]) assert.ok(bashTouchesProtected(command), command)
+})
+
+test('shell lexical receipts preserve separators, literal quoting and uncertainty', () => {
+  const parsed = parseShellCommands("npm test && npm run lint; cat 'a;b' 2>/dev/null")
+  assert.equal(parsed.uncertain, false)
+  assert.deepEqual(parsed.commands.map(item => item.separator), ['&&', ';', null])
+  assert.deepEqual(parsed.commands[2].words, ['cat', 'a;b'])
+  assert.deepEqual(parsed.commands[2].redirects, [{ operator: '>', target: '/dev/null' }])
+  assert.equal(parseShellCommands('npm test && && true').uncertain, true)
+  assert.equal(parseShellCommands('echo $(pwd)').uncertain, true)
+  assert.equal(parseShellCommands("echo '$(pwd)'").uncertain, false)
+  assert.equal(parseShellCommands('cat "unterminated').uncertain, true)
+})
 
 test("protected paths cover the four classes that git cannot undo", () => {
   for (const p of [".git/config", ".git/hooks/pre-commit", "sub/.git/index"]) {
@@ -53,6 +99,13 @@ test("yolo does not bypass protection either", () => {
   assert.equal(evaluatePermission({ config, tool: "write", pattern: ".bashrc" }).action, "ask")
   // 而普通文件在 yolo 下照旧放行 —— 保护清单不是把 yolo 变回 manual
   assert.equal(evaluatePermission({ config, tool: "write", pattern: "src/a.mjs" }).action, "allow")
+})
+
+test('protected paths cannot turn inherited or direct denies into approvable asks', () => {
+  for (const permission of [{ level: 'readonly' }, { level: 'yolo', rules: [{ tool: 'write', action: 'deny' }] }]) {
+    assert.equal(evaluatePermission({ config: { permission }, tool: 'write', pattern: '.git/config' }).action, 'deny')
+    assert.equal(evaluatePermission({ config: { permission: { level: 'yolo' } }, permissionCeilings: [permission], tool: 'write', pattern: '.git/config' }).action, 'deny')
+  }
 })
 
 test("bash writes to protected paths are caught, reads are not", () => {
@@ -131,10 +184,10 @@ test("plan mode allows read-only work including git inspection", async () => {
   assert.equal(typeof planModeAllows, "function", "闸门函数必须可测 —— 不可测就等于没有闸门")
 
   for (const name of ["read", "grep", "glob", "list", "sysinfo", "question",
-                      "task_list", "task_get", "git_status", "git_info", "enter_plan", "exit_plan"]) {
+                      "task_list", "task_get", "task", "task_group", "git_status", "git_info", "enter_plan", "exit_plan", "todo_read", "todowrite"]) {
     assert.equal(planModeAllows(name), true, `${name} 应在 plan 档放行`)
   }
-  for (const name of ["write", "edit", "multiedit", "patch", "task", "git_restore", "git_auto_push"]) {
+  for (const name of ["write", "edit", "multiedit", "patch", "agent_send", "git_restore", "git_auto_push"]) {
     assert.equal(planModeAllows(name), false, `${name} 应在 plan 档拦下`)
   }
   // bash 按命令判定，不按工具名

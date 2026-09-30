@@ -1,6 +1,7 @@
 export interface DeviceEvent { schemaVersion: '1'; id: string; seq: number; sessionId: string; type: string; payload: unknown; timestamp: number }
 export interface ContextUsage { tokens: number; limit: number; percent: number; outputReserved?: number; inputBudget?: number; requiredTokens?: number; source: 'estimated' | 'count-api' | 'provider-usage' | 'strict-upper-bound'; estimated: boolean; components: { system?: number; tools?: number; messages?: number }; updatedAt?: number }
 export interface ToolDefinition { name: string; description: string; inputSchema: Record<string, unknown> }
+export interface SubagentSnapshot { session_id: string; parent_session_id: string; subagent: string; status: string; background_task_id: string | null; pending_messages: number; }
 export interface SessionInfo { id: string; title?: string; cwd?: string; model?: string; providerType?: string; status?: string; archived?: boolean; hasContent?: boolean; context?: ContextUsage; [key: string]: unknown }
 export interface AttachmentInfo { id: string; sessionId: string; name: string; mediaType: string; size: number; createdAt: number; expiresAt: number }
 export interface RemoteArtifact { id: string; sha256: string; size: number; mime: string; createdAt: number; source: { kind: string }; retention: { active: boolean; resolved: boolean; pinned: boolean; references?: string[] } }
@@ -31,7 +32,7 @@ export interface DeviceMethods {
   'files.read': { params: { path: string }; result: { path: string; content: string } };
   'media.preview': { params: { sessionId: string; messageId: string; index: number }; result: { type: 'image'; data: string; mediaType: string } };
   'sessions.list': { params: { cwd?: string; limit?: number }; result: SessionInfo[] };
-  'sessions.get': { params: { sessionId: string; before?: string; limit?: number }; result: SessionInfo & { messages: Record<string, unknown>[]; parts: Record<string, unknown>[] } };
+  'sessions.get': { params: { sessionId: string; before?: string; limit?: number }; result: SessionInfo & { messages: Record<string, unknown>[]; parts: Record<string, unknown>[]; todos?: import('./tasks.mjs').TodoSnapshot; subagents?: SubagentSnapshot[] } };
   'sessions.create': { params: { cwd: string; mode?: string; model?: string; provider?: string; title?: string }; result: { id: string; cwd: string } };
   'sessions.update': { params: { sessionId: string; title?: string; expectedTitleRevision?: number; archived?: boolean }; result: SessionInfo };
   'sessions.configure': { params: { sessionId: string; mode?: string; model?: string; provider?: string }; result: SessionInfo };
@@ -62,6 +63,7 @@ export interface DeviceMethods {
   'artifacts.pin': { params: { sessionId: string; id: string; pinned: boolean }; result: RemoteArtifact };
   'artifacts.prune': { params: { sessionId?: string; confirmed: true }; result: { removed: string[] } };
   'runs.list': { params: { sessionId: string; cursor?: string; limit?: number }; result: { items: RemoteRun[]; nextCursor: string | null; truncated: boolean } };
+  'todos.list': { params: { sessionId: string }; result: import('./tasks.mjs').TodoSnapshot };
   'runs.get': { params: RunParams; result: RemoteRun };
   'runs.events': { params: RunParams & { after?: number; limit?: number }; result: { runId: string; revision: number; events: RemoteRunEvent[]; nextAfter: number } };
   'runs.pause': { params: RunControlParams; result: RemoteRun };

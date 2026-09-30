@@ -4,6 +4,10 @@ In a strict host-owned task, this tool uses a persisted task graph, not the lega
 
 Each task spawns a delegated LLM session that makes its own tool calls and returns a single result message when done.
 
+Plan mode supports explicitly scoped read-only analysis delegation. Its child and follow-up work inherit a host-enforced read-only ceiling, regardless of requested role or prompt. Never use delegation to bypass the parent's policy.
+
+Owned child controls: agent_list/agent_wait inspect lifecycle and outcomes; agent_send queues a message to an active owned child; agent_followup resumes owned work within its immutable identity, original scope and current parent ceiling; agent_interrupt requests real cancellation, not rollback. These controls do not authorize writes or bypass strict host task graphs. Use task_list/task_output/task_stop for background jobs; a returned ID means work started, not that it completed.
+
 # Delegation Decision Rules
 
 Stay local when:
@@ -49,7 +53,7 @@ kkcode also accepts structured brief fields for these sections (`objective`, `wh
 Whether the brief is handwritten or synthesized, delegated work must follow this contract:
 - Stay local if a direct read/edit/run action would finish the next step faster
 - Do not delegate to compensate for routing uncertainty on a bounded local task
-- Avoid suggesting LongAgent-style escalation unless heavy multi-file evidence is actually present
+- Agent/Auto/Yolo already support full implementation and delegation; Ultra is an optional durable orchestration overlay
 - Do not fabricate completion or present unfinished work as done
 - Do not peek at unfinished sibling work and convert guesses into facts
 - Background delegates cannot ask interactive questions; keep them self-contained
@@ -131,7 +135,7 @@ GOOD: glob(pattern="**/*.test.js")
 - **execution_mode** (optional): `fresh_agent` (default) or `fork_context`. Use `fork_context` only when inheriting the parent transcript is genuinely useful and the delegated slice stays read-only.
 - **isolation** (optional): `default` (normal workspace) or `worktree` (local detached git worktree). `worktree` is currently meant for isolated background sidecar execution only; its changes reach the workspace only through an explicit user-run `kkcode background apply --id <task_id>`.
 
-- **run_in_background** (optional): Set to true only for sidecar work that can continue while you do other things. Returns a task_id immediately — use `background_output` to check results later. Background delegates must be self-contained and cannot use `question`.
+- **run_in_background** (optional): Set to true only for sidecar work that can continue while you do other things. Returns a task_id immediately — use `task_output` to check results later (`background_output` is a compatibility alias). Background delegates must be self-contained and cannot use `question`.
 
 # Important Behaviors
 

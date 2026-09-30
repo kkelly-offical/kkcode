@@ -71,7 +71,8 @@ test('model-invoked skill restricts later calls even if the provider guesses hid
   assert.ok(result.toolEvents.some(event => /active skill allowed-tools/.test(event.output || '')))
 })
 
-test('skill policy is included in delegated run specifications for background workers', async () => {
+test('skill policy is included in delegated run specifications for background workers', async t => {
+  await kernelFixture(t)
   let runSpec
   const delegate = createTaskDelegate({ config: {}, parentSessionId: 'policy-parent', model: 'fixture', providerType: 'fixture', getSkillToolGroups: () => [['read', 'grep']], runSubtask: async payload => { runSpec = payload.runSpec; return { reply: 'done', toolEvents: [] } } })
   await delegate({ prompt: 'inspect', subagent_type: 'explore' })

@@ -1,0 +1,1 @@
+Request cancellation of an owned child's active execution. Stop is not rollback. Read the acknowledged lifecycle state and any unresolved effects; cancellation does not mean prior edits were undone or that the task completed. Controls grant no extra write authority.

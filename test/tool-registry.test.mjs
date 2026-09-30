@@ -12,8 +12,9 @@ test("tool registry exposes task tool in agent mode", async () => {
   }
 })
 
-test("tool registry hides mutation and task tools in plan mode", async () => {
+test("tool registry hides project mutations but exposes guarded exploration and delegation in Plan", async () => {
   const tools = await ToolRegistry.list({ mode: "plan", cwd: process.cwd(), agents: [], config: testConfig })
   assert.equal(tools.some((tool) => tool.name === "write"), false)
-  assert.equal(tools.some((tool) => tool.name === "task"), false)
+  for (const name of ['bash', 'todo_read', 'todowrite', 'task', 'task_group', 'agent_list', 'agent_wait', 'agent_followup', 'agent_interrupt']) assert.ok(tools.some(tool => tool.name === name), name)
+  for (const name of ['edit', 'git_restore', 'git_apply_patch']) assert.ok(!tools.some(tool => tool.name === name), name)
 })

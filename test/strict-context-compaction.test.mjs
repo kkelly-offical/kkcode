@@ -12,6 +12,7 @@ import { withRequestBudget } from '../src/usage/request-budget.mjs'
 import { strictInputTokenBound } from '../src/usage/input-token-bound.mjs'
 import { requestContextBudget } from '../src/kernel/session/context-budget.mjs'
 import { createFixtureCleanup } from './helpers/fixture-cleanup.mjs'
+import { createConversationArtifactAccess } from '../src/kernel/tool/artifacts.mjs'
 
 const LIMIT = 262144
 const USER_CONSTRAINT = 'NEW_USER_CONSTRAINT: original.txt must remain byte-identical.'
@@ -97,6 +98,29 @@ test('direct SDK compaction refuses a summary that cannot reserve output in the 
   const result = await f.withinBudget(() => f.kernel.sessions.compactSession({ sessionId: f.sessionId, model: 'fixed-model', providerType: 'fixture', configState: f.configState }))
   assert.equal(result.result.compacted, false)
   assert.match(result.result.reason, /输入加最大输出预留/)
+  assert.equal(f.requests.length, 0)
+  assert.deepEqual((await f.kernel.sessions.getSession(f.sessionId)).messages, f.before)
+})
+
+test('strict SDK compaction without an artifact capability retains exact originals rather than minting a foreign-scope archive', async t => {
+  const f = await fixture(t)
+  const result = await f.withinBudget(() => f.kernel.sessions.compactSession({ sessionId: f.sessionId, model: 'fixed-model', providerType: 'fixture', configState: f.configState }))
+  assert.equal(result.result.compacted, true)
+  const first = (await f.kernel.sessions.getSession(f.sessionId)).messages[0]
+  assert.equal(first.compactionUserSourceRef, undefined)
+  assert.equal(first.compactionUserRequests[0].text, f.before[0].content)
+  assert.ok(first.content.includes(f.before[0].content), 'exact source remains active when no task-scoped retrieval capability exists')
+  assert.equal(first.artifactRefs.length, 1)
+  assert.equal(first.artifactRefs[0].id, f.artifact.id, 'only the established artifact was retained; no conversation archive was substituted')
+  assert.doesNotMatch(first.content, /PARTIAL projection/)
+})
+
+test('strict compaction cannot fall back to a conversation archive when the supplied branded scope denies access', async t => {
+  const f = await fixture(t)
+  const denied = createConversationArtifactAccess({ sessionId: 'missing-compaction-scope', cwd: f.configState.source.userDir, turnId: 'denied-scope' })
+  const result = await f.withinBudget(() => f.kernel.sessions.compactSession({ sessionId: f.sessionId, model: 'fixed-model', providerType: 'fixture', configState: f.configState, artifactAccess: denied }))
+  assert.equal(result.result.compacted, false)
+  assert.equal(result.result.reasonCode, 'user_source_archive_unavailable')
   assert.equal(f.requests.length, 0)
   assert.deepEqual((await f.kernel.sessions.getSession(f.sessionId)).messages, f.before)
 })

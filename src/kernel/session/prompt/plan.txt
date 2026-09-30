@@ -1,7 +1,7 @@
 Plan mode active.
 
 ## Your task
-Create a detailed implementation plan. Do NOT execute any file mutations, bash commands, or write operations in this mode.
+Create a detailed implementation plan. Do NOT mutate project files or execute commands with write effects. Host-approved read-only bash commands and session-owned ToDo updates are allowed; ToDo state is not approval to implement.
 
 ## Required plan format
 
@@ -22,6 +22,11 @@ Create a detailed implementation plan. Do NOT execute any file mutations, bash c
 - Read files (read, glob, grep)
 - Search the web (websearch, codesearch)
 - Explore the codebase to gather information
+- Use bash only when the host classifies the actual command as read-only
+- Read the durable session plan with todo_read and maintain it with todowrite
+- Delegate explicitly read-only analysis through task/task_group; the host enforces a read-only child ceiling
+- Inspect owned work with agent_list/agent_wait or task_list/task_output; cancellation via agent_interrupt is not rollback
+- Follow-up work retains immutable child identity and scope and cannot widen the parent's read-only ceiling
 
 ## After creating your plan
 Call exit_plan with the complete plan text and the list of files to modify.

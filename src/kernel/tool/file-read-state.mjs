@@ -1,10 +1,30 @@
 import path from "node:path"
 import { readFile, stat } from "node:fs/promises"
+import { currentRuntime, runtimeCwd } from "../core/runtime-context.mjs"
 
-const fileReadState = new Map()
+// A read receipt is volatile authority for this kernel, session and workspace,
+// not a fact that may be reconstructed from a transcript or summary. Restarting
+// the process/kernel intentionally requires reading again. The legacy map is
+// only for callers outside a runtime; it is never a fallback inside a kernel.
+const legacyFileReadState = new Map()
+const kernelFileReadStates = new WeakMap()
+
+function readStates() {
+  const runtime = currentRuntime()
+  if (!runtime) return legacyFileReadState
+  // executeTurn creates shallow runtime copies; the registry identity remains
+  // stable across turns but differs between independently created kernels.
+  const owner = runtime.tools || runtime
+  let scopes = kernelFileReadStates.get(owner)
+  if (!scopes) { scopes = new Map(); kernelFileReadStates.set(owner, scopes) }
+  const key = JSON.stringify([path.resolve(runtimeCwd()), runtime.sessionId ?? null])
+  let scope = scopes.get(key)
+  if (!scope) { scope = new Map(); scopes.set(key, scope) }
+  return scope
+}
 
 function normalizeFilePath(filePath) {
-  return path.resolve(String(filePath || ""))
+  return path.resolve(runtimeCwd(), String(filePath || ""))
 }
 
 function normalizeTimestamp(timestamp) {
@@ -20,25 +40,25 @@ export function markFileRead(filePath, {
   isPartialView = false
 } = {}) {
   const normalized = normalizeFilePath(filePath)
-  fileReadState.set(normalized, {
+  readStates().set(normalized, Object.freeze({
     content: String(content ?? ""),
     timestamp: normalizeTimestamp(timestamp),
     offset: Number.isInteger(offset) ? offset : undefined,
     limit: Number.isInteger(limit) ? limit : undefined,
     isPartialView: Boolean(isPartialView)
-  })
+  }))
 }
 
 export function getFileReadState(filePath) {
-  return fileReadState.get(normalizeFilePath(filePath)) || null
+  return readStates().get(normalizeFilePath(filePath)) || null
 }
 
 export function wasFileRead(filePath) {
-  return fileReadState.has(normalizeFilePath(filePath))
+  return readStates().has(normalizeFilePath(filePath))
 }
 
 export function clearFileReadState() {
-  fileReadState.clear()
+  readStates().clear()
 }
 
 export function extractTrackedView(content, readState) {

@@ -12,6 +12,7 @@ import { ToolRegistry } from "../tool/registry.mjs"
 import { executeTool } from "../tool/executor.mjs"
 import { markToolProgramCall } from '../tool/program.mjs'
 import { currentDurableRun } from '../orchestration/run-runtime.mjs'
+import { assertRequestBudgetWithin } from '../../usage/request-budget.mjs'
 import { archiveToolText, artifactArchiveAttempted, createConversationArtifactAccess, trustedArtifactRef, trustedArtifactRefs } from '../tool/artifacts.mjs'
 import { markBrowserRecipeCall } from '../tool/browser-recipe.mjs'
 import { effectiveDataPolicy, intersectDataPolicies } from '../permission/data-policy.mjs'
@@ -20,7 +21,11 @@ import { PermissionEngine } from "../permission/engine.mjs"
 import { normalizePermissionLevel, toolCapability } from "../permission/rules.mjs"
 import { addModelUsage, priceModelUsage } from '../../usage/model-ledger.mjs'
 import { APPROVAL_LEVELS, approvalFromAgentPermission } from "../core/modes.mjs"
-import { createTaskDelegate } from "../orchestration/task-scheduler.mjs"
+import { createTaskDelegate, createChildController } from "../orchestration/task-scheduler.mjs"
+import { isReadOnlyWriteScope } from '../orchestration/child-policy.mjs'
+import { createSessionTodoService } from './todo-service.mjs'
+import { priorCompletionEvidence } from './completion-history.mjs'
+import { collectBackgroundCompletionEvidence } from './background-completion.mjs'
 import { loadInstructions } from "./instruction-loader.mjs"
 import { buildSystemPromptBlocks } from "./system-prompt.mjs"
 import { detectProjectContext } from "./project-context.mjs"
@@ -33,6 +38,8 @@ import {
   appendMessage,
   appendPart,
   getConversationHistory,
+  getSession,
+  flushNow,
   markSessionStatus,
   updateSession
 } from "./store.mjs"
@@ -74,12 +81,12 @@ const attachProviderState = (content, state) => state?.protocol === 'anthropic'
 const PLAN_ALLOWED_CAPABILITIES = new Set(["read", "search", "network", "safe-shell"])
 
 export function planModeAllows(toolName, args = {}) {
-  if (toolName === "enter_plan" || toolName === "exit_plan") return true
+  if (['enter_plan', 'exit_plan', 'todowrite', 'todo_read', 'task', 'task_group', 'agent_followup', 'agent_interrupt'].includes(toolName)) return true
   if (toolName === 'browser') return ['status', 'snapshot', 'screenshot', 'diagnostics', 'close', 'tabs', 'frames', 'dialogs'].includes(args.action)
   if (toolName === 'browser_bridge') return ['status', 'snapshot', 'screenshot', 'disconnect', 'tabs'].includes(args.action)
   if (toolName === 'browser_recipe') return args.action === 'list'
   if (['office_capabilities', 'office_inspect'].includes(toolName)) return true
-  const cap = toolCapability(toolName, String(args?.command || ""))
+  const cap = toolCapability(toolName, String(args?.command || ""), { args })
   return PLAN_ALLOWED_CAPABILITIES.has(cap)
 }
 
@@ -92,7 +99,7 @@ export function planModeAllows(toolName, args = {}) {
  */
 const NON_MUTATING_TOOLS = new Set([
   "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch", "tool_search", "tool_batch", "tool_program",
-  "background_output", "todowrite", "enter_plan", "exit_plan",
+  "background_output", "todowrite", "todo_read", "enter_plan", "exit_plan", "agent_list", "agent_wait", "agent_interrupt",
   "sysinfo", "question", "task_list", "task_get", "task_output", "task_parallel",
   "git_status", "git_info", "git_list_snapshots", "artifact_read", "artifact_search", "lsp", "mcp_resource", "mcp_prompt", "office_capabilities", "office_inspect"
 ])
@@ -106,6 +113,7 @@ const NON_MUTATING_TOOLS = new Set([
 const PARALLELIZABLE_TOOLS = new Set([
   "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch",
   "background_output", "sysinfo", "task_list", "task_get", "task_output",
+  "todo_read", "agent_list", "agent_wait",
   "git_status", "git_info", "git_list_snapshots", "artifact_read", "artifact_search"
 ])
 
@@ -122,7 +130,7 @@ function canMutateWorkspace(toolName, args = {}) {
   if (name === 'browser_bridge') return !['status', 'snapshot', 'screenshot', 'disconnect', 'tabs'].includes(args.action)
   if (name === 'browser_recipe') return args.action !== 'list'
   if (name === "bash") {
-    return toolCapability("bash", String(args?.command || "")) !== "safe-shell"
+    return toolCapability("bash", String(args?.command || ""), { args }) !== "safe-shell"
   }
   return !NON_MUTATING_TOOLS.has(name)
 }
@@ -320,6 +328,13 @@ async function processTurnLoopInRuntime({
 }) {
   assertExecutableConfiguration(configState)
   signal?.throwIfAborted()
+  depth = Math.max(depth, Number(runSpec?.toolContext?.childDepth) || 0)
+  const priorSession = await getSession(sessionId)
+  const storedChild = priorSession?.session
+  if (storedChild?.childContract && (!toolContext.childOperationId || storedChild.childOperationId !== toolContext.childOperationId
+      || storedChild.childContract.runSpec.runId !== runSpec?.runId || storedChild.childContract.parentSessionId !== runSpec?.parentSessionId)) {
+    throw new Error('Delegated session requires its active parent-owned operation; use agent_followup instead of adopting its transcript')
+  }
   const cwd = runtimeCwd()
   const extensionPolicy = resolveExtensionPolicy(configState)
   await initHookBus(cwd, extensionPolicy.config, {
@@ -331,6 +346,7 @@ async function processTurnLoopInRuntime({
       sessionId,
       turnId: newId("turn"),
       reply: "task delegation depth exceeded",
+      status: 'incomplete', stopReason: 'depth-limit',
       emittedText: false,
       context: null,
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -363,12 +379,22 @@ async function processTurnLoopInRuntime({
   }
   const turnTraceContext = createRequestContext()
   const configMaxSteps = Math.max(1, Number(configState.config.agent.max_steps || 128))
-  const maxSteps = (subagent?.maxTurns > 0) ? Math.min(configMaxSteps, subagent.maxTurns) : configMaxSteps
+  const selectedAgent = runSpecRole(runSpec) || subagent || agent
+  const durableToolNames = currentDurableRun()?.allowedToolNames
+  // Ultra replaces roles between stages, but cannot replace the strict host's
+  // absolute tool ceiling. Apply it to advertising, discovery and execution.
+  const effectiveAgent = Array.isArray(durableToolNames)
+    ? { ...selectedAgent, tools: durableToolNames.filter(name => !selectedAgent?.tools || selectedAgent.tools.includes(name)) }
+    : selectedAgent
+  const maxSteps = (effectiveAgent?.maxTurns > 0) ? Math.min(configMaxSteps, effectiveAgent.maxTurns) : configMaxSteps
   const verifyCompletion = configState.config.agent?.verify_completion !== false
   const recoveryEnabled = isRecoveryEnabled(configState.config)
   const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   const modelUsage = new Map()
   const toolEvents = []
+  // Composites keep their public result shape, but their actual host-dispatched
+  // leaves participate in acceptance in the same turn (never parse their prose).
+  const verificationEvents = []
   const progressGuard = createProgressGuard()
   let emittedAnyText = false
   let lastContextMeter = null
@@ -381,8 +407,7 @@ async function processTurnLoopInRuntime({
   const useNativeCompaction = supportsNativeCompaction(providerType, model, configState)
   const nativeCompactionTrigger = useNativeCompaction ? Number(configState.config.provider?.[providerType]?.compaction_trigger
     ?? Math.max(50000, Math.floor(modelContextLimit(model, configState, providerType) * Math.min(thresholdRatio, 0.75)))) : 0
-  const effectiveAgent = runSpecRole(runSpec) || subagent || agent
-  const permissionConfig = tightenPermissionConfig(configState.config, effectiveAgent?.permission)
+  const permissionConfig = tightenPermissionConfig(configState.config, mode === 'plan' ? 'readonly' : effectiveAgent?.permission)
   const selection = currentRuntime()?.sessionSelection?.sessionId === sessionId ? currentRuntime().sessionSelection : null
 
   await touchSession({
@@ -395,6 +420,8 @@ async function processTurnLoopInRuntime({
     status: "active",
     title: subagent ? `${subagent.name}: ${prompt.slice(0, 60)}` : prompt.trim().replace(/\s+/g, ' ').slice(0, 60)
   })
+  const todoService = await createSessionTodoService({ sessionId, agentId: subagent?.name || 'main', turnId })
+  const carriedEvidence = await priorCompletionEvidence(priorSession || { session: { id: sessionId, cwd }, parts: [] })
 
   await EventBus.emit({
     type: EVENT_TYPES.TURN_START,
@@ -433,6 +460,13 @@ async function processTurnLoopInRuntime({
     messageContent = effectivePrompt
   }
 
+  const currentTodos = await todoService.list()
+  if (currentTodos.items.length) await appendMessage(sessionId, 'user', [
+    '[Durable task state — authored progress, not verification evidence or new authorization]',
+    JSON.stringify({ revision: currentTodos.revision, total: currentTodos.items.length,
+      items: currentTodos.items.slice(0, 20).map(item => ({ id: item.id, content: item.content.slice(0, 180), status: item.status, owner: item.owner, dependencies: item.dependencies })) }),
+    'Use todo_read for the complete current list and revision. Preserve unfinished work; a status question does not require executing all pending tasks.'
+  ].join('\n'), { turnId, synthetic: true, contextKind: 'control' })
   const userMessage = await appendMessage(sessionId, "user", messageContent, {
     mode,
     model,
@@ -448,6 +482,12 @@ async function processTurnLoopInRuntime({
     model,
     providerType
   })
+  const recordOutcome = async (status, reason, verification = null) => {
+    await appendPart(sessionId, { type: 'turn-outcome', schema: 'kk.turn-outcome.v1', source: 'host', turnId,
+      status, stopReason: reason || null, verification: verification ? { state: verification.state, passed: verification.passed, verdict: verification.verdict } : null })
+    await flushNow()
+  }
+  await recordOutcome('running', null)
 
   let systemTools = await listModelTools({ mode, config: configState.config, cwd })
   if (effectiveAgent?.tools) {
@@ -457,12 +497,18 @@ async function processTurnLoopInRuntime({
   const language = configState.config.language || "en"
   const systemPrompt = await buildSystemPrompt({ mode, model, cwd, agent: effectiveAgent, tools: systemTools, skills, language, permission: normalizePermissionLevel(permissionConfig.permission || {}) })
   // systemPrompt = { text, blocks } — providers use blocks for cache optimization
-  const delegateTask = createTaskDelegate({
+  const delegateTask = args => createTaskDelegate({
     getSkillToolGroups: () => skillToolPolicy.snapshot(),
     config: { ...configState.config, data_policy: effectiveDataPolicy(configState) },
     parentSessionId: sessionId,
+    parentMode: toolContext._planMode ? 'plan' : mode,
+    parentDepth: depth,
     model,
     providerType,
+    parentRunSpec: runSpec,
+    parentAgent: effectiveAgent,
+    parentPermissionConfig: toolContext._planMode ? tightenPermissionConfig(permissionConfig, 'readonly') : permissionConfig,
+    signal, baseUrl, apiKeyEnv,
     runSubtask: async ({
       prompt: subPrompt,
       sessionId: subSessionId,
@@ -470,7 +516,13 @@ async function processTurnLoopInRuntime({
       providerType: subProvider,
         subagent: resolvedSubagent,
         runSpec: subRunSpec,
-        allowQuestion: subAllowQuestion = false
+        allowQuestion: subAllowQuestion = false,
+        signal: childSignal = signal,
+        steerSource: childSteerSource = null,
+        baseUrl: childBaseUrl = baseUrl,
+        apiKeyEnv: childApiKeyEnv = apiKeyEnv,
+        dataPolicy: childDataPolicy = undefined,
+        childOperationId = null
     }) => {
       return processTurnLoop({
         prompt: subPrompt,
@@ -478,18 +530,20 @@ async function processTurnLoopInRuntime({
         model: subModel,
         providerType: subProvider,
         sessionId: subSessionId,
-        configState,
-        baseUrl,
-        apiKeyEnv,
+        configState: { ...configState, config: { ...configState.config, data_policy: intersectDataPolicies(effectiveDataPolicy(configState), childDataPolicy) } },
+        baseUrl: childBaseUrl,
+        apiKeyEnv: childApiKeyEnv,
         depth: depth + 1,
-        signal,
+        signal: childSignal,
+        steerSource: childSteerSource,
         subagent: resolvedSubagent,
         runSpec: subRunSpec,
         allowQuestion: subAllowQuestion,
-        toolContext: { ...toolContext, skillAllowedTools: null, skillToolGroups: skillToolPolicy.snapshot() }
+        toolContext: { ...toolContext, childOperationId, skillAllowedTools: null, skillToolGroups: subRunSpec?.toolContext?.skillToolGroups || skillToolPolicy.snapshot() }
       })
     }
-  })
+  })(args)
+  const childController = createChildController({ parentSessionId: sessionId, delegateTask, config: permissionConfig, signal })
 
   const MAX_CONTINUES = 8
   const MAX_TOTAL_CONTINUES = 24 // hard cap on total auto-continues per turn
@@ -497,6 +551,8 @@ async function processTurnLoopInRuntime({
   let totalContinueCount = 0
   let nudgeCount = 0
   let finalReply = ""
+  let stopReason = 'max-steps'
+  let verification = null
   let interruptedReply = ''
   // 渲染流（阶段 3a）：用户可见输出纯化为数据事件；旧 output 字节轨经
   // 前端登记的渲染器驱动（双轨期，见 session/render-stream.mjs 头注释）。
@@ -510,14 +566,30 @@ async function processTurnLoopInRuntime({
   try {
     for (let step = 1; step <= maxSteps; step++) {
       signal?.throwIfAborted()
+      if (runSpec?.limits?.budgetUsd === 0) {
+        // Zero USD does not grant inference. The sole existing exception is a
+        // matching branded durable run inside its private, active host budget
+        // scope. That scope itself validates the finite local-free capability;
+        // JSON prices, another run, and ambient paid budgets cannot satisfy it.
+        let authorizedFreeScope = false
+        const durableScope = currentDurableRun()
+        if (typeof durableScope?.runId === 'string' && durableScope.runId && durableScope.runId === runSpec.runId) {
+          try {
+            assertRequestBudgetWithin({ budgetUsd: 0, durableRequired: true, deadlineAt: runSpec.limits.deadlineAt ?? undefined })
+            authorizedFreeScope = true
+          } catch { /* Preserve ordinary zero-budget child denial. */ }
+        }
+        if (!authorizedFreeScope) { stopReason = 'budget'; finalReply = '子任务预算为 0，未发起模型请求。'; break }
+      }
+      if (runSpec?.limits?.deadlineAt != null && Date.now() >= runSpec.limits.deadlineAt) { stopReason = 'deadline'; finalReply = '子任务已到截止时间，未发起新的模型请求。'; break }
       await markTurnInProgress(sessionId, turnId, step, recoveryEnabled)
       // 插话在 step 边界送达：写进会话后，下面 getConversationHistory 自然带上，
       // 本 step 的模型请求就能看到。放在这里而不是工具执行中间，是因为消息序
       // 必须落在两次 assistant 响应之间 —— 夹进 tool_result 的中间会打乱
       // 「assistant → tool → assistant」的配对，部分 provider 会直接拒收。
       if (steerSource) {
-        for (const steered of steerSource()) {
-          await appendMessage(sessionId, "user", steered)
+        for (const steered of await steerSource()) {
+          await appendMessage(sessionId, "user", steered, { turnId, contextKind: 'steering' })
           await EventBus.emit({
             type: EVENT_TYPES.TURN_STEER_INJECTED,
             sessionId,
@@ -619,6 +691,8 @@ async function processTurnLoopInRuntime({
             traceId: turnTraceContext.traceId,
             turnId,
             signal,
+            artifactAccess,
+            continuationState: { todos: await todoService.list() },
             requestContext: { system: systemPrompt, tools },
             onUsage: entry => addModelUsage(modelUsage, entry.provider, entry.model, entry.usage)
           })
@@ -658,6 +732,7 @@ async function processTurnLoopInRuntime({
       }
       const limits = runSpec?.limits || null
       if (limits?.deadlineAt && Date.now() > Number(limits.deadlineAt)) {
+        stopReason = 'deadline'
         finalReply = `${finalReply}\n[deadline exceeded — stopping]`.trim()
         break
       }
@@ -665,6 +740,7 @@ async function processTurnLoopInRuntime({
         try {
           const { amount } = await priceModelUsage(configState, [...modelUsage.values()])
           if (amount >= limits.budgetUsd) {
+            stopReason = 'budget'
             finalReply = `${finalReply}\n[budget ${limits.budgetUsd} USD exhausted — stopping]`.trim()
             break
           }
@@ -739,6 +815,10 @@ async function processTurnLoopInRuntime({
           throw error
         }
         await render.streamEnd(step)
+        if (signal?.aborted) {
+          interruptedReply = textParts.join('')
+          signal.throwIfAborted()
+        }
         if (textParts.length) {
           emittedAnyText = true
         }
@@ -771,6 +851,8 @@ async function processTurnLoopInRuntime({
             traceId: turnTraceContext.traceId,
             turnId,
             signal,
+            artifactAccess,
+            continuationState: { todos: await todoService.list() },
             requestContext: { system: systemPrompt, tools },
             onUsage: entry => addModelUsage(modelUsage, entry.provider, entry.model, entry.usage)
           })
@@ -936,35 +1018,74 @@ async function processTurnLoopInRuntime({
             : '本轮没有执行工具，未自动追加重试请求。'
           throw new ProviderError(`${reason}${next}${effects}`, { reason: 'empty_response' })
         }
-        // Enhanced task completion verification
-        if (verifyCompletion && nudgeCount < 2) {
+        // A final sentence is not evidence that work is finished. Validate on
+        // every final attempt; exhausting the repair hints never disables it.
+        {
           try {
             const validator = await createValidator({ cwd, configState })
-            const validationResult = await validator.validate({
-              todoState: toolContext._todoState,
+            const todos = await todoService.list()
+            const authoredThisTurn = todos.source.turnId === turnId
+            const background = await collectBackgroundCompletionEvidence({ sessionId,
+              toolEvents: [...carriedEvidence.toolEvents, ...verificationEvents], parts: (await getSession(sessionId))?.parts || [] })
+            const validationResult = { state: 'not_verified', ...(verifyCompletion ? await validator.validate({
+              todoState: authoredThisTurn || carriedEvidence.toolEvents.length > 0 || carriedEvidence.requireChecks || verificationEvents.some(event => ['write', 'edit', 'patch', 'multiedit'].includes(event.name)) ? todos.items : [],
+              toolEvents: background.events,
+              requireChecks: carriedEvidence.requireChecks || background.needsFreshVerification,
               // Never launch project scripts/npx behind the tool permission
               // boundary (or on a simple question). The agent must request
               // verification commands through normal approved tools.
               level: 'evidence'
-            })
+            }) : { passed: true, verdict: 'VERIFICATION_DISABLED', checks: [], failures: [], message: 'Optional verification is disabled; execution lifecycle and unknown outcomes still must settle.' }) }
+            if (background.pending.length || background.unknown) {
+              validationResult.passed = false
+              validationResult.verdict = 'BLOCK'
+              validationResult.state = background.unknown ? 'outcome_unknown' : 'background_running'
+              validationResult.message += background.unknown
+                ? '\n后台操作结果尚无法核实，请检查任务记录和实际文件状态，不要重复执行。'
+                : `\n仍有 ${background.pending.length} 个后台命令未收尾，请用 task_output 核查实际结果；后台修改结束前的测试不算最终验收。`
+            }
+            const children = await childController.list()
+            const unsettled = children.filter(child => ['running', 'pending', 'unknown', 'incomplete', 'error', 'failed', 'cancelled', 'interrupted', 'blocked'].includes(child.status))
+            if (unsettled.length) {
+              validationResult.passed = false
+              validationResult.verdict = 'BLOCK'
+              validationResult.message += `\n仍有 ${unsettled.length} 个子任务未收尾，请用 agent_wait / agent_list 核查实际结果，不要猜测完成。`
+            }
+            verification = validationResult
             
             if (!validationResult.passed) {
+              if (toolEvents.some(event => event.code === 'PERMISSION_DENIED')) {
+                stopReason = 'permission-denied'
+                finalReply = response.text.trim() || '操作未获授权，未执行该操作。已有结果已保留。'
+                break
+              }
+              if (nudgeCount >= 2) {
+                stopReason = 'verification-incomplete'
+                finalReply = `本轮尚未完成验收，已保留已有结果和文件改动。\n${validationResult.message}`
+                break
+              }
               nudgeCount++
               const validationPrompt = language === "zh"
                 ? `[任务验证失败] 您报告任务已完成，但以下验证失败：\n\n${validationResult.message}\n\n请修复问题后再报告完成。`
                 : `[TASK VERIFICATION FAILED] You indicated completion, but verification failed:\n\n${validationResult.message}\n\nPlease fix the issues before declaring completion.`
               
               await appendMessage(sessionId, "user", validationPrompt,
-                { mode, model, providerType, step, turnId, synthetic: true }
+                { mode, model, providerType, step, turnId, synthetic: true, contextKind: 'control' }
               )
               continue
             }
           } catch (validationError) {
-            await render.validationSkipped(step, validationError.message)
+            if (isCancellation(validationError, signal)) throw validationError
+            stopReason = 'verification-unavailable'
+            finalReply = `验收状态暂时无法核实，本轮未标记完成。已有改动已保留，请核查后继续。\n${validationError.message}`
+            verification = { passed: false, verdict: 'BLOCK', state: 'unknown', message: validationError.message, checks: [], failures: [] }
+            break
           }
         }
         
         finalReply = response.text.trim()
+        interruptedReply = finalReply
+        signal?.throwIfAborted()
         const finalContent = attachProviderState(response.reasoning
           ? [
               { type: "reasoning", text: response.reasoning },
@@ -994,11 +1115,13 @@ async function processTurnLoopInRuntime({
           )
         }
         await markTurnFinished(sessionId, recoveryEnabled)
+        await recordOutcome('completed', null, verification)
+        signal?.throwIfAborted()
         await EventBus.emit({
           type: EVENT_TYPES.TURN_FINISH,
           sessionId,
           turnId,
-          payload: { step, reply: finalReply }
+          payload: { step, reply: finalReply, status: 'completed', verification }
         })
         // 终态闸：TURN_FINISH 之后这个回合不再产出任何流式/thinking 事件
         render.close()
@@ -1006,6 +1129,7 @@ async function processTurnLoopInRuntime({
           sessionId,
           turnId,
           reply: finalReply,
+          status: 'completed', verification,
           emittedText: emittedAnyText,
           context: lastContextMeter,
           usage,
@@ -1016,6 +1140,7 @@ async function processTurnLoopInRuntime({
 
       // --- Execute tool calls (read-only in parallel, write tools serially) ---
       async function executeOneCall(call, childSignal = null, browserRecipeGuard = null) {
+        const callStartedAt = Date.now()
         const callSignal = childSignal instanceof AbortSignal ? (signal ? AbortSignal.any([signal, childSignal]) : childSignal) : signal
         let programSequence = 0
         let recipeSequence = 0
@@ -1067,7 +1192,9 @@ async function processTurnLoopInRuntime({
             const pendingTool = await ToolRegistry.get(call.name)
             const permission = await PermissionEngine.check({
               config: permissionConfig,
-              capability: pendingTool?.capabilityFor?.(call.args) || null,
+              permissionCeilings: runSpec?.toolContext?.permissionCeilings || [],
+              capability: ['task', 'task_group', 'agent_followup'].includes(call.name) && (toolContext._planMode || normalizePermissionLevel(permissionConfig.permission) === 'readonly')
+                ? 'readonly-task' : pendingTool?.capabilityFor?.(call.args) || null,
               sessionId,
               turnId,
               traceId: stepRequestContext.traceId,
@@ -1107,12 +1234,13 @@ async function processTurnLoopInRuntime({
             // 只读子智能体照样能用 shell 改工作区。改为按「这个工具是否可能
             // 改动工作区」判定，而不是猜能力名。
             const scope = String(runSpec?.workspace?.writeScope || "").trim().toLowerCase()
-            const readOnlyScope = /^(read[-_ ]?only|none|no[-_ ]?mutations?)$/.test(scope)
+            const readOnlyScope = isReadOnlyWriteScope(scope)
             // A strict task's filesystem scope is not its network authority.
             // These finite managed adapters still pass the durable coordinator's
             // exact external-action grants and the strict backend's site policy.
             const strictManagedNetwork = Boolean(currentDurableRun()) && runSpec?.workspace?.isolation === 'strict' && ['browser', 'http_request'].includes(call.name)
-            const deniedByWriteScope = readOnlyScope && !strictManagedNetwork && canMutateWorkspace(call.name, call.args)
+            const boundedChild = ['task', 'task_group', 'agent_followup'].includes(call.name) && (toolContext._planMode || normalizePermissionLevel(permissionConfig.permission) === 'readonly')
+            const deniedByWriteScope = readOnlyScope && !strictManagedNetwork && !boundedChild && canMutateWorkspace(call.name, call.args)
             result = !tool
               ? {
                   name: call.name,
@@ -1146,8 +1274,6 @@ async function processTurnLoopInRuntime({
                     traceId: stepRequestContext.traceId,
                     requestId: stepRequestContext.requestId,
                     delegateTask,
-                    sessionId,
-                    turnId,
                     // 工具需要知道当前模型与渠道才能算输出预算（动态上限）。
                     // 0.6.3 之前 ctx 只有 config，于是任何按模型能力调整的
                     // 工具行为都无从下手。
@@ -1158,6 +1284,9 @@ async function processTurnLoopInRuntime({
                     // 管到 loop 这一层，工具那一层照旧按固定数字砍。
                     toolResultLimit,
                     ...toolContext,
+                    // Host-bound state and child authority cannot be supplied by
+                    // a model, plugin payload or a stale copied tool context.
+                    sessionId, turnId, todoService, childController,
                     // Preserve trusted config provenance; model/per-turn JSON
                     // cannot grant a project permission to choose a binary.
                     configState,
@@ -1166,7 +1295,7 @@ async function processTurnLoopInRuntime({
                     officeService: currentRuntime()?.services?.office,
                     recipeGuard: browserRecipeGuard,
                     signal: callSignal,
-                    config: { ...configState.config, ...(toolContext.config || {}),
+                    config: { ...configState.config, ...(toolContext.config || {}), permission: permissionConfig.permission,
                       data_policy: intersectDataPolicies(effectiveDataPolicy(configState), toolContext.config?.data_policy) },
                     artifactAccess,
                     toolCallId: call.id,
@@ -1217,6 +1346,7 @@ async function processTurnLoopInRuntime({
           result = {
             name: call.name,
             status: "error",
+            code: error.code || null,
             output: error.message,
             error: error.message
           }
@@ -1225,8 +1355,6 @@ async function processTurnLoopInRuntime({
         // Sync _planMode back to toolContext after enter_plan / exit_plan
         if (call.name === "enter_plan" && isToolSuccess(result)) {
           toolContext._planMode = true
-        } else if (call.name === "exit_plan" && isToolSuccess(result)) {
-          toolContext._planMode = false
         }
 
         const hookAfterResult = await HookBus.toolAfter({
@@ -1240,6 +1368,7 @@ async function processTurnLoopInRuntime({
           mode
         })
         if (hookAfterResult?.result) result = hookAfterResult.result
+        result = { ...result, startedAt: result.startedAt ?? callStartedAt, completedAt: result.completedAt ?? Date.now() }
 
         // Plan approval interception: if the tool returned planApproval metadata,
         // pause and ask the user to approve/reject the plan
@@ -1305,8 +1434,14 @@ async function processTurnLoopInRuntime({
           status: result.status,
           output: result.output,
           metadata: result.metadata,
+          code: result.code,
+          ok: result.ok,
+          evidence: result.evidence,
+          startedAt: result.startedAt,
+          completedAt: result.completedAt,
           durationMs: result.durationMs
         })
+        verificationEvents.push({ name: call.name, args: call.args, ...result, invocationId: call.id, turnId, step })
 
         return { call, result }
       }
@@ -1357,6 +1492,8 @@ async function processTurnLoopInRuntime({
         if (entry) {
           toolEvents.push({
             step,
+            invocationId: entry.call.id,
+            turnId,
             name: entry.call.name,
             args: entry.call.args,
             ...entry.result
@@ -1425,8 +1562,10 @@ async function processTurnLoopInRuntime({
         step,
         turnId,
         synthetic: true,
+        contextKind: 'tool_result',
         artifactRefs: [...callResults.values()].flatMap(entry => trustedArtifactRefs(entry.result))
       })
+      await flushNow()
       // Keep tool_use/tool_result pairs and uncertain-effect receipts durable,
       // then stop before any continuation or new provider request.
       signal?.throwIfAborted()
@@ -1447,10 +1586,11 @@ async function processTurnLoopInRuntime({
         finalReply = language === 'zh' ? '已暂停：相同工具序列连续 6 次没有产生新结果。已有文件和操作结果保留，请检查阻塞原因后继续；这不代表任务已完成。' : 'Paused: the same tool sequence produced no new evidence six times. Existing files and results are preserved. Inspect the blocker before continuing; the task is not claimed complete.'
         await appendMessage(sessionId, 'assistant', finalReply, { mode, model, providerType, step, turnId })
         await markSessionStatus(sessionId, 'no-progress'); await markTurnFinished(sessionId, recoveryEnabled)
+        await recordOutcome('incomplete', 'no-progress', verification)
         await render.textDelta(step, `\n${finalReply}`); await render.streamEnd(step)
         await EventBus.emit({ type: EVENT_TYPES.TURN_FINISH, sessionId, turnId, payload: { step, reply: finalReply, stopReason: 'no-progress' } })
         render.close()
-        return { sessionId, turnId, reply: finalReply, emittedText: true, context: lastContextMeter, usage, toolEvents, planHandoff, stopReason: 'no-progress' }
+        return { sessionId, turnId, reply: finalReply, status: 'incomplete', emittedText: true, context: lastContextMeter, usage, toolEvents, planHandoff, stopReason: 'no-progress', verification }
       }
 
       // --- Soft step warning: alert model when nearing the limit ---
@@ -1468,26 +1608,28 @@ async function processTurnLoopInRuntime({
       })
     }
 
-    finalReply = "Reached max steps. Review tool outputs and continue in a new turn."
+    if (stopReason === 'max-steps') finalReply = "Reached max steps. Review tool outputs and continue in a new turn."
     await appendMessage(sessionId, "assistant", finalReply, {
       mode,
       model,
       providerType,
       turnId,
-      maxSteps: true
+      maxSteps: stopReason === 'max-steps', stopReason, status: 'incomplete'
     })
     await markTurnFinished(sessionId, recoveryEnabled)
+    await recordOutcome('incomplete', stopReason, verification)
     await EventBus.emit({
       type: EVENT_TYPES.TURN_FINISH,
       sessionId,
       turnId,
-      payload: { maxSteps: true, reply: finalReply }
+      payload: { maxSteps: stopReason === 'max-steps', stopReason, status: 'incomplete', reply: finalReply, verification }
     })
     render.close()
     return {
       sessionId,
       turnId,
       reply: finalReply,
+      status: 'incomplete', stopReason, verification,
       emittedText: emittedAnyText,
       context: lastContextMeter,
       usage,
@@ -1509,6 +1651,7 @@ async function processTurnLoopInRuntime({
       })
     }
     if (cancelled) await appendPart(sessionId, { type: 'turn-cancelled', messageId: userMessage.id, turnId, reason: 'user_cancel', filesReverted: false })
+    await recordOutcome(cancelled ? 'cancelled' : 'error', cancelled ? 'cancelled' : 'execution-error', verification)
     render.close()
     await EventBus.emit({
       type: EVENT_TYPES.TURN_ERROR,
@@ -1526,6 +1669,7 @@ async function processTurnLoopInRuntime({
       // 结构化失败走 error 字段 —— turn.result 据此给 status: "failed"。
       reply: `provider error: ${errorMessage}`,
       error: errorMessage,
+      status: cancelled ? 'cancelled' : 'error',
       ...(cancelled ? { cancelled: true, partialReply: interruptedReply, stopReason: 'cancelled' } : {}),
       emittedText: emittedAnyText,
       context: lastContextMeter,

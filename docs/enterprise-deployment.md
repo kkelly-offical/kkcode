@@ -1,6 +1,6 @@
 # 企业自托管与多端连接
 
-[文档导航](README.md) · 适用版本：1.0.5 · [版本状态](versions.md)
+[文档导航](README.md) · 稳定版1.0.5；Preview源码1.0.6-preview.0 · [版本状态](versions.md)
 
 部署方控制网关、身份认证和数据存储，工作电脑运行内核与工具。手机和网页是客户端，
 不是另一个云端Agent。发布软件包不自动部署企业服务器，也不代表任意生产环境已验收。
@@ -41,7 +41,8 @@ PostgreSQL、Keycloak／其他IdP和反向代理是独立服务，不是把其�
 
 ## 部署准备与启动
 
-选择经核对的源码提交或公开的 `v1.0.5` 标签；发行产物是否就绪以[Release](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.5)为准。
+选择经核对的源码提交或公开的 `v1.0.5` 标签；发行产物以[Release](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.5)为准。
+下面的本地镜像名对应当前开发源码；如果选择稳定标签，构建名称相应使用1.0.5，不把标签名当作部署或发布授权。
 准备Docker/Compose、数据库持久卷、HTTPS反向代理、正式域名和企业OIDC客户端。
 把配置放在仓库外的私密环境文件中，保留数据库密码和网关加密身份，不写入Git。
 
@@ -72,10 +73,10 @@ Compose默认仅将网关18272绑定到127.0.0.1，应在前方配置HTTPS入口
 如自行管理镜像，可在当前核对过的源码目录构建本地tag：
 
 ```sh
-docker build -f deploy/Dockerfile -t kkcode-gateway:1.0.5 .
+docker build -f deploy/Dockerfile -t kkcode-gateway:1.0.6-preview.0 .
 ```
 
-这里的1.0.5是本地构建名称，不是公共registry地址。**公共网关镜像发布暂缓**，
+这里的1.0.6-preview.0是开发源码的本地构建名称，不是公共registry地址或部署指令。**公共网关镜像发布暂缓**，
 不要根据此命令推断存在官方 `docker pull` 入口。停止／升级服务时保留数据库卷和密钥。
 
 ## 绑定工作电脑

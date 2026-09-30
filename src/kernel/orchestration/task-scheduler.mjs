@@ -1,13 +1,21 @@
 import { currentRuntime, runtimeCwd } from "../core/runtime-context.mjs"
 import { randomUUID } from 'node:crypto'
+import path from 'node:path'
 import { BackgroundManager } from "./background-manager.mjs"
 import { resolveSubagent } from "./subagent-router.mjs"
-import { flushNow, forkSession, getSession } from "../session/store.mjs"
+import { flushNow, forkSession, getSession, touchSession, updateSessionIf } from "../session/store.mjs"
 import { extractEditFeedbackFromToolEvents } from "../../observability/edit-diagnostics.mjs"
 import { createRunSpec } from "./run-spec.mjs"
 import { resolveRoleModel } from "../provider/model-roles.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
+import { childOutcome, inheritChildPolicy, isReadOnlyWriteScope } from './child-policy.mjs'
+import { intersectDataPolicies } from '../permission/data-policy.mjs'
+import { currentDurableRun } from './run-runtime.mjs'
+import { getAgentPrompt } from '../agent/agent.mjs'
+import { normalizePath } from '../../util/glob.mjs'
+import { acquireChildOperation, bindChildOperation, drainChildMessages, ownedChild, settleChildOperation } from './child-controller.mjs'
+export { createChildController } from './child-controller.mjs'
 
 const SUPPORTED_EXECUTION_MODES = new Set(["fresh_agent", "fork_context"])
 const SUPPORTED_ISOLATION_MODES = new Set(["default", "worktree"])
@@ -54,27 +62,6 @@ function normalizeList(input) {
   return []
 }
 
-function normalizeWriteScope(input) {
-  return String(input || "").trim().toLowerCase()
-}
-
-function isReadOnlyWriteScope(input) {
-  const scope = normalizeWriteScope(input)
-  if (!scope) return false
-  return [
-    "read-only",
-    "readonly",
-    "no-mutation",
-    "no-mutations",
-    "no mutation",
-    "no mutations",
-    "no-write",
-    "no-writes",
-    "no write",
-    "no writes"
-  ].includes(scope) || scope.includes("read-only") || scope.includes("no mutation") || scope.includes("no write")
-}
-
 function validateDelegationArgs(args = {}, executionMode) {
   const explicitPrompt = String(args.prompt || "").trim()
   const objective = String(args.objective || "").trim()
@@ -101,6 +88,12 @@ function validateDelegationArgs(args = {}, executionMode) {
   }
   if (isContinuation && args.execution_mode) {
     return "task.execution_mode only applies when starting a new delegated session"
+  }
+  if (isContinuation && ['subagent_type', 'category', 'inherit_context', 'isolation', 'budget_usd', 'deadline_at'].some(key => args[key] != null)) {
+    return 'task.session_id retains its original role, scope, model and limits; routing/isolation/limit overrides are not allowed'
+  }
+  for (const key of ['budget_usd', 'deadline_at']) {
+    if (args[key] != null && (typeof args[key] !== 'number' || !Number.isFinite(args[key]) || args[key] < 0)) return `task.${key} must be a finite nonnegative number`
   }
   if (!explicitPrompt && objective && !writeScope) {
     return "task.write_scope is required when synthesizing a new delegation brief"
@@ -199,19 +192,32 @@ async function ensureDelegatedSession({ executionMode, parentSessionId, subSessi
   await flushNow()
 }
 
-export function createTaskDelegate({ config, parentSessionId, model, providerType, runSubtask, getSkillToolGroups = () => [] }) {
+export function createTaskDelegate({ config, parentSessionId, model, providerType, runSubtask, parentRunSpec = null, parentAgent = null, parentPermissionConfig = null, parentMode = null, parentDepth = 0, signal = null, baseUrl = null, apiKeyEnv = null, getSkillToolGroups = () => [] }) {
   return async function delegateTask(args = {}) {
+    try {
+    signal?.throwIfAborted()
+    if (currentDurableRun()) return { error: 'strict delegation requires its task graph host; ordinary child scheduling is disabled' }
     const requestedExecutionMode = args.inherit_context === true && !args.execution_mode ? "fork_context" : args.execution_mode
     const executionModeResult = normalizeExecutionMode(requestedExecutionMode)
     if (executionModeResult.error) return { error: executionModeResult.error }
-    const executionMode = executionModeResult.mode
+    let executionMode = executionModeResult.mode
     const isolationResult = normalizeIsolation(args.isolation)
     if (isolationResult.error) return { error: isolationResult.error }
     const validationError = validateDelegationArgs(args, executionMode)
     if (validationError) return { error: validationError }
-    const isolation = isolationResult.mode
+    let isolation = isolationResult.mode
 
-    const subagent = resolveSubagent({
+    const existing = args.session_id ? await ownedChild(parentSessionId, String(args.session_id)) : null
+    if (existing && existing.childContract.schema !== 1) return { error: 'unsupported delegated session contract; cannot safely continue' }
+    if (existing) {
+      executionMode = existing.childContract.executionMode
+      isolation = existing.childContract.runSpec.workspace.isolation
+      if (existing.childContract.runSpec.limits.budgetUsd > 0) return { error: 'finite-budget continuation requires a cumulative host reservation ledger; legacy per-turn spend is not a safe remaining-budget proof', status: 'blocked' }
+      if (path.resolve(existing.childContract.runSpec.workspace.cwd) !== path.resolve(runtimeCwd())) return { error: 'delegated continuation must use its original workspace' }
+      if (isolation === 'worktree') return { error: 'worktree child continuation requires an explicit host workspace handoff; inspect/apply its preserved worktree before creating new work' }
+    }
+
+    let subagent = existing?.childContract.runSpec.role || resolveSubagent({
       config,
       subagentType: args.subagent_type || null,
       category: args.category || null
@@ -227,6 +233,7 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
       ]
       return { error: `${subagent.reason}. Available subagent types: ${[...new Set(known)].sort().join(", ")}` }
     }
+    if (!existing) subagent = { ...subagent, prompt: subagent.prompt || await getAgentPrompt(subagent.name) }
 
     // Millisecond timestamps collide under task_group parallel dispatch. IDs
     // are opaque; ancestry is persisted separately and never parsed from them.
@@ -234,8 +241,30 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
     const prompt = buildDelegationPrompt({ ...args, execution_mode: executionMode })
 
     // 优先级：子智能体级覆盖 > models.subagent 角色 > 当前会话模型
-    const subModel = subagent.model || resolveRoleModel(config, "subagent", { fallbackToMain: false }) || model
-    const subProvider = subagent.providerType || providerType
+    const subModel = existing?.childContract.runSpec.model || subagent.model || resolveRoleModel(config, "subagent", { fallbackToMain: false }) || model
+    const subProvider = existing?.childContract.runSpec.provider || subagent.providerType || providerType
+    const childDepth = existing?.childContract.runSpec.toolContext.childDepth ?? (Math.max(Number(parentDepth), Number(parentRunSpec?.toolContext?.childDepth || 0)) + 1)
+    if (!Number.isInteger(childDepth) || childDepth < 1 || childDepth > 8) return { error: 'task delegation depth exceeded', status: 'blocked', stop_reason: 'depth-limit' }
+    const childBaseUrl = existing ? existing.childContract.baseUrl : (subProvider === providerType ? baseUrl : null) || config.provider?.[subProvider]?.base_url || null
+    const childApiKeyEnv = existing ? existing.childContract.apiKeyEnv : (subProvider === providerType ? apiKeyEnv : null) || config.provider?.[subProvider]?.api_key_env || null
+    const dataPolicy = intersectDataPolicies(existing?.childContract.dataPolicy ?? undefined, config.data_policy)
+    const skillGroups = [...(existing?.childContract.runSpec.toolContext?.skillToolGroups || []), ...getSkillToolGroups()]
+    const uniqueSkillGroups = [...new Map(skillGroups.map(group => [JSON.stringify(group), group])).values()]
+    if (uniqueSkillGroups.length > 128) return { error: 'too many inherited skill tool policies' }
+    const parentPermission = (parentPermissionConfig || config).permission
+    const scopedParentPermission = parentPermission && { ...parentPermission,
+      rules: (parentPermission.rules || []).filter(rule => !Array.isArray(rule.modes) || !rule.modes.length || rule.modes.includes(parentMode || parentRunSpec?.mode || 'agent'))
+        .filter(rule => !rule.workspace || normalizePath(rule.workspace) === normalizePath(runtimeCwd()))
+        .map(({ modes: _modes, workspace: _workspace, ...rule }) => rule) }
+    const permissionCeilings = [...(existing?.childContract.runSpec.toolContext?.permissionCeilings || []),
+      ...(parentRunSpec?.toolContext?.permissionCeilings || []), scopedParentPermission].filter(value => value !== undefined)
+    const uniquePermissionCeilings = [...new Map(permissionCeilings.map(policy => [JSON.stringify(policy), structuredClone(policy)])).values()]
+    if (uniquePermissionCeilings.length > 32) return { error: 'too many inherited permission ceilings' }
+    const policy = inheritChildPolicy({ role: subagent, parentAgent, parentRunSpec, permission: (parentPermissionConfig || config).permission,
+      writeScope: existing?.childContract.runSpec.workspace.writeScope || args.write_scope,
+      limits: existing?.childContract.runSpec.limits || { budgetUsd: args.budget_usd ?? null, deadlineAt: args.deadline_at ?? null } })
+    subagent = policy.role
+    if (Number(config.agent?.max_steps) > 0) subagent = { ...subagent, maxSteps: Math.min(subagent.maxSteps || Infinity, Number(config.agent.max_steps)) }
     const runSpec = createRunSpec({
       sessionId: subSessionId,
       parentSessionId,
@@ -247,26 +276,38 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
         root: runtimeCwd(),
         cwd: runtimeCwd(),
         isolation,
-        writeScope: args.write_scope || null
+        writeScope: policy.writeScope
       },
-      limits: {
-        budgetUsd: args.budget_usd || null,
-        deadlineAt: args.deadline_at || null
-      },
+      limits: policy.limits,
       toolContext: {
-        ...(getSkillToolGroups().length ? { skillToolGroups: getSkillToolGroups() } : {}),
+        childDepth,
+        ...(uniqueSkillGroups.length ? { skillToolGroups: uniqueSkillGroups } : {}),
+        ...(uniquePermissionCeilings.length ? { permissionCeilings: uniquePermissionCeilings } : {}),
         groupId: args.group_id || null,
         stageId: args.stage_id || null,
         logicalTaskId: args.task_id || null
       }
     })
 
-    const run = async ({ isCancelled, log }) => {
-      await ensureDelegatedSession({
-        executionMode,
-        parentSessionId,
-        subSessionId
+    if (!existing) {
+      if (!parentSessionId || subSessionId === parentSessionId) return { error: 'delegation requires a distinct parent session' }
+      await ensureDelegatedSession({ executionMode, parentSessionId, subSessionId })
+      await touchSession({ sessionId: subSessionId, parentSessionId, model: subModel, providerType: subProvider, mode: 'agent', cwd: runtimeCwd(), title: `${subagent.name}: ${prompt.slice(0, 60)}` })
+      const created = await updateSessionIf(subSessionId, { parentSessionId, childContractVersion: undefined }, {
+        childContractVersion: randomUUID(), childOperationId: null, childStatus: 'idle', childMailbox: [], childMailboxRevision: randomUUID(),
+        childContract: { schema: 1, parentSessionId, executionMode, runSpec, baseUrl: childBaseUrl, apiKeyEnv: childApiKeyEnv, dataPolicy: dataPolicy ?? null }
       })
+      if (!created) return { error: 'delegated session identity changed before reservation' }
+    }
+    const operationId = await acquireChildOperation(parentSessionId, subSessionId, existing?.childContractVersion)
+    if (existing) await updateSessionIf(subSessionId, { childOperationId: operationId }, {
+      childContractVersion: randomUUID(), childContract: { ...existing.childContract, runSpec,
+        dataPolicy: dataPolicy ?? null }
+    })
+
+    const run = async ({ isCancelled, log }) => {
+      const operation = bindChildOperation(operationId, signal)
+      try {
       await log(`task started (${subagent.name})`)
       await EventBus.emit({
         type: EVENT_TYPES.SUBAGENT_DELEGATED,
@@ -280,20 +321,22 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
         providerType: subProvider,
         subagent,
         runSpec,
+        childOperationId: operationId,
+        signal: operation.signal,
+        steerSource: () => drainChildMessages(subSessionId, operationId),
+        baseUrl: childBaseUrl,
+        apiKeyEnv: childApiKeyEnv,
+        dataPolicy,
         allowQuestion: args.allow_question === true,
         groupId: args.group_id || null,
         groupLabel: args.group_label || null
       })
-      await log(out.reply)
-      if (isCancelled()) return { cancelled: true }
+      await log(out.reply || '')
+      const outcome = childOutcome(out, operation.signal.aborted || await isCancelled())
       const fileChanges = extractFileChanges(out.toolEvents || [])
       const editFeedback = extractEditFeedbackFromToolEvents(out.toolEvents || [])
-      await EventBus.emit({
-        type: EVENT_TYPES.SUBAGENT_SETTLED,
-        sessionId: parentSessionId,
-        payload: { subagent: subagent.name, subSessionId, toolEvents: out.toolEvents?.length || 0, files: fileChanges.length }
-      })
-      return {
+      const result = {
+        ...outcome,
         session_id: subSessionId,
         parent_session_id: parentSessionId,
         subagent: subagent.name,
@@ -305,18 +348,36 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
         group_id: args.group_id || null,
         group_label: args.group_label || null
       }
+      await settleChildOperation(subSessionId, operationId, result)
+      await EventBus.emit({
+        type: EVENT_TYPES.SUBAGENT_SETTLED, sessionId: parentSessionId,
+        payload: { subagent: subagent.name, subSessionId, status: outcome.status, toolEvents: out.toolEvents?.length || 0, files: fileChanges.length }
+      })
+      return result
+      } catch (error) {
+        const result = { session_id: subSessionId, parent_session_id: parentSessionId, ...childOutcome({ error: error?.message || String(error) }, operation.signal.aborted) }
+        await settleChildOperation(subSessionId, operationId, result)
+        await EventBus.emit({ type: EVENT_TYPES.SUBAGENT_SETTLED, sessionId: parentSessionId, payload: { subagent: subagent.name, subSessionId, status: result.status, toolEvents: 0, files: 0 } })
+        return result
+      } finally { operation.close() }
     }
 
     if (args.run_in_background) {
+      try {
+      signal?.throwIfAborted()
       const task = await BackgroundManager.launchDelegateTask({
         description: String(args.description || `background task (${subagent.name})`),
         payload: {
           parentSessionId,
           subSessionId,
+          childOperationId: operationId,
           prompt,
           cwd: runtimeCwd(),
           model: subModel,
           providerType: subProvider,
+          baseUrl: childBaseUrl,
+          apiKeyEnv: childApiKeyEnv,
+          dataPolicy,
           executionMode,
           isolation,
           subagent: subagent.name,
@@ -332,6 +393,26 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
         },
         config
       })
+      if (signal?.aborted) await BackgroundManager.cancel(task.id)
+      if (signal && !signal.aborted) {
+        const cancel = () => { BackgroundManager.cancel(task.id).catch(() => {}) }
+        const unsubscribe = EventBus.subscribe(event => {
+          if (event.type === EVENT_TYPES.TASK_SETTLED && event.payload?.id === task.id) {
+            signal.removeEventListener('abort', cancel)
+            unsubscribe()
+          }
+        })
+        signal.addEventListener('abort', cancel, { once: true })
+        if (signal.aborted) cancel()
+        // The worker can settle before the subscription is installed.
+        if (['completed', 'error', 'cancelled', 'interrupted'].includes((await BackgroundManager.get(task.id))?.status)) {
+          signal.removeEventListener('abort', cancel); unsubscribe()
+        }
+      }
+      await updateSessionIf(subSessionId, { childOperationId: operationId }, { childBackgroundTaskId: task.id,
+        ...(['pending', 'running'].includes(task.status) ? { childStatus: task.status } : {}) })
+      await EventBus.emit({ type: EVENT_TYPES.SUBAGENT_DELEGATED, sessionId: parentSessionId,
+        payload: { subagent: subagent.name, subSessionId, description: String(args.description || args.objective || '').slice(0, 120), status: task.status } })
       return {
         background_task_id: task.id,
         status: task.status,
@@ -341,11 +422,17 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
         group_id: args.group_id || null,
         group_label: args.group_label || null
       }
+      } catch (error) {
+        const result = { ...childOutcome({ error: error?.message || String(error) }, signal?.aborted), session_id: subSessionId }
+        await settleChildOperation(subSessionId, operationId, result)
+        return result
+      }
     }
 
     return run({
       isCancelled: () => false,
       log: async () => {}
     })
+    } catch (error) { return { error: error?.message || String(error), ...(signal?.aborted ? { cancelled: true, status: 'cancelled' } : {}) } }
   }
 }
