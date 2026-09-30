@@ -199,7 +199,7 @@
   "scripts": {
     "build:web": "npm run build --workspace @kkcode/web",
     "typecheck:web": "tsc -p apps/web/tsconfig.json",
-    "test:web": "npm run build:web && node scripts/web-smoke.mjs && node scripts/web-cancel-smoke.mjs && node scripts/web-feature-contract-smoke.mjs && node scripts/web-pixel-theme-smoke.mjs && node scripts/web-knowledge-smoke.mjs && node scripts/web-config-smoke.mjs && node --test test/web-memory-race.test.mjs test/web-todo-progress.test.mjs",
+    "test:web": "npm run build:web && node scripts/web-smoke.mjs && node scripts/web-cancel-smoke.mjs && node scripts/web-feature-contract-smoke.mjs && node scripts/web-pixel-theme-smoke.mjs && node scripts/web-knowledge-smoke.mjs && node scripts/web-config-smoke.mjs && node --test test/web-memory-race.test.mjs test/web-todo-progress.test.mjs test/web-markdown-sanitization.test.mjs",
     "test:browser": "node scripts/browser-smoke.mjs",
     "test:compatibility": "node scripts/compatibility-acceptance.mjs",
     "gateway": "node apps/gateway/main.mjs",
@@ -228,7 +228,7 @@
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
     "commander": "^15.0.0",
-    "dompurify": "^3.4.15",
+    "dompurify": "^3.4.16",
     "fastify": "^5.12.5",
     "jose": "^6.2.12",
     "marked": "^16.4.2",
