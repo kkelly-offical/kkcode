@@ -6,7 +6,7 @@ import path from 'node:path'
 import { runManagedProcess } from '../src/kernel/tool/managed-process.mjs'
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
-const node = (code, options = {}) => runManagedProcess({ command: process.execPath, args: ['-e', code], ...options })
+const node = (code, options = {}, argv = []) => runManagedProcess({ command: process.execPath, args: ['-e', code, ...argv], ...options })
 
 test('already-cancelled managed process does not spawn', async () => {
   const controller = new AbortController(); controller.abort()
@@ -62,8 +62,10 @@ test('TERM-ignoring descendants with closed pipes still receive final process-gr
   const root = await mkdtemp(path.join(os.tmpdir(), 'kk-managed-escalation-'))
   const ready = path.join(root, 'ready'), later = path.join(root, 'later')
   const controller = new AbortController()
-  const child = `const fs = require('node:fs'); process.on('SIGTERM', () => {}); fs.closeSync(1); fs.closeSync(2); fs.writeFileSync(${JSON.stringify(ready)}, 'ready'); setTimeout(() => fs.writeFileSync(${JSON.stringify(later)}, 'leaked'), 600); setTimeout(() => {}, 900)`
-  const pending = node(`require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(child)}], { stdio: 'inherit' }); setTimeout(() => {}, 1200)`, { signal: controller.signal, killGraceMs: 50 })
+  const pending = node(`
+    const child = "const fs = require('node:fs'); process.on('SIGTERM', () => {}); fs.closeSync(1); fs.closeSync(2); fs.writeFileSync(process.argv[1], 'ready'); setTimeout(() => fs.writeFileSync(process.argv[2], 'leaked'), 600); setTimeout(() => {}, 900)";
+    require('node:child_process').spawn(process.execPath, ['-e', child, ...process.argv.slice(1)], { stdio: 'inherit' }); setTimeout(() => {}, 1200)
+  `, { signal: controller.signal, killGraceMs: 50 }, [ready, later])
   try {
     for (let i = 0; i < 200; i++) { if (await access(ready).then(() => true, () => false)) break; await pause(10) }
     await access(ready)
@@ -78,9 +80,11 @@ test('TERM-ignoring descendants with closed pipes still receive final process-gr
 test('successful owner exit with redirected live children is cleaned up and not reported complete', { skip: process.platform === 'win32' ? 'POSIX group liveness probe; Windows active cancellation has separate coverage' : false }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kk-managed-orphan-'))
   const later = path.join(root, 'later')
-  const child = `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(later)}, 'orphaned'), 800)`
   try {
-    const result = await node(`require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(child)}], { stdio: 'ignore' }).unref()`, { killGraceMs: 20, drainMs: 100 })
+    const result = await node(`
+      const child = "setTimeout(() => require('node:fs').writeFileSync(process.argv[1], 'orphaned'), 800)";
+      require('node:child_process').spawn(process.execPath, ['-e', child, process.argv[1]], { stdio: 'ignore' }).unref()
+    `, { killGraceMs: 20, drainMs: 100 }, [later])
     assert.equal(result.exitCode, 0)
     assert.equal(result.errorCode, 'PROCESS_CHILDREN_RUNNING')
     assert.equal(result.captureIncomplete, true)

@@ -5,10 +5,10 @@ import os from 'node:os'
 import path from 'node:path'
 import { createKernel } from '../src/kernel/kernel.mjs'
 import { BackgroundManager } from '../src/kernel/orchestration/background-manager.mjs'
+import { nodeFixtureCommand } from './fixtures/process-script.mjs'
 
 const pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
 const exists = file => access(file).then(() => true, () => false)
-const command = code => `"${process.execPath}" -e "eval(Buffer.from('${Buffer.from(code).toString('base64')}','base64').toString())"`
 
 async function fixture(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kk-background-completion-'))
@@ -40,13 +40,14 @@ async function fixture(t) {
 
 async function launchHeldMutation(kernel, cwd, sessionId, changedContent = 'syntax invalid {') {
   const ready = path.join(cwd, 'background-ready'), release = path.join(cwd, 'background-release')
-  const source = `const fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(ready)}, 'ready'); const timer = setInterval(() => { if (fs.existsSync(${JSON.stringify(release)})) { fs.writeFileSync('safe.mjs', ${JSON.stringify(changedContent)}); clearInterval(timer); } }, 20)`
+  const source = "const fs = require('node:fs'); const { changedContent } = JSON.parse(fs.readFileSync(require('node:path').join(__dirname, 'data.json'), 'utf8')); fs.writeFileSync('background-ready', 'ready'); const timer = setInterval(() => { if (fs.existsSync('background-release')) { fs.writeFileSync('safe.mjs', changedContent); clearInterval(timer); } }, 20)"
+  const command = await nodeFixtureCommand(cwd, source, { changedContent })
   let requests = 0
   kernel.providers.registerProvider('background-fixture', {
     async request() { throw new Error('Only controlled streaming is enabled') },
     async *requestStream() {
       requests++
-      if (requests === 1) yield { type: 'tool_call', call: { id: 'held-mutation', name: 'bash', args: { command: command(source), run_in_background: true } } }
+      if (requests === 1) yield { type: 'tool_call', call: { id: 'held-mutation', name: 'bash', args: { command, run_in_background: true } } }
       else if (requests === 2) {
         for (let attempt = 0; !await exists(ready) && attempt < 250; attempt++) await pause(20)
         assert.equal(await exists(ready), true, 'the fixture background process must actually be running')

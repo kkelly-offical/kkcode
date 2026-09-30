@@ -8,11 +8,11 @@ import path from 'node:path'
 import os from 'node:os'
 import { ToolRegistry } from '../src/kernel/tool/registry.mjs'
 import { BackgroundManager } from '../src/kernel/orchestration/background-manager.mjs'
+import { nodeFixtureCommand } from './fixtures/process-script.mjs'
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
 const exists = target => access(target).then(() => true, () => false)
 const config = { permission: { level: 'yolo', rules: [] }, tool: { sources: { builtin: true, local: false, plugin: false, mcp: false } }, git: { auto: { enabled: false } } }
-const command = code => `"${process.execPath}" -e "eval(Buffer.from('${Buffer.from(code).toString('base64')}','base64').toString())"`
 
 async function within(promise, ms, message) {
   let timer
@@ -33,8 +33,8 @@ test('an in-flight heartbeat cannot erase cancellation committed by another proc
   const heartbeatRelease = new Promise(resolve => { releaseHeartbeat = resolve })
   try {
     await ToolRegistry.initialize({ config, cwd: root, force: true, allowProjectSources: false })
-    const code = `const fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(ready)}, 'ready'); setTimeout(() => fs.writeFileSync(${JSON.stringify(later)}, 'effect after cancellation'), 5000); setTimeout(() => {}, 5100)`
-    const launched = await ToolRegistry.call('bash', { command: command(code), run_in_background: true }, { cwd: root, config, sessionId: 'cancel-race-fixture' })
+    const code = "const fs = require('node:fs'); fs.writeFileSync('ready', 'ready'); setTimeout(() => fs.writeFileSync('later', 'effect after cancellation'), 5000); setTimeout(() => {}, 5100)"
+    const launched = await ToolRegistry.call('bash', { command: await nodeFixtureCommand(root, code), run_in_background: true }, { cwd: root, config, sessionId: 'cancel-race-fixture' })
     taskId = launched.output.match(/background task launched: (\S+)/)?.[1]
     assert.ok(taskId, launched.output)
     await within((async () => { while (!(await exists(ready))) await pause(10) })(), 3000, 'Bash child did not become ready')
@@ -58,8 +58,8 @@ test('an in-flight heartbeat cannot erase cancellation committed by another proc
     await within(heartbeatReady, 3000, 'Heartbeat never reached the commit boundary')
 
     const managerUrl = new URL('../src/kernel/orchestration/background-manager.mjs', import.meta.url).href
-    const cancelCode = `const { BackgroundManager } = await import(${JSON.stringify(managerUrl)}); console.log('cancel-started'); console.log('cancel-result:' + await BackgroundManager.cancel(${JSON.stringify(taskId)}));`
-    cancellingChild = spawn(process.execPath, ['--input-type=module', '-e', cancelCode], { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] })
+    const cancelCode = "const { BackgroundManager } = await import(process.argv[1]); console.log('cancel-started'); console.log('cancel-result:' + await BackgroundManager.cancel(process.argv[2]));"
+    cancellingChild = spawn(process.execPath, ['--input-type=module', '-e', cancelCode, managerUrl, taskId], { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] })
     let cancelOutput = '', cancelError = '', notifyCancelStarted
     const cancelStarted = new Promise(resolve => { notifyCancelStarted = resolve })
     cancellingChild.stdout.on('data', chunk => {

@@ -7,12 +7,13 @@ import { ToolRegistry } from '../src/kernel/tool/registry.mjs'
 import { executeTool } from '../src/kernel/tool/executor.mjs'
 import { BackgroundManager } from '../src/kernel/orchestration/background-manager.mjs'
 import { runManagedProcess } from '../src/kernel/tool/managed-process.mjs'
+import { nodeFixtureCommand } from './fixtures/process-script.mjs'
 
 let root, previousRoot
 const tasks = new Set()
 const config = { permission: { level: 'yolo', rules: [] }, tool: { sources: { builtin: true, local: false, plugin: false, mcp: false } }, git: { auto: { enabled: false } } }
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
-const command = code => `"${process.execPath}" -e "eval(Buffer.from('${Buffer.from(code).toString('base64')}','base64').toString())"`
+const command = code => nodeFixtureCommand(root, code)
 const exists = file => access(file).then(() => true, () => false)
 async function waitUntil(predicate) {
   for (let i = 0; i < 300; i++) { if (await predicate()) return; await pause(10) }
@@ -54,7 +55,7 @@ test('short Bash nonzero output is a failed tool with structured exit evidence',
 })
 
 test('successful Bash stderr remains success with complete structured metadata', async () => {
-  const result = await bash({ command: command("process.stderr.write('progress')") })
+  const result = await bash({ command: await command("process.stderr.write('progress')") })
   assert.equal(result.ok, true)
   assert.equal(result.metadata.exitCode, 0)
   assert.equal(result.metadata.timedOut, false)
@@ -64,7 +65,7 @@ test('successful Bash stderr remains success with complete structured metadata',
 })
 
 test('foreground timeout preserves output and never settles successfully', async () => {
-  const result = await bash({ command: command("console.log('partial'); setTimeout(() => {}, 1500)"), timeout: 1000 })
+  const result = await bash({ command: await command("console.log('partial'); setTimeout(() => {}, 1500)"), timeout: 1000 })
   assert.equal(result.ok, false)
   assert.equal(result.status, 'error')
   assert.equal(result.metadata.timedOut, true)
@@ -76,7 +77,7 @@ test('foreground timeout preserves output and never settles successfully', async
 test('executor forwards its AbortSignal and cancellation terminates before natural exit', async () => {
   const ready = path.join(root, 'ready')
   const controller = new AbortController()
-  const pending = bash({ command: command(`require('node:fs').writeSync(1, 'partial'); require('node:fs').writeFileSync(${JSON.stringify(ready)}, 'ready'); setTimeout(() => {}, 1800)`) }, controller.signal)
+  const pending = bash({ command: await command("require('node:fs').writeSync(1, 'partial'); require('node:fs').writeFileSync('ready', 'ready'); setTimeout(() => {}, 1800)") }, controller.signal)
   await waitUntil(() => exists(ready))
   const started = Date.now(); controller.abort()
   const result = await pending
@@ -96,7 +97,7 @@ test('background Bash nonzero result is retained and classified as error', async
 })
 
 test('background Bash respects the same requested timeout as foreground', async () => {
-  const task = await settled(await background({ command: command("console.log('partial'); setTimeout(() => {}, 1600)"), timeout: 1000 }))
+  const task = await settled(await background({ command: await command("console.log('partial'); setTimeout(() => {}, 1600)"), timeout: 1000 }))
   assert.equal(task.status, 'error')
   assert.equal(task.result.metadata.timedOut, true)
   assert.match(task.result.output, /partial/)
@@ -104,7 +105,7 @@ test('background Bash respects the same requested timeout as foreground', async 
 
 test('background cancellation signals the real process and retains partial result', async () => {
   const ready = path.join(root, 'ready')
-  const id = await background({ command: command(`require('node:fs').writeSync(1, 'partial'); require('node:fs').writeFileSync(${JSON.stringify(ready)}, 'ready'); setTimeout(() => {}, 1800)`) })
+  const id = await background({ command: await command("require('node:fs').writeSync(1, 'partial'); require('node:fs').writeFileSync('ready', 'ready'); setTimeout(() => {}, 1800)") })
   await waitUntil(() => exists(ready))
   const started = Date.now(); await BackgroundManager.cancel(id)
   const task = await settled(id)
@@ -116,9 +117,11 @@ test('background cancellation signals the real process and retains partial resul
 
 test('cancellation stops inherited child processes before later side effects', async () => {
   const ready = path.join(root, 'child-ready'), later = path.join(root, 'child-later')
-  const childCode = `require('node:fs').writeFileSync(${JSON.stringify(ready)}, 'ready'); setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(later)}, 'must not happen'), 1400); setTimeout(() => {}, 1600)`
-  const parentCode = `require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(childCode)}], { stdio: 'inherit' }); setTimeout(() => {}, 1800)`
-  const controller = new AbortController(), pending = bash({ command: command(parentCode) }, controller.signal)
+  const parentCode = `
+    const child = "require('node:fs').writeFileSync('child-ready', 'ready'); setTimeout(() => require('node:fs').writeFileSync('child-later', 'must not happen'), 1400); setTimeout(() => {}, 1600)";
+    require('node:child_process').spawn(process.execPath, ['-e', child], { stdio: 'inherit' }); setTimeout(() => {}, 1800)
+  `
+  const controller = new AbortController(), pending = bash({ command: await command(parentCode) }, controller.signal)
   await waitUntil(() => exists(ready)); controller.abort()
   const result = await pending
   assert.equal(result.status, 'cancelled')
@@ -128,11 +131,11 @@ test('cancellation stops inherited child processes before later side effects', a
 
 test('another process can cancel an inline Bash task through its durable record', async () => {
   const ready = path.join(root, 'cross-process-ready')
-  const id = await background({ command: command(`require('node:fs').writeSync(1, 'partial'); require('node:fs').writeFileSync(${JSON.stringify(ready)}, 'ready'); setTimeout(() => {}, 2500)`) })
+  const id = await background({ command: await command("require('node:fs').writeSync(1, 'partial'); require('node:fs').writeFileSync('cross-process-ready', 'ready'); setTimeout(() => {}, 2500)") })
   await waitUntil(() => exists(ready))
   const moduleUrl = new URL('../src/kernel/orchestration/background-manager.mjs', import.meta.url).href
   const stopped = await runManagedProcess({ command: process.execPath,
-    args: ['--input-type=module', '-e', `const { BackgroundManager } = await import(${JSON.stringify(moduleUrl)}); await BackgroundManager.cancel(${JSON.stringify(id)});`] })
+    args: ['--input-type=module', '-e', 'const { BackgroundManager } = await import(process.argv[1]); await BackgroundManager.cancel(process.argv[2]);', moduleUrl, id] })
   assert.equal(stopped.exitCode, 0)
   const task = await settled(id)
   assert.equal(task.status, 'cancelled')

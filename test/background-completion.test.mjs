@@ -8,11 +8,12 @@ import { executeTool } from '../src/kernel/tool/executor.mjs'
 import { BackgroundManager } from '../src/kernel/orchestration/background-manager.mjs'
 import { collectBackgroundCompletionEvidence } from '../src/kernel/session/background-completion.mjs'
 import { evaluateCompletionEvidence } from '../src/kernel/session/completion-evidence.mjs'
+import { nodeFixtureCommand } from './fixtures/process-script.mjs'
 
 let root, previousRoot
 const tasks = new Set()
 const config = { permission: { level: 'yolo', rules: [] }, tool: { sources: { builtin: true, local: false, plugin: false, mcp: false } } }
-const command = code => `"${process.execPath}" -e "eval(Buffer.from('${Buffer.from(code).toString('base64')}','base64').toString())"`
+const command = code => nodeFixtureCommand(root, code)
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
 const collect = (toolEvents = [], parts = []) => collectBackgroundCompletionEvidence({ sessionId: 'owner', toolEvents, parts, cwd: root })
 const settled = id => BackgroundManager.waitForTask(id, { timeoutMs: 10000, tickMs: 20 })
@@ -38,7 +39,7 @@ afterEach(async () => {
 })
 
 test('Bash launch has durable session/turn ownership and is pending, not completion', async () => {
-  const launched = await launch(command('setTimeout(() => {}, 800)'))
+  const launched = await launch(await command('setTimeout(() => {}, 800)'))
   const task = await BackgroundManager.get(launched.id)
   assert.equal(task.payload.parentSessionId, 'owner')
   assert.equal(task.payload.turnId, 'owned-turn')
@@ -52,7 +53,7 @@ test('Bash launch has durable session/turn ownership and is pending, not complet
 })
 
 test('a check that finished after background mutation but began before it settled cannot verify it', async () => {
-  const launched = await launch(command('console.log("done")'))
+  const launched = await launch(await command('console.log("done")'))
   const task = await settled(launched.id), ended = task.endedAt
   const stale = successfulCheck(ended - 20, ended + 100)
   const result = await collect([launched.event, stale])
@@ -111,7 +112,7 @@ test('blocked background dispatch is not mistaken for a launched process with mi
 })
 
 test('old completed marker does not waive a background mutation without a later-starting actual check', async () => {
-  const launched = await launch(command('console.log("done")'))
+  const launched = await launch(await command('console.log("done")'))
   const task = await settled(launched.id), end = task.endedAt
   const marker = { type: 'turn-outcome', source: 'host', schema: 'kk.turn-outcome.v1', status: 'completed', createdAt: end + 200 }
   const before = { type: 'tool-call', tool: 'bash', ...successfulCheck(end - 10, end + 100) }
@@ -134,7 +135,7 @@ test('known failed background check stays resolved after an exact later repair c
 
 test('parent abort stops its owned finite background command instead of leaving future writes', async () => {
   const controller = new AbortController(), ready = path.join(root, 'ready'), later = path.join(root, 'later')
-  const launched = await launch(command(`require('node:fs').writeFileSync(${JSON.stringify(ready)}, 'ready'); setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(later)}, 'bad'), 900); setTimeout(() => {}, 1100)`), { signal: controller.signal })
+  const launched = await launch(await command("require('node:fs').writeFileSync('ready', 'ready'); setTimeout(() => require('node:fs').writeFileSync('later', 'bad'), 900); setTimeout(() => {}, 1100)"), { signal: controller.signal })
   for (let index = 0; index < 200; index++) { if (await access(ready).then(() => true, () => false)) break; await pause(10) }
   await access(ready); controller.abort()
   const task = await settled(launched.id)

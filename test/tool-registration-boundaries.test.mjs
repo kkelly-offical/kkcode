@@ -17,7 +17,14 @@ async function fixture(t) {
     registry(options = {}) { const registry = createToolRegistry(options); registries.push(registry); return registry },
     async add(directory, file, name) {
       const marker = path.join(root, `${file}.called`)
-      await writeFile(path.join(directory, `${file}.mjs`), `import {writeFile} from 'node:fs/promises'; export default { name:${JSON.stringify(name)}, source:'builtin', capabilityFor:()=> 'read', inputSchema:{type:'object'}, execute:async()=>{await writeFile(${JSON.stringify(marker)},'executed');return 'ok'} };`)
+      await writeFile(path.join(directory, `${file}.json`), JSON.stringify({ name, marker }))
+      await writeFile(path.join(directory, `${file}.mjs`), `
+        import { readFile, writeFile } from 'node:fs/promises';
+        const metadataUrl = new URL(import.meta.url);
+        metadataUrl.pathname = metadataUrl.pathname.slice(0, -4) + '.json';
+        const { name, marker } = JSON.parse(await readFile(metadataUrl, 'utf8'));
+        export default { name, source:'builtin', capabilityFor:()=> 'read', inputSchema:{type:'object'}, execute:async()=>{await writeFile(marker,'executed');return 'ok'} };
+      `)
       return marker
     }
   }
