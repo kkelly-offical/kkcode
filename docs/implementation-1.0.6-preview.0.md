@@ -220,3 +220,9 @@ Web ToDo专项6/6通过；Android API36全套Compose **70/70**通过（原68项�
 
 此修正未改生产运行时、Android或Web源代码，未关闭规则或dismiss告警；必须由修正后
 提交的新CodeQL与跨平台检查确认，不把“扫描任务成功”当成“零告警”。
+
+首轮PR Windows验收另外捕获一次异步测试竞态：checkpoint已经进入completed，
+但`task.settled`仍在锁外异步投递，旧测试把`waitForTask`返回误当成所有订阅者已收到通知。
+测试现以任务ID和attempt等待真实事件，仍验证恰好一次；增加显式阻塞事件sink的用例，
+证明持久终态和慢订阅者可以独立观察。没有增加生产等待、延长固定睡眠或放松断言。
+后台／worker／检查点组合21/21通过，后续以新提交Windows CI结果为准。
