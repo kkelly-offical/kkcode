@@ -1,14 +1,6 @@
 import path from "node:path"
-import { readFile, writeFile, rename, unlink, mkdir } from "node:fs/promises"
+import { readFile, rename, mkdir, mkdtemp, open, lstat, chmod, rm } from "node:fs/promises"
 import { diagnoseNoMatch } from "./edit-diagnosis.mjs"
-
-function tmpPath(target) {
-  return `${target}.kkcode.tmp`
-}
-
-function backupPath(target) {
-  return `${target}.kkcode.bak`
-}
 
 function linesForPatch(text) {
   const value = String(text ?? "")
@@ -77,34 +69,45 @@ export function buildStructuredPatch(oldText, newText, {
 
 export async function atomicWriteFile(target, content) {
   const dir = path.dirname(target)
-  await mkdir(dir, { recursive: true })
-  const tmp = tmpPath(target)
-  const bak = backupPath(target)
-  let hadOriginal = false
-  try {
-    const existing = await readFile(target, "utf8")
-    hadOriginal = true
-    await writeFile(bak, existing, "utf8")
-  } catch {
-    hadOriginal = false
+  const targetInfo = async () => {
+    try { return await lstat(target, {bigint: true}) }
+    catch (error) {if (error.code === 'ENOENT') return null; throw error}
   }
-
+  const original = await targetInfo()
+  if (original && (!original.isFile() || original.nlink !== 1n)) {
+    throw Object.assign(new Error('Atomic editing requires a regular single-link target. Use the explicit real file rather than replacing a symbolic or hard-linked alias.'), {code: 'unsafe_atomic_target'})
+  }
+  const same = current => original ? current && ['dev', 'ino', 'mode', 'uid', 'gid', 'size', 'mtimeNs', 'ctimeNs', 'nlink'].every(key => current[key] === original[key]) : current === null
+  await mkdir(dir, { recursive: true })
+  // Never touch predictable .kkcode.tmp/.bak names controlled by a workspace.
+  // Keep original bytes in place until the single atomic commit; a failed
+  // write/rename must not restore an old backup over somebody else's changes.
+  const staging = await mkdtemp(path.join(dir, '.kkcode-write-'))
+  let handle
   try {
-    await writeFile(tmp, content, "utf8")
-    await rename(tmp, target)
-    if (hadOriginal) {
-      await unlink(bak).catch(() => {})
+    await chmod(staging, 0o700)
+    const temporary = path.join(staging, 'content')
+    handle = await open(temporary, 'wx', 0o600)
+    await handle.writeFile(content, 'utf8')
+    if (original && process.platform !== 'win32') {
+      const created = await handle.stat({bigint: true})
+      if (created.uid !== original.uid || created.gid !== original.gid) await handle.chown(Number(original.uid), Number(original.gid))
     }
-  } catch (error) {
-    if (hadOriginal) {
-      const bakContent = await readFile(bak, "utf8").catch(() => null)
-      if (bakContent !== null) {
-        await writeFile(target, bakContent, "utf8").catch(() => {})
+    // Preserve ordinary permission/executable bits, not setuid/setgid grants
+    // on changed code. Private files must not become broadly readable.
+    await handle.chmod(original ? Number(original.mode & 0o777n) : 0o666 & ~process.umask())
+    await handle.sync(); await handle.close(); handle = null
+    for (let attempt = 0; ; attempt++) {
+      if (!same(await targetInfo())) throw Object.assign(new Error('Atomic edit target changed while preparing the write; inspect and reread it before retrying.'), {code: 'atomic_target_changed'})
+      try { await rename(temporary, target); break }
+      catch (error) {
+        if (attempt >= 5 || !['EPERM', 'EBUSY', 'EACCES'].includes(error.code)) throw error
+        await new Promise(resolve => setTimeout(resolve, 20 * 2 ** attempt))
       }
-      await unlink(bak).catch(() => {})
     }
-    await unlink(tmp).catch(() => {})
-    throw error
+  } finally {
+    await handle?.close().catch(() => {})
+    await rm(staging, {recursive: true, force: true}).catch(() => {})
   }
 }
 
