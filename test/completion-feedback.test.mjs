@@ -104,6 +104,28 @@ for (const language of ['en', 'zh']) test(`a later ordinary inspection script ge
   assert.equal(result.toolEvents.filter(e => e.name === 'bash' && e.args.command === 'node inspect-result.mjs').length, 1)
 })
 
+test('real final read-only shell composition preserves checked completion without permission escalation', async t => {
+  const {kernel} = await fixture(t, 'zh')
+  let requests = 0
+  kernel.providers.registerProvider('feedback-fixture', {
+    async request() {throw Error('Streaming fixture only')},
+    async *requestStream() {
+      requests++
+      if (requests === 1) {
+        yield {type: 'tool_call', call: {id: 'value', name: 'write', args: {path: 'result.txt', content: '42\n'}}}
+        yield {type: 'tool_call', call: {id: 'test', name: 'write', args: {path: 'verify.test.mjs', content: assertion}}}
+      } else if (requests === 2) yield {type: 'tool_call', call: {id: 'verified', name: 'bash', args: {command: 'node --test verify.test.mjs'}}}
+      else if (requests === 3) yield {type: 'tool_call', call: {id: 'identity-inspection', name: 'bash', args: {command: 'whoami && whoami'}}}
+      else yield {type: 'text', content: 'The exact result passed its test; subsequent identity inspection did not edit it.'}
+    }
+  })
+  const result = await kernel.executeTurn({prompt: 'Create, verify, inspect the executing identity, and report.', sessionId: 'readonly-ordering-owner', mode: 'assistant', model: 'fixture', providerType: 'feedback-fixture'})
+  assert.equal(result.status, 'completed')
+  assert.equal(requests, 4)
+  assert.equal(result.verification.passed, true)
+  assert.ok(result.toolEvents.some(event => event.name === 'bash' && event.args.command === 'whoami && whoami' && event.metadata.exitCode === 0))
+})
+
 test('refused alias edit does not poison completion after the explicit real file is read, edited and checked', async t => {
   const {kernel, cwd} = await fixture(t, 'en', {maxSteps: 10})
   await writeFile(path.join(cwd, 'actual.txt'), 'before\n')

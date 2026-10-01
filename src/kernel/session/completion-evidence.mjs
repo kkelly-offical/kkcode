@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { createHash } from 'node:crypto'
-import { parseShellCommands } from '../permission/shell-analysis.mjs'
+import { parseShellCommands, isLiteralNonmutatingShell } from '../permission/shell-analysis.mjs'
 import { toolCapability } from '../permission/rules.mjs'
 import { isReconciledCompletionEvent, completionEnvironmentIdentity } from './completion-history.mjs'
 import { completionVerificationGuidance } from './verification-guidance.mjs'
@@ -252,6 +252,7 @@ function mutationReason(event, verification) {
   if (Array.isArray(metadata.fileChanges) && metadata.fileChanges.length || Array.isArray(event.evidence?.fileChanges) && event.evidence.fileChanges.length || metadata.mutation || Array.isArray(metadata.mutations) && metadata.mutations.length) return 'observed_file_change'
   if (EDIT_TOOLS.has(event.name)) return successful(event) || isReconciledCompletionEvent(event) ? 'editor_action' : null
   if (event.name !== 'bash' || verification || !['completed', 'error', 'cancelled'].includes(event.status) || event.metadata?.started === false) return null
+  if (event.metadata?.verificationEnvUnknown !== true && isLiteralNonmutatingShell(event.args?.command, {env: event.args?.env})) return null
   const parsed = parseShellCommands(event.args?.command)
   if (event.metadata?.verificationEnvUnknown !== true && completionEnvironmentIdentity(event.args?.env) && !parsed.uncertain && parsed.commands.length && parsed.commands.every(entry => !entry.dynamic && !entry.glob && !entry.redirects.length && ['echo', 'printf', 'true', 'pwd'].includes(entry.words[0]))) return null
   return event.metadata?.verificationEnvUnknown === true || toolCapability('bash', event.args?.command, { args: event.args }) !== 'safe-shell' ? 'unclassified_command' : null
