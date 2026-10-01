@@ -1,5 +1,9 @@
 # Project working memory
 
+## Windows quota fixture ordering — 2026-10-01
+
+- Source8caa886 pushed to PR#33; PR/branch CodeQL36854105033/36854133507 passed3each and branch0open; enterprise36854131788 failedWindows only (11other pass). Its existing artifact-store quota test's100ms abort preceded filesystem setup under Windows, so actualAbortError was correct but not the tested later-abort-after-quota path. Fixture now synchronizes on producer.return entry, retains5000ms cap/quota-error/no-partial/lock-release/next-save assertions, no production change or Windows skip. New SHA needs own final gates. PR#33 administrator exception unused, no publication/deployment/new inference yet; R7 private lifecycle/calibration preparation is separate and unactivated.
+
 ## Unknown effects stop barrier / second carry — 2026-10-01
 
 - Actual frozen R6 art trace continued many tools after a timed-out command had unknown effects. New controlled real timeout regression reproduced same-batch later writes plus4provider requests; with optional verification=false it even returnedcompleted. New loop fixes stop before subsequent batch effects/provider calls, preserve all wire pairs with host not-started receipts, gate new turns until exact owner acknowledgement, retain fresh-check requirements afterward, and protect uncertain host outcomes from tool-after transforms. Owned background uncertainty and strict program leaves use the same barrier; running known jobs remain waitable. Final local4150/3994pass/0fail/156conditional skips/E2E33/minNode22.12related54/53pass1OCI skip/types/lint/clean package/secrets pass. FINAL new-SHA platform/security gates remain separate. PR#33 admin exception remains unused; no publication/deployment.
