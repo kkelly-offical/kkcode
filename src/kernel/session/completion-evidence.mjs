@@ -82,7 +82,14 @@ export function classifyVerificationCommand(command, { cwd = process.cwd(), env 
       directory = path.resolve(directory, args[0]); continue
     }
     const check = simpleCheck(words)
-    if (!check) return null
+    if (!check) {
+      // Foreground success of an unmasked && chain proves every check leaf
+      // succeeded, even with literal read-only/output leaves around it. Output
+      // text is not proof. Keep opaque effects, masks, expansions and shell
+      // dialect ambiguity rejected; do not grant new execution permissions.
+      if (!env.length && !/[\\'%!^]/.test(command) && isLiteralNonmutatingShell(words.map(word => JSON.stringify(word)).join(' '))) continue
+      return null
+    }
     const effectiveEnv = [...new Map([...toolEnvironment, ...env]).entries()].sort(([a], [b]) => a.localeCompare(b))
     const descriptor = { ...check, id: digest({ directory, env: effectiveEnv, words }) }
     checkDetails.set(descriptor, {directory, words, environmentNames: effectiveEnv.map(([key]) => key)})

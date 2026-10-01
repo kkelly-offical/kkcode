@@ -74,7 +74,7 @@ export function parseShellCommands(input) {
   return { commands, uncertain }
 }
 
-const NONMUTATING_PROGRAMS = new Set(['pwd', 'ls', 'cat', 'head', 'tail', 'wc', 'which', 'whoami', 'uname', 'grep'])
+const NONMUTATING_PROGRAMS = new Set(['pwd', 'ls', 'cat', 'head', 'tail', 'wc', 'which', 'whoami', 'uname', 'grep', 'echo', 'printf', 'true'])
 
 /** Effect knowledge is NOT execution authorization. A compound expression may
  * remain risky-shell for approvals/scope while its literal read-only leaves do
