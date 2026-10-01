@@ -1,5 +1,11 @@
 # Project working memory
 
+## Post-integration dependency follow-up — 2026-10-01
+
+- PR#31 has been administrator-merged under the user's one-PR authorization: main `d1f96493d2590f9ef9aaf5447fe13b7709435e52`, identical tree `1aacfb237b6eb10212cafa1abf7b162d2627837f` to tested `7d27eb2`. The exception is consumed. Candidate PR verify36756249490 (5/5), enterprise36756275360 (12/12), PR/branch CodeQL36756249780/36756274553 (3/3 each), main verify36758909650 (5/5) and main CodeQL36758909753 (3/3) passed. Main has zero open CodeQL and secret-scanning alerts; historical dismissed findings remain.
+- A newly indexed low-severity Dependabot#3 (`GHSA-p98j-92pf-mc4p`) affects installed DOMPurify3.4.15. Current Web sanitization uses a string, not the advisory's required `IN_PLACE` plus node-removing hooks; do not claim a reproduced KK Code XSS. A minimal3.4.16 dependency/bundled-Web patch is being prepared on `fix/1.0.6-preview-dompurify-20261001`, with targeted real-browser regression. No alert dismissal, rule change, tag, npm/GitHub publication or deployment occurred.
+- The user's new explicit reply "合入吧" authorizes the separate DOMPurify patch PR's administrator integration after its own checks pass, followed by the already-authorized1.0.6-preview.0 publication. This is a new scoped exception, not reuse of PR#31's consumed permission or standing authority for unrelated PRs. Do not count old CI as this patch's acceptance or alter protection rules. Keep1.0.6-preview.0/Android10011; Android source and signed APK remain unchanged. Public verification state/receipts are outside Git at `/tmp/kkcode-1.0.6-public-verification-A0GsCS/`.
+
 ## 1.0.6 Preview publication and five-scene evaluation — 2026-10-01
 
 - The user explicitly authorizes pushing this round, running release tests, and publishing the current **1.0.6-preview.0 / Android10011**, then evaluating the actual published package in five scenarios: full-stack Web, document authoring/layout/revisions, comprehensive sourced research reports, artistic responsive pages, and deep multi-agent/orchestration algorithms. This supersedes the previous no-push/no-publication restriction for this Preview only. Keep stable npm latest1.0.5 unchanged; use npm preview and GitHub prerelease. No public gateway image or production/demo upgrade is included.
