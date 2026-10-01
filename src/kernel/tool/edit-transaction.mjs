@@ -1,5 +1,5 @@
 import path from "node:path"
-import { readFile, rename, mkdir, mkdtemp, open, lstat, chmod, rm } from "node:fs/promises"
+import { readFile, rename, mkdir, mkdtemp, open, lstat, chmod, rm, rmdir } from "node:fs/promises"
 import { diagnoseNoMatch } from "./edit-diagnosis.mjs"
 
 function linesForPatch(text) {
@@ -67,17 +67,29 @@ export function buildStructuredPatch(oldText, newText, {
   }]
 }
 
-export async function atomicWriteFile(target, content) {
-  const dir = path.dirname(target)
-  const targetInfo = async () => {
-    try { return await lstat(target, {bigint: true}) }
-    catch (error) {if (error.code === 'ENOENT') return null; throw error}
-  }
-  const original = await targetInfo()
+async function targetInfo(target) {
+  try { return await lstat(target, {bigint: true}) }
+  catch (error) {if (error.code === 'ENOENT') return null; throw error}
+}
+
+/** Read-only precondition; checking it must never create a parent/scratch file. */
+export async function assertAtomicWriteTarget(target) {
+  const original = await targetInfo(target)
   if (original && (!original.isFile() || original.nlink !== 1n)) {
-    throw Object.assign(new Error('Atomic editing requires a regular single-link target. Use the explicit real file rather than replacing a symbolic or hard-linked alias.'), {code: 'unsafe_atomic_target'})
+    throw Object.assign(new Error('Atomic editing requires a regular single-link target. For a symbolic link, read and edit its explicit real file. Hard-linked files require an owner decision about shared links; do not silently replace an alias.'), {code: 'unsafe_atomic_target'})
   }
+  return original
+}
+
+export async function atomicWriteFile(target, content, options = /** @type {{expectedContent?: string | null}} */ ({})) {
+  const dir = path.dirname(target)
+  const original = await assertAtomicWriteTarget(target)
   const same = current => original ? current && ['dev', 'ino', 'mode', 'uid', 'gid', 'size', 'mtimeNs', 'ctimeNs', 'nlink'].every(key => current[key] === original[key]) : current === null
+  if (Object.hasOwn(options, 'expectedContent')) {
+    const expected = options.expectedContent
+    const matches = expected === null ? original === null : original && typeof expected === 'string' && await readFile(target, 'utf8') === expected
+    if (!matches || !same(await targetInfo(target))) throw Object.assign(new Error('Atomic edit target no longer contains the expected bytes; preserve the current file and inspect before retrying.'), {code: 'atomic_target_changed'})
+  }
   await mkdir(dir, { recursive: true })
   // Never touch predictable .kkcode.tmp/.bak names controlled by a workspace.
   // Keep original bytes in place until the single atomic commit; a failed
@@ -98,7 +110,7 @@ export async function atomicWriteFile(target, content) {
     await handle.chmod(original ? Number(original.mode & 0o777n) : 0o666 & ~process.umask())
     await handle.sync(); await handle.close(); handle = null
     for (let attempt = 0; ; attempt++) {
-      if (!same(await targetInfo())) throw Object.assign(new Error('Atomic edit target changed while preparing the write; inspect and reread it before retrying.'), {code: 'atomic_target_changed'})
+      if (!same(await targetInfo(target))) throw Object.assign(new Error('Atomic edit target changed while preparing the write; inspect and reread it before retrying.'), {code: 'atomic_target_changed'})
       try { await rename(temporary, target); break }
       catch (error) {
         if (attempt >= 5 || !['EPERM', 'EBUSY', 'EACCES'].includes(error.code)) throw error
@@ -108,6 +120,31 @@ export async function atomicWriteFile(target, content) {
   } finally {
     await handle?.close().catch(() => {})
     await rm(staging, {recursive: true, force: true}).catch(() => {})
+  }
+}
+
+/** Preserve a newly-created batch member instead of unlinking it on rollback.
+ * A private adjacent directory stays on the same volume. This is recoverable
+ * removal, not deletion or an adversarial filesystem-wide compare-and-swap. */
+export async function recoverCreatedAtomicFile(target, expectedContent) {
+  const original = await assertAtomicWriteTarget(target)
+  const same = info => original && info && ['dev', 'ino', 'mode', 'uid', 'gid', 'size', 'mtimeNs', 'nlink'].every(key => info[key] === original[key])
+  if (!original || await readFile(target, 'utf8') !== expectedContent || !same(await targetInfo(target))) {
+    throw Object.assign(new Error('Created batch member changed; preserved it instead of deleting owner data.'), {code: 'atomic_target_changed'})
+  }
+  const directory = await mkdtemp(path.join(path.dirname(target), '.kkcode-rollback-'))
+  let moved = false
+  const recoveryPath = path.join(directory, path.basename(target))
+  try {
+    await chmod(directory, 0o700)
+    if (!same(await targetInfo(target))) throw Object.assign(new Error('Created batch member changed while preparing recovery.'), {code: 'atomic_target_changed'})
+    await rename(target, recoveryPath); moved = true
+    if (!same(await targetInfo(recoveryPath)) || await readFile(recoveryPath, 'utf8') !== expectedContent || await targetInfo(target)) {
+      throw Object.assign(new Error('Recovery target changed; all moved bytes are preserved for owner inspection.'), {code: 'atomic_recovery_changed', recoveryPath})
+    }
+    return recoveryPath
+  } finally {
+    if (!moved) await rmdir(directory).catch(() => {}) // empty only, never recursive
   }
 }
 
@@ -128,7 +165,7 @@ export async function replaceInFileTransactional(target, before, after) {
     return { ok: false, output: `ambiguous: found ${matches} occurrences, expected exactly 1. Provide more surrounding context to match uniquely.`, matches, addedLines: 0, removedLines: 0 }
   }
   const next = content.replace(before, after)
-  await atomicWriteFile(absolute, next)
+  await atomicWriteFile(absolute, next, {expectedContent: content})
   const diff = diffLineCount(before, after)
   return {
     ok: true,
@@ -151,7 +188,7 @@ export async function replaceAllInFileTransactional(target, before, after) {
     }
   }
   const next = content.replaceAll(before, after)
-  await atomicWriteFile(absolute, next)
+  await atomicWriteFile(absolute, next, {expectedContent: content})
   const diff = diffLineCount(content, next)
   return {
     ok: true,

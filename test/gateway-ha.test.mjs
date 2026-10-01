@@ -1,6 +1,5 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import net from 'node:net'
 import { randomBytes, randomUUID, createCipheriv } from 'node:crypto'
 import { once } from 'node:events'
 import WebSocket from 'ws'
@@ -9,8 +8,13 @@ import { createRelayCluster } from '../src/remote/cluster.mjs'
 import { MemoryStore } from '../src/remote/store.mjs'
 import { identityHash } from '../src/remote/identity.mjs'
 
-const freePort = () => new Promise(resolve => { const server = net.createServer(); server.listen(0, '127.0.0.1', () => { const port = server.address().port; server.close(() => resolve(port)) }) })
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+test('automatic ephemeral HA listeners reject public origins or wildcard binding before startup', async () => {
+  const base = {store: new MemoryStore(), secret: randomBytes(32).toString('hex'), port: 0, handle: async () => ({result: true})}
+  await assert.rejects(createRelayCluster({...base, address: 'http://example.test:0'}), /private loopback/)
+  await assert.rejects(createRelayCluster({...base, address: 'http://127.0.0.1:0', host: '0.0.0.0'}), /private loopback/)
+})
 
 test('two gateway nodes route transient RPC, fence old connections, revoke credentials and fail over', { timeout: 30000 }, async () => {
   const store = new MemoryStore(), secret = randomBytes(32).toString('hex')
@@ -21,8 +25,7 @@ test('two gateway nodes route transient RPC, fence old connections, revoke crede
     await store.put(`token:${identityHash(id)}`, { sessionId: id, kind, account, expires: Date.now() + 60000 })
   }
   const create = async () => {
-    const port = await freePort()
-    const app = await createGateway({ origin: 'http://localhost', issuer: 'https://idp.invalid', oidcConfig: {}, store, dev: true, organization: 'HA', cluster: { address: `http://127.0.0.1:${port}`, port, secret, leaseMs: 1500 } })
+    const app = await createGateway({ origin: 'http://localhost', issuer: 'https://idp.invalid', oidcConfig: {}, store, dev: true, organization: 'HA', cluster: { address: 'http://127.0.0.1:0', port: 0, secret, leaseMs: 1500 } })
     const address = await app.listen({ host: '127.0.0.1', port: 0 })
     return { app, address }
   }
@@ -74,8 +77,9 @@ test('two gateway nodes route transient RPC, fence old connections, revoke crede
 })
 
 test('cluster rejects unsigned requests and expires unrenewed routes without persistent payloads', { timeout: 10000 }, async () => {
-  const store = new MemoryStore(), port = await freePort(), address = `http://127.0.0.1:${port}`
-  const cluster = await createRelayCluster({ store, address, port, secret: randomBytes(32).toString('hex'), leaseMs: 300, handle: async () => ({ result: true }) })
+  const store = new MemoryStore()
+  const cluster = await createRelayCluster({ store, address: 'http://127.0.0.1:0', port: 0, secret: randomBytes(32).toString('hex'), leaseMs: 300, handle: async () => ({ result: true }) })
+  const address = cluster.address
   try {
     assert.equal((await fetch(address + '/rpc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target: cluster.nodeId, request: { method: 'status' } }) })).status, 403)
     await store.put('route:dead', { nodeId: 'dead-node', address, connectionId: 'stale', expires: Date.now() + 20 })
@@ -87,9 +91,10 @@ test('cluster rejects unsigned requests and expires unrenewed routes without per
 })
 
 test('cluster authenticated envelopes reject replay, stale timestamps, wrong keys and connection fencing IDs', { timeout: 10000 }, async () => {
-  const store = new MemoryStore(), port = await freePort(), address = `http://127.0.0.1:${port}`, secret = randomBytes(32).toString('hex')
+  const store = new MemoryStore(), secret = randomBytes(32).toString('hex')
   let calls = 0
-  const cluster = await createRelayCluster({ store, address, port, secret, handle: async () => { calls++; return { result: true } } })
+  const cluster = await createRelayCluster({ store, address: 'http://127.0.0.1:0', port: 0, secret, handle: async () => { calls++; return { result: true } } })
+  const address = cluster.address
   const envelope = (extra = {}, key = secret) => {
     const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', Buffer.from(key, 'hex'), iv)
     const body = Buffer.concat([cipher.update(JSON.stringify({ nonce: randomUUID(), at: Date.now(), target: cluster.nodeId, deviceId: 'computer', connectionId: 'connection', request: { method: 'status' }, principal: { id: 'owner' }, ...extra })), cipher.final()])
@@ -109,10 +114,11 @@ test('cluster authenticated envelopes reject replay, stale timestamps, wrong key
 })
 
 test('encrypted HA forwarding carries upload-sized requests and history-sized responses within bounded envelopes', { timeout: 15000 }, async () => {
-  const store = new MemoryStore(), secret = randomBytes(32).toString('hex'), portA = await freePort(), portB = await freePort()
+  const store = new MemoryStore(), secret = randomBytes(32).toString('hex')
   const upload = Buffer.alloc(4 * 1024 * 1024, 7).toString('base64'), history = 'h'.repeat(4 * 1024 * 1024)
-  const a = await createRelayCluster({ store, secret, port: portA, address: `http://127.0.0.1:${portA}`, handle: async () => { throw new Error('Unexpected local dispatch') } })
-  const b = await createRelayCluster({ store, secret, port: portB, address: `http://127.0.0.1:${portB}`, handle: async (_device, _connection, request) => { assert.equal(request.params.data, upload); return { result: history } } })
+  const a = await createRelayCluster({ store, secret, port: 0, address: 'http://127.0.0.1:0', handle: async () => { throw new Error('Unexpected local dispatch') } })
+  const b = await createRelayCluster({ store, secret, port: 0, address: 'http://127.0.0.1:0', handle: async (_device, _connection, request) => { assert.equal(request.params.data, upload); return { result: history } } })
+  assert.notEqual(a.address, b.address)
   try {
     await b.claim('computer', 'live')
     const result = await a.send('computer', { id: 'upload', method: 'attachments.upload', params: { data: upload } }, { id: 'owner' })
@@ -122,11 +128,11 @@ test('encrypted HA forwarding carries upload-sized requests and history-sized re
 })
 
 test('cross-node forwarding applies backpressure while another node is nonresponsive', { timeout: 15000 }, async () => {
-  const store = new MemoryStore(), secret = randomBytes(32).toString('hex'), portA = await freePort(), portB = await freePort()
+  const store = new MemoryStore(), secret = randomBytes(32).toString('hex')
   let release
   const gate = new Promise(resolve => { release = resolve })
-  const a = await createRelayCluster({ store, secret, port: portA, address: `http://127.0.0.1:${portA}`, handle: async () => ({ result: true }) })
-  const b = await createRelayCluster({ store, secret, port: portB, address: `http://127.0.0.1:${portB}`, handle: async () => { await gate; return { result: true } } })
+  const a = await createRelayCluster({ store, secret, port: 0, address: 'http://127.0.0.1:0', handle: async () => ({ result: true }) })
+  const b = await createRelayCluster({ store, secret, port: 0, address: 'http://127.0.0.1:0', handle: async () => { await gate; return { result: true } } })
   let requests = []
   try {
     await b.claim('computer', 'live')

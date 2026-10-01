@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile, symlink, rm } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { pathToFileURL } from 'node:url'
@@ -68,6 +68,35 @@ for (const language of ['en', 'zh']) test(`real custom-output check receives act
   assert.ok(result.toolEvents.some(event => event.name === 'bash' && event.args.command === customCheck && event.metadata.exitCode === 0))
   assert.ok(result.toolEvents.some(event => event.name === 'bash' && event.args.command === 'node --test verify.test.mjs' && event.metadata.exitCode === 0))
   assert.match(feedback, /checks_required/)
+})
+
+test('refused alias edit does not poison completion after the explicit real file is read, edited and checked', async t => {
+  const {kernel, cwd} = await fixture(t, 'en', {maxSteps: 10})
+  await writeFile(path.join(cwd, 'actual.txt'), 'before\n')
+  await symlink(path.join(cwd, 'actual.txt'), path.join(cwd, 'alias.txt'))
+  let requests = 0
+  const calls = [
+    ['read', {path: 'alias.txt'}],
+    ['edit', {path: 'alias.txt', before: 'before', after: 'after'}],
+    ['read', {path: 'actual.txt'}],
+    ['edit', {path: 'actual.txt', before: 'before', after: 'after'}],
+    ['write', {path: 'verify.test.mjs', content: "import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';test('real file and alias',()=>{assert.equal(fs.readFileSync('actual.txt','utf8'),'after\\n');assert.equal(fs.readFileSync('alias.txt','utf8'),'after\\n');assert.equal(fs.lstatSync('alias.txt').isSymbolicLink(),true)});\n"}],
+    ['bash', {command: 'node --test verify.test.mjs'}]
+  ]
+  kernel.providers.registerProvider('feedback-fixture', {
+    async request() {throw Error('Streaming fixture only')},
+    async *requestStream() {
+      const call = calls[requests++]
+      if (call) yield {type: 'tool_call', call: {id: 'alias-' + requests, name: call[0], args: call[1]}}
+      else yield {type: 'text', content: 'The real file was edited and both paths passed; the alias remains intact.'}
+    }
+  })
+  const result = await kernel.executeTurn({prompt: 'Update the file safely, preserve aliases, and verify it.', sessionId: 'alias-owner', mode: 'assistant', model: 'fixture', providerType: 'feedback-fixture'})
+  assert.equal(result.status, 'completed')
+  assert.equal(requests, 7)
+  assert.equal(await readFile(path.join(cwd, 'actual.txt'), 'utf8'), 'after\n')
+  assert.equal(result.verification.passed, true)
+  assert.equal(result.toolEvents.find(e => e.name === 'edit' && e.args.path === 'alias.txt').metadata.started, false)
 })
 
 test('masked check repair feedback retains exact runner arguments without replaying the setup', async t => {

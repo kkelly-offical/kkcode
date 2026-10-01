@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import path from 'node:path'
 import * as evidence from '../src/kernel/session/completion-evidence.mjs'
 
 const shell = command => ({name: 'bash', args: {command}, status: 'completed', ok: true, metadata: {exitCode: 0, started: true}})
@@ -12,7 +13,8 @@ test('repair hints identify the exact masked check arguments and directory witho
   const guidance = evidence.completionRepairGuidance({verification, toolEvents: events, cwd: '/workspace/project'})
   assert.match(guidance, /tests.test_docs/)
   assert.match(guidance, /"-v"/)
-  assert.match(guidance, /\/workspace\/project\/docs/)
+  const records = JSON.parse(guidance.match(/<check-repair-records>\n([\s\S]+)\n<\/check-repair-records>/)[1])
+  assert.equal(records[0].checks[0].cwd, path.resolve('/workspace/project', 'docs'))
   assert.doesNotMatch(guidance, /build.py|2>&1/)
   assert.match(guidance, /not.*(?:authorization|authority)/i)
   assert.equal(evidence.evaluateCompletionEvidence({toolEvents: [...events, shell('cd docs && python3 -m unittest tests.test_docs -v')], cwd: '/workspace/project'}).passed, true)

@@ -1,6 +1,6 @@
 import { runtimeCwd } from "../core/runtime-context.mjs"
 import path from "node:path"
-import { stat, rename, mkdir, cp, readdir, rm, writeFile } from "node:fs/promises"
+import { stat, lstat, realpath, rename, mkdir, mkdtemp, rmdir, cp, readdir, rm, writeFile } from "node:fs/promises"
 import { createWriteStream, createReadStream } from "node:fs"
 import { createGzip } from "node:zlib"
 import { pipeline } from "node:stream/promises"
@@ -25,6 +25,21 @@ import { findProtectedTarget } from "../permission/protected-paths.mjs"
 
 const TRASH_DIR = ".kkcode/trash"
 const MAX_ARCHIVE_ENTRIES = 20000
+
+async function checkedTrashRoot(root) {
+  const canonical = await realpath(root)
+  for (const name of ['.kkcode', TRASH_DIR]) {
+    const directory = path.join(root, name)
+    const existing = await lstat(directory).catch(error => {if (error.code === 'ENOENT') return null; throw error})
+    if (existing && (!existing.isDirectory() || existing.isSymbolicLink())) throw new Error('回收站目录不能是软链接或非目录；未移动或删除原文件。')
+    if (!existing) await mkdir(directory, {mode: 0o700}).catch(error => {if (error.code !== 'EEXIST') throw error})
+    const info = await lstat(directory), resolved = await realpath(directory), relative = path.relative(canonical, resolved)
+    if (!info.isDirectory() || info.isSymbolicLink() || relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) {
+      throw new Error('回收站路径发生变化或超出工作区；未移动或删除原文件。')
+    }
+  }
+  return path.join(root, TRASH_DIR)
+}
 
 function schema(type, description) {
   return { type, description }
@@ -169,20 +184,26 @@ export const removeTool = {
         return `permanently deleted ${kind}: ${rel(root, target)}`
       }
 
-      // 回收站路径带序号而非时间戳：Date.now() 在同一毫秒内两次删除会撞名，
-      // 而序号只依赖磁盘现状，可重复推演。
-      const trashRoot = path.join(root, TRASH_DIR)
-      await mkdir(trashRoot, { recursive: true })
+      // Every removal owns a new private destination; neither a workspace
+      // symlink nor another concurrent remover can claim its predictable name.
+      const trashRoot = await checkedTrashRoot(root)
       const base = path.basename(target)
-      let dest = path.join(trashRoot, base)
-      for (let n = 1; await pathKind(dest); n++) {
-        dest = path.join(trashRoot, `${base}.${n}`)
+      let holder = await mkdtemp(path.join(trashRoot, 'removed-')), dest = path.join(holder, base), moved = false
+      try {
+        try {await rename(target, dest)}
+        catch (error) {
+          if (error.code !== 'EXDEV') throw error
+          await rmdir(holder)
+          // A nested mount uses recoverable storage on its OWN volume. Never
+          // copy then recursively delete a source that may have changed.
+          holder = await mkdtemp(path.join(path.dirname(target), '.kkcode-trash-'))
+          dest = path.join(holder, base)
+          await rename(target, dest)
+        }
+        moved = true
+      } finally {
+        if (!moved) await rmdir(holder).catch(() => {}) // empty only
       }
-      await rename(target, dest).catch(async (error) => {
-        if (error?.code !== "EXDEV") throw error
-        await cp(target, dest, { recursive: true })
-        await rm(target, { recursive: true, force: true })
-      })
       return `deleted ${kind}: ${rel(root, target)} → recoverable at ${rel(root, dest)}`
     } catch (error) {
       return `error: ${error.message}`

@@ -1,5 +1,7 @@
-Apply multiple file edits in a single atomic operation.
-All changes succeed together or are rolled back entirely — no half-applied states.
+Validate and apply multiple file edits as one batch. This is NOT a filesystem-wide
+atomic commit. Targets and interactions are checked before publishing files.
+Failures attempt guarded recovery; concurrent owner changes are preserved.
+Read the structured rollback receipt instead of assuming there are no partial effects.
 
 When to use (instead of sequential `edit` calls):
 - Renaming an export and updating all its import sites
@@ -18,4 +20,8 @@ Rules:
 - You MUST `read` each file before editing it (same as `edit` tool).
 - Existing files in the batch must be freshly read. If any file is unread or stale, the whole batch is rejected.
 - If any change fails validation (no match, ambiguous match), the entire batch is rejected before any writes.
-- On write failure mid-batch, all previously applied changes are rolled back.
+- On write failure, only files still matching this batch's written bytes can be restored.
+- Newly created files are preserved in private .kkcode-rollback-* recovery directories,
+  not permanently deleted. The receipt gives their exact recovery paths.
+- Incomplete recovery or a changed target requires owner inspection; do not replay or
+  declare success. Cancellation preserves applied files and is not rollback.
