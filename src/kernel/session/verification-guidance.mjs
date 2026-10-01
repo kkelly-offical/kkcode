@@ -7,6 +7,7 @@ export function completionVerificationGuidance(language = 'en') {
     '直接调用检查命令；多项依赖检查用 && 连接。通配符、输出重定向、管道、;、|| true 和单纯的cat/echo不会形成可信检查回执。',
     '保留可复跑的验证脚本；不要在检查命令后串接删除/清理。若检查后又修改产物或测试，需再次执行真实检查，不能用清理前的成功证明清理后的状态。',
     'node --check仅证明语法，git diff --check仅证明文档差异的空白格式；它们不能证明功能或文档内容正确。按用户需求编写断言，并如实报告检查范围。只读/Plan任务不得为了验证创建或修改文件。',
+    '逐条把用户要求映射到真实断言，不只检查关键词存在。文档修改需核对所属章节、相对顺序和保留对象；数据库测试需在干净隔离状态初始化并验证迁移，不能依赖先前手工运行留下的表或数据。自写测试通过仍不能替代未覆盖的要求或人工视觉复查。',
     '测试需临时服务时，优先让真实测试程序启动服务、等待就绪、执行断言并在 finally 中关闭服务，所有子进程关闭后以真实测试退出码结束；不要先开多个无限后台服务再用 pkill 清理。',
     '后台启动回执不是完成回执。超时、取消和未知效果不等于回滚或成功；出现需要所有者核查的状态应保留记录并报告阻断，不要重跑同一操作或代用户确认。'
   ].join('\n')
@@ -17,6 +18,7 @@ export function completionVerificationGuidance(language = 'en') {
     'Invoke checks directly; join dependent checks with &&. Globs, output redirection, pipelines, ;, || true and plain cat/echo do not produce trusted check receipts.',
     'Keep rerunnable verification scripts; do not append deletion/cleanup to a check command. If artifacts or tests change after a check, run a real check again; the pre-cleanup success does not prove the post-cleanup state.',
     'node --check proves syntax only; git diff --check proves whitespace formatting of documentation changes only. Neither proves functionality or document content. Assert the user requirements and report the actual scope. Read-only/Plan tasks must not create or edit files for verification.',
+    'Map each user requirement to real assertions, not just keyword presence. Document edits must verify the containing section, relative order and protected objects. Database tests must initialize and verify migrations from clean isolated state, not depend on tables or data left by manual runs. Passing self-written tests does not cover omitted requirements or replace visual review.',
     'For temporary test services, prefer a real test harness that starts the service, waits for readiness, asserts behavior, closes it in finally, joins all children and exits with the real test result. Do not launch multiple indefinite background services and clean them up with pkill.',
     'A background launch receipt is not completion. Timeout, cancellation and unknown effects are neither rollback nor success. Preserve evidence and report owner-inspection blockers; do not replay the operation or acknowledge on the owner\'s behalf.'
   ].join('\n')

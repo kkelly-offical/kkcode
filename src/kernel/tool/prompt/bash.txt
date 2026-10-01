@@ -1,5 +1,12 @@
 Executes a shell command in the workspace directory with optional timeout.
 
+The tool name is legacy: Unix commands run under /bin/sh, NOT the user's
+login SHELL. Windows uses ComSpec/cmd, not PowerShell. Use portable syntax or
+invoke an explicitly available interpreter for its own syntax; do not assume
+PIPESTATUS, arrays, [[ ... ]] or pipefail exist in /bin/sh. sysinfo reports the
+actual default command shell. A pipeline's last exit code is not proof that
+all earlier commands passed; prefer direct assertion-test processes.
+
 CRITICAL — tool selection rules. Do NOT use `bash` when a dedicated tool exists:
 Optional tools may be deferred rather than present in the current schemas. If a
 dedicated file-management or HTTP tool below is not visible, first use tool_search
@@ -31,7 +38,10 @@ Parameters:
 - command (required): shell command to execute
 - timeout (optional): timeout in ms (default 120000, max 600000)
 - description (optional): human-readable description of what this command does. For simple commands keep it brief (5-10 words). For complex commands (piped commands, obscure flags), add enough context to clarify.
-- run_in_background (optional): run as background task, returns task_id immediately
+- run_in_background (optional): run as background task, returns task_id immediately;
+  it does NOT extend timeout or create a persistent service. The same finite
+  default 120000ms / maximum 600000ms applies. The launch receipt reports the
+  effective timeout; choose a finite bound that covers the intended check.
 
 Rules:
 - Always quote file paths that contain spaces with double quotes.

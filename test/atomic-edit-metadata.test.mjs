@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {mkdtemp, mkdir, readFile, writeFile, chmod, stat, readdir, rm, symlink, link, open} from 'node:fs/promises'
+import {mkdtemp, mkdir, readFile, writeFile, chmod, chown, stat, readdir, rm, symlink, link, open} from 'node:fs/promises'
 import {execFile} from 'node:child_process'
 import {promisify} from 'node:util'
 import path from 'node:path'
@@ -81,4 +81,26 @@ test('changed code does not retain setuid/setgid permission grants', {skip: proc
   await writeFile(file, '#!/bin/sh\necho before\n'); await chmod(file, 0o6755)
   await atomicWriteFile(file, '#!/bin/sh\necho after\n')
   assert.equal((await stat(file)).mode & 0o7777, 0o755)
+})
+
+test('ownership-preservation failure cannot publish replacement bytes', {skip: process.platform === 'win32'}, async t => {
+  const root = await fixture(t), file = path.join(root, 'private.txt')
+  await writeFile(file, 'original\n'); await chmod(file, 0o600)
+  const probe = await open(file, 'r'), proto = Object.getPrototypeOf(probe), originalStat = proto.stat
+  await probe.close()
+  t.mock.method(proto, 'stat', async function (...args) {const info = await originalStat.apply(this, args); return {...info, uid: info.uid + 1n}})
+  t.mock.method(proto, 'chown', async () => {throw Object.assign(Error('controlled ownership failure'), {code: 'EPERM'})})
+  await assert.rejects(atomicWriteFile(file, 'replacement\n'), /controlled ownership failure/)
+  assert.equal(await readFile(file, 'utf8'), 'original\n')
+  assert.equal((await stat(file)).mode & 0o777, 0o600)
+  assert.deepEqual(await readdir(root), ['private.txt'])
+})
+
+test('actual differing POSIX group survives atomic replacement', {skip: process.platform === 'win32' || process.getuid?.() !== 0}, async t => {
+  const root = await fixture(t), file = path.join(root, 'shared.txt')
+  await writeFile(file, 'original\n'); await chown(file, 0, 1); await chmod(file, 0o640)
+  await atomicWriteFile(file, 'replacement\n')
+  const info = await stat(file)
+  assert.equal(info.uid, 0); assert.equal(info.gid, 1); assert.equal(info.mode & 0o777, 0o640)
+  assert.equal(await readFile(file, 'utf8'), 'replacement\n')
 })

@@ -61,6 +61,7 @@ import { createProgressGuard } from './progress-guard.mjs'
 import { resolveModelCapabilities } from '../provider/model-catalog.mjs'
 import { isCancellation } from '../../abort.mjs'
 import { toolDispatchReceipt, attachToolDispatchReceipt } from '../core/execution-outcome.mjs'
+import { completionRepairGuidance } from './completion-evidence.mjs'
 
 // 每条 tool_result 进入活动上下文的字符上限。0.6.3 之前是硬编码 3000 ——
 // 一个 268 行的普通源文件有 12494 字符，模型只能看到四分之一，而且不知道
@@ -554,6 +555,7 @@ async function processTurnLoopInRuntime({
   let finalReply = ""
   let stopReason = 'max-steps'
   let verification = null
+  let verificationRepairHints = ''
   let interruptedReply = ''
   // Snapshot actual host receipts only. Final replies and interrupted/error
   // terminals share this path so a repaired check cannot remain stale, and a
@@ -591,6 +593,7 @@ async function processTurnLoopInRuntime({
       result.passed = false; result.verdict = 'BLOCK'
       result.message += `\n仍有 ${unsettled.length} 个子任务未收尾，请用 agent_wait / agent_list 核查实际结果，不要猜测完成。`
     }
+    verificationRepairHints = completionRepairGuidance({verification: result, toolEvents: background.events, cwd, language})
     return result
   }
   async function refreshInterruptedVerification() {
@@ -1094,8 +1097,8 @@ async function processTurnLoopInRuntime({
               }
               nudgeCount++
               const validationPrompt = language === "zh"
-                ? `[任务验证失败] 您报告任务已完成，但以下验证失败：\n\n${validationResult.message}\n\n请修复问题后再报告完成。`
-                : `[TASK VERIFICATION FAILED] You indicated completion, but verification failed:\n\n${validationResult.message}\n\nPlease fix the issues before declaring completion.`
+                ? `[任务验证失败] 您报告任务已完成，但以下验证失败：\n\n${validationResult.message}\n\n${verificationRepairHints}\n\n请修复问题后再报告完成。`
+                : `[TASK VERIFICATION FAILED] You indicated completion, but verification failed:\n\n${validationResult.message}\n\n${verificationRepairHints}\n\nPlease fix the issues before declaring completion.`
               
               await appendMessage(sessionId, "user", validationPrompt,
                 { mode, model, providerType, step, turnId, synthetic: true, contextKind: 'control' }

@@ -145,9 +145,12 @@ function formatBytes(bytes) {
 
 function detectShellInfo() {
   if (process.platform === "win32") {
-    return process.env.ComSpec || process.env.SHELL || "powershell/cmd"
+    return process.env.ComSpec || "cmd.exe"
   }
-  return process.env.SHELL || "/bin/sh"
+  // The user's login shell is not Node's command shell. Keep this identical
+  // to the execution path (and the Unix sandbox) rather than advertise Bash
+  // syntax such as PIPESTATUS while actually running it under /bin/sh.
+  return "/bin/sh"
 }
 
 async function detectGitRepo(cwd) {
@@ -646,7 +649,7 @@ function spawnShell({ command, cwd, timeoutMs, env, signal, sandbox = null, invo
     return runManagedProcess({ command: sandbox.command, args: sandbox.args, cwd, timeoutMs, env, signal })
   }
   if (invocation) return runManagedProcess({ command: invocation.command, args: invocation.args, cwd, timeoutMs, env: invocation.env, signal })
-  return runManagedProcess({ command: wrapCmd(command), cwd, timeoutMs, env, signal, shell: true })
+  return runManagedProcess({ command: wrapCmd(command), cwd, timeoutMs, env, signal, shell: detectShellInfo() })
 }
 
 /**
@@ -1500,14 +1503,14 @@ function builtinTools(config) {
 
   const bashTool = {
     name: "bash",
-    description: "Run a shell command in cwd. ONLY use for commands that have no dedicated tool (e.g. git, npm, pip, docker). Do NOT use for: reading files (use `read`), searching files (use `grep`/`glob`), writing files (use `write`/`edit`), moving/copying/deleting/creating directories/archiving (use `move`/`copy`/`remove`/`mkdir`/`archive` — those validate paths, refuse protected files, and make deletion recoverable, none of which `bash` does), or HTTP requests (use `http_request`/`webfetch` — `curl` through `bash` skips the egress checks that block internal addresses and cloud metadata endpoints). Long-running commands (dev servers, watchers) must use run_in_background: true. Supports `cwd` and per-command `env`. Non-zero exits are reported as `[exit N]`.",
+    description: "Run a shell command in cwd using /bin/sh on Unix or ComSpec/cmd on Windows, NOT the login SHELL; invoke bash explicitly for Bash-only syntax. ONLY use for commands that have no dedicated tool (e.g. git, npm, pip, docker). Do NOT use for: reading files (use `read`), searching files (use `grep`/`glob`), writing files (use `write`/`edit`), moving/copying/deleting/creating directories/archiving (use `move`/`copy`/`remove`/`mkdir`/`archive` — those validate paths, refuse protected files, and make deletion recoverable, none of which `bash` does), or HTTP requests (use `http_request`/`webfetch` — `curl` through `bash` skips the egress checks that block internal addresses and cloud metadata endpoints). Long-running commands (dev servers, watchers) must use run_in_background: true, which does NOT extend their finite timeout. Prefer a bounded assertion harness that owns temporary services and cleanup. Supports `cwd` and per-command `env`. Non-zero exits are reported as `[exit N]`.",
     inputSchema: {
       type: "object",
       properties: {
         command: schema("string", "shell command"),
         timeout: schema("number", "timeout in ms (default 120000, max 600000)"),
         description: schema("string", "human-readable description of what this command does (optional)"),
-        run_in_background: schema("boolean", "run as background task, returns task_id immediately (optional). Use this for long-running commands (dev servers, watchers, builds) — they are blocked in the foreground."),
+        run_in_background: schema("boolean", "run as a background task, returns task_id immediately (optional). Same finite timeout as foreground: default 120000ms, max 600000ms; NOT a persistent service. Use a bounded assertion harness for temporary test services."),
         cwd: schema("string", "working directory, relative to the workspace root (optional, default: workspace root)"),
         env: schema("object", "extra environment variables for this command only, e.g. {\"NODE_ENV\":\"test\"} (optional). Added on top of the inherited environment.")
       },
@@ -1570,6 +1573,7 @@ function builtinTools(config) {
           description: args.description || command,
           payload: { workerType: 'bash', command, cwd: runCwd, parentSessionId: ctx.sessionId || null,
             turnId: ctx.turnId || null, toolCallId: ctx.toolCallId || null,
+            workerTimeoutMs: timeoutMs, commandTimeoutMs: timeoutMs,
             envProvided: Object.keys(extraEnv || {}).length > 0 },
           run: async ({ signal }) => {
             // Submission's operation ends with the launch acknowledgement.
@@ -1601,11 +1605,11 @@ function builtinTools(config) {
           config: ctx.config,
           signal: ctx.signal
         })
-        const launched = `background task launched: ${task.id}\nUse background_output to check results.`
+        const launched = `background task launched: ${task.id}\nCommand timeout: ${timeoutMs}ms; backgrounding does not extend it or create a persistent service.\nUse background_output to check results. For temporary test services, prefer a bounded assertion harness that owns startup, readiness, checks and cleanup.`
         return { ok: true, status: task.status, background_task_id: task.id,
           output: sandbox.notice ? `${sandbox.notice}\n${launched}` : launched,
           metadata: { backgroundTask: { id: task.id, kind: 'bash', phase: 'submitted', status: task.status,
-            parentSessionId: ctx.sessionId || null, turnId: ctx.turnId || null } } }
+            parentSessionId: ctx.sessionId || null, turnId: ctx.turnId || null, commandTimeoutMs: timeoutMs } } }
       }
 
       const output = await runBash(command, runCwd, timeoutMs, {

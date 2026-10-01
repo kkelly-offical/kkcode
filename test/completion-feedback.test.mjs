@@ -70,6 +70,36 @@ for (const language of ['en', 'zh']) test(`real custom-output check receives act
   assert.match(feedback, /checks_required/)
 })
 
+test('masked check repair feedback retains exact runner arguments without replaying the setup', async t => {
+  const {kernel} = await fixture(t, 'en')
+  let requests = 0, feedback = ''
+  const exactCheck = 'node --test --test-reporter=spec verify.test.mjs'
+  kernel.providers.registerProvider('feedback-fixture', {
+    async request() {throw Error('Streaming fixture only')},
+    async *requestStream(input) {
+      requests++
+      if (requests === 1) {
+        yield {type: 'tool_call', call: {id: 'result', name: 'write', args: {path: 'result.txt', content: '42\n'}}}
+        yield {type: 'tool_call', call: {id: 'test', name: 'write', args: {path: 'verify.test.mjs', content: assertion}}}
+      } else if (requests === 2) yield {type: 'tool_call', call: {id: 'masked', name: 'bash', args: {command: exactCheck + ' || true'}}}
+      else if (requests === 3) yield {type: 'text', content: 'The exact result passed.'}
+      else if (requests === 4) {
+        feedback = JSON.stringify(input.messages.at(-1).content)
+        assert.match(feedback, /--test-reporter=spec/)
+        assert.match(feedback, /verify.test.mjs/)
+        assert.match(feedback, /not.*authorization/i)
+        yield {type: 'tool_call', call: {id: 'direct', name: 'bash', args: {command: exactCheck}}}
+      } else yield {type: 'text', content: 'The exact result passed the directly executed assertion suite.'}
+    }
+  })
+  const result = await kernel.executeTurn({prompt: 'Create result.txt with 42 and a newline, and verify it.', sessionId: 'exact-check-owner', mode: 'assistant', model: 'fixture', providerType: 'feedback-fixture'})
+  assert.equal(result.status, 'completed')
+  assert.equal(requests, 5)
+  assert.equal(result.verification.passed, true)
+  assert.ok(result.toolEvents.some(event => event.name === 'bash' && event.args.command === exactCheck && event.metadata.exitCode === 0))
+  assert.doesNotMatch(JSON.stringify(result.verification), /verify.test.mjs|--test-reporter=spec/)
+})
+
 test('guidance alone cannot turn repeated completion claims or a custom zero exit into successful acceptance', async t => {
   const {kernel, cwd} = await fixture(t, 'en')
   let requests = 0
