@@ -277,6 +277,10 @@ export function evaluateCompletionEvidence({ todoState = null, toolEvents = [], 
     if (!event || typeof event !== 'object') continue
     if (event.metadata?.completionHistoryIncomplete === true) failures.push({ kind: 'history_inspection_required', index })
     if (event.outcomeUnknown === true || event.metadata?.outcomeUnknown === true || event.metadata?.terminationIncomplete === true) failures.push({ kind: 'unknown_effect', index, tool: String(event.name || 'tool').slice(0, 60) })
+    // A host-proven pre-dispatch rejection did not run a check or change a
+    // file. Never manufacture a failed check from its proposed arguments.
+    // Untrusted metadata.started=false does not carry this proof.
+    if (isToolNotStarted(event)) continue
     const eventCwd = path.resolve(cwd, event.args?.cwd || '.')
     const verification = event.name === 'bash' && event.metadata?.verificationEnvUnknown !== true ? classifyVerificationCommand(event.args?.command, { cwd: eventCwd, env: event.args?.env }) : null
     if (EDIT_TOOLS.has(event.name)) {

@@ -51,6 +51,8 @@ Rules:
 - When commands depend on each other, chain with && (e.g. `git add . && git commit -m "msg"`).
 - NEVER use interactive flags like -i (e.g. git rebase -i, git add -i) — they require interactive input which is not supported.
 
+- On POSIX, do not append shell `&` and return while children keep running. Explicit unjoined launches are rejected before execution, including when run_in_background is also set. Use a bounded test harness that closes and joins its services, or remove the shell `&` and launch one finite managed background command. Explicitly joined parallel work (`... & wait`) remains available; actual child lifetime is still checked. CMD's single `&` is sequential and does not use this POSIX rule.
+
 # Completion verification
 
 After authorized changes, run the project's real tests/builds through this tool.

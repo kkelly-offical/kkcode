@@ -12,6 +12,7 @@ export function completionVerificationGuidance(language = 'en') {
     '涉及文档修订时，分别核对接受修订后的目标内容和拒绝本轮修订后应保留的原内容；存在修订标记不代表内容可正确接受或撤销。同时检查新增段落、表格及保留格式，并实际预览交付文件。',
     '最后根据实际输入、最终产物和执行记录核对交付说明与修改日志：新增/修改/保留项、文件路径、章节位置、数量及测试结果都须有依据。旧稿说明、计划和待办完成状态不能代替最终核对；未验证的内容应明确标注。',
     '测试需临时服务时，优先让真实测试程序启动服务、等待就绪、执行断言并在 finally 中关闭服务，所有子进程关闭后以真实测试退出码结束；不要先开多个无限后台服务再用 pkill 清理。',
+    '按交付说明约定的工作目录和环境实际运行启动脚本，并检查真实页面与接口；子目录构建成功不能证明从项目入口启动后可用。',
     '后台启动回执不是完成回执。超时、取消和未知效果不等于回滚或成功；出现需要所有者核查的状态应保留记录并报告阻断，不要重跑同一操作或代用户确认。'
   ].join('\n')
   return [
@@ -26,6 +27,7 @@ export function completionVerificationGuidance(language = 'en') {
     'For tracked document revisions, verify both the intended accepted content and the original content that must remain after rejecting the current edits. Revision markers alone do not prove correct acceptance or reversal. Check inserted paragraphs, tables and preserved formatting, and preview the actual deliverables.',
     'Before delivery, cross-check the report and change log against the actual inputs, final artifacts and execution records: additions, edits, preserved items, file paths, section locations, counts and test results need evidence. Old draft descriptions, plans and completed todos do not replace this final check; label anything not verified.',
     'For temporary test services, prefer a real test harness that starts the service, waits for readiness, asserts behavior, closes it in finally, joins all children and exits with the real test result. Do not launch multiple indefinite background services and clean them up with pkill.',
+    'Run the delivered startup scripts from their documented working directory and environment, and check the actual page and API. A successful subproject build does not prove the project entrypoint works.',
     'A background launch receipt is not completion. Timeout, cancellation and unknown effects are neither rollback nor success. Preserve evidence and report owner-inspection blockers; do not replay the operation or acknowledge on the owner\'s behalf.'
   ].join('\n')
 }

@@ -9,6 +9,7 @@ import { promisify } from "node:util"
 import { pathToFileURL } from "node:url"
 import { atomicWriteFile, assertAtomicWriteTarget, recoverCreatedAtomicFile, replaceInFileTransactional, replaceAllInFileTransactional, diffLineCount, buildStructuredPatch } from "./edit-transaction.mjs"
 import { registerAtomicMutationPreflights } from './mutation-preflight.mjs'
+import { registerBashPreflights, assertBashLifecycle } from './bash-preflight.mjs'
 import { withFileLock } from "./file-lock-manager.mjs"
 import { BackgroundManager } from "../orchestration/background-manager.mjs"
 import { scopedBackgroundTask, scopedBackgroundTasks, cancelScopedBackgroundTask } from './background-task-scope.mjs'
@@ -1511,16 +1512,19 @@ function builtinTools(config) {
     inputSchema: {
       type: "object",
       properties: {
-        command: schema("string", "shell command"),
+        command: schema("string", "shell command; on POSIX do not append unjoined shell &. Use an owned test harness or a managed background command without shell &; explicit wait joins are allowed."),
         timeout: schema("number", "timeout in ms (default 120000, max 600000)"),
         description: schema("string", "human-readable description of what this command does (optional)"),
-        run_in_background: schema("boolean", "run as a background task, returns task_id immediately (optional). Same finite timeout as foreground: default 120000ms, max 600000ms; NOT a persistent service. Use a bounded assertion harness for temporary test services."),
+        run_in_background: schema("boolean", "run as a managed background task without shell &, returns task_id immediately (optional). Same finite timeout as foreground: default 120000ms, max 600000ms; NOT a persistent service. Use a bounded assertion harness that closes and joins temporary test services."),
         cwd: schema("string", "working directory, relative to the workspace root (optional, default: workspace root)"),
         env: schema("object", "extra environment variables for this command only, e.g. {\"NODE_ENV\":\"test\"} (optional). Added on top of the inherited environment.")
       },
       required: ["command"]
     },
     async execute(args, ctx) {
+      // Also protect the legacy direct-call API; governed calls already run
+      // the identity-bound preflight before opening an operation record.
+      assertBashLifecycle(args,{language:ctx.config?.language})
       const command = String(args.command || "")
       const configuredTimeout = Number(ctx.config?.tool?.bash_timeout_ms)
       const configBashTimeout = Number.isFinite(configuredTimeout) && configuredTimeout !== 0 ? configuredTimeout : BASH_TIMEOUT_MS
@@ -2677,7 +2681,7 @@ export function createToolRegistry({ mcpRegistry = McpRegistry, deferMcp = false
       const extensions = []
 
       if (config.tool?.sources?.builtin !== false) {
-        tools.push(...registerAtomicMutationPreflights(markStrictBuiltinTools(builtinTools(config))))
+        tools.push(...registerBashPreflights(registerAtomicMutationPreflights(markStrictBuiltinTools(builtinTools(config)))))
         if (config.tool?.browser?.enabled !== false) tools.push(...markStrictBuiltinTools([browser]))
         if (config.tool?.browser?.enabled !== false) tools.push(bridge)
         if (config.tool?.browser?.enabled !== false) tools.push(...markStrictBuiltinTools(createBrowserRecipeTools(browser)))
