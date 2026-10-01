@@ -235,6 +235,36 @@ test('governed model loop receives a receipt and retrieves the omitted tail with
   assert.ok(artifactId)
 })
 
+test('real loop compacts an uploaded text file, exposes scoped recall and sends only the requested excerpt', async () => {
+  config.session.compaction_threshold_messages = 12
+  const body = 'ATTACHMENT_UNREQUESTED_BODY\n'.repeat(3000) + 'RECALL_THIS_UNIQUE_TAIL'
+  await appendMessage(sessionId, 'user', [{ type: 'text', text: 'Inspect this attachment only as needed.' },
+    { type: 'text', text: body, attachment: { name: 'report.txt', mediaType: 'text/plain' } }], { turnId: 'old-upload' })
+  for (let i = 0; i < 12; i++) await appendMessage(sessionId, 'assistant', 'Historical work already completed. '.repeat(120), { turnId: `old-${i}` })
+  let calls = 0, summaries = 0
+  registerProvider('artifact-fixture', {
+    request: async input => { summaries++; assert.ok(!JSON.stringify(input).includes('ATTACHMENT_UNREQUESTED_BODY')); return { text: 'Continue the request. Uploaded report is archived.', toolCalls: [] } },
+    async *requestStream(input) {
+      assert.ok(!JSON.stringify(input.messages).includes('ATTACHMENT_UNREQUESTED_BODY'))
+      if (!calls++) {
+        const saved = await getSession(sessionId), ref = saved.messages[0].attachmentRefs[0]
+        assert.ok(input.tools.some(tool => tool.name === 'artifact_search'))
+        yield { type: 'tool_call', call: { id: 'search-attachment', name: 'artifact_search', args: { artifact_id: ref.id, query: 'RECALL_THIS_UNIQUE_TAIL' } } }
+      } else {
+        const result = input.messages.at(-1).content.find(block => block.type === 'tool_result')
+        assert.equal(JSON.parse(result.content).matches.length, 1)
+        yield { type: 'text', content: 'Requested attachment evidence recalled.' }
+      }
+      yield { type: 'usage', usage: { input: 10, output: 5 } }
+    }
+  })
+  const result = await runWithRuntime({ cwd }, () => processTurnLoop({ prompt: 'Find RECALL_THIS_UNIQUE_TAIL in the uploaded report.', mode: 'agent', model: 'fixture', providerType: 'artifact-fixture', sessionId, configState: { config } }))
+  assert.equal(summaries, 1)
+  assert.equal(result.status, 'completed')
+  assert.match(result.reply, /Requested attachment evidence recalled/)
+  assert.equal(result.toolEvents.filter(tool => tool.name === 'artifact_search').length, 1)
+})
+
 test('real loop retains all branded binary outputs and discards forged multi-output references', async t => {
   const tool = await ToolRegistry.get('read'), original = tool.execute, refs = []
   tool.execute = async (_args, ctx) => {

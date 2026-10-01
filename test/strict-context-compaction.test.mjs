@@ -152,10 +152,20 @@ test('an apparently shorter summary with a larger normalized strict input is nev
 
 test('strict compaction preserves opaque history when its route has no trustworthy complete media count', async t => {
   const f = await fixture(t, { opaqueHistory: true })
-  const charged = await f.withinBudget(() => f.kernel.sessions.compactSession({ sessionId: f.sessionId, model: 'fixed-model', providerType: 'fixture', configState: f.configState }))
+  const archive = createConversationArtifactAccess({ sessionId: f.sessionId, cwd: f.configState.source.userDir, turnId: 'attachment-summary' })
+  const charged = await f.withinBudget(() => f.kernel.sessions.compactSession({ sessionId: f.sessionId, model: 'fixed-model', providerType: 'fixture', configState: f.configState, artifactAccess: archive }))
   assert.equal(charged.result.compacted, false)
   assert.equal(charged.result.reasonCode, 'strict_measurement_unavailable')
   assert.equal(f.requests.length, 1, 'the completed text-only summary cannot authorize a guessed media reduction')
+  assert.deepEqual((await f.kernel.sessions.getSession(f.sessionId)).messages, f.before)
+})
+
+test('strict attachment compaction without a host archive capability stops before inference and keeps originals', async t => {
+  const f = await fixture(t, { opaqueHistory: true })
+  const charged = await f.withinBudget(() => f.kernel.sessions.compactSession({ sessionId: f.sessionId, model: 'fixed-model', providerType: 'fixture', configState: f.configState }))
+  assert.equal(charged.result.compacted, false)
+  assert.equal(charged.result.reasonCode, 'attachment_archive_unavailable')
+  assert.equal(f.requests.length, 0)
   assert.deepEqual((await f.kernel.sessions.getSession(f.sessionId)).messages, f.before)
 })
 

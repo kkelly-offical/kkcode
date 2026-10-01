@@ -22,6 +22,9 @@ try {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } }), errors = []
   page.on('pageerror', error => errors.push(error.message))
   await page.goto(info.url)
+  // The disconnected landing also has a More menu. Wait for the authenticated
+  // home before interacting; bootstrap legitimately replaces that first tree.
+  await expect(page.locator('.remote-title .online')).toBeVisible()
   await page.getByRole('button', { name: '更多', exact: true }).click()
   await page.getByRole('menuitem', { name: '设置', exact: true }).click()
   await page.getByRole('button', { name: '模型与渠道', exact: true }).click()
@@ -38,6 +41,7 @@ try {
   assert.deepEqual(JSON.parse(await readFile(file, 'utf8')), original)
   await writeFile(file, JSON.stringify({ ...original, permission: { level: 'manual' } }))
   await page.reload()
+  await expect(page.locator('.remote-title .online')).toBeVisible()
   await page.getByRole('button', { name: '更多', exact: true }).click()
   await page.getByRole('menuitem', { name: '设置', exact: true }).click()
   await page.getByRole('button', { name: '模型与渠道', exact: true }).click()

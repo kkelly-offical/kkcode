@@ -1,6 +1,6 @@
 # 历史发布与验收资料
 
-[文档导航](README.md) · 当前使用指南按1.0.5维护，发行状态见[版本与升级](versions.md)。
+[文档导航](README.md) · 当前指南区分稳定版与Preview能力，发行状态见[版本与升级](versions.md)。
 
 历史文件保留当时版本、失败和收据，不全局替换成1.0.5，也不冒充新的重新验收。
 
@@ -13,6 +13,8 @@
 
 | 版本 | 说明与证据 |
 | --- | --- |
+| 1.0.6-preview.0 | [发行说明](release-1.0.6-preview.0.md) · [公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.6-preview.0/release-verification.json) |
+| 1.0.5 | [稳定版说明](release-1.0.5.md) · [公开Release](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.5) |
 | 1.0.5-preview.0 | [预发布说明](release-1.0.5-preview.0.md) · [完整实施过程](history/implementation-1.0.5-preview.0.md) · [公开Release](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.5-preview.0) |
 | 1.0.4 | [正式版说明](release-1.0.4.md) · [实际发行回执](stable-1.0.4-worklog.md) |
 | 1.0.4-preview.0 | [预发布说明](release-1.0.4-preview.0.md) · [实施记录](implementation-1.0.4.md) |
@@ -37,3 +39,15 @@
 
 旧记录中的“尚未发布”“测试进行中”只描述当时的提交；最新结论看有明确日期的
 发行回执与当前Issue。不可删失败、改旧分数，或把旧CI冒充正式版准备分支的新验收。
+
+## 开发过程归档
+
+根目录AGENTS.md只维护当前工作。以下长过程已归档，历史许可、失败和当时的未发布状态都不自动改写为当前结论。
+
+- [working-memory](https://github.com/kkelly-offical/kkcode/blob/main/docs/history/working-memory-through-2026-10-02.md)
+- [implementation-1.1.6](https://github.com/kkelly-offical/kkcode/blob/main/docs/history/implementation-1.1.6-through-2026-10-02.md)
+- [implementation-1.0.6-preview.0](https://github.com/kkelly-offical/kkcode/blob/main/docs/history/implementation-1.0.6-preview.0-through-2026-10-02.md)
+- [implementation-1.0.6-preview.1](https://github.com/kkelly-offical/kkcode/blob/main/docs/history/implementation-1.0.6-preview.1-through-2026-10-02.md)
+- [maintenance-1.0.6](https://github.com/kkelly-offical/kkcode/blob/main/docs/history/maintenance-1.0.6-through-2026-10-02.md)
+- [security-review-1.1.6](https://github.com/kkelly-offical/kkcode/blob/main/docs/history/security-review-1.1.6-through-2026-10-02.md)
+- [security-review-1.0.6](https://github.com/kkelly-offical/kkcode/blob/main/docs/history/security-review-1.0.6-through-2026-10-02.md)

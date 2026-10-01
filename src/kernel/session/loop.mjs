@@ -47,6 +47,7 @@ import { pendingRejections, markRejectionsConsumed } from "../../review/rejectio
 import { isRecoveryEnabled, markTurnFinished, markTurnInProgress } from "./recovery.mjs"
 import { HookBus, initHookBus } from "../plugin/hook-bus.mjs"
 import { shouldCompact, compactSession, estimateTokenCount, modelContextLimit, supportsNativeCompaction } from "./compaction.mjs"
+import { hasCompactionAttachments } from './attachment-compaction.mjs'
 import { saveCheckpoint } from "./checkpoint.mjs"
 import { createRenderStream } from "./render-stream.mjs"
 import { askPlanApproval } from "../tool/question-prompt.mjs"
@@ -747,7 +748,7 @@ async function processTurnLoopInRuntime({
         })
       }
 
-      if ((!useNativeCompaction || lastContextMeter.requiredTokens > lastContextMeter.limit) && shouldCompact({
+      if ((!useNativeCompaction || hasCompactionAttachments(history) || lastContextMeter.requiredTokens > lastContextMeter.limit) && shouldCompact({
         messages: normalizedHistory,
         model,
         thresholdMessages,
@@ -773,6 +774,11 @@ async function processTurnLoopInRuntime({
           }
           if (compactResult.compacted) {
             const beforeTokens = Number(lastContextMeter?.tokens) || 0
+            if ('attachmentCount' in compactResult && compactResult.attachmentCount) {
+              activateTools(['artifact_read', 'artifact_search'])
+              tools = await listModelTools({ mode, config: configState.config, cwd })
+              if (effectiveAgent?.tools) tools = tools.filter(tool => effectiveAgent.tools.includes(tool.name))
+            }
             history = await getConversationHistory(sessionId, 9999)
             messages = await HookBus.messagesTransform([...history])
             let compactedBound = null

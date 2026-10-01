@@ -22,7 +22,7 @@
 - [Android SSH与账号设备](ssh-account-devices.md) · [目录范围与信任](remote-folder-browsing.md)
 - [跨端任务监督](task-monitoring.md) · [命令契约](remote-command-contract.md) · [SSE与同步](remote-sse-contract.md)
 - [持久待办与子代理状态](task-monitoring.md#普通会话的紧凑待办)
-- [思考动效、停止与恢复](implementation-1.1.6.md#思考动效与停止恢复2026-09-27)
+- [思考动效、停止与恢复](task-monitoring.md#停止与恢复)
 - [设备事件与容量维护](device-retention.md)
 
 App、设备CLI和网关分别升级。公共网关镜像发布暂缓，继续从源码构建；没有自动生产部署。
@@ -51,7 +51,7 @@ App、设备CLI和网关分别升级。公共网关镜像发布暂缓，继续�
 ## 历史与发行证据
 
 [历史导航](history.md)集中保存旧版本发布、设计契约和试验记录；
-[未发行1.1.6标记期间的维护记录](implementation-1.1.6.md)与[1.0.5预览历史账本](implementation-1.0.5.md)分开，保留各候选的真实结果。
+历史工作记忆、旧实现过程和安全复核已移出当前指南；各候选的真实结果仍可追溯。
 新用户无需从旧版契约逐层寻找当前模式或配置。
 
 源码中的测试、`scripts/`、`evaluation/` 和Android/Web开发工程不随全局npm包完整安装；

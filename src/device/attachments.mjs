@@ -157,7 +157,7 @@ export class AttachmentStore {
           ? { type: 'image', data: record.data, mediaType: record.mediaType }
           : /^(audio|video)\//.test(record.mediaType)
           ? { type: record.mediaType.startsWith('audio/') ? 'audio' : 'video', data: record.data, mediaType: record.mediaType }
-          : { type: 'text', text: Buffer.from(record.data, 'base64').toString('utf8') })
+          : { type: 'text', text: Buffer.from(record.data, 'base64').toString('utf8'), attachment: { name: record.name, mediaType: record.mediaType } })
       }
       for (const id of ids) this.pins.set(id, (this.pins.get(id) || 0) + 1)
       let released = false
