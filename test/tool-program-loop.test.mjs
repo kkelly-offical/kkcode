@@ -92,7 +92,8 @@ test('each real program leaf gets its own stable durable intent and settled reco
 })
 
 test('a thrown reply after a real mutation is unknown to the program and stops the next leaf', async t => {
-  const f = await fixture(t, 'await tools.call("write",{path:"uncertain.txt",content:"effect happened"}); await tools.call("write",{path:"no-replay.txt",content:"must not run"});')
+  let requests = 0
+  const f = await fixture(t, 'await tools.call("write",{path:"uncertain.txt",content:"effect happened"}); await tools.call("write",{path:"no-replay.txt",content:"must not run"});', {}, () => {requests++})
   const failures = []
   const binding = createDurableRunBinding({
     async prepareTool({ tool, invocationId }) { return { id: invocationId, effect: tool.name === 'write' ? 'local_write' : 'read' } },
@@ -112,6 +113,9 @@ test('a thrown reply after a real mutation is unknown to the program and stops t
   const program = result.toolEvents.find(event => event.name === 'tool_program')
   assert.equal(program.metadata.outcomeUnknown, true)
   assert.equal(JSON.parse(program.output).outcomeUnknown, true)
+  assert.equal(result.status, 'incomplete')
+  assert.equal(result.stopReason, 'inspection-required')
+  assert.equal(requests, 1, 'a strict leaf unknown cannot trigger another provider request or be upgraded by optional verification=false')
 })
 
 test('real strict model loop composes container leaves without a serial-dispatch deadlock', { skip: !process.env.KKCODE_STRICT_TEST_IMAGE, timeout: 60000 }, async t => {

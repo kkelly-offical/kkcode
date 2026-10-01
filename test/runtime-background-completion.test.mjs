@@ -134,12 +134,14 @@ test('optional verification=false cannot upgrade an unknown legacy background re
     payload: { workerType: 'bash', parentSessionId: sessionId, command: 'echo legacy', cwd },
     run: async () => 'legacy output without a structured exit result' }))
   await kernel.run(() => BackgroundManager.waitForTask(task.id, { timeoutMs: 10000, tickMs: 20 }))
+  let requests = 0
   kernel.providers.registerProvider('background-fixture', {
     async request() { throw new Error('Only controlled streaming is enabled') },
-    async *requestStream() { yield { type: 'text', content: 'Report the preserved background receipt.' } }
+    async *requestStream() { requests++; yield { type: 'text', content: 'Report the preserved background receipt.' } }
   })
   const result = await kernel.executeTurn({ prompt: 'Inspect the preserved result.', sessionId, model: 'fixture', providerType: 'background-fixture' })
   assert.equal(result.status, 'incomplete')
   assert.equal(result.verification?.passed, false)
   assert.notEqual(result.verification?.state, 'checks_observed')
+  assert.equal(requests, 0, 'owned unknown background effects block before inference, including with optional checking disabled')
 })

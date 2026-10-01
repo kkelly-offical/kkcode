@@ -60,7 +60,7 @@ import { promptReport } from './prompt-report.mjs'
 import { createProgressGuard } from './progress-guard.mjs'
 import { resolveModelCapabilities } from '../provider/model-catalog.mjs'
 import { isCancellation } from '../../abort.mjs'
-import { toolDispatchReceipt, attachToolDispatchReceipt } from '../core/execution-outcome.mjs'
+import { toolDispatchReceipt, attachToolDispatchReceipt, markToolNotStarted } from '../core/execution-outcome.mjs'
 import { completionRepairGuidance } from './completion-evidence.mjs'
 
 // 每条 tool_result 进入活动上下文的字符上限。0.6.3 之前是硬编码 3000 ——
@@ -557,6 +557,7 @@ async function processTurnLoopInRuntime({
   let verification = null
   let verificationRepairHints = ''
   let interruptedReply = ''
+  let inspectionBarrier = carriedEvidence.unknown || carriedEvidence.needsInspection
   // Snapshot actual host receipts only. Final replies and interrupted/error
   // terminals share this path so a repaired check cannot remain stale, and a
   // later failure cannot hide behind an earlier green report. Never execute
@@ -605,6 +606,16 @@ async function processTurnLoopInRuntime({
         message: language === 'zh' ? '本轮已停止，但无法刷新执行验证记录。请核查已保留的工具和文件结果；不要重复执行未知操作。' : 'The turn stopped, but its execution evidence could not be refreshed. Inspect retained tool and file results; do not replay unknown operations.' }
     }
   }
+  async function stopForInspection() {
+    stopReason = 'inspection-required'
+    await refreshInterruptedVerification()
+    // Lifecycle uncertainty is mandatory even with optional semantic checking
+    // disabled, or when the evidence reader itself cannot safely reconstruct it.
+    verification = { ...verification, passed: false, verdict: 'BLOCK', state: 'outcome_unknown',
+      checks: verification?.checks || [], failures: verification?.failures || [],
+      message: verification?.message || (language === 'zh' ? '先核查已保留的执行记录和实际状态；不要重放未知操作。' : 'Inspect retained execution evidence and actual state; do not replay unknown operations.') }
+    finalReply = `${language === 'zh' ? '操作效果尚未核实，已暂停后续执行；保留已有文件和记录，需所有者核查后再继续。' : 'Operation effects are unresolved. Further execution is paused; files and records are preserved for owner inspection before continuation.'}\n${verification.message}`
+  }
   // 渲染流（阶段 3a）：用户可见输出纯化为数据事件；旧 output 字节轨经
   // 前端登记的渲染器驱动（双轨期，见 session/render-stream.mjs 头注释）。
   const render = createRenderStream({
@@ -617,6 +628,13 @@ async function processTurnLoopInRuntime({
   try {
     for (let step = 1; step <= maxSteps; step++) {
       signal?.throwIfAborted()
+      if (!inspectionBarrier && (step === 1 || [...carriedEvidence.toolEvents, ...verificationEvents].some(event => event.metadata?.backgroundTask))) {
+        // A background job can become uncertain between model requests. Pending
+        // known jobs may still be waited on; uncertainty cannot be auto-repaired.
+        verification = await collectCompletionVerification()
+        inspectionBarrier = verification.state === 'outcome_unknown'
+      }
+      if (inspectionBarrier) {await stopForInspection(); break}
       if (runSpec?.limits?.budgetUsd === 0) {
         // Zero USD does not grant inference. The sole existing exception is a
         // matching branded durable run inside its private, active host budget
@@ -1186,6 +1204,22 @@ async function processTurnLoopInRuntime({
           output: ""
         })
 
+        if (inspectionBarrier) {
+          // This call was advertised in the same response but never dispatched.
+          // Keep every wire pair and a canonical host receipt, without hooks,
+          // approvals, snapshots, operation preparation or tool-side effects.
+          const result = markToolNotStarted({name: call.name, status: 'blocked', ok: false, code: 'inspection_required',
+            output: language === 'zh' ? '先前操作效果未知，本次工具未执行；需所有者核查后继续。' : 'A prior operation has unknown effects. This tool was not started; owner inspection is required.',
+            metadata: {started: false}, startedAt: callStartedAt, completedAt: Date.now(), durationMs: Date.now() - callStartedAt})
+          const dispatch = toolDispatchReceipt(result)
+          await appendPart(sessionId, {type: 'tool-call', messageId: userMessage.id, step, turnId, runPartId: runningPart.id,
+            tool: call.name, args: call.args, ...result, dispatch})
+          verificationEvents.push(attachToolDispatchReceipt({name: call.name, args: call.args, ...result, invocationId: call.id, turnId, step}, dispatch))
+          await EventBus.emit({type: EVENT_TYPES.TOOL_ERROR, sessionId, turnId,
+            payload: {invocationId: call.id, tool: call.name, args: call.args, status: result.status, output: result.output, code: result.code, durationMs: result.durationMs}})
+          return {call, result}
+        }
+
         const risk = ["bash", "write", "edit", "task"].includes(call.name) ? 9 : 1
         let result
         try {
@@ -1388,6 +1422,10 @@ async function processTurnLoopInRuntime({
           toolContext._planMode = true
         }
 
+        const uncertainResult = result
+        const uncertainMetadata = uncertainResult.metadata
+        const requiresInspection = uncertainMetadata?.outcomeUnknown === true || uncertainMetadata?.terminationIncomplete === true
+        if (requiresInspection) inspectionBarrier = true
         const hookAfterResult = await HookBus.toolAfter({
           tool: call.name,
           toolName: call.name,
@@ -1399,6 +1437,12 @@ async function processTurnLoopInRuntime({
           mode
         })
         if (hookAfterResult?.result) result = hookAfterResult.result
+        if (requiresInspection) result = {...result, status: uncertainResult.status, ok: false,
+          code: uncertainResult.code, error: uncertainResult.error, output: uncertainResult.output, evidence: uncertainResult.evidence,
+          metadata: {...result.metadata, outcomeUnknown: true,
+          ...(uncertainMetadata.terminationIncomplete === true ? {terminationIncomplete: true} : {}),
+          ...(uncertainMetadata.operationId ? {operationId: uncertainMetadata.operationId} : {})}}
+        if (result.metadata?.outcomeUnknown === true || result.metadata?.terminationIncomplete === true) inspectionBarrier = true
         const dispatchReceipt = toolDispatchReceipt(result)
         result = { ...result, startedAt: result.startedAt ?? callStartedAt, completedAt: result.completedAt ?? Date.now() }
 
@@ -1602,6 +1646,8 @@ async function processTurnLoopInRuntime({
       // Keep tool_use/tool_result pairs and uncertain-effect receipts durable,
       // then stop before any continuation or new provider request.
       signal?.throwIfAborted()
+
+      if (inspectionBarrier) {await stopForInspection(); break}
 
       const progress = progressGuard.observe(response.toolCalls.map(call => callResults.get(call.id)).filter(Boolean).map(entry => {
         const refs = trustedArtifactRefs(entry.result)
