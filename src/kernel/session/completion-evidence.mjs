@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { parseShellCommands } from '../permission/shell-analysis.mjs'
 import { toolCapability } from '../permission/rules.mjs'
 import { isReconciledCompletionEvent, completionEnvironmentIdentity } from './completion-history.mjs'
+import { completionVerificationGuidance } from './verification-guidance.mjs'
 
 const EDIT_TOOLS = new Set(['write', 'edit', 'multiedit', 'patch', 'notebookedit', 'move', 'copy', 'remove', 'mkdir', 'archive', 'git_apply_patch', 'git_restore', 'office_create', 'office_edit', 'office_pdf'])
 const NON_CHECK_FLAGS = /^(?:--help|-h|--version|--list(?:Tests|-tests)?|-list|--collect-only|--co|--setup-plan|--setup-only|--dry-run|--showConfig|--listFilesOnly|--print-config|--init|--fixtures(?:-per-test)?|--markers|--if-present|--ignore-scripts|--passWithNoTests|--watch(?:All)?|--fix)(?:=|$)/i
@@ -121,7 +122,7 @@ function hasMutation(event, verification) {
 
 /** Host event chronology only: report observed checks, never semantic acceptance.
  * `toolEvents` must be the current host-recorded execution slice, not model text. */
-export function evaluateCompletionEvidence({ todoState = null, toolEvents = [], requireChecks = false, cwd = process.cwd() } = {}) {
+export function evaluateCompletionEvidence({ todoState = null, toolEvents = [], requireChecks = false, cwd = process.cwd(), language = 'en' } = {}) {
   const todos = Array.isArray(todoState) ? todoState : Array.isArray(todoState?.items) ? todoState.items : []
   const pending = todos.filter(item => !['completed', 'cancelled'].includes(item?.status))
   const failures = [], observations = [], unresolved = new Map(), failedMutations = new Map()
@@ -155,7 +156,7 @@ export function evaluateCompletionEvidence({ todoState = null, toolEvents = [], 
     const passed = processVerified(event)
     const record = { id: verification.id, label: verification.checks.map(check => check.label).join(' && ').slice(0, 180), status: passed ? 'passed' : 'failed', index, kind: verification.checks.some(check => check.kind === 'project') ? 'project' : 'documentation' }
     observations.push(record)
-    if (!passed) unresolved.set(verification.id, { kind: 'failed_check', ...record })
+    if (!passed) unresolved.set(verification.id, { ...record, kind: 'failed_check' })
     else {
       unresolved.delete(verification.id)
       // Successful && chains prove each member ran successfully. A failed
@@ -170,12 +171,23 @@ export function evaluateCompletionEvidence({ todoState = null, toolEvents = [], 
   if (checksRequired && !recentChecks.length) failures.push({ kind: 'checks_required', afterIndex: lastMutation })
   const passed = failures.length === 0
   const state = passed ? recentChecks.length ? 'checks_observed' : 'not_verified' : failures.some(failure => failure.kind === 'unknown_effect') ? 'outcome_unknown' : pending.length ? 'work_remaining' : 'needs_verification'
+  const failureKinds = [...new Set(failures.map(failure => failure.kind))]
+  const chinese = typeof language === 'string' && (language === 'zh' || language.startsWith('zh-'))
+  const blockedMessage = chinese
+    ? `完成验收被阻断：${failureKinds.join(', ')}。请检查已有执行记录，通过正常工具和权限路径补齐检查；不得把未知效果标成成功或重复执行。`
+    : `Completion is blocked: ${failureKinds.join(', ')}. Inspect existing evidence and run appropriate checks through the normal approved tool path; do not claim completion or replay unknown effects.`
+  const repairGuidance = [
+    ...(failureKinds.includes('checks_required') ? [completionVerificationGuidance(language)] : []),
+    ...(failureKinds.some(kind => ['failed_check', 'unverified_check'].includes(kind)) ? [chinese
+      ? '已有失败或未能核实的检查仍须修复，并以相同参数、工作目录和环境重新执行同一检查。无关检查成功不能清除它；不要隐藏错误或跳过原测试。'
+      : 'Repair failed or unverified checks and rerun the same checks with the same arguments, working directory and environment. An unrelated successful check cannot clear them; do not hide errors or skip the original tests.'] : [])
+  ].join('\n')
   return {
     passed, verdict: passed ? state === 'checks_observed' ? 'CHECKS_OBSERVED' : 'NO_BLOCKING_TODO' : 'BLOCK', state,
     checks: observations.slice(-20), failures: failures.slice(-20),
     message: state === 'checks_observed'
       ? 'Successful check processes were observed after the latest mutation. This is not full semantic acceptance; report their actual scope and remaining limits.'
       : passed ? 'No blocking todo or observed mutation requires verification. An empty todo list is not proof that tests passed; build/test/lint commands are not executed implicitly.'
-        : `Completion is blocked: ${[...new Set(failures.map(failure => failure.kind))].join(', ')}. Inspect existing evidence and run appropriate checks through the normal approved tool path; do not claim completion or replay unknown effects.`
+        : [blockedMessage, repairGuidance].filter(Boolean).join('\n')
   }
 }

@@ -225,7 +225,7 @@ export class TaskValidator {
 
     if (level === 'evidence') {
       return {
-        ...evaluateCompletionEvidence({ todoState, toolEvents, requireChecks, cwd: this.cwd }), results
+        ...evaluateCompletionEvidence({ todoState, toolEvents, requireChecks, cwd: this.cwd, language: this.configState?.config?.language || 'en' }), results
       }
     }
 

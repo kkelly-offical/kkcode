@@ -37,6 +37,18 @@ Rules:
 - When commands depend on each other, chain with && (e.g. `git add . && git commit -m "msg"`).
 - NEVER use interactive flags like -i (e.g. git rebase -i, git add -i) — they require interactive input which is not supported.
 
+# Completion verification
+
+After authorized changes, run the project's real tests/builds through this tool.
+For bespoke file, document or API checks, create an assertion test with write/edit
+in the authorized workspace and run `node --test <explicit-test-file>` or
+`python3 -m unittest <test-module>`. A false assertion must fail the process.
+Completion observes direct test processes after the last change. Repeating a
+shell condition or printing PASS does not supply a recognized verification receipt.
+Do not mask errors with pipes, redirection, `;` or `|| true`; use `&&` for dependent checks.
+Syntax/whitespace checks prove only syntax/whitespace, not the requested behavior.
+Read-only/Plan tasks must not create or edit files just to obtain a check receipt.
+
 # Committing changes with git
 
 Only create commits when requested by the user. If unclear, ask first. When creating a git commit:
