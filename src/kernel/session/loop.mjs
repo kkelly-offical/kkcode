@@ -555,6 +555,53 @@ async function processTurnLoopInRuntime({
   let stopReason = 'max-steps'
   let verification = null
   let interruptedReply = ''
+  // Snapshot actual host receipts only. Final replies and interrupted/error
+  // terminals share this path so a repaired check cannot remain stale, and a
+  // later failure cannot hide behind an earlier green report. Never execute
+  // project verification commands or infer overall task completion here.
+  async function collectCompletionVerification() {
+    const validator = await createValidator({ cwd, configState })
+    const todos = await todoService.list()
+    const authoredThisTurn = todos.source.turnId === turnId
+    const background = await collectBackgroundCompletionEvidence({ sessionId,
+      toolEvents: [...carriedEvidence.toolEvents, ...verificationEvents], parts: (await getSession(sessionId))?.parts || [] })
+    const result = { state: 'not_verified', inspection: background.inspection || [], ...(verifyCompletion ? await validator.validate({
+      todoState: authoredThisTurn || carriedEvidence.toolEvents.length > 0 || carriedEvidence.requireChecks || verificationEvents.some(event => ['write', 'edit', 'patch', 'multiedit'].includes(event.name)) ? todos.items : [],
+      toolEvents: background.events,
+      requireChecks: carriedEvidence.requireChecks || background.needsFreshVerification,
+      level: 'evidence'
+    }) : { passed: true, verdict: 'VERIFICATION_DISABLED', checks: [], failures: [], message: 'Optional verification is disabled; execution lifecycle and unknown outcomes still must settle.' }) }
+    if (background.pending.length || background.unknown) {
+      result.passed = false; result.verdict = 'BLOCK'
+      result.state = background.unknown ? 'outcome_unknown' : 'background_running'
+      result.message += background.unknown
+        ? '\n后台操作结果尚无法核实，请检查任务记录和实际文件状态，不要重复执行。'
+        : `\n仍有 ${background.pending.length} 个后台命令未收尾，请用 task_output 核查实际结果；后台修改结束前的测试不算最终验收。`
+    }
+    if (background.inspection?.length) {
+      const owned = background.inspection.filter(item => /^[a-f0-9-]{36}$/.test(item.operationId || '') && /^[A-Za-z0-9_-]{1,128}/.exec(sessionId)?.[0] === sessionId)
+      if (owned.length) result.message += '\n' + (language === 'zh'
+        ? '需要会话所有者先核查实际文件、数据和进程，再确认操作记录；智能体不得代替用户确认。确认不是回滚，也不是测试通过：'
+        : 'The session owner must inspect actual files, data and processes before acknowledging these operations. The agent must not confirm on the owner\'s behalf. Acknowledgement is neither rollback nor test acceptance:') +
+        '\n' + owned.slice(-8).map(item => `kkcode session operations --id ${sessionId} --resolve ${item.operationId} --confirm-inspected`).join('\n')
+    }
+    const children = await childController.list()
+    const unsettled = children.filter(child => ['running', 'pending', 'unknown', 'incomplete', 'error', 'failed', 'cancelled', 'interrupted', 'blocked'].includes(child.status))
+    if (unsettled.length) {
+      result.passed = false; result.verdict = 'BLOCK'
+      result.message += `\n仍有 ${unsettled.length} 个子任务未收尾，请用 agent_wait / agent_list 核查实际结果，不要猜测完成。`
+    }
+    return result
+  }
+  async function refreshInterruptedVerification() {
+    if (!verification && !verificationEvents.length && !carriedEvidence.toolEvents.length && !carriedEvidence.requireChecks) return
+    try { verification = await collectCompletionVerification() }
+    catch {
+      verification = { ...verification, passed: false, verdict: 'BLOCK', state: 'unknown',
+        checks: verification?.checks || [], failures: [...(verification?.failures || []), {kind: 'verification_unavailable'}],
+        message: language === 'zh' ? '本轮已停止，但无法刷新执行验证记录。请核查已保留的工具和文件结果；不要重复执行未知操作。' : 'The turn stopped, but its execution evidence could not be refreshed. Inspect retained tool and file results; do not replay unknown operations.' }
+    }
+  }
   // 渲染流（阶段 3a）：用户可见输出纯化为数据事件；旧 output 字节轨经
   // 前端登记的渲染器驱动（双轨期，见 session/render-stream.mjs 头注释）。
   const render = createRenderStream({
@@ -1023,42 +1070,7 @@ async function processTurnLoopInRuntime({
         // every final attempt; exhausting the repair hints never disables it.
         {
           try {
-            const validator = await createValidator({ cwd, configState })
-            const todos = await todoService.list()
-            const authoredThisTurn = todos.source.turnId === turnId
-            const background = await collectBackgroundCompletionEvidence({ sessionId,
-              toolEvents: [...carriedEvidence.toolEvents, ...verificationEvents], parts: (await getSession(sessionId))?.parts || [] })
-            const validationResult = { state: 'not_verified', inspection: background.inspection || [], ...(verifyCompletion ? await validator.validate({
-              todoState: authoredThisTurn || carriedEvidence.toolEvents.length > 0 || carriedEvidence.requireChecks || verificationEvents.some(event => ['write', 'edit', 'patch', 'multiedit'].includes(event.name)) ? todos.items : [],
-              toolEvents: background.events,
-              requireChecks: carriedEvidence.requireChecks || background.needsFreshVerification,
-              // Never launch project scripts/npx behind the tool permission
-              // boundary (or on a simple question). The agent must request
-              // verification commands through normal approved tools.
-              level: 'evidence'
-            }) : { passed: true, verdict: 'VERIFICATION_DISABLED', checks: [], failures: [], message: 'Optional verification is disabled; execution lifecycle and unknown outcomes still must settle.' }) }
-            if (background.pending.length || background.unknown) {
-              validationResult.passed = false
-              validationResult.verdict = 'BLOCK'
-              validationResult.state = background.unknown ? 'outcome_unknown' : 'background_running'
-              validationResult.message += background.unknown
-                ? '\n后台操作结果尚无法核实，请检查任务记录和实际文件状态，不要重复执行。'
-                : `\n仍有 ${background.pending.length} 个后台命令未收尾，请用 task_output 核查实际结果；后台修改结束前的测试不算最终验收。`
-            }
-            if (background.inspection?.length) {
-              const owned = background.inspection.filter(item => /^[a-f0-9-]{36}$/.test(item.operationId || '') && /^[A-Za-z0-9_-]{1,128}/.exec(sessionId)?.[0] === sessionId)
-              if (owned.length) validationResult.message += '\n' + (language === 'zh'
-                ? '需要会话所有者先核查实际文件、数据和进程，再确认操作记录；智能体不得代替用户确认。确认不是回滚，也不是测试通过：'
-                : 'The session owner must inspect actual files, data and processes before acknowledging these operations. The agent must not confirm on the owner\'s behalf. Acknowledgement is neither rollback nor test acceptance:') +
-                '\n' + owned.slice(-8).map(item => `kkcode session operations --id ${sessionId} --resolve ${item.operationId} --confirm-inspected`).join('\n')
-            }
-            const children = await childController.list()
-            const unsettled = children.filter(child => ['running', 'pending', 'unknown', 'incomplete', 'error', 'failed', 'cancelled', 'interrupted', 'blocked'].includes(child.status))
-            if (unsettled.length) {
-              validationResult.passed = false
-              validationResult.verdict = 'BLOCK'
-              validationResult.message += `\n仍有 ${unsettled.length} 个子任务未收尾，请用 agent_wait / agent_list 核查实际结果，不要猜测完成。`
-            }
+            const validationResult = await collectCompletionVerification()
             verification = validationResult
             
             if (!validationResult.passed) {
@@ -1604,6 +1616,7 @@ async function processTurnLoopInRuntime({
         finalReply = language === 'zh' ? '已暂停：相同工具序列连续 6 次没有产生新结果。已有文件和操作结果保留，请检查阻塞原因后继续；这不代表任务已完成。' : 'Paused: the same tool sequence produced no new evidence six times. Existing files and results are preserved. Inspect the blocker before continuing; the task is not claimed complete.'
         await appendMessage(sessionId, 'assistant', finalReply, { mode, model, providerType, step, turnId })
         await markSessionStatus(sessionId, 'no-progress'); await markTurnFinished(sessionId, recoveryEnabled)
+        await refreshInterruptedVerification()
         await recordOutcome('incomplete', 'no-progress', verification)
         await render.textDelta(step, `\n${finalReply}`); await render.streamEnd(step)
         await EventBus.emit({ type: EVENT_TYPES.TURN_FINISH, sessionId, turnId, payload: { step, reply: finalReply, stopReason: 'no-progress' } })
@@ -1635,6 +1648,7 @@ async function processTurnLoopInRuntime({
       maxSteps: stopReason === 'max-steps', stopReason, status: 'incomplete'
     })
     await markTurnFinished(sessionId, recoveryEnabled)
+    await refreshInterruptedVerification()
     await recordOutcome('incomplete', stopReason, verification)
     await EventBus.emit({
       type: EVENT_TYPES.TURN_FINISH,
@@ -1669,6 +1683,7 @@ async function processTurnLoopInRuntime({
       })
     }
     if (cancelled) await appendPart(sessionId, { type: 'turn-cancelled', messageId: userMessage.id, turnId, reason: 'user_cancel', filesReverted: false })
+    await refreshInterruptedVerification()
     await recordOutcome(cancelled ? 'cancelled' : 'error', cancelled ? 'cancelled' : 'execution-error', verification)
     render.close()
     await EventBus.emit({

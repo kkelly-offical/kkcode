@@ -17,7 +17,7 @@ const { buildSystemPromptBlocks } = await import(new URL('src/kernel/session/sys
 const assertion = "import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';test('exact value and newline',()=>assert.equal(fs.readFileSync('result.txt','utf8'),'42\\n'));\n"
 const customCheck = `node -e "if (require('node:fs').readFileSync('result.txt','utf8') !== '42\\n') throw Error('incorrect result')"`
 
-async function fixture(t, language) {
+async function fixture(t, language, {maxSteps = 8} = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kk-completion-feedback-'))
   const previous = process.env.KKCODE_HOME
   process.env.KKCODE_HOME = path.join(root, 'state')
@@ -25,7 +25,7 @@ async function fixture(t, language) {
   await mkdir(cwd)
   const kernel = await createKernel({cwd, trustState: {trusted: true}, config: {config: {
     provider: {default: 'feedback-fixture', 'feedback-fixture': {default_model: 'fixture', retry_attempts: 0}},
-    agent: {max_steps: 8, verify_completion: true}, permission: {level: 'yolo', rules: []},
+    agent: {max_steps: maxSteps, verify_completion: true}, permission: {level: 'yolo', rules: []},
     tool: {sources: {builtin: true, local: false, plugin: false, mcp: false}},
     session: {title_generation: false, recovery: false}, usage: {budget: {}}, ui: {markdown_render: false}, language
   }}})
@@ -185,6 +185,71 @@ test('provider failure preserves earlier verification failures in the returned r
   assert.equal(result.status, 'error')
   assert.equal(result.verification?.passed, false)
   assert.ok(result.verification.failures.some(failure => failure.kind === 'checks_required'))
+})
+
+for (const repair of [false, true]) test(`provider failure reports latest observed checks without declaring completion (repair=${repair})`, async t => {
+  const {kernel} = await fixture(t, 'en')
+  let requests = 0
+  const call = (name, args) => ({type: 'tool_call', call: {id: 'error-evidence-' + requests, name, args}})
+  kernel.providers.registerProvider('feedback-fixture', {
+    async request() {throw Error('Streaming fixture only')},
+    async *requestStream() {
+      requests++
+      if (requests === 1) yield call('write', {path: 'result.txt', content: '42\n'})
+      else if (requests === 2) yield call('write', {path: 'verify.test.mjs', content: assertion})
+      else if (requests === 3) yield call('bash', {command: repair ? 'node --test verify.test.mjs && node -e "process.stdout.write(\'checked\')"' : 'node --test verify.test.mjs'})
+      else if (repair && requests === 4) yield {type: 'text', content: 'The task is complete.'}
+      else if (repair && requests === 5) yield call('bash', {command: 'node --test verify.test.mjs'})
+      else throw Error('controlled model request cap reached')
+    }
+  })
+  const result = await kernel.executeTurn({prompt: 'Create and verify the output.', sessionId: 'latest-error-checks-' + repair, mode: 'assistant', model: 'fixture', providerType: 'feedback-fixture'})
+  assert.equal(result.status, 'error', 'observed checks do not fabricate a final assistant reply')
+  assert.match(result.error, /controlled model request cap/)
+  assert.equal(result.verification?.passed, true)
+  assert.equal(result.verification?.state, 'checks_observed')
+  assert.deepEqual(result.verification?.failures, [])
+  assert.ok(result.verification.checks.some(check => check.status === 'passed'))
+  assert.equal(requests, repair ? 6 : 4)
+  assert.equal(result.toolEvents.length, repair ? 4 : 3, 'refresh only reads receipts, never reexecutes a check')
+})
+
+test('a later mutation stays unverified when a provider fails after an earlier passing check', async t => {
+  const {kernel} = await fixture(t, 'en'); let requests = 0
+  kernel.providers.registerProvider('feedback-fixture', {
+    async request() {throw Error('Streaming fixture only')},
+    async *requestStream() {
+      requests++
+      const call = (name, args) => ({type: 'tool_call', call: {id: 'later-mutation-' + requests, name, args}})
+      if (requests === 1) yield call('write', {path: 'result.txt', content: '42\n'})
+      else if (requests === 2) yield call('write', {path: 'verify.test.mjs', content: assertion})
+      else if (requests === 3) yield call('bash', {command: 'node --test verify.test.mjs'})
+      else if (requests === 4) yield call('write', {path: 'result.txt', content: '43\n'})
+      else throw Error('controlled failure after later mutation')
+    }
+  })
+  const result = await kernel.executeTurn({prompt: 'Keep all actual effects visible.', sessionId: 'error-after-green-edit', mode: 'assistant', model: 'fixture', providerType: 'feedback-fixture'})
+  assert.equal(result.status, 'error'); assert.equal(result.verification.passed, false)
+  assert.ok(result.verification.checks.some(check => check.status === 'passed'))
+  assert.ok(result.verification.failures.some(failure => failure.kind === 'checks_required'))
+  assert.equal(requests, 5)
+})
+
+test('step exhaustion reports current successful checks but remains incomplete without a final response', async t => {
+  const {kernel} = await fixture(t, 'en', {maxSteps: 3}); let requests = 0
+  kernel.providers.registerProvider('feedback-fixture', {
+    async request() {throw Error('Streaming fixture only')},
+    async *requestStream() {
+      requests++
+      const actions = [['write', {path: 'result.txt', content: '42\n'}], ['write', {path: 'verify.test.mjs', content: assertion}], ['bash', {command: 'node --test verify.test.mjs'}]]
+      const [name, args] = actions[requests - 1]
+      yield {type: 'tool_call', call: {id: 'step-terminal-' + requests, name, args}}
+    }
+  })
+  const result = await kernel.executeTurn({prompt: 'Create and check the result.', sessionId: 'step-check-terminal', mode: 'assistant', model: 'fixture', providerType: 'feedback-fixture'})
+  assert.equal(result.status, 'incomplete'); assert.equal(result.stopReason, 'max-steps')
+  assert.equal(result.verification.passed, true); assert.equal(result.verification.state, 'checks_observed')
+  assert.equal(requests, 3)
 })
 
 for (const language of ['en', 'zh']) test(`shared guidance reaches the actual Plan system prompt without granting writes (${language})`, async () => {

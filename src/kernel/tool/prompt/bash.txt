@@ -1,6 +1,10 @@
 Executes a shell command in the workspace directory with optional timeout.
 
 CRITICAL — tool selection rules. Do NOT use `bash` when a dedicated tool exists:
+Optional tools may be deferred rather than present in the current schemas. If a
+dedicated file-management or HTTP tool below is not visible, first use tool_search
+to discover its exact schema. Discovery does not expand permissions. If your
+role cannot discover or use it, report that limit instead of routing around it.
 - Read files → use `read` (NEVER cat/head/tail/type/Get-Content)
 - Search contents → use `grep` (NEVER bash grep/rg)
 - Find files → use `glob` (NEVER bash find/ls/dir)
@@ -46,6 +50,8 @@ in the authorized workspace and run `node --test <explicit-test-file>` or
 Completion observes direct test processes after the last change. Repeating a
 shell condition or printing PASS does not supply a recognized verification receipt.
 Do not mask errors with pipes, redirection, `;` or `|| true`; use `&&` for dependent checks.
+Keep rerunnable test scripts. Do not append deletion/cleanup to a check command;
+changes after the check require another actual check of the final state.
 Syntax/whitespace checks prove only syntax/whitespace, not the requested behavior.
 Read-only/Plan tasks must not create or edit files just to obtain a check receipt.
 For temporary test servers, prefer an assertion-test harness that starts its own
