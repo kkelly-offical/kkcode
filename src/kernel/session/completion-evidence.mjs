@@ -4,6 +4,7 @@ import { parseShellCommands } from '../permission/shell-analysis.mjs'
 import { toolCapability } from '../permission/rules.mjs'
 import { isReconciledCompletionEvent, completionEnvironmentIdentity } from './completion-history.mjs'
 import { completionVerificationGuidance } from './verification-guidance.mjs'
+import { isToolNotStarted } from '../core/execution-outcome.mjs'
 
 const EDIT_TOOLS = new Set(['write', 'edit', 'multiedit', 'patch', 'notebookedit', 'move', 'copy', 'remove', 'mkdir', 'archive', 'git_apply_patch', 'git_restore', 'office_create', 'office_edit', 'office_pdf'])
 const NON_CHECK_FLAGS = /^(?:--help|-h|--version|--list(?:Tests|-tests)?|-list|--collect-only|--co|--setup-plan|--setup-only|--dry-run|--showConfig|--listFilesOnly|--print-config|--init|--fixtures(?:-per-test)?|--markers|--if-present|--ignore-scripts|--passWithNoTests|--watch(?:All)?|--fix)(?:=|$)/i
@@ -92,13 +93,26 @@ function processVerified(event) {
 function attemptedChecks(command, cwd, env = null) {
   const toolEnvironment = completionEnvironmentIdentity(env)
   if (!toolEnvironment) return []
-  return parseShellCommands(command).commands.flatMap(entry => {
+  let directory = path.resolve(cwd)
+  const checks = []
+  let directoryKnown = true
+  for (const entry of parseShellCommands(command).commands) {
     const normalized = stripEnvironment(entry.words)
-    if (!normalized) return []
+    if (!normalized) continue
+    if (normalized.words[0] === 'cd') {
+      const args = normalized.words[1] === '--' ? normalized.words.slice(2) : normalized.words.slice(1)
+      // Only && proves that the following check ran after successful cd. A
+      // dynamic/conditional directory must never acquire a false root identity.
+      if (!entry.dynamic && !entry.glob && !entry.redirects.length && !normalized.env.length && args.length === 1 && !args[0].startsWith('-') && !args[0].startsWith('~') && entry.separator === '&&' && (directoryKnown || path.isAbsolute(args[0]))) {
+        directory = path.resolve(directory, args[0]); directoryKnown = true
+      } else directoryKnown = false
+      continue
+    }
     const check = simpleCheck(normalized.words)
     const effectiveEnv = [...new Map([...toolEnvironment, ...normalized.env]).entries()].sort(([a], [b]) => a.localeCompare(b))
-    return check ? [{ ...check, id: digest({ directory: path.resolve(cwd), env: effectiveEnv, words: normalized.words }) }] : []
-  })
+    if (check) checks.push({ ...check, id: digest({ directory: directoryKnown ? directory : {unknownScope: digest(command)}, env: effectiveEnv, words: normalized.words }) })
+  }
+  return checks
 }
 
 function mutationPaths(event) {
@@ -107,10 +121,12 @@ function mutationPaths(event) {
     ...(Array.isArray(metadata.mutations) ? metadata.mutations : []), ...(metadata.mutation ? [metadata.mutation] : [])]
   const found = changes.map(change => change?.path || change?.filePath || change?.target).filter(value => typeof value === 'string')
   if (!found.length) for (const key of ['path', 'file_path', 'filePath', 'from', 'to']) if (typeof args[key] === 'string') found.push(args[key])
+  if (!found.length && Array.isArray(args.changes)) for (const change of args.changes) for (const key of ['path', 'file_path', 'filePath', 'from', 'to']) if (typeof change?.[key] === 'string') found.push(change[key])
   return found
 }
 
 function hasMutation(event, verification) {
+  if (isToolNotStarted(event)) return false
   const metadata = event.metadata || {}
   if (Array.isArray(metadata.fileChanges) && metadata.fileChanges.length || Array.isArray(event.evidence?.fileChanges) && event.evidence.fileChanges.length || metadata.mutation || Array.isArray(metadata.mutations) && metadata.mutations.length) return true
   if (EDIT_TOOLS.has(event.name)) return successful(event) || isReconciledCompletionEvent(event)
@@ -134,9 +150,12 @@ export function evaluateCompletionEvidence({ todoState = null, toolEvents = [], 
     const eventCwd = path.resolve(cwd, event.args?.cwd || '.')
     const verification = event.name === 'bash' && event.metadata?.verificationEnvUnknown !== true ? classifyVerificationCommand(event.args?.command, { cwd: eventCwd, env: event.args?.env }) : null
     if (EDIT_TOOLS.has(event.name)) {
-      const paths = mutationPaths(event), key = digest({ cwd: eventCwd, paths: paths.length ? paths.map(file => path.resolve(eventCwd, file)).sort() : [event.name] })
-      if (successful(event)) failedMutations.delete(key)
-      else if (!isReconciledCompletionEvent(event)) failedMutations.set(key, { kind: 'failed_mutation', index, tool: String(event.name).slice(0, 60) })
+      const paths = [...new Set(mutationPaths(event).map(file => path.resolve(eventCwd, file)))]
+      const keys = paths.length ? paths.map(file => digest({path: file})) : [digest({cwd: eventCwd, unknownPath: event.name})]
+      for (const key of keys) {
+        if (successful(event)) failedMutations.delete(key)
+        else if (!isToolNotStarted(event) && !isReconciledCompletionEvent(event)) failedMutations.set(key, { kind: 'failed_mutation', index, tool: String(event.name).slice(0, 60) })
+      }
     }
     if (hasMutation(event, verification)) {
       mutations++; lastMutation = index
@@ -182,12 +201,15 @@ export function evaluateCompletionEvidence({ todoState = null, toolEvents = [], 
       ? '已有失败或未能核实的检查仍须修复，并以相同参数、工作目录和环境重新执行同一检查。无关检查成功不能清除它；不要隐藏错误或跳过原测试。'
       : 'Repair failed or unverified checks and rerun the same checks with the same arguments, working directory and environment. An unrelated successful check cannot clear them; do not hide errors or skip the original tests.'] : [])
   ].join('\n')
+  const unresolvedChecks = failures.filter(failure => ['failed_check', 'unverified_check'].includes(failure.kind)).slice(-8)
+  const checkDetails = unresolvedChecks.length ? [chinese ? '尚未核实的检查（定位原始工具记录；不是新执行授权）：' : 'Unresolved checks (locate the original tool record; not new execution authority):',
+    ...unresolvedChecks.map(check => `${check.label} · ${check.id} · #${check.index}`)].join('\n') : ''
   return {
     passed, verdict: passed ? state === 'checks_observed' ? 'CHECKS_OBSERVED' : 'NO_BLOCKING_TODO' : 'BLOCK', state,
     checks: observations.slice(-20), failures: failures.slice(-20),
     message: state === 'checks_observed'
       ? 'Successful check processes were observed after the latest mutation. This is not full semantic acceptance; report their actual scope and remaining limits.'
       : passed ? 'No blocking todo or observed mutation requires verification. An empty todo list is not proof that tests passed; build/test/lint commands are not executed implicitly.'
-        : [blockedMessage, repairGuidance].filter(Boolean).join('\n')
+        : [blockedMessage, repairGuidance, checkDetails].filter(Boolean).join('\n')
   }
 }

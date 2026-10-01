@@ -9,6 +9,7 @@ import { BackgroundManager } from '../src/kernel/orchestration/background-manage
 import { collectBackgroundCompletionEvidence } from '../src/kernel/session/background-completion.mjs'
 import { evaluateCompletionEvidence } from '../src/kernel/session/completion-evidence.mjs'
 import { nodeFixtureCommand } from './fixtures/process-script.mjs'
+import { listToolOperations, resolveToolOperation } from '../src/kernel/tool/operation-journal.mjs'
 
 let root, previousRoot
 const tasks = new Set()
@@ -142,4 +143,31 @@ test('parent abort stops its owned finite background command instead of leaving 
   assert.equal(task.status, 'cancelled')
   await pause(1000)
   await assert.rejects(access(later), { code: 'ENOENT' })
+})
+
+test('cancelled background process has a distinct owner-inspection journal and exact recovery path', async () => {
+  const launched = await launch(await command('setTimeout(() => {}, 10000)'))
+  for (let index = 0; index < 100; index++) {
+    if ((await listToolOperations('owner')).some(operation => operation.state === 'pending')) break
+    await pause(10)
+  }
+  await BackgroundManager.cancel(launched.id)
+  const task = await settled(launched.id)
+  const operationId = task.result.metadata.operationId
+  assert.ok(operationId)
+  const rows = await listToolOperations('owner')
+  assert.equal(rows.filter(row => row.state === 'uncertain').length, 1)
+  assert.equal(rows.find(row => row.id === operationId).state, 'uncertain')
+  const before = await collect([launched.event, successfulCheck(task.endedAt + 1, task.endedAt + 10)])
+  assert.equal(before.unknown, true, 'green output is not owner inspection')
+  assert.equal(before.inspection[0].operationId, operationId)
+  await assert.rejects(resolveToolOperation('foreign', operationId, true), /No unresolved/)
+  await assert.rejects(resolveToolOperation('owner', operationId, false), /Inspect/)
+  await resolveToolOperation('owner', operationId, true)
+  const inspected = await collect([launched.event])
+  assert.equal(inspected.unknown, false)
+  assert.equal(evaluateCompletionEvidence({toolEvents: inspected.events, requireChecks: inspected.needsFreshVerification}).passed, false)
+  const fresh = await collect([launched.event, successfulCheck(task.endedAt + 1, task.endedAt + 10)])
+  assert.equal(evaluateCompletionEvidence({toolEvents: fresh.events, requireChecks: fresh.needsFreshVerification}).passed, true)
+  assert.equal((await BackgroundManager.get(launched.id)).status, 'cancelled', 'inspection never rewrites the original outcome')
 })

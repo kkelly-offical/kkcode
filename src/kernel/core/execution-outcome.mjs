@@ -1,6 +1,28 @@
 // Host-only provenance. Error codes / booleans crossing tool IPC are diagnostics,
 // never evidence that an effect did not happen. This module is not an SDK export.
 const preDispatchFailures = new WeakSet()
+const notStartedReceipts = new WeakSet()
+const dispatchReceipts = new WeakMap()
+
+/** Minted only before the host dispatch boundary, never from a tool's code,
+ * status, output, or metadata. Brands survive host result transformations. */
+export function markToolNotStarted(result) {
+  const receipt = Object.freeze({schema: 'kk.tool-dispatch.v1', source: 'host', started: false})
+  notStartedReceipts.add(receipt)
+  dispatchReceipts.set(result, receipt)
+  return result
+}
+export const toolDispatchReceipt = result => dispatchReceipts.get(result) || null
+export const isToolNotStarted = result => Boolean(toolDispatchReceipt(result))
+export function attachToolDispatchReceipt(result, receipt) {
+  if (receipt && notStartedReceipts.has(receipt)) dispatchReceipts.set(result, receipt)
+  return result
+}
+/** Called only by the canonical host history reader, not on tool metadata. */
+export function restoreToolDispatchReceipt(result, receipt) {
+  if (receipt?.schema === 'kk.tool-dispatch.v1' && receipt.source === 'host' && receipt.started === false) markToolNotStarted(result)
+  return result
+}
 
 export function toolPreDispatchError(cause) {
   const original = cause?.message || String(cause)

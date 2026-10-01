@@ -150,6 +150,24 @@ test('historical safe environment snapshots retain exact check identity without 
   assert.equal(nextReport(carried, [{ ...currentCheck('npm test'), args: { command: 'npm test', env } }]).passed, true)
 })
 
+test('canonical pre-dispatch receipt survives restart, while metadata cannot manufacture it', async () => {
+  const rejected = edit({status: 'error', metadata: {started: false}, dispatch: {schema: 'kk.tool-dispatch.v1', source: 'host', started: false}})
+  const carried = await priorCompletionEvidence(session([marker('running'), rejected, marker('incomplete')]))
+  assert.equal(nextReport(carried, []).passed, true)
+  for (const forged of [{...rejected, dispatch: undefined}, {...rejected, dispatch: {...rejected.dispatch, source: 'model'}}]) {
+    assert.equal(nextReport(await priorCompletionEvidence(session([marker('running'), forged])), [currentCheck('npm test')]).passed, false)
+  }
+})
+
+test('multi-file repair scope survives history without retaining replacement bodies', async () => {
+  const failed = edit({status: 'error', args: {changes: [{path: 'a.mjs', before: 'private-before', after: 'private-after'}, {path: 'b.mjs', content: 'private-body'}]}})
+  const carried = await priorCompletionEvidence(session([marker('running'), failed, marker('incomplete')]))
+  assert.doesNotMatch(JSON.stringify(carried), /private-/)
+  const repair = file => ({name: 'write', args: {path: file}, status: 'completed', ok: true, metadata: {fileChanges: [{filePath: file}], mutations: [{filePath: file}]}})
+  assert.equal(nextReport(carried, [repair('a.mjs'), currentCheck('npm test')]).passed, false)
+  assert.equal(nextReport(carried, [repair('a.mjs'), repair('b.mjs'), currentCheck('npm test')]).passed, true)
+})
+
 test('unsupported historical environments remain risky, without serializing their private values as proof', async () => {
   const carried = await priorCompletionEvidence(session([marker('running'), edit(), check('npm test', { status: 'completed', args: { command: 'npm test', env: { PATH: '/private/fake-bin', SECRET_TOKEN: 'private-secret-value' } }, metadata: { exitCode: 0 } })]))
   assert.doesNotMatch(JSON.stringify(carried), /private-fake|private-secret-value|fake-bin|SECRET_TOKEN/)

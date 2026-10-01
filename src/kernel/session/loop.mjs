@@ -60,6 +60,7 @@ import { promptReport } from './prompt-report.mjs'
 import { createProgressGuard } from './progress-guard.mjs'
 import { resolveModelCapabilities } from '../provider/model-catalog.mjs'
 import { isCancellation } from '../../abort.mjs'
+import { toolDispatchReceipt, attachToolDispatchReceipt } from '../core/execution-outcome.mjs'
 
 // 每条 tool_result 进入活动上下文的字符上限。0.6.3 之前是硬编码 3000 ——
 // 一个 268 行的普通源文件有 12494 字符，模型只能看到四分之一，而且不知道
@@ -1027,7 +1028,7 @@ async function processTurnLoopInRuntime({
             const authoredThisTurn = todos.source.turnId === turnId
             const background = await collectBackgroundCompletionEvidence({ sessionId,
               toolEvents: [...carriedEvidence.toolEvents, ...verificationEvents], parts: (await getSession(sessionId))?.parts || [] })
-            const validationResult = { state: 'not_verified', ...(verifyCompletion ? await validator.validate({
+            const validationResult = { state: 'not_verified', inspection: background.inspection || [], ...(verifyCompletion ? await validator.validate({
               todoState: authoredThisTurn || carriedEvidence.toolEvents.length > 0 || carriedEvidence.requireChecks || verificationEvents.some(event => ['write', 'edit', 'patch', 'multiedit'].includes(event.name)) ? todos.items : [],
               toolEvents: background.events,
               requireChecks: carriedEvidence.requireChecks || background.needsFreshVerification,
@@ -1044,6 +1045,13 @@ async function processTurnLoopInRuntime({
                 ? '\n后台操作结果尚无法核实，请检查任务记录和实际文件状态，不要重复执行。'
                 : `\n仍有 ${background.pending.length} 个后台命令未收尾，请用 task_output 核查实际结果；后台修改结束前的测试不算最终验收。`
             }
+            if (background.inspection?.length) {
+              const owned = background.inspection.filter(item => /^[a-f0-9-]{36}$/.test(item.operationId || '') && /^[A-Za-z0-9_-]{1,128}/.exec(sessionId)?.[0] === sessionId)
+              if (owned.length) validationResult.message += '\n' + (language === 'zh'
+                ? '需要会话所有者先核查实际文件、数据和进程，再确认操作记录；智能体不得代替用户确认。确认不是回滚，也不是测试通过：'
+                : 'The session owner must inspect actual files, data and processes before acknowledging these operations. The agent must not confirm on the owner\'s behalf. Acknowledgement is neither rollback nor test acceptance:') +
+                '\n' + owned.slice(-8).map(item => `kkcode session operations --id ${sessionId} --resolve ${item.operationId} --confirm-inspected`).join('\n')
+            }
             const children = await childController.list()
             const unsettled = children.filter(child => ['running', 'pending', 'unknown', 'incomplete', 'error', 'failed', 'cancelled', 'interrupted', 'blocked'].includes(child.status))
             if (unsettled.length) {
@@ -1054,6 +1062,14 @@ async function processTurnLoopInRuntime({
             verification = validationResult
             
             if (!validationResult.passed) {
+              // No amount of autonomous retry can manufacture owner inspection
+              // or recover missing canonical evidence. Preserve a useful
+              // terminal result instead of consuming provider quota in a loop.
+              if (validationResult.state === 'outcome_unknown' || carriedEvidence.needsInspection) {
+                stopReason = 'inspection-required'
+                finalReply = `${language === 'zh' ? '需要先核查先前操作，本轮未标记完成；已保留文件和执行记录。' : 'Prior operations require inspection. This turn is not completed; files and execution evidence are preserved.'}\n${validationResult.message}`
+                break
+              }
               if (toolEvents.some(event => event.code === 'PERMISSION_DENIED')) {
                 stopReason = 'permission-denied'
                 finalReply = response.text.trim() || '操作未获授权，未执行该操作。已有结果已保留。'
@@ -1368,6 +1384,7 @@ async function processTurnLoopInRuntime({
           mode
         })
         if (hookAfterResult?.result) result = hookAfterResult.result
+        const dispatchReceipt = toolDispatchReceipt(result)
         result = { ...result, startedAt: result.startedAt ?? callStartedAt, completedAt: result.completedAt ?? Date.now() }
 
         // Plan approval interception: if the tool returned planApproval metadata,
@@ -1437,11 +1454,12 @@ async function processTurnLoopInRuntime({
           code: result.code,
           ok: result.ok,
           evidence: result.evidence,
+          ...(dispatchReceipt ? {dispatch: dispatchReceipt} : {}),
           startedAt: result.startedAt,
           completedAt: result.completedAt,
           durationMs: result.durationMs
         })
-        verificationEvents.push({ name: call.name, args: call.args, ...result, invocationId: call.id, turnId, step })
+        verificationEvents.push(attachToolDispatchReceipt({ name: call.name, args: call.args, ...result, invocationId: call.id, turnId, step }, dispatchReceipt))
 
         return { call, result }
       }
@@ -1674,7 +1692,8 @@ async function processTurnLoopInRuntime({
       emittedText: emittedAnyText,
       context: lastContextMeter,
       usage,
-      toolEvents
+      toolEvents,
+      verification
     }
   }
 }

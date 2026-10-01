@@ -12,7 +12,7 @@ import { buildMutationObservability } from "../../observability/edit-diagnostics
 import { toolCapability } from '../permission/rules.mjs'
 import { beginToolOperation } from './operation-journal.mjs'
 import { currentDurableRun } from '../orchestration/run-runtime.mjs'
-import { isToolPreDispatchError } from '../core/execution-outcome.mjs'
+import { isToolPreDispatchError, markToolNotStarted } from '../core/execution-outcome.mjs'
 
 const FILE_EDIT_TOOLS = new Set(["write", "edit", "multiedit", "patch", "notebookedit", "move", "copy", "remove", "mkdir", "archive", "git_apply_patch"])
 // 同一 turn 可能并行触发多个编辑工具。只记一个 boolean 会让第二个工具越过仍在
@@ -79,7 +79,7 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
   // Freeze wire-equivalent values before the first await/audit callback. Never
   // validate one mutable object and execute a later changed version of it.
   try { args = snapshotToolArguments(args) }
-  catch (error) { return makeToolResult({ name: tool.name, status: 'error', ok: false, code: error.code, output: error.message, error: error.message }) }
+  catch (error) { return markToolNotStarted(makeToolResult({ name: tool.name, status: 'error', ok: false, code: error.code, output: error.message, error: error.message, metadata: {started: false} })) }
   const durableRun = currentDurableRun()
   const toolInvocationId = String(invocationId || `${turnId || "turn"}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`)
   context = { ...context, sessionId, turnId, toolCallId: toolInvocationId, ...(signal ? { signal } : {}) }
@@ -108,12 +108,13 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
 
       try {
         if (signal?.aborted) {
-          const cancelled = makeToolResult({
+          const cancelled = markToolNotStarted(makeToolResult({
             name: tool.name,
             status: "cancelled",
             output: "tool cancelled before execution",
-            durationMs: Date.now() - startedAt
-          })
+            durationMs: Date.now() - startedAt,
+            metadata: {started: false}
+          }))
           await EventBus.emit({
             type: EVENT_TYPES.TOOL_ERROR,
             sessionId,
@@ -240,8 +241,9 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
           error: errorMessage,
           durationMs: Date.now() - startedAt,
           startedAt, completedAt: Date.now(),
-          ...(outcomeUnknown ? { metadata: { outcomeUnknown: true, ...(operationId ? { operationId } : {}) } } : {})
+          metadata: knownNotStarted ? {started: false} : outcomeUnknown ? { outcomeUnknown: true, ...(operationId ? { operationId } : {}) } : {}
         })
+        if (knownNotStarted) markToolNotStarted(result)
         await EventBus.emit({
           type: EVENT_TYPES.TOOL_ERROR,
           sessionId,

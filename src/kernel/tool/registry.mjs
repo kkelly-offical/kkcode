@@ -14,6 +14,7 @@ import { scopedBackgroundTask, scopedBackgroundTasks, cancelScopedBackgroundTask
 import { runManagedProcess } from './managed-process.mjs'
 import { createTaskTool, createTaskGroupTool, createChildControlTools, taskModelSchema } from "./task-tool.mjs"
 import { normalizeToolOutcome } from './result-outcome.mjs'
+import { beginToolOperation } from './operation-journal.mjs'
 import { makeToolResult } from '../core/types.mjs'
 import { McpRegistry } from "../mcp/registry.mjs"
 import { SkillRegistry } from "../skill/registry.mjs"
@@ -1570,10 +1571,33 @@ function builtinTools(config) {
           payload: { workerType: 'bash', command, cwd: runCwd, parentSessionId: ctx.sessionId || null,
             turnId: ctx.turnId || null, toolCallId: ctx.toolCallId || null,
             envProvided: Object.keys(extraEnv || {}).length > 0 },
-          run: ({ signal }) => runBash(command, runCwd, timeoutMs, {
-            background: true, env: extraEnv, maxChars, sandbox: sandbox.spawn, sandboxHint: sandbox.hint, invocation,
-            artifactAccess: ctx.artifactAccess, toolCallId: ctx.toolCallId, signal
-          }),
+          run: async ({ signal }) => {
+            // Submission's operation ends with the launch acknowledgement.
+            // The actual background process needs its OWN durable outcome, so
+            // the owner can inspect/acknowledge a cancellation or lost effect.
+            let operation
+            let dispatchStarted = false
+            try {
+              operation = await beginToolOperation({sessionId: ctx.sessionId, turnId: ctx.turnId, tool: 'bash', args: {command, cwd: runCwd, background: true, env: extraEnv}})
+              dispatchStarted = true
+              const result = await runBash(command, runCwd, timeoutMs, {
+                background: true, env: extraEnv, maxChars, sandbox: sandbox.spawn, sandboxHint: sandbox.hint, invocation,
+                artifactAccess: ctx.artifactAccess, toolCallId: ctx.toolCallId, signal
+              })
+              const uncertain = 'outcomeUnknown' in result.metadata && result.metadata.outcomeUnknown === true
+              await operation?.finish(uncertain ? 'uncertain' : 'settled')
+              return {...result, metadata: {...result.metadata, ...(operation ? {operationId: operation.id} : {})}}
+            } catch (error) {
+              // Even a storage/archive exception must retain the operation's
+              // identity. A bare background error/string loses the only safe
+              // owner-recovery path and cannot be promoted to an exit receipt.
+              await operation?.finish('uncertain').catch(() => {})
+              return {ok: false, status: 'error', error: error.message, output: error.message,
+                metadata: {started: dispatchStarted, exitCode: null, timedOut: false, cancelled: signal.aborted,
+                  captureIncomplete: dispatchStarted, ...(dispatchStarted ? {outcomeUnknown: true} : {}),
+                  ...(operation ? {operationId: operation.id} : {})}}
+            }
+          },
           config: ctx.config,
           signal: ctx.signal
         })

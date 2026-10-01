@@ -48,6 +48,12 @@ shell condition or printing PASS does not supply a recognized verification recei
 Do not mask errors with pipes, redirection, `;` or `|| true`; use `&&` for dependent checks.
 Syntax/whitespace checks prove only syntax/whitespace, not the requested behavior.
 Read-only/Plan tasks must not create or edit files just to obtain a check receipt.
+For temporary test servers, prefer an assertion-test harness that starts its own
+services, waits for readiness, checks behavior, closes services in finally and
+joins all children before exiting with the real test result. Do not use pkill to
+clean up unbounded servers. Background cancellation/timeout is not rollback or
+test acceptance; stop and report any owner-inspection requirement rather than
+replaying effects or acknowledging on the owner's behalf.
 
 # Committing changes with git
 

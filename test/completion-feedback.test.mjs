@@ -104,6 +104,89 @@ test('failed-check feedback preserves check identity, chronology and unknown-eff
   assert.equal(evaluateCompletionEvidence({toolEvents: [{...write, metadata: {outcomeUnknown: true}}, shell('node --test original.test.mjs')]}).state, 'outcome_unknown')
 })
 
+test('repairing a masked check uses its actual directory, not the shell launch directory', () => {
+  const shell = (command, cwd = 'repo') => ({name: 'bash', args: {command, cwd}, status: 'completed', ok: true, metadata: {exitCode: 0, started: true}})
+  const failed = shell('cd web && node --test suite.test.mjs | tail -10')
+  assert.equal(evaluateCompletionEvidence({toolEvents: [failed, shell('node --test suite.test.mjs', 'repo/web')]}).passed, true)
+  assert.equal(evaluateCompletionEvidence({toolEvents: [failed, shell('node --test suite.test.mjs', 'repo/api')]}).passed, false)
+  assert.equal(evaluateCompletionEvidence({toolEvents: [shell('cd web\nnode --test suite.test.mjs || true'), shell('node --test suite.test.mjs', 'repo/web')]}).passed, false, 'a failed cd could have run the masked test in another directory')
+})
+
+test('a real edit repair is not blocked by duplicate paths in observability receipts', () => {
+  const failed = {name: 'edit', args: {path: 'src/result.mjs'}, status: 'error', ok: false}
+  const repaired = {name: 'edit', args: {path: 'src/result.mjs'}, status: 'completed', ok: true,
+    metadata: {fileChanges: [{filePath: 'src/result.mjs'}], mutation: {filePath: 'src/result.mjs'}, mutations: [{filePath: 'src/result.mjs'}]}}
+  const check = {name: 'bash', args: {command: 'node --test suite.test.mjs'}, status: 'completed', ok: true, metadata: {exitCode: 0, started: true}}
+  assert.equal(evaluateCompletionEvidence({toolEvents: [failed, repaired, check]}).passed, true)
+  assert.equal(evaluateCompletionEvidence({toolEvents: [failed, {...repaired, args: {path: 'other.mjs'}, metadata: {fileChanges: [{filePath: 'other.mjs'}]}}, check]}).passed, false)
+})
+
+test('a failed multi-file edit can be repaired one path at a time without clearing unrelated paths', () => {
+  const failed = {name: 'edit', args: {changes: [{path: 'a.mjs'}, {path: 'b.mjs'}]}, status: 'error', ok: false}
+  const repair = path => ({name: 'write', args: {path}, status: 'completed', ok: true, metadata: {fileChanges: [{filePath: path}], mutation: {filePath: path}}})
+  const check = {name: 'bash', args: {command: 'node --test suite.test.mjs'}, status: 'completed', ok: true, metadata: {exitCode: 0, started: true}}
+  assert.equal(evaluateCompletionEvidence({toolEvents: [failed, repair('a.mjs'), check]}).passed, false)
+  assert.equal(evaluateCompletionEvidence({toolEvents: [failed, repair('a.mjs'), repair('b.mjs'), check]}).passed, true)
+  assert.equal(evaluateCompletionEvidence({toolEvents: [{...failed, metadata: {started: false, operationAcknowledged: true}}, check]}).passed, false, 'untrusted metadata cannot manufacture the host pre-dispatch brand')
+})
+
+test('unknown process effects stop with retained evidence instead of autonomous repair nudges', async t => {
+  const {kernel} = await fixture(t, 'en')
+  let requests = 0
+  kernel.providers.registerProvider('feedback-fixture', {
+    async request() {throw Error('Streaming fixture only')},
+    async *requestStream() {
+      if (++requests === 1) yield {type: 'tool_call', call: {id: 'signal-exit', name: 'bash', args: {command: process.platform === 'win32' ? 'node missing-inspection-fixture.mjs' : 'kill -TERM $$'}}}
+      else yield {type: 'text', content: 'All previous operations completed successfully.'}
+    }
+  })
+  if (process.platform === 'win32') return t.skip('POSIX signal exit is covered by the Windows process-tree suites instead')
+  const result = await kernel.executeTurn({prompt: 'Inspect the outcome and do not replay it.', sessionId: 'unknown-no-replay', mode: 'assistant', model: 'fixture', providerType: 'feedback-fixture'})
+  assert.equal(result.status, 'incomplete')
+  assert.equal(result.stopReason, 'inspection-required')
+  assert.equal(result.verification.state, 'outcome_unknown')
+  assert.equal(result.toolEvents.length, 1)
+  assert.equal(requests, 2)
+  assert.ok(result.verification.inspection.some(item => item.operationId))
+  assert.match(result.reply, /session operations/)
+  assert.doesNotMatch(result.reply, /kill -TERM/)
+})
+
+test('pre-dispatch schema rejection has no mutation and the real executor receipt survives history', async t => {
+  const {kernel} = await fixture(t, 'en')
+  let requests = 0
+  kernel.providers.registerProvider('feedback-fixture', {
+    async request() {throw Error('Streaming fixture only')},
+    async *requestStream() {
+      if (++requests === 1) yield {type: 'tool_call', call: {id: 'invalid-edit', name: 'edit', args: {path: 'never-created.mjs', changes: [{before: 'x', after: 'y'}]}}}
+      else yield {type: 'text', content: 'The rejected edit did not run. No files were changed.'}
+    }
+  })
+  const first = await kernel.executeTurn({prompt: 'Inspect the rejection without making changes.', sessionId: 'rejected-edit', mode: 'assistant', model: 'fixture', providerType: 'feedback-fixture'})
+  assert.equal(first.status, 'completed')
+  assert.equal(first.toolEvents[0].code, 'schema_invalid')
+  assert.equal(first.toolEvents[0].metadata.started, false)
+  const second = await kernel.executeTurn({prompt: 'Confirm no edit was applied.', sessionId: 'rejected-edit', mode: 'assistant', model: 'fixture', providerType: 'feedback-fixture'})
+  assert.equal(second.status, 'completed')
+})
+
+test('provider failure preserves earlier verification failures in the returned result', async t => {
+  const {kernel} = await fixture(t, 'en')
+  let requests = 0
+  kernel.providers.registerProvider('feedback-fixture', {
+    async request() {throw Error('Streaming fixture only')},
+    async *requestStream() {
+      if (++requests === 1) yield {type: 'tool_call', call: {id: 'write', name: 'write', args: {path: 'result.txt', content: '42\n'}}}
+      else if (requests === 2) yield {type: 'text', content: 'Complete.'}
+      else throw Error('controlled provider allowance exhausted')
+    }
+  })
+  const result = await kernel.executeTurn({prompt: 'Create the output and verify it.', sessionId: 'failed-provider-evidence', mode: 'assistant', model: 'fixture', providerType: 'feedback-fixture'})
+  assert.equal(result.status, 'error')
+  assert.equal(result.verification?.passed, false)
+  assert.ok(result.verification.failures.some(failure => failure.kind === 'checks_required'))
+})
+
 for (const language of ['en', 'zh']) test(`shared guidance reaches the actual Plan system prompt without granting writes (${language})`, async () => {
   const prompt = await buildSystemPromptBlocks({mode: 'plan', model: 'fixture', cwd: process.cwd(), language, tools: [{name: 'bash'}]})
   const contract = prompt.blocks.find(block => block.label === 'assistant_contract').text

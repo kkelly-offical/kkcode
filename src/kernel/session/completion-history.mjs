@@ -2,6 +2,7 @@ import { listToolOperations } from '../tool/operation-journal.mjs'
 import { toolCapability } from '../permission/rules.mjs'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
+import { restoreToolDispatchReceipt } from '../core/execution-outcome.mjs'
 
 const SCHEMA = 'kk.turn-outcome.v1'
 const STATUSES = new Set(['running', 'completed', 'incomplete', 'cancelled', 'error'])
@@ -75,6 +76,7 @@ function slimEvent(part, cwd) {
     if (part.args[key].length > (key === 'command' ? 32768 : 4096)) throw new Error('oversized_tool_arguments')
     args[key] = part.args[key]
   }
+  if (Array.isArray(part.args?.changes)) args.changes = slimPaths(part.args.changes)
   if (part.args?.env != null) args.env = environmentSnapshot(part.args.env)
   if (part.args?.run_in_background !== undefined) {
     if (typeof part.args.run_in_background !== 'boolean') throw new Error('invalid_background_flag')
@@ -104,7 +106,7 @@ function slimEvent(part, cwd) {
     metadata.historyInterrupted = true
     if (!['read', 'search', 'safe-shell'].includes(toolCapability(part.tool, args.command, { args }))) metadata.outcomeUnknown = true
   }
-  return event
+  return restoreToolDispatchReceipt(event, part.dispatch)
 }
 
 function inspection(reason, events = [], legacyUnverified = false) {
@@ -159,16 +161,25 @@ export async function priorCompletionEvidence(entry, { maxEvents = 256, maxBytes
     }
   } catch { return inspection('completion_history_unrepresentable') }
 
+  const reconciliation = await reconcileCompletionEvents(events, entry?.session?.id)
+  if (reconciliation.unavailable) return inspection('operation_journal_unavailable', events)
+  const unknown = events.some(event => event.metadata.outcomeUnknown === true || event.metadata.terminationIncomplete === true)
+  return { toolEvents: events, requireChecks: reconciliation.requireChecks, unknown, needsInspection: false, legacyUnverified: false }
+}
+
+/** Shared foreground/background owner reconciliation. Acknowledgement is an
+ * exact journal receipt, never a tool/plugin assertion or a later green test. */
+export async function reconcileCompletionEvents(events, sessionId) {
   let operations = null, requireChecks = false
   for (const event of events) {
     const unknown = event.metadata.outcomeUnknown === true || event.metadata.terminationIncomplete === true
     if (!unknown) continue
     requireChecks = true
     const operationId = event.metadata.operationId
-    if (typeof operationId !== 'string' || !operationId || !entry?.session?.id) continue
+    if (typeof operationId !== 'string' || !operationId || !sessionId) continue
     if (!operations) {
-      try { operations = await listToolOperations(entry.session.id) }
-      catch { return inspection('operation_journal_unavailable', events) }
+      try { operations = await listToolOperations(sessionId) }
+      catch { return {unavailable: true, requireChecks: true} }
     }
     const exact = operations.find(operation => operation.id === operationId && operation.tool === event.name && operation.turnId === event.turnId)
     if (exact?.state !== 'acknowledged') continue
@@ -177,6 +188,5 @@ export async function priorCompletionEvidence(entry, { maxEvents = 256, maxBytes
     event.metadata.operationAcknowledged = true
     reconciledEvents.add(event)
   }
-  const unknown = events.some(event => event.metadata.outcomeUnknown === true || event.metadata.terminationIncomplete === true)
-  return { toolEvents: events, requireChecks, unknown, needsInspection: false, legacyUnverified: false }
+  return {requireChecks, unavailable: false}
 }
