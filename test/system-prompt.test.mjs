@@ -3,6 +3,20 @@ import assert from "node:assert/strict"
 import { defineAgent } from "../src/kernel/agent/agent.mjs"
 import { buildSystemPromptBlocks, providerPromptByModel } from "../src/kernel/session/system-prompt.mjs"
 
+test('optional completion guidance follows its setting across prompt cache hits without hiding lifecycle rules', async () => {
+  const options = {mode: 'agent', model: 'fixture', cwd: process.cwd(), tools: [{name: 'bash'}]}
+  const contract = prompt => prompt.blocks.find(block => block.label === 'assistant_contract').text
+  const enabled = await buildSystemPromptBlocks(options)
+  const disabled = await buildSystemPromptBlocks({...options, verifyCompletion: false})
+  const reenabled = await buildSystemPromptBlocks(options)
+  assert.match(contract(enabled), /Completion records actual check processes/)
+  assert.doesNotMatch(contract(disabled), /Completion records actual check processes/)
+  assert.match(contract(disabled), /unknown outcomes/)
+  assert.match(contract(disabled), /normal|permission|authorization/)
+  assert.equal(contract(reenabled), contract(enabled))
+  assert.ok(disabled.text.length < enabled.text.length)
+})
+
 test("system prompt routes claude models to anthropic prompt", async () => {
   const text = await providerPromptByModel("claude-3-5-sonnet-latest")
   assert.ok(text.includes("anthropic mode"))

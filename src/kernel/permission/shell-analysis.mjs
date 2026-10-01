@@ -73,3 +73,31 @@ export function parseShellCommands(input) {
   flushCommand()
   return { commands, uncertain }
 }
+
+const NONMUTATING_PROGRAMS = new Set(['pwd', 'ls', 'cat', 'head', 'tail', 'wc', 'which', 'whoami', 'uname', 'grep', 'echo', 'printf', 'true'])
+
+/** Effect knowledge is NOT execution authorization. A compound expression may
+ * remain risky-shell for approvals/scope while its literal read-only leaves do
+ * not invalidate a project check. Assumes the same trusted inherited execution
+ * environment as basic shell classification, not an executable attestation or
+ * OS sandbox. Never infer safety for scripts, configuration-loading programs,
+ * substitutions, redirects, custom environments or unjoined background jobs. */
+export function isLiteralNonmutatingShell(input, {env = null} = {}) {
+  if (env != null && (typeof env !== 'object' || Array.isArray(env) || Reflect.ownKeys(env).length)) return false
+  const command = String(input || '').trim()
+  // Restrict the additional composition proof to the common literal subset
+  // of /bin/sh and ComSpec. CMD does not honor POSIX single quotes/backslash
+  // escapes and can expand %, ! and ^; these remain conservative/opaque.
+  if (/[\\'%!^]/.test(command)) return false
+  const parsed = parseShellCommands(command)
+  if (parsed.uncertain || !parsed.commands.length || parsed.commands.length > 32) return false
+  return parsed.commands.every((entry, index) => {
+    if (entry.dynamic || entry.glob || entry.redirects.length || !entry.words.length) return false
+    if (index === parsed.commands.length - 1 ? entry.separator !== null : !['&&', '||', '|', ';', '\n', '\r'].includes(entry.separator)) return false
+    const [program, ...args] = entry.words
+    if (NONMUTATING_PROGRAMS.has(program)) return true
+    if (program !== 'cd' || entry.separator === '|') return false
+    const directory = args[0] === '--' ? args.slice(1) : args
+    return directory.length === 1 && directory[0] && !directory[0].startsWith('-') && !directory[0].startsWith('~')
+  })
+}

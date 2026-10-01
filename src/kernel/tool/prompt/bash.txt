@@ -51,6 +51,8 @@ Rules:
 - When commands depend on each other, chain with && (e.g. `git add . && git commit -m "msg"`).
 - NEVER use interactive flags like -i (e.g. git rebase -i, git add -i) — they require interactive input which is not supported.
 
+- On POSIX, do not append shell `&` and return while children keep running. Explicit unjoined launches are rejected before execution, including when run_in_background is also set. Use a bounded test harness that closes and joins its services, or remove the shell `&` and launch one finite managed background command. Explicitly joined parallel work (`... & wait`) remains available; actual child lifetime is still checked. CMD's single `&` is sequential and does not use this POSIX rule.
+
 # Completion verification
 
 After authorized changes, run the project's real tests/builds through this tool.
@@ -60,6 +62,11 @@ in the authorized workspace and run `node --test <explicit-test-file>` or
 Completion observes direct test processes after the last change. Repeating a
 shell condition or printing PASS does not supply a recognized verification receipt.
 Do not mask errors with pipes, redirection, `;` or `|| true`; use `&&` for dependent checks.
+Long output is archived automatically when needed. Use artifact_read / artifact_search
+on the returned archive instead of appending tail/grep to the test command.
+When repairing a check, preserve its arguments, module list, working directory and
+environment. Rerun a failed && group together in its original order; separately
+passing members do not replace the original group receipt.
 Keep rerunnable test scripts. Do not append deletion/cleanup to a check command;
 changes after the check require another actual check of the final state.
 Syntax/whitespace checks prove only syntax/whitespace, not the requested behavior.

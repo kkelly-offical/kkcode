@@ -80,7 +80,7 @@ test('1.0.6 preview source is consistent while published stable, preview, signin
   assert.match(versions, /历史预览.*1\.0\.5-preview\.0/)
   assert.match(versions, /从未公开发行过1\.1\.6/)
   assert.match(versions, /源码版本、流水线启动都不等于已公开下载/)
-  assert.match(versions, /本轮仅准备1\.0\.6-preview\.1，尚无新的管理员例外或公开发行批准/)
+  assert.match(versions, /本轮已授权验收后发布1\.0\.6-preview\.1；PR#34仍需正常审核或新的管理员例外/)
   assert.match(versions, /release-verification\.json/)
   assert.match(await read('CHANGELOG.md'), /## 1\.0\.5 — Stable/)
   const notice = await read('NOTICE.md')

@@ -44,7 +44,7 @@ test('uploads are opaque private files; text and real image blocks reach the ker
   const resolved = await store.resolve({ sessionId: 'session', ids: [text.id, image.id], prompt: 'review both' })
   assert.deepEqual(resolved.contentBlocks, [
     { type: 'text', text: 'review both' }, { type: 'text', text: 'Attached file: notes.txt' },
-    { type: 'text', text: 'hello\n世界' }, { type: 'text', text: 'Attached file: photo.png' },
+    { type: 'text', text: 'hello\n世界', attachment: { name: 'notes.txt', mediaType: 'text/plain' } }, { type: 'text', text: 'Attached file: photo.png' },
     { type: 'image', data: png, mediaType: 'image/png' }
   ])
   assert.equal((await store.list({ sessionId: 'other' })).attachments.length, 0)

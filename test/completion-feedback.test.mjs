@@ -15,9 +15,74 @@ const { evaluateCompletionEvidence } = await import(new URL('src/kernel/session/
 const { buildSystemPromptBlocks } = await import(new URL('src/kernel/session/system-prompt.mjs', source))
 const {listToolOperations, resolveToolOperation} = await import(new URL('src/kernel/tool/operation-journal.mjs', source))
 const {initHookBus, HookBus} = await import(new URL('src/kernel/plugin/hook-bus.mjs', source))
+const {buildTranscript} = await import(new URL('apps/web/src/transcript.mjs', source))
 
 const assertion = "import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';test('exact value and newline',()=>assert.equal(fs.readFileSync('result.txt','utf8'),'42\\n'));\n"
 const customCheck = `node -e "if (require('node:fs').readFileSync('result.txt','utf8') !== '42\\n') throw Error('incorrect result')"`
+
+for (const language of ['en', 'zh']) test(`masked checks receive private repair guidance before the next model action (${language})`, async t => {
+  const {kernel} = await fixture(t, language)
+  let requests = 0, feedback = ''
+  const command = 'node --test --test-reporter=spec verify.test.mjs'
+  kernel.providers.registerProvider('feedback-fixture', {
+    async request() {throw Error('Streaming fixture only')},
+    async *requestStream(input) {
+      requests++
+      if (requests === 1) {
+        yield {type: 'tool_call', call: {id: 'result', name: 'write', args: {path: 'result.txt', content: '42\n'}}}
+        yield {type: 'tool_call', call: {id: 'test', name: 'write', args: {path: 'verify.test.mjs', content: assertion}}}
+      } else if (requests === 2) yield {type: 'tool_call', call: {id: 'masked', name: 'bash', args: {command: command + ' || true'}}}
+      else if (requests === 3) {
+        feedback = JSON.stringify(input.messages.at(-1).content)
+        assert.match(feedback, /\[VERIFICATION FEEDBACK\]|\[检查反馈\]/)
+        assert.match(feedback, /--test-reporter=spec/)
+        assert.match(feedback, /verify.test.mjs/)
+        assert.doesNotMatch(feedback, /\|\| true/)
+        const results = input.messages.flatMap(message => Array.isArray(message.content) ? message.content : []).filter(block => block.type === 'tool_result' && block.tool_use_id === 'masked')
+        assert.equal(results.length, 1, 'the real wire result is retained exactly once')
+        assert.doesNotMatch(JSON.stringify(results), /check-repair-records/, 'guidance must not alter tool output bytes')
+        yield {type: 'tool_call', call: {id: 'verified', name: 'bash', args: {command}}}
+      } else yield {type: 'text', content: 'The directly executed assertion test passed.'}
+    }
+  })
+  const result = await kernel.executeTurn({prompt: 'Create result.txt with exactly 42 and a newline, verify it, and report.', sessionId: 'early-feedback-' + language, mode: 'assistant', model: 'fixture', providerType: 'feedback-fixture'})
+  assert.equal(result.status, 'completed')
+  assert.equal(requests, 4, 'repair happens before a failed completion attempt')
+  assert.equal(result.verification.passed, true)
+  assert.doesNotMatch(JSON.stringify(result.verification), /verify.test.mjs|--test-reporter/)
+  const stored = await kernel.sessions.getSession(result.sessionId)
+  const notices = stored.messages.filter(message => message.contextKind === 'control' && /VERIFICATION FEEDBACK|检查反馈/.test(String(message.content)))
+  assert.equal(notices.length, 1)
+  assert.equal(notices[0].synthetic, true)
+  assert.ok(!buildTranscript(stored).some(row => /check-repair-records/.test(row.text || '')), 'private model feedback must not become a visible chat message')
+})
+
+test('real failed check group is repaired from early ordered-chain guidance', async t => {
+  const {kernel} = await fixture(t, 'en')
+  let requests = 0
+  const command = 'node --test a.test.mjs && node --test b.test.mjs'
+  const simpleTest = "import test from 'node:test';test('actual check',()=>{});\n"
+  kernel.providers.registerProvider('feedback-fixture', {
+    async request() {throw Error('Streaming fixture only')},
+    async *requestStream(input) {
+      requests++
+      if (requests === 1) yield {type: 'tool_call', call: {id: 'first-test', name: 'write', args: {path: 'a.test.mjs', content: simpleTest}}}
+      else if (requests === 2) yield {type: 'tool_call', call: {id: 'failed-group', name: 'bash', args: {command}}}
+      else if (requests === 3) {
+        const feedback = JSON.stringify(input.messages.at(-1).content)
+        assert.match(feedback, /ordered-and-chain/)
+        assert.match(feedback, /same order joined with &&/)
+        yield {type: 'tool_call', call: {id: 'repair-test', name: 'write', args: {path: 'b.test.mjs', content: simpleTest}}}
+      } else if (requests === 4) yield {type: 'tool_call', call: {id: 'repaired-group', name: 'bash', args: {command}}}
+      else yield {type: 'text', content: 'Both checks passed in the original sequence.'}
+    }
+  })
+  const result = await kernel.executeTurn({prompt: 'Run both test modules and fix missing coverage.', sessionId: 'early-group-owner', mode: 'assistant', model: 'fixture', providerType: 'feedback-fixture'})
+  assert.equal(result.status, 'completed')
+  assert.equal(requests, 5)
+  assert.equal(result.verification.passed, true)
+  assert.ok(result.toolEvents.some(event => event.invocationId === 'failed-group' && event.metadata.exitCode !== 0))
+})
 
 async function fixture(t, language, {maxSteps = 8, verifyCompletion = true} = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kk-completion-feedback-'))
@@ -70,6 +135,60 @@ for (const language of ['en', 'zh']) test(`real custom-output check receives act
   assert.ok(result.toolEvents.some(event => event.name === 'bash' && event.args.command === customCheck && event.metadata.exitCode === 0))
   assert.ok(result.toolEvents.some(event => event.name === 'bash' && event.args.command === 'node --test verify.test.mjs' && event.metadata.exitCode === 0))
   assert.match(feedback, /checks_required/)
+})
+
+for (const language of ['en', 'zh']) test(`a later ordinary inspection script gets precise ordering feedback without being trusted as a check (${language})`, async t => {
+  const {kernel} = await fixture(t, language)
+  let requests = 0, feedback = ''
+  const call = (id, name, args) => ({type: 'tool_call', call: {id, name, args}})
+  kernel.providers.registerProvider('feedback-fixture', {
+    async request() {throw Error('Streaming fixture only')},
+    async *requestStream(input) {
+      requests++
+      if (requests === 1) {
+        yield call('result', 'write', {path: 'result.txt', content: '42\n'})
+        yield call('test', 'write', {path: 'verify.test.mjs', content: assertion})
+        yield call('inspection', 'write', {path: 'inspect-result.mjs', content: "import fs from 'node:fs';console.log(fs.readFileSync('result.txt','utf8'));\n"})
+      } else if (requests === 2) yield call('first-check', 'bash', {command: 'node --test verify.test.mjs'})
+      else if (requests === 3) yield call('ordinary-program', 'bash', {command: 'node inspect-result.mjs'})
+      else if (requests === 4) yield {type: 'text', content: 'The output and tests passed.'}
+      else if (requests === 5) {
+        feedback = JSON.stringify(input.messages.at(-1).content)
+        assert.match(feedback, /verification-order-records/)
+        assert.match(feedback, /unclassified_command/)
+        assert.match(feedback, /verify.test.mjs/)
+        assert.doesNotMatch(feedback, /inspect-result.mjs/, 'do not invite replay of arbitrary programs')
+        yield call('last-check', 'bash', {command: 'node --test verify.test.mjs'})
+      } else yield {type: 'text', content: 'The final check passed; no further execution is needed.'}
+    }
+  })
+  const result = await kernel.executeTurn({prompt: 'Create and inspect the result, then verify and report it.', sessionId: 'ordering-' + language, mode: 'assistant', model: 'fixture', providerType: 'feedback-fixture'})
+  assert.equal(result.status, 'completed')
+  assert.equal(requests, 6)
+  assert.equal(result.verification.passed, true)
+  assert.equal(result.toolEvents.filter(e => e.name === 'bash' && e.args.command === 'node inspect-result.mjs').length, 1)
+})
+
+for (const checkTail of ['', ' && echo VERIFIED']) test(`real final read-only shell composition preserves checked completion without permission escalation${checkTail ? ' including success-preserving output tail' : ''}`, async t => {
+  const {kernel} = await fixture(t, 'zh')
+  let requests = 0
+  kernel.providers.registerProvider('feedback-fixture', {
+    async request() {throw Error('Streaming fixture only')},
+    async *requestStream() {
+      requests++
+      if (requests === 1) {
+        yield {type: 'tool_call', call: {id: 'value', name: 'write', args: {path: 'result.txt', content: '42\n'}}}
+        yield {type: 'tool_call', call: {id: 'test', name: 'write', args: {path: 'verify.test.mjs', content: assertion}}}
+      } else if (requests === 2) yield {type: 'tool_call', call: {id: 'verified', name: 'bash', args: {command: 'node --test verify.test.mjs' + checkTail}}}
+      else if (requests === 3) yield {type: 'tool_call', call: {id: 'identity-inspection', name: 'bash', args: {command: 'whoami && whoami'}}}
+      else yield {type: 'text', content: 'The exact result passed its test; subsequent identity inspection did not edit it.'}
+    }
+  })
+  const result = await kernel.executeTurn({prompt: 'Create, verify, inspect the executing identity, and report.', sessionId: 'readonly-ordering-owner', mode: 'assistant', model: 'fixture', providerType: 'feedback-fixture'})
+  assert.equal(result.status, 'completed')
+  assert.equal(requests, 4)
+  assert.equal(result.verification.passed, true)
+  assert.ok(result.toolEvents.some(event => event.name === 'bash' && event.args.command === 'whoami && whoami' && event.metadata.exitCode === 0))
 })
 
 test('refused alias edit does not poison completion after the explicit real file is read, edited and checked', async t => {
