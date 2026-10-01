@@ -1,10 +1,10 @@
 # Android release signing and acceptance
 
-[Documentation](README.md) · Preview preparation target: **1.0.6-preview.1 / 10012**.
-This round prepares the next same-certificate APK; publication is not yet approved.
-Public stable remains **1.0.5 / 10010**, and public Preview remains **1.0.6-preview.0 / 10011**.
-Changing the source version does not itself publish an APK. Verify the signed
-asset and update manifest on [GitHub Release](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.6-preview.0); see [version status](versions.md).
+[Documentation](README.md) · Current Preview: **1.0.6-preview.1 / 10012**.
+Public stable remains **1.0.5 / 10010**. The current same-certificate Preview APK,
+update manifest, anonymous downloads and upgrade have been verified; see the
+[public release receipt](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.6-preview.1/release-verification.json)
+and [version status](versions.md). Building or signing a future APK does not itself publish it.
 
 Previous stable: **1.0.4 / 10008**, with the same release certificate. Its actual
 acceptance/publication is recorded in [the stable ledger](stable-1.0.4-worklog.md).
@@ -24,7 +24,7 @@ The Android application is a native remote client. Release signing is separate
 from publishing: producing this APK does not upload it to a store or GitHub.
 
 The public stable **1.0.5 / 10010** follows the public Preview without changing
-the certificate. Published Preview1.0.6-preview.0 uses10011; the prepared next Preview reserves10012 and must pass its own signing, installation and public-download checks.
+the certificate. Preview1.0.6-preview.0 uses10011; current Preview1.0.6-preview.1 uses10012 and passed signing, upgrade and public-download checks.
 The former source marker1.1.6 was never a public APK release.
 Historical receipts are not proof that a newly built artifact was uploaded.
 
@@ -34,7 +34,7 @@ The user authorized creation of a project-specific production release key on
 2026-09-21. It is not the Android debug key or an acceptance-only identity.
 
 - Application ID: `cn.kkcode.remote`.
-- Public stable: `1.0.5` / code `10010`; published Preview `1.0.6-preview.0` / `10011`; source `1.0.6-preview.1` reserves `10012`; historical `1.0.5-preview.0` uses `10009`. Earlier stable `1.0.4` / `10008` receipts remain in [its ledger](stable-1.0.4-worklog.md).
+- Public stable: `1.0.5` / code `10010`; published Preview `1.0.6-preview.1` / `10012`; previous Preview `1.0.6-preview.0` / `10011`; historical `1.0.5-preview.0` uses `10009`. Earlier stable `1.0.4` / `10008` receipts remain in [its ledger](stable-1.0.4-worklog.md).
 - Algorithm: RSA-4096, SHA256withRSA; certificate validity: 10,000 days.
 - Public certificate SHA-256:
   `cf75774a4d87ba1ccc4a811f271bd301076cf6beefd7432a3cb30231164be5d1`.

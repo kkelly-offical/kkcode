@@ -1,6 +1,6 @@
 # 内核、远程客户端与分域 SDK
 
-[文档导航](README.md) · 当前源码：**1.0.6-preview.0（Preview）**；[版本状态](versions.md)。
+[文档导航](README.md) · 当前源码：**1.0.6-preview.1（Preview）**；[版本状态](versions.md)。
 本地内核、远程客户端与分域接口保持各自职责；部分能力已随此前预览版发行，
 不能把接口存在解释为所有平台或模型质量验收完成。已知边界见[能力总览](capabilities.md)。
 
