@@ -1,6 +1,6 @@
 # 模式、权限与任务恢复
 
-[文档导航](README.md) · 当前源码：1.0.6-preview.0（Preview）；[发行状态](versions.md)
+[文档导航](README.md) · 当前源码：1.0.6-preview.1（Preview）；[发行状态](versions.md)
 
 ## 五种公开模式
 

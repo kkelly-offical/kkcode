@@ -1,6 +1,6 @@
 # 1.0.6-preview.1 实施与验收
 
-更新：2026-10-02。状态：开发与验收中，**尚未发行**。源码与Android目标为
+更新：2026-10-02。状态：**已公开发行并验证下载**。源码与Android目标为
 1.0.6-preview.1 / 10012；公开状态只在[版本与升级](versions.md)维护。
 
 ## 本轮实现
@@ -17,7 +17,7 @@
 | Web配置冒烟启动竞态 | 等待真实已连接主页后再打开设置；生产UI布局和超时不变 |
 
 PR#33的基础修复已合入main `0f8a91f`。PR#34承载后续运行时修复和附件改动，
-其最终提交仍须独立跨平台、安全、安装包和实际候选验证。界面沿用既有ToDo与子代理展示。
+最终候选6d8806f通过5项跨平台/Web及3项CodeQL，合入47aa1bf的源码树完全一致；真实案例继续独立记录。界面沿用既有ToDo与子代理展示。
 
 ## 当前验证
 
@@ -26,7 +26,7 @@ PR#33的基础修复已合入main `0f8a91f`。PR#34承载后续运行时修复�
 - 最终本机Node覆盖率：4196项，4040通过、0失败、156条件跳过；行83.39%、分支80.98%、函数82.05%。
 - 完整Web：六smoke、8浏览器用例、136控件矩形通过。最低Node22.12相关57项通过。
 - PR#34前一提交579cfb7的Web CI失败日志保留；其他平台成功不能覆盖Web失败，也不能代替新提交的CI。
-- 本机release:verify通过：官方生产依赖审计0、lint/类型/无import环、E2E33/33、干净包771文件扫描、SDK/SQLite/ToDo/子代理往返。文档合同21项通过；最终提交CI仍独立执行。受控提供者测试不是模型质量成绩。
+- 本机release:verify通过：官方生产依赖审计0、lint/类型/无import环、E2E33/33、干净包771文件扫描、SDK/SQLite/ToDo/子代理往返。文档合同21项通过；最终提交CI5/5与CodeQL3/3通过，发行流水线5/5通过。受控提供者测试不是模型质量成绩。
 
 ## 五场景实测现状
 
@@ -40,19 +40,30 @@ PR#33的基础修复已合入main `0f8a91f`。PR#34承载后续运行时修复�
 
 新增用量unknown为373338tokens上界；R12合计329请求/19583561tokens/1新增unknown。
 历史累计1871请求/90759649tokens/3unknown，包括旧119667和271625上界，全部继续计账。
-后端运行/排队均0，四个任务进程清空、数据库登录撤销，专用服务已停。继续许可已询问，
-新R13只做准备；宿主期限改由既定执行截止派生，不延长原2026-10-02T04:02:34.744Z期限。
+后端运行/排队均0，四个任务进程清空、数据库登录撤销，专用服务已停。随后用户明确要求加快发布并继续真实案例，由此按新指示准备独立R15；旧unknown继续按上界计账。
+新R15的实际公开包冒烟已通过，9请求/112517tokens、无新增unknown；五场景已独立启动。宿主期限改由既定执行截止派生，不延长原2026-10-02T04:02:34.744Z期限。
 
 ## 不变的边界与发布剩余项
 
 - 保留真实失败、未知效果、用户原始要求和文件读取依据。普通委派预算与严格宿主预算分别说明。
 - 稳定latest仍为1.0.5；此轮仅Preview，原Android证书不变；不部署生产或发布网关镜像。
-- 完成必要最终CI、安全、安装包与Android绑定；PR#34须正常审核或新的一次管理员许可后合入。
-- 随后才创建新标签、发布npm preview/GitHub prerelease/APK，并核验匿名下载、哈希与升级。
+- 最终工程门禁和PR#34合入已完成；用户已允许由我们发起的管理员合并，保护规则保持不变。
+- 新标签、npm preview、GitHub prerelease、APK和匿名下载核验均已完成；完整五场景仍待真实案例收口。
 
 [详细历史检查点与原失败](https://github.com/kkelly-offical/kkcode/blob/main/docs/history/implementation-1.0.6-preview.1-through-2026-10-02.md)
 · [发行范围](release-1.0.6-preview.1.md) · [附件与上下文契约](context-and-harness.md)
 
 本轮本机日志：`/tmp/kkcode-1061-attachment-*`。R12关闭回执：
 `/root/kkcode-1061-timely-feedback-20261001/private/closure-receipt.json`；
-新批次准备：`/root/kkcode-1061-attachments-acceptance-20261002`。私密原始材料不进入Git或npm。
+当前实测：`/root/kkcode-1061-wire-acceptance-20261002`。私密原始材料不进入Git或npm。
+
+公开发行证据：[完整回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.6-preview.1/release-verification.json) · [SHA256SUMS](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.6-preview.1/SHA256SUMS)。
+
+公开包与本机预备包的771个文件内容完全一致；tar权限元数据分别为0644/0755和0600/0700，
+因此压缩包哈希不同。公开npm、CI与GitHub实际包三者完全相同，SHA-256为
+`b384960dc1b9df09cc0e0181cc2653e5c6532d98bf8e814fa12f3de729a7763e`。
+R13未调用模型即退休；R14重新安装实际公开包后开展实测，不把两个压缩包说成字节相同。
+
+R14首次冒烟因评测脚本遗漏投递期限字段被执行前拒绝，未调用模型；原记录保留。
+新R15把验证和持久化统一为同一个投递对象，并通过真实VM的缺字段零副作用负例及JSON往返正例，
+共享只读公开程序、另建全部可变任务范围。实测进行中，不把冒烟或环境控制当成五场景通过。

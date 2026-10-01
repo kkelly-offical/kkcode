@@ -1,6 +1,6 @@
 # 开发与验证
 
-[文档导航](README.md) · 当前源码1.0.6-preview.0（Preview）；见[版本状态](versions.md)。
+[文档导航](README.md) · 当前源码1.0.6-preview.1（Preview）；见[版本状态](versions.md)。
 
 ## 小步修改
 
@@ -25,8 +25,8 @@ npm test
 ## 版本准备与发行分开
 
 根包、四个私有工作区和锁文件必须同版本；CLI／Web从根包读取，Android版本名与之
-一致，公开版本码递增并保留项目证书。本轮仅开发与验证1.0.6-preview.0，Android预留10011，
-没有发布授权；1.0.5公开产物和1.0.5-preview.0渠道不变。没有1.1.6公开版本，不能使用旧标记发行。
+一致，公开版本码递增并保留项目证书。当前公开版本与源码目标只在[版本状态](versions.md)维护，
+不把旧任务中的临时许可当作新发行授权。
 正式发行另行批准，使用经过验收的不可变产物；既有tag和npm版本不覆盖。
 
 main受PR和审核约束。同时检查传统branch protection与repository rulesets；

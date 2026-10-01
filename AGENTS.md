@@ -7,12 +7,13 @@
 
 - 用户要求完成上一轮遗留任务，提交并发布 **1.0.6-preview.1 / Android10012**；补齐附件
   压缩后的描述与按需召回；同时精简文档和清理已过时分支。
-- 已发布：稳定 **1.0.5 / 10010**（npm latest）、Preview **1.0.6-preview.0 / 10011**。
-  Preview.1 尚未发行。发布事实只看 [versions.md](docs/versions.md) 与匿名下载回执。
-- main=`0f8a91f`（PR#33）；工作树 `/root/2026项目/kkcode-completion-invalidation-1061`，
-  分支 `fix/1.0.6-preview.1-completion-invalidation`，PR#34。此处的新改动尚待最终提交验收。
-- 用户已授权本轮推送、测试和 Preview 发布；**没有新的管理员审核绕过许可**。
-  PR#31/#32/#33 的一次例外均已消耗，PR#34 的单独申请尚未答复。不得改保护规则或虚称批准。
+- 已发布：稳定 **1.0.5 / 10010**（npm latest）、Preview **1.0.6-preview.1 / 10012**。
+  Preview.1 已发行并完成匿名下载、哈希、签名与升级核验。发布事实只看 [versions.md](docs/versions.md) 与匿名下载回执。
+- 发行main=`47aa1bf`（PR#34），与验收候选6d8806f同树；tag=`v1.0.6-preview.1`不移动。
+  当前文档回执维护在 `docs/1.0.6-preview.1-release-receipts`；产品源码与发行包保持一致。
+- 用户已授权本轮推送、测试、发布，并明确“允许所有来自我们的管理员合并操作”。
+  后续由我们发起且属于用户任务范围的管理员合入不再重复询问；仍核验实际检查和变更范围，
+  不改保护规则、不虚称批准审核、不自动合入无关PR。
 - 最新用户选择加快迭代：本轮完成必要工程、安全和安装包检查后发布，完整五场景实测转到发布后；
   不再因完整模型评分长期阻塞此Preview。已知缺陷、旧失败和待测范围如实披露。仍不绕过保护规则，
   不虚报旧CI覆盖新代码；发布后核验实际下载、哈希、同证书签名和升级。
@@ -38,18 +39,21 @@
 - PR#34 已含只读检查失效、成功 && 检查链、提前反馈、精确修复指引和 POSIX 后台服务执行前
   所有权检查。当前新增附件归档/召回及 Web 配置夹具启动竞态修复。
 - 本机release:verify通过，Node4196项/4040通过/0失败/156条件跳过；E2E33，最低Node22.12相关57项，
-  完整 Web 六smoke/8浏览器测试/136原布局矩形通过。最终提交CI另行执行，结果以 [实施记录](docs/implementation-1.0.6-preview.1.md) 为准。
+  完整 Web 六smoke/8浏览器测试/136原布局矩形通过。最终候选CI5/5、CodeQL3/3与发行5/5通过，结果以 [实施记录](docs/implementation-1.0.6-preview.1.md) 为准。
 - 旧 R12 源码39d4冻结批次已经关闭：文档有两处明确勘误的修复验收通过；全栈失败；检索被测试
   宿主旧2700秒上限提前终止（控制器是3600秒）；艺术/算法未运行。保留各自结果，不改成整体通过。
 - R12：329请求/19583561计账tokens/1新增unknown（373338上界）；累计1871请求/90759649tokens/
   3unknown（另两笔119667、271625）。后端运行/排队0/0，全部已启动任务进程清空、数据库登录撤销，
-  专用入口/隧道/检索已停止。新增 unknown 的继续许可已在本对话询问，**尚待答复**；此前约定
-  “New unknowns again require review/drain/authorization”继续有效。
+  专用入口/隧道/检索已停止。新增unknown已披露、排空并完整计账；用户随后要求尽快发布并继续真实案例，按这一新指示准备R15。
+  不声称用户单独回答了373338tokens选择题；后续新unknown仍须停止、核查和确定继续依据。
 - 用户允许既有免费本地 Qwen/vLLM 使用，不受旧数值总表阻断，但每批任务须有限、新命名空间、
   冻结包与继承账本；付费0。原截止 **2026-10-02T04:02:34.744Z** 未延长。不得重启旧批次、
   改旧分数、重用聊天秘密或调整/重启 vLLM。
-- 新 R13 准备目录 `/root/kkcode-1061-attachments-acceptance-20261002`，尚未激活或调用模型。
-  已修正宿主 RuntimeMaxSec 由真实执行截止派生；须完成新包、期限正负例、隔离与继续许可后启用。
+- 新 R15 实测目录 `/root/kkcode-1061-wire-acceptance-20261002`，已冻结，实际公开包冒烟9请求/112517tokens通过、0新增unknown，五场景已启动；清单SHA-256 `75169175df4b39c1a5cf6319f21e53139afd382218dc64231506a6a4501ce8b1`。
+  宿主RuntimeMaxSec由执行截止派生；继承所有旧账本。冒烟通过后五场景独立执行，失败保留并继续其余，
+  控制器/未知/排空异常仍停止核查。结果和模型用量以该批private/runs记录为准，不逐请求扩写本文件。
+  R13因tar权限元数据不同而退休；R14直接安装公开包，但期限字段在评测投递中遗漏，零模型调用停止。
+  R15补齐投递与真实VM正负例，复用只读公开安装、使用新账号/工作目录，保留两个旧准备记录。
 - 文档保留历史证据但退出当前导航；分支只清理已合入、无独有提交且不被工作树/开放PR使用者。
   不自动合入或关闭其他开放 PR#5/#6/#22。保留当前开放 Issues 与延期的 C04、GitLab、长期实用门禁。
 
@@ -59,6 +63,6 @@
 - [当前使用文档](docs/README.md) · [能力边界](docs/capabilities.md) · [历史导航](docs/history.md)
 - 本轮本机日志：`/tmp/kkcode-1061-attachment-*`；上轮：`/tmp/kkcode-1061-feedback-acceptance-Wk9MFI/`。
 - R12关闭回执：`/root/kkcode-1061-timely-feedback-20261001/private/closure-receipt.json`。
-- Preview.0永久公开回执：GitHub `v1.0.6-preview.0` 的 `release-verification.json`。
+- 永久公开回执：GitHub `v1.0.6-preview.1` 的 `release-verification.json`；Preview.0旧回执仍保留。
 - 9月30日旧冻结对照评测在 `/root/kkcode-agent-eval-20260930`，不修改/重启；源码参考在
   `/root/kkcode-architecture-audit-20260930`，不得执行竞品仓库安装脚本。

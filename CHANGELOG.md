@@ -1,6 +1,6 @@
 # Changelog / 更新日志
 
-## 1.0.6-preview.1 — In preparation / 准备中
+## 1.0.6-preview.1 — Preview / 预览版（2026-10-02）
 
 - Archive uploaded attachment bodies during compaction, including recent retained
   turns; keep brief references and recall text or supported media only as needed.
