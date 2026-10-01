@@ -1,5 +1,11 @@
 # Project working memory
 
+## Acceptance before publication — user decision 2026-10-01
+
+- The user requires future versions to be tested before publication: freeze the actual installable candidate, run required engineering/real-model/VM acceptance, fix and reaccept observed problems, then integrate and publish. Post-publication checks verify anonymous download hashes, signatures, versions and upgrades; they must not be the first real provider/tool/engineering test.
+- Already published Preview.0 and its failed smoke remain immutable. Preview.1 is still unissued; move its actual Qwen/YOLO smoke and five-scene runs to the candidate-package stage, label them candidate acceptance rather than public-download acceptance, and finish them before requesting publication. Do not repeat unchanged functional acceptance merely for documentation changes; retain source/artifact/tree bindings and independently complete required final CI.
+- This process change does not grant a new administrator merge exception, public tag, production deployment, paid routing, old-cohort reset, larger request/token allowance or extended deadline. Retesting uses a new separately recorded bounded cohort and retains the prior8requests/91138tokens/failure within the original aggregate2408requests/101Mtokens/deadline2026-10-02T04:02:34.744Z.
+
 ## Published-package smoke and verification feedback — 2026-10-01
 
 - PR#32 was administrator-merged under its separate user authorization as main `05f8dd82f3df18b20ea06295914759a7c6d31f81`. The exception is consumed. `1.0.6-preview.0/Android10011` is public and anonymously verified; npm latest remains1.0.5. Do not reuse PR#31/#32 exceptions, move public tags or replace public artifacts. Permanent receipt: GitHub `v1.0.6-preview.0` asset `release-verification.json`.
