@@ -1,5 +1,17 @@
 # Changelog / 更新日志
 
+## 1.0.6-preview.1 — In preparation / 准备中
+
+- Explain recognized completion checks before work and when verification blocks
+  completion; guide custom output checks toward actual assertion tests instead
+  of repeated shell conditions. Chinese sessions receive Chinese repair guidance.
+- Preserve failed-check identity instead of overwriting `failed_check` with the
+  project classification; retain matching-repair, chronology and unknown-effect guards.
+- Keep public `1.0.6-preview.0` smoke failure as a recorded failure. Five-scene
+  model evaluation has not run; controlled regression results are not model scores.
+- Reserve Android10012 and align source versions for the next Preview. No new
+  publication or production deployment is claimed by this preparation.
+
 ## 1.0.6-preview.0 — Preview / 预览发行候选
 
 - Share coding, verification and delegation capabilities across Agent / Auto / YOLO;

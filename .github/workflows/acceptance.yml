@@ -111,7 +111,7 @@ jobs:
             test/evaluation-v4-receipt.test.mjs test/evaluation-v4-artifact-evidence.test.mjs \
             test/tool-program-loop.test.mjs test/browser-recipe-strict.test.mjs \
             test/run-browser-effects.test.mjs test/browser-strict-effects.test.mjs \
-            test/verification-workspace.test.mjs \
+            test/verification-workspace.test.mjs test/completion-feedback.test.mjs \
             test/forge-run-delivery.test.mjs test/forge-cli.test.mjs
       - name: Real non-root Chromium sandbox gate
         run: node --test test/browser-strict-smoke.test.mjs

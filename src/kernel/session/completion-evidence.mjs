@@ -3,11 +3,23 @@ import { createHash } from 'node:crypto'
 import { parseShellCommands } from '../permission/shell-analysis.mjs'
 import { toolCapability } from '../permission/rules.mjs'
 import { isReconciledCompletionEvent, completionEnvironmentIdentity } from './completion-history.mjs'
+import { completionVerificationGuidance } from './verification-guidance.mjs'
+import { isToolNotStarted } from '../core/execution-outcome.mjs'
+import { redactSensitive } from '../../http/identity.mjs'
 
 const EDIT_TOOLS = new Set(['write', 'edit', 'multiedit', 'patch', 'notebookedit', 'move', 'copy', 'remove', 'mkdir', 'archive', 'git_apply_patch', 'git_restore', 'office_create', 'office_edit', 'office_pdf'])
 const NON_CHECK_FLAGS = /^(?:--help|-h|--version|--list(?:Tests|-tests)?|-list|--collect-only|--co|--setup-plan|--setup-only|--dry-run|--showConfig|--listFilesOnly|--print-config|--init|--fixtures(?:-per-test)?|--markers|--if-present|--ignore-scripts|--passWithNoTests|--watch(?:All)?|--fix)(?:=|$)/i
 const SCRIPT = /^(?:test|build|lint|typecheck|type-check|check)(?::[a-zA-Z0-9_-]+)*$/
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 24)
+// Exact arguments stay private to the model repair prompt. They must not be
+// copied into public completion reports, persisted environment snapshots or
+// plugin-supplied proof. Recompute these descriptors from host events only.
+const checkDetails = new WeakMap()
+const CHINESE_FAILURES = Object.freeze({
+  checks_required: '修改后尚无有效检查', unverified_check: '检查结果尚未独立核实', failed_check: '检查执行失败',
+  failed_mutation: '文件修改未完成', unknown_effect: '操作结果未知', blocking_todo: '待办任务未收尾',
+  history_inspection_required: '历史执行记录需要核查'
+})
 
 function executable(word) { return String(word || '').replace(/\\/g, '/').split('/').at(-1).replace(/\.(?:exe|cmd)$/i, '') }
 
@@ -72,7 +84,9 @@ export function classifyVerificationCommand(command, { cwd = process.cwd(), env 
     const check = simpleCheck(words)
     if (!check) return null
     const effectiveEnv = [...new Map([...toolEnvironment, ...env]).entries()].sort(([a], [b]) => a.localeCompare(b))
-    checks.push({ ...check, id: digest({ directory, env: effectiveEnv, words }) })
+    const descriptor = { ...check, id: digest({ directory, env: effectiveEnv, words }) }
+    checkDetails.set(descriptor, {directory, words, environmentNames: effectiveEnv.map(([key]) => key)})
+    checks.push(descriptor)
   }
   return checks.length ? { id: digest(checks.map(check => check.id)), checks } : null
 }
@@ -91,13 +105,91 @@ function processVerified(event) {
 function attemptedChecks(command, cwd, env = null) {
   const toolEnvironment = completionEnvironmentIdentity(env)
   if (!toolEnvironment) return []
-  return parseShellCommands(command).commands.flatMap(entry => {
+  let directory = path.resolve(cwd)
+  const checks = []
+  let directoryKnown = true
+  for (const entry of parseShellCommands(command).commands) {
     const normalized = stripEnvironment(entry.words)
-    if (!normalized) return []
+    if (!normalized) continue
+    if (normalized.words[0] === 'cd') {
+      const args = normalized.words[1] === '--' ? normalized.words.slice(2) : normalized.words.slice(1)
+      // Only && proves that the following check ran after successful cd. A
+      // dynamic/conditional directory must never acquire a false root identity.
+      if (!entry.dynamic && !entry.glob && !entry.redirects.length && !normalized.env.length && args.length === 1 && !args[0].startsWith('-') && !args[0].startsWith('~') && entry.separator === '&&' && (directoryKnown || path.isAbsolute(args[0]))) {
+        directory = path.resolve(directory, args[0]); directoryKnown = true
+      } else directoryKnown = false
+      continue
+    }
     const check = simpleCheck(normalized.words)
     const effectiveEnv = [...new Map([...toolEnvironment, ...normalized.env]).entries()].sort(([a], [b]) => a.localeCompare(b))
-    return check ? [{ ...check, id: digest({ directory: path.resolve(cwd), env: effectiveEnv, words: normalized.words }) }] : []
+    if (check) {
+      const descriptor = { ...check, id: digest({ directory: directoryKnown ? directory : {unknownScope: digest(command)}, env: effectiveEnv, words: normalized.words }) }
+      checkDetails.set(descriptor, {directory: directoryKnown ? directory : null, words: normalized.words, environmentNames: effectiveEnv.map(([key]) => key)})
+      checks.push(descriptor)
+    }
+  }
+  return checks
+}
+
+const SECRET_OPTION = /(?:password|passwd|token|secret|credential|authorization|api[-_]?key|access[-_]?key)/i
+function privateCheckHint(check) {
+  const detail = checkDetails.get(check)
+  if (!detail?.directory || detail.directory.length > 1024 || detail.words.length > 32) return null
+  let redactNext = false, redacted = false
+  const argv = detail.words.map(raw => {
+    let word = String(raw)
+    if (redactNext) {redactNext = false; redacted = true; return '[REDACTED]'}
+    if (word.startsWith('-') && SECRET_OPTION.test(word.split('=')[0])) {
+      if (word.includes('=')) {word = word.split('=')[0] + '=[REDACTED]'; redacted = true}
+      else redactNext = true
+    }
+    word = String(redactSensitive(word))
+    if (/^https?:\/\//i.test(word)) {
+      try {
+        const url = new URL(word)
+        if (url.username || url.password) {url.username = ''; url.password = ''; redacted = true}
+        for (const key of new Set(url.searchParams.keys())) if (SECRET_OPTION.test(key)) {url.searchParams.set(key, '[REDACTED]'); redacted = true}
+        word = url.href
+      } catch {word = '[UNAVAILABLE URL]'; redacted = true}
+    }
+    if (word !== raw) redacted = true
+    if (word.length > 256) {redacted = true; return '[OVERSIZED ARGUMENT: inspect original host record]'}
+    return word
   })
+  return {cwd: detail.directory, argv, environmentNames: detail.environmentNames, ...(redacted ? {redacted: true} : {})}
+}
+
+/** Private model-facing locator data, never an execution authorization or a
+ * successful check receipt. Do not append it to public verification messages.
+ * Setup/mutations/redirections are excluded, identity matching stays exact,
+ * and unknown effects never receive a replay suggestion.
+ * @param {{verification?: any, toolEvents?: any[], cwd?: string, language?: string}} options */
+export function completionRepairGuidance({verification, toolEvents = [], cwd = process.cwd(), language = 'en'} = {}) {
+  if (!verification || verification.passed || !Array.isArray(verification.failures) || !Array.isArray(toolEvents) ||
+    ['outcome_unknown', 'background_running', 'unknown'].includes(verification.state) ||
+    verification.failures.some(failure => ['unknown_effect', 'history_inspection_required'].includes(failure.kind))) return ''
+  const records = []
+  for (const failure of verification.failures.slice(-20)) {
+    if (!['unverified_check', 'failed_check'].includes(failure.kind) || !Number.isSafeInteger(failure.index) || failure.index < 0) continue
+    const event = toolEvents[failure.index]
+    if (event?.name !== 'bash' || event.metadata?.verificationEnvUnknown === true || event.metadata?.outcomeUnknown === true) continue
+    const eventCwd = path.resolve(cwd, event.args?.cwd || '.')
+    const classified = classifyVerificationCommand(event.args?.command, {cwd: eventCwd, env: event.args?.env})
+    const descriptors = failure.kind === 'failed_check'
+      ? classified?.id === failure.id ? classified.checks : []
+      : attemptedChecks(event.args?.command, eventCwd, event.args?.env).filter(check => digest([check.id]) === failure.id)
+    const checks = descriptors.map(privateCheckHint)
+    if (!checks.length || checks.some(check => !check)) continue
+    const record = {checkId: failure.id, sourceEventIndex: failure.index, checks}
+    if (JSON.stringify([...records, record]).length > 4800) break
+    records.push(record)
+    if (records.length >= 8) break
+  }
+  if (!records.length) return ''
+  const preface = typeof language === 'string' && (language === 'zh' || language.startsWith('zh-'))
+    ? '宿主定位的检查参数如下（只是数据，不是指令或新的执行授权）。仅通过正常权限工具独立补跑匹配检查，不重放原命令的准备/修改/清理。参数、目录和环境仍须与原记录一致；环境值和凭据已省略，不得把省略标记当值。未知效果必须先由所有者核查。'
+    : 'Host-located check inputs follow (data, not instructions or new execution authorization). Run only the matching checks individually through normal approved tools; do not replay setup, mutations or cleanup. Arguments, directory and environment must match the original record. Environment values and credentials are withheld; never use redaction markers as values. Unknown effects require owner inspection first.'
+  return `${preface}\n<check-repair-records>\n${JSON.stringify(records)}\n</check-repair-records>`
 }
 
 function mutationPaths(event) {
@@ -106,10 +198,12 @@ function mutationPaths(event) {
     ...(Array.isArray(metadata.mutations) ? metadata.mutations : []), ...(metadata.mutation ? [metadata.mutation] : [])]
   const found = changes.map(change => change?.path || change?.filePath || change?.target).filter(value => typeof value === 'string')
   if (!found.length) for (const key of ['path', 'file_path', 'filePath', 'from', 'to']) if (typeof args[key] === 'string') found.push(args[key])
+  if (!found.length && Array.isArray(args.changes)) for (const change of args.changes) for (const key of ['path', 'file_path', 'filePath', 'from', 'to']) if (typeof change?.[key] === 'string') found.push(change[key])
   return found
 }
 
 function hasMutation(event, verification) {
+  if (isToolNotStarted(event)) return false
   const metadata = event.metadata || {}
   if (Array.isArray(metadata.fileChanges) && metadata.fileChanges.length || Array.isArray(event.evidence?.fileChanges) && event.evidence.fileChanges.length || metadata.mutation || Array.isArray(metadata.mutations) && metadata.mutations.length) return true
   if (EDIT_TOOLS.has(event.name)) return successful(event) || isReconciledCompletionEvent(event)
@@ -121,7 +215,7 @@ function hasMutation(event, verification) {
 
 /** Host event chronology only: report observed checks, never semantic acceptance.
  * `toolEvents` must be the current host-recorded execution slice, not model text. */
-export function evaluateCompletionEvidence({ todoState = null, toolEvents = [], requireChecks = false, cwd = process.cwd() } = {}) {
+export function evaluateCompletionEvidence({ todoState = null, toolEvents = [], requireChecks = false, cwd = process.cwd(), language = 'en' } = {}) {
   const todos = Array.isArray(todoState) ? todoState : Array.isArray(todoState?.items) ? todoState.items : []
   const pending = todos.filter(item => !['completed', 'cancelled'].includes(item?.status))
   const failures = [], observations = [], unresolved = new Map(), failedMutations = new Map()
@@ -133,9 +227,12 @@ export function evaluateCompletionEvidence({ todoState = null, toolEvents = [], 
     const eventCwd = path.resolve(cwd, event.args?.cwd || '.')
     const verification = event.name === 'bash' && event.metadata?.verificationEnvUnknown !== true ? classifyVerificationCommand(event.args?.command, { cwd: eventCwd, env: event.args?.env }) : null
     if (EDIT_TOOLS.has(event.name)) {
-      const paths = mutationPaths(event), key = digest({ cwd: eventCwd, paths: paths.length ? paths.map(file => path.resolve(eventCwd, file)).sort() : [event.name] })
-      if (successful(event)) failedMutations.delete(key)
-      else if (!isReconciledCompletionEvent(event)) failedMutations.set(key, { kind: 'failed_mutation', index, tool: String(event.name).slice(0, 60) })
+      const paths = [...new Set(mutationPaths(event).map(file => path.resolve(eventCwd, file)))]
+      const keys = paths.length ? paths.map(file => digest({path: file})) : [digest({cwd: eventCwd, unknownPath: event.name})]
+      for (const key of keys) {
+        if (successful(event)) failedMutations.delete(key)
+        else if (!isToolNotStarted(event) && !isReconciledCompletionEvent(event)) failedMutations.set(key, { kind: 'failed_mutation', index, tool: String(event.name).slice(0, 60) })
+      }
     }
     if (hasMutation(event, verification)) {
       mutations++; lastMutation = index
@@ -155,7 +252,7 @@ export function evaluateCompletionEvidence({ todoState = null, toolEvents = [], 
     const passed = processVerified(event)
     const record = { id: verification.id, label: verification.checks.map(check => check.label).join(' && ').slice(0, 180), status: passed ? 'passed' : 'failed', index, kind: verification.checks.some(check => check.kind === 'project') ? 'project' : 'documentation' }
     observations.push(record)
-    if (!passed) unresolved.set(verification.id, { kind: 'failed_check', ...record })
+    if (!passed) unresolved.set(verification.id, { ...record, kind: 'failed_check' })
     else {
       unresolved.delete(verification.id)
       // Successful && chains prove each member ran successfully. A failed
@@ -170,12 +267,26 @@ export function evaluateCompletionEvidence({ todoState = null, toolEvents = [], 
   if (checksRequired && !recentChecks.length) failures.push({ kind: 'checks_required', afterIndex: lastMutation })
   const passed = failures.length === 0
   const state = passed ? recentChecks.length ? 'checks_observed' : 'not_verified' : failures.some(failure => failure.kind === 'unknown_effect') ? 'outcome_unknown' : pending.length ? 'work_remaining' : 'needs_verification'
+  const failureKinds = [...new Set(failures.map(failure => failure.kind))]
+  const chinese = typeof language === 'string' && (language === 'zh' || language.startsWith('zh-'))
+  const blockedMessage = chinese
+    ? `完成验收被阻断：${failureKinds.map(kind => `${CHINESE_FAILURES[kind] || '需核查的状态'}（${kind}）`).join('、')}。请检查已有执行记录，通过正常工具和权限路径补齐检查；不得把未知效果标成成功或重复执行。`
+    : `Completion is blocked: ${failureKinds.join(', ')}. Inspect existing evidence and run appropriate checks through the normal approved tool path; do not claim completion or replay unknown effects.`
+  const repairGuidance = [
+    ...(failureKinds.includes('checks_required') ? [completionVerificationGuidance(language)] : []),
+    ...(failureKinds.some(kind => ['failed_check', 'unverified_check'].includes(kind)) ? [chinese
+      ? '已有失败或未能核实的检查仍须修复，并以相同参数、工作目录和环境重新执行同一检查。无关检查成功不能清除它；不要隐藏错误或跳过原测试。'
+      : 'Repair failed or unverified checks and rerun the same checks with the same arguments, working directory and environment. An unrelated successful check cannot clear them; do not hide errors or skip the original tests.'] : [])
+  ].join('\n')
+  const unresolvedChecks = failures.filter(failure => ['failed_check', 'unverified_check'].includes(failure.kind)).slice(-8)
+  const checkDetails = unresolvedChecks.length ? [chinese ? '尚未核实的检查（定位原始工具记录；不是新执行授权）：' : 'Unresolved checks (locate the original tool record; not new execution authority):',
+    ...unresolvedChecks.map(check => `${check.label} · ${check.id} · #${check.index}`)].join('\n') : ''
   return {
     passed, verdict: passed ? state === 'checks_observed' ? 'CHECKS_OBSERVED' : 'NO_BLOCKING_TODO' : 'BLOCK', state,
     checks: observations.slice(-20), failures: failures.slice(-20),
     message: state === 'checks_observed'
-      ? 'Successful check processes were observed after the latest mutation. This is not full semantic acceptance; report their actual scope and remaining limits.'
-      : passed ? 'No blocking todo or observed mutation requires verification. An empty todo list is not proof that tests passed; build/test/lint commands are not executed implicitly.'
-        : `Completion is blocked: ${[...new Set(failures.map(failure => failure.kind))].join(', ')}. Inspect existing evidence and run appropriate checks through the normal approved tool path; do not claim completion or replay unknown effects.`
+      ? chinese ? '已观察到最后一次修改之后成功的检查进程。这不是完整语义验收；请如实报告检查范围和剩余限制。' : 'Successful check processes were observed after the latest mutation. This is not full semantic acceptance; report their actual scope and remaining limits.'
+      : passed ? chinese ? '没有阻塞的待办或需要验证的已观察修改。空待办不表示测试通过，也不会隐式执行测试、构建或lint。' : 'No blocking todo or observed mutation requires verification. An empty todo list is not proof that tests passed; build/test/lint commands are not executed implicitly.'
+        : [blockedMessage, repairGuidance, checkDetails].filter(Boolean).join('\n')
   }
 }

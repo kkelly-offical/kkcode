@@ -15,6 +15,18 @@ test('pure questions and cancelled todos remain nonblocking but explicitly not v
   assert.match(result.message, /not proof that tests passed/)
 })
 
+test('Chinese completion messages explain observed and blocking states while retaining machine codes', () => {
+  const options = {language: 'zh'}
+  const pending = evaluateCompletionEvidence({...options, toolEvents: [edit()]})
+  assert.match(pending.message, /修改后尚无有效检查/)
+  assert.match(pending.message, /checks_required/)
+  assert.equal(pending.failures.at(-1).kind, 'checks_required')
+  const observed = evaluateCompletionEvidence({...options, toolEvents: [edit(), shell('npm test')]})
+  assert.equal(observed.state, 'checks_observed')
+  assert.match(observed.message, /不是完整语义验收/)
+  assert.match(evaluateCompletionEvidence({...options, toolEvents: []}).message, /空待办不表示测试通过/)
+})
+
 for (const status of ['pending', 'blocked', 'in_progress']) test(`current ${status} todo blocks even after successful checks`, () => {
   const result = evaluateCompletionEvidence({ todoState: { items: [{ status, content: 'current plan' }] }, toolEvents: [shell('npm test')] })
   assert.equal(result.passed, false)

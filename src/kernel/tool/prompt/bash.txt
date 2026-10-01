@@ -1,6 +1,17 @@
 Executes a shell command in the workspace directory with optional timeout.
 
+The tool name is legacy: Unix commands run under /bin/sh, NOT the user's
+login SHELL. Windows uses ComSpec/cmd, not PowerShell. Use portable syntax or
+invoke an explicitly available interpreter for its own syntax; do not assume
+PIPESTATUS, arrays, [[ ... ]] or pipefail exist in /bin/sh. sysinfo reports the
+actual default command shell. A pipeline's last exit code is not proof that
+all earlier commands passed; prefer direct assertion-test processes.
+
 CRITICAL — tool selection rules. Do NOT use `bash` when a dedicated tool exists:
+Optional tools may be deferred rather than present in the current schemas. If a
+dedicated file-management or HTTP tool below is not visible, first use tool_search
+to discover its exact schema. Discovery does not expand permissions. If your
+role cannot discover or use it, report that limit instead of routing around it.
 - Read files → use `read` (NEVER cat/head/tail/type/Get-Content)
 - Search contents → use `grep` (NEVER bash grep/rg)
 - Find files → use `glob` (NEVER bash find/ls/dir)
@@ -27,7 +38,10 @@ Parameters:
 - command (required): shell command to execute
 - timeout (optional): timeout in ms (default 120000, max 600000)
 - description (optional): human-readable description of what this command does. For simple commands keep it brief (5-10 words). For complex commands (piped commands, obscure flags), add enough context to clarify.
-- run_in_background (optional): run as background task, returns task_id immediately
+- run_in_background (optional): run as background task, returns task_id immediately;
+  it does NOT extend timeout or create a persistent service. The same finite
+  default 120000ms / maximum 600000ms applies. The launch receipt reports the
+  effective timeout; choose a finite bound that covers the intended check.
 
 Rules:
 - Always quote file paths that contain spaces with double quotes.
@@ -36,6 +50,26 @@ Rules:
 - When issuing multiple independent commands, make multiple bash calls in parallel.
 - When commands depend on each other, chain with && (e.g. `git add . && git commit -m "msg"`).
 - NEVER use interactive flags like -i (e.g. git rebase -i, git add -i) — they require interactive input which is not supported.
+
+# Completion verification
+
+After authorized changes, run the project's real tests/builds through this tool.
+For bespoke file, document or API checks, create an assertion test with write/edit
+in the authorized workspace and run `node --test <explicit-test-file>` or
+`python3 -m unittest <test-module>`. A false assertion must fail the process.
+Completion observes direct test processes after the last change. Repeating a
+shell condition or printing PASS does not supply a recognized verification receipt.
+Do not mask errors with pipes, redirection, `;` or `|| true`; use `&&` for dependent checks.
+Keep rerunnable test scripts. Do not append deletion/cleanup to a check command;
+changes after the check require another actual check of the final state.
+Syntax/whitespace checks prove only syntax/whitespace, not the requested behavior.
+Read-only/Plan tasks must not create or edit files just to obtain a check receipt.
+For temporary test servers, prefer an assertion-test harness that starts its own
+services, waits for readiness, checks behavior, closes services in finally and
+joins all children before exiting with the real test result. Do not use pkill to
+clean up unbounded servers. Background cancellation/timeout is not rollback or
+test acceptance; stop and report any owner-inspection requirement rather than
+replaying effects or acknowledging on the owner's behalf.
 
 # Committing changes with git
 

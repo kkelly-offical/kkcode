@@ -223,18 +223,22 @@ describe('artifact store: bounds, retention and failure behavior', () => {
   it('quota rejection releases the lock even if producer teardown stalls before a later abort', { timeout: 5000 }, async () => {
     store = new ArtifactStore({ root, limits: { fileBytes: 1, lockTimeoutMs: 100 } })
     const controller = new AbortController()
-    let returned = false
+    let returned = false, teardownStarted
+    const enteredTeardown = new Promise(resolve => { teardownStarted = resolve })
     const content = { [Symbol.asyncIterator]() { return {
       next() { return Promise.resolve({ done: false, value: 'too large' }) },
-      return() { returned = true; return new Promise(() => {}) }
+      return() { returned = true; teardownStarted(); return new Promise(() => {}) }
     } } }
-    const timer = setTimeout(() => controller.abort(), 100)
-    try {
-      await assert.rejects(store.put({ actor, content, signal: controller.signal }), code('artifact_quota_exceeded'))
-      assert.equal(returned, true)
-      assert.deepEqual(await readdir(path.join(root, 'pending')), [])
-      assert.equal((await store.put({ actor, content: 'x' })).size, 1)
-    } finally { clearTimeout(timer) }
+    const rejected = assert.rejects(store.put({ actor, content, signal: controller.signal }), code('artifact_quota_exceeded'))
+    // The abort is intentionally LATER than the quota/producer teardown path.
+    // A wall timer could fire during Windows mkdir/open/lock setup and test a
+    // different (correctly aborted) operation instead of this contract.
+    await enteredTeardown
+    controller.abort()
+    await rejected
+    assert.equal(returned, true)
+    assert.deepEqual(await readdir(path.join(root, 'pending')), [])
+    assert.equal((await store.put({ actor, content: 'x' })).size, 1)
   })
 
   it('observes a failed producer teardown without masking quota errors or leaking the lock', async () => {

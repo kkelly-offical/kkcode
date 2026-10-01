@@ -12,6 +12,8 @@ export async function createRelayCluster({ store, address, host = '127.0.0.1', p
   if (!/^[A-Za-z0-9._-]{1,128}$/.test(nodeId) || !Number.isSafeInteger(leaseMs) || leaseMs < 300 || leaseMs > 300000) throw new Error('Invalid HA node identity or lease duration')
   const url = new URL(address)
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new Error('Cluster address must be an HTTP(S) origin')
+  const ephemeral = port === 0 && url.port === '0'
+  if (ephemeral && (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || !['127.0.0.1', 'localhost', '::1'].includes(host))) throw new Error('Automatic ephemeral cluster addresses are private loopback only')
   const key = Buffer.from(secret, 'hex'), routes = new Map(), seen = new Map()
   let closed = false, renewing = false, renewal = Promise.resolve(), forwarding = 0, forwardingBytes = 0
   function seal(value) {
@@ -41,7 +43,13 @@ export async function createRelayCluster({ store, address, host = '127.0.0.1', p
     catch (error) { return seal({ requestNonce: message.nonce, error: { message: error.statusCode ? error.message : 'Device relay failed', statusCode: error.statusCode || 503 } }) }
   })
   app.setErrorHandler((_error, _request, reply) => reply.code(503).send({ error: 'Cluster request failed' }))
-  await app.listen({ host, port })
+  try {await app.listen({ host, port })}
+  catch (error) {await app.close().catch(() => {}); throw error}
+  if (ephemeral) {
+    const listener = app.server.address()
+    if (!listener || typeof listener === 'string') {await app.close(); throw new Error('Missing private cluster listener')}
+    url.port = String(listener.port)
+  }
   async function release(deviceId, connectionId) {
     const route = routes.get(deviceId)
     if (!route || route.connectionId !== connectionId) return
@@ -68,6 +76,7 @@ export async function createRelayCluster({ store, address, host = '127.0.0.1', p
   interval.unref?.()
   return {
     nodeId,
+    get address() {return url.origin},
     async claim(deviceId, connectionId) {
       const route = { nodeId, address: url.origin, connectionId, expires: Date.now() + leaseMs }
       await store.put(`route:${deviceId}`, route)

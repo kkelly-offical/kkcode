@@ -17,16 +17,24 @@ function journalPath(sessionId) {
   return path.join(userRootDir(), 'operations', `${match[0]}.json`)
 }
 async function read(file) {
-  let handle
-  try {
-    handle = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW || 0))
-    const info = await handle.stat()
-    if (!info.isFile() || info.size > 1024 * 1024 || info.nlink !== 1 || process.getuid && (info.uid !== process.getuid() || (info.mode & 0o077))) throw new Error('Operation journal must be a private regular file')
-    const value = JSON.parse(await handle.readFile('utf8'))
-    if (value.version !== 1 || !Array.isArray(value.operations) || value.operations.length > 512) throw new Error('Invalid operation journal; inspect it locally')
-    return value.operations
-  } catch (error) { if (error.code === 'ENOENT') return []; throw error }
-  finally { await handle?.close() }
+  for (let attempt = 0; attempt < 8; attempt++) {
+    let handle
+    try {
+      handle = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW || 0))
+      const info = await handle.stat()
+      if (!info.isFile() || info.size > 1024 * 1024 || process.getuid && (info.uid !== process.getuid() || (info.mode & 0o077))) throw new Error('Operation journal must be a private regular file')
+      // Atomic replacement can unlink the snapshot after open but before stat.
+      // Reopen the new snapshot; never accept an unlinked or hard-linked file,
+      // and keep bounded failure if another writer continually replaces it.
+      if (info.nlink === 0) continue
+      if (info.nlink !== 1) throw new Error('Operation journal must be a private regular file')
+      const value = JSON.parse(await handle.readFile('utf8'))
+      if (value.version !== 1 || !Array.isArray(value.operations) || value.operations.length > 512) throw new Error('Invalid operation journal; inspect it locally')
+      return value.operations
+    } catch (error) { if (error.code === 'ENOENT') return []; throw error }
+    finally { await handle?.close() }
+  }
+  throw new Error('Operation journal was replaced repeatedly; retry after the writer settles')
 }
 async function update(sessionId, change) {
   const file = journalPath(sessionId)

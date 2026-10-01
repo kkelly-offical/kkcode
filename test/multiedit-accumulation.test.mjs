@@ -50,6 +50,9 @@ describe("同一文件的多个改动逐个叠加", () => {
     const final = await readFile(join(cwd, "a.mjs"), "utf8")
     assert.match(final, /const one = 100/, `第一个改动丢了: ${JSON.stringify(final)} (${JSON.stringify(out)})`)
     assert.match(final, /const two = 200/, "第二个改动丢了")
+    assert.equal(out.metadata.fileChanges.length, 1, '同一文件只计一次实际变更')
+    assert.equal(out.metadata.mutations.length, 1)
+    assert.equal(out.metadata.mutations[0].updatedContent, final, '展示最终内容，不是某一个分步替换')
   })
 
   it("三个改动依次叠加", async () => {

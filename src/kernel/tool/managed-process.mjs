@@ -5,7 +5,7 @@ import path from 'node:path'
  * group; Windows uses the native taskkill tree operation without changing OS
  * policy. This is lifecycle management, not an isolation/security boundary:
  * intentionally daemonized/detached descendants need the strict OCI runtime. */
-export function runManagedProcess({ command, args = [], cwd, env = process.env, shell = false,
+export function runManagedProcess({ command, args = [], cwd, env = process.env, shell = /** @type {boolean | string} */ (false),
   signal = null, timeoutMs = 120000, maxBuffer = 1024 * 1024, killGraceMs = 250, drainMs = 1000 }) {
   return new Promise(resolve => {
     const chunks = { stdout: [], stderr: [] }, sizes = { stdout: 0, stderr: 0 }

@@ -13,7 +13,7 @@ const entryDocs = [
   'README.md', 'docs/README.md', 'docs/getting-started.md', 'docs/configuration.md',
   'docs/modes-and-permissions.md', 'docs/cli-reference.md', 'docs/capabilities.md',
   'docs/versions.md', 'docs/history.md', 'docs/contributing.md', 'docs/implementation-1.1.6.md',
-  'docs/implementation-1.0.5.md', 'docs/implementation-1.0.6-preview.0.md', 'docs/ROADMAP.md', 'docs/enterprise-deployment.md'
+  'docs/implementation-1.0.5.md', 'docs/implementation-1.0.6-preview.0.md', 'docs/implementation-1.0.6-preview.1.md', 'docs/ROADMAP.md', 'docs/enterprise-deployment.md'
 ]
 
 test('README stays a compact product entry rather than an accumulated release manual', async () => {
@@ -57,29 +57,30 @@ test('active topic guides do not send users back to unreleased hotfix or old dep
     assert.doesNotMatch(text, /^# .*\(1\.0\.[1-4]\)|^# .*（1\.0\.[1-4]）/m)
     assert.doesNotMatch(text, /unreleased local hotfix|kkcode-gateway:1\.0\.[1-4]/)
   }
-  assert.match(await read('docs/config.example.yaml'), /适用源码：1\.0\.6-preview\.0.*Preview/)
+  assert.match(await read('docs/config.example.yaml'), /适用源码：1\.0\.6-preview\.1.*Preview/)
   assert.match(await read('docs/media-input.md'), /OpenAI Responses.*input_image/)
 })
 
 test('1.0.6 preview source is consistent while published stable, preview, signing and historical facts remain separate', async () => {
   const manifest = await checkReleaseVersions(root)
   const android = await readAndroidReleaseTarget(root)
-  assert.equal(manifest.version, '1.0.6-preview.0')
+  assert.equal(manifest.version, '1.0.6-preview.1')
   assert.equal(manifest.channel, 'preview')
   assert.equal(manifest.distTag, 'preview')
   assert.equal(android.version, manifest.version)
-  assert.equal(android.versionCode, 10011)
+  assert.equal(android.versionCode, 10012)
   assert.equal(android.channel, 'prerelease')
   const readme = await read('README.md'), versions = await read('docs/versions.md')
   assert.match(readme, /公开稳定版.*1\.0\.5/)
-  assert.match(readme, /本轮预览版本.*1\.0\.6-preview\.0.*发行回执/)
+  assert.match(readme, /已发布预览版.*1\.0\.6-preview\.0.*正在准备.*1\.0\.6-preview\.1/)
   assert.doesNotMatch(readme, /1\.1\.6/)
   assert.match(versions, /已发布稳定渠道.*1\.0\.5 \/ Android10010/)
   assert.match(versions, /上一已核实稳定版.*1\.0\.4/)
-  assert.match(versions, /发行准备时已核验的旧预览.*1\.0\.5-preview\.0/)
+  assert.match(versions, /已发布预览渠道.*1\.0\.6-preview\.0 \/ Android10011/)
+  assert.match(versions, /历史预览.*1\.0\.5-preview\.0/)
   assert.match(versions, /从未公开发行过1\.1\.6/)
   assert.match(versions, /源码版本、流水线启动都不等于已公开下载/)
-  assert.match(versions, /本轮授权通过门禁后发布1\.0\.6-preview\.0，不授权替换稳定版或升级生产服务/)
+  assert.match(versions, /本轮仅准备1\.0\.6-preview\.1，尚无新的管理员例外或公开发行批准/)
   assert.match(versions, /release-verification\.json/)
   assert.match(await read('CHANGELOG.md'), /## 1\.0\.5 — Stable/)
   const notice = await read('NOTICE.md')

@@ -260,11 +260,17 @@ test('actual parent kernel task_group crosses the branded strict backend into pe
   const workspace = await createTaskWorkspace({ cwd: f.cwd, expectedCommit: baseline.commit, parent: path.join(f.root, 'parent-worktrees') })
   const kernel = await createDelegatedKernel({ cwd: workspace.cwd, configState: f.configState, trustState: { trusted: true } })
   const coordinator = createRunCoordinator({ kernel, store: f.store, artifacts: f.artifacts, actor, taskGraph: f.host,
+    // This synthetic fixture exercises four capabilities, not an unrelated
+    // Office/LSP/network catalog. Freeze its explicit host ceiling up front;
+    // retain the same 128K window, prices and strict complete-input bound.
+    toolAllowlist: ['task_group', 'read', 'list', 'write'],
     authorize: request => { f.approvals.push(request); return true }, executionBackend: createDockerExecutionBackend({ image, delegationEnabled: true }) })
   try {
     const run = await coordinator.start({ id: 'real-kernel-parent', limits: { budgetUsd: 5, deadlineAt: Date.now() + 600000 }, contract: { objective: 'Delegate reviewed work', allowedPaths: ['.'], allowedTools: ['task_group', 'read', 'list', 'write'], requiredCriteria: [{ id: 'review', description: 'Independent evidence review' }] } })
     const result = await coordinator.execute({ runId: run.id, prompt: 'parent orchestrates two independent isolated children' })
     assert.equal(result.turn.error, null, JSON.stringify(result.turn))
+    const parentRequest = f.requests.find(request => JSON.stringify(request.messages).includes('parent orchestrates'))
+    assert.ok(parentRequest.tools.every(tool => ['task_group', 'read', 'list', 'write'].includes(tool.function.name)), 'advertising stays within the explicit host ceiling')
     const graphs = await f.store.listTaskGraphs({ runId: run.id })
     assert.equal(graphs.length, 1, JSON.stringify(result.turn.toolEvents))
     assert.equal(graphs[0].status, 'needs_review', JSON.stringify(graphs[0]))

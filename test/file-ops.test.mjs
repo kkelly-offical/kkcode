@@ -73,22 +73,24 @@ test("remove is recoverable by default", async () => {
     await writeFile(path.join(dir, "gone.txt"), "IMPORTANT")
     const out = await removeTool.execute({ path: "gone.txt" }, ctx)
     // 删错文件是日常整理里最不可逆的一步，所以默认可恢复而不是 unlink
-    assert.match(out, /recoverable at \.kkcode\/trash\/gone\.txt/)
-    assert.equal(await readFile(path.join(dir, ".kkcode/trash/gone.txt"), "utf8"), "IMPORTANT")
+    assert.match(out, /recoverable at \.kkcode\/trash\/removed-[^/]+\/gone\.txt/)
+    const recovered = out.split('recoverable at ')[1]
+    assert.equal(await readFile(path.join(dir, recovered), "utf8"), "IMPORTANT")
   })
 })
 
 test("repeated deletes of the same name do not overwrite each other in the trash", async () => {
   await withWorkspace(async (dir, ctx) => {
     await writeFile(path.join(dir, "dup.txt"), "FIRST")
-    await removeTool.execute({ path: "dup.txt" }, ctx)
+    const first = await removeTool.execute({ path: "dup.txt" }, ctx)
     await writeFile(path.join(dir, "dup.txt"), "SECOND")
-    await removeTool.execute({ path: "dup.txt" }, ctx)
+    const second = await removeTool.execute({ path: "dup.txt" }, ctx)
 
     const trash = await readdir(path.join(dir, ".kkcode/trash"))
     assert.equal(trash.length, 2, `回收站应有两份，实际 ${trash.join(", ")}`)
-    assert.equal(await readFile(path.join(dir, ".kkcode/trash/dup.txt"), "utf8"), "FIRST")
-    assert.equal(await readFile(path.join(dir, ".kkcode/trash/dup.txt.1"), "utf8"), "SECOND")
+    assert.notEqual(first.split('recoverable at ')[1], second.split('recoverable at ')[1])
+    assert.equal(await readFile(path.join(dir, first.split('recoverable at ')[1]), "utf8"), "FIRST")
+    assert.equal(await readFile(path.join(dir, second.split('recoverable at ')[1]), "utf8"), "SECOND")
   })
 })
 
@@ -101,7 +103,9 @@ test("remove needs recursive for a non-empty directory and honours permanent", a
 
     await writeFile(path.join(dir, "p.txt"), "x")
     assert.match(await removeTool.execute({ path: "p.txt", permanent: true }, ctx), /permanently deleted/)
-    assert.deepEqual(await readdir(path.join(dir, ".kkcode/trash")), ["d"], "permanent 不该进回收站")
+    const trash = await readdir(path.join(dir, ".kkcode/trash"))
+    assert.equal(trash.length, 1, "permanent 不该进回收站")
+    assert.deepEqual(await readdir(path.join(dir, '.kkcode/trash', trash[0])), ['d'])
   })
 })
 

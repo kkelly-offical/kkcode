@@ -3,6 +3,7 @@ import { BackgroundManager } from '../orchestration/background-manager.mjs'
 import { classifyVerificationCommand } from './completion-evidence.mjs'
 import { normalizeToolOutcome } from '../tool/result-outcome.mjs'
 import { runtimeCwd } from '../core/runtime-context.mjs'
+import { reconcileCompletionEvents } from './completion-history.mjs'
 
 const ACTIVE = new Set(['pending', 'running'])
 const TERMINAL = new Set(['completed', 'error', 'cancelled', 'interrupted'])
@@ -128,10 +129,16 @@ export async function collectBackgroundCompletionEvidence({ sessionId, toolEvent
       continue
     }
     const event = receipt(task)
+    const reconciliation = await reconcileCompletionEvents([event], sessionId)
+    if (reconciliation.unavailable) {
+      events.push(unknownEvent('operation_journal_unavailable', task.id)); unknown = true
+      continue
+    }
     if (previouslyVerified(event, parts, cwd)) continue
+    if (reconciliation.requireChecks) needsFreshVerification = true
     events.push(event)
     if (event.metadata.outcomeUnknown === true) unknown = true
-    if (!check(event, cwd)) needsFreshVerification = true
+    if (event.metadata.started !== false && !check(event, cwd)) needsFreshVerification = true
   }
   if (selected.size || references.size) {
     const position = event => check(event, cwd) ? timestamp(event.startedAt) ?? -Infinity : timestamp(event.completedAt) ?? -Infinity
@@ -143,5 +150,11 @@ export async function collectBackgroundCompletionEvidence({ sessionId, toolEvent
       return Number(Boolean(check(right, cwd))) - Number(Boolean(check(left, cwd)))
     })
   }
-  return { pending, events, needsFreshVerification, unknown }
+  const inspection = events.filter(event => event.metadata?.outcomeUnknown === true || event.metadata?.terminationIncomplete === true).slice(-20).map(event => ({
+    tool: event.name,
+    ...(typeof event.metadata?.operationId === 'string' ? {operationId: event.metadata.operationId} : {}),
+    ...(event.metadata?.backgroundTask?.id ? {backgroundTaskId: event.metadata.backgroundTask.id} : {}),
+    status: event.status
+  }))
+  return { pending, events, needsFreshVerification, unknown, inspection }
 }

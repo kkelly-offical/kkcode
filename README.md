@@ -8,8 +8,8 @@
 ![Node](https://img.shields.io/badge/Node.js-%3E%3D22.12-green)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
 
-公开稳定版 **1.0.5**；本轮预览版本 **1.0.6-preview.0**，公开可用性以发行回执为准。
-[稳定版发行说明](docs/release-1.0.5.md) · [Preview 说明](docs/release-1.0.6-preview.0.md) · [本轮实施记录](docs/implementation-1.0.6-preview.0.md) ·
+公开稳定版 **1.0.5**；已发布预览版 **1.0.6-preview.0**；正在准备 **1.0.6-preview.1**。
+[稳定版发行说明](docs/release-1.0.5.md) · [Preview 修复说明](docs/release-1.0.6-preview.1.md) · [本轮实施记录](docs/implementation-1.0.6-preview.1.md) ·
 [版本与升级](docs/versions.md)区分源码、公开产物与部署状态。
 上图为品牌概念图，不是实际界面截图。
 

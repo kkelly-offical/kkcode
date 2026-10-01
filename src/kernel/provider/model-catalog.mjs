@@ -2,6 +2,7 @@ import path from "node:path"
 import { createHmac, randomUUID } from "node:crypto"
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { buildRequestHeaders, createRequestContext } from "../../http/identity.mjs"
+import {providerFetch} from '../../http/provider-transport.mjs'
 import { userRootDir } from "../../storage/paths.mjs"
 import { ProviderError } from "../core/errors.mjs"
 import { startAuditSpan } from "../../audit/event.mjs"
@@ -237,9 +238,22 @@ function timeoutSignal(timeoutMs, parentSignal) {
 
 async function fetchSameOrigin(url, connection, { requestId, timeoutMs, signal }) {
   let current = new URL(url)
-  const originalOrigin = current.origin
+  const trustedEndpoint = new URL(connection.modelsUrl)
+  const originalOrigin = trustedEndpoint.origin
   for (let redirects = 0; redirects <= 5; redirects++) {
-    const response = await fetch(current, {
+    if (current.origin !== originalOrigin || current.username || current.password) {
+      throw new ProviderError('model discovery refused an untrusted origin to protect credentials', {
+        provider: connection.name, reason: 'unsafe_redirect'
+      })
+    }
+    // Only path/query may come from catalog pagination or redirect data. Keep
+    // transport authority structurally owned by the configured endpoint, not
+    // merely by an origin comparison in a separate caller's loop.
+    const destination = new URL(trustedEndpoint)
+    destination.pathname = current.pathname
+    destination.search = current.search
+    destination.hash = ''
+    const response = await providerFetch(destination, {
       method: "GET",
       headers: discoveryHeaders(connection, requestId),
       redirect: "manual",

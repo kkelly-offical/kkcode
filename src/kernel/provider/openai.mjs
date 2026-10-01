@@ -1,4 +1,5 @@
 import { ProviderError } from "../core/errors.mjs"
+import {providerFetch} from '../../http/provider-transport.mjs'
 import { buildRequestHeaders } from "../../http/identity.mjs"
 import {
   annotateRetryAfter,
@@ -207,7 +208,7 @@ async function fetchStreamConnection(endpoint, init, timeoutMs, signal) {
     : controller.signal
 
   try {
-    return await fetch(endpoint, { ...init, redirect: 'error', signal: fetchSignal })
+    return await providerFetch(endpoint, { ...init, redirect: 'error', signal: fetchSignal })
   } catch (error) {
     if (timedOut && !signal?.aborted) {
       const timeoutError = /** @type {Error & { code: string }} */ (new Error(`openai connection timeout after ${timeout}ms`, { cause: error }))
@@ -256,7 +257,7 @@ export async function requestOpenAI(input) {
     signal,
     onRetry: retry.onRetry,
     execute: async () => {
-      const response = await fetch(endpoint, {
+      const response = await providerFetch(endpoint, {
         redirect: 'error',
         method: "POST",
         headers: buildRequestHeaders({

@@ -3,17 +3,19 @@ import { modelToolSurface, searchToolMetadata } from './discovery.mjs'
 import path from "node:path"
 import os from "node:os"
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
-import { access, realpath, stat, statfs, unlink } from "node:fs/promises"
+import { access, realpath, stat, statfs } from "node:fs/promises"
 import { exec as execCb, spawn } from "node:child_process"
 import { promisify } from "node:util"
 import { pathToFileURL } from "node:url"
-import { atomicWriteFile, replaceInFileTransactional, replaceAllInFileTransactional, diffLineCount, buildStructuredPatch } from "./edit-transaction.mjs"
+import { atomicWriteFile, assertAtomicWriteTarget, recoverCreatedAtomicFile, replaceInFileTransactional, replaceAllInFileTransactional, diffLineCount, buildStructuredPatch } from "./edit-transaction.mjs"
+import { registerAtomicMutationPreflights } from './mutation-preflight.mjs'
 import { withFileLock } from "./file-lock-manager.mjs"
 import { BackgroundManager } from "../orchestration/background-manager.mjs"
 import { scopedBackgroundTask, scopedBackgroundTasks, cancelScopedBackgroundTask } from './background-task-scope.mjs'
 import { runManagedProcess } from './managed-process.mjs'
 import { createTaskTool, createTaskGroupTool, createChildControlTools, taskModelSchema } from "./task-tool.mjs"
 import { normalizeToolOutcome } from './result-outcome.mjs'
+import { beginToolOperation } from './operation-journal.mjs'
 import { makeToolResult } from '../core/types.mjs'
 import { McpRegistry } from "../mcp/registry.mjs"
 import { SkillRegistry } from "../skill/registry.mjs"
@@ -144,9 +146,12 @@ function formatBytes(bytes) {
 
 function detectShellInfo() {
   if (process.platform === "win32") {
-    return process.env.ComSpec || process.env.SHELL || "powershell/cmd"
+    return process.env.ComSpec || "cmd.exe"
   }
-  return process.env.SHELL || "/bin/sh"
+  // The user's login shell is not Node's command shell. Keep this identical
+  // to the execution path (and the Unix sandbox) rather than advertise Bash
+  // syntax such as PIPESTATUS while actually running it under /bin/sh.
+  return "/bin/sh"
 }
 
 async function detectGitRepo(cwd) {
@@ -645,7 +650,7 @@ function spawnShell({ command, cwd, timeoutMs, env, signal, sandbox = null, invo
     return runManagedProcess({ command: sandbox.command, args: sandbox.args, cwd, timeoutMs, env, signal })
   }
   if (invocation) return runManagedProcess({ command: invocation.command, args: invocation.args, cwd, timeoutMs, env: invocation.env, signal })
-  return runManagedProcess({ command: wrapCmd(command), cwd, timeoutMs, env, signal, shell: true })
+  return runManagedProcess({ command: wrapCmd(command), cwd, timeoutMs, env, signal, shell: detectShellInfo() })
 }
 
 /**
@@ -1306,25 +1311,28 @@ function builtinTools(config) {
       const options = lockOptions(ctx)
 
       const runWrite = async () => {
+        let missing = false
         try {
           previous = await readFile(target, "utf8")
-        } catch {
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error
+          missing = true
           previous = ""
         }
 
         if (mode === "append") {
           const separator = previous && !previous.endsWith("\n") ? "\n" : ""
-          await atomicWriteFile(target, previous + separator + content)
+          await atomicWriteFile(target, previous + separator + content, {expectedContent: missing ? null : previous})
         } else if (mode === "insert") {
           const lineNum = Math.max(1, Number(args.insert_at_line) || 1)
           const lines = previous ? previous.split("\n") : []
           const insertIdx = Math.min(lineNum - 1, lines.length)
           const newLines = content.split("\n")
           lines.splice(insertIdx, 0, ...newLines)
-          await atomicWriteFile(target, lines.join("\n"))
+          await atomicWriteFile(target, lines.join("\n"), {expectedContent: missing ? null : previous})
         } else {
           // overwrite (default)
-          await atomicWriteFile(target, content)
+          await atomicWriteFile(target, content, {expectedContent: missing ? null : previous})
         }
       }
 
@@ -1499,14 +1507,14 @@ function builtinTools(config) {
 
   const bashTool = {
     name: "bash",
-    description: "Run a shell command in cwd. ONLY use for commands that have no dedicated tool (e.g. git, npm, pip, docker). Do NOT use for: reading files (use `read`), searching files (use `grep`/`glob`), writing files (use `write`/`edit`), moving/copying/deleting/creating directories/archiving (use `move`/`copy`/`remove`/`mkdir`/`archive` — those validate paths, refuse protected files, and make deletion recoverable, none of which `bash` does), or HTTP requests (use `http_request`/`webfetch` — `curl` through `bash` skips the egress checks that block internal addresses and cloud metadata endpoints). Long-running commands (dev servers, watchers) must use run_in_background: true. Supports `cwd` and per-command `env`. Non-zero exits are reported as `[exit N]`.",
+    description: "Run a shell command in cwd using /bin/sh on Unix or ComSpec/cmd on Windows, NOT the login SHELL; invoke bash explicitly for Bash-only syntax. ONLY use for commands that have no dedicated tool (e.g. git, npm, pip, docker). Do NOT use for: reading files (use `read`), searching files (use `grep`/`glob`), writing files (use `write`/`edit`), moving/copying/deleting/creating directories/archiving (use `move`/`copy`/`remove`/`mkdir`/`archive` — those validate paths, refuse protected files, and make deletion recoverable, none of which `bash` does), or HTTP requests (use `http_request`/`webfetch` — `curl` through `bash` skips the egress checks that block internal addresses and cloud metadata endpoints). Long-running commands (dev servers, watchers) must use run_in_background: true, which does NOT extend their finite timeout. Prefer a bounded assertion harness that owns temporary services and cleanup. Supports `cwd` and per-command `env`. Non-zero exits are reported as `[exit N]`.",
     inputSchema: {
       type: "object",
       properties: {
         command: schema("string", "shell command"),
         timeout: schema("number", "timeout in ms (default 120000, max 600000)"),
         description: schema("string", "human-readable description of what this command does (optional)"),
-        run_in_background: schema("boolean", "run as background task, returns task_id immediately (optional). Use this for long-running commands (dev servers, watchers, builds) — they are blocked in the foreground."),
+        run_in_background: schema("boolean", "run as a background task, returns task_id immediately (optional). Same finite timeout as foreground: default 120000ms, max 600000ms; NOT a persistent service. Use a bounded assertion harness for temporary test services."),
         cwd: schema("string", "working directory, relative to the workspace root (optional, default: workspace root)"),
         env: schema("object", "extra environment variables for this command only, e.g. {\"NODE_ENV\":\"test\"} (optional). Added on top of the inherited environment.")
       },
@@ -1514,8 +1522,13 @@ function builtinTools(config) {
     },
     async execute(args, ctx) {
       const command = String(args.command || "")
-      const configBashTimeout = Number(ctx.config?.tool?.bash_timeout_ms || BASH_TIMEOUT_MS)
-      const timeoutMs = Math.min(Math.max(Number(args.timeout) || configBashTimeout, 1000), 600_000)
+      const configuredTimeout = Number(ctx.config?.tool?.bash_timeout_ms)
+      const configBashTimeout = Number.isFinite(configuredTimeout) && configuredTimeout !== 0 ? configuredTimeout : BASH_TIMEOUT_MS
+      const requestedTimeout = Number(args.timeout)
+      // A malformed optional setting must not turn into NaN and disable the
+      // managed process timer. Config diagnostics remain intact; every actual
+      // Bash launch has a finite, truthful lifetime regardless of caller path.
+      const timeoutMs = Math.min(Math.max(Number.isFinite(requestedTimeout) && requestedTimeout !== 0 ? requestedTimeout : configBashTimeout, 1000), 600_000)
 
       // 执行策略检查。审批档必须传进去 —— exec-policy 与 PermissionEngine 是
       // 两套互不通话的权限词汇，不传的话 YOLO 档在这里等同于最严格档，
@@ -1569,19 +1582,43 @@ function builtinTools(config) {
           description: args.description || command,
           payload: { workerType: 'bash', command, cwd: runCwd, parentSessionId: ctx.sessionId || null,
             turnId: ctx.turnId || null, toolCallId: ctx.toolCallId || null,
+            workerTimeoutMs: timeoutMs, commandTimeoutMs: timeoutMs,
             envProvided: Object.keys(extraEnv || {}).length > 0 },
-          run: ({ signal }) => runBash(command, runCwd, timeoutMs, {
-            background: true, env: extraEnv, maxChars, sandbox: sandbox.spawn, sandboxHint: sandbox.hint, invocation,
-            artifactAccess: ctx.artifactAccess, toolCallId: ctx.toolCallId, signal
-          }),
+          run: async ({ signal }) => {
+            // Submission's operation ends with the launch acknowledgement.
+            // The actual background process needs its OWN durable outcome, so
+            // the owner can inspect/acknowledge a cancellation or lost effect.
+            let operation
+            let dispatchStarted = false
+            try {
+              operation = await beginToolOperation({sessionId: ctx.sessionId, turnId: ctx.turnId, tool: 'bash', args: {command, cwd: runCwd, background: true, env: extraEnv}})
+              dispatchStarted = true
+              const result = await runBash(command, runCwd, timeoutMs, {
+                background: true, env: extraEnv, maxChars, sandbox: sandbox.spawn, sandboxHint: sandbox.hint, invocation,
+                artifactAccess: ctx.artifactAccess, toolCallId: ctx.toolCallId, signal
+              })
+              const uncertain = 'outcomeUnknown' in result.metadata && result.metadata.outcomeUnknown === true
+              await operation?.finish(uncertain ? 'uncertain' : 'settled')
+              return {...result, metadata: {...result.metadata, ...(operation ? {operationId: operation.id} : {})}}
+            } catch (error) {
+              // Even a storage/archive exception must retain the operation's
+              // identity. A bare background error/string loses the only safe
+              // owner-recovery path and cannot be promoted to an exit receipt.
+              await operation?.finish('uncertain').catch(() => {})
+              return {ok: false, status: 'error', error: error.message, output: error.message,
+                metadata: {started: dispatchStarted, exitCode: null, timedOut: false, cancelled: signal.aborted,
+                  captureIncomplete: dispatchStarted, ...(dispatchStarted ? {outcomeUnknown: true} : {}),
+                  ...(operation ? {operationId: operation.id} : {})}}
+            }
+          },
           config: ctx.config,
           signal: ctx.signal
         })
-        const launched = `background task launched: ${task.id}\nUse background_output to check results.`
+        const launched = `background task launched: ${task.id}\nCommand timeout: ${timeoutMs}ms; backgrounding does not extend it or create a persistent service.\nUse background_output to check results. For temporary test services, prefer a bounded assertion harness that owns startup, readiness, checks and cleanup.`
         return { ok: true, status: task.status, background_task_id: task.id,
           output: sandbox.notice ? `${sandbox.notice}\n${launched}` : launched,
           metadata: { backgroundTask: { id: task.id, kind: 'bash', phase: 'submitted', status: task.status,
-            parentSessionId: ctx.sessionId || null, turnId: ctx.turnId || null } } }
+            parentSessionId: ctx.sessionId || null, turnId: ctx.turnId || null, commandTimeoutMs: timeoutMs } } }
       }
 
       const output = await runBash(command, runCwd, timeoutMs, {
@@ -2111,7 +2148,7 @@ function builtinTools(config) {
 
   const multieditTool = {
     name: "multiedit",
-    description: "Apply multiple file edits atomically in a single operation. All changes succeed together or are rolled back entirely. Use this instead of multiple sequential `edit` calls when modifying related code across files (e.g. renaming an export and updating all imports). Each file must have been `read` first.",
+    description: "Validate multiple file edits, then apply a batch. On failure, restore only matching committed bytes; preserve concurrent changes and explicitly report incomplete recovery. New batch files move to private recoverable storage, not permanent deletion. This is not a filesystem-wide atomic commit. Each existing file must have been read first.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2142,6 +2179,9 @@ function builtinTools(config) {
       const staleNotices = []
       for (const change of changes) {
         const target = await resolveWorkspacePath(ctx.cwd, change.path)
+        // Also protect direct host-library callers: every target must be safe
+        // before Phase 2 can publish any member of this batch.
+        await assertAtomicWriteTarget(target)
         const originalExists = await exists(target)
         const hasBefore = Object.prototype.hasOwnProperty.call(change, "before")
         const isCreate = !originalExists && !hasBefore
@@ -2177,75 +2217,79 @@ function builtinTools(config) {
 
       // Phase 2: apply all changes
       const applied = []
+      const workingCopy = new Map()
+      // Resolve interactions within a batch in memory, before publishing even
+      // its first member. A second edit that removes its own later anchor is
+      // a validation failure, not a reason to create and undo real effects.
+      for (const change of resolved) {
+        const content = workingCopy.has(change.target) ? workingCopy.get(change.target) : snapshots.find(s => s.path === change.target)?.original
+        if (change.isCreate) workingCopy.set(change.target, String(change.after))
+        else {
+          if (typeof content !== 'string' || !content.includes(change.before)) {
+            return `error: change ${resolved.indexOf(change) + 1} for ${change.path} no longer matches after an earlier change in this batch. No file writes were performed; split the changes or use a surviving snippet.`
+          }
+          workingCopy.set(change.target, change.replace_all ? content.replaceAll(change.before, change.after) : content.replace(change.before, change.after))
+        }
+      }
       try {
         // 同一文件的多个 change 必须逐个叠加。此前每个 change 都从
         // `snap.original`（批次前的原始内容）算起，于是同一文件出现两次时
         // 第二个 change 会覆盖掉第一个 —— 静默丢改动，没有任何报错。
-        const workingCopy = new Map()
-        for (const change of resolved) {
-          if (change.isCreate) {
-            await atomicWriteFile(change.target, String(change.after))
-            workingCopy.set(change.target, String(change.after))
-          } else {
-            const snap = snapshots.find(s => s.path === change.target)
-            const content = workingCopy.has(change.target)
-              ? workingCopy.get(change.target)
-              : snap?.original ?? await readFile(change.target, "utf8")
-            if (!content.includes(change.before)) {
-              // 前一个 change 把它改掉了。Phase 1 的预检基于原始内容，看不到
-              // 这种批次内的相互作用 —— 与其静默产出错误结果，不如整批回滚。
-              throw new Error(
-                `change ${resolved.indexOf(change) + 1} for ${change.path} no longer matches after an earlier change in this batch. `
-                + "Split it into separate multiedit calls, or provide a snippet that survives the earlier edit."
-              )
-            }
-            const next = change.replace_all
-              ? content.replaceAll(change.before, change.after)
-              : content.replace(change.before, change.after)
-            await atomicWriteFile(change.target, next)
-            workingCopy.set(change.target, next)
-          }
-          await refreshFileReadStateFromDisk(change.target).catch(() => {})
-          applied.push(change.target)
+        for (const [target, content] of workingCopy) {
+          ctx.signal?.throwIfAborted()
+          const snap = snapshots.find(s => s.path === target)
+          await atomicWriteFile(target, content, {expectedContent: snap?.original ?? null})
+          applied.push(target)
+          await refreshFileReadStateFromDisk(target).catch(() => {})
         }
       } catch (error) {
-        // Rollback all applied changes
-        for (let i = applied.length - 1; i >= 0; i--) {
-          const snap = snapshots.find(s => s.path === applied[i])
+        // A rollback must not overwrite concurrent owner changes or falsely
+        // claim best-effort cleanup succeeded. Never unlink created contents.
+        const cancelled = ctx.signal?.aborted || error.name === 'AbortError' || error.code === 'ABORT_ERR'
+        const restored = [], recoveryFiles = [], failures = cancelled ? [{path: '(batch)', code: 'cancelled', message: 'Batch stopped; already-applied files were preserved, not rolled back.'}] : []
+        for (const target of cancelled ? [] : [...new Set(applied)].reverse()) {
+          const snap = snapshots.find(s => s.path === target)
           if (!snap) continue
           try {
             if (snap.isNew) {
-              await unlink(applied[i]).catch(() => {})
+              recoveryFiles.push({path: target, recoveryPath: await recoverCreatedAtomicFile(target, workingCopy.get(target))})
             } else if (snap.original !== null) {
-              await atomicWriteFile(applied[i], snap.original)
+              await atomicWriteFile(target, snap.original, {expectedContent: workingCopy.get(target)})
             }
-          } catch { /* best effort rollback */ }
+            restored.push(target)
+            await refreshFileReadStateFromDisk(target).catch(() => {})
+          } catch (rollbackError) {
+            failures.push({path: target, code: rollbackError.code || 'rollback_failed', message: String(rollbackError.message).slice(0, 400), ...(rollbackError.recoveryPath ? {recoveryPath: rollbackError.recoveryPath} : {})})
+          }
         }
-        return `error: failed at ${applied.length + 1}/${resolved.length} — all changes rolled back. Cause: ${error.message}`
+        const complete = failures.length === 0
+        return {ok: false, status: cancelled ? 'cancelled' : 'error', cancelled, code: cancelled ? 'cancelled' : complete ? 'multiedit_failed' : 'multiedit_recovery_incomplete',
+          output: `error: failed at ${applied.length + 1}/${resolved.length} — ${complete ? 'all changes rolled back' : 'rollback incomplete; current files preserved, owner inspection required'}. Cause: ${error.message}` +
+            (recoveryFiles.length ? '\nRecoverable created files:\n' + recoveryFiles.map(item => item.recoveryPath).join('\n') : '') +
+            (failures.length ? '\nUnresolved recovery:\n' + failures.map(item => `${item.path}: ${item.message}${item.recoveryPath ? ' — preserved at ' + item.recoveryPath : ''}`).join('\n') : ''),
+          metadata: {rollback: {complete, restored, recoveryFiles, failures}, ...(complete ? {} : {outcomeUnknown: true}),
+            fileChanges: [...new Set(applied)].map(target => ({path: target, tool: 'multiedit'}))}}
       }
 
       // Phase 3: summarize
-      const summary = resolved.map(c => `  ${c.isCreate ? "+" : "~"} ${c.path}`).join("\n")
+      const unique = [...workingCopy.keys()].map(target => resolved.find(change => change.target === target))
+      const summary = unique.map(c => `  ${c.isCreate ? "+" : "~"} ${c.path}`).join("\n")
       return {
         output: [
           ...staleNotices,
-          `${resolved.length} file(s) updated atomically:\n${summary}`
+          `${unique.length} file(s) updated in one checked batch:\n${summary}`
         ].join("\n"),
         metadata: {
-          fileChanges: resolved.map(c => ({
+          fileChanges: unique.map(c => ({
             path: String(c.path || c.target),
             tool: "multiedit",
             stageId: ctx.stageId || null,
             taskId: ctx.logicalTaskId || ctx.taskId || null
           })),
-          mutations: resolved.map((c) => {
+          mutations: unique.map((c) => {
             const snap = snapshots.find((s) => s.path === c.target)
             const originalContent = snap?.original ?? null
-            const updatedContent = c.isCreate
-              ? String(c.after)
-              : c.replace_all
-                ? String(originalContent ?? "").replaceAll(String(c.before), String(c.after))
-                : String(originalContent ?? "").replace(String(c.before), String(c.after))
+            const updatedContent = workingCopy.get(c.target)
             const diff = diffLineCount(originalContent ?? "", updatedContent)
             return {
               operation: "multiedit",
@@ -2396,7 +2440,7 @@ function builtinTools(config) {
       }
 
       const finalNotebook = JSON.stringify(notebook, null, 1) + "\n"
-      await atomicWriteFile(target, finalNotebook)
+      await atomicWriteFile(target, finalNotebook, {expectedContent: raw})
       await refreshFileReadStateFromDisk(target, { content: finalNotebook }).catch(() => {})
       const actionLabel = mode === "insert" ? "inserted" : mode === "delete" ? "deleted" : "replaced"
       return {
@@ -2463,7 +2507,7 @@ function builtinTools(config) {
         const newLines = content === "" ? [] : content.split("\n")
         lines.splice(startIdx, endIdx - startIdx, ...newLines)
         const final = lines.join("\n")
-        await atomicWriteFile(target, final)
+        await atomicWriteFile(target, final, {expectedContent: existing})
         return { removedCount: endIdx - startIdx, insertedCount: newLines.length, previous: existing, final }
       }
 
@@ -2633,7 +2677,7 @@ export function createToolRegistry({ mcpRegistry = McpRegistry, deferMcp = false
       const extensions = []
 
       if (config.tool?.sources?.builtin !== false) {
-        tools.push(...markStrictBuiltinTools(builtinTools(config)))
+        tools.push(...registerAtomicMutationPreflights(markStrictBuiltinTools(builtinTools(config))))
         if (config.tool?.browser?.enabled !== false) tools.push(...markStrictBuiltinTools([browser]))
         if (config.tool?.browser?.enabled !== false) tools.push(bridge)
         if (config.tool?.browser?.enabled !== false) tools.push(...markStrictBuiltinTools(createBrowserRecipeTools(browser)))
