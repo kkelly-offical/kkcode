@@ -11,8 +11,10 @@ const dispatcher = new Agent({connectTimeout: 0, headersTimeout: 0, bodyTimeout:
 export function providerFetch(url, init) {
   if (!(init?.signal instanceof AbortSignal)) throw new Error('Provider transport requires a cancellation signal; its caller must enforce a finite deadline')
   if (!['error', 'manual'].includes(init.redirect || '')) throw new Error('Provider transport refuses automatic redirects')
+  const endpoint = new URL(url)
+  if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password) throw new Error('Provider transport requires an HTTP(S) endpoint without embedded credentials')
   // Built-in fetch remains the boundary for existing host mocks and standard
   // Response/WebStream semantics; the dispatcher belongs only to these calls.
   const options = {...init, dispatcher}
-  return fetch(url, options)
+  return fetch(typeof url === 'string' ? endpoint.href : endpoint, options)
 }

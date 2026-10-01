@@ -35,6 +35,7 @@ test('caller cancellation/deadline still aborts pending provider headers, withou
   assert.equal(disconnected, true); assert.equal(requests, 1)
   assert.throws(() => providerFetch(url, {redirect: 'error'}), /cancellation signal/)
   assert.throws(() => providerFetch(url, {redirect: 'follow', signal: AbortSignal.timeout(50)}), /redirect/)
+  for (const endpoint of ['file:///private', 'data:text/plain,test', 'http://user:password@127.0.0.1/']) assert.throws(() => providerFetch(endpoint, {redirect: 'error', signal: AbortSignal.timeout(50)}), /HTTP\(S\)/)
 })
 
 test('redirect policy rejects forwarding credentials to a different origin', async t => {

@@ -37,6 +37,30 @@ function stateFor(name, provider) {
   }
 }
 
+test('untrusted catalog pagination and reported response origins never own the credentialed transport', async () => {
+  const originalFetch = global.fetch, requests = []
+  const state = stateFor('authority', {type: 'openai-compatible', base_url: 'https://trusted.example.test/v1', api_key_env: 'TEST_MODEL_KEY'})
+  process.env.TEST_MODEL_KEY = 'fixture-catalog-key'
+  try {
+    for (const payload of [{next: 'https://metadata.example.test/latest/'}, {next: '//metadata.example.test/'}, {next: 'https://user:password@trusted.example.test/v1/models'}]) {
+      requests.length = 0
+      global.fetch = async (url, init) => {requests.push({url: String(url), authorization: init.headers.Authorization}); return new Response(JSON.stringify({data: [{id: 'first'}], ...payload}))}
+      await assert.rejects(discoverModelsForProvider(state, {refresh: true}))
+      assert.equal(requests.length, 1)
+      assert.equal(new URL(requests[0].url).origin, 'https://trusted.example.test')
+    }
+    requests.length = 0
+    global.fetch = async (url, init) => {
+      requests.push({url: String(url), authorization: init.headers.Authorization})
+      const response = new Response(JSON.stringify({data: [{id: 'first'}], has_more: true, last_id: 'cursor'}))
+      Object.defineProperty(response, 'url', {value: 'https://metadata.example.test/v1/models'})
+      return response
+    }
+    await assert.rejects(discoverModelsForProvider(state, {refresh: true}), /cross-origin/)
+    assert.equal(requests.length, 1)
+  } finally {global.fetch = originalFetch}
+})
+
 test("model ids reject terminal controls and rendering escapes legacy unsafe text", () => {
   assert.equal(validateModelId("anthropic/claude-sonnet"), "anthropic/claude-sonnet")
   assert.throws(
