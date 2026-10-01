@@ -72,6 +72,38 @@ for (const language of ['en', 'zh']) test(`real custom-output check receives act
   assert.match(feedback, /checks_required/)
 })
 
+for (const language of ['en', 'zh']) test(`a later ordinary inspection script gets precise ordering feedback without being trusted as a check (${language})`, async t => {
+  const {kernel} = await fixture(t, language)
+  let requests = 0, feedback = ''
+  const call = (id, name, args) => ({type: 'tool_call', call: {id, name, args}})
+  kernel.providers.registerProvider('feedback-fixture', {
+    async request() {throw Error('Streaming fixture only')},
+    async *requestStream(input) {
+      requests++
+      if (requests === 1) {
+        yield call('result', 'write', {path: 'result.txt', content: '42\n'})
+        yield call('test', 'write', {path: 'verify.test.mjs', content: assertion})
+        yield call('inspection', 'write', {path: 'inspect-result.mjs', content: "import fs from 'node:fs';console.log(fs.readFileSync('result.txt','utf8'));\n"})
+      } else if (requests === 2) yield call('first-check', 'bash', {command: 'node --test verify.test.mjs'})
+      else if (requests === 3) yield call('ordinary-program', 'bash', {command: 'node inspect-result.mjs'})
+      else if (requests === 4) yield {type: 'text', content: 'The output and tests passed.'}
+      else if (requests === 5) {
+        feedback = JSON.stringify(input.messages.at(-1).content)
+        assert.match(feedback, /verification-order-records/)
+        assert.match(feedback, /unclassified_command/)
+        assert.match(feedback, /verify.test.mjs/)
+        assert.doesNotMatch(feedback, /inspect-result.mjs/, 'do not invite replay of arbitrary programs')
+        yield call('last-check', 'bash', {command: 'node --test verify.test.mjs'})
+      } else yield {type: 'text', content: 'The final check passed; no further execution is needed.'}
+    }
+  })
+  const result = await kernel.executeTurn({prompt: 'Create and inspect the result, then verify and report it.', sessionId: 'ordering-' + language, mode: 'assistant', model: 'fixture', providerType: 'feedback-fixture'})
+  assert.equal(result.status, 'completed')
+  assert.equal(requests, 6)
+  assert.equal(result.verification.passed, true)
+  assert.equal(result.toolEvents.filter(e => e.name === 'bash' && e.args.command === 'node inspect-result.mjs').length, 1)
+})
+
 test('refused alias edit does not poison completion after the explicit real file is read, edited and checked', async t => {
   const {kernel, cwd} = await fixture(t, 'en', {maxSteps: 10})
   await writeFile(path.join(cwd, 'actual.txt'), 'before\n')
