@@ -40,8 +40,8 @@ PR#33的基础修复已合入main `0f8a91f`。PR#34承载后续运行时修复�
 
 新增用量unknown为373338tokens上界；R12合计329请求/19583561tokens/1新增unknown。
 历史累计1871请求/90759649tokens/3unknown，包括旧119667和271625上界，全部继续计账。
-后端运行/排队均0，四个任务进程清空、数据库登录撤销，专用服务已停。随后用户明确要求加快发布并继续真实案例，由此按新指示准备独立R14；旧unknown继续按上界计账。
-新R14已经在公开下载验证后冻结并启动冒烟；宿主期限改由既定执行截止派生，不延长原2026-10-02T04:02:34.744Z期限。
+后端运行/排队均0，四个任务进程清空、数据库登录撤销，专用服务已停。随后用户明确要求加快发布并继续真实案例，由此按新指示准备独立R15；旧unknown继续按上界计账。
+新R15的实际公开包冒烟已通过，9请求/112517tokens、无新增unknown；五场景已独立启动。宿主期限改由既定执行截止派生，不延长原2026-10-02T04:02:34.744Z期限。
 
 ## 不变的边界与发布剩余项
 
@@ -55,7 +55,7 @@ PR#33的基础修复已合入main `0f8a91f`。PR#34承载后续运行时修复�
 
 本轮本机日志：`/tmp/kkcode-1061-attachment-*`。R12关闭回执：
 `/root/kkcode-1061-timely-feedback-20261001/private/closure-receipt.json`；
-新批次准备：`/root/kkcode-1061-public-acceptance-20261002`。私密原始材料不进入Git或npm。
+当前实测：`/root/kkcode-1061-wire-acceptance-20261002`。私密原始材料不进入Git或npm。
 
 公开发行证据：[完整回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.6-preview.1/release-verification.json) · [SHA256SUMS](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.6-preview.1/SHA256SUMS)。
 
@@ -63,3 +63,7 @@ PR#33的基础修复已合入main `0f8a91f`。PR#34承载后续运行时修复�
 因此压缩包哈希不同。公开npm、CI与GitHub实际包三者完全相同，SHA-256为
 `b384960dc1b9df09cc0e0181cc2653e5c6532d98bf8e814fa12f3de729a7763e`。
 R13未调用模型即退休；R14重新安装实际公开包后开展实测，不把两个压缩包说成字节相同。
+
+R14首次冒烟因评测脚本遗漏投递期限字段被执行前拒绝，未调用模型；原记录保留。
+新R15把验证和持久化统一为同一个投递对象，并通过真实VM的缺字段零副作用负例及JSON往返正例，
+共享只读公开程序、另建全部可变任务范围。实测进行中，不把冒烟或环境控制当成五场景通过。
