@@ -1,5 +1,11 @@
 # Project working memory
 
+## PR#33 authority / finite timeout finalization — 2026-10-01
+
+- User explicitly answered `最终提交门禁全过后，允许仅 PR #33 管理员合入` to call_jZEpWPpaML3ba9X7I3qqDdxH/0. One new scoped administrator exception for PR#33 AFTER its FINAL cross-platform/security/package checks pass; no rule changes or claimed approving review. It is not yet consumed and grants NO publication/deployment/model allowance increase. Continue five-scene testing and repaired real-candidate acceptance separately.
+- Source9b3e096 is pushed; CI36843373288/36843410910/36843373287/36843415348 was started, not yet all complete. Final review then reproduced optional bad timeout ->NaN/null checkpoint and disabled managed timer (real tool regression old-red). Explicit finite normalization uses the safe default and preserves existing finite lower/upper clamps; raw config diagnostics/critical permission guards remain unchanged. Source follow-up needs its own final SHA checks, not9b3 receipts.
+- Local4133tests3977pass0fail156conditional skips/types/lint passed before the subsequent behavior-preserving finite-clamp clarification; targeted actual-tool/config/minNode regressions cover the final path. All old model results/failed CI/checkpoint errors stay retained. Source1.0.6-preview.1/10012 is unissued; frozen1061r6 continues on93fb46b.
+
 ## Precise repair hints / shell lifetimes — 2026-10-01
 
 - Atomic-edit commita4595d1 is pushed to PR#33 only; verify36840308827/enterprise36840313648/both CodeQL36840308826/36840318638 all succeeded5/12/3/3 with zero open branch findings. Later dirty shell/repair-hint/hook changes need separate final-SHA CI; no merge/publication or administrator exception.

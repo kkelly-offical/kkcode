@@ -62,3 +62,27 @@ test('background launch clamps a requested unbounded lifetime instead of adverti
   assert.equal(task.payload.commandTimeoutMs, 600_000)
   assert.equal(launch.metadata.backgroundTask.commandTimeoutMs, 600_000)
 })
+
+test('malformed optional timeout configuration cannot silently remove the process deadline', async t => {
+  const {root} = await setup(t)
+  for (const timeout of ['not-a-number', NaN]) {
+    const invalidOptional = {...config, tool: {...config.tool, bash_timeout_ms: timeout}}
+    const launch = await ToolRegistry.call('bash', {command: 'exit 0', run_in_background: true}, {cwd: root, config: invalidOptional, sessionId: 'shell-lifetime', turnId: 'lifetime-turn'})
+    const task = await BackgroundManager.waitForTask(launch.metadata.backgroundTask.id, {timeoutMs: 5000, tickMs: 10})
+    assert.equal(task.status, 'completed')
+    assert.equal(task.payload.commandTimeoutMs, 120_000)
+    assert.equal(launch.metadata.backgroundTask.commandTimeoutMs, 120_000)
+    assert.doesNotMatch(launch.output, /NaN|Infinity/)
+  }
+})
+
+test('finite timeout values retain the original lower and upper clamps', async t => {
+  const {call} = await setup(t)
+  for (const [timeout, expected] of [[20, 1000], [-5, 1000], [650000, 600000]]) {
+    const launch = await call('bash', {command: 'exit 0', run_in_background: true, timeout})
+    const task = await BackgroundManager.waitForTask(launch.metadata.backgroundTask.id, {timeoutMs: 5000, tickMs: 10})
+    assert.equal(task.status, 'completed')
+    assert.equal(task.payload.commandTimeoutMs, expected)
+    assert.equal(launch.metadata.backgroundTask.commandTimeoutMs, expected)
+  }
+})

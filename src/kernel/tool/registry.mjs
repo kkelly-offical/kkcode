@@ -1518,8 +1518,13 @@ function builtinTools(config) {
     },
     async execute(args, ctx) {
       const command = String(args.command || "")
-      const configBashTimeout = Number(ctx.config?.tool?.bash_timeout_ms || BASH_TIMEOUT_MS)
-      const timeoutMs = Math.min(Math.max(Number(args.timeout) || configBashTimeout, 1000), 600_000)
+      const configuredTimeout = Number(ctx.config?.tool?.bash_timeout_ms)
+      const configBashTimeout = Number.isFinite(configuredTimeout) && configuredTimeout !== 0 ? configuredTimeout : BASH_TIMEOUT_MS
+      const requestedTimeout = Number(args.timeout)
+      // A malformed optional setting must not turn into NaN and disable the
+      // managed process timer. Config diagnostics remain intact; every actual
+      // Bash launch has a finite, truthful lifetime regardless of caller path.
+      const timeoutMs = Math.min(Math.max(Number.isFinite(requestedTimeout) && requestedTimeout !== 0 ? requestedTimeout : configBashTimeout, 1000), 600_000)
 
       // 执行策略检查。审批档必须传进去 —— exec-policy 与 PermissionEngine 是
       // 两套互不通话的权限词汇，不传的话 YOLO 档在这里等同于最严格档，
