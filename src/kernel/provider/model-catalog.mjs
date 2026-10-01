@@ -2,6 +2,7 @@ import path from "node:path"
 import { createHmac, randomUUID } from "node:crypto"
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { buildRequestHeaders, createRequestContext } from "../../http/identity.mjs"
+import {providerFetch} from '../../http/provider-transport.mjs'
 import { userRootDir } from "../../storage/paths.mjs"
 import { ProviderError } from "../core/errors.mjs"
 import { startAuditSpan } from "../../audit/event.mjs"
@@ -239,7 +240,7 @@ async function fetchSameOrigin(url, connection, { requestId, timeoutMs, signal }
   let current = new URL(url)
   const originalOrigin = current.origin
   for (let redirects = 0; redirects <= 5; redirects++) {
-    const response = await fetch(current, {
+    const response = await providerFetch(current, {
       method: "GET",
       headers: discoveryHeaders(connection, requestId),
       redirect: "manual",

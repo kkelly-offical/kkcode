@@ -170,4 +170,10 @@ test('cancelled background process has a distinct owner-inspection journal and e
   const fresh = await collect([launched.event, successfulCheck(task.endedAt + 1, task.endedAt + 10)])
   assert.equal(evaluateCompletionEvidence({toolEvents: fresh.events, requireChecks: fresh.needsFreshVerification}).passed, true)
   assert.equal((await BackgroundManager.get(launched.id)).status, 'cancelled', 'inspection never rewrites the original outcome')
+  const foreground = {type: 'tool-call', tool: 'bash', ...successfulCheck(task.endedAt + 1, task.endedAt + 10)}
+  const accepted = {type: 'turn-outcome', source: 'host', schema: 'kk.turn-outcome.v1', status: 'completed', createdAt: task.endedAt + 20}
+  const laterQuestion = await collect([], [foreground, accepted])
+  assert.equal(laterQuestion.events.length, 0)
+  assert.equal(laterQuestion.needsFreshVerification, false, 'accepted inspected background work must not force tests for every future question')
+  assert.equal(evaluateCompletionEvidence({toolEvents: laterQuestion.events, requireChecks: laterQuestion.needsFreshVerification}).passed, true)
 })

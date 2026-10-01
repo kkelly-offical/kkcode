@@ -1,4 +1,5 @@
 import { ProviderError } from '../core/errors.mjs'
+import {providerFetch} from '../../http/provider-transport.mjs'
 import { buildRequestHeaders } from '../../http/identity.mjs'
 import { annotateRetryAfter, primeRetriableStream, requestWithRetry, resolveRetryOptions } from './retry-policy.mjs'
 import { parseSSE } from './sse.mjs'
@@ -130,7 +131,7 @@ async function connect(input, stream) {
   if (!input.apiKey && input.apiKeyEnv !== '') throw failure(input, 401, {}, '尚未配置 Responses API Key')
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), input.timeoutMs || 120000)
   try {
-    const response = await fetch(responsesEndpoint(input.baseUrl), {
+    const response = await providerFetch(responsesEndpoint(input.baseUrl), {
       method: 'POST', redirect: 'error', signal: input.signal ? AbortSignal.any([input.signal, controller.signal]) : controller.signal,
       headers: buildRequestHeaders({ target: 'llm', provider: input.provider || 'openai-responses', protocol: 'responses', requestId: input.requestId || '', openAIClientRequestId: true, accept: stream ? 'text/event-stream, application/json' : 'application/json', contentType: 'application/json', authorization: input.apiKey ? `Bearer ${input.apiKey}` : '' }),
       body: JSON.stringify(responsesPayload(input, stream))
@@ -248,7 +249,7 @@ export async function countTokensResponses(input) {
   const payload = Object.fromEntries(Object.entries(generated).filter(([key, value]) => allowed.includes(key) && value !== undefined))
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), Math.min(input.timeoutMs || 10000, 30000))
   try {
-    const response = await fetch(endpoint, {
+    const response = await providerFetch(endpoint, {
       method: 'POST', redirect: 'error', signal: input.signal ? AbortSignal.any([input.signal, controller.signal]) : controller.signal,
       headers: buildRequestHeaders({ target: 'llm-token-count', provider: input.provider || 'openai-responses', protocol: 'responses', requestId: input.requestId || '', openAIClientRequestId: true,
         accept: 'application/json', contentType: 'application/json', authorization: input.apiKey ? `Bearer ${input.apiKey}` : '' }),

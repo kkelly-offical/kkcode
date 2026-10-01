@@ -1,4 +1,5 @@
 import { ProviderError } from "../core/errors.mjs"
+import {providerFetch} from '../../http/provider-transport.mjs'
 import { buildRequestHeaders } from "../../http/identity.mjs"
 import {
   annotateRetryAfter,
@@ -148,7 +149,7 @@ export async function requestOllama(input) {
     ...(tools?.length ? { tools: mapTools(tools) } : {})
   }
 
-  const response = await fetch(endpoint, {
+  const response = await providerFetch(endpoint, {
     redirect: 'error',
     method: "POST",
     headers: buildRequestHeaders({
@@ -234,7 +235,7 @@ export async function* requestOllamaStream(input) {
     ...(tools?.length ? { tools: mapTools(tools) } : {})
   }
 
-  const response = await fetch(endpoint, {
+  const response = await providerFetch(endpoint, {
     redirect: 'error',
     method: "POST",
     headers: buildRequestHeaders({

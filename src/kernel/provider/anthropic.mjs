@@ -1,4 +1,5 @@
 import { ProviderError } from "../core/errors.mjs"
+import {providerFetch} from '../../http/provider-transport.mjs'
 import { buildRequestHeaders } from "../../http/identity.mjs"
 import {
   annotateRetryAfter,
@@ -234,7 +235,7 @@ async function fetchStreamConnection(endpoint, init, timeoutMs, signal) {
     : controller.signal
 
   try {
-    return await fetch(endpoint, { ...init, redirect: 'error', signal: fetchSignal })
+    return await providerFetch(endpoint, { ...init, redirect: 'error', signal: fetchSignal })
   } catch (error) {
     if (timedOut && !signal?.aborted) {
       const timeoutError = /** @type {Error & { code: string }} */ (new Error(`anthropic connection timeout after ${timeout}ms`, { cause: error }))
@@ -278,7 +279,7 @@ export async function requestAnthropic(input) {
     signal,
     onRetry: retry.onRetry,
     execute: async () => {
-      const response = await fetch(endpoint, {
+      const response = await providerFetch(endpoint, {
         method: "POST",
         redirect: 'error',
         headers: buildRequestHeaders({
@@ -346,7 +347,7 @@ export async function countTokensAnthropic(input) {
     ...(input.compaction ? { context_management: compactionEdit(input) } : {})
   }
   try {
-    const res = await fetch(endpoint, {
+    const res = await providerFetch(endpoint, {
       method: "POST",
       redirect: 'error',
       headers: buildRequestHeaders({

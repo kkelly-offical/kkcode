@@ -134,8 +134,8 @@ export async function collectBackgroundCompletionEvidence({ sessionId, toolEvent
       events.push(unknownEvent('operation_journal_unavailable', task.id)); unknown = true
       continue
     }
-    if (reconciliation.requireChecks) needsFreshVerification = true
     if (previouslyVerified(event, parts, cwd)) continue
+    if (reconciliation.requireChecks) needsFreshVerification = true
     events.push(event)
     if (event.metadata.outcomeUnknown === true) unknown = true
     if (event.metadata.started !== false && !check(event, cwd)) needsFreshVerification = true
