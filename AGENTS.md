@@ -1,5 +1,11 @@
 # Project working memory
 
+## Proactive verification feedback / delivery report review — 2026-10-02
+
+- User explicitly asks to identify and implement further optimizations. New PR#34 increment gives private, deduplicated foreground check feedback before the next model action, corrects failed-chain guidance to ordered `&&` replay of checks only, preserves output bytes/UI hiding/unknown barriers, and gates optional completion prompt content with a cache-bound setting. No check identity, permission or acceptance relaxation. Three old-red regressions retained. Source remains1.0.6-preview.1/Android10012 unissued; PR#34 administrator request still unanswered, PR#33 exception consumed.
+- Exact711 passed all23CI and security0. Frozen R11 `/root/kkcode-1061-quality-recovery-20261001` is now CLOSED:92requests/3690853known tokens/0newunknown, native document succeeded and43automatic checks passed; actual7page visual/body review passed. Overall delivery FAIL because required change-log mislocates two metrics and misreports seven new table rows as preexisting, with inconsistent revision counts. Keep automatic/native results and separate manual failure; no first-attempt pass or followup automation. Aggregate1542/71176088 retains2oldunknown; backend0/0, guestcleanup known, dedicated services stopped. New acceptance requires a new frozen candidate/namespace; never restart or alter R11.
+- New local final4179total/4023pass/0fail/156conditional skips; E2E33 and minimumNode22.12related166/166 passed. Final new-SHA CI/package remain separate. Initial whole-suite2fail exposed32K context pressure from injecting disabled verification guidance; fixed by respecting optional setting and prompt cache, with no window increase. Real early-feedback tool loops and stored-Web-transcript hiding pass. Receipt root `/tmp/kkcode-1061-feedback-acceptance-Wk9MFI/`; publication and production deployment remain separate.
+
 ## Success-preserving check chains / free local continuation — 2026-10-01
 
 - PR#34 remains draft; daaa318 passed final verify36880619729/enterprise36880630033/PRQL36880619892/branchQL36880637594 (5/12/3/3), actual indexed branch/PR CodeQL0 open, Dependabot/secrets0. PR#33 exception remains consumed; PR#34 administrator reply is unanswered. NEW following source needs its own final-SHA gates, no publication/deployment authority.

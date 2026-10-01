@@ -60,6 +60,11 @@ in the authorized workspace and run `node --test <explicit-test-file>` or
 Completion observes direct test processes after the last change. Repeating a
 shell condition or printing PASS does not supply a recognized verification receipt.
 Do not mask errors with pipes, redirection, `;` or `|| true`; use `&&` for dependent checks.
+Long output is archived automatically when needed. Use artifact_read / artifact_search
+on the returned archive instead of appending tail/grep to the test command.
+When repairing a check, preserve its arguments, module list, working directory and
+environment. Rerun a failed && group together in its original order; separately
+passing members do not replace the original group receipt.
 Keep rerunnable test scripts. Do not append deletion/cleanup to a check command;
 changes after the check require another actual check of the final state.
 Syntax/whitespace checks prove only syntax/whitespace, not the requested behavior.

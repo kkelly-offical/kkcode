@@ -5,6 +5,22 @@ import * as evidence from '../src/kernel/session/completion-evidence.mjs'
 
 const shell = command => ({name: 'bash', args: {command}, status: 'completed', ok: true, metadata: {exitCode: 0, started: true}})
 
+test('failed check groups receive a matching ordered-chain repair, not misleading individual-check advice', () => {
+  const command = 'node --test a.test.mjs && node --test b.test.mjs'
+  const failed = {...shell(command), status: 'error', ok: false, metadata: {exitCode: 1, started: true}}
+  const events = [failed, shell('node --test a.test.mjs'), shell('node --test b.test.mjs')]
+  const verification = evidence.evaluateCompletionEvidence({toolEvents: events})
+  assert.equal(verification.passed, false, 'separate runs do not prove the original ordered chain')
+  for (const language of ['en', 'zh']) {
+    const hint = evidence.completionRepairGuidance({verification, toolEvents: events, language})
+    const records = JSON.parse(hint.match(/<check-repair-records>\n([\s\S]+)\n<\/check-repair-records>/)[1])
+    assert.equal(records[0].execution, 'ordered-and-chain')
+    assert.deepEqual(records[0].checks.map(check => check.argv.at(-1)), ['a.test.mjs', 'b.test.mjs'])
+    assert.match(hint, language === 'zh' ? /相同顺序.*&&/ : /same order.*&&/)
+  }
+  assert.equal(evidence.evaluateCompletionEvidence({toolEvents: [...events, shell(command)]}).passed, true)
+})
+
 test('repair hints identify the exact masked check arguments and directory without replaying its setup', () => {
   const events = [shell('cd docs && python3 build.py && python3 -m unittest tests.test_docs -v 2>&1'), shell('cd docs && python3 -m unittest tests.test_docs')]
   const verification = evidence.evaluateCompletionEvidence({toolEvents: events, cwd: '/workspace/project'})

@@ -62,6 +62,7 @@ import { resolveModelCapabilities } from '../provider/model-catalog.mjs'
 import { isCancellation } from '../../abort.mjs'
 import { toolDispatchReceipt, attachToolDispatchReceipt, markToolNotStarted } from '../core/execution-outcome.mjs'
 import { completionRepairGuidance } from './completion-evidence.mjs'
+import { createVerificationFeedback } from './verification-feedback.mjs'
 
 // 每条 tool_result 进入活动上下文的字符上限。0.6.3 之前是硬编码 3000 ——
 // 一个 268 行的普通源文件有 12494 字符，模型只能看到四分之一，而且不知道
@@ -218,7 +219,7 @@ function addUsage(target, delta) {
 }
 
 
-export async function buildSystemPrompt({ mode, model, cwd, agent = null, tools = [], skills = [], language = "en", permission = 'manual' }) {
+export async function buildSystemPrompt({ mode, model, cwd, agent = null, tools = [], skills = [], language = "en", permission = 'manual', verifyCompletion = true }) {
   // Assemble user instructions + rules (Layer 6)
   const instructions = await loadInstructions(cwd)
   const rules = await renderRulesPrompt(cwd)
@@ -259,7 +260,7 @@ export async function buildSystemPrompt({ mode, model, cwd, agent = null, tools 
   const projectContext = await detectProjectContext(cwd)
 
   // Build structured blocks for provider-level cache optimization
-  const result = await buildSystemPromptBlocks({ mode, model, cwd, agent, tools, skills, userInstructions, projectContext, language, permission })
+  const result = await buildSystemPromptBlocks({ mode, model, cwd, agent, tools, skills, userInstructions, projectContext, language, permission, verifyCompletion })
   return result
 }
 
@@ -497,7 +498,7 @@ async function processTurnLoopInRuntime({
   }
   const skills = SkillRegistry.isReady() ? SkillRegistry.listForSystemPrompt() : []
   const language = configState.config.language || "en"
-  const systemPrompt = await buildSystemPrompt({ mode, model, cwd, agent: effectiveAgent, tools: systemTools, skills, language, permission: normalizePermissionLevel(permissionConfig.permission || {}) })
+  const systemPrompt = await buildSystemPrompt({ mode, model, cwd, agent: effectiveAgent, tools: systemTools, skills, language, permission: normalizePermissionLevel(permissionConfig.permission || {}), verifyCompletion })
   // systemPrompt = { text, blocks } — providers use blocks for cache optimization
   const delegateTask = args => createTaskDelegate({
     getSkillToolGroups: () => skillToolPolicy.snapshot(),
@@ -556,6 +557,7 @@ async function processTurnLoopInRuntime({
   let stopReason = 'max-steps'
   let verification = null
   let verificationRepairHints = ''
+  const earlyVerificationFeedback = createVerificationFeedback({cwd, language})
   let interruptedReply = ''
   let inspectionBarrier = carriedEvidence.unknown || carriedEvidence.needsInspection
   // Snapshot actual host receipts only. Final replies and interrupted/error
@@ -1188,6 +1190,7 @@ async function processTurnLoopInRuntime({
       }
 
       // --- Execute tool calls (read-only in parallel, write tools serially) ---
+      const verificationBatchStart = carriedEvidence.toolEvents.length + verificationEvents.length
       async function executeOneCall(call, childSignal = null, browserRecipeGuard = null) {
         const callStartedAt = Date.now()
         const callSignal = childSignal instanceof AbortSignal ? (signal ? AbortSignal.any([signal, childSignal]) : childSignal) : signal
@@ -1648,6 +1651,13 @@ async function processTurnLoopInRuntime({
       signal?.throwIfAborted()
 
       if (inspectionBarrier) {await stopForInspection(); break}
+
+      if (verifyCompletion) {
+        const feedback = earlyVerificationFeedback.observe([...carriedEvidence.toolEvents, ...verificationEvents], verificationBatchStart)
+        if (feedback) await appendMessage(sessionId, 'user', feedback, {
+          mode, model, providerType, step, turnId, synthetic: true, contextKind: 'control'
+        })
+      }
 
       const progress = progressGuard.observe(response.toolCalls.map(call => callResults.get(call.id)).filter(Boolean).map(entry => {
         const refs = trustedArtifactRefs(entry.result)

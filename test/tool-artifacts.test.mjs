@@ -271,7 +271,7 @@ test('fresh archive IDs do not bypass the real loop no-progress warning and stop
     }
   })
   const result = await runWithRuntime({ cwd }, () => processTurnLoop({ prompt: 'Run a repetition fixture.', mode: 'agent', model: 'fixture', providerType: 'artifact-fixture', sessionId, configState: { config } }))
-  assert.equal(result.stopReason, 'no-progress')
+  assert.equal(result.stopReason, 'no-progress', `${result.status}: ${result.reply}`)
   assert.equal(providerCalls, 6)
   assert.equal(result.toolEvents.length, 6)
   const refs = result.toolEvents.map(event => event.metadata.artifactRef)
@@ -295,7 +295,7 @@ test('changed content beyond the archived preview remains progress in the real l
   })
   const result = await runWithRuntime({ cwd }, () => processTurnLoop({ prompt: 'Run a changing-output fixture.', mode: 'agent', model: 'fixture', providerType: 'artifact-fixture', sessionId, configState: { config } }))
   assert.notEqual(result.stopReason, 'no-progress')
-  assert.equal(providerCalls, 6)
+  assert.equal(providerCalls, 6, `${result.status}: ${result.reply}`)
   assert.equal(new Set(result.toolEvents.map(event => event.metadata.artifactRef.sha256)).size, 6)
 })
 
