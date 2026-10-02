@@ -46,7 +46,7 @@ App、设备CLI和网关分别升级。公共网关镜像发布暂缓，继续�
 
 - [分域SDK总览](sdk-guide.md) · [headless JSONL契约](headless-jsonl-contract.md)
 - [配置字段参考](config.example.yaml) · [贡献与验证](contributing.md)
-- [路线图与Issues](ROADMAP.md) · [1.0.5发行范围与边界](release-1.0.5.md)
+- [路线图与Issues](ROADMAP.md) · [1.0.6发行范围与边界](release-1.0.6.md)
 
 ## 历史与发行证据
 

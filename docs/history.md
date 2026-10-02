@@ -2,7 +2,7 @@
 
 [文档导航](README.md) · 当前指南区分稳定版与Preview能力，发行状态见[版本与升级](versions.md)。
 
-历史文件保留当时版本、失败和收据，不全局替换成1.0.5，也不冒充新的重新验收。
+历史文件保留当时版本、失败和收据，不全局替换成当前版本，也不冒充新的重新验收。
 
 此前[1.0.5准备](release-1.0.5.md)、[1.0.6维护](maintenance-1.0.6.md)和
 [安全复核](security-review-1.0.6.md)曾以[1.1.6源码标记整合](implementation-1.1.6.md)，但没有发行1.1.6。
@@ -13,6 +13,8 @@
 
 | 版本 | 说明与证据 |
 | --- | --- |
+| 1.0.6 | [正式版说明](release-1.0.6.md) · [公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.6/release-verification.json) |
+| 1.0.6-preview.1 | [发行说明](release-1.0.6-preview.1.md) · [原五场景实测](implementation-1.0.6-preview.1.md) · [公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.6-preview.1/release-verification.json) |
 | 1.0.6-preview.0 | [发行说明](release-1.0.6-preview.0.md) · [公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.6-preview.0/release-verification.json) |
 | 1.0.5 | [稳定版说明](release-1.0.5.md) · [公开Release](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.5) |
 | 1.0.5-preview.0 | [预发布说明](release-1.0.5-preview.0.md) · [完整实施过程](history/implementation-1.0.5-preview.0.md) · [公开Release](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.5-preview.0) |

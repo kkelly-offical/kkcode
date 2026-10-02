@@ -1,6 +1,6 @@
 # 跨端任务查看、停止与证据
 
-[文档导航](README.md) · 当前源码：1.0.6-preview.1（Preview）；[发行状态](versions.md)
+[文档导航](README.md) · 当前源码：1.0.6（正式版）；[发行状态](versions.md)
 
 ## 普通会话的紧凑待办
 

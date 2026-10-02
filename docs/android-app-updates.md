@@ -1,9 +1,9 @@
 # Android 应用更新
 
-[文档导航](README.md) · 适用版本：1.0.5；[当前发行渠道](versions.md)。
-1.0.5正式版使用版本码10010，接续1.0.5-preview.0/10009和1.0.4/10008，
-均沿用项目证书；是否已有可下载APK以GitHub Release的实际附件为准。发行与匿名下载
-回执见[版本状态](versions.md)。正常同签名升级保留本机SSH凭据与网关账号，不需要卸载。
+[文档导航](README.md) · 适用版本：1.0.6；[当前发行渠道](versions.md)。
+正式版10013沿用项目证书，稳定和预览更新渠道都可接收，已验证10012→10013覆盖升级。
+实际下载、哈希、签名和更新策略见[公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.6/release-verification.json)。
+正常同签名升级保留本机SSH凭据与网关账号，不需要卸载。
 
 历史迁移注意：1.0.2 Fix使用技术版本 **1.0.3 / 10006**，沿用正式证书，可由已有1.0.1/1.0.2
 稳定渠道更新器发现。发布标题与技术版本可以不同；不要把修复包命名成旧 App
@@ -75,5 +75,5 @@ node scripts/android-update-manifest.mjs
   应用商店分发或企业强制升级。
 
 验收分为更新策略／传输单元测试、Compose 状态交互测试，以及专用模拟器上的
-同签名真实系统升级。最后一项使用仓库外的私有递增版本号 APK，绝不发布测试
-升级产物；当时的实际结果见[1.0.1历史验收账本](https://github.com/kkelly-offical/kkcode/blob/v1.0.5-preview.0/docs/stable-1.0.1-worklog.md)。
+同签名真实系统升级。本版使用真实Preview10012与正式10013验证升级；早期私有递增
+测试APK不对外发布，历史结果见[1.0.1历史验收账本](https://github.com/kkelly-offical/kkcode/blob/v1.0.5-preview.0/docs/stable-1.0.1-worklog.md)。

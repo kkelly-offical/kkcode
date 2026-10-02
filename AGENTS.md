@@ -5,8 +5,8 @@
 
 ## 发行与授权
 
-- 已发布稳定 **1.0.5 / Android10010**（npm latest）及 **1.0.6-preview.1 / Android10012**。
-  Preview.1为47aa1bf（PR#34），与验收候选6d8806f同树；匿名下载、哈希、签名与升级已核验。
+- 已发布稳定 **1.0.6 / Android10013**（npm latest）及 **1.0.6-preview.1 / Android10012**。
+  正式版为609cc9a（PR#37），与验收候选1d43cf5同树；匿名下载、哈希、原签名和升级已核验。
   [versions.md](docs/versions.md)和公开release-verification.json是发行事实入口；旧标签不移动。
 - 用户明确“允许所有来自我们的管理员合并操作”。对本任务相关合入不再重复询问；核验变更
   与实际检查，不修改保护规则、不虚称批准审核、不自动合入无关PR#5/#6/#22。
@@ -30,12 +30,12 @@
 
 ## 实测与下一步
 
-- 发布工程检查已完成；PR#35的发行回执和文档维护已合入，候选及main检查均通过。
+- 正式版候选、main跨平台/Web/CodeQL及发行流水线通过；公开CI/npm/GitHub包一致，两个App渠道接受10013。
 - R15使用实际公开包，目录`/root/kkcode-1061-wire-acceptance-20261002`，五场景已结束并关闭。
   文档反馈修复通过，其余四项未完整交付；服务已停、授权撤销。看实施记录及private/closure-receipt.json。
-- 本轮在`fix/1.0.6-stable-20261002`修复Vite命令分类、Responses推理重复计数及短历史压缩，
-  并在新的评测副本修复依赖链接复制。当前验收/发行准备中，尚未发布正式1.0.6。旧成绩不改写。
-- 新模型针对性复验已询问独立有限授权，尚未收到回复；当前只做工程/隔离环境回归。原截止
+- 已修复Vite命令分类、Responses推理重复计数、短历史压缩及新评测副本的依赖链接复制，
+  原失败回放与隔离环境回归通过；未新增模型调用，不改写旧成绩。
+- 后续模型实测须新范围、冻结公开包、继承账本及有限授权，付费0。原截止
   **2026-10-02T04:02:34.744Z**未延长。新增用量unknown须停止、核查并确定继续依据，不重用聊天秘密，
   不调整/重启vLLM。历史3笔unknown继续计账；R12/R13/R14已关闭，不重启或改写旧记录。
 - 分支只清理已合入、无独有提交且未被工作树/开放PR使用者；本轮已清理43远端、48本地，
@@ -45,6 +45,6 @@
 
 - [当前版本](docs/versions.md) · [发行范围](docs/release-1.0.6.md) · [实施与验收](docs/implementation-1.0.6.md)
 - [使用文档](docs/README.md) · [能力边界](docs/capabilities.md) · [历史导航](docs/history.md)
-- 发行回执与本机资料：`/tmp/kkcode-1061-release-final-20261002/`；完整公开回执在GitHub Release。
+- 正式版回执：`/tmp/kkcode-106-stable-lakJaz/`；Preview资料在`/tmp/kkcode-1061-release-final-20261002/`。
 - 9月30日旧冻结对照评测`/root/kkcode-agent-eval-20260930`不可修改/重启；参考源码位于
   `/root/kkcode-architecture-audit-20260930`，不得执行竞品仓库安装脚本。

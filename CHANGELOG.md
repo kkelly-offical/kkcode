@@ -1,6 +1,6 @@
 # Changelog / 更新日志
 
-## 1.0.6 — Stable (prepared)
+## 1.0.6 — Stable / 正式版（2026-10-02）
 
 - Includes the Preview runtime unification, durable ToDo/child controls and scoped attachment archive/recall.
 - Fixes foreground classification of finite Vite builds while retaining managed dev/preview/watch ownership.
