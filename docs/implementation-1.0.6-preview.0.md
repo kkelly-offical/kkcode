@@ -4,4 +4,4 @@
 
 - [完整历史与失败证据](https://github.com/kkelly-offical/kkcode/blob/main/docs/history/implementation-1.0.6-preview.0-through-2026-10-02.md)
 - [当前版本与公开回执](versions.md)
-- [当前开发与验收](implementation-1.0.6-preview.1.md)
+- [当前开发与验收](implementation-1.0.6.md)

@@ -2,8 +2,8 @@
 
 [版本与升级](versions.md) · [实施与验证](implementation-1.0.6.md)
 
-当前为发行准备：1.0.6 / Android10013，尚未公开发布。用户已授权正式版；
-完成当前候选检查后发布npm latest、GitHub稳定Release和原证书APK。
+已发布 **1.0.6 / Android10013**：npm latest、[GitHub稳定Release](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.6)及原证书APK。
+匿名下载、CI/npm/GitHub包一致性、签名与升级已核验；[完整发行回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.6/release-verification.json)。
 
 相对稳定1.0.5，本版包含两个Preview的运行时统一、持久ToDo、子代理控制、
 取消与完成验证改进，以及上传附件的私有归档和按需召回。Agent / Auto / YOLO
