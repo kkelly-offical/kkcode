@@ -1,6 +1,6 @@
 # 上下文、提示词与 Harness
 
-[文档导航](README.md) · 当前源码：1.0.6-preview.1（Preview）；[发行状态](versions.md)
+[文档导航](README.md) · 当前源码：1.0.6（正式版候选）；[发行状态](versions.md)
 
 ## 上下文数字的含义
 
@@ -237,7 +237,7 @@ Web/Android获得同一阻断说明，但目前没有独立的操作账本确认
 这种人工核查屏障会明确结束当前回合，而不是反复请求模型。提供者出错时也保留已知
 验证结果，CLI/SDK可从`completion.verification`查看恢复依据；不把新一次报错说成验收通过。
 
-详细改动与真实模型重测状态见[本轮实施记录](implementation-1.0.6-preview.1.md)。
+详细改动与真实模型重测状态见[本轮实施记录](implementation-1.0.6.md)。
 
 ## 浏览器开发诊断
 

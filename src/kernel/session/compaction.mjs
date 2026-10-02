@@ -466,6 +466,7 @@ export async function compactSession({
   configState,
   keepRecent = DEFAULT_KEEP_RECENT,
   keepRecentTurns = DEFAULT_KEEP_RECENT_TURNS,
+  force = false,
   baseUrl = null,
   apiKeyEnv = null,
   traceId = "",
@@ -482,7 +483,7 @@ export async function compactSession({
   if (strict) snapshotStrictInput(continuation)
   const snapshot = await getSession(sessionId)
   const history = snapshot?.messages || []
-  if (history.length <= keepRecent + 2) return { compacted: false, reason: "too few messages" }
+  if (!force && history.length <= keepRecent + 2) return { compacted: false, reason: "too few messages" }
   const previousSummary = isCompactionSummaryMessage(history[0])
     ? extractCompactionSummary(history[0].content)
     : ""
@@ -500,7 +501,11 @@ export async function compactSession({
       turnIds.push(msg.turnId)
     }
   }
-  if (turnIds.length > keepRecentTurns) {
+  if (force) {
+    // An oversized short history cannot wait for the usual message/turn floor.
+    // Retain the newest pair, then expand backwards for real tool dependencies.
+    splitIdx = workingHistory.length - Math.min(keepRecent, 2)
+  } else if (turnIds.length > keepRecentTurns) {
     const keepFromTurnId = turnIds[turnIds.length - keepRecentTurns]
     splitIdx = workingHistory.findIndex(msg => msg.turnId === keepFromTurnId)
     if (splitIdx < 0) splitIdx = workingHistory.length - keepRecent
@@ -653,7 +658,14 @@ export async function compactSession({
     compactionEvidence: evidenceRecords,
     ...(artifactRefs.length ? { artifactRefs } : {})
   }
-  const candidate = [summaryMessage, ...kept]
+  // The current turn's host-issued no-progress warning must remain visible
+  // after an emergency compaction. It is bounded guidance, not old scaffolding
+  // or a renewed permission grant. Keep at most the newest eligible warning.
+  const retainedGuidance = projectedWorking.slice(0, splitIdx).filter(message =>
+    message.role === 'user' && message.synthetic === true && (!turnId || message.turnId === turnId)
+    && typeof message.content === 'string' && message.content.startsWith('[NO PROGRESS]')
+  ).slice(-1)
+  const candidate = [summaryMessage, ...retainedGuidance, ...kept]
   // Compare the complete prospective context, including the wrapper and
   // host-authored artifact index, with the same CJK/media-aware estimator.
   // A nonempty response alone is not evidence that compaction saved space.
@@ -698,7 +710,7 @@ export async function compactSession({
     iteration: Date.now(),
     compactedAt: Date.now(),
     summarizeCount: toSummarize.length,
-    keepCount: kept.length,
+    keepCount: retainedGuidance.length + kept.length,
     summaryVersion: 2,
     summaryLength: summaryText.length,
     summaryProvider: summaryRoute.providerType,
@@ -713,7 +725,7 @@ export async function compactSession({
     attachmentCount: attachmentProjection.attachments.length,
     ...(strict ? { strictBeforeTokens, strictAfterTokens } : {}),
     summarizedCount: toSummarize.length,
-    keptCount: kept.length,
+    keptCount: retainedGuidance.length + kept.length,
     summaryLength: summaryText.length,
     estimatedBeforeTokens,
     estimatedAfterTokens

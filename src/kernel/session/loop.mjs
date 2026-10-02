@@ -46,7 +46,7 @@ import {
 import { pendingRejections, markRejectionsConsumed } from "../../review/rejection-queue.mjs"
 import { isRecoveryEnabled, markTurnFinished, markTurnInProgress } from "./recovery.mjs"
 import { HookBus, initHookBus } from "../plugin/hook-bus.mjs"
-import { shouldCompact, compactSession, estimateTokenCount, modelContextLimit, supportsNativeCompaction } from "./compaction.mjs"
+import { shouldCompact, compactSession, modelContextLimit, supportsNativeCompaction } from "./compaction.mjs"
 import { hasCompactionAttachments } from './attachment-compaction.mjs'
 import { saveCheckpoint } from "./checkpoint.mjs"
 import { createRenderStream } from "./render-stream.mjs"
@@ -689,7 +689,7 @@ async function processTurnLoopInRuntime({
       // can add context; counting the canonical history alone underestimates it.
       let messages = await HookBus.messagesTransform([...history])
       const normalizedHistory = messages.map(normalizeMessageForCache)
-      let contextTokens = requestContextBudget({ system: systemPrompt, messages, tools, model, configState, providerType }).tokens
+      let contextTokens = requestContextBudget({ system: systemPrompt, messages, tools, model, configState, providerType, baseUrl, apiKeyEnv }).tokens
       let contextFromCache = false
       let strictInputBound = null
 
@@ -710,14 +710,14 @@ async function processTurnLoopInRuntime({
         contextTokens = realCount
       } else if (contextCachePoint && contextCachePoint.toolSignature === JSON.stringify(tools.map(tool => [tool.name, tool.description, tool.inputSchema])) && isPrefixMessages(contextCachePoint.messages, normalizedHistory)) {
         const delta = messages.slice(contextCachePoint.messages.length)
-        contextTokens = contextCachePoint.tokens + estimateTokenCount(delta)
+        contextTokens = contextCachePoint.tokens + requestContextBudget({ messages: delta, model, configState, providerType, baseUrl, apiKeyEnv }).components.messages
         contextFromCache = true
       } else if (contextCachePoint) {
         contextCachePoint = null
       }
       const contextLimit = modelContextLimit(model, configState, providerType)
       const contextRatio = contextLimit > 0 ? Math.min(1, contextTokens / contextLimit) : 0
-      lastContextMeter = { ...requestContextBudget({ system: systemPrompt, messages, tools, model, configState, providerType,
+      lastContextMeter = { ...requestContextBudget({ system: systemPrompt, messages, tools, model, configState, providerType, baseUrl, apiKeyEnv,
         measuredTokens: strictInputBound?.tokens ?? realCount ?? (contextFromCache ? contextTokens : null),
         source: strictInputBound?.source || (realCount != null ? 'count-api' : 'estimated') }), fromCache: contextFromCache }
 
@@ -760,6 +760,7 @@ async function processTurnLoopInRuntime({
           await EventBus.emit({ type: EVENT_TYPES.SESSION_COMPACTING, sessionId, turnId, payload: {} })
           const compactResult = await compactSession({
             sessionId, model, providerType, configState, baseUrl, apiKeyEnv,
+            force: lastContextMeter.requiredTokens > lastContextMeter.limit,
             traceId: turnTraceContext.traceId,
             turnId,
             signal,
@@ -784,7 +785,7 @@ async function processTurnLoopInRuntime({
             let compactedBound = null
             const compactedCount = strictInputBound ? await countTokensProvider({ configState, providerType, model, system: systemPrompt, messages, tools, baseUrl, apiKeyEnv,
               traceId: turnTraceContext.traceId, sessionId, turnId, signal, onInputBound: value => { compactedBound = value } }) : null
-            const compactedMeter = requestContextBudget({ system: systemPrompt, messages, tools, model, configState, providerType,
+            const compactedMeter = requestContextBudget({ system: systemPrompt, messages, tools, model, configState, providerType, baseUrl, apiKeyEnv,
               measuredTokens: compactedBound?.tokens ?? compactedCount, source: compactedBound?.source || (compactedCount != null ? 'count-api' : 'estimated') })
             // 事件带上前后 token 数 —— UI 层的「已压缩，193.4K → 42.1K」提示全靠它
             await EventBus.emit({
@@ -925,6 +926,7 @@ async function processTurnLoopInRuntime({
           await EventBus.emit({ type: EVENT_TYPES.SESSION_COMPACTING, sessionId, turnId, payload: {} })
           const compactResult = await compactSession({
             sessionId, model, providerType, configState, baseUrl, apiKeyEnv,
+            force: lastContextMeter.requiredTokens > lastContextMeter.limit,
             traceId: turnTraceContext.traceId,
             turnId,
             signal,
@@ -960,7 +962,7 @@ async function processTurnLoopInRuntime({
       const totalInput = (u.input || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0)
       if (totalInput > 0) {
         lastContextMeter = {
-          ...requestContextBudget({ system: systemPrompt, messages, tools, model, configState, providerType, measuredTokens: totalInput + (u.output || 0), source: 'provider-usage' }),
+          ...requestContextBudget({ system: systemPrompt, messages, tools, model, configState, providerType, baseUrl, apiKeyEnv, measuredTokens: totalInput + (u.output || 0), source: 'provider-usage' }),
           fromCache: false,
           cacheRead: u.cacheRead || 0,
           cacheWrite: u.cacheWrite || 0,

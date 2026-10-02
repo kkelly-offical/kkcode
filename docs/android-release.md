@@ -1,6 +1,6 @@
 # Android release signing and acceptance
 
-[Documentation](README.md) · Current Preview: **1.0.6-preview.1 / 10012**.
+[Documentation](README.md) · Source target: **1.0.6 stable / 10013** (not yet published). Published Preview remains **1.0.6-preview.1 / 10012**.
 Public stable remains **1.0.5 / 10010**. The current same-certificate Preview APK,
 update manifest, anonymous downloads and upgrade have been verified; see the
 [public release receipt](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.6-preview.1/release-verification.json)
@@ -96,7 +96,7 @@ The application footer and Android User-Agent use `BuildConfig.VERSION_NAME`.
 
 After signature verification, run `node scripts/android-update-manifest.mjs`.
 Publish its `test-results/android-update.json` alongside the exact signed APK
-renamed `kkcode-android-<versionName>.apk` (`kkcode-android-1.0.6-preview.1.apk` for the prepared next Preview).
+renamed `kkcode-android-<versionName>.apk` (`kkcode-android-1.0.6.apk` for this stable candidate).
 The App updater skips releases without a
 matching manifest. Public identity is pinned in `configs/android-release.json`;
 private signing files never enter the release. See [App updates](android-app-updates.md).

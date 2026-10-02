@@ -1,5 +1,13 @@
 # Changelog / 更新日志
 
+## 1.0.6 — Stable (prepared)
+
+- Includes the Preview runtime unification, durable ToDo/child controls and scoped attachment archive/recall.
+- Fixes foreground classification of finite Vite builds while retaining managed dev/preview/watch ownership.
+- Estimates Responses context from replayed input; displayed reasoning and prior reasoning output usage no longer count twice. Oversized short histories can compact while preserving tool pairs and original requirements.
+- Repairs dependency-template copying in the new evaluation preparation; frozen results stay unchanged.
+- Android10013 keeps the existing signing identity. Release and verification status: [versions](docs/versions.md).
+
 ## 1.0.6-preview.1 — Preview / 预览版（2026-10-02）
 
 - Archive uploaded attachment bodies during compaction, including recent retained
