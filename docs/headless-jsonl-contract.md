@@ -1,7 +1,7 @@
 # Headless JSONL 机器契约（1.0.0）
 
 状态：**1.0.0 契约面**（`turn.result` stable / `assistant.delta` experimental，见下文稳定性承诺）。
-当前Preview为1.0.6-preview.1；本轮兼容保留完成检查与恢复信息，`schemaVersion`仍为`"1"`。
+当前源码为1.0.6；本轮兼容保留完成检查与恢复信息，`schemaVersion`仍为`"1"`。
 适用命令：`kkcode chat --output-format json` 与 `kkcode chat --output-format stream-json`。
 单一事实源：事件类型表由代码导出（`src/cli/output-format.mjs` 的
 `HEADLESS_JSONL_EVENTS`），本页是它的说明；两者漂移时以代码为准并有测试钉住

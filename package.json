@@ -1,6 +1,6 @@
 {
   "name": "@kkelly-offical/kkcode",
-  "version": "1.0.6-preview.1",
+  "version": "1.0.6",
   "workspaces": [
     "apps/web",
     "apps/gateway",
@@ -140,6 +140,8 @@
     "docs/implementation-1.0.6-preview.0.md",
     "docs/release-1.0.6-preview.0.md",
     "docs/implementation-1.0.6-preview.1.md",
+    "docs/implementation-1.0.6.md",
+    "docs/release-1.0.6.md",
     "docs/release-1.0.6-preview.1.md",
     "docs/implementation-1.1.6.md",
     "docs/codeql-triage-1.0.5.md",

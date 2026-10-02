@@ -270,6 +270,25 @@ const call = id => [{ type: 'tool_use', id, name: 'read', input: { path: `${id}.
 const result = id => [{ type: 'tool_result', tool_use_id: id, content: `result-${id}` }]
 const tail = count => Array.from({ length: count }, (_, index) => `recent-${index}`)
 
+test('forced compaction handles five messages while preserving the newest tool pair and exact requirements', async () => {
+  const sessionId = 'ses_force_short_history'
+  await touchSession({ sessionId, mode: 'agent', model: 'test-model', providerType: 'compaction-test', cwd: process.cwd() })
+  await appendMessage(sessionId, 'user', 'MUST preserve permissions and report unresolved failures.')
+  await appendMessage(sessionId, 'assistant', [{ type: 'text', text: 'earlier work '.repeat(5000) }, ...call('older')])
+  await appendMessage(sessionId, 'user', [{ ...result('older')[0], content: 'Error: unresolved earlier failure', is_error: true }])
+  await appendMessage(sessionId, 'assistant', call('latest'))
+  await appendMessage(sessionId, 'user', result('latest'))
+  const before = await getSession(sessionId)
+  const compacted = await compactSession({ sessionId, model: 'test-model', providerType: 'compaction-test', configState: configState(), force: true })
+  assert.equal(compacted.compacted, true, compacted.reason)
+  const after = await getSession(sessionId)
+  const retained = messages => messages.map(({ id, role, content, createdAt }) => ({ id, role, content, createdAt }))
+  assert.deepEqual(retained(after.messages.slice(1)), retained(before.messages.slice(-2)))
+  assert.match(after.messages[0].content, /MUST preserve permissions/)
+  assert.match(after.messages[0].content, /unresolved earlier failure/)
+  assert.equal(compacted.keptCount, 2)
+})
+
 test('message-count fallback retains the call before a kept result without deleting either', async () => {
   const sessionId = await seedToolHistory('fallback', [...prefix(4), call('paired'), result('paired'), ...tail(5)])
   const before = await getSession(sessionId)

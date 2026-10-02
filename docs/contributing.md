@@ -1,6 +1,6 @@
 # 开发与验证
 
-[文档导航](README.md) · 当前源码1.0.6-preview.1（Preview）；见[版本状态](versions.md)。
+[文档导航](README.md) · 当前源码1.0.6（正式版候选）；见[版本状态](versions.md)。
 
 ## 小步修改
 

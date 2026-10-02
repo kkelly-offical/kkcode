@@ -257,7 +257,6 @@ const LONG_RUNNING_PATTERNS = [
   /\byarn\s+start\b/i,
   /\bpnpm\s+dev\b/i,
   /\bpnpm\s+start\b/i,
-  /\bnpx\s+vite\b/i,
   /\bnpx\s+next\s+dev\b/i,
   /\bnpx\s+serve\b/i,
   /\bnode\s+.*server/i,
@@ -404,10 +403,6 @@ function executableName(token) {
   return String(token || "").split(/[\\/]/).at(-1).toLowerCase().replace(/\.(?:cmd|exe)$/i, "")
 }
 
-function isVitestExecutable(token) {
-  const name = executableName(token)
-  return name === "vitest" || /^vitest@[^@]+$/.test(name)
-}
 
 function wrapperName(token) {
   const name = executableName(token)
@@ -485,14 +480,17 @@ function skipCommandWrappers(words, start = 0) {
   return index
 }
 
-function vitestArgv(words) {
+function toolCliArgv(words, name) {
+  const isToolExecutable = token => {
+    const executable = executableName(token)
+    return executable === name || executable.startsWith(name + "@") && executable.length > name.length + 1
+  }
   let index = skipCommandWrappers(words)
 
-  if (isVitestExecutable(words[index])) return words.slice(index + 1)
+  if (isToolExecutable(words[index])) return words.slice(index + 1)
 
-  // Running Vitest's published Node entrypoint directly has the same watch
-  // defaults as the `vitest` bin.  Limit this to a node_modules/vitest path so
-  // arbitrary scripts merely containing "vitest" are not blocked.
+  // Published CLI entrypoints have the same behavior as their package bins.
+  // Match package paths, not arbitrary scripts containing the tool name.
   if (["node", "nodejs"].includes(executableName(words[index]))) {
     index++
     const nodeValueOptions = new Set([
@@ -507,7 +505,9 @@ function vitestArgv(words) {
       index += nodeValueOptions.has(option) ? 2 : 1
     }
     const script = String(words[index] || "").replace(/\\/g, "/").toLowerCase()
-    if (/(?:^|\/)node_modules\/(?:\.pnpm\/[^/]+\/node_modules\/)?vitest\/(?:vitest\.mjs|dist\/cli\.js)$/.test(script)) {
+    const entry = script.match(/(?:^|\/)node_modules\/(?:\.pnpm\/[^/]+\/node_modules\/)?(vite|vitest)\/(.+)$/)
+    const entrypoints = name === "vite" ? ["bin/vite.js"] : ["vitest.mjs", "dist/cli.js"]
+    if (entry?.[1] === name && entrypoints.includes(entry[2])) {
       return words.slice(index + 1)
     }
     return null
@@ -518,7 +518,7 @@ function vitestArgv(words) {
   index++
   if (["npm", "pnpm", "yarn", "bun"].includes(launcher) && executableName(words[index]) === "run") {
     index++
-    if (!isVitestExecutable(words[index])) return null
+    if (!isToolExecutable(words[index])) return null
     index++
     if (words[index] === "--") index++
     return words.slice(index)
@@ -529,13 +529,13 @@ function vitestArgv(words) {
     if (["-p", "--package", "-c", "--call", "--cache", "--userconfig"].includes(token)) index += 2
     else index++
   }
-  if (isVitestExecutable(words[index])) return words.slice(index + 1)
+  if (isToolExecutable(words[index])) return words.slice(index + 1)
 
   // Package launchers can themselves launch cross-env/nice/stdbuf wrappers.
   // Re-enter only the wrapper consumer (not the launcher parser) to avoid an
   // accidental recursive loop on malformed argv.
   index = skipCommandWrappers(words, index)
-  return isVitestExecutable(words[index]) ? words.slice(index + 1) : null
+  return isToolExecutable(words[index]) ? words.slice(index + 1) : null
 }
 
 // 这些 option 的下一个 argv 是值，不能把值恰好叫 run/list
@@ -582,11 +582,38 @@ function vitestInvocationIsLongRunning(args) {
   return !(informational || oneShot)
 }
 
-function isLongRunningVitest(command, shellSyntax = {}) {
+// Consume option values before interpreting subcommands or help/watch flags.
+// A value named "build" is not a build invocation (e.g. vite --mode build).
+const VITE_VALUE_OPTIONS = new Set([
+  "-c", "--config", "--base", "-l", "--loglevel", "--configloader", "-f", "--filter",
+  "-m", "--mode", "--port", "--target", "--outdir", "--assetsdir", "--assetsinlinelimit"
+])
+const VITE_OPTIONAL_VALUE_OPTIONS = new Set([
+  "--host", "--open", "--profile", "-d", "--debug", "--ssr", "--sourcemap", "--minify", "--manifest", "--ssrmanifest"
+])
+function viteInvocationIsLongRunning(args) {
+  let positional = "", watch = false, informational = false
+  for (let index = 0; index < args.length; index++) {
+    const arg = String(args[index]).toLowerCase()
+    if (arg === "--") break
+    if (VITE_VALUE_OPTIONS.has(arg)) { index++; continue }
+    if (VITE_OPTIONAL_VALUE_OPTIONS.has(arg)) {
+      if (args[index + 1] && !String(args[index + 1]).startsWith("-")) index++
+      continue
+    }
+    if (["--help", "-h", "--version", "-v"].includes(arg)) informational = true
+    else if (["--watch", "-w", "--watch=true"].includes(arg)) watch = true
+    else if (["--no-watch", "--watch=false"].includes(arg)) watch = false
+    else if (!arg.startsWith("-") && !positional) positional = arg
+  }
+  return !informational && (watch || !["build", "optimize"].includes(positional))
+}
+
+function isLongRunningTool(command, name, classify, shellSyntax = {}) {
   for (const segment of splitShellSegments(command, shellSyntax)) {
     const words = splitShellWords(segment)
-    const args = vitestArgv(words)
-    if (args && vitestInvocationIsLongRunning(args)) return true
+    const args = toolCliArgv(words, name)
+    if (args && classify(args)) return true
 
     // `sh -c 'vitest ...'` 是真实执行面，不能因外层 wrapper 而漏判。
     const shell = executableName(words[0])
@@ -596,7 +623,7 @@ function isLongRunningVitest(command, shellSyntax = {}) {
     if (
       commandIndex >= 0 &&
       words[commandIndex + 1] &&
-      isLongRunningVitest(words[commandIndex + 1], { hashComments: true })
+      isLongRunningTool(words[commandIndex + 1], name, classify, { hashComments: true })
     ) return true
 
     // cmd /c 把 /c 后全部 argv 当作命令行；与 POSIX sh -c 的「只有
@@ -606,7 +633,7 @@ function isLongRunningVitest(command, shellSyntax = {}) {
       if (
         cmdCommandIndex >= 0 &&
         words[cmdCommandIndex + 1] &&
-        isLongRunningVitest(words.slice(cmdCommandIndex + 1).join(" "), { hashComments: false })
+        isLongRunningTool(words.slice(cmdCommandIndex + 1).join(" "), name, classify, { hashComments: false })
       ) return true
       // `/k` deliberately keeps cmd.exe open after the child exits.  It is
       // therefore long-running even when the nested Vitest form is one-shot.
@@ -622,14 +649,14 @@ function isLongRunningVitest(command, shellSyntax = {}) {
       if (
         powershellCommandIndex >= 0 &&
         words[powershellCommandIndex + 1] &&
-        isLongRunningVitest(words.slice(powershellCommandIndex + 1).join(" "), { hashComments: true })
+        isLongRunningTool(words.slice(powershellCommandIndex + 1).join(" "), name, classify, { hashComments: true })
       ) return true
     }
 
     if (shell === "cross-env-shell") {
       let innerIndex = 1
       while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[innerIndex] || "")) innerIndex++
-      if (words[innerIndex] && isLongRunningVitest(words.slice(innerIndex).join(" "), shellSyntax)) return true
+      if (words[innerIndex] && isLongRunningTool(words.slice(innerIndex).join(" "), name, classify, shellSyntax)) return true
     }
   }
   return false
@@ -637,7 +664,9 @@ function isLongRunningVitest(command, shellSyntax = {}) {
 
 export function isLongRunningCommand(command) {
   const cmd = String(command || "").trim()
-  return isLongRunningVitest(cmd) || LONG_RUNNING_PATTERNS.some((re) => re.test(cmd))
+  return isLongRunningTool(cmd, "vitest", vitestInvocationIsLongRunning)
+    || isLongRunningTool(cmd, "vite", viteInvocationIsLongRunning)
+    || LONG_RUNNING_PATTERNS.some((re) => re.test(cmd))
 }
 
 /**

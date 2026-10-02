@@ -1,6 +1,6 @@
 # 安装与首次使用
 
-[文档导航](README.md) · [版本与升级](versions.md) · 稳定版1.0.5；Preview源码1.0.6-preview.1
+[文档导航](README.md) · [版本与升级](versions.md) · 稳定版1.0.5；正式版候选源码1.0.6
 
 ## 安装已发布版本
 
@@ -42,7 +42,7 @@ kkcode remote               # 工作电脑前台远控；首次登录并确认�
 不同服务；手机不运行 Agent 内核。Android 也可直接 SSH，Web 不代理 SSH。
 详见[企业部署](enterprise-deployment.md)、[Android 更新](android-app-updates.md)。
 
-## 从源码运行（当前1.0.6-preview.1）
+## 从源码运行（当前1.0.6）
 
 ```sh
 git clone https://github.com/kkelly-offical/kkcode.git

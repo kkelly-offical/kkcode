@@ -1,6 +1,6 @@
 # KK Code 工作记忆
 
-只维护当前状态、有效约束和未完事项。过程写入[实施记录](docs/implementation-1.0.6-preview.1.md)，
+只维护当前状态、有效约束和未完事项。过程写入[实施记录](docs/implementation-1.0.6.md)，
 旧检查点见[历史记忆](docs/history/working-memory-through-2026-10-02.md)，不要逐轮追加日志。
 
 ## 发行与授权
@@ -10,8 +10,8 @@
   [versions.md](docs/versions.md)和公开release-verification.json是发行事实入口；旧标签不移动。
 - 用户明确“允许所有来自我们的管理员合并操作”。对本任务相关合入不再重复询问；核验变更
   与实际检查，不修改保护规则、不虚称批准审核、不自动合入无关PR#5/#6/#22。
-- 用户选择必要工程、安全、安装包检查后先发布Preview，再进入真实案例。质量失败如实保留，
-  不用机器检查或局部案例通过冒充整体成熟。此轮不替换latest、不发布网关镜像、不升级生产/演示。
+- 用户最新明确要求修复后发布 **1.0.6正式版 / Android10013**，授权本轮npm latest、GitHub稳定Release
+  和原证书APK。完成必要工程、安全与安装包检查；不发布网关镜像、不升级生产/演示，不改旧标签。
 
 ## 产品约束
 
@@ -33,9 +33,9 @@
 - 发布工程检查已完成；PR#35的发行回执和文档维护已合入，候选及main检查均通过。
 - R15使用实际公开包，目录`/root/kkcode-1061-wire-acceptance-20261002`，五场景已结束并关闭。
   文档反馈修复通过，其余四项未完整交付；服务已停、授权撤销。看实施记录及private/closure-receipt.json。
-- 已确认待修：`npx vite build`被误判为常驻服务。评测环境另有依赖复制使Playwright命令
-  指向模板副本的问题；另有长推理压缩后上下文仍超限。未声称已修复，不改冻结批次或旧成绩。
-- 既有免费本地Qwen/vLLM可用，但每批须有限、新范围、冻结包与继承账本，付费0；原截止
+- 本轮在`fix/1.0.6-stable-20261002`修复Vite命令分类、Responses推理重复计数及短历史压缩，
+  并在新的评测副本修复依赖链接复制。当前验收/发行准备中，尚未发布正式1.0.6。旧成绩不改写。
+- 新模型针对性复验已询问独立有限授权，尚未收到回复；当前只做工程/隔离环境回归。原截止
   **2026-10-02T04:02:34.744Z**未延长。新增用量unknown须停止、核查并确定继续依据，不重用聊天秘密，
   不调整/重启vLLM。历史3笔unknown继续计账；R12/R13/R14已关闭，不重启或改写旧记录。
 - 分支只清理已合入、无独有提交且未被工作树/开放PR使用者；本轮已清理43远端、48本地，
@@ -43,7 +43,7 @@
 
 ## 证据入口
 
-- [当前版本](docs/versions.md) · [发行范围](docs/release-1.0.6-preview.1.md) · [实施与验收](docs/implementation-1.0.6-preview.1.md)
+- [当前版本](docs/versions.md) · [发行范围](docs/release-1.0.6.md) · [实施与验收](docs/implementation-1.0.6.md)
 - [使用文档](docs/README.md) · [能力边界](docs/capabilities.md) · [历史导航](docs/history.md)
 - 发行回执与本机资料：`/tmp/kkcode-1061-release-final-20261002/`；完整公开回执在GitHub Release。
 - 9月30日旧冻结对照评测`/root/kkcode-agent-eval-20260930`不可修改/重启；参考源码位于

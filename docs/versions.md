@@ -5,20 +5,21 @@
 ## 当前版本
 
 公开稳定版 **1.0.5 / Android10010**，公开Preview **1.0.6-preview.1 / Android10012**。
-CLI、四个工作区、Web和Android源码版本一致；APK使用原项目证书。
+本轮源码目标为 **1.0.6正式版 / Android10013**，尚待发布；CLI、四个工作区、Web和Android版本一致，APK继续使用原证书。
 源码版本、流水线启动都不等于已公开下载。本次已核对官方npm与GitHub实际下载、产物哈希、
 同证书签名和升级；精确提交、CI、SHA-256和限制见[公开release-verification.json](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.6-preview.1/release-verification.json)。
 从未公开发行过1.1.6，旧源码标记仅用于历史追溯。
 
 | 层次 | 版本 | 渠道与证据 |
 | --- | --- | --- |
+| 本轮待发布源码 | **1.0.6 / Android10013** | 用户已授权正式发行；以新候选检查和公开下载核验为准 |
 | 已发布预览渠道 | **1.0.6-preview.1 / Android10012** | npm preview；[GitHub prerelease](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.6-preview.1)；匿名下载与原证书已核验 |
 | 已发布稳定渠道 | **1.0.5 / Android10010** | npm latest；[稳定Release](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.5) |
 | 上一已核实预览版 | 1.0.6-preview.0 / Android10011 | 原tag、包与[公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.6-preview.0/release-verification.json)保持 |
 | 上一已核实稳定版 | 1.0.4 / Android10008 | [历史发行回执](stable-1.0.4-worklog.md) |
 | 历史预览 | 1.0.5-preview.0 / Android10009 | 原tag和APK保持 |
 
-[Preview发行范围](release-1.0.6-preview.1.md) · [实际实施与剩余评测](implementation-1.0.6-preview.1.md)
+[本轮正式版发行范围](release-1.0.6.md) · [实施与验证](implementation-1.0.6.md) · [原Preview实测](implementation-1.0.6-preview.1.md)
 
 ## CLI 升级
 
@@ -57,12 +58,12 @@ CLI、网关/Web、Android分别部署，升级其中一个不会自动替换另
 
 ## 验证边界
 
-本轮按用户2026-10-02最新决定采用快速Preview迭代：完成必要工程、安全及实际安装包检查后发布，随后继续真实案例与五场景鲁棒性评测。完整模型评分不再阻塞此Preview发行；旧失败、已知局限和待验证部分必须如实披露。发布后仍核验匿名下载、哈希、签名、版本与升级安装。
+用户2026-10-02最新要求修复后发布1.0.6正式版，允许更新npm latest与GitHub稳定Release。继续完成必要工程、安全及实际安装包检查；旧五场景失败保留，不把修复回归改写成整批模型通过。发布后核验匿名下载、哈希、签名、版本与升级安装。
 
 - 新发行候选需要自己的跨平台、Web、Android、打包与安全门禁，不能复用旧版本的成功状态。
 - C04真实重连、完整修订版模型质量、GitLab实测与长期使用等仍在Issues中，旧失败成绩保留。
 - 已发布tag、npm版本和APK不可覆盖；后续公开APK继续递增版本码并保留项目证书。
 - PR#34已按用户管理员合入授权集成；保护规则不变，没有冒称批准审核。发布策略保持1.0.x；旧的未发行1.1.6标记不复活，既有发行tag不移动。
-- 1.0.5不是1.1.0成熟度门禁已通过的证明；生产部署与新的模型调用仍需独立授权。
+- 1.0.6正式版命名不是1.1.0成熟度门禁已通过的证明；生产部署与新的模型调用仍需独立授权。
 
 [已知边界](capabilities.md) · [当前Issues](https://github.com/kkelly-offical/kkcode/issues) · [历史证据](history.md)
