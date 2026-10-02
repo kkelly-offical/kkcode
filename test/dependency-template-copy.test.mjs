@@ -20,7 +20,7 @@ test('copied npm links and imported runner share the task-local module instance'
   try { await symlink('../runner/cli.cjs', path.join(f.source, '.bin', 'runner')) }
   catch (error) { if (process.platform === 'win32' && error.code === 'EPERM') return t.skip('host does not allow file symlink creation'); throw error }
   await copyDependencyTemplate(f.source, f.target)
-  assert.equal(await readlink(path.join(f.target, '.bin', 'runner')), '../runner/cli.cjs')
+  assert.equal(await readlink(path.join(f.target, '.bin', 'runner')), await readlink(path.join(f.source, '.bin', 'runner')))
   assert.equal(await realpath(path.join(f.target, '.bin', 'runner')), await realpath(path.join(f.target, 'runner', 'cli.cjs')))
   const spec = path.join(path.dirname(f.target), 'spec.cjs')
   await writeFile(spec, "require('node:assert/strict').equal(require('./node_modules/runner/state.cjs').value,42);console.log('same module instance');\n")
