@@ -5,21 +5,18 @@
 
 ## 发行与授权
 
-- 当前任务：用户10月4日授权完成Web／网关像素风界面增强，并同步Android正式发行。候选 **1.0.8 / Android10015**（1.0.7后续增强版）；旧1.0.7不可覆盖，非Preview。分支`feat/1.0.8-pixel-studio`，待完成UI、签名升级及CI验证后发布。
-- 本轮允许整理原功能入口、增加像素伙伴与调整界面细节；单模式选择器、权限与direct-SSH保持。无新增真实推理、公共镜像或生产部署授权。
-
-- 已发布稳定 **1.0.7 / Android10014**（npm latest），发行提交`a04bf10`（PR#40），
-  与候选`aded56b`同树；匿名下载、CI/npm/GitHub字节一致、原证书与10013→10014升级已核验。
-  Preview仍为 **1.0.6-preview.1 / Android10012**；旧稳定1.0.6及所有旧tag不移动。
+- 已发布稳定 **1.0.8 / Android10015**（npm latest）：1.0.7的Pixel Studio界面增强正式版。
+  发行提交`43bb449`（PR#42），与候选`e01ec56`同树；公开下载、CI/npm/GitHub字节一致、原证书与10014→10015升级已核验。
+  Preview仍为 **1.0.6-preview.1 / Android10012**；旧1.0.7及所有旧tag不移动。
   [versions.md](docs/versions.md)与公开release-verification.json是发行事实入口。
-- 用户明确“允许所有来自我们的管理员合并操作”。本任务相关合入不重复询问；核验变更与实际检查，
+- 用户明确“允许所有来自我们的管理员合并操作”。本任务相关合入不重复询问；核验实际检查，
   不修改保护规则、不虚称批准审核、不自动合入无关PR#5/#6/#22。
-- 用户已于10月3日授权并完成1.0.7正式发布；没有公共网关镜像、生产/演示升级或新增真实模型调用。
+- 用户10月4日授权并完成Web／网关／Android增强正式发行；没有公共网关镜像、生产／演示升级或新增真实模型调用。
 
 ## 产品约束
 
 - Agent / Auto / YOLO能力相同，差别是审批策略；Ultra增加持久分阶段编排，Plan只读探索、
-  规划与持久ToDo。保留单个模式选择器及原CLI/Web/Android布局，不加未实现的远控按钮。
+  规划与持久ToDo。保持单个模式选择器、会话导航与输入区，不加未实现的远控按钮。
 - ToDo完成、子代理汇报、checks_observed不是完整验收。未知效果先暂停核查；取消不回滚，
   恢复由用户触发并检查既有副作用，不能放松校验换取通过。
 - 严格任务图保留宿主身份、范围和硬预算；普通委派预算仍是操作估算。工作树续作要明确交接，
@@ -33,9 +30,9 @@
 
 ## 实测与下一步
 
-- 八项体验优化已合入并发行：错误恢复、受管服务、收尾、压缩/召回、工具反馈、ToDo局部修订、
-  跨端插话与子代理交接。候选/main/发行跨平台、Web、CodeQL通过，Android85项JVM测试通过。
-  移除未修复的HTTP缓存依赖链，npm审计0告警。下一步是实际业务使用与人工审阅，不另建评测框架主线。
+- 1.0.7八项连续工作改进与1.0.8像素界面、KIKI伙伴、工具入口均已发行；伙伴建议只追加草稿、不自动发送或验收。
+  当前跨平台、Web、CodeQL通过，Android85项JVM／73项UI与设备测试及签名升级通过，npm审计0告警。
+  下一步是实际业务使用与人工审阅，不另建评测框架主线。
 - R15已关闭：`/root/kkcode-1061-wire-acceptance-20261002`；文档反馈修复通过，其余四项未完整交付。
   R16于10月3日02:41（UTC+8）关闭：`/root/kkcode-106-stable-harness-20261002`；437请求/
   23619076 tokens/USD0，无新增用量unknown，全栈工具效果unknown未解除。两批服务/授权均已关闭。
@@ -48,8 +45,9 @@
 
 ## 证据入口
 
-- [当前版本](docs/versions.md) · [发行范围](docs/release-1.0.7.md) · [实施与验收](docs/implementation-1.0.7.md)
+- [当前版本](docs/versions.md) · [发行范围](docs/release-1.0.8.md) · [实施与验收](docs/implementation-1.0.8.md)
 - [使用文档](docs/README.md) · [能力边界](docs/capabilities.md) · [历史导航](docs/history.md)
+- 1.0.8发行回执：`/tmp/kkcode-108-stable-_1tnlyzp/`。
 - 1.0.7发行回执：`/tmp/kkcode-107-stable-ty7o6nqe/`；1.0.6：`/tmp/kkcode-106-stable-lakJaz/`。
 - 旧冻结评测：`/root/kkcode-agent-eval-20260930`；参考源码：
   `/root/kkcode-architecture-audit-20260930`，不得执行竞品仓库安装脚本。

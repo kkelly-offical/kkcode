@@ -2,7 +2,7 @@
 
 [版本状态](versions.md) · [实施与验证](implementation-1.0.8.md)
 
-状态：**正式版候选，尚未发布**。这是1.0.7的页面增强后续版本；使用新的1.0.8版本与Android10015，不覆盖已发布包，不进入Preview渠道。用户已授权验证后正式发行。
+状态：**1.0.8 / Android10015正式版已发布并核验**。这是1.0.7的页面增强后续版本，npm latest、[稳定Release](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.8)和原证书APK均已发布；[完整回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.8/release-verification.json)。原1.0.7及Preview保持不变。
 
 - Web采用石墨绿／暖纸色两套像素工作台主题，细化边框、层次、按钮、会话列表和空白状态。
 - 原创KIKI像素伙伴展示连接、工作、停止、审批与只读状态；项目梳理、代码审查和规划提示加入原草稿，由用户发送。伙伴配色与收起偏好在当前客户端保存；Web动态遵循系统减少动态效果设置。

@@ -1,6 +1,6 @@
 # 离线 Office、PDF 与 Markdown 工具
 
-[文档导航](README.md) · 当前源码：1.0.8（开发中）；[发行状态](versions.md)
+[文档导航](README.md) · 当前源码：1.0.8（正式版）；[发行状态](versions.md)
 
 Office 工具在用户明确配置的固定 Docker 镜像中运行。它不会安装宿主 Python／LibreOffice，不继承模型令牌、不访问网络。输入只读复制，输出经过回读、渲染与指纹核验后交付到**新目录**；已存在的文件和目录不会被覆盖。
 
