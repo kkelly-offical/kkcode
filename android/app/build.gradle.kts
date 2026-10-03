@@ -38,8 +38,8 @@ android {
         applicationId = "cn.kkcode.remote"
         minSdk = 29
         targetSdk = 35
-        versionCode = 10015
-        versionName = "1.0.8"
+        versionCode = 10016
+        versionName = "1.0.9"
         buildConfigField("String", "UPDATE_REPOSITORY", "\"${releaseIdentity["repository"]}\"")
         buildConfigField("String", "UPDATE_CERT_SHA256", "\"${releaseIdentity["certificateSha256"]}\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -82,6 +82,7 @@ dependencies {
     implementation("org.bouncycastle:bcprov-jdk18on:1.80.2")
     implementation("org.bouncycastle:bcpkix-jdk18on:1.80.2")
     implementation("io.noties.markwon:core:4.6.2")
+    implementation("com.atlassian.commonmark:commonmark-ext-gfm-tables:0.13.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("org.json:json:20260814")

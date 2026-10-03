@@ -303,7 +303,7 @@ header > span {
   flex: 1;
   overflow-y: auto;
   padding: 30px max(24px, calc((100% - 780px) / 2));
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
 }
 .empty {
   padding-top: 15vh;
@@ -727,6 +727,9 @@ summary {
 .turn-cancelled { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 0; color: var(--text-secondary); font-size: 12px; }
 .turn-cancelled button { color: inherit; background: none; border: 1px solid currentColor; padding: 3px 9px; cursor: pointer; }
 .stop-progress { color: var(--text-secondary); font-size: 12px; padding: 5px 12px; }
+.back-to-latest { align-self: center; margin: 4px; padding: 7px 16px; border: 1px solid var(--border); background: var(--bg-panel); font-size: 12px; }
+.compact-progress { color: var(--text-secondary); font-size: 12px; padding: 7px 20px; }
+.compacted-history { margin: 12px 0; }
 /* Read-only durable task progress: one line until explicitly expanded. */
 .todo-progress { margin: 0 auto; width: min(100%, 860px); color: var(--muted, #999); font-size: 12px; padding: 0 20px; box-sizing: border-box; }
 .todo-progress > summary { cursor: pointer; padding: 8px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -182,6 +182,8 @@ provider:
 # Agent 配置
 # =============================================================================
 agent:
+  # 普通会话不强制测试验收。显式启用才会追加完成检查；宿主严格合同不受此开关降级。
+  verify_completion: false
   # 模式 id：plan | agent | auto | ultra | yolo（agent-auto 仅兼容别名）
   # 旧写法 assistant / code / coding / longagent 仍可用并自动映射
   default_mode: "agent"

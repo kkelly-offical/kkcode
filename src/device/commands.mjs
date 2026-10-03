@@ -9,6 +9,7 @@ import { modeIdFromLegacy, approvalOf } from '../kernel/index.mjs'
 import { DEFAULT_THEME } from '../theme/default-theme.mjs'
 import { ProtocolError } from '../protocol/index.mjs'
 import { getDeviceProfile } from './profile.mjs'
+import { startDeviceCompaction } from './compaction.mjs'
 export { publicCommandCatalog }
 
 const stripAnsi = value => String(value).replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
@@ -33,7 +34,7 @@ export async function listDeviceCommands({ kernel }) {
 }
 
 /** One transport-neutral dispatcher: never start readline or silently discard a picker. */
-export async function runDeviceCommand({ service, kernel, sessionId, command, principal }) {
+export async function runDeviceCommand({ service, kernel, sessionId, command, principal, executionId }) {
   if (typeof command !== 'string' || !command.trim() || command.length > 200000) throw new ProtocolError('invalid_command', 'Command must contain 1–200000 characters')
   const input = command.trim()
   const normalized = normalizeSlashAlias(input.startsWith('/') || input.startsWith('$') ? input : `/${input}`)
@@ -55,6 +56,7 @@ export async function runDeviceCommand({ service, kernel, sessionId, command, pr
   const saved = (await kernel.sessions.getSession(sessionId))?.session || {}
   const providerType = saved.providerType || kernel.configState.config.provider.default
   const state = { sessionId, mode: saved.mode || 'assistant', modeId: saved.modeId || 'agent', model: saved.model || kernel.configState.config.provider[providerType]?.default_model || '', providerType, ...service.commandStates.get(sessionId) }
+  if (name === 'compact') return startDeviceCompaction({ service, kernel, sessionId, state, principal, executionId })
   const configure = async values => {
     const configured = await service.dispatch('sessions.configure', { sessionId, ...values }, principal)
     Object.assign(state, configured)
@@ -97,7 +99,7 @@ export async function runDeviceCommand({ service, kernel, sessionId, command, pr
   }
   if (name === 'model') {
     if (args && args !== 'refresh') return configure({ model: args })
-    const catalog = await service.dispatch('models.discover', { provider: state.providerType, refresh: args === 'refresh' }, principal)
+    const catalog = await service.dispatch('models.discover', { provider: state.providerType, refresh: true }, principal)
     return action('models', { catalog, provider: state.providerType })
   }
   if (modeCommands.has(name)) {

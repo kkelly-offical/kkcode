@@ -48,6 +48,7 @@ function metadata(source, cap) {
   const result = {}
   const context = publicContext(source?.context)
   if (context) result.context = context
+  if (source?.lastCompaction?.compactedAt) result.lastCompaction = Object.fromEntries(['compactedAt', 'beforeTokens', 'afterTokens', 'limit', 'summarizedCount'].filter(key => Number.isFinite(source.lastCompaction[key])).map(key => [key, source.lastCompaction[key]]))
   for (const [key, max] of Object.entries(metadataFields)) {
     if (!Object.hasOwn(source || {}, key)) continue
     const value = source[key]

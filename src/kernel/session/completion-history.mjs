@@ -119,13 +119,19 @@ function inspection(reason, events = [], legacyUnverified = false) {
 /** Read-only reconstruction from canonical host parts. An old installation's
  * pre-marker conversations remain explicitly unverified, not retroactively
  * accepted and not imported wholesale into a new task's completion gate. */
-export async function priorCompletionEvidence(entry, { maxEvents = 256, maxBytes = 262144 } = {}) {
+export async function priorCompletionEvidence(entry, { maxEvents = 256, maxBytes = 262144, requireVerification = true } = {}) {
   if (!Number.isSafeInteger(maxEvents) || maxEvents < 1 || maxEvents > 4096 || !Number.isSafeInteger(maxBytes) || maxBytes < 1024 || maxBytes > 4 * 1024 * 1024) throw new Error('Invalid completion history bounds')
   const parts = Array.isArray(entry?.parts) ? entry.parts : []
   const firstMarker = parts.findIndex(typedMarker)
   if (firstMarker < 0) return { toolEvents: [], requireChecks: false, unknown: false, needsInspection: false, legacyUnverified: true }
   let start = firstMarker
-  for (let index = firstMarker; index < parts.length; index++) if (typedMarker(parts[index]) && parts[index].status === 'completed') start = index + 1
+  for (let index = firstMarker; index < parts.length; index++) {
+    const marker = parts[index]
+    // Answer completion does not clear unverified work for a strict caller.
+    // Ordinary subsequent questions do not inherit a mandatory test backlog.
+    if (typedMarker(marker) && marker.status === 'completed' &&
+        (!requireVerification || marker.completionPolicy !== 'observational' || marker.verification?.passed === true)) start = index + 1
+  }
 
   const relevant = [], running = new Map(), finished = new Set()
   for (let index = start; index < parts.length; index++) {

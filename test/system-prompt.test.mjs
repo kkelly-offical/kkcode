@@ -4,7 +4,7 @@ import { defineAgent } from "../src/kernel/agent/agent.mjs"
 import { buildSystemPromptBlocks, providerPromptByModel } from "../src/kernel/session/system-prompt.mjs"
 
 test('optional completion guidance follows its setting across prompt cache hits without hiding lifecycle rules', async () => {
-  const options = {mode: 'agent', model: 'fixture', cwd: process.cwd(), tools: [{name: 'bash'}]}
+  const options = {mode: 'agent', model: 'fixture', cwd: process.cwd(), tools: [{name: 'bash'}], verifyCompletion: true}
   const contract = prompt => prompt.blocks.find(block => block.label === 'assistant_contract').text
   const enabled = await buildSystemPromptBlocks(options)
   const disabled = await buildSystemPromptBlocks({...options, verifyCompletion: false})

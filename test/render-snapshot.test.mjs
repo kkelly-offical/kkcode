@@ -173,7 +173,13 @@ function stableEvents(events) {
       // 1.0.6 adds typed completion evidence to this existing event. Preserve
       // the old byte/event contract while testing the additive fields below.
       payload: JSON.parse(JSON.stringify(event.type === 'turn.finish'
-        ? Object.fromEntries(Object.entries(event.payload || {}).filter(([key]) => !['status', 'verification'].includes(key))) : event.payload ?? {}, (key, value) =>
+        ? Object.fromEntries(Object.entries(event.payload || {}).filter(([key]) => !['status', 'verification'].includes(key)))
+        // 1.0.9 adds source/time/full budget metadata. Compare every original
+        // context field here; current accounting is exercised end to end by
+        // general-agent-completion.test.mjs and the Compact/UI regressions.
+        : event.type === 'turn.usage.update' && event.payload?.context
+          ? { ...event.payload, context: Object.fromEntries(Object.entries(event.payload.context).filter(([key]) => ['tokens', 'limit', 'percent', 'ratio', 'inputUncached', 'cacheRead', 'cacheWrite', 'fromCache'].includes(key))) }
+          : event.payload ?? {}, (key, value) =>
         key === "durationMs" ? 0 : value))
     }))
 }

@@ -54,6 +54,8 @@ internal fun modelCapabilityLabel(entry: JSONObject?): String {
         Group {
             SettingsRow(Icons.Outlined.Hub, name, defaultModel) { state.discoverModels(name) }
             if(state.catalogProvider == name) {
+                if(state.catalogLoading) Text("正在刷新模型列表…", fontSize = 11.sp, color = kkcodeColors.activityMuted, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                if(state.catalogError.isNotBlank()) TextButton(onClick = { state.discoverModels(name) }, enabled = !state.catalogLoading) { Text("重新读取模型列表", fontSize = 11.sp) }
                 catalogSourceLabel(state.catalogSource, state.catalogStale).takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 10.sp, color = if(state.catalogStale) kkcodeColors.warning else kkcodeColors.activityMuted, modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)) }
                 if(state.catalogError.isNotBlank()) ManualModelEntry(state, name)
                 val discovered = state.modelOptions.map { it.getString("id") }

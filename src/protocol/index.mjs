@@ -20,7 +20,7 @@ export const SSE_CONTROL_TYPES = Object.freeze(['connected', 'replay.gap', 'sess
 /** Device-scope status events on the device stream (and relay `device-event`). */
 export const DEVICE_EVENT_TYPES = Object.freeze(['device.online', 'device.offline', 'session.status', 'settings.updated', 'models.updated', 'mcp.loaded', 'memory.updated', 'runs.updated'])
 /** Turn lifecycle row types that determine whether a session is running. */
-export const SESSION_RUNNING_TYPES = Object.freeze(['turn.preparing', 'turn.start', 'turn.auto_continue', 'turn.stopping'])
+export const SESSION_RUNNING_TYPES = Object.freeze(['turn.preparing', 'turn.start', 'turn.auto_continue', 'turn.stopping', 'session.compacting'])
 export const SESSION_IDLE_TYPES = Object.freeze(['turn.finish', 'turn.result', 'turn.failed', 'turn.cancelled'])
 export const DEVICE_METHODS = Object.freeze([
   'status', 'folders.list', 'files.read', 'media.preview', 'sessions.list', 'sessions.get', 'sessions.create', 'sessions.configure', 'sessions.update', 'sessions.rewind', 'sessions.delete',

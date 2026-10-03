@@ -22,7 +22,7 @@ async function fixture(fn) {
   const originalGet = kernel.sessions.getSession, originalList = kernel.sessions.listSessions
   kernel.sessions.getSession = async id => sessions.has(id) ? { session: sessions.get(id) } : null
   kernel.sessions.listSessions = async () => [...sessions.values()]
-  const service = { metadata: {}, commandStates: states, async dispatch(method, params) {
+  const service = { metadata: {}, commandStates: states, turns: new Map(), lease() {}, async record() {}, async settleTurn(sessionId) { this.turns.delete(sessionId) }, async dispatch(method, params) {
     calls.push({ method, params })
     if (method === 'sessions.configure') {
       const state = { sessionId: params.sessionId, ...states.get(params.sessionId), ...params }
@@ -56,7 +56,7 @@ test('remote dispatch policy exhaustively covers every builtin and alias once', 
 
 test('all remote builtins have an executable action or a shared handler, never a raw picker flag', () => fixture(async ({ run }) => {
   for (const entry of BUILTIN_COMMANDS) {
-    const expensive = ['btw', 'status', 'compact', 'undo', 'board', 'commands', 'reload', 'mcp', 'agents', 'tasks', 'skills', 'trust', 'untrust'].includes(entry.names[0])
+    const expensive = ['btw', 'status', 'undo', 'board', 'commands', 'reload', 'mcp', 'agents', 'tasks', 'skills', 'trust', 'untrust'].includes(entry.names[0])
     const original = entry.run
     let sharedCalls = 0
     // Infrastructure/model behavior is covered by dedicated tests; this matrix

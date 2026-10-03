@@ -5,7 +5,7 @@
 ## 当前版本
 
 公开稳定版 **1.0.8 / Android10015**（npm latest），公开Preview **1.0.6-preview.1 / Android10012**。
-CLI、四个工作区、Web和Android源码版本为1.0.8。本版是1.0.7的Pixel Studio页面增强正式发行，
+CLI、四个工作区、Web和Android当前源码候选为1.0.9 / Android10016，见[开发与验证清单](implementation-1.0.9.md)，尚未发布。已发布的1.0.8是1.0.7的Pixel Studio页面增强正式发行，
 使用新版本避免覆盖已发布1.0.7；发行提交`43bb449`（PR#42），与验收候选`e01ec56`同树。
 源码版本、流水线启动都不等于已公开下载。本次已核对匿名npm／GitHub下载、CI包一致性、
 最低Node22.12安装与原证书Android10014→10015升级；精确哈希和范围见

@@ -229,6 +229,7 @@ export function validateConfig(config) {
         err(errors, "agent.default_mode", `must be one of ${VALID_MODES.join(", ")}`)
       }
       if (config.agent.max_steps !== undefined) checkInt(errors, "agent.max_steps", config.agent.max_steps, 1)
+      if (config.agent.verify_completion !== undefined && typeof config.agent.verify_completion !== 'boolean') err(errors, 'agent.verify_completion', 'must be boolean')
       if (config.agent.longagent !== undefined) {
         if (!isObj(config.agent.longagent)) err(errors, "agent.longagent", "must be object")
         else {

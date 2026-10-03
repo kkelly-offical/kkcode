@@ -21,13 +21,14 @@ internal fun contextSummary(value: JSONObject): String? {
         "count-api", "provider-usage" -> ""
         else -> " · 估算"
     }
-    return "上下文 ${number.format(used.toLong())} / ${number.format(limit.toLong())} · $percent%" + suffix
+    val label = if(value.optString("source") == "provider-usage") "最近请求输入" else "上下文"
+    return "$label ${number.format(used.toLong())} / ${number.format(limit.toLong())} · $percent%" + suffix
 }
 
 internal fun contextExplanation(value: JSONObject): String = "这是当前上下文占用，不是累计用量。" + when(value.optString("source", "estimated")) {
     "strict-upper-bound" -> "完整请求的保守上界，用于严格模式的窗口检查和自动压缩；不是模型实际 token 计数或计费值。分项仍是估算，不要求相加等于上界。"
     "count-api" -> "根据模型端对当前请求的计数更新。"
-    "provider-usage" -> "根据最近一次响应的输入 usage 更新，不代表下一次请求的精确计数。"
+    "provider-usage" -> "最近一次响应对应的实际请求输入量，不混入回复输出。新请求仍单独计算完整预算，收到实际用量后更新此数。"
     else -> "估算包含系统提示、工具声明、历史及媒体；与模型计费值可能不同。"
 }
 

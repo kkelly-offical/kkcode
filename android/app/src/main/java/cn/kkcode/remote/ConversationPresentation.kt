@@ -1,5 +1,21 @@
 package cn.kkcode.remote
 
+import org.json.JSONObject
+import java.util.Locale
+
+internal fun compactionLabel(value: JSONObject?): String {
+    if(value == null || !value.has("beforeTokens") || !value.has("afterTokens")) return "已精简上下文"
+    fun count(number: Double): String = if(number >= 1000) String.format(Locale.ROOT, "%.1f", number / 1000).removeSuffix(".0") + "k" else number.toLong().toString()
+    return "已压缩 · ≈ ${count(value.optDouble("beforeTokens"))} → ${count(value.optDouble("afterTokens"))}"
+}
+
+internal fun collapseCompactedHistory(items: List<ChatItem>): List<ChatItem> {
+    val boundary = items.indexOfLast { it.kind == "compacted" }
+    if(boundary < 0) return items
+    val history = items.take(boundary).filter { it.kind != "compacted" }
+    return (if(history.isEmpty()) emptyList() else listOf(ChatItem("history-${items[boundary].id}", "compacted-history", "压缩前的记录 · 点击展开", children = history))) + items.drop(boundary)
+}
+
 /** View-only grouping. Canonical messages and live rows are never discarded. */
 internal fun collapseCompletedRuns(items: List<ChatItem>, busy: Boolean): List<ChatItem> {
     val result = mutableListOf<ChatItem>()

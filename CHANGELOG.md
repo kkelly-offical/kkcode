@@ -1,5 +1,14 @@
 # Changelog / 更新日志
 
+## 1.0.9 — General Agent & conversation fixes / 正式版候选（2026-10-04）
+
+- End everyday conversations without forced test-repair prompts; retain actual evidence and explicit strict acceptance.
+- Stabilize input context accounting while keeping fresh independent request admission checks.
+- Make manual Compact cancellable, duplicate-safe and visible, with immediate meter updates and a short before/after indicator.
+- Follow the actual bottom only when the reader stays there; open conversations at the latest content and fold available pre-compaction history.
+- Render native selectable, horizontally scrollable Android Markdown tables; refresh model lists on every opening and clear recovered connection notices.
+- Android10016 keeps the existing signing identity. Publication status and validation: [1.0.9 implementation](docs/implementation-1.0.9.md).
+
 ## 1.0.8 — Pixel Studio / 界面增强正式版（2026-10-04）
 
 - Refine Web and Android with a shared pixel studio palette, original artwork, richer surfaces and responsive layouts.
