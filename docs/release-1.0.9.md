@@ -2,7 +2,7 @@
 
 [版本状态](versions.md) · [逐项实施与验证](implementation-1.0.9.md)
 
-发行目标：**1.0.9 / Android10016稳定正式版**。本页记录发行内容；公开下载状态以[版本入口](versions.md)及[1.0.9公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.9/release-verification.json)为准，不以版本号或构建成功代替发行完成。
+状态：**1.0.9 / Android10016稳定正式版已发布并核验**。npm latest、[稳定Release](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.9)与原证书APK均已上线；[公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.9/release-verification.json)。旧Preview与所有旧tag保持。
 
 - 普通会话默认关闭强制测试验收，日常问答、文档及运维可正常结束；明确代码工作仍遵循项目检查。失败回执保留，回答结束与验收通过分开记录，宿主严格合同及权限、预算、未知效果约束保持。
 - 上下文标尺统一为最近请求的实际输入数，区分估算和严格上界；新请求独立检查完整预算。
@@ -12,6 +12,6 @@
 - 模型选择器每次打开自动刷新，失败保留已有目录；异步响应按设备和渠道隔离。CLI的`/model`也会重新发现目录。
 - Android连接提示随断开、重连、恢复变化；恢复后自动收起，普通提示限时展示，真实任务错误仍留在会话记录。
 
-Android为正式发行目标，沿用项目原证书及direct-SSH，版本码递增到10016。CLI、Web网关和App分别升级；本轮包括用户已授权的本机`/root`、all-folders tmux remote更新，不自动部署公共网关镜像或其他生产环境。
+Android为正式发行，沿用项目原证书及direct-SSH，版本码递增到10016。CLI、Web网关和App分别升级；本轮包括用户已授权的本机`/root`、all-folders tmux remote更新，不自动部署公共网关镜像或其他生产环境。
 
 验证使用本地受控provider与HTTP、浏览器、模拟器；不新增真实模型调用，不重启历史冻结评测，不改写旧失败与unknown。

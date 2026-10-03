@@ -1,10 +1,10 @@
 # Android release signing and acceptance
 
-[Documentation](README.md) · Published stable: **1.0.8 / 10015**; Preview: **1.0.6-preview.1 / 10012**.
+[Documentation](README.md) · Published stable: **1.0.9 / 10016**; Preview: **1.0.6-preview.1 / 10012**.
 The signed stable APK, update manifest and anonymous downloads have been verified.
-Stable and Preview update channels both accept 10015; replacement installation
-from stable 10014 and the actual home screen passed on the isolated release AVD.
-See the [public receipt](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.8/release-verification.json)
+Stable and Preview update channels both accept 10016; replacement installation
+from stable 10015 and the actual home screen passed on the isolated release AVD.
+See the [public receipt](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.9/release-verification.json)
 and [version status](versions.md) for exact artifacts, prior releases and limitations.
 
 The Android application is a native remote client. Building or signing an APK
@@ -17,7 +17,7 @@ The user authorized creation of a project-specific production release key on
 2026-09-21. It is not the Android debug key or an acceptance-only identity.
 
 - Application ID: `cn.kkcode.remote`.
-- Public stable: `1.0.8` / code `10015`; same certificate as previous stable and Preview releases.
+- Public stable: `1.0.9` / code `10016`; same certificate as previous stable and Preview releases.
 - Algorithm: RSA-4096, SHA256withRSA; certificate validity: 10,000 days.
 - Public certificate SHA-256:
   `cf75774a4d87ba1ccc4a811f271bd301076cf6beefd7432a3cb30231164be5d1`.
@@ -41,7 +41,7 @@ Changing only `versionName` is not a valid public update policy. Keep using
 the same signing identity unless an explicit, separately validated
 key-rotation plan is adopted.
 
-Published enhancement: **1.0.8 / 10015**. Publication and upgrade verification are tracked in [the implementation record](implementation-1.0.8.md).
+Published enhancement: **1.0.9 / 10016**. Publication and upgrade verification are tracked in [the implementation record](implementation-1.0.9.md).
 
 ## Reproducible build and verification
 
