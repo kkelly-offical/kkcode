@@ -1,11 +1,13 @@
 # 版本、升级与发行状态
 
-[文档导航](README.md) · 更新：2026-10-03
+[文档导航](README.md) · 更新：2026-10-04
 
 ## 当前版本
 
 公开稳定版 **1.0.7 / Android10014**（npm latest），公开Preview **1.0.6-preview.1 / Android10012**。
-CLI、四个工作区、Web和Android源码版本为1.0.7。发行提交`a04bf10`（PR#40），与验收候选同树。
+CLI、四个工作区、Web和Android源码目标为 **1.0.8 / Android10015**，即1.0.7的页面增强正式版候选，尚未公开发行。
+用户已授权完成验证后正式发行（非Preview）；[增强范围](release-1.0.8.md)与[实施记录](implementation-1.0.8.md)。
+以下1.0.7为当前公开版本。发行提交`a04bf10`（PR#40），与验收候选同树。
 源码版本、流水线启动都不等于已公开下载。本次已核对官方npm与GitHub实际下载、CI包一致性、
 原证书签名和10013→10014覆盖升级；精确提交、CI、SHA-256和限制见
 [正式版release-verification.json](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.7/release-verification.json)。

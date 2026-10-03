@@ -41,6 +41,8 @@ Changing only `versionName` is not a valid public update policy. Keep using
 the same signing identity unless an explicit, separately validated
 key-rotation plan is adopted.
 
+Current enhancement candidate: **1.0.8 / 10015**. Publication and upgrade verification are tracked in [the implementation record](implementation-1.0.8.md).
+
 ## Reproducible build and verification
 
 Set `ANDROID_HOME` and provide Gradle 8.14.3 through `KKCODE_GRADLE` or `PATH`:
@@ -72,7 +74,7 @@ The application footer and Android User-Agent use `BuildConfig.VERSION_NAME`.
 
 After signature verification, run `node scripts/android-update-manifest.mjs`.
 Publish its `test-results/android-update.json` alongside the exact signed APK
-renamed `kkcode-android-<versionName>.apk` (`kkcode-android-1.0.7.apk` for the current stable release).
+renamed `kkcode-android-<versionName>.apk` (`kkcode-android-1.0.8.apk` for the current source target).
 The App updater skips releases without a
 matching manifest. Public identity is pinned in `configs/android-release.json`;
 private signing files never enter the release. See [App updates](android-app-updates.md).

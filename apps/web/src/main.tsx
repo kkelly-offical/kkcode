@@ -2,7 +2,9 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
 import "./mobile.css";
+import "./studio.css";
 import "./pixel.css";
+import { PixelBuddy, PixelScene, StudioBar } from "./PixelStudio";
 import { SessionHome, ConnectionLanding, SessionActions } from "./Home";
 import { Sheet } from "./Sheet";
 import { ContextUsage } from './ContextUsage';
@@ -179,7 +181,7 @@ function App() {
       document
         .querySelectorAll('meta[name="theme-color"]')
         .forEach((tag) =>
-          tag.setAttribute("content", resolved === "dark" ? "#0e100f" : "#faf9f6"),
+          tag.setAttribute("content", resolved === "dark" ? "#101714" : "#f5f1e7"),
         );
     };
     apply(); media.addEventListener("change", apply);
@@ -744,15 +746,13 @@ function App() {
         aria-label="工作区导航"
       >
         <div className="brand">
-          <div className="wordmark">
-            KK<span>Code</span>
-          </div>
+          <PixelBuddy className="brand-mark" /><div><div className="wordmark">KK<span>Code</span></div><div className="brand-subtitle">PIXEL STUDIO</div></div>
           <button className="icon mobile" onClick={() => setSidebar(false)}>
             ×
           </button>
         </div>
         <button className="new" disabled={!connected || !canManage || uploading} onClick={() => setPanel("new")}>
-          ＋ 新对话
+          <Icon name="plus" size={17} /> 新对话
         </button>
         <div className="section-label">工作设备</div>
         {gateway ? (
@@ -786,6 +786,7 @@ function App() {
         >
           ▱ {cwd.split(/[\\/]/).at(-1) || "选择工作目录"} <span>⌄</span>
         </button>
+        <div className="studio-nav" role="group" aria-label="工作区快捷入口"><button onClick={() => attempt(openSettings)}><Icon name="settings" size={17} />设置</button><button disabled={!connected || !canManage} onClick={() => setPanel("models")}><Icon name="cloud" size={17} />模型</button><button disabled={!connected || !canManage} onClick={() => setPanel("extensions")}><Icon name="extension" size={17} />扩展</button></div>
         <div className="section-label">
           {showArchived ? "已归档对话" : "对话记录"} <button className="icon" aria-label={showArchived ? "查看活跃对话" : "查看已归档对话"} onClick={() => setShowArchived(value => !value)}><Icon name="archive" size={15} /></button>
         </div>
@@ -805,6 +806,7 @@ function App() {
             </div>
           ))}
         </nav>
+        <div className="sidebar-studio-note"><span>MAKE SOMETHING GREAT</span><i /></div>
         <button
           className="profile"
           aria-label="个人与设备设置"
@@ -876,9 +878,9 @@ function App() {
             </header>
             <div className="transcript">
               {session?.historyHasMore && <button className="load-history" disabled={loadingHistory} onClick={() => void loadEarlierMessages()}>{loadingHistory ? "正在加载…" : "加载更早消息"}</button>}
-              {!messages.length && (
+              {!messages.length && !busy && !approval.length && (
                 <div className="empty">
-                  <div className="spark">✳</div>
+                  <PixelScene /><div className="studio-eyebrow">YOUR IDEAS. A LITTLE PIXEL MAGIC.</div>
                   <h1>今天想构建什么？</h1>
                   <p>连接你的工作区，把想法变成可验证的结果。</p>
                   <div className="suggestions">
@@ -918,6 +920,7 @@ function App() {
             <ContextUsage value={session?.context} />
             <TodoProgress key={todoIdentity} snapshot={todos?.identity === todoIdentity ? todos.snapshot : null} subagents={subagents?.identity === todoIdentity ? subagents.items : []} />
             {busy && ['stopping', 'finishing'].includes(turnPhase) && <div className="stop-progress" role="status">{stopping ? '正在停止并保存已有结果；已执行的文件改动不会撤销。' : '正在保存本轮结果…'}</div>}
+            <StudioBar busy={busy} stopping={stopping} approval={approval.length > 0} readOnly={readOnly || Boolean(session?.archived)} connected={connected} selected={Boolean(selected)} canManage={canManage} onPanel={setPanel} onPrompt={value => setPrompt(previous => previous ? `${previous}\n\n${value}` : value)} />
             <Composer
               readOnly={readOnly || Boolean(session?.archived)}
               canManage={canManage}

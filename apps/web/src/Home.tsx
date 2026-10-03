@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Icon, type IconName } from "./Icon";
 import { Sheet } from "./Sheet";
 import { groupSessions } from "./sessions.mjs";
+import { PixelBuddy, PixelScene } from "./PixelStudio";
 import { APP_VERSION } from "./version";
 import { deviceLoginPath } from "../../../src/protocol/login-path.mjs";
 
@@ -85,7 +86,7 @@ export function SessionHome({
           onClick={onConnect}
           aria-label={"当前设备：" + name}
         >
-          <b>远程</b>
+          <b>KK Code <span className="home-title-detail">/ 远程</span></b>
           <small>
             <i className={connected ? "online" : ""} />
             <Icon name="terminal" size={13} />
@@ -170,6 +171,7 @@ export function SessionHome({
           </div>
         </>
       )}
+      <div className="home-studio-label"><span>YOUR PIXEL WORKSPACE</span><span>{connected ? "CONNECTED" : "LET’S CONNECT"}</span></div>
       <div className="remote-session-list">
         {groups.length ? (
           groups.map(([group, items]: [string, Item[]]) => (
@@ -224,7 +226,7 @@ export function SessionHome({
           ))
         ) : (
           <div className="remote-empty">
-            <Icon name={query ? "search" : "message"} size={30} />
+            {query ? <Icon name="search" size={30} /> : <><PixelScene /><div className="studio-eyebrow">A LITTLE SPACE FOR BIG IDEAS</div></>}
             <h2>
               {query
                 ? "没有找到相关对话"
@@ -383,6 +385,8 @@ export function ConnectionLanding({
             </>
           ) : (
             <>
+              <div className="connection-story"><PixelBuddy /><div><b>连接你的工作台</b><small>熟悉的项目，随时接着写。</small></div></div>
+              <div className="connection-steps" aria-label="连接步骤"><span className={!waiting ? "active" : ""}>01 · {gateway ? "组织登录" : "设备配对"}</span><span className={waiting ? "active" : ""}>02 · 确认连接</span><span>03 · 开始创作</span></div>
               <p className="sheet-note">
                 {gateway
                   ? "由网关引导至组织登录。模型配置与文件保留在你的电脑。"
