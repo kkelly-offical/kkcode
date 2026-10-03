@@ -1809,17 +1809,17 @@ function builtinTools(config) {
 
   const cancelTool = {
     name: "background_cancel",
-    description: "Cancel a background task owned by this session by its task_id. Covers owned background `task`, `bash`, and longagent lanes. Alias of `task_stop` — prefer `task_stop` for new work.",
+    description: "Alias of task_stop for an owned background task. Managed services normally close cooperatively; force=true requests cancellation. Prefer task_stop for new work.",
     inputSchema: {
       type: "object",
       properties: {
-        task_id: schema("string", "background task id")
+        task_id: schema("string", "background task id"),
+        force: schema('boolean', 'force cancellation instead of cooperative service shutdown')
       },
       required: ["task_id"]
     },
     async execute(args, ctx) {
-      const ok = await cancelScopedBackgroundTask(String(args.task_id || ""), ctx)
-      return ok ? "cancel requested" : "background task not found"
+      return taskStopTool.execute(args, ctx)
     }
   }
 
