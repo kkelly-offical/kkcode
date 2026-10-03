@@ -1,10 +1,10 @@
 # Android release signing and acceptance
 
-[Documentation](README.md) · Published stable: **1.0.6 / 10013**; Preview: **1.0.6-preview.1 / 10012**.
+[Documentation](README.md) · Published stable: **1.0.7 / 10014**; Preview: **1.0.6-preview.1 / 10012**.
 The signed stable APK, update manifest and anonymous downloads have been verified.
-Stable and Preview update channels both accept 10013; replacement installation
-from Preview 10012 and the actual home screen passed.
-See the [public receipt](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.6/release-verification.json)
+Stable and Preview update channels both accept 10014; replacement installation
+from stable 10013 and the actual home screen passed on the isolated release AVD.
+See the [public receipt](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.7/release-verification.json)
 and [version status](versions.md) for exact artifacts, prior releases and limitations.
 
 The Android application is a native remote client. Building or signing an APK
@@ -17,7 +17,7 @@ The user authorized creation of a project-specific production release key on
 2026-09-21. It is not the Android debug key or an acceptance-only identity.
 
 - Application ID: `cn.kkcode.remote`.
-- Public stable: `1.0.6` / code `10013`; same certificate as previous stable and Preview releases.
+- Public stable: `1.0.7` / code `10014`; same certificate as previous stable and Preview releases.
 - Algorithm: RSA-4096, SHA256withRSA; certificate validity: 10,000 days.
 - Public certificate SHA-256:
   `cf75774a4d87ba1ccc4a811f271bd301076cf6beefd7432a3cb30231164be5d1`.
@@ -72,7 +72,7 @@ The application footer and Android User-Agent use `BuildConfig.VERSION_NAME`.
 
 After signature verification, run `node scripts/android-update-manifest.mjs`.
 Publish its `test-results/android-update.json` alongside the exact signed APK
-renamed `kkcode-android-<versionName>.apk` (`kkcode-android-1.0.7.apk` for the current unpublished source candidate).
+renamed `kkcode-android-<versionName>.apk` (`kkcode-android-1.0.7.apk` for the current stable release).
 The App updater skips releases without a
 matching manifest. Public identity is pinned in `configs/android-release.json`;
 private signing files never enter the release. See [App updates](android-app-updates.md).
