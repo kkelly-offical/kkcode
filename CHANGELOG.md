@@ -1,13 +1,13 @@
 # Changelog / 更新日志
 
-## 1.0.7 — In development / 开发中
+## 1.0.7 — Stable / 正式版（2026-10-03）
 
 - Recover from host-proven zero-write edits and historical permission denials without weakening unknown-effect inspection.
 - Separate command waits from bounded service lifetimes; expose incremental logs and cooperative service shutdown.
 - Give focused completion repair feedback; recognize stderr merging and e2e checks without accepting masked exits.
 - Keep host continuation locators after compaction; evict recalled attachment text/bytes as well as media.
 - Support incremental ToDo changes with reasons, durable user steering across CLI/Web/Android, and structured child handoffs.
-- Source target Android10014; public stable remains 1.0.6. Validation: [implementation](docs/implementation-1.0.7.md).
+- Android10014 retains the original certificate; npm latest and GitHub stable Release are published. Validation: [implementation](docs/implementation-1.0.7.md).
 
 ## 1.0.6 — Stable / 正式版（2026-10-02）
 

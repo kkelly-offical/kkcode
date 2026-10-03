@@ -1,6 +1,6 @@
 # 1.0.7 智能体连续工作体验
 
-状态：八项实现已接入，本机主要验证通过；跨平台检查与合入状态见[PR #40](https://github.com/kkelly-offical/kkcode/pull/40)。尚未公开发行，沿用原模式、权限范围与客户端布局。
+状态：**1.0.7正式版 / Android10014已发布并核验**。发行提交`a04bf10`（[PR #40](https://github.com/kkelly-offical/kkcode/pull/40)），与验收候选`aded56b`同树；沿用原模式、权限范围与客户端布局。
 
 本轮交付范围是智能体自身的八项体验优化；外部评测器不作为本轮主线。
 
@@ -29,7 +29,13 @@
 - 首轮串行完整回归暴露兼容/声明问题：旧timeout下界、异步broker测试时序、当前权限拒绝收尾、SDK新增RPC声明、子代理新增交接字段和版本文档。已逐项修正，相关定向回归通过；第二轮串行完整回归4225项：4069通过、0失败、156项按原环境条件跳过。
 - 原证书release APK验证通过；未调用外部或本地真实模型，没有使用关闭批次的模型授权。真实模型的长期流畅度仍待新一轮实际使用验证。
 
-临时证据在 `/tmp/kkcode-107-*.log`，后续最终检查结果会在本页更新。
+## 正式发行验证
+
+- 候选与集成main的跨平台、Web及CodeQL检查全部通过；main验证[37108257307](https://github.com/kkelly-offical/kkcode/actions/runs/37108257307)、CodeQL[37108257424](https://github.com/kkelly-offical/kkcode/actions/runs/37108257424)。最终候选Linux22回归4237项：4073通过、0失败、164条件跳过。
+- 正式发行流水线[37111371298](https://github.com/kkelly-offical/kkcode/actions/runs/37111371298)通过，npm latest与GitHub stable/latest为1.0.7；原Preview1.0.6-preview.1及旧tag保持。
+- 匿名下载的CI/npm/GitHub安装包一致，公开包在最低Node22.12上验证CLI、SDK、SQLite、ToDo及子代理接口；过程没有真实模型调用。
+- Android10014沿用原证书，v2/v3和非调试属性通过；隔离只读AVD完成10013→10014覆盖升级与真实首页检查，随后关闭。公开App更新策略在稳定与Preview渠道均接受10014。
+- 完整产物哈希与检查结果见[公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.7/release-verification.json)。本机发行证据：`/tmp/kkcode-107-stable-ty7o6nqe/`；实现回归日志：`/tmp/kkcode-107-*.log`。
 
 ## 保留的边界
 
@@ -39,7 +45,7 @@
 
 ## 安全与安装包
 
-- Android1.0.7 / 10014正式构建仍使用原证书，v2/v3签名与非调试属性验证通过；未上传发行渠道。
+- Android1.0.7 / 10014正式构建仍使用原证书，v2/v3签名与非调试属性验证通过；APK与更新清单已在稳定Release发布。
 - 官方npm审计新报告了[http-cache-semantics公告](https://github.com/advisories/GHSA-ch52-4w7c-c8xp)，上游暂未发布修复版。KK原插件下载已使用每次独立缓存；本轮进一步移除仅用于下载的pacote及75个传递包，沿用受控HTTP、SRI和隔离归档检查，不引入审计豁免或自动降级。
 - npm插件继续限公开注册表固定版本：校验注册表/包内身份、原锁完整性、压缩/解压配额，拒绝链接、路径逃逸、大小写别名、Git管理目录和特殊文件；不执行生命周期脚本。原本地/Git安装与审批/回滚逻辑保留。
 - 新下载器覆盖路径逃逸、链接、特殊文件、目录/文件冲突、别名与身份/哈希校验，插件相关回归通过；真实公开注册表的普通及scoped包下载/哈希/解包验证通过，未执行包中代码。移除依赖后官方npm审计0告警。
