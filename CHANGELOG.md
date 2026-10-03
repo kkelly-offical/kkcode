@@ -1,6 +1,6 @@
 # Changelog / 更新日志
 
-## 1.0.9 — General Agent & conversation fixes / 正式版候选（2026-10-04）
+## 1.0.9 — General Agent & conversation fixes / 正式版（2026-10-04）
 
 - End everyday conversations without forced test-repair prompts; retain actual evidence and explicit strict acceptance.
 - Stabilize input context accounting while keeping fresh independent request admission checks.
