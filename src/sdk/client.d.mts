@@ -38,8 +38,9 @@ export interface DeviceMethods {
   'sessions.configure': { params: { sessionId: string; mode?: string; model?: string; provider?: string }; result: SessionInfo };
   'sessions.delete': { params: { sessionId: string; confirmed: true }; result: { deleted: boolean; recoverable: boolean; filesChanged: false } };
   'sessions.rewind': { params: { sessionId: string; confirmed: true; messageId?: string; expectedLastMessageId?: string }; result: { ok: boolean; prompt?: string; filesChanged: false } };
-  'turns.start': { params: { sessionId: string; prompt: string; attachmentIds?: string[]; mode?: string; model?: string; provider?: string; skill?: string }; result: { accepted: true; turnId: string } };
-  'turns.cancel': { params: { sessionId: string }; result: Record<string, unknown> };
+  'turns.start': { params: { sessionId: string; prompt: string; executionId?: string; attachmentIds?: string[]; mode?: string; model?: string; provider?: string; skill?: string }; result: { accepted: boolean; turnId: string; executionId: string; cancelled?: boolean } };
+  'turns.cancel': { params: { sessionId: string; executionId?: string }; result: Record<string, unknown> };
+  'turns.steer': { params: { sessionId: string; executionId: string; prompt: string }; result: { accepted: true; guidanceId: string; executionId: string } };
   'control.acquire': { params: { sessionId: string; takeover?: boolean }; result: Record<string, unknown> };
   'control.release': { params: { sessionId: string }; result: Record<string, unknown> };
   'events.list': { params: { sessionId: string; after?: number }; result: { events: DeviceEvent[]; cursor: number; gap?: boolean } };

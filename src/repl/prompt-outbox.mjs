@@ -136,6 +136,9 @@ export function createPromptOutbox({
     requestRender()
     return taken
   }
+  // Non-consuming peek: a wait/tool boundary must never lose a queued user
+  // message if the current turn is cancelled before the next model request.
+  takeSteer.hasPending = () => ui.steerPrompts.length > 0
 
   /**
    * 非用户来源的注入：后台任务跑完了，把结果送回主代理。

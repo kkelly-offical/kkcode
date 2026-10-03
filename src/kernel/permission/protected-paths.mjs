@@ -142,7 +142,7 @@ const ALL_TARGET_MUTATORS = new Set(['rm', 'rmdir', 'mv', 'tee', 'truncate', 'ch
 export function bashTouchesProtected(command) {
   const cmd = String(command || '')
   if (!cmd.trim()) return null
-  const parsed = parseShellCommands(cmd)
+  const parsed = parseShellCommands(cmd, {allowSimpleParameters: true})
   // Substitution, heredoc and malformed syntax cannot be proven safe by this
   // lexer. Retain conservative handling instead of silently losing targets.
   if (parsed.uncertain) {

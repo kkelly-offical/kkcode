@@ -1,6 +1,6 @@
 # KK Code 工作记忆
 
-只维护当前状态、有效约束和未完事项。过程写入[实施记录](docs/implementation-1.0.6.md)，
+只维护当前状态、有效约束和未完事项。过程写入[当前实施记录](docs/implementation-1.0.7.md)，
 旧检查点见[历史记忆](docs/history/working-memory-through-2026-10-02.md)，不要逐轮追加日志。
 
 ## 发行与授权
@@ -30,14 +30,18 @@
 
 ## 实测与下一步
 
+- 用户授权开始1.0.7，八项智能体体验优化均纳入；当前分支`feat/1.0.7-agent-continuity`，
+  源码1.0.7 / Android10014，尚未发行。重点为错误恢复、受管服务、收尾、压缩/召回、工具反馈、
+  ToDo局部修订、跨端插话与子代理交接；实际进度及验证见1.0.7实施记录，不另建评测框架主线。
 - 正式版候选、main跨平台/Web/CodeQL及发行流水线通过；公开CI/npm/GitHub包一致，两个App渠道接受10013。
 - R15使用实际公开包，目录`/root/kkcode-1061-wire-acceptance-20261002`，五场景已结束并关闭。
   文档反馈修复通过，其余四项未完整交付；服务已停、授权撤销。看实施记录及private/closure-receipt.json。
 - 已修复Vite命令分类、Responses推理重复计数、短历史压缩及新评测副本的依赖链接复制，
   原失败回放与隔离环境回归通过；发行修复阶段未调用模型，不改写旧成绩。
-- R16已获用户后台串行授权，冻结正式包，目录`/root/kkcode-106-stable-harness-20261002`。
-  顺序smoke→baseline→research→art→algorithms→fullstack；并发1，1312请求/58.8M tokens/USD0。
-  新截止**2026-10-02T23:57:24.350Z**；状态及次日审阅入口为`private/status.json`和`private/REPORT.md`。
+- R16已于10月3日02:41（UTC+8）关闭，目录`/root/kkcode-106-stable-harness-20261002`。
+  串行437请求/23619076 tokens/USD0，无新增用量unknown；全栈工具效果unknown未解除，授权已撤销。
+  [失败归因审计](docs/r16-harness-audit-2026-10-03.md)：艺术有收尾误阻断，算法有目录/响应解包评测缺陷，
+  全栈有服务生命周期与生成代码问题。隔离非模型诊断未改旧成绩；产品修复与人工审阅待办。
 - 原截止**2026-10-02T04:02:34.744Z**未延长，继承2276请求/110224798 tokens/3旧unknown。
   新增用量或工具效果unknown须停止、核查并确定继续依据，不重用聊天秘密，
   不调整/重启vLLM。历史3笔unknown继续计账；R12/R13/R14已关闭，不重启或改写旧记录。

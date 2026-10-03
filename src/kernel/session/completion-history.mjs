@@ -2,7 +2,7 @@ import { listToolOperations } from '../tool/operation-journal.mjs'
 import { toolCapability } from '../permission/rules.mjs'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
-import { restoreToolDispatchReceipt } from '../core/execution-outcome.mjs'
+import { restoreToolDispatchReceipt, restoreToolMutationReceipt } from '../core/execution-outcome.mjs'
 
 const SCHEMA = 'kk.turn-outcome.v1'
 const STATUSES = new Set(['running', 'completed', 'incomplete', 'cancelled', 'error'])
@@ -106,7 +106,7 @@ function slimEvent(part, cwd) {
     metadata.historyInterrupted = true
     if (!['read', 'search', 'safe-shell'].includes(toolCapability(part.tool, args.command, { args }))) metadata.outcomeUnknown = true
   }
-  return restoreToolDispatchReceipt(event, part.dispatch)
+  return restoreToolMutationReceipt(restoreToolDispatchReceipt(event, part.dispatch), part.mutationReceipt)
 }
 
 function inspection(reason, events = [], legacyUnverified = false) {

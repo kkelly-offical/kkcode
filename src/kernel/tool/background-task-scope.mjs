@@ -30,3 +30,8 @@ export async function cancelScopedBackgroundTask(id, ctx) {
   const owner = parentSession(ctx)
   return BackgroundManager.cancel(id, owner == null ? {} : { parentSessionId: owner })
 }
+
+export async function stopScopedBackgroundTask(id, ctx) {
+  const owner = parentSession(ctx)
+  return BackgroundManager.requestStop(id, owner == null ? {} : {parentSessionId: owner})
+}

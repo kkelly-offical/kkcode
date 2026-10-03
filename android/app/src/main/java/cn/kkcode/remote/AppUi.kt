@@ -399,6 +399,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                     ComposerChip(Icons.Outlined.CloudQueue, state.modelLabel, "模型", maxWidth = 120.dp) { state.openModelPicker() }
                 }
                 Spacer(Modifier.weight(1f))
+                if(state.busy && text.isNotBlank() && !state.stopping) IconButton(onClick = { state.send(text) }, enabled = state.canControl && !state.uploading && !state.sessionArchived, modifier = Modifier.size(34.dp)) { Icon(Icons.Outlined.ArrowUpward, "发送补充要求", Modifier.size(21.dp)) }
                 IconButton(onClick = { if(state.busy) state.stop() else if(text.isNotBlank() || state.attachments.isNotEmpty()) state.send(text) }, enabled = state.canControl && !state.uploading && !state.sessionArchived && !state.stopping, modifier = Modifier.size(34.dp).background(MaterialTheme.colorScheme.onSurface, PixelShape(3.dp))) { Icon(if(state.busy) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, if(state.stopping) "正在停止" else if(state.busy) "停止" else "发送", Modifier.size(21.dp), tint = MaterialTheme.colorScheme.background) }
             }
         }

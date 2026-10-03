@@ -3,6 +3,28 @@
 const preDispatchFailures = new WeakSet()
 const notStartedReceipts = new WeakSet()
 const dispatchReceipts = new WeakMap()
+const noMutationReceipts = new WeakMap()
+const trustedNoMutation = new WeakSet()
+
+/** Native transaction validation proved that no target was written. This is
+ * distinct from not dispatching the tool, and cannot be minted by IPC metadata. */
+export function markToolNoMutation(result) {
+  const receipt = Object.freeze({schema: 'kk.tool-mutation.v1', source: 'host', changed: false})
+  trustedNoMutation.add(receipt)
+  noMutationReceipts.set(result, receipt)
+  return result
+}
+export const toolMutationReceipt = result => noMutationReceipts.get(result) || null
+export const isToolNoMutation = result => Boolean(toolMutationReceipt(result))
+export function attachToolMutationReceipt(result, receipt) {
+  if (receipt && trustedNoMutation.has(receipt)) noMutationReceipts.set(result, receipt)
+  return result
+}
+/** Only the canonical host history reader restores this top-level receipt. */
+export function restoreToolMutationReceipt(result, receipt) {
+  if (receipt?.schema === 'kk.tool-mutation.v1' && receipt.source === 'host' && receipt.changed === false) markToolNoMutation(result)
+  return result
+}
 
 /** Minted only before the host dispatch boundary, never from a tool's code,
  * status, output, or metadata. Brands survive host result transformations. */

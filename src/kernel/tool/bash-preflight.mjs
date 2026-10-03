@@ -1,5 +1,6 @@
 import {parseShellCommands} from '../permission/shell-analysis.mjs'
 import {toolPreDispatchError} from '../core/execution-outcome.mjs'
+import {serviceCommand, processLifetime} from './process-lifetime.mjs'
 
 const builtins=new WeakSet()
 export function registerBashPreflights(tools) {
@@ -43,7 +44,14 @@ export function hasUnjoinedPosixBackground(command,{platform=process.platform}={
   return !commands.some(entry=>entry.words[0]==='wait'&&!entry.words.includes('-n'))
 }
 
-export function assertBashLifecycle(args,{platform=process.platform,language='en'}={}) {
+export function assertBashLifecycle(args,{platform=process.platform,language='en',durable=false}={}) {
+  try {
+    const lifetime = processLifetime(args)
+    if (lifetime.service) {
+      if (durable) throw new Error('Persistent service lifetime is unavailable in a strict run; use a bounded test that owns its services and cleanup.')
+      serviceCommand(args.command, {platform})
+    }
+  } catch (error) { throw toolPreDispatchError(Object.assign(error, {code: 'bash_lifetime_invalid'})) }
   if(!hasUnjoinedPosixBackground(args?.command,{platform}))return
   const chinese=typeof language==='string'&&(language==='zh'||language.startsWith('zh-'))
   const message=chinese

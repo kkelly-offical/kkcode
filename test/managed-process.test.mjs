@@ -33,6 +33,13 @@ test('managed capture preserves stdout/stderr bytes and nonzero exit', async () 
   assert.equal(result.captureIncomplete, false)
 })
 
+test('incremental UTF-8 output preserves characters split across process writes', async () => {
+  let output = ''
+  const result = await node("const b=Buffer.from('你好');process.stdout.write(b.subarray(0,1));setTimeout(()=>process.stdout.write(b.subarray(1)),30)", {onOutput: text => {output += text}})
+  assert.equal(result.exitCode, 0)
+  assert.equal(output, '你好')
+})
+
 test('output cap is a separate failure, not a timeout or cancellation', async () => {
   const result = await node("process.stdout.write('x'.repeat(10000)); setTimeout(() => {}, 1800)", { maxBuffer: 1024, killGraceMs: 20 })
   assert.equal(Buffer.byteLength(result.stdout), 1024)

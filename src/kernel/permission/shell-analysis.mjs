@@ -3,16 +3,17 @@
  * `uncertain`/`dynamic` as unknown, not as proof that a command is read-only.
  * Words are unquoted; redirects belong only to their own simple command.
  */
-export function parseShellCommands(input) {
+export function parseShellCommands(input, { allowSimpleParameters = false } = {}) {
   const source = String(input || '')
   const commands = []
   let words = [], redirects = [], word = '', hasWord = false, quote = '', dynamic = false, glob = false
-  let uncertain = false, pendingRedirect = null
+  let uncertain = false, pendingRedirect = null, pendingFd = null
   const flushWord = () => {
     if (!hasWord) return
     if (pendingRedirect) {
-      redirects.push({ operator: pendingRedirect, target: word })
+      redirects.push({ operator: pendingRedirect, target: word, ...(pendingRedirect === '>&' ? {fd: pendingFd ?? 1} : {}) })
       pendingRedirect = null
+      pendingFd = null
     } else words.push(word)
     word = ''; hasWord = false
   }
@@ -38,7 +39,13 @@ export function parseShellCommands(input) {
     }
     if (c === '"') { quote = quote === '"' ? '' : '"'; hasWord = true; continue }
     if (!quote && c === "'") { quote = "'"; hasWord = true; continue }
-    if (c === '$' || c === '`') { dynamic = true; uncertain = true }
+    if (c === '$' || c === '`') {
+      dynamic = true
+      // Used only for protected-write target analysis: a plain variable in a
+      // read-only argument cannot make another simple command write a path.
+      // Substitution, parameter operators and malformed syntax stay uncertain.
+      if (!(allowSimpleParameters && c === '$' && /^[A-Za-z_]/.test(source[i + 1] || ''))) uncertain = true
+    }
     if (quote) { word += c; hasWord = true; continue }
     if (c === '*' || c === '?' || c === '[') glob = true
     if (c === '#' && !hasWord) {
@@ -47,13 +54,15 @@ export function parseShellCommands(input) {
     }
     if (c === '<' || c === '>') {
       // A numeric word immediately before a redirect is its file descriptor.
-      if (hasWord && /^\d+$/.test(word)) { word = ''; hasWord = false }
+      const fd = hasWord && /^\d+$/.test(word) ? Number(word) : null
+      if (fd !== null) { word = ''; hasWord = false }
       flushWord()
       if (pendingRedirect) uncertain = true
       let operator = c
       if (source[i + 1] === c || source[i + 1] === '&' || source[i + 1] === '|') operator += source[++i]
       if (operator === '<<') { uncertain = true; if (source[i + 1] === '<' || source[i + 1] === '-') operator += source[++i] }
       pendingRedirect = operator
+      pendingFd = fd
       continue
     }
     if (c === ';' || c === '|' || c === '&' || c === '\n' || c === '\r') {

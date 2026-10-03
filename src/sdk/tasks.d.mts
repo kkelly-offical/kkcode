@@ -44,7 +44,7 @@ export const TASK_NODE_STATES: readonly TaskNodeState[];
 export type TodoState = 'pending' | 'in_progress' | 'completed' | 'blocked' | 'cancelled';
 export interface TodoEvidenceRef { kind: 'message' | 'part'; id: string; }
 export interface TodoItem {
-  id: string; content: string; activeForm?: string; status: TodoState;
+  id: string; content: string; activeForm?: string; status: TodoState; reason?: string;
   owner: { sessionId: string; agentId: string }; dependencies: string[]; evidenceRefs: TodoEvidenceRef[];
   revision: number; createdAt: number; updatedAt: number;
 }
@@ -52,11 +52,11 @@ export interface TodoSnapshot {
   version: 1; sessionId: string; revision: number; items: TodoItem[]; updatedAt: number;
   source: { kind: 'initial' | 'update' | 'rewind'; agentId: string; turnId: string | null; previousRevision: number; restoredRevision?: number };
 }
-export interface TodoInput { id?: string; content: string; activeForm?: string; status: TodoState; dependencies?: string[]; evidenceRefs?: TodoEvidenceRef[]; }
+export interface TodoInput { id?: string; content: string; activeForm?: string; status: TodoState; reason?: string; dependencies?: string[]; evidenceRefs?: TodoEvidenceRef[]; }
 export interface SessionTodoService {
   readonly sessionId: string; readonly agentId: string;
   list(options?: { refresh?: boolean }): Promise<TodoSnapshot>;
-  update(input: { todos: TodoInput[]; expectedRevision?: number }, options?: { sessionId?: string; signal?: AbortSignal }): Promise<TodoSnapshot>;
+  update(input: { todos: TodoInput[]; expectedRevision?: number; mode?: 'merge' | 'replace' }, options?: { sessionId?: string; signal?: AbortSignal }): Promise<TodoSnapshot>;
 }
 export function getSessionTodos(sessionId: string): Promise<TodoSnapshot | null>;
 export function createSessionTodoService(options: { sessionId: string; agentId?: string; turnId?: string | null; emit?: (event: { type: 'todo.updated'; sessionId: string; turnId: string | null; payload: { snapshot: TodoSnapshot } }) => unknown | Promise<unknown> }): Promise<SessionTodoService>;

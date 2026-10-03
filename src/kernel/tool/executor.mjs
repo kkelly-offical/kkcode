@@ -12,7 +12,7 @@ import { buildMutationObservability } from "../../observability/edit-diagnostics
 import { toolCapability } from '../permission/rules.mjs'
 import { beginToolOperation } from './operation-journal.mjs'
 import { currentDurableRun } from '../orchestration/run-runtime.mjs'
-import { isToolPreDispatchError, markToolNotStarted } from '../core/execution-outcome.mjs'
+import { isToolPreDispatchError, markToolNotStarted, toolMutationReceipt, attachToolMutationReceipt } from '../core/execution-outcome.mjs'
 import {validateAtomicMutationPreflight} from './mutation-preflight.mjs'
 import {validateBashPreflight} from './bash-preflight.mjs'
 
@@ -139,7 +139,7 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
         // Durable delegation executes Bash in the Linux OCI workspace. Native
         // execution retains the host's POSIX/ComSpec distinction. Refuse known
         // unowned launches before any operation reservation or dispatch.
-        validateBashPreflight(tool,args,{platform:durableRun?'linux':process.platform,language:context.config?.language})
+        validateBashPreflight(tool,args,{platform:durableRun?'linux':process.platform,language:context.config?.language,durable:Boolean(durableRun)})
         // Native target preconditions precede snapshots, operation preparation
         // and ALL mutations. Never mark a late helper/batch failure no-effect.
         // Strict executions use virtual paths and the OCI backend's own guard.
@@ -211,6 +211,7 @@ export async function executeTool({ tool, args, sessionId, turnId, invocationId 
           image: normalizedContent.contentBlocks.find(block => block.type === 'image') || null,
           contentBlocks: normalizedContent.contentBlocks
         })
+        if (!durableRun && status === 'error' && !metadata.outcomeUnknown && !metadata.terminationIncomplete) attachToolMutationReceipt(result, toolMutationReceipt(raw))
         if (durableOperation) {
           await durableRun.settleTool({ operation: durableOperation, result })
           durableOperation = null

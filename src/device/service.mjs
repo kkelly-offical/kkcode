@@ -27,6 +27,8 @@ import { DeviceArtifacts, ARTIFACT_FEATURE, ARTIFACT_READ_METHODS } from './arti
 import { DeviceMemory, MEMORY_FEATURE, MEMORY_READ_METHODS } from './memory.mjs'
 import { DeviceRuns, RUN_FEATURE, RUN_READ_METHODS } from './runs.mjs'
 import { DeviceTodos, TODO_FEATURE, TODO_READ_METHODS } from './todos.mjs'
+import {queueSteering} from '../kernel/session/store.mjs'
+import {sessionSteeringSource, retainEarlierSteering} from '../kernel/session/steering.mjs'
 import { readTodoSnapshot } from '../kernel/session/todo-state.mjs'
 import { listChildSnapshots } from '../kernel/orchestration/child-controller.mjs'
 import { awaitAbortable, isCancellation } from '../abort.mjs'
@@ -114,7 +116,11 @@ export class DeviceService extends EventEmitter {
       this.turns.set(sessionId, entry); this.leases.set(sessionId, { client: 'local', until: Date.now() + 60000 })
       entry.promise = Promise.resolve().then(async () => {
         let result, error
-        try { signal.throwIfAborted(); result = await execute({ ...options, sessionId, signal }) } catch (cause) { error = cause }
+        try {
+          signal.throwIfAborted()
+          await retainEarlierSteering(sessionId, entry.turnId)
+          result = await execute({ ...options, sessionId, signal, steerSource: sessionSteeringSource(sessionId, entry.turnId, options.steerSource) })
+        } catch (cause) { error = cause }
         await this.settleTurn(sessionId, entry, { result, error })
         if (error) throw error
         return result
@@ -279,7 +285,7 @@ export class DeviceService extends EventEmitter {
   async dispatch(method, p, principal) {
     const sessionId = p.sessionId
     if ((this.workspaceMutation || this.configurationUpdating) && ['sessions.create', 'sessions.configure', 'settings.update', 'extensions.reload', 'models.discover'].includes(method)) throw new ProtocolError('workspace_busy', 'Wait for device maintenance to finish', 409)
-    if (method === 'status') return { schemaVersion: PROTOCOL_VERSION, features: [ARTIFACT_FEATURE, MEMORY_FEATURE, RUN_FEATURE, TODO_FEATURE], device: this.metadata, roots: this.roots, active: [...this.turns.keys()], retention: { replay: this.replay.stats(), requests: this.ledger.stats() } }
+    if (method === 'status') return { schemaVersion: PROTOCOL_VERSION, features: [ARTIFACT_FEATURE, MEMORY_FEATURE, RUN_FEATURE, TODO_FEATURE, 'turn-steering.v1'], device: this.metadata, roots: this.roots, active: [...this.turns.keys()], retention: { replay: this.replay.stats(), requests: this.ledger.stats() } }
     if (method.startsWith('artifacts.')) return this.artifacts.dispatch(method, p, principal)
     if (method.startsWith('memory.')) return this.memory.dispatch(method, p, principal)
     if (method.startsWith('runs.')) return this.runs.dispatch(method, p, principal)
@@ -463,6 +469,18 @@ export class DeviceService extends EventEmitter {
       }
       return { cancelled: true, ...this.sessionState(sessionId, principal) }
     }
+    if (method === 'turns.steer') {
+      this.assertOwner(principal)
+      this.lease(sessionId, principal)
+      const entry = this.turns.get(sessionId)
+      if (!entry || ['stopping', 'finishing'].includes(entry.phase)) throw new ProtocolError('turn_not_running', '当前任务已结束或正在停止；补充内容尚未发送，请保留并在下一轮发送。', 409)
+      if (p.executionId !== entry.turnId) throw new ProtocolError('turn_changed', '任务已变化，请刷新后再发送补充要求。', 409)
+      if (Object.keys(p).some(key => !['sessionId', 'executionId', 'prompt'].includes(key)) || typeof p.prompt !== 'string' || !p.prompt.trim() || p.prompt.length > 16000) throw new ProtocolError('invalid_prompt', '补充要求需为 1–16000 字符的文字；附件请在下一轮发送。')
+      if (this.turns.get(sessionId) !== entry || entry.controller.signal.aborted) throw new ProtocolError('turn_changed', '任务状态已变化，请保留补充内容并刷新。', 409)
+      const part = await queueSteering(sessionId, {executionId: entry.turnId, text: p.prompt})
+      await this.record({type: 'turn.steering.queued', sessionId, turnId: entry.kernelTurnId || entry.turnId, payload: {executionId: entry.turnId, guidanceId: part.id}})
+      return {accepted: true, guidanceId: part.id, executionId: entry.turnId}
+    }
     if (method === 'turns.start') {
       if (this.configurationUpdating || this.workspaceMutation) throw new ProtocolError('configuration_busy', 'Device configuration or Git branch is changing; retry after it completes', 409)
       this.lease(sessionId, principal)
@@ -509,9 +527,10 @@ export class DeviceService extends EventEmitter {
       }
       controller.signal.throwIfAborted()
       await kernel.events.emit({ type: 'remote.turn.started', sessionId, payload: { prompt: p.prompt, client: principal.client } })
-      entry.promise = Promise.resolve().then(() => {
+      entry.promise = Promise.resolve().then(async () => {
         controller.signal.throwIfAborted()
-        return kernel.executeTurn({ prompt: p.prompt, contentBlocks: attachmentInput.contentBlocks, sessionId, mode: laneOf(mode), model, providerType, configState: state, signal: controller.signal, toolContext: { skillAllowedTools } })
+        await retainEarlierSteering(sessionId, entry.turnId)
+        return kernel.executeTurn({ prompt: p.prompt, contentBlocks: attachmentInput.contentBlocks, sessionId, mode: laneOf(mode), model, providerType, configState: state, signal: controller.signal, steerSource: sessionSteeringSource(sessionId, entry.turnId), toolContext: { skillAllowedTools } })
       }).then(result => this.settleTurn(sessionId, entry, { result, release: () => attachmentInput.release() }), error => this.settleTurn(sessionId, entry, { error, release: () => attachmentInput.release() }))
       entry.promise.catch(() => {}) // Observed by close()/journal; never an unhandled background rejection.
       return { accepted: true, turnId, executionId: turnId }

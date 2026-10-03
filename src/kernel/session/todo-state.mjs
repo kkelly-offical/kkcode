@@ -74,9 +74,10 @@ function validateSnapshot(snapshot, sessionId) {
   if (snapshot.source.turnId !== null) id(snapshot.source.turnId, 'turn')
   if (snapshot.source.kind === 'rewind' && (!Number.isSafeInteger(snapshot.source.restoredRevision) || snapshot.source.restoredRevision < 0 || snapshot.source.restoredRevision >= snapshot.revision)) fail('todo_storage', 'Todo rewind target is invalid')
   for (const item of snapshot.items) {
-    object(item, ['id', 'content', 'activeForm', 'status', 'owner', 'dependencies', 'evidenceRefs', 'revision', 'createdAt', 'updatedAt'], 'item')
+    object(item, ['id', 'content', 'activeForm', 'status', 'reason', 'owner', 'dependencies', 'evidenceRefs', 'revision', 'createdAt', 'updatedAt'], 'item')
     id(item.id, 'id'); text(item.content, 2048, 'content')
     if (item.activeForm !== undefined) text(item.activeForm, 256, 'active form')
+    if (item.reason !== undefined) text(item.reason, 512, 'reason')
     object(item.owner, ['sessionId', 'agentId'], 'owner')
     if (item.owner.sessionId !== sessionId || !TODO_STATES.includes(item.status) || !Number.isSafeInteger(item.revision) || item.revision < 1
         || !Number.isSafeInteger(item.createdAt) || item.createdAt < 0 || !Number.isSafeInteger(item.updatedAt) || item.updatedAt < item.createdAt) fail('todo_storage', 'Todo item metadata is invalid')
@@ -107,14 +108,15 @@ export function readTodoSnapshot(parts, sessionId) {
 export function reduceTodoSnapshot(previous, input, { sessionId, agentId = 'main', turnId = null, now = Date.now(), messages = [], parts = [] }) {
   id(sessionId, 'session'); agentIdentity(agentId); if (turnId !== null) id(turnId, 'turn')
   validateSnapshot(previous, sessionId)
-  object(input, ['todos', 'expectedRevision'], 'update')
+  object(input, ['todos', 'expectedRevision', 'mode'], 'update')
+  if (input.mode !== undefined && !['merge', 'replace'].includes(input.mode)) fail('todo_invalid', 'Todo mode must be merge or replace')
   if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) fail('todo_invalid', 'A todo expectedRevision is required')
   if (input.expectedRevision !== previous.revision) fail('todo_conflict', `Todo revision changed (expected ${input.expectedRevision}, current ${previous.revision}); read the current list before retrying`)
   if (!Array.isArray(input.todos) || input.todos.length > MAX_ITEMS) fail('todo_invalid', 'Todo list must contain at most 100 items')
   const timestamp = Math.max(now, previous.updatedAt), used = new Set(), prior = new Map(previous.items.map(item => [item.id, item]))
   const available = { message: new Set(messages.map(item => item.id)), part: new Set(parts.map(item => item.id)) }
   const items = input.todos.map(raw => {
-    object(raw, ['id', 'content', 'activeForm', 'status', 'dependencies', 'evidenceRefs'], 'input item')
+    object(raw, ['id', 'content', 'activeForm', 'status', 'reason', 'dependencies', 'evidenceRefs'], 'input item')
     const content = text(raw.content, 2048, 'content')
     if (!TODO_STATES.includes(raw.status)) fail('todo_invalid', 'Invalid todo status')
     // Legacy callers without IDs preserve identity by exact unique description.
@@ -132,17 +134,22 @@ export function reduceTodoSnapshot(previous, input, { sessionId, agentId = 'main
       if (!available[reference.kind].has(reference.id)) fail('todo_scope', 'Todo evidence does not belong to the current conversation')
     }
     const value = { id: todoId, content, ...(raw.activeForm === undefined ? existing?.activeForm ? { activeForm: existing.activeForm } : {} : { activeForm: text(raw.activeForm, 256, 'active form') }),
-      status: raw.status, owner: { sessionId, agentId }, dependencies: dependencies(raw.dependencies ?? existing?.dependencies), evidenceRefs,
+      status: raw.status, ...(raw.reason !== undefined ? {reason: text(raw.reason, 512, 'reason')} : existing?.status === raw.status && existing.reason ? {reason: existing.reason} : {}),
+      owner: { sessionId, agentId }, dependencies: dependencies(raw.dependencies ?? existing?.dependencies), evidenceRefs,
       revision: existing ? existing.revision + 1 : 1, createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp }
     if (existing && JSON.stringify({ ...value, revision: existing.revision, updatedAt: existing.updatedAt }) === JSON.stringify(existing)) return structuredClone(existing)
     return value
   })
   for (const item of previous.items) {
     if (used.has(item.id)) continue
-    items.push(item.owner.agentId === agentId && !['completed', 'cancelled'].includes(item.status)
+    items.push(input.mode !== 'merge' && item.owner.agentId === agentId && !['completed', 'cancelled'].includes(item.status)
       ? { ...structuredClone(item), status: 'cancelled', revision: item.revision + 1, updatedAt: timestamp } : structuredClone(item))
   }
   if (items.length > MAX_ITEMS) fail('todo_invalid', 'Todo history contains 100 items; update existing items instead of replacing their identities')
+  if (input.mode === 'merge') {
+    const order = new Map(previous.items.map((item, index) => [item.id, index]))
+    items.sort((a, b) => (order.get(a.id) ?? previous.items.length) - (order.get(b.id) ?? previous.items.length))
+  }
   graph(items)
   return validateSnapshot({ version: 1, sessionId, revision: previous.revision + 1, items, updatedAt: timestamp,
     source: { kind: 'update', agentId, turnId, previousRevision: previous.revision } }, sessionId)

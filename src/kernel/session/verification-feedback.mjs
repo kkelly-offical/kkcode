@@ -28,8 +28,8 @@ export function createVerificationFeedback({cwd = process.cwd(), language = 'en'
       for (const failure of failures) notified.add(`${failure.kind}:${failure.id}`)
       const chinese = language === 'zh' || language.startsWith('zh-')
       return (chinese
-        ? '[检查反馈] 刚才的检查失败，或其独立退出状态未被核实。先核对实际错误并完成必要修改，再补齐下列匹配检查。查看长输出请用已归档结果的 artifact_read / artifact_search；不要为了缩短输出给检查增加管道或重定向。这条提示不是任务验收结论。'
-        : '[VERIFICATION FEEDBACK] A check just failed or its individual exit status was not verified. Inspect the actual failure, finish the necessary changes, then repair the matching checks below. Read long archived output with artifact_read / artifact_search; do not add pipes or redirects just to shorten check output. This guidance is not a task acceptance verdict.') + '\n\n' + guidance
+        ? '[检查反馈] 刚才的检查失败，或其独立退出状态未被核实。先核对实际错误并完成必要修改，再补齐下列匹配检查。查看长输出请用已归档结果的 artifact_read / artifact_search；不要用管道或文件重定向缩短输出。这条提示不是任务验收结论。'
+        : '[VERIFICATION FEEDBACK] A check just failed or its individual exit status was not verified. Inspect the actual failure, finish the necessary changes, then repair the matching checks below. Read long archived output with artifact_read / artifact_search; do not use pipelines or file redirects to shorten output. This guidance is not a task acceptance verdict.') + '\n\n' + guidance
     }
   }
 }

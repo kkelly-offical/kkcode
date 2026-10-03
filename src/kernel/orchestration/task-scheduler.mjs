@@ -10,11 +10,12 @@ import { resolveRoleModel } from "../provider/model-roles.mjs"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { childOutcome, inheritChildPolicy, isReadOnlyWriteScope } from './child-policy.mjs'
+import {childHandoff} from './child-handoff.mjs'
 import { intersectDataPolicies } from '../permission/data-policy.mjs'
 import { currentDurableRun } from './run-runtime.mjs'
 import { getAgentPrompt } from '../agent/agent.mjs'
 import { normalizePath } from '../../util/glob.mjs'
-import { acquireChildOperation, bindChildOperation, drainChildMessages, ownedChild, settleChildOperation } from './child-controller.mjs'
+import { acquireChildOperation, bindChildOperation, childSteeringSource, ownedChild, settleChildOperation } from './child-controller.mjs'
 export { createChildController } from './child-controller.mjs'
 
 const SUPPORTED_EXECUTION_MODES = new Set(["fresh_agent", "fork_context"])
@@ -323,7 +324,7 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
         runSpec,
         childOperationId: operationId,
         signal: operation.signal,
-        steerSource: () => drainChildMessages(subSessionId, operationId),
+        steerSource: childSteeringSource(subSessionId, operationId),
         baseUrl: childBaseUrl,
         apiKeyEnv: childApiKeyEnv,
         dataPolicy,
@@ -335,7 +336,7 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
       const outcome = childOutcome(out, operation.signal.aborted || await isCancelled())
       const fileChanges = extractFileChanges(out.toolEvents || [])
       const editFeedback = extractEditFeedbackFromToolEvents(out.toolEvents || [])
-      const result = {
+      const record = {
         ...outcome,
         session_id: subSessionId,
         parent_session_id: parentSessionId,
@@ -348,6 +349,7 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
         group_id: args.group_id || null,
         group_label: args.group_label || null
       }
+      const result = {...record, handoff: childHandoff(record, {cwd: runtimeCwd()})}
       await settleChildOperation(subSessionId, operationId, result)
       await EventBus.emit({
         type: EVENT_TYPES.SUBAGENT_SETTLED, sessionId: parentSessionId,

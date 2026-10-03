@@ -1,6 +1,6 @@
 {
   "name": "@kkelly-offical/kkcode",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "workspaces": [
     "apps/web",
     "apps/gateway",
@@ -195,7 +195,10 @@
     "docs/kkcode-0.4.0-mode-contract.md",
     "CHANGELOG.md",
     "NOTICE.md",
-    "LICENSE"
+    "LICENSE",
+    "docs/implementation-1.0.7.md",
+    "docs/release-1.0.7.md",
+    "docs/r16-harness-audit-2026-10-03.md"
   ],
   "engines": {
     "node": ">=22.12.0"
@@ -237,7 +240,6 @@
     "jose": "^6.2.12",
     "marked": "^16.4.2",
     "openid-client": "^6.8.8",
-    "pacote": "^21.5.1",
     "pg": "^8.23.0",
     "playwright-core": "1.63.0",
     "sharp": "0.35.4",

@@ -1,7 +1,7 @@
 # KK Code 文档
 
-当前文档适用源码 **1.0.6**；公开发行状态见[版本与升级](versions.md)。
-本轮范围见[1.0.6发行范围](release-1.0.6.md)与[实施记录](implementation-1.0.6.md)，旧稳定版见[1.0.5记录](release-1.0.5.md)。
+当前文档适用源码 **1.0.7（开发中）**；公开稳定版仍为1.0.6，见[版本与升级](versions.md)。
+本轮范围见[1.0.7迭代范围](release-1.0.7.md)与[实施记录](implementation-1.0.7.md)，稳定版见[1.0.6记录](release-1.0.6.md)。
 已发布渠道、Android版本码与升级入口只在[版本与升级](versions.md)集中维护。
 历史材料保留原始版本和证据，不作为当前使用说明。
 
@@ -46,7 +46,7 @@ App、设备CLI和网关分别升级。公共网关镜像发布暂缓，继续�
 
 - [分域SDK总览](sdk-guide.md) · [headless JSONL契约](headless-jsonl-contract.md)
 - [配置字段参考](config.example.yaml) · [贡献与验证](contributing.md)
-- [路线图与Issues](ROADMAP.md) · [1.0.6发行范围与边界](release-1.0.6.md)
+- [路线图与Issues](ROADMAP.md) · [1.0.7迭代范围与边界](release-1.0.7.md)
 
 ## 历史与发行证据
 

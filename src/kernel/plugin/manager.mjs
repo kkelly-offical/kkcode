@@ -2,7 +2,7 @@ import path from 'node:path'
 import { mkdtemp, mkdir, readdir, readFile, cp, rename, rm, lstat, realpath } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import pacote from 'pacote'
+import {fetchNpmPlugin} from './npm-source.mjs'
 import { userRootDir } from '../../storage/paths.mjs'
 import { readJson, writeJsonAtomic } from '../../storage/json-store.mjs'
 import { acquireProcessLock } from '../../storage/process-lock.mjs'
@@ -34,12 +34,7 @@ export async function installPlugin({ name, source, revision, update = false }) 
     if (source.startsWith('npm:')) {
       const spec = source.slice(4)
       if (!/^(?:@[a-z0-9_~-][a-z0-9._~-]*\/)?[a-z0-9_~-][a-z0-9._~-]*@\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(spec)) throw new Error('npm plugins require an exact version and a registry package name')
-      const options = { ignoreScripts: true, registry: 'https://registry.npmjs.org', cache: path.join(staging, 'npm-cache') }
-      const resolved = await pacote.manifest(spec, options)
-      packageIntegrity = resolved._integrity || resolved.dist?.integrity
-      if (typeof packageIntegrity !== 'string' || !/^sha(?:256|384|512)-[A-Za-z0-9+/=]+$/.test(packageIntegrity)) throw new Error('npm plugin has no verifiable content integrity')
-      if (oldLock?.source === source && oldLock.packageIntegrity && oldLock.packageIntegrity !== packageIntegrity) throw new Error('Pinned npm version integrity changed; refusing replacement')
-      await pacote.extract(spec, payload, { ...options, integrity: packageIntegrity })
+      packageIntegrity = await fetchNpmPlugin({spec, staging, payload, expectedIntegrity: oldLock?.source === source ? oldLock.packageIntegrity : null})
     } else if (/^https:\/\/.+\.git$/.test(source)) {
       if (!/^[a-fA-F0-9]{40}$/.test(revision || '')) throw new Error('Git plugins require a full commit SHA')
       const url = new URL(source)

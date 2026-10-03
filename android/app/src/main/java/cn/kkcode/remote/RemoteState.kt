@@ -55,6 +55,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         val finished = CompletableDeferred<Unit>()
     }
     private var pendingSend: PendingSend? = null
+    private var steeringInFlight = false
     var contextUsage by mutableStateOf(JSONObject())
     var todos by mutableStateOf<JSONObject?>(null)
         private set
@@ -867,12 +868,30 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
     }
     fun send(text: String) = action {
         if (selected.isBlank()) return@action
-        if(busy || pendingSend != null) return@action
+        if(pendingSend != null) return@action
         require(!sessionArchived) { "恢复归档后再继续对话" }
         require(canControl) { "这个会话是只读分享" }
         require(!uploading) { "请等待附件上传完成" }
         require(!text.startsWith('/') || attachments.isEmpty()) { "附件只能随消息发送，不能附在命令上" }
         val origin = selected
+        if(busy) {
+            if(steeringInFlight) return@action
+            require(!stopping && turnPhase != "finishing") { "当前任务正在收尾；请保留补充要求，稍后发送。" }
+            require(text.isNotBlank() && text.length <= 16000 && !text.startsWith('/') && attachments.isEmpty()) { "执行期间可发送文字补充要求；附件和命令请在本轮结束后发送。" }
+            val execution = activeExecution
+            val generation = connectionGeneration
+            steeringInFlight = true
+            try {
+                acquireControl(origin)
+                if(selected != origin || connectionGeneration != generation || activeExecution != execution) return@action
+                rpc("turns.steer", JSONObject().put("sessionId", origin).put("executionId", execution).put("prompt", text))
+                if(selected == origin && connectionGeneration == generation) {
+                    if(draft == text) draft = ""
+                    notice = "补充要求已保存，智能体将在安全执行节点读取。"
+                }
+            } finally { steeringInFlight = false }
+            return@action
+        }
         val token = PendingSend(origin, java.util.UUID.randomUUID().toString(), connectionGeneration, text, attachments.map { it.getString("id") }.toSet())
         val inputAttachments = attachments
         pendingSend = token

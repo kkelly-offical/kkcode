@@ -175,10 +175,11 @@ export async function createGateway({ origin, issuer, clientId, clientSecret, or
     if (!owner && !sharedIndex) {
       const artifactReads = ['artifacts.list', 'artifacts.read', 'artifacts.search', 'artifacts.download']
       const runReads = ['runs.list', 'runs.get', 'runs.events', 'runs.artifacts.list', 'runs.artifacts.read', 'runs.artifacts.download', 'todos.list']
-      const allowed = access === 'control' ? ['sessions.get', 'media.preview', 'events.list', ...artifactReads, ...runReads, 'control.acquire', 'control.release', 'turns.start', 'turns.cancel', 'approvals.resolve'] : ['sessions.get', 'media.preview', 'events.list', ...artifactReads, ...runReads]
+      const allowed = access === 'control' ? ['sessions.get', 'media.preview', 'events.list', ...artifactReads, ...runReads, 'control.acquire', 'control.release', 'turns.start', 'turns.cancel', 'turns.steer', 'approvals.resolve'] : ['sessions.get', 'media.preview', 'events.list', ...artifactReads, ...runReads]
       if (!allowed.includes(request.method)) return reply.code(403).send({ error: { code: 'forbidden', message: 'Operation exceeds shared access' } })
       if (request.method === 'approvals.resolve' && typeof request.params?.answer === 'string' && !['allow_once', 'deny'].includes(request.params.answer)) return reply.code(403).send({ error: { code: 'forbidden', message: 'Shared control cannot create persistent permission grants' } })
       if (request.method === 'turns.start') request.params = { sessionId: request.params.sessionId, prompt: request.params.prompt }
+      if (request.method === 'turns.steer') request.params = {sessionId: request.params.sessionId, executionId: request.params.executionId, prompt: request.params.prompt}
     }
     if (!owner && request.method === 'commands.list') return { result: [] }
     const principal = { id: device.owner, actorId: account.id, client: identity.sessionId, organization }

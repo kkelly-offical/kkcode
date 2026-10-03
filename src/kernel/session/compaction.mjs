@@ -11,6 +11,7 @@ import { snapshotStrictInput } from '../../usage/input-token-bound.mjs'
 import { authorizeArtifactAccess, createConversationArtifactAccess } from '../tool/artifacts.mjs'
 import { currentDurableRun } from '../orchestration/run-runtime.mjs'
 import { hasCompactionAttachments, projectCompactionAttachments, attachmentIndex } from './attachment-compaction.mjs'
+import {continuationIndex} from './continuation-state.mjs'
 
 const COMPACTION_SYSTEM = `You are a conversation summarizer. Create a structured, merge-safe summary preserving all critical information for continued work.
 
@@ -484,6 +485,9 @@ export async function compactSession({
   const snapshot = await getSession(sessionId)
   const history = snapshot?.messages || []
   if (!force && history.length <= keepRecent + 2) return { compacted: false, reason: "too few messages" }
+  let hostContinuation
+  try { hostContinuation = continuationIndex(snapshot) }
+  catch { return {compacted: false, reasonCode: 'continuation_state_unavailable', reason: 'durable continuation state could not be verified; original history retained'} }
   const previousSummary = isCompactionSummaryMessage(history[0])
     ? extractCompactionSummary(history[0].content)
     : ""
@@ -649,7 +653,7 @@ export async function compactSession({
   const summaryMessage = {
     role: "user",
     contextKind: 'compaction',
-    content: `<compaction-summary version="2">\n${summaryText}\n</compaction-summary>${attachmentIndex(attachmentProjection.attachments, catalogRef)}${artifactIndex}${requestIndex}${evidenceIndex}`,
+    content: `<compaction-summary version="2">\n${summaryText}\n</compaction-summary>${attachmentIndex(attachmentProjection.attachments, catalogRef)}${artifactIndex}${requestIndex}${evidenceIndex}${hostContinuation}`,
     ...(attachmentProjection.attachments.length ? { attachmentRefs: attachmentProjection.attachments } : {}),
     ...(catalogRef ? { attachmentCatalogRef: catalogRef } : {}),
     compactionUserRequests: userRequests,
