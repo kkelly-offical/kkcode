@@ -5,13 +5,13 @@
 
 ## 发行与授权
 
-- 已发布稳定 **1.0.8 / Android10015**（npm latest）：1.0.7的Pixel Studio界面增强正式版。
-  发行提交`43bb449`（PR#42），与候选`e01ec56`同树；公开下载、CI/npm/GitHub字节一致、原证书与10014→10015升级已核验。
-  Preview仍为 **1.0.6-preview.1 / Android10012**；旧1.0.7及所有旧tag不移动。
+- 已发布稳定 **1.0.9 / Android10016**（npm latest），发行提交`b0ef227`（PR#44），与最终候选`f9983b6`同树。
+  候选／主线／发行跨平台、Web、CodeQL通过，匿名CI/npm/GitHub包一致，Node22.12及原证书10015→10016升级已核验。
+  Preview仍为 **1.0.6-preview.1 / Android10012**；1.0.8与所有旧tag不移动。
   [versions.md](docs/versions.md)与公开release-verification.json是发行事实入口。
 - 用户明确“允许所有来自我们的管理员合并操作”。本任务相关合入不重复询问；核验实际检查，
   不修改保护规则、不虚称批准审核、不自动合入无关PR#5/#6/#22。
-- 用户10月4日授权并完成Web／网关／Android增强正式发行；没有公共网关镜像、生产／演示升级或新增真实模型调用。
+- 用户10月4日授权修复后发布1.0.9正式版，已完成。未发布公共网关镜像、未升级其他生产／演示网关、未新增真实模型评测。
 
 ## 产品约束
 
@@ -30,11 +30,11 @@
 
 ## 实测与下一步
 
-- 当前开发：用户10月4日要求完成[1.0.9清单](docs/implementation-1.0.9.md)后正式发行：普通会话取消强制测试门禁、上下文口径、自由滚动／进入会话定位、Compact历史折叠、Markdown表格、模型自动刷新和Android提示生命周期。分支`fix/general-agent-harness-context`，未发布。
-- 本机1.0.8 remote已在`tmux kkcode-coding`中从`/root`运行，连接用户指定的企业网关，用户明确授权all-folders。原设备身份保持；新任务不借此取得真实模型评测授权。现场循环原会话已由用户取消，私密证据保留。
+- [1.0.9清单](docs/implementation-1.0.9.md)全部完成并发行：普通会话取消强制测试门禁、上下文口径、自由滚动／最新定位、Compact取消／即时数字／历史折叠、Markdown表格、模型自动刷新和Android提示生命周期。普通回答结束不等于验收通过；显式配置和宿主严格合同仍保留门禁。
+- 本机1.0.9 remote已在`tmux kkcode-coding`中从`/root`运行，通过原企业网关连接，all-folders及原身份／配置保留。升级前确认空闲并备份；不自动续跑已取消任务。私密升级记录与备份入口在`/root/.local/state/kkcode-coding/`。
 
 - 1.0.7八项连续工作改进与1.0.8像素界面、KIKI伙伴、工具入口均已发行；伙伴建议只追加草稿、不自动发送或验收。
-  当前跨平台、Web、CodeQL通过，Android85项JVM／73项UI与设备测试及签名升级通过，npm审计0告警。
+  当前跨平台、Web、CodeQL通过，Android85项JVM／80项UI与设备测试及签名升级通过，npm审计0告警。
   下一步是实际业务使用与人工审阅，不另建评测框架主线。
 - R15已关闭：`/root/kkcode-1061-wire-acceptance-20261002`；文档反馈修复通过，其余四项未完整交付。
   R16于10月3日02:41（UTC+8）关闭：`/root/kkcode-106-stable-harness-20261002`；437请求/
@@ -48,8 +48,9 @@
 
 ## 证据入口
 
-- [当前版本](docs/versions.md) · [发行范围](docs/release-1.0.8.md) · [实施与验收](docs/implementation-1.0.8.md)
+- [当前版本](docs/versions.md) · [发行范围](docs/release-1.0.9.md) · [实施与验收](docs/implementation-1.0.9.md)
 - [使用文档](docs/README.md) · [能力边界](docs/capabilities.md) · [历史导航](docs/history.md)
+- 1.0.9发行回执：`/tmp/kkcode-109-stable-qv6gzea1/`。
 - 1.0.8发行回执：`/tmp/kkcode-108-stable-_1tnlyzp/`。
 - 1.0.7发行回执：`/tmp/kkcode-107-stable-ty7o6nqe/`；1.0.6：`/tmp/kkcode-106-stable-lakJaz/`。
 - 旧冻结评测：`/root/kkcode-agent-eval-20260930`；参考源码：
