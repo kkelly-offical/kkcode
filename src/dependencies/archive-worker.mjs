@@ -17,6 +17,7 @@ try {
       const name = entry.path.replace(/\/$/, '')
       prefix ||= name.split('/')[0]
       const key = plugin ? name.normalize('NFC').toLowerCase() : name
+      if (name === prefix && entry.type !== 'Directory') { stop(); return }
       if (++entries > 20000 || !name.startsWith(prefix + '/') && name !== prefix || /[\\\x00-\x1f\x7f]/.test(name) || name.split('/').some(part => !part || part === '.' || part === '..' || (plugin ? part.toLowerCase() === '.git' || /[<>:"|?*]|[. ]$/.test(part) || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part) : part === 'node_modules' || sensitive(part))) || seen.has(key) || !['File', 'Directory', 'OldFile'].includes(entry.type) || entry.mode & 0o6000 || !Number.isSafeInteger(entry.size) || entry.size < 0 || plugin && entry.size > 16 * 1024 * 1024 || (bytes += entry.size) > workerData.maxBytes) { stop(); return }
       seen.add(key)
       if (name !== prefix + '/package.json') { entry.resume(); return }

@@ -47,6 +47,7 @@ for (const entry of [
   {path: 'package/link', type: 'Link', linkpath: 'package/package.json'},
   {path: 'package/.git/config', data: 'unsafe'},
   {path: 'package/CON', data: 'unsafe'},
+  {path: 'package', data: 'a root cannot be both a file and a directory'},
   {path: 'package/Package.json', data: 'case alias'}
 ]) test(`unsafe npm archive is rejected before extraction: ${entry.path} ${entry.type || ''}`, async t => {
   const f = await fixture(t), bytes = tar([entry])

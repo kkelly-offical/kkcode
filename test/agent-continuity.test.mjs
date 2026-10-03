@@ -98,7 +98,9 @@ test('stderr merging preserves check identity, while masking expressions remain 
 
 test('plain variable output does not turn an unrelated protected read into a write', () => {
   assert.equal(bashTouchesProtected('ls .kkcode 2>/dev/null; echo "HOME=$HOME"'), null)
-  for (const command of ['echo $(rm -rf .kkcode)', 'echo `rm -rf .kkcode`', 'echo "${x:-$(rm -rf .kkcode)}"', 'ls .kkcode; echo bad > .kkcode/config.yaml']) assert.ok(bashTouchesProtected(command), command)
+  for (const command of ['echo $(rm -rf .kkcode)', 'echo `rm -rf .kkcode`', 'echo "${x:-$(rm -rf .kkcode)}"', 'ls .kkcode; echo bad > .kkcode/config.yaml',
+    'CFG=.kkcode/config.yaml; echo bad > "$CFG"', 'DEST=.kkcode/config.yaml; cp source "$DEST"', 'DIR=.kkcode; export DIR; node writer.mjs',
+    'ls .kkcode; echo bad > "$TARGET"']) assert.ok(bashTouchesProtected(command), command)
 })
 
 test('new user guidance stops undispatched writes while preserving tool pairs and completed work', async t => {
