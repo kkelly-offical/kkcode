@@ -4,12 +4,12 @@ import { parseShellCommands, isLiteralNonmutatingShell } from '../permission/she
 import { toolCapability } from '../permission/rules.mjs'
 import { isReconciledCompletionEvent, completionEnvironmentIdentity } from './completion-history.mjs'
 import { completionVerificationGuidance } from './verification-guidance.mjs'
-import { isToolNotStarted } from '../core/execution-outcome.mjs'
+import { isToolNotStarted, isToolNoMutation } from '../core/execution-outcome.mjs'
 import { redactSensitive } from '../../http/identity.mjs'
 
 const EDIT_TOOLS = new Set(['write', 'edit', 'multiedit', 'patch', 'notebookedit', 'move', 'copy', 'remove', 'mkdir', 'archive', 'git_apply_patch', 'git_restore', 'office_create', 'office_edit', 'office_pdf'])
 const NON_CHECK_FLAGS = /^(?:--help|-h|--version|--list(?:Tests|-tests)?|-list|--collect-only|--co|--setup-plan|--setup-only|--dry-run|--showConfig|--listFilesOnly|--print-config|--init|--fixtures(?:-per-test)?|--markers|--if-present|--ignore-scripts|--passWithNoTests|--watch(?:All)?|--fix)(?:=|$)/i
-const SCRIPT = /^(?:test|build|lint|typecheck|type-check|check)(?::[a-zA-Z0-9_-]+)*$/
+const SCRIPT = /^(?:test|build|lint|typecheck|type-check|check|e2e)(?::[a-zA-Z0-9_-]+)*$/
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 24)
 // Exact arguments stay private to the model repair prompt. They must not be
 // copied into public completion reports, persisted environment snapshots or
@@ -69,7 +69,7 @@ export function classifyVerificationCommand(command, { cwd = process.cwd(), env 
   const toolEnvironment = completionEnvironmentIdentity(env)
   if (!toolEnvironment) return null
   const parsed = parseShellCommands(command), commands = parsed.commands
-  if (parsed.uncertain || !commands.length || commands.some((entry, index) => entry.dynamic || entry.glob || entry.redirects.length || entry.separator !== (index === commands.length - 1 ? null : '&&'))) return null
+  if (parsed.uncertain || !commands.length || commands.some((entry, index) => entry.dynamic || entry.glob || entry.redirects.some(r => r.operator !== '>&' || r.fd !== 2 || r.target !== '1') || entry.separator !== (index === commands.length - 1 ? null : '&&'))) return null
   let directory = path.resolve(cwd)
   const checks = []
   for (const entry of commands) {
@@ -255,7 +255,7 @@ function mutationPaths(event) {
 }
 
 function mutationReason(event, verification) {
-  if (isToolNotStarted(event)) return null
+  if (isToolNotStarted(event) || isToolNoMutation(event)) return null
   const metadata = event.metadata || {}
   if (Array.isArray(metadata.fileChanges) && metadata.fileChanges.length || Array.isArray(event.evidence?.fileChanges) && event.evidence.fileChanges.length || metadata.mutation || Array.isArray(metadata.mutations) && metadata.mutations.length) return 'observed_file_change'
   if (EDIT_TOOLS.has(event.name)) return successful(event) || isReconciledCompletionEvent(event) ? 'editor_action' : null
@@ -280,7 +280,7 @@ export function evaluateCompletionEvidence({ todoState = null, toolEvents = [], 
     // A host-proven pre-dispatch rejection did not run a check or change a
     // file. Never manufacture a failed check from its proposed arguments.
     // Untrusted metadata.started=false does not carry this proof.
-    if (isToolNotStarted(event)) continue
+    if (isToolNotStarted(event) || isToolNoMutation(event)) continue
     const eventCwd = path.resolve(cwd, event.args?.cwd || '.')
     const verification = event.name === 'bash' && event.metadata?.verificationEnvUnknown !== true ? classifyVerificationCommand(event.args?.command, { cwd: eventCwd, env: event.args?.env }) : null
     if (EDIT_TOOLS.has(event.name)) {
@@ -335,7 +335,13 @@ export function evaluateCompletionEvidence({ todoState = null, toolEvents = [], 
     ...(failures.some(failure => failure.kind === 'checks_required') && lastMutationReason === 'unclassified_command' && observations.some(check => check.status === 'passed' && check.index < lastMutation) ? [chinese
       ? '标准检查之后运行的普通命令无法证明只读，因此先前检查已过期；这不是已观察到文件真的改变。完成其他操作后，最后直接运行真实检查，再汇报结果。'
       : 'A later ordinary command is not proven read-only, so the earlier checks are stale; this is not a claim that a file change was observed. Finish other operations, run the real checks last, then report.'] : []),
-    ...(failureKinds.includes('checks_required') ? [completionVerificationGuidance(language)] : []),
+    ...(failureKinds.includes('checks_required') ? [completionVerificationGuidance(language, {compact: true})] : []),
+    ...(failureKinds.includes('failed_mutation') ? [chinese
+      ? '有修改操作未完成：先读取该工具记录及目标文件，核对当前内容后修复；不要仅靠无关测试成功清除它。'
+      : 'A mutation remains unresolved. Inspect its tool record and current target contents before repairing it; unrelated passing tests cannot clear it.'] : []),
+    ...(failureKinds.includes('blocking_todo') ? [chinese
+      ? '使用 todo_read 读取当前版本；继续未完成项，或根据实际任务变化明确取消过时项并注明原因。待办状态不代表验收通过。'
+      : 'Use todo_read for the current revision. Continue unfinished work, or explicitly cancel superseded items with a reason. Todo status is not verification.'] : []),
     ...(failureKinds.some(kind => ['failed_check', 'unverified_check'].includes(kind)) ? [chinese
       ? '已有失败或未能核实的检查仍须修复，并以相同参数、工作目录和环境重新执行同一检查。无关检查成功不能清除它；不要隐藏错误或跳过原测试。'
       : 'Repair failed or unverified checks and rerun the same checks with the same arguments, working directory and environment. An unrelated successful check cannot clear them; do not hide errors or skip the original tests.'] : [])

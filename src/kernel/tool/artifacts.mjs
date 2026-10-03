@@ -10,6 +10,7 @@ import { MAX_MEDIA_BYTES, mediaBlockError } from '../core/media.mjs'
 
 const digest = value => createHash('sha256').update(String(value)).digest('hex')
 const accesses = new WeakSet(), references = new WeakSet()
+const recalls = new WeakSet()
 const ARCHIVE_ATTEMPT = Symbol('host-artifact-archive-attempt')
 const publicRef = metadata => Object.freeze({ id: metadata.id, sha256: metadata.sha256, size: metadata.size })
 const missingAccess = () => { throw new ArtifactStoreError('artifact_host_required', '完整输出读取需要当前会话的受控运行环境。', 403) }
@@ -242,6 +243,11 @@ export function trustedArtifactRef(result) {
   return ref && references.has(ref) ? ref : null
 }
 
+export function trustedArtifactRecall(result) {
+  const ref = trustedArtifactRef(result)
+  return ref && recalls.has(ref) ? ref : null
+}
+
 export function trustedArtifactRefs(result) {
   const all = [result?.metadata?.artifactRef, ...(Array.isArray(result?.metadata?.artifactRefs) ? result.metadata.artifactRefs : [])]
   return [...new Map(all.filter(ref => ref && references.has(ref)).map(ref => [ref.id, ref])).values()]
@@ -297,9 +303,10 @@ export function createArtifactTools() {
       // JSON can expand control characters sixfold. Reserve envelope/cursor
       // space so reading an artifact never recursively archives its own page.
       const page = await governedAccess(ctx).read({ id: args.artifact_id, cursor: args.cursor, limit: Math.min(Number(args.limit) || 4000, Math.max(1, Math.floor(((ctx.toolResultLimit || 16000) - 1000) / 8))) })
+      const ref = publicRef(page); references.add(ref); recalls.add(ref)
       const content = args.encoding === 'base64' ? page.data : Buffer.from(page.data, 'base64').toString('utf8')
       return { output: JSON.stringify({ ...page, data: content, encoding: args.encoding === 'base64' ? 'base64' : 'utf8',
-        ...(args.encoding === 'base64' ? {} : { note: 'UTF-8 display at arbitrary byte boundaries can show replacement characters; base64 preserves exact bytes.' }) }) }
+        ...(args.encoding === 'base64' ? {} : { note: 'UTF-8 display at arbitrary byte boundaries can show replacement characters; base64 preserves exact bytes.' }) }), metadata: {artifactRef: ref} }
     }
   }, {
     name: 'artifact_search',

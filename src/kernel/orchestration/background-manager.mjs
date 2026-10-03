@@ -25,6 +25,7 @@ settledEmitter.setMaxListeners(50)
 const WORKER_ENTRY = fileURLToPath(new URL("./background-worker.mjs", import.meta.url))
 const TERMINAL_STATES = new Set(["completed", "cancelled", "error", "interrupted"])
 const inlineControllers = new Map()
+const inlineStopControllers = new Map()
 const inlineOwnerReleases = new Map()
 
 function now() {
@@ -153,6 +154,8 @@ function summarizeTask(task) {
     next_action: nextActionForTask(task),
     log_lines: Array.isArray(task.logs) ? task.logs.length : 0,
     log_tail: Array.isArray(task.logs) ? task.logs.slice(-10) : [],
+    ...(task.payload?.workerType === 'bash' ? {cwd: task.payload.cwd, lifetime: task.payload.lifetime || 'command',
+      timeout_ms: task.payload.commandTimeoutMs, stop_requested: Boolean(task.stopRequestedAt)} : {}),
     result_preview: extractTaskResultPreview(task),
     worktree_preserved: task.result?.worktree_preserved === true,
     worktree_path: task.result?.worktree_path || null
@@ -430,14 +433,17 @@ async function startPendingTasks(config = {}) {
 
 async function runInline(task, run) {
   const controller = new AbortController()
+  const stopController = new AbortController()
   const owner = backgroundTaskOwner(task)
   const writeOptions = { owner, preserveTerminal: true }
   inlineControllers.set(task.id, controller)
+  inlineStopControllers.set(task.id, stopController)
   let poll
   try {
     const active = await patchTask(task.id, current => current.cancelled || TERMINAL_STATES.has(current.status)
       ? {} : { status: "running", startedAt: now(), lastHeartbeatAt: now() }, writeOptions)
     if (!active || active.cancelled || TERMINAL_STATES.has(active.status)) return
+    if (active.stopRequestedAt) stopController.abort()
     // Another CLI process can persist a cancellation, so the same-process
     // controller is the fast path rather than the only path.
     let checking = false
@@ -447,6 +453,7 @@ async function runInline(task, run) {
       try {
         const latest = await loadTask(task.id)
         if (!backgroundTaskOwnerMatches(latest, owner) || latest?.cancelled) controller.abort()
+        else if (latest.stopRequestedAt && !stopController.signal.aborted) stopController.abort()
         else if (latest?.status === 'running' && now() - Number(latest.lastHeartbeatAt || 0) >= 1000) {
           await patchTask(task.id, current => current.status === 'running' ? { lastHeartbeatAt: now() } : {}, writeOptions)
         }
@@ -457,6 +464,7 @@ async function runInline(task, run) {
     const result = await run({
       taskId: task.id,
       signal: controller.signal,
+      stopSignal: stopController.signal,
       isCancelled: async () => {
         const latest = await loadTask(task.id)
         return !backgroundTaskOwnerMatches(latest, owner) || Boolean(latest?.cancelled)
@@ -464,6 +472,7 @@ async function runInline(task, run) {
       log: async (line) => {
         await patchTask(task.id, (current) => ({
           logs: [...(current.logs || []), String(line)].slice(-300),
+          logSequence: (current.logSequence ?? current.logs?.length ?? 0) + 1,
           lastHeartbeatAt: now()
         }), writeOptions)
       }
@@ -488,6 +497,7 @@ async function runInline(task, run) {
   } finally {
     clearInterval(poll)
     if (inlineControllers.get(task.id) === controller) inlineControllers.delete(task.id)
+    if (inlineStopControllers.get(task.id) === stopController) inlineStopControllers.delete(task.id)
     inlineOwnerReleases.get(task.id)?.()
     inlineOwnerReleases.delete(task.id)
   }
@@ -594,6 +604,18 @@ export const BackgroundManager = {
   async summary() {
     await ensureBackgroundTaskRuntimeDir()
     return summarizeTaskList(await readAllTasks())
+  },
+
+  async requestStop(id, {parentSessionId = null} = {}) {
+    const task = await loadTask(id)
+    if (!task || parentSessionId != null && task.payload?.parentSessionId !== parentSessionId) return false
+    if (task.payload?.lifetime !== 'service' || task.payload?.workerType !== 'bash') return this.cancel(id, {parentSessionId})
+    await patchTask(id, current => {
+      if (parentSessionId != null && current.payload?.parentSessionId !== parentSessionId) throw new Error('Background task owner changed')
+      return TERMINAL_STATES.has(current.status) ? {} : {stopRequestedAt: current.stopRequestedAt || now()}
+    }, {owner: backgroundTaskOwner(task), preserveTerminal: true})
+    inlineStopControllers.get(id)?.abort()
+    return true
   },
 
   async cancel(id, { parentSessionId = null } = {}) {

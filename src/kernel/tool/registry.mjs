@@ -12,11 +12,13 @@ import { registerAtomicMutationPreflights } from './mutation-preflight.mjs'
 import { registerBashPreflights, assertBashLifecycle } from './bash-preflight.mjs'
 import { withFileLock } from "./file-lock-manager.mjs"
 import { BackgroundManager } from "../orchestration/background-manager.mjs"
-import { scopedBackgroundTask, scopedBackgroundTasks, cancelScopedBackgroundTask } from './background-task-scope.mjs'
+import { scopedBackgroundTask, scopedBackgroundTasks, cancelScopedBackgroundTask, stopScopedBackgroundTask } from './background-task-scope.mjs'
+import {processLifetime, serviceCommand, processLogWindow} from './process-lifetime.mjs'
 import { runManagedProcess } from './managed-process.mjs'
 import { createTaskTool, createTaskGroupTool, createChildControlTools, taskModelSchema } from "./task-tool.mjs"
 import { normalizeToolOutcome } from './result-outcome.mjs'
 import { beginToolOperation } from './operation-journal.mjs'
+import { markToolNoMutation } from '../core/execution-outcome.mjs'
 import { makeToolResult } from '../core/types.mjs'
 import { McpRegistry } from "../mcp/registry.mjs"
 import { SkillRegistry } from "../skill/registry.mjs"
@@ -675,12 +677,12 @@ export function isLongRunningCommand(command) {
  * - 有沙箱：命令文本作为 `sh -c` 的一个 argv 传给 bwrap，
  *   全程不拼字符串 —— 拼接方案下命令里的引号会被沙箱参数表二次解释。
  */
-function spawnShell({ command, cwd, timeoutMs, env, signal, sandbox = null, invocation = null }) {
+function spawnShell({ command, cwd, timeoutMs, env, signal, stopSignal = null, onOutput = null, sandbox = null, invocation = null }) {
   if (sandbox) {
-    return runManagedProcess({ command: sandbox.command, args: sandbox.args, cwd, timeoutMs, env, signal })
+    return runManagedProcess({ command: sandbox.command, args: sandbox.args, cwd, timeoutMs, env, signal, stopSignal, onOutput })
   }
-  if (invocation) return runManagedProcess({ command: invocation.command, args: invocation.args, cwd, timeoutMs, env: invocation.env, signal })
-  return runManagedProcess({ command: wrapCmd(command), cwd, timeoutMs, env, signal, shell: detectShellInfo() })
+  if (invocation) return runManagedProcess({ command: invocation.command, args: invocation.args, cwd, timeoutMs, env: invocation.env, signal, stopSignal, onOutput })
+  return runManagedProcess({ command: wrapCmd(command), cwd, timeoutMs, env, signal, stopSignal, onOutput, shell: detectShellInfo() })
 }
 
 /**
@@ -750,10 +752,11 @@ async function runBash(command, cwd, timeoutMs = BASH_TIMEOUT_MS, options = {}) 
   // A host-controlled read invocation's scrubbed environment is authoritative;
   // merging caller/ambient variables back would re-enable Git executables.
   const env = invocation?.env || (extraEnv ? { ...process.env, ...extraEnv } : process.env)
-  const out = await spawnShell({ command, cwd, timeoutMs, env, sandbox, invocation, signal: options.signal })
+  const out = await spawnShell({ command, cwd, timeoutMs, env, sandbox, invocation, signal: options.signal, stopSignal: options.stopSignal, onOutput: options.onOutput })
   const { exitCode, exitSignal, timedOut, cancelled, captureIncomplete, terminationIncomplete, started } = out
   const ok = exitCode === 0 && !timedOut && !cancelled && !captureIncomplete && !terminationIncomplete && !out.errorCode
   const metadata = { exitCode, exitSignal, timedOut, cancelled, captureIncomplete, terminationIncomplete, started,
+    cwd, ...(out.stopRequested ? {stopRequested: true} : {}),
     ...(invocation ? { executionAdapter: 'controlled-git-read' } : {}),
     ...(started && (timedOut || cancelled || captureIncomplete || terminationIncomplete || exitSignal) ? { outcomeUnknown: true } : {}) }
   const result = { ok, status: cancelled ? 'cancelled' : ok ? 'completed' : 'error', cancelled,
@@ -1451,12 +1454,12 @@ function builtinTools(config) {
           })
         : await runEdit()
       if (result?.ok === false) {
-        return {
+        return markToolNoMutation({
           ok: false,
           error: "edit_failed",
           output: result.output || "edit failed",
           metadata: { fileChanges: [] }
-        }
+        })
       }
       const updatedContent = await readFile(target, "utf8").catch(() => null)
       await refreshFileReadStateFromDisk(target, { content: updatedContent ?? undefined }).catch(() => {})
@@ -1537,14 +1540,16 @@ function builtinTools(config) {
 
   const bashTool = {
     name: "bash",
-    description: "Run a shell command in cwd using /bin/sh on Unix or ComSpec/cmd on Windows, NOT the login SHELL; invoke bash explicitly for Bash-only syntax. ONLY use for commands that have no dedicated tool (e.g. git, npm, pip, docker). Do NOT use for: reading files (use `read`), searching files (use `grep`/`glob`), writing files (use `write`/`edit`), moving/copying/deleting/creating directories/archiving (use `move`/`copy`/`remove`/`mkdir`/`archive` — those validate paths, refuse protected files, and make deletion recoverable, none of which `bash` does), or HTTP requests (use `http_request`/`webfetch` — `curl` through `bash` skips the egress checks that block internal addresses and cloud metadata endpoints). Long-running commands (dev servers, watchers) must use run_in_background: true, which does NOT extend their finite timeout. Prefer a bounded assertion harness that owns temporary services and cleanup. Supports `cwd` and per-command `env`. Non-zero exits are reported as `[exit N]`.",
+    description: "Run a shell command in cwd using /bin/sh on Unix or ComSpec/cmd on Windows. Use dedicated read/edit/search/file/HTTP tools when available. For a long build use yield_time_ms to return a managed task handle while it runs. For a temporary development server use lifetime: service with one foreground command and a finite timeout; inspect readiness/logs using task_output and request graceful shutdown with task_stop. Waiting does not extend the process deadline. A clean exit is required; forced termination or lost effects still require inspection. Never use unjoined shell &. Non-zero exits are reported as [exit N]; large output is archived for artifact_read/artifact_search, so do not add tail/grep pipelines to tests.",
     inputSchema: {
       type: "object",
       properties: {
         command: schema("string", "shell command; on POSIX do not append unjoined shell &. Use an owned test harness or a managed background command without shell &; explicit wait joins are allowed."),
         timeout: schema("number", "timeout in ms (default 120000, max 600000)"),
+        lifetime: {type: 'string', enum: ['command', 'service'], description: 'command (default): finite job; service: managed temporary foreground server, default 600000ms, max 3600000ms. Stop it before final verification. Strict runs use bounded tests instead.'},
+        yield_time_ms: schema('number', 'wait for a managed command before returning its task handle (0-30000ms). Does not kill or extend the process; poll with task_output.'),
         description: schema("string", "human-readable description of what this command does (optional)"),
-        run_in_background: schema("boolean", "run as a managed background task without shell &, returns task_id immediately (optional). Same finite timeout as foreground: default 120000ms, max 600000ms; NOT a persistent service. Use a bounded assertion harness that closes and joins temporary test services."),
+        run_in_background: schema("boolean", "return a managed task handle; without yield_time_ms returns immediately. Uses the selected lifetime and finite timeout. No detached shell &."),
         cwd: schema("string", "working directory, relative to the workspace root (optional, default: workspace root)"),
         env: schema("object", "extra environment variables for this command only, e.g. {\"NODE_ENV\":\"test\"} (optional). Added on top of the inherited environment.")
       },
@@ -1555,13 +1560,9 @@ function builtinTools(config) {
       // the identity-bound preflight before opening an operation record.
       assertBashLifecycle(args,{language:ctx.config?.language})
       const command = String(args.command || "")
-      const configuredTimeout = Number(ctx.config?.tool?.bash_timeout_ms)
-      const configBashTimeout = Number.isFinite(configuredTimeout) && configuredTimeout !== 0 ? configuredTimeout : BASH_TIMEOUT_MS
-      const requestedTimeout = Number(args.timeout)
-      // A malformed optional setting must not turn into NaN and disable the
-      // managed process timer. Config diagnostics remain intact; every actual
-      // Bash launch has a finite, truthful lifetime regardless of caller path.
-      const timeoutMs = Math.min(Math.max(Number.isFinite(requestedTimeout) && requestedTimeout !== 0 ? requestedTimeout : configBashTimeout, 1000), 600_000)
+      const lifetime = processLifetime(args, ctx.config)
+      const {timeoutMs} = lifetime
+      const processCommand = lifetime.service ? serviceCommand(command) : command
 
       // 执行策略检查。审批档必须传进去 —— exec-policy 与 PermissionEngine 是
       // 两套互不通话的权限词汇，不传的话 YOLO 档在这里等同于最严格档，
@@ -1604,9 +1605,9 @@ function builtinTools(config) {
           code: cancelled ? 'cancelled' : 'controlled_git_preparation_failed', output: error.message,
           metadata: { started: false, exitCode: null, timedOut: false, cancelled, captureIncomplete: false } }
       }
-      const sandbox = await prepareBashSandbox(ctx, command, invocation ? [invocation.command, ...invocation.args] : null)
+      const sandbox = await prepareBashSandbox(ctx, processCommand, invocation ? [invocation.command, ...invocation.args] : null)
 
-      if (args.run_in_background) {
+      if (lifetime.yielding) {
         // 这里**不**再拦长命令。前台那道拦截的提示语原文是「或者用
         // run_in_background: true」，而这里又把它堵回去 —— 文档承诺的唯一
         // 逃生口在代码里不存在，模型照提示改参数后拿到的还是 blocked。
@@ -1616,20 +1617,39 @@ function builtinTools(config) {
           payload: { workerType: 'bash', command, cwd: runCwd, parentSessionId: ctx.sessionId || null,
             turnId: ctx.turnId || null, toolCallId: ctx.toolCallId || null,
             workerTimeoutMs: timeoutMs, commandTimeoutMs: timeoutMs,
+            lifetime: lifetime.lifetime,
             envProvided: Object.keys(extraEnv || {}).length > 0 },
-          run: async ({ signal }) => {
+          run: async ({ signal, stopSignal, log }) => {
             // Submission's operation ends with the launch acknowledgement.
             // The actual background process needs its OWN durable outcome, so
             // the owner can inspect/acknowledge a cancellation or lost effect.
             let operation
             let dispatchStarted = false
+            let pendingOutput = '', skippedOutput = 0, flushing = Promise.resolve()
+            const flush = () => {
+              if (!pendingOutput) return flushing
+              const text = (skippedOutput ? `[Live preview omitted ${skippedOutput} earlier characters; inspect the final output/archive receipt after settlement.]\n` : '') + pendingOutput
+              pendingOutput = ''; skippedOutput = 0
+              flushing = flushing.then(() => log(text))
+              return flushing
+            }
+            const outputTimer = setInterval(() => { void flush().catch(() => {}) }, 500)
             try {
               operation = await beginToolOperation({sessionId: ctx.sessionId, turnId: ctx.turnId, tool: 'bash', args: {command, cwd: runCwd, background: true, env: extraEnv}})
               dispatchStarted = true
-              const result = await runBash(command, runCwd, timeoutMs, {
+              const result = await runBash(processCommand, runCwd, timeoutMs, {
                 background: true, env: extraEnv, maxChars, sandbox: sandbox.spawn, sandboxHint: sandbox.hint, invocation,
-                artifactAccess: ctx.artifactAccess, toolCallId: ctx.toolCallId, signal
+                artifactAccess: ctx.artifactAccess, toolCallId: ctx.toolCallId, signal,
+                stopSignal: lifetime.service ? stopSignal : null,
+                onOutput: text => { const combined = pendingOutput + text; skippedOutput += Math.max(0, combined.length - 32000); pendingOutput = combined.slice(-32000) }
               })
+              // Progress-log storage is separate from the already observed
+              // process outcome. Never turn a known exit into an unknown
+              // operation merely because its live preview could not be saved.
+              try { await flush() } catch {
+                Object.assign(result.metadata, {liveLogIncomplete: true})
+                result.output += '\n[Live progress log was not fully saved; inspect this final output and its archive receipt.]'
+              }
               const uncertain = 'outcomeUnknown' in result.metadata && result.metadata.outcomeUnknown === true
               await operation?.finish(uncertain ? 'uncertain' : 'settled')
               return {...result, metadata: {...result.metadata, ...(operation ? {operationId: operation.id} : {})}}
@@ -1642,16 +1662,18 @@ function builtinTools(config) {
                 metadata: {started: dispatchStarted, exitCode: null, timedOut: false, cancelled: signal.aborted,
                   captureIncomplete: dispatchStarted, ...(dispatchStarted ? {outcomeUnknown: true} : {}),
                   ...(operation ? {operationId: operation.id} : {})}}
-            }
+            } finally { clearInterval(outputTimer) }
           },
           config: ctx.config,
           signal: ctx.signal
         })
-        const launched = `background task launched: ${task.id}\nCommand timeout: ${timeoutMs}ms; backgrounding does not extend it or create a persistent service.\nUse background_output to check results. For temporary test services, prefer a bounded assertion harness that owns startup, readiness, checks and cleanup.`
-        return { ok: true, status: task.status, background_task_id: task.id,
+        const observed = lifetime.waitMs > 0 ? await BackgroundManager.waitForTask(task.id, {timeoutMs: lifetime.waitMs, tickMs: 50}) : task
+        const launched = `background task launched: ${task.id}\nLifetime: ${lifetime.lifetime}; command timeout: ${timeoutMs}ms; cwd: ${runCwd}. Waiting does not extend this deadline.\nStatus: ${observed?.status || task.status}. Use task_output with task_id and optional wait_ms/cursor for progress. ${lifetime.service ? 'Use task_stop for graceful shutdown; the service must close resources and exit normally. Forced stopping remains subject to inspection.' : 'A launch receipt is not a completed check.'}`
+        return { ok: true, status: observed?.status || task.status, background_task_id: task.id,
           output: sandbox.notice ? `${sandbox.notice}\n${launched}` : launched,
-          metadata: { backgroundTask: { id: task.id, kind: 'bash', phase: 'submitted', status: task.status,
-            parentSessionId: ctx.sessionId || null, turnId: ctx.turnId || null, commandTimeoutMs: timeoutMs } } }
+          metadata: { backgroundTask: { id: task.id, kind: 'bash', phase: 'submitted', status: observed?.status || task.status,
+            parentSessionId: ctx.sessionId || null, turnId: ctx.turnId || null, commandTimeoutMs: timeoutMs },
+            process: {taskId: task.id, status: observed?.status || task.status, cwd: runCwd, lifetime: lifetime.lifetime, timeoutMs} } }
       }
 
       const output = await runBash(command, runCwd, timeoutMs, {
@@ -1734,35 +1756,51 @@ function builtinTools(config) {
 
   const taskStopTool = {
     name: "task_stop",
-    description: "Cancel a background task owned by this session by task_id. Safe to call on owned tasks that already finished.",
+    description: "Stop an owned task. Managed services receive a graceful stop request; inspect task_output until they exit. Other tasks are cancelled. Force cancels immediately and may require effect inspection. Stopping is not rollback or verification.",
     inputSchema: {
       type: "object",
       properties: {
-        task_id: schema("string", "background task id")
+        task_id: schema("string", "background task id"),
+        force: schema('boolean', 'force cancellation instead of requesting graceful service shutdown (default false)')
       },
       required: ["task_id"]
     },
     async execute(args, ctx) {
-      const ok = await cancelScopedBackgroundTask(String(args.task_id || ""), ctx)
-      return ok ? "cancel requested" : "background task not found"
+      const task = await scopedBackgroundTask(String(args.task_id || ''), ctx)
+      if (!task) return 'background task not found'
+      const graceful = args.force !== true && task.payload?.lifetime === 'service'
+      const ok = await (graceful ? stopScopedBackgroundTask : cancelScopedBackgroundTask)(task.id, ctx)
+      return ok ? graceful ? 'graceful stop requested; use task_output to verify the actual exit and retained effects' : 'cancel requested' : 'background task not found'
     }
   }
 
   const taskOutputTool = {
     name: "task_output",
-    description: "Retrieve background task output owned by this session with summary, result payload, and next-action guidance.",
+    description: "Read an owned task's status, cwd, incremental logs, result and next action. wait_ms waits up to 30000ms without changing its deadline; pass the returned cursor on the next call to avoid repeating logs.",
     inputSchema: {
       type: "object",
       properties: {
-        task_id: schema("string", "background task id")
+        task_id: schema("string", "background task id"),
+        wait_ms: schema('number', 'wait up to 30000ms for completion; 0 returns immediately'),
+        cursor: schema('number', 'log cursor from the previous task_output; default 0')
       },
       required: ["task_id"]
     },
     async execute(args, ctx) {
-      const task = await scopedBackgroundTask(String(args.task_id || ""), ctx)
+      let task = await scopedBackgroundTask(String(args.task_id || ""), ctx)
       if (!task) return "background task not found"
+      const deadline = Date.now() + Math.min(30000, Math.max(0, Number(args.wait_ms) || 0))
+      while (['pending', 'running'].includes(task.status) && Date.now() < deadline) {
+        ctx.signal?.throwIfAborted()
+        // A short bounded wait also lets user steering reach the next boundary.
+        if (await ctx.hasPendingInput?.()) break
+        await BackgroundManager.waitForAny([task.id], Math.min(100, deadline - Date.now()))
+        task = await scopedBackgroundTask(task.id, ctx)
+        if (!task) return 'background task not found'
+      }
       return {
         ...BackgroundManager.summarize(task),
+        logs: processLogWindow(task, args.cursor),
         result: task.result,
         error: task.error || null
       }
@@ -1771,17 +1809,17 @@ function builtinTools(config) {
 
   const cancelTool = {
     name: "background_cancel",
-    description: "Cancel a background task owned by this session by its task_id. Covers owned background `task`, `bash`, and longagent lanes. Alias of `task_stop` — prefer `task_stop` for new work.",
+    description: "Alias of task_stop for an owned background task. Managed services normally close cooperatively; force=true requests cancellation. Prefer task_stop for new work.",
     inputSchema: {
       type: "object",
       properties: {
-        task_id: schema("string", "background task id")
+        task_id: schema("string", "background task id"),
+        force: schema('boolean', 'force cancellation instead of cooperative service shutdown')
       },
       required: ["task_id"]
     },
     async execute(args, ctx) {
-      const ok = await cancelScopedBackgroundTask(String(args.task_id || ""), ctx)
-      return ok ? "cancel requested" : "background task not found"
+      return taskStopTool.execute(args, ctx)
     }
   }
 
@@ -1799,11 +1837,12 @@ function builtinTools(config) {
 
   const todowriteTool = {
     name: "todowrite",
-    description: "Create or update your durable session task list for multi-step work in every mode, including Plan. Preserve returned item IDs, and use the returned revision as expectedRevision. Status is authored progress, not evidence that tests passed; attach only existing conversation references. Omitted unfinished own items become cancelled. Other agents' items are read-only.",
+    description: "Maintain the durable plan in every mode. Use mode: merge to update selected items while preserving other work; replace (legacy default) cancels omitted unfinished own items. Read todo_read to obtain existing IDs and revision; never invent IDs. Use reason when cancelling superseded work or explaining a blocker. Status is authored progress, not verification. Other agents' items are read-only.",
     inputSchema: {
       type: "object",
       properties: {
         expectedRevision: { type: "integer", minimum: 0, description: "Revision returned by the last todo update; stale writes are rejected" },
+        mode: {type: 'string', enum: ['merge', 'replace'], description: 'Prefer merge for incremental changes. replace cancels omitted unfinished own items; default replace for compatibility.'},
         todos: {
           type: "array",
           maxItems: 100,
@@ -1816,6 +1855,7 @@ function builtinTools(config) {
               content: schema("string", "task description in imperative form (e.g. 'Run tests')"),
               activeForm: schema("string", "present continuous form shown during execution (e.g. 'Running tests')"),
               status: { type: "string", enum: ["pending", "in_progress", "completed", "blocked", "cancelled"], description: "authored progress only, not observed verification" },
+              reason: schema('string', 'why work is blocked, cancelled or replanned; max 512 characters'),
               dependencies: { type: "array", items: { type: "string" }, description: "Existing todo IDs in this session" },
               evidenceRefs: { type: "array", items: { type: "object", additionalProperties: false, properties: { kind: { type: "string", enum: ["message", "part"] }, id: { type: "string" } }, required: ["kind", "id"] }, description: "Existing same-session message/part references, not file paths or verification claims" }
             },
@@ -1828,17 +1868,17 @@ function builtinTools(config) {
     },
     async execute(args, ctx) {
       const { isSessionTodoService } = await import('../session/todo-service.mjs')
-      if (!isSessionTodoService(ctx.todoService)) throw Object.assign(new Error('A host-bound session todo service is required'), { code: 'todo_scope' })
+      if (!isSessionTodoService(ctx.todoService) || ctx.todoService.sessionId !== ctx.sessionId) throw Object.assign(new Error('A host-bound session todo service is required'), { code: 'todo_scope' })
       try {
         const snapshot = await ctx.todoService.update(args, { sessionId: ctx.sessionId, signal: ctx.signal })
         return JSON.stringify({ ...snapshot, note: 'Authored task progress only. Completed items are not proof that tests or acceptance passed.' })
       } catch (error) {
-        if (error.code !== 'todo_conflict') throw error
+        if (!['todo_conflict', 'todo_scope'].includes(error.code)) throw error
         // Return current IDs/state for deliberate replanning, without advancing
         // the service baseline or pretending the stale write was accepted.
         const snapshot = await ctx.todoService.list()
-        return { status: 'blocked', code: 'todo_conflict', error: error.message,
-          output: JSON.stringify({ updated: false, snapshot, message: 'Todo changed concurrently. Reconcile current items and retry with its explicit expectedRevision; do not blindly replay the previous list.' }) }
+        return { status: error.code === 'todo_conflict' ? 'blocked' : 'error', code: error.code, error: error.message,
+          output: JSON.stringify({ updated: false, snapshot, message: 'Use the current returned IDs and explicit expectedRevision. Reconcile the intended changes with mode: merge; omit id only for a new item. No update was accepted.' }) }
       }
     }
   }

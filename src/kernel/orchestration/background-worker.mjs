@@ -11,7 +11,8 @@ import { checkWorkspaceTrust } from "../permission/workspace-trust.mjs"
 import { removeDetachedWorktree } from "./worktree-handoff.mjs"
 import { createBackgroundPromptClient } from './background-prompts.mjs'
 import * as git from "../../util/git.mjs"
-import { ownedChild, drainChildMessages, settleChildOperation } from './child-controller.mjs'
+import { ownedChild, childSteeringSource, settleChildOperation } from './child-controller.mjs'
+import {childHandoff} from './child-handoff.mjs'
 import { childOutcome } from './child-policy.mjs'
 import { readBackgroundTask, updateBackgroundTask, backgroundTaskOwner, backgroundTaskOwnerMatches } from './background-task-store.mjs'
 
@@ -215,7 +216,7 @@ async function runDelegateTask(task, signal) {
       apiKeyEnv: payload.apiKeyEnv || null,
       sessionId: payload.subSessionId,
       signal,
-      steerSource: payload.childOperationId ? () => drainChildMessages(payload.subSessionId, payload.childOperationId) : null,
+      steerSource: payload.childOperationId ? childSteeringSource(payload.subSessionId, payload.childOperationId) : null,
       runSpec: payload.runSpec || null,
       allowQuestion: payload.allowQuestion === true,
       toolContext: {
@@ -294,7 +295,7 @@ async function runDelegateTask(task, signal) {
     }
   }
 
-  return {
+  const result = {
     ...childOutcome(out, signal.aborted),
     session_id: payload.subSessionId,
     parent_session_id: payload.parentSessionId || null,
@@ -313,6 +314,7 @@ async function runDelegateTask(task, signal) {
     worktree_preserved: worktreePreserved,
     worktree_cleanup_error: worktreeCleanupError
   }
+  return {...result, handoff: childHandoff(result, {cwd: worktreePreserved ? worktree.path : repoCwd})}
 }
 
 const SILENT_ERROR_PATTERNS = [

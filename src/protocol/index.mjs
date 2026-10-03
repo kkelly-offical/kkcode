@@ -24,7 +24,7 @@ export const SESSION_RUNNING_TYPES = Object.freeze(['turn.preparing', 'turn.star
 export const SESSION_IDLE_TYPES = Object.freeze(['turn.finish', 'turn.result', 'turn.failed', 'turn.cancelled'])
 export const DEVICE_METHODS = Object.freeze([
   'status', 'folders.list', 'files.read', 'media.preview', 'sessions.list', 'sessions.get', 'sessions.create', 'sessions.configure', 'sessions.update', 'sessions.rewind', 'sessions.delete',
-  'turns.start', 'turns.cancel', 'events.list', 'control.acquire', 'control.release',
+  'turns.start', 'turns.cancel', 'turns.steer', 'events.list', 'control.acquire', 'control.release',
   'approvals.resolve', 'commands.list', 'commands.run', 'settings.get', 'settings.update',
   'extensions.list', 'extensions.reload', 'models.discover', 'profile.get', 'profile.update',
   'attachments.upload', 'attachments.list', 'attachments.remove', 'branches.list', 'branches.switch', 'branches.create', 'worktrees.list', 'worktrees.create', 'worktrees.open',

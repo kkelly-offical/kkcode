@@ -1,1 +1,1 @@
-{"name":"@kkcode/sdk","version":"1.0.6","private":true,"type":"module","exports":{".":"./index.mjs","./client":"./client.mjs"}}
+{"name":"@kkcode/sdk","version":"1.0.7","private":true,"type":"module","exports":{".":"./index.mjs","./client":"./client.mjs"}}

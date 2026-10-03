@@ -142,10 +142,13 @@ const ALL_TARGET_MUTATORS = new Set(['rm', 'rmdir', 'mv', 'tee', 'truncate', 'ch
 export function bashTouchesProtected(command) {
   const cmd = String(command || '')
   if (!cmd.trim()) return null
-  const parsed = parseShellCommands(cmd)
+  const parsed = parseShellCommands(cmd, {allowSimpleParameters: true})
   // Substitution, heredoc and malformed syntax cannot be proven safe by this
   // lexer. Retain conservative handling instead of silently losing targets.
-  if (parsed.uncertain) {
+  const opaqueDynamicWrite = parsed.commands.some(item => item.dynamic && (
+    !READ_COMMANDS.has(item.words[0]) || item.redirects.some(redirect => redirect.operator.includes('>') && /[$`]/.test(redirect.target))
+  ))
+  if (parsed.uncertain || opaqueDynamicWrite) {
     const hit = protectedMention(cmd) || protectedMention(parsed.commands.flatMap(item => item.words).join(' '))
     if (hit) return hit
   }
@@ -159,7 +162,15 @@ export function bashTouchesProtected(command) {
     const assignments = []
     while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0] || '')) assignments.push(words.shift())
     const name = (words.shift() || '').split('/').at(-1)
-    if (!name) continue
+    if (!name) {
+      // A later command may consume this binding as a write destination. Do
+      // not lose the protected literal when the assignment stands on its own.
+      for (const assignment of assignments) {
+        const hit = protectedMention(assignment)
+        if (hit) return hit
+      }
+      continue
+    }
     const args = words.filter(arg => !arg.startsWith('-'))
     let targets = []
     if (ALL_TARGET_MUTATORS.has(name)) targets = args

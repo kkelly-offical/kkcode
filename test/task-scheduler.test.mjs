@@ -110,7 +110,11 @@ test("task delegate reuses an existing sub-session with continuation prompt", as
   assert.equal(received.providerType, "local")
   assert.equal(received.subagent.name, "default-subagent")
   assert.equal(received.allowQuestion, true)
-  assert.deepEqual(result, {
+  assert.equal(result.handoff.status, 'completed')
+  assert.equal(result.handoff.verification_state, 'not_verified')
+  assert.deepEqual(result.handoff.files, [])
+  const {handoff: _handoff, ...legacyResult} = result
+  assert.deepEqual(legacyResult, {
     status: 'completed',
     session_id: initial.session_id,
     parent_session_id: "parent_2",

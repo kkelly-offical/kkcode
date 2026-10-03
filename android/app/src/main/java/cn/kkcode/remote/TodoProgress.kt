@@ -85,6 +85,7 @@ internal fun subagentProgressSummary(items: List<JSONObject>): String? {
                 Column(Modifier.padding(top = 7.dp)) {
                     Text("${todoStatusLabel(item.optString("status"))} · ${if(item.optString("status") == "in_progress") item.optString("activeForm").ifBlank { item.optString("content") } else item.optString("content")}", color = muted, fontSize = 12.sp)
                     Text("负责人：$ownerLabel" + if(labels.isNotEmpty()) " · 依赖：${labels.joinToString("、")}" else "", color = muted, fontSize = 10.sp)
+                    if(item.optString("reason").isNotBlank()) Text(item.optString("reason"), color = muted, fontSize = 11.sp)
                 }
             } }
             subagents.forEach { item -> key(item.optString("session_id")) {

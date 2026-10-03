@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
-import { Worker } from 'node:worker_threads'
+import {auditPackageArchive as auditArchive} from '../../dependencies/archive-audit.mjs'
 import { realpath, mkdir, mkdtemp, readFile, writeFile, lstat, readdir, rm } from 'node:fs/promises'
 import { guardedFetch } from '../../net/url-guard.mjs'
 import { buildRequestHeaders } from '../../http/identity.mjs'
@@ -101,22 +101,6 @@ export async function inspectNpmEnvironment({ cwd, image, registryOrigins, allow
   return plan
 }
 
-async function auditArchive(file, maxBytes, signal) {
-  signal?.throwIfAborted()
-  const worker = new Worker(new URL('../../dependencies/archive-worker.mjs', import.meta.url), { workerData: { file, maxBytes }, env: {}, execArgv: [], resourceLimits: { maxOldGenerationSizeMb: 64, maxYoungGenerationSizeMb: 16, stackSizeMb: 2 } })
-  let timer, abort
-  try {
-    return await new Promise((resolve, reject) => {
-      abort = () => reject(Object.assign(new Error('依赖归档检查已取消。'), { code: 'DEPENDENCY_CANCELLED' }))
-      timer = setTimeout(() => reject(Object.assign(new Error('依赖归档检查超时。'), { code: 'DEPENDENCY_ARCHIVE' })), 15000)
-      signal?.addEventListener('abort', abort, { once: true })
-      const done = (error, value = null) => { clearTimeout(timer); signal?.removeEventListener('abort', abort); error ? reject(error) : resolve(value) }
-      worker.once('message', value => value?.ok ? done(null, value) : done(Object.assign(new Error('依赖归档包含不安全链接、路径或不支持结构。'), { code: 'DEPENDENCY_ARCHIVE' })))
-      worker.once('error', () => done(Object.assign(new Error('依赖归档隔离检查失败。'), { code: 'DEPENDENCY_ARCHIVE' })))
-      worker.once('exit', code => { if (code !== 0) done(Object.assign(new Error('依赖归档检查提前退出。'), { code: 'DEPENDENCY_ARCHIVE' })) })
-    })
-  } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); await worker.terminate() }
-}
 async function privateRoot(requested = defaultRoot()) {
   const absolute = path.resolve(requested)
   await mkdir(absolute, { recursive: true, mode: 0o700 })

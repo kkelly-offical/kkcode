@@ -415,6 +415,39 @@ export async function appendMessage(sessionId, role, content, extra = {}) {
   })
 }
 
+export async function queueSteering(sessionId, {executionId, text}) {
+  return withLock(async () => {
+    await ensureLoadedUnsafe()
+    await flushUnsafe()
+    if (!state.index.sessions[sessionId]) throw new Error('Steering session is unavailable')
+    const data = await loadSessionDataUnsafe(sessionId)
+    const delivered = new Set(data.parts.filter(part => part.type === 'steering.delivered').map(part => part.guidanceId))
+    if (data.parts.filter(part => part.type === 'steering.queued' && !delivered.has(part.id)).length >= 32) throw Object.assign(new Error('尚有较多补充要求等待读取，请稍后再发。'), {code: 'steering_full', status: 409})
+    const part = newPart('steering.queued', {source: 'user', executionId, text})
+    queueDataOperation(sessionId, {kind: 'part', value: part})
+    queueIndexOperation(sessionId, 'patch', {updatedAt: now()})
+    await flushUnsafe()
+    return part
+  })
+}
+
+export async function deliverQueuedSteering(sessionId, guidanceId, turnId = null) {
+  return withLock(async () => {
+    await ensureLoadedUnsafe()
+    await flushUnsafe()
+    const data = await loadSessionDataUnsafe(sessionId)
+    if (data.parts.some(part => part.type === 'steering.delivered' && part.guidanceId === guidanceId)) return null
+    const queued = data.parts.find(part => part.id === guidanceId && part.type === 'steering.queued' && part.source === 'user')
+    if (!queued) throw new Error('Queued user guidance is unavailable')
+    const message = newMessage('user', queued.text, {contextKind: 'steering', steeringId: guidanceId, ...(turnId ? {turnId} : {})})
+    queueDataOperation(sessionId, {kind: 'message', value: message})
+    queueDataOperation(sessionId, {kind: 'part', value: newPart('steering.delivered', {guidanceId, messageId: message.id, turnId})})
+    if (state.index.sessions[sessionId]) queueIndexOperation(sessionId, 'patch', {updatedAt: now()})
+    await flushUnsafe()
+    return message
+  })
+}
+
 export async function replaceMessages(sessionId, newMessages, options = {}) {
   return withLock(async () => {
     options.signal?.throwIfAborted()

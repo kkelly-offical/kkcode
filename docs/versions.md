@@ -5,7 +5,7 @@
 ## 当前版本
 
 公开稳定版 **1.0.6 / Android10013**（npm latest），公开Preview **1.0.6-preview.1 / Android10012**。
-CLI、四个工作区、Web和Android源码版本为1.0.6，APK继续使用原证书。
+CLI、四个工作区、Web和Android源码已进入1.0.7 / Android10014开发；尚未发布，公开渠道保持上述版本。
 源码版本、流水线启动都不等于已公开下载。本次已核对官方npm与GitHub实际下载、CI包一致性、
 产物哈希、同证书签名和10012→10013升级；精确提交、CI、SHA-256和限制见
 [正式版release-verification.json](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.6/release-verification.json)。
@@ -14,6 +14,7 @@ CLI、四个工作区、Web和Android源码版本为1.0.6，APK继续使用原�
 | 层次 | 版本 | 渠道与证据 |
 | --- | --- | --- |
 | 已发布稳定渠道 | **1.0.6 / Android10013** | npm latest；[稳定Release](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.6)；匿名下载、签名与升级已核验 |
+| 开发中源码 | **1.0.7 / Android10014** | 八项智能体体验优化；[实施与验证](implementation-1.0.7.md)，尚未发行 |
 | 已发布预览渠道 | **1.0.6-preview.1 / Android10012** | npm preview；[GitHub prerelease](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.6-preview.1)；匿名下载与原证书已核验 |
 | 上一已核实预览版 | 1.0.6-preview.0 / Android10011 | 原tag、包与[公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.6-preview.0/release-verification.json)保持 |
 | 上一已核实稳定版 | 1.0.5 / Android10010 | [稳定1.0.5](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.5)；[更早1.0.4回执](stable-1.0.4-worklog.md) |

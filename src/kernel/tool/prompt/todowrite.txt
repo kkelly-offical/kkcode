@@ -86,7 +86,11 @@ Rules:
 - Multiple independent tasks may be in_progress when they are actually being worked on concurrently
 - Preserve the returned stable id when updating an existing task, and send the returned expectedRevision for subsequent updates
 - A stale revision is rejected: inspect the returned conflict or use todo_read for current session state before replanning; never blindly replay an old list
-- Cancel tasks that are no longer relevant; omitted unfinished own tasks become cancelled, and completed history remains
+- Prefer mode: merge for incremental updates: omitted items keep their state and
+  order. Use replace only for a deliberate replacement plan; its omitted
+  unfinished own tasks become cancelled, while completed history remains.
+- Explain blocked/cancelled or replanned work with reason. Preserve returned IDs;
+  an unknown ID does not create a task. Read the returned snapshot before retrying.
 - Only edit this agent's own items; dependencies may name existing same-session item IDs
 - Evidence references may identify actual same-session messages or parts; they do not grant execution authority or prove acceptance passed
 
@@ -123,3 +127,5 @@ When in doubt, use this tool. Being proactive with task management demonstrates 
   - dependencies: existing todo IDs in this session
   - evidenceRefs: existing conversation references as {kind: "message" | "part", id: "..."}; no paths, foreign session IDs, or verified flags
 - expectedRevision: revision from the previous returned snapshot (the host captures the initial revision before model execution)
+- mode: merge (recommended for partial changes) or replace (legacy default)
+- todos[].reason: optional explanation, up to 512 characters

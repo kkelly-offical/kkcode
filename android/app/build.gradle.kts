@@ -38,8 +38,8 @@ android {
         applicationId = "cn.kkcode.remote"
         minSdk = 29
         targetSdk = 35
-        versionCode = 10013
-        versionName = "1.0.6"
+        versionCode = 10014
+        versionName = "1.0.7"
         buildConfigField("String", "UPDATE_REPOSITORY", "\"${releaseIdentity["repository"]}\"")
         buildConfigField("String", "UPDATE_CERT_SHA256", "\"${releaseIdentity["certificateSha256"]}\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

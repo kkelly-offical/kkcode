@@ -1,10 +1,13 @@
 /** Shared model-facing guidance, not an execution grant or a check receipt. */
-export function completionVerificationGuidance(language = 'en') {
+export function completionVerificationGuidance(language = 'en', {compact = false} = {}) {
+  if (compact) return language === 'zh' || language.startsWith('zh-')
+    ? '完成最后一次修改后，在交付约定的目录直接运行真实测试/构建。失败须保持参数、目录和环境修复并重跑；用 artifact_read / artifact_search 查看长日志，不用管道或 echo 掩盖退出码。自定义断言放在可复跑的 node --test 或 unittest 测试中。只报告实际检查范围，未覆盖项明确保留；未知效果先核查，不重放。'
+    : 'After the final change, run real tests/builds directly in the documented project directory. Repair failed checks with the same arguments, cwd and environment. Read long logs with artifact_read / artifact_search; do not mask exit status with pipelines or echo. Put custom assertions in rerunnable node --test or unittest tests. Report actual coverage and remaining limits; inspect unknown effects without replaying them.'
   if (typeof language === 'string' && (language === 'zh' || language.startsWith('zh-'))) return [
     '完成验证只记录最后一次修改之后实际执行的检查进程，不根据输出“PASS”或退出码0的任意shell表达式推断验收通过。',
     '对已获授权的修改，优先运行项目真实的测试/构建命令，例如 npm test、npm run build、go test ./... 或 python3 -m unittest。',
     '自定义文件、文档或接口断言请在获准的工作区用 write/edit 编写真实测试，失败时必须报错，再通过 bash 运行 node --test <明确的测试文件路径> 或 python3 -m unittest <测试模块>。不要反复执行未被识别的shell条件判断。',
-    '直接调用检查命令；多项依赖检查用 && 连接。通配符、输出重定向、管道、;、|| true 和单纯的cat/echo不会形成可信检查回执。',
+    '直接调用检查命令；多项依赖检查用 && 连接。允许单纯的 2>&1 合流；通配符、文件重定向、管道、;、|| true 和单纯的cat/echo不会形成可信检查回执。',
     '长输出使用工具自动保存的归档，通过 artifact_read / artifact_search 定位错误，不要给测试加 tail/grep 管道。修复时保留原检查参数、模块列表、顺序和工作目录；失败的 && 组合须以相同顺序整体重跑。',
     '保留可复跑的验证脚本；不要在检查命令后串接删除/清理。若检查后又修改产物或测试，需再次执行真实检查，不能用清理前的成功证明清理后的状态。',
     'node --check仅证明语法，git diff --check仅证明文档差异的空白格式；它们不能证明功能或文档内容正确。按用户需求编写断言，并如实报告检查范围。只读/Plan任务不得为了验证创建或修改文件。',
@@ -19,7 +22,7 @@ export function completionVerificationGuidance(language = 'en') {
     'Completion records actual check processes after the latest change; a printed PASS or exit zero from an arbitrary shell expression is not a verification receipt.',
     'For authorized changes, prefer real project tests/builds, such as npm test, npm run build, go test ./... or python3 -m unittest.',
     'For custom file, document or API assertions, use write/edit in the authorized workspace to create a real test that fails on a false assertion, then request bash to run node --test <explicit-test-file> or python3 -m unittest <test-module>. Do not repeat an unrecognized shell condition.',
-    'Invoke checks directly; join dependent checks with &&. Globs, output redirection, pipelines, ;, || true and plain cat/echo do not produce trusted check receipts.',
+    'Invoke checks directly; join dependent checks with &&. A plain 2>&1 stream merge is supported; globs, file output redirection, pipelines, ;, || true and plain cat/echo do not produce trusted check receipts.',
     'For long output, inspect the tool-saved archive with artifact_read / artifact_search instead of adding tail/grep pipelines. Preserve the original check arguments, module list, order and working directory during repair; rerun a failed && group as a whole in the same order.',
     'Keep rerunnable verification scripts; do not append deletion/cleanup to a check command. If artifacts or tests change after a check, run a real check again; the pre-cleanup success does not prove the post-cleanup state.',
     'node --check proves syntax only; git diff --check proves whitespace formatting of documentation changes only. Neither proves functionality or document content. Assert the user requirements and report the actual scope. Read-only/Plan tasks must not create or edit files for verification.',

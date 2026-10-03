@@ -1,28 +1,31 @@
 import { spawn } from 'node:child_process'
 import path from 'node:path'
+import {StringDecoder} from 'node:string_decoder'
 
 /** A bounded, single-attempt process owner. POSIX children share a new process
  * group; Windows uses the native taskkill tree operation without changing OS
  * policy. This is lifecycle management, not an isolation/security boundary:
  * intentionally daemonized/detached descendants need the strict OCI runtime. */
 export function runManagedProcess({ command, args = [], cwd, env = process.env, shell = /** @type {boolean | string} */ (false),
-  signal = null, timeoutMs = 120000, maxBuffer = 1024 * 1024, killGraceMs = 250, drainMs = 1000 }) {
+  signal = null, stopSignal = null, onOutput = null, timeoutMs = 120000, maxBuffer = 1024 * 1024, killGraceMs = 250, drainMs = 1000, gracefulStopMs = 5000 }) {
   return new Promise(resolve => {
     const chunks = { stdout: [], stderr: [] }, sizes = { stdout: 0, stderr: 0 }
+    const decoders = {stdout: new StringDecoder('utf8'), stderr: new StringDecoder('utf8')}
     const limit = Math.max(1, Number(maxBuffer) || 1024 * 1024)
     let child, exitCode = null, exitSignal = null, errorCode = null, errorMessage = ''
     let started = false, timedOut = false, cancelled = false, captureIncomplete = false, terminationIncomplete = false
     let closed = false, stopping = false, terminationDone = false, settled = false
-    let timeout, escalation, drain, deadline
+    let timeout, escalation, drain, deadline, gracefulDeadline, stopRequested = false
     const finish = () => {
       if (settled) return
       settled = true
-      for (const timer of [timeout, escalation, drain, deadline]) clearTimeout(timer)
+      for (const timer of [timeout, escalation, drain, deadline, gracefulDeadline]) clearTimeout(timer)
       signal?.removeEventListener('abort', onAbort)
+      stopSignal?.removeEventListener('abort', onGracefulStop)
       child?.stdout?.destroy(); child?.stderr?.destroy()
       child?.unref()
       resolve({ stdout: Buffer.concat(chunks.stdout).toString('utf8'), stderr: Buffer.concat(chunks.stderr).toString('utf8'),
-        exitCode, exitSignal, timedOut, cancelled, captureIncomplete, terminationIncomplete, started, errorCode, errorMessage })
+        exitCode, exitSignal, timedOut, cancelled, captureIncomplete, terminationIncomplete, started, errorCode, errorMessage, stopRequested })
     }
     const maybeFinish = () => { if (closed && (!stopping || terminationDone)) finish() }
     const ownedGroupExists = () => {
@@ -67,17 +70,31 @@ export function runManagedProcess({ command, args = [], cwd, env = process.env, 
       }, killGraceMs + drainMs)
     }
     const onAbort = () => stop('cancelled')
+    const onGracefulStop = () => {
+      if (settled || stopping || stopRequested) return
+      stopRequested = true
+      // A service must close its own resources and exit normally. A raw signal
+      // exit or forced cancellation remains uncertain at the tool boundary.
+      if (process.platform === 'win32') { stop('cancelled'); return }
+      killGroup('SIGTERM')
+      gracefulDeadline = setTimeout(() => stop('cancelled'), Math.min(10000, Math.max(100, gracefulStopMs)))
+    }
     if (signal?.aborted) { cancelled = true; finish(); return }
+    if (stopSignal?.aborted) { stopRequested = true; exitCode = 0; finish(); return }
     try {
       child = spawn(command, args, { cwd, env, shell, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
     } catch (error) {
       errorCode = error.code || 'PROCESS_SPAWN_FAILED'; errorMessage = error.message; finish(); return
     }
-    child.once('spawn', () => { started = true })
+    child.once('spawn', () => { started = true; if (stopSignal?.aborted) onGracefulStop() })
     for (const stream of ['stdout', 'stderr']) child[stream].on('data', data => {
       const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data)
       const keep = Math.max(0, Math.min(chunk.length, limit - sizes[stream]))
       if (keep) { chunks[stream].push(chunk.subarray(0, keep)); sizes[stream] += keep }
+      if (keep && onOutput) {
+        try { const text = decoders[stream].write(chunk.subarray(0, keep)); if (text) onOutput(text, stream) }
+        catch { errorCode = 'PROCESS_OUTPUT_OBSERVER_FAILED'; stop('capture') }
+      }
       if (keep < chunk.length) { errorCode = 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'; stop('capture') }
     })
     child.once('error', error => { errorCode = error.code || 'PROCESS_FAILED'; errorMessage = error.message })
@@ -111,6 +128,7 @@ export function runManagedProcess({ command, args = [], cwd, env = process.env, 
       maybeFinish()
     })
     signal?.addEventListener('abort', onAbort, { once: true })
+    stopSignal?.addEventListener('abort', onGracefulStop, { once: true })
     if (signal?.aborted) onAbort()
     if (!stopping && Number.isFinite(timeoutMs) && timeoutMs > 0) timeout = setTimeout(() => stop('timeout'), timeoutMs)
   })

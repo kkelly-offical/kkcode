@@ -36,16 +36,26 @@ similar), which is the intended path for that work.
 
 Parameters:
 - command (required): shell command to execute
-- timeout (optional): timeout in ms (default 120000, max 600000)
+- timeout (optional): finite process deadline in ms; command default 120000/max 600000,
+  service default 600000/max 3600000. Waiting never extends this deadline.
+- lifetime (optional): command (default) or service. Use service for one temporary
+  foreground development server; pass cwd/env separately, without shell operators
+  or redirections. Strict runs use a bounded test that owns its services instead.
+- yield_time_ms (optional): wait 0–30000ms before returning a managed task handle.
+  The process keeps running after this wait; use task_output with wait_ms/cursor.
 - description (optional): human-readable description of what this command does. For simple commands keep it brief (5-10 words). For complex commands (piped commands, obscure flags), add enough context to clarify.
-- run_in_background (optional): run as background task, returns task_id immediately;
-  it does NOT extend timeout or create a persistent service. The same finite
-  default 120000ms / maximum 600000ms applies. The launch receipt reports the
-  effective timeout; choose a finite bound that covers the intended check.
+- run_in_background (optional): return a task handle immediately unless a yield
+  window is requested. lifetime: service already selects managed backgrounding.
+  The launch receipt reports the effective deadline, cwd and task identity.
 
 Rules:
 - Always quote file paths that contain spaces with double quotes.
-- NEVER run long-running/dev-server commands in foreground (npm run dev, jest --watch, webpack serve, nodemon, tsc --watch, etc.). Use run_in_background: true or tell user to run manually.
+- Use lifetime: service for temporary servers/watchers and task_stop to request
+  graceful shutdown; verify the actual exit with task_output. A POSIX service
+  must handle SIGTERM and exit normally. Force-stop, lost output and incomplete
+  cleanup remain subject to inspection; stopping does not roll back effects.
+- Run final project checks after owned services have closed. A background launch
+  or a successful readiness probe is not a complete verification receipt.
 - Use description to explain non-obvious commands.
 - When issuing multiple independent commands, make multiple bash calls in parallel.
 - When commands depend on each other, chain with && (e.g. `git add . && git commit -m "msg"`).

@@ -13,6 +13,7 @@ export function TodoProgress({ snapshot, subagents = [] }: { snapshot: Record<st
       <ul aria-label="待办任务列表">{(snapshot?.items || []).map((item: Record<string, any>) => <li key={item.id} data-status={item.status}>
         <div><span className="todo-progress-status">{todoStatusLabels[item.status as keyof typeof todoStatusLabels]}</span><span className="todo-progress-content">{item.status === 'in_progress' && item.activeForm || item.content}</span></div>
         <small>负责人：{todoOwnerLabel(item, snapshot!.sessionId)}{item.dependencies?.length > 0 && ` · 依赖：${item.dependencies.join('、')}`}</small>
+        {item.reason && <small>{item.reason}</small>}
       </li>)}</ul>
       {subagents.length > 0 && <ul aria-label="子代理状态">{subagents.map(item => <li key={item.session_id}><span>{item.subagent} · {subagentStatusLabels[item.status as keyof typeof subagentStatusLabels] || '待核查'}</span><small>{item.session_id}</small></li>)}</ul>}
     </div>

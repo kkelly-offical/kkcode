@@ -60,6 +60,9 @@ test('kernel and kernel.turns entry points share one broker, emit results and re
   assert.equal(kernel.executeTurn, kernel.turns.executeTurn)
   const turn = kernel.turns.executeTurn({ sessionId: 'tracked-session' })
   await assert.rejects(kernel.executeTurn({ sessionId: 'tracked-session' }), error => error.code === 'turn_busy')
+  // The broker may restore durable, undelivered guidance before entering the
+  // kernel. Mutual exclusion must hold during that asynchronous preparation.
+  for (let attempt = 0; !calls && attempt < 100; attempt++) await new Promise(resolve => setTimeout(resolve, 5))
   assert.equal(calls, 1); assert.equal(service.turns.size, 1)
   resolve({ reply: 'done', turnId: 'turn' }); await turn
   assert.equal(service.turns.size, 0); assert.equal(service.leases.size, 0)

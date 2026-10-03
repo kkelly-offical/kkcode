@@ -135,7 +135,7 @@ test("headless 契约：未注入 handler 的 kernel 遇到需审批工具 → �
 
     // 拒绝结果仍保留给模型解释，但未执行的请求不会伪装为完成；
     // 不自动追加“修复”回合诱导模型绕过用户的拒绝。
-    assert.equal(result.reply, "明白了，不动文件。")
+    assert.match(result.reply, /未获授权|operation was denied/)
     assert.equal(result.status, 'incomplete')
     assert.equal(result.stopReason, 'permission-denied')
     assert.equal(result.toolEvents.length, 1)

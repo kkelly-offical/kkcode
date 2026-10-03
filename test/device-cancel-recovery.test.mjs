@@ -73,6 +73,57 @@ test('stop preserves partial reasoning/text and settles resources before a new t
   assert.equal((await f.service.readEvents(f.sessionId, 0)).at(-1).type, 'turn.result')
 })
 
+test('remote steering is execution-bound, replay-safe and reaches the same turn before final completion', async t => {
+  const entered = deferred(), release = deferred(); let calls = 0, received
+  const f = await fixture(t, {async *requestStream(input) {
+    if (++calls === 1) {entered.resolve(); await release.promise; yield {type: 'text', content: 'Old direction'}; return}
+    received = input.messages
+    yield {type: 'text', content: 'Followed the updated direction'}
+  }})
+  const accepted = await f.rpc('turns.start', {sessionId: f.sessionId, prompt: 'Begin the original task'})
+  const finished = f.service.turns.get(f.sessionId).promise
+  await entered.promise
+  await assert.rejects(f.rpc('turns.steer', {sessionId: f.sessionId, executionId: 'stale-execution', prompt: 'Wrong turn'}), {code: 'turn_changed'})
+  const request = {id: randomUUID(), method: 'turns.steer', params: {sessionId: f.sessionId, executionId: accepted.executionId, prompt: 'Focus on the database first'}}
+  await assert.rejects(f.service.request({...request, id: randomUUID()}, {id: 'foreign', client: 'foreign'}), {code: 'forbidden'})
+  const receipt = await f.service.request(request, {id: 'local', client: 'browser'})
+  assert.equal(receipt.accepted, true)
+  assert.deepEqual(await f.service.request(request, {id: 'local', client: 'browser'}), receipt)
+  release.resolve(); await finished
+  assert.equal(calls, 2)
+  assert.match(JSON.stringify(received), /Focus on the database first/)
+  const saved = await getSession(f.sessionId)
+  assert.equal(saved.parts.filter(part => part.type === 'steering.queued').length, 1)
+  assert.equal(saved.parts.filter(part => part.type === 'steering.delivered').length, 1)
+  assert.equal(saved.messages.filter(message => message.steeringId === receipt.guidanceId).length, 1)
+})
+
+test('steering accepted before cancellation is retained ahead of the next prompt, never auto-executed', async t => {
+  const entered = deferred(); let calls = 0, received
+  const f = await fixture(t, {async *requestStream(input) {
+    calls++
+    if (calls === 1) {
+      entered.resolve()
+      await new Promise((_, reject) => input.signal.addEventListener('abort', () => reject(input.signal.reason), {once: true}))
+      return
+    }
+    received = input.messages
+    yield {type: 'text', content: 'Status only'}
+  }})
+  const first = await f.rpc('turns.start', {sessionId: f.sessionId, prompt: 'Start work'})
+  const finished = f.service.turns.get(f.sessionId).promise
+  await entered.promise
+  await f.rpc('turns.steer', {sessionId: f.sessionId, executionId: first.executionId, prompt: 'Earlier queued guidance'})
+  await f.rpc('turns.cancel', {sessionId: f.sessionId, executionId: first.executionId}); await finished
+  assert.equal(calls, 1)
+  await f.acquire()
+  await f.rpc('turns.start', {sessionId: f.sessionId, prompt: 'New instruction: status only, no writes'})
+  await f.service.turns.get(f.sessionId).promise
+  const wire = JSON.stringify(received)
+  assert.ok(wire.indexOf('Earlier queued guidance') < wire.indexOf('New instruction: status only, no writes'))
+  assert.equal((await getSession(f.sessionId)).parts.filter(part => part.type === 'steering.delivered').length, 1)
+})
+
 test('stop interrupts shared kernel preparation without later dispatching the cancelled prompt', { timeout: 10000 }, async t => {
   let calls = 0
   const f = await fixture(t, { async *requestStream() { calls++; yield { type: 'text', content: 'unexpected' } } })

@@ -68,6 +68,7 @@ function App() {
   const [stopping, setStopping] = useState(false), [turnPhase, setTurnPhase] = useState('idle');
   const activeExecution = useRef(''), stopRequested = useRef('');
   const pendingSend = useRef<Item | null>(null), stopInFlight = useRef<Promise<void> | null>(null);
+  const steeringInFlight = useRef(false);
   const settledExecutions = useRef(new Set<string>());
   const viewIdentity = useRef({ gateway, deviceId, selected });
   viewIdentity.current = { gateway, deviceId, selected };
@@ -584,8 +585,23 @@ function App() {
   }
   async function send(e?: React.FormEvent) {
     e?.preventDefault();
-    if (!prompt.trim() || busy || pendingSend.current || uploading || readOnly) return;
+    if (!prompt.trim() || pendingSend.current || uploading || readOnly) return;
     const text = prompt;
+    if (busy) {
+      if (steeringInFlight.current) return;
+      if (stopping || turnPhase === 'finishing') { setNotice('当前任务正在收尾；请保留补充要求，稍后发送。'); return; }
+      if (attachments.length || text.startsWith('/')) { setNotice('执行期间可发送文字补充要求；附件和命令请在本轮结束后发送。'); return; }
+      const id = selected, device = deviceId, executionId = activeExecution.current;
+      steeringInFlight.current = true;
+      try {
+        await rpc('control.acquire', {sessionId: id});
+        if (!currentView(id, device) || activeExecution.current !== executionId) return;
+        await rpc('turns.steer', {sessionId: id, executionId, prompt: text});
+        if (currentView(id, device)) { setPrompt(old => old === text ? '' : old); setNotice('补充要求已保存，智能体将在安全执行节点读取。'); }
+      } catch (cause: any) { if (currentView(id, device)) setNotice(cause.message); }
+      finally { steeringInFlight.current = false; }
+      return;
+    }
     const token: Item = { id: crypto.randomUUID(), sessionId: selected, deviceId, text, attachmentIds: attachments.map(item => item.id), cancelled: false, start: null, terminal: false };
     token.finished = new Promise(resolve => { token.finish = resolve; });
     pendingSend.current = token;

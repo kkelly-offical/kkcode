@@ -5,6 +5,13 @@ what the task produced rather than its bookkeeping.
 
 Parameters:
 - task_id (required): from the launch call or `task_list`.
+- wait_ms (optional): wait up to 30000ms for completion without changing the
+  process deadline. Pending user guidance can end this wait early.
+- cursor (optional): use the cursor returned by the prior read for incremental
+  logs. A truncated or reset window is explicitly marked.
 
 If the task is still running you get its partial output — that is a signal to wait, not a
 reason to launch a second copy of the same work.
+
+The response includes cwd/lifetime/deadline information for managed shell work.
+Inspect final exit status and any uncertainty; live log text is not completion.

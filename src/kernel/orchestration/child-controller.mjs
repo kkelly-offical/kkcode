@@ -65,6 +65,15 @@ export async function drainChildMessages(sessionId, operationId) {
   throw new Error('child mailbox changed repeatedly; retry at next boundary')
 }
 
+export function childSteeringSource(sessionId, operationId) {
+  const take = () => drainChildMessages(sessionId, operationId)
+  take.hasPending = async () => {
+    const session = (await getSession(sessionId))?.session
+    return session?.childOperationId === operationId && session.childMailbox?.some(message => message.operationId === operationId) === true
+  }
+  return take
+}
+
 function summary(session) {
   return { session_id: session.id, parent_session_id: session.childContract.parentSessionId,
     subagent: session.childContract.runSpec.role.name, status: session.childStatus || 'unknown',
@@ -73,8 +82,8 @@ function summary(session) {
 }
 
 /** Parent-scoped lifecycle API; no retries/replays of unfinished tool actions. */
-/** @param {{parentSessionId?: string, delegateTask?: Function, config?: any, signal?: AbortSignal}} options */
-export function createChildController({ parentSessionId, delegateTask, config = {}, signal } = {}) {
+/** @param {{parentSessionId?: string, delegateTask?: Function, config?: any, signal?: AbortSignal, hasPendingInput?: Function}} options */
+export function createChildController({ parentSessionId, delegateTask, config = {}, signal, hasPendingInput } = {}) {
   const inspect = async sessionId => {
     let session = await ownedChild(parentSessionId, sessionId)
     if (session.childOperationId && session.childBackgroundTaskId) {
@@ -102,7 +111,7 @@ export function createChildController({ parentSessionId, delegateTask, config = 
       do {
         signal?.throwIfAborted()
         session = await inspect(sessionId)
-        if (!session.childOperationId || Date.now() >= deadline) break
+        if (!session.childOperationId || Date.now() >= deadline || await hasPendingInput?.()) break
         await BackgroundManager.waitForSettled(Math.min(100, deadline - Date.now()))
       } while (true)
       return { ...summary(session), timed_out: Boolean(session.childOperationId) }

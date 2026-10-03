@@ -94,7 +94,8 @@ export function formatTaskResult(result) {
   const files = Array.isArray(result.file_changes) ? result.file_changes : []
   const meta = [
     `subagent: ${result.subagent || "?"} · session: ${result.session_id || "?"} · tool events: ${result.tool_events ?? 0}`,
-    ...(files.length ? [`files changed: ${files.map((f) => f.path || f).slice(0, 20).join(", ")}`] : [])
+    ...(files.length ? [`files changed: ${files.map((f) => f.path || f).slice(0, 20).join(", ")}`] : []),
+    ...(result.handoff ? [`Host handoff (observations, not acceptance): ${JSON.stringify(result.handoff)}`] : [])
   ]
   return {
     ...(result.status ? { status: result.status } : {}),
@@ -106,6 +107,7 @@ export function formatTaskResult(result) {
       execution_mode: result.execution_mode,
       group_id: result.group_id,
       ...(result.verification ? { verification: result.verification } : {}),
+      ...(result.handoff ? {handoff: result.handoff} : {}),
       ...(result.stop_reason ? { stop_reason: result.stop_reason } : {})
     }
   }

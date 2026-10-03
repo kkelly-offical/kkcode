@@ -1,4 +1,4 @@
-Cancels a delegated background task by task_id.
+Stops an owned background task by task_id.
 
 Use this when a task is no longer needed — the plan changed, the answer arrived another
 way, or it is clearly stuck. Leaving work running costs tokens and can produce writes you
@@ -6,6 +6,10 @@ no longer want.
 
 Parameters:
 - task_id (required): from the launch call or `task_list`.
+- force (optional, default false): force cancellation. Managed services normally
+  receive a cooperative stop request; ordinary jobs retain cancellation behavior.
 
-Cancellation is not instant: a task in the middle of a tool call finishes that call first.
-Check `task_list` afterwards rather than assuming it stopped.
+Stopping is asynchronous. Check task_output for the actual process exit and
+cleanup outcome. Uncooperative services may require forced termination and
+effect inspection. Neither stopping nor cancellation rolls back completed work
+or proves that project checks passed.

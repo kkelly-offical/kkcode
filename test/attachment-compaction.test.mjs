@@ -6,7 +6,7 @@ import os from 'node:os'
 import { compactSession } from '../src/kernel/session/compaction.mjs'
 import { registerProvider } from '../src/kernel/provider/router.mjs'
 import { appendMessage, getSession, touchSession, flushNow } from '../src/kernel/session/store.mjs'
-import { createArtifactTools, createConversationArtifactAccess } from '../src/kernel/tool/artifacts.mjs'
+import { createArtifactTools, createConversationArtifactAccess, trustedArtifactRecall } from '../src/kernel/tool/artifacts.mjs'
 import { toolResultContent } from '../src/kernel/tool/result-content.mjs'
 import { wavBlock, mp4Block } from './helpers/media-fixtures.mjs'
 import sharp from 'sharp'
@@ -27,6 +27,25 @@ async function setup(id) {
 }
 const compact = (sessionId, extra = {}) => compactSession({ sessionId, model: 'fixture', providerType: 'attachment-summary', configState, keepRecent: 2, keepRecentTurns: 1, ...extra })
 const accessFor = sessionId => createConversationArtifactAccess({ sessionId, cwd: root, turnId: 'recall' })
+
+test('text and base64 recall pages leave only their existing reference after compaction, including retained tool pairs', async () => {
+  const id = 'attachment-text-recall'; await setup(id)
+  const access = accessFor(id), payload = 'RECALLED_ATTACHMENT_BYTES_' + 'private content '.repeat(1200)
+  const ref = await access.putFile({content: Buffer.from(payload), mime: 'text/plain', kind: 'user', callId: 'uploaded'})
+  for (const encoding of ['utf8', 'base64']) {
+    const callId = 'recall-' + encoding
+    const result = await createArtifactTools()[0].execute({artifact_id: ref.id, encoding, limit: 16000}, {artifactAccess: access})
+    assert.ok(trustedArtifactRecall(result))
+    await appendMessage(id, 'assistant', [{type: 'tool_use', id: callId, name: 'artifact_read', input: {artifact_id: ref.id, encoding}}])
+    await appendMessage(id, 'user', [{type: 'tool_result', tool_use_id: callId, content: result.output, archiveRecall: trustedArtifactRecall(result)}], {synthetic: true, contextKind: 'tool_result', artifactRefs: [ref]})
+    assert.equal((await compact(id)).compacted, true)
+    const saved = await getSession(id), wire = JSON.stringify(saved.messages)
+    assert.doesNotMatch(wire, /RECALLED_ATTACHMENT_BYTES_|UkVDQUxMRURfQVRUQUNITUVOVF9CWVRFU18/)
+    assert.equal(saved.messages.at(-1).content[0].tool_use_id, callId)
+    assert.equal(saved.messages.at(-1).attachmentRefs.length, 1)
+    assert.equal((await access.metadata({id: ref.id})).size, Buffer.byteLength(payload))
+  }
+})
 
 test('compaction removes old and recent attachment payloads from summarizer, kept turns and user-source projections', async () => {
   const id = 'attachment-prefix-and-tail'; await setup(id)

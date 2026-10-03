@@ -13,7 +13,7 @@ import { executeTool } from "../tool/executor.mjs"
 import { markToolProgramCall } from '../tool/program.mjs'
 import { currentDurableRun } from '../orchestration/run-runtime.mjs'
 import { assertRequestBudgetWithin } from '../../usage/request-budget.mjs'
-import { archiveToolText, artifactArchiveAttempted, createConversationArtifactAccess, trustedArtifactRef, trustedArtifactRefs } from '../tool/artifacts.mjs'
+import { archiveToolText, artifactArchiveAttempted, createConversationArtifactAccess, trustedArtifactRef, trustedArtifactRefs, trustedArtifactRecall } from '../tool/artifacts.mjs'
 import { markBrowserRecipeCall } from '../tool/browser-recipe.mjs'
 import { effectiveDataPolicy, intersectDataPolicies } from '../permission/data-policy.mjs'
 import { isToolSuccess } from "../core/types.mjs"
@@ -61,7 +61,7 @@ import { promptReport } from './prompt-report.mjs'
 import { createProgressGuard } from './progress-guard.mjs'
 import { resolveModelCapabilities } from '../provider/model-catalog.mjs'
 import { isCancellation } from '../../abort.mjs'
-import { toolDispatchReceipt, attachToolDispatchReceipt, markToolNotStarted } from '../core/execution-outcome.mjs'
+import { toolDispatchReceipt, attachToolDispatchReceipt, markToolNotStarted, toolMutationReceipt, attachToolMutationReceipt } from '../core/execution-outcome.mjs'
 import { completionRepairGuidance } from './completion-evidence.mjs'
 import { createVerificationFeedback } from './verification-feedback.mjs'
 
@@ -547,13 +547,15 @@ async function processTurnLoopInRuntime({
       })
     }
   })(args)
-  const childController = createChildController({ parentSessionId: sessionId, delegateTask, config: permissionConfig, signal })
+  const hasPendingInput = async () => Boolean(typeof steerSource?.hasPending === 'function' && await steerSource.hasPending())
+  const childController = createChildController({ parentSessionId: sessionId, delegateTask, config: permissionConfig, signal, hasPendingInput })
 
   const MAX_CONTINUES = 8
   const MAX_TOTAL_CONTINUES = 24 // hard cap on total auto-continues per turn
   let continueCount = 0
   let totalContinueCount = 0
   let nudgeCount = 0
+  let verificationBlockers = ''
   let finalReply = ""
   let stopReason = 'max-steps'
   let verification = null
@@ -661,12 +663,14 @@ async function processTurnLoopInRuntime({
       // 「assistant → tool → assistant」的配对，部分 provider 会直接拒收。
       if (steerSource) {
         for (const steered of await steerSource()) {
-          await appendMessage(sessionId, "user", steered, { turnId, contextKind: 'steering' })
+          const text = typeof steered === 'string' ? steered : steered.text
+          if (typeof steered?.deliver === 'function') await steered.deliver(turnId)
+          else await appendMessage(sessionId, "user", text, { turnId, contextKind: 'steering' })
           await EventBus.emit({
             type: EVENT_TYPES.TURN_STEER_INJECTED,
             sessionId,
             turnId,
-            payload: { text: steered, step }
+            payload: { text, step }
           })
         }
       }
@@ -1079,6 +1083,9 @@ async function processTurnLoopInRuntime({
       continueCount = 0
 
       if (!response.toolCalls?.length) {
+        // New user guidance arrived while the provider was producing a final
+        // answer. Deliver it at the next safe boundary before ending the turn.
+        if (await hasPendingInput()) continue
         if (!String(response.text || '').trim()) {
           // Reasoning is useful history, not a completed user-facing answer.
           // Never synthesize a successful assistant message or retry tool side
@@ -1113,11 +1120,22 @@ async function processTurnLoopInRuntime({
                 finalReply = `${language === 'zh' ? '需要先核查先前操作，本轮未标记完成；已保留文件和执行记录。' : 'Prior operations require inspection. This turn is not completed; files and execution evidence are preserved.'}\n${validationResult.message}`
                 break
               }
-              if (toolEvents.some(event => event.code === 'PERMISSION_DENIED')) {
+              // A currently rejected call must not trigger an autonomous
+              // attempt to work around that refusal. Earlier refusals followed
+              // by other work are ordinary history, not a permanent barrier.
+              if (verificationEvents.at(-1)?.code === 'PERMISSION_DENIED') {
                 stopReason = 'permission-denied'
-                finalReply = response.text.trim() || '操作未获授权，未执行该操作。已有结果已保留。'
+                finalReply = language === 'zh'
+                  ? '本轮操作未获授权，尚未完成。被拒绝的操作未执行，已有结果已保留；请确认允许的任务范围后继续。'
+                  : 'The current operation was denied and the task is incomplete. The rejected action did not run; existing results are preserved. Continue only within the authorized scope.'
                 break
               }
+              // Bound repeated non-progress, not the number of distinct defects
+              // an otherwise progressing task may repair. Overall step/budget
+              // limits remain unchanged.
+              const failures = 'failures' in validationResult && Array.isArray(validationResult.failures) ? validationResult.failures : []
+              const blockers = JSON.stringify(failures.map(failure => [failure.kind, failure.id, failure.tool, failure.count]))
+              if (blockers !== verificationBlockers) { verificationBlockers = blockers; nudgeCount = 0 }
               if (nudgeCount >= 2) {
                 stopReason = 'verification-incomplete'
                 finalReply = `本轮尚未完成验收，已保留已有结果和文件改动。\n${validationResult.message}`
@@ -1215,12 +1233,15 @@ async function processTurnLoopInRuntime({
           output: ""
         })
 
-        if (inspectionBarrier) {
+        const steeringPending = !inspectionBarrier && await hasPendingInput()
+        if (inspectionBarrier || steeringPending) {
           // This call was advertised in the same response but never dispatched.
           // Keep every wire pair and a canonical host receipt, without hooks,
           // approvals, snapshots, operation preparation or tool-side effects.
-          const result = markToolNotStarted({name: call.name, status: 'blocked', ok: false, code: 'inspection_required',
-            output: language === 'zh' ? '先前操作效果未知，本次工具未执行；需所有者核查后继续。' : 'A prior operation has unknown effects. This tool was not started; owner inspection is required.',
+          const result = markToolNotStarted({name: call.name, status: 'blocked', ok: false, code: steeringPending ? 'steering_pending' : 'inspection_required',
+            output: steeringPending
+              ? language === 'zh' ? '收到新的用户指令，本次工具尚未执行。先读取下一步送达的指令，再决定后续操作。' : 'New user guidance is pending. This call was not started; read the incoming guidance before choosing further actions.'
+              : language === 'zh' ? '先前操作效果未知，本次工具未执行；需所有者核查后继续。' : 'A prior operation has unknown effects. This tool was not started; owner inspection is required.',
             metadata: {started: false}, startedAt: callStartedAt, completedAt: Date.now(), durationMs: Date.now() - callStartedAt})
           const dispatch = toolDispatchReceipt(result)
           await appendPart(sessionId, {type: 'tool-call', messageId: userMessage.id, step, turnId, runPartId: runningPart.id,
@@ -1362,7 +1383,7 @@ async function processTurnLoopInRuntime({
                     ...toolContext,
                     // Host-bound state and child authority cannot be supplied by
                     // a model, plugin payload or a stale copied tool context.
-                    sessionId, turnId, todoService, childController,
+                    sessionId, turnId, todoService, childController, hasPendingInput,
                     // Preserve trusted config provenance; model/per-turn JSON
                     // cannot grant a project permission to choose a binary.
                     configState,
@@ -1455,6 +1476,7 @@ async function processTurnLoopInRuntime({
           ...(uncertainMetadata.operationId ? {operationId: uncertainMetadata.operationId} : {})}}
         if (result.metadata?.outcomeUnknown === true || result.metadata?.terminationIncomplete === true) inspectionBarrier = true
         const dispatchReceipt = toolDispatchReceipt(result)
+        const mutationReceipt = toolMutationReceipt(result)
         result = { ...result, startedAt: result.startedAt ?? callStartedAt, completedAt: result.completedAt ?? Date.now() }
 
         // Plan approval interception: if the tool returned planApproval metadata,
@@ -1525,11 +1547,12 @@ async function processTurnLoopInRuntime({
           ok: result.ok,
           evidence: result.evidence,
           ...(dispatchReceipt ? {dispatch: dispatchReceipt} : {}),
+          ...(mutationReceipt ? {mutationReceipt} : {}),
           startedAt: result.startedAt,
           completedAt: result.completedAt,
           durationMs: result.durationMs
         })
-        verificationEvents.push(attachToolDispatchReceipt({ name: call.name, args: call.args, ...result, invocationId: call.id, turnId, step }, dispatchReceipt))
+        verificationEvents.push(attachToolMutationReceipt(attachToolDispatchReceipt({ name: call.name, args: call.args, ...result, invocationId: call.id, turnId, step }, dispatchReceipt), mutationReceipt))
 
         return { call, result }
       }
@@ -1630,11 +1653,13 @@ async function processTurnLoopInRuntime({
               hint: "Narrow the request (grep instead of read, or read with offset/limit) rather than repeating it."
             })}`
           : rawOutput
+        const recall = trustedArtifactRecall(entry?.result)
         resultContent.push({
           type: "tool_result",
           tool_use_id: call.id,
           content,
-          is_error: isError
+          is_error: isError,
+          ...(recall ? {archiveRecall: recall} : {})
         })
 
         // Canonical multimodal content is shared by builtin/plugin/MCP tools;

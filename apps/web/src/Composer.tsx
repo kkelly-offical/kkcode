@@ -571,6 +571,7 @@ export function Composer({
                 </>,
               )}
           </div>
+          {busy && prompt.trim() && !stopping && <button type="button" className="send" aria-label="发送补充要求" disabled={readOnly || uploading} onClick={onSend}><Icon name="send" size={21} /></button>}
           {busy ? (
             <button
               type="button"
