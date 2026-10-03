@@ -1,6 +1,6 @@
 # 1.0.8 · Pixel Studio 实施与验收
 
-状态：开发与验证中；分支`feat/1.0.8-pixel-studio`，基线`bdabb17`。用户2026-10-04要求交付完整Web／网关界面增强与Android正式版，已授权本任务相关合入及发布。源码目标1.0.8／Android10015，尚未公开发布；既有1.0.7及Preview不覆盖。
+状态：**1.0.8 / Android10015正式版已发布并核验**。发行提交`43bb449`（[PR#42](https://github.com/kkelly-offical/kkcode/pull/42)），与验收候选`e01ec56`同树；用户已授权本任务相关管理员合入与正式发行。原1.0.7及Preview不覆盖。
 
 ## 本轮范围
 
@@ -19,6 +19,12 @@ Web保留会话导航、输入区与单模式选择器。新增原创像素工�
 
 日志暂存`/tmp/kkcode-108-*.log`，视觉证据在`test-results/`。本轮使用非模型fixture与隔离模拟器，不重启R12—R16、不调用真实模型、不改变原失败或unknown。
 
-## 待完成
+## 正式发行验证
 
-完成完整发行门禁、跨平台CI与CodeQL；随后正式发行并核对匿名下载、安装包一致性与公开回执。生产／演示部署与公共镜像仍不在范围内。
+- 候选跨平台／Web [37139922657](https://github.com/kkelly-offical/kkcode/actions/runs/37139922657)和三语言CodeQL [37139922648](https://github.com/kkelly-offical/kkcode/actions/runs/37139922648)全部通过；Linux22为4237项／4073通过／0失败／164条件跳过。
+- 本地串行coverage4237项：4081通过、0失败、156条件跳过；行／分支／函数覆盖83.51%／81.18%／82.17%。条件跳过不算通过。
+- 主线verify [37141076735](https://github.com/kkelly-offical/kkcode/actions/runs/37141076735)、CodeQL [37141076728](https://github.com/kkelly-offical/kkcode/actions/runs/37141076728)与正式发行 [37141117205](https://github.com/kkelly-offical/kkcode/actions/runs/37141117205)的实际结果见公开回执。
+- CI产物与匿名npm／GitHub安装包逐字节一致；公开包在最低Node22.12验证CLI、SDK、ToDo／子代理接口与SQLite往返，787文件打包扫描通过，无真实模型推理。
+- 公开Android APK与已签名、已覆盖升级的10015产物一致，更新清单与SHA-256一致，原证书保持。
+- 正式[公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.8/release-verification.json)记录提交、CI、哈希和限制。本机证据：`/tmp/kkcode-108-stable-_1tnlyzp/`。
+- 模拟器已关闭；生产／演示部署、公共镜像、实体设备长期验收和新模型测试不在本轮范围。R12—R16保持关闭。
