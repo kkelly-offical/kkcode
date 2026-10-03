@@ -1,7 +1,7 @@
 # KK Code 文档
 
 当前文档适用公开稳定版 **1.0.7 / Android10014**，见[版本与升级](versions.md)。
-本轮范围见[1.0.7正式版](release-1.0.7.md)与[实施记录](implementation-1.0.7.md)，上一稳定版见[1.0.6记录](release-1.0.6.md)。
+源码正在准备[1.0.8界面增强版](release-1.0.8.md)，见[实施记录](implementation-1.0.8.md)；已发布版见[1.0.7记录](release-1.0.7.md)。
 已发布渠道、Android版本码与升级入口只在[版本与升级](versions.md)集中维护。
 历史材料保留原始版本和证据，不作为当前使用说明。
 

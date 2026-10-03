@@ -33,7 +33,7 @@ async function compare(name) {
     const rules = await page.evaluate(() => {
       for(const [sheetIndex, sheet] of [...document.styleSheets].entries()) {
         const list = [...sheet.cssRules]
-        const start = list.findIndex(rule => rule.type === CSSRule.STYLE_RULE && rule.selectorText === ':root' && rule.style.getPropertyValue('--primary-hover').trim() === '#30302d')
+        const start = list.findIndex(rule => rule.type === CSSRule.STYLE_RULE && rule.selectorText === ':root' && rule.style.getPropertyValue('--pixel-finish').trim() === '1')
         if(start < 0) continue
         const saved = list.slice(start).map(rule => rule.cssText)
         for(let i = sheet.cssRules.length - 1; i >= start; i--) sheet.deleteRule(i)
@@ -74,6 +74,39 @@ try {
   await page.keyboard.press('Escape')
   await page.setViewportSize({ width: 320, height: 640 })
   await compare('narrow-home')
+  // New companion controls are functional, respect the existing draft, and never send it.
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.getByRole('button', { name: /布局验收/ }).first().click()
+  await page.getByRole('textbox', { name: '消息' }).fill('保留我的要求')
+  await page.getByRole('button', { name: '像素伙伴', exact: true }).click()
+  let dialog = page.getByRole('dialog')
+  await dialog.getByRole('button', { name: '鸢尾', exact: true }).click()
+  await dialog.getByRole('button', { name: '了解项目', exact: true }).click()
+  await expect(page.getByRole('textbox', { name: '消息' })).toHaveValue('保留我的要求\n\n梳理项目结构，说明主要模块与入口。')
+  await expect(page.locator('.message.user')).toHaveCount(0)
+  assert.equal(await page.evaluate(() => localStorage.getItem('kkcode.studio.palette')), 'iris')
+  await page.getByRole('button', { name: '像素伙伴', exact: true }).click()
+  dialog = page.getByRole('dialog')
+  await dialog.getByRole('checkbox', { name: '收起玩偶，保留状态', exact: true }).check()
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.studio-companion .pixel-buddy')).toHaveCount(0)
+  await page.reload()
+  await page.getByRole('button', { name: /布局验收/ }).first().click()
+  await expect(page.locator('.studio-companion')).toHaveClass(/compact/)
+  await page.getByRole('button', { name: '像素伙伴', exact: true }).click()
+  await expect(page.getByRole('dialog').getByRole('button', { name: '鸢尾', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await page.getByRole('checkbox', { name: '收起玩偶，保留状态', exact: true }).uncheck()
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: '打开产物', exact: true }).click()
+  await expect(page.getByRole('dialog')).toContainText('会话产物')
+  await page.keyboard.press('Escape')
+  for(const width of [1440, 760, 390, 320]) {
+    await page.setViewportSize({ width, height: width === 320 ? 640 : 900 })
+    await expect(page.getByRole('textbox', { name: '消息' })).toBeInViewport()
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${width}px must not overflow`)
+    await expect(page.getByRole('button', { name: '像素伙伴', exact: true })).toBeInViewport()
+  }
+  assert.equal(await page.locator('.buddy-eyes').first().evaluate(node => getComputedStyle(node).animationName), 'none', 'reduced motion disables companion animation')
   console.log(`Pixel theme: ${comparisons} control rectangles unchanged against the original CSS; dark/light desktop/mobile/320px screenshots captured`)
 } finally {
   await browser.close(); await server.close()

@@ -1,5 +1,13 @@
 # Changelog / 更新日志
 
+## 1.0.8 — Pixel Studio / 界面增强正式版候选（2026-10-04）
+
+- Refine Web and Android with a shared pixel studio palette, original artwork, richer surfaces and responsive layouts.
+- Add KIKI companions with truthful session status, retained draft suggestions and persisted appearance controls.
+- Group existing workspace and session tools into compact, permission-aware shortcuts.
+- Unify gateway login, device approval and native App return pages while retaining authentication and return-address boundaries.
+- Android target10015 preserves the project certificate. Publication status and validation: [implementation](docs/implementation-1.0.8.md).
+
 ## 1.0.7 — Stable / 正式版（2026-10-03）
 
 - Recover from host-proven zero-write edits and historical permission denials without weakening unknown-effect inspection.

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Original Pixel Studio artwork; shared geometry: src/ui/pixel-art.mjs. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="40dp" android:height="44dp" android:viewportWidth="40" android:viewportHeight="44">
+  <path android:fillColor="#152a25" android:fillAlpha=".3" android:pathData="M8 40h25v2H8z" />
+  <path android:fillColor="#263d34" android:fillAlpha="1" android:pathData="M17 2h6v6h9v4h4v19h-5v8H9v-8H4V12h4V8h9z" />
+  <path android:fillColor="#f0c77f" android:fillAlpha="1" android:pathData="M18 2h4v4h-4z" />
+  <path android:fillColor="#a4d8b5" android:fillAlpha="1" android:pathData="M9 10h22v4h3v15h-6v8H12v-8H6V14h3z" />
+  <path android:fillColor="#d8f4ca" android:fillAlpha="1" android:pathData="M10 10h20v3H10zM8 14h3v8H8z" />
+  <path android:fillColor="#3c6554" android:fillAlpha="1" android:pathData="M12 16h17v11H12z" />
+  <path android:fillColor="#152a25" android:fillAlpha="1" android:pathData="M14 17h13v8H14z" />
+  <path android:fillColor="#f4eecb" android:fillAlpha="1" android:pathData="M16 19h3v3h-3zM23 19h3v3h-3z" />
+  <path android:fillColor="#f0c77f" android:fillAlpha="1" android:pathData="M11 28h19v4H11zM27 30h4v6h-4z" />
+  <path android:fillColor="#4d7d65" android:fillAlpha="1" android:pathData="M13 33h4v4h-4zM23 33h4v4h-4z" />
+  <path android:fillColor="#263d34" android:fillAlpha="1" android:pathData="M11 37h7v3h-7zM23 37h7v3h-7z" />
+  <path android:fillColor="#d8f4ca" android:fillAlpha="1" android:pathData="M5 25h4v6H5zM31 25h4v6h-4z" />
+</vector>

@@ -53,7 +53,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             CircleButton(if(inChat) Icons.Outlined.ArrowBack else Icons.Outlined.Menu, if(inChat) "返回会话列表" else "设备与连接") { if(inChat) state.leaveChat() else state.sheet = "connections" }
             Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(if(inChat) state.sessions.find { it.optString("id") == state.selected }?.optString("title")?.takeIf { it.isNotBlank() } ?: "新对话" else "远程", fontSize = 16.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(if(inChat) state.sessions.find { it.optString("id") == state.selected }?.optString("title")?.takeIf { it.isNotBlank() } ?: "新对话" else "KK Code / 远程", fontSize = 16.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { state.sheet = "connections" }.padding(top = 3.dp)) {
                     Box(Modifier.size(6.dp).background(if(state.connected) connectedGreen else muted, CircleShape))
                     Spacer(Modifier.width(6.dp)); Icon(Icons.Outlined.Terminal, null, Modifier.size(12.dp), tint = muted)
@@ -83,7 +83,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                 Icon(Icons.Outlined.Search, null, Modifier.size(19.dp), tint = muted)
                 androidx.compose.foundation.text.BasicTextField(search, { search = it }, modifier = Modifier.weight(1f).padding(start = 8.dp), singleLine = true, textStyle = androidx.compose.ui.text.TextStyle(color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp), decorationBox = { field -> if(search.isBlank()) Text("搜索聊天", color = muted, fontSize = 14.sp); field() })
             }
-            Button(onClick = { if(state.connected) state.sheet = "new" else state.sheet = "connections" }, enabled = !state.sharedDevice, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.onSurface, contentColor = MaterialTheme.colorScheme.background), shape = PixelShape(), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)) {
+            Button(onClick = { if(state.connected) state.sheet = "new" else state.sheet = "connections" }, enabled = !state.sharedDevice, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary), shape = PixelShape(), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)) {
                 Icon(Icons.Outlined.EditNote, null, Modifier.size(22.dp)); Spacer(Modifier.width(6.dp)); Text("聊天", fontSize = 14.sp, fontWeight = FontWeight.Medium)
             }
         }
@@ -94,7 +94,10 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                 Text(state.notice, modifier = Modifier.weight(1f), color = kkcodeColors.warning, fontSize = 12.sp)
                 IconButton(onClick = { state.notice = "" }, modifier = Modifier.size(28.dp)) { Icon(Icons.Outlined.Close, null, Modifier.size(16.dp)) }
             }
-            if(inChat) ChatScreen(state) else SessionHome(state, search, sort, archived)
+            if(inChat) ChatScreen(state) else {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) { Text("YOUR PIXEL WORKSPACE", fontSize = 8.sp, letterSpacing = 1.sp, color = muted); Text(if(state.connected) "CONNECTED" else "LET’S CONNECT", fontSize = 8.sp, letterSpacing = 1.sp, color = MaterialTheme.colorScheme.primary) }
+                SessionHome(state, search, sort, archived)
+            }
         }
     }
     if(state.sheet.isNotBlank()) ModalBottomSheet(onDismissRequest = { state.sheet = "" }, containerColor = MaterialTheme.colorScheme.surface, shape = PixelShape(8.dp, bottomCorners = false), dragHandle = null, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
@@ -137,7 +140,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
     }
     if(filtered.isEmpty()) Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Outlined.Forum, null, Modifier.size(30.dp), tint = kkcodeColors.activityMuted)
+            if(search.isBlank()) PixelWorkshop() else Icon(Icons.Outlined.Search, null, Modifier.size(30.dp), tint = kkcodeColors.activityMuted)
             Spacer(Modifier.height(16.dp)); Text(if(search.isNotBlank()) "没有找到相关对话" else if(archived) "没有已归档的对话" else if(state.connected) "还没有对话" else "你的对话，在这里继续", fontSize = 17.sp)
             Spacer(Modifier.height(8.dp)); Text(if(search.isNotBlank()) "试试其他关键词或项目名称。" else if(state.connected) "选择工作目录，开始新的聊天。" else "添加一台电脑，随时回到你的工作区。", color = muted, fontSize = 13.sp)
             if(!state.connected) TextButton(onClick = { state.sheet = "connections" }, modifier = Modifier.padding(top = 12.dp)) { Text("管理连接", color = kkcodeColors.link, fontSize = 14.sp) }
@@ -146,7 +149,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
         grouped.forEach { (group, list) ->
             item { TextButton(onClick = { collapsed = if(group in collapsed) collapsed - group else collapsed + group }, contentPadding = PaddingValues(0.dp)) { Text(group, color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Medium); Spacer(Modifier.width(7.dp)); Icon(if(group in collapsed) Icons.Outlined.ChevronRight else Icons.Outlined.ExpandMore, if(group in collapsed) "展开分组" else "收起分组", Modifier.size(14.dp), tint = muted) } }
             items(if(group in collapsed) emptyList() else list, key = { it.getString("id") }) { session ->
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().padding(bottom = 8.dp).background(MaterialTheme.colorScheme.surface, PixelShape()).border(1.dp, MaterialTheme.colorScheme.outlineVariant, PixelShape()).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f).clickable { state.openSession(session) }.padding(vertical = 14.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(session.optString("title").ifBlank { "新对话" }, modifier = Modifier.weight(1f), fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -334,6 +337,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
     Column(Modifier.fillMaxSize().imePadding()) {
         LazyColumn(Modifier.weight(1f), state = listState, contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)) {
             if(state.historyHasMore) item(key = "load-earlier") { TextButton(onClick = { state.loadEarlier() }, enabled = !state.loadingHistory, modifier = Modifier.fillMaxWidth()) { Text(if(state.loadingHistory) "正在加载…" else "加载更早的消息", fontSize = 12.sp) } }
+            if(displayItems.isEmpty() && !state.busy && state.approvals.isEmpty()) item(key = "studio-welcome") { Column(Modifier.fillMaxWidth().padding(vertical = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) { PixelWorkshop(); Text("今天想构建什么？", fontSize = 22.sp, fontWeight = FontWeight.Medium); Text("把想法变成可验证的结果。", color = muted, fontSize = 12.sp, modifier = Modifier.padding(top = 10.dp)) } }
             items(displayItems, key = { it.id }) { item ->
                 Column(Modifier.fillMaxWidth().padding(vertical = if(item.kind in listOf("tool", "thinking")) 0.dp else 10.dp), horizontalAlignment = if(item.kind == "user") Alignment.End else Alignment.Start) {
                     when(item.kind) {
@@ -369,6 +373,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
         ChangeSummary(state.messages)
         TodoProgressView(state.todos, "${System.identityHashCode(state.api)}:${state.api?.device}:${state.selected}", state.subagents)
         if(state.showContext) ContextUsageView(state.contextUsage)
+        StudioTools(state)
         if(text.startsWith('/') && !text.contains(' ')) {
             val query = text.removePrefix("/")
             val suggestions = state.commands.filter { (it.optString("name") + " " + it.optString("description")).contains(query, ignoreCase = true) }.sortedBy { if(it.optString("name").startsWith(query, ignoreCase = true)) 0 else 1 }.take(12)
@@ -400,7 +405,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                 }
                 Spacer(Modifier.weight(1f))
                 if(state.busy && text.isNotBlank() && !state.stopping) IconButton(onClick = { state.send(text) }, enabled = state.canControl && !state.uploading && !state.sessionArchived, modifier = Modifier.size(34.dp)) { Icon(Icons.Outlined.ArrowUpward, "发送补充要求", Modifier.size(21.dp)) }
-                IconButton(onClick = { if(state.busy) state.stop() else if(text.isNotBlank() || state.attachments.isNotEmpty()) state.send(text) }, enabled = state.canControl && !state.uploading && !state.sessionArchived && !state.stopping, modifier = Modifier.size(34.dp).background(MaterialTheme.colorScheme.onSurface, PixelShape(3.dp))) { Icon(if(state.busy) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, if(state.stopping) "正在停止" else if(state.busy) "停止" else "发送", Modifier.size(21.dp), tint = MaterialTheme.colorScheme.background) }
+                IconButton(onClick = { if(state.busy) state.stop() else if(text.isNotBlank() || state.attachments.isNotEmpty()) state.send(text) }, enabled = state.canControl && !state.uploading && !state.sessionArchived && !state.stopping, modifier = Modifier.size(34.dp).background(MaterialTheme.colorScheme.primary, PixelShape(3.dp))) { Icon(if(state.busy) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, if(state.stopping) "正在停止" else if(state.busy) "停止" else "发送", Modifier.size(21.dp), tint = MaterialTheme.colorScheme.onPrimary) }
             }
         }
     }
