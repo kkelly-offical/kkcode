@@ -25,11 +25,15 @@ Web/Android在用户打开设置／模型面板后显示诊断，不自动弹出
 
 以下仍是通用命令派发契约：
 
-`commands.run` accepts `{sessionId, command}` while holding session control. It
+`commands.run` accepts `{sessionId, command, executionId?}` while holding session control. It
 does not open terminal readline prompts. Responses may contain `output`
 (`{text,channel?,topic?,tone?}[]`), `panels` (`{title,text}[]`), updated `state`,
 an accepted turn, or the following explicit client actions. Output text is
 ANSI-free. A command error must be shown, not replaced by a success toast.
+
+Since 1.0.9, `/compact` returns an accepted operation with `operation: "compact"` and an execution ID immediately. It shares the turn broker, session lock, control ownership and `turns.cancel` with normal turns; it cannot accept steering or a second compact concurrently. The client shows submitting/compacting/stopping, clears only the accepted original draft, and restores a retry command on cancellation/failure without overwriting newly typed text. Request-ledger replay retains the same accepted operation.
+
+`session.compacting` carries the operation; `session.compacted` carries `beforeTokens`, `afterTokens`, `compactedAt` and a fresh `session.context.updated`. Completion is `turn.result`; cancellation/failure uses the existing terminal events with `operation: "compact"`. `sessions.get.context` and `lastCompaction` recover the meter and short arrow after reload. Cancellation before commit preserves original history; a stop after the history commit reports actual success, never a claimed rollback. Client folding affects available display history only, not model history or permission/evidence records.
 
 | Action | Required client behavior |
 | --- | --- |

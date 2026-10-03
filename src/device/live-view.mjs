@@ -35,7 +35,7 @@ export class DeviceLiveView {
     if (!presentationTypes.has(event.type)) return
     const id = event.sessionId, payload = event.payload || {}
     let state = this.sessions.get(id), turnId = event.type === 'turn.result' ? payload.turnId || event.turnId : event.turnId
-    if (terminalTypes.has(event.type) && state) turnId = state.turnId
+    if (terminalTypes.has(event.type) && state && payload.operation !== 'compact') turnId = state.turnId
     if (!turnId) return
     if (!state || state.turnId !== turnId || event.type === 'turn.start') {
       state = { turnId, prompt: null, segments: [], generations: new Map(), terminal: null, truncated: false, bytes: 0 }
@@ -51,7 +51,7 @@ export class DeviceLiveView {
       const key = stepKey(turnId, payload.step)
       state.generations.set(key, (state.generations.get(key) || 0) + 1)
     } else if (terminalTypes.has(event.type)) {
-      item.payload = { ...(payload.step != null ? { step: payload.step } : {}), ...(payload.reply ? { reply: tail(String(payload.reply), Math.floor(this.limits.maxSessionBytes / 4)) } : {}), ...(payload.error ? { error: tail(String(payload.error), 4096) } : {}), ...(payload.executionId ? { executionId: payload.executionId } : {}), ...(payload.settling ? { settling: true } : {}) }
+      item.payload = { ...(payload.step != null ? { step: payload.step } : {}), ...(payload.operation === 'compact' ? { operation: 'compact' } : {}), ...(payload.reply ? { reply: tail(String(payload.reply), Math.floor(this.limits.maxSessionBytes / 4)) } : {}), ...(payload.error ? { error: tail(String(payload.error), 4096) } : {}), ...(payload.executionId ? { executionId: payload.executionId } : {}), ...(payload.settling ? { settling: true } : {}) }
       state.terminal = item
       if (payload.reply && item.payload.reply !== String(payload.reply)) state.truncated = true
     } else if (event.type === 'stream.end' || event.type === 'tool.start') {

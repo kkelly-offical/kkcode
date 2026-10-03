@@ -1,6 +1,6 @@
 {
   "name": "@kkelly-offical/kkcode",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "workspaces": [
     "apps/web",
     "apps/gateway",
@@ -200,7 +200,9 @@
     "docs/release-1.0.7.md",
     "docs/r16-harness-audit-2026-10-03.md",
     "docs/release-1.0.8.md",
-    "docs/implementation-1.0.8.md"
+    "docs/implementation-1.0.8.md",
+    "docs/release-1.0.9.md",
+    "docs/implementation-1.0.9.md"
   ],
   "engines": {
     "node": ">=22.12.0"
@@ -208,7 +210,7 @@
   "scripts": {
     "build:web": "npm run build --workspace @kkcode/web",
     "typecheck:web": "tsc -p apps/web/tsconfig.json",
-    "test:web": "npm run build:web && node scripts/web-smoke.mjs && node scripts/web-cancel-smoke.mjs && node scripts/web-feature-contract-smoke.mjs && node scripts/web-pixel-theme-smoke.mjs && node scripts/gateway-pixel-smoke.mjs && node scripts/web-knowledge-smoke.mjs && node scripts/web-config-smoke.mjs && node --test test/web-memory-race.test.mjs test/web-todo-progress.test.mjs test/web-markdown-sanitization.test.mjs",
+    "test:web": "npm run build:web && node scripts/web-smoke.mjs && node scripts/web-cancel-smoke.mjs && node scripts/web-conversation-smoke.mjs && node scripts/web-feature-contract-smoke.mjs && node scripts/web-pixel-theme-smoke.mjs && node scripts/gateway-pixel-smoke.mjs && node scripts/web-knowledge-smoke.mjs && node scripts/web-config-smoke.mjs && node --test test/web-memory-race.test.mjs test/web-todo-progress.test.mjs test/web-markdown-sanitization.test.mjs",
     "test:browser": "node scripts/browser-smoke.mjs",
     "test:compatibility": "node scripts/compatibility-acceptance.mjs",
     "gateway": "node apps/gateway/main.mjs",

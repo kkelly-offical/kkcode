@@ -100,7 +100,8 @@ export function buildTranscript(snapshot = {}, events = []) {
         id: message.id,
         type: text.includes("<compaction-summary") ? "compacted" : message.role,
         text,
-        timestamp: message.createdAt,
+        timestamp: message.compaction?.compactedAt || message.createdAt || message.timestamp,
+        ...(text.includes('<compaction-summary') ? { compaction: { ...message.compaction, ...snapshot.lastCompaction } } : {}),
         turnId: message.turnId,
         ...(message.role === "user" && !text.includes("<compaction-summary") ? { messageId: message.id } : {}),
       });
@@ -223,7 +224,7 @@ export function buildTranscript(snapshot = {}, events = []) {
       event.type === "session.compacted" ||
       event.type === "stream.provider_compaction"
     )
-      rows.push({ id: event.id, type: "compacted" });
+      rows.push({ id: event.id, type: "compacted", timestamp: event.timestamp, compaction: p });
     else if (event.type === "turn.finish" || event.type === "turn.result") {
       endThinking();
       if (

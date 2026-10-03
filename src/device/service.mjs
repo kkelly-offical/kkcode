@@ -13,6 +13,7 @@ import { acquireProcessLock } from '../storage/process-lock.mjs'
 import { PROTOCOL_VERSION, ProtocolError, validateRequest } from '../protocol/index.mjs'
 import { listDeviceFolder, readDeviceFile, resolveDevicePath } from './files.mjs'
 import { listDeviceCommands, runDeviceCommand } from './commands.mjs'
+import { startDeviceCompaction } from './compaction.mjs'
 import { discoverDeviceModels, updateDeviceSettings, deviceSettingsSnapshot } from './model-settings.mjs'
 import { ReplayStore } from './replay-store.mjs'
 import { RequestLedger, REQUEST_WINDOW_MS } from './request-ledger.mjs'
@@ -141,7 +142,7 @@ export class DeviceService extends EventEmitter {
   async settleTurn(sessionId, entry, { result, error, release } = {}) {
     let cleanupFailed = false
     try { await release?.() } catch (cause) { error = cause; cleanupFailed = true }
-    const cancelled = !cleanupFailed && (isCancellation(error, entry.signal || entry.controller.signal) || result?.cancelled)
+    const cancelled = !entry.committed && !cleanupFailed && (isCancellation(error, entry.signal || entry.controller.signal) || result?.cancelled)
     // Only advertise a terminal outcome after resources/control are released.
     // A listener can immediately start the next turn without racing old cleanup.
     this.finishTurn(sessionId, entry)
@@ -149,7 +150,7 @@ export class DeviceService extends EventEmitter {
       ? { cancelled: true, reply: result?.partialReply || '', reason: 'user_cancel', filesReverted: false }
       : error ? { error: error.message } : result || {}
     return this.record({ type: cancelled ? 'turn.cancelled' : error ? 'turn.failed' : 'turn.result', sessionId,
-      turnId: result?.turnId || entry.kernelTurnId || entry.turnId, payload: { ...payload, executionId: entry.turnId, settled: true } })
+      turnId: result?.turnId || entry.kernelTurnId || entry.turnId, payload: { ...payload, ...(entry.operation ? { operation: entry.operation } : {}), executionId: entry.turnId, settled: true } })
   }
   async record(event) {
     if (this.closed) return
@@ -176,7 +177,7 @@ export class DeviceService extends EventEmitter {
     const entry = this.turns.get(sessionId)
     let pendingApprovalCount = 0
     for (const approval of this.approvals.values()) if (approval.sessionId === sessionId) pendingApprovalCount++
-    return { running: Boolean(entry), turnState: entry ? { executionId: entry.turnId, phase: entry.controller.signal.aborted || entry.signal?.aborted ? 'stopping' : entry.phase || 'running' } : null,
+    return { running: Boolean(entry), turnState: entry ? { executionId: entry.turnId, ...(entry.operation ? { operation: entry.operation } : {}), phase: entry.controller.signal.aborted || entry.signal?.aborted ? 'stopping' : entry.phase || 'running' } : null,
       control: lease && lease.until > Date.now() ? { yours: lease.client === principal.client, until: lease.until } : null, pendingApprovalCount }
   }
   /** The events.list envelope. Watching a session (polling or SSE) renews the
@@ -461,6 +462,7 @@ export class DeviceService extends EventEmitter {
       if (!entry) return { cancelled: false, running: false, turnState: null }
       this.lease(sessionId, principal)
       if (p.executionId !== undefined && p.executionId !== entry.turnId) throw new ProtocolError('turn_changed', '原回合已结束，未中止新回合。请刷新当前会话状态。', 409)
+      if (entry.committed) return { cancelled: false, ...this.sessionState(sessionId, principal) }
       if (entry.phase !== 'stopping') {
         entry.phase = 'stopping'
         const recorded = this.record({ type: 'turn.stopping', sessionId, turnId: entry.kernelTurnId || entry.turnId, payload: { executionId: entry.turnId } })
@@ -473,6 +475,7 @@ export class DeviceService extends EventEmitter {
       this.assertOwner(principal)
       this.lease(sessionId, principal)
       const entry = this.turns.get(sessionId)
+      if (entry?.operation === 'compact') throw new ProtocolError('session_busy', '正在压缩上下文；请等待完成或停止后再发送。', 409)
       if (!entry || ['stopping', 'finishing'].includes(entry.phase)) throw new ProtocolError('turn_not_running', '当前任务已结束或正在停止；补充内容尚未发送，请保留并在下一轮发送。', 409)
       if (p.executionId !== entry.turnId) throw new ProtocolError('turn_changed', '任务已变化，请刷新后再发送补充要求。', 409)
       if (Object.keys(p).some(key => !['sessionId', 'executionId', 'prompt'].includes(key)) || typeof p.prompt !== 'string' || !p.prompt.trim() || p.prompt.length > 16000) throw new ProtocolError('invalid_prompt', '补充要求需为 1–16000 字符的文字；附件请在下一轮发送。')
@@ -626,9 +629,10 @@ export class DeviceService extends EventEmitter {
       if (this.turns.has(sessionId) || this.workspaceMutation || this.configurationUpdating || this.commandSessions.has(sessionId) || this.sessionTransitions.has(sessionId)) throw new ProtocolError('turn_busy', 'Wait for the active turn, command or branch change to finish', 409)
       this.commandSessions.add(sessionId)
       try {
+        if (typeof p.command === 'string' && /^\/?compact\s*$/.test(p.command.trim())) return await startDeviceCompaction({ service: this, sessionId, principal, executionId: p.executionId })
         const kernel = await this.kernel((sessionId && (await getSession(sessionId))?.session.cwd) || this.cwd)
         this.lease(sessionId, principal)
-        return await this.commandContext.run({ sessionId }, () => runDeviceCommand({ service: this, kernel, sessionId, command: p.command, principal }))
+        return await this.commandContext.run({ sessionId }, () => runDeviceCommand({ service: this, kernel, sessionId, command: p.command, principal, executionId: p.executionId }))
       } finally { this.commandSessions.delete(sessionId) }
     }
     const kernel = await this.kernel(p.cwd || (sessionId && (await getSession(sessionId))?.session.cwd) || this.cwd)

@@ -32,7 +32,12 @@ test('actual DeviceService executes the safe slash command surface without termi
     assert.ok(catalog.some(entry => entry.name === 'mcp')); assert.ok(catalog.some(entry => entry.name === 'rewind'))
     for (const command of ['/help', '/status', '/session', '/commands', '/skills', '/agents', '/mcp', '/mcp reload', '/tasks', '/board', '/permission list', '/compact', '/undo', '/reload']) {
       const result = await run(command)
-      assert.ok(result.panels?.length || result.output?.length, `${command} should return visible output`)
+      if(command === '/compact') {
+        assert.equal(result.accepted, true)
+        await service.turns.get(sessionId)?.promise
+        assert.equal((await service.readEvents(sessionId, 0)).at(-1).payload.operation, 'compact')
+        await rpc('control.acquire', {sessionId})
+      } else assert.ok(result.panels?.length || result.output?.length, `${command} should return visible output`)
       assert.ok(!result.output?.some(entry => /TypeError|ReferenceError/.test(entry.text)), command)
     }
     assert.equal((await run('/history')).clientAction, 'sessions')

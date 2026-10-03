@@ -506,7 +506,7 @@ test('step exhaustion reports current successful checks but remains incomplete w
 })
 
 for (const language of ['en', 'zh']) test(`shared guidance reaches the actual Plan system prompt without granting writes (${language})`, async () => {
-  const prompt = await buildSystemPromptBlocks({mode: 'plan', model: 'fixture', cwd: process.cwd(), language, tools: [{name: 'bash'}]})
+  const prompt = await buildSystemPromptBlocks({mode: 'plan', model: 'fixture', cwd: process.cwd(), language, tools: [{name: 'bash'}], verifyCompletion: true})
   const contract = prompt.blocks.find(block => block.label === 'assistant_contract').text
   assert.match(contract, /node --test/)
   assert.match(contract, language === 'zh' ? /只读\/Plan任务不得.*创建或修改/ : /Read-only\/Plan tasks must not create or edit/)

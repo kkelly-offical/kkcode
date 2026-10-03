@@ -422,7 +422,7 @@ test("background delegate cleans a detached worktree after a post-setup error", 
 //
 // 因此这里必须发一次真实的工具调用，并断言产物真的落到磁盘上 —— 只断言
 // 任务状态是不够的，那正是当年漏掉它的原因。
-test("background worker retains an actual delegated write without claiming unverified completion", async () => {
+test("background worker with explicit verification retains a delegated write without claiming acceptance", async () => {
   const config = {
     background: { mode: "worker_process", max_parallel: 1, worker_timeout_ms: 30000 }
   }
@@ -431,6 +431,7 @@ test("background worker retains an actual delegated write without claiming unver
   const raw = JSON.parse(await readFile(join(project, "kkcode.config.json"), "utf8"))
   raw.tool.sources.builtin = true
   raw.agent.max_steps = 3
+  raw.agent.verify_completion = true
   await writeFile(join(project, "kkcode.config.json"), `${JSON.stringify(raw, null, 2)}\n`, "utf8")
 
   const target = "delegated-artifact.txt"

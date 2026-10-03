@@ -147,6 +147,7 @@ function MediaPreview({ row, loadPreview }: { row: Item; loadPreview?: (referenc
   </details>;
 }
 export function TranscriptRow({ row, loadPreview, onRewind, thinkingExpanded, onThinkingExpanded, active = true, stopping = false, onResume }: { row: Item; loadPreview?: (reference: Item) => Promise<Item>; onRewind?: (row: Item) => void; thinkingExpanded?: boolean; onThinkingExpanded?: (expanded: boolean) => void; active?: boolean; stopping?: boolean; onResume?: () => void }) {
+  if (row.type === 'compacted-history') return <details className="compacted-history tool-row"><summary><Icon name="chevron" size={14} /><span>压缩前的记录 · 点击展开</span></summary><div className="run-summary-body">{row.rows.map((child: Item) => <TranscriptRow key={child.id} row={child} loadPreview={loadPreview} active={false} />)}</div></details>;
   if (row.type === 'cancelled') return <div className="turn-cancelled" role="status"><span>已停止。已收到的内容和文件改动已保留。</span>{onResume && <button type="button" onClick={onResume}>继续</button>}</div>;
   if (row.type === 'run-summary') return <details className="tool-row run-summary">
     <summary><Icon name="chevron" size={14} /><span>{row.durationMs != null ? `已运行 ${Math.floor(row.durationMs / 1000)} 秒` : '运行过程已完成'}{row.tools ? ` · ${row.tools} 次工具调用` : ''}</span></summary>
@@ -159,7 +160,7 @@ export function TranscriptRow({ row, loadPreview, onRewind, thinkingExpanded, on
   if (row.type === "compacted")
     return (
       <div className="context-divider">
-        <span>已精简上下文</span>
+        <span>{row.label || '已精简上下文'}</span>
       </div>
     );
   return (

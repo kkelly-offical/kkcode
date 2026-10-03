@@ -34,7 +34,7 @@ private val removal: Color @Composable get() = kkcodeColors.diffRemove
 @Composable internal fun RunSummaryRow(item: ChatItem, onExpanded: (Boolean) -> Unit = {}) {
     var expanded by remember(item.id) { mutableStateOf(false) }
     val tools = item.children.count { it.kind == "tool" }
-    val title = (item.durationMs?.let { "已运行 ${it / 1000} 秒" } ?: "运行过程已完成") + if(tools > 0) " · $tools 次工具调用" else ""
+    val title = if(item.kind == "compacted-history") item.text else (item.durationMs?.let { "已运行 ${it / 1000} 秒" } ?: "运行过程已完成") + if(tools > 0) " · $tools 次工具调用" else ""
     Column(Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().clickable { expanded = !expanded; onExpanded(expanded) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
             Icon(Icons.Outlined.CheckCircleOutline, null, Modifier.size(16.dp), tint = activityMuted)
@@ -43,7 +43,13 @@ private val removal: Color @Composable get() = kkcodeColors.diffRemove
         }
         if(expanded) Column(Modifier.fillMaxWidth().padding(start = 12.dp)) {
             item.children.forEach { child -> key(child.id) {
-                if(child.kind == "assistant") MarkdownText(child.text, Modifier.fillMaxWidth().padding(vertical = 8.dp)) else ActivityRow(child)
+                when(child.kind) {
+                    "assistant" -> MarkdownText(child.text, Modifier.fillMaxWidth().padding(vertical = 8.dp))
+                    "user", "error", "cancelled" -> SelectionContainer { Text(child.text, modifier = Modifier.padding(vertical = 8.dp), fontSize = 14.sp) }
+                    "run-summary", "compacted-history" -> RunSummaryRow(child)
+                    "media" -> Text("图片附件 · 原始内容保留在电脑", color = activityMuted, fontSize = 12.sp)
+                    else -> ActivityRow(child, active = false)
+                }
             } }
         }
     }

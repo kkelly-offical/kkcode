@@ -8,13 +8,14 @@ import { PixelBuddy, PixelScene, StudioBar } from "./PixelStudio";
 import { SessionHome, ConnectionLanding, SessionActions } from "./Home";
 import { Sheet } from "./Sheet";
 import { ContextUsage } from './ContextUsage';
+import { useTranscriptScroll } from './useTranscriptScroll';
 import { TodoProgress } from './TodoProgress';
 import { acceptTodoSnapshot, scopedSubagents, mergeSubagentEvent } from '../../../src/ui/todo-progress.mjs';
 import { modeLabel } from "./modes.mjs";
 import { SettingsOverlay } from "./Settings";
 import { Icon } from "./Icon";
 import { TranscriptRow, ThinkingRow } from "./TranscriptView";
-import { collapseCompletedRuns } from './conversation-presentation.mjs';
+import { collapseCompletedRuns, collapseCompactedHistory, compactionLabel } from './conversation-presentation.mjs';
 import { remoteErrorMessage } from './errors.mjs';
 import { Composer } from "./Composer";
 import { buildTranscript, changeSummary } from "./transcript.mjs";
@@ -68,6 +69,7 @@ function App() {
     [notice, setNotice] = useState(""),
     [sidebar, setSidebar] = useState(false);
   const [stopping, setStopping] = useState(false), [turnPhase, setTurnPhase] = useState('idle');
+  const [turnOperation, setTurnOperation] = useState('');
   const activeExecution = useRef(''), stopRequested = useRef('');
   const pendingSend = useRef<Item | null>(null), stopInFlight = useRef<Promise<void> | null>(null);
   const steeringInFlight = useRef(false);
@@ -96,6 +98,7 @@ function App() {
     if (meta.running && execution && settledExecutions.current.has(execution)) return;
     if (execution) activeExecution.current = execution;
     setBusy(Boolean(meta.running));
+    setTurnOperation(meta.turnState?.operation || '');
     if (!meta.running) { activeExecution.current = ''; stopRequested.current = ''; setStopping(false); setTurnPhase('idle'); }
     else {
       const isStopping = meta.turnState?.phase === 'stopping' || Boolean(stopRequested.current && (!execution || stopRequested.current === execution));
@@ -107,7 +110,7 @@ function App() {
     if (id && pending?.id === id) { pending.terminal = true; pending.finish?.({ accepted: Boolean(pending.acknowledged), settled: true }); pendingSend.current = null; }
     if (id) { settledExecutions.current.add(id); if (settledExecutions.current.size > 64) settledExecutions.current.delete(settledExecutions.current.values().next().value!); }
     if (id && activeExecution.current && activeExecution.current !== id) return;
-    activeExecution.current = ''; stopRequested.current = ''; stopInFlight.current = null; setBusy(false); setStopping(false); setTurnPhase('idle');
+    activeExecution.current = ''; stopRequested.current = ''; stopInFlight.current = null; setBusy(false); setStopping(false); setTurnPhase('idle'); setTurnOperation('');
   }
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
   useEffect(() => { setThinkingExpanded(false); }, [selected, busy]);
@@ -116,8 +119,8 @@ function App() {
   const [settings, setSettings] = useState<Item>({});
   const [commands, setCommands] = useState<Item[]>([]),
     [approval, setApproval] = useState<Item[]>([]);
-  const tail = useRef<HTMLDivElement>(null),
-    cursor = useRef(0);
+  const cursor = useRef(0);
+  const scroll = useTranscriptScroll(`${gateway}:${deviceId}:${selected}`, ready && session?.id === selected);
   const manuallyDisconnected = useRef(false);
   const livePreviewNotice = useRef(""), livePreviewLimited = useRef(false);
   const attachmentKey = `${deviceId}:${selected}`;
@@ -385,14 +388,17 @@ function App() {
           if (['subagent.delegated', 'subagent.settled'].includes(event.type)) setSubagents(previous => ({ identity: todoIdentity, items: mergeSubagentEvent(previous?.identity === todoIdentity ? previous.items : [], event, selected) }));
           if (['session.context.updated', 'turn.usage.update'].includes(event.type) && event.payload?.context) setSession(previous => previous ? { ...previous, context: event.payload.context } : previous);
           const execution = event.payload?.executionId || '';
-          if (['turn.preparing', 'turn.start', 'turn.stopping'].includes(event.type)) {
+          if (['turn.preparing', 'turn.start', 'turn.stopping', 'session.compacting'].includes(event.type)) {
             if (execution) activeExecution.current = execution;
             const pending = pendingSend.current;
-            if (event.type === 'turn.start' && pending && pending.id === execution) acknowledgeSend(pending);
+            if (['turn.start', 'session.compacting'].includes(event.type) && pending && pending.id === execution) acknowledgeSend(pending);
+            if (event.payload?.operation) setTurnOperation(event.payload.operation);
             setBusy(true);
             const halted = event.type === 'turn.stopping' || Boolean(stopRequested.current && stopRequested.current === execution);
-            setStopping(halted); setTurnPhase(halted ? 'stopping' : event.type === 'turn.preparing' ? 'starting' : 'running');
+            setStopping(halted); setTurnPhase(halted ? 'stopping' : event.type === 'turn.preparing' ? 'starting' : event.type === 'session.compacting' ? 'compacting' : 'running');
           }
+          if (event.type === 'session.compacted') setSession(previous => previous ? { ...previous, lastCompaction: event.payload } : previous);
+          if (['turn.failed', 'turn.cancelled'].includes(event.type) && event.payload?.operation === 'compact') setPrompt(old => old || '/compact');
           if (event.type === 'turn.finish' && event.payload?.settling && (!execution || execution === activeExecution.current)) setTurnPhase(stopRequested.current ? 'stopping' : 'finishing');
           if (['turn.result', 'turn.failed', 'turn.cancelled'].includes(event.type) || event.type === 'turn.finish' && !event.payload?.settling) settleExecution(execution);
         }
@@ -541,13 +547,18 @@ function App() {
     await rpc("attachments.remove", { sessionId: selected, id });
     setDraftAttachments(old => ({ ...old, [attachmentKey]: (old[attachmentKey] || []).filter(item => item.id !== id) }));
   }
-  async function runCommand(text: string, id = selected) {
+  async function runCommand(text: string, id = selected, token?: Item) {
     const sessionId = id || await ensureSession();
     const lease = await rpc("control.acquire", { sessionId });
     let accepted = false;
     try {
-      const result = await rpc("commands.run", { sessionId, command: text });
+      if (token?.cancelled) return { accepted: false };
+      const request = rpc("commands.run", { sessionId, command: text, ...(token ? { executionId: token.id } : {}) }, token ? { id: token.id } : {});
+      if (token) token.start = request;
+      const result = await request;
       accepted = Boolean(result?.accepted);
+      if (!currentView(sessionId) || token?.terminal) return result;
+      if (accepted && token) acknowledgeSend(token);
       applySelection(result?.state || result || {});
       setCommandResult({ ...result, command: text });
       const action = result?.clientAction;
@@ -592,6 +603,7 @@ function App() {
     if (busy) {
       if (steeringInFlight.current) return;
       if (stopping || turnPhase === 'finishing') { setNotice('当前任务正在收尾；请保留补充要求，稍后发送。'); return; }
+      if (turnOperation === 'compact') { setNotice('正在压缩上下文，请等待完成或停止后再发送。'); return; }
       if (attachments.length || text.startsWith('/')) { setNotice('执行期间可发送文字补充要求；附件和命令请在本轮结束后发送。'); return; }
       const id = selected, device = deviceId, executionId = activeExecution.current;
       steeringInFlight.current = true;
@@ -607,7 +619,8 @@ function App() {
     const token: Item = { id: crypto.randomUUID(), sessionId: selected, deviceId, text, attachmentIds: attachments.map(item => item.id), cancelled: false, start: null, terminal: false };
     token.finished = new Promise(resolve => { token.finish = resolve; });
     pendingSend.current = token;
-    if (!text.startsWith('/')) { activeExecution.current = token.id; setBusy(true); setTurnPhase('starting'); }
+    const compact = /^\/compact\s*$/.test(text);
+    if (!text.startsWith('/') || compact) { activeExecution.current = token.id; setBusy(true); setTurnPhase('starting'); setTurnOperation(compact ? 'compact' : ''); }
     let accepted = false;
     try {
       let id = selected;
@@ -618,9 +631,10 @@ function App() {
       if (token.cancelled || viewIdentity.current.deviceId !== deviceId || (viewIdentity.current.selected !== id && viewIdentity.current.selected !== selected)) return;
       if (text.startsWith("/")) {
         if (attachments.length) throw new Error("附件不能附加到 / 命令，请先发送普通消息或移除附件");
-        setPrompt(old => old === text ? '' : old);
-        const result = await runCommand(text, id);
+        if (!compact) setPrompt(old => old === text ? '' : old);
+        const result = await runCommand(text, id, token);
         accepted = Boolean(result?.accepted);
+        if (accepted && compact && currentView(id) && !token.terminal) setTurnPhase(token.cancelled ? 'stopping' : 'compacting');
         return;
       }
       const lease = await rpc("control.acquire", { sessionId: id });
@@ -638,10 +652,7 @@ function App() {
       if (!currentView(id) || token.terminal) return;
       acknowledgeSend(token);
       if (!settledExecutions.current.has(token.id)) { setBusy(true); setTurnPhase(token.cancelled ? 'stopping' : 'running'); }
-      setTimeout(
-        () => tail.current?.scrollIntoView({ behavior: "smooth" }),
-        50,
-      );
+      scroll.latest();
     } catch (cause: any) {
       if (!token.terminal && currentView(token.sessionId)) {
         if (text.startsWith('/')) setPrompt(old => old || text);
@@ -876,7 +887,8 @@ function App() {
                 </button>
               </div>
             </header>
-            <div className="transcript">
+            <div className="transcript" ref={scroll.viewport}>
+              <div className="transcript-content" ref={scroll.content}>
               {session?.historyHasMore && <button className="load-history" disabled={loadingHistory} onClick={() => void loadEarlierMessages()}>{loadingHistory ? "正在加载…" : "加载更早消息"}</button>}
               {!messages.length && !busy && !approval.length && (
                 <div className="empty">
@@ -904,29 +916,33 @@ function App() {
                   )}
                 </div>
               )}
-              {collapseCompletedRuns(messages, busy).map((row) => (
+              {collapseCompactedHistory(collapseCompletedRuns(messages, busy)).map((item: Item) => { const row = item.type === 'compacted' ? { ...item, label: compactionLabel(item.compaction) } : item; return (
                 <TranscriptRow key={row.id} row={row} active={busy && !['stopping', 'finishing'].includes(turnPhase)} stopping={stopping} thinkingExpanded={row.done === false && thinkingExpanded} onThinkingExpanded={setThinkingExpanded} loadPreview={ref => rpc("media.preview", { sessionId: selected, ...ref })} onRewind={canManage && !busy && !session?.archived ? target => setRewindTarget(target) : undefined} onResume={row.type === 'cancelled' && !busy && canManage && !session?.archived ? () => { setPrompt(old => old || '请从中断处继续。先核查已有结果和已执行的操作，不要重复已完成的改动。'); document.querySelector<HTMLTextAreaElement>('textarea[aria-label="消息"]')?.focus(); } : undefined} />
-              ))}
-              {busy && turnPhase !== 'finishing' && !approval.length &&
+              ); })}
+              {busy && turnOperation !== 'compact' && turnPhase !== 'finishing' && !approval.length &&
                 !messages.some(
                   (row) => ['thinking', 'assistant', 'review'].includes(row.type) && row.done === false || row.type === 'tool' && row.payload?.status === 'running',
                 ) && (
                   <ThinkingRow key={`waiting-${selected}`} row={{ id: 'waiting-thinking', text: '', done: false }} active={!['stopping', 'finishing'].includes(turnPhase)} stopping={stopping} initiallyExpanded={thinkingExpanded} onExpanded={setThinkingExpanded} />
                 )}
               {approval.map(request => <Approval key={request.id} request={request} readOnly={readOnly} onResolve={answer => rpc('approvals.resolve', { id: request.id, sessionId: request.sessionId || selected, answer })} />)}
-              <div ref={tail} />
+              </div>
             </div>
+            {scroll.away && <button className="back-to-latest" onClick={scroll.latest}>↓ 回到最新</button>}
             {control && !control.yours && <div className="control-notice">另一客户端正在控制此会话。{canManage && <button onClick={() => attempt(async () => { await rpc('control.acquire', { sessionId: selected, takeover: true }); setControl({ yours: true }); })}>接管控制</button>}</div>}
             <ContextUsage value={session?.context} />
+            {busy && turnOperation === 'compact' && <div className="compact-progress" role="status">{stopping ? '正在停止压缩…' : turnPhase === 'starting' ? '正在提交压缩…' : '正在压缩上下文…'}</div>}
             <TodoProgress key={todoIdentity} snapshot={todos?.identity === todoIdentity ? todos.snapshot : null} subagents={subagents?.identity === todoIdentity ? subagents.items : []} />
             {busy && ['stopping', 'finishing'].includes(turnPhase) && <div className="stop-progress" role="status">{stopping ? '正在停止并保存已有结果；已执行的文件改动不会撤销。' : '正在保存本轮结果…'}</div>}
             <StudioBar busy={busy} stopping={stopping} approval={approval.length > 0} readOnly={readOnly || Boolean(session?.archived)} connected={connected} selected={Boolean(selected)} canManage={canManage} onPanel={setPanel} onPrompt={value => setPrompt(previous => previous ? `${previous}\n\n${value}` : value)} />
             <Composer
+              key={`${gateway}:${deviceId}`}
               readOnly={readOnly || Boolean(session?.archived)}
               canManage={canManage}
               prompt={prompt}
               onPrompt={setPrompt}
               busy={busy}
+              compacting={turnOperation === 'compact'}
               stopping={stopping}
               mode={mode}
               modes={commandResult.clientAction === "mode" && commandResult.items?.length ? commandResult.items : undefined}
@@ -951,7 +967,7 @@ function App() {
                   setNotice(`模型已切换为 ${selection.model}`);
                 })
               }
-              onDiscoverModels={(name) => rpc("models.discover", { provider: name })}
+              onDiscoverModels={(name) => rpc("models.discover", { provider: name, refresh: true })}
               onPanel={setPanel}
               summary={changeSummary(messages)}
             />

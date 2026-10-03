@@ -111,8 +111,7 @@ export const providerCommands = [
     run: async ({ args, print, state, ctx, openPanel }) => {
       // `/model` 与 `/model refresh` 都是「列出并选一个」；其它参数是直接指定。
       if (!args || args === "refresh") {
-        const refresh = args === "refresh"
-        const catalog = await loadProviderModelItems(ctx.configState, state.providerType, { refresh })
+        const catalog = await loadProviderModelItems(ctx.configState, state.providerType, { refresh: true })
         const items = catalog.items
         if (openPanel) {
           // TUI：选择器承载完整清单，对话记录里不重复 dump —— 只留一条瞬时提示

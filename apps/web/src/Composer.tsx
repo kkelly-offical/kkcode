@@ -68,6 +68,7 @@ export function Composer({
   onSend,
   onStop,
   stopping = false,
+  compacting = false,
   onPanel,
   onMode,
   onModel,
@@ -91,6 +92,7 @@ export function Composer({
   onSend: () => void;
   onStop: () => void;
   stopping?: boolean;
+  compacting?: boolean;
   onPanel: (panel: string) => void;
   onMode?: (mode: string) => void;
   onModel?: (selection: { provider: string; model: string }) => void;
@@ -121,6 +123,10 @@ export function Composer({
       ? commandSuggestions(commands, needle)
       : [];
   const providers = configuredProviders(settings);
+  const catalogScope = JSON.stringify(settings.provider || {});
+  const activeCatalogScope = useRef(catalogScope), discovering = useRef(new Map<string, string>());
+  activeCatalogScope.current = catalogScope;
+  useEffect(() => { setCatalogs({}); discovering.current.clear(); }, [catalogScope]);
   const selection = effectiveSelection(settings, { provider, model });
   const modeOptions = modes?.length ? modes : MODE_OPTIONS;
   const pickerAnchor =
@@ -157,21 +163,25 @@ export function Composer({
     setPicker(name);
   };
   const discover = async (name: string) => {
-    const known = catalogs[name];
-    if (!onDiscoverModels || known?.loading || known?.models.length) return;
+    if (!onDiscoverModels || discovering.current.get(name) === catalogScope) return;
+    const scope = catalogScope;
+    discovering.current.set(name, scope);
     setCatalogs((old) => ({
       ...old,
       [name]: { loading: true, models: old[name]?.models || [] },
     }));
     try {
       const result = await onDiscoverModels(name);
+      if (activeCatalogScope.current !== scope) return;
       setCatalogs((old) => ({
         ...old,
         [name]: {
           models: (result?.models || []).filter((entry: Item) => entry?.id),
+          error: result?.warning || '',
         },
       }));
     } catch (cause: any) {
+      if (activeCatalogScope.current !== scope) return;
       setCatalogs((old) => ({
         ...old,
         [name]: {
@@ -179,7 +189,7 @@ export function Composer({
           error: cause?.message || "模型列表读取失败",
         },
       }));
-    }
+    } finally { if (discovering.current.get(name) === scope) discovering.current.delete(name); }
   };
   const chooseModel = (providerName: string, id: string) => {
     setPicker("");
@@ -571,7 +581,7 @@ export function Composer({
                 </>,
               )}
           </div>
-          {busy && prompt.trim() && !stopping && <button type="button" className="send" aria-label="发送补充要求" disabled={readOnly || uploading} onClick={onSend}><Icon name="send" size={21} /></button>}
+          {busy && prompt.trim() && !stopping && !compacting && <button type="button" className="send" aria-label="发送补充要求" disabled={readOnly || uploading} onClick={onSend}><Icon name="send" size={21} /></button>}
           {busy ? (
             <button
               type="button"

@@ -21,3 +21,17 @@ export function collapseCompletedRuns(rows, busy = false) {
   flush(true);
   return result;
 }
+
+export function compactionLabel(value = {}) {
+  const format = number => number >= 1000 ? `${Number((number / 1000).toFixed(1))}k` : String(Math.ceil(number));
+  return Number.isFinite(value.beforeTokens) && Number.isFinite(value.afterTokens)
+    ? `已压缩 · ≈ ${format(value.beforeTokens)} → ${format(value.afterTokens)}` : '已精简上下文';
+}
+
+/** Presentation only: keep available history in an expandable row. */
+export function collapseCompactedHistory(rows) {
+  const boundary = rows.findLastIndex(row => row.type === 'compacted');
+  if (boundary < 0) return rows;
+  const divider = rows[boundary], history = rows.slice(0, boundary).filter(row => row.type !== 'compacted');
+  return [ ...(history.length ? [{ id: `history-${divider.id}`, type: 'compacted-history', rows: history }] : []), divider, ...rows.slice(boundary + 1) ];
+}

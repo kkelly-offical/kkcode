@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Assignment
@@ -19,12 +20,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.json.JSONObject
+import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
 import java.time.LocalDate
@@ -90,6 +93,11 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
     }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).pixelBackground()) {
             DeviceStrip(state)
+            if(state.connectionNotice.isNotBlank() && state.sheet.isBlank()) Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if(state.connectionPhase == "reconnecting") CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 1.5.dp)
+                else Icon(if(state.connectionPhase == "recovered") Icons.Outlined.CheckCircleOutline else Icons.Outlined.WifiOff, null, Modifier.size(15.dp), tint = if(state.connectionPhase == "recovered") connectedGreen else muted)
+                Text(state.connectionNotice, color = if(state.connectionPhase == "recovered") connectedGreen else kkcodeColors.warning, fontSize = 12.sp)
+            }
             if(state.notice.isNotBlank() && state.sheet.isBlank()) Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(state.notice, modifier = Modifier.weight(1f), color = kkcodeColors.warning, fontSize = 12.sp)
                 IconButton(onClick = { state.notice = "" }, modifier = Modifier.size(28.dp)) { Icon(Icons.Outlined.Close, null, Modifier.size(16.dp)) }
@@ -324,19 +332,35 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
 
 @Composable private fun ChatScreen(state: RemoteState) {
     val text = state.draft
-    val displayItems = collapseCompletedRuns(state.messages, state.busy)
+    val displayItems = collapseCompactedHistory(collapseCompletedRuns(state.messages, state.busy))
     var expandedRows by remember(state.selected) { mutableStateOf(emptySet<String>()) }
     var thinkingExpanded by remember(state.selected, state.busy) { mutableStateOf(false) }
     var actions by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if(uri != null) state.attach(uri) }
     LaunchedEffect(state.attachmentPickerRequest) { if(state.attachmentPickerRequest > 0) picker.launch(arrayOf("image/png", "image/jpeg", "image/gif", "image/webp", "audio/wav", "audio/mpeg", "video/mp4", "video/quicktime", "video/webm", "video/mpeg", "text/*", "application/json", "application/xml", "application/yaml")) }
-    val listState = rememberLazyListState()
-    LaunchedEffect(displayItems.size, displayItems.lastOrNull()?.text?.length) {
-        if(displayItems.isNotEmpty() && !thinkingExpanded && displayItems.none { it.id in expandedRows } && (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= displayItems.size - 3) listState.animateScrollToItem(displayItems.lastIndex)
+    val listState = key(state.selected) { rememberLazyListState() }
+    val dragging by listState.interactionSource.collectIsDraggedAsState()
+    var following by remember(state.selected) { mutableStateOf(true) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(dragging) { if(dragging) following = false }
+    LaunchedEffect(listState) {
+        snapshotFlow { !listState.canScrollForward && !listState.isScrollInProgress }.collect { bottom -> if(bottom) following = true }
+    }
+    LaunchedEffect(displayItems, state.busy, state.approvals.size) {
+        if(following && !dragging) { withFrameNanos { }; listState.scrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)) }
+    }
+    LaunchedEffect(listState) {
+        // AndroidView Markdown can change height after the message was laid out.
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.let { Triple(it.index, it.offset, it.size) } }.collect {
+            if(following && !dragging && listState.canScrollForward) {
+                withFrameNanos { }
+                if(following && !dragging && listState.canScrollForward) listState.requestScrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
+            }
+        }
     }
     Column(Modifier.fillMaxSize().imePadding()) {
-        LazyColumn(Modifier.weight(1f), state = listState, contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)) {
-            if(state.historyHasMore) item(key = "load-earlier") { TextButton(onClick = { state.loadEarlier() }, enabled = !state.loadingHistory, modifier = Modifier.fillMaxWidth()) { Text(if(state.loadingHistory) "正在加载…" else "加载更早的消息", fontSize = 12.sp) } }
+        LazyColumn(Modifier.weight(1f).testTag("conversation-list"), state = listState, contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)) {
+            if(state.historyHasMore) item(key = "load-earlier") { TextButton(onClick = { following = false; state.loadEarlier() }, enabled = !state.loadingHistory, modifier = Modifier.fillMaxWidth()) { Text(if(state.loadingHistory) "正在加载…" else "加载更早的消息", fontSize = 12.sp) } }
             if(displayItems.isEmpty() && !state.busy && state.approvals.isEmpty()) item(key = "studio-welcome") { Column(Modifier.fillMaxWidth().padding(vertical = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) { PixelWorkshop(); Text("今天想构建什么？", fontSize = 22.sp, fontWeight = FontWeight.Medium); Text("把想法变成可验证的结果。", color = muted, fontSize = 12.sp, modifier = Modifier.padding(top = 10.dp)) } }
             items(displayItems, key = { it.id }) { item ->
                 Column(Modifier.fillMaxWidth().padding(vertical = if(item.kind in listOf("tool", "thinking")) 0.dp else 10.dp), horizontalAlignment = if(item.kind == "user") Alignment.End else Alignment.Start) {
@@ -349,13 +373,13 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                         "assistant" -> MarkdownText(item.text, Modifier.fillMaxWidth())
                         "error" -> Text(item.text, color = kkcodeColors.danger, fontSize = 13.sp)
                         "cancelled" -> Row(verticalAlignment = Alignment.CenterVertically) { Text(item.text, Modifier.weight(1f), color = muted, fontSize = 12.sp); if(!state.busy && state.canControl && !state.sessionArchived) TextButton(onClick = { state.prepareResume() }) { Text("继续", fontSize = 12.sp) } }
-                        "run-summary" -> RunSummaryRow(item) { open -> expandedRows = if(open) expandedRows + item.id else expandedRows - item.id }
-                        "compacted" -> Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) { HorizontalDivider(Modifier.weight(1f), color = card); Text("已精简上下文", fontSize = 10.sp, color = muted); HorizontalDivider(Modifier.weight(1f), color = card) }
-                        else -> ActivityRow(item, initiallyExpanded = item.kind == "thinking" && !item.done && thinkingExpanded, active = state.busy && state.turnPhase !in listOf("stopping", "finishing"), stopping = state.stopping) { open -> if(item.kind == "thinking") thinkingExpanded = open; expandedRows = if(open) expandedRows + item.id else expandedRows - item.id }
+                        "run-summary", "compacted-history" -> RunSummaryRow(item) { open -> following = false; expandedRows = if(open) expandedRows + item.id else expandedRows - item.id }
+                        "compacted" -> Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) { HorizontalDivider(Modifier.weight(1f), color = card); Text(item.text, fontSize = 11.sp, color = muted); HorizontalDivider(Modifier.weight(1f), color = card) }
+                        else -> ActivityRow(item, initiallyExpanded = item.kind == "thinking" && !item.done && thinkingExpanded, active = state.busy && state.turnPhase !in listOf("stopping", "finishing"), stopping = state.stopping) { open -> following = false; if(item.kind == "thinking") thinkingExpanded = open; expandedRows = if(open) expandedRows + item.id else expandedRows - item.id }
                     }
                 }
             }
-            if(state.busy && state.turnPhase != "finishing" && state.approvals.isEmpty() && state.messages.none { it.kind in listOf("thinking", "assistant", "review") && !it.done || it.kind == "tool" && it.tool?.optString("status") == "running" }) item(key = "waiting-thinking") { ActivityRow(ChatItem("waiting-${state.selected}", "thinking", "", done = false), initiallyExpanded = thinkingExpanded, active = state.turnPhase !in listOf("stopping", "finishing"), stopping = state.stopping) { thinkingExpanded = it } }
+            if(state.busy && state.turnOperation != "compact" && state.turnPhase != "finishing" && state.approvals.isEmpty() && state.messages.none { it.kind in listOf("thinking", "assistant", "review") && !it.done || it.kind == "tool" && it.tool?.optString("status") == "running" }) item(key = "waiting-thinking") { ActivityRow(ChatItem("waiting-${state.selected}", "thinking", "", done = false), initiallyExpanded = thinkingExpanded, active = state.turnPhase !in listOf("stopping", "finishing"), stopping = state.stopping) { following = false; thinkingExpanded = it } }
             if(state.busy && state.turnPhase in listOf("stopping", "finishing")) item(key = "stop-progress") { Text(if(state.stopping) "正在停止并保存已有结果；已执行的文件改动不会撤销。" else "正在保存本轮结果…", color = muted, fontSize = 12.sp) }
             items(state.approvals, key = { it.getString("id") }) { a ->
                 Group("需要你的确认") {
@@ -368,11 +392,14 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                     else QuestionForm(a.getString("id"), a.optJSONObject("request") ?: JSONObject()) { state.answer(a.getString("id"), it) }
                 }
             }
+            item(key = "conversation-bottom") { Spacer(Modifier.fillMaxWidth().height(1.dp).testTag("conversation-bottom")) }
         }
+        if(!following && listState.canScrollForward) TextButton(onClick = { following = true; scope.launch { listState.scrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)) } }, modifier = Modifier.align(Alignment.CenterHorizontally)) { Icon(Icons.Outlined.ArrowDownward, null, Modifier.size(14.dp)); Text("回到最新", fontSize = 12.sp) }
         if(state.controlElsewhere) Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) { Text("另一客户端正在控制", fontSize = 11.sp, color = muted, modifier = Modifier.weight(1f)); if(!state.sharedDevice) TextButton(onClick = { state.takeControl() }) { Text("接管控制", fontSize = 11.sp) } }
         ChangeSummary(state.messages)
         TodoProgressView(state.todos, "${System.identityHashCode(state.api)}:${state.api?.device}:${state.selected}", state.subagents)
         if(state.showContext) ContextUsageView(state.contextUsage)
+        if(state.busy && state.turnOperation == "compact") Text(if(state.stopping) "正在停止压缩…" else if(state.turnPhase == "starting") "正在提交压缩…" else "正在压缩上下文…", color = muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
         StudioTools(state)
         if(text.startsWith('/') && !text.contains(' ')) {
             val query = text.removePrefix("/")
@@ -404,7 +431,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                     ComposerChip(Icons.Outlined.CloudQueue, state.modelLabel, "模型", maxWidth = 120.dp) { state.openModelPicker() }
                 }
                 Spacer(Modifier.weight(1f))
-                if(state.busy && text.isNotBlank() && !state.stopping) IconButton(onClick = { state.send(text) }, enabled = state.canControl && !state.uploading && !state.sessionArchived, modifier = Modifier.size(34.dp)) { Icon(Icons.Outlined.ArrowUpward, "发送补充要求", Modifier.size(21.dp)) }
+                if(state.busy && state.turnOperation != "compact" && text.isNotBlank() && !state.stopping) IconButton(onClick = { state.send(text) }, enabled = state.canControl && !state.uploading && !state.sessionArchived, modifier = Modifier.size(34.dp)) { Icon(Icons.Outlined.ArrowUpward, "发送补充要求", Modifier.size(21.dp)) }
                 IconButton(onClick = { if(state.busy) state.stop() else if(text.isNotBlank() || state.attachments.isNotEmpty()) state.send(text) }, enabled = state.canControl && !state.uploading && !state.sessionArchived && !state.stopping, modifier = Modifier.size(34.dp).background(MaterialTheme.colorScheme.primary, PixelShape(3.dp))) { Icon(if(state.busy) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, if(state.stopping) "正在停止" else if(state.busy) "停止" else "发送", Modifier.size(21.dp), tint = MaterialTheme.colorScheme.onPrimary) }
             }
         }

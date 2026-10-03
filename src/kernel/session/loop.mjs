@@ -57,6 +57,8 @@ import { createRequestContext } from "../../http/identity.mjs"
 import { resolveExtensionPolicy, assertExecutableConfiguration } from "../../context.mjs"
 import { toolOutputBudget, truncationNotice } from "../tool/output-budget.mjs"
 import { requestContextBudget } from './context-budget.mjs'
+import { contextDisplay } from './context-display.mjs'
+import { completionInputHistory } from './completion-policy.mjs'
 import { promptReport } from './prompt-report.mjs'
 import { createProgressGuard } from './progress-guard.mjs'
 import { resolveModelCapabilities } from '../provider/model-catalog.mjs'
@@ -220,7 +222,7 @@ function addUsage(target, delta) {
 }
 
 
-export async function buildSystemPrompt({ mode, model, cwd, agent = null, tools = [], skills = [], language = "en", permission = 'manual', verifyCompletion = true }) {
+export async function buildSystemPrompt({ mode, model, cwd, agent = null, tools = [], skills = [], language = "en", permission = 'manual', verifyCompletion = false }) {
   // Assemble user instructions + rules (Layer 6)
   const instructions = await loadInstructions(cwd)
   const rules = await renderRulesPrompt(cwd)
@@ -391,7 +393,9 @@ async function processTurnLoopInRuntime({
     ? { ...selectedAgent, tools: durableToolNames.filter(name => !selectedAgent?.tools || selectedAgent.tools.includes(name)) }
     : selectedAgent
   const maxSteps = (effectiveAgent?.maxTurns > 0) ? Math.min(configMaxSteps, effectiveAgent.maxTurns) : configMaxSteps
-  const verifyCompletion = configState.config.agent?.verify_completion !== false
+  // Ordinary conversations end when the answer ends. Only an explicit host
+  // contract/opt-in may turn observations into a mandatory acceptance gate.
+  const verifyCompletion = Boolean(currentDurableRun()) || configState.config.agent?.verify_completion === true
   const recoveryEnabled = isRecoveryEnabled(configState.config)
   const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   const modelUsage = new Map()
@@ -402,6 +406,7 @@ async function processTurnLoopInRuntime({
   const progressGuard = createProgressGuard()
   let emittedAnyText = false
   let lastContextMeter = null
+  let measuredContext = priorSession?.session?.context?.source === 'provider-usage' ? priorSession.session.context : null
   // Plan 审批后的执行航道交接，由调用方（REPL）真正切换模式并续跑
   let planHandoff = null
   let contextCachePoint = null
@@ -425,7 +430,7 @@ async function processTurnLoopInRuntime({
     title: subagent ? `${subagent.name}: ${prompt.slice(0, 60)}` : prompt.trim().replace(/\s+/g, ' ').slice(0, 60)
   })
   const todoService = await createSessionTodoService({ sessionId, agentId: subagent?.name || 'main', turnId })
-  const carriedEvidence = await priorCompletionEvidence(priorSession || { session: { id: sessionId, cwd }, parts: [] })
+  const carriedEvidence = await priorCompletionEvidence(priorSession || { session: { id: sessionId, cwd }, parts: [] }, { requireVerification: verifyCompletion })
 
   await EventBus.emit({
     type: EVENT_TYPES.TURN_START,
@@ -488,7 +493,8 @@ async function processTurnLoopInRuntime({
   })
   const recordOutcome = async (status, reason, verification = null) => {
     await appendPart(sessionId, { type: 'turn-outcome', schema: 'kk.turn-outcome.v1', source: 'host', turnId,
-      status, stopReason: reason || null, verification: verification ? { state: verification.state, passed: verification.passed, verdict: verification.verdict } : null })
+      status, completionPolicy: verifyCompletion ? 'required' : 'observational', stopReason: reason || null,
+      verification: verification ? { state: verification.state, passed: verification.passed, verdict: verification.verdict, required: verifyCompletion } : null })
     await flushNow()
   }
   await recordOutcome('running', null)
@@ -573,13 +579,15 @@ async function processTurnLoopInRuntime({
     const authoredThisTurn = todos.source.turnId === turnId
     const background = await collectBackgroundCompletionEvidence({ sessionId,
       toolEvents: [...carriedEvidence.toolEvents, ...verificationEvents], parts: (await getSession(sessionId))?.parts || [] })
-    const result = { state: 'not_verified', inspection: background.inspection || [], ...(verifyCompletion ? await validator.validate({
+    const result = { state: 'not_verified', inspection: background.inspection || [], ...await validator.validate({
       todoState: authoredThisTurn || carriedEvidence.toolEvents.length > 0 || carriedEvidence.requireChecks || verificationEvents.some(event => ['write', 'edit', 'patch', 'multiedit'].includes(event.name)) ? todos.items : [],
       toolEvents: background.events,
       requireChecks: carriedEvidence.requireChecks || background.needsFreshVerification,
       level: 'evidence'
-    }) : { passed: true, verdict: 'VERIFICATION_DISABLED', checks: [], failures: [], message: 'Optional verification is disabled; execution lifecycle and unknown outcomes still must settle.' }) }
+    }), required: verifyCompletion, lifecycleBlocked: false }
+    if (!verifyCompletion && !result.passed) result.verdict = 'OBSERVATIONS_RECORDED'
     if (background.pending.length || background.unknown) {
+      result.lifecycleBlocked = true
       result.passed = false; result.verdict = 'BLOCK'
       result.state = background.unknown ? 'outcome_unknown' : 'background_running'
       result.message += background.unknown
@@ -596,6 +604,7 @@ async function processTurnLoopInRuntime({
     const children = await childController.list()
     const unsettled = children.filter(child => ['running', 'pending', 'unknown', 'incomplete', 'error', 'failed', 'cancelled', 'interrupted', 'blocked'].includes(child.status))
     if (unsettled.length) {
+      result.lifecycleBlocked = true
       result.passed = false; result.verdict = 'BLOCK'
       result.message += `\n仍有 ${unsettled.length} 个子任务未收尾，请用 agent_wait / agent_list 核查实际结果，不要猜测完成。`
     }
@@ -688,7 +697,7 @@ async function processTurnLoopInRuntime({
       // Compaction decisions must see the complete active history. Applying
       // max_history before this point silently drops context and can prevent the
       // message threshold from ever being reached.
-      let history = await getConversationHistory(sessionId, 9999)
+      let history = completionInputHistory(await getConversationHistory(sessionId, 9999, { includeMetadata: true }), verifyCompletion).map(({ role, content }) => ({ role, content }))
       // Count exactly the hook-transformed request that will be sent. Plugins
       // can add context; counting the canonical history alone underestimates it.
       let messages = await HookBus.messagesTransform([...history])
@@ -778,23 +787,26 @@ async function processTurnLoopInRuntime({
             throw new Error('压缩期间对话或模型已被修改；旧摘要未保存，当前回合已停止。请在最新会话状态下重试。')
           }
           if (compactResult.compacted) {
+            measuredContext = null
             const beforeTokens = Number(lastContextMeter?.tokens) || 0
             if ('attachmentCount' in compactResult && compactResult.attachmentCount) {
               activateTools(['artifact_read', 'artifact_search'])
               tools = await listModelTools({ mode, config: configState.config, cwd })
               if (effectiveAgent?.tools) tools = tools.filter(tool => effectiveAgent.tools.includes(tool.name))
             }
-            history = await getConversationHistory(sessionId, 9999)
+            history = completionInputHistory(await getConversationHistory(sessionId, 9999, { includeMetadata: true }), verifyCompletion).map(({ role, content }) => ({ role, content }))
             messages = await HookBus.messagesTransform([...history])
             let compactedBound = null
             const compactedCount = strictInputBound ? await countTokensProvider({ configState, providerType, model, system: systemPrompt, messages, tools, baseUrl, apiKeyEnv,
               traceId: turnTraceContext.traceId, sessionId, turnId, signal, onInputBound: value => { compactedBound = value } }) : null
             const compactedMeter = requestContextBudget({ system: systemPrompt, messages, tools, model, configState, providerType, baseUrl, apiKeyEnv,
               measuredTokens: compactedBound?.tokens ?? compactedCount, source: compactedBound?.source || (compactedCount != null ? 'count-api' : 'estimated') })
+            const compactionNotice = { ...compactResult, beforeTokens, afterTokens: compactedMeter.tokens, limit: compactedMeter.limit, compactedAt: Date.now() }
+            await updateSession(sessionId, { lastCompaction: compactionNotice })
             // 事件带上前后 token 数 —— UI 层的「已压缩，193.4K → 42.1K」提示全靠它
             await EventBus.emit({
               type: EVENT_TYPES.SESSION_COMPACTED, sessionId, turnId,
-              payload: { ...compactResult, beforeTokens, afterTokens: compactedMeter.tokens, limit: compactedMeter.limit }
+              payload: compactionNotice
             })
             lastContextMeter = { ...compactedMeter, fromCache: false }
             contextCachePoint = {
@@ -807,10 +819,12 @@ async function processTurnLoopInRuntime({
 
       // runSpec.limits 是委派方给子智能体立的硬约束。0.6.0 之前两个字段
       // 写进 runSpec 后全仓无读取点 —— 立了规矩没人执行。
-      await updateSession(sessionId, { context: lastContextMeter, promptReport: promptReport(systemPrompt, tools, lastContextMeter, { turnId, step }) })
+      const requestMeter = lastContextMeter
+      lastContextMeter = contextDisplay(requestMeter, measuredContext)
+      await updateSession(sessionId, { context: lastContextMeter, promptReport: promptReport(systemPrompt, tools, requestMeter, { turnId, step }) })
       await EventBus.emit({ type: 'session.context.updated', sessionId, turnId, payload: { context: lastContextMeter } })
-      if (lastContextMeter.requiredTokens > lastContextMeter.limit) {
-        throw new Error(`Context budget exceeded after compaction: ${lastContextMeter.tokens} input + ${lastContextMeter.outputReserved} reserved output > ${lastContextMeter.limit}. Reduce injected instructions/tools, lower max_tokens, or choose a larger-context model.`)
+      if (requestMeter.requiredTokens > requestMeter.limit) {
+        throw new Error(`Context budget exceeded after compaction: ${requestMeter.tokens} input + ${requestMeter.outputReserved} reserved output > ${requestMeter.limit}. Reduce injected instructions/tools, lower max_tokens, or choose a larger-context model.`)
       }
       const limits = runSpec?.limits || null
       if (limits?.deadlineAt && Date.now() > Number(limits.deadlineAt)) {
@@ -940,6 +954,8 @@ async function processTurnLoopInRuntime({
             onUsage: entry => addModelUsage(modelUsage, entry.provider, entry.model, entry.usage)
           })
           if (compactResult.compacted) {
+            measuredContext = null
+            contextCachePoint = null
             await EventBus.emit({ type: EVENT_TYPES.SESSION_COMPACTED, sessionId, turnId, payload: compactResult })
             continue
           }
@@ -966,12 +982,13 @@ async function processTurnLoopInRuntime({
       const totalInput = (u.input || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0)
       if (totalInput > 0) {
         lastContextMeter = {
-          ...requestContextBudget({ system: systemPrompt, messages, tools, model, configState, providerType, baseUrl, apiKeyEnv, measuredTokens: totalInput + (u.output || 0), source: 'provider-usage' }),
+          ...requestContextBudget({ system: systemPrompt, messages, tools, model, configState, providerType, baseUrl, apiKeyEnv, measuredTokens: totalInput, source: 'provider-usage' }),
           fromCache: false,
           cacheRead: u.cacheRead || 0,
           cacheWrite: u.cacheWrite || 0,
           inputUncached: u.input || 0
         }
+        measuredContext = lastContextMeter
       }
 
       await updateSession(sessionId, { context: lastContextMeter })
@@ -980,14 +997,7 @@ async function processTurnLoopInRuntime({
         type: EVENT_TYPES.TURN_USAGE_UPDATE,
         sessionId,
         turnId,
-        payload: { usage: { ...usage }, step, model, context: lastContextMeter ? {
-          tokens: totalInput > 0 ? totalInput : lastContextMeter.tokens,
-          limit: lastContextMeter.limit,
-          ratio: Math.min(1, (totalInput > 0 ? totalInput : lastContextMeter.tokens) / lastContextMeter.limit),
-          percent: Math.round(Math.min(1, (totalInput > 0 ? totalInput : lastContextMeter.tokens) / lastContextMeter.limit) * 100),
-          fromCache: lastContextMeter.fromCache,
-          ...(totalInput > 0 ? { cacheRead: u.cacheRead || 0, cacheWrite: u.cacheWrite || 0, inputUncached: u.input || 0 } : {})
-        } : null }
+        payload: { usage: { ...usage }, step, model, context: lastContextMeter }
       })
       await EventBus.emit({ type: 'session.context.updated', sessionId, turnId, payload: { context: lastContextMeter } })
 
@@ -1104,8 +1114,8 @@ async function processTurnLoopInRuntime({
             : '本轮没有执行工具，未自动追加重试请求。'
           throw new ProviderError(`${reason}${next}${effects}`, { reason: 'empty_response' })
         }
-        // A final sentence is not evidence that work is finished. Validate on
-        // every final attempt; exhausting the repair hints never disables it.
+        // Record actual outcomes on every final reply. Only an explicit
+        // verification policy can turn failed checks into more model work.
         {
           try {
             const validationResult = await collectCompletionVerification()
@@ -1130,26 +1140,34 @@ async function processTurnLoopInRuntime({
                   : 'The current operation was denied and the task is incomplete. The rejected action did not run; existing results are preserved. Continue only within the authorized scope.'
                 break
               }
-              // Bound repeated non-progress, not the number of distinct defects
-              // an otherwise progressing task may repair. Overall step/budget
-              // limits remain unchanged.
-              const failures = 'failures' in validationResult && Array.isArray(validationResult.failures) ? validationResult.failures : []
-              const blockers = JSON.stringify(failures.map(failure => [failure.kind, failure.id, failure.tool, failure.count]))
-              if (blockers !== verificationBlockers) { verificationBlockers = blockers; nudgeCount = 0 }
-              if (nudgeCount >= 2) {
+              if (!verifyCompletion && validationResult.lifecycleBlocked) {
                 stopReason = 'verification-incomplete'
-                finalReply = `本轮尚未完成验收，已保留已有结果和文件改动。\n${validationResult.message}`
+                finalReply = `${response.text.trim()}\n\n${validationResult.message}`
                 break
               }
-              nudgeCount++
-              const validationPrompt = language === "zh"
-                ? `[任务验证失败] 您报告任务已完成，但以下验证失败：\n\n${validationResult.message}\n\n${verificationRepairHints}\n\n请修复问题后再报告完成。`
-                : `[TASK VERIFICATION FAILED] You indicated completion, but verification failed:\n\n${validationResult.message}\n\n${verificationRepairHints}\n\nPlease fix the issues before declaring completion.`
-              
-              await appendMessage(sessionId, "user", validationPrompt,
-                { mode, model, providerType, step, turnId, synthetic: true, contextKind: 'control' }
-              )
-              continue
+              // A failed/missing check is an observation in ordinary work,
+              // never a new user request to invent tests or repair old tasks.
+              if (verifyCompletion) {
+                // Bound repeated non-progress, not the number of distinct defects
+                // an otherwise progressing task may repair. Overall step/budget
+                // limits remain unchanged.
+                const failures = 'failures' in validationResult && Array.isArray(validationResult.failures) ? validationResult.failures : []
+                const blockers = JSON.stringify(failures.map(failure => [failure.kind, failure.id, failure.tool, failure.count]))
+                if (blockers !== verificationBlockers) { verificationBlockers = blockers; nudgeCount = 0 }
+                if (nudgeCount >= 2) {
+                  stopReason = 'verification-incomplete'
+                  finalReply = `本轮尚未完成验收，已保留已有结果和文件改动。\n${validationResult.message}`
+                  break
+                }
+                nudgeCount++
+                const validationPrompt = language === "zh"
+                  ? `[任务验证失败] 您报告任务已完成，但以下验证失败：\n\n${validationResult.message}\n\n${verificationRepairHints}\n\n请修复问题后再报告完成。`
+                  : `[TASK VERIFICATION FAILED] You indicated completion, but verification failed:\n\n${validationResult.message}\n\n${verificationRepairHints}\n\nPlease fix the issues before declaring completion.`
+                await appendMessage(sessionId, "user", validationPrompt,
+                  { mode, model, providerType, step, turnId, synthetic: true, contextKind: 'control' }
+                )
+                continue
+              }
             }
           } catch (validationError) {
             if (isCancellation(validationError, signal)) throw validationError

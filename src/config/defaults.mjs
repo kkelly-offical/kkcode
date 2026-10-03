@@ -31,6 +31,7 @@ export const DEFAULT_CONFIG = {
   agent: {
     default_mode: "assistant",
     max_steps: 8,
+    verify_completion: false,
     longagent: {
       // 总 LLM 轮次硬上限（0 = 不限）。0.5.0 起真正生效：超限以
       // budget_exhausted 结束。轮次层面的约束见 ultra.* 段。

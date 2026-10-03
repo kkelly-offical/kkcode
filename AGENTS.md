@@ -1,6 +1,6 @@
 # KK Code 工作记忆
 
-只维护当前状态、有效约束和未完事项。过程与证据写入[当前实施记录](docs/implementation-1.0.8.md)，
+只维护当前状态、有效约束和未完事项。过程与证据写入[当前实施记录](docs/implementation-1.0.9.md)，
 旧检查点见[历史记忆](docs/history/working-memory-through-2026-10-02.md)，不要逐轮追加日志。
 
 ## 发行与授权
@@ -29,6 +29,9 @@
   不宣称达到1.1.0成熟度、优于竞品或已完成延期的C04、GitLab和长期实用门禁。
 
 ## 实测与下一步
+
+- 当前开发：用户10月4日要求完成[1.0.9清单](docs/implementation-1.0.9.md)后正式发行：普通会话取消强制测试门禁、上下文口径、自由滚动／进入会话定位、Compact历史折叠、Markdown表格、模型自动刷新和Android提示生命周期。分支`fix/general-agent-harness-context`，未发布。
+- 本机1.0.8 remote已在`tmux kkcode-coding`中从`/root`运行，连接用户指定的企业网关，用户明确授权all-folders。原设备身份保持；新任务不借此取得真实模型评测授权。现场循环原会话已由用户取消，私密证据保留。
 
 - 1.0.7八项连续工作改进与1.0.8像素界面、KIKI伙伴、工具入口均已发行；伙伴建议只追加草稿、不自动发送或验收。
   当前跨平台、Web、CodeQL通过，Android85项JVM／73项UI与设备测试及签名升级通过，npm审计0告警。
