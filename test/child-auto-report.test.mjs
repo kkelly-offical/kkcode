@@ -57,5 +57,12 @@ test('real background children automatically report to the active parent without
   assert.equal(reports.flatMap(message => message.childReports).length, 2)
   assert.match(JSON.stringify(parentBodies.at(-1).messages), /Automatic report 1/)
   assert.match(JSON.stringify(parentBodies.at(-1).messages), /Automatic report 2/)
+  // Durable results can be read before the worker's exit callback has finished
+  // publishing its UI snapshot. Observe that separate channel before closing
+  // the kernel; do not equate parent completion with synchronous UI delivery.
+  const deliveryDeadline = Date.now() + 10000
+  while (events.filter(event => event.type === 'subagent.settled' && event.sessionId === 'parent').length < 2 && Date.now() < deliveryDeadline) {
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
   assert.ok(events.filter(event => event.type === 'subagent.settled' && event.sessionId === 'parent').length >= 2)
 })
