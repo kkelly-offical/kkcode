@@ -14,4 +14,4 @@ Legacy behavior outside a strict host graph:
 - Use `fresh_agent` for implementation or mutation work.
 - Provide `subagent_type`, `objective` or `prompt`, `write_scope`, and `deliverable` for each lane when possible.
 
-After launching a group, use `task_parallel`, `task_list`, or `task_output` to observe progress and collect results.
+Background child results arrive automatically. Continue independent work, then finish your response to let the host await reports without polling. Use `task_list` or `task_output` only for additional inspection, not repeated waiting.

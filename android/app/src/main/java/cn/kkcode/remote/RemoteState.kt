@@ -90,6 +90,9 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
     var loadingHistory by mutableStateOf(false)
     var commandItemKind by mutableStateOf("")
     var managedSession by mutableStateOf<JSONObject?>(null)
+    var managedSessionAction by mutableStateOf("menu")
+    var subagentSyncNotice by mutableStateOf("")
+    var lastTurnOutcome by mutableStateOf("")
     var rewindTarget by mutableStateOf<ChatItem?>(null)
     var savingSession by mutableStateOf(false)
     var sessionArchived by mutableStateOf(false)
@@ -628,7 +631,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         finally { if(api?.relay != false || ssh !== connection) connection.close(); if(generation == connectionGeneration) loading = false }
     }
     fun openSession(item: JSONObject) = action {
-        polling?.cancel(); selected = item.getString("id"); cwd = item.optString("cwd", cwd)
+        polling?.cancel(); lastTurnOutcome = ""; subagentSyncNotice = ""; selected = item.getString("id"); cwd = item.optString("cwd", cwd)
         messages = emptyList(); contextUsage = JSONObject(); approvals = emptyList(); turnOperation = ""
         val selection = ++sessionGeneration
         todos = null
@@ -808,7 +811,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
             if(event.optString("sessionId") == selected) todos = acceptTodoSnapshot(todos, payload.optJSONObject("snapshot"), selected)
             return
         }
-        if(type in listOf("subagent.delegated", "subagent.settled")) {
+        if(type in listOf("subagent.delegated", "subagent.settled", "subagent.progress")) {
             subagents = mergeSubagentEvent(subagents, event, selected)
             return
         }
@@ -882,6 +885,8 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
                 busy = true; stopping = type == "turn.stopping" || stopRequested == execution && execution.isNotBlank()
                 turnPhase = if(stopping) "stopping" else if(type == "session.compacting") "compacting" else "starting"
             }
+            "turn.waiting.children" -> if(!stopping) turnPhase = "waiting_children"
+            "turn.step.start" -> if(!stopping) turnPhase = "running"
             "stream.thinking.start" -> messages = beginStreamThinking(messages, StreamDelta(event.optString("id"), "thinking", "", turn, step, timestamp), persistedSteps)
             "stream.text.delta", "stream.thinking.delta" -> {
                 if(type == "stream.text.delta") finishThinking(timestamp)
@@ -889,6 +894,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
             }
             "stream.end" -> messages = finishStreamStep(messages, turn, step, timestamp)
             "turn.start" -> {
+                lastTurnOutcome = ""
                 busy = true
                 if(execution.isNotBlank()) activeExecution = execution
                 pendingSend?.takeIf { it.executionId == execution }?.let { acknowledgeSend(it) }
@@ -896,18 +902,21 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
                 if(turn !in persistedUserTurns && payload.optString("prompt").isNotBlank() && messages.none { it.kind == "user" && turn.isNotBlank() && it.turnId == turn }) messages = messages + ChatItem("${event.optString("id")}-user", "user", payload.getString("prompt"), startedAt = timestamp, turnId = turn)
             }
             "turn.finish", "turn.result" -> {
+                lastTurnOutcome = payload.optString("status", if(payload.optString("stopReason") in listOf("", "end_turn")) "completed" else "incomplete")
                 if(type == "turn.finish" && payload.optBoolean("settling")) { if(execution.isBlank() || activeExecution == execution) turnPhase = if(stopping) "stopping" else "finishing" }
                 else settleExecution(execution)
                 messages = finishStreamReply(messages, event.optString("id"), turn, step, payload.optString("reply"), timestamp)
             }
             "turn.cancelled" -> {
+                lastTurnOutcome = "cancelled"
                 if(payload.optString("operation") == "compact" && draft.isBlank()) draft = "/compact"
                 settleExecution(execution); messages = finishStreamStep(messages, turn, null, timestamp).map { item ->
                     if(item.kind == "tool" && item.turnId == turn && item.tool?.optString("status") == "running") item.copy(tool = JSONObject(item.tool.toString()).put("status", "cancelled")) else item
                 }
                 if(messages.none { it.kind == "cancelled" && it.turnId == turn }) messages = messages + ChatItem(event.optString("id"), "cancelled", if(payload.optString("operation") == "compact") "压缩已停止，原对话已保留。" else "已停止。已收到的内容和文件改动已保留。", turnId = turn, startedAt = timestamp)
             }
-            "turn.failed" -> { if(payload.optString("operation") == "compact" && draft.isBlank()) draft = "/compact"; messages = finishStreamStep(messages, turn, null, timestamp); settleExecution(execution); notice = remoteErrorMessage(Exception(payload.optString("error")), api?.relay == false); messages = messages + ChatItem(event.optString("id"), "error", notice, turnId = turn, startedAt = timestamp) }
+            "turn.failed" -> {
+                lastTurnOutcome = "error"; if(payload.optString("operation") == "compact" && draft.isBlank()) draft = "/compact"; messages = finishStreamStep(messages, turn, null, timestamp); settleExecution(execution); notice = remoteErrorMessage(Exception(payload.optString("error")), api?.relay == false); messages = messages + ChatItem(event.optString("id"), "error", notice, turnId = turn, startedAt = timestamp) }
             else -> return false
         }
         return true
@@ -1180,6 +1189,24 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         notice = if(settings.optJSONObject("_diagnostics")?.optBoolean("toolsBlocked") == true) "渠道已保存，但设备配置仍有错误；修正后才能恢复执行。" else "渠道已保存并立即生效"; backSheet()
     }
     fun loadExtensions() = action { extensions = rpc("extensions.list") as JSONObject; sheet = "extensions" }
+    suspend fun refreshSubagents() {
+        val session = selected; val client = api; val generation = sessionGeneration
+        if(session.isBlank() || !connected) return
+        try {
+            val response = rpc("sessions.get", JSONObject().put("sessionId", session).put("view", "subagents")) as JSONObject
+            if(selected != session || api !== client || generation != sessionGeneration) return
+            subagents = mergeSubagentSnapshot(subagents, response.optJSONArray("subagents").objects(), session)
+            subagentSyncNotice = if(response.has("messages")) "升级被控电脑后可使用自动汇报和完整模型详情" else ""
+        } catch(error: CancellationException) { throw error }
+        catch(error: Exception) { if(selected == session && api === client && generation == sessionGeneration) subagentSyncNotice = "子代理状态暂未同步，连接恢复后自动更新" }
+    }
+    fun interruptSubagent(id: String) = action {
+        val session = selected
+        require(subagents.any { it.optString("session_id") == id }) { "子代理不属于当前会话" }
+        acquireControl(session)
+        val response = rpc("subagents.interrupt", JSONObject().put("sessionId", session).put("childSessionId", id)) as JSONObject
+        if(selected == session) subagents = mergeSubagentSnapshot(subagents, response.optJSONArray("items").objects(), session)
+    }
     fun leaveChat() { polling?.cancel(); sessionGeneration++; todos = null; subagents = emptyList(); selected = ""; messages = emptyList(); contextUsage = JSONObject(); persistedSteps = emptySet(); persistedUserTurns = emptySet(); approvals = emptyList(); attachments = emptyList(); draft = ""; historyHasMore = false; historyBefore = ""; busy = false; stopping = false; turnPhase = "idle"; activeExecution = ""; stopRequested = ""; pendingSend = null; stopJob = null }
     fun disconnect() { connectionGeneration++; sshRecovery?.cancel(); sshHeartbeat?.cancel(); deviceEvents?.cancel(); deviceNotice?.cancel(); manualDisconnect = true; leaveChat(); clearDeviceSelection(); ssh?.close(); ssh = null; selectedSsh = ""; vault.clear("active-ssh:${accountScope()}"); api = gatewayApi ?: api?.takeIf { it.relay }; api?.device = ""; connected = false; deviceName = "未连接设备"; sessions = emptyList(); commands = emptyList() }
     fun logout() = action {

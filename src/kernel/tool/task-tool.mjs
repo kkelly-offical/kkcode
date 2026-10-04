@@ -70,7 +70,7 @@ export function normalizeTaskBrief(args = {}) {
 export function createTaskTool() {
   return {
     name: "task",
-    description: "Delegate complex multi-step work to a subagent that makes its own LLM calls. Use inherit_context=true or execution_mode=fork_context for read-only sidecars that need the parent transcript. Background tasks spawn a separate worker process and must be observed via task_list/task_output.",
+    description: "Delegate complex multi-step work to a subagent that makes its own LLM calls. Use inherit_context=true or execution_mode=fork_context for read-only sidecars needing the parent transcript. Background child results are delivered automatically; continue independent work, then finish your response to let the host await reports without polling.",
     inputSchema: taskSchema(),
     async execute(args, ctx) {
       const graph = strictGraph(ctx)

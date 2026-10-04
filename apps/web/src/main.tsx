@@ -5,12 +5,12 @@ import "./mobile.css";
 import "./studio.css";
 import "./pixel.css";
 import { PixelBuddy, PixelScene, StudioBar } from "./PixelStudio";
-import { SessionHome, ConnectionLanding, SessionActions } from "./Home";
+import { SessionHome, ConnectionLanding, SessionActions, ConversationMenu } from "./Home";
 import { Sheet } from "./Sheet";
 import { ContextUsage } from './ContextUsage';
 import { useTranscriptScroll } from './useTranscriptScroll';
 import { TodoProgress } from './TodoProgress';
-import { acceptTodoSnapshot, scopedSubagents, mergeSubagentEvent } from '../../../src/ui/todo-progress.mjs';
+import { acceptTodoSnapshot, scopedSubagents, mergeSubagentSnapshot, mergeSubagentEvent } from '../../../src/ui/todo-progress.mjs';
 import { modeLabel } from "./modes.mjs";
 import { SettingsOverlay } from "./Settings";
 import { Icon } from "./Icon";
@@ -53,11 +53,13 @@ function App() {
   const [sessionRevision, setSessionRevision] = useState(0);
   const [todos, setTodos] = useState<{ identity: string, snapshot: Item | null } | null>(null);
   const [subagents, setSubagents] = useState<{ identity: string, items: Item[] } | null>(null);
+  const [subagentNotice, setSubagentNotice] = useState('');
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [prompt, setPrompt] = useState(""),
     [mode, setMode] = useState("agent"),
     [model, setModel] = useState(""),
     [provider, setProvider] = useState("");
+  const [managedAction, setManagedAction] = useState('menu');
   const [managedSession, setManagedSession] = useState<Item | null>(null), [rewindTarget, setRewindTarget] = useState<Item | null>(null);
   const [rewinding, setRewinding] = useState(false), [showArchived, setShowArchived] = useState(false);
   const [control, setControl] = useState<Item | null>(null);
@@ -385,8 +387,10 @@ function App() {
         setEvents((old) => [...old, ...fresh]);
         for (const event of fresh) {
           if (event.type === 'todo.updated' && event.sessionId === selected) observeTodos(event.payload?.snapshot);
-          if (['subagent.delegated', 'subagent.settled'].includes(event.type)) setSubagents(previous => ({ identity: todoIdentity, items: mergeSubagentEvent(previous?.identity === todoIdentity ? previous.items : [], event, selected) }));
+          if (['subagent.delegated', 'subagent.settled', 'subagent.progress'].includes(event.type)) setSubagents(previous => ({ identity: todoIdentity, items: mergeSubagentEvent(previous?.identity === todoIdentity ? previous.items : [], event, selected) }));
           if (['session.context.updated', 'turn.usage.update'].includes(event.type) && event.payload?.context) setSession(previous => previous ? { ...previous, context: event.payload.context } : previous);
+          if (event.type === 'turn.waiting.children') setTurnPhase('waiting_children');
+          if (event.type === 'turn.step.start') setTurnPhase('running');
           const execution = event.payload?.executionId || '';
           if (['turn.preparing', 'turn.start', 'turn.stopping', 'session.compacting'].includes(event.type)) {
             if (execution) activeExecution.current = execution;
@@ -703,6 +707,31 @@ function App() {
     ready &&
     (!gateway ||
       devices.some((device) => device.id === deviceId && device.online));
+  const childItems = subagents?.identity === todoIdentity ? subagents.items : [];
+  const childrenActive = childItems.some(item => ['running', 'pending'].includes(item.status));
+  useEffect(() => {
+    if (!ready || !connected || !selected) return;
+    const controller = new AbortController(); let timer: ReturnType<typeof setTimeout>; let refreshing = false;
+    async function refresh() {
+      clearTimeout(timer);
+      if (document.hidden || refreshing || controller.signal.aborted) return;
+      refreshing = true;
+      try {
+        const value = await sdk.request<any>('sessions.get', { sessionId: selected, view: 'subagents' }, { signal: controller.signal });
+        if (controller.signal.aborted || !currentView(selected)) return;
+        setSubagents(previous => ({ identity: todoIdentity, items: mergeSubagentSnapshot(previous?.identity === todoIdentity ? previous.items : [], value.subagents, selected) }));
+        setSubagentNotice(Object.hasOwn(value, 'messages') ? '升级被控电脑后可使用自动汇报和完整模型详情' : '');
+      } catch {
+        if (!controller.signal.aborted && currentView(selected)) setSubagentNotice('子代理状态暂未同步，连接恢复后自动更新');
+      }
+      finally { refreshing = false; }
+      if (!controller.signal.aborted && !document.hidden && (busy || childrenActive || panel === 'subagents')) timer = setTimeout(refresh, 2000);
+    }
+    const visible = () => { if (!document.hidden) void refresh(); else clearTimeout(timer); };
+    document.addEventListener('visibilitychange', visible);
+    void refresh();
+    return () => { controller.abort(); clearTimeout(timer); document.removeEventListener('visibilitychange', visible); };
+  }, [sdk, ready, connected, selected, todoIdentity, busy, childrenActive, panel === 'subagents']);
   const deviceName = gateway
     ? devices.find((device) => device.id === deviceId)?.name || "未连接设备"
     : profile.name;
@@ -813,7 +842,7 @@ function App() {
             >
               {s.title || s.id}
             </button>
-            {canManage && <button className="icon session-more" aria-label={`管理对话 ${s.title || "新对话"}`} onClick={() => setManagedSession(s)}><Icon name="more" size={17} /></button>}
+            {canManage && <button className="icon session-more" aria-label={`管理对话 ${s.title || "新对话"}`} onClick={() => { setManagedAction('menu'); setManagedSession(s); }}><Icon name="more" size={17} /></button>}
             </div>
           ))}
         </nav>
@@ -843,7 +872,7 @@ function App() {
             onSettings={() => attempt(openSettings)}
             onConnect={() => setPanel("connections")}
             canManage={canManage}
-            onManage={setManagedSession}
+            onManage={value => { setManagedAction('menu'); setManagedSession(value); }}
           />
         ) : (
           <>
@@ -878,13 +907,14 @@ function App() {
                 >
                   <Icon name="chat" size={20} />
                 </button>
-                <button
-                  className="icon"
-                  aria-label="对话设置"
-                  onClick={() => selected && canManage ? setManagedSession(sessions.find(item => item.id === selected) || session) : setPanel("settings")}
-                >
-                  <Icon name="more" size={20} />
-                </button>
+                <ConversationMenu key={todoIdentity} canManage={canManage} busy={busy} archived={Boolean(session?.archived)} onAction={action => {
+                  if (['subagents', 'artifacts', 'settings'].includes(action)) { setPanel(action); return; }
+                  if (action === 'compact') { void attempt(() => runCommand('/compact')); return; }
+                  const current = sessions.find(item => item.id === selected) || session;
+                  if (!current) return;
+                  if (action === 'archive') void attempt(() => updateSessionMetadata(current, { archived: !current.archived }));
+                  else { setManagedAction(action); setManagedSession(current); }
+                }} />
               </div>
             </header>
             <div className="transcript" ref={scroll.viewport}>
@@ -919,7 +949,7 @@ function App() {
               {collapseCompactedHistory(collapseCompletedRuns(messages, busy)).map((item: Item) => { const row = item.type === 'compacted' ? { ...item, label: compactionLabel(item.compaction) } : item; return (
                 <TranscriptRow key={row.id} row={row} active={busy && !['stopping', 'finishing'].includes(turnPhase)} stopping={stopping} thinkingExpanded={row.done === false && thinkingExpanded} onThinkingExpanded={setThinkingExpanded} loadPreview={ref => rpc("media.preview", { sessionId: selected, ...ref })} onRewind={canManage && !busy && !session?.archived ? target => setRewindTarget(target) : undefined} onResume={row.type === 'cancelled' && !busy && canManage && !session?.archived ? () => { setPrompt(old => old || '请从中断处继续。先核查已有结果和已执行的操作，不要重复已完成的改动。'); document.querySelector<HTMLTextAreaElement>('textarea[aria-label="消息"]')?.focus(); } : undefined} />
               ); })}
-              {busy && turnOperation !== 'compact' && turnPhase !== 'finishing' && !approval.length &&
+              {busy && turnOperation !== 'compact' && !['finishing', 'waiting_children'].includes(turnPhase) && !approval.length &&
                 !messages.some(
                   (row) => ['thinking', 'assistant', 'review'].includes(row.type) && row.done === false || row.type === 'tool' && row.payload?.status === 'running',
                 ) && (
@@ -932,9 +962,9 @@ function App() {
             {control && !control.yours && <div className="control-notice">另一客户端正在控制此会话。{canManage && <button onClick={() => attempt(async () => { await rpc('control.acquire', { sessionId: selected, takeover: true }); setControl({ yours: true }); })}>接管控制</button>}</div>}
             <ContextUsage value={session?.context} />
             {busy && turnOperation === 'compact' && <div className="compact-progress" role="status">{stopping ? '正在停止压缩…' : turnPhase === 'starting' ? '正在提交压缩…' : '正在压缩上下文…'}</div>}
-            <TodoProgress key={todoIdentity} snapshot={todos?.identity === todoIdentity ? todos.snapshot : null} subagents={subagents?.identity === todoIdentity ? subagents.items : []} />
+            <TodoProgress onSubagents={() => setPanel('subagents')} key={todoIdentity} snapshot={todos?.identity === todoIdentity ? todos.snapshot : null} subagents={subagents?.identity === todoIdentity ? subagents.items : []} />
             {busy && ['stopping', 'finishing'].includes(turnPhase) && <div className="stop-progress" role="status">{stopping ? '正在停止并保存已有结果；已执行的文件改动不会撤销。' : '正在保存本轮结果…'}</div>}
-            <StudioBar busy={busy} stopping={stopping} approval={approval.length > 0} readOnly={readOnly || Boolean(session?.archived)} connected={connected} selected={Boolean(selected)} canManage={canManage} onPanel={setPanel} onPrompt={value => setPrompt(previous => previous ? `${previous}\n\n${value}` : value)} />
+            <StudioBar waiting={turnPhase === 'waiting_children'} busy={busy} stopping={stopping} approval={approval.length > 0} readOnly={readOnly || Boolean(session?.archived)} connected={connected} selected={Boolean(selected)} canManage={canManage} onPanel={setPanel} onPrompt={value => setPrompt(previous => previous ? `${previous}\n\n${value}` : value)} />
             <Composer
               key={`${gateway}:${deviceId}`}
               readOnly={readOnly || Boolean(session?.archived)}
@@ -982,6 +1012,8 @@ function App() {
         <SettingsOverlay
           key={panel}
           initial={panel}
+          subagents={childItems}
+          subagentNotice={subagentNotice}
           onClose={() => setPanel("")}
           profile={profile}
           devices={devices}
@@ -1029,7 +1061,7 @@ function App() {
           onNotice={setNotice}
         />
       )}
-      {managedSession && <SessionActions session={sessions.find(item => item.id === managedSession.id) || managedSession} busy={Boolean(managedSession.id === selected ? busy : String(managedSession.status).startsWith("running"))} onClose={() => setManagedSession(null)} onUpdate={patch => updateSessionMetadata(managedSession, patch)} onDelete={() => deleteConversation(managedSession)} />}
+      {managedSession && <SessionActions initialAction={managedAction} session={sessions.find(item => item.id === managedSession.id) || managedSession} busy={Boolean(managedSession.id === selected ? busy : String(managedSession.status).startsWith("running"))} onClose={() => setManagedSession(null)} onUpdate={patch => updateSessionMetadata(managedSession, patch)} onDelete={() => deleteConversation(managedSession)} />}
       {rewindTarget && <Sheet title="回退对话" onClose={() => { if (!rewinding) setRewindTarget(null); }}>
         <p className="sheet-note">撤回{rewindTarget.messageId ? "这条提问及其后的全部" : "上一轮"}对话，并恢复提问草稿。设备会保存回退前的备份。此操作会同步到其他客户端，<strong>不会撤销任何文件或 Git 修改</strong>。</p>
         {rewindTarget.text && <blockquote>{rewindTarget.text.slice(0, 300)}</blockquote>}

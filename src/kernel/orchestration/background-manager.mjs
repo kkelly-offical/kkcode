@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url"
 import { EventEmitter } from "node:events"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
+import { getSession } from '../session/store.mjs'
+import { childSnapshot, settleChildOperation } from './child-state.mjs'
 import { INTERRUPTION_REASONS } from "./interruption-reason.mjs"
 import { intersectDataPolicies } from '../permission/data-policy.mjs'
 import { normalizeToolOutcome } from '../tool/result-outcome.mjs'
@@ -93,6 +95,22 @@ async function emitTaskSettled(task) {
       worktreePath: task.result?.worktree_path || null
     }
   }).catch(() => {})
+  // Worker-local events cannot reach the parent's bus. Reconcile the exact
+  // owned operation after its durable task terminal, then publish its snapshot.
+  if (task.payload?.childOperationId && task.payload?.subSessionId) {
+    const { subSessionId, parentSessionId, childOperationId } = task.payload
+    let session = (await getSession(subSessionId))?.session
+    if (session?.parentSessionId === parentSessionId && session.childContract?.parentSessionId === parentSessionId
+        && [session.childOperationId, session.childSettledOperationId].includes(childOperationId)) {
+      if (session.childOperationId === childOperationId) await settleChildOperation(subSessionId, childOperationId, {
+        ...(task.result || {}), status: task.result?.status && task.result.status !== 'completed' ? task.result.status : task.status,
+        ...(task.error ? { error: task.error } : {})
+      })
+      session = (await getSession(subSessionId))?.session
+      if (session?.childSettledOperationId === childOperationId) await EventBus.emit({ type: EVENT_TYPES.SUBAGENT_SETTLED, sessionId: parentSessionId,
+        payload: { subSessionId, subagent: session.childContract.runSpec.role.name, status: session.childStatus, child: childSnapshot(session) } })
+    }
+  }
   return true
 }
 

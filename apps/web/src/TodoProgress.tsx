@@ -1,7 +1,7 @@
 import React from 'react';
 import { todoProgressSummary, todoStatusLabels, todoOwnerLabel, subagentProgressSummary, subagentStatusLabels } from '../../../src/ui/todo-progress.mjs';
 
-export function TodoProgress({ snapshot, subagents = [] }: { snapshot: Record<string, any> | null, subagents?: Record<string, any>[] }) {
+export function TodoProgress({ snapshot, subagents = [], onSubagents }: { snapshot: Record<string, any> | null, subagents?: Record<string, any>[], onSubagents?: () => void }) {
   const summary = todoProgressSummary(snapshot);
   const childSummary = subagentProgressSummary(subagents);
   if (!summary && !childSummary) return null;
@@ -15,7 +15,8 @@ export function TodoProgress({ snapshot, subagents = [] }: { snapshot: Record<st
         <small>负责人：{todoOwnerLabel(item, snapshot!.sessionId)}{item.dependencies?.length > 0 && ` · 依赖：${item.dependencies.join('、')}`}</small>
         {item.reason && <small>{item.reason}</small>}
       </li>)}</ul>
-      {subagents.length > 0 && <ul aria-label="子代理状态">{subagents.map(item => <li key={item.session_id}><span>{item.subagent} · {subagentStatusLabels[item.status as keyof typeof subagentStatusLabels] || '待核查'}</span><small>{item.session_id}</small></li>)}</ul>}
+      {subagents.length > 0 && onSubagents && <button onClick={onSubagents}>查看子代理详情</button>}
+      {subagents.length > 0 && <ul aria-label="子代理状态">{subagents.map(item => <li key={item.session_id}><span>{item.subagent} · {subagentStatusLabels[item.status as keyof typeof subagentStatusLabels] || '待核查'}</span><small>{[item.description, item.model].filter(Boolean).join(' · ') || '正在读取任务详情'}</small></li>)}</ul>}
     </div>
   </details>;
 }

@@ -1,5 +1,13 @@
 # Changelog / 更新日志
 
+## 1.0.11 — Stable（发行准备）
+
+- 后台子代理结束后自动投递报告；主代理无独立工作时由宿主等待，取消、插话与任务截止继续生效，不用反复调用 agent_wait。
+- Web／Android 子代理卡片自动同步任务说明、执行阶段、模型渠道、思考设置和上下文；迟到事件不回退新状态。
+- 常用任务入口改为“子代理”，持久任务和交付记录保留独立入口；右上角操作改为紧凑菜单。
+- Android KIKI 根据思考、执行、等待、确认、结束与异常展示动作，支持关闭动画并遵循系统设置。
+- 纳入1.0.10发布后的思考控件、Kimi三档、通用直答标签及自动模型额度修复；不再保存模型数字上限。
+
 ## Unreleased / 发行后修复（未公开发行）
 
 - Keep thinking settings visible for Android's default model and explain missing metadata from older remote versions in Android/Web.

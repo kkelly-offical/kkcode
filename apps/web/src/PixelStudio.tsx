@@ -18,8 +18,8 @@ function persist(key: string, value: string) {
   try { localStorage.setItem(`kkcode.studio.${key}`, value); } catch { /* Appearance still works without storage. */ }
 }
 
-export function StudioBar({ busy, stopping, approval, readOnly, connected, selected, canManage, onPanel, onPrompt }: {
-  busy: boolean; stopping: boolean; approval: boolean; readOnly: boolean;
+export function StudioBar({ waiting = false, busy, stopping, approval, readOnly, connected, selected, canManage, onPanel, onPrompt }: {
+  waiting?: boolean; busy: boolean; stopping: boolean; approval: boolean; readOnly: boolean;
   connected: boolean; selected: boolean; canManage: boolean;
   onPanel: (panel: string) => void; onPrompt: (prompt: string) => void;
 }) {
@@ -28,11 +28,11 @@ export function StudioBar({ busy, stopping, approval, readOnly, connected, selec
   const [motion, setMotion] = useState(() => saved('motion', 'on') !== 'off');
   const [compact, setCompact] = useState(() => saved('compact', 'off') === 'on');
   const tone = palettes.find(item => item[0] === palette) || palettes[0];
-  const state = !connected ? 'offline' : stopping ? 'stopping' : approval ? 'approval' : busy ? 'working' : readOnly ? 'readonly' : 'idle';
-  const label = { offline: '等待连接', stopping: '正在停止', approval: '等待你的确认', working: '正在工作', readonly: '只读陪伴', idle: '准备好，一起开工' }[state];
+  const state = !connected ? 'offline' : stopping ? 'stopping' : approval ? 'approval' : waiting ? 'waiting' : busy ? 'working' : readOnly ? 'readonly' : 'idle';
+  const label = { offline: '等待连接', stopping: '正在停止', approval: '等待你的确认', working: '正在工作', waiting: '等待伙伴的汇报', readonly: '只读陪伴', idle: '准备好，一起开工' }[state];
   const shortcuts: [string, IconName, string][] = [
     ...(canManage ? [['attachments', 'attachment', '附件']] as [string, IconName, string][] : []),
-    ['tasks', 'priority', '任务'], ['artifacts', 'folder', '产物'],
+    ['subagents', 'priority', '子代理'], ['artifacts', 'folder', '产物'],
     ...(canManage ? [['memory', 'archive', '记忆']] as [string, IconName, string][] : []),
   ];
   return <>

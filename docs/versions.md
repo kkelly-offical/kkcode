@@ -4,6 +4,8 @@
 
 ## 当前版本
 
+候选源码 **1.0.11 / Android10018** 正在完成子代理协作与安卓交互检查，尚未公开发布；见[发行范围](release-1.0.11.md)和[实施清单](implementation-1.0.11.md)。
+
 公开稳定版 **1.0.10 / Android10017**（npm latest），公开Preview **1.0.6-preview.1 / Android10012**。
 1.0.10发行提交`da25fd1`（PR#46），与最终候选`303d0f4`同树。
 候选与主线的跨平台／Web／CodeQL检查及正式发行流水线通过，Android沿用原证书。

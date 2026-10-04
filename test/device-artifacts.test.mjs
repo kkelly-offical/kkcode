@@ -164,7 +164,7 @@ test('real relay shares only selected session artifact reads, rejects lifecycle 
     } catch (error) { socket.send(JSON.stringify({ type: 'response', id: message.id, error: { code: error.code, message: error.message }, status: error.status || 400 })) }
   })
   const rpc = (method, params = {}, id = randomUUID()) => app.inject({ method: 'POST', url: `/api/v1/devices/${f.service.metadata.id}/rpc`, headers: { host: 'localhost', authorization: 'Bearer viewer' }, payload: { id, method, params } })
-  assert.deepEqual((await rpc('status')).json().result.features, ['artifacts.v1', 'runs.v1', 'todos.v1'])
+  assert.deepEqual((await rpc('status')).json().result.features, ['artifacts.v1', 'runs.v1', 'todos.v1', 'subagents.v1'])
   const downloaded = await rpc('artifacts.download', { sessionId: f.sessionId, id: f.ref.id, limit: 64 })
   assert.equal(downloaded.statusCode, 200, downloaded.body)
   assert.equal((await rpc('artifacts.read', { sessionId: 'unshared', id: f.ref.id })).statusCode, 403)

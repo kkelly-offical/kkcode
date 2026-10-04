@@ -66,7 +66,7 @@ internal data class TaskItem(val id: String, val sessionId: String, val objectiv
     val client = state.api; val device = client?.device; val session = state.selected
     val account = state.profile.optString("id"); val organization = state.profile.optString("organization"); val gateway = state.gateway
     key(client, device, session, account, organization, gateway, state.connected) {
-        if(!state.connected || session.isBlank()) Text("请先连接设备并打开一个会话，再查看委托任务。", Modifier.padding(16.dp))
+        if(!state.connected || session.isBlank()) Text("请先连接设备并打开一个会话，再查看持久任务。", Modifier.padding(16.dp))
         else TaskPanel(session, state.sharedDevice, request = { method, params ->
             fun checkSelection() {
                 if(state.api !== client || client?.device != device || state.selected != session || !state.connected || state.gateway != gateway ||
@@ -153,15 +153,15 @@ internal data class TaskItem(val id: String, val sessionId: String, val objectiv
         }
     }
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("委托任务", style = MaterialTheme.typography.titleMedium)
+        Text("持久任务", style = MaterialTheme.typography.titleMedium)
         Text("仅显示当前会话的持久任务。创建、恢复、未知结果核查与最终交付确认仍在被控电脑完成。", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if(shared) Text("共享会话：只读查看，不能暂停或取消任务。", fontSize = 12.sp)
         when(supported) {
             null -> Text("正在检查任务能力…")
-            false -> Text("当前设备版本不支持委托任务，请升级被控电脑和网关。")
+            false -> Text("当前设备版本不支持持久任务，请升级被控电脑和网关。")
             true -> {
                 TextButton(onClick = { action { load(); selected?.let { refreshTask(it.id) } } }, enabled = !busy) { Text("刷新任务") }
-                if(items.isEmpty() && !busy) Text("此会话还没有委托任务。")
+                if(items.isEmpty() && !busy) Text("此会话还没有持久任务。")
                 items.forEach { item -> OutlinedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(item.objective, maxLines = 3, fontSize = 14.sp)
                     Text(taskStates.getValue(item.state), fontSize = 12.sp)

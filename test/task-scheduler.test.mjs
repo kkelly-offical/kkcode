@@ -347,8 +347,10 @@ test("task delegate launches background tasks with deterministic payload metadat
       execution_mode: "fresh_agent",
       isolation: "default",
       group_id: null,
-      group_label: null
+      group_label: null,
+      notification: result.notification
     })
+    assert.match(result.notification, /automatically delivers/)
     assert.match(result.session_id, /^sub_parent_bg_[a-f0-9-]{36}$/)
     assert.equal(launchArgs.description, "verify branch")
     assert.equal(launchArgs.payload.parentSessionId, "parent_bg")

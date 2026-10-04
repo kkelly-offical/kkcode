@@ -30,8 +30,8 @@ class TasksUiTest {
     @Test fun unsupportedDoesNotPretendThereAreNoTasks() {
         val lists = AtomicInteger(0)
         compose.setContent { KKCodeTheme(true) { TaskPanel("session", false) { method, _ -> if(method == "runs.list") lists.incrementAndGet(); JSONObject() } } }
-        compose.onNodeWithText("当前设备版本不支持委托任务", substring = true).assertExists()
-        compose.onNodeWithText("此会话还没有委托任务。").assertDoesNotExist()
+        compose.onNodeWithText("当前设备版本不支持持久任务", substring = true).assertExists()
+        compose.onNodeWithText("此会话还没有持久任务。").assertDoesNotExist()
         compose.runOnIdle { assertEquals(0, lists.get()) }
     }
 

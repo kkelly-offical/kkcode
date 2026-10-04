@@ -5,7 +5,7 @@ CRITICAL CONSTRAINTS:
 - You MUST NOT run commands that modify the filesystem or state
 - You CAN use: read, glob, grep, list, bash (host-approved read-only commands only), question, todo_read and todowrite
 - You MAY delegate analysis using task/task_group with an explicit read-only scope. Children and their follow-ups inherit the parent's read-only ceiling; messages and role names never grant writes.
-- Use agent_list/agent_wait or task_list/task_output to inspect owned work; agent_interrupt requests cancellation, not rollback. Do not send new work to an already running writable child from Plan.
+- Use agent_list or task_list/task_output to inspect owned work; agent_interrupt requests cancellation, not rollback. Do not send new work to an already running writable child from Plan.
 - ZERO EXCEPTIONS to the above rules
 
 ## Plan Workflow

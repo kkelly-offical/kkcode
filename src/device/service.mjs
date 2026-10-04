@@ -32,6 +32,7 @@ import {queueSteering} from '../kernel/session/store.mjs'
 import {sessionSteeringSource, retainEarlierSteering} from '../kernel/session/steering.mjs'
 import { readTodoSnapshot } from '../kernel/session/todo-state.mjs'
 import { listChildSnapshots } from '../kernel/orchestration/child-controller.mjs'
+import { dispatchSubagents, SUBAGENT_FEATURE } from './subagents.mjs'
 import { awaitAbortable, isCancellation } from '../abort.mjs'
 
 const idPattern = /^[A-Za-z0-9_-]{1,128}$/
@@ -159,6 +160,8 @@ export class DeviceService extends EventEmitter {
     const current = this.turns.get(event.sessionId)
     const entry = !event.payload?.executionId || event.payload.executionId === current?.turnId ? current : null
     if (entry && event.type === 'turn.start') { entry.kernelTurnId = event.turnId; if (entry.phase !== 'stopping') entry.phase = 'running' }
+    if (entry && entry.phase !== 'stopping' && event.type === 'turn.waiting.children') entry.phase = 'waiting_children'
+    if (entry && entry.phase !== 'stopping' && event.type === 'turn.step.start') entry.phase = 'running'
     if (entry && ['turn.finish', 'turn.error'].includes(event.type) && entry.phase !== 'stopping') entry.phase = 'finishing'
     if (entry) event = { ...event, payload: { ...event.payload, executionId: entry.turnId, ...(['turn.finish', 'turn.error'].includes(event.type) ? { settling: true } : {}) } }
     this.sessionTree.observe(event)
@@ -260,7 +263,7 @@ export class DeviceService extends EventEmitter {
     validateRequest(request); this.assertOwner(principal)
     if (this.closed) throw new ProtocolError('device_offline', 'Device is closing', 503)
     const { id, method, params = {} } = request
-    const mutating = !ARTIFACT_READ_METHODS.includes(method) && !MEMORY_READ_METHODS.includes(method) && !RUN_READ_METHODS.includes(method) && !TODO_READ_METHODS.includes(method) && !/^(status|folders\.list|files\.read|media\.preview|sessions\.(list|get)|events\.list|commands\.list|settings\.get|extensions\.list|models\.discover|attachments\.list|branches\.list|worktrees\.list|profile\.get)$/.test(method)
+    const mutating = method !== 'subagents.list' && !ARTIFACT_READ_METHODS.includes(method) && !MEMORY_READ_METHODS.includes(method) && !RUN_READ_METHODS.includes(method) && !TODO_READ_METHODS.includes(method) && !/^(status|folders\.list|files\.read|media\.preview|sessions\.(list|get)|events\.list|commands\.list|settings\.get|extensions\.list|models\.discover|attachments\.list|branches\.list|worktrees\.list|profile\.get)$/.test(method)
     const key = `${principal.id}:${id}`, hash = createHash('sha256').update(JSON.stringify({ method, params })).digest('hex')
     if (mutating && this.ledger.get(key)) {
       const prior = this.ledger.get(key)
@@ -286,11 +289,12 @@ export class DeviceService extends EventEmitter {
   async dispatch(method, p, principal) {
     const sessionId = p.sessionId
     if ((this.workspaceMutation || this.configurationUpdating) && ['sessions.create', 'sessions.configure', 'settings.update', 'extensions.reload', 'models.discover'].includes(method)) throw new ProtocolError('workspace_busy', 'Wait for device maintenance to finish', 409)
-    if (method === 'status') return { schemaVersion: PROTOCOL_VERSION, features: [ARTIFACT_FEATURE, MEMORY_FEATURE, RUN_FEATURE, TODO_FEATURE, 'turn-steering.v1'], device: this.metadata, roots: this.roots, active: [...this.turns.keys()], retention: { replay: this.replay.stats(), requests: this.ledger.stats() } }
+    if (method === 'status') return { schemaVersion: PROTOCOL_VERSION, features: [ARTIFACT_FEATURE, MEMORY_FEATURE, RUN_FEATURE, TODO_FEATURE, SUBAGENT_FEATURE, 'turn-steering.v1'], device: this.metadata, roots: this.roots, active: [...this.turns.keys()], retention: { replay: this.replay.stats(), requests: this.ledger.stats() } }
     if (method.startsWith('artifacts.')) return this.artifacts.dispatch(method, p, principal)
     if (method.startsWith('memory.')) return this.memory.dispatch(method, p, principal)
     if (method.startsWith('runs.')) return this.runs.dispatch(method, p, principal)
     if (method.startsWith('todos.')) return this.todos.dispatch(method, p, principal)
+    if (method.startsWith('subagents.')) return dispatchSubagents(this, method, p, principal)
     if (method === 'folders.list') return listDeviceFolder(p.path, this.roots)
     if (method === 'files.read') return readDeviceFile(p.path, this.roots)
     if (method === 'media.preview') {
@@ -312,6 +316,9 @@ export class DeviceService extends EventEmitter {
     })
     if (method === 'sessions.get') {
       const owner = this.metadata.owner
+      // Lean projection also traverses gateways predating subagents.list.
+      // Old devices safely ignore this read-only hint and return their snapshot.
+      if (p.view === 'subagents') return { sessionId, subagents: (await dispatchSubagents(this, 'subagents.list', { sessionId }, principal)).items }
       const snapshot = await this.liveView.snapshot(sessionId, {
         readCursor: () => this.replay.read(sessionId, 0, 1),
         readCanonical: async () => {

@@ -64,18 +64,30 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                 }
             }
             Box {
-                CircleButton(Icons.Outlined.MoreHoriz, "更多") { if(inChat && !state.sharedDevice) state.managedSession = state.sessions.find { it.optString("id") == state.selected } ?: JSONObject().put("id", state.selected) else menu = true }
-                DropdownMenu(menu, { menu = false }, containerColor = card, shape = PixelShape()) {
-                    if(inChat && !state.sharedDevice) {
-                        DropdownMenuItem(text = { Text("管理当前对话") }, leadingIcon = { Icon(Icons.Outlined.Edit, null) }, onClick = { state.managedSession = state.sessions.find { it.optString("id") == state.selected } ?: JSONObject().put("id", state.selected); menu = false })
-                        HorizontalDivider()
-                    }
-                    listOf("priority" to "优先级", "project" to "按项目", "time" to "按时间倒序排列").forEach { (value, label) ->
-                        DropdownMenuItem(text = { Text(label, fontSize = 14.sp) }, leadingIcon = { Icon(if(sort == value) Icons.Outlined.Check else Icons.Outlined.Sort, null) }, onClick = { sort = value; menu = false })
+                CircleButton(Icons.Outlined.MoreHoriz, "更多") { menu = !menu }
+                DropdownMenu(menu, { menu = false }, modifier = Modifier.widthIn(min = 190.dp, max = 240.dp), containerColor = card, shape = PixelShape()) {
+                    if(inChat) {
+                        val session = state.sessions.find { it.optString("id") == state.selected } ?: JSONObject().put("id", state.selected)
+                        if(state.sharedDevice) {
+                            DropdownMenuItem(text = { Text("子代理") }, leadingIcon = { Icon(Icons.Outlined.Groups, null) }, onClick = { menu = false; state.sheet = "subagents" })
+                            DropdownMenuItem(text = { Text("会话产物") }, leadingIcon = { Icon(Icons.Outlined.FolderOpen, null) }, onClick = { menu = false; state.sheet = "artifacts" })
+                        }
+                        if(!state.sharedDevice) {
+                            DropdownMenuItem(text = { Text("压缩上下文") }, leadingIcon = { Icon(Icons.Outlined.Compress, null) }, enabled = !state.busy && !state.sessionArchived, onClick = { menu = false; state.send("/compact") })
+                            HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = .09f))
+                            DropdownMenuItem(text = { Text("改名") }, leadingIcon = { Icon(Icons.Outlined.Edit, null) }, onClick = { menu = false; state.managedSessionAction = "rename"; state.managedSession = session })
+                            DropdownMenuItem(text = { Text(if(state.sessionArchived) "恢复对话" else "归档对话") }, leadingIcon = { Icon(Icons.Outlined.Archive, null) }, enabled = !state.busy && !state.savingSession, onClick = { menu = false; state.updateSession(session, JSONObject().put("archived", !state.sessionArchived)) })
+                            DropdownMenuItem(text = { Text("删除对话", color = MaterialTheme.colorScheme.error) }, leadingIcon = { Icon(Icons.Outlined.DeleteOutline, null) }, enabled = !state.busy && !state.savingSession, onClick = { menu = false; state.managedSessionAction = "delete"; state.managedSession = session })
+                        }
+                    } else {
+                        listOf("priority" to "优先级", "project" to "按项目", "time" to "按时间倒序排列").forEach { (value, label) ->
+                            DropdownMenuItem(text = { Text(label, fontSize = 14.sp) }, leadingIcon = { Icon(if(sort == value) Icons.Outlined.Check else Icons.Outlined.Sort, null) }, onClick = { sort = value; menu = false })
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = .09f))
+                        DropdownMenuItem(text = { Text(if(archived) "所有对话" else "已归档对话") }, leadingIcon = { Icon(Icons.Outlined.Archive, null) }, onClick = { archived = !archived; menu = false })
+                        DropdownMenuItem(text = { Text("添加连接") }, leadingIcon = { Icon(Icons.Outlined.Link, null) }, onClick = { state.sheet = "add"; menu = false })
                     }
                     HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = .09f))
-                    DropdownMenuItem(text = { Text(if(archived) "所有对话" else "已归档对话") }, leadingIcon = { Icon(Icons.Outlined.Archive, null) }, onClick = { archived = !archived; menu = false })
-                    DropdownMenuItem(text = { Text("添加连接") }, leadingIcon = { Icon(Icons.Outlined.Link, null) }, onClick = { state.sheet = "add"; menu = false })
                     DropdownMenuItem(text = { Text("设置") }, leadingIcon = { Icon(Icons.Outlined.Settings, null) }, onClick = { state.openSettings(); menu = false })
                 }
             }
@@ -112,7 +124,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
         Column(Modifier.fillMaxWidth().heightIn(max = (LocalConfiguration.current.screenHeightDp * .9f).dp).padding(horizontal = 16.dp).navigationBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 if(state.canGoBack) TextButton(onClick = { state.backSheet() }) { Text("返回", color = MaterialTheme.colorScheme.onSurface) } else Spacer(Modifier.width(56.dp))
-                Text(when(state.sheet) { "connections" -> "远程控制"; "settings" -> "设置"; "profile" -> "个人资料"; "preferences" -> "工作偏好"; "add" -> "添加连接"; "relay" -> "中继网关"; "ssh" -> "SSH 连接"; "folders" -> "工作目录"; "extensions" -> "扩展"; "models" -> "模型渠道"; "model-picker" -> "选择模型"; "approval" -> "权限"; "provider" -> if(state.editingProvider.isBlank()) "添加渠道" else "编辑渠道"; "new" -> "新对话"; "mode" -> "执行模式"; "branches" -> "Git 分支"; "sessions" -> "选择会话"; "permission" -> "权限"; "keys" -> "操作指南"; "theme" -> "外观"; "command-result" -> "命令结果"; "device-ownership" -> "设备归属"; "updates" -> "应用更新"; "artifacts" -> "会话产物"; "memory" -> "记忆管理"; "tasks" -> "委托任务"; else -> "高级配置" }, modifier = Modifier.weight(1f), fontSize = 16.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontWeight = FontWeight.Medium)
+                Text(when(state.sheet) { "connections" -> "远程控制"; "settings" -> "设置"; "profile" -> "个人资料"; "preferences" -> "工作偏好"; "add" -> "添加连接"; "relay" -> "中继网关"; "ssh" -> "SSH 连接"; "folders" -> "工作目录"; "extensions" -> "扩展"; "models" -> "模型渠道"; "model-picker" -> "选择模型"; "approval" -> "权限"; "provider" -> if(state.editingProvider.isBlank()) "添加渠道" else "编辑渠道"; "new" -> "新对话"; "mode" -> "执行模式"; "branches" -> "Git 分支"; "sessions" -> "选择会话"; "permission" -> "权限"; "keys" -> "操作指南"; "theme" -> "外观"; "command-result" -> "命令结果"; "device-ownership" -> "设备归属"; "updates" -> "应用更新"; "artifacts" -> "会话产物"; "memory" -> "记忆管理"; "tasks" -> "持久任务"; "subagents" -> "子代理"; else -> "高级配置" }, modifier = Modifier.weight(1f), fontSize = 16.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontWeight = FontWeight.Medium)
                 CircleButton(Icons.Outlined.Close, "关闭") { state.sheet = "" }
             }
             SheetContent(state)
@@ -170,7 +182,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                         if(added + removed > 0) { Text("+$added ", color = kkcodeColors.diffAdd, fontSize = 11.sp); Text("−$removed", color = kkcodeColors.diffRemove, fontSize = 11.sp) }
                     }
                 }
-                if(!state.sharedDevice) IconButton(onClick = { state.managedSession = session }) { Icon(Icons.Outlined.MoreHoriz, "管理对话 ${session.optString("title", "新对话")}", tint = muted) }
+                if(!state.sharedDevice) IconButton(onClick = { state.managedSessionAction = "menu"; state.managedSession = session }) { Icon(Icons.Outlined.MoreHoriz, "管理对话 ${session.optString("title", "新对话")}", tint = muted) }
                 }
             }
         }
@@ -234,11 +246,13 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                     SettingsRow(Icons.Outlined.Shield, "执行模式", modeLabel(state.mode)) { state.sheet = "mode" }
                     SettingsRow(Icons.Outlined.Description, "会话产物", "查看、搜索与保存完整工具输出") { state.sheet = "artifacts" }
                     SettingsRow(Icons.Outlined.Psychology, "记忆管理", "项目经验与确认后的个人偏好") { state.sheet = "memory" }
-                    SettingsRow(Icons.AutoMirrored.Outlined.Assignment, "委托任务", "执行状态、停止与任务证据") { state.sheet = "tasks" }
+                    SettingsRow(Icons.AutoMirrored.Outlined.Assignment, "子代理", "当前会话的协作状态与模型") { state.sheet = "subagents" }
+                    SettingsRow(Icons.Outlined.Shield, "持久任务与交付记录", "宿主合同、预算与交付证据") { state.sheet = "tasks" }
                 }
                 if(state.connected && state.sharedDevice) Group("工作区") {
                     SettingsRow(Icons.Outlined.Description, "会话产物", "只读共享产物") { state.sheet = "artifacts" }
-                    SettingsRow(Icons.AutoMirrored.Outlined.Assignment, "委托任务", "只读任务状态与证据") { state.sheet = "tasks" }
+                    SettingsRow(Icons.AutoMirrored.Outlined.Assignment, "子代理", "当前会话的协作状态与模型") { state.sheet = "subagents" }
+                    SettingsRow(Icons.Outlined.Shield, "持久任务与交付记录", "宿主合同、预算与交付证据") { state.sheet = "tasks" }
                 }
                 Group("编写器") { Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { Text("显示上下文与模型", Modifier.weight(1f), fontSize = 15.sp); SettingsSwitch(state.showContext, { state.preference("showContext", it) }) } }
                 Group("外观") { SettingsRow(Icons.Outlined.Palette, "主题", state.appearance) { state.sheet = "theme" } }
@@ -325,6 +339,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
             "artifacts" -> ArtifactsSheet(state)
             "memory" -> MemorySheet(state)
             "tasks" -> TasksSheet(state)
+            "subagents" -> SubagentsSheet(state)
         }
         if(state.notice.isNotBlank()) Text(state.notice, color = kkcodeColors.warning, fontSize = 12.sp, modifier = Modifier.padding(12.dp))
     }
@@ -379,7 +394,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                     }
                 }
             }
-            if(state.busy && state.turnOperation != "compact" && state.turnPhase != "finishing" && state.approvals.isEmpty() && state.messages.none { it.kind in listOf("thinking", "assistant", "review") && !it.done || it.kind == "tool" && it.tool?.optString("status") == "running" }) item(key = "waiting-thinking") { ActivityRow(ChatItem("waiting-${state.selected}", "thinking", "", done = false), initiallyExpanded = thinkingExpanded, active = state.turnPhase !in listOf("stopping", "finishing"), stopping = state.stopping) { following = false; thinkingExpanded = it } }
+            if(state.busy && state.turnOperation != "compact" && state.turnPhase !in listOf("finishing", "waiting_children") && state.approvals.isEmpty() && state.messages.none { it.kind in listOf("thinking", "assistant", "review") && !it.done || it.kind == "tool" && it.tool?.optString("status") == "running" }) item(key = "waiting-thinking") { ActivityRow(ChatItem("waiting-${state.selected}", "thinking", "", done = false), initiallyExpanded = thinkingExpanded, active = state.turnPhase !in listOf("stopping", "finishing"), stopping = state.stopping) { following = false; thinkingExpanded = it } }
             if(state.busy && state.turnPhase in listOf("stopping", "finishing")) item(key = "stop-progress") { Text(if(state.stopping) "正在停止并保存已有结果；已执行的文件改动不会撤销。" else "正在保存本轮结果…", color = muted, fontSize = 12.sp) }
             items(state.approvals, key = { it.getString("id") }) { a ->
                 Group("需要你的确认") {
@@ -397,7 +412,8 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
         if(!following && listState.canScrollForward) TextButton(onClick = { following = true; scope.launch { listState.scrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)) } }, modifier = Modifier.align(Alignment.CenterHorizontally)) { Icon(Icons.Outlined.ArrowDownward, null, Modifier.size(14.dp)); Text("回到最新", fontSize = 12.sp) }
         if(state.controlElsewhere) Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) { Text("另一客户端正在控制", fontSize = 11.sp, color = muted, modifier = Modifier.weight(1f)); if(!state.sharedDevice) TextButton(onClick = { state.takeControl() }) { Text("接管控制", fontSize = 11.sp) } }
         ChangeSummary(state.messages)
-        TodoProgressView(state.todos, "${System.identityHashCode(state.api)}:${state.api?.device}:${state.selected}", state.subagents)
+        SubagentSync(state)
+        TodoProgressView(state.todos, "${System.identityHashCode(state.api)}:${state.api?.device}:${state.selected}", state.subagents) { state.sheet = "subagents" }
         if(state.showContext) ContextUsageView(state.contextUsage)
         if(state.busy && state.turnOperation == "compact") Text(if(state.stopping) "正在停止压缩…" else if(state.turnPhase == "starting") "正在提交压缩…" else "正在压缩上下文…", color = muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
         StudioTools(state)
