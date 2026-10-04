@@ -348,14 +348,17 @@ describe('artifact store: bounds, retention and failure behavior', () => {
 describe('artifact store: concurrency', () => {
   it('rechecks a detached lock snapshot and bounds persistent contention without publishing', async t => {
     const original = fs.lstat
-    let remaining = 1
+    let remaining = 1, injected = 0
     t.mock.method(fs, 'lstat', async (...args) => {
-      if (args[0] === path.join(root, 'catalog.lock') && remaining-- > 0) return { isFile: () => true, nlink: 0 }
+      // The store canonicalizes OS temp aliases (e.g. /var -> /private/var
+      // on macOS), so intercept its actual path rather than the input alias.
+      if (args[0] === store.lockFile && remaining-- > 0) { injected++; return { isFile: () => true, nlink: 0 } }
       return original(...args)
     })
     syncBuiltinESMExports()
     try {
       const saved = await store.put({actor,content:'preserved'})
+      assert.equal(injected, 1)
       remaining = Infinity
       await assert.rejects(new ArtifactStore({root,limits:{lockTimeoutMs:20}}).put({actor,content:'not published'}), code('artifact_busy'))
       remaining = 0
