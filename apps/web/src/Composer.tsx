@@ -530,7 +530,7 @@ export function Composer({
                                 </div> : <label>思考强度 <select aria-label="思考强度" value={current} disabled={busy || readOnly || !canManage || !onThinking} onChange={event => { onThinking?.(entry.name, selection.model, event.target.value); setPicker(''); }}>
                                   {control?.options?.map((option: Item) => <option key={option.value} value={option.value} disabled={!option.available}>{option.label} · {option.description}</option>)}
                                 </select></label>}
-                                <small>上下文 {Number(runtime.context.limit).toLocaleString()} · 输出预留 {Number(runtime.output.reserved).toLocaleString()}{runtime.output.source === 'estimated' ? '（估算）' : runtime.output.source === 'configuration' ? '（手动上限）' : '（接口）'}</small>
+                                <small>上下文 {Number(runtime.context.limit).toLocaleString()}<br />输出预留 {Number(runtime.output.reserved).toLocaleString()}{runtime.output.source === 'estimated' ? '（估算）' : runtime.output.source === 'configuration' ? '（手动上限）' : '（接口）'}</small>
                               </div>;
                             })()}
                             {catalog?.loading && (

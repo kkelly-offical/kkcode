@@ -77,6 +77,8 @@ try {
   await picker.click()
   await expect(thinking).toHaveValue('xhigh')
   await expect(page.getByText(/输出预留 65,536/)).toBeVisible()
+  const controlBox = await page.locator('.model-thinking').boundingBox(), selectBox = await thinking.boundingBox()
+  assert.ok(selectBox.x >= controlBox.x && selectBox.x + selectBox.width <= controlBox.x + controlBox.width + 1, 'thinking selection must remain inside its card')
   await page.screenshot({path:'test-results/web-110-thinking.png'})
   await page.setViewportSize({width:320,height:800})
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'thinking controls must fit a narrow phone viewport')
