@@ -268,11 +268,44 @@ export function SessionHome({
   );
 }
 
-export function SessionActions({ session, busy = false, onClose, onUpdate, onDelete }: {
+export function ConversationMenu({ canManage, busy, archived, onAction }: { canManage: boolean; busy: boolean; archived: boolean; onAction: (action: string) => void }) {
+  const [open, setOpen] = useState(false), root = useRef<HTMLDivElement>(null), button = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    root.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    const dismiss = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false); };
+    const keys = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); setOpen(false); button.current?.focus(); }
+      else if (event.key === 'Tab') setOpen(false);
+      else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+        event.preventDefault();
+        const items = [...(root.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') || [])];
+        const index = items.indexOf(document.activeElement as HTMLButtonElement);
+        items[event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length]?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', dismiss); document.addEventListener('keydown', keys);
+    return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', keys); };
+  }, [open]);
+  const choose = (action: string) => { setOpen(false); button.current?.focus(); onAction(action); };
+  return <div className="conversation-menu" ref={root}>
+    <button className="icon" aria-label="对话设置" aria-haspopup="menu" aria-expanded={open} ref={button} onClick={() => setOpen(!open)}><Icon name="more" size={20} /></button>
+    {open && <div className="conversation-actions" role="menu" aria-label="对话操作">
+      {!canManage && <><button role="menuitem" onClick={() => choose('subagents')}>子代理</button><button role="menuitem" onClick={() => choose('artifacts')}>会话产物</button></>}
+      {canManage && <><button role="menuitem" disabled={busy || archived} onClick={() => choose('compact')}>压缩上下文</button><hr /><button role="menuitem" onClick={() => choose('rename')}>改名</button>
+        <button role="menuitem" disabled={busy} onClick={() => choose('archive')}>{archived ? '恢复' : '归档'}</button>
+        <button role="menuitem" className="danger" disabled={busy} onClick={() => choose('delete')}>删除</button></>}
+      <hr /><button role="menuitem" onClick={() => choose('settings')}>设置</button>
+    </div>}
+  </div>;
+}
+
+export function SessionActions({ session, busy = false, initialAction = 'menu', onClose, onUpdate, onDelete }: {
   session: Item; busy?: boolean; onClose: () => void;
+  initialAction?: string;
   onUpdate: (patch: Item) => Promise<void>; onDelete: () => Promise<void>;
 }) {
-  const [action, setAction] = useState('menu');
+  const [action, setAction] = useState(initialAction);
   const [title, setTitle] = useState(session.title || ""), [saving, setSaving] = useState(false), [error, setError] = useState("");
   const save = async (patch: Item) => {
     setSaving(true); setError("");
@@ -280,7 +313,7 @@ export function SessionActions({ session, busy = false, onClose, onUpdate, onDel
     catch (cause: any) { setError(cause.message); }
     finally { setSaving(false); }
   };
-  return <Sheet title={action === 'rename' ? '改名' : action === 'delete' ? '删除对话？' : '对话'} onClose={() => { if (!saving) onClose(); }} onBack={action === 'menu' ? undefined : () => setAction('menu')}>
+  return <Sheet title={action === 'rename' ? '改名' : action === 'delete' ? '删除对话？' : '对话'} onClose={() => { if (!saving) onClose(); }} onBack={action === 'menu' ? undefined : initialAction === 'menu' ? () => setAction('menu') : onClose}>
     {action === 'menu' && <div className="session-actions-list" role="menu" aria-label="管理对话">
       <button role="menuitem" onClick={() => setAction('rename')}>改名</button>
       <button role="menuitem" disabled={busy || saving} onClick={() => void save({ archived: !session.archived })}>{session.archived ? '恢复' : '归档'}</button>

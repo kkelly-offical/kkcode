@@ -1,7 +1,8 @@
-import { publicContext } from '../../protocol/context.mjs'
 import { randomUUID } from 'node:crypto'
 import { getSession, listSessions, updateSessionIf } from '../session/store.mjs'
 import { BackgroundManager } from './background-manager.mjs'
+import { childSnapshot, settleChildOperation } from './child-state.mjs'
+export { settleChildOperation } from './child-state.mjs'
 
 const live = new Map()
 const ACTIVE = new Set(['running', 'pending'])
@@ -34,16 +35,12 @@ export async function acquireChildOperation(parentSessionId, sessionId, expected
   const operationId = randomUUID()
   const acquired = await updateSessionIf(sessionId, { childOperationId: session.childOperationId, childContractVersion: session.childContractVersion, childMailboxRevision: session.childMailboxRevision, parentSessionId }, {
     childOperationId: operationId, childStatus: 'running', childBackgroundTaskId: null, childResult: null,
+    childStartedAt: Date.now(), childSettledAt: null, childSettledOperationId: null, childBackground: false,
+    childRevision: (session.childRevision || 0) + 1, childProgress: {}, childStopRequestedAt: null,
     childUndeliveredMessages: session.childMailbox || [], childMailbox: [], childMailboxRevision: randomUUID()
   })
   if (!acquired) throw new Error('delegated session changed or is already running')
   return operationId
-}
-
-export async function settleChildOperation(sessionId, operationId, result) {
-  return updateSessionIf(sessionId, { childOperationId: operationId }, {
-    childOperationId: null, childStatus: result.status, childResult: result, childSettledAt: Date.now()
-  })
 }
 
 export function bindChildOperation(operationId, parentSignal) {
@@ -76,12 +73,8 @@ export function childSteeringSource(sessionId, operationId) {
 }
 
 function summary(session) {
-  return { session_id: session.id, parent_session_id: session.childContract.parentSessionId,
-    model: session.childContract.runSpec.model, provider: session.childContract.runSpec.provider,
-    context: publicContext(session.context),
-    subagent: session.childContract.runSpec.role.name, status: session.childStatus || 'unknown',
-    background_task_id: session.childBackgroundTaskId || null, pending_messages: session.childMailbox?.length || 0,
-    result: session.childResult || null }
+  return { ...childSnapshot(session), operation_id: session.childOperationId || session.childSettledOperationId || null,
+    background: session.childBackground === true || Boolean(session.childBackgroundTaskId), result: session.childResult || null }
 }
 
 /** Parent-scoped lifecycle API; no retries/replays of unfinished tool actions. */
@@ -107,6 +100,18 @@ export function createChildController({ parentSessionId, delegateTask, config = 
       return Promise.all(sessions.map(async session => summary(await inspect(session.id))))
     },
     async get(sessionId) { return summary(await inspect(sessionId)) },
+    async startPending({ since, canStart }) {
+      if (signal?.aborted || !canStart()) return
+      const sessions = await parentChildren(parentSessionId)
+      const tasks = new Map(sessions.filter(session => session.childStartedAt >= since && (session.childOperationId || session.childSettledOperationId) && session.childBackgroundTaskId)
+        .map(session => [session.childBackgroundTaskId, session.childOperationId || session.childSettledOperationId]))
+      // A heartbeat may wake the queue observer. Avoid a global queue scan
+      // unless this turn still owns an actual pending checkpoint.
+      const checkpoints = await Promise.all([...tasks.keys()].map(id => BackgroundManager.get(id)))
+      if (checkpoints.some(task => task?.status === 'pending' && !task.cancelled && tasks.get(task.id) === task.payload?.childOperationId && task.payload?.parentSessionId === parentSessionId)) {
+        await BackgroundManager.tick(config, { tasks, parentSessionId, canStart, signal })
+      }
+    },
     async wait(sessionId, { timeoutMs = 30000 } = {}) {
       const timeout = Math.min(60000, Math.max(0, Number(timeoutMs) || 0))
       const deadline = Date.now() + timeout
@@ -160,7 +165,6 @@ export async function listChildSnapshots(parentSessionId) {
           status = task.result?.status && task.result.status !== 'completed' ? task.result.status : task.status
         }
       }
-      return { session_id: session.id, parent_session_id: parentSessionId, subagent: session.childContract.runSpec?.role?.name || 'unknown',
-        status, background_task_id: session.childBackgroundTaskId || null, pending_messages: session.childMailbox?.length || 0 }
+      return childSnapshot(session, status)
     }))
 }

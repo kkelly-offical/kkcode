@@ -88,3 +88,25 @@
 @media (prefers-reduced-motion: reduce) {
   .studio-bar .buddy-body, .studio-bar .buddy-eyes { animation: none !important; }
 }
+
+.subagent-panel { display: grid; gap: 12px; }
+.subagent-summary { font-weight: 650; margin: 0; }
+.subagent-card { display: grid; gap: 9px; padding: 16px; border: 1px solid var(--border); background: var(--bg-panel); border-radius: 5px; min-width: 0; }
+.subagent-card header { display: flex; align-items: start; gap: 12px; justify-content: space-between; }
+.subagent-card header strong { overflow-wrap: anywhere; }
+.subagent-card header span { white-space: nowrap; color: var(--text-secondary); font-size: 11px; }
+.subagent-card p { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.subagent-card small { color: var(--text-secondary); font-size: 11px; }
+.subagent-card progress { width: 100%; height: 4px; accent-color: var(--primary-bg); }
+.subagent-card button { justify-self: start; font-size: 12px; padding: 6px 0; }
+.subagent-empty { padding: 24px 14px; background: var(--bg-panel); color: var(--text-secondary); font-size: 13px; }
+.studio-bar[data-state="waiting"] .pixel-buddy { animation: buddy-think 2s ease-in-out infinite; }
+@keyframes buddy-think { 0%,100% { transform: rotate(-4deg); } 50% { transform: rotate(4deg); } }
+@media (prefers-reduced-motion: reduce) { .studio-bar[data-state="waiting"] .pixel-buddy { animation: none; } }
+.studio-bar[data-motion="off"] .pixel-buddy { animation: none; }
+
+.conversation-menu { position: relative; }
+.conversation-actions { position: absolute; top: calc(100% + 8px); right: 0; z-index: 80; width: 230px; max-width: calc(100vw - 32px); padding: 7px; background: var(--bg-menu); border: 1px solid var(--border-strong); box-shadow: var(--shadow-pop); border-radius: 5px; }
+.conversation-actions button { display: block; width: 100%; padding: 11px 13px; text-align: left; font-size: 14px; border-radius: 3px; }
+.conversation-actions button:hover, .conversation-actions button:focus-visible { background: var(--bg-hover); }
+.conversation-actions hr { border: 0; border-top: 1px solid var(--border); margin: 5px 0; }

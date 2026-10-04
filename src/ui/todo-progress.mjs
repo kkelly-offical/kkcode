@@ -33,13 +33,32 @@ export function todoOwnerLabel(item, sessionId) {
 
 export const subagentStatusLabels = Object.freeze({ running: '进行中', pending: '等待中', completed: '已完成', blocked: '受阻', error: '失败', cancelled: '已取消', interrupted: '已中断', incomplete: '未完成', unknown: '待核查' })
 export function scopedSubagents(value, sessionId) {
-  return Array.isArray(value) ? value.filter(item => item?.parent_session_id === sessionId && typeof item.session_id === 'string' && item.session_id).map(item => ({ session_id: item.session_id, parent_session_id: sessionId, subagent: typeof item.subagent === 'string' ? item.subagent : '子代理', status: Object.hasOwn(subagentStatusLabels, item.status) ? item.status : 'unknown' })) : []
+  const text = value => typeof value === 'string' ? value.slice(0, 160) : ''
+  const number = value => Number.isSafeInteger(value) && value >= 0 ? value : null
+  return Array.isArray(value) ? value.filter(item => item?.parent_session_id === sessionId && typeof item.session_id === 'string' && item.session_id).map(item => ({
+    session_id: item.session_id, parent_session_id: sessionId, subagent: text(item.subagent) || '子代理',
+    status: Object.hasOwn(subagentStatusLabels, item.status) ? item.status : 'unknown',
+    revision: number(item.revision) || 0, description: text(item.description), model: text(item.model), provider: text(item.provider),
+    started_at: number(item.started_at), updated_at: number(item.updated_at), settled_at: number(item.settled_at),
+    context: item.context && { tokens: number(item.context.tokens), limit: number(item.context.limit), percent: number(item.context.percent) },
+    runtime: { thinking: text(item.runtime?.thinking), output_reserved: number(item.runtime?.output_reserved), context_limit: number(item.runtime?.context_limit) },
+    activity: { phase: text(item.activity?.phase), tool: text(item.activity?.tool), step: number(item.activity?.step) }
+  })) : []
+}
+export function mergeSubagentSnapshot(items, incoming, sessionId) {
+  const snapshot = scopedSubagents(incoming, sessionId)
+  return [...snapshot.map(child => {
+    const prior = items.find(item => item.session_id === child.session_id)
+    return prior?.revision > child.revision ? prior : child
+  }), ...items.filter(item => item.parent_session_id === sessionId && !snapshot.some(child => child.session_id === item.session_id))]
 }
 export function mergeSubagentEvent(items, event, sessionId) {
-  if (event.sessionId !== sessionId || !['subagent.delegated', 'subagent.settled'].includes(event.type) || typeof event.payload?.subSessionId !== 'string') return items
+  if (event.sessionId !== sessionId || !['subagent.delegated', 'subagent.settled', 'subagent.progress'].includes(event.type) || typeof event.payload?.subSessionId !== 'string') return items
   const payload = event.payload
-  const [child] = scopedSubagents([{ session_id: payload.subSessionId, parent_session_id: sessionId, subagent: payload.subagent, status: event.type === 'subagent.delegated' ? 'running' : payload.status }], sessionId)
-  if (!child) return items
+  const [child] = scopedSubagents([payload.child || { session_id: payload.subSessionId, parent_session_id: sessionId, subagent: payload.subagent, status: event.type === 'subagent.delegated' ? 'running' : payload.status }], sessionId)
+  if (!child || child.session_id !== payload.subSessionId) return items
+  const prior = items.find(item => item.session_id === child.session_id)
+  if (prior && (prior.revision > child.revision || prior.revision === child.revision && child.revision > 0)) return items
   return [...items.filter(item => item.session_id !== child.session_id), child]
 }
 export function subagentProgressSummary(items = []) {

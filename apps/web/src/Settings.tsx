@@ -10,10 +10,13 @@ import { APP_VERSION } from "./version";
 import { ArtifactPanel } from './Artifacts';
 import { MemoryPanel } from './Memory';
 import { TaskPanel } from './Tasks';
+import { SubagentPanel } from './Subagents';
 
 type Item = Record<string, any>;
 type Props = {
   initial: string;
+  subagents?: Item[];
+  subagentNotice?: string;
   profile: Item;
   devices: Item[];
   deviceId: string;
@@ -68,7 +71,8 @@ const titles: Record<string, string> = {
   lifecycle: "设备绑定与转移",
   artifacts: "会话产物与完整日志",
   memory: "记忆管理",
-  tasks: "任务与验收",
+  tasks: "持久任务与交付记录",
+  subagents: "子代理",
 };
 
 export function SettingsOverlay(props: Props) {
@@ -231,6 +235,7 @@ export function SettingsOverlay(props: Props) {
       {props.canManage !== false && ['settings', 'models', 'provider'].includes(panel) && props.settings._diagnostics?.warningCount > 0 && <p role="status" className="hint">{props.settings._diagnostics.warning}</p>}
       {panel === 'artifacts' && <ArtifactPanel key={`${props.deviceId}:${props.sessionId}`} rpc={props.rpc} sessionId={props.sessionId} canManage={props.canManage !== false} />}
       {panel === 'memory' && props.canManage !== false && <MemoryPanel key={`${props.deviceId}:${props.sessionId}`} rpc={props.rpc} sessionId={props.sessionId} />}
+      {panel === 'subagents' && <SubagentPanel items={props.subagents || []} sessionId={props.sessionId} canManage={props.canManage !== false} notice={props.subagentNotice} rpc={props.rpc} onTasks={() => go('tasks')} />}
       {panel === 'tasks' && <TaskPanel key={`${props.deviceId}:${props.sessionId}`} rpc={props.rpc} sessionId={props.sessionId} />}
       {["settings", "connections"].includes(panel) && (
         <>
@@ -240,7 +245,8 @@ export function SettingsOverlay(props: Props) {
             <>
               <p className="group-label">工作区</p>
               <div className="settings-group">
-                <SettingsRow icon="shield" title="任务与验收" disabled={!props.connected || !props.sessionId} onClick={() => go('tasks')} />
+                <SettingsRow icon="priority" title="子代理" disabled={!props.connected || !props.sessionId} onClick={() => go('subagents')} />
+                <SettingsRow icon="shield" title="持久任务与交付记录" disabled={!props.connected || !props.sessionId} onClick={() => go('tasks')} />
                 <SettingsRow icon="attachment" title="会话产物与完整日志" disabled={!props.connected || !props.sessionId} onClick={() => go('artifacts')} />
                 {props.canManage !== false && <SettingsRow icon="settings" title="记忆管理" disabled={!props.connected} onClick={() => go('memory')} />}
                 <SettingsRow

@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url"
 import { EventEmitter } from "node:events"
 import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
+import { getSession } from '../session/store.mjs'
+import { childSnapshot, settleChildOperation } from './child-state.mjs'
 import { INTERRUPTION_REASONS } from "./interruption-reason.mjs"
 import { intersectDataPolicies } from '../permission/data-policy.mjs'
 import { normalizeToolOutcome } from '../tool/result-outcome.mjs'
@@ -93,6 +95,22 @@ async function emitTaskSettled(task) {
       worktreePath: task.result?.worktree_path || null
     }
   }).catch(() => {})
+  // Worker-local events cannot reach the parent's bus. Reconcile the exact
+  // owned operation after its durable task terminal, then publish its snapshot.
+  if (task.payload?.childOperationId && task.payload?.subSessionId) {
+    const { subSessionId, parentSessionId, childOperationId } = task.payload
+    let session = (await getSession(subSessionId))?.session
+    if (session?.parentSessionId === parentSessionId && session.childContract?.parentSessionId === parentSessionId
+        && [session.childOperationId, session.childSettledOperationId].includes(childOperationId)) {
+      if (session.childOperationId === childOperationId) await settleChildOperation(subSessionId, childOperationId, {
+        ...(task.result || {}), status: task.result?.status && task.result.status !== 'completed' ? task.result.status : task.status,
+        ...(task.error ? { error: task.error } : {})
+      })
+      session = (await getSession(subSessionId))?.session
+      if (session?.childSettledOperationId === childOperationId) await EventBus.emit({ type: EVENT_TYPES.SUBAGENT_SETTLED, sessionId: parentSessionId,
+        payload: { subSessionId, subagent: session.childContract.runSpec.role.name, status: session.childStatus, child: childSnapshot(session) } })
+    }
+  }
   return true
 }
 
@@ -356,12 +374,13 @@ function spawnWorker(task) {
   return child.pid
 }
 
-async function markStaleRunningTasks(config = {}) {
+async function markStaleRunningTasks(config = {}, selected = null) {
   const tasks = await readAllTasks()
   const timeoutDefault = Math.max(1000, Number(config.background?.worker_timeout_ms || 900000))
   let interrupted = 0
 
   for (const task of tasks) {
+    if (selected && selected.get(task.id) !== task.payload?.childOperationId) continue
     if (task.status !== "running") continue
     const heartbeatAt = Number(task.lastHeartbeatAt || 0)
     const timeoutMs = resolveWorkerTimeoutMs(config, task.payload || {})
@@ -388,7 +407,8 @@ async function markStaleRunningTasks(config = {}) {
   return interrupted
 }
 
-async function startPendingTasks(config = {}) {
+/** @param {any} config @param {{tasks?: Map<string, string>, parentSessionId?: string, canStart?: () => boolean, signal?: AbortSignal}} scope */
+async function startPendingTasks(config = {}, scope = {}) {
   const maxParallel = resolveMaxParallel(config)
   const tasks = await readAllTasks()
   const running = tasks.filter((task) => task.status === "running").length
@@ -397,10 +417,19 @@ async function startPendingTasks(config = {}) {
 
   let started = 0
   const pending = tasks
-    .filter((task) => task.status === "pending" && task.backgroundMode === "worker_process")
+    .filter((task) => task.status === "pending" && !task.cancelled && task.backgroundMode === "worker_process"
+      && (!scope.tasks || scope.tasks.get(task.id) === task.payload?.childOperationId)
+      && (!scope.parentSessionId || task.payload?.parentSessionId === scope.parentSessionId))
     .sort((a, b) => a.createdAt - b.createdAt)
 
+  if (pending.length && scope.tasks && tasks.some(task => scope.tasks.get(task.id) === task.payload?.childOperationId
+    && task.payload?.parentSessionId === scope.parentSessionId
+    && (['unknown', 'interrupted'].includes(task.status) || task.result?.verification?.state === 'outcome_unknown' || task.result?.stop_reason === 'inspection-required'))) {
+    throw Object.assign(new Error('A delegated worker has unresolved effects; inspect it before starting queued work'), { code: 'child_queue_inspection_required' })
+  }
+
   for (const task of pending) {
+    if (scope.canStart && !scope.canStart() || scope.signal?.aborted) break
     if (remainingSlots <= 0) break
     let pid
     try {
@@ -561,11 +590,11 @@ export const BackgroundManager = {
       return task
     }
 
-    await this.tick(config)
+    await this.tick(config, { signal })
     return (await loadTask(id)) || task
   },
 
-  async launchDelegateTask({ description, payload, config = {} }) {
+  async launchDelegateTask({ description, payload, config = {}, signal = null }) {
     return this.launch({
       description,
       payload: {
@@ -575,7 +604,7 @@ export const BackgroundManager = {
         resumeToken: payload.resumeToken || `resume_${Date.now()}`
       },
       run: null,
-      config
+      config, signal
     })
   },
 
@@ -768,8 +797,15 @@ export const BackgroundManager = {
     return loadTask(id)
   },
 
-  async tick(config = {}) {
-    await markStaleRunningTasks(config)
-    await startPendingTasks(config)
+  /** @param {any} config @param {{tasks?: Map<string, string>, parentSessionId?: string, canStart?: () => boolean, signal?: AbortSignal}} [scope] */
+  async tick(config = {}, scope = {}) {
+    if (scope.tasks && !scope.tasks.size) return
+    // One dispatcher across processes: launch and completion callbacks must
+    // not reserve the same pending worker or overbook the concurrency ceiling.
+    return withBackgroundTaskLock('scheduler.queue.v1', async () => {
+      if (scope.canStart && !scope.canStart() || scope.signal?.aborted) return
+      await markStaleRunningTasks(config, scope.tasks || null)
+      await startPendingTasks(config, scope)
+    })
   }
 }

@@ -19,6 +19,7 @@ import { resolveModelLimits } from '../provider/model-limits.mjs'
 import { readCachedModelCatalog } from '../provider/model-catalog.mjs'
 import { normalizePath } from '../../util/glob.mjs'
 import { acquireChildOperation, bindChildOperation, childSteeringSource, ownedChild, settleChildOperation } from './child-controller.mjs'
+import { childSnapshot, updateChildOperation } from './child-state.mjs'
 export { createChildController } from './child-controller.mjs'
 
 const SUPPORTED_EXECUTION_MODES = new Set(["fresh_agent", "fork_context"])
@@ -202,7 +203,7 @@ async function ensureDelegatedSession({ executionMode, parentSessionId, subSessi
   await flushNow()
 }
 
-export function createTaskDelegate({ config, parentSessionId, model, providerType, runSubtask, parentRunSpec = null, parentAgent = null, parentPermissionConfig = null, parentMode = null, parentDepth = 0, signal = null, baseUrl = null, apiKeyEnv = null, getSkillToolGroups = () => [] }) {
+export function createTaskDelegate({ config, parentSessionId, model, providerType, runSubtask, parentRunSpec = null, parentAgent = null, parentPermissionConfig = null, parentMode = null, parentDepth = 0, parentTurnStartedAt = 0, signal = null, baseUrl = null, apiKeyEnv = null, getSkillToolGroups = () => [] }) {
   return async function delegateTask(args = {}) {
     try {
     signal?.throwIfAborted()
@@ -219,6 +220,7 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
 
     const existing = args.session_id ? await ownedChild(parentSessionId, String(args.session_id)) : null
     if (existing && existing.childContract.schema !== 1) return { error: 'unsupported delegated session contract; cannot safely continue' }
+    if (existing && parentTurnStartedAt > 0 && existing.childCancelledByUserAt >= parentTurnStartedAt) return { status: 'blocked', error: 'The user stopped this child during the current turn. Retain its results; do not restart it until the user explicitly continues in a new turn.' }
     if (existing) {
       executionMode = existing.childContract.executionMode
       isolation = existing.childContract.runSpec.workspace.isolation
@@ -319,6 +321,7 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
       if (!created) return { error: 'delegated session identity changed before reservation' }
     }
     const operationId = await acquireChildOperation(parentSessionId, subSessionId, existing?.childContractVersion)
+    await updateChildOperation(subSessionId, operationId, { childDescription: String(args.description || args.objective || subagent.name).slice(0, 160), childBackground: args.run_in_background === true })
     if (existing) await updateSessionIf(subSessionId, { childOperationId: operationId }, {
       childContractVersion: randomUUID(), childContract: { ...existing.childContract, runSpec,
         dataPolicy: dataPolicy ?? null }
@@ -331,7 +334,7 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
       await EventBus.emit({
         type: EVENT_TYPES.SUBAGENT_DELEGATED,
         sessionId: parentSessionId,
-        payload: { subagent: subagent.name, subSessionId, description: String(args.description || args.objective || "").slice(0, 120) }
+        payload: { subagent: subagent.name, subSessionId, child: childSnapshot(await ownedChild(parentSessionId, subSessionId)) }
       })
       const out = await runSubtask({
         prompt,
@@ -371,13 +374,13 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
       await settleChildOperation(subSessionId, operationId, result)
       await EventBus.emit({
         type: EVENT_TYPES.SUBAGENT_SETTLED, sessionId: parentSessionId,
-        payload: { subagent: subagent.name, subSessionId, status: outcome.status, toolEvents: out.toolEvents?.length || 0, files: fileChanges.length }
+        payload: { subagent: subagent.name, subSessionId, status: outcome.status, child: childSnapshot(await ownedChild(parentSessionId, subSessionId)), toolEvents: out.toolEvents?.length || 0, files: fileChanges.length }
       })
       return result
       } catch (error) {
         const result = { session_id: subSessionId, parent_session_id: parentSessionId, ...childOutcome({ error: error?.message || String(error) }, operation.signal.aborted) }
         await settleChildOperation(subSessionId, operationId, result)
-        await EventBus.emit({ type: EVENT_TYPES.SUBAGENT_SETTLED, sessionId: parentSessionId, payload: { subagent: subagent.name, subSessionId, status: result.status, toolEvents: 0, files: 0 } })
+        await EventBus.emit({ type: EVENT_TYPES.SUBAGENT_SETTLED, sessionId: parentSessionId, payload: { subagent: subagent.name, subSessionId, status: result.status, child: childSnapshot(await ownedChild(parentSessionId, subSessionId)), toolEvents: 0, files: 0 } })
         return result
       } finally { operation.close() }
     }
@@ -387,6 +390,7 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
       signal?.throwIfAborted()
       const task = await BackgroundManager.launchDelegateTask({
         description: String(args.description || `background task (${subagent.name})`),
+        signal,
         payload: {
           parentSessionId,
           subSessionId,
@@ -431,8 +435,10 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
       }
       await updateSessionIf(subSessionId, { childOperationId: operationId }, { childBackgroundTaskId: task.id,
         ...(['pending', 'running'].includes(task.status) ? { childStatus: task.status } : {}) })
+      // A fast worker may already have settled before its handle is attached.
+      await updateSessionIf(subSessionId, { childOperationId: null, childSettledOperationId: operationId }, { childBackgroundTaskId: task.id })
       await EventBus.emit({ type: EVENT_TYPES.SUBAGENT_DELEGATED, sessionId: parentSessionId,
-        payload: { subagent: subagent.name, subSessionId, description: String(args.description || args.objective || '').slice(0, 120), status: task.status } })
+        payload: { subagent: subagent.name, subSessionId, status: task.status, child: childSnapshot(await ownedChild(parentSessionId, subSessionId)) } })
       return {
         background_task_id: task.id,
         status: task.status,
@@ -440,7 +446,8 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
         execution_mode: executionMode,
         isolation,
         group_id: args.group_id || null,
-        group_label: args.group_label || null
+        group_label: args.group_label || null,
+        notification: 'The host automatically delivers this child’s result at the next safe boundary. Continue independent work; when no work remains, finish your response and the host will await child reports without agent_wait or polling.'
       }
       } catch (error) {
         const result = { ...childOutcome({ error: error?.message || String(error) }, signal?.aborted), session_id: subSessionId }

@@ -1,7 +1,13 @@
 export interface DeviceEvent { schemaVersion: '1'; id: string; seq: number; sessionId: string; type: string; payload: unknown; timestamp: number }
 export interface ContextUsage { tokens: number; limit: number; percent: number; outputReserved?: number; windowKind?: 'input' | 'shared'; contextSource?: 'configuration' | 'catalog' | 'fallback'; outputSource?: 'configuration' | 'catalog' | 'estimated'; inputBudget?: number; requiredTokens?: number; source: 'estimated' | 'count-api' | 'provider-usage' | 'strict-upper-bound'; estimated: boolean; components: { system?: number; tools?: number; messages?: number }; updatedAt?: number }
 export interface ToolDefinition { name: string; description: string; inputSchema: Record<string, unknown> }
-export interface SubagentSnapshot { session_id: string; parent_session_id: string; subagent: string; status: string; background_task_id: string | null; pending_messages: number; }
+export interface SubagentSnapshot {
+  session_id: string; parent_session_id: string; subagent: string; status: string; background_task_id: string | null; pending_messages: number;
+  revision?: number; description?: string; model?: string; provider?: string; started_at?: number | null; updated_at?: number | null; settled_at?: number | null;
+  context?: ContextUsage | null;
+  runtime?: { thinking: string; output_reserved: number | null; context_limit: number | null };
+  activity?: { phase: string; tool: string; step: number | null };
+}
 export interface SessionInfo { id: string; title?: string; cwd?: string; model?: string; providerType?: string; status?: string; archived?: boolean; hasContent?: boolean; context?: ContextUsage; [key: string]: unknown }
 export interface AttachmentInfo { id: string; sessionId: string; name: string; mediaType: string; size: number; createdAt: number; expiresAt: number }
 export interface RemoteArtifact { id: string; sha256: string; size: number; mime: string; createdAt: number; source: { kind: string }; retention: { active: boolean; resolved: boolean; pinned: boolean; references?: string[] } }
@@ -65,6 +71,8 @@ export interface DeviceMethods {
   'artifacts.prune': { params: { sessionId?: string; confirmed: true }; result: { removed: string[] } };
   'runs.list': { params: { sessionId: string; cursor?: string; limit?: number }; result: { items: RemoteRun[]; nextCursor: string | null; truncated: boolean } };
   'todos.list': { params: { sessionId: string }; result: import('./tasks.mjs').TodoSnapshot };
+  'subagents.list': { params: { sessionId: string }; result: { sessionId: string; items: SubagentSnapshot[] } };
+  'subagents.interrupt': { params: { sessionId: string; childSessionId: string }; result: { sessionId: string; items: SubagentSnapshot[] } };
   'runs.get': { params: RunParams; result: RemoteRun };
   'runs.events': { params: RunParams & { after?: number; limit?: number }; result: { runId: string; revision: number; events: RemoteRunEvent[]; nextAfter: number } };
   'runs.pause': { params: RunControlParams; result: RemoteRun };
@@ -101,6 +109,7 @@ export declare class DeviceClient {
   http<T = unknown>(path: string, options?: { method?: string; body?: unknown; signal?: AbortSignal }): Promise<T>;
   request<T = unknown>(method: string, params?: Record<string, unknown>, options?: { signal?: AbortSignal; id?: string; issuedAt?: number }): Promise<T>;
   call<M extends keyof DeviceMethods>(method: M, params: DeviceMethods[M]['params'], options?: { signal?: AbortSignal; id?: string; issuedAt?: number }): Promise<DeviceMethods[M]['result']>;
+  call(method: 'sessions.get', params: { sessionId: string; view: 'subagents' }, options?: { signal?: AbortSignal; id?: string; issuedAt?: number }): Promise<{ sessionId: string; subagents: SubagentSnapshot[] }>;
   listDevices<T = unknown>(options?: { signal?: AbortSignal }): Promise<T>;
   profile<T = unknown>(options?: { signal?: AbortSignal }): Promise<T>;
   stream(sessionId: string, options?: { after?: number; signal?: AbortSignal; onEvent?: (event: DeviceEvent) => void | Promise<void>; onMeta?: (state: Record<string, unknown>) => void | Promise<void>; onGap?: (state: Record<string, unknown>) => void | Promise<void> }): Promise<'closed'>;

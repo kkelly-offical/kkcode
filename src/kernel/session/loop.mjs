@@ -24,6 +24,8 @@ import { normalizePermissionLevel, toolCapability } from "../permission/rules.mj
 import { addModelUsage, priceModelUsage } from '../../usage/model-ledger.mjs'
 import { APPROVAL_LEVELS, approvalFromAgentPermission } from "../core/modes.mjs"
 import { createTaskDelegate, createChildController } from "../orchestration/task-scheduler.mjs"
+import { createChildInbox } from '../orchestration/child-inbox.mjs'
+import { observeChildProgress } from '../orchestration/child-progress.mjs'
 import { isReadOnlyWriteScope } from '../orchestration/child-policy.mjs'
 import { createSessionTodoService } from './todo-service.mjs'
 import { priorCompletionEvidence } from './completion-history.mjs'
@@ -366,6 +368,7 @@ async function processTurnLoopInRuntime({
   }
 
   const turnId = newId("turn")
+  const turnStartedAt = Date.now()
   const artifactAccess = currentDurableRun()?.artifactAccess || createConversationArtifactAccess({ sessionId, cwd, turnId })
   const skillToolPolicy = createSkillToolPolicy(toolContext.skillAllowedTools, toolContext.skillToolGroups)
   const activatedTools = new Set()
@@ -376,7 +379,7 @@ async function processTurnLoopInRuntime({
   }
   const listModelTools = async options => !toolCallingAvailable ? [] : (typeof ToolRegistry.listForModel === 'function'
     ? ToolRegistry.listForModel({ ...options, activated: activatedTools, allowedTools: effectiveAgent?.tools || null })
-    : ToolRegistry.list(options)).then(tools => tools.filter(tool => skillToolPolicy.allows(tool.name, {}, true)))
+    : ToolRegistry.list(options)).then(tools => tools.filter(tool => tool.name !== 'agent_wait' && skillToolPolicy.allows(tool.name, {}, true)))
   // 工具输出预算按当前模型的上下文算一次，本轮复用
   const toolResultLimit = toolOutputBudget({ model, providerType, config: configState.config, baseUrl, apiKeyEnv }).chars
     || TOOL_RESULT_FALLBACK_LIMIT
@@ -519,6 +522,7 @@ async function processTurnLoopInRuntime({
     parentSessionId: sessionId,
     parentMode: toolContext._planMode ? 'plan' : mode,
     parentDepth: depth,
+    parentTurnStartedAt: turnStartedAt,
     model,
     providerType,
     parentRunSpec: runSpec,
@@ -561,6 +565,9 @@ async function processTurnLoopInRuntime({
   })(args)
   const hasPendingInput = async () => Boolean(typeof steerSource?.hasPending === 'function' && await steerSource.hasPending())
   const childController = createChildController({ parentSessionId: sessionId, delegateTask, config: permissionConfig, signal, hasPendingInput })
+  const childInbox = createChildInbox({ controller: childController, sessionId, turnId, startedAt: turnStartedAt, signal, hasPendingInput, deadlineAt: runSpec?.limits?.deadlineAt })
+  let stopChildProgress = () => {}
+  let childProgressStarted = false
 
   const MAX_CONTINUES = 8
   const MAX_TOTAL_CONTINUES = 24 // hard cap on total auto-continues per turn
@@ -612,7 +619,7 @@ async function processTurnLoopInRuntime({
     if (unsettled.length) {
       result.lifecycleBlocked = true
       result.passed = false; result.verdict = 'BLOCK'
-      result.message += `\n仍有 ${unsettled.length} 个子任务未收尾，请用 agent_wait / agent_list 核查实际结果，不要猜测完成。`
+      result.message += `\n仍有 ${unsettled.length} 个子任务未收尾，请根据自动汇报或 agent_list 核查实际结果，不要猜测完成。`
     }
     verificationRepairHints = completionRepairGuidance({verification: result, toolEvents: background.events, cwd, language})
     return result
@@ -646,6 +653,7 @@ async function processTurnLoopInRuntime({
     turnId
   })
   try {
+    await childInbox.initialize()
     for (let step = 1; step <= maxSteps; step++) {
       signal?.throwIfAborted()
       if (!inspectionBarrier && (step === 1 || [...carriedEvidence.toolEvents, ...verificationEvents].some(event => event.metadata?.backgroundTask))) {
@@ -671,6 +679,10 @@ async function processTurnLoopInRuntime({
         if (!authorizedFreeScope) { stopReason = 'budget'; finalReply = '子任务预算为 0，未发起模型请求。'; break }
       }
       if (runSpec?.limits?.deadlineAt != null && Date.now() >= runSpec.limits.deadlineAt) { stopReason = 'deadline'; finalReply = '子任务已到截止时间，未发起新的模型请求。'; break }
+      if (!childProgressStarted) {
+        stopChildProgress = await observeChildProgress({ sessionId, operationId: toolContext.childOperationId, configState, providerType, model, baseUrl, apiKeyEnv })
+        childProgressStarted = true
+      }
       await markTurnInProgress(sessionId, turnId, step, recoveryEnabled)
       // 插话在 step 边界送达：写进会话后，下面 getConversationHistory 自然带上，
       // 本 step 的模型请求就能看到。放在这里而不是工具执行中间，是因为消息序
@@ -689,6 +701,7 @@ async function processTurnLoopInRuntime({
           })
         }
       }
+      await childInbox.deliver()
       await EventBus.emit({
         type: EVENT_TYPES.TURN_STEP_START,
         sessionId,
@@ -1104,6 +1117,18 @@ async function processTurnLoopInRuntime({
         // New user guidance arrived while the provider was producing a final
         // answer. Deliver it at the next safe boundary before ending the turn.
         if (await hasPendingInput()) continue
+        const childUpdates = await childInbox.pending()
+        if (childUpdates.reports.length || childUpdates.active.length) {
+          if (response.text || response.reasoning || response.providerState) await appendMessage(sessionId, 'assistant', attachProviderState(response.reasoning
+            ? [{ type: 'reasoning', text: response.reasoning }, { type: 'text', text: String(response.text || '').trim() }] : String(response.text || '').trim(), response.providerState),
+          { mode, model, providerType, step, turnId, intermediate: true })
+          if (childUpdates.active.length && !childUpdates.reports.length) {
+            const waited = await childInbox.wait()
+            signal?.throwIfAborted()
+            if (waited === 'deadline') { stopReason = 'deadline'; finalReply = '等待子代理期间已到任务截止时间，未发起新的模型请求。'; break }
+          }
+          continue
+        }
         if (!String(response.text || '').trim()) {
           // Reasoning is useful history, not a completed user-facing answer.
           // Never synthesize a successful assistant message or retry tool side
@@ -1828,5 +1853,5 @@ async function processTurnLoopInRuntime({
       toolEvents,
       verification
     }
-  }
+  } finally { await childInbox.close(); stopChildProgress() }
 }

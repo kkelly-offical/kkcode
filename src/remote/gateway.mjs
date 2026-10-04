@@ -174,7 +174,7 @@ export async function createGateway({ origin, issuer, clientId, clientSecret, or
     if (!device || (!owner && !access && !sharedIndex)) return reply.code(403).send({ error: { code: 'forbidden', message: 'Device access denied' } })
     if (!owner && !sharedIndex) {
       const artifactReads = ['artifacts.list', 'artifacts.read', 'artifacts.search', 'artifacts.download']
-      const runReads = ['runs.list', 'runs.get', 'runs.events', 'runs.artifacts.list', 'runs.artifacts.read', 'runs.artifacts.download', 'todos.list']
+      const runReads = ['runs.list', 'runs.get', 'runs.events', 'runs.artifacts.list', 'runs.artifacts.read', 'runs.artifacts.download', 'todos.list', 'subagents.list']
       const allowed = access === 'control' ? ['sessions.get', 'media.preview', 'events.list', ...artifactReads, ...runReads, 'control.acquire', 'control.release', 'turns.start', 'turns.cancel', 'turns.steer', 'approvals.resolve'] : ['sessions.get', 'media.preview', 'events.list', ...artifactReads, ...runReads]
       if (!allowed.includes(request.method)) return reply.code(403).send({ error: { code: 'forbidden', message: 'Operation exceeds shared access' } })
       if (request.method === 'approvals.resolve' && typeof request.params?.answer === 'string' && !['allow_once', 'deny'].includes(request.params.answer)) return reply.code(403).send({ error: { code: 'forbidden', message: 'Shared control cannot create persistent permission grants' } })
@@ -187,7 +187,7 @@ export async function createGateway({ origin, issuer, clientId, clientSecret, or
     if (!cluster && !connection) return reply.code(503).send({ error: { code: 'device_offline', message: 'The computer is offline' } })
     const result = cluster ? await cluster.send(device.id, request, principal) : await sendLocal(device.id, connection.connectionId, request, principal)
     if (await store.get(`device-unbound:${device.id}`)) return reply.code(410).send({ error: { code: 'device_unbound', message: 'Device was unbound while this request was in progress' } })
-    if (['artifacts.list', 'artifacts.read', 'artifacts.search', 'artifacts.download', 'runs.list', 'runs.get', 'runs.events', 'runs.artifacts.list', 'runs.artifacts.read', 'runs.artifacts.download', 'todos.list', 'sessions.get'].includes(request.method)) {
+    if (['artifacts.list', 'artifacts.read', 'artifacts.search', 'artifacts.download', 'runs.list', 'runs.get', 'runs.events', 'runs.artifacts.list', 'runs.artifacts.read', 'runs.artifacts.download', 'todos.list', 'subagents.list', 'sessions.get'].includes(request.method)) {
       // A large page may finish after sharing or account membership changed.
       // Recheck before emitting bytes, not merely before forwarding the request.
       const refreshed = await authenticate(req), currentDevice = await store.get(`device:${device.id}`)
@@ -200,7 +200,7 @@ export async function createGateway({ origin, issuer, clientId, clientSecret, or
     }
     if (!owner && !result.error) {
       if (request.method === 'sessions.list') result.result = result.result.filter(session => Object.hasOwn(grants, session.id))
-      if (request.method === 'status') result.result = { schemaVersion: '1', features: (result.result.features || []).filter(feature => ['artifacts.v1', 'runs.v1', 'todos.v1'].includes(feature)), device: { id: device.id, name: device.name }, roots: [], shared: true, active: (result.result.active || []).filter(sessionId => Object.hasOwn(grants, sessionId)) }
+      if (request.method === 'status') result.result = { schemaVersion: '1', features: (result.result.features || []).filter(feature => ['artifacts.v1', 'runs.v1', 'todos.v1', 'subagents.v1'].includes(feature)), device: { id: device.id, name: device.name }, roots: [], shared: true, active: (result.result.active || []).filter(sessionId => Object.hasOwn(grants, sessionId)) }
     }
     await audit(req.body.method, account.id, device.id, result.error ? 'error' : 'ok')
     return result.error ? reply.code(result.status || 400).send({ error: result.error }) : { result: result.result }

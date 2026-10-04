@@ -21,7 +21,7 @@ internal fun modeLabel(value: String) = MODE_CHOICES.firstOrNull { it.id == if(v
     state.managedSession?.let { original ->
         val session = state.sessions.find { it.optString("id") == original.optString("id") } ?: original
         var title by remember(session.optString("id")) { mutableStateOf(session.optString("title")) }
-        var action by remember(session.optString("id")) { mutableStateOf("menu") }
+        var action by remember(session.optString("id"), state.managedSessionAction) { mutableStateOf(state.managedSessionAction) }
         val running = if(session.optString("id") == state.selected) state.busy else session.optString("status").startsWith("running")
         AlertDialog(onDismissRequest = { if(!state.savingSession) state.managedSession = null }, title = { Text(if(action == "rename") "改名" else if(action == "delete") "删除对话？" else "对话") }, text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {

@@ -47,14 +47,32 @@ internal fun subagentStatusLabel(status: String): String = when(status) {
     "running" -> "进行中"; "pending" -> "等待中"; "completed" -> "已完成"; "blocked" -> "受阻"; "error" -> "失败"; "cancelled" -> "已取消"; "interrupted" -> "已中断"; "incomplete" -> "未完成"; else -> "待核查"
 }
 
-internal fun scopedSubagents(items: List<JSONObject>, sessionId: String): List<JSONObject> = items.filter { it.optString("parent_session_id") == sessionId && it.optString("session_id").isNotBlank() }.map {
-    JSONObject().put("session_id", it.optString("session_id")).put("parent_session_id", sessionId).put("subagent", it.optString("subagent", "子代理")).put("status", it.optString("status", "unknown"))
+internal fun scopedSubagents(items: List<JSONObject>, sessionId: String): List<JSONObject> = items.filter { it.optString("parent_session_id") == sessionId && it.optString("session_id").isNotBlank() }.map { item ->
+    JSONObject().put("session_id", item.optString("session_id")).put("parent_session_id", sessionId)
+        .put("subagent", item.optString("subagent", "子代理")).put("status", item.optString("status", "unknown"))
+        .put("revision", item.optLong("revision", 0).coerceAtLeast(0)).apply {
+            listOf("description", "model", "provider").forEach { put(it, item.optString(it).take(160)) }
+            listOf("started_at", "updated_at", "settled_at").forEach { key -> if(item.optLong(key) > 0) put(key, item.optLong(key)) }
+            item.optJSONObject("runtime")?.let { value -> put("runtime", JSONObject().put("thinking", value.optString("thinking").take(160)).put("output_reserved", value.optLong("output_reserved")).put("context_limit", value.optLong("context_limit"))) }
+            item.optJSONObject("activity")?.let { value -> put("activity", JSONObject().put("phase", value.optString("phase").take(40)).put("tool", value.optString("tool").take(80)).put("step", value.optInt("step"))) }
+            item.optJSONObject("context")?.let { value -> put("context", JSONObject().put("tokens", value.optLong("tokens")).put("limit", value.optLong("limit")).put("percent", value.optInt("percent"))) }
+        }
+}
+
+internal fun mergeSubagentSnapshot(items: List<JSONObject>, incoming: List<JSONObject>, sessionId: String): List<JSONObject> {
+    val snapshot = scopedSubagents(incoming, sessionId)
+    return snapshot.map { child -> items.find { it.optString("session_id") == child.optString("session_id") }?.takeIf { it.optLong("revision") > child.optLong("revision") } ?: child } +
+        items.filter { old -> old.optString("parent_session_id") == sessionId && snapshot.none { it.optString("session_id") == old.optString("session_id") } }
 }
 
 internal fun mergeSubagentEvent(items: List<JSONObject>, event: JSONObject, sessionId: String): List<JSONObject> {
     val type = event.optString("type"); val payload = event.optJSONObject("payload") ?: return items
-    if(event.optString("sessionId") != sessionId || type !in listOf("subagent.delegated", "subagent.settled") || payload.optString("subSessionId").isBlank()) return items
-    val child = JSONObject().put("session_id", payload.optString("subSessionId")).put("parent_session_id", sessionId).put("subagent", payload.optString("subagent", "子代理")).put("status", if(type == "subagent.delegated") "running" else payload.optString("status", "unknown"))
+    if(event.optString("sessionId") != sessionId || type !in listOf("subagent.delegated", "subagent.settled", "subagent.progress") || payload.optString("subSessionId").isBlank()) return items
+    val raw = payload.optJSONObject("child") ?: JSONObject().put("session_id", payload.optString("subSessionId")).put("parent_session_id", sessionId).put("subagent", payload.optString("subagent", "子代理")).put("status", if(type == "subagent.delegated") "running" else payload.optString("status", "unknown"))
+    val child = scopedSubagents(listOf(raw), sessionId).firstOrNull() ?: return items
+    if(child.optString("session_id") != payload.optString("subSessionId")) return items
+    val prior = items.find { it.optString("session_id") == child.optString("session_id") }
+    if(prior != null && (prior.optLong("revision") > child.optLong("revision") || child.optLong("revision") > 0 && prior.optLong("revision") == child.optLong("revision"))) return items
     return items.filterNot { it.optString("session_id") == child.optString("session_id") } + child
 }
 
@@ -66,7 +84,7 @@ internal fun subagentProgressSummary(items: List<JSONObject>): String? {
     return "子代理 $completed/${items.size} · 进行中 $active · 需关注 $attention"
 }
 
-@Composable internal fun TodoProgressView(snapshot: JSONObject?, identity: String, subagents: List<JSONObject> = emptyList()) {
+@Composable internal fun TodoProgressView(snapshot: JSONObject?, identity: String, subagents: List<JSONObject> = emptyList(), onSubagents: (() -> Unit)? = null) {
     val summary = listOfNotNull(todoProgressSummary(snapshot), subagentProgressSummary(subagents)).joinToString(" · ").ifBlank { return }
     var expanded by remember(identity) { mutableStateOf(false) }
     val muted = kkcodeColors.activityMuted
@@ -88,10 +106,11 @@ internal fun subagentProgressSummary(items: List<JSONObject>): String? {
                     if(item.optString("reason").isNotBlank()) Text(item.optString("reason"), color = muted, fontSize = 11.sp)
                 }
             } }
+            if(subagents.isNotEmpty() && onSubagents != null) androidx.compose.material3.TextButton(onClick = onSubagents) { Text("查看子代理详情", fontSize = 12.sp) }
             subagents.forEach { item -> key(item.optString("session_id")) {
                 Column(Modifier.padding(top = 7.dp)) {
                     Text("${item.optString("subagent")} · ${subagentStatusLabel(item.optString("status"))}", color = muted, fontSize = 12.sp)
-                    Text(item.optString("session_id"), color = muted, fontSize = 10.sp)
+                    Text(listOf(item.optString("description"), item.optString("model")).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "正在读取任务详情" }, color = muted, fontSize = 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
             } }
         }

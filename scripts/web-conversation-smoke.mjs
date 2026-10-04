@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { createKernel } from '../src/kernel/index.mjs'
-import { appendUserMessage, appendAssistantMessage, updateSession } from '../src/kernel/session/store.mjs'
+import { appendUserMessage, appendAssistantMessage, updateSession, touchSession } from '../src/kernel/session/store.mjs'
 import { DeviceService } from '../src/device/service.mjs'
 import { createDeviceServer } from '../src/device/server.mjs'
 import { awaitAbortable } from '../src/abort.mjs'
@@ -128,10 +128,33 @@ try {
   await page.getByRole('button', {name: /会话体验验收/}).first().click()
   await expect(page.locator('.context-divider').last()).toContainText(/100k →/)
   await expect.poll(bottomDistance).toBeLessThan(5)
+  await page.getByRole('button', {name: '对话设置', exact: true}).click()
+  await expect(page.getByRole('menu', {name: '对话操作'})).toBeVisible()
+  assert.ok((await page.getByRole('menu', {name: '对话操作'}).boundingBox()).height < 420)
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await touchSession({ sessionId: 'web-child', parentSessionId: sessionId, cwd: temporary })
+  await updateSession('web-child', { childContract: { schema: 1, parentSessionId: sessionId, runSpec: { sessionId: 'web-child', parentSessionId: sessionId, role: {name: 'explore'}, model: 'fixture-child', provider: 'openai' } },
+    childStatus: 'running', childRevision: 1, childStartedAt: Date.now(), childDescription: '审查数据流与配置',
+    childRuntime: { model: 'fixture-child', provider: 'openai', thinking: '深思', context_limit: 262144, output_reserved: 65536 }, childProgress: {phase: 'tool', tool: 'read', step: 2} })
+  const children = await service.request({id: 'children-snapshot', method: 'subagents.list', params: {sessionId}})
+  await service.record({type: 'subagent.delegated', sessionId, payload: {subSessionId: 'web-child', child: children.items[0]}})
+  await page.getByRole('button', {name: '打开子代理', exact: true}).click()
+  await expect(page.locator('.subagent-card')).toContainText('审查数据流与配置')
+  await expect(page.locator('.subagent-card')).toContainText('openai / fixture-child')
+  await expect(page.locator('.subagent-card')).toContainText('思考 · 深思')
+  await updateSession('web-child', {childStatus: 'completed', childRevision: 2, childSettledAt: Date.now()})
+  await expect(page.locator('.subagent-card')).toHaveAttribute('data-status', 'completed')
+  await service.record({type: 'subagent.progress', sessionId, payload: {subSessionId: 'web-child', child: children.items[0]}})
+  await expect(page.locator('.subagent-card')).toHaveAttribute('data-status', 'completed')
+  await page.setViewportSize({width: 320, height: 760})
+  assert.ok(await page.getByRole('dialog').evaluate(element => element.scrollWidth <= element.clientWidth + 1))
+  await page.screenshot({path: 'test-results/web-111-subagents.png'})
+  await page.keyboard.press('Escape')
   assert.equal(summaryCalls, 2)
   assert.equal(unexpectedCalls, 0)
   assert.deepEqual(errors, [])
-  console.log('Web conversation: latest entry, free scroll/follow, model auto refresh and five-level thinking persistence, compact cancel/draft/meter/folding/reopen passed.')
+  console.log('Web conversation: scroll, thinking, compact, anchored menu and live subagent models/status/stale-event protection passed.')
 } finally {
   await browser.close(); await server.close(); await service.close(); await new Promise(resolve => catalog.close(resolve))
   if(previous === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = previous

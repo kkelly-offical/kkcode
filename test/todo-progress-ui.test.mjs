@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { acceptTodoSnapshot, todoProgressSummary, scopedSubagents, mergeSubagentEvent, subagentProgressSummary } from '../src/ui/todo-progress.mjs'
+import { acceptTodoSnapshot, todoProgressSummary, scopedSubagents, mergeSubagentEvent, mergeSubagentSnapshot, subagentProgressSummary } from '../src/ui/todo-progress.mjs'
 import { createActivityRenderer, formatTodoProgress } from '../src/ui/activity-renderer.mjs'
 import { createTranscriptModel } from '../src/ui/transcript-model.mjs'
 
@@ -54,4 +54,15 @@ test('child snapshots/events are parent scoped, content free, multi-active, and 
   items = mergeSubagentEvent(items, event('subagent.settled', 'two'), 's')
   assert.equal(subagentProgressSummary(items), '子代理 0/2 · 进行中 0 · 需关注 2')
   assert.equal(mergeSubagentEvent(items, { ...event('subagent.settled', 'one', 'completed'), sessionId: 'foreign' }, 's'), items)
+})
+
+test('child refresh and delayed progress events cannot regress a newer terminal or erase a newly delegated sibling', () => {
+  const child = { session_id: 'one', parent_session_id: 's', revision: 5, status: 'completed', model: 'm', provider: 'p', runtime: { thinking: '深思', api_key: 'private' } }
+  const current = scopedSubagents([child, { ...child, session_id: 'two', revision: 1, status: 'running' }], 's')
+  const refreshed = mergeSubagentSnapshot(current, [{ ...child, revision: 3, status: 'running' }], 's')
+  assert.equal(refreshed.length, 2); assert.equal(refreshed[0].status, 'completed')
+  assert.equal(refreshed[0].runtime.api_key, undefined)
+  const stale = { type: 'subagent.progress', sessionId: 's', payload: { subSessionId: 'one', child: { ...child, revision: 4, status: 'running' } } }
+  assert.equal(mergeSubagentEvent(current, stale, 's'), current)
+  assert.equal(mergeSubagentEvent(current, { ...stale, payload: { ...stale.payload, child: { ...child, session_id: 'foreign', revision: 9 } } }, 's'), current)
 })

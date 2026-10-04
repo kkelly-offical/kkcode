@@ -25,7 +25,7 @@ Create a detailed implementation plan. Do NOT mutate project files or execute co
 - Use bash only when the host classifies the actual command as read-only
 - Read the durable session plan with todo_read and maintain it with todowrite
 - Delegate explicitly read-only analysis through task/task_group; the host enforces a read-only child ceiling
-- Inspect owned work with agent_list/agent_wait or task_list/task_output; cancellation via agent_interrupt is not rollback
+- Inspect owned work with agent_list or task_list/task_output; cancellation via agent_interrupt is not rollback
 - Follow-up work retains immutable child identity and scope and cannot widen the parent's read-only ceiling
 
 ## After creating your plan

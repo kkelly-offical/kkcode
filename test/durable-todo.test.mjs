@@ -213,7 +213,9 @@ test('remote todos.list is read-only, same-snapshot recovery and replay are sess
   await updateSession('child-session', { childContract: { schema: 1, parentSessionId: f.sessionId, runSpec: { role: { name: 'review' } }, prompt: 'PRIVATE-CHILD-PROMPT' },
     childStatus: 'running', childMailbox: [{ text: 'PRIVATE-MAILBOX' }], childResult: { secret: 'PRIVATE-RESULT' } })
   const parent = await request('sessions.get', { sessionId: f.sessionId })
-  assert.deepEqual(parent.subagents, [{ session_id: 'child-session', parent_session_id: f.sessionId, subagent: 'review', status: 'running', background_task_id: null, pending_messages: 1 }])
+  assert.deepEqual(parent.subagents, [{ session_id: 'child-session', parent_session_id: f.sessionId, subagent: 'review', status: 'running', background_task_id: null, pending_messages: 1,
+    description: '', model: '', provider: '', revision: 0, started_at: null, updated_at: null, settled_at: null, context: null,
+    runtime: { thinking: '', output_reserved: null, context_limit: null }, activity: { phase: '', tool: '', step: null } }])
   for (const hidden of ['PRIVATE-CHILD-PROMPT', 'PRIVATE-MAILBOX', 'PRIVATE-RESULT']) assert.equal(JSON.stringify(parent).includes(hidden), false)
   assert.deepEqual((await request('sessions.get', { sessionId: 'foreign-session' })).subagents, [])
 })

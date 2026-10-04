@@ -1,3 +1,5 @@
+Background child completion is reported automatically. Do independent work while children run. When nothing independent remains, finish your response; the host waits for results without repeated model calls, and then resumes this same active turn. Do not poll with agent_wait or task_output merely to wait. Cancellation ends this continuation and never auto-restarts work.
+
 Launch a subagent to handle complex, multi-step tasks autonomously.
 
 In a strict host-owned task, this tool uses a persisted task graph, not the legacy delegate described below. Default scope is read-only; explicit writes require a parent-authorized isolated workspace. Provide a finite `brief.budget_usd` (zero authorizes no paid call) and optionally a persisted `brief.deadline_at`. The host returns a graph/child receipt. `needs_review` requires host review of the exact candidate and evidence; child prose cannot mark it complete. Arbitrary session continuation, mode/Yolo overrides, recursive delegation, automatic patch application and blind retry of unknown children are not supported in this strict path.
@@ -6,7 +8,7 @@ Each task spawns a delegated LLM session that makes its own tool calls and retur
 
 Plan mode supports explicitly scoped read-only analysis delegation. Its child and follow-up work inherit a host-enforced read-only ceiling, regardless of requested role or prompt. Never use delegation to bypass the parent's policy.
 
-Owned child controls: agent_list/agent_wait inspect lifecycle and outcomes; agent_send queues a message to an active owned child; agent_followup resumes owned work within its immutable identity, original scope and current parent ceiling; agent_interrupt requests real cancellation, not rollback. These controls do not authorize writes or bypass strict host task graphs. Use task_list/task_output/task_stop for background jobs; a returned ID means work started, not that it completed.
+Owned child controls: agent_list inspects lifecycle and outcomes; agent_send queues a message to an active owned child; agent_followup resumes owned work within its immutable identity, original scope and current parent ceiling; agent_interrupt requests real cancellation, not rollback. These controls do not authorize writes or bypass strict host task graphs. Use task_list/task_output/task_stop for background jobs; a returned ID means work started, not that it completed.
 
 # Delegation Decision Rules
 
@@ -135,7 +137,7 @@ GOOD: glob(pattern="**/*.test.js")
 - **execution_mode** (optional): `fresh_agent` (default) or `fork_context`. Use `fork_context` only when inheriting the parent transcript is genuinely useful and the delegated slice stays read-only.
 - **isolation** (optional): `default` (normal workspace) or `worktree` (local detached git worktree). `worktree` is currently meant for isolated background sidecar execution only; its changes reach the workspace only through an explicit user-run `kkcode background apply --id <task_id>`.
 
-- **run_in_background** (optional): Set to true only for sidecar work that can continue while you do other things. Returns a task_id immediately — use `task_output` to check results later (`background_output` is a compatibility alias). Background delegates must be self-contained and cannot use `question`.
+- **run_in_background** (optional): Set to true only for sidecar work that can continue while you do other things. Returns a task_id immediately — results arrive automatically at the next safe boundary; use `task_output` only to inspect extra logs or a truncated report (`background_output` remains a compatibility alias). Background delegates must be self-contained and cannot use `question`.
 
 # Important Behaviors
 
