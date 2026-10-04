@@ -80,3 +80,9 @@
 - 接口元数据优先；缺失时使用已有规格或窗口1/5估算，保留“估算”来源，不写入配置。旧`thinking.type: enabled`保留开启意图，额度按本次输出有效范围换算。连接、凭据、每模型档位和权限设置保留；SDK显式限制与既有冻结宿主预算仍受约束。
 - 78项配置／真实适配器fixture请求检查通过，覆盖旧字段、实时目录刷新、不同配置层、设置保存、密钥保留和权限错误拒绝；Web真实设备服务模型选择与思考保存检查通过，Android文案修改编译通过。无真实模型推理。其余完整检查与本机部署结果收录于`/tmp/kkcode-auto-limits-fix-nhOhshiF/`。
 - 此补丁不覆盖已发布1.0.10的npm包、tag或Android10017。既有安卓版本从remote读取标签及额度，后端更新后即可使用通用标签与自动数值。
+
+- 本地最终完整检查4271项：4115通过、0失败、156条件跳过。首轮两项失败分别是旧保存断言及严格宿主借配置文件传额度；前者按新产品要求更新，后者将批准的profile额度直接注入内存并保留原校验，原监听器／预算拒绝断言不变。49项相关预算检查及10项最终宿主／渠道检查通过。
+- 本机已在空闲并完整备份后应用源码`b7e5dbc15bf28005fa5c6690f9febb53d0b4c83c`，包SHA-256为`8534123fd1e74c2f75e9318ad07663805210f1deac09fbfc26e156c3b92b3db9`，801个安装文件与包一致。私密备份入口`automatic-limits-backup-path`、启动脚本`launch-automatic-limits.py`均在`/root/.local/state/kkcode-coding/`。只删除kimi-code的context_limit／max_tokens和aliyun的max_tokens，其他配置语义、设备身份、企业网关与根目录范围保持；未自动恢复任何任务。
+- 正在运行的remote实际目录RPC确认：k3窗口1048576来自接口，输出未声明，预留209715且来源estimated；选项为自动、直答、略思、深思、穷理，直答说明为“关闭思考”。仅读取目录，不以此宣称真实推理效果。
+- 修复入口：[PR#49](https://github.com/kkelly-offical/kkcode/pull/49)。代码检查与部署基于`b7e5dbc`，后续提交只更新文档和本机部署记录，不重打包已安装补丁。
+- 运行时代码CI：[verify 37200182262](https://github.com/kkelly-offical/kkcode/actions/runs/37200182262)的Linux Node22/24、macOS、Windows及Web全部通过；[CodeQL 37200182252](https://github.com/kkelly-offical/kkcode/actions/runs/37200182252)通过。最终文档更新另有7项文档一致性检查通过，不将文档提交尚未完成的CI描述为通过。
