@@ -1853,5 +1853,5 @@ async function processTurnLoopInRuntime({
       toolEvents,
       verification
     }
-  } finally { childInbox.close(); stopChildProgress() }
+  } finally { await childInbox.close(); stopChildProgress() }
 }

@@ -100,6 +100,18 @@ export function createChildController({ parentSessionId, delegateTask, config = 
       return Promise.all(sessions.map(async session => summary(await inspect(session.id))))
     },
     async get(sessionId) { return summary(await inspect(sessionId)) },
+    async startPending({ since, canStart }) {
+      if (signal?.aborted || !canStart()) return
+      const sessions = await parentChildren(parentSessionId)
+      const tasks = new Map(sessions.filter(session => session.childStartedAt >= since && (session.childOperationId || session.childSettledOperationId) && session.childBackgroundTaskId)
+        .map(session => [session.childBackgroundTaskId, session.childOperationId || session.childSettledOperationId]))
+      // A heartbeat may wake the queue observer. Avoid a global queue scan
+      // unless this turn still owns an actual pending checkpoint.
+      const checkpoints = await Promise.all([...tasks.keys()].map(id => BackgroundManager.get(id)))
+      if (checkpoints.some(task => task?.status === 'pending' && !task.cancelled && tasks.get(task.id) === task.payload?.childOperationId && task.payload?.parentSessionId === parentSessionId)) {
+        await BackgroundManager.tick(config, { tasks, parentSessionId, canStart, signal })
+      }
+    },
     async wait(sessionId, { timeoutMs = 30000 } = {}) {
       const timeout = Math.min(60000, Math.max(0, Number(timeoutMs) || 0))
       const deadline = Date.now() + timeout

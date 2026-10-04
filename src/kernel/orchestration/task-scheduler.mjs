@@ -390,6 +390,7 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
       signal?.throwIfAborted()
       const task = await BackgroundManager.launchDelegateTask({
         description: String(args.description || `background task (${subagent.name})`),
+        signal,
         payload: {
           parentSessionId,
           subSessionId,

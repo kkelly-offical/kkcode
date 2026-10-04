@@ -1,5 +1,8 @@
 import { EVENT_TYPES } from '../core/constants.mjs'
 import { EventBus } from '../core/events.mjs'
+import { watch } from 'node:fs'
+import { currentRuntime, runWithRuntime } from '../core/runtime-context.mjs'
+import { backgroundTaskRuntimeDir } from '../../storage/paths.mjs'
 import { appendMessage, getSession } from '../session/store.mjs'
 
 const active = child => ['running', 'pending'].includes(child.status)
@@ -8,13 +11,42 @@ const key = child => `${child.session_id}:${child.operation_id}`
 /** Scoped, durable report delivery at model boundaries. Waiting belongs to the
  * host, not repeated inference/tool calls. Closing never starts another turn. */
 export function createChildInbox({ controller, sessionId, turnId, startedAt, signal, hasPendingInput, deadlineAt = null }) {
+  const ownerRuntime = currentRuntime(), taskDirectory = backgroundTaskRuntimeDir()
   const initial = new Set(), delivered = new Set()
   let revision = 0, wake = null, closed = false
+  let pump = null, requested = false, pumpError = null
+  let watcher = null
+  const canStart = () => !closed && !signal?.aborted && (!deadlineAt || Date.now() < deadlineAt)
+  const failPump = error => { if (canStart()) { pumpError = error; revision++; wake?.() } }
+  const observeCapacity = () => {
+    if (watcher || !canStart()) return
+    try {
+      // Checkpoints are atomic files. Other processes do not share our bus;
+      // their writes can release capacity but cannot authorize any new work.
+      watcher = watch(taskDirectory, { persistent: false }, (_event, file) => {
+        if (!file || String(file).endsWith('.json')) schedule()
+      })
+      watcher.on('error', failPump)
+    } catch (error) { if (error.code !== 'ENOENT') failPump(error) }
+  }
+  const schedule = () => {
+    if (!controller.startPending || !canStart()) return
+    observeCapacity()
+    requested = true
+    if (pump) return
+    pump = Promise.resolve().then(() => runWithRuntime(ownerRuntime, async () => {
+      while (requested && canStart()) { requested = false; await controller.startPending({ since: startedAt, canStart }) }
+    })).catch(failPump).finally(() => { pump = null; if (requested && canStart()) schedule() })
+  }
   const unsubscribe = EventBus.subscribe(event => {
+    // A foreign worker may release a shared slot; only this turn's owned,
+    // already-authorized queue is advanced. No foreign result is delivered.
+    if (event.type === 'task.settled' || event.sessionId === sessionId && event.type === 'subagent.delegated') schedule()
     if (event.sessionId !== sessionId || !['task.settled', 'subagent.settled', 'turn.steering.queued'].includes(event.type)) return
     revision++; wake?.()
   })
   const pending = async () => {
+    if (pumpError) throw pumpError
     const children = (await controller.list()).filter(child => child.background && child.operation_id
       && (initial.has(key(child)) || child.started_at >= startedAt))
     return { active: children.filter(active), reports: children.filter(child => !active(child) && child.result && !delivered.has(key(child))) }
@@ -73,6 +105,6 @@ export function createChildInbox({ controller, sessionId, turnId, startedAt, sig
       }
       return 'closed'
     },
-    close() { closed = true; unsubscribe(); wake?.() }
+    async close() { closed = true; unsubscribe(); watcher?.close(); wake?.(); await pump }
   }
 }
