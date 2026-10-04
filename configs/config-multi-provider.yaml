@@ -29,7 +29,6 @@ provider:
       - qwen-plus-latest
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
-    max_tokens: 32768
     retry_attempts: 5
     retry_base_delay_ms: 800
     stream: true
@@ -47,7 +46,6 @@ provider:
       - deepseek-reasoner
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
-    max_tokens: 32768
     retry_attempts: 5
     retry_base_delay_ms: 800
     stream: true
@@ -63,7 +61,6 @@ provider:
       - glm-4.5
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
-    max_tokens: 32768
     retry_attempts: 5
     retry_base_delay_ms: 800
     stream: true
@@ -78,7 +75,6 @@ provider:
       - claude-haiku-4-5
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
-    max_tokens: 32768
     retry_attempts: 5
     retry_base_delay_ms: 800
     stream: true
@@ -98,7 +94,6 @@ provider:
       - gpt-5.3-codex
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
-    max_tokens: 32768
     retry_attempts: 5
     retry_base_delay_ms: 800
     stream: true
@@ -115,7 +110,6 @@ provider:
       - gemini-3.1-flash-lite
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
-    max_tokens: 32768
     retry_attempts: 5
     retry_base_delay_ms: 800
     stream: true
@@ -131,7 +125,6 @@ provider:
       - kimi-k2.6
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
-    max_tokens: 32768
     retry_attempts: 5
     retry_base_delay_ms: 800
     stream: true
@@ -146,7 +139,6 @@ provider:
       - grok-4.3
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
-    max_tokens: 32768
     retry_attempts: 5
     retry_base_delay_ms: 800
     stream: true

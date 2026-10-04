@@ -10,7 +10,7 @@ import { withRequestBudget } from '../../src/usage/request-budget.mjs'
 import { prepareBudgetProfile } from '../../src/usage/budget-profiles.mjs'
 import { createLocalFreeInferenceAuthorization, localFreePolicy, validateLocalFreeBudget } from '../../src/usage/local-free.mjs'
 import { flushNow } from '../../src/kernel/session/store.mjs'
-import { loadConfig } from '../../src/config/load-config.mjs'
+import { loadEvaluationConfig } from './config-state.mjs'
 import { sha256 } from './manifest.mjs'
 import { evaluationTurnDiagnostics } from './diagnostics.mjs'
 import { createCounterExecutionObserver } from '../v4/counter-evidence.mjs'
@@ -99,7 +99,7 @@ export async function createRecoveryRuntime({ task, cwd, privateRoot, profile, i
   await mkdir(home, { recursive: true, mode: 0o700 })
   const prices = path.join(home, 'prices.json'), configFile = path.join(home, 'config.json')
   const config = { provider: { default: 'evaluation', evaluation: { type: profile.providerType === 'responses' ? 'openai-responses' : profile.providerType,
-    base_url: profile.baseUrl, api_key: '', api_key_env: profile.apiKeyEnv || '', default_model: profile.model, context_limit: profile.contextLimit, max_tokens: profile.maxTokens, stream: false } },
+    base_url: profile.baseUrl, api_key: '', api_key_env: profile.apiKeyEnv || '', default_model: profile.model, stream: false } },
     permission: { level: 'accept-edits', rules: [] }, agent: { default_mode: 'agent', max_steps: profile.maxSteps || 40 }, session: { title_generation: false, recovery: false },
     tool: { output_budget_ratio: 0.005, sources: { builtin: true, local: false, plugin: false, mcp: false } }, usage: { pricing_file: prices },
     skills: { enabled: false, auto_seed: false }, plugins: { enabled: false }, mcp: { servers: {} } }
@@ -108,7 +108,7 @@ export async function createRecoveryRuntime({ task, cwd, privateRoot, profile, i
   for (const [file, content] of [[prices, { currency: 'USD', per_tokens: 1000000, models: { [profile.model]: profile.pricing } }], [configFile, config]]) {
     try { await writeFile(file, JSON.stringify(content), { flag: 'wx', mode: 0o600 }) } catch (error) { if (error.code !== 'EEXIST') throw error }
   }
-  const state = await loadConfig(cwd)
+  const state = await loadEvaluationConfig(cwd, profile)
   if (state.errors?.length || state.config.provider.default !== 'evaluation' || state.config.provider.evaluation.api_key) throw new Error('Recovery fixture configuration failed validation or explicit route isolation')
   const store = await openRunStore({ directory: path.join(privateRoot, 'runs') }), artifacts = createArtifactStore({ root: path.join(privateRoot, 'artifacts') })
   let localFreeAuthorization = providedAuthorization

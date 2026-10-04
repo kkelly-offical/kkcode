@@ -83,7 +83,7 @@ describe("provider switch", () => {
     assert.equal(saved.provider["kimi-code"].api_key, "sk-kimi-secret")
     assert.equal(saved.provider["kimi-code"].timeout_ms, 180000)
     assert.equal(saved.provider.aliyun.api_key, "sk-aliyun-secret")
-    assert.deepEqual(saved.provider.model_context, { k3: 1048576 }, "元字段原样保留")
+    assert.equal(saved.provider.model_context, undefined, "旧上下文数字不再写回配置")
   })
 
   it("未知名称报错并列出可用项，退出码置位", async () => {

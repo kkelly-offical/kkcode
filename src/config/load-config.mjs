@@ -3,6 +3,7 @@ import { access, readFile, realpath, stat } from "node:fs/promises"
 import YAML from "yaml"
 import { DEFAULT_CONFIG } from "./defaults.mjs"
 import { validateConfig } from "./schema.mjs"
+import { withoutModelTokenLimits } from './model-token-limits.mjs'
 import { projectConfigCandidates, userConfigCandidates, envFileCandidates, userRootDir } from "../storage/paths.mjs"
 import { noteDeprecation } from "../kernel/core/deprecations.mjs"
 import { FORBIDDEN_MERGE_KEYS, mergeConfigObject } from "./merge.mjs"
@@ -282,6 +283,7 @@ function normalizeUltraAliasOverlay(raw) {
 }
 
 function validateLayer(rawConfig, baseConfig, label) {
+  rawConfig = withoutModelTokenLimits(rawConfig)
   let policy, policyError
   try { policy = normalizeDataPolicy(rawConfig?.data_policy) }
   catch {

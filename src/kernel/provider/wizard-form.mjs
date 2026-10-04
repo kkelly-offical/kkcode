@@ -41,6 +41,7 @@ import { inferCapabilitiesFromName, normalizeCapabilities } from "./model-capabi
 import { askQuestionInteractive } from "../tool/question-prompt.mjs"
 import { QUESTION_SKIPPED } from "../core/constants.mjs"
 import { PROVIDER_META_KEYS } from "../../config/schema.mjs"
+import { withoutModelTokenLimits } from '../../config/model-token-limits.mjs'
 import { trimTrailingSlashes } from "./url-path.mjs"
 
 /** 表单答案 → 干净字符串。跳过哨兵与 undefined 一律折成空串。 */
@@ -283,8 +284,7 @@ function buildEntry({ type, baseUrl, apiKey, model, models = [] }) {
  * 确认页文本：所见即所写。密钥只给末四位。
  *
  * `models` 逐行列出并跟上上下文（`gpt-4o (128k)` / `o3-mini (—)`）：`—` 表示
- * 这个模型的上下文没发现到、`provider.model_context` 里也就不会有它 ——
- * 用户在按下保存之前就该看见这个区别，而不是事后翻 YAML 才发现少了一半。
+ * 这个模型的上下文尚未发现。能力数字仅用于预览，不写入配置。
  */
 export function previewEntry(name, entry, { setDefault = true, modelContext = {}, modelThinking = {}, modelCapabilities = {} } = {}) {
   const lines = [`provider.${name}:`]
@@ -297,7 +297,7 @@ export function previewEntry(name, entry, { setDefault = true, modelContext = {}
   }
   const contextEntries = Object.entries(modelContext)
   if (contextEntries.length) {
-    lines.push("provider.model_context:")
+    lines.push("模型上下文（接口信息，不写入配置）:")
     for (const [id, tokens] of contextEntries) lines.push(`  ${id}: ${tokens}`)
   }
   const thinkingEntries = Object.entries(modelThinking)
@@ -463,7 +463,7 @@ export async function runProviderEditForm({
     return { saved: false, reason: "not_found" }
   }
 
-  const EDITABLE = ["type", "protocol", "base_url", "api_key_env", "default_model", "max_tokens", "context_limit"]
+  const EDITABLE = ["type", "protocol", "base_url", "api_key_env", "default_model"]
   const questions = /** @type {Array<Record<string, any>>} */ (EDITABLE
     .filter((key) => existing[key] !== undefined)
     .map((key) => ({
@@ -487,16 +487,14 @@ export async function runProviderEditForm({
     if (existing[key] === undefined) continue
     const value = clean(answers[key])
     if (!value || value === String(existing[key])) continue
-    const numeric = ["max_tokens", "context_limit"].includes(key)
-    patch[key] = numeric ? Number.parseInt(value, 10) : value
-    if (numeric && !Number.isFinite(patch[key])) delete patch[key]
+    patch[key] = value
   }
   const newKey = clean(answers.api_key)
   if (newKey) patch.api_key = newKey
 
   if (!Object.keys(patch).length) return { saved: false, reason: "unchanged" }
 
-  const configPatch = { provider: { [name]: { ...existing, ...patch } } }
+  const configPatch = withoutModelTokenLimits({ provider: { [name]: { ...existing, ...patch } } })
   await saveProviderConfig(configPatch, false)
   return { saved: true, name, configPatch, changed: Object.keys(patch) }
 }

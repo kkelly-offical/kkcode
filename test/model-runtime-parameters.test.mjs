@@ -152,7 +152,8 @@ test('Kimi Code specification fills missing controls only on its official routes
   assert.equal(control.source,'specification')
   assert.deepEqual(control.options.map(x=>x.value),['auto','off','low','high','max'])
   assert.equal(control.defaultLevel,'high')
-  assert.match(control.options.find(x=>x.value==='off').description,/K2\.8 Preview/)
+  assert.equal(control.options.find(x=>x.value==='off').label,'直答')
+  assert.equal(control.options.find(x=>x.value==='off').description,'关闭思考')
   for (const [saved,selected] of [['medium','high'],['xhigh','max'],['light','low']]) {
     const alias=thinkingControl({...input,settings:{model_options:{k3:{thinking_effort:saved}}}})
     assert.equal(alias.selected,selected)

@@ -4,6 +4,7 @@ import { Command } from "commander"
 import YAML from "yaml"
 import { importConfig } from "../config/import-config.mjs"
 import { validateConfig } from "../config/schema.mjs"
+import { withoutModelTokenLimits, isModelTokenLimitPath } from '../config/model-token-limits.mjs'
 import { loadConfig } from "../config/load-config.mjs"
 import { DEFAULT_CONFIG } from "../config/defaults.mjs"
 import { projectConfigCandidates } from "../storage/paths.mjs"
@@ -15,6 +16,7 @@ function parseInput(file, raw) {
 }
 
 function stringifyOutput(file, data) {
+  data = withoutModelTokenLimits(data)
   if (file.endsWith(".json")) return JSON.stringify(data, null, 2) + "\n"
   return YAML.stringify(data)
 }
@@ -151,6 +153,11 @@ export function createConfigCommand() {
     .command("set <key> <value>")
     .description("set a config value in project config (e.g. provider.default anthropic)")
     .action(async (key, rawValue) => {
+      if (isModelTokenLimitPath(key)) {
+        console.error('模型上下文、输出与思考额度由接口及客户端自动计算，不再保存手动上限。')
+        process.exitCode = 1
+        return
+      }
       const cwd = process.cwd()
       const candidates = projectConfigCandidates(cwd)
       let configPath = null
@@ -174,6 +181,7 @@ export function createConfigCommand() {
 
       const value = coerceValue(rawValue)
       setByPath(existing, key, value)
+      existing = withoutModelTokenLimits(existing)
 
       const check = validateConfig(existing)
       if (!check.valid) {

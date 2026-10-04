@@ -2,7 +2,7 @@ import path from 'node:path'
 import { mkdir, writeFile, realpath, lstat } from 'node:fs/promises'
 import { createRunCoordinator, createDelegatedKernel, createDockerExecutionBackend, openRunStore, createArtifactStore } from '../../src/sdk/runs.mjs'
 import { createOfficeService } from '../../src/sdk/office.mjs'
-import { loadConfig } from '../../src/config/load-config.mjs'
+import { loadEvaluationConfig } from './config-state.mjs'
 import { prepareBudgetProfile } from '../../src/usage/budget-profiles.mjs'
 import { sha256 } from './manifest.mjs'
 import { runRecoveryScenario, supportedRecovery } from './recovery-drivers.mjs'
@@ -54,7 +54,7 @@ export async function runLiveTask({ task, cwd, privateRoot, profile, image, offi
   await writeFile(pricingFile, JSON.stringify({ currency: 'USD', per_tokens: 1000000, models: { [profile.model]: profile.pricing } }), { flag: 'wx', mode: 0o600 })
   const config = {
     provider: { default: 'evaluation', evaluation: { type: profile.providerType === 'responses' ? 'openai-responses' : profile.providerType, base_url: profile.baseUrl, api_key: '', api_key_env: profile.apiKeyEnv || '',
-      default_model: profile.model, context_limit: profile.contextLimit, max_tokens: profile.maxTokens, stream: true } },
+      default_model: profile.model, stream: true } },
     agent: { default_mode: 'agent', max_steps: profile.maxSteps || 40 },
     session: { title_generation: false, recovery: false },
     usage: { pricing_file: pricingFile },
@@ -63,7 +63,7 @@ export async function runLiveTask({ task, cwd, privateRoot, profile, image, offi
     skills: { enabled: false, auto_seed: false }, plugins: { enabled: false }, mcp: { servers: {} }
   }
   await writeFile(path.join(process.env.KKCODE_HOME, 'config.json'), JSON.stringify(config), { flag: 'wx', mode: 0o600 })
-    const state = await loadConfig(cwd)
+    const state = await loadEvaluationConfig(cwd, profile)
     if (state.errors?.length) throw Object.assign(new Error('Evaluation host configuration failed schema validation'), { details: state.errors })
     if (state.config.provider.default !== 'evaluation' || state.config.provider.evaluation.api_key) throw new Error('Ambient configuration altered the explicitly selected provider')
     const effective = structuredClone(state.config)

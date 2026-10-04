@@ -2,7 +2,7 @@ import path from 'node:path'
 import { mkdir, writeFile, lstat, open } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { loadConfig } from '../../src/config/load-config.mjs'
+import { loadEvaluationConfig } from './config-state.mjs'
 import { prepareBudgetProfile } from '../../src/usage/budget-profiles.mjs'
 import { createLocalFreeInferenceAuthorization } from '../../src/usage/local-free.mjs'
 import { allocateLocalFreeLimits, assertLocalFreeProfile } from './local-free.mjs'
@@ -59,9 +59,9 @@ export async function prepareEvaluationLocalFreeAuthorization({ profile, limits,
     await writeFile(prices, JSON.stringify({ currency: 'USD', per_tokens: 1000000, models: { [profile.model]: profile.pricing } }), { flag: 'wx', mode: 0o600 })
     await writeFile(path.join(home, 'config.json'), JSON.stringify({ provider: { default: 'evaluation', evaluation: {
       type: profile.providerType === 'responses' ? 'openai-responses' : profile.providerType, base_url: profile.baseUrl,
-      api_key: '', api_key_env: profile.apiKeyEnv || '', default_model: profile.model, context_limit: profile.contextLimit, max_tokens: profile.maxTokens
+      api_key: '', api_key_env: profile.apiKeyEnv || '', default_model: profile.model
     } }, usage: { pricing_file: prices }, mcp: { servers: {} }, plugins: { enabled: false }, skills: { enabled: false, auto_seed: false } }), { flag: 'wx', mode: 0o600 })
-    const state = await loadConfig(privateRoot)
+    const state = await loadEvaluationConfig(privateRoot, profile)
     if (state.errors?.length || state.config.provider.default !== 'evaluation' || state.config.provider.evaluation.api_key) throw new Error('Suite authorization configuration failed validation')
     return await createLocalFreeInferenceAuthorization({ profile: await prepareBudgetProfile(state, { providerType: 'evaluation', model: profile.model }),
       baseUrl: profile.baseUrl, apiKeyEnv: profile.apiKeyEnv || '', maxRequests: allocation.requestLimit, maxTokens: allocation.tokenLimit,
