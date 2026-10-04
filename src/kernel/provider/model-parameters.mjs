@@ -9,9 +9,11 @@ export const EFFORT_ORDER = ['none', 'off', 'minimal', 'low', 'medium', 'high', 
 
 export function parseModelParameters(item = {}) {
   const old = item.modelParameters || {}
+  const advertisedContext = positive(old.limits?.context, item.context_length, item.contextLength, item.context_window, item.contextWindow, item.max_context_window_tokens, item.max_context_length, item.top_provider?.context_length)
+  const deployedContext = positive(item.max_model_len)
   const limits = {
     inputOnly: old.limits?.inputOnly === true || item.inputTokenLimit != null || item.context_includes_output === false,
-    context: positive(old.limits?.context, item.context_length, item.contextLength, item.context_window, item.contextWindow, item.max_context_window_tokens, item.max_context_length),
+    context: advertisedContext && deployedContext ? Math.min(advertisedContext,deployedContext) : deployedContext || advertisedContext,
     input: positive(old.limits?.input, item.max_input_tokens, item.input_token_limit, item.inputTokenLimit),
     output: positive(old.limits?.output, item.max_output_tokens, item.maxOutputTokens, item.max_completion_tokens, item.output_token_limit, item.outputTokenLimit, item.top_provider?.max_completion_tokens,
       // Anthropic's Models API uses max_tokens for the output ceiling.

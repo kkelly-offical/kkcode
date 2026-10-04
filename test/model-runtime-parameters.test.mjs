@@ -17,7 +17,8 @@ test('catalog → complete budget → actual request, with refreshed models and 
   const requests = []
   let models = [{ id:'large', context_length:1048576, max_output_tokens:131072, reasoning_effort_levels:['max','xhigh','high','medium','low'], supported_parameters:['tools','reasoning_effort','max_completion_tokens'] },
     { id:'small', context_length:32768, max_output_tokens:8192, reasoning_effort_levels:['low','medium','high'] },
-    { id:'independent', inputTokenLimit:1048576, outputTokenLimit:65536 }]
+    { id:'independent', inputTokenLimit:1048576, outputTokenLimit:65536 },
+    { id:'local-deployment', context_length:262144, max_model_len:65536 }]
   const cfg = { config:{provider:{default:'p',p:{type:'openai-compatible',base_url:'https://models.example.test/v1',api_key_env:'', default_model:'large', model_options:{large:{thinking_effort:'xhigh'}}}}} }
   global.fetch = async (url, options) => {
     if (String(url).endsWith('/models')) return new Response(JSON.stringify({ data:models }))
@@ -36,6 +37,7 @@ test('catalog → complete budget → actual request, with refreshed models and 
     assert.equal(independent.outputReserved,65536)
     assert.equal(independent.requiredTokens,1000000)
     assert.equal(independent.windowKind,'input')
+    assert.equal(requestContextBudget({model:'local-deployment',configState:cfg}).limit,65536, 'vLLM deployment limit takes precedence over a larger advertised model window')
     await requestProvider({configState:cfg,providerType:'p',model:'large',system:'',messages:[{role:'user',content:'fixture'}],tools:[]})
     assert.equal(requests.at(-1).max_completion_tokens,131072)
     assert.equal(requests.at(-1).reasoning_effort,'xhigh')
