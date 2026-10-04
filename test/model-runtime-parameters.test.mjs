@@ -94,6 +94,16 @@ test('a declared boolean control exposes a switch, while unknown support offers 
   assert.deepEqual(control.options.map(x=>x.value),['auto','off','on'])
   assert.deepEqual(mapThinkingRequest({control,protocol:'openai',maxTokens:8000}),{thinkingSwitch:{parameter:'chat_template_kwargs.enable_thinking',enabled:false}})
   assert.deepEqual(thinkingControl({model:'unknown'}).options.map(x=>x.value),['auto'])
+  const mixed=parseModelParameters({reasoning_effort_levels:['low','high'],parameters:{enable_thinking:{type:'boolean'}}})
+  const mixedControl=thinkingControl({metadata:mixed,protocol:'openai',maxTokens:8000,settings:{thinking_effort:'high'}})
+  assert.deepEqual(mapThinkingRequest({control:mixedControl,protocol:'openai',maxTokens:8000}),{reasoningEffort:'high',thinkingSwitch:{parameter:'enable_thinking',enabled:true}})
+  assert.equal(thinkingControl({metadata,protocol:'responses',maxTokens:8000}).options.some(x=>x.value==='off'),false, 'unsupported wire controls must not be advertised')
+})
+
+test('insufficient thinking budgets and incompatible adapters fail before pretending a setting was applied', () => {
+  const control=thinkingControl({model:'claude-sonnet-4',protocol:'anthropic',maxTokens:512,settings:{thinking_effort:'high'}})
+  assert.throws(()=>mapThinkingRequest({control,protocol:'anthropic',maxTokens:512}),/不足/)
+  assert.throws(()=>mapThinkingRequest({control:thinkingControl({protocol:'ollama',settings:{thinking_effort:'high'}}),protocol:'ollama',maxTokens:512}),/适配器/)
 })
 
 test('native enum spelling survives cache normalization and an explicit off is sent as declared', () => {
