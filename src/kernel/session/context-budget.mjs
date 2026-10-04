@@ -1,5 +1,6 @@
-import { estimateStringTokens, estimateTokenCount, modelContextLimit } from './compaction.mjs'
+import { estimateStringTokens, estimateTokenCount } from './compaction.mjs'
 import { contextInputMessages } from './context-input.mjs'
+import { resolveModelLimits } from '../provider/model-limits.mjs'
 
 const count = value => Number.isFinite(Number(value)) && Number(value) >= 0 ? Math.ceil(Number(value)) : 0
 
@@ -16,15 +17,13 @@ export function requestContextBudget({ system = '', messages = [], tools = [], m
   const estimated = Object.values(components).reduce((sum, value) => sum + value, 0)
   const measured = measuredTokens !== null && Number.isFinite(Number(measuredTokens)) && Number(measuredTokens) >= 0
   const tokens = measured ? count(measuredTokens) : estimated
-  const limit = modelContextLimit(model, configState, providerType)
+  const limits = resolveModelLimits({ model, configState, providerType, baseUrl, apiKeyEnv })
+  const { limit, outputReserved, inputBudget, windowKind, contextSource, outputSource } = limits
   const provider = configState?.config?.provider
-  const settings = provider?.[providerType || provider?.default] || {}
-  const requestedOutput = count(settings.max_tokens) || Math.min(16384, Math.max(1, Math.floor(limit / 4)))
-  const outputCap = count(settings.max_output_tokens) || requestedOutput
-  const outputReserved = Math.min(requestedOutput, outputCap, Math.max(0, limit - 1))
   return {
-    tokens, limit, outputReserved, inputBudget: Math.max(1, limit - outputReserved),
-    requiredTokens: tokens + outputReserved,
+    tokens, limit, outputReserved, inputBudget, windowKind, contextSource, outputSource,
+    ...(limits.routeScope ? {routeScope:limits.routeScope} : {}),
+    requiredTokens: tokens + (windowKind === 'input' ? 0 : outputReserved),
     ratio: limit > 0 ? Math.min(1, tokens / limit) : 0,
     percent: limit > 0 ? Math.min(100, Math.round(tokens * 100 / limit)) : 0,
     source: measured ? source : 'estimated', estimated: !measured || source === 'estimated' || source === 'strict-upper-bound',

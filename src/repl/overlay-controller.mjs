@@ -24,16 +24,15 @@ import { createPickerFilterState, resolvePickerChoice } from "../ui/overlay-sele
 import { createModePickerState, resolveModeId, MODE_PICKER_CHOICES } from "./mode-flow.mjs"
 import { createPolicyPickerState, POLICY_CHOICES, applyPolicyChoice } from "./permission-flow.mjs"
 import { stripAnsi } from "../util/frame-primitives.mjs"
-import { THINKING_TIERS, normalizeThinkingTier, saveProviderConfig } from "../kernel/index.mjs"
+import { saveProviderConfig } from "../kernel/index.mjs"
 import { modelThinkingSupport } from "./provider-catalog.mjs"
+import { modelRuntimeProfile, resolveProviderRouteSettings } from '../kernel/index.mjs'
+
 
 /** 思考档位的展示行。desc 说的是**语义**（预算比例），不是各家参数名。 */
 export const THINKING_TIER_CHOICES = Object.freeze({
-  off: "关闭扩展思考",
-  low: "浅想 · 约 15% 输出预算",
-  medium: "适中 · 约 35% 输出预算",
-  high: "深想 · 约 60% 输出预算（缺省）",
-  max: "全力 · 约 85% 输出预算"
+  auto: '自动 · 使用服务端默认', off: '直答 · 关闭思考', low: '略思 · 较轻思考',
+  medium: '审思 · 仔细推敲', high: '深思 · 深入推演', xhigh: '精思 · 更缜密推演', max: '穷理 · 更充分推究'
 })
 
 export function createOverlayController({
@@ -151,8 +150,7 @@ export function createOverlayController({
         ? chosen.thinking
         : modelThinkingSupport({ config: ctx.configState.config, model: chosen.model })
       if (thinking !== false) {
-        openThinkingPicker({ provider: chosen.provider, model: chosen.model })
-        return
+        if (openThinkingPicker({ provider: chosen.provider, model: chosen.model })) return
       }
     }
     requestRender({ force: true })
@@ -164,14 +162,11 @@ export function createOverlayController({
    * reasoning_effort（OpenAI 系）或 budget_tokens（Anthropic）。
    */
   function openThinkingPicker({ provider, model }) {
-    const providerCfg = ctx.configState.config.provider?.[provider] || {}
-    const current = normalizeThinkingTier(providerCfg.thinking_effort || providerCfg.reasoning_effort, "high")
-    const items = THINKING_TIERS.map((tier) => ({
-      id: tier,
-      label: tier,
-      desc: THINKING_TIER_CHOICES[tier],
-      current: tier === current
-    }))
+    const route = resolveProviderRouteSettings(ctx.configState, provider, { model })
+    const control = modelRuntimeProfile(ctx.configState, route).thinking
+    const items = control.options.map(option => ({ id: option.value, label: option.label,
+      desc: option.description, disabled: !option.available, current: option.value === control.selected }))
+    if (items.length < 2) return false
     openUserOverlay(ui, "thinkingPicker", {
       items,
       selected: Math.max(0, items.findIndex((item) => item.current)),
@@ -189,18 +184,18 @@ export function createOverlayController({
 
   function confirmThinkingPicker() {
     if (!ui.thinkingPicker) return
-    const { items, selected, provider } = ui.thinkingPicker
+    const { items, selected, provider, model } = ui.thinkingPicker
     const chosen = items[selected]
     closeUserOverlay(ui, "thinkingPicker")
-    if (chosen && provider) {
+    if (chosen && !chosen.disabled && provider && model) {
       // 内存立即生效：router 每次请求都读 providerCfg.thinking_effort
       const bag = ctx.configState.config.provider || (ctx.configState.config.provider = {})
       const entry = bag[provider] || (bag[provider] = {})
-      entry.thinking_effort = chosen.id
-      showToast(`Thinking · ${chosen.id}`, { topic: "model", tone: "success" })
+      entry.model_options = { ...entry.model_options, [model]: { thinking_effort: chosen.id } }
+      showToast(`思考 · ${chosen.label}`, { topic: "model", tone: "success" })
       // 落盘失败不回滚界面 —— 本次会话已经生效，只是下次启动不记得
       void Promise.resolve(
-        persistProviderConfig({ provider: { [provider]: { thinking_effort: chosen.id } } }, false)
+        persistProviderConfig({ provider: { [provider]: { model_options: { [model]: { thinking_effort: chosen.id } } } } }, false)
       ).catch(() => {})
     }
     requestRender({ force: true })

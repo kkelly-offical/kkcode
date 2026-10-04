@@ -22,15 +22,15 @@
  *   - 上下文长度    → 目录条目的 context_length 等八种字段名（model-catalog）
  *   - thinking 支持 → supported_parameters 或模型名族启发式（thinking-effort）
  *
- * **只有读不到的才问**：目录没报上下文的模型追问一轮数字；能力判不出的模型
- * 追问一轮「支持/不支持/跳过」。名称从 URL host 推导，确认页上可改。
+ * 1.0.10：缺失参数由运行时分析和兜底，不再补问数字或要求用户判断模型能力。
+ * 名称从 URL host 推导，确认页上可改。
  *
  * ## 三条纪律（0.7.3 定下，继续有效）
  *
  * 1. **API Key 直接输入**，明文写进 `~/.kkcode/config.yaml` 的 `api_key`。
  *    输入时遮蔽（`secret: true`），确认页只显示末四位，不进对话记录与日志。
- * 2. **只写用户提供或确认过的字段**。自动读到的（上下文、thinking 支持）都在
- *    确认页逐条列出后才落盘 —— 自动发现不是背着用户写配置的许可。
+ * 2. **只写用户提供或确认过的字段**。自动能力保留在按端点分区的目录中，
+ *    不将自动发现值冻结成用户手动设置。
  * 3. **确认页所见即所写**：预览里的每一行就是将要落盘的字段，没有背后追加。
  */
 
@@ -160,7 +160,7 @@ async function discoverModelChoices({ name, entry, discover }) {
         id: m.id,
         // model-catalog 的 readContextLength 已经把各家字段名统一过，并且只在
         // >= 1024 时给值 —— 这里不再二次判断，也不为拿不到的模型编一个数字。
-        contextLength: Number.isFinite(Number(m.contextLength)) ? Number(m.contextLength) : 0,
+        contextLength: Number(m.contextLength || m.modelParameters?.limits?.input) || 0,
         supportedParameters: Array.isArray(m.supportedParameters) ? m.supportedParameters : null,
         capabilities: normalizeCapabilities(m.capabilities),
         pricing: m.pricing && typeof m.pricing === "object" ? m.pricing : null
@@ -217,7 +217,7 @@ async function askModel({ name, entry, ask, discover }) {
           ...discovered.map((m) => ({
             label: labelWithContext(m.id, m.contextLength),
             value: m.id,
-            description: m.contextLength ? `上下文 ${m.contextLength} tokens（写入 provider.model_context）` : ""
+            description: m.contextLength ? `上下文 ${m.contextLength} tokens（从目录自动读取）` : ""
           })),
           { label: MANUAL_MODEL, value: MANUAL_MODEL, description: "手动输入模型 ID" }
         ]
@@ -235,7 +235,7 @@ async function askModel({ name, entry, ask, discover }) {
       if (!chosenDefault) return { ...empty, cancelled: true }
       const contexts = {}
       // 发现不到上下文的模型**不写** —— 编一个数字会让压缩阈值静默算错；
-      // 读不到的那几个由 askMissingContexts 追问，用户不答仍然不写
+      // 未知值交给运行时兜底，模型目录数字仅用于选择时展示
       for (const id of chosen) if (contextOf(id)) contexts[id] = contextOf(id)
       return { models: chosen, defaultModel: chosenDefault, contexts, discovered }
     }
@@ -253,77 +253,6 @@ async function askModel({ name, entry, ask, discover }) {
   return typed ? { models: [typed], defaultModel: typed, contexts: {}, discovered } : empty
 }
 
-/**
- * 目录没报上下文的模型，一轮补问。**这是「只有缺失信息才要用户动手」的落点**：
- * 读到了就一个字都不问，读不到的逐个给一格数字输入，留空 = 不写、运行时用
- * 内置缺省表 —— 与「不编数字」同一条纪律。
- */
-async function askMissingContexts({ chosen, contexts, ask }) {
-  const missing = chosen.filter((id) => !contexts[id])
-  if (!missing.length) return {}
-  const answers = await ask({
-    questions: missing.map((id) => ({
-      id: `ctx:${id}`,
-      header: "Context",
-      text: `${id} 的上下文长度（tokens）`,
-      description: "API 目录没有报告这个模型的上下文。留空 = 不写入，运行时用内置缺省表。",
-      default: ""
-    }))
-  })
-  const out = {}
-  for (const id of missing) {
-    const n = Number.parseInt(clean(answers[`ctx:${id}`]), 10)
-    if (Number.isFinite(n) && n >= 1024) out[id] = n
-  }
-  return out
-}
-
-/**
- * thinking 支持：能自动判的自动判，判不出的才问。
- *
- * 判据优先级与 supportsThinking 一致：目录报了 supported_parameters 以它为准
- * （OpenRouter 等会报），否则按模型名族启发式；两者都拿不准返回 null —— 那才
- * 轮到用户。结果进 `provider.model_thinking`（true/false 都记：知道「不支持」
- * 同样有价值，/model 据此不再对它弹 thinking 档位）。
- */
-function detectThinkingSupport(chosen, discovered) {
-  const byId = new Map(discovered.map((m) => [m.id, m]))
-  const known = {}
-  const unknown = []
-  for (const id of chosen) {
-    const meta = byId.get(id)
-    const verdict = supportsThinking({ modelId: id, supportedParameters: meta?.supportedParameters ?? null })
-    if (verdict === true || verdict === false) known[id] = verdict
-    else unknown.push(id)
-  }
-  return { known, unknown }
-}
-
-async function askMissingThinking({ unknown, ask }) {
-  if (!unknown.length) return {}
-  const answers = await ask({
-    questions: unknown.map((id) => ({
-      id: `think:${id}`,
-      header: "Thinking",
-      text: `${id} 支持扩展思考（thinking / reasoning）吗？`,
-      description: "目录没报能力、模型名也认不出。答了才写入 provider.model_thinking；跳过 = 不写。",
-      allowCustom: false,
-      options: [
-        { label: "支持", value: "yes", description: "/model 选它之后会提供思考档位" },
-        { label: "不支持", value: "no", description: "/model 不再问它的思考档位" },
-        { label: "不确定（跳过）", value: "skip", description: "不写入配置" }
-      ]
-    }))
-  })
-  const out = {}
-  for (const id of unknown) {
-    const value = clean(answers[`think:${id}`])
-    if (value === "yes") out[id] = true
-    if (value === "no") out[id] = false
-  }
-  return out
-}
-
 /** 确认页能力标记的中文标签。reasoning 不在此列 —— 它归 provider.model_thinking。 */
 const CAPABILITY_LABELS = Object.freeze({
   image: "图像",
@@ -332,28 +261,6 @@ const CAPABILITY_LABELS = Object.freeze({
   tools: "工具",
   streaming: "流式"
 })
-
-/**
- * 多模态/工具/流式能力：目录自报优先，名字族启发式兜底，两者都拿不准就不写。
- *
- * 与 thinking 不同，这里**不补问**：图像能力「未知」的缺省行为是放行（与没有
- * 能力系统时一致），不会错拦；而写错一个 false 会把用户本来能用的图挡掉。
- * 确认页会把写入的标记逐条列出（所见即所写），用户要改在 YAML 里改
- * provider.model_capabilities。reasoning 键归 model_thinking，不重复写。
- */
-function detectCapabilities(chosen, discovered) {
-  const byId = new Map(discovered.map((m) => [m.id, m]))
-  const map = {}
-  for (const id of chosen) {
-    const merged = {
-      ...inferCapabilitiesFromName(id),
-      ...normalizeCapabilities(byId.get(id)?.capabilities)
-    }
-    delete merged.reasoning
-    if (Object.keys(merged).length) map[id] = merged
-  }
-  return map
-}
 
 /**
  * 组装将要写盘的条目。**这里出现的每个字段都来自用户的输入或确认页** ——
@@ -486,23 +393,18 @@ export async function runProviderAddForm({
   }
 
   const modelResult = await askModel({ name, entry: probeEntry, ask, discover })
-  const { models, defaultModel: model, discovered } = modelResult
+  const { models, defaultModel: model } = modelResult
   if (!model) return { saved: false, reason: "cancelled" }
 
-  const contexts = {
-    ...modelResult.contexts,
-    ...(await askMissingContexts({ chosen: models, contexts: modelResult.contexts, ask }))
-  }
-  const { known, unknown } = detectThinkingSupport(models, discovered)
-  const thinkingMap = { ...known, ...(await askMissingThinking({ unknown, ask })) }
-  const capabilityMap = detectCapabilities(models, discovered)
-
+  // Keep discovered capabilities in the scoped catalog. Missing metadata uses
+  // runtime inference/defaults; adding a provider never asks users to invent
+  // numeric context sizes or freezes automatic values into global overrides.
   const entry = buildEntry({ type: protocol.type, baseUrl, apiKey, model, models })
 
   // 确认循环：保存 / 修改名称 / 取消。名称是唯一推导出来（而非用户输入）的
   // 落盘键名，所以必须给一条不重走全流程的修改路径。
   for (;;) {
-    const preview = previewEntry(name, entry, { modelContext: contexts, modelThinking: thinkingMap, modelCapabilities: capabilityMap })
+    const preview = previewEntry(name, entry)
     const confirm = await ask({
       questions: [{
         id: "confirm",
@@ -540,12 +442,6 @@ export async function runProviderAddForm({
   }
 
   const configPatch = /** @type {{ provider: Record<string, any> }} */ ({ provider: { default: name, [name]: entry } })
-  // model_context / model_thinking / model_capabilities 是 provider 段下的顶层
-  // map（不是条目内字段）。saveProviderConfig 对它们走同一套浅合并 ——
-  // 新模型的条目并进去，别的原样留着。
-  if (Object.keys(contexts).length) configPatch.provider.model_context = { ...contexts }
-  if (Object.keys(thinkingMap).length) configPatch.provider.model_thinking = { ...thinkingMap }
-  if (Object.keys(capabilityMap).length) configPatch.provider.model_capabilities = capabilityMap
   await saveProviderConfig(configPatch, true)
   return { saved: true, name, configPatch }
 }

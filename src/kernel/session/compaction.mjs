@@ -1,3 +1,6 @@
+import { prepareModelMetadata, readCachedModelCatalog } from '../provider/model-catalog.mjs'
+import { modelContextLimit } from '../provider/model-limits.mjs'
+export { modelContextLimit } from '../provider/model-limits.mjs'
 import { requestProvider, countTokensProvider } from "../provider/router.mjs"
 import { getSession, replaceMessages } from "./store.mjs"
 import { HookBus } from "../plugin/hook-bus.mjs"
@@ -358,54 +361,6 @@ export function pruneForSummary(messages, previewLimit = TOOL_RESULT_PREVIEW_LIM
   })
 }
 
-/**
- * 兜底的模型上下文表。优先级最低 —— provider.model_context 与目录发现
- * （applyDiscoveredContextLimits）都排在它前面。
- *
- * 前缀匹配，长前缀要写在短前缀之前（`Object.entries` 按声明序遍历，
- * `claude` 若排在 `claude-opus-4` 前面会把后者吃掉）。
- */
-const BUILTIN_CONTEXT = {
-  // kimi：k3 是 1M，coding 系列是 256K。此前整个 kimi 族缺失，
-  // k3 走默认 128000 —— 少算了八倍，压缩因此提前触发。
-  "k3-256k": 262144, "k3": 1048576,
-  "kimi-for-coding": 262144, "kimi": 262144,
-  "gpt-5": 272000, "o3": 200000, "o1": 200000,
-  "claude-opus-4": 200000, "claude-sonnet-4": 200000,
-  "claude-3-5": 200000, "claude-3.5": 200000, "claude": 200000,
-  "gemini-2": 1048576, "gemini-1.5": 1048576, "gemini": 128000,
-  "gpt-4o": 128000, "gpt-4": 128000, "gpt-3.5": 16000,
-  "deepseek-r": 128000, "deepseek": 64000,
-  "qwen3": 262144, "qwen": 128000,
-  "glm-4": 128000, "glm": 128000
-}
-
-export function modelContextLimit(model, configState = null, providerType = "") {
-  const m = String(model || "").toLowerCase()
-  // 1) Check provider-level context_limit for the active provider
-  const providerCfg = configState?.config?.provider
-  if (providerCfg) {
-    // Per-model override from provider.model_context map
-    const mc = providerCfg.model_context
-    if (mc) {
-      if (mc[model]) return mc[model]
-      for (const key of Object.keys(mc)) {
-        if (m.startsWith(key.toLowerCase())) return mc[key]
-      }
-    }
-    // Provider-level context_limit。必须用「本轮实际使用的 provider」——
-    // /provider 切换只改 state.providerType 不改 config.provider.default，
-    // 0.6.0 之前这里读 default，会话内切渠道后上限与状态栏百分比全部失准。
-    const active = providerCfg[providerType || providerCfg.default]
-    if (active?.context_limit > 0) return active.context_limit
-  }
-  // 2) Builtin prefix match
-  for (const [prefix, limit] of Object.entries(BUILTIN_CONTEXT)) {
-    if (m.includes(prefix)) return limit
-  }
-  return 128000
-}
-
 export function contextUtilization(messages, model, configState = null, providerType = "") {
   const tokens = estimateTokenCount(messages)
   const limit = modelContextLimit(model, configState, providerType)
@@ -426,11 +381,13 @@ export function supportsNativeCompaction(providerType, model, configState = null
     && modelContextLimit(model, configState, providerType) >= 60000)
 }
 
-export function shouldCompact({ messages, model, thresholdMessages = DEFAULT_THRESHOLD_MESSAGES, thresholdRatio = DEFAULT_THRESHOLD_RATIO, configState = null, providerType = "", realTokenCount = null }) {
-  if (messages.length >= thresholdMessages) return true
-  const limit = modelContextLimit(model, configState, providerType)
+export function shouldCompact({ messages, model, thresholdMessages = DEFAULT_THRESHOLD_MESSAGES, thresholdRatio = DEFAULT_THRESHOLD_RATIO, configState = null, providerType = "", realTokenCount = null, baseUrl = null, apiKeyEnv = null, requestBudget = null }) {
+  if (requestBudget && Number.isFinite(requestBudget.tokens) && requestBudget.inputBudget > 0) return requestBudget.tokens >= requestBudget.inputBudget * thresholdRatio
+  const limit = modelContextLimit(model, configState, providerType, {baseUrl,apiKeyEnv})
   const tokens = realTokenCount != null ? realTokenCount : estimateTokenCount(messages)
-  return tokens >= limit * thresholdRatio
+  // Message count is only an estimation fallback, not a competing cap on a
+  // measured long-window request containing many small tool messages.
+  return tokens >= limit * thresholdRatio || realTokenCount == null && messages.length >= thresholdMessages && tokens >= limit * .5
 }
 
 /** Move a proposed boundary backwards, never delete a result to repair it.
@@ -480,6 +437,7 @@ export async function compactSession({
 }) {
   signal?.throwIfAborted()
   const strict = hasRequestBudget()
+  await (strict ? readCachedModelCatalog(configState,providerType,{baseUrl,apiKeyEnv}) : prepareModelMetadata(configState,providerType,{baseUrl,apiKeyEnv,signal}))
   const continuation = { system: requestContext?.system || '', tools: requestContext?.tools || [], messages: [] }
   if (strict) snapshotStrictInput(continuation)
   const snapshot = await getSession(sessionId)

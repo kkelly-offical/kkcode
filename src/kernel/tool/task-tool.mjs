@@ -22,6 +22,8 @@ function taskProperties() {
     write_scope: { type: "string", description: "explicit write scope such as read-only, specific files, or no mutations" },
     starting_points: { type: "array", items: { type: "string" }, description: "relevant files, symbols, tests, or commands the subagent should start from" },
     constraints: { type: "array", items: { type: "string" }, description: "architectural boundaries, forbidden edits, or safety constraints for the delegated run" },
+    context_summary: { type: 'string', maxLength: 64000, description: 'Only task-relevant facts, decisions, original constraints and pending work. Prefer this brief to copying the full parent transcript.' },
+    context_refs: { type: 'array', maxItems: 20, items: {type:'string',maxLength:500}, description: 'Private artifact IDs or file paths to inspect on demand within the inherited permissions; references do not grant access.' },
     deliverable: { type: "string", description: "expected output from the subagent, such as a patch, findings, or a concise summary" },
     category: { type: "string", description: "routing category (alternative to subagent_type; mutually exclusive)" },
     inherit_context: { type: "boolean", description: "shortcut for execution_mode=fork_context; only valid for read-only sidecar work" },
@@ -120,7 +122,7 @@ export function createChildControlTools() {
   const message = { type: 'string', maxLength: 16000, description: 'bounded message delivered at the next model boundary; does not replay tools' }
   const definitions = /** @type {Array<[string, string, Record<string, any>, string[], (args: any, controller: any) => any]>} */ ([
     ['agent_list', 'List child agents owned by this parent session.', {}, [], (_args, controller) => controller.list()],
-    ['agent_wait', 'Wait at most 60 seconds for an owned child; timeout is not completion.', { session_id: session, timeout_ms: { type: 'integer', minimum: 0, maximum: 60000 } }, ['session_id'], (args, controller) => controller.wait(args.session_id, { timeoutMs: args.timeout_ms ?? 30000 })],
+    ['agent_wait', 'Wait at most 60 seconds for an owned child; timeout is not completion.', { session_id: session, timeout_ms: { type: 'integer', minimum: 0, maximum: 60000 } }, ['session_id'], async (args, controller) => { const result = await controller.wait(args.session_id, { timeoutMs: args.timeout_ms ?? 30000 }); return { ...result, metadata: { childWaiting: result.timed_out === true && ['running','pending','active'].includes(result.status) } } }],
     ['agent_send', 'Queue a message for an active owned child without starting another turn.', { session_id: session, message }, ['session_id', 'message'], (args, controller) => controller.send(args.session_id, args.message)],
     ['agent_followup', 'Continue an idle owned child with its original role and policy; inspect prior effects before asking it to act.', { session_id: session, prompt: message, run_in_background: { type: 'boolean' } }, ['session_id', 'prompt'], (args, controller) => controller.followup(args.session_id, args.prompt, { run_in_background: args.run_in_background === true })],
     ['agent_interrupt', 'Request cancellation of an owned active child. This does not roll back effects.', { session_id: session }, ['session_id'], (args, controller) => controller.interrupt(args.session_id)]

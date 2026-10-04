@@ -1,6 +1,6 @@
 {
   "name": "@kkelly-offical/kkcode",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "workspaces": [
     "apps/web",
     "apps/gateway",
@@ -202,7 +202,9 @@
     "docs/release-1.0.8.md",
     "docs/implementation-1.0.8.md",
     "docs/release-1.0.9.md",
-    "docs/implementation-1.0.9.md"
+    "docs/implementation-1.0.9.md",
+    "docs/optimization-next.md",
+    "docs/implementation-1.0.10.md"
   ],
   "engines": {
     "node": ">=22.12.0"

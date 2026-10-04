@@ -25,7 +25,8 @@ export async function reviewSensitiveAction({ configState, providerType, model, 
     selectedProvider = provider
     model = route.model; baseUrl = route.baseUrl; apiKeyEnv = route.apiKeyEnv
     if (!Object.hasOwn(state.config.provider, provider) || ['__proto__', 'constructor', 'prototype'].includes(provider)) throw new Error('Unknown review provider')
-    const options = { ...state.config.provider[provider], retry_attempts: 0, thinking_effort: 'off' }
+    const options = { ...state.config.provider[provider], retry_attempts: 0, thinking_effort: 'auto' }
+    options.model_options = { ...options.model_options, [model]: { thinking_effort:'auto' } }
     delete options.thinking
     delete options.reasoning_effort
     state.config.provider = { ...state.config.provider, [provider]: options }

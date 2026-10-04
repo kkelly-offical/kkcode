@@ -8,8 +8,8 @@
 ![Node](https://img.shields.io/badge/Node.js-%3E%3D22.12-green)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
 
-当前源码版本 **1.0.9（会话体验修复）**；公开稳定与预览渠道以[版本与升级](docs/versions.md)为准。
-[1.0.9会话体验修复](docs/release-1.0.9.md) · [上一稳定版](docs/release-1.0.8.md) · [本轮实施记录](docs/implementation-1.0.9.md) ·
+当前开发版本 **1.0.10（模型参数与编排优化）**，已发布稳定版为 **1.0.9**；公开稳定与预览渠道以[版本与升级](docs/versions.md)为准。
+[1.0.9会话体验修复](docs/release-1.0.9.md) · [上一稳定版](docs/release-1.0.8.md) · [本轮实施记录](docs/implementation-1.0.10.md) ·
 [版本与升级](docs/versions.md)区分源码、公开产物与部署状态。
 上图为品牌概念图，不是实际界面截图。
 

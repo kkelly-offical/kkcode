@@ -1,3 +1,4 @@
+import { publicContext } from '../../protocol/context.mjs'
 import { randomUUID } from 'node:crypto'
 import { getSession, listSessions, updateSessionIf } from '../session/store.mjs'
 import { BackgroundManager } from './background-manager.mjs'
@@ -76,6 +77,8 @@ export function childSteeringSource(sessionId, operationId) {
 
 function summary(session) {
   return { session_id: session.id, parent_session_id: session.childContract.parentSessionId,
+    model: session.childContract.runSpec.model, provider: session.childContract.runSpec.provider,
+    context: publicContext(session.context),
     subagent: session.childContract.runSpec.role.name, status: session.childStatus || 'unknown',
     background_task_id: session.childBackgroundTaskId || null, pending_messages: session.childMailbox?.length || 0,
     result: session.childResult || null }

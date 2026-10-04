@@ -42,6 +42,7 @@ function baseConfig(longagentOverrides = {}) {
         default_mode: "longagent",
         max_steps: 1,
         longagent: {
+          orchestration: "staged",
           max_iterations: 0,
           no_progress_warning: 1,
           no_progress_limit: 1,

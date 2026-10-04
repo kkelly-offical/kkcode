@@ -71,7 +71,7 @@ const scriptedAsk = (answerBook) => async ({ questions }) => {
   return out
 }
 
-test("provider add writes discovered capabilities to provider.model_capabilities", async () => {
+test("provider add keeps discovered capabilities out of persistent manual overrides", async () => {
   const result = await runProviderAddForm({
     configState: { config: { provider: {} } },
     ask: scriptedAsk({
@@ -94,10 +94,10 @@ test("provider add writes discovered capabilities to provider.model_capabilities
     })
   })
   assert.equal(result.saved, true)
-  const written = result.configPatch.provider.model_capabilities
-  assert.deepEqual(written["glm-5.1"], { image: true, video: false, audio: false, tools: true, streaming: true })
-  // 目录只报了 tools；image 由 glm-5 名字族启发式补上（探测不到的键才轮到启发式）
-  assert.deepEqual(written["glm-5.1-flash"], { image: true, tools: true })
+  assert.equal(result.configPatch.provider.model_capabilities, undefined)
+  assert.equal(result.configPatch.provider.model_context, undefined)
+  assert.equal(result.configPatch.provider.model_thinking, undefined)
+  assert.deepEqual(result.configPatch.provider.bigmodel.models, ['glm-5.1','glm-5.1-flash'])
 })
 
 test("provider add writes nothing when capabilities are undeterminable", async () => {

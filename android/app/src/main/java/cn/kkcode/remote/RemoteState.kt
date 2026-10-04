@@ -1037,6 +1037,15 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         }
         sheet = ""; notice = "模型已切换"
     }
+    fun selectThinking(name: String, id: String, value: String) = action {
+        require(!sharedDevice && !busy) { "请在任务结束后由电脑所有者调整思考强度" }
+        val option = JSONObject().put("thinking_effort", value)
+        val patch = JSONObject().put("provider", JSONObject().put(name, JSONObject().put("model_options", JSONObject().put(id, option))))
+        val result = rpc("settings.update", JSONObject().put("config", patch)) as JSONObject
+        settings = result.getJSONObject("config")
+        discoverModels(name)
+        notice = "思考强度已更新"
+    }
     fun selectMode(value: String) = action {
         require(!sharedDevice) { "只有电脑所有者可以切换执行模式" }
         if(selected.isBlank()) mode = value

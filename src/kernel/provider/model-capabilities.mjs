@@ -17,7 +17,7 @@ import { ProviderError } from "../core/errors.mjs"
 import { assertMediaInput } from './media-input.mjs'
 
 /** 能力标记的全集 —— schema 校验与 wizard 预览都从这份清单派生，不手抄。 */
-export const MODEL_CAPABILITY_KEYS = Object.freeze(["image", "video", "audio", "tools", "streaming", "reasoning"])
+export const MODEL_CAPABILITY_KEYS = Object.freeze(["image", "video", "audio", "tools", "streaming", "reasoning", "parallelTools", "structuredOutput", "pdf", "cache", "tokenCounting", "nativeCompaction"])
 
 const CAPABILITY_SET = new Set(MODEL_CAPABILITY_KEYS)
 
@@ -83,7 +83,13 @@ function readCapabilityObject(item, into) {
     audio: ["audio", "audio_input", "audioInput"],
     tools: ["tools", "function_calling", "functionCalling", "tool_use", "toolUse"],
     streaming: ["streaming", "stream"],
-    reasoning: ["reasoning", "thinking"]
+    reasoning: ["reasoning", "thinking"],
+    parallelTools: ['parallelTools', 'parallel_tool_calls'],
+    structuredOutput: ['structuredOutput', 'structured_outputs', 'response_format'],
+    pdf: ['pdf', 'pdf_input'],
+    cache: ['cache', 'prompt_caching'],
+    tokenCounting: ['tokenCounting', 'count_tokens'],
+    nativeCompaction: ['nativeCompaction', 'compaction']
   }
   for (const [capability, aliases] of Object.entries(keys)) {
     for (const alias of aliases) {
@@ -91,8 +97,14 @@ function readCapabilityObject(item, into) {
         into[capability] = bag[alias]
         break
       }
+      if (typeof bag[alias]?.supported === 'boolean') {
+        into[capability] = bag[alias].supported
+        break
+      }
     }
   }
+  const compact = Object.entries(bag.context_management || {}).filter(([key]) => key.startsWith('compact_'))
+  if (into.nativeCompaction === undefined && compact.some(([,value]) => typeof value?.supported === 'boolean')) into.nativeCompaction = compact.some(([,value]) => value?.supported === true)
 }
 
 /**

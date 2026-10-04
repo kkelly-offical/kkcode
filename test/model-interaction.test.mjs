@@ -157,8 +157,8 @@ test("discovery failure degrades to manual model input, not an error", async () 
     assert.equal(modelRounds.length, 1, "只该有手动输入这一轮")
     assert.equal(modelRounds[0].find((q) => q.id === "model").options, undefined)
     // 上下文读不到 → 追问了一轮（留空 = 不写）；thinking 认不出 → 也追问了
-    assert.ok(asked.flat().some((q) => q.id === "ctx:local-model"), "读不到的上下文要给用户补的机会")
-    assert.ok(asked.flat().some((q) => q.id === "think:local-model"), "认不出的 thinking 要给用户补的机会")
+    assert.ok(!asked.flat().some((q) => q.id === "ctx:local-model"), "缺失上下文由运行时兜底，不要求用户补数字")
+    assert.ok(!asked.flat().some((q) => q.id === "think:local-model"), "未知思考能力使用自动，不问用户猜测")
   })
 })
 
@@ -309,7 +309,7 @@ test("恰好选一个：不追问默认", async () => {
   })
 })
 
-test("上下文：发现到的写进 model_context；没发现到的追问，留空仍然不写、不编数字", async () => {
+test("discovered context is shown without persisting it as a global override or asking for missing numbers", async () => {
   await withTempHome(async (home) => {
     const asked = []
     await runProviderAddForm({
@@ -322,15 +322,9 @@ test("上下文：发现到的写进 model_context；没发现到的追问，留
     })
 
     const saved = YAML.parse(await readFile(path.join(home, "config.yaml"), "utf8"))
-    assert.equal(saved.provider.model_context["gpt-4o"], 128000)
-    assert.equal("o3-mini" in saved.provider.model_context, false,
-      "追问留空就不写 —— 编一个数字会让压缩阈值静默算错")
-    assert.equal("gpt-4o-mini" in saved.provider.model_context, false, "没选中的模型不写")
-    assert.equal(saved.provider.ctx.model_context, undefined, "model_context 是 provider 段下的顶层 map")
-
-    // 「只有缺失信息才要用户动手」：读到了的 gpt-4o 一个字都不问，缺的 o3-mini 问一格
-    const ctxRounds = asked.flat().filter((q) => q.id.startsWith("ctx:"))
-    assert.deepEqual(ctxRounds.map((q) => q.id), ["ctx:o3-mini"])
+    assert.equal(saved.provider.model_context, undefined)
+    assert.equal(saved.provider.ctx.model_context, undefined)
+    assert.deepEqual(asked.flat().filter(q => q.id.startsWith('ctx:')), [])
 
     const modelRound = asked.flat().find((q) => q.id === "model" && q.options)
     assert.equal(modelRound.options.find((o) => o.value === "gpt-4o").label, "gpt-4o (128k)",
@@ -338,13 +332,12 @@ test("上下文：发现到的写进 model_context；没发现到的追问，留
     assert.equal(modelRound.options.find((o) => o.value === "o3-mini").label, "o3-mini (—)")
 
     const confirmQ = asked.flat().find((q) => q.id === "confirm")
-    assert.match(confirmQ.text, /- gpt-4o \(128k\)/, "确认页要逐个列出模型与上下文")
-    assert.match(confirmQ.text, /provider\.model_context:\n {2}gpt-4o: 128000/,
-      "所见即所写：model_context 这一段也要出现在预览里")
+    assert.match(confirmQ.text, /gpt-4o/)
+    assert.doesNotMatch(confirmQ.text, /provider\.model_context:/, 'automatic metadata is not presented as a configuration write')
   })
 })
 
-test("追问的上下文答了就写进 model_context", async () => {
+test("obsolete context answers cannot silently become new manual overrides", async () => {
   await withTempHome(async (home) => {
     await runProviderAddForm({
       configState: { config: { provider: {} } },
@@ -355,7 +348,7 @@ test("追问的上下文答了就写进 model_context", async () => {
       discover: async () => ({ models: DISCOVERED })
     })
     const saved = YAML.parse(await readFile(path.join(home, "config.yaml"), "utf8"))
-    assert.equal(saved.provider.model_context["o3-mini"], 200000, "用户补的数字与发现到的走同一个出口")
+    assert.equal(saved.provider.model_context, undefined, "未提出的旧问题答案不写盘")
   })
 })
 
@@ -394,7 +387,7 @@ test("手动项与真模型一起选中时以真模型为准", async () => {
 
 // --- thinking 支持的自动检测与补问（0.8.0） ---
 
-test("thinking：目录报了 supported_parameters 就不问；报不出的才问；答案与检测走同一个出口", async () => {
+test("thinking discovery stays in metadata; neither known nor unknown capability requires a setup question", async () => {
   await withTempHome(async (home) => {
     const asked = []
     await runProviderAddForm({
@@ -419,16 +412,11 @@ test("thinking：目录报了 supported_parameters 就不问；报不出的才�
     })
 
     const saved = YAML.parse(await readFile(path.join(home, "config.yaml"), "utf8"))
-    assert.equal(saved.provider.model_thinking["reasoner-x"], true, "supported_parameters 报了 reasoning → 自动 true")
-    assert.equal(saved.provider.model_thinking["plain-x"], false, "报了参数表但没有 reasoning → 自动 false，false 也有价值")
-    assert.equal(saved.provider.model_thinking["mystery-x"], true, "判不出的问用户，用户答了「支持」")
-
-    const thinkRounds = asked.flat().filter((q) => q.id.startsWith("think:"))
-    assert.deepEqual(thinkRounds.map((q) => q.id), ["think:mystery-x"],
-      "能自动判的（true 和 false 都算判出）一个都不问")
-
-    const confirmQ = asked.flat().find((q) => q.id === "confirm")
-    assert.match(confirmQ.text, /provider\.model_thinking:/, "自动检测不是背着用户写配置的许可 —— 确认页要列出来")
+    assert.equal(saved.provider.model_thinking, undefined)
+    assert.equal(saved.provider.model_capabilities, undefined)
+    assert.deepEqual(asked.flat().filter(q => q.id.startsWith('think:')), [])
+    const confirmQ = asked.flat().find(q => q.id === 'confirm')
+    assert.doesNotMatch(confirmQ.text, /provider\.model_thinking:/)
   })
 })
 

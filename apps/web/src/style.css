@@ -743,3 +743,8 @@ summary {
 .todo-progress-content { min-width: 0; }
 .todo-progress small { display: block; opacity: .8; font-size: 10px; }
 .todo-progress li[data-status="completed"] .todo-progress-content { opacity: .7; }
+
+.model-thinking { display: grid; gap: .65rem; margin: .5rem; padding: .8rem; border: 1px solid var(--border, #444); border-radius: 8px; }
+.model-thinking label { display: flex; align-items: center; justify-content: space-between; gap: .8rem; }
+.model-thinking select { max-width: 72%; padding: .5rem; color: inherit; background: var(--surface, #23232b); border-radius: 5px; }
+.model-thinking small { opacity: .7; font-size: .75rem; }

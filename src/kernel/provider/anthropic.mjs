@@ -263,6 +263,8 @@ export async function requestAnthropic(input) {
     model,
     max_tokens: maxTokens,
     ...(Number.isFinite(input.temperature) ? { temperature: input.temperature } : {}),
+    ...(Number.isFinite(input.topP) ? { top_p: input.topP } : {}),
+    ...(Number.isFinite(input.topK) ? { top_k: input.topK } : {}),
     metadata: { user_id: "kkcode" },
     system: systemWithCacheControl(system),
     messages: mapMessages(input),
@@ -270,9 +272,10 @@ export async function requestAnthropic(input) {
     ...(input.compaction ? { context_management: compactionEdit(input) } : {})
   })
   if (input.thinking?.type) {
-    payload.thinking = { type: input.thinking.type, budget_tokens: input.thinking.budget_tokens || 10000 }
+    payload.thinking = { type: input.thinking.type, ...(input.thinking.type === 'enabled' ? { budget_tokens: input.thinking.budget_tokens } : {}) }
   }
 
+  if (input.outputConfig) payload.output_config = input.outputConfig
   return requestWithRetry({
     ...resolveRetryOptions(retry),
     baseDelayMs: Number(retry.baseDelayMs ?? 800),
@@ -417,6 +420,8 @@ export async function* requestAnthropicStream(input) {
     model,
     max_tokens: maxTokens,
     ...(Number.isFinite(input.temperature) ? { temperature: input.temperature } : {}),
+    ...(Number.isFinite(input.topP) ? { top_p: input.topP } : {}),
+    ...(Number.isFinite(input.topK) ? { top_k: input.topK } : {}),
     metadata: { user_id: "kkcode" },
     system: systemWithCacheControl(system),
     messages: mapMessages(input),
@@ -425,8 +430,9 @@ export async function* requestAnthropicStream(input) {
     ...(compaction ? { context_management: compactionEdit(input) } : {})
   })
   if (input.thinking?.type) {
-    payload.thinking = { type: input.thinking.type, budget_tokens: input.thinking.budget_tokens || 10000 }
+    payload.thinking = { type: input.thinking.type, ...(input.thinking.type === 'enabled' ? { budget_tokens: input.thinking.budget_tokens } : {}) }
   }
+  if (input.outputConfig) payload.output_config = input.outputConfig
   let response
   try { response = await requestWithRetry({
     attempts: Number(retry.attempts ?? 5),

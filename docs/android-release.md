@@ -74,7 +74,7 @@ The application footer and Android User-Agent use `BuildConfig.VERSION_NAME`.
 
 After signature verification, run `node scripts/android-update-manifest.mjs`.
 Publish its `test-results/android-update.json` alongside the exact signed APK
-renamed `kkcode-android-<versionName>.apk` (`kkcode-android-1.0.9.apk` for the current source target).
+renamed `kkcode-android-<versionName>.apk` (`kkcode-android-1.0.10.apk` for the current development source target).
 The App updater skips releases without a
 matching manifest. Public identity is pinned in `configs/android-release.json`;
 private signing files never enter the release. See [App updates](android-app-updates.md).

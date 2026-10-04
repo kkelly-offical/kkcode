@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { flushNow, touchSession } from '../src/kernel/session/store.mjs'
+import { flushNow, touchSession, appendMessage } from '../src/kernel/session/store.mjs'
 import { createTaskDelegate } from "../src/kernel/orchestration/task-scheduler.mjs"
 import { BackgroundManager } from "../src/kernel/orchestration/background-manager.mjs"
 let temporaryHome, previousHome
@@ -23,6 +23,28 @@ test("task delegate requires a prompt for new delegated sessions", async () => {
 
   const result = await delegateTask({})
   assert.deepEqual(result, { error: "task.prompt or task.objective is required when session_id is not provided" })
+})
+
+test('fresh children receive a bounded context handoff while retaining their own model and scope', async () => {
+  await touchSession({sessionId:'brief-parent',cwd:process.cwd()})
+  let actual
+  const delegate=createTaskDelegate({config:{agent:{subagents:{explore:{model:'small-model'}}}},parentSessionId:'brief-parent',model:'large-model',providerType:'fixture',runSubtask:async input=>{actual=input;return{status:'completed',reply:'checked',toolEvents:[]}}})
+  const out=await delegate({prompt:'Check the known issue',subagent_type:'explore',context_summary:'Original constraint: read only. Previous result is inconclusive.',context_refs:['src/main.mjs']})
+  assert.equal(out.status,'completed')
+  assert.equal(actual.model,'small-model')
+  assert.match(actual.prompt,/Original constraint: read only/)
+  assert.match(actual.prompt,/src\/main.mjs/)
+  assert.equal(actual.runSpec.role.permission,'readonly')
+  assert.match((await delegate({prompt:'x',context_summary:'x'.repeat(64001)})).error,/64000/)
+})
+
+test('an oversized parent fork asks for a concise handoff before starting a small child', async () => {
+  await touchSession({sessionId:'large-context-parent',cwd:process.cwd()})
+  await appendMessage('large-context-parent','user','context '.repeat(10000))
+  const delegate=createTaskDelegate({config:{provider:{model_context:{small:4096}},agent:{subagents:{explore:{model:'small'}}}},parentSessionId:'large-context-parent',model:'large',providerType:'fixture',runSubtask:async()=>assert.fail('oversized fork must not start')})
+  const result=await delegate({prompt:'Inspect a small part',subagent_type:'explore',execution_mode:'fork_context',write_scope:'read-only'})
+  assert.equal(result.stop_reason,'context-handoff-required')
+  assert.ok(result.context.estimatedTokens > result.context.inputBudget)
 })
 
 test("task delegate requires write_scope and deliverable for synthesized briefs", async () => {

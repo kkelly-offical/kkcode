@@ -18,21 +18,19 @@ export const DEFAULT_CONFIG = {
    *   - 厂商的推荐 base_url / 模型清单在 VENDOR_PRESETS（wizard.mjs）——
    *     那是 `/provider add` 表单的数据源，不是配置。
    *
-   * `model_context` 不是 provider，是「已知模型的上下文长度」知识库，保留。
+   * `model_context` 只保留用户覆盖；内置知识在 model-limits 中标记为兜底。
    */
   provider: {
     strict_mode: false,
-    model_context: {
-      k3: 1048576,
-      "kimi-for-coding": 262144,
-      "kimi-for-coding-highspeed": 262144
-    }
+    model_context: {}
   },
   agent: {
     default_mode: "assistant",
-    max_steps: 8,
+    max_steps: 128,
+    subagent_max_steps: 64,
     verify_completion: false,
     longagent: {
+      orchestration: 'adaptive',
       // 总 LLM 轮次硬上限（0 = 不限）。0.5.0 起真正生效：超限以
       // budget_exhausted 结束。轮次层面的约束见 ultra.* 段。
       max_iterations: 0,
@@ -100,7 +98,7 @@ export const DEFAULT_CONFIG = {
         tdd_mode: false,
         cross_review: true,
         incremental_gates: true,
-        context_pressure_limit: 8000,
+        context_pressure_limit: 0, // auto: derives from the active model input budget
         budget_awareness: true,
         checkpoint_resume: true,
         project_memory: true,

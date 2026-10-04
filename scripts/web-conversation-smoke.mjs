@@ -15,7 +15,7 @@ process.env.KKCODE_HOME = path.join(temporary, 'state')
 let catalogCalls = 0, summaryCalls = 0, unexpectedCalls = 0
 const catalog = createServer((request, response) => {
   if(request.url !== '/v1/models') { unexpectedCalls++; response.writeHead(500).end(); return }
-  catalogCalls++; response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({data: [{id: 'fixture-model'}, {id: `fresh-model-${catalogCalls}`}]}))
+  catalogCalls++; response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({data: [{id: 'fixture-model', context_length: 262144, max_output_tokens: 65536, reasoning_effort_levels: ['low','medium','high','xhigh','max']}, {id: `fresh-model-${catalogCalls}`}]}))
 })
 await new Promise(resolve => catalog.listen(0, '127.0.0.1', resolve))
 await mkdir(process.env.KKCODE_HOME)
@@ -69,6 +69,21 @@ try {
   await expect(page.getByRole('menuitemradio', {name: /fresh-model-2/})).toBeVisible()
   await page.keyboard.press('Escape')
 
+  await picker.click()
+  const thinking = page.getByRole('combobox', {name:'思考强度'})
+  await expect(thinking.locator('option')).toHaveText(['自动 · 使用服务端默认设置','略思 · 较轻思考','审思 · 仔细推敲','深思 · 深入推演','精思 · 更缜密推演','穷理 · 更充分推究'])
+  await thinking.selectOption('xhigh')
+  await expect.poll(async () => (await service.request({id:'thinking-saved',method:'settings.get'})).provider.openai.model_options?.['fixture-model']?.thinking_effort).toBe('xhigh')
+  await picker.click()
+  await expect(thinking).toHaveValue('xhigh')
+  await expect(page.getByText(/输出预留 65,536/)).toBeVisible()
+  await page.screenshot({path:'test-results/web-110-thinking.png'})
+  await page.setViewportSize({width:320,height:800})
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'thinking controls must fit a narrow phone viewport')
+  await expect(thinking).toBeVisible()
+  await page.setViewportSize({width:1100,height:850})
+  await page.keyboard.press('Escape')
+
   await input.fill('/compact')
   await page.getByRole('button', {name: '发送', exact: true}).click()
   await expect(page.getByText('正在压缩上下文…', {exact: true})).toBeVisible()
@@ -96,7 +111,7 @@ try {
   assert.equal(summaryCalls, 2)
   assert.equal(unexpectedCalls, 0)
   assert.deepEqual(errors, [])
-  console.log('Web conversation: latest entry, free scroll/follow, model auto refresh, compact cancel/draft/meter/folding/reopen passed.')
+  console.log('Web conversation: latest entry, free scroll/follow, model auto refresh and five-level thinking persistence, compact cancel/draft/meter/folding/reopen passed.')
 } finally {
   await browser.close(); await server.close(); await service.close(); await new Promise(resolve => catalog.close(resolve))
   if(previous === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = previous

@@ -49,7 +49,6 @@ export const VENDOR_PRESETS = {
     },
     default_model: "qwen3.5-plus",
     models: ["qwen3.5-plus", "kimi-k2.6", "glm-5.1", "glm-5", "MiniMax-M2.5", "qwen3-coder-plus"],
-    context_limit: 983616,
     supports_thinking: false,
     supports_vision: true,
     key_env: "CODING_PLAN_API_KEY"
@@ -100,7 +99,6 @@ export const VENDOR_PRESETS = {
     base_url: "https://api.kimi.com/coding/v1",
     default_model: "k3",
     models: ["k3", "kimi-for-coding", "kimi-for-coding-highspeed"],
-    context_limit: 1048576,
     supports_thinking: true,
     supports_vision: true,
     key_env: "KIMI_CODE_API_KEY"

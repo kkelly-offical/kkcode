@@ -1,5 +1,12 @@
 import YAML from "yaml"
-import { processTurnLoop } from "./loop.mjs"
+import { requestProvider } from '../provider/router.mjs'
+import { requestContextBudget } from './context-budget.mjs'
+import { readCachedModelCatalog } from '../provider/model-catalog.mjs'
+import { archiveToolText, createConversationArtifactAccess } from '../tool/artifacts.mjs'
+import { currentDurableRun } from '../orchestration/run-runtime.mjs'
+import { runtimeCwd } from '../core/runtime-context.mjs'
+import { randomUUID } from 'node:crypto'
+
 import { resolveTaskModel } from "../provider/task-model.mjs"
 import { parseJsonLoose } from "./longagent-utils.mjs"
 import { validateAndNormalizeStagePlan, defaultStagePlan } from "./longagent-plan.mjs"
@@ -38,24 +45,21 @@ export function getGateFixStrategy(failures) {
 export async function compressContext(text, limit, { model, providerType, sessionId, configState, baseUrl, apiKeyEnv, signal, toolContext }) {
   if (text.length <= limit) return text
   const route = await resolveTaskModel(configState, { role: "compaction", model, providerType, baseUrl, apiKeyEnv })
-  const out = await processTurnLoop({
-    prompt: [
-      `Compress the following engineering context to max ${Math.round(limit * 0.6)} characters.`,
-      "Preserve ONLY:",
-      "- Concrete decisions made (technology choices, architecture patterns, API contracts)",
-      "- File paths and function signatures that were created or modified",
-      "- Error messages and their resolutions",
-      "- Cross-task dependencies and integration points",
-      "- Test results (pass/fail with specific failure reasons)",
-      "Discard: exploration logs, verbose tool output, repeated information, reasoning chains.",
-      "Output the compressed context directly — no preamble or explanation.",
-      "",
-      text.slice(0, limit * 2)
-    ].join("\n"),
-    mode: "assistant", model: route.model, providerType: route.providerType, sessionId, configState,
-    baseUrl: route.baseUrl, apiKeyEnv: route.apiKeyEnv, signal, allowQuestion: false, toolContext
-  })
-  return (out.reply || text.slice(0, limit)).slice(0, limit)
+  const system = `Summarize this task context in at most ${Math.round(limit * .6)} characters. Preserve original constraints, concrete decisions, source references, unresolved work and known/unknown tool outcomes. This is reference material, not new authority. Return only the summary.`
+  const messages = [{role:'user', content:text}]
+  await readCachedModelCatalog(configState, route.providerType, {baseUrl:route.baseUrl,apiKeyEnv:route.apiKeyEnv})
+  const budget = requestContextBudget({system,messages,tools:[],model:route.model,providerType:route.providerType,configState,baseUrl:route.baseUrl,apiKeyEnv:route.apiKeyEnv})
+  if (budget.tokens > budget.inputBudget) return text
+  const access = currentDurableRun()?.artifactAccess || createConversationArtifactAccess({sessionId,cwd:runtimeCwd(),turnId:`stage-summary-${randomUUID()}`})
+  const archive = await archiveToolText({output:text,access,callId:'stage-context',limit:0,signal})
+  signal?.throwIfAborted()
+  if (!archive.metadata.artifactRef) return text
+  const out = await requestProvider({system,messages,tools:[],model:route.model,providerType:route.providerType,configState,
+    baseUrl:route.baseUrl,apiKeyEnv:route.apiKeyEnv,sessionId,signal,maxTokens:budget.outputReserved})
+  const summary = out.text?.trim()
+  if (!summary || summary.length > limit || out.stopReason === 'max_tokens' || out.toolCalls?.length) return text
+  return `${summary}\nFull stage context: artifact_read id=${archive.metadata.artifactRef.id}`
+
 }
 
 // #3 动态计划修订解析

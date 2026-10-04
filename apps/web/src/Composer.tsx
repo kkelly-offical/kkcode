@@ -73,6 +73,7 @@ export function Composer({
   onMode,
   onModel,
   onDiscoverModels,
+  onThinking,
   summary,
   readOnly = false,
   canManage = true,
@@ -97,6 +98,7 @@ export function Composer({
   onMode?: (mode: string) => void;
   onModel?: (selection: { provider: string; model: string }) => void;
   onDiscoverModels?: (provider: string) => Promise<Item>;
+  onThinking?: (provider: string, model: string, value: string) => void;
   summary: { files: number; added: number; removed: number };
   readOnly?: boolean;
   canManage?: boolean;
@@ -517,6 +519,20 @@ export function Composer({
                                 {id === entry.defaultModel && <em>默认</em>}
                               </button>
                             ))}
+                            {entry.name === selection.provider && (() => {
+                              const runtime = catalog?.models.find(item => item.id === selection.model)?.runtime;
+                              const control = runtime?.thinking;
+                              const current = settings.provider?.[entry.name]?.model_options?.[selection.model]?.thinking_effort ?? control?.selected ?? 'auto';
+                              return runtime && <div className="model-thinking" aria-label="思考强度">
+                                {control?.kind === 'toggle' ? <div className="thinking-switch">
+                                  <button type="button" disabled={busy || readOnly || !canManage || !onThinking} aria-pressed={current === 'auto'} onClick={() => { onThinking?.(entry.name, selection.model, 'auto'); setPicker(''); }}>自动</button>
+                                  <button type="button" role="switch" aria-label="思考开关" aria-checked={current === 'on'} disabled={busy || readOnly || !canManage || !onThinking} onClick={() => { onThinking?.(entry.name, selection.model, current === 'on' ? 'off' : 'on'); setPicker(''); }}>思考 · {current === 'auto' ? '沿用默认' : current === 'on' ? '开' : '关'}</button>
+                                </div> : <label>思考强度 <select aria-label="思考强度" value={current} disabled={busy || readOnly || !canManage || !onThinking} onChange={event => { onThinking?.(entry.name, selection.model, event.target.value); setPicker(''); }}>
+                                  {control?.options?.map((option: Item) => <option key={option.value} value={option.value} disabled={!option.available}>{option.label} · {option.description}</option>)}
+                                </select></label>}
+                                <small>上下文 {Number(runtime.context.limit).toLocaleString()} · 输出预留 {Number(runtime.output.reserved).toLocaleString()}{runtime.output.source === 'estimated' ? '（估算）' : runtime.output.source === 'configuration' ? '（手动上限）' : '（接口）'}</small>
+                              </div>;
+                            })()}
                             {catalog?.loading && (
                               <p className="model-status" role="status">
                                 正在读取模型列表…

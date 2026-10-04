@@ -50,3 +50,39 @@
 - npm latest=1.0.9，preview=1.0.6-preview.1；匿名npm／GitHub／CI tarball字节相同。原证书APK、android-update.json、SBOM、公开回执和SHA256SUMS均可匿名下载。Node22.12安装、792文件秘密扫描、SDK与SQLite往返通过。
 - 本机空闲时正常停止旧remote，私密状态备份后从公开校验包升级到1.0.9；`tmux kkcode-coding`仍在`/root`、all-folders，原设备／所有者身份与配置字节保留，已恢复连接。没有自动恢复已取消的任务。
 - 完整回执目录：`/tmp/kkcode-109-stable-qv6gzea1/`；本机升级备份入口：`/root/.local/state/kkcode-coding/backup-109-path`。旧R12—R16结果与授权边界未改写。
+
+## 下一轮优化现状审计（2026-10-04）
+
+用户要求将模型参数自动配置、子代理配置／上下文管理和缩减强制编排纳入下一轮，并汇报当前约束。已登记[下一轮开发清单](optimization-next.md)；以下是对发行后源码的静态审计，不表示这些新优化已实现，不修改 1.0.9 发行事实。没有执行真实推理、修改运行配置或重启服务。
+
+已按用户进一步明确的方向收敛 A01/A03/U01：接口有效值优先，字段缺失时分析已有返回数据，再由适用规格和默认兜底；用户主要调节思考强度。有分级时按实际能力映射数字等级，预备略思／审思／深思／精思／穷理五档，对应 low/medium/high/xhigh/max，随接口返回调整可见档位及表述，只有二态时只显示开关。详细交互约定见清单。当前 [thinking-effort.mjs](../src/kernel/provider/thinking-effort.mjs) 与 [CLI 选择器](../src/repl/overlay-controller.mjs) 仍使用固定 off/low/medium/high/max；off 路径省略思考参数，不能仅凭省略就断言所有服务均关闭思考。下一轮需核对能力、界面与真实请求的对应关系，尚未修改运行实现。
+
+五档预设包含 xhigh，实际显示仍按各模型接口能力映射，不固定思考阈值。规格已明确：原生枚举直接映射，不把 xhigh 和 max 混用；只有预算参数时按有效范围与本次输出额度动态换算；二态采用开关；不凑档数、不冒充官方分级。保留原生配置及来源，支持界面与实际参数的双向还原，未确定能力时使用默认。本轮只维护规格，文档链接与差异检查通过。
+
+### 模型参数与上下文
+
+- [context-budget.mjs](../src/kernel/session/context-budget.mjs) 的默认请求输出为 `min(16384, floor(context/4))`（小窗口保留正值），发现的 `max_output_tokens` 只参与取最小值。已知输出上限较大也无法自动提高默认 16K，须在 A02 统一修复。
+- [model-catalog.mjs](../src/kernel/provider/model-catalog.mjs) 已解析部分窗口、输出能力、支持参数和价格；`applyDiscoveredCapabilities` 只选择 provider 的 `default_model`，且只在字段未设置时回填。这些自动值与显式配置缺乏独立来源，需检查切模型、刷新及对子代理路由的传播，不能宣称每个实际请求已完整同步。
+- 输出解析当前没有读取 Anthropic 模型元数据的 `max_tokens` 或 Gemini 的 `outputTokenLimit`；能力解析主要接受布尔值，不能完整读取嵌套的 `{ supported: true }`。现有目录传输支持 OpenAI／Responses／Anthropic 路径，不因字段可解析而宣称已实现原生 Gemini 推理。另将 `max_input_tokens` 与总窗口归入同一 contextLength，输入／总窗口语义需分开。
+- [thinking-effort.mjs](../src/kernel/provider/thinking-effort.mjs) 按声明输出上限或窗口的 1/8 推算思考预算；[router.mjs](../src/kernel/provider/router.mjs) 的这部分取值与实际请求 `maxTokens` 分开。例如目录输出上限较大、请求仍为 16K 时，存在思考额度不匹配的路径，需由 A03 同源解析后检查。
+- 普通请求的 Compact 默认按完整输入加输出预留达到窗口 85%，或历史达到 200 条触发，另有原生压缩分支；[compaction.mjs](../src/kernel/session/compaction.mjs) 的消息数条件仍是独立触发。工具结果[预算](../src/kernel/tool/output-budget.mjs)默认按窗口 8% 估算字符量，再限制于 16,000—200,000 字符。
+- Ultra 还有独立的阶段摘要预算：[longagent-hybrid.mjs](../src/kernel/session/longagent-hybrid.mjs) 在 `priorContext.length > 8000` 默认条件下调用压缩；[辅助函数](../src/kernel/session/longagent-hybrid-helpers.mjs)先截取 `limit*2` 字符，再要求约 `limit*0.6` 字符摘要，结果限制到 `limit`。预览、蓝图、调试交接另有固定切片。这不是模型 token 窗口，需要列入 S03，不能只修改主会话预留。
+
+官方 API 资料核对：Anthropic [模型详情](https://platform.claude.com/docs/en/api/typescript/models/retrieve)提供 `max_input_tokens`、`max_tokens` 和嵌套能力；Gemini [Models API](https://ai.google.dev/api/models)提供输入／输出限额、支持方法与采样默认值等；OpenAI [模型详情](https://developers.openai.com/api/reference/cli/resources/models/methods/retrieve)主要返回身份和归属等基础元数据。因此自动配置可以尽量完整，但不能承诺每个兼容 `/models` 都会提供全部参数；未知、规格回退、用户覆盖与实际端点证据需要分别表达。
+
+### 当前强制或默认编排
+
+| 范围 | 现状与触发条件 | 下一轮方向 |
+| --- | --- | --- |
+| 普通 Agent 完成判断 | `verify_completion=false`；普通回答不会因缺少测试自动追加修复。显式启用或当前宿主严格任务仍要求验证，待处理子任务／未知操作另有生命周期约束 | 保持普通任务自然结束；不把运行结束或 ToDo 完成冒充检查通过 |
+| 普通主／子代理步数 | [defaults.mjs](../src/config/defaults.mjs) `agent.max_steps=8`；[loop.mjs](../src/kernel/session/loop.mjs) 再与角色 maxTurns 取较小值，距上限两步注入收尾提示。实际部署可覆盖，8 是仓库默认而非已读取的本机会话值 | 评估主／子代理分开的合理默认或软提示；显式硬上限不能由模型自行提升 |
+| 截断续写 | 普通循环中需有半成品，已知输出预算时核对 usage；单段最多 8 次、单回合累计最多 24 次，另受步数限制；空响应不自动续跑 | 先修输出／思考预算，再减少因人为截断导致的续写及重复控制提示 |
+| 无进展检测 | [progress-guard.mjs](../src/kernel/session/progress-guard.mjs) 对相同调用及结果组成的序列检测，重复 3 次提醒、6 次停止，支持 1—3 步模式 | 保留防循环，区分有依据的等待／轮询；避免为了防循环反复加入长提示 |
+| 子代理分派与继承 | [task-scheduler.mjs](../src/kernel/orchestration/task-scheduler.mjs)支持 fresh_agent／fork_context；后者仅只读。模型优先级为既有子会话合同→角色覆盖→models.subagent→当前会话；普通递归深度上限 8。结构化 brief 需要范围和交付物，直接 prompt 并非必须填写所有字段；续作保留原合同 | 精简模型可见参数，按任务提供必要上下文；权限、归属、停止、预算和续作副作用保留 |
+| Ultra 阶段 | 默认路径包括澄清、探索、蓝图、可选 Git、脚手架、阶段执行、调试、完成检查及最终门禁。已有任务意图区分，文档／研究／运维会调整脚手架及 build/test 要求，并非所有任务都执行全部步骤 | 继续缩减固定路径，让模型决定何时需要计划／拆分／审阅，保留持久状态与恢复 |
+| Ultra 审阅与检查 | 默认启用蓝图检查、阶段间增量门禁、存在文件改动时的交叉审阅、完成检查；最终 build/test/review/health/budget 门禁受配置与任务条件影响 | 复核重复检查、工程提示与机械返回循环；按具体变更和用户目标检查，不无条件测试所有工作 |
+| Ultra 重试与资源 | 默认并发 3、阶段任务超时 10 分钟、任务重试 2、阶段恢复 3、累计阶段尝试 12、调试最多 20 轮、最终门禁最多 5 次、重规划最多 2 次；goal 模式默认 2 小时时限、连续 2 轮无强进展视为阻塞，轮数／总迭代数默认不设正上限 | 审核多层循环叠加及停止原因，减少固定流程；资源上限和显式授权继续由宿主约束 |
+
+上述数字来自默认配置与实际读取点，不保证每条路径都会消耗完整次数；取消、预算、时限、父级策略或早期完成均可提前终止。Ultra 入口与步骤依据 [longagent-hybrid.mjs](../src/kernel/session/longagent-hybrid.mjs)、[goal-model.mjs](../src/kernel/session/goal-model.mjs) 和 [child-policy.mjs](../src/kernel/orchestration/child-policy.mjs)。
+
+可以简化的是任务方法：固定工程蓝图、预先创建脚手架、多层审阅、重复门禁和催促提示。继续保留的是宿主事实与授权：账号／项目／会话隔离，工具和读写范围，显式审批，父子取消及执行状态，硬预算／截止，未知副作用核查，压缩归档与工具配对，以及用户或宿主明确要求的验收合同。模型能力更强不改变这些授权边界。

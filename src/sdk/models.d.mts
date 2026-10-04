@@ -13,8 +13,9 @@ export interface ProviderProfile {
   schemaVersion: 1; provider: string; model: string; protocol: string; endpointOrigin: string; scope: string;
   capabilities: Record<string, { value: boolean | null; source: ModelEvidenceSource }>;
   continuity: { kind: 'responses-native-output' | 'anthropic-completed-compaction-response' | 'none' };
-  context: { limit: number; source: 'configuration' | 'inference'; estimated: boolean; catalogLimit: number | null; note: string };
-  output: { reserved: number; declaredLimit: number | null; source: 'configuration' | 'bounded-default' };
+  context: { limit: number; inputBudget: number; kind: 'input' | 'shared'; source: 'configuration' | 'catalog' | 'fallback'; estimated: boolean; catalogLimit: number | null; note: string };
+  output: { reserved: number; declaredLimit: number | null; source: 'configuration' | 'catalog' | 'estimated' };
+  thinking: { kind: string; source: string; selected: string; options: {value: string; label: string; description: string; available: boolean}[]; defaultLevel: string | null };
   catalog: { available: boolean; fetchedAt: number | null };
   compatibility: { endpointTested: false; note: string };
 }

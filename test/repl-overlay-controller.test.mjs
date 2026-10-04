@@ -125,8 +125,8 @@ test("confirming a model just sets the two fields — there is no command to reu
   assert.equal(state.providerType, "openai")
   assert.equal(state.model, "gpt")
   assert.ok(!calls.some((c) => c.startsWith("submit(")), "没有既有命令路径可复用时就直接改")
-  // "gpt" 的 thinking 能力判不出（null）→ 档位选择器就是那份缺失信息的补充入口
-  assert.equal(activeUserOverlay(ui), "thinkingPicker")
+  // Unknown capabilities use server defaults instead of inventing effort levels.
+  assert.equal(activeUserOverlay(ui), null)
 })
 
 // --- 思考档位选择器（0.8.0）---
@@ -146,7 +146,7 @@ test("the tier picker opens on the provider's current tier, not always high", ()
   controller.confirmModelPicker()
   assert.equal(activeUserOverlay(ui), "thinkingPicker")
   const { items, selected } = ui.thinkingPicker
-  assert.deepEqual(items.map((i) => i.id), ["off", "low", "medium", "high", "max"])
+  assert.deepEqual(items.map((i) => i.id), ["auto", "low", "medium", "high"])
   assert.equal(items[selected].id, "low", "当前档从配置读（reasoning_effort 兼容口径）")
   assert.equal(items.find((i) => i.current).id, "low")
 })
@@ -156,13 +156,13 @@ test("confirming a tier takes effect in memory immediately and persists", async 
   ctx.configState.config.provider.openai = {}
   controller.openModelPicker([{ provider: "openai", model: "o3", label: "openai/o3", thinking: true }])
   controller.confirmModelPicker()
-  ui.thinkingPicker.selected = ui.thinkingPicker.items.findIndex((i) => i.id === "max")
+  ui.thinkingPicker.selected = ui.thinkingPicker.items.findIndex((i) => i.id === "high")
   controller.confirmThinkingPicker()
   assert.equal(activeUserOverlay(ui), null)
   // 内存立即生效 —— router 每次请求都读 providerCfg.thinking_effort
-  assert.equal(ctx.configState.config.provider.openai.thinking_effort, "max")
+  assert.equal(ctx.configState.config.provider.openai.model_options.o3.thinking_effort, "high")
   await Promise.resolve()
-  assert.deepEqual(persisted, [{ patch: { provider: { openai: { thinking_effort: "max" } } }, setDefault: false }],
+  assert.deepEqual(persisted, [{ patch: { provider: { openai: { model_options: { o3: { thinking_effort: "high" } } } } }, setDefault: false }],
     "落盘走注入的写回，且绝不动 provider.default")
 })
 

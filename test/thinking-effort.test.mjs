@@ -19,7 +19,7 @@ import { applyDiscoveredCapabilities } from "../src/kernel/provider/model-catalo
 
 describe("档位归一", () => {
   it("五个档位 + off", () => {
-    assert.deepEqual([...THINKING_TIERS], ["off", "low", "medium", "high", "max"])
+    assert.deepEqual([...THINKING_TIERS], ["auto", "off", "low", "medium", "high", "xhigh", "max"])
   })
 
   it("大小写与空白容错", () => {

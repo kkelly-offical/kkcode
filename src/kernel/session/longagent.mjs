@@ -1,4 +1,7 @@
 import { runHybridLongAgent } from "./longagent-hybrid.mjs"
+import { runAdaptiveLongAgent } from './longagent-adaptive.mjs'
+import { currentDurableRun } from '../orchestration/run-runtime.mjs'
+import { LongAgentManager } from '../orchestration/longagent-manager.mjs'
 
 /**
  * Ultra 模式入口。
@@ -11,5 +14,10 @@ import { runHybridLongAgent } from "./longagent-hybrid.mjs"
  * 随之移除的还有 `/longagent 4stage|hybrid` 子命令与 `state.longagentImpl`。
  */
 export async function runLongAgent(args) {
-  return runHybridLongAgent(args)
+  const config = args.configState?.config
+  const saved = await LongAgentManager.get(args.sessionId)
+  const legacyResume = saved?.stagePlan && saved.orchestration !== 'adaptive' && !['completed','fatal'].includes(saved.status)
+  const requiredGates = Object.values(config?.agent?.longagent?.usability_gates || {}).some(gate => gate?.required === true)
+  if (args.acceptance?.required || currentDurableRun() || requiredGates || config?.agent?.longagent?.orchestration === 'staged' || legacyResume) return runHybridLongAgent(args)
+  return runAdaptiveLongAgent(args)
 }

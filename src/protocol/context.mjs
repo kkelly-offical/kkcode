@@ -5,6 +5,8 @@ export function publicContext(value) {
   for (const key of ['outputReserved', 'inputBudget', 'requiredTokens', 'updatedAt']) if (Number.isFinite(value[key]) && value[key] >= 0) result[key] = Math.ceil(value[key])
   result.source = ['count-api', 'provider-usage', 'strict-upper-bound'].includes(value.source) ? value.source : 'estimated'
   result.estimated = result.source === 'estimated' || result.source === 'strict-upper-bound'
+  if (['input','shared'].includes(value.windowKind)) result.windowKind = value.windowKind
+  for (const key of ['contextSource','outputSource']) if (['configuration','catalog','fallback','estimated'].includes(value[key])) result[key] = value[key]
   result.components = {}
   for (const key of ['system', 'tools', 'messages']) if (Number.isFinite(value.components?.[key]) && value.components[key] >= 0) result.components[key] = Math.ceil(value.components[key])
   return result

@@ -14,8 +14,8 @@ import {
   assertProviderOutboundAllowed
 } from "./security.mjs"
 import { resolveProviderRouteSettings } from './route-settings.mjs'
-import { resolveThinkingParams } from "./thinking-effort.mjs"
-import { resolveModelCapabilities } from "./model-catalog.mjs"
+import { runtimeParameters } from "./runtime-parameters.mjs"
+import { resolveModelCapabilities, readCachedModelCatalog } from "./model-catalog.mjs"
 import { enforceModelInputCapabilities } from "./model-capabilities.mjs"
 import { noteDeprecation } from "../core/deprecations.mjs"
 import { trimTrailingSlashes } from "./url-path.mjs"
@@ -232,7 +232,7 @@ export function createProviderRegistry() {
 
   async function guardModelInput(configState, settings, messages, tools, context = {}) {
     if (!['responses', 'anthropic'].includes(settings.protocol)) messages = stripProviderState(messages)
-    const { capabilities } = await resolveModelCapabilities(configState, settings.configKey, settings.model)
+    const { capabilities } = await resolveModelCapabilities(configState, settings.configKey, settings.model, {baseUrl:settings.baseUrl,apiKeyEnv:settings.apiKeyEnv})
     const guarded = enforceModelInputCapabilities({
       messages,
       tools,
@@ -300,6 +300,7 @@ export function createProviderRegistry() {
     const providerCfg = configState.config.provider[settings.configKey]
       || configState.config.provider[settings.providerType]
       || {}
+    await readCachedModelCatalog(configState, settings.configKey, { baseUrl: settings.baseUrl, apiKeyEnv: settings.apiKeyEnv })
     return { settings, apiKey, providerCfg }
   }
 
@@ -380,6 +381,7 @@ export function createProviderRegistry() {
     const { settings, apiKey, providerCfg } = await prepareProviderCall(configState, { providerType, model, baseUrl, apiKeyEnv })
     const guarded = await guardModelInput(configState, settings, messages, tools, { sessionId, turnId })
     const capabilities = guarded.capabilities
+    const runtime = runtimeParameters(configState, settings, { maxTokens, temperature })
     const requestContext = createRequestContext({ traceId, requestId, parentEventId })
     let responseStatus = null
     let responseRequestId = null
@@ -403,7 +405,8 @@ export function createProviderRegistry() {
       ...(settings.protocol === 'anthropic' && providerCfg.native_compaction === true ? { compaction: { trigger: providerCfg.compaction_trigger ?? 150000 } } : {}),
       tools: guarded.tools,
       timeoutMs: Number(providerCfg.timeout_ms || 120000),
-      maxTokens: Number(maxTokens || providerCfg.max_tokens || 16384),
+      ...runtime.params,
+      maxTokens: runtime.params.maxTokens,
       retry: {
         retries: hasRequestBudget() ? 0 : Number(providerCfg.retry_attempts ?? 5),
         baseDelayMs: Number(providerCfg.retry_base_delay_ms || 800),
@@ -414,20 +417,7 @@ export function createProviderRegistry() {
       // 对小模型可能超过它的输出上限。显式写的 thinking/reasoning_effort 仍然优先。
       // 能力确知「不支持思考」时按 off 处理：给它发 reasoning_effort/thinking
       // 只会换来 400。用户显式写的 thinking 配置仍然优先于探测结论。
-      ...resolveThinkingParams({
-        // OpenAI-compatible servers do not share one effort vocabulary (for
-        // example the local Qwen template rejects "high"). With no explicit
-        // preference, let the server choose its default instead of injecting it.
-        tier: providerCfg.thinking_effort || providerCfg.reasoning_effort ||
-          (settings.protocol === 'anthropic' && capabilities.reasoning !== false ? 'high' : 'off'),
-        protocol: settings.protocol,
-        maxOutputTokens: Number(providerCfg.max_output_tokens) || Number(providerCfg.max_tokens) || 0,
-        contextLimit: Number(providerCfg.context_limit) || 0
-      }),
-      ...(providerCfg.thinking ? { thinking: providerCfg.thinking } : {}),
-      ...(providerCfg.reasoning_effort ? { reasoningEffort: providerCfg.reasoning_effort } : {}),
       ...(settings.protocol === 'responses' ? { reasoningSummary: providerCfg.reasoning_summary || (capabilities.reasoning === true ? 'auto' : null) } : {}),
-      ...(Number.isFinite(temperature) ? { temperature } : {}),
       ...requestContext,
       onResponse(response) {
         responseStatus = Number(response?.status || 0) || null
@@ -460,7 +450,7 @@ export function createProviderRegistry() {
       throwIfProviderAborted(input.signal)
       const inputTokenBound = await requestInputBound(input, { configState, providerType, model, baseUrl, apiKeyEnv, sessionId, turnId })
       budget = await reserveRequestBudget(configState, { provider: settings.configKey, model: settings.model,
-        contextLimit: Number(providerCfg.context_limit), maxTokens: input.maxTokens, inputTokenBound, compaction: Boolean(input.compaction), requestId: requestContext.requestId, baseUrl: settings.baseUrl, credential: apiKey, protocol: settings.protocol })
+        contextLimit: runtime.limits.contextSource === 'fallback' ? Number(providerCfg.context_limit) : runtime.limits.limit, maxTokens: input.maxTokens, inputTokenBound, compaction: Boolean(input.compaction), requestId: requestContext.requestId, baseUrl: settings.baseUrl, credential: apiKey, protocol: settings.protocol })
       if (input.signal?.aborted) { await budget?.cancelBeforeDispatch(); throwIfProviderAborted(input.signal) }
       await verifyLocalDispatch(input, budget)
       const result = await provider.request(input)
@@ -513,6 +503,7 @@ export function createProviderRegistry() {
     const { settings, apiKey, providerCfg } = await prepareProviderCall(configState, { providerType, model, baseUrl, apiKeyEnv })
     const guarded = await guardModelInput(configState, settings, messages, tools, { sessionId, turnId })
     const capabilities = guarded.capabilities
+    const runtime = runtimeParameters(configState, settings, { maxTokens, temperature })
 
     // providerCfg.stream === false 是显式配置；capabilities.streaming === false
     // 是探测结论（目录枚举过能力且没有流式）。两者都走非流式通道。
@@ -554,7 +545,8 @@ export function createProviderRegistry() {
       tools: guarded.tools,
       timeoutMs: Number(providerCfg.timeout_ms || 120000),
       streamIdleTimeoutMs: Number(providerCfg.stream_idle_timeout_ms || 120000),
-      maxTokens: Number(maxTokens || providerCfg.max_tokens || 16384),
+      ...runtime.params,
+      maxTokens: runtime.params.maxTokens,
       retry: {
         retries: hasRequestBudget() ? 0 : Number(providerCfg.retry_attempts ?? 5),
         baseDelayMs: Number(providerCfg.retry_base_delay_ms || 800),
@@ -562,15 +554,6 @@ export function createProviderRegistry() {
       },
       // 思考档位的能力门：与 requestProvider 同一条规则（确知不支持 → off，
       // 用户显式配置优先）。
-      ...resolveThinkingParams({
-        tier: providerCfg.thinking_effort || providerCfg.reasoning_effort ||
-          (settings.protocol === 'anthropic' && capabilities.reasoning !== false ? 'high' : 'off'),
-        protocol: settings.protocol,
-        maxOutputTokens: Number(providerCfg.max_output_tokens) || Number(providerCfg.max_tokens) || 0,
-        contextLimit: Number(providerCfg.context_limit) || 0
-      }),
-      ...(providerCfg.thinking ? { thinking: providerCfg.thinking } : {}),
-      ...(providerCfg.reasoning_effort ? { reasoningEffort: providerCfg.reasoning_effort } : {}),
       ...(settings.protocol === 'responses' ? { reasoningSummary: providerCfg.reasoning_summary || (capabilities.reasoning === true ? 'auto' : null) } : {}),
       ...requestContext,
       onResponse(response) {
@@ -608,7 +591,7 @@ export function createProviderRegistry() {
       throwIfProviderAborted(input.signal)
       const inputTokenBound = await requestInputBound(input, { configState, providerType, model, baseUrl, apiKeyEnv, sessionId, turnId })
       budget = await reserveRequestBudget(configState, { provider: settings.configKey, model: settings.model,
-        contextLimit: Number(providerCfg.context_limit), maxTokens: input.maxTokens, inputTokenBound, compaction: Boolean(input.compaction), requestId: requestContext.requestId, baseUrl: settings.baseUrl, credential: apiKey, protocol: settings.protocol })
+        contextLimit: runtime.limits.contextSource === 'fallback' ? Number(providerCfg.context_limit) : runtime.limits.limit, maxTokens: input.maxTokens, inputTokenBound, compaction: Boolean(input.compaction), requestId: requestContext.requestId, baseUrl: settings.baseUrl, credential: apiKey, protocol: settings.protocol })
       if (input.signal?.aborted) { await budget?.cancelBeforeDispatch(); throwIfProviderAborted(input.signal) }
       await verifyLocalDispatch(input, budget)
       for await (const chunk of provider.requestStream(input)) {

@@ -6,6 +6,11 @@ export function createProgressGuard() {
   const history = [], warned = new Set()
   return {
     observe(results) {
+      // Waiting on a known running child is not evidence of a failed action.
+      // Only the host wait tool's structured receipt qualifies, never text.
+      const active = results.filter(({call, result}) => !(call.name === 'agent_wait' && result.metadata?.childWaiting === true))
+      if (results.length && !active.length) return { state: 'waiting' }
+      results = active
       const signature = createHash('sha256').update(JSON.stringify(results.map(({ call, result }) => [call.name, call.args, result.status, result.output]))).digest('hex')
       history.push(signature); if (history.length > 18) history.shift()
       for (let period = 1; period <= 3; period++) {
