@@ -2,7 +2,7 @@
 
 [版本状态](versions.md) · [实施与检查](implementation-1.0.11.md)
 
-发行目标：**1.0.11 稳定正式版 / Android10018**，沿用原签名证书。目前仍在完成发布检查，未公开上线；Preview及旧tag不变。
+已发布 **1.0.11 稳定正式版 / Android10018**（npm latest），发行提交`a60d8b0`，沿用原签名证书。Preview及旧tag不变；[下载正式APK](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.11/kkcode-android-1.0.11.apk)。
 
 - 后台子代理完成后自动向主代理投递结果。主代理继续独立工作；没有独立工作时由宿主等待，结果到达再继续，不反复消耗模型请求调用`agent_wait`。
 - Web／Android子代理卡片展示任务说明、当前活动、实际模型与渠道、思考设置、上下文及输出预留。前台自动同步，完成事件即时更新，旧事件不会回退状态；不暴露密钥或完整私密委派正文。

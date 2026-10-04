@@ -1,13 +1,13 @@
 # KK Code 文档
 
-当前文档适用公开稳定版 **1.0.10 / Android10017**，见[版本与升级](versions.md)。
-当前稳定版已发布[1.0.10模型参数与编排优化正式版](release-1.0.10.md)，见[逐项实施记录](implementation-1.0.10.md)；上一稳定版见[1.0.9记录](release-1.0.9.md)。
+当前文档适用公开稳定版 **1.0.11 / Android10018**，见[版本与升级](versions.md)。
+当前稳定版已发布[1.0.11子代理协作与交互增强正式版](release-1.0.11.md)，见[逐项实施记录](implementation-1.0.11.md)；上一稳定版见[1.0.10记录](release-1.0.10.md)。
 已发布渠道、Android版本码与升级入口只在[版本与升级](versions.md)集中维护。
 历史材料保留原始版本和证据，不作为当前使用说明。
 
-本轮 **1.0.10** 已完成并发布：[开发清单](optimization-next.md) · [实施记录](implementation-1.0.10.md)。
+本轮 **1.0.11** 已完成并发布：[五项开发清单与检查](implementation-1.0.11.md)。
 
-下一正式版目标：[1.0.11发行范围](release-1.0.11.md) · [1.0.11实施清单](implementation-1.0.11.md)；公开状态仍以版本页为准。
+[1.0.11发行范围](release-1.0.11.md) · 公开产物与部署状态以版本页为准。
 
 ## 开始使用
 
@@ -50,7 +50,7 @@ App、设备CLI和网关分别升级。公共网关镜像发布暂缓，继续�
 
 - [分域SDK总览](sdk-guide.md) · [headless JSONL契约](headless-jsonl-contract.md)
 - [配置字段参考](config.example.yaml) · [贡献与验证](contributing.md)
-- [路线图与Issues](ROADMAP.md) · [1.0.10迭代范围与边界](release-1.0.10.md)
+- [路线图与Issues](ROADMAP.md) · [1.0.11迭代范围与边界](release-1.0.11.md)
 
 ## 历史与发行证据
 
