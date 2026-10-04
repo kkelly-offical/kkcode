@@ -34,7 +34,8 @@ export function thinkingControl({ model = '', protocol = 'openai', baseUrl = '',
   const useSpecification = Boolean(specification && !declaredControl)
   if (useSpecification) declared = { ...declared, ...specification, defaultLevel: declared.defaultLevel ?? specification.defaultLevel }
   const preference = settings.model_options?.[model]?.thinking_effort ?? settings.thinking_effort ?? settings.reasoning_effort ?? 'auto'
-  const selected = preference === 'none' ? 'off' : useSpecification ? specification.aliases?.[preference] || preference : preference
+  const alias = useSpecification && Object.hasOwn(specification.aliases || {}, preference) ? specification.aliases[preference] : preference
+  const selected = preference === 'none' ? 'off' : alias
   const nativeLevels = { ...declared.nativeLevels }
   // Collapse documented aliases in the UI while retaining an explicitly
   // saved valid wire value. Selecting a new option stores its canonical value.

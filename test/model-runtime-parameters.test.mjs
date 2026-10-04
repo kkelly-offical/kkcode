@@ -159,6 +159,9 @@ test('Kimi Code specification fills missing controls only on its official routes
     assert.deepEqual(alias.options.map(x=>x.value),['auto','off','low','high','max'])
     assert.equal(mapThinkingRequest({control:alias,protocol:'openai',maxTokens:4096}).reasoningEffort,saved)
   }
+  const invalid=thinkingControl({...input,settings:{thinking_effort:'constructor'}})
+  assert.equal(invalid.selected,'constructor')
+  assert.throws(()=>mapThinkingRequest({control:invalid,protocol:'openai',maxTokens:4096}),/不支持/)
   for(const baseUrl of ['https://api.kimi.com.evil.test/coding/v1','https://proxy.example.test/coding/v1','https://api.kimi.com/other','http://api.kimi.com/coding/v1','https://api.kimi.com:8443/coding/v1']) {
     assert.equal(thinkingControl({...input,baseUrl}).kind,'unknown')
   }
