@@ -1,3 +1,4 @@
+import { resolveModelLimits } from '../provider/model-limits.mjs'
 import { currentRuntime, runWithRuntime, runtimeCwd } from "../core/runtime-context.mjs"
 import { createHash } from 'node:crypto'
 import { reviewSensitiveAction } from '../permission/auto-review.mjs'
@@ -6,13 +7,14 @@ import { EventBus } from "../core/events.mjs"
 import { EVENT_TYPES } from "../core/constants.mjs"
 import { ProviderError } from '../core/errors.mjs'
 import { requestProviderStream, countTokensProvider } from "../provider/router.mjs"
+import { prepareModelMetadata, readCachedModelCatalog } from '../provider/model-catalog.mjs'
 import { attachResponsesState } from '../provider/responses-state.mjs'
 import { attachAnthropicState } from '../provider/anthropic-state.mjs'
 import { ToolRegistry } from "../tool/registry.mjs"
 import { executeTool } from "../tool/executor.mjs"
 import { markToolProgramCall } from '../tool/program.mjs'
 import { currentDurableRun } from '../orchestration/run-runtime.mjs'
-import { assertRequestBudgetWithin } from '../../usage/request-budget.mjs'
+import { assertRequestBudgetWithin, hasRequestBudget } from '../../usage/request-budget.mjs'
 import { archiveToolText, artifactArchiveAttempted, createConversationArtifactAccess, trustedArtifactRef, trustedArtifactRefs, trustedArtifactRecall } from '../tool/artifacts.mjs'
 import { markBrowserRecipeCall } from '../tool/browser-recipe.mjs'
 import { effectiveDataPolicy, intersectDataPolicies } from '../permission/data-policy.mjs'
@@ -334,6 +336,9 @@ async function processTurnLoopInRuntime({
 }) {
   assertExecutableConfiguration(configState)
   signal?.throwIfAborted()
+  await (currentDurableRun() || hasRequestBudget()
+    ? readCachedModelCatalog(configState, providerType, {baseUrl,apiKeyEnv})
+    : prepareModelMetadata(configState, providerType, { baseUrl, apiKeyEnv, signal }))
   depth = Math.max(depth, Number(runSpec?.toolContext?.childDepth) || 0)
   const priorSession = await getSession(sessionId)
   const storedChild = priorSession?.session
@@ -364,7 +369,7 @@ async function processTurnLoopInRuntime({
   const artifactAccess = currentDurableRun()?.artifactAccess || createConversationArtifactAccess({ sessionId, cwd, turnId })
   const skillToolPolicy = createSkillToolPolicy(toolContext.skillAllowedTools, toolContext.skillToolGroups)
   const activatedTools = new Set()
-  const toolCallingAvailable = (await resolveModelCapabilities(configState, providerType, model)).capabilities.tools !== false
+  const toolCallingAvailable = (await resolveModelCapabilities(configState, providerType, model, {baseUrl,apiKeyEnv})).capabilities.tools !== false
   const activateTools = names => {
     for (const name of names) { activatedTools.delete(name); activatedTools.add(name) }
     while (activatedTools.size > 64) activatedTools.delete(activatedTools.values().next().value)
@@ -373,7 +378,7 @@ async function processTurnLoopInRuntime({
     ? ToolRegistry.listForModel({ ...options, activated: activatedTools, allowedTools: effectiveAgent?.tools || null })
     : ToolRegistry.list(options)).then(tools => tools.filter(tool => skillToolPolicy.allows(tool.name, {}, true)))
   // 工具输出预算按当前模型的上下文算一次，本轮复用
-  const toolResultLimit = toolOutputBudget({ model, providerType, config: configState.config }).chars
+  const toolResultLimit = toolOutputBudget({ model, providerType, config: configState.config, baseUrl, apiKeyEnv }).chars
     || TOOL_RESULT_FALLBACK_LIMIT
 
   // plan 档的执行层闸门。此前 _planMode 只有模型自愿调 enter_plan 才会被设，
@@ -392,7 +397,8 @@ async function processTurnLoopInRuntime({
   const effectiveAgent = Array.isArray(durableToolNames)
     ? { ...selectedAgent, tools: durableToolNames.filter(name => !selectedAgent?.tools || selectedAgent.tools.includes(name)) }
     : selectedAgent
-  const maxSteps = (effectiveAgent?.maxTurns > 0) ? Math.min(configMaxSteps, effectiveAgent.maxTurns) : configMaxSteps
+  const roleSteps = effectiveAgent?.maxTurns > 0 ? effectiveAgent.maxTurns : depth > 0 ? Number(configState.config.agent.subagent_max_steps || 64) : configMaxSteps
+  const maxSteps = Math.min(configMaxSteps, roleSteps)
   // Ordinary conversations end when the answer ends. Only an explicit host
   // contract/opt-in may turn observations into a mandatory acceptance gate.
   const verifyCompletion = Boolean(currentDurableRun()) || configState.config.agent?.verify_completion === true
@@ -768,6 +774,8 @@ async function processTurnLoopInRuntime({
         thresholdRatio,
         configState,
         providerType,
+        baseUrl, apiKeyEnv,
+        requestBudget: lastContextMeter,
         realTokenCount: lastContextMeter.requiredTokens
       })) {
           await EventBus.emit({ type: EVENT_TYPES.SESSION_COMPACTING, sessionId, turnId, payload: {} })
@@ -823,8 +831,8 @@ async function processTurnLoopInRuntime({
       lastContextMeter = contextDisplay(requestMeter, measuredContext)
       await updateSession(sessionId, { context: lastContextMeter, promptReport: promptReport(systemPrompt, tools, requestMeter, { turnId, step }) })
       await EventBus.emit({ type: 'session.context.updated', sessionId, turnId, payload: { context: lastContextMeter } })
-      if (requestMeter.requiredTokens > requestMeter.limit) {
-        throw new Error(`Context budget exceeded after compaction: ${requestMeter.tokens} input + ${requestMeter.outputReserved} reserved output > ${requestMeter.limit}. Reduce injected instructions/tools, lower max_tokens, or choose a larger-context model.`)
+      if (requestMeter.requiredTokens > requestMeter.limit || requestMeter.tokens > requestMeter.inputBudget) {
+        throw new Error(`Context budget exceeded after compaction: ${requestMeter.tokens} input exceeds ${requestMeter.inputBudget} available input (window ${requestMeter.limit}, reserved output ${requestMeter.outputReserved}, ${requestMeter.windowKind} limit). Reduce injected instructions/tools, lower max_tokens, or choose a larger-context model.`)
       }
       const limits = runSpec?.limits || null
       if (limits?.deadlineAt && Date.now() > Number(limits.deadlineAt)) {
@@ -1014,7 +1022,7 @@ async function processTurnLoopInRuntime({
       const validToolCalls = (response.toolCalls || []).filter(tc => !tc.args?.__parse_error)
       const hasPartialContent = Boolean(String(response.text || '').trim()) || validToolCalls.length > 0 || Boolean(String(response.reasoning || '').trim())
       const requestedOutputBudget = lastContextMeter.outputReserved
-      const knownOutputCap = Number(configState.config.provider?.[providerType]?.max_output_tokens) || 0
+      const knownOutputCap = resolveModelLimits({model,configState,providerType,baseUrl,apiKeyEnv}).declaredOutput || Number(configState.config.provider?.[providerType]?.max_output_tokens) || 0
       const effectiveOutputBudget = knownOutputCap > 0 ? Math.min(requestedOutputBudget, knownOutputCap) : 0
       const reportedOutput = Number((response.contextUsage || response.usage)?.output) || 0
       const truncationCredible = hasPartialContent && (
@@ -1721,7 +1729,7 @@ async function processTurnLoopInRuntime({
           outcomeUnknown: entry.result.metadata.outcomeUnknown === true }) } }
       }))
       if (progress.state === 'warn') {
-        await appendMessage(sessionId, 'user', '[NO PROGRESS] The same tool sequence produced identical results three times. Inspect the evidence and change strategy. Do not repeat side effects or claim completion; ask for missing information if needed.', { mode, model, providerType, step, turnId, synthetic: true })
+        await appendMessage(sessionId, 'user', '[NO PROGRESS] The same tool sequence produced identical results three times. Inspect the evidence and change strategy. Do not repeat side effects or claim completion; ask for missing information if needed.', { mode, model, providerType, step, turnId, synthetic: true, contextKind: 'control' })
       } else if (progress.state === 'stop') {
         finalReply = language === 'zh' ? '已暂停：相同工具序列连续 6 次没有产生新结果。已有文件和操作结果保留，请检查阻塞原因后继续；这不代表任务已完成。' : 'Paused: the same tool sequence produced no new evidence six times. Existing files and results are preserved. Inspect the blocker before continuing; the task is not claimed complete.'
         await appendMessage(sessionId, 'assistant', finalReply, { mode, model, providerType, step, turnId })

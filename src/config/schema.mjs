@@ -148,18 +148,26 @@ export function validateConfig(config) {
         if (p.timeout_ms !== undefined) checkInt(errors, `provider.${key}.timeout_ms`, p.timeout_ms, 1000)
         if (p.stream_idle_timeout_ms !== undefined) checkInt(errors, `provider.${key}.stream_idle_timeout_ms`, p.stream_idle_timeout_ms, 1000)
         if (p.max_tokens !== undefined) checkInt(errors, `provider.${key}.max_tokens`, p.max_tokens, 1)
+        if (p.output_parameter !== undefined && !['max_tokens','max_completion_tokens'].includes(p.output_parameter)) err(errors, `provider.${key}.output_parameter`, 'must be max_tokens|max_completion_tokens')
         if (p.retry_attempts !== undefined) checkInt(errors, `provider.${key}.retry_attempts`, p.retry_attempts, 0)
         if (p.native_compaction !== undefined && typeof p.native_compaction !== 'boolean') err(errors, `provider.${key}.native_compaction`, 'must be boolean')
         if (p.compaction_trigger !== undefined) checkInt(errors, `provider.${key}.compaction_trigger`, p.compaction_trigger, 50000)
         if (p.retry_base_delay_ms !== undefined) checkInt(errors, `provider.${key}.retry_base_delay_ms`, p.retry_base_delay_ms, 100)
         if (p.stream !== undefined && typeof p.stream !== "boolean") err(errors, `provider.${key}.stream`, "must be boolean")
-        if (p.reasoning_effort !== undefined && !["low", "medium", "high", "max", "none"].includes(p.reasoning_effort)) {
-          err(errors, `provider.${key}.reasoning_effort`, "must be low|medium|high|max|none")
+        if (p.reasoning_effort !== undefined && !["low", "medium", "high", "xhigh", "max", "none", "minimal"].includes(p.reasoning_effort)) {
+          err(errors, `provider.${key}.reasoning_effort`, "must be low|medium|high|xhigh|max|none|minimal")
         }
         // 0.6.2：思考强度的推荐写法。档位表达意图，具体预算按模型能力推算，
         // 换模型不用改数字。
         if (p.thinking_effort !== undefined && !THINKING_TIERS.includes(p.thinking_effort)) {
           err(errors, `provider.${key}.thinking_effort`, `must be ${THINKING_TIERS.join("|")}`)
+        }
+        if (p.model_options !== undefined) {
+          if (!isObj(p.model_options)) err(errors, `provider.${key}.model_options`, 'must be object')
+          else for (const [id, options] of Object.entries(p.model_options)) {
+            if (!id || ['__proto__','constructor','prototype'].includes(id) || !isObj(options) || Object.keys(options).some(k => k !== 'thinking_effort') ||
+              typeof options.thinking_effort !== 'string' || !/^[a-z][a-z0-9_-]{0,39}$/.test(options.thinking_effort)) err(errors, `provider.${key}.model_options`, 'requires model IDs with a valid thinking_effort')
+          }
         }
         if (p.max_output_tokens !== undefined && p.max_output_tokens !== null) {
           checkInt(errors, `provider.${key}.max_output_tokens`, p.max_output_tokens, 256)
@@ -229,6 +237,8 @@ export function validateConfig(config) {
         err(errors, "agent.default_mode", `must be one of ${VALID_MODES.join(", ")}`)
       }
       if (config.agent.max_steps !== undefined) checkInt(errors, "agent.max_steps", config.agent.max_steps, 1)
+      if (config.agent.subagent_max_steps !== undefined) checkInt(errors, 'agent.subagent_max_steps', config.agent.subagent_max_steps, 1)
+      if (config.agent.longagent?.orchestration !== undefined && !['adaptive','staged'].includes(config.agent.longagent.orchestration)) err(errors, 'agent.longagent.orchestration', 'must be adaptive|staged')
       if (config.agent.verify_completion !== undefined && typeof config.agent.verify_completion !== 'boolean') err(errors, 'agent.verify_completion', 'must be boolean')
       if (config.agent.longagent !== undefined) {
         if (!isObj(config.agent.longagent)) err(errors, "agent.longagent", "must be object")

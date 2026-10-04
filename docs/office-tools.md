@@ -1,6 +1,6 @@
 # 离线 Office、PDF 与 Markdown 工具
 
-[文档导航](README.md) · 当前源码：1.0.9（正式版）；[发行状态](versions.md)
+[文档导航](README.md) · 当前源码：1.0.10（开发中），已发布稳定版1.0.9；[发行状态](versions.md)
 
 Office 工具在用户明确配置的固定 Docker 镜像中运行。它不会安装宿主 Python／LibreOffice，不继承模型令牌、不访问网络。输入只读复制，输出经过回读、渲染与指纹核验后交付到**新目录**；已存在的文件和目录不会被覆盖。
 
@@ -32,8 +32,8 @@ HTTP(S) 文档来源链接不仅检查文字和 DOCX 关系，还回读 PDF 的�
 在仓库根目录执行：
 
 ```sh
-docker build -f containers/office/Dockerfile -t kkcode-office:1.0.9 .
-docker image inspect kkcode-office:1.0.9 --format '{{.Id}}'
+docker build -f containers/office/Dockerfile -t kkcode-office:1.0.10 .
+docker image inspect kkcode-office:1.0.10 --format '{{.Id}}'
 ```
 
 将第二条命令返回的完整 `sha256:…` 配置给 CLI／宿主服务。运行时拒绝 `latest` 等浮动标签，也不会隐式拉取镜像。当前开发验收只构建本机镜像，不表示已发布公共镜像。

@@ -26,13 +26,18 @@ async function read(file) {
       // Atomic replacement can unlink the snapshot after open but before stat.
       // Reopen the new snapshot; never accept an unlinked or hard-linked file,
       // and keep bounded failure if another writer continually replaces it.
-      if (info.nlink === 0) continue
-      if (info.nlink !== 1) throw new Error('Operation journal must be a private regular file')
-      const value = JSON.parse(await handle.readFile('utf8'))
-      if (value.version !== 1 || !Array.isArray(value.operations) || value.operations.length > 512) throw new Error('Invalid operation journal; inspect it locally')
-      return value.operations
+      if (info.nlink !== 0) {
+        if (info.nlink !== 1) throw new Error('Operation journal must be a private regular file')
+        const value = JSON.parse(await handle.readFile('utf8'))
+        if (value.version !== 1 || !Array.isArray(value.operations) || value.operations.length > 512) throw new Error('Invalid operation journal; inspect it locally')
+        return value.operations
+      }
     } catch (error) { if (error.code === 'ENOENT') return []; throw error }
     finally { await handle?.close() }
+    // Release the handle before yielding (Windows writers need that close).
+    // Back off only for atomic replacement, without relaxing identity checks
+    // or the eight-attempt bound. A tight retry can race the same write burst.
+    await new Promise(resolve => setTimeout(resolve, Math.min(2 ** attempt, 16)))
   }
   throw new Error('Operation journal was replaced repeatedly; retry after the writer settles')
 }

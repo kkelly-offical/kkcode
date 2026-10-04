@@ -28,7 +28,8 @@ export async function refineSessionTitle({ configState, sessionId, prompt, provi
     if (!claimed) return null
     const state = structuredClone(configState)
     if (!Object.hasOwn(state.config.provider, provider) || ['__proto__', 'constructor', 'prototype'].includes(provider)) return null
-    const options = { ...state.config.provider[provider], thinking_effort: 'off', retry_attempts: 0 }
+    const options = { ...state.config.provider[provider], thinking_effort: 'auto', retry_attempts: 0 }
+    options.model_options = { ...options.model_options, [chosen]: { thinking_effort:'auto' } }
     delete options.thinking
     delete options.reasoning_effort
     state.config.provider = { ...state.config.provider, [provider]: options }

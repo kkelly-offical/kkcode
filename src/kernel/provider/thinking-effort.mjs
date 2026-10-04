@@ -9,7 +9,7 @@
  * 换模型不用改数字，配置里写的是意图（"想深一点"）而不是实现细节。
  */
 
-export const THINKING_TIERS = Object.freeze(["off", "low", "medium", "high", "max"])
+export const THINKING_TIERS = Object.freeze(["auto", "off", "low", "medium", "high", "xhigh", "max"])
 
 /** 各档占模型可用输出预算的比例 */
 const TIER_RATIO = Object.freeze({
@@ -17,6 +17,7 @@ const TIER_RATIO = Object.freeze({
   low: 0.15,
   medium: 0.35,
   high: 0.60,
+  xhigh: 0.75,
   max: 0.85
 })
 
@@ -26,6 +27,7 @@ const OPENAI_EFFORT = Object.freeze({
   low: "low",
   medium: "medium",
   high: "high",
+  xhigh: "xhigh",
   max: "max"
 })
 
@@ -59,6 +61,7 @@ export function resolveThinkingParams({
   contextLimit = 0
 } = {}) {
   const level = normalizeThinkingTier(tier)
+  if (level === 'auto') return {}
 
   if (protocol === "anthropic") {
     if (level === "off") return {}
@@ -79,7 +82,7 @@ export function resolveThinkingParams({
  */
 export function thinkingBudgetTokens({ tier = "high", maxOutputTokens = 0, contextLimit = 0 }) {
   const level = normalizeThinkingTier(tier)
-  if (level === "off") return 0
+  if (level === "off" || level === 'auto') return 0
 
   const declared = Number(maxOutputTokens) || 0
   const derived = Number(contextLimit) > 0 ? Math.floor(Number(contextLimit) / 8) : 0

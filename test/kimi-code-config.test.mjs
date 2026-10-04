@@ -2,6 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 import YAML from "yaml"
+import { modelContextLimit } from '../src/kernel/provider/model-limits.mjs'
 import { DEFAULT_CONFIG } from "../src/config/defaults.mjs"
 import { validateConfig } from "../src/config/schema.mjs"
 import { VENDOR_PRESETS } from "../src/kernel/provider/wizard.mjs"
@@ -20,7 +21,8 @@ test("official Kimi Code preset uses coding endpoint and environment credential"
   assert.equal(preset.default_model, "k3")
   assert.ok(preset.models.includes("kimi-for-coding"))
   assert.equal(DEFAULT_CONFIG.provider["kimi-code"], undefined, "预置条目不得回潮")
-  assert.equal(DEFAULT_CONFIG.provider.model_context.k3, 1048576, "模型知识库保留")
+  assert.equal(DEFAULT_CONFIG.provider.model_context.k3, undefined, "内置知识不能伪装成用户手动覆盖")
+  assert.equal(modelContextLimit("k3"), 1048576, "模型知识保留为明确的兜底")
 
   const template = YAML.parse(await readFile(new URL("../configs/config-kimi-code.yaml", import.meta.url), "utf8"))
   assert.equal(template.provider.default, "kimi-code")

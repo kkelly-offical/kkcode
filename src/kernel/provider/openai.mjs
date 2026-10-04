@@ -245,9 +245,12 @@ export async function requestOpenAI(input) {
     ],
     tools: mapTools(tools),
     tool_choice: tools?.length ? "auto" : undefined,
-    ...(reasoningEffort && reasoningEffort !== "none" ? { reasoning_effort: reasoningEffort } : {}),
-    ...(maxTokens ? { max_tokens: maxTokens } : {}),
-    ...(Number.isFinite(input.temperature) ? { temperature: input.temperature } : {})
+    ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+    ...(maxTokens ? { [input.outputParameter === 'max_completion_tokens' ? 'max_completion_tokens' : 'max_tokens']: maxTokens } : {}),
+    ...(Number.isFinite(input.temperature) ? { temperature: input.temperature } : {}),
+    ...(Number.isFinite(input.topP) ? { top_p: input.topP } : {}),
+    ...(input.thinkingSwitch?.parameter === 'enable_thinking' ? {enable_thinking:input.thinkingSwitch.enabled} : {}),
+    ...(input.thinkingSwitch?.parameter === 'chat_template_kwargs.enable_thinking' ? {chat_template_kwargs:{enable_thinking:input.thinkingSwitch.enabled}} : {})
   }
   const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`
 
@@ -359,9 +362,12 @@ export async function* requestOpenAIStream(input) {
     ],
     tools: mapTools(tools),
     tool_choice: tools?.length ? "auto" : undefined,
-    ...(reasoningEffort && reasoningEffort !== "none" ? { reasoning_effort: reasoningEffort } : {}),
-    ...(maxTokens ? { max_tokens: maxTokens } : {}),
+    ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+    ...(maxTokens ? { [input.outputParameter === 'max_completion_tokens' ? 'max_completion_tokens' : 'max_tokens']: maxTokens } : {}),
     ...(Number.isFinite(input.temperature) ? { temperature: input.temperature } : {}),
+    ...(Number.isFinite(input.topP) ? { top_p: input.topP } : {}),
+    ...(input.thinkingSwitch?.parameter === 'enable_thinking' ? {enable_thinking:input.thinkingSwitch.enabled} : {}),
+    ...(input.thinkingSwitch?.parameter === 'chat_template_kwargs.enable_thinking' ? {chat_template_kwargs:{enable_thinking:input.thinkingSwitch.enabled}} : {}),
     stream: true,
     stream_options: { include_usage: true }
   }

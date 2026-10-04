@@ -6,6 +6,8 @@ import os from 'node:os'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { createHash } from 'node:crypto'
+import fs from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import { ArtifactStore, ARTIFACT_LIMITS } from '../src/storage/artifact-store.mjs'
 
 const actor = { accountId: 'account-a', projectId: 'project-a', sessionId: 'session-a', runId: 'run-a' }
@@ -344,6 +346,27 @@ describe('artifact store: bounds, retention and failure behavior', () => {
 })
 
 describe('artifact store: concurrency', () => {
+  it('rechecks a detached lock snapshot and bounds persistent contention without publishing', async t => {
+    const original = fs.lstat
+    let remaining = 1, injected = 0
+    t.mock.method(fs, 'lstat', async (...args) => {
+      // The store canonicalizes OS temp aliases (e.g. /var -> /private/var
+      // on macOS), so intercept its actual path rather than the input alias.
+      if (args[0] === store.lockFile && remaining-- > 0) { injected++; return { isFile: () => true, nlink: 0 } }
+      return original(...args)
+    })
+    syncBuiltinESMExports()
+    try {
+      const saved = await store.put({actor,content:'preserved'})
+      assert.equal(injected, 1)
+      remaining = Infinity
+      await assert.rejects(new ArtifactStore({root,limits:{lockTimeoutMs:20}}).put({actor,content:'not published'}), code('artifact_busy'))
+      remaining = 0
+      assert.deepEqual((await store.list({actor})).items.map(item => item.id), [saved.id])
+      assert.equal((await store.getMetadata({actor,id:saved.id})).sha256, saved.sha256)
+    } finally { t.mock.restoreAll(); syncBuiltinESMExports() }
+  })
+
   it('serializes independent instances and retains every published artifact', async () => {
     const writers = Array.from({ length: 12 }, () => new ArtifactStore({ root }))
     const entries = await Promise.all(writers.map((writer, i) => writer.put({ actor, content: `payload-${i}` })))

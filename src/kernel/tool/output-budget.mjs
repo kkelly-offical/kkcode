@@ -42,11 +42,13 @@ const MAX_CHARS = 200000
  * @param {string} [p.model] 当前模型
  * @param {string} [p.providerType] 当前 provider（不是配置里的默认值）
  * @param {Record<string, any>} [p.config] 完整配置，用于读 provider.model_context 与比例
+ * @param {string|null} [p.baseUrl]
+ * @param {string|null} [p.apiKeyEnv]
  * @returns {{chars: number, ratio: number, contextLimit: number}}
  */
-export function toolOutputBudget({ model = "", providerType = "", config = null } = {}) {
+export function toolOutputBudget({ model = "", providerType = "", config = null, baseUrl = null, apiKeyEnv = null } = {}) {
   const ratio = normalizeRatio(config?.tool?.output_budget_ratio)
-  const contextLimit = modelContextLimit(model, config ? { config } : null, providerType)
+  const contextLimit = modelContextLimit(model, config ? { config } : null, providerType, {baseUrl,apiKeyEnv})
   const raw = Math.floor(contextLimit * CHARS_PER_TOKEN * ratio)
   return {
     chars: Math.max(MIN_CHARS, Math.min(raw, MAX_CHARS)),

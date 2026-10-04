@@ -7,7 +7,7 @@ import { registerProvider } from '../src/kernel/provider/router.mjs'
 import { runHybridLongAgent } from '../src/kernel/session/longagent-hybrid.mjs'
 import { runStrictUltraStage } from '../src/kernel/session/strict-ultra-stage.mjs'
 import { compressContext } from '../src/kernel/session/longagent-hybrid-helpers.mjs'
-import { getSession, flushNow } from '../src/kernel/session/store.mjs'
+import { getSession, flushNow, touchSession } from '../src/kernel/session/store.mjs'
 import { runWithRuntime } from '../src/kernel/core/runtime-context.mjs'
 import { createScriptedProvider, stagePlanFence, currentStageOf, ultraConfig } from './helpers/ultra-harness.mjs'
 import { installBackgroundMock, restoreBackgroundMock } from './helpers/background-mock.mjs'
@@ -78,7 +78,8 @@ test('Ultra phase context compression uses its explicit compaction route only wh
   await runWithRuntime({ cwd, sessionSelection: { sessionId, model: options.model, providerType: options.providerType, mode: 'longagent' } }, async () => {
     assert.equal(await compressContext('short', 100, options), 'short')
     assert.equal(requests.length, 0)
-    assert.equal(await compressContext('Detailed engineering context. '.repeat(100), 100, options), 'Verified phase summary.')
+    await touchSession({sessionId,cwd,model:options.model,providerType:options.providerType})
+    assert.match(await compressContext('Detailed engineering context. '.repeat(100), 100, options), /^Verified phase summary\.\nFull stage context: artifact_read id=/)
   })
   assert.equal(requests.length, 1)
   assert.equal(requests[0].provider, 'planner'); assert.equal(requests[0].model, 'summary-role')

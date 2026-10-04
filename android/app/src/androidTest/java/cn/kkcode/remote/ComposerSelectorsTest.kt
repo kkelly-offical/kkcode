@@ -75,4 +75,22 @@ class ComposerSelectorsTest {
         compose.onNodeWithText("手动输入模型 ID").assertIsDisplayed()
         compose.onNodeWithText("使用此模型").assertIsNotEnabled()
     }
+    @Test fun thinkingLevelsFollowCatalogAndKeepXhighDistinctFromMax() {
+        val options = org.json.JSONArray()
+        listOf("auto" to "自动", "low" to "略思", "medium" to "审思", "high" to "深思", "xhigh" to "精思", "max" to "穷理").forEach { (value, label) ->
+            options.put(JSONObject().put("value", value).put("label", label).put("available", true))
+        }
+        val runtime = JSONObject().put("thinking", JSONObject().put("kind", "levels").put("selected", "xhigh").put("options", options))
+            .put("context", JSONObject().put("limit", 262144)).put("output", JSONObject().put("reserved", 65536).put("source", "catalog"))
+        show {
+            it.selected = "session-fixture"; it.sheet = "model-picker"; it.provider = "fixture"; it.model = "model"
+            it.settings = JSONObject().put("provider", JSONObject().put("fixture", JSONObject().put("default_model", "model")))
+            it.catalogProvider = "fixture"; it.catalogSource = "network"
+            it.modelOptions = listOf(JSONObject().put("id", "model").put("runtime", runtime))
+        }
+        compose.onNodeWithText("✓ 精思").assertIsDisplayed()
+        compose.onNodeWithText("穷理").assertIsDisplayed()
+        compose.onNodeWithText("上下文 262144 · 输出预留 65536（接口）").assertIsDisplayed()
+    }
+
 }

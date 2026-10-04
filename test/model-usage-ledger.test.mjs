@@ -28,6 +28,7 @@ test('real kernel turn prices conversation and explicit review separately, and a
   const requests = []
   let mainCalls = 0, kernel
   const server = createServer(async (request, response) => {
+    if(request.method === 'GET' && request.url.endsWith('/models')) {response.setHeader('content-type','application/json');response.end(JSON.stringify({data:[]}));return}
     const parts = []; for await (const part of request) parts.push(part)
     const body = JSON.parse(Buffer.concat(parts).toString()); requests.push({ url: request.url, body })
     if (request.url.startsWith('/review')) {

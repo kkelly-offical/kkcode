@@ -195,3 +195,6 @@ export { createTaskGraphHost, isTaskGraphHost } from './orchestration/task-graph
 export { captureAcceptanceCandidate } from './session/acceptance-manifest.mjs'
 export { readHostServices, readHostServicesFile, normalizeHostServices, hostServicesHash, configureHostServices } from './core/host-services.mjs'
 export { createOfficeService, createOfficeTools, OfficeError } from './office/service.mjs'
+
+export { modelRuntimeProfile } from './provider/runtime-parameters.mjs'
+export { resolveProviderRouteSettings } from './provider/route-settings.mjs'

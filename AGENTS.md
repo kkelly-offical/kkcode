@@ -1,6 +1,6 @@
 # KK Code 工作记忆
 
-只维护当前状态、有效约束和未完事项。过程与证据写入[当前实施记录](docs/implementation-1.0.9.md)，
+只维护当前状态、有效约束和未完事项。过程与证据写入[当前实施记录](docs/implementation-1.0.10.md)，
 旧检查点见[历史记忆](docs/history/working-memory-through-2026-10-02.md)，不要逐轮追加日志。
 
 ## 发行与授权
@@ -15,7 +15,7 @@
 
 ## 产品约束
 
-- Agent / Auto / YOLO能力相同，差别是审批策略；Ultra增加持久分阶段编排，Plan只读探索、
+- Agent / Auto / YOLO能力相同，差别是审批策略；Ultra增加持久任务状态与按需编排，显式staged／严格合同保留阶段流程，Plan只读探索、
   规划与持久ToDo。保持单个模式选择器、会话导航与输入区，不加未实现的远控按钮。
 - ToDo完成、子代理汇报、checks_observed不是完整验收。未知效果先暂停核查；取消不回滚，
   恢复由用户触发并检查既有副作用，不能放松校验换取通过。
@@ -36,6 +36,7 @@
 - 1.0.7八项连续工作改进与1.0.8像素界面、KIKI伙伴、工具入口均已发行；伙伴建议只追加草稿、不自动发送或验收。
   当前跨平台、Web、CodeQL通过，Android85项JVM／80项UI与设备测试及签名升级通过，npm审计0告警。
   下一步是实际业务使用与人工审阅，不另建评测框架主线。
+- 用户10月4日确认[下一轮优化清单](docs/optimization-next.md)：API模型参数自动配置、输出／思考／上下文同源预算、子代理配置与上下文管理、缩减Ultra固定编排及重复控制提示。接口值优先，缺失时分析已有返回数据并兜底；思考预备略思／审思／深思／精思／穷理五档（low/medium/high/xhigh/max），按接口能力动态映射并调整可见表述，不写死各档token阈值、不强凑档数，只有二态则显示开关，普通用户不必手填技术参数。已授权实施 **1.0.10 / Android10017，实现与专项验证完成、发行候选**，当前正式版仍为1.0.9；[实施记录](docs/implementation-1.0.10.md)维护实际检查与剩余事项；普通任务减少强制流程，权限、硬预算、未知效果与显式宿主合同保留。
 - R15已关闭：`/root/kkcode-1061-wire-acceptance-20261002`；文档反馈修复通过，其余四项未完整交付。
   R16于10月3日02:41（UTC+8）关闭：`/root/kkcode-106-stable-harness-20261002`；437请求/
   23619076 tokens/USD0，无新增用量unknown，全栈工具效果unknown未解除。两批服务/授权均已关闭。
@@ -50,6 +51,7 @@
 
 - [当前版本](docs/versions.md) · [发行范围](docs/release-1.0.9.md) · [实施与验收](docs/implementation-1.0.9.md)
 - [使用文档](docs/README.md) · [能力边界](docs/capabilities.md) · [历史导航](docs/history.md)
+- 1.0.10候选／PR#46交付回执：`/tmp/kkcode-110-candidate-u4w_66rm/`；未公开发行，实际完整检查见该目录`candidate-verification.json`及PR检查。
 - 1.0.9发行回执：`/tmp/kkcode-109-stable-qv6gzea1/`。
 - 1.0.8发行回执：`/tmp/kkcode-108-stable-_1tnlyzp/`。
 - 1.0.7发行回执：`/tmp/kkcode-107-stable-ty7o6nqe/`；1.0.6：`/tmp/kkcode-106-stable-lakJaz/`。

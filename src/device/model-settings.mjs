@@ -10,6 +10,8 @@ import { userRootDir } from '../storage/paths.mjs'
 import { writePrivateFile } from '../storage/private-file.mjs'
 import { discoverModelsForProvider, inferCapabilitiesFromName, normalizeCapabilities, parseCatalogEntryCapabilities } from '../kernel/index.mjs'
 import { ProtocolError } from '../protocol/index.mjs'
+import { modelRuntimeProfile } from '../kernel/provider/runtime-parameters.mjs'
+import { resolveProviderRouteSettings } from '../kernel/provider/route-settings.mjs'
 
 function merge(base, patch) {
   const out = { ...base }
@@ -67,7 +69,8 @@ export async function discoverDeviceModels(service, params) {
     const capabilities = { ...inferCapabilitiesFromName(model.id), ...discovered, ...configured }
     const capabilitySources = Object.fromEntries(Object.keys(capabilities).map(key => [key, key in configured ? 'config' : key in discovered ? 'discovered' : 'heuristic']))
     if (catalog.protocol !== 'openai') for (const key of ['audio', 'video']) { capabilities[key] = false; capabilitySources[key] = 'protocol' }
-    return { origin, ...model, capabilities, capabilitySources }
+    const runtime = modelRuntimeProfile(state, resolveProviderRouteSettings(state, name, { model: model.id }))
+    return { origin, ...model, capabilities, capabilitySources, runtime }
   }) }
 }
 export async function updateDeviceSettings(service, patch) {

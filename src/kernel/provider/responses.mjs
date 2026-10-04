@@ -55,6 +55,8 @@ export function responsesPayload(input, stream = false) {
     model: input.model, instructions: system || undefined, input: responsesInput(input), store: false, stream,
     ...(input.tools?.length ? { tools: input.tools.map(tool => ({ type: 'function', name: tool.name, description: tool.description, parameters: tool.inputSchema, strict: false })), tool_choice: 'auto' } : {}),
     ...(input.maxTokens ? { max_output_tokens: input.maxTokens } : {}),
+    ...(Number.isFinite(input.temperature) ? { temperature: input.temperature } : {}),
+    ...(Number.isFinite(input.topP) ? { top_p: input.topP } : {}),
     ...(Object.keys(reasoning).length ? { reasoning, include: ['reasoning.encrypted_content'] } : {}),
     ...(Number.isFinite(input.temperature) ? { temperature: input.temperature } : {})
   }

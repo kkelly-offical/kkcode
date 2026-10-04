@@ -172,6 +172,7 @@ test('real HTTP Responses kernel round executes a governed read and replays priv
   const old = process.env.KKCODE_HOME; process.env.KKCODE_HOME = path.join(root, 'state'); await mkdir(process.env.KKCODE_HOME)
   const requests = []
   const server = createServer(async (req, res) => {
+    if(req.method === 'GET' && req.url.endsWith('/models')) {res.setHeader('content-type','application/json');res.end(JSON.stringify({data:[]}));return}
     const chunks = []; for await (const chunk of req) chunks.push(chunk)
     const body = JSON.parse(Buffer.concat(chunks).toString()); requests.push(body)
     const completed = body.input.some(item => item.type === 'function_call_output')

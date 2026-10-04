@@ -968,6 +968,10 @@ function App() {
                 })
               }
               onDiscoverModels={(name) => rpc("models.discover", { provider: name, refresh: true })}
+              onThinking={(name, id, value) => void attempt(async () => {
+                const result = await rpc('settings.update', { config: { provider: { [name]: { model_options: { [id]: { thinking_effort: value } } } } } });
+                setSettings(result.config); setNotice('思考强度已更新');
+              })}
               onPanel={setPanel}
               summary={changeSummary(messages)}
             />

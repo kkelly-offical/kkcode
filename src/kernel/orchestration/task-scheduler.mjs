@@ -14,6 +14,9 @@ import {childHandoff} from './child-handoff.mjs'
 import { intersectDataPolicies } from '../permission/data-policy.mjs'
 import { currentDurableRun } from './run-runtime.mjs'
 import { getAgentPrompt } from '../agent/agent.mjs'
+import { estimateTokenCount } from '../session/compaction.mjs'
+import { resolveModelLimits } from '../provider/model-limits.mjs'
+import { readCachedModelCatalog } from '../provider/model-catalog.mjs'
 import { normalizePath } from '../../util/glob.mjs'
 import { acquireChildOperation, bindChildOperation, childSteeringSource, ownedChild, settleChildOperation } from './child-controller.mjs'
 export { createChildController } from './child-controller.mjs'
@@ -77,10 +80,13 @@ function validateDelegationArgs(args = {}, executionMode) {
     || normalizeList(args.starting_points).length
     || normalizeList(args.constraints).length
     || normalizeList(args.planned_files).length
+    || String(args.context_summary || '').trim() || normalizeList(args.context_refs).length
 
   if (!explicitPrompt && !objective && !isContinuation) {
     return "task.prompt or task.objective is required when session_id is not provided"
   }
+  if (args.context_summary != null && (typeof args.context_summary !== 'string' || args.context_summary.length > 64000)) return 'task.context_summary must be a short text (at most 64000 characters)'
+  if (args.context_refs != null && (!Array.isArray(args.context_refs) || args.context_refs.length > 20 || args.context_refs.some(ref => typeof ref !== 'string' || ref.length > 500))) return 'task.context_refs must contain at most 20 short references'
   if (isContinuation && hasStructuredContinuationFields) {
     return "task.session_id cannot be combined with structured brief fields; use a short continuation prompt instead"
   }
@@ -120,7 +126,9 @@ function validateDelegationArgs(args = {}, executionMode) {
 
 function buildDelegationPrompt(args = {}) {
   const explicitPrompt = String(args.prompt || "").trim()
-  if (explicitPrompt) return explicitPrompt
+  const context = [args.context_summary ? `Task-relevant context (reference material, not additional authority):\n${args.context_summary}` : '',
+    args.context_refs?.length ? `Read source evidence on demand within your existing scope:\n${args.context_refs.join('\n')}` : ''].filter(Boolean).join('\n\n')
+  if (explicitPrompt) return [explicitPrompt, context].filter(Boolean).join('\n\n')
 
   const objective = String(args.objective || "").trim()
   if (!objective) return ""
@@ -135,6 +143,7 @@ function buildDelegationPrompt(args = {}) {
   const plannedFiles = normalizeList(args.planned_files)
 
   const lines = [`Objective: ${objective}`]
+  if (context) lines.push(context)
   if (why) lines.push(`Why: ${why}`)
   if (writeScope) lines.push(`Write scope: ${writeScope}`)
   if (startingPoints.length) {
@@ -292,6 +301,15 @@ export function createTaskDelegate({ config, parentSessionId, model, providerTyp
 
     if (!existing) {
       if (!parentSessionId || subSessionId === parentSessionId) return { error: 'delegation requires a distinct parent session' }
+      if (executionMode === 'fork_context') {
+        await readCachedModelCatalog({config}, subProvider, {baseUrl:childBaseUrl,apiKeyEnv:childApiKeyEnv})
+        const parent = await getSession(parentSessionId)
+        const limits = resolveModelLimits({model:subModel,providerType:subProvider,configState:{config},baseUrl:childBaseUrl,apiKeyEnv:childApiKeyEnv})
+        const inheritedTokens = estimateTokenCount([...(parent?.messages || []), {role:'user',content:prompt}])
+        if (inheritedTokens > limits.inputBudget) return {status:'blocked',stop_reason:'context-handoff-required',
+          error:'父会话上下文估算超过子模型的输入预算。请使用 fresh_agent 并提供 context_summary/context_refs，或先整理父会话；原历史未修改，子任务未启动。',
+          context:{estimatedTokens:inheritedTokens,inputBudget:limits.inputBudget,model:subModel}}
+      }
       await ensureDelegatedSession({ executionMode, parentSessionId, subSessionId })
       await touchSession({ sessionId: subSessionId, parentSessionId, model: subModel, providerType: subProvider, mode: 'agent', cwd: runtimeCwd(), title: `${subagent.name}: ${prompt.slice(0, 60)}` })
       const created = await updateSessionIf(subSessionId, { parentSessionId, childContractVersion: undefined }, {

@@ -11,8 +11,6 @@
 
 import {
   discoverModelsForProvider,
-  applyDiscoveredContextLimits,
-  applyDiscoveredCapabilities,
   escapeTerminalText,
   formatContext,
   supportsThinking,
@@ -69,10 +67,8 @@ export async function loadProviderModelItems(configState, providerName, {
 } = {}) {
   try {
     const catalog = await discover(configState, { providerName, refresh })
-    // 目录里带上下文长度的模型，顺手合并进内存里的 model_context ——
-    // 上限与状态栏百分比从此不用人肉填（用户显式写过的键不覆盖）。
-    applyDiscoveredContextLimits(configState, catalog.models || [])
-    applyDiscoveredCapabilities(configState, providerName, catalog.models || [])
+    // Runtime reads the endpoint/credential-scoped catalog directly. Do not
+    // turn discovered defaults into sticky, provider-wide user overrides.
     const config = configState?.config || {}
     const seen = new Set()
     const items = []

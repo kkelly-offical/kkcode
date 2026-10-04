@@ -13,6 +13,8 @@ import {
 import { validateModelId } from "./model-id.mjs"
 import { trimTrailingSlashes } from "./url-path.mjs"
 import { supportsThinking } from "./thinking-effort.mjs"
+import { awaitAbortable } from '../../abort.mjs'
+import { parseModelParameters } from './model-parameters.mjs'
 import { assertProviderDataPolicy } from '../permission/data-policy.mjs'
 import {
   MODEL_CAPABILITY_KEYS,
@@ -26,6 +28,7 @@ export const DEFAULT_MODEL_CACHE_TTL_MS = 15 * 60 * 1000
 const MAX_PAGES = 100
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 const cacheMemory = new Map()
+const discoveryAttempts = new Map()
 
 // 每个模型条目都标出来源：auto = 自动发现（network/cache），manual = 手动
 // 维护的配置回退。上游（/model 选择器、远程 models.updated 事件）按条目渲染
@@ -162,9 +165,10 @@ function modelCacheKey(connection) {
   // the same value should keep the same cache, while rotating its value must not.
   return createHmac("sha256", connection.apiKey || "")
     .update(JSON.stringify([
-      "kkcode.model-catalog.v2",
+      "kkcode.model-catalog.v3",
       connection.name,
       connection.protocol,
+      connection.baseUrl,
       connection.modelsUrl
     ]))
     .digest("hex")
@@ -306,8 +310,9 @@ function normalizeModels(json) {
       label: "model catalog id",
       reason: "bad_response"
     })
-    const contextLength = readContextLength(item)
-    const maxOutput = readMaxOutput(item)
+    const modelParameters = parseModelParameters(item)
+    const contextLength = modelParameters.limits.context
+    const maxOutput = modelParameters.limits.output
     const supported = Array.isArray(item.supported_parameters) ? item.supported_parameters : null
     // 能力与定价随条目一起进磁盘缓存与 models.updated —— 解析只认有证据的
     // 字段，拿不到就是 undefined（不编），归一化形态在缓存回放时原样穿透。
@@ -315,6 +320,7 @@ function normalizeModels(json) {
     const pricing = parseCatalogEntryPricing(item)
     return {
       id,
+      modelParameters,
       ...(maxOutput ? { maxOutputTokens: maxOutput } : {}),
       ...(supported ? { supportedParameters: supported } : {}),
       ...(item.display_name || item.displayName ? { displayName: item.display_name || item.displayName } : {}),
@@ -325,41 +331,6 @@ function normalizeModels(json) {
       ...(pricing ? { pricing } : {})
     }
   }).filter(Boolean)
-}
-
-/**
- * 从目录条目里提取上下文窗口长度。
- *
- * 0.6.0 之前 normalizeModels 只保留 4 个字段 —— provider 即使在 /models 里
- * 返回了上下文长度也被丢弃，于是这个数字永远只能人肉填进
- * provider.model_context。各家字段名不一，逐个试。
- */
-/** 输出上限：思考预算按它的比例推算，拿不到就退回按上下文推 */
-function readMaxOutput(item) {
-  const candidates = [
-    item.max_output_tokens, item.maxOutputTokens,
-    item.max_completion_tokens, item.output_token_limit,
-    item.top_provider?.max_completion_tokens
-  ]
-  for (const value of candidates) {
-    const n = Number(value)
-    if (Number.isFinite(n) && n >= 256) return Math.floor(n)
-  }
-  return 0
-}
-
-function readContextLength(item) {
-  const candidates = [
-    item.context_length, item.contextLength,
-    item.context_window, item.contextWindow,
-    item.max_context_window_tokens, item.max_context_length,
-    item.max_input_tokens, item.input_token_limit
-  ]
-  for (const value of candidates) {
-    const n = Number(value)
-    if (Number.isFinite(n) && n >= 1024) return Math.floor(n)
-  }
-  return 0
 }
 
 /**
@@ -678,6 +649,7 @@ export async function discoverModelsForProvider(configState, {
 
 export function clearModelCatalogMemoryCache() {
   cacheMemory.clear()
+  discoveryAttempts.clear()
 }
 
 /**
@@ -688,15 +660,73 @@ export function clearModelCatalogMemoryCache() {
  * 配置残缺（provider 不存在、URL 非法）也折成 null：请求路径会在后面的
  * 环节用更具体的错误失败，能力解析不该抢先。
  */
-export async function readCachedModelCatalog(configState, providerName = null) {
+function metadataConnection(configState, providerName, overrides = {}) {
+  const config = configRoot(configState), name = providerName || config.provider?.default
+  if (!overrides.baseUrl && !overrides.apiKeyEnv) return resolveProviderConnection(configState, name)
+  const settings = config.provider?.[name] || {}
+  let baseChanged = false
+  if (overrides.baseUrl) {
+    try { baseChanged = trimTrailingSlashes(overrides.baseUrl) !== resolveProviderConnection(configState, name).baseUrl } catch { baseChanged = true }
+  }
+  return resolveProviderConnection({ config: { ...config, provider: { ...config.provider, [name]: { ...settings,
+    ...(baseChanged ? { base_url: overrides.baseUrl, endpoints: {} } : {}),
+    ...(overrides.apiKeyEnv ? { api_key_env: overrides.apiKeyEnv } : {}) } } } }, name)
+}
+
+/** Synchronous projection for budget calculations after the request path has
+ * warmed the scoped disk cache. Never mutates user configuration. */
+export function modelMetadataScope(configState, providerName, overrides = {}) {
+  try { return modelCacheKey(metadataConnection(configState,providerName,overrides)) } catch { return null }
+}
+
+export function cachedModelMetadata(configState, providerName, modelId, overrides = {}) {
   try {
-    const connection = resolveProviderConnection(configState, providerName)
+    const connection = metadataConnection(configState, providerName, overrides)
+    const cached = cacheMemory.get(`${cachePath()}\0${modelCacheKey(connection)}`)
+    const model = cached?.models?.find(entry => entry.id === modelId)
+    return model ? { model, fetchedAt: cached.fetchedAt, stale: Date.now() - cached.fetchedAt >= connection.discovery.cacheTtlMs } : null
+  } catch { return null }
+}
+
+export async function readCachedModelCatalog(configState, providerName = null, overrides = {}) {
+  try {
+    const connection = metadataConnection(configState, providerName, overrides)
     const cached = await readDiskCache(modelCacheKey(connection))
     if (!cached) return null
     return { provider: connection.name, models: cached.models, fetchedAt: cached.fetchedAt }
   } catch {
     return null
   }
+}
+
+/** One bounded metadata lookup at the start of an interactive turn. Optional
+ * discovery failures retain the old catalog/defaults; never probe by inference.
+ * Direct SDK request/capability helpers remain read-only cache consumers. */
+export async function prepareModelMetadata(configState, providerName, {baseUrl = null, apiKeyEnv = null, signal = null} = {}) {
+  const cached = await readCachedModelCatalog(configState, providerName, {baseUrl,apiKeyEnv})
+  let connection, baseline
+  try {
+    connection = metadataConnection(configState, providerName, {baseUrl,apiKeyEnv})
+    baseline = resolveProviderConnection(configState, providerName)
+  } catch { return cached }
+  // A turn-specific endpoint is not permission to query the configured
+  // catalog for another route. Such routes use matching prior discovery only.
+  if (!connection.discovery.enabled || modelCacheKey(connection) !== modelCacheKey(baseline)) return cached
+  if (cached && Date.now() - cached.fetchedAt < connection.discovery.cacheTtlMs) return cached
+  const key = `${cachePath()}\0${modelCacheKey(connection)}`, previous = discoveryAttempts.get(key)
+  if (previous?.pending) {
+    try { return await awaitAbortable(previous.pending, signal) }
+    catch(error) { if(signal?.aborted) throw error; return cached }
+  }
+  if (previous && Date.now() - previous.at < 60000) return cached
+  const attempt = {at:Date.now(),pending:null,failed:true}
+  const timeout = AbortSignal.timeout(3000), boundedSignal = signal ? AbortSignal.any([signal,timeout]) : timeout
+  const pending = awaitAbortable(discoverModelsForProvider(configState,{providerName,signal:boundedSignal,timeoutMs:3000}),boundedSignal)
+    .then(result => {attempt.failed=result.stale === true; return readCachedModelCatalog(configState,providerName)}).catch(error => { if(signal?.aborted) throw error; return cached })
+    .finally(() => {attempt.pending=null; if((!attempt.failed || signal?.aborted) && discoveryAttempts.get(key) === attempt) discoveryAttempts.delete(key)})
+  attempt.pending=pending; discoveryAttempts.set(key,attempt)
+  while(discoveryAttempts.size > 500) discoveryAttempts.delete(discoveryAttempts.keys().next().value)
+  return pending
 }
 
 /**
@@ -712,7 +742,7 @@ export async function readCachedModelCatalog(configState, providerName = null) {
  * 永不抛错、永不触网：这是每条模型请求都要走的热路径，解析失败必须等价于
  * 「未知」而不是把请求弄挂。
  */
-export async function resolveModelCapabilities(configState, providerName, modelId) {
+export async function resolveModelCapabilities(configState, providerName, modelId, overrides = {}) {
   const capabilities = {}
   const sources = {}
   try {
@@ -735,7 +765,7 @@ export async function resolveModelCapabilities(configState, providerName, modelI
 
     const missing = MODEL_CAPABILITY_KEYS.filter((key) => capabilities[key] === undefined)
     if (missing.length) {
-      const cached = await readCachedModelCatalog(configState, providerName)
+      const cached = await readCachedModelCatalog(configState, providerName, overrides)
       const entry = cached?.models?.find((model) => model?.id === id)
       const discovered = normalizeCapabilities(entry?.capabilities)
       for (const key of missing) {

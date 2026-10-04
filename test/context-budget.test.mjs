@@ -23,8 +23,8 @@ test('remote counts and usage do not add estimated blocks a second time', () => 
 })
 test('small model windows reserve a bounded default output and invalid counts fall back', () => {
   const meter = requestContextBudget({ system: 'hello', model: 'm', configState: { config: { provider: { default: 'p', p: { context_limit: 4096 } } } }, measuredTokens: NaN })
-  assert.equal(meter.outputReserved, 1024)
-  assert.equal(meter.inputBudget, 3072)
+  assert.equal(meter.outputReserved, 819)
+  assert.equal(meter.inputBudget, 3277)
   assert.equal(meter.estimated, true)
 })
 
@@ -38,4 +38,11 @@ test('strict complete-input upper bounds remain explicitly estimated in every cl
   assert.equal(projected.estimated, true)
   assert.equal(projected.tokens, 60000)
   assert.equal('privatePrompt' in projected, false)
+})
+
+test('compaction headroom is measured against available input after reserving output once', () => {
+  const meter=requestContextBudget({model:'m',configState:{config:{provider:{default:'p',p:{context_limit:200000,max_output_tokens:64000}}}},measuredTokens:110000})
+  assert.equal(meter.inputBudget,136000)
+  assert.equal(shouldCompact({messages:[],model:'m',requestBudget:meter}),false)
+  assert.equal(shouldCompact({messages:[],model:'m',requestBudget:{...meter,tokens:116000}}),true)
 })

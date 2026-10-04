@@ -35,7 +35,7 @@ provider:
     models: [gpt-5.5, gpt-5.5-pro, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex]
     timeout_ms: 120000
     stream_idle_timeout_ms: 120000
-    max_tokens: 32768
+    # max_tokens: 32768 # 可选手动限制；省略时按当前模型能力自动设置
     retry_attempts: 5
     retry_base_delay_ms: 800
     stream: true
@@ -46,7 +46,7 @@ provider:
     base_url: "https://api.example.com/v1"
     api_key_env: "RESPONSES_API_KEY"
     default_model: "model-id-from-your-catalog"
-    max_tokens: 16384
+    # max_tokens: 16384 # 可选手动限制；省略时按当前模型能力自动设置
     retry_attempts: 5
     stream: true
     # 按模型能力选择，不支持 reasoning 的模型不要添加：
@@ -61,7 +61,7 @@ provider:
     default_model: "claude-sonnet-4-6"
     models: [claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5-20251001]
     timeout_ms: 120000
-    max_tokens: 32768
+    # max_tokens: 32768 # 可选手动限制；省略时按当前模型能力自动设置
     retry_attempts: 5
     stream: true
 
@@ -82,7 +82,7 @@ provider:
       enabled: true
       cache_ttl_ms: 900000
     timeout_ms: 120000
-    max_tokens: 32768
+    # max_tokens: 32768 # 可选手动限制；省略时按当前模型能力自动设置
     retry_attempts: 5
     stream: true
 
@@ -100,7 +100,7 @@ provider:
       - qwen3-coder-plus
       - qwen-plus-latest
     timeout_ms: 120000
-    max_tokens: 32768
+    # max_tokens: 32768 # 可选手动限制；省略时按当前模型能力自动设置
     retry_attempts: 5
     stream: true
 
@@ -113,7 +113,7 @@ provider:
     default_model: "glm-5.1"
     models: [glm-5.1, glm-5, glm-4.5, glm-4.5-air]
     timeout_ms: 120000
-    max_tokens: 32768
+    # max_tokens: 32768 # 可选手动限制；省略时按当前模型能力自动设置
     retry_attempts: 5
     stream: true
 
@@ -126,7 +126,7 @@ provider:
     # deepseek-chat / deepseek-reasoner are compatibility aliases until 2026-07-24.
     models: [deepseek-v4-flash, deepseek-v4-pro, deepseek-chat, deepseek-reasoner]
     timeout_ms: 120000
-    max_tokens: 32768
+    # max_tokens: 32768 # 可选手动限制；省略时按当前模型能力自动设置
     retry_attempts: 5
     stream: true
 
@@ -138,7 +138,7 @@ provider:
     default_model: "gemini-3.5-flash"
     models: [gemini-3.5-flash, gemini-3.1-pro, gemini-3.1-flash-lite]
     timeout_ms: 120000
-    max_tokens: 32768
+    # max_tokens: 32768 # 可选手动限制；省略时按当前模型能力自动设置
     retry_attempts: 5
     stream: true
 
@@ -150,7 +150,7 @@ provider:
     default_model: "kimi-k2.6"
     models: [kimi-k2.6, kimi-k2.5, moonshot-v1-128k, moonshot-v1-32k]
     timeout_ms: 120000
-    max_tokens: 32768
+    # max_tokens: 32768 # 可选手动限制；省略时按当前模型能力自动设置
     retry_attempts: 5
     stream: true
 
@@ -162,7 +162,7 @@ provider:
     default_model: "grok-4.3"
     models: [grok-4.3, grok-4.3-latest]
     timeout_ms: 120000
-    max_tokens: 32768
+    # max_tokens: 32768 # 可选手动限制；省略时按当前模型能力自动设置
     retry_attempts: 5
     stream: true
 
@@ -174,7 +174,7 @@ provider:
     default_model: "qwen3:32b"
     timeout_ms: 600000
     stream_idle_timeout_ms: 300000
-    max_tokens: 16384
+    # max_tokens: 16384 # 可选手动限制；省略时按当前模型能力自动设置
     retry_attempts: 5
     stream: true
 

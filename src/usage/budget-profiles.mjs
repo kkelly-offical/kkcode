@@ -1,3 +1,5 @@
+import { resolveModelLimits } from '../kernel/provider/model-limits.mjs'
+import { readCachedModelCatalog } from '../kernel/provider/model-catalog.mjs'
 import { createHash } from 'node:crypto'
 import { loadPricing, calculateCost } from './pricing.mjs'
 import { resolveTaskModel, TASK_MODEL_ROLES } from '../kernel/provider/task-model.mjs'
@@ -20,7 +22,8 @@ export function budgetRoute(configState, { providerType, model, baseUrl = null, 
   const credential = settings.apiKeyDirect || (settings.apiKeyEnv ? process.env[settings.apiKeyEnv] : '') || ''
   const baselineCredential = baseline.apiKeyDirect || (baseline.apiKeyEnv ? process.env[baseline.apiKeyEnv] : '') || ''
   const route = { provider: name, model: settings.model, protocol: settings.protocol, baseUrl: settings.baseUrl, credential }
-  return { ...route, scopeHash: routeBudgetScope(route), contextLimit: Number(config.context_limit), maxTokens: Number(config.max_tokens || 16384), compaction: config.native_compaction === true,
+  const limits = resolveModelLimits({model:settings.model,providerType:name,configState,baseUrl:settings.baseUrl,apiKeyEnv:settings.apiKeyEnv})
+  return { ...route, scopeHash: routeBudgetScope(route), contextLimit: limits.contextSource === 'fallback' ? NaN : limits.limit, maxTokens: limits.outputReserved, compaction: config.native_compaction === true,
     changedScope: String(settings.baseUrl).replace(/\/$/, '') !== String(baseline.baseUrl).replace(/\/$/, '') || credential !== baselineCredential }
 }
 
@@ -28,6 +31,7 @@ export function budgetRoute(configState, { providerType, model, baseUrl = null, 
  * Never call this loader on each request: the price file may be in a writable
  * task checkout. Persist the returned validated profile in the private ledger. */
 export async function prepareBudgetProfile(configState, input) {
+  await readCachedModelCatalog(configState, input.providerType, {baseUrl:input.baseUrl,apiKeyEnv:input.apiKeyEnv})
   const route = budgetRoute(configState, input)
   if (!route.model || !Number.isSafeInteger(route.contextLimit) || route.contextLimit <= 0 || !Number.isSafeInteger(route.maxTokens) || route.maxTokens <= 0) fail('模型缺少明确上下文窗口或输出上限，无法批准固定预算档案。')
   const { pricing, source, errors, strictPriceComplete, strictModelExact } = await loadPricing(configState, { providerName: route.provider, model: route.model, skipCatalog: route.changedScope })

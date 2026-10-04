@@ -1,3 +1,4 @@
+import { resolveModelLimits } from '../provider/model-limits.mjs'
 import { runtimeCwd, currentRuntime, runWithRuntime } from "../core/runtime-context.mjs"
 /**
  * LongAgent Hybrid 模式
@@ -897,7 +898,7 @@ async function runHybridPipeline({
         stageList,
         "",
         "架构摘要：",
-        architectureText.slice(0, 1200),
+        architectureText,
         "",
         "请使用 question 工具询问用户：",
         "1. 以上执行计划是否符合预期？",
@@ -1175,7 +1176,7 @@ async function runHybridPipeline({
 
     const scaffoldModel = await getModelForStage('coding')
     const scaffoldResult = await runScaffoldPhase({
-      objective: `${prompt}\n\n=== BLUEPRINT ARCHITECTURE ===\n${architectureText.slice(0, 4000)}`,
+      objective: `${prompt}\n\n=== BLUEPRINT ARCHITECTURE ===\n${architectureText}`,
       stagePlan: scaffoldPlan, model: scaffoldModel.model, providerType: scaffoldModel.providerType, sessionId, configState,
       baseUrl: scaffoldModel.baseUrl, apiKeyEnv: scaffoldModel.apiKeyEnv, agent, signal, toolContext,
       tddMode: hybridConfig.tdd_mode === true
@@ -1196,8 +1197,8 @@ async function runHybridPipeline({
   const gatesConfig = longagentConfig.usability_gates || {}
   let priorContext = [
     userGuidance ? `## 用户指引（最高优先级）\n${userGuidance}\n` : "",
-    "### Preview Findings", previewFindings.slice(0, 2000), "",
-    "### Blueprint Architecture", architectureText.slice(0, 3000)
+    "### Preview Findings", previewFindings, "",
+    "### Blueprint Architecture", architectureText
   ].join("\n")
   const seenFilePaths = new Set() // #3 去重：跨阶段文件路径去重
 
@@ -1380,7 +1381,7 @@ async function runHybridPipeline({
       // #1 阶段级压缩 + #3 文件去重 — 结构化摘要，跨阶段去重文件路径
       const taskSummaries = Object.values(stageResult.taskProgress || {})
         .filter(t => t.lastReply)
-        .map(t => `  - [${t.taskId}] ${t.status}: ${t.lastReply.slice(0, 250)}`)
+        .map(t => `  - [${t.taskId}] ${t.status}: ${t.lastReply}`)
       const stageFiles = (stageResult.fileChanges || [])
         .map(f => (typeof f === "string" ? f : (f.path || f.file || "")))
         .filter(Boolean)
@@ -1397,7 +1398,7 @@ async function runHybridPipeline({
         if (busCtx) priorContext += `\n${busCtx}\n`
       }
       // #13 上下文压缩
-      const pressureLimit = Number(hybridConfig.context_pressure_limit || 8000)
+      const pressureLimit = Number(hybridConfig.context_pressure_limit) || Math.max(8000, Math.min(200000, Math.floor(resolveModelLimits({model, providerType, configState, baseUrl, apiKeyEnv}).inputBudget * .12 * 3.5)))
       if (priorContext.length > pressureLimit) {
         priorContext = await compressContext(priorContext, pressureLimit, { model, providerType, sessionId, configState, baseUrl, apiKeyEnv, signal, toolContext })
         await EventBus.emit({ type: EVENT_TYPES.LONGAGENT_HYBRID_CONTEXT_COMPRESSED, sessionId, payload: { newLength: priorContext.length } })
@@ -1613,8 +1614,8 @@ async function runHybridPipeline({
       await saveCheckpoint(sessionId, {
         name: `hybrid_stage_${stage.stageId}`, iteration, currentPhase, stageIndex, stagePlan,
         taskProgress, planFrozen, lastProgress, round,
-        previewFindings: previewFindings.slice(0, 4000),
-        architectureText: architectureText.slice(0, 6000)
+        previewFindings: previewFindings,
+        architectureText: architectureText
       })
     }
 
@@ -1654,7 +1655,7 @@ async function runHybridPipeline({
         model, providerType, sessionId, configState, baseUrl, apiKeyEnv, signal, output, allowQuestion: false, toolContext
       })
       accumulateUsage(reviewOut)
-      if (reviewOut.reply) priorContext += `\n### Cross-Review Findings\n${reviewOut.reply.slice(0, 1500)}\n`
+      if (reviewOut.reply) priorContext += `\n### Cross-Review Findings\n${reviewOut.reply}\n`
     }
 
     // --- H5: DEBUGGING (回滚检测) ---
@@ -1670,9 +1671,9 @@ async function runHybridPipeline({
 
     const debugModel = await getModelForStage("debugging")
     const debugPromptBase = buildStageWrapper(ULTRA_STAGES.DEBUGGING, {
-      preview: previewFindings.slice(0, 2000),
-      blueprint: architectureText.slice(0, 3000),
-      coding: priorContext.slice(0, 4000)
+      preview: previewFindings,
+      blueprint: architectureText,
+      coding: priorContext
     }, prompt)
     // goal 模式才谈得上「判据核验」。关掉 goal_mode 时没有判据可核，
     // 教模型输出一个不会被验证的信号只会让它更愿意提前收工。
@@ -1819,8 +1820,8 @@ async function runHybridPipeline({
         await saveCheckpoint(sessionId, {
           name: `debug_iter_${iteration}`, iteration, currentPhase, stageIndex, stagePlan,
           taskProgress, planFrozen, lastProgress, round,
-          previewFindings: previewFindings.slice(0, 4000),
-          architectureText: architectureText.slice(0, 6000)
+          previewFindings: previewFindings,
+          architectureText: architectureText
         }).catch(() => {})
       }
       await syncState({ lastMessage: `H5: debugging iteration ${debugIter}/${maxDebugIterations}` })

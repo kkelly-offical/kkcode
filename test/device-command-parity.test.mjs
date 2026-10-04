@@ -39,6 +39,9 @@ async function fixture(fn) {
   } }
   const run = command => runDeviceCommand({ service, kernel, sessionId: 'current', command, principal: { id: 'local', client: 'test' } })
   try { await fn({ directory, kernel, calls, run, sessions }) } finally {
+    // Compact is acknowledged before it settles. Match DeviceService.close:
+    // drain owned operations before restoring the store and removing its home.
+    await Promise.all([...service.turns.values()].map(entry => entry.promise))
     kernel.sessions.getSession = originalGet; kernel.sessions.listSessions = originalList
     await kernel.shutdown()
     if (previous === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = previous

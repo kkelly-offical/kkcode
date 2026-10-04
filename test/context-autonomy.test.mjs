@@ -54,10 +54,10 @@ describe("85% 阈值真的能触发", () => {
     assert.equal(shouldCompact({ ...base, realTokenCount: 85000 }), true)
   })
 
-  it("消息数高位安全网（200 条）仍然兜底", () => {
+  it("measured low occupancy does not compact merely because history has 200 messages", () => {
     assert.equal(
       shouldCompact({ messages: messagesOf(200), model: "m", configState, providerType: "p", realTokenCount: 1000 }),
-      true
+      false
     )
   })
 

@@ -13,6 +13,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Switch
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -58,6 +59,10 @@ internal fun modelCapabilityLabel(entry: JSONObject?): String {
                 if(state.catalogError.isNotBlank()) TextButton(onClick = { state.discoverModels(name) }, enabled = !state.catalogLoading) { Text("重新读取模型列表", fontSize = 11.sp) }
                 catalogSourceLabel(state.catalogSource, state.catalogStale).takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 10.sp, color = if(state.catalogStale) kkcodeColors.warning else kkcodeColors.activityMuted, modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)) }
                 if(state.catalogError.isNotBlank()) ManualModelEntry(state, name)
+                if(state.provider == name) {
+                    val active = state.modelOptions.find { it.optString("id") == state.model }
+                    active?.optJSONObject("runtime")?.let { ModelThinkingOptions(state, name, state.model, it) }
+                }
                 val discovered = state.modelOptions.map { it.getString("id") }
                 val merged = (listOf(defaultModel) + discovered + listOf(if(state.provider == name) state.model else "")).filter { it.isNotBlank() }.distinct()
                 merged.forEach { id ->
@@ -90,5 +95,32 @@ internal fun modelCapabilityLabel(entry: JSONObject?): String {
             Text(id, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if(tag.isNotBlank()) Text(tag, fontSize = 10.sp, color = kkcodeColors.activityMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable private fun ModelThinkingOptions(state: RemoteState, provider: String, model: String, runtime: JSONObject) {
+    val control = runtime.optJSONObject("thinking") ?: return
+    val options = control.optJSONArray("options") ?: return
+    val selected = control.optString("selected", "auto")
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Text("思考强度", fontSize = 12.sp, color = kkcodeColors.activityMuted)
+        if(control.optString("kind") == "toggle") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(enabled = !state.busy && !state.sharedDevice, onClick = { state.selectThinking(provider, model, "auto") }) { Text(if(selected == "auto") "✓ 自动" else "自动") }
+                Text(if(selected == "auto") "思考 · 沿用默认" else "思考", fontSize = 12.sp)
+                Switch(checked = selected == "on", enabled = !state.busy && !state.sharedDevice, onCheckedChange = { state.selectThinking(provider, model, if(it) "on" else "off") })
+            }
+        } else FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            for(index in 0 until options.length()) {
+                val option = options.getJSONObject(index)
+                TextButton(enabled = !state.busy && !state.sharedDevice && option.optBoolean("available"), onClick = { state.selectThinking(provider, model, option.getString("value")) }) {
+                    Text((if(selected == option.optString("value")) "✓ " else "") + option.optString("label"), color = if(selected == option.optString("value")) kkcodeColors.success else kkcodeColors.link, fontSize = 12.sp)
+                }
+            }
+        }
+        val context = runtime.optJSONObject("context")?.optLong("limit") ?: 0
+        val output = runtime.optJSONObject("output")
+        Text("上下文 $context · 输出预留 ${output?.optLong("reserved") ?: 0}${when(output?.optString("source")) { "estimated" -> "（估算）"; "configuration" -> "（手动上限）"; else -> "（接口）" }}", fontSize = 10.sp, color = kkcodeColors.activityMuted)
     }
 }

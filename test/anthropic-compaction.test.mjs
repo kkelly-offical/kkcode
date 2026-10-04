@@ -178,6 +178,7 @@ test('real HTTP kernel tools and follow-up replay the persisted Anthropic compac
   let inference = 0
   let countedTokens = 120
   const server = createServer(async (req, res) => {
+    if(req.method === 'GET' && req.url.endsWith('/models')) {res.setHeader('content-type','application/json');res.end(JSON.stringify({data:[{id:'claude-fixture',max_input_tokens:200000,max_tokens:16384}]}));return}
     const chunks = []; for await (const chunk of req) chunks.push(chunk)
     const body = JSON.parse(Buffer.concat(chunks).toString()); requests.push({ url: req.url, body })
     if (req.url.endsWith('count_tokens')) { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ input_tokens: countedTokens })); return }

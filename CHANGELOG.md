@@ -1,5 +1,14 @@
 # Changelog / 更新日志
 
+## 1.0.10 — Model-aware settings & adaptive Ultra / 开发中
+
+- Resolve input/output limits and reasoning options from the actual model catalog without rewriting user settings. Unknown output limits use a labelled one-fifth fallback.
+- Map low/medium/high/xhigh/max to 略思／审思／深思／精思／穷理; expose only supported levels or the declared thinking switch across CLI, Web and Android.
+- Give children their own request budgets and bounded context handoffs; default step budgets are 128 for the parent and 64 for ordinary children, subject to explicit ceilings.
+- Let ordinary Ultra choose stages, delegation and checks while preserving durable state and cancellation; strict contracts and unfinished legacy stages retain the staged runner.
+- Preserve full archived stage context before summarization and avoid early compression of measured low-occupancy histories.
+- Android10017 uses the original release identity. Published stable remains 1.0.9; see [implementation evidence](docs/implementation-1.0.10.md).
+
 ## 1.0.9 — General Agent & conversation fixes / 正式版（2026-10-04）
 
 - End everyday conversations without forced test-repair prompts; retain actual evidence and explicit strict acceptance.

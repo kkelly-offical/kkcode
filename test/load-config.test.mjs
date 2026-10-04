@@ -288,7 +288,7 @@ provider:
     await writeFile(path.join(tmpDir, ".env"), "KKCODE_AGENT__MAX_STEPS=bad\nKKCODE_LANGUAGE=zh\n")
 
     const result = await loadConfig(tmpDir)
-    assert.equal(result.config.agent.max_steps, 8, "坏的 env 值必须回落到已验证的低优先级值")
+    assert.equal(result.config.agent.max_steps, 128, "坏的 env 值必须回落到已验证的低优先级值")
     assert.equal(result.config.language, "zh", "同一 env 里的合法键应继续生效")
     assert.equal(result.source.envOverlay.agent?.max_steps, undefined)
     assert.match(result.warnings[0], /agent\.max_steps/)
@@ -341,7 +341,7 @@ language: zh
     assert.equal(result.errors.length, 0)
     assert.ok(result.warnings.some((warning) => warning.includes("agent.max_steps")),
       "mergeConfigObject 的 null=inherit 语义不能遮住普通字段校验")
-    assert.equal(result.config.agent.max_steps, 8)
+    assert.equal(result.config.agent.max_steps, 128)
     assert.equal(result.config.language, "zh")
   })
 
