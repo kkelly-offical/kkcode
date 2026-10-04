@@ -4,8 +4,9 @@ import path from 'node:path'
 import os from 'node:os'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
-import { mkdtemp, rm, writeFile, symlink, link } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, writeFile, symlink, link } from 'node:fs/promises'
 import { prepareEvaluationLocalFreeAuthorization, localFreeServiceBindingHash, readEvaluationLocalFreeBinding } from '../evaluation/v1/local-free-authorization.mjs'
+import { loadEvaluationConfig } from '../evaluation/v1/config-state.mjs'
 import { localFreePolicy } from '../src/usage/local-free.mjs'
 import { localFreePolicyId } from '../src/storage/local-free-policy.mjs'
 
@@ -13,6 +14,25 @@ const withId = policy => ({ ...policy, id: localFreePolicyId(policy) })
 const fixturePolicy = () => withId({ version: 1, provider: 'evaluation', model: 'binding-fixture', protocol: 'openai',
   baseUrl: 'http://127.0.0.1:12345/v1', scopeHash: '1'.repeat(64), maxRequests: 8, maxTokens: 1000000,
   listener: { pid: 123, uid: 0, fd: 4, inode: '123', startTimeTicks: '456', executable: '/controlled/fixture' } })
+
+test('host model bounds remain explicit in memory without persisting ordinary config caps', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kk-evaluation-config-')), previous = process.env.KKCODE_HOME
+  process.env.KKCODE_HOME = root
+  const file = path.join(root, 'config.json'), raw = JSON.stringify({ provider: { default: 'evaluation', evaluation: { type: 'openai', default_model: 'binding-fixture' } } })
+  try {
+    await writeFile(file, raw)
+    const state = await loadEvaluationConfig(root, { contextLimit: 131072, maxTokens: 4096 })
+    for (const config of [state.config, state.userConfig]) {
+      assert.equal(config.provider.evaluation.context_limit, 131072)
+      assert.equal(config.provider.evaluation.max_tokens, 4096)
+    }
+    assert.equal(await readFile(file, 'utf8'), raw)
+    await assert.rejects(loadEvaluationConfig(root, { contextLimit: 131072, maxTokens: -1 }), /schema validation/)
+  } finally {
+    if (previous === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = previous
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 test('local service binding excludes only quota/id and keeps every service identity field', () => {
   const original = fixturePolicy(), hash = localFreeServiceBindingHash(original)
@@ -66,6 +86,9 @@ test('a reduced new batch retains the original real listener and rejects replace
     const prepare = (expectedPolicy = null, limits = { requestLimit: 8, tokenLimit: 1000000 }, config = profile) =>
       prepareEvaluationLocalFreeAuthorization({ profile: config, limits, expectedPolicy, privateRoot: path.join(root, `authorization-${++serial}`) })
     const original = localFreePolicy(await prepare())
+    const saved = JSON.parse(await readFile(path.join(root, 'authorization-1/state/config.json'), 'utf8'))
+    assert.equal(saved.provider.evaluation.context_limit, undefined)
+    assert.equal(saved.provider.evaluation.max_tokens, undefined)
     const reduced = localFreePolicy(await prepare(original, { requestLimit: 2, tokenLimit: 500000 }))
     assert.equal(localFreeServiceBindingHash(original), localFreeServiceBindingHash(reduced))
     assert.notEqual(original.id, reduced.id)
