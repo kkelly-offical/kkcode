@@ -32,6 +32,7 @@ test('catalog → complete budget → actual request, with refreshed models and 
     assert.equal(meter.outputReserved,131072)
     assert.equal(meter.inputBudget,917504)
     assert.equal(meter.outputSource,'catalog')
+    assert.equal(requestContextBudget({model:'p/large',providerType:'p',configState:cfg}).outputReserved,131072, 'budgeting resolves the same provider/model alias as the wire adapter')
     const independent=requestContextBudget({model:'independent',configState:cfg,measuredTokens:1000000})
     assert.equal(independent.inputBudget,1048576)
     assert.equal(independent.outputReserved,65536)
@@ -122,4 +123,14 @@ test('malformed API limits remain unknown instead of coercing booleans or arrays
     assert.equal(parsed.limits.context,null)
   }
   assert.equal(parseModelParameters({max_output_tokens:'65536'}).limits.output,65536)
+})
+
+test('known model defaults fill sparse catalogs without capping explicit choices or starving small deployments', () => {
+  assert.equal(requestContextBudget({model:'gpt-5-2025-08-07'}).outputReserved,128000)
+  const configState={config:{provider:{default:'p',p:{context_limit:400000,max_tokens:150000}}}}
+  assert.equal(requestContextBudget({model:'gpt-5',configState}).outputReserved,150000)
+  configState.config.provider.p={context_limit:32768,max_output_tokens:131072}
+  const small=requestContextBudget({model:'gpt-5',configState})
+  assert.equal(small.outputReserved,6553)
+  assert.ok(small.inputBudget > 25000)
 })
