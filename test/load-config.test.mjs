@@ -488,7 +488,7 @@ provider:
     await mkdir(kkDir, { recursive: true })
     await writeFile(path.join(kkDir, "config.yaml"), `
 provider:
-  model_context:
+  model_thinking:
     "__proto__.toString": 1
 `)
 

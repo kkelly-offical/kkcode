@@ -11,18 +11,17 @@ export const DEFAULT_CONFIG = {
    *
    * 现在**用户有什么就显示什么**。删除是安全的：
    *   - 每个字段在读取点都有代码级缺省（router 的 `retry_attempts ?? 5`、
-   *     `timeout_ms || 120000`、`max_tokens || 16384`）—— 用户自建的 provider
+   *     `timeout_ms || 120000`、动态模型额度）—— 用户自建的 provider
    *     从来就没有这些字段，那条路一直在被走。
    *   - 没有 default provider 时，preflight 的 "no default provider configured"
    *     失败路径接住（它此前因为恒有预置而不可达）。
    *   - 厂商的推荐 base_url / 模型清单在 VENDOR_PRESETS（wizard.mjs）——
    *     那是 `/provider add` 表单的数据源，不是配置。
    *
-   * `model_context` 只保留用户覆盖；内置知识在 model-limits 中标记为兜底。
+   * 窗口与输出额度在运行时读取接口或计算，不写入配置。
    */
   provider: {
-    strict_mode: false,
-    model_context: {}
+    strict_mode: false
   },
   agent: {
     default_mode: "assistant",

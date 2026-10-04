@@ -20,8 +20,7 @@ function kimiCodeThinking(model, protocol, baseUrl) {
   if (!['k3', 'k3-256k', 'kimi-for-coding'].includes(model)) return null
   return { supported: true, levels: ['none', 'low', 'high', 'max'],
     defaultLevel: model === 'kimi-for-coding' ? 'max' : 'high',
-    aliases: { medium: 'high', xhigh: 'max', ultra: 'max', minimum: 'low', light: 'low' },
-    offLabel: '直答（K2.8）', offDescription: '关闭思考；服务端改由 K2.8 Preview 无思考版处理' }
+    aliases: { medium: 'high', xhigh: 'max', ultra: 'max', minimum: 'low', light: 'low' } }
 }
 
 /** Public, credential-free UI contract; the same choices drive wire mapping.
@@ -75,8 +74,8 @@ export function thinkingControl({ model = '', protocol = 'openai', baseUrl = '',
     values = [...unique.values()]
   }
   const options = ['auto', ...(canDisable && kind !== 'unsupported' ? ['off'] : []), ...values]
-    .map(value => ({ value, label: value === 'off' && declared.offLabel ? declared.offLabel : LABELS[value]?.[0] || value,
-      description: value === 'off' && declared.offDescription ? declared.offDescription : LABELS[value]?.[1] || '模型原生档位', available: true,
+    .map(value => ({ value, label: LABELS[value]?.[0] || value,
+      description: LABELS[value]?.[1] || '模型原生档位', available: true,
       level: ['levels','budget'].includes(kind) && values.every(v => Object.hasOwn(RATIOS,v) || v === 'minimal') && values.includes(value) ? values.indexOf(value)+1 : null }))
   if (!options.some(option => option.value === selected)) options.push({ value: selected, label: `${LABELS[selected]?.[0] || selected} · 待确认`, description: '已保存设置，当前模型未确认支持', available: false, level: null })
   return { kind, source, selected, options, canDisable, nativeOff, types, nativeLevels, toggleParameter:toggleParameter || null,
@@ -91,8 +90,11 @@ export function mapThinkingRequest({ control, protocol, settings = {}, maxTokens
   if (explicit?.type) {
     if (protocol !== 'anthropic') fail('当前协议适配器不支持 thinking 对象，请使用自动或该模型支持的思考选项。')
     if (explicit.type === 'enabled') {
-      if (!Number.isInteger(explicit.budget_tokens) || explicit.budget_tokens < control.minBudget || explicit.budget_tokens >= maxTokens || control.maxBudget && explicit.budget_tokens > control.maxBudget) fail('思考预算必须处于模型有效范围并小于本次输出额度。')
-      return { thinking: { type: 'enabled', budget_tokens: explicit.budget_tokens } }
+      // Legacy file settings retain the enabled switch, but no numeric cap.
+      // Derive its budget from the same range used by the effort selector.
+      const budget = explicit.budget_tokens ?? control.budgetValues[control.defaultLevel] ?? control.budgetValues.high
+      if (!Number.isInteger(budget) || budget < control.minBudget || budget >= maxTokens || control.maxBudget && budget > control.maxBudget) fail('思考预算必须处于模型有效范围并小于本次输出额度。')
+      return { thinking: { type: 'enabled', budget_tokens: budget } }
     }
     if (!['adaptive','disabled'].includes(explicit.type)) fail('当前协议不支持该思考模式。')
     if (explicit.type === 'disabled' && control.types.includes('adaptive') && !control.canDisable) fail('当前模型不支持关闭思考。')

@@ -137,6 +137,6 @@ internal fun modelCapabilityLabel(entry: JSONObject?): String {
         }
         val context = runtime.optJSONObject("context")?.optLong("limit") ?: 0
         val output = runtime.optJSONObject("output")
-        Text("上下文 $context · 输出预留 ${output?.optLong("reserved") ?: 0}${when(output?.optString("source")) { "estimated" -> "（估算）"; "configuration" -> "（手动上限）"; else -> "（接口）" }}", fontSize = 10.sp, color = kkcodeColors.activityMuted)
+        Text("上下文 $context · 输出预留 ${output?.optLong("reserved") ?: 0}${when(output?.optString("source")) { "estimated" -> "（估算）"; "catalog" -> "（接口）"; else -> "" }}", fontSize = 10.sp, color = kkcodeColors.activityMuted)
     }
 }

@@ -1,5 +1,6 @@
 import path from "node:path"
 import { readFile, writeFile, mkdir, chmod } from "node:fs/promises"
+import { withoutModelTokenLimits } from '../../config/model-token-limits.mjs'
 import YAML from "yaml"
 import { userRootDir } from "../../storage/paths.mjs"
 
@@ -165,7 +166,7 @@ export async function saveProviderConfig(newCfg, setDefault = true) {
     existing.provider.default = newCfg.provider.default
   }
 
-  await writeFile(configPath, YAML.stringify(existing), "utf8")
+  await writeFile(configPath, YAML.stringify(withoutModelTokenLimits(existing)), "utf8")
   // 配置文件从 0.7.3 起可能带明文 api_key。0600 在 POSIX 上挡住同机其它用户；
   // Windows 的 chmod 只动 readonly 位、不抛错，静默走过即可。
   try { await chmod(configPath, 0o600) } catch { /* 平台不支持就算了 */ }

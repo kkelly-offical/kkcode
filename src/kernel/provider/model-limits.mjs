@@ -26,6 +26,9 @@ export function resolveModelLimits({ model = '', configState = null, providerTyp
   const id = String(wireModel || '').toLowerCase()
   const cached = cachedModelMetadata(configState, provider, wireModel, { baseUrl, apiKeyEnv })
   const metadata = cached?.model?.modelParameters || {}, declared = metadata.limits || {}
+  // File loaders discard legacy numeric settings. Programmatic SDK/host
+  // configurations may still supply explicit bounds; frozen budgets retain
+  // their own enforcement and never expand with a catalog refresh.
   const overrides = providers.model_context || {}
   const key = Object.keys(overrides).sort((a,b) => b.length - a.length).find(k => id.startsWith(k.toLowerCase()))
   const configuredContext = integer(overrides[model]) || integer(overrides[wireModel]) || integer(overrides[key]) || integer(settings.context_limit)

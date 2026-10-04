@@ -3,20 +3,12 @@
 # Keep credentials outside this file:
 #   export KIMI_CODE_API_KEY="your-kimi-code-key"
 #
-# Every model on this endpoint is thinking-only, so reasoning tokens come out
-# of max_tokens. Keep it generous — a small budget can be consumed entirely by
-# reasoning and return empty content.
+# Context and output limits are read from the API or calculated at runtime.
 
 config_version: 1
 
 provider:
   default: kimi-code
-
-  model_context:
-    k3: 1048576
-    k3-256k: 262144
-    kimi-for-coding: 262144
-    kimi-for-coding-highspeed: 262144
 
   kimi-code:
     type: openai-compatible
@@ -26,12 +18,10 @@ provider:
     models:
       - k3                          # K3 — 1M context
       - k3-256k                     # K3 — 256K context
-      - kimi-for-coding             # K2.7 Coding
-      - kimi-for-coding-highspeed   # K2.7 Coding Highspeed
-    context_limit: 1048576
+      - kimi-for-coding             # Coding
+      - kimi-for-coding-highspeed   # Coding Highspeed
     timeout_ms: 240000
     stream_idle_timeout_ms: 240000
-    max_tokens: 32768
     retry_attempts: 5
     retry_base_delay_ms: 800
     stream: true
@@ -39,11 +29,8 @@ provider:
 
 # 0.4.0 model roles. fast powers inline ghost text and session titles.
 #
-# fast is deliberately left unset: every model on this channel is thinking-only,
-# and the fast channel gives helper calls a 32-token budget with a 4s timeout —
-# the reasoning pass consumes the whole budget and the visible text comes back
-# empty every time. Pointing fast here does not merely fail, it fails silently
-# while still spending tokens on each keystroke pause.
+# fast is left unset. Helper calls need low latency and short responses;
+# select a suitable model explicitly before enabling them.
 #
 # To enable ghost text, point fast at an instant-answer model on another
 # channel using the provider/model form, e.g.:

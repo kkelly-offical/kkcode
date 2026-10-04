@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import YAML from 'yaml'
 import { loadConfig } from '../config/load-config.mjs'
 import { validateConfig } from '../config/schema.mjs'
+import { withoutModelTokenLimits } from '../config/model-token-limits.mjs'
 import { DEFAULT_CONFIG } from '../config/defaults.mjs'
 import { configurationDiagnostics, configurationErrorMessage } from '../config/diagnostics.mjs'
 import { redactConfig } from '../config/redact.mjs'
@@ -78,7 +79,7 @@ export async function updateDeviceSettings(service, patch) {
   if (Object.hasOwn(patch, '_diagnostics') || Object.hasOwn(patch.permission || {}, '_load_error')) throw new ProtocolError('invalid_config', '配置诊断是只读信息，不能通过保存配置清除安全限制')
   if (service.turns.size) throw new ProtocolError('configuration_busy', 'Wait for running turns to finish before changing device configuration', 409)
   const loaded = await loadConfig(service.cwd)
-  const validation = validateConfig(merge(loaded.config, patch))
+  const validation = validateConfig(withoutModelTokenLimits(merge(loaded.config, patch)))
   if (!validation.valid) throw new ProtocolError('invalid_config', configurationErrorMessage(validation.errors))
   const file = loaded.source.userPath || path.join(userRootDir(), 'config.json')
   let original = {}
@@ -88,7 +89,7 @@ export async function updateDeviceSettings(service, patch) {
   }
   catch (error) { if (error.code !== 'ENOENT') throw new ProtocolError('invalid_config', '配置未保存：无法读取或解析原有用户配置。请在被控电脑修正文件后重试；原文件未修改。') }
   if (!original || typeof original !== 'object' || Array.isArray(original)) throw new ProtocolError('invalid_config', configurationErrorMessage([]))
-  const next = merge(original, patch)
+  const next = withoutModelTokenLimits(merge(original, patch))
   // Validate the bytes that will actually be saved, not only a sanitized
   // effective view which may have discarded an existing malformed subtree.
   const persisted = validateConfig(merge(DEFAULT_CONFIG, next))

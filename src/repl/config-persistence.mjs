@@ -16,6 +16,7 @@ import { dirname } from "node:path"
 import YAML from "yaml"
 import { userConfigCandidates, projectConfigCandidates } from "../storage/paths.mjs"
 import { mergeConfigObject } from "../config/merge.mjs"
+import { withoutModelTokenLimits } from '../config/model-token-limits.mjs'
 import { appendLearnedRule, buildLearnedRule } from "../kernel/index.mjs"
 
 export function parseConfigByPath(filePath, raw) {
@@ -24,6 +25,7 @@ export function parseConfigByPath(filePath, raw) {
 }
 
 export function stringifyConfigByPath(filePath, data) {
+  data = withoutModelTokenLimits(data)
   if (filePath.endsWith(".json")) return JSON.stringify(data, null, 2) + "\n"
   return YAML.stringify(data)
 }
