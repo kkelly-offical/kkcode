@@ -93,4 +93,31 @@ class ComposerSelectorsTest {
         compose.onNodeWithText("上下文 262144 · 输出预留 65536（接口）").assertIsDisplayed()
     }
 
+    @Test fun defaultModelShowsThinkingControlsBeforeAnExplicitModelSelection() {
+        val options = org.json.JSONArray().put(JSONObject().put("value", "auto").put("label", "自动").put("available", true))
+            .put(JSONObject().put("value", "high").put("label", "深思").put("available", true))
+        val runtime = JSONObject().put("thinking", JSONObject().put("kind", "levels").put("selected", "auto").put("options", options))
+        val state = show {
+            it.selected = "session-fixture"; it.sheet = "model-picker"; it.provider = "fixture"; it.model = ""
+            it.settings = JSONObject().put("provider", JSONObject().put("fixture", JSONObject().put("default_model", "default-model")))
+            it.catalogProvider = "fixture"
+            it.modelOptions = listOf(JSONObject().put("id", "default-model").put("runtime", runtime))
+        }
+        compose.onNodeWithText("思考强度").assertIsDisplayed()
+        compose.onNodeWithText("深思").assertIsDisplayed()
+        compose.runOnIdle { assertEquals("", state.model) }
+    }
+
+    @Test fun legacyRemoteExplainsMissingThinkingMetadataInsteadOfHidingTheEntry() {
+        show {
+            it.selected = "session-fixture"; it.sheet = "model-picker"; it.provider = "fixture"; it.model = "model"
+            it.settings = JSONObject().put("provider", JSONObject().put("fixture", JSONObject().put("default_model", "model")))
+            it.catalogProvider = "fixture"
+            it.modelOptions = listOf(JSONObject().put("id", "model"))
+        }
+        compose.onNodeWithText("思考强度").assertIsDisplayed()
+        compose.onNodeWithText("电脑端未提供思考设置。请确认电脑上的 KK Code / remote 为 1.0.10 或更新版本，然后重新连接。").assertIsDisplayed()
+        compose.onNodeWithText("深思").assertDoesNotExist()
+    }
+
 }

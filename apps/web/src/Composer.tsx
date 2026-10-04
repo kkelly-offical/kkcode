@@ -519,15 +519,22 @@ export function Composer({
                                 {id === entry.defaultModel && <em>默认</em>}
                               </button>
                             ))}
-                            {entry.name === selection.provider && (() => {
-                              const runtime = catalog?.models.find(item => item.id === selection.model)?.runtime;
+                            {entry.name === (selection.provider || settings.provider?.default) && (() => {
+                              const selectedModel = selection.model || entry.defaultModel;
+                              const active = catalog?.models.find(item => item.id === selectedModel);
+                              const runtime = active?.runtime;
                               const control = runtime?.thinking;
-                              const current = settings.provider?.[entry.name]?.model_options?.[selection.model]?.thinking_effort ?? control?.selected ?? 'auto';
-                              return runtime && <div className="model-thinking" aria-label="思考强度">
+                              const saved = settings.provider?.[entry.name]?.model_options?.[selectedModel]?.thinking_effort;
+                              const current = control?.options?.some((option: Item) => option.value === saved) ? saved : control?.selected ?? 'auto';
+                              if (!runtime) return <div className="model-thinking" aria-label="思考强度"><span>思考强度</span><small>{catalog?.loading ? '正在读取模型的思考设置…' : !selectedModel ? '请先选择模型。' : !active ? '当前模型信息暂未就绪，请重新读取模型列表。' : '电脑端未提供思考设置。请确认电脑上的 KK Code / remote 为 1.0.10 或更新版本，然后重新连接。'}</small></div>;
+                              return <div className="model-thinking" aria-label="思考强度">
+                                {control?.kind === 'unknown' && <small>尚未确认此模型的可调思考选项，当前沿用默认设置。</small>}
+                                {control?.kind === 'unsupported' && <small>此模型不支持思考调节。</small>}
+                                {control?.kind === 'fixed' && <small>{control.budgetUnavailable ? '当前输出额度不足以开启可调思考。' : '此模型的思考方式由服务端固定。'}</small>}
                                 {control?.kind === 'toggle' ? <div className="thinking-switch">
-                                  <button type="button" disabled={busy || readOnly || !canManage || !onThinking} aria-pressed={current === 'auto'} onClick={() => { onThinking?.(entry.name, selection.model, 'auto'); setPicker(''); }}>自动</button>
-                                  <button type="button" role="switch" aria-label="思考开关" aria-checked={current === 'on'} disabled={busy || readOnly || !canManage || !onThinking} onClick={() => { onThinking?.(entry.name, selection.model, current === 'on' ? 'off' : 'on'); setPicker(''); }}>思考 · {current === 'auto' ? '沿用默认' : current === 'on' ? '开' : '关'}</button>
-                                </div> : <label>思考强度 <select aria-label="思考强度" value={current} disabled={busy || readOnly || !canManage || !onThinking} onChange={event => { onThinking?.(entry.name, selection.model, event.target.value); setPicker(''); }}>
+                                  <button type="button" disabled={busy || readOnly || !canManage || !onThinking} aria-pressed={current === 'auto'} onClick={() => { onThinking?.(entry.name, selectedModel, 'auto'); setPicker(''); }}>自动</button>
+                                  <button type="button" role="switch" aria-label="思考开关" aria-checked={current === 'on'} disabled={busy || readOnly || !canManage || !onThinking} onClick={() => { onThinking?.(entry.name, selectedModel, current === 'on' ? 'off' : 'on'); setPicker(''); }}>思考 · {current === 'auto' ? '沿用默认' : current === 'on' ? '开' : '关'}</button>
+                                </div> : <label>思考强度 <select aria-label="思考强度" value={current} disabled={busy || readOnly || !canManage || !onThinking} onChange={event => { onThinking?.(entry.name, selectedModel, event.target.value); setPicker(''); }}>
                                   {control?.options?.map((option: Item) => <option key={option.value} value={option.value} disabled={!option.available}>{option.label} · {option.description}</option>)}
                                 </select></label>}
                                 <small>上下文 {Number(runtime.context.limit).toLocaleString()}<br />输出预留 {Number(runtime.output.reserved).toLocaleString()}{runtime.output.source === 'estimated' ? '（估算）' : runtime.output.source === 'configuration' ? '（手动上限）' : '（接口）'}</small>
