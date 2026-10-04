@@ -3,7 +3,7 @@ import { ProviderError } from '../core/errors.mjs'
 const LABELS = { auto: ['自动', '使用服务端默认设置'], off: ['直答', '关闭思考'], none: ['直答', '关闭思考'],
   minimal: ['微思', '最轻思考'], low: ['略思', '较轻思考'], medium: ['审思', '仔细推敲'], high: ['深思', '深入推演'],
   xhigh: ['精思', '更缜密推演'], max: ['穷理', '更充分推究'], on: ['启思', '开启思考'] }
-const RATIOS = { low: .15, medium: .35, high: .6, xhigh: .75, max: .85 }
+const RATIOS = { low: 0, medium: .25, high: .5, xhigh: .75, max: 1 }
 const fail = message => { throw new ProviderError(message, { reason: 'invalid_thinking_parameter' }) }
 
 /** Public, credential-free UI contract; the same choices drive wire mapping.
@@ -36,12 +36,22 @@ export function thinkingControl({ model = '', protocol = 'openai', metadata = {}
   const budgetCeiling = Math.min(declared.maxBudget || Infinity, Math.floor(maxTokens * .9), maxTokens - 1)
   const budgetUnavailable = kind === 'budget' && budgetCeiling < minBudget
   if (budgetUnavailable) { kind = 'fixed'; values = [] }
+  const budgetValues = {}
+  if (kind === 'budget') {
+    const unique = new Map()
+    for (const value of values) {
+      const tokens = minBudget + Math.floor((budgetCeiling - minBudget) * RATIOS[value])
+      budgetValues[value] = tokens
+      if (!unique.has(tokens) || value === selected) unique.set(tokens,value)
+    }
+    values = [...unique.values()]
+  }
   const options = ['auto', ...(canDisable && kind !== 'unsupported' ? ['off'] : []), ...values]
     .map(value => ({ value, label: LABELS[value]?.[0] || value, description: LABELS[value]?.[1] || '模型原生档位', available: true,
       level: ['levels','budget'].includes(kind) && values.every(v => Object.hasOwn(RATIOS,v) || v === 'minimal') && values.includes(value) ? values.indexOf(value)+1 : null }))
   if (!options.some(option => option.value === selected)) options.push({ value: selected, label: `${LABELS[selected]?.[0] || selected} · 待确认`, description: '已保存设置，当前模型未确认支持', available: false, level: null })
   return { kind, source, selected, options, canDisable, nativeOff, types, nativeLevels:declared.nativeLevels || {}, toggleParameter:toggleParameter || null,
-    minBudget, budgetUnavailable, budgetCeiling: Number.isFinite(budgetCeiling) ? Math.max(0, budgetCeiling) : 0,
+    minBudget, maxBudget:declared.maxBudget || null, budgetValues, budgetUnavailable, budgetCeiling: Number.isFinite(budgetCeiling) ? Math.max(0, budgetCeiling) : 0,
     defaultLevel: declared.defaultLevel || null }
 }
 
@@ -52,7 +62,7 @@ export function mapThinkingRequest({ control, protocol, settings = {}, maxTokens
   if (explicit?.type) {
     if (protocol !== 'anthropic') fail('当前协议适配器不支持 thinking 对象，请使用自动或该模型支持的思考选项。')
     if (explicit.type === 'enabled') {
-      if (!Number.isInteger(explicit.budget_tokens) || explicit.budget_tokens < control.minBudget || explicit.budget_tokens >= maxTokens) fail('思考预算必须处于模型有效范围并小于本次输出额度。')
+      if (!Number.isInteger(explicit.budget_tokens) || explicit.budget_tokens < control.minBudget || explicit.budget_tokens >= maxTokens || control.maxBudget && explicit.budget_tokens > control.maxBudget) fail('思考预算必须处于模型有效范围并小于本次输出额度。')
       return { thinking: { type: 'enabled', budget_tokens: explicit.budget_tokens } }
     }
     if (!['adaptive','disabled'].includes(explicit.type)) fail('当前协议不支持该思考模式。')
@@ -71,9 +81,8 @@ export function mapThinkingRequest({ control, protocol, settings = {}, maxTokens
     return protocol === 'anthropic' ? { thinking: { type: 'disabled' } } : { reasoningEffort: (control.nativeOff ? control.nativeLevels[control.nativeOff] : null) || control.nativeOff || 'none' }
   }
   if (control.kind === 'budget') {
-    const ratio = RATIOS[value]
-    if (!ratio || control.budgetCeiling < control.minBudget) fail('本次输出额度不足以启用所选思考档位。')
-    const budget = Math.max(control.minBudget, Math.min(control.budgetCeiling, Math.floor(maxTokens * ratio)))
+    const budget = control.budgetValues[value]
+    if (!Number.isInteger(budget) || budget < control.minBudget || budget >= maxTokens || budget > control.budgetCeiling) fail('本次输出额度不足以启用所选思考档位。')
     return { thinking: { type: 'enabled', budget_tokens: budget } }
   }
   if (control.kind === 'toggle') {

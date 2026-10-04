@@ -107,6 +107,17 @@ test('insufficient thinking budgets and incompatible adapters fail before preten
   assert.throws(()=>mapThinkingRequest({control:thinkingControl({protocol:'ollama',settings:{thinking_effort:'high'}}),protocol:'ollama',maxTokens:512}),/适配器/)
 })
 
+test('budget presets span the effective range and merge equal values instead of inventing distinct levels', () => {
+  const metadata=parseModelParameters({capabilities:{thinking:{supported:true,types:{enabled:{supported:true},disabled:{supported:true}},min_budget_tokens:1024,max_budget_tokens:1025}}})
+  const control=thinkingControl({metadata,protocol:'anthropic',maxTokens:4096,settings:{thinking_effort:'high'}})
+  const presets=control.options.filter(option=>!['auto','off'].includes(option.value))
+  const budgets=presets.map(option=>mapThinkingRequest({control:{...control,selected:option.value},protocol:'anthropic',maxTokens:4096}).thinking.budget_tokens)
+  assert.equal(new Set(budgets).size,presets.length)
+  assert.deepEqual(budgets,[1024,1025])
+  assert.ok(presets.some(option=>option.value===control.selected))
+  assert.throws(()=>mapThinkingRequest({control,protocol:'anthropic',maxTokens:4096,settings:{thinking:{type:'enabled',budget_tokens:1200}}}),/有效范围/)
+})
+
 test('native enum spelling survives cache normalization and an explicit off is sent as declared', () => {
   const original=parseModelParameters({reasoning_effort_levels:['LOW','MEDIUM','HIGH','XHIGH','MAX','OFF']})
   const metadata=parseModelParameters({modelParameters:original})

@@ -250,10 +250,19 @@ export class ArtifactStore {
     let lock
     while (!lock) {
       signal?.throwIfAborted()
-      for (const file of [this.lockFile, `${this.lockFile}.recovery`]) {
-        try { privateStat(await lstat(file), file.endsWith('.recovery'), file === this.lockFile) } catch (error) { if (error.code !== 'ENOENT') throw error }
-      }
-      try { lock = await acquireProcessLock(this.lockFile) } catch (error) {
+      try {
+        for (const file of [this.lockFile, `${this.lockFile}.recovery`]) {
+          try {
+            const info = await lstat(file)
+            // A competing owner may unlink its lock during stat. Retry from
+            // the path, under the existing timeout, without accepting this
+            // detached inode or weakening the linked-file permission checks.
+            if (file === this.lockFile && info.isFile() && info.nlink === 0) throw Object.assign(new Error('Artifact lock changed during inspection'), {code:'device_in_use'})
+            privateStat(info, file.endsWith('.recovery'), file === this.lockFile)
+          } catch (error) { if (error.code !== 'ENOENT') throw error }
+        }
+        lock = await acquireProcessLock(this.lockFile)
+      } catch (error) {
         if (error.code !== 'device_in_use') throw error
         if (Date.now() - start >= this.limits.lockTimeoutMs) fail('artifact_busy', '产物存储正在使用或锁状态需要本机检查，请稍后重试。', 409)
         await delay(10, undefined, { signal })
