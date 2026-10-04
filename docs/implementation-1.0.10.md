@@ -69,4 +69,6 @@
 - 按[Kimi官方规格](https://www.kimi.com/code/docs/kimi-code/models.html)补齐精确官方HTTPS端点及模型ID的能力。K3与标准coding模型提供low/high/max；none关闭思考并由服务端切换到K2.8 Preview，界面明确标为“直答（K2.8）”。高速模型保持固定思考。API已有控制声明优先，不给其他域名、路径、协议或同名模型套用此兜底。
 - Android默认模型正确匹配能力；Android/Web对旧端缺字段、能力未确认和固定思考显示原因，不伪造可用档位。新App界面修复尚未进入已发行APK；现有1.0.10 App显式选中模型后可读取后端的新档位。
 - 11项受控参数检查、Web真实设备服务交互检查、9项Android选择器检查通过，含旧端缺元数据及默认模型回归；类型和针对性lint通过。请求仅使用隔离fixture，不做真实推理效果宣称。
-- 本机后端补丁正在准备，使用独立安装目录并记录源码提交与包哈希；不覆盖已发行tag、npm或APK。修复证据目录：`/tmp/kkcode-thinking-controls-fix-6l6xdsfk/`。
+- 本机已切换至源码`f11340d959c625773b724b6a381334df27c198e0`的独立目录补丁（包SHA-256 `ba56ed7eeecbc7134ee8c9142aee25921841bb3836a184f46847af54d11cfdf6`），公开npm全局安装保持1.0.10原版。补丁不覆盖任何发行tag、npm或APK。切换前再次确认空闲并备份当时状态；设备归属及目录范围保持，配置字节与补丁切换前最新快照一致。两次维护之间已保存的k3／kimi-for-coding自动偏好完整保留，不用更早快照覆盖。
+- 通过正在运行的本机设备RPC重新读取实时目录，`k3`已返回`auto/off/low/high/max`可用项；实际控制仍为auto，没有代替用户修改偏好。86项相关回归通过；保留有效旧effort别名的原生请求值，但界面按官方实际档位合并，不重复凑档。没有调用真实模型确认输出效果。
+- 修复见[PR#48](https://github.com/kkelly-offical/kkcode/pull/48)，证据目录：`/tmp/kkcode-thinking-controls-fix-6l6xdsfk/`。私密补丁前缀在`/root/.local/state/kkcode-coding/thinking-patch-prefix`，完整备份入口在`backup-110-path`，原版启动脚本为`launch-current.py`。回退同样须先确认空闲；不回滚用户会话或配置，不自动恢复取消的任务。
