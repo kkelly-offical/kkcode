@@ -5,13 +5,13 @@
 
 ## 发行与授权
 
-- 已发布稳定 **1.0.9 / Android10016**（npm latest），发行提交`b0ef227`（PR#44），与最终候选`f9983b6`同树。
-  候选／主线／发行跨平台、Web、CodeQL通过，匿名CI/npm/GitHub包一致，Node22.12及原证书10015→10016升级已核验。
+- 已发布稳定 **1.0.10 / Android10017**（npm latest），发行提交`da25fd1`（PR#46），与最终候选`303d0f4`同树。
+  候选与主线的跨平台、Web、CodeQL及发行流水线通过，匿名CI/npm/GitHub包一致，Node22.12及原证书10016→10017升级已核验。
   Preview仍为 **1.0.6-preview.1 / Android10012**；1.0.8与所有旧tag不移动。
   [versions.md](docs/versions.md)与公开release-verification.json是发行事实入口。
 - 用户明确“允许所有来自我们的管理员合并操作”。本任务相关合入不重复询问；核验实际检查，
   不修改保护规则、不虚称批准审核、不自动合入无关PR#5/#6/#22。
-- 用户10月4日授权修复后发布1.0.9正式版，已完成。未发布公共网关镜像、未升级其他生产／演示网关、未新增真实模型评测。
+- 用户10月4日授权直接发布1.0.10正式版，已完成。未发布公共网关镜像、未升级其他生产／演示网关、未新增真实模型评测。
 
 ## 产品约束
 
@@ -34,9 +34,9 @@
 - 本机1.0.9 remote已在`tmux kkcode-coding`中从`/root`运行，通过原企业网关连接，all-folders及原身份／配置保留。升级前确认空闲并备份；不自动续跑已取消任务。私密升级记录与备份入口在`/root/.local/state/kkcode-coding/`。
 
 - 1.0.7八项连续工作改进与1.0.8像素界面、KIKI伙伴、工具入口均已发行；伙伴建议只追加草稿、不自动发送或验收。
-  当前跨平台、Web、CodeQL通过，Android85项JVM／80项UI与设备测试及签名升级通过，npm审计0告警。
+  当前跨平台、Web、CodeQL通过，Android85项JVM／81项UI与设备测试及签名升级通过，npm审计0告警。
   下一步是实际业务使用与人工审阅，不另建评测框架主线。
-- 用户10月4日确认[下一轮优化清单](docs/optimization-next.md)：API模型参数自动配置、输出／思考／上下文同源预算、子代理配置与上下文管理、缩减Ultra固定编排及重复控制提示。接口值优先，缺失时分析已有返回数据并兜底；思考预备略思／审思／深思／精思／穷理五档（low/medium/high/xhigh/max），按接口能力动态映射并调整可见表述，不写死各档token阈值、不强凑档数，只有二态则显示开关，普通用户不必手填技术参数。已授权实施 **1.0.10 / Android10017，实现与专项验证完成、发行候选**，当前正式版仍为1.0.9；[实施记录](docs/implementation-1.0.10.md)维护实际检查与剩余事项；普通任务减少强制流程，权限、硬预算、未知效果与显式宿主合同保留。
+- 用户10月4日确认[下一轮优化清单](docs/optimization-next.md)：API模型参数自动配置、输出／思考／上下文同源预算、子代理配置与上下文管理、缩减Ultra固定编排及重复控制提示。接口值优先，缺失时分析已有返回数据并兜底；思考预备略思／审思／深思／精思／穷理五档（low/medium/high/xhigh/max），按接口能力动态映射并调整可见表述，不写死各档token阈值、不强凑档数，只有二态则显示开关，普通用户不必手填技术参数。已完成并正式发行 **1.0.10 / Android10017**；[实施记录](docs/implementation-1.0.10.md)维护实际检查与剩余事项；普通任务减少强制流程，权限、硬预算、未知效果与显式宿主合同保留。
 - R15已关闭：`/root/kkcode-1061-wire-acceptance-20261002`；文档反馈修复通过，其余四项未完整交付。
   R16于10月3日02:41（UTC+8）关闭：`/root/kkcode-106-stable-harness-20261002`；437请求/
   23619076 tokens/USD0，无新增用量unknown，全栈工具效果unknown未解除。两批服务/授权均已关闭。
@@ -49,9 +49,9 @@
 
 ## 证据入口
 
-- [当前版本](docs/versions.md) · [发行范围](docs/release-1.0.9.md) · [实施与验收](docs/implementation-1.0.9.md)
+- [当前版本](docs/versions.md) · [发行范围](docs/release-1.0.10.md) · [实施与验收](docs/implementation-1.0.10.md)
 - [使用文档](docs/README.md) · [能力边界](docs/capabilities.md) · [历史导航](docs/history.md)
-- 1.0.10候选／PR#46交付回执：`/tmp/kkcode-110-candidate-u4w_66rm/`；未公开发行，实际完整检查见该目录`candidate-verification.json`及PR检查。
+- 1.0.10正式发行回执：`/tmp/kkcode-110-stable-25oiumt6/`；候选回执保留在`/tmp/kkcode-110-candidate-u4w_66rm/`。
 - 1.0.9发行回执：`/tmp/kkcode-109-stable-qv6gzea1/`。
 - 1.0.8发行回执：`/tmp/kkcode-108-stable-_1tnlyzp/`。
 - 1.0.7发行回执：`/tmp/kkcode-107-stable-ty7o6nqe/`；1.0.6：`/tmp/kkcode-106-stable-lakJaz/`。

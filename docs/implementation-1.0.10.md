@@ -1,6 +1,6 @@
 # 1.0.10 模型参数与通用编排优化
 
-状态：**实现与专项验证完成，1.0.10 发行候选，尚未公开发行**。当前稳定发行仍为 **1.0.9 / Android10016**，本分支为 **1.0.10 / Android10017**。用户授权范围为[优化清单](optimization-next.md) A01—U01，不扩大产品范围。
+状态：**1.0.10 / Android10017稳定正式版已发布并核验**。npm latest与GitHub Release已上线，Preview保持1.0.6-preview.1。用户授权范围为[优化清单](optimization-next.md) A01—U01，不扩大产品范围。
 
 ## 实现与检查清单
 
@@ -15,7 +15,7 @@
 
 ## 实施与约束
 
-- 分支 `feat/1.0.10-model-runtime`，以已发布1.0.9后主线为基线。已批准的严格预算不随目录更新扩大；新的预算档案只在宿主准备／确认时计算，不修改既有冻结档案。
+- 分支 `feat/1.0.10-model-runtime` 已经PR#46合入；发行提交`da25fd1`与最终候选`303d0f4`同树，以已发布1.0.9后主线为基线。已批准的严格预算不随目录更新扩大；新的预算档案只在宿主准备／确认时计算，不修改既有冻结档案。
 - API能力缺失仍保留未知或明确标记兜底，不通过试发推理补齐字段。模型目录的声明不是实际推理／工具行为验收；未实现的原生协议能力不因一个标记自动启用。
 - 普通Ultra的完成是会话执行结果，`completionPolicy=observational`；不冒充严格验收通过。ToDo／子代理汇报不变成验收凭证；未知效果、权限、所有者和取消传播仍受原执行层约束。
 - 原分阶段流程可通过 `agent.longagent.orchestration: staged` 显式使用；既有未完成阶段任务按原流程续作。取消后不启动新回合，恢复仍由用户触发。
@@ -31,7 +31,7 @@
 - 依赖审计0告警；类型、语法、架构边界、导入环与秘密扫描通过。跨平台完整检查和CodeQL随[PR#46](https://github.com/kkelly-offical/kkcode/pull/46/checks)逐提交记录；合入以最终提交的实际检查为准，不以历史通过代替。
 - 本机交付回执目录：`/tmp/kkcode-110-candidate-u4w_66rm/`，保存最终npm包、签名APK、哈希、界面截图和检查日志；`candidate-verification.json`记录最终提交、完整检查、CI与产物的对应关系。不是公共发行回执。
 - APK SHA-256：`44db7908cd01b44c8b3f4e7cbbe41a7dde4479737f7824e8085102d58b26638f`；原证书SHA-256：`cf75774a4d87ba1ccc4a811f271bd301076cf6beefd7432a3cb30231164be5d1`。
-- 公开npm latest保持1.0.9，preview保持1.0.6-preview.1；未推送公共网关镜像，未升级本机或其他生产remote／网关，未创建1.0.10公开tag或Release。
+- 公开npm latest=1.0.10，preview=1.0.6-preview.1；v1.0.10为稳定正式发行。未推送公共网关镜像，未升级本机或其他生产remote／网关，本机仍为1.0.9。
 
 ## 检查中发现的问题
 
@@ -48,3 +48,14 @@
 ## 参数依据
 
 [Anthropic模型元数据](https://platform.claude.com/docs/en/api/typescript/models/retrieve)、[共享上下文与输出](https://platform.claude.com/docs/en/build-with-claude/context-windows)、[Gemini模型元数据](https://ai.google.dev/api/models)、[OpenAI输出计数](https://developers.openai.com/api/docs/guides/token-counting)用于核对字段语义；适配器只发送明确支持的参数，保留API原生枚举。
+
+## 1.0.10 正式发行回执
+
+用户在候选合入后明确授权“直接发布”。候选verify [37192049044](https://github.com/kkelly-offical/kkcode/actions/runs/37192049044)、CodeQL [37192049043](https://github.com/kkelly-offical/kkcode/actions/runs/37192049043)，主线verify [37192924088](https://github.com/kkelly-offical/kkcode/actions/runs/37192924088)、CodeQL [37192923959](https://github.com/kkelly-offical/kkcode/actions/runs/37192923959)，正式发行 [37193159946](https://github.com/kkelly-offical/kkcode/actions/runs/37193159946)均通过。
+
+- 最终本地完整检查4262项：4106通过、0失败、156条件跳过，另有CLI端到端33项通过。最终macOS测试已改用存储规范化后的临时目录路径，确认锁竞争模拟实际触发；原失败日志保留。
+- 匿名npm、GitHub与CI tarball字节一致；原证书APK、android-update.json、SBOM、公开回执与SHA256SUMS可匿名下载。公开包在最低Node22.12安装及SDK／SQLite往返通过。
+- Android10017原证书、v2/v3、非debug及10016→10017覆盖升级证据复用同一未变化的APK。未新增真实模型推理或生产服务升级。
+- [稳定Release](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.10) · [公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.10/release-verification.json)；完整本机发行回执：`/tmp/kkcode-110-stable-25oiumt6/`。
+
+本节是发行后的状态回写，发行tag和npm包保持原样，不重新打包或覆盖已发行产物。

@@ -1,11 +1,11 @@
 # KK Code 文档
 
-当前文档适用公开稳定版 **1.0.9 / Android10016**，见[版本与升级](versions.md)。
-当前稳定版已发布[1.0.9会话体验修复正式版](release-1.0.9.md)，见[逐项实施记录](implementation-1.0.9.md)；上一稳定版见[1.0.8记录](release-1.0.8.md)。
+当前文档适用公开稳定版 **1.0.10 / Android10017**，见[版本与升级](versions.md)。
+当前稳定版已发布[1.0.10模型参数与编排优化正式版](release-1.0.10.md)，见[逐项实施记录](implementation-1.0.10.md)；上一稳定版见[1.0.9记录](release-1.0.9.md)。
 已发布渠道、Android版本码与升级入口只在[版本与升级](versions.md)集中维护。
 历史材料保留原始版本和证据，不作为当前使用说明。
 
-下一轮 **1.0.10** 开发中：[开发清单](optimization-next.md) · [实施记录](implementation-1.0.10.md)。
+本轮 **1.0.10** 已完成并发布：[开发清单](optimization-next.md) · [实施记录](implementation-1.0.10.md)。
 
 ## 开始使用
 
@@ -48,7 +48,7 @@ App、设备CLI和网关分别升级。公共网关镜像发布暂缓，继续�
 
 - [分域SDK总览](sdk-guide.md) · [headless JSONL契约](headless-jsonl-contract.md)
 - [配置字段参考](config.example.yaml) · [贡献与验证](contributing.md)
-- [路线图与Issues](ROADMAP.md) · [1.0.9迭代范围与边界](release-1.0.9.md)
+- [路线图与Issues](ROADMAP.md) · [1.0.10迭代范围与边界](release-1.0.10.md)
 
 ## 历史与发行证据
 
