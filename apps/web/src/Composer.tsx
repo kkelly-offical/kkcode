@@ -524,7 +524,8 @@ export function Composer({
                               const active = catalog?.models.find(item => item.id === selectedModel);
                               const runtime = active?.runtime;
                               const control = runtime?.thinking;
-                              const current = settings.provider?.[entry.name]?.model_options?.[selectedModel]?.thinking_effort ?? control?.selected ?? 'auto';
+                              const saved = settings.provider?.[entry.name]?.model_options?.[selectedModel]?.thinking_effort;
+                              const current = control?.options?.some((option: Item) => option.value === saved) ? saved : control?.selected ?? 'auto';
                               if (!runtime) return <div className="model-thinking" aria-label="思考强度"><span>思考强度</span><small>{catalog?.loading ? '正在读取模型的思考设置…' : !selectedModel ? '请先选择模型。' : !active ? '当前模型信息暂未就绪，请重新读取模型列表。' : '电脑端未提供思考设置。请确认电脑上的 KK Code / remote 为 1.0.10 或更新版本，然后重新连接。'}</small></div>;
                               return <div className="model-thinking" aria-label="思考强度">
                                 {control?.kind === 'unknown' && <small>尚未确认此模型的可调思考选项，当前沿用默认设置。</small>}

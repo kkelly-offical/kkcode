@@ -20,6 +20,7 @@ function kimiCodeThinking(model, protocol, baseUrl) {
   if (!['k3', 'k3-256k', 'kimi-for-coding'].includes(model)) return null
   return { supported: true, levels: ['none', 'low', 'high', 'max'],
     defaultLevel: model === 'kimi-for-coding' ? 'max' : 'high',
+    aliases: { medium: 'high', xhigh: 'max', ultra: 'max', minimum: 'low', light: 'low' },
     offLabel: '直答（K2.8）', offDescription: '关闭思考；服务端改由 K2.8 Preview 无思考版处理' }
 }
 
@@ -33,7 +34,11 @@ export function thinkingControl({ model = '', protocol = 'openai', baseUrl = '',
   const useSpecification = Boolean(specification && !declaredControl)
   if (useSpecification) declared = { ...declared, ...specification, defaultLevel: declared.defaultLevel ?? specification.defaultLevel }
   const preference = settings.model_options?.[model]?.thinking_effort ?? settings.thinking_effort ?? settings.reasoning_effort ?? 'auto'
-  const selected = preference === 'none' ? 'off' : preference
+  const selected = preference === 'none' ? 'off' : useSpecification ? specification.aliases?.[preference] || preference : preference
+  const nativeLevels = { ...declared.nativeLevels }
+  // Collapse documented aliases in the UI while retaining an explicitly
+  // saved valid wire value. Selecting a new option stores its canonical value.
+  if (useSpecification && selected !== preference && selected !== 'off') nativeLevels[selected] = preference
   let levels = declared.levels ? [...declared.levels] : null
   let types = declared.types || []
   let source = useSpecification ? 'specification' : declared.supported != null || levels || types.length || declared.toggleParameter ? 'catalog' : 'unknown'
@@ -73,7 +78,7 @@ export function thinkingControl({ model = '', protocol = 'openai', baseUrl = '',
       description: value === 'off' && declared.offDescription ? declared.offDescription : LABELS[value]?.[1] || '模型原生档位', available: true,
       level: ['levels','budget'].includes(kind) && values.every(v => Object.hasOwn(RATIOS,v) || v === 'minimal') && values.includes(value) ? values.indexOf(value)+1 : null }))
   if (!options.some(option => option.value === selected)) options.push({ value: selected, label: `${LABELS[selected]?.[0] || selected} · 待确认`, description: '已保存设置，当前模型未确认支持', available: false, level: null })
-  return { kind, source, selected, options, canDisable, nativeOff, types, nativeLevels:declared.nativeLevels || {}, toggleParameter:toggleParameter || null,
+  return { kind, source, selected, options, canDisable, nativeOff, types, nativeLevels, toggleParameter:toggleParameter || null,
     minBudget, maxBudget:declared.maxBudget || null, budgetValues, budgetUnavailable, budgetCeiling: Number.isFinite(budgetCeiling) ? Math.max(0, budgetCeiling) : 0,
     defaultLevel: declared.defaultLevel || null }
 }

@@ -153,6 +153,12 @@ test('Kimi Code specification fills missing controls only on its official routes
   assert.deepEqual(control.options.map(x=>x.value),['auto','off','low','high','max'])
   assert.equal(control.defaultLevel,'high')
   assert.match(control.options.find(x=>x.value==='off').description,/K2\.8 Preview/)
+  for (const [saved,selected] of [['medium','high'],['xhigh','max'],['light','low']]) {
+    const alias=thinkingControl({...input,settings:{model_options:{k3:{thinking_effort:saved}}}})
+    assert.equal(alias.selected,selected)
+    assert.deepEqual(alias.options.map(x=>x.value),['auto','off','low','high','max'])
+    assert.equal(mapThinkingRequest({control:alias,protocol:'openai',maxTokens:4096}).reasoningEffort,saved)
+  }
   for(const baseUrl of ['https://api.kimi.com.evil.test/coding/v1','https://proxy.example.test/coding/v1','https://api.kimi.com/other','http://api.kimi.com/coding/v1','https://api.kimi.com:8443/coding/v1']) {
     assert.equal(thinkingControl({...input,baseUrl}).kind,'unknown')
   }
