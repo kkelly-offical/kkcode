@@ -13,6 +13,10 @@
 
 | 版本 | 说明与证据 |
 | --- | --- |
+| 1.0.10 | [正式版说明](release-1.0.10.md) · [公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.10/release-verification.json) |
+| 1.0.9 | [正式版说明](release-1.0.9.md) · [公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.9/release-verification.json) |
+| 1.0.8 | [正式版说明](release-1.0.8.md) · [公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.8/release-verification.json) |
+| 1.0.7 | [正式版说明](release-1.0.7.md) · [公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.7/release-verification.json) |
 | 1.0.6 | [正式版说明](release-1.0.6.md) · [公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.6/release-verification.json) |
 | 1.0.6-preview.1 | [发行说明](release-1.0.6-preview.1.md) · [原五场景实测](implementation-1.0.6-preview.1.md) · [公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.6-preview.1/release-verification.json) |
 | 1.0.6-preview.0 | [发行说明](release-1.0.6-preview.0.md) · [公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.6-preview.0/release-verification.json) |
