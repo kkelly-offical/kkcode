@@ -6,15 +6,37 @@ const LABELS = { auto: ['自动', '使用服务端默认设置'], off: ['直答'
 const RATIOS = { low: 0, medium: .25, high: .5, xhigh: .75, max: 1 }
 const fail = message => { throw new ProviderError(message, { reason: 'invalid_thinking_parameter' }) }
 
+// Kimi Code's catalog currently exposes context/media but omits effort fields.
+// Bind this fallback to the documented service, protocol and exact model ID;
+// another gateway using the same model name must supply its own capabilities.
+// https://www.kimi.com/code/docs/kimi-code/models.html (2026-10-04)
+function kimiCodeThinking(model, protocol, baseUrl) {
+  if (!['openai', 'anthropic'].includes(protocol)) return null
+  let url
+  try { url = new URL(baseUrl) } catch { return null }
+  if (url.protocol !== 'https:' || !['api.kimi.com', 'api.kimi.ai'].includes(url.hostname)
+    || url.port || url.username || url.password || url.search || url.hash || !/^\/coding(?:\/v1)?\/?$/.test(url.pathname)) return null
+  if (model === 'kimi-for-coding-highspeed') return { supported: true, alwaysOn: true }
+  if (!['k3', 'k3-256k', 'kimi-for-coding'].includes(model)) return null
+  return { supported: true, levels: ['none', 'low', 'high', 'max'],
+    defaultLevel: model === 'kimi-for-coding' ? 'max' : 'high',
+    offLabel: '直答（K2.8）', offDescription: '关闭思考；服务端改由 K2.8 Preview 无思考版处理' }
+}
+
 /** Public, credential-free UI contract; the same choices drive wire mapping.
- * @param {{model?: string, protocol?: string, metadata?: any, settings?: any, maxTokens?: number}} input */
-export function thinkingControl({ model = '', protocol = 'openai', metadata = {}, settings = {}, maxTokens = 0 } = {}) {
-  const declared = metadata.reasoning || {}
+ * @param {{model?: string, protocol?: string, baseUrl?: string, metadata?: any, settings?: any, maxTokens?: number}} input */
+export function thinkingControl({ model = '', protocol = 'openai', baseUrl = '', metadata = {}, settings = {}, maxTokens = 0 } = {}) {
+  let declared = metadata.reasoning || {}
+  const specification = kimiCodeThinking(model, protocol, baseUrl)
+  const declaredControl = declared.supported === false || declared.levels != null || declared.types?.length
+    || declared.toggleParameter || declared.alwaysOn != null || declared.minBudget != null || declared.maxBudget != null
+  const useSpecification = Boolean(specification && !declaredControl)
+  if (useSpecification) declared = { ...declared, ...specification, defaultLevel: declared.defaultLevel ?? specification.defaultLevel }
   const preference = settings.model_options?.[model]?.thinking_effort ?? settings.thinking_effort ?? settings.reasoning_effort ?? 'auto'
   const selected = preference === 'none' ? 'off' : preference
   let levels = declared.levels ? [...declared.levels] : null
   let types = declared.types || []
-  let source = declared.supported != null || levels || types.length || declared.toggleParameter ? 'catalog' : 'unknown'
+  let source = useSpecification ? 'specification' : declared.supported != null || levels || types.length || declared.toggleParameter ? 'catalog' : 'unknown'
   // Conservative compatibility knowledge for the original effort vocabulary.
   // Additional levels (notably xhigh/max) require declared capability.
   if (!levels && declared.supported !== false && /^(?:o[134](?:-|$)|gpt-5(?:-|$))/.test(model) && ['openai','responses'].includes(protocol)) {
@@ -47,7 +69,8 @@ export function thinkingControl({ model = '', protocol = 'openai', metadata = {}
     values = [...unique.values()]
   }
   const options = ['auto', ...(canDisable && kind !== 'unsupported' ? ['off'] : []), ...values]
-    .map(value => ({ value, label: LABELS[value]?.[0] || value, description: LABELS[value]?.[1] || '模型原生档位', available: true,
+    .map(value => ({ value, label: value === 'off' && declared.offLabel ? declared.offLabel : LABELS[value]?.[0] || value,
+      description: value === 'off' && declared.offDescription ? declared.offDescription : LABELS[value]?.[1] || '模型原生档位', available: true,
       level: ['levels','budget'].includes(kind) && values.every(v => Object.hasOwn(RATIOS,v) || v === 'minimal') && values.includes(value) ? values.indexOf(value)+1 : null }))
   if (!options.some(option => option.value === selected)) options.push({ value: selected, label: `${LABELS[selected]?.[0] || selected} · 待确认`, description: '已保存设置，当前模型未确认支持', available: false, level: null })
   return { kind, source, selected, options, canDisable, nativeOff, types, nativeLevels:declared.nativeLevels || {}, toggleParameter:toggleParameter || null,
@@ -73,7 +96,7 @@ export function mapThinkingRequest({ control, protocol, settings = {}, maxTokens
   if (control.budgetUnavailable && value !== 'off') fail('本次输出额度不足以启用所选思考档位。')
   if (!['openai','responses','anthropic'].includes(protocol)) fail('当前协议适配器尚不支持手动思考参数，请使用自动。')
   const option = control.options.find(item => item.value === value)
-  if (option?.available === false && control.source === 'catalog') fail(`当前模型不支持已选择的思考档位 ${value}，请重新选择或使用自动。`)
+  if (option?.available === false && ['catalog', 'specification'].includes(control.source)) fail(`当前模型不支持已选择的思考档位 ${value}，请重新选择或使用自动。`)
   if (control.kind === 'unsupported') fail('当前模型不支持思考参数，请使用自动设置。')
   if (control.toggleParameter && ['off','on'].includes(value)) return { thinkingSwitch:{parameter:control.toggleParameter,enabled:value === 'on'} }
   if (value === 'off') {

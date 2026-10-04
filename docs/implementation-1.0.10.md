@@ -59,3 +59,14 @@
 - [稳定Release](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.10) · [公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.10/release-verification.json)；完整本机发行回执：`/tmp/kkcode-110-stable-25oiumt6/`。
 
 本节是发行后的状态回写，发行tag和npm包保持原样，不重新打包或覆盖已发行产物。
+
+## 发布后思考入口修复（2026-10-04）
+
+用户在安卓模型面板完全看不到思考入口。实际本机进程仍为1.0.9；通过已认证的本地设备RPC确认旧`models.discover`不含`runtime`。确认对话与后台任务均为空后，正常停止remote、备份完整私密状态，以已核验的公开npm包升级1.0.10并恢复原tmux、`/root`、all-folders和企业网关连接。设备归属及配置文件字节保持，未恢复取消任务、未发起模型推理。备份入口为`/root/.local/state/kkcode-coding/backup-110-path`。
+
+升级后还确认当前`kimi-code / k3`的实时目录只声明窗口和媒体能力，没有effort字段，1.0.10只显示自动。另发现安卓在使用默认模型但尚未显式选择时，以空模型ID寻找能力；旧服务缺字段时也直接隐藏控件，缺少原因提示。
+
+- 按[Kimi官方规格](https://www.kimi.com/code/docs/kimi-code/models.html)补齐精确官方HTTPS端点及模型ID的能力。K3与标准coding模型提供low/high/max；none关闭思考并由服务端切换到K2.8 Preview，界面明确标为“直答（K2.8）”。高速模型保持固定思考。API已有控制声明优先，不给其他域名、路径、协议或同名模型套用此兜底。
+- Android默认模型正确匹配能力；Android/Web对旧端缺字段、能力未确认和固定思考显示原因，不伪造可用档位。新App界面修复尚未进入已发行APK；现有1.0.10 App显式选中模型后可读取后端的新档位。
+- 11项受控参数检查、Web真实设备服务交互检查、9项Android选择器检查通过，含旧端缺元数据及默认模型回归；类型和针对性lint通过。请求仅使用隔离fixture，不做真实推理效果宣称。
+- 本机后端补丁正在准备，使用独立安装目录并记录源码提交与包哈希；不覆盖已发行tag、npm或APK。修复证据目录：`/tmp/kkcode-thinking-controls-fix-6l6xdsfk/`。

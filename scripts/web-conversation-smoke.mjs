@@ -28,6 +28,13 @@ const service = await new DeviceService({cwd: temporary, roots: [temporary], cre
   })
   return kernel
 } }).initialize()
+let legacyModelMetadata = false
+const dispatch = service.dispatch.bind(service)
+service.dispatch = async (method, params, principal) => {
+  const result = await dispatch(method, params, principal)
+  if (method !== 'models.discover' || !legacyModelMetadata) return result
+  return { ...result, models: result.models.map(model => { const copy = { ...model }; delete copy.runtime; return copy }) }
+}
 const {id: sessionId} = await service.request({id: 'conversation-fixture', method: 'sessions.create', params: {cwd: temporary, title: '会话体验验收'}})
 for(let i = 0; i < 9; i++) {
   await appendUserMessage(sessionId, `Question ${i}`, {turnId: `old-${i}`})
@@ -84,6 +91,17 @@ try {
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'thinking controls must fit a narrow phone viewport')
   await expect(thinking).toBeVisible()
   await page.setViewportSize({width:1100,height:850})
+  await page.keyboard.press('Escape')
+
+  legacyModelMetadata = true
+  await picker.click()
+  await expect(page.getByText('电脑端未提供思考设置。请确认电脑上的 KK Code / remote 为 1.0.10 或更新版本，然后重新连接。')).toBeVisible()
+  await expect(thinking).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  legacyModelMetadata = false
+  await picker.click()
+  await expect(thinking).toBeVisible()
+  await expect(thinking).toHaveValue('xhigh')
   await page.keyboard.press('Escape')
 
   await input.fill('/compact')

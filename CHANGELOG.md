@@ -1,5 +1,10 @@
 # Changelog / 更新日志
 
+## Unreleased / 发行后修复（未公开发行）
+
+- Keep thinking settings visible for Android's default model and explain missing metadata from older remote versions in Android/Web.
+- Fill sparse Kimi Code catalogs from endpoint-scoped official specifications: low/high/max and an explicit non-thinking choice; retain API declarations and fixed-thinking HighSpeed behavior.
+
 ## 1.0.10 — Model-aware settings & adaptive Ultra / 正式版（2026-10-04）
 
 - Resolve input/output limits and reasoning options from the actual model catalog without rewriting user settings. Unknown output limits use a labelled one-fifth fallback.

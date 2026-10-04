@@ -44,7 +44,7 @@ internal fun modelCapabilityLabel(entry: JSONObject?): String {
     val providers = state.settings.optJSONObject("provider") ?: JSONObject()
     val names = configuredProviderNames(providers)
     Text("当前：${state.modelLabel}${if(state.provider.isNotBlank()) " · ${state.provider}" else ""}", fontSize = 13.sp, color = kkcodeColors.activityMuted, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
-    if(state.busy) Text("任务执行期间不能切换模型，完成后即可切换。", fontSize = 12.sp, color = kkcodeColors.warning, modifier = Modifier.padding(horizontal = 12.dp))
+    if(state.busy) Text("任务执行期间不能切换模型或思考设置，完成后即可调整。", fontSize = 12.sp, color = kkcodeColors.warning, modifier = Modifier.padding(horizontal = 12.dp))
     if(names.isEmpty()) {
         Text("电脑上还没有配置模型渠道。", fontSize = 13.sp, modifier = Modifier.padding(12.dp))
         TextButton(onClick = { state.editingProvider = ""; state.sheet = "provider" }) { Text("添加渠道", color = kkcodeColors.link) }
@@ -52,6 +52,7 @@ internal fun modelCapabilityLabel(entry: JSONObject?): String {
     names.forEach { name ->
         val profile = providers.getJSONObject(name)
         val defaultModel = profile.optString("default_model")
+        val selectedModel = state.model.ifBlank { defaultModel }
         Group {
             SettingsRow(Icons.Outlined.Hub, name, defaultModel) { state.discoverModels(name) }
             if(state.catalogProvider == name) {
@@ -60,8 +61,18 @@ internal fun modelCapabilityLabel(entry: JSONObject?): String {
                 catalogSourceLabel(state.catalogSource, state.catalogStale).takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 10.sp, color = if(state.catalogStale) kkcodeColors.warning else kkcodeColors.activityMuted, modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)) }
                 if(state.catalogError.isNotBlank()) ManualModelEntry(state, name)
                 if(state.provider == name) {
-                    val active = state.modelOptions.find { it.optString("id") == state.model }
-                    active?.optJSONObject("runtime")?.let { ModelThinkingOptions(state, name, state.model, it) }
+                    val active = state.modelOptions.find { it.optString("id") == selectedModel }
+                    val runtime = active?.optJSONObject("runtime")
+                    if(runtime != null) ModelThinkingOptions(state, name, selectedModel, runtime)
+                    else Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                        Text("思考强度", fontSize = 12.sp, color = kkcodeColors.activityMuted)
+                        Text(when {
+                            state.catalogLoading -> "正在读取模型的思考设置…"
+                            selectedModel.isBlank() -> "请先选择模型。"
+                            active == null -> "当前模型信息暂未就绪，请重新读取模型列表。"
+                            else -> "电脑端未提供思考设置。请确认电脑上的 KK Code / remote 为 1.0.10 或更新版本，然后重新连接。"
+                        }, fontSize = 11.sp, color = kkcodeColors.activityMuted)
+                    }
                 }
                 val discovered = state.modelOptions.map { it.getString("id") }
                 val merged = (listOf(defaultModel) + discovered + listOf(if(state.provider == name) state.model else "")).filter { it.isNotBlank() }.distinct()
@@ -69,7 +80,7 @@ internal fun modelCapabilityLabel(entry: JSONObject?): String {
                     val entry = state.modelOptions.find { it.optString("id") == id }
                     val origin = entry?.optString("origin") ?: ""
                     val tag = listOf(if(id == defaultModel) "默认" else if(origin == "manual") "手动" else "", modelCapabilityLabel(entry)).filter { it.isNotBlank() }.joinToString(" · ")
-                    ModelOption(enabled = !state.busy, current = state.provider == name && state.model == id, id = id, tag = tag) { state.selectModel(name, id) }
+                    ModelOption(enabled = !state.busy, current = state.provider == name && selectedModel == id, id = id, tag = tag) { state.selectModel(name, id) }
                 }
             }
         }
@@ -105,6 +116,11 @@ internal fun modelCapabilityLabel(entry: JSONObject?): String {
     val selected = control.optString("selected", "auto")
     Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
         Text("思考强度", fontSize = 12.sp, color = kkcodeColors.activityMuted)
+        when(control.optString("kind")) {
+            "unknown" -> Text("尚未确认此模型的可调思考选项，当前沿用默认设置。", fontSize = 11.sp, color = kkcodeColors.activityMuted)
+            "unsupported" -> Text("此模型不支持思考调节。", fontSize = 11.sp, color = kkcodeColors.activityMuted)
+            "fixed" -> Text(if(control.optBoolean("budgetUnavailable")) "当前输出额度不足以开启可调思考。" else "此模型的思考方式由服务端固定。", fontSize = 11.sp, color = kkcodeColors.activityMuted)
+        }
         if(control.optString("kind") == "toggle") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(enabled = !state.busy && !state.sharedDevice, onClick = { state.selectThinking(provider, model, "auto") }) { Text(if(selected == "auto") "✓ 自动" else "自动") }

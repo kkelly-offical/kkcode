@@ -145,3 +145,51 @@ test('known model defaults fill sparse catalogs without capping explicit choices
   assert.equal(small.outputReserved,6553)
   assert.ok(small.inputBudget > 25000)
 })
+
+test('Kimi Code specification fills missing controls only on its official routes and never replaces explicit declarations', () => {
+  const input={model:'k3',protocol:'openai',baseUrl:'https://api.kimi.com/coding/v1',maxTokens:4096}
+  const control=thinkingControl(input)
+  assert.equal(control.source,'specification')
+  assert.deepEqual(control.options.map(x=>x.value),['auto','off','low','high','max'])
+  assert.equal(control.defaultLevel,'high')
+  assert.match(control.options.find(x=>x.value==='off').description,/K2\.8 Preview/)
+  for(const baseUrl of ['https://api.kimi.com.evil.test/coding/v1','https://proxy.example.test/coding/v1','https://api.kimi.com/other','http://api.kimi.com/coding/v1','https://api.kimi.com:8443/coding/v1']) {
+    assert.equal(thinkingControl({...input,baseUrl}).kind,'unknown')
+  }
+  assert.equal(thinkingControl({...input,protocol:'responses'}).kind,'unknown')
+  const explicit=thinkingControl({...input,metadata:parseModelParameters({reasoning_effort_levels:['low','high']})})
+  assert.equal(explicit.source,'catalog')
+  assert.deepEqual(explicit.options.map(x=>x.value),['auto','low','high'])
+  assert.equal(thinkingControl({...input,metadata:{reasoning:{supported:false}}}).kind,'unsupported')
+  const fixed=thinkingControl({...input,model:'kimi-for-coding-highspeed'})
+  assert.equal(fixed.kind,'fixed');assert.equal(fixed.canDisable,false)
+  const disabled=thinkingControl({...input,protocol:'anthropic',baseUrl:'https://api.kimi.ai/coding/',settings:{thinking_effort:'off'}})
+  assert.deepEqual(mapThinkingRequest({control:disabled,protocol:'anthropic',maxTokens:4096}),{thinking:{type:'disabled'}})
+})
+
+test('sparse Kimi catalog produces selectable native efforts and actual Chat request parameters without a model probe', async () => {
+  const dir=await mkdtemp(path.join(os.tmpdir(),'kkcode-kimi-controls-'))
+  const oldHome=process.env.KKCODE_HOME, oldFetch=global.fetch
+  process.env.KKCODE_HOME=dir
+  const requests=[]
+  const cfg={config:{provider:{default:'coding',coding:{type:'openai-compatible',base_url:'https://api.kimi.com/coding/v1',api_key_env:'',default_model:'k3',model_options:{k3:{thinking_effort:'auto'}}}}}}
+  global.fetch=async(url,options)=>{
+    if(String(url).endsWith('/models')) return new Response(JSON.stringify({data:[{id:'k3',context_length:1048576}]}))
+    requests.push(JSON.parse(options.body))
+    return new Response(JSON.stringify({choices:[{message:{role:'assistant',content:'fixture'},finish_reason:'stop'}],usage:{prompt_tokens:1,completion_tokens:1}}),{headers:{'content-type':'application/json'}})
+  }
+  try {
+    await discoverModelsForProvider(cfg,{refresh:true})
+    const profile=modelRuntimeProfile(cfg,{configKey:'coding',protocol:'openai',model:'k3',baseUrl:cfg.config.provider.coding.base_url})
+    assert.deepEqual(profile.thinking.options.map(x=>x.value),['auto','off','low','high','max'])
+    assert.equal(requests.length,0)
+    for(const value of ['auto','off','low','high','max']) {
+      cfg.config.provider.coding.model_options.k3.thinking_effort=value
+      await requestProvider({configState:cfg,providerType:'coding',model:'k3',system:'',messages:[],tools:[],maxTokens:4096})
+      assert.equal(requests.at(-1).reasoning_effort,value==='auto'?undefined:value==='off'?'none':value)
+    }
+  } finally {
+    global.fetch=oldFetch;if(oldHome===undefined)delete process.env.KKCODE_HOME;else process.env.KKCODE_HOME=oldHome
+    clearModelCatalogMemoryCache();await rm(dir,{recursive:true,force:true})
+  }
+})

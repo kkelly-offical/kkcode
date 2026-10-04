@@ -8,7 +8,7 @@
 1.0.10发行提交`da25fd1`（PR#46），与最终候选`303d0f4`同树。
 候选与主线的跨平台／Web／CodeQL检查及正式发行流水线通过，Android沿用原证书。
 源码版本、流水线启动都不等于已公开下载。本次已核对匿名npm／GitHub下载、CI包一致性、
-最低Node22.12安装及原证书Android10016→10017覆盖升级；本机remote仍运行1.0.9，未自动升级服务。
+最低Node22.12安装及原证书Android10016→10017覆盖升级；发布后本机remote因思考入口问题升级至1.0.10，后续本机补丁见[实施记录](implementation-1.0.10.md#发布后思考入口修复2026-10-04)。
 精确哈希与验证范围见[正式版release-verification.json](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.10/release-verification.json)。
 从未公开发行过1.1.6，旧源码标记仅用于历史追溯。
 
@@ -57,7 +57,7 @@ Android在个人资料的版本入口检查更新。1.0.10稳定APK可被稳定�
 
 CLI、网关/Web和Android分别部署。已有网关需升级其源码构建后才能使用新页面；
 升级CLI或App不会自动替换网关。升级前备份私密状态和数据库，保留账号、OIDC、加密及签名身份。
-**公共网关镜像发布暂缓**，本轮没有推送镜像或升级其他生产／演示网关。本机已按授权从`/root`在`tmux kkcode-coding`运行1.0.9 remote，保留all-folders、原设备身份与配置。
+**公共网关镜像发布暂缓**，本轮没有推送镜像或升级其他生产／演示网关。本机已按授权从`/root`在`tmux kkcode-coding`运行1.0.10 remote，保留all-folders、原设备身份与配置；未公开发行的本机补丁单独记录，不覆盖正式包。
 
 ## 验证边界
 
