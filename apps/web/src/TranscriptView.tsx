@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Marked } from "marked";
 import DOMPurify from "dompurify";
 import { Icon, type IconName } from "./Icon";
@@ -13,6 +13,9 @@ const markdown = new Marked({ renderer: {
   checkbox: ({ checked }) => `<span aria-label="${checked ? "已完成" : "未完成"}">${checked ? "☑" : "☐"}</span> `,
 } });
 export function Markdown({ text }: { text: string }) {
+  const container = useRef<HTMLDivElement>(null);
+  const positions = useRef(new Map<number, { signature: string; top: number; left: number }>());
+  const signature = (node: Element) => `${node.tagName}:${node.textContent?.slice(0, 96)}`;
   const clean = DOMPurify.sanitize(markdown.parse(text || '', { async: false }) as string,
     { USE_PROFILES: { html: true }, FORBID_TAGS: ['img', 'iframe', 'video', 'audio', 'source', 'style', 'link', 'object', 'embed', 'input'], FORBID_ATTR: ['style', 'ping'] });
   const document = new DOMParser().parseFromString(clean, 'text/html');
@@ -22,11 +25,28 @@ export function Markdown({ text }: { text: string }) {
     anchor.setAttribute('href', url); anchor.setAttribute('target', '_blank');
     anchor.setAttribute('rel', 'noopener noreferrer'); anchor.setAttribute('referrerpolicy', 'no-referrer');
   }
+  for (const block of document.querySelectorAll('pre,table')) block.setAttribute('tabindex', '0');
+  const html = document.body.innerHTML;
+  useLayoutEffect(() => {
+    const blocks = container.current?.querySelectorAll<HTMLElement>('pre,table');
+    for (const [index, saved] of positions.current) {
+      const block = blocks?.[index];
+      if (!block || signature(block) !== saved.signature) { positions.current.delete(index); continue; }
+      block.scrollTop = saved.top; block.scrollLeft = saved.left;
+    }
+  }, [html]);
   return (
     <div
+      ref={container}
       className="markdown"
+      onScrollCapture={event => {
+        const block = event.target as HTMLElement;
+        if (!block.matches('pre,table')) return;
+        const index = [...(container.current?.querySelectorAll('pre,table') || [])].indexOf(block);
+        if (index >= 0) positions.current.set(index, { signature: signature(block), top: block.scrollTop, left: block.scrollLeft });
+      }}
       dangerouslySetInnerHTML={{
-        __html: document.body.innerHTML,
+        __html: html,
       }}
     />
   );

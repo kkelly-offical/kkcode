@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import { commandSuggestions } from "./commands.mjs";
 import {
@@ -15,6 +15,11 @@ import { APP_VERSION } from "./version";
 type Item = Record<string, any>;
 type Catalog = { loading?: boolean; error?: string; models: Item[] };
 type Picker = "" | "mode" | "model";
+function resizeInput(element: HTMLTextAreaElement | null) {
+  if (!element) return;
+  element.style.height = "auto";
+  element.style.height = `${Math.min(160, element.scrollHeight)}px`;
+}
 
 function useMenuKeys(
   open: boolean,
@@ -139,12 +144,17 @@ export function Composer({
     setHighlight(0);
     setDismissed(false);
   }, [prompt]);
+  useLayoutEffect(() => { resizeInput(input.current); }, [prompt]);
   useEffect(() => {
-    if (input.current) {
-      input.current.style.height = "auto";
-      input.current.style.height = `${Math.min(160, input.current.scrollHeight)}px`;
-    }
-  }, [prompt]);
+    const resize = () => resizeInput(input.current);
+    let width = input.current?.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (input.current?.clientWidth !== width) { width = input.current?.clientWidth; resize(); }
+    });
+    if (input.current) observer.observe(input.current);
+    window.addEventListener('resize', resize);
+    return () => { observer.disconnect(); window.removeEventListener('resize', resize); };
+  }, []);
   useMenuKeys(menu, actions, () => setMenu(false), actionButton);
   useMenuKeys(Boolean(picker), pickerBody, () => setPicker(""), pickerAnchor);
   const choose = (command: Item) => {
@@ -298,6 +308,7 @@ export function Composer({
       {attachments.length > 0 && <button type="button" className="attachment-summary" onClick={() => onPanel("attachments")}><Icon name="attachment" size={15} /><span>{attachments.map(item => item.name).join("、")}</span><small>{attachments.length} 个附件</small></button>}
       {uploading && <p className="upload-status" role="status">附件上传中…</p>}
       <textarea
+          rows={1}
         disabled={readOnly}
           ref={input}
           aria-label="消息"
