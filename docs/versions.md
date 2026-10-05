@@ -27,6 +27,12 @@
 
 [发行范围](release-1.0.11.md) · [逐项实施与验证](implementation-1.0.11.md)
 
+## 独立 Web 显示补丁
+
+**1.0.11-display.1** 已发布：[独立Release](https://github.com/kkelly-offical/kkcode/releases/tag/web-1.0.11-display.1) · [改动与检查](web-display-1.0.11.md) · [安装／回退](web-display-install.md)。
+仅更新1.0.11的网页静态资源，npm latest和Android10018不变；GitHub默认正式版仍为v1.0.11。
+现网尚未部署，需取得实际部署位置后应用。
+
 ## CLI 升级
 
 ```sh

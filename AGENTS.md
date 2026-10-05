@@ -31,7 +31,7 @@
 
 ## 实测与下一步
 
-- 用户确认独立发布 **1.0.11 网关/Web显示补丁**，安卓不升版；正在实现顶部与输入区收缩、去除重复设备条、阅读比例及自由滚动优化。清单见[Web显示补丁](docs/web-display-1.0.11.md)，尚未发布补丁或自动升级生产网关。
+- 独立 **Web 1.0.11-display.1** 已发布（PR#52，`dd1e4a2`，与候选`5d51fdc`同树）；顶部／输入区收缩、去重设备条、字号／阅读宽度和自由滚动均完成。跨平台、Web、CodeQL、真实归档安装／回退及匿名下载通过。npm/CLI1.0.11与Android10018不变；[清单与回执](docs/web-display-1.0.11.md)。现网尚未部署，等待用户提供实际机器／目录；本机实验网关不是目标，保持原样。
 
 - 1.0.11五项开发清单全部完成并正式发行：子代理自动汇报与队列接续、状态／实际模型参数自动同步、独立子代理入口及停止操作、紧凑菜单、KIKI状态动作。细节与跨平台失败原记录见[实施清单](docs/implementation-1.0.11.md)。新自动汇报需新版remote，单个子代理停止需新版网关；不自动部署其他网关。
 
@@ -57,6 +57,7 @@
 
 - [当前版本](docs/versions.md) · [发行范围](docs/release-1.0.11.md) · [实施与验收](docs/implementation-1.0.11.md)
 - [使用文档](docs/README.md) · [能力边界](docs/capabilities.md) · [历史导航](docs/history.md)
+- Web显示补丁回执：`/tmp/kkcode-web-111-display1-ab0n_dgh/`；独立tag `web-1.0.11-display.1`，不进入npm或Android更新通道。
 - 1.0.11正式发行回执：`/tmp/kkcode-111-stable-l0fcvpm_/`；候选回执`/tmp/kkcode-111-candidate-EYkQlswt/`。
 - 1.0.10正式发行回执：`/tmp/kkcode-110-stable-25oiumt6/`；候选回执保留在`/tmp/kkcode-110-candidate-u4w_66rm/`。
 - 1.0.9发行回执：`/tmp/kkcode-109-stable-qv6gzea1/`。
