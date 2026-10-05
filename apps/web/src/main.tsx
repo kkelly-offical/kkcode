@@ -3,12 +3,14 @@ import { createRoot } from "react-dom/client";
 import "./style.css";
 import "./mobile.css";
 import "./studio.css";
+import "./reading.css";
 import "./pixel.css";
 import { PixelBuddy, PixelScene, StudioBar } from "./PixelStudio";
 import { SessionHome, ConnectionLanding, SessionActions, ConversationMenu } from "./Home";
 import { Sheet } from "./Sheet";
 import { ContextUsage } from './ContextUsage';
 import { useTranscriptScroll } from './useTranscriptScroll';
+import { useReadingPreferences } from './ReadingPreferences';
 import { TodoProgress } from './TodoProgress';
 import { acceptTodoSnapshot, scopedSubagents, mergeSubagentSnapshot, mergeSubagentEvent } from '../../../src/ui/todo-progress.mjs';
 import { modeLabel } from "./modes.mjs";
@@ -29,6 +31,7 @@ import { attachmentMediaType, readAttachment, type Attachment } from "./Attachme
 
 type Item = Record<string, any>;
 function App() {
+  const reading = useReadingPreferences();
   const [small, setSmall] = useState(window.innerWidth <= 760);
   useEffect(() => {
     const resize = () => setSmall(window.innerWidth <= 760);
@@ -780,7 +783,7 @@ function App() {
     );
   const mobileHome = small && !selected;
   return (
-    <div className="app">
+    <div className="app" style={reading.style}>
       <aside
         className={sidebar ? "sidebar open" : "sidebar"}
         aria-label="工作区导航"
@@ -861,7 +864,6 @@ function App() {
         </button>
       </aside>
       <main>
-        {gateway && devices.length > 1 && <nav className="device-strip" aria-label="切换设备">{devices.map(device => <button key={device.id} aria-pressed={device.id === deviceId} disabled={!device.online || uploading} onClick={() => { if(device.id === deviceId) return; manuallyDisconnected.current = false; setSelected(''); setSession(null); setEvents([]); setBusy(false); setApproval([]); setControl(null); setDeviceId(device.id); setSessions([]); setCwd(''); setModel(''); setProvider(''); }}>{device.name}{device.online ? '' : ' · 离线'}</button>)}</nav>}
         {mobileHome ? (
           <SessionHome
             sessions={sessions}
@@ -876,7 +878,7 @@ function App() {
           />
         ) : (
           <>
-            <header>
+            <header className="chat-header">
               <button
                 className="round mobile chat-back"
                 aria-label="返回会话列表"
@@ -894,7 +896,7 @@ function App() {
                     session?.title ||
                     "新对话"}
                 </strong>
-                <button onClick={() => setPanel("connections")}>
+                <button aria-label={`切换设备，当前 ${deviceName}`} title={cwd ? `${cwd} · ${deviceName}` : deviceName} onClick={() => setPanel("connections")}>
                   {cwd.split(/[\\/]/).at(-1)} · {deviceName}
                 </button>
               </div>
@@ -917,7 +919,8 @@ function App() {
                 }} />
               </div>
             </header>
-            <div className="transcript" ref={scroll.viewport}>
+            <div className="transcript-region">
+            <div className="transcript" ref={scroll.viewport} tabIndex={0} role="region" aria-label="对话内容">
               <div className="transcript-content" ref={scroll.content}>
               {session?.historyHasMore && <button className="load-history" disabled={loadingHistory} onClick={() => void loadEarlierMessages()}>{loadingHistory ? "正在加载…" : "加载更早消息"}</button>}
               {!messages.length && !busy && !approval.length && (
@@ -958,7 +961,8 @@ function App() {
               {approval.map(request => <Approval key={request.id} request={request} readOnly={readOnly} onResolve={answer => rpc('approvals.resolve', { id: request.id, sessionId: request.sessionId || selected, answer })} />)}
               </div>
             </div>
-            {scroll.away && <button className="back-to-latest" onClick={scroll.latest}>↓ 回到最新</button>}
+            {scroll.away && <button className="back-to-latest" onClick={() => { scroll.viewport.current?.focus({ preventScroll: true }); scroll.latest(); }}>↓ 回到最新</button>}
+            </div>
             {control && !control.yours && <div className="control-notice">另一客户端正在控制此会话。{canManage && <button onClick={() => attempt(async () => { await rpc('control.acquire', { sessionId: selected, takeover: true }); setControl({ yours: true }); })}>接管控制</button>}</div>}
             <ContextUsage value={session?.context} />
             {busy && turnOperation === 'compact' && <div className="compact-progress" role="status">{stopping ? '正在停止压缩…' : turnPhase === 'starting' ? '正在提交压缩…' : '正在压缩上下文…'}</div>}
@@ -1029,6 +1033,8 @@ function App() {
           sessions={sessions}
           commandResult={commandResult}
           theme={theme}
+          reading={reading.reading}
+          onReading={reading.updateReading}
           onTheme={setTheme}
           onCommand={runCommand}
           onSession={id => { setSelected(id); setPanel(""); }}

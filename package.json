@@ -207,7 +207,9 @@
     "docs/implementation-1.0.10.md",
     "docs/release-1.0.10.md",
     "docs/implementation-1.0.11.md",
-    "docs/release-1.0.11.md"
+    "docs/release-1.0.11.md",
+    "docs/web-display-1.0.11.md",
+    "docs/web-display-install.md"
   ],
   "engines": {
     "node": ">=22.12.0"
@@ -215,7 +217,7 @@
   "scripts": {
     "build:web": "npm run build --workspace @kkcode/web",
     "typecheck:web": "tsc -p apps/web/tsconfig.json",
-    "test:web": "npm run build:web && node scripts/web-smoke.mjs && node scripts/web-cancel-smoke.mjs && node scripts/web-conversation-smoke.mjs && node scripts/web-feature-contract-smoke.mjs && node scripts/web-pixel-theme-smoke.mjs && node scripts/gateway-pixel-smoke.mjs && node scripts/web-knowledge-smoke.mjs && node scripts/web-config-smoke.mjs && node --test test/web-memory-race.test.mjs test/web-todo-progress.test.mjs test/web-markdown-sanitization.test.mjs",
+    "test:web": "npm run build:web && node scripts/web-smoke.mjs && node scripts/web-cancel-smoke.mjs && node scripts/web-conversation-smoke.mjs && node scripts/web-display-smoke.mjs && node scripts/web-feature-contract-smoke.mjs && node scripts/web-pixel-theme-smoke.mjs && node scripts/gateway-pixel-smoke.mjs && node scripts/web-knowledge-smoke.mjs && node scripts/web-config-smoke.mjs && node --test test/web-memory-race.test.mjs test/web-todo-progress.test.mjs test/web-markdown-sanitization.test.mjs",
     "test:browser": "node scripts/browser-smoke.mjs",
     "test:compatibility": "node scripts/compatibility-acceptance.mjs",
     "gateway": "node apps/gateway/main.mjs",

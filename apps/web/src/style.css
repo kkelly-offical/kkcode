@@ -282,7 +282,7 @@ main {
   display: flex;
   flex-direction: column;
 }
-header {
+.chat-header {
   height: 70px;
   display: flex;
   gap: 15px;
@@ -292,7 +292,7 @@ header {
   font-size: 13px;
   color: var(--text-secondary);
 }
-header > span {
+.chat-header > span {
   flex: 1;
 }
 .quiet {
@@ -652,7 +652,7 @@ summary {
   .mobile {
     display: block;
   }
-  header {
+  .chat-header {
     padding: 0 15px;
     height: 58px;
   }

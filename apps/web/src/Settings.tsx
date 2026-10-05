@@ -6,11 +6,12 @@ import { AttachmentPanel, type Attachment } from "./Attachments";
 import { BranchPanel } from "./Branches";
 import { CommandOutput, PreferencesPanel, ThemePanel, DeviceLifecyclePanel } from "./ClientPanels";
 import { MODE_OPTIONS, modeLabel } from "./modes.mjs";
-import { APP_VERSION } from "./version";
+import { APP_VERSION, WEB_DISPLAY_VERSION } from "./version";
 import { ArtifactPanel } from './Artifacts';
 import { MemoryPanel } from './Memory';
 import { TaskPanel } from './Tasks';
 import { SubagentPanel } from './Subagents';
+import { ReadingControls, type ReadingPreferences } from './ReadingPreferences';
 
 type Item = Record<string, any>;
 type Props = {
@@ -31,6 +32,8 @@ type Props = {
   sessions: Item[];
   commandResult: Item;
   theme: string;
+  reading: ReadingPreferences;
+  onReading: (value: ReadingPreferences) => void;
   onTheme: (theme: string) => void;
   onCommand: (command: string) => Promise<any>;
   onSession: (id: string) => void;
@@ -289,6 +292,7 @@ export function SettingsOverlay(props: Props) {
             配置按需打开，启动时不会自动弹出。
             <br />
             KK Code {APP_VERSION}
+            {WEB_DISPLAY_VERSION && <small>Web · {WEB_DISPLAY_VERSION}</small>}
           </p>
         </>
       )}
@@ -674,7 +678,7 @@ export function SettingsOverlay(props: Props) {
       {panel === "branches" && props.canManage !== false && <BranchPanel rpc={props.rpc} sessionId={props.sessionId} cwd={props.cwd} ensureSession={props.ensureSession} onChanged={props.onBranch} onOpened={props.onSession} />}
       {panel === "lifecycle" && props.canManage !== false && <DeviceLifecyclePanel deviceId={props.deviceId} gateway={props.gateway} name={props.deviceName} />}
       {panel === "command" && <CommandOutput result={props.commandResult} />}
-      {panel === "theme" && <ThemePanel theme={props.theme} onTheme={props.onTheme} />}
+      {panel === "theme" && <><ThemePanel theme={props.theme} onTheme={props.onTheme} /><ReadingControls value={props.reading} onChange={props.onReading} /></>}
       {panel === "preferences" && props.canManage !== false && <PreferencesPanel rpc={props.rpc} onSaved={() => { props.onNotice("个人偏好已保存"); stack.length > 1 ? back() : props.onClose(); }} />}
       {panel === "sessions" && <div className="settings-group">{(props.commandResult.items || props.sessions).map((item: Item) => <SettingsRow key={item.id} icon={props.sessionId === item.id ? "check" : "message"} title={item.label || item.title || item.id} detail={item.desc || item.cwd} onClick={() => props.onSession(item.id)} />)}</div>}
       {loading && (

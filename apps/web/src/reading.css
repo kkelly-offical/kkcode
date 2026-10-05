@@ -1,0 +1,61 @@
+/* Conversation space is sized independently of decorative pixel paint. */
+.app { --reading-scale: 1; --reading-width: 1040px; }
+.app main { min-height: 0; }
+.app main > .chat-header { flex: 0 0 52px; height: 52px; min-width: 0; padding: 0 20px; gap: 12px; }
+.chat-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.chat-title strong { min-width: 0; }
+.chat-title > button { min-width: 0; max-width: 42%; padding: 0 0 0 12px; border-left: 1px solid var(--border); }
+.chat-header-actions { flex: none; }
+.transcript-region { position: relative; display: flex; flex: 1 1 0; min-height: 0; min-width: 0; }
+.transcript { min-width: 0; padding: 20px max(20px, calc((100% - var(--reading-width)) / 2)) 28px; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+.transcript:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.transcript .message { max-width: 100%; font-size: calc(15px * var(--reading-scale)); line-height: 1.75; }
+.transcript .message.user { max-width: 85%; }
+.transcript .markdown pre { font-size: .86em; max-height: min(440px, 55dvh); overflow: auto; overscroll-behavior: contain; white-space: pre; overflow-wrap: normal; }
+.transcript .tool-row, .transcript .thinking-row { font-size: calc(12px * var(--reading-scale)); }
+.transcript-region > .back-to-latest { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); z-index: 4; margin: 0; box-shadow: var(--shadow-pop); white-space: nowrap; }
+.app .composer-wrap { padding: 6px max(20px, calc((100% - var(--reading-width)) / 2)) 10px; }
+.app .composer { padding: 10px 12px; }
+.app .composer textarea { min-height: 36px; max-height: min(160px, 24dvh); line-height: 1.5; }
+.app .composer-wrap .footnote { margin-top: 6px; font-size: 9px; }
+.app .studio-bar { width: min(var(--reading-width), calc(100% - 40px)); padding: 4px 0; min-height: 34px; }
+.app .studio-companion small { display: none; }
+.app .studio-companion .pixel-buddy { width: 26px; height: 29px; }
+.app .studio-shortcuts button { min-height: 30px; padding: 5px 8px; }
+.app .sidebar { width: 244px; padding: 16px 12px 10px; gap: 8px; min-height: 0; }
+.app .sidebar .brand { padding-bottom: 10px; }
+.app .sidebar > nav { min-height: 0; overscroll-behavior: contain; scrollbar-width: thin; }
+.app .sidebar .section-label { margin-top: 9px; }
+.app .sidebar .studio-nav { margin-top: 4px; }
+.app .sidebar .studio-nav button { padding: 8px 3px; gap: 5px; }
+.app .sidebar-studio-note { padding: 7px 8px; }
+.app .empty { padding-top: clamp(12px, 4vh, 40px); }
+.app .empty .pixel-scene { width: min(220px, 55%); margin-bottom: 14px; }
+.app .empty h1 { font-size: clamp(23px, 2.4vw, 32px); }
+.reading-settings { display: grid; gap: 14px; margin-top: 24px; }
+.reading-settings h3 { margin: 0; font-size: 15px; }
+.reading-settings label { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
+.reading-settings select { max-width: 65%; min-width: 0; }
+.reading-settings > button { justify-self: start; font-size: 12px; }
+@media (max-width: 760px) {
+  .app main > .chat-header { flex-basis: 56px; height: 56px; padding: 6px 12px; gap: 8px; }
+  .chat-title { display: block; }
+  .chat-title > button { max-width: 100%; padding: 2px 0 0; border-left: 0; }
+  .transcript { padding: 14px 16px 24px; }
+  .app .composer-wrap { padding: 4px 12px max(8px, env(safe-area-inset-bottom)); }
+  .app .studio-bar { width: 100%; padding-inline: 16px; }
+  .app .composer textarea { font-size: 16px; }
+}
+@media (max-height: 600px) {
+  .app .composer { padding: 8px 10px; }
+  .app .composer-wrap { padding-top: 4px; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  .app .composer-wrap .footnote, .sidebar-studio-note { display: none; }
+  .app .empty .pixel-scene { width: 120px; margin-bottom: 6px; }
+  .app .empty .suggestions { margin-top: 14px; }
+  .app .sidebar .brand-subtitle { display: none; }
+  .app .sidebar .brand { padding-bottom: 2px; }
+  .app .sidebar .profile { padding-top: 8px; }
+}
+@media (max-height: 600px) and (min-width: 761px) {
+  .app .composer textarea { min-height: 30px; }
+}
