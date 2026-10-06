@@ -12,6 +12,7 @@
 [1.0.11正式版](docs/release-1.0.11.md) · [上一稳定版](docs/release-1.0.10.md) · [本轮实施记录](docs/implementation-1.0.11.md) ·
 [版本与升级](docs/versions.md)区分源码、公开产物与部署状态。
 另有[1.0.11独立Web显示补丁](docs/web-display-1.0.11.md)，提供更大的正文空间和滚动优化，安卓不升版。
+当前研发 [1.0.12 用户体验与 Windows 客户端](docs/release-1.0.12.md)，设计与候选检查见[实施清单](docs/implementation-1.0.12.md)；尚未替换上述公开版本。
 上图为品牌概念图，不是实际界面截图。
 
 ## 产品特色

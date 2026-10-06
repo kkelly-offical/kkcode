@@ -5,6 +5,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.json.JSONObject
@@ -32,10 +35,18 @@ internal fun contextExplanation(value: JSONObject): String = "这是当前上下
     else -> "估算包含系统提示、工具声明、历史及媒体；与模型计费值可能不同。"
 }
 
-@Composable internal fun ContextUsageView(value: JSONObject) {
+@Composable internal fun ContextUsageView(value: JSONObject, compact: Boolean = false) {
     val summary = contextSummary(value) ?: return
     var expanded by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxWidth().clickable { expanded = true }.padding(horizontal = 18.dp, vertical = 6.dp)) {
+    if(compact) Row(Modifier.width(92.dp).semantics { contentDescription = "上下文使用情况：$summary" }.clickable { expanded = true }.padding(end = 12.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        val percent = (value.optDouble("tokens") * 100 / value.optDouble("limit")).toInt().coerceIn(0, 100)
+        Column {
+            Text("$percent%", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val source = value.optString("source", "estimated")
+            if(source !in listOf("count-api", "provider-usage")) Text(if(source == "strict-upper-bound") "保守上界" else "估算", fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        LinearProgressIndicator(progress = { percent / 100f }, modifier = Modifier.weight(1f).height(3.dp))
+    } else Column(Modifier.fillMaxWidth().clickable { expanded = true }.padding(horizontal = 18.dp, vertical = 6.dp)) {
         Text(summary, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         LinearProgressIndicator(progress = { (value.optDouble("tokens") / value.optDouble("limit")).toFloat().coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(2.dp))
     }

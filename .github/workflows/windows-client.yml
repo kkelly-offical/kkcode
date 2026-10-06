@@ -1,6 +1,7 @@
 name: windows-client
 on:
   workflow_dispatch:
+  workflow_call:
   pull_request:
     paths:
       - 'apps/desktop/**'
@@ -38,6 +39,12 @@ jobs:
       - run: npm run build:web
       - run: node --test test/desktop-policy.test.mjs test/desktop-backend.test.mjs test/web-projects.test.mjs
       - run: npm run desktop:build:win
+      - name: Record installer signing status
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem test-results/windows-release/*setup.exe | Select-Object -First 1
+          $signature = Get-AuthenticodeSignature -FilePath $installer.FullName
+          @{ file = $installer.Name; status = $signature.Status.ToString(); signer = $signature.SignerCertificate.Subject; thumbprint = $signature.SignerCertificate.Thumbprint } | ConvertTo-Json | Out-File -Encoding utf8 test-results/windows-release/windows-signature.json
       - run: node scripts/desktop-smoke.mjs
       - uses: actions/upload-artifact@v7
         if: always()
@@ -47,5 +54,6 @@ jobs:
             test-results/windows-release/*setup.exe
             test-results/windows-release/windows-verification.json
             test-results/windows-release/windows-installed.png
+            test-results/windows-release/windows-signature.json
             test-results/desktop-resources/runtime-verification.json
           if-no-files-found: error

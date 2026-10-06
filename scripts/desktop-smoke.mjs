@@ -5,6 +5,7 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { _electron as electron, expect } from '@playwright/test'
+import { gatewayFixture } from './desktop-gateway-fixture.mjs'
 
 if (process.platform !== 'win32') throw new Error('Windows application acceptance must run on Windows')
 const root = path.resolve('.'), output = path.join(root, 'test-results/windows-release')
@@ -25,7 +26,7 @@ const runtime = path.join(installed, 'resources', 'runtime')
 const target = JSON.parse(await readFile('configs/desktop-release.json', 'utf8'))
 assert.equal(run(path.join(runtime, 'node', 'node.exe'), ['--version']).trim(), `v${target.nodeVersion}`)
 assert.match(run(path.join(runtime, 'search', 'rg.exe'), ['--version']), new RegExp(`ripgrep ${target.ripgrepVersion.replaceAll('.', '\\.')}`))
-let app, data, marker
+let app, data, marker, gateway
 const errors = []
 try {
   app = await electron.launch({ executablePath, timeout: 60000 })
@@ -51,6 +52,36 @@ try {
   assert.equal(denied, true)
   await page.evaluate(() => window.kkcodeDesktop.savePreferences({ 'kkcode.web.theme': 'light', 'kkcode.web.reading': '{"scale":125,"width":"wide"}' }))
   await page.screenshot({ path: path.join(output, 'windows-installed.png') })
+  gateway = await gatewayFixture(temporary)
+  // Trust only this freshly generated loopback certificate in this test
+  // session. All other hosts continue through Chromium's verification.
+  await app.evaluate(({ session }, pem) => {
+    session.defaultSession.setCertificateVerifyProc((request, callback) => callback(request.hostname === '127.0.0.1' && request.certificate.data.replace(/\s/g, '') === pem.replace(/\s/g, '') ? 0 : -3))
+  }, gateway.certificate)
+  await page.evaluate(origin => { void window.kkcodeDesktop.connectGateway(origin) }, gateway.origin)
+  await page.waitForURL(gateway.origin + '/')
+  await expect(page.locator('.app')).toBeVisible()
+  assert.equal(await page.evaluate(() => typeof window.kkcodeDesktop), 'undefined')
+  await expect(page.locator('body')).not.toContainText('OLD GATEWAY UI')
+  const transport = await page.evaluate(async () => {
+    const post = await (await fetch('/auth/fixture', { method: 'POST', body: 'fixture-body' })).json()
+    const cookie = await (await fetch('/api/v1/fixture-cookie')).json()
+    const response = await fetch('/api/v1/fixture-stream'), reader = response.body.getReader()
+    const first = new TextDecoder().decode((await reader.read()).value)
+    let rest = ''
+    for (;;) { const chunk = await reader.read(); if (chunk.done) break; rest += new TextDecoder().decode(chunk.value) }
+    return { post, cookie, first, rest }
+  })
+  assert.deepEqual(transport.post, { method: 'POST', body: 'fixture-body' })
+  assert.match(transport.cookie.cookie, /fixture=allowed/)
+  assert.match(transport.first, /data: first/); assert.match(transport.rest, /data: second/)
+  assert.ok(gateway.seen.includes('/api/v1/discovery'))
+  assert.equal(gateway.seen.includes('/'), false, 'The Windows client must keep its bundled UI when connecting an older gateway')
+  await app.evaluate(({ Menu }) => Menu.getApplicationMenu().items[0].submenu.items.find(item => item.label === '返回本机').click())
+  await expect(page.locator('.app')).toBeVisible()
+  await expect.poll(() => page.evaluate(() => typeof window.kkcodeDesktop)).toBe('object')
+  await app.evaluate(({ session }) => session.defaultSession.setCertificateVerifyProc(null))
+  await gateway.close(); gateway = null
   assert.deepEqual(errors, [])
   await app.close(); app = null
   app = await electron.launch({ executablePath, timeout: 60000 })
@@ -66,7 +97,7 @@ try {
   assert.ok(uninstaller)
   run(path.join(installed, uninstaller), ['/S'])
   assert.equal(await readFile(marker, 'utf8'), 'retain-user-state')
-  const report = { version, platform: 'win32', arch: 'x64', installer: path.basename(installer), sha256: createHash('sha256').update(await readFile(installer)).digest('hex'), installedLaunch: true, projectPicker: true, sandbox: true, contextIsolation: true, displayPreferencesAfterRestart: true, retainedAfterReinstall: true, retainedAfterUninstall: true, modelCalls: 0, errors }
+  const report = { version, platform: 'win32', arch: 'x64', installer: path.basename(installer), sha256: createHash('sha256').update(await readFile(installer)).digest('hex'), installedLaunch: true, projectPicker: true, sandbox: true, contextIsolation: true, bundledGatewayUi: true, gatewayPostCookiesAndStreaming: true, remoteNativeBridgeAbsent: true, displayPreferencesAfterRestart: true, retainedAfterReinstall: true, retainedAfterUninstall: true, modelCalls: 0, errors }
   await writeFile(path.join(output, 'windows-verification.json'), JSON.stringify(report, null, 2) + '\n')
   console.log(JSON.stringify(report, null, 2))
-} finally { if (app) await app.close() }
+} finally { if (app) await app.close(); if (gateway) await gateway.close() }

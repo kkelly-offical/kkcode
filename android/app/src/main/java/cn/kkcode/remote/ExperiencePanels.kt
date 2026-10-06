@@ -27,6 +27,7 @@ internal fun projectPathKey(value: String): String {
 }
 internal fun projectName(value: String): String = value.trimEnd('/', '\\').split('/', '\\').lastOrNull().orEmpty().ifBlank { value.ifBlank { "全部项目" } }
 internal fun projectSessions(items: List<JSONObject>, path: String): List<JSONObject> = if(path.isBlank()) items else items.filter { projectPathKey(it.optString("cwd")) == projectPathKey(path) }
+internal data class ReadingPosition(val key: String?, val index: Int, val offset: Int, val following: Boolean)
 
 @Composable internal fun ProjectsSheet(state: RemoteState) {
     var query by remember { mutableStateOf("") }
@@ -124,8 +125,10 @@ internal fun revealHistoryPath(items: List<ChatItem>, target: String): List<Chat
 @Composable internal fun ConversationRunStatus(state: RemoteState) {
     if(!state.busy) return
     val current = state.todos?.optJSONArray("items").objects().firstOrNull { it.optString("status") == "in_progress" }
-    val label = when { state.stopping -> "正在停止"; state.turnOperation == "compact" -> "正在压缩上下文"; state.approvals.isNotEmpty() -> "等待你的确认"; state.turnPhase == "waiting_children" -> "等待子代理汇报"; state.turnPhase == "finishing" -> "正在保存结果"; else -> current?.optString("activeForm")?.ifBlank { null } ?: "正在工作" }
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp)).clickable { state.sheet = "activity" }.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+    val tasks = state.todos?.optJSONArray("items").objects()
+    val children = state.subagents.count { it.optString("status") in listOf("running", "pending") }
+    val label = when { state.turnOperation == "compact" -> if(state.stopping) "正在停止压缩…" else if(state.turnPhase == "starting") "正在提交压缩…" else "正在压缩上下文…"; state.stopping -> "正在停止"; state.approvals.isNotEmpty() -> "等待你的确认"; state.turnPhase == "finishing" -> "正在保存结果"; tasks.isNotEmpty() -> "任务 ${tasks.count { it.optString("status") == "completed" }}/${tasks.size}" + if(children > 0) " · 子代理 $children 运行中" else ""; state.turnPhase == "waiting_children" -> "等待子代理汇报"; else -> current?.optString("activeForm")?.ifBlank { null } ?: "正在工作" }
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp)).clickable { state.sheet = "activity" }.padding(horizontal = 12.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(Icons.Outlined.Terminal, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(8.dp))
         Text(label, Modifier.weight(1f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Icon(Icons.Outlined.ChevronRight, "查看会话活动", Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)

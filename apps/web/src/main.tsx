@@ -896,6 +896,7 @@ function App() {
             <div className="session-list-row" key={s.id}>
             <button
               className={selected === s.id ? "session active" : "session"}
+              aria-label={s.title || s.id}
               onClick={() => {
                 setSelected(s.id);
                 setSidebar(false);

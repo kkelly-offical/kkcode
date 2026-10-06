@@ -149,11 +149,15 @@ class SessionLifecycleTest {
         try {
             state.api = DeviceApi(server.url("/").toString(), "fixture-only", relay = false); state.selected = "ses-stop"
             state.observeTurnState(JSONObject().put("running", true).put("turnState", JSONObject().put("executionId", "test-stop").put("phase", "running")))
-            state.stop()
-            withTimeout(10000) { while(!state.notice.contains("停止尚未确认")) delay(10) }
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { state.stop() }
+            try { withTimeout(10000) { while(!state.notice.contains("停止尚未确认")) delay(10) } }
+            catch(error: kotlinx.coroutines.TimeoutCancellationException) { throw AssertionError("Rejected stop did not become retryable: requests=${server.requestCount}, stops=${stops.get()}, busy=${state.busy}, stopping=${state.stopping}, notice=${state.notice}", error) }
             assertTrue(state.busy); assertFalse(state.stopping)
-            state.stop()
-            withTimeout(10000) { while(stops.get() < 2) delay(10) }
+            // Match a real button click: the main dispatcher finishes the prior
+            // rejection handler before accepting a subsequent stop request.
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { state.stop() }
+            try { withTimeout(10000) { while(stops.get() < 2) delay(10) } }
+            catch(error: kotlinx.coroutines.TimeoutCancellationException) { throw AssertionError("Retried stop was not dispatched: requests=${server.requestCount}, stops=${stops.get()}, busy=${state.busy}, stopping=${state.stopping}, notice=${state.notice}", error) }
             assertTrue(state.busy); assertTrue(state.stopping)
         } finally { state.disconnect(); server.shutdown() }
     }

@@ -57,9 +57,9 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
     LaunchedEffect(state.api, state.api?.device) { state.projectFilter = "" }
     BackHandler(enabled = inChat && state.sheet.isBlank()) { state.leaveChat() }
     Scaffold(containerColor = MaterialTheme.colorScheme.background, snackbarHost = { SnackbarHost(updateNotices) }, topBar = {
-        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             CircleButton(if(inChat) Icons.Outlined.ArrowBack else Icons.Outlined.Menu, if(inChat) "返回会话列表" else "设备与连接") { if(inChat) state.leaveChat() else state.sheet = "connections" }
-            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(Modifier.weight(1f).padding(start = 6.dp), horizontalAlignment = Alignment.Start) {
                 Text(if(inChat) state.sessions.find { it.optString("id") == state.selected }?.optString("title")?.takeIf { it.isNotBlank() } ?: "新对话" else "KK Code / 远程", fontSize = 16.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { state.sheet = "connections" }.padding(top = 3.dp)) {
                     Box(Modifier.size(6.dp).background(if(state.connected) connectedGreen else muted, CircleShape))
@@ -148,7 +148,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
     Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled, colors = SwitchDefaults.colors(checkedThumbColor = MaterialTheme.colorScheme.onSurface, checkedTrackColor = kkcodeColors.success, uncheckedThumbColor = MaterialTheme.colorScheme.onSurface, uncheckedTrackColor = kkcodeColors.switchTrackOff, uncheckedBorderColor = Color.Transparent))
 }
 @Composable private fun CircleButton(icon: ImageVector, label: String, onClick: () -> Unit) {
-    IconButton(onClick, modifier = Modifier.size(42.dp).background(MaterialTheme.colorScheme.surfaceVariant, PixelShape(4.dp)).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .6f), PixelShape(4.dp))) { Icon(icon, label, Modifier.size(22.dp)) }
+    IconButton(onClick, modifier = Modifier.size(36.dp)) { Icon(icon, label, Modifier.size(20.dp)) }
 }
 @Composable private fun ComposerChip(icon: ImageVector, label: String, description: String, maxWidth: androidx.compose.ui.unit.Dp = 96.dp, onClick: () -> Unit) {
     Row(Modifier.padding(start = 6.dp).height(30.dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = .05f), RoundedCornerShape(8.dp)).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .5f), RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -350,7 +350,8 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
 
 @Composable private fun ChatScreen(state: RemoteState) {
     val text = state.draft
-    val displayItems = revealHistoryPath(collapseCompactedHistory(collapseCompletedRuns(state.messages, state.busy)), state.historyTarget)
+    val foldedItems = collapseCompactedHistory(collapseCompletedRuns(state.messages, state.busy))
+    val displayItems = revealHistoryPath(foldedItems, state.historyTarget)
     var expandedRows by remember(state.selected) { mutableStateOf(emptySet<String>()) }
     var thinkingExpanded by remember(state.selected, state.busy) { mutableStateOf(false) }
     var actions by remember { mutableStateOf(false) }
@@ -359,10 +360,10 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
     val listState = key(state.selected) { rememberLazyListState() }
     val dragging by listState.interactionSource.collectIsDraggedAsState()
     var following by remember(state.selected) { mutableStateOf(true) }
-    var readingBookmark by remember(state.selected) { mutableStateOf<Pair<Int, Int>?>(null) }
+    var readingBookmark by remember(state.selected) { mutableStateOf<ReadingPosition?>(null) }
     LaunchedEffect(state.historyTarget) {
         if(state.historyTarget.isNotBlank()) {
-            if(readingBookmark == null) readingBookmark = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+            if(readingBookmark == null) readingBookmark = ReadingPosition(listState.layoutInfo.visibleItemsInfo.firstOrNull()?.key as? String, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, following)
             following = false
             val index = displayItems.indexOfFirst { it.id == state.historyTarget }
             if(index >= 0) { withFrameNanos { }; listState.scrollToItem(index + if(state.historyHasMore) 1 else 0) }
@@ -424,15 +425,25 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
             item(key = "conversation-bottom") { Spacer(Modifier.fillMaxWidth().height(1.dp).testTag("conversation-bottom")) }
         }
         if(!following && listState.canScrollForward) FilledTonalButton(onClick = { state.historyTarget = ""; following = true; scope.launch { withFrameNanos { }; listState.scrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)) } }, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp)) { Icon(Icons.Outlined.ArrowDownward, null, Modifier.size(14.dp)); Text("回到最新", fontSize = 12.sp) }
-        readingBookmark?.let { saved -> TextButton(onClick = { state.historyTarget = ""; following = false; readingBookmark = null; scope.launch { withFrameNanos { }; listState.scrollToItem(saved.first.coerceAtMost((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)), saved.second) } }, modifier = Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 52.dp).background(card, RoundedCornerShape(8.dp))) { Text("返回刚才的位置", fontSize = 12.sp) } }
+        readingBookmark?.let { saved -> TextButton(onClick = {
+            state.historyTarget = ""; following = saved.following; readingBookmark = null
+            scope.launch {
+                withFrameNanos { }
+                val last = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+                val anchor = foldedItems.indexOfFirst { it.id == saved.key }
+                val index = if(saved.following) last else if(anchor >= 0) anchor + if(state.historyHasMore) 1 else 0 else saved.index
+                listState.scrollToItem(index.coerceIn(0, last), if(saved.following) 0 else saved.offset)
+            }
+        }, modifier = Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 52.dp).background(card, RoundedCornerShape(8.dp))) { Text("返回刚才的位置", fontSize = 12.sp) } }
         }
         if(state.controlElsewhere) Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) { Text("另一客户端正在控制", fontSize = 11.sp, color = muted, modifier = Modifier.weight(1f)); if(!state.sharedDevice) TextButton(onClick = { state.takeControl() }) { Text("接管控制", fontSize = 11.sp) } }
         ChangeSummary(state.messages)
         SubagentSync(state)
         if(!state.busy) TodoProgressView(state.todos, "${System.identityHashCode(state.api)}:${state.api?.device}:${state.selected}", state.subagents) { state.sheet = "subagents" }
-        if(state.showContext) ContextUsageView(state.contextUsage)
-        if(state.busy && state.turnOperation == "compact") Text(if(state.stopping) "正在停止压缩…" else if(state.turnPhase == "starting") "正在提交压缩…" else "正在压缩上下文…", color = muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
-        StudioTools(state)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            StudioTools(state, Modifier.weight(1f), shortcuts = false)
+            if(state.showContext) ContextUsageView(state.contextUsage, compact = true)
+        }
         if(text.startsWith('/') && !text.contains(' ')) {
             val query = text.removePrefix("/")
             val suggestions = state.commands.filter { (it.optString("name") + " " + it.optString("description")).contains(query, ignoreCase = true) }.sortedBy { if(it.optString("name").startsWith(query, ignoreCase = true)) 0 else 1 }.take(12)

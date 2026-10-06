@@ -210,7 +210,10 @@
     "docs/implementation-1.0.11.md",
     "docs/release-1.0.11.md",
     "docs/web-display-1.0.11.md",
-    "docs/web-display-install.md"
+    "docs/web-display-install.md",
+    "docs/release-1.0.12.md",
+    "docs/implementation-1.0.12.md",
+    "docs/windows-client.md"
   ],
   "engines": {
     "node": ">=22.12.0"

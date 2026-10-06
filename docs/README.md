@@ -1,6 +1,7 @@
 # KK Code 文档
 
 当前文档适用公开稳定版 **1.0.11 / Android10018**，见[版本与升级](versions.md)。
+研发中的 [1.0.12](release-1.0.12.md) 包含 [Windows 客户端](windows-client.md) 与 Android / Web 体验优化；检查进度见[实施清单](implementation-1.0.12.md)。
 当前稳定版已发布[1.0.11子代理协作与交互增强正式版](release-1.0.11.md)，见[逐项实施记录](implementation-1.0.11.md)；上一稳定版见[1.0.10记录](release-1.0.10.md)。
 已发布渠道、Android版本码与升级入口只在[版本与升级](versions.md)集中维护。
 历史材料保留原始版本和证据，不作为当前使用说明。
