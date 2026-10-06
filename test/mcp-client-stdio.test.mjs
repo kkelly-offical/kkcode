@@ -155,7 +155,10 @@ test('a peer closing its input pipe rejects the request without an uncaught EPIP
     lines.on('line', line => {
       const message = JSON.parse(line);
       if (message.method === 'initialize') {
-        process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:message.id,result:{protocolVersion:'2024-11-05',capabilities:{}}})+'\\n', () => fs.closeSync(0));
+        // Close before advertising readiness; otherwise the parent's next
+        // request can be buffered while the pipe is still open.
+        fs.closeSync(0);
+        process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:message.id,result:{protocolVersion:'2024-11-05',capabilities:{}}})+'\\n');
       }
     });
     setInterval(() => {}, 1000);
