@@ -143,6 +143,13 @@ export function createStdioMcpClient(serverName, config = {}, host = {}) {
         shell: explicitShell
       })
       child = proc
+      // A pipe write can emit EPIPE asynchronously, after write() returned.
+      // Keep this listener on the owned stream even after the process closes.
+      proc.stdin.on('error', () => {
+        if (child !== proc) return
+        rejectPending('server_crash', `mcp server "${serverName}" input pipe closed`, { phase: lifecycle === 'starting' ? 'startup' : 'request' })
+        try { proc.kill() } catch {}
+      })
 
       const timer = setTimeout(() => {
         if (settled) return
@@ -260,6 +267,7 @@ export function createStdioMcpClient(serverName, config = {}, host = {}) {
       proc.stderr.on("data", (chunk) => appendStderr(chunk))
 
       proc.on("close", (code, signal) => {
+        if (child !== proc) return
         if (ignoreClose) {
           cleanupChild()
           return

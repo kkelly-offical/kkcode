@@ -30,6 +30,36 @@ try {
   const input = page.getByRole('textbox', { name: '消息', exact: true })
   await expect(input).toBeVisible()
   await input.fill('正文仍然保留')
+  let created = 0, rejectUpload = true
+  const attachmentSessions = []
+  await page.route('**/api/v1/rpc', async route => {
+    const request = route.request().postDataJSON()
+    if (request.method === 'sessions.create') created++
+    if (request.method === 'attachments.upload') {
+      attachmentSessions.push(request.params.sessionId)
+      if (request.params.name === 'retry.txt' && rejectUpload) {
+        rejectUpload = false
+        return route.fulfill({ status: 422, json: { error: { code: 'fixture_upload', message: '模拟一次上传失败' } } })
+      }
+    }
+    return route.continue()
+  })
+  await input.evaluate(element => {
+    const transfer = new DataTransfer()
+    for (const name of ['first.txt', 'retry.txt', 'second.txt']) transfer.items.add(new File(['Attachment ' + name], name, { type: 'text/plain' }))
+    element.dispatchEvent(new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }))
+  })
+  // Pending cards are not proof of upload completion: wait for the actual
+  // removable attachments and then retry the failed file in the same session.
+  await expect(page.getByRole('button', { name: '移除附件 second.txt', exact: true })).toBeEnabled()
+  await expect(page.getByRole('button', { name: '移除附件 first.txt', exact: true })).toBeEnabled()
+  await page.getByRole('button', { name: '重试', exact: true }).click()
+  await expect(page.getByRole('button', { name: '移除附件 retry.txt', exact: true })).toBeEnabled()
+  assert.equal(created, 1, 'one paste creates only one conversation')
+  assert.equal(new Set(attachmentSessions).size, 1, 'the whole batch and retry stay in the same conversation')
+  await expect(input).toHaveValue('正文仍然保留')
+  for (const name of ['first.txt', 'retry.txt', 'second.txt']) await page.getByRole('button', { name: `移除附件 ${name}`, exact: true }).click()
+  await expect(page.locator('.composer-attachment')).toHaveCount(0)
   const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2lGkAAAAASUVORK5CYII='
   await input.evaluate((element, base64) => {
     const transfer = new DataTransfer(), bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0))
@@ -67,7 +97,7 @@ try {
   await page.keyboard.press('Escape')
   await expect(input).toHaveValue('配置期间保留的草稿')
   assert.deepEqual(errors, [])
-  console.log('Real UI passed: clipboard image, thumbnail, DOCX upload/extraction, attachment-only send, encrypted connection form, retained draft and mobile layout; no model inference.')
+  console.log('Real UI passed: new-conversation multi-file paste and retry share one session, clipboard image, thumbnail, DOCX extraction, attachment-only send, encrypted connection form, retained draft and mobile layout; no model inference.')
 } finally {
   await browser.close(); await server.close(); if(previous === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = previous
   await rm(root, { recursive: true, force: true })

@@ -145,6 +145,26 @@ test("stdio mcp client server_crash classification", async (t) => {
   await assert.rejects(client.listTools(), (error) => error.reason === "server_crash" || error.reason === "spawn_failed")
 })
 
+test('a peer closing its input pipe rejects the request without an uncaught EPIPE', async t => {
+  const script = `
+    const fs = require('node:fs');
+    const readline = require('node:readline');
+    process.stdin.on('error', () => {});
+    const lines = readline.createInterface({ input: process.stdin });
+    lines.on('error', () => {});
+    lines.on('line', line => {
+      const message = JSON.parse(line);
+      if (message.method === 'initialize') {
+        process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:message.id,result:{protocolVersion:'2024-11-05',capabilities:{}}})+'\\n', () => fs.closeSync(0));
+      }
+    });
+    setInterval(() => {}, 1000);
+  `
+  const client = createStdioMcpClient('closed-input', { type: 'stdio', command: nodeCommand(script), env: fixtureEnvironment, shell: false, framing: 'newline', timeout_ms: 1000, shutdown_timeout_ms: 100 })
+  t.after(() => client.shutdown())
+  await assert.rejects(client.listTools(), error => error.reason === 'server_crash')
+})
+
 test("stdio mcp health reports spawn_failed", async (t) => {
   const client = createStdioMcpClient("stdioMissing", {
     type: "stdio",
