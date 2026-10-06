@@ -1,6 +1,8 @@
 # 1.0.13 · 客户端精修、附件与应用内配置
 
-当前为发行候选，尚未公开发布；公开渠道见 [版本与升级](versions.md)。Android 目标版本码 10020，沿用原签名证书。
+已发布 **1.0.13 正式版 / Android10020 / Windows x64**（npm latest）。发行提交 `4c6107c`（PR#56 / #57 / #58），与候选 `8901af6` 同树；Android 沿用原签名证书。
+
+[Windows 安装器](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.13/kkcode-windows-1.0.13-x64-setup.exe) · [Android APK](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.13/kkcode-android-1.0.13.apk) · [设计导出包](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.13/kkcode-design-1.0.13.zip) · [校验回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.13/release-verification.json)
 
 - Windows 增加独立工程导航、项目栏、链接右键打开 / 复制，以及浏览器授权后的 App 回跳。
 - Windows、Web、Android 内置统一的正文与代码字体，细化任务进度、控件和输入区；运行横幅不再提供重复的补充按钮。
