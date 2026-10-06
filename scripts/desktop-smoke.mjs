@@ -72,6 +72,15 @@ try {
   await page.getByRole('button', { name: '选择项目与工作区', exact: true }).click()
   await page.getByRole('button', { name: '选择其他文件夹', exact: false }).click()
   await expect(page.getByRole('button', { name: '选择项目与工作区', exact: true })).toHaveAttribute('title', project)
+  const pasteFile = path.join(project, 'clipboard-notes.txt')
+  await writeFile(pasteFile, 'Desktop clipboard file acceptance')
+  const pasteScript = path.join(temporary, 'clipboard-files.ps1')
+  await writeFile(pasteScript, `Add-Type -AssemblyName System.Windows.Forms\n$clipboardFiles = New-Object System.Collections.Specialized.StringCollection\n[void]$clipboardFiles.Add('${pasteFile.replaceAll("'", "''")}')\n[System.Windows.Forms.Clipboard]::SetFileDropList($clipboardFiles)\n`)
+  run('powershell.exe', ['-NoProfile', '-STA', '-File', pasteScript])
+  const composer = page.getByRole('textbox', { name: '消息', exact: true })
+  await composer.focus(); await composer.press('Control+V')
+  await expect(page.locator('.composer-attachment')).toContainText('clipboard-notes.txt')
+  await page.getByRole('button', { name: '移除附件 clipboard-notes.txt', exact: true }).click()
   const denied = await page.evaluate(async () => { try { await window.kkcodeDesktop.connectGateway('javascript:alert(1)'); return false } catch { return true } })
   assert.equal(denied, true)
   await page.evaluate(() => window.kkcodeDesktop.savePreferences({ 'kkcode.web.theme': 'light', 'kkcode.web.reading': '{"scale":125,"width":"wide"}' }))
@@ -127,7 +136,7 @@ try {
   assert.ok(uninstaller)
   run(path.join(installed, uninstaller), ['/S'])
   assert.equal(await readFile(marker, 'utf8'), 'retain-user-state')
-  const report = { version, platform: 'win32', arch: 'x64', installer: path.basename(installer), sha256: createHash('sha256').update(await readFile(installer)).digest('hex'), installedLaunch: true, projectPicker: true, sandbox: true, contextIsolation: true, bundledGatewayUi: true, gatewayPostCookiesAndStreaming: true, remoteNativeBridgeAbsent: true, nativeLinkContextMenu: true, systemProtocolLoginReturn: true, desktopWorkspaceRail: true, displayPreferencesAfterRestart: true, retainedAfterReinstall: true, retainedAfterUninstall: true, modelCalls: 0, errors }
+  const report = { version, platform: 'win32', arch: 'x64', installer: path.basename(installer), sha256: createHash('sha256').update(await readFile(installer)).digest('hex'), installedLaunch: true, projectPicker: true, sandbox: true, contextIsolation: true, bundledGatewayUi: true, gatewayPostCookiesAndStreaming: true, remoteNativeBridgeAbsent: true, nativeLinkContextMenu: true, systemProtocolLoginReturn: true, nativeClipboardFile: true, desktopWorkspaceRail: true, displayPreferencesAfterRestart: true, retainedAfterReinstall: true, retainedAfterUninstall: true, modelCalls: 0, errors }
   await writeFile(path.join(output, 'windows-verification.json'), JSON.stringify(report, null, 2) + '\n')
   console.log(JSON.stringify(report, null, 2))
 } finally { if (app) await app.close(); if (gateway) await gateway.close() }
