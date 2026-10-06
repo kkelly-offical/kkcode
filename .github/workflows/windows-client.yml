@@ -34,6 +34,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: npm audit --registry=https://registry.npmjs.org --audit-level=high
       - run: npm run version:check
       - run: npm run typecheck:web
       - run: npm run build:web
@@ -56,4 +57,5 @@ jobs:
             test-results/windows-release/windows-installed.png
             test-results/windows-release/windows-signature.json
             test-results/desktop-resources/runtime-verification.json
+            test-results/desktop-resources/dependency-audit.json
           if-no-files-found: error

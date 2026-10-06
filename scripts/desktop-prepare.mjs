@@ -47,8 +47,10 @@ const npmCli = process.env.npm_execpath || path.join(path.dirname(process.execPa
 const packed = JSON.parse(run(process.execPath, [npmCli, 'pack', '--json', '--ignore-scripts', '--pack-destination', stage]))[0]
 await writeFile(path.join(stage, 'agent', 'package.json'), JSON.stringify({ name: 'kkcode-desktop-runtime', version: '1.0.0', private: true }))
 run(process.execPath, [npmCli, 'install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', path.join(stage, packed.filename)], path.join(stage, 'agent'))
+const runtimeAudit = run(process.execPath, [npmCli, 'audit', '--omit=dev', '--audit-level=high', '--json', '--registry=https://registry.npmjs.org'], path.join(stage, 'agent'))
+await writeFile(path.join(stage, 'dependency-audit.json'), runtimeAudit)
 await cp(path.join(root, 'apps', 'desktop', 'backend.mjs'), path.join(stage, 'backend.mjs'))
-await writeFile(path.join(stage, 'runtime-verification.json'), JSON.stringify({ nodeVersion: target.nodeVersion, nodeArchiveSha256: digest, ripgrepVersion: target.ripgrepVersion, ripgrepArchiveSha256: rgDigest, packageVersion: packed.version, packageIntegrity: packed.integrity, dependenciesLockSha256: createHash('sha256').update(await readFile(path.join(stage, 'agent', 'package-lock.json'))).digest('hex') }, null, 2) + '\n')
+await writeFile(path.join(stage, 'runtime-verification.json'), JSON.stringify({ nodeVersion: target.nodeVersion, nodeArchiveSha256: digest, ripgrepVersion: target.ripgrepVersion, ripgrepArchiveSha256: rgDigest, packageVersion: packed.version, packageIntegrity: packed.integrity, dependenciesLockSha256: createHash('sha256').update(await readFile(path.join(stage, 'agent', 'package-lock.json'))).digest('hex'), productionAudit: JSON.parse(runtimeAudit).metadata.vulnerabilities }, null, 2) + '\n')
 await rm(path.join(stage, archive)); await rm(path.join(stage, 'extract.ps1')); await rm(path.join(stage, packed.filename))
 await rm(output, { recursive: true, force: true }); await rename(stage, output)
 console.log(`Prepared Windows runtime: Node ${target.nodeVersion}, KK Code ${packed.version}`)
