@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { pixelBuddySvg, pixelStudioSvg } from '../../../src/ui/pixel-art.mjs';
 import { Icon, type IconName } from './Icon';
 import { Sheet } from './Sheet';
+import { persistDesktopPreferences } from './desktop';
 
 export function PixelBuddy({ className = '' }: { className?: string }) {
   return <span aria-hidden="true" className={`pixel-buddy ${className}`} dangerouslySetInnerHTML={{ __html: pixelBuddySvg }} />;
@@ -16,6 +17,7 @@ function saved(key: string, fallback: string) {
 }
 function persist(key: string, value: string) {
   try { localStorage.setItem(`kkcode.studio.${key}`, value); } catch { /* Appearance still works without storage. */ }
+  void persistDesktopPreferences();
 }
 
 export function StudioBar({ waiting = false, busy, stopping, approval, readOnly, connected, selected, canManage, onPanel, onPrompt }: {

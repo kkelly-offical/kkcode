@@ -17,6 +17,8 @@ type HomeProps = {
   onConnect: () => void;
   canManage?: boolean;
   onManage?: (session: Item) => void;
+  projectLabel?: string;
+  onProject?: () => void;
 };
 const sortOptions: [string, string, IconName][] = [
   ["priority", "优先级", "priority"],
@@ -34,6 +36,8 @@ export function SessionHome({
   onConnect,
   canManage = false,
   onManage,
+  projectLabel,
+  onProject,
 }: HomeProps) {
   const [query, setQuery] = useState(""),
     [menu, setMenu] = useState(false);
@@ -104,6 +108,7 @@ export function SessionHome({
           <Icon name="more" />
         </button>
       </div>
+      {connected && onProject && <button className="home-project" onClick={onProject}><Icon name="folder" size={18} /><span>{projectLabel || '全部项目'}</span><Icon name="down" size={16} /></button>}
       {menu && (
         <>
           <button

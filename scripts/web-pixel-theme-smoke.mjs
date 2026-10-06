@@ -35,8 +35,13 @@ async function compare(name) {
         const list = [...sheet.cssRules]
         const start = list.findIndex(rule => rule.type === CSSRule.STYLE_RULE && rule.selectorText === ':root' && rule.style.getPropertyValue('--pixel-finish').trim() === '1')
         if(start < 0) continue
-        const saved = list.slice(start).map(rule => rule.cssText)
-        for(let i = sheet.cssRules.length - 1; i >= start; i--) sheet.deleteRule(i)
+        // The 1.0.12 experience layer intentionally changes layout and controls.
+        // Keep it applied while checking that the original decorative pixel
+        // skin itself adds no layout shifts in either theme.
+        const boundary = list.findIndex((rule, index) => index > start && rule.type === CSSRule.STYLE_RULE && rule.selectorText === ':root' && rule.style.getPropertyValue('--experience-layout').trim() === '1')
+        const end = boundary < 0 ? list.length : boundary
+        const saved = list.slice(start, end).map(rule => rule.cssText)
+        for(let i = end - 1; i >= start; i--) sheet.deleteRule(i)
         return { sheetIndex, start, saved }
       }
       throw new Error('Pixel visual layer was not found; no layout comparison was performed')
@@ -97,9 +102,10 @@ try {
   await expect(page.getByRole('dialog').getByRole('button', { name: '鸢尾', exact: true })).toHaveAttribute('aria-pressed', 'true')
   await page.getByRole('checkbox', { name: '收起玩偶，保留状态', exact: true }).uncheck()
   await page.keyboard.press('Escape')
-  await page.getByRole('button', { name: '打开产物', exact: true }).click()
-  await expect(page.getByRole('dialog')).toContainText('会话产物')
-  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: '会话活动', exact: true }).click()
+  await page.getByRole('tab', { name: '产物', exact: true }).click()
+  await expect(page.getByRole('complementary', {name: '会话活动'})).toContainText('这个会话暂时没有归档产物。')
+  await page.getByRole('button', { name: '关闭活动面板', exact: true }).click()
   for(const width of [1440, 760, 390, 320]) {
     await page.setViewportSize({ width, height: width === 320 ? 640 : 900 })
     await expect(page.getByRole('textbox', { name: '消息' })).toBeInViewport()
@@ -107,7 +113,7 @@ try {
     await expect(page.getByRole('button', { name: '像素伙伴', exact: true })).toBeInViewport()
   }
   assert.equal(await page.locator('.buddy-eyes').first().evaluate(node => getComputedStyle(node).animationName), 'none', 'reduced motion disables companion animation')
-  console.log(`Pixel theme: ${comparisons} control rectangles unchanged against the original CSS; dark/light desktop/mobile/320px screenshots captured`)
+  console.log(`Pixel theme: ${comparisons} control rectangles unchanged when toggling the decorative layer over the current layout; dark/light desktop/mobile/320px screenshots captured`)
 } finally {
   await browser.close(); await server.close()
   if(old === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = old

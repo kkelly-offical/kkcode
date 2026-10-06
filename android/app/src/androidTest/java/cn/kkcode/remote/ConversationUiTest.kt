@@ -33,7 +33,9 @@ class ConversationUiTest {
         compose.onNodeWithText("主机地址").assertDoesNotExist()
         compose.onNodeWithContentDescription("更多").performClick()
         compose.onNodeWithText("设置").performClick()
-        compose.onNodeWithText("自动恢复远程连接").assertIsDisplayed()
+        compose.onNodeWithText("外观与阅读").assertIsDisplayed()
+        compose.onNodeWithText("设备与连接").performClick()
+        compose.onNodeWithText("自动恢复远程连接").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("网关地址").assertDoesNotExist()
         compose.onNodeWithContentDescription("关闭").performClick()
         compose.runOnIdle { assertEquals("", state.sheet) }
@@ -166,7 +168,7 @@ class ConversationUiTest {
         show {
             it.selected = "context-session"; it.contextUsage = JSONObject().put("tokens", 8192).put("limit", 32768).put("source", "estimated").put("outputReserved", 4096)
         }
-        compose.onNodeWithText("上下文", substring = true).assertIsDisplayed().performClick()
+        compose.onNodeWithContentDescription("上下文使用情况：", substring = true).assertIsDisplayed().performClick()
         compose.onNodeWithText("上下文使用情况").assertIsDisplayed()
         compose.onNodeWithText("当前上下文占用，不是累计用量", substring = true).assertIsDisplayed()
         compose.onNodeWithText("知道了").performClick()
@@ -177,7 +179,8 @@ class ConversationUiTest {
         show {
             it.selected = "context-bound-session"; it.contextUsage = JSONObject().put("tokens", 360000).put("limit", 262144).put("source", "strict-upper-bound").put("estimated", true)
         }
-        compose.onNodeWithText("保守上界", substring = true).assertIsDisplayed().performClick()
+        compose.onNodeWithText("保守上界", substring = true).assertIsDisplayed()
+        compose.onNodeWithContentDescription("上下文使用情况：", substring = true).performClick()
         compose.onNodeWithText("不是模型实际 token 计数或计费值", substring = true).assertIsDisplayed()
         compose.onNodeWithText("知道了").performClick()
         compose.onNodeWithText("上下文使用情况").assertDoesNotExist()

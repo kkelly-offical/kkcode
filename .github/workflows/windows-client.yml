@@ -1,0 +1,61 @@
+name: windows-client
+on:
+  workflow_dispatch:
+  workflow_call:
+  pull_request:
+    paths:
+      - 'apps/desktop/**'
+      - 'apps/web/**'
+      - 'src/**'
+      - 'scripts/desktop-*.mjs'
+      - 'configs/desktop-release.json'
+      - 'package*.json'
+      - '.github/workflows/windows-client.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/desktop/**'
+      - 'apps/web/**'
+      - 'src/**'
+      - 'scripts/desktop-*.mjs'
+      - 'configs/desktop-release.json'
+      - 'package*.json'
+      - '.github/workflows/windows-client.yml'
+permissions:
+  contents: read
+jobs:
+  windows-client:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm audit --registry=https://registry.npmjs.org --audit-level=high
+      - run: npm run version:check
+      - run: npm run typecheck:web
+      - run: npm run build:web
+      - run: node --test test/desktop-policy.test.mjs test/desktop-backend.test.mjs test/web-projects.test.mjs
+      - run: npm run desktop:build:win
+      - name: Record installer signing status
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem test-results/windows-release/*setup.exe | Select-Object -First 1
+          $signature = Get-AuthenticodeSignature -FilePath $installer.FullName
+          @{ file = $installer.Name; status = $signature.Status.ToString(); signer = $signature.SignerCertificate.Subject; thumbprint = $signature.SignerCertificate.Thumbprint } | ConvertTo-Json | Out-File -Encoding utf8 test-results/windows-release/windows-signature.json
+      - run: node scripts/desktop-smoke.mjs
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-client-candidate
+          path: |
+            test-results/windows-release/*setup.exe
+            test-results/windows-release/windows-verification.json
+            test-results/windows-release/windows-installed.png
+            test-results/windows-release/windows-signature.json
+            test-results/desktop-resources/runtime-verification.json
+            test-results/desktop-resources/dependency-audit.json
+          if-no-files-found: error

@@ -43,7 +43,8 @@ class SubagentExperienceTest {
     }
     @Test fun shortcutShowsActualChildDetailsAndLiveUpdatesWithoutUuidDump() {
         val state = show(); event(state, child())
-        compose.onNodeWithContentDescription("打开子代理").performClick()
+        compose.onNodeWithContentDescription("会话活动").performClick()
+        compose.onNodeWithText("子代理", substring = false).performClick()
         compose.onNodeWithText("梳理项目结构与调用链").assertIsDisplayed()
         compose.onNodeWithText("团队模型 / k3").assertIsDisplayed()
         compose.onNodeWithText("思考 · 深思").assertIsDisplayed()

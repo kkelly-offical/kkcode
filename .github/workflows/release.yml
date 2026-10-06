@@ -45,9 +45,14 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: node scripts/audit-concurrency-smoke.mjs
 
+  windows_verify:
+    uses: ./.github/workflows/windows-client.yml
+    permissions:
+      contents: read
+
   release_verify:
     timeout-minutes: 45
-    needs: matrix_verify
+    needs: [matrix_verify, windows_verify]
     environment: npm-release
     runs-on: ubuntu-latest
     steps:
@@ -188,3 +193,16 @@ jobs:
             gh release create "$tag" --title "$tag" --generate-notes --verify-tag --latest
           fi
           gh release upload "$tag" "$SBOM_FILE" --clobber
+      - name: Download verified Windows client
+        if: steps.release.outputs.publish == 'true'
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: windows-client-candidate
+          path: windows-client-candidate
+      - name: Publish verified Windows client
+        if: steps.release.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release upload "$GITHUB_REF_NAME" windows-client-candidate/windows-release/*setup.exe windows-client-candidate/windows-release/windows-verification.json windows-client-candidate/windows-release/windows-signature.json windows-client-candidate/desktop-resources/runtime-verification.json

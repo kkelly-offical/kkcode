@@ -36,6 +36,9 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
     var extensions by mutableStateOf(JSONObject())
     var selected by mutableStateOf("")
     var cwd by mutableStateOf("")
+    var projectFilter by mutableStateOf("")
+    var historyTarget by mutableStateOf("")
+    var readingScale by mutableStateOf(prefs.getFloat("readingScale", 1f).takeIf { it in listOf(1f, 1.1f, 1.25f) } ?: 1f)
     var deviceName by mutableStateOf("未连接设备")
     var profile by mutableStateOf(JSONObject())
     var connected by mutableStateOf(false)
@@ -206,6 +209,11 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
     }
     fun prepareResume() { if(!busy && canControl && !sessionArchived && draft.isBlank()) draft = "请从中断处继续。先核查已有结果和已执行的操作，不要重复已完成的改动。" }
     fun preference(name: String, value: Boolean) { prefs.edit().putBoolean(name, value).apply(); if (name == "autoConnect") autoConnect = value else showContext = value }
+    fun updateReadingScale(value: Float) { if(value in listOf(1f, 1.1f, 1.25f)) { readingScale = value; prefs.edit().putFloat("readingScale", value).apply() } }
+    fun chooseProject(path: String) {
+        if(uploading) { notice = "附件上传中，请稍后切换项目"; return }
+        leaveChat(); cwd = path; projectFilter = path; historyTarget = ""; sheet = ""
+    }
     fun restore() = action {
         val saved = vault.get("credentials")
         if(saved == null) {
@@ -1207,7 +1215,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         val response = rpc("subagents.interrupt", JSONObject().put("sessionId", session).put("childSessionId", id)) as JSONObject
         if(selected == session) subagents = mergeSubagentSnapshot(subagents, response.optJSONArray("items").objects(), session)
     }
-    fun leaveChat() { polling?.cancel(); sessionGeneration++; todos = null; subagents = emptyList(); selected = ""; messages = emptyList(); contextUsage = JSONObject(); persistedSteps = emptySet(); persistedUserTurns = emptySet(); approvals = emptyList(); attachments = emptyList(); draft = ""; historyHasMore = false; historyBefore = ""; busy = false; stopping = false; turnPhase = "idle"; activeExecution = ""; stopRequested = ""; pendingSend = null; stopJob = null }
+    fun leaveChat() { historyTarget = ""; polling?.cancel(); sessionGeneration++; todos = null; subagents = emptyList(); selected = ""; messages = emptyList(); contextUsage = JSONObject(); persistedSteps = emptySet(); persistedUserTurns = emptySet(); approvals = emptyList(); attachments = emptyList(); draft = ""; historyHasMore = false; historyBefore = ""; busy = false; stopping = false; turnPhase = "idle"; activeExecution = ""; stopRequested = ""; pendingSend = null; stopJob = null }
     fun disconnect() { connectionGeneration++; sshRecovery?.cancel(); sshHeartbeat?.cancel(); deviceEvents?.cancel(); deviceNotice?.cancel(); manualDisconnect = true; leaveChat(); clearDeviceSelection(); ssh?.close(); ssh = null; selectedSsh = ""; vault.clear("active-ssh:${accountScope()}"); api = gatewayApi ?: api?.takeIf { it.relay }; api?.device = ""; connected = false; deviceName = "未连接设备"; sessions = emptyList(); commands = emptyList() }
     fun logout() = action {
         cancelLogin()

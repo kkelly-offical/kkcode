@@ -63,12 +63,21 @@ import kotlinx.coroutines.delay
 }
 
 /** Status is derived from the session; the companion never submits prompts or accepts work. */
-@Composable internal fun StudioTools(state: RemoteState) {
+@Composable internal fun StudioTools(state: RemoteState, modifier: Modifier = Modifier, shortcuts: Boolean = true) {
     val context = LocalContext.current
     val preferences = remember { context.getSharedPreferences("kkcode.studio", android.content.Context.MODE_PRIVATE) }
     var palette by remember { mutableStateOf(preferences.getString("palette", "mint") ?: "mint") }
     var compact by remember { mutableStateOf(preferences.getBoolean("compact", false)) }
     var motion by remember { mutableStateOf(preferences.getBoolean("motion", true)) }
+    DisposableEffect(preferences) {
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, _ ->
+            palette = prefs.getString("palette", "mint") ?: "mint"
+            compact = prefs.getBoolean("compact", false)
+            motion = prefs.getBoolean("motion", true)
+        }
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
     var show by remember { mutableStateOf(false) }
     var wasBusy by remember(state.selected) { mutableStateOf(false) }
     var celebrate by remember(state.selected) { mutableStateOf(false) }
@@ -79,17 +88,19 @@ import kotlinx.coroutines.delay
     val mood = companionMood(state.connected, state.stopping, state.approvals.isNotEmpty(), state.busy, state.turnPhase, state.messages.lastOrNull { !it.done }?.kind.orEmpty(), !state.canControl || state.sessionArchived, state.lastTurnOutcome, celebrate)
     val label = companionLabel(mood)
     val systemMotion = android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) > 0f
-    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
         Row(Modifier.weight(1f).clickable(onClickLabel = "像素伙伴") { show = true }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             if(!compact) { PixelBuddy(32.dp, palette, mood, motion && systemMotion); Spacer(Modifier.width(8.dp)) }
             Column(Modifier.weight(1f)) {
-                Text("KIKI / CODE COMPANION", fontFamily = FontFamily.Monospace, fontSize = 7.sp, letterSpacing = .5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                if(shortcuts) Text("KIKI / CODE COMPANION", fontFamily = FontFamily.Monospace, fontSize = 7.sp, letterSpacing = .5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                 Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Icon(Icons.Outlined.ExpandMore, "像素伙伴", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        IconButton(onClick = { state.sheet = "subagents" }, enabled = state.connected, modifier = Modifier.size(42.dp)) { Icon(Icons.Outlined.Groups, "打开子代理", Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary) }
-        IconButton(onClick = { state.sheet = "artifacts" }, enabled = state.connected, modifier = Modifier.size(42.dp)) { Icon(Icons.Outlined.FolderOpen, "打开产物", Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary) }
+        if(shortcuts) {
+            IconButton(onClick = { state.sheet = "subagents" }, enabled = state.connected, modifier = Modifier.size(42.dp)) { Icon(Icons.Outlined.Groups, "打开子代理", Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary) }
+            IconButton(onClick = { state.sheet = "artifacts" }, enabled = state.connected, modifier = Modifier.size(42.dp)) { Icon(Icons.Outlined.FolderOpen, "打开产物", Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary) }
+        }
     }
     if(show) AlertDialog(onDismissRequest = { show = false }, shape = PixelShape(8.dp), containerColor = MaterialTheme.colorScheme.surface, title = {
         Row(verticalAlignment = Alignment.CenterVertically) { PixelBuddy(48.dp, palette, mood, motion && systemMotion); Spacer(Modifier.width(12.dp)); Column { Text("你好，我是 KIKI。", fontSize = 17.sp, fontWeight = FontWeight.Medium); Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } }

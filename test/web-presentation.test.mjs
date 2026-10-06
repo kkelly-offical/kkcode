@@ -23,7 +23,7 @@ test('home sorts running sessions before time groups, filters search/archive wit
   assert.deepEqual(groupSessions(sessions, { now, sort: 'time' }).map(([name]) => name), ['今天', '昨天', '过去 7 天'])
   assert.equal(groupSessions(sessions, { now, query: ' kkcode ' }).flatMap(([, values]) => values).length, 2)
   assert.deepEqual(groupSessions(sessions, { now, archived: true })[0][1].map(item => item.id), ['archived'])
-  assert.equal(groupSessions(sessions, { now, sort: 'project' })[0][0], 'kkcode')
+  assert.equal(groupSessions(sessions, { now, sort: 'project' })[0][0], '/work/kkcode')
   assert.deepEqual(sessions.map(item => item.id), ['old', 'today', 'running', 'archived'])
 })
 test('home uses calendar days rather than a rolling 24-hour bucket', () => {

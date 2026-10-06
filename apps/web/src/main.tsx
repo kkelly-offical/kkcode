@@ -5,6 +5,7 @@ import "./mobile.css";
 import "./studio.css";
 import "./reading.css";
 import "./pixel.css";
+import "./experience.css";
 import { PixelBuddy, PixelScene, StudioBar } from "./PixelStudio";
 import { SessionHome, ConnectionLanding, SessionActions, ConversationMenu } from "./Home";
 import { Sheet } from "./Sheet";
@@ -27,6 +28,11 @@ import { awaitAbortable } from "../../../src/abort.mjs";
 import { useDeviceEvents } from './DeviceEvents';
 import { mcpLoadNotice } from './device-notices.mjs';
 import { Approval } from "./Approval";
+import { ActivityPanel, RunBanner, type ActivityTab } from './ActivityPanel';
+import { ProjectPicker } from './ProjectPicker';
+import { projectName, projectSessions } from './projects.mjs';
+import { HistoryNavigator } from './HistoryNavigator';
+import { initializeDesktopPreferences, persistDesktopPreferences } from './desktop';
 import { attachmentMediaType, readAttachment, type Attachment } from "./Attachments";
 
 type Item = Record<string, any>;
@@ -70,6 +76,7 @@ function App() {
   const [uploading, setUploading] = useState(false), [branch, setBranch] = useState("");
   const [commandResult, setCommandResult] = useState<Item>({});
   const [theme, setTheme] = useState(() => { try { return localStorage.getItem("kkcode.web.theme") || "dark"; } catch { return "dark"; } });
+  useEffect(() => { void persistDesktopPreferences(); }, [reading.reading]);
   const [busy, setBusy] = useState(false),
     [notice, setNotice] = useState(""),
     [sidebar, setSidebar] = useState(false);
@@ -118,6 +125,12 @@ function App() {
     activeExecution.current = ''; stopRequested.current = ''; stopInFlight.current = null; setBusy(false); setStopping(false); setTurnPhase('idle'); setTurnOperation('');
   }
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
+  const [activityTab, setActivityTab] = useState<ActivityTab>('todos');
+  const [activityChoice, setActivityChoice] = useState<boolean | null>(null);
+  const [historyPanel, setHistoryPanel] = useState<'history' | 'search' | ''>('');
+  const [projectsOpen, setProjectsOpen] = useState(false);
+  const [projectFilter, setProjectFilter] = useState('');
+  useEffect(() => { setProjectFilter(''); setHistoryPanel(''); setProjectsOpen(false); }, [gateway, deviceId]);
   useEffect(() => { setThinkingExpanded(false); }, [selected, busy]);
   const [panel, setPanel] = useState(""),
     [cwd, setCwd] = useState("");
@@ -194,6 +207,7 @@ function App() {
     };
     apply(); media.addEventListener("change", apply);
     try { localStorage.setItem("kkcode.web.theme", theme); } catch { /* Private browsing may disable storage. */ }
+    void persistDesktopPreferences();
     return () => media.removeEventListener("change", apply);
   }, [theme]);
   useEffect(() => {
@@ -486,7 +500,7 @@ function App() {
       cursor.current = snapshot?.eventCursor || 0;
       setSession(snapshot);
       applyLiveSnapshot(snapshot);
-      if (snapshot) { applySelection(snapshot); setCwd(snapshot.cwd || cwd); }
+      if (snapshot) { applySelection(snapshot); setCwd(snapshot.cwd || cwd); setProjectFilter(snapshot.cwd || ''); }
       observeTurn(snapshot || {});
       await stream();
     });
@@ -703,6 +717,26 @@ function App() {
   async function openFolders() {
     setPanel("folders");
   }
+  async function browseProject() {
+    setProjectsOpen(false);
+    if (window.kkcodeDesktop) {
+      const path = await window.kkcodeDesktop.openFolder();
+      if (path) chooseProject(path);
+    } else await openFolders();
+  }
+  useEffect(() => {
+    if (!ready || !window.kkcodeDesktop) return;
+    let disposed = false;
+    const readProject = () => {
+      const project = new URLSearchParams(location.hash.slice(1)).get('project');
+      if (!project) return;
+      history.replaceState(null, '', location.pathname + location.search);
+      if (uploading) { setNotice('附件上传中，请稍后切换项目'); return; }
+      void rpc('folders.list', { path: project }).then(value => { if (!disposed) chooseProject(value.path); }).catch(error => { if (!disposed) setNotice(remoteErrorMessage(error)); });
+    };
+    readProject(); window.addEventListener('hashchange', readProject);
+    return () => { disposed = true; window.removeEventListener('hashchange', readProject); };
+  }, [ready, uploading]);
   async function openSettings() {
     setPanel("settings");
   }
@@ -728,20 +762,41 @@ function App() {
         if (!controller.signal.aborted && currentView(selected)) setSubagentNotice('子代理状态暂未同步，连接恢复后自动更新');
       }
       finally { refreshing = false; }
-      if (!controller.signal.aborted && !document.hidden && (busy || childrenActive || panel === 'subagents')) timer = setTimeout(refresh, 2000);
+      if (!controller.signal.aborted && !document.hidden && (busy || childrenActive || panel === 'subagents' || activityTab === 'subagents' && activityChoice !== false)) timer = setTimeout(refresh, 2000);
     }
     const visible = () => { if (!document.hidden) void refresh(); else clearTimeout(timer); };
     document.addEventListener('visibilitychange', visible);
     void refresh();
     return () => { controller.abort(); clearTimeout(timer); document.removeEventListener('visibilitychange', visible); };
-  }, [sdk, ready, connected, selected, todoIdentity, busy, childrenActive, panel === 'subagents']);
+  }, [sdk, ready, connected, selected, todoIdentity, busy, childrenActive, panel === 'subagents', activityTab === 'subagents', activityChoice]);
   const deviceName = gateway
     ? devices.find((device) => device.id === deviceId)?.name || "未连接设备"
     : profile.name;
   const activeDevice = devices.find(device => device.id === deviceId);
   const canManage = !gateway || Boolean(activeDevice && !activeDevice.shared);
+  useEffect(() => {
+    const newConversation = () => { if (connected && canManage && !uploading) setPanel('new'); };
+    const searchConversations = () => { if (connected) setHistoryPanel('search'); };
+    window.addEventListener('kkcode:new-conversation', newConversation);
+    window.addEventListener('kkcode:search-conversations', searchConversations);
+    return () => { window.removeEventListener('kkcode:new-conversation', newConversation); window.removeEventListener('kkcode:search-conversations', searchConversations); };
+  }, [connected, canManage, uploading]);
   const readOnly = !connected || Boolean(activeDevice?.shared && activeDevice.permissions?.[selected] !== 'control');
   const messages: Item[] = buildTranscript(session || {}, events);
+  const todoSnapshot = todos?.identity === todoIdentity ? todos.snapshot : null;
+  const workspaceSessions: Item[] = projectSessions(sessions, projectFilter);
+  const activityOpen = Boolean(selected) && (activityChoice ?? (!small && Boolean(todoSnapshot?.items?.length || childItems.length || changeSummary(messages).files)));
+  const hasRunBanner = busy || approval.length > 0;
+  const openActivity = (tab: ActivityTab) => { setActivityTab(tab); setActivityChoice(true); };
+  const openPanel = (value: string) => {
+    if (selected && ['subagents', 'tasks', 'artifacts'].includes(value)) openActivity(value as ActivityTab);
+    else setPanel(value);
+  };
+  function chooseProject(path: string) {
+    if (uploading) { setNotice('附件上传中，请稍后切换项目'); return; }
+    setProjectsOpen(false); setCwd(path); setProjectFilter(path); setSelected(''); setSession(null); setEvents([]); setSidebar(false);
+  }
+  const companion = <StudioBar waiting={turnPhase === 'waiting_children'} busy={busy} stopping={stopping} approval={approval.length > 0} readOnly={readOnly || Boolean(session?.archived)} connected={connected} selected={Boolean(selected)} canManage={canManage} onPanel={openPanel} onPrompt={value => setPrompt(previous => previous ? `${previous}\n\n${value}` : value)} />;
   if (!ready)
     return (
       <ConnectionLanding
@@ -783,7 +838,7 @@ function App() {
     );
   const mobileHome = small && !selected;
   return (
-    <div className="app" style={reading.style}>
+    <div className={`app experience${activityOpen && !small ? ' with-activity' : ''}`} style={reading.style}>
       <aside
         className={sidebar ? "sidebar open" : "sidebar"}
         aria-label="工作区导航"
@@ -825,25 +880,29 @@ function App() {
         <button
           className="workspace"
           disabled={!connected || !canManage}
-          onClick={() => attempt(() => openFolders())}
+          onClick={() => setProjectsOpen(true)}
+          aria-label="选择项目与工作区"
+          title={cwd}
         >
-          ▱ {cwd.split(/[\\/]/).at(-1) || "选择工作目录"} <span>⌄</span>
+          <Icon name="folder" size={18} /> {projectFilter ? projectName(projectFilter) : "全部项目"} <span>⌄</span>
         </button>
+        <button className="sidebar-search" onClick={() => setHistoryPanel('search')}><Icon name="search" size={16} /><span>搜索项目中的对话</span></button>
         <div className="studio-nav" role="group" aria-label="工作区快捷入口"><button onClick={() => attempt(openSettings)}><Icon name="settings" size={17} />设置</button><button disabled={!connected || !canManage} onClick={() => setPanel("models")}><Icon name="cloud" size={17} />模型</button><button disabled={!connected || !canManage} onClick={() => setPanel("extensions")}><Icon name="extension" size={17} />扩展</button></div>
         <div className="section-label">
           {showArchived ? "已归档对话" : "对话记录"} <button className="icon" aria-label={showArchived ? "查看活跃对话" : "查看已归档对话"} onClick={() => setShowArchived(value => !value)}><Icon name="archive" size={15} /></button>
         </div>
         <nav>
-          {sessions.filter(s => Boolean(s.archived) === showArchived).map((s) => (
+          {workspaceSessions.filter(s => Boolean(s.archived) === showArchived).map((s) => (
             <div className="session-list-row" key={s.id}>
             <button
               className={selected === s.id ? "session active" : "session"}
+              aria-label={s.title || s.id}
               onClick={() => {
                 setSelected(s.id);
                 setSidebar(false);
               }}
             >
-              {s.title || s.id}
+              <span>{s.title || s.id}</span><small>{String(s.status || '').startsWith('running') ? '进行中' : s.updatedAt ? new Date(s.updatedAt).toLocaleDateString() : ''}</small>
             </button>
             {canManage && <button className="icon session-more" aria-label={`管理对话 ${s.title || "新对话"}`} onClick={() => { setManagedAction('menu'); setManagedSession(s); }}><Icon name="more" size={17} /></button>}
             </div>
@@ -866,7 +925,7 @@ function App() {
       <main>
         {mobileHome ? (
           <SessionHome
-            sessions={sessions}
+            sessions={workspaceSessions}
             name={deviceName}
             connected={connected}
             onSelect={(s) => setSelected(s.id)}
@@ -874,6 +933,8 @@ function App() {
             onSettings={() => attempt(openSettings)}
             onConnect={() => setPanel("connections")}
             canManage={canManage}
+            projectLabel={projectFilter ? projectName(projectFilter) : '全部项目'}
+            onProject={() => setProjectsOpen(true)}
             onManage={value => { setManagedAction('menu'); setManagedSession(value); }}
           />
         ) : (
@@ -901,6 +962,8 @@ function App() {
                 </button>
               </div>
               <div className="chat-header-actions">
+                <button className="icon" aria-label="对话记录" disabled={!selected} onClick={() => setHistoryPanel('history')}><Icon name="clock" size={19} /></button>
+                <button className="icon" aria-label="会话活动" aria-pressed={activityOpen} disabled={!selected} onClick={() => setActivityChoice(!activityOpen)}><Icon name="activity" size={20} /></button>
                 <button
                   className="icon"
                   aria-label="新对话"
@@ -910,7 +973,7 @@ function App() {
                   <Icon name="chat" size={20} />
                 </button>
                 <ConversationMenu key={todoIdentity} canManage={canManage} busy={busy} archived={Boolean(session?.archived)} onAction={action => {
-                  if (['subagents', 'artifacts', 'settings'].includes(action)) { setPanel(action); return; }
+                  if (['subagents', 'artifacts', 'settings'].includes(action)) { openPanel(action); return; }
                   if (action === 'compact') { void attempt(() => runCommand('/compact')); return; }
                   const current = sessions.find(item => item.id === selected) || session;
                   if (!current) return;
@@ -919,6 +982,7 @@ function App() {
                 }} />
               </div>
             </header>
+            <RunBanner busy={busy} phase={turnPhase} compacting={turnOperation === 'compact'} approvals={approval.length} snapshot={todoSnapshot} messages={messages} onStop={() => void stopTurn()} onPrompt={() => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="消息"]')?.focus()} readOnly={readOnly} companion={companion} />
             <div className="transcript-region">
             <div className="transcript" ref={scroll.viewport} tabIndex={0} role="region" aria-label="对话内容">
               <div className="transcript-content" ref={scroll.content}>
@@ -962,13 +1026,16 @@ function App() {
               </div>
             </div>
             {scroll.away && <button className="back-to-latest" onClick={() => { scroll.viewport.current?.focus({ preventScroll: true }); scroll.latest(); }}>↓ 回到最新</button>}
+            {scroll.canReturn && <button className="back-to-reading" onClick={scroll.returnToReading}>返回刚才的位置</button>}
             </div>
             {control && !control.yours && <div className="control-notice">另一客户端正在控制此会话。{canManage && <button onClick={() => attempt(async () => { await rpc('control.acquire', { sessionId: selected, takeover: true }); setControl({ yours: true }); })}>接管控制</button>}</div>}
-            <ContextUsage value={session?.context} />
             {busy && turnOperation === 'compact' && <div className="compact-progress" role="status">{stopping ? '正在停止压缩…' : turnPhase === 'starting' ? '正在提交压缩…' : '正在压缩上下文…'}</div>}
-            <TodoProgress onSubagents={() => setPanel('subagents')} key={todoIdentity} snapshot={todos?.identity === todoIdentity ? todos.snapshot : null} subagents={subagents?.identity === todoIdentity ? subagents.items : []} />
+            {!activityOpen && <TodoProgress onSubagents={() => openActivity('subagents')} key={todoIdentity} snapshot={todoSnapshot} subagents={childItems} />}
             {busy && ['stopping', 'finishing'].includes(turnPhase) && <div className="stop-progress" role="status">{stopping ? '正在停止并保存已有结果；已执行的文件改动不会撤销。' : '正在保存本轮结果…'}</div>}
-            <StudioBar waiting={turnPhase === 'waiting_children'} busy={busy} stopping={stopping} approval={approval.length > 0} readOnly={readOnly || Boolean(session?.archived)} connected={connected} selected={Boolean(selected)} canManage={canManage} onPanel={setPanel} onPrompt={value => setPrompt(previous => previous ? `${previous}\n\n${value}` : value)} />
+            <div className="conversation-status">
+              {!hasRunBanner && companion}
+              <ContextUsage value={session?.context} />
+            </div>
             <Composer
               key={`${gateway}:${deviceId}`}
               readOnly={readOnly || Boolean(session?.archived)}
@@ -978,6 +1045,7 @@ function App() {
               busy={busy}
               compacting={turnOperation === 'compact'}
               stopping={stopping}
+              stopInBanner={!small && hasRunBanner}
               mode={mode}
               modes={commandResult.clientAction === "mode" && commandResult.items?.length ? commandResult.items : undefined}
               model={model}
@@ -1006,12 +1074,15 @@ function App() {
                 const result = await rpc('settings.update', { config: { provider: { [name]: { model_options: { [id]: { thinking_effort: value } } } } } });
                 setSettings(result.config); setNotice('思考强度已更新');
               })}
-              onPanel={setPanel}
+              onPanel={openPanel}
               summary={changeSummary(messages)}
             />
           </>
         )}
       </main>
+      {activityOpen && (small ? <Sheet title="会话活动" onClose={() => setActivityChoice(false)}><ActivityPanel key={todoIdentity} tab={activityTab} onTab={setActivityTab} snapshot={todoSnapshot} items={childItems} messages={messages} sessionId={selected} canManage={canManage} notice={subagentNotice} rpc={rpc} onClose={() => setActivityChoice(false)} /></Sheet> : <ActivityPanel key={todoIdentity} tab={activityTab} onTab={setActivityTab} snapshot={todoSnapshot} items={childItems} messages={messages} sessionId={selected} canManage={canManage} notice={subagentNotice} rpc={rpc} onClose={() => setActivityChoice(false)} />)}
+      {projectsOpen && <ProjectPicker sessions={sessions} cwd={projectFilter} deviceId={deviceId} deviceName={deviceName} onChoose={chooseProject} onAll={() => { setProjectFilter(''); setProjectsOpen(false); }} onBrowse={() => void attempt(browseProject)} onClose={() => setProjectsOpen(false)} />}
+      {historyPanel && <HistoryNavigator key={`${todoIdentity}:${historyPanel}`} messages={messages} sessions={workspaceSessions} search={historyPanel === 'search'} hasMore={Boolean(session?.historyHasMore)} loading={loadingHistory} onLoadEarlier={() => void loadEarlierMessages()} onClose={() => setHistoryPanel('')} onSession={id => { setSelected(id); setHistoryPanel(''); }} onMessage={id => { setHistoryPanel(''); requestAnimationFrame(() => { if (!scroll.reveal(id)) setNotice('此记录尚未加载，请先加载更早消息。'); }); }} />}
       {panel && (
         <SettingsOverlay
           key={panel}
@@ -1047,6 +1118,7 @@ function App() {
           rpc={rpc}
           onCwd={value => {
             setCwd(value);
+            setProjectFilter(value);
             if (selected && value !== session?.cwd) { setSelected(""); setSession(null); setEvents([]); setNotice("工作目录已选择，下一条消息会在新对话中开始"); }
           }}
           onMode={value => selectModel({ mode: value })}
@@ -1082,4 +1154,4 @@ function App() {
     </div>
   );
 }
-createRoot(document.getElementById("root")!).render(<App />);
+void initializeDesktopPreferences().finally(() => createRoot(document.getElementById("root")!).render(<App />));

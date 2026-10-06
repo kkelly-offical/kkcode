@@ -1,0 +1,246 @@
+{
+  "fileKey": "B7xZDsDx6Bj1LiNZ2wThpk",
+  "reviewNode": "69:1128",
+  "files": [
+    {
+      "file": "assets/imgIconBranch.svg",
+      "bytes": 1610,
+      "sha256": "e0849ba0fb72475c0d5167138c28d599c5560475e4ac5a06db0aaa9ce1606944"
+    },
+    {
+      "file": "assets/imgIconBranch1.svg",
+      "bytes": 1399,
+      "sha256": "325c8752f36a0acc0d86fa93bddad0e034e64705fe29c9f68e20ff16e4298360"
+    },
+    {
+      "file": "assets/imgIconCheck.svg",
+      "bytes": 241,
+      "sha256": "fd458e5fa8ac61b9ca1353b1a3dfb35dd10b8b600f381ccf56a3a07805f34f21"
+    },
+    {
+      "file": "assets/imgIconClose.svg",
+      "bytes": 220,
+      "sha256": "5cd496b638f6538e900b8bea2a9cfd035f39301878959186781d591573f81716"
+    },
+    {
+      "file": "assets/imgIconDown.svg",
+      "bytes": 232,
+      "sha256": "664d3c136e533c46610ffe5b2efef3302ed36c582f7880f8a1ef16b42cb5e90b"
+    },
+    {
+      "file": "assets/imgIconDown1.svg",
+      "bytes": 226,
+      "sha256": "2e9ce17cda93e08dabf9848386dbe22906cd740e25c804dc60770ccc5356086c"
+    },
+    {
+      "file": "assets/imgIconEdit.svg",
+      "bytes": 245,
+      "sha256": "2882b3c0695d898c710710e924716990846e5e3b5f23a90187e507213cc7d81d"
+    },
+    {
+      "file": "assets/imgIconFile.svg",
+      "bytes": 260,
+      "sha256": "2f7441fda6a66dc962c86ff869783c17d73d35aa30cdb2acab51474d65a76096"
+    },
+    {
+      "file": "assets/imgIconFile1.svg",
+      "bytes": 315,
+      "sha256": "7633ad1c567e8d78b10e91b807485f8e34479b197e137e282699c27e340777cd"
+    },
+    {
+      "file": "assets/imgIconFolder.svg",
+      "bytes": 273,
+      "sha256": "59264db18d42a48e4825773f7257cc5a2f3c9ae50fea761065ccef328d64fd26"
+    },
+    {
+      "file": "assets/imgIconLayout.svg",
+      "bytes": 234,
+      "sha256": "cca2a6b8969222b85320eb3010dc351cfe9857ab8f73e162db25a754ad1f9081"
+    },
+    {
+      "file": "assets/imgIconMore.svg",
+      "bytes": 241,
+      "sha256": "231b4730b5a19c16e053710c6f163223eaeb2ed0eee7475af4984ce18fba6f2b"
+    },
+    {
+      "file": "assets/imgIconMore1.svg",
+      "bytes": 241,
+      "sha256": "1ff4bb21069a81d9480488ef75974dbb436403e17d2f2755058924e2f66d8bb4"
+    },
+    {
+      "file": "assets/imgIconPanel.svg",
+      "bytes": 235,
+      "sha256": "0f5a88cff41c28d65fb38ca9c66c58ac8f6158e3beba7e28a8fb1cdf72c1a5ba"
+    },
+    {
+      "file": "assets/imgIconPlus.svg",
+      "bytes": 226,
+      "sha256": "043585ed28b4e20b741a9ea30282180bea8fc37e44581453221e6c74b0fcbc9f"
+    },
+    {
+      "file": "assets/imgIconSearch.svg",
+      "bytes": 716,
+      "sha256": "3d67cf84dadd99123317fe0e8b9c851374599e9747ed2425f3b66154d3c0317e"
+    },
+    {
+      "file": "assets/imgIconSearch1.svg",
+      "bytes": 647,
+      "sha256": "1a39dd86c3a34e8edc96408b1e02a14344993d1e60e1579aa5a1fe9f200bfa99"
+    },
+    {
+      "file": "assets/imgIconSend.svg",
+      "bytes": 272,
+      "sha256": "bec73c5fa3153ffbea7790ce59d1756ef0f5f6d6e57ea1e8476b57eccb725781"
+    },
+    {
+      "file": "assets/imgIconShield.svg",
+      "bytes": 474,
+      "sha256": "dd6755c19999f5e03ce6bc1c7df1fa3e126213fe239b0d1a8a5f5d8972d5050b"
+    },
+    {
+      "file": "assets/imgIconTerminal.svg",
+      "bytes": 239,
+      "sha256": "f352e6b8c472e2cd464c6e1c614b010ed59b90d3af3ff5fc76140b7f773d87cc"
+    },
+    {
+      "file": "assets/imgKiki.svg",
+      "bytes": 1247,
+      "sha256": "22971899375fede27ddeaa9f2df6cab917c6ee1c2d0734261a071f56545f5509"
+    },
+    {
+      "file": "assets/imgKiki1.svg",
+      "bytes": 836,
+      "sha256": "f0907f3c1a477eb6f19f80143a0d1c69956a2bd0f90550d736371d63964b3e81"
+    },
+    {
+      "file": "assets/imgMark.svg",
+      "bytes": 346,
+      "sha256": "1a13617f0652f7c795550a8d0078de8dc51ad31daf58a489176d912550027090"
+    },
+    {
+      "file": "assets/imgSt.svg",
+      "bytes": 220,
+      "sha256": "4cc585709f8ce0fa50d2a479436a3ec1841f8163f6cbd9c1385777d06531752f"
+    },
+    {
+      "file": "assets/imgSt1.svg",
+      "bytes": 220,
+      "sha256": "faf6e7afc6d1d1a677f236163da2fe910379d189a0fa7c734e65c158b114a986"
+    },
+    {
+      "file": "assets/imgSt2.svg",
+      "bytes": 173,
+      "sha256": "2050e1e4f59da29026f849bd923ba3a4562f56777d6bb17ae31f1c32e376fc2d"
+    },
+    {
+      "file": "exports/android-approval.png",
+      "bytes": 32977,
+      "sha256": "87eac7d0264bc0a2c72cde89332fbadf32c42e79ec13456d03f6a3c3872035c9"
+    },
+    {
+      "file": "exports/android-chat.png",
+      "bytes": 43397,
+      "sha256": "1f8a8a8477e8a6ad5fe7604be35aee34f0a74c9a50eb9e0f8162766f51126293"
+    },
+    {
+      "file": "exports/android-compacted.png",
+      "bytes": 26687,
+      "sha256": "92f7b0ca727d3277b7225ff95b6962baaf3ff536837bf7a089b6f5900d36d82b"
+    },
+    {
+      "file": "exports/android-compacting.png",
+      "bytes": 38917,
+      "sha256": "688bdc90d96c9da72e317cf82573a413bde2e47817195b60335c4737d6ec9fa4"
+    },
+    {
+      "file": "exports/android-connections.png",
+      "bytes": 32784,
+      "sha256": "8e3eb975afb66d9eb202d8c79e78d8f9f2631d32b4a279b73fc4b9face8efdf5"
+    },
+    {
+      "file": "exports/android-keyboard.png",
+      "bytes": 34028,
+      "sha256": "7f3016fce9a4b71c6a086d0013129fce40b33ae6aada1366507ba4d03813bb1b"
+    },
+    {
+      "file": "exports/android-kiki.png",
+      "bytes": 31028,
+      "sha256": "e75982b0c3c73a924be9e0281f217b229c52b2113092b5aec85eca85500b5fb6"
+    },
+    {
+      "file": "exports/android-menu.png",
+      "bytes": 25434,
+      "sha256": "9bcee1a23db3033e4659317470c7bdf566c45d05fd8fd62b87fac36dc6b3be94"
+    },
+    {
+      "file": "exports/android-models.png",
+      "bytes": 36255,
+      "sha256": "7a2f71b83037f2322ac25b3cf1bafc09e29d039634e8ff0a2763106eb3345162"
+    },
+    {
+      "file": "exports/android-reading.png",
+      "bytes": 36663,
+      "sha256": "163bb598d61f18aeb9e622b13f7a0e6d817182fc3df56d8643c4d06fc254f501"
+    },
+    {
+      "file": "exports/android-report.png",
+      "bytes": 35171,
+      "sha256": "7665d79dee3cc73a6de2f69891a7f69ed87cccfd59da6437dabaa3c0ac979555"
+    },
+    {
+      "file": "exports/android-settings.png",
+      "bytes": 35586,
+      "sha256": "18ceb7deb0c80c91a5c243594edd461ce80670ed3eaf721ddfd297680b4c2865"
+    },
+    {
+      "file": "exports/android-stopping.png",
+      "bytes": 30432,
+      "sha256": "3237e13a46b728aef37efd48b1d73df4507bd83210a4089f71525d548aa9774f"
+    },
+    {
+      "file": "exports/android-subagent-detail.png",
+      "bytes": 40828,
+      "sha256": "869d2385899aa45c1527316fea66c2f6ea4be38ae8cff5e78dd625e058b93689"
+    },
+    {
+      "file": "exports/android-subagents.png",
+      "bytes": 36066,
+      "sha256": "3cf493d2b496f71906c719856f0238c1ab91a03975627567f55197593a77ae51"
+    },
+    {
+      "file": "exports/android-thinking-switch.png",
+      "bytes": 22969,
+      "sha256": "3c528a6a00e99a040566cf9aca12ab0a12b514b13354e1c5cb794d68fa560e14"
+    },
+    {
+      "file": "exports/android-working.png",
+      "bytes": 68812,
+      "sha256": "21ce29dd9460cfa4e99c14177e2291f2274f8995ac2f6e47a09e4e4bc9800c4e"
+    },
+    {
+      "file": "exports/interaction-spec.png",
+      "bytes": 160420,
+      "sha256": "16442045d57be7709b66865db71fd87eb8e085d3e4f26870642e58054d3163c9"
+    },
+    {
+      "file": "exports/windows-history.png",
+      "bytes": 196721,
+      "sha256": "09d885139461c773f7ddcfeefc7740cc724029bd9a6a4370aa2df09ced38e8be"
+    },
+    {
+      "file": "exports/windows-main.png",
+      "bytes": 195425,
+      "sha256": "3c2207b772453ac2b66ccfa5df6f7b7f92a0b51817c2fd283bf603d4256255e9"
+    },
+    {
+      "file": "exports/windows-projects.png",
+      "bytes": 161532,
+      "sha256": "ed05d7d252deb6e3012abe020d46a27f690b937825d0b844764176b17f4660e5"
+    },
+    {
+      "file": "exports/windows-search.png",
+      "bytes": 196185,
+      "sha256": "b916607dfa41ccab4993a5ee9b7d033de85c8454fb15adc36a9ae90a9ae700a6"
+    }
+  ]
+}

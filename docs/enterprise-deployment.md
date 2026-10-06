@@ -73,7 +73,7 @@ Compose默认仅将网关18272绑定到127.0.0.1，应在前方配置HTTPS入口
 如自行管理镜像，可在当前核对过的源码目录构建本地tag：
 
 ```sh
-docker build -f deploy/Dockerfile -t kkcode-gateway:1.0.11 .
+docker build -f deploy/Dockerfile -t kkcode-gateway:1.0.12 .
 ```
 
 这里的1.0.11是当前源码的本地构建名称，不是公共registry地址或部署指令。**公共网关镜像发布暂缓**，

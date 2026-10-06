@@ -6,6 +6,11 @@ function nodeCommand(script) {
   return [process.execPath, "-e", script]
 }
 
+// These child programs are synthetic protocol peers and import no product
+// code. Windows forcibly terminates some of them by design; do not let their
+// partial V8 files corrupt the test worker's real MCP-client coverage.
+const fixtureEnvironment = { NODE_V8_COVERAGE: "" }
+
 const standardMcpServerScript = `
 let buffer = Buffer.alloc(0);
 function send(message) {
@@ -75,9 +80,10 @@ test("stdio mcp client supports auto framing with standard content-length server
   const client = createStdioMcpClient("stdioAuto", {
     type: "stdio",
     command: nodeCommand(standardMcpServerScript),
+    env: fixtureEnvironment,
     shell: false,
     framing: "auto",
-    timeout_ms: 500
+    timeout_ms: 5000
   })
   t.after(() => client.shutdown())
   const tools = await client.listTools()
@@ -92,6 +98,7 @@ test("stdio mcp client timeout classification", async (t) => {
   const client = createStdioMcpClient("stdioTimeout", {
     type: "stdio",
     command: nodeCommand(script),
+    env: fixtureEnvironment,
     shell: false,
     timeout_ms: 80,
     startup_timeout_ms: 200,
@@ -103,14 +110,19 @@ test("stdio mcp client timeout classification", async (t) => {
 
 test("stdio mcp client bad_response classification", async (t) => {
   const script = `
-    process.stdout.write("not json\\n");
-    setTimeout(() => process.exit(0), 20);
+    process.stdin.once("data", () => {
+      process.stdout.write("not json\\n", () => process.exit(0));
+    });
+    process.stdin.resume();
   `
   const client = createStdioMcpClient("stdioBadJson", {
     type: "stdio",
     command: nodeCommand(script),
+    env: fixtureEnvironment,
     shell: false,
-    timeout_ms: 300,
+    // Classification is under test here, not OS process startup latency.
+    // The separate timeout test above retains its intentionally short limit.
+    timeout_ms: 5000,
     framing: "newline"
   })
   t.after(() => client.shutdown())
@@ -125,8 +137,9 @@ test("stdio mcp client server_crash classification", async (t) => {
   const client = createStdioMcpClient("stdioCrash", {
     type: "stdio",
     command: nodeCommand(script),
+    env: fixtureEnvironment,
     shell: false,
-    timeout_ms: 300
+    timeout_ms: 5000
   })
   t.after(() => client.shutdown())
   await assert.rejects(client.listTools(), (error) => error.reason === "server_crash" || error.reason === "spawn_failed")
@@ -136,6 +149,7 @@ test("stdio mcp health reports spawn_failed", async (t) => {
   const client = createStdioMcpClient("stdioMissing", {
     type: "stdio",
     command: ["nonexistent_kkcode_command_12345"],
+    env: fixtureEnvironment,
     shell: false,
     timeout_ms: 300
   })

@@ -2,6 +2,7 @@ import React from "react";
 
 const paths = {
   menu: "M4 7h16M4 17h11",
+  activity: "M3 4h18v16H3zM15 4v16",
   more: "M5 12h.01M12 12h.01M19 12h.01",
   close: "m6 6 12 12M6 18 18 6",
   back: "m14 5-7 7 7 7",

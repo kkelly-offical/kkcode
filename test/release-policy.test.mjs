@@ -106,7 +106,9 @@ test('preview releases retain matrix, protected main ancestry and immutable arti
   const workflow = YAML.parse(await readFile(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8'))
   assert.equal(workflow.jobs.matrix_verify.strategy.matrix.include.length, 4)
   assert.ok(workflow.jobs.matrix_verify.steps.some(step => step.run === 'npm run version:check'))
-  assert.equal(workflow.jobs.release_verify.needs, 'matrix_verify')
+  assert.deepEqual(workflow.jobs.release_verify.needs, ['matrix_verify', 'windows_verify'])
+  assert.equal(workflow.jobs.windows_verify.uses, './.github/workflows/windows-client.yml')
+  assert.equal(workflow.jobs.windows_verify.permissions.contents, 'read')
   assert.equal(workflow.jobs.release_verify.environment, 'npm-release')
   const steps = workflow.jobs.release_verify.steps, metadata = steps.find(step => step.id === 'release').run
   assert.match(metadata, /node scripts\/check-release-version\.mjs/)

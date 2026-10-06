@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Assignment
 import androidx.compose.material.icons.outlined.*
@@ -20,6 +21,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -51,11 +54,12 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
         }
     }
     val inChat = state.selected.isNotBlank()
+    LaunchedEffect(state.api, state.api?.device) { state.projectFilter = "" }
     BackHandler(enabled = inChat && state.sheet.isBlank()) { state.leaveChat() }
     Scaffold(containerColor = MaterialTheme.colorScheme.background, snackbarHost = { SnackbarHost(updateNotices) }, topBar = {
-        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             CircleButton(if(inChat) Icons.Outlined.ArrowBack else Icons.Outlined.Menu, if(inChat) "返回会话列表" else "设备与连接") { if(inChat) state.leaveChat() else state.sheet = "connections" }
-            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(Modifier.weight(1f).padding(start = 6.dp), horizontalAlignment = Alignment.Start) {
                 Text(if(inChat) state.sessions.find { it.optString("id") == state.selected }?.optString("title")?.takeIf { it.isNotBlank() } ?: "新对话" else "KK Code / 远程", fontSize = 16.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { state.sheet = "connections" }.padding(top = 3.dp)) {
                     Box(Modifier.size(6.dp).background(if(state.connected) connectedGreen else muted, CircleShape))
@@ -63,9 +67,13 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                     Spacer(Modifier.width(4.dp)); Text(if(inChat) "${state.cwd.split('/', '\\').lastOrNull()} · ${state.deviceName}" else state.deviceName, color = muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
+            if(inChat) {
+                IconButton(onClick = { state.sheet = "history" }, modifier = Modifier.size(36.dp)) { Icon(Icons.Outlined.History, "对话记录", Modifier.size(20.dp)) }
+                IconButton(onClick = { state.sheet = "activity" }, modifier = Modifier.size(36.dp)) { Icon(Icons.Outlined.ViewSidebar, "会话活动", Modifier.size(20.dp)) }
+            }
             Box {
                 CircleButton(Icons.Outlined.MoreHoriz, "更多") { menu = !menu }
-                DropdownMenu(menu, { menu = false }, modifier = Modifier.widthIn(min = 190.dp, max = 240.dp), containerColor = card, shape = PixelShape()) {
+                DropdownMenu(menu, { menu = false }, modifier = Modifier.widthIn(min = 190.dp, max = 240.dp), containerColor = card, shape = RoundedCornerShape(12.dp)) {
                     if(inChat) {
                         val session = state.sessions.find { it.optString("id") == state.selected } ?: JSONObject().put("id", state.selected)
                         if(state.sharedDevice) {
@@ -94,17 +102,17 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
         }
     }, bottomBar = {
         if(!inChat) Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Row(Modifier.weight(1f).height(46.dp).background(card, PixelShape()).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .5f), PixelShape()).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f).height(46.dp).background(card, RoundedCornerShape(12.dp)).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .5f), RoundedCornerShape(12.dp)).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.Search, null, Modifier.size(19.dp), tint = muted)
                 androidx.compose.foundation.text.BasicTextField(search, { search = it }, modifier = Modifier.weight(1f).padding(start = 8.dp), singleLine = true, textStyle = androidx.compose.ui.text.TextStyle(color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp), decorationBox = { field -> if(search.isBlank()) Text("搜索聊天", color = muted, fontSize = 14.sp); field() })
             }
-            Button(onClick = { if(state.connected) state.sheet = "new" else state.sheet = "connections" }, enabled = !state.sharedDevice, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary), shape = PixelShape(), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)) {
+            Button(onClick = { if(state.connected) state.sheet = "new" else state.sheet = "connections" }, enabled = !state.sharedDevice, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary), shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)) {
                 Icon(Icons.Outlined.EditNote, null, Modifier.size(22.dp)); Spacer(Modifier.width(6.dp)); Text("聊天", fontSize = 14.sp, fontWeight = FontWeight.Medium)
             }
         }
     }) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).pixelBackground()) {
-            DeviceStrip(state)
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            if(!inChat) DeviceStrip(state)
             if(state.connectionNotice.isNotBlank() && state.sheet.isBlank()) Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if(state.connectionPhase == "reconnecting") CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 1.5.dp)
                 else Icon(if(state.connectionPhase == "recovered") Icons.Outlined.CheckCircleOutline else Icons.Outlined.WifiOff, null, Modifier.size(15.dp), tint = if(state.connectionPhase == "recovered") connectedGreen else muted)
@@ -114,17 +122,20 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                 Text(state.notice, modifier = Modifier.weight(1f), color = kkcodeColors.warning, fontSize = 12.sp)
                 IconButton(onClick = { state.notice = "" }, modifier = Modifier.size(28.dp)) { Icon(Icons.Outlined.Close, null, Modifier.size(16.dp)) }
             }
-            if(inChat) ChatScreen(state) else {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) { Text("YOUR PIXEL WORKSPACE", fontSize = 8.sp, letterSpacing = 1.sp, color = muted); Text(if(state.connected) "CONNECTED" else "LET’S CONNECT", fontSize = 8.sp, letterSpacing = 1.sp, color = MaterialTheme.colorScheme.primary) }
+            if(inChat) {
+                val density = LocalDensity.current
+                CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale * state.readingScale)) { ChatScreen(state) }
+            } else {
+                if(state.connected) TextButton(onClick = { state.sheet = "projects" }, modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) { Icon(Icons.Outlined.FolderOpen, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(projectName(state.projectFilter), Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis); Icon(Icons.Outlined.ExpandMore, "选择项目与工作区", Modifier.size(18.dp)) }
                 SessionHome(state, search, sort, archived)
             }
         }
     }
-    if(state.sheet.isNotBlank()) ModalBottomSheet(onDismissRequest = { state.sheet = "" }, containerColor = MaterialTheme.colorScheme.surface, shape = PixelShape(8.dp, bottomCorners = false), dragHandle = null, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    if(state.sheet.isNotBlank()) ModalBottomSheet(onDismissRequest = { state.sheet = "" }, containerColor = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp), dragHandle = null, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().heightIn(max = (LocalConfiguration.current.screenHeightDp * .9f).dp).padding(horizontal = 16.dp).navigationBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 if(state.canGoBack) TextButton(onClick = { state.backSheet() }) { Text("返回", color = MaterialTheme.colorScheme.onSurface) } else Spacer(Modifier.width(56.dp))
-                Text(when(state.sheet) { "connections" -> "远程控制"; "settings" -> "设置"; "profile" -> "个人资料"; "preferences" -> "工作偏好"; "add" -> "添加连接"; "relay" -> "中继网关"; "ssh" -> "SSH 连接"; "folders" -> "工作目录"; "extensions" -> "扩展"; "models" -> "模型渠道"; "model-picker" -> "选择模型"; "approval" -> "权限"; "provider" -> if(state.editingProvider.isBlank()) "添加渠道" else "编辑渠道"; "new" -> "新对话"; "mode" -> "执行模式"; "branches" -> "Git 分支"; "sessions" -> "选择会话"; "permission" -> "权限"; "keys" -> "操作指南"; "theme" -> "外观"; "command-result" -> "命令结果"; "device-ownership" -> "设备归属"; "updates" -> "应用更新"; "artifacts" -> "会话产物"; "memory" -> "记忆管理"; "tasks" -> "持久任务"; "subagents" -> "子代理"; else -> "高级配置" }, modifier = Modifier.weight(1f), fontSize = 16.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontWeight = FontWeight.Medium)
+                Text(when(state.sheet) { "projects" -> "项目与工作区"; "history" -> "对话记录"; "activity", "changes" -> "会话活动"; "companion" -> "KIKI 伙伴"; "connections" -> "远程控制"; "settings" -> "设置"; "profile" -> "个人资料"; "preferences" -> "工作偏好"; "add" -> "添加连接"; "relay" -> "中继网关"; "ssh" -> "SSH 连接"; "folders" -> "工作目录"; "extensions" -> "扩展"; "models" -> "模型渠道"; "model-picker" -> "选择模型"; "approval" -> "权限"; "provider" -> if(state.editingProvider.isBlank()) "添加渠道" else "编辑渠道"; "new" -> "新对话"; "mode" -> "执行模式"; "branches" -> "Git 分支"; "sessions" -> "选择会话"; "permission" -> "权限"; "keys" -> "操作指南"; "theme" -> "外观"; "command-result" -> "命令结果"; "device-ownership" -> "设备归属"; "updates" -> "应用更新"; "artifacts" -> "会话产物"; "memory" -> "记忆管理"; "tasks" -> "持久任务"; "subagents" -> "子代理"; else -> "高级配置" }, modifier = Modifier.weight(1f), fontSize = 16.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontWeight = FontWeight.Medium)
                 CircleButton(Icons.Outlined.Close, "关闭") { state.sheet = "" }
             }
             SheetContent(state)
@@ -137,10 +148,10 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
     Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled, colors = SwitchDefaults.colors(checkedThumbColor = MaterialTheme.colorScheme.onSurface, checkedTrackColor = kkcodeColors.success, uncheckedThumbColor = MaterialTheme.colorScheme.onSurface, uncheckedTrackColor = kkcodeColors.switchTrackOff, uncheckedBorderColor = Color.Transparent))
 }
 @Composable private fun CircleButton(icon: ImageVector, label: String, onClick: () -> Unit) {
-    IconButton(onClick, modifier = Modifier.size(42.dp).background(MaterialTheme.colorScheme.surfaceVariant, PixelShape(4.dp)).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .6f), PixelShape(4.dp))) { Icon(icon, label, Modifier.size(22.dp)) }
+    IconButton(onClick, modifier = Modifier.size(36.dp)) { Icon(icon, label, Modifier.size(20.dp)) }
 }
 @Composable private fun ComposerChip(icon: ImageVector, label: String, description: String, maxWidth: androidx.compose.ui.unit.Dp = 96.dp, onClick: () -> Unit) {
-    Row(Modifier.padding(start = 6.dp).height(30.dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = .05f), PixelShape(3.dp)).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .5f), PixelShape(3.dp)).clickable(onClick = onClick).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.padding(start = 6.dp).height(30.dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = .05f), RoundedCornerShape(8.dp)).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .5f), RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, description, Modifier.size(13.dp), tint = muted)
         Spacer(Modifier.width(5.dp))
         Text(label, color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = maxWidth))
@@ -148,9 +159,9 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
 }
 @Composable private fun SessionHome(state: RemoteState, search: String, sort: String, archived: Boolean) {
     var collapsed by remember { mutableStateOf(emptySet<String>()) }
-    val filtered = state.sessions.filter { sessionHasVisibleContent(it) && it.optBoolean("archived") == archived && (it.optString("title") + it.optString("cwd")).contains(search, true) }.sortedWith(compareByDescending<JSONObject> { sort == "priority" && it.optString("status").startsWith("running") }.thenByDescending { it.optLong("updatedAt", it.optLong("createdAt")) })
+    val filtered = projectSessions(state.sessions, state.projectFilter).filter { sessionHasVisibleContent(it) && it.optBoolean("archived") == archived && (it.optString("title") + it.optString("cwd")).contains(search, true) }.sortedWith(compareByDescending<JSONObject> { sort == "priority" && it.optString("status").startsWith("running") }.thenByDescending { it.optLong("updatedAt", it.optLong("createdAt")) })
     val grouped = filtered.groupBy { item ->
-        if(sort == "project") item.optString("cwd").split('/', '\\').lastOrNull().orEmpty().ifBlank { "其他项目" }
+        if(sort == "project") item.optString("cwd").ifBlank { "其他项目" }
         else if(sort == "priority" && item.optString("status").startsWith("running")) "优先级"
         else {
             val date = Instant.ofEpochMilli(item.optLong("updatedAt")).atZone(ZoneId.systemDefault()).toLocalDate()
@@ -169,7 +180,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
         grouped.forEach { (group, list) ->
             item { TextButton(onClick = { collapsed = if(group in collapsed) collapsed - group else collapsed + group }, contentPadding = PaddingValues(0.dp)) { Text(group, color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Medium); Spacer(Modifier.width(7.dp)); Icon(if(group in collapsed) Icons.Outlined.ChevronRight else Icons.Outlined.ExpandMore, if(group in collapsed) "展开分组" else "收起分组", Modifier.size(14.dp), tint = muted) } }
             items(if(group in collapsed) emptyList() else list, key = { it.getString("id") }) { session ->
-                Row(Modifier.fillMaxWidth().padding(bottom = 8.dp).background(MaterialTheme.colorScheme.surface, PixelShape()).border(1.dp, MaterialTheme.colorScheme.outlineVariant, PixelShape()).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().padding(bottom = 8.dp).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp)).border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f).clickable { state.openSession(session) }.padding(vertical = 14.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(session.optString("title").ifBlank { "新对话" }, modifier = Modifier.weight(1f), fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -191,7 +202,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
 
 @Composable internal fun Group(title: String = "", content: @Composable ColumnScope.() -> Unit) {
     if(title.isNotBlank()) Text(title, color = muted, fontSize = 13.sp, modifier = Modifier.padding(start = 12.dp, top = 26.dp, bottom = 9.dp))
-    Column(Modifier.fillMaxWidth().background(card, PixelShape()).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .45f), PixelShape()), content = content)
+    Column(Modifier.fillMaxWidth().background(card, RoundedCornerShape(12.dp)).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .45f), RoundedCornerShape(12.dp)), content = content)
 }
 @Composable internal fun SettingsRow(icon: ImageVector, title: String, subtitle: String = "", onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -222,8 +233,15 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
     }
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 30.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
         if(!state.sharedDevice && state.sheet in listOf("settings", "models", "provider", "mode", "permission", "approval")) ConfigurationDiagnostics(state.settings)
+        if(state.sheet in listOf("activity", "changes", "subagents", "artifacts")) ActivityTabs(state)
         when(state.sheet) {
-            "settings", "connections" -> {
+            "settings" -> ExperienceSettings(state)
+            "projects" -> ProjectsSheet(state)
+            "history" -> HistorySheet(state)
+            "activity" -> TaskCards(state)
+            "changes" -> { ChangeSummary(state.messages); state.messages.filter { it.kind == "tool" && (it.tool?.optJSONObject("metadata")?.has("mutations") == true || it.tool?.optJSONObject("metadata")?.has("mutation") == true) }.forEach { ActivityRow(it, active = false) }; Text("汇总当前工具记录中的修改，不表示完整 Git 差异。", fontSize = 12.sp, color = muted) }
+            "companion" -> CompanionPreferences()
+            "connections" -> {
                 Group { SettingsRow(Icons.Outlined.AccountCircle, state.profile.optString("name", "个人资料"), state.profile.optString("organization")) { state.sheet = "profile" } }
                 Group("网关设备") {
                     state.devices.forEach { d -> Row(Modifier.padding(horizontal = 16.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Outlined.Terminal, null, tint = muted); Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(d.optString("name"), fontSize = 15.sp); Text(if(d.optBoolean("online")) "● 在线" else "● 离线", fontSize = 11.sp, color = if(d.optBoolean("online")) connectedGreen else muted) }; SettingsSwitch(checked = state.api?.device == d.optString("id") && state.connected, onCheckedChange = { checked -> if(checked) state.action { state.chooseDevice(d) } else state.disconnect() }, enabled = d.optBoolean("online")) } }
@@ -239,21 +257,6 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                 }
                 Group("启动") { Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { Text("自动恢复远程连接", Modifier.weight(1f), fontSize = 15.sp); SettingsSwitch(state.autoConnect, { state.preference("autoConnect", it) }) } }
                 Text("启动后恢复上次连接，配置保持收起。", color = muted, fontSize = 11.sp, modifier = Modifier.padding(12.dp))
-                if(state.connected && !state.sharedDevice) Group("工作区") {
-                    SettingsRow(Icons.Outlined.FolderOpen, "工作目录", state.cwd) { state.browse() }
-                    SettingsRow(Icons.Outlined.Tune, "模型与渠道") { state.openModels() }
-                    SettingsRow(Icons.Outlined.Extension, "MCP、Skills 与插件") { state.loadExtensions() }
-                    SettingsRow(Icons.Outlined.Shield, "执行模式", modeLabel(state.mode)) { state.sheet = "mode" }
-                    SettingsRow(Icons.Outlined.Description, "会话产物", "查看、搜索与保存完整工具输出") { state.sheet = "artifacts" }
-                    SettingsRow(Icons.Outlined.Psychology, "记忆管理", "项目经验与确认后的个人偏好") { state.sheet = "memory" }
-                    SettingsRow(Icons.AutoMirrored.Outlined.Assignment, "子代理", "当前会话的协作状态与模型") { state.sheet = "subagents" }
-                    SettingsRow(Icons.Outlined.Shield, "持久任务与交付记录", "宿主合同、预算与交付证据") { state.sheet = "tasks" }
-                }
-                if(state.connected && state.sharedDevice) Group("工作区") {
-                    SettingsRow(Icons.Outlined.Description, "会话产物", "只读共享产物") { state.sheet = "artifacts" }
-                    SettingsRow(Icons.AutoMirrored.Outlined.Assignment, "子代理", "当前会话的协作状态与模型") { state.sheet = "subagents" }
-                    SettingsRow(Icons.Outlined.Shield, "持久任务与交付记录", "宿主合同、预算与交付证据") { state.sheet = "tasks" }
-                }
                 Group("编写器") { Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) { Text("显示上下文与模型", Modifier.weight(1f), fontSize = 15.sp); SettingsSwitch(state.showContext, { state.preference("showContext", it) }) } }
                 Group("外观") { SettingsRow(Icons.Outlined.Palette, "主题", state.appearance) { state.sheet = "theme" } }
             }
@@ -332,7 +335,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
             "branches" -> BranchPicker(state)
             "preferences" -> PreferencesForm(state)
             "sessions" -> Group { state.sessions.forEach { session -> SettingsRow(Icons.Outlined.ChatBubbleOutline, session.optString("title", "新对话"), session.optString("cwd")) { state.openSession(session) } } }
-            "theme" -> Group { listOf("dark" to "深色", "light" to "浅色", "auto" to "跟随系统").forEach { (id, label) -> SettingsRow(if(state.appearance == id) Icons.Outlined.Check else Icons.Outlined.Palette, label) { state.updateAppearance(id) } } }
+            "theme" -> { Group("主题") { listOf("dark" to "深色", "light" to "浅色", "auto" to "跟随系统").forEach { (id, label) -> SettingsRow(if(state.appearance == id) Icons.Outlined.Check else Icons.Outlined.Palette, label) { state.updateAppearance(id) } } }; Group("对话文字大小") { listOf(1f to "标准", 1.1f to "较大", 1.25f to "更大").forEach { (value, label) -> SettingsRow(if(state.readingScale == value) Icons.Outlined.Check else Icons.Outlined.TextFields, label) { state.updateReadingScale(value) } } }; Text("仅影响此手机；与系统字体缩放共同生效。", color = muted, fontSize = 12.sp, modifier = Modifier.padding(12.dp)) }
             "command-result" -> state.commandPanels.forEach { panel -> Group(panel.optString("title")) { androidx.compose.foundation.text.selection.SelectionContainer { Text(panel.optString("text"), modifier = Modifier.padding(14.dp)) } } }
             "device-ownership" -> DeviceOwnership(state.api?.device ?: "")
             "updates" -> UpdateSheet(state.updater)
@@ -347,7 +350,8 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
 
 @Composable private fun ChatScreen(state: RemoteState) {
     val text = state.draft
-    val displayItems = collapseCompactedHistory(collapseCompletedRuns(state.messages, state.busy))
+    val foldedItems = collapseCompactedHistory(collapseCompletedRuns(state.messages, state.busy))
+    val displayItems = revealHistoryPath(foldedItems, state.historyTarget)
     var expandedRows by remember(state.selected) { mutableStateOf(emptySet<String>()) }
     var thinkingExpanded by remember(state.selected, state.busy) { mutableStateOf(false) }
     var actions by remember { mutableStateOf(false) }
@@ -356,32 +360,43 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
     val listState = key(state.selected) { rememberLazyListState() }
     val dragging by listState.interactionSource.collectIsDraggedAsState()
     var following by remember(state.selected) { mutableStateOf(true) }
+    var readingBookmark by remember(state.selected) { mutableStateOf<ReadingPosition?>(null) }
+    LaunchedEffect(state.historyTarget) {
+        if(state.historyTarget.isNotBlank()) {
+            if(readingBookmark == null) readingBookmark = ReadingPosition(listState.layoutInfo.visibleItemsInfo.firstOrNull()?.key as? String, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, following)
+            following = false
+            val index = displayItems.indexOfFirst { it.id == state.historyTarget }
+            if(index >= 0) { withFrameNanos { }; listState.scrollToItem(index + if(state.historyHasMore) 1 else 0) }
+        }
+    }
     val scope = rememberCoroutineScope()
     LaunchedEffect(dragging) { if(dragging) following = false }
     LaunchedEffect(listState) {
-        snapshotFlow { !listState.canScrollForward && !listState.isScrollInProgress }.collect { bottom -> if(bottom) following = true }
+        snapshotFlow { !listState.canScrollForward && !listState.isScrollInProgress }.collect { bottom -> if(bottom && state.historyTarget.isBlank()) following = true }
     }
     LaunchedEffect(displayItems, state.busy, state.approvals.size) {
-        if(following && !dragging) { withFrameNanos { }; listState.scrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)) }
+        if(following && !dragging && state.historyTarget.isBlank()) { withFrameNanos { }; listState.scrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)) }
     }
     LaunchedEffect(listState) {
         // AndroidView Markdown can change height after the message was laid out.
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.let { Triple(it.index, it.offset, it.size) } }.collect {
-            if(following && !dragging && listState.canScrollForward) {
+            if(following && !dragging && state.historyTarget.isBlank() && listState.canScrollForward) {
                 withFrameNanos { }
-                if(following && !dragging && listState.canScrollForward) listState.requestScrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
+                if(following && !dragging && state.historyTarget.isBlank() && listState.canScrollForward) listState.requestScrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
             }
         }
     }
     Column(Modifier.fillMaxSize().imePadding()) {
-        LazyColumn(Modifier.weight(1f).testTag("conversation-list"), state = listState, contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)) {
+        ConversationRunStatus(state)
+        Box(Modifier.weight(1f)) {
+        LazyColumn(Modifier.fillMaxSize().testTag("conversation-list"), state = listState, contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)) {
             if(state.historyHasMore) item(key = "load-earlier") { TextButton(onClick = { following = false; state.loadEarlier() }, enabled = !state.loadingHistory, modifier = Modifier.fillMaxWidth()) { Text(if(state.loadingHistory) "正在加载…" else "加载更早的消息", fontSize = 12.sp) } }
             if(displayItems.isEmpty() && !state.busy && state.approvals.isEmpty()) item(key = "studio-welcome") { Column(Modifier.fillMaxWidth().padding(vertical = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) { PixelWorkshop(); Text("今天想构建什么？", fontSize = 22.sp, fontWeight = FontWeight.Medium); Text("把想法变成可验证的结果。", color = muted, fontSize = 12.sp, modifier = Modifier.padding(top = 10.dp)) } }
             items(displayItems, key = { it.id }) { item ->
-                Column(Modifier.fillMaxWidth().padding(vertical = if(item.kind in listOf("tool", "thinking")) 0.dp else 10.dp), horizontalAlignment = if(item.kind == "user") Alignment.End else Alignment.Start) {
+                Column(Modifier.fillMaxWidth().background(if(item.id == state.historyTarget) MaterialTheme.colorScheme.primary.copy(alpha = .10f) else Color.Transparent, RoundedCornerShape(8.dp)).padding(vertical = if(item.kind in listOf("tool", "thinking")) 0.dp else 10.dp), horizontalAlignment = if(item.kind == "user") Alignment.End else Alignment.Start) {
                     when(item.kind) {
                         "user" -> {
-                            Text(item.text, modifier = Modifier.widthIn(max = 310.dp).background(card, PixelShape()).padding(14.dp), fontSize = 15.sp, lineHeight = 23.sp)
+                            Text(item.text, modifier = Modifier.widthIn(max = 310.dp).background(card, RoundedCornerShape(12.dp)).padding(14.dp), fontSize = 15.sp, lineHeight = 23.sp)
                             if(item.messageId.isNotBlank() && !state.sharedDevice && !state.busy && !state.sessionArchived) TextButton(onClick = { state.rewindTarget = item }, contentPadding = PaddingValues(horizontal = 6.dp)) { Icon(Icons.Outlined.Undo, null, Modifier.size(13.dp), tint = muted); Text("回退", color = muted, fontSize = 11.sp) }
                         }
                         "media" -> MediaPreview(item, state)
@@ -409,31 +424,43 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
             }
             item(key = "conversation-bottom") { Spacer(Modifier.fillMaxWidth().height(1.dp).testTag("conversation-bottom")) }
         }
-        if(!following && listState.canScrollForward) TextButton(onClick = { following = true; scope.launch { listState.scrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)) } }, modifier = Modifier.align(Alignment.CenterHorizontally)) { Icon(Icons.Outlined.ArrowDownward, null, Modifier.size(14.dp)); Text("回到最新", fontSize = 12.sp) }
+        if(!following && listState.canScrollForward) FilledTonalButton(onClick = { state.historyTarget = ""; following = true; scope.launch { withFrameNanos { }; listState.scrollToItem((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)) } }, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp)) { Icon(Icons.Outlined.ArrowDownward, null, Modifier.size(14.dp)); Text("回到最新", fontSize = 12.sp) }
+        readingBookmark?.let { saved -> TextButton(onClick = {
+            state.historyTarget = ""; following = saved.following; readingBookmark = null
+            scope.launch {
+                withFrameNanos { }
+                val last = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+                val anchor = foldedItems.indexOfFirst { it.id == saved.key }
+                val index = if(saved.following) last else if(anchor >= 0) anchor + if(state.historyHasMore) 1 else 0 else saved.index
+                listState.scrollToItem(index.coerceIn(0, last), if(saved.following) 0 else saved.offset)
+            }
+        }, modifier = Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 52.dp).background(card, RoundedCornerShape(8.dp))) { Text("返回刚才的位置", fontSize = 12.sp) } }
+        }
         if(state.controlElsewhere) Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) { Text("另一客户端正在控制", fontSize = 11.sp, color = muted, modifier = Modifier.weight(1f)); if(!state.sharedDevice) TextButton(onClick = { state.takeControl() }) { Text("接管控制", fontSize = 11.sp) } }
         ChangeSummary(state.messages)
         SubagentSync(state)
-        TodoProgressView(state.todos, "${System.identityHashCode(state.api)}:${state.api?.device}:${state.selected}", state.subagents) { state.sheet = "subagents" }
-        if(state.showContext) ContextUsageView(state.contextUsage)
-        if(state.busy && state.turnOperation == "compact") Text(if(state.stopping) "正在停止压缩…" else if(state.turnPhase == "starting") "正在提交压缩…" else "正在压缩上下文…", color = muted, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
-        StudioTools(state)
+        if(!state.busy) TodoProgressView(state.todos, "${System.identityHashCode(state.api)}:${state.api?.device}:${state.selected}", state.subagents) { state.sheet = "subagents" }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            StudioTools(state, Modifier.weight(1f), shortcuts = false)
+            if(state.showContext) ContextUsageView(state.contextUsage, compact = true)
+        }
         if(text.startsWith('/') && !text.contains(' ')) {
             val query = text.removePrefix("/")
             val suggestions = state.commands.filter { (it.optString("name") + " " + it.optString("description")).contains(query, ignoreCase = true) }.sortedBy { if(it.optString("name").startsWith(query, ignoreCase = true)) 0 else 1 }.take(12)
-            if(suggestions.isNotEmpty()) Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp).heightIn(max = 190.dp).background(card, PixelShape()).verticalScroll(rememberScrollState()).padding(6.dp)) {
+            if(suggestions.isNotEmpty()) Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp).heightIn(max = 190.dp).background(card, RoundedCornerShape(12.dp)).verticalScroll(rememberScrollState()).padding(6.dp)) {
                 suggestions.forEach { command -> Row(Modifier.fillMaxWidth().clickable { state.draft = "/${command.getString("name")} " }.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.Terminal, null, Modifier.size(18.dp), tint = muted); Spacer(Modifier.width(10.dp)); Column(Modifier.weight(1f)) { Text("/${command.getString("name")}", fontSize = 14.sp); Text(command.optString("description"), color = muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }; Text("命令", color = muted, fontSize = 10.sp)
                 } }
             }
         }
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp).navigationBarsPadding().background(card, PixelShape()).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .6f), PixelShape()).padding(12.dp)) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp).navigationBarsPadding().background(card, RoundedCornerShape(12.dp)).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .6f), RoundedCornerShape(12.dp)).padding(12.dp)) {
             if(state.attachments.isNotEmpty()) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { state.attachments.forEach { attachment -> InputChip(selected = true, onClick = { state.removeAttachment(attachment.getString("id")) }, label = { Text(attachment.optString("name"), maxLines = 1) }, trailingIcon = { Icon(Icons.Outlined.Close, "移除附件 ${attachment.optString("name")}", Modifier.size(14.dp)) }) } }
             if(state.uploading) Text("正在上传附件…", color = muted, fontSize = 11.sp)
             androidx.compose.foundation.text.BasicTextField(text, { state.draft = it }, enabled = state.canControl && !state.sessionArchived, modifier = Modifier.fillMaxWidth().heightIn(min = 38.dp, max = 130.dp).padding(4.dp), textStyle = androidx.compose.ui.text.TextStyle(color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp), decorationBox = { inner -> if(text.isBlank()) Text(if(state.sessionArchived) "恢复归档后继续对话" else if(state.canControl) "发消息，或输入 / 命令" else "只读共享会话", color = muted, fontSize = 14.sp); inner() })
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if(!state.sharedDevice) Box {
                     IconButton(onClick = { actions = !actions }, Modifier.size(36.dp)) { Icon(Icons.Outlined.Add, "添加与工具", Modifier.size(22.dp)) }
-                    DropdownMenu(actions, { actions = false }, containerColor = card, shape = PixelShape()) {
+                    DropdownMenu(actions, { actions = false }, containerColor = card, shape = RoundedCornerShape(12.dp)) {
                         DropdownMenuItem(text = { Text("文件或图片", fontSize = 14.sp) }, leadingIcon = { Icon(Icons.Outlined.AttachFile, null) }, enabled = !state.uploading && state.attachments.size < 8, onClick = { actions = false; state.attachmentPickerRequest++ })
                         DropdownMenuItem(text = { Text("Git 分支", fontSize = 14.sp) }, leadingIcon = { Icon(Icons.Outlined.AccountTree, null) }, onClick = { actions = false; state.loadBranches() })
                         DropdownMenuItem(text = { Text("执行模式", fontSize = 14.sp) }, leadingIcon = { Icon(Icons.Outlined.Shield, null) }, onClick = { actions = false; state.sheet = "mode" })
@@ -448,7 +475,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                 }
                 Spacer(Modifier.weight(1f))
                 if(state.busy && state.turnOperation != "compact" && text.isNotBlank() && !state.stopping) IconButton(onClick = { state.send(text) }, enabled = state.canControl && !state.uploading && !state.sessionArchived, modifier = Modifier.size(34.dp)) { Icon(Icons.Outlined.ArrowUpward, "发送补充要求", Modifier.size(21.dp)) }
-                IconButton(onClick = { if(state.busy) state.stop() else if(text.isNotBlank() || state.attachments.isNotEmpty()) state.send(text) }, enabled = state.canControl && !state.uploading && !state.sessionArchived && !state.stopping, modifier = Modifier.size(34.dp).background(MaterialTheme.colorScheme.primary, PixelShape(3.dp))) { Icon(if(state.busy) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, if(state.stopping) "正在停止" else if(state.busy) "停止" else "发送", Modifier.size(21.dp), tint = MaterialTheme.colorScheme.onPrimary) }
+                IconButton(onClick = { if(state.busy) state.stop() else if(text.isNotBlank() || state.attachments.isNotEmpty()) state.send(text) }, enabled = state.canControl && !state.uploading && !state.sessionArchived && !state.stopping, modifier = Modifier.size(34.dp).background(MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))) { Icon(if(state.busy) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward, if(state.stopping) "正在停止" else if(state.busy) "停止" else "发送", Modifier.size(21.dp), tint = MaterialTheme.colorScheme.onPrimary) }
             }
         }
     }

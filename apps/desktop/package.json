@@ -1,0 +1,61 @@
+{
+  "name": "@kkcode/desktop",
+  "version": "1.0.12",
+  "private": true,
+  "description": "KK Code Windows desktop client",
+  "author": "kkelly-offical",
+  "license": "GPL-3.0",
+  "main": "main.cjs",
+  "scripts": {
+    "dev": "electron .",
+    "build:win": "electron-builder --win nsis --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "cn.kkcode.desktop",
+    "productName": "KK Code",
+    "asar": true,
+    "directories": {
+      "output": "../../test-results/windows-release"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "policy.cjs",
+      "gateway.html",
+      "gateway.js",
+      "window.css",
+      "package.json",
+      "icon.png"
+    ],
+    "extraResources": [
+      {
+        "from": "../../test-results/desktop-resources",
+        "to": "runtime"
+      }
+    ],
+    "win": {
+      "icon": "icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "kkcode-windows-${version}-x64-setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "shortcutName": "KK Code"
+    }
+  }
+}
