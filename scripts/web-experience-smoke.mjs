@@ -85,8 +85,8 @@ try {
   await page.screenshot({ path: path.join(output, 'mobile-chat-320.png') })
   await page.setViewportSize({ width: 1440, height: 1040 })
   await page.getByRole('button', { name: '选择项目与工作区', exact: true }).click()
-  await expect(page.getByRole('button').filter({ hasText: '/workspace/one/app' })).toBeVisible()
-  await page.getByRole('button').filter({ hasText: '/workspace/two/app' }).click()
+  await expect(page.locator('.project-option').filter({ hasText: '/workspace/one/app' })).toBeVisible()
+  await page.locator('.project-option').filter({ hasText: '/workspace/two/app' }).click()
   await expect(page.locator('.sidebar nav')).toContainText('另一个应用')
   await expect(page.locator('.sidebar nav')).not.toContainText('重构登录模块')
   for (const [width,height] of [[390,844],[320,568]]) {

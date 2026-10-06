@@ -4,6 +4,7 @@ const app = await createGateway({
   issuer: process.env.KKCODE_OIDC_ISSUER,
   clientId: process.env.KKCODE_OIDC_CLIENT_ID,
   clientSecret: process.env.KKCODE_OIDC_CLIENT_SECRET,
+  accountEncryptionKey: process.env.KKCODE_ACCOUNT_CONFIG_KEY,
   rolesClaim: process.env.KKCODE_OIDC_ROLES_CLAIM,
   adminRole: process.env.KKCODE_OIDC_ADMIN_ROLE,
   scopes: process.env.KKCODE_OIDC_SCOPES,

@@ -100,23 +100,23 @@ internal fun toolMutations(payload: JSONObject?): List<JSONObject> {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
                         Icon(Icons.Outlined.Description, null, Modifier.size(12.dp), tint = activityMuted)
                         Spacer(Modifier.width(6.dp))
-                        Text(change.optString("filePath"), color = activityMuted, fontSize = 11.sp, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(change.optString("filePath"), color = activityMuted, fontSize = 11.sp, fontFamily = KKMonoFamily, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     SelectionContainer {
                         Column(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 4.dp)) {
                             change.optJSONArray("structuredPatch").objects().forEach { hunk ->
-                                Text("@@ −${hunk.optInt("oldStart")},${hunk.optInt("oldLineCount")} +${hunk.optInt("newStart")},${hunk.optInt("newLineCount")} @@", fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = activityMuted, modifier = Modifier.padding(vertical = 3.dp))
+                                Text("@@ −${hunk.optInt("oldStart")},${hunk.optInt("oldLineCount")} +${hunk.optInt("newStart")},${hunk.optInt("newLineCount")} @@", fontSize = 10.sp, fontFamily = KKMonoFamily, color = activityMuted, modifier = Modifier.padding(vertical = 3.dp))
                                 hunk.optJSONArray("lines").objects().forEach { line ->
                                     val type = line.optString("type"); val color = if(type == "add") addition else if(type == "remove") removal else activityMuted
-                                    Text((if(type == "add") "+ " else if(type == "remove") "− " else "  ") + line.optString("text"), color = color, fontSize = 11.sp, lineHeight = 19.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.fillMaxWidth().background(if(type == "add" || type == "remove") color.copy(alpha = .1f) else Color.Transparent, RoundedCornerShape(4.dp)).padding(horizontal = 6.dp))
+                                    Text((if(type == "add") "+ " else if(type == "remove") "− " else "  ") + line.optString("text"), color = color, fontSize = 11.sp, lineHeight = 19.sp, fontFamily = KKMonoFamily, modifier = Modifier.fillMaxWidth().background(if(type == "add" || type == "remove") color.copy(alpha = .1f) else Color.Transparent, RoundedCornerShape(4.dp)).padding(horizontal = 6.dp))
                                 }
                             }
                         }
                     }
                 }
                 val detail = if(item.kind == "thinking") item.text.ifBlank { "模型尚未返回可展示的思考内容；收到后会在这里实时更新。部分模型不提供思考文本。" } else item.detail.ifBlank { payload.optString("output", "") }
-                if(detail.isNotBlank()) SelectionContainer { Text(if(item.kind == "thinking") detail else detail.take(20000), fontSize = 12.sp, color = activityMuted, lineHeight = 19.sp, fontFamily = if(item.kind == "thinking") null else FontFamily.Monospace, modifier = Modifier.padding(top = if(changes.isEmpty()) 0.dp else 6.dp)) }
-                if(args.length() > 0) { var showArgs by remember { mutableStateOf(false) }; TextButton(onClick = { showArgs = !showArgs }, contentPadding = PaddingValues(0.dp)) { Text("调用参数", fontSize = 11.sp, color = kkcodeColors.link) }; if(showArgs) SelectionContainer { Text(args.toString(2), fontSize = 11.sp, color = activityMuted, fontFamily = FontFamily.Monospace, lineHeight = 17.sp) } }
+                if(detail.isNotBlank()) SelectionContainer { Text(if(item.kind == "thinking") detail else detail.take(20000), fontSize = 12.sp, color = activityMuted, lineHeight = 19.sp, fontFamily = if(item.kind == "thinking") null else KKMonoFamily, modifier = Modifier.padding(top = if(changes.isEmpty()) 0.dp else 6.dp)) }
+                if(args.length() > 0) { var showArgs by remember { mutableStateOf(false) }; TextButton(onClick = { showArgs = !showArgs }, contentPadding = PaddingValues(0.dp)) { Text("调用参数", fontSize = 11.sp, color = kkcodeColors.link) }; if(showArgs) SelectionContainer { Text(args.toString(2), fontSize = 11.sp, color = activityMuted, fontFamily = KKMonoFamily, lineHeight = 17.sp) } }
             }
         }
     }

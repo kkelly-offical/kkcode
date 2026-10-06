@@ -11,3 +11,8 @@ if (allowed && location.origin === allowed) contextBridge.exposeInMainWorld('kkc
 if (process.argv.includes('--kkcode-gateway-dialog')) contextBridge.exposeInMainWorld('kkcodeGateway', Object.freeze({
   connect: value => ipcRenderer.invoke('kkcode:gateway-dialog-connect', value),
 }))
+
+if (allowed && location.protocol === 'https:') contextBridge.exposeInMainWorld('kkcodeDesktopLogin', Object.freeze({
+  prepare: state => ipcRenderer.invoke('kkcode:prepare-login', state),
+  finish: state => ipcRenderer.invoke('kkcode:finish-login', state),
+}))

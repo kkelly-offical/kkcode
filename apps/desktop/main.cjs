@@ -1,5 +1,5 @@
 'use strict'
-const { app, BrowserWindow, Menu, Tray, nativeImage, nativeTheme, dialog, ipcMain, shell, session, net } = require('electron')
+const { app, BrowserWindow, Menu, Tray, nativeImage, nativeTheme, dialog, ipcMain, shell, clipboard, session, net } = require('electron')
 const { spawn } = require('node:child_process')
 const { readFile, readdir, mkdir, writeFile, rename } = require('node:fs/promises')
 const path = require('node:path')
@@ -7,6 +7,13 @@ const os = require('node:os')
 const { randomUUID } = require('node:crypto')
 const { gatewayOrigin, externalUrl, trustedFrame, uiPreferences, bundledGatewayAsset } = require('./policy.cjs')
 
+const { loginState, loginReturn } = require('./login-policy.cjs')
+let pendingLogin = null
+function acceptLoginReturn(value) {
+  if (!loginReturn(value, pendingLogin)) return
+  pendingLogin = null
+  showWindow()
+}
 app.setName('KK Code')
 if (!app.isPackaged && process.env.KKCODE_DESKTOP_TEST_USER_DATA) app.setPath('userData', process.env.KKCODE_DESKTOP_TEST_USER_DATA)
 const locked = app.requestSingleInstanceLock()
@@ -73,7 +80,7 @@ async function startBackend() {
   })
 }
 function showWindow() { if (!window || window.isDestroyed()) return; window.show(); if (window.isMinimized()) window.restore(); window.focus() }
-function openExternal(value) { const url = externalUrl(value); if (url) void shell.openExternal(url) }
+function openExternal(value) { const url = externalUrl(value); if (url) return shell.openExternal(url).catch(() => dialog.showErrorBox('未能打开浏览器', '请检查系统默认浏览器设置，或复制链接后打开。')) }
 async function useGateway(value) {
   const origin = gatewayOrigin(value)
   allowedOrigins.add(origin); gatewayOrigins.add(origin); preferences.gateway = origin; await save()
@@ -88,7 +95,7 @@ async function chooseFolder() {
 }
 function showGatewayDialog() {
   if (gatewayDialog && !gatewayDialog.isDestroyed()) { gatewayDialog.focus(); return }
-  gatewayDialog = new BrowserWindow({ parent: window, modal: true, width: 520, height: 520, resizable: false, title: '连接企业网关', backgroundColor: '#0d1311', icon: iconPath,
+  gatewayDialog = new BrowserWindow({ parent: window, modal: true, width: 520, height: 520, resizable: false, title: '连接企业网关', backgroundColor: '#181818', icon: iconPath,
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, additionalArguments: ['--kkcode-gateway-dialog'] } })
   gatewayDialog.setMenu(null)
   gatewayDialog.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
@@ -134,13 +141,28 @@ if (locked) app.whenReady().then(async () => {
       const key = bundledGatewayAsset(request, gatewayOrigins, assets)
       if (!key) return net.fetch(request, { bypassCustomProtocolHandlers: true })
       const file = assets.get(key), body = await readFile(file)
-      const type = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' }[path.extname(file)] || 'application/octet-stream'
+      const type = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.ttf': 'font/ttf' }[path.extname(file)] || 'application/octet-stream'
       return new Response(body, { headers: { 'Content-Type': `${type}; charset=utf-8`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } })
     })
+    if (app.isPackaged) app.setAsDefaultProtocolClient('cn.kkcode.desktop')
     await startBackend()
-    window = new BrowserWindow({ width: 1440, height: 1000, minWidth: 820, minHeight: 600, title: 'KK Code', backgroundColor: '#0d1311', icon: iconPath, show: false,
+    window = new BrowserWindow({ width: 1440, height: 1000, minWidth: 820, minHeight: 600, title: 'KK Code', backgroundColor: '#181818', icon: iconPath, show: false,
       webPreferences: { preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, allowRunningInsecureContent: false, additionalArguments: [`--kkcode-origin=${localOrigin}`] } })
     window.webContents.setWindowOpenHandler(({ url }) => { openExternal(url); return { action: 'deny' } })
+    window.webContents.on('context-menu', (_event, params) => {
+      const link = externalUrl(params.linkURL)
+      const items = link ? [
+        { label: '在系统浏览器中打开链接', click: () => openExternal(link) },
+        { label: '复制链接地址', click: async () => { try { await clipboard.writeText(link) } catch { dialog.showErrorBox('未能复制链接', '剪贴板暂时不可用，请稍后重试。') } } },
+      ] : []
+      if (params.isEditable || params.selectionText) {
+        if (items.length) items.push({ type: 'separator' })
+        if (params.isEditable) items.push({ role: 'cut' })
+        items.push({ role: 'copy' })
+        if (params.isEditable) items.push({ role: 'paste' }, { role: 'selectAll' })
+      }
+      if (items.length) Menu.buildFromTemplate(items).popup({ window })
+    })
     window.webContents.on('will-attach-webview', event => event.preventDefault())
     window.webContents.on('will-navigate', (event, url) => {
       let origin
@@ -151,6 +173,17 @@ if (locked) app.whenReady().then(async () => {
     window.on('close', event => { if (!quitting) { event.preventDefault(); void quitSafely() } })
     window.once('ready-to-show', showWindow)
     const localGuard = event => { if (!trustedFrame(event, window, localOrigin)) throw new Error('此操作仅供本机工作区使用') }
+    ipcMain.handle('kkcode:prepare-login', (event, state) => {
+      const origin = new URL(event.senderFrame.url).origin
+      if (!gatewayOrigins.has(origin) || !trustedFrame(event, window, origin) || !loginState(state)) throw new Error('无效的网关登录请求')
+      pendingLogin = { state, origin, expires: Date.now() + 600000 }; return true
+    })
+    ipcMain.handle('kkcode:finish-login', (event, state) => {
+      const origin = new URL(event.senderFrame.url).origin
+      if (!gatewayOrigins.has(origin) || !trustedFrame(event, window, origin)) return false
+      if (pendingLogin?.state === state && pendingLogin.origin === origin) { pendingLogin = null; showWindow() }
+      return true
+    })
     ipcMain.handle('kkcode:choose-folder', async event => { localGuard(event); return chooseFolder() })
     ipcMain.handle('kkcode:connect-gateway', async (event, value) => { localGuard(event); await useGateway(value); return true })
     ipcMain.handle('kkcode:display-preferences', event => { localGuard(event); return preferences.ui })
@@ -179,6 +212,10 @@ if (locked) app.whenReady().then(async () => {
     await window.loadURL(localUrl)
   } catch (error) { await dialog.showMessageBox({ type: 'error', title: 'KK Code 未能启动', message: error.message }); quitting = true; if (backend?.connected) backend.disconnect(); app.quit() }
 })
-app.on('second-instance', showWindow)
+app.on('second-instance', (_event, argv) => {
+  const callback = argv.find(value => value.startsWith('cn.kkcode.desktop:'))
+  if (callback) acceptLoginReturn(callback); else showWindow()
+})
+app.on('open-url', (event, url) => { event.preventDefault(); acceptLoginReturn(url) })
 app.on('activate', showWindow)
 app.on('before-quit', event => { if (!quitting) { event.preventDefault(); void quitSafely() } })

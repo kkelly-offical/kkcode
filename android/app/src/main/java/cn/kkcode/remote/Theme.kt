@@ -37,23 +37,23 @@ class KKCodeColors(
 )
 
 private val DarkScheme: ColorScheme = darkColorScheme(
-    primary = Color(0xFFE6BB75),
-    onPrimary = Color(0xFF292719),
-    background = Color(0xFF0D1311),
-    onBackground = Color(0xFFECEFE6),
-    surface = Color(0xFF121A16),
-    onSurface = Color(0xFFECEFE6),
-    surfaceVariant = Color(0xFF18221D),
-    onSurfaceVariant = Color(0xFFA6B3A8),
-    outline = Color(0xFF425649),
-    outlineVariant = Color(0xFF2C3B34),
-    primaryContainer = Color(0xFF223229), onPrimaryContainer = Color(0xFFECEFE6),
+    primary = Color(0xFFE3EAE5),
+    onPrimary = Color(0xFF202721),
+    background = Color(0xFF181818),
+    onBackground = Color(0xFFECECEC),
+    surface = Color(0xFF202020),
+    onSurface = Color(0xFFECECEC),
+    surfaceVariant = Color(0xFF262626),
+    onSurfaceVariant = Color(0xFFB1B8B3),
+    outline = Color(0xFF424842),
+    outlineVariant = Color(0xFF343834),
+    primaryContainer = Color(0xFF303630), onPrimaryContainer = Color(0xFFECECEC),
     secondary = Color(0xFFA4D8B5), onSecondary = Color(0xFF161F1A),
     secondaryContainer = Color(0xFF2D3E30), onSecondaryContainer = Color(0xFFE8EBE1),
     tertiary = Color(0xFFC5BADB), onTertiary = Color(0xFF161F1A),
     tertiaryContainer = Color(0xFF3B3546), onTertiaryContainer = Color(0xFFE8EBE1),
     inverseSurface = Color(0xFFE9E4D3), inverseOnSurface = Color(0xFF29382E), inversePrimary = Color(0xFF416D4E),
-    surfaceTint = Color(0xFFECEFE6),
+    surfaceTint = Color(0xFFECECEC),
     error = Color(0xFFE48282),
 )
 
@@ -107,7 +107,7 @@ val kkcodeColors: KKCodeColors @Composable get() = LocalKKCodeColors.current
 
 @Composable fun KKCodeTheme(dark: Boolean, content: @Composable () -> Unit) {
     CompositionLocalProvider(LocalKKCodeColors provides if(dark) DarkExtras else LightExtras) {
-        MaterialTheme(colorScheme = if(dark) DarkScheme else LightScheme, shapes = Shapes(extraSmall = RoundedCornerShape(4.dp), small = RoundedCornerShape(8.dp), medium = RoundedCornerShape(12.dp), large = RoundedCornerShape(16.dp), extraLarge = RoundedCornerShape(24.dp)), content = content)
+        MaterialTheme(typography = KKTypography, colorScheme = if(dark) DarkScheme else LightScheme, shapes = Shapes(extraSmall = RoundedCornerShape(4.dp), small = RoundedCornerShape(8.dp), medium = RoundedCornerShape(12.dp), large = RoundedCornerShape(16.dp), extraLarge = RoundedCornerShape(24.dp)), content = content)
     }
 }
 

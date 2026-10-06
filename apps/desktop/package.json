@@ -1,6 +1,6 @@
 {
   "name": "@kkcode/desktop",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "private": true,
   "description": "KK Code Windows desktop client",
   "author": "kkelly-offical",
@@ -29,7 +29,8 @@
       "gateway.js",
       "window.css",
       "package.json",
-      "icon.png"
+      "icon.png",
+      "login-policy.cjs"
     ],
     "extraResources": [
       {
@@ -56,6 +57,14 @@
       "deleteAppDataOnUninstall": false,
       "createDesktopShortcut": true,
       "shortcutName": "KK Code"
-    }
+    },
+    "protocols": [
+      {
+        "name": "KK Code 登录返回",
+        "schemes": [
+          "cn.kkcode.desktop"
+        ]
+      }
+    ]
   }
 }

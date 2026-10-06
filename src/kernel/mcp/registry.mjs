@@ -1,3 +1,4 @@
+import { resolveManagedMcpConfig } from './managed-config.mjs'
 import { runtimeCwd, currentRuntime } from "../core/runtime-context.mjs"
 import { createHttpMcpClient } from "./client-http.mjs"
 import { createStdioMcpClient } from "./client-stdio.mjs"
@@ -147,6 +148,14 @@ export function createMcpRegistry() {
       name,
       transport: patch.transport || prev.transport || resolveTransport(serverConfig),
       lastCheckedAt: Date.now()
+    }
+    if (next.error) {
+      const config = state.configured.get(name) || serverConfig
+      const secrets = [...Object.values(config.env || {}), ...Object.values(config.headers || {})]
+      try { for (const value of new URL(config.url || config.base_url).searchParams.values()) secrets.push(value) } catch {}
+      let message = String(next.error)
+      for (const value of secrets.filter(value => typeof value === 'string' && value.length >= 3).sort((a, b) => b.length - a.length)) message = message.split(value).join('[REDACTED]')
+      next.error = message
     }
     state.health.set(name, next)
     return next
@@ -366,7 +375,7 @@ export function createMcpRegistry() {
       }
 
       for (const [name, serverConfig] of Object.entries(allServers)) {
-        const effective = { ...mcpGlobalDefaults, ...serverConfig }
+        const effective = { ...mcpGlobalDefaults, ...await resolveManagedMcpConfig(name, serverConfig) }
         allServers[name] = effective
         state.configured.set(name, effective)
         if (serverConfig?.enabled === false) {
@@ -509,6 +518,11 @@ export function createMcpRegistry() {
         reason: health.reason || "unknown",
         lastError: health.error || null
       }
+    },
+
+    connectionConfig(name) {
+      const value = state.configured.get(name)
+      return value ? structuredClone(value) : null
     },
 
     healthSnapshot() {

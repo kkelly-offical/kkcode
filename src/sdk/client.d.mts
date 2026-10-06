@@ -56,6 +56,13 @@ export interface DeviceMethods {
   'settings.get': { params: EmptyParams; result: Record<string, unknown> };
   'settings.update': { params: { config: Record<string, unknown> }; result: Record<string, unknown> };
   'extensions.list': { params: WorkspaceParams; result: ExtensionsInfo };
+  'extensions.catalog': { params: WorkspaceParams; result: ExtensionsInfo & { device: string } };
+  'extensions.manage': { params: { action: 'mcp.save' | 'mcp.toggle' | 'plugin.install' | 'plugin.manage' | 'skill.save'; name: string; transport?: 'stdio' | 'streamable-http' | 'legacy-sse'; url?: string; command?: string; args?: string[]; auth?: 'oauth' | 'none'; env?: {key: string; value: string}[]; headers?: {key: string; value: string}[]; enabled?: boolean; source?: string; revision?: string; operation?: 'inspect' | 'enable' | 'disable' | 'approve' | 'remove' | 'update'; confirmHash?: string; content?: string }; result: Record<string, unknown> };
+  'extensions.auth.start': { params: { name: string }; result: {id: string; status: string} };
+  'extensions.auth.status': { params: { id: string }; result: {id: string; name: string; status: 'pending' | 'authorized' | 'failed' | 'cancelled'; url: string | null} };
+  'extensions.auth.complete': { params: { id: string; url: string }; result: {id: string; status: string} };
+  'extensions.auth.cancel': { params: { id: string }; result: {id: string; status: string} };
+  'extensions.auth.logout': { params: { name: string }; result: {signedOut: true; remoteRevoked: false} };
   'extensions.reload': { params: WorkspaceParams; result: ExtensionsInfo };
   'models.discover': { params: { provider?: string; refresh?: boolean; connection?: { type?: string; protocol?: string; base_url?: string; api_key?: string; api_key_env?: string; endpoints?: Record<string, string>; default_model?: string } }; result: { models: { id: string; [key: string]: unknown }[]; provider?: string; source: string; stale?: boolean } };
   'profile.get': { params: EmptyParams; result: DeviceProfile };

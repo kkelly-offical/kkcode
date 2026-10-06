@@ -453,6 +453,7 @@ export function validateConfig(config) {
             err(errors, prefix, "must be object")
             continue
           }
+          if (server.credential_ref !== undefined && (typeof server.credential_ref !== "string" || !/^[0-9a-f-]{36}$/.test(server.credential_ref))) err(errors, `${prefix}.credential_ref`, "must be a managed connection reference")
           if (server.enabled !== undefined && typeof server.enabled !== "boolean") {
             err(errors, `${prefix}.enabled`, "must be boolean")
           }

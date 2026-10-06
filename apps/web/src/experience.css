@@ -10,11 +10,11 @@
   font-family: 'Noto Sans SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 :root[data-theme="dark"] {
-  --bg: #0d1311; --bg-panel: #121a16; --bg-elevated: #18221d;
-  --bg-sunken: #0a0f0d; --bg-menu: #18221d; --bg-hover: #1e2a24; --bg-active: #223229;
-  --bg-user: #18221d; --text: #ecefe6; --text-secondary: #a6b3a8; --text-faint: #85938a;
-  --border: #202d26; --border-strong: #2c3b34; --primary-bg: #e6bb75;
-  --primary-text: #2a2314; --primary-hover: #f0cc91; --accent-soft: #e6bb75;
+  --bg: #181818; --bg-panel: #202020; --bg-elevated: #262626;
+  --bg-sunken: #141414; --bg-menu: #262626; --bg-hover: #303030; --bg-active: #343834;
+  --bg-user: #262626; --text: #ececec; --text-secondary: #b1b8b3; --text-faint: #929d95;
+  --border: #303330; --border-strong: #424842; --primary-bg: #e3eae5;
+  --primary-text: #202721; --primary-hover: #f2f5f3; --accent-soft: #d8e3dc;
   --ok: #4fcb8a; --online: #4fcb8a; --danger: #e88585; --err: #e88585;
   --shadow-composer: none; --shadow-pop: 0 12px 32px #0006;
 }
@@ -141,3 +141,53 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .back-to-reading { bottom: 52px; left: 12px; }
 }
 @media (max-height: 650px) { .run-banner { padding-block: 7px; } .run-label small { display: none; } .conversation-status { padding-block: 1px; } }
+/* Input attachments remain with the draft until the turn is accepted. */
+.attachment-composer { position: relative; width: 100%; min-width: 0; }
+.composer-attachments { display: flex; flex-wrap: wrap; gap: 10px; padding: 6px 8px 12px; max-height: 240px; overflow: auto; }
+.composer-attachment { display: flex; align-items: center; gap: 10px; width: 260px; min-width: 0; padding: 10px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; }
+.composer-attachment img { width: 48px; height: 48px; border-radius: 8px; object-fit: cover; flex: none; }
+.composer-attachment > span { display: grid; gap: 4px; min-width: 0; flex: 1; }
+.composer-attachment b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; }
+.composer-attachment small { color: var(--text-secondary); font-size: 11px; }
+.composer-attachment progress { width: 100%; height: 3px; }
+.composer-attachment.failed { border-color: var(--danger); }
+.composer-attach { position: absolute; right: 8px; bottom: 9px; padding: 7px; background: transparent; border: 0; color: var(--text-secondary); }
+.attachment-composer textarea { padding-right: 46px; }
+.attachment-error { margin: 8px; font-size: 12px; color: var(--danger); }
+.attachment-drop-hint { position: absolute; inset: 0; display: grid; place-items: center; background: var(--bg-panel); border: 2px dashed var(--border-strong); border-radius: 14px; pointer-events: none; }
+@media(max-width: 600px) { .composer-attachments { flex-wrap: nowrap; max-height: 100px; } .composer-attachment { flex: 0 0 230px; } }
+.connections { width: 100%; }
+.connection-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 16px 0; }
+.connection-toolbar [role=tablist] { display: flex; gap: 4px; flex: 1; }
+.connection-toolbar [role=tab] { background: transparent; border: 0; padding: 9px 15px; color: var(--text-secondary); }
+.connection-toolbar [aria-selected=true] { color: var(--text); background: var(--bg-active); }
+.connection-search { width: 100%; margin-bottom: 20px; }
+.connection-list { display: grid; gap: 10px; }
+.connection-row { display: flex; align-items: center; gap: 14px; padding: 16px 12px; border-bottom: 1px solid var(--border); }
+.connection-symbol { flex: none; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; background: var(--bg-active); font-size: 19px; }
+.connection-description { display: grid; gap: 6px; min-width: 0; flex: 1; }
+.connection-description strong { font-weight: 500; font-size: 15px; }
+.connection-description small { color: var(--text-secondary); font-size: 13px; overflow-wrap: anywhere; }
+.connection-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.connection-actions button { padding: 7px 10px; font-size: 12px; }
+.connection-form { display: grid; gap: 18px; }
+.connection-form label, .connection-auth label { display: grid; gap: 8px; font-size: 13px; color: var(--text-secondary); }
+.connection-form input, .connection-form select, .connection-form textarea, .connection-auth input { width: 100%; }
+.connection-fields { border: 1px solid var(--border); padding: 16px; border-radius: 12px; display: grid; gap: 10px; }
+.connection-field { display: grid; grid-template-columns: 1fr 1.5fr auto; gap: 8px; }
+.connection-field input { min-width: 0; }
+.connection-auth { padding: 20px; margin-bottom: 20px; border: 1px solid var(--border-strong); border-radius: 14px; display: grid; gap: 12px; }
+.connection-auth a { text-align: center; text-decoration: none; padding: 12px; border-radius: 10px; background: var(--primary-bg); color: var(--primary-text); }
+@media(min-width: 900px) { .sheet:has(.connections) { width: min(900px, 85vw); max-width: 900px; } }
+@media(max-width: 600px) { .connection-row { flex-wrap: wrap; } .connection-actions { width: 100%; padding-left: 58px; } }
+.task-progress-track { display: flex; width: 100%; height: 6px; gap: 2px; overflow: hidden; border-radius: 8px; background: var(--bg-active); }
+.task-progress-track span { flex-shrink: 1; border-radius: 3px; }
+.task-progress-track [data-status=completed] { background: var(--ok); }
+.task-progress-track [data-status=active] { background: var(--text-secondary); }
+.task-progress-track [data-status=blocked] { background: var(--accent-soft); }
+.task-progress-track [data-status=cancelled] { background: var(--text-faint); opacity: .35; }
+.activity-progress .task-progress-track { grid-column: 1 / -1; margin-top: 12px; }
+.experience .composer { border-radius: 20px !important; padding: 14px 16px 12px; background: var(--bg-elevated); border-color: var(--border-strong); }
+.experience .message.user { border-radius: 18px !important; padding: 12px 18px; }
+.experience .run-banner { border-radius: 12px; }
+.experience .chat-header { border-bottom: 0; }

@@ -4,6 +4,8 @@
 
 ## 当前版本
 
+源码正在准备 **1.0.13 / Android10020** 发行候选，尚未公开发布；见 [1.0.13 实施记录](implementation-1.0.13.md)。
+
 公开稳定版 **1.0.12 / Android10019 / Windows x64**（npm latest），公开 Preview **1.0.6-preview.1 / Android10012**。
 1.0.12 发行提交 `00e573c`（PR#54），与最终候选 `caf7073` 同树。
 候选与主线跨平台、Web、CodeQL、Windows 安装和正式发行流水线均已通过；Android 沿用原证书。

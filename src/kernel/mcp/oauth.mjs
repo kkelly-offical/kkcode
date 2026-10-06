@@ -4,7 +4,7 @@ import { Client, StreamableHTTPClientTransport, SSEClientTransport, Unauthorized
 import { encryptedStore } from '../../storage/encrypted-store.mjs'
 import { MCP_CLIENT_INFO } from './constants.mjs'
 
-const required = () => Object.assign(new Error('MCP authorization required; run kkcode mcp auth --server <name>'), { code: 'mcp_auth_required' })
+const required = () => Object.assign(new Error('MCP 需要授权，请在对话的“连接与扩展”中登录此服务。'), { code: 'mcp_auth_required' })
 function endpoint(config) {
   const url = new URL(config.url || config.base_url)
   if (url.username || url.password || url.protocol !== 'https:' && !(url.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname))) throw new Error('MCP OAuth requires HTTPS outside loopback')
@@ -23,9 +23,9 @@ export function createMcpOAuthProvider(name, config, { redirectUrl, onAuthorizat
     clientInformation: async () => {
       const saved = await store.read()
       if (onAuthorization && activeRedirect && saved.redirectUrl !== activeRedirect && !saved.tokens) return undefined
-      return saved.client
+      return saved.client?.issuer ? saved.client : undefined
     }, saveClientInformation: save('client'),
-    tokens: field('tokens'), saveTokens: save('tokens'),
+    tokens: async () => { const value = await field('tokens')(); return value?.issuer ? value : undefined }, saveTokens: save('tokens'),
     discoveryState: field('discovery'), saveDiscoveryState: save('discovery'),
     saveCodeVerifier: save('verifier'), codeVerifier: async () => { const verifier = await field('verifier')(); if (!verifier) throw required(); return verifier },
     redirectToAuthorization: async authorizationUrl => { if (!onAuthorization) throw required(); await onAuthorization(authorizationUrl) },
@@ -40,13 +40,13 @@ export function createMcpOAuthProvider(name, config, { redirectUrl, onAuthorizat
     async initialize() {
       const saved = await store.read()
       if (!activeRedirect) activeRedirect = saved.redirectUrl
-      return Boolean(saved.tokens)
+      return Boolean(saved.tokens?.issuer)
     }
   }
 }
 
-/** @param {string} name @param {any} config @param {{onAuthorization?: (url: URL) => unknown, signal?: AbortSignal, timeoutMs?: number}} [options] */
-export async function loginMcpOAuth(name, config, { onAuthorization, signal, timeoutMs = 180000 } = {}) {
+/** @param {string} name @param {any} config @param {{onAuthorization?: (url: URL) => unknown, onCallbackReady?: (callback: {complete: (url: string) => void}) => unknown, signal?: AbortSignal, timeoutMs?: number}} [options] */
+export async function loginMcpOAuth(name, config, { onAuthorization, onCallbackReady, signal, timeoutMs = 180000 } = {}) {
   const url = endpoint(config), state = randomBytes(32).toString('base64url')
   let accept, decline, handled = false
   const callback = new Promise((resolve, reject) => { accept = resolve; decline = reject })
@@ -67,6 +67,13 @@ export async function loginMcpOAuth(name, config, { onAuthorization, signal, tim
   const address = server.address()
   if (!address || typeof address === 'string') throw new Error('OAuth callback did not bind a loopback port')
   redirectUrl = `http://127.0.0.1:${address.port}/callback`
+  const complete = value => {
+    let incoming
+    try { incoming = new URL(value) } catch { throw new Error('Invalid authorization callback') }
+    const supplied = Buffer.from(incoming.searchParams.get('state') || ''), expected = Buffer.from(state)
+    if (handled || incoming.origin !== new URL(redirectUrl).origin || incoming.pathname !== '/callback' || incoming.username || incoming.password || supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) throw new Error('Invalid authorization callback')
+    handled = true; accept(incoming.searchParams)
+  }
   const auth = createMcpOAuthProvider(name, config, { redirectUrl, onAuthorization, state })
   const controller = new AbortController()
   const cancel = error => { decline(error); controller.abort(error); void client.close().catch(() => {}) }
@@ -76,6 +83,7 @@ export async function loginMcpOAuth(name, config, { onAuthorization, signal, tim
   const Transport = String(config.transport || config.type).toLowerCase() === 'legacy-sse' ? SSEClientTransport : StreamableHTTPClientTransport
   const transport = new Transport(url, { authProvider: auth.provider, requestInit: { signal: controller.signal } }), client = new Client(MCP_CLIENT_INFO)
   try {
+    onCallbackReady?.({ complete })
     if (signal?.aborted) throw new Error('MCP authorization cancelled')
     await auth.initialize()
     try { await client.connect(transport); return { authorized: true } }

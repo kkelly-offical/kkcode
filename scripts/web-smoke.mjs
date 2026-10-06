@@ -195,7 +195,7 @@ try {
   await page.getByRole('button', { name: '发送', exact: true }).click()
   await expect.poll(() => requests.some(request => JSON.stringify(request).includes('REAL_BROWSER_ATTACHMENT_ACCEPTANCE'))).toBe(true)
   await expect(page.getByRole('button', { name: '停止', exact: true })).toHaveCount(0)
-  await expect(page.locator('.attachment-summary')).toHaveCount(0)
+  await expect(page.locator('.composer-attachments')).toHaveCount(0)
   // Two authenticated clients must converge after destructive conversation edits.
   const mirror = await page.context().newPage()
   await mirror.setViewportSize({ width: 390, height: 844 }); await mirror.goto(info.address)

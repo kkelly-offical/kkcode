@@ -14,7 +14,6 @@ import android.widget.Toast
 import android.widget.TableLayout
 import android.widget.TableRow
 import android.view.Gravity
-import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -53,6 +52,10 @@ internal fun openSourceLink(view: View, link: String) {
 }
 
 internal fun sourceMarkdown(context: android.content.Context): Markwon = Markwon.builder(context).usePlugin(object : AbstractMarkwonPlugin() {
+    override fun configureTheme(builder: io.noties.markwon.core.MarkwonTheme.Builder) {
+        val mono = androidx.core.content.res.ResourcesCompat.getFont(context, R.font.kk_mono)
+        if (mono != null) builder.codeTypeface(mono).codeBlockTypeface(mono)
+    }
     override fun configureConfiguration(builder: MarkwonConfiguration.Builder) { builder.linkResolver { view, link -> openSourceLink(view, link) } }
     override fun configureParser(builder: Parser.Builder) { builder.extensions(listOf(TablesExtension.create())) }
 }).build()
@@ -116,6 +119,8 @@ internal fun markdownBlocks(markwon: Markwon, text: String): List<MarkdownBlock>
     Column(modifier) {
         blocks.forEach { block ->
             if(block.content != null) AndroidView(factory = { ctx -> TextView(ctx).apply {
+                typeface = androidx.core.content.res.ResourcesCompat.getFont(ctx, R.font.kk_sans)
+                fontVariationSettings = "'wght' 400"
                 textSize = 15f; setLineSpacing(5f, 1.12f); setTextIsSelectable(true)
             } }, update = { view -> view.setTextColor(color); view.setLinkTextColor(linkColor); setSourceSpans(view, block.content) }, modifier = Modifier.fillMaxWidth())
             else AndroidView(factory = { ctx -> TableLayout(ctx) }, update = { table ->
@@ -126,11 +131,14 @@ internal fun markdownBlocks(markwon: Markwon, text: String): List<MarkdownBlock>
                     val row = TableRow(table.context)
                     cells.forEach { cell ->
                         val view = TextView(table.context).apply {
+                            typeface = androidx.core.content.res.ResourcesCompat.getFont(table.context, R.font.kk_sans)
+                            // Select the variable-font axis directly. Android's
+                            // synthetic BOLD resets this font to its thin default.
+                            fontVariationSettings = if (cell.header) "'wght' 600" else "'wght' 400"
                             textSize = 14f; setTextColor(color); setLinkTextColor(linkColor); setTextIsSelectable(true)
                             minWidth = (120 * density).toInt(); maxWidth = (280 * density).toInt()
                             setPadding((12 * density).toInt(), (10 * density).toInt(), (12 * density).toInt(), (10 * density).toInt())
                             gravity = Gravity.TOP or when(cell.alignment) { TableCell.Alignment.RIGHT -> Gravity.RIGHT; TableCell.Alignment.CENTER -> Gravity.CENTER_HORIZONTAL; else -> Gravity.LEFT }
-                            if(cell.header) setTypeface(typeface, Typeface.BOLD)
                             background = GradientDrawable().apply { setColor(if(cell.header) header else android.graphics.Color.TRANSPARENT); setStroke(density.toInt().coerceAtLeast(1), border) }
                             setSourceSpans(this, cell.content)
                         }

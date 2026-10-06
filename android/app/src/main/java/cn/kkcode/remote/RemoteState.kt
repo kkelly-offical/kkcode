@@ -80,6 +80,8 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
     private var catalogRequest = 0
     var draft by mutableStateOf("")
     var attachments by mutableStateOf(emptyList<JSONObject>())
+    var failedAttachments by mutableStateOf(emptyList<Uri>())
+    private val attachmentMutex = Mutex()
     var uploading by mutableStateOf(false)
     var branchSnapshot by mutableStateOf(JSONObject())
     var commandItems by mutableStateOf(emptyList<JSONObject>())
@@ -340,7 +342,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         if(generation != connectionGeneration) return
         cwd = status.getJSONArray("roots").optString(0, ""); connected = true; sharedDevice = status.optBoolean("shared")
         sharedPermissions = device.optJSONObject("permissions") ?: JSONObject()
-        selected = ""; messages = emptyList(); attachments = emptyList(); draft = ""; polling?.cancel()
+        selected = ""; messages = emptyList(); attachments = emptyList(); failedAttachments = emptyList(); draft = ""; polling?.cancel()
         refreshSessions()
         if(generation != connectionGeneration) return
         val availableCommands = visibleCommands((rpc("commands.list") as? JSONArray).objects())
@@ -651,7 +653,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         catch(error: Exception) { if(selected != sessionId || api !== source || sessionGeneration != selection) return@action; if(sessionGone(error, sessionId)) return@action; throw error }
         if(selected != sessionId || api !== source || sessionGeneration != selection) return@action
         applySnapshot(snapshot)
-        attachments = emptyList(); draft = ""
+        attachments = emptyList(); failedAttachments = emptyList(); draft = ""
         startEvents(snapshot.optLong("eventCursor")); sheet = ""
     }
     private fun sessionGone(error: Exception, id: String): Boolean {
@@ -736,7 +738,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         try { applySelection(rpc("sessions.configure", JSONObject().put("sessionId", id).put("mode", mode).also { if(model.isNotBlank()) it.put("model", model); if(provider.isNotBlank()) it.put("provider", provider) }) as JSONObject) }
         finally { runCatching { releaseControl(lease) } }
         }
-        selected = created.getString("id"); messages = emptyList(); contextUsage = JSONObject(); snapshotLastMessage = ""; snapshotCursor = 0; sessionArchived = false; persistedSteps = emptySet(); persistedUserTurns = emptySet(); attachments = emptyList(); draft = ""; historyHasMore = false; historyBefore = ""; startEvents(0); refreshSessions(); sheet = ""
+        selected = created.getString("id"); messages = emptyList(); contextUsage = JSONObject(); snapshotLastMessage = ""; snapshotCursor = 0; sessionArchived = false; persistedSteps = emptySet(); persistedUserTurns = emptySet(); attachments = emptyList(); failedAttachments = emptyList(); draft = ""; historyHasMore = false; historyBefore = ""; startEvents(0); refreshSessions(); sheet = ""
         if(selectedSsh.isNotBlank()) vault.put("ssh-session:${accountScope()}:$selectedSsh", selected)
         } finally { loading = false }
     }
@@ -1137,16 +1139,28 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
     }
     fun updateAppearance(value: String) { require(value in listOf("dark", "light", "auto")); appearance = value; prefs.edit().putString("appearance", value).apply(); sheet = "" }
     fun savePreferences(value: JSONObject) = action { profilePreferences = rpc("profile.update", JSONObject().put("profile", value)) as JSONObject; notice = "偏好已保存到电脑"; sheet = "" }
-    fun attach(uri: Uri) = action {
-        require(!sharedDevice && selected.isNotBlank()) { "请先打开自己的会话" }
-        require(attachments.size < 8) { "一次最多发送 8 个附件" }
-        uploading = true
-        val session = selected
-        try {
-            val input = withContext(Dispatchers.IO) { readAttachment(getApplication<Application>().contentResolver, uri) }
-            val result = rpc("attachments.upload", input.put("sessionId", session)) as JSONObject
-            if(selected == session) attachments = attachments + result else rpc("attachments.remove", JSONObject().put("sessionId", session).put("id", result.getString("id")))
-        } finally { uploading = false }
+    fun attach(uri: Uri): Job {
+        val origin = selected
+        val generation = connectionGeneration
+        return action { attachmentMutex.withLock {
+            require(origin == selected && generation == connectionGeneration) { "会话已切换，请在原会话中重新添加附件" }
+            require(!sharedDevice && selected.isNotBlank()) { "请先打开自己的会话" }
+            require(attachments.size < 8) { "一次最多发送 8 个附件" }
+            uploading = true
+            try {
+                val input = withContext(Dispatchers.IO) { readAttachment(getApplication<Application>().contentResolver, uri) }
+                val result = rpc("attachments.upload", input.put("sessionId", origin)) as JSONObject
+                if(input.optString("mediaType").startsWith("image/")) result.put("preview", input.optString("data"))
+                if(selected == origin && generation == connectionGeneration) {
+                    attachments = attachments + result
+                    failedAttachments = failedAttachments.filterNot { it == uri }
+                } else rpc("attachments.remove", JSONObject().put("sessionId", origin).put("id", result.getString("id")))
+            } catch(e: CancellationException) { throw e }
+            catch(e: Exception) {
+                if(selected == origin && generation == connectionGeneration) failedAttachments = (failedAttachments + uri).distinct()
+                throw e
+            } finally { uploading = false }
+        } }
     }
     fun removeAttachment(id: String) = action { rpc("attachments.remove", JSONObject().put("sessionId", selected).put("id", id)); attachments = attachments.filterNot { it.optString("id") == id } }
     fun loadBranches() = action {
@@ -1182,11 +1196,25 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         catalogError = ""; catalogProvider = ""; modelOptions = emptyList()
         sheet = "models"
     }
-    fun saveProvider(name: String, type: String, base: String, key: String, modelId: String) = action {
+    val accountTemplatesAvailable: Boolean get() = gatewayApi != null && credentials != null
+    suspend fun accountModels(path: String = "", body: JSONObject? = null): JSONObject {
+        val client = gatewayApi ?: error("请先登录账号网关")
+        refreshToken()
+        val result = client.call("/api/v1/account/models$path", body)
+        if(gatewayApi !== client) throw CancellationException("账号已切换")
+        return result
+    }
+    fun saveProvider(name: String, type: String, base: String, key: String, modelId: String, scope: String = "device") = action {
         require(name.matches(Regex("[A-Za-z0-9_-]+"))) { "渠道名称只能包含字母、数字、连字符与下划线" }
         val entry = JSONObject().put("type", type).put("base_url", base).put("default_model", modelId)
         if(editingProvider.isBlank() || key.isNotBlank()) entry.put("api_key", key)
         if(editingProvider.isBlank()) entry.put("api_key_env", "")
+        if(scope == "account") {
+            require(editingProvider.isBlank() || key.isNotBlank() || settings.optJSONObject("provider")?.optJSONObject(editingProvider)?.optString("api_key") != "[REDACTED]") { "保存账号模板时，请重新填写此渠道的 API Key" }
+            val templates = accountModels()
+            accountModels(body = JSONObject().put("revision", templates.optInt("revision")).put("provider", JSONObject().put(name, entry)))
+            notice = "已保存到账号模板；设备配置保持独立"; backSheet(); return@action
+        }
         val result = rpc("settings.update", JSONObject().put("config", JSONObject().put("provider", JSONObject().put("default", name).put(name, entry)))) as JSONObject
         settings = result.optJSONObject("config") ?: rpc("settings.get") as JSONObject
         if(selected.isNotBlank()) {
@@ -1196,7 +1224,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         } else { provider = name; model = modelId }
         notice = if(settings.optJSONObject("_diagnostics")?.optBoolean("toolsBlocked") == true) "渠道已保存，但设备配置仍有错误；修正后才能恢复执行。" else "渠道已保存并立即生效"; backSheet()
     }
-    fun loadExtensions() = action { extensions = rpc("extensions.list") as JSONObject; sheet = "extensions" }
+    fun loadExtensions() = action { sheet = "extensions" }
     suspend fun refreshSubagents() {
         val session = selected; val client = api; val generation = sessionGeneration
         if(session.isBlank() || !connected) return
@@ -1215,7 +1243,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         val response = rpc("subagents.interrupt", JSONObject().put("sessionId", session).put("childSessionId", id)) as JSONObject
         if(selected == session) subagents = mergeSubagentSnapshot(subagents, response.optJSONArray("items").objects(), session)
     }
-    fun leaveChat() { historyTarget = ""; polling?.cancel(); sessionGeneration++; todos = null; subagents = emptyList(); selected = ""; messages = emptyList(); contextUsage = JSONObject(); persistedSteps = emptySet(); persistedUserTurns = emptySet(); approvals = emptyList(); attachments = emptyList(); draft = ""; historyHasMore = false; historyBefore = ""; busy = false; stopping = false; turnPhase = "idle"; activeExecution = ""; stopRequested = ""; pendingSend = null; stopJob = null }
+    fun leaveChat() { historyTarget = ""; polling?.cancel(); sessionGeneration++; todos = null; subagents = emptyList(); selected = ""; messages = emptyList(); contextUsage = JSONObject(); persistedSteps = emptySet(); persistedUserTurns = emptySet(); approvals = emptyList(); attachments = emptyList(); failedAttachments = emptyList(); draft = ""; historyHasMore = false; historyBefore = ""; busy = false; stopping = false; turnPhase = "idle"; activeExecution = ""; stopRequested = ""; pendingSend = null; stopJob = null }
     fun disconnect() { connectionGeneration++; sshRecovery?.cancel(); sshHeartbeat?.cancel(); deviceEvents?.cancel(); deviceNotice?.cancel(); manualDisconnect = true; leaveChat(); clearDeviceSelection(); ssh?.close(); ssh = null; selectedSsh = ""; vault.clear("active-ssh:${accountScope()}"); api = gatewayApi ?: api?.takeIf { it.relay }; api?.device = ""; connected = false; deviceName = "未连接设备"; sessions = emptyList(); commands = emptyList() }
     fun logout() = action {
         cancelLogin()

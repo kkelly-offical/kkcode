@@ -1,0 +1,429 @@
+{
+  "fileId": "750700cf-927c-80aa-8008-bfd546a4a5c2",
+  "name": "KK Code · 五端客户端 · 精修设计",
+  "pages": [
+    {
+      "id": "e273c9e2-ff1d-802e-8008-bfb914ffb6f4",
+      "name": "05 · Web",
+      "boards": [
+        {
+          "id": "8f8c5fb6-1db2-8073-8008-bfd1d3c41249",
+          "name": "01 / Web · 对话与任务",
+          "width": 1366,
+          "height": 768,
+          "image": "web-01.png",
+          "sha256": "c91cc2e4a17ea6b5a619654f89612af1de071d97450cc80c9cde29214bef17b3"
+        },
+        {
+          "id": "8f8c5fb6-1db2-8073-8008-bfe1fdd9a3e5",
+          "name": "06 / Web · 连接与扩展",
+          "width": 1366,
+          "height": 768,
+          "image": "web-06.png",
+          "sha256": "3b475d4629a9bb1acedb78066f2dc6aa95a52577a9d7b8a2c2300f6f2f50af89"
+        },
+        {
+          "id": "797a1dd1-ace8-5c09-8150-0f5208d595d9",
+          "name": "02 / Web · 协作展开 · 1440 × 900",
+          "width": 1440,
+          "height": 900,
+          "image": "web-02.png",
+          "sha256": "5f3dad58c85cd2b5134927c361aa7e297b64bc3a9d9b70d4aa461ceda6242362"
+        },
+        {
+          "id": "55f86d54-d22d-5e37-8d09-d7c601f9b279",
+          "name": "03 / Web · 小屏阅读 · 1024 × 600",
+          "width": 1024,
+          "height": 600,
+          "image": "web-03.png",
+          "sha256": "91e2b94347616037dbc586ddd8ffa0358b58bbc8fdfd3759b65b208e410eb06b"
+        },
+        {
+          "id": "bff4bf5c-d091-5f53-bc68-8946d4a58165",
+          "name": "04 / Web · 浅色阅读 · 1366 × 768",
+          "width": 1366,
+          "height": 768,
+          "image": "web-04.png",
+          "sha256": "487fee0deef53f0e1dba7d468e728f0518fd6ff1e90a7a675a8a65482a65fa81"
+        },
+        {
+          "id": "ef8bd796-c7db-514a-9c2f-ea93cdcea9f0",
+          "name": "05 / 设置 · 外观与阅读",
+          "width": 1200,
+          "height": 800,
+          "image": "web-05.png",
+          "sha256": "b847c8436e8ee7a0e09a022133a652b973d3c615da9776a28991836ec6715c8a"
+        }
+      ]
+    },
+    {
+      "id": "e273c9e2-ff1d-802e-8008-bfb9154c9ba3",
+      "name": "03 · Android",
+      "boards": [
+        {
+          "id": "8f8c5fb6-1db2-8073-8008-bfd1f7e00c33",
+          "name": "01 / Android · 对话与任务",
+          "width": 412,
+          "height": 892,
+          "image": "android-01.png",
+          "sha256": "83226b53646501b8cb3365f9394e64c64eb0ea9cf58f4bb17502a0ce0fd5b1d2"
+        },
+        {
+          "id": "8f8c5fb6-1db2-8073-8008-bfdce68f5469",
+          "name": "18 / Android · 附件待发送",
+          "width": 412,
+          "height": 892,
+          "image": "android-18.png",
+          "sha256": "77e4c1650a4b0a55059348feea04f827ebeb28fcbe7807873d0af856417c3c4c"
+        },
+        {
+          "id": "2465a273-337d-5745-86e4-ab6d281b5e10",
+          "name": "02 / 设置 · 清晰分层",
+          "width": 412,
+          "height": 892,
+          "image": "android-02.png",
+          "sha256": "29f82122a20d85a8bc047a36fd8fa302b70b71f295975407bde1cce1a24673ab"
+        },
+        {
+          "id": "e2ddf1e7-29d5-577e-8f6d-e0567730cdd4",
+          "name": "03 / 模型与思考 · 三档",
+          "width": 412,
+          "height": 892,
+          "image": "android-03.png",
+          "sha256": "c75158c145c219f190cf8030eff23682bb4cd261e42413077f55ac7798d3ddac"
+        },
+        {
+          "id": "9c523f8e-c7bf-5b00-aced-a9aefa02454e",
+          "name": "04 / 模型与思考 · 开关",
+          "width": 412,
+          "height": 892,
+          "image": "android-04.png",
+          "sha256": "dc2966533d86d2e7e66e2a99c3861fff9f8fa6676e0862899b18b49a9d226f20"
+        },
+        {
+          "id": "033f88cc-dab0-5cfb-98e9-9a4e8847e47f",
+          "name": "05 / 活动 · 子代理",
+          "width": 412,
+          "height": 892,
+          "image": "android-05.png",
+          "sha256": "733e8abf5920ecdd56b5b8cd5d9c788a5311a4e70412ed39173259b036838323"
+        },
+        {
+          "id": "95b74649-d5f4-53aa-b575-d6abecd6fccc",
+          "name": "06 / 子代理 · 实时详情",
+          "width": 412,
+          "height": 892,
+          "image": "android-06.png",
+          "sha256": "21b462cb11eb3d178d6c52363791a91075185f84a7b84e20c2a7c4148a3da943"
+        },
+        {
+          "id": "3bd8f12d-23a5-5441-98a3-d01ed9e14e5f",
+          "name": "07 / 上下文 · 压缩中",
+          "width": 412,
+          "height": 892,
+          "image": "android-07.png",
+          "sha256": "0cb1c6d816d50d4d1fbd1fc8f8b6c57fc44881e63050929fc25e2495468e7158"
+        },
+        {
+          "id": "67e9fb82-738b-5a5a-b8fb-f05f3413020b",
+          "name": "08 / 上下文 · 完成",
+          "width": 412,
+          "height": 892,
+          "image": "android-08.png",
+          "sha256": "d83602ccc49d7e28f3d0547e2391953d6015774c0ba1335c771235280bb15202"
+        },
+        {
+          "id": "e7aa7459-4f8f-5fa6-93ac-4bc2fe204cba",
+          "name": "09 / 外观与阅读",
+          "width": 412,
+          "height": 892,
+          "image": "android-09.png",
+          "sha256": "4d02c95e5684dc01edc762e79aec56d93df0ac98ce54aa1d94f68d13633eb1fa"
+        },
+        {
+          "id": "0b3997d4-93d6-5608-8e11-3182f7b5fed1",
+          "name": "10 / KIKI 伙伴设置",
+          "width": 412,
+          "height": 892,
+          "image": "android-10.png",
+          "sha256": "f07fd0bab9ffbdd44e092fb641960544ab574be1788d74fddb5afef13e7f9ee7"
+        },
+        {
+          "id": "6a5d09d7-a417-5db6-a9eb-5508cc643839",
+          "name": "11 / 对话菜单 · 小卡片",
+          "width": 412,
+          "height": 892,
+          "image": "android-11.png",
+          "sha256": "f70e6df4173a2bec84ba0de4459477a212d5c1b4b021646d63dc373cd01f1c83"
+        },
+        {
+          "id": "063cee36-2d0f-5584-864b-3a8e453df224",
+          "name": "12 / 对话 · 键盘展开",
+          "width": 412,
+          "height": 892,
+          "image": "android-12.png",
+          "sha256": "5de2b71766eb3cc26e5ec0f94ed0e94fd50766a6dec4d28b7a71c2961ec70163"
+        },
+        {
+          "id": "2bcafdb7-77b0-52bf-9c89-ba5ff760d616",
+          "name": "13 / 子代理 · 完成汇报",
+          "width": 412,
+          "height": 892,
+          "image": "android-13.png",
+          "sha256": "861b738b0603e707e2e40dafaa9a6ed2d16034b6d5a65697d50c71308ca9294d"
+        },
+        {
+          "id": "c51f48f3-49ef-53ee-8f6e-ea6a1c44dc17",
+          "name": "14 / 设备与连接 · 网关和 SSH",
+          "width": 412,
+          "height": 892,
+          "image": "android-14.png",
+          "sha256": "55e613e031a288bb1503895dfd12974e72120a8ec4032fa63587358bd668fd1f"
+        },
+        {
+          "id": "e949471d-b902-5afc-b59b-3523d0ec33f0",
+          "name": "15 / 审批 · 明确来源与作用范围",
+          "width": 412,
+          "height": 892,
+          "image": "android-15.png",
+          "sha256": "de421af32b1ead997be8adf9fc4d5ee126830f3de39a3ad63dcad003728cd09f"
+        },
+        {
+          "id": "8bc18cb9-f3f1-51c3-8e74-6f95e4e069b7",
+          "name": "16 / 子代理 · 正在停止",
+          "width": 412,
+          "height": 892,
+          "image": "android-16.png",
+          "sha256": "0a2ab76aa0a28549f5d84d5305d3b80a0dfd12991aaaac5c62d58b8a230e75e2"
+        },
+        {
+          "id": "8f8c5fb6-1db2-8073-8008-bfd1f861f13d",
+          "name": "17 / Android · 连接与扩展",
+          "width": 412,
+          "height": 892,
+          "image": "android-17.png",
+          "sha256": "d7910428cd4caf696ecb6069a6bcf8d5f5f2c069d0a66cd9542913638e0bf5c5"
+        },
+        {
+          "id": "8f8c5fb6-1db2-8073-8008-bfdd35c96fa2",
+          "name": "19 / Android · 模型配置范围",
+          "width": 412,
+          "height": 892,
+          "image": "android-19.png",
+          "sha256": "28bbd5c66497d6d5df2d760adadfb44b02914a7b569182072bd7170488e322a0"
+        }
+      ]
+    },
+    {
+      "id": "e273c9e2-ff1d-802e-8008-bfb915cbc813",
+      "name": "04 · Windows",
+      "boards": [
+        {
+          "id": "8f8c5fb6-1db2-8073-8008-bfcffb2b8a64",
+          "name": "01 / Windows App · 对话与任务",
+          "width": 1440,
+          "height": 1040,
+          "image": "windows-01.png",
+          "sha256": "a593ab440ceaf7164600e6f4101b9e5b1469f7ef3e3dd7191be627f73df9f5a2"
+        },
+        {
+          "id": "8f8c5fb6-1db2-8073-8008-bfd6677994e0",
+          "name": "08 / Windows App · 附件待发送",
+          "width": 1440,
+          "height": 1040,
+          "image": "windows-08.png",
+          "sha256": "52ebb7d53b00ecf0f538fc7efeddf09dde09adff48c54786780498966aa4f0b1"
+        },
+        {
+          "id": "8f8c5fb6-1db2-8073-8008-bfd619ff71fc",
+          "name": "05 / Windows App · 连接与扩展",
+          "width": 1440,
+          "height": 1040,
+          "image": "windows-05.png",
+          "sha256": "ea9137df78bd7f50d800eab26b64c13e698f6681da9e1c01d8ef9506299c662f"
+        },
+        {
+          "id": "8f8c5fb6-1db2-8073-8008-bfd644e05a1d",
+          "name": "07 / Windows App · 浏览器授权",
+          "width": 1440,
+          "height": 1040,
+          "image": "windows-07.png",
+          "sha256": "54d6bd8546b15d45bdb9cddf97c6347dc75da7358e697e8968ba0e54e6bd4f31"
+        },
+        {
+          "id": "8f8c5fb6-1db2-8073-8008-bfd642810272",
+          "name": "06 / Windows App · 配置连接",
+          "width": 1440,
+          "height": 1040,
+          "image": "windows-06.png",
+          "sha256": "aa4dccd3fb7eb5a150f62b5dff7f67869b5040d1d8d71b1a52f6da9eef230631"
+        },
+        {
+          "id": "2203285f-af58-5765-8137-91c8d73cdc91",
+          "name": "02 / Windows App · 项目选择",
+          "width": 1440,
+          "height": 1040,
+          "image": "windows-02.png",
+          "sha256": "fcc6d49eb271b592d7576d6a9ac82ed7088f7183861c70196c869597cb4e90b0"
+        },
+        {
+          "id": "ceeb7edb-cf7b-5db8-8585-b85f9896d06d",
+          "name": "03 / Windows App · 历史与最新",
+          "width": 1440,
+          "height": 1040,
+          "image": "windows-03.png",
+          "sha256": "6fc97e8f716e16756e774db8ad71e6c4fd0e779c3667aef202ee90d9608dba44"
+        },
+        {
+          "id": "dab217c4-2950-5029-89da-185c50926e62",
+          "name": "04 / Windows App · 搜索会话",
+          "width": 1440,
+          "height": 1040,
+          "image": "windows-04.png",
+          "sha256": "fdd42b30d443130650c60c738dbb298af4a806d6aa4f5088c0aa4cd7af957922"
+        }
+      ]
+    },
+    {
+      "id": "e273c9e2-ff1d-802e-8008-bfb916d8b1ff",
+      "name": "01 · iPhone",
+      "boards": [
+        {
+          "id": "b9b65e9e-3df1-50e6-a402-9a7317ae8045",
+          "name": "01 / iPhone · 项目与会话",
+          "width": 402,
+          "height": 874,
+          "image": "iphone-01.png",
+          "sha256": "ab3ba2f55c2384c76c3a9a33eceab7ffddbc6b9c83ef52dcdb1745dd69237fbe"
+        },
+        {
+          "id": "fade4997-a66f-5dff-98b4-e1e239fb9e91",
+          "name": "02 / iPhone · 对话与任务",
+          "width": 402,
+          "height": 874,
+          "image": "iphone-02.png",
+          "sha256": "f35d2f141dcb53e871a7a0f5b5e19d72a0b31586dd4c45e7211f9edf1d95d4fc"
+        },
+        {
+          "id": "8f8c5fb6-1db2-8073-8008-bfe57bde6b7e",
+          "name": "03 / iPhone · 深色对话",
+          "width": 402,
+          "height": 874,
+          "image": "iphone-03.png",
+          "sha256": "058150a25e0a23d11aaa3ea2c873cb99ba0d190ca42037e3813e64194d757028"
+        },
+        {
+          "id": "8f8c5fb6-1db2-8073-8008-bfe18843f31f",
+          "name": "13 / iPhone · 附件待发送",
+          "width": 402,
+          "height": 874,
+          "image": "iphone-13.png",
+          "sha256": "fc56da4482d7cb3cb5a19b166d2a4fc17fd46ba6f29233785ef396653ffad6c2"
+        },
+        {
+          "id": "253caab5-f4cb-59bb-b7a6-a3518ac22449",
+          "name": "04 / iPhone · 压缩完成",
+          "width": 402,
+          "height": 874,
+          "image": "iphone-04.png",
+          "sha256": "3112c84c82608db40dfa4d007e110afa0cad4daa7dcac6fffe442ea40d4957df"
+        },
+        {
+          "id": "50f2363f-e3b1-5b01-8b19-c527e6dda3cf",
+          "name": "05 / iPhone · 选择项目",
+          "width": 402,
+          "height": 874,
+          "image": "iphone-05.png",
+          "sha256": "8103b9e7342a69fa582768285cecd5804ac7021942feaef591dd34fd6541626f"
+        },
+        {
+          "id": "97e9015e-0956-54d5-8082-14de287eaf94",
+          "name": "06 / iPhone · 活动",
+          "width": 402,
+          "height": 874,
+          "image": "iphone-06.png",
+          "sha256": "d5ed99c25fd0de064c627fde27cdb3105b7204faa7dc110ee4cec121a3724acb"
+        },
+        {
+          "id": "e077bdec-3ea2-51c5-92b1-5667224fa9c7",
+          "name": "07 / iPhone · 模型与思考",
+          "width": 402,
+          "height": 874,
+          "image": "iphone-07.png",
+          "sha256": "9567eef6ec04a034ad17109c87d9ebf45ab74dc69c6b1be31a809b76745bc438"
+        },
+        {
+          "id": "d91284ce-74f9-5dea-8bf0-6e7a7b97488a",
+          "name": "08 / iPhone · 需要你的确认",
+          "width": 402,
+          "height": 874,
+          "image": "iphone-08.png",
+          "sha256": "9c6bce04eababa2d146c8296bed534af9831ecff982a25d4c8669ac7b79d5ae3"
+        },
+        {
+          "id": "5a1b3750-80d5-53f0-b213-d6089ae73822",
+          "name": "09 / iPhone · 外观与陪伴",
+          "width": 402,
+          "height": 874,
+          "image": "iphone-09.png",
+          "sha256": "4f03e141acf4dd4200bd4a460a5c239dc2d3ec22f7fa11d7d79d8596a78ce4eb"
+        },
+        {
+          "id": "b392c23c-c110-5666-be89-9fa79cc6f499",
+          "name": "10 / iPhone · 对话记录",
+          "width": 402,
+          "height": 874,
+          "image": "iphone-10.png",
+          "sha256": "818c4f90ea9b02e0a162afed8e802c4353caeb41ebf4957289f3760e2470a00d"
+        },
+        {
+          "id": "8f8c5fb6-1db2-8073-8008-bfe05a2838cf",
+          "name": "11 / iPhone · 连接与扩展",
+          "width": 402,
+          "height": 874,
+          "image": "iphone-11.png",
+          "sha256": "9b9bec6da609a57cf7a5f45d2047cc2989094177d6a67fed4a71e8042d6b5a04"
+        },
+        {
+          "id": "8f8c5fb6-1db2-8073-8008-bfe05b99c6ce",
+          "name": "12 / iPhone · 账号模板与设备",
+          "width": 402,
+          "height": 874,
+          "image": "iphone-12.png",
+          "sha256": "9c84062d4adbdab6c8ffc0517afa44f8df6d4cc19836a2807a035d40a0633947"
+        }
+      ]
+    },
+    {
+      "id": "e273c9e2-ff1d-802e-8008-bfb91731ba67",
+      "name": "02 · Mac",
+      "boards": [
+        {
+          "id": "85fde8ff-79db-5d91-abd1-a790ae7f0cb5",
+          "name": "01 / Mac · 轻材质工作台",
+          "width": 1440,
+          "height": 1070,
+          "image": "mac-01.png",
+          "sha256": "47567b1fd8059a0b220d17a5aaef4727b63f49b38d3373b93fa06db1b5c46904"
+        },
+        {
+          "id": "231eee6a-1e62-5bf3-9502-4e048cb0fed4",
+          "name": "02 / Mac · 深色工作台",
+          "width": 1440,
+          "height": 1070,
+          "image": "mac-02.png",
+          "sha256": "43a7807154e2b8acf64db5e0621959c44b7f3993e8bd5742b7519488d6b27fbf"
+        },
+        {
+          "id": "39473ad2-f776-5152-9dbd-08d3fff6c0ac",
+          "name": "03 / Mac · 项目路径 Popover",
+          "width": 1440,
+          "height": 1070,
+          "image": "mac-03.png",
+          "sha256": "6622ffe623b76fadc5573a0215f596b0a43c5555616efe8aa21c7239f0f401cb"
+        }
+      ]
+    }
+  ],
+  "errors": []
+}

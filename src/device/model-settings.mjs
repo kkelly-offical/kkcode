@@ -14,12 +14,13 @@ import { ProtocolError } from '../protocol/index.mjs'
 import { modelRuntimeProfile } from '../kernel/provider/runtime-parameters.mjs'
 import { resolveProviderRouteSettings } from '../kernel/provider/route-settings.mjs'
 
-function merge(base, patch) {
+function merge(base, patch, trail = []) {
+  if (trail.length === 3 && trail[0] === 'mcp' && trail[1] === 'servers' && patch?.credential_ref) return { credential_ref: patch.credential_ref, transport: patch.transport, enabled: patch.enabled !== false }
   const out = { ...base }
   for (const [key, value] of Object.entries(patch)) {
     if (['__proto__', 'constructor', 'prototype'].includes(key)) throw new ProtocolError('invalid_config', 'Unsafe configuration key')
     if (value === '[REDACTED]') continue
-    out[key] = value && typeof value === 'object' && !Array.isArray(value) ? merge(base?.[key], value) : value
+    out[key] = value && typeof value === 'object' && !Array.isArray(value) ? merge(base?.[key], value, [...trail, key]) : value
   }
   return out
 }

@@ -26,7 +26,7 @@ export const DEVICE_METHODS = Object.freeze([
   'status', 'folders.list', 'files.read', 'media.preview', 'sessions.list', 'sessions.get', 'sessions.create', 'sessions.configure', 'sessions.update', 'sessions.rewind', 'sessions.delete',
   'turns.start', 'turns.cancel', 'turns.steer', 'events.list', 'control.acquire', 'control.release',
   'approvals.resolve', 'commands.list', 'commands.run', 'settings.get', 'settings.update',
-  'extensions.list', 'extensions.reload', 'models.discover', 'profile.get', 'profile.update',
+  'extensions.catalog', 'extensions.manage', 'extensions.auth.start', 'extensions.auth.status', 'extensions.auth.complete', 'extensions.auth.cancel', 'extensions.auth.logout', 'extensions.list', 'extensions.reload', 'models.discover', 'profile.get', 'profile.update',
   'attachments.upload', 'attachments.list', 'attachments.remove', 'branches.list', 'branches.switch', 'branches.create', 'worktrees.list', 'worktrees.create', 'worktrees.open',
   'artifacts.list', 'artifacts.read', 'artifacts.search', 'artifacts.download', 'artifacts.pin', 'artifacts.prune',
   'memory.list', 'memory.get', 'memory.propose', 'memory.correct', 'memory.confirm', 'memory.enable', 'memory.forget', 'memory.observe', 'memory.legacy', 'memory.import',

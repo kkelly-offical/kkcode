@@ -13,6 +13,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -103,6 +106,7 @@ internal fun revealHistoryPath(items: List<ChatItem>, target: String): List<Chat
     if(items.isEmpty()) Text("当前会话还没有待办。日常对话无需创建任务清单。", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, modifier = Modifier.padding(vertical = 20.dp))
     else {
         Text("${items.count { it.optString("status") == "completed" }} / ${items.size}", fontSize = 28.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(vertical = 16.dp))
+        TaskProgressStrip(items, Modifier.padding(bottom = 16.dp))
         items.forEach { item ->
             val status = item.optString("status"); val active = status == "in_progress"
             Row(Modifier.fillMaxWidth().padding(bottom = 12.dp).background(if(active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp)).border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)).padding(14.dp), verticalAlignment = Alignment.Top) {
@@ -128,10 +132,13 @@ internal fun revealHistoryPath(items: List<ChatItem>, target: String): List<Chat
     val tasks = state.todos?.optJSONArray("items").objects()
     val children = state.subagents.count { it.optString("status") in listOf("running", "pending") }
     val label = when { state.turnOperation == "compact" -> if(state.stopping) "正在停止压缩…" else if(state.turnPhase == "starting") "正在提交压缩…" else "正在压缩上下文…"; state.stopping -> "正在停止"; state.approvals.isNotEmpty() -> "等待你的确认"; state.turnPhase == "finishing" -> "正在保存结果"; tasks.isNotEmpty() -> "任务 ${tasks.count { it.optString("status") == "completed" }}/${tasks.size}" + if(children > 0) " · 子代理 $children 运行中" else ""; state.turnPhase == "waiting_children" -> "等待子代理汇报"; else -> current?.optString("activeForm")?.ifBlank { null } ?: "正在工作" }
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp)).clickable { state.sheet = "activity" }.padding(horizontal = 12.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(Icons.Outlined.Terminal, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(8.dp))
-        Text(label, Modifier.weight(1f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Icon(Icons.Outlined.ChevronRight, "查看会话活动", Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(16.dp)).clickable { state.sheet = "activity" }.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Outlined.Terminal, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(10.dp))
+            Text(label, Modifier.weight(1f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Icon(Icons.Outlined.ChevronRight, "查看会话活动", Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if(tasks.isNotEmpty()) TaskProgressStrip(tasks)
     }
 }
 
@@ -151,5 +158,14 @@ internal fun revealHistoryPath(items: List<ChatItem>, target: String): List<Chat
         Row(verticalAlignment = Alignment.CenterVertically) { Text("播放状态动作", Modifier.weight(1f)); Switch(motion, { motion = it; preferences.edit().putBoolean("motion", it).apply() }) }
         Text("动作遵循系统的动画设置；关闭后仍显示静态姿态与状态文字。", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text("伙伴建议只填入草稿，由你决定是否发送。", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable internal fun TaskProgressStrip(items: List<JSONObject>, modifier: Modifier = Modifier) {
+    if(items.isEmpty()) return
+    val completed = items.count { it.optString("status") == "completed" }
+    val colors = listOf("completed" to kkcodeColors.success, "in_progress" to MaterialTheme.colorScheme.onSurfaceVariant, "blocked" to kkcodeColors.warning, "cancelled" to MaterialTheme.colorScheme.outline, "pending" to MaterialTheme.colorScheme.outlineVariant)
+    Row(modifier.fillMaxWidth().height(5.dp).semantics { progressBarRangeInfo = ProgressBarRangeInfo(completed.toFloat(), 0f..items.size.toFloat(), (items.size - 1).coerceAtLeast(0)) }, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        colors.forEach { (status, color) -> val count = items.count { it.optString("status") == status }; if(count > 0) Box(Modifier.weight(count.toFloat()).fillMaxHeight().background(color, RoundedCornerShape(3.dp))) }
     }
 }

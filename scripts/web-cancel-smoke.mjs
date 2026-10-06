@@ -59,6 +59,8 @@ await page.route('**/api/v1/rpc', async route => {
 })
 try {
   await page.goto(info.url)
+  // Bootstrap replaces the disconnected navigation; interact after pairing.
+  await expect(page.locator('.remote-title .online')).toBeVisible()
   await page.getByRole('button', { name: '聊天', exact: true }).click()
   await page.getByRole('button', { name: '开始对话', exact: true }).click()
   const input = page.getByRole('textbox', { name: '消息' })
