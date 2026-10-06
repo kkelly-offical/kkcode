@@ -35,8 +35,13 @@ async function compare(name) {
         const list = [...sheet.cssRules]
         const start = list.findIndex(rule => rule.type === CSSRule.STYLE_RULE && rule.selectorText === ':root' && rule.style.getPropertyValue('--pixel-finish').trim() === '1')
         if(start < 0) continue
-        const saved = list.slice(start).map(rule => rule.cssText)
-        for(let i = sheet.cssRules.length - 1; i >= start; i--) sheet.deleteRule(i)
+        // The 1.0.12 experience layer intentionally changes layout and controls.
+        // Keep it applied while checking that the original decorative pixel
+        // skin itself adds no layout shifts in either theme.
+        const boundary = list.findIndex((rule, index) => index > start && rule.type === CSSRule.STYLE_RULE && rule.selectorText === ':root' && rule.style.getPropertyValue('--experience-layout').trim() === '1')
+        const end = boundary < 0 ? list.length : boundary
+        const saved = list.slice(start, end).map(rule => rule.cssText)
+        for(let i = end - 1; i >= start; i--) sheet.deleteRule(i)
         return { sheetIndex, start, saved }
       }
       throw new Error('Pixel visual layer was not found; no layout comparison was performed')

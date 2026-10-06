@@ -43,6 +43,10 @@ async function startBackend() {
   await mkdir(data, { recursive: true, mode: 0o700 })
   const env = { ...process.env, KKCODE_HOME: data, KKCODE_DESKTOP_ROOTS: JSON.stringify(preferences.roots) }
   delete env.ELECTRON_RUN_AS_NODE; delete env.NODE_OPTIONS
+  if (runtime) {
+    const pathKey = Object.keys(env).find(key => key.toLowerCase() === 'path') || 'PATH'
+    env[pathKey] = [path.join(runtime, 'node'), path.join(runtime, 'search'), env[pathKey] || ''].join(path.delimiter)
+  }
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('本机服务启动超时')), 30000)
     backend = spawn(node, [script, root], { cwd: os.homedir(), env, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] })

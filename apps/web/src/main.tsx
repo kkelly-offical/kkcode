@@ -29,7 +29,7 @@ import { useDeviceEvents } from './DeviceEvents';
 import { mcpLoadNotice } from './device-notices.mjs';
 import { Approval } from "./Approval";
 import { ActivityPanel, RunBanner, type ActivityTab } from './ActivityPanel';
-import { ProjectPicker } from './Projects';
+import { ProjectPicker } from './ProjectPicker';
 import { projectName, projectSessions } from './projects.mjs';
 import { HistoryNavigator } from './HistoryNavigator';
 import { initializeDesktopPreferences, persistDesktopPreferences } from './desktop';

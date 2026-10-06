@@ -21,6 +21,10 @@ function run(file, args) {
 run(installer, ['/S', `/D=${installed}`])
 const executablePath = path.join(installed, 'KK Code.exe')
 await access(executablePath)
+const runtime = path.join(installed, 'resources', 'runtime')
+const target = JSON.parse(await readFile('configs/desktop-release.json', 'utf8'))
+assert.equal(run(path.join(runtime, 'node', 'node.exe'), ['--version']).trim(), `v${target.nodeVersion}`)
+assert.match(run(path.join(runtime, 'search', 'rg.exe'), ['--version']), new RegExp(`ripgrep ${target.ripgrepVersion.replaceAll('.', '\\.')}`))
 let app, data, marker
 const errors = []
 try {

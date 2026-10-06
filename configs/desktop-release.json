@@ -3,5 +3,7 @@
   "platform": "win32",
   "arch": "x64",
   "nodeVersion": "24.21.0",
+  "ripgrepVersion": "15.2.0",
+  "ripgrepArchiveSha256": "71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5",
   "repository": "kkelly-offical/kkcode"
 }

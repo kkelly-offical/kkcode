@@ -9,7 +9,8 @@ export function HistoryNavigator({ messages, sessions, hasMore, loading, onLoadE
 }) {
   const [query, setQuery] = useState('');
   const needle = query.trim().toLocaleLowerCase();
-  const matches = messages.filter(row => ['user', 'assistant'].includes(row.type) && typeof row.text === 'string' && (!needle || row.text.toLocaleLowerCase().includes(needle))).slice(-100).reverse();
+  const flatten = (rows: Item[]): Item[] => rows.flatMap(row => Array.isArray(row.rows) ? flatten(row.rows) : [row]);
+  const matches = flatten(messages).filter(row => ['user', 'assistant'].includes(row.type) && typeof row.text === 'string' && (!needle || row.text.toLocaleLowerCase().includes(needle))).slice(-100).reverse();
   const conversations = search && needle ? sessions.filter(item => String(item.title || '').toLocaleLowerCase().includes(needle)) : [];
   return <Sheet title={search ? '搜索项目中的对话' : '对话记录'} onClose={onClose}>
     <label className="search-field"><Icon name="search" size={18} /><input autoFocus aria-label="查找对话记录" value={query} onChange={event => setQuery(event.target.value)} placeholder="查找标题或已加载的消息" /></label>

@@ -1,5 +1,6 @@
 /* 1.0.12: approved Figma palette and hierarchy. Keep task/activity structure. */
 :root {
+  --experience-layout: 1;
   --bg: #f6f3ea; --bg-panel: #fffdf6; --bg-elevated: #fff;
   --bg-sunken: #f0ecdf; --bg-menu: #fffdf6; --bg-hover: #eee9dc; --bg-active: #e6e8dc;
   --bg-user: #fff; --text: #27382e; --text-secondary: #657064; --text-faint: #727a6e;
