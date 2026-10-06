@@ -1,6 +1,6 @@
 # 1.0.12 · 用户体验与 Windows 客户端
 
-[版本状态](versions.md) · [实施与检查](implementation-1.0.12.md) · [设计归档](design/1.0.12/README.md)
+[版本状态](versions.md) · [实施与检查](implementation-1.0.12.md) · [设计归档](https://github.com/kkelly-offical/kkcode/tree/main/docs/design/1.0.12)
 
 当前为 **1.0.12 发行候选**，Android 目标版本码 **10019**。正式发布与下载状态以版本页及公开回执为准。
 
