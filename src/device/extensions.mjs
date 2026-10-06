@@ -4,7 +4,7 @@ import { mkdir, lstat, realpath } from 'node:fs/promises'
 import YAML from 'yaml'
 import { loadConfig } from '../config/load-config.mjs'
 import { updateDeviceSettings } from './model-settings.mjs'
-import { resolveManagedMcpConfig, managedMcpStore, installPlugin, managePlugin } from '../kernel/index.mjs'
+import { resolveManagedMcpConfig, managedMcpStore, installRemotePlugin, managePlugin } from '../kernel/index.mjs'
 import { userRootDir } from '../storage/paths.mjs'
 import { writePrivateFile } from '../storage/private-file.mjs'
 import { ProtocolError } from '../protocol/index.mjs'
@@ -86,7 +86,7 @@ export class DeviceExtensions {
           if (url.username || url.password || url.search || url.hash) fail('仓库地址不能包含账号、密钥或查询参数。')
           if (!/^[0-9a-f]{40}$/i.test(p.revision || '')) fail('请填写仓库的完整提交编号，以固定插件版本。')
         }
-        result = { ...await installPlugin({ name, source: p.source, revision: p.revision }), source: p.source, revision: p.revision || null }
+        result = { ...await installRemotePlugin({ name, source: p.source, revision: p.revision }), source: p.source, revision: p.revision || null }
       } else if (p.action === 'plugin.manage') {
         if (!['inspect', 'enable', 'disable', 'approve', 'remove', 'update'].includes(p.operation)) fail('插件操作无效。')
         result = await managePlugin(name, p.operation, { confirmHash: p.confirmHash })

@@ -9,7 +9,8 @@ import { acquireProcessLock } from '../../storage/process-lock.mjs'
 import { inspectPluginContent, readPluginLock, writePluginLock, verifyManagedPlugin, publishPluginContent } from './integrity.mjs'
 
 const run = promisify(execFile)
-const pluginName = name => { if (!/^[a-z0-9][a-z0-9_-]{0,79}$/.test(name)) throw new Error('Plugin name must use lowercase letters, numbers, - or _'); return name }
+const pluginName = name => { if (typeof name !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,79}$/.test(name)) throw new Error('Plugin name must use lowercase letters, numbers, - or _'); return path.basename(name) }
+const remoteSource = source => typeof source === 'string' && (source.startsWith('npm:') || /^https:\/\/.+\.git$/.test(source))
 async function rejectLinks(dir) {
   for (const item of await readdir(dir, { withFileTypes: true })) {
     if (item.name === '.git') continue
@@ -18,7 +19,19 @@ async function rejectLinks(dir) {
     if (info.isDirectory()) await rejectLinks(target)
   }
 }
+/** Remote clients can install pinned registry/repository packages only. Local
+ * paths are a separate argument populated exclusively by the explicit CLI API. */
+export async function installRemotePlugin({ name, source, revision, update = false }) {
+  if (!remoteSource(source)) throw new Error('Remote plugin installation requires a pinned npm package or HTTPS .git repository')
+  return installPreparedPlugin({ name, source, revision, update }, null)
+}
 export async function installPlugin({ name, source, revision, update = false }) {
+  if (typeof source !== 'string' || !source.trim()) throw new Error('Plugin source is required')
+  if (remoteSource(source)) return installRemotePlugin({ name, source, revision, update })
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(source)) throw new Error('Unsupported plugin URL; use a pinned npm package or credential-free HTTPS Git URL')
+  return installPreparedPlugin({ name, source, revision, update }, source)
+}
+async function installPreparedPlugin({ name, source, revision, update }, localSource) {
   name = pluginName(name)
   if (typeof source !== 'string' || !source.trim()) throw new Error('Plugin source is required')
   const root = path.join(userRootDir(), 'plugins')
@@ -46,11 +59,12 @@ export async function installPlugin({ name, source, revision, update = false }) 
       await run('git', [...safeGit, 'checkout', '--detach', revision], { cwd: payload, env, timeout: 120000 })
       await rm(path.join(payload, '.git'), { recursive: true, force: true })
     } else {
-      if (/^[a-z][a-z0-9+.-]*:\/\//i.test(source)) throw new Error('Unsupported plugin URL; use a pinned npm package or credential-free HTTPS Git URL')
-      if ((await lstat(path.resolve(source))).isSymbolicLink()) throw new Error('Portable plugin source cannot use symbolic links')
-      source = await realpath(path.resolve(source))
-      await rejectLinks(path.resolve(source))
-      await cp(path.resolve(source), payload, { recursive: true, filter: src => path.basename(src) !== '.git' })
+      if (typeof localSource !== 'string') throw new Error('Local plugin source was not explicitly authorized')
+      if ((await lstat(path.resolve(localSource))).isSymbolicLink()) throw new Error('Portable plugin source cannot use symbolic links')
+      const directory = await realpath(path.resolve(localSource))
+      source = directory
+      await rejectLinks(directory)
+      await cp(directory, payload, { recursive: true, filter: src => path.basename(src) !== '.git' })
     }
     await rejectLinks(payload)
     let manifest, manifestFile
@@ -90,6 +104,7 @@ export async function installPlugin({ name, source, revision, update = false }) 
 }
 /** @param {string} name @param {string} action @param {{source?: string, revision?: string, confirmHash?: string}} [options] */
 export async function managePlugin(name, action, options = {}) {
+  name = pluginName(name)
   if (action === 'update') return managePluginUnlocked(name, action, options)
   const lock = await acquireProcessLock(path.join(userRootDir(), 'plugin-locks', `${pluginName(name)}.install.lock`))
   try { return await managePluginUnlocked(name, action, options) } finally { await lock.release() }
