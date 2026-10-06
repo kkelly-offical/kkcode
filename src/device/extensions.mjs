@@ -45,6 +45,7 @@ export class DeviceExtensions {
     service.configurationUpdating = true
     try {
       const name = p.action?.startsWith('mcp.') ? mcpNameOf(p.name) : nameOf(p.name)
+      if (p.action?.startsWith('plugin.') && name !== name.toLowerCase()) fail('插件名称请使用小写字母、数字、短横线或下划线。')
       if (p.action === 'mcp.save') {
         const source = (await loadConfig(service.cwd)).config.mcp?.servers?.[name]
         await kernel.bootExtensions()
@@ -95,7 +96,11 @@ export class DeviceExtensions {
         let metadata
         try { metadata = header && YAML.parse(header[1], { maxAliasCount: 20 }) } catch { fail('技能头部格式无效。') }
         if (!metadata || metadata.name !== name || typeof metadata.description !== 'string' || !metadata.description.trim()) fail('技能头部的 name 必须与名称一致，并填写 description。')
-        const root = path.join(userRootDir(), 'skills'), directory = path.join(root, name)
+        // Skill directories have a stricter naming boundary than MCP identifiers
+        // (which can include plugin/name). Revalidate at the filesystem boundary.
+        const skillName = nameOf(p.name)
+        const root = path.join(userRootDir(), 'skills'), directory = path.join(root, path.basename(skillName))
+        if (path.dirname(directory) !== path.resolve(root)) fail('技能目录必须直接位于用户技能目录下。')
         await mkdir(root, { recursive: true, mode: 0o700 })
         if ((await lstat(root)).isSymbolicLink()) fail('技能目录不能是符号链接。')
         try { await mkdir(directory, { mode: 0o700 }) } catch (error) { if (error.code === 'EEXIST') fail('该技能名称已经存在，请换一个名称，避免覆盖原有技能。'); throw error }

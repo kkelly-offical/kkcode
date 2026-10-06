@@ -30,5 +30,10 @@ test('owner-managed MCP credentials are encrypted and bound to the connection; b
     service.configurationUpdating = false
     await call('extensions.manage', { action: 'mcp.toggle', name: 'design', enabled: false })
     assert.equal((await call('extensions.catalog')).mcp[0].enabled, false)
+    for (const name of ['../outside', 'plugin/skill', '..', 'C:\\escape', '__proto__']) {
+      await assert.rejects(call('extensions.manage', { action: 'skill.save', name, content: `---\nname: ${name}\ndescription: unsafe path\n---\nBody` }), { code: 'extension_input' })
+    }
+    await call('extensions.manage', { action: 'skill.save', name: 'safe-skill', content: '---\nname: safe-skill\ndescription: Imported fixture\n---\nPreserve the user scope.' })
+    assert.match(await readFile(path.join(process.env.KKCODE_HOME, 'skills', 'safe-skill', 'SKILL.md'), 'utf8'), /Preserve the user scope/)
   } finally { await service.close(); if(previous === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = previous; await rm(root, { recursive: true, force: true }) }
 })
