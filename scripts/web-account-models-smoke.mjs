@@ -18,9 +18,8 @@ await writeFile(path.join(process.env.KKCODE_HOME, 'config.json'), JSON.stringif
 const service = await new DeviceService({ cwd: root, roots: [root] }).initialize(), app = Fastify(), store = new MemoryStore()
 const rpc = (method, params = {}) => service.request({ id: randomUUID(), method, params }, { id: 'local', client: 'template-fixture' })
 registerAccountModels({ app, store, origin: 'https://fixture.invalid', encryptionKey: Buffer.alloc(32, 17).toString('base64'), authenticate: async () => ({ account: { id: 'fixture-owner' } }) })
-app.post('/fixture/rpc', req => rpc(req.body.method, req.body.params))
 const bundle = await build({ stdin: { contents: `import React from 'react'; import {createRoot} from 'react-dom/client'; import {AccountModels} from './apps/web/src/AccountModels.tsx';
-  const rpc=async(method,params)=>{const r=await fetch('/fixture/rpc',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({method,params})});if(!r.ok)throw new Error('Device settings rejected');return r.json()};
+  const rpc=(method,params)=>window.fixtureSettings({method,params});
   createRoot(document.getElementById('root')).render(<AccountModels rpc={rpc} onSettings={()=>{}}/>);`, loader: 'tsx', resolveDir: process.cwd() }, bundle: true, write: false, format: 'iife' })
 app.get('/', (_req, reply) => reply.type('text/html').send('<!doctype html><html lang="zh"><meta charset="utf-8"><div id="root"></div><script src="/fixture.js"></script></html>'))
 app.get('/fixture.js', (_req, reply) => reply.type('application/javascript').send(bundle.outputFiles[0].text))
@@ -29,6 +28,13 @@ let browser
 try {
   browser = await chromium.launch({ headless: true, ...(process.env.KKCODE_CHROMIUM ? { executablePath: process.env.KKCODE_CHROMIUM } : {}) })
   const page = await browser.newPage(), errors = []
+  // Bind only the settings operations needed by this component to this page;
+  // do not expose the device's general RPC interface as an HTTP fixture route.
+  await page.exposeFunction('fixtureSettings', ({ method, params }) => {
+    if (method === 'settings.get') return rpc('settings.get')
+    if (method === 'settings.update' && Object.keys(params?.config || {}).join() === 'provider') return rpc('settings.update', { config: { provider: params.config.provider } })
+    throw new Error('Unexpected template fixture operation')
+  })
   page.on('pageerror', error => errors.push(error.message))
   await page.goto(origin)
   await page.getByRole('button', { name: '＋ 添加账号模板', exact: true }).click()
