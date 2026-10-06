@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { access, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, readFile, readdir, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -11,7 +11,7 @@ const root = path.resolve('.'), output = path.join(root, 'test-results/windows-r
 const { version } = JSON.parse(await readFile('package.json', 'utf8'))
 const installer = path.join(output, `kkcode-windows-${version}-x64-setup.exe`)
 await access(installer)
-const temporary = await mkdtemp(path.join(tmpdir(), 'kkcode-windows-'))
+const temporary = await realpath(await mkdtemp(path.join(tmpdir(), 'kkcode-windows-')))
 const installed = path.join(temporary, 'app')
 function run(file, args) {
   const result = spawnSync(file, args, { encoding: 'utf8', timeout: 180000, windowsHide: true })

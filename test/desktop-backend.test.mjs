@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { fork } from 'node:child_process'
-import { mkdtemp, mkdir, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 
 test('desktop backend pairs locally, authorizes only a selected folder, and shuts down cleanly', { timeout: 40000 }, async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), 'kkcode-desktop-'))
+  const directory = await realpath(await mkdtemp(path.join(tmpdir(), 'kkcode-desktop-')))
   const home = path.join(directory, 'private'), workspace = path.join(directory, 'project')
   await mkdir(workspace)
   const root = fileURLToPath(new URL('../', import.meta.url))
