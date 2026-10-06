@@ -1,9 +1,9 @@
 # 能力与边界
 
-[文档导航](README.md) · 当前稳定版：1.0.9 · [发行状态](versions.md)
+[文档导航](README.md) · 当前稳定版：1.0.12 · [发行状态](versions.md)
 
 “有实现”“工程回归通过”“真实模型完成任务”“生产部署验收”不是同一件事。
-本页说明当前接口和使用边界；公开稳定版为1.0.9，界面增强见[1.0.8实施记录](implementation-1.0.8.md)，运行时连续工作改进见[1.0.7记录](implementation-1.0.7.md)。
+本页说明当前接口和使用边界；公开稳定版为1.0.12，界面与 Windows 客户端见[本轮实施记录](implementation-1.0.12.md)，运行时连续工作改进见[1.0.7记录](implementation-1.0.7.md)。
 R16已有多项自动检查通过，同时发现产品收尾与外部评测器缺陷；人工质量审阅与新版本真实模型复测仍待完成。
 
 ## 产品能力
@@ -12,13 +12,15 @@ R16已有多项自动检查通过，同时发现产品收尾与外部评测器�
 | --- | --- | --- |
 | 日常编码与本地工作 | 文件／日志检查、编辑、搜索、Shell、测试、仓库辅助 | 默认Agent；不自动成为桌面远控或完整IDE；[模式](modes-and-permissions.md) |
 | 多模型 | Base URL目录发现、协议适配、模型切换和职责路由 | 目录、型号、计费与多模态取决于实际渠道；[配置](configuration.md) |
-| 多端协作 | 本地／Host Web、OIDC/SSO中继、Android；设备上的会话、审批和配置 | 网关可信但非零知识中继；Android直连SSH，Web不代连；[部署](enterprise-deployment.md) |
+| 多端协作 | 本地／Host Web、Windows x64 客户端、OIDC/SSO中继、Android；设备上的会话、审批和配置 | 网关可信但非零知识中继；Android直连SSH，Web不代连；[部署](enterprise-deployment.md) |
 | 长任务与工作树 | Ultra、后台子任务、独立工作树、受控成果回收 | 不自动覆盖用户工作、合并PR或发布；[严格任务](trusted-runs.md) |
 | 上下文与证据 | 压缩、完整请求预算、大输出归档、受权限管理的读取和检索 | 不恢复此前已经丢弃的原文；[上下文](context-and-harness.md) |
 | 可恢复严格执行 | 宿主合同、持久账本、未知动作核查、独立验收 | 不是普通聊天的默认保护级别；[隔离](strict-isolation.md) |
 | 项目／个人记忆 | 带来源的经验、修正、禁用、删除与确认 | 跨项目个人偏好需要确认；[记忆](scoped-memory.md) |
 | 开发工具 | 隔离Browser、本机授权Bridge、Office/PDF、LSP | 引擎／固定镜像单独准备；[宿主服务](host-services.md) |
 | 扩展与SDK | MCP/ACP、Skills、插件内容锁、分域SDK | 仅支持声明的协议子集；插件信任不等于OS隔离；[协议](protocol-extensions.md) |
+
+Windows 首版支持本机工作区与 HTTPS 网关，使用说明见[客户端指南](windows-client.md)。安装器未配置 Authenticode 签名；macOS / iOS 应用暂缓。
 
 ## 尚未补齐的验证
 

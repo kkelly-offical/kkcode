@@ -1,16 +1,16 @@
 # KK Code 文档
 
-当前文档适用公开稳定版 **1.0.11 / Android10018**，见[版本与升级](versions.md)。
-研发中的 [1.0.12](release-1.0.12.md) 包含 [Windows 客户端](windows-client.md) 与 Android / Web 体验优化；检查进度见[实施清单](implementation-1.0.12.md)。
-当前稳定版已发布[1.0.11子代理协作与交互增强正式版](release-1.0.11.md)，见[逐项实施记录](implementation-1.0.11.md)；上一稳定版见[1.0.10记录](release-1.0.10.md)。
+当前文档适用公开稳定版 **1.0.12 / Android10019**，见[版本与升级](versions.md)。
+[Windows 客户端](windows-client.md) 与 Android / Web 体验优化已随 [1.0.12](release-1.0.12.md) 正式发布；检查事实见[实施清单](implementation-1.0.12.md)。
+当前稳定版为[1.0.12 用户体验与 Windows 正式版](release-1.0.12.md)；上一稳定版为[1.0.11](release-1.0.11.md)。
 已发布渠道、Android版本码与升级入口只在[版本与升级](versions.md)集中维护。
 历史材料保留原始版本和证据，不作为当前使用说明。
 
-本轮 **1.0.11** 已完成并发布：[五项开发清单与检查](implementation-1.0.11.md)。
+本轮 **1.0.12** 已完成并发布：[开发清单与检查](implementation-1.0.12.md)。
 
-[1.0.11发行范围](release-1.0.11.md) · 公开产物与部署状态以版本页为准。
+[1.0.12发行范围](release-1.0.12.md) · 公开产物与部署状态以版本页为准。
 
-已发布[1.0.11独立Web显示补丁](web-display-1.0.11.md) · [安装与回退](web-display-install.md)，npm和安卓版本保持。
+历史独立补丁：[1.0.11 Web 显示版](web-display-1.0.11.md) · [安装与回退](web-display-install.md)，该补丁自身不改变 CLI 或 Android 版本。
 
 ## 开始使用
 
@@ -53,7 +53,7 @@ App、设备CLI和网关分别升级。公共网关镜像发布暂缓，继续�
 
 - [分域SDK总览](sdk-guide.md) · [headless JSONL契约](headless-jsonl-contract.md)
 - [配置字段参考](config.example.yaml) · [贡献与验证](contributing.md)
-- [路线图与Issues](ROADMAP.md) · [1.0.11迭代范围与边界](release-1.0.11.md)
+- [路线图与Issues](ROADMAP.md) · [1.0.12迭代范围与边界](release-1.0.12.md)
 
 ## 历史与发行证据
 
