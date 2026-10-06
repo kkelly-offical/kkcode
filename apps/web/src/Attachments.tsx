@@ -2,6 +2,7 @@ import React, { useRef, useState } from "react";
 import { Icon } from "./Icon";
 
 export type Attachment = { id: string; name: string; mediaType: string; size: number; expiresAt?: number; preview?: string };
+export type AttachmentUploadBatch = { sessionId?: string };
 export const attachmentAccept = ".pdf,.docx,.xlsx,.pptx,image/png,image/jpeg,image/gif,image/webp,audio/wav,audio/mpeg,video/mp4,video/quicktime,video/webm,video/mpeg,.wav,.mp3,.mp4,.mov,.webm,.mpeg,text/*,application/json,application/xml,application/yaml,.yaml,.yml,.md,.csv,.log,.ts,.tsx,.js,.jsx,.mjs,.py,.kt,.java,.go,.rs,.c,.h,.cpp,.css,.html";
 
 export function readAttachment(file: File): Promise<string> {

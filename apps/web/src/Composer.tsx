@@ -10,7 +10,7 @@ import {
   capabilityLabel,
 } from "./models.mjs";
 import { MODE_OPTIONS, modeLabel } from "./modes.mjs";
-import type { Attachment } from "./Attachments";
+import type { Attachment, AttachmentUploadBatch } from "./Attachments";
 import { APP_VERSION } from "./version";
 
 type Item = Record<string, any>;
@@ -116,7 +116,7 @@ export function Composer({
   uploading?: boolean;
   attachments?: Attachment[];
   attachmentScope: string;
-  onUploadAttachments: (files: File[]) => Promise<void>;
+  onUploadAttachments: (files: File[], batch?: AttachmentUploadBatch) => Promise<void>;
   onRemoveAttachment: (id: string) => Promise<void>;
   branch?: string;
 }) {

@@ -1,5 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import childProcess from "node:child_process"
+import { syncBuiltinESMExports } from "node:module"
 import { createStdioMcpClient } from "../src/kernel/mcp/client-stdio.mjs"
 
 function nodeCommand(script) {
@@ -143,6 +145,46 @@ test("stdio mcp client server_crash classification", async (t) => {
   })
   t.after(() => client.shutdown())
   await assert.rejects(client.listTools(), (error) => error.reason === "server_crash" || error.reason === "spawn_failed")
+})
+
+test('an asynchronous input-pipe failure rejects the in-flight request and closes its peer', async t => {
+  const script = `
+    const readline = require('node:readline');
+    readline.createInterface({input:process.stdin}).on('line', line => {
+      const message = JSON.parse(line);
+      if (message.method === 'initialize') process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:message.id,result:{protocolVersion:'2024-11-05',capabilities:{}}})+'\\n');
+      if (message.method === 'tools/list') process.stderr.write('fixture-request-received');
+    });
+    setInterval(() => {}, 1000);
+  `
+  // Use a real peer and wait until its request is in flight. Closing fd 0 in
+  // the peer does not close Node's duplicated Windows pipe consistently.
+  // Destroying the parent's actual Writable with EPIPE delivers the same
+  // asynchronous stream error on every OS, without changing the client API.
+  const originalSpawn = childProcess.spawn
+  let injected = false, exited = false
+  const spawn = t.mock.method(childProcess, 'spawn', (...args) => {
+    const peer = originalSpawn(...args)
+    let stderr = ''
+    peer.once('close', () => { exited = true })
+    peer.stderr.on('data', chunk => {
+      stderr += chunk
+      if (!injected && stderr.includes('fixture-request-received')) {
+        injected = true
+        queueMicrotask(() => peer.stdin.destroy(Object.assign(new Error('fixture input pipe closed'), {code:'EPIPE'})))
+      }
+    })
+    return peer
+  })
+  syncBuiltinESMExports()
+  const client = createStdioMcpClient('closed-input', { type: 'stdio', command: nodeCommand(script), env: fixtureEnvironment, shell: false, framing: 'newline', timeout_ms: 5000, shutdown_timeout_ms: 100 })
+  try {
+    await assert.rejects(client.listTools(), error => error.reason === 'server_crash')
+    assert.equal(injected, true)
+    assert.equal(spawn.mock.calls.length, 1, 'a failed in-flight request is not automatically replayed')
+    await client.shutdown()
+    assert.equal(exited, true, 'the failed owned peer is reaped')
+  } finally { await client.shutdown(); t.mock.restoreAll(); syncBuiltinESMExports() }
 })
 
 test("stdio mcp health reports spawn_failed", async (t) => {

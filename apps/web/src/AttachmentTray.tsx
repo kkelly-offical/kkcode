@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Attachment, attachmentAccept } from './Attachments';
+import { Attachment, attachmentAccept, type AttachmentUploadBatch } from './Attachments';
 import { Icon } from './Icon';
 
 export function AttachmentTray({ items, scope, disabled, uploading, onUpload, onRemove, children }: {
   scope: string;
   items: Attachment[]; disabled: boolean; uploading: boolean;
-  onUpload: (files: File[]) => Promise<void>; onRemove: (id: string) => Promise<void>;
+  onUpload: (files: File[], batch?: AttachmentUploadBatch) => Promise<void>; onRemove: (id: string) => Promise<void>;
   children: React.ReactNode;
 }) {
   const picker = useRef<HTMLInputElement>(null), lock = useRef(false);
@@ -24,10 +24,11 @@ export function AttachmentTray({ items, scope, disabled, uploading, onUpload, on
     if (!files.length || disabled || uploading || lock.current) return;
     if (files.length + items.length > 8) { setError('每条消息最多添加 8 个附件'); return; }
     lock.current = true; workScope.current = scope; setError(''); setPending(files);
-    const failures: File[] = [];
+    const failures: File[] = [], batch: AttachmentUploadBatch = {};
     try {
       for (const file of files) {
-        try { await onUpload([file]); }
+        if (workScope.current !== currentScope.current) break;
+        try { await onUpload([file], batch); }
         catch (cause: any) { failures.push(file); if (workScope.current === currentScope.current) setError(`${file.name}：${cause.message}`); }
         if (workScope.current === currentScope.current) setPending(old => old.filter(item => item !== file));
       }

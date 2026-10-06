@@ -37,7 +37,7 @@ import { ProjectPicker } from './ProjectPicker';
 import { projectName, projectSessions } from './projects.mjs';
 import { HistoryNavigator } from './HistoryNavigator';
 import { initializeDesktopPreferences, persistDesktopPreferences } from './desktop';
-import { attachmentMediaType, readAttachment, type Attachment } from "./Attachments";
+import { attachmentMediaType, readAttachment, type Attachment, type AttachmentUploadBatch } from "./Attachments";
 
 type Item = Record<string, any>;
 function App() {
@@ -553,7 +553,7 @@ function App() {
     finally { setLoadingHistory(false); }
   }
   async function ensureSession(): Promise<string> { return selected || await createSession(); }
-  async function uploadAttachments(files: File[]) {
+  async function uploadAttachments(files: File[], batch?: AttachmentUploadBatch) {
     if (!canManage || uploading) return;
     if (files.length + attachments.length > 8) throw new Error("每条消息最多添加 8 个附件");
     for (const file of files) {
@@ -562,7 +562,8 @@ function App() {
     }
     setUploading(true);
     try {
-      const id = await ensureSession(), key = `${deviceId}:${id}`;
+      const id = batch?.sessionId || await ensureSession(), key = `${deviceId}:${id}`;
+      if (batch) batch.sessionId = id;
       for (const file of files) {
         const mediaType = attachmentMediaType(file), data = await readAttachment(file);
         const attachment = await rpc("attachments.upload", { sessionId: id, name: file.name, mediaType, data });
