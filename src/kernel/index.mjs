@@ -29,6 +29,7 @@
 export { createKernel } from "./kernel.mjs"
 export { runtimeCwd } from './core/runtime-context.mjs'
 export { installPlugin, managePlugin } from './plugin/manager.mjs'
+export { resolveManagedMcpConfig, managedMcpStore } from './mcp/managed-config.mjs'
 
 // Experimental host-owned persistence factories for sdk/storage and local
 // diagnostics. These do not launch agents or grant remote/model authority.

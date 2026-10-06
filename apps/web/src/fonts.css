@@ -1,0 +1,15 @@
+@font-face { font-family: 'KK Mono'; src: url('./fonts/kk-mono.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face {
+  font-family: 'KK Sans';
+  src: url('./fonts/kk-sans.woff2') format('woff2');
+  font-weight: 250 900;
+  font-style: normal;
+  font-display: swap;
+}
+:root { --font-ui: 'KK Sans', 'Microsoft YaHei', system-ui, sans-serif; }
+html, body, button, input, select, textarea, .experience, .message, .markdown, .sheet, .settings, .chat-header, .composer, .session {
+  font-family: var(--font-ui);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+.markdown :not(pre) > code, pre, code, .diff-code { font-family: 'KK Mono', 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace; font-variant-ligatures: none; }

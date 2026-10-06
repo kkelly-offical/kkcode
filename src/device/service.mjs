@@ -1,3 +1,4 @@
+import { DeviceExtensions } from './extensions.mjs'
 import { randomUUID, createHash } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
@@ -5,7 +6,6 @@ import { EventEmitter } from 'node:events'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { mkdir, readFile } from 'node:fs/promises'
 import { createKernel, getSession, listSessions, newSessionId, resolveModelCapabilities, resolveProviderConnection, assertMediaInput, normalizeImageBlock, rewindLastTurn, normalizeTitle, modeIdFromLegacy, resolveSessionMode, laneOf, approvalOf } from '../kernel/index.mjs'
-import { loadConfig } from '../config/load-config.mjs'
 import { redactConfig } from '../config/redact.mjs'
 import { userRootDir } from '../storage/paths.mjs'
 import { writePrivateFile } from '../storage/private-file.mjs'
@@ -263,7 +263,7 @@ export class DeviceService extends EventEmitter {
     validateRequest(request); this.assertOwner(principal)
     if (this.closed) throw new ProtocolError('device_offline', 'Device is closing', 503)
     const { id, method, params = {} } = request
-    const mutating = method !== 'subagents.list' && !ARTIFACT_READ_METHODS.includes(method) && !MEMORY_READ_METHODS.includes(method) && !RUN_READ_METHODS.includes(method) && !TODO_READ_METHODS.includes(method) && !/^(status|folders\.list|files\.read|media\.preview|sessions\.(list|get)|events\.list|commands\.list|settings\.get|extensions\.list|models\.discover|attachments\.list|branches\.list|worktrees\.list|profile\.get)$/.test(method)
+    const mutating = method !== 'subagents.list' && !ARTIFACT_READ_METHODS.includes(method) && !MEMORY_READ_METHODS.includes(method) && !RUN_READ_METHODS.includes(method) && !TODO_READ_METHODS.includes(method) && !/^(status|folders\.list|files\.read|media\.preview|sessions\.(list|get)|events\.list|commands\.list|settings\.get|extensions\.(list|catalog|auth\.status)|models\.discover|attachments\.list|branches\.list|worktrees\.list|profile\.get)$/.test(method)
     const key = `${principal.id}:${id}`, hash = createHash('sha256').update(JSON.stringify({ method, params })).digest('hex')
     if (mutating && this.ledger.get(key)) {
       const prior = this.ledger.get(key)
@@ -279,7 +279,7 @@ export class DeviceService extends EventEmitter {
       if (mutating) await this.ledger.reserve(key, hash)
       try {
         const result = await this.dispatch(method, params, principal)
-        if (mutating) await this.ledger.complete(key, result, { omitResult: method.startsWith('memory.') })
+        if (mutating) await this.ledger.complete(key, result, { omitResult: method.startsWith('memory.') || method.startsWith('extensions.auth.') && method !== 'extensions.auth.start' })
         return result
       } catch (error) { if (mutating) await this.ledger.fail(key, error); throw error }
     })()
@@ -288,8 +288,12 @@ export class DeviceService extends EventEmitter {
   }
   async dispatch(method, p, principal) {
     const sessionId = p.sessionId
+    if (['extensions.catalog', 'extensions.manage', 'extensions.auth.start', 'extensions.auth.status', 'extensions.auth.complete', 'extensions.auth.cancel', 'extensions.auth.logout'].includes(method)) {
+      this.extensionManager ||= new DeviceExtensions(this)
+      return this.extensionManager.dispatch(method, p, principal)
+    }
     if ((this.workspaceMutation || this.configurationUpdating) && ['sessions.create', 'sessions.configure', 'settings.update', 'extensions.reload', 'models.discover'].includes(method)) throw new ProtocolError('workspace_busy', 'Wait for device maintenance to finish', 409)
-    if (method === 'status') return { schemaVersion: PROTOCOL_VERSION, features: [ARTIFACT_FEATURE, MEMORY_FEATURE, RUN_FEATURE, TODO_FEATURE, SUBAGENT_FEATURE, 'turn-steering.v1'], device: this.metadata, roots: this.roots, active: [...this.turns.keys()], retention: { replay: this.replay.stats(), requests: this.ledger.stats() } }
+    if (method === 'status') return { schemaVersion: PROTOCOL_VERSION, features: [ARTIFACT_FEATURE, MEMORY_FEATURE, RUN_FEATURE, TODO_FEATURE, SUBAGENT_FEATURE, 'turn-steering.v1', 'extensions.manage.v1', 'attachments.documents.v1'], device: this.metadata, roots: this.roots, active: [...this.turns.keys()], retention: { replay: this.replay.stats(), requests: this.ledger.stats() } }
     if (method.startsWith('artifacts.')) return this.artifacts.dispatch(method, p, principal)
     if (method.startsWith('memory.')) return this.memory.dispatch(method, p, principal)
     if (method.startsWith('runs.')) return this.runs.dispatch(method, p, principal)
@@ -654,6 +658,7 @@ export class DeviceService extends EventEmitter {
   close() {
     if (this.closePromise) return this.closePromise
     this.closed = true
+    this.extensionManager?.close()
     this.closePromise = (async () => {
     try {
     for (const entry of this.turns.values()) entry.controller.abort()

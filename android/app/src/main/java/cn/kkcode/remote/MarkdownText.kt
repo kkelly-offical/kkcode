@@ -116,6 +116,8 @@ internal fun markdownBlocks(markwon: Markwon, text: String): List<MarkdownBlock>
     Column(modifier) {
         blocks.forEach { block ->
             if(block.content != null) AndroidView(factory = { ctx -> TextView(ctx).apply {
+                typeface = androidx.core.content.res.ResourcesCompat.getFont(ctx, R.font.kk_sans)
+                fontVariationSettings = "'wght' 400"
                 textSize = 15f; setLineSpacing(5f, 1.12f); setTextIsSelectable(true)
             } }, update = { view -> view.setTextColor(color); view.setLinkTextColor(linkColor); setSourceSpans(view, block.content) }, modifier = Modifier.fillMaxWidth())
             else AndroidView(factory = { ctx -> TableLayout(ctx) }, update = { table ->
@@ -126,6 +128,8 @@ internal fun markdownBlocks(markwon: Markwon, text: String): List<MarkdownBlock>
                     val row = TableRow(table.context)
                     cells.forEach { cell ->
                         val view = TextView(table.context).apply {
+                            typeface = androidx.core.content.res.ResourcesCompat.getFont(table.context, R.font.kk_sans)
+                            fontVariationSettings = "'wght' 400"
                             textSize = 14f; setTextColor(color); setLinkTextColor(linkColor); setTextIsSelectable(true)
                             minWidth = (120 * density).toInt(); maxWidth = (280 * density).toInt()
                             setPadding((12 * density).toInt(), (10 * density).toInt(), (12 * density).toInt(), (10 * density).toInt())

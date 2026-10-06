@@ -1,8 +1,8 @@
 import React, { useRef, useState } from "react";
 import { Icon } from "./Icon";
 
-export type Attachment = { id: string; name: string; mediaType: string; size: number; expiresAt?: number };
-export const attachmentAccept = "image/png,image/jpeg,image/gif,image/webp,audio/wav,audio/mpeg,video/mp4,video/quicktime,video/webm,video/mpeg,.wav,.mp3,.mp4,.mov,.webm,.mpeg,text/*,application/json,application/xml,application/yaml,.yaml,.yml,.md,.csv,.log,.ts,.tsx,.js,.jsx,.mjs,.py,.kt,.java,.go,.rs,.c,.h,.cpp,.css,.html";
+export type Attachment = { id: string; name: string; mediaType: string; size: number; expiresAt?: number; preview?: string };
+export const attachmentAccept = ".pdf,.docx,.xlsx,.pptx,image/png,image/jpeg,image/gif,image/webp,audio/wav,audio/mpeg,video/mp4,video/quicktime,video/webm,video/mpeg,.wav,.mp3,.mp4,.mov,.webm,.mpeg,text/*,application/json,application/xml,application/yaml,.yaml,.yml,.md,.csv,.log,.ts,.tsx,.js,.jsx,.mjs,.py,.kt,.java,.go,.rs,.c,.h,.cpp,.css,.html";
 
 export function readAttachment(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -14,7 +14,7 @@ export function readAttachment(file: File): Promise<string> {
 }
 
 export function attachmentMediaType(file: File) {
-  const media: Record<string, string> = { wav: 'audio/wav', mp3: 'audio/mpeg', mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mpeg: 'video/mpeg', mpg: 'video/mpeg' };
+  const media: Record<string, string> = { pdf: 'application/pdf', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', wav: 'audio/wav', mp3: 'audio/mpeg', mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mpeg: 'video/mpeg', mpg: 'video/mpeg' };
   const extension = file.name.split('.').at(-1)?.toLowerCase() || '';
   if (media[extension]) return media[extension];
   if (/\.(json|jsonl)$/i.test(file.name)) return "application/json";
@@ -37,7 +37,7 @@ export function AttachmentPanel({ items, loading, onUpload, onRemove }: {
     finally { if (input.current) input.current.value = ""; }
   };
   return <>
-    <p className="sheet-note">附件上传到当前设备，点击发送后才交给模型。图片、WAV／MP3 音频及 MP4／MOV／WebM／MPEG 视频每个最多 4 MiB，UTF-8 文本最多 256 KiB；每条消息最多 8 个，暂存最多 24 小时。音视频需要明确支持该类型的 OpenAI 兼容模型渠道；不兼容时会拒绝发送并保留附件。不支持 PDF、可执行文件和凭据文件。</p>
+    <p className="sheet-note">附件上传到当前设备，点击发送后才交给模型。PDF／DOCX／XLSX／PPTX 文档、图片、WAV／MP3 音频及 MP4／MOV／WebM／MPEG 视频每个最多 4 MiB，UTF-8 文本最多 256 KiB；每条消息最多 8 个，暂存最多 24 小时。音视频需要明确支持该类型的 OpenAI 兼容模型渠道；不兼容时会拒绝发送并保留附件。文档提取文字供 Agent 读取；扫描件请使用图片，不执行文档宏。可执行文件和凭据文件不支持上传。</p>
     <input className="file-picker" ref={input} aria-label="选择附件" type="file" accept={attachmentAccept} multiple disabled={loading || items.length >= 8} onChange={event => void upload(Array.from(event.target.files || []))} />
     <div className="attachment-list" aria-label="待发送附件">
       {items.map(item => <div className="attachment-item" key={item.id}>

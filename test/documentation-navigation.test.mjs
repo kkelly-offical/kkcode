@@ -61,14 +61,14 @@ test('active topic guides do not send users back to unreleased hotfix or old dep
   assert.match(await read('docs/media-input.md'), /OpenAI Responses.*input_image/)
 })
 
-test('1.0.12 stable release keeps publication, preview, signing and historical facts distinct', async () => {
+test('1.0.13 candidate preserves verified publication, preview, signing and historical facts', async () => {
   const manifest = await checkReleaseVersions(root)
   const android = await readAndroidReleaseTarget(root)
-  assert.equal(manifest.version, '1.0.12')
+  assert.equal(manifest.version, '1.0.13')
   assert.equal(manifest.channel, 'stable')
   assert.equal(manifest.distTag, 'latest')
   assert.equal(android.version, manifest.version)
-  assert.equal(android.versionCode, 10019)
+  assert.equal(android.versionCode, 10020)
   assert.equal(android.channel, 'stable')
   const readme = await read('README.md'), versions = await read('docs/versions.md')
   assert.match(readme, /当前稳定版本.*1\.0\.12/)

@@ -1,7 +1,7 @@
 import * as oidc from 'openid-client'
 import { gatewayPage as page } from './gateway-page.mjs'
 import { randomBytes, randomInt, createHash, randomUUID } from 'node:crypto'
-import { NATIVE_LOGIN_CAPABILITY, nativeLoginRequest, nativeLoginProof, nativeLoginReturn } from './native-login.mjs'
+import { DESKTOP_LOGIN_CAPABILITY, NATIVE_LOGIN_CAPABILITY, nativeLoginRequest, nativeLoginProof, nativeLoginReturn } from './native-login.mjs'
 
 export const identityHash = value => createHash('sha256').update(String(value || '')).digest('hex')
 const secret = () => randomBytes(32).toString('base64url')
@@ -68,7 +68,7 @@ export function registerIdentity({ app, store, config, origin, issuer, organizat
   async function revokeAccount(accountId) {
     for (const entry of await store.list('identity-session:')) if (entry.accountId === accountId) await revoke(entry.id)
   }
-  app.get('/api/v1/discovery', async () => ({ protocolVersion: '1', gateway: origin, organization, authentication: { deviceAuthorization: '/auth/device', browser: '/auth/start', token: '/auth/token', issuer, nativeLogin: NATIVE_LOGIN_CAPABILITY } }))
+  app.get('/api/v1/discovery', async () => ({ protocolVersion: '1', gateway: origin, organization, authentication: { deviceAuthorization: '/auth/device', browser: '/auth/start', token: '/auth/token', issuer, nativeLogin: NATIVE_LOGIN_CAPABILITY, desktopLogin: DESKTOP_LOGIN_CAPABILITY } }))
   app.post('/auth/device', { config: { rateLimit: { max: 20, timeWindow: '1 minute', keyGenerator: req => req.ip } } }, async req => {
     const native = nativeLoginRequest(req.body)
     const deviceCode = secret(), userCode = String(randomInt(10000000, 100000000))

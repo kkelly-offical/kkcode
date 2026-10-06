@@ -1,3 +1,4 @@
+import { DOCUMENT_TYPES, readDocument } from './document-reader.mjs'
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, mkdir, open, readdir, realpath, unlink } from 'node:fs/promises'
@@ -6,7 +7,7 @@ import { ProtocolError } from '../protocol/index.mjs'
 import { sniffImageMediaType, mediaBlockError } from '../kernel/index.mjs'
 
 export const ATTACHMENT_LIMITS = Object.freeze({
-  imageBytes: 4 * 1024 * 1024, mediaBytes: 4 * 1024 * 1024, textBytes: 256 * 1024,
+  documentBytes: 4 * 1024 * 1024, imageBytes: 4 * 1024 * 1024, mediaBytes: 4 * 1024 * 1024, textBytes: 256 * 1024,
   perTurn: 8, perSessionBytes: 16 * 1024 * 1024,
   deviceBytes: 64 * 1024 * 1024, entries: 256, retentionMs: 24 * 60 * 60 * 1000
 })
@@ -31,8 +32,9 @@ function decodeUpload({ name, mediaType, data }, limits) {
   mediaType = mediaType.toLowerCase().split(';')[0].trim()
   const image = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(mediaType)
   const media = ['audio/wav', 'audio/x-wav', 'audio/mpeg', 'audio/mp3', 'video/mp4', 'video/quicktime', 'video/webm', 'video/mpeg'].includes(mediaType)
-  if (!image && !media && !(/^text\/[a-z0-9.+-]+$/.test(mediaType) || textTypes.has(mediaType))) throw new ProtocolError('attachment_type', 'Upload supported images, WAV/MP3 audio, MP4/MOV/WebM/MPEG video or UTF-8 text')
-  const max = image ? limits.imageBytes : media ? limits.mediaBytes : limits.textBytes
+  const document = DOCUMENT_TYPES.has(mediaType)
+  if (!image && !media && !document && !(/^text\/[a-z0-9.+-]+$/.test(mediaType) || textTypes.has(mediaType))) throw new ProtocolError('attachment_type', 'Upload supported images, PDF/DOCX/XLSX/PPTX documents, WAV/MP3 audio, MP4/MOV/WebM/MPEG video or UTF-8 text')
+  const max = image ? limits.imageBytes : media ? limits.mediaBytes : document ? limits.documentBytes : limits.textBytes
   if (typeof data !== 'string' || !data || data.length > Math.ceil(max / 3) * 4) throw new ProtocolError('attachment_size', `File must contain 1–${max} bytes`, 413)
   if (data.length % 4 || /[^A-Za-z0-9+/=]/.test(data)) throw new ProtocolError('attachment_encoding', 'Attachment data must be canonical base64')
   const bytes = Buffer.from(data, 'base64')
@@ -43,7 +45,7 @@ function decodeUpload({ name, mediaType, data }, limits) {
   } else if (media) {
     const error = mediaBlockError({ type: mediaType.startsWith('audio/') ? 'audio' : 'video', mediaType, data })
     if (error) throw new ProtocolError('attachment_type', error)
-  } else {
+  } else if (!document) {
     let text
     try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) } catch { throw new ProtocolError('attachment_encoding', 'Text attachments must use UTF-8') }
     if (/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(text)) throw new ProtocolError('attachment_type', 'Binary content cannot be uploaded as text')
@@ -113,6 +115,7 @@ export class AttachmentStore {
       let total = 0, sessionBytes = 0
       for (const record of this.records.values()) { total += record.size; if (record.sessionId === input.sessionId) sessionBytes += record.size }
       if (this.records.size >= this.limits.entries || total + decoded.size > this.limits.deviceBytes || sessionBytes + decoded.size > this.limits.perSessionBytes) throw new ProtocolError('attachment_quota', 'Attachment staging is full; remove unused attachments or wait for expiry', 413)
+      if (DOCUMENT_TYPES.has(decoded.mediaType)) await readDocument(decoded.data, decoded.mediaType)
       const now = this.now(), record = { id: randomUUID(), sessionId: input.sessionId, ...decoded, createdAt: now, expiresAt: now + this.limits.retentionMs }
       const file = await open(path.join(this.directory, `${record.id}.json`), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW || 0), 0o600)
       try { await file.writeFile(JSON.stringify(record)); await file.sync() } finally { await file.close() }
@@ -157,7 +160,7 @@ export class AttachmentStore {
           ? { type: 'image', data: record.data, mediaType: record.mediaType }
           : /^(audio|video)\//.test(record.mediaType)
           ? { type: record.mediaType.startsWith('audio/') ? 'audio' : 'video', data: record.data, mediaType: record.mediaType }
-          : { type: 'text', text: Buffer.from(record.data, 'base64').toString('utf8'), attachment: { name: record.name, mediaType: record.mediaType } })
+          : { type: 'text', text: DOCUMENT_TYPES.has(record.mediaType) ? await readDocument(record.data, record.mediaType) : Buffer.from(record.data, 'base64').toString('utf8'), attachment: { name: record.name, mediaType: record.mediaType } })
       }
       for (const id of ids) this.pins.set(id, (this.pins.get(id) || 0) + 1)
       let released = false

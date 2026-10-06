@@ -53,13 +53,13 @@ import kotlinx.coroutines.delay
             alpha = if(mood == "offline") .55f else 1f
         })
         val symbol = when(mood) { "approval" -> "!"; "offline", "stopped" -> "z"; "waiting" -> "···"; "working", "writing" -> if(phase > .5f) "▰" else "▪"; "error" -> "?"; else -> "" }
-        if(symbol.isNotBlank()) Text(symbol, color = tone, fontFamily = FontFamily.Monospace, fontSize = 9.sp, modifier = Modifier.align(Alignment.TopEnd))
+        if(symbol.isNotBlank()) Text(symbol, color = tone, fontFamily = KKMonoFamily, fontSize = 9.sp, modifier = Modifier.align(Alignment.TopEnd))
     }
 }
 
 @Composable internal fun PixelWorkshop() {
     Image(painterResource(R.drawable.pixel_studio), null, Modifier.widthIn(max = 280.dp).fillMaxWidth().aspectRatio(256f / 120f))
-    Text("A LITTLE SPACE FOR BIG IDEAS", fontFamily = FontFamily.Monospace, fontSize = 8.sp, letterSpacing = 1.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 12.dp, bottom = 24.dp))
+    Text("A LITTLE SPACE FOR BIG IDEAS", fontFamily = KKMonoFamily, fontSize = 8.sp, letterSpacing = 1.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 12.dp, bottom = 24.dp))
 }
 
 /** Status is derived from the session; the companion never submits prompts or accepts work. */
@@ -92,7 +92,7 @@ import kotlinx.coroutines.delay
         Row(Modifier.weight(1f).clickable(onClickLabel = "像素伙伴") { show = true }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             if(!compact) { PixelBuddy(32.dp, palette, mood, motion && systemMotion); Spacer(Modifier.width(8.dp)) }
             Column(Modifier.weight(1f)) {
-                if(shortcuts) Text("KIKI / CODE COMPANION", fontFamily = FontFamily.Monospace, fontSize = 7.sp, letterSpacing = .5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                if(shortcuts) Text("KIKI / CODE COMPANION", fontFamily = KKMonoFamily, fontSize = 7.sp, letterSpacing = .5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                 Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Icon(Icons.Outlined.ExpandMore, "像素伙伴", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)

@@ -40,6 +40,30 @@ try {
   })
   assert.equal(security.nodeIntegration, false); assert.equal(security.contextIsolation, true); assert.equal(security.sandbox, true); assert.equal(security.version, version)
   assert.equal(await page.evaluate(() => typeof window.require), 'undefined')
+  await expect(page.getByRole('navigation', { name: '桌面工作区' })).toBeVisible()
+  await app.evaluate(({ Menu, shell }) => {
+    globalThis.fixtureExternalLinks = []
+    const build = Menu.buildFromTemplate.bind(Menu)
+    globalThis.fixtureOriginalMenuBuild = build
+    globalThis.fixtureOriginalOpenExternal = shell.openExternal
+    shell.openExternal = async url => { globalThis.fixtureExternalLinks.push(url) }
+    Menu.buildFromTemplate = template => {
+      if (template.some(item => item.label === '在系统浏览器中打开链接')) { globalThis.fixtureLinkMenu = template; return { popup() {} } }
+      return build(template)
+    }
+  })
+  await page.evaluate(() => { const a = document.createElement('a'); a.id = 'native-link-fixture'; a.href = 'https://example.invalid/auth'; a.textContent = '授权链接测试'; a.style = 'position:fixed;top:10px;right:10px;z-index:99999'; document.body.append(a) })
+  await page.locator('#native-link-fixture').click({ button: 'right' })
+  const linkMenu = await app.evaluate(async ({ Menu, shell, clipboard }) => {
+    const items = globalThis.fixtureLinkMenu
+    items.find(item => item.label === '在系统浏览器中打开链接').click()
+    items.find(item => item.label === '复制链接地址').click()
+    const result = { links: globalThis.fixtureExternalLinks, copied: clipboard.readText() }
+    Menu.buildFromTemplate = globalThis.fixtureOriginalMenuBuild; shell.openExternal = globalThis.fixtureOriginalOpenExternal
+    return result
+  })
+  assert.deepEqual(linkMenu, { links: ['https://example.invalid/auth'], copied: 'https://example.invalid/auth' })
+  await page.locator('#native-link-fixture').evaluate(element => element.remove())
   data = security.data; marker = path.join(data, 'upgrade-retention-smoke.txt')
   await writeFile(marker, 'retain-user-state')
   const project = path.join(temporary, 'project')
@@ -62,6 +86,12 @@ try {
   await page.waitForURL(gateway.origin + '/')
   await expect(page.locator('.app')).toBeVisible()
   assert.equal(await page.evaluate(() => typeof window.kkcodeDesktop), 'undefined')
+  assert.equal(await page.evaluate(() => typeof window.kkcodeDesktopLogin), 'object')
+  const loginState = 'd'.repeat(43)
+  await page.evaluate(state => window.kkcodeDesktopLogin.prepare(state), loginState)
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].hide())
+  run('cmd.exe', ['/c', 'start', '', `cn.kkcode.desktop://auth/complete?state=${loginState}`])
+  await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), { timeout: 15000 }).toBe(true)
   await expect(page.locator('body')).not.toContainText('OLD GATEWAY UI')
   const transport = await page.evaluate(async () => {
     const post = await (await fetch('/auth/fixture', { method: 'POST', body: 'fixture-body' })).json()
@@ -97,7 +127,7 @@ try {
   assert.ok(uninstaller)
   run(path.join(installed, uninstaller), ['/S'])
   assert.equal(await readFile(marker, 'utf8'), 'retain-user-state')
-  const report = { version, platform: 'win32', arch: 'x64', installer: path.basename(installer), sha256: createHash('sha256').update(await readFile(installer)).digest('hex'), installedLaunch: true, projectPicker: true, sandbox: true, contextIsolation: true, bundledGatewayUi: true, gatewayPostCookiesAndStreaming: true, remoteNativeBridgeAbsent: true, displayPreferencesAfterRestart: true, retainedAfterReinstall: true, retainedAfterUninstall: true, modelCalls: 0, errors }
+  const report = { version, platform: 'win32', arch: 'x64', installer: path.basename(installer), sha256: createHash('sha256').update(await readFile(installer)).digest('hex'), installedLaunch: true, projectPicker: true, sandbox: true, contextIsolation: true, bundledGatewayUi: true, gatewayPostCookiesAndStreaming: true, remoteNativeBridgeAbsent: true, nativeLinkContextMenu: true, systemProtocolLoginReturn: true, desktopWorkspaceRail: true, displayPreferencesAfterRestart: true, retainedAfterReinstall: true, retainedAfterUninstall: true, modelCalls: 0, errors }
   await writeFile(path.join(output, 'windows-verification.json'), JSON.stringify(report, null, 2) + '\n')
   console.log(JSON.stringify(report, null, 2))
 } finally { if (app) await app.close(); if (gateway) await gateway.close() }

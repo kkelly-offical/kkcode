@@ -1,3 +1,4 @@
+import { TaskProgress } from './TaskProgress';
 import React from 'react';
 import { Icon } from './Icon';
 import { PixelBuddy } from './PixelStudio';
@@ -21,7 +22,7 @@ export function ActivityPanel({ tab, onTab, snapshot, items, messages, sessionId
     <div className="activity-tabs" role="tablist" aria-label="活动分类">{tabs.map(([id, label, count]) => <button key={id} role="tab" aria-selected={tab === id} aria-controls={`activity-${id}`} id={`activity-tab-${id}`} onClick={() => onTab(id)}>{label}{count ? <small>{count}</small> : null}</button>)}</div>
     <div className="activity-content" role="tabpanel" id={`activity-${tab}`} aria-labelledby={`activity-tab-${tab}`} tabIndex={0}>
       {tab === 'todos' && <>{summary ? <>
-        <div className="activity-progress" role="group" aria-label={summary.text}><strong>{summary.completed}<small> / {summary.total}</small></strong><span>已完成 {summary.completed} · 进行中 {summary.active}{summary.blocked > 0 ? ` · 受阻 ${summary.blocked}` : ''}</span><progress max={summary.total} value={summary.completed} aria-label="待办完成数量" /></div>
+        <div className="activity-progress" role="group" aria-label={summary.text}><strong>{summary.completed}<small> / {summary.total}</small></strong><span>已完成 {summary.completed} · 进行中 {summary.active}{summary.blocked > 0 ? ` · 受阻 ${summary.blocked}` : ''}</span><TaskProgress summary={summary} label="待办完成数量" /></div>
         <ul className="task-cards" aria-label="待办任务列表">{snapshot!.items.map((item: Item) => <li key={item.id} data-status={item.status}>
           <span className="task-state" aria-label={todoStatusLabels[item.status as keyof typeof todoStatusLabels]}>{item.status === 'completed' ? '✓' : item.status === 'in_progress' ? '◉' : item.status === 'blocked' ? '!' : '○'}</span>
           <div><p>{item.status === 'in_progress' && item.activeForm || item.content}</p><small>负责人：{todoOwnerLabel(item, snapshot!.sessionId)}</small>{item.dependencies?.length > 0 && <small>依赖：{item.dependencies.join('、')}</small>}{item.reason && <small>{item.reason}</small>}</div>
@@ -35,9 +36,9 @@ export function ActivityPanel({ tab, onTab, snapshot, items, messages, sessionId
   </aside>;
 }
 
-export function RunBanner({ busy, phase, compacting, approvals, snapshot, messages, onStop, onPrompt, readOnly, companion }: {
+export function RunBanner({ busy, phase, compacting, approvals, snapshot, messages, onStop, readOnly, companion }: {
   busy: boolean; phase: string; compacting: boolean; approvals: number; snapshot: Item | null; messages: Item[];
-  onStop: () => void; onPrompt: () => void; readOnly: boolean;
+  onStop: () => void; readOnly: boolean;
   companion?: React.ReactNode;
 }) {
   if (!busy && !approvals) return null;
@@ -46,8 +47,7 @@ export function RunBanner({ busy, phase, compacting, approvals, snapshot, messag
   const label = phase === 'stopping' ? '正在停止' : compacting ? '正在压缩上下文' : approvals ? '等待你的确认' : phase === 'waiting_children' ? '等待子代理汇报' : phase === 'finishing' ? '正在保存结果' : tool ? toolPresentation(tool.payload).title : current?.activeForm || '正在工作';
   return <section className="run-banner" aria-label="当前执行状态" data-state={phase}>
     {companion || <PixelBuddy />}<div className="run-label"><strong title={label}>{label}</strong>{current && <small>{current.content}</small>}</div>
-    {summary && <div className="run-progress"><progress aria-label="当前待办完成数量" max={summary.total} value={summary.completed} /><small>已完成 {summary.completed} / {summary.total}</small></div>}
-    <button onClick={onPrompt} disabled={readOnly || compacting || phase === 'stopping'}>补充要求</button>
+    {summary && <div className="run-progress"><TaskProgress summary={summary} label="当前待办完成数量" /><small>已完成 {summary.completed} / {summary.total}</small></div>}
     <button className="run-stop" disabled={readOnly || phase === 'stopping' || phase === 'finishing'} onClick={onStop}>{phase === 'stopping' ? '停止中…' : '停止'}</button>
   </section>;
 }

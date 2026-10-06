@@ -5,6 +5,7 @@ export function isSecretConfigPath(path) {
   return String(path).split('.').some(key => !/_env$/i.test(key) && secretKey.test(key))
 }
 export function redactConfig(value, path = '') {
+  if (/^mcp\.servers\.[^.]+\.(env|headers)\./.test(path)) return value ? '[REDACTED]' : value
   if (isSecretConfigPath(path)) return value == null || value === '' ? value : '[REDACTED]'
   if (Array.isArray(value)) return value.map(item => redactConfig(item, path))
   if (value && typeof value === 'object') {

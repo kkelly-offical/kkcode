@@ -1,3 +1,5 @@
+import { AccountModels, saveAccountModelTemplate } from './AccountModels';
+import { ExtensionsPanel } from './ExtensionsPanel';
 import React, { useEffect, useState } from "react";
 import { Sheet } from "./Sheet";
 import { SettingsRow } from "./Home";
@@ -85,6 +87,7 @@ export function SettingsOverlay(props: Props) {
     [loading, setLoading] = useState(false);
   const [folder, setFolder] = useState<Item | null>(null),
     [file, setFile] = useState<Item | null>(null);
+  const [modelScope, setModelScope] = useState("device"), [providerScope, setProviderScope] = useState("device");
   const [extensions, setExtensions] = useState<Item>({}),
     [gatewayUrl, setGatewayUrl] = useState("");
   const catalog = props.initial === "models" && props.commandResult.clientAction === "models" ? props.commandResult.catalog : null;
@@ -136,11 +139,6 @@ export function SettingsOverlay(props: Props) {
         if (!cancelled) setFolder(result);
       });
     }
-    if (panel === "extensions")
-      void run(async () => {
-        const result = await props.rpc("extensions.list");
-        if (!cancelled) setExtensions(result);
-      });
     if (panel === "models")
       void run(async () => {
         const result = await props.rpc("settings.get");
@@ -518,7 +516,10 @@ export function SettingsOverlay(props: Props) {
       )}
       {panel === "models" && (
         <>
-          <p className="group-label">已配置渠道</p>
+          <div className="connection-toolbar" role="tablist" aria-label="模型配置范围"><button role="tab" aria-selected={modelScope === "device"} onClick={() => setModelScope("device")}>当前设备</button><button role="tab" aria-selected={modelScope === "account"} disabled={!props.gateway} onClick={() => setModelScope("account")}>账号模板</button></div>
+          {!props.gateway && <p className="sheet-note">连接账号网关后，可保存和复用账号模板。</p>}
+          {modelScope === "account" ? <AccountModels rpc={props.rpc} onSettings={props.onSettings} /> : <>
+          <p className="group-label">已配置渠道 · 当前设备</p>
           <div className="settings-group">
             {Object.entries(props.settings.provider || {})
               .filter(
@@ -544,7 +545,7 @@ export function SettingsOverlay(props: Props) {
           {modelProvider && <button className="sheet-secondary" disabled={loading} onClick={() => editProvider(modelProvider)}>编辑 {modelProvider} 渠道</button>}
           <p className="sheet-note">
             API Key 不在列表中展示。模型配置保存在连接的电脑上。
-          </p>
+          </p></>}
         </>
       )}
       {panel === "provider" && (
@@ -565,6 +566,11 @@ export function SettingsOverlay(props: Props) {
                   },
                 },
               };
+              if (providerScope === "account") {
+                if (editingProvider && !draft.api_key && props.settings.provider?.[editingProvider]?.api_key === '[REDACTED]') throw new Error('保存账号模板时，请重新填写此渠道的 API Key。');
+                await saveAccountModelTemplate({ [draft.name]: config.provider[draft.name] });
+                setDraft({ ...draft, api_key: "" }); props.onNotice('已保存到账号模板；设备配置保持独立。'); back(); setModelScope('account'); return;
+              }
               await props.rpc("settings.update", { config });
               setDraft({ ...draft, api_key: "" });
               const settings = await props.rpc("settings.get");
@@ -574,6 +580,10 @@ export function SettingsOverlay(props: Props) {
             });
           }}
         >
+          <label>
+            保存位置
+            <select value={providerScope} onChange={event => setProviderScope(event.target.value)}><option value="device">当前设备</option><option value="account" disabled={!props.gateway}>账号模板（跨端复用，复制后独立）</option></select>
+          </label>
           <label>
             渠道名称
             <input
@@ -641,39 +651,7 @@ export function SettingsOverlay(props: Props) {
           </button>
         </form>
       )}
-      {panel === "extensions" && (
-        <>
-          <button
-            className="sheet-secondary"
-            disabled={loading}
-            onClick={() =>
-              run(async () =>
-                setExtensions(await props.rpc("extensions.reload")),
-              )
-            }
-          >
-            重新加载
-          </button>
-          {["skills", "plugins", "mcp"].map((kind) => (
-            <div key={kind}>
-              <p className="group-label">{kind}</p>
-              <div className="settings-group">
-                {(Array.isArray(extensions[kind]) ? extensions[kind] : []).map(
-                  (item: Item, index: number) => (
-                    <details className="extension-detail" key={index}>
-                      <summary>{item.name || item.server}</summary>
-                      <p>{item.description || item.error || "可用"}</p>
-                    </details>
-                  ),
-                )}
-                {!extensions[kind]?.length && (
-                  <p className="sheet-note">暂无条目</p>
-                )}
-              </div>
-            </div>
-          ))}
-        </>
-      )}
+      {panel === "extensions" && props.canManage !== false && <ExtensionsPanel key={props.deviceId} rpc={props.rpc} deviceName={props.deviceName} />}
       {panel === "attachments" && props.canManage !== false && <AttachmentPanel items={props.attachments} loading={props.uploading} onUpload={props.onUpload} onRemove={props.onRemoveAttachment} />}
       {panel === "branches" && props.canManage !== false && <BranchPanel rpc={props.rpc} sessionId={props.sessionId} cwd={props.cwd} ensureSession={props.ensureSession} onChanged={props.onBranch} onOpened={props.onSession} />}
       {panel === "lifecycle" && props.canManage !== false && <DeviceLifecyclePanel deviceId={props.deviceId} gateway={props.gateway} name={props.deviceName} />}

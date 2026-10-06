@@ -1,0 +1,28 @@
+/* Desktop-owned shell. Conversation/RPC components remain shared with Web. */
+.desktop-workbench .desktop-workspace-rail { width: 64px; flex: 0 0 64px; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px 6px 12px; background: var(--bg-sunken); border-right: 1px solid var(--border); }
+.desktop-workspace-rail button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; width: 48px; min-height: 48px; padding: 8px; border: 0; color: var(--text-secondary); background: transparent; border-radius: 12px !important; }
+.desktop-workspace-rail button:hover:not(:disabled), .desktop-workspace-rail button:focus-visible { color: var(--text); background: var(--bg-active); }
+.desktop-workspace-rail button span { font-size: 10px; line-height: 1; }
+.desktop-workspace-rail .desktop-mark { min-height: 40px; width: 40px; margin-bottom: 12px; font-size: 20px; font-weight: 650; color: var(--primary-text); background: var(--primary-bg); border-radius: 12px !important; }
+.desktop-rail-spacer { flex: 1; }
+.desktop-workbench.experience .sidebar { width: 260px; background: var(--bg-panel); padding: 18px 14px 12px; }
+.desktop-workbench .sidebar .studio-nav { display: none; }
+.desktop-workbench .sidebar .new { margin-top: 12px; }
+.desktop-workbench .sidebar .device { font-size: 12px; min-height: 36px; }
+.desktop-workbench .chat { background: var(--bg); }
+.desktop-project-bar { display: flex; align-items: center; flex: 0 0 36px; height: 36px; gap: 16px; border-bottom: 1px solid var(--border); padding: 0 24px; color: var(--text-secondary); background: var(--bg-panel); font-size: 11px; }
+.desktop-project-bar button { display: flex; align-items: center; gap: 8px; background: transparent; padding: 0; border: 0; color: inherit; font-size: inherit; min-width: 0; max-width: 70%; }
+.desktop-project-bar button span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.desktop-branch { display: flex; align-items: center; gap: 6px; }
+.desktop-workspace-label { margin-left: auto; white-space: nowrap; color: var(--text-faint); }
+.desktop-workbench.experience .chat-header { min-height: 56px; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
+.desktop-workbench.experience .run-banner { margin: 0 24px 10px; background: var(--bg-panel); border: 1px solid var(--border); }
+.desktop-workbench.experience .activity-panel { width: 340px; flex-basis: 340px; background: var(--bg-panel); }
+.desktop-workbench.experience .activity-panel header { height: 58px; padding: 18px; }
+.desktop-workbench .activity-tabs button { min-height: 44px; }
+.desktop-workbench .task-cards li { border-radius: 12px; padding: 14px; }
+.desktop-workbench .composer-wrap { padding-inline: 24px; }
+.desktop-workbench.experience .composer { border-radius: 16px !important; border-color: var(--border-strong); }
+.desktop-workbench .footer { text-align: left; padding-inline: 26px; }
+@media(max-width: 1100px) { .desktop-workbench.experience .sidebar { width: 224px; } .desktop-workbench.experience .activity-panel { width: 280px; flex-basis: 280px; } .desktop-workspace-label { display: none; } }
+@media(max-width: 760px) { .desktop-workbench .desktop-workspace-rail, .desktop-project-bar { display: none; } }

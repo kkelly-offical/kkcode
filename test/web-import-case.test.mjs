@@ -25,9 +25,9 @@ test('case-folded resolver detects the historical Transcript.tsx/transcript.mjs 
   assert.deepEqual(candidates([path.join(directory, 'TranscriptView.tsx'), path.join(directory, 'transcript.mjs')], path.join(directory, 'TranscriptView')), [path.join(directory, 'TranscriptView.tsx')])
 })
 
-test('Web extensionless relative imports have exactly one case-insensitive resolution', async () => {
+test('Web and desktop UI extensionless imports have exactly one case-insensitive resolution', async () => {
   const directory = fileURLToPath(new URL('../apps/web/src/', import.meta.url))
-  const files = await sourceFiles(directory)
+  const files = [...await sourceFiles(directory), ...await sourceFiles(path.resolve(directory, '../../desktop/ui'))]
   let checked = 0
   for (const file of files.filter(file => extensions.includes(path.extname(file)))) {
     const text = await readFile(file, 'utf8')

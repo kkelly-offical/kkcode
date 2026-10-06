@@ -306,6 +306,8 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                 Group { MODE_CHOICES.forEach { choice -> SettingsRow(if(state.mode == choice.id) Icons.Outlined.Check else Icons.Outlined.Tune, choice.label, choice.description) { state.selectMode(choice.id) } } }
             }
             "models" -> {
+                AccountModelTemplates(state)
+
                 val providers = state.settings.optJSONObject("provider") ?: JSONObject()
                 Group("已配置渠道") { configuredProviderNames(providers).forEach { name -> val p = providers.getJSONObject(name); SettingsRow(Icons.Outlined.Hub, name, p.optString("default_model")) { state.discoverModels(name) }; TextButton(onClick = { state.editingProvider = name; state.sheet = "provider" }) { Text("编辑 $name", fontSize = 11.sp) } } }
                 if(state.modelOptions.isNotEmpty()) Group("${state.catalogProvider} · 模型目录") { state.modelOptions.forEach { model -> SettingsRow(Icons.Outlined.CloudQueue, model.getString("id")) { state.selectModel(state.catalogProvider, model.getString("id")) } } }
@@ -315,6 +317,9 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
             }
             "model-picker" -> ModelPicker(state)
             "provider" -> {
+                var providerScope by remember { mutableStateOf("device") }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { FilterChip(providerScope == "device", { providerScope = "device" }, label = { Text("当前设备") }); FilterChip(providerScope == "account", { providerScope = "account" }, label = { Text("账号模板") }, enabled = state.accountTemplatesAvailable) }
+
                 Text("选择协议，使用 Base URL 读取可用模型。", color = muted, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp, bottom = 8.dp))
                 Column { listOf("openai" to "OpenAI Chat Completions", "openai-responses" to "OpenAI Responses API", "anthropic" to "Anthropic").forEach { (value, label) -> Row(Modifier.fillMaxWidth().clickable { providerType = value }, verticalAlignment = Alignment.CenterVertically) { RadioButton(selected = providerType == value, onClick = { providerType = value }); Text(label, fontSize = 13.sp) } } }
                 OutlinedTextField(providerName, { providerName = it }, label = { Text("名称") }, modifier = Modifier.fillMaxWidth())
@@ -329,9 +334,9 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
                     val result = state.rpc("models.discover", params) as JSONObject; state.modelOptions = result.optJSONArray("models").objects(); if(providerModel.isBlank()) providerModel = state.modelOptions.firstOrNull()?.optString("id") ?: ""
                 } }) { Text("读取模型列表") }
                 state.modelOptions.forEach { model -> TextButton(onClick = { providerModel = model.getString("id") }) { Text(model.getString("id"), fontSize = 12.sp) } }
-                Button(onClick = { state.saveProvider(providerName, providerType, baseUrl, apiKey, providerModel) }, modifier = Modifier.fillMaxWidth()) { Text("保存到电脑") }
+                Button(onClick = { state.saveProvider(providerName, providerType, baseUrl, apiKey, providerModel, providerScope) }, modifier = Modifier.fillMaxWidth()) { Text(if(providerScope == "account") "保存到账号" else "保存到电脑") }
             }
-            "extensions" -> { TextButton(onClick = { state.action { state.extensions = state.rpc("extensions.reload") as JSONObject } }) { Text("刷新目录") }; listOf("skills", "plugins", "mcp").forEach { kind -> Group(kind) { state.extensions.optJSONArray(kind).objects().forEach { item -> var expanded by remember { mutableStateOf(false) }; SettingsRow(Icons.Outlined.Extension, item.optString("name", item.optString("server"))) { expanded = !expanded }; if(expanded) Text(item.optString("description", item.optString("error", "可用")), color = muted, fontSize = 12.sp, modifier = Modifier.padding(16.dp)) } } } }
+            "extensions" -> ExtensionsPanel(state)
             "branches" -> BranchPicker(state)
             "preferences" -> PreferencesForm(state)
             "sessions" -> Group { state.sessions.forEach { session -> SettingsRow(Icons.Outlined.ChatBubbleOutline, session.optString("title", "新对话"), session.optString("cwd")) { state.openSession(session) } } }
@@ -356,7 +361,7 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
     var thinkingExpanded by remember(state.selected, state.busy) { mutableStateOf(false) }
     var actions by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if(uri != null) state.attach(uri) }
-    LaunchedEffect(state.attachmentPickerRequest) { if(state.attachmentPickerRequest > 0) picker.launch(arrayOf("image/png", "image/jpeg", "image/gif", "image/webp", "audio/wav", "audio/mpeg", "video/mp4", "video/quicktime", "video/webm", "video/mpeg", "text/*", "application/json", "application/xml", "application/yaml")) }
+    LaunchedEffect(state.attachmentPickerRequest) { if(state.attachmentPickerRequest > 0) picker.launch(arrayOf("application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "image/png", "image/jpeg", "image/gif", "image/webp", "audio/wav", "audio/mpeg", "video/mp4", "video/quicktime", "video/webm", "video/mpeg", "text/*", "application/json", "application/xml", "application/yaml")) }
     val listState = key(state.selected) { rememberLazyListState() }
     val dragging by listState.interactionSource.collectIsDraggedAsState()
     var following by remember(state.selected) { mutableStateOf(true) }
@@ -454,9 +459,14 @@ private val connectedGreen: Color @Composable get() = kkcodeColors.success
             }
         }
         Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp).navigationBarsPadding().background(card, RoundedCornerShape(12.dp)).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .6f), RoundedCornerShape(12.dp)).padding(12.dp)) {
-            if(state.attachments.isNotEmpty()) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { state.attachments.forEach { attachment -> InputChip(selected = true, onClick = { state.removeAttachment(attachment.getString("id")) }, label = { Text(attachment.optString("name"), maxLines = 1) }, trailingIcon = { Icon(Icons.Outlined.Close, "移除附件 ${attachment.optString("name")}", Modifier.size(14.dp)) }) } }
-            if(state.uploading) Text("正在上传附件…", color = muted, fontSize = 11.sp)
-            androidx.compose.foundation.text.BasicTextField(text, { state.draft = it }, enabled = state.canControl && !state.sessionArchived, modifier = Modifier.fillMaxWidth().heightIn(min = 38.dp, max = 130.dp).padding(4.dp), textStyle = androidx.compose.ui.text.TextStyle(color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp), decorationBox = { inner -> if(text.isBlank()) Text(if(state.sessionArchived) "恢复归档后继续对话" else if(state.canControl) "发消息，或输入 / 命令" else "只读共享会话", color = muted, fontSize = 14.sp); inner() })
+            AttachmentDrafts(state)
+            state.failedAttachments.forEach { uri -> Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("附件上传失败", fontSize = 12.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
+                TextButton(onClick = { state.attach(uri) }, enabled = !state.uploading) { Text("重试") }
+                TextButton(onClick = { state.failedAttachments = state.failedAttachments.filterNot { it == uri } }) { Text("移除") }
+            } }
+            if(state.uploading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(bottom = 8.dp))
+            key(state.selected) { AttachmentMessageInput(state) }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if(!state.sharedDevice) Box {
                     IconButton(onClick = { actions = !actions }, Modifier.size(36.dp)) { Icon(Icons.Outlined.Add, "添加与工具", Modifier.size(22.dp)) }

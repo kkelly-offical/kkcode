@@ -1,3 +1,4 @@
+import { registerAccountModels } from './account-models.mjs'
 import Fastify from 'fastify'
 import cookie from '@fastify/cookie'
 import websocket from '@fastify/websocket'
@@ -16,7 +17,7 @@ import { registerSshProfiles } from './ssh-profiles.mjs'
 import { GatewayEventHub } from './sse-hub.mjs'
 import { SseWriter, isDeviceEvent, isJournalRow, streamCursor } from '../http/sse.mjs'
 
-export async function createGateway({ origin, issuer, clientId, clientSecret, organization = 'default', databaseUrl, store, dev = false, oidcConfig, rolesClaim, adminRole, scopes, auditRetentionDays, auditMaxRecords, trustProxy = false, cluster: clusterOptions, streaming = {} } = {}) {
+export async function createGateway({ origin, issuer, clientId, clientSecret, organization = 'default', databaseUrl, store, dev = false, oidcConfig, rolesClaim, adminRole, scopes, auditRetentionDays, auditMaxRecords, trustProxy = false, cluster: clusterOptions, accountEncryptionKey, streaming = {} } = {}) {
   if (!origin || (!dev && !origin.startsWith('https://'))) throw new Error('Gateway public origin must use HTTPS')
   if (!store) store = databaseUrl ? await new PostgresStore(databaseUrl).initialize() : dev ? new MemoryStore() : null
   if (!store) throw new Error('Production gateway requires PostgreSQL')
@@ -83,6 +84,7 @@ export async function createGateway({ origin, issuer, clientId, clientSecret, or
     for (const [id, job] of pending) if (job.deviceId === deviceId) { pending.delete(id); clearTimeout(job.timer); job.reject(Object.assign(new Error('Device unbound'), { statusCode: 410 })) }
   } })
   registerSshProfiles({ app, store, authenticate, audit })
+  registerAccountModels({ app, store, authenticate, origin, encryptionKey: accountEncryptionKey, clientSecret, cluster: Boolean(clusterOptions) })
   app.get('/api/v1/devices', async req => {
     const { account } = await authenticate(req)
     return Promise.all((await store.list('device:')).filter(d => d.organization === account.organization && (d.owner === account.id || Object.keys(d.shares?.[account.id] || {}).length)).map(async ({ key, shares, ...device }) => ({ ...device, shared: device.owner !== account.id, ...(device.owner !== account.id ? { permissions: shares[account.id] } : {}), online: cluster ? await cluster.online(device.id) : devices.has(device.id) })))

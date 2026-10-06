@@ -1,3 +1,4 @@
+import { AttachmentTray } from './AttachmentTray';
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import { commandSuggestions } from "./commands.mjs";
@@ -85,6 +86,9 @@ export function Composer({
   canManage = true,
   uploading = false,
   attachments = [],
+  attachmentScope,
+  onUploadAttachments,
+  onRemoveAttachment,
   branch = "",
 }: {
   prompt: string;
@@ -111,6 +115,9 @@ export function Composer({
   canManage?: boolean;
   uploading?: boolean;
   attachments?: Attachment[];
+  attachmentScope: string;
+  onUploadAttachments: (files: File[]) => Promise<void>;
+  onRemoveAttachment: (id: string) => Promise<void>;
   branch?: string;
 }) {
   const [menu, setMenu] = useState(false),
@@ -307,8 +314,7 @@ export function Composer({
           onSend();
         }}
       >
-      {attachments.length > 0 && <button type="button" className="attachment-summary" onClick={() => onPanel("attachments")}><Icon name="attachment" size={15} /><span>{attachments.map(item => item.name).join("、")}</span><small>{attachments.length} 个附件</small></button>}
-      {uploading && <p className="upload-status" role="status">附件上传中…</p>}
+      <AttachmentTray scope={attachmentScope} items={attachments} disabled={readOnly || !canManage} uploading={uploading} onUpload={onUploadAttachments} onRemove={onRemoveAttachment}>
       <textarea
           rows={1}
         disabled={readOnly}
@@ -361,6 +367,7 @@ export function Composer({
             }
           }}
         />
+      </AttachmentTray>
         <div className="composer-tools">
           {canManage && <div className="composer-actions">
             <button
@@ -632,7 +639,7 @@ export function Composer({
             <button
               className="send"
               aria-label={busy ? '发送补充要求' : '发送'}
-              disabled={readOnly || uploading || stopping || compacting || !prompt.trim()}
+              disabled={readOnly || uploading || stopping || compacting || (!prompt.trim() && !attachments.length)}
             >
               <Icon name="send" size={21} />
             </button>

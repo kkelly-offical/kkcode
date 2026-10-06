@@ -1,3 +1,5 @@
+import { DesktopWorkspaceRail, DesktopProjectBar } from '../../desktop/ui/WorkspaceChrome';
+import { desktopLoginProof } from './gateway-login';
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
@@ -6,6 +8,8 @@ import "./studio.css";
 import "./reading.css";
 import "./pixel.css";
 import "./experience.css";
+import "./fonts.css";
+import "../../desktop/ui/workspace.css";
 import { PixelBuddy, PixelScene, StudioBar } from "./PixelStudio";
 import { SessionHome, ConnectionLanding, SessionActions, ConversationMenu } from "./Home";
 import { Sheet } from "./Sheet";
@@ -37,6 +41,7 @@ import { attachmentMediaType, readAttachment, type Attachment } from "./Attachme
 
 type Item = Record<string, any>;
 function App() {
+  const desktopApp = Boolean(window.kkcodeDesktop || window.kkcodeDesktopLogin);
   const reading = useReadingPreferences();
   const [small, setSmall] = useState(window.innerWidth <= 760);
   useEffect(() => {
@@ -218,10 +223,10 @@ function App() {
     const poll = async () => {
       try {
         if (Date.now() >= expires) throw new Error("登录请求已过期，请重新登录");
-        const response = await fetch("/auth/token", { method: "POST", redirect: "error", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ device_code: loginFlow.device_code, browser: true }) });
+        const response = await fetch("/auth/token", { method: "POST", redirect: "error", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ device_code: loginFlow.device_code, browser: true, ...(loginFlow.verifier ? { code_verifier: loginFlow.verifier } : {}) }) });
         const result = await response.json();
         if (stopped) return;
-        if (response.ok && result.authenticated) { setProfile(result.profile); setLoginFlow(null); setReady(true); return; }
+        if (response.ok && result.authenticated) { if (loginFlow.state) await window.kkcodeDesktopLogin?.finish(loginFlow.state); setProfile(result.profile); setLoginFlow(null); setReady(true); return; }
         if (result.error === "slow_down") interval += 5000;
         else if (result.error !== "authorization_pending") throw new Error("登录请求未完成或已过期，请重新登录");
       } catch (cause: any) {
@@ -552,14 +557,16 @@ function App() {
     if (!canManage || uploading) return;
     if (files.length + attachments.length > 8) throw new Error("每条消息最多添加 8 个附件");
     for (const file of files) {
-      const mediaType = attachmentMediaType(file), limit = /^(image|audio|video)\//.test(mediaType) ? 4 * 1024 * 1024 : 256 * 1024;
+      const mediaType = attachmentMediaType(file), limit = /^(image|audio|video)\/|^application\/(pdf|vnd.openxmlformats-officedocument)/.test(mediaType) ? 4 * 1024 * 1024 : 256 * 1024;
       if (file.size > limit) throw new Error(`${file.name} 超过单个附件大小限制`);
     }
     setUploading(true);
     try {
       const id = await ensureSession(), key = `${deviceId}:${id}`;
       for (const file of files) {
-        const attachment = await rpc("attachments.upload", { sessionId: id, name: file.name, mediaType: attachmentMediaType(file), data: await readAttachment(file) });
+        const mediaType = attachmentMediaType(file), data = await readAttachment(file);
+        const attachment = await rpc("attachments.upload", { sessionId: id, name: file.name, mediaType, data });
+        if (mediaType.startsWith("image/")) attachment.preview = `data:${mediaType};base64,${data}`;
         setDraftAttachments(old => ({ ...old, [key]: [...(old[key] || []), attachment] }));
       }
     } finally { setUploading(false); }
@@ -619,7 +626,7 @@ function App() {
   }
   async function send(e?: React.FormEvent) {
     e?.preventDefault();
-    if (!prompt.trim() || pendingSend.current || uploading || readOnly) return;
+    if ((!prompt.trim() && !attachments.length) || pendingSend.current || uploading || readOnly) return;
     const text = prompt;
     if (busy) {
       if (steeringInFlight.current) return;
@@ -662,7 +669,7 @@ function App() {
       if (token.cancelled) { await releaseControl(id, lease).catch(() => {}); return; }
       try { token.start = rpc("turns.start", {
         sessionId: id,
-        prompt: text,
+        prompt: text.trim() ? text : "请分析附件。",
         attachmentIds: attachments.map(item => item.id),
         executionId: token.id,
       }, { id: token.id });
@@ -821,16 +828,17 @@ function App() {
         }
         login={() =>
           attempt(async () => {
+            const proof = await desktopLoginProof();
             const r = await fetch("/auth/device", {
               method: "POST",
               redirect: "error",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ kind: "client", name: "Web browser" }),
+              body: JSON.stringify({ kind: "client", name: window.kkcodeDesktopLogin ? "KK Code Windows" : "Web browser", ...(proof ? { native: proof.native } : {}) }),
             });
             if (!r.ok) throw new Error("暂时无法开始登录，请稍后重试");
             const flow = await r.json();
             const loginPath = deviceLoginPath(flow.user_code);
-            setLoginFlow(flow);
+            setLoginFlow({ ...flow, ...(proof ? { state: proof.state, verifier: proof.verifier } : {}) });
             window.open(loginPath, "_blank", "noopener");
           })
         }
@@ -838,7 +846,8 @@ function App() {
     );
   const mobileHome = small && !selected;
   return (
-    <div className={`app experience${activityOpen && !small ? ' with-activity' : ''}`} style={reading.style}>
+    <div className={`app experience${desktopApp ? ' desktop-workbench' : ' web-entry'}${activityOpen && !small ? ' with-activity' : ''}`} style={reading.style}>
+      {desktopApp && <DesktopWorkspaceRail project={cwd} session={Boolean(selected)} onProject={() => setProjectsOpen(true)} onNew={() => setPanel("new")} onPanel={setPanel} onActivity={openActivity} />}
       <aside
         className={sidebar ? "sidebar open" : "sidebar"}
         aria-label="工作区导航"
@@ -923,6 +932,7 @@ function App() {
         </button>
       </aside>
       <main>
+        {desktopApp && !small && <DesktopProjectBar path={cwd} branch={branch} onProject={() => setProjectsOpen(true)} />}
         {mobileHome ? (
           <SessionHome
             sessions={workspaceSessions}
@@ -982,7 +992,7 @@ function App() {
                 }} />
               </div>
             </header>
-            <RunBanner busy={busy} phase={turnPhase} compacting={turnOperation === 'compact'} approvals={approval.length} snapshot={todoSnapshot} messages={messages} onStop={() => void stopTurn()} onPrompt={() => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="消息"]')?.focus()} readOnly={readOnly} companion={companion} />
+            <RunBanner busy={busy} phase={turnPhase} compacting={turnOperation === 'compact'} approvals={approval.length} snapshot={todoSnapshot} messages={messages} onStop={() => void stopTurn()} readOnly={readOnly} companion={companion} />
             <div className="transcript-region">
             <div className="transcript" ref={scroll.viewport} tabIndex={0} role="region" aria-label="对话内容">
               <div className="transcript-content" ref={scroll.content}>
@@ -1053,6 +1063,9 @@ function App() {
               settings={settings}
               uploading={uploading}
               attachments={attachments}
+              attachmentScope={attachmentKey}
+              onUploadAttachments={uploadAttachments}
+              onRemoveAttachment={removeAttachment}
               branch={branch}
               commands={commands}
               onSend={() => void send()}
