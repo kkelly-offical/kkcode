@@ -68,29 +68,37 @@ test('Web real device snapshots and live events restore todos after reopening an
     browser = await chromium.launch({ headless: true })
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 } })
     let page = await context.newPage()
+    const expectTasks = async text => {
+      await page.getByRole('tab', { name: /^待办/ }).click()
+      await expect(page.locator('.activity-progress')).toHaveAttribute('aria-label', new RegExp(text))
+    }
+    const expectChildren = async text => {
+      await page.getByRole('tab', { name: /^子代理/ }).click()
+      await expect(page.locator('.subagent-summary')).toContainText(text)
+    }
     await page.goto(info.url)
     await page.getByRole('button', { name: 'Todo first', exact: true }).click()
-    await expect(page.locator('.todo-progress summary')).toContainText('待办 1/4 · 进行中 2 · 受阻 1')
+    await expectTasks('待办 1/4 · 进行中 2 · 受阻 1')
     await writer.update({ todos: tasks.map(item => ({ ...item, status: 'completed' })) })
-    await expect(page.locator('.todo-progress summary')).toContainText('待办 4/4 · 进行中 0 · 受阻 0')
+    await expectTasks('待办 4/4 · 进行中 0 · 受阻 0')
     for (const id of ['child_one', 'child_two']) {
       await touchSession({ sessionId: id, parentSessionId: one.id, cwd: workspace, mode: 'agent' })
       await updateSession(id, { childStatus: 'running', childContract: { schema: 1, parentSessionId: one.id, runSpec: { role: { name: 'fixture-worker' } } } })
       await kernel.events.emit({ type: 'subagent.delegated', sessionId: one.id, payload: { subSessionId: id, subagent: 'fixture-worker' } })
     }
-    await expect(page.locator('.todo-progress summary')).toContainText('子代理 0/2 · 进行中 2 · 需关注 0')
+    await expectChildren('子代理 0/2 · 进行中 2 · 需关注 0')
     await updateSession('child_one', { childStatus: 'error' })
     await kernel.events.emit({ type: 'subagent.settled', sessionId: one.id, payload: { subSessionId: 'child_one', subagent: 'fixture-worker', status: 'error' } })
     await updateSession('child_two', { childStatus: 'blocked' })
     await kernel.events.emit({ type: 'task.settled', sessionId: one.id, payload: { subSessionId: 'child_two', status: 'completed' } })
-    await expect(page.locator('.todo-progress summary')).toContainText('子代理 0/2 · 进行中 0 · 需关注 2')
+    await expectChildren('子代理 0/2 · 进行中 0 · 需关注 2')
     await page.close(); page = await context.newPage()
     await page.goto(info.address)
     await page.getByRole('button', { name: 'Todo first', exact: true }).click()
-    await expect(page.locator('.todo-progress summary')).toContainText('待办 4/4')
-    await expect(page.locator('.todo-progress summary')).toContainText('子代理 0/2 · 进行中 0 · 需关注 2')
+    await expectTasks('待办 4/4')
+    await expectChildren('子代理 0/2 · 进行中 0 · 需关注 2')
     await page.getByRole('button', { name: 'Todo second', exact: true }).click()
-    await expect(page.locator('.todo-progress')).toHaveCount(0)
+    await expect(page.locator('.activity-panel')).toHaveCount(0)
 
     let arrive
     const arrived = new Promise(resolve => { arrive = resolve }), gate = new Promise(resolve => { release = resolve })
@@ -102,13 +110,13 @@ test('Web real device snapshots and live events restore todos after reopening an
     await page.getByRole('button', { name: 'Todo first', exact: true }).click(); await arrived
     await page.getByRole('button', { name: 'Todo second', exact: true }).click()
     release(); await page.unroute('**/api/v1/rpc')
-    await expect(page.locator('.todo-progress')).toHaveCount(0)
+    await expect(page.locator('.activity-panel')).toHaveCount(0)
     assert.equal((await service.dispatch('todos.list', { sessionId: two.id }, principal)).items.length, 0)
     await page.getByRole('button', { name: 'Todo first', exact: true }).click()
-    await expect(page.locator('.todo-progress summary')).toContainText('待办 4/4')
+    await expectTasks('待办 4/4')
     await writer.update({ todos: [] })
     // Removing authored input cannot erase the durable completed task history.
-    await expect(page.locator('.todo-progress summary')).toContainText('待办 4/4')
+    await expectTasks('待办 4/4')
 
     // Exercise the real App's five mode-selected sessions, not only a standalone
     // progress helper. Progress is capability-neutral and must remain visible.
@@ -123,14 +131,14 @@ test('Web real device snapshots and live events restore todos after reopening an
       await page.reload()
       await page.getByRole('button', { name: title, exact: true }).click()
       await expect(page.getByRole('button', { name: `执行模式，当前 ${label}`, exact: true })).toBeVisible()
-      await expect(page.locator('.todo-progress summary')).toContainText('待办 0/1 · 进行中 1 · 受阻 0 · 子代理 0/1 · 进行中 1 · 需关注 0')
-      await page.locator('.todo-progress summary').click()
+      await expectTasks('待办 0/1 · 进行中 1 · 受阻 0')
       await expect(page.getByText(`${label} 工作项`, { exact: true })).toBeVisible()
-      await expect(page.getByText(`${label} worker · 进行中`, { exact: true })).toBeVisible()
+      await expectChildren('子代理 0/1 · 进行中 1 · 需关注 0')
+      await expect(page.locator('.subagent-card').filter({ hasText: `${label} worker` })).toHaveAttribute('data-status', 'running')
       await updateSession(childId, { childStatus: 'completed' })
       await kernel.events.emit({ type: 'subagent.settled', sessionId: session.id, payload: { subSessionId: childId, subagent: `${label} worker`, status: 'completed' } })
-      await expect(page.locator('.todo-progress summary')).toContainText('子代理 1/1 · 进行中 0 · 需关注 0')
-      await expect(page.getByText(`${label} worker · 已完成`, { exact: true })).toBeVisible()
+      await expectChildren('子代理 1/1 · 进行中 0 · 需关注 0')
+      await expect(page.locator('.subagent-card').filter({ hasText: `${label} worker` })).toHaveAttribute('data-status', 'completed')
     }
   } finally {
     release?.(); await browser?.close(); await server?.close(); await service?.close()
