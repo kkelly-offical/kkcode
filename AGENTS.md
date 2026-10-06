@@ -1,14 +1,15 @@
 # KK Code 工作记忆
 
-只维护当前状态、有效约束和未完事项。过程与证据写入[当前实施记录](docs/implementation-1.0.11.md)，
+只维护当前状态、有效约束和未完事项。过程与证据写入[当前实施记录](docs/implementation-1.0.12.md)，
 旧检查点见[历史记忆](docs/history/working-memory-through-2026-10-02.md)，不要逐轮追加日志。
 
 ## 发行与授权
 
-- 已发布稳定 **1.0.11 / Android10018**（npm latest），发行提交`a60d8b0`（PR#50），与最终候选`ac622bf`同树。
-  候选与主线的跨平台、Web、CodeQL及发行流水线通过，匿名CI/npm/GitHub包一致，Node22.12及原证书10017→10018升级已核验。
-  Preview仍为 **1.0.6-preview.1 / Android10012**；1.0.8与所有旧tag不移动。
-  [versions.md](docs/versions.md)与公开release-verification.json是发行事实入口。
+- 已发布稳定 **1.0.12 / Android10019 / Windows x64**（npm latest），发行提交 `00e573c`（PR#54），与最终候选 `caf7073` 同树。
+  候选与主线跨平台、Web、CodeQL、Windows 安装和发行流水线均通过；Android 原证书10018→10019、偏好保留与 Node22.12 安装核验通过。
+  公开包身份与实际核验方式见发行回执；Windows 安装器未配置 Authenticode 签名。macOS / iOS 应用暂缓。
+  Preview仍为 **1.0.6-preview.1 / Android10012**；所有旧tag不移动。
+  [versions.md](docs/versions.md)与公开release-verification.json是发行事实入口；上一稳定1.0.11发行事实保留。
 - 用户明确“允许所有来自我们的管理员合并操作”。本任务相关合入不重复询问；核验实际检查，
   不修改保护规则、不虚称批准审核、不自动合入无关PR#5/#6/#22。
 - 用户要求五项优化完成后发布1.0.11正式版，已完成；此前1.0.10发行授权与事实保留。未发布公共网关镜像、未升级其他生产／演示网关、未新增真实模型评测。
@@ -31,9 +32,9 @@
 
 ## 实测与下一步
 
-- 用户已授权开发并在验证后发布 **1.0.12**：按已确认 Figma 导出并实现 Web / Android 体验优化，同步新增 Windows 应用，macOS / iOS 暂缓。保留任务卡、运行横幅、活动面板和整体布局，仅精修细节；补齐项目路径导航与历史滚动。当前处于研发阶段，尚未发布，进度与证据维护在 [1.0.12 清单](docs/implementation-1.0.12.md)。
+- **1.0.12** 设计导出、Web / Android 体验优化与 Windows 应用已完成并发布：保留任务卡、运行横幅、活动面板与整体布局，细化配色和控件，补齐项目路径与历史导航。Android 89 项 JVM / 91 项 UI、Windows 安装与 HTTPS 网关核验通过。进度与证据见 [1.0.12 清单](docs/implementation-1.0.12.md)。
 
-- 独立 **Web 1.0.11-display.1** 已发布（PR#52，`dd1e4a2`，与候选`5d51fdc`同树）；顶部／输入区收缩、去重设备条、字号／阅读宽度和自由滚动均完成。跨平台、Web、CodeQL、真实归档安装／回退及匿名下载通过。npm/CLI1.0.11与Android10018不变；[清单与回执](docs/web-display-1.0.11.md)。现网尚未部署，等待用户提供实际机器／目录；本机实验网关不是目标，保持原样。
+- 独立 **Web 1.0.11-display.1** 已发布（PR#52，`dd1e4a2`，与候选`5d51fdc`同树）；顶部／输入区收缩、去重设备条、字号／阅读宽度和自由滚动均完成。跨平台、Web、CodeQL、真实归档安装／回退及匿名下载通过。该独立补丁当时未改变 npm/CLI1.0.11与Android10018；[清单与回执](docs/web-display-1.0.11.md)。现网尚未部署，等待用户提供实际机器／目录；本机实验网关不是目标，保持原样。
 
 - 1.0.11五项开发清单全部完成并正式发行：子代理自动汇报与队列接续、状态／实际模型参数自动同步、独立子代理入口及停止操作、紧凑菜单、KIKI状态动作。细节与跨平台失败原记录见[实施清单](docs/implementation-1.0.11.md)。新自动汇报需新版remote，单个子代理停止需新版网关；不自动部署其他网关。
 
@@ -57,7 +58,9 @@
 
 ## 证据入口
 
-- [当前版本](docs/versions.md) · [发行范围](docs/release-1.0.11.md) · [实施与验收](docs/implementation-1.0.11.md)
+- 1.0.12 正式发行回执：`/tmp/kkcode-112-stable-ve_vemqx/`；候选与失败记录：`/tmp/kkcode-112-design/`，候选产物 `/tmp/kkcode-112-candidate-gl12s00u/`。
+
+- [当前版本](docs/versions.md) · [发行范围](docs/release-1.0.12.md) · [实施与验收](docs/implementation-1.0.12.md)
 - [使用文档](docs/README.md) · [能力边界](docs/capabilities.md) · [历史导航](docs/history.md)
 - Web显示补丁回执：`/tmp/kkcode-web-111-display1-ab0n_dgh/`；独立tag `web-1.0.11-display.1`，不进入npm或Android更新通道。
 - 1.0.11正式发行回执：`/tmp/kkcode-111-stable-l0fcvpm_/`；候选回执`/tmp/kkcode-111-candidate-EYkQlswt/`。

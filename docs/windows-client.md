@@ -2,7 +2,7 @@
 
 [文档导航](README.md) · [1.0.12 发行范围](release-1.0.12.md)
 
-Windows x64 客户端提供本机工作区与企业网关两种入口。1.0.12 正式下载是否可用，请以[版本页](versions.md)为准。
+Windows x64 客户端提供本机工作区与企业网关两种入口。**1.0.12 正式版已发布**：[下载 Windows x64 安装器](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.12/kkcode-windows-1.0.12-x64-setup.exe)，详见[版本页](versions.md)。
 
 ## 安装与开始
 
@@ -32,4 +32,4 @@ Windows x64 客户端提供本机工作区与企业网关两种入口。1.0.12 �
 
 本机服务仅监听回环地址。网页渲染启用沙箱与上下文隔离，外部网关页面没有本机文件选择或 Node 调用权限。选取新项目经过原生目录对话框和既有私密路径保护。网关鉴权、接口及事件流继续经过该网关的 HTTPS 证书验证。
 
-安装器签名状态、SHA-256 及真实安装验证结果将在本版公开回执中明确列出。只从项目的正式发行页获取安装器并核对校验值。
+本版安装器未配置 Authenticode 签名，安装时可能显示未知发布者。SHA-256、签名状态与真实安装检查见[公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.12/release-verification.json)。请从项目的正式发行页获取安装器并核对校验值。
