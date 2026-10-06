@@ -1,11 +1,12 @@
 {
   "name": "@kkelly-offical/kkcode",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "workspaces": [
     "apps/web",
     "apps/gateway",
     "packages/protocol",
-    "packages/sdk"
+    "packages/sdk",
+    "apps/desktop"
   ],
   "exports": {
     "./sdk": {
@@ -217,13 +218,13 @@
   "scripts": {
     "build:web": "npm run build --workspace @kkcode/web",
     "typecheck:web": "tsc -p apps/web/tsconfig.json",
-    "test:web": "npm run build:web && node scripts/web-smoke.mjs && node scripts/web-cancel-smoke.mjs && node scripts/web-conversation-smoke.mjs && node scripts/web-display-smoke.mjs && node scripts/web-feature-contract-smoke.mjs && node scripts/web-pixel-theme-smoke.mjs && node scripts/gateway-pixel-smoke.mjs && node scripts/web-knowledge-smoke.mjs && node scripts/web-config-smoke.mjs && node --test test/web-memory-race.test.mjs test/web-todo-progress.test.mjs test/web-markdown-sanitization.test.mjs",
+    "test:web": "npm run build:web && node scripts/web-smoke.mjs && node scripts/web-cancel-smoke.mjs && node scripts/web-conversation-smoke.mjs && node scripts/web-display-smoke.mjs && node scripts/web-experience-smoke.mjs && node scripts/web-feature-contract-smoke.mjs && node scripts/web-pixel-theme-smoke.mjs && node scripts/gateway-pixel-smoke.mjs && node scripts/web-knowledge-smoke.mjs && node scripts/web-config-smoke.mjs && node --test test/web-memory-race.test.mjs test/web-todo-progress.test.mjs test/web-markdown-sanitization.test.mjs",
     "test:browser": "node scripts/browser-smoke.mjs",
     "test:compatibility": "node scripts/compatibility-acceptance.mjs",
     "gateway": "node apps/gateway/main.mjs",
     "version:check": "node scripts/check-release-version.mjs",
     "start": "node ./src/index.mjs",
-    "lint": "eslint src scripts test evaluation && node ./scripts/check-node-syntax.mjs && node ./scripts/check-boundaries.mjs",
+    "lint": "eslint src scripts test evaluation apps/desktop && node ./scripts/check-node-syntax.mjs && node ./scripts/check-boundaries.mjs",
     "test": "node ./scripts/run-node-tests.mjs",
     "test:e2e": "node --test test/e2e/*.mjs",
     "typecheck": "node ./scripts/check-types.mjs",
@@ -231,7 +232,10 @@
     "package:smoke": "node ./scripts/package-smoke.mjs",
     "package:verify-artifact": "node ./scripts/package-artifact-verify.mjs",
     "security:scan": "node ./scripts/secret-scan.mjs",
-    "release:verify": "node ./scripts/release-verify.mjs"
+    "release:verify": "node ./scripts/release-verify.mjs",
+    "desktop:dev": "npm run build:web && npm run dev --workspace @kkcode/desktop",
+    "desktop:prepare": "node scripts/desktop-prepare.mjs",
+    "desktop:build:win": "npm run desktop:prepare && npm run build:win --workspace @kkcode/desktop"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.3.0",

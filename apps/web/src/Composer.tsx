@@ -74,6 +74,7 @@ export function Composer({
   onStop,
   stopping = false,
   compacting = false,
+  stopInBanner = false,
   onPanel,
   onMode,
   onModel,
@@ -99,6 +100,7 @@ export function Composer({
   onStop: () => void;
   stopping?: boolean;
   compacting?: boolean;
+  stopInBanner?: boolean;
   onPanel: (panel: string) => void;
   onMode?: (mode: string) => void;
   onModel?: (selection: { provider: string; model: string }) => void;
@@ -615,8 +617,8 @@ export function Composer({
                 </>,
               )}
           </div>
-          {busy && prompt.trim() && !stopping && !compacting && <button type="button" className="send" aria-label="发送补充要求" disabled={readOnly || uploading} onClick={onSend}><Icon name="send" size={21} /></button>}
-          {busy ? (
+          {busy && !stopInBanner && prompt.trim() && !stopping && !compacting && <button type="button" className="send" aria-label="发送补充要求" disabled={readOnly || uploading} onClick={onSend}><Icon name="send" size={21} /></button>}
+          {busy && !stopInBanner ? (
             <button
               type="button"
               className="send"
@@ -629,8 +631,8 @@ export function Composer({
           ) : (
             <button
               className="send"
-              aria-label="发送"
-              disabled={readOnly || uploading || !prompt.trim()}
+              aria-label={busy ? '发送补充要求' : '发送'}
+              disabled={readOnly || uploading || stopping || compacting || !prompt.trim()}
             >
               <Icon name="send" size={21} />
             </button>

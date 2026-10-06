@@ -35,10 +35,7 @@ export function groupSessions(
     const age = day(now) - day(timestamp(session));
     const group =
       sort === "project"
-        ? String(session.cwd || "")
-            .split(/[\\/]/)
-            .filter(Boolean)
-            .at(-1) || "其他项目"
+        ? String(session.cwd || "") || "其他项目"
         : sort === "priority" && priority(session)
           ? "优先级"
           : age <= 0

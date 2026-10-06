@@ -33,7 +33,9 @@ class ConversationUiTest {
         compose.onNodeWithText("主机地址").assertDoesNotExist()
         compose.onNodeWithContentDescription("更多").performClick()
         compose.onNodeWithText("设置").performClick()
-        compose.onNodeWithText("自动恢复远程连接").assertIsDisplayed()
+        compose.onNodeWithText("外观与阅读").assertIsDisplayed()
+        compose.onNodeWithText("设备与连接").performClick()
+        compose.onNodeWithText("自动恢复远程连接").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("网关地址").assertDoesNotExist()
         compose.onNodeWithContentDescription("关闭").performClick()
         compose.runOnIdle { assertEquals("", state.sheet) }

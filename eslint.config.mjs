@@ -1,7 +1,7 @@
 export default [
   { ignores: ["src/web/assets/**", "coverage/**", "dist/**", "node_modules/**"] },
   {
-    files: ["src/**/*.mjs", "scripts/**/*.mjs", "test/**/*.mjs", "evaluation/**/*.mjs"],
+    files: ["src/**/*.mjs", "scripts/**/*.mjs", "test/**/*.mjs", "evaluation/**/*.mjs", "apps/desktop/*.{mjs,cjs,js}"],
     ignores: ["coverage/**", "dist/**", "node_modules/**"],
     languageOptions: {
       ecmaVersion: "latest",
@@ -32,6 +32,7 @@ export default [
       "valid-typeof": "error"
     }
   },
+  { files: ["apps/desktop/*.cjs"], languageOptions: { sourceType: "commonjs" } },
   // 1.0.0 阶段 4（架构 §3/§4.2.2）：分层边界进 lint。frontends 只允许 import
   // src/kernel/index.mjs facade；deep-import 内核内部文件即 error。
   // scripts/check-boundaries.mjs 是同一规则的脚本兜底（同时覆盖动态 import 与

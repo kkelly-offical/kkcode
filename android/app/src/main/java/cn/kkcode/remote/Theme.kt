@@ -5,7 +5,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.Shapes
-import androidx.compose.foundation.shape.CutCornerShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
@@ -39,28 +39,28 @@ class KKCodeColors(
 private val DarkScheme: ColorScheme = darkColorScheme(
     primary = Color(0xFFE6BB75),
     onPrimary = Color(0xFF292719),
-    background = Color(0xFF101714),
-    onBackground = Color(0xFFEDF0DF),
-    surface = Color(0xFF161F1A),
-    onSurface = Color(0xFFEDF0DF),
-    surfaceVariant = Color(0xFF202C24),
-    onSurfaceVariant = Color(0xFFA6B6A4),
-    outline = Color(0xFF4A5C45),
-    outlineVariant = Color(0xFF2F4033),
-    primaryContainer = Color(0xFF2D3E30), onPrimaryContainer = Color(0xFFEDF0DF),
+    background = Color(0xFF0D1311),
+    onBackground = Color(0xFFECEFE6),
+    surface = Color(0xFF121A16),
+    onSurface = Color(0xFFECEFE6),
+    surfaceVariant = Color(0xFF18221D),
+    onSurfaceVariant = Color(0xFFA6B3A8),
+    outline = Color(0xFF425649),
+    outlineVariant = Color(0xFF2C3B34),
+    primaryContainer = Color(0xFF223229), onPrimaryContainer = Color(0xFFECEFE6),
     secondary = Color(0xFFA4D8B5), onSecondary = Color(0xFF161F1A),
     secondaryContainer = Color(0xFF2D3E30), onSecondaryContainer = Color(0xFFE8EBE1),
     tertiary = Color(0xFFC5BADB), onTertiary = Color(0xFF161F1A),
     tertiaryContainer = Color(0xFF3B3546), onTertiaryContainer = Color(0xFFE8EBE1),
     inverseSurface = Color(0xFFE9E4D3), inverseOnSurface = Color(0xFF29382E), inversePrimary = Color(0xFF416D4E),
-    surfaceTint = Color(0xFFEDF0DF),
+    surfaceTint = Color(0xFFECEFE6),
     error = Color(0xFFE48282),
 )
 
 private val LightScheme: ColorScheme = lightColorScheme(
     primary = Color(0xFF345B46),
     onPrimary = Color(0xFFFFFCF3),
-    background = Color(0xFFF5F1E7),
+    background = Color(0xFFF6F3EA),
     onBackground = Color(0xFF29382E),
     surface = Color(0xFFFFFCF3),
     onSurface = Color(0xFF29382E),
@@ -79,7 +79,7 @@ private val LightScheme: ColorScheme = lightColorScheme(
 )
 
 private val DarkExtras = KKCodeColors(
-    success = Color(0xFF31C977),
+    success = Color(0xFF4FCB8A),
     warning = Color(0xFFE4B18B),
     danger = Color(0xFFE48282),
     link = Color(0xFFA8D9AF),
@@ -107,7 +107,7 @@ val kkcodeColors: KKCodeColors @Composable get() = LocalKKCodeColors.current
 
 @Composable fun KKCodeTheme(dark: Boolean, content: @Composable () -> Unit) {
     CompositionLocalProvider(LocalKKCodeColors provides if(dark) DarkExtras else LightExtras) {
-        MaterialTheme(colorScheme = if(dark) DarkScheme else LightScheme, shapes = Shapes(extraSmall = CutCornerShape(2.dp), small = CutCornerShape(3.dp), medium = CutCornerShape(4.dp), large = CutCornerShape(6.dp), extraLarge = CutCornerShape(8.dp)), content = content)
+        MaterialTheme(colorScheme = if(dark) DarkScheme else LightScheme, shapes = Shapes(extraSmall = RoundedCornerShape(4.dp), small = RoundedCornerShape(8.dp), medium = RoundedCornerShape(12.dp), large = RoundedCornerShape(16.dp), extraLarge = RoundedCornerShape(24.dp)), content = content)
     }
 }
 

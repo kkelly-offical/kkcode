@@ -1,0 +1,7 @@
+{
+  "applicationId": "cn.kkcode.desktop",
+  "platform": "win32",
+  "arch": "x64",
+  "nodeVersion": "24.21.0",
+  "repository": "kkelly-offical/kkcode"
+}

@@ -3,7 +3,7 @@ import path from "node:path"
 import { spawn } from "node:child_process"
 
 const rootDir = process.cwd()
-const targets = ["src", "test", "scripts", "evaluation"]
+const targets = ["src", "test", "scripts", "evaluation", "apps/desktop"]
 const syntaxTargets = []
 
 async function collect(dir) {
@@ -11,11 +11,12 @@ async function collect(dir) {
   for (const entry of entries) {
     const full = path.join(dir, entry.name)
     if (entry.isDirectory()) {
+      if (entry.name === 'node_modules') continue
       await collect(full)
       continue
     }
     if (!entry.isFile()) continue
-    if (entry.name.endsWith('.mjs') || entry.name.endsWith('.js')) {
+    if (/\.(?:mjs|cjs|js)$/.test(entry.name)) {
       syntaxTargets.push(full)
     }
   }

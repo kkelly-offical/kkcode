@@ -69,6 +69,15 @@ import kotlinx.coroutines.delay
     var palette by remember { mutableStateOf(preferences.getString("palette", "mint") ?: "mint") }
     var compact by remember { mutableStateOf(preferences.getBoolean("compact", false)) }
     var motion by remember { mutableStateOf(preferences.getBoolean("motion", true)) }
+    DisposableEffect(preferences) {
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, _ ->
+            palette = prefs.getString("palette", "mint") ?: "mint"
+            compact = prefs.getBoolean("compact", false)
+            motion = prefs.getBoolean("motion", true)
+        }
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
     var show by remember { mutableStateOf(false) }
     var wasBusy by remember(state.selected) { mutableStateOf(false) }
     var celebrate by remember(state.selected) { mutableStateOf(false) }
