@@ -80,7 +80,7 @@ async function startBackend() {
   })
 }
 function showWindow() { if (!window || window.isDestroyed()) return; window.show(); if (window.isMinimized()) window.restore(); window.focus() }
-function openExternal(value) { const url = externalUrl(value); if (url) void shell.openExternal(url) }
+function openExternal(value) { const url = externalUrl(value); if (url) return shell.openExternal(url).catch(() => dialog.showErrorBox('未能打开浏览器', '请检查系统默认浏览器设置，或复制链接后打开。')) }
 async function useGateway(value) {
   const origin = gatewayOrigin(value)
   allowedOrigins.add(origin); gatewayOrigins.add(origin); preferences.gateway = origin; await save()
@@ -153,7 +153,7 @@ if (locked) app.whenReady().then(async () => {
       const link = externalUrl(params.linkURL)
       const items = link ? [
         { label: '在系统浏览器中打开链接', click: () => openExternal(link) },
-        { label: '复制链接地址', click: () => clipboard.writeText(link) },
+        { label: '复制链接地址', click: async () => { try { await clipboard.writeText(link) } catch { dialog.showErrorBox('未能复制链接', '剪贴板暂时不可用，请稍后重试。') } } },
       ] : []
       if (params.isEditable || params.selectionText) {
         if (items.length) items.push({ type: 'separator' })

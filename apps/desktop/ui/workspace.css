@@ -1,11 +1,11 @@
 /* Desktop-owned shell. Conversation/RPC components remain shared with Web. */
-.desktop-workbench .desktop-workspace-rail { width: 64px; flex: 0 0 64px; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px 6px 12px; background: var(--bg-sunken); border-right: 1px solid var(--border); }
-.desktop-workspace-rail button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; width: 48px; min-height: 48px; padding: 8px; border: 0; color: var(--text-secondary); background: transparent; border-radius: 12px !important; }
+.desktop-workbench .desktop-workspace-rail { width: 56px; flex: 0 0 56px; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px 6px 12px; background: var(--bg-sunken); border-right: 1px solid var(--border); }
+.desktop-workspace-rail button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; width: 44px; min-height: 48px; padding: 8px; border: 0; color: var(--text-secondary); background: transparent; border-radius: 12px !important; }
 .desktop-workspace-rail button:hover:not(:disabled), .desktop-workspace-rail button:focus-visible { color: var(--text); background: var(--bg-active); }
 .desktop-workspace-rail button span { font-size: 10px; line-height: 1; }
 .desktop-workspace-rail .desktop-mark { min-height: 40px; width: 40px; margin-bottom: 12px; font-size: 20px; font-weight: 650; color: var(--primary-text); background: var(--primary-bg); border-radius: 12px !important; }
 .desktop-rail-spacer { flex: 1; }
-.desktop-workbench.experience .sidebar { width: 260px; background: var(--bg-panel); padding: 18px 14px 12px; }
+.desktop-workbench.experience .sidebar { width: 232px; background: var(--bg-panel); padding: 18px 14px 12px; }
 .desktop-workbench .sidebar .studio-nav { display: none; }
 .desktop-workbench .sidebar .new { margin-top: 12px; }
 .desktop-workbench .sidebar .device { font-size: 12px; min-height: 36px; }

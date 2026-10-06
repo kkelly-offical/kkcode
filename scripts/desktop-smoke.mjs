@@ -56,9 +56,9 @@ try {
   await page.locator('#native-link-fixture').click({ button: 'right' })
   const linkMenu = await app.evaluate(async ({ Menu, shell, clipboard }) => {
     const items = globalThis.fixtureLinkMenu
-    items.find(item => item.label === '在系统浏览器中打开链接').click()
-    items.find(item => item.label === '复制链接地址').click()
-    const result = { links: globalThis.fixtureExternalLinks, copied: clipboard.readText() }
+    await items.find(item => item.label === '在系统浏览器中打开链接').click()
+    await items.find(item => item.label === '复制链接地址').click()
+    const result = { links: globalThis.fixtureExternalLinks, copied: await clipboard.readText() }
     Menu.buildFromTemplate = globalThis.fixtureOriginalMenuBuild; shell.openExternal = globalThis.fixtureOriginalOpenExternal
     return result
   })
