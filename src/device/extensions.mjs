@@ -23,9 +23,9 @@ const fields = (rows, old = {}) => {
 function publicConnection(name, config, health) {
   let endpoint = ''
   if (config.url) { try { const u = new URL(config.url); endpoint = u.origin } catch {} }
-  return { name, transport: config.transport || config.type || 'stdio', endpoint, command: Array.isArray(config.command) ? config.command[0] : config.command || '', args: [],
+  return { ...health, name, transport: config.transport || config.type || 'stdio', endpoint, command: Array.isArray(config.command) ? config.command[0] : config.command || '', args: [],
     enabled: config.enabled !== false, managed: true, configurable: true, envKeys: Object.keys(config.env || {}), headerKeys: Object.keys(config.headers || {}),
-    auth: config.oauth ? 'oauth' : 'none', ...health, error: health?.error ? '连接未就绪，请检查配置或重新登录。' : null }
+    auth: config.oauth ? 'oauth' : 'none', error: health?.error ? '连接未就绪，请检查配置或重新登录。' : null }
 }
 export class DeviceExtensions {
   constructor(service) { this.service = service; this.auth = new Map() }
