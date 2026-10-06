@@ -126,7 +126,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .run-banner { margin: 0 12px 8px; padding: 8px 10px; gap: 8px; }
   .run-banner .pixel-buddy { width: 24px; height: 27px; }
   .run-label strong { font-size: 13px; }
-  .run-label small, .run-progress, .run-banner button:not(.run-stop) { display: none; }
+  .run-label small, .run-progress, .run-banner > button:not(.run-stop) { display: none; }
   .run-banner .run-stop { display: none; }
   .sheet .activity-panel { width: 100%; height: min(65dvh, 700px); border: 0; flex-basis: auto; }
   .sheet .activity-panel > header { display: none; }
