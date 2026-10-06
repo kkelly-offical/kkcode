@@ -26,7 +26,7 @@ app.get('/fixture.js', (_req, reply) => reply.type('application/javascript').sen
 const origin = await app.listen({ host: '127.0.0.1', port: 0 })
 let browser
 try {
-  browser = await chromium.launch({ headless: true, ...(process.env.KKCODE_CHROMIUM ? { executablePath: process.env.KKCODE_CHROMIUM } : {}) })
+  browser = await chromium.launch({ headless: true, chromiumSandbox: true, ...(process.env.KKCODE_CHROMIUM ? { executablePath: process.env.KKCODE_CHROMIUM } : {}) })
   const page = await browser.newPage(), errors = []
   // Bind only the settings operations needed by this component to this page;
   // do not expose the device's general RPC interface as an HTTP fixture route.

@@ -10,7 +10,7 @@ const digest = value => createHash('sha256').update(typeof value === 'string' ? 
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value
 const invalid = message => { throw Object.assign(new Error(message), { code: 'plugin_integrity_error' }) }
 const lockPath = name => path.join(userRootDir(), 'plugin-locks', `${name}.json`)
-const nameOk = name => { if (!/^[a-z0-9][a-z0-9_-]{0,79}$/.test(name)) invalid('插件名称无效。'); return name }
+const nameOk = name => { if (typeof name !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,79}$/.test(name)) invalid('插件名称无效。'); return path.basename(name) }
 const json = text => { try { return JSON.parse(text) } catch { invalid('插件JSON记录无法解析，未输出原始内容。') } }
 
 export async function readPluginLock(name) {

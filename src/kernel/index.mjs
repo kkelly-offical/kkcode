@@ -28,7 +28,8 @@
 // ── 1. 组合根 ─────────────────────────────────────────────────────────
 export { createKernel } from "./kernel.mjs"
 export { runtimeCwd } from './core/runtime-context.mjs'
-export { installPlugin, managePlugin } from './plugin/manager.mjs'
+// Remote installation has no local filesystem source path; CLI keeps its explicit local import.
+export { installPlugin, installRemotePlugin, managePlugin } from './plugin/manager.mjs'
 export { resolveManagedMcpConfig, managedMcpStore } from './mcp/managed-config.mjs'
 
 // Experimental host-owned persistence factories for sdk/storage and local

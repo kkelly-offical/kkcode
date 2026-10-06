@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, rename } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
-import { installPlugin, managePlugin } from '../src/kernel/plugin/manager.mjs'
+import { installPlugin, installRemotePlugin, managePlugin } from '../src/kernel/plugin/manager.mjs'
 import { inspectPluginContent, verifyManagedPlugin } from '../src/kernel/plugin/integrity.mjs'
 import { discoverLocalPluginManifests } from '../src/kernel/plugin/manifest-loader.mjs'
 
@@ -14,6 +14,19 @@ async function fixture(t, manifest = {}) {
   await mkdir(source); await writeFile(path.join(source, 'plugin.json'), JSON.stringify({ name: 'fixture', version: '1.0.0', ...manifest }))
   return { root, source, state, target: path.join(state, 'plugins', 'fixture') }
 }
+test('remote plugin install cannot enter the local source importer or use path names', async t => {
+  const f = await fixture(t)
+  for (const source of [f.source, './source', '../source', 'file:///source', 'https://example.invalid/source']) {
+    await assert.rejects(installRemotePlugin({ name: 'fixture', source }), /Remote plugin installation/)
+  }
+  for (const name of ['../escape', 'plugin/name', 'C:\\escape', '..', { toString: () => 'fixture' }]) {
+    await assert.rejects(installRemotePlugin({ name, source: 'npm:fixture@1.0.0' }), /Plugin name/)
+    await assert.rejects(managePlugin(name, 'remove'), /Plugin name/)
+  }
+  // The explicitly invoked CLI importer still supports trusted local packages.
+  assert.equal((await installPlugin({ name: 'fixture', source: f.source })).installed, true)
+  assert.equal((await verifyManagedPlugin(f.target)).verified, true)
+})
 test('managed executable plugin requires exact-content approval and a no-op update cannot clear it', async t => {
   const f = await fixture(t, { hooks: ['hooks'] }); await mkdir(path.join(f.source, 'hooks'))
   await writeFile(path.join(f.source, 'hooks', 'hook.mjs'), 'export default {name:"fixture",chat:{}}')

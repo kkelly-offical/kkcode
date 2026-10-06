@@ -102,7 +102,15 @@ export async function updateDeviceSettings(service, patch) {
     // A valid user update may coexist with a still-invalid project layer.
     // Keep its execution guard without restarting extensions or turning an
     // already-persisted user update into a misleading transport failure.
-    if (!fresh.permissionBlocked) await kernel.applyTrustState(kernel.trustState)
+    if (!fresh.permissionBlocked) {
+      await kernel.applyTrustState(kernel.trustState)
+      // General refresh may defer MCP loading. Explicit MCP edits must wait for
+      // an older load and apply the latest config before acknowledging success.
+      if (Object.hasOwn(patch, 'mcp')) {
+        const policy = kernel.extensionPolicy
+        await kernel.extensions.mcp.initialize(policy.config, { cwd: kernel.cwd, allowProjectSources: policy.allowProjectSources, force: true, defer: false })
+      }
+    }
   }
   service.emit('configuration', { updated: true })
   return { saved: true, restartRequired: false, config: await deviceSettingsSnapshot(service.cwd) }
