@@ -22,8 +22,9 @@ const sessions = {
 }
 const roots = { 'device-a': '/workspace/alpha', 'device-b': '/workspace/device-b' }
 const attachments = new Map(), calls = []
-let created = 0, attachment = 0, logoutCalls = 0, commandStarted = false, releaseCommand
+let created = 0, attachment = 0, logoutCalls = 0, commandStarted = false, successStarted = false, releaseCommand, releaseSuccess
 const commandGate = new Promise(resolve => { releaseCommand = resolve })
+const successGate = new Promise(resolve => { releaseSuccess = resolve })
 const json = (response, value, status = 200) => {
   response.writeHead(status, { 'Content-Type': 'application/json' })
   response.end(JSON.stringify(value))
@@ -69,6 +70,7 @@ const server = createServer(async (request, response) => {
     if (method === 'attachments.remove') { attachments.delete(params.id); return reply({ ok: true }) }
     if (method === 'turns.start') {
       if (params.prompt === '新建会话失败草稿') return json(response, { error: { code: 'fixture_send', message: '模拟发送失败' } }, 409)
+      if (params.prompt === '延迟成功正文') { successStarted = true; await successGate }
       return reply({ accepted: true, executionId: params.executionId })
     }
     if (method === 'commands.run' && params.command === '/fail') {
@@ -107,6 +109,20 @@ const chooseProject = async project => {
 try {
   await page.goto(`http://127.0.0.1:${server.address().port}`)
   await expect(input).toBeVisible()
+  await chooseProject('/workspace/alpha')
+  await input.fill('项目 A 空白草稿')
+  await chooseProject('/workspace/beta')
+  await expect(input).toHaveValue('')
+  await input.fill('项目 B 空白草稿')
+  await chooseProject('/workspace/alpha')
+  await expect(input).toHaveValue('项目 A 空白草稿')
+  await input.fill('')
+  await chooseProject('/workspace/beta')
+  await expect(input).toHaveValue('项目 B 空白草稿')
+  await input.fill('')
+  await chooseProject('/workspace/alpha')
+  await expect(input).toHaveValue('')
+
   await sessionButton('Alpha 一').click()
   await input.fill('A1 私密正文')
   await page.locator('input[aria-label="添加图片或文件"]').setInputFiles({ name: 'a-one.txt', mimeType: 'text/plain', buffer: Buffer.from('A1 attachment') })
@@ -124,6 +140,25 @@ try {
 
   await sessionButton('Alpha 一').click()
   await page.getByRole('button', { name: '发送', exact: true }).click()
+  await expect(input).toHaveValue('')
+  await expect(page.locator('.composer-attachment')).toHaveCount(0)
+  await sessionButton('Alpha 二').click()
+  await expect(input).toHaveValue('A2 私密正文')
+
+  await sessionButton('Alpha 一').click()
+  await input.fill('延迟成功正文')
+  await page.locator('input[aria-label="添加图片或文件"]').setInputFiles({ name: 'delayed.txt', mimeType: 'text/plain', buffer: Buffer.from('Delayed attachment') })
+  await expect(page.getByRole('button', { name: '移除附件 delayed.txt', exact: true })).toBeEnabled()
+  const delayedResponse = page.waitForResponse(response => response.request().postData()?.includes('"method":"turns.start"') && response.request().postData()?.includes('延迟成功正文'))
+  await page.getByRole('button', { name: '发送', exact: true }).click()
+  await expect.poll(() => successStarted).toBe(true)
+  await sessionButton('Alpha 二').click()
+  await expect(input).toHaveValue('A2 私密正文')
+  releaseSuccess()
+  await delayedResponse
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  await expect(input).toHaveValue('A2 私密正文')
+  await sessionButton('Alpha 一').click()
   await expect(input).toHaveValue('')
   await expect(page.locator('.composer-attachment')).toHaveCount(0)
   await sessionButton('Alpha 二').click()
@@ -188,9 +223,10 @@ try {
   await expect(input).toHaveValue('')
   await expect(page.locator('.composer-attachment')).toHaveCount(0)
   assert.deepEqual(errors, [])
-  console.log('Web scoped drafts: cross-session/project/device isolation, attachment alignment, new-session and delayed failure recovery, and logout cleanup passed.')
+  console.log('Web scoped drafts: blank-project and cross-session/device isolation, delayed success/failure recovery, attachment alignment, and logout cleanup passed.')
 } finally {
   releaseCommand()
+  releaseSuccess()
   await browser.close()
   await new Promise(resolve => server.close(resolve))
 }
