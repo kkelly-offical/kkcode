@@ -1,4 +1,5 @@
 export interface DeviceEvent { schemaVersion: '1'; id: string; seq: number; sessionId: string; type: string; payload: unknown; timestamp: number }
+export interface ReplayGap { type: 'replay.gap'; earliest: number; cursor: number; [key: string]: unknown }
 export interface ContextUsage { tokens: number; limit: number; percent: number; outputReserved?: number; windowKind?: 'input' | 'shared'; contextSource?: 'configuration' | 'catalog' | 'fallback'; outputSource?: 'configuration' | 'catalog' | 'estimated'; inputBudget?: number; requiredTokens?: number; source: 'estimated' | 'count-api' | 'provider-usage' | 'strict-upper-bound'; estimated: boolean; components: { system?: number; tools?: number; messages?: number }; updatedAt?: number }
 export interface ToolDefinition { name: string; description: string; inputSchema: Record<string, unknown> }
 export interface SubagentSnapshot {
@@ -109,6 +110,7 @@ export interface DeviceCredentials { access_token: string; refresh_token: string
 export declare const PROTOCOL_VERSION: '1';
 export declare function downloadArtifact(client: Pick<DeviceClient, 'request'>, options: { sessionId: string; id: string; maxBytes?: number; signal?: AbortSignal; onProgress?: (received: number, total: number) => void }): Promise<{ id: string; sha256: string; size: number; mime: string; blob: Blob }>;
 export declare class DeviceClient {
+  /** The retries option must be a safe integer from 0 through 5 (default 5); invalid values throw RangeError. */
   constructor(options: { url: string; token?: string; deviceId?: string | null; gateway?: boolean; refreshToken?: string | null; onCredentials?: (credentials: DeviceCredentials) => void | Promise<void>; fetch?: typeof fetch; headers?: Record<string, string>; retries?: number });
   deviceId: string | null;
   token?: string;
@@ -119,6 +121,7 @@ export declare class DeviceClient {
   call(method: 'sessions.get', params: { sessionId: string; view: 'subagents' }, options?: { signal?: AbortSignal; id?: string; issuedAt?: number }): Promise<{ sessionId: string; subagents: SubagentSnapshot[] }>;
   listDevices<T = unknown>(options?: { signal?: AbortSignal }): Promise<T>;
   profile<T = unknown>(options?: { signal?: AbortSignal }): Promise<T>;
-  stream(sessionId: string, options?: { after?: number; signal?: AbortSignal; onEvent?: (event: DeviceEvent) => void | Promise<void>; onMeta?: (state: Record<string, unknown>) => void | Promise<void>; onGap?: (state: Record<string, unknown>) => void | Promise<void> }): Promise<'closed'>;
+  /** Without onGap, a replay gap rejects with replay_gap instead of dispatching later rows. */
+  stream(sessionId: string, options?: { after?: number; signal?: AbortSignal; onEvent?: (event: DeviceEvent) => void | Promise<void>; onMeta?: (state: Record<string, unknown>) => void | Promise<void>; onGap?: (gap: ReplayGap) => void | Promise<void> }): Promise<'closed'>;
   events(sessionId: string, options?: { after?: number; signal?: AbortSignal; interval?: number }): AsyncGenerator<DeviceEvent>;
 }

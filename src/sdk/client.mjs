@@ -1,5 +1,5 @@
 import { PROTOCOL_VERSION } from '../protocol/index.mjs'
-import { eventsStreamPath, streamSessionEvents } from './event-stream.mjs'
+import { eventsStreamPath, replayGapError, streamSessionEvents } from './event-stream.mjs'
 export { PROTOCOL_VERSION }
 export { downloadArtifact } from './artifacts.mjs'
 
@@ -20,9 +20,10 @@ const withSignal = (promise, signal) => !signal ? promise : new Promise((resolve
 /** Browser-safe device SDK: local/Host and Relay share exactly the same RPC API. */
 export class DeviceClient {
   constructor({ url, token, deviceId = null, gateway = false, refreshToken = null, onCredentials, fetch: fetchImpl = globalThis.fetch, headers = {}, retries = 5 }) {
+    if (!Number.isSafeInteger(retries) || retries < 0 || retries > 5) throw new RangeError('retries must be a safe integer between 0 and 5')
     this.url = url.replace(/\/$/, ''); this.token = token; this.deviceId = deviceId
     this.refreshToken = refreshToken; this.onCredentials = onCredentials; this.refreshing = null; this.gateway = gateway || Boolean(deviceId)
-    this.fetch = fetchImpl.bind(globalThis); this.headers = headers; this.retries = Math.max(0, Math.min(5, retries))
+    this.fetch = fetchImpl.bind(globalThis); this.headers = headers; this.retries = retries
   }
   async refresh({ signal } = {}) {
     if (!this.refreshing) this.refreshing = (async () => {
@@ -71,7 +72,7 @@ export class DeviceClient {
     let cursor = after
     while (!signal?.aborted) {
       const batch = await this.request('events.list', { sessionId, after: cursor }, { signal })
-      if (batch.gap) throw Object.assign(new Error('Event history was compacted; reload the session snapshot'), { code: 'replay_gap', after: batch.earliest })
+      if (batch.gap) throw replayGapError(batch)
       for (const event of batch.events) { cursor = event.seq; yield event }
       await pause(interval, signal)
     }

@@ -30,6 +30,12 @@ kernel.missing();
 const client = new DeviceClient({ url: 'http://localhost' });
 const sessions = await client.call('sessions.list', {});
 sessions[0]?.title?.toUpperCase();
+await client.stream('session', {
+  onGap: gap => {
+    gap.earliest.toFixed();
+    gap.cursor.toFixed();
+  },
+});
 // @ts-expect-error unknown RPC method
 await client.call('sessions.misspelled', {});
 // @ts-expect-error deletion requires explicit confirmation
