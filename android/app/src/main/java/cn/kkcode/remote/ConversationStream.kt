@@ -1,14 +1,14 @@
 package cn.kkcode.remote
 
-/** Only durable journal seq values advance replay. SSE control frames reuse
- * Last-Event-ID and must still apply at the same cursor (state, hello, gap). */
+/** Only durable journal seq values advance replay, after their handler succeeds.
+ * SSE control frames reuse Last-Event-ID and apply at the current cursor. */
 internal class SessionEventCursor(initial: Long) {
     var value: Long = initial
         private set
-    fun accept(sequence: Long?): Boolean {
-        if(sequence == null || sequence <= 0) return true
-        if(sequence <= value) return false
-        value = sequence
+    suspend fun process(sequence: Long?, handler: suspend () -> Unit): Boolean {
+        if(sequence != null && sequence > 0 && sequence <= value) return false
+        handler()
+        if(sequence != null && sequence > 0 && sequence > value) value = sequence
         return true
     }
     fun reset(sequence: Long) { value = sequence }

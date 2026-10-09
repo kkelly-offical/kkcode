@@ -24,6 +24,8 @@ internal fun sshCredentialMatches(saved: org.json.JSONObject, connection: org.js
         saved.optInt("port", -1) == connection.optInt("port", 22) &&
         saved.optString("username") == connection.optString("username") &&
         saved.optString("hostKey").isNotBlank() && saved.optString("hostKey") == connection.optString("hostKey")
+internal fun shouldRestoreSshComposer(recovering: Boolean, activeSsh: String, connectedSsh: String, activeSession: String, restoredSession: String?): Boolean =
+    recovering && activeSsh.isNotBlank() && activeSsh == connectedSsh && activeSession.isNotBlank() && activeSession == restoredSession
 internal fun sshStartupError(detail: String): String = when {
     detail.contains("scope", ignoreCase = true) -> "SSH 目录范围与电脑上现有远控不一致。请在 SSH 设置中匹配“所有普通目录”或“仅 home”，不必重新登录网关。"
     detail.contains("port", ignoreCase = true) -> "SSH 服务端口与电脑上的 WebUI/远控不一致或已被占用，请核对 SSH 设置中的远端端口。"
