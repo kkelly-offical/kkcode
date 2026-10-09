@@ -598,6 +598,8 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         vault.put("ssh-key:${accountScope()}:$host:$port:$user", fingerprint); fingerprint = ""
     }
     fun connectSsh(host: String, port: String, user: String, password: String, key: String = "", name: String = host, rememberCredentials: Boolean = true, remotePort: Int = 18271, allFolders: Boolean = false, recovering: Boolean = false) = action {
+        val recoverySsh = if(recovering) selectedSsh else ""
+        val recoverySession = if(recovering) selected.ifBlank { if(recoverySsh.isBlank()) "" else vault.get("ssh-session:${accountScope()}:$recoverySsh").orEmpty() } else ""
         val sshPort = port.toIntOrNull()?.takeIf { it in 1..65535 } ?: throw IllegalArgumentException("SSH 端口必须是 1–65535 之间的整数")
         if(!recovering) sshRecovery?.cancel()
         val generation = ++connectionGeneration
@@ -608,10 +610,12 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
             val accepted = vault.get("ssh-key:${accountScope()}:$host:$port:$user") ?: existing?.optString("hostKey")?.takeIf { it.isNotBlank() }
             val next = connection.connect(host, sshPort, user, password, accepted, remotePort = remotePort, privateKey = key, allFolders = allFolders)
             if(generation != connectionGeneration) { connection.close(); return@action }
-            leaveChat(); clearDeviceSelection(); sessions = emptyList(); commands = emptyList(); deviceEvents?.cancel(); sshHeartbeat?.cancel(); ssh?.close(); ssh = connection; api = next
+            val id = existing?.optString("id") ?: editingSsh?.optString("id")?.takeIf { it.isNotBlank() } ?: java.util.UUID.randomUUID().toString()
+            val previousSession = vault.get("ssh-session:${accountScope()}:$id")
+            val restoreComposer = shouldRestoreSshComposer(recovering, recoverySsh, id, recoverySession, previousSession)
+            leaveChat(preserveComposer = restoreComposer); clearDeviceSelection(); sessions = emptyList(); commands = emptyList(); deviceEvents?.cancel(); sshHeartbeat?.cancel(); ssh?.close(); ssh = connection; api = next
             connected = true; deviceName = name.ifBlank { host }; manualDisconnect = false
             if(recovering) { connectionPhase = "reconnecting"; connectionRestored() }
-            val id = existing?.optString("id") ?: editingSsh?.optString("id")?.takeIf { it.isNotBlank() } ?: java.util.UUID.randomUUID().toString()
             selectedSsh = id
             val saved = JSONObject().put("id", id).put("type", "ssh").put("name", deviceName).put("host", host).put("port", sshPort).put("username", user).put("remotePort", remotePort).put("hostKey", accepted ?: "").put("folders", if(allFolders) "all" else "home").put("pendingSync", true)
             sshProfiles = sshProfiles.filterNot { it.optString("id") == id } + saved; persistSshProfiles()
@@ -630,8 +634,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
             sheet = ""; fingerprint = ""
             startDeviceEvents()
             sshHeartbeat = viewModelScope.launch { while(isActive && api === next) { try { next.call("/api/v1/auth/heartbeat", JSONObject()); if(api === next) connectionRestored() } catch(error: CancellationException) { throw error } catch(_: Exception) { if(api === next) { connectionLost("SSH 连接中断"); resumeSshConnection(force = true) } }; delay(20000) } }
-            val previousSession = vault.get("ssh-session:${accountScope()}:$id")
-            sessions.find { it.optString("id") == previousSession }?.let { openSession(it) }
+            sessions.find { it.optString("id") == previousSession }?.let { openSession(it, preserveComposer = restoreComposer) }
             viewModelScope.launch { loadSshProfiles() }
         } catch (e: HostKeyRequired) { if(generation == connectionGeneration) { fingerprint = e.fingerprint; if(!recovering) sheet = "ssh"; notice = "请从 SSH 连接管理核对电脑的主机指纹；不会自动信任变更后的身份" } }
         catch(e: Exception) {
@@ -640,7 +643,8 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         }
         finally { if(api?.relay != false || ssh !== connection) connection.close(); if(generation == connectionGeneration) loading = false }
     }
-    fun openSession(item: JSONObject) = action {
+    fun openSession(item: JSONObject) = openSession(item, preserveComposer = false)
+    internal fun openSession(item: JSONObject, preserveComposer: Boolean) = action {
         polling?.cancel(); lastTurnOutcome = ""; subagentSyncNotice = ""; selected = item.getString("id"); cwd = item.optString("cwd", cwd)
         messages = emptyList(); contextUsage = JSONObject(); approvals = emptyList(); turnOperation = ""
         val selection = ++sessionGeneration
@@ -653,7 +657,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         catch(error: Exception) { if(selected != sessionId || api !== source || sessionGeneration != selection) return@action; if(sessionGone(error, sessionId)) return@action; throw error }
         if(selected != sessionId || api !== source || sessionGeneration != selection) return@action
         applySnapshot(snapshot)
-        attachments = emptyList(); failedAttachments = emptyList(); draft = ""
+        if(!preserveComposer) { attachments = emptyList(); failedAttachments = emptyList(); draft = "" }
         startEvents(snapshot.optLong("eventCursor")); sheet = ""
     }
     private fun sessionGone(error: Exception, id: String): Boolean {
@@ -758,26 +762,28 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
                         client.streamEvents(sessionId, cursor.value).collect { frame ->
                             if(!currentSession()) throw CancellationException()
                             val row = try { JSONObject(frame.data) } catch(_: Exception) { return@collect }
-                            if(!cursor.accept(if(row.has("seq")) row.optLong("seq") else null)) return@collect
-                            when (frame.event) {
-                                "connected" -> {
-                                    observeTurnState(row); connectionRestored()
-                                    controlElsewhere = row.optJSONObject("control")?.optBoolean("yours") == false
-                                    approvals = row.optJSONArray("approvals").objects()
+                            val sequence = if(frame.event in listOf("connected", "session.state", "replay.gap", "device.online", "device.offline")) null else if(row.has("seq")) row.optLong("seq") else null
+                            cursor.process(sequence) {
+                                when (frame.event) {
+                                    "connected" -> {
+                                        observeTurnState(row); connectionRestored()
+                                        controlElsewhere = row.optJSONObject("control")?.optBoolean("yours") == false
+                                        approvals = row.optJSONArray("approvals").objects()
+                                    }
+                                    "session.state" -> {
+                                        observeTurnState(row)
+                                        controlElsewhere = row.optJSONObject("control")?.optBoolean("yours") == false
+                                    }
+                                    "replay.gap" -> {
+                                        val snapshot = rpc("sessions.get", JSONObject().put("sessionId", sessionId)) as JSONObject
+                                        if(!currentSession()) throw CancellationException()
+                                        applySnapshot(snapshot); cursor.reset(snapshot.optLong("eventCursor", cursor.value))
+                                        if(!snapshot.optBoolean("liveTruncated")) notice = "历史事件已归档，已重新同步完整会话"
+                                    }
+                                    "device.online" -> connectionRestored()
+                                    "device.offline" -> connectionLost("设备已离线，等待恢复")
+                                    else -> handleJournalEvent(row)
                                 }
-                                "session.state" -> {
-                                    observeTurnState(row)
-                                    controlElsewhere = row.optJSONObject("control")?.optBoolean("yours") == false
-                                }
-                                "replay.gap" -> {
-                                    val snapshot = rpc("sessions.get", JSONObject().put("sessionId", sessionId)) as JSONObject
-                                    if(!currentSession()) throw CancellationException()
-                                    applySnapshot(snapshot); cursor.reset(snapshot.optLong("eventCursor", cursor.value))
-                                    if(!snapshot.optBoolean("liveTruncated")) notice = "历史事件已归档，已重新同步完整会话"
-                                }
-                                "device.online" -> connectionRestored()
-                                "device.offline" -> connectionLost("设备已离线，等待恢复")
-                                else -> handleJournalEvent(row)
                             }
                         }
                         reconnectMs = 2000
@@ -801,8 +807,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
                         continue
                     }
                     for (event in batch.optJSONArray("events").objects()) {
-                        if(!cursor.accept(event.getLong("seq"))) continue
-                        handleJournalEvent(event)
+                        cursor.process(event.getLong("seq")) { handleJournalEvent(event) }
                     }
                     approvals = batch.optJSONArray("approvals").objects(); connectionRestored()
                     observeTurnState(batch)
@@ -926,7 +931,9 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
                 if(messages.none { it.kind == "cancelled" && it.turnId == turn }) messages = messages + ChatItem(event.optString("id"), "cancelled", if(payload.optString("operation") == "compact") "压缩已停止，原对话已保留。" else "已停止。已收到的内容和文件改动已保留。", turnId = turn, startedAt = timestamp)
             }
             "turn.failed" -> {
-                lastTurnOutcome = "error"; if(payload.optString("operation") == "compact" && draft.isBlank()) draft = "/compact"; messages = finishStreamStep(messages, turn, null, timestamp); settleExecution(execution); notice = remoteErrorMessage(Exception(payload.optString("error")), api?.relay == false); messages = messages + ChatItem(event.optString("id"), "error", notice, turnId = turn, startedAt = timestamp) }
+                lastTurnOutcome = "error"; if(payload.optString("operation") == "compact" && draft.isBlank()) draft = "/compact"; messages = finishStreamStep(messages, turn, null, timestamp); settleExecution(execution); notice = remoteErrorMessage(Exception(payload.optString("error")), api?.relay == false)
+                if(messages.none { it.kind == "error" && it.id == event.optString("id") }) messages = messages + ChatItem(event.optString("id"), "error", notice, turnId = turn, startedAt = timestamp)
+            }
             else -> return false
         }
         return true
@@ -1243,7 +1250,12 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         val response = rpc("subagents.interrupt", JSONObject().put("sessionId", session).put("childSessionId", id)) as JSONObject
         if(selected == session) subagents = mergeSubagentSnapshot(subagents, response.optJSONArray("items").objects(), session)
     }
-    fun leaveChat() { historyTarget = ""; polling?.cancel(); sessionGeneration++; todos = null; subagents = emptyList(); selected = ""; messages = emptyList(); contextUsage = JSONObject(); persistedSteps = emptySet(); persistedUserTurns = emptySet(); approvals = emptyList(); attachments = emptyList(); failedAttachments = emptyList(); draft = ""; historyHasMore = false; historyBefore = ""; busy = false; stopping = false; turnPhase = "idle"; activeExecution = ""; stopRequested = ""; pendingSend = null; stopJob = null }
+    fun leaveChat() = leaveChat(preserveComposer = false)
+    internal fun leaveChat(preserveComposer: Boolean) {
+        historyTarget = ""; polling?.cancel(); sessionGeneration++; todos = null; subagents = emptyList(); selected = ""; messages = emptyList(); contextUsage = JSONObject(); persistedSteps = emptySet(); persistedUserTurns = emptySet(); approvals = emptyList()
+        if(!preserveComposer) { attachments = emptyList(); failedAttachments = emptyList(); draft = "" }
+        historyHasMore = false; historyBefore = ""; busy = false; stopping = false; turnPhase = "idle"; activeExecution = ""; stopRequested = ""; pendingSend = null; stopJob = null
+    }
     fun disconnect() { connectionGeneration++; sshRecovery?.cancel(); sshHeartbeat?.cancel(); deviceEvents?.cancel(); deviceNotice?.cancel(); manualDisconnect = true; leaveChat(); clearDeviceSelection(); ssh?.close(); ssh = null; selectedSsh = ""; vault.clear("active-ssh:${accountScope()}"); api = gatewayApi ?: api?.takeIf { it.relay }; api?.device = ""; connected = false; deviceName = "未连接设备"; sessions = emptyList(); commands = emptyList() }
     fun logout() = action {
         cancelLogin()

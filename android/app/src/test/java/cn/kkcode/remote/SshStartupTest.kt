@@ -18,4 +18,12 @@ class SshStartupTest {
         assertTrue(sshStartupError("SSH port must match").contains("服务端口"))
         assertFalse(sshStartupError("unexpected private diagnostic payload").contains("private diagnostic"))
     }
+    @Test fun onlyAutomaticRecoveryOfTheSameSshSessionPreservesComposer() {
+        assertTrue(shouldRestoreSshComposer(true, "ssh-one", "ssh-one", "session-one", "session-one"))
+        assertFalse(shouldRestoreSshComposer(false, "ssh-one", "ssh-one", "session-one", "session-one"))
+        assertFalse(shouldRestoreSshComposer(true, "ssh-one", "ssh-two", "session-one", "session-one"))
+        assertFalse(shouldRestoreSshComposer(true, "ssh-one", "ssh-one", "session-one", "session-two"))
+        assertFalse(shouldRestoreSshComposer(true, "", "ssh-one", "session-one", "session-one"))
+        assertFalse(shouldRestoreSshComposer(true, "ssh-one", "ssh-one", "", null))
+    }
 }
