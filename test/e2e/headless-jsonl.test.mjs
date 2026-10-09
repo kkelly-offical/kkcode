@@ -38,6 +38,17 @@ function sseBody(chunks, usage, finishReason = "stop") {
   ].join("")
 }
 
+function sseToolCallBody(text, call, usage) {
+  return [
+    `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: call.id, type: "function", function: { name: call.name, arguments: JSON.stringify(call.args) } }] } }] })}\n\n`,
+    `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "tool_calls" }], usage })}\n\n`,
+    "data: [DONE]\n\n"
+  ].join("")
+}
+
+let interleaveRequestCount = 0
+
 before(async () => {
   server = createServer((req, res) => {
     let body = ""
@@ -67,6 +78,16 @@ before(async () => {
             usage: { prompt_tokens: 11, completion_tokens: 7 }
           }))
         }
+        return
+      }
+      if (payload.model === "mock-interleave") {
+        interleaveRequestCount += 1
+        const usage = { prompt_tokens: 11, completion_tokens: 7 }
+        res.writeHead(200, { "content-type": "text/event-stream" })
+        if (interleaveRequestCount === 1) res.end(sseBody(["前半"], usage, "length"))
+        else if (interleaveRequestCount === 2) {
+          res.end(sseToolCallBody("中间", { id: "list-middle", name: "list", args: { path: "." } }, usage))
+        } else res.end(sseBody(["后半"], usage))
         return
       }
       if (payload.stream) {
@@ -220,6 +241,25 @@ test("e2e headless 契约：auto-continue 的 text/json/stream-json 终态与 de
       )
     }
   }
+})
+
+test("e2e headless 契约：auto-continue 中间工具调用的渲染分隔不进入 stream-json 正文", async () => {
+  const { stdout, stderr, exitCode } = await runCli([
+    "chat", "interleave", "--output-format", "stream-json", "--model", "mock-interleave", "--trust"
+  ])
+  assert.equal(exitCode, 0, `交错续写应成功退出，stderr：${stderr}`)
+  const events = parseJsonlContract(stdout)
+  const result = events.at(-1)
+  assert.equal(result.type, "turn.result")
+  assert.equal(result.status, "succeeded")
+  assert.equal(result.content, "前半中间后半")
+  assert.ok(result.toolResults.some((event) => event.name === "list" && event.status === "completed"),
+    "中间 list 工具调用必须真实执行成功")
+
+  const deltas = events.filter((event) => event.type === "assistant.delta")
+  assert.deepEqual(deltas.map((event) => event.delta), ["前半", "中间", "后半", "\n"])
+  assert.equal(deltas.map((event) => event.delta).join("").trimEnd(), result.content)
+  assert.ok(!deltas.some((event) => event.delta.includes("output truncated")), "续写提示不属于助手正文")
 })
 
 test("e2e headless 契约：进程级失败时 stdout 保持纯 JSONL（零事件），错误只在 stderr", async () => {

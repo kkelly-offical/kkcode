@@ -64,7 +64,7 @@ export function createOutputReporter(format, {
       if (!content) return
       if (format === "legacy") stdout.write(String(content))
       if (format === "stream-json") {
-        const value = pendingStreamNewline + String(content)
+        const value = String(content)
         pendingStreamNewline = ""
         const plain = value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
         const autoContinue = plain.match(/^\n*(  ↳ output truncated, auto-continuing \(\d+\/\d+\)\.\.\.)\n$/)
@@ -72,8 +72,8 @@ export function createOutputReporter(format, {
           writeLine(stderr, autoContinue[1])
           return
         }
-        // Hold the renderer's end-of-response newline until the next chunk tells
-        // us whether it is a continuation separator or the final trailing newline.
+        // Keep renderer newlines out of subsequent responses; only the final
+        // trailing newline is emitted as assistant content.
         if (value === "\n") {
           pendingStreamNewline = value
           return
