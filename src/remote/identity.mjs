@@ -34,13 +34,27 @@ export function registerIdentity({ app, store, config, origin, issuer, organizat
     }
   })
   const audit = async (action, actor, resource, result = 'ok') => store.put(`audit:${Date.now()}:${randomUUID()}`, { action, actor, resource, result, timestamp: Date.now() })
+  async function updateAccount(profile) {
+    const key = `account:${profile.id}`
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const current = await store.get(key)
+      if (current?.disabled) return null
+      const account = { ...current, ...profile, disabled: current?.disabled === true }
+      const updated = current ? await store.comparePut(key, current, account) : await store.putIfAbsent(key, account)
+      if (updated) return account
+    }
+    throw failure('Organization membership changed; restart login', 409)
+  }
   async function issue(account, kind = 'client', existing = null) {
-    const session = existing || { id: randomUUID(), accountId: account.id, kind, deviceId: null, createdAt: Date.now(), expires: Date.now() + 30 * 86400000 }
+    const current = await store.get(`account:${account.id}`)
+    if (!current || current.disabled) throw failure('Organization membership has been disabled', 403)
+    if (current.organization !== organization) throw failure('Login belongs to a different organization', 403)
+    const session = existing || { id: randomUUID(), accountId: current.id, kind, deviceId: null, createdAt: Date.now(), expires: Date.now() + 30 * 86400000 }
     if (!existing) await store.put(`identity-session:${session.id}`, session)
-    const access = secret(), refresh = secret(), value = { sessionId: session.id, account, kind, expires: Date.now() + 3600000 }
+    const access = secret(), refresh = secret(), value = { sessionId: session.id, account: current, kind, expires: Date.now() + 3600000 }
     await store.put(`token:${identityHash(access)}`, value)
     await store.put(`refresh:${identityHash(refresh)}`, { sessionId: session.id, expires: session.expires })
-    return { access_token: access, refresh_token: refresh, token_type: 'Bearer', expires_in: 3600, profile: account }
+    return { access_token: access, refresh_token: refresh, token_type: 'Bearer', expires_in: 3600, profile: current }
   }
   function cookies(reply, credentials) {
     reply.setCookie(cookieName, credentials.access_token, { httpOnly: true, secure, sameSite: 'strict', path: '/', maxAge: credentials.expires_in })
@@ -125,9 +139,9 @@ export function registerIdentity({ app, store, config, origin, issuer, organizat
     catch { return endBrowserLogin(reply, flow, true) }
     const claims = tokens.claims()
     if (!claims?.sub) return browserError(reply, 401, 'Identity provider returned no subject')
-    const account = { id: identityHash(`${issuer}\0${claims.sub}`), organization, name: claims.name || claims.preferred_username || claims.sub, email: claims.email || '', admin: hasOrganizationRole(claims, rolesClaim, adminRole), disabled: false }
-    if ((await store.get(`account:${account.id}`))?.disabled) return browserError(reply, 403, 'Organization membership disabled')
-    await store.put(`account:${account.id}`, account)
+    const profile = { id: identityHash(`${issuer}\0${claims.sub}`), organization, name: claims.name || claims.preferred_username || claims.sub, email: claims.email || '', admin: hasOrganizationRole(claims, rolesClaim, adminRole) }
+    const account = await updateAccount(profile)
+    if (!account) return browserError(reply, 403, 'Organization membership disabled')
     const entry = await codeFor(flow.code)
     if (!entry || entry.value.confirmed || entry.value.denied) return browserError(reply, 400, 'Login request expired')
     const confirmation = secret()
@@ -140,7 +154,12 @@ export function registerIdentity({ app, store, config, origin, issuer, organizat
       if (await store.comparePut(current.key, current.value, { ...current.value, account, confirmation: identityHash(confirmation) })) { updated = true; break }
     }
     if (!updated) return browserError(reply, 409, 'Login request changed; restart login')
-    const browser = await issue(account)
+    let browser
+    try { browser = await issue(account) }
+    catch (error) {
+      if (error.statusCode !== 403) throw error
+      return browserError(reply, 403, 'Organization membership disabled')
+    }
     cookies(reply, browser)
     reply.clearCookie('kkcode_oauth_state', { path: '/auth' })
     return reply.type('text/html').send(page('确认连接', `<span class="caption">Confirm device</span><h1>是你发起的连接吗？</h1><p>${html(entry.value.name)}</p><p>${html(account.name)} · ${html(organization)}</p><form method="post" action="/auth/confirm"><input type="hidden" name="code" value="${flow.code}"><input type="hidden" name="confirmation" value="${confirmation}"><button>确认连接此设备<small>Allow this device</small></button></form>`))
@@ -206,9 +225,15 @@ export function registerIdentity({ app, store, config, origin, issuer, organizat
   app.post('/api/v1/admin/members/:id/disable', async (req, reply) => {
     const { account } = await authenticate(req)
     if (!account.admin) return reply.code(403).send({ error: 'Administrator required' })
-    const member = await store.get(`account:${req.params.id}`)
-    if (!member || member.organization !== account.organization) return reply.code(404).send({ error: 'Member not found' })
-    await store.put(`account:${member.id}`, { ...member, disabled: true }); await revokeAccount(member.id)
+    const key = `account:${req.params.id}`
+    let member, updated = false
+    for (let attempt = 0; attempt < 5; attempt++) {
+      member = await store.get(key)
+      if (!member || member.organization !== account.organization) return reply.code(404).send({ error: 'Member not found' })
+      if (member.disabled || await store.comparePut(key, member, { ...member, disabled: true })) { updated = true; break }
+    }
+    if (!updated) return reply.code(409).send({ error: 'Membership changed; retry disable' })
+    await revokeAccount(member.id)
     await audit('member.disabled', account.id, member.id)
     return { disabled: true }
   })
