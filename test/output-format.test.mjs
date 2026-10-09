@@ -111,6 +111,25 @@ test("stream-json 格式 delta 与终态都是带类型的契约事件", () => {
   assert.ok(!stderr.read().includes('"type"'), "事件只属于 stdout")
 })
 
+test("stream-json 自动续写提示不混入正文 delta，段间分隔不污染最终拼接", () => {
+  const stdout = sink()
+  const stderr = sink()
+  const reporter = createOutputReporter("stream-json", { stdout, stderr })
+  reporter.delta("前半")
+  reporter.delta("\n")
+  reporter.delta("\n\u001b[2m\u001b[33m\n  ↳ output truncated, auto-continuing (1/8)...\n\u001b[0m")
+  reporter.delta("后半")
+  reporter.delta("\n")
+  reporter.finish({ reply: "前半后半", sessionId: "s", turnId: "t" })
+
+  const events = stdout.read().split("\n").filter(Boolean).map((line) => JSON.parse(line))
+  const deltas = events.filter((event) => event.type === "assistant.delta")
+  assert.equal(deltas.map((event) => event.delta).join("").trimEnd(), "前半后半")
+  assert.equal(events.at(-1).content, "前半后半")
+  assert.ok(stderr.read().includes("output truncated, auto-continuing (1/8)"), "提示应改走 stderr")
+  assert.ok(!stderr.read().includes('"type"'), "提示不得伪装成机器事件")
+})
+
 test("契约文档与代码同步：docs/headless-jsonl-contract.md 必须覆盖全部事件类型与版本号", () => {
   const docPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "docs", "headless-jsonl-contract.md")
   const doc = readFileSync(docPath, "utf8")

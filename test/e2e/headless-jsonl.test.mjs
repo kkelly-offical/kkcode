@@ -30,10 +30,10 @@ let baseUrl
 let home
 let workDir
 
-function sseBody(chunks, usage) {
+function sseBody(chunks, usage, finishReason = "stop") {
   return [
     ...chunks.map((content) => `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`),
-    `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }], usage })}\n\n`,
+    `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: finishReason }], usage })}\n\n`,
     "data: [DONE]\n\n"
   ].join("")
 }
@@ -50,6 +50,23 @@ before(async () => {
         // 必须是 status: "failed" + error 字段，且进程退出码非零（契约 §3.1）
         res.writeHead(500, { "content-type": "application/json" })
         res.end(JSON.stringify({ error: { message: "mock provider boom" } }))
+        return
+      }
+      if (payload.model === "mock-continue") {
+        const continued = (payload.messages || []).some((message) =>
+          message.role === "user" && JSON.stringify(message.content || "").includes("[OUTPUT TRUNCATED"))
+        const content = continued ? "后半" : "前半"
+        const finishReason = continued ? "stop" : "length"
+        if (payload.stream) {
+          res.writeHead(200, { "content-type": "text/event-stream" })
+          res.end(sseBody([content], { prompt_tokens: 11, completion_tokens: 7 }, finishReason))
+        } else {
+          res.writeHead(200, { "content-type": "application/json" })
+          res.end(JSON.stringify({
+            choices: [{ message: { role: "assistant", content }, finish_reason: finishReason }],
+            usage: { prompt_tokens: 11, completion_tokens: 7 }
+          }))
+        }
         return
       }
       if (payload.stream) {
@@ -175,6 +192,34 @@ test("e2e headless 契约：--output-format stream-json 逐行 delta 且全部�
     "delta 顺序拼接必须等于终态 content"
   )
   assert.equal(results[0].status, "succeeded")
+})
+
+test("e2e headless 契约：auto-continue 的 text/json/stream-json 终态与 delta 均保留全部正文", async () => {
+  for (const format of ["text", "json", "stream-json"]) {
+    const { stdout, stderr, exitCode } = await runCli([
+      "chat", "continue", "--output-format", format, "--model", "mock-continue"
+    ])
+    assert.equal(exitCode, 0, `${format} 模式应成功退出，stderr：${stderr}`)
+    if (format === "text") {
+      assert.equal(stdout, "前半后半\n")
+      continue
+    }
+
+    const events = parseJsonlContract(stdout)
+    const result = events.at(-1)
+    assert.equal(result.type, "turn.result")
+    assert.equal(result.content, "前半后半", `${format} 终态必须包含所有续写分段`)
+    if (format === "json") assert.equal(events.length, 1)
+    if (format === "stream-json") {
+      const deltas = events.filter((event) => event.type === "assistant.delta")
+      assert.ok(deltas.length >= 2, "每个自动续写分段仍按实际到达顺序发送")
+      assert.equal(
+        deltas.map((event) => event.delta).join("").trimEnd(),
+        result.content,
+        "自动续写的 delta 顺序拼接必须等于终态 content"
+      )
+    }
+  }
 })
 
 test("e2e headless 契约：进程级失败时 stdout 保持纯 JSONL（零事件），错误只在 stderr", async () => {

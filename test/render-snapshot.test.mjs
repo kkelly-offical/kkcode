@@ -214,7 +214,8 @@ test("渲染快照：output 字节流与迁移前逐字节一致（3a 零行为�
         const finished = events.findLast(event => event.type === 'turn.finish')
         assert.equal(finished?.payload.status, 'completed')
         assert.equal(finished?.payload.verification?.state, 'not_verified', 'ordinary prose completion never claims a test receipt')
-        assert.equal(result.reply, expected.reply, "回合 reply 与迁移前不一致")
+        assert.equal(finished?.payload.reply, expected.reply, "turn.finish 必须携带完整的累计正文")
+        assert.equal(result.reply, expected.reply, "回合 reply 与契约基线不一致")
         assert.deepEqual(stableEvents(events), stableGoldenEvents(expected.events),
           "迁移前已存在事件的类型序列与 payload 不一致")
       } finally {

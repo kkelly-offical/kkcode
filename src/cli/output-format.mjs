@@ -45,6 +45,12 @@ export function createOutputReporter(format, {
   stderr = process.stderr
 } = {}) {
   const writeLine = (stream, value = "") => stream.write(`${String(value)}\n`)
+  const writeDelta = content => writeLine(stdout, JSON.stringify({
+    schemaVersion: OUTPUT_SCHEMA_VERSION,
+    type: "assistant.delta",
+    delta: String(content)
+  }))
+  let pendingStreamNewline = ""
   return {
     format,
     progress(message) {
@@ -58,14 +64,28 @@ export function createOutputReporter(format, {
       if (!content) return
       if (format === "legacy") stdout.write(String(content))
       if (format === "stream-json") {
-        writeLine(stdout, JSON.stringify({
-          schemaVersion: OUTPUT_SCHEMA_VERSION,
-          type: "assistant.delta",
-          delta: String(content)
-        }))
+        const value = pendingStreamNewline + String(content)
+        pendingStreamNewline = ""
+        const plain = value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+        const autoContinue = plain.match(/^\n*(  ↳ output truncated, auto-continuing \(\d+\/\d+\)\.\.\.)\n$/)
+        if (autoContinue) {
+          writeLine(stderr, autoContinue[1])
+          return
+        }
+        // Hold the renderer's end-of-response newline until the next chunk tells
+        // us whether it is a continuation separator or the final trailing newline.
+        if (value === "\n") {
+          pendingStreamNewline = value
+          return
+        }
+        writeDelta(value)
       }
     },
     finish(result) {
+      if (format === "stream-json" && pendingStreamNewline) {
+        writeDelta(pendingStreamNewline)
+        pendingStreamNewline = ""
+      }
       const record = toPublicResult(result)
       // json 与 stream-json 共用一个终态事件形状：一行一事件、带 type ——
       // stdout 上不存在无类型的「裸结果」行（阶段 5 前 json 格式没有 type 字段，
