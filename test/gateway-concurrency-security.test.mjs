@@ -76,3 +76,89 @@ test('a nonresponding device cannot accumulate unbounded pending relay requests'
     assert.ok((await Promise.all(waiting)).every(result => result.statusCode === 503))
   } finally { socket.terminate() }
 }))
+
+test('shared RPC responses recheck revoked grants and identity while the device response is in flight', { timeout: 15000 }, () => fixture(async ({ store, address, request }) => {
+  const socket = new WebSocket(address.replace('http:', 'ws:') + '/relay/device', { headers: { Host: 'localhost', Authorization: 'Bearer device' } })
+  const gates = new Map()
+  try {
+    await once(socket, 'open')
+    const registered = once(socket, 'message')
+    socket.send(JSON.stringify({ type: 'register', device: { id: 'computer', name: 'Computer' } }))
+    await registered
+    socket.on('message', async raw => {
+      const message = JSON.parse(raw)
+      if (message.type !== 'request') return
+      const gate = gates.get(message.request.id)
+      if (gate) { gate.entered.resolve(); await gate.release.promise }
+      const result = {
+        'events.list': { events: [{ id: 'PRIVATE-EVENT' }] },
+        'media.preview': { data: 'PRIVATE-MEDIA', mediaType: 'image/png' },
+        'sessions.list': [{ id: 'one', title: 'PRIVATE-ONE' }, { id: 'two', title: 'VISIBLE-TWO' }],
+        status: { features: ['artifacts.v1', 'private.feature'], active: ['one', 'two'] }
+      }[message.request.method]
+      socket.send(JSON.stringify({ type: 'response', id: message.id, result }))
+    })
+    const call = (token, id, method, params = {}) => request('/api/v1/devices/computer/rpc', token, { id, method, params })
+    const pause = async (token, id, method, params) => {
+      const gate = deferred(); gate.entered = deferred(); gate.release = deferred()
+      gates.set(id, gate)
+      const waiting = call(token, id, method, params)
+      await gate.entered.promise
+      return { waiting, gate }
+    }
+    const setShares = async shares => {
+      const device = await store.get('device:computer')
+      await store.put('device:computer', { ...device, shares: { viewer: shares } })
+    }
+    for (const { method, params, filtered } of [
+      { method: 'events.list', params: { sessionId: 'one' } },
+      { method: 'media.preview', params: { sessionId: 'one', messageId: 'message', index: 0 } },
+      { method: 'sessions.list', params: {}, filtered: true },
+      { method: 'status', params: {}, filtered: true }
+    ]) {
+      const requestId = `partial-${method.replaceAll('.', '-')}`
+      await setShares({ one: 'view', two: 'view' })
+      const { waiting, gate } = await pause('viewer', requestId, method, params)
+      await setShares({ two: 'view' })
+      gate.release.resolve()
+      const response = await waiting
+      if (!filtered) {
+        assert.equal(response.statusCode, 403, `${method} must not return a revoked session response`)
+        assert.equal(JSON.stringify(response.json()).includes('PRIVATE'), false)
+      } else {
+        assert.equal(response.statusCode, 200, response.body)
+        if (method === 'sessions.list') assert.deepEqual(response.json().result.map(session => session.id), ['two'])
+        else assert.deepEqual(response.json().result.active, ['two'])
+        assert.equal(JSON.stringify(response.json()).includes('PRIVATE-ONE'), false)
+      }
+      gates.delete(requestId)
+    }
+    for (const method of ['sessions.list', 'status']) {
+      const requestId = `all-${method.replaceAll('.', '-')}`
+      await setShares({ one: 'view', two: 'view' })
+      const { waiting, gate } = await pause('viewer', requestId, method)
+      await setShares({})
+      gate.release.resolve()
+      assert.equal((await waiting).statusCode, 403, `${method} must be denied after the final grant is revoked`)
+      gates.delete(requestId)
+    }
+    await setShares({ one: 'view' })
+    const disabled = await pause('viewer', 'disabled-events', 'events.list', { sessionId: 'one' })
+    const viewer = await store.get('account:viewer')
+    await store.put('account:viewer', { ...viewer, disabled: true })
+    disabled.gate.release.resolve()
+    assert.equal((await disabled.waiting).statusCode, 403, 'response-time authentication must reject a disabled member')
+    gates.delete('disabled-events')
+
+    const owner = await pause('browser', 'owner-status', 'status')
+    await setShares({})
+    owner.gate.release.resolve()
+    const ownerResponse = await owner.waiting
+    assert.equal(ownerResponse.statusCode, 200, ownerResponse.body)
+    assert.deepEqual(ownerResponse.json().result.active, ['one', 'two'], 'owner responses remain unfiltered')
+    gates.delete('owner-status')
+  } finally {
+    for (const gate of gates.values()) gate.release.resolve()
+    socket.terminate()
+  }
+}))

@@ -104,7 +104,7 @@ export async function createGateway({ origin, issuer, clientId, clientSecret, or
       next.shares ||= {}; next.shares[accountId] ||= {}
       if (role === 'remove') delete next.shares[accountId][sessionId]
       else next.shares[accountId][sessionId] = role
-      if (await store.comparePut(`device:${device.id}`, current, next)) { await audit('share', account.id, device.id); hub.revalidate(device.id); return { saved: true } }
+      if (await store.comparePut(`device:${device.id}`, current, next)) { await audit('share', account.id, device.id); await hub.revalidate(device.id); return { saved: true } }
     }
     throw Object.assign(new Error('Sharing changed concurrently; retry'), { statusCode: 409 })
   })
@@ -189,20 +189,22 @@ export async function createGateway({ origin, issuer, clientId, clientSecret, or
     if (!cluster && !connection) return reply.code(503).send({ error: { code: 'device_offline', message: 'The computer is offline' } })
     const result = cluster ? await cluster.send(device.id, request, principal) : await sendLocal(device.id, connection.connectionId, request, principal)
     if (await store.get(`device-unbound:${device.id}`)) return reply.code(410).send({ error: { code: 'device_unbound', message: 'Device was unbound while this request was in progress' } })
-    if (['artifacts.list', 'artifacts.read', 'artifacts.search', 'artifacts.download', 'runs.list', 'runs.get', 'runs.events', 'runs.artifacts.list', 'runs.artifacts.read', 'runs.artifacts.download', 'todos.list', 'subagents.list', 'sessions.get'].includes(request.method)) {
-      // A large page may finish after sharing or account membership changed.
+    let currentGrants = grants
+    if (!owner) {
+      // Any shared response may finish after sharing or membership changed.
       // Recheck before emitting bytes, not merely before forwarding the request.
       const refreshed = await authenticate(req), currentDevice = await store.get(`device:${device.id}`)
       const currentOwner = currentDevice?.owner === refreshed.account.id && currentDevice.organization === refreshed.account.organization
-      const currentAccess = currentDevice?.organization === refreshed.account.organization
-        ? currentDevice.shares?.[refreshed.account.id]?.[request.params?.sessionId || ''] : null
-      if (!currentDevice || (!currentOwner && !['view', 'control'].includes(currentAccess))) {
-        return reply.code(403).send({ error: { code: 'forbidden', message: '会话共享权限已改变，已停止返回任务或产物内容。请刷新设备和会话权限。' } })
+      currentGrants = currentDevice?.organization === refreshed.account.organization ? currentDevice.shares?.[refreshed.account.id] || {} : {}
+      const currentAccess = Object.hasOwn(currentGrants, request.params?.sessionId || '') ? currentGrants[request.params?.sessionId || ''] : undefined
+      const currentSharedIndex = ['status', 'sessions.list', 'commands.list'].includes(request.method) && Object.keys(currentGrants).length > 0
+      if (!currentDevice || (!currentOwner && !['view', 'control'].includes(currentAccess) && !currentSharedIndex)) {
+        return reply.code(403).send({ error: { code: 'forbidden', message: '会话共享权限已改变，已停止返回私密内容。请刷新设备和会话权限。' } })
       }
     }
     if (!owner && !result.error) {
-      if (request.method === 'sessions.list') result.result = result.result.filter(session => Object.hasOwn(grants, session.id))
-      if (request.method === 'status') result.result = { schemaVersion: '1', features: (result.result.features || []).filter(feature => ['artifacts.v1', 'runs.v1', 'todos.v1', 'subagents.v1'].includes(feature)), device: { id: device.id, name: device.name }, roots: [], shared: true, active: (result.result.active || []).filter(sessionId => Object.hasOwn(grants, sessionId)) }
+      if (request.method === 'sessions.list') result.result = result.result.filter(session => Object.hasOwn(currentGrants, session.id))
+      if (request.method === 'status') result.result = { schemaVersion: '1', features: (result.result.features || []).filter(feature => ['artifacts.v1', 'runs.v1', 'todos.v1', 'subagents.v1'].includes(feature)), device: { id: device.id, name: device.name }, roots: [], shared: true, active: (result.result.active || []).filter(sessionId => Object.hasOwn(currentGrants, sessionId)) }
     }
     await audit(req.body.method, account.id, device.id, result.error ? 'error' : 'ok')
     return result.error ? reply.code(result.status || 400).send({ error: result.error }) : { result: result.result }
@@ -244,7 +246,7 @@ export async function createGateway({ origin, issuer, clientId, clientSecret, or
     await audit('events.stream', account.id, device.id)
     const writer = new SseWriter(reply)
     const sub = sessionId
-      ? hub.addSessionStream({ deviceId: device.id, sessionId, after, principal, writer, access, accountId: account.id, identitySessionId: identity.sessionId })
+      ? hub.addSessionStream({ deviceId: device.id, sessionId, after, principal, writer, access, accountId: account.id, identitySessionId: identity.sessionId, shared: !owner })
       : hub.addDeviceStream({ deviceId: device.id, principal, writer, access, accountId: account.id, identitySessionId: identity.sessionId, grants: owner ? null : new Set(Object.keys(grants)) })
     reply.raw.on('close', () => hub.remove(sub))
   })
