@@ -8,8 +8,9 @@
  *   without `events` ({running, control, approvals, ...});
  * - `event: session.state` on state/tick changes ({running, control,
  *   pendingApprovalCount}); approval bodies arrive as approval.* rows;
- * - `event: replay.gap` when the log rotated — the stream stays open and the
- *   client resyncs via `sessions.get`, exactly like the polling gap path.
+ * - `event: replay.gap` when the log rotated — the wire stream stays open;
+ *   without an explicit onGap handler the client rejects with replay_gap rather
+ *   than dispatching a partial history. A handler may resync via sessions.get.
  * Devices without the endpoint answer 404/HTML, which surfaces as
  * `stream_unavailable` so the caller keeps using `events.list` polling.
  */
@@ -81,10 +82,19 @@ export function streamUnavailable(response) {
   );
 }
 
+export function replayGapError(payload = {}) {
+  const earliest = payload?.earliest ?? payload?.after;
+  return Object.assign(
+    new Error('Event history was compacted; reload the session snapshot'),
+    { code: 'replay_gap', after: earliest, earliest, cursor: payload?.cursor },
+  );
+}
+
 /**
  * Consume one SSE connection until it closes or the signal aborts.
  * Frame dispatch follows contract v1: `connected`/`session.state` → onMeta,
  * `replay.gap` → onGap (stream continues), anything else → onEvent(row).
+ * Without onGap, replay.gap throws replay_gap and no later frame is dispatched.
  * Returns "closed" when the stream ends.
  */
 export async function streamSessionEvents({
@@ -121,8 +131,12 @@ export async function streamSessionEvents({
       const payload = frame.data ? JSON.parse(frame.data) : {};
       if (frame.event === "connected" || frame.event === "session.state")
         await onMeta?.(payload);
-      else if (frame.event === "replay.gap") await onGap?.(payload);
-      else await onEvent?.(payload);
+      else if (frame.event === "replay.gap") {
+        if (onGap) {
+          await onGap(payload);
+          signal?.throwIfAborted();
+        } else throw replayGapError(payload);
+      } else await onEvent?.(payload);
     }
     if (done) return "closed";
   }
