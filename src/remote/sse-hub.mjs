@@ -24,7 +24,23 @@ export class GatewayEventHub {
   countForAccount(accountId) { let n = 0; for (const sub of this.subs) if (!sub.closed && sub.accountId === accountId) n++; return n }
   countForDevice(deviceId) { let n = 0; for (const sub of this.subs) if (!sub.closed && sub.deviceId === deviceId) n++; return n }
   setPush(deviceId, capable) { this.push.set(deviceId, capable) }
-  _enqueue(sub, operation) { sub.chain = sub.chain.then(operation).catch(() => this._close(sub)) }
+  _enqueue(sub, operation) {
+    sub.chain = sub.chain.then(async () => {
+      if (sub.closed) return
+      if (sub.shared && !await this._refreshAccess(sub)) return
+      return operation()
+    }).catch(() => this._close(sub))
+    return sub.chain
+  }
+  async _refreshAccess(sub) {
+    const access = await sub.access()
+    if (!access) { this._close(sub); return null }
+    if (sub.kind === 'device') {
+      sub.grants = access.owner ? null : access.sessions
+      if (sub.grants) for (const sessionId of sub.active) if (!sub.grants.has(sessionId)) sub.active.delete(sessionId)
+    }
+    return access
+  }
   _close(sub) {
     if (sub.closed) return
     sub.closed = true
@@ -36,8 +52,12 @@ export class GatewayEventHub {
   close() { for (const sub of [...this.subs]) this._close(sub) }
   closeDevice(deviceId) { for (const sub of [...this.subs]) if (sub.deviceId === deviceId) this._close(sub) }
   closeIdentitySession(identitySessionId) { for (const sub of [...this.subs]) if (sub.identitySessionId === identitySessionId) this._close(sub) }
-  /** Sharing changed: re-check every subscriber of this device now. */
-  revalidate(deviceId) { for (const sub of this.subs) if (sub.deviceId === deviceId && !sub.closed) this._enqueue(sub, async () => { if (!await sub.access()) this._close(sub) }) }
+  /** Sharing changed: refresh every subscriber and wait for queued sends to recheck. */
+  revalidate(deviceId) {
+    const pending = []
+    for (const sub of this.subs) if (sub.deviceId === deviceId && !sub.closed) pending.push(this._enqueue(sub, async () => { if (!sub.shared && !await sub.access()) this._close(sub) }))
+    return Promise.all(pending)
+  }
   /** Relay connection appeared/disappeared on this node: sync immediately. */
   deviceRegistered(deviceId, pushCapable) {
     this.setPush(deviceId, pushCapable)
@@ -62,8 +82,8 @@ export class GatewayEventHub {
     sub.online = true
     sub.writer.send({ event: 'device.online', data: { type: 'device.online', deviceId: sub.deviceId, timestamp: Date.now() } })
   }
-  addSessionStream({ deviceId, sessionId, after, principal, writer, access, accountId, identitySessionId }) {
-    const sub = { kind: 'session', deviceId, sessionId, cursor: after, principal, writer, access, accountId, identitySessionId, closed: false, online: null, lastState: null, chain: Promise.resolve(), timer: null }
+  addSessionStream({ deviceId, sessionId, after, principal, writer, access, accountId, identitySessionId, shared = true }) {
+    const sub = { kind: 'session', deviceId, sessionId, cursor: after, principal, writer, access, accountId, identitySessionId, shared, closed: false, online: null, lastState: null, chain: Promise.resolve(), timer: null }
     this.subs.add(sub)
     const schedule = () => {
       if (sub.closed) return
@@ -75,8 +95,8 @@ export class GatewayEventHub {
     schedule()
     return sub
   }
-  addDeviceStream({ deviceId, principal, writer, access, accountId, identitySessionId, grants = null }) {
-    const sub = { kind: 'device', deviceId, principal, writer, access, accountId, identitySessionId, grants, closed: false, online: null, active: new Set(), localId: 0, chain: Promise.resolve(), timer: null }
+  addDeviceStream({ deviceId, principal, writer, access, accountId, identitySessionId, grants = null, shared = grants !== null }) {
+    const sub = { kind: 'device', deviceId, principal, writer, access, accountId, identitySessionId, grants, shared, closed: false, online: null, active: new Set(), localId: 0, chain: Promise.resolve(), timer: null }
     this.subs.add(sub)
     const schedule = () => {
       if (sub.closed) return
@@ -106,7 +126,8 @@ export class GatewayEventHub {
         const status = sessionStatusFromRow(row)
         if (!status || sub.grants && !sub.grants.has(row.sessionId)) continue
         this._enqueue(sub, async () => {
-          if (sub.closed || sub.active.has(row.sessionId) === status.running) return
+          if (sub.closed || sub.grants && !sub.grants.has(row.sessionId)) return
+          if (sub.active.has(row.sessionId) === status.running) return
           if (status.running) sub.active.add(row.sessionId)
           else sub.active.delete(row.sessionId)
           if (!sub.writer.send({ id: String(++sub.localId), event: 'session.status', data: { type: 'session.status', deviceId, ...status, timestamp: row.timestamp } })) this._close(sub)
@@ -133,10 +154,14 @@ export class GatewayEventHub {
     let envelope
     try { envelope = await this._rpc(sub, 'events.list', { sessionId: sub.sessionId, after: sub.cursor }) }
     catch (error) {
-      if (this._transitory(error)) return this._markOffline(sub)
+      if (this._transitory(error)) {
+        if (sub.shared && !await this._refreshAccess(sub)) return
+        return this._markOffline(sub)
+      }
       return this._close(sub)
     }
     if (sub.closed || !envelope) return
+    if (sub.shared && !await this._refreshAccess(sub)) return
     this._markOnline(sub)
     // Hello/gap frames must not advance Last-Event-ID past backlog rows that
     // have not been delivered yet, so they carry the subscriber's cursor.
@@ -175,6 +200,7 @@ export class GatewayEventHub {
     try { result = await this._rpc(sub, 'status', {}) }
     catch (error) {
       if (this._transitory(error)) {
+        if (sub.shared && !await this._refreshAccess(sub)) return
         if (hello) { sub.online = false; sub.writer.send({ id: String(++sub.localId), event: 'connected', data: { type: 'connected', schemaVersion: PROTOCOL_VERSION, deviceId: sub.deviceId, online: false, active: [] } }) }
         else await this._deviceOffline(sub)
         return
@@ -182,6 +208,7 @@ export class GatewayEventHub {
       return this._close(sub)
     }
     if (sub.closed || !result) return
+    if (sub.shared && !await this._refreshAccess(sub)) return
     const active = new Set(result.active || [])
     if (sub.grants) for (const sessionId of [...active]) if (!sub.grants.has(sessionId)) active.delete(sessionId)
     if (hello) {

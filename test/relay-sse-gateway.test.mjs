@@ -64,7 +64,7 @@ class SseClient {
         if (index >= 0 || this.done) { clearTimeout(timer); resolve(index >= 0 ? this.frames.splice(0, index + 1).pop() : null); return }
         this.waiters.push(check)
       }
-      this.waiters.push(check)
+      check()
     })
   }
   close() { return this.reader.cancel().catch(() => {}) }
@@ -106,13 +106,13 @@ async function loginFlow(origin, { kind = 'device', name = 'QA device' } = {}) {
   return { browserCookie, credentials }
 }
 
-async function setup(t) {
+async function setup(t, streaming = {}) {
   const temp = await mkdtemp(path.join(os.tmpdir(), 'kkcode-sse-gateway-'))
   const previous = process.env.KKCODE_HOME; process.env.KKCODE_HOME = path.join(temp, 'state')
   const { idp, issuer } = await stubIdentityProvider(['owner', 'guest'])
   const store = new MemoryStore()
   const port = await freePort(), origin = `http://127.0.0.1:${port}`
-  const gateway = await createGateway({ origin, issuer, clientId: 'kkcode', clientSecret: 'fixture-secret', store, dev: true, organization: 'QA', streaming: { pollMs: 60, syncMs: 120, statusMs: 60 } })
+  const gateway = await createGateway({ origin, issuer, clientId: 'kkcode', clientSecret: 'fixture-secret', store, dev: true, organization: 'QA', streaming: { pollMs: 60, syncMs: 120, statusMs: 60, ...streaming } })
   await gateway.listen({ host: '127.0.0.1', port })
   t.after(async () => {
     await gateway.close(); await idp.close()
@@ -304,4 +304,112 @@ test('gateway session stream falls back to journal sync for devices without push
   assert.ok(frame, 'row delivered without device push support')
   assert.equal(frame.json.payload.text, 'polled')
   assert.equal(frame.id, '1')
+})
+
+test('gateway device stream applies partial and full share changes before the share response returns', { timeout: 30000 }, async t => {
+  const { temp, origin } = await setup(t, { pollMs: 60000, syncMs: 60000, statusMs: 60000 })
+  const owner = await loginFlow(origin)
+  const service = await new DeviceService({ cwd: temp, roots: [temp] }).initialize()
+  const relay = await connectRelay({ service, credentials: { ...owner.credentials, gateway: origin, expiresAt: Date.now() + 3600000 } })
+  t.after(async () => { relay.close(); await service.close() })
+  const deviceId = service.metadata.id
+  const ownerHeaders = { Cookie: owner.browserCookie, Origin: origin }
+  for (let i = 0; i < 50; i++) { const list = await (await fetch(`${origin}/api/v1/devices`, { headers: ownerHeaders })).json(); if (list[0]?.online) break; await new Promise(r => setTimeout(r, 20)) }
+  const guest = await loginFlow(origin, { kind: 'client', name: 'Guest browser' })
+  const guestProfile = await (await fetch(`${origin}/api/v1/profile`, { headers: { Cookie: guest.browserCookie, Origin: origin } })).json()
+  const guestHeaders = { Cookie: guest.browserCookie, Origin: origin }
+  const share = (sessionId, role = 'view') => fetch(`${origin}/api/v1/devices/${deviceId}/share`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...ownerHeaders }, body: JSON.stringify({ accountId: guestProfile.id, sessionId, role }) })
+  assert.equal((await share('s1')).status, 200)
+  assert.equal((await share('s2')).status, 200)
+  service.turns.set('s1', { controller: new AbortController(), client: 'local', turnId: 't1' })
+  service.turns.set('s2', { controller: new AbortController(), client: 'local', turnId: 't2' })
+  const client = new SseClient(await fetch(`${origin}/api/v1/devices/${deviceId}/events/stream`, { headers: guestHeaders }))
+  t.after(() => client.close())
+  const hello = await client.next(frame => frame.event === 'connected')
+  assert.deepEqual(hello?.json.active.sort(), ['s1', 's2'])
+
+  assert.equal((await share('s1', 'remove')).status, 200)
+  await service.record({ type: 'turn.result', sessionId: 's1', turnId: 't1', payload: {} })
+  await service.record({ type: 'turn.result', sessionId: 's2', turnId: 't2', payload: {} })
+  const afterPartialRevoke = await client.next(frame => frame.event === 'session.status')
+  assert.equal(afterPartialRevoke?.json.sessionId, 's2', 'a queued status for the revoked session must not be emitted')
+  assert.equal(afterPartialRevoke?.json.running, false)
+
+  assert.equal((await share('s1')).status, 200)
+  await service.record({ type: 'turn.start', sessionId: 's1', turnId: 't3', payload: { prompt: 'new grant' } })
+  const afterGrant = await client.next(frame => frame.event === 'session.status')
+  assert.equal(afterGrant?.json.sessionId, 's1', 'a new grant is visible without waiting for periodic status sync')
+  assert.equal(afterGrant?.json.running, true)
+
+  assert.equal((await share('s1', 'remove')).status, 200)
+  assert.equal((await share('s2', 'remove')).status, 200)
+  assert.equal(await client.next(() => true, 1000), null, 'removing the final grant closes the device stream')
+  assert.ok(await Promise.race([client.pump.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 1000))]), 'the device stream actually ends after full revocation')
+})
+
+test('gateway event hub rechecks grants for sends queued behind a device response', async t => {
+  const { GatewayEventHub } = await import('../src/remote/sse-hub.mjs')
+  let rpc = async () => ({ result: { active: [] } })
+  const hub = new GatewayEventHub({ sendRpc: (...args) => rpc(...args), pollMs: 60000, syncMs: 60000, statusMs: 60000 })
+  t.after(() => hub.close())
+  const frames = []
+  let closed = false
+  const writer = { send: frame => { frames.push(frame); return true }, close: () => { closed = true } }
+  let sessions = new Set(['one', 'two'])
+  const access = async () => sessions ? { owner: false, sessions: new Set(sessions) } : null
+  const sub = hub.addDeviceStream({ deviceId: 'device', principal: {}, writer, access, accountId: 'viewer', identitySessionId: 'login', grants: new Set(sessions) })
+  await sub.chain
+  assert.equal(frames[0]?.event, 'connected')
+
+  let entered, release
+  const rpcEntered = new Promise(resolve => { entered = resolve }), resume = new Promise(resolve => { release = resolve })
+  rpc = async () => { entered(); await resume; return { result: { active: [] } } }
+  hub.deviceRegistered('device', true)
+  await rpcEntered
+  hub.publish('device', { sessionId: 'one', seq: 1, timestamp: Date.now(), type: 'turn.start', payload: {} })
+  sessions = new Set(['two'])
+  const revalidating = hub.revalidate('device')
+  release()
+  await revalidating
+  await sub.chain
+  assert.equal(frames.some(frame => frame.data?.sessionId === 'one'), false, 'the queued revoked-session event is suppressed')
+
+  sessions = new Set(['one', 'two'])
+  await hub.revalidate('device')
+  hub.publish('device', { sessionId: 'one', seq: 2, timestamp: Date.now(), type: 'turn.start', payload: {} })
+  await sub.chain
+  assert.ok(frames.some(frame => frame.data?.sessionId === 'one' && frame.data?.running === true), 'a restored grant is applied immediately')
+
+  sessions = null
+  await hub.revalidate('device')
+  assert.equal(closed, true, 'losing every grant closes the subscription')
+})
+
+test('gateway event hub suppresses session rows queued behind an events.list response after revocation', async t => {
+  const { GatewayEventHub } = await import('../src/remote/sse-hub.mjs')
+  const envelope = () => ({ events: [], earliest: 1, cursor: 0, gap: false, running: false, turnState: null, control: null, approvals: [], pendingApprovalCount: 0 })
+  let rpc = async () => ({ result: envelope() })
+  const hub = new GatewayEventHub({ sendRpc: (...args) => rpc(...args), pollMs: 60000, syncMs: 60000, statusMs: 60000 })
+  t.after(() => hub.close())
+  const frames = []
+  let closed = false, granted = true
+  const writer = { send: frame => { frames.push(frame); return true }, close: () => { closed = true } }
+  const access = async () => granted ? { owner: false, sessions: new Set(['one']) } : null
+  const sub = hub.addSessionStream({ deviceId: 'device', sessionId: 'one', after: 0, principal: {}, writer, access, accountId: 'viewer', identitySessionId: 'login' })
+  await sub.chain
+  assert.equal(frames[0]?.event, 'connected')
+
+  let entered, release
+  const rpcEntered = new Promise(resolve => { entered = resolve }), resume = new Promise(resolve => { release = resolve })
+  rpc = async () => { entered(); await resume; return { result: envelope() } }
+  hub.deviceRegistered('device', true)
+  await rpcEntered
+  hub.publish('device', { sessionId: 'one', seq: 1, timestamp: Date.now(), type: 'stream.text.delta', payload: { text: 'PRIVATE-QUEUED-ROW' } })
+  granted = false
+  const revalidating = hub.revalidate('device')
+  release()
+  await revalidating
+  await sub.chain
+  assert.equal(frames.some(frame => frame.event === 'stream.text.delta'), false)
+  assert.equal(closed, true)
 })
