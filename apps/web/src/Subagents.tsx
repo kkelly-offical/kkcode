@@ -13,8 +13,11 @@ export function SubagentPanel({ items, sessionId, canManage, notice, rpc, onTask
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
   async function stop(id: string) {
     setStopping(id); setError('');
-    try { await rpc('control.acquire', { sessionId }); await rpc('subagents.interrupt', { sessionId, childSessionId: id }); }
-    catch (cause) { setError((cause as Error).message); }
+    try {
+      const lease = await rpc('control.acquire', { sessionId });
+      try { await rpc('subagents.interrupt', { sessionId, childSessionId: id }); }
+      finally { await rpc('control.release', { sessionId, ...(lease?.leaseId ? { leaseId: lease.leaseId } : {}) }).catch(() => {}); }
+    } catch (cause) { setError((cause as Error).message); }
     finally { setStopping(''); }
   }
   return <div className="subagent-panel">

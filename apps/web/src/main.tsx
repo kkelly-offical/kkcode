@@ -187,7 +187,13 @@ function App() {
   }
   const deviceNoticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(deviceNoticeTimer.current), []);
-  useDeviceEvents({ enabled: ready, gateway, deviceId, onEvent: async (event, signal) => {
+  const refreshDeviceSnapshot = async (signal: AbortSignal) => {
+    const [config, result] = await Promise.all([rpc('settings.get'), rpc('sessions.list')]);
+    if (signal.aborted) return;
+    setSettings(config);
+    setSessions(Array.isArray(result) ? result : result.sessions || []);
+  };
+  useDeviceEvents({ enabled: ready, gateway, deviceId, sdk, onReconnect: refreshDeviceSnapshot, onEvent: async (event, signal) => {
     const message = mcpLoadNotice(event);
     if (message) {
       setNotice(message); clearTimeout(deviceNoticeTimer.current);
@@ -216,10 +222,16 @@ function App() {
     return true;
   }
   async function selectModel(selection: Item) {
-    if (!selected) { applySelection({ ...selection, providerType: selection.provider, modeId: selection.mode }); return; }
-    const lease = await rpc('control.acquire', { sessionId: selected });
-    try { applySelection(await rpc('sessions.configure', { sessionId: selected, ...selection })); }
-    finally { await releaseControl(selected, lease).catch(() => {}); }
+    const id = selected, device = deviceId;
+    if (!id) { applySelection({ ...selection, providerType: selection.provider, modeId: selection.mode }); return true; }
+    const lease = await rpc('control.acquire', { sessionId: id });
+    try {
+      if (!currentView(id, device)) return false;
+      const result = await rpc('sessions.configure', { sessionId: id, ...selection });
+      if (!currentView(id, device)) return false;
+      applySelection(result);
+      return true;
+    } finally { await releaseControl(id, lease).catch(() => {}); }
   }
   const attempt = async (fn: () => Promise<any>) => {
     try {
@@ -267,8 +279,10 @@ function App() {
     timer = setTimeout(poll, interval);
     return () => { stopped = true; clearTimeout(timer); };
   }, [loginFlow]);
-  async function refreshSessions() {
+  async function refreshSessions(expectedSession = '') {
+    const device = deviceId, isGateway = gateway;
     const result = await rpc("sessions.list");
+    if (viewIdentity.current.gateway !== isGateway || viewIdentity.current.deviceId !== device || expectedSession && viewIdentity.current.selected !== expectedSession) return;
     setSessions(Array.isArray(result) ? result : result.sessions || []);
   }
   async function updateSessionMetadata(target: Item, patch: Item) {
@@ -431,7 +445,7 @@ function App() {
         if (cancelled) return;
         cursor.current = snapshot?.eventCursor || batch.cursor || 0;
         setSession(snapshot); applyLiveSnapshot(snapshot); setApproval([]); observeTurn(snapshot || {});
-        await refreshSessions(); return;
+        await refreshSessions(selected); return;
       }
       if (fresh.length) {
         cursor.current = fresh.at(-1).seq ?? cursor.current;
@@ -461,8 +475,10 @@ function App() {
           fresh.some((event: Item) =>
             ["turn.result", "turn.failed", "turn.cancelled"].includes(event.type),
           )
-        )
-          await refreshSessions();
+        ) {
+          await refreshSessions(selected);
+          if (cancelled) return;
+        }
       }
       if (batch.approvals !== undefined) setApproval(batch.approvals || []);
       observeTurn(batch);
@@ -475,7 +491,11 @@ function App() {
         }
         if (event.type === 'session.configured') applySelection(event.payload);
         if (event.type === 'session.branch.changed') setBranch(event.payload.branch || '');
-        if (["session.updated", "session.title.updated"].includes(event.type)) { setSession(old => old ? { ...old, ...event.payload } : old); await refreshSessions(); }
+        if (["session.updated", "session.title.updated"].includes(event.type)) {
+          setSession(old => old ? { ...old, ...event.payload } : old);
+          await refreshSessions(selected);
+          if (cancelled) return;
+        }
       }
       const turnEnded = fresh.some((event: Item) => ["turn.result", "turn.failed", "turn.cancelled"].includes(event.type));
       const childSettled = fresh.some((event: Item) => event.type === 'task.settled' && event.sessionId === selected && event.payload?.subSessionId);
@@ -1107,14 +1127,12 @@ function App() {
               onStop={() => void stopTurn()}
               onMode={(value) =>
                 void attempt(async () => {
-                  await selectModel({ mode: value });
-                  setNotice(`执行模式已切换为 ${modeLabel(value)}`);
+                  if (await selectModel({ mode: value })) setNotice(`执行模式已切换为 ${modeLabel(value)}`);
                 })
               }
               onModel={(selection) =>
                 void attempt(async () => {
-                  await selectModel(selection);
-                  setNotice(`模型已切换为 ${selection.model}`);
+                  if (await selectModel(selection)) setNotice(`模型已切换为 ${selection.model}`);
                 })
               }
               onDiscoverModels={(name) => rpc("models.discover", { provider: name, refresh: true })}
