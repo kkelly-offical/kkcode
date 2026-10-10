@@ -1,12 +1,66 @@
 package cn.kkcode.remote
 
 import android.content.ContentResolver
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Base64
+import kotlinx.coroutines.CancellationException
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+
+internal const val ATTACHMENT_PREVIEW_MAX_DIMENSION = 128
+internal const val ATTACHMENT_PREVIEW_MAX_BYTES = 64 * 1024
+internal const val ATTACHMENT_PREVIEW_MAX_BASE64_CHARS = ((ATTACHMENT_PREVIEW_MAX_BYTES + 2) / 3) * 4
+
+internal data class AttachmentOrigin(val sessionId: String, val generation: Int, val client: DeviceApi, val device: String) {
+    fun matches(selectedSession: String, currentGeneration: Int, currentClient: DeviceApi?): Boolean =
+        sessionId == selectedSession && generation == currentGeneration && currentClient === client && currentClient?.device == device
+
+    fun requireCurrent(selectedSession: String, currentGeneration: Int, currentClient: DeviceApi?) {
+        if(!matches(selectedSession, currentGeneration, currentClient)) throw CancellationException("会话已切换")
+    }
+
+    suspend fun rpc(method: String, params: JSONObject): Any? = client.rpc(method, params, device)
+}
+
+internal fun attachmentPreviewSampleSize(width: Int, height: Int, maxDimension: Int = ATTACHMENT_PREVIEW_MAX_DIMENSION): Int {
+    require(maxDimension > 0)
+    if(width <= 0 || height <= 0) return 1
+    var sample = 1
+    while(maxOf(width, height) / (sample * 2) >= maxDimension) sample *= 2
+    return sample
+}
+
+internal fun createAttachmentPreview(input: JSONObject): String {
+    if(!input.optString("mediaType").startsWith("image/")) return ""
+    return runCatching {
+        val bytes = Base64.decode(input.optString("data"), Base64.NO_WRAP)
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if(bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching ""
+        val options = BitmapFactory.Options().apply { inSampleSize = attachmentPreviewSampleSize(bounds.outWidth, bounds.outHeight) }
+        val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options) ?: return@runCatching ""
+        val scale = (ATTACHMENT_PREVIEW_MAX_DIMENSION.toFloat() / maxOf(decoded.width, decoded.height)).coerceAtMost(1f)
+        val preview = if(scale < 1f) Bitmap.createScaledBitmap(decoded, (decoded.width * scale).toInt().coerceAtLeast(1), (decoded.height * scale).toInt().coerceAtLeast(1), true) else decoded
+        try {
+            val output = ByteArrayOutputStream()
+            if(!preview.compress(Bitmap.CompressFormat.PNG, 100, output) || output.size() > ATTACHMENT_PREVIEW_MAX_BYTES) ""
+            else Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)
+        } finally {
+            if(preview !== decoded) preview.recycle()
+            decoded.recycle()
+        }
+    }.getOrDefault("")
+}
+
+internal fun bindAttachmentPreview(result: JSONObject, mediaType: String, preview: String): JSONObject {
+    result.remove("preview")
+    if(mediaType.startsWith("image/") && preview.isNotBlank() && preview.length <= ATTACHMENT_PREVIEW_MAX_BASE64_CHARS) result.put("preview", preview)
+    return result
+}
 
 internal fun readBoundedAttachment(input: InputStream, limit: Int): ByteArray {
     require(limit > 0)
