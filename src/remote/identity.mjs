@@ -85,14 +85,25 @@ export function registerIdentity({ app, store, config, origin, issuer, organizat
   app.get('/api/v1/discovery', async () => ({ protocolVersion: '1', gateway: origin, organization, authentication: { deviceAuthorization: '/auth/device', browser: '/auth/start', token: '/auth/token', issuer, nativeLogin: NATIVE_LOGIN_CAPABILITY, desktopLogin: DESKTOP_LOGIN_CAPABILITY } }))
   app.post('/auth/device', { config: { rateLimit: { max: 20, timeWindow: '1 minute', keyGenerator: req => req.ip } } }, async req => {
     const native = nativeLoginRequest(req.body)
-    const deviceCode = secret(), userCode = String(randomInt(10000000, 100000000))
+    const deviceCode = secret(), codeKey = `login-code:${identityHash(deviceCode)}`
     const active = await store.list('login-code:')
-    for (const entry of active) if (entry.expires <= Date.now()) { await store.delete(entry.key); await store.delete(`login-user:${entry.userCode}`) }
+    for (const entry of active) if (entry.expires <= Date.now()) {
+      const { key, ...value } = entry
+      await store.compareDelete(key, value)
+      await store.compareDelete(`login-user:${value.userCode}`, { codeKey: key })
+    }
     if (active.filter(entry => entry.expires > Date.now()).length >= 1000) throw failure('Too many login attempts', 429)
-    const codeKey = `login-code:${identityHash(deviceCode)}`
-    await store.put(codeKey, { userCode, name: String(req.body?.name || 'KK Code').slice(0, 80), kind: req.body?.kind === 'device' ? 'device' : 'client', ...(native ? { native } : {}), expires: Date.now() + 600000, lastPoll: 0 })
-    await store.put(`login-user:${userCode}`, { codeKey })
-    return { device_code: deviceCode, user_code: userCode, verification_uri: `${origin}/login`, verification_uri_complete: `${origin}/login?code=${userCode}`, expires_in: 600, interval: 5, ...(native ? { native_return: true } : {}) }
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const userCode = String(randomInt(10000000, 100000000))
+      const value = { userCode, name: String(req.body?.name || 'KK Code').slice(0, 80), kind: req.body?.kind === 'device' ? 'device' : 'client', ...(native ? { native } : {}), expires: Date.now() + 600000, lastPoll: 0 }
+      await store.put(codeKey, value)
+      let reserved
+      try { reserved = await store.putIfAbsent(`login-user:${userCode}`, { codeKey }) }
+      catch (error) { await store.compareDelete(codeKey, value); throw error }
+      if (reserved) return { device_code: deviceCode, user_code: userCode, verification_uri: `${origin}/login`, verification_uri_complete: `${origin}/login?code=${userCode}`, expires_in: 600, interval: 5, ...(native ? { native_return: true } : {}) }
+      await store.compareDelete(codeKey, value)
+    }
+    throw failure('Could not allocate a unique login code', 503)
   })
   async function codeFor(userCode) {
     if (!/^\d{8}$/.test(String(userCode))) return null
@@ -182,7 +193,13 @@ export function registerIdentity({ app, store, config, origin, issuer, organizat
   })
   app.post('/auth/token', async (req, reply) => {
     const key = `login-code:${identityHash(req.body?.device_code)}`, entry = await store.get(key)
-    if (!entry || entry.expires <= Date.now()) { await store.delete(key); return reply.code(400).send({ error: 'expired_token' }) }
+    if (!entry || entry.expires <= Date.now()) {
+      if (entry) {
+        await store.compareDelete(key, entry)
+        await store.compareDelete(`login-user:${entry.userCode}`, { codeKey: key })
+      }
+      return reply.code(400).send({ error: 'expired_token' })
+    }
     if (!nativeLoginProof(entry, req.body)) return reply.code(400).send({ error: 'invalid_grant' })
     if (entry.denied) return reply.code(400).send({ error: entry.authorizationFailed ? 'authorization_failed' : 'access_denied' })
     if (req.body?.browser === true && entry.kind !== 'client') return reply.code(400).send({ error: 'client_grant_required' })
@@ -190,7 +207,7 @@ export function registerIdentity({ app, store, config, origin, issuer, organizat
     if (!entry.confirmed) { await store.comparePut(key, entry, { ...entry, lastPoll: Date.now() }); return reply.code(400).send({ error: 'authorization_pending' }) }
     const grant = await store.take(key)
     if (!grant?.confirmed || grant.denied || !nativeLoginProof(grant, req.body)) return reply.code(400).send({ error: grant?.denied ? 'access_denied' : 'expired_token' })
-    await store.delete(`login-user:${grant.userCode}`)
+    await store.compareDelete(`login-user:${grant.userCode}`, { codeKey: key })
     if ((await store.get(`account:${grant.account.id}`))?.disabled) return reply.code(403).send({ error: 'membership_disabled' })
     // A popup and its opener share the HttpOnly session established by callback.
     // Completing that browser grant must not leave an unnecessary extra session.
