@@ -25,6 +25,14 @@ const attachments = new Map(), calls = []
 let created = 0, attachment = 0, logoutCalls = 0, commandStarted = false, successStarted = false, releaseCommand, releaseSuccess
 const commandGate = new Promise(resolve => { releaseCommand = resolve })
 const successGate = new Promise(resolve => { releaseSuccess = resolve })
+const statusGates = new Map()
+const holdStatus = deviceId => {
+  let release
+  const gate = { started: false, promise: new Promise(resolve => { release = resolve }), release: null }
+  gate.release = release
+  statusGates.set(deviceId, gate)
+  return gate
+}
 const json = (response, value, status = 200) => {
   response.writeHead(status, { 'Content-Type': 'application/json' })
   response.end(JSON.stringify(value))
@@ -43,7 +51,11 @@ const server = createServer(async (request, response) => {
     const deviceSessions = sessions[deviceId]
     calls.push({ deviceId, method, params })
     const reply = result => json(response, { result })
-    if (method === 'status') return reply({ device: { name: devices.find(device => device.id === deviceId).name }, roots: [roots[deviceId]] })
+    if (method === 'status') {
+      const gate = statusGates.get(deviceId)
+      if (gate) { gate.started = true; await gate.promise }
+      return reply({ device: { name: devices.find(device => device.id === deviceId).name }, roots: [roots[deviceId]] })
+    }
     if (method === 'sessions.list') return reply(deviceSessions)
     if (method === 'sessions.get') {
       const session = deviceSessions.find(item => item.id === params.sessionId)
@@ -175,7 +187,37 @@ try {
 
   await page.getByRole('combobox', { name: '设备', exact: true }).selectOption('device-b')
   await expect(input).toHaveValue('')
+  await page.getByRole('combobox', { name: '设备', exact: true }).selectOption('device-a')
+  await expect(input).toHaveValue('')
+  await input.fill('A 慢回填空白')
+  const slowB = holdStatus('device-b')
+  await page.getByRole('combobox', { name: '设备', exact: true }).selectOption('device-b')
+  await expect.poll(() => slowB.started).toBe(true)
+  await input.fill('B 慢回填空白')
+  const slowBResponse = page.waitForResponse(response => response.url().includes('/api/v1/devices/device-b/rpc') && response.request().postData()?.includes('"method":"status"'))
+  slowB.release()
+  await slowBResponse
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  await expect(input).toHaveValue('B 慢回填空白')
+  const slowA = holdStatus('device-a')
+  await page.getByRole('combobox', { name: '设备', exact: true }).selectOption('device-a')
+  await expect.poll(() => slowA.started).toBe(true)
+  await expect(input).toHaveValue('A 慢回填空白')
+  const slowAResponse = page.waitForResponse(response => response.url().includes('/api/v1/devices/device-a/rpc') && response.request().postData()?.includes('"method":"status"'))
+  slowA.release()
+  await slowAResponse
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  await expect(input).toHaveValue('A 慢回填空白')
+  await page.getByRole('combobox', { name: '设备', exact: true }).selectOption('device-b')
+  await expect(input).toHaveValue('B 慢回填空白')
+  await page.getByRole('combobox', { name: '设备', exact: true }).selectOption('device-a')
+  await expect(input).toHaveValue('A 慢回填空白')
+  await input.fill('')
+
+  await page.getByRole('combobox', { name: '设备', exact: true }).selectOption('device-b')
+  await expect(input).toHaveValue('B 慢回填空白')
   await sessionButton('Device B 会话').click()
+  await expect(input).toHaveValue('')
   await input.fill('B 私密正文')
   await page.locator('input[aria-label="添加图片或文件"]').setInputFiles({ name: 'b-one.txt', mimeType: 'text/plain', buffer: Buffer.from('B attachment') })
   await expect(page.getByRole('button', { name: '移除附件 b-one.txt', exact: true })).toBeEnabled()
@@ -227,6 +269,7 @@ try {
 } finally {
   releaseCommand()
   releaseSuccess()
+  for (const gate of statusGates.values()) gate.release()
   await browser.close()
   await new Promise(resolve => server.close(resolve))
 }
