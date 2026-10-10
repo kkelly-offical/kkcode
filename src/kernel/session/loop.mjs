@@ -573,9 +573,13 @@ async function processTurnLoopInRuntime({
   const MAX_TOTAL_CONTINUES = 24 // hard cap on total auto-continues per turn
   let continueCount = 0
   let totalContinueCount = 0
+  let autoContinuing = false
+  let continuedReply = ""
+  const visibleResponseText = current => `${autoContinuing ? continuedReply : ""}${current}`
   let nudgeCount = 0
   let verificationBlockers = ''
   let finalReply = ""
+  let persistedIncompleteReply = ""
   let stopReason = 'max-steps'
   let verification = null
   let verificationRepairHints = ''
@@ -864,6 +868,10 @@ async function processTurnLoopInRuntime({
         } catch { /* 计价表缺失时预算检查静默跳过 */ }
       }
 
+      if (autoContinuing && interruptedReply) {
+        continuedReply += interruptedReply
+        interruptedReply = ""
+      }
       const stepRequestContext = createRequestContext({ traceId: turnTraceContext.traceId })
 
       let response
@@ -993,6 +1001,7 @@ async function processTurnLoopInRuntime({
         throw error
       }
 
+      if (autoContinuing) interruptedReply = response.text
       addUsage(usage, response.usage || {})
       addModelUsage(modelUsage, providerType, model, response.usage || {})
 
@@ -1047,6 +1056,9 @@ async function processTurnLoopInRuntime({
         console.error(`[kkcode] provider reported max_tokens for model "${model}" without truncation evidence (output=${reportedOutput}, budget=${effectiveOutputBudget || "unknown"}); skipping automatic continuation`)
       }
       if (response.stopReason === "max_tokens" && truncationCredible && continueCount < MAX_CONTINUES && totalContinueCount < MAX_TOTAL_CONTINUES) {
+        autoContinuing = true
+        continuedReply += response.text
+        interruptedReply = ""
         continueCount++
         totalContinueCount++
         await render.autoContinue(step, { continueCount, maxContinues: MAX_CONTINUES })
@@ -1175,7 +1187,8 @@ async function processTurnLoopInRuntime({
               }
               if (!verifyCompletion && validationResult.lifecycleBlocked) {
                 stopReason = 'verification-incomplete'
-                finalReply = `${response.text.trim()}\n\n${validationResult.message}`
+                finalReply = `${visibleResponseText(response.text).trim()}\n\n${validationResult.message}`
+                persistedIncompleteReply = `${response.text.trim()}\n\n${validationResult.message}`
                 break
               }
               // A failed/missing check is an observation in ordinary work,
@@ -1211,15 +1224,16 @@ async function processTurnLoopInRuntime({
           }
         }
         
-        finalReply = response.text.trim()
-        interruptedReply = finalReply
+        finalReply = visibleResponseText(response.text).trim()
+        interruptedReply = autoContinuing ? response.text : finalReply
         signal?.throwIfAborted()
+        const currentReply = response.text.trim()
         const finalContent = attachProviderState(response.reasoning
           ? [
               { type: "reasoning", text: response.reasoning },
-              { type: "text", text: finalReply }
+              { type: "text", text: currentReply }
             ]
-          : finalReply, response.providerState)
+          : currentReply, response.providerState)
         const assistant = await appendMessage(sessionId, "assistant", finalContent, {
           mode,
           model,
@@ -1608,27 +1622,22 @@ async function processTurnLoopInRuntime({
         return { call, result }
       }
 
-      // Split into read-only (parallelizable) and write (serial) groups
-      const readOnlyCalls = []
-      const writeCalls = []
-      for (const call of response.toolCalls) {
-        if (PARALLELIZABLE_TOOLS.has(call.name)) {
-          readOnlyCalls.push(call)
-        } else {
-          writeCalls.push(call)
-        }
-      }
-
-      // Execute read-only tools in parallel
+      // Preserve model order across batches. Only a consecutive run of
+      // independent read-only calls executes in parallel; every other call is a
+      // barrier so a later read can observe an earlier write.
       const callResults = new Map() // call.id → { call, result }
-      if (readOnlyCalls.length > 0) {
-        const settled = await Promise.allSettled(readOnlyCalls.map(executeOneCall))
+      let readOnlyBatch = []
+      const executeReadOnlyBatch = async () => {
+        if (!readOnlyBatch.length) return
+        const batch = readOnlyBatch
+        readOnlyBatch = []
+        const settled = await Promise.allSettled(batch.map(executeOneCall))
         for (let si = 0; si < settled.length; si++) {
           const outcome = settled[si]
           if (outcome.status === "fulfilled") {
             callResults.set(outcome.value.call.id, outcome.value)
           } else {
-            const failedCall = readOnlyCalls[si]
+            const failedCall = batch[si]
             callResults.set(failedCall.id, {
               call: failedCall,
               result: {
@@ -1642,11 +1651,16 @@ async function processTurnLoopInRuntime({
         }
       }
 
-      // Execute write tools serially
-      for (const call of writeCalls) {
+      for (const call of response.toolCalls) {
+        if (PARALLELIZABLE_TOOLS.has(call.name)) {
+          readOnlyBatch.push(call)
+          continue
+        }
+        await executeReadOnlyBatch()
         const outcome = await executeOneCall(call)
         callResults.set(outcome.call.id, outcome)
       }
+      await executeReadOnlyBatch()
 
       // Collect results in original order
       for (const call of response.toolCalls) {
@@ -1783,7 +1797,7 @@ async function processTurnLoopInRuntime({
     }
 
     if (stopReason === 'max-steps') finalReply = "Reached max steps. Review tool outputs and continue in a new turn."
-    await appendMessage(sessionId, "assistant", finalReply, {
+    await appendMessage(sessionId, "assistant", persistedIncompleteReply || finalReply, {
       mode,
       model,
       providerType,
@@ -1846,7 +1860,7 @@ async function processTurnLoopInRuntime({
       reply: `provider error: ${errorMessage}`,
       error: errorMessage,
       status: cancelled ? 'cancelled' : 'error',
-      ...(cancelled ? { cancelled: true, partialReply: interruptedReply, stopReason: 'cancelled' } : {}),
+      ...(cancelled ? { cancelled: true, partialReply: autoContinuing ? visibleResponseText(interruptedReply) : interruptedReply, stopReason: 'cancelled' } : {}),
       emittedText: emittedAnyText,
       context: lastContextMeter,
       usage,

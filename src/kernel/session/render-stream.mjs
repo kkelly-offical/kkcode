@@ -46,9 +46,30 @@ export function hasStreamByteRenderer() {
  */
 export function createRenderStream({ output = null, renderMarkdown = true, eventBus, sessionId, turnId }) {
   const write = output && typeof output.write === "function" ? output.write : null
+  let semanticKind = "text"
+  let streamEndChunks = null
   const bytes = write && streamByteRendererFactory
-    ? streamByteRendererFactory({ write: (text) => write(text), renderMarkdown })
+    ? streamByteRendererFactory({
+        write: (text) => {
+          if (semanticKind === "streamEnd") {
+            const chunk = Buffer.from(String(text))
+            chunk.semanticKind = sawText ? "text" : "thinking"
+            streamEndChunks.push(chunk)
+            return
+          }
+          if (semanticKind === "text") return write(text)
+          const chunk = Buffer.from(String(text))
+          chunk.semanticKind = semanticKind
+          return write(chunk)
+        },
+        renderMarkdown
+      })
     : null
+  const withSemanticKind = (kind, invoke) => {
+    const previous = semanticKind
+    semanticKind = kind
+    try { return invoke() } finally { semanticKind = previous }
+  }
 
   // 流相位与迁移前 loop 的 streamPhase 同生命周期：每个 step 一次 provider
   // 流，beginStep 重置。thinking 段、text 段、tool_call 段之间的切换点
@@ -77,15 +98,15 @@ export function createRenderStream({ output = null, renderMarkdown = true, event
     if (phase !== "thinking") {
       phase = "thinking"
       await eventBus.emit({ type: EVENT_TYPES.STREAM_THINKING_START, sessionId, turnId, payload: { step } })
-      bytes?.thinkingStart?.()
+      withSemanticKind("thinking", () => bytes?.thinkingStart?.())
     }
     await eventBus.emit({ type: EVENT_TYPES.STREAM_THINKING_DELTA, sessionId, turnId, payload: { step, text } })
-    bytes?.thinkingDelta?.(text)
+    withSemanticKind("thinking", () => bytes?.thinkingDelta?.(text))
   }
 
   async function textDelta(step, text) {
     if (closed) return
-    if (phase === "thinking") bytes?.leaveThinking?.()
+    if (phase === "thinking") withSemanticKind("thinking", () => bytes?.leaveThinking?.())
     if (phase !== "text") {
       phase = "text"
       await eventBus.emit({ type: EVENT_TYPES.STREAM_TEXT_START, sessionId, turnId, payload: { step } })
@@ -97,7 +118,7 @@ export function createRenderStream({ output = null, renderMarkdown = true, event
 
   async function toolCallChunk(step, call) {
     if (closed) return
-    if (phase === "thinking") bytes?.leaveThinking?.()
+    if (phase === "thinking") withSemanticKind("thinking", () => bytes?.leaveThinking?.())
     phase = "tool_call"
     await eventBus.emit({
       type: EVENT_TYPES.STREAM_TOOL_CALL,
@@ -110,14 +131,21 @@ export function createRenderStream({ output = null, renderMarkdown = true, event
   async function providerCompaction(step) {
     if (closed) return
     await eventBus.emit({ type: EVENT_TYPES.STREAM_PROVIDER_COMPACTION, sessionId, turnId, payload: { step } })
-    bytes?.providerCompaction?.()
+    withSemanticKind("notice", () => bytes?.providerCompaction?.())
   }
 
   /** provider 流正常收尾（错误/中断路径不调用 —— 与迁移前一致，残余缓冲直接丢弃）。 */
   async function streamEnd(step) {
     if (closed) return
     await eventBus.emit({ type: EVENT_TYPES.STREAM_END, sessionId, turnId, payload: { step } })
-    bytes?.streamEnd?.(sawText)
+    const chunks = streamEndChunks = []
+    try {
+      withSemanticKind("streamEnd", () => bytes?.streamEnd?.(sawText))
+      if (sawText && chunks.length) chunks.at(-1).semanticKind = "separator"
+      for (const chunk of chunks) write(chunk)
+    } finally {
+      streamEndChunks = null
+    }
   }
 
   async function autoContinue(step, { continueCount, maxContinues }) {
@@ -128,7 +156,7 @@ export function createRenderStream({ output = null, renderMarkdown = true, event
       turnId,
       payload: { step, continueCount, maxContinues }
     })
-    bytes?.autoContinue?.(continueCount, maxContinues)
+    withSemanticKind("notice", () => bytes?.autoContinue?.(continueCount, maxContinues))
   }
 
   async function validationSkipped(step, message) {
@@ -139,7 +167,7 @@ export function createRenderStream({ output = null, renderMarkdown = true, event
       turnId,
       payload: { step, message: String(message || "") }
     })
-    bytes?.validationSkipped?.(message)
+    withSemanticKind("notice", () => bytes?.validationSkipped?.(message))
   }
 
   return {
