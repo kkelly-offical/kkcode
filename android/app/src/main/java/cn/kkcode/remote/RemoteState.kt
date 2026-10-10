@@ -12,9 +12,24 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 data class ChatItem(val id: String, val kind: String, val text: String, val detail: String = "", val tool: JSONObject? = null, val startedAt: Long = 0, val durationMs: Long? = null, val done: Boolean = true, val turnId: String = "", val step: Int? = null, val streamed: Boolean = false, val messageId: String = "", val media: JSONObject? = null, val children: List<ChatItem> = emptyList())
-class RemoteState @JvmOverloads constructor(application: Application, restoreConnections: Boolean = true, private val sshFactory: () -> SshConnection = { SshConnection() }) : AndroidViewModel(application) {
+internal interface RemoteStateVault {
+    fun put(name: String, value: String, durable: Boolean = false)
+    fun get(name: String): String?
+    fun clear(name: String, durable: Boolean = false)
+    fun completeLogin(gateway: String, credentials: String)
+}
+private class AndroidRemoteStateVault(application: Application) : RemoteStateVault {
+    private val delegate = CredentialVault(application)
+    override fun put(name: String, value: String, durable: Boolean) = delegate.put(name, value, durable)
+    override fun get(name: String): String? = delegate.get(name)
+    override fun clear(name: String, durable: Boolean) = delegate.clear(name, durable)
+    override fun completeLogin(gateway: String, credentials: String) = delegate.completeLogin(gateway, credentials)
+}
+class RemoteState private constructor(application: Application, restoreConnections: Boolean, private val sshFactory: () -> SshConnection, vault: RemoteStateVault) : AndroidViewModel(application) {
+    @JvmOverloads constructor(application: Application, restoreConnections: Boolean = true, sshFactory: () -> SshConnection = { SshConnection() }) : this(application, restoreConnections, sshFactory, AndroidRemoteStateVault(application))
+    internal constructor(application: Application, restoreConnections: Boolean, vault: RemoteStateVault, sshFactory: () -> SshConnection = { SshConnection() }) : this(application, restoreConnections, sshFactory, vault)
     internal val updater = AppUpdater(application, viewModelScope)
-    val vault = CredentialVault(application)
+    internal val vault = vault
     private val prefs = application.getSharedPreferences("kkcode.ui", 0)
     private var ssh: SshConnection? = null
     private var gatewayApi: DeviceApi? = null
@@ -298,7 +313,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         if (first != null) chooseDevice(first) else connected = false
         startDevicePolling()
     }
-    private fun startDevicePolling() {
+    internal fun startDevicePolling() {
         devicePolling?.cancel()
         val client = gatewayApi ?: api?.takeIf { it.relay } ?: return
         if(!client.relay) return
@@ -328,8 +343,8 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
                 } catch(error: CancellationException) { throw error }
                 catch(error: Exception) {
                     if(gatewayApi !== client) return@launch
-                    if(error is DeviceApiError && error.status in listOf(401, 403)) {
-                        permanentRelayAuthorization(error)
+                    if(api === client && selectedSsh.isBlank() && error is DeviceApiError && error.status in listOf(401, 403)) {
+                        permanentRelayAuthorization(client, error)
                         return@launch
                     }
                     /* The session poll owns transient connection notices. */
@@ -357,8 +372,10 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         if(generation != connectionGeneration) return
         commands = availableCommands; sheet = ""
         startDeviceEvents()
+        if(devicePolling?.isActive != true) startDevicePolling()
     }
-    private fun permanentRelayAuthorization(error: DeviceApiError) {
+    private fun permanentRelayAuthorization(client: DeviceApi, error: DeviceApiError) {
+        if(api !== client || selectedSsh.isNotBlank()) return
         manualDisconnect = true
         devicePolling?.cancel(); deviceEvents?.cancel(); polling?.cancel()
         val message = remoteErrorMessage(error)
@@ -367,7 +384,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         noticeExpiry?.cancel()
         sheet = if(error.status == 401) "relay" else "connections"
     }
-    private fun startDeviceEvents() {
+    internal fun startDeviceEvents() {
         deviceEvents?.cancel()
         val client = api ?: return
         val device = client.device
@@ -396,7 +413,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
                 catch(error: Exception) {
                     failure = error
                     if(api === client && client.device == device && client.relay && error is DeviceApiError && error.status in listOf(401, 403)) {
-                        permanentRelayAuthorization(error)
+                        permanentRelayAuthorization(client, error)
                         return@launch
                     }
                     if(client.relay && api === client && client.device == device) connectionLost(remoteErrorMessage(error))
