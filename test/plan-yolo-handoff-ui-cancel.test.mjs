@@ -5,6 +5,7 @@ import { createReplUiState } from "../src/repl/ui-state.mjs"
 import { createKeyDispatcher } from "../src/repl/key-dispatch.mjs"
 import { createLifecycleKeyScope, createScrollKeyScope } from "../src/repl/keys/global-keys.mjs"
 import { resetTurnRuntime } from "../src/ui/turn-runtime.mjs"
+import { shouldSubmitInput } from "../src/repl/input-engine.mjs"
 
 function keyScope(kind, state) {
   if (kind === "escape") {
@@ -95,4 +96,61 @@ test("Esc cancels an in-flight Compact + Build through the real TUI key dispatch
 
 test("Ctrl+C cancels an in-flight Compact + Build through the real TUI key dispatcher", async () => {
   await cancelCompactionWithKey("ctrl-c")
+})
+
+test("successful Compact + Build passes the real submit guard exactly once", async () => {
+  const events = []
+  const state = {
+    modeId: "agent",
+    sessionId: "ses_ui_success",
+    model: "test-model",
+    providerType: "test"
+  }
+  const ctx = {
+    configState: { config: {} },
+    kernel: {
+      sessions: {
+        compactSession: async () => {
+          events.push("compact")
+          return { compacted: true, summarizedCount: 6, keptCount: 2 }
+        }
+      }
+    }
+  }
+  const ui = createReplUiState()
+  resetTurnRuntime(ui)
+  let submissions = 0
+  let busyAtSubmit = null
+  let controllerAtSubmit = null
+
+  const continued = await continuePlanBuildHandoff({
+    handoff: { modeId: "agent", compactFirst: true, planPath: "/tmp/plan.md" },
+    state,
+    ctx,
+    ui,
+    signal: new AbortController().signal,
+    print: () => {},
+    submit: async (prompt) => {
+      busyAtSubmit = ui.busy
+      controllerAtSubmit = ui.turnAbortController
+      if (!shouldSubmitInput(prompt, ui.busy)) {
+        events.push("swallowed")
+        return
+      }
+      submissions += 1
+      events.push(prompt)
+    },
+    startBusySpinner: () => {},
+    stopBusySpinner: () => {},
+    requestRender: () => {}
+  })
+
+  assert.equal(continued, true)
+  assert.equal(submissions, 1)
+  assert.equal(busyAtSubmit, false)
+  assert.equal(controllerAtSubmit, null)
+  assert.deepEqual(events, [
+    "compact",
+    "Implement the approved plan at /tmp/plan.md. Follow it stage by stage and report what you changed."
+  ])
 })

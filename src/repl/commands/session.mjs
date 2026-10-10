@@ -77,6 +77,13 @@ export async function continuePlanBuildHandoff({
     }
     if (!stillCurrent()) return false
 
+    if (handoffController) {
+      resetTurnRuntime(ui)
+      stopBusySpinner()
+      requestRender()
+      handoffController = null
+    }
+
     const planRef = handoff.planPath ? ` at ${handoff.planPath}` : ""
     await submit(`Implement the approved plan${planRef}. Follow it stage by stage and report what you changed.`)
     return true

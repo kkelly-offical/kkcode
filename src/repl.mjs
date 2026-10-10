@@ -57,7 +57,7 @@ import {
 } from "./repl/core-shell.mjs"
 import { runReplController } from "./repl/controller-entry.mjs"
 import { resolveTerminalMode, runControlledTerminal } from "./repl/controlled-status.mjs"
-import { collectInput, closeLineInput, resolveHistoryNavigation } from "./repl/input-engine.mjs"
+import { collectInput, closeLineInput, resolveHistoryNavigation, shouldSubmitInput } from "./repl/input-engine.mjs"
 export { collectInput } from "./repl/input-engine.mjs"
 // 帧度量与拼装原语。此前 repl.mjs 自带一份，与 repl-dashboard / activity-renderer /
 // repl-help / text-layout 各自的副本互不一致 —— 见 util/frame-primitives.mjs 的说明。
@@ -1059,7 +1059,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
   async function submitCurrentInput() {
     const line = ui.input.replace(/\r/g, "")
-    if (!line.trim() || ui.busy) return
+    if (!shouldSubmitInput(line, ui.busy)) return
     // 提交即作废预测：在途请求的结果对下一轮输入毫无意义
     ui.ghostText = ""
     ghostPredictor.cancel()

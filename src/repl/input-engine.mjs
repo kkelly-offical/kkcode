@@ -43,6 +43,10 @@ export async function closeLineInput(renderer, rl, saveHistory) {
   }
 }
 
+export function shouldSubmitInput(line, busy) {
+  return Boolean(line.trim()) && !busy
+}
+
 export async function collectInput(rl, promptStr) {
   const answer = await nextInputLine(rl, promptStr)
   if (answer === null) return null
