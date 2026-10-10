@@ -1400,7 +1400,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
     const handoff = pendingPlanBuild
     pendingPlanBuild = null
     if (handoff && !ui.quitting && !aborter.signal.aborted) await continuePlanBuildHandoff({
-      handoff, state, ctx, signal: aborter.signal, print: printTui,
+      handoff, state, ctx, ui, signal: aborter.signal, print: printTui, startBusySpinner, stopBusySpinner, requestRender,
       submit: async (prompt) => {
         ui.input = prompt
         ui.inputCursor = ui.input.length

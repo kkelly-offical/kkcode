@@ -16,6 +16,7 @@ import { ageLabel, padRight } from "../../util/frame-primitives.mjs"
 import { buildReplRuntimeSnapshot } from "../runtime-facade.mjs"
 import { buildOperatorSnapshot } from "../operator-surface.mjs"
 import { formatTodoProgress } from '../../ui/activity-renderer.mjs'
+import { markTurnSubmitted, resetTurnRuntime } from "../../ui/turn-runtime.mjs"
 
 export async function compactConversation({ print, state, ctx, signal = null }) {
   signal?.throwIfAborted()
@@ -37,25 +38,55 @@ export async function compactConversation({ print, state, ctx, signal = null }) 
   return result
 }
 
-export async function continuePlanBuildHandoff({ handoff, state, ctx, signal, print, submit }) {
+export async function continuePlanBuildHandoff({
+  handoff,
+  state,
+  ctx,
+  ui = null,
+  signal,
+  print,
+  submit,
+  startBusySpinner = () => {},
+  stopBusySpinner = () => {},
+  requestRender = () => {}
+}) {
   const sessionId = state.sessionId
-  const stillCurrent = () => !signal?.aborted && state.sessionId === sessionId && state.modeId === handoff?.modeId
+  let handoffSignal = signal
+  let handoffController = null
+  const stillCurrent = () => !handoffSignal?.aborted && state.sessionId === sessionId && state.modeId === handoff?.modeId
   if (!handoff?.modeId || !stillCurrent()) return false
 
-  if (handoff.compactFirst) {
-    try {
-      await compactConversation({ print, state, ctx, signal })
-    } catch (error) {
-      if (signal?.aborted || error?.name === "AbortError") return false
-      print(`compact failed: ${error.message}`, { channel: "notice", topic: "command", tone: "error" })
-      return false
+  try {
+    if (handoff.compactFirst && ui) {
+      handoffController = new AbortController()
+      handoffSignal = handoffController.signal
+      ui.turnAbortController = handoffController
+      markTurnSubmitted(ui)
+      startBusySpinner()
+      requestRender()
+    }
+
+    if (handoff.compactFirst) {
+      try {
+        await compactConversation({ print, state, ctx, signal: handoffSignal })
+      } catch (error) {
+        if (handoffSignal?.aborted || error?.name === "AbortError") return false
+        print(`compact failed: ${error.message}`, { channel: "notice", topic: "command", tone: "error" })
+        return false
+      }
+    }
+    if (!stillCurrent()) return false
+
+    const planRef = handoff.planPath ? ` at ${handoff.planPath}` : ""
+    await submit(`Implement the approved plan${planRef}. Follow it stage by stage and report what you changed.`)
+    return true
+  } finally {
+    if (handoffController) {
+      resetTurnRuntime(ui)
+      stopBusySpinner()
+      requestRender()
     }
   }
-  if (!stillCurrent()) return false
-
-  const planRef = handoff.planPath ? ` at ${handoff.planPath}` : ""
-  await submit(`Implement the approved plan${planRef}. Follow it stage by stage and report what you changed.`)
-  return true
 }
 
 export const sessionCommands = [
