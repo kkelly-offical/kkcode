@@ -188,9 +188,13 @@ function App() {
   const deviceNoticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(deviceNoticeTimer.current), []);
   const refreshDeviceSnapshot = async (signal: AbortSignal) => {
-    const [config, result] = await Promise.all([rpc('settings.get'), rpc('sessions.list')]);
+    const shared = devices.find(device => device.id === deviceId)?.shared;
+    const [config, result] = await Promise.all([
+      shared ? null : rpc('settings.get').catch((error: any) => { if (error.status === 403) return null; throw error; }),
+      rpc('sessions.list'),
+    ]);
     if (signal.aborted) return;
-    setSettings(config);
+    if (config) setSettings(config);
     setSessions(Array.isArray(result) ? result : result.sessions || []);
   };
   useDeviceEvents({ enabled: ready, gateway, deviceId, sdk, onReconnect: refreshDeviceSnapshot, onEvent: async (event, signal) => {

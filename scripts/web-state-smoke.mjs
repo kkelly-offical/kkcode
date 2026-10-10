@@ -31,7 +31,7 @@ const settings = {
 const calls = [], streams = new Set(), heldEvents = new Set()
 const configureGate = deferred(), listGate = deferred(), eventsGate = deferred()
 const slowBatch = { armed: false }
-const recovery = { enabled: false, failures: 0, unauthorized: false }
+const recovery = { enabled: false, failures: 0, unauthorized: false, shared: false, title: '恢复后的权威标题' }
 let lease = 0
 const json = (response, value, status = 200) => {
   response.writeHead(status, { 'Content-Type': 'application/json' })
@@ -56,7 +56,7 @@ const server = createServer(async (request, response) => {
       calls.push({ method: 'device.stream.failure' })
       return json(response, { error: { code: 'temporarily_unavailable', message: '暂时不可用' } }, 503)
     }
-    sessions['device-a'][1].title = '恢复后的权威标题'
+    sessions['device-a'][1].title = recovery.title
     settings['device-a'] = { provider: { default: 'recovered', recovered: { type: 'openai', default_model: 'recovered-model' } } }
     calls.push({ method: 'device.stream.connected' })
     response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
@@ -73,7 +73,7 @@ const server = createServer(async (request, response) => {
     const deviceSessions = sessions[deviceId]
     calls.push({ deviceId, method, params })
     const reply = result => json(response, { result })
-    if (method === 'status') return reply({ device: { name: devices.find(device => device.id === deviceId).name }, roots: [roots[deviceId]] })
+    if (method === 'status') return reply({ device: { name: devices.find(device => device.id === deviceId).name }, roots: [roots[deviceId]], shared: Boolean(recovery.shared) })
     if (method === 'sessions.list') {
       if (listGate.armed && deviceId === 'device-a') {
         listGate.armed = false; listGate.started = true
@@ -116,7 +116,13 @@ const server = createServer(async (request, response) => {
     if (method === 'control.acquire') return reply({ yours: true, leaseId: `lease-${++lease}` })
     if (method === 'control.release') return reply({ released: true })
     if (method === 'commands.list') return reply([])
-    if (method === 'settings.get') return reply(settings[deviceId])
+    if (method === 'settings.get') {
+      if (recovery.shared) {
+        calls.push({ deviceId, method: 'settings.get.forbidden' })
+        return json(response, { error: { code: 'forbidden', message: '共享设备无设置权限' } }, 403)
+      }
+      return reply(settings[deviceId])
+    }
     if (method === 'todos.list') return reply({ revision: 0, items: [] })
     return json(response, { error: { code: 'unexpected', message: `Unexpected RPC: ${method}` } }, 400)
   }
@@ -188,8 +194,21 @@ try {
   assert.equal(calls.filter(call => call.method === 'device.stream.failure').length, 6)
   assert.equal(calls.slice(connectedAt + 1).some(call => call.method === 'settings.get'), true)
   assert.equal(calls.slice(connectedAt + 1).some(call => call.method === 'sessions.list'), true)
+
+  recovery.shared = true; recovery.failures = 1; recovery.title = '共享设备恢复标题'
+  for (const stream of streams) stream.end()
+  await expect.poll(() => calls.filter(call => call.method === 'device.stream.connected').length, { timeout: 15000 }).toBe(2)
+  await expect(sessionButton('共享设备恢复标题')).toBeVisible()
+  const sharedConnectedAt = calls.findIndex((call, index) => index > connectedAt && call.method === 'device.stream.connected')
+  assert.equal(calls.slice(sharedConnectedAt + 1).some(call => call.method === 'settings.get.forbidden'), true)
+
+  recovery.title = '共享设备再次恢复标题'
+  for (const stream of streams) stream.end()
+  await expect.poll(() => calls.filter(call => call.method === 'device.stream.connected').length, { timeout: 10000 }).toBe(3)
+  await expect(sessionButton('共享设备再次恢复标题')).toBeVisible()
+  assert.equal(calls.filter(call => call.method === 'settings.get.forbidden').length, 2)
   assert.deepEqual(errors, [])
-  console.log('Web state recovery: slow configure/list identity fences, six transient device-stream failures, SDK 401 refresh, bounded reconnect and authoritative snapshot refresh passed.')
+  console.log('Web state recovery: slow configure/list identity fences, six transient device-stream failures, SDK 401 refresh, shared-device snapshot tolerance and continued reconnects passed.')
 } finally {
   configureGate.resolve(); listGate.resolve(); eventsGate.resolve()
   recovery.enabled = false
