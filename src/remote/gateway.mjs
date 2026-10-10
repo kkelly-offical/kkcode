@@ -125,7 +125,7 @@ export async function createGateway({ origin, issuer, clientId, clientSecret, or
             const binding = await store.get(`identity-session:${auth.sessionId}`)
             if (!binding || binding.deviceId && binding.deviceId !== message.device.id) throw new Error('Credential belongs to a different device')
             if (!binding.deviceId && !await store.comparePut(`identity-session:${auth.sessionId}`, binding, { ...binding, deviceId: message.device.id })) throw new Error('Device binding changed')
-            const previous = await store.get(`device:${message.device.id}`)
+            let previous = await store.get(`device:${message.device.id}`)
             if (previous && (previous.owner !== auth.account.id || previous.organization !== auth.account.organization)) throw new Error('Device already bound')
             deviceId = message.device.id
             clearTimeout(registrationDeadline)
@@ -133,7 +133,16 @@ export async function createGateway({ origin, issuer, clientId, clientSecret, or
             connectionId = randomUUID()
             const features = Array.isArray(message.features) ? message.features.filter(feature => typeof feature === 'string' && /^[\w.-]{1,32}$/.test(feature)).slice(0, 16) : []
             devices.set(deviceId, { socket, connectionId, alive: true, account: auth.account, identitySessionId: auth.sessionId, features })
-            await store.put(`device:${deviceId}`, { id: deviceId, name: String(message.device.name).slice(0, 100), owner: auth.account.id, organization, shares: previous?.shares || {} })
+            let saved = false
+            for (let attempt = 0; attempt < 5 && !saved; attempt++) {
+              if (attempt > 0) {
+                previous = await store.get(`device:${deviceId}`)
+                if (previous && (previous.owner !== auth.account.id || previous.organization !== auth.account.organization)) throw new Error('Device already bound')
+              }
+              const next = { id: deviceId, name: String(message.device.name).slice(0, 100), owner: auth.account.id, organization, shares: previous?.shares || {} }
+              saved = previous ? await store.comparePut(`device:${deviceId}`, previous, next) : await store.putIfAbsent(`device:${deviceId}`, next)
+            }
+            if (!saved) throw new Error('Device registration changed concurrently')
             if (await store.get(`device-unbound:${deviceId}`)) { await store.delete(`device:${deviceId}`); throw new Error('Device was unbound during registration') }
             await cluster?.claim(deviceId, connectionId)
             if (await store.get(`device-unbound:${deviceId}`) || !await store.get(`identity-session:${auth.sessionId}`)) { await cluster?.release(deviceId, connectionId); throw new Error('Device login was revoked during registration') }
@@ -244,6 +253,8 @@ export async function createGateway({ origin, issuer, clientId, clientSecret, or
       }
     }
     await audit('events.stream', account.id, device.id)
+    // Keep the final quota check and subscription registration in one synchronous segment.
+    if (hub.countForAccount(account.id) >= hub.maxPerAccount || hub.countForDevice(device.id) >= hub.maxPerDevice) return reply.code(429).send({ error: { code: 'stream_limit', message: 'Too many live event subscriptions' } })
     const writer = new SseWriter(reply)
     const sub = sessionId
       ? hub.addSessionStream({ deviceId: device.id, sessionId, after, principal, writer, access, accountId: account.id, identitySessionId: identity.sessionId, shared: !owner })
