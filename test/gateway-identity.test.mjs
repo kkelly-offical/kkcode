@@ -2,14 +2,14 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import Fastify from 'fastify'
 import { generateKeyPair, exportJWK, SignJWT } from 'jose'
-import { createHash, randomUUID } from 'node:crypto'
+import crypto, { createHash, randomUUID } from 'node:crypto'
+import { syncBuiltinESMExports } from 'node:module'
 import { createGateway } from '../src/remote/gateway.mjs'
 import { MemoryStore, PostgresStore } from '../src/remote/store.mjs'
 import { identityHash, hasOrganizationRole } from '../src/remote/identity.mjs'
 import { PACKAGE_VERSION } from '../src/version.mjs'
 
-async function fixture(run) {
-  const store = new MemoryStore()
+async function fixture(run, store = new MemoryStore()) {
   const account = { id: 'owner', name: 'Owner', organization: 'QA', admin: false }
   const colleague = { id: 'viewer', name: 'Viewer', organization: 'QA', admin: false }
   const administrator = { id: 'admin', name: 'Admin', organization: 'QA', admin: true }
@@ -24,6 +24,138 @@ async function fixture(run) {
   const request = (url, token = 'a', payload) => app.inject({ method: payload === undefined ? 'GET' : 'POST', url, headers: { host: 'localhost', authorization: `Bearer fixture-${token}` }, ...(payload === undefined ? {} : { payload }) })
   try { await run({ app, store, request }) } finally { await app.close() }
 }
+
+function postgresFixtureStore() {
+  const store = new PostgresStore('postgresql://localhost/fixture'), records = new Map()
+  store.prune = async () => {}
+  store.pool.query = async (sql, values = []) => {
+    if (sql === 'SELECT value FROM kkcode_gateway WHERE key = $1') {
+      const value = records.get(values[0])
+      return { rows: value === undefined ? [] : [{ value: structuredClone(value) }] }
+    }
+    if (sql === 'SELECT key,value FROM kkcode_gateway WHERE starts_with(key,$1)') return { rows: [...records].filter(([key]) => key.startsWith(values[0])).map(([key, value]) => ({ key, value: structuredClone(value) })) }
+    if (sql.startsWith('INSERT INTO kkcode_gateway(key,value)')) {
+      if (sql.includes('ON CONFLICT(key) DO NOTHING') && records.has(values[0])) return { rowCount: 0, rows: [] }
+      records.set(values[0], JSON.parse(values[1]))
+      return { rowCount: 1, rows: [] }
+    }
+    if (sql === 'UPDATE kkcode_gateway SET value=$3 WHERE key=$1 AND value=$2') {
+      if (JSON.stringify(records.get(values[0])) !== values[1]) return { rowCount: 0, rows: [] }
+      records.set(values[0], JSON.parse(values[2]))
+      return { rowCount: 1, rows: [] }
+    }
+    if (sql === 'DELETE FROM kkcode_gateway WHERE key=$1 RETURNING value') {
+      const value = records.get(values[0])
+      records.delete(values[0])
+      return { rowCount: value === undefined ? 0 : 1, rows: value === undefined ? [] : [{ value: structuredClone(value) }] }
+    }
+    if (sql === 'DELETE FROM kkcode_gateway WHERE key=$1 AND value=$2') {
+      if (JSON.stringify(records.get(values[0])) !== values[1]) return { rowCount: 0, rows: [] }
+      records.delete(values[0])
+      return { rowCount: 1, rows: [] }
+    }
+    if (sql === 'DELETE FROM kkcode_gateway WHERE key=$1') {
+      const deleted = records.delete(values[0])
+      return { rowCount: deleted ? 1 : 0, rows: [] }
+    }
+    throw new Error(`Unexpected PostgreSQL fixture query: ${sql}`)
+  }
+  return store
+}
+
+async function withUserCodes(t, codes, run) {
+  const remaining = [...codes]
+  t.mock.method(crypto, 'randomInt', () => remaining.length ? remaining.shift() : codes.at(-1))
+  syncBuiltinESMExports()
+  try { await run() } finally { t.mock.restoreAll(); syncBuiltinESMExports() }
+}
+
+async function checkLoginCodeCollision(t, store) {
+  await withUserCodes(t, [10000000, 10000000, 10000001], () => fixture(async ({ request, store }) => {
+    const create = async name => {
+      const response = await request('/auth/device', 'a', { kind: 'device', name })
+      assert.equal(response.statusCode, 200, response.body)
+      return response.json()
+    }
+    const first = await create('First device'), second = await create('Second device')
+    const account = await store.get('account:owner')
+    for (const flow of [first, second]) {
+      const key = `login-code:${identityHash(flow.device_code)}`
+      await store.put(key, { ...await store.get(key), account, confirmation: identityHash('fixture-confirmation') })
+    }
+    const confirm = flow => request('/auth/confirm', 'a', { code: flow.user_code, confirmation: 'fixture-confirmation' })
+    assert.equal((await confirm(first)).statusCode, 200)
+    const firstExchange = await request('/auth/token', 'a', { device_code: first.device_code })
+    assert.equal(firstExchange.statusCode, 200, firstExchange.body)
+    assert.ok(firstExchange.json().access_token)
+    assert.equal((await store.get(`login-code:${identityHash(second.device_code)}`)).confirmed, undefined)
+    assert.equal((await confirm(second)).statusCode, 200)
+    const secondExchange = await request('/auth/token', 'a', { device_code: second.device_code })
+    assert.equal(secondExchange.statusCode, 200, secondExchange.body)
+    assert.ok(secondExchange.json().access_token)
+    assert.equal(first.user_code, '10000000')
+    assert.equal(second.user_code, '10000001')
+    assert.notEqual(first.device_code, second.device_code)
+    assert.notEqual(firstExchange.json().access_token, secondExchange.json().access_token)
+    assert.equal(await store.get(`login-user:${first.user_code}`), null)
+    assert.equal(await store.get(`login-user:${second.user_code}`), null)
+    assert.equal((await store.list('login-code:')).length, 0)
+  }, store))
+}
+
+for (const [backend, createStore] of [['Memory', () => new MemoryStore()], ['PostgreSQL', () => postgresFixtureStore()]]) test(`${backend} login code collisions keep confirmation and device grants bound`, async t => {
+  await checkLoginCodeCollision(t, createStore())
+})
+
+test('login code allocation has bounded collision retries and preserves the active grant', async t => {
+  const store = new MemoryStore()
+  await withUserCodes(t, [10000000], () => fixture(async ({ request, store }) => {
+    const first = await request('/auth/device', 'a', { kind: 'device', name: 'First device' })
+    assert.equal(first.statusCode, 200, first.body)
+    const codeKey = `login-code:${identityHash(first.json().device_code)}`
+    const collision = await request('/auth/device', 'a', { kind: 'device', name: 'Colliding device' })
+    assert.equal(collision.statusCode, 503, collision.body)
+    assert.deepEqual(await store.get('login-user:10000000'), { codeKey })
+    assert.equal((await store.get(codeKey)).name, 'First device')
+    assert.equal((await store.list('login-code:')).length, 1)
+  }, store))
+})
+
+test('token cleanup cannot delete a replacement user-code mapping', () => fixture(async ({ request, store }) => {
+  const created = await request('/auth/device', 'a', { kind: 'device', name: 'Original device' })
+  const flow = created.json(), codeKey = `login-code:${identityHash(flow.device_code)}`, replacement = { codeKey: 'login-code:replacement' }
+  const account = await store.get('account:owner')
+  await store.put(codeKey, { ...await store.get(codeKey), account, confirmed: true })
+  const take = store.take.bind(store)
+  store.take = async key => {
+    const grant = await take(key)
+    if (key === codeKey) await store.put(`login-user:${flow.user_code}`, replacement)
+    return grant
+  }
+  const exchanged = await request('/auth/token', 'a', { device_code: flow.device_code })
+  assert.equal(exchanged.statusCode, 200, exchanged.body)
+  assert.deepEqual(await store.get(`login-user:${flow.user_code}`), replacement)
+}))
+
+test('expired grant cleanup cannot delete a replacement user-code mapping', () => fixture(async ({ app, request, store }) => {
+  await app.ready()
+  const codeKey = 'login-code:expired', userCode = '12345678', replacement = { codeKey: 'login-code:replacement' }
+  await store.put(codeKey, { userCode, name: 'Expired device', kind: 'device', expires: Date.now() - 1, lastPoll: 0 })
+  await store.put(`login-user:${userCode}`, { codeKey })
+  const remove = store.delete.bind(store), compareDelete = store.compareDelete.bind(store)
+  store.delete = async key => {
+    await remove(key)
+    if (key === codeKey) await store.put(`login-user:${userCode}`, replacement)
+  }
+  store.compareDelete = async (key, expected) => {
+    const deleted = await compareDelete(key, expected)
+    if (deleted && key === codeKey) await store.put(`login-user:${userCode}`, replacement)
+    return deleted
+  }
+  const created = await request('/auth/device', 'a', { kind: 'device', name: 'Active device' })
+  assert.equal(created.statusCode, 200, created.body)
+  assert.deepEqual(await store.get(`login-user:${userCode}`), replacement)
+}))
 
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 
