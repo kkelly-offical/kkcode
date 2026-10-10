@@ -221,47 +221,51 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
       }
       const configState = await loadConfig()
       const kernel = await applyCliTrust(configState, { trust: options.trust })
-      if (!kernel.trustState.trusted) {
-        console.error("workspace is not trusted — file tools will refuse to work.")
-        console.error("re-run with --trust, or run /trust once in the REPL here.")
-        process.exitCode = 1
-        return
-      }
-      // 优先用原 run 的渠道与模型（记在台账里）—— 0.5.2 之前一律回落默认
-      // provider：--provider aliyun 起的会话续跑时会悄悄换到 kimi
-      const recorded = ledger.data.providerType
-      const providerKey = (recorded && configState.config.provider[recorded])
-        ? recorded
-        : configState.config.provider.default
-      const providerConf = configState.config.provider[providerKey] || {}
-      const model = (ledger.data.model && providerKey === recorded ? ledger.data.model : null)
-        || providerConf.default_model
-      if (!model) {
-        console.error(`no model configured for provider "${providerKey}"`)
-        process.exitCode = 1
-        return
-      }
-      console.log(`resuming session ${options.session} — ${objective.slice(0, 80)}`)
       try {
-        const result = await runLongAgent({
-          prompt: objective,
-          model,
-          providerType: providerKey,
-          sessionId: options.session,
-          configState: { config: configState.config, source: configState.source },
-          baseUrl: providerConf.base_url || null,
-          apiKeyEnv: providerConf.api_key_env || null,
-          guidance: options.guidance || "",
-          output: { write: (t) => process.stdout.write(t) }
-        })
-        console.log(`\nsession ${options.session} finished (status: ${result.status || "unknown"})`)
-        if (result.blockedReport) {
-          for (const line of renderBlockedReportText(result.blockedReport)) console.log(line)
+        if (!kernel.trustState.trusted) {
+          console.error("workspace is not trusted — file tools will refuse to work.")
+          console.error("re-run with --trust, or run /trust once in the REPL here.")
+          process.exitCode = 1
+          return
         }
-        process.exitCode = exitCodeForUltraStatus(result.status)
-      } catch (err) {
-        console.error(`resume failed: ${err.message}`)
-        process.exitCode = 1
+        // 优先用原 run 的渠道与模型（记在台账里）—— 0.5.2 之前一律回落默认
+        // provider：--provider aliyun 起的会话续跑时会悄悄换到 kimi
+        const recorded = ledger.data.providerType
+        const providerKey = (recorded && configState.config.provider[recorded])
+          ? recorded
+          : configState.config.provider.default
+        const providerConf = configState.config.provider[providerKey] || {}
+        const model = (ledger.data.model && providerKey === recorded ? ledger.data.model : null)
+          || providerConf.default_model
+        if (!model) {
+          console.error(`no model configured for provider "${providerKey}"`)
+          process.exitCode = 1
+          return
+        }
+        console.log(`resuming session ${options.session} — ${objective.slice(0, 80)}`)
+        try {
+          const result = await runLongAgent({
+            prompt: objective,
+            model,
+            providerType: providerKey,
+            sessionId: options.session,
+            configState: { config: configState.config, source: configState.source },
+            baseUrl: providerConf.base_url || null,
+            apiKeyEnv: providerConf.api_key_env || null,
+            guidance: options.guidance || "",
+            output: { write: (t) => process.stdout.write(t) }
+          })
+          console.log(`\nsession ${options.session} finished (status: ${result.status || "unknown"})`)
+          if (result.blockedReport) {
+            for (const line of renderBlockedReportText(result.blockedReport)) console.log(line)
+          }
+          process.exitCode = exitCodeForUltraStatus(result.status)
+        } catch (err) {
+          console.error(`resume failed: ${err.message}`)
+          process.exitCode = 1
+        }
+      } finally {
+        await kernel.shutdown()
       }
     })
 
@@ -368,54 +372,58 @@ export function createLongagentCommand({ name = "ultra" } = {}) {
     .action(async (prompt, options) => {
       const configState = await loadConfig()
       const kernel = await applyCliTrust(configState, { trust: options.trust })
-      if (!kernel.trustState.trusted) {
-        console.error("workspace is not trusted — file tools will refuse to work.")
-        console.error("re-run with --trust, or run /trust once in the REPL here.")
-        process.exitCode = 1
-        return
-      }
-      const providerKey = options.provider || configState.config.provider.default
-      const providerConf = configState.config.provider[providerKey] || {}
-      const model = options.model || providerConf.default_model
-      if (!model) {
-        console.error(`no model configured for provider "${providerKey}"`)
-        process.exitCode = 1
-        return
-      }
-      const sessionId = kernel.turns.newSessionId()
-      console.log(`starting longagent session: ${sessionId}`)
-      console.log(`model: ${model}, provider: ${providerKey}`)
       try {
-        const result = await kernel.executeTurn({
-          prompt,
-          mode: "longagent",
-          model,
-          sessionId,
-          configState: { config: configState.config, source: configState.source },
-          providerType: providerKey,
-          baseUrl: providerConf.base_url || null,
-          apiKeyEnv: providerConf.api_key_env || null,
-          maxIterations: Number(options.maxIterations) || 0,
-          output: { write: (t) => process.stdout.write(t) }
-        })
-        // executeTurn 返回的对象没有顶层 status —— 它在 result.longagent.status。
-        // 0.4.x 读的是 result.status，恒为 undefined，所以这行**永远**打印 done，
-        // 哪怕这一轮其实是 failed 或 aborted。
-        const ultra = result.longagent || {}
-        console.log(`\nsession ${sessionId} finished (status: ${ultra.status || "unknown"})`)
-        if (ultra.blockedReport) {
-          console.log("")
-          for (const line of renderBlockedReportText(ultra.blockedReport)) console.log(line)
-        } else if (ultra.recoverySuggestions) {
-          for (const line of formatRecoverySuggestions(ultra.recoverySuggestions)) {
-            console.log(line)
-          }
+        if (!kernel.trustState.trusted) {
+          console.error("workspace is not trusted — file tools will refuse to work.")
+          console.error("re-run with --trust, or run /trust once in the REPL here.")
+          process.exitCode = 1
+          return
         }
-        if (ultra.reportPath) console.log(`\nreport: ${ultra.reportPath}`)
-        if (ultra.status === "failed") process.exitCode = 1
-      } catch (err) {
-        console.error(`longagent error: ${err.message}`)
-        process.exitCode = 1
+        const providerKey = options.provider || configState.config.provider.default
+        const providerConf = configState.config.provider[providerKey] || {}
+        const model = options.model || providerConf.default_model
+        if (!model) {
+          console.error(`no model configured for provider "${providerKey}"`)
+          process.exitCode = 1
+          return
+        }
+        const sessionId = kernel.turns.newSessionId()
+        console.log(`starting longagent session: ${sessionId}`)
+        console.log(`model: ${model}, provider: ${providerKey}`)
+        try {
+          const result = await kernel.executeTurn({
+            prompt,
+            mode: "longagent",
+            model,
+            sessionId,
+            configState: { config: configState.config, source: configState.source },
+            providerType: providerKey,
+            baseUrl: providerConf.base_url || null,
+            apiKeyEnv: providerConf.api_key_env || null,
+            maxIterations: Number(options.maxIterations) || 0,
+            output: { write: (t) => process.stdout.write(t) }
+          })
+          // executeTurn 返回的对象没有顶层 status —— 它在 result.longagent.status。
+          // 0.4.x 读的是 result.status，恒为 undefined，所以这行**永远**打印 done，
+          // 哪怕这一轮其实是 failed 或 aborted。
+          const ultra = result.longagent || {}
+          console.log(`\nsession ${sessionId} finished (status: ${ultra.status || "unknown"})`)
+          if (ultra.blockedReport) {
+            console.log("")
+            for (const line of renderBlockedReportText(ultra.blockedReport)) console.log(line)
+          } else if (ultra.recoverySuggestions) {
+            for (const line of formatRecoverySuggestions(ultra.recoverySuggestions)) {
+              console.log(line)
+            }
+          }
+          if (ultra.reportPath) console.log(`\nreport: ${ultra.reportPath}`)
+          if (ultra.status === "failed") process.exitCode = 1
+        } catch (err) {
+          console.error(`longagent error: ${err.message}`)
+          process.exitCode = 1
+        }
+      } finally {
+        await kernel.shutdown()
       }
     })
 

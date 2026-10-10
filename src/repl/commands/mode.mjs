@@ -57,10 +57,10 @@ export const modeCommands = [
     desc: "read-only development plan",
     argMode: "optional",
     run: (cmd) => {
-      const { args, state } = cmd
+      const { args, state, ctx, switchModeInPlace } = cmd
       if (!args) return switchAndReport(cmd, "plan")
-      // 带目标的 /plan：切到 plan 航道，然后把目标包成一段规划指令继续跑。
-      state.mode = "plan"
+      // 带目标的 /plan：完整切到只读 plan 模式，然后把目标包成规划指令继续跑。
+      switchModeInPlace(state, ctx, "plan")
       return {
         rewrite: [
           "Create a read-only development plan for this request.",
