@@ -370,6 +370,55 @@ test("auto-continue: cancellation retains the completed prefix and current visib
   }
 })
 
+test("auto-continue: cancellation preserves visible leading and trailing whitespace", async () => {
+  let requestCount = 0
+  let notifyContinuation
+  const continuationStarted = new Promise(resolve => { notifyContinuation = resolve })
+  registerProvider("mock-lifecycle", {
+    async request() { throw new Error("controlled stream required") },
+    async *requestStream(input) {
+      requestCount++
+      if (requestCount === 1) {
+        for (const chunk of textChunks("前半", { output: 4000, stopReason: "max_tokens" })) yield chunk
+        return
+      }
+      yield { type: "text", content: " 后半 \t\n" }
+      notifyContinuation()
+      await new Promise((_, reject) => {
+        const cancel = () => reject(Object.assign(new Error("cancelled"), { code: "ABORT_ERR" }))
+        if (input.signal?.aborted) cancel()
+        else input.signal?.addEventListener("abort", cancel, { once: true })
+      })
+    }
+  })
+  const controller = new AbortController()
+  const { events, unsubscribe } = captureEvents()
+  try {
+    const pending = executeTurn({
+      prompt: "write something long",
+      mode: "agent",
+      model: "test",
+      providerType: "mock-lifecycle",
+      sessionId: nextSessionId(),
+      configState: baseConfig({ max_output_tokens: 4096 }),
+      signal: controller.signal
+    })
+    await continuationStarted
+    controller.abort()
+    const result = await pending
+    const visibleText = events
+      .filter((event) => event.type === EVENT_TYPES.STREAM_TEXT_DELTA)
+      .map((event) => event.payload.text)
+      .join("")
+    assert.equal(result.status, "cancelled")
+    assert.equal(result.cancelled, true)
+    assert.equal(visibleText, "前半 后半 \t\n")
+    assert.equal(result.partialReply, visibleText, "cancelled partial reply must preserve every visible whitespace character")
+  } finally {
+    unsubscribe()
+  }
+})
+
 test("render stream close() is a terminal gate: late emissions produce nothing", async () => {
   const emitted = []
   const render = createRenderStream({

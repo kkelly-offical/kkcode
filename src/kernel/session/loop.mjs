@@ -1860,7 +1860,7 @@ async function processTurnLoopInRuntime({
       reply: `provider error: ${errorMessage}`,
       error: errorMessage,
       status: cancelled ? 'cancelled' : 'error',
-      ...(cancelled ? { cancelled: true, partialReply: autoContinuing ? visibleResponseText(interruptedReply).trim() : interruptedReply, stopReason: 'cancelled' } : {}),
+      ...(cancelled ? { cancelled: true, partialReply: autoContinuing ? visibleResponseText(interruptedReply) : interruptedReply, stopReason: 'cancelled' } : {}),
       emittedText: emittedAnyText,
       context: lastContextMeter,
       usage,
