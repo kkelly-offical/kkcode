@@ -52,13 +52,13 @@ import kotlinx.coroutines.withContext
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         state.attachments.forEach { attachment ->
             val preview = attachment.optString("preview")
-            val bitmap by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, attachment.optString("id")) {
-                if(preview.isNotEmpty()) value = withContext(Dispatchers.IO) {
+            val bitmap by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, attachment.optString("id"), preview) {
+                if(preview.isNotEmpty() && preview.length <= ATTACHMENT_PREVIEW_MAX_BASE64_CHARS) value = withContext(Dispatchers.IO) {
                     runCatching {
                         val bytes = Base64.decode(preview, Base64.NO_WRAP)
                         val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-                        options.inSampleSize = (maxOf(options.outWidth, options.outHeight) / 128).coerceAtLeast(1)
+                        options.inSampleSize = attachmentPreviewSampleSize(options.outWidth, options.outHeight)
                         options.inJustDecodeBounds = false
                         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)?.asImageBitmap()
                     }.getOrNull()

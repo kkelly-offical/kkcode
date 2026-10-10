@@ -12,9 +12,24 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 data class ChatItem(val id: String, val kind: String, val text: String, val detail: String = "", val tool: JSONObject? = null, val startedAt: Long = 0, val durationMs: Long? = null, val done: Boolean = true, val turnId: String = "", val step: Int? = null, val streamed: Boolean = false, val messageId: String = "", val media: JSONObject? = null, val children: List<ChatItem> = emptyList())
-class RemoteState @JvmOverloads constructor(application: Application, restoreConnections: Boolean = true, private val sshFactory: () -> SshConnection = { SshConnection() }) : AndroidViewModel(application) {
+internal interface RemoteStateVault {
+    fun put(name: String, value: String, durable: Boolean = false)
+    fun get(name: String): String?
+    fun clear(name: String, durable: Boolean = false)
+    fun completeLogin(gateway: String, credentials: String)
+}
+private class AndroidRemoteStateVault(application: Application) : RemoteStateVault {
+    private val delegate = CredentialVault(application)
+    override fun put(name: String, value: String, durable: Boolean) = delegate.put(name, value, durable)
+    override fun get(name: String): String? = delegate.get(name)
+    override fun clear(name: String, durable: Boolean) = delegate.clear(name, durable)
+    override fun completeLogin(gateway: String, credentials: String) = delegate.completeLogin(gateway, credentials)
+}
+class RemoteState private constructor(application: Application, restoreConnections: Boolean, private val sshFactory: () -> SshConnection, vault: RemoteStateVault) : AndroidViewModel(application) {
+    @JvmOverloads constructor(application: Application, restoreConnections: Boolean = true, sshFactory: () -> SshConnection = { SshConnection() }) : this(application, restoreConnections, sshFactory, AndroidRemoteStateVault(application))
+    internal constructor(application: Application, restoreConnections: Boolean, vault: RemoteStateVault, sshFactory: () -> SshConnection = { SshConnection() }) : this(application, restoreConnections, sshFactory, vault)
     internal val updater = AppUpdater(application, viewModelScope)
-    val vault = CredentialVault(application)
+    internal val vault = vault
     private val prefs = application.getSharedPreferences("kkcode.ui", 0)
     private var ssh: SshConnection? = null
     private var gatewayApi: DeviceApi? = null
@@ -298,7 +313,7 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         if (first != null) chooseDevice(first) else connected = false
         startDevicePolling()
     }
-    private fun startDevicePolling() {
+    internal fun startDevicePolling() {
         devicePolling?.cancel()
         val client = gatewayApi ?: api?.takeIf { it.relay } ?: return
         if(!client.relay) return
@@ -320,12 +335,20 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
                             leaveChat(); refreshSessions(); notice = "该会话的分享已撤销"
                         }
                         if(!active.optBoolean("online")) connected = false
-                        else if(!connected && selected.isBlank()) chooseDevice(active)
+                        else if(deviceEventsNeedRestart(connected, deviceEvents?.isActive == true, manualDisconnect)) startDeviceEvents()
+                        else if(!connected && selected.isBlank() && !manualDisconnect) chooseDevice(active)
                     } else if(!manualDisconnect) {
                         updated.firstOrNull { it.optBoolean("online") }?.let { chooseDevice(it) }
                     }
                 } catch(error: CancellationException) { throw error }
-                catch(_: Exception) { /* The session poll owns transient connection notices. */ }
+                catch(error: Exception) {
+                    if(gatewayApi !== client) return@launch
+                    if(api === client && selectedSsh.isBlank() && error is DeviceApiError && error.status in listOf(401, 403)) {
+                        permanentRelayAuthorization(client, error)
+                        return@launch
+                    }
+                    /* The session poll owns transient connection notices. */
+                }
             }
         }
     }
@@ -349,19 +372,34 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         if(generation != connectionGeneration) return
         commands = availableCommands; sheet = ""
         startDeviceEvents()
+        if(devicePolling?.isActive != true) startDevicePolling()
     }
-    private fun startDeviceEvents() {
+    private fun permanentRelayAuthorization(client: DeviceApi, error: DeviceApiError) {
+        if(api !== client || selectedSsh.isNotBlank()) return
+        manualDisconnect = true
+        devicePolling?.cancel(); deviceEvents?.cancel(); polling?.cancel()
+        val message = remoteErrorMessage(error)
+        connectionLost(message, retrying = false)
+        notice = message + if(error.status == 401) "\n请重新登录网关。" else "\n请选择其他连接，或联系设备所有者恢复授权。"
+        noticeExpiry?.cancel()
+        sheet = if(error.status == 401) "relay" else "connections"
+    }
+    internal fun startDeviceEvents() {
         deviceEvents?.cancel()
         val client = api ?: return
         val device = client.device
         deviceEvents = viewModelScope.launch {
             var attempts = 0
-            while(isActive && api === client && client.device == device && attempts <= 5) {
+            while(isActive && api === client && client.device == device) {
+                var failure: Throwable? = null
                 try {
                     if(client.relay) refreshToken()
                     client.streamEvents("", 0).collect { frame ->
                         if(api !== client || client.device != device) return@collect
-                        if(frame.event == "connected") attempts = 0
+                        if(frame.event == "connected") {
+                            attempts = 0
+                            if(client.relay) connectionRestored()
+                        }
                         val event = JSONObject(frame.data)
                         val message = mcpLoadNotice(event)
                         if(message.isNotBlank()) {
@@ -373,9 +411,16 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
                     }
                 } catch(error: CancellationException) { throw error }
                 catch(error: Exception) {
-                    if(error is DeviceApiError && (error.status in listOf(401, 403, 404, 405, 501) || error.code == "not_sse")) break
+                    failure = error
+                    if(api === client && client.device == device && client.relay && error is DeviceApiError && error.status in listOf(401, 403)) {
+                        permanentRelayAuthorization(client, error)
+                        return@launch
+                    }
+                    if(client.relay && api === client && client.device == device) connectionLost(remoteErrorMessage(error))
                 }
-                attempts++; delay((500L shl attempts.coerceAtMost(5)).coerceAtMost(10000))
+                attempts++
+                val retryDelay = deviceEventRetryDelay(client.relay, attempts, failure) ?: break
+                delay(retryDelay)
             }
         }
     }
@@ -644,21 +689,23 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
         finally { if(api?.relay != false || ssh !== connection) connection.close(); if(generation == connectionGeneration) loading = false }
     }
     fun openSession(item: JSONObject) = openSession(item, preserveComposer = false)
-    internal fun openSession(item: JSONObject, preserveComposer: Boolean) = action {
-        polling?.cancel(); lastTurnOutcome = ""; subagentSyncNotice = ""; selected = item.getString("id"); cwd = item.optString("cwd", cwd)
-        messages = emptyList(); contextUsage = JSONObject(); approvals = emptyList(); turnOperation = ""
-        val selection = ++sessionGeneration
-        todos = null
-        subagents = emptyList()
-        pendingSend = null; activeExecution = ""; stopRequested = ""; stopping = false; busy = false; turnPhase = "idle"; stopJob = null
-        if(selectedSsh.isNotBlank()) vault.put("ssh-session:${accountScope()}:$selectedSsh", selected)
-        val sessionId = selected; val source = api
-        val snapshot = try { rpc("sessions.get", JSONObject().put("sessionId", selected)) as JSONObject }
-        catch(error: Exception) { if(selected != sessionId || api !== source || sessionGeneration != selection) return@action; if(sessionGone(error, sessionId)) return@action; throw error }
-        if(selected != sessionId || api !== source || sessionGeneration != selection) return@action
-        applySnapshot(snapshot)
-        if(!preserveComposer) { attachments = emptyList(); failedAttachments = emptyList(); draft = "" }
-        startEvents(snapshot.optLong("eventCursor")); sheet = ""
+    internal fun openSession(item: JSONObject, preserveComposer: Boolean): Job {
+        prepareSessionComposer(preserveComposer) { attachments = emptyList(); failedAttachments = emptyList(); draft = "" }
+        return action {
+            polling?.cancel(); lastTurnOutcome = ""; subagentSyncNotice = ""; selected = item.getString("id"); cwd = item.optString("cwd", cwd)
+            messages = emptyList(); contextUsage = JSONObject(); approvals = emptyList(); turnOperation = ""
+            val selection = ++sessionGeneration
+            todos = null
+            subagents = emptyList()
+            pendingSend = null; activeExecution = ""; stopRequested = ""; stopping = false; busy = false; turnPhase = "idle"; stopJob = null
+            if(selectedSsh.isNotBlank()) vault.put("ssh-session:${accountScope()}:$selectedSsh", selected)
+            val sessionId = selected; val source = api
+            val snapshot = try { rpc("sessions.get", JSONObject().put("sessionId", selected)) as JSONObject }
+            catch(error: Exception) { if(selected != sessionId || api !== source || sessionGeneration != selection) return@action; if(sessionGone(error, sessionId)) return@action; throw error }
+            if(selected != sessionId || api !== source || sessionGeneration != selection) return@action
+            applySnapshot(snapshot)
+            startEvents(snapshot.optLong("eventCursor")); sheet = ""
+        }
     }
     private fun sessionGone(error: Exception, id: String): Boolean {
         if(error !is DeviceApiError || error.code != "session_missing") return false
@@ -1146,30 +1193,59 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
     }
     fun updateAppearance(value: String) { require(value in listOf("dark", "light", "auto")); appearance = value; prefs.edit().putString("appearance", value).apply(); sheet = "" }
     fun savePreferences(value: JSONObject) = action { profilePreferences = rpc("profile.update", JSONObject().put("profile", value)) as JSONObject; notice = "偏好已保存到电脑"; sheet = "" }
+    private suspend fun attachmentRpc(origin: AttachmentOrigin, method: String, params: JSONObject, requireCurrent: Boolean = true): Any? {
+        if(requireCurrent) origin.requireCurrent(selected, connectionGeneration, api)
+        if(origin.client.relay && gatewayApi === origin.client) refreshToken()
+        if(requireCurrent) origin.requireCurrent(selected, connectionGeneration, api)
+        try { return origin.rpc(method, params) }
+        catch(error: CancellationException) { throw error }
+        catch(error: Exception) {
+            if(origin.matches(selected, connectionGeneration, api)) {
+                if(error is java.io.IOException || error is DeviceApiError && error.status in listOf(502, 503, 504)) connectionLost(remoteErrorMessage(error, !origin.client.relay))
+                if(!origin.client.relay && (error is java.io.IOException || error is DeviceApiError && error.status in listOf(401, 502, 503, 504))) { connected = false; resumeSshConnection(force = true) }
+            }
+            throw error
+        }
+    }
     fun attach(uri: Uri): Job {
-        val origin = selected
-        val generation = connectionGeneration
+        val origin = api?.let { AttachmentOrigin(selected, connectionGeneration, it, it.device) }
         return action { attachmentMutex.withLock {
-            require(origin == selected && generation == connectionGeneration) { "会话已切换，请在原会话中重新添加附件" }
+            val bound = origin ?: error("先添加一个设备连接")
+            bound.requireCurrent(selected, connectionGeneration, api)
             require(!sharedDevice && selected.isNotBlank()) { "请先打开自己的会话" }
             require(attachments.size < 8) { "一次最多发送 8 个附件" }
             uploading = true
             try {
                 val input = withContext(Dispatchers.IO) { readAttachment(getApplication<Application>().contentResolver, uri) }
-                val result = rpc("attachments.upload", input.put("sessionId", origin)) as JSONObject
-                if(input.optString("mediaType").startsWith("image/")) result.put("preview", input.optString("data"))
-                if(selected == origin && generation == connectionGeneration) {
+                bound.requireCurrent(selected, connectionGeneration, api)
+                val result = attachmentRpc(bound, "attachments.upload", input.put("sessionId", bound.sessionId)) as JSONObject
+                if(bound.matches(selected, connectionGeneration, api)) {
+                    val preview = withContext(Dispatchers.IO) { createAttachmentPreview(input) }
+                    bindAttachmentPreview(result, input.optString("mediaType"), preview)
+                }
+                if(bound.matches(selected, connectionGeneration, api)) {
                     attachments = attachments + result
                     failedAttachments = failedAttachments.filterNot { it == uri }
-                } else rpc("attachments.remove", JSONObject().put("sessionId", origin).put("id", result.getString("id")))
+                } else {
+                    attachmentRpc(bound, "attachments.remove", JSONObject().put("sessionId", bound.sessionId).put("id", result.getString("id")), requireCurrent = false)
+                    throw CancellationException("会话已切换")
+                }
             } catch(e: CancellationException) { throw e }
             catch(e: Exception) {
-                if(selected == origin && generation == connectionGeneration) failedAttachments = (failedAttachments + uri).distinct()
+                if(bound.matches(selected, connectionGeneration, api)) failedAttachments = (failedAttachments + uri).distinct()
                 throw e
             } finally { uploading = false }
         } }
     }
-    fun removeAttachment(id: String) = action { rpc("attachments.remove", JSONObject().put("sessionId", selected).put("id", id)); attachments = attachments.filterNot { it.optString("id") == id } }
+    fun removeAttachment(id: String): Job {
+        val origin = api?.let { AttachmentOrigin(selected, connectionGeneration, it, it.device) }
+        return action {
+            val bound = origin ?: error("先添加一个设备连接")
+            bound.requireCurrent(selected, connectionGeneration, api)
+            attachmentRpc(bound, "attachments.remove", JSONObject().put("sessionId", bound.sessionId).put("id", id))
+            if(bound.matches(selected, connectionGeneration, api)) attachments = attachments.filterNot { it.optString("id") == id }
+        }
+    }
     fun loadBranches() = action {
         require(!sharedDevice) { "只有电脑所有者可以修改分支" }
         branchSnapshot = rpc("branches.list", if(selected.isBlank()) JSONObject().put("cwd", cwd) else JSONObject().put("sessionId", selected)) as JSONObject
@@ -1265,5 +1341,14 @@ class RemoteState @JvmOverloads constructor(application: Application, restoreCon
     }
     override fun onCleared() { connectionGeneration++; sshRecovery?.cancel(); sshHeartbeat?.cancel(); loginJob?.cancel(); loginNotice?.cancel(); polling?.cancel(); devicePolling?.cancel(); deviceEvents?.cancel(); deviceNotice?.cancel(); ssh?.close(); super.onCleared() }
 }
+internal fun deviceEventRetryDelay(relay: Boolean, failures: Int, error: Throwable? = null): Long? {
+    val apiError = error as? DeviceApiError
+    if(relay) {
+        if(apiError != null && apiError.status in listOf(401, 403)) return null
+    } else if(failures > 5 || apiError != null && (apiError.status in listOf(401, 403, 404, 405, 501) || apiError.code == "not_sse")) return null
+    return (500L shl failures.coerceIn(1, 5)).coerceAtMost(10000)
+}
+internal fun deviceEventsNeedRestart(connected: Boolean, eventsActive: Boolean, manualDisconnect: Boolean): Boolean = connected && !eventsActive && !manualDisconnect
+internal fun prepareSessionComposer(preserveComposer: Boolean, clear: () -> Unit) { if(!preserveComposer) clear() }
 internal fun JSONArray?.objects(): List<JSONObject> = if (this == null) emptyList() else (0 until length()).mapNotNull { optJSONObject(it) }
 internal fun JSONObject.stepOrNull(): Int? = if(has("step") && !isNull("step")) (opt("step") as? Number)?.toInt() else null
