@@ -54,6 +54,7 @@ type Props = {
   onCreate: () => Promise<any>;
   onSettings: (config: Item) => void;
   onNotice: (notice: string) => void;
+  onLogout: () => void;
 };
 const titles: Record<string, string> = {
   settings: "设置",
@@ -164,6 +165,7 @@ export function SettingsOverlay(props: Props) {
         },
       );
       if (!response.ok) throw new Error("暂时无法退出，请重试");
+      props.onLogout();
       location.reload();
     });
   const account = (
