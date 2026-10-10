@@ -17,6 +17,10 @@ function sink() {
   return { write(chunk) { value += chunk }, read() { return value } }
 }
 
+function semanticChunk(text, semanticKind) {
+  return Object.assign(Buffer.from(text), { semanticKind })
+}
+
 test("non-TTY defaults to stable text while TTY keeps legacy display", () => {
   assert.equal(resolveOutputFormat(null, { stdoutIsTTY: false }), "text")
   assert.equal(resolveOutputFormat(null, { stdoutIsTTY: true }), "legacy")
@@ -116,12 +120,12 @@ test("stream-json 自动续写提示不混入正文 delta，段间分隔不污�
   const stderr = sink()
   const reporter = createOutputReporter("stream-json", { stdout, stderr })
   reporter.delta("前半")
-  reporter.delta("\n")
-  reporter.delta("\n\u001b[2m\u001b[33m\n  ↳ output truncated, auto-continuing (1/8)...\n\u001b[0m")
+  reporter.delta(semanticChunk("\n", "separator"))
+  reporter.delta(semanticChunk("\n\u001b[2m\u001b[33m\n  ↳ output truncated, auto-continuing (1/8)...\n\u001b[0m", "notice"))
   reporter.delta("中间")
-  reporter.delta("\n")
+  reporter.delta(semanticChunk("\n", "separator"))
   reporter.delta("后半")
-  reporter.delta("\n")
+  reporter.delta(semanticChunk("\n", "separator"))
   reporter.finish({ reply: "前半中间后半", sessionId: "s", turnId: "t" })
 
   const events = stdout.read().split("\n").filter(Boolean).map((line) => JSON.parse(line))
@@ -131,6 +135,23 @@ test("stream-json 自动续写提示不混入正文 delta，段间分隔不污�
   assert.equal(events.at(-1).content, "前半中间后半")
   assert.ok(stderr.read().includes("output truncated, auto-continuing (1/8)"), "提示应改走 stderr")
   assert.ok(!stderr.read().includes('"type"'), "提示不得伪装成机器事件")
+})
+
+test("stream-json 独立正文换行与渲染分隔按语义分别处理", () => {
+  const stdout = sink()
+  const stderr = sink()
+  const reporter = createOutputReporter("stream-json", { stdout, stderr })
+  reporter.delta("前半\n")
+  reporter.delta("\n")
+  reporter.delta("后半")
+  reporter.delta(semanticChunk("\n", "separator"))
+  reporter.finish({ reply: "前半\n\n后半", sessionId: "s", turnId: "t" })
+
+  const events = stdout.read().split("\n").filter(Boolean).map((line) => JSON.parse(line))
+  const deltas = events.filter((event) => event.type === "assistant.delta")
+  assert.deepEqual(deltas.map((event) => event.delta), ["前半\n", "\n", "后半", "\n"])
+  assert.equal(deltas.map((event) => event.delta).join("").trimEnd(), "前半\n\n后半")
+  assert.equal(events.at(-1).content, "前半\n\n后半")
 })
 
 test("契约文档与代码同步：docs/headless-jsonl-contract.md 必须覆盖全部事件类型与版本号", () => {

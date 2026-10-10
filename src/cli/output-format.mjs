@@ -50,7 +50,8 @@ export function createOutputReporter(format, {
     type: "assistant.delta",
     delta: String(content)
   }))
-  let pendingStreamNewline = ""
+  let sawText = false
+  let sawSeparator = false
   return {
     format,
     progress(message) {
@@ -64,28 +65,25 @@ export function createOutputReporter(format, {
       if (!content) return
       if (format === "legacy") stdout.write(String(content))
       if (format === "stream-json") {
+        const kind = content.semanticKind
         const value = String(content)
-        pendingStreamNewline = ""
+        if (kind === "separator") {
+          sawSeparator = true
+          return
+        }
+        if (kind === "thinking") return
         const plain = value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
         const autoContinue = plain.match(/^\n*(  ↳ output truncated, auto-continuing \(\d+\/\d+\)\.\.\.)\n$/)
         if (autoContinue) {
           writeLine(stderr, autoContinue[1])
           return
         }
-        // Keep renderer newlines out of subsequent responses; only the final
-        // trailing newline is emitted as assistant content.
-        if (value === "\n") {
-          pendingStreamNewline = value
-          return
-        }
+        sawText = true
         writeDelta(value)
       }
     },
     finish(result) {
-      if (format === "stream-json" && pendingStreamNewline) {
-        writeDelta(pendingStreamNewline)
-        pendingStreamNewline = ""
-      }
+      if (format === "stream-json" && sawText && sawSeparator) writeDelta("\n")
       const record = toPublicResult(result)
       // json 与 stream-json 共用一个终态事件形状：一行一事件、带 type ——
       // stdout 上不存在无类型的「裸结果」行（阶段 5 前 json 格式没有 type 字段，

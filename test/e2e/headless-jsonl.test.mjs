@@ -90,6 +90,11 @@ before(async () => {
         } else res.end(sseBody(["后半"], usage))
         return
       }
+      if (payload.model === "mock-newline") {
+        res.writeHead(200, { "content-type": "text/event-stream" })
+        res.end(sseBody(["前半\n", "\n", "后半"], { prompt_tokens: 11, completion_tokens: 7 }))
+        return
+      }
       if (payload.stream) {
         res.writeHead(200, { "content-type": "text/event-stream" })
         res.end(sseBody(["Hello", " from mock"], { prompt_tokens: 11, completion_tokens: 7 }))
@@ -260,6 +265,19 @@ test("e2e headless 契约：auto-continue 中间工具调用的渲染分隔不�
   assert.deepEqual(deltas.map((event) => event.delta), ["前半", "中间", "后半", "\n"])
   assert.equal(deltas.map((event) => event.delta).join("").trimEnd(), result.content)
   assert.ok(!deltas.some((event) => event.delta.includes("output truncated")), "续写提示不属于助手正文")
+})
+
+test("e2e headless 契约：模型正文中的独立换行不得被误认为渲染分隔", async () => {
+  const { stdout, stderr, exitCode } = await runCli([
+    "chat", "newline", "--output-format", "stream-json", "--model", "mock-newline"
+  ])
+  assert.equal(exitCode, 0, `独立正文换行用例应成功退出，stderr：${stderr}`)
+  const events = parseJsonlContract(stdout)
+  const result = events.at(-1)
+  assert.equal(result.content, "前半\n\n后半")
+  const deltas = events.filter((event) => event.type === "assistant.delta")
+  assert.deepEqual(deltas.map((event) => event.delta), ["前半\n", "\n", "后半", "\n"])
+  assert.equal(deltas.map((event) => event.delta).join("").trimEnd(), result.content)
 })
 
 test("e2e headless 契约：进程级失败时 stdout 保持纯 JSONL（零事件），错误只在 stderr", async () => {
