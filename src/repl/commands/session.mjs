@@ -7,7 +7,7 @@ import { runtimeCwd } from "../../kernel/index.mjs"
  * 走 `notice`（瞬时提示），需要回看的内容才留在对话记录里。
  */
 
-import { LongAgentManager, loadLedger, rewindLastTurn } from "../../kernel/index.mjs"
+import { LongAgentManager, loadLedger, rewindLastTurn, resolveSessionMode } from "../../kernel/index.mjs"
 import { buildBoardModel, renderUltraBoard } from "../../ui/ultra-board.mjs"
 import { renderRuntimeDashboardView } from "../../ui/repl-status-view.mjs"
 import { runBtwQuery } from "../btw-query.mjs"
@@ -16,6 +16,47 @@ import { ageLabel, padRight } from "../../util/frame-primitives.mjs"
 import { buildReplRuntimeSnapshot } from "../runtime-facade.mjs"
 import { buildOperatorSnapshot } from "../operator-surface.mjs"
 import { formatTodoProgress } from '../../ui/activity-renderer.mjs'
+
+export async function compactConversation({ print, state, ctx, signal = null }) {
+  signal?.throwIfAborted()
+  // 进度是瞬时提示：压缩完成后这条就该消失，不该留在对话记录里
+  print("compacting conversation...", { channel: "notice", topic: "compact" })
+  const result = await ctx.kernel.sessions.compactSession({
+    sessionId: state.sessionId,
+    model: state.model,
+    providerType: state.providerType,
+    configState: ctx.configState,
+    signal
+  })
+  signal?.throwIfAborted()
+  if (result.compacted) {
+    print(`compacted: ${result.summarizedCount} messages summarized, ${result.keptCount} kept`, { channel: "notice", topic: "command" })
+  } else {
+    print(`skipped: ${result.reason}`, { channel: "notice", topic: "command" })
+  }
+  return result
+}
+
+export async function continuePlanBuildHandoff({ handoff, state, ctx, signal, print, submit }) {
+  const sessionId = state.sessionId
+  const stillCurrent = () => !signal?.aborted && state.sessionId === sessionId && state.modeId === handoff?.modeId
+  if (!handoff?.modeId || !stillCurrent()) return false
+
+  if (handoff.compactFirst) {
+    try {
+      await compactConversation({ print, state, ctx, signal })
+    } catch (error) {
+      if (signal?.aborted || error?.name === "AbortError") return false
+      print(`compact failed: ${error.message}`, { channel: "notice", topic: "command", tone: "error" })
+      return false
+    }
+  }
+  if (!stillCurrent()) return false
+
+  const planRef = handoff.planPath ? ` at ${handoff.planPath}` : ""
+  await submit(`Implement the approved plan${planRef}. Follow it stage by stage and report what you changed.`)
+  return true
+}
 
 export const sessionCommands = [
   {
@@ -129,22 +170,11 @@ export const sessionCommands = [
     names: ["compact"],
     desc: "summarize conversation to free context",
     argMode: "none",
-    run: async ({ print, state, ctx }) => {
+    run: async ({ print, state, ctx, signal }) => {
       try {
-        // 进度是瞬时提示：压缩完成后这条就该消失，不该留在对话记录里
-        print("compacting conversation...", { channel: "notice", topic: "compact" })
-        const result = await ctx.kernel.sessions.compactSession({
-          sessionId: state.sessionId,
-          model: state.model,
-          providerType: state.providerType,
-          configState: ctx.configState
-        })
-        if (result.compacted) {
-          print(`compacted: ${result.summarizedCount} messages summarized, ${result.keptCount} kept`, { channel: "notice", topic: "command" })
-        } else {
-          print(`skipped: ${result.reason}`, { channel: "notice", topic: "command" })
-        }
+        await compactConversation({ print, state, ctx, signal })
       } catch (err) {
+        if (signal?.aborted || err?.name === "AbortError") throw err
         print(`compact failed: ${err.message}`, { channel: "notice", topic: "command", tone: "error" })
       }
       return { exit: false }
@@ -193,7 +223,7 @@ export const sessionCommands = [
     names: ["resume", "r"],
     desc: "resume session",
     argMode: "optional",
-    run: async ({ args, print, state, openPanel, ctx }) => {
+    run: async ({ args, print, state, openPanel, ctx, switchModeInPlace }) => {
       const sessions = await ctx.kernel.sessions.listSessions({ cwd: runtimeCwd(), limit: 20, includeChildren: false })
 
       if (!sessions.length) {
@@ -243,7 +273,11 @@ export const sessionCommands = [
       }
 
       state.sessionId = target.id
-      state.mode = target.mode || state.mode
+      switchModeInPlace(state, ctx, resolveSessionMode({
+        modeId: target.modeId,
+        mode: target.mode || state.mode,
+        approval: target.approval || target.permission?.level
+      }))
       state.providerType = target.providerType || state.providerType
       state.model = target.model || state.model
       const title = target.title || `${target.mode}:${target.model || "?"}`

@@ -1,12 +1,60 @@
+const readlineStates = new WeakMap()
+
+function readlineState(rl) {
+  let state = readlineStates.get(rl)
+  if (state) return state
+
+  state = { lines: [], waiters: [], closed: Boolean(rl.closed) }
+  readlineStates.set(rl, state)
+  rl.on("line", (line) => {
+    if (state.waiters.length) state.waiters.shift()(line)
+    else state.lines.push(line)
+  })
+  rl.on("close", () => {
+    state.closed = true
+    while (state.waiters.length) state.waiters.shift()(null)
+  })
+  return state
+}
+
+async function nextInputLine(rl, promptStr) {
+  // Lightweight mocks and other hosts can keep the original question-based contract.
+  if (typeof rl.on !== "function") return rl.question(promptStr)
+
+  const state = readlineState(rl)
+  if (!state.closed) {
+    rl.setPrompt(promptStr)
+    rl.prompt()
+  }
+  if (state.lines.length) return state.lines.shift()
+  if (state.closed) return null
+  return await new Promise((resolve) => state.waiters.push(resolve))
+}
+
+export async function closeLineInput(renderer, rl, saveHistory) {
+  try {
+    renderer?.stop()
+  } finally {
+    try {
+      rl.close()
+    } finally {
+      await saveHistory()
+    }
+  }
+}
+
 export async function collectInput(rl, promptStr) {
-  const first = (await rl.question(promptStr)).trim()
+  const answer = await nextInputLine(rl, promptStr)
+  if (answer === null) return null
+  const first = answer.trim()
   if (!first) return ""
 
   if (first === '"""' || first.startsWith('"""')) {
     const lines = []
     if (first !== '"""') lines.push(first.slice(3))
     while (true) {
-      const next = await rl.question("... ")
+      const next = await nextInputLine(rl, "... ")
+      if (next === null) return lines.join("\n").trim()
       if (next.trim() === '"""') break
       lines.push(next)
     }
@@ -16,7 +64,8 @@ export async function collectInput(rl, promptStr) {
   if (first.endsWith("\\")) {
     const lines = [first.slice(0, -1)]
     while (true) {
-      const next = await rl.question("... ")
+      const next = await nextInputLine(rl, "... ")
+      if (next === null) return lines.join("\n").trim()
       if (next.endsWith("\\")) lines.push(next.slice(0, -1))
       else {
         lines.push(next)
