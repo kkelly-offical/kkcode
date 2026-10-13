@@ -9,6 +9,7 @@ import {
   splitCommandLine
 } from "../src/repl/commands/registry.mjs"
 import { sessionCommands } from "../src/repl/commands/session.mjs"
+import { requestContextBudget } from "../src/kernel/index.mjs"
 import { providerCommands } from "../src/repl/commands/provider.mjs"
 import { permissionCommands } from "../src/repl/commands/permission.mjs"
 import { modeCommands } from "../src/repl/commands/mode.mjs"
@@ -357,4 +358,125 @@ test("/clear signals a transcript clear without printing anything", async () => 
   assert.equal(action.cleared, true)
   assert.deepEqual(writes.transcript, [])
   assert.deepEqual(writes.notice, [])
+})
+
+function resumeSession(id, patch = {}) {
+  return {
+    id,
+    mode: "agent",
+    model: "test-model",
+    providerType: "test",
+    cwd: process.cwd(),
+    updatedAt: Date.now(),
+    ...patch
+  }
+}
+
+test("/resume loads an exact session id beyond the recent twenty", async () => {
+  const oldest = resumeSession("ses_00")
+  const recent = Array.from({ length: 20 }, (_, index) => resumeSession(`ses_${String(index + 1).padStart(2, "0")}`))
+  const { cmd } = makeCmd({ args: oldest.id })
+  let directReads = 0
+  cmd.ctx.kernel.sessions.listSessions = async () => recent
+  cmd.ctx.kernel.sessions.getSession = async (id) => {
+    directReads += 1
+    return id === oldest.id ? { session: oldest, messages: [] } : null
+  }
+
+  await find("resume").run(cmd)
+
+  assert.equal(directReads, 1)
+  assert.equal(cmd.state.sessionId, oldest.id)
+  assert.equal(cmd.state.model, oldest.model)
+})
+
+test("/resume rejects direct ids from another workspace or a child session", async () => {
+  for (const target of [
+    resumeSession("ses_other_workspace", { cwd: `${process.cwd()}-other` }),
+    resumeSession("ses_child", { parentSessionId: "ses_parent" })
+  ]) {
+    const { cmd, writes } = makeCmd({ args: target.id })
+    cmd.ctx.kernel.sessions.listSessions = async () => []
+    cmd.ctx.kernel.sessions.getSession = async () => ({ session: target, messages: [] })
+
+    await find("resume").run(cmd)
+
+    assert.equal(cmd.state.sessionId, "ses_test")
+    assert.match(writes.notice.map((write) => write.text).join("\n"), /no sessions found in current directory/)
+  }
+})
+
+test("/resume keeps numeric index and recent prefix precedence", async () => {
+  const recent = [resumeSession("ses_recent"), resumeSession("ses_prefix_target")]
+  for (const [args, expected] of [["1", recent[0]], ["ses_pre", recent[1]]]) {
+    const { cmd } = makeCmd({ args })
+    cmd.ctx.kernel.sessions.listSessions = async () => recent
+    cmd.ctx.kernel.sessions.getSession = async () => assert.fail("a resolved index/prefix must not need a direct read")
+
+    await find("resume").run(cmd)
+
+    assert.equal(cmd.state.sessionId, expected.id)
+  }
+})
+
+test("successful /compact persists the recomputed meter and returns it to the frontend", async () => {
+  const { cmd, writes } = makeCmd()
+  const prior = {
+    model: cmd.state.model,
+    provider: cmd.state.providerType,
+    tokens: 321,
+    components: { system: 40, tools: 60, messages: 221 }
+  }
+  const saved = {
+    session: { context: prior },
+    messages: [{ role: "user", content: "compacted summary" }]
+  }
+  const updates = []
+  cmd.ctx.kernel.sessions.compactSession = async () => ({
+    compacted: true,
+    summarizedCount: 6,
+    keptCount: 2,
+    estimatedBeforeTokens: 900,
+    estimatedAfterTokens: 12
+  })
+  cmd.ctx.kernel.sessions.getSession = async () => saved
+  cmd.ctx.kernel.sessions.updateSession = async (sessionId, patch) => {
+    updates.push({ sessionId, patch })
+    return patch
+  }
+
+  const action = await find("compact").run(cmd)
+
+  assert.equal(updates.length, 1)
+  assert.equal(updates[0].sessionId, cmd.state.sessionId)
+  const { context, lastCompaction } = updates[0].patch
+  const fresh = requestContextBudget({
+    messages: saved.messages,
+    model: cmd.state.model,
+    providerType: cmd.state.providerType,
+    configState: cmd.ctx.configState
+  })
+  assert.deepEqual(context.components, { ...fresh.components, system: 40, tools: 60 })
+  assert.equal(context.tokens, Object.values(context.components).reduce((sum, value) => sum + value, 0))
+  assert.equal(context.requiredTokens, context.tokens + context.outputReserved)
+  assert.equal(context.percent, Math.min(100, Math.round(context.tokens * 100 / context.limit)))
+  assert.equal(context.ratio, Math.min(1, context.tokens / context.limit))
+  assert.equal(lastCompaction.beforeTokens, 321)
+  assert.equal(lastCompaction.afterTokens, context.tokens)
+  assert.equal(lastCompaction.limit, context.limit)
+  assert.equal(lastCompaction.source, "estimated")
+  assert.equal(lastCompaction.summarizedCount, 6)
+  assert.ok(Number.isFinite(lastCompaction.compactedAt))
+  assert.equal(action.turnResult.context, context)
+  assert.match(writes.notice.map((write) => write.text).join("\n"), /compacted: 6 messages summarized, 2 kept/)
+})
+
+test("skipped /compact leaves the persisted meter untouched", async () => {
+  const { cmd } = makeCmd()
+  cmd.ctx.kernel.sessions.getSession = async () => assert.fail("skipped compaction must not re-read the session")
+  cmd.ctx.kernel.sessions.updateSession = async () => assert.fail("skipped compaction must not update metadata")
+
+  const action = await find("compact").run(cmd)
+
+  assert.equal(action.turnResult, undefined)
 })

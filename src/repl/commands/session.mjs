@@ -1,4 +1,4 @@
-import { runtimeCwd } from "../../kernel/index.mjs"
+import { runtimeCwd, requestContextBudget } from "../../kernel/index.mjs"
 /**
  * 会话与工作区状态类命令：开新会话、续跑、历史、压缩、回滚、清屏、看板。
  *
@@ -18,7 +18,7 @@ import { buildOperatorSnapshot } from "../operator-surface.mjs"
 import { formatTodoProgress } from '../../ui/activity-renderer.mjs'
 import { markTurnSubmitted, resetTurnRuntime } from "../../ui/turn-runtime.mjs"
 
-export async function compactConversation({ print, state, ctx, signal = null }) {
+export async function compactConversation({ print, state, ctx, signal = null, persistContext = false }) {
   signal?.throwIfAborted()
   // 进度是瞬时提示：压缩完成后这条就该消失，不该留在对话记录里
   print("compacting conversation...", { channel: "notice", topic: "compact" })
@@ -30,6 +30,34 @@ export async function compactConversation({ print, state, ctx, signal = null }) 
     signal
   })
   signal?.throwIfAborted()
+  if (result.compacted && persistContext) {
+    const saved = await ctx.kernel.sessions.getSession(state.sessionId)
+    const context = requestContextBudget({
+      messages: saved.messages,
+      model: state.model,
+      providerType: state.providerType,
+      configState: ctx.configState
+    })
+    const prior = saved.session.context
+    if (prior?.model === state.model && prior?.provider === state.providerType) {
+      for (const key of ["system", "tools"]) context.components[key] = Math.max(0, Number(prior.components?.[key]) || 0)
+      context.tokens = Object.values(context.components).reduce((sum, value) => sum + value, 0)
+      context.requiredTokens = context.tokens + context.outputReserved
+      context.percent = Math.min(100, Math.round(context.tokens * 100 / context.limit))
+      context.ratio = Math.min(1, context.tokens / context.limit)
+    }
+    const lastCompaction = {
+      ...result,
+      beforeTokens: prior?.tokens ?? result.estimatedBeforeTokens,
+      afterTokens: context.tokens,
+      limit: context.limit,
+      source: "estimated",
+      compactedAt: Date.now()
+    }
+    await ctx.kernel.sessions.updateSession(state.sessionId, { context, lastCompaction })
+    print(`compacted: ${result.summarizedCount} messages summarized, ${result.keptCount} kept`, { channel: "notice", topic: "command" })
+    return { ...result, context }
+  }
   if (result.compacted) {
     print(`compacted: ${result.summarizedCount} messages summarized, ${result.keptCount} kept`, { channel: "notice", topic: "command" })
   } else {
@@ -210,7 +238,8 @@ export const sessionCommands = [
     argMode: "none",
     run: async ({ print, state, ctx, signal }) => {
       try {
-        await compactConversation({ print, state, ctx, signal })
+        const result = await compactConversation({ print, state, ctx, signal, persistContext: true })
+        return { exit: false, ...(result.context ? { turnResult: { context: result.context } } : {}) }
       } catch (err) {
         if (signal?.aborted || err?.name === "AbortError") throw err
         print(`compact failed: ${err.message}`, { channel: "notice", topic: "command", tone: "error" })
@@ -263,13 +292,30 @@ export const sessionCommands = [
     argMode: "optional",
     run: async ({ args, print, state, openPanel, ctx, switchModeInPlace }) => {
       const sessions = await ctx.kernel.sessions.listSessions({ cwd: runtimeCwd(), limit: 20, includeChildren: false })
+      let target = null
 
-      if (!sessions.length) {
+      if (args) {
+        // Try numeric index first (1-based)
+        const idx = parseInt(args, 10)
+        if (!Number.isNaN(idx) && idx >= 1 && idx <= sessions.length) {
+          target = sessions[idx - 1]
+        } else {
+          // Fallback to ID prefix match
+          target = sessions.find((s) => s.id === args || s.id.startsWith(args)) || null
+        }
+        if (!target) {
+          const snapshot = await ctx.kernel.sessions.getSession(args).catch((error) => {
+            if (error?.code === "invalid_session") return null
+            throw error
+          })
+          if (snapshot?.session.cwd === runtimeCwd() && !snapshot.session.parentSessionId) target = snapshot.session
+        }
+      }
+
+      if (!sessions.length && !target) {
         print("no sessions found in current directory", { channel: "notice", topic: "command", tone: "error" })
         return { exit: false }
       }
-
-      let target = null
 
       if (!args) {
         // 裸 /resume 是「列出并选一个」，和 /provider 同构 —— 走选择器，
@@ -294,15 +340,6 @@ export const sessionCommands = [
         })
         print(`\n  usage: ${paint("/resume <number>", "yellow")} or ${paint("/resume <session-id>", "yellow")}`)
         return { exit: false }
-      }
-
-      // Try numeric index first (1-based)
-      const idx = parseInt(args, 10)
-      if (!Number.isNaN(idx) && idx >= 1 && idx <= sessions.length) {
-        target = sessions[idx - 1]
-      } else {
-        // Fallback to ID prefix match
-        target = sessions.find((s) => s.id === args || s.id.startsWith(args)) || null
       }
 
       if (!target) {

@@ -27,6 +27,30 @@ function assertRecoveryEnabled(config, commandName) {
   return false
 }
 
+async function withSessionKernel(action, { interactive = false } = {}) {
+  const ttyHandlers = interactive ? createTtyPromptHandlers() : null
+  const kernel = await createKernel({
+    cwd: process.cwd(),
+    boot: false,
+    ...(ttyHandlers ? { handlers: ttyHandlers } : {})
+  })
+  try {
+    return await action(kernel)
+  } finally {
+    await kernel.shutdown()
+  }
+}
+
+function reportTurnFailure(result) {
+  if (result.error) {
+    process.exitCode = 1
+    console.error(`provider error: ${result.error}`)
+  } else if (result.cancelled || ["incomplete", "blocked", "unknown", "cancelled"].includes(result.status)) {
+    process.exitCode = 2
+    console.error(`任务尚未完成：${result.stopReason || result.status || "cancelled"}。已有结果已保留，请核查后继续。`)
+  }
+}
+
 export function createSessionCommand() {
   const cmd = new Command("session").description("manage persisted kkcode sessions")
   cmd.command('operations').description('inspect interrupted tool outcomes; never automatically replay side effects')
@@ -106,8 +130,7 @@ export function createSessionCommand() {
     .description("show a unified runtime summary for the latest or selected session")
     .option("--id <id>", "session id")
     .option("--json", "print as json", false)
-    .action(async (options) => {
-      const kernel = await createKernel({ cwd: process.cwd(), boot: false })
+    .action(async (options) => withSessionKernel(async (kernel) => {
       const summary = await summarizeSessionRuntimeState({
         sessionId: options.id || null,
         cwd: process.cwd(),
@@ -134,7 +157,7 @@ export function createSessionCommand() {
       console.log(`recoverable=${summary.recoverableCount}`)
       console.log(`background total=${summary.background.total} running=${summary.background.running} pending=${summary.background.pending} interrupted=${summary.background.interrupted} error=${summary.background.error}`)
       console.log(`audit total=${summary.audit.total} error1h=${summary.audit.error1h} error24h=${summary.audit.error24h}`)
-    })
+    }))
 
   cmd
     .command("show")
@@ -204,17 +227,9 @@ export function createSessionCommand() {
     .requiredOption("--id <id>", "session id to resume")
     .option("--mode <mode>", "override mode")
     .option("--model <model>", "override model")
-    .action(async (options) => {
+    .action(async (options) => withSessionKernel(async (kernel) => {
       // boot 推迟到确认真的要跑回合之后（原 bootstrapKernelExtensions 的位置
       // 语义：session 不存在/无可续时不 spawn MCP）
-      // 阶段 4（M12 补位）：TTY 下注入前端审批/提问 handler，恢复交互式
-      // resume 的审批能力（3b 后内核自身不再碰 TTY）。
-      const ttyHandlers = createTtyPromptHandlers()
-      const kernel = await createKernel({
-        cwd: process.cwd(),
-        boot: false,
-        ...(ttyHandlers ? { handlers: ttyHandlers } : {})
-      })
       if (!assertRecoveryEnabled(kernel.configState.config, "session resume")) return
 
       const resumeCtx = await getResumeContext(options.id, { enabled: true })
@@ -241,20 +256,14 @@ export function createSessionCommand() {
         providerType: resumeCtx.session.providerType
       })
       console.log(result.reply)
-    })
+      reportTurnFailure(result)
+    }, { interactive: true }))
 
   cmd
     .command("retry")
     .description("retry the last failed turn in a session")
     .requiredOption("--id <id>", "session id to retry")
-    .action(async (options) => {
-      // 与 resume 同：TTY 下注入前端审批/提问 handler（M12 补位）
-      const ttyHandlers = createTtyPromptHandlers()
-      const kernel = await createKernel({
-        cwd: process.cwd(),
-        boot: false,
-        ...(ttyHandlers ? { handlers: ttyHandlers } : {})
-      })
+    .action(async (options) => withSessionKernel(async (kernel) => {
       if (!assertRecoveryEnabled(kernel.configState.config, "session retry")) return
 
       const resumeCtx = await getResumeContext(options.id, { enabled: true })
@@ -283,14 +292,14 @@ export function createSessionCommand() {
         providerType: resumeCtx.session.providerType
       })
       console.log(result.reply)
-    })
+      reportTurnFailure(result)
+    }, { interactive: true }))
 
   cmd
     .command("recoverable")
     .description("list sessions that can be resumed or retried")
     .option("--json", "print as json", false)
-    .action(async (options) => {
-      const kernel = await createKernel({ cwd: process.cwd(), boot: false })
+    .action(async (options) => withSessionKernel(async (kernel) => {
       if (!assertRecoveryEnabled(kernel.configState.config, "session recoverable")) return
 
       const sessions = await listRecoverableSessions({
@@ -313,7 +322,7 @@ export function createSessionCommand() {
         const summary = summarizeResumeContext(await getResumeContext(s.id, { enabled: true }))
         console.log(`${s.id}  ${s.mode}  ${summary?.status || "unknown"}  ${new Date(s.updatedAt).toLocaleString()}  ${summary?.lastPromptPreview || ""}`)
       }
-    })
+    }))
 
   return cmd
 }
