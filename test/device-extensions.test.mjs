@@ -58,7 +58,7 @@ test('stdio MCP arguments support lossless editing and explicit clearing', async
   const root = await mkdtemp(path.join(os.tmpdir(), 'kkcode-extension-args-test-')), previous = process.env.KKCODE_HOME
   process.env.KKCODE_HOME = path.join(root, 'home')
   await mkdir(process.env.KKCODE_HOME)
-  const original = ['--original', '', 'value with spaces']
+  const original = ['--original', 'line one\nline two', '', '\\n\\r\\t\\\\']
   await writeFile(path.join(process.env.KKCODE_HOME, 'config.json'), JSON.stringify({ mcp: { auto_discover: false, servers: {
     local: { transport: 'stdio', command: 'fixture-stdio', args: original, env: { TOKEN: 'private-env' } },
     argv: { transport: 'stdio', command: ['fixture-stdio', ...original] },

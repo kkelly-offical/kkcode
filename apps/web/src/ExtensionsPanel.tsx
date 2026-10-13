@@ -2,8 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Icon } from './Icon';
 type Item = Record<string, any>;
 const empty = { name: '', transport: 'streamable-http', url: '', command: '', args: '', auth: 'none', env: [] as Item[], headers: [] as Item[], source: '', revision: '', content: '' };
-const argsToText = (args: string[]) => args.join('\n') + (args[args.length - 1] === '' ? '\n' : '');
-const argsFromText = (text: string) => { const args = text.split('\n'); if (args[args.length - 1] === '') args.pop(); return args; };
+const plainArg = /^[\x20-\x7E\u00A0-\uD7FF\uE000-\uFFFF]+$/;
+const argsToText = (args: string[]) => args.map(arg => plainArg.test(arg) && !arg.startsWith('json:') ? arg : `json:${JSON.stringify(arg)}`).join('\n');
+const argsFromText = (text: string): string[] => text === '' ? [] : text.split('\n').map(arg => arg.startsWith('json:') ? JSON.parse(arg.slice(5)) : arg);
 
 export function ExtensionsPanel({ rpc, deviceName }: { rpc: (method: string, params?: Item) => Promise<any>; deviceName: string }) {
   const api = useRef(rpc); api.current = rpc;
