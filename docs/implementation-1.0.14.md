@@ -1,6 +1,6 @@
-# 1.0.14 候选实施与验收
+# 1.0.14 实施与验收
 
-用户要求直接完成优化并交付新的最终候选，由用户决定是否发布。目标 **1.0.14 / Android10021 / Windows x64**；当前公开稳定版仍为 1.0.13，未创建发行标签、发布 npm / GitHub Release 或部署网关。
+用户先要求完成优化并交付最终候选，随后明确授权正式发布，并要求 Windows 同时以未签名实验版发布。目标 **1.0.14 / Android10021 / Windows x64 实验版**。候选准备与正式发行证据分别保留；正式发行事实见文末与[版本页](versions.md)。本轮未部署其他网关。
 
 ## 范围与修复
 
@@ -28,5 +28,20 @@
 ## 交付与发布边界
 
 - 交付 CLI / 网关 npm 归档、原证书 Android APK、Windows x64 安装器、源码归档、版本说明、更新清单、校验回执与 SHA256SUMS。
-- 所有产物准备完成后仍不创建发行标签或发布 npm / GitHub Release。公开 stable / Preview 与其他现网网关保持原状态，正式发布由用户决定。
+- 初次交付候选时没有创建发行标签、发布 npm / GitHub Release 或部署网关；用户随后授权正式发布。Preview 与其他现网网关保持原状态，正式发行独立记录。
 - 157 项跳过检查不计为通过；模拟器覆盖升级不代替实体设备长期验收。未新增真实模型调用，不重启已冻结评测。
+
+## 最终合入与正式发行
+
+用户于2026-10-13明确“可以的，发版吧”，并要求 Windows 一起提供实验版、不配置证书。最终发行提交 `53577ccebdc5bcade5a457261e9aa965b2630e8b`（PR#70）与候选 `ffd4f021da0a8c0819fe702703d4f9329bcea5f0` 同树；候选 / 主线跨平台、Web、Windows 原生和完整 CodeQL 通过，主线开放告警0。主线首次 Windows 既有 doctor 测试15秒超时，代码、断言及时限均未修改，同提交完整重跑通过；失败与重跑原记录保留在1.0.13实施记录与候选回执。
+
+- `v1.0.14` 指向上述发行提交，旧tag未移动。[正式发行流水线38420874406](https://github.com/kkelly-offical/kkcode/actions/runs/38420874406)全部通过；Windows Node22矩阵4373项中4124通过、249跳过、0失败。跳过项不计为通过。
+- npm latest已切换为1.0.14，Preview仍为1.0.6-preview.1。[GitHub Release](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.14)已提供原证书Android10021和未签名Windows x64实验版，以及源码、npm归档、SBOM、更新清单与哈希回执。
+- npm归档由正式流水线重新构建、验证并发布；Windows来自同一发行源码的正式流水线新构建，已通过实际安装 / 网关 / 重装 / 卸载数据保留检查，签名状态为NotSigned。Android使用原候选APK，原证书与10020→10021升级 / 偏好保留不变。候选文件与候选回执完整保留，未把新Windows哈希冒称为旧候选哈希。
+- 公开npm归档完整下载及registry完整性验证通过；最低Node22.12.0配合npm11.12.1的官方registry全新安装及公开tar缓存安装、SDK replay.gap默认失败、重试校验、SQLite与附件往返通过，无模型调用。Android和Windows匿名完整下载SHA-256核对通过，公开更新清单与APK大小 / 证书 / 哈希一致。
+
+发行产物SHA-256：npm `1aef194f5288084f39fda291246a40d74fada52c8c6f261d2764d1212a3c1767`；APK `96611d8b13f82257d1da1e9706423a686a3335e82faa000579f3ae1af22c9966`；Windows `10789ed256b8c9a6b445f6fd1235601fe9b2793ca5249b258c9215da69cae28a`。正式回执与原始证据在 `/tmp/kkcode-114-stable/`，持久交付目录为 `test-results/1.0.14-release/`，公开事实入口为 [release-verification.json](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.14/release-verification.json)。
+
+最低Node检查采用npm11.12.1；npm10.9联网及缓存安装在依赖解析阶段未完成，主动中止的原记录保留，不宣称通过或擅自确定原因。
+
+本轮没有部署其他生产 / 演示网关、升级运行中的remote或新增真实模型调用；SDK深度扫描M11仍暂停，Apple应用、C04 / GitLab / 长期实际使用门禁仍未宣称完成。Windows安装器未配置Authenticode，按用户要求以实验版发行。

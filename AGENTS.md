@@ -5,10 +5,10 @@
 
 ## 发行与授权
 
-- 已发布稳定 **1.0.13 / Android10020 / Windows x64**（npm latest），发行提交 `4c6107c`（PR#56 / #57 / #58），与最终候选 `8901af6` 同树。
-  候选 / 主线跨平台、Web、CodeQL、Windows 原生和发行检查通过；Android 89 项 JVM / 92 项 UI、原证书10019→10020、偏好保留与 Node22.12 安装核验通过。
-  Windows 安装器未配置 Authenticode 签名；Apple 两端只交付设计，应用暂缓。Preview仍为 **1.0.6-preview.1 / Android10012**，旧tag不移动。
-  [versions.md](docs/versions.md)与公开release-verification.json是发行事实入口；上一稳定1.0.12事实保留。
+- 已发布稳定 **1.0.14 / Android10021**（npm latest），同时提供 **Windows x64 未签名实验版**；发行提交 `53577cc`（PR#70），与最终候选 `ffd4f02` 同树。
+  候选 / 主线跨平台、Web、完整CodeQL、Windows原生和正式发行检查通过；Android109项JVM / 93项UI、原证书10020→10021及偏好保留、最低Node22.12公开包安装核验通过。
+  用户明确授权此次发行，Windows按其要求不配置Authenticode证书；Apple两端只交付设计，应用暂缓。Preview仍为 **1.0.6-preview.1 / Android10012**，旧tag不移动。
+  [versions.md](docs/versions.md)与公开release-verification.json是发行事实入口；上一稳定1.0.13事实保留。
 - 用户明确“允许所有来自我们的管理员合并操作”。本任务相关合入不重复询问；核验实际检查，
   不修改保护规则、不虚称批准审核、不自动合入无关PR#5/#6/#22。
 - 用户要求五项优化完成后发布1.0.11正式版，已完成；此前1.0.10发行授权与事实保留。未发布公共网关镜像、未升级其他生产／演示网关、未新增真实模型评测。
@@ -31,7 +31,7 @@
 
 ## 实测与下一步
 
-- 用户要求修复 PR#70 后交付 **1.0.14 / Android10021 / Windows x64 最终候选**，正式发布由用户决定。代码候选 `a80d72e` 跨平台、Web、Windows 原生、PR / 完整 CodeQL 通过（开放告警 0）；本机 Node4373 项（4216 通过 / 157 跳过 / 0 失败）、Android109 项 JVM / 93 项 UI、原证书10020→10021及偏好保留、最低 Node22.12 安装与 SDK / SQLite 往返通过。当前完成候选说明与不可变产物回执；原失败保留。未创建发行标签、发布 npm / GitHub Release 或部署网关；[候选清单](docs/implementation-1.0.14.md)，研发证据 `/tmp/kkcode-114/evidence/`。
+- **1.0.14已完成并发布**：20项P1 / P2存量修复、Android测试工具链、Web / Android专项和分发资源已完成；正式发行流水线38420874406全部通过，开放CodeQL告警0。Android沿用原证书，Windows为用户要求的未签名实验版；公开npm / APK / Windows匿名下载及最低Node22.12安装 / SDK / SQLite往返已核验。主线首轮既有doctor超时的原记录保留，同提交完整重跑通过，代码、断言及时限未改。SDK深度扫描M11仍暂停。正式产物 `test-results/1.0.14-release/`，候选 `test-results/1.0.14-candidate/` 保留；[清单](docs/implementation-1.0.14.md)，发行证据 `/tmp/kkcode-114-stable/`。未部署其他网关、升级运行中的remote或新增真实模型调用。
 
 - **1.0.13 已完成并发布**：五端 49 张独立精修设计、Windows 工程工作台、三端附件 / 字体 / 任务进度、应用内扩展配置及桌面登录返回完成。模型账号配置仅作可复用模板，复制后设备独立，不自动跟随；[实施记录](docs/implementation-1.0.13.md)。账号模板与扩展能力需要相应网关 / remote 升级，不自动部署其他现网网关。
 
@@ -61,11 +61,13 @@
 
 ## 证据入口
 
+- 1.0.14正式发行回执：`/tmp/kkcode-114-stable/`；候选与失败记录：`/tmp/kkcode-114/evidence/`；[发行范围](docs/release-1.0.14.md) · [实施与验收](docs/implementation-1.0.14.md)。
+
 - 1.0.13 正式发行回执：`/tmp/kkcode-113-stable/`；研发与失败记录 `/tmp/kkcode-113/`；[发行范围](docs/release-1.0.13.md) · [实施与验收](docs/implementation-1.0.13.md)。
 
 - 1.0.12 正式发行回执：`/tmp/kkcode-112-stable-ve_vemqx/`；候选与失败记录：`/tmp/kkcode-112-design/`，候选产物 `/tmp/kkcode-112-candidate-gl12s00u/`。
 
-- [当前版本](docs/versions.md) · [发行范围](docs/release-1.0.13.md) · [实施与验收](docs/implementation-1.0.13.md)
+- [当前版本](docs/versions.md) · [发行范围](docs/release-1.0.14.md) · [实施与验收](docs/implementation-1.0.14.md)
 - [使用文档](docs/README.md) · [能力边界](docs/capabilities.md) · [历史导航](docs/history.md)
 - Web显示补丁回执：`/tmp/kkcode-web-111-display1-ab0n_dgh/`；独立tag `web-1.0.11-display.1`，不进入npm或Android更新通道。
 - 1.0.11正式发行回执：`/tmp/kkcode-111-stable-l0fcvpm_/`；候选回执`/tmp/kkcode-111-candidate-EYkQlswt/`。
