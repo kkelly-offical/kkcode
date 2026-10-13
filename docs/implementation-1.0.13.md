@@ -101,3 +101,5 @@
 用户于2026-10-13明确授权发布，Windows按其要求以未签名x64实验版同时发行。`v1.0.14`指向`53577cc`，正式发行流水线38420874406全部通过；npm latest为1.0.14，Preview仍为1.0.6-preview.1。原证书Android10021、Windows实验版、源码、更新清单、SBOM及公开哈希回执均已提供；匿名完整下载、最低Node22.12公开包安装 / SDK / SQLite往返核验通过。原候选与主线首次失败、npm10.9两次依赖解析未完成记录保留，不覆盖已发布旧tag、npm版本或APK。
 
 正式回执 `/tmp/kkcode-114-stable/`，持久产物 `test-results/1.0.14-release/`；[1.0.14实施与验收](implementation-1.0.14.md)及[公开发行回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.14/release-verification.json)为详细入口。Windows没有新增证书，未部署网关、升级运行中的remote或新增真实模型调用。
+
+既有开发构建依赖 `sprintf-js@1.1.3` 的中度Dependabot#4已核验：上一稳定版亦存在，公开生产安装树不包含，尚无修复版；原告警保持开放，详见1.0.14实施记录。

@@ -45,3 +45,5 @@
 最低Node检查采用npm11.12.1；npm10.9联网及缓存安装在依赖解析阶段未完成，主动中止的原记录保留，不宣称通过或擅自确定原因。
 
 本轮没有部署其他生产 / 演示网关、升级运行中的remote或新增真实模型调用；SDK深度扫描M11仍暂停，Apple应用、C04 / GitLab / 长期实际使用门禁仍未宣称完成。Windows安装器未配置Authenticode，按用户要求以实验版发行。
+
+发行记录推送时核对了既有 [Dependabot#4](https://github.com/kkelly-offical/kkcode/security/dependabot/4)：`sprintf-js@1.1.3` / GHSA-hp3w-g68c-fv3c，中度、尚无修复版本；来自 `@kkcode/desktop → electron-builder → @electron/get → global-agent → roarr` 的开发 / 可选构建依赖，1.0.13已有相同版本。公开npm生产安装树不包含此包，Windows生产运行时依赖审计通过；原告警保持开放，不把CodeQL开放告警0或生产审计结果冒称为全部开发依赖无告警。原始告警与依赖路径证据在 `/tmp/kkcode-114-stable/`。

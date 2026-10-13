@@ -31,7 +31,7 @@
 
 ## 实测与下一步
 
-- **1.0.14已完成并发布**：20项P1 / P2存量修复、Android测试工具链、Web / Android专项和分发资源已完成；正式发行流水线38420874406全部通过，开放CodeQL告警0。Android沿用原证书，Windows为用户要求的未签名实验版；公开npm / APK / Windows匿名下载及最低Node22.12安装 / SDK / SQLite往返已核验。主线首轮既有doctor超时的原记录保留，同提交完整重跑通过，代码、断言及时限未改。SDK深度扫描M11仍暂停。正式产物 `test-results/1.0.14-release/`，候选 `test-results/1.0.14-candidate/` 保留；[清单](docs/implementation-1.0.14.md)，发行证据 `/tmp/kkcode-114-stable/`。未部署其他网关、升级运行中的remote或新增真实模型调用。
+- **1.0.14已完成并发布**：20项P1 / P2存量修复、Android测试工具链、Web / Android专项和分发资源已完成；正式发行流水线38420874406全部通过，开放CodeQL告警0。Android沿用原证书，Windows为用户要求的未签名实验版；公开npm / APK / Windows匿名下载及最低Node22.12安装 / SDK / SQLite往返已核验。主线首轮既有doctor超时的原记录保留，同提交完整重跑通过，代码、断言及时限未改。SDK深度扫描M11仍暂停。既有Windows构建开发依赖sprintf-js的中度Dependabot#4保持开放，尚无修复版，生产安装树不包含；详情见实施记录。正式产物 `test-results/1.0.14-release/`，候选 `test-results/1.0.14-candidate/` 保留；[清单](docs/implementation-1.0.14.md)，发行证据 `/tmp/kkcode-114-stable/`。未部署其他网关、升级运行中的remote或新增真实模型调用。
 
 - **1.0.13 已完成并发布**：五端 49 张独立精修设计、Windows 工程工作台、三端附件 / 字体 / 任务进度、应用内扩展配置及桌面登录返回完成。模型账号配置仅作可复用模板，复制后设备独立，不自动跟随；[实施记录](docs/implementation-1.0.13.md)。账号模板与扩展能力需要相应网关 / remote 升级，不自动部署其他现网网关。
 
