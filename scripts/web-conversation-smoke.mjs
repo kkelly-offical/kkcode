@@ -42,7 +42,7 @@ for(let i = 0; i < 9; i++) {
 }
 await updateSession(sessionId, {context: {tokens: 100000, limit: 200000, source: 'provider-usage', provider: 'openai', model: 'fixture-model', components: {system: 200, tools: 400}}})
 const server = await createDeviceServer({service, port: 0}), info = await server.listen()
-const browser = await chromium.launch({headless: true, ...(process.env.KKCODE_CHROMIUM ? {executablePath: process.env.KKCODE_CHROMIUM} : {})})
+const browser = await chromium.launch({headless: true, chromiumSandbox: true, ...(process.env.KKCODE_CHROMIUM ? {executablePath: process.env.KKCODE_CHROMIUM} : {})})
 const page = await browser.newPage({viewport: {width: 1100, height: 850}}), errors = []
 page.on('pageerror', error => errors.push(error.message))
 const bottomDistance = () => page.locator('.transcript').evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)

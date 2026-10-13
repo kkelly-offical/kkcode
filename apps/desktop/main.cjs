@@ -18,7 +18,7 @@ app.setName('KK Code')
 if (!app.isPackaged && process.env.KKCODE_DESKTOP_TEST_USER_DATA) app.setPath('userData', process.env.KKCODE_DESKTOP_TEST_USER_DATA)
 const locked = app.requestSingleInstanceLock()
 if (!locked) app.quit()
-let window, gatewayDialog, tray, backend, localUrl = '', localOrigin = '', quitting = false, closePending = false
+let window, gatewayDialog, tray, backend, localUrl = '', localOrigin = '', quitting = false, stopping = false, closePending = false
 let preferences = { roots: [], gateway: '', ui: {} }, saving = Promise.resolve()
 const pending = new Map(), allowedOrigins = new Set(), gatewayOrigins = new Set()
 const iconPath = path.join(__dirname, 'icon.png')
@@ -75,7 +75,7 @@ async function startBackend() {
       for (const request of pending.values()) { clearTimeout(request.timer); request.reject(new Error('本机服务已停止')) }
       pending.clear()
       if (!localUrl) reject(new Error(`本机服务无法启动（${code ?? 'unknown'}）`))
-      else if (!quitting) void dialog.showMessageBox({ type: 'error', title: '本机服务已停止', message: '请重新打开 KK Code。已有会话记录会保留；重新执行前请确认上一项操作的状态。' })
+      else if (!quitting && !stopping) void dialog.showMessageBox({ type: 'error', title: '本机服务已停止', message: '请重新打开 KK Code。已有会话记录会保留；重新执行前请确认上一项操作的状态。' })
     })
   })
 }
@@ -103,6 +103,24 @@ function showGatewayDialog() {
   void gatewayDialog.loadFile(path.join(__dirname, 'gateway.html'))
   gatewayDialog.on('closed', () => { gatewayDialog = null })
 }
+function requestBackendClose() {
+  const worker = backend
+  return new Promise(resolve => {
+    const id = randomUUID()
+    const finish = outcome => {
+      clearTimeout(timer)
+      worker.off('message', onMessage)
+      worker.off('exit', onExit)
+      resolve(outcome)
+    }
+    const timer = setTimeout(() => finish({ exited: false }), 30000)
+    const onMessage = message => { if (message?.id === id && message.error) finish({ exited: false, error: new Error(message.error) }) }
+    const onExit = () => finish({ exited: true })
+    worker.on('message', onMessage)
+    worker.once('exit', onExit)
+    try { worker.send({ type: 'close', id }) } catch (error) { finish({ exited: false, error }) }
+  })
+}
 async function quitSafely() {
   if (quitting || closePending) return
   closePending = true
@@ -113,16 +131,23 @@ async function quitSafely() {
       if (answer.response === 0) { window.hide(); return }
       if (answer.response !== 1) return
     }
-    quitting = true
+    stopping = true
     if (backend?.connected) {
-      await new Promise(resolve => { const timer = setTimeout(resolve, 30000); backend.once('exit', () => { clearTimeout(timer); resolve() }); backend.send({ type: 'close', id: randomUUID() }) })
-      if (backend.exitCode === null) {
-        quitting = false
+      const outcome = await requestBackendClose()
+      if (outcome.error) {
+        stopping = false
+        await dialog.showMessageBox(window, { type: 'error', title: '未能退出', message: '本机服务未能完成收尾，请稍后重试。', detail: outcome.error.message })
+        return
+      }
+      if (!outcome.exited) {
+        stopping = false
         await dialog.showMessageBox(window, { type: 'info', title: '正在停止', message: '本机任务还在收尾，窗口会保持打开。请稍后再次退出。' })
         return
       }
     }
     await saving.catch(() => {})
+    stopping = false
+    quitting = true
     tray?.destroy(); app.quit()
   } finally { closePending = false }
 }

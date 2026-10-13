@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
@@ -10,7 +11,22 @@ import { zipSync, strToU8 } from 'fflate'
 
 const root = await mkdtemp(path.join(os.tmpdir(), 'kkcode-113-ui-')), previous = process.env.KKCODE_HOME
 process.env.KKCODE_HOME = path.join(root, 'state'); await mkdir(process.env.KKCODE_HOME)
-await writeFile(path.join(process.env.KKCODE_HOME, 'config.json'), JSON.stringify({ provider: { default: 'openai', openai: { default_model: 'fixture', stream: false }, model_capabilities: { fixture: { image: true } } }, skills: { auto_seed: false }, mcp: { auto_discover: false } }))
+const argumentCases = [
+  ['--original', '', 'value with spaces'],
+  ['--original', 'line one\nline two', ''],
+  [],
+  [''],
+  ['', '', '--original', '', ''],
+  ['--original', '', ''],
+  ['line one\r\nline two\rline three\nline four', String.raw`\n\r\t\\`, 'json:"quoted"', 'json:plain', '"quoted"'],
+  ['  leading', 'trailing  ', '中文🚀'],
+  ['\t', '\u0001', '\u007f', '\u0085', '\u2028\u2029', '\ud800', '\udc00'],
+]
+const servers = Object.fromEntries(argumentCases.flatMap((args, index) => [
+  [`local-${index}`, { transport: 'stdio', command: 'fixture-stdio', args }],
+  [`argv-${index}`, { transport: 'stdio', command: ['fixture-stdio', ...args] }],
+]))
+await writeFile(path.join(process.env.KKCODE_HOME, 'config.json'), JSON.stringify({ provider: { default: 'openai', openai: { default_model: 'fixture', stream: false }, model_capabilities: { fixture: { image: true } } }, skills: { auto_seed: false }, mcp: { auto_discover: false, servers } }))
 const calls = []
 const service = await new DeviceService({ cwd: root, roots: [root], createKernelImpl: async options => {
   const kernel = await createKernel({ ...options, trustState: { trusted: true } })
@@ -91,13 +107,48 @@ try {
   await page.getByRole('button', { name: '保存到当前设备', exact: true }).click()
   await expect(page.locator('.connection-row').filter({ hasText: 'design' })).toBeVisible()
   assert.ok(!(await readFile(path.join(process.env.KKCODE_HOME, 'config.json'), 'utf8')).includes('fixture-private-value'))
+
+  const argsInput = page.getByRole('textbox', { name: '程序参数', exact: true })
+  const savedArgs = async name => {
+    const catalog = await service.request({ id: randomUUID(), method: 'extensions.catalog', params: {} })
+    return catalog.mcp.find(item => item.name === name).args
+  }
+  const checkRoundTrip = async (name, original) => {
+    const row = page.locator('.connection-row').filter({ hasText: name })
+    const edit = async () => { await row.getByRole('button', { name: '配置', exact: true }).click(); await expect(argsInput).toBeVisible() }
+    const save = async () => { await page.getByRole('button', { name: '保存到当前设备', exact: true }).click(); await expect(row).toBeVisible() }
+    await edit()
+    const originalText = await argsInput.inputValue()
+    await save()
+    assert.deepEqual(await savedArgs(name), original, `${name}: unchanged arguments`)
+
+    await edit()
+    assert.equal(await argsInput.inputValue(), originalText, `${name}: stable argument text`)
+    const appendedText = originalText ? `${originalText}\n--added` : '--added'
+    await argsInput.fill(appendedText)
+    await save()
+    assert.deepEqual(await savedArgs(name), [...original, '--added'], `${name}: appended arguments`)
+
+    await edit()
+    assert.equal(await argsInput.inputValue(), appendedText, `${name}: stable appended text`)
+    await argsInput.fill('')
+    await save()
+    assert.deepEqual(await savedArgs(name), [], `${name}: explicitly cleared arguments`)
+    await edit()
+    await expect(argsInput).toHaveValue('')
+    await page.getByRole('button', { name: '取消', exact: true }).click()
+  }
+  for (const [index, original] of argumentCases.entries()) {
+    for (const prefix of ['local', 'argv']) await checkRoundTrip(`${prefix}-${index}`, original)
+  }
+
   await page.setViewportSize({ width: 390, height: 844 })
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false)
   await page.screenshot({ path: 'test-results/experience-113/connections-mobile.png' })
   await page.keyboard.press('Escape')
   await expect(input).toHaveValue('配置期间保留的草稿')
   assert.deepEqual(errors, [])
-  console.log('Real UI passed: new-conversation multi-file paste and retry share one session, clipboard image, thumbnail, DOCX extraction, attachment-only send, encrypted connection form, retained draft and mobile layout; no model inference.')
+  console.log('Real UI passed: new-conversation multi-file paste and retry share one session, clipboard image, thumbnail, DOCX extraction, attachment-only send, encrypted connection form, lossless stdio argument editing, retained draft and mobile layout; no model inference.')
 } finally {
   await browser.close(); await server.close(); if(previous === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = previous
   await rm(root, { recursive: true, force: true })

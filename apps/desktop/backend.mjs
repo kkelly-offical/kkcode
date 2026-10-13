@@ -14,7 +14,7 @@ let closing = false
 async function close() {
   if (closing) return
   closing = true
-  await server.close()
+  try { await server.close() } catch (error) { closing = false; throw error }
   process.exitCode = 0
   process.disconnect?.()
 }

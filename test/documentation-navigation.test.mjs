@@ -61,19 +61,20 @@ test('active topic guides do not send users back to unreleased hotfix or old dep
   assert.match(await read('docs/media-input.md'), /OpenAI Responses.*input_image/)
 })
 
-test('1.0.13 stable preserves verified publication, preview, signing and historical facts', async () => {
+test('1.0.14 candidate preserves verified 1.0.13 publication, preview, signing and historical facts', async () => {
   const manifest = await checkReleaseVersions(root)
   const android = await readAndroidReleaseTarget(root)
-  assert.equal(manifest.version, '1.0.13')
+  assert.equal(manifest.version, '1.0.14')
   assert.equal(manifest.channel, 'stable')
   assert.equal(manifest.distTag, 'latest')
   assert.equal(android.version, manifest.version)
-  assert.equal(android.versionCode, 10020)
+  assert.equal(android.versionCode, 10021)
   assert.equal(android.channel, 'stable')
   const readme = await read('README.md'), versions = await read('docs/versions.md')
   assert.match(readme, /当前稳定版本.*1\.0\.13/)
   assert.match(readme, /公开稳定与预览渠道以.*版本与升级/)
   assert.doesNotMatch(readme, /1\.1\.6/)
+  assert.match(versions, /待发布候选.*1\.0\.14 \/ Android10021/)
   assert.match(versions, /已发布稳定渠道.*1\.0\.13 \/ Android10020/)
   assert.match(versions, /上一已核实稳定版.*1\.0\.12/)
   assert.match(versions, /已发布预览渠道.*1\.0\.6-preview\.1 \/ Android10012/)

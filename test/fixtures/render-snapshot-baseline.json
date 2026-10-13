@@ -224,7 +224,7 @@
   ]
  },
  "color_on_notices": {
-  "reply": "完成了。",
+  "reply": "继续写\n完成了。",
   "bytes": "\u001b[38;2;102;102;102m●\u001b[0m \u001b[2mThinking\u001b[0m \u001b[2m∨\u001b[0m\n\u001b[2m  先想想\u001b[0m\n\u001b[2m\u001b[36m\n  ↻ context compacted by provider\n\u001b[0m继续写\n\n\u001b[2m\u001b[33m\n  ↳ output truncated, auto-continuing (1/8)...\n\u001b[0m完成了。\n\n",
   "events": [
    {
@@ -405,7 +405,7 @@
     "type": "turn.finish",
     "payload": {
      "step": 2,
-     "reply": "完成了。"
+     "reply": "继续写\n完成了。"
     }
    }
   ]
@@ -523,7 +523,7 @@
   ]
  },
  "color_off_notices": {
-  "reply": "完成了。",
+  "reply": "继续写\n完成了。",
   "bytes": "● Thinking ∨\n  先想想\n\n  ↻ context compacted by provider\n继续写\n\n\n  ↳ output truncated, auto-continuing (1/8)...\n完成了。\n\n",
   "events": [
    {
@@ -704,7 +704,7 @@
     "type": "turn.finish",
     "payload": {
      "step": 2,
-     "reply": "完成了。"
+     "reply": "继续写\n完成了。"
     }
    }
   ]

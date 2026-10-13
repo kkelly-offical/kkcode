@@ -53,3 +53,47 @@ test('owner-managed MCP credentials are encrypted and bound to the connection; b
     assert.match(await readFile(path.join(process.env.KKCODE_HOME, 'skills', 'safe-skill', 'SKILL.md'), 'utf8'), /Preserve the user scope/)
   } finally { await service.close(); if(previous === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = previous; await rm(root, { recursive: true, force: true }) }
 })
+
+test('stdio MCP arguments support lossless editing and explicit clearing', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kkcode-extension-args-test-')), previous = process.env.KKCODE_HOME
+  process.env.KKCODE_HOME = path.join(root, 'home')
+  await mkdir(process.env.KKCODE_HOME)
+  const original = ['--original', 'line one\nline two', '', '\\n\\r\\t\\\\']
+  await writeFile(path.join(process.env.KKCODE_HOME, 'config.json'), JSON.stringify({ mcp: { auto_discover: false, servers: {
+    local: { transport: 'stdio', command: 'fixture-stdio', args: original, env: { TOKEN: 'private-env' } },
+    argv: { transport: 'stdio', command: ['fixture-stdio', ...original] },
+  } }, skills: { auto_seed: false } }))
+  const service = await new DeviceService({ cwd: root, roots: [root] }).initialize()
+  const call = (method, params = {}) => service.request({ id: randomUUID(), method, params })
+  const catalog = () => call('extensions.catalog')
+  const argsFor = async name => (await catalog()).mcp.find(item => item.name === name).args
+  const save = (name, args, explicit = true) => call('extensions.manage', { action: 'mcp.save', name, transport: 'stdio', command: 'fixture-stdio', args, ...(explicit ? { argsMode: 'replace' } : {}), env: [{ key: 'TOKEN', value: '' }], headers: [] })
+  try {
+    const initialCatalog = await catalog()
+    assert.ok(!JSON.stringify(initialCatalog).includes('private-env'))
+    for (const name of ['local', 'argv']) {
+      const initial = initialCatalog.mcp.find(item => item.name === name)
+      assert.deepEqual(initial.args, original)
+      assert.equal(initial.command, 'fixture-stdio')
+
+      await save(name, [], false)
+      assert.deepEqual(await argsFor(name), original, 'legacy empty input preserves existing arguments')
+
+      await save(name, original)
+      assert.deepEqual(await argsFor(name), original, 'saving the visible arguments unchanged preserves them')
+
+      const appended = [...original, '--added']
+      await save(name, appended)
+      assert.deepEqual(await argsFor(name), appended, 'appending to the visible arguments retains every old argument')
+
+      const replacement = ['--replacement']
+      await save(name, replacement)
+      assert.deepEqual(await argsFor(name), replacement)
+
+      await save(name, [])
+      assert.deepEqual(await argsFor(name), [], 'an explicit replacement with no arguments clears them')
+    }
+    assert.deepEqual(initialCatalog.mcp.find(item => item.name === 'local').envKeys, ['TOKEN'])
+    assert.ok(!JSON.stringify(await catalog()).includes('private-env'))
+  } finally { await service.close(); if(previous === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = previous; await rm(root, { recursive: true, force: true }) }
+})

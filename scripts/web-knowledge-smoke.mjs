@@ -27,7 +27,7 @@ task = await store.getRun(runId)
 const taskEvidence = 'TASK_EVIDENCE_WITHOUT_PRIVATE_GRANTS'
 await new ArtifactStore().put({ actor: { sessionId: created.id, runId, accountId, projectId: 'web-fixture' }, content: taskEvidence, source: { kind: 'tool' } })
 const server = await createDeviceServer({ service, port: 0 }), info = await server.listen()
-const browser = await chromium.launch({ headless: true, ...(process.env.KKCODE_CHROMIUM ? { executablePath: process.env.KKCODE_CHROMIUM } : {}) })
+const browser = await chromium.launch({ headless: true, chromiumSandbox: true, ...(process.env.KKCODE_CHROMIUM ? { executablePath: process.env.KKCODE_CHROMIUM } : {}) })
 const page = await browser.newPage({ viewport: { width: 1280, height: 1000 }, acceptDownloads: true }), failures = []
 page.on('pageerror', error => failures.push(error.message))
 const held = new Set()

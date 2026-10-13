@@ -21,7 +21,7 @@ assert.equal(login.statusCode, 200); assert.equal(completed.statusCode, 200, com
 assert.equal(login.headers['cache-control'], 'no-store')
 assert.equal(completed.headers['referrer-policy'], 'no-referrer')
 assert.doesNotMatch(completed.body, new RegExp(flow.device_code))
-const browser = await chromium.launch({ headless: true, ...(process.env.KKCODE_CHROMIUM ? { executablePath: process.env.KKCODE_CHROMIUM } : {}) })
+const browser = await chromium.launch({ headless: true, chromiumSandbox: true, ...(process.env.KKCODE_CHROMIUM ? { executablePath: process.env.KKCODE_CHROMIUM } : {}) })
 try {
   await mkdir('test-results', { recursive: true })
   const page = await browser.newPage({ reducedMotion: 'reduce' })

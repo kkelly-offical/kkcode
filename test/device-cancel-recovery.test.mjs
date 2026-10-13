@@ -140,6 +140,27 @@ test('stop interrupts shared kernel preparation without later dispatching the ca
   } finally { gate.resolve(); f.service.kernel = original }
 })
 
+test('a running reacquisition survives old turn completion and fences stale releases', async t => {
+  const entered = deferred(), release = deferred()
+  const f = await fixture(t, { async *requestStream() {
+    entered.resolve(); await release.promise
+    yield { type: 'text', content: 'done' }
+  } })
+  const first = await f.acquire()
+  try {
+    await f.rpc('turns.start', { sessionId: f.sessionId, prompt: 'hold the original lease' })
+    const completion = f.service.turns.get(f.sessionId).promise
+    await entered.promise
+    const second = await f.acquire()
+    release.resolve(); await completion
+    assert.notEqual(second.leaseId, first.leaseId)
+    assert.equal(f.service.leases.get(f.sessionId)?.leaseId, second.leaseId)
+    assert.equal((await f.rpc('control.release', { sessionId: f.sessionId, leaseId: first.leaseId })).released, false)
+    assert.equal(f.service.leases.get(f.sessionId)?.leaseId, second.leaseId)
+    assert.equal((await f.rpc('control.release', { sessionId: f.sessionId, leaseId: second.leaseId })).released, true)
+  } finally { release.resolve() }
+})
+
 test('provider-local AbortError without caller cancellation remains a real failure', async t => {
   const f = await fixture(t, { async *requestStream() {
     yield { type: 'thinking', content: 'provider timeout fixture' }

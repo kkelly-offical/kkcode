@@ -7,6 +7,7 @@ import { registerProvider } from "../src/kernel/provider/router.mjs"
 import { ToolRegistry } from "../src/kernel/tool/registry.mjs"
 import { PermissionEngine } from "../src/kernel/permission/engine.mjs"
 import { processTurnLoop } from "../src/kernel/session/loop.mjs"
+import { executeTurn } from "../src/kernel/session/engine.mjs"
 import { flushNow, getSession } from "../src/kernel/session/store.mjs"
 import { EventBus } from "../src/kernel/core/events.mjs"
 import { EVENT_TYPES } from "../src/kernel/core/constants.mjs"
@@ -229,6 +230,39 @@ test("auto-continue: usage at the known cap is credible truncation and still con
   ])
   registerProvider("mock-lifecycle", provider)
   const { events, unsubscribe } = captureEvents()
+  const sessionId = nextSessionId()
+  try {
+    const result = await executeTurn({
+      prompt: "write something long",
+      mode: "agent",
+      model: "test",
+      providerType: "mock-lifecycle",
+      sessionId,
+      configState: baseConfig({ max_output_tokens: 4096 })
+    })
+    assert.equal(provider.calls.length, 2, "real truncation still stitches")
+    assert.equal(result.reply, "前半后半")
+    const saved = await getSession(sessionId)
+    assert.deepEqual(
+      saved.messages.filter((message) => message.role === "assistant").map((message) => message.content),
+      ["前半", "后半"],
+      "history keeps each persisted segment once while the public reply accumulates them"
+    )
+    assert.equal(events.filter((event) => event.type === EVENT_TYPES.TURN_AUTO_CONTINUE).length, 1)
+    assertNoStreamEventsAfterTerminal(events, [EVENT_TYPES.TURN_FINISH])
+  } finally {
+    unsubscribe()
+  }
+})
+
+test("auto-continue: every visible segment is accumulated across multiple continuations", async () => {
+  const provider = createStreamProvider([
+    { chunks: textChunks("第一段", { output: 4000, stopReason: "max_tokens" }) },
+    { chunks: textChunks("第二段", { output: 4000, stopReason: "max_tokens" }) },
+    { chunks: textChunks("第三段", { output: 20, stopReason: "end_turn" }) }
+  ])
+  registerProvider("mock-lifecycle", provider)
+  const { events, unsubscribe } = captureEvents()
   try {
     const result = await processTurnLoop({
       prompt: "write something long",
@@ -238,10 +272,148 @@ test("auto-continue: usage at the known cap is credible truncation and still con
       sessionId: nextSessionId(),
       configState: baseConfig({ max_output_tokens: 4096 })
     })
-    assert.equal(provider.calls.length, 2, "real truncation still stitches")
-    assert.equal(result.reply, "后半")
-    assert.equal(events.filter((event) => event.type === EVENT_TYPES.TURN_AUTO_CONTINUE).length, 1)
+    assert.equal(provider.calls.length, 3)
+    assert.equal(result.reply, "第一段第二段第三段")
+    assert.equal(events.filter((event) => event.type === EVENT_TYPES.TURN_AUTO_CONTINUE).length, 2)
+    assert.equal(
+      events.filter((event) => event.type === EVENT_TYPES.STREAM_TEXT_DELTA).map((event) => event.payload.text).join(""),
+      result.reply,
+      "the public reply must match the visible text deltas"
+    )
     assertNoStreamEventsAfterTerminal(events, [EVENT_TYPES.TURN_FINISH])
+  } finally {
+    unsubscribe()
+  }
+})
+
+test("auto-continue: visible text around an intermediate tool call stays in the public reply", async () => {
+  const provider = createStreamProvider([
+    { chunks: textChunks("前半", { output: 4000, stopReason: "max_tokens" }) },
+    { chunks: [
+      { type: "text", content: "中间" },
+      { type: "tool_call", call: { id: "tc_middle", name: "list", args: { path: "." } } },
+      { type: "usage", usage: { input: 20, output: 20, cacheRead: 0, cacheWrite: 0 } },
+      { type: "stop", reason: "tool_use" }
+    ] },
+    { chunks: textChunks("后半", { output: 20, stopReason: "end_turn" }) }
+  ])
+  registerProvider("mock-lifecycle", provider)
+  const { events, unsubscribe } = captureEvents()
+  try {
+    const result = await processTurnLoop({
+      prompt: "write something long",
+      mode: "agent",
+      model: "test",
+      providerType: "mock-lifecycle",
+      sessionId: nextSessionId(),
+      configState: baseConfig({ max_output_tokens: 4096 })
+    })
+    assert.equal(result.reply, "前半中间后半")
+    assert.equal(result.toolEvents.length, 1)
+    assert.equal(result.toolEvents[0].status, "completed")
+    assert.equal(
+      events.filter((event) => event.type === EVENT_TYPES.STREAM_TEXT_DELTA).map((event) => event.payload.text).join(""),
+      result.reply,
+      "text emitted before and after a tool call must have the same cumulative public result"
+    )
+  } finally {
+    unsubscribe()
+  }
+})
+
+test("auto-continue: cancellation retains the completed prefix and current visible segment", async () => {
+  let requestCount = 0
+  let notifyContinuation
+  const continuationStarted = new Promise(resolve => { notifyContinuation = resolve })
+  registerProvider("mock-lifecycle", {
+    async request() { throw new Error("controlled stream required") },
+    async *requestStream(input) {
+      requestCount++
+      if (requestCount === 1) {
+        for (const chunk of textChunks("前半", { output: 4000, stopReason: "max_tokens" })) yield chunk
+        return
+      }
+      yield { type: "text", content: "后半" }
+      notifyContinuation()
+      await new Promise((_, reject) => {
+        const cancel = () => reject(Object.assign(new Error("cancelled"), { code: "ABORT_ERR" }))
+        if (input.signal?.aborted) cancel()
+        else input.signal?.addEventListener("abort", cancel, { once: true })
+      })
+    }
+  })
+  const controller = new AbortController()
+  const { events, unsubscribe } = captureEvents()
+  try {
+    const pending = executeTurn({
+      prompt: "write something long",
+      mode: "agent",
+      model: "test",
+      providerType: "mock-lifecycle",
+      sessionId: nextSessionId(),
+      configState: baseConfig({ max_output_tokens: 4096 }),
+      signal: controller.signal
+    })
+    await continuationStarted
+    controller.abort()
+    const result = await pending
+    assert.equal(result.status, "cancelled")
+    assert.equal(result.cancelled, true)
+    assert.equal(result.partialReply, "前半后半")
+    assert.equal(
+      events.filter((event) => event.type === EVENT_TYPES.STREAM_TEXT_DELTA).map((event) => event.payload.text).join(""),
+      result.partialReply,
+      "the cancelled partial reply must match all visible text deltas"
+    )
+  } finally {
+    unsubscribe()
+  }
+})
+
+test("auto-continue: cancellation preserves visible leading and trailing whitespace", async () => {
+  let requestCount = 0
+  let notifyContinuation
+  const continuationStarted = new Promise(resolve => { notifyContinuation = resolve })
+  registerProvider("mock-lifecycle", {
+    async request() { throw new Error("controlled stream required") },
+    async *requestStream(input) {
+      requestCount++
+      if (requestCount === 1) {
+        for (const chunk of textChunks("前半", { output: 4000, stopReason: "max_tokens" })) yield chunk
+        return
+      }
+      yield { type: "text", content: " 后半 \t\n" }
+      notifyContinuation()
+      await new Promise((_, reject) => {
+        const cancel = () => reject(Object.assign(new Error("cancelled"), { code: "ABORT_ERR" }))
+        if (input.signal?.aborted) cancel()
+        else input.signal?.addEventListener("abort", cancel, { once: true })
+      })
+    }
+  })
+  const controller = new AbortController()
+  const { events, unsubscribe } = captureEvents()
+  try {
+    const pending = executeTurn({
+      prompt: "write something long",
+      mode: "agent",
+      model: "test",
+      providerType: "mock-lifecycle",
+      sessionId: nextSessionId(),
+      configState: baseConfig({ max_output_tokens: 4096 }),
+      signal: controller.signal
+    })
+    await continuationStarted
+    controller.abort()
+    const result = await pending
+    const visibleText = events
+      .filter((event) => event.type === EVENT_TYPES.STREAM_TEXT_DELTA)
+      .map((event) => event.payload.text)
+      .join("")
+    assert.equal(result.status, "cancelled")
+    assert.equal(result.cancelled, true)
+    assert.equal(visibleText, "前半 后半 \t\n")
+    assert.equal(result.partialReply, visibleText, "cancelled partial reply must preserve every visible whitespace character")
   } finally {
     unsubscribe()
   }

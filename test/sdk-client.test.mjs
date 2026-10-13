@@ -92,3 +92,99 @@ test('SDK stream cancellation closes an idle reader without waiting for another 
   await assert.rejects(operation, /switched device/)
   assert.equal(cancelled, true)
 })
+
+test('SDK rejects invalid retry counts at construction and accepts the supported range', () => {
+  for (const retries of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -1, 1.5, 6, '2', null]) {
+    assert.throws(() => new DeviceClient({ url: 'https://device.example', retries }), RangeError, `retries=${String(retries)}`)
+  }
+  for (const retries of [0, 1, 2, 3, 4, 5]) {
+    assert.equal(new DeviceClient({ url: 'https://device.example', retries }).retries, retries)
+  }
+})
+
+test('SDK stops persistent transient failures after the configured retries', async () => {
+  let calls = 0
+  const client = new DeviceClient({ url: 'https://device.example', retries: 2, fetch: async () => {
+    calls++
+    return json({ error: { code: 'device_offline', message: 'offline' } }, 503)
+  } })
+  await assert.rejects(client.request('status'), error => error.code === 'device_offline' && error.status === 503)
+  assert.equal(calls, 3)
+
+  let singleCalls = 0
+  const single = new DeviceClient({ url: 'https://device.example', retries: 0, fetch: async () => {
+    singleCalls++
+    return json({ error: { code: 'device_offline' } }, 503)
+  } })
+  await assert.rejects(single.request('status'), error => error.status === 503)
+  assert.equal(singleCalls, 1)
+})
+
+test('SDK abort cancels an active retry backoff', async () => {
+  let calls = 0
+  const controller = new AbortController()
+  const client = new DeviceClient({ url: 'https://device.example', fetch: async () => {
+    calls++
+    return json({ error: { code: 'device_offline' } }, 503)
+  } })
+  const operation = client.request('status', {}, { signal: controller.signal })
+  await new Promise(resolve => setTimeout(resolve, 20))
+  controller.abort(new Error('backoff cancelled'))
+  await assert.rejects(operation, /backoff cancelled/)
+  assert.equal(calls, 1)
+})
+
+test('SDK stream rejects an unhandled replay gap before dispatching later events', async () => {
+  let cancelled = false
+  const rows = []
+  const client = new DeviceClient({ url: 'https://device.example', fetch: async () => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('event: replay.gap\ndata: {"type":"replay.gap","earliest":4,"cursor":9}\n\nevent: tool.finish\ndata: {"seq":10}\n\n'))
+    },
+    cancel() { cancelled = true },
+  }), { headers: { 'content-type': 'text/event-stream' } }) })
+  await assert.rejects(client.stream('test', { onEvent: event => rows.push(event) }), error => {
+    assert.equal(error.code, 'replay_gap')
+    assert.equal(error.after, 4)
+    assert.equal(error.earliest, 4)
+    assert.equal(error.cursor, 9)
+    return true
+  })
+  assert.deepEqual(rows, [])
+  assert.equal(cancelled, true)
+})
+
+test('SDK stream continues after an explicit gap handler restores the snapshot', async () => {
+  const applied = []
+  const client = new DeviceClient({ url: 'https://device.example', fetch: async () => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('event: replay.gap\ndata: {"type":"replay.gap","earliest":4,"cursor":9}\n\nevent: tool.finish\ndata: {"seq":10}\n\n'))
+      controller.close()
+    },
+  }), { headers: { 'content-type': 'text/event-stream' } }) })
+  const result = await client.stream('test', {
+    onGap: async gap => { applied.push(`snapshot:${gap.cursor}`) },
+    onEvent: event => { applied.push(`event:${event.seq}`) },
+  })
+  assert.equal(result, 'closed')
+  assert.deepEqual(applied, ['snapshot:9', 'event:10'])
+})
+
+test('SDK stream abort during gap recovery stops later events and closes the reader', async () => {
+  let cancelled = false
+  const rows = []
+  const controller = new AbortController()
+  const client = new DeviceClient({ url: 'https://device.example', fetch: async () => new Response(new ReadableStream({
+    start(source) {
+      source.enqueue(new TextEncoder().encode('event: replay.gap\ndata: {"type":"replay.gap","earliest":4,"cursor":9}\n\nevent: tool.finish\ndata: {"seq":10}\n\n'))
+    },
+    cancel() { cancelled = true },
+  }), { headers: { 'content-type': 'text/event-stream' } }) })
+  await assert.rejects(client.stream('test', {
+    signal: controller.signal,
+    onGap: async () => { controller.abort(new Error('recovery cancelled')) },
+    onEvent: event => rows.push(event),
+  }), /recovery cancelled/)
+  assert.deepEqual(rows, [])
+  assert.equal(cancelled, true)
+})

@@ -18,7 +18,7 @@ const service = await new DeviceService({ cwd, roots: [cwd] }).initialize()
 const server = await createDeviceServer({ service, port: 0 }), info = await server.listen()
 let browser
 try {
-  browser = await chromium.launch({ headless: true, ...(process.env.KKCODE_CHROMIUM ? { executablePath: process.env.KKCODE_CHROMIUM } : {}) })
+  browser = await chromium.launch({ headless: true, chromiumSandbox: true, ...(process.env.KKCODE_CHROMIUM ? { executablePath: process.env.KKCODE_CHROMIUM } : {}) })
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } }), errors = []
   page.on('pageerror', error => errors.push(error.message))
   await page.goto(info.url)

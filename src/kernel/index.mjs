@@ -147,6 +147,7 @@ export {
   isRecoveryEnabled,
   summarizeResumeContext
 } from "./session/recovery.mjs"
+export { requestContextBudget } from "./session/context-budget.mjs"
 export { summarizeSessionRuntimeState } from "./session/runtime-state.mjs"
 export { inspectPrompt } from './session/prompt-report.mjs'
 export { listToolOperations, resolveToolOperation } from './tool/operation-journal.mjs'

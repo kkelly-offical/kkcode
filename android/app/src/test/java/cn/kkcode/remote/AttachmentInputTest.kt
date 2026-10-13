@@ -1,6 +1,7 @@
 package cn.kkcode.remote
 
-import org.junit.Assert.assertArrayEquals
+import org.json.JSONObject
+import org.junit.Assert.*
 import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.io.InputStream
@@ -27,5 +28,21 @@ class AttachmentInputTest {
             override fun read(bytes: ByteArray, offset: Int, length: Int): Int = 0
         }
         readBoundedAttachment(input, 2)
+    }
+    @Test fun previewSamplingBoundsTheDecodedDimensions() {
+        assertEquals(1, attachmentPreviewSampleSize(128, 128))
+        assertEquals(2, attachmentPreviewSampleSize(256, 128))
+        assertEquals(32, attachmentPreviewSampleSize(4096, 2048))
+        assertEquals(1, attachmentPreviewSampleSize(0, 4096))
+    }
+    @Test fun previewMetadataNeverFallsBackToTheOriginalBase64Payload() {
+        val oversized = "x".repeat(ATTACHMENT_PREVIEW_MAX_BASE64_CHARS + 1)
+        val result = JSONObject().put("preview", oversized)
+        bindAttachmentPreview(result, "image/png", "bounded-thumbnail")
+        assertEquals("bounded-thumbnail", result.optString("preview"))
+        bindAttachmentPreview(result, "image/png", oversized)
+        assertFalse(result.has("preview"))
+        bindAttachmentPreview(result, "text/plain", "bounded-thumbnail")
+        assertFalse(result.has("preview"))
     }
 }

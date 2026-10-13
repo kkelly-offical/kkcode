@@ -40,6 +40,10 @@ import { initializeDesktopPreferences, persistDesktopPreferences } from './deskt
 import { attachmentMediaType, readAttachment, type Attachment, type AttachmentUploadBatch } from "./Attachments";
 
 type Item = Record<string, any>;
+function composerDraftKey(gateway: boolean, deviceId: string, sessionId: string, cwd?: string) {
+  const scope = `${gateway ? "gateway" : "local"}:${deviceId}:`;
+  return sessionId || cwd === undefined ? `${scope}${sessionId}` : `${scope}new:${cwd}`;
+}
 function App() {
   const desktopApp = Boolean(window.kkcodeDesktop || window.kkcodeDesktopLogin);
   const reading = useReadingPreferences();
@@ -69,7 +73,8 @@ function App() {
   const [subagents, setSubagents] = useState<{ identity: string, items: Item[] } | null>(null);
   const [subagentNotice, setSubagentNotice] = useState('');
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const [prompt, setPrompt] = useState(""),
+  const [cwd, setCwd] = useState(""), [draftProject, setDraftProject] = useState("");
+  const [promptDrafts, setPromptDrafts] = useState<Record<string, string>>({}),
     [mode, setMode] = useState("agent"),
     [model, setModel] = useState(""),
     [provider, setProvider] = useState("");
@@ -91,9 +96,35 @@ function App() {
   const pendingSend = useRef<Item | null>(null), stopInFlight = useRef<Promise<void> | null>(null);
   const steeringInFlight = useRef(false);
   const settledExecutions = useRef(new Set<string>());
-  const viewIdentity = useRef({ gateway, deviceId, selected });
-  viewIdentity.current = { gateway, deviceId, selected };
+  const viewIdentity = useRef({ gateway, deviceId, selected, project: draftProject });
+  viewIdentity.current = { gateway, deviceId, selected, project: draftProject };
   const todoIdentity = `${gateway ? 'gateway' : 'local'}:${deviceId}:${selected}`;
+  const attachmentKey = composerDraftKey(gateway, deviceId, selected);
+  const promptKey = composerDraftKey(gateway, deviceId, selected, draftProject);
+  const prompt = promptDrafts[promptKey] || "";
+  function setPrompt(value: React.SetStateAction<string>, key = promptKey) {
+    setPromptDrafts(old => {
+      const previous = old[key] || "", next = typeof value === "function" ? value(previous) : value;
+      if (next === previous) return old;
+      const drafts = { ...old };
+      if (next) drafts[key] = next;
+      else delete drafts[key];
+      return drafts;
+    });
+  }
+  function migrateBlankDraft(device: string, sessionId: string, project: string) {
+    const from = composerDraftKey(gateway, device, "", project), to = composerDraftKey(gateway, device, sessionId);
+    setPromptDrafts(old => {
+      if (old[from] === undefined || old[to] !== undefined) return old;
+      const drafts = { ...old, [to]: old[from] };
+      delete drafts[from];
+      return drafts;
+    });
+  }
+  function clearSensitiveDrafts() {
+    setPromptDrafts({});
+    setDraftAttachments({});
+  }
   function currentView(id: string, device = deviceId) { return viewIdentity.current.gateway === gateway && viewIdentity.current.deviceId === device && viewIdentity.current.selected === id; }
   function observeTodos(value: Item | null | undefined) {
     if (!currentView(selected)) return;
@@ -101,10 +132,10 @@ function App() {
     setTodos(previous => ({ identity, snapshot: acceptTodoSnapshot(previous?.identity === identity ? previous.snapshot : null, value, selected) }));
   }
   function acknowledgeSend(token: Item) {
-    if (token.acknowledged || !currentView(token.sessionId, token.deviceId)) return;
+    if (token.acknowledged) return;
     token.acknowledged = true;
-    setPrompt(old => old === token.text ? '' : old);
-    const key = `${token.deviceId}:${token.sessionId}`, consumed = new Set(token.attachmentIds || []);
+    const key = composerDraftKey(token.gateway ?? gateway, token.deviceId, token.sessionId), draftKey = composerDraftKey(token.gateway ?? gateway, token.deviceId, token.sessionId, token.project), consumed = new Set(token.attachmentIds || []);
+    setPrompt(old => old === token.text ? '' : old, draftKey);
     setDraftAttachments(old => ({ ...old, [key]: (old[key] || []).filter(item => !consumed.has(item.id)) }));
   }
   function observeTurn(meta: Item) {
@@ -135,10 +166,9 @@ function App() {
   const [historyPanel, setHistoryPanel] = useState<'history' | 'search' | ''>('');
   const [projectsOpen, setProjectsOpen] = useState(false);
   const [projectFilter, setProjectFilter] = useState('');
-  useEffect(() => { setProjectFilter(''); setHistoryPanel(''); setProjectsOpen(false); }, [gateway, deviceId]);
+  useEffect(() => { setProjectFilter(''); setDraftProject(''); setHistoryPanel(''); setProjectsOpen(false); }, [gateway, deviceId]);
   useEffect(() => { setThinkingExpanded(false); }, [selected, busy]);
-  const [panel, setPanel] = useState(""),
-    [cwd, setCwd] = useState("");
+  const [panel, setPanel] = useState("");
   const [settings, setSettings] = useState<Item>({});
   const [commands, setCommands] = useState<Item[]>([]),
     [approval, setApproval] = useState<Item[]>([]);
@@ -146,7 +176,6 @@ function App() {
   const scroll = useTranscriptScroll(`${gateway}:${deviceId}:${selected}`, ready && session?.id === selected);
   const manuallyDisconnected = useRef(false);
   const livePreviewNotice = useRef(""), livePreviewLimited = useRef(false);
-  const attachmentKey = `${deviceId}:${selected}`;
   const attachments = draftAttachments[attachmentKey] || [];
   const sdk = useMemo(() => new DeviceClient({ url: location.origin, gateway, deviceId: gateway ? deviceId || null : null }), [gateway, deviceId]);
   async function rpc(method: string, params: Item = {}, options: Item = {}) {
@@ -158,7 +187,17 @@ function App() {
   }
   const deviceNoticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(deviceNoticeTimer.current), []);
-  useDeviceEvents({ enabled: ready, gateway, deviceId, onEvent: async (event, signal) => {
+  const refreshDeviceSnapshot = async (signal: AbortSignal) => {
+    const shared = devices.find(device => device.id === deviceId)?.shared;
+    const [config, result] = await Promise.all([
+      shared ? null : rpc('settings.get').catch((error: any) => { if (error.status === 403) return null; throw error; }),
+      rpc('sessions.list'),
+    ]);
+    if (signal.aborted) return;
+    if (config) setSettings(config);
+    setSessions(Array.isArray(result) ? result : result.sessions || []);
+  };
+  useDeviceEvents({ enabled: ready, gateway, deviceId, sdk, onReconnect: refreshDeviceSnapshot, onEvent: async (event, signal) => {
     const message = mcpLoadNotice(event);
     if (message) {
       setNotice(message); clearTimeout(deviceNoticeTimer.current);
@@ -187,10 +226,16 @@ function App() {
     return true;
   }
   async function selectModel(selection: Item) {
-    if (!selected) { applySelection({ ...selection, providerType: selection.provider, modeId: selection.mode }); return; }
-    const lease = await rpc('control.acquire', { sessionId: selected });
-    try { applySelection(await rpc('sessions.configure', { sessionId: selected, ...selection })); }
-    finally { await releaseControl(selected, lease).catch(() => {}); }
+    const id = selected, device = deviceId;
+    if (!id) { applySelection({ ...selection, providerType: selection.provider, modeId: selection.mode }); return true; }
+    const lease = await rpc('control.acquire', { sessionId: id });
+    try {
+      if (!currentView(id, device)) return false;
+      const result = await rpc('sessions.configure', { sessionId: id, ...selection });
+      if (!currentView(id, device)) return false;
+      applySelection(result);
+      return true;
+    } finally { await releaseControl(id, lease).catch(() => {}); }
   }
   const attempt = async (fn: () => Promise<any>) => {
     try {
@@ -238,8 +283,10 @@ function App() {
     timer = setTimeout(poll, interval);
     return () => { stopped = true; clearTimeout(timer); };
   }, [loginFlow]);
-  async function refreshSessions() {
+  async function refreshSessions(expectedSession = '') {
+    const device = deviceId, isGateway = gateway;
     const result = await rpc("sessions.list");
+    if (viewIdentity.current.gateway !== isGateway || viewIdentity.current.deviceId !== device || expectedSession && viewIdentity.current.selected !== expectedSession) return;
     setSessions(Array.isArray(result) ? result : result.sessions || []);
   }
   async function updateSessionMetadata(target: Item, patch: Item) {
@@ -402,7 +449,7 @@ function App() {
         if (cancelled) return;
         cursor.current = snapshot?.eventCursor || batch.cursor || 0;
         setSession(snapshot); applyLiveSnapshot(snapshot); setApproval([]); observeTurn(snapshot || {});
-        await refreshSessions(); return;
+        await refreshSessions(selected); return;
       }
       if (fresh.length) {
         cursor.current = fresh.at(-1).seq ?? cursor.current;
@@ -432,8 +479,10 @@ function App() {
           fresh.some((event: Item) =>
             ["turn.result", "turn.failed", "turn.cancelled"].includes(event.type),
           )
-        )
-          await refreshSessions();
+        ) {
+          await refreshSessions(selected);
+          if (cancelled) return;
+        }
       }
       if (batch.approvals !== undefined) setApproval(batch.approvals || []);
       observeTurn(batch);
@@ -446,7 +495,11 @@ function App() {
         }
         if (event.type === 'session.configured') applySelection(event.payload);
         if (event.type === 'session.branch.changed') setBranch(event.payload.branch || '');
-        if (["session.updated", "session.title.updated"].includes(event.type)) { setSession(old => old ? { ...old, ...event.payload } : old); await refreshSessions(); }
+        if (["session.updated", "session.title.updated"].includes(event.type)) {
+          setSession(old => old ? { ...old, ...event.payload } : old);
+          await refreshSessions(selected);
+          if (cancelled) return;
+        }
       }
       const turnEnded = fresh.some((event: Item) => ["turn.result", "turn.failed", "turn.cancelled"].includes(event.type));
       const childSettled = fresh.some((event: Item) => event.type === 'task.settled' && event.sessionId === selected && event.payload?.subSessionId);
@@ -505,7 +558,7 @@ function App() {
       cursor.current = snapshot?.eventCursor || 0;
       setSession(snapshot);
       applyLiveSnapshot(snapshot);
-      if (snapshot) { applySelection(snapshot); setCwd(snapshot.cwd || cwd); setProjectFilter(snapshot.cwd || ''); }
+      if (snapshot) { applySelection(snapshot); setCwd(snapshot.cwd || cwd); setDraftProject(snapshot.cwd || draftProject); setProjectFilter(snapshot.cwd || ''); }
       observeTurn(snapshot || {});
       await stream();
     });
@@ -523,16 +576,18 @@ function App() {
   }, [notice]);
   async function createSession(): Promise<string> {
     const previousView = viewIdentity.current;
+    const viewChanged = () => viewIdentity.current.deviceId !== previousView.deviceId || viewIdentity.current.selected !== previousView.selected || !previousView.selected && viewIdentity.current.project !== previousView.project;
     const result = await rpc("sessions.create", { cwd, mode, model: model || undefined, provider: provider || undefined });
     if (!result.modeId && settings.provider?.default) {
       const lease = await rpc("control.acquire", { sessionId: result.id });
       try { await rpc("sessions.configure", { sessionId: result.id, mode, model: model || undefined, provider: provider || undefined }); }
       finally { await releaseControl(result.id, lease).catch(() => {}); }
     }
-    if (viewIdentity.current.deviceId !== previousView.deviceId || viewIdentity.current.selected !== previousView.selected) return result.id;
+    if (viewChanged()) return result.id;
     if (result.modeId) applySelection(result);
     await refreshSessions();
-    if (viewIdentity.current.deviceId !== previousView.deviceId || viewIdentity.current.selected !== previousView.selected) return result.id;
+    if (viewChanged()) return result.id;
+    if (!previousView.selected) migrateBlankDraft(previousView.deviceId, result.id, previousView.project);
     if (pendingSend.current?.deviceId === deviceId && !pendingSend.current.sessionId) pendingSend.current.sessionId = result.id;
     setSelected(result.id);
     setSidebar(false);
@@ -562,7 +617,7 @@ function App() {
     }
     setUploading(true);
     try {
-      const id = batch?.sessionId || await ensureSession(), key = `${deviceId}:${id}`;
+      const id = batch?.sessionId || await ensureSession(), key = composerDraftKey(gateway, deviceId, id);
       if (batch) batch.sessionId = id;
       for (const file of files) {
         const mediaType = attachmentMediaType(file), data = await readAttachment(file);
@@ -586,8 +641,8 @@ function App() {
       if (token) token.start = request;
       const result = await request;
       accepted = Boolean(result?.accepted);
-      if (!currentView(sessionId) || token?.terminal) return result;
       if (accepted && token) acknowledgeSend(token);
+      if (!currentView(sessionId) || token?.terminal) return result;
       applySelection(result?.state || result || {});
       setCommandResult({ ...result, command: text });
       const action = result?.clientAction;
@@ -601,19 +656,21 @@ function App() {
             if (!response.ok) throw new Error("退出配对失败，请重试");
             setReady(false);
           }
+          clearSensitiveDrafts();
           setNotice("已断开此客户端，设备终端仍保持运行");
         }
       } else if (action === "session") {
-        setSelected(result.sessionId || result.state?.sessionId || "");
-        if (result.cwd) setCwd(result.cwd);
-        if (result.draft !== undefined) setPrompt(result.draft);
+        const nextSession = result.sessionId || result.state?.sessionId || "";
+        setSelected(nextSession);
+        if (result.cwd) { setCwd(result.cwd); setDraftProject(result.cwd); }
+        if (result.draft !== undefined) setPrompt(result.draft, composerDraftKey(gateway, deviceId, nextSession, result.cwd || draftProject));
         setSessionRevision(value => value + 1);
         await refreshSessions(); setPanel("");
       } else if (action === "theme") {
         const value = String(result.args || "").trim();
         if (["dark", "light", "auto"].includes(value)) { setTheme(value); setNotice("外观已更新"); }
         else setPanel("theme");
-      } else if (action === "paste") { if (result.args) setPrompt(String(result.args)); setPanel("attachments"); }
+      } else if (action === "paste") { if (result.args) setPrompt(String(result.args), composerDraftKey(gateway, deviceId, sessionId)); setPanel("attachments"); }
       else if (action === "like") setPanel("preferences");
       else if (action === "profile") setPanel(result.args?.trim() === "edit" ? "preferences" : "profile");
       else if (action === "provider") setPanel(String(result.args || "").trim() ? "provider" : "models");
@@ -640,12 +697,12 @@ function App() {
         await rpc('control.acquire', {sessionId: id});
         if (!currentView(id, device) || activeExecution.current !== executionId) return;
         await rpc('turns.steer', {sessionId: id, executionId, prompt: text});
-        if (currentView(id, device)) { setPrompt(old => old === text ? '' : old); setNotice('补充要求已保存，智能体将在安全执行节点读取。'); }
+        if (currentView(id, device)) { setPrompt(old => old === text ? '' : old, composerDraftKey(gateway, device, id)); setNotice('补充要求已保存，智能体将在安全执行节点读取。'); }
       } catch (cause: any) { if (currentView(id, device)) setNotice(cause.message); }
       finally { steeringInFlight.current = false; }
       return;
     }
-    const token: Item = { id: crypto.randomUUID(), sessionId: selected, deviceId, text, attachmentIds: attachments.map(item => item.id), cancelled: false, start: null, terminal: false };
+    const token: Item = { id: crypto.randomUUID(), sessionId: selected, deviceId, gateway, project: draftProject, text, attachmentIds: attachments.map(item => item.id), cancelled: false, start: null, terminal: false };
     token.finished = new Promise(resolve => { token.finish = resolve; });
     pendingSend.current = token;
     const compact = /^\/compact\s*$/.test(text);
@@ -657,10 +714,10 @@ function App() {
         id = await createSession();
       }
       token.sessionId = id;
-      if (token.cancelled || viewIdentity.current.deviceId !== deviceId || (viewIdentity.current.selected !== id && viewIdentity.current.selected !== selected)) return;
+      if (token.cancelled || viewIdentity.current.deviceId !== deviceId || (viewIdentity.current.selected !== id && viewIdentity.current.selected !== selected) || (!selected && viewIdentity.current.project !== draftProject)) return;
       if (text.startsWith("/")) {
         if (attachments.length) throw new Error("附件不能附加到 / 命令，请先发送普通消息或移除附件");
-        if (!compact) setPrompt(old => old === text ? '' : old);
+        if (!compact) setPrompt(old => old === text ? '' : old, composerDraftKey(gateway, token.deviceId, id));
         const result = await runCommand(text, id, token);
         accepted = Boolean(result?.accepted);
         if (accepted && compact && currentView(id) && !token.terminal) setTurnPhase(token.cancelled ? 'stopping' : 'compacting');
@@ -678,14 +735,14 @@ function App() {
       accepted = result.accepted !== false;
       if (!accepted) return;
       } catch (error) { if (!token.terminal) await releaseControl(id, lease).catch(() => {}); throw error; }
-      if (!currentView(id) || token.terminal) return;
       acknowledgeSend(token);
+      if (!currentView(id) || token.terminal) return;
       if (!settledExecutions.current.has(token.id)) { setBusy(true); setTurnPhase(token.cancelled ? 'stopping' : 'running'); }
       scroll.latest();
     } catch (cause: any) {
-      if (!token.terminal && currentView(token.sessionId)) {
-        if (text.startsWith('/')) setPrompt(old => old || text);
-        setNotice(cause.message);
+      if (!token.terminal) {
+        if (text.startsWith('/')) setPrompt(old => old || text, composerDraftKey(token.gateway, token.deviceId, token.sessionId, token.project));
+        if (currentView(token.sessionId, token.deviceId)) setNotice(cause.message);
       }
     }
     finally {
@@ -802,7 +859,7 @@ function App() {
   };
   function chooseProject(path: string) {
     if (uploading) { setNotice('附件上传中，请稍后切换项目'); return; }
-    setProjectsOpen(false); setCwd(path); setProjectFilter(path); setSelected(''); setSession(null); setEvents([]); setSidebar(false);
+    setProjectsOpen(false); setCwd(path); setDraftProject(path); setProjectFilter(path); setSelected(''); setSession(null); setEvents([]); setSidebar(false);
   }
   const companion = <StudioBar waiting={turnPhase === 'waiting_children'} busy={busy} stopping={stopping} approval={approval.length > 0} readOnly={readOnly || Boolean(session?.archived)} connected={connected} selected={Boolean(selected)} canManage={canManage} onPanel={openPanel} onPrompt={value => setPrompt(previous => previous ? `${previous}\n\n${value}` : value)} />;
   if (!ready)
@@ -871,6 +928,7 @@ function App() {
             onChange={(e) => {
               setDeviceId(e.target.value);
               setSelected("");
+              setDraftProject("");
               setProvider(""); setModel(""); setMode("agent");
             }}
           >
@@ -1073,14 +1131,12 @@ function App() {
               onStop={() => void stopTurn()}
               onMode={(value) =>
                 void attempt(async () => {
-                  await selectModel({ mode: value });
-                  setNotice(`执行模式已切换为 ${modeLabel(value)}`);
+                  if (await selectModel({ mode: value })) setNotice(`执行模式已切换为 ${modeLabel(value)}`);
                 })
               }
               onModel={(selection) =>
                 void attempt(async () => {
-                  await selectModel(selection);
-                  setNotice(`模型已切换为 ${selection.model}`);
+                  if (await selectModel(selection)) setNotice(`模型已切换为 ${selection.model}`);
                 })
               }
               onDiscoverModels={(name) => rpc("models.discover", { provider: name, refresh: true })}
@@ -1132,6 +1188,7 @@ function App() {
           rpc={rpc}
           onCwd={value => {
             setCwd(value);
+            setDraftProject(value);
             setProjectFilter(value);
             if (selected && value !== session?.cwd) { setSelected(""); setSession(null); setEvents([]); setNotice("工作目录已选择，下一条消息会在新对话中开始"); }
           }}
@@ -1142,6 +1199,7 @@ function App() {
             manuallyDisconnected.current = !id;
             setDeviceId(id);
             setSelected("");
+            setDraftProject("");
             setSession(null);
             setEvents([]);
             setSessions([]);
@@ -1151,6 +1209,7 @@ function App() {
           onCreate={createSession}
           onSettings={setSettings}
           onNotice={setNotice}
+          onLogout={clearSensitiveDrafts}
         />
       )}
       {managedSession && <SessionActions initialAction={managedAction} session={sessions.find(item => item.id === managedSession.id) || managedSession} busy={Boolean(managedSession.id === selected ? busy : String(managedSession.status).startsWith("running"))} onClose={() => setManagedSession(null)} onUpdate={patch => updateSessionMetadata(managedSession, patch)} onDelete={() => deleteConversation(managedSession)} />}

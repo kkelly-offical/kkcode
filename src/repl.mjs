@@ -57,7 +57,7 @@ import {
 } from "./repl/core-shell.mjs"
 import { runReplController } from "./repl/controller-entry.mjs"
 import { resolveTerminalMode, runControlledTerminal } from "./repl/controlled-status.mjs"
-import { collectInput, resolveHistoryNavigation } from "./repl/input-engine.mjs"
+import { collectInput, closeLineInput, resolveHistoryNavigation, shouldSubmitInput } from "./repl/input-engine.mjs"
 export { collectInput } from "./repl/input-engine.mjs"
 // 帧度量与拼装原语。此前 repl.mjs 自带一份，与 repl-dashboard / activity-renderer /
 // repl-help / text-layout 各自的副本互不一致 —— 见 util/frame-primitives.mjs 的说明。
@@ -72,6 +72,7 @@ import { createSuggestionSource } from "./repl/suggestion-source.mjs"
 import { resolveCommand, buildBuiltinSlashCatalog } from "./repl/commands/registry.mjs"
 import { BUILTIN_COMMANDS } from './command/builtin.mjs'
 import { presentPromptTurn } from "./repl/turn-presenter.mjs"
+import { continuePlanBuildHandoff } from "./repl/commands/session.mjs"
 import { loadProviderModelItems } from "./repl/provider-catalog.mjs"
 import { expandUserSkill } from './repl/skill-invocation.mjs'
 import { persistLearnedGrant } from "./repl/config-persistence.mjs"
@@ -167,7 +168,7 @@ function slashRouterOptions(customCommands = [], skillRegistry = null) {
  * 返回的 action 必须是**对象** —— 三个调用点直接读它的字段。裸 null 曾让行模式的
  * REPL 整个崩掉（v0.6.0 → v0.6.14），所以调用点也做了归一化兜底。
  */
-async function processInputLine({
+export async function processInputLine({
   line,
   state,
   ctx,
@@ -206,7 +207,8 @@ async function processInputLine({
   // 排除 `!=` 这类误写：`!` 后必须紧跟非空白非 = 的内容才算命令。
   if (/^![^\s=]/.test(normalized)) {
     const command = normalized.slice(1).trim()
-    const result = await runShellPassthrough(command)
+    const result = await runShellPassthrough(command, { signal })
+    signal?.throwIfAborted()
     print(formatShellForTranscript(command, result), { channel: "transcript" })
     await ctx.kernel.sessions.appendMessage(state.sessionId, "user", formatShellForContext(command, result)).catch(() => {})
     return { exit: false }
@@ -378,7 +380,7 @@ async function processInputLine({
 
 async function startLineRepl({ ctx, state, providersConfigured, customCommands, recentSessions, historyLines }) {
   // A piped stdin can close as soon as readline is created. Finish asynchronous
-  // snapshot I/O first, then reach the first question without yielding.
+  // snapshot I/O first, then reach the first input read without yielding.
   const initialTodos = await loadTodoProgress(ctx.kernel, state.sessionId)
   const rl = createInterface({ input, output, history: historyLines, historySize: HIST_SIZE })
   let localCustomCommands = customCommands
@@ -395,99 +397,99 @@ async function startLineRepl({ ctx, state, providersConfigured, customCommands, 
     context: null,
     longagent: null
   }
+  let lineActivityRenderer = null
 
-  console.log(renderStartupScreen({
-    theme: ctx.themeState.theme,
-    recentSessions,
-    columns: Number(process.stdout.columns || 120)
-  }))
-
-  const lineActivityRenderer = createActivityRenderer({
-    theme: ctx.themeState.theme,
-    eventBus: ctx.kernel.events,
-    eventFilter: event => !event?.sessionId || event.sessionId === state.sessionId,
-    output: {
-      appendLog: (text) => console.log(text),
-      appendStreamChunk: (chunk) => process.stdout.write(chunk)
-    }
-  })
-  lineActivityRenderer.start()
-  lineActivityRenderer.restoreTodos(initialTodos)
-
-  let linePendingImages = []
-
-  while (true) {
-    const status = renderReplStatusLine({
-      state,
-      configState: ctx.configState,
+  try {
+    console.log(renderStartupScreen({
       theme: ctx.themeState.theme,
-      tokenMeter: lastTurn.tokenMeter,
-      cost: lastTurn.cost,
-      costSavings: lastTurn.costSavings,
-      contextMeter: lastTurn.context,
-      longagentState: lastTurn.longagent
+      recentSessions,
+      columns: Number(process.stdout.columns || 120)
+    }))
+
+    lineActivityRenderer = createActivityRenderer({
+      theme: ctx.themeState.theme,
+      eventBus: ctx.kernel.events,
+      eventFilter: event => !event?.sessionId || event.sessionId === state.sessionId,
+      output: {
+        appendLog: (text) => console.log(text),
+        appendStreamChunk: (chunk) => process.stdout.write(chunk)
+      }
     })
+    lineActivityRenderer.start()
+    lineActivityRenderer.restoreTodos(initialTodos)
 
-    const line = await collectInput(rl, `${status}\n> `)
-    if (!line) continue
-    entered.push(line)
+    let linePendingImages = []
 
-    // `|| {}` 不是防御性冗余：调用点直接读 action 的字段，而命令分支曾经
-    // 返回过裸 null（/agents、/tasks，v0.6.0 起），行模式这条 while 循环没有
-    // try/catch，于是整个 REPL 崩在下一行的 action.cleared 上。归一化让
-    // 「某个分支忘了返回对象」退化成无害的默认动作。
-    const action = (await processInputLine({
-      line,
-      state,
-      ctx,
-      providersConfigured,
-      customCommands: localCustomCommands,
-      setCustomCommands: (next) => {
-        localCustomCommands = next
-      },
-      providerPicker: localProviderPicker,
-      setProviderPicker: (next) => { localProviderPicker = next },
-      print: (text) => console.log(text),
-      streamSink: (text) => process.stdout.write(text),
-      pendingImages: linePendingImages,
-      clearPendingImages: () => { linePendingImages = [] },
-      // 行模式没有可编辑的输入框，插不了标记 —— 退回「挂着，下一条消息带上」。
-      attachImage: (block) => { linePendingImages.push(block); return "" }
-    })) || {}
-
-    if (action.cleared) clearScreen()
-    if (action.dashboardRefresh) {
-      const runtimeView = await buildReplRuntimeSnapshot({
-        cwd: process.cwd(),
+    while (true) {
+      const status = renderReplStatusLine({
         state,
-        customCommands: localCustomCommands,
-        providers: providersConfigured,
-        mcpRegistry: ctx.kernel.extensions.mcp,
-        skillRegistry: ctx.kernel.extensions.skills,
-        recoveryEnabled: ctx.configState.config.session?.recovery !== false
+        configState: ctx.configState,
+        theme: ctx.themeState.theme,
+        tokenMeter: lastTurn.tokenMeter,
+        cost: lastTurn.cost,
+        costSavings: lastTurn.costSavings,
+        contextMeter: lastTurn.context,
+        longagentState: lastTurn.longagent
       })
-      runtimeView.recentSessions = action.recentSessions || runtimeView.recentSessions
-      console.log(
-        renderReplDashboard({
-          theme: ctx.themeState.theme,
-          ...runtimeView
+
+      const line = await collectInput(rl, `${status}\n> `)
+      if (line === null) break
+      if (!line) continue
+      entered.push(line)
+
+      // `|| {}` 不是防御性冗余：调用点直接读 action 的字段，而命令分支曾经
+      // 返回过裸 null（/agents、/tasks，v0.6.0 起），行模式这条 while 循环没有
+      // try/catch，于是整个 REPL 崩在下一行的 action.cleared 上。归一化让
+      // 「某个分支忘了返回对象」退化成无害的默认动作。
+      const action = (await processInputLine({
+        line,
+        state,
+        ctx,
+        providersConfigured,
+        customCommands: localCustomCommands,
+        setCustomCommands: (next) => {
+          localCustomCommands = next
+        },
+        providerPicker: localProviderPicker,
+        setProviderPicker: (next) => { localProviderPicker = next },
+        print: (text) => console.log(text),
+        streamSink: (text) => process.stdout.write(text),
+        pendingImages: linePendingImages,
+        clearPendingImages: () => { linePendingImages = [] },
+        // 行模式没有可编辑的输入框，插不了标记 —— 退回「挂着，下一条消息带上」。
+        attachImage: (block) => { linePendingImages.push(block); return "" }
+      })) || {}
+
+      if (action.cleared) clearScreen()
+      if (action.dashboardRefresh) {
+        const runtimeView = await buildReplRuntimeSnapshot({
+          cwd: process.cwd(),
+          state,
+          customCommands: localCustomCommands,
+          providers: providersConfigured,
+          mcpRegistry: ctx.kernel.extensions.mcp,
+          skillRegistry: ctx.kernel.extensions.skills,
+          recoveryEnabled: ctx.configState.config.session?.recovery !== false
         })
-      )
+        runtimeView.recentSessions = action.recentSessions || runtimeView.recentSessions
+        console.log(
+          renderReplDashboard({
+            theme: ctx.themeState.theme,
+            ...runtimeView
+          })
+        )
+      }
+
+      if (action.turnResult) {
+        lastTurn.tokenMeter = action.turnResult.tokenMeter || lastTurn.tokenMeter
+        lastTurn.cost = Number.isFinite(action.turnResult.cost) ? action.turnResult.cost : lastTurn.cost
+        lastTurn.context = action.turnResult.context || null
+        lastTurn.longagent = action.turnResult.longagent || null
+      }
+
+      if (action.exit) break
     }
-
-    if (action.turnResult) {
-      lastTurn.tokenMeter = action.turnResult.tokenMeter || lastTurn.tokenMeter
-      lastTurn.cost = Number.isFinite(action.turnResult.cost) ? action.turnResult.cost : lastTurn.cost
-      lastTurn.context = action.turnResult.context || null
-      lastTurn.longagent = action.turnResult.longagent || null
-    }
-
-    if (action.exit) break
-  }
-
-  lineActivityRenderer.stop()
-  rl.close()
-  await saveHistoryLines(HIST_FILE, HIST_SIZE, entered)
+  } finally { await closeLineInput(lineActivityRenderer, rl, () => saveHistoryLines(HIST_FILE, HIST_SIZE, entered)) }
 }
 
 function startTuiFrame(features) {
@@ -1057,7 +1059,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
 
   async function submitCurrentInput() {
     const line = ui.input.replace(/\r/g, "")
-    if (!line.trim() || ui.busy) return
+    if (!shouldSubmitInput(line, ui.busy)) return
     // 提交即作废预测：在途请求的结果对下一轮输入毫无意义
     ui.ghostText = ""
     ghostPredictor.cancel()
@@ -1078,8 +1080,8 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
         requestRender()
         return
       } else {
-        // 用户拒绝，切换到建议模式
-        state.mode = confirm.suggestedMode
+        // 用户拒绝，完整切换到建议模式（航道、modeId 与审批档一起更新）
+        switchModeInPlace(state, ctx, confirm.suggestedMode)
         showToast(`Mode · ${confirm.suggestedMode}`, { topic: "mode", tone: "success" })
         ui.input = ""
         ui.inputCursor = 0
@@ -1254,7 +1256,7 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       })
       if (routeFeedback.changedMessage) {
         showToast(stripAnsi(routeFeedback.changedMessage), { topic: "route", tone: "info" })
-        state.mode = route.mode
+        switchModeInPlace(state, ctx, route.mode)
       } else if (routeFeedback.forcedMessage) {
         // 待回答的路由确认：留在滚动区（用户对着它答 y/n），但用弱化的 system 样式
         ui.pendingModeConfirm = { suggestedMode: route.suggestion, originalMode: state.mode, reason: route.reason }
@@ -1394,16 +1396,17 @@ async function startTuiRepl({ ctx, state, providersConfigured, customCommands, r
       requestRender()
     }
 
-    // Plan → Build 交接：模式已切好，直接以计划文件为输入续跑一轮。
-    // pendingPlanBuild 先清空，递归深度因此固定为 1。
-    if (pendingPlanBuild && !ui.quitting && !aborter.signal.aborted) {
-      const handoff = pendingPlanBuild
-      pendingPlanBuild = null
-      const planRef = handoff.planPath ? ` at ${handoff.planPath}` : ""
-      ui.input = `Implement the approved plan${planRef}. Follow it stage by stage and report what you changed.`
-      ui.inputCursor = ui.input.length
-      await submitCurrentInput()
-    }
+    // 先消费交接：Compact + Build 完成现有压缩后才递归续跑（深度固定为 1）。
+    const handoff = pendingPlanBuild
+    pendingPlanBuild = null
+    if (handoff && !ui.quitting && !aborter.signal.aborted) await continuePlanBuildHandoff({
+      handoff, state, ctx, ui, signal: aborter.signal, print: printTui, startBusySpinner, stopBusySpinner, requestRender,
+      submit: async (prompt) => {
+        ui.input = prompt
+        ui.inputCursor = ui.input.length
+        await submitCurrentInput()
+      }
+    })
   }
 
   function handleUpDownSuggestions(keyName) {

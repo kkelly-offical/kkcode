@@ -42,7 +42,7 @@ const server = createServer(async (req, res) => {
   catch { res.writeHead(404); res.end() }
 })
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
-const browser = await chromium.launch({ headless: true, ...(process.env.KKCODE_CHROMIUM ? { executablePath: process.env.KKCODE_CHROMIUM } : {}) })
+const browser = await chromium.launch({ headless: true, chromiumSandbox: true, ...(process.env.KKCODE_CHROMIUM ? { executablePath: process.env.KKCODE_CHROMIUM } : {}) })
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' }), errors = [], metrics = []
 page.on('pageerror', error => errors.push(error.message))
 const distance = () => page.locator('.transcript').evaluate(node => node.scrollHeight - node.clientHeight - node.scrollTop)

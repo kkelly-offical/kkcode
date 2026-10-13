@@ -1,4 +1,4 @@
-import { runtimeCwd } from "../../kernel/index.mjs"
+import { runtimeCwd, requestContextBudget } from "../../kernel/index.mjs"
 /**
  * 会话与工作区状态类命令：开新会话、续跑、历史、压缩、回滚、清屏、看板。
  *
@@ -7,7 +7,7 @@ import { runtimeCwd } from "../../kernel/index.mjs"
  * 走 `notice`（瞬时提示），需要回看的内容才留在对话记录里。
  */
 
-import { LongAgentManager, loadLedger, rewindLastTurn } from "../../kernel/index.mjs"
+import { LongAgentManager, loadLedger, rewindLastTurn, resolveSessionMode } from "../../kernel/index.mjs"
 import { buildBoardModel, renderUltraBoard } from "../../ui/ultra-board.mjs"
 import { renderRuntimeDashboardView } from "../../ui/repl-status-view.mjs"
 import { runBtwQuery } from "../btw-query.mjs"
@@ -16,6 +16,113 @@ import { ageLabel, padRight } from "../../util/frame-primitives.mjs"
 import { buildReplRuntimeSnapshot } from "../runtime-facade.mjs"
 import { buildOperatorSnapshot } from "../operator-surface.mjs"
 import { formatTodoProgress } from '../../ui/activity-renderer.mjs'
+import { markTurnSubmitted, resetTurnRuntime } from "../../ui/turn-runtime.mjs"
+
+export async function compactConversation({ print, state, ctx, signal = null, persistContext = false }) {
+  signal?.throwIfAborted()
+  // 进度是瞬时提示：压缩完成后这条就该消失，不该留在对话记录里
+  print("compacting conversation...", { channel: "notice", topic: "compact" })
+  const result = await ctx.kernel.sessions.compactSession({
+    sessionId: state.sessionId,
+    model: state.model,
+    providerType: state.providerType,
+    configState: ctx.configState,
+    signal
+  })
+  signal?.throwIfAborted()
+  if (result.compacted && persistContext) {
+    const saved = await ctx.kernel.sessions.getSession(state.sessionId)
+    const context = requestContextBudget({
+      messages: saved.messages,
+      model: state.model,
+      providerType: state.providerType,
+      configState: ctx.configState
+    })
+    const prior = saved.session.context
+    if (prior?.model === state.model && prior?.provider === state.providerType) {
+      for (const key of ["system", "tools"]) context.components[key] = Math.max(0, Number(prior.components?.[key]) || 0)
+      context.tokens = Object.values(context.components).reduce((sum, value) => sum + value, 0)
+      context.requiredTokens = context.tokens + context.outputReserved
+      context.percent = Math.min(100, Math.round(context.tokens * 100 / context.limit))
+      context.ratio = Math.min(1, context.tokens / context.limit)
+    }
+    const lastCompaction = {
+      ...result,
+      beforeTokens: prior?.tokens ?? result.estimatedBeforeTokens,
+      afterTokens: context.tokens,
+      limit: context.limit,
+      source: "estimated",
+      compactedAt: Date.now()
+    }
+    await ctx.kernel.sessions.updateSession(state.sessionId, { context, lastCompaction })
+    print(`compacted: ${result.summarizedCount} messages summarized, ${result.keptCount} kept`, { channel: "notice", topic: "command" })
+    return { ...result, context }
+  }
+  if (result.compacted) {
+    print(`compacted: ${result.summarizedCount} messages summarized, ${result.keptCount} kept`, { channel: "notice", topic: "command" })
+  } else {
+    print(`skipped: ${result.reason}`, { channel: "notice", topic: "command" })
+  }
+  return result
+}
+
+export async function continuePlanBuildHandoff({
+  handoff,
+  state,
+  ctx,
+  ui = null,
+  signal,
+  print,
+  submit,
+  startBusySpinner = () => {},
+  stopBusySpinner = () => {},
+  requestRender = () => {}
+}) {
+  const sessionId = state.sessionId
+  let handoffSignal = signal
+  let handoffController = null
+  const stillCurrent = () => !handoffSignal?.aborted && state.sessionId === sessionId && state.modeId === handoff?.modeId
+  if (!handoff?.modeId || !stillCurrent()) return false
+
+  try {
+    if (handoff.compactFirst && ui) {
+      handoffController = new AbortController()
+      handoffSignal = handoffController.signal
+      ui.turnAbortController = handoffController
+      markTurnSubmitted(ui)
+      startBusySpinner()
+      requestRender()
+    }
+
+    if (handoff.compactFirst) {
+      try {
+        await compactConversation({ print, state, ctx, signal: handoffSignal })
+      } catch (error) {
+        if (handoffSignal?.aborted || error?.name === "AbortError") return false
+        print(`compact failed: ${error.message}`, { channel: "notice", topic: "command", tone: "error" })
+        return false
+      }
+    }
+    if (!stillCurrent()) return false
+
+    if (handoffController) {
+      resetTurnRuntime(ui)
+      stopBusySpinner()
+      requestRender()
+      handoffController = null
+    }
+
+    const planRef = handoff.planPath ? ` at ${handoff.planPath}` : ""
+    await submit(`Implement the approved plan${planRef}. Follow it stage by stage and report what you changed.`)
+    return true
+  } finally {
+    if (handoffController) {
+      resetTurnRuntime(ui)
+      stopBusySpinner()
+      requestRender()
+    }
+  }
+}
 
 export const sessionCommands = [
   {
@@ -129,22 +236,12 @@ export const sessionCommands = [
     names: ["compact"],
     desc: "summarize conversation to free context",
     argMode: "none",
-    run: async ({ print, state, ctx }) => {
+    run: async ({ print, state, ctx, signal }) => {
       try {
-        // 进度是瞬时提示：压缩完成后这条就该消失，不该留在对话记录里
-        print("compacting conversation...", { channel: "notice", topic: "compact" })
-        const result = await ctx.kernel.sessions.compactSession({
-          sessionId: state.sessionId,
-          model: state.model,
-          providerType: state.providerType,
-          configState: ctx.configState
-        })
-        if (result.compacted) {
-          print(`compacted: ${result.summarizedCount} messages summarized, ${result.keptCount} kept`, { channel: "notice", topic: "command" })
-        } else {
-          print(`skipped: ${result.reason}`, { channel: "notice", topic: "command" })
-        }
+        const result = await compactConversation({ print, state, ctx, signal, persistContext: true })
+        return { exit: false, ...(result.context ? { turnResult: { context: result.context } } : {}) }
       } catch (err) {
+        if (signal?.aborted || err?.name === "AbortError") throw err
         print(`compact failed: ${err.message}`, { channel: "notice", topic: "command", tone: "error" })
       }
       return { exit: false }
@@ -193,15 +290,32 @@ export const sessionCommands = [
     names: ["resume", "r"],
     desc: "resume session",
     argMode: "optional",
-    run: async ({ args, print, state, openPanel, ctx }) => {
+    run: async ({ args, print, state, openPanel, ctx, switchModeInPlace }) => {
       const sessions = await ctx.kernel.sessions.listSessions({ cwd: runtimeCwd(), limit: 20, includeChildren: false })
+      let target = null
 
-      if (!sessions.length) {
+      if (args) {
+        // Try numeric index first (1-based)
+        const idx = parseInt(args, 10)
+        if (!Number.isNaN(idx) && idx >= 1 && idx <= sessions.length) {
+          target = sessions[idx - 1]
+        } else {
+          // Fallback to ID prefix match
+          target = sessions.find((s) => s.id === args || s.id.startsWith(args)) || null
+        }
+        if (!target) {
+          const snapshot = await ctx.kernel.sessions.getSession(args).catch((error) => {
+            if (error?.code === "invalid_session") return null
+            throw error
+          })
+          if (snapshot?.session.cwd === runtimeCwd() && !snapshot.session.parentSessionId) target = snapshot.session
+        }
+      }
+
+      if (!sessions.length && !target) {
         print("no sessions found in current directory", { channel: "notice", topic: "command", tone: "error" })
         return { exit: false }
       }
-
-      let target = null
 
       if (!args) {
         // 裸 /resume 是「列出并选一个」，和 /provider 同构 —— 走选择器，
@@ -228,22 +342,17 @@ export const sessionCommands = [
         return { exit: false }
       }
 
-      // Try numeric index first (1-based)
-      const idx = parseInt(args, 10)
-      if (!Number.isNaN(idx) && idx >= 1 && idx <= sessions.length) {
-        target = sessions[idx - 1]
-      } else {
-        // Fallback to ID prefix match
-        target = sessions.find((s) => s.id === args || s.id.startsWith(args)) || null
-      }
-
       if (!target) {
         print(`no session matching "${args}"`, { channel: "notice", topic: "command", tone: "error" })
         return { exit: false }
       }
 
       state.sessionId = target.id
-      state.mode = target.mode || state.mode
+      switchModeInPlace(state, ctx, resolveSessionMode({
+        modeId: target.modeId,
+        mode: target.mode || state.mode,
+        approval: target.approval || target.permission?.level
+      }))
       state.providerType = target.providerType || state.providerType
       state.model = target.model || state.model
       const title = target.title || `${target.mode}:${target.model || "?"}`

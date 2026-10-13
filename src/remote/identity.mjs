@@ -34,13 +34,27 @@ export function registerIdentity({ app, store, config, origin, issuer, organizat
     }
   })
   const audit = async (action, actor, resource, result = 'ok') => store.put(`audit:${Date.now()}:${randomUUID()}`, { action, actor, resource, result, timestamp: Date.now() })
+  async function updateAccount(profile) {
+    const key = `account:${profile.id}`
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const current = await store.get(key)
+      if (current?.disabled) return null
+      const account = { ...current, ...profile, disabled: current?.disabled === true }
+      const updated = current ? await store.comparePut(key, current, account) : await store.putIfAbsent(key, account)
+      if (updated) return account
+    }
+    throw failure('Organization membership changed; restart login', 409)
+  }
   async function issue(account, kind = 'client', existing = null) {
-    const session = existing || { id: randomUUID(), accountId: account.id, kind, deviceId: null, createdAt: Date.now(), expires: Date.now() + 30 * 86400000 }
+    const current = await store.get(`account:${account.id}`)
+    if (!current || current.disabled) throw failure('Organization membership has been disabled', 403)
+    if (current.organization !== organization) throw failure('Login belongs to a different organization', 403)
+    const session = existing || { id: randomUUID(), accountId: current.id, kind, deviceId: null, createdAt: Date.now(), expires: Date.now() + 30 * 86400000 }
     if (!existing) await store.put(`identity-session:${session.id}`, session)
-    const access = secret(), refresh = secret(), value = { sessionId: session.id, account, kind, expires: Date.now() + 3600000 }
+    const access = secret(), refresh = secret(), value = { sessionId: session.id, account: current, kind, expires: Date.now() + 3600000 }
     await store.put(`token:${identityHash(access)}`, value)
     await store.put(`refresh:${identityHash(refresh)}`, { sessionId: session.id, expires: session.expires })
-    return { access_token: access, refresh_token: refresh, token_type: 'Bearer', expires_in: 3600, profile: account }
+    return { access_token: access, refresh_token: refresh, token_type: 'Bearer', expires_in: 3600, profile: current }
   }
   function cookies(reply, credentials) {
     reply.setCookie(cookieName, credentials.access_token, { httpOnly: true, secure, sameSite: 'strict', path: '/', maxAge: credentials.expires_in })
@@ -71,14 +85,25 @@ export function registerIdentity({ app, store, config, origin, issuer, organizat
   app.get('/api/v1/discovery', async () => ({ protocolVersion: '1', gateway: origin, organization, authentication: { deviceAuthorization: '/auth/device', browser: '/auth/start', token: '/auth/token', issuer, nativeLogin: NATIVE_LOGIN_CAPABILITY, desktopLogin: DESKTOP_LOGIN_CAPABILITY } }))
   app.post('/auth/device', { config: { rateLimit: { max: 20, timeWindow: '1 minute', keyGenerator: req => req.ip } } }, async req => {
     const native = nativeLoginRequest(req.body)
-    const deviceCode = secret(), userCode = String(randomInt(10000000, 100000000))
+    const deviceCode = secret(), codeKey = `login-code:${identityHash(deviceCode)}`
     const active = await store.list('login-code:')
-    for (const entry of active) if (entry.expires <= Date.now()) { await store.delete(entry.key); await store.delete(`login-user:${entry.userCode}`) }
+    for (const entry of active) if (entry.expires <= Date.now()) {
+      const { key, ...value } = entry
+      await store.compareDelete(key, value)
+      await store.compareDelete(`login-user:${value.userCode}`, { codeKey: key })
+    }
     if (active.filter(entry => entry.expires > Date.now()).length >= 1000) throw failure('Too many login attempts', 429)
-    const codeKey = `login-code:${identityHash(deviceCode)}`
-    await store.put(codeKey, { userCode, name: String(req.body?.name || 'KK Code').slice(0, 80), kind: req.body?.kind === 'device' ? 'device' : 'client', ...(native ? { native } : {}), expires: Date.now() + 600000, lastPoll: 0 })
-    await store.put(`login-user:${userCode}`, { codeKey })
-    return { device_code: deviceCode, user_code: userCode, verification_uri: `${origin}/login`, verification_uri_complete: `${origin}/login?code=${userCode}`, expires_in: 600, interval: 5, ...(native ? { native_return: true } : {}) }
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const userCode = String(randomInt(10000000, 100000000))
+      const value = { userCode, name: String(req.body?.name || 'KK Code').slice(0, 80), kind: req.body?.kind === 'device' ? 'device' : 'client', ...(native ? { native } : {}), expires: Date.now() + 600000, lastPoll: 0 }
+      await store.put(codeKey, value)
+      let reserved
+      try { reserved = await store.putIfAbsent(`login-user:${userCode}`, { codeKey }) }
+      catch (error) { await store.compareDelete(codeKey, value); throw error }
+      if (reserved) return { device_code: deviceCode, user_code: userCode, verification_uri: `${origin}/login`, verification_uri_complete: `${origin}/login?code=${userCode}`, expires_in: 600, interval: 5, ...(native ? { native_return: true } : {}) }
+      await store.compareDelete(codeKey, value)
+    }
+    throw failure('Could not allocate a unique login code', 503)
   })
   async function codeFor(userCode) {
     if (!/^\d{8}$/.test(String(userCode))) return null
@@ -125,9 +150,9 @@ export function registerIdentity({ app, store, config, origin, issuer, organizat
     catch { return endBrowserLogin(reply, flow, true) }
     const claims = tokens.claims()
     if (!claims?.sub) return browserError(reply, 401, 'Identity provider returned no subject')
-    const account = { id: identityHash(`${issuer}\0${claims.sub}`), organization, name: claims.name || claims.preferred_username || claims.sub, email: claims.email || '', admin: hasOrganizationRole(claims, rolesClaim, adminRole), disabled: false }
-    if ((await store.get(`account:${account.id}`))?.disabled) return browserError(reply, 403, 'Organization membership disabled')
-    await store.put(`account:${account.id}`, account)
+    const profile = { id: identityHash(`${issuer}\0${claims.sub}`), organization, name: claims.name || claims.preferred_username || claims.sub, email: claims.email || '', admin: hasOrganizationRole(claims, rolesClaim, adminRole) }
+    const account = await updateAccount(profile)
+    if (!account) return browserError(reply, 403, 'Organization membership disabled')
     const entry = await codeFor(flow.code)
     if (!entry || entry.value.confirmed || entry.value.denied) return browserError(reply, 400, 'Login request expired')
     const confirmation = secret()
@@ -140,7 +165,12 @@ export function registerIdentity({ app, store, config, origin, issuer, organizat
       if (await store.comparePut(current.key, current.value, { ...current.value, account, confirmation: identityHash(confirmation) })) { updated = true; break }
     }
     if (!updated) return browserError(reply, 409, 'Login request changed; restart login')
-    const browser = await issue(account)
+    let browser
+    try { browser = await issue(account) }
+    catch (error) {
+      if (error.statusCode !== 403) throw error
+      return browserError(reply, 403, 'Organization membership disabled')
+    }
     cookies(reply, browser)
     reply.clearCookie('kkcode_oauth_state', { path: '/auth' })
     return reply.type('text/html').send(page('确认连接', `<span class="caption">Confirm device</span><h1>是你发起的连接吗？</h1><p>${html(entry.value.name)}</p><p>${html(account.name)} · ${html(organization)}</p><form method="post" action="/auth/confirm"><input type="hidden" name="code" value="${flow.code}"><input type="hidden" name="confirmation" value="${confirmation}"><button>确认连接此设备<small>Allow this device</small></button></form>`))
@@ -163,7 +193,13 @@ export function registerIdentity({ app, store, config, origin, issuer, organizat
   })
   app.post('/auth/token', async (req, reply) => {
     const key = `login-code:${identityHash(req.body?.device_code)}`, entry = await store.get(key)
-    if (!entry || entry.expires <= Date.now()) { await store.delete(key); return reply.code(400).send({ error: 'expired_token' }) }
+    if (!entry || entry.expires <= Date.now()) {
+      if (entry) {
+        await store.compareDelete(key, entry)
+        await store.compareDelete(`login-user:${entry.userCode}`, { codeKey: key })
+      }
+      return reply.code(400).send({ error: 'expired_token' })
+    }
     if (!nativeLoginProof(entry, req.body)) return reply.code(400).send({ error: 'invalid_grant' })
     if (entry.denied) return reply.code(400).send({ error: entry.authorizationFailed ? 'authorization_failed' : 'access_denied' })
     if (req.body?.browser === true && entry.kind !== 'client') return reply.code(400).send({ error: 'client_grant_required' })
@@ -171,7 +207,7 @@ export function registerIdentity({ app, store, config, origin, issuer, organizat
     if (!entry.confirmed) { await store.comparePut(key, entry, { ...entry, lastPoll: Date.now() }); return reply.code(400).send({ error: 'authorization_pending' }) }
     const grant = await store.take(key)
     if (!grant?.confirmed || grant.denied || !nativeLoginProof(grant, req.body)) return reply.code(400).send({ error: grant?.denied ? 'access_denied' : 'expired_token' })
-    await store.delete(`login-user:${grant.userCode}`)
+    await store.compareDelete(`login-user:${grant.userCode}`, { codeKey: key })
     if ((await store.get(`account:${grant.account.id}`))?.disabled) return reply.code(403).send({ error: 'membership_disabled' })
     // A popup and its opener share the HttpOnly session established by callback.
     // Completing that browser grant must not leave an unnecessary extra session.
@@ -206,9 +242,15 @@ export function registerIdentity({ app, store, config, origin, issuer, organizat
   app.post('/api/v1/admin/members/:id/disable', async (req, reply) => {
     const { account } = await authenticate(req)
     if (!account.admin) return reply.code(403).send({ error: 'Administrator required' })
-    const member = await store.get(`account:${req.params.id}`)
-    if (!member || member.organization !== account.organization) return reply.code(404).send({ error: 'Member not found' })
-    await store.put(`account:${member.id}`, { ...member, disabled: true }); await revokeAccount(member.id)
+    const key = `account:${req.params.id}`
+    let member, updated = false
+    for (let attempt = 0; attempt < 5; attempt++) {
+      member = await store.get(key)
+      if (!member || member.organization !== account.organization) return reply.code(404).send({ error: 'Member not found' })
+      if (member.disabled || await store.comparePut(key, member, { ...member, disabled: true })) { updated = true; break }
+    }
+    if (!updated) return reply.code(409).send({ error: 'Membership changed; retry disable' })
+    await revokeAccount(member.id)
     await audit('member.disabled', account.id, member.id)
     return { disabled: true }
   })

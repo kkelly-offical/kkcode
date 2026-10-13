@@ -51,6 +51,11 @@ const sessions = await client.call('sessions.list', {});
 // 在你的已认证界面展示 sessions；不要在初始化客户端时自动修改/删除会话。
 ```
 
+`DeviceClient` 的 `retries` 是初始请求失败后的重试次数，必须是 0–5 的安全整数，
+默认是 5；0 表示只发起一次请求。`NaN`、无穷值、非整数、负数、超过 5 及其他
+非数值输入会在构造时抛出 `RangeError`，不会进入请求循环。Abort 仍会终止重试
+退避并阻止后续重试。
+
 SDK 不隐式获取 control lease；
 start/configure/rewind 等需要 `control.acquire`，完成后显式 `control.release`。
 删除／回退／停止等操作应先展示当前对象和影响，让用户确认，再提交对应版本参数。
@@ -81,8 +86,14 @@ await client.stream('session-id', {
 ```
 
 stream 消费一条连接；宿主决定重连/退回 `events()` 轮询。切换设备/卸载界面时
-abort，reader 会被取消释放；401 刷新复用已有单飞凭据轮转。replay.gap 要重新加载
-规范快照，不能把缺失的流片段当完整历史。Web 与 SDK 共用此实现。
+abort，reader 会被取消释放；401 刷新复用已有单飞凭据轮转。
+
+未提供 `onGap` 时，`replay.gap` 会取消 reader 并以 `code === 'replay_gap'` 拒绝；
+错误保留 `after`、`earliest`、`cursor` 恢复信息，不会继续分发缺口后的事件。
+`events()` 轮询使用相同错误码。显式提供 `onGap` 表示调用方接管恢复：通常应等待
+`sessions.get` 规范快照重建完成后再返回，返回后才继续接收事件；无法恢复时可抛错
+或 abort。回调中 abort 会拒绝流并取消 reader，不会分发当前批次的后续事件。
+Web 与 SDK 共用此实现。
 
 Node 通过 SSH 本地转发连接时，目标机仍严格校验 Host。浏览器兼容 fetch 不允许
 自定义 Host，可通过 SDK `fetch` 注入基于 Node HTTP 的转发传输；不要为迁就隧道

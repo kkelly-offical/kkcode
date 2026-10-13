@@ -30,13 +30,24 @@ let baseUrl
 let home
 let workDir
 
-function sseBody(chunks, usage) {
+function sseBody(chunks, usage, finishReason = "stop") {
   return [
     ...chunks.map((content) => `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`),
-    `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }], usage })}\n\n`,
+    `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: finishReason }], usage })}\n\n`,
     "data: [DONE]\n\n"
   ].join("")
 }
+
+function sseToolCallBody(text, call, usage) {
+  return [
+    `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: call.id, type: "function", function: { name: call.name, arguments: JSON.stringify(call.args) } }] } }] })}\n\n`,
+    `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "tool_calls" }], usage })}\n\n`,
+    "data: [DONE]\n\n"
+  ].join("")
+}
+
+let interleaveRequestCount = 0
 
 before(async () => {
   server = createServer((req, res) => {
@@ -50,6 +61,38 @@ before(async () => {
         // 必须是 status: "failed" + error 字段，且进程退出码非零（契约 §3.1）
         res.writeHead(500, { "content-type": "application/json" })
         res.end(JSON.stringify({ error: { message: "mock provider boom" } }))
+        return
+      }
+      if (payload.model === "mock-continue") {
+        const continued = (payload.messages || []).some((message) =>
+          message.role === "user" && JSON.stringify(message.content || "").includes("[OUTPUT TRUNCATED"))
+        const content = continued ? "后半" : "前半"
+        const finishReason = continued ? "stop" : "length"
+        if (payload.stream) {
+          res.writeHead(200, { "content-type": "text/event-stream" })
+          res.end(sseBody([content], { prompt_tokens: 11, completion_tokens: 7 }, finishReason))
+        } else {
+          res.writeHead(200, { "content-type": "application/json" })
+          res.end(JSON.stringify({
+            choices: [{ message: { role: "assistant", content }, finish_reason: finishReason }],
+            usage: { prompt_tokens: 11, completion_tokens: 7 }
+          }))
+        }
+        return
+      }
+      if (payload.model === "mock-interleave") {
+        interleaveRequestCount += 1
+        const usage = { prompt_tokens: 11, completion_tokens: 7 }
+        res.writeHead(200, { "content-type": "text/event-stream" })
+        if (interleaveRequestCount === 1) res.end(sseBody(["前半"], usage, "length"))
+        else if (interleaveRequestCount === 2) {
+          res.end(sseToolCallBody("中间", { id: "list-middle", name: "list", args: { path: "." } }, usage))
+        } else res.end(sseBody(["后半"], usage))
+        return
+      }
+      if (payload.model === "mock-newline") {
+        res.writeHead(200, { "content-type": "text/event-stream" })
+        res.end(sseBody(["前半\n", "\n", "后半"], { prompt_tokens: 11, completion_tokens: 7 }))
         return
       }
       if (payload.stream) {
@@ -175,6 +218,66 @@ test("e2e headless 契约：--output-format stream-json 逐行 delta 且全部�
     "delta 顺序拼接必须等于终态 content"
   )
   assert.equal(results[0].status, "succeeded")
+})
+
+test("e2e headless 契约：auto-continue 的 text/json/stream-json 终态与 delta 均保留全部正文", async () => {
+  for (const format of ["text", "json", "stream-json"]) {
+    const { stdout, stderr, exitCode } = await runCli([
+      "chat", "continue", "--output-format", format, "--model", "mock-continue"
+    ])
+    assert.equal(exitCode, 0, `${format} 模式应成功退出，stderr：${stderr}`)
+    if (format === "text") {
+      assert.equal(stdout, "前半后半\n")
+      continue
+    }
+
+    const events = parseJsonlContract(stdout)
+    const result = events.at(-1)
+    assert.equal(result.type, "turn.result")
+    assert.equal(result.content, "前半后半", `${format} 终态必须包含所有续写分段`)
+    if (format === "json") assert.equal(events.length, 1)
+    if (format === "stream-json") {
+      const deltas = events.filter((event) => event.type === "assistant.delta")
+      assert.ok(deltas.length >= 2, "每个自动续写分段仍按实际到达顺序发送")
+      assert.equal(
+        deltas.map((event) => event.delta).join("").trimEnd(),
+        result.content,
+        "自动续写的 delta 顺序拼接必须等于终态 content"
+      )
+    }
+  }
+})
+
+test("e2e headless 契约：auto-continue 中间工具调用的渲染分隔不进入 stream-json 正文", async () => {
+  const { stdout, stderr, exitCode } = await runCli([
+    "chat", "interleave", "--output-format", "stream-json", "--model", "mock-interleave", "--trust"
+  ])
+  assert.equal(exitCode, 0, `交错续写应成功退出，stderr：${stderr}`)
+  const events = parseJsonlContract(stdout)
+  const result = events.at(-1)
+  assert.equal(result.type, "turn.result")
+  assert.equal(result.status, "succeeded")
+  assert.equal(result.content, "前半中间后半")
+  assert.ok(result.toolResults.some((event) => event.name === "list" && event.status === "completed"),
+    "中间 list 工具调用必须真实执行成功")
+
+  const deltas = events.filter((event) => event.type === "assistant.delta")
+  assert.deepEqual(deltas.map((event) => event.delta), ["前半", "中间", "后半", "\n"])
+  assert.equal(deltas.map((event) => event.delta).join("").trimEnd(), result.content)
+  assert.ok(!deltas.some((event) => event.delta.includes("output truncated")), "续写提示不属于助手正文")
+})
+
+test("e2e headless 契约：模型正文中的独立换行不得被误认为渲染分隔", async () => {
+  const { stdout, stderr, exitCode } = await runCli([
+    "chat", "newline", "--output-format", "stream-json", "--model", "mock-newline"
+  ])
+  assert.equal(exitCode, 0, `独立正文换行用例应成功退出，stderr：${stderr}`)
+  const events = parseJsonlContract(stdout)
+  const result = events.at(-1)
+  assert.equal(result.content, "前半\n\n后半")
+  const deltas = events.filter((event) => event.type === "assistant.delta")
+  assert.deepEqual(deltas.map((event) => event.delta), ["前半\n", "\n", "后半", "\n"])
+  assert.equal(deltas.map((event) => event.delta).join("").trimEnd(), result.content)
 })
 
 test("e2e headless 契约：进程级失败时 stdout 保持纯 JSONL（零事件），错误只在 stderr", async () => {

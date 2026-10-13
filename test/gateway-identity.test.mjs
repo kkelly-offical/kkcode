@@ -1,12 +1,15 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import Fastify from 'fastify'
+import { generateKeyPair, exportJWK, SignJWT } from 'jose'
+import crypto, { createHash, randomUUID } from 'node:crypto'
+import { syncBuiltinESMExports } from 'node:module'
 import { createGateway } from '../src/remote/gateway.mjs'
 import { MemoryStore, PostgresStore } from '../src/remote/store.mjs'
 import { identityHash, hasOrganizationRole } from '../src/remote/identity.mjs'
 import { PACKAGE_VERSION } from '../src/version.mjs'
 
-async function fixture(run) {
-  const store = new MemoryStore()
+async function fixture(run, store = new MemoryStore()) {
   const account = { id: 'owner', name: 'Owner', organization: 'QA', admin: false }
   const colleague = { id: 'viewer', name: 'Viewer', organization: 'QA', admin: false }
   const administrator = { id: 'admin', name: 'Admin', organization: 'QA', admin: true }
@@ -20,6 +23,182 @@ async function fixture(run) {
   const app = await createGateway({ origin: 'http://localhost', issuer: 'https://idp.invalid', clientId: 'test', dev: true, oidcConfig: {}, store, organization: 'QA' })
   const request = (url, token = 'a', payload) => app.inject({ method: payload === undefined ? 'GET' : 'POST', url, headers: { host: 'localhost', authorization: `Bearer fixture-${token}` }, ...(payload === undefined ? {} : { payload }) })
   try { await run({ app, store, request }) } finally { await app.close() }
+}
+
+function postgresFixtureStore() {
+  const store = new PostgresStore('postgresql://localhost/fixture'), records = new Map()
+  store.prune = async () => {}
+  store.pool.query = async (sql, values = []) => {
+    if (sql === 'SELECT value FROM kkcode_gateway WHERE key = $1') {
+      const value = records.get(values[0])
+      return { rows: value === undefined ? [] : [{ value: structuredClone(value) }] }
+    }
+    if (sql === 'SELECT key,value FROM kkcode_gateway WHERE starts_with(key,$1)') return { rows: [...records].filter(([key]) => key.startsWith(values[0])).map(([key, value]) => ({ key, value: structuredClone(value) })) }
+    if (sql.startsWith('INSERT INTO kkcode_gateway(key,value)')) {
+      if (sql.includes('ON CONFLICT(key) DO NOTHING') && records.has(values[0])) return { rowCount: 0, rows: [] }
+      records.set(values[0], JSON.parse(values[1]))
+      return { rowCount: 1, rows: [] }
+    }
+    if (sql === 'UPDATE kkcode_gateway SET value=$3 WHERE key=$1 AND value=$2') {
+      if (JSON.stringify(records.get(values[0])) !== values[1]) return { rowCount: 0, rows: [] }
+      records.set(values[0], JSON.parse(values[2]))
+      return { rowCount: 1, rows: [] }
+    }
+    if (sql === 'DELETE FROM kkcode_gateway WHERE key=$1 RETURNING value') {
+      const value = records.get(values[0])
+      records.delete(values[0])
+      return { rowCount: value === undefined ? 0 : 1, rows: value === undefined ? [] : [{ value: structuredClone(value) }] }
+    }
+    if (sql === 'DELETE FROM kkcode_gateway WHERE key=$1 AND value=$2') {
+      if (JSON.stringify(records.get(values[0])) !== values[1]) return { rowCount: 0, rows: [] }
+      records.delete(values[0])
+      return { rowCount: 1, rows: [] }
+    }
+    if (sql === 'DELETE FROM kkcode_gateway WHERE key=$1') {
+      const deleted = records.delete(values[0])
+      return { rowCount: deleted ? 1 : 0, rows: [] }
+    }
+    throw new Error(`Unexpected PostgreSQL fixture query: ${sql}`)
+  }
+  return store
+}
+
+async function withUserCodes(t, codes, run) {
+  const remaining = [...codes]
+  t.mock.method(crypto, 'randomInt', () => remaining.length ? remaining.shift() : codes.at(-1))
+  syncBuiltinESMExports()
+  try { await run() } finally { t.mock.restoreAll(); syncBuiltinESMExports() }
+}
+
+async function checkLoginCodeCollision(t, store) {
+  await withUserCodes(t, [10000000, 10000000, 10000001], () => fixture(async ({ request, store }) => {
+    const create = async name => {
+      const response = await request('/auth/device', 'a', { kind: 'device', name })
+      assert.equal(response.statusCode, 200, response.body)
+      return response.json()
+    }
+    const first = await create('First device'), second = await create('Second device')
+    const account = await store.get('account:owner')
+    for (const flow of [first, second]) {
+      const key = `login-code:${identityHash(flow.device_code)}`
+      await store.put(key, { ...await store.get(key), account, confirmation: identityHash('fixture-confirmation') })
+    }
+    const confirm = flow => request('/auth/confirm', 'a', { code: flow.user_code, confirmation: 'fixture-confirmation' })
+    assert.equal((await confirm(first)).statusCode, 200)
+    const firstExchange = await request('/auth/token', 'a', { device_code: first.device_code })
+    assert.equal(firstExchange.statusCode, 200, firstExchange.body)
+    assert.ok(firstExchange.json().access_token)
+    assert.equal((await store.get(`login-code:${identityHash(second.device_code)}`)).confirmed, undefined)
+    assert.equal((await confirm(second)).statusCode, 200)
+    const secondExchange = await request('/auth/token', 'a', { device_code: second.device_code })
+    assert.equal(secondExchange.statusCode, 200, secondExchange.body)
+    assert.ok(secondExchange.json().access_token)
+    assert.equal(first.user_code, '10000000')
+    assert.equal(second.user_code, '10000001')
+    assert.notEqual(first.device_code, second.device_code)
+    assert.notEqual(firstExchange.json().access_token, secondExchange.json().access_token)
+    assert.equal(await store.get(`login-user:${first.user_code}`), null)
+    assert.equal(await store.get(`login-user:${second.user_code}`), null)
+    assert.equal((await store.list('login-code:')).length, 0)
+  }, store))
+}
+
+for (const [backend, createStore] of [['Memory', () => new MemoryStore()], ['PostgreSQL', () => postgresFixtureStore()]]) test(`${backend} login code collisions keep confirmation and device grants bound`, async t => {
+  await checkLoginCodeCollision(t, createStore())
+})
+
+test('login code allocation has bounded collision retries and preserves the active grant', async t => {
+  const store = new MemoryStore()
+  await withUserCodes(t, [10000000], () => fixture(async ({ request, store }) => {
+    const first = await request('/auth/device', 'a', { kind: 'device', name: 'First device' })
+    assert.equal(first.statusCode, 200, first.body)
+    const codeKey = `login-code:${identityHash(first.json().device_code)}`
+    const collision = await request('/auth/device', 'a', { kind: 'device', name: 'Colliding device' })
+    assert.equal(collision.statusCode, 503, collision.body)
+    assert.deepEqual(await store.get('login-user:10000000'), { codeKey })
+    assert.equal((await store.get(codeKey)).name, 'First device')
+    assert.equal((await store.list('login-code:')).length, 1)
+  }, store))
+})
+
+test('token cleanup cannot delete a replacement user-code mapping', () => fixture(async ({ request, store }) => {
+  const created = await request('/auth/device', 'a', { kind: 'device', name: 'Original device' })
+  const flow = created.json(), codeKey = `login-code:${identityHash(flow.device_code)}`, replacement = { codeKey: 'login-code:replacement' }
+  const account = await store.get('account:owner')
+  await store.put(codeKey, { ...await store.get(codeKey), account, confirmed: true })
+  const take = store.take.bind(store)
+  store.take = async key => {
+    const grant = await take(key)
+    if (key === codeKey) await store.put(`login-user:${flow.user_code}`, replacement)
+    return grant
+  }
+  const exchanged = await request('/auth/token', 'a', { device_code: flow.device_code })
+  assert.equal(exchanged.statusCode, 200, exchanged.body)
+  assert.deepEqual(await store.get(`login-user:${flow.user_code}`), replacement)
+}))
+
+test('expired grant cleanup cannot delete a replacement user-code mapping', () => fixture(async ({ app, request, store }) => {
+  await app.ready()
+  const codeKey = 'login-code:expired', userCode = '12345678', replacement = { codeKey: 'login-code:replacement' }
+  await store.put(codeKey, { userCode, name: 'Expired device', kind: 'device', expires: Date.now() - 1, lastPoll: 0 })
+  await store.put(`login-user:${userCode}`, { codeKey })
+  const remove = store.delete.bind(store), compareDelete = store.compareDelete.bind(store)
+  store.delete = async key => {
+    await remove(key)
+    if (key === codeKey) await store.put(`login-user:${userCode}`, replacement)
+  }
+  store.compareDelete = async (key, expected) => {
+    const deleted = await compareDelete(key, expected)
+    if (deleted && key === codeKey) await store.put(`login-user:${userCode}`, replacement)
+    return deleted
+  }
+  const created = await request('/auth/device', 'a', { kind: 'device', name: 'Active device' })
+  assert.equal(created.statusCode, 200, created.body)
+  assert.deepEqual(await store.get(`login-user:${userCode}`), replacement)
+}))
+
+const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
+
+async function oidcFixture(run) {
+  const idp = Fastify(), grants = new Map()
+  const { publicKey, privateKey } = await generateKeyPair('RS256')
+  const jwk = await exportJWK(publicKey); jwk.kid = 'fixture'
+  let issuer
+  idp.get('/.well-known/openid-configuration', async () => ({ issuer, authorization_endpoint: `${issuer}/authorize`, token_endpoint: `${issuer}/token`, jwks_uri: `${issuer}/jwks`, response_types_supported: ['code'], subject_types_supported: ['public'], id_token_signing_alg_values_supported: ['RS256'], token_endpoint_auth_methods_supported: ['client_secret_post'], code_challenge_methods_supported: ['S256'] }))
+  idp.get('/jwks', async () => ({ keys: [jwk] }))
+  idp.get('/authorize', async (req, reply) => { const code = randomUUID(); grants.set(code, req.query); const target = new URL(req.query.redirect_uri); target.searchParams.set('state', req.query.state); target.searchParams.set('code', code); return reply.redirect(target.href) })
+  idp.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (req, body, done) => done(null, Object.fromEntries(new URLSearchParams(body))))
+  idp.post('/token', async (req, reply) => {
+    const grant = grants.get(req.body.code); grants.delete(req.body.code)
+    if (!grant || createHash('sha256').update(req.body.code_verifier).digest('base64url') !== grant.code_challenge) return reply.code(400).send({ error: 'invalid_grant' })
+    return { access_token: 'fixture-access', token_type: 'Bearer', expires_in: 3600, id_token: await new SignJWT({ nonce: grant.nonce, name: 'Updated Owner', email: 'updated@example.test' }).setProtectedHeader({ alg: 'RS256', kid: 'fixture' }).setSubject('owner').setAudience('kkcode').setIssuer(issuer).setIssuedAt().setExpirationTime('5m').sign(privateKey) }
+  })
+  issuer = await idp.listen({ host: '127.0.0.1', port: 0 })
+  let app
+  try {
+    const store = new MemoryStore()
+    const member = { id: identityHash(`${issuer}\0owner`), organization: 'QA', name: 'Previous Owner', email: 'previous@example.test', admin: false, disabled: false }
+    const administrator = { id: 'admin', organization: 'QA', name: 'Admin', admin: true, disabled: false }
+    await store.put(`account:${member.id}`, member)
+    await store.put('account:admin', administrator)
+    await store.put('identity-session:admin', { id: 'admin', accountId: 'admin', kind: 'client', expires: Date.now() + 60000 })
+    await store.put(`token:${identityHash('fixture-admin')}`, { sessionId: 'admin', account: administrator, kind: 'client', expires: Date.now() + 60000 })
+    app = await createGateway({ origin: 'http://localhost', issuer, clientId: 'kkcode', clientSecret: 'fixture-secret', store, dev: true, organization: 'QA' })
+    async function prepareCallback() {
+      const device = await app.inject({ method: 'POST', url: '/auth/device', headers: { host: 'localhost' }, payload: { kind: 'device', name: 'QA device' } })
+      assert.equal(device.statusCode, 200, device.body)
+      const flow = device.json()
+      const start = await app.inject({ url: `/auth/start?code=${flow.user_code}`, headers: { host: 'localhost' } })
+      assert.equal(start.statusCode, 302, start.body)
+      const stateCookie = start.headers['set-cookie'].split(';')[0]
+      const authorized = await fetch(start.headers.location, { redirect: 'manual' })
+      assert.equal(authorized.status, 302)
+      const target = new URL(authorized.headers.get('location'))
+      return { flow, callback: () => app.inject({ url: `${target.pathname}${target.search}`, headers: { host: 'localhost', cookie: stateCookie } }) }
+    }
+    const disableMember = () => app.inject({ method: 'POST', url: `/api/v1/admin/members/${member.id}/disable`, headers: { host: 'localhost', authorization: 'Bearer fixture-admin' }, payload: {} })
+    await run({ app, store, member, prepareCallback, disableMember })
+  } finally { await app?.close(); await idp.close() }
 }
 
 test('gateway refresh rotation is single-use and keeps the stable controller session ID', () => fixture(async ({ request, store }) => {
@@ -59,6 +238,53 @@ test('disabling organization membership revokes all its clients, refresh grants 
   assert.equal((await request('/auth/refresh', 'a', { refresh_token: 'fixture-refresh-a' })).statusCode, 401)
   assert.equal(await store.get('identity-session:d'), null)
   assert.equal((await store.get('account:owner')).disabled, true)
+}))
+
+test('OIDC callback refreshes mutable profile fields for an active member', { timeout: 10000 }, () => oidcFixture(async ({ store, member, prepareCallback }) => {
+  const { callback } = await prepareCallback()
+  const result = await callback()
+  assert.equal(result.statusCode, 200, result.body)
+  const saved = await store.get(`account:${member.id}`)
+  assert.equal(saved.name, 'Updated Owner')
+  assert.equal(saved.email, 'updated@example.test')
+  assert.equal(saved.disabled, false)
+  assert.equal((await store.list('identity-session:')).filter(session => session.accountId === member.id).length, 1)
+}))
+
+test('OIDC callback cannot overwrite a concurrent membership disable', { timeout: 10000 }, () => oidcFixture(async ({ store, member, prepareCallback, disableMember }) => {
+  const { callback } = await prepareCallback()
+  const get = store.get.bind(store), reached = deferred(), release = deferred()
+  let armed = true
+  store.get = async key => {
+    const value = await get(key)
+    if (armed && key === `account:${member.id}`) { armed = false; reached.resolve(); await release.promise }
+    return value
+  }
+  const pending = callback()
+  await reached.promise
+  try { assert.equal((await disableMember()).statusCode, 200) } finally { release.resolve() }
+  const result = await pending
+  assert.equal(result.statusCode, 403, result.body)
+  assert.equal((await store.get(`account:${member.id}`)).disabled, true)
+  assert.equal((await store.list('identity-session:')).some(session => session.accountId === member.id), false)
+}))
+
+test('OIDC callback rechecks membership immediately before issuing browser credentials', { timeout: 10000 }, () => oidcFixture(async ({ store, member, prepareCallback, disableMember }) => {
+  const { callback } = await prepareCallback()
+  const comparePut = store.comparePut.bind(store), reached = deferred(), release = deferred()
+  let armed = true
+  store.comparePut = async (key, expected, value) => {
+    const updated = await comparePut(key, expected, value)
+    if (armed && updated && key.startsWith('login-code:') && value.confirmation) { armed = false; reached.resolve(); await release.promise }
+    return updated
+  }
+  const pending = callback()
+  await reached.promise
+  try { assert.equal((await disableMember()).statusCode, 200) } finally { release.resolve() }
+  const result = await pending
+  assert.equal(result.statusCode, 403, result.body)
+  assert.equal((await store.get(`account:${member.id}`)).disabled, true)
+  assert.equal((await store.list('identity-session:')).some(session => session.accountId === member.id), false)
 }))
 
 test('memory-store compare-and-swap and one-shot take permit one concurrent winner', async () => {
