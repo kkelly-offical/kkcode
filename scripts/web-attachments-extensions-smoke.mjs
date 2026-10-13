@@ -91,13 +91,46 @@ try {
   await page.getByRole('button', { name: '保存到当前设备', exact: true }).click()
   await expect(page.locator('.connection-row').filter({ hasText: 'design' })).toBeVisible()
   assert.ok(!(await readFile(path.join(process.env.KKCODE_HOME, 'config.json'), 'utf8')).includes('fixture-private-value'))
+
+  const originalArgs = '--original\nvalue with spaces', appendedArgs = `${originalArgs}\n--added`
+  const saveConnection = () => page.getByRole('button', { name: '保存到当前设备', exact: true }).click()
+  await page.getByRole('button', { name: '＋ 添加', exact: true }).click()
+  await page.getByRole('textbox', { name: '名称', exact: true }).fill('local-args')
+  await page.getByRole('combobox', { name: '连接方式', exact: true }).selectOption('stdio')
+  await page.getByRole('textbox', { name: '可执行程序', exact: true }).fill('fixture-stdio')
+  const argsInput = page.getByRole('textbox', { name: '程序参数', exact: true }), localRow = page.locator('.connection-row').filter({ hasText: 'local-args' })
+  const editLocal = async () => { await localRow.getByRole('button', { name: '配置', exact: true }).click(); await expect(argsInput).toBeVisible() }
+  await argsInput.fill(originalArgs)
+  await saveConnection()
+  await expect(localRow).toBeVisible()
+
+  await editLocal()
+  await expect(argsInput).toHaveValue(originalArgs)
+  await saveConnection()
+  await expect(localRow).toBeVisible()
+
+  await editLocal()
+  await expect(argsInput).toHaveValue(originalArgs)
+  await argsInput.fill(appendedArgs)
+  await saveConnection()
+  await expect(localRow).toBeVisible()
+
+  await editLocal()
+  await expect(argsInput).toHaveValue(appendedArgs)
+  await argsInput.fill('')
+  await saveConnection()
+  await expect(localRow).toBeVisible()
+  await editLocal()
+  await expect(argsInput).toHaveValue('')
+  await page.getByRole('button', { name: '取消', exact: true }).click()
+
   await page.setViewportSize({ width: 390, height: 844 })
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false)
   await page.screenshot({ path: 'test-results/experience-113/connections-mobile.png' })
   await page.keyboard.press('Escape')
   await expect(input).toHaveValue('配置期间保留的草稿')
   assert.deepEqual(errors, [])
-  console.log('Real UI passed: new-conversation multi-file paste and retry share one session, clipboard image, thumbnail, DOCX extraction, attachment-only send, encrypted connection form, retained draft and mobile layout; no model inference.')
+  console.log('Real UI passed: new-conversation multi-file paste and retry share one session, clipboard image, thumbnail, DOCX extraction, attachment-only send, encrypted connection form, lossless stdio argument editing, retained draft and mobile layout; no model inference.')
 } finally {
   await browser.close(); await server.close(); if(previous === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = previous
   await rm(root, { recursive: true, force: true })
