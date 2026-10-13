@@ -96,10 +96,19 @@ export async function executePromptTurn({
     }
   }
 
+  const chatParams = await chatParamsFn({
+    prompt: effectivePrompt,
+    mode: state.mode,
+    model: state.model,
+    providerType: state.providerType,
+    sessionId: state.sessionId
+  })
+  const finalPrompt = chatParams.prompt ?? effectivePrompt
+
   let contentBlocks = null
 
   if (imagePaths.length || imageUrls.length || pendingImages.length) {
-    contentBlocks = await buildContentBlocksFn(effectivePrompt, imagePaths, imageUrls)
+    contentBlocks = await buildContentBlocksFn(finalPrompt, imagePaths, imageUrls)
     if (typeof contentBlocks === "string") {
       contentBlocks = [{ type: "text", text: contentBlocks }]
     }
@@ -110,17 +119,9 @@ export async function executePromptTurn({
     }
   }
 
-  const chatParams = await chatParamsFn({
-    prompt: effectivePrompt,
-    mode: state.mode,
-    model: state.model,
-    providerType: state.providerType,
-    sessionId: state.sessionId
-  })
-
   return {
     result: await executeTurnFn({
-      prompt: chatParams.prompt ?? effectivePrompt,
+      prompt: finalPrompt,
       contentBlocks,
       mode: chatParams.mode ?? state.mode,
       model: chatParams.model ?? state.model,

@@ -53,6 +53,60 @@ test("executePromptTurn builds content blocks and appends pending images", async
   assert.equal(received.contentBlocks[1].type, "image")
 })
 
+test("executePromptTurn applies hook prompt rewrites without changing attachment blocks or mention boundaries", async () => {
+  const userPrompt = "compare @selected.png with @notes.txt"
+  const mentionSuffix = '\n\n<file path="notes.txt">\nORIGINAL_ATTACHMENT\n@not-selected.png\n</file>'
+  const attachmentBlocks = [
+    { type: "image", path: "/tmp/repo/selected.png", mediaType: "image/png", data: "ORIGINAL_IMAGE" },
+    { type: "text", text: "[image not found: /tmp/repo/missing.png]" }
+  ]
+  const pendingImages = [
+    { type: "image", mediaType: "image/png", data: "PENDING_IMAGE" },
+    { type: "video", mediaType: "video/mp4", data: "PENDING_VIDEO" },
+    { type: "audio", mediaType: "audio/mpeg", data: "PENDING_AUDIO" }
+  ]
+  const builds = []
+  let finalPrompt = ""
+  let received = null
+
+  await executePromptTurn({
+    prompt: userPrompt + mentionSuffix,
+    imageReferenceLength: userPrompt.length,
+    state: { mode: "agent", model: "gpt-5", providerType: "openai", sessionId: "sid_hook_attachment" },
+    ctx: { configState: { config: {} } },
+    pendingImages,
+    deps: {
+      cwd: "/tmp/repo",
+      extractImageRefs: (text) => ({ text, imagePaths: [], imageUrls: [] }),
+      buildContentBlocks: async (text, imagePaths, imageUrls) => {
+        builds.push({ imagePaths, imageUrls })
+        return [{ type: "text", text }, ...attachmentBlocks]
+      },
+      chatParams: async (params) => {
+        finalPrompt = `hook rewritten\n${params.prompt}\n@from-hook.png`
+        return { ...params, prompt: finalPrompt }
+      },
+      executeTurn: async (params) => {
+        received = params
+        return { reply: "ok" }
+      }
+    }
+  })
+
+  assert.equal(received.prompt, finalPrompt)
+  assert.deepEqual(received.contentBlocks, [
+    { type: "text", text: finalPrompt },
+    ...attachmentBlocks,
+    ...pendingImages
+  ])
+  assert.ok(received.contentBlocks[0].text.includes(mentionSuffix))
+  assert.equal(builds.length, 1)
+  assert.deepEqual(builds[0], {
+    imagePaths: [path.resolve("/tmp/repo", "selected.png")],
+    imageUrls: []
+  })
+})
+
 test("executePromptTurn applies chat param overrides and stream sink", async () => {
   let received = null
   const writes = []
