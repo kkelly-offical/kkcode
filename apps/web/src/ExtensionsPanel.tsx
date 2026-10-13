@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Icon } from './Icon';
 type Item = Record<string, any>;
 const empty = { name: '', transport: 'streamable-http', url: '', command: '', args: '', auth: 'none', env: [] as Item[], headers: [] as Item[], source: '', revision: '', content: '' };
+const argsToText = (args: string[]) => args.join('\n') + (args[args.length - 1] === '' ? '\n' : '');
+const argsFromText = (text: string) => { const args = text.split('\n'); if (args[args.length - 1] === '') args.pop(); return args; };
 
 export function ExtensionsPanel({ rpc, deviceName }: { rpc: (method: string, params?: Item) => Promise<any>; deviceName: string }) {
   const api = useRef(rpc); api.current = rpc;
@@ -18,7 +20,7 @@ export function ExtensionsPanel({ rpc, deviceName }: { rpc: (method: string, par
     return () => { active = false; clearInterval(timer); };
   }, [flow?.id, flow?.status]);
   const manage = (params: Item) => api.current('extensions.manage', params);
-  const edit = (item?: Item) => setDraft(item ? { ...empty, ...item, url: '', args: (item.args || []).join('\n'), env: (item.envKeys || []).map((key: string) => ({ key, value: '' })), headers: (item.headerKeys || []).map((key: string) => ({ key, value: '' })), existing: true } : { ...empty, env: [], headers: [] });
+  const edit = (item?: Item) => setDraft(item ? { ...empty, ...item, url: '', args: argsToText(item.args || []), env: (item.envKeys || []).map((key: string) => ({ key, value: '' })), headers: (item.headerKeys || []).map((key: string) => ({ key, value: '' })), existing: true } : { ...empty, env: [], headers: [] });
   const rows = (Array.isArray(catalog[tab]) ? catalog[tab] : []).filter((item: Item) => `${item.name} ${item.description || ''}`.toLowerCase().includes(query.toLowerCase()));
   const fields = (kind: 'env' | 'headers', title: string) => <fieldset className="connection-fields"><legend>{title}</legend>
     {draft![kind].map((field: Item, index: number) => <div className="connection-field" key={index}>
@@ -41,7 +43,7 @@ export function ExtensionsPanel({ rpc, deviceName }: { rpc: (method: string, par
     </section>}
     {review && <section className="connection-auth"><h3>检查插件权限 · {review.name}</h3><p className="sheet-note">来源：{review.source || review.lock?.source || "本机已安装插件"}{review.revision || review.lock?.revision ? ` · ${(review.revision || review.lock.revision).slice(0, 12)}` : ""}</p><p className="sheet-note">启用后，此插件可以在当前电脑执行以下能力。请核实来源后再启用。</p><ul>{(review.capabilities || review.addedCapabilities || []).map((capability: string) => <li key={capability}>{capability}</li>)}</ul><button disabled={saving} onClick={() => void run(async () => { await manage({ action: 'plugin.manage', name: review.name, operation: 'approve', confirmHash: review.contentHash }); setReview(null); await refresh(); })}>确认来源并启用</button><button disabled={saving} onClick={() => void run(async () => { await manage({ action: "plugin.manage", name: review.name, operation: "disable" }); setReview(null); await refresh(); })}>停用插件</button><button disabled={saving} onClick={() => void run(async () => { await manage({ action: "plugin.manage", name: review.name, operation: "remove" }); setReview(null); await refresh(); })}>移入已移除插件</button><button onClick={() => setReview(null)}>返回</button></section>}
     {draft ? <form className="connection-form" onSubmit={e => { e.preventDefault(); void run(async () => {
-      const result = await manage(tab === 'mcp' ? { ...draft, action: 'mcp.save', args: draft.args.split('\n').filter(Boolean), ...(draft.transport === 'stdio' ? { argsMode: 'replace' } : {}) } : tab === 'plugins' ? { name: draft.name, source: draft.source, revision: draft.revision, action: 'plugin.install' } : { name: draft.name, content: draft.content, action: 'skill.save' });
+      const result = await manage(tab === 'mcp' ? { ...draft, action: 'mcp.save', args: argsFromText(draft.args), ...(draft.transport === 'stdio' ? { argsMode: 'replace' } : {}) } : tab === 'plugins' ? { name: draft.name, source: draft.source, revision: draft.revision, action: 'plugin.install' } : { name: draft.name, content: draft.content, action: 'skill.save' });
       setDraft(null); if (result.pendingApproval) setReview(result); await refresh();
     }); }}>
       <h3>{draft.existing ? '编辑连接' : '添加' + (tab === 'mcp' ? ' MCP 连接' : tab === 'plugins' ? '插件' : '技能')}</h3>

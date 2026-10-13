@@ -10,7 +10,11 @@ import { zipSync, strToU8 } from 'fflate'
 
 const root = await mkdtemp(path.join(os.tmpdir(), 'kkcode-113-ui-')), previous = process.env.KKCODE_HOME
 process.env.KKCODE_HOME = path.join(root, 'state'); await mkdir(process.env.KKCODE_HOME)
-await writeFile(path.join(process.env.KKCODE_HOME, 'config.json'), JSON.stringify({ provider: { default: 'openai', openai: { default_model: 'fixture', stream: false }, model_capabilities: { fixture: { image: true } } }, skills: { auto_seed: false }, mcp: { auto_discover: false } }))
+const originalArgValues = ['--original', '', 'value with spaces']
+await writeFile(path.join(process.env.KKCODE_HOME, 'config.json'), JSON.stringify({ provider: { default: 'openai', openai: { default_model: 'fixture', stream: false }, model_capabilities: { fixture: { image: true } } }, skills: { auto_seed: false }, mcp: { auto_discover: false, servers: {
+  'local-args': { transport: 'stdio', command: 'fixture-stdio', args: originalArgValues },
+  'argv-args': { transport: 'stdio', command: ['fixture-stdio', ...originalArgValues] },
+} } }))
 const calls = []
 const service = await new DeviceService({ cwd: root, roots: [root], createKernelImpl: async options => {
   const kernel = await createKernel({ ...options, trustState: { trusted: true } })
@@ -92,37 +96,35 @@ try {
   await expect(page.locator('.connection-row').filter({ hasText: 'design' })).toBeVisible()
   assert.ok(!(await readFile(path.join(process.env.KKCODE_HOME, 'config.json'), 'utf8')).includes('fixture-private-value'))
 
-  const originalArgs = '--original\nvalue with spaces', appendedArgs = `${originalArgs}\n--added`
-  const saveConnection = () => page.getByRole('button', { name: '保存到当前设备', exact: true }).click()
-  await page.getByRole('button', { name: '＋ 添加', exact: true }).click()
-  await page.getByRole('textbox', { name: '名称', exact: true }).fill('local-args')
-  await page.getByRole('combobox', { name: '连接方式', exact: true }).selectOption('stdio')
-  await page.getByRole('textbox', { name: '可执行程序', exact: true }).fill('fixture-stdio')
-  const argsInput = page.getByRole('textbox', { name: '程序参数', exact: true }), localRow = page.locator('.connection-row').filter({ hasText: 'local-args' })
-  const editLocal = async () => { await localRow.getByRole('button', { name: '配置', exact: true }).click(); await expect(argsInput).toBeVisible() }
-  await argsInput.fill(originalArgs)
-  await saveConnection()
-  await expect(localRow).toBeVisible()
+  const originalArgs = originalArgValues.join('\n'), appendedArgs = `${originalArgs}\n--added`
+  const argsInput = page.getByRole('textbox', { name: '程序参数', exact: true })
+  const checkRoundTrip = async (name, original, appended, initialize = false) => {
+    const row = page.locator('.connection-row').filter({ hasText: name })
+    const edit = async () => { await row.getByRole('button', { name: '配置', exact: true }).click(); await expect(argsInput).toBeVisible() }
+    const save = async () => { await page.getByRole('button', { name: '保存到当前设备', exact: true }).click(); await expect(row).toBeVisible() }
+    await edit()
+    if (initialize) { await argsInput.fill(original); await save(); await edit() }
+    await expect(argsInput).toHaveValue(original)
+    await save()
 
-  await editLocal()
-  await expect(argsInput).toHaveValue(originalArgs)
-  await saveConnection()
-  await expect(localRow).toBeVisible()
+    await edit()
+    await expect(argsInput).toHaveValue(original)
+    await argsInput.fill(appended)
+    await save()
 
-  await editLocal()
-  await expect(argsInput).toHaveValue(originalArgs)
-  await argsInput.fill(appendedArgs)
-  await saveConnection()
-  await expect(localRow).toBeVisible()
-
-  await editLocal()
-  await expect(argsInput).toHaveValue(appendedArgs)
-  await argsInput.fill('')
-  await saveConnection()
-  await expect(localRow).toBeVisible()
-  await editLocal()
-  await expect(argsInput).toHaveValue('')
-  await page.getByRole('button', { name: '取消', exact: true }).click()
+    await edit()
+    await expect(argsInput).toHaveValue(appended)
+    await argsInput.fill('')
+    await save()
+    await edit()
+    await expect(argsInput).toHaveValue('')
+    await page.getByRole('button', { name: '取消', exact: true }).click()
+  }
+  for (const name of ['local-args', 'argv-args']) {
+    await checkRoundTrip(name, originalArgs, appendedArgs)
+    await checkRoundTrip(name, '\n', '\n--added', true)
+    await checkRoundTrip(name, '--original\n\n', '--original\n\n--added', true)
+  }
 
   await page.setViewportSize({ width: 390, height: 844 })
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false)
