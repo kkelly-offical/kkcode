@@ -15,7 +15,7 @@ const server = createServer(async (request, response) => {
 })
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
 const address = `http://127.0.0.1:${server.address().port}`
-const browser = await chromium.launch({ headless: true, ...(process.env.KKCODE_CHROMIUM ? { executablePath: process.env.KKCODE_CHROMIUM } : {}) })
+const browser = await chromium.launch({ headless: true, chromiumSandbox: true, ...(process.env.KKCODE_CHROMIUM ? { executablePath: process.env.KKCODE_CHROMIUM } : {}) })
 const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
 const errors = []; page.on('pageerror', error => errors.push(error.message))
 const externalRequests = []; page.on('request', request => { if (!request.url().startsWith(address)) externalRequests.push(request.url()) })

@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+
 package cn.kkcode.remote
 
 import androidx.lifecycle.Lifecycle

@@ -30,7 +30,7 @@ test('stopping a subagent releases its original lease so a second client can imm
   process.env.KKCODE_HOME = home
   const service = await new DeviceService({ cwd: home, roots: [home] }).initialize()
   const first = { id: 'local', client: 'first-client' }, second = { id: 'local', client: 'second-client' }
-  const browser = await chromium.launch({ headless: true, ...(process.env.KKCODE_CHROMIUM ? { executablePath: process.env.KKCODE_CHROMIUM } : {}) })
+  const browser = await chromium.launch({ headless: true, chromiumSandbox: true, ...(process.env.KKCODE_CHROMIUM ? { executablePath: process.env.KKCODE_CHROMIUM } : {}) })
   try {
     const page = await browser.newPage()
     await page.exposeFunction('deviceRpc', (method, params) => service.request({ id: randomUUID(), method, params }, first))

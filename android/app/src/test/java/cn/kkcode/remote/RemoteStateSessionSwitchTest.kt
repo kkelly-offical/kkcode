@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+
 package cn.kkcode.remote
 
 import androidx.lifecycle.ViewModelStore
@@ -17,9 +19,14 @@ import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35])
 class RemoteStateSessionSwitchTest {
     @Before fun setMainDispatcher() { Dispatchers.setMain(StandardTestDispatcher()) }
     @After fun resetMainDispatcher() { Dispatchers.resetMain() }

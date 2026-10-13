@@ -80,3 +80,12 @@
 - EPIPE 回归先等待真实子进程接收请求，再让其自有 stdin Writable 发出异步 EPIPE；确认请求拒绝、不自动重放及子进程回收。早期关闭 peer stdin 的夹具跨平台不可靠，失败日志保留，最终回归在全部平台通过。
 - 主线首轮 macOS 的既有 child-inbox 文件通知等待超时；相关代码与 1.0.12 一致。定向复验和仅重跑失败任务均通过，没有修改断言或延长超时；保留首轮失败和第二轮成功的任务证据。正式发行另行全量通过。
 - 首次发行运行 `37533632320` 失败且发布步骤跳过；核实 npm / GitHub 均无 1.0.13 后，完整备份失败候选标签 `316b04a`。以精确旧值约束仅重建本任务新建的 `v1.0.13` 至 `4c6107c`，历史标签逐项核对未变；记录位于 `/tmp/kkcode-113-stable/tag-rebuild.json`。正式发行运行 `37546014056` 使用该最终提交。
+
+## 2026-10-13 存量缺陷 PR#70 合入审查
+
+- 审查 [PR#70](https://github.com/kkelly-offical/kkcode/pull/70)：Preview `75fbf7260891da6229e8357c29af0cc7e3f57e90` → main `45597194599fad6bb9f3075ceffdcbeedfc0a0e6`，74 个文件、5161 行新增 / 531 行删除，汇总 20 项既有缺陷修复。已核对生产代码差异及回归测试；当前 HEAD 不满足安全合入条件，未合并。
+- Web 分发资源未随源码更新提交。干净 detached checkout `/tmp/kkcode-pr70-review` 中，`npm run release:verify` 的依赖审计、lint、import cycles、内核 / Web 类型检查和 Web 构建通过，随后密钥扫描准确报告已从磁盘移除但仍被 Git 跟踪的 `src/web/assets/index-C9lQmE95.js`（ENOENT）；重建生成 `index-CisjsNNI.js` 并修改入口。应提交配套资源新增、删除和入口更新后完整复验，不能忽略扫描失败。
+- [跨平台 CI 38370990311](https://github.com/kkelly-offical/kkcode/actions/runs/38370990311) 四组矩阵均在同一扫描步骤失败，因此覆盖率、后续独立 e2e 与打包门禁未执行；Web UI job 已通过。独立 [Windows 原生 CI 38370990306](https://github.com/kkelly-offical/kkcode/actions/runs/38370990306) 通过。
+- [CodeQL CI 38370990344](https://github.com/kkelly-offical/kkcode/actions/runs/38370990344) 的 actions / JavaScript-TypeScript 通过；Java-Kotlin 在 `:app:compileDebugUnitTestKotlin` 失败，尚未完成分析。新增 `AppUpdaterTest.kt:28` 和 `RemoteStateTestFixtures.kt:51` 直接引用不可用的 `sun.misc.Unsafe`；后者第 26–31 行还把 `String?` 键写入 `MutableMap<String, Any?>`。需要改成兼容当前 Android 测试工具链的夹具并处理键类型，然后实际运行 Android JVM / UI 与安装恢复验收；生产 debug APK 已在该 CI 的前序步骤构建成功，不将测试编译失败表述为生产源码编译失败。
+- 新增 `scripts/web-drafts-smoke.mjs` 与 `scripts/web-state-smoke.mjs` 未进入 `package.json` 的 `test:web` 或任何工作流，因此本次 Web 绿灯未覆盖这两份专项；需接入必跑套件。Copilot review 因配额耗尽未审查，GitHub 当前没有批准 review，未把 PR 描述中的独立审查声明当作平台审核回执。
+- 本机 Node24.15.0 独立 `npm test`：4373 项 / 148 个 suites，4216 通过、157 跳过、0 失败、0 取消；跳过项未计为通过。本次未本机执行 Android / 浏览器专项，未新增真实模型调用、发布或部署。原日志与结构化回执保留在 `/tmp/kkcode-pr70-review-evidence/`，本地工作树构建差异仅用于复现，不是已提交修复。

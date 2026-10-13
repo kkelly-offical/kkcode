@@ -40,7 +40,7 @@ service.attachments.resolve = async options => {
   return { ...input, release: async () => { if(calls === 1) { releasing = true; await releaseGate.promise } else await finishGate.promise; await release() } }
 }
 const server = await createDeviceServer({ service, port: 0 }), info = await server.listen()
-const browser = await chromium.launch({ headless: true, ...(process.env.KKCODE_CHROMIUM ? { executablePath: process.env.KKCODE_CHROMIUM } : {}) })
+const browser = await chromium.launch({ headless: true, chromiumSandbox: true, ...(process.env.KKCODE_CHROMIUM ? { executablePath: process.env.KKCODE_CHROMIUM } : {}) })
 const page = await browser.newPage({ viewport: { width: 390, height: 844 } }), errors = []
 page.on('pageerror', error => errors.push(error.message))
 await page.route('**/api/v1/rpc', async route => {

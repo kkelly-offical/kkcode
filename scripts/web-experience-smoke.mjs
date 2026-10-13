@@ -41,7 +41,7 @@ const server = createServer(async (req, res) => {
 })
 await mkdir(output, { recursive: true })
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
-const browser = await chromium.launch({ headless: true })
+const browser = await chromium.launch({ headless: true, chromiumSandbox: true })
 const page = await browser.newPage({ viewport: { width: 1440, height: 1040 }, reducedMotion: 'reduce' })
 const errors = [], metrics = []
 page.on('pageerror', error => errors.push(error.message))

@@ -1,6 +1,7 @@
 # KK Code 文档
 
 当前文档适用公开稳定版 **1.0.13 / Android10020**，见[版本与升级](versions.md)。
+源码候选为 **1.0.14 / Android10021**，尚未公开发布：[候选范围](release-1.0.14.md) · [实施与验收](implementation-1.0.14.md)。
 [Windows 客户端](windows-client.md) 与 Android / Web 体验优化已随 [1.0.13](release-1.0.13.md) 正式发布；检查事实见[实施清单](implementation-1.0.13.md)。
 当前稳定版为[1.0.13 客户端精修正式版](release-1.0.13.md)；上一稳定版为[1.0.12](release-1.0.12.md)。
 已发布渠道、Android版本码与升级入口只在[版本与升级](versions.md)集中维护。

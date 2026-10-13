@@ -13,7 +13,7 @@ await writeFile(path.join(process.env.KKCODE_HOME, 'config.json'), JSON.stringif
 const service = await new DeviceService({ cwd: temporary, roots: [temporary] }).initialize()
 await service.request({ id: 'pixel-layout-session', issuedAt: Date.now(), method: 'sessions.create', params: { cwd: temporary, title: '布局验收' } })
 const server = await createDeviceServer({ service, port: 0 }), info = await server.listen()
-const browser = await chromium.launch({ headless: true, ...(process.env.KKCODE_CHROMIUM ? { executablePath: process.env.KKCODE_CHROMIUM } : {}) })
+const browser = await chromium.launch({ headless: true, chromiumSandbox: true, ...(process.env.KKCODE_CHROMIUM ? { executablePath: process.env.KKCODE_CHROMIUM } : {}) })
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' })
 let comparisons = 0
 async function controls() {

@@ -9,6 +9,7 @@
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
 
 当前稳定版本 **1.0.13（客户端精修、附件与应用内配置）**；公开稳定与预览渠道以[版本与升级](docs/versions.md)为准。
+源码正在准备 [1.0.14 存量缺陷修复候选](docs/release-1.0.14.md)，正式发布由用户决定。
 [1.0.13正式版](docs/release-1.0.13.md) · [上一稳定版](docs/release-1.0.12.md) · [本轮实施记录](docs/implementation-1.0.13.md) ·
 [版本与升级](docs/versions.md)区分源码、公开产物与部署状态。
 1.0.11 用户仍可使用[独立 Web 显示补丁](docs/web-display-1.0.11.md)；1.0.12 已包含后续体验优化。

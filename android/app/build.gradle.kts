@@ -38,13 +38,29 @@ android {
         applicationId = "cn.kkcode.remote"
         minSdk = 29
         targetSdk = 35
-        versionCode = 10020
-        versionName = "1.0.13"
+        versionCode = 10021
+        versionName = "1.0.14"
         buildConfigField("String", "UPDATE_REPOSITORY", "\"${releaseIdentity["repository"]}\"")
         buildConfigField("String", "UPDATE_CERT_SHA256", "\"${releaseIdentity["certificateSha256"]}\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            it.jvmArgs(
+                "--add-opens=java.base/java.lang=ALL-UNNAMED",
+                "--add-opens=java.base/java.util=ALL-UNNAMED",
+                "--add-opens=java.base/java.io=ALL-UNNAMED",
+                "--add-opens=java.base/java.net=ALL-UNNAMED",
+                "--add-opens=java.base/java.security=ALL-UNNAMED",
+                "--add-opens=java.base/java.text=ALL-UNNAMED",
+                "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED",
+                "--add-opens=java.desktop/java.awt.font=ALL-UNNAMED",
+                "--add-opens=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED",
+            )
+        }
+    }
     signingConfigs {
         if (releaseSigningReady) create("projectRelease") {
             storeFile = file(releaseStore!!)
@@ -84,6 +100,7 @@ dependencies {
     implementation("io.noties.markwon:core:4.6.2")
     implementation("com.atlassian.commonmark:commonmark-ext-gfm-tables:0.13.0")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.17")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("org.json:json:20260814")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")

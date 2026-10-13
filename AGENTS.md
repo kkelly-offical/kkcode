@@ -31,6 +31,8 @@
 
 ## 实测与下一步
 
+- 用户要求修复 PR#70 后交付 **1.0.14 / Android10021 / Windows x64 最终候选**，正式发布由用户决定。原 `75fbf72` 的失败与审查保留；当前正在补齐 Android 测试、Web / Android 专项与构建资源，完整复验通过后才能合入。未创建发行标签、发布 npm / GitHub Release 或部署网关；[候选清单](docs/implementation-1.0.14.md)，研发证据 `/tmp/kkcode-114/evidence/`。
+
 - **1.0.13 已完成并发布**：五端 49 张独立精修设计、Windows 工程工作台、三端附件 / 字体 / 任务进度、应用内扩展配置及桌面登录返回完成。模型账号配置仅作可复用模板，复制后设备独立，不自动跟随；[实施记录](docs/implementation-1.0.13.md)。账号模板与扩展能力需要相应网关 / remote 升级，不自动部署其他现网网关。
 
 - **1.0.12** 设计导出、Web / Android 体验优化与 Windows 应用已完成并发布：保留任务卡、运行横幅、活动面板与整体布局，细化配色和控件，补齐项目路径与历史导航。Android 89 项 JVM / 91 项 UI、Windows 安装与 HTTPS 网关核验通过。进度与证据见 [1.0.12 清单](docs/implementation-1.0.12.md)。

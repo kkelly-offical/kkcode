@@ -1,9 +1,6 @@
 package cn.kkcode.remote
 
-import android.app.Application
 import android.content.Context
-import android.content.SharedPreferences
-import android.os.Build
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -16,47 +13,22 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
-import java.nio.file.Files
 import java.security.MessageDigest
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicInteger
 
-private fun updateTestUnsafe(): sun.misc.Unsafe {
-    val field = sun.misc.Unsafe::class.java.getDeclaredField("theUnsafe").apply { isAccessible = true }
-    return field.get(null) as sun.misc.Unsafe
-}
-
-private fun setUpdateTestSdk(value: Int) {
-    val field = Build.VERSION::class.java.getDeclaredField("SDK_INT")
-    val unsafe = updateTestUnsafe()
-    unsafe.putInt(unsafe.staticFieldBase(field), unsafe.staticFieldOffset(field), value)
-}
-
-private class UpdateRecoveryApplication private constructor() : Application() {
-    private var cacheDirectory: File? = null
-    private var preferenceStores: MutableMap<String, MemorySharedPreferences>? = null
-    override fun getCacheDir(): File = cacheDirectory!!
-    override fun getPackageName(): String = BuildConfig.APPLICATION_ID
-    override fun getSharedPreferences(name: String, mode: Int): SharedPreferences = preferenceStores!!.getOrPut(name) { MemorySharedPreferences() }
-
-    companion object {
-        fun create(cacheDirectory: File): UpdateRecoveryApplication {
-            val application = updateTestUnsafe().allocateInstance(UpdateRecoveryApplication::class.java) as UpdateRecoveryApplication
-            application.cacheDirectory = cacheDirectory
-            application.preferenceStores = mutableMapOf()
-            return application
-        }
-    }
-}
-
-private class UpdateRecoveryFixture(root: File) {
+private class UpdateRecoveryFixture {
     val versionCode = 20001L
     val bytes = "cached APK fixture".toByteArray()
-    val application = UpdateRecoveryApplication.create(root)
+    val application = RuntimeEnvironment.getApplication()
     val requests = AtomicInteger()
     val verifications = AtomicInteger()
     private val source = GitHubUpdateSource(transport = UpdateTransport {
@@ -71,7 +43,7 @@ private class UpdateRecoveryFixture(root: File) {
         manifest.getJSONObject("apk").put("certificateSha256", BuildConfig.UPDATE_CERT_SHA256)
         application.getSharedPreferences("kkcode.updates", Context.MODE_PRIVATE).edit()
             .putString("candidate-STABLE", manifest.toString()).putLong("checked-STABLE", System.currentTimeMillis()).commit()
-        val directory = File(root, "app-updates").apply { mkdirs() }
+        val directory = File(application.cacheDir, "app-updates").apply { mkdirs() }
         File(directory, "update-$versionCode.apk").writeBytes(bytes)
     }
 
@@ -92,19 +64,16 @@ private suspend fun awaitUpdatePhase(updater: AppUpdater, expected: UpdatePhase)
 }
 
 private fun runUpdateRecoveryTest(block: suspend (UpdateRecoveryFixture, CoroutineScope) -> Unit) {
-    val previousSdk = Build.VERSION.SDK_INT
-    val root = Files.createTempDirectory("kkcode-update-recovery-").toFile()
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     try {
-        setUpdateTestSdk(35)
-        runBlocking { block(UpdateRecoveryFixture(root), scope) }
+        runBlocking { block(UpdateRecoveryFixture(), scope) }
     } finally {
         scope.cancel()
-        root.deleteRecursively()
-        setUpdateTestSdk(previousSdk)
     }
 }
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35])
 class AppUpdaterTest {
     @Test fun readyDownloadIsReverifiedAfterProcessRecreation() = runUpdateRecoveryTest { fixture, scope ->
         val restored = fixture.newUpdater(scope)

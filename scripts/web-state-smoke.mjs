@@ -138,7 +138,7 @@ const server = createServer(async (request, response) => {
   }
 })
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
-const browser = await chromium.launch({ headless: true, ...(process.env.KKCODE_CHROMIUM ? { executablePath: process.env.KKCODE_CHROMIUM } : {}) })
+const browser = await chromium.launch({ headless: true, chromiumSandbox: true, ...(process.env.KKCODE_CHROMIUM ? { executablePath: process.env.KKCODE_CHROMIUM } : {}) })
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } }), errors = []
 page.on('pageerror', error => errors.push(error.message))
 const sessionButton = title => page.locator('.sidebar nav').getByRole('button', { name: new RegExp(title) }).first()
