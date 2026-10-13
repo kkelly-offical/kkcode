@@ -11,6 +11,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.io.File
@@ -79,8 +82,18 @@ internal data class TaskItem(val id: String, val sessionId: String, val objectiv
     }
 }
 
+internal suspend fun Lifecycle.pollTaskDetailsWhileStarted(active: () -> Boolean, poll: () -> Unit) {
+    repeatOnLifecycle(Lifecycle.State.STARTED) {
+        while(active()) {
+            delay(3000)
+            poll()
+        }
+    }
+}
+
 @Composable internal fun TaskPanel(sessionId: String, shared: Boolean, request: suspend (String, JSONObject) -> JSONObject) {
     val scope = rememberCoroutineScope()
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
     var supported by remember { mutableStateOf<Boolean?>(null) }
     var items by remember { mutableStateOf(emptyList<TaskItem>()) }
     var nextCursor by remember { mutableStateOf<String?>(null) }
@@ -147,8 +160,7 @@ internal data class TaskItem(val id: String, val sessionId: String, val objectiv
         if(supported == true) load()
     } }
     LaunchedEffect(selected?.id, supported) {
-        while(supported == true && selected != null) {
-            delay(3000)
+        lifecycle.pollTaskDetailsWhileStarted(active = { supported == true && selected != null }) {
             if(!busy && confirmation == null && !evidence) action { selected?.let { refreshTask(it.id) } }
         }
     }
