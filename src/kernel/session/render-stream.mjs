@@ -52,14 +52,12 @@ export function createRenderStream({ output = null, renderMarkdown = true, event
     ? streamByteRendererFactory({
         write: (text) => {
           if (semanticKind === "streamEnd") {
-            const chunk = Buffer.from(String(text))
-            chunk.semanticKind = sawText ? "text" : "thinking"
+            const chunk = Object.assign(Buffer.from(String(text)), { semanticKind: sawText ? "text" : "thinking" })
             streamEndChunks.push(chunk)
             return
           }
           if (semanticKind === "text") return write(text)
-          const chunk = Buffer.from(String(text))
-          chunk.semanticKind = semanticKind
+          const chunk = Object.assign(Buffer.from(String(text)), { semanticKind })
           return write(chunk)
         },
         renderMarkdown
