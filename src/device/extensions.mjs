@@ -20,10 +20,11 @@ const fields = (rows, old = {}) => {
     return [row.key, row.value || old[row.key] || '']
   }))
 }
+const stdioArgs = config => Array.isArray(config.command) ? config.command.slice(1) : Array.isArray(config.args) ? config.args : []
 function publicConnection(name, config, health) {
   let endpoint = ''
   if (config.url) { try { const u = new URL(config.url); endpoint = u.origin } catch {} }
-  return { ...health, name, transport: config.transport || config.type || 'stdio', endpoint, command: Array.isArray(config.command) ? config.command[0] : config.command || '', args: [],
+  return { ...health, name, transport: config.transport || config.type || 'stdio', endpoint, command: Array.isArray(config.command) ? config.command[0] : config.command || '', args: stdioArgs(config),
     enabled: config.enabled !== false, managed: true, configurable: true, envKeys: Object.keys(config.env || {}), headerKeys: Object.keys(config.headers || {}),
     auth: config.oauth ? 'oauth' : 'none', error: health?.error ? '连接未就绪，请检查配置或重新登录。' : null }
 }
@@ -56,7 +57,8 @@ export class DeviceExtensions {
         if (transport === 'stdio') {
           if (typeof p.command !== 'string' || !p.command.trim() || p.command.length > 1024 || /[\r\n\0]/.test(p.command)) fail('请选择可执行程序。')
           if (!Array.isArray(p.args) || p.args.length > 64 || p.args.some(arg => typeof arg !== 'string' || arg.length > 8192 || arg.includes('\0'))) fail('程序参数无效。')
-          config.command = p.command; config.args = p.args.length || !source ? p.args : old.args || []
+          if (p.argsMode !== undefined && p.argsMode !== 'replace') fail('程序参数更新方式无效。')
+          config.command = p.command; config.args = p.argsMode === 'replace' || p.args.length || !source ? p.args : stdioArgs(old)
         } else {
           let url
           try { url = new URL(p.url || old.url) } catch { fail('请输入服务的完整地址。') }
