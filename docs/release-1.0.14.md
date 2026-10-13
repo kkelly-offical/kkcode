@@ -1,6 +1,6 @@
-# 1.0.14 · 存量缺陷修复候选
+# 1.0.14 · 存量缺陷修复
 
-准备版本 **1.0.14 / Android10021 / Windows x64**。本版尚未公开发布，npm latest 仍为 1.0.13，Preview 仍为 1.0.6-preview.1。正式发布由用户决定；源码合入与候选打包不等于公开发行。
+已发布稳定 **1.0.14 / Android10021**（npm latest），同时提供 **Windows x64 未签名实验版**。Preview 仍为 1.0.6-preview.1；旧 tag 和已发布产物保持。发行提交 `53577cc` 与最终候选 `ffd4f02` 同树，实际发行检查及产物哈希见[公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.14/release-verification.json)。
 
 本版纳入 PR#70 的 20 项 P1 / P2 存量修复，并补齐其构建、测试与分发资源，保持现有产品能力和权限边界。
 
@@ -13,6 +13,6 @@
 - Windows 等待本机服务完成收尾后退出，失败时保留窗口并允许重试。
 - SDK 遇到历史缺口默认失败，显式处理缺口的调用者可以重新同步；重试次数必须为 0–5 的安全整数。
 
-Android 候选继续沿用项目原签名证书，版本码 10021 高于公开稳定版 10020。Windows 安装器的签名状态以候选回执为准。
+Android 继续沿用项目原签名证书，版本码 10021 高于上一稳定版 10020；原证书覆盖升级与偏好保留已经核验。Windows 按用户要求不配置 Authenticode 证书，以实验版提供；安装器签名状态与真实安装检查见公开回执。
 
-CLI、Web / 网关、Android 与 Windows 分别安装或部署。本次没有升级其他生产 / 演示网关，没有新增真实模型调用；Apple 应用仍暂缓。检查与产物事实见[候选实施与验收](implementation-1.0.14.md)，公开渠道见[版本页](versions.md)。
+CLI、Web / 网关、Android 与 Windows 分别安装或部署。本次没有升级其他生产 / 演示网关，没有新增真实模型调用；Apple 应用仍暂缓。检查与产物事实见[实施与验收](implementation-1.0.14.md)，公开渠道见[版本页](versions.md)。

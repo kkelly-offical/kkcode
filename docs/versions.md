@@ -1,23 +1,25 @@
 # 版本、升级与发行状态
 
-[文档导航](README.md) · 更新：2026-10-13
+[文档导航](README.md) · 更新：2026-10-14
 
 ## 当前版本
 
-公开稳定版 **1.0.13 / Android10020 / Windows x64**（npm latest），公开 Preview **1.0.6-preview.1 / Android10012**。
-1.0.13 发行提交 `4c6107c`（PR#56 / #57 / #58），与最终候选 `8901af6` 同树。
-候选与主线跨平台、Web、CodeQL、Windows 安装和正式发行流水线均已通过；Android 沿用原证书。
+公开稳定版 **1.0.14 / Android10021**（npm latest），同时提供 **Windows x64 未签名实验版**；公开 Preview **1.0.6-preview.1 / Android10012**。
+1.0.14 发行提交 `53577cc`（PR#70），与最终候选 `ffd4f02` 同树。
+候选、主线跨平台 / Web / 完整 CodeQL / Windows 原生检查和正式发行流水线均通过，开放 CodeQL 告警为 0；Android 沿用原证书。
 源码版本、流水线启动都不等于已公开下载。实际产物、哈希与验证范围以
-[正式版 release-verification.json](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.13/release-verification.json) 为准。
-最低 Node22.12 实际安装、Windows 安装／HTTPS 网关／重装／卸载数据保留、Android10019→10020 与浅色偏好保留均已核验。
+[正式版 release-verification.json](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.14/release-verification.json) 为准。
+最低 Node22.12 实际安装、Windows 原生安装 / 网关 / 重装 / 卸载数据保留、Android10020→10021 与浅色偏好保留均已核验。
+Windows 按用户要求以实验版发布，不配置 Authenticode 签名；主线首次 doctor 测试超时的原记录保留，同提交完整重跑通过，代码 / 断言 / 时限未改。
 从未公开发行过1.1.6，旧源码标记仅用于历史追溯。
 
 | 层次 | 版本 | 渠道与证据 |
 | --- | --- | --- |
-| 待发布候选 | **1.0.14 / Android10021 / Windows x64** | 代码候选跨平台、Web、CodeQL、Windows 与 Android 检查通过；最终产物和提交以随包回执为准；正式发布由用户决定；[候选范围](release-1.0.14.md)与[实际检查](implementation-1.0.14.md) |
-| 已发布稳定渠道 | **1.0.13 / Android10020 / Windows x64** | npm latest；[稳定 Release](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.13)；[本轮回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.13/release-verification.json) |
+| 已发布稳定渠道 | **1.0.14 / Android10021** | npm latest；[稳定 Release](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.14)；[本轮回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.14/release-verification.json) |
+| Windows 实验版 | **1.0.14 x64** | 随本轮 Release 提供；未配置 Authenticode；安装检查与签名状态见公开回执 |
 | 已发布预览渠道 | **1.0.6-preview.1 / Android10012** | npm preview；[原GitHub prerelease](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.6-preview.1)保持 |
-| 上一已核实稳定版 | 1.0.12 / Android10019 | [稳定1.0.12](release-1.0.12.md)；[公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.12/release-verification.json) |
+| 上一已核实稳定版 | 1.0.13 / Android10020 | [稳定1.0.13](release-1.0.13.md)；[公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.13/release-verification.json) |
+| 更早已核实稳定版 | 1.0.12 / Android10019 | [稳定1.0.12](release-1.0.12.md)；[公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.12/release-verification.json) |
 | 更早已核实稳定版 | 1.0.11 / Android10018 | [稳定1.0.11](release-1.0.11.md)；[公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.11/release-verification.json) |
 | 更早已核实稳定版 | 1.0.10 / Android10017 | [稳定1.0.10](release-1.0.10.md)；[公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.10/release-verification.json) |
 | 更早已核实稳定版 | 1.0.9 / Android10016 | [稳定1.0.9](release-1.0.9.md)；[公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.9/release-verification.json) |
@@ -28,12 +30,12 @@
 | 更早稳定版 | 1.0.5 / Android10010 | [稳定1.0.5](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.5)；更早记录见[历史导航](history.md) |
 | 历史预览 | 1.0.5-preview.0 / Android10009 | 原tag和APK保持 |
 
-[发行范围](release-1.0.13.md) · [逐项实施与验证](implementation-1.0.13.md)
+[发行范围](release-1.0.14.md) · [逐项实施与验证](implementation-1.0.14.md)
 
 ## 独立 Web 显示补丁
 
 **1.0.11-display.1** 已发布：[独立Release](https://github.com/kkelly-offical/kkcode/releases/tag/web-1.0.11-display.1) · [改动与检查](web-display-1.0.11.md) · [安装／回退](web-display-install.md)。
-该历史补丁仅更新1.0.11的网页静态资源，没有改变当时的 npm 或 Android 渠道。1.0.13 已包含后续界面增强；旧补丁继续保留。
+该历史补丁仅更新1.0.11的网页静态资源，没有改变当时的 npm 或 Android 渠道。1.0.14 已包含后续界面增强；旧补丁继续保留。
 现网尚未部署，需取得实际部署位置后应用。
 
 ## CLI 升级
@@ -46,7 +48,7 @@ kkcode update --install --channel preview
 ```
 
 首次安装见[快速开始](getting-started.md)。固定安装公开稳定版可使用
-`npm install -g @kkelly-offical/kkcode@1.0.13`；Preview仍为1.0.6-preview.1。
+`npm install -g @kkelly-offical/kkcode@1.0.14`；Preview仍为1.0.6-preview.1。
 启动更新检查默认只通知，不自动改全局安装；缓存位于用户私密状态目录。
 
 ```yaml
@@ -60,16 +62,16 @@ update:
 
 ## Windows 客户端
 
-[下载 1.0.13 x64 安装器](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.13/kkcode-windows-1.0.13-x64-setup.exe) · [使用指南](windows-client.md)。
+[下载 1.0.14 x64 实验版安装器](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.14/kkcode-windows-1.0.14-x64-setup.exe) · [使用指南](windows-client.md)。
 支持独立工程工作台、本机工作区、HTTPS 网关、原生项目选择、文件粘贴、链接右键菜单与浏览器登录返回。随包 Node 与搜索工具均有来源和哈希记录。
-本版安装器未配置 Authenticode 签名；同版本重装和卸载保留数据已经验证，不据此承诺未来跨版本升级。
+本版按用户要求以实验版发布，未配置 Authenticode 签名；同版本重装和卸载保留数据已经验证，不据此承诺未来跨版本升级。
 macOS / iOS 应用暂缓。
 
 ## Android、设备与网关
 
-Android在设置的“关于 KK Code”入口检查更新。1.0.13稳定APK可被稳定与Preview两种渠道接收；
+Android在设置的“关于 KK Code”入口检查更新。1.0.14稳定APK可被稳定与Preview两种渠道接收；
 下载校验后仍须Android系统确认安装。详见[App更新](android-app-updates.md)与[原证书签名流程](android-release.md)。
-版本码10020高于10019与10012；专用发行模拟器中的10019→10020覆盖升级、安装时间与浅色偏好保留、真实主页和非调试属性已核验。
+版本码10021高于10020与10012；专用发行模拟器中的10020→10021覆盖升级、安装时间与浅色偏好保留、真实主页和非调试属性已核验。
 这不代替实体设备长期验收。
 
 CLI、网关/Web和Android分别部署。已有网关需升级其源码构建后才能使用新页面；
@@ -78,12 +80,12 @@ CLI、网关/Web和Android分别部署。已有网关需升级其源码构建后
 
 ## 验证边界
 
-用户授权完成五端设计、三端精修、附件与应用内配置后发布1.0.13；PR#56 / #57 / #58沿用已授权的管理员合入流程，保护规则不变。
+用户明确授权发布1.0.14，并要求同时提供未签名 Windows 实验版；PR#70沿用已授权的管理员合入流程，保护规则不变。1.0.13五端设计与精修的既有授权和发行事实保留。
 PR#34已按用户管理员合入授权集成，旧记录保持；不冒称批准审核。
 
 - 跨平台、Web、CodeQL、Android、发行流水线与公开包安装验证通过，未新增真实模型调用。
 - R12—R16保持关闭，原失败与unknown不改写；C04、GitLab和长期实际使用仍待后续验收。
 - 已发布tag、npm版本和APK不可覆盖；后续公开APK继续递增版本码并沿用项目证书。
-- 1.0.13正式版不代表1.1.0成熟度门禁已通过。
+- 1.0.14正式版不代表1.1.0成熟度门禁已通过。
 
 [能力边界](capabilities.md) · [当前Issues](https://github.com/kkelly-offical/kkcode/issues) · [历史证据](history.md)
