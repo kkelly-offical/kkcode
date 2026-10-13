@@ -83,6 +83,7 @@ internal class AppUpdater(
         restoreCandidate(); check(true)
     }
     private fun restoreInstallState() {
+        if(phase == UpdatePhase.DOWNLOADING || phase == UpdatePhase.CHECKING && !restoringDownload) return
         val install = updateInstallPreferences(application)
         when(install.getString("status", "")) {
             "success" -> { message = "更新安装完成"; install.edit().clear().apply() }
@@ -96,7 +97,7 @@ internal class AppUpdater(
     fun onForeground() {
         restoreInstallState()
         if(phase == UpdatePhase.PERMISSION && application.packageManager.canRequestPackageInstalls()) { phase = UpdatePhase.READY; message = "安装权限已允许，请点“安装更新”继续" }
-        if(!restoringDownload && phase !in setOf(UpdatePhase.READY, UpdatePhase.PERMISSION, UpdatePhase.INSTALLING, UpdatePhase.DOWNLOADING)) check(false)
+        if(phase !in setOf(UpdatePhase.CHECKING, UpdatePhase.READY, UpdatePhase.PERMISSION, UpdatePhase.INSTALLING, UpdatePhase.DOWNLOADING)) check(false)
     }
     fun check(force: Boolean = true) {
         if(phase in setOf(UpdatePhase.DOWNLOADING, UpdatePhase.INSTALLING)) return
