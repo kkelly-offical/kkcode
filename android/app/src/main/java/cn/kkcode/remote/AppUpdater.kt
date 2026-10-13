@@ -17,6 +17,7 @@ internal class AppUpdater(
     private val application: Application,
     private val scope: CoroutineScope,
     private val source: GitHubUpdateSource = GitHubUpdateSource(),
+    private val verifyApk: (Context, File, AppUpdate) -> Unit = ::verifyUpdateApk,
 ) {
     private val prefs = application.getSharedPreferences("kkcode.updates", Context.MODE_PRIVATE)
     var channel by mutableStateOf(runCatching { UpdateChannel.valueOf(prefs.getString("channel", if(BuildConfig.VERSION_NAME.contains('-')) "PREVIEW" else "STABLE")!!) }.getOrDefault(UpdateChannel.STABLE)); private set
@@ -31,6 +32,7 @@ internal class AppUpdater(
     val working: Boolean get() = phase in setOf(UpdatePhase.CHECKING, UpdatePhase.DOWNLOADING, UpdatePhase.INSTALLING)
     private var job: Job? = null
     private var downloaded: File? = null
+    private var restoringDownload = false
     private val directory get() = File(application.cacheDir, "app-updates")
     init { restoreCandidate() }
 
@@ -48,29 +50,59 @@ internal class AppUpdater(
             UpdatePolicy().manifest(text, release).takeIf { it.minSdk <= Build.VERSION.SDK_INT }
         }.getOrNull()
         checkedAt = prefs.getLong("checked-${channel.name}", 0)
+        downloaded = null
         phase = if(hasUpdate) UpdatePhase.AVAILABLE else UpdatePhase.IDLE
+        val update = candidate?.takeIf { hasUpdate } ?: return
+        val file = File(directory, "update-${update.versionCode}.apk")
+        if(!file.isFile) return
+        restoringDownload = true
+        phase = UpdatePhase.CHECKING
+        message = "正在重新校验已下载的更新"
+        job = scope.launch {
+            try {
+                withContext(Dispatchers.IO) { verifyApk(application, file, update) }
+                ensureActive()
+                restoringDownload = false
+                downloaded = file
+                phase = UpdatePhase.READY
+                message = "文件与签名校验通过，可以安装"
+                restoreInstallState()
+            } catch(error: CancellationException) { throw error }
+            catch(error: Exception) {
+                ensureActive()
+                restoringDownload = false
+                phase = if(hasUpdate) UpdatePhase.AVAILABLE else UpdatePhase.IDLE
+                message = updateErrorMessage(error)
+            }
+        }
     }
     fun dismissNotice() { dismissedCode = candidate?.versionCode ?: 0; prefs.edit().putLong("dismissedCode", dismissedCode).apply() }
     fun selectChannel(value: UpdateChannel) {
         if(phase == UpdatePhase.INSTALLING || channel == value) return
-        job?.cancel(); downloaded = null; channel = value; prefs.edit().putString("channel", value.name).apply()
+        job?.cancel(); restoringDownload = false; downloaded = null; channel = value; prefs.edit().putString("channel", value.name).apply()
         restoreCandidate(); check(true)
     }
-    fun onForeground() {
+    private fun restoreInstallState() {
         val install = updateInstallPreferences(application)
         when(install.getString("status", "")) {
             "success" -> { message = "更新安装完成"; install.edit().clear().apply() }
             "failed" -> { message = install.getString("message", "安装未完成") ?: "安装未完成"; phase = if(downloaded != null) UpdatePhase.READY else UpdatePhase.ERROR; install.edit().clear().apply() }
-            "confirmation", "installing" -> if(phase == UpdatePhase.INSTALLING) { phase = if(downloaded != null) UpdatePhase.READY else UpdatePhase.AVAILABLE; message = "安装尚未完成，可再次确认或稍后重试" }
+            "confirmation", "installing" -> {
+                if(!restoringDownload) phase = if(downloaded != null) UpdatePhase.READY else UpdatePhase.AVAILABLE
+                message = "安装尚未完成，可再次确认或稍后重试"
+            }
         }
+    }
+    fun onForeground() {
+        restoreInstallState()
         if(phase == UpdatePhase.PERMISSION && application.packageManager.canRequestPackageInstalls()) { phase = UpdatePhase.READY; message = "安装权限已允许，请点“安装更新”继续" }
-        if(phase !in setOf(UpdatePhase.READY, UpdatePhase.PERMISSION, UpdatePhase.INSTALLING, UpdatePhase.DOWNLOADING)) check(false)
+        if(!restoringDownload && phase !in setOf(UpdatePhase.READY, UpdatePhase.PERMISSION, UpdatePhase.INSTALLING, UpdatePhase.DOWNLOADING)) check(false)
     }
     fun check(force: Boolean = true) {
         if(phase in setOf(UpdatePhase.DOWNLOADING, UpdatePhase.INSTALLING)) return
         val now = System.currentTimeMillis(); val lastAttempt = prefs.getLong("attempt-${channel.name}", 0)
         if(!force && ((checkedAt > 0 && now - checkedAt in 0..(12 * 3600_000L)) || now - lastAttempt in 0..(30 * 60_000L))) return
-        job?.cancel(); val selectedChannel = channel
+        job?.cancel(); restoringDownload = false; val selectedChannel = channel
         phase = UpdatePhase.CHECKING; message = ""; prefs.edit().putLong("attempt-${channel.name}", now).apply()
         job = scope.launch {
             try {
@@ -87,14 +119,14 @@ internal class AppUpdater(
     fun download() {
         val update = candidate?.takeIf { hasUpdate } ?: return
         if(working) return
-        job?.cancel(); phase = UpdatePhase.DOWNLOADING; message = "正在下载并校验更新"; progress = 0
+        job?.cancel(); restoringDownload = false; phase = UpdatePhase.DOWNLOADING; message = "正在下载并校验更新"; progress = 0
         job = scope.launch {
             try {
                 val file = source.download(update, directory) { current, total ->
                     val percent = (current * 100 / total).toInt()
                     if(percent != progress) withContext(Dispatchers.Main.immediate) { progress = percent }
                 }
-                withContext(Dispatchers.IO) { verifyUpdateApk(application, file, update) }
+                withContext(Dispatchers.IO) { verifyApk(application, file, update) }
                 ensureActive(); downloaded = file; phase = UpdatePhase.READY; message = "文件与签名校验通过，可以安装"
             } catch(error: CancellationException) { throw error }
             catch(error: Exception) { phase = UpdatePhase.ERROR; message = updateErrorMessage(error) }
@@ -102,7 +134,7 @@ internal class AppUpdater(
     }
     fun cancel() {
         if(phase == UpdatePhase.INSTALLING) return
-        job?.cancel(); job = null; phase = if(hasUpdate) UpdatePhase.AVAILABLE else UpdatePhase.IDLE; message = "已取消，可以稍后重试"
+        job?.cancel(); job = null; restoringDownload = false; phase = if(hasUpdate) UpdatePhase.AVAILABLE else UpdatePhase.IDLE; message = "已取消，可以稍后重试"
     }
     fun install(context: Context) {
         val update = candidate ?: return
