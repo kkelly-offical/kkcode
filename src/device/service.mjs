@@ -112,10 +112,10 @@ export class DeviceService extends EventEmitter {
       const sessionId = options.sessionId || newSessionId(), existing = this.turns.get(sessionId)
       if (existing && existing.controller.signal === options.signal) return execute(options)
       if (existing) return Promise.reject(new ProtocolError('turn_busy', 'Another client is already running this session', 409))
-      const controller = new AbortController(), entry = { controller, origin: 'terminal', client: 'local', turnId: randomUUID(), phase: 'starting' }
+      const controller = new AbortController(), lease = { client: 'local', until: Date.now() + 60000 }, entry = { controller, origin: 'terminal', client: 'local', turnId: randomUUID(), phase: 'starting', lease }
       const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal
       entry.signal = signal
-      this.turns.set(sessionId, entry); this.leases.set(sessionId, { client: 'local', until: Date.now() + 60000 })
+      this.turns.set(sessionId, entry); this.leases.set(sessionId, lease)
       entry.promise = Promise.resolve().then(async () => {
         let result, error
         try {
@@ -136,7 +136,8 @@ export class DeviceService extends EventEmitter {
   finishTurn(sessionId, entry) {
     if (this.turns.get(sessionId) !== entry) return
     this.turns.delete(sessionId)
-    if (this.leases.get(sessionId)?.client === entry.client) this.leases.delete(sessionId)
+    const lease = this.leases.get(sessionId)
+    if (entry.lease ? lease === entry.lease : lease?.client === entry.client) this.leases.delete(sessionId)
     for (const approval of [...this.approvals.values()]) if (approval.sessionId === sessionId) this.resolveApproval(approval.id, approval.kind === 'permission' ? 'deny' : {})
     if (!this.closed) this.emitDeviceEvent('session.status', { sessionId })
   }
@@ -503,7 +504,7 @@ export class DeviceService extends EventEmitter {
       if (typeof p.prompt !== 'string' || !p.prompt.trim() || p.prompt.length > 200000) throw new ProtocolError('invalid_prompt', 'Prompt must contain 1–200000 characters')
       if (p.executionId !== undefined && (typeof p.executionId !== 'string' || !idPattern.test(p.executionId))) throw new ProtocolError('invalid_turn', '回合标识无效，请重试。')
       const controller = new AbortController(), turnId = p.executionId || randomUUID()
-      const entry = { controller, turnId, origin: 'remote', client: principal.client, phase: 'starting' }; this.turns.set(sessionId, entry)
+      const entry = { controller, turnId, origin: 'remote', client: principal.client, phase: 'starting', lease: this.leases.get(sessionId) }; this.turns.set(sessionId, entry)
       let attachmentInput
       try {
       const session = await getSession(sessionId)
