@@ -14,7 +14,7 @@
 
 | 层次 | 版本 | 渠道与证据 |
 | --- | --- | --- |
-| 待发布候选 | **1.0.14 / Android10021 / Windows x64** | 正在完成优化与候选验证；正式发布由用户决定；[候选范围](release-1.0.14.md)与[实际检查](implementation-1.0.14.md) |
+| 待发布候选 | **1.0.14 / Android10021 / Windows x64** | 代码候选跨平台、Web、CodeQL、Windows 与 Android 检查通过；最终产物和提交以随包回执为准；正式发布由用户决定；[候选范围](release-1.0.14.md)与[实际检查](implementation-1.0.14.md) |
 | 已发布稳定渠道 | **1.0.13 / Android10020 / Windows x64** | npm latest；[稳定 Release](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.13)；[本轮回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.13/release-verification.json) |
 | 已发布预览渠道 | **1.0.6-preview.1 / Android10012** | npm preview；[原GitHub prerelease](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.6-preview.1)保持 |
 | 上一已核实稳定版 | 1.0.12 / Android10019 | [稳定1.0.12](release-1.0.12.md)；[公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.12/release-verification.json) |
