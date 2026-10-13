@@ -15,11 +15,18 @@ export function createChildInbox({ controller, sessionId, turnId, startedAt, sig
   const initial = new Set(), delivered = new Set()
   let revision = 0, wake = null, closed = false
   let pump = null, requested = false, pumpError = null
-  let watcher = null
+  let watcher = null, capacityTimer = null
   const canStart = () => !closed && !signal?.aborted && (!deadlineAt || Date.now() < deadlineAt)
   const failPump = error => { if (canStart()) { pumpError = error; revision++; wake?.() } }
   const observeCapacity = () => {
-    if (watcher || !canStart()) return
+    if (!canStart()) return
+    if (!capacityTimer) {
+      // Watch notifications can be coalesced or lost under load. The scoped
+      // controller avoids a global queue scan when no owned work is pending.
+      capacityTimer = setInterval(schedule, 500)
+      capacityTimer.unref()
+    }
+    if (watcher) return
     try {
       // Checkpoints are atomic files. Other processes do not share our bus;
       // their writes can release capacity but cannot authorize any new work.
@@ -105,6 +112,6 @@ export function createChildInbox({ controller, sessionId, turnId, startedAt, sig
       }
       return 'closed'
     },
-    async close() { closed = true; unsubscribe(); watcher?.close(); wake?.(); await pump }
+    async close() { closed = true; clearInterval(capacityTimer); unsubscribe(); watcher?.close(); wake?.(); await pump }
   }
 }

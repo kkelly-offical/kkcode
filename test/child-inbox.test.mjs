@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import fs from 'node:fs'
+import { EventEmitter } from 'node:events'
+import { syncBuiltinESMExports } from 'node:module'
 import path from 'node:path'
 import os from 'node:os'
 import { createChildInbox } from '../src/kernel/orchestration/child-inbox.mjs'
@@ -63,6 +66,54 @@ test('checkpoint capacity wakes preserve parent runtime and stop with the parent
   await writeFile(path.join(backgroundTaskRuntimeDir(), 'capacity.json'), '{"status":"completed"}')
   await new Promise(resolve => setTimeout(resolve, 30))
   assert.equal(seen.length, stopped)
+})
+
+test('capacity fallback recovers lost checkpoint events without overlapping queue pumps', async t => {
+  await fixture(t)
+  await mkdir(backgroundTaskRuntimeDir(), { recursive: true })
+  const watcher = new EventEmitter()
+  watcher.close = t.mock.fn()
+  t.mock.method(fs, 'watch', () => watcher)
+  syncBuiltinESMExports()
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  const owner = { cwd: '/owner-context' }, seen = [], abort = new AbortController()
+  const firstStarted = Promise.withResolvers(), releaseFirst = Promise.withResolvers()
+  let active = 0, maxActive = 0
+  const controller = { list: async () => [], startPending: async ({ canStart }) => {
+    if (!canStart()) return
+    seen.push(currentRuntime())
+    active++; maxActive = Math.max(maxActive, active)
+    if (seen.length === 1) { firstStarted.resolve(); await releaseFirst.promise }
+    active--
+  } }
+  const inbox = runWithRuntime(owner, () => createChildInbox({ controller, sessionId: 'parent', turnId: 'turn', startedAt: Date.now(), signal: abort.signal }))
+  const flush = () => new Promise(resolve => setImmediate(resolve))
+  try {
+    await runWithRuntime({ cwd: '/foreign-publisher' }, () => EventBus.emit({ type: 'subagent.delegated', sessionId: 'parent', payload: {} }))
+    await firstStarted.promise
+    // The watcher stays silent: only the fallback may advance this release.
+    await writeFile(path.join(backgroundTaskRuntimeDir(), 'capacity.json'), '{}')
+    t.mock.timers.tick(500)
+    await flush()
+    assert.equal(seen.length, 1, 'a wakeup must coalesce behind the active pump')
+    releaseFirst.resolve()
+    await flush()
+    assert.equal(seen.length, 2, 'the fallback must retry after a dropped checkpoint notification')
+    t.mock.timers.tick(500)
+    await flush()
+    assert.equal(seen.length, 3, 'the fallback must also retry while the queue pump is idle')
+    assert.equal(maxActive, 1)
+    assert.ok(seen.every(runtime => runtime === owner))
+    abort.abort()
+    t.mock.timers.tick(1000)
+    await flush()
+    assert.equal(seen.length, 3)
+    await inbox.close()
+    assert.equal(watcher.close.mock.callCount(), 1)
+  } finally {
+    abort.abort(); releaseFirst.resolve(); await inbox.close()
+    t.mock.timers.reset(); t.mock.restoreAll(); syncBuiltinESMExports()
+  }
 })
 
 test('automatic queue dispatch preserves unresolved outcomes and cancellation', async t => {
