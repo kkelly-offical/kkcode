@@ -8,7 +8,8 @@ import { ToolRegistry } from "../src/kernel/tool/registry.mjs"
 import { PermissionEngine } from "../src/kernel/permission/engine.mjs"
 import { processTurnLoop } from "../src/kernel/session/loop.mjs"
 import { executeTurn } from "../src/kernel/session/engine.mjs"
-import { flushNow, getSession } from "../src/kernel/session/store.mjs"
+import { appendUserMessage, flushNow, getSession, touchSession } from "../src/kernel/session/store.mjs"
+import { getResumeContext } from "../src/kernel/session/recovery.mjs"
 import { EventBus } from "../src/kernel/core/events.mjs"
 import { EVENT_TYPES } from "../src/kernel/core/constants.mjs"
 import { createRenderStream } from "../src/kernel/session/render-stream.mjs"
@@ -149,6 +150,41 @@ test("turn lifecycle: no stream/thinking events after turn.finish, inProgress ze
   } finally {
     unsubscribe()
   }
+})
+
+test("turn lifecycle: recovered multimedia content keeps ordered blocks through the real loop", async () => {
+  const content = [
+    { type: "text", text: "Look at this image." },
+    { type: "image", mediaType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==" },
+    { type: "text", text: "Then describe it." }
+  ]
+  const sessionId = nextSessionId()
+  await touchSession({ sessionId, mode: "agent", model: "test", providerType: "mock-lifecycle", cwd: process.cwd() })
+  await appendUserMessage(sessionId, content)
+  await flushNow()
+  const resumeCtx = await getResumeContext(sessionId)
+  const provider = createStreamProvider([{ chunks: textChunks("recovered") }])
+  registerProvider("mock-lifecycle", provider)
+
+  const result = await processTurnLoop({
+    prompt: resumeCtx.lastPrompt,
+    contentBlocks: resumeCtx.contentBlocks,
+    mode: "agent",
+    model: "test",
+    providerType: "mock-lifecycle",
+    sessionId,
+    configState: baseConfig()
+  })
+
+  assert.equal(result.reply, "recovered")
+  assert.equal(resumeCtx.lastPrompt, "Look at this image.\nThen describe it.")
+  assert.deepEqual(provider.calls[0].messages.at(-1).content, [
+    content[0],
+    { ...content[1], width: 1, height: 1 },
+    content[2]
+  ])
+  const saved = await getSession(sessionId)
+  assert.deepEqual(saved.messages.filter((message) => message.role === "user").at(-1).content, content)
 })
 
 test("turn lifecycle: error path emits turn.error, zeroes inProgress, and stays silent afterwards", async () => {
