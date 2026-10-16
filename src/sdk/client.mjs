@@ -73,7 +73,12 @@ export class DeviceClient {
     while (!signal?.aborted) {
       const batch = await this.request('events.list', { sessionId, after: cursor }, { signal })
       if (batch.gap) throw replayGapError(batch)
-      for (const event of batch.events) { cursor = event.seq; yield event }
+      for (const event of batch.events) {
+        signal?.throwIfAborted()
+        cursor = event.seq
+        yield event
+        signal?.throwIfAborted()
+      }
       await pause(interval, signal)
     }
   }
