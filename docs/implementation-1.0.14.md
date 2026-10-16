@@ -53,4 +53,6 @@
 - SDK深度扫描M11已完成，并修复7项SDK / ACP缺陷；另完成多媒体resume / retry、REC-02、Windows doctor e2e诊断修复，以及测试清单维护和发行文档同步。#60–#69与#8均已关闭；既有失败记录不改写，版本与既有发布状态不变。
 - 最终在detached `8699e13`上验证：Node共4748项，4553通过、195跳过、0失败；独立e2e 36项通过、1项Linux跳过；Web 14份smoke与9项unit全部通过、0跳过；行 / 分支 / 函数覆盖率分别为82.92% / 81.27% / 82.61%；package smoke与secret scan通过。跳过项不计为通过。
 - macOS构建首次因hash差异导致旧tracked Web资产ENOENT，原失败记录保留。最终在detached工作树暂存本地生成物供扫描，提交树未夹带生成物。
-- hosted Windows / PR CI尚待运行，均为待验；不得将上述本地结果或既有发行结果写成本轮hosted Windows / PR CI已通过。
+- PR#73首次 `b71e54f` 的 [verify run 38859669757](https://github.com/kkelly-offical/kkcode/actions/runs/38859669757) 因旧Web资产ENOENT失败，原失败保留。M38从同提交windows-client产物提取 `index-UWd2tjyB.js`（491544字节；SHA-256 `e07906c73f3f9de61cbce2ea0794036810fc7d5e6bf45fb0e65f93fc4d66051e`）修复CI资产；此远端资产失败与上述本地macOS构建首次ENOENT分别记录，不合并或改写。
+- PR#73代码与资源提交 `4c3e823` 的远端检查已全部成功：[verify run 38861491345](https://github.com/kkelly-offical/kkcode/actions/runs/38861491345)（ubuntu22/24、macos22、windows22、web-ui）、[windows-client run 38861491332](https://github.com/kkelly-offical/kkcode/actions/runs/38861491332)、[CodeQL run 38861491786](https://github.com/kkelly-offical/kkcode/actions/runs/38861491786)（actions/javascript-typescript/java-kotlin）。PR#73仍待用户审查，不自动合并。
+- 本次及后续仅文档更新只同步上述既有检查事实，不冒称新的产品代码验收或新发布。

@@ -33,7 +33,7 @@
 
 - **1.0.14已完成并发布**：20项P1 / P2存量修复、Android测试工具链、Web / Android专项和分发资源已完成；正式发行流水线38420874406全部通过，开放CodeQL告警0。Android沿用原证书，Windows为用户要求的未签名实验版；公开npm / APK / Windows匿名下载及最低Node22.12安装 / SDK / SQLite往返已核验。主线首轮既有doctor超时的原记录保留，同提交完整重跑通过，发行当时未改代码、断言及时限。既有Windows构建开发依赖sprintf-js的中度Dependabot#4保持开放，尚无修复版，生产安装树不包含；详情见实施记录。正式产物 `test-results/1.0.14-release/`，候选 `test-results/1.0.14-candidate/` 保留；[清单](docs/implementation-1.0.14.md)，发行证据 `/tmp/kkcode-114-stable/`。未部署其他网关、升级运行中的remote或新增真实模型调用。
 
-- **当前维护修复**：SDK深度扫描M11已完成并修复7项SDK / ACP缺陷；另完成多媒体resume / retry、REC-02、Windows doctor e2e诊断修复，以及测试清单维护和发行文档同步，#60–#69与#8均已关闭。最终detached `8699e13`的本地Node / e2e / Web / coverage、package smoke与secret scan验证通过；hosted Windows / PR CI尚待运行，保持待验，不提前写通过。实际计数与边界见[实施记录](docs/implementation-1.0.14.md)。
+- **当前维护修复**：SDK深度扫描M11已完成并修复7项SDK / ACP缺陷；另完成多媒体resume / retry、REC-02、Windows doctor e2e诊断修复，以及测试清单维护和发行文档同步，#60–#69与#8均已关闭。最终detached `8699e13`的本地Node / e2e / Web / coverage、package smoke与secret scan验证通过。PR#73代码与资源提交 `4c3e823` 的远端检查已全部成功：verify run `38861491345`（ubuntu22/24、macos22、windows22、web-ui）、windows-client run `38861491332`、CodeQL run `38861491786`（actions/javascript-typescript/java-kotlin）。首次 `b71e54f` 的verify run `38859669757`因旧Web资产ENOENT失败，已由M38从同提交windows-client产物提取 `index-UWd2tjyB.js`（491544字节，SHA-256 `e07906c73f3f9de61cbce2ea0794036810fc7d5e6bf45fb0e65f93fc4d66051e`）修复，原失败保留。PR#73仍待用户审查，不自动合并。实际计数与边界见[实施记录](docs/implementation-1.0.14.md)。
 
 - **1.0.13 已完成并发布**：五端 49 张独立精修设计、Windows 工程工作台、三端附件 / 字体 / 任务进度、应用内扩展配置及桌面登录返回完成。模型账号配置仅作可复用模板，复制后设备独立，不自动跟随；[实施记录](docs/implementation-1.0.13.md)。账号模板与扩展能力需要相应网关 / remote 升级，不自动部署其他现网网关。
 
