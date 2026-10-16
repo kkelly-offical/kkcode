@@ -1,6 +1,6 @@
 import { validateToolArguments } from '../kernel/tool/validate-args.mjs'
 
-const sensitive = /password|passwd|api.?key|access.?token|refresh.?token|token|private.?key|client.?secret|密码|口令|私钥|密钥|令牌/i
+const sensitive = /password|passwd|api.?key|access.?token|refresh.?token|token|private.?key|client.?secret|secret|credential|密码|口令|私钥|密钥|令牌|凭据/i
 
 /** ACP support is explicit per mode (unlike MCP, elicitation:{} is NOT form).
  * The client handle and signal belong to this app connection + active turn.
