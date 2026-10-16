@@ -38,3 +38,55 @@ test('ACP form validates accepted fields, refuses credential questions and does 
   for (const response of [{ action: 'decline', content: { q0: 'small' } }, { action: 'accept', content: { q0: 'not-advertised' } }, { action: 'accept', content: { q0: 'small', extra: 'no' } }]) assert.deepEqual(await requestAcpQuestion({ ...base, client: { request: async () => response } }), { cancelled: true })
   assert.deepEqual(await requestAcpQuestion({ ...base, request: { questions: [{ id: 'secret', text: 'API key' }] }, client: { request: () => { throw new Error('must not request') } } }), { cancelled: true })
 })
+
+test('ACP form rejects sensitive metadata before contacting the client', async () => {
+  const questions = [
+    { id: 'password', text: 'Value' },
+    { id: 'value', text: 'Password' },
+    { id: 'value', text: 'Value', header: 'Password' },
+    { id: 'value', text: 'Value', description: 'Paste the token' },
+    { id: 'value', text: 'Value', description: '请填写令牌' },
+    { id: 'value', text: 'Value', secret: true }
+  ]
+  for (const question of questions) {
+    let seen = 0
+    const answer = await requestAcpQuestion({
+      capabilities: { elicitation: { form: {} } }, sessionId: 's', request: { questions: [question] },
+      client: { request: async () => { seen++; return { action: 'accept', content: { q0: 'value' } } } }
+    })
+    assert.deepEqual(answer, { cancelled: true }, JSON.stringify(question))
+    assert.equal(seen, 0, JSON.stringify(question))
+  }
+})
+
+test('ACP form round-trips multi-select arrays and rejects invalid answers', async () => {
+  const question = { id: 'scopes', text: '范围', options: [{ label: 'A', value: 'a' }, { label: 'B', value: 'b' }], multi: true, allowCustom: false }
+  const run = async content => {
+    let params
+    const answer = await requestAcpQuestion({
+      capabilities: { elicitation: { form: {} } }, sessionId: 's', request: { questions: [question] },
+      client: { request: async (method, value) => { params = value; return { action: 'accept', content: { q0: content } } } }
+    })
+    return { answer, params }
+  }
+  const valid = await run(['a', 'b'])
+  assert.deepEqual(valid.answer, { scopes: ['a', 'b'] })
+  assert.equal(valid.params.requestedSchema.properties.q0.type, 'array')
+  assert.deepEqual(valid.params.requestedSchema.properties.q0.items, { type: 'string', enum: ['a', 'b'] })
+  for (const content of ['a', 'not-advertised', ['a', 'not-advertised']]) assert.deepEqual((await run(content)).answer, { cancelled: true })
+})
+
+test('ACP form keeps ordinary and custom answers compatible', async () => {
+  const cases = [
+    [{ id: 'value', text: 'Value', header: 'Details', description: 'Ordinary project metadata', secret: false }, 'ordinary', { value: 'ordinary' }],
+    [{ id: 'value', text: 'Value', options: [{ label: 'small' }] }, 'custom', { value: 'custom' }],
+    [{ id: 'values', text: 'Values', options: [{ label: 'a' }], multi: true }, ['a', 'custom'], { values: ['a', 'custom'] }]
+  ]
+  for (const [question, content, expected] of cases) {
+    const answer = await requestAcpQuestion({
+      capabilities: { elicitation: { form: {} } }, sessionId: 's', request: { questions: [question] },
+      client: { request: async () => ({ action: 'accept', content: { q0: content } }) }
+    })
+    assert.deepEqual(answer, expected)
+  }
+})
