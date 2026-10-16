@@ -60,7 +60,10 @@ test('ACP form rejects sensitive metadata before contacting the client', async (
 })
 
 test('ACP form rejects secret and credential metadata before contacting the client', async t => {
-  const questions = ['Secret', 'userSecret', 'credential', '凭据'].flatMap(value => [
+  const questions = [
+    'Secret', 'userSecret', 'USERSECRET', 'USERSecret', 'mysecret', 'userSecrets', 'secrets', 'USERSECRETS',
+    'mytoken', 'tokens', 'accessToken', 'refresh_token', 'mypassword', 'credential', 'credentials', '凭据'
+  ].flatMap(value => [
     { id: value, text: 'Value' },
     { id: 'value', text: value },
     { id: 'value', text: 'Value', header: value },
@@ -79,11 +82,14 @@ test('ACP form rejects secret and credential metadata before contacting the clie
 
 test('ACP form allows ordinary words resembling sensitive metadata', async t => {
   const questions = [
-    { id: 'secretary', text: 'Value' },
-    { id: 'value', text: 'Secretary' },
-    { id: 'value', text: 'Value', header: 'Secretariat' },
-    { id: 'value', text: 'Value', description: 'Administrative secretary' }
-  ]
+    'secretary', 'Secretary', 'Secretariat', 'Administrative secretary',
+    'tokenizer', 'Tokenizer', 'Tokenization', 'Choose a tokenizer'
+  ].flatMap(value => [
+    { id: value, text: 'Value' },
+    { id: 'value', text: value },
+    { id: 'value', text: 'Value', header: value },
+    { id: 'value', text: 'Value', description: value }
+  ])
   for (const question of questions) await t.test(JSON.stringify(question), async () => {
     let seen = 0
     const answer = await requestAcpQuestion({

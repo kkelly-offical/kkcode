@@ -1,7 +1,7 @@
 import { validateToolArguments } from '../kernel/tool/validate-args.mjs'
 
-const sensitive = /password|passwd|api.?key|access.?token|refresh.?token|token|private.?key|(?:^|[^a-z])secret(?![a-z])|credential|密码|口令|私钥|密钥|令牌|凭据/i
-const isSensitive = value => sensitive.test(String(value || '').replace(/([a-z0-9])([A-Z])/g, '$1 $2'))
+const sensitive = /(?:password|passwd|credential|secret|token)s?(?![a-z])|(?:api|private)[^a-z]*keys?(?![a-z])|密码|口令|私钥|密钥|令牌|凭据/
+const isSensitive = value => sensitive.test(String(value || '').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase())
 
 /** ACP support is explicit per mode (unlike MCP, elicitation:{} is NOT form).
  * The client handle and signal belong to this app connection + active turn.
