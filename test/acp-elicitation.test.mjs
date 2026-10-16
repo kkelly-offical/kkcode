@@ -60,7 +60,7 @@ test('ACP form rejects sensitive metadata before contacting the client', async (
 })
 
 test('ACP form rejects secret and credential metadata before contacting the client', async t => {
-  const questions = ['Secret', 'credential', '凭据'].flatMap(value => [
+  const questions = ['Secret', 'userSecret', 'credential', '凭据'].flatMap(value => [
     { id: value, text: 'Value' },
     { id: 'value', text: value },
     { id: 'value', text: 'Value', header: value },
@@ -74,6 +74,24 @@ test('ACP form rejects secret and credential metadata before contacting the clie
     })
     assert.deepEqual(answer, { cancelled: true })
     assert.equal(seen, 0)
+  })
+})
+
+test('ACP form allows ordinary words resembling sensitive metadata', async t => {
+  const questions = [
+    { id: 'secretary', text: 'Value' },
+    { id: 'value', text: 'Secretary' },
+    { id: 'value', text: 'Value', header: 'Secretariat' },
+    { id: 'value', text: 'Value', description: 'Administrative secretary' }
+  ]
+  for (const question of questions) await t.test(JSON.stringify(question), async () => {
+    let seen = 0
+    const answer = await requestAcpQuestion({
+      capabilities: { elicitation: { form: {} } }, sessionId: 's', request: { questions: [question] },
+      client: { request: async () => { seen++; return { action: 'accept', content: { q0: 'value' } } } }
+    })
+    assert.deepEqual(answer, { [question.id]: 'value' })
+    assert.equal(seen, 1)
   })
 })
 
