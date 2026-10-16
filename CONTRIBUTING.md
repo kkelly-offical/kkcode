@@ -39,12 +39,9 @@ npm install
 npm run start
 ```
 
-### Running Tests
+### Validation
 
-```bash
-npm test
-npm run test:e2e
-```
+Run `npm test` and the checks required for your change. Use the [development and validation guide](docs/contributing.md) as the canonical checklist for static checks, Web build/browser coverage, additional suites, and skip or platform-acceptance reporting. Never report unexecuted checks as passing.
 
 ## Code Style
 

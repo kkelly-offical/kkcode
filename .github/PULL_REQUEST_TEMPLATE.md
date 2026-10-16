@@ -39,6 +39,6 @@ Closes #
 
 - [ ] I have read the [Contributing Guide](../CONTRIBUTING.md) / 我已阅读[贡献指南](../CONTRIBUTING.zh-CN.md)
 - [ ] My code follows the project's code style / 代码遵循项目风格
-- [ ] I have tested my changes locally / 已在本地测试过变更
-- [ ] I have added/updated tests if needed / 如有需要，已添加或更新测试
+- [ ] I ran the required checks and disclosed every skip/not-run item and any required platform acceptance / 已执行必备检查，并如实注明 skip、未执行项及所需平台验收
+- [ ] I added or updated regression tests for behavior changes / 行为变更已添加或更新回归测试
 - [ ] My changes do not introduce new warnings / 变更没有引入新的警告
