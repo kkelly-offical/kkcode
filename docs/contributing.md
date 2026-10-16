@@ -1,6 +1,6 @@
 # 开发与验证
 
-[文档导航](README.md) · 当前源码1.0.8（界面增强正式版）；见[版本状态](versions.md)。
+[文档导航](README.md) · 公开版本与源码目标见[版本状态](versions.md)。
 
 ## 小步修改
 
@@ -8,19 +8,26 @@
 独立分支。缺陷、能力边界和未覆盖的测试分开记录；不要把维护文档当成已修复运行时。
 保持现有CLI/headless契约、Web/Android布局及权限边界。
 
+所有改动执行必备检查：
+
 ```sh
 npm ci
 npm run version:check
 npm run lint
 npm run typecheck
 npm run typecheck:web
-npm run build:web
 npm test
 ```
 
-按改动补专项：`npm run test:web`、`npm run test:e2e`、`npm run test:compatibility`；
-发布候选执行 `npm run release:verify`。完整源码测试命令不保证存在于全局npm安装包中。
-本机通过不能代替所需的平台／真实模型验收；没有环境时记录skip，不写成通过。
+Web或Device/API契约改动必须再运行 `npm run test:web`；它已包含Web构建，不重复执行
+`npm run build:web`。其他改动仍执行 `npm run build:web`。Web套件只保留真实Device/API、
+隔离UI契约、安全、响应式和状态恢复等仍有独立保护作用的浏览器检查。
+
+按改动补专项：`npm run test:e2e`、`npm run test:compatibility`；发布候选执行
+`npm run release:verify`。完整源码测试命令不保证存在于全局npm安装包中。
+普通Node套件中的浏览器专项可按既有条件skip；Web必跑套件须在Chromium可用环境完整执行。
+本机通过不能代替所需的平台／真实模型验收；未执行、skip及原因须如实记录，不写成通过，
+也不新增skip换取绿灯。
 
 ## 版本准备与发行分开
 

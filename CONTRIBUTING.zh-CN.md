@@ -39,12 +39,9 @@ npm install
 npm run start
 ```
 
-### 运行测试
+### 验证
 
-```bash
-npm test
-npm run test:e2e
-```
+运行 `npm test` 及改动所需的检查。必备静态检查、Web构建与浏览器覆盖、专项套件以及skip和平台验收口径，统一以[开发与验证指南](docs/contributing.md)为准；未执行的检查不得写成通过。
 
 ## 代码风格
 
