@@ -2,21 +2,23 @@ import { validateToolArguments } from '../kernel/tool/validate-args.mjs'
 
 const sensitive = /password|passwd|credential|secret|token|apikey|privatekey/
 const sensitiveChinese = /密码|口令|私钥|密钥|令牌|凭据/
-const ordinaryIdentifiers = new Set([
-  'secretary', 'secretariat', 'secretaries', 'secretarial', 'secrete', 'secreted',
-  'tokenizer', 'tokenization', 'tokenizers', 'tokenize', 'tokenized',
-  'passwordless', 'privatekeyboard', 'apikeynesian'
-])
+const ordinaryPatterns = [
+  /^secret(?:ar(?:y|ies|ial(?:ly)?|iats?)|e(?:d|s)?|ing|ions?|ive(?:ly|ness)?|ly|ory)$/,
+  /^token(?:iz(?:ers?|e(?:d|s)?|ing|ations?)|is(?:ers?|e(?:d|s)?|ing|ations?)|isms?|ist(?:s|ic(?:ally)?)?)$/,
+  /^passwordless$/,
+  /^(?:keyboards?|keynesians?|privatekeyboards?|apikeynesians?)$/
+]
+const isOrdinary = value => ordinaryPatterns.some(pattern => pattern.test(value))
 const isSensitive = value => {
   const text = String(value || '')
   if (sensitiveChinese.test(text)) return true
   const tokens = []
   for (const word of text.match(/[A-Za-z]+/g) || []) {
-    if (ordinaryIdentifiers.has(word.toLowerCase())) continue
+    if (isOrdinary(word.toLowerCase())) continue
     const normalized = word.replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase()
-    for (const token of normalized.split(' ')) if (!ordinaryIdentifiers.has(token)) tokens.push(token)
+    for (const token of normalized.split(' ')) if (!isOrdinary(token)) tokens.push(token)
   }
-  return tokens.some((token, index) => sensitive.test(token) || ((token === 'api' || token === 'private') && /^keys?$/.test(tokens[index + 1] || '')))
+  return tokens.some((token, index) => sensitive.test(token) || ((token === 'api' || token === 'private') && /^keys?/.test(tokens[index + 1] || '')))
 }
 
 /** ACP support is explicit per mode (unlike MCP, elicitation:{} is NOT form).
@@ -32,6 +34,7 @@ export async function requestAcpQuestion({ client, capabilities, sessionId, requ
     const question = questions[index]
     if (typeof question.id !== 'string' || question.secret === true || [question.id, question.text, question.header, question.description].some(isSensitive)) return { cancelled: true }
     const choices = (question.options || []).map(option => String(option.value ?? option.label)).slice(0, 100)
+    if (question.allowCustom === false && !choices.length) return { cancelled: true }
     const field = { type: question.multi ? 'array' : 'string', title: String(question.text || question.id).slice(0, 1000), description: String(question.description || '').slice(0, 8000) }
     if (question.multi) field.items = { type: 'string' }
     if (question.allowCustom === false && choices.length) {

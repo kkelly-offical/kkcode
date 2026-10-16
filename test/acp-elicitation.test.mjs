@@ -66,7 +66,10 @@ test('ACP form rejects secret and credential metadata before contacting the clie
     'mytoken', 'tokens', 'token', 'accessToken', 'refresh_token', 'TOKENVALUE', 'tokenvalue',
     'mypassword', 'password', 'passwd', 'PASSWORDVALUE', 'PASSWDVALUE',
     'credential', 'credentials', 'CREDENTIALVALUE',
-    'apiKey', 'private key', 'PRIVATE_KEY', 'APIKEYVALUE', 'PRIVATEKEYVALUE', 'secretarySecret',
+    'apiKey', 'private key', 'PRIVATE_KEY', 'APIKEYVALUE', 'PRIVATEKEYVALUE',
+    'api keyvalue', 'API KEYVALUE', 'api keysvalue', 'private keyvalue', 'PRIVATE KEYVALUE', 'private keysvalue',
+    'secretarySecret', 'SecretSecretary', 'secretariatToken', 'TokenTokenizer',
+    'tokenizerPassword', 'passwordlessCredential', 'privateKeyboardSecret', 'APIKeynesianToken',
     '密码', '口令', '私钥', '密钥', '令牌', '凭据'
   ].flatMap(value => [
     { id: value, text: 'Value' },
@@ -88,10 +91,12 @@ test('ACP form rejects secret and credential metadata before contacting the clie
 test('ACP form allows ordinary words resembling sensitive metadata', async t => {
   const questions = [
     'secretary', 'Secretary', 'Secretariat', 'Administrative secretary',
-    'secretaries', 'Secretarial', 'secrete', 'secreted',
+    'secretaries', 'Secretarial', 'secrete', 'secreted', 'secretes', 'secreting',
+    'secretion', 'secretions', 'secretive', 'secretively',
     'tokenizer', 'Tokenizer', 'Tokenization', 'Choose a tokenizer',
     'tokenizers', 'tokenize', 'tokenized', 'tokenization algorithm',
-    'passwordless', 'privateKeyboard', 'APIKeynesian'
+    'tokenizing', 'tokenisation', 'tokenising', 'tokenism', 'tokenisms', 'tokenistically',
+    'passwordless', 'privateKeyboard', 'APIKeynesian', 'private keyboard', 'API Keynesian'
   ].flatMap(value => [
     { id: value, text: 'Value' },
     { id: 'value', text: value },
@@ -126,11 +131,26 @@ test('ACP form round-trips multi-select arrays and rejects invalid answers', asy
   for (const content of ['a', 'not-advertised', ['a', 'not-advertised']]) assert.deepEqual((await run(content)).answer, { cancelled: true })
 })
 
+test('ACP form rejects fixed questions without options before contacting the client', async t => {
+  for (const multi of [false, true]) await t.test(multi ? 'multi' : 'single', async () => {
+    let seen = 0
+    const answer = await requestAcpQuestion({
+      capabilities: { elicitation: { form: {} } }, sessionId: 's',
+      request: { questions: [{ id: 'choice', text: 'Choice', options: [], multi, allowCustom: false }] },
+      client: { request: async () => { seen++; return { action: 'accept', content: { q0: multi ? ['not-advertised'] : 'not-advertised' } } } }
+    })
+    assert.deepEqual(answer, { cancelled: true })
+    assert.equal(seen, 0)
+  })
+})
+
 test('ACP form keeps ordinary and custom answers compatible', async () => {
   const cases = [
     [{ id: 'value', text: 'Value', header: 'Details', description: 'Ordinary project metadata', secret: false }, 'ordinary', { value: 'ordinary' }],
     [{ id: 'value', text: 'Value', options: [{ label: 'small' }] }, 'custom', { value: 'custom' }],
-    [{ id: 'values', text: 'Values', options: [{ label: 'a' }], multi: true }, ['a', 'custom'], { values: ['a', 'custom'] }]
+    [{ id: 'values', text: 'Values', options: [{ label: 'a' }], multi: true }, ['a', 'custom'], { values: ['a', 'custom'] }],
+    [{ id: 'value', text: 'Value', options: [], allowCustom: true }, 'custom', { value: 'custom' }],
+    [{ id: 'values', text: 'Values', options: [], multi: true, allowCustom: true }, ['custom'], { values: ['custom'] }]
   ]
   for (const [question, content, expected] of cases) {
     const answer = await requestAcpQuestion({
