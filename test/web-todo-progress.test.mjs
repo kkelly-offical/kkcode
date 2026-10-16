@@ -79,6 +79,7 @@ test('Web real device snapshots and live events restore todos after reopening an
     await page.goto(info.url)
     await page.getByRole('button', { name: 'Todo first', exact: true }).click()
     await expectTasks('待办 1/4 · 进行中 2 · 受阻 1')
+    await expect(page.getByRole('list', { name: '待办任务列表', exact: true })).toContainText('ACTIVE_ONE')
     await writer.update({ todos: tasks.map(item => ({ ...item, status: 'completed' })) })
     await expectTasks('待办 4/4 · 进行中 0 · 受阻 0')
     for (const id of ['child_one', 'child_two']) {

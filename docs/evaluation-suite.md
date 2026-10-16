@@ -105,6 +105,41 @@ node scripts/evaluate.mjs selfcheck --suite-version v4 --case C04 --case C10 \
   --image sha256:已安装的Node镜像摘要
 ```
 
+### REC-02：首工具所有权边界的独立公开定义
+
+Issue #8 的 `list → write` 对照出现 `ENOENT`，源于驱动把首个任意工具误当成
+`effect-once.txt` 写入，并不是产品所有权隔离失效的证据。修正后的独立定义为
+`kk.evaluation.recovery-driver-definition.v1` / `owner-epoch-first-tool-rec02-v1`，
+定义 SHA-256 为 `b6c080bf21ea046275b1446eb0abc20d3ebde95690466060f1e39110fe1563fb`。
+只有显式传入 `createOwnerEpochRecoveryFixture` 生成的 `ownerEpochFixture` 才启用；
+回执记录 `driverDefinition` / `driverDefinitionHash`，并把定义和场景参数纳入
+`stateFingerprint` 与 `lifecycleReceipt`。v1–v4 的 `graderRevision`、manifest/task
+hash 和既有结果不改，这份定义不是 v5 成绩，也不能与旧成绩混算。
+
+故障切点是“声明的第一个工具已经执行、其 durable result 尚未结算”。公开定义覆盖：
+
+- 首工具 `list`、`read`、`write` 和实际返回失败的 `failed-write`；文件是否存在只作
+  fixture 观察。非写入和失败写入允许没有标记文件，不再无条件读取并把它误报为恢复失败。
+- `control.requested` 在 `run.claimed` 之前或之后的两种取消顺序；取消终态保留，
+  未决动作仍须核查，不能把取消当成回滚。
+- 旧 owner 的迟到工具结果保持未提交，后续 `execute` / `complete` 均为 `STALE_OWNER`；
+  replacement owner 的 `resume` 在未知动作核查前为 `UNRESOLVED_ACTIONS`。
+  宿主实际重放同一 write 时，即使最终字节不变，执行计数也使回执失败；实际提交晚到
+  结果的负控同样失败。
+
+新场景使用独立 `REC02-PUBLIC` 合成任务，不从封存任务构造输入、期望或故障参数。
+它在临时合成工作树中运行真实 host 工具、kernel 和持久 run store，模型侧仅为本地
+loopback 参考 provider；不需要 Docker，不调用真实模型，也不是 live/封存成绩。
+六个正向场景各有缺失 takeover 负例，另有重放和晚到提交两个故障负控：
+
+```sh
+node --test --test-name-pattern='^REC02' test/evaluation-recovery.test.mjs
+```
+
+该命令不覆盖真实模型行为、封存任务、外部写副作用、多工具并发批次、持久控制请求之间的
+真实进程崩溃或未知动作后的具体 reconciliation 结论。旧 lifecycle 全量测试仍需已安装的
+严格镜像；未执行或 skip 不能记为通过。
+
 在完整源码仓库根目录，先准备本机已有的不可变镜像。Office 镜像按 [文档工具说明](office-tools.md) 构建。
 
 ```sh

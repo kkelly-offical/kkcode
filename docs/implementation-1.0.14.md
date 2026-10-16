@@ -33,7 +33,7 @@
 
 ## 最终合入与正式发行
 
-用户于2026-10-13明确“可以的，发版吧”，并要求 Windows 一起提供实验版、不配置证书。最终发行提交 `53577ccebdc5bcade5a457261e9aa965b2630e8b`（PR#70）与候选 `ffd4f021da0a8c0819fe702703d4f9329bcea5f0` 同树；候选 / 主线跨平台、Web、Windows 原生和完整 CodeQL 通过，主线开放告警0。主线首次 Windows 既有 doctor 测试15秒超时，代码、断言及时限均未修改，同提交完整重跑通过；失败与重跑原记录保留在1.0.13实施记录与候选回执。
+用户于2026-10-13明确“可以的，发版吧”，并要求 Windows 一起提供实验版、不配置证书。最终发行提交 `53577ccebdc5bcade5a457261e9aa965b2630e8b`（PR#70）与候选 `ffd4f021da0a8c0819fe702703d4f9329bcea5f0` 同树；候选 / 主线跨平台、Web、Windows 原生和完整 CodeQL 通过，主线开放告警0。主线首次 Windows 既有 doctor 测试15秒超时，发行当时未修改代码、断言及时限，同提交完整重跑通过；失败与重跑原记录保留在1.0.13实施记录与候选回执，后续诊断修复见下节。
 
 - `v1.0.14` 指向上述发行提交，旧tag未移动。[正式发行流水线38420874406](https://github.com/kkelly-offical/kkcode/actions/runs/38420874406)全部通过；Windows Node22矩阵4373项中4124通过、249跳过、0失败。跳过项不计为通过。
 - npm latest已切换为1.0.14，Preview仍为1.0.6-preview.1。[GitHub Release](https://github.com/kkelly-offical/kkcode/releases/tag/v1.0.14)已提供原证书Android10021和未签名Windows x64实验版，以及源码、npm归档、SBOM、更新清单与哈希回执。
@@ -44,6 +44,15 @@
 
 最低Node检查采用npm11.12.1；npm10.9联网及缓存安装在依赖解析阶段未完成，主动中止的原记录保留，不宣称通过或擅自确定原因。
 
-本轮没有部署其他生产 / 演示网关、升级运行中的remote或新增真实模型调用；SDK深度扫描M11仍暂停，Apple应用、C04 / GitLab / 长期实际使用门禁仍未宣称完成。Windows安装器未配置Authenticode，按用户要求以实验版发行。
+本轮没有部署其他生产 / 演示网关、升级运行中的remote或新增真实模型调用；SDK深度扫描M11在发行时仍暂停，当前状态见下节；Apple应用、C04 / GitLab / 长期实际使用门禁仍未宣称完成。Windows安装器未配置Authenticode，按用户要求以实验版发行。
 
 发行记录推送时核对了既有 [Dependabot#4](https://github.com/kkelly-offical/kkcode/security/dependabot/4)：`sprintf-js@1.1.3` / GHSA-hp3w-g68c-fv3c，中度、尚无修复版本；来自 `@kkcode/desktop → electron-builder → @electron/get → global-agent → roarr` 的开发 / 可选构建依赖，1.0.13已有相同版本。公开npm生产安装树不包含此包，Windows生产运行时依赖审计通过；原告警保持开放，不把CodeQL开放告警0或生产审计结果冒称为全部开发依赖无告警。原始告警与依赖路径证据在 `/tmp/kkcode-114-stable/`。
+
+## 发布后维护修复与当前验证
+
+- SDK深度扫描M11已完成，并修复7项SDK / ACP缺陷；另完成多媒体resume / retry、REC-02、Windows doctor e2e诊断修复，以及测试清单维护和发行文档同步。#60–#69与#8均已关闭；既有失败记录不改写，版本与既有发布状态不变。
+- 最终在detached `8699e13`上验证：Node共4748项，4553通过、195跳过、0失败；独立e2e 36项通过、1项Linux跳过；Web 14份smoke与9项unit全部通过、0跳过；行 / 分支 / 函数覆盖率分别为82.92% / 81.27% / 82.61%；package smoke与secret scan通过。跳过项不计为通过。
+- macOS构建首次因hash差异导致旧tracked Web资产ENOENT，原失败记录保留。最终在detached工作树暂存本地生成物供扫描，提交树未夹带生成物。
+- PR#73首次 `b71e54f` 的 [verify run 38859669757](https://github.com/kkelly-offical/kkcode/actions/runs/38859669757) 因旧Web资产ENOENT失败，原失败保留。M38从同提交windows-client产物提取 `index-UWd2tjyB.js`（491544字节；SHA-256 `e07906c73f3f9de61cbce2ea0794036810fc7d5e6bf45fb0e65f93fc4d66051e`）修复CI资产；此远端资产失败与上述本地macOS构建首次ENOENT分别记录，不合并或改写。
+- PR#73代码与资源提交 `4c3e823` 的远端检查已全部成功：[verify run 38861491345](https://github.com/kkelly-offical/kkcode/actions/runs/38861491345)（ubuntu22/24、macos22、windows22、web-ui）、[windows-client run 38861491332](https://github.com/kkelly-offical/kkcode/actions/runs/38861491332)、[CodeQL run 38861491786](https://github.com/kkelly-offical/kkcode/actions/runs/38861491786)（actions/javascript-typescript/java-kotlin）。PR#73仍待用户审查，不自动合并。
+- 本次及后续仅文档更新只同步上述既有检查事实，不冒称新的产品代码验收或新发布。

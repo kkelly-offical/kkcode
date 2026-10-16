@@ -1,4 +1,5 @@
-export interface BrowserRecipeAuthority { readonly __browserRecipeAuthority?: never }
+declare const browserRecipeAuthorityBrand: unique symbol;
+export interface BrowserRecipeAuthority { readonly [browserRecipeAuthorityBrand]: true }
 export type BrowserRecipeState = 'candidate' | 'reviewed' | 'validated' | 'enabled' | 'disabled' | 'invalidated';
 export interface BrowserRecipeStep {
   action: 'snapshot' | 'open' | 'click' | 'fill' | 'press'; role?: string; name?: string; nameParameter?: string;

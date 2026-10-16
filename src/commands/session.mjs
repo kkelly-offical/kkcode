@@ -250,6 +250,7 @@ export function createSessionCommand() {
       console.log(`last prompt: ${resumeCtx.lastPrompt.slice(0, 100)}${resumeCtx.lastPrompt.length > 100 ? "..." : ""}`)
       const result = await kernel.executeTurn({
         prompt: resumeCtx.lastPrompt,
+        ...(resumeCtx.contentBlocks ? { contentBlocks: resumeCtx.contentBlocks } : {}),
         mode,
         model,
         sessionId: options.id,
@@ -286,6 +287,7 @@ export function createSessionCommand() {
       console.log(`retrying failed turn in session ${options.id}`)
       const result = await kernel.executeTurn({
         prompt: resumeCtx.lastPrompt,
+        ...(resumeCtx.contentBlocks ? { contentBlocks: resumeCtx.contentBlocks } : {}),
         mode: resumeCtx.session.mode,
         model: resumeCtx.session.model,
         sessionId: options.id,

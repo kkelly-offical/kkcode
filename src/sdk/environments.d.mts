@@ -13,7 +13,9 @@ export interface NpmOfflineScriptPlan {
   readonly schema: 'kk.npm-offline-scripts.v1'; readonly planId: string; readonly imageId: string;
   readonly scripts: readonly Readonly<NpmOfflineScript>[]; readonly scriptsHash: string; readonly network: 'none'; readonly limits: Readonly<NpmEnvironmentLimits>;
 }
+declare const npmEnvironmentBrand: unique symbol;
 export interface NpmEnvironment {
+  readonly [npmEnvironmentBrand]: true;
   readonly schema: 'kk.npm-environment.v1'; readonly id: string; readonly directory: string; readonly planId: string; readonly imageId: string;
   readonly manifestHashes: Readonly<NpmManifestHashes>; readonly platform: Readonly<{os: string; arch: string}>;
   readonly registryOrigins: readonly string[]; readonly limits: Readonly<NpmEnvironmentLimits>;

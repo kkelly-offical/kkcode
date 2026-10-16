@@ -66,6 +66,7 @@ try {
   const input = page.getByRole('textbox', { name: '消息' })
   await input.fill('停止和恢复验收')
   await page.getByRole('button', { name: '发送', exact: true }).click()
+  await expect(page.getByRole('region', { name: '当前执行状态', exact: true })).toHaveCount(1)
   const dots = page.getByTestId('thinking-dots')
   await expect(dots).toHaveCount(1)
   await expect(dots.locator('span')).toHaveCount(9)

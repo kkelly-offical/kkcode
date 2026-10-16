@@ -78,8 +78,16 @@ export function createAcpApp({ trust = false, createKernelImpl = createKernel } 
       sessions.set(id, entry)
       if (loaded) for (const message of previous.messages.slice(-200)) {
         if (message.synthetic || !['user', 'assistant'].includes(message.role)) continue
-        const text = typeof message.content === 'string' ? message.content : (message.content || []).filter(part => part.type === 'text').map(part => part.text).join('\n')
-        if (text) await notify(ctx.client, id, { sessionUpdate: message.role === 'user' ? 'user_message_chunk' : 'agent_message_chunk', content: { type: 'text', text: text.slice(0, 20000) } })
+        const content = message.content, sessionUpdate = message.role === 'user' ? 'user_message_chunk' : 'agent_message_chunk'
+        if (typeof content === 'string' || (Array.isArray(content) && content.every(part => part.type === 'text'))) {
+          const text = typeof content === 'string' ? content : content.map(part => part.text).join('\n')
+          if (text) await notify(ctx.client, id, { sessionUpdate, content: { type: 'text', text: text.slice(0, 20000) } })
+          continue
+        }
+        for (const part of content || []) {
+          if (part.type === 'text' && part.text) await notify(ctx.client, id, { sessionUpdate, content: { type: 'text', text: part.text.slice(0, 20000) } })
+          else if (part.type === 'image') await notify(ctx.client, id, { sessionUpdate, content: { type: 'image', data: part.data, mimeType: part.mediaType } })
+        }
       }
       return { ...(loaded ? {} : { sessionId: id }), modes: modes(entry.mode) }
     } catch (error) { if (sessions.get(id)?.kernel === kernel) sessions.delete(id); await kernel.shutdown(); throw error }
@@ -101,9 +109,10 @@ export function createAcpApp({ trust = false, createKernelImpl = createKernel } 
       const id = ctx.params.sessionId, entry = session(id)
       if (active.has(id)) throw invalid('A turn is already active in this session')
       const contentBlocks = [], text = []
+      let hasImage = false
       for (const block of ctx.params.prompt) {
-        if (block.type === 'text') text.push(block.text)
-        else if (block.type === 'image') contentBlocks.push({ type: 'image', data: block.data, mediaType: block.mimeType })
+        if (block.type === 'text') { text.push(block.text); contentBlocks.push({ type: 'text', text: block.text }) }
+        else if (block.type === 'image') { hasImage = true; contentBlocks.push({ type: 'image', data: block.data, mediaType: block.mimeType }) }
         else throw invalid('This ACP adapter supports text and image inputs; other resource types are not advertised')
       }
       const controller = new AbortController(), signal = AbortSignal.any([controller.signal, ctx.signal])
@@ -112,7 +121,7 @@ export function createAcpApp({ trust = false, createKernelImpl = createKernel } 
         const configState = structuredClone(entry.kernel.configState)
         configState.config.permission = { ...configState.config.permission, level: approvalOf(entry.mode), auto_review: ['auto', 'ultra'].includes(entry.mode) }
         const prompt = text.join('\n')
-        const pending = entry.kernel.executeTurn({ sessionId: id, prompt, ...(contentBlocks.length ? { contentBlocks: [...(prompt ? [{ type: 'text', text: prompt }] : []), ...contentBlocks] } : {}), mode: laneOf(entry.mode), model: entry.model, providerType: entry.provider, configState, signal, allowQuestion: true })
+        const pending = entry.kernel.executeTurn({ sessionId: id, prompt, ...(hasImage ? { contentBlocks } : {}), mode: laneOf(entry.mode), model: entry.model, providerType: entry.provider, configState, signal, allowQuestion: true })
         active.get(id).promise = pending
         const result = await pending
         if (!entry.streamed && result.reply) await notify(ctx.client, id, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: result.reply } })
