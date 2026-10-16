@@ -62,7 +62,12 @@ test('ACP form rejects sensitive metadata before contacting the client', async (
 test('ACP form rejects secret and credential metadata before contacting the client', async t => {
   const questions = [
     'Secret', 'userSecret', 'USERSECRET', 'USERSecret', 'mysecret', 'userSecrets', 'secrets', 'USERSECRETS',
-    'mytoken', 'tokens', 'accessToken', 'refresh_token', 'mypassword', 'credential', 'credentials', '凭据'
+    'secretkey', 'SECRETKEY', 'MYSECRETKEY', 'SECRETVALUE',
+    'mytoken', 'tokens', 'token', 'accessToken', 'refresh_token', 'TOKENVALUE', 'tokenvalue',
+    'mypassword', 'password', 'passwd', 'PASSWORDVALUE', 'PASSWDVALUE',
+    'credential', 'credentials', 'CREDENTIALVALUE',
+    'apiKey', 'private key', 'PRIVATE_KEY', 'APIKEYVALUE', 'PRIVATEKEYVALUE', 'secretarySecret',
+    '密码', '口令', '私钥', '密钥', '令牌', '凭据'
   ].flatMap(value => [
     { id: value, text: 'Value' },
     { id: 'value', text: value },
@@ -83,7 +88,10 @@ test('ACP form rejects secret and credential metadata before contacting the clie
 test('ACP form allows ordinary words resembling sensitive metadata', async t => {
   const questions = [
     'secretary', 'Secretary', 'Secretariat', 'Administrative secretary',
-    'tokenizer', 'Tokenizer', 'Tokenization', 'Choose a tokenizer'
+    'secretaries', 'Secretarial', 'secrete', 'secreted',
+    'tokenizer', 'Tokenizer', 'Tokenization', 'Choose a tokenizer',
+    'tokenizers', 'tokenize', 'tokenized', 'tokenization algorithm',
+    'passwordless', 'privateKeyboard', 'APIKeynesian'
   ].flatMap(value => [
     { id: value, text: 'Value' },
     { id: 'value', text: value },

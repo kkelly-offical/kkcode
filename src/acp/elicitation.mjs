@@ -1,7 +1,23 @@
 import { validateToolArguments } from '../kernel/tool/validate-args.mjs'
 
-const sensitive = /(?:password|passwd|credential|secret|token)s?(?![a-z])|(?:api|private)[^a-z]*keys?(?![a-z])|密码|口令|私钥|密钥|令牌|凭据/
-const isSensitive = value => sensitive.test(String(value || '').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase())
+const sensitive = /password|passwd|credential|secret|token|apikey|privatekey/
+const sensitiveChinese = /密码|口令|私钥|密钥|令牌|凭据/
+const ordinaryIdentifiers = new Set([
+  'secretary', 'secretariat', 'secretaries', 'secretarial', 'secrete', 'secreted',
+  'tokenizer', 'tokenization', 'tokenizers', 'tokenize', 'tokenized',
+  'passwordless', 'privatekeyboard', 'apikeynesian'
+])
+const isSensitive = value => {
+  const text = String(value || '')
+  if (sensitiveChinese.test(text)) return true
+  const tokens = []
+  for (const word of text.match(/[A-Za-z]+/g) || []) {
+    if (ordinaryIdentifiers.has(word.toLowerCase())) continue
+    const normalized = word.replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase()
+    for (const token of normalized.split(' ')) if (!ordinaryIdentifiers.has(token)) tokens.push(token)
+  }
+  return tokens.some((token, index) => sensitive.test(token) || ((token === 'api' || token === 'private') && /^keys?$/.test(tokens[index + 1] || '')))
+}
 
 /** ACP support is explicit per mode (unlike MCP, elicitation:{} is NOT form).
  * The client handle and signal belong to this app connection + active turn.
