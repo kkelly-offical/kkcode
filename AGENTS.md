@@ -1,6 +1,6 @@
 # KK Code 工作记忆
 
-只维护当前状态、有效约束和未完事项。过程与证据写入[当前实施记录](docs/implementation-1.0.13.md)，
+只维护当前状态、有效约束和未完事项。过程与证据写入[当前实施记录](docs/implementation-1.0.14.md)，
 旧检查点见[历史记忆](docs/history/working-memory-through-2026-10-02.md)，不要逐轮追加日志。
 
 ## 发行与授权
@@ -31,7 +31,9 @@
 
 ## 实测与下一步
 
-- **1.0.14已完成并发布**：20项P1 / P2存量修复、Android测试工具链、Web / Android专项和分发资源已完成；正式发行流水线38420874406全部通过，开放CodeQL告警0。Android沿用原证书，Windows为用户要求的未签名实验版；公开npm / APK / Windows匿名下载及最低Node22.12安装 / SDK / SQLite往返已核验。主线首轮既有doctor超时的原记录保留，同提交完整重跑通过，代码、断言及时限未改。SDK深度扫描M11仍暂停。既有Windows构建开发依赖sprintf-js的中度Dependabot#4保持开放，尚无修复版，生产安装树不包含；详情见实施记录。正式产物 `test-results/1.0.14-release/`，候选 `test-results/1.0.14-candidate/` 保留；[清单](docs/implementation-1.0.14.md)，发行证据 `/tmp/kkcode-114-stable/`。未部署其他网关、升级运行中的remote或新增真实模型调用。
+- **1.0.14已完成并发布**：20项P1 / P2存量修复、Android测试工具链、Web / Android专项和分发资源已完成；正式发行流水线38420874406全部通过，开放CodeQL告警0。Android沿用原证书，Windows为用户要求的未签名实验版；公开npm / APK / Windows匿名下载及最低Node22.12安装 / SDK / SQLite往返已核验。主线首轮既有doctor超时的原记录保留，同提交完整重跑通过，发行当时未改代码、断言及时限。既有Windows构建开发依赖sprintf-js的中度Dependabot#4保持开放，尚无修复版，生产安装树不包含；详情见实施记录。正式产物 `test-results/1.0.14-release/`，候选 `test-results/1.0.14-candidate/` 保留；[清单](docs/implementation-1.0.14.md)，发行证据 `/tmp/kkcode-114-stable/`。未部署其他网关、升级运行中的remote或新增真实模型调用。
+
+- **当前维护修复**：SDK深度扫描M11已完成并修复7项SDK / ACP缺陷；另完成多媒体resume / retry、REC-02、Windows doctor e2e诊断修复，以及测试清单维护和发行文档同步，#60–#69与#8均已关闭。最终detached `8699e13`的本地Node / e2e / Web / coverage、package smoke与secret scan验证通过；hosted Windows / PR CI尚待运行，保持待验，不提前写通过。实际计数与边界见[实施记录](docs/implementation-1.0.14.md)。
 
 - **1.0.13 已完成并发布**：五端 49 张独立精修设计、Windows 工程工作台、三端附件 / 字体 / 任务进度、应用内扩展配置及桌面登录返回完成。模型账号配置仅作可复用模板，复制后设备独立，不自动跟随；[实施记录](docs/implementation-1.0.13.md)。账号模板与扩展能力需要相应网关 / remote 升级，不自动部署其他现网网关。
 

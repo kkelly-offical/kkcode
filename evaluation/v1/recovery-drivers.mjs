@@ -23,6 +23,20 @@ const guard = run => ({ runId: run.id, expectedRevision: run.revision, ownerId: 
 const terminalUnknown = run => run.actions.some(action => ['prepared', 'unknown'].includes(action.state))
 const summary = '<context-state>{"goal":"Continue the original task","key_decisions":["UTC; never publish; preserve original.txt; COMP-17; label B"],"evidence":["Existing files and durable receipts must not be replayed"]}</context-state><summary>Continue from the existing evidence.</summary>'
 export const supportedRecovery = new Set(['pause_resume', 'coordinator_restart', 'cancel_inflight', 'detach_reattach', 'protocol_pair_restart', 'force_compaction', 'compaction_history_race', 'compaction_no_reduction', 'kill_after_prepare', 'receipt_write_failure', 'owner_epoch_takeover', 'candidate_drift_after_verify', 'artifact_context_restore', 'abort_tool_batch', 'process_sigkill_resume'])
+const ownerEpochDefinitionBody = Object.freeze({
+  schema: 'kk.evaluation.recovery-driver-definition.v1',
+  id: 'owner-epoch-first-tool-rec02-v1',
+  lifecycle: 'owner_epoch_takeover',
+  boundary: 'after-first-declared-tool-before-durable-settlement',
+  firstTools: Object.freeze(['list', 'read', 'write', 'failed-write']),
+  cancellation: Object.freeze(['none', 'before-takeover', 'after-takeover']),
+  unknownEffectPolicy: 'reject-resume-until-explicit-reconciliation; never replay automatically',
+  filesystemPolicy: 'observe-the-declared-effect-without-unconditional-reads'
+})
+export const ownerEpochRecoveryDefinition = Object.freeze({ ...ownerEpochDefinitionBody, definitionHash: sha256(ownerEpochDefinitionBody) })
+export function createOwnerEpochRecoveryFixture({ firstTool = 'write', cancellation = 'none', fault = null } = {}) {
+  return Object.freeze({ definition: ownerEpochRecoveryDefinition, backend: 'public-synthetic-host', firstTool, cancellation, fault })
+}
 
 export const isRecoveryEvidence = execution => proofs.has(execution) && proofs.get(execution).hash === sha256(proofBody(execution))
 export function verifyRecoveryEvidence(task, execution) {
@@ -35,7 +49,7 @@ const call = (id, name, args) => ({ id, type: 'function', function: { name, argu
 /** A reference provider is used ONLY in system-selfcheck. It does not evaluate
  * model quality: the reference knows expected answers and is explicitly tagged.
  * All tools, SQLite recovery, compaction CAS and process faults remain real. */
-async function referenceProvider(task) {
+async function referenceProvider(task, ownerEpochFixture = null) {
   let phase = 'first', sent = false, reads = 0, count = 0, counterStep = 0, receiptStep = 0
   const server = createServer(async (req, res) => {
     const chunks = []; for await (const chunk of req) chunks.push(chunk)
@@ -44,6 +58,16 @@ async function referenceProvider(task) {
     const system = body.messages?.filter(item => item.role === 'system').map(item => item.content).join('\n') || ''
     let message = { role: 'assistant', content: 'Reference turn complete; host verification still required.' }
     if (system.includes('conversation summarizer')) message = { role: 'assistant', content: summary }
+    else if (phase === 'first' && ownerEpochFixture && !sent) {
+      sent = true
+      const calls = {
+        list: call('rec02-first-tool', 'list', { path: '.' }),
+        read: call('rec02-first-tool', 'read', { path: 'original.txt' }),
+        write: call('rec02-first-tool', 'write', { path: 'effect-once.txt', content: 'once' }),
+        'failed-write': call('rec02-first-tool', 'write', { path: 'effect-once.txt', content: '' })
+      }
+      message = { role: 'assistant', content: null, tool_calls: [calls[ownerEpochFixture.firstTool]] }
+    }
     else if (phase === 'first' && task.receiptReplayCheck === 'bound-effect-receipt-v4') {
       const calls = [call('inspect-before-effect', 'list', { path: '.' }), call('read-before-effect', 'read', { path: 'original.txt' }), call('target-effect', 'write', { path: 'effect-once.txt', content: 'once' })]
       if (receiptStep < calls.length) message = { role: 'assistant', content: null, tool_calls: [calls[receiptStep++]] }
@@ -94,7 +118,7 @@ async function privateControl(cwd, privateRoot) {
 }
 
 /** Shared only with the trusted crash worker; never a model/tool API. */
-export async function createRecoveryRuntime({ task, cwd, privateRoot, profile, image, limits, ownerId = 'evaluation-recovery', fault = null, localFreeLimits = null, existingRunId = null, localFreeAuthorization: providedAuthorization = null, expectedLocalFreePolicy = null, executionObserver = null, counterObserver = null, receiptObserver = null, artifactObserver = null }) {
+export async function createRecoveryRuntime({ task, cwd, privateRoot, profile, image, limits, ownerId = 'evaluation-recovery', fault = null, localFreeLimits = null, existingRunId = null, localFreeAuthorization: providedAuthorization = null, expectedLocalFreePolicy = null, executionObserver = null, counterObserver = null, receiptObserver = null, artifactObserver = null, publicFixtureBackend = null }) {
   const home = path.join(privateRoot, 'state'); process.env.KKCODE_HOME = home
   await mkdir(home, { recursive: true, mode: 0o700 })
   const prices = path.join(home, 'prices.json'), configFile = path.join(home, 'config.json')
@@ -124,7 +148,7 @@ export async function createRecoveryRuntime({ task, cwd, privateRoot, profile, i
     throw new Error('A recovery authorization requires its explicit frozen local quotas')
   } } catch (error) { await store.close(); throw error }
   const kernel = await createDelegatedKernel({ cwd, configState: state, trustState: { trusted: true } })
-  const strict = createDockerExecutionBackend({ image }), actor = { accountId: 'evaluation', projectId: task.id }
+  const strict = publicFixtureBackend || createDockerExecutionBackend({ image }), actor = { accountId: 'evaluation', projectId: task.id }
   const runtime = { store, kernel, artifacts, actor, configState: state, coordinator: null, run: null, limits, backend: strict, localFreeAuthorization }
   const fileObserver = counterObserver || receiptObserver || artifactObserver
   let counterQueue = Promise.resolve()
@@ -133,10 +157,11 @@ export async function createRecoveryRuntime({ task, cwd, privateRoot, profile, i
     const trace = await fileObserver?.before(input)
     let result
     try {
-      result = await strict.executeTool({ ...input, invoke: () => {
+      const toolInput = publicFixtureBackend ? input : { ...input, invoke: () => {
         if (['artifact_read', 'artifact_search'].includes(input.tool.name)) return input.invoke()
         throw new Error('Recovery filesystem tools must never execute the host fallback')
-      } })
+      } }
+      result = await strict.executeTool(toolInput)
     } catch (error) { await fileObserver?.after(input, null, trace, error); throw error }
     await fileObserver?.after(input, result, trace)
     executionObserver?.record(input, result)
@@ -151,7 +176,7 @@ export async function createRecoveryRuntime({ task, cwd, privateRoot, profile, i
     counterQueue = pending.then(() => {}, () => {})
     return pending
   } }
-  if (executionObserver || fileObserver) runtime.executeObservedFixtureTool = input => backend.executeTool(input)
+  if (executionObserver || fileObserver || publicFixtureBackend) runtime.executeObservedFixtureTool = input => backend.executeTool(input)
   const originalPut = artifacts.put.bind(artifacts)
   artifacts.put = async input => { await fault?.beforeArtifact?.(runtime, input); return originalPut(input) }
   runtime.coordinator = createRunCoordinator({ kernel, store, artifacts, actor, ownerId, executionBackend: backend, ...(localFreeAuthorization ? { localFreeAuthorization } : {}),
@@ -253,9 +278,10 @@ async function compact(runtime, task, checks, operations, negativeControl = fals
   return { before, after, result }
 }
 
-/** Actual host lifecycle runner. All approval closures are evaluator authority,
- * all file effects use the real strict Docker backend, never model assertions. */
-export async function runRecoveryScenario({ task, cwd, privateRoot, profile = null, image, budgetUsd = 0, deadlineAt = Date.now() + 120000, signal, mode = 'live', negativeControl = false, localFreeLimits = null, localFreeAuthorization = null, protocolFault = null, counterFault = null, receiptFault = null, graderRevision = 1 }) {
+/** Actual host lifecycle runner. All approval closures are evaluator authority.
+ * Docker is the default; REC-02's explicit public fixture uses real host tools
+ * only inside its temporary synthetic worktree and is never valid in live mode. */
+export async function runRecoveryScenario({ task, cwd, privateRoot, profile = null, image, budgetUsd = 0, deadlineAt = Date.now() + 120000, signal, mode = 'live', negativeControl = false, localFreeLimits = null, localFreeAuthorization = null, protocolFault = null, counterFault = null, receiptFault = null, graderRevision = 1, ownerEpochFixture = null }) {
   if (!supportedRecovery.has(task.lifecycle)) throw new Error('Unknown recovery lifecycle')
   if (![1, 4].includes(graderRevision)) throw new Error('Unsupported public recovery grader revision')
   if (!['live', 'system-selfcheck'].includes(mode)) throw new Error('Invalid recovery mode')
@@ -263,6 +289,11 @@ export async function runRecoveryScenario({ task, cwd, privateRoot, profile = nu
   if (localFreeAuthorization && !localFreeLimits) throw new Error('Suite authorization requires explicit local resource limits')
   if (mode === 'live' && (!profile || (localFreeLimits ? budgetUsd !== 0 : budgetUsd <= 0))) throw new Error('Live recovery requires an explicit paid budget or host-approved local-free allowance')
   if (negativeControl && mode !== 'system-selfcheck') throw new Error('Lifecycle negative controls are offline fixture-only, never live model quality evidence')
+  const boundOwnerEpoch = ownerEpochFixture !== null
+  if (boundOwnerEpoch && (mode !== 'system-selfcheck' || task.lifecycle !== ownerEpochRecoveryDefinition.lifecycle || ownerEpochFixture.definition !== ownerEpochRecoveryDefinition
+    || ownerEpochFixture.backend !== 'public-synthetic-host' || !ownerEpochRecoveryDefinition.firstTools.includes(ownerEpochFixture.firstTool)
+    || !ownerEpochRecoveryDefinition.cancellation.includes(ownerEpochFixture.cancellation) || ![null, 'late-result-commit', 'unknown-effect-replay'].includes(ownerEpochFixture.fault)
+    || negativeControl && ownerEpochFixture.fault)) throw new Error('Owner epoch controls require the explicit REC-02 public offline fixture')
   const boundProtocol = task.lifecycle === 'protocol_pair_restart' && task.protocolReplayCheck === 'bound-invocations-v2'
   const boundCounter = task.id === 'C04' && task.split === 'development' && task.lifecycle === 'detach_reattach' && task.counterReplayCheck === 'bound-counter-v4'
   const boundReceipt = task.id === 'C10' && task.split === 'development' && task.lifecycle === 'receipt_write_failure' && task.receiptReplayCheck === 'bound-effect-receipt-v4'
@@ -272,10 +303,16 @@ export async function runRecoveryScenario({ task, cwd, privateRoot, profile = nu
   if (counterFault && (mode !== 'system-selfcheck' || !boundCounter || negativeControl || !['repeat-original', 'repeat-and-restore'].includes(counterFault))) throw new Error('Counter fault injection requires an explicit v4 offline C04 fixture')
   if (receiptFault && (mode !== 'system-selfcheck' || !boundReceipt || negativeControl || !['repeat-original', 'wrong-read-receipt'].includes(receiptFault))) throw new Error('Receipt fault injection requires an explicit v4 offline C10 fixture')
   privateRoot = await privateControl(cwd, privateRoot)
-  const previousHome = process.env.KKCODE_HOME, reference = mode === 'system-selfcheck' ? await referenceProvider(task) : null
+  const previousHome = process.env.KKCODE_HOME, reference = mode === 'system-selfcheck' ? await referenceProvider(task, boundOwnerEpoch ? ownerEpochFixture : null) : null
   profile = reference?.profile || profile
   const limits = { budgetUsd: reference ? 1 : budgetUsd, deadlineAt }, checks = [], operations = [], diagnostics = [], turns = []
-  let runtime, beforeEventsHash, beforeEpoch, faultUsed = false, release, arrived
+  let runtime, replacementCoordinator, ownerEpochInput, beforeEventsHash, beforeEpoch, faultUsed = false, release, arrived
+  const ownerEpochObservation = boundOwnerEpoch ? { executions: [], firstToolError: null, naturalOldOwnerError: null } : null
+  const publicFixtureBackend = boundOwnerEpoch ? {
+    allowedToolNames: ['list', 'read', 'write'],
+    ensureReady: async ({ cwd: workspace }) => ({ backend: 'public-synthetic-host', strict: false, workspace: await realpath(workspace) }),
+    executeTool: input => input.invoke()
+  } : null
   const executionObserver = boundProtocol ? protocolExecutionObserver() : null
   const counterObserver = boundCounter ? createCounterExecutionObserver(cwd) : null
   const receiptObserver = boundReceipt ? createReceiptExecutionObserver(cwd) : null
@@ -285,7 +322,13 @@ export async function runRecoveryScenario({ task, cwd, privateRoot, profile = nu
   const reached = new Promise(resolve => { arrived = resolve }), gate = new Promise(resolve => { release = resolve })
   try {
     const fault = {
-      async afterTool(current, input) {
+      async afterTool(current, input, result) {
+        if (boundOwnerEpoch) {
+          const failed = result?.status === 'error' || result?.ok === false || String(result?.output || '').startsWith('error:')
+          ownerEpochObservation.executions.push({ operationId: input.operationId, invocationId: input.invocationId, tool: input.tool.name, failed })
+          ownerEpochObservation.firstToolError ??= failed
+          ownerEpochInput ||= input
+        }
         if (faultUsed) return
         if (boundReceipt) { await receiptObserver.bindEffect(current, input); return }
         if (boundCounter && !counterObserver.isIncrement(input)) return
@@ -296,8 +339,18 @@ export async function runRecoveryScenario({ task, cwd, privateRoot, profile = nu
           else await new Promise((_, reject) => { const abort = () => reject(Object.assign(new Error('Evaluation cancellation after a real tool'), { code: 'ABORT_ERR' })); if (input.signal.aborted) abort(); else input.signal.addEventListener('abort', abort, { once: true }) })
         } else if (task.lifecycle === 'owner_epoch_takeover' && !negativeControl) {
           faultUsed = true
-          const row = await current.store.getRun(current.run.id)
-          await current.store.claimRun({ runId: row.id, expectedRevision: row.revision, expectedOwnerId: row.ownerId, expectedOwnerEpoch: row.ownerEpoch, ownerId: 'evaluation-replacement', approval: { approved: true, actorId: 'evaluation-host', reason: 'Explicit ownership race injection' } })
+          let row = await current.store.getRun(current.run.id)
+          const approval = { approved: true, actorId: 'evaluation-host', reason: 'Explicit ownership race injection' }
+          if (boundOwnerEpoch && ownerEpochFixture.cancellation === 'before-takeover') {
+            await current.store.requestControl({ runId: row.id, expectedRevision: row.revision, expectedOwnerId: row.ownerId, expectedOwnerEpoch: row.ownerEpoch,
+              kind: 'cancel', requestId: 'control_rec02_before_takeover', approval })
+            row = await current.store.getRun(current.run.id)
+          }
+          const claimed = await current.store.claimRun({ runId: row.id, expectedRevision: row.revision, expectedOwnerId: row.ownerId, expectedOwnerEpoch: row.ownerEpoch, ownerId: 'evaluation-replacement', approval })
+          if (boundOwnerEpoch && ownerEpochFixture.cancellation === 'after-takeover') {
+            await current.store.requestControl({ runId: claimed.id, expectedRevision: claimed.revision, expectedOwnerId: claimed.ownerId, expectedOwnerEpoch: claimed.ownerEpoch,
+              kind: 'cancel', requestId: 'control_rec02_after_takeover', approval })
+          }
         }
       },
       async beforeArtifact(current, input) {
@@ -334,7 +387,7 @@ export async function runRecoveryScenario({ task, cwd, privateRoot, profile = nu
         operations.push({ kind: 'real-process-SIGKILL', boundary: task.lifecycle, beforeState: prior.lastTurn?.status, afterState: runtime.run.lastTurn?.status })
       } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); if (worker.exitCode === null && worker.signalCode === null) worker.kill('SIGKILL') }
     } else {
-      runtime = await createRecoveryRuntime({ task, cwd, privateRoot, profile, image, limits, fault, localFreeLimits, localFreeAuthorization, executionObserver, counterObserver, receiptObserver, artifactObserver })
+      runtime = await createRecoveryRuntime({ task, cwd, privateRoot, profile, image, limits, fault, localFreeLimits, localFreeAuthorization, executionObserver, counterObserver, receiptObserver, artifactObserver, publicFixtureBackend })
       await start(runtime, task)
       beforeEpoch = runtime.run.ownerEpoch; beforeEventsHash = sha256(await runtime.store.events({ runId: runtime.run.id }))
       let unsubscribe, firstEvents = 0, secondEvents = 0
@@ -347,7 +400,7 @@ export async function runRecoveryScenario({ task, cwd, privateRoot, profile = nu
         else await runtime.coordinator.cancel({ runId: runtime.run.id, reason: 'Evaluation controlled cancellation' })
       }
       let first
-      try { first = await pending; turns.push(first.turn) } catch (error) { if (task.lifecycle !== 'owner_epoch_takeover') throw error; diagnostics.push(error.code || error.message) }
+      try { first = await pending; turns.push(first.turn) } catch (error) { if (task.lifecycle !== 'owner_epoch_takeover') throw error; if (boundOwnerEpoch) ownerEpochObservation.naturalOldOwnerError = error.code || error.message; diagnostics.push(error.code || error.message) }
       unsubscribe?.()
       beforeEventsHash = sha256(await runtime.store.events({ runId: runtime.run.id }))
       let run = await runtime.store.getRun(runtime.run.id)
@@ -371,8 +424,55 @@ export async function runRecoveryScenario({ task, cwd, privateRoot, profile = nu
           checks.push({ name: 'receipt-failure-blocks-replay', passed: await rejected(() => runtime.coordinator.resume({ runId: run.id })) === 'UNRESOLVED_ACTIONS' && run.actions.length === 1 })
         }
       } else if (task.lifecycle === 'owner_epoch_takeover') {
-        checks.push({ name: 'actual-epoch-fence-rejects-old-host', passed: faultUsed && run.ownerEpoch > beforeEpoch && run.ownerId === 'evaluation-replacement' && await rejected(() => runtime.coordinator.execute({ runId: run.id, prompt: 'Must not run' })) === 'STALE_OWNER' })
-        checks.push({ name: 'late-result-does-not-forge-success', passed: terminalUnknown(run) && run.actions.length === 1 && await readFile(path.join(cwd, 'effect-once.txt'), 'utf8') === 'once' })
+        if (boundOwnerEpoch) {
+          const expectedKind = `tool.${ownerEpochFixture.firstTool === 'failed-write' ? 'write' : ownerEpochFixture.firstTool}`
+          let oldOwnerExecuteError = 'NOT_ATTEMPTED_WITHOUT_TAKEOVER', oldOwnerCompleteError = 'NOT_ATTEMPTED_WITHOUT_TAKEOVER'
+          if (!negativeControl) {
+            oldOwnerExecuteError = await rejected(() => runtime.coordinator.execute({ runId: run.id, prompt: 'Must not run' }))
+            oldOwnerCompleteError = await rejected(() => runtime.coordinator.complete({ runId: run.id }))
+          }
+          if (ownerEpochFixture.fault === 'unknown-effect-replay') {
+            await runtime.executeObservedFixtureTool(ownerEpochInput)
+            operations.push({ kind: 'fault-rec02-unknown-effect-replay', operationId: ownerEpochInput.operationId })
+          }
+          if (ownerEpochFixture.fault === 'late-result-commit') {
+            const current = await runtime.store.getRun(run.id), scopedActor = { ...runtime.actor, runId: run.id, sessionId: run.binding.sessionId }
+            const proof = await runtime.artifacts.put({ actor: scopedActor, content: 'Controlled REC-02 late-result commit fault', source: { kind: 'system' } })
+            run = await runtime.store.settleAction({ ...guard(current), actionId: current.actions[0].id, state: 'succeeded',
+              receipt: { summary: 'Controlled REC-02 late-result commit fault', evidenceRefs: [proof.id] } })
+            operations.push({ kind: 'fault-rec02-late-result-commit', actionId: current.actions[0].id })
+          }
+          let replacementResumeError = 'NOT_ATTEMPTED_WITHOUT_UNKNOWN'
+          if (!negativeControl && ownerEpochFixture.fault !== 'late-result-commit') {
+            replacementCoordinator = createRunCoordinator({ kernel: runtime.kernel, store: runtime.store, artifacts: runtime.artifacts, actor: runtime.actor,
+              ownerId: 'evaluation-replacement', executionBackend: runtime.backend, leaseDirectory: path.join(privateRoot, 'leases'), grantDirectory: path.join(privateRoot, 'grants'),
+              authorize: request => ['run.contract', 'run.takeover', 'run.tool', 'run.reconcile'].includes(request.kind) })
+            replacementResumeError = await rejected(() => replacementCoordinator.resume({ runId: run.id, prompt: 'Inspect the persisted unknown action; do not replay it.', mode: 'agent', signal }))
+            run = await runtime.store.getRun(run.id)
+          }
+          const events = await runtime.store.events({ runId: run.id }), claimIndex = events.findIndex(event => event.type === 'run.claimed'), cancelIndex = events.findIndex(event => event.type === 'control.requested')
+          const cancellationObserved = ownerEpochFixture.cancellation === 'none' ? cancelIndex < 0 : claimIndex >= 0 && cancelIndex >= 0
+            && (ownerEpochFixture.cancellation === 'before-takeover' ? cancelIndex < claimIndex : cancelIndex > claimIndex)
+          const effectPath = path.join(cwd, 'effect-once.txt'), effectPresent = await exists(effectPath), effectContent = effectPresent ? await readFile(effectPath, 'utf8') : null
+          const expectedState = ownerEpochFixture.cancellation === 'none' ? 'outcome_unknown' : 'cancelled', firstAction = run.actions[0]
+          checks.push({ name: 'owner-boundary-matches-declared-first-tool', passed: faultUsed && run.ownerEpoch > beforeEpoch && run.ownerId === 'evaluation-replacement'
+            && run.actions.length === 1 && firstAction?.kind === expectedKind && ownerEpochObservation.firstToolError === (ownerEpochFixture.firstTool === 'failed-write') })
+          checks.push({ name: 'actual-epoch-fence-rejects-old-host', passed: oldOwnerExecuteError === 'STALE_OWNER' && oldOwnerCompleteError === 'STALE_OWNER' })
+          checks.push({ name: 'late-result-does-not-forge-success', passed: run.state === expectedState && run.lastTurn?.status === 'interrupted'
+            && run.actions.length === 1 && firstAction?.state === 'unknown' })
+          checks.push({ name: 'replacement-owner-cannot-replay-unknown', passed: replacementResumeError === 'UNRESOLVED_ACTIONS'
+            && ownerEpochObservation.executions.length === 1 && run.actions.length === 1 && firstAction?.state === 'unknown' })
+          checks.push({ name: 'owner-cancellation-cut-point-matches-definition', passed: cancellationObserved })
+          operations.push({ kind: ownerEpochRecoveryDefinition.id, definitionHash: ownerEpochRecoveryDefinition.definitionHash,
+            firstTool: ownerEpochFixture.firstTool, cancellation: ownerEpochFixture.cancellation, expectedState, runState: run.state,
+            firstToolError: ownerEpochObservation.firstToolError, naturalOldOwnerError: ownerEpochObservation.naturalOldOwnerError,
+            oldOwnerExecuteError, oldOwnerCompleteError, replacementResumeError, executions: ownerEpochObservation.executions.map(item => ({ ...item })),
+            controlSequence: events.filter(event => ['run.claimed', 'control.requested'].includes(event.type)).map(event => event.type),
+            filesystem: { effectPresent, effectContentHash: effectContent === null ? null : sha256(effectContent) } })
+        } else {
+          checks.push({ name: 'actual-epoch-fence-rejects-old-host', passed: faultUsed && run.ownerEpoch > beforeEpoch && run.ownerId === 'evaluation-replacement' && await rejected(() => runtime.coordinator.execute({ runId: run.id, prompt: 'Must not run' })) === 'STALE_OWNER' })
+          checks.push({ name: 'late-result-does-not-forge-success', passed: terminalUnknown(run) && run.actions.length === 1 && await readFile(path.join(cwd, 'effect-once.txt'), 'utf8') === 'once' })
+        }
       } else if (task.lifecycle === 'candidate_drift_after_verify') {
         const candidate = await captureAcceptanceCandidate(cwd), scopedActor = { ...runtime.actor, runId: run.id, sessionId: run.binding.sessionId }
         const proof = await runtime.artifacts.put({ actor: scopedActor, content: JSON.stringify({ candidate, verifiedOriginal: await readFile(path.join(cwd, 'original.txt'), 'utf8') }), source: { kind: 'system' } })
@@ -476,15 +576,28 @@ export async function runRecoveryScenario({ task, cwd, privateRoot, profile = nu
     checks.push({ name: 'durable-identity-and-request-ledger-present', passed: run.id === runtime.run.id && budget.requests.some(request => request.kind === 'model') })
     const candidate = await captureAcceptanceCandidate(cwd), evidence = { durableRunId: run.id, ownerEpoch: String(run.ownerEpoch), beforeEventsHash,
       ...(graderRevision === 4 ? { graderRevision } : {}),
+      ...(boundOwnerEpoch ? { driverDefinition: ownerEpochRecoveryDefinition.id, driverDefinitionHash: ownerEpochRecoveryDefinition.definitionHash } : {}),
       afterEventsHash: sha256(events), lifecycle: task.lifecycle, actions: run.actions, operations, budget,
-      candidateHash: candidate.treeFingerprint, stateFingerprint: sha256({ profile: { ...profile, baseUrl: '<explicit-route>' }, image, mode }),
-      lifecycleReceipt: sha256({ checks, runId: run.id, beforeEpoch, afterEpoch: run.ownerEpoch, events: sha256(events), candidate: candidate.treeFingerprint }),
+      candidateHash: candidate.treeFingerprint, stateFingerprint: sha256({ profile: { ...profile, baseUrl: '<explicit-route>' }, image, mode,
+        ...(boundOwnerEpoch ? { driverDefinitionHash: ownerEpochRecoveryDefinition.definitionHash,
+          fixture: { firstTool: ownerEpochFixture.firstTool, cancellation: ownerEpochFixture.cancellation, fault: ownerEpochFixture.fault, negativeControl } } : {}) }),
+      lifecycleReceipt: sha256({ checks, runId: run.id, beforeEpoch, afterEpoch: run.ownerEpoch, events: sha256(events), candidate: candidate.treeFingerprint,
+        ...(boundOwnerEpoch ? { driverDefinitionHash: ownerEpochRecoveryDefinition.definitionHash,
+          fixture: { firstTool: ownerEpochFixture.firstTool, cancellation: ownerEpochFixture.cancellation, fault: ownerEpochFixture.fault, negativeControl } } : {}) }),
       modelError: turns.some(turn => turn?.error && !['cancel_inflight', 'receipt_write_failure', 'abort_tool_batch', 'owner_epoch_takeover'].includes(task.lifecycle)),
       diagnostics, runState: run.state, mode, negativeControl, fixtureOnly: mode === 'system-selfcheck', externalAuthorizedUsd: reference ? 0 : budgetUsd,
       referenceRequests: reference?.requests() ?? null, oracleChecks: checks }
     proofs.set(evidence, { taskHash: sha256(task), hash: sha256(proofBody(evidence)), checks: structuredClone(checks) })
     return evidence
-  } finally { release?.(); await closeRuntime(runtime); await reference?.close(); if (previousHome === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = previousHome }
+  } finally {
+    release?.()
+    try { await replacementCoordinator?.close() } finally {
+      try { await closeRuntime(runtime) } finally {
+        await reference?.close()
+        if (previousHome === undefined) delete process.env.KKCODE_HOME; else process.env.KKCODE_HOME = previousHome
+      }
+    }
+  }
 }
 
 /** Isolated child entry: parent independently verifies SQLite and filesystem

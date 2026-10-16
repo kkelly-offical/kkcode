@@ -39,6 +39,51 @@ const responseOf = ({ status = 200, type = 'text/event-stream', chunks = [] }) =
   body: streamOf(chunks),
 })
 
+test('EventStreamParser discards an unterminated pending frame at EOF', () => {
+  const parser = new EventStreamParser()
+  assert.deepEqual(parser.push('data: {"seq":1}\n\ndata: {"seq":2}'), [
+    { event: 'message', data: '{"seq":1}', id: '' },
+  ])
+  assert.deepEqual(parser.end(), [])
+})
+
+test('streamSessionEvents stops a fetched batch when onEvent aborts', async () => {
+  const controller = new AbortController()
+  const seen = []
+  await assert.rejects(streamSessionEvents({
+    url: '/x',
+    signal: controller.signal,
+    fetchImpl: async () => responseOf({
+      chunks: ['data: {"seq":1}\n\ndata: {"seq":2}\n\n'],
+    }),
+    onEvent: async (event) => {
+      seen.push(event.seq)
+      controller.abort(new Error('event batch stopped'))
+    },
+  }), /event batch stopped/)
+  assert.deepEqual(seen, [1])
+})
+
+test('streamSessionEvents stops a fetched batch when onMeta aborts', async () => {
+  const controller = new AbortController()
+  const seen = []
+  await assert.rejects(streamSessionEvents({
+    url: '/x',
+    signal: controller.signal,
+    fetchImpl: async () => responseOf({
+      chunks: [
+        'event: connected\ndata: {"type":"connected"}\n\nevent: session.state\ndata: {"type":"session.state"}\n\nevent: stream.text.delta\ndata: {"type":"stream.text.delta","seq":1}\n\n',
+      ],
+    }),
+    onMeta: async (meta) => {
+      seen.push(meta.type)
+      controller.abort(new Error('meta batch stopped'))
+    },
+    onEvent: (event) => seen.push(event.type),
+  }), /meta batch stopped/)
+  assert.deepEqual(seen, ['connected'])
+})
+
 test('streamSessionEvents dispatches contract v1 frames: connected/state → meta, rows → events', async () => {
   const seen = { events: [], metas: [], gaps: [] }
   const outcome = await streamSessionEvents({

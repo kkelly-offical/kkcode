@@ -74,3 +74,73 @@ test('official ACP client drives real kernel sessions, mode changes, tool approv
     assert.ok(events.some(event => event.sessionUpdate === 'user_message_chunk'))
   } finally { resumed.close(); await resumedHost.shutdown() }
 })
+
+const ACP_IMAGE = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
+
+function createAcpKernelStub({ previous = null, prompts = [] } = {}) {
+  let sequence = 0
+  return {
+    trustState: { trusted: true },
+    configState: { config: { provider: { default: 'fixture', fixture: { default_model: 'test' } }, permission: {} } },
+    sessions: { touchSession: async () => {}, getSession: async () => previous, updateSession: async () => {} },
+    turns: { newSessionId: () => `acp-test-${++sequence}` },
+    executeTurn: async options => { prompts.push(options); return { reply: '' } },
+    shutdown: async () => {}
+  }
+}
+
+test('official ACP client preserves prompt block order and plain-text input compatibility', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kkcode-acp-media-prompt-')), prompts = []
+  const host = createAcpApp({ createKernelImpl: async () => createAcpKernelStub({ prompts }) })
+  const client = acp.client({ name: 'media-prompt-fixture' }), connection = client.connect(host.app)
+  t.after(async () => { connection.close(); await host.shutdown(); await rm(root, { recursive: true, force: true }) })
+
+  const plain = await connection.agent.request('session/new', { cwd: root, mcpServers: [] })
+  await connection.agent.request('session/prompt', { sessionId: plain.sessionId, prompt: [{ type: 'text', text: 'first' }, { type: 'text', text: 'second' }] })
+  assert.equal(prompts[0].prompt, 'first\nsecond')
+  assert.equal(prompts[0].contentBlocks, undefined)
+
+  const mixed = await connection.agent.request('session/new', { cwd: root, mcpServers: [] })
+  await connection.agent.request('session/prompt', { sessionId: mixed.sessionId, prompt: [
+    { type: 'text', text: 'before' },
+    { type: 'image', data: ACP_IMAGE, mimeType: 'image/png' },
+    { type: 'text', text: 'after' }
+  ] })
+  assert.equal(prompts[1].prompt, 'before\nafter')
+  assert.deepEqual(prompts[1].contentBlocks, [
+    { type: 'text', text: 'before' },
+    { type: 'image', data: ACP_IMAGE, mediaType: 'image/png' },
+    { type: 'text', text: 'after' }
+  ])
+})
+
+test('session/load replays ordered text and image notifications and keeps plain-text history compatible', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kkcode-acp-media-load-'))
+  const previous = {
+    session: { cwd: root, modeId: 'agent', model: 'test', providerType: 'fixture' },
+    messages: [
+      { role: 'user', content: [
+        { type: 'text', text: 'before' },
+        { type: 'image', data: ACP_IMAGE, mediaType: 'image/png' },
+        { type: 'text', text: 'after' }
+      ] },
+      { role: 'assistant', content: 'Done.' },
+      { role: 'user', content: 'plain string' },
+      { role: 'assistant', content: [{ type: 'text', text: 'first' }, { type: 'text', text: 'second' }] }
+    ]
+  }
+  const host = createAcpApp({ createKernelImpl: async () => createAcpKernelStub({ previous }) }), events = []
+  const client = acp.client({ name: 'media-load-fixture' }).onNotification('session/update', ctx => { events.push(ctx.params.update) })
+  const connection = client.connect(host.app)
+  t.after(async () => { connection.close(); await host.shutdown(); await rm(root, { recursive: true, force: true }) })
+
+  await connection.agent.request('session/load', { sessionId: 'media-history', cwd: root, mcpServers: [] })
+  assert.deepEqual(events, [
+    { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'before' } },
+    { sessionUpdate: 'user_message_chunk', content: { type: 'image', data: ACP_IMAGE, mimeType: 'image/png' } },
+    { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'after' } },
+    { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Done.' } },
+    { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'plain string' } },
+    { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'first\nsecond' } }
+  ])
+})

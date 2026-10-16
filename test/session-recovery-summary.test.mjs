@@ -36,3 +36,21 @@ test("summarizeResumeContext reports retryable errors distinctly", () => {
   assert.equal(summary.status, "retryable-error")
   assert.equal(summary.canRetry, true)
 })
+
+test("summarizeResumeContext previews text without stringifying multimedia blocks", () => {
+  const summary = summarizeResumeContext({
+    lastPrompt: [
+      { type: "text", text: "Inspect the image" },
+      { type: "image", mediaType: "image/png", data: "RAW_IMAGE_BYTES" },
+      { type: "text", text: "and compare the audio" },
+      { type: "audio", mediaType: "audio/wav", data: "RAW_AUDIO_BYTES" }
+    ],
+    messageCount: 3,
+    retryMeta: {},
+    canResume: true,
+    canRetry: false
+  })
+
+  assert.equal(summary.lastPromptPreview, "Inspect the image\nand compare the audio")
+  assert.doesNotMatch(summary.lastPromptPreview, /RAW_IMAGE_BYTES|RAW_AUDIO_BYTES|\[object Object\]/)
+})
