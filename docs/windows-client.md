@@ -1,8 +1,8 @@
 # Windows 客户端
 
-[文档导航](README.md) · [1.0.13 发行范围](release-1.0.13.md)
+[文档导航](README.md) · [1.0.14 发行范围](release-1.0.14.md)
 
-Windows x64 客户端提供本机工作区与企业网关两种入口。**1.0.13 正式版已发布**：[下载 Windows x64 安装器](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.13/kkcode-windows-1.0.13-x64-setup.exe)，详见[版本页](versions.md)。
+Windows x64 客户端提供本机工作区与企业网关两种入口。**1.0.14 x64 实验版已发布**：[下载 Windows x64 安装器](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.14/kkcode-windows-1.0.14-x64-setup.exe)，详见[版本页](versions.md)。
 
 ## 安装与开始
 
@@ -40,4 +40,4 @@ Windows x64 客户端提供本机工作区与企业网关两种入口。**1.0.13
 
 本机服务仅监听回环地址。网页渲染启用沙箱与上下文隔离，外部网关页面没有本机文件选择或 Node 调用权限。选取新项目经过原生目录对话框和既有私密路径保护。网关鉴权、接口及事件流继续经过该网关的 HTTPS 证书验证。
 
-本版安装器未配置 Authenticode 签名，安装时可能显示未知发布者。SHA-256、签名状态与真实安装检查见[公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.13/release-verification.json)。请从项目的正式发行页获取安装器并核对校验值。
+本版按用户要求以实验版发布，未配置 Authenticode 签名，安装时可能显示未知发布者。SHA-256、签名状态与真实安装检查见[公开回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.14/release-verification.json)。请从项目的正式发行页获取安装器并核对校验值。

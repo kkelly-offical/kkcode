@@ -1,15 +1,11 @@
 # KK Code 文档
 
-当前文档适用公开稳定版 **1.0.13 / Android10020**，见[版本与升级](versions.md)。
-源码候选为 **1.0.14 / Android10021**，尚未公开发布：[候选范围](release-1.0.14.md) · [实施与验收](implementation-1.0.14.md)。
-[Windows 客户端](windows-client.md) 与 Android / Web 体验优化已随 [1.0.13](release-1.0.13.md) 正式发布；检查事实见[实施清单](implementation-1.0.13.md)。
-当前稳定版为[1.0.13 客户端精修正式版](release-1.0.13.md)；上一稳定版为[1.0.12](release-1.0.12.md)。
-已发布渠道、Android版本码与升级入口只在[版本与升级](versions.md)集中维护。
+当前文档适用公开稳定版 **1.0.14 / Android10021**，见[版本与升级](versions.md)。
+本轮存量缺陷修复已发布：[发行范围](release-1.0.14.md) · [实施与验收](implementation-1.0.14.md)。
+[Windows 客户端](windows-client.md) 同时提供 **1.0.14 x64 未签名实验版**。
+上一稳定版为[1.0.13](release-1.0.13.md)；其设计与体验优化事实见[实施清单](implementation-1.0.13.md)。
+已发布渠道、Android版本码与升级入口在[版本与升级](versions.md)集中维护。
 历史材料保留原始版本和证据，不作为当前使用说明。
-
-本轮 **1.0.13** 已完成并发布：[开发清单与检查](implementation-1.0.13.md)。
-
-[1.0.13发行范围](release-1.0.13.md) · 公开产物与部署状态以版本页为准。
 
 历史独立补丁：[1.0.11 Web 显示版](web-display-1.0.11.md) · [安装与回退](web-display-install.md)，该补丁自身不改变 CLI 或 Android 版本。
 
@@ -54,7 +50,7 @@ App、设备CLI和网关分别升级。公共网关镜像发布暂缓，继续�
 
 - [分域SDK总览](sdk-guide.md) · [headless JSONL契约](headless-jsonl-contract.md)
 - [配置字段参考](config.example.yaml) · [贡献与验证](contributing.md)
-- [路线图与Issues](ROADMAP.md) · [1.0.13迭代范围与边界](release-1.0.13.md)
+- [路线图与Issues](ROADMAP.md) · [1.0.14迭代范围与边界](release-1.0.14.md)
 
 ## 历史与发行证据
 

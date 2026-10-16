@@ -91,3 +91,15 @@
 - 本机 Node24.15.0 独立 `npm test`：4373 项 / 148 个 suites，4216 通过、157 跳过、0 失败、0 取消；跳过项未计为通过。本次未本机执行 Android / 浏览器专项，未新增真实模型调用、发布或部署。原日志与结构化回执保留在 `/tmp/kkcode-pr70-review-evidence/`，本地工作树构建差异仅用于复现，不是已提交修复。
 
 用户后续要求完成优化并交付新版本候选，由用户决定正式发布。修复与版本准备见[1.0.14 候选实施与验收](implementation-1.0.14.md)：代码候选 `a80d72e` 已解决上述阻断，四组跨平台、Web、Windows 原生、PR / 完整 CodeQL 通过；Android109 项 JVM / 93 项 UI、原证书10020→10021与偏好保留、最低 Node22.12 安装往返通过。原 `75fbf72` 的失败事实不改写；候选源码和产物不等于公开发行。
+
+最终候选 `ffd4f02` 已通过全部候选检查，PR#70 按既有管理员授权合入 `53577cc`，逐项确认同树 `6668d8d968c74e5f617dabf0c23ea942a9bed6fc`，未冒称批准 review。主线 [verify 38384223547](https://github.com/kkelly-offical/kkcode/actions/runs/38384223547) 首轮 Windows 的既有 `e2e: doctor exits 0` 达到15秒执行时限，代码与测试均未在本 PR 修改；本机两项定向复验通过，同一提交仅重跑失败 Windows job 后完整覆盖率、e2e、打包和并发审计门禁通过，原断言 / 时限保持。[Windows 原生 38384223558](https://github.com/kkelly-offical/kkcode/actions/runs/38384223558)与[主线完整 CodeQL 38384223574](https://github.com/kkelly-offical/kkcode/actions/runs/38384223574)通过，开放告警0项；首轮失败与第二轮成功分别保留在 `/tmp/kkcode-114/evidence/`。
+
+1.0.14最终候选交付于 `test-results/1.0.14-candidate/`，含 CLI / 网关 npm 归档、原证书 APK、Windows x64 安装器、源码、SBOM、安装说明、实际检查与哈希回执；完整 ZIP 为 `test-results/kkcode-1.0.14-candidate.zip`。npm归档 SHA-256 `411b30e914dcaaac320124d25273e677cc3c677c3b678542d30fd058539a1859`，APK `96611d8b13f82257d1da1e9706423a686a3335e82faa000579f3ae1af22c9966`，Windows `d1d690fca27d78fdb4ee0fed79c03d0a640f597f3dc5c72174c9f2a0a69790f6`；Windows 下载容器与实际安装器均核对 CI 哈希。最终发布批准仍为 false，未创建发行标签或发布 npm / GitHub Release、未部署网关、未新增真实模型调用；公开 stable / Preview 保持原状态。交付后的这两份本地工作记忆 / 实施记录更新不改变已验证候选的产品代码与产物。
+
+## 1.0.14 正式发行后续
+
+用户于2026-10-13明确授权发布，Windows按其要求以未签名x64实验版同时发行。`v1.0.14`指向`53577cc`，正式发行流水线38420874406全部通过；npm latest为1.0.14，Preview仍为1.0.6-preview.1。原证书Android10021、Windows实验版、源码、更新清单、SBOM及公开哈希回执均已提供；匿名完整下载、最低Node22.12公开包安装 / SDK / SQLite往返核验通过。原候选与主线首次失败、npm10.9两次依赖解析未完成记录保留，不覆盖已发布旧tag、npm版本或APK。
+
+正式回执 `/tmp/kkcode-114-stable/`，持久产物 `test-results/1.0.14-release/`；[1.0.14实施与验收](implementation-1.0.14.md)及[公开发行回执](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.14/release-verification.json)为详细入口。Windows没有新增证书，未部署网关、升级运行中的remote或新增真实模型调用。
+
+既有开发构建依赖 `sprintf-js@1.1.3` 的中度Dependabot#4已核验：上一稳定版亦存在，公开生产安装树不包含，尚无修复版；原告警保持开放，详见1.0.14实施记录。
