@@ -34,6 +34,14 @@ export async function listRecoverableSessions({ cwd = null, limit = 50, enabled 
   )
 }
 
+function promptText(content) {
+  if (!Array.isArray(content)) return content || null
+  return content
+    .filter((block) => block?.type === "text" && typeof block.text === "string")
+    .map((block) => block.text)
+    .join("\n")
+}
+
 export async function getResumeContext(sessionId, { enabled = true } = {}) {
   if (!enabled) return null
   const data = await getSession(sessionId)
@@ -41,9 +49,11 @@ export async function getResumeContext(sessionId, { enabled = true } = {}) {
   const { session, messages } = data
   const userMessages = messages.filter((m) => m.role === "user" && !m.synthetic)
   const lastUserMessage = userMessages.length ? userMessages[userMessages.length - 1] : null
+  const content = lastUserMessage?.content
   return {
     session,
-    lastPrompt: lastUserMessage?.content || null,
+    lastPrompt: promptText(content),
+    contentBlocks: Array.isArray(content) ? content : null,
     messageCount: messages.length,
     retryMeta: session.retryMeta || null,
     canResume: Boolean(lastUserMessage),
@@ -61,12 +71,13 @@ export function summarizeResumeContext(resumeCtx) {
       : resumeCtx.canResume
         ? "resumable"
         : "idle"
+  const lastPrompt = String(promptText(resumeCtx.lastPrompt) || "")
   return {
     status,
     canResume: resumeCtx.canResume,
     canRetry: resumeCtx.canRetry,
     messageCount: resumeCtx.messageCount,
-    lastPromptPreview: resumeCtx.lastPrompt ? `${String(resumeCtx.lastPrompt).slice(0, 100)}${String(resumeCtx.lastPrompt).length > 100 ? "..." : ""}` : "",
+    lastPromptPreview: lastPrompt ? `${lastPrompt.slice(0, 100)}${lastPrompt.length > 100 ? "..." : ""}` : "",
     retryStep: Number(retryMeta.step || 0),
     turnId: retryMeta.turnId || null
   }

@@ -124,6 +124,8 @@ try {
   await chooseProject('/workspace/alpha')
   await input.fill('项目 A 空白草稿')
   await chooseProject('/workspace/beta')
+  await expect(page.locator('.sidebar nav')).toContainText('Beta 项目')
+  await expect(page.locator('.sidebar nav')).not.toContainText('Alpha 一')
   await expect(input).toHaveValue('')
   await input.fill('项目 B 空白草稿')
   await chooseProject('/workspace/alpha')

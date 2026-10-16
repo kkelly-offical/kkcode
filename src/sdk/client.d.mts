@@ -10,6 +10,9 @@ export interface SubagentSnapshot {
   activity?: { phase: string; tool: string; step: number | null };
 }
 export interface SessionInfo { id: string; title?: string; cwd?: string; model?: string; providerType?: string; status?: string; archived?: boolean; hasContent?: boolean; context?: ContextUsage; [key: string]: unknown }
+export interface SessionSnapshot extends SessionInfo { messages: Record<string, unknown>[]; parts: Record<string, unknown>[]; todos?: import('./tasks.mjs').TodoSnapshot; subagents?: SubagentSnapshot[] }
+export interface SessionSubagentsProjection { sessionId: string; subagents: SubagentSnapshot[] }
+export type SessionSubagentsResult = SessionSubagentsProjection | SessionSnapshot;
 export interface AttachmentInfo { id: string; sessionId: string; name: string; mediaType: string; size: number; createdAt: number; expiresAt: number }
 export interface RemoteArtifact { id: string; sha256: string; size: number; mime: string; createdAt: number; source: { kind: string }; retention: { active: boolean; resolved: boolean; pinned: boolean; references?: string[] } }
 export interface RemoteArtifactPage { id: string; sha256: string; size: number; mime?: string; offset: number; encoding: 'base64'; data: string; nextCursor: string | null }
@@ -39,7 +42,7 @@ export interface DeviceMethods {
   'files.read': { params: { path: string }; result: { path: string; content: string } };
   'media.preview': { params: { sessionId: string; messageId: string; index: number }; result: { type: 'image'; data: string; mediaType: string } };
   'sessions.list': { params: { cwd?: string; limit?: number }; result: SessionInfo[] };
-  'sessions.get': { params: { sessionId: string; before?: string; limit?: number }; result: SessionInfo & { messages: Record<string, unknown>[]; parts: Record<string, unknown>[]; todos?: import('./tasks.mjs').TodoSnapshot; subagents?: SubagentSnapshot[] } };
+  'sessions.get': { params: { sessionId: string; before?: string; limit?: number }; result: SessionSnapshot };
   'sessions.create': { params: { cwd: string; mode?: string; model?: string; provider?: string; title?: string }; result: { id: string; cwd: string } };
   'sessions.update': { params: { sessionId: string; title?: string; expectedTitleRevision?: number; archived?: boolean }; result: SessionInfo };
   'sessions.configure': { params: { sessionId: string; mode?: string; model?: string; provider?: string }; result: SessionInfo };
@@ -118,7 +121,7 @@ export declare class DeviceClient {
   http<T = unknown>(path: string, options?: { method?: string; body?: unknown; signal?: AbortSignal }): Promise<T>;
   request<T = unknown>(method: string, params?: Record<string, unknown>, options?: { signal?: AbortSignal; id?: string; issuedAt?: number }): Promise<T>;
   call<M extends keyof DeviceMethods>(method: M, params: DeviceMethods[M]['params'], options?: { signal?: AbortSignal; id?: string; issuedAt?: number }): Promise<DeviceMethods[M]['result']>;
-  call(method: 'sessions.get', params: { sessionId: string; view: 'subagents' }, options?: { signal?: AbortSignal; id?: string; issuedAt?: number }): Promise<{ sessionId: string; subagents: SubagentSnapshot[] }>;
+  call(method: 'sessions.get', params: { sessionId: string; view: 'subagents' }, options?: { signal?: AbortSignal; id?: string; issuedAt?: number }): Promise<SessionSubagentsResult>;
   listDevices<T = unknown>(options?: { signal?: AbortSignal }): Promise<T>;
   profile<T = unknown>(options?: { signal?: AbortSignal }): Promise<T>;
   /** Without onGap, a replay gap rejects with replay_gap instead of dispatching later rows. */

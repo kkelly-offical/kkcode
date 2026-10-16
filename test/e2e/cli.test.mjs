@@ -7,6 +7,15 @@ import { tmpdir } from "node:os"
 
 const CLI = resolve("src/index.mjs")
 const NODE = process.execPath
+const DOCTOR_PROCESS_TIMEOUT = 45_000
+
+function addTimeoutDiagnostics(error, timeout) {
+  if (error?.code !== "ETIMEDOUT") return error
+  const stdout = String(error.stdout || "")
+  const stderr = String(error.stderr || "")
+  error.message += `\nchild process exceeded ${timeout}ms; stdout=${JSON.stringify(stdout)}; stderr=${JSON.stringify(stderr)}`
+  return error
+}
 
 function createIsolatedHome(prefix) {
   const home = mkdtempSync(join(tmpdir(), prefix))
@@ -32,7 +41,7 @@ function run(args, { timeout = 15000, env = {}, expectFail = false, cwd } = {}) 
     if (expectFail) throw new Error("expected non-zero exit but got 0")
     return { stdout, exitCode: 0 }
   } catch (err) {
-    if (!expectFail) throw err
+    if (!expectFail) throw addTimeoutDiagnostics(err, timeout)
     return { stdout: err.stdout || "", stderr: err.stderr || "", exitCode: err.status || 1 }
   }
 }
@@ -55,7 +64,7 @@ test("e2e: --version exits 0", () => {
 test("e2e: doctor exits 0", () => {
   const home = createIsolatedHome("kkcode-e2e-doctor-text-")
   try {
-    const { stdout } = run(["doctor"], { env: { KKCODE_HOME: home } })
+    const { stdout } = run(["doctor"], { timeout: DOCTOR_PROCESS_TIMEOUT, env: { KKCODE_HOME: home } })
     assert.ok(stdout.includes("node"), "should check node")
   } finally {
     rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
@@ -65,7 +74,7 @@ test("e2e: doctor exits 0", () => {
 test("e2e: doctor --json exits 0 and outputs structured json", () => {
   const home = createIsolatedHome("kkcode-e2e-doctor-")
   try {
-    const { stdout } = run(["doctor", "--json"], { env: { KKCODE_HOME: home } })
+    const { stdout } = run(["doctor", "--json"], { timeout: DOCTOR_PROCESS_TIMEOUT, env: { KKCODE_HOME: home } })
     const parsed = JSON.parse(stdout)
     assert.equal(typeof parsed.ok, "boolean")
     assert.ok(parsed.config)
@@ -75,6 +84,26 @@ test("e2e: doctor --json exits 0 and outputs structured json", () => {
   } finally {
     rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
+})
+
+test("e2e helper: timeout diagnostics preserve partial child output", () => {
+  const error = Object.assign(new Error("spawnSync node ETIMEDOUT"), {
+    code: "ETIMEDOUT",
+    stdout: "partial report\n",
+    stderr: "cleanup warning\n"
+  })
+  addTimeoutDiagnostics(error, 15000)
+  assert.ok(error.message.includes("exceeded 15000ms"))
+  assert.ok(error.message.includes('stdout="partial report\\n"'))
+  assert.ok(error.message.includes('stderr="cleanup warning\\n"'))
+
+  const emptyError = Object.assign(new Error("spawnSync node ETIMEDOUT"), { code: "ETIMEDOUT" })
+  addTimeoutDiagnostics(emptyError, 15000)
+  assert.ok(emptyError.message.includes('stdout=""; stderr=""'))
+
+  const ordinaryError = new Error("exit 1")
+  assert.equal(addTimeoutDiagnostics(ordinaryError, 15000), ordinaryError)
+  assert.equal(ordinaryError.message, "exit 1")
 })
 
 // theme preview

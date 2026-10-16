@@ -71,6 +71,20 @@ test('SDK cancellation stops retry backoff and replay gaps request a snapshot re
   await assert.rejects(replay.events('session').next(), error => error.code === 'replay_gap' && error.after === 42)
 })
 
+test('SDK polling abort stops a prefetched batch before its next event', async () => {
+  const controller = new AbortController()
+  let calls = 0
+  const client = new DeviceClient({ url: 'https://device.example', fetch: async () => {
+    calls++
+    return json({ result: { events: [{ seq: 1 }, { seq: 2 }] } })
+  } })
+  const events = client.events('test', { signal: controller.signal, interval: 0 })
+  assert.equal((await events.next()).value.seq, 1)
+  controller.abort(new Error('polling cancelled'))
+  await assert.rejects(events.next(), /polling cancelled/)
+  assert.equal(calls, 1)
+})
+
 test('SDK stream refreshes authentication, dispatches gaps and releases its reader on callback failure', async () => {
   let refreshed = 0, cancelled = 0
   const rows = [], gaps = []
