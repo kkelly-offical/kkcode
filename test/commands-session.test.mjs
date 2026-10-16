@@ -133,6 +133,29 @@ for (const command of ["resume", "retry"]) {
     assert.equal(globalThis.__sessionCommandFixture.shutdowns, 1)
     assert.equal(globalThis.__sessionCommandFixture.boots, 1)
     assert.equal(globalThis.__sessionCommandFixture.turns[0].prompt, "original prompt")
+    assert.equal(globalThis.__sessionCommandFixture.turns[0].contentBlocks, undefined)
+  })
+
+  test(`${command} restores multimodal content without treating blocks as a prompt string`, async () => {
+    const content = [
+      { type: "text", text: "Examine the image." },
+      { type: "image", mediaType: "image/png", data: "IMAGE_BYTES_NOT_PROMPT" },
+      { type: "text", text: "Then compare the audio." },
+      { type: "audio", mediaType: "audio/wav", data: "AUDIO_BYTES_NOT_PROMPT" },
+      { type: "text", text: "Keep this order." }
+    ]
+    const sessionId = await seedSession({ failed: command === "retry", empty: true })
+    await appendUserMessage(sessionId, content)
+    await flushNow()
+
+    const result = await runCommand([command, "--id", sessionId])
+    assert.equal(result.error, null)
+    assert.equal(result.code, 0)
+    const turn = globalThis.__sessionCommandFixture.turns[0]
+    assert.equal(typeof turn.prompt, "string")
+    assert.equal(turn.prompt, "Examine the image.\nThen compare the audio.\nKeep this order.")
+    assert.deepEqual(turn.contentBlocks, content)
+    assert.doesNotMatch(turn.prompt, /IMAGE_BYTES_NOT_PROMPT|AUDIO_BYTES_NOT_PROMPT|\[object Object\]/)
   })
 
   test(`${command} preserves reply text and chat failure exit semantics`, async () => {
