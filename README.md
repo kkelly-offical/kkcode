@@ -8,12 +8,12 @@
 ![Node](https://img.shields.io/badge/Node.js-%3E%3D22.12-green)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
 
-当前稳定版本 **1.0.13（客户端精修、附件与应用内配置）**；公开稳定与预览渠道以[版本与升级](docs/versions.md)为准。
-源码为 [1.0.14 存量缺陷修复候选](docs/release-1.0.14.md)，公开渠道仍保持原版本，正式发布由用户决定。
-[1.0.13正式版](docs/release-1.0.13.md) · [上一稳定版](docs/release-1.0.12.md) · [本轮实施记录](docs/implementation-1.0.13.md) ·
+当前稳定版本 **1.0.14（存量缺陷修复）**；公开稳定与预览渠道以[版本与升级](docs/versions.md)为准。
+Android **1.0.14 / 10021** 同步发布，Windows x64 提供未签名实验版。
+[1.0.14正式版](docs/release-1.0.14.md) · [上一稳定版](docs/release-1.0.13.md) · [本轮实施记录](docs/implementation-1.0.13.md) ·
 [版本与升级](docs/versions.md)区分源码、公开产物与部署状态。
 1.0.11 用户仍可使用[独立 Web 显示补丁](docs/web-display-1.0.11.md)；1.0.12 已包含后续体验优化。
-新增 [Windows x64 客户端](docs/windows-client.md)，支持本机工作区与企业网关；[下载正式安装器](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.13/kkcode-windows-1.0.13-x64-setup.exe)。
+新增 [Windows x64 客户端](docs/windows-client.md)，支持本机工作区与企业网关；[下载 1.0.14 实验版安装器](https://github.com/kkelly-offical/kkcode/releases/download/v1.0.14/kkcode-windows-1.0.14-x64-setup.exe)。
 上图为品牌概念图，不是实际界面截图。
 
 ## 产品特色
