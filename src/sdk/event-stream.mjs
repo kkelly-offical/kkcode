@@ -49,9 +49,8 @@ export class EventStreamParser {
     return frames;
   }
   end() {
-    const frame = this.buffer.trim() ? this.#frame(this.buffer) : null;
     this.buffer = "";
-    return frame ? [frame] : [];
+    return [];
   }
   #frame(raw) {
     for (const line of raw.split(/\r\n|\n|\r/)) {
@@ -128,15 +127,15 @@ export async function streamSessionEvents({
       ? [...parser.push(decoder.decode()), ...parser.end()]
       : parser.push(decoder.decode(value, { stream: true }));
     for (const frame of frames) {
+      signal?.throwIfAborted();
       const payload = frame.data ? JSON.parse(frame.data) : {};
       if (frame.event === "connected" || frame.event === "session.state")
         await onMeta?.(payload);
       else if (frame.event === "replay.gap") {
-        if (onGap) {
-          await onGap(payload);
-          signal?.throwIfAborted();
-        } else throw replayGapError(payload);
+        if (onGap) await onGap(payload);
+        else throw replayGapError(payload);
       } else await onEvent?.(payload);
+      signal?.throwIfAborted();
     }
     if (done) return "closed";
   }
